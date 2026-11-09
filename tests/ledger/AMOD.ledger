@@ -1,0 +1,20 @@
+# Schema ledger for AMOD (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device AMOD - schema=1
+param AMOD enabled unit=choice choice=Off|On
+param AMOD type unit=number min=-16777215 max=16777215 stepped=0 zones=8
+param AMOD flavour unit=number min=-16777215 max=16777215 stepped=0 zones=8
+param AMOD mod unit=number min=-16777215 max=16777215 stepped=0 zones=8
+param AMOD gamma unit=number min=-16777215 max=16777215 stepped=0
+param AMOD freq unit=percent min=-1 max=1 stepped=0
+param AMOD rate unit=log_multiple min=-2 max=2 stepped=0
+param AMOD sync unit=choice choice=0.1 Hz|1 Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param AMOD lfo_mode unit=choice choice=Free|Retrigger|Once|Stop
+param AMOD depth unit=percent min=0 max=1 stepped=0
+param AMOD manual unit=percent min=-1 max=1 stepped=0
+param AMOD mix unit=percent min=0 max=1 stepped=0
+param AMOD env unit=decibel min=-48 max=0 stepped=0
+param AMOD rotate unit=number min=-8388608 max=8388608 stepped=0
+param AMOD width unit=percent min=0 max=1 stepped=0
+param AMOD keytrack unit=choice choice=Off|On
+extra AMOD travel floats=39

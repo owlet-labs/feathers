@@ -1,0 +1,26 @@
+# Schema ledger for smth (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device smth - schema=1
+param smth smooth_enabled unit=choice choice=Off|On
+param smth smooth_poly unit=choice choice=Off|On
+param smth smooth_drive_fader unit=fader min=0 max=1 stepped=0
+param smth smooth_harmonic_mode unit=choice choice=3579|3579wm|FM|Fold|Ring|Add|Mod|Poly
+param smth smooth_harmonic_coord unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param smth smooth_sweep unit=number min=-8388608 max=8388608 stepped=0 zones=4
+param smth smooth_mix unit=percent min=0 max=1 stepped=0
+param smth smooth_harmonic_phase unit=number min=-8388608 max=8388608 stepped=0
+param smth smooth_gamma unit=number min=-8388608 max=8388608 stepped=0
+param smth smooth_sweep_on unit=choice choice=Off|On
+param smth smooth_width unit=percent min=0 max=1 stepped=0
+param smth smooth_evens unit=percent min=0 max=1 stepped=0
+param smth smooth_rect unit=percent min=0 max=1 stepped=0
+param smth smooth_fdbk unit=percent min=0 max=1 stepped=0
+param smth smooth_width_on unit=choice choice=Off|On
+param smth smooth_evens_on unit=choice choice=Off|On
+param smth smooth_rect_on unit=choice choice=Off|On
+param smth smooth_fdbk_on unit=choice choice=Off|On
+retired smth smooth_harmonic 2026-09-26 a 0..1 position clamped to the mode became an unbounded coordinate (smooth_harmonic_coord)
+retired smth smooth_twist 2026-09-26 a 0..1 knob became an unbounded coordinate whose laps are the firmware's twistPhaseOffset (smooth_twist_coord)
+retired smth smooth_twist_phase 2026-09-26 folded into Twist: one click of 128 is 128 laps of smooth_twist_coord
+retired smth smooth_twist_coord 2026-10-03 Twist split into four pills (smooth_width/evens/rect/fdbk) and the phi sweep alone (smooth_sweep)
+retired smth smooth_drive 2026-09-26 a -1..1 knob over the voice path's 0.25..2.25x became a 0..1 fader over the full 0..4x law (smooth_drive_fader)

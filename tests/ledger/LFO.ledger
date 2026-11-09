@@ -1,0 +1,23 @@
+# Schema ledger for LFO (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device LFO - schema=1
+param LFO waveform unit=choice choice=Sine|Triangle|Square|Random|Random Glide
+param LFO skew_pre_peak unit=percent min=0 max=1 stepped=0
+param LFO skew_pre_cross unit=percent min=0 max=1 stepped=0
+param LFO skew_pre_trough unit=percent min=0 max=1 stepped=0
+param LFO seed unit=number min=0 max=999 stepped=1
+param LFO time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT|Note
+param LFO rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param LFO smoothing unit=log_seconds min=-11 max=0 stepped=0
+param LFO mode unit=choice choice=Gate|Loop|Once|Free|LFO Retrig
+param LFO phase unit=percent min=0 max=1 stepped=0
+param LFO ping_pong unit=choice choice=Off|On
+param LFO bipolar unit=choice choice=Off|On
+param LFO enabled unit=choice choice=Off|On
+param LFO amount unit=percent min=-1 max=1 stepped=0
+param LFO poly unit=choice choice=Off|On
+param LFO smooth_carry unit=choice choice=Off|On
+param LFO trig unit=percent min=0 max=1 stepped=0
+param LFO notes_trig unit=choice choice=Off|On
+param LFO stereo_phase unit=degrees min=0 max=3.141592653589793 stepped=0
+out LFO lfo bipolar=1

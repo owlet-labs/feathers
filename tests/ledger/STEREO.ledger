@@ -1,0 +1,12 @@
+# Schema ledger for STEREO (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device STEREO - schema=1
+param STEREO in unit=percent min=-1 max=1 stepped=0
+param STEREO amount unit=percent min=0 max=2 stepped=0
+param STEREO width unit=percent min=0 max=2 stepped=0
+param STEREO swap unit=choice choice=Off|On
+param STEREO enabled unit=choice choice=Off|On
+out STEREO split bipolar=1
+out STEREO width bipolar=1
+retired STEREO identity 2026-10-05 the Identity output (−1, +1) is gone: Split with In and Amount at 100% gives (+1, −1)
+retired STEREO pan 2026-10-05 the Pan control and the Pan output (an equal-power gain pair, both ears ≥ 0) are gone; Split replaces them

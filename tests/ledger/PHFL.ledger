@@ -1,0 +1,59 @@
+# Schema ledger for PHFL (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device PHFL - schema=2
+param PHFL phaser_enabled unit=choice choice=Off|On
+param PHFL phaser_mode unit=choice choice=Phaser|Flanger
+param PHFL phaser_stages unit=choice choice=2|4|6|8|10|12
+param PHFL phaser_center_hz unit=log_hertz min=5.321928094887363 max=13.550746785383243 stepped=0
+param PHFL phaser_delay unit=log_seconds min=-12.28771237954945 max=-6.058893689053569 stepped=0
+param PHFL phaser_feedback unit=percent min=-1 max=1 stepped=0
+param PHFL phaser_damping unit=log_hertz min=8.965784284662087 max=14.287712379549449 stepped=0
+param PHFL phaser_drive unit=percent min=0 max=1 stepped=0
+param PHFL phaser_mix unit=percent min=0 max=1 stepped=0
+param PHFL phaser_position unit=percent min=-1 max=1 stepped=0
+param PHFL phaser_lfo_on unit=choice choice=Off|On
+param PHFL phaser_lfo_depth unit=percent min=0 max=1 stepped=0
+param PHFL phaser_sync unit=choice choice=Free|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param PHFL phaser_rate_hz unit=log_hertz min=-6.643856189774724 max=4.321928094887363 stepped=0
+param PHFL phaser_stereo unit=number min=0 max=180 stepped=0
+param PHFL phaser_env_on unit=choice choice=Off|On
+param PHFL phaser_env_amount unit=percent min=-1 max=1 stepped=0
+param PHFL phaser_env_attack unit=log_seconds min=-10.965784284662087 max=2.321928094887362 stepped=0
+param PHFL phaser_env_release unit=log_seconds min=-6.643856189774724 max=4.321928094887363 stepped=0
+param PHFL phaser_env_sens_db unit=decibel min=-24 max=24 stepped=0
+param PHFL phaser_sweep unit=choice choice=Normal|Up|Down
+param PHFL phaser_through_zero unit=choice choice=Off|On
+param PHFL phaser_key_track unit=choice choice=Off|On
+param PHFL phaser_rotate unit=number min=-8388608 max=8388608 stepped=0
+param PHFL phaser_x_spread_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_spread_on unit=choice choice=Off|On
+param PHFL phaser_x_stagger_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_stagger_on unit=choice choice=Off|On
+param PHFL phaser_x_shape_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_shape_on unit=choice choice=Off|On
+param PHFL phaser_x_colour_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_colour_on unit=choice choice=Off|On
+param PHFL phaser_x_bias_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_bias_on unit=choice choice=Off|On
+param PHFL phaser_x_skew_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_skew_on unit=choice choice=Off|On
+param PHFL phaser_x_rate_skew_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_rate_skew_on unit=choice choice=Off|On
+param PHFL phaser_x_fb_tilt_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_fb_tilt_on unit=choice choice=Off|On
+param PHFL phaser_x_pairing_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_pairing_on unit=choice choice=Off|On
+param PHFL phaser_x_curve_field unit=percent min=0 max=1 stepped=0
+param PHFL phaser_x_curve_on unit=choice choice=Off|On
+extra PHFL travel floats=34
+retired PHFL phaser_key_offset 2026-10-03 merged into Center: while a note is tracked, Center is the offset from it
+retired PHFL phaser_x_spread 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_stagger 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_shape 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_colour 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_bias 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_skew 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_rate_skew 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_fb_tilt 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_pairing 2026-10-04 pill law changed from multiplier to fieldWithOverride
+retired PHFL phaser_x_curve 2026-10-04 pill law changed from multiplier to fieldWithOverride

@@ -1,0 +1,358 @@
+# Schema ledger for PAT (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device PAT - schema=1
+param PAT enabled unit=choice choice=Off|On
+param PAT selector unit=percent min=0 max=1 stepped=0
+param PAT keys unit=choice choice=Transpose|Pool
+param PAT latch unit=choice choice=Off|On
+param PAT humanize unit=choice choice=Straight|Swing 4|Swing 8|Swing 16|Groove 4|Groove 8|Groove 16|Free 4|Free 8|Free 16|Tight|Loose|Drunk|Push|Lazy|Strum Up|Strum Down|Flam
+param PAT humanize_amount unit=percent min=0 max=1 stepped=0
+param PAT seed unit=number min=0 max=999 stepped=1
+param PAT offset unit=number min=-16 max=16 stepped=1
+param PAT nudge unit=percent min=-0.5 max=0.5 stepped=0
+param PAT run unit=choice choice=Always|Transport|Note
+param PAT fixed_velocity unit=choice choice=Off|On
+param PAT velocity unit=percent min=0 max=1 stepped=0
+param PAT likes_warp unit=choice choice=Off|On
+param PAT play_mode unit=choice choice=Selector|Cycle
+param PAT transpose_steps unit=number min=-14 max=14 stepped=1
+param PAT transpose_octaves unit=number min=-4 max=4 stepped=1
+param PAT free_phase unit=number min=-8388608 max=8388608 stepped=0
+param PAT wobble unit=number min=-8388608 max=8388608 stepped=0
+param PAT note_low unit=note min=0 max=127 stepped=1
+param PAT note_high unit=note min=0 max=127 stepped=1
+param PAT p1.enable unit=choice choice=Off|On
+param PAT p1.solo unit=choice choice=Off|On
+param PAT p1.mode unit=choice choice=Melody|Melody Mono|Chords|TB-Mono|TB-Glide|Drum|Progression|Modulation
+param PAT p1.root unit=choice choice=C|C#|D|Eb|E|F|F#|G|Ab|A|Bb|B
+param PAT p1.scale unit=choice choice=Major|Dorian|Phrygian|Lydian|Mixolydian|Minor|Locrian|Harmonic Minor|Melodic Minor|Harmonic Major|Dorian #4 (Romanian Minor)|Phrygian Dominant|Lydian Dominant|Altered|Lydian Augmented|Locrian Natural 2|Major Pentatonic|Minor Pentatonic|Egyptian|Blues|Major Blues|Man Gong|Hirajoshi|In Sen|Iwato|Kumoi|Yo|Hungarian Minor|Hungarian Major|Double Harmonic (Bhairav)|Neapolitan Major|Neapolitan Minor|Persian|Enigmatic|Spanish 8-Tone|Todi|Marwa|Purvi|Whole Tone|Diminished (W-H)|Diminished (H-W)|Augmented|Prometheus|Bebop Dominant|Bebop Major|Chromatic
+param PAT p1.degree unit=choice choice=I|II|III|IV|V|VI|VII
+param PAT p1.size unit=choice choice=Single|Power|Triad|Sus2|Sus4|6th|7th|add9|9th|11th|13th
+param PAT p1.inversion unit=choice choice=Auto|Root|1st|2nd|3rd
+param PAT p1.spread unit=choice choice=Close|Drop 2|Drop 3|Drop 2+4|Open|Wide
+param PAT p1.time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param PAT p1.rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param PAT p1.length unit=number min=1 max=64 stepped=1
+param PAT p1.gate unit=percent min=0.05 max=1 stepped=0
+param PAT p1.accent unit=percent min=0 max=1 stepped=0
+param PAT p1.pitch_on_notes unit=choice choice=Off|On
+param PAT p1.glide_time unit=log_seconds min=-8.965784284662087 max=-1 stepped=0
+param PAT p1.thru unit=choice choice=Auto|Off|On
+param PAT p1.trig unit=choice choice=Auto|Transport|Gate|Restart
+param PAT p1.zone unit=number min=0 max=1023 stepped=1
+param PAT p1.zone_offset unit=number min=0 max=1 stepped=0
+param PAT p1.gamma unit=number min=0 max=8388608 stepped=0
+param PAT p1.place_x unit=number min=-4096 max=4096 stepped=0
+param PAT p1.place_y unit=number min=-4096 max=4096 stepped=0
+param PAT p1.rotate unit=number min=-8388608 max=8388608 stepped=0
+param PAT p1.pin.motion unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.leap unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.range unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.density unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.length unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.hold unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.accent unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.glide unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.octave unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.repeat unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.answer unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.detail unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.ratchet unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.voice_leading unit=percent min=0 max=1 stepped=0
+param PAT p1.pin.approach unit=percent min=0 max=1 stepped=0
+param PAT p1.drum.kick.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.snare.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.closed_hat.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.open_hat.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.clap.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.low_tom.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.high_tom.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.ride.note unit=number min=0 max=127 stepped=1
+param PAT p1.drum.kick.on unit=choice choice=Off|On
+param PAT p1.drum.snare.on unit=choice choice=Off|On
+param PAT p1.drum.closed_hat.on unit=choice choice=Off|On
+param PAT p1.drum.open_hat.on unit=choice choice=Off|On
+param PAT p1.drum.clap.on unit=choice choice=Off|On
+param PAT p1.drum.low_tom.on unit=choice choice=Off|On
+param PAT p1.drum.high_tom.on unit=choice choice=Off|On
+param PAT p1.drum.ride.on unit=choice choice=Off|On
+param PAT p1.repeats unit=number min=1 max=16 stepped=1
+param PAT p1.next unit=choice choice=Next|Previous|Random|Stop|Loop
+param PAT p1.transpose_steps unit=number min=-14 max=14 stepped=1
+param PAT p1.transpose_octaves unit=number min=-4 max=4 stepped=1
+param PAT p1.span unit=choice choice=Auto|1 bar|2 bars|4 bars|8 bars
+param PAT p1.fill unit=choice choice=Off|On
+param PAT p1.start unit=number min=0 max=63 stepped=1
+param PAT p1.end unit=number min=1 max=64 stepped=1
+param PAT p1.fill_trigger unit=percent min=0 max=1 stepped=0
+param PAT p1.mod_smooth unit=choice choice=Hold|Glide|Ramp
+param PAT p1.mod_time unit=number min=0 max=4 stepped=0
+param PAT p1.mod_polarity unit=choice choice=Unipolar|Bipolar
+param PAT p1.mod_neutral unit=choice choice=Off|On
+param PAT p2.enable unit=choice choice=Off|On
+param PAT p2.solo unit=choice choice=Off|On
+param PAT p2.mode unit=choice choice=Melody|Melody Mono|Chords|TB-Mono|TB-Glide|Drum|Progression|Modulation
+param PAT p2.root unit=choice choice=C|C#|D|Eb|E|F|F#|G|Ab|A|Bb|B
+param PAT p2.scale unit=choice choice=Major|Dorian|Phrygian|Lydian|Mixolydian|Minor|Locrian|Harmonic Minor|Melodic Minor|Harmonic Major|Dorian #4 (Romanian Minor)|Phrygian Dominant|Lydian Dominant|Altered|Lydian Augmented|Locrian Natural 2|Major Pentatonic|Minor Pentatonic|Egyptian|Blues|Major Blues|Man Gong|Hirajoshi|In Sen|Iwato|Kumoi|Yo|Hungarian Minor|Hungarian Major|Double Harmonic (Bhairav)|Neapolitan Major|Neapolitan Minor|Persian|Enigmatic|Spanish 8-Tone|Todi|Marwa|Purvi|Whole Tone|Diminished (W-H)|Diminished (H-W)|Augmented|Prometheus|Bebop Dominant|Bebop Major|Chromatic
+param PAT p2.degree unit=choice choice=I|II|III|IV|V|VI|VII
+param PAT p2.size unit=choice choice=Single|Power|Triad|Sus2|Sus4|6th|7th|add9|9th|11th|13th
+param PAT p2.inversion unit=choice choice=Auto|Root|1st|2nd|3rd
+param PAT p2.spread unit=choice choice=Close|Drop 2|Drop 3|Drop 2+4|Open|Wide
+param PAT p2.time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param PAT p2.rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param PAT p2.length unit=number min=1 max=64 stepped=1
+param PAT p2.gate unit=percent min=0.05 max=1 stepped=0
+param PAT p2.accent unit=percent min=0 max=1 stepped=0
+param PAT p2.pitch_on_notes unit=choice choice=Off|On
+param PAT p2.glide_time unit=log_seconds min=-8.965784284662087 max=-1 stepped=0
+param PAT p2.thru unit=choice choice=Auto|Off|On
+param PAT p2.trig unit=choice choice=Auto|Transport|Gate|Restart
+param PAT p2.zone unit=number min=0 max=1023 stepped=1
+param PAT p2.zone_offset unit=number min=0 max=1 stepped=0
+param PAT p2.gamma unit=number min=0 max=8388608 stepped=0
+param PAT p2.place_x unit=number min=-4096 max=4096 stepped=0
+param PAT p2.place_y unit=number min=-4096 max=4096 stepped=0
+param PAT p2.rotate unit=number min=-8388608 max=8388608 stepped=0
+param PAT p2.pin.motion unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.leap unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.range unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.density unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.length unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.hold unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.accent unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.glide unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.octave unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.repeat unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.answer unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.detail unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.ratchet unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.voice_leading unit=percent min=0 max=1 stepped=0
+param PAT p2.pin.approach unit=percent min=0 max=1 stepped=0
+param PAT p2.drum.kick.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.snare.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.closed_hat.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.open_hat.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.clap.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.low_tom.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.high_tom.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.ride.note unit=number min=0 max=127 stepped=1
+param PAT p2.drum.kick.on unit=choice choice=Off|On
+param PAT p2.drum.snare.on unit=choice choice=Off|On
+param PAT p2.drum.closed_hat.on unit=choice choice=Off|On
+param PAT p2.drum.open_hat.on unit=choice choice=Off|On
+param PAT p2.drum.clap.on unit=choice choice=Off|On
+param PAT p2.drum.low_tom.on unit=choice choice=Off|On
+param PAT p2.drum.high_tom.on unit=choice choice=Off|On
+param PAT p2.drum.ride.on unit=choice choice=Off|On
+param PAT p2.repeats unit=number min=1 max=16 stepped=1
+param PAT p2.next unit=choice choice=Next|Previous|Random|Stop|Loop
+param PAT p2.transpose_steps unit=number min=-14 max=14 stepped=1
+param PAT p2.transpose_octaves unit=number min=-4 max=4 stepped=1
+param PAT p2.span unit=choice choice=Auto|1 bar|2 bars|4 bars|8 bars
+param PAT p2.fill unit=choice choice=Off|On
+param PAT p2.start unit=number min=0 max=63 stepped=1
+param PAT p2.end unit=number min=1 max=64 stepped=1
+param PAT p2.fill_trigger unit=percent min=0 max=1 stepped=0
+param PAT p2.mod_smooth unit=choice choice=Hold|Glide|Ramp
+param PAT p2.mod_time unit=number min=0 max=4 stepped=0
+param PAT p2.mod_polarity unit=choice choice=Unipolar|Bipolar
+param PAT p2.mod_neutral unit=choice choice=Off|On
+param PAT p3.enable unit=choice choice=Off|On
+param PAT p3.solo unit=choice choice=Off|On
+param PAT p3.mode unit=choice choice=Melody|Melody Mono|Chords|TB-Mono|TB-Glide|Drum|Progression|Modulation
+param PAT p3.root unit=choice choice=C|C#|D|Eb|E|F|F#|G|Ab|A|Bb|B
+param PAT p3.scale unit=choice choice=Major|Dorian|Phrygian|Lydian|Mixolydian|Minor|Locrian|Harmonic Minor|Melodic Minor|Harmonic Major|Dorian #4 (Romanian Minor)|Phrygian Dominant|Lydian Dominant|Altered|Lydian Augmented|Locrian Natural 2|Major Pentatonic|Minor Pentatonic|Egyptian|Blues|Major Blues|Man Gong|Hirajoshi|In Sen|Iwato|Kumoi|Yo|Hungarian Minor|Hungarian Major|Double Harmonic (Bhairav)|Neapolitan Major|Neapolitan Minor|Persian|Enigmatic|Spanish 8-Tone|Todi|Marwa|Purvi|Whole Tone|Diminished (W-H)|Diminished (H-W)|Augmented|Prometheus|Bebop Dominant|Bebop Major|Chromatic
+param PAT p3.degree unit=choice choice=I|II|III|IV|V|VI|VII
+param PAT p3.size unit=choice choice=Single|Power|Triad|Sus2|Sus4|6th|7th|add9|9th|11th|13th
+param PAT p3.inversion unit=choice choice=Auto|Root|1st|2nd|3rd
+param PAT p3.spread unit=choice choice=Close|Drop 2|Drop 3|Drop 2+4|Open|Wide
+param PAT p3.time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param PAT p3.rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param PAT p3.length unit=number min=1 max=64 stepped=1
+param PAT p3.gate unit=percent min=0.05 max=1 stepped=0
+param PAT p3.accent unit=percent min=0 max=1 stepped=0
+param PAT p3.pitch_on_notes unit=choice choice=Off|On
+param PAT p3.glide_time unit=log_seconds min=-8.965784284662087 max=-1 stepped=0
+param PAT p3.thru unit=choice choice=Auto|Off|On
+param PAT p3.trig unit=choice choice=Auto|Transport|Gate|Restart
+param PAT p3.zone unit=number min=0 max=1023 stepped=1
+param PAT p3.zone_offset unit=number min=0 max=1 stepped=0
+param PAT p3.gamma unit=number min=0 max=8388608 stepped=0
+param PAT p3.place_x unit=number min=-4096 max=4096 stepped=0
+param PAT p3.place_y unit=number min=-4096 max=4096 stepped=0
+param PAT p3.rotate unit=number min=-8388608 max=8388608 stepped=0
+param PAT p3.pin.motion unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.leap unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.range unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.density unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.length unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.hold unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.accent unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.glide unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.octave unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.repeat unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.answer unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.detail unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.ratchet unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.voice_leading unit=percent min=0 max=1 stepped=0
+param PAT p3.pin.approach unit=percent min=0 max=1 stepped=0
+param PAT p3.drum.kick.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.snare.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.closed_hat.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.open_hat.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.clap.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.low_tom.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.high_tom.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.ride.note unit=number min=0 max=127 stepped=1
+param PAT p3.drum.kick.on unit=choice choice=Off|On
+param PAT p3.drum.snare.on unit=choice choice=Off|On
+param PAT p3.drum.closed_hat.on unit=choice choice=Off|On
+param PAT p3.drum.open_hat.on unit=choice choice=Off|On
+param PAT p3.drum.clap.on unit=choice choice=Off|On
+param PAT p3.drum.low_tom.on unit=choice choice=Off|On
+param PAT p3.drum.high_tom.on unit=choice choice=Off|On
+param PAT p3.drum.ride.on unit=choice choice=Off|On
+param PAT p3.repeats unit=number min=1 max=16 stepped=1
+param PAT p3.next unit=choice choice=Next|Previous|Random|Stop|Loop
+param PAT p3.transpose_steps unit=number min=-14 max=14 stepped=1
+param PAT p3.transpose_octaves unit=number min=-4 max=4 stepped=1
+param PAT p3.span unit=choice choice=Auto|1 bar|2 bars|4 bars|8 bars
+param PAT p3.fill unit=choice choice=Off|On
+param PAT p3.start unit=number min=0 max=63 stepped=1
+param PAT p3.end unit=number min=1 max=64 stepped=1
+param PAT p3.fill_trigger unit=percent min=0 max=1 stepped=0
+param PAT p3.mod_smooth unit=choice choice=Hold|Glide|Ramp
+param PAT p3.mod_time unit=number min=0 max=4 stepped=0
+param PAT p3.mod_polarity unit=choice choice=Unipolar|Bipolar
+param PAT p3.mod_neutral unit=choice choice=Off|On
+param PAT p4.enable unit=choice choice=Off|On
+param PAT p4.solo unit=choice choice=Off|On
+param PAT p4.mode unit=choice choice=Melody|Melody Mono|Chords|TB-Mono|TB-Glide|Drum|Progression|Modulation
+param PAT p4.root unit=choice choice=C|C#|D|Eb|E|F|F#|G|Ab|A|Bb|B
+param PAT p4.scale unit=choice choice=Major|Dorian|Phrygian|Lydian|Mixolydian|Minor|Locrian|Harmonic Minor|Melodic Minor|Harmonic Major|Dorian #4 (Romanian Minor)|Phrygian Dominant|Lydian Dominant|Altered|Lydian Augmented|Locrian Natural 2|Major Pentatonic|Minor Pentatonic|Egyptian|Blues|Major Blues|Man Gong|Hirajoshi|In Sen|Iwato|Kumoi|Yo|Hungarian Minor|Hungarian Major|Double Harmonic (Bhairav)|Neapolitan Major|Neapolitan Minor|Persian|Enigmatic|Spanish 8-Tone|Todi|Marwa|Purvi|Whole Tone|Diminished (W-H)|Diminished (H-W)|Augmented|Prometheus|Bebop Dominant|Bebop Major|Chromatic
+param PAT p4.degree unit=choice choice=I|II|III|IV|V|VI|VII
+param PAT p4.size unit=choice choice=Single|Power|Triad|Sus2|Sus4|6th|7th|add9|9th|11th|13th
+param PAT p4.inversion unit=choice choice=Auto|Root|1st|2nd|3rd
+param PAT p4.spread unit=choice choice=Close|Drop 2|Drop 3|Drop 2+4|Open|Wide
+param PAT p4.time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param PAT p4.rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param PAT p4.length unit=number min=1 max=64 stepped=1
+param PAT p4.gate unit=percent min=0.05 max=1 stepped=0
+param PAT p4.accent unit=percent min=0 max=1 stepped=0
+param PAT p4.pitch_on_notes unit=choice choice=Off|On
+param PAT p4.glide_time unit=log_seconds min=-8.965784284662087 max=-1 stepped=0
+param PAT p4.thru unit=choice choice=Auto|Off|On
+param PAT p4.trig unit=choice choice=Auto|Transport|Gate|Restart
+param PAT p4.zone unit=number min=0 max=1023 stepped=1
+param PAT p4.zone_offset unit=number min=0 max=1 stepped=0
+param PAT p4.gamma unit=number min=0 max=8388608 stepped=0
+param PAT p4.place_x unit=number min=-4096 max=4096 stepped=0
+param PAT p4.place_y unit=number min=-4096 max=4096 stepped=0
+param PAT p4.rotate unit=number min=-8388608 max=8388608 stepped=0
+param PAT p4.pin.motion unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.leap unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.range unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.density unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.length unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.hold unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.accent unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.glide unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.octave unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.repeat unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.answer unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.detail unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.ratchet unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.voice_leading unit=percent min=0 max=1 stepped=0
+param PAT p4.pin.approach unit=percent min=0 max=1 stepped=0
+param PAT p4.drum.kick.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.snare.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.closed_hat.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.open_hat.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.clap.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.low_tom.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.high_tom.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.ride.note unit=number min=0 max=127 stepped=1
+param PAT p4.drum.kick.on unit=choice choice=Off|On
+param PAT p4.drum.snare.on unit=choice choice=Off|On
+param PAT p4.drum.closed_hat.on unit=choice choice=Off|On
+param PAT p4.drum.open_hat.on unit=choice choice=Off|On
+param PAT p4.drum.clap.on unit=choice choice=Off|On
+param PAT p4.drum.low_tom.on unit=choice choice=Off|On
+param PAT p4.drum.high_tom.on unit=choice choice=Off|On
+param PAT p4.drum.ride.on unit=choice choice=Off|On
+param PAT p4.repeats unit=number min=1 max=16 stepped=1
+param PAT p4.next unit=choice choice=Next|Previous|Random|Stop|Loop
+param PAT p4.transpose_steps unit=number min=-14 max=14 stepped=1
+param PAT p4.transpose_octaves unit=number min=-4 max=4 stepped=1
+param PAT p4.span unit=choice choice=Auto|1 bar|2 bars|4 bars|8 bars
+param PAT p4.fill unit=choice choice=Off|On
+param PAT p4.start unit=number min=0 max=63 stepped=1
+param PAT p4.end unit=number min=1 max=64 stepped=1
+param PAT p4.fill_trigger unit=percent min=0 max=1 stepped=0
+param PAT p4.mod_smooth unit=choice choice=Hold|Glide|Ramp
+param PAT p4.mod_time unit=number min=0 max=4 stepped=0
+param PAT p4.mod_polarity unit=choice choice=Unipolar|Bipolar
+param PAT p4.mod_neutral unit=choice choice=Off|On
+block PAT arp_play floats=103
+block PAT pattern_hand floats=1004
+block PAT pattern.likes.v3 floats=23044
+block PAT pattern.edits.v3 floats=2604
+block PAT pattern.edits.v4 floats=4908
+out PAT step bipolar=0
+out PAT pitch bipolar=0
+out PAT velocity bipolar=0
+out PAT accent bipolar=0
+out PAT accent_sweep bipolar=0
+out PAT slide bipolar=0
+out PAT degree bipolar=0
+out PAT tab1.active bipolar=0
+out PAT tab2.active bipolar=0
+out PAT tab3.active bipolar=0
+out PAT tab4.active bipolar=0
+out PAT tab1.lane1 bipolar=1
+out PAT tab1.lane2 bipolar=1
+out PAT tab1.lane3 bipolar=1
+out PAT tab1.lane4 bipolar=1
+out PAT tab1.lane5 bipolar=1
+out PAT tab1.lane6 bipolar=1
+out PAT tab1.lane7 bipolar=1
+out PAT tab1.lane8 bipolar=1
+out PAT tab2.lane1 bipolar=1
+out PAT tab2.lane2 bipolar=1
+out PAT tab2.lane3 bipolar=1
+out PAT tab2.lane4 bipolar=1
+out PAT tab2.lane5 bipolar=1
+out PAT tab2.lane6 bipolar=1
+out PAT tab2.lane7 bipolar=1
+out PAT tab2.lane8 bipolar=1
+out PAT tab3.lane1 bipolar=1
+out PAT tab3.lane2 bipolar=1
+out PAT tab3.lane3 bipolar=1
+out PAT tab3.lane4 bipolar=1
+out PAT tab3.lane5 bipolar=1
+out PAT tab3.lane6 bipolar=1
+out PAT tab3.lane7 bipolar=1
+out PAT tab3.lane8 bipolar=1
+out PAT tab4.lane1 bipolar=1
+out PAT tab4.lane2 bipolar=1
+out PAT tab4.lane3 bipolar=1
+out PAT tab4.lane4 bipolar=1
+out PAT tab4.lane5 bipolar=1
+out PAT tab4.lane6 bipolar=1
+out PAT tab4.lane7 bipolar=1
+out PAT tab4.lane8 bipolar=1
+retired PAT contour 2026-10-30 the output cap (kMaxDeviceOutputs = 7): Accent Sweep took its slot; it returns under a new key if the cap grows
+retired PAT pattern.likes.v1 2026-10-31 a like now also stores its full point (31 phases, 31 rate offsets) so its mark follows a turn: pattern.likes.v2
+retired PAT pattern.edits.v2 2026-11-05 the anchor lost Radius and Theta (removed): v3
+retired PAT p1.radius 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT p1.theta 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT p2.radius 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT p2.theta 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT p3.radius 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT p3.theta 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT p4.radius 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT p4.theta 2026-11-05 radius and theta are not needed — the orbit is gone
+retired PAT free_fine 2026-11-07 a second zone was meant as orthogonal phi fields for more nuanced control, not finer steps
+retired PAT pattern.edits.v1 2026-11-04 an edit's key was absolute and signed by key, so one made over the window's C4 was never heard at another held key: v2 keys from the cycle's root, signed by degree and octave
+retired PAT pattern.likes.v2 2026-10-31 the point in doubles (two floats each): a float phase loses its fraction far from home, and the warp reads angles: v3
+retired PAT stop_with_transport 2026-11-07 the Only w/ Transport switch became Run (Always, Transport, Note) — its Off and On are carried

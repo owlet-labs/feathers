@@ -1,0 +1,52 @@
+# One line per device tag and per engine, for scripts/readme-device-list.sh. The registry carries no
+# description field, so these are written by hand, each condensed from the header comment of the device's
+# own *_types.h. The script REFUSES to run when a registry device or engine has no line here, so a new
+# device cannot silently drop out of the README. Format: <tag or engine:Name><TAB><one line>.
+flt1	Multimode filter: lowpass, bandpass, highpass and more, with drive, spread and morph.
+HARM	Strips the fundamental with a note-tracking notch and puts a clean sine sub-harmonic back.
+OWLTT	Three-band upward and downward compressor, with Character and Vibe zones.
+SKLITTER	Stutterer: eight slicing modes over one ring buffer, a perform circle, grain and post lanes.
+wayp	Four filter states on a plane, and one Morph that walks between them.
+drwn	A filter whose response is drawn: four frames blended on an XY pad.
+SHPR	Table waveshaper whose curve is a place in a φ-field rather than a preset.
+AMOD	The Automodulator: an auto-wah whose filter, comb and envelope response are read from one position in the φ-field.
+DHDS	Delay, attack, hold, decay, sustain, release envelope.
+MSEG	Multi-segment envelope: a shape made of segments you draw.
+TRAK	Pitch tracker: the held note's pitch as a modulation source, with a rule for which note of a chord it follows.
+NEXP	Note Expressions: seven per-note controllers (volume, pan, tune, vibrato, expression, brightness and more) as routable outputs.
+busu	Gain, pan, dual pan, width and polarity.
+cmps	Chain: devices in series inside one slot, with its own macros and routes.
+LFO	Low-frequency oscillator with shapes, sync, phase and its own preview.
+DELAY	Delay with Clean, Granular, Xfade, Tape, Multi-Tap, Reverse and Buckets modes, and an effects lane in its feedback loop.
+PITCH	Pitch shifter, with an option to lock to a scale.
+ERODER	A very short comb whose delay is shaken by filtered noise, then soft-clipped and folded.
+FVERB	Featherverb: an algorithmic reverb, extended with a convolution section.
+comp	Compressor, limiter and compander, with a lane between the compander's halves.
+clip	Clipper with five characters and 4x oversampling.
+RESONATE	Scanned-string resonator: bowed and plucked notes plus a drone, with effects lanes for each.
+MACROS	Four macro knobs as a modulator device.
+MATH	Combines two modulation inputs into one output, through a transfer curve.
+smth	Smooth Shaper: eight waveshapers behind one knob, and a Twist that sweeps four modifiers at once.
+eq	Parametric EQ for surgical and mastering work, with an analyser.
+DISPERSE	Disperser: a dispersion (allpass group-delay) effect.
+PHFL	Phaser and flanger, with a response view and an explore field.
+STEREO	Left/right modulation sources (split, width) for stereo routes.
+spectral	Spectral effect: the Additive engine's partial operators applied to any audio.
+noise	Adds noise or pseudorandom impulses to whatever passes, through its own filter.
+rtrig	Random Trigger: pseudorandom events as modulation.
+SNH	Sample & Hold, with a built-in noise source and a trigger threshold.
+STEPSEQ	Step sequencer: up to 32 steps of value, gate, probability, ratchet and slew, with randomisation.
+FOLLOWER	Envelope follower, and a threshold that turns any signal into trigger pulses.
+RACK	Chains side by side, combined by mode (Parallel, Select/Blend, Mid/Side, Left/Right, Bands), each with level, mute and solo, plus eight macros.
+inject	Sidechain Inject: brings the plugin's sidechain input into the chain at this point.
+ARP	Classic arpeggiator: makes notes from the held chord.
+PAT	Pattern: a terrain arpeggiator with four patterns, fills and routable outputs.
+TFIELD	Twin Field: eight modulation outputs read off the φ terrain in two crossfaded layers.
+engine:Morph	The original PhiMorph oscillator.
+engine:Stair	The original PhiStair oscillator.
+engine:V5	The default engine.
+engine:Resonate	A resonator engine: a string, bar, tube or membrane model.
+engine:Basic Shapes	Classic oscillator shapes.
+engine:Additive	Additive synthesis, with a spectrum panel of partial operators and a vocoder.
+engine:Pluck	Plucked-string engine.
+engine:Drum	Eight-pad drum kit, with a hit picture per pad and a PAD FX rail.

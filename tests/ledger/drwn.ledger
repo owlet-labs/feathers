@@ -1,0 +1,132 @@
+# Schema ledger for drwn (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device drwn - schema=1
+param drwn enabled unit=choice choice=Off|On
+param drwn morph_x unit=percent min=0 max=1 stepped=0
+param drwn morph_y unit=percent min=0 max=1 stepped=0
+param drwn cutoff unit=number min=-4 max=4 stepped=0
+param drwn res unit=percent min=0 max=1 stepped=0
+param drwn drive unit=percent min=0 max=1 stepped=0
+param drwn wake unit=percent min=0 max=1 stepped=0
+param drwn mix unit=percent min=0 max=1 stepped=0
+param drwn wet_gain unit=fader min=0 max=1 stepped=0
+param drwn 1_1_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 1_1_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_1_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 1_1_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_1_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 1_2_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 1_2_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_2_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 1_2_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_2_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 1_3_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 1_3_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_3_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 1_3_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_3_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 1_4_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 1_4_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_4_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 1_4_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_4_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 1_5_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 1_5_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_5_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 1_5_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_5_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 1_6_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 1_6_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_6_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 1_6_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 1_6_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 2_1_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 2_1_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_1_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 2_1_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_1_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 2_2_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 2_2_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_2_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 2_2_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_2_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 2_3_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 2_3_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_3_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 2_3_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_3_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 2_4_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 2_4_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_4_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 2_4_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_4_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 2_5_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 2_5_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_5_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 2_5_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_5_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 2_6_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 2_6_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_6_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 2_6_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 2_6_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 3_1_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 3_1_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_1_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 3_1_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_1_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 3_2_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 3_2_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_2_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 3_2_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_2_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 3_3_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 3_3_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_3_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 3_3_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_3_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 3_4_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 3_4_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_4_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 3_4_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_4_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 3_5_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 3_5_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_5_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 3_5_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_5_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 3_6_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 3_6_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_6_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 3_6_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 3_6_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 4_1_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 4_1_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_1_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 4_1_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_1_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 4_2_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 4_2_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_2_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 4_2_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_2_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 4_3_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 4_3_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_3_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 4_3_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_3_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 4_4_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 4_4_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_4_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 4_4_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_4_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 4_5_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 4_5_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_5_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 4_5_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_5_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free
+param drwn 4_6_pole_q unit=percent min=0 max=0.9998999834060669 stepped=0
+param drwn 4_6_pole_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_6_zero_r unit=number min=-8 max=8 stepped=0
+param drwn 4_6_zero_freq unit=number min=-12 max=0 stepped=0
+param drwn 4_6_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Bell|Allpass|Bypass|Free

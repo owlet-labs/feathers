@@ -1,0 +1,9 @@
+# Schema ledger for ERODER (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device ERODER - schema=1
+param ERODER eroder_enabled unit=choice choice=Off|On
+param ERODER eroder_tone unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param ERODER eroder_character unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param ERODER eroder_gamma unit=number min=-8388608 max=8388608 stepped=0
+param ERODER eroder_cutoff unit=number min=-2 max=2 stepped=0
+param ERODER eroder_mix unit=percent min=0 max=1 stepped=0

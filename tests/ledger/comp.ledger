@@ -1,0 +1,26 @@
+# Schema ledger for comp (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device comp - schema=1
+param comp comp_enabled unit=choice choice=Off|On
+param comp comp_mode unit=choice choice=Compress|Limit|Compander
+param comp comp_threshold unit=decibel min=-60 max=0 stepped=0
+param comp comp_ratio unit=number min=1 max=20 stepped=0
+param comp comp_knee unit=decibel min=0 max=24 stepped=0
+param comp comp_attack unit=log_seconds min=-13.287712379549449 max=-3.321928094887362 stepped=0
+param comp comp_release unit=log_seconds min=-9.965784284662087 max=1 stepped=0
+param comp comp_detect unit=choice choice=Peak|RMS
+param comp comp_sc_hpf unit=choice choice=Off|20Hz|40Hz|60Hz|80Hz|120Hz|200Hz|300Hz|500Hz
+param comp comp_makeup unit=decibel min=-12 max=24 stepped=0
+param comp comp_mix unit=percent min=0 max=1 stepped=0
+param comp comp_drive unit=decibel min=-24 max=24 stepped=0
+param comp comp_ceiling unit=decibel min=-24 max=0 stepped=0
+param comp comp_stereo_link unit=percent min=0 max=1 stepped=0
+param comp comp_stereo_mode unit=choice choice=L/R|M/S
+param comp comp_detector unit=choice choice=Self|Side
+param comp comp_cmp_ratio unit=number min=1.5 max=4 stepped=0
+param comp comp_cmp_range unit=decibel min=6 max=24 stepped=0
+param comp comp_cmp_topology unit=choice choice=Compress|Expand|Compander|Excomper
+param comp comp_cmp_link unit=choice choice=Off|On
+param comp comp_cmp_ratio2 unit=number min=1.5 max=4 stepped=0
+param comp comp_cmp_attack2 unit=log_seconds min=-13.287712379549449 max=-3.321928094887362 stepped=0
+param comp comp_cmp_release2 unit=log_seconds min=-9.965784284662087 max=1 stepped=0

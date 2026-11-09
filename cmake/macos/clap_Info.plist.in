@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright 2026 Owlet Records
+
+  This file is part of Feathers.
+
+  Feathers is free software: you can redistribute it and/or modify it under the
+  terms of the GNU General Public License as published by the Free Software
+  Foundation, either version 3 of the License, or (at your option) any later
+  version.
+
+  This program is distributed in the hope that it will be useful, but WITHOUT ANY
+  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+  PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License along with
+  this program.  If not, see <https://www.gnu.org/licenses/>.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Do NOT use @MACOSX_BUNDLE_EXECUTABLE@: it resolves empty for the CLAP
+	     target, leaving CFBundleExecutable blank and making CFBundleLoadExecutable
+	     fail to locate the binary. The value must be the file in Contents/MacOS/,
+	     which is the target's LIBRARY_OUTPUT_NAME; clap-wrapper's wrap_clap.cmake
+	     sets MACOSX_BUNDLE_BUNDLE_NAME to that same OUTPUT_NAME, and that key is
+	     already proven to substitute here (CFBundleName below). So it tracks the
+	     executable for every target this plist is applied to: "feathers" for
+	     feathers_clap, "feathers-chain" for feathers-chain-plugin_clap. It used to be
+	     hardcoded "feathers", which was only ever right for the first. -->
+	<key>CFBundleExecutable</key>
+	<string>@MACOSX_BUNDLE_BUNDLE_NAME@</string>
+	<key>CFBundleIdentifier</key>
+	<string>@MACOSX_BUNDLE_GUI_IDENTIFIER@</string>
+	<key>CFBundleName</key>
+	<string>@MACOSX_BUNDLE_BUNDLE_NAME@</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@MACOSX_BUNDLE_SHORT_VERSION_STRING@</string>
+	<key>CFBundleSignature</key>
+	<string>FeAt</string>
+	<key>CFBundleVersion</key>
+	<string>@MACOSX_BUNDLE_BUNDLE_VERSION@</string>
+	<key>CSResourcesFileMapped</key>
+	<true/>
+</dict>
+</plist>

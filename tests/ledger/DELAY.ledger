@@ -1,0 +1,36 @@
+# Schema ledger for DELAY (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device DELAY - schema=1
+param DELAY delay_enabled unit=choice choice=Off|On
+param DELAY delay_sync unit=choice choice=10 ms|100 ms|1 s|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT|Note
+param DELAY delay_time unit=log_multiple min=-2 max=2 stepped=0
+param DELAY delay_feedback unit=percent min=0 max=2 stepped=0
+param DELAY delay_tone unit=percent min=-1 max=1 stepped=0
+param DELAY delay_ping_pong unit=choice choice=Off|Stereo|Classic
+param DELAY delay_spread unit=percent min=0 max=1 stepped=0
+param DELAY delay_mode unit=choice choice=Clean|Granular|Xfade|Tape|Multi-Tap|Reverse|Buckets
+param DELAY delay_grain_size unit=log_seconds min=-8 max=-1 stepped=0
+param DELAY delay_density unit=log_hertz min=-1 max=7.64385619 stepped=0
+param DELAY delay_spray unit=percent min=0 max=1 stepped=0
+param DELAY delay_pitch unit=number min=-24 max=24 stepped=0
+param DELAY delay_mix unit=percent min=0 max=1 stepped=0
+param DELAY delay_dub unit=choice choice=Off|On
+param DELAY delay_wow unit=percent min=0 max=1 stepped=0
+param DELAY delay_flutter unit=percent min=0 max=1 stepped=0
+param DELAY delay_saturation unit=percent min=0 max=1 stepped=0
+param DELAY delay_hf_loss unit=percent min=0 max=1 stepped=0
+param DELAY delay_taps unit=number min=2 max=8 stepped=1
+param DELAY delay_tap_pattern unit=number min=-8388608 max=8388608 stepped=0 zones=4
+param DELAY delay_tap_levels unit=number min=-8388608 max=8388608 stepped=0 zones=4
+param DELAY delay_tap_width unit=percent min=0 max=1 stepped=0
+param DELAY delay_duck unit=percent min=-1 max=1 stepped=0
+param DELAY delay_duck_release unit=log_seconds min=-5.64385619 max=1 stepped=0
+param DELAY delay_freeze unit=choice choice=Off|On
+param DELAY delay_clear unit=choice choice=Off|On
+param DELAY delay_swarm unit=percent min=0 max=1 stepped=0
+param DELAY delay_bbd_stages unit=choice choice=1024|2048|4096|8192
+param DELAY delay_bbd_compander unit=percent min=0 max=1 stepped=0
+param DELAY delay_bbd_noise unit=percent min=0 max=1 stepped=0
+param DELAY delay_bbd_drive unit=percent min=0 max=1 stepped=0
+retired DELAY delay_tap_shape 2026-10-30 became the zoned coordinate delay_tap_pattern, whose Curve zone is the old Shape
+retired DELAY delay_tap_slope 2026-10-30 became the zoned coordinate delay_tap_levels, whose Fade zone is the old Slope

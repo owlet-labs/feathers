@@ -1,0 +1,10 @@
+# bench_patch STANDING plan (resonate): backlog PS, Resonate's live cost (6-14 ms per 1024-frame block in a live session, one voice).
+# The two factory synth presets that carry a RESONATE lane device (Wood Elves: lane position 1; Pan Tanpura: position 2), ONE note
+# (the live sessions held one), at 1024 and 256 frames, each beside itself with the Resonate removed, so the device's share is a
+# difference measured in the same pass. Run: scripts/bench-standing.sh compare -p resonate
+wood_elves_1n_1024 --preset presets/factory/Feathers/wood_elves_pan.fpreset --notes 1 --frames 1024 --idle 0.5 --held 2 --tail 1
+wood_elves_nores_1n_1024 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 1 --notes 1 --frames 1024 --idle 0.5 --held 2 --tail 1
+pan_tanpura_1n_1024 --preset presets/factory/Feathers/pan_tanpura.fpreset --notes 1 --frames 1024 --idle 0.5 --held 2 --tail 1
+pan_tanpura_nores_1n_1024 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 2 --notes 1 --frames 1024 --idle 0.5 --held 2 --tail 1
+wood_elves_1n_256 --preset presets/factory/Feathers/wood_elves_pan.fpreset --notes 1 --frames 256 --idle 0.5 --held 2 --tail 1
+pan_tanpura_1n_256 --preset presets/factory/Feathers/pan_tanpura.fpreset --notes 1 --frames 256 --idle 0.5 --held 2 --tail 1

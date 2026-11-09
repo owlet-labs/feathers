@@ -1,0 +1,14 @@
+# Schema ledger for cmps (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device cmps - schema=1
+param cmps chain_enabled unit=choice choice=Off|On
+param cmps chain_mix unit=percent min=0 max=1 stepped=0
+param cmps chain_gain unit=fader min=0 max=1 stepped=0
+param cmps macro_1 unit=percent min=0 max=1 stepped=0
+param cmps macro_2 unit=percent min=0 max=1 stepped=0
+param cmps macro_3 unit=percent min=0 max=1 stepped=0
+param cmps macro_4 unit=percent min=0 max=1 stepped=0
+param cmps macro_5 unit=percent min=0 max=1 stepped=0
+param cmps macro_6 unit=percent min=0 max=1 stepped=0
+param cmps macro_7 unit=percent min=0 max=1 stepped=0
+param cmps macro_8 unit=percent min=0 max=1 stepped=0

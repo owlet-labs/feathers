@@ -1,0 +1,33 @@
+[submodule "libs/clap"]
+	path = libs/clap
+	url = https://github.com/free-audio/clap.git
+[submodule "libs/clap-helpers"]
+	path = libs/clap-helpers
+	url = https://github.com/free-audio/clap-helpers.git
+[submodule "libs/clap-wrapper"]
+	path = libs/clap-wrapper
+	url = https://github.com/free-audio/clap-wrapper.git
+[submodule "libs/sst-voicemanager"]
+	path = libs/sst-voicemanager
+	url = https://github.com/surge-synthesizer/sst-voicemanager.git
+[submodule "libs/simde"]
+	path = libs/simde
+	url = https://github.com/simd-everywhere/simde.git
+[submodule "libs/sst-cpputils"]
+	path = libs/sst-cpputils
+	url = https://github.com/surge-synthesizer/sst-cpputils.git
+[submodule "libs/visage"]
+	path = libs/visage
+	# OUR FORK, since 2026-08-12, pinned at the same commit upstream was
+	# (828037000d0893647ab29b66ae9c4a241c90f671) — the move carries no code change, it only gives
+	# us somewhere to put one. The forcing issue: visage binds bgfx to the first window handle,
+	# latches Renderer::initialize and never calls bgfx::shutdown, so destroying a window
+	# deadlocks the caller on Mesa's WSI threads. That cost a user a wedged DAW, and the
+	# plugin-side reparent workaround cannot cover a plugin instance being destroyed.
+	url = https://github.com/owlet-labs/visage.git
+[submodule "libs/pffft"]
+	path = libs/pffft
+	url = https://github.com/marton78/pffft
+[submodule "libs/dr_libs"]
+	path = libs/dr_libs
+	url = https://github.com/mackron/dr_libs.git

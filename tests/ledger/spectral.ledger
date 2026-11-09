@@ -1,0 +1,68 @@
+# Schema ledger for spectral (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device spectral - schema=1
+param spectral spectral_enabled unit=choice choice=Off|On
+param spectral spectral_resolution unit=choice choice=Fast|Balanced|Fine
+param spectral spectral_mix unit=percent min=0 max=1 stepped=0
+param spectral spectral_keytrack unit=choice choice=Off|On
+param spectral spectral_key_offset unit=number min=-36 max=36 stepped=0
+param spectral spectral_poly unit=choice choice=Off|On
+param spectral spectral_filter_on unit=choice choice=Off|On
+param spectral spectral_filter_mode unit=choice choice=Low Pass|High Pass|Band Pass|Notch|Bell
+param spectral spectral_filter_cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param spectral spectral_filter_res unit=percent min=0 max=1 stepped=0
+param spectral spectral_filter_slope unit=percent min=0 max=1 stepped=0
+param spectral spectral_filter_gain unit=decibel min=-24 max=24 stepped=0
+param spectral spectral_filter2_on unit=choice choice=Off|On
+param spectral spectral_filter2_mode unit=choice choice=Low Pass|High Pass|Band Pass|Notch|Bell
+param spectral spectral_filter2_cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param spectral spectral_filter2_res unit=percent min=0 max=1 stepped=0
+param spectral spectral_filter2_slope unit=percent min=0 max=1 stepped=0
+param spectral spectral_filter2_gain unit=decibel min=-24 max=24 stepped=0
+param spectral spectral_filter_routing unit=choice choice=Series|Parallel
+param spectral spectral_comb_on unit=choice choice=Off|On
+param spectral spectral_comb_spacing unit=number min=1 max=16 stepped=0
+param spectral spectral_comb_depth unit=percent min=0 max=1 stepped=0
+param spectral spectral_comb_phase unit=percent min=0 max=1 stepped=0
+param spectral spectral_vowel_on unit=choice choice=Off|On
+param spectral spectral_vowel unit=number min=0 max=7 stepped=0
+param spectral spectral_vowel_depth unit=percent min=0 max=1 stepped=0
+param spectral spectral_tilt_on unit=choice choice=Off|On
+param spectral spectral_tilt unit=number min=-24 max=24 stepped=0
+param spectral spectral_oddeven_on unit=choice choice=Off|On
+param spectral spectral_oddeven unit=percent min=-1 max=1 stepped=0
+param spectral spectral_vocode_on unit=choice choice=Off|On
+param spectral spectral_vocode_bands unit=number min=8 max=128 stepped=0
+param spectral spectral_vocode_attack unit=number min=1 max=500 stepped=0
+param spectral spectral_vocode_release unit=number min=5 max=2000 stepped=0
+param spectral spectral_vocode_flatten unit=percent min=0 max=1 stepped=0
+param spectral spectral_vocode_sibilance unit=percent min=0 max=1 stepped=0
+param spectral spectral_vocode_carrier unit=choice choice=Input|Square|White|Pink
+param spectral spectral_vocode_depth unit=percent min=0 max=2 stepped=0
+param spectral spectral_vocode_gate unit=decibel min=-96 max=0 stepped=0
+param spectral spectral_vocode_freeze unit=choice choice=Off|On
+param spectral spectral_vocode_low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param spectral spectral_vocode_high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param spectral spectral_vocode_stereo unit=choice choice=Mono|Stereo|Spread
+param spectral spectral_vocode_bandwidth unit=percent min=0 max=1 stepped=0
+param spectral spectral_vocode_zone unit=choice choice=Even|Speech|Low|High|Harmonic|Inharmonic|Free
+param spectral spectral_vocode_zone_amount unit=percent min=0 max=1 stepped=0
+param spectral spectral_vocode_zone_free unit=number min=-8388608 max=8388608 stepped=0
+param spectral spectral_vocode_width_zone unit=choice choice=Even|Narrow Low|Narrow High|Harmonic|Inharmonic|Free
+param spectral spectral_vocode_width_amount unit=percent min=0 max=1 stepped=0
+param spectral spectral_vocode_width_free unit=number min=-8388608 max=8388608 stepped=0
+param spectral spectral_fshift_on unit=choice choice=Off|On
+param spectral spectral_fshift_low unit=number min=-36 max=36 stepped=0
+param spectral spectral_fshift_high unit=number min=-36 max=36 stepped=0
+param spectral spectral_fshift_crossover unit=log_hertz min=6.643856189774724 max=12.965784284662087 stepped=0
+param spectral spectral_fshift_link unit=choice choice=Off|On
+param spectral spectral_partials_on unit=choice choice=Off|On
+param spectral spectral_partials_mode unit=choice choice=Peaks|Harmonics|Centers
+param spectral spectral_partials_count unit=number min=1 max=320 stepped=0
+param spectral spectral_partials_set unit=number min=-8388608 max=8388608 stepped=0
+param spectral spectral_partials_depth unit=percent min=0 max=1 stepped=0
+param spectral spectral_curve_on unit=choice choice=Off|On
+block spectral spectral_freeze floats=523
+block spectral spectral_curve_db floats=64
+retired spectral spectral_curve 2026-10-27 the drawn curve left the row's extra state (128-float cap) for the hand's block spectral_curve_db, which saves it whole
+retired spectral spectral_comb_hz 2026-10-12 the comb is always in harmonics of f0 now (C3 raised by Key Offset with Key Track off), so f0 × Spacing covers a spacing in Hz

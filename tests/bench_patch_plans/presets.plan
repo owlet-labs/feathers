@@ -1,0 +1,19 @@
+# bench_patch plan (presets), the perf survey 2026-10-29. Run from the repo root.
+init_v5_64 --frames 64 --idle 1 --held 3 --tail 2
+init_add_64 --engine additive --frames 64 --idle 1 --held 3 --tail 2
+baby_elf_bass_64 --preset presets/factory/Feathers/baby_elf_bass.fpreset --frames 64 --idle 1 --held 3 --tail 2
+machine_elf_book_of_dreams_64 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --frames 64 --idle 1 --held 3 --tail 2
+pan_tanpura_64 --preset presets/factory/Feathers/pan_tanpura.fpreset --frames 64 --idle 1 --held 3 --tail 2
+wood_elves_pan_64 --preset presets/factory/Feathers/wood_elves_pan.fpreset --frames 64 --idle 1 --held 3 --tail 2
+init_v5_256 --frames 256 --idle 1 --held 3 --tail 2
+init_add_256 --engine additive --frames 256 --idle 1 --held 3 --tail 2
+baby_elf_bass_256 --preset presets/factory/Feathers/baby_elf_bass.fpreset --frames 256 --idle 1 --held 3 --tail 2
+machine_elf_book_of_dreams_256 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --frames 256 --idle 1 --held 3 --tail 2
+pan_tanpura_256 --preset presets/factory/Feathers/pan_tanpura.fpreset --frames 256 --idle 1 --held 3 --tail 2
+wood_elves_pan_256 --preset presets/factory/Feathers/wood_elves_pan.fpreset --frames 256 --idle 1 --held 3 --tail 2
+init_v5_1024 --frames 1024 --idle 1 --held 3 --tail 2
+init_add_1024 --engine additive --frames 1024 --idle 1 --held 3 --tail 2
+baby_elf_bass_1024 --preset presets/factory/Feathers/baby_elf_bass.fpreset --frames 1024 --idle 1 --held 3 --tail 2
+machine_elf_book_of_dreams_1024 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --frames 1024 --idle 1 --held 3 --tail 2
+pan_tanpura_1024 --preset presets/factory/Feathers/pan_tanpura.fpreset --frames 1024 --idle 1 --held 3 --tail 2
+wood_elves_pan_1024 --preset presets/factory/Feathers/wood_elves_pan.fpreset --frames 1024 --idle 1 --held 3 --tail 2

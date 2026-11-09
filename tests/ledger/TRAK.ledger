@@ -1,0 +1,10 @@
+# Schema ledger for TRAK (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device TRAK - schema=1
+param TRAK rule unit=choice choice=Last|Lowest|Highest
+param TRAK root_note unit=note min=0 max=127 stepped=1
+param TRAK spread unit=number min=1 max=5 stepped=1
+param TRAK glide unit=number min=0 max=1 stepped=0
+param TRAK enabled unit=choice choice=Off|On
+param TRAK amount unit=percent min=-1 max=1 stepped=0
+out TRAK pitch bipolar=1

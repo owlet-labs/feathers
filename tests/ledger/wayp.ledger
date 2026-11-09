@@ -1,0 +1,26 @@
+# Schema ledger for wayp (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device wayp - schema=1
+param wayp enabled unit=choice choice=Off|On
+param wayp type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Peak|Low Shelf|High Shelf|Bell|Comb
+param wayp morph unit=percent min=0 max=1 stepped=0
+param wayp cutoff_1 unit=log_hertz min=4.321928094887362 max=14.287712379549449 stepped=0
+param wayp resonance_1 unit=percent min=0 max=1 stepped=0
+param wayp macro_1_1 unit=percent min=0 max=1 stepped=0
+param wayp macro_2_1 unit=percent min=0 max=1 stepped=0
+param wayp cutoff_2 unit=log_hertz min=4.321928094887362 max=14.287712379549449 stepped=0
+param wayp resonance_2 unit=percent min=0 max=1 stepped=0
+param wayp macro_1_2 unit=percent min=0 max=1 stepped=0
+param wayp macro_2_2 unit=percent min=0 max=1 stepped=0
+param wayp cutoff_3 unit=log_hertz min=4.321928094887362 max=14.287712379549449 stepped=0
+param wayp resonance_3 unit=percent min=0 max=1 stepped=0
+param wayp macro_1_3 unit=percent min=0 max=1 stepped=0
+param wayp macro_2_3 unit=percent min=0 max=1 stepped=0
+param wayp cutoff_4 unit=log_hertz min=4.321928094887362 max=14.287712379549449 stepped=0
+param wayp resonance_4 unit=percent min=0 max=1 stepped=0
+param wayp macro_1_4 unit=percent min=0 max=1 stepped=0
+param wayp macro_2_4 unit=percent min=0 max=1 stepped=0
+param wayp keytrack unit=choice choice=Off|On
+param wayp poly unit=choice choice=Off|On
+param wayp waypoint_mix unit=percent min=0 max=1 stepped=0
+param wayp waypoint_wet_gain unit=fader min=0 max=1 stepped=0

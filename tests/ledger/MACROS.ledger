@@ -1,0 +1,20 @@
+# Schema ledger for MACROS (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device MACROS - schema=1
+param MACROS macro_1 unit=percent min=0 max=1 stepped=0
+param MACROS macro_2 unit=percent min=0 max=1 stepped=0
+param MACROS macro_3 unit=percent min=0 max=1 stepped=0
+param MACROS macro_4 unit=percent min=0 max=1 stepped=0
+param MACROS bipolar_1 unit=choice choice=Off|On
+param MACROS bipolar_2 unit=choice choice=Off|On
+param MACROS bipolar_3 unit=choice choice=Off|On
+param MACROS bipolar_4 unit=choice choice=Off|On
+param MACROS type_1 unit=choice choice=Knob|Latch|Momentary
+param MACROS type_2 unit=choice choice=Knob|Latch|Momentary
+param MACROS type_3 unit=choice choice=Knob|Latch|Momentary
+param MACROS type_4 unit=choice choice=Knob|Latch|Momentary
+param MACROS enabled unit=choice choice=Off|On
+out MACROS macro_1 bipolar=1
+out MACROS macro_2 bipolar=1
+out MACROS macro_3 bipolar=1
+out MACROS macro_4 bipolar=1

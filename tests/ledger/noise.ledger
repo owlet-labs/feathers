@@ -1,0 +1,28 @@
+# Schema ledger for noise (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device noise - schema=1
+param noise noise_enabled unit=choice choice=Off|On
+param noise noise_source unit=choice choice=Noise|Impulses
+param noise noise_level unit=fader min=0 max=1 stepped=0
+param noise noise_colour unit=percent min=-1 max=1 stepped=0
+param noise noise_filter_type unit=choice choice=LP|BP|HP
+param noise noise_cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param noise noise_res unit=percent min=0 max=1 stepped=0
+param noise noise_keytrack unit=percent min=0 max=1 stepped=0
+param noise noise_stereo unit=percent min=0 max=1 stepped=0
+param noise noise_seed_mode unit=choice choice=Stable|Free
+param noise noise_seed unit=number min=0 max=999 stepped=1
+param noise noise_density unit=log_hertz min=-3.321928094887362 max=10.965784284662087 stepped=0
+param noise noise_sync unit=choice choice=Free|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param noise noise_timing unit=choice choice=Regular|Poisson|Clustered
+param noise noise_jitter unit=percent min=0 max=1 stepped=0
+param noise noise_cluster unit=percent min=0 max=1 stepped=0
+param noise noise_hit_size unit=choice choice=Fixed|Uniform|Exponential
+param noise noise_polarity unit=choice choice=Positive|Random
+param noise noise_decay unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param noise noise_trig_in unit=percent min=0 max=1 stepped=0
+param noise noise_poly unit=choice choice=Off|On
+block noise noise_held floats=4
+out noise noise_hit_trig bipolar=0
+out noise noise_hit_size bipolar=1
+out noise noise_hit_decay bipolar=1

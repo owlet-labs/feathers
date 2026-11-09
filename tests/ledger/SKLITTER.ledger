@@ -1,0 +1,47 @@
+# Schema ledger for SKLITTER (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device SKLITTER - schema=1
+param SKLITTER zone_a unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param SKLITTER zone_b unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param SKLITTER p_write unit=percent min=0 max=1 stepped=0
+param SKLITTER density unit=percent min=0 max=1 stepped=0
+param SKLITTER rate unit=percent min=0 max=1 stepped=0
+param SKLITTER enabled unit=choice choice=Off|On
+param SKLITTER engage unit=choice choice=Off|On
+param SKLITTER mode unit=choice choice=Burst|Repeat|Time|Shuffle|Grain|Pattern|Pitch
+param SKLITTER quantized unit=choice choice=Off|On
+param SKLITTER gamma unit=number min=-8388608 max=8388608 stepped=0
+param SKLITTER pitch_scale unit=choice choice=Chromatic|Major|Minor|MajPent|MinPent|Blues|Dorian|Mixolyd|MajTri|MinTri|Sus4|Dim|+1|+2|+3|+4|+5|+6|+7|+8|+9|+10|+11|+12|+13
+param SKLITTER stereo_width unit=percent min=0 max=1 stepped=0
+param SKLITTER seq_length unit=choice choice=1 bar|2 bars|3 bars|4 bars
+param SKLITTER buffer_length unit=choice choice=1/4 bar|1/2 bar|1 bar|2 bars|4 bars
+param SKLITTER transport_locked unit=choice choice=Off|On
+param SKLITTER min_env unit=log_seconds min=-13.2877 max=-5.6439 stepped=0
+param SKLITTER mix unit=percent min=0 max=1 stepped=0
+param SKLITTER send_override unit=percent min=-1 max=1 stepped=0
+param SKLITTER dry_write unit=percent min=0 max=1 stepped=0
+param SKLITTER feedback unit=percent min=0 max=1 stepped=0
+param SKLITTER fb_tap unit=choice choice=Grain FX|Post FX
+param SKLITTER grain_order unit=choice choice=P Write First|P Write Last
+param SKLITTER groove_mode unit=choice choice=Straight|Swing 4|Swing 8|Swing 16|Groove 4|Groove 8|Groove 16|Free 4|Free 8|Free 16
+param SKLITTER groove_amount unit=percent min=0 max=1 stepped=0
+param SKLITTER free_phase unit=number min=-8388608 max=8388608 stepped=0
+param SKLITTER cfg_1 unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param SKLITTER cfg_2 unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param SKLITTER cfg_3 unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param SKLITTER cfg_4 unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param SKLITTER perf_x unit=percent min=-1 max=1 stepped=0
+param SKLITTER perf_y unit=percent min=-1 max=1 stepped=0
+param SKLITTER perf_depth unit=percent min=0 max=1 stepped=0
+param SKLITTER input_gain unit=decibel min=-24 max=24 stepped=0
+param SKLITTER freeze unit=choice choice=Off|On
+param SKLITTER record_gate unit=percent min=0 max=1 stepped=0
+extra SKLITTER perform_anchor floats=9
+out SKLITTER perf_x bipolar=1
+out SKLITTER perf_y bipolar=1
+out SKLITTER weight_1 bipolar=0
+out SKLITTER weight_2 bipolar=0
+out SKLITTER weight_3 bipolar=0
+out SKLITTER weight_4 bipolar=0
+out SKLITTER perf_speed bipolar=0
+retired SKLITTER direction 2026-11-09 removed with the mode it applied to; no remaining mode reads a direction

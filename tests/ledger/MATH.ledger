@@ -1,0 +1,13 @@
+# Schema ledger for MATH (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device MATH - schema=1
+param MATH a unit=percent min=-1 max=1 stepped=0
+param MATH b unit=percent min=-1 max=1 stepped=0
+param MATH operator unit=choice choice=×|+|−|min|max|>|<|>=|<=
+param MATH map unit=choice choice=Lin|Log|Exp|Phi
+param MATH amount unit=percent min=0 max=1 stepped=0
+param MATH bipolar unit=choice choice=Off|On
+param MATH phi_periods unit=log_multiple min=0 max=7 stepped=0
+param MATH exponent unit=number min=1 max=8 stepped=0
+param MATH enabled unit=choice choice=Off|On
+out MATH math bipolar=1

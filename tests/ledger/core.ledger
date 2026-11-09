@@ -1,0 +1,810 @@
+# Schema ledger for core (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device core - schema=1
+param core resonate.width unit=percent min=0 max=1 stepped=0
+param core resonate.bow unit=factor min=0 max=4 stepped=0
+param core resonate.bow_mode unit=choice choice=Laws|Triangle|StickSlip|Noise|Pulses|Walk
+param core resonate.shimmer unit=log_factor min=-2 max=2 stepped=0
+param core resonate.stiffness unit=log_factor min=-2 max=2 stepped=0
+param core resonate.coupling unit=log_factor min=-2 max=2 stepped=0
+param core resonate.decay unit=log_factor min=-2 max=2 stepped=0
+param core resonate.pluck unit=factor min=0 max=4 stepped=0
+param core resonate.travel unit=factor min=0 max=4 stepped=0
+param core resonate.speed unit=log_factor min=0 max=3 stepped=0
+param core shapes.sine unit=percent min=0 max=1 stepped=0
+param core shapes.triangle unit=percent min=0 max=1 stepped=0
+param core shapes.saw unit=percent min=0 max=1 stepped=0
+param core shapes.square unit=percent min=0 max=1 stepped=0
+param core additive.shape unit=choice choice=Sine|Triangle|Saw|Square
+param core additive.phases unit=choice choice=Natural|Headroom|Sub priority
+param core additive.sub_level unit=decibel min=-24 max=12 stepped=0
+param core additive.ceiling unit=decibel min=-24 max=0 stepped=0
+param core additive.vocode.resolution unit=choice choice=Fast|Balanced|Fine
+param core additive.vocode.bands unit=number min=8 max=128 stepped=0
+param core additive.vocode.attack unit=number min=1 max=500 stepped=0
+param core additive.vocode.release unit=number min=5 max=2000 stepped=0
+param core additive.vocode.freeze unit=choice choice=Off|On
+param core additive.vocode.keytrack unit=choice choice=Off|On
+param core additive.vocode.spacing unit=choice choice=Even|Speech|Low|High|Harmonic|Inharmonic|Free
+param core additive.vocode.widths unit=choice choice=Even|Narrow Low|Narrow High|Harmonic|Inharmonic|Free
+param core additive.vocode.stereo unit=choice choice=Mono|Stereo|Spread
+param core additive.vocode.sibilance unit=percent min=0 max=1 stepped=0
+param core ks.decay unit=log_seconds min=-4.321928094887363 max=4.906890595608519 stepped=0
+param core ks.decay_track unit=percent min=0 max=1 stepped=0
+param core ks.release unit=log_seconds min=-5.643856189774724 max=3.321928094887362 stepped=0
+param core ks.hardness unit=percent min=0 max=1 stepped=0
+param core ks.pickup unit=percent min=0.02 max=0.5 stepped=0
+param core ks.width unit=percent min=0 max=0.3 stepped=0
+param core ks.seed unit=integer min=0 max=999 stepped=1
+param core ks.velocity_hardness unit=percent min=0 max=1 stepped=0
+param core drum.mode unit=choice choice=Pitched|Kit
+param core drum.pitched_kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core drum.walk_x unit=percent min=-1 max=1 stepped=0
+param core drum.walk_y unit=percent min=-1 max=1 stepped=0
+param core drum.seed unit=integer min=0 max=999 stepped=1
+param core drum.kit.gamma unit=number min=-4 max=4 stepped=0
+param core drum.kit.zone unit=zone min=-512 max=512 stepped=0
+param core drum.kit.offset unit=number min=-2 max=2 stepped=0
+param core drum.kit.pitch unit=percent min=0 max=1 stepped=0
+param core drum.kit.length unit=percent min=0 max=1 stepped=0
+param core drum.kit.sweep unit=percent min=0 max=1 stepped=0
+param core drum.kit.tone unit=percent min=0 max=1 stepped=0
+param core drum.kit.noise unit=percent min=0 max=1 stepped=0
+param core drum.kit.snap unit=percent min=0 max=1 stepped=0
+param core drum.kit.metal unit=percent min=0 max=1 stepped=0
+param core a.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core a.spectral.filter2.on unit=choice choice=Off|On
+param core a.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core a.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core a.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core a.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core a.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core a.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core a.spectral.filter.routing unit=choice choice=Series|Parallel
+param core a.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core a.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core a.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core a.spectral.vocode.on unit=choice choice=Off|On
+param core a.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core a.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core a.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core a.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core a.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core a.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core a.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core a.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core a.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core a.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core b.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core b.spectral.filter2.on unit=choice choice=Off|On
+param core b.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core b.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core b.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core b.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core b.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core b.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core b.spectral.filter.routing unit=choice choice=Series|Parallel
+param core b.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core b.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core b.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core b.spectral.vocode.on unit=choice choice=Off|On
+param core b.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core b.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core b.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core b.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core b.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core b.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core b.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core b.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core b.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core b.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core c.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core c.spectral.filter2.on unit=choice choice=Off|On
+param core c.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core c.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core c.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core c.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core c.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core c.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core c.spectral.filter.routing unit=choice choice=Series|Parallel
+param core c.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core c.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core c.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core c.spectral.vocode.on unit=choice choice=Off|On
+param core c.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core c.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core c.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core c.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core c.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core c.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core c.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core c.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core c.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core c.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core d.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core d.spectral.filter2.on unit=choice choice=Off|On
+param core d.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core d.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core d.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core d.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core d.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core d.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core d.spectral.filter.routing unit=choice choice=Series|Parallel
+param core d.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core d.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core d.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core d.spectral.vocode.on unit=choice choice=Off|On
+param core d.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core d.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core d.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core d.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core d.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core d.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core d.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core d.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core d.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core d.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core e.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core e.spectral.filter2.on unit=choice choice=Off|On
+param core e.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core e.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core e.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core e.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core e.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core e.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core e.spectral.filter.routing unit=choice choice=Series|Parallel
+param core e.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core e.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core e.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core e.spectral.vocode.on unit=choice choice=Off|On
+param core e.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core e.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core e.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core e.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core e.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core e.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core e.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core e.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core e.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core e.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core f.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core f.spectral.filter2.on unit=choice choice=Off|On
+param core f.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core f.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core f.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core f.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core f.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core f.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core f.spectral.filter.routing unit=choice choice=Series|Parallel
+param core f.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core f.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core f.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core f.spectral.vocode.on unit=choice choice=Off|On
+param core f.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core f.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core f.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core f.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core f.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core f.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core f.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core f.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core f.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core f.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core g.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core g.spectral.filter2.on unit=choice choice=Off|On
+param core g.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core g.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core g.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core g.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core g.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core g.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core g.spectral.filter.routing unit=choice choice=Series|Parallel
+param core g.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core g.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core g.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core g.spectral.vocode.on unit=choice choice=Off|On
+param core g.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core g.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core g.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core g.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core g.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core g.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core g.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core g.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core g.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core g.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core h.spectral.filter.gain unit=decibel min=-24 max=24 stepped=0
+param core h.spectral.filter2.on unit=choice choice=Off|On
+param core h.spectral.filter2.mode unit=choice choice=Low-pass|High-pass|Band-pass|Notch|Bell
+param core h.spectral.filter2.cutoff unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core h.spectral.filter2.res unit=percent min=0 max=1 stepped=0
+param core h.spectral.filter2.slope unit=percent min=0 max=1 stepped=0
+param core h.spectral.filter2.keytrack unit=percent min=0 max=1 stepped=0
+param core h.spectral.filter2.gain unit=decibel min=-24 max=24 stepped=0
+param core h.spectral.filter.routing unit=choice choice=Series|Parallel
+param core h.spectral.partials.mode unit=choice choice=Peaks|Harmonics|Centers
+param core h.spectral.partials.set unit=number min=0 max=16 stepped=0
+param core h.spectral.partials.depth unit=percent min=0 max=1 stepped=0
+param core h.spectral.vocode.on unit=choice choice=Off|On
+param core h.spectral.vocode.depth unit=percent min=0 max=2 stepped=0
+param core h.spectral.vocode.flatten unit=percent min=0 max=1 stepped=0
+param core h.spectral.vocode.gate unit=decibel min=-96 max=0 stepped=0
+param core h.spectral.vocode.low unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core h.spectral.vocode.high unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param core h.spectral.vocode.bandwidth unit=percent min=0 max=1 stepped=0
+param core h.spectral.vocode.spacing.amount unit=percent min=0 max=1 stepped=0
+param core h.spectral.vocode.spacing.free unit=number min=-64 max=64 stepped=0
+param core h.spectral.vocode.widths.amount unit=percent min=0 max=1 stepped=0
+param core h.spectral.vocode.widths.free unit=number min=-64 max=64 stepped=0
+param core a.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core a.drum.note unit=integer min=0 max=127 stepped=1
+param core a.drum.choke unit=choice choice=Off|1|2|3|4
+param core a.drum.voices unit=choice choice=1|2|4
+param core a.drum.trigger unit=choice choice=One-shot|Gate
+param core a.drum.level unit=decibel min=-60 max=6 stepped=0
+param core a.drum.pan unit=percent min=-1 max=1 stepped=0
+param core a.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core a.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core a.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core a.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core a.drum.drive unit=percent min=0 max=1 stepped=0
+param core a.drum.count unit=integer min=1 max=8 stepped=1
+param core a.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core a.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core a.drum.f.length unit=percent min=0 max=1 stepped=0
+param core a.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core a.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core a.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core a.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core a.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core a.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core a.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core a.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core a.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core a.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core a.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core a.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core a.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core a.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core a.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core a.drum.start_phase unit=number min=0 max=90 stepped=0
+param core a.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core a.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core a.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core a.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core a.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core a.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core a.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core a.drum.width unit=percent min=0 max=1 stepped=0
+param core a.drum.mute unit=integer min=0 max=1 stepped=1
+param core a.drum.bend unit=percent min=0 max=1 stepped=0
+param core a.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core a.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core a.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core a.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core a.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core a.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core a.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core a.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core a.drum.wires unit=number min=-8 max=8 stepped=0
+param core a.drum.bells unit=number min=-8 max=8 stepped=0
+param core b.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core b.drum.note unit=integer min=0 max=127 stepped=1
+param core b.drum.choke unit=choice choice=Off|1|2|3|4
+param core b.drum.voices unit=choice choice=1|2|4
+param core b.drum.trigger unit=choice choice=One-shot|Gate
+param core b.drum.level unit=decibel min=-60 max=6 stepped=0
+param core b.drum.pan unit=percent min=-1 max=1 stepped=0
+param core b.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core b.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core b.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core b.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core b.drum.drive unit=percent min=0 max=1 stepped=0
+param core b.drum.count unit=integer min=1 max=8 stepped=1
+param core b.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core b.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core b.drum.f.length unit=percent min=0 max=1 stepped=0
+param core b.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core b.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core b.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core b.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core b.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core b.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core b.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core b.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core b.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core b.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core b.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core b.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core b.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core b.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core b.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core b.drum.start_phase unit=number min=0 max=90 stepped=0
+param core b.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core b.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core b.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core b.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core b.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core b.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core b.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core b.drum.width unit=percent min=0 max=1 stepped=0
+param core b.drum.mute unit=integer min=0 max=1 stepped=1
+param core b.drum.bend unit=percent min=0 max=1 stepped=0
+param core b.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core b.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core b.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core b.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core b.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core b.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core b.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core b.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core b.drum.wires unit=number min=-8 max=8 stepped=0
+param core b.drum.bells unit=number min=-8 max=8 stepped=0
+param core c.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core c.drum.note unit=integer min=0 max=127 stepped=1
+param core c.drum.choke unit=choice choice=Off|1|2|3|4
+param core c.drum.voices unit=choice choice=1|2|4
+param core c.drum.trigger unit=choice choice=One-shot|Gate
+param core c.drum.level unit=decibel min=-60 max=6 stepped=0
+param core c.drum.pan unit=percent min=-1 max=1 stepped=0
+param core c.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core c.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core c.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core c.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core c.drum.drive unit=percent min=0 max=1 stepped=0
+param core c.drum.count unit=integer min=1 max=8 stepped=1
+param core c.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core c.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core c.drum.f.length unit=percent min=0 max=1 stepped=0
+param core c.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core c.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core c.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core c.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core c.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core c.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core c.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core c.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core c.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core c.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core c.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core c.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core c.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core c.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core c.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core c.drum.start_phase unit=number min=0 max=90 stepped=0
+param core c.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core c.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core c.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core c.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core c.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core c.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core c.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core c.drum.width unit=percent min=0 max=1 stepped=0
+param core c.drum.mute unit=integer min=0 max=1 stepped=1
+param core c.drum.bend unit=percent min=0 max=1 stepped=0
+param core c.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core c.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core c.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core c.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core c.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core c.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core c.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core c.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core c.drum.wires unit=number min=-8 max=8 stepped=0
+param core c.drum.bells unit=number min=-8 max=8 stepped=0
+param core d.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core d.drum.note unit=integer min=0 max=127 stepped=1
+param core d.drum.choke unit=choice choice=Off|1|2|3|4
+param core d.drum.voices unit=choice choice=1|2|4
+param core d.drum.trigger unit=choice choice=One-shot|Gate
+param core d.drum.level unit=decibel min=-60 max=6 stepped=0
+param core d.drum.pan unit=percent min=-1 max=1 stepped=0
+param core d.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core d.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core d.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core d.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core d.drum.drive unit=percent min=0 max=1 stepped=0
+param core d.drum.count unit=integer min=1 max=8 stepped=1
+param core d.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core d.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core d.drum.f.length unit=percent min=0 max=1 stepped=0
+param core d.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core d.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core d.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core d.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core d.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core d.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core d.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core d.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core d.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core d.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core d.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core d.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core d.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core d.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core d.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core d.drum.start_phase unit=number min=0 max=90 stepped=0
+param core d.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core d.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core d.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core d.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core d.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core d.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core d.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core d.drum.width unit=percent min=0 max=1 stepped=0
+param core d.drum.mute unit=integer min=0 max=1 stepped=1
+param core d.drum.bend unit=percent min=0 max=1 stepped=0
+param core d.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core d.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core d.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core d.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core d.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core d.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core d.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core d.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core d.drum.wires unit=number min=-8 max=8 stepped=0
+param core d.drum.bells unit=number min=-8 max=8 stepped=0
+param core e.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core e.drum.note unit=integer min=0 max=127 stepped=1
+param core e.drum.choke unit=choice choice=Off|1|2|3|4
+param core e.drum.voices unit=choice choice=1|2|4
+param core e.drum.trigger unit=choice choice=One-shot|Gate
+param core e.drum.level unit=decibel min=-60 max=6 stepped=0
+param core e.drum.pan unit=percent min=-1 max=1 stepped=0
+param core e.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core e.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core e.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core e.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core e.drum.drive unit=percent min=0 max=1 stepped=0
+param core e.drum.count unit=integer min=1 max=8 stepped=1
+param core e.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core e.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core e.drum.f.length unit=percent min=0 max=1 stepped=0
+param core e.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core e.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core e.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core e.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core e.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core e.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core e.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core e.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core e.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core e.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core e.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core e.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core e.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core e.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core e.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core e.drum.start_phase unit=number min=0 max=90 stepped=0
+param core e.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core e.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core e.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core e.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core e.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core e.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core e.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core e.drum.width unit=percent min=0 max=1 stepped=0
+param core e.drum.mute unit=integer min=0 max=1 stepped=1
+param core e.drum.bend unit=percent min=0 max=1 stepped=0
+param core e.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core e.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core e.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core e.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core e.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core e.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core e.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core e.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core e.drum.wires unit=number min=-8 max=8 stepped=0
+param core e.drum.bells unit=number min=-8 max=8 stepped=0
+param core f.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core f.drum.note unit=integer min=0 max=127 stepped=1
+param core f.drum.choke unit=choice choice=Off|1|2|3|4
+param core f.drum.voices unit=choice choice=1|2|4
+param core f.drum.trigger unit=choice choice=One-shot|Gate
+param core f.drum.level unit=decibel min=-60 max=6 stepped=0
+param core f.drum.pan unit=percent min=-1 max=1 stepped=0
+param core f.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core f.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core f.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core f.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core f.drum.drive unit=percent min=0 max=1 stepped=0
+param core f.drum.count unit=integer min=1 max=8 stepped=1
+param core f.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core f.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core f.drum.f.length unit=percent min=0 max=1 stepped=0
+param core f.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core f.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core f.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core f.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core f.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core f.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core f.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core f.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core f.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core f.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core f.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core f.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core f.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core f.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core f.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core f.drum.start_phase unit=number min=0 max=90 stepped=0
+param core f.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core f.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core f.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core f.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core f.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core f.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core f.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core f.drum.width unit=percent min=0 max=1 stepped=0
+param core f.drum.mute unit=integer min=0 max=1 stepped=1
+param core f.drum.bend unit=percent min=0 max=1 stepped=0
+param core f.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core f.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core f.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core f.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core f.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core f.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core f.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core f.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core f.drum.wires unit=number min=-8 max=8 stepped=0
+param core f.drum.bells unit=number min=-8 max=8 stepped=0
+param core g.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core g.drum.note unit=integer min=0 max=127 stepped=1
+param core g.drum.choke unit=choice choice=Off|1|2|3|4
+param core g.drum.voices unit=choice choice=1|2|4
+param core g.drum.trigger unit=choice choice=One-shot|Gate
+param core g.drum.level unit=decibel min=-60 max=6 stepped=0
+param core g.drum.pan unit=percent min=-1 max=1 stepped=0
+param core g.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core g.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core g.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core g.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core g.drum.drive unit=percent min=0 max=1 stepped=0
+param core g.drum.count unit=integer min=1 max=8 stepped=1
+param core g.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core g.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core g.drum.f.length unit=percent min=0 max=1 stepped=0
+param core g.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core g.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core g.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core g.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core g.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core g.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core g.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core g.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core g.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core g.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core g.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core g.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core g.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core g.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core g.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core g.drum.start_phase unit=number min=0 max=90 stepped=0
+param core g.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core g.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core g.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core g.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core g.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core g.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core g.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core g.drum.width unit=percent min=0 max=1 stepped=0
+param core g.drum.mute unit=integer min=0 max=1 stepped=1
+param core g.drum.bend unit=percent min=0 max=1 stepped=0
+param core g.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core g.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core g.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core g.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core g.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core g.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core g.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core g.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core g.drum.wires unit=number min=-8 max=8 stepped=0
+param core g.drum.bells unit=number min=-8 max=8 stepped=0
+param core h.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param core h.drum.note unit=integer min=0 max=127 stepped=1
+param core h.drum.choke unit=choice choice=Off|1|2|3|4
+param core h.drum.voices unit=choice choice=1|2|4
+param core h.drum.trigger unit=choice choice=One-shot|Gate
+param core h.drum.level unit=decibel min=-60 max=6 stepped=0
+param core h.drum.pan unit=percent min=-1 max=1 stepped=0
+param core h.drum.tune unit=semitones min=-48 max=48 stepped=0
+param core h.drum.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param core h.drum.release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core h.drum.sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core h.drum.drive unit=percent min=0 max=1 stepped=0
+param core h.drum.count unit=integer min=1 max=8 stepped=1
+param core h.drum.spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param core h.drum.f.pitch unit=percent min=0 max=1 stepped=0
+param core h.drum.f.length unit=percent min=0 max=1 stepped=0
+param core h.drum.f.sweep unit=percent min=0 max=1 stepped=0
+param core h.drum.f.tone unit=percent min=0 max=1 stepped=0
+param core h.drum.f.noise unit=percent min=0 max=1 stepped=0
+param core h.drum.f.snap unit=percent min=0 max=1 stepped=0
+param core h.drum.f.metal unit=percent min=0 max=1 stepped=0
+param core h.drum.wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param core h.drum.click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param core h.drum.bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core h.drum.bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param core h.drum.bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param core h.drum.kick_hold unit=number min=0 max=200 stepped=0
+param core h.drum.kick_dip unit=percent min=0 max=1 stepped=0
+param core h.drum.kick_dip_time unit=number min=2 max=80 stepped=0
+param core h.drum.click_sweep unit=number min=0 max=6 stepped=0
+param core h.drum.click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param core h.drum.start_phase unit=number min=0 max=90 stepped=0
+param core h.drum.drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param core h.drum.drive_tone unit=percent min=0 max=1 stepped=0
+param core h.drum.clap_q unit=number min=0.5 max=8 stepped=0
+param core h.drum.clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core h.drum.bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param core h.drum.bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param core h.drum.velocity_noise unit=percent min=-1 max=1 stepped=0
+param core h.drum.width unit=percent min=0 max=1 stepped=0
+param core h.drum.mute unit=integer min=0 max=1 stepped=1
+param core h.drum.bend unit=percent min=0 max=1 stepped=0
+param core h.drum.layer.kind unit=choice choice=Off|Kick|Membrane|Snare|Metal|Clap
+param core h.drum.layer.level unit=decibel min=-60 max=6 stepped=0
+param core h.drum.layer.delay unit=number min=0 max=10 stepped=0
+param core h.drum.layer.hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param core h.drum.layer.lock unit=integer min=0 max=1 stepped=1
+param core h.drum.layer.dx unit=percent min=-1 max=1 stepped=0
+param core h.drum.layer.dy unit=percent min=-1 max=1 stepped=0
+param core h.drum.velocity_zone unit=number min=-8 max=8 stepped=0
+param core h.drum.wires unit=number min=-8 max=8 stepped=0
+param core h.drum.bells unit=number min=-8 max=8 stepped=0
+param core voice.level unit=gain min=0 max=1 stepped=0
+param core output.level unit=gain min=0 max=1 stepped=0
+param core stack.count unit=integer min=1 max=8 stepped=1
+param core stack.detune unit=cents min=0 max=50 stepped=0
+param core stack.spread unit=percent min=0 max=1 stepped=0
+param core stack.shape unit=choice choice=Linear|Power|S-Curve|Step|Triangle|Sine|Random|Random Fresh|Drift|Free
+param core stack.shape_amount unit=percent min=0 max=1 stepped=0
+param core stack.free_phase unit=number min=0 max=1 stepped=0
+param core stack.map unit=choice choice=As shaped|Symmetric|Anti-sym|Pitch+|Pitch-|Center-out|Rotate|Pairs|Shuffle
+param core stack.map_amount unit=percent min=0 max=1 stepped=0
+param core stack.curve unit=percent min=-1 max=1 stepped=0
+param core osc.phase unit=percent min=0 max=1 stepped=0
+param core osc.phase_width unit=percent min=0 max=1 stepped=0
+param core osc.coarse unit=semitones min=-48 max=48 stepped=0
+extra core spectral_on floats=1
+extra core a.spectral.curve.on floats=1
+extra core a.spectral.curve.gain floats=64
+extra core b.spectral.curve.on floats=1
+extra core b.spectral.curve.gain floats=64
+extra core c.spectral.curve.on floats=1
+extra core c.spectral.curve.gain floats=64
+extra core d.spectral.curve.on floats=1
+extra core d.spectral.curve.gain floats=64
+extra core e.spectral.curve.on floats=1
+extra core e.spectral.curve.gain floats=64
+extra core f.spectral.curve.on floats=1
+extra core f.spectral.curve.gain floats=64
+extra core g.spectral.curve.on floats=1
+extra core g.spectral.curve.gain floats=64
+extra core h.spectral.curve.on floats=1
+extra core h.spectral.curve.gain floats=64
+extra core vocode.held floats=526
+extra core terrain.likes.v8 floats=91649
+extra core preset.name text
+extra core preset.category text
+retired core additive.sub 2026-10-18 Sub became a LEVEL against the rest's energy (A-PH3), not a raise over the sound's own balance: additive.sub_level
+retired core terrain.likes 2026-10-27 each like gained its engine and sound (backlog ON: likes leaked across engines): terrain.likes.v2
+retired core terrain.likes.v2 2026-10-27 a like stores its 48-bin sixth-octave spectrum, not 12 harmonic magnitudes (the Hellinger fingerprint): terrain.likes.v3
+retired core terrain.likes.v3 2026-10-28 a like stores its FULL POINT in its engine's triangle space, so its place follows a rotate, a gamma or a dial (backlog ON): terrain.likes.v4
+retired core terrain.likes.v4 2026-10-28 a like stores its phase-warp angles as heard, which the P-MOBIUS likes fit reads: terrain.likes.v5
+retired core terrain.likes.v5 2026-10-28 a like stores the angles of EVERY engine's sites (Stair, Resonate and the vowel joined the phase warp): terrain.likes.v6
+retired core terrain.likes.v6 2026-10-31 a like stores the Karplus-Strong string's five material sites too (Pluck joined the phase warp): terrain.likes.v7
+retired core terrain.likes.v7 2026-11-05 a like stores the drum engine's seven sites and, on Drum, its kind (the drum joined the phase warp): terrain.likes.v8
+retired core vocode.freeze 2026-10-27 the engine vocoder's held envelope carries the right channel too (OE2 Stereo), a new layout: vocode.held
+retired core a.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): a.drum.velocity_zone
+retired core a.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): a.drum.velocity_zone
+retired core a.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): a.drum.wires
+retired core a.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): a.drum.wires
+retired core a.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): a.drum.wires
+retired core a.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): a.drum.wires
+retired core a.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): a.drum.wires
+retired core a.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core a.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core a.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core a.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core a.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): a.drum.bells
+retired core a.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): a.drum.bells
+retired core a.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): a.drum.bells
+retired core b.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): b.drum.velocity_zone
+retired core b.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): b.drum.velocity_zone
+retired core b.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): b.drum.wires
+retired core b.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): b.drum.wires
+retired core b.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): b.drum.wires
+retired core b.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): b.drum.wires
+retired core b.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): b.drum.wires
+retired core b.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core b.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core b.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core b.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core b.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): b.drum.bells
+retired core b.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): b.drum.bells
+retired core b.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): b.drum.bells
+retired core c.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): c.drum.velocity_zone
+retired core c.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): c.drum.velocity_zone
+retired core c.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): c.drum.wires
+retired core c.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): c.drum.wires
+retired core c.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): c.drum.wires
+retired core c.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): c.drum.wires
+retired core c.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): c.drum.wires
+retired core c.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core c.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core c.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core c.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core c.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): c.drum.bells
+retired core c.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): c.drum.bells
+retired core c.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): c.drum.bells
+retired core d.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): d.drum.velocity_zone
+retired core d.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): d.drum.velocity_zone
+retired core d.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): d.drum.wires
+retired core d.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): d.drum.wires
+retired core d.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): d.drum.wires
+retired core d.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): d.drum.wires
+retired core d.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): d.drum.wires
+retired core d.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core d.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core d.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core d.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core d.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): d.drum.bells
+retired core d.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): d.drum.bells
+retired core d.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): d.drum.bells
+retired core e.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): e.drum.velocity_zone
+retired core e.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): e.drum.velocity_zone
+retired core e.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): e.drum.wires
+retired core e.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): e.drum.wires
+retired core e.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): e.drum.wires
+retired core e.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): e.drum.wires
+retired core e.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): e.drum.wires
+retired core e.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core e.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core e.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core e.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core e.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): e.drum.bells
+retired core e.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): e.drum.bells
+retired core e.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): e.drum.bells
+retired core f.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): f.drum.velocity_zone
+retired core f.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): f.drum.velocity_zone
+retired core f.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): f.drum.wires
+retired core f.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): f.drum.wires
+retired core f.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): f.drum.wires
+retired core f.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): f.drum.wires
+retired core f.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): f.drum.wires
+retired core f.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core f.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core f.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core f.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core f.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): f.drum.bells
+retired core f.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): f.drum.bells
+retired core f.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): f.drum.bells
+retired core g.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): g.drum.velocity_zone
+retired core g.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): g.drum.velocity_zone
+retired core g.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): g.drum.wires
+retired core g.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): g.drum.wires
+retired core g.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): g.drum.wires
+retired core g.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): g.drum.wires
+retired core g.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): g.drum.wires
+retired core g.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core g.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core g.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core g.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core g.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): g.drum.bells
+retired core g.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): g.drum.bells
+retired core g.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): g.drum.bells
+retired core h.drum.velocity_tone 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): h.drum.velocity_zone
+retired core h.drum.velocity_tension 2026-11-07 absorbed into the Velocity zone (drum proposal §14 lever 2): h.drum.velocity_zone
+retired core h.drum.body_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): h.drum.wires
+retired core h.drum.wire_shape 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): h.drum.wires
+retired core h.drum.wire_contour 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): h.drum.wires
+retired core h.drum.buzz 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): h.drum.wires
+retired core h.drum.buzz_threshold 2026-11-07 absorbed into the Wires zone (drum proposal §14 lever 2): h.drum.wires
+retired core h.drum.wire_sweep 2026-11-07 yielded to the terrain: the Snare's Sweep field (drum proposal §14 lever 1)
+retired core h.drum.bell_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core h.drum.bell2_q 2026-11-07 yielded to the terrain: the place's Snap, scaled by the Bells zone (drum proposal §14 lever 1)
+retired core h.drum.bell2_ratio 2026-11-07 yielded to the terrain: the place's Metal (drum proposal §14 lever 1)
+retired core h.drum.bell_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): h.drum.bells
+retired core h.drum.bell2_level 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): h.drum.bells
+retired core h.drum.bell2_link 2026-11-07 absorbed into the Bells zone (drum proposal §14 lever 2): h.drum.bells

@@ -1,0 +1,25 @@
+# bench_patch plan (voices), the perf survey 2026-10-29. Run from the repo root.
+v5_n1 --voice-count 16 --notes 1 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+add_n1 --engine additive --voice-count 16 --notes 1 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+book_n1 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --voice-count 16 --notes 1 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+v5_n4 --voice-count 16 --notes 4 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+add_n4 --engine additive --voice-count 16 --notes 4 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+book_n4 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --voice-count 16 --notes 4 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+v5_n8 --voice-count 16 --notes 8 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+add_n8 --engine additive --voice-count 16 --notes 8 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+book_n8 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --voice-count 16 --notes 8 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+v5_n16 --voice-count 16 --notes 16 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+add_n16 --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+book_n16 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --voice-count 16 --notes 16 --step 2 --note 40 --idle 0.25 --held 2 --tail 0.5
+v5_n8_stack4 --voice-count 16 --notes 8 --step 2 --note 40 --param 0x65=4 --idle 0.25 --held 2 --tail 0.5
+add_n8_stack4 --engine additive --voice-count 16 --notes 8 --step 2 --note 40 --param 0x65=4 --idle 0.25 --held 2 --tail 0.5
+v5_n8_stack8 --voice-count 16 --notes 8 --step 2 --note 40 --param 0x65=8 --idle 0.25 --held 2 --tail 0.5
+add_n8_stack8 --engine additive --voice-count 16 --notes 8 --step 2 --note 40 --param 0x65=8 --idle 0.25 --held 2 --tail 0.5
+v5move_n1 --voice-count 16 --notes 1 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5
+addmove_n1 --engine additive --voice-count 16 --notes 1 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5
+v5move_n4 --voice-count 16 --notes 4 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5
+addmove_n4 --engine additive --voice-count 16 --notes 4 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5
+v5move_n8 --voice-count 16 --notes 8 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5
+addmove_n8 --engine additive --voice-count 16 --notes 8 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5
+v5move_n16 --voice-count 16 --notes 16 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5
+addmove_n16 --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --automate 0x31 --idle 0.25 --held 2 --tail 0.5

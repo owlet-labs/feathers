@@ -1,0 +1,25 @@
+# Schema ledger for FVERB (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device FVERB - schema=1
+param FVERB featherverb_enabled unit=choice choice=Off|On
+param FVERB featherverb_mix unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_room unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_damping unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_width unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_hpf_hz unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param FVERB featherverb_lpf_hz unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param FVERB featherverb_matrix unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_size_mode unit=choice choice=Mouse|Rabbit|Lake|Trees|Feather|Sky|Aurora|Vast|Owl
+param FVERB featherverb_size unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_decay unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_predelay unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_character unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param FVERB featherverb_oversample unit=choice choice=Off|On
+param FVERB featherverb_conv_mode unit=choice choice=Off|Parallel|Series|Conv Only|Exciter
+param FVERB featherverb_conv_blend unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_conv_predelay unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_conv_feedback unit=percent min=0 max=1 stepped=0
+param FVERB featherverb_input_gain unit=decibel min=-24 max=24 stepped=0
+retired FVERB featherverb_owl_comp 2026-09-25 Owl's compressor is always on; the audition switch is gone
+retired FVERB featherverb_hpf 2026-10-10 LB: a 0..1 knob on the firmware's coefficient; now featherverb_hpf_hz, log2(Hz) over 20 Hz..20 kHz
+retired FVERB featherverb_lpf 2026-10-10 LB: a 0..1 knob on the firmware's coefficient; now featherverb_lpf_hz, log2(Hz) over 20 Hz..20 kHz

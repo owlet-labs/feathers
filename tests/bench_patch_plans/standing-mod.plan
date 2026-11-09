@@ -1,0 +1,26 @@
+# bench_patch STANDING plan (modulation): backlog OR. The modulation items nobody had measured. V5, Init, 4 notes unless stated.
+#  routes_N   N core routes (macro / weight / stack sources to host destinations, small amounts), all adopted by the engine
+#  mono_lfo   one strip LFO (slot 1) routed to a lane control (flt1 Filter Cutoff) and, for the voice rows, to host destination #1 (Pos X)
+#  poly_lfo_N the same LFO with Poly on, N notes: a wave per note
+#  stereo     the LFO at Stereo Phase 1.57 rad (a stereo-live modulator) on the lane control and on Pos X
+routes_0 --idle 0.25 --held 1.5 --tail 0.25
+routes_16 --routes 16 --idle 0.25 --held 1.5 --tail 0.25
+routes_64 --routes 64 --idle 0.25 --held 1.5 --tail 0.25
+routes_128 --routes 128 --idle 0.25 --held 1.5 --tail 0.25
+routes_256 --routes 256 --idle 0.25 --held 1.5 --tail 0.25
+lane_unrouted --add flt1 --mod LFO --idle 0.25 --held 1.5 --tail 0.25
+lane_mono --add flt1 --mod LFO --droute 1:0:0:Filter_Cutoff=0.5 --idle 0.25 --held 1.5 --tail 0.25
+lane_poly_1 --add flt1 --mod LFO --set s1:Poly=1 --droute 1:0:0:Filter_Cutoff=0.5 --notes 1 --idle 0.25 --held 1.5 --tail 0.25
+lane_poly_4 --add flt1 --mod LFO --set s1:Poly=1 --droute 1:0:0:Filter_Cutoff=0.5 --notes 4 --idle 0.25 --held 1.5 --tail 0.25
+lane_poly_16 --add flt1 --mod LFO --set s1:Poly=1 --droute 1:0:0:Filter_Cutoff=0.5 --notes 16 --step 2 --note 40 --voice-count 16 --idle 0.25 --held 1.5 --tail 0.25
+lane_stereo --add flt1 --mod LFO --set s1:Stereo_Phase=1.57 --droute 1:0:0:Filter_Cutoff=0.5 --idle 0.25 --held 1.5 --tail 0.25
+voice_unrouted_1 --mod LFO --notes 1 --idle 0.25 --held 1.5 --tail 0.25
+voice_unrouted_4 --mod LFO --notes 4 --idle 0.25 --held 1.5 --tail 0.25
+voice_unrouted_16 --mod LFO --notes 16 --step 2 --note 40 --voice-count 16 --idle 0.25 --held 1.5 --tail 0.25
+voice_mono_1 --mod LFO --droute 1:0:0:#1=0.3 --notes 1 --idle 0.25 --held 1.5 --tail 0.25
+voice_mono_16 --mod LFO --droute 1:0:0:#1=0.3 --notes 16 --step 2 --note 40 --voice-count 16 --idle 0.25 --held 1.5 --tail 0.25
+voice_poly_1 --mod LFO --set s1:Poly=1 --droute 1:0:0:#1=0.3 --notes 1 --idle 0.25 --held 1.5 --tail 0.25
+voice_poly_4 --mod LFO --set s1:Poly=1 --droute 1:0:0:#1=0.3 --notes 4 --idle 0.25 --held 1.5 --tail 0.25
+voice_poly_16 --mod LFO --set s1:Poly=1 --droute 1:0:0:#1=0.3 --notes 16 --step 2 --note 40 --voice-count 16 --idle 0.25 --held 1.5 --tail 0.25
+voice_stereo_16 --mod LFO --set s1:Stereo_Phase=1.57 --droute 1:0:0:#1=0.3 --notes 16 --step 2 --note 40 --voice-count 16 --idle 0.25 --held 1.5 --tail 0.25
+voice_poly_stereo_16 --mod LFO --set s1:Poly=1 --set s1:Stereo_Phase=1.57 --droute 1:0:0:#1=0.3 --notes 16 --step 2 --note 40 --voice-count 16 --idle 0.25 --held 1.5 --tail 0.25

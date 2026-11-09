@@ -1,0 +1,31 @@
+# bench_patch plan (ablation), the perf survey 2026-10-29. Run from the repo root.
+ref --idle 0.25 --held 2 --tail 1
+baby_elf_bass_all --preset presets/factory/Feathers/baby_elf_bass.fpreset --idle 0.25 --held 2 --tail 1
+baby_elf_bass_minus0 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 0 --idle 0.25 --held 2 --tail 1
+baby_elf_bass_minus1 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 1 --idle 0.25 --held 2 --tail 1
+baby_elf_bass_minus2 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 2 --idle 0.25 --held 2 --tail 1
+baby_elf_bass_minus3 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 3 --idle 0.25 --held 2 --tail 1
+baby_elf_bass_minus4 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 4 --idle 0.25 --held 2 --tail 1
+baby_elf_bass_minus5 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 5 --idle 0.25 --held 2 --tail 1
+baby_elf_bass_none --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --remove 4 --remove 5 --idle 0.25 --held 2 --tail 1
+machine_elf_book_of_dreams_all --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --idle 0.25 --held 2 --tail 1
+machine_elf_book_of_dreams_minus0 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 0 --idle 0.25 --held 2 --tail 1
+machine_elf_book_of_dreams_minus1 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 1 --idle 0.25 --held 2 --tail 1
+machine_elf_book_of_dreams_minus2 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 2 --idle 0.25 --held 2 --tail 1
+machine_elf_book_of_dreams_minus3 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 3 --idle 0.25 --held 2 --tail 1
+machine_elf_book_of_dreams_none --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --idle 0.25 --held 2 --tail 1
+pan_tanpura_all --preset presets/factory/Feathers/pan_tanpura.fpreset --idle 0.25 --held 2 --tail 1
+pan_tanpura_minus0 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 0 --idle 0.25 --held 2 --tail 1
+pan_tanpura_minus1 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 1 --idle 0.25 --held 2 --tail 1
+pan_tanpura_minus2 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 2 --idle 0.25 --held 2 --tail 1
+pan_tanpura_minus3 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 3 --idle 0.25 --held 2 --tail 1
+pan_tanpura_none --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_all --preset presets/factory/Feathers/wood_elves_pan.fpreset --idle 0.25 --held 2 --tail 1
+wood_elves_pan_minus0 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 0 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_minus1 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 1 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_minus2 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 2 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_minus3 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 3 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_minus4 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 4 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_minus5 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 5 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_minus6 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 6 --idle 0.25 --held 2 --tail 1
+wood_elves_pan_none --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --remove 4 --remove 5 --remove 6 --idle 0.25 --held 2 --tail 1

@@ -1,0 +1,20 @@
+# Schema ledger for rtrig (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device rtrig - schema=1
+param rtrig rtrig_enabled unit=choice choice=Off|On
+param rtrig rtrig_density unit=log_hertz min=-3.321928094887362 max=7.643856189774724 stepped=0
+param rtrig rtrig_sync unit=choice choice=Free|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param rtrig rtrig_timing unit=choice choice=Regular|Poisson|Clustered
+param rtrig rtrig_jitter unit=percent min=0 max=1 stepped=0
+param rtrig rtrig_cluster unit=percent min=0 max=1 stepped=0
+param rtrig rtrig_hit_size unit=choice choice=Fixed|Uniform|Exponential
+param rtrig rtrig_polarity unit=choice choice=Positive|Random
+param rtrig rtrig_decay unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param rtrig rtrig_seed_mode unit=choice choice=Stable|Free
+param rtrig rtrig_seed unit=number min=0 max=999 stepped=1
+param rtrig rtrig_poly unit=choice choice=Off|On
+param rtrig rtrig_trig_in unit=percent min=0 max=1 stepped=0
+block rtrig rtrig_stream floats=33
+out rtrig rtrig_trig bipolar=0
+out rtrig rtrig_size bipolar=1
+out rtrig rtrig_decay bipolar=1

@@ -1,0 +1,16 @@
+# Schema ledger for FOLLOWER (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device FOLLOWER - schema=2
+param FOLLOWER mode unit=choice choice=Control|Audio
+param FOLLOWER input unit=percent min=-1 max=1 stepped=0
+param FOLLOWER detector unit=choice choice=Peak|RMS|Signed
+param FOLLOWER attack unit=log_seconds min=-13.287712379549449 max=0 stepped=0
+param FOLLOWER release unit=log_seconds min=-9.965784284662087 max=2.321928094887362 stepped=0
+param FOLLOWER gain unit=decibel min=-24 max=24 stepped=0
+param FOLLOWER floor unit=decibel min=-72 max=0 stepped=0
+param FOLLOWER threshold unit=percent min=0 max=1 stepped=0
+param FOLLOWER poly unit=choice choice=Off|On
+param FOLLOWER enabled unit=choice choice=Off|On
+out FOLLOWER env bipolar=1
+out FOLLOWER trig bipolar=0
+retired FOLLOWER source 2026-10-26 the Sidechain source is gone: the sidechain enters the chain at a Sidechain Inject device and a Follower in Audio mode after it follows it

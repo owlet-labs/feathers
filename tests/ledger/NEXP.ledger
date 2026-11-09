@@ -1,0 +1,13 @@
+# Schema ledger for NEXP (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device NEXP - schema=1
+param NEXP rule unit=choice choice=Last|Lowest|Highest|Max
+param NEXP enabled unit=choice choice=Off|On
+param NEXP amount unit=percent min=-1 max=1 stepped=0
+out NEXP vol bipolar=0
+out NEXP pan bipolar=0
+out NEXP tune bipolar=1
+out NEXP vib bipolar=0
+out NEXP expr bipolar=0
+out NEXP brite bipolar=0
+out NEXP press bipolar=0

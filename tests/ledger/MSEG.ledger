@@ -1,0 +1,47 @@
+# Schema ledger for MSEG (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device MSEG - schema=1
+param MSEG start_level unit=percent min=0 max=1 stepped=0
+param MSEG segments unit=number min=1 max=8 stepped=1
+param MSEG sustain_at unit=number min=-1 max=7 stepped=1
+param MSEG loop_from unit=number min=0 max=7 stepped=1
+param MSEG loop_to unit=number min=0 max=7 stepped=1
+param MSEG time_base unit=choice choice=1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param MSEG rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param MSEG smoothing unit=log_seconds min=-11 max=0 stepped=0
+param MSEG mode unit=choice choice=Gate|Loop|Once|Free|LFO Retrig
+param MSEG phase unit=percent min=0 max=1 stepped=0
+param MSEG ping_pong unit=choice choice=Off|On
+param MSEG bipolar unit=choice choice=Off|On
+param MSEG enabled unit=choice choice=Off|On
+param MSEG amount unit=percent min=-1 max=1 stepped=0
+param MSEG poly unit=choice choice=Off|On
+param MSEG smooth_carry unit=choice choice=Off|On
+param MSEG trig unit=percent min=0 max=1 stepped=0
+param MSEG notes_trig unit=choice choice=Off|On
+param MSEG stereo_phase unit=degrees min=0 max=3.141592653589793 stepped=0
+param MSEG seg_1_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_1_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_1_curve unit=percent min=-1 max=1 stepped=0
+param MSEG seg_2_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_2_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_2_curve unit=percent min=-1 max=1 stepped=0
+param MSEG seg_3_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_3_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_3_curve unit=percent min=-1 max=1 stepped=0
+param MSEG seg_4_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_4_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_4_curve unit=percent min=-1 max=1 stepped=0
+param MSEG seg_5_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_5_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_5_curve unit=percent min=-1 max=1 stepped=0
+param MSEG seg_6_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_6_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_6_curve unit=percent min=-1 max=1 stepped=0
+param MSEG seg_7_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_7_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_7_curve unit=percent min=-1 max=1 stepped=0
+param MSEG seg_8_time unit=log_seconds min=-11 max=3.321928024291992 stepped=0
+param MSEG seg_8_level unit=percent min=0 max=1 stepped=0
+param MSEG seg_8_curve unit=percent min=-1 max=1 stepped=0
+out MSEG mseg bipolar=1

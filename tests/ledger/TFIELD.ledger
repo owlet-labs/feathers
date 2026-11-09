@@ -1,0 +1,35 @@
+# Schema ledger for TFIELD (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device TFIELD - schema=1
+param TFIELD crossfade unit=percent min=0 max=1 stepped=0
+param TFIELD solo_a unit=choice choice=Off|On
+param TFIELD solo_b unit=choice choice=Off|On
+param TFIELD a.pan_x unit=number min=-8 max=8 stepped=0
+param TFIELD a.pan_y unit=number min=-8 max=8 stepped=0
+param TFIELD a.zoom unit=number min=-2 max=6 stepped=0
+param TFIELD a.spread unit=number min=0 max=4 stepped=0
+param TFIELD a.rotate unit=number min=-4 max=4 stepped=0
+param TFIELD a.gamma unit=number min=0 max=8 stepped=0
+param TFIELD a.rate unit=log_multiple min=-2 max=2 stepped=0
+param TFIELD a.sync unit=choice choice=0.1 Hz|1 Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param TFIELD a.mode unit=choice choice=Free|Retrigger|Once
+param TFIELD a.depth unit=percent min=0 max=1 stepped=0
+param TFIELD b.pan_x unit=number min=-8 max=8 stepped=0
+param TFIELD b.pan_y unit=number min=-8 max=8 stepped=0
+param TFIELD b.zoom unit=number min=-2 max=6 stepped=0
+param TFIELD b.spread unit=number min=0 max=4 stepped=0
+param TFIELD b.rotate unit=number min=-4 max=4 stepped=0
+param TFIELD b.gamma unit=number min=0 max=8 stepped=0
+param TFIELD b.rate unit=log_multiple min=-2 max=2 stepped=0
+param TFIELD b.sync unit=choice choice=0.1 Hz|1 Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param TFIELD b.mode unit=choice choice=Free|Retrigger|Once
+param TFIELD b.depth unit=percent min=0 max=1 stepped=0
+param TFIELD enabled unit=choice choice=Off|On
+out TFIELD mod_1 bipolar=0
+out TFIELD mod_2 bipolar=0
+out TFIELD mod_3 bipolar=0
+out TFIELD mod_4 bipolar=0
+out TFIELD mod_5 bipolar=0
+out TFIELD mod_6 bipolar=0
+out TFIELD mod_7 bipolar=0
+out TFIELD mod_8 bipolar=0

@@ -1,0 +1,28 @@
+VST3: a CLAP_PARAM_RESCAN_INFO refreshes the short title too, and converts the name as UTF-8
+
+Against free-audio/clap-wrapper v0.16.0 (the libs/clap-wrapper pin). Applied by Feathers'
+CMakeLists.txt at configure time to a copy of the wrapper in the build directory; the submodule
+itself is never modified. Feathers backlog KD; checked by tests/test_host_rename.cpp.
+
+ClapAsVst3::param_rescan rewrote ParameterInfo::title only, and with the SDK's str8ToStr16, which
+widens each BYTE of a signed char: "W\xC3\xB6bble" arrived as W U+FFC3 U+FFB6 b b l e. Setup
+(Vst3Parameter::create) already writes both title and shortTitle with utf8_to_utf16l; the rescan now
+does the same, so a renamed parameter reads the same after a rescan as it would at setup.
+
+Drop this file when upstream carries the fix; the configure step then reports it as already applied.
+
+diff --git a/src/wrapasvst3.cpp b/src/wrapasvst3.cpp
+index 6901c15..19f7e88 100644
+--- a/src/wrapasvst3.cpp
++++ b/src/wrapasvst3.cpp
+@@ -1265,7 +1265,9 @@ void ClapAsVst3::param_rescan(clap_param_rescan_flags flags)
+       clap_param_info_t info;
+       if (_plugin->_ext._params->get_info(_plugin->_plugin, p->param_index_for_clap_get_info, &info))
+       {
+-        str8ToStr16(p->getInfo().title, info.name, str16BufferSize(p->getInfo().title));
++        utf8_to_utf16l(info.name, (uint16_t *)p->getInfo().title, str16BufferSize(p->getInfo().title));
++        utf8_to_utf16l(info.name, (uint16_t *)p->getInfo().shortTitle,
++                       str16BufferSize(p->getInfo().shortTitle));
+       }
+     }
+   }

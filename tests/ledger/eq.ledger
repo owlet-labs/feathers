@@ -1,0 +1,62 @@
+# Schema ledger for eq (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device eq - schema=1
+param eq enabled unit=choice choice=Off|On
+param eq offset unit=number min=-10 max=10 stepped=0
+param eq amount unit=percent min=-2 max=2 stepped=0
+param eq tilt unit=number min=-6 max=6 stepped=0
+param eq tilt_pivot unit=log_hertz min=6.643856189774725 max=13.28771237954945 stepped=0
+param eq output unit=decibel min=-24 max=24 stepped=0
+param eq phase unit=choice choice=Minimum|Linear
+param eq key_track unit=choice choice=Off|On
+param eq eq_mix unit=percent min=0 max=1 stepped=0
+param eq eq_wet_gain unit=fader min=0 max=1 stepped=0
+param eq b1_on unit=choice choice=Off|On
+param eq b1_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b1_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b1_gain unit=decibel min=-24 max=24 stepped=0
+param eq b1_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b1_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+param eq b2_on unit=choice choice=Off|On
+param eq b2_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b2_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b2_gain unit=decibel min=-24 max=24 stepped=0
+param eq b2_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b2_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+param eq b3_on unit=choice choice=Off|On
+param eq b3_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b3_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b3_gain unit=decibel min=-24 max=24 stepped=0
+param eq b3_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b3_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+param eq b4_on unit=choice choice=Off|On
+param eq b4_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b4_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b4_gain unit=decibel min=-24 max=24 stepped=0
+param eq b4_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b4_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+param eq b5_on unit=choice choice=Off|On
+param eq b5_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b5_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b5_gain unit=decibel min=-24 max=24 stepped=0
+param eq b5_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b5_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+param eq b6_on unit=choice choice=Off|On
+param eq b6_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b6_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b6_gain unit=decibel min=-24 max=24 stepped=0
+param eq b6_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b6_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+param eq b7_on unit=choice choice=Off|On
+param eq b7_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b7_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b7_gain unit=decibel min=-24 max=24 stepped=0
+param eq b7_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b7_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+param eq b8_on unit=choice choice=Off|On
+param eq b8_type unit=choice choice=Bell|Low Shelf|High Shelf|Low Cut|High Cut|Notch
+param eq b8_freq unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param eq b8_gain unit=decibel min=-24 max=24 stepped=0
+param eq b8_q unit=number min=-3.321928094887362 max=4.169925001442312 stepped=0
+param eq b8_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB|36 dB|48 dB|72 dB|96 dB
+extra eq eq_state floats=17

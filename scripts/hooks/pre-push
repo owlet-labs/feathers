@@ -1,0 +1,47 @@
+#!/bin/sh
+# Copyright © 2026 Owlet Records
+#
+# This file is part of Feathers.
+#
+# PRE-PUSH: THE FACTORY PRESETS MUST BE IN DATE WITH THE PRESET ROOT.
+#
+# CI cannot see the user's preset folder, so this runs locally. It asks
+# `scripts/collect-factory-presets.sh --check`, which COPIES NOTHING, whether presets/factory matches the
+# presets tagged `factory` in the root; on a mismatch it refuses the push and prints the fix. It never
+# modifies the working tree. With no preset root on this machine (another host, a fresh clone, CI) it
+# passes silently. Skip it once with `git push --no-verify`.
+#
+# INSTALL, from the main workspace (hooks live in the shared .git, so every worktree gets it):
+#
+#     ln -s ../../scripts/hooks/pre-push .git/hooks/pre-push
+#
+# If .git/hooks/pre-push already exists, rename it to `pre-push.local` first: this hook runs it after
+# its own check, with the same arguments and input, so nothing is replaced.
+
+set -u
+
+top=$(git rev-parse --show-toplevel) || exit 1
+hooks=$(git rev-parse --git-common-dir)/hooks
+root=${FEATHERS_PRESET_ROOT:-"$HOME/Documents/Owlet/Feathers/Presets"}
+
+# git hands a pre-push hook the refs on stdin; keep them for a chained hook.
+input=$(cat)
+
+if [ -d "$root" ] && [ -x "$top/scripts/collect-factory-presets.sh" ]; then
+	out=$("$top/scripts/collect-factory-presets.sh" --check "$root" 2>&1)
+	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		echo "pre-push: presets/factory is out of date with the presets tagged 'factory' in $root:" >&2
+		printf '%s\n' "$out" | sed 's/^/    /' >&2
+		echo "Fix it, then push again:" >&2
+		echo "    scripts/collect-factory-presets.sh && git add presets/factory && git commit -m 'Factory presets: collect' && git push" >&2
+		echo "(add --prune to the collect to remove files no longer tagged; git push --no-verify skips this once)" >&2
+		exit 1
+	fi
+fi
+
+if [ -x "$hooks/pre-push.local" ]; then
+	if [ -n "$input" ]; then printf '%s\n' "$input"; fi | "$hooks/pre-push.local" "$@"
+	exit $?
+fi
+exit 0

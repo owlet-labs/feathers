@@ -1,0 +1,217 @@
+# Schema ledger for RACK (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device RACK - schema=1
+param RACK rack_enabled unit=choice choice=Off|On
+param RACK rack_mix unit=percent min=0 max=1 stepped=0
+param RACK rack_gain unit=fader min=0 max=1 stepped=0
+param RACK macro_1 unit=percent min=0 max=1 stepped=0
+param RACK macro_2 unit=percent min=0 max=1 stepped=0
+param RACK macro_3 unit=percent min=0 max=1 stepped=0
+param RACK macro_4 unit=percent min=0 max=1 stepped=0
+param RACK macro_5 unit=percent min=0 max=1 stepped=0
+param RACK macro_6 unit=percent min=0 max=1 stepped=0
+param RACK macro_7 unit=percent min=0 max=1 stepped=0
+param RACK macro_8 unit=percent min=0 max=1 stepped=0
+param RACK rack_mode unit=choice choice=Parallel|Select|Blend|Mid/Side|Left/Right|Bands
+param RACK rack_position unit=percent min=0 max=1 stepped=0
+param RACK rack_unused unit=choice choice=Ring out|Stop
+param RACK rack_bands unit=choice choice=2|3|5
+param RACK rack_cut_1 unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param RACK rack_cut_2 unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param RACK rack_cut_3 unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param RACK rack_cut_4 unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param RACK rack_slope unit=choice choice=LR4 24 dB|LR2 12 dB
+param RACK rack_filtering unit=choice choice=Before|After|Both
+param RACK rack_key_track unit=choice choice=Off|On
+param RACK rack_chain_slot_1_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_1_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_1_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_2_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_2_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_2_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_3_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_3_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_3_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_4_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_4_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_4_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_5_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_5_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_5_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_6_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_6_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_6_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_7_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_7_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_7_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_8_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_8_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_8_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_9_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_9_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_9_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_10_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_10_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_10_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_11_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_11_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_11_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_12_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_12_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_12_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_13_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_13_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_13_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_14_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_14_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_14_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_15_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_15_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_15_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_16_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_16_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_16_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_17_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_17_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_17_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_18_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_18_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_18_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_19_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_19_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_19_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_20_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_20_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_20_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_21_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_21_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_21_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_22_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_22_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_22_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_23_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_23_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_23_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_24_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_24_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_24_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_25_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_25_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_25_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_26_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_26_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_26_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_27_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_27_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_27_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_28_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_28_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_28_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_29_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_29_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_29_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_30_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_30_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_30_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_31_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_31_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_31_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_32_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_32_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_32_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_33_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_33_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_33_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_34_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_34_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_34_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_35_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_35_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_35_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_36_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_36_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_36_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_37_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_37_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_37_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_38_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_38_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_38_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_39_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_39_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_39_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_40_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_40_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_40_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_41_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_41_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_41_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_42_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_42_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_42_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_43_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_43_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_43_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_44_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_44_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_44_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_45_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_45_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_45_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_46_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_46_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_46_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_47_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_47_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_47_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_48_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_48_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_48_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_49_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_49_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_49_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_50_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_50_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_50_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_51_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_51_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_51_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_52_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_52_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_52_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_53_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_53_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_53_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_54_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_54_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_54_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_55_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_55_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_55_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_56_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_56_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_56_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_57_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_57_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_57_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_58_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_58_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_58_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_59_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_59_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_59_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_60_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_60_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_60_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_61_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_61_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_61_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_62_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_62_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_62_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_63_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_63_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_63_solo unit=choice choice=Off|On
+param RACK rack_chain_slot_64_level unit=fader min=0 max=1 stepped=0
+param RACK rack_chain_slot_64_mute unit=choice choice=Off|On
+param RACK rack_chain_slot_64_solo unit=choice choice=Off|On

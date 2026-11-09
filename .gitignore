@@ -1,0 +1,20 @@
+build*/
+worktrees/
+.cache/
+compile_commands.json
+build-asan/
+build-tsan/
+
+# Stray run artifacts: a probe scratch frame and CI installer zips downloaded into the tree
+# (both were committed by accident on 2026-09-10 and removed 2026-09-16).
+probe_scratch.ppm
+/Feathers-macos-*.zip
+
+# Host logs copied in by scripts/sync-host-logs.sh: the development machine's, never committed.
+/host-logs/
+
+# Host-local settings read by scripts/env.sh and docker/feathers-dev.sh (FEATHERS_TOOLCHAIN_DIR, ...).
+/.env.local
+
+# Private notes checkout (the project team's internal guidance and design history; never published)
+/private/

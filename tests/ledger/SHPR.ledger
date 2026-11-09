@@ -1,0 +1,38 @@
+# Schema ledger for SHPR (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device SHPR - schema=1
+param SHPR enabled unit=choice choice=Off|On
+param SHPR shaper_knee unit=percent min=0 max=1 stepped=0
+param SHPR shaper_colour unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param SHPR shaper_gamma unit=number min=-8388608 max=8388608 stepped=0
+param SHPR shaper_drive unit=percent min=0 max=1 stepped=0
+param SHPR shaper_mix unit=percent min=0 max=1 stepped=0
+param SHPR shaper_emphasis unit=decibel min=-12 max=12 stepped=0
+param SHPR shaper_sub unit=percent min=0 max=1 stepped=0
+param SHPR shaper_feedback unit=percent min=0 max=1 stepped=0
+param SHPR shaper_mangle unit=percent min=0 max=1 stepped=0
+param SHPR shaper_lowpass unit=percent min=0 max=1 stepped=0
+param SHPR shaper_integrator unit=percent min=0 max=1 stepped=0
+param SHPR shaper_hysteresis unit=percent min=0 max=1 stepped=0
+param SHPR shaper_rotate unit=number min=-8388608 max=8388608 stepped=0
+param SHPR shaper_aggression unit=percent min=0 max=1 stepped=0
+param SHPR shaper_trim unit=decibel min=-24 max=24 stepped=0
+param SHPR shaper_deadzone unit=percent min=0 max=1 stepped=0
+param SHPR shaper_bloom unit=percent min=0 max=1 stepped=0
+param SHPR shaper_sag unit=percent min=0 max=1 stepped=0
+param SHPR shaper_loop unit=percent min=0 max=1 stepped=0
+param SHPR shaper_cheby unit=percent min=-1 max=1 stepped=0
+param SHPR shaper_stair unit=percent min=0 max=1 stepped=0
+param SHPR shaper_sub_on unit=choice choice=Off|On
+param SHPR shaper_feedback_on unit=choice choice=Off|On
+param SHPR shaper_mangle_on unit=choice choice=Off|On
+param SHPR shaper_lowpass_on unit=choice choice=Off|On
+param SHPR shaper_integrator_on unit=choice choice=Off|On
+param SHPR shaper_deadzone_on unit=choice choice=Off|On
+param SHPR shaper_colour_mode unit=choice choice=Inflate|Free
+param SHPR shaper_inflate unit=percent min=0 max=1 stepped=0
+param SHPR shaper_input_hpf unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param SHPR shaper_input_lpf unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
+param SHPR shaper_dry_wet unit=percent min=0 max=1 stepped=0
+param SHPR shaper_poly unit=choice choice=Off|On
+extra SHPR travel floats=18

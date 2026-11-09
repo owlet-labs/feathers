@@ -1,0 +1,53 @@
+# bench_patch plan (devices), the perf survey 2026-10-29. Run from the repo root.
+base_v5  --idle 0.5 --held 2 --tail 1
+base_add --engine additive --idle 0.5 --held 2 --tail 1
+dev_flt1 --add flt1 --idle 0.5 --held 2 --tail 1
+dev_HARM --add HARM --idle 0.5 --held 2 --tail 1
+dev_OWLTT --add OWLTT --idle 0.5 --held 2 --tail 1
+dev_SKLITTER --add SKLITTER --idle 0.5 --held 2 --tail 1
+dev_wayp --add wayp --idle 0.5 --held 2 --tail 1
+dev_drwn --add drwn --idle 0.5 --held 2 --tail 1
+dev_SHPR --add SHPR --idle 0.5 --held 2 --tail 1
+dev_AMOD --add AMOD --idle 0.5 --held 2 --tail 1
+dev_DHDS --add DHDS --idle 0.5 --held 2 --tail 1
+dev_MSEG --add MSEG --idle 0.5 --held 2 --tail 1
+dev_TRAK --add TRAK --idle 0.5 --held 2 --tail 1
+dev_NEXP --add NEXP --idle 0.5 --held 2 --tail 1
+dev_busu --add busu --idle 0.5 --held 2 --tail 1
+dev_cmps --add cmps --idle 0.5 --held 2 --tail 1
+dev_LFO --add LFO --idle 0.5 --held 2 --tail 1
+dev_DELAY --add DELAY --idle 0.5 --held 2 --tail 1
+dev_PITCH --add PITCH --idle 0.5 --held 2 --tail 1
+dev_ERODER --add ERODER --idle 0.5 --held 2 --tail 1
+dev_FVERB --add FVERB --idle 0.5 --held 2 --tail 1
+dev_comp --add comp --idle 0.5 --held 2 --tail 1
+dev_clip --add clip --idle 0.5 --held 2 --tail 1
+dev_RESONATE --add RESONATE --idle 0.5 --held 2 --tail 1
+dev_MACROS --add MACROS --idle 0.5 --held 2 --tail 1
+dev_MATH --add MATH --idle 0.5 --held 2 --tail 1
+dev_smth --add smth --idle 0.5 --held 2 --tail 1
+dev_eq --add eq --idle 0.5 --held 2 --tail 1
+dev_DISPERSE --add DISPERSE --idle 0.5 --held 2 --tail 1
+dev_PHFL --add PHFL --idle 0.5 --held 2 --tail 1
+dev_STEREO --add STEREO --idle 0.5 --held 2 --tail 1
+dev_spectral --add spectral --idle 0.5 --held 2 --tail 1
+dev_noise --add noise --idle 0.5 --held 2 --tail 1
+dev_rtrig --add rtrig --idle 0.5 --held 2 --tail 1
+dev_SNH --add SNH --idle 0.5 --held 2 --tail 1
+dev_STEPSEQ --add STEPSEQ --idle 0.5 --held 2 --tail 1
+dev_FOLLOWER --add FOLLOWER --idle 0.5 --held 2 --tail 1
+dev_RACK --add RACK --idle 0.5 --held 2 --tail 1
+dev_inject --add inject --idle 0.5 --held 2 --tail 1
+rack_mode1 --add RACK --set 1:Rack_Mode=1 --idle 0.5 --held 2 --tail 1
+rack_mode2 --add RACK --set 1:Rack_Mode=2 --idle 0.5 --held 2 --tail 1
+rack_mode3 --add RACK --set 1:Rack_Mode=3 --idle 0.5 --held 2 --tail 1
+rack_mode4 --add RACK --set 1:Rack_Mode=4 --idle 0.5 --held 2 --tail 1
+rack_mode5 --add RACK --set 1:Rack_Mode=5 --idle 0.5 --held 2 --tail 1
+spectral_fine --add spectral --set 1:Spectral_Resolution=2 --idle 0.5 --held 2 --tail 1
+spectral_poly --add spectral --set 1:Spectral_Poly=1 --idle 0.5 --held 2 --tail 1
+spectral_vocode --add spectral --set 1:Spectral_Vocode=1 --sidechain 1 --idle 0.5 --held 2 --tail 1
+dense_v5 --add HARM --add OWLTT --add SHPR --add PHFL --add DISPERSE --add eq --add comp --add DELAY --add FVERB --add clip --add STEREO --idle 0.5 --held 2 --tail 1
+dense_add --engine additive --add HARM --add OWLTT --add SHPR --add PHFL --add DISPERSE --add eq --add comp --add DELAY --add FVERB --add clip --add STEREO --idle 0.5 --held 2 --tail 1
+mods_lane --add LFO --add LFO --add LFO --add LFO --add MSEG --add MSEG --add STEPSEQ --add SNH --add rtrig --add FOLLOWER --add MATH --add smth --idle 0.5 --held 2 --tail 1
+automate_posx --automate 0x31 --idle 0.5 --held 2 --tail 1
+automate_posx_add --engine additive --automate 0x31 --idle 0.5 --held 2 --tail 1

@@ -1,0 +1,71 @@
+# Schema ledger for RESONATE (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device RESONATE - schema=1
+param RESONATE resonate_enabled unit=choice choice=Off|On
+param RESONATE resonate_model unit=choice choice=Ring|Bar|Tube|Membrane|Stiffening
+param RESONATE resonate_character unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_morph unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_bow unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drive unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_pluck_strength unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_voicing unit=choice choice=Poly|Mono
+param RESONATE resonate_porta unit=log_seconds min=-11 max=3.3219280948873626 stepped=0
+param RESONATE resonate_octave unit=number min=-3 max=3 stepped=1
+param RESONATE resonate_semitone unit=number min=-12 max=12 stepped=1
+param RESONATE resonate_fine unit=number min=-100 max=100 stepped=0
+param RESONATE resonate_drone_out unit=fader min=0 max=1 stepped=0
+param RESONATE resonate_drone_excite unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_attack unit=log_seconds min=-11 max=5.906890595608519 stepped=0
+param RESONATE resonate_drone_decay unit=log_seconds min=-11 max=5.906890595608519 stepped=0
+param RESONATE resonate_drone_chord_choice unit=choice choice=Unison|Fifth|Octave|Fifth + Octave|Major|Minor|Sus4|Sitar|Tanpura|Tanpura Ma|Sus2|Add9|Maj7|Min7|Dom7|Min9|Quartal|Dim|Aug|Bilawal (Ionian)|Yaman (Lydian)|Khamaj (Mixolydian)|Kafi (Dorian)|Asavari (Aeolian)|Bhairavi (Phrygian)|Bhairav (Double Harmonic)|Todi (Phrygian ♯4 ♮7)|Purvi (Lydian ♭2 ♭6)|Marwa (Lydian ♭2, no 5th)|Bhupali (Major Pentatonic)|Malkauns (Pentatonic, no 5th)|Durga (Suspended Pentatonic)
+param RESONATE resonate_drone_character unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param RESONATE resonate_drone_width unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_root unit=note min=24 max=96 stepped=1
+param RESONATE resonate_size_taps unit=number min=32 max=256 stepped=0
+param RESONATE resonate_width unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_blend unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_level unit=fader min=0 max=1 stepped=0
+param RESONATE resonate_mix unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_sustain unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_jawari unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_bridge_curve unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_sympathy_notes unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_voice unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_stiffness unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_body unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_twin unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_cycle unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param RESONATE resonate_drone_cycle_sync unit=choice choice=Off|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param RESONATE resonate_head_release unit=choice choice=Gate|Ring
+param RESONATE resonate_drone_tuning unit=choice choice=Equal|Just
+param RESONATE resonate_ring_decay unit=log_multiple min=-2 max=2 stepped=0
+param RESONATE resonate_drone_cycle_level unit=fader min=0 max=1 stepped=0
+param RESONATE resonate_bounce unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_tension unit=log_multiple min=-4 max=1 stepped=0
+param RESONATE resonate_drone_input unit=fader min=0 max=1 stepped=0
+param RESONATE resonate_string unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_string_excite unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_cycle_transport unit=choice choice=Off|On
+param RESONATE resonate_pickup unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_bridge_fixed unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_pluck unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_jawari unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_bounce unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_sympathy unit=percent min=0 max=1 stepped=0
+param RESONATE resonate_drone_to_wet_fx unit=choice choice=Off|On
+param RESONATE resonate_drone_thread unit=percent min=0.01 max=0.08 stepped=0
+param RESONATE resonate_drone_follow unit=choice choice=Off|On
+param RESONATE resonate_drone_detail unit=choice choice=Full|96|64|48
+retired RESONATE resonate_drone 2026-09-26 the Drone switch became a level: a sympathetic drone the input plays (resonate_drone_level)
+retired RESONATE resonate_size 2026-09-26 Size became continuous and modulatable (resonate_size_taps); still taps, but a stepped control turned continuous is a new meaning to the ledger
+retired RESONATE resonate_drone_level 2026-09-26 the drone's level became its own output fader after Level and Blend (resonate_drone_out)
+retired RESONATE resonate_drone_chord 2026-09-26 the Chord became one unbounded coordinate through the φ landscape, the house zone-knob convention (resonate_drone_chord_coord)
+retired RESONATE resonate_drone_chord_coord 2026-09-26 the Chord split in two: the chord a Choice (resonate_drone_chord_choice), its φ driver a plain number (resonate_drone_phase)
+retired RESONATE resonate_drone_phase 2026-09-27 the Drone Phase (a plain number) became the Character, the house zoned coordinate (resonate_drone_character)
+retired RESONATE resonate_drone_cycle_rate 2026-09-28 the Cycle's rate became tempo-synced note divisions, Off first (resonate_drone_cycle_sync)
+retired RESONATE resonate_bridge_loss 2026-09-28 the all-pass contact and its Loss were replaced; how hard the string comes off the bridge is Bounce (resonate_bounce), 1 elastic: the opposite sense
+retired RESONATE resonate_pluck 2026-10-04 Pluck Sens (the onset detector's threshold) became Pluck, how hard every pluck deforms the ring, onsets and the Cycle's alike (resonate_pluck_strength); the threshold is fixed at the old default
+retired RESONATE resonate_sympathy 2026-10-05 Sympathy's reach grew and its law bent (resonate_sympathy_reach): v15's full Sympathy is now mid-travel, the top 1.8x it, and the played notes ride the bridge too
+retired RESONATE resonate_sympathy_reach 2026-10-05 Sympathy became the yielding bridge's lightness on a log law (resonate_sympathy_bridge): every string ends on one bridge that conserves energy; the coupling through the ears is gone
+retired RESONATE resonate_sympathy_bridge 2026-10-05 Sympathy's range widened (resonate_sympathy_bridge_wide): the bridge mass now runs 843 to 63 (was 843 to 150), the old top is the new default; a rescale, so a new key
+retired RESONATE resonate_sympathy_bridge_wide 2026-10-05 Sympathy became the notes' strings' alone (resonate_sympathy_notes); the drone's strings have Drone Sympathy (resonate_drone_sympathy)

@@ -1,0 +1,21 @@
+# Schema ledger for SNH (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device SNH - schema=1
+param SNH source unit=choice choice=White|Pink|Brown|Input
+param SNH input unit=percent min=-1 max=1 stepped=0
+param SNH clock unit=choice choice=Rate|Note|Trig|Random
+param SNH time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param SNH rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param SNH slew unit=log_seconds min=-11 max=0 stepped=0
+param SNH quantize unit=number min=0 max=48 stepped=1
+param SNH probability unit=percent min=0 max=1 stepped=0
+param SNH seed_mode unit=choice choice=Stable|Free
+param SNH seed unit=number min=0 max=999 stepped=1
+param SNH bipolar unit=choice choice=Off|On
+param SNH poly unit=choice choice=Off|On
+param SNH amount unit=percent min=-1 max=1 stepped=0
+param SNH enabled unit=choice choice=Off|On
+param SNH trig unit=percent min=0 max=1 stepped=0
+block SNH snh_hold floats=97
+out SNH held bipolar=1
+out SNH trig_out bipolar=0

@@ -1,0 +1,19 @@
+# bench_patch STANDING plan (engine): backlog OR. The Additive engine at 8 / 16 / 32 voices (32 = 16 voices x Stack 2, 0x65=2; the pool is 16),
+# one note per voice, plain / drawer heavy (nine drawer operators on sound 0) / Vocode live (noise sidechain) / A-PH on (Phases = Sub priority, 0x49=2).
+# V5 beside it at the same counts. Idle readings: the idle phase of every row.
+v5_8 --voice-count 8 --notes 8 --step 2 --note 40 --idle 0.25 --held 1.5 --tail 0.25
+v5_16 --voice-count 16 --notes 16 --step 2 --note 40 --idle 0.25 --held 1.5 --tail 0.25
+v5_32 --voice-count 16 --notes 16 --step 2 --note 40 --param 0x65=2 --idle 0.25 --held 1.5 --tail 0.25
+add_8 --engine additive --voice-count 8 --notes 8 --step 2 --note 40 --idle 0.25 --held 1.5 --tail 0.25
+add_16 --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --idle 0.25 --held 1.5 --tail 0.25
+add_32 --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --param 0x65=2 --idle 0.25 --held 1.5 --tail 0.25
+add_8_drawer --engine additive --voice-count 8 --notes 8 --step 2 --note 40 --sp 0:FilterOn=1 --sp 0:CombOn=1 --sp 0:TiltOn=1 --sp 0:OddEvenOn=1 --sp 0:FormantOn=1 --sp 0:PartialsOn=1 --sp 0:DampOn=1 --sp 0:StretchOn=1 --sp 0:ShiftOn=1 --idle 0.25 --held 1.5 --tail 0.25
+add_16_drawer --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --sp 0:FilterOn=1 --sp 0:CombOn=1 --sp 0:TiltOn=1 --sp 0:OddEvenOn=1 --sp 0:FormantOn=1 --sp 0:PartialsOn=1 --sp 0:DampOn=1 --sp 0:StretchOn=1 --sp 0:ShiftOn=1 --idle 0.25 --held 1.5 --tail 0.25
+add_32_drawer --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --param 0x65=2 --sp 0:FilterOn=1 --sp 0:CombOn=1 --sp 0:TiltOn=1 --sp 0:OddEvenOn=1 --sp 0:FormantOn=1 --sp 0:PartialsOn=1 --sp 0:DampOn=1 --sp 0:StretchOn=1 --sp 0:ShiftOn=1 --idle 0.25 --held 1.5 --tail 0.25
+add_8_vocode --engine additive --voice-count 8 --notes 8 --step 2 --note 40 --sp 0:VocodeOn=1 --sidechain 1 --idle 0.25 --held 1.5 --tail 0.25
+add_16_vocode --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --sp 0:VocodeOn=1 --sidechain 1 --idle 0.25 --held 1.5 --tail 0.25
+add_32_vocode --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --param 0x65=2 --sp 0:VocodeOn=1 --sidechain 1 --idle 0.25 --held 1.5 --tail 0.25
+add_8_aph --engine additive --voice-count 8 --notes 8 --step 2 --note 40 --param 0x49=2 --idle 0.25 --held 1.5 --tail 0.25
+add_16_aph --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --param 0x49=2 --idle 0.25 --held 1.5 --tail 0.25
+add_32_aph --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --param 0x65=2 --param 0x49=2 --idle 0.25 --held 1.5 --tail 0.25
+add_16_all --engine additive --voice-count 16 --notes 16 --step 2 --note 40 --param 0x49=2 --sp 0:VocodeOn=1 --sp 0:FilterOn=1 --sp 0:CombOn=1 --sp 0:TiltOn=1 --sp 0:OddEvenOn=1 --sp 0:FormantOn=1 --sp 0:PartialsOn=1 --sidechain 1 --idle 0.25 --held 1.5 --tail 0.25

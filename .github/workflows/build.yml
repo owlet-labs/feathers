@@ -1,0 +1,374 @@
+name: build
+
+# Three platforms, native toolchains. scripts/env.sh is NOT used here — it points at the local
+# dbt toolchain and is for that machine only.
+#
+# TRIGGERS ARE DELIBERATELY MANUAL.
+#
+# This used to be `push: branches: ["**"]`, which meant EVERY push on EVERY branch ran the whole
+# matrix — and with three sessions pushing working branches all day that is most of a budget spent on
+# builds nobody asked for. The local loop is the real gate anyway: a clean configure with
+# FEATHERS_BUILD_TOOLS=ON, ninja and ctest by exit code, and the change's own cases by name through
+# scripts/run-cases.sh. CI's distinct value is the platforms this machine is not — macOS, and Windows
+# when that leg comes back — which is worth spending on a build that is meant to be installed, not on every
+# intermediate commit.
+#
+# So: tags still build (a tag is a release), and workflow_dispatch is how anyone asks for one. Add a
+# push trigger back only with explicit approval.
+on:
+  push:
+    tags: ["v*"]      # a tag is a release; branch pushes deliberately do NOT build
+  workflow_dispatch:
+    inputs:
+      survey_warnings:
+        description: "Diagnostic run: report ALL warnings and errors instead of stopping at the first (-Werror off, ninja -k 0). Never merge with this on."
+        type: boolean
+        default: false
+      only_leg:
+        description: "Run one leg only (linux-x86_64, windows-x86_64 or macos-universal2); empty runs all three. For iterating on one platform without paying for the others."
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ccache holds the COMPILED objects of everything the SDK-download cache below only fetches as
+# SOURCE: bgfx, freetype, the VST3 SDK, clap, the character layer, visage, feathers and
+# the tests. The runners are ephemeral, so without it every run recompiles all of that from
+# scratch — which is the bulk of the build time. With a warm cache, a feathers-only edit
+# recompiles only the feathers TUs and relinks (the CI analogue of the 9.5s local incremental),
+# and a run with no source change at all compiles nothing. Keyed per-OS; a runner image update
+# changes the compiler and the cache misses safely rather than replaying stale objects.
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 3G
+
+jobs:
+  build:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ fromJSON('{"linux-x86_64":"ubuntu-latest","windows-x86_64":"windows-latest","macos-universal2":"macos-latest"}')[matrix.leg] }}
+    # Windows is bounded so a hang costs at most this. 150 and not 90: its COLD build MEASURED 1 h 48 min (run
+    # 42565871384, 804 of 815 compiles missed ccache), and tests took 22 min; a warm cache should allow less.
+    timeout-minutes: ${{ matrix.leg == 'windows-x86_64' && 150 || 360 }}
+    # PER-LEG SETTINGS, looked up by leg rather than listed as matrix includes, so that `only_leg` can narrow
+    # the one axis: an include whose leg is not in the axis is ADDED as a new combination, so includes cannot
+    # be filtered, and an exclude cannot name a value computed from the inputs.
+    env:
+      # The only leg that runs the platform-pinned suites. See the ctest step.
+      PLATFORM_PINNED: ${{ matrix.leg == 'linux-x86_64' }}
+      # macOS: both slices in one binary. macos-latest runners are arm64, and a Bitwig or Live user on an
+      # Intel Mac needs the x86_64 half; the tests run as the runner's native arch. Pinned to macOS 15.0
+      # (Sequoia) so the binary targets a 15.x host runtime; the unpinned build targets the macOS 26 SDK,
+      # whose binaries a Sequoia host cannot load. std::from_chars(FP) in audition.cpp is gated to macOS 26
+      # by the SDK, so that call was replaced with a C-locale strtod_l (see parseNumber). Quoted because
+      # the list separator is a semicolon and the run step is a shell.
+      #
+      # It also builds the macOS UI integrity venue (tools/macos_probe.mm) rather than the X11 hosts, which
+      # are Linux only. Off everywhere else because the hosts need an X display.
+      #
+      # Windows: MSVC through Ninja (the msvc-dev-cmd step below). The plugin builds with visage compiled
+      # in but NO EDITOR offered to a host: the Windows embed is not written yet (PluginWindow::isAvailable),
+      # so for now a Windows host gets the synth without its window. The widget suites are not built there
+      # for the same reason (tests/CMakeLists.txt, the `if(TARGET visage AND NOT WIN32)` block).
+      CMAKE_EXTRA: ${{ matrix.leg == 'macos-universal2' && '-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DFEATHERS_BUILD_TOOLS=ON' || '' }}
+    strategy:
+      # One platform failing should not hide what the other two would have said.
+      fail-fast: false
+      matrix:
+        # All three, or only the one `only_leg` names.
+        leg: ${{ fromJSON(inputs.only_leg != '' && format('["{0}"]', inputs.only_leg) || '["linux-x86_64","windows-x86_64","macos-universal2"]') }}
+
+    steps:
+      # The Windows runner's git converts LF to CRLF on checkout. The clap-wrapper patches are applied with
+      # `git apply` at configure time and the test fixtures are compared byte for byte, so check out the
+      # bytes that are committed.
+      - name: Keep line endings as committed
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Check out feathers
+        uses: actions/checkout@v4
+        with:
+          # All submodules are public now: clap, clap-helpers, clap-wrapper, the sst libraries and
+          # simde. The private firmware submodule is gone — the character layer lives in
+          # src/character/ and is Owlet's own code — so this is an ordinary anonymous checkout and
+          # needs no secret. Fork PRs work again; they could not while a secret was required, because
+          # forks do not receive them.
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # ninja + ccache: not in the runner image. libasound2-dev: RtAudio and RtMidi need at
+          # least one audio backend for the standalone, and ALSA is the one every Linux has.
+          # libx11-dev: clap-wrapper's Linux standalone opens its plugin window through X11.
+          # The rest is visage v1's Linux backend (fontconfig, xcb present/randr/xfixes/sync/render, SM/ICE, XTest),
+          # kept equal to docker/Dockerfile's list (the dev image) — a package added there must be added here too.
+          sudo apt-get install -y ninja-build ccache libasound2-dev libx11-dev \
+            libxrandr-dev pkg-config libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev \
+            libsm-dev libice-dev libxtst-dev \
+            libfontconfig-dev libxcb-present-dev libx11-xcb-dev \
+            libxcb-randr0-dev libxcb-xfixes0-dev libxcb-sync-dev libxcb-render0-dev
+
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja ccache
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        run: choco install -y --no-progress ninja ccache
+
+      # Ninja on all three so the build is single-config and the artifact paths below are the same
+      # everywhere; the Visual Studio generator would bury the outputs under build/Release.
+      - name: Set up the MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # clap-wrapper fetches the VST3 SDK (~47 MB), RtAudio and RtMidi at configure time. Keyed on the
+      # file that holds the GIT_TAGs it asks for, so bumping the clap-wrapper submodule to a version
+      # wanting different SDKs invalidates the cache and nothing else does.
+      # visage FetchContent's bgfx + freetype (~tens of MB) land in build/_deps rather than build/cpm;
+      # the macOS leg now pulls visage for the editor, so cache that too. The key also hashes
+      # visage's CMakeLists so a FetchContent tag bump invalidates it.
+      - name: Cache the configure-time SDK downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/cpm
+            build/_deps
+          key: cpm-${{ runner.os }}-${{ hashFiles('libs/clap-wrapper/cmake/base_sdks.cmake') }}-${{ hashFiles('libs/visage/CMakeLists.txt') }}
+          restore-keys: cpm-${{ runner.os }}-
+
+      # The compiled-object counterpart of the source cache above. The SDK cache spares the
+      # download; this one spares the COMPILE of everything that was downloaded plus every
+      # dependency and every feathers TU — which measured 6-7.5 min of the ~8.5 min job.
+      # sha in the key with an OS prefix in restore-keys: never an exact hit, always the freshest
+      # save for the platform, exactly like upstream's recommended pattern for continuously
+      # growing caches. A cache from a compiler the runner no longer has simply misses per object
+      # (ccache's compiler check) rather than replaying stale objects, so a runner image update
+      # degrades to a cold build instead of a wrong one.
+      #
+      # RESTORE AND SAVE ARE SEPARATE STEPS, and the save runs even when a later step fails. actions/cache saves only
+      # on a green job, so a leg that kept going red (Windows, its first week) never saved anything and every run
+      # compiled from cold: MEASURED, 11 hits in 815 on a run whose only changes were tests.
+      - name: Restore compiled objects (ccache)
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-objects-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-objects-${{ runner.os }}-
+
+      - name: Configure
+        shell: bash
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DFEATHERS_WARNINGS_AS_ERRORS=${{ inputs.survey_warnings && 'OFF' || 'ON' }} ${{ env.CMAKE_EXTRA }}
+
+      - name: Build
+        shell: bash
+        run: |
+          # A survey keeps going past failed edges (ninja -k 0), so one run reports every error too. So does Windows
+          # always: its runs are the slowest and dearest, and a build that stops at its first error spends one run per
+          # error (the leg still fails on any of them; -k changes what is reported, not what passes).
+          cmake --build build ${{ (inputs.survey_warnings || runner.os == 'Windows') && '-- -k 0' || '' }}
+          # What the plugin targets put on disk, by name — the layout differs per platform and the upload
+          # step below lists every form.
+          find build -maxdepth 3 \( -name '*.clap' -o -name '*.vst3' -o -name 'feathers*standalone*' \) -prune -print
+          # Hit/miss numbers for the run; a cold cache should say so here rather than surprise
+          # anybody reading the timings.
+          ccache --show-stats
+
+      # Right after the build, before the tests, and whatever the build's outcome: a red build still compiled most of
+      # the tree, and the next run should not pay for it again.
+      - name: Save compiled objects (ccache)
+        if: always() && steps.ccache-restore.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-objects-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Two suites carry the "platform-pinned" label and run on Linux x86-64 only: vox-voice and
+      # flagship, which assert BAKE IDENTITY TO THE BIT. macOS arm64 produces different bits for the
+      # same bake even with -ffp-contract=off — a platform float difference, not a bug. The reason
+      # recorded in tests/CMakeLists.txt.
+      #
+      # The golden-character capture used to be the third, and was the reason this flag was called
+      # `golden`. It is gone: it was dropped with the firmware submodule, and the six fixed-point
+      # operations it half-covered are pinned directly by test_fixedpoint instead.
+      - name: Test
+        shell: bash
+        run: |
+          if [ "$PLATFORM_PINNED" = "true" ]; then
+            # Linux CI is headless. gui-widgets needs a real GL display and is excluded as
+            # headless-incompatible (no display -> SegFault; software-GL/llvmpipe renders blank),
+            # so the pixel/red-channel assertions can't hold. The rest of the suite is CPU/offscreen
+            # bakes and renders fine headless. gui-widgets runs on a host display (DISPLAY=:1), per
+            # the repo's GUI-on-a-host stance.
+            ctest --test-dir build --output-on-failure --label-exclude headless-incompatible
+          else
+            # The platform-pinned suites are Linux-only. macos-probe is NOT a ctest
+            # case — it runs as its own step below so its four exit codes can be interpreted per the
+            # venue rules instead of hard-failing ctest.
+            # Windows: a per-test bound, so a suite that hangs there fails in five minutes and names itself instead of
+            # holding the job until GitHub cancels it (run 42531659871 did, at 3 h: spike-log spinning on a thread CPU
+            # clock Windows does not provide; that suite is now built but not run there, see tests/CMakeLists.txt).
+            ctest --test-dir build --output-on-failure --label-exclude "platform-pinned|headless-incompatible" ${{ runner.os == 'Windows' && '--timeout 300' || '' }}
+          fi
+
+      # BACKLOG LP: Resonate renders a different buzz on macOS arm64. This prints one setup's stages as exact bits on every
+      # leg so the two logs can be diffed (grep '^LP '); the first line that differs names the computation. Diagnostic only:
+      # it asserts nothing and never fails the job. Delete it with the case once LP is closed.
+      - name: Resonate platform trace (backlog LP)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: FEATHERS_LP_TRACE=1 build/tests/test_fx_resonate -tc="LP trace*" | grep '^LP '
+
+      # THE macOS UI INTEGRITY VENUE. macos-probe opens a real Cocoa window hosting the in-process
+      # shipped editor, drives a parameter storm, and photographs the presented window with CoreGraphics.
+      # It is run here rather than via ctest because the venue rules demand three distinct outcomes,
+      # each with its own meaning — and a venue that can't express one must not count as evidence for
+      # any of them:
+      #   0 = the editor responded AND the known-bad control fired (or, in control mode, fired) — green
+      #   1 = the detector is dead (storm moved nothing, or known-bad did not fire) — red
+      #   2 = the editor failed to open — red
+      #   3 = INCONCLUSIVE (no display / capture failed) — skipped, NOT green: silence is not evidence
+      # Run under FEATHERS_REDUCED_MOTION so the editor's own animation can't make every run report changed.
+      - name: macOS UI probe
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          FEATHERS_REDUCED_MOTION: 1
+        run: |
+          # macos-probe exits 3 for INCONCLUSIVE (no display / capture failed) and that must NOT
+          # fail the job — set -e (GitHub's default for run:) would abort on its non-zero exit before
+          # the handling below runs. Capture the code explicitly and interpret it per the venue rules.
+          set +e
+          build/macos-probe
+          rc=$?
+          if [ "$rc" -eq 3 ]; then
+            echo "::warning::macos-probe was INCONCLUSIVE (no display or capture failed); the venue" \
+                  "could not express an outcome, so this is skipped rather than counted as evidence."
+            exit 0
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "macos-probe failed (exit $rc) — see the venue rules: a detector that cannot fire is" \
+                  "not a detector, and a frozen window is not a pass."
+            exit $rc
+          fi
+          echo "macos-probe: OK"
+
+      # THE macOS INSTALLER ZIP. scripts/macos/install.command is that installer, and this
+      # step is what puts it in a zip beside the two bundles.
+      #
+      # SIGNING FIRST. Apple silicon refuses to load a Mach-O with no code signature at all, quarantine
+      # or not, and neither CMake nor clap-wrapper signs anything. The linker ad-hoc signs an arm64
+      # slice as it links, but a bundle assembled afterwards has no CodeResources for its plist, so
+      # the bundle as a whole does not verify. An ad-hoc signature (`--sign -`) is the most we can
+      # give without a Developer ID; it is enough for loading, not for Gatekeeper, which is why the
+      # installer script strips quarantine. Signed IN PLACE in build/, so the plain artifact below
+      # ships the same signed bundles. `--verify --deep --strict` is the check; a bundle that does
+      # not verify here would be one a Mac cannot load, and the job fails rather than ship it.
+      #
+      # ZIPPED WITH ditto -c -k, not upload-artifact's own packing: upload-artifact drops symlinks
+      # and permission bits, which would lose install.command's executable bit and anything a bundle
+      # links internally. So the download is GitHub's zip around ours; the inner one is the one that
+      # keeps the bundles intact.
+      - name: Sign the bundles and build the installer zip
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA:0:7}"
+          name="Feathers-macos-universal2-$short"
+          stage="build/installer/$name"
+          rm -rf build/installer
+          mkdir -p "$stage"
+          # THE BUNDLE AS BUILT, TOUCHED BY NOTHING, AND EVERY CODESIGN FACT ABOUT IT PRINTED — NONE
+          # OF THEM FATAL. Four runs of one step taught the shape (2026-09-08, backlog DC):
+          #
+          #   run 8   `codesign --force --deep --sign -` on the bundle: sealed, valid — and a
+          #           hand copy of it, recursively dequarantined, did not load while the untouched
+          #           .vst3 beside it did.
+          #   run 10  sign the executable only: codesign given a bundle's MAIN EXECUTABLE resolves
+          #           the bundle and signs it AS a bundle (the man page's rule); the seal came back.
+          #   run 11  sign nothing, `rm -rf _CodeSignature`, verify the executable in place:
+          #           "code has no resources but signature indicates they must be present" — the
+          #           embedded signature, judged in its bundle, wants a resource envelope. Whether
+          #           that is the linker's own signature read in bundle context or a signature some
+          #           build step wrote cannot be told from a Linux host, and the build system signs
+          #           nothing for the CLAP or VST3 wraps (grepped: only the AUv2/AUv3 wraps codesign).
+          #
+          # So this step stops deciding. It stages the bundle EXACTLY as the build left it — the
+          # state the loading .vst3 was in — removes nothing, signs nothing, and prints: whether a
+          # seal exists as built; the bundle-level verify; the executable's verify and display on a
+          # BARE COPY outside the bundle (same bytes, same embedded signature, no bundle context);
+          # and the display of the bundle itself. Every command's output is captured and echoed
+          # whether it succeeds or fails, and none fails the step: under `set -e` a failing command
+          # whose output went to a variable dies with its message in the variable and nothing in the
+          # log, which is what run 11 looked like until the log was found. the Mac says whether
+          # the untouched bundle loads; this log says what it carried. One run answers both.
+          say() { local label="$1"; shift; local out; if out="$("$@" 2>&1)"; then echo "$label: OK"; else echo "$label: FAILED (exit $?)"; fi; printf '%s\n' "$out" | sed 's/^/    /'; }
+          for b in feathers.clap feathers-chain.clap feathers.vst3 feathers-chain.vst3; do
+            test -d "build/$b" || { echo "build/$b is missing"; exit 1; }
+            exe="build/$b/Contents/MacOS/${b%.*}"
+            test -f "$exe" || { echo "$exe is missing"; exit 1; }
+            echo "== $b as built =="
+            ls -la "build/$b/Contents"
+            if [ -e "build/$b/Contents/_CodeSignature" ]; then echo "seal: Contents/_CodeSignature EXISTS as built"; ls -la "build/$b/Contents/_CodeSignature"; else echo "seal: none as built"; fi
+            say "bundle verify (--deep --strict)" codesign --verify --deep --strict --verbose=2 "build/$b"
+            say "bundle display" codesign -dv --verbose=4 "build/$b"
+            probe="$(mktemp -d)"
+            cp "$exe" "$probe/mach-o"
+            say "bare executable verify (arm64)" codesign --verify --strict --verbose=2 --architecture arm64 "$probe/mach-o"
+            say "bare executable display (arm64)" codesign -dv --verbose=4 --architecture arm64 "$probe/mach-o"
+            say "bare executable display (x86_64)" codesign -dv --verbose=4 --architecture x86_64 "$probe/mach-o"
+            rm -rf "$probe"
+            ditto "build/$b" "$stage/$b"
+          done
+          cp scripts/macos/install.command scripts/macos/README.txt "$stage/"
+          chmod +x "$stage/install.command"
+          ditto -c -k --keepParent "$stage" "build/installer/$name.zip"
+          shasum -a 256 "build/installer/$name.zip"
+
+      - name: Upload the macOS installer zip
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: feathers-macos-universal2-installer
+          if-no-files-found: error
+          retention-days: 7
+          path: build/installer/Feathers-macos-universal2-*.zip
+
+      # macOS bundles are AD-HOC signed by the step above — enough for Apple silicon to load them, but
+      # not Developer-ID signed and not notarised: Gatekeeper will still quarantine them on download,
+      # and a user has to clear it by hand (xattr -dr com.apple.quarantine, or the installer zip's
+      # install.command) until we have a Developer ID.
+      - name: Upload plugin artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: feathers-${{ matrix.leg }}
+          if-no-files-found: error
+          # Default is 90 days, which piled 156 builds (1.9 GB) into a 500 MB storage tier in one
+          # month. A week is long enough to pull a build off a run you are still looking at.
+          retention-days: 7
+          # Two layouts, both listed rather than globbed. On Linux and macOS clap-wrapper puts the
+          # assets straight into ASSET_OUTPUT_DIRECTORY; on Windows it sorts them into CLAP/, VST3/
+          # and Standalone-<target>/ subdirectories of it. Paths that do not exist on a given platform
+          # are simply not matched.
+          path: |
+            build/feathers.clap
+            build/THIRD-PARTY-NOTICES.md
+            build/feathers.vst3
+            build/feathers-chain.clap
+            build/feathers-chain.vst3
+            build/feathers-standalone
+            build/feathers-standalone.app
+            build/CLAP/feathers.clap
+            build/VST3/feathers.vst3
+            build/CLAP/feathers-chain.clap
+            build/VST3/feathers-chain.vst3
+            build/Standalone-feathers_standalone/feathers-standalone.exe

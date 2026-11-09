@@ -1,0 +1,47 @@
+# Schema ledger for DISPERSE (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device DISPERSE - schema=1
+param DISPERSE disperser_enabled unit=choice choice=Off|On
+param DISPERSE disperser_topo_mode unit=choice choice=Cascade|Ladder|Owlpass|Cross|Parallel|Nested|Diffuse|Spring
+param DISPERSE disperser_topo_phase unit=number min=-8388608 max=8388608 stepped=0
+param DISPERSE disperser_twist_mode unit=choice choice=Width|Punch|Curve|Chirp|QTilt|Twist
+param DISPERSE disperser_twist_pos unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_twist_phase unit=number min=0 max=8388608 stepped=0 zones=8
+param DISPERSE disperser_gamma unit=number min=-8388608 max=8388608 stepped=0
+param DISPERSE disperser_stages unit=number min=1 max=32 stepped=1
+param DISPERSE disperser_key_track unit=choice choice=Off|On
+param DISPERSE disperser_freq unit=log_hertz min=0 max=13 stepped=0
+param DISPERSE disperser_offset unit=number min=-6.5 max=6.3984375 stepped=0
+param DISPERSE disperser_q_offset unit=number min=-3 max=3 stepped=0
+param DISPERSE disperser_width unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_punch unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_chirp unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_curve unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_qtilt unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_q unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_detune unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_emphasis unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_harmonic unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_width_power unit=choice choice=Off|On
+param DISPERSE disperser_punch_power unit=choice choice=Off|On
+param DISPERSE disperser_chirp_power unit=choice choice=Off|On
+param DISPERSE disperser_curve_power unit=choice choice=Off|On
+param DISPERSE disperser_qtilt_power unit=choice choice=Off|On
+param DISPERSE disperser_q_power unit=choice choice=Off|On
+param DISPERSE disperser_detune_power unit=choice choice=Off|On
+param DISPERSE disperser_emphasis_power unit=choice choice=Off|On
+param DISPERSE disperser_harmonic_power unit=choice choice=Off|On
+param DISPERSE disperser_mix unit=percent min=0 max=1 stepped=0
+param DISPERSE disperser_wet_gain unit=fader min=0 max=1 stepped=0
+retired DISPERSE disperser_topo 2026-09-26 one unbounded coordinate became the house mode cell: a fenced routing (disperser_topo_mode) and a position inside it (disperser_topo_pos)
+retired DISPERSE disperser_twist 2026-09-26 one unbounded coordinate became the house mode cell: five fenced zones and the infinite Twist (disperser_twist_mode, _pos, _phase)
+retired DISPERSE disperser_topo_pos 2026-09-27 Topo became infinite: a fenced 0..1 position became an unbounded phase (disperser_topo_phase); 0..1 is the same place
+retired DISPERSE disperser_width_on 2026-09-27 off meant the zones' own Width; off now disables it (disperser_width_power)
+retired DISPERSE disperser_punch_on 2026-09-27 off meant the zones' own Punch; off now disables it (disperser_punch_power)
+retired DISPERSE disperser_chirp_on 2026-09-27 off meant the zones' own Chirp; off now disables it (disperser_chirp_power)
+retired DISPERSE disperser_curve_on 2026-09-27 off meant the zones' own Curve; off now the even spread (disperser_curve_power)
+retired DISPERSE disperser_qtilt_on 2026-09-27 off meant the zones' own QTilt; off now disables it (disperser_qtilt_power)
+retired DISPERSE disperser_q_on 2026-09-27 off meant the zones' own Q; off now the firmware's default Q (disperser_q_power)
+retired DISPERSE disperser_detune_on 2026-09-27 off meant the zones' own Detune; off now disables it (disperser_detune_power)
+retired DISPERSE disperser_emphasis_on 2026-09-27 off meant the zones' own Emphasis; off now flat (disperser_emphasis_power)
+retired DISPERSE disperser_harmonic_on 2026-09-27 off meant the zones' own 2f; off now disables it (disperser_harmonic_power)

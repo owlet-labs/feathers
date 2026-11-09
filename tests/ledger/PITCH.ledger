@@ -1,0 +1,13 @@
+# Schema ledger for PITCH (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device PITCH - schema=1
+param PITCH pitch_enabled unit=choice choice=Off|On
+param PITCH pitch_scale unit=choice choice=Free|Chromatic|Major|Minor|MajPent|MinPent|Blues|Dorian|Mixolyd|MajTri|MinTri|Sus4|Dim
+param PITCH pitch_shift unit=number min=-24 max=24 stepped=0
+param PITCH pitch_fine unit=number min=-100 max=100 stepped=0
+param PITCH pitch_mix unit=percent min=0 max=1 stepped=0
+param PITCH pitch_mode unit=choice choice=Smooth|Tight|Reverse
+param PITCH pitch_size unit=number min=5 max=250 stepped=0
+param PITCH pitch_jitter unit=percent min=0 max=1 stepped=0
+param PITCH pitch_width unit=percent min=0 max=1 stepped=0
+param PITCH pitch_feedback unit=percent min=0 max=0.95 stepped=0

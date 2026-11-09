@@ -1,0 +1,17 @@
+# Schema ledger for flt1 (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device flt1 - schema=1
+param flt1 filter_enabled unit=choice choice=Off|On
+param flt1 filter_type unit=choice choice=Lowpass|Highpass|Bandpass|Notch|Peak|Low Shelf|High Shelf|Bell|Comb|Brickwall HP
+param flt1 filter_cutoff_wide unit=log_hertz min=-1 max=14.550746785383243 stepped=0
+param flt1 filter_res unit=percent min=0 max=1 stepped=0
+param flt1 filter_drive unit=percent min=0 max=1 stepped=0
+param flt1 filter_keytrack unit=choice choice=Off|On
+param flt1 filter_macro_1 unit=percent min=-1 max=1 stepped=0
+param flt1 filter_macro_2 unit=percent min=-1 max=1 stepped=0
+param flt1 filter_slope unit=choice choice=6 dB|12 dB|18 dB|24 dB
+param flt1 filter_spread unit=percent min=-1 max=1 stepped=0
+param flt1 filter_poly unit=choice choice=Off|On
+param flt1 filter_mix unit=percent min=0 max=1 stepped=0
+param flt1 filter_wet_gain unit=fader min=0 max=1 stepped=0
+retired flt1 filter_cutoff 2026-10-18 the knob widened from 20 Hz..20 kHz to 0.5 Hz..24 kHz (Z8), so a stored position means another cutoff: filter_cutoff_wide

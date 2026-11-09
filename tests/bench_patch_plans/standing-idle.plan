@@ -1,0 +1,6 @@
+# bench_patch STANDING plan (idle): backlog OR, for PB item 5 (the decision: leave it, keep a revisit and a benchmark).
+# Book of Dreams with NO NOTES under a host that ignores CLAP_PROCESS_SLEEP — bench_patch keeps calling process() whatever the
+# plugin returns, so the idle phase is exactly that host's cost. Beside it the same preset with its four lane devices removed:
+# the floor the lane's idle work sits on. Read the idle rows; held and tail are kept short and are not the point.
+book_idle --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --idle 2 --held 0.1 --tail 0.1
+book_idle_nolane --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --idle 2 --held 0.1 --tail 0.1

@@ -1,0 +1,41 @@
+# Schema ledger for OWLTT (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device OWLTT - schema=1
+param OWLTT mode unit=choice choice=AP 6dB|Quirky|Twisted|Weird|LR2 Fast|LR2 Full|LR4 Fast|LR4 Full|Inverted|Twist3
+param OWLTT enabled unit=choice choice=Off|On
+param OWLTT threshold unit=percent min=0 max=1 stepped=0
+param OWLTT ratio unit=percent min=0 max=1 stepped=0
+param OWLTT bandwidth unit=percent min=0 max=1 stepped=0
+param OWLTT up_down_skew unit=percent min=0 max=1 stepped=0
+param OWLTT attack unit=percent min=0 max=1 stepped=0
+param OWLTT release unit=percent min=0 max=1 stepped=0
+param OWLTT character unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param OWLTT vibe unit=number min=-8388608 max=8388608 stepped=0 zones=8
+param OWLTT low_threshold unit=percent min=0 max=1 stepped=0
+param OWLTT low_ratio unit=percent min=0 max=1 stepped=0
+param OWLTT low_bandwidth unit=percent min=0 max=1 stepped=0
+param OWLTT low_level unit=percent min=0 max=1 stepped=0
+param OWLTT mid_threshold unit=percent min=0 max=1 stepped=0
+param OWLTT mid_ratio unit=percent min=0 max=1 stepped=0
+param OWLTT mid_bandwidth unit=percent min=0 max=1 stepped=0
+param OWLTT mid_level unit=percent min=0 max=1 stepped=0
+param OWLTT high_threshold unit=percent min=0 max=1 stepped=0
+param OWLTT high_ratio unit=percent min=0 max=1 stepped=0
+param OWLTT high_bandwidth unit=percent min=0 max=1 stepped=0
+param OWLTT high_level unit=percent min=0 max=1 stepped=0
+param OWLTT low_crossover unit=number min=20 max=2000 stepped=0
+param OWLTT high_crossover unit=number min=200 max=20000 stepped=0
+param OWLTT output_gain unit=percent min=0 max=1 stepped=0
+param OWLTT blend unit=percent min=0 max=1 stepped=0
+param OWLTT soft_clip unit=choice choice=Off|On
+param OWLTT character_mode unit=choice choice=Width|Timing|Skew|Punch|Air|Rich|Slam|OWLTT|Free
+param OWLTT vibe_mode unit=choice choice=Sync|Spread|Pairs|Cascade|Invert|Pulse|Drift|Chaos|Free
+param OWLTT stereo_link unit=percent min=0 max=1 stepped=0
+param OWLTT stereo_mode unit=choice choice=L/R|M/S
+param OWLTT width unit=percent min=0 max=2 stepped=0
+param OWLTT low_width unit=percent min=0 max=2 stepped=0
+param OWLTT mid_width unit=percent min=0 max=2 stepped=0
+param OWLTT high_width unit=percent min=0 max=2 stepped=0
+param OWLTT drive unit=decibel min=-12 max=24 stepped=0
+param OWLTT lookahead unit=choice choice=Off|1 ms|2 ms|3 ms|4 ms|5 ms|6 ms|7 ms|8 ms|9 ms|10 ms
+param OWLTT owltt_key_track unit=choice choice=Off|On

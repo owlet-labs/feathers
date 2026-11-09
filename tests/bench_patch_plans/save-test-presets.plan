@@ -1,0 +1,85 @@
+# THE TEST PRESETS: every survey patch that is not already a factory preset, saved once through the browser's road
+# (bench_patch --save) under $FEATHERS_PRESET_ROOT/Feathers/Test, tagged test. Run from the repo root, --rounds 1, then
+# copy $FEATHERS_PRESET_ROOT/Feathers/Test/*.fpreset to presets/factory/Feathers/Test/. Host automation, note counts and a
+# sidechain are not patch state, so the automated-Pos-X and note-count rows of the other plans have no preset of their own.
+init_add --engine additive --save test_-_Init_on_Additive --idle 0.05 --held 0.05 --tail 0.05
+dev_flt1 --add flt1 --save test_-_Init_with_Filter --idle 0.05 --held 0.05 --tail 0.05
+dev_HARM --add HARM --save test_-_Init_with_Harm --idle 0.05 --held 0.05 --tail 0.05
+dev_OWLTT --add OWLTT --save test_-_Init_with_OWLTT --idle 0.05 --held 0.05 --tail 0.05
+dev_SKLITTER --add SKLITTER --save test_-_Init_with_SKLITTER --idle 0.05 --held 0.05 --tail 0.05
+dev_wayp --add wayp --save test_-_Init_with_Waypoint --idle 0.05 --held 0.05 --tail 0.05
+dev_drwn --add drwn --save test_-_Init_with_Drawn --idle 0.05 --held 0.05 --tail 0.05
+dev_SHPR --add SHPR --save test_-_Init_with_Shaper --idle 0.05 --held 0.05 --tail 0.05
+dev_AMOD --add AMOD --save test_-_Init_with_Automod --idle 0.05 --held 0.05 --tail 0.05
+dev_DHDS --add DHDS --save test_-_Init_with_DAHDSR --idle 0.05 --held 0.05 --tail 0.05
+dev_MSEG --add MSEG --save test_-_Init_with_MSEG --idle 0.05 --held 0.05 --tail 0.05
+dev_TRAK --add TRAK --save test_-_Init_with_Tracker --idle 0.05 --held 0.05 --tail 0.05
+dev_NEXP --add NEXP --save test_-_Init_with_Note_Expressions --idle 0.05 --held 0.05 --tail 0.05
+dev_busu --add busu --save test_-_Init_with_Bus_Utility --idle 0.05 --held 0.05 --tail 0.05
+dev_cmps --add cmps --save test_-_Init_with_Chain --idle 0.05 --held 0.05 --tail 0.05
+dev_LFO --add LFO --save test_-_Init_with_LFO --idle 0.05 --held 0.05 --tail 0.05
+dev_DELAY --add DELAY --save test_-_Init_with_Delay --idle 0.05 --held 0.05 --tail 0.05
+dev_PITCH --add PITCH --save test_-_Init_with_Pitch --idle 0.05 --held 0.05 --tail 0.05
+dev_ERODER --add ERODER --save test_-_Init_with_Eroder --idle 0.05 --held 0.05 --tail 0.05
+dev_FVERB --add FVERB --save test_-_Init_with_Featherverb --idle 0.05 --held 0.05 --tail 0.05
+dev_comp --add comp --save test_-_Init_with_Compressor --idle 0.05 --held 0.05 --tail 0.05
+dev_clip --add clip --save test_-_Init_with_Clipper --idle 0.05 --held 0.05 --tail 0.05
+dev_RESONATE --add RESONATE --save test_-_Init_with_Resonate --idle 0.05 --held 0.05 --tail 0.05
+dev_MACROS --add MACROS --save test_-_Init_with_Macros --idle 0.05 --held 0.05 --tail 0.05
+dev_MATH --add MATH --save test_-_Init_with_Math --idle 0.05 --held 0.05 --tail 0.05
+dev_smth --add smth --save test_-_Init_with_Smooth_Shaper --idle 0.05 --held 0.05 --tail 0.05
+dev_eq --add eq --save test_-_Init_with_EQ --idle 0.05 --held 0.05 --tail 0.05
+dev_DISPERSE --add DISPERSE --save test_-_Init_with_Disperser --idle 0.05 --held 0.05 --tail 0.05
+dev_PHFL --add PHFL --save test_-_Init_with_Phaser_Flanger --idle 0.05 --held 0.05 --tail 0.05
+dev_STEREO --add STEREO --save test_-_Init_with_Stereo_Tool --idle 0.05 --held 0.05 --tail 0.05
+dev_spectral --add spectral --save test_-_Init_with_Spectral --idle 0.05 --held 0.05 --tail 0.05
+dev_noise --add noise --save test_-_Init_with_Noise --idle 0.05 --held 0.05 --tail 0.05
+dev_rtrig --add rtrig --save test_-_Init_with_Random_Trigger --idle 0.05 --held 0.05 --tail 0.05
+dev_SNH --add SNH --save test_-_Init_with_Sample_and_Hold --idle 0.05 --held 0.05 --tail 0.05
+dev_STEPSEQ --add STEPSEQ --save test_-_Init_with_Step_Seq --idle 0.05 --held 0.05 --tail 0.05
+dev_FOLLOWER --add FOLLOWER --save test_-_Init_with_Follower --idle 0.05 --held 0.05 --tail 0.05
+dev_RACK --add RACK --save test_-_Init_with_Rack --idle 0.05 --held 0.05 --tail 0.05
+dev_inject --add inject --save test_-_Init_with_Sidechain_Inject --idle 0.05 --held 0.05 --tail 0.05
+rack_mode1 --add RACK --set 1:Rack_Mode=1 --save test_-_Rack_in_Select_mode --idle 0.05 --held 0.05 --tail 0.05
+rack_mode2 --add RACK --set 1:Rack_Mode=2 --save test_-_Rack_in_Blend_mode --idle 0.05 --held 0.05 --tail 0.05
+rack_mode3 --add RACK --set 1:Rack_Mode=3 --save test_-_Rack_in_Mid-Side_mode --idle 0.05 --held 0.05 --tail 0.05
+rack_mode4 --add RACK --set 1:Rack_Mode=4 --save test_-_Rack_in_Left-Right_mode --idle 0.05 --held 0.05 --tail 0.05
+rack_mode5 --add RACK --set 1:Rack_Mode=5 --save test_-_Rack_in_Bands_mode --idle 0.05 --held 0.05 --tail 0.05
+spectral_fine --add spectral --set 1:Spectral_Resolution=2 --save test_-_Spectral_at_Fine_resolution --idle 0.05 --held 0.05 --tail 0.05
+spectral_poly --add spectral --set 1:Spectral_Poly=1 --save test_-_Spectral_Poly_one_STFT_per_voice --idle 0.05 --held 0.05 --tail 0.05
+spectral_vocode --add spectral --set 1:Spectral_Vocode=1 --save test_-_Spectral_Vocode_needs_a_sidechain --idle 0.05 --held 0.05 --tail 0.05
+dense_v5 --add HARM --add OWLTT --add SHPR --add PHFL --add DISPERSE --add eq --add comp --add DELAY --add FVERB --add clip --add STEREO --save test_-_Dense_chain_of_11_devices_V5 --idle 0.05 --held 0.05 --tail 0.05
+dense_add --engine additive --add HARM --add OWLTT --add SHPR --add PHFL --add DISPERSE --add eq --add comp --add DELAY --add FVERB --add clip --add STEREO --save test_-_Dense_chain_of_11_devices_Additive --idle 0.05 --held 0.05 --tail 0.05
+mods_lane --add LFO --add LFO --add LFO --add LFO --add MSEG --add MSEG --add STEPSEQ --add SNH --add rtrig --add FOLLOWER --add MATH --add smth --save test_-_12_modulators_in_the_lane_unrouted --idle 0.05 --held 0.05 --tail 0.05
+v5_16 --voice-count 16 --save test_-_16_voices_V5 --idle 0.05 --held 0.05 --tail 0.05
+add_16 --engine additive --voice-count 16 --save test_-_16_voices_Additive --idle 0.05 --held 0.05 --tail 0.05
+book_16 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --voice-count 16 --save test_-_16_voices_Book_of_Dreams --idle 0.05 --held 0.05 --tail 0.05
+v5_16_stack4 --voice-count 16 --param 0x65=4 --save test_-_16_voices_V5_stack_4 --idle 0.05 --held 0.05 --tail 0.05
+add_16_stack4 --engine additive --voice-count 16 --param 0x65=4 --save test_-_16_voices_Additive_stack_4 --idle 0.05 --held 0.05 --tail 0.05
+v5_16_stack8 --voice-count 16 --param 0x65=8 --save test_-_16_voices_V5_stack_8 --idle 0.05 --held 0.05 --tail 0.05
+add_16_stack8 --engine additive --voice-count 16 --param 0x65=8 --save test_-_16_voices_Additive_stack_8 --idle 0.05 --held 0.05 --tail 0.05
+baby_elf_bass_minus0 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 0 --save test_-_Baby_Elf_Bass_without_Filter_1 --idle 0.05 --held 0.05 --tail 0.05
+baby_elf_bass_minus1 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 1 --save test_-_Baby_Elf_Bass_without_Smooth_Shaper --idle 0.05 --held 0.05 --tail 0.05
+baby_elf_bass_minus2 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 2 --save test_-_Baby_Elf_Bass_without_Filter_2 --idle 0.05 --held 0.05 --tail 0.05
+baby_elf_bass_minus3 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 3 --save test_-_Baby_Elf_Bass_without_Harm --idle 0.05 --held 0.05 --tail 0.05
+baby_elf_bass_minus4 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 4 --save test_-_Baby_Elf_Bass_without_Compressor --idle 0.05 --held 0.05 --tail 0.05
+baby_elf_bass_minus5 --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 5 --save test_-_Baby_Elf_Bass_without_Bus_Utility --idle 0.05 --held 0.05 --tail 0.05
+baby_elf_bass_none --preset presets/factory/Feathers/baby_elf_bass.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --remove 4 --remove 5 --save test_-_Baby_Elf_Bass_engine_only_no_lane_devices --idle 0.05 --held 0.05 --tail 0.05
+machine_elf_book_of_dreams_minus0 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 0 --save test_-_Book_of_Dreams_without_Filter --idle 0.05 --held 0.05 --tail 0.05
+machine_elf_book_of_dreams_minus1 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 1 --save test_-_Book_of_Dreams_without_Featherverb --idle 0.05 --held 0.05 --tail 0.05
+machine_elf_book_of_dreams_minus2 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 2 --save test_-_Book_of_Dreams_without_Compressor --idle 0.05 --held 0.05 --tail 0.05
+machine_elf_book_of_dreams_minus3 --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 3 --save test_-_Book_of_Dreams_without_SKLITTER --idle 0.05 --held 0.05 --tail 0.05
+machine_elf_book_of_dreams_none --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --save test_-_Book_of_Dreams_engine_only_no_lane_devices --idle 0.05 --held 0.05 --tail 0.05
+pan_tanpura_minus0 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 0 --save test_-_Pan_Tanpura_without_Filter --idle 0.05 --held 0.05 --tail 0.05
+pan_tanpura_minus1 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 1 --save test_-_Pan_Tanpura_without_EQ --idle 0.05 --held 0.05 --tail 0.05
+pan_tanpura_minus2 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 2 --save test_-_Pan_Tanpura_without_Resonate --idle 0.05 --held 0.05 --tail 0.05
+pan_tanpura_minus3 --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 3 --save test_-_Pan_Tanpura_without_Delay --idle 0.05 --held 0.05 --tail 0.05
+pan_tanpura_none --preset presets/factory/Feathers/pan_tanpura.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --save test_-_Pan_Tanpura_engine_only_no_lane_devices --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_minus0 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 0 --save test_-_Wood_Elves_without_Eroder --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_minus1 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 1 --save test_-_Wood_Elves_without_Resonate --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_minus2 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 2 --save test_-_Wood_Elves_without_Delay --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_minus3 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 3 --save test_-_Wood_Elves_without_Automod --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_minus4 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 4 --save test_-_Wood_Elves_without_Featherverb --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_minus5 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 5 --save test_-_Wood_Elves_without_Compressor --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_minus6 --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 6 --save test_-_Wood_Elves_without_Bus_Utility --idle 0.05 --held 0.05 --tail 0.05
+wood_elves_pan_none --preset presets/factory/Feathers/wood_elves_pan.fpreset --remove 0 --remove 1 --remove 2 --remove 3 --remove 4 --remove 5 --remove 6 --save test_-_Wood_Elves_engine_only_no_lane_devices --idle 0.05 --held 0.05 --tail 0.05

@@ -1,0 +1,17 @@
+# Schema ledger for clip (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device clip - schema=1
+param clip clip_enabled unit=choice choice=Off|On
+param clip clip_mode unit=choice choice=Soft|Texture|Grit|Fold|Bits
+param clip clip_drive unit=decibel min=-24 max=24 stepped=0
+param clip clip_ceiling unit=decibel min=-24 max=0 stepped=0
+param clip clip_output unit=decibel min=-24 max=12 stepped=0
+param clip clip_oversample unit=choice choice=Off|4x
+param clip clip_knee unit=percent min=0 max=1 stepped=0
+param clip clip_freq unit=log_hertz min=8.965784284662087 max=13.550746785383243 stepped=0
+param clip clip_foldback unit=percent min=0 max=1 stepped=0
+param clip clip_grit unit=percent min=0 max=1 stepped=0
+param clip clip_depth unit=percent min=0 max=1 stepped=0
+param clip clip_bits unit=choice choice=1 bit|2 bit
+param clip clip_mix unit=percent min=0 max=1 stepped=0
+param clip clip_wet_gain unit=fader min=0 max=1 stepped=0

@@ -1,0 +1,19 @@
+# bench_patch STANDING plan (devices): backlog OR, the perf survey's "standing set". Run by scripts/bench-standing.sh.
+# One lane device added to Init (V5, 4 notes, 256 frames) at its defaults and at a worst-case setting; the idle phase of every row is the idle/sleep reading.
+base_v5 --idle 0.5 --held 1.5 --tail 0.5
+base_add --engine additive --idle 0.5 --held 1.5 --tail 0.5
+drwn_default --add drwn --idle 0.5 --held 1.5 --tail 0.5
+fverb_default --add FVERB --idle 0.5 --held 1.5 --tail 1
+fverb_worst --add FVERB --set 1:Featherverb_Oversample=1 --set 1:Featherverb_Room=0.95 --set 1:Featherverb_Conv_Mode=2 --idle 0.5 --held 1.5 --tail 1
+resonate_default --add RESONATE --idle 0.5 --held 1.5 --tail 0.5
+resonate_worst --add RESONATE --set 1:Resonate_Size=256 --set 1:Resonate_Sympathy=1 --set 1:Resonate_Sustain=1 --idle 0.5 --held 1.5 --tail 0.5
+spectral_default --add spectral --idle 0.5 --held 1.5 --tail 0.5
+spectral_fine --add spectral --set 1:Spectral_Resolution=2 --idle 0.5 --held 1.5 --tail 0.5
+spectral_poly --add spectral --set 1:Spectral_Poly=1 --idle 0.5 --held 1.5 --tail 0.5
+spectral_fine_poly_8 --add spectral --set 1:Spectral_Resolution=2 --set 1:Spectral_Poly=1 --notes 8 --step 2 --note 40 --idle 0.5 --held 1.5 --tail 0.5
+spectral_vocode --add spectral --set 1:Spectral_Vocode=1 --sidechain 1 --idle 0.5 --held 1.5 --tail 0.5
+spectral_vocode_fine --add spectral --set 1:Spectral_Vocode=1 --set 1:Spectral_Resolution=2 --sidechain 1 --idle 0.5 --held 1.5 --tail 0.5
+preset_baby_elf_bass --preset presets/factory/Feathers/baby_elf_bass.fpreset --idle 0.5 --held 1.5 --tail 0.5
+preset_book_of_dreams --preset presets/factory/Feathers/machine_elf_book_of_dreams.fpreset --idle 0.5 --held 1.5 --tail 0.5
+preset_pan_tanpura --preset presets/factory/Feathers/pan_tanpura.fpreset --idle 0.5 --held 1.5 --tail 0.5
+preset_wood_elves_pan --preset presets/factory/Feathers/wood_elves_pan.fpreset --idle 0.5 --held 1.5 --tail 0.5

@@ -1,0 +1,29 @@
+# Schema ledger for ARP (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device ARP - schema=1
+param ARP enabled unit=choice choice=Off|On
+param ARP time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param ARP rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param ARP order unit=choice choice=Up|Down|Up-Down|Up-Down Repeat|Played|Random
+param ARP octaves unit=number min=1 max=4 stepped=1
+param ARP octave_mode unit=choice choice=Each Note|Whole Chord
+param ARP gate unit=percent min=0.01 max=2 stepped=0
+param ARP feel unit=choice choice=Straight|Swing 4|Swing 8|Swing 16|Groove 4|Groove 8|Groove 16|Free 4|Free 8|Free 16
+param ARP feel_amount unit=percent min=0 max=1 stepped=0
+param ARP free_phase unit=number min=-8388608 max=8388608 stepped=0
+param ARP wobble unit=number min=-8388608 max=8388608 stepped=0
+param ARP fixed_velocity unit=choice choice=Off|On
+param ARP velocity unit=percent min=0 max=1 stepped=0
+param ARP latch unit=choice choice=Off|On
+param ARP offset unit=number min=-16 max=16 stepped=1
+param ARP nudge unit=percent min=-0.5 max=0.5 stepped=0
+param ARP run unit=choice choice=Always|Transport|Note
+param ARP seed unit=number min=0 max=999 stepped=1
+block ARP arp_play floats=103
+out ARP step bipolar=0
+out ARP pitch bipolar=0
+out ARP velocity bipolar=0
+retired ARP velocity_mode 2026-10-30 a Played/Fixed choice became the Off/On switch fixed_velocity, so its chip names what it toggles
+retired ARP swing 2026-10-30 the swing knob is replaced by the bar feel (feel + feel_amount), shared with the Pattern device's Humanize
+retired ARP free_fine 2026-11-07 a second zone was meant as orthogonal phi fields for more nuanced control, not finer steps
+retired ARP stop_with_transport 2026-11-07 the Only w/ Transport switch became Run (Always, Transport, Note) — its Off and On are carried

@@ -372,3 +372,52 @@ jobs:
             build/CLAP/feathers-chain.clap
             build/VST3/feathers-chain.vst3
             build/Standalone-feathers_standalone/feathers-standalone.exe
+
+  # A v* tag is a release: once every leg is green, publish one asset per platform. Linux and Windows
+  # are zipped here from their artifacts; artifact packing drops the executable bit, so the Linux
+  # standalone gets it back first. macOS ships the installer zip exactly as its leg built it (ditto keeps
+  # the bundles' symlinks and install.command's executable bit, which a zip made here could not).
+  release:
+    name: Create release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: feathers-*
+          path: dist
+
+      - name: Package one zip per platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir out
+          tag="${GITHUB_REF_NAME}"
+          chmod +x dist/feathers-linux-x86_64/feathers-standalone
+          (cd dist/feathers-linux-x86_64 && zip -qr "../../out/feathers-${tag}-linux-x86_64.zip" .)
+          (cd dist/feathers-windows-x86_64 && zip -qr "../../out/feathers-${tag}-windows-x86_64.zip" .)
+          mac=(dist/feathers-macos-universal2-installer/Feathers-macos-universal2-*.zip)
+          test "${#mac[@]}" -eq 1 && test -f "${mac[0]}"
+          cp "${mac[0]}" "out/feathers-${tag}-macos-universal2.zip"
+          ls -l out
+          (cd out && sha256sum *.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Create the release and upload the assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Feathers ${{ github.ref_name }}
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            A pre-release build of Feathers for Linux x86-64, macOS (universal) and Windows x86-64, as CLAP
+            and VST3 plugins with a standalone. See the README's "Trying it" section for installing, including
+            clearing macOS quarantine. The macOS builds are ad-hoc signed, not notarised. On Windows the
+            plugins load and play but have no editor window yet.
+          files: |
+            out/*.zip
+            out/SHA256SUMS.txt

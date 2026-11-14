@@ -221,6 +221,29 @@ jobs:
       # THE WINDOWS EDITOR, PHOTOGRAPHED (tests/test_win32_embed.cpp): nobody on the team has a Windows machine, so the
       # pictures the embed test takes of the editor in a real host window are kept for a person to look at. Uploaded
       # whatever the tests said, because a red embed is exactly when the picture matters most.
+      # THE ONE-LINE INSTALLERS, RUN FOR REAL on each platform against the newest published release: the README offers
+      # them as the preferred install, and nobody on the team has a Windows machine to try install.ps1 on. They install
+      # into the runner's per-user plugin folders and the step checks the plugins arrived. Network-dependent (GitHub's
+      # API and release downloads), so a failure here is reported but does not fail the build.
+      - name: Smoke-test the one-line installer
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh_exe=powershell  # Windows PowerShell 5.1, what users have
+            "$pwsh_exe" -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Raw scripts/install.ps1 | Invoke-Expression"
+            la="$(cygpath -u "$LOCALAPPDATA")"
+            for p in "$la/Programs/Common/CLAP/feathers.clap" "$la/Programs/Common/VST3/feathers.vst3"; do
+              test -e "$p" && echo "ok: $p" || { echo "MISSING: $p"; exit 1; }
+            done
+          else
+            bash scripts/install.sh
+            if [ "$RUNNER_OS" = "macOS" ]; then d="$HOME/Library/Audio/Plug-Ins"; c="$d/CLAP"; v="$d/VST3"; else c="$HOME/.clap"; v="$HOME/.vst3"; fi
+            for p in "$c/feathers.clap" "$v/feathers.vst3"; do test -e "$p" && echo "ok: $p" || { echo "MISSING: $p"; exit 1; }; done
+            if [ "$RUNNER_OS" = "macOS" ]; then xattr -lr "$c/feathers.clap" | grep -c quarantine && echo "QUARANTINED" || echo "no quarantine flag"; fi
+          fi
+
       - name: Upload the Windows editor screenshots
         if: always() && runner.os == 'Windows'
         continue-on-error: true

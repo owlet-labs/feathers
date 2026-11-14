@@ -227,6 +227,26 @@ The core of Feathers is, and will remain, open source under the GNU General Publ
 
 ## Trying it
 
+### Install in one line (recommended)
+
+Paste one command. It downloads the latest release, checks it against the release's checksums, unpacks it and installs the synth and the Chain (CLAP and VST3) into your own plugin folders. No clone, no GitHub account, no administrator password, and on macOS nothing to unquarantine.
+
+**macOS and Linux** (Terminal):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.sh | bash
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.ps1 | iex
+```
+
+Then restart your DAW or rescan its plugins. The scripts are short and readable: [`install.sh`](scripts/install.sh), [`install.ps1`](scripts/install.ps1). To install a particular release, use `curl … | bash -s -- --version v0.1.0`, or set `$env:FEATHERS_VERSION = 'v0.1.0'` before the PowerShell line. On Windows the plugins go into `%LOCALAPPDATA%\Programs\Common\CLAP` and `…\VST3`; if your DAW doesn't scan those, add them to its plugin paths, or run PowerShell as administrator with `$env:FEATHERS_SYSTEM = '1'` to install into `C:\Program Files\Common Files\`.
+
+### Downloading by hand
+
 Download the latest build from the [**Releases** page](https://github.com/owlet-labs/feathers/releases): open the newest release and take the zip for your platform from its **Assets**. No GitHub account is needed, and `SHA256SUMS.txt` beside them lets you check a download.
 
 | Platform | Release asset | Contains |
@@ -239,17 +259,9 @@ For something newer than the latest release, every [`build` workflow](https://gi
 
 **Patches and presets are not stable before 1.0.** Devices and engines are still changing, and a later build may load a saved patch, preset or DAW project differently, or not restore parts of it. Until the 1.0 release, don't rely on Feathers for projects you need to reopen exactly as they were, and keep a bounce of anything that matters.
 
-### Installing on macOS
+#### Installing on macOS
 
-**Quickest: one command in Terminal.** It downloads the latest release, checks it against the release's checksums, and installs the synth and the Chain (CLAP and VST3) into your own plugin folders, with nothing to unquarantine (files downloaded by `curl` are not quarantined):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.sh | bash
-```
-
-Read it first if you like: [`scripts/install.sh`](scripts/install.sh). `| bash -s -- --version v0.1.0` installs a particular release.
-
-**Or by hand from the download:** unzip it. (A workflow artifact has one more layer: unzip it, then the `Feathers-macos-universal2-….zip` inside.)
+Unzip the download. (A workflow artifact has one more layer: unzip it, then the `Feathers-macos-universal2-….zip` inside.)
 
 The builds are signed ad hoc, **not notarised**, so macOS quarantines them when they are downloaded, and a DAW will refuse to load a quarantined plugin. The included installer clears the quarantine and copies the plugins into place:
 
@@ -265,15 +277,9 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/CLAP/feathers*.clap ~/Li
 
 If Terminal says "permission denied" for `install.command`, the executable bit was lost in transit: run `chmod +x install.command` and try again.
 
-### Installing on Linux
+#### Installing on Linux
 
-The same one-line installer works on Linux x86-64 (it installs into `~/.clap` and `~/.vst3`):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.sh | bash
-```
-
-Or by hand: unzip the download and copy the plugins into your user plugin folders, then rescan in your DAW:
+Unzip the download and copy the plugins into your user plugin folders, then rescan in your DAW:
 
 ```sh
 mkdir -p ~/.clap ~/.vst3
@@ -283,7 +289,7 @@ cp -r feathers.vst3 feathers-chain.vst3 ~/.vst3/
 
 Feathers is built and played daily in Bitwig on Linux. If your DAW runs as a Flatpak and does not see the plugin, give it access to those folders (for example `flatpak override --user --filesystem=~/.clap --filesystem=~/.vst3 <app id>`).
 
-### Installing on Windows
+#### Installing on Windows
 
 **There is no editor window on Windows yet.** The plugins load and play (parameters, automation, presets saved by the host, MIDI), but the host shows no Feathers window: the window embed for Windows is still to be written. Everything else is the same build as Linux and macOS, and passes the same test suite.
 

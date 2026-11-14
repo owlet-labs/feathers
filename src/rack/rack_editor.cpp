@@ -485,6 +485,9 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 		}
 	};
 
+	// THE EDITOR'S TOOLTIP LAYER, under the notifier (`raiseTopLayers`) — see `tips_`.
+	addChild(&tips_);
+	tips_.watch(*this);
 	notify_ = std::make_unique<ui::NotifyTray>();
 	notify_->setIgnoresMouseEvents(true, false);
 	addChild(notify_.get());
@@ -761,6 +764,7 @@ void RackEditor::raiseTopLayers() {
 			raise(arm.get());
 		}
 		raise(macrosRail_.get()); // the Macros toggle (QN) over the column's ground, and its folded strip over the cards
+		raise(&tips_); // a tooltip over everything the column holds
 	}
 	const int notifyAt = notify_ != nullptr ? indexOfChild(notify_.get()) : -1;
 	const int surfacesAt = surfaces_ != nullptr ? indexOfChild(surfaces_.get()) : -1;
@@ -2316,6 +2320,18 @@ UndoRedoButtons::UndoRedoButtons(ui::EditHistory& history) : history_(history) {
 		}
 		redraw();
 	};
+	// LAST, after every `=` above (`installTooltipHover`'s hazard).
+	ui::installTooltipHover(*this, *this);
+}
+
+const char* UndoRedoButtons::tooltipAt(visage::Point local) const {
+	if (undoBounds().contains(local)) {
+		return "Undo the last edit (Ctrl/Cmd+Z)";
+	}
+	if (redoBounds().contains(local)) {
+		return "Redo the edit just undone (Ctrl/Cmd+Shift+Z)";
+	}
+	return nullptr;
 }
 
 void UndoRedoButtons::draw(visage::Canvas& canvas) {

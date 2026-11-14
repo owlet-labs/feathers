@@ -383,6 +383,7 @@ void RackGui::tick() {
 		// AND A CARD HELD AT THE LANE'S EDGE SCROLLS IT (backlog DB) — this beat is the only clock a still
 		// pointer has.
 		(void)editor_->tickDrag();
+		(void)editor_->tickTooltips();
 	}
 }
 

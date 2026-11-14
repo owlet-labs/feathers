@@ -318,7 +318,7 @@ bool sklitterRecording(const backplane::DeviceHost& host, DeviceInstanceId devic
 void drawSklitterRecordLight(visage::Canvas& canvas, float cx, float cy, bool on) {
 	// THE RECORD RED — the master meter's and the bus utility's over-red, because a lit red dot already means
 	// "recording" to anyone who has used a tape machine; a data colour, so outside the hue offset.
-	constexpr uint32_t kRecordRed = 0xffD9483B;
+	constexpr uint32_t kRecordRed = kMeterClip; // the over-full-scale red (`theme.h`): one red, named once
 	const float r = kSklitterRecordLightRadius;
 	if (on) {
 		canvas.setColor(kRecordRed);

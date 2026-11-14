@@ -4095,7 +4095,7 @@ void drawEncoder(visage::Canvas& canvas, const visage::Bounds& bounds, const cha
 
 void drawButton(visage::Canvas& canvas, const visage::Bounds& bounds, const std::string& caption,
                 bool enabled, bool accent) {
-	canvas.setColor(enabled ? (accent ? 0xff3A4C74 : kLine) : withAlpha(kLine, 0.5f));
+	canvas.setColor(enabled ? (accent ? kBorderOn : kLine) : withAlpha(kLine, 0.5f));
 	canvas.roundedRectangleBorder(bounds.x(), bounds.y(), bounds.width(), bounds.height(),
 	                              kButtonRounding, 1.0f);
 	const visage::Font& face = font(kControlSize);

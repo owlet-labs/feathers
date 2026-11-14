@@ -414,7 +414,7 @@ float softClipLaw(float x, float knee) {
 
 /// A LOW BAND ALONE: mid and high Levels at zero, ratios at zero (no compression), a low tone of `amp`. The sum is then the
 /// low band's, so the clip law can be restated sample for sample against the unclipped render.
-std::vector<float> lowOnly(float amp, bool softClip, bool bandsOnly) {
+std::vector<float> lowOnly(float amp, bool softClip, uint8_t clipOnly) {
 	Cfg c;
 	c.mode = 6.0f;
 	c.ratio = 0.5f;
@@ -423,7 +423,7 @@ std::vector<float> lowOnly(float amp, bool softClip, bool bandsOnly) {
 	nw::Settings s = settingsOf<nw::Settings>(c);
 	s.ratio = 0.0f; // a global at its neutral shifts nothing; at 0 the band ratio 0.5 + (0 - 0.5) = 0: no compression
 	s.softClip = softClip;
-	s.clipBandsOnly = bandsOnly;
+	s.clipOnly = clipOnly;
 	nw::Owltt d;
 	d.prepare(kRate);
 	d.setTarget(s);
@@ -440,41 +440,45 @@ std::vector<float> lowOnly(float amp, bool softClip, bool bandsOnly) {
 
 } // namespace
 
-TEST_CASE("per-band controls: Clip Off is the identity, Bands clips each band and not the sum, Master does both") {
+TEST_CASE("per-band controls: Clip Off is the identity, Master clips the sum only, Bands each band only, Both each band and then the sum") {
 	for (const float amp : { 3.0f, 1.5f }) {
 		INFO("amplitude " << amp);
-		const auto off = lowOnly(amp, false, false);
-		const auto master = lowOnly(amp, true, false);
-		const auto bands = lowOnly(amp, true, true);
-		float offPeak = 0.0f, bandsDiff = 0.0f, masterDiff = 0.0f, stageDiff = 0.0f;
+		const auto off = lowOnly(amp, false, 0);
+		const auto both = lowOnly(amp, true, 0);
+		const auto bands = lowOnly(amp, true, 1);
+		const auto master = lowOnly(amp, true, 2);
+		float offPeak = 0.0f, dBands = 0.0f, dMaster = 0.0f, dBoth = 0.0f, spread = 0.0f;
 		for (size_t i = 24000; i < off.size(); ++i) {
 			const float x = off[i];
 			offPeak = std::max(offPeak, std::fabs(x));
-			// THE LAW, restated: Bands is the band clip alone; Master is the band clip and then the output clip.
-			const float wantBands = softClipLaw(x, 2.0f);
-			const float wantMaster = softClipLaw(wantBands, 1.0f);
-			bandsDiff = std::max(bandsDiff, std::fabs(bands[i] - wantBands));
-			masterDiff = std::max(masterDiff, std::fabs(master[i] - wantMaster));
-			stageDiff = std::max(stageDiff, std::fabs(master[i] - bands[i]));
+			// THE LAW, restated: Bands is the 2.0 knee alone; Master is the 1.0 knee alone; Both is the first and then the second.
+			dBands = std::max(dBands, std::fabs(bands[i] - softClipLaw(x, 2.0f)));
+			dMaster = std::max(dMaster, std::fabs(master[i] - softClipLaw(x, 1.0f)));
+			dBoth = std::max(dBoth, std::fabs(both[i] - softClipLaw(softClipLaw(x, 2.0f), 1.0f)));
+			spread = std::max(spread, std::fabs(amp > 2.0f ? master[i] - both[i] : master[i] - bands[i]));
 		}
 		CHECK(offPeak > 1.1f); // the tone really reached the clippers
-		CHECK(bandsDiff < 1e-5f);
-		CHECK(masterDiff < 1e-5f);
-		// NOT VACUOUS: the two clip choices differ at the output stage, and Off differs from Bands only above the band knee.
-		CHECK(stageDiff > 0.1f);
+		CHECK(dBands < 1e-5f);
+		CHECK(dMaster < 1e-5f);
+		CHECK(dBoth < 1e-5f);
+		CHECK(spread > 0.05f); // NOT VACUOUS: Master differs from Both where a band is over its knee, and from Bands where only the sum is over its own
 	}
-	// Off passes a band over its knee through untouched; Bands halves the excess above 2.
-	const auto off = lowOnly(3.0f, false, false);
-	const auto bands = lowOnly(3.0f, true, true);
-	float offPeak = 0.0f, bandsPeak = 0.0f;
+	// A BAND OVER ITS KNEE (peak > 2): Master leaves the band unclipped and clips only the sum; Bands the reverse.
+	const auto off = lowOnly(3.0f, false, 0);
+	const auto bands = lowOnly(3.0f, true, 1);
+	const auto master = lowOnly(3.0f, true, 2);
+	float offPeak = 0.0f, bandsPeak = 0.0f, masterPeak = 0.0f;
 	for (size_t i = 24000; i < off.size(); ++i) {
 		offPeak = std::max(offPeak, std::fabs(off[i]));
 		bandsPeak = std::max(bandsPeak, std::fabs(bands[i]));
+		masterPeak = std::max(masterPeak, std::fabs(master[i]));
 	}
+	REQUIRE(offPeak > 2.0f);
 	CHECK(bandsPeak == doctest::Approx(2.0f + (offPeak - 2.0f) * 0.5f).epsilon(1e-4));
+	CHECK(masterPeak == doctest::Approx(1.0f + (offPeak - 1.0f) * 0.5f).epsilon(1e-4));
 }
 
-TEST_CASE("per-band controls: the Clip choice stores by label, an old On is Master, and Master is what On was") {
+TEST_CASE("per-band controls: the Clip choice stores by label, an old On is Both, and Both is what On was") {
 	const feathers::device::ParamDesc* clip = nullptr;
 	for (const auto& p : nw::kParamDescs) {
 		if (std::string_view(p.key) == "soft_clip") {
@@ -482,14 +486,15 @@ TEST_CASE("per-band controls: the Clip choice stores by label, an old On is Mast
 		}
 	}
 	REQUIRE(clip != nullptr);
-	REQUIRE(clip->names.size() == 3u);
+	REQUIRE(clip->names.size() == 4u);
 	CHECK(std::string_view(clip->names[0]) == "Off");
 	CHECK(std::string_view(clip->names[1]) == "Master");
 	CHECK(std::string_view(clip->names[2]) == "Bands");
-	CHECK(clip->def == 1.0);
+	CHECK(std::string_view(clip->names[3]) == "Both");
+	CHECK(clip->def == 3.0); // the old On
 	REQUIRE(clip->choiceAliases.size() == 1u);
 	CHECK(std::string_view(clip->choiceAliases[0].from) == "On");
-	CHECK(std::string_view(clip->choiceAliases[0].to) == "Master");
+	CHECK(std::string_view(clip->choiceAliases[0].to) == "Both");
 
 	// A PATCH SAVED BEFORE THIS CHANGE: written by the old device's descriptor (Off|On, 38 controls), loaded by the new one.
 	od::Row oldRow {};
@@ -512,7 +517,7 @@ TEST_CASE("per-band controls: the Clip choice stores by label, an old On is Mast
 	std::vector<float> loaded(std::size(nw::kParamDescs), 0.0f);
 	feathers::rack::LoadReport report;
 	feathers::rack::rowOfValues(nw::kDescriptor, saved, loaded, &report, "OWLTT", nullptr);
-	CHECK(loaded[static_cast<size_t>(nw::Param::SoftClip)] == 1.0f); // Master, not Off
+	CHECK(loaded[static_cast<size_t>(nw::Param::SoftClip)] == 3.0f); // Both, not Master or Off
 	for (size_t i = static_cast<size_t>(nw::Param::LowUpRatio); i < static_cast<size_t>(nw::Param::kCount); ++i) {
 		CHECK(loaded[i] == static_cast<float>(nw::kParamDescs[i].def)); // every new control neutral
 	}
@@ -520,7 +525,7 @@ TEST_CASE("per-band controls: the Clip choice stores by label, an old On is Mast
 	std::copy(loaded.begin(), loaded.end(), row.begin());
 	const nw::Settings s = nw::stateOf(row);
 	CHECK(s.softClip);
-	CHECK_FALSE(s.clipBandsOnly);
+	CHECK(s.clipOnly == 0); // both stages, as On always ran
 
 	// AND IT SOUNDS AS BEFORE: the old row through the old device, the loaded row through the new one, to the bit.
 	const Program in = programOf(9000, false, 4242u);
@@ -545,7 +550,11 @@ TEST_CASE("per-band controls: a short row from before them takes the neutral def
 	void* at = storage;
 	ops.construct(at);
 	ops.prepare(at, kRate, 480);
-	ops.setFields(at, oldRow.data(), oldRow.size());
+	// (A NUMBER IS NOT A LABEL: the old On was the value 1, which the four-way choice reads as Master. A file carries labels, and
+	// the alias sends "On" to Both; a bare short row is given Both, the value that means what On meant.)
+	od::Row shortRow = oldRow;
+	shortRow[static_cast<size_t>(od::Param::SoftClip)] = 3.0f;
+	ops.setFields(at, shortRow.data(), shortRow.size());
 	const Program in = programOf(9000, false, 99u);
 	std::vector<float> l = in.l, r = in.r;
 	for (size_t i = 0; i < l.size(); i += 480) {
@@ -575,7 +584,7 @@ TEST_CASE("per-band controls: every new control non-default survives a save and 
 	s.mid.inputDb = 4.0f;
 	s.high.inputDb = 12.0f;
 	s.softClip = true;
-	s.clipBandsOnly = true;
+	s.clipOnly = 1;
 	const nw::Row row = nw::rowOf(s);
 	// By key and label, as a file stores it, into a fresh row.
 	feathers::rack::RackPatch::Device dev;
@@ -594,7 +603,7 @@ TEST_CASE("per-band controls: every new control non-default survives a save and 
 	CHECK(t.low.upRatio == s.low.upRatio);
 	CHECK(t.high.release == s.high.release);
 	CHECK(t.mid.inputDb == s.mid.inputDb);
-	CHECK(t.clipBandsOnly);
+	CHECK(t.clipOnly == 1);
 	// A fresh instance rendering the loaded state is the original's render.
 	const Program in = programOf(9000, false, 5u);
 	const auto a = render<nw::Owltt>(s, in, 480);

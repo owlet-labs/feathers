@@ -41309,7 +41309,7 @@ TEST_CASE("OWLTT's window: a routed per-band threshold draws its ModHandle strok
 	CHECK(std::count(addressed.begin(), addressed.end(), ow::Param::HighCrossover) == 1);
 	CHECK(graph->crossoverHandle(0).x < graph->crossoverHandle(1).x);
 
-	// THE TOP ROW, in order: Key Track, Lookahead, L/R, the crossover type, then the Clip choice (a box with a menu of three).
+	// THE TOP ROW, in order: Key Track, Lookahead, L/R, the crossover type, then the Clip choice (a box with a menu of four).
 	CHECK(panel.keyTrackBounds().right() <= panel.lookaheadBounds().x());
 	CHECK(panel.lookaheadBounds().right() <= panel.stereoBounds().x());
 	CHECK(panel.stereoBounds().right() <= panel.modeBounds().x());
@@ -41318,11 +41318,12 @@ TEST_CASE("OWLTT's window: a routed per-band threshold draws its ModHandle strok
 	ui::ValueBox* clip = panel.clipForTest();
 	REQUIRE(clip != nullptr);
 	CHECK(clip->choiceMenuAvailable());
-	REQUIRE(clip->entryCount() == 3u);
+	REQUIRE(clip->entryCount() == 4u);
 	// (a menu row carries a mark for the current choice, so the label is looked for in it)
 	CHECK(clip->choiceLabelAt(0).find("Off") != std::string::npos);
 	CHECK(clip->choiceLabelAt(1).find("Master") != std::string::npos);
 	CHECK(clip->choiceLabelAt(2).find("Bands") != std::string::npos);
+	CHECK(clip->choiceLabelAt(3).find("Both") != std::string::npos);
 	CHECK(std::string_view(clip->control().desc().key) == "soft_clip");
 
 	// THE GLOBAL ROW, in order and with no hole: nine boxes, left to right at one height, each gap the same.

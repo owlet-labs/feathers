@@ -6913,7 +6913,7 @@ TEST_CASE("HARM's Poly switch is live now, and the card learned that from the de
 	HarmFixture f;
 	ui::WidgetRegistry registry;
 	ui::HarmExpanded panel { f.deviceHost, registry, f.device };
-	ui::SegmentedControl* poly = panel.polyForTest();
+	ui::SwitchChip* poly = panel.polyForTest();
 	REQUIRE(poly != nullptr);
 
 	// THE DEVICE'S OWN DECLARATION, and the card agreeing with it. Stated as an equivalence rather
@@ -6925,8 +6925,8 @@ TEST_CASE("HARM's Poly switch is live now, and the card learned that from the de
 	// THE SURFACE ASKS THE DEVICE, stated as an equivalence rather than as a constant: a panel that
 	// hardcoded `true` would pass a bare "it is enabled" check and would be wrong again the day some
 	// other device's road is the one missing.
-	CHECK(poly->enabled() == (fx::harm::kDescriptor.traits.perVoiceControl >= 0));
-	CHECK(poly->enabled());
+	CHECK(poly->usable() == (fx::harm::kDescriptor.traits.perVoiceControl >= 0));
+	CHECK(poly->usable());
 
 	// AND A HAND MOVES IT. This is the assertion that was inverted: the same routed click that had to
 	// leave the value alone must now change it, in the row the engine decodes.
@@ -6939,12 +6939,12 @@ TEST_CASE("HARM's Poly switch is live now, and the card learned that from the de
 	panel.setBounds(0, 0, 420, 340);
 	const visage::Bounds sw = panel.polyBounds();
 	poly->onMouseDown().callback(
-	    at(sw.width() * 0.75f, sw.height() * 0.5f));
+	    at(sw.width() * 0.5f, sw.height() * 0.5f));
 	CHECK(f.param(fx::harm::Param::Poly) == doctest::Approx(1.0));
 	CHECK(f.state().poly);
 
 	// AND BACK, so the switch is a switch rather than a one-way latch.
-	poly->onMouseDown().callback(at(sw.width() * 0.25f, sw.height() * 0.5f));
+	poly->onMouseDown().callback(at(sw.width() * 0.5f, sw.height() * 0.5f));
 	CHECK(f.param(fx::harm::Param::Poly) == doctest::Approx(0.0));
 
 	SUBCASE("and the caption stopped making an excuse for it") {
@@ -6956,12 +6956,12 @@ TEST_CASE("HARM's Poly switch is live now, and the card learned that from the de
 		CHECK(panel.polyText().find("yet") == std::string::npos);
 	}
 
-	SUBCASE("and the reason still fits, because there is less of it") {
+	SUBCASE("and the chip's word fits the chip") {
 		panel.setBounds(0, 0, panel.minimumSize().x, panel.minimumSize().y);
-		const float drawn = ui::trackedWidth(ui::font(ui::kKnobReadoutSize), panel.polyText(), 0.0f);
+		const float drawn = ui::trackedWidth(ui::font(ui::kKnobLabelSize), poly->label(), 0.0f);
 		CAPTURE(drawn);
-		CHECK(drawn <= panel.polyLabelBounds().width());
-		CHECK(panel.polyLabelBounds().right() <= panel.width());
+		CHECK(drawn <= static_cast<float>(poly->width()));
+		CHECK(poly->x() + poly->width() <= panel.width());
 	}
 }
 
@@ -14833,6 +14833,9 @@ std::vector<std::string> exploreSurroundAsDrawn(OscType engine, size_t sound, fl
 			const std::string label = knob->label();
 			CAPTURE(label);
 			CHECK(f.stage.frameAtPoint(centre) == knob);
+			// AND ITS CAPTION IS NOT CUT at this size ("SMOOTHN..." was) — the Explore surround is not a device card, so the
+			// device-walking caption guard (`test_gui_widgets_tooltips`) does not reach it; every drawn knob is asked here.
+			CHECK_FALSE(knob->captionCut());
 			char line[256];
 			std::snprintf(line, sizeof(line), "%s s%zu %gx%g knob '%s' = %s live%d [%.9g %.9g %.9g %.9g]", engineName,
 			              sound, static_cast<double>(width), static_cast<double>(height), knob->label(), binds.c_str(),
@@ -18718,6 +18721,10 @@ TEST_CASE("the waypoint card's head carries all four verbs, and a folded one put
 		for (const auto& knob : card->knobsForTest()) {
 			visible += knob->isVisible() ? 1 : 0;
 		}
+		// THE THREE DEVICE-WIDE CHOICES ARE NOT KNOBS (a box and two chips), and are cells of the same layout.
+		visible += card->typeForTest()->isVisible() ? 1 : 0;
+		visible += card->keytrackForTest()->isVisible() ? 1 : 0;
+		visible += card->polyForTest()->isVisible() ? 1 : 0;
 		CHECK(visible == ui::WaypointCard::kKnobCells);
 	}
 

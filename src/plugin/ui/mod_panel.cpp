@@ -306,6 +306,7 @@ RouteList::RouteList(backplane::DeviceHost& host, ModState& mod, EditHistory& hi
 		dragging_ = true;
 		dragRow_ = Row { hit.chain, hit.destination };
 		anchorY_ = e.position.y;
+		fine_ = e.isShiftDown();
 		before_ = amountOf(dragRow_);
 		anchorAmount_ = before_;
 		host_.beginRouteGesture();
@@ -331,7 +332,13 @@ RouteList::RouteList(backplane::DeviceHost& host, ModState& mod, EditHistory& hi
 		if (!dragging_) {
 			return;
 		}
-		const float travel = (anchorY_ - e.position.y) / kDragRange;
+		// SHIFT CHANGING MID-DRAG RE-ANCHORS, as the knob's does (`kFineAdjust`).
+		if (e.isShiftDown() != fine_) {
+			fine_ = e.isShiftDown();
+			anchorY_ = e.position.y;
+			anchorAmount_ = amountOf(dragRow_);
+		}
+		const float travel = (anchorY_ - e.position.y) / kDragRange * (fine_ ? kFineAdjust : 1.0f);
 		commitAmount(dragRow_,
 		             std::clamp(anchorAmount_ + travel, -kMaxRouteAmount, kMaxRouteAmount));
 	};

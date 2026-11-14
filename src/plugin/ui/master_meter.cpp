@@ -35,7 +35,7 @@ namespace {
 /// `kOverRed`: this palette has no danger token, and a `theme.h` entry is a promise to every surface.
 /// The red is the card's, so the two surfaces that say "over" say it in one colour; the orange is the
 /// warning at -6 LUFS. If a third surface wants either, that is the moment for a token.
-constexpr uint32_t kOverRed = 0xffD9483B;
+constexpr uint32_t kOverRed = kMeterClip;
 constexpr uint32_t kWarnOrange = 0xffE08A2A;
 
 } // namespace

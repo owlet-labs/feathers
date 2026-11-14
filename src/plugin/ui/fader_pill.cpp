@@ -55,6 +55,7 @@ FaderPill::FaderPill(device::Modulatable& amount, std::string caption) : amount_
 		dragged_ = false;
 		startX_ = e.position.x;
 		startY_ = e.position.y;
+		fine_ = e.isShiftDown();
 		routing_ = mappable(control, e.isAltDown());
 		if (routing_) {
 			// DOUBLE-CLICK UNROUTES in mapping mode — the knob's and the box's split: the thing under the
@@ -94,6 +95,20 @@ FaderPill::FaderPill(device::Modulatable& amount, std::string caption) : amount_
 		if (target_ == Target::None) {
 			return;
 		}
+		// SHIFT CHANGING MID-DRAG RE-ANCHORS, as the knob's does (`kFineAdjust`): the drag restarts from where the value
+		// is now, so the modifier never makes it jump.
+		if (e.isShiftDown() != fine_) {
+			fine_ = e.isShiftDown();
+			startX_ = e.position.x;
+			startY_ = e.position.y;
+			if (routing_) {
+				anchorAmount_ = (target_ == Target::Power ? *power_ : amount_).display().amount;
+			}
+			else if (dragged_) {
+				startValue_ = amount_.value();
+			}
+		}
+		const float scale = fine_ ? kFineAdjust : 1.0f;
 		const float dx = e.position.x - startX_;
 		if (routing_) {
 			// **RIGHT OR UP, EITHER ONE.** The power symbol routed only on a SIDEWAYS drag — the
@@ -101,7 +116,7 @@ FaderPill::FaderPill(device::Modulatable& amount, std::string caption) : amount_
 			// so a hand that knows either gesture finds it works.
 			const float travel = dx + (startY_ - e.position.y);
 			device::Modulatable& control = target_ == Target::Power ? *power_ : amount_;
-			control.setAmount(std::clamp(anchorAmount_ + travel / kRouteDragRange, -device::kMaxAmount,
+			control.setAmount(std::clamp(anchorAmount_ + travel / kRouteDragRange * scale, -device::kMaxAmount,
 			                             device::kMaxAmount));
 			redraw();
 			return;
@@ -115,7 +130,7 @@ FaderPill::FaderPill(device::Modulatable& amount, std::string caption) : amount_
 		}
 		const device::ParamDesc& d = amount_.desc();
 		const double span = d.max - d.min;
-		amount_.setValue(std::clamp(startValue_ + static_cast<double>(dx / kSpan) * span, d.min, d.max));
+		amount_.setValue(std::clamp(startValue_ + static_cast<double>(dx / kSpan * scale) * span, d.min, d.max));
 		redraw();
 	};
 

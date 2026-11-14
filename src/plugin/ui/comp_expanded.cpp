@@ -234,11 +234,15 @@ void CompExpanded::layOut() {
 	const float colW = std::max(0.0f, width() - rail - 2.0f * kPad);
 	// EVERY `setBounds` UNCONDITIONAL (CLAUDE.md's DPI rule).
 	float y = kPad;
-	mode_->setBounds(left, y, std::max(0.0f, colW - kChipWidth - kGap), kSwitchHeight);
+	// THE TWO ROWS ARE CAPTIONED IN THE MARGIN (Delay's LOOP / TAPS / HOLD): MODE is what the device is, TOPOLOGY is how the
+	// compander's two halves are arranged — two rows of "Compress ..." that otherwise say nothing about what they pick.
+	const float rowLeft = left + kRowCaptionWidth;
+	const float rowW = std::max(0.0f, colW - kRowCaptionWidth);
+	mode_->setBounds(rowLeft, y, std::max(0.0f, rowW - kChipWidth - kGap), kSwitchHeight);
 	stereo_->setBounds(left + colW - kChipWidth, y + (kSwitchHeight - SwitchChip::kHeight) * 0.5f, kChipWidth,
 	                   SwitchChip::kHeight);
 	y += kSwitchHeight + kRowGap;
-	topology_->setBounds(left, y, std::max(0.0f, colW - kChipWidth - kGap), kSwitchHeight);
+	topology_->setBounds(rowLeft, y, std::max(0.0f, rowW - kChipWidth - kGap), kSwitchHeight);
 	link_->setBounds(left + colW - kChipWidth, y + (kSwitchHeight - SwitchChip::kHeight) * 0.5f, kChipWidth,
 	                 SwitchChip::kHeight);
 	y += kSwitchHeight + kRowGap;
@@ -352,6 +356,14 @@ bool CompExpanded::updateContent() {
 void CompExpanded::draw(visage::Canvas& canvas) {
 	canvas.setColor(kSurfaceRaised);
 	canvas.fill(0.0f, 0.0f, width() - railWidth(), height());
+	// THE ROW CAPTIONS, in the margin the switches leave (see `layOut`); the topology's goes with its row.
+	canvas.setColor(kMuted);
+	canvas.text("MODE", font(kKnobLabelSize), visage::Font::kLeft, mode_->x() - kRowCaptionWidth, mode_->y(),
+	            kRowCaptionWidth, mode_->height());
+	if (topology_->isVisible()) {
+		canvas.text("TOPOLOGY", font(kKnobLabelSize), visage::Font::kLeft, topology_->x() - kRowCaptionWidth,
+		            topology_->y(), kRowCaptionWidth, topology_->height());
+	}
 }
 
 std::vector<cp::Param> CompExpanded::addressedParamsForTest() const {

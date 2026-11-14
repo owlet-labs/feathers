@@ -24,6 +24,8 @@
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/fx_control.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/switch_chip.h"
+#include "plugin/ui/value_box.h"
 
 #include <memory>
 #include <vector>
@@ -83,6 +85,10 @@ private:
 	DeviceInstanceId device_ = kNoInstance;
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::vector<std::unique_ptr<Knob>> knobs_;
+	/// The device-wide choices that are not knobs: the filter type's list, and two chips.
+	std::unique_ptr<ValueBox> type_;
+	std::unique_ptr<SwitchChip> keytrack_;
+	std::unique_ptr<SwitchChip> poly_;
 	std::vector<fx::waypoint::Param> knobParams_;
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;

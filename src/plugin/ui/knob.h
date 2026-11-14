@@ -23,6 +23,7 @@
 
 #include "device/modulatable.h"
 #include "plugin/ui/edit_history.h"
+#include "plugin/ui/fine_adjust.h"
 #include "plugin/ui/macro_menu.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/tooltip.h"
@@ -523,7 +524,7 @@ public:
 
 	/// What the fine modifier multiplies that travel by. Shift is the modifier every DAW's own
 	/// controls use for this, so it is the one a hand already knows.
-	static constexpr float kFineFactor = 0.2f;
+	static constexpr float kFineFactor = kFineAdjust;
 
 	/// The mock's knob face, `canvas width=52 height=52`, and the arc inside it. The Engine rail's are
 	/// smaller — `.insp-krow .knob canvas` is 38px — so the face is a per-knob size with the footer's

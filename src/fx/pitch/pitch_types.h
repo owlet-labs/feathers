@@ -417,9 +417,10 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateControl = -1,
      .gateMask = 0,
      .centred = false,
-     // THE UNIT, IN THE CAPTION, because the vocabulary has no millisecond unit and a bare "60.00"
-     // under a knob called Size says nothing about sixty of what.
-     .shortName = "Size ms"},
+     // THE UNIT IS ON THE READOUT (`ParamDesc::suffix`), where it used to be in the caption ("Size ms" over a bare "60.00").
+     .shortName = "Size",
+     .wholeReadout = true,
+     .suffix = "ms"},
     {.key = "pitch_jitter", .name = "Pitch Jitter",
      .min = 0.0,
      .max = 1.0,

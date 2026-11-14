@@ -24,6 +24,7 @@
 #include "device/format_value.h"
 #include "device/modulatable.h"
 #include "plugin/ui/drag_acceleration.h"
+#include "plugin/ui/fine_adjust.h"
 #include "plugin/ui/frame_watchers.h"
 #include "plugin/ui/tooltip.h"
 #include "plugin/ui/type_in.h"
@@ -455,7 +456,7 @@ public:
 
 	[[nodiscard]] double pressPlaceForTest() const noexcept { return pressPlace_; }
 	/// Shift-drag, from Knob::kFineFactor.
-	static constexpr float kFineFactor = 0.2f;
+	static constexpr float kFineFactor = kFineAdjust;
 	/// **HOW BRIGHT A SWITCHED-OFF BOX'S MAPPING BORDER IS** against the live one's full colour (QK, by design).
 	static constexpr float kGreyedSignalAlpha = 0.5f;
 	/// An amount has twice the range and half the travel — Knob::kRouteDragRange.

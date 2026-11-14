@@ -41,11 +41,8 @@ constexpr size_t kCurvePoints = 128;
 
 /// THE DEVICE-WIDE KNOBS, in the order they are laid out. One table, read by `layOut` and by
 /// `addressedParamsForTest`, which is what stops two functions disagreeing about which knob is which.
-constexpr std::array<wp::Param, 4> kDeviceKnobs {
+constexpr std::array<wp::Param, 1> kDeviceKnobs {
 	wp::Param::Morph,
-	wp::Param::Type,
-	wp::Param::Keytrack,
-	wp::Param::Poly,
 };
 
 [[nodiscard]] wp::Param macroParam(size_t waypoint, size_t which) {
@@ -91,6 +88,14 @@ WaypointCard::WaypointCard(backplane::DeviceHost& host, WidgetRegistry& registry
 	for (const wp::Param p : kDeviceKnobs) {
 		addKnob(p);
 	}
+	// THE THREE DEVICE-WIDE CHOICES ARE NOT DIALS (a knob hides its choices until the hand has moved it): the filter
+	// type is a box that opens its list, Keytrack and Poly are two-state chips.
+	type_ = std::make_unique<ValueBox>(control(wp::Param::Type), "Type");
+	addChild(type_.get());
+	keytrack_ = std::make_unique<SwitchChip>(control(wp::Param::Keytrack), "Keytrack");
+	addChild(keytrack_.get());
+	poly_ = std::make_unique<SwitchChip>(control(wp::Param::Poly), "Poly");
+	addChild(poly_.get());
 	// EVERY WAYPOINT'S MACROS GET THEIR OWN KNOB, and only the selected pair is VISIBLE.
 	//
 	// THE ALTERNATIVE WAS RETARGETING ONE PAIR, and it was the first thing I wrote: `Knob` has no
@@ -365,6 +370,9 @@ void WaypointCard::retarget() {
 	for (size_t i = 0; i < kDeviceKnobs.size(); ++i) {
 		knobs_[i]->setVisible(!folded_);
 	}
+	type_->setVisible(!folded_);
+	keytrack_->setVisible(!folded_);
+	poly_->setVisible(!folded_);
 	for (size_t i = 0; i < wp::kWaypoints; ++i) {
 		const bool shown = !folded_ && i == selected_;
 		knobs_[kDeviceKnobs.size() + i * 2]->setVisible(shown);
@@ -414,9 +422,20 @@ void WaypointCard::layOut() {
 	place(*knobs_[0], 0); // Morph
 	place(*knobs_[kDeviceKnobs.size() + selected_ * 2], 1);
 	place(*knobs_[kDeviceKnobs.size() + selected_ * 2 + 1], 2);
-	for (size_t i = 1; i < kDeviceKnobs.size(); ++i) {
-		place(*knobs_[i], 2 + i);
-	}
+	// THE THREE CHOICES in cells 3..5, inset in their cell and centred on the face's line.
+	const auto cellOf = [&](size_t cellIndex) {
+		return visage::Bounds { bodyLeft() + kPad + cell * static_cast<float>(cellIndex % kKnobsPerRow),
+			                    top + static_cast<float>(cellIndex / kKnobsPerRow) * (Knob::kHeight + kRowGap), cell,
+			                    Knob::kHeight };
+	};
+	const visage::Bounds typeCell = cellOf(3);
+	type_->setBounds(typeCell.x() + 2.0f, typeCell.y() + 6.0f, typeCell.width() - 4.0f, ValueBox::kHeight);
+	const visage::Bounds keyCell = cellOf(4);
+	keytrack_->setBounds(keyCell.x() + 2.0f, keyCell.y() + 6.0f + 0.5f * (ValueBox::kHeight - SwitchChip::kHeight),
+	                     keyCell.width() - 4.0f, SwitchChip::kHeight);
+	const visage::Bounds polyCell = cellOf(5);
+	poly_->setBounds(polyCell.x() + 2.0f, polyCell.y() + 6.0f + 0.5f * (ValueBox::kHeight - SwitchChip::kHeight),
+	                 polyCell.width() - 4.0f, SwitchChip::kHeight);
 	for (size_t i = 0; i < wp::kWaypoints; ++i) {
 		if (i == selected_) {
 			continue;
@@ -569,6 +588,9 @@ std::vector<wp::Param> WaypointCard::addressedParamsForTest() const {
 	for (const wp::Param p : kDeviceKnobs) {
 		out.push_back(p);
 	}
+	out.push_back(wp::Param::Type);
+	out.push_back(wp::Param::Keytrack);
+	out.push_back(wp::Param::Poly);
 	// THE DOTS: dragging dot n writes its cutoff and its resonance. One gesture, four dots, and a
 	// case asserts the VALUE each writes.
 	for (size_t i = 0; i < wp::kWaypoints; ++i) {

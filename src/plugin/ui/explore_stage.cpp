@@ -440,7 +440,7 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 		// which Additive does not draw. "Shape", because the box under it names WHICH shape.
 		makeKnob(shapeAmountKnobs_, slot, findParam(static_cast<clap_id>(shapeAmountParam(slot))), "Shape");
 		makeKnob(
-		    smoothnessKnobs_, slot, findParam(static_cast<clap_id>(smoothnessParam(slot))), "Smoothness");
+		    smoothnessKnobs_, slot, findParam(static_cast<clap_id>(smoothnessParam(slot))), "Smooth");
 		// THE FIVE FIELD MODIFIER KNOBS, right flank. Same makeKnob, so they are stock Knobs with
 		// Knob's own registry wiring, Knob's anchor-and-delta gesture and Knob's mod ring — which is
 		// what makes them modulation destinations without this file knowing anything about the bus.
@@ -4095,7 +4095,7 @@ void drawEncoder(visage::Canvas& canvas, const visage::Bounds& bounds, const cha
 
 void drawButton(visage::Canvas& canvas, const visage::Bounds& bounds, const std::string& caption,
                 bool enabled, bool accent) {
-	canvas.setColor(enabled ? (accent ? 0xff3A4C74 : kLine) : withAlpha(kLine, 0.5f));
+	canvas.setColor(enabled ? (accent ? kBorderOn : kLine) : withAlpha(kLine, 0.5f));
 	canvas.roundedRectangleBorder(bounds.x(), bounds.y(), bounds.width(), bounds.height(),
 	                              kButtonRounding, 1.0f);
 	const visage::Font& face = font(kControlSize);

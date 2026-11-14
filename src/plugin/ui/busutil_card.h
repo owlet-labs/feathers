@@ -203,6 +203,11 @@ private:
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::vector<std::unique_ptr<Knob>> knobs_;
 	std::unique_ptr<ValueBox> monitor_;
+	/// THE NAMED CHOICES AMONG THE ROW'S CONTROLS (Highpass, Clip) as boxes, each with the cell it sits in; `knobCells_` is
+	/// the same for `knobs_`.
+	std::vector<std::unique_ptr<ValueBox>> choiceBoxes_;
+	std::vector<size_t> choiceCells_;
+	std::vector<size_t> knobCells_;
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;
 };

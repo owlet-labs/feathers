@@ -227,21 +227,21 @@ The core of Feathers is, and will remain, open source under the GNU General Publ
 
 ## Trying it
 
-Pre-release builds come from GitHub Actions. Open the [`build` workflow](https://github.com/owlet-labs/feathers/actions/workflows/build.yml), choose the latest successful run, and download the artifact for your platform from the bottom of its page:
+Download the latest build from the [**Releases** page](https://github.com/owlet-labs/feathers/releases): open the newest release and take the zip for your platform from its **Assets**. No GitHub account is needed, and `SHA256SUMS.txt` beside them lets you check a download.
 
-| Platform | Artifact | Contains |
+| Platform | Release asset | Contains |
 |---|---|---|
-| macOS (Apple silicon and Intel) | `feathers-macos-universal2-installer` | an installer zip: the synth and the Chain, as CLAP and VST3, plus `install.command` |
-| Linux x86-64 | `feathers-linux-x86_64` | the synth and the Chain, as CLAP and VST3 |
-| Windows x86-64 | `feathers-windows-x86_64` | the synth and the Chain, as CLAP and VST3, plus the synth's standalone `.exe`; **no editor window yet** |
+| macOS (Apple silicon and Intel) | `feathers-<version>-macos-universal2.zip` | the synth and the Chain, as CLAP and VST3, plus `install.command` |
+| Linux x86-64 | `feathers-<version>-linux-x86_64.zip` | the synth and the Chain, as CLAP and VST3, plus the synth's standalone |
+| Windows x86-64 | `feathers-<version>-windows-x86_64.zip` | the synth and the Chain, as CLAP and VST3, plus the synth's standalone `.exe`; **no editor window yet** |
 
-Downloading artifacts needs a signed-in GitHub account, and a run keeps its artifacts for **7 days**, so take them from a recent run. These are pre-release builds: expect rough edges, and please [report what you find](https://github.com/owlet-labs/feathers/issues).
+For something newer than the latest release, every [`build` workflow](https://github.com/owlet-labs/feathers/actions/workflows/build.yml) run also keeps its builds as artifacts (bottom of the run's page) for 7 days; downloading those needs a signed-in GitHub account, and GitHub wraps each one in an extra zip. These are pre-release builds: expect rough edges, and please [report what you find](https://github.com/owlet-labs/feathers/issues).
 
 **Patches and presets are not stable before 1.0.** Devices and engines are still changing, and a later build may load a saved patch, preset or DAW project differently, or not restore parts of it. Until the 1.0 release, don't rely on Feathers for projects you need to reopen exactly as they were, and keep a bounce of anything that matters.
 
 ### Installing on macOS
 
-GitHub wraps every artifact in a zip, so there are two: unzip the download, then unzip the `Feathers-macos-universal2-….zip` inside it.
+Unzip the download. (A workflow artifact has one more layer: unzip it, then the `Feathers-macos-universal2-….zip` inside.)
 
 The builds are signed ad hoc, **not notarised**, so macOS quarantines them when they are downloaded, and a DAW will refuse to load a quarantined plugin. The included installer clears the quarantine and copies the plugins into place:
 
@@ -259,7 +259,7 @@ If Terminal says "permission denied" for `install.command`, the executable bit w
 
 ### Installing on Linux
 
-Unzip the artifact and copy the plugins into your user plugin folders, then rescan in your DAW:
+Unzip the download and copy the plugins into your user plugin folders, then rescan in your DAW:
 
 ```sh
 mkdir -p ~/.clap ~/.vst3
@@ -273,7 +273,7 @@ Feathers is built and played daily in Bitwig on Linux. If your DAW runs as a Fla
 
 **There is no editor window on Windows yet.** The plugins load and play (parameters, automation, presets saved by the host, MIDI), but the host shows no Feathers window: the window embed for Windows is still to be written. Everything else is the same build as Linux and macOS, and passes the same test suite.
 
-Unzip the artifact. Inside are:
+Unzip the download. Inside are:
 
 | Path | What it is |
 |---|---|
@@ -366,7 +366,8 @@ The standalone takes no arguments. It opens the default audio device, binds ever
 that exists **when it starts** (so start your controller or virtual keyboard first), and runs until
 interrupted.
 
-CI artifacts are built on request for Linux x86-64 and macOS universal2 (arm64 + x86_64). The macOS
+CI builds Linux x86-64, Windows x86-64 and macOS universal2 (arm64 + x86_64) on request, and a `v*` tag
+publishes them as a release. The macOS
 bundles are **ad-hoc signed, not notarised** — the installer zip's `install.command` clears the
 quarantine flag, or do it by hand (`xattr -dr com.apple.quarantine <path>`) until there is a
 Developer ID to sign with.

@@ -3366,6 +3366,22 @@ TEST_CASE("every declared parameter a hand should be able to reach has a control
 		REQUIRE(desc != nullptr);
 		expected.push_back(std::string(desc->name));
 	}
+	// THE DRUM PAD'S TWO LAYERS (kit stance redesign): the engine reads every one of these (test_drum_engine's "layer two reads its
+	// OWN copy" case), and the pad editor that gives them a hand is the next piece of the redesign, not this one. Until it lands the
+	// pad panel offers layer two's Lock and its vector (the old layer row) and nothing else of the layers' own: layer one's Lock,
+	// vector and terrain pitch mode, layer two's pitch mode and its copies of every control a hit reads.
+	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+		for (const feathers::DrumControl c : feathers::kDrumLayerControls) {
+			const bool onPanel = c == feathers::DrumControl::Lock || c == feathers::DrumControl::OffsetX || c == feathers::DrumControl::OffsetY;
+			if (!onPanel) {
+				expected.push_back(std::string(findParam(static_cast<clap_id>(feathers::drumLayer2Param(slot, c)))->name));
+			}
+		}
+		for (const feathers::DrumControl c : { feathers::DrumControl::Lock, feathers::DrumControl::OffsetX, feathers::DrumControl::OffsetY,
+		                                       feathers::DrumControl::PitchMode }) {
+			expected.push_back(std::string(findParam(static_cast<clap_id>(feathers::drumParam(slot, c)))->name));
+		}
+	}
 	std::sort(unreachable.begin(), unreachable.end());
 	std::sort(expected.begin(), expected.end());
 

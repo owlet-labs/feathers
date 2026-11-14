@@ -5268,6 +5268,49 @@ TEST_CASE("drum: every Drum factory kit loads into a fresh instance on Drum and 
 	CHECK(tried == 6);
 }
 
+#include "fixtures/old_drum_kit_preset.inc"
+
+TEST_CASE("drum: a kit saved before the stance redesign (its Walk, Kit Gamma/Zone/Offset and old layer ids) loads without a crash, "
+          "plays, and allocates nothing") {
+	feathers::PresetMeta meta;
+	std::vector<uint8_t> payload;
+	REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(std::begin(kOldDrumKitPreset), std::end(kOldDrumKitPreset)), &meta,
+	                                      &payload));
+	HostedPlugin host;
+	const auto* chain = testChainOf(host.plugin());
+	StateBytes bytes;
+	bytes.bytes = payload;
+	clap_istream in = bytes.in();
+	REQUIRE(chain->load_preset(host.plugin(), &in));
+	const auto* params = static_cast<const clap_plugin_params*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_PARAMS));
+	double engine = -1.0;
+	REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::ParamId::OscType), &engine));
+	CHECK(engine == static_cast<double>(feathers::OscType::Drum));
+	// THE RETIRED IDS ARE GONE, NOT REINTERPRETED: nothing at the stance, and every layer's lock and vector within its range.
+	double posX = 1.0;
+	REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::ParamId::PosX), &posX));
+	CHECK(posX == 0.0);
+	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+		for (const size_t layer : { size_t { 0 }, size_t { 1 } }) {
+			double x = 9.0;
+			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::OffsetX)), &x));
+			CHECK(std::abs(x) <= feathers::kDrumVectorRange);
+		}
+	}
+	EventList events;
+	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 36, 1, 0.8);
+	float peak = 0.0f;
+	for (int block = 0; block < 16; ++block) {
+		CHECK(host.run(256, events) != CLAP_PROCESS_ERROR);
+		events.clear();
+		CHECK(host.allocationsInLastProcess() == 0);
+		CHECK(allFinite(host.left(), 256));
+		peak = std::max(peak, peakOf(host.left(), 256));
+	}
+	CHECK(peak > 0.02f);
+	CHECK(peak < 1.5f);
+}
+
 TEST_CASE("every test-tagged factory preset loads into a fresh instance and renders a block") {
 	// THE SURVEY'S STRESS PATCHES (presets/factory/README.md, "The `test` tag"), written by bench_patch through the
 	// browser's save road (`capture_preset`), so each is read back through the browser's load road, into an instance

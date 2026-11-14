@@ -41412,3 +41412,60 @@ TEST_CASE("OWLTT's window: offsets and ratio trims read and type as signed perce
 	// THE GLOBAL ROW IS LEFT AS IT WAS: Attack still reads as a percentage of its range.
 	CHECK(panel.globalBoxesForTest()[4]->control().text() == "25%");
 }
+
+TEST_CASE("OWLTT: the combined-reduction readout has a place of its own — no strip header, no crossover label, no clip square, at every crossover position, in the window and on the card") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	const auto overlap = [](const visage::Bounds& a, const visage::Bounds& b) {
+		return a.x() < b.right() && b.x() < a.right() && a.y() < b.bottom() && b.y() < a.bottom();
+	};
+	// A NON-ZERO REDUCTION IS PUBLISHED, so the readout is the one the player sees while signal passes (it draws only above 0.1 dB).
+	const std::array<float, 3> gr { -0.5f, -0.25f, -0.125f };
+	d.f.bridge.publishOwlttMeters(d.slot, gr, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false, { false, false, false }, 3.0f);
+	REQUIRE(d.card->graph()->meters().combinedGrDb == doctest::Approx(3.0f));
+	REQUIRE(panel.graph()->meters().combinedGrDb == doctest::Approx(3.0f));
+
+	struct Scene {
+		const char* name;
+		float low;
+		float high;
+	};
+	const Scene scenes[] = { { "defaults", 200.0f, 2000.0f }, { "high at the bottom", 200.0f, 300.0f },
+		                     { "high at the top", 200.0f, 20000.0f }, { "both high", 1800.0f, 20000.0f },
+		                     { "close", 800.0f, 900.0f } };
+	size_t headersChecked = 0;
+	for (const Scene& s : scenes) {
+		d.set(static_cast<size_t>(ow::Param::LowCrossover), s.low);
+		d.set(static_cast<size_t>(ow::Param::HighCrossover), s.high);
+		for (ui::OwlttGraph* graph : { d.card->graph(), panel.graph() }) {
+			CAPTURE(s.name);
+			CAPTURE(graph == panel.graph());
+			const visage::Bounds readout = graph->readoutBounds();
+			REQUIRE(readout.width() > 0.0f);
+			CHECK(readout.x() >= 0.0f);
+			CHECK(readout.right() <= graph->width());
+			CHECK_FALSE(overlap(readout, graph->clipSquare()));
+			const ui::OwlttGraph::BottomText t = graph->bottomText();
+			for (const visage::Bounds& label : t.frequency) {
+				CHECK_FALSE(overlap(readout, label));
+			}
+			if (graph->editor()) {
+				for (size_t band = 0; band < 3; ++band) {
+					for (size_t which = 0; which < 2; ++which) {
+						CAPTURE(band);
+						CAPTURE(which);
+						CHECK_FALSE(overlap(readout, graph->stripHeader(band, which)));
+						CHECK_FALSE(overlap(graph->clipSquare(), graph->stripHeader(band, which)));
+						++headersChecked;
+					}
+				}
+			}
+		}
+	}
+	CHECK(headersChecked == 5u * 6u); // not vacuous: the headers were there to be avoided
+}

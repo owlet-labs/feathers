@@ -473,9 +473,12 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 			const visage::Point c = crossoverHandle(h);
 			fixed.push_back({ c.x - 8.0f, c.y - 8.0f, 16.0f, 16.0f });
 		}
+		fixed.push_back(readoutBounds());
+		fixed.push_back(clipSquare());
 	}
 	else {
-		fixed.push_back({ whole.right() - 90.0f, whole.y(), 90.0f, 14.0f }); // the clip square and the combined reduction
+		fixed.push_back(readoutBounds()); // the combined reduction beside the clip square
+		fixed.push_back(clipSquare());
 		for (const float left : { whole.x(), xLow, xHigh }) {
 			fixed.push_back({ left + 3.0f, xover.y() + 3.0f, 8.0f, 8.0f }); // a band's saturation light
 		}
@@ -501,7 +504,7 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 		// than over it.
 		out.frequency[which] = { anchor, y, w, kRowHeight };
 		bool placed = false;
-		for (int row = 0; row < 3 && !placed; ++row) {
+		for (int row = 0; row < (lane.width() > 0.0f ? 1 : 3) && !placed; ++row) { // the lane has one row; stepping down would enter the headers
 			for (int side = 0; side < 2 && !placed; ++side) {
 				const bool right = (lane.width() > 0.0f) == (side == 0);
 				const visage::Bounds b { right ? anchor + gap : anchor - gap - w, y + static_cast<float>(row) * 13.0f, w, kRowHeight };
@@ -862,6 +865,35 @@ visage::Bounds OwlttGraph::rail() const {
 	}
 	const visage::Bounds box = plot();
 	return { box.x(), box.y(), box.width(), kRailHeight };
+}
+
+/// THE CLIP SQUARE AND THE COMBINED-REDUCTION READOUT BESIDE IT: in the window they share the lane's right end, which nothing
+/// else uses at that height (the strip headers are in the bars' area below it); on the card, which has no lane, they are the bars' area's
+/// top right.
+visage::Bounds OwlttGraph::clipSquare() const {
+	const visage::Bounds lane = rail();
+	if (lane.width() > 0.0f) {
+		return { lane.right() - 10.0f, lane.y() + (lane.height() - 6.0f) * 0.5f, 6.0f, 6.0f };
+	}
+	const visage::Bounds xover = barArea();
+	return { xover.right() - 10.0f, xover.y() + 4.0f, 6.0f, 6.0f };
+}
+
+visage::Bounds OwlttGraph::readoutBounds() const {
+	const visage::Bounds lane = rail();
+	const visage::Bounds square = clipSquare();
+	const float y = lane.width() > 0.0f ? lane.y() + (lane.height() - 12.0f) * 0.5f : barArea().y() + 2.0f;
+	return { square.x() - 4.0f - 52.0f, y, 52.0f, 12.0f };
+}
+
+visage::Bounds OwlttGraph::stripHeader(size_t band, size_t which) const {
+	const visage::Bounds xover = barArea();
+	const float x0 = band == 0 ? xover.x() : bandEdge(band - 1);
+	const float x1 = band == 2 ? xover.right() : bandEdge(band);
+	const StripSpan strip = stripSpanOf(x0, x1);
+	const float a = which == 0 ? strip.x0 : strip.mid;
+	const float b = which == 0 ? strip.mid : strip.x1;
+	return { a - 4.0f, xover.y() + 2.0f, b - a + 8.0f, 10.0f };
 }
 
 visage::Bounds OwlttGraph::barArea() const {
@@ -1424,10 +1456,12 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			if (editor_) {
 				// THE STRIPS' CAPTIONS, once per band, at the top of each strip.
 				canvas.setColor(withAlpha(kMuted, 0.9f));
-				canvas.text("RATIO", font(kKnobLabelSize), visage::Font::kCenter, stripX0 - 4.0f, xover.y() + 2.0f,
-				            stripX1 - stripX0 + 8.0f, 10.0f);
-				canvas.text("LEVEL", font(kKnobLabelSize), visage::Font::kCenter, stripX1 - 4.0f, xover.y() + 2.0f,
-				            stripX2 - stripX1 + 8.0f, 10.0f);
+				const visage::Bounds ratioHead = stripHeader(b, 0);
+				const visage::Bounds levelHead = stripHeader(b, 1);
+				canvas.text("RATIO", font(kKnobLabelSize), visage::Font::kCenter, ratioHead.x(), ratioHead.y(),
+				            ratioHead.width(), ratioHead.height());
+				canvas.text("LEVEL", font(kKnobLabelSize), visage::Font::kCenter, levelHead.x(), levelHead.y(),
+				            levelHead.width(), levelHead.height());
 			}
 
 			if (editor_) {
@@ -1447,7 +1481,8 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		const float dotSize = 6.0f;
 		if (meters.clipState != ClipLedState::Normal) {
 			canvas.setColor(meters.clipState == ClipLedState::Clip ? kAccent : kMeterNear);
-			canvas.rectangle(xover.right() - dotSize - 4.0f, xover.y() + 4.0f, dotSize, dotSize);
+			const visage::Bounds square = clipSquare();
+			canvas.rectangle(square.x(), square.y(), square.width(), square.height());
 		}
 		// EACH BAND'S OWN LIGHT (backlog EL): the same square, at the top-left of the band's region,
 		// while that band's clipper is working. The output square above says the SUM clipped; these
@@ -1467,10 +1502,9 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		if (meters.combinedGrDb >= 0.1f) {
 			char text[16];
 			std::snprintf(text, sizeof(text), "%.1f dB", meters.combinedGrDb);
-			const float textW = 52.0f;
+			const visage::Bounds at = readoutBounds();
 			canvas.setColor(kMuted);
-			canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight,
-			            xover.right() - dotSize - 8.0f - textW, xover.y() + 2.0f, textW, 12.0f);
+			canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, at.x(), at.y(), at.width(), at.height());
 		}
 	}
 

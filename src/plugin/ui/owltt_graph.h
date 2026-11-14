@@ -252,6 +252,10 @@ public:
 	/// bars are confined below the lane rather than merely losing to it.
 	static constexpr float kRailHeight = 16.0f;
 	visage::Bounds rail() const;
+	/// The combined-reduction readout's rectangle and the clip square beside it, and a strip header's (`which` 0 RATIO, 1 LEVEL).
+	visage::Bounds readoutBounds() const;
+	visage::Bounds clipSquare() const;
+	visage::Bounds stripHeader(size_t band, size_t which) const;
 
 	/// WHERE THE BARS, STRIPS AND METERS LIVE — the plot minus the lane. Everything that was written
 	/// against `plot()` asks this instead, so a bar cannot be drawn into a lane it cannot be grabbed

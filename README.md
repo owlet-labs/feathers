@@ -1,7 +1,7 @@
 # Feathers
 
-[![Linux x86-64](https://img.shields.io/badge/Linux-x86--64-FCC624?logo=linux&logoColor=black)](#trying-it)
-[![macOS universal](https://img.shields.io/badge/macOS-universal%20(arm64%20%2B%20x86--64)-000000?logo=apple&logoColor=white)](#trying-it)
+[![Linux x86-64](https://img.shields.io/badge/Linux-x86--64-FCC624?logo=linux&logoColor=black)](#install)
+[![macOS universal](https://img.shields.io/badge/macOS-universal%20(arm64%20%2B%20x86--64)-000000?logo=apple&logoColor=white)](#install)
 [![Windows x86-64](https://img.shields.io/badge/Windows-x86--64%20(no%20editor%20yet)-0078D6?logo=windows&logoColor=white)](#installing-on-windows)
 [![CLAP](https://img.shields.io/badge/plugin-CLAP-5a3e85)](#trying-it)
 [![VST3](https://img.shields.io/badge/plugin-VST3-5a3e85)](#trying-it)
@@ -14,6 +14,24 @@ Feathers is a polyphonic synthesizer and effects rack, built as a CLAP plugin (V
 **Linux is a first-class platform.** Feathers is developed and played on Linux every day (in Bitwig), and every
 pre-release build ships for Linux x86-64 alongside the universal macOS build and Windows x86-64. On Windows the
 synth plays but has no editor window yet: the window embed for Windows is still to be written.
+
+## Install
+
+Paste one line. It downloads the latest release, checks it, and installs the synth and the Chain (CLAP and VST3) into your own plugin folders: no clone, no GitHub account, no administrator password, and on macOS nothing to unquarantine.
+
+**macOS and Linux** (Terminal):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.sh | bash
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.ps1 | iex
+```
+
+Then restart your DAW or rescan its plugins. Options, the manual download and per-platform notes are under [Trying it](#trying-it). Pre-release: patches may not load the same way in later builds before 1.0.
 
 ![The full editor with the Wood Elves factory preset](docs/readme/01-hero-full-editor.png)
 *The full editor with a factory preset (Wood Elves). From left to right: the Engine rail (voice, pitch and stack, with the route list for the focused source at the bottom), the modulator lane (DAHDSR, two LFOs), the sounds and their blend geometry, and the post-fx lane (Eroder, Resonate, Delay). The route list shows four routes from one modulator into two devices, each with its amount and transfer curve. The preset name box reads "Init" because the capture host loads the patch state directly, not through the preset browser.*
@@ -227,23 +245,9 @@ The core of Feathers is, and will remain, open source under the GNU General Publ
 
 ## Trying it
 
-### Install in one line (recommended)
+The one-line installers are at the [top of this page](#install); they are the recommended way in. The options they take, and the manual route, follow.
 
-Paste one command. It downloads the latest release, checks it against the release's checksums, unpacks it and installs the synth and the Chain (CLAP and VST3) into your own plugin folders. No clone, no GitHub account, no administrator password, and on macOS nothing to unquarantine.
-
-**macOS and Linux** (Terminal):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.sh | bash
-```
-
-**Windows** (PowerShell):
-
-```powershell
-irm https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.ps1 | iex
-```
-
-Then restart your DAW or rescan its plugins. The scripts are short and readable: [`install.sh`](scripts/install.sh), [`install.ps1`](scripts/install.ps1). To install a particular release, use `curl … | bash -s -- --version v0.1.0`, or set `$env:FEATHERS_VERSION = 'v0.1.0'` before the PowerShell line. On Windows the plugins go into `%LOCALAPPDATA%\Programs\Common\CLAP` and `…\VST3`; if your DAW doesn't scan those, add them to its plugin paths, or run PowerShell as administrator with `$env:FEATHERS_SYSTEM = '1'` to install into `C:\Program Files\Common Files\`.
+On Windows the one-liner installs into `%LOCALAPPDATA%\Programs\Common\CLAP` and `…\VST3`; if your DAW doesn't scan those, add them to its plugin paths, or run PowerShell as administrator after setting `$env:FEATHERS_SYSTEM = '1'` to install into `C:\Program Files\Common Files\`. To install a particular release: `curl … | bash -s -- --version v0.1.0`, or set `$env:FEATHERS_VERSION = 'v0.1.0'` before the PowerShell line. The scripts are short and readable: [`install.sh`](scripts/install.sh), [`install.ps1`](scripts/install.ps1).
 
 ### Downloading by hand
 

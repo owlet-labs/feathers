@@ -210,10 +210,10 @@ struct Settings {
 	float outputGain = 0.5f;       // 0..1, 0.5 = unity
 	float blend = 1.0f;            // 0=dry, 1=wet
 	/// THE CLIP CHOICE, as two flags so the many callers that set `softClip` keep meaning what they meant. `softClip`
-	/// off is Off. On with `clipBandsOnly` false is Master, which is how the device always ran (each band's sum
-	/// clipped, then the output); `clipBandsOnly` true is Bands: each band clipped before the sum, the sum not.
+	/// off is Off. On clips by `clipOnly`: 0 is Both (each band clipped, then the output sum: how the device always ran), 1 is
+	/// Bands (each band before the sum, the sum not), 2 is Master (the output sum only, no band clip).
 	bool softClip = true;
-	bool clipBandsOnly = false;
+	uint8_t clipOnly = 0;
 	/// CHARACTER'S AND VIBE'S MODES (backlog IW): a zone index 0..7, or `kZoneModeFree`. Free is the rolling coordinate.
 	uint32_t characterMode = 8;
 	uint32_t vibeMode = 8;
@@ -333,10 +333,10 @@ inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", 
                                              "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3"};
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
-/// THE CLIP CHOICE (`soft_clip`). It was Off|On; On is Master, the same index, so a stored 1 means what it meant, and a
-/// patch that stored the label "On" loads as Master through `kClipAliases`.
-inline constexpr const char* kClipNames[] = {"Off", "Master", "Bands"};
-inline constexpr device::ChoiceAlias kClipAliases[] = { { "On", "Master" } };
+/// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
+/// (and a stored label "On" loads as Both through `kClipAliases`). Master clips the output sum only, Bands each band only, Both each band and then the sum.
+inline constexpr const char* kClipNames[] = {"Off", "Both", "Master", "Bands"};
+inline constexpr device::ChoiceAlias kClipAliases[] = { { "On", "Both" } };
 /// BACKLOG LQ: what a band's two channels are.
 inline constexpr const char* kStereoModeNames[] = {"L/R", "M/S"};
 
@@ -625,10 +625,10 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     // knee-clipped at +6 dB and the output at 0 dBFS. Off lets a hot band through unclipped — the
     // firmware's `setSoftClipEnabled`, which its Mode encoder toggled with a click. Not modulatable:
     // a clipper switching under modulation is a click, not an effect.
-    {.key = "soft_clip", .name = "Soft Clip", .min = 0.0, .max = 2.0, .def = 1.0, .stepped = true, .unit = device::Unit::Choice,
+    {.key = "soft_clip", .name = "Soft Clip", .min = 0.0, .max = 3.0, .def = 1.0, .stepped = true, .unit = device::Unit::Choice,
      .names = kClipNames, .modulatable = false, .offsetsMayLeaveRange = false,
-     .tooltip = "Soft clipper — Off lets peaks through; Master clips each band (+6 dB) and then the output (0 dBFS); "
-                "Bands clips each band and leaves the sum alone",
+     .tooltip = "Soft clipper — Off lets peaks through; Master clips the summed output (0 dBFS); Bands clips each band "
+                "(+6 dB) and leaves the sum alone; Both clips each band and then the output",
      .shortName = "Clip", .choiceAliases = kClipAliases},
     // **CHARACTER'S AND VIBE'S MODE CELLS (backlog IW).** Stepped Choices, eight zones then Free, default Free — so a
     // fresh device sounds as it did: Free is the rolling coordinate. Not destinations: a mode switching under a route is

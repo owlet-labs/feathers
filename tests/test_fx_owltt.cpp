@@ -1885,7 +1885,7 @@ TEST_CASE("backlog EL: the Soft Clip switch — Off lets a hot sum through uncli
 	const Row row = rowOf(s);
 	CHECK(row[static_cast<size_t>(Param::SoftClip)] == 0.0f);
 	CHECK(stateOf(row).softClip == false);
-	CHECK(kParamDescs[static_cast<size_t>(Param::SoftClip)].def == 1.0);
+	CHECK(kParamDescs[static_cast<size_t>(Param::SoftClip)].def == 1.0); // Both, the old On, at its old index
 }
 
 TEST_CASE("backlog EL: a band's light comes on while its clipper is working, holds for the clip light's ~500 ms, "

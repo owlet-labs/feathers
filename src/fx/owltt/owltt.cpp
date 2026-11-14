@@ -103,7 +103,7 @@ Settings stateOf(const Row& row) {
 	{
 		const float clip = row[i++];
 		s.softClip = clip > 0.5f;
-		s.clipBandsOnly = clip > 1.5f;
+		s.clipOnly = clip > 2.5f ? 1 : (clip > 1.5f ? 2 : 0); // 3 Bands, 2 Master, 1 Both
 	}
 	s.characterMode = static_cast<uint32_t>(std::clamp(std::lround(row[i++]), 0L, 8L));
 	s.vibeMode = static_cast<uint32_t>(std::clamp(std::lround(row[i++]), 0L, 8L));
@@ -174,7 +174,7 @@ Row rowOf(const Settings& s) {
 	row[i++] = s.highCrossover;
 	row[i++] = s.outputGain;
 	row[i++] = s.blend;
-	row[i++] = !s.softClip ? 0.0f : (s.clipBandsOnly ? 2.0f : 1.0f);
+	row[i++] = !s.softClip ? 0.0f : (s.clipOnly == 0 ? 1.0f : (s.clipOnly == 1 ? 3.0f : 2.0f));
 	row[i++] = static_cast<float>(s.characterMode);
 	row[i++] = static_cast<float>(s.vibeMode);
 	row[i++] = s.stereoLink;
@@ -1316,7 +1316,7 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			}
 
 			// Soft clip per band — under the switch (backlog EL): the firmware's `softClipEnabled_`.
-			if (target_.softClip) { // Master and Bands both clip the band
+			if (target_.softClip && target_.clipOnly != 2) { // the band stage: Bands and Both, not Master
 				L = softClip(L, kBandClipKnee);
 				R = softClip(R, kBandClipKnee);
 			}
@@ -1335,7 +1335,7 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		sumR *= smoothedOutputGain_;
 
 		// Soft clip at output — under the same switch as the bands.
-		if (target_.softClip && !target_.clipBandsOnly) { // Master only: Bands leaves the sum alone
+		if (target_.softClip && target_.clipOnly != 1) { // the sum stage: Master and Both, not Bands
 			sumL = softClip(sumL, kOutputClipKnee);
 			sumR = softClip(sumR, kOutputClipKnee);
 		}
@@ -1668,7 +1668,18 @@ const device::TextOps kTextOps {
 				std::snprintf(out, size, "0");
 			}
 			else {
-				std::snprintf(out, size, "%+.0f%%", pct);
+				// TWO DECIMALS, TRAILING ZEROS DROPPED: "+25%", "+43.75%". The text a hand types into must read back to the value
+				// it was opened on, so a whole-percent print would not do.
+				char digits[24];
+				std::snprintf(digits, sizeof(digits), "%+.2f", pct);
+				size_t n = std::strlen(digits);
+				while (n > 0 && digits[n - 1] == '0') {
+					digits[--n] = '\0';
+				}
+				if (n > 0 && digits[n - 1] == '.') {
+					digits[--n] = '\0';
+				}
+				std::snprintf(out, size, "%s%%", digits);
 			}
 			return true;
 		}

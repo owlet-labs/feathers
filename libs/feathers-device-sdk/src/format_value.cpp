@@ -89,14 +89,14 @@ std::string formatValue(const ParamDesc& desc, double value) {
 		}
 		const double hz = std::exp2(value);
 		if (hz >= 1000.0) {
-			std::snprintf(out, sizeof(out), "%.2gk", hz / 1000.0);
+			std::snprintf(out, sizeof(out), "%.2gkHz", hz / 1000.0);
 		}
 		else if (hz < 9.95) {
 			// BELOW 10 Hz, TWO SIGNIFICANT DIGITS: the filter's knob reaches 0.5 Hz (Z8), which "%.0f" printed as "0".
-			std::snprintf(out, sizeof(out), "%.2g", hz);
+			std::snprintf(out, sizeof(out), "%.2gHz", hz);
 		}
 		else {
-			std::snprintf(out, sizeof(out), "%.0f", hz);
+			std::snprintf(out, sizeof(out), "%.0fHz", hz);
 		}
 		return out;
 	}
@@ -168,10 +168,11 @@ std::string formatValue(const ParamDesc& desc, double value) {
 		// 3.6 reads as the 4 every reader of a stepped control takes it for.
 		// A CONTINUOUS ONE THAT ASKS (`ParamDesc::wholeReadout`) prints the same way.
 		if (desc.stepped || desc.wholeReadout) {
-			std::snprintf(out, sizeof(out), "%.0f", std::round(value));
+			std::snprintf(out, sizeof(out), "%.0f%s", std::round(value), desc.suffix != nullptr ? desc.suffix : "");
 			return out;
 		}
-		break;
+		std::snprintf(out, sizeof(out), "%.2f%s", value, desc.suffix != nullptr ? desc.suffix : "");
+		return out;
 	}
 	std::snprintf(out, sizeof(out), "%.2f", value);
 	return out;
@@ -343,7 +344,7 @@ std::string renderForEdit(const ParamDesc& desc, double value, int significant) 
 			return "off";
 		}
 		const double hz = std::exp2(value);
-		return hz >= 1000.0 ? decimal(hz / 1000.0, significant) + "k" : decimal(hz, significant);
+		return hz >= 1000.0 ? decimal(hz / 1000.0, significant) + "kHz" : decimal(hz, significant) + "Hz";
 	}
 	case Unit::Percent:
 		return (desc.min < 0.0 ? signedDecimal(value * 100.0, significant) : decimal(value * 100.0, significant)) + "%";
@@ -368,7 +369,7 @@ std::string renderForEdit(const ParamDesc& desc, double value, int significant) 
 		if (atOffEnd(desc, value)) {
 			return "off";
 		}
-		break;
+		return decimal(value, significant) + (desc.suffix != nullptr ? desc.suffix : "");
 	}
 	return decimal(value, significant);
 }
@@ -531,7 +532,8 @@ std::optional<double> parseValue(const ParamDesc& desc, std::string_view text, d
 	case Unit::Choice:
 	case Unit::Note:
 	case Unit::Number:
-		if (!unit.empty()) {
+		// THE DECLARED UNIT MAY BE TYPED OR LEFT OFF ("200" and "200Hz"): `ParamDesc::suffix`, any case.
+		if (!unit.empty() && !(desc.unit == Unit::Number && desc.suffix != nullptr && sameWord(unit, desc.suffix))) {
 			return std::nullopt;
 		}
 		return clamped(n);

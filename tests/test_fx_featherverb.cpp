@@ -766,8 +766,8 @@ TEST_CASE("Featherverb's HPF and LPF are corners in Hz over 20 Hz..20 kHz, on a 
 		CHECK(d.unit == feathers::device::Unit::LogHertz); // the value IS log2(Hz): equal travel per octave
 		CHECK(std::exp2(d.min) == doctest::Approx(20.0).epsilon(1e-12));
 		CHECK(std::exp2(d.max) == doctest::Approx(20000.0).epsilon(1e-12));
-		CHECK(feathers::device::formatValue(d, d.min) == "20");
-		CHECK(feathers::device::formatValue(d, d.max) == "20k");
+		CHECK(feathers::device::formatValue(d, d.min) == "20Hz");
+		CHECK(feathers::device::formatValue(d, d.max) == "20kHz");
 		CHECK(d.modulatable);
 	}
 	// THE KEYS NAME THE NEW MEANING, AND THE OLD ONES ARE RETIRED (CLAUDE.md, the schema ledger).

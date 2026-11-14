@@ -545,10 +545,13 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      "High band output level"},
 
     // Output
-    {"low_crossover", "Low Crossover", 20.0, 2000.0, 200.0, false, device::Unit::Number, {}, true, false,
-     "Low-mid split frequency"},
-    {"high_crossover", "High Crossover", 200.0, 20000.0, 2000.0, false, device::Unit::Number, {}, true, false,
-     "Mid-high split frequency"},
+    // THE UNIT IS PRINTED, whole hertz (`ParamDesc::suffix`, `wholeReadout`): a bare "200.00" said nothing about 200 of what.
+    {.key = "low_crossover", .name = "Low Crossover", .min = 20.0, .max = 2000.0, .def = 200.0, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Low-mid split frequency", .wholeReadout = true, .suffix = "Hz"},
+    {.key = "high_crossover", .name = "High Crossover", .min = 200.0, .max = 20000.0, .def = 2000.0, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Mid-high split frequency", .wholeReadout = true, .suffix = "Hz"},
     {"output_gain", "Output Gain", 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,
      "Makeup gain — output level after compression"},
     {"blend", "Blend", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,

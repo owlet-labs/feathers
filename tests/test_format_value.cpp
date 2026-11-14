@@ -95,12 +95,12 @@ const SynthGolden kSynthGolden[] = {
 	{ "s_logsec", -5, "31ms" },
 	{ "s_logsec", 0.5, "1.4s" },
 	{ "s_logsec", -12, "off" },
-	{ "s_loghz", 5, "32" },
-	{ "s_loghz", 9.9657, "1000" },
-	{ "s_loghz", 10.5, "1.4k" },
-	{ "s_loghz", 12, "4.1k" },
-	{ "s_loghz", 14, "16k" },
-	{ "s_loghz", 3, "8" },
+	{ "s_loghz", 5, "32Hz" },
+	{ "s_loghz", 9.9657, "1000Hz" },
+	{ "s_loghz", 10.5, "1.4kHz" },
+	{ "s_loghz", 12, "4.1kHz" },
+	{ "s_loghz", 14, "16kHz" },
+	{ "s_loghz", 3, "8Hz" },
 	{ "s_pct", 0, "0%" },
 	{ "s_pct", 0.33300000000000002, "33%" },
 	{ "s_pct", 0.5, "50%" },
@@ -169,23 +169,23 @@ struct RegistryGolden {
 // value is stored rather than recomputed, so a later change to a device's RANGE does not move these;
 // a change to its unit or its names does, and should.
 const RegistryGolden kRegistryGolden[] = {
-	{ "flt1", "filter_cutoff_wide", 4.3219280948873617, "20" },
-	{ "flt1", "filter_cutoff_wide", 5.3185065233535704, "40" },
-	{ "flt1", "filter_cutoff_wide", 8.0092682802123338, "258" },
-	{ "flt1", "filter_cutoff_wide", 9.3048202372184043, "632" },
-	{ "flt1", "filter_cutoff_wide", 12.593529051156894, "6.2k" },
-	{ "flt1", "filter_cutoff_wide", 14.287712379549449, "20k" },
-	{ "flt1", "filter_cutoff_wide", 9.965784284662087, "1k" },
-	{ "flt1", "filter_cutoff_wide", -1.0, "0.5" },              // the knob's bottom since Z8
-	{ "flt1", "filter_cutoff_wide", 1.3219280948873622, "2.5" },
-	{ "flt1", "filter_cutoff_wide", 14.550746785383243, "24k" }, // and its top
-	{ "clip", "clip_freq", 8.965784284662087, "500" },
-	{ "clip", "clip_freq", 9.4242805347342031, "687" },
-	{ "clip", "clip_freq", 10.662220409928915, "1.6k" },
-	{ "clip", "clip_freq", 11.258265535022666, "2.4k" },
-	{ "clip", "clip_freq", 12.771303160260647, "7k" },
-	{ "clip", "clip_freq", 13.550746785383243, "12k" },
-	{ "clip", "clip_freq", 11.550746785383243, "3k" },
+	{ "flt1", "filter_cutoff_wide", 4.3219280948873617, "20Hz" },
+	{ "flt1", "filter_cutoff_wide", 5.3185065233535704, "40Hz" },
+	{ "flt1", "filter_cutoff_wide", 8.0092682802123338, "258Hz" },
+	{ "flt1", "filter_cutoff_wide", 9.3048202372184043, "632Hz" },
+	{ "flt1", "filter_cutoff_wide", 12.593529051156894, "6.2kHz" },
+	{ "flt1", "filter_cutoff_wide", 14.287712379549449, "20kHz" },
+	{ "flt1", "filter_cutoff_wide", 9.965784284662087, "1kHz" },
+	{ "flt1", "filter_cutoff_wide", -1.0, "0.5Hz" },              // the knob's bottom since Z8
+	{ "flt1", "filter_cutoff_wide", 1.3219280948873622, "2.5Hz" },
+	{ "flt1", "filter_cutoff_wide", 14.550746785383243, "24kHz" }, // and its top
+	{ "clip", "clip_freq", 8.965784284662087, "500Hz" },
+	{ "clip", "clip_freq", 9.4242805347342031, "687Hz" },
+	{ "clip", "clip_freq", 10.662220409928915, "1.6kHz" },
+	{ "clip", "clip_freq", 11.258265535022666, "2.4kHz" },
+	{ "clip", "clip_freq", 12.771303160260647, "7kHz" },
+	{ "clip", "clip_freq", 13.550746785383243, "12kHz" },
+	{ "clip", "clip_freq", 11.550746785383243, "3kHz" },
 	{ "flt1", "filter_res", 0, "0%" },
 	{ "flt1", "filter_res", 0.10000000000000001, "10%" },
 	{ "flt1", "filter_res", 0.37, "37%" },
@@ -592,8 +592,8 @@ TEST_CASE("editText opens on the fewest digits that read back to the same stored
 	// READABLE, NOT JUST EXACT: a clean value opens on its clean text.
 	using device::Unit;
 	const device::ParamDesc hz = unitDesc(Unit::LogHertz, std::log2(20.0), std::log2(20000.0));
-	CHECK(device::editText(hz, std::log2(1000.0)) == "1k");
-	CHECK(device::editText(hz, std::log2(440.0)) == "440");
+	CHECK(device::editText(hz, std::log2(1000.0)) == "1kHz");
+	CHECK(device::editText(hz, std::log2(440.0)) == "440Hz");
 	const device::ParamDesc pct = unitDesc(Unit::Percent, 0.0, 1.0);
 	CHECK(device::editText(pct, 0.5) == "50%");
 	const device::ParamDesc t = unitDesc(Unit::LogSeconds, std::log2(0.0005), std::log2(20.0));
@@ -638,10 +638,10 @@ TEST_CASE("FA: the Shaper's input filters read \"off\" at their open ends, and \
 	CHECK(feathers::device::formatValue(hpf, hpf.min + 0.5 * feathers::device::kOffEndSlack) == "off");
 	CHECK_FALSE(shp::inputHighpassOn(static_cast<float>(hpf.min + 0.5 * feathers::device::kOffEndSlack)));
 	// ONLY THE DECLARED END: the HPF's top and the LPF's bottom are corners like any other.
-	CHECK(feathers::device::formatValue(hpf, hpf.max) == "20k");
-	CHECK(feathers::device::formatValue(lpf, lpf.min) == "20");
-	CHECK(feathers::device::formatValue(hpf, std::log2(250.0)) == "250");
-	CHECK(feathers::device::formatValue(hpf, hpf.min + 0.01) == "20"); // a hundredth of an octave in is a filter
+	CHECK(feathers::device::formatValue(hpf, hpf.max) == "20kHz");
+	CHECK(feathers::device::formatValue(lpf, lpf.min) == "20Hz");
+	CHECK(feathers::device::formatValue(hpf, std::log2(250.0)) == "250Hz");
+	CHECK(feathers::device::formatValue(hpf, hpf.min + 0.01) == "20Hz"); // a hundredth of an octave in is a filter
 	CHECK(shp::inputHighpassOn(static_cast<float>(hpf.min + 0.01)));
 	// THE EDIT TEXT TOO, and typing "off" lands on the end that is off.
 	CHECK(feathers::device::editText(hpf, hpf.min) == "off");
@@ -650,7 +650,7 @@ TEST_CASE("FA: the Shaper's input filters read \"off\" at their open ends, and \
 	CHECK(feathers::device::parseValue(lpf, "Off", 10.0) == lpf.max);
 	// AND A CONTROL THAT DECLARES NO OFF END IS UNTOUCHED: Featherverb's LPF at 20 kHz is a 20 kHz filter.
 	bool sawPlain = false;
-	for (const auto& d : feathers::kDevices) {
+	for (const auto& d : kDevices) {
 		for (const auto& p : d.params) {
 			if (p.unit == feathers::device::Unit::LogHertz && p.offAtEnd == 0) {
 				CHECK(feathers::device::formatValue(p, p.max) != "off");
@@ -705,4 +705,66 @@ TEST_CASE("an angle reads in whole degrees and types in degrees: 0, a quarter, a
 		REQUIRE(back.has_value());
 		CHECK(static_cast<float>(*back) == static_cast<float>(v));
 	}
+}
+
+TEST_CASE("a readout carries its unit: frequencies print Hz and kHz, a plain Number prints its declared suffix, and typing reads it with or without") {
+	using device::Unit;
+	// A FREQUENCY'S UNIT IS ON THE READOUT, the card, the window, the tooltip and the field alike — one formatter. Expected
+	// strings are restated from the frequency, not read off the formatter.
+	const device::ParamDesc hz = unitDesc(Unit::LogHertz, std::log2(20.0), std::log2(20000.0), std::log2(1000.0));
+	CHECK(device::formatValue(hz, std::log2(1000.0)) == "1kHz");
+	CHECK(device::formatValue(hz, std::log2(150.0)) == "150Hz");
+	CHECK(device::formatValue(hz, std::log2(20000.0)) == "20kHz");
+	CHECK(device::formatValue(hz, std::log2(1200.0)) == "1.2kHz");
+	CHECK(device::formatValue(hz, std::log2(4.0)) == "4Hz"); // under 10 Hz, two significant digits
+	CHECK(device::editText(hz, std::log2(1200.0)) == "1.2kHz");
+	// AND THE FIELD READS BACK what it opened on, and what a hand types without the unit.
+	CHECK(near(device::parseValue(hz, "1.2kHz", 0.0), std::log2(1200.0)));
+	CHECK(near(device::parseValue(hz, "1200", 0.0), std::log2(1200.0)));
+	CHECK(near(device::parseValue(hz, "150hz", 0.0), std::log2(150.0)));
+
+	// A PLAIN NUMBER WITH A DECLARED SUFFIX (`ParamDesc::suffix`): the crossovers' hertz, the grain size's milliseconds.
+	device::ParamDesc xover = make("xover", 20.0, 2000.0, false, Unit::Number);
+	xover.wholeReadout = true;
+	xover.suffix = "Hz";
+	CHECK(device::formatValue(xover, 200.0) == "200Hz"); // whole hertz, not "200.00"
+	CHECK(device::formatValue(xover, 2000.0) == "2000Hz");
+	CHECK(device::formatValue(xover, 199.6) == "200Hz");
+	CHECK(device::editText(xover, 200.0) == "200Hz");
+	CHECK(near(device::parseValue(xover, "350", 200.0), 350.0));
+	CHECK(near(device::parseValue(xover, "350Hz", 200.0), 350.0));
+	CHECK(near(device::parseValue(xover, "350 HZ", 200.0), 350.0));
+	CHECK_FALSE(device::parseValue(xover, "350ms", 200.0).has_value()); // another unit is no value
+	// AND A CONTINUOUS NUMBER KEEPS ITS DECIMALS, then the unit.
+	device::ParamDesc oct = make("oct", -4.0, 4.0, false, Unit::Number);
+	oct.suffix = "oct";
+	CHECK(device::formatValue(oct, 0.5) == "0.50oct");
+	CHECK(near(device::parseValue(oct, "0.5oct", 0.0), 0.5));
+	CHECK(near(device::parseValue(oct, "0.5", 0.0), 0.5));
+	// NO SUFFIX, NO CHANGE: a bare Number still prints bare and still refuses a unit.
+	const device::ParamDesc bare = make("bare", 0.0, 10.0, false, Unit::Number);
+	CHECK(device::formatValue(bare, 2.5) == "2.50");
+	CHECK_FALSE(device::parseValue(bare, "2.5Hz", 0.0).has_value());
+
+	// THE REGISTRY'S OWN DECLARATIONS: the controls the audit named carry theirs.
+	const auto readout = [](const char* tag, const char* key, double value) {
+		for (const device::Descriptor& d : kDevices) {
+			if (std::string(d.traits.tag) != tag) {
+				continue;
+			}
+			for (const device::ParamDesc& p : d.params) {
+				if (std::string(p.key) == key) {
+					return device::formatValue(p, value);
+				}
+			}
+		}
+		return std::string("(no such control)");
+	};
+	CHECK(readout("OWLTT", "low_crossover", 200.0) == "200Hz");
+	CHECK(readout("OWLTT", "high_crossover", 2000.0) == "2000Hz");
+	CHECK(readout("PITCH", "pitch_size", 60.0) == "60ms");
+	CHECK(readout("ERODER", "eroder_cutoff", 0.5) == "0.50oct");
+	CHECK(readout("drwn", "cutoff", 1.0) == "1.00oct");
+	CHECK(readout("flt1", "filter_cutoff_wide", std::log2(1000.0)) == "1kHz");
+	CHECK(readout("FVERB", "featherverb_hpf_hz", std::log2(150.0)) == "150Hz");
 }

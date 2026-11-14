@@ -30040,8 +30040,8 @@ TEST_CASE("PHASER's Center stays live while a note is tracked, prints the offset
 	ui::PhaserPlot* plot = d.card->plotForTest();
 	CHECK_FALSE(plot->trackingForTest());
 	CHECK(d.card->centerBoxForTest()->enabled());
-	CHECK(d.card->centerBoxForTest()->readout() == "800");
-	CHECK(panel->boxForTest(phr::Param::CenterHz)->readout() == "800");
+	CHECK(d.card->centerBoxForTest()->readout() == "800Hz");
+	CHECK(panel->boxForTest(phr::Param::CenterHz)->readout() == "800Hz");
 	// A NOTE: still live, and the readout is the offset — "+0" at the default, which is "on the note".
 	d.publish(phaserReadings(0.0f, 0.0f, 0.0f, 440.0f));
 	CHECK(d.card->updateContent());

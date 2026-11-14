@@ -21761,3 +21761,274 @@ TEST_CASE("PHOTO OD: a window's head and the settings screen, controls left and 
 		shoot(screen, std::string(dir) + "/settings-" + name + ".png");
 	}
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// PLOT HANDLES AS MODULATION TARGETS (`ModHandle`): the OWLTT crossover handles and the Drawn puck.
+// ---------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// OWLTT's frequency axis, RESTATED (20 Hz..20 kHz, log2, across the plot's width) — not the graph's own `hzToX`.
+float restatedHzToX(const visage::Bounds& plot, double hz) {
+	const double t = std::log2(hz / 20.0) / std::log2(20000.0 / 20.0);
+	return plot.x() + static_cast<float>(std::clamp(t, 0.0, 1.0)) * plot.width();
+}
+
+} // namespace
+
+TEST_CASE("OWLTT's crossover handles are full modulation targets: halo, route on press, amount stroke, live dot") {
+	namespace owl = feathers::fx::owltt;
+	FilterFixture f;
+	const size_t slot = f.bridge.addFxDevice(owl::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	f.lane->resized();
+	auto* card = dynamic_cast<ui::OwlttCard*>(f.lane->cardAt(slot));
+	REQUIRE(card != nullptr);
+	ui::OwlttGraph* graph = card->graph();
+	REQUIRE(graph != nullptr);
+	graph->setCrossoversDraggable(true);
+	REQUIRE(graph->rail().width() > 0.0f);
+	ui::ModState* mod = f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+
+	const backplane::Source macro = backplane::Source::core(0);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	const size_t lowIndex = static_cast<size_t>(owl::Param::LowCrossover);
+	const backplane::Destination lowX = backplane::Destination::control(id, lowIndex);
+	const auto baseHz = [&] { return static_cast<double>(f.bridge.fxChain().device[slot].row.field[lowIndex]); };
+	const visage::Bounds plot = graph->plot();
+	constexpr double kSpan = 2000.0 - 20.0; // Low Crossover's declared range: a full-depth route moves it this far
+
+	// NOTHING ARMED: offered (it is a destination) but quiet — no halo, no stroke, no dot.
+	ui::ModHandlePlan quiet = graph->crossoverModPlan(0);
+	REQUIRE(quiet.axes.size() == 1);
+	CHECK_FALSE(quiet.halo);
+	CHECK_FALSE(quiet.axes[0].hasStroke);
+	CHECK_FALSE(quiet.axes[0].hasDot);
+
+	// ARMED AND UNROUTED: the halo, and nothing else — no stroke, no dot.
+	mod->focus(macro);
+	mod->arm(true);
+	REQUIRE(f.bridge.mayRoute(macro, lowX));
+	const ui::ModHandlePlan armed = graph->crossoverModPlan(0);
+	CHECK(armed.halo);
+	CHECK_FALSE(armed.axes[0].hasStroke);
+	CHECK_FALSE(armed.axes[0].hasDot);
+	// AND THE OTHER HANDLE, whose control the macro may also reach, lights too.
+	CHECK(graph->crossoverModPlan(1).halo);
+
+	SUBCASE("an armed press creates exactly one route, one undo entry, and starts no value drag") {
+		REQUIRE(f.gui.history() != nullptr);
+		const double before = baseHz();
+		const visage::Point h = graph->crossoverHandle(0);
+		graph->onMouseDown().callback(at(h.x, h.y));
+		// THE DRAG THAT FOLLOWS MOVES THE AMOUNT, NOT THE FREQUENCY: sideways travel must not move the base.
+		graph->onMouseDrag().callback(at(h.x + 40.0f, h.y));
+		graph->onMouseUp().callback(at(h.x + 40.0f, h.y));
+		CHECK(f.bridge.routeAmount(macro, lowX) == doctest::Approx(ui::Knob::kRouteSeedAmount));
+		CHECK(f.bridge.routeAmount(macro, backplane::Destination::control(id, static_cast<size_t>(owl::Param::HighCrossover))) == 0.0f);
+		CHECK(baseHz() == doctest::Approx(before));
+		REQUIRE(f.gui.history()->canUndo());
+		f.gui.history()->undo();
+		CHECK(f.bridge.routeAmount(macro, lowX) == 0.0f);
+		CHECK_FALSE(f.gui.history()->canUndo()); // ONE entry, not two
+	}
+
+	SUBCASE("a vertical drag while armed edits the amount along the knob's own gearing") {
+		const visage::Point h = graph->crossoverHandle(0);
+		graph->onMouseDown().callback(at(h.x, h.y));
+		graph->onMouseDrag().callback(at(h.x, h.y - 35.0f));
+		graph->onMouseUp().callback(at(h.x, h.y - 35.0f));
+		CHECK(f.bridge.routeAmount(macro, lowX) == doctest::Approx(ui::Knob::kRouteSeedAmount + 35.0f / ui::Knob::kRouteDragRange));
+	}
+
+	SUBCASE("the amount stroke, the live dot and the base handle sit where the plot's own axis puts them") {
+		const double base = baseHz();
+		REQUIRE(base == doctest::Approx(200.0));
+		for (const bool isArmed : { true, false }) {
+			CAPTURE(isArmed);
+			mod->arm(isArmed);
+			for (const float amount : { 0.05f, -0.05f }) {
+				CAPTURE(amount);
+				f.bridge.setRouteAmount(macro, lowX, amount);
+				// THE STROKE: from the BASE to base + amount * span (a unipolar macro reaches one way), clamped to
+				// the declared range, through the restated axis.
+				const double end = std::clamp(base + static_cast<double>(amount) * kSpan, 20.0, 2000.0);
+				const float a = restatedHzToX(plot, std::min(base, end));
+				const float b = restatedHzToX(plot, std::max(base, end));
+				const ui::ModHandlePlan plan = graph->crossoverModPlan(0);
+				REQUIRE(plan.axes[0].hasStroke);
+				CHECK(plan.axes[0].strokeLo == doctest::Approx(a).epsilon(1e-3));
+				CHECK(plan.axes[0].strokeHi == doctest::Approx(b).epsilon(1e-3));
+				CHECK(plan.axes[0].base == doctest::Approx(restatedHzToX(plot, base)).epsilon(1e-3));
+				// THE HANDLE STAYS AT THE BASE.
+				CHECK(graph->crossoverHandle(0).x == doctest::Approx(restatedHzToX(plot, base)).epsilon(1e-3));
+				CHECK(plan.halo == isArmed);
+				// NOT MEASURED FROM THE MODULATED VALUE: moving the live value does not move the stroke.
+				f.bridge.setFxModulatedForTest(slot, lowIndex, 260.0f);
+				const ui::ModHandlePlan live = graph->crossoverModPlan(0);
+				CHECK(live.axes[0].strokeLo == doctest::Approx(a).epsilon(1e-3));
+				CHECK(live.axes[0].strokeHi == doctest::Approx(b).epsilon(1e-3));
+				// THE DOT: at the modulated value's coordinate, in BOTH states.
+				REQUIRE(live.axes[0].hasDot);
+				CHECK(live.axes[0].dot == doctest::Approx(restatedHzToX(plot, 260.0)).epsilon(1e-3));
+				f.bridge.setFxModulatedForTest(slot, lowIndex, static_cast<float>(base));
+				CHECK_FALSE(graph->crossoverModPlan(0).axes[0].hasDot);
+			}
+		}
+	}
+
+	SUBCASE("unarmed, dragging the handle edits the base and leaves the route and the dot alone") {
+		f.bridge.setRouteAmount(macro, lowX, 0.05f);
+		f.bridge.setFxModulatedForTest(slot, lowIndex, 260.0f);
+		mod->arm(false);
+		const visage::Point h = graph->crossoverHandle(0);
+		const float toX = h.x + 60.0f;
+		graph->onMouseDown().callback(at(h.x, h.y));
+		graph->onMouseDrag().callback(at(toX, h.y));
+		graph->onMouseUp().callback(at(toX, h.y));
+		CHECK(baseHz() > 200.0);
+		CHECK(f.bridge.routeAmount(macro, lowX) == doctest::Approx(0.05f));
+		const ui::ModHandlePlan plan = graph->crossoverModPlan(0);
+		CHECK(plan.axes[0].base == doctest::Approx(restatedHzToX(plot, baseHz())).epsilon(1e-3));
+		CHECK(plan.axes[0].dot == doctest::Approx(restatedHzToX(plot, 260.0)).epsilon(1e-3));
+	}
+
+	SUBCASE("a knob over the same control shows the same amount and modulated value as the handle") {
+		f.bridge.setRouteAmount(macro, lowX, 0.05f);
+		f.bridge.setFxModulatedForTest(slot, lowIndex, 260.0f);
+		device::Modulatable& control = *graph->crossoverModHandle(0).axis(0).control;
+		ui::Knob knob(control, "Low", nullptr);
+		const ui::Knob::ModRing ring = knob.modRingForTest();
+		const ui::ModHandlePlan plan = graph->crossoverModPlan(0);
+		// THE KNOB'S NORMALISED SWEEP IS LINEAR IN HERTZ HERE; READ THE HANDLE'S COORDINATES BACK TO HERTZ through the
+		// restated axis's inverse and then to the same sweep.
+		const auto hzAt = [&](float x) { return 20.0 * std::pow(1000.0, (x - plot.x()) / plot.width()); };
+		const auto sweep = [](double hz) { return (hz - 20.0) / (2000.0 - 20.0); };
+		CHECK(sweep(hzAt(plan.axes[0].strokeLo)) == doctest::Approx(ring.lo).epsilon(2e-3));
+		CHECK(sweep(hzAt(plan.axes[0].strokeHi)) == doctest::Approx(ring.hi).epsilon(2e-3));
+		REQUIRE(ring.hasMark);
+		REQUIRE(plan.axes[0].hasDot);
+		CHECK(sweep(hzAt(plan.axes[0].dot)) == doctest::Approx(ring.mark).epsilon(2e-3));
+	}
+
+	SUBCASE("both crossovers are declared to ControlFace, so the window-superset guard sees them") {
+		std::vector<ui::ControlFace::Offered> offered;
+		graph->offeredControls(offered);
+		for (size_t which = 0; which < 2; ++which) {
+			const device::Modulatable* c = graph->crossoverModHandle(which).axis(0).control;
+			bool found = false;
+			for (const auto& o : offered) {
+				found = found || o.control == c;
+			}
+			CHECK(found);
+		}
+	}
+}
+
+TEST_CASE("the Drawn puck is a full modulation target on both axes: route on press, a stroke per axis, a dot per axis") {
+	namespace dr = feathers::fx::drawn;
+	FilterFixture f;
+	const size_t slot = f.bridge.addFxDevice(dr::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	f.lane->resized();
+	auto* card = dynamic_cast<ui::DrawnCard*>(f.lane->cardAt(slot));
+	REQUIRE(card != nullptr);
+	card->setBounds(0.0f, 0.0f, 240.0f, card->laneHeight());
+	card->resized();
+	ui::ModState* mod = f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+
+	const backplane::Source macro = backplane::Source::core(0);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	const size_t xIndex = static_cast<size_t>(dr::Param::MorphX);
+	const size_t yIndex = static_cast<size_t>(dr::Param::MorphY);
+	const backplane::Destination dx = backplane::Destination::control(id, xIndex);
+	const backplane::Destination dy = backplane::Destination::control(id, yIndex);
+	const auto valueOf = [&](size_t i) { return static_cast<double>(f.bridge.fxChain().device[slot].row.field[i]); };
+	const visage::Bounds plane = card->planeBounds();
+	// THE PLANE'S MAPPING, RESTATED: x grows right across the plane, y is drawn up from its bottom edge.
+	const auto xOf = [&](double v) { return plane.x() + plane.width() * static_cast<float>(std::clamp(v, 0.0, 1.0)); };
+	const auto yOf = [&](double v) { return plane.bottom() - plane.height() * static_cast<float>(std::clamp(v, 0.0, 1.0)); };
+
+	mod->focus(macro);
+	mod->arm(true);
+	REQUIRE(f.bridge.mayRoute(macro, dx));
+	REQUIRE(f.bridge.mayRoute(macro, dy));
+	const ui::ModHandlePlan armed = card->puckModPlan();
+	REQUIRE(armed.axes.size() == 2);
+	CHECK(armed.halo);
+
+	SUBCASE("an armed press creates exactly one route on the nearer axis, one undo entry, and drags no morph") {
+		const visage::Point p = card->puckCentre();
+		const double bx = valueOf(xIndex);
+		const double by = valueOf(yIndex);
+		// A PRESS A FEW PIXELS ABOVE THE PUCK'S CENTRE LINE: nearer the horizontal (Morph X) stroke.
+		card->onMouseDown().callback(at(p.x, p.y - 1.0f));
+		card->onMouseDrag().callback(at(p.x + 20.0f, p.y - 20.0f));
+		card->onMouseUp().callback(at(p.x + 20.0f, p.y - 20.0f));
+		const float ax = f.bridge.routeAmount(macro, dx);
+		const float ay = f.bridge.routeAmount(macro, dy);
+		CHECK(((ax != 0.0f) != (ay != 0.0f))); // exactly one of the two axes got a route
+		CHECK(valueOf(xIndex) == doctest::Approx(bx));
+		CHECK(valueOf(yIndex) == doctest::Approx(by));
+		REQUIRE(f.gui.history()->canUndo());
+		f.gui.history()->undo();
+		CHECK(f.bridge.routeAmount(macro, dx) == 0.0f);
+		CHECK(f.bridge.routeAmount(macro, dy) == 0.0f);
+		CHECK_FALSE(f.gui.history()->canUndo());
+	}
+
+	SUBCASE("each axis draws its own stroke through the plane's mapping, and its own dot") {
+		const double bx = valueOf(xIndex);
+		const double by = valueOf(yIndex);
+		f.bridge.setRouteAmount(macro, dx, 0.2f);
+		f.bridge.setRouteAmount(macro, dy, -0.3f);
+		f.bridge.setFxModulatedForTest(slot, xIndex, static_cast<float>(bx + 0.1));
+		f.bridge.setFxModulatedForTest(slot, yIndex, static_cast<float>(by - 0.2));
+		for (const bool isArmed : { true, false }) {
+			CAPTURE(isArmed);
+			mod->arm(isArmed);
+			const ui::ModHandlePlan plan = card->puckModPlan();
+			// X: base to base + 0.2 (span 1), unipolar, along x.
+			REQUIRE(plan.axes[0].hasStroke);
+			CHECK(plan.axes[0].strokeLo == doctest::Approx(xOf(bx)).epsilon(1e-3));
+			CHECK(plan.axes[0].strokeHi == doctest::Approx(xOf(bx + 0.2)).epsilon(1e-3));
+			// Y: base - 0.3 .. base, drawn up, so the LOW coordinate is the higher value.
+			REQUIRE(plan.axes[1].hasStroke);
+			CHECK(plan.axes[1].strokeLo == doctest::Approx(yOf(by)).epsilon(1e-3));
+			CHECK(plan.axes[1].strokeHi == doctest::Approx(yOf(std::max(0.0, by - 0.3))).epsilon(1e-3));
+			REQUIRE(plan.axes[0].hasDot);
+			REQUIRE(plan.axes[1].hasDot);
+			CHECK(plan.axes[0].dot == doctest::Approx(xOf(bx + 0.1)).epsilon(1e-3));
+			CHECK(plan.axes[1].dot == doctest::Approx(yOf(by - 0.2)).epsilon(1e-3));
+			// THE PUCK STAYS AT THE BASE.
+			CHECK(card->puckCentre().x == doctest::Approx(xOf(bx)).epsilon(1e-3));
+			CHECK(card->puckCentre().y == doctest::Approx(yOf(by)).epsilon(1e-3));
+		}
+	}
+
+	SUBCASE("unarmed, dragging the puck edits the bases only") {
+		f.bridge.setRouteAmount(macro, dx, 0.2f);
+		mod->arm(false);
+		const visage::Point p = card->puckCentre();
+		card->onMouseDown().callback(at(p.x, p.y));
+		card->onMouseDrag().callback(at(p.x + 25.0f, p.y));
+		card->onMouseUp().callback(at(p.x + 25.0f, p.y));
+		CHECK(valueOf(xIndex) > 0.5);
+		CHECK(f.bridge.routeAmount(macro, dx) == doctest::Approx(0.2f));
+	}
+
+	SUBCASE("both morph axes are declared to ControlFace") {
+		std::vector<ui::ControlFace::Offered> offered;
+		card->offeredControls(offered);
+		for (size_t axis = 0; axis < 2; ++axis) {
+			const device::Modulatable* c = card->puckModHandle().axis(axis).control;
+			bool found = false;
+			for (const auto& o : offered) {
+				found = found || o.control == c;
+			}
+			CHECK(found);
+		}
+	}
+}

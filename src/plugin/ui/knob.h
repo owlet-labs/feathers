@@ -179,41 +179,36 @@ public:
 void drawKnobFace(visage::Canvas& canvas, float centreX, float centreY, float diameter, float value,
                   bool enabled, bool hasValue = true, float rest = 0.0f);
 
-/// The modulation arc over that face: `lo` and `hi` are positions along the same 0..1 sweep the value
-/// uses, and `glow` is how loudly it is stated — the mock's three states differ in this and in their
-/// endpoints, in nothing else. Free for the same reason drawKnobFace is: the panel's own small knobs
-/// are not bound to a destination and must not be a second drawing of the same arc.
+/// **THE MODULATION-AMOUNT ARC** over that face: `lo` and `hi` are positions along the same 0..1 sweep the value
+/// uses (the route's REACH from the base, and nothing else), and `glow` is how loudly it is stated. It sits OUTSIDE the
+/// face's own arc, on a radius of its own with a dark keyline beneath it — so a negative amount, which runs back over
+/// the stretch the face arc already covers, is drawn beside that arc rather than on top of it and stays at full
+/// strength. Free for the same reason drawKnobFace is: small knobs not bound to a destination must not be a second
+/// drawing of the same arc.
 void drawModulationRing(visage::Canvas& canvas, float centreX, float centreY, float diameter, float lo,
                         float hi, float glow);
 
-/// THE DISPLACEMENT MARK — where the value actually is, drawn across the amount span. See the
-/// definition for why a mark and not a second arc.
-void drawModulationMark(visage::Canvas& canvas, float centreX, float centreY, float diameter,
-                        float at);
-/// **WHERE EACH EAR'S ARC SITS** (backlog KU): the ring's own footprint cut in two along its radius — the left ear
-/// outside, the right inside, each half the width, touching. Free and returned as numbers so a case can hold the
-/// geometry to the rule without a picture. Every `radius` here is a stroke's CENTRE LINE: visage's `Canvas::arc`
-/// strokes INWARD from its box (`shader_utils.sh` `arc`: centre at `width − thickness`, half-pixel units), so the
-/// drawing adds half a width back to find each box.
-struct RingEarGeometry {
-	float trackRadius = 0.0f;
-	float trackWidth = 0.0f;
-	struct Arc {
-		float radius = 0.0f;
-		float width = 0.0f;
-	};
-	Arc outer;
-	Arc inner;
+/// **WHERE THE AMOUNT ARC AND THE DOT SIT**, as numbers (a stroke's centre line, in pixels at `diameter`), so a case
+/// can hold the geometry to its rule without a picture: the arc clear of the face's own track, the dot riding the
+/// arc's centre line and larger than its width.
+struct ModRingGeometry {
+	float faceTrackOuter = 0.0f; ///< the face arc's outer edge
+	float arcCentre = 0.0f;      ///< the amount arc's centre line
+	float arcWidth = 0.0f;
+	float arcInner = 0.0f;       ///< its inner edge: strictly outside `faceTrackOuter`, the gap being the keyline
+	float dotRadius = 0.0f;
+	float arcOuterKeyline = 0.0f;  ///< the outer edge of the arc's keyline: nothing else may be drawn inside this
+	float hostMarkCentre = 0.0f;   ///< the host-slot mark's distance from the face centre (at 45 degrees, upper right)
+	float hostMarkRadius = 0.0f;
 };
-[[nodiscard]] RingEarGeometry ringEarGeometry(float diameter);
-/// THE RUNNING STEREO RING: an ear's as-modulated arc each, left outer in `kModulationL`, right inner in `kModulationR`.
-void drawModulationRingEars(visage::Canvas& canvas, float centreX, float centreY, float diameter, float loL, float hiL,
-                            float loR, float hiR, float glow);
+[[nodiscard]] ModRingGeometry modRingGeometry(float diameter);
 
-/// The same mark in a given colour (backlog KU): a stereo-live control marks each ear in its own
-/// (`kModulationL`/`kModulationR`).
-void drawModulationMark(visage::Canvas& canvas, float centreX, float centreY, float diameter,
-                        float at, uint32_t colour);
+/// **THE MODULATED-VALUE DOT** — where the value is right now after modulation, at `at` along the sweep, in BOTH
+/// states (assigning and running). Drawn LAST, with a dark keyline round it, so it reads over any arc or the face.
+/// `colour` is the dot's body; `core` (0: none) a bright centre drawn over it, how a stereo control's per-ear dots
+/// keep their ear colour and still read as "the dot".
+void drawModulationDot(visage::Canvas& canvas, float centreX, float centreY, float diameter, float at, uint32_t colour,
+                       uint32_t core = 0);
 
 /// One knob: an arc, a label, a readout, bound to at most one parameter.
 class Knob : public visage::Frame, public TooltipSource {
@@ -234,7 +229,7 @@ public:
 			return {};
 		}
 		const ModRing ring = modRing();
-		return { true, haloLit(), ring.split || ring.hi > ring.lo || ring.hasMark || ring.routedDot };
+		return { true, haloLit(), ring.hi > ring.lo || ring.hasMark || ring.routedDot };
 	}
 
 	/// **THE NAME THE CAPTION STANDS FOR** — what a hover says when the caption is shortened or cut. The control's
@@ -446,11 +441,16 @@ public:
 	/// `lo` and `hi` are positions along the knob's own 0..1 sweep, so a case can compare them against
 	/// normalized() without knowing the parameter's units.
 	struct ModRing {
+		/// THE AMOUNT ARC: the route's reach `[lo, hi]` from the base (clamped to the face), both directions for a
+		/// bipolar source. It is the same in both states; `glow` is how loudly it is stated (1.0 assigning).
 		float lo = 0.0f;
 		float hi = 0.0f;
 		float glow = 0.0f;
 		bool drawn = false;
 
+		/// **WHERE THE VALUE ACTUALLY IS AFTER MODULATION — THE DOT, in assigning AND running state.** The one element
+		/// that says it (the running state's base-to-value arc is gone). Absent when the value is the base.
+		///
 		/// **WHERE THE VALUE ACTUALLY IS INSIDE THE SPAN — the displacement, as a MARK rather than as a
 		/// second arc.**
 		///
@@ -473,15 +473,10 @@ public:
 		float markR = 0.0f;
 		bool hasMarkR = false;
 
-		/// **TWO EARS WHILE RUNNING** (not mapping): the as-modulated arc SPLITS into two half-thickness arcs, each
-		/// from the base to its own ear — `left` outer, `right` inner (`ringEarGeometry`).
-		struct EarArc {
-			float lo = 0.0f;
-			float hi = 0.0f;
-		};
-		bool split = false;
-		EarArc left;
-		EarArc right;
+		/// THE AMOUNT ARC IS DRAWN OVER THE FACE ARC'S STRETCH: the reach `[lo, hi]` overlaps what the face arc already
+		/// covers (a NEGATIVE amount on an ordinary knob, either side of a centred knob's notch). It is drawn on its own
+		/// radius with a keyline, so the overlap does not hide it; the flag is for the case that asserts it is kept.
+		bool overFace = false;
 
 		/// **A ROUTE NO ARC CAN SHOW** (2026-11-07, the glow-honesty sweep): one from a source that is not focused and is
 		/// still, or the focused one's pushing the value past its end (the reach clamps to nothing). `ValueBox`'s dot,
@@ -501,17 +496,12 @@ public:
 	static constexpr float kGreyedHaloAlpha = 0.28f;
 	Halo halo() const;
 
-	/// The mock's three states, in its own order (paint(), :1922-1938):
+	/// What the ring draws, in every state: the AMOUNT arc (the route's reach from the base, full strength while a
+	/// source is armed, a little quieter while it only runs), and the DOT (where the value is after modulation).
+	/// Armed and unrouted draws neither — the face's own glow says "you may point here".
 	///
-	///   * ARMED — the AMOUNT, a static reach from the base, at full glow, beside the face's own glow.
-	///   * RUNNING — the modulated RESULT, base → where the value actually is now, at 0.9.
-	///   * AT REST — a route that exists while its source sits at zero, as a faint hint at 0.28.
-	///
-	/// In every one of them the POINTER AND THE PRINTED NUMBER STAY AT THE BASE. That is the mock's
-	/// rule (":1171 — Never the modulated result: the value indicator stays at the base") and it is
-	/// also ours for a second reason it could not have known: a readout that chased a modulator would
-	/// re-rasterise its text every frame, and text churn is the family this project traced its atlas
-	/// corruption to.
+	/// In every state the POINTER AND THE PRINTED NUMBER STAY AT THE BASE: a readout that chased a modulator would
+	/// re-rasterise its text every frame, and text churn is the family this project traced its atlas corruption to.
 	ModRing modRing() const;
 
 	/// Pixels of vertical travel for the whole ±200 % of an amount, from the mock's `/70`. Half the

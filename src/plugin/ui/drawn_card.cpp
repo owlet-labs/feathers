@@ -112,7 +112,19 @@ DrawnCard::DrawnCard(backplane::DeviceHost& host, WidgetRegistry& registry, Devi
 			// press on the head is not dispatched as a body press; it has nothing to do.
 			return;
 		}
+		if (onPuck && e.shouldTriggerPopup() && puckMod().showMenu(*this)) {
+			return; // a modulated puck's right-click opens the sources menu, as a modulated knob's does
+		}
 		if (onPuck) {
+			// ARMED, AND THE PRESS IS THE ROUTE'S (`ModHandle`): the amount gesture on the nearer axis, no morph drag.
+			const visage::Point centre = puckCentre();
+			const size_t axis = puckMod().routeAxisFor(e.isAltDown(), e.position, centre.x, centre.y);
+			if (axis != ModHandle::npos) {
+				routingPuck_ = true;
+				puckMod().beginRoute(axis, e);
+				redraw();
+				return;
+			}
 			// ONE GESTURE MOVES BOTH AXES, so both gestures open. A morph that opened only X would
 			// leave Y's undo record half-written.
 			holdingPuck_ = true;
@@ -126,12 +138,20 @@ DrawnCard::DrawnCard(backplane::DeviceHost& host, WidgetRegistry& registry, Devi
 	// here would silently delete the base's handlers and the only way left to reorder this card would
 	// be the slot menu — which is exactly the bug WaypointCard shipped and its comment records.
 	onMouseDrag() += [this](const visage::MouseEvent& e) {
-		if (holdingPuck_) {
+		if (routingPuck_) {
+			puckMod().dragRoute(e);
+			redraw();
+		}
+		else if (holdingPuck_) {
 			dragPuck(e.position);
 		}
 	};
 	onMouseUp() += [this](const visage::MouseEvent& e) {
 		(void)e;
+		if (routingPuck_) {
+			puckMod().endRoute();
+			routingPuck_ = false;
+		}
 		if (holdingPuck_) {
 			control(dr::Param::MorphX).endGesture();
 			control(dr::Param::MorphY).endGesture();
@@ -382,8 +402,31 @@ void DrawnCard::drawPlane(visage::Canvas& canvas) {
 	canvas.segment(box.x(), p.y, box.right(), p.y, 1.0f, true);
 	canvas.segment(p.x, box.y(), p.x, box.bottom(), 1.0f, true);
 
+	// THE HANDLE STAYS AT THE BASE; its halo and amount strokes go under it, the live dots over it.
+	puckMod().drawUnder(canvas, p.x, p.y, kPuckRadius);
 	canvas.setColor(kAccent);
 	canvas.circle(p.x - kPuckRadius, p.y - kPuckRadius, kPuckRadius * 2.0f);
+	puckMod().drawOver(canvas, p.x, p.y, kPuckRadius);
+}
+
+ModHandle& DrawnCard::puckMod() const {
+	if (!puckModBuilt_) {
+		// A CONTROL VALUE TO A PLANE COORDINATE: the same mapping `puckCentre` draws by (x grows right, y is drawn up).
+		puckMod_ = ModHandle({
+		    ModHandleAxis { &control(dr::Param::MorphX), true,
+		                    [this](double v) {
+			                    const visage::Bounds box = planeBounds();
+			                    return box.x() + box.width() * std::clamp(static_cast<float>(v), 0.0f, 1.0f);
+		                    } },
+		    ModHandleAxis { &control(dr::Param::MorphY), false,
+		                    [this](double v) {
+			                    const visage::Bounds box = planeBounds();
+			                    return box.bottom() - box.height() * std::clamp(static_cast<float>(v), 0.0f, 1.0f);
+		                    } },
+		});
+		puckModBuilt_ = true;
+	}
+	return puckMod_;
 }
 
 void DrawnCard::drawFrameLabels(visage::Canvas& canvas) {

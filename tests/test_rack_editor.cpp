@@ -4907,12 +4907,12 @@ TEST_CASE("an LFO routed into Macro 2 moves output 2 and the knob draws a ring")
 		CHECK(output == doctest::Approx(expected));
 		if (std::abs(expected - base) > 1e-3) {
 			++moved;
-			// THE RING RUNS FROM THE BASE TO WHERE THE VALUE IS — the published output, in face units
-			// (unipolar, so the face IS the value).
+			// THE DOT SITS WHERE THE VALUE IS — the published output, in face units (unipolar, so the face IS
+			// the value). The macro knob has no amount of its own, so there is no arc.
 			const ui::Knob::ModRing ring = knob.modRingForTest();
 			CHECK(ring.drawn);
-			const float far = std::abs(ring.lo - base) > std::abs(ring.hi - base) ? ring.lo : ring.hi;
-			CHECK(far == doctest::Approx(output).epsilon(1e-3));
+			REQUIRE(ring.hasMark);
+			CHECK(ring.mark == doctest::Approx(output).epsilon(1e-3));
 			ringed += ring.drawn ? 1u : 0u;
 		}
 		// OUTPUT 1 IS NOT RIDDEN.

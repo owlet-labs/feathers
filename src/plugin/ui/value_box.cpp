@@ -813,9 +813,15 @@ void ValueBox::draw(visage::Canvas& canvas) {
 	// A COMPACT BOX DRAWS ONLY THE SIGNAL HALF, and that asymmetry is the point rather than an
 	// omission: the resting border is what makes the box a separate object, and the armed border is
 	// an affordance the honesty rule will not let go of. See `kCompactHeight`.
-	if (lit || !compact_) {
-		// A SWITCHED-OFF BOX'S SIGNAL IS DIMMER (QK): plainly lit, plainly not the live box beside it.
-		canvas.setColor(lit ? (enabled_ ? kModulation : withAlpha(kModulation, kGreyedSignalAlpha)) : kLine);
+	if (lit) {
+		// A DESTINATION'S OUTLINE: the doubled modulation stroke plus the inner glow (`boxOutlineOf`) — a box that is
+		// not "selected" in any sense, so never the interaction colour. A SWITCHED-OFF BOX'S SIGNAL IS DIMMER (QK):
+		// plainly lit, plainly not the live box beside it.
+		drawBoxOutline(canvas, 0.0f, 0.0f, width(), height(), kCornerRadius, boxOutlineOf(false, true, true),
+		               enabled_ ? 1.0f : kGreyedSignalAlpha);
+	}
+	else if (!compact_) {
+		canvas.setColor(kLine);
 		canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), kCornerRadius, 1.0f);
 	}
 

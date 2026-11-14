@@ -255,6 +255,9 @@ public:
 	/// values moved, and that only those are reported. Reaching those exact readings through a
 	/// ParamSet would be testing a different thing. The seam is the point; the name was the bug.
 	void publishValuesForTest(std::span<const double> base, std::span<const double> modulated) noexcept;
+	/// TEST ONLY: put an fx device's control at a modulated value the way the audio thread's publish would, so a case
+	/// can show a live position without running an engine. Widens the published row to cover `control`.
+	void setFxModulatedForTest(size_t slot, size_t control, float value) noexcept;
 
 	/// THE RATE THE ENGINE IS ACTUALLY RUNNING AT, so a surface that draws something rate-dependent
 	/// draws the device the musician has rather than the one the developer had.

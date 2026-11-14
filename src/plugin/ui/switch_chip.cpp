@@ -373,7 +373,7 @@ void SwitchChip::draw(visage::Canvas& canvas) {
 		const visage::Bounds pad = padBounds();
 		canvas.setColor(lit ? withAlpha(kAccent, 0.22f) : kVoid);
 		canvas.roundedRectangle(pad.x(), pad.y(), pad.width(), pad.height(), 4.0f);
-		canvas.setColor(lit ? kAccent : withAlpha(kLine, 0.8f));
+		canvas.setColor(lit ? kSelectedOutline : withAlpha(kLine, 0.8f));
 		canvas.roundedRectangleBorder(pad.x(), pad.y(), pad.width(), pad.height(), 4.0f, 1.0f);
 
 		canvas.setColor(kMuted);
@@ -387,7 +387,7 @@ void SwitchChip::draw(visage::Canvas& canvas) {
 	const bool asleep = lit && dormant_;
 	canvas.setColor(lit ? withAlpha(kAccent, asleep ? 0.08f : 0.22f) : kVoid);
 	canvas.roundedRectangle(0.0f, 0.0f, w, h, 3.0f);
-	canvas.setColor(lit ? withAlpha(kAccent, asleep ? 0.45f : 1.0f) : withAlpha(kLine, 0.8f));
+	canvas.setColor(lit ? withAlpha(kSelectedOutline, asleep ? 0.45f : 1.0f) : withAlpha(kLine, 0.8f));
 	canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, 3.0f, 1.0f);
 	if (pending_ && !lit) {
 		// PENDING: armed, waiting for its boundary — two accent borders and an accent caption, no motion.
@@ -415,8 +415,10 @@ void SwitchChip::draw(visage::Canvas& canvas) {
 		const float dim = enabled_ ? 1.0f : 0.5f;
 		canvas.setColor(withAlpha(kModulation, (0.15f + 0.45f * marks.reach) * dim));
 		canvas.roundedRectangle(0.0f, 0.0f, w, h, 3.0f);
-		canvas.setColor(withAlpha(kModulation, dim));
-		canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, 3.0f, 1.0f);
+		// THE OUTLINE: a chip that is on is SELECTED (one accent stroke); one an armed source may route to is a
+		// DESTINATION (doubled, modulation colour); both draws both. The old code drew the modulation stroke OVER the
+		// accent one on the same pixel line, so an on chip that was also a destination lost its selection.
+		drawBoxOutline(canvas, 0.0f, 0.0f, w, h, 3.0f, boxOutlineOf(lit, true, true), dim);
 	}
 	if (marks.ring) {
 		const float d = std::max(h - 10.0f, 4.0f);

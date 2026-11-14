@@ -893,4 +893,50 @@ void drawTracked(visage::Canvas& canvas, const std::string& text, const visage::
 	}
 }
 
+BoxOutline boxOutlineOf(bool selected, bool destination, bool assigning) {
+	BoxOutline o;
+	if (selected && destination) {
+		o.kind = BoxOutlineKind::Both;
+		o.outerColour = kSelectedOutline;
+		o.innerColour = kModulation;
+		o.strokes = 2;
+	}
+	else if (selected) {
+		o.kind = BoxOutlineKind::Selected;
+		o.outerColour = kSelectedOutline;
+		o.strokes = 1;
+	}
+	else if (destination) {
+		o.kind = BoxOutlineKind::Destination;
+		o.outerColour = kModulation;
+		o.innerColour = kModulation;
+		o.strokes = 2;
+	}
+	o.innerGlow = destination && assigning;
+	return o;
+}
+
+void drawBoxOutline(visage::Canvas& canvas, float x, float y, float w, float h, float radius, const BoxOutline& o,
+                    float dim) {
+	if (o.innerGlow) {
+		// TWO STROKES, BOTH WITHIN `kBoxGlowExtent` OF THE EDGE: one in the gap between the doubled outline's lines
+		// (inset 1) and one just inside the second line (inset 3). Nothing reaches further in, where the text is.
+		const float insets[2] = { 1.0f, 3.0f };
+		const float alphas[2] = { 0.32f, 0.2f };
+		for (int i = 0; i < 2; ++i) {
+			canvas.setColor(withAlpha(kModulation, alphas[i] * dim));
+			canvas.roundedRectangleBorder(x + insets[i], y + insets[i], w - 2.0f * insets[i], h - 2.0f * insets[i],
+			                              std::max(0.0f, radius - insets[i]), 1.0f);
+		}
+	}
+	if (o.strokes >= 1) {
+		canvas.setColor(withAlpha(o.outerColour, dim));
+		canvas.roundedRectangleBorder(x, y, w, h, radius, 1.0f);
+	}
+	if (o.strokes >= 2) {
+		canvas.setColor(withAlpha(o.innerColour, dim));
+		canvas.roundedRectangleBorder(x + 2.0f, y + 2.0f, w - 4.0f, h - 4.0f, std::max(0.0f, radius - 2.0f), 1.0f);
+	}
+}
+
 } // namespace feathers::ui

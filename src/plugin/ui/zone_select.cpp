@@ -373,8 +373,7 @@ void ZoneSelect::draw(visage::Canvas& canvas) {
 	// route here; routed and not armed, a small ring at the right end.
 	const ModLook look = modLookFor(control_);
 	if (look.armedGlow) {
-		canvas.setColor(kModulation);
-		canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), kCornerRadius, 1.0f);
+		drawBoxOutline(canvas, 0.0f, 0.0f, width(), height(), kCornerRadius, boxOutlineOf(false, true, true));
 	}
 	else if (look.routedMark) {
 		const float d = std::max(height() - 10.0f, 4.0f);

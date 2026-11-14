@@ -1136,6 +1136,7 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 			segmented(L.driveCurve, id(DrumControl::DriveCurve), kDrumDriveCurveNames);
 			segmented(L.pitchMode, id(DrumControl::PitchMode), kDrumPitchModeNames);
 			pill(L.tuneControl, L.tunePill, id(DrumControl::Tune), "Tune");
+			L.tunePill->setWholeSteps(true); // semitones, as the readout and the picture's handle
 			pill(L.velocityNoiseControl, L.velocityNoise, id(DrumControl::VelocityNoise), "Vel Noise");
 			pill(L.widthControl, L.width, id(DrumControl::Width), "Width");
 			if (layer == 1) {

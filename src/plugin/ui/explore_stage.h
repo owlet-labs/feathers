@@ -744,6 +744,8 @@ public:
 	size_t moveKitUnlocked(double dx, double dy);
 	/// Each vector parameter the open drag has written, with the value it held before its first write (one undo step at the end).
 	std::vector<std::pair<clap_id, double>> bulkTouched_;
+	/// A kit drag whose star's own layer is locked: where the drag has taken its (undrawn) star, so the bulk edit goes by the pointer's step.
+	std::optional<AnchorPoint> kitVirtual_;
 	struct BulkEntry {
 		clap_id id;
 		double before;

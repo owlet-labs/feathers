@@ -16047,27 +16047,101 @@ TEST_CASE("pad editor: Lock set leaves that layer's vector alone under the kit's
 	CHECK(f.bridge.value(id(0, 1, DrumControl::OffsetY)) == -0.25 - 0.0625);
 }
 
-TEST_CASE("pad editor: a drag of the kit's star is held when the star's own layer is locked, and writes no drift") {
-	ExploreFixture f;
-	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
-	f.set(ParamId::DrumMode, 1.0);
-	f.selection.select(1);
-	const auto vec = [&](size_t slot) {
-		return std::pair { f.bridge.value(static_cast<clap_id>(feathers::drumLayerParam(slot, 0, DrumControl::OffsetX))),
-			               f.bridge.value(static_cast<clap_id>(feathers::drumLayerParam(slot, 0, DrumControl::OffsetY))) };
+TEST_CASE("pad editor: a kit drag with the selected pad's layer one LOCKED still moves every unlocked layer by exactly the step the pointer took, and is one undo step") {
+	using feathers::drumLayerParam;
+	const auto id = [](size_t slot, size_t layer, DrumControl c) { return static_cast<clap_id>(drumLayerParam(slot, layer, c)); };
+	// THE SAME DRAG TWICE: once with nothing locked (the star moves, so its step IS the pointer's step), once with the star's layer locked.
+	const auto drag = [&](bool lockStar, std::vector<double>& after, std::vector<double>& before) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+		f.set(ParamId::DrumMode, 1.0);
+		f.set(feathers::drumParam(1, DrumControl::LayerKind), 2.0);
+		for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+			for (size_t layer = 0; layer < 2; ++layer) {
+				f.set(static_cast<ParamId>(id(slot, layer, DrumControl::OffsetX)), 0.01 * static_cast<double>(slot) - 0.02 * static_cast<double>(layer));
+				f.set(static_cast<ParamId>(id(slot, layer, DrumControl::OffsetY)), 0.005 * static_cast<double>(slot) + 0.01 * static_cast<double>(layer));
+			}
+		}
+		if (lockStar) {
+			f.set(static_cast<ParamId>(id(1, 0, DrumControl::Lock)), 1.0);
+		}
+		f.selection.select(1);
+		const auto snapshot = [&] {
+			std::vector<double> v;
+			for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+				for (size_t layer = 0; layer < 2; ++layer) {
+					v.push_back(f.bridge.value(id(slot, layer, DrumControl::OffsetX)));
+					v.push_back(f.bridge.value(id(slot, layer, DrumControl::OffsetY)));
+				}
+			}
+			return v;
+		};
+		before = snapshot();
+		const visage::Point centre = f.stage.disk().centre();
+		f.stage.onMouseDown().callback(at(centre.x, centre.y));
+		for (int i = 1; i <= 6; ++i) {
+			f.now += 40;
+			f.stage.onMouseDrag().callback(at(centre.x + 20.0f * static_cast<float>(i), centre.y - 5.0f * static_cast<float>(i)));
+			(void)f.stage.update();
+		}
+		f.stage.onMouseUp().callback(at(centre.x + 120.0f, centre.y - 30.0f));
+		f.settleScrub();
+		f.settleGesture();
+		after = snapshot();
+		const size_t steps = f.history.length();
+		f.stage.undo();
+		CHECK(snapshot() == before); // the whole drag, one step
+		CHECK(steps >= 1);
+		CHECK(f.bridge.soundTravel().offset[1].x == 0.0);
 	};
-	f.set(static_cast<ParamId>(feathers::drumLayerParam(1, 0, DrumControl::Lock)), 1.0);
-	const auto before0 = vec(0);
-	const auto before1 = vec(1);
-	const visage::Point centre = f.stage.disk().centre();
-	f.stage.onMouseDown().callback(at(centre.x, centre.y));
-	f.now += 250;
-	f.stage.onMouseDrag().callback(at(centre.x + 120.0f, centre.y));
-	f.stage.onMouseUp().callback(at(centre.x + 120.0f, centre.y));
-	f.settleScrub();
-	CHECK(vec(1) == before1);
-	CHECK(vec(0) == before0); // not moved by a step the star never took
-	CHECK(f.bridge.soundTravel().offset[1].x == 0.0);
+	std::vector<double> freeBefore, freeAfter, lockedBefore, lockedAfter;
+	drag(false, freeAfter, freeBefore);
+	drag(true, lockedAfter, lockedBefore);
+	const double dx = freeAfter[2 * 2] - freeBefore[2 * 2]; // pad 1, layer 0, X: the star moved by the pointer's step
+	const double dy = freeAfter[2 * 2 + 1] - freeBefore[2 * 2 + 1];
+	REQUIRE(std::abs(dx) > 1.0e-4);
+	for (size_t i = 0; i < freeBefore.size(); i += 2) {
+		CAPTURE(i);
+		if (i == 2 * 2) {
+			CHECK(lockedAfter[i] == lockedBefore[i]); // the locked layer stands, bit-identical
+			CHECK(lockedAfter[i + 1] == lockedBefore[i + 1]);
+			continue;
+		}
+		CHECK(lockedAfter[i] == doctest::Approx(std::clamp(lockedBefore[i] + dx, -feathers::kDrumVectorRange, feathers::kDrumVectorRange)).epsilon(1.0e-9));
+		CHECK(lockedAfter[i + 1] == doctest::Approx(std::clamp(lockedBefore[i + 1] + dy, -feathers::kDrumVectorRange, feathers::kDrumVectorRange)).epsilon(1.0e-9));
+	}
+}
+
+TEST_CASE("pad editor: the Tune pill steps in whole semitones, and Shift moves it finely") {
+	PadEditorFixture f(false);
+	f.set(feathers::drumParam(0, DrumControl::Tune), 1.0);
+	(void)f.panel.update();
+	auto* pill = dynamic_cast<ui::FaderPill*>(f.panel.controlForTest(0, DrumControl::Tune, 0));
+	REQUIRE(pill != nullptr);
+	const auto dragBy = [&](float dx, bool shift) {
+		visage::MouseEvent down = at(40.0f, 10.0f);
+		if (shift) {
+			down.modifiers = visage::kModifierShift;
+		}
+		pill->onMouseDown().callback(down);
+		visage::MouseEvent move = at(40.0f + dx, 10.0f);
+		if (shift) {
+			move.modifiers = visage::kModifierShift;
+		}
+		pill->onMouseDrag().callback(move);
+		pill->onMouseUp().callback(move);
+		f.settleGesture();
+	};
+	dragBy(23.0f, false); // 23 px of 120 over 96 semitones is 18.4: a whole number lands
+	const double t = f.base(0, 0, DrumControl::Tune);
+	CHECK(t == std::round(t));
+	CHECK(t > 1.0);
+	f.set(feathers::drumParam(0, DrumControl::Tune), 1.0);
+	(void)f.panel.update();
+	dragBy(23.0f, true);
+	const double fine = f.base(0, 0, DrumControl::Tune);
+	CHECK(fine != std::round(fine));
+	CHECK(fine == doctest::Approx(1.0 + 23.0 / 120.0 * 96.0 * static_cast<double>(feathers::ui::kFineAdjust)).epsilon(1.0e-6));
 }
 
 TEST_CASE("pad editor: the terrain pitch mode is three choices on the face and writes the layer's own PitchMode by value") {

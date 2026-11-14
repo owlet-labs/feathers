@@ -1137,6 +1137,9 @@ double ExploreStage::selectedHome() const {
 }
 
 double ExploreStage::selectedDrift() const {
+	if (kitVirtual_) {
+		return kitVirtual_->x;
+	}
 	return placeOf(selection_.slot()).x;
 }
 
@@ -1153,6 +1156,9 @@ double ExploreStage::selectedTheta() const {
 }
 
 double ExploreStage::selectedDriftY() const {
+	if (kitVirtual_) {
+		return kitVirtual_->y;
+	}
 	return placeOf(selection_.slot()).y;
 }
 
@@ -1348,16 +1354,22 @@ void ExploreStage::commit(clap_id id, double value) {
 
 void ExploreStage::commitDrift(size_t slot, double x, double y) {
 	const AnchorPoint now = placeOf(slot);
-	if (now.x == x && now.y == y) {
+	if (drumKitShown() && slot < kMaxSounds) {
+		// A KIT'S DRAG IS THE BULK EDIT AND NOTHING ELSE: the step between where the drag was and where it now asks to be, added to
+		// every unlocked layer's vector. No drift is written (a kit reads none). The reference is the drag's own last point: the
+		// star's place while it moves, and a virtual point (the drag logic's `selectedDrift`, never drawn) while the star's own
+		// layer is locked and stands still, so a locked star neither holds the drag nor makes it repeat each frame.
+		const bool locked = std::lround(bridge_.value(static_cast<clap_id>(drumLayerParam(slot, 0, DrumControl::Lock)))) != 0;
+		const AnchorPoint ref = kitVirtual_.value_or(now);
+		if (locked) {
+			kitVirtual_ = AnchorPoint { x, y };
+		}
+		if (ref.x != x || ref.y != y) {
+			moveKitUnlocked(x - ref.x, y - ref.y);
+		}
 		return;
 	}
-	if (drumKitShown() && slot < kMaxSounds) {
-		// A KIT'S DRAG IS THE BULK EDIT AND NOTHING ELSE: the same step added to every unlocked layer's vector. No drift is
-		// written (a kit reads none). The star is the reference, so a locked star holds the drag: were it to move the others
-		// by a step it never took, the gap to the pointer would never close and every frame would add the step again.
-		if (std::lround(bridge_.value(static_cast<clap_id>(drumLayerParam(slot, 0, DrumControl::Lock)))) == 0) {
-			moveKitUnlocked(x - now.x, y - now.y);
-		}
+	if (now.x == x && now.y == y) {
 		return;
 	}
 	// Its own bracket, and not the parameters' bracket: there is no CLAP parameter here for a gesture
@@ -1443,6 +1455,7 @@ void ExploreStage::recordBulk() {
 }
 
 void ExploreStage::endGesture() {
+	kitVirtual_.reset();
 	for (const clap_id id : gesturesOpen_) {
 		bridge_.endGesture(id);
 	}
@@ -3979,13 +3992,14 @@ void ExploreStage::drawStar(visage::Canvas& canvas) {
 	// moves and what the orbit turns about, so it keeps the full glyph and the label; the played place
 	// gets a smaller star in the same hue, tied back by a faint line so which sound it belongs to is
 	// never a guess. ONLY WHEN THE TWO DIFFER — a sound with no Radius on it is one thing, drawn once.
-	const visage::Point sheet = sheetAtWorld(selectedDrift(), selectedDriftY());
+	const AnchorPoint real = placeOf(selection_.slot()); // where the pad IS (a locked star stands while the drag goes on)
+	const visage::Point sheet = sheetAtWorld(real.x, real.y);
 	const bool onChart = d.contains(sheet);
 	const uint32_t playedHue = kSeedHues[hueIndexOf(bridge_.soundHues(), selection_.slot())];
 	const AnchorPoint played = playedPlace();
 	playedMarkDrawn_ = false;
 	vectorDrawn_ = false;
-	if (played.x != selectedDrift() || played.y != selectedDriftY()) {
+	if (played.x != real.x || played.y != real.y) {
 		const visage::Point playedSheet = sheetAtWorld(played.x, played.y);
 		// Asked of the SHEET, for the reason above; a played place off the chart draws nothing rather
 		// than a second rim mark — the knobs' own marks carry it there.

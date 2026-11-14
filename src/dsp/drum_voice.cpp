@@ -313,9 +313,20 @@ double bellQFor(float snap, double scale) { return (2.0 + 10.0 * static_cast<dou
 double bell2QFor(float snap, double scale) { return (1.0 + 6.0 * static_cast<double>(std::clamp(snap, 0.0f, 1.0f))) * scale; }
 double bell2RatioFor(float metal) { return 1.3 + 1.2 * static_cast<double>(std::clamp(metal, 0.0f, 1.0f)); }
 
+double terrainPitchSemitones(float fieldPitch, const Controls& c) {
+	// THE TERRAIN'S PITCH, in semitones either side of the resting pitch, under the layer's mode. The Free road is the product
+	// the engine always formed, in the same order, so it is bit-identical to before the modes.
+	const double semitones = (static_cast<double>(fieldPitch) - 0.5) * 2.0 * c.pitchRangeSemitones;
+	switch (c.pitchMode) {
+	case 1: return std::round(semitones);
+	case 2: return 0.0;
+	default: return semitones;
+	}
+}
+
 Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double velocity) {
 	Laws l;
-	l.hz = baseHz * std::pow(2.0, (static_cast<double>(f.pitch) - 0.5) * 2.0 * c.pitchRangeSemitones / 12.0);
+	l.hz = baseHz * std::pow(2.0, terrainPitchSemitones(f.pitch, c) / 12.0);
 	l.t60 = c.decaySeconds * std::pow(4.0, 2.0 * static_cast<double>(f.length) - 1.0);
 	// THE THREE ZONES, read once (drum proposal §14): what velocity reaches, the wires' character, the bells.
 	const VelocityMix vel = velocityAt(c.velocityZone);
@@ -383,6 +394,36 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.buzz = std::clamp(wire.buzz, 0.0, 1.0);
 	l.buzzThreshold = std::clamp(wire.threshold, 0.0, 1.0);
 	return l;
+}
+
+double modeRatio(int k, float metal);
+double metalRatio(int i, float metal);
+
+SettledPitch settledPitch(Kind k, const Fields& f, const Controls& c, double baseHz) {
+	// THE HZ A HIT'S SWEEP LANDS ON: the laws' own `hz` (the same call lawsFor makes, so the two cannot disagree).
+	const double hz = baseHz * std::pow(2.0, terrainPitchSemitones(f.pitch, c) / 12.0);
+	switch (k) {
+	case Kind::Kick:
+	case Kind::String:
+		return { true, false, hz };
+	case Kind::Membrane:
+	case Kind::Snare:
+		// The head's lowest mode, which is the pitch heard: mode 0 sits at hz * its ratio at this Metal.
+		return { true, false, hz * modeRatio(0, f.metal) };
+	case Kind::Metal: {
+		// Inharmonic by design: the lowest of its oscillators, offered as a centre rather than a pitch.
+		double lowest = metalRatio(0, f.metal);
+		for (int i = 1; i < kMetalOscillators; ++i) {
+			lowest = std::min(lowest, metalRatio(i, f.metal));
+		}
+		return { true, true, hz * lowest };
+	}
+	default: return {};
+	}
+}
+
+double restingBaseHz(Kind k, double tuneSemitones, double transposeSemitones) {
+	return kindBaseHz(k) * std::exp2((tuneSemitones + transposeSemitones) / 12.0);
 }
 
 double modeRatio(int k, float metal) {

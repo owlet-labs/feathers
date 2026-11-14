@@ -1316,3 +1316,114 @@ TEST_CASE("the zone controls (drum proposal §14): each zone's anchor at its sto
 	CHECK(l.bell2Ratio == doctest::Approx(1.3 + 1.2 * 0.25));
 	CHECK(l.wireSweepOctaves == doctest::Approx(0.6));
 }
+
+// ---- THE TERRAIN'S PITCH, PER LAYER (kit stance redesign R5) ------------------------------------------------------------------
+
+namespace {
+
+/// A hit's frequency read from its WAVEFORM: the spacing of positive-going zero crossings over a late window, each placed by
+/// linear interpolation, so the answer is the signal's period and not a number the code under test reports.
+double measuredHz(const std::vector<float>& x, size_t from, size_t to) {
+	double first = -1.0;
+	double last = -1.0;
+	size_t crossings = 0;
+	for (size_t i = from + 1; i < to; ++i) {
+		if (x[i - 1] < 0.0f && x[i] >= 0.0f) {
+			const double t = static_cast<double>(i - 1) + static_cast<double>(-x[i - 1]) / static_cast<double>(x[i] - x[i - 1]);
+			if (first < 0.0) {
+				first = t;
+			}
+			last = t;
+			++crossings;
+		}
+	}
+	return crossings < 3 ? 0.0 : static_cast<double>(crossings - 1) * kSr / (last - first);
+}
+
+} // namespace
+
+TEST_CASE("terrain pitch: Free, Semitones and Off apply the Pitch field's contribution as it is, rounded to whole semitones, or not at all") {
+	for (const float f : { 0.0f, 0.1f, 0.2f, 0.37f, 0.5f, 0.61f, 0.83f, 1.0f }) {
+		CAPTURE(f);
+		Controls c;
+		c.pitchRangeSemitones = 3.0;
+		Fields fields;
+		fields.pitch = f;
+		// THE CONTRIBUTION WRITTEN OUT: the field either side of its middle, through the range, in semitones.
+		const double semis = (static_cast<double>(f) - 0.5) * 6.0;
+		const double base = 180.0;
+		c.pitchMode = 0;
+		CHECK(lawsFor(Kind::Snare, fields, c, base, 0.8).hz == doctest::Approx(base * std::pow(2.0, semis / 12.0)).epsilon(1.0e-12));
+		c.pitchMode = 1;
+		CHECK(lawsFor(Kind::Snare, fields, c, base, 0.8).hz == doctest::Approx(base * std::pow(2.0, std::round(semis) / 12.0)).epsilon(1.0e-12));
+		c.pitchMode = 2;
+		CHECK(lawsFor(Kind::Snare, fields, c, base, 0.8).hz == base);
+	}
+	// NOT VACUOUS: at 0.37 the contribution is -0.78 semitones, so the three modes are three different pitches.
+	Controls c;
+	Fields fields;
+	fields.pitch = 0.37f;
+	const auto hz = [&](int mode) {
+		c.pitchMode = mode;
+		return lawsFor(Kind::Snare, fields, c, 180.0, 0.8).hz;
+	};
+	CHECK(hz(0) != hz(1));
+	CHECK(hz(1) != hz(2));
+	CHECK(hz(0) != hz(2));
+	// FREE IS WHAT THE ENGINE ALWAYS COMPUTED (the same product, in the same order): to the bit.
+	c.pitchMode = 0;
+	CHECK(lawsFor(Kind::Snare, fields, c, 180.0, 0.8).hz
+	      == 180.0 * std::pow(2.0, (static_cast<double>(fields.pitch) - 0.5) * 2.0 * c.pitchRangeSemitones / 12.0));
+}
+
+TEST_CASE("settled pitch: a Kick's measured fundamental, a Membrane's lowest mode and a String's frequency are the function's answer, "
+          "under each terrain pitch mode; a Clap has none and a Metal is approximate") {
+	Rig r;
+	for (const int mode : { 0, 1, 2 }) {
+		CAPTURE(mode);
+		Controls c;
+		c.pitchRangeSemitones = 3.0;
+		c.pitchMode = mode;
+		c.decaySeconds = 4.0;
+		c.sweepSeconds = 0.05;
+		Fields f;
+		f.pitch = 0.83f; // +1.98 semitones of terrain: Free 1.98, Semitones 2, Off 0
+		f.sweep = 0.6f;
+		f.tone = 0.0f;
+		f.noise = 0.0f;
+		const double tune = -3.0;
+		const double base = restingBaseHz(Kind::Kick, tune, 0.0);
+		CHECK(base == doctest::Approx(50.0 * std::pow(2.0, -3.0 / 12.0)).epsilon(1.0e-12));
+		const SettledPitch kick = settledPitch(Kind::Kick, f, c, base);
+		REQUIRE(kick.defined);
+		CHECK_FALSE(kick.approximate);
+		// THE INDEPENDENT RESTATEMENT of the answer, by mode.
+		const double terrain = mode == 0 ? (0.83f - 0.5) * 6.0 : mode == 1 ? 2.0 : 0.0;
+		CHECK(kick.hz == doctest::Approx(base * std::pow(2.0, terrain / 12.0)).epsilon(1.0e-6));
+		// THE MEASUREMENT: strike it and read the waveform once the sweep has landed.
+		r.hit.reset();
+		r.hit.strike(Kind::Kick, lawsFor(Kind::Kick, f, c, base, 0.8), 5, 1.0f);
+		const std::vector<float> x = render(r.hit, 48000);
+		CHECK(measuredHz(x, 24000, 48000) == doctest::Approx(kick.hz).epsilon(2.0e-3));
+	}
+	// NONE for a Clap; APPROXIMATE for a Metal; a String and a Membrane are defined.
+	Controls c;
+	Fields f;
+	CHECK_FALSE(settledPitch(Kind::Clap, f, c, 1000.0).defined);
+	const SettledPitch metal = settledPitch(Kind::Metal, f, c, 400.0);
+	CHECK(metal.defined);
+	CHECK(metal.approximate);
+	CHECK(settledPitch(Kind::String, f, c, 110.0).defined);
+	f.pitch = 0.5f;
+	f.metal = 0.0f;
+	CHECK(settledPitch(Kind::Membrane, f, c, 110.0).hz == doctest::Approx(110.0 * 1.0).epsilon(1.0e-9)); // mode 0 at Metal 0 is the base
+	// A MEMBRANE'S LOWEST MODE as the hit reports it, once settled.
+	c.decaySeconds = 2.0;
+	f.sweep = 0.0f;
+	f.metal = 0.5f;
+	const double want = settledPitch(Kind::Membrane, f, c, 110.0).hz;
+	r.hit.reset();
+	r.hit.strike(Kind::Membrane, lawsFor(Kind::Membrane, f, c, 110.0, 0.8), 3, 1.0f);
+	(void)render(r.hit, 4800);
+	CHECK(r.hit.currentHz(0) == doctest::Approx(want).epsilon(1.0e-9));
+}

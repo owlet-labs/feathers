@@ -13735,9 +13735,11 @@ TEST_CASE("drum kit panel: the hit picture is the pad at its REAL place (and the
 	const feathers::drum::Laws here = panel.pictureForTest().lawsForTest();
 	CHECK(panel.pictureForTest().kindForTest() == feathers::drum::Kind::Membrane);
 	CHECK(here == expected());
-	// AND THE WALK MOVES IT: the same restatement at the walked place, which is not the unwalked one.
-	f.set(ParamId::DrumWalkX, 0.6);
-	f.set(ParamId::DrumWalkY, -0.4);
+	// AND THE STANCE MOVES IT: the same restatement at the moved place (the ordinary Pos X/Y through Weather), which is not the
+	// unmoved one.
+	f.set(ParamId::Weather, 1.0);
+	f.set(ParamId::PosX, 0.6);
+	f.set(ParamId::PosY, -0.4);
 	(void)panel.update();
 	CHECK(panel.pictureForTest().lawsForTest() == expected());
 	CHECK(!(panel.pictureForTest().lawsForTest() == here));
@@ -13790,14 +13792,13 @@ TEST_CASE("drum kit panel: the handles on the hit picture set Tune, Decay, Level
 	CHECK(p.handleShown(H::Decay));
 }
 
-TEST_CASE("drum surround: Metal is drawn on a pad that reads it and not on a Kick; the Walk only in Kit mode") {
+TEST_CASE("drum surround: Metal is drawn on a pad that reads it and not on a Kick") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	f.stage.update();
 	using DF = ExploreStage::DrumField;
 	CHECK_FALSE(f.stage.drumFieldKnobForTest(DF::Metal, 0).isVisible()); // A, a Kick
 	CHECK(f.stage.drumFieldKnobForTest(DF::Sweep, 0).isVisible());
-	CHECK(f.stage.drumWalkKnobForTest(0).isVisible());
 	f.selection.select(2); // C, Metal
 	f.stage.update();
 	CHECK(f.stage.drumFieldKnobForTest(DF::Metal, 2).isVisible());
@@ -13807,11 +13808,6 @@ TEST_CASE("drum surround: Metal is drawn on a pad that reads it and not on a Kic
 	f.set(ParamId::CEnable, 0.0);
 	f.stage.update();
 	CHECK(f.stage.drumFieldKnobForTest(DF::Metal, 2).enabled());
-	// PITCHED: the Walk goes, and the scalers are the engine's Kind's (Membrane reads Metal).
-	f.set(ParamId::DrumMode, 0.0);
-	f.stage.update();
-	CHECK_FALSE(f.stage.drumWalkKnobForTest(0).isVisible());
-	CHECK_FALSE(f.stage.drumWalkKnobForTest(1).isVisible());
 }
 
 TEST_CASE("drum terrain: each place draws the selected sound's kind as heard there, through its scalers, by the bank's road") {
@@ -14291,26 +14287,22 @@ TEST_CASE("drum kit chart: another pad is drawn at its place on the selected pad
 	CHECK(markOf(f, 2)->at.x == doctest::Approx(want.x).epsilon(1.0e-5));
 	CHECK(markOf(f, 2)->at.y == doctest::Approx(want.y).epsilon(1.0e-5));
 	CHECK(markOf(f, 2)->hollow);
-	CHECK_FALSE(markOf(f, 2)->arrow); // no Walk, no arrow
+	CHECK_FALSE(markOf(f, 2)->arrow); // no arrow
 	CHECK_FALSE(markOf(f, 0).has_value()); // the selected pad is the star, not a mark
 	// C MADE A KICK: the same mark, filled.
 	f.set(feathers::drumParam(2, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Kick));
 	f.stage.draw(canvas);
 	REQUIRE(markOf(f, 2).has_value());
 	CHECK_FALSE(markOf(f, 2)->hollow);
-	// THE WALK: every pad played (0.002, 0.001) from its place. C's arrow ends where it plays; A's played mark is the Walk's.
-	f.set(ParamId::DrumWalkX, 0.002);
-	f.set(ParamId::DrumWalkY, 0.001);
+	// THE PERFORMANCE IS NOT DRAWN HERE: moving the stance (the ordinary puck through Weather) leaves every mark where the pad is
+	// put, and no arrow is drawn.
+	f.set(ParamId::Weather, 1.0);
+	f.set(ParamId::PosX, 0.002);
+	f.set(ParamId::PosY, 0.001);
 	f.stage.draw(canvas);
 	REQUIRE(markOf(f, 2).has_value());
-	REQUIRE(markOf(f, 2)->arrow);
-	const visage::Point tip = f.stage.glassAt(0.005, 0.005);
-	CHECK(markOf(f, 2)->tip.x == doctest::Approx(tip.x).epsilon(1.0e-5));
-	CHECK(markOf(f, 2)->tip.y == doctest::Approx(tip.y).epsilon(1.0e-5));
-	REQUIRE(f.stage.playedMarkDrawn());
-	const visage::Point played = f.stage.glassAt(0.001, 0.002);
-	CHECK(f.stage.playedMarkAt().x == doctest::Approx(played.x).epsilon(1.0e-5));
-	CHECK(f.stage.playedMarkAt().y == doctest::Approx(played.y).epsilon(1.0e-5));
+	CHECK_FALSE(markOf(f, 2)->arrow);
+	CHECK(markOf(f, 2)->at.x == doctest::Approx(want.x).epsilon(1.0e-5));
 	// NOT ON A DRUM KIT: no marks at all (Pitched mode, the puck and sounds as on every engine).
 	f.set(ParamId::DrumMode, 0.0);
 	f.stage.draw(canvas);
@@ -14388,22 +14380,18 @@ TEST_CASE("drum kit chart: a pad on ANOTHER plane is drawn at its place's projec
 	CHECK(std::hypot(want.x - raw.x, want.y - raw.y) > 0.5f); // and that is not where its raw travel would put it
 }
 
-TEST_CASE("kit layer on the pictures: Kit Zone, Offset and Gamma move every pad's terrain window, the trims ride it, and the hit picture reads them") {
+TEST_CASE("kit layer on the pictures: the trims ride every pad's terrain window, and the hit picture reads them") {
 	ExploreFixture f;
 	visage::Canvas canvas;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	f.set(ParamId::DrumMode, 1.0);
 	const TerrainWindow before = f.stage.terrainWindowFor(2);
 	CHECK(before.additive.drumKit == feathers::DrumBias {}); // neutral by default
-	f.set(ParamId::DrumKitZone, 20.0);
-	f.set(ParamId::DrumKitOffset, 0.1);
-	f.set(ParamId::DrumKitGamma, 0.2);
 	f.set(ParamId::DrumKitTone, 0.8);
 	for (const size_t slot : { size_t { 0 }, size_t { 2 }, size_t { 7 } }) {
 		CAPTURE(slot);
 		const TerrainWindow w = f.stage.terrainWindowFor(slot);
-		CHECK(w.zoneBaseline == std::clamp(f.read(soundParam(slot, SoundField::Zone)) + 20.0, 0.0, 1023.0));
-		CHECK(w.offsetBaseline == doctest::Approx(f.read(soundParam(slot, SoundField::Offset)) + 0.3).epsilon(1.0e-12));
+		CHECK(w.zoneBaseline == f.read(soundParam(slot, SoundField::Zone)));
 		CHECK(w.additive.drumKit.tone == 0.8f);
 		CHECK(w.additive.drumKit.pitch == feathers::kFieldNeutral);
 	}
@@ -14423,7 +14411,7 @@ TEST_CASE("kit layer on the pictures: Kit Zone, Offset and Gamma move every pad'
 	CHECK(std::abs(panel.pictureForTest().lawsForTest().tone - neutralTone) > 1.0e-3);
 }
 
-TEST_CASE("kit layer on the surround: Kit mode offers three pages (Pad, Kit Fields, Kit Place); Pitched offers no page and no kit knob") {
+TEST_CASE("kit layer on the surround: Kit mode offers two pages (Pad, Kit Fields); Pitched offers no page and no kit knob") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	f.set(ParamId::DrumMode, 1.0);
@@ -14434,24 +14422,18 @@ TEST_CASE("kit layer on the surround: Kit mode offers three pages (Pad, Kit Fiel
 	CHECK_FALSE(shown(C::DrumKitPitch));
 	f.stage.chooseDrumPage(ui::ExploreStage::DrumPage::KitFields);
 	for (const C c : { C::DrumKitPitch, C::DrumKitLength, C::DrumKitSweep, C::DrumKitTone, C::DrumKitNoise, C::DrumKitSnap,
-	                   C::DrumKitMetal, C::DrumWalkX, C::DrumWalkY }) {
+	                   C::DrumKitMetal }) {
 		CAPTURE(static_cast<int>(c));
 		CHECK(shown(c));
 	}
 	CHECK_FALSE(shown(C::DrumPitch));
-	f.stage.chooseDrumPage(ui::ExploreStage::DrumPage::KitPlace);
-	for (const C c : { C::DrumKitGamma, C::DrumKitZone, C::DrumKitOffset, C::DrumWalkX, C::DrumWalkY }) {
-		CAPTURE(static_cast<int>(c));
-		CHECK(shown(c));
-	}
-	CHECK_FALSE(shown(C::DrumKitTone));
-	// PITCHED: the Pad page whatever was chosen, no page box, no kit knob, no Walk.
+	CHECK_FALSE(shown(C::DrumPitch));
+	// PITCHED: the Pad page whatever was chosen, no page box, no kit knob.
 	f.set(ParamId::DrumMode, 0.0);
 	CHECK_FALSE(shown(C::DrumPage));
-	CHECK_FALSE(shown(C::DrumKitGamma));
-	CHECK_FALSE(shown(C::DrumWalkX));
-	// EACH KIT KNOB DRIVES ITS PARAM: the tenth is Kit Metal.
-	CHECK(f.stage.drumKitKnobForTest(9).control()->display().base == doctest::Approx(0.5));
+	CHECK_FALSE(shown(C::DrumKitPitch));
+	// EACH KIT KNOB DRIVES ITS PARAM: the seventh is Kit Metal.
+	CHECK(f.stage.drumKitKnobForTest(6).control()->display().base == doctest::Approx(0.5));
 }
 
 TEST_CASE("kit layer on the terrain: a kit trim over a neutral pad scaler draws exactly what that scaler alone draws, and not the neutral map") {
@@ -14731,39 +14713,75 @@ TEST_CASE("drum kit panel (decision 8): a kit pad's Bend pill writes its own Ben
 	CHECK(panel.drawnForTest(0, DrumControl::Pan)); // the row is still there
 }
 
-TEST_CASE("drum layer slot (stage (c)): dragging a pad carries its LOCKED layer with no write; UNLOCKED, the layer stays where it "
-          "stands, the vector taking the drag back exactly") {
-	for (const bool locked : { true, false }) {
-		CAPTURE(locked);
-		ExploreFixture f;
-		f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
-		f.set(ParamId::DrumMode, 1.0); // Kit
-		const auto id = [](DrumControl c) { return static_cast<clap_id>(feathers::drumParam(1, c)); };
-		f.set(static_cast<ParamId>(id(DrumControl::LayerKind)), 2.0);
-		f.set(static_cast<ParamId>(id(DrumControl::LayerLock)), locked ? 1.0 : 0.0);
-		f.set(static_cast<ParamId>(id(DrumControl::LayerOffsetX)), 0.2);
-		f.set(static_cast<ParamId>(id(DrumControl::LayerOffsetY)), 0.1);
-		f.selection.select(1);
-		const AnchorPoint before = f.bridge.soundTravel().offset[1];
-		const visage::Point centre = f.stage.disk().centre();
-		f.stage.onMouseDown().callback(at(centre.x, centre.y));
-		drain(f.bridge);
-		f.now += 250;
-		f.stage.onMouseDrag().callback(at(centre.x + 120.0f, centre.y));
-		const AnchorPoint after = f.bridge.soundTravel().offset[1];
-		const double dx = after.x - before.x;
-		REQUIRE(std::abs(dx) > 1.0e-3); // the pad moved, so the claim is about a real drag
-		const double ox = f.bridge.value(id(DrumControl::LayerOffsetX));
-		const double oy = f.bridge.value(id(DrumControl::LayerOffsetY));
-		if (locked) {
-			CHECK(ox == 0.2); // no write: the layer's place is the pad's plus the same vector
-			CHECK(oy == 0.1);
-		}
-		else {
-			CHECK(std::abs((after.x + ox) - (before.x + 0.2)) < 1.0e-9); // where it stood
-			CHECK(std::abs((after.y + oy) - (before.y + 0.1)) < 1.0e-9);
+TEST_CASE("drum layers: dragging a pad is a kit-wide bulk edit: the same step on every UNLOCKED layer's vector, locked ones bit-identical, "
+          "one undo restoring all") {
+	ExploreFixture f;
+	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+	f.set(ParamId::DrumMode, 1.0); // Kit
+	using feathers::drumLayerParam;
+	const auto id = [](size_t slot, size_t layer, DrumControl c) { return static_cast<clap_id>(drumLayerParam(slot, layer, c)); };
+	f.set(static_cast<ParamId>(id(1, 1, DrumControl::LayerKind)), 2.0);
+	// A SPREAD OF VECTORS, and two layers locked (pad 1's second, pad 3's first).
+	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+		for (size_t layer = 0; layer < 2; ++layer) {
+			f.set(static_cast<ParamId>(id(slot, layer, DrumControl::OffsetX)), 0.05 * static_cast<double>(slot) - 0.1 * static_cast<double>(layer));
+			f.set(static_cast<ParamId>(id(slot, layer, DrumControl::OffsetY)), -0.02 * static_cast<double>(slot) + 0.1 * static_cast<double>(layer));
 		}
 	}
+	f.set(static_cast<ParamId>(id(1, 1, DrumControl::Lock)), 1.0);
+	f.set(static_cast<ParamId>(id(3, 0, DrumControl::Lock)), 1.0);
+	f.selection.select(1);
+	std::vector<double> before;
+	const auto snapshot = [&] {
+		std::vector<double> v;
+		for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+			for (size_t layer = 0; layer < 2; ++layer) {
+				v.push_back(f.bridge.value(id(slot, layer, DrumControl::OffsetX)));
+				v.push_back(f.bridge.value(id(slot, layer, DrumControl::OffsetY)));
+			}
+		}
+		return v;
+	};
+	before = snapshot();
+	const AnchorPoint star = f.bridge.soundTravel().offset[1];
+	const visage::Point centre = f.stage.disk().centre();
+	f.stage.onMouseDown().callback(at(centre.x, centre.y));
+	drain(f.bridge);
+	f.now += 250;
+	f.stage.onMouseDrag().callback(at(centre.x + 120.0f, centre.y));
+	const AnchorPoint after = f.bridge.soundTravel().offset[1];
+	const double dx = after.x - star.x;
+	const double dy = after.y - star.y;
+	REQUIRE(std::abs(dx) > 1.0e-3); // a real drag
+	const std::vector<double> moved = snapshot();
+	const std::vector<double> moved2 = moved;
+	size_t layerIndex = 0;
+	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+		for (size_t layer = 0; layer < 2; ++layer, layerIndex += 2) {
+			CAPTURE(slot);
+			CAPTURE(layer);
+			const bool locked = (slot == 1 && layer == 1) || (slot == 3 && layer == 0);
+			if (locked) {
+				CHECK(moved[layerIndex] == before[layerIndex]); // untouched, to the bit
+				CHECK(moved[layerIndex + 1] == before[layerIndex + 1]);
+			}
+			else {
+				CHECK(moved[layerIndex] == std::clamp(before[layerIndex] + dx, -feathers::kDrumVectorRange, feathers::kDrumVectorRange));
+				CHECK(moved[layerIndex + 1] == std::clamp(before[layerIndex + 1] + dy, -feathers::kDrumVectorRange, feathers::kDrumVectorRange));
+			}
+		}
+	}
+	f.stage.onMouseUp().callback(at(centre.x + 120.0f, centre.y));
+	f.settleScrub();
+	f.settleGesture();
+	// ONE UNDO takes back the star's move AND every vector (a group of one step), and one redo puts them all forward again.
+	const size_t steps = f.history.length();
+	f.stage.undo();
+	CHECK(snapshot() == before);
+	CHECK(f.bridge.soundTravel().offset[1].x == star.x);
+	f.stage.redo();
+	CHECK(snapshot() == moved2);
+	CHECK(steps >= 1);
 }
 
 TEST_CASE("drum kit panel (layer slot, stage (c)): Kit mode draws the Layer box; its Level, Delay, High Pass, Lock and offset "
@@ -14774,7 +14792,7 @@ TEST_CASE("drum kit panel (layer slot, stage (c)): Kit mode draws the Layer box;
 	ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
 	panel.setBounds(0.0f, 0.0f, panel.minimumSize().x, panel.minimumSize().y); // the pad row plus the pad fx rail
 	constexpr std::array<DrumControl, 6> kOn { DrumControl::LayerLevel, DrumControl::LayerDelay, DrumControl::LayerHighPass,
-		                                       DrumControl::LayerLock, DrumControl::LayerOffsetX, DrumControl::LayerOffsetY };
+		                                       DrumControl::Lock, DrumControl::OffsetX, DrumControl::OffsetY };
 	(void)panel.update();
 	CHECK(panel.drawnForTest(0, DrumControl::LayerKind));
 	for (const DrumControl c : kOn) {

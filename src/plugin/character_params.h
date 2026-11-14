@@ -364,17 +364,12 @@ Character characterFromParamsAtSide(Read&& read, OscType type, const AuditionTun
 		// finished character address these the way a player does — by rail row — without owning a second
 		// copy of the packing rule. See SoundCoord::slot.
 		sound.slot = static_cast<uint8_t>(slot);
-		// THE KIT-WIDE LAYER (2026-11-06): on a Drum Kit, Kit Zone moves every pad's zone (before the rounding, so it is moving
-		// each pad's Zone by the same amount, held inside the zones that exist) and Kit Offset and Kit Gamma its phase offset.
-		const double kitZone = drumKit ? read(ParamId::DrumKitZone) : 0.0;
-		const double kitPhase = drumKit ? read(ParamId::DrumKitOffset) + read(ParamId::DrumKitGamma) : 0.0;
-		sound.zone = static_cast<uint16_t>(std::lround(drumKit ? std::clamp(read(soundParam(slot, SoundField::Zone)) + kitZone, 0.0, 1023.0)
-		                                                       : read(soundParam(slot, SoundField::Zone))));
+		sound.zone = static_cast<uint16_t>(std::lround(read(soundParam(slot, SoundField::Zone))));
 		// Gamma is not a knob of its own in the character layer: the engine adds it to the phase offset,
 		// which is the coordinate that walks a zone into quasi-periodic bank space. Global Gamma is the
 		// macro offset over every sound, so it lands on all of them.
 		sound.phaseOffset = static_cast<float>(read(soundParam(slot, SoundField::Offset))
-		                                       + read(soundParam(slot, SoundField::Gamma)) + globalGamma + kitPhase);
+		                                       + read(soundParam(slot, SoundField::Gamma)) + globalGamma);
 		// AND GAMMA'S UNBOUNDED HALF, kept out of that float on purpose. The parameter above is the
 		// vernier and stays bounded, automatable and exactly where it was; this is the coarse half,
 		// and it reaches `home` as a double so it does not quantise the fine one. Zero here is the
@@ -420,26 +415,30 @@ Character characterFromParamsAtSide(Read&& read, OscType type, const AuditionTun
 				                 static_cast<float>(read(ksPickParam(slot))), static_cast<float>(read(ksNoiseParam(slot))),
 				                 static_cast<float>(read(ksStretchParam(slot))) };
 		}
-		// THE DRUM'S SEVEN FIELD SCALERS (drum proposal §3.2), raw, and only on Drum.
+		// THE DRUM'S SEVEN FIELD SCALERS (drum proposal §3.2), raw, and only on Drum: layer one's.
 		if (type == OscType::Drum) {
-			sound.drumBias = { static_cast<float>(read(drumParam(slot, DrumControl::FieldPitch))),
-				               static_cast<float>(read(drumParam(slot, DrumControl::FieldLength))),
-				               static_cast<float>(read(drumParam(slot, DrumControl::FieldSweep))),
-				               static_cast<float>(read(drumParam(slot, DrumControl::FieldTone))),
-				               static_cast<float>(read(drumParam(slot, DrumControl::FieldNoise))),
-				               static_cast<float>(read(drumParam(slot, DrumControl::FieldSnap))),
-				               static_cast<float>(read(drumParam(slot, DrumControl::FieldMetal))) };
+			const auto bias = [&](size_t layer) {
+				const auto f = [&](DrumControl control) { return static_cast<float>(read(drumLayerParam(slot, layer, control))); };
+				return DrumBias { f(DrumControl::FieldPitch), f(DrumControl::FieldLength), f(DrumControl::FieldSweep),
+					              f(DrumControl::FieldTone),  f(DrumControl::FieldNoise),  f(DrumControl::FieldSnap),
+					              f(DrumControl::FieldMetal) };
+			};
+			sound.drumBias = bias(0);
 			// AND THE KIT-WIDE TRIMS on top (2026-11-06): the scaler's own law again, so neutral is the pad's fields to the bit.
+			// A PAD IS TWO LAYERS (kit stance redesign): layer two has its own scalers, its own lock and its own vector, and is on
+			// whenever its kind is not Off. Layer one is the pad's own and always on.
 			if (drumKit) {
 				sound.drumKitBias = { static_cast<float>(read(ParamId::DrumKitPitch)), static_cast<float>(read(ParamId::DrumKitLength)),
 					                  static_cast<float>(read(ParamId::DrumKitSweep)), static_cast<float>(read(ParamId::DrumKitTone)),
 					                  static_cast<float>(read(ParamId::DrumKitNoise)), static_cast<float>(read(ParamId::DrumKitSnap)),
 					                  static_cast<float>(read(ParamId::DrumKitMetal)) };
-				// AND ITS LAYER'S OFFSET (stage (c)), only while the pad has a layer, so a layerless kit compares equal to before.
+				for (size_t layer = 0; layer < 2; ++layer) {
+					sound.drumVectorX[layer] = read(drumLayerParam(slot, layer, DrumControl::OffsetX));
+					sound.drumVectorY[layer] = read(drumLayerParam(slot, layer, DrumControl::OffsetY));
+				}
 				if (std::lround(read(drumParam(slot, DrumControl::LayerKind))) > 0) {
 					sound.drumLayer = true;
-					sound.drumLayerX = read(drumParam(slot, DrumControl::LayerOffsetX));
-					sound.drumLayerY = read(drumParam(slot, DrumControl::LayerOffsetY));
+					sound.drumBias2 = bias(1);
 				}
 			}
 		}
@@ -536,15 +535,20 @@ Character characterFromParamsAtSide(Read&& read, OscType type, const AuditionTun
 		c.sounds[i].travelY = weather * (puck.y - anchors[i].y) + drift.offset[slotOf[i]].y;
 		c.sounds[i].weight = weights[i];
 	}
-	// A KIT PAD STANDS AT ITS OWN PLACE MOVED BY THE WALK (drum proposal D3): the puck is not where a kit is played from, so
-	// Weather's puck term does not reach it; the Walk moves every pad together, and its own drift is still its own. At Walk 0
-	// each pad is exactly home + drift.
+	// **THE KIT'S STANCE IS THE ORDINARY ONE** (kit stance redesign): the standard puck moves the whole kit. A kit is not
+	// blended, so there are no anchors to be relative to and Path (which tours them) is not read: the stance is the puck's
+	// Pos X/Y through Weather, `weather * puck`, one place for every pad. Weather at 0 is the kit at rest, each layer exactly
+	// at home + its own vector. Each LAYER stands at the stance + its own vector (`drumLayerPlace`), locked or not (Lock is the editor's);
+	// the pad's own drift and orbit are not read (a layer's vector is its own, a parameter). The sound's travel is layer one's
+	// place, which is what the pad is.
 	if (drumKit) {
-		const double walkX = read(ParamId::DrumWalkX);
-		const double walkY = read(ParamId::DrumWalkY);
+		const AnchorPoint stance { weather * read(ParamId::PosX), weather * read(ParamId::PosY) };
+		c.drumStance = stance;
 		for (size_t i = 0; i < count; ++i) {
-			c.sounds[i].travelX = walkX + drift.offset[slotOf[i]].x;
-			c.sounds[i].travelY = walkY + drift.offset[slotOf[i]].y;
+			SoundCoord& sound = c.sounds[i];
+			const AnchorPoint place = drumLayerPlace(stance, { sound.drumVectorX[0], sound.drumVectorY[0] });
+			sound.travelX = place.x;
+			sound.travelY = place.y;
 		}
 	}
 	// AND ON ADDITIVE EACH EAR READS THE FIELDS AT ITS OWN STAND, at any Weather (2026-10-11, option (b) of the
@@ -564,7 +568,7 @@ Character characterFromParamsAtSide(Read&& read, OscType type, const AuditionTun
 			c.sounds[i].travelX -= topUp * earShift[i];
 		}
 	}
-	c.puck = puck;
+	c.puck = drumKit ? AnchorPoint { read(ParamId::PosX), read(ParamId::PosY) } : puck;
 
 	// AND NO MOTION TERMS WHILE PREVIEWING. The blue shift is what the blend does as you MOVE THROUGH
 	// it — an overshoot aimed along the puck's velocity, a Doppler on the rate of approach — and a

@@ -14788,13 +14788,13 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 	enum Ctl : size_t {
 		Width, FmDepth, Warp, Smoothness, Quantize, Sync, Feedback, Points, Grit, ModeBox, ModelBox,
 		Radius, Theta, ResonateSurround, ShapesMix, ShapeAmount, Bias, StringScalers, PluckSurround, DrumScalers, DrumMetal,
-		DrumWalk, kCtlCount
+		kCtlCount
 	};
 	const char* const kNames[kCtlCount] = { "Width", "FM Depth", "Warp", "Smoothness", "Quantize", "Sync",
 		                                    "Feedback", "Points", "Grit", "mode box", "Model box", "Radius",
 		                                    "Theta", "Resonate surround", "Shapes mix", "Shape Amount",
 		                                    "Additive bias", "Pluck string scalers", "Pluck surround",
-		                                    "Drum scalers (a Kick's six)", "Drum Metal", "Drum Walk" };
+		                                    "Drum scalers (a Kick's six)", "Drum Metal" };
 	struct Row {
 		OscType engine;
 		const char* face; // one char per Ctl: 'L' drawn and live, '-' not drawn
@@ -14807,25 +14807,25 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 	// scalers (the bank's String build), and its engine-wide knobs (the String page's Width, Decay and Release here; the Pluck
 	// page's four are pinned by test_gui_widgets_explore's Pluck case); its left box is the page box.
 	// DRUM (2026-11-05, drum proposal §6), in Kit mode with pad A (a Kick) selected: the six field scalers a Kick reads (not
-	// Metal: drum::kindReads) and the Kit Walk; its left box is the page box (Pad, Kit Fields, Kit Place; 2026-11-06). A kit
+	// Metal: drum::kindReads); its left box is the page box (Pad, Kit Fields). A kit
 	// pad never greys for its switch (every sound is a pad).
-	//                                    W  F  Wp S  Q  Sy Fb P  G  Mb Mo R  T  Rs Sh SA Bi St Pk Ds Dm Dw
+	//                                    W  F  Wp S  Q  Sy Fb P  G  Mb Mo R  T  Rs Sh SA Bi St Pk Ds Dm
 	const Row kTable[] = {
-		{ OscType::Morph,       "--------L--LL---------" },
-		{ OscType::Stair,       "-----------LL---------" },
-		{ OscType::V5,          "LLLLLLLLLL-LL---------" },
-		{ OscType::Resonate,    "---------LLLLL--------" },
-		{ OscType::BasicShapes, "LLLL----LL-LL-L-------" }, // Q/Sy/Fb/P on its Operators page (backlog KV)
-		{ OscType::Additive,    "L--L-----L-LL--LL-----" },
-		{ OscType::Pluck,       "---L-----L-LL----LL---" },
-		{ OscType::Drum,        "---------L-LL------L-L" },
+		{ OscType::Morph,       "--------L--LL--------" },
+		{ OscType::Stair,       "-----------LL--------" },
+		{ OscType::V5,          "LLLLLLLLLL-LL--------" },
+		{ OscType::Resonate,    "---------LLLLL-------" },
+		{ OscType::BasicShapes, "LLLL----LL-LL-L------" }, // Q/Sy/Fb/P on its Operators page (backlog KV)
+		{ OscType::Additive,    "L--L-----L-LL--LL----" },
+		{ OscType::Pluck,       "---L-----L-LL----LL--" },
+		{ OscType::Drum,        "---------L-LL------L-" },
 	};
 	REQUIRE(std::size(kTable) == static_cast<size_t>(OscType::kCount));
 	// PER-SOUND controls grey when the selected sound is parked (its switch is on this face); the engine-wide
 	// ones (the boxes, Resonate's surround, the shapes mix) and the polar pair do not.
 	const bool kPerSoundGreys[kCtlCount] = { true, true, true, true, true, true, true, true, true,
 		                                     false, false, false, false, false, false, true, true, true, false,
-		                                     false, false, false };
+		                                     false, false };
 
 	using FieldKind = ExploreStage::FieldKind;
 	using FlagshipKind = ExploreStage::FlagshipKind;
@@ -14902,7 +14902,6 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 					return all;
 				}
 				case DrumMetal: return { &f.stage.drumFieldKnobForTest(ExploreStage::DrumField::Metal, slot) };
-				case DrumWalk: return { &f.stage.drumWalkKnobForTest(0), &f.stage.drumWalkKnobForTest(1) };
 				default: return {};
 				}
 			};

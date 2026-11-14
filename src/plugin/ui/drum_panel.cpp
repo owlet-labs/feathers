@@ -735,8 +735,8 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 		handle(set.clapQ, DrumControl::ClapQ);
 		handle(set.clapHighPass, DrumControl::ClapHighPass);
 		const auto pill = [&](std::unique_ptr<ParamControl>& control, std::unique_ptr<FaderPill>& out, DrumControl c,
-		                      const char* caption) {
-			const ParamDesc& d = descOf(drumParam(slot, c));
+		                      const char* caption, bool layerTwo = false) {
+			const ParamDesc& d = descOf(layerTwo ? drumLayer2Param(slot, c) : drumParam(slot, c));
 			control = std::make_unique<ParamControl>(bridge, &d);
 			out = std::make_unique<FaderPill>(*control, caption);
 			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), out.get()));
@@ -754,10 +754,10 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 		pill(set.layerLevelControl, set.layerLevel, DrumControl::LayerLevel, "Layer Lvl");
 		pill(set.layerDelayControl, set.layerDelay, DrumControl::LayerDelay, "Delay");
 		pill(set.layerHighPassControl, set.layerHighPass, DrumControl::LayerHighPass, "Layer HP");
-		pill(set.layerOffsetXControl, set.layerOffsetX, DrumControl::LayerOffsetX, "Offset X");
-		pill(set.layerOffsetYControl, set.layerOffsetY, DrumControl::LayerOffsetY, "Offset Y");
+		pill(set.layerOffsetXControl, set.layerOffsetX, DrumControl::OffsetX, "Offset X", true);
+		pill(set.layerOffsetYControl, set.layerOffsetY, DrumControl::OffsetY, "Offset Y", true);
 		{
-			const ParamDesc& d = descOf(drumParam(slot, DrumControl::LayerLock));
+			const ParamDesc& d = descOf(drumLayer2Param(slot, DrumControl::Lock));
 			set.layerLockControl = std::make_unique<ParamControl>(bridge, &d);
 			set.layerLock = std::make_unique<SwitchChip>(*set.layerLockControl, "Lock");
 			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), set.layerLock.get()));
@@ -1216,9 +1216,9 @@ visage::Frame* DrumPanel::controlForTest(size_t pad, DrumControl c) const {
 	case DrumControl::LayerLevel: return set.layerLevel.get();
 	case DrumControl::LayerDelay: return set.layerDelay.get();
 	case DrumControl::LayerHighPass: return set.layerHighPass.get();
-	case DrumControl::LayerLock: return set.layerLock.get();
-	case DrumControl::LayerOffsetX: return set.layerOffsetX.get();
-	case DrumControl::LayerOffsetY: return set.layerOffsetY.get();
+	case DrumControl::Lock: return set.layerLock.get();
+	case DrumControl::OffsetX: return set.layerOffsetX.get();
+	case DrumControl::OffsetY: return set.layerOffsetY.get();
 	case DrumControl::VelocityZone: return set.velocityZone.get();
 	case DrumControl::Wires: return set.wires.get();
 	case DrumControl::Bells: return set.bells.get();

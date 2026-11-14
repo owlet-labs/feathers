@@ -86,12 +86,13 @@ PreparedCharacter& prepared(const Character& c) {
 
 /// ONE SOUND'S DRUM FIELDS, restated: its home, its frame (its own pin or the character's, its own residue), its travel,
 /// through the guests and its scalers.
-drum::Fields soloFields(const Character& c, const SoundCoord& s) {
+drum::Fields soloFields(const Character& c, const SoundCoord& s, const feathers::DrumBias* bias = nullptr) {
 	const feathers::SliceOrientationPin& pin = s.orientation.pinned ? s.orientation : c.orientation;
 	const double home = feathers::sliceHome(s.zone, s.phaseOffset, s.gammaBase);
 	const auto frame =
 	    feathers::sliceFrameFor<feathers::kPartialTriangles>(feathers::rotateFor(pin), home, s.residue.partials);
-	return feathers::drumFieldsWithOverrides(feathers::readDrumFields(frame, home, s.travelX, s.travelY), s.drumBias);
+	return feathers::drumFieldsWithOverrides(feathers::readDrumFields(frame, home, s.travelX, s.travelY),
+	                                       bias != nullptr ? *bias : s.drumBias);
 }
 
 std::array<double, 7> asArray(const drum::Fields& f) {
@@ -428,41 +429,52 @@ TEST_CASE("drum kit: a panned pad takes the stereo road; a centred kit does not"
 	CHECK(rig->synth.drumKitForTest().pads[2].pan == 0.5f);
 }
 
-TEST_CASE("drum kit: every sound is a pad whatever its switch, at its home plus the Walk; Weather's puck term does not reach "
-          "it, and Pitched keeps the ordinary blend") {
+TEST_CASE("drum kit: every sound is a pad whatever its switch, at the kit's stance (Pos X/Y through Weather, no anchors, no Path) "
+          "plus its layer's vector; Pitched keeps the ordinary blend") {
 	ParamSet params; // the defaults: only some sounds switched on
-	const auto build = [&params](double walkX, double walkY, bool kit) {
+	const auto build = [&params](double posX, double posY, double weather, bool kit) {
 		params.setBase(static_cast<clap_id>(ParamId::DrumMode), kit ? 1.0 : 0.0);
-		params.setBase(static_cast<clap_id>(ParamId::DrumWalkX), walkX);
-		params.setBase(static_cast<clap_id>(ParamId::DrumWalkY), walkY);
-		params.setBase(static_cast<clap_id>(ParamId::Weather), 1.0);
-		params.setBase(static_cast<clap_id>(ParamId::PosX), 0.3);
+		params.setBase(static_cast<clap_id>(ParamId::Weather), weather);
+		params.setBase(static_cast<clap_id>(ParamId::PosX), posX);
+		params.setBase(static_cast<clap_id>(ParamId::PosY), posY);
 		return feathers::characterFromParams([&params](ParamId id) { return params.base(id); }, OscType::Drum,
 		                                     feathers::AuditionTuning {}, feathers::AnchorPoint {}, feathers::SoundTravel {},
 		                                     feathers::SoundOrientations {}, feathers::SoundResidue {}, feathers::SoundGamma {},
 		                                     feathers::Preview {}, feathers::EarSide::Head);
 	};
-	const Character kit = build(0.25, -0.5, true);
+	// The stance written out: the standard puck through Weather's taper, one place for every pad (the anchors are not in it).
+	const double taper = feathers::amountTaper(1.0);
+	const Character kit = build(0.25, -0.5, 1.0, true);
 	CHECK(kit.engine == OscEngine::Drum);
 	CHECK(kit.drumKit);
 	REQUIRE(kit.count == 8);
+	CHECK(kit.drumStance.x == taper * 0.25);
+	CHECK(kit.drumStance.y == taper * -0.5);
 	for (uint8_t i = 0; i < 8; ++i) {
 		CAPTURE(i);
 		CHECK(kit.sounds[i].slot == i);
-		CHECK(kit.sounds[i].travelX == 0.25);
-		CHECK(kit.sounds[i].travelY == -0.5);
+		CHECK(kit.sounds[i].travelX == taper * 0.25);
+		CHECK(kit.sounds[i].travelY == taper * -0.5);
 	}
-	// At Walk 0 every pad is exactly home.
-	const Character still = build(0.0, 0.0, true);
+	// Weather 0 is the kit at rest: every pad exactly home, whatever the puck.
+	const Character still = build(0.25, -0.5, 0.0, true);
 	for (uint8_t i = 0; i < 8; ++i) {
 		CHECK(still.sounds[i].travelX == 0.0);
 		CHECK(still.sounds[i].travelY == 0.0);
 	}
+	// PATH IS NOT READ in a kit: it tours the pads' anchors, which a kit has no use for.
+	params.setBase(static_cast<clap_id>(ParamId::Path), 0.6);
+	const Character toured = build(0.25, -0.5, 1.0, true);
+	for (uint8_t i = 0; i < 8; ++i) {
+		CHECK(toured.sounds[i].travelX == kit.sounds[i].travelX);
+		CHECK(toured.sounds[i].travelY == kit.sounds[i].travelY);
+	}
+	params.setBase(static_cast<clap_id>(ParamId::Path), 0.0);
 	// PITCHED: the switches decide membership and the puck's Weather reaches the sounds, as on every engine.
-	const Character pitched = build(0.25, -0.5, false);
+	const Character pitched = build(0.25, -0.5, 1.0, false);
 	CHECK_FALSE(pitched.drumKit);
 	CHECK(pitched.count < 8);
-	CHECK(pitched.sounds[0].travelX != 0.25);
+	CHECK(pitched.drumStance == feathers::AnchorPoint {}); // the stance is a kit's alone
 }
 
 TEST_CASE("drum kit: a snare pad's own envelopes and bell reach its hit, through its params, by value") {
@@ -773,41 +785,6 @@ TEST_CASE("kit layer: at its defaults it is neutral to the bit, every pad's plac
 	}
 }
 
-TEST_CASE("kit layer: Kit Zone and Kit Gamma are each every pad moved by the same amount") {
-	ParamSet moved;
-	ParamSet kit;
-	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-		const double z = moved.base(soundParam(slot, SoundField::Zone));
-		moved.setBase(static_cast<clap_id>(soundParam(slot, SoundField::Zone)), std::clamp(z + 37.0, 0.0, 1023.0));
-		moved.setBase(static_cast<clap_id>(soundParam(slot, SoundField::Gamma)), moved.base(soundParam(slot, SoundField::Gamma)) + 0.3);
-	}
-	kit.setBase(static_cast<clap_id>(ParamId::DrumKitZone), 37.0);
-	kit.setBase(static_cast<clap_id>(ParamId::DrumKitGamma), 0.3);
-	const Character a = kitCharacter(moved);
-	const Character b = kitCharacter(kit);
-	REQUIRE(a.count == b.count);
-	const auto fa = feathers::buildDrumFor(a);
-	const auto fb = feathers::buildDrumFor(b);
-	for (size_t i = 0; i < a.count; ++i) {
-		CAPTURE(i);
-		CHECK(a.sounds[i].zone == b.sounds[i].zone);
-		CHECK(std::abs(a.sounds[i].phaseOffset - b.sounds[i].phaseOffset) <= 1.0e-6f); // the same sum, added in another order
-		const auto x = asArray(fa.pads[i]);
-		const auto y = asArray(fb.pads[i]);
-		for (size_t k = 0; k < x.size(); ++k) {
-			CHECK(std::abs(x[k] - y[k]) < 1.0e-4);
-		}
-	}
-	// AND IT DID MOVE THEM (the case is not about two unmoved kits).
-	ParamSet plain;
-	CHECK(kitCharacter(plain).sounds[1].zone != b.sounds[1].zone);
-	// HELD INSIDE THE ZONES THAT EXIST: a pad at 1000 shifted by +100 stands at 1023.
-	ParamSet edge;
-	edge.setBase(static_cast<clap_id>(soundParam(0, SoundField::Zone)), 1000.0);
-	edge.setBase(static_cast<clap_id>(ParamId::DrumKitZone), 100.0);
-	CHECK(kitCharacter(edge).sounds[0].zone == 1023);
-}
-
 TEST_CASE("kit layer: a kit trim composes with each pad's scaler by the scaler's own law, applied again on top") {
 	// The law written out: k ≤ 0.5 scales toward 0 by 2k; above, lifts toward 1 by 2(k − 0.5).
 	const auto law = [](double f, double k) { return k <= 0.5 ? f * (2.0 * k) : f + (1.0 - f) * (2.0 * (k - 0.5)); };
@@ -837,7 +814,7 @@ TEST_CASE("kit layer: a kit trim composes with each pad's scaler by the scaler's
 }
 
 TEST_CASE("kit layer: every kit control is a modulation destination, and a modulated Kit Tone reaches a pad's hit") {
-	for (const ParamId id : { ParamId::DrumKitGamma, ParamId::DrumKitZone, ParamId::DrumKitOffset, ParamId::DrumKitPitch,
+	for (const ParamId id : { ParamId::DrumKitPitch,
 	                          ParamId::DrumKitLength, ParamId::DrumKitSweep, ParamId::DrumKitTone, ParamId::DrumKitNoise,
 	                          ParamId::DrumKitSnap, ParamId::DrumKitMetal }) {
 		CAPTURE(static_cast<int>(id));
@@ -905,15 +882,18 @@ TEST_CASE("drum kit (audition): a muted pad takes no hit and does not count one;
 	}
 }
 
-TEST_CASE("rotate on drums: a pad's seven fields (and so its hit) are bit-identical under a turn at home and at a drift; the Walk is what a turn reaches") {
+TEST_CASE("rotate on drums: a pad's seven fields (and so its hit) are bit-identical under a turn at home and at a drift; the stance is what a turn reaches") {
 	for (const bool kit : { true, false }) {
 		CAPTURE(kit);
 		ParamSet params;
 		params.setBase(static_cast<clap_id>(ParamId::OscType), static_cast<double>(OscType::Drum));
 		params.setBase(static_cast<clap_id>(ParamId::DrumMode), kit ? 1.0 : 0.0);
 		params.setBase(static_cast<clap_id>(soundParam(0, SoundField::Enable)), 1.0);
-		const auto build = [&params](const feathers::SoundTravel& drift, const feathers::SoundOrientations& planes,
-		                             const feathers::SoundResidue& residue) {
+		const auto build = [&params, kit](const feathers::SoundTravel& drift, const feathers::SoundOrientations& planes,
+		                                  const feathers::SoundResidue& residue) {
+			// IN A KIT A PAD'S PLACE IS ITS LAYER'S VECTOR (the engine reads no drift there): the drift here is written as one.
+			params.setBase(static_cast<clap_id>(drumParam(0, DrumControl::OffsetX)), kit ? drift.offset[0].x : 0.0);
+			params.setBase(static_cast<clap_id>(drumParam(0, DrumControl::OffsetY)), kit ? drift.offset[0].y : 0.0);
 			return feathers::characterFromParams([&params](ParamId id) { return params.base(id); }, OscType::Drum,
 			                                     feathers::AuditionTuning {}, feathers::AnchorPoint {}, drift, planes, residue,
 			                                     feathers::SoundGamma {}, feathers::Preview {}, feathers::EarSide::Head);
@@ -952,12 +932,13 @@ TEST_CASE("rotate on drums: a pad's seven fields (and so its hit) are bit-identi
 			CHECK(drum::lawsFor(drum::Kind::Snare, f[0], c, 180.0, 0.8) == drum::lawsFor(drum::Kind::Snare, f[1], c, 180.0, 0.8));
 		}
 	}
-	// IN A KIT THE WALK IS TRAVEL THE FOLD DOES NOT HOLD (as the puck's Weather is on the other engines): a turn with the
-	// Walk off zero moves the pad, which is what was heard (the per-pad pivot).
+	// IN A KIT THE STANCE IS TRAVEL THE FOLD DOES NOT HOLD (as the puck's Weather is on the other engines): a turn with the
+	// kit moved off rest moves the pad, which is what was heard (the per-pad pivot).
 	ParamSet params;
 	params.setBase(static_cast<clap_id>(ParamId::OscType), static_cast<double>(OscType::Drum));
 	params.setBase(static_cast<clap_id>(ParamId::DrumMode), 1.0);
-	params.setBase(static_cast<clap_id>(ParamId::DrumWalkX), 0.25);
+	params.setBase(static_cast<clap_id>(ParamId::PosX), 0.25);
+	params.setBase(static_cast<clap_id>(ParamId::Weather), 1.0);
 	const auto read = [&params](ParamId id) { return params.base(id); };
 	const Character flat = feathers::characterFromParams(read, OscType::Drum, feathers::AuditionTuning {}, feathers::AnchorPoint {},
 	                                                     feathers::SoundTravel {}, feathers::SoundOrientations {},
@@ -1061,43 +1042,108 @@ TEST_CASE("drum pitched (decision 8, the 808 glide): Mono with Glide strikes the
 
 // ---- THE LAYER SLOT (drum proposal §12; stage (c), 2026-11-07) -----------------------------------------------------------
 
-TEST_CASE("drum layer slot: a layer's fields are its pad's place moved by its offset vector, through the pad's scalers; a pad "
-          "without one reaches the character unchanged") {
+TEST_CASE("drum layers: every layer, locked or not, stands at the kit's stance plus its own vector, through its own scalers; "
+          "a pad without a second layer reaches the character unchanged") {
 	ParamSet params;
+	const auto L = feathers::drumLayerParam;
 	params.setBase(static_cast<clap_id>(drumParam(2, DrumControl::LayerKind)), 3.0); // Snare
-	params.setBase(static_cast<clap_id>(drumParam(2, DrumControl::LayerOffsetX)), 0.3);
-	params.setBase(static_cast<clap_id>(drumParam(2, DrumControl::LayerOffsetY)), -0.2);
-	params.setBase(static_cast<clap_id>(drumParam(2, DrumControl::FieldTone)), 0.8);
-	params.setBase(static_cast<clap_id>(ParamId::DrumWalkX), 0.1);
-	const Character c = kitCharacter(params);
-	REQUIRE(c.count == 8);
-	const feathers::DrumCharacter built = feathers::buildDrumFor(c);
-	for (size_t i = 0; i < c.count; ++i) {
-		const SoundCoord& s = c.sounds[i];
-		CAPTURE(s.slot);
-		if (s.slot != 2) {
-			CHECK_FALSE(s.drumLayer);
-			CHECK(s.drumLayerX == 0.0);
-			CHECK(built.layers[s.slot] == drum::Fields {});
-			continue;
+	params.setBase(static_cast<clap_id>(L(2, 0, DrumControl::OffsetX)), -0.4);
+	params.setBase(static_cast<clap_id>(L(2, 0, DrumControl::OffsetY)), 0.15);
+	params.setBase(static_cast<clap_id>(L(2, 1, DrumControl::OffsetX)), 0.3);
+	params.setBase(static_cast<clap_id>(L(2, 1, DrumControl::OffsetY)), -0.2);
+	params.setBase(static_cast<clap_id>(L(2, 0, DrumControl::FieldTone)), 0.8);
+	params.setBase(static_cast<clap_id>(L(2, 1, DrumControl::FieldTone)), 0.2);
+	params.setBase(static_cast<clap_id>(ParamId::PosX), 0.5);
+	params.setBase(static_cast<clap_id>(ParamId::PosY), -0.25);
+	params.setBase(static_cast<clap_id>(ParamId::Weather), 1.0);
+	const double taper = feathers::amountTaper(1.0);
+	for (const bool lockTwo : { false, true }) {
+		CAPTURE(lockTwo);
+		// THE LOCK IS THE EDITOR'S: the engine does not read it, so the place is the same either way.
+		params.setBase(static_cast<clap_id>(L(2, 1, DrumControl::Lock)), lockTwo ? 1.0 : 0.0);
+		params.setBase(static_cast<clap_id>(L(2, 0, DrumControl::Lock)), lockTwo ? 1.0 : 0.0);
+		const Character c = kitCharacter(params);
+		REQUIRE(c.count == 8);
+		const feathers::DrumCharacter built = feathers::buildDrumFor(c);
+		for (size_t i = 0; i < c.count; ++i) {
+			const SoundCoord& s = c.sounds[i];
+			CAPTURE(s.slot);
+			if (s.slot != 2) {
+				CHECK_FALSE(s.drumLayer);
+				CHECK(built.layers[s.slot] == drum::Fields {});
+				continue;
+			}
+			REQUIRE(s.drumLayer);
+			// THE RESTATEMENT, from the parameters' own numbers.
+			const double sx = taper * 0.5;
+			const double sy = taper * -0.25;
+			SoundCoord one = s;
+			one.travelX = sx + -0.4;
+			one.travelY = sy + 0.15;
+			SoundCoord two = s;
+			two.travelX = sx + 0.3;
+			two.travelY = sy + -0.2;
+			CHECK(s.travelX == one.travelX);
+			CHECK(s.travelY == one.travelY);
+			CHECK(built.pads[2] == soloFields(c, one, &s.drumBias));
+			CHECK(built.layers[2] == soloFields(c, two, &s.drumBias2));
+			// AND EACH LAYER READS ITS OWN SCALERS (tone 0.8 against 0.2), so the two are not one hit read twice.
+			CHECK(s.drumBias.tone == 0.8f);
+			CHECK(s.drumBias2.tone == 0.2f);
+			CHECK_FALSE(built.layers[2] == built.pads[2]);
 		}
-		REQUIRE(s.drumLayer);
-		CHECK(s.drumLayerX == 0.3);
-		CHECK(s.drumLayerY == -0.2);
-		// THE RESTATEMENT: the pad's own coordinate with its travel moved by the vector (the Walk's 0.1 included).
-		SoundCoord at = s;
-		at.travelX = 0.1 + 0.3;
-		at.travelY = -0.2;
-		at.drumLayer = false;
-		CHECK(built.layers[2] == soloFields(c, at));
-		CHECK_FALSE(built.layers[2] == built.pads[2]); // the vector moved it, so the claim is not the pad's own fields
 	}
-	// OFF, the offset is not read at all.
+	// OFF, the second layer is not read at all.
 	params.setBase(static_cast<clap_id>(drumParam(2, DrumControl::LayerKind)), 0.0);
 	const Character off = kitCharacter(params);
 	for (size_t i = 0; i < off.count; ++i) {
 		CHECK_FALSE(off.sounds[i].drumLayer);
 	}
+}
+
+TEST_CASE("drum layers: the stance moves every layer by exactly weather * the puck, direct and modulated; Lock changes nothing audible") {
+	const auto L = feathers::drumLayerParam;
+	const auto place = [&L](double posX, double posY, double weather, double modX, bool locked) {
+		ParamSet params;
+		params.setBase(static_cast<clap_id>(drumParam(1, DrumControl::LayerKind)), 3.0);
+		params.setBase(static_cast<clap_id>(L(1, 0, DrumControl::OffsetX)), 0.1);
+		params.setBase(static_cast<clap_id>(L(1, 1, DrumControl::OffsetX)), -0.3);
+		params.setBase(static_cast<clap_id>(L(1, 0, DrumControl::Lock)), locked ? 1.0 : 0.0);
+		params.setBase(static_cast<clap_id>(L(1, 1, DrumControl::Lock)), locked ? 1.0 : 0.0);
+		params.setBase(static_cast<clap_id>(ParamId::PosX), posX);
+		params.setBase(static_cast<clap_id>(ParamId::PosY), posY);
+		params.setBase(static_cast<clap_id>(ParamId::Weather), weather);
+		params.setModOffset(static_cast<clap_id>(ParamId::PosX), modX); // a modulated Pos X, as a route resolves it
+		params.setBase(static_cast<clap_id>(ParamId::OscType), static_cast<double>(OscType::Drum));
+		params.setBase(static_cast<clap_id>(ParamId::DrumMode), 1.0);
+		const Character c = feathers::characterFromParams([&params](ParamId id) { return params.resolved(id); }, OscType::Drum,
+		                                                  feathers::AuditionTuning {}, feathers::AnchorPoint {},
+		                                                  feathers::SoundTravel {}, feathers::SoundOrientations {},
+		                                                  feathers::SoundResidue {}, feathers::SoundGamma {}, feathers::Preview {},
+		                                                  feathers::EarSide::Head);
+		for (size_t i = 0; i < c.count; ++i) {
+			if (c.sounds[i].slot == 1) {
+				return std::array<double, 4> { c.sounds[i].travelX, c.drumStance.x, c.sounds[i].drumVectorX[1], c.drumStance.y };
+			}
+		}
+		return std::array<double, 4> {};
+	};
+	for (const bool locked : { false, true }) {
+		CAPTURE(locked);
+		const double taper = feathers::amountTaper(0.7);
+		const auto rest = place(0.0, 0.0, 0.7, 0.0, locked);
+		const auto moved = place(0.4, 0.2, 0.7, 0.0, locked);
+		const auto modulated = place(0.1, 0.2, 0.7, 0.3, locked); // 0.1 + 0.3 modulated
+		CHECK(rest[0] == 0.1); // layer one at home plus its vector
+		CHECK(moved[0] == taper * 0.4 + 0.1);
+		CHECK(moved[1] == taper * 0.4);
+		CHECK(moved[3] == taper * 0.2);
+		CHECK(modulated[1] == taper * (0.1 + 0.3));
+		CHECK(modulated[0] == taper * (0.1 + 0.3) + 0.1);
+		CHECK(moved[2] == -0.3); // layer two's vector is its own, the stance is added at the build
+	}
+	// WEATHER AT 0 PARKS THE KIT whatever the puck.
+	CHECK(place(0.9, -0.9, 0.0, 0.0, false)[1] == 0.0);
 }
 
 namespace {
@@ -1121,6 +1167,9 @@ TEST_CASE("drum layer slot: a layered pad strikes a second hit of the layer's ki
 	rig->pad(5, DrumControl::Tune, -5.0);
 	rig->pad(5, DrumControl::FieldPitch, 0.0); // −3 semitones, the pad's scaler and so its layer's
 	rig->pad(5, DrumControl::LayerKind, 1.0); // Kick
+	// ITS OWN CONTROLS (R2): the layer's own Tune and Pitch scaler, which a layer used to borrow from its pad.
+	rig->set(feathers::drumLayerParam(5, 1, DrumControl::Tune), -5.0);
+	rig->set(feathers::drumLayerParam(5, 1, DrumControl::FieldPitch), 0.0);
 	rig->pad(5, DrumControl::LayerDelay, 5.0); // 240 samples at 48 kHz
 	rig->synth.noteOn(0, 45, 1, 1.0);
 	(void)rig->play(224, 16);
@@ -1169,6 +1218,7 @@ TEST_CASE("drum layer slot: its high-pass's coefficient is the one-pole law, byp
 	rig->pad(5, DrumControl::LayerDelay, 10.0);
 	rig->pad(5, DrumControl::Trigger, 1.0); // Gate
 	rig->pad(5, DrumControl::Decay, std::log2(2.0));
+	rig->set(feathers::drumLayerParam(5, 1, DrumControl::Decay), std::log2(2.0));
 	rig->pad(5, DrumControl::Release, std::log2(0.02));
 	rig->synth.noteOn(0, 45, 1, 1.0);
 	(void)rig->play(1024, 16);
@@ -1193,6 +1243,7 @@ TEST_CASE("drum layer slot: a voice whose pad has fallen silent lives on while i
 	rig->pad(5, DrumControl::LayerKind, 2.0); // Membrane
 	rig->pad(5, DrumControl::LayerDelay, 10.0);
 	rig->pad(5, DrumControl::Decay, std::log2(0.05));
+	rig->set(feathers::drumLayerParam(5, 1, DrumControl::Decay), std::log2(0.05));
 	rig->synth.noteOn(0, 45, 1, 1.0);
 	(void)rig->play(16, 16);
 	const int tom = rig->slotOfPad(5);
@@ -1217,6 +1268,9 @@ TEST_CASE("drum layer slot: a pad whose hit is over before its layer's Delay sti
 	rig->pad(5, DrumControl::FieldSweep, 0.0);
 	rig->pad(5, DrumControl::LayerKind, 2.0);            // Membrane
 	rig->pad(5, DrumControl::LayerDelay, 10.0);          // 480 samples
+	rig->set(feathers::drumLayerParam(5, 1, DrumControl::Decay), -6.643856189774724);
+	rig->set(feathers::drumLayerParam(5, 1, DrumControl::FieldLength), 0.0);
+	rig->set(feathers::drumLayerParam(5, 1, DrumControl::FieldSweep), 0.0);
 	rig->synth.noteOn(0, 45, 1, 1.0);
 	(void)rig->play(16, 16);
 	const int tom = rig->slotOfPad(5);
@@ -1521,4 +1575,60 @@ TEST_CASE("drum kit: the kit is rebuilt once per render call and once per contro
 		CHECK(ticks > earlyA * 1.05f); // the source moved the pad's level across the run: the equality above is not vacuous
 		(void)earlyB;
 	}
+}
+
+TEST_CASE("drum layers: layer two reads its OWN copy of every control a hit reads, independent of layer one's, by value") {
+	using feathers::drumLayerParam;
+	auto rig = std::make_unique<Rig>();
+	const auto kit = [&rig]() -> const drum::KitSetup& {
+		(void)rig->play(64);
+		return rig->synth.drumKitForTest();
+	};
+	// Every control a layer owns, set to a value of its own on each layer; the two never meet.
+	rig->pad(0, DrumControl::LayerKind, 2.0); // layer two: a Membrane
+	for (const size_t layer : { size_t { 0 }, size_t { 1 } }) {
+		const double k = layer == 0 ? 1.0 : -1.0;
+		rig->set(drumLayerParam(0, layer, DrumControl::Decay), 0.5 * k);
+		rig->set(drumLayerParam(0, layer, DrumControl::Tune), 3.0 * k);
+		rig->set(drumLayerParam(0, layer, DrumControl::Drive), layer == 0 ? 0.2 : 0.7);
+		rig->set(drumLayerParam(0, layer, DrumControl::ClapQ), layer == 0 ? 2.0 : 5.0);
+		rig->set(drumLayerParam(0, layer, DrumControl::Width), layer == 0 ? 0.1 : 0.9);
+		rig->set(drumLayerParam(0, layer, DrumControl::PitchMode), layer == 0 ? 1.0 : 2.0);
+	}
+	{
+		const drum::PadSetup& p = kit().pads[0];
+		REQUIRE(p.layer.on);
+		CHECK(p.controls.decaySeconds == doctest::Approx(std::exp2(0.5)));
+		CHECK(p.layer.controls.decaySeconds == doctest::Approx(std::exp2(-0.5)));
+		CHECK(p.tuneSemitones == 3.0);
+		CHECK(p.layer.tuneSemitones == -3.0);
+		CHECK(p.controls.drive == 0.2);
+		CHECK(p.layer.controls.drive == 0.7);
+		CHECK(p.controls.clapQ == 2.0);
+		CHECK(p.layer.controls.clapQ == 5.0);
+		CHECK(p.controls.width == 0.1);
+		CHECK(p.layer.controls.width == 0.9);
+		CHECK(p.controls.pitchMode == 1);
+		CHECK(p.layer.controls.pitchMode == 2);
+	}
+	// MOVING LAYER ONE'S LEAVES LAYER TWO'S UNTOUCHED, and the other way about.
+	const drum::Controls twoBefore = kit().pads[0].layer.controls;
+	const double twoTune = kit().pads[0].layer.tuneSemitones;
+	rig->set(drumParam(0, DrumControl::Decay), 1.7);
+	rig->set(drumParam(0, DrumControl::Tune), -9.0);
+	rig->set(drumParam(0, DrumControl::Drive), 0.95);
+	CHECK(kit().pads[0].layer.controls == twoBefore);
+	CHECK(kit().pads[0].layer.tuneSemitones == twoTune);
+	CHECK(kit().pads[0].controls.decaySeconds == doctest::Approx(std::exp2(1.7)));
+	const drum::Controls oneBefore = kit().pads[0].controls;
+	rig->set(drumLayerParam(0, 1, DrumControl::Decay), 2.2);
+	rig->set(drumLayerParam(0, 1, DrumControl::Tune), 8.0);
+	CHECK(kit().pads[0].controls == oneBefore);
+	CHECK(kit().pads[0].layer.controls.decaySeconds == doctest::Approx(std::exp2(2.2)));
+	CHECK(kit().pads[0].layer.tuneSemitones == 8.0);
+	// PITCHED MODE reads no terrain pitch mode (its fine pitch is the +-0.5 semitone it always was).
+	auto pitched = std::make_unique<Rig>(false);
+	pitched->set(drumLayerParam(0, 0, DrumControl::PitchMode), 1.0);
+	(void)pitched->play(64);
+	CHECK(pitched->synth.drumKitForTest().pads[0].controls.pitchMode == 0);
 }

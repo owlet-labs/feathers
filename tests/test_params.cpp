@@ -350,7 +350,9 @@ TEST_CASE("the param table is what it was") {
 		// blocks re-packed (ids are free: nobody keeps patches).
 		// AND 2026-11-07: each pad's Bend (continuous) at the end of the second block, 44 -> 45.
 		// AND 2026-11-07 (stage (c), the layer slot): seven more per pad at the end of the second block, 45 -> 52.
-		constexpr uint64_t kRecordedIds =  0x7c7af389de9ab129ull;
+		// AND THE KIT STANCE REDESIGN (2026-11-14): the Walk and Kit Gamma, Zone, Offset gone (-5), each pad's Lock, Offset X/Y and
+		// Terrain Pitch added and its second layer's copies of every control a hit reads in a third block at 0x0800 + slot*0x40.
+		constexpr uint64_t kRecordedIds =  0xb3798b2bd893e937ull;
 		CHECK(paramIdFingerprint() == kRecordedIds);
 	}
 
@@ -481,7 +483,7 @@ TEST_CASE("the param table is what it was") {
 		// And each pad's Bend 0..1 default 1 (the whole Bend range).
 		// And the layer: Kind 0..5 default Off, Level -60..6 dB default 0, Delay 0..10 ms default 0, High Pass log2 20 Hz..2048 Hz
 		// default 20 Hz, Lock 0..1 default 1, Offset X and Y -1..1 default 0.
-		constexpr uint64_t kRecordedRanges =  0x6ad7d3e75b1f667ull;
+		constexpr uint64_t kRecordedRanges =  0xee991eb72076293eull;
 		CHECK(paramRangeFingerprint() == kRecordedRanges);
 	}
 }
@@ -2592,7 +2594,8 @@ TEST_CASE("the spectral drawer's params: one block per sound, unkeyed, the conti
 	CHECK(feathers::spectralAddressOf(static_cast<ParamId>(0x0580u + 11u)).slot == feathers::kMaxSounds);
 	CHECK(feathers::spectralAddressOf(static_cast<ParamId>(0x0600u)).slot == feathers::kMaxSounds);
 	// THE DRUM PADS TAKE 0x0600..0x06FF and 0x0700..0x07FF (2026-11-05/06; the second block 32 a slot since S11), so the span is 0x0800.
-	CHECK(feathers::kParamIdSpan == 0x0800u);
+	// AND LAYER TWO'S COPIES TAKE 0x0800..0x09FF (kit stance redesign), so the span is 0x0A00.
+	CHECK(feathers::kParamIdSpan == 0x0A00u);
 	// THE MODE'S LABELS, in spectral::FilterMode's order (Synth::drawerFor casts the index).
 	CHECK(std::string(feathers::kSpectralFilterModeNames[static_cast<size_t>(feathers::spectral::FilterMode::LowPass)]) == "Low-pass");
 	CHECK(std::string(feathers::kSpectralFilterModeNames[static_cast<size_t>(feathers::spectral::FilterMode::HighPass)]) == "High-pass");
@@ -2687,6 +2690,13 @@ TEST_CASE("a sound's knob list is pinned: perSoundKnobParam's order is the stanc
 		// AND ITS STEPPED CONTROLS, appended after the spectral drawer's.
 		for (const feathers::DrumControl c : feathers::kDrumSteppedControls) {
 			want.push_back(feathers::drumParam(slot, c));
+		}
+		// AND THE DRUM PAD'S SECOND LAYER (kit stance redesign), APPENDED: its continuous copies, then its stepped ones.
+		for (const feathers::DrumControl c : feathers::kDrumLayer2Continuous) {
+			want.push_back(feathers::drumLayer2Param(slot, c));
+		}
+		for (const feathers::DrumControl c : feathers::kDrumLayer2Stepped) {
+			want.push_back(feathers::drumLayer2Param(slot, c));
 		}
 		REQUIRE(want.size() == feathers::kPerSoundKnobCount);
 		for (size_t k = 0; k < want.size(); ++k) {

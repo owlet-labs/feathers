@@ -941,13 +941,22 @@ TEST_CASE("drum: a ringing ride keeps the plugin awake, and once it is exactly s
 	CHECK(peakOf(host.left(), kFrames) == 0.0f);
 }
 
-TEST_CASE("drum: process allocates nothing — kit notes, a layer, a choke, a pad's steal, the Walk and an engine switch") {
+TEST_CASE("drum: process allocates nothing — kit notes, two layers, a choke, a pad's steal, a modulated stance and an engine switch") {
 	HostedPlugin host;
 	EventList events;
 	constexpr uint32_t kFrames = 128;
 	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
 	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(2, feathers::DrumControl::Pan)), -0.4);
 	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(4, feathers::DrumControl::Note)), 36.0);
+	// TWO FULL LAYERS on the kick and the clap pads: a second hit with its own controls, its own place, a locked one among them.
+	for (const size_t pad : { size_t { 0 }, size_t { 3 } }) {
+		events.pushParam(0, static_cast<clap_id>(feathers::drumParam(pad, feathers::DrumControl::LayerKind)), 3.0);
+		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::Decay)), -1.0);
+		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::Lock)), pad == 0 ? 1.0 : 0.0);
+		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::OffsetX)), 0.3);
+		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::PitchMode)), 1.0);
+	}
+	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::Weather), 1.0);
 	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 46, 1, 1.0);
 	host.run(kFrames, events);
 	CHECK(host.allocationsInLastProcess() == 0);
@@ -963,7 +972,7 @@ TEST_CASE("drum: process allocates nothing — kit notes, a layer, a choke, a pa
 	CHECK(host.allocationsInLastProcess() == 0);
 	for (int block = 0; block < 8; block++) {
 		events.clear();
-		events.pushParam(0, static_cast<clap_id>(feathers::ParamId::DrumWalkX), 0.1 * static_cast<double>(block));
+		events.pushParam(0, static_cast<clap_id>(feathers::ParamId::PosX), 0.1 * static_cast<double>(block));
 		events.pushParam(0, static_cast<clap_id>(feathers::drumParam(1, feathers::DrumControl::FieldTone)),
 		                 0.125 * static_cast<double>(block));
 		host.run(kFrames, events);
@@ -5180,13 +5189,17 @@ TEST_CASE("drum: every Drum factory kit loads into a fresh instance on Drum and 
 	// loaded into ANOTHER fresh one carries the engine-wide drum controls and every pad's every control, value for value.
 	using feathers::ParamId;
 	std::vector<clap_id> ids;
-	for (const ParamId id : { ParamId::OscType, ParamId::DrumMode, ParamId::DrumPitchedKind, ParamId::DrumWalkX,
-	                          ParamId::DrumWalkY, ParamId::DrumSeed }) {
+	for (const ParamId id : { ParamId::OscType, ParamId::DrumMode, ParamId::DrumPitchedKind, ParamId::PosX, ParamId::PosY,
+	                          ParamId::Weather, ParamId::DrumSeed }) {
 		ids.push_back(static_cast<clap_id>(id));
 	}
 	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
 		for (size_t c = 0; c < feathers::kDrumControlCount; ++c) {
 			ids.push_back(static_cast<clap_id>(feathers::drumParam(slot, static_cast<feathers::DrumControl>(c))));
+		}
+		// AND LAYER TWO'S OWN COPIES of everything a hit reads.
+		for (const feathers::DrumControl c : feathers::kDrumLayerControls) {
+			ids.push_back(static_cast<clap_id>(feathers::drumLayer2Param(slot, c)));
 		}
 	}
 	const auto valuesOf = [&](const clap_plugin* p) {
@@ -5217,6 +5230,22 @@ TEST_CASE("drum: every Drum factory kit loads into a fresh instance on Drum and 
 		REQUIRE(chain->load_preset(host.plugin(), &in));
 		const std::vector<double> loaded = valuesOf(host.plugin());
 		CHECK(loaded[0] == static_cast<double>(feathers::OscType::Drum));
+		// THE WALKING KIT stands off home by the ordinary stance (Pos X/Y through Weather), not a drum-only Walk.
+		if (file.path.find("Walking") != std::string_view::npos) {
+			CHECK(loaded[3] == 0.35);
+			CHECK(loaded[4] == -0.2);
+			CHECK(loaded[5] == 1.0);
+		}
+		// A KIT FOLLOWS THE KIT'S STANCE: no pad's first layer may come out of a factory kit locked (the old layer lock's
+		// default stood at this id, so a kit authored before the stance redesign would load stuck at home).
+		if (loaded[1] == 1.0) {
+			const auto* params = static_cast<const clap_plugin_params*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_PARAMS));
+			for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+				double lock = 1.0;
+				REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumParam(slot, feathers::DrumControl::Lock)), &lock));
+				CHECK(lock == 0.0);
+			}
+		}
 		EventList events;
 		events.pushNote(CLAP_EVENT_NOTE_ON, 0, loaded[1] == 1.0 ? 36 : 48, 1, 0.8);
 		float peak = 0.0f;

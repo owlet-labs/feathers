@@ -173,8 +173,8 @@ constexpr ExploreStage::SlotRow pluckPageThreeOf(ExploreStage::SlotRow row) {
 	return row;
 }
 
-/// THE DRUM KIT'S OTHER TWO PAGES (2026-11-06, the kit-wide layer): Kit Fields puts the seven kit trims where the pad's seven
-/// scalers stand; Kit Place puts Kit Gamma, Zone and Offset in three of them and empties the rest. The Walk stays on both.
+/// THE DRUM KIT'S OTHER PAGE (2026-11-06, the kit-wide layer): Kit Fields puts the seven kit trims where the pad's seven
+/// scalers stand. (The kit's place is the ordinary Pos X/Y and Weather now, so there is no Place page and no Walk.)
 constexpr ExploreStage::SlotRow drumKitFieldsOf(ExploreStage::SlotRow row) {
 	for (SurroundControl& c : row) {
 		switch (c) {
@@ -185,22 +185,6 @@ constexpr ExploreStage::SlotRow drumKitFieldsOf(ExploreStage::SlotRow row) {
 		case SurroundControl::DrumNoise: c = SurroundControl::DrumKitNoise; break;
 		case SurroundControl::DrumSnap: c = SurroundControl::DrumKitSnap; break;
 		case SurroundControl::DrumMetal: c = SurroundControl::DrumKitMetal; break;
-		default: break;
-		}
-	}
-	return row;
-}
-
-constexpr ExploreStage::SlotRow drumKitPlaceOf(ExploreStage::SlotRow row) {
-	for (SurroundControl& c : row) {
-		switch (c) {
-		case SurroundControl::DrumSnap: c = SurroundControl::DrumKitZone; break;
-		case SurroundControl::DrumMetal: c = SurroundControl::DrumKitOffset; break;
-		case SurroundControl::DrumPitch: c = SurroundControl::DrumKitGamma; break;
-		case SurroundControl::DrumLength:
-		case SurroundControl::DrumSweep:
-		case SurroundControl::DrumTone:
-		case SurroundControl::DrumNoise: c = SurroundControl::None; break;
 		default: break;
 		}
 	}
@@ -233,9 +217,6 @@ constexpr bool slotTableValid(const ExploreStage::SlotTable& table) {
 		seated[static_cast<size_t>(control)] = true;
 	}
 	for (const SurroundControl control : drumKitFieldsOf(table[static_cast<size_t>(OscType::Drum)])) {
-		seated[static_cast<size_t>(control)] = true;
-	}
-	for (const SurroundControl control : drumKitPlaceOf(table[static_cast<size_t>(OscType::Drum)])) {
 		seated[static_cast<size_t>(control)] = true;
 	}
 	for (const SurroundControl control : pluckPageThreeOf(table[static_cast<size_t>(OscType::Pluck)])) {
@@ -296,9 +277,8 @@ constexpr ExploreStage::SlotTable kSurroundSlots = [] {
 	row(OscType::Pluck) = { C::KsWidth,      C::KsDecay,   C::KsRelease, C::KsPage,  C::Smoothness,
 		                    C::KsBrightness, C::KsSustain, C::KsPick,    C::KsNoise, C::KsStretch,  C::None };
 	// DRUM (2026-11-05, drum proposal §6): the selected sound's seven field scalers (the bank's Drum build reads them through
-	// drumFieldsWithOverrides) — five on the right flank, Snap and Metal on the left — and the Kit Walk (character_params.h
-	// reads it in Kit mode) in the left's other two. currentSlotRow takes out what the mode or the selected kind does not read.
-	row(OscType::Drum) = { C::DrumSnap,  C::DrumMetal,  C::DrumWalkX, C::DrumPage, C::DrumWalkY,
+	// drumFieldsWithOverrides) — five on the right flank, Snap and Metal on the left. currentSlotRow takes out what the mode or the selected kind does not read.
+	row(OscType::Drum) = { C::DrumSnap,  C::DrumMetal,  C::None,      C::DrumPage, C::None,
 		                   C::DrumPitch, C::DrumLength, C::DrumSweep, C::DrumTone, C::DrumNoise, C::None };
 	return table;
 }();
@@ -511,22 +491,15 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 	for (size_t i = 0; i < kPluckKnobCount; ++i) {
 		makeKnob(pluckKnobs_, i, findParam(static_cast<clap_id>(kPluckKnobs[i].first)), kPluckKnobs[i].second);
 	}
-	// THE DRUM'S KIT WALK, engine-wide (every pad moves together).
-	makeKnob(drumWalkKnobs_, 0, findParam(static_cast<clap_id>(ParamId::DrumWalkX)), "Walk X");
-	makeKnob(drumWalkKnobs_, 1, findParam(static_cast<clap_id>(ParamId::DrumWalkY)), "Walk Y");
-	// AND THE KIT-WIDE LAYER (2026-11-06), engine-wide: Gamma, Zone, Offset and the seven trims, on the Kit pages.
-	constexpr std::array<const char*, kDrumKitKnobCount> kDrumKitLabels { "Kit Gamma", "Kit Zone", "Kit Offset", "Kit Pitch",
-		                                                                  "Kit Length", "Kit Sweep", "Kit Tone",  "Kit Noise",
-		                                                                  "Kit Snap",   "Kit Metal" };
+	// THE KIT-WIDE TRIMS (2026-11-06), engine-wide: the seven trims, on the Kit Fields page.
+	constexpr std::array<const char*, kDrumKitKnobCount> kDrumKitLabels { "Kit Pitch", "Kit Length", "Kit Sweep", "Kit Tone",
+		                                                                  "Kit Noise", "Kit Snap",   "Kit Metal" };
 	for (size_t i = 0; i < kDrumKitKnobCount; ++i) {
-		const auto id = static_cast<clap_id>(static_cast<uint32_t>(ParamId::DrumKitGamma) + static_cast<uint32_t>(i));
+		const auto id = static_cast<clap_id>(static_cast<uint32_t>(ParamId::DrumKitPitch) + static_cast<uint32_t>(i));
 		makeKnob(drumKitKnobs_, i, findParam(id), kDrumKitLabels[i]);
-		// IN THE TERRAIN'S WINDOW (Zone, Offset and Gamma move every row; the trims every place's fields), so the chart hears it.
+		// IN THE TERRAIN'S WINDOW (the trims move every place's fields), so the chart hears it.
 		watches_.push_back(registry.watchToken(id, this));
 	}
-	// AND THE WALK, which the stage draws now (the played mark and every pad's arrow).
-	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumWalkX), this));
-	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumWalkY), this));
 	// The mode and every pad's kind decide which of them are drawn (currentSlotRow), so a move of one re-lays the face.
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumMode), this));
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumPitchedKind), this));
@@ -779,6 +752,7 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 			glideToSelected();
 		}
 		departure_.reset();
+		recordBulk(); // (when the star did not move, the vectors still get their step)
 		// **THE HOLD ENDS WHERE THE GESTURE DOES**, and it is released BEFORE the `askForTerrain()`
 		// below so that last word is the true base rather than the held one. Cleared unconditionally
 		// rather than only for `Part::Gamma`: a hold that outlived its gesture would freeze the map at
@@ -822,6 +796,7 @@ void ExploreStage::finishScrub() {
 		plantCrumb(selection_.slot(), *departure_);
 	}
 	departure_.reset();
+	recordBulk();
 	// THE FAST DRAG'S CLOSE, and it glides for the same reason the other two do — this is the release
 	// that had the FURTHEST left to travel, since the star was still coasting when the button came up.
 	glideToSelected();
@@ -1184,17 +1159,80 @@ double ExploreStage::selectedDriftY() const {
 /// already says why — the view follows identity and never performance, and a modulator is
 /// performance). That split is the whole of "no breadcrumbs, no recentre": nothing that leaves a
 /// crumb or moves the view can see the pull.
+namespace {
+/// ONE UNDO STEP FOR A KIT-WIDE BULK EDIT: every vector the drag moved, each with the value it had and the value it ended on,
+/// walked together through the bridge's ordinary parameter road (a hand on each, as ParamValueEdit does for one).
+class KitBulkEdit final : public EditRecord {
+public:
+	struct Entry {
+		clap_id id;
+		double before;
+		double after;
+	};
+	KitBulkEdit(ParamBridge& bridge, std::vector<Entry> entries) : bridge_(bridge), entries_(std::move(entries)) {}
+	void undo() const override {
+		for (const Entry& e : entries_) {
+			write(e.id, e.before);
+		}
+	}
+	void redo() const override {
+		for (const Entry& e : entries_) {
+			write(e.id, e.after);
+		}
+	}
+	const char* verb() const override { return "Move kit"; }
+
+private:
+	void write(clap_id id, double value) const {
+		bridge_.beginGesture(id);
+		bridge_.setValue(id, value);
+		bridge_.endGesture(id);
+	}
+	ParamBridge& bridge_;
+	std::vector<Entry> entries_;
+};
+} // namespace
+
+size_t ExploreStage::moveKitUnlocked(double dx, double dy) {
+	// THE KIT-WIDE BULK EDIT (kit stance redesign): every layer whose Lock is off takes the same step on its vector, through the
+	// ordinary parameter road (`commit`: one gesture per id, closed together with the drag's, so one undo group); a locked
+	// layer's vector is not written at all, so it stays bit-identical. At most 8 pads x 2 layers x 2 axes = 32 writes.
+	size_t written = 0;
+	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
+		for (size_t layer = 0; layer < 2; ++layer) {
+			if (std::lround(bridge_.value(static_cast<clap_id>(drumLayerParam(slot, layer, DrumControl::Lock)))) != 0) {
+				continue;
+			}
+			const auto id = [&](DrumControl c) { return static_cast<clap_id>(drumLayerParam(slot, layer, c)); };
+			const double x = std::clamp(bridge_.value(id(DrumControl::OffsetX)) + dx, -kDrumVectorRange, kDrumVectorRange);
+			const double y = std::clamp(bridge_.value(id(DrumControl::OffsetY)) + dy, -kDrumVectorRange, kDrumVectorRange);
+			for (const auto& [target, value] : { std::pair<clap_id, double> { id(DrumControl::OffsetX), x },
+			                                     std::pair<clap_id, double> { id(DrumControl::OffsetY), y } }) {
+				if (std::none_of(bulkTouched_.begin(), bulkTouched_.end(), [&](const auto& t) { return t.first == target; })) {
+					bulkTouched_.emplace_back(target, bridge_.value(target)); // what it was before the drag's first write
+				}
+				commit(target, value);
+			}
+			written += 2;
+		}
+	}
+	return written;
+}
+
+AnchorPoint ExploreStage::kitStanceNow() const {
+	// The engine's rule (character_params.h): the standard puck's Pos X/Y through Weather's taper; Path is not read in a kit.
+	const double weather = amountTaper(bridge_.modulated(static_cast<clap_id>(ParamId::Weather)));
+	return { weather * bridge_.modulated(static_cast<clap_id>(ParamId::PosX)),
+		     weather * bridge_.modulated(static_cast<clap_id>(ParamId::PosY)) };
+}
+
 AnchorPoint ExploreStage::playedPlace() const {
 	const size_t slot = selection_.slot();
 	const TravelPulls pulls = bridge_.travelPulls();
 	const SoundTravel travel = bridge_.soundTravel();
 	AnchorPoint at = pulledPlace(travel.offset[slot], travel.orbit[slot], pulls.radius[slot], pulls.theta[slot]);
-	// A KIT PAD PLAYS AT ITS PLACE MOVED BY THE WALK (drum proposal D3, character_params' road), so the played mark and its
-	// arrow are the Walk's on the selected pad.
-	if (drumKitShown()) {
-		at.x += bridge_.value(static_cast<clap_id>(ParamId::DrumWalkX));
-		at.y += bridge_.value(static_cast<clap_id>(ParamId::DrumWalkY));
-	}
+	// (A kit's stance is the Perform puck, which this surface does not draw: Explore shows where the pads are put, not where
+	// the performance has moved them. `kitStanceNow` is the engine's stance for a surface that wants it.)
 	return at;
 }
 
@@ -1292,17 +1330,10 @@ void ExploreStage::commitDrift(size_t slot, double x, double y) {
 		bridge_.beginSoundTravelGesture();
 		driftGestureOpen_ = true;
 	}
-	// THE LAYER'S LOCK (drum proposal §12, stage (c)): the layer stands at its pad's place plus its offset vector at every
-	// read, so LOCKED it follows this drag with no write at all. UNLOCKED it stays where it stands: the vector takes the drag
-	// back, by exactly the pad's move (clamped only at the vector's own range).
+	// IN A KIT THE PAD'S PLACE IS LAYER ONE'S VECTOR (the engine reads no drift there): a drag is a KIT-WIDE edit, the same step
+	// added to every unlocked layer's vector, in the one gesture.
 	if (drumKitShown() && slot < kMaxSounds) {
-		const auto id = [slot](DrumControl c) { return static_cast<clap_id>(drumParam(slot, c)); };
-		const bool layered = std::lround(bridge_.value(id(DrumControl::LayerKind))) > 0;
-		const bool locked = std::lround(bridge_.value(id(DrumControl::LayerLock))) != 0;
-		if (layered && !locked) {
-			commit(id(DrumControl::LayerOffsetX), std::clamp(bridge_.value(id(DrumControl::LayerOffsetX)) - (x - now.x), -1.0, 1.0));
-			commit(id(DrumControl::LayerOffsetY), std::clamp(bridge_.value(id(DrumControl::LayerOffsetY)) - (y - now.y), -1.0, 1.0));
-		}
+		moveKitUnlocked(x - now.x, y - now.y);
 	}
 	bridge_.setSoundTravel(slot, { x, y });
 }
@@ -1368,11 +1399,31 @@ float ExploreStage::regearCorner(const visage::MouseEvent& e) {
 	return fine ? kEncoderTravel / Knob::kFineFactor : kEncoderTravel;
 }
 
+void ExploreStage::recordBulk() {
+	if (!bulkEntries_.empty()) {
+		std::vector<KitBulkEdit::Entry> entries;
+		for (const BulkEntry& e : bulkEntries_) {
+			entries.push_back({ e.id, e.before, e.after });
+		}
+		bulkEntries_.clear();
+		history_.record(std::make_unique<KitBulkEdit>(bridge_, std::move(entries)));
+	}
+}
+
 void ExploreStage::endGesture() {
 	for (const clap_id id : gesturesOpen_) {
 		bridge_.endGesture(id);
 	}
 	gesturesOpen_.clear();
+	// THE KIT-WIDE BULK EDIT'S VECTORS, held for the drag's one undo step (`recordBulk`, which `record` and the callers of this
+	// run right after it, so the star's move and the vectors' are one step).
+	for (const auto& [id, before] : bulkTouched_) {
+		const double after = bridge_.value(id);
+		if (after != before) {
+			bulkEntries_.push_back({ id, before, after });
+		}
+	}
+	bulkTouched_.clear();
 	if (driftGestureOpen_) {
 		bridge_.endSoundTravelGesture();
 		driftGestureOpen_ = false;
@@ -1804,7 +1855,10 @@ void ExploreStage::record(size_t slot, const SoundIdentity& before, const SoundI
 	was.identity = before;
 	SlotState now = rest;
 	now.identity = after;
+	history_.beginGroup(verb);
+	recordBulk(); // the kit-wide vectors the same drag moved: one step with the star's
 	recordSlot(history_, bridge_, slot, was, now, verb);
+	history_.endGroup();
 }
 
 void ExploreStage::plantCrumb(size_t slot, const SoundIdentity& at) {
@@ -2164,7 +2218,6 @@ void ExploreStage::rebuildShapesOperatorsRow() {
 	pluckPageTwoRow_ = pluckPageTwoOf(slots_[static_cast<size_t>(OscType::Pluck)]);
 	pluckPageThreeRow_ = pluckPageThreeOf(slots_[static_cast<size_t>(OscType::Pluck)]);
 	drumKitFieldsRow_ = drumKitFieldsOf(slots_[static_cast<size_t>(OscType::Drum)]);
-	drumKitPlaceRow_ = drumKitPlaceOf(slots_[static_cast<size_t>(OscType::Drum)]);
 	shapesOperatorsRow_ = slots_[static_cast<size_t>(OscType::BasicShapes)];
 	for (SurroundControl& c : shapesOperatorsRow_) {
 		switch (c) {
@@ -2223,14 +2276,13 @@ const ExploreStage::SlotRow& ExploreStage::currentSlotRow() const {
 		                           : static_cast<clap_id>(ParamId::DrumPitchedKind);
 		const drum::FieldUse reads =
 		    drum::kindReads(static_cast<drum::Kind>(steppedIndex(bridge_.value(kindId), kDrumKindNames.size())));
-		// THE PAGE (Kit mode only; Pitched is always the Pad page, with no page box): Pad, Kit Fields or Kit Place.
+		// THE PAGE (Kit mode only; Pitched is always the Pad page, with no page box): Pad or Kit Fields.
 		drumRow_ = !kit || drumPage_ == DrumPage::Pad ? slots_[engine]
 		           : drumPage_ == DrumPage::KitFields ? drumKitFieldsRow_
-		                                              : drumKitPlaceRow_;
+		                                              : drumKitFieldsRow_;
 		for (SurroundControl& control : drumRow_) {
-			const bool kitOnly = control == SurroundControl::DrumWalkX || control == SurroundControl::DrumWalkY
-			                     || control == SurroundControl::DrumPage
-			                     || (control >= SurroundControl::DrumKitGamma && control <= SurroundControl::DrumKitMetal);
+			const bool kitOnly = control == SurroundControl::DrumPage
+			                     || (control >= SurroundControl::DrumKitPitch && control <= SurroundControl::DrumKitMetal);
 			const bool shown = kitOnly                                                                   ? kit
 			                   : control == SurroundControl::DrumPitch                                       ? reads.pitch
 			                   : control == SurroundControl::DrumLength                                      ? reads.length
@@ -2270,8 +2322,7 @@ ExploreStage::Slot ExploreStage::homeSlotOf(SurroundControl control) const {
 		}
 	}
 	for (size_t s = 0; s < kSlotCount; ++s) {
-		if (pluckPageTwoRow_[s] == control || pluckPageThreeRow_[s] == control || drumKitFieldsRow_[s] == control
-		    || drumKitPlaceRow_[s] == control) {
+		if (pluckPageTwoRow_[s] == control || pluckPageThreeRow_[s] == control || drumKitFieldsRow_[s] == control) {
 			return static_cast<Slot>(s); // Pluck's other pages' own knobs
 		}
 	}
@@ -2310,18 +2361,13 @@ Knob* ExploreStage::surroundKnob(SurroundControl control, size_t sound) const {
 	case SurroundControl::DrumNoise:
 	case SurroundControl::DrumSnap:
 	case SurroundControl::DrumMetal: return drumFieldKnobs_[c - static_cast<size_t>(SurroundControl::DrumPitch)][s].get();
-	case SurroundControl::DrumWalkX:
-	case SurroundControl::DrumWalkY: return drumWalkKnobs_[c - static_cast<size_t>(SurroundControl::DrumWalkX)].get();
-	case SurroundControl::DrumKitGamma:
-	case SurroundControl::DrumKitZone:
-	case SurroundControl::DrumKitOffset:
 	case SurroundControl::DrumKitPitch:
 	case SurroundControl::DrumKitLength:
 	case SurroundControl::DrumKitSweep:
 	case SurroundControl::DrumKitTone:
 	case SurroundControl::DrumKitNoise:
 	case SurroundControl::DrumKitSnap:
-	case SurroundControl::DrumKitMetal: return drumKitKnobs_[c - static_cast<size_t>(SurroundControl::DrumKitGamma)].get();
+	case SurroundControl::DrumKitMetal: return drumKitKnobs_[c - static_cast<size_t>(SurroundControl::DrumKitPitch)].get();
 	case SurroundControl::ResonateWidth:
 	case SurroundControl::Bow:
 	case SurroundControl::Shimmer:
@@ -2381,7 +2427,7 @@ const char* ExploreStage::boxLabel(SurroundControl control) const {
 	case SurroundControl::KsPage:
 		return pluckPage_ == PluckPage::String ? "Page: String" : pluckPage_ == PluckPage::Pluck ? "Page: Pluck" : "Page: Velocity";
 	case SurroundControl::DrumPage:
-		return drumPage_ == DrumPage::Pad ? "Page: Pad" : drumPage_ == DrumPage::KitFields ? "Page: Kit Fields" : "Page: Kit Place";
+		return drumPage_ == DrumPage::Pad ? "Page: Pad" : "Page: Kit Fields";
 	default: return "";
 	}
 }
@@ -2421,9 +2467,8 @@ void ExploreStage::showBoxMenu(SurroundControl control) {
 		visage::PopupMenu menu;
 		menu.addOption(0, "Pad").select(drumPage_ == DrumPage::Pad);
 		menu.addOption(1, "Kit Fields").select(drumPage_ == DrumPage::KitFields);
-		menu.addOption(2, "Kit Place").select(drumPage_ == DrumPage::KitPlace);
 		menu.onSelection() = [this](int id) {
-			if (id >= 0 && id <= 2) {
+			if (id >= 0 && id <= 1) {
 				chooseDrumPage(static_cast<DrumPage>(id));
 			}
 		};
@@ -2647,11 +2692,8 @@ void ExploreStage::setModulation(ModState* state, EditHistory* history) {
 	for (auto& knob : pluckKnobs_) {
 		knob->setModulation(state, history);
 	}
-	// AND THE DRUM'S KIT WALK.
+	// AND THE DRUM'S KIT TRIMS.
 	for (auto& knob : drumKitKnobs_) {
-		knob->setModulation(state, history);
-	}
-	for (auto& knob : drumWalkKnobs_) {
 		knob->setModulation(state, history);
 	}
 	// AND THE MASTER SWITCH'S FLIPS, steps of the editor's undo (stored state, which the host's undo never sees).
@@ -3190,16 +3232,12 @@ TerrainWindow ExploreStage::terrainWindowFor(size_t slot) const {
 		window.additive.drum = { d(DrumControl::FieldPitch), d(DrumControl::FieldLength), d(DrumControl::FieldSweep),
 			                     d(DrumControl::FieldTone),  d(DrumControl::FieldNoise),  d(DrumControl::FieldSnap),
 			                     d(DrumControl::FieldMetal) };
-		// THE KIT-WIDE LAYER (2026-11-06), as the character applies it: the trims on top of the pad's scalers, and Kit Zone,
-		// Offset and Gamma moving the place every row is built at (each pad's window, so every pad's mark moves with it too).
+		// THE KIT-WIDE TRIMS (2026-11-06), as the character applies them: on top of the pad's scalers.
 		if (kit) {
 			const auto g = [&](ParamId id) { return base(id); };
 			window.additive.drumKit = { g(ParamId::DrumKitPitch), g(ParamId::DrumKitLength), g(ParamId::DrumKitSweep),
 			                            g(ParamId::DrumKitTone),  g(ParamId::DrumKitNoise),  g(ParamId::DrumKitSnap),
 			                            g(ParamId::DrumKitMetal) };
-			window.zoneBaseline = std::clamp(window.zoneBaseline + bridge_.value(static_cast<clap_id>(ParamId::DrumKitZone)), 0.0, 1023.0);
-			window.offsetBaseline += bridge_.value(static_cast<clap_id>(ParamId::DrumKitOffset))
-			                         + bridge_.value(static_cast<clap_id>(ParamId::DrumKitGamma));
 		}
 	}
 	// AND THE PATCH'S LIKES (backlog ON): the builder scores every texel against them, so they are in the content key.
@@ -4223,8 +4261,6 @@ void ExploreStage::drawPadMarks(visage::Canvas& canvas) {
 		return steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::Kind))), kDrumKindNames.size());
 	};
 	const size_t kind = kindOf(selected);
-	const double walkX = bridge_.value(static_cast<clap_id>(ParamId::DrumWalkX));
-	const double walkY = bridge_.value(static_cast<clap_id>(ParamId::DrumWalkY));
 	const SoundTravel travel = bridge_.soundTravel();
 	const visage::Font& face = font(kKnobReadoutSize);
 	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
@@ -4251,19 +4287,6 @@ void ExploreStage::drawPadMarks(visage::Canvas& canvas) {
 		mark.hollow = kindOf(slot) != kind;
 		const uint32_t hue = kSeedHues[hueIndexOf(bridge_.soundHues(), slot)];
 		const float r = 4.5f * d.glyphScale();
-		// THE WALK, a faint arrow from the place to where the pad plays.
-		if (walkX != 0.0 || walkY != 0.0) {
-			const PlanePlace played = onHere(at.x + walkX, at.y + walkY);
-			const visage::Point pf = sheetAtWorld(played.x, played.y);
-			if (std::isfinite(pf.x) && std::isfinite(pf.y) && d.contains(pf)) {
-				const visage::Point tip = Bubble::toGlass(d, pf);
-				canvas.setColor(withAlpha(tokens::kMod, 0.45f));
-				canvas.segment(mark.at.x, mark.at.y, tip.x, tip.y, 1.0f, true);
-				canvas.circle(tip.x - 1.5f, tip.y - 1.5f, 3.0f);
-				mark.arrow = true;
-				mark.tip = tip;
-			}
-		}
 		if (mark.hollow) {
 			canvas.setColor(withAlpha(hue, 0.85f));
 			canvas.ring(mark.at.x - r, mark.at.y - r, 2.0f * r, 1.5f);

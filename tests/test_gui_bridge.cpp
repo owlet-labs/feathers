@@ -9578,3 +9578,60 @@ TEST_CASE("backlog PA: an MSEG's and an LFO's Stereo Phase are saved under `ster
 	CHECK(fresh.chainRecord().rowOf(m2).field[static_cast<size_t>(mseg::Param::StereoPhase)] == kMseg);
 	CHECK(fresh.chainRecord().rowOf(l2).field[static_cast<size_t>(lfo::Param::StereoPhase)] == kLfo);
 }
+
+TEST_CASE("publish: the drum pads' rows are left out under another engine, never lost, and published on a write or the engine switch") {
+	using feathers::DrumControl;
+	using feathers::drumLayerParam;
+	using feathers::drumParam;
+	ParamBridge bridge;
+	ParamSet params;
+	const clap_id tune = static_cast<clap_id>(drumParam(3, DrumControl::Tune));
+	const clap_id tuneTwo = static_cast<clap_id>(drumLayerParam(3, 1, DrumControl::Tune));
+	const auto settle = [&] {
+		bridge.publish(params);
+		bridge.refresh();
+	};
+	// A NON-DRUM ENGINE: the work is every row but the pads', and a second call does the same.
+	params.setBase(idOf(ParamId::OscType), static_cast<double>(feathers::OscType::V5));
+	settle();
+	settle();
+	const size_t withoutDrum = bridge.publishedRowsForTest();
+	const size_t pads = feathers::kMaxSounds * (feathers::kDrumControlCount + feathers::kDrumLayerControls.size());
+	CHECK(withoutDrum == feathers::kParamCount - pads);
+	// (a) A HOST WRITE UNDER THAT ENGINE is not lost and reaches the editor in the next call.
+	params.setBase(tune, 7.0);
+	params.setBase(tuneTwo, -4.0);
+	CHECK(params.base(tune) == 7.0);
+	settle();
+	CHECK(bridge.publishedRowsForTest() == feathers::kParamCount); // the rows came back for that call
+	CHECK(bridge.value(tune) == 7.0);
+	CHECK(bridge.value(tuneTwo) == -4.0);
+	settle(); // and then are left out again, until the next write
+	CHECK(bridge.publishedRowsForTest() == withoutDrum);
+	// AN EDITOR WRITE under that engine, drained into the engine as the plugin's binding does, comes back the same way.
+	bridge.setValue(tune, 2.5);
+	bridge.drain([&](const UiParamEvent& event) {
+		if (event.kind == UiParamEvent::Kind::Value) {
+			params.setBase(event.id, event.value);
+		}
+	});
+	CHECK(params.base(tune) == 2.5);
+	settle();
+	CHECK(bridge.value(tune) == 2.5);
+	// (b) SWITCHING TO DRUM publishes every row in that same call, and every call after it.
+	params.setBase(idOf(ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
+	settle();
+	CHECK(bridge.publishedRowsForTest() == feathers::kParamCount);
+	settle();
+	CHECK(bridge.publishedRowsForTest() == feathers::kParamCount); // work proportional to the whole count, every call, while Drum
+	// A WRITE MADE AS THE ENGINE SWITCHES is the first thing the editor sees.
+	params.setBase(tune, -9.0);
+	settle();
+	CHECK(bridge.value(tune) == -9.0);
+	// (c) STATE IS UNAFFECTED: the engine's own table is what saves, whatever was published.
+	params.setBase(idOf(ParamId::OscType), static_cast<double>(feathers::OscType::V5));
+	params.setBase(tuneTwo, 6.0);
+	CHECK(params.base(tuneTwo) == 6.0);
+	settle();
+	CHECK(params.base(tune) == -9.0);
+}

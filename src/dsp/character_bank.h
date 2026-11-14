@@ -181,10 +181,12 @@ struct SoundCoord {
 	DrumBias drumBias{};
 	/// AND THE KIT-WIDE TRIMS (2026-11-06), the same law applied again on top of the pad's own: neutral except on a Drum Kit.
 	DrumBias drumKitBias{};
-	/// THE LAYER'S PLACE (drum proposal §12, stage (c)): its offset from this pad's travel, read only on a Drum Kit whose pad has
-	/// a layer (zero everywhere else, so every other SoundCoord compares equal to before).
-	double drumLayerX{0.0};
-	double drumLayerY{0.0};
+	/// **A PAD IS TWO LAYERS** (kit stance redesign), each at its own place: (the kit's stance) plus that layer's own vector.
+	/// `drumBias` and `drumVectorX/Y[0]` are layer one's, `drumBias2` and index 1 layer two's; the kit's trims apply to both. Read only on a Drum Kit (zero everywhere else, so every other SoundCoord
+	/// compares equal to before). `drumLayer` is whether layer two is on (its kind is not Off).
+	DrumBias drumBias2{};
+	std::array<double, 2> drumVectorX {};
+	std::array<double, 2> drumVectorY {};
 	bool drumLayer{false};
 
 	/// THE BLUE SHIFT, and both of these are exactly zero unless the puck is moving AND the audition
@@ -295,6 +297,9 @@ struct Character {
 	/// THE DRUM ENGINE'S KIT MODE (drum proposal §3.3): every one of `sounds` is a PAD, built at its own place and never
 	/// blended. False everywhere else, so every other Character compares equal to before.
 	bool drumKit{false};
+	/// THE KIT'S STANCE as the engine sees it (kit stance redesign): the standard puck's Pos X/Y through Weather, the one
+	/// place every unlocked layer of every pad is moved by. Zero off a Drum Kit.
+	AnchorPoint drumStance{};
 	float xf{0.0f};
 	/// Where the puck is, carried so that the thing which has to DIFFERENTIATE it does not have to
 	/// re-read forty-eight parameters to find out. Nothing downstream of the blend reads it.
@@ -417,12 +422,21 @@ void buildPartialsFor(const Character& c, partials::PartialSpectrum& out, Partia
 /// buildPartialsFor's shares. No sounds is the default material.
 StringFields buildStringFieldsFor(const Character& c);
 
+/// **A DRUM LAYER'S PLACE** (kit stance redesign R3): the kit's stance (the Perform puck, Pos X/Y through Weather) plus the
+/// layer's own vector, for EVERY layer: the engine does not read a layer's Lock (a stored flag only the editor's bulk edits read,
+/// so engaging or releasing it changes nothing audible). The whole rule; evaluated once per rebuild, per layer.
+inline AnchorPoint drumLayerPlace(const AnchorPoint& stance, const AnchorPoint& vector) {
+	return { stance.x + vector.x, stance.y + vector.y };
+}
+/// How far a layer's vector parameter reaches either side (the declared range of its Offset X/Y).
+inline constexpr double kDrumVectorRange = 2.0;
+
 /// THE DRUM PADS' FIELDS (drum proposal §3): in Kit mode each live sound's seven at its own coordinate, scalers applied, at its
 /// slot; in Pitched mode the live sounds' blended (buildStringFieldsFor's shares) into pad 0.
 struct DrumCharacter {
 	std::array<drum::Fields, kMaxSounds> pads{};
-	/// EACH PAD'S LAYER'S FIELDS (stage (c)): at the pad's place plus its offset, through the pad's own scalers; default where a
-	/// pad has no layer.
+	/// EACH PAD'S SECOND LAYER'S FIELDS: at that layer's own place, through its own scalers; default where a pad has no
+	/// second layer. (`pads` is layer one's.)
 	std::array<drum::Fields, kMaxSounds> layers{};
 	bool kit{false};
 	friend bool operator==(const DrumCharacter&, const DrumCharacter&) = default;

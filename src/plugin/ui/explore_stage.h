@@ -301,13 +301,12 @@ public:
 	Knob& drumFieldKnobForTest(DrumField f, size_t slot) {
 		return *drumFieldKnobs_[static_cast<size_t>(f)][std::min(slot, kMaxSounds - 1)];
 	}
-	Knob& drumWalkKnobForTest(size_t axis) { return *drumWalkKnobs_[std::min<size_t>(axis, 1)]; }
-	/// THE KIT-WIDE LAYER'S TEN KNOBS (2026-11-06), in SurroundControl's order from DrumKitGamma, and the Drum surround's pages:
-	/// Pad (each pad's seven scalers and the Walk), Kit Fields (the seven kit trims in the scalers' slots, and the Walk) and Kit
-	/// Place (Kit Zone, Offset and Gamma, and the Walk). The pages box stands in the left box slot in Kit mode only.
-	static constexpr size_t kDrumKitKnobCount = 10;
+	/// THE KIT-WIDE TRIMS' SEVEN KNOBS (2026-11-06), in SurroundControl's order from DrumKitPitch, and the Drum surround's pages:
+	/// Pad (each pad's seven scalers) and Kit Fields (the seven kit trims in the scalers' slots). The pages box stands in the left
+	/// box slot in Kit mode only.
+	static constexpr size_t kDrumKitKnobCount = 7;
 	Knob& drumKitKnobForTest(size_t i) { return *drumKitKnobs_[std::min(i, kDrumKitKnobCount - 1)]; }
-	enum class DrumPage : uint8_t { Pad, KitFields, KitPlace };
+	enum class DrumPage : uint8_t { Pad, KitFields };
 	void chooseDrumPage(DrumPage page);
 	[[nodiscard]] DrumPage drumPageForTest() const noexcept { return drumPage_; }
 	enum class PluckKnob : uint8_t { Width, Decay, Release, Seed, DecayTrack, Hardness, Pickup, Velocity };
@@ -496,8 +495,7 @@ public:
 		ResonateWidth, Bow, Shimmer, Stiffness, Coupling, Decay, Pluck, Travel, Speed,
 		Sine, Triangle, Saw, Square,
 		KsWidth, KsDecay, KsRelease, KsSeed, KsDecayTrack, KsHardness, KsPickup, KsVelocity,
-		DrumWalkX, DrumWalkY,
-		DrumKitGamma, DrumKitZone, DrumKitOffset, DrumKitPitch, DrumKitLength, DrumKitSweep, DrumKitTone, DrumKitNoise,
+		DrumKitPitch, DrumKitLength, DrumKitSweep, DrumKitTone, DrumKitNoise,
 		DrumKitSnap, DrumKitMetal,
 		WarpMode, BowMode, AdditiveShape, Model, ShapesPage, KsPage, DrumPage,
 		kCount
@@ -740,6 +738,21 @@ public:
 	double selectedDriftY() const;
 	/// Where the selected sound is PLAYED: authored place plus the engine's live polar pull. Drawing only.
 	[[nodiscard]] AnchorPoint playedPlace() const;
+	/// The kit's stance as the engine sees it (the ordinary puck through Weather), for the pad marks and the played mark.
+	[[nodiscard]] AnchorPoint kitStanceNow() const;
+	/// **THE KIT-WIDE BULK EDIT**: adds (dx, dy) to the vector of every layer whose Lock is off (both layers of all eight pads),
+	/// through `commit` (one gesture, one undo group with the drag it belongs to); locked vectors are not written. Answers how
+	/// many parameter writes it made (up to 32).
+	size_t moveKitUnlocked(double dx, double dy);
+	/// Each vector parameter the open drag has written, with the value it held before its first write (one undo step at the end).
+	std::vector<std::pair<clap_id, double>> bulkTouched_;
+	struct BulkEntry {
+		clap_id id;
+		double before;
+		double after;
+	};
+	std::vector<BulkEntry> bulkEntries_; ///< what the closed drag moved, until `recordBulk` makes its undo step
+	void recordBulk();
 	/// Where the rotate encoder reads, in radians: the selected sound's own turn, else the global
 	/// audition pin's, else 0 — the turn every unturned sound genuinely plays at.
 	double selectedRotation() const;
@@ -1467,11 +1480,9 @@ private:
 	std::array<std::array<std::unique_ptr<Knob>, kMaxSounds>, kStringKindCount> stringKnobs_;
 	std::array<std::unique_ptr<Knob>, kPluckKnobCount> pluckKnobs_;
 	std::array<std::array<std::unique_ptr<Knob>, kMaxSounds>, kDrumFieldCount> drumFieldKnobs_;
-	std::array<std::unique_ptr<Knob>, 2> drumWalkKnobs_;
 	std::array<std::unique_ptr<Knob>, kDrumKitKnobCount> drumKitKnobs_;
 	DrumPage drumPage_ = DrumPage::Pad;
 	SlotRow drumKitFieldsRow_ {};
-	SlotRow drumKitPlaceRow_ {};
 	/// The Drum row as the mode and the selected kind leave it (currentSlotRow): the table's, less what they do not read.
 	mutable SlotRow drumRow_ {};
 	PluckPage pluckPage_ = PluckPage::String;

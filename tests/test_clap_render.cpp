@@ -436,6 +436,10 @@ struct OutputLog {
 		uint16_t type = 0;
 		clap_id id = 0;
 		double value = 0.0;
+		int32_t noteId = -1; ///< a NOTE_END's, as the host issued it
+		int16_t key = -1;
+		int16_t channel = -1;
+		int16_t port = -1;
 	};
 	std::vector<Event> events;
 
@@ -455,6 +459,13 @@ struct OutputLog {
 		}
 		else if (h->type == CLAP_EVENT_PARAM_GESTURE_BEGIN || h->type == CLAP_EVENT_PARAM_GESTURE_END) {
 			e.id = reinterpret_cast<const clap_event_param_gesture*>(h)->param_id;
+		}
+		else if (h->type == CLAP_EVENT_NOTE_END) {
+			const auto* n = reinterpret_cast<const clap_event_note*>(h);
+			e.noteId = n->note_id;
+			e.key = n->key;
+			e.channel = n->channel;
+			e.port = n->port_index;
 		}
 		else {
 			return true;
@@ -9344,4 +9355,235 @@ TEST_CASE("RB: a stopped Pattern on Trig Transport is armed — the plugin stays
 		slept = host.run(kFrames, none) == CLAP_PROCESS_SLEEP;
 	}
 	CHECK(slept);
+}
+
+//------------------------------------------------------------------------------------------------//
+// CLAP_EVENT_NOTE_END. The contract is the header's: the plugin tells the host, after processing the //
+// frames, that the voice for a note the HOST issued has ended, carrying the port, channel, key and //
+// note id the host's note-on carried.                                                              //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+std::vector<OutputLog::Event> noteEndsIn(const OutputLog& log) {
+	std::vector<OutputLog::Event> out;
+	for (const OutputLog::Event& e : log.events) {
+		if (e.type == CLAP_EVENT_NOTE_END) {
+			out.push_back(e);
+		}
+	}
+	return out;
+}
+
+/// Run blocks, appending what the plugin sent, until `blocks` have gone or `stop` says so.
+template <class Stop>
+int runCollecting(HostedPlugin& host, OutputLog& log, int blocks, Stop stop) {
+	EventList none;
+	int ran = 0;
+	while (ran < blocks) {
+		host.run(kBlock, none, &log);
+		++ran;
+		if (stop()) {
+			break;
+		}
+	}
+	return ran;
+}
+
+} // namespace
+
+TEST_CASE("NOTE_END: a host note gets exactly one, with its port, channel, key and id, once its release tail has ended") {
+	HostedPlugin host;
+	OutputLog log;
+	EventList on;
+	on.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 7, 1.0);
+	host.run(kBlock, on, &log);
+	runCollecting(host, log, 8, [] { return false; });
+	CHECK(noteEndsIn(log).empty()); // sounding and held: not over
+	EventList off;
+	off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 60, 7, 0.0);
+	host.run(kBlock, off, &log);
+	CHECK(noteEndsIn(log).empty()); // released, tail still running
+	// The tail runs for about a second; the end comes in the block the last voice stops sounding in, never before.
+	int blocks = 0;
+	while (noteEndsIn(log).empty() && blocks < 4 * 48000 / static_cast<int>(kBlock)) {
+		CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) >= 1.0);
+		runCollecting(host, log, 1, [] { return false; });
+		++blocks;
+	}
+	REQUIRE(noteEndsIn(log).size() == 1);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 0.0);
+	CHECK(blocks > 1);
+	const OutputLog::Event end = noteEndsIn(log)[0];
+	CHECK(end.noteId == 7);
+	CHECK(end.key == 60);
+	CHECK(end.channel == 0);
+	CHECK(end.port == 0);
+	runCollecting(host, log, 100, [] { return false; });
+	CHECK(noteEndsIn(log).size() == 1); // once
+}
+
+TEST_CASE("NOTE_END: a MIDI-dialect note (id -1) ends with id -1 on its own channel") {
+	HostedPlugin host;
+	OutputLog log;
+	EventList on;
+	on.pushMidi(0, 0x92, 64, 100); // channel 2
+	host.run(kBlock, on, &log);
+	EventList off;
+	off.pushMidi(0, 0x82, 64, 0);
+	host.run(kBlock, off, &log);
+	runCollecting(host, log, 4 * 48000 / static_cast<int>(kBlock), [&] { return !noteEndsIn(log).empty(); });
+	REQUIRE(noteEndsIn(log).size() == 1);
+	CHECK(noteEndsIn(log)[0].noteId == -1);
+	CHECK(noteEndsIn(log)[0].key == 64);
+	CHECK(noteEndsIn(log)[0].channel == 2);
+}
+
+TEST_CASE("NOTE_END: a stolen voice's old note is ended once, at the steal") {
+	HostedPlugin host;
+	OutputLog log;
+	EventList none;
+	EventList setup;
+	setup.pushParam(0, static_cast<clap_id>(feathers::ParamId::VoiceCount), 2.0);
+	host.run(kBlock, setup, &log);
+	const int16_t keys[3] = { 60, 64, 67 };
+	for (int i = 0; i < 3; ++i) {
+		EventList on;
+		on.pushNote(CLAP_EVENT_NOTE_ON, 0, keys[i], 1 + i, 1.0);
+		host.run(kBlock, on, &log);
+		runCollecting(host, log, 3, [] { return false; });
+		if (i < 2) {
+			CHECK(noteEndsIn(log).empty());
+		}
+	}
+	// Two voices, three notes: the oldest (id 1, key 60) was stolen and is over, though its key is still down.
+	REQUIRE(noteEndsIn(log).size() == 1);
+	CHECK(noteEndsIn(log)[0].noteId == 1);
+	CHECK(noteEndsIn(log)[0].key == 60);
+	// Releasing everything ends the other two once each, and the stolen one is not ended again.
+	EventList off;
+	for (int i = 0; i < 3; ++i) {
+		off.pushNote(CLAP_EVENT_NOTE_OFF, 0, keys[i], 1 + i, 0.0);
+	}
+	host.run(kBlock, off, &log);
+	runCollecting(host, log, 8 * 48000 / static_cast<int>(kBlock), [&] { return noteEndsIn(log).size() >= 3; });
+	runCollecting(host, log, 100, [] { return false; });
+	std::map<int32_t, int> seen;
+	for (const OutputLog::Event& e : noteEndsIn(log)) {
+		++seen[e.noteId];
+	}
+	CHECK(seen.size() == 3);
+	for (const auto& [id, n] : seen) {
+		CAPTURE(id);
+		CHECK(n == 1);
+	}
+}
+
+TEST_CASE("NOTE_END: a choke ends the note in the block it is sent in, once") {
+	HostedPlugin host;
+	OutputLog log;
+	EventList on;
+	on.pushNote(CLAP_EVENT_NOTE_ON, 0, 62, 5, 1.0);
+	host.run(kBlock, on, &log);
+	runCollecting(host, log, 4, [] { return false; });
+	REQUIRE(noteEndsIn(log).empty());
+	EventList choke;
+	choke.pushNote(CLAP_EVENT_NOTE_CHOKE, 0, 62, 5, 0.0);
+	host.run(kBlock, choke, &log);
+	REQUIRE(noteEndsIn(log).size() == 1);
+	CHECK(noteEndsIn(log)[0].noteId == 5);
+	CHECK(noteEndsIn(log)[0].key == 62);
+	runCollecting(host, log, 100, [] { return false; });
+	CHECK(noteEndsIn(log).size() == 1); // the steal fade's end adds none
+}
+
+TEST_CASE("NOTE_END: N notes give N ends, one per id, none repeated over many blocks") {
+	HostedPlugin host;
+	OutputLog log;
+	constexpr int kN = 6;
+	EventList on;
+	for (int i = 0; i < kN; ++i) {
+		on.pushNote(CLAP_EVENT_NOTE_ON, static_cast<uint32_t>(i * 3), static_cast<int16_t>(48 + i * 2), 10 + i, 1.0);
+	}
+	host.run(kBlock, on, &log);
+	runCollecting(host, log, 6, [] { return false; });
+	EventList off;
+	for (int i = 0; i < kN; ++i) {
+		off.pushNote(CLAP_EVENT_NOTE_OFF, 0, static_cast<int16_t>(48 + i * 2), 10 + i, 0.0);
+	}
+	host.run(kBlock, off, &log);
+	runCollecting(host, log, 8 * 48000 / static_cast<int>(kBlock), [&] { return noteEndsIn(log).size() >= kN; });
+	runCollecting(host, log, 300, [] { return false; });
+	std::map<int32_t, std::pair<int, int>> seen; // id -> count, key
+	for (const OutputLog::Event& e : noteEndsIn(log)) {
+		++seen[e.noteId].first;
+		seen[e.noteId].second = e.key;
+	}
+	REQUIRE(seen.size() == static_cast<size_t>(kN));
+	for (int i = 0; i < kN; ++i) {
+		CAPTURE(i);
+		CHECK(seen[10 + i].first == 1);
+		CHECK(seen[10 + i].second == 48 + i * 2);
+	}
+}
+
+TEST_CASE("NOTE_END: voices an arp plays on keys and ids the host never sent produce no end for them") {
+	constexpr int kBlocks = 12;
+	uint32_t seated = UINT32_MAX;
+	HostedPlugin host(&kHost, [](const clap_plugin* p, void* out) {
+		*static_cast<uint32_t*>(out) = testChainOf(p)->add_mod_device(p, feathers::mod::arp::kTraits.tag);
+	}, &seated);
+	REQUIRE(seated != UINT32_MAX);
+	const auto* chain = testChainOf(host.plugin());
+	EventList none;
+	host.setTransport(0.0, false, false);
+	host.run(kMaxFrames, none);
+	mainThreadVisit(host.plugin());
+	const double two[2] = { 2.0, 2.0 };
+	REQUIRE(chain->drag_control(host.plugin(), CLAP_FEATHERS_TEST_STRIP | seated, "Octaves", two, 2));
+	REQUIRE(chain->delivered_note(host.plugin(), UINT32_MAX, nullptr, nullptr, nullptr));
+	OutputLog log;
+	int64_t at = kMaxFrames;
+	EventList chord;
+	chord.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 1, 1.0);
+	chord.pushNote(CLAP_EVENT_NOTE_ON, 0, 64, 2, 1.0);
+	bool first = true;
+	for (int b = 0; b < kBlocks * 200; ++b) {
+		host.setTransport(static_cast<double>(at) / kSampleRate, true, false);
+		host.run(kMaxFrames, first ? chord : none, &log);
+		first = false;
+		at += kMaxFrames;
+	}
+	EventList off;
+	off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 60, 1, 0.0);
+	off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 64, 2, 0.0);
+	host.setTransport(static_cast<double>(at) / kSampleRate, true, false);
+	host.run(kMaxFrames, off, &log);
+	at += kMaxFrames;
+	for (int b = 0; b < 400; ++b) {
+		host.setTransport(static_cast<double>(at) / kSampleRate, true, false);
+		host.run(kMaxFrames, none, &log);
+		at += kMaxFrames;
+	}
+	// NOT VACUOUS: the arp did play keys the host never sent.
+	bool inventedKey = false;
+	uint32_t kind = 0;
+	int32_t key = 0;
+	uint64_t sample = 0;
+	for (uint32_t i = 0; chain->delivered_note(host.plugin(), i, &kind, &key, &sample); ++i) {
+		inventedKey = inventedKey || (kind == 0 && key != 60 && key != 64);
+	}
+	REQUIRE(inventedKey);
+	// What the host hears is only about the notes it sent: keys 60 and 64 with ids 1 and 2, each at most once.
+	std::map<int32_t, int> seen;
+	for (const OutputLog::Event& e : noteEndsIn(log)) {
+		CAPTURE(e.key);
+		CAPTURE(e.noteId);
+		CHECK(((e.key == 60 && e.noteId == 1) || (e.key == 64 && e.noteId == 2)));
+		++seen[e.key];
+	}
+	for (const auto& [k, n] : seen) {
+		CAPTURE(k);
+		CHECK(n == 1);
+	}
 }

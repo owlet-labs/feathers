@@ -160,6 +160,7 @@
 #include <thread>
 #include <cstdlib>
 #include <filesystem>
+#include <type_traits>
 #include "fx/filter/multimode_filter.h"
 
 #include <fstream>
@@ -265,6 +266,12 @@ visage::MouseEvent optAt(float x, float y);
 /// is a failure that moves.
 class ScopedEnv {
 public:
+#if defined(_WIN32)
+	/// A path's `c_str()` is wide on Windows; the narrowing is the path's own.
+	/// A template so that `nullptr` (unset) still picks the narrow constructor rather than being ambiguous.
+	template <class Wide, std::enable_if_t<std::is_same_v<Wide, wchar_t>, int> = 0>
+	ScopedEnv(const char* name, const Wide* value) : ScopedEnv(name, std::filesystem::path(value).string().c_str()) {}
+#endif
 	ScopedEnv(const char* name, const char* value) : name_(name) {
 		if (const char* existing = std::getenv(name)) {
 			had_ = true;

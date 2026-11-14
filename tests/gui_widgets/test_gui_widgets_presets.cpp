@@ -54,6 +54,12 @@ namespace {
 /// An environment variable set for one scope and put back after, including "was not set".
 class EnvVar {
 public:
+#if defined(_WIN32)
+	/// A path's `c_str()` is wide on Windows; the narrowing is the path's own.
+	/// A template so that `nullptr` (unset) still picks the narrow constructor rather than being ambiguous.
+	template <class Wide, std::enable_if_t<std::is_same_v<Wide, wchar_t>, int> = 0>
+	EnvVar(const char* name, const Wide* value) : EnvVar(name, std::filesystem::path(value).string().c_str()) {}
+#endif
 	EnvVar(const char* name, const char* value) : name_(name) {
 		if (const char* was = std::getenv(name); was != nullptr) {
 			had_ = true;

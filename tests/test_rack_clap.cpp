@@ -907,6 +907,8 @@ TEST_CASE("the rack offers a gui, and only for the api it can embed into") {
 	REQUIRE(gui != nullptr);
 #if defined(__APPLE__)
 	REQUIRE(gui->is_api_supported(v.plugin, CLAP_WINDOW_API_COCOA, false));
+#elif defined(_WIN32)
+	REQUIRE(gui->is_api_supported(v.plugin, CLAP_WINDOW_API_WIN32, false));
 #else
 	REQUIRE(gui->is_api_supported(v.plugin, CLAP_WINDOW_API_X11, false));
 #endif
@@ -926,6 +928,8 @@ TEST_CASE("the editor opens, reports a usable size, and a second open reuses the
 
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -974,6 +978,8 @@ TEST_CASE("the rack's editor reports the lane plus the canvas, and a fold change
 	CHECK(gui.logicalWidth() == static_cast<uint32_t>(rack::RackEditor::kWidth));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1514,6 +1520,8 @@ TEST_CASE("backlog DB: the rack GUI's beat is what scrolls a card held at the la
 	rack::RackGui gui { bridge };
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1557,6 +1565,8 @@ TEST_CASE("adjust_size never answers with the size we already are") {
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1600,6 +1610,8 @@ TEST_CASE("the editor is laid out with real bounds once the window has a size") 
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1644,6 +1656,8 @@ TEST_CASE("a device added while the editor is open gets a card with real bounds"
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1793,6 +1807,8 @@ TEST_CASE("a routing the rules drop is SAID, not merely counted") {
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1839,6 +1855,8 @@ TEST_CASE("a load that refused nothing says nothing") {
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1873,6 +1891,8 @@ TEST_CASE("a refusal that arrives BEFORE the editor is held, and said when it op
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1895,6 +1915,8 @@ TEST_CASE("the (+) adds a device to the rack, and the card appears") {
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1936,6 +1958,8 @@ TEST_CASE("the (+) is a spine in the rack's lane, the lane's height tall, and a 
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -1972,6 +1996,8 @@ TEST_CASE("a macro moved by the host moves on the face") {
 	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -2010,6 +2036,8 @@ TEST_CASE("adding a device from the editor while the host is processing") {
 	REQUIRE(gui != nullptr);
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -2110,6 +2138,8 @@ TEST_CASE("backlog NI: Esc leaves modulation assign mode in the rack's editor, b
 	rack::RackGui gui { bridge };
 #if defined(__APPLE__)
 	REQUIRE(gui.create(CLAP_WINDOW_API_COCOA, false));
+#elif defined(_WIN32)
+	REQUIRE(gui.create(CLAP_WINDOW_API_WIN32, false));
 #else
 	REQUIRE(gui.create(CLAP_WINDOW_API_X11, false));
 #endif
@@ -2357,6 +2387,8 @@ TEST_CASE("backlog NN: in the rack's editor Esc closes the most recently opened 
 	rack::RackGui gui { bridge };
 #if defined(__APPLE__)
 	REQUIRE(gui.create(CLAP_WINDOW_API_COCOA, false));
+#elif defined(_WIN32)
+	REQUIRE(gui.create(CLAP_WINDOW_API_WIN32, false));
 #else
 	REQUIRE(gui.create(CLAP_WINDOW_API_X11, false));
 #endif
@@ -4418,6 +4450,8 @@ TEST_CASE("backlog KS: closing the rack's editor ends assign mode — the editor
 	rack::RackGui gui { bridge };
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -4445,6 +4479,8 @@ TEST_CASE("backlog KS: closing the rack's editor closes a preset prompt open ins
 	rack::RackGui gui { bridge };
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif
@@ -5994,6 +6030,8 @@ TEST_CASE("note rack: a note effect with a note port each way and no audio, offe
 	REQUIRE(gui != nullptr);
 #if defined(__APPLE__)
 	REQUIRE(gui->create(v.plugin, CLAP_WINDOW_API_COCOA, false));
+#elif defined(_WIN32)
+	REQUIRE(gui->create(v.plugin, CLAP_WINDOW_API_WIN32, false));
 #else
 	REQUIRE(gui->create(v.plugin, CLAP_WINDOW_API_X11, false));
 #endif
@@ -6019,6 +6057,8 @@ TEST_CASE("note rack: a note effect with a note port each way and no audio, offe
 	const auto* chainGui = static_cast<const clap_plugin_gui*>(chainVenue.plugin->get_extension(chainVenue.plugin, CLAP_EXT_GUI));
 #if defined(__APPLE__)
 	REQUIRE(chainGui->create(chainVenue.plugin, CLAP_WINDOW_API_COCOA, false));
+#elif defined(_WIN32)
+	REQUIRE(chainGui->create(chainVenue.plugin, CLAP_WINDOW_API_WIN32, false));
 #else
 	REQUIRE(chainGui->create(chainVenue.plugin, CLAP_WINDOW_API_X11, false));
 #endif
@@ -6336,6 +6376,8 @@ TEST_CASE("QN: the Rack plugin's Macros column, folded, is folded again after a 
 	}
 #if defined(__APPLE__)
 	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
 #else
 	const char* api = CLAP_WINDOW_API_X11;
 #endif

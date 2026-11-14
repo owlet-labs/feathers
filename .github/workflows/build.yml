@@ -218,6 +218,19 @@ jobs:
             ctest --test-dir build --output-on-failure --label-exclude "platform-pinned|headless-incompatible" ${{ runner.os == 'Windows' && '--timeout 300' || '' }}
           fi
 
+      # THE WINDOWS EDITOR, PHOTOGRAPHED (tests/test_win32_embed.cpp): nobody on the team has a Windows machine, so the
+      # pictures the embed test takes of the editor in a real host window are kept for a person to look at. Uploaded
+      # whatever the tests said, because a red embed is exactly when the picture matters most.
+      - name: Upload the Windows editor screenshots
+        if: always() && runner.os == 'Windows'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: feathers-windows-editor-screenshots
+          retention-days: 7
+          if-no-files-found: warn
+          path: build/tests/win32-editor-*.bmp
+
       # BACKLOG LP: Resonate renders a different buzz on macOS arm64. This prints one setup's stages as exact bits on every
       # leg so the two logs can be diffed (grep '^LP '); the first line that differs names the computation. Diagnostic only:
       # it asserts nothing and never fails the job. Delete it with the case once LP is closed.

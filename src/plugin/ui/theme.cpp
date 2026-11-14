@@ -897,13 +897,13 @@ BoxOutline boxOutlineOf(bool selected, bool destination, bool assigning) {
 	BoxOutline o;
 	if (selected && destination) {
 		o.kind = BoxOutlineKind::Both;
-		o.outerColour = kAccent;
+		o.outerColour = kSelectedOutline;
 		o.innerColour = kModulation;
 		o.strokes = 2;
 	}
 	else if (selected) {
 		o.kind = BoxOutlineKind::Selected;
-		o.outerColour = kAccent;
+		o.outerColour = kSelectedOutline;
 		o.strokes = 1;
 	}
 	else if (destination) {
@@ -919,14 +919,14 @@ BoxOutline boxOutlineOf(bool selected, bool destination, bool assigning) {
 void drawBoxOutline(visage::Canvas& canvas, float x, float y, float w, float h, float radius, const BoxOutline& o,
                     float dim) {
 	if (o.innerGlow) {
-		// THREE NESTED STROKES, FADING INWARD: visage has no inner shadow, and a fill would wash the value text.
-		// The strokes start past the doubled line (insets 3..5) and total under a fifth of the text's contrast.
-		const float fades[3] = { 0.22f, 0.12f, 0.06f };
-		for (int i = 0; i < 3; ++i) {
-			const float inset = 3.0f + static_cast<float>(i);
-			canvas.setColor(withAlpha(kModulation, fades[i] * dim));
-			canvas.roundedRectangleBorder(x + inset, y + inset, w - 2.0f * inset, h - 2.0f * inset,
-			                              std::max(0.0f, radius - inset), 1.0f);
+		// TWO STROKES, BOTH WITHIN `kBoxGlowExtent` OF THE EDGE: one in the gap between the doubled outline's lines
+		// (inset 1) and one just inside the second line (inset 3). Nothing reaches further in, where the text is.
+		const float insets[2] = { 1.0f, 3.0f };
+		const float alphas[2] = { 0.32f, 0.2f };
+		for (int i = 0; i < 2; ++i) {
+			canvas.setColor(withAlpha(kModulation, alphas[i] * dim));
+			canvas.roundedRectangleBorder(x + insets[i], y + insets[i], w - 2.0f * insets[i], h - 2.0f * insets[i],
+			                              std::max(0.0f, radius - insets[i]), 1.0f);
 		}
 	}
 	if (o.strokes >= 1) {

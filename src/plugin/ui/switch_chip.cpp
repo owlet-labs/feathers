@@ -373,7 +373,7 @@ void SwitchChip::draw(visage::Canvas& canvas) {
 		const visage::Bounds pad = padBounds();
 		canvas.setColor(lit ? withAlpha(kAccent, 0.22f) : kVoid);
 		canvas.roundedRectangle(pad.x(), pad.y(), pad.width(), pad.height(), 4.0f);
-		canvas.setColor(lit ? kAccent : withAlpha(kLine, 0.8f));
+		canvas.setColor(lit ? kSelectedOutline : withAlpha(kLine, 0.8f));
 		canvas.roundedRectangleBorder(pad.x(), pad.y(), pad.width(), pad.height(), 4.0f, 1.0f);
 
 		canvas.setColor(kMuted);
@@ -387,7 +387,7 @@ void SwitchChip::draw(visage::Canvas& canvas) {
 	const bool asleep = lit && dormant_;
 	canvas.setColor(lit ? withAlpha(kAccent, asleep ? 0.08f : 0.22f) : kVoid);
 	canvas.roundedRectangle(0.0f, 0.0f, w, h, 3.0f);
-	canvas.setColor(lit ? withAlpha(kAccent, asleep ? 0.45f : 1.0f) : withAlpha(kLine, 0.8f));
+	canvas.setColor(lit ? withAlpha(kSelectedOutline, asleep ? 0.45f : 1.0f) : withAlpha(kLine, 0.8f));
 	canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, 3.0f, 1.0f);
 	if (pending_ && !lit) {
 		// PENDING: armed, waiting for its boundary — two accent borders and an accent caption, no motion.

@@ -84,6 +84,11 @@ inline const uint32_t& kModulation = chrome_detail::gChrome.modulation;
 /// it differs from both in lightness, which is what a rotation cannot move. A stereo control's two dots keep their
 /// ear colours and wear this as their core.
 inline const uint32_t& kModulatedDot = chrome_detail::gChrome.ink;
+/// **A SELECTED BOX'S OUTLINE** — one crisp stroke in the chrome's brightest near-neutral. Not `kAccent`: the accent and
+/// the modulation colour are neighbours in the palette (their OKLab distance is about 0.03), so an accent outline could
+/// not be told from a modulation-destination outline by colour. A near-neutral differs from the modulation colour (and
+/// from `kValue`) in lightness, which no hue rotation moves. Its own name so it can diverge from the dot's later.
+inline const uint32_t& kSelectedOutline = chrome_detail::gChrome.ink;
 /// **A METER'S TWO COLOURS: DATA, SO THEY NEVER TURN** — the accent and value as the mock draws them,
 /// fixed. A meter reads a level; its colour is not chrome (backlog LG).
 inline constexpr uint32_t kMeterAccent = tokens::kAccent;
@@ -788,12 +793,15 @@ inline constexpr float kKnobLabelTracking = 0.22f;
 
 /// **WHAT A BOX'S OUTLINE SAYS, AS A VALUE BEFORE ANY PAINT** (so a case can assert it without a render).
 ///
-///   - SELECTED (on, chosen): ONE stroke in the interaction colour `kAccent`.
+///   - SELECTED (on, chosen): ONE stroke in `kSelectedOutline`, the near-neutral bright.
 ///   - DESTINATION (a route reaches it, or an armed source may route to it): a DOUBLED stroke in the modulation colour
 ///     `kModulation` — the edge and a second line two pixels inside it. The style differs as well as the hue, so the
 ///     two read apart for an eye that cannot tell the hues.
 ///   - BOTH: the selected stroke outside, the destination's inner line inside it — each still its own colour and shape.
-/// While a source is ARMED and the box would take the route, a faint inner glow in the modulation colour is added.
+/// While a source is ARMED and the box would take the route, a faint inner glow in the modulation colour is added,
+/// confined to the `kBoxGlowExtent` pixels nearest the edge (a stroke in the gap between the two lines and one just
+/// inside the second) so it never reaches the text, which is drawn clear of that band.
+inline constexpr float kBoxGlowExtent = 4.0f;
 enum class BoxOutlineKind { None, Selected, Destination, Both };
 struct BoxOutline {
 	BoxOutlineKind kind = BoxOutlineKind::None;

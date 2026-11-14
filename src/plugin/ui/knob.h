@@ -196,6 +196,9 @@ struct ModRingGeometry {
 	float arcWidth = 0.0f;
 	float arcInner = 0.0f;       ///< its inner edge: strictly outside `faceTrackOuter`, the gap being the keyline
 	float dotRadius = 0.0f;
+	float arcOuterKeyline = 0.0f;  ///< the outer edge of the arc's keyline: nothing else may be drawn inside this
+	float hostMarkCentre = 0.0f;   ///< the host-slot mark's distance from the face centre (at 45 degrees, upper right)
+	float hostMarkRadius = 0.0f;
 };
 [[nodiscard]] ModRingGeometry modRingGeometry(float diameter);
 

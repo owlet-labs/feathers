@@ -786,6 +786,11 @@ ModRingGeometry modRingGeometry(float diameter) {
 	g.arcInner = g.faceTrackOuter + 1.75f * unit;
 	g.arcCentre = g.arcInner + g.arcWidth * 0.5f;
 	g.dotRadius = 3.6f * unit;
+	g.arcOuterKeyline = g.arcInner + g.arcWidth + 1.0f * unit;
+	// THE HOST-SLOT MARK sits just OUTSIDE the amount arc and its keyline, on its old 45-degree line, so a route's arc
+	// reaching that angle never runs under it. Its meaning is its spot (upper right, opposite the routed dot).
+	g.hostMarkRadius = 2.25f * unit;
+	g.hostMarkCentre = g.arcOuterKeyline + g.hostMarkRadius + 0.25f * unit;
 	return g;
 }
 
@@ -973,9 +978,9 @@ void Knob::draw(visage::Canvas& canvas) {
 	// to look at. Pinned and Anchored share it — both stay on the host until a hand frees them; which of
 	// the two is in the right-click's slot line. The accent, the mock's colour for "a hand did this".
 	if (hostMarked()) {
-		const float scale = faceDiameter_ / kDiameter;
-		const float dot = 2.25f * scale;
-		const float reach = faceDiameter_ * 0.5f - dot; // on the face's own circle, clear of the 21.5px ring
+		const ModRingGeometry geometry = modRingGeometry(faceDiameter_);
+		const float dot = geometry.hostMarkRadius;
+		const float reach = geometry.hostMarkCentre; // outside the amount arc's keyline: nothing a route draws covers it
 		const float x = centreX + reach * 0.70710678f;
 		const float y = centreY - reach * 0.70710678f;
 		canvas.setColor(lit ? kAccent : kDisabled);

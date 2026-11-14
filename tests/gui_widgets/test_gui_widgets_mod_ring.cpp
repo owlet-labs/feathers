@@ -1583,6 +1583,12 @@ TEST_CASE("the amount arc sits clear of the face arc, and the dot rides it and i
 		CHECK(g.arcCentre + g.dotRadius < diameter * 0.5f);
 		// THE DOT STANDS PROUD OF THE ARC IT RIDES.
 		CHECK(g.dotRadius * 2.0f > g.arcWidth);
+		// THE HOST-SLOT MARK is clear of the arc AND its keyline: the circle of radius `hostMarkRadius` about
+		// `hostMarkCentre` starts beyond `arcOuterKeyline`, so no arc at any angle runs under it.
+		CHECK(g.arcOuterKeyline >= g.arcInner + g.arcWidth);
+		CHECK(g.hostMarkCentre - g.hostMarkRadius > g.arcOuterKeyline);
+		// AND IT STAYS INSIDE THE KNOB'S OWN WIDGET BOX: its 45-degree offset plus its radius fits the face's half.
+		CHECK(g.hostMarkCentre * 0.70710678f + g.hostMarkRadius <= diameter * 0.5f);
 	}
 }
 
@@ -1712,6 +1718,32 @@ TEST_CASE("the face arc, the amount arc and the modulated-value dot stay distinc
 	MESSAGE("worst pairwise separation over the sweep: " << worst << " (ear core: " << worstEar << ")");
 }
 
+TEST_CASE("the selected outline and the destination outline differ in COLOUR at every hue setting, and from the face arc") {
+	// `kSelectedOutline` (the chrome ink) against `kModulation` and `kValue`, over the whole of both hue ranges.
+	double worst = 1.0;
+	for (double chrome = ui::kChromeHueMin; chrome <= ui::kChromeHueMax; chrome += 15.0) {
+		for (const double accent : { -180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0 }) {
+			const ui::ChromePalette p = ui::rotatedPalette(ui::kChromeBase, chrome, accent);
+			CAPTURE(chrome);
+			CAPTURE(accent);
+			// THE SELECTED STROKE IS THE PALETTE'S `ink`: the same entry `kSelectedOutline` reads.
+			const double selDest = separation(p.ink, p.modulation);
+			const double selValue = separation(p.ink, p.value);
+			const double destValue = separation(p.modulation, p.value);
+			CHECK(selDest >= kMinSeparation);
+			CHECK(selValue >= kMinSeparation);
+			CHECK(destValue >= kMinSeparation);
+			worst = std::min({ worst, selDest, selValue, destValue });
+		}
+	}
+	MESSAGE("worst selected/destination/value separation over the sweep: " << worst);
+	// AND THE LIVE ROLE IS THAT ENTRY: the constant the widgets read is the ink, not the accent.
+	CHECK(ui::kSelectedOutline == ui::kInk);
+	CHECK(ui::boxOutlineOf(true, false, false).outerColour == ui::kSelectedOutline);
+	CHECK(ui::boxOutlineOf(false, true, false).outerColour == ui::kModulation);
+	CHECK(ui::kSelectedOutline != ui::kModulation);
+}
+
 TEST_CASE("a selected box and a modulation-destination box differ in STYLE as well as colour, and the glow is assign-only") {
 	const ui::BoxOutline none = ui::boxOutlineOf(false, false, false);
 	const ui::BoxOutline sel = ui::boxOutlineOf(true, false, false);
@@ -1724,28 +1756,45 @@ TEST_CASE("a selected box and a modulation-destination box differ in STYLE as we
 	CHECK(both.kind == ui::BoxOutlineKind::Both);
 	// SELECTED: ONE accent stroke. DESTINATION: TWO modulation strokes. A colour-blind eye counts strokes.
 	CHECK(sel.strokes == 1);
-	CHECK(sel.outerColour == ui::kAccent);
+	CHECK(sel.outerColour == ui::kSelectedOutline);
 	CHECK(dest.strokes == 2);
 	CHECK(dest.outerColour == ui::kModulation);
 	CHECK(dest.innerColour == ui::kModulation);
 	CHECK(sel.strokes != dest.strokes);
+	CHECK(sel.outerColour != dest.outerColour);
 	// BOTH draws both, each in its own colour and shape: the selected stroke outside, the destination's line inside.
 	CHECK(both.strokes == 2);
-	CHECK(both.outerColour == ui::kAccent);
+	CHECK(both.outerColour == ui::kSelectedOutline);
 	CHECK(both.innerColour == ui::kModulation);
 	// THE INNER GLOW is assign-mode and destination-only.
 	CHECK_FALSE(dest.innerGlow);
 	CHECK_FALSE(ui::boxOutlineOf(true, false, true).innerGlow);
 	CHECK(ui::boxOutlineOf(false, true, true).innerGlow);
 	CHECK(ui::boxOutlineOf(true, true, true).innerGlow);
-	// THE HUE SWEEP: the style distinction does not depend on the colours at all, so no rotation can collapse it; the
-	// colours' own separation is reported (the two roles are neighbours in the mock's palette).
-	double worst = 1.0;
-	for (double chrome = ui::kChromeHueMin; chrome <= ui::kChromeHueMax; chrome += 15.0) {
-		const ui::ChromePalette p = ui::rotatedPalette(ui::kChromeBase, chrome, 0.0);
-		worst = std::min(worst, separation(p.accent, p.modulation));
-	}
-	MESSAGE("selected vs destination outline colour separation, worst over the sweep: " << worst);
+}
+
+TEST_CASE("the inner glow stays in a band at the edge and never reaches the text of a default-size box") {
+	// THE GLOW'S INNER EXTENT comes from the draw plan's own constant; the TEXT is the glyph ink of the row it is drawn
+	// in — cap height 0.72 of the font size, centred in its row — which is what the glow must not touch.
+	const auto inkTop = [](float rowTop, float rowHeight, float fontSize) {
+		return rowTop + (rowHeight - 0.72f * fontSize) * 0.5f;
+	};
+	// A stacked ValueBox at its default height: the caption row is the nearest text to the top edge, the value row to
+	// the bottom (both checked from their own edge).
+	const float vbTop = inkTop(ui::ValueBox::kPadY, ui::ValueBox::kLabelHeight, ui::kKnobLabelSize);
+	const float vbValueBottom = ui::ValueBox::kHeight - (ui::ValueBox::kPadY + ui::ValueBox::kLabelHeight +
+	                                                       inkTop(0.0f, ui::ValueBox::kValueHeight, ui::kKnobReadoutSize) +
+	                                                       0.72f * ui::kKnobReadoutSize);
+	CHECK(ui::kBoxGlowExtent <= vbTop);
+	CHECK(ui::kBoxGlowExtent <= vbValueBottom);
+	// THE COMPACT ROW: one row of the box's own height.
+	CHECK(ui::kBoxGlowExtent <= inkTop(0.0f, ui::ValueBox::kCompactHeight, ui::kKnobReadoutSize));
+	// A SWITCH CHIP centres its caption in its whole height.
+	CHECK(ui::kBoxGlowExtent <= inkTop(0.0f, ui::SwitchChip::kHeight, ui::kKnobLabelSize));
+	// A FADER PILL at the smallest height the cards give it.
+	CHECK(ui::kBoxGlowExtent <= inkTop(0.0f, 20.0f, ui::kKnobLabelSize));
+	// AND THE PLAN DRAWS NOTHING FURTHER IN than the extent: its two strokes are at insets 1 and 3, a pixel each.
+	CHECK(3.0f + 1.0f <= ui::kBoxGlowExtent);
 }
 
 TEST_CASE("mapping a stereo-live control keeps one reach arc and puts a dot at each ear, at that ear's value") {

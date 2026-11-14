@@ -145,6 +145,24 @@ Row rowOf(const State& state) {
 	// THE FURNITURE'S DEFAULTS: the slot reads these, the device never does, and a zero Mix would be silence.
 	row[static_cast<size_t>(Param::Mix)] = 1.0f;
 	row[static_cast<size_t>(Param::WetGain)] = 0.5f;
+	row[static_cast<size_t>(Param::Partial1Active)] = state.settings.active ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::Delay)] = log2Of(state.settings.delaySeconds);
+	row[static_cast<size_t>(Param::Hold)] = log2Of(state.settings.holdSeconds);
+	row[static_cast<size_t>(Param::Decay)] = log2Of(state.settings.decaySeconds);
+	row[static_cast<size_t>(Param::Sustain)] = state.settings.sustain;
+	for (int k = 1; k < kPartialCount; ++k) {
+		const PartialSettings& p = state.settings.more[static_cast<size_t>(k - 1)];
+		const auto at = [k](PartialField f) { return static_cast<size_t>(partialParam(k, f)); };
+		row[at(PartialField::Harmonic)] = static_cast<float>(p.harmonic);
+		row[at(PartialField::Level)] = p.level;
+		row[at(PartialField::Fine)] = p.fineSemitones;
+		row[at(PartialField::Phase)] = p.phase;
+		row[at(PartialField::Spread)] = p.spread;
+		row[at(PartialField::Width)] = p.width;
+		row[at(PartialField::Depth)] = p.depth;
+		row[at(PartialField::Mode)] = p.highpass ? 1.0f : 0.0f;
+		row[at(PartialField::Active)] = p.active ? 1.0f : 0.0f;
+	}
 	return row;
 }
 
@@ -176,6 +194,24 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	out.poly = read(Param::Poly) >= 0.5f;
 	out.settings.depthFollowsEnv = read(Param::DepthFollowsEnv) >= 0.5f;
 	out.settings.highpass = read(Param::Mode) >= 0.5f;
+	out.settings.active = read(Param::Partial1Active) >= 0.5f;
+	out.settings.delaySeconds = secondsOf(read(Param::Delay));
+	out.settings.holdSeconds = secondsOf(read(Param::Hold));
+	out.settings.decaySeconds = secondsOf(read(Param::Decay));
+	out.settings.sustain = read(Param::Sustain);
+	for (int k = 1; k < kPartialCount; ++k) {
+		PartialSettings& p = out.settings.more[static_cast<size_t>(k - 1)];
+		const auto at = [k, &read](PartialField f) { return read(partialParam(k, f)); };
+		p.harmonic = static_cast<size_t>(at(PartialField::Harmonic));
+		p.level = at(PartialField::Level);
+		p.fineSemitones = at(PartialField::Fine);
+		p.phase = at(PartialField::Phase);
+		p.spread = at(PartialField::Spread);
+		p.width = at(PartialField::Width);
+		p.depth = at(PartialField::Depth);
+		p.highpass = at(PartialField::Mode) >= 0.5f;
+		p.active = at(PartialField::Active) >= 0.5f;
+	}
 	// noteSemitones, bendSemitones and gate are deliberately untouched — see rowOf.
 	return out;
 }
@@ -394,29 +430,24 @@ void Harm::prepare(double sampleRate) {
 }
 
 void Harm::reset() {
-	left_.reset();
-	right_.reset();
-	hpLeft_.reset();
-	hpRight_.reset();
-	phase_ = 0.0;
-	catchup_ = 0.0;
-	pinkScale_ = 1.0;
-	envelope_ = 0.0;
-	currentHz_ = 0.0;
+	for (Voice& v : voices_) {
+		v.reset();
+		v.wasActive = false;
+	}
+	envelope_.reset();
 	gateWas_ = false;
-	// SO THE NEXT NOTE SNAPS RATHER THAN GLIDING UP FROM NOTHING. A reset filter starts silent; a
-	// reset oscillator with a remembered frequency would portamento from wherever it was left, which
-	// is audible and wrong after a transport stop.
-	haveFrequency_ = false;
 	gridPhase_ = 0;
 }
 
-void Harm::refreshCoefficients() {
+void Harm::refreshCoefficients(Voice& v, const Settings& p) {
 	// WIDTH ZERO IS NO NOTCH AT ALL, which is the control's declared meaning and not a small-Q
 	// approximation of it. A notch at Q=30 still removes a real amount of signal, so a device at its
 	// DEFAULT settings would colour a sound it was asked to leave alone — the identity guarantee the
 	// Level control also carries.
-	const bool wasOn = notchOn_;
+	//
+	// `p` IS THE PARTIAL, seen as the first (`partialSlice`): its harmonic, width, depth and mode, with the note and the gate
+	// the whole device shares. Everything below is what the single notch always did, once per active partial.
+	const bool wasOn = v.notchOn;
 	// **DEPTH FOLLOWS THE ENVELOPE, WHEN ASKED** (`Param::DepthFollowsEnv`): the depth is scaled by
 	// where the note envelope stands at this grid point, so the notch fades in over Attack and out over Release.
 	// Exactly 1 when the option is off, and `x * 1.0` is `x`, so that road is today's bits. An envelope at ZERO
@@ -424,39 +455,39 @@ void Harm::refreshCoefficients() {
 	// the way out so a note brings it back from silence. Read at the grid, so with Attack at zero the notch
 	// engages at the first grid point after the gate rather than on the gate's sample (at most kControlBlock late).
 	// **HIGH-PASS MODE (backlog NL): THE BRICKWALL RUNS INSTEAD, at the frequency the oscillator is actually at.**
-	// `currentHz_` rather than the target, so Porta glides the corner with the oscillator — the coupling the
+	// `currentHz` rather than the target, so Porta glides the corner with the oscillator — the coupling the
 	// header promises. Width, Depth and the envelope do not reach it (the brickwall has one shape), so it is
 	// always on in this mode. Each filter's state is cleared on the way OUT, for the notch's reason below:
 	// switching back must not replay a tail from whenever that filter last ran.
-	const bool wasHighpass = highpassOn_;
-	highpassOn_ = target_.highpass;
-	if (highpassOn_) {
-		if (notchOn_) {
-			left_.reset();
-			right_.reset();
+	const bool wasHighpass = v.highpassOn;
+	v.highpassOn = p.highpass;
+	if (v.highpassOn) {
+		if (v.notchOn) {
+			v.left.reset();
+			v.right.reset();
 		}
-		notchOn_ = false;
-		notchDepthNow_ = 0.0;
-		const double f0 = currentHz_ > 0.0 ? currentHz_ : notchCentreHz(target_);
-		hpLeft_.setCorner(f0, sampleRate_);
-		hpRight_.setCorner(f0, sampleRate_);
+		v.notchOn = false;
+		v.notchDepthNow = 0.0;
+		const double f0 = v.currentHz > 0.0 ? v.currentHz : notchCentreHz(p);
+		v.hpLeft.setCorner(f0, sampleRate_);
+		v.hpRight.setCorner(f0, sampleRate_);
 		return;
 	}
 	if (wasHighpass) {
-		hpLeft_.reset();
-		hpRight_.reset();
+		v.hpLeft.reset();
+		v.hpRight.reset();
 	}
-	const double envelopeDepth = target_.depthFollowsEnv ? envelope_ : 1.0;
-	notchOn_ = target_.width > 0.0f && envelopeDepth > 0.0;
-	notchDepthNow_ = 0.0;
-	if (!notchOn_) {
+	const double envelopeDepth = p.depthFollowsEnv ? envelope_.level() : 1.0;
+	v.notchOn = p.width > 0.0f && envelopeDepth > 0.0;
+	v.notchDepthNow = 0.0;
+	if (!v.notchOn) {
 		// AND THE BIQUAD FORGETS WHERE IT WAS (backlog EH, shape 6): a stage that keeps its state across
 		// a bypass replays it on the way back in — a Q=30 notch holding a tail from whenever Width was
 		// last up rang it into the first samples after Width came back. The bus utility's DC stage names
 		// the same precedent. Cleared on the way OUT, so the way back in starts silent.
 		if (wasOn) {
-			left_.reset();
-			right_.reset();
+			v.left.reset();
+			v.right.reset();
 		}
 		return;
 	}
@@ -464,12 +495,12 @@ void Harm::refreshCoefficients() {
 	// THE CENTRE TRACKS THE OSCILLATOR, which is the coupling that makes HARM one device — and falls
 	// back to the fundamental when the oscillator is silent, because a notch tracking a harmonic
 	// nobody is sounding would be stripping a frequency for no reason. Both live in notchCentreHz.
-	const double centre = notchCentreHz(target_);
+	const double centre = notchCentreHz(p);
 	// BOUNDED BY NYQUIST HERE, where the sample rate is known. The control declares a musical range
 	// and the DSP owns its own limit — the same division the filter's cutoff draws.
 	const double nyquist = sampleRate_ * 0.5;
 	const double fc = std::clamp(centre, 1.0, nyquist * 0.98);
-	const double q = std::max(notchQ(target_), 0.01);
+	const double q = std::max(notchQ(p), 0.01);
 
 	// RBJ's notch, verbatim in shape: a zero pair exactly on the unit circle at w0, so the centre is
 	// removed rather than attenuated, and the poles inside it by alpha.
@@ -483,40 +514,38 @@ void Harm::refreshCoefficients() {
 	// coefficients that shipped; at depth 0 the numerator equals the denominator termwise and the
 	// filter is a wire.
 	//
-	// THE POLES DO NOT MOVE, and that is the property worth stating: `a1_`, `a2_` and `a0` are
+	// THE POLES DO NOT MOVE, and that is the property worth stating: `a1`, `a2` and `a0` are
 	// untouched, so the notch keeps its WIDTH while its DEPTH changes. A depth that moved the poles
 	// would be a second width control wearing another name.
-	notchDepthNow_ = notchDepth(target_) * envelopeDepth;
-	const double alphaZ = alpha * (1.0 - notchDepthNow_);
-	b0_ = (1.0 + alphaZ) / a0;
-	b1_ = -2.0 * cosW0 / a0;
-	b2_ = (1.0 - alphaZ) / a0;
-	a1_ = -2.0 * cosW0 / a0;
-	a2_ = (1.0 - alpha) / a0;
+	v.notchDepthNow = notchDepth(p) * envelopeDepth;
+	const double alphaZ = alpha * (1.0 - v.notchDepthNow);
+	v.b0 = (1.0 + alphaZ) / a0;
+	v.b1 = -2.0 * cosW0 / a0;
+	v.b2 = (1.0 - alphaZ) / a0;
+	v.a1 = -2.0 * cosW0 / a0;
+	v.a2 = (1.0 - alpha) / a0;
 }
 
-void Harm::advanceControl(int samples) {
+void Harm::advanceControl(Voice& v, const Settings& p, bool retriggered) {
 	// PORTAMENTO ON THE TRACKED FREQUENCY, and the notch rides it because the notch is recomputed
 	// from the same number. A glide that moved the oscillator and left the notch behind would pull
 	// the two halves of the device apart for the length of the glide.
-	const double targetHz = oscillatorHz(target_);
-	// LATCHED HERE, ON THE GRID, NOT AT THE END OF THE CALL. It used to be written after the whole
+	const double targetHz = oscillatorHz(p);
+	// `retriggered` IS LATCHED BY THE CALLER, ON THE GRID, NOT AT THE END OF THE CALL. It used to be written after the whole
 	// buffer, so a 256-frame block saw "retriggered" at sixteen grid points and a 1-frame block at
 	// one — harmless while the trigger only snapped a frequency that was already at its target, and a
 	// block-size dependence the moment the trigger also aimed the phase (HARM parity sweep,
-	// 2026-09-16; the block-size case caught it at 1e-6).
-	const bool retriggered = target_.gate && !gateWas_;
-	gateWas_ = target_.gate;
-	const double coefficient = smoothingCoefficient(target_.portaSeconds, sampleRate_);
-	if (!haveFrequency_ || retriggered || coefficient == 0.0) {
+	// 2026-09-16; the block-size case caught it at 1e-6). One latch serves every partial.
+	const double coefficient = smoothingCoefficient(p.portaSeconds, sampleRate_);
+	if (!v.haveFrequency || retriggered || coefficient == 0.0) {
 		// SNAP ON RETRIGGER, so a new note starts AT its pitch. A porta that applied to the first note
 		// of a phrase would bend into every attack, which is not what a portamento control means.
-		currentHz_ = targetHz;
-		haveFrequency_ = true;
+		v.currentHz = targetHz;
+		v.haveFrequency = true;
 	}
-	else if (currentHz_ != targetHz) {
-		const double retention = std::pow(coefficient, static_cast<double>(samples));
-		currentHz_ = targetHz + (currentHz_ - targetHz) * retention;
+	else if (v.currentHz != targetHz) {
+		const double retention = std::pow(coefficient, static_cast<double>(kControlBlock));
+		v.currentHz = targetHz + (v.currentHz - targetHz) * retention;
 	}
 
 	// PHASE IS A START PHASE, so a retrigger AIMS the oscillator at it — and converges rather than
@@ -527,24 +556,27 @@ void Harm::advanceControl(int samples) {
 	// at the read, so the target for the accumulator is zero: the error is the accumulator's own
 	// distance from a whole turn, shortest way round.
 	if (retriggered) {
-		const double away = phase_ - std::floor(phase_ + 0.5); // in (-0.5, 0.5]: how far past the nearest turn
-		catchup_ = -away;
+		const double away = v.phase - std::floor(v.phase + 0.5); // in (-0.5, 0.5]: how far past the nearest turn
+		v.catchup = -away;
 	}
 
 	// PINK-NOISE SCALING OF THE SINE, -3 dB/octave above 40 Hz and unity below, recomputed with the
 	// tracked frequency (the firmware's `cachedPinkQ31`, recomputed when the pitch moves).
-	pinkScale_ = currentHz_ > 40.0 ? std::sqrt(40.0 / currentHz_) : 1.0;
+	v.pinkScale = v.currentHz > 40.0 ? std::sqrt(40.0 / v.currentHz) : 1.0;
 
-	refreshCoefficients();
+	refreshCoefficients(v, p);
+	++v.gridPoints;
 }
 
 void Harm::processStereo(float* left, float* right, int frames) {
 	// THIS CALL'S WINDOWS, taken before any return so none outlives its call.
-	const float* levelRun = pendingLevelRun_;
-	const float* phaseRun = pendingPhaseRun_;
-	const float* spreadRun = pendingSpreadRun_;
-	pendingLevelRun_ = pendingPhaseRun_ = pendingSpreadRun_ = nullptr;
-	windowedCalls_ += (levelRun != nullptr || phaseRun != nullptr || spreadRun != nullptr) ? 1u : 0u;
+	const std::array<Runs, kPartialCount> runs = pending_;
+	pending_ = {};
+	bool anyWindow = false;
+	for (const Runs& r : runs) {
+		anyWindow = anyWindow || r.level != nullptr || r.phase != nullptr || r.spread != nullptr;
+	}
+	windowedCalls_ += anyWindow ? 1u : 0u;
 	if (left == nullptr || frames <= 0) {
 		return;
 	}
@@ -556,82 +588,130 @@ void Harm::processStereo(float* left, float* right, int frames) {
 	// AND THE STATE GOES QUIET WITH IT. A device switched out mid-phrase must not keep its envelope
 	// open or its notch ringing, or switching it back on would resume a note nobody is playing.
 	if (!target_.enabled) {
-		if (haveFrequency_ || envelope_ > 0.0) {
+		bool live = envelope_.level() > 0.0;
+		for (const Voice& v : voices_) {
+			live = live || v.haveFrequency;
+		}
+		if (live) {
 			reset();
 		}
 		return;
 	}
 	// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 before anything sees it (as EQ and Comp do; `fx::scrubNonFinite`).
 	fx::scrubNonFinite(left, right, frames);
-	const double level = static_cast<double>(std::clamp(target_.level, 0.0f, 1.0f));
+
+	// THE PARTIALS THAT ARE IN THE SOUND, each seen as the first (`partialSlice`). AN INACTIVE PARTIAL IS NOT RENDERED AT
+	// ALL — no notch, no sine, no grid point — and is reset the moment it goes out, so switching it back on starts it
+	// from silence rather than replaying whatever it last held.
+	std::array<Settings, kPartialCount> slice;
+	std::array<int, kPartialCount> live {};
+	int liveCount = 0;
+	for (int k = 0; k < kPartialCount; ++k) {
+		slice[static_cast<size_t>(k)] = partialSlice(target_, k);
+		Voice& v = voices_[static_cast<size_t>(k)];
+		if (slice[static_cast<size_t>(k)].active) {
+			live[static_cast<size_t>(liveCount++)] = k;
+			v.wasActive = true;
+		}
+		else if (v.wasActive) {
+			v.reset();
+			v.wasActive = false;
+		}
+	}
+
 	// SPREAD IS A HALF TURN AT THE TOP, and it is separate from Phase — the firmware folded the two
 	// into one control and could not offer a centred oscillator with any width at all.
-	const double spreadTurns = static_cast<double>(std::clamp(target_.spread, 0.0f, 1.0f)) * 0.5;
-	const double phaseOffset = static_cast<double>(std::clamp(target_.phase, 0.0f, 1.0f));
+	std::array<double, kPartialCount> level {};
+	std::array<double, kPartialCount> spreadTurns {};
+	std::array<double, kPartialCount> phaseOffset {};
+	for (int n = 0; n < liveCount; ++n) {
+		const auto k = static_cast<size_t>(live[static_cast<size_t>(n)]);
+		level[k] = static_cast<double>(std::clamp(slice[k].level, 0.0f, 1.0f));
+		spreadTurns[k] = static_cast<double>(std::clamp(slice[k].spread, 0.0f, 1.0f)) * 0.5;
+		phaseOffset[k] = static_cast<double>(std::clamp(slice[k].phase, 0.0f, 1.0f));
+	}
 
 	int done = 0;
 	while (done < frames) {
 		// THE GRID IS ABSOLUTE, carried in gridPhase_ across calls, so where a host's block boundary
 		// falls cannot change which samples the coefficients were updated on.
 		if (gridPhase_ == 0) {
-			advanceControl(kControlBlock);
+			const bool retriggered = target_.gate && !gateWas_;
+			gateWas_ = target_.gate;
+			for (int n = 0; n < liveCount; ++n) {
+				const auto k = static_cast<size_t>(live[static_cast<size_t>(n)]);
+				advanceControl(voices_[k], slice[k], retriggered);
+			}
 		}
 		const int take = std::min(frames - done, kControlBlock - gridPhase_);
 
-		const double increment = currentHz_ / sampleRate_;
-		const double attack = smoothingCoefficient(target_.attackSeconds, sampleRate_);
-		const double release = smoothingCoefficient(target_.releaseSeconds, sampleRate_);
+		// THE ENVELOPE'S COEFFICIENTS, once per chunk like the attack and release always were.
+		EnvelopeCoefs env;
+		env.attack = smoothingCoefficient(target_.attackSeconds, sampleRate_);
+		env.release = smoothingCoefficient(target_.releaseSeconds, sampleRate_);
+		env.decay = smoothingCoefficient(target_.decaySeconds, sampleRate_);
+		env.delaySamples = static_cast<int>(std::lround(std::max(0.0f, target_.delaySeconds) * sampleRate_));
+		env.holdSamples = static_cast<int>(std::lround(std::max(0.0f, target_.holdSeconds) * sampleRate_));
+		env.sustain = static_cast<double>(std::clamp(target_.sustain, 0.0f, 1.0f));
+
+		std::array<double, kPartialCount> increment {};
+		for (int n = 0; n < liveCount; ++n) {
+			const auto k = static_cast<size_t>(live[static_cast<size_t>(n)]);
+			increment[k] = voices_[k].currentHz / sampleRate_;
+			voices_[k].samplesRendered += static_cast<size_t>(take);
+		}
 
 		for (int i = 0; i < take; ++i) {
 			const int at = done + i;
 
 			// THE ENVELOPE MOVES PER SAMPLE, not per grid: it is what a note's attack sounds like, and
 			// a sixteen-sample staircase on it is audible in a way a sixteen-sample staircase on a
-			// notch's centre is not.
-			const double coefficient = target_.gate ? attack : release;
-			const double destination = target_.gate ? 1.0 : 0.0;
-			envelope_ = coefficient == 0.0 ? destination
-			                               : destination + (envelope_ - destination) * coefficient;
-			// FLOORED TO ZERO, the firmware's `kHarmEnvThreshold` (1e-7, ~-140 dB): a one-pole release
-			// never reaches zero on its own, so without this the sine's gain went denormal after every
-			// note and stayed there — on the audio thread (HARM parity sweep, 2026-09-16).
-			if (!target_.gate && envelope_ < kEnvelopeFloor) {
-				envelope_ = 0.0;
-			}
+			// notch's centre is not. (The release is floored to zero inside `Envelope`: a one-pole release never
+			// reaches zero on its own, so without it the sine's gain went denormal after every note and stayed
+			// there — on the audio thread. HARM parity sweep, 2026-09-16.)
+			const double envelope = envelope_.step(target_.gate, env);
 
-			// STRIP FIRST, THEN REPLACE. The order is the device: the notch takes the harmonic out of
-			// what arrived, and the oscillator puts one back in its place.
+			// STRIP FIRST, THEN REPLACE. The order is the device: the notches take their harmonics out of
+			// what arrived — in series, partial 1 first — and the oscillators put theirs back.
 			float l = left[at];
 			float r = right != nullptr ? right[at] : l;
-			if (notchOn_) {
-				l = left_.process(l, b0_, b1_, b2_, a1_, a2_);
-				r = right_.process(r, b0_, b1_, b2_, a1_, a2_);
-			}
-			else if (highpassOn_) {
-				l = hpLeft_.process(l);
-				r = hpRight_.process(r);
+			for (int n = 0; n < liveCount; ++n) {
+				Voice& v = voices_[static_cast<size_t>(live[static_cast<size_t>(n)])];
+				if (v.notchOn) {
+					l = v.left.process(l, v.b0, v.b1, v.b2, v.a1, v.a2);
+					r = v.right.process(r, v.b0, v.b1, v.b2, v.a1, v.a2);
+				}
+				else if (v.highpassOn) {
+					l = v.hpLeft.process(l);
+					r = v.hpRight.process(r);
+				}
 			}
 
-			// PER SAMPLE WHILE A ROUTED SOURCE MOVES THEM (backlog FK), by the same clamps as the scalars above.
-			const double levelAt = levelRun != nullptr ? static_cast<double>(std::clamp(levelRun[at], 0.0f, 1.0f)) : level;
-			if (levelAt > 0.0 && envelope_ > 0.0) {
-				const double spreadAt =
-				    spreadRun != nullptr ? static_cast<double>(std::clamp(spreadRun[at], 0.0f, 1.0f)) * 0.5 : spreadTurns;
-				const double phaseAt = phaseRun != nullptr ? static_cast<double>(std::clamp(phaseRun[at], 0.0f, 1.0f)) : phaseOffset;
-				// PINK-SCALED: -3 dB per octave above 40 Hz, never a boost — the firmware's `pinkScale`,
-				// which the port had dropped (HARM parity sweep, 2026-09-16). Harmonic spans 1:8 to 32:1,
-				// so without it 32:1 on middle C sat a full 23 dB above where the reference puts it.
-				// SPREAD IS SYMMETRIC about Phase, +-spread/2, as the firmware places it (`targetPhaseL =
-				// spread/2, targetPhaseR = -spread/2`); the port held L and moved R by the whole spread —
-				// the same angle between them, a different place for both.
-				// AND FULL LEVEL IS 0 dBFS — DECIDED (backlog EM). The firmware's sine leaves
-				// its fixed-point chain ~36 dB down (`>>6`, then `<<1`, `<<2`), a headroom artefact rather
-				// than a level anyone chose; the parity sweep asked and this is the answer.
-				const double gain = levelAt * envelope_ * pinkScale_;
-				l += static_cast<float>(
-				    gain * std::sin(2.0 * std::numbers::pi * (phase_ + phaseAt - 0.5 * spreadAt)));
-				r += static_cast<float>(
-				    gain * std::sin(2.0 * std::numbers::pi * (phase_ + phaseAt + 0.5 * spreadAt)));
+			for (int n = 0; n < liveCount; ++n) {
+				const auto k = static_cast<size_t>(live[static_cast<size_t>(n)]);
+				const Voice& v = voices_[k];
+				const Runs& run = runs[k];
+				// PER SAMPLE WHILE A ROUTED SOURCE MOVES THEM (backlog FK), by the same clamps as the scalars above.
+				const double levelAt = run.level != nullptr ? static_cast<double>(std::clamp(run.level[at], 0.0f, 1.0f)) : level[k];
+				if (levelAt > 0.0 && envelope > 0.0) {
+					const double spreadAt =
+					    run.spread != nullptr ? static_cast<double>(std::clamp(run.spread[at], 0.0f, 1.0f)) * 0.5 : spreadTurns[k];
+					const double phaseAt = run.phase != nullptr ? static_cast<double>(std::clamp(run.phase[at], 0.0f, 1.0f)) : phaseOffset[k];
+					// PINK-SCALED: -3 dB per octave above 40 Hz, never a boost — the firmware's `pinkScale`,
+					// which the port had dropped (HARM parity sweep, 2026-09-16). Harmonic spans 1:8 to 32:1,
+					// so without it 32:1 on middle C sat a full 23 dB above where the reference puts it.
+					// SPREAD IS SYMMETRIC about Phase, +-spread/2, as the firmware places it (`targetPhaseL =
+					// spread/2, targetPhaseR = -spread/2`); the port held L and moved R by the whole spread —
+					// the same angle between them, a different place for both.
+					// AND FULL LEVEL IS 0 dBFS — DECIDED (backlog EM). The firmware's sine leaves
+					// its fixed-point chain ~36 dB down (`>>6`, then `<<1`, `<<2`), a headroom artefact rather
+					// than a level anyone chose; the parity sweep asked and this is the answer.
+					const double gain = levelAt * envelope * v.pinkScale;
+					l += static_cast<float>(
+					    gain * std::sin(2.0 * std::numbers::pi * (v.phase + phaseAt - 0.5 * spreadAt)));
+					r += static_cast<float>(
+					    gain * std::sin(2.0 * std::numbers::pi * (v.phase + phaseAt + 0.5 * spreadAt)));
+				}
 			}
 
 			left[at] = l;
@@ -639,19 +719,23 @@ void Harm::processStereo(float* left, float* right, int frames) {
 				right[at] = r;
 			}
 
-			phase_ += increment;
-			// THE CATCH-UP, paid off a sixteenth of the increment's share per sample; the last crumb is
-			// paid whole so the error reaches exactly zero rather than asymptoting into denormals.
-			if (catchup_ != 0.0) {
-				double correction = catchup_ * increment * (1.0 / 16.0);
-				if (std::fabs(correction) >= std::fabs(catchup_) || std::fabs(correction) < 1.0e-9) {
-					correction = catchup_;
+			for (int n = 0; n < liveCount; ++n) {
+				const auto k = static_cast<size_t>(live[static_cast<size_t>(n)]);
+				Voice& v = voices_[k];
+				v.phase += increment[k];
+				// THE CATCH-UP, paid off a sixteenth of the increment's share per sample; the last crumb is
+				// paid whole so the error reaches exactly zero rather than asymptoting into denormals.
+				if (v.catchup != 0.0) {
+					double correction = v.catchup * increment[k] * (1.0 / 16.0);
+					if (std::fabs(correction) >= std::fabs(v.catchup) || std::fabs(correction) < 1.0e-9) {
+						correction = v.catchup;
+					}
+					v.phase += correction;
+					v.catchup -= correction;
 				}
-				phase_ += correction;
-				catchup_ -= correction;
-			}
-			if (phase_ >= 1.0 || phase_ < 0.0) {
-				phase_ -= std::floor(phase_);
+				if (v.phase >= 1.0 || v.phase < 0.0) {
+					v.phase -= std::floor(v.phase);
+				}
 			}
 		}
 
@@ -673,8 +757,8 @@ Harm& asHarm(void* storage) { return *static_cast<Harm*>(storage); }
 
 } // namespace
 
-double opsCurrentHzForTest(const void* storage) {
-	return static_cast<const Harm*>(storage)->currentHzForTest();
+double opsCurrentHzForTest(const void* storage, int partial) {
+	return static_cast<const Harm*>(storage)->currentHzForTest(partial);
 }
 
 const Settings& opsTargetForTest(const void* storage) {
@@ -683,15 +767,32 @@ const Settings& opsTargetForTest(const void* storage) {
 
 size_t opsWindowedCallsForTest(const void* storage) { return static_cast<const Harm*>(storage)->windowedCalls_; }
 
-double opsNotchDepthForTest(const void* storage) { return static_cast<const Harm*>(storage)->notchDepthForTest(); }
-
-double opsHighpassCornerForTest(const void* storage) {
-	return static_cast<const Harm*>(storage)->highpassCornerForTest();
+double opsNotchDepthForTest(const void* storage, int partial) {
+	return static_cast<const Harm*>(storage)->notchDepthForTest(partial);
 }
 
-/// THE CONTROLS READ PER SAMPLE WHEN MODULATED — see `AudioOps::windowedControls`.
-constexpr std::array<uint8_t, 3> kWindowedControls { static_cast<uint8_t>(Param::Level), static_cast<uint8_t>(Param::Phase),
-                                                     static_cast<uint8_t>(Param::Spread) };
+double opsHighpassCornerForTest(const void* storage, int partial) {
+	return static_cast<const Harm*>(storage)->highpassCornerForTest(partial);
+}
+
+size_t opsPartialSamplesForTest(const void* storage, int partial) {
+	return static_cast<const Harm*>(storage)->partialSamplesForTest(partial);
+}
+
+size_t opsPartialGridPointsForTest(const void* storage, int partial) {
+	return static_cast<const Harm*>(storage)->partialGridPointsForTest(partial);
+}
+
+/// THE CONTROLS READ PER SAMPLE WHEN MODULATED — see `AudioOps::windowedControls`. Every partial's Level, Phase and Spread.
+constexpr std::array<uint8_t, 3 * kPartialCount> kWindowedControls = [] {
+	std::array<uint8_t, 3 * kPartialCount> out {};
+	for (int k = 0; k < kPartialCount; ++k) {
+		out[static_cast<size_t>(3 * k + 0)] = static_cast<uint8_t>(partialParam(k, PartialField::Level));
+		out[static_cast<size_t>(3 * k + 1)] = static_cast<uint8_t>(partialParam(k, PartialField::Phase));
+		out[static_cast<size_t>(3 * k + 2)] = static_cast<uint8_t>(partialParam(k, PartialField::Spread));
+	}
+	return out;
+}();
 
 const device::AudioOps kAudioOps {
     .stateBytes = sizeof(Harm),
@@ -742,7 +843,11 @@ const device::AudioOps kAudioOps {
     .setFieldWindows =
         [](void* storage, const float* const* runs, size_t count, int) {
 	        const auto at = [&](Param p) { return static_cast<size_t>(p) < count ? runs[static_cast<size_t>(p)] : nullptr; };
-	        asHarm(storage).setWindowRuns(at(Param::Level), at(Param::Phase), at(Param::Spread));
+	        for (int k = 0; k < kPartialCount; ++k) {
+		        asHarm(storage).setWindowRuns(k, at(partialParam(k, PartialField::Level)),
+		                                      at(partialParam(k, PartialField::Phase)),
+		                                      at(partialParam(k, PartialField::Spread)));
+	        }
         },
 };
 

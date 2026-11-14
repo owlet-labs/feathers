@@ -24,6 +24,7 @@
 #include "device/device.h"
 #include "device/registry.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -336,8 +337,52 @@ enum class Param : int {
 	/// Mix is NOT Level: Level is the oscillator's loudness inside the wet; Mix is the slot's dry against the whole wet.
 	Mix,
 	WetGain,
-	kCount,
+	/// **THE FIRST PARTIAL'S SWITCH** — see `kPartialCount`. On by default, so a patch from before partials existed (which
+	/// stores no such key) plays its one partial exactly as it did. The device's own enable stays `Enabled`'s.
+	Partial1Active,
+	/// **THE ENVELOPE'S OTHER FOUR STAGES.** Attack and Release above are the A and R of a full DAHDSR; these are its D, H, D
+	/// and S. Their defaults (no delay, no hold, decay off, sustain at the top) make the envelope the attack-and-release
+	/// one it always was, to the bit. See `Envelope` in harm.h.
+	Delay,
+	Hold,
+	Decay,
+	Sustain,
+	/// **PARTIALS 2 TO 4**, nine controls each in `PartialField` order, so a partial's control is `partialParam`. Generated from
+	/// one macro, below, so the four cannot drift.
+	Partial2Harmonic,
+	kCount = Partial2Harmonic + 3 * 9,
 };
+
+/// HOW MANY HARMONICS ONE HARM PLAYS: four identical partials, each its own notch and its own sine. The first keeps the
+/// device's original keys and meanings; the other three are the same controls under `harm_p2_`..`harm_p4_`.
+inline constexpr int kPartialCount = 4;
+
+/// The nine controls one partial is, in the order the extra partials lay them out. The first partial's are the
+/// device's original controls (and `Partial1Active`), found by `partialParam`.
+enum class PartialField : int { Harmonic, Level, Fine, Phase, Spread, Width, Depth, Mode, Active, kCount };
+inline constexpr int kPartialFieldCount = static_cast<int>(PartialField::kCount);
+static_assert(kPartialFieldCount == 9);
+
+/// THE PARAMETER A PARTIAL'S FIELD LIVES AT. `partial` is 0..3.
+constexpr Param partialParam(int partial, PartialField field) {
+	if (partial <= 0) {
+		switch (field) {
+		case PartialField::Harmonic: return Param::Harmonic;
+		case PartialField::Level: return Param::Level;
+		case PartialField::Fine: return Param::Fine;
+		case PartialField::Phase: return Param::Phase;
+		case PartialField::Spread: return Param::Spread;
+		case PartialField::Width: return Param::Width;
+		case PartialField::Depth: return Param::Depth;
+		case PartialField::Mode: return Param::Mode;
+		case PartialField::Active:
+		case PartialField::kCount: break;
+		}
+		return Param::Partial1Active;
+	}
+	return static_cast<Param>(static_cast<int>(Param::Partial2Harmonic) + (partial - 1) * kPartialFieldCount
+	                          + static_cast<int>(field));
+}
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
 /// The Mode switch's two states, in stored order — a Choice is stored by LABEL, so these words are the patch's.
@@ -347,6 +392,29 @@ inline constexpr const char* kModeNames[] = {"Notch", "High-pass"};
 /// even in octaves, and the minimum means "no time at all" because a logarithmic domain has no zero.
 inline constexpr double kTimeLog2Min = -11.0; // 0.49 ms
 inline constexpr double kTimeLog2Max = 3.3219280948873626; // 10 s
+
+/// ONE PARTIAL'S NINE ROWS, for partials 2 to 4. `HARMONIC` is the default ratio's index in `kHarmonics` (19 is 2:1, 29 is
+/// 3:1, 39 is 4:1: the octave, the fifth above it, two octaves), and the default of Active is OFF, so switching one on adds
+/// a harmonic worth hearing. Every other number is the first partial's own.
+#define FEATHERS_HARM_PARTIAL_DESCS(KEY, NAME, HARMONIC, ORDINAL) \
+    {KEY "harmonic", NAME "Harmonic", 0.0, static_cast<double>(kHarmonicCount) - 1.0, HARMONIC, true, device::Unit::Number, {}, \
+     false, false, "Which harmonic the " ORDINAL " partial's notch targets and its sine plays"}, \
+    {KEY "level", NAME "Level", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false, \
+     "Output level of the " ORDINAL " partial's sine"}, \
+    {KEY "fine", NAME "Fine", -12.0, 12.0, 0.0, false, device::Unit::Number, {}, true, false, \
+     "Fine pitch adjustment of the " ORDINAL " partial in semitones — tunes its notch target precisely"}, \
+    {KEY "phase", NAME "Phase", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, true, false, \
+     "Where in its cycle the " ORDINAL " partial's sine starts"}, \
+    {KEY "spread", NAME "Spread", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, true, false, \
+     "Stereo spread of the " ORDINAL " partial's sine"}, \
+    {KEY "width", NAME "Width", 0.0, 1.0, 0.3, false, device::Unit::Percent, {}, true, false, \
+     "How wide the " ORDINAL " partial's notch is — 0 is a wire, higher is a broader cut. Notch mode only"}, \
+    {KEY "depth", NAME "Depth", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false, \
+     "How much of the centre the " ORDINAL " partial's notch removes — 1 is a full null, 0 is nothing. Notch mode only"}, \
+    {KEY "mode", NAME "Mode", 0.0, 1.0, 0.0, true, device::Unit::Choice, kModeNames, false, false, \
+     "The " ORDINAL " partial strips its harmonic with a notch, or with a steep high-pass that also removes everything below it"}, \
+    {KEY "active", NAME "Active", 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false, \
+     "Whether the " ORDINAL " partial — its notch and its sine — is in the sound"},
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // **ON BY DEFAULT — all effects should default to on when they are added.**
@@ -418,9 +486,54 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      "Dry against processed, around the whole device"},
     {"harm_wet_gain", "Harm Wet Gain", 0.0, 1.0, 0.5, false, device::Unit::Fader, {}, true, false,
      "Level of the processed signal alone, unity at twelve o'clock; the dry in a partial Mix is untouched"},
+    // THE FIRST PARTIAL'S SWITCH. ON BY DEFAULT, which is what a patch that never stored it means: one partial, playing.
+    {"harm_p1_active", "Harm 1 Active", 0.0, 1.0, 1.0, true, device::Unit::Choice, kOffOnNames, false, false,
+     "Whether the first partial — its notch and its sine — is in the sound"},
+    // THE ENVELOPE'S D, H, D AND S, beside the Attack and Release above. Times are the same log2 seconds, and the minimum of
+    // a time means the stage does not happen (the DAHDSR's own convention). The defaults — no delay, no hold, decay
+    // off, sustain full — leave the envelope exactly the attack/release one the device had.
+    {"harm_delay", "Harm Delay", kTimeLog2Min, kTimeLog2Max, kTimeLog2Min, false, device::Unit::LogSeconds, {}, true, false,
+     "A silence between the note starting and the envelope's attack beginning"},
+    {"harm_hold", "Harm Hold", kTimeLog2Min, kTimeLog2Max, kTimeLog2Min, false, device::Unit::LogSeconds, {}, true, false,
+     "How long the envelope stays at its peak before the decay begins"},
+    {"harm_decay", "Harm Decay", kTimeLog2Min, kTimeLog2Max, kTimeLog2Min, false, device::Unit::LogSeconds, {}, true, false,
+     "How long the envelope takes to fall from its peak to the sustain level; at the bottom of its travel the fall is instant"},
+    {"harm_sustain", "Harm Sustain", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,
+     "The level the envelope holds at while the note is pressed"},
+    // PARTIALS 2, 3 AND 4 — ONE MACRO, SO THE THREE CANNOT DRIFT FROM EACH OTHER, and `static_assert`s below hold them to
+    // the first partial's rows. Each differs from the first only in key, name, default harmonic and a default of OFF.
+    FEATHERS_HARM_PARTIAL_DESCS("harm_p2_", "Harm 2 ", 19, "second")
+    FEATHERS_HARM_PARTIAL_DESCS("harm_p3_", "Harm 3 ", 29, "third")
+    FEATHERS_HARM_PARTIAL_DESCS("harm_p4_", "Harm 4 ", 39, "fourth")
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
+
+/// THE FOUR PARTIALS' DESCRIPTORS ARE ONE DESCRIPTOR, checked rather than hoped. Everything but key, name and tooltip must
+/// match the first partial's row — and the two defaults that are the point of having partials to switch on (Active, and
+/// the ratio) are held to their own values.
+constexpr bool partialsAgree() {
+	for (int k = 1; k < kPartialCount; ++k) {
+		for (int f = 0; f < kPartialFieldCount; ++f) {
+			const auto field = static_cast<PartialField>(f);
+			const device::ParamDesc& a = kParamDescs[static_cast<size_t>(partialParam(0, field))];
+			const device::ParamDesc& b = kParamDescs[static_cast<size_t>(partialParam(k, field))];
+			const bool defOk = field == PartialField::Active ? b.def == 0.0
+			                   : field == PartialField::Harmonic ? b.def > a.def
+			                                                     : b.def == a.def;
+			if (a.min != b.min || a.max != b.max || !defOk || a.stepped != b.stepped || a.unit != b.unit
+			    || a.names.data() != b.names.data() || a.names.size() != b.names.size()
+			    || a.modulatable != b.modulatable || a.offsetsMayLeaveRange != b.offsetsMayLeaveRange) {
+				return false;
+			}
+		}
+	}
+	return kParamDescs[static_cast<size_t>(Param::Partial1Active)].def == 1.0
+	       && kHarmonics[static_cast<size_t>(kParamDescs[static_cast<size_t>(partialParam(1, PartialField::Harmonic))].def)].ratio == 2.0f
+	       && kHarmonics[static_cast<size_t>(kParamDescs[static_cast<size_t>(partialParam(2, PartialField::Harmonic))].def)].ratio == 3.0f
+	       && kHarmonics[static_cast<size_t>(kParamDescs[static_cast<size_t>(partialParam(3, PartialField::Harmonic))].def)].ratio == 4.0f;
+}
+static_assert(partialsAgree(), "the four partials' descriptors differ in more than key, name, ratio and Active");
 
 
 /// WHAT THIS DEVICE IS, for a browser to group it by. See device::Traits::tags.
@@ -494,6 +607,41 @@ inline constexpr device::Traits kTraits {
 /// A declaration rather than an omission, and the same answer the filter gives. HARM makes sound; it
 /// does not make control signals. An envelope follower on its own oscillator would be a real second
 /// output and is not being invented here.
+/// THE INDEX OF A RATIO IN `kHarmonics`, for the extra partials' defaults — found by value, so nobody counts rows by hand.
+constexpr size_t harmonicIndexOf(int num, int den) {
+	for (size_t i = 0; i < kHarmonicCount; ++i) {
+		if (kHarmonics[i].num * den == kHarmonics[i].den * num) {
+			return i;
+		}
+	}
+	return kUnisonHarmonic;
+}
+
+/// **PARTIALS 2 TO 4, as the DSP takes them** — the first partial's own fields, without the per-render note (which is the
+/// whole device's). The first partial's live in `Settings` itself, under the names the device has always had, so every
+/// existing reader of them is unmoved; `partialSlice` makes any partial look like that one.
+struct PartialSettings {
+	bool active { false };
+	size_t harmonic { kUnisonHarmonic };
+	float level { 1.0f };
+	float fineSemitones { 0.0f };
+	float phase { 0.0f };
+	float spread { 0.0f };
+	float width { 0.3f };
+	float depth { 1.0f };
+	bool highpass { false };
+
+	friend bool operator==(const PartialSettings&, const PartialSettings&) = default;
+};
+
+constexpr std::array<PartialSettings, 3> defaultExtraPartials() {
+	std::array<PartialSettings, 3> out {};
+	out[0].harmonic = harmonicIndexOf(2, 1);
+	out[1].harmonic = harmonicIndexOf(3, 1);
+	out[2].harmonic = harmonicIndexOf(4, 1);
+	return out;
+}
+
 /// WHAT THE DSP TAKES. Every control that feeds the sample loop, in its own units — times in
 /// SECONDS here rather than in the log2 the knob declares, because the loop should not carry a taper.
 struct Settings {
@@ -525,6 +673,16 @@ struct Settings {
 	bool depthFollowsEnv { false };
 	/// THE BRICKWALL INSTEAD OF THE NOTCH — see `Param::Mode`. The sample loop reads it.
 	bool highpass { false };
+	/// THE FIRST PARTIAL'S SWITCH (`Param::Partial1Active`). The fields above are the first partial's; partials 2 to 4 are `more`.
+	bool active { true };
+	/// THE ENVELOPE'S DELAY, HOLD, DECAY AND SUSTAIN, beside `attackSeconds` and `releaseSeconds`. Zero seconds is a stage that
+	/// does not happen, and a full sustain leaves nothing for the decay to do, so the defaults are the attack/release envelope.
+	float delaySeconds { 0.0f };
+	float holdSeconds { 0.0f };
+	float decaySeconds { 0.0f };
+	float sustain { 1.0f };
+	/// PARTIALS 2, 3 AND 4, in that order.
+	std::array<PartialSettings, 3> more { defaultExtraPartials() };
 
 	/// THE NOTE THE DEVICE IS TRACKING, and NOT patch state — supplied per render by whoever runs
 	/// HARM, exactly as fx::filter::Settings::keyOffsetSemitones is.
@@ -570,6 +728,39 @@ static_assert(Settings {}.enabled
 static_assert(Settings {}.depthFollowsEnv
               == (kParamDescs[static_cast<size_t>(Param::DepthFollowsEnv)].def >= 0.5));
 static_assert(Settings {}.highpass == (kParamDescs[static_cast<size_t>(Param::Mode)].def >= 0.5));
+
+static_assert(Settings {}.active == (kParamDescs[static_cast<size_t>(Param::Partial1Active)].def >= 0.5));
+static_assert(Settings {}.sustain == static_cast<float>(kParamDescs[static_cast<size_t>(Param::Sustain)].def));
+static_assert(Settings {}.more[0].harmonic
+              == static_cast<size_t>(kParamDescs[static_cast<size_t>(partialParam(1, PartialField::Harmonic))].def));
+static_assert(Settings {}.more[1].harmonic
+              == static_cast<size_t>(kParamDescs[static_cast<size_t>(partialParam(2, PartialField::Harmonic))].def));
+static_assert(Settings {}.more[2].harmonic
+              == static_cast<size_t>(kParamDescs[static_cast<size_t>(partialParam(3, PartialField::Harmonic))].def));
+static_assert(Settings {}.more[0].width
+              == static_cast<float>(kParamDescs[static_cast<size_t>(partialParam(1, PartialField::Width))].def));
+
+/// **ANY PARTIAL, SEEN AS THE FIRST.** Returns `settings` with partial `k`'s controls in the fields the first partial's
+/// occupy (and the note, bend and gate untouched), so every function here that reads `Settings` — the oscillator's pitch,
+/// the notch's centre, width and depth, its profile on the ratio axis — answers for partial `k` unchanged. A render and a
+/// picture then ask the same question the same way.
+inline Settings partialSlice(const Settings& settings, int k) {
+	if (k <= 0) {
+		return settings;
+	}
+	Settings out = settings;
+	const PartialSettings& p = settings.more[static_cast<size_t>(std::min(k, kPartialCount - 1) - 1)];
+	out.active = p.active;
+	out.harmonic = p.harmonic;
+	out.level = p.level;
+	out.fineSemitones = p.fineSemitones;
+	out.phase = p.phase;
+	out.spread = p.spread;
+	out.width = p.width;
+	out.depth = p.depth;
+	out.highpass = p.highpass;
+	return out;
+}
 
 struct State {
 	Settings settings {};

@@ -450,6 +450,15 @@ public:
 		bool centred = true; ///< false means right-aligned
 	};
 	[[nodiscard]] ReadoutBox readoutBox() const;
+	/// WHERE THE NUMBER'S ROW IS, VERTICALLY: `{top, height}` in the box, asked by `draw`, `typeInBounds` and
+	/// `caretBounds`. A compact box's one row, or the box's middle; a stacked box with a caption, the row under it; a
+	/// stacked box WITHOUT one, the box's middle too, since there is no caption row to sit under (the Engine rail's
+	/// dropdown drew its name under an empty caption row, at the box's bottom edge, until this said so).
+	struct ValueRow {
+		float top = 0.0f;
+		float height = 0.0f;
+	};
+	[[nodiscard]] ValueRow valueRow() const;
 	/// WHERE THE CAPTION OF A STACKED BOX IS DRAWN — the full width, less the caret's room when the box
 	/// opens a menu (the caret sits on the caption row there, so the value keeps its width).
 	[[nodiscard]] ReadoutBox captionBox() const;

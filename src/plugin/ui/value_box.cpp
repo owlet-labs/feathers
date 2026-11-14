@@ -135,11 +135,20 @@ void ValueBox::resized() {
 visage::Bounds ValueBox::typeInBounds() const {
 	// OVER THE READING: the whole of a compact box (its one row is the reading), the value row of a stacked
 	// one, so the caption above stays to say what is being typed.
-	if (compact_) {
+	if (compact_ || label_.empty()) {
 		return { 0.0f, 0.0f, static_cast<float>(width()), static_cast<float>(height()) };
 	}
 	return { 0.0f, kPadY + kLabelHeight, static_cast<float>(width()),
 		     std::max(0.0f, static_cast<float>(height()) - kPadY - kLabelHeight) };
+}
+
+ValueBox::ValueRow ValueBox::valueRow() const {
+	// A STACKED BOX'S CAPTION ROW EXISTS ONLY WHEN IT HAS A CAPTION: without one the number takes the middle, as a
+	// compact box's does.
+	if (compact_ || label_.empty()) {
+		return { (static_cast<float>(height()) - kValueHeight) * 0.5f, kValueHeight };
+	}
+	return { kPadY + kLabelHeight, kValueHeight };
 }
 
 std::optional<LabelFace> ValueBox::labelFaceAt(visage::Point) const {
@@ -293,9 +302,14 @@ ValueBox::ReadoutBox ValueBox::readoutBox() const {
 	// A COMPACT BOX THAT OPENS A MENU GIVES THE CARET ITS ROOM ON THE RIGHT OF ITS ONE ROW — see
 	// `caretBounds`. A stacked box puts the caret on the CAPTION row instead, so its value keeps the
 	// whole width: a time base's "1 barT" is 26px in a 33px box and was the case that said so.
-	const float caret = compact_ && opensMenu() ? kCaretWidth + kCaretGap : 0.0f;
+	const float caret = (compact_ || label_.empty()) && opensMenu() ? kCaretWidth + kCaretGap : 0.0f;
 	if (compact_) {
 		return { kCompactPadX, static_cast<float>(width()) - kCompactPadX * 2.0f - caret, label_.empty() };
+	}
+	// A STACKED BOX WITHOUT A CAPTION HAS ITS CARET ON THE NUMBER'S ROW (`caretBounds`), so the number gives up the
+	// caret's room there, as a compact box's does.
+	if (label_.empty() && caret > 0.0f) {
+		return { kCompactPadX, static_cast<float>(width()) - kCompactPadX * 2.0f - caret, true };
 	}
 	return { 0.0f, static_cast<float>(width()), true };
 }
@@ -312,7 +326,8 @@ visage::Bounds ValueBox::caretBounds() const {
 		return {};
 	}
 	// ON THE CAPTION ROW OF A STACKED BOX, ON THE ONE ROW OF A COMPACT ONE, inside the right-hand pad.
-	const float middle = compact_ ? height() * 0.5f : kPadY + kLabelHeight * 0.5f;
+	// A stacked box with no caption has no caption row: the caret sits beside the number, as a compact one's does.
+	const float middle = compact_ || label_.empty() ? height() * 0.5f : kPadY + kLabelHeight * 0.5f;
 	return { width() - kCompactPadX - kCaretWidth, middle - kCaretHeight * 0.5f, kCaretWidth, kCaretHeight };
 }
 
@@ -830,7 +845,7 @@ void ValueBox::draw(visage::Canvas& canvas) {
 		// because the number is what changes — a value that grew from "3" to "12" would shift its own
 		// left edge under a centred layout, and a readout that moves while you drag it is harder to
 		// read than one that does not.
-		const float textTop = (height() - kValueHeight) * 0.5f;
+		const float textTop = valueRow().top;
 		// NO CAPTION MEANS THE NUMBER IS THE WHOLE CONTENT, so it takes the middle rather than
 		// hugging the right edge against a caption that is not there. Right-alignment earns its keep
 		// only when something sits opposite it — see the note below on why the number is the half
@@ -853,18 +868,20 @@ void ValueBox::draw(visage::Canvas& canvas) {
 		return;
 	}
 
-	canvas.setColor(captionInk);
-	const ReadoutBox caption = captionBox(); // `labelFaceAt` measures against this room too
-	canvas.text(label_, font(kKnobLabelSize), visage::Font::kCenter, caption.x, kPadY, caption.width,
-	            kLabelHeight);
+	if (!label_.empty()) {
+		canvas.setColor(captionInk);
+		const ReadoutBox caption = captionBox(); // `labelFaceAt` measures against this room too
+		canvas.text(label_, font(kKnobLabelSize), visage::Font::kCenter, caption.x, kPadY, caption.width,
+		            kLabelHeight);
+	}
 
 	// THE NUMBER IS THE BASE, ALWAYS — never the modulated result. See the note at the top of the
 	// header: the mock's rule, and this project's atlas-corruption reason for keeping it.
 	const ReadoutBox stacked = readoutBox();
 	canvas.setColor(ink);
 	canvas.text(readout(), font(kKnobReadoutSize),
-	            stacked.centred ? visage::Font::kCenter : visage::Font::kRight, stacked.x,
-	            kPadY + kLabelHeight, stacked.width, kValueHeight);
+	            stacked.centred ? visage::Font::kCenter : visage::Font::kRight, stacked.x, valueRow().top,
+	            stacked.width, kValueHeight);
 	drawCaret(canvas);
 }
 

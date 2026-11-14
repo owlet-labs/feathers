@@ -91,6 +91,11 @@ public:
 	/// list (every engine visible before one is applied). `selectEngine` is what a pick does, named so a case can exercise
 	/// the effect without a popup; `engineDisplayName` is what the collapsed rail's label wears.
 	[[nodiscard]] ValueBox* engineBoxForTest() const noexcept { return engineBox_.get(); }
+	/// **THE ENGINE CHOICE'S CAPTION**, "ENGINE" in the knobs' caption type, left of the box on its row. The room it is
+	/// drawn in (from the last layout) and the width it needs, so a case can check it is whole and overlaps nothing.
+	[[nodiscard]] visage::Bounds engineCaptionBounds() const;
+	[[nodiscard]] float engineCaptionTextWidth() const;
+	static constexpr const char* kEngineCaption = "ENGINE";
 	void selectEngine(int index);
 	static std::string engineDisplayName(int index);
 	[[nodiscard]] visage::Frame* oscModeForTest() const noexcept { return oscMode_.get(); }
@@ -268,6 +273,8 @@ private:
 	[[nodiscard]] bool additiveEngine() const;
 	/// The y the pages' heading row sits at, from the last walk.
 	float pageHeadingY_ = 0.0f;
+	/// The y the engine choice's caption sits at, from the last walk.
+	float engineCaptionY_ = 0.0f;
 	/// THE TOOLTIP LAYER, a plain member as the card's is; on top of every child by its own flag.
 	TooltipLayer tips_;
 };

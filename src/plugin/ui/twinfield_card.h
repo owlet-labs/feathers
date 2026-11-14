@@ -41,7 +41,7 @@ class WidgetRegistry;
 ///
 /// Top to bottom: the A / B tabs, each carrying its own Solo chip; the pad (the shown layer's terrain,
 /// its eight numbered points and its orbit, with the Crossfade knob on its corner); the shown layer's
-/// view row (Pan X, Pan Y, Zoom, Rotate, Gamma); its motion row (Rate, Sync, Mode, Depth).
+/// view row (Pan X, Pan Y, Zoom, Rotate, Gamma); its motion row (Rate, Sync, Mode, Depth; with the orbit Off, Phase in Rate's cell and no Sync).
 ///
 /// THE TAB IS THE CARD'S VIEW, not a param — Stereo Tool's scope tab is the precedent. BOTH layers'
 /// widgets exist for the card's whole life and the tab shows one set, so no widget is ever re-bound.
@@ -95,6 +95,9 @@ public:
 	[[nodiscard]] SegmentedControl& tabs() const { return *tabs_; }
 	[[nodiscard]] SwitchChip& solo(size_t layer) const { return *solo_[layer]; }
 	[[nodiscard]] Knob& crossfade() const { return *crossfade_; }
+	[[nodiscard]] Knob& rate(size_t layer) const { return *layers_[layer].rate; }
+	[[nodiscard]] Knob& orbitPhase(size_t layer) const { return *layers_[layer].phase; }
+	[[nodiscard]] ValueBox& sync(size_t layer) const { return *layers_[layer].sync; }
 	[[nodiscard]] DeviceControl& control(size_t index) const;
 	[[nodiscard]] std::vector<mod::twinfield::Param> addressedParamsForTest() const;
 	/// THE EIGHT OUTPUTS THE 2x4 BLOCK SHOWS, recomputed from the published orbit phases (the playhead channel: A as
@@ -126,6 +129,9 @@ private:
 	struct LayerWidgets {
 		std::array<std::unique_ptr<Knob>, 5> view;
 		std::unique_ptr<Knob> rate;
+		/// **RATE'S CELL WHEN THE ORBIT IS OFF** — Orbit Phase, its own param and destination. Both knobs exist for the
+		/// card's life and the Mode gate shows one (`device::relevantFor`), so neither is ever re-bound.
+		std::unique_ptr<Knob> phase;
 		std::unique_ptr<ValueBox> sync;
 		std::unique_ptr<ValueBox> mode;
 		std::unique_ptr<Knob> depth;
@@ -136,6 +142,8 @@ private:
 	device::Modulatable* enableModulatable() override;
 	void setShown(size_t layer);
 	void showLayerWidgets();
+	/// IS THIS CONTROL LIVE UNDER ITS GATE? The descriptor decides, the instance supplies the gate's value.
+	[[nodiscard]] bool live(size_t index) const;
 	[[nodiscard]] std::vector<Knob*> allKnobs() const;
 	[[nodiscard]] visage::PopupMenu guardedMenuFor(ValueBox& box);
 

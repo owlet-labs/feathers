@@ -40310,6 +40310,33 @@ struct TwinFieldLaneFixture {
 
 } // namespace
 
+TEST_CASE("Twin Field's card in the fx lane: with the orbit Off, Phase takes Rate's cell and Sync hides; Free puts them back") {
+	// THE VERTICAL LANE'S LAYOUT (the rack's horizontal one is test_rack_editor's TFIELD Off case): one cell, Rate while the
+	// orbit runs and Phase while it is Off, each shown only where it changes the sound.
+	namespace tf = feathers::mod::twinfield;
+	TwinFieldLaneFixture t;
+	ui::TwinFieldCard& card = *t.card;
+	REQUIRE(card.laneAxis() == ui::FxCard::LaneAxis::Vertical);
+	(void)card.updateContent();
+	REQUIRE(card.rate(0).isVisible());
+	CHECK(card.sync(0).isVisible());
+	CHECK_FALSE(card.orbitPhase(0).isVisible());
+	const visage::Bounds rateCell { card.rate(0).x(), card.rate(0).y(), card.rate(0).width(), card.rate(0).height() };
+	card.control(tf::layerParam(0, tf::LayerParam::Mode)).setValue(static_cast<double>(tf::Mode::Off));
+	(void)card.updateContent();
+	CHECK_FALSE(card.rate(0).isVisible());
+	CHECK_FALSE(card.sync(0).isVisible());
+	REQUIRE(card.orbitPhase(0).isVisible());
+	CHECK(card.orbitPhase(0).x() == rateCell.x());
+	CHECK(card.orbitPhase(0).y() == rateCell.y());
+	CHECK(card.orbitPhase(0).width() == rateCell.width());
+	card.control(tf::layerParam(0, tf::LayerParam::Mode)).setValue(static_cast<double>(tf::Mode::Free));
+	(void)card.updateContent();
+	CHECK(card.rate(0).isVisible());
+	CHECK(card.sync(0).isVisible());
+	CHECK_FALSE(card.orbitPhase(0).isVisible());
+}
+
 TEST_CASE("Twin Field's card: a plain wheel over the terrain scrolls the lane and leaves Zoom; Ctrl/Cmd+wheel zooms and does not scroll") {
 	// Scrolling across the lane, the Twin Field card's terrain took over the wheel as it passed under the
 	// pointer. On a card the plain wheel is the LANE's; the main modifier zooms.

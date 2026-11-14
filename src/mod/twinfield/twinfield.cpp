@@ -135,6 +135,14 @@ void TwinField::advance(Layer& layer, const LayerSettings& l, const device::ModT
 			}
 		}
 		return;
+	case Mode::Off:
+		// NO MOTION: the read point stands where Orbit Phase puts it, every tick, whatever the clock says. The
+		// accumulator follows it, so leaving Off for Retrigger or Once (or a stopped Free) starts from there.
+		layer.lock.release();
+		layer.onceRunning = false;
+		layer.phase = manualPhaseTurns(l.orbitPhase);
+		layer.readAt = layer.phase;
+		return;
 	case Mode::kCount:
 		break;
 	}

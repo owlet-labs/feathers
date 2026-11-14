@@ -95,6 +95,7 @@ TwinFieldCard::TwinFieldCard(backplane::DeviceHost& host, WidgetRegistry& regist
 			addChild(w.view[i].get());
 		}
 		w.rate = std::make_unique<Knob>(control(tf::layerParam(l, LP::Rate)), "Rate", notifier_);
+		w.phase = std::make_unique<Knob>(control(tf::layerParam(l, LP::OrbitPhase)), "Phase", notifier_);
 		w.sync = std::make_unique<ValueBox>(control(tf::layerParam(l, LP::Sync)), "Sync");
 		w.mode = std::make_unique<ValueBox>(control(tf::layerParam(l, LP::Mode)), "Mode");
 		w.depth = std::make_unique<Knob>(control(tf::layerParam(l, LP::Depth)), "Depth", notifier_);
@@ -105,6 +106,7 @@ TwinFieldCard::TwinFieldCard(backplane::DeviceHost& host, WidgetRegistry& regist
 			});
 		}
 		addChild(w.rate.get());
+		addChild(w.phase.get());
 		addChild(w.sync.get());
 		addChild(w.mode.get());
 		addChild(w.depth.get());
@@ -137,6 +139,7 @@ std::vector<Knob*> TwinFieldCard::allKnobs() const {
 			out.push_back(k.get());
 		}
 		out.push_back(w.rate.get());
+		out.push_back(w.phase.get());
 		out.push_back(w.depth.get());
 		out.push_back(w.spread.get());
 	}
@@ -192,7 +195,13 @@ void TwinFieldCard::setShown(size_t layer) {
 	redraw();
 }
 
+bool TwinFieldCard::live(size_t index) const {
+	const device::ParamDesc& d = tf::kParamDescs[index];
+	return d.gateControl < 0 || device::relevantFor(d, host_.fieldAt(device_, static_cast<size_t>(d.gateControl)));
+}
+
 void TwinFieldCard::showLayerWidgets() {
+	// THE HONESTY RULE: Rate and Sync only while the orbit runs, Phase (in Rate's cell) only while it is Off.
 	const bool open = !folded();
 	for (size_t l = 0; l < tf::kLayers; ++l) {
 		const bool on = open && l == shown_;
@@ -200,8 +209,9 @@ void TwinFieldCard::showLayerWidgets() {
 		for (auto& k : w.view) {
 			k->setVisible(on);
 		}
-		w.rate->setVisible(on);
-		w.sync->setVisible(on);
+		w.rate->setVisible(on && live(tf::layerParam(l, LP::Rate)));
+		w.phase->setVisible(on && live(tf::layerParam(l, LP::OrbitPhase)));
+		w.sync->setVisible(on && live(tf::layerParam(l, LP::Sync)));
 		w.mode->setVisible(on);
 		w.depth->setVisible(on);
 		w.spread->setVisible(on);
@@ -276,6 +286,7 @@ void TwinFieldCard::resized() {
 		}
 		if (wide) {
 			w.rate->setBounds(at(0), y2, cell, rowHeight());
+			w.phase->setBounds(at(0), y2, cell, rowHeight());
 			w.sync->setBounds(at(1) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
 			w.mode->setBounds(at(2) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
 			w.depth->setBounds(at(3), y2, cell, rowHeight());
@@ -283,6 +294,7 @@ void TwinFieldCard::resized() {
 			continue;
 		}
 		w.rate->setBounds(at(1), y2, cell, rowHeight());
+		w.phase->setBounds(at(1), y2, cell, rowHeight());
 		w.sync->setBounds(at(2) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
 		w.mode->setBounds(at(3) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
 		w.depth->setBounds(at(0), y3, cell, rowHeight());
@@ -316,12 +328,17 @@ bool TwinFieldCard::updateContent() {
 	// ANY PARAM THAT MOVED REDRAWS THE CARD'S CHILDREN; the pad re-reads its own key and rebuilds only if
 	// a terrain input moved.
 	bool told = false;
+	bool modeMoved = false;
 	for (size_t i = 0; i < drawn_.size(); ++i) {
 		const double now = control(i).value();
 		if (now != drawn_[i]) {
+			modeMoved = modeMoved || i == tf::layerParam(0, LP::Mode) || i == tf::layerParam(1, LP::Mode);
 			drawn_[i] = now;
 			told = true;
 		}
+	}
+	if (modeMoved) {
+		showLayerWidgets(); // a Mode change swaps Rate's cell between Rate and Phase, and shows or hides Sync
 	}
 	if (told) {
 		pad_->redraw();

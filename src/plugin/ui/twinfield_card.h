@@ -58,6 +58,8 @@ public:
 	/// strip lies outside it; this is the one hook `FxCard::draw` calls unclipped.
 	void drawHeadExtras(visage::Canvas& canvas) override;
 	float laneHeightAt(float cardWidth) const override;
+	/// A horizontal lane's width: five cells across, each `kWideCellWidth` wide (see `resized`).
+	float laneExtent(float cross) const override;
 	void setModulation(ModState* mod, EditHistory* history) override;
 	void foldedChanged() override;
 	bool updateContent() override;
@@ -76,9 +78,12 @@ public:
 	static constexpr float kPadHeight = 150.0f;
 	static constexpr float kKnobDiameter = 24.0f;
 	static constexpr float kSoloWidth = 40.0f;
+	/// The widest caption ("ROTATE", "SPREAD") whole, with its margins: a cell of the horizontal lane's five-across layout.
+	static constexpr float kWideCellWidth = 60.0f;
 	static constexpr float rowHeight() { return Knob::columnHeight(kKnobDiameter); }
 	static constexpr float bodyHeight() {
-		return kGap + kTabsHeight + kGap + kPadHeight + kGap + rowHeight() + kGap + rowHeight() + kGap;
+		return kGap + kTabsHeight + kGap + kPadHeight + kGap + rowHeight() + kGap + rowHeight() + kGap
+		       + rowHeight() + kGap;
 	}
 	static float openHeight(size_t outputRows);
 

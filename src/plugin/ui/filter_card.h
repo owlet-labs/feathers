@@ -29,6 +29,7 @@
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/fx_control.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/switch_chip.h"
 
 #include <array>
 #include <memory>
@@ -135,7 +136,7 @@ public:
 	/// At the bottom it is in nobody else's rectangle, which removes that hazard rather than managing
 	/// it, and it is below the fold, so it hides with the knobs like an ordinary control.
 	static constexpr float kSwitchHeight = 16.0f;
-	static constexpr float kSwitchWidth = 44.0f;
+	static constexpr float kSwitchWidth = 64.0f;
 	/// How many cells the macro row is divided into: Spread, Macro 1, Macro 2. FIXED, and each knob
 	/// keeps its own cell whether or not the type declares it — a row that closed up around an absent
 	/// knob would move the others under the pointer every time the dropdown changed.
@@ -177,9 +178,7 @@ public:
 	/// Where the keytrack switch and its caption sit, so a case can ask whether they overlap anything
 	/// rather than take a picture and squint. Both are in the bottom strip.
 	visage::Bounds polyBounds() const;
-	visage::Bounds polyLabelBounds() const;
 	visage::Bounds keytrackBounds() const;
-	visage::Bounds keytrackLabelBounds() const;
 	/// The top of that strip, which is also what the card's height is derived from.
 	float polyRowTop() const;
 	float keytrackRowTop() const;
@@ -284,8 +283,8 @@ public:
 
 	/// The keytrack switch, for the same reason: a case asks the control how it reads and where it is
 	/// rather than taking a picture of the card and squinting at it.
-	SegmentedControl* keytrackForTest() const { return keytrack_.get(); }
-	SegmentedControl* polyForTest() const { return poly_.get(); }
+	SwitchChip* keytrackForTest() const { return keytrack_.get(); }
+	SwitchChip* polyForTest() const { return poly_.get(); }
 
 	/// EVERY PARAMETER THIS CARD PUTS A CONTROL ON — the card's own answer to "what can a hand
 	/// reach", rather than a list a test keeps beside it.
@@ -368,8 +367,8 @@ public:
 	std::vector<std::unique_ptr<Knob>> knobs_;
 	/// The control each knob in `knobs_` was built for, in the same order — see addressedParamsForTest.
 	std::vector<fx::filter::Param> knobParams_;
-	std::unique_ptr<SegmentedControl> poly_;
-	std::unique_ptr<SegmentedControl> keytrack_;
+	std::unique_ptr<SwitchChip> poly_;
+	std::unique_ptr<SwitchChip> keytrack_;
 };
 
 } // namespace feathers::ui

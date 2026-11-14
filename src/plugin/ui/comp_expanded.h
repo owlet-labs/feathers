@@ -111,6 +111,8 @@ public:
 	static constexpr size_t kKnobRows = 3;
 	static constexpr float kPlotWidth = 240.0f;
 	static constexpr float kChipWidth = 44.0f;
+	/// The margin the first two rows keep for their captions (MODE, TOPOLOGY) — Delay's `kBandLabelWidth`.
+	static constexpr float kRowCaptionWidth = 60.0f;
 	/// THE METER COLUMN — the card's width, to the right of the knob grid.
 	static constexpr float kMeterWidth = 54.0f;
 

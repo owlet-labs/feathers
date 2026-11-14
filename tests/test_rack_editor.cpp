@@ -5490,6 +5490,46 @@ TEST_CASE("backlog KQ: in the rack, every control a hand-written card shows is i
 	}
 }
 
+TEST_CASE("JB: the undo and redo buttons name themselves on hover — each its own words, nothing between them, and shown through the editor's own tooltip layer") {
+	// TWO HOOKED ARROWS SAY NOTHING ON THEIR OWN. They sit on the editor rather than on a card, so they have no card's
+	// layer to speak through: the editor is a `TooltipHost` and its tick advances the delay (`RackGui::tick`).
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	f.editor.setSettingsDoor([] {});
+	rack::UndoRedoButtons* buttons = f.editor.undoRedoForTest();
+	REQUIRE(buttons != nullptr);
+	const visage::Point undoAt { buttons->undoBounds().x() + 4.0f, 4.0f };
+	const visage::Point redoAt { buttons->redoBounds().x() + 4.0f, 4.0f };
+	const visage::Point between { rack::UndoRedoButtons::kButton + 0.5f * rack::UndoRedoButtons::kGap, 4.0f };
+	const char* undoText = buttons->tooltipAt(undoAt);
+	const char* redoText = buttons->tooltipAt(redoAt);
+	REQUIRE(undoText != nullptr);
+	REQUIRE(redoText != nullptr);
+	CHECK(std::string(undoText).rfind("Undo", 0) == 0);
+	CHECK(std::string(redoText).rfind("Redo", 0) == 0);
+	CHECK(buttons->tooltipAt(between) == nullptr); // the gap between them is neither
+
+	// THROUGH THE LAYER, as a hand's hover arrives: enter, rest past the delay, the box shows that button's words.
+	ui::TooltipLayer& layer = f.editor.tooltipLayer();
+	double now = 0.0;
+	layer.setClock([&now] { return now; });
+	const auto hoverShows = [&](visage::Point at, const char* word) {
+		CAPTURE(std::string(word));
+		visage::MouseEvent e = ui::MouseEventForTest();
+		e.position = at;
+		buttons->processMouseEnter(e);
+		REQUIRE(layer.state() == ui::TooltipLayer::State::Pending);
+		now += ui::TooltipLayer::kDelayMs + 100.0;
+		(void)f.editor.tickTooltips();
+		CHECK(layer.shown());
+		CHECK(layer.text().rfind(word, 0) == 0);
+		buttons->processMouseExit(e);
+		(void)layer.clear();
+	};
+	hoverShows(undoAt, "Undo");
+	hoverShows(redoAt, "Redo");
+}
+
 TEST_CASE("OC: the standalone rack has its Macros column at the left — macros two across and four tall with their arms BESIDE them, the route list under them — and the lane starts after it with no band above") {
 	Fixture f;
 	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);

@@ -256,19 +256,49 @@ void TwinFieldCard::resized() {
 	crossfade_->setBounds(left + inner - xfWidth - 2.0f, y + 2.0f, xfWidth, rowHeight());
 	y += kPadHeight + kGap;
 
-	const float fifth = std::max(0.0f, (inner - 4.0f * kGap) / 5.0f);
-	const float cell = std::max(0.0f, (inner - 4.0f * kGap) / 5.0f); // Rate, Sync, Mode, Depth, Spread
+	// EDGE-TO-EDGE CELLS, no gutter: a knob's caption keeps its own margin each side (`Knob::kCaptionMargin`), and a gutter on
+	// top of it left ~37 px for "ROTATE", "GAMMA", "DEPTH" and "SPREAD" (cut to "RO...", "GA...", "DE...", "SP..."). The two
+	// boxes (Sync, Mode) keep a gutter by being inset.
+	//   VERTICAL LANE (one unit wide, height free): four across, three rows —
+	//     row 1: Pan X, Pan Y, Zoom, Rotate    row 2: Gamma, Rate, Sync, Mode    row 3: Depth, Spread
+	//   HORIZONTAL LANE (height fixed at one unit, width free — `laneExtent` widens the card to `kWideCellWidth` a cell): five
+	//     across, two rows — row 1: the five view knobs    row 2: Rate, Sync, Mode, Depth, Spread
+	const bool wide = laneAxis() == LaneAxis::Horizontal;
+	const float cell = std::max(0.0f, inner / (wide ? 5.0f : 4.0f));
+	const float inset = kGap * 0.5f;
+	const auto at = [&](size_t column) { return left + static_cast<float>(column) * cell; };
 	for (LayerWidgets& w : layers_) {
-		for (size_t i = 0; i < w.view.size(); ++i) {
-			w.view[i]->setBounds(left + static_cast<float>(i) * (fifth + kGap), y, fifth, rowHeight());
-		}
 		const float y2 = y + rowHeight() + kGap;
-		w.rate->setBounds(left, y2, cell, rowHeight());
-		w.sync->setBounds(left + (cell + kGap), y2, cell, ValueBox::kHeight);
-		w.mode->setBounds(left + 2.0f * (cell + kGap), y2, cell, ValueBox::kHeight);
-		w.depth->setBounds(left + 3.0f * (cell + kGap), y2, cell, rowHeight());
-		w.spread->setBounds(left + 4.0f * (cell + kGap), y2, cell, rowHeight());
+		const float y3 = y2 + rowHeight() + kGap;
+		for (size_t i = 0; i < w.view.size(); ++i) {
+			const bool firstRow = wide || i < 4;
+			w.view[i]->setBounds(at(firstRow ? i : 0), firstRow ? y : y2, cell, rowHeight());
+		}
+		if (wide) {
+			w.rate->setBounds(at(0), y2, cell, rowHeight());
+			w.sync->setBounds(at(1) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
+			w.mode->setBounds(at(2) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
+			w.depth->setBounds(at(3), y2, cell, rowHeight());
+			w.spread->setBounds(at(4), y2, cell, rowHeight());
+			continue;
+		}
+		w.rate->setBounds(at(1), y2, cell, rowHeight());
+		w.sync->setBounds(at(2) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
+		w.mode->setBounds(at(3) + inset, y2, std::max(0.0f, cell - kGap), ValueBox::kHeight);
+		w.depth->setBounds(at(0), y3, cell, rowHeight());
+		w.spread->setBounds(at(1), y3, cell, rowHeight());
 	}
+}
+
+float TwinFieldCard::laneExtent(float cross) const {
+	if (folded()) {
+		return kCardHeadHeight;
+	}
+	if (laneAxis() == LaneAxis::Horizontal) {
+		// FIVE CELLS ACROSS, each wide enough for the longest caption whole — the width is the free axis here.
+		return std::max(FxCard::laneExtent(cross), kCardHeadHeight + 2.0f * kPadX + 5.0f * kWideCellWidth);
+	}
+	return FxCard::laneExtent(cross);
 }
 
 void TwinFieldCard::foldedChanged() {

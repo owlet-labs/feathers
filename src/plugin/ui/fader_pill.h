@@ -18,6 +18,7 @@
 #pragma once
 
 #include "device/modulatable.h"
+#include "plugin/ui/fine_adjust.h"
 #include "plugin/ui/frame_watchers.h"
 #include "plugin/ui/tooltip.h"
 
@@ -152,6 +153,7 @@ private:
 	float startY_ = 0.0f;
 	double startValue_ = 0.0;
 	float anchorAmount_ = 0.0f;
+	bool fine_ = false; ///< Shift is held: the travel is worth `kFineAdjust` of itself (re-anchored when it changes)
 
 	/// THE MODULATION SUBSCRIPTION — `ValueBox::refreshWatch`'s, for the same reason: the glow and the
 	/// live amount must repaint when the panel state moves, not when the hand next does.

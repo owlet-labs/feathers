@@ -569,10 +569,25 @@ void ValueBox::dragTo(const visage::MouseEvent& e) {
 	if (!dragging_) {
 		return;
 	}
+	// **SHIFT CHANGING MID-DRAG RE-ANCHORS, AS THE KNOB'S DOES** (`kFineAdjust`): the drag restarts from where the value is
+	// now, at the new rate, so nothing jumps. It was latched at the press, which made the modifier a thing that could
+	// only be decided before the hand had moved.
+	if (e.isShiftDown() != fine_) {
+		fine_ = e.isShiftDown();
+		anchorY_ = e.position.y;
+		lastY_ = e.position.y;
+		extraTravel_ = 0.0;
+		if (draggingAmount_) {
+			anchorAmount_ = control_.display().amount;
+		}
+		else {
+			anchorValue_ = control_.value();
+		}
+	}
 	const float travel = anchorY_ - e.position.y; // up is more, which is every drag in this editor
 	if (draggingAmount_) {
-		control_.setAmount(std::clamp(anchorAmount_ + travel / kRouteDragRange, -device::kMaxAmount,
-		                              device::kMaxAmount));
+		control_.setAmount(std::clamp(anchorAmount_ + travel / kRouteDragRange * (fine_ ? kFineFactor : 1.0f),
+		                              -device::kMaxAmount, device::kMaxAmount));
 		return;
 	}
 	const device::ParamDesc& desc = control_.desc();

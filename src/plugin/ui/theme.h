@@ -89,6 +89,10 @@ inline constexpr uint32_t kMeterNear = 0xffE8D25A;
 /// **OVER FULL SCALE** (backlog MK): the red the master's and Bus Utility's clip LEDs light (`kOverRed` beside each), as
 /// a token, for the card's courtesy meter that fills from its far end by the amount over. Data; it does not turn.
 inline constexpr uint32_t kMeterClip = 0xffD9483B;
+/// **THE TWO BORDER BLUES THE MOCK WRITES AS LITERALS** (`.seed.sel`, and `.sw.on` / `.btn.accent` / `.pwr.on`): no
+/// generated token carries them, so they are named once here rather than spelled in each surface that draws them.
+inline constexpr uint32_t kBorderSelected = 0xff33406a;
+inline constexpr uint32_t kBorderOn = 0xff3A4C74;
 /// **A STEREO RING'S TWO EARS** (backlog KU) — either side of `kModulation`, cool left, warm right, so a split ring
 /// still reads as modulation first. PROVISIONAL: to be set by eye.
 inline constexpr uint32_t kModulationL = tokens::kModL;

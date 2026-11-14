@@ -1680,6 +1680,183 @@ TEST_CASE("a device's window offers every control its card offers") {
 
 namespace {
 
+/// **A SURFACE'S CAPTIONS AND CONTROL SHAPES, ASKED OF ITS WIDGETS.** Every frame EFFECTIVELY visible under `root`
+/// (it and every ancestor shown, and a size) that speaks for a label is asked whether the caption it draws holds the
+/// whole label (`ui::LabelFace::cut` — the knob's `captionCut`, the chip's, the box's, the pill's, the head's). Probed
+/// on a grid, because a widget may answer by position. And every `Knob` is asked what it is over: a knob whose
+/// control is a named choice is the wrong shape (a choice shows its choices before one is applied).
+struct SurfaceFindings {
+	std::vector<std::string> cut;       ///< "<label> (<full name>)" for each caption that does not fit
+	std::vector<std::string> choiceKnobs; ///< the name of each knob drawn over a Choice
+	std::vector<std::string> offOnSegments; ///< the name of each segmented control over an Off/On pair (a chip's job)
+	size_t captions = 0;                ///< captions asked, so a vacuous walk is visible
+	size_t knobs = 0;
+};
+
+void collectSurface(const visage::Frame* root, SurfaceFindings& into, bool shown = true) {
+	shown = shown && root->isVisible();
+	if (!shown) {
+		return;
+	}
+	const float w = static_cast<float>(root->width());
+	const float h = static_cast<float>(root->height());
+	if (w > 0.0f && h > 0.0f) {
+		if (const auto* source = dynamic_cast<const ui::TooltipSource*>(root)) {
+			std::set<std::string> seen;
+			bool asked = false;
+			for (int iy = 0; iy < 8; ++iy) {
+				for (int ix = 0; ix < 8; ++ix) {
+					const visage::Point at { w * (static_cast<float>(ix) + 0.5f) / 8.0f,
+						                     h * (static_cast<float>(iy) + 0.5f) / 8.0f };
+					const std::optional<ui::LabelFace> face = source->labelFaceAt(at);
+					if (!face.has_value()) {
+						continue;
+					}
+					asked = true;
+					if (face->cut && seen.insert(face->label).second) {
+						into.cut.push_back(face->label + " (" + face->full + ")");
+					}
+				}
+			}
+			into.captions += asked ? 1 : 0;
+		}
+		if (const auto* segmented = dynamic_cast<const ui::SegmentedControl*>(root)) {
+			std::vector<ui::ControlFace::Offered> offered;
+			segmented->offeredControls(offered);
+			for (const ui::ControlFace::Offered& o : offered) {
+				if (o.control != nullptr && device::isOffOnChoice(o.control->desc())) {
+					into.offOnSegments.push_back(o.control->desc().name != nullptr ? o.control->desc().name : "?");
+				}
+			}
+		}
+		if (const auto* knob = dynamic_cast<const ui::Knob*>(root)) {
+			++into.knobs;
+			const device::Modulatable* control = knob->control();
+			if (control != nullptr && control->desc().unit == device::Unit::Choice) {
+				into.choiceKnobs.push_back(control->desc().name != nullptr ? control->desc().name : "?");
+			}
+		}
+	}
+	for (const visage::Frame* child : root->children()) {
+		collectSurface(child, into, shown);
+	}
+}
+
+} // namespace
+
+TEST_CASE("no caption on any device card or window is elided at its default size, and no knob sits over a choice") {
+	// **THE ELLIPSIS IS A FLOOR, NOT A DESIGN** (`Knob::columnCaption`): it stops one caption running into the next,
+	// and a card that reaches it has not been given the room its words need ("AMO...", "THRES...", "PA... PA... ZO..."
+	// on the captures). So every card is built at the size the lane gives it and every window at its minimum size — the
+	// size it opens at — and every caption on every one is asked whether it holds the whole label. A surface that cannot
+	// be fixed is a NAMED exception below with its reason, never a blanket skip; an exception that stops being needed
+	// fails too, so the list cannot rot.
+	//
+	// THE SECOND QUESTION is the shape: a knob is for a quantity, so one over a Choice (an Off/On, a mode, a type) is a
+	// control that hides its choices. `Knob` has no notion of a choice, so the only place it can be seen is here.
+	//
+	// THE THIRD IS THE OTHER SHAPE RULE: an Off/On pair is a `SwitchChip`, not a two-segment strip ("no multivalue toggles").
+	//
+	// ASKED OF THE WIDGETS, as the superset guard is: no per-device list, so a new device is in this case by being
+	// registered.
+	rack::registerChainExpandedView();
+	// `<tag> <surface> <label>` -> why it stays. EMPTY IS THE GOAL.
+	const std::map<std::string, std::string> captionExceptions {};
+	// `<tag> <surface> <control name>` -> why it stays a knob. EMPTY IS THE GOAL.
+	const std::map<std::string, std::string> knobExceptions {};
+	std::vector<std::string> failures;
+	std::set<std::string> usedExceptions;
+	size_t surfaces = 0;
+	size_t captions = 0;
+	size_t knobs = 0;
+	const auto judge = [&](const std::string& tag, const std::string& surface, const SurfaceFindings& found) {
+		++surfaces;
+		captions += found.captions;
+		knobs += found.knobs;
+		for (const std::string& cut : found.cut) {
+			const std::string key = tag + " " + surface + " " + cut.substr(0, cut.find(" ("));
+			if (captionExceptions.count(key) != 0) {
+				usedExceptions.insert(key);
+			}
+			else {
+				failures.push_back(tag + " " + surface + ": caption cut: " + cut);
+			}
+		}
+		for (const std::string& name : found.choiceKnobs) {
+			const std::string key = tag + " " + surface + " " + name;
+			if (knobExceptions.count(key) != 0) {
+				usedExceptions.insert(key);
+			}
+			else {
+				failures.push_back(tag + " " + surface + ": a knob over a choice: " + name);
+			}
+		}
+		for (const std::string& name : found.offOnSegments) {
+			failures.push_back(tag + " " + surface + ": an Off/On pair drawn as a segmented control (a SwitchChip's job): " + name);
+		}
+	};
+	for (const device::Descriptor& desc : kDevices) {
+		const std::string tag = desc.traits.tag;
+		CAPTURE(tag);
+		std::unique_ptr<rack::RackEngine> bodies;
+		void* body = nullptr;
+		if (desc.container != nullptr) {
+			bodies = std::make_unique<rack::RackEngine>(rack::kRackAxes, feathers::hostCatalogue());
+			bodies->prepare(48000.0, 4096);
+			const size_t lane = bodies->addDevice(desc.traits.tag);
+			REQUIRE(lane != rack::RackEngine::kNoSlot);
+			body = bodies->slotAtLane(lane).storage.get();
+			REQUIRE(body != nullptr);
+		}
+		ModFixture f;
+		ui::WidgetRegistry registry;
+		const Placed placed = place(f, desc);
+		REQUIRE(placed.device != kNoInstance);
+		REQUIRE(placed.card != nullptr);
+		if (body != nullptr) {
+			f.bridge.fxBodies().attach(placed.device, body);
+		}
+		f.gui.tickForTest();
+		placed.card->resized();
+		(void)placed.card->update();
+		{
+			SurfaceFindings found;
+			collectSurface(placed.card, found);
+			judge(tag, "card", found);
+		}
+		if (!ui::hasExpandedView(desc)) {
+			continue;
+		}
+		std::unique_ptr<ui::ExpandedView> view =
+		    ui::makeExpandedView(f.deviceHost, &f.bridge, registry, placed.device, desc);
+		REQUIRE(view != nullptr);
+		const visage::Point min = view->minimumSize();
+		view->setBounds(0.0f, 0.0f, min.x, min.y);
+		(void)view->update();
+		view->resized();
+		(void)view->update();
+		SurfaceFindings found;
+		collectSurface(view.get(), found);
+		judge(tag, "window", found);
+	}
+	for (const auto& [key, why] : captionExceptions) {
+		CHECK_MESSAGE(usedExceptions.count(key) != 0, "caption exception no longer needed: " << key << " (" << why << ")");
+	}
+	for (const auto& [key, why] : knobExceptions) {
+		CHECK_MESSAGE(usedExceptions.count(key) != 0, "knob exception no longer needed: " << key << " (" << why << ")");
+	}
+	for (const std::string& failure : failures) {
+		MESSAGE(failure);
+	}
+	CHECK_MESSAGE(failures.empty(), failures.size() << " caption/shape finding(s) (above)");
+	MESSAGE("surfaces: " << surfaces << ", captions asked: " << captions << ", knobs: " << knobs);
+	CHECK(surfaces >= 40);
+	CHECK(captions > 300);
+	CHECK(knobs > 100);
+}
+
+namespace {
+
 /// Every knob and every value box under `root`, with whether it is EFFECTIVELY visible (it and every
 /// ancestor up to `root` shown) — a hidden one is checked as a control but not clicked.
 void collectTypeIns(visage::Frame* root, std::vector<std::pair<visage::Frame*, bool>>& out, bool shown = true) {

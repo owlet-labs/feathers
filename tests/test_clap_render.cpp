@@ -3345,10 +3345,10 @@ TEST_CASE("a pinned slot is named 'Filter · Cutoff' and its text is the filter'
 	const double expected = (std::log2(1200.0) - std::log2(0.5)) / (std::log2(24000.0) - std::log2(0.5));
 	CHECK(slotValue(h.plugin(), 0) == doctest::Approx(expected).epsilon(1e-6));
 
-	// THE TEXT IS THE FILTER'S: "1.2k" at the knob's value, and the ends of the sweep read as the ends.
-	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "1.2k");
-	CHECK(slotText(h.plugin(), 0, 0.0) == "0.5");
-	CHECK(slotText(h.plugin(), 0, 1.0) == "24k");
+	// THE TEXT IS THE FILTER'S: "1.2kHz" at the knob's value, and the ends of the sweep read as the ends.
+	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "1.2kHz");
+	CHECK(slotText(h.plugin(), 0, 0.0) == "0.5Hz");
+	CHECK(slotText(h.plugin(), 0, 1.0) == "24kHz");
 	// AND IT IS formatValue's OWN TEXT, not a copy of it that agrees today.
 	const feathers::device::ParamDesc& desc = filterParam("filter_cutoff_wide");
 	CHECK(slotText(h.plugin(), 0, 0.37) == feathers::device::formatValue(desc, feathers::device::fromNormal(desc, 0.37)));
@@ -3822,7 +3822,7 @@ TEST_CASE("a state load restoring slots rescans once") {
 	CHECK(std::string(slotInfo(h.plugin(), 2).name) == "Filter " + kDot + " Drive");
 	CHECK(std::string(slotInfo(h.plugin(), 3).name) == "Slot 4");
 	CHECK(slotValue(h.plugin(), 0) == doctest::Approx(cutoffValue).epsilon(1e-9));
-	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "440");
+	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "440Hz");
 }
 
 TEST_CASE("removing a device frees its slot; undo restores it") {
@@ -3855,7 +3855,7 @@ TEST_CASE("removing a device frees its slot; undo restores it") {
 	CHECK((back.flags & CLAP_PARAM_IS_HIDDEN) == 0);
 	// THE SAME CONTROL, READ AGAIN — the device came back under its id with its row.
 	CHECK(slotValue(h.plugin(), 0) == doctest::Approx(pinned).epsilon(1e-9));
-	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "2.5k");
+	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "2.5kHz");
 }
 
 TEST_CASE("a same-id, different-tag replacement frees the slot and rescans once") {
@@ -3957,7 +3957,7 @@ TEST_CASE("a preset load keeps the pool and frees only unresolved targets") {
 	// THE FILTER'S SLOTS STAY — the same id, the same kind, the same keys — and READ THE PRESET'S VALUE.
 	CHECK(std::string(slotInfo(h.plugin(), 0).name) == "Filter " + kDot + " Cutoff");
 	CHECK(std::string(slotInfo(h.plugin(), 2).name) == "Filter " + kDot + " Res");
-	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "300");
+	CHECK(slotText(h.plugin(), 0, slotValue(h.plugin(), 0)) == "300Hz");
 	// THE OTHER DEVICE'S SLOT IS FREED: its device is not in the preset.
 	const clap_param_info freed = slotInfo(h.plugin(), 1);
 	CHECK(std::string(freed.name) == "Slot 2");

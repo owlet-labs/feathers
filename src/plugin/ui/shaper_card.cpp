@@ -85,6 +85,14 @@ ShaperCard::ShaperCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 		if (std::string_view(label).rfind("Shaper ", 0) == 0) {
 			shortLabel = label + 7;
 		}
+		// TWO WORDS THE CARD'S CELLS CANNOT HOLD WHOLE (four across a narrow card): their usual short forms, still
+		// words, rather than a start and an ellipsis. The window and the tooltip say the full name.
+		if (p == shp::Param::Threshold) {
+			shortLabel = "Thresh";
+		}
+		else if (p == shp::Param::Aggression) {
+			shortLabel = "Aggr";
+		}
 		if (p == shp::Param::Colour) {
 			// **COLOUR'S MODE CELL (backlog IW).** The dropdown is a mode selector, not a phase region
 			// selector. The dropdown lists Colour's modes — Inflate, then Free — and the box is the live mode's

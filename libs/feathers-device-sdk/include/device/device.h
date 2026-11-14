@@ -816,6 +816,11 @@ struct ParamDesc {
 	/// road into a slot refuses it (`rack::SlotOwner`: a pin, a touch, a nested level's, and a saved map, whose stale
 	/// entry is dropped and reported). Changes no stored key. Appended LAST for `shortName`'s reason.
 	bool hostSlot = true;
+	/// **THE UNIT A PLAIN `Number` CONTROL PRINTS AFTER ITS VALUE** ("Hz", "ms"): display and typing only — the value,
+	/// its range and its modulation are untouched, so the unit enum and the schema ledger do not change. A bare number
+	/// under a knob says nothing about a hundred of what. Typed text may carry it or not ("200" and "200Hz" are the same
+	/// value). Only `Unit::Number` reads it; the other units already carry theirs. Appended LAST for `shortName`'s reason.
+	const char* suffix = nullptr;
 };
 
 /// HOW CLOSE TO AN `offAtEnd` END A VALUE MAY SIT AND STILL BE OFF, in the control's own units — a ten-thousandth

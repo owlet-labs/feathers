@@ -53,11 +53,10 @@ constexpr float kRailLabelTracking = 0.26f;
 constexpr float kCardRounding = 8.0f;
 constexpr float kBorder = 1.0f;
 
-/// `.seed.sel { border-color: #33406a }` and `.sw.on { border-color: #3A4C74 }`. Literals in the
-/// mock rather than tokens, so literals here — inventing token names for them would put two spellings
-/// of the same colour in the design language.
-constexpr uint32_t kSelectedBorder = 0xff33406a;
-constexpr uint32_t kSwitchOnBorder = 0xff3A4C74;
+/// `.seed.sel { border-color: #33406a }` and `.sw.on { border-color: #3A4C74 }`: the mock's literals, named once in
+/// `theme.h` (`kBorderSelected`, `kBorderOn`) because no generated token carries them.
+constexpr uint32_t kSelectedBorder = kBorderSelected;
+constexpr uint32_t kSwitchOnBorder = kBorderOn;
 
 /// `.seed .dot { width: 9px }`, and how far its glow reaches (`box-shadow: 0 0 7px`).
 constexpr float kDotSize = 9.0f;

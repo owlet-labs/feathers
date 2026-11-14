@@ -2207,14 +2207,12 @@ TEST_CASE("the head and the type row have room for the words they draw") {
 	const visage::Font& control = ui::font(ui::kControlSize);
 	const visage::Font& readout = ui::font(ui::kKnobReadoutSize);
 
-	// THE SWITCH'S OWN WORDS, one per cell, drawn centred by SegmentedControl::draw.
-	const float cell = f.card->keytrackBounds().width() * 0.5f;
-	for (const char* word : {"Off", "On"}) {
-		CAPTURE(word);
-		const float wide = ui::trackedWidth(control, word, ui::kControlTracking);
+	// THE CHIPS' OWN WORDS, centred in the chip's width as `SwitchChip::draw` prints them.
+	for (const ui::SwitchChip* chip : {f.card->polyForTest(), f.card->keytrackForTest()}) {
+		const float wide = ui::trackedWidth(ui::font(ui::kKnobLabelSize), chip->label().c_str(), 0.0f);
+		CAPTURE(chip->label());
 		CAPTURE(wide);
-		CAPTURE(cell);
-		CHECK(wide < cell - 2.0f); // a margin, not a squeeze against the cell wall
+		CHECK(wide < static_cast<float>(chip->width()) - 4.0f); // a margin, not a squeeze against the wall
 	}
 
 	// EVERY SLOPE NAME, because the box is one width and the longest entry is what has to fit in it.
@@ -2224,11 +2222,6 @@ TEST_CASE("the head and the type row have room for the words they draw") {
 		CAPTURE(wide);
 		CHECK(wide < f.card->slopeBoxBounds().width() - 4.0f);
 	}
-
-	// The caption, which is the WHOLE WORD now that the switch has a strip of its own — it read "KT"
-	// only because the head had a title in it.
-	CHECK(ui::trackedWidth(readout, "KEYTRACK", ui::kControlTracking)
-	      < f.card->keytrackLabelBounds().width());
 
 	// AND THE CARD'S NAME DOES NOT REACH THE ENABLE SQUARE. The head is back to a title and one
 	// control, which is what it was before the switch spent a night up there.
@@ -2629,8 +2622,6 @@ TEST_CASE("the keytrack switch sits in a strip of its own along the bottom") {
 	// rectangle, so the hazard is removed rather than guarded.
 	FilterFixture f;
 	const visage::Bounds sw = f.card->keytrackBounds();
-	const visage::Bounds caption = f.card->keytrackLabelBounds();
-
 	const auto overlaps = [](const visage::Bounds& a, const visage::Bounds& b) {
 		return a.x() < b.right() && b.x() < a.right() && a.y() < b.bottom() && b.y() < a.bottom();
 	};
@@ -2638,15 +2629,13 @@ TEST_CASE("the keytrack switch sits in a strip of its own along the bottom") {
 	// BELOW EVERYTHING, and inside the card. Clear of the head entirely, which is the whole point.
 	CHECK(sw.y() > ui::FilterCard::kHeadHeight);
 	CHECK(sw.bottom() <= f.card->height());
-	CHECK(caption.bottom() <= f.card->height());
 	for (const auto& knob : f.card->knobsForTest()) {
 		CAPTURE(knob->y());
 		CHECK(sw.y() >= knob->y() + knob->height() - 1.0f);
 	}
 
-	// The word at the left, the switch at the right, not on top of each other.
-	CHECK_FALSE(overlaps(sw, caption));
-	CHECK(caption.right() <= sw.x());
+	// The chip is inside the card and off the poly chip above it.
+	CHECK_FALSE(overlaps(sw, f.card->polyBounds()));
 	CHECK(sw.right() <= f.card->width());
 	CHECK_FALSE(overlaps(sw, f.card->enableBounds()));
 
@@ -2666,14 +2655,14 @@ TEST_CASE("the keytrack switch sits in a strip of its own along the bottom") {
 		// Kept from when the switch was in the head, where this was the hazard. It is cheap, and it
 		// is the assertion that would notice if the switch ever moved back into somebody else's
 		// rectangle.
-		ui::SegmentedControl* keytrack = f.card->keytrackForTest();
+		ui::SwitchChip* keytrack = f.card->keytrackForTest();
 		REQUIRE(keytrack != nullptr);
 		REQUIRE(f.param(fx::filter::Param::Keytrack) < 0.5);
 		REQUIRE_FALSE(f.card->folded());
 
 		const visage::Point onSegment =
 		    keytrack->positionInWindow()
-		    + visage::Point{keytrack->width() * 0.75f, keytrack->height() * 0.5f};
+		    + visage::Point{keytrack->width() * 0.5f, keytrack->height() * 0.5f};
 		REQUIRE(f.root->frameAtPoint(onSegment) == keytrack);
 		f.clickAt(onSegment);
 		f.settle();
@@ -3563,9 +3552,10 @@ TEST_CASE("a filter that is switched out of the signal reads as switched off") {
 		// for. Greying is a statement about the signal path, not about what you are allowed to touch.
 		CHECK(knob->enabled());
 	}
+	// POLY AND KEYTRACK ARE CHIPS, which have no greyed-but-pointable look: usable whatever the device's state.
 	REQUIRE(f.card->keytrackForTest() != nullptr);
-	CHECK_FALSE(f.card->keytrackForTest()->active());
-	CHECK(f.card->keytrackForTest()->enabled());
+	CHECK(f.card->keytrackForTest()->usable());
+	CHECK(f.card->polyForTest()->usable());
 
 	// SWITCHED IN THROUGH THE ROUTED PATH, the way a window delivers a click, and the card comes up.
 	f.click(f.card->enableBounds());
@@ -3575,24 +3565,18 @@ TEST_CASE("a filter that is switched out of the signal reads as switched off") {
 	for (const auto& knob : f.card->knobsForTest()) {
 		CHECK(knob->active());
 	}
-	// POLY AND KEYTRACK ARE BOTH ACTIVE WITH THE CARD, whatever Poly says (2026-10-04).
-	//
-	// Keytrack was greyed while Poly was off, because a bus filter could not follow "the note" and the
-	// engine refused the pair. It follows the one note its host picked now (`OpsFilter::refresh`), so it
-	// changes sound on the bus and the honesty rule wants it lit. The control: switching Poly does not
-	// grey it, in either direction.
-	CHECK(f.card->polyForTest()->active());
-	CHECK(f.card->keytrackForTest()->active());
-
+	// POLY AND KEYTRACK STAY USABLE WITH THE CARD, whatever Poly says: keytrack changes sound on the bus too,
+	// so the honesty rule wants it live in both Poly states.
+	CHECK(f.card->polyForTest()->usable());
+	CHECK(f.card->keytrackForTest()->usable());
 	f.set(fx::filter::Param::Poly, 1.0);
 	f.settle();
 	f.card->draw(canvas);
-	CHECK(f.card->keytrackForTest()->active());
-
+	CHECK(f.card->keytrackForTest()->usable());
 	f.set(fx::filter::Param::Poly, 0.0);
 	f.settle();
 	f.card->draw(canvas);
-	CHECK(f.card->keytrackForTest()->active());
+	CHECK(f.card->keytrackForTest()->usable());
 
 	// AND THE SQUARE IS THE WAY BACK. It is the one control on a switched-out card that is still doing
 	// anything, which is why it is the one thing the greying does not touch: every other control can
@@ -3633,12 +3617,12 @@ TEST_CASE("a switched-out filter can still be dialled in") {
 
 	// AND THE KEYTRACK SWITCH, whose off/on is an architecture rather than a level and is exactly the
 	// kind of thing a hand sets up before switching the device in.
-	ui::SegmentedControl* keytrack = f.card->keytrackForTest();
+	ui::SwitchChip* keytrack = f.card->keytrackForTest();
 	REQUIRE(keytrack != nullptr);
 	REQUIRE(f.param(fx::filter::Param::Keytrack) < 0.5);
 	const visage::Point onSegment =
 	    keytrack->positionInWindow()
-	    + visage::Point { keytrack->width() * 0.75f, keytrack->height() * 0.5f };
+	    + visage::Point { keytrack->width() * 0.5f, keytrack->height() * 0.5f };
 	REQUIRE(f.root->frameAtPoint(onSegment) == keytrack);
 	f.clickAt(onSegment);
 	f.settle();

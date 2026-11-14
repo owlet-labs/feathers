@@ -83,7 +83,7 @@ constexpr std::array<const char*, 2> kPolarityCaption { "invert", "pol" };
 /// promise to every surface in the editor that a danger colour exists and is this one; that is a
 /// decision about the whole editor and it is not this card's to make. If a second surface ever wants
 /// it, that is the moment it becomes a token.
-constexpr uint32_t kOverRed = 0xffD9483B;
+constexpr uint32_t kOverRed = kMeterClip; // `theme.h`'s over-full-scale red: the same colour, named once
 
 /// THE CAPTION TYPE — smaller than a knob's readout, because a caption names a thing and a readout
 /// IS the thing. Local rather than a theme token: no other surface has captions this small, and a
@@ -109,9 +109,19 @@ BusUtilCard::BusUtilCard(backplane::DeviceHost& host, WidgetRegistry& registry, 
 	(void)registry;
 	controls_.resize(static_cast<size_t>(bu::Param::kCount));
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
+		// A NAMED CHOICE IS A BOX THAT OPENS ITS LIST, NOT A KNOB (Highpass's seven rungs, Clip's nine): a dial would
+		// show one rung at a time and hide the others until the hand had already moved it.
+		if (control(kKnobs[i]).desc().unit == device::Unit::Choice) {
+			auto box = std::make_unique<ValueBox>(control(kKnobs[i]), kKnobCaptions[i]);
+			addChild(box.get());
+			choiceCells_.push_back(knobCell(i));
+			choiceBoxes_.push_back(std::move(box));
+			continue;
+		}
 		auto knob = std::make_unique<Knob>(control(kKnobs[i]), kKnobCaptions[i], notifier_);
 		knob->setFaceDiameter(kKnobDiameter);
 		addChild(knob.get());
+		knobCells_.push_back(knobCell(i));
 		knobs_.push_back(std::move(knob));
 	}
 	// MONITOR, A NAMED LIST: a value box opens it as a menu from the descriptor alone (`ValueBox::choiceMenuAvailable`).
@@ -202,6 +212,7 @@ void BusUtilCard::setModulation(ModState* mod, EditHistory* history) {
 	for (auto& knob : knobs_) {
 		knob->setModulation(mod, history);
 	}
+
 	// AND EVERY ADAPTER, INCLUDING THE ONES NO KNOB HOLDS — the polarity pair is edited by a gesture
 	// this card hit-tests rather than by a widget, and an adapter that never learned the panel's
 	// state reports itself unarmed forever. `WaypointCard` states the rule and calls it "cheap,
@@ -276,8 +287,12 @@ visage::Bounds BusUtilCard::swapBounds() const {
 
 void BusUtilCard::layOut() {
 	for (size_t i = 0; i < knobs_.size(); ++i) {
-		const visage::Bounds where = cellBounds(knobCell(i));
+		const visage::Bounds where = cellBounds(knobCells_[i]);
 		knobs_[i]->setBounds(where.x(), where.y(), where.width(), where.height());
+	}
+	for (size_t i = 0; i < choiceBoxes_.size(); ++i) {
+		const visage::Bounds where = cellBounds(choiceCells_[i]);
+		choiceBoxes_[i]->setBounds(where.x() + 2.0f, where.y() + 6.0f, where.width() - 4.0f, ValueBox::kHeight);
 	}
 	const visage::Bounds box = cellBounds(kMonitorCell);
 	monitor_->setBounds(box.x() + 2.0f, box.y() + 6.0f, box.width() - 4.0f, ValueBox::kHeight);
@@ -375,6 +390,9 @@ void BusUtilCard::foldedChanged() {
 		knob->setVisible(!folded());
 	}
 	monitor_->setVisible(!folded());
+	for (auto& box : choiceBoxes_) {
+		box->setVisible(!folded());
+	}
 }
 
 //------------------------------------------------------------------------------------------------//

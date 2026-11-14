@@ -26,6 +26,7 @@
 #include "plugin/ui/automod_pad.h"
 #include "plugin/ui/gamma_box.h"
 #include "plugin/ui/switch_chip.h"
+#include "plugin/ui/value_box.h"
 #include "plugin/ui/zone_coord_cell.h"
 #include <span>
 #include "plugin/ui/device_control.h"
@@ -156,6 +157,9 @@ private:
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::vector<std::unique_ptr<Knob>> knobs_;
 	std::vector<fx::automod::Param> knobParams_;
+	/// Sync and LFO Mode: named choices, so boxes that open their lists rather than knobs.
+	std::vector<std::unique_ptr<ValueBox>> choices_;
+	std::vector<fx::automod::Param> choiceParams_;
 	std::vector<visage::Frame*> cells_;
 	std::unique_ptr<GammaBox> gamma_;
 	/// ROTATE'S BOX. Not a knob since its range became a drag window — see the seating in the .cpp.

@@ -126,6 +126,7 @@ DeviceControl& FilterCard::control(flt::Param param) const {
 FilterCard::FilterCard(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id,
                        Notifier* notifier)
     : host_(host), notifier_(notifier), device_(id) {
+	(void)registry; // the chips take none, as the knobs do not
 	// NO PARAMETER WATCHES ANY MORE, and their absence is the whole of this change.
 	//
 	// This card used to watch eight of the filter's clap ids so the curve would follow the knobs. The
@@ -164,15 +165,13 @@ FilterCard::FilterCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	// chose the arrangement AND the tracking; the engine now reads poly for the arrangement, so the
 	// justification moved with the job. Leaving it where it was would have been a label describing a
 	// control that no longer does what it says.
-	auto poly = std::make_unique<SegmentedControl>(control(flt::Param::Poly), registry,
-	                                               flt::kOffOnNames, notifier);
+	auto poly = std::make_unique<SwitchChip>(control(flt::Param::Poly), "Poly");
 	addChild(poly.get());
 	poly_ = std::move(poly);
 
 	// KEYTRACK IS TONAL: whether the corner follows the note — a voice's own with Poly on, the host's
 	// one picked note on the bus. Under Poly, because Poly decides which note that is.
-	auto keytrack = std::make_unique<SegmentedControl>(control(flt::Param::Keytrack), registry,
-	                                                   flt::kOffOnNames, notifier);
+	auto keytrack = std::make_unique<SwitchChip>(control(flt::Param::Keytrack), "Keytrack");
 	addChild(keytrack.get());
 	keytrack_ = std::move(keytrack);
 
@@ -308,26 +307,13 @@ float FilterCard::keytrackRowTop() const {
 }
 
 visage::Bounds FilterCard::polyBounds() const {
-	return {width() - kPad - kSwitchWidth, polyRowTop(), kSwitchWidth, kSwitchHeight};
-}
-
-visage::Bounds FilterCard::polyLabelBounds() const {
-	const visage::Bounds sw = polyBounds();
-	return {bodyLeft() + kPad, polyRowTop(), sw.x() - 6.0f - kPad, kSwitchHeight};
+	// A CHIP THAT NAMES ITSELF, at the strip's left: the chip prints its own word, so there is no caption beside it.
+	return {bodyLeft() + kPad, polyRowTop(), kSwitchWidth, kSwitchHeight};
 }
 
 visage::Bounds FilterCard::keytrackBounds() const {
-	// A STRIP OF ITS OWN along the bottom, switch at the right edge and the word at the left — a
-	// labelled setting row, which is what an architecture toggle is. Nothing else is in this band, so
-	// unlike the two homes before it there is no rectangle it can collide with.
-	return {width() - kPad - kSwitchWidth, keytrackRowTop(), kSwitchWidth, kSwitchHeight};
-}
-
-visage::Bounds FilterCard::keytrackLabelBounds() const {
-	// THE WHOLE WORD, because down here there is room for it. It read "KT" while the switch lived in
-	// the head beside a title; a strip of its own can afford to say what the control is.
-	const visage::Bounds sw = keytrackBounds();
-	return {bodyLeft() + kPad, keytrackRowTop(), sw.x() - 6.0f - kPad, kSwitchHeight};
+	// A STRIP OF ITS OWN along the bottom — nothing else is in this band, so there is no rectangle it can collide with.
+	return {bodyLeft() + kPad, keytrackRowTop(), kSwitchWidth, kSwitchHeight};
 }
 
 visage::Bounds FilterCard::curveBounds() const {
@@ -658,16 +644,8 @@ void FilterCard::showEnablement(bool on) {
 	for (auto& knob : knobs_) {
 		knob->setActive(on);
 	}
-	if (poly_ != nullptr) {
-		poly_->setActive(on);
-	}
-	if (keytrack_ != nullptr) {
-		// KEYTRACK IS LIVE WHENEVER THE DEVICE IS (2026-10-04). It was greyed while Poly was off, because
-		// it changed nothing on the bus; it does now — the bus filter follows the one note its host
-		// picked (`OpsFilter::refresh`), which in the rack plugin, where Poly runs on the bus anyway, is
-		// the only way it can track at all.
-		keytrack_->setActive(on);
-	}
+	// POLY AND KEYTRACK ARE CHIPS (two states, so a chip), and a chip has no "greyed but pointable" look: it
+	// stays as lit as its value, which is the truth about it whether or not the device is in the signal.
 }
 
 std::vector<fx::filter::Param> FilterCard::addressedParamsForTest() const {
@@ -907,29 +885,6 @@ void FilterCard::drawContent(visage::Canvas& canvas) {
 	}
 	if (tooFew) {
 		return; // as the mono picture always has: no curve, and nothing drawn after it
-	}
-
-	// THE SWITCH'S CAPTION. Without it the control is the words "Off" and "On" with no subject — and
-	// what it switches is not a setting but the whole shape of the signal path, which is the last
-
-	// THE KEYTRACK CAPTION, in the bottom strip beside its switch. An ARCHITECTURE is not a thing to
-	// leave unlabelled, and down here there is room for the whole word. The switch's own words are
-	// drawn by the SegmentedControl and greyed by its inactive state; this caption belongs to the
-	// card, so it takes the card's dimming to land in the same place.
-	{
-		const visage::Bounds caption = polyLabelBounds();
-		canvas.setColor(stated(kMuted));
-		drawTracked(canvas, "POLY", font(kKnobReadoutSize), kControlTracking, caption.x(),
-		            caption.y(), caption.height());
-	}
-	{
-		// KEYTRACK'S CAPTION DIMS WITH ITS SWITCH, so the pair reads as a dependency rather than as a
-		// bright word over a control that does nothing.
-		const bool polyOn = control(flt::Param::Poly).value() >= 0.5;
-		const visage::Bounds caption = keytrackLabelBounds();
-		canvas.setColor(stated(polyOn ? kMuted : kLine));
-		drawTracked(canvas, "KEYTRACK", font(kKnobReadoutSize), kControlTracking, caption.x(),
-		            caption.y(), caption.height());
 	}
 
 	// The macro labels follow the dropdown while their ids never move, so they are re-read here rather

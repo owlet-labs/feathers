@@ -791,8 +791,10 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      "Where the puck sits between the left and right frames — bilinear, so all four contribute"},
     {"morph_y", "Morph Y", 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,
      "Where the puck sits between the bottom and top frames"},
-    {"cutoff", "Cutoff", -4.0, 4.0, 0.0, false, device::Unit::Number, {}, true, false,
-     "Slides the whole drawn shape along the spectrum, in OCTAVES, with its spacing intact"},
+    {.key = "cutoff", .name = "Cutoff", .min = -4.0, .max = 4.0, .def = 0.0, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Slides the whole drawn shape along the spectrum, in OCTAVES, with its spacing intact",
+     .suffix = "oct"},
     {"res", "Res", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, true, false,
      "Pulls every pole toward the unit circle — sharpens every resonance the drawing has without "
      "moving any of them"},

@@ -35,11 +35,8 @@ constexpr size_t kCurvePoints = 160;
 
 /// THE DEVICE-WIDE ROW, in its order. One table, read by the constructor and by
 /// `addressedParamsForTest`, so the two cannot disagree about what is on screen.
-constexpr std::array<wp::Param, 4> kDeviceKnobs {
+constexpr std::array<wp::Param, 1> kDeviceKnobs {
 	wp::Param::Morph,
-	wp::Param::Type,
-	wp::Param::Keytrack,
-	wp::Param::Poly,
 };
 
 [[nodiscard]] wp::Param fieldOf(size_t waypoint, size_t field) {
@@ -74,6 +71,13 @@ WaypointExpanded::WaypointExpanded(backplane::DeviceHost& host, WidgetRegistry& 
 	for (const wp::Param p : kDeviceKnobs) {
 		addKnob(p);
 	}
+	// THE OTHER THREE OF THE DEVICE-WIDE ROW ARE CHOICES, NOT DIALS: the filter type's list and two chips.
+	type_ = std::make_unique<ValueBox>(control(wp::Param::Type), "Type");
+	addChild(type_.get());
+	keytrack_ = std::make_unique<SwitchChip>(control(wp::Param::Keytrack), "Keytrack");
+	addChild(keytrack_.get());
+	poly_ = std::make_unique<SwitchChip>(control(wp::Param::Poly), "Poly");
+	addChild(poly_.get());
 }
 
 DeviceControl& WaypointExpanded::control(wp::Param p) const {
@@ -131,6 +135,13 @@ void WaypointExpanded::layOut() {
 		knobs_[i]->setBounds(cell * static_cast<float>(col),
 		                     top + static_cast<float>(row) * (column + kRowGap), cell, column);
 	}
+	// THE DEVICE-WIDE ROW'S OTHER THREE, in columns 1..3 of the row Morph starts, centred on the face's line.
+	const size_t deviceRow = (wp::kWaypoints * kColumns) / kColumns;
+	const float rowTop = top + static_cast<float>(deviceRow) * (column + kRowGap);
+	type_->setBounds(cell * 1.0f + 2.0f, rowTop + 6.0f, cell - 4.0f, ValueBox::kHeight);
+	const float chipY = rowTop + 6.0f + 0.5f * (ValueBox::kHeight - SwitchChip::kHeight);
+	keytrack_->setBounds(cell * 2.0f + 2.0f, chipY, cell - 4.0f, SwitchChip::kHeight);
+	poly_->setBounds(cell * 3.0f + 2.0f, chipY, cell - 4.0f, SwitchChip::kHeight);
 }
 
 void WaypointExpanded::draw(visage::Canvas& canvas) {
@@ -191,8 +202,12 @@ void WaypointExpanded::draw(visage::Canvas& canvas) {
 
 std::vector<wp::Param> WaypointExpanded::addressedParamsForTest() const {
 	// ASKED OF THE KNOBS THIS PANEL ACTUALLY BUILT, not restated. A list written by hand beside the
-	// constructor is a list that drifts from it.
-	return knobParams_;
+	// constructor is a list that drifts from it. The three choices that are not knobs are added by name.
+	std::vector<wp::Param> out = knobParams_;
+	out.push_back(wp::Param::Type);
+	out.push_back(wp::Param::Keytrack);
+	out.push_back(wp::Param::Poly);
+	return out;
 }
 
 } // namespace feathers::ui

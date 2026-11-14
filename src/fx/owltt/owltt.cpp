@@ -107,7 +107,12 @@ Settings stateOf(const Row& row) {
 	s.highCrossover = row[i++];
 	s.outputGain = row[i++];
 	s.blend = row[i++];
-	s.softClip = row[i++] > 0.5f;
+	// THE CLIP CHOICE: 0 Off, 1 Master (what On was), 2 Bands.
+	{
+		const float clip = row[i++];
+		s.softClip = clip > 0.5f;
+		s.clipBandsOnly = clip > 1.5f;
+	}
 	s.characterMode = static_cast<uint32_t>(std::clamp(std::lround(row[i++]), 0L, 8L));
 	s.vibeMode = static_cast<uint32_t>(std::clamp(std::lround(row[i++]), 0L, 8L));
 	s.stereoLink = std::clamp(row[i++], 0.0f, 1.0f);
@@ -119,6 +124,17 @@ Settings stateOf(const Row& row) {
 	s.driveDb = std::clamp(row[i++], kDriveMinDb, kDriveMaxDb);
 	s.lookahead = static_cast<uint32_t>(std::clamp(std::lround(row[i++]), 0L, static_cast<long>(kLookaheadChoices - 1)));
 	s.keyTrack = row[i++] > 0.5f;
+	for (BandParams* band : { &s.low, &s.mid, &s.high }) {
+		band->upRatio = std::clamp(row[i++], 0.0f, 1.0f);
+		band->downRatio = std::clamp(row[i++], 0.0f, 1.0f);
+	}
+	for (BandParams* band : { &s.low, &s.mid, &s.high }) {
+		band->attack = std::clamp(row[i++], 0.0f, 1.0f);
+		band->release = std::clamp(row[i++], 0.0f, 1.0f);
+	}
+	for (BandParams* band : { &s.low, &s.mid, &s.high }) {
+		band->inputDb = std::clamp(row[i++], kBandInputMinDb, kBandInputMaxDb);
+	}
 
 	// **THE WALK ENDS WHERE THE ENUM ENDS, AND THAT IS THE WHOLE DISCIPLINE.** This walk is positional
 	// — `i++` down the row — so an entry read where it makes sense rather than where its `Param` sits
@@ -166,7 +182,7 @@ Row rowOf(const Settings& s) {
 	row[i++] = s.highCrossover;
 	row[i++] = s.outputGain;
 	row[i++] = s.blend;
-	row[i++] = s.softClip ? 1.0f : 0.0f;
+	row[i++] = !s.softClip ? 0.0f : (s.clipBandsOnly ? 2.0f : 1.0f);
 	row[i++] = static_cast<float>(s.characterMode);
 	row[i++] = static_cast<float>(s.vibeMode);
 	row[i++] = s.stereoLink;
@@ -178,6 +194,17 @@ Row rowOf(const Settings& s) {
 	row[i++] = s.driveDb;
 	row[i++] = static_cast<float>(s.lookahead);
 	row[i++] = s.keyTrack ? 1.0f : 0.0f;
+	for (const BandParams* band : { &s.low, &s.mid, &s.high }) {
+		row[i++] = band->upRatio;
+		row[i++] = band->downRatio;
+	}
+	for (const BandParams* band : { &s.low, &s.mid, &s.high }) {
+		row[i++] = band->attack;
+		row[i++] = band->release;
+	}
+	for (const BandParams* band : { &s.low, &s.mid, &s.high }) {
+		row[i++] = band->inputDb;
+	}
 
 	return row;
 }
@@ -276,6 +303,7 @@ void Owltt::reset() {
 		pair.fill(1.0f);
 	}
 	smoothedOutputGain_ = 1.0f;
+	inputGain_.fill(1.0f);
 	frameCount_ = 0;
 }
 
@@ -988,11 +1016,11 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	// (backlog LQ), set in one order by one function, so the three cannot drift apart and Link 100% can be
 	// the linked device to the bit.
 	const auto configure = [this](BandCompressor& c, const EffectiveBand& eff) {
-		c.setAttack(target_.attack);
-		c.setRelease(target_.release);
+		c.setAttack(eff.attack);
+		c.setRelease(eff.release);
 		c.setThresholdDown(eff.threshold);
-		c.setRatioDown(eff.ratio);
-		c.setRatioUp(eff.ratio);
+		c.setRatioDown(eff.ratioDown);
+		c.setRatioUp(eff.ratioUp);
 		c.setBandwidth(eff.bandwidth);
 		c.setOutputLevel(eff.level);
 		c.setLookaheadWindow(static_cast<float>(lookLen_)); // ND: 0 without one
@@ -1130,6 +1158,28 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	// Band buffer pointers for level update.
 	const std::array<float*, 3> bandL = {lowL.data(), midL.data(), highL.data()};
 	const std::array<float*, 3> bandR = {lowR.data(), midR.data(), highR.data()};
+
+	// **EACH BAND'S INPUT LEVEL (the per-band rebuild)**, AFTER THE SPLIT AND BEFORE THE DETECTOR: the band's audio is
+	// scaled, so its detector, its gain computer and the signal the gain is applied to all hear it. A one-pole per
+	// sample toward the target, so a modulated level does not step. At 0 dB the target is exactly 1 and the gain
+	// starts there, so the band is left alone and no multiply runs: the device before it, to the bit.
+	for (size_t b = 0; b < 3; ++b) {
+		const float target = driveGainOf(target_.band(b).inputDb);
+		inputGainTarget_[b] = target;
+		if (inputGain_[b] == 1.0f && target == 1.0f) {
+			continue;
+		}
+		float g = inputGain_[b];
+		for (int i = 0; i < frames; ++i) {
+			g += (target - g) * gainSmoothAlpha_;
+			bandL[b][i] *= g;
+			bandR[b][i] *= g;
+		}
+		if (std::abs(target - g) < 1.0e-4f * target) { // the one-pole stalls a few ulps short; snap
+			g = target;
+		}
+		inputGain_[b] = g;
+	}
 
 	// **IN M/S (backlog LQ) EACH BAND IS ENCODED HERE, IN PLACE, AFTER ITS WIDTH**: `bandL` becomes the band's
 	// Mid and `bandR` its Side scaled by the band's width — the same `mid` and `sideScaled` the L/R road below
@@ -1274,7 +1324,7 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			}
 
 			// Soft clip per band — under the switch (backlog EL): the firmware's `softClipEnabled_`.
-			if (target_.softClip) {
+			if (target_.softClip) { // Master and Bands both clip the band
 				L = softClip(L, kBandClipKnee);
 				R = softClip(R, kBandClipKnee);
 			}
@@ -1293,7 +1343,7 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		sumR *= smoothedOutputGain_;
 
 		// Soft clip at output — under the same switch as the bands.
-		if (target_.softClip) {
+		if (target_.softClip && !target_.clipBandsOnly) { // Master only: Bands leaves the sum alone
 			sumL = softClip(sumL, kOutputClipKnee);
 			sumR = softClip(sumR, kOutputClipKnee);
 		}
@@ -1506,8 +1556,13 @@ const device::AudioOps kAudioOps {
 		    // instead (device_row.h's rule), which is the linked device. Only these two: every field before
 		    // them has always read an absent value as zero here, and changing that is not LQ's business.
 		    // BACKLOG LR'S FOUR WIDTHS, LIKEWISE: a zero there is MONO, so a short row takes 100%, the zone's own width.
+		    // THE PER-BAND REBUILD'S TWELVE TRIMS AND OFFSETS, TOO: a zero is a step away from neutral, so a short row
+		    // takes the declared (neutral) default.
 		    for (const Param p : { Param::StereoLink, Param::StereoMode, Param::Width, Param::LowWidth, Param::MidWidth,
-		                           Param::HighWidth }) {
+		                           Param::HighWidth, Param::LowUpRatio, Param::LowDownRatio, Param::MidUpRatio,
+		                           Param::MidDownRatio, Param::HighUpRatio, Param::HighDownRatio, Param::LowAttack,
+		                           Param::LowRelease, Param::MidAttack, Param::MidRelease, Param::HighAttack,
+		                           Param::HighRelease }) {
 			    const auto at = static_cast<size_t>(p);
 			    if (at >= take) {
 				    row[at] = static_cast<float>(kParamDescs[at].def);

@@ -1036,6 +1036,13 @@ target_link_libraries(test_fx_owltt PRIVATE feathers-fx feathers-warnings)
 target_include_directories(test_fx_owltt PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME fx-owltt COMMAND test_fx_owltt)
 
+# OWLTT'S PER-BAND CONTROLS, against the device as it was before them (tests/owltt_ref, the pre-change source in its own
+# namespace): the bit-identity gate, the laws of each new control by value, the Clip choice, the state road.
+add_executable(test_fx_owltt_perband test_fx_owltt_perband.cpp owltt_ref/owltt.cpp)
+target_link_libraries(test_fx_owltt_perband PRIVATE feathers-fx feathers-rack feathers-warnings)
+target_include_directories(test_fx_owltt_perband PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME fx-owltt-perband COMMAND test_fx_owltt_perband)
+
 # THE TABLE SHAPER. It links feathers-fx and nothing else, which is the point: a link error here is
 # the device having reached into the plugin, and the boundary is checked by reading the include graph
 # in test_fx_filter.cpp's own case (which walks all of src/fx, so this device is covered by it).

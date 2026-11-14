@@ -14075,6 +14075,198 @@ TEST_CASE("drum picture: after a drag off the right edge the axis, the drawn han
 	}
 }
 
+namespace {
+
+/// A drum picture under a hand, for the drag-off-the-right cases: the gestures, and the checks that follow each one.
+struct DrumHand {
+	ExploreFixture f;
+	std::unique_ptr<ui::DrumPanel> panel;
+	ui::HitPicture* p = nullptr;
+	size_t pad = 3;
+	using H = ui::HitPicture::Handle;
+
+	explicit DrumHand(feathers::drum::Kind kind) {
+		f.bridge.setEditHistory(&f.history);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+		f.set(feathers::drumParam(pad, DrumControl::Kind), static_cast<double>(kind));
+		f.selection.select(pad);
+		panel = std::make_unique<ui::DrumPanel>(f.bridge, f.registry, f.selection, &f.tray);
+		panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+		tick();
+		p = &panel->pictureForTest();
+	}
+	void tick() {
+		f.settleGesture();
+		(void)panel->update();
+	}
+	static visage::MouseEvent at(visage::Point q) {
+		visage::MouseEvent e;
+		e.position = q;
+		return e;
+	}
+	float right() const { return p->width() - 10.0f; }
+	/// Press on `h`, move to `h`'s place + (dx, 0) in eight steps, a tick between, release where the hand is.
+	void gesture(H h, float dx) {
+		const visage::Point from = p->handleAt(h);
+		p->onMouseDown().callback(at(from));
+		for (int i = 1; i <= 8; ++i) {
+			p->onMouseDrag().callback(at({ from.x + dx * static_cast<float>(i) / 8.0f, from.y }));
+			tick();
+		}
+		p->onMouseUp().callback(at({ from.x + dx, from.y }));
+		tick();
+	}
+	/// The time the laws say handle `h` stands at, restated from the laws' own fields.
+	double timeOf(H h) const {
+		const auto& l = p->lawsForTest();
+		switch (h) {
+		case H::SweepTime: return 3.0 * l.sweepTau;
+		case H::Decay: return l.t60;
+		case H::WireDecay: return l.wireT60;
+		case H::ClickDecay: return l.clickT60;
+		case H::BellEnd: return 3.0 * l.bellTau;
+		case H::Bell2: return l.bell2T60;
+		case H::Hold: return l.kickHold;
+		case H::Dip: return l.kickDipTime;
+		case H::ClickSweep: return 3.0 * l.clickSweepTau;
+		case H::Spread: return l.spreadSeconds;
+		default: return 0.0;
+		}
+	}
+	/// What every gesture must leave true: the axis painted is the axis tested, each time handle is drawn at the axis's place
+	/// for its value, and every shown handle is the one a press at its drawn place finds.
+	void consistent(const std::vector<H>& timeHandles) {
+		CHECK(p->paintedSpanForTest() == p->spanForTest());
+		for (const H h : timeHandles) {
+			if (p->handleShown(h)) {
+				CAPTURE(static_cast<int>(h));
+				CHECK(p->handleAt(h).x == doctest::Approx(p->xOf(timeOf(h))).epsilon(1.0e-4));
+			}
+		}
+		for (size_t i = 0; i < ui::HitPicture::kHandleCount; ++i) {
+			const auto h = static_cast<H>(i);
+			if (!p->handleShown(h)) {
+				continue;
+			}
+			CAPTURE(i);
+			const H found = p->handleUnder(p->handleAt(h));
+			CHECK(p->handleAt(found).x == doctest::Approx(p->handleAt(h).x).epsilon(1.0e-4));
+			CHECK(p->handleAt(found).y == doctest::Approx(p->handleAt(h).y).epsilon(1.0e-4));
+		}
+	}
+};
+
+const std::vector<ui::HitPicture::Handle> kTimeHandles {
+	ui::HitPicture::Handle::SweepTime, ui::HitPicture::Handle::Decay, ui::HitPicture::Handle::WireDecay,
+	ui::HitPicture::Handle::ClickDecay, ui::HitPicture::Handle::BellEnd, ui::HitPicture::Handle::Bell2,
+	ui::HitPicture::Handle::Hold, ui::HitPicture::Handle::Dip, ui::HitPicture::Handle::ClickSweep,
+	ui::HitPicture::Handle::Spread
+};
+
+} // namespace
+
+TEST_CASE("drum picture: every time handle of every kind survives a drag off the right edge, past its clamp, and back") {
+	using H = ui::HitPicture::Handle;
+	size_t pairs = 0;
+	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
+		const auto kind = static_cast<feathers::drum::Kind>(k);
+		DrumHand d(kind);
+		std::vector<H> shown;
+		for (const H h : kTimeHandles) {
+			if (d.p->handleShown(h)) {
+				shown.push_back(h);
+			}
+		}
+		INFO("kind " << k << ", " << shown.size() << " time handles");
+		d.consistent(shown);
+		for (size_t i = 0; i < shown.size(); ++i) {
+			const H h = shown[i];
+			CAPTURE(k);
+			CAPTURE(static_cast<int>(h));
+			++pairs;
+			// OFF THE RIGHT, FAR PAST ANY CLAMP, released outside the frame.
+			const double t0 = d.timeOf(h);
+			CHECK(d.p->handleUnder(d.p->handleAt(h)) == h); // a press on it takes IT, not a neighbour
+			d.gesture(h, (d.right() - d.p->handleAt(h).x) + 600.0f);
+			d.consistent(shown);
+			const double atMax = d.timeOf(h);
+			CHECK(atMax > t0 * 1.001); // it went out
+			// THE HANDLE STANDS AT THE CLAMPED VALUE'S PLACE, inside the frame, not under the pointer.
+			CHECK(d.p->handleAt(h).x <= d.right() + 0.5f);
+			// ONE PRESS, FAR OUT AND BACK: the way back moves the value at once (no dead travel beyond the clamp).
+			{
+				const visage::Point from = d.p->handleAt(h);
+				d.p->onMouseDown().callback(DrumHand::at(from));
+				for (int j = 1; j <= 10; ++j) {
+					d.p->onMouseDrag().callback(DrumHand::at({ from.x + 40.0f * static_cast<float>(j), from.y }));
+					d.tick();
+				}
+				const double far = d.timeOf(h);
+				// BACK BY A SHARE OF THE WAY THE HANDLE HAS FROM THE LEFT EDGE (a crowded axis leaves a short handle few pixels)
+				const float back60 = std::min(60.0f, 0.5f * (from.x - 10.0f));
+				d.p->onMouseDrag().callback(DrumHand::at({ from.x + 400.0f - back60, from.y }));
+				d.tick();
+				const double back = d.timeOf(h);
+				d.p->onMouseUp().callback(DrumHand::at({ from.x + 400.0f - back60, from.y }));
+				d.tick();
+				CHECK(far >= atMax * 0.999);
+				CHECK(back < far * 0.999);
+				d.consistent(shown);
+			}
+			// THE NEXT DRAG OF THE SAME HANDLE lands by the axis it is pressed on, leftwards inside the plot.
+			{
+				const float x0 = d.p->handleAt(h).x;
+				const float step = -std::min(30.0f, 0.5f * (x0 - 10.0f));
+				const double expected = d.p->secondsAt(x0 + step);
+				const double before = d.timeOf(h);
+				d.gesture(h, step);
+				CHECK(d.timeOf(h) < before);
+				CHECK(std::abs(d.timeOf(h) - expected) <= 0.03 * expected + 1.0e-6);
+				d.consistent(shown);
+			}
+			// AND A DIFFERENT HANDLE's.
+			if (shown.size() > 1) {
+				const H other = shown[(i + 1) % shown.size()];
+				const float x0 = d.p->handleAt(other).x;
+				const float step = -std::min(20.0f, 0.5f * (x0 - 10.0f));
+				const double expected = d.p->secondsAt(x0 + step);
+				d.gesture(other, step);
+				CAPTURE(static_cast<int>(other));
+				CHECK(std::abs(d.timeOf(other) - expected) <= 0.03 * expected + 1.0e-6);
+				d.consistent(shown);
+			}
+		}
+	}
+	CHECK(pairs >= 14); // the table is not empty: kick, membrane, snare, metal, clap and string between them
+}
+
+TEST_CASE("drum picture: a drag off the right edge is one undo step, and a two-way handle's two controls are one step") {
+	using H = ui::HitPicture::Handle;
+	DrumHand d(feathers::drum::Kind::Kick);
+	d.f.history.clear();
+	REQUIRE(d.p->handleShown(H::Decay));
+	const size_t before = d.f.history.length();
+	d.gesture(H::Decay, (d.right() - d.p->handleAt(H::Decay).x) + 300.0f);
+	CHECK(d.f.history.length() == before + 1);
+	// THE FISHTAIL: its time (across) and depth (up and down) are two controls, one gesture, one step.
+	REQUIRE(d.p->handleShown(H::Dip));
+	const size_t beforeDip = d.f.history.length();
+	{
+		const visage::Point from = d.p->handleAt(H::Dip);
+		d.p->onMouseDown().callback(DrumHand::at(from));
+		for (int i = 1; i <= 6; ++i) {
+			d.p->onMouseDrag().callback(DrumHand::at({ from.x + 30.0f * static_cast<float>(i), from.y + 4.0f * static_cast<float>(i) }));
+			d.tick();
+		}
+		d.p->onMouseUp().callback(DrumHand::at({ from.x + 180.0f, from.y + 24.0f }));
+		d.tick();
+	}
+	CHECK(d.f.history.length() == beforeDip + 1);
+	d.f.history.undo();
+	d.tick();
+	d.consistent({ H::Decay, H::Dip, H::Hold, H::SweepTime, H::ClickSweep });
+}
+
 TEST_CASE("hardening: the drum picture places its labels once for what they depend on") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));

@@ -297,6 +297,7 @@ void HitPicture::press(visage::Point p) {
 	heldSecond_ = secondOf(held_);
 	frozenSpan_ = naturalSpan();
 	dragging_ = true;
+	slack_ = 0.0f;
 	pressAt_ = p;
 	startValue_ = c->value();
 	startX_ = handleAt(held_).x;
@@ -307,6 +308,11 @@ void HitPicture::press(visage::Point p) {
 	}
 	if (heldSecond_ != nullptr) {
 		startSecond_ = heldSecond_->value();
+		// A TWO-WAY HANDLE'S GESTURE IS ONE UNDO STEP, not one for each control it writes.
+		groupHistory_ = c->recordsInto();
+		if (groupHistory_ != nullptr) {
+			groupHistory_->beginGroup("Move drum handle");
+		}
 		heldSecond_->beginGesture();
 	}
 	c->beginGesture();
@@ -324,6 +330,36 @@ void HitPicture::drag(visage::Point p) {
 	const float dx = p.x - pressAt_.x;
 	const float dy = p.y - pressAt_.y;
 	const float envH = envBottom() - envTop();
+	// THE TIME UNDER THE HAND, AS FAR AS THE CONTROL CAN FOLLOW IT: `toValue` maps seconds to the control's own unit, and a hand
+	// beyond where that leaves the control's range is taken to be AT the range's end. Without it the value stops at its clamp
+	// while the hand goes on (or comes back from beyond it), and a drag back sets nothing until the hand is home again.
+	const auto reach = [&](const ParamControl* control, auto&& toValue) {
+		const double lo = control->desc().min;
+		const double hi = control->desc().max;
+		float x = startX_ + dx - slack_;
+		const double v = toValue(dragSeconds(x));
+		if (v > hi) {
+			float a = plotLeft(), b = x;
+			for (int i = 0; i < 40; ++i) {
+				const float m = 0.5f * (a + b);
+				(toValue(dragSeconds(m)) > hi ? b : a) = m;
+			}
+			slack_ += x - a; // THE HAND'S EXCESS IS KEPT, so coming back moves the value at once rather than after the way home
+			x = a;
+		}
+		else if (v < lo) {
+			float a = x, b = plotRight();
+			for (int i = 0; i < 40; ++i) {
+				const float m = 0.5f * (a + b);
+				(toValue(dragSeconds(m)) < lo ? a : b) = m;
+			}
+			slack_ += x - b;
+			x = b;
+		}
+		return dragSeconds(x);
+	};
+	const auto log2s = [](double floor, double mult = 1.0) { return [=](double t) { return std::log2(std::max(floor, t) / mult); }; };
+	const auto millis = [](double t) { return 1000.0 * t; };
 	switch (held_) {
 	case Handle::Tune: {
 		// SEMITONES BY THE PLOT'S OWN SCALE: a drag of one octave's height is twelve.
@@ -333,11 +369,11 @@ void HitPicture::drag(visage::Point p) {
 	}
 	case Handle::SweepTime:
 		// THE LANDING WHERE THE HAND IS: Sweep Time = the time under it, in log2 seconds (the control's unit).
-		c->setValue(std::log2(std::max(1.0e-3, dragSeconds(startX_ + dx))));
+		c->setValue(log2s(1.0e-3)(reach(c, log2s(1.0e-3))));
 		break;
 	case Handle::Decay:
 		// THE T60 WHERE THE HAND IS; Decay is that over Length's multiplier (T60 / Decay at the press), in log2 seconds.
-		c->setValue(std::log2(std::max(1.0e-3, dragSeconds(startX_ + dx)) / startMultiplier_));
+		c->setValue(log2s(1.0e-3, startMultiplier_)(reach(c, log2s(1.0e-3, startMultiplier_))));
 		break;
 	case Handle::Level: c->setValue(startValue_ - 66.0 * static_cast<double>(dy / envH)); break;
 	case Handle::Drive:
@@ -347,28 +383,28 @@ void HitPicture::drag(visage::Point p) {
 			second->setValue(startSecond_ + static_cast<double>(dx / (0.5f * (plotRight() - plotLeft()))));
 		}
 		break;
-	case Handle::WireDecay: c->setValue(std::log2(std::max(1.0e-3, dragSeconds(startX_ + dx)) / startMultiplier_)); break;
-	case Handle::ClickDecay: c->setValue(std::log2(std::max(1.0e-4, dragSeconds(startX_ + dx)))); break;
+	case Handle::WireDecay: c->setValue(log2s(1.0e-3, startMultiplier_)(reach(c, log2s(1.0e-3, startMultiplier_)))); break;
+	case Handle::ClickDecay: c->setValue(log2s(1.0e-4)(reach(c, log2s(1.0e-4)))); break;
 	case Handle::BellStart: c->setValue(std::log2(hzAt(startY_ + dy))); break;
 	case Handle::BellEnd:
 		// UP AND DOWN, WHERE IT LANDS; ACROSS, WHEN (Bell Time: 95% of the glide).
 		c->setValue(std::log2(hzAt(startY_ + dy)));
 		if (second != nullptr) {
-			second->setValue(std::log2(std::max(1.0e-3, dragSeconds(startX_ + dx))));
+			second->setValue(log2s(1.0e-3)(reach(second, log2s(1.0e-3))));
 		}
 		break;
 	case Handle::Bell2:
 		// ACROSS, HOW LONG IT RINGS; UP AND DOWN, WHERE IT RESTS while Free (Linked, the place's Metal sets its ratio).
-		c->setValue(std::log2(std::max(1.0e-3, dragSeconds(startX_ + dx))));
+		c->setValue(log2s(1.0e-3)(reach(c, log2s(1.0e-3))));
 		if (second != nullptr) {
 			second->setValue(std::log2(hzAt(startY_ + dy)));
 		}
 		break;
-	case Handle::Hold: c->setValue(1000.0 * dragSeconds(startX_ + dx)); break; // ms
+	case Handle::Hold: c->setValue(millis(reach(c, millis))); break; // ms
 	case Handle::Dip: {
 		// ACROSS, WHEN (ms); UP AND DOWN, HOW DEEP: the depth whose level, below the peak, is where the hand is.
 		if (second != nullptr) {
-			second->setValue(1000.0 * dragSeconds(startX_ + dx));
+			second->setValue(millis(reach(second, millis)));
 		}
 		const double db = static_cast<double>((envBottom() - (startY_ + dy)) / envH) * 66.0 - 60.0;
 		c->setValue(1.0 - std::pow(10.0, std::min(0.0, db - levelDb_) / 20.0));
@@ -378,7 +414,7 @@ void HitPicture::drag(visage::Point p) {
 		// UP AND DOWN, HOW FAR ABOVE THE SWEEP'S TOP IT STARTS (octaves); ACROSS, ITS TIME.
 		c->setValue(std::log2(hzAt(startY_ + dy) / laws_.hz) - laws_.sweepOctaves);
 		if (second != nullptr) {
-			second->setValue(std::log2(std::max(1.0e-5, dragSeconds(startX_ + dx))));
+			second->setValue(log2s(1.0e-5)(reach(second, log2s(1.0e-5))));
 		}
 		break;
 	case Handle::StartPhase:
@@ -387,7 +423,7 @@ void HitPicture::drag(visage::Point p) {
 		break;
 	case Handle::Spread:
 		// ACROSS, WHEN THE LAST HAND LANDS (Spread, in log2 seconds).
-		c->setValue(std::log2(std::max(1.0e-3, dragSeconds(startX_ + dx))));
+		c->setValue(log2s(1.0e-3)(reach(c, log2s(1.0e-3))));
 		break;
 	case Handle::ClapBand:
 		// UP AND DOWN, THE HIGH PASS CORNER WHERE THE HAND IS; ACROSS, THE BAND'S Q (an octave of Q per 80 px).
@@ -407,6 +443,10 @@ void HitPicture::release() {
 		if (heldSecond_ != nullptr) {
 			heldSecond_->endGesture();
 		}
+	}
+	if (groupHistory_ != nullptr) {
+		groupHistory_->endGroup();
+		groupHistory_ = nullptr;
 	}
 	dragging_ = false;
 	held_ = Handle::kCount;

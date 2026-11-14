@@ -191,6 +191,7 @@ private:
 	/// the panel's own per-pad ones and outlive the picture; only which of them `controls_` names moves.
 	ParamControl* heldControl_ = nullptr;
 	ParamControl* heldSecond_ = nullptr;
+	EditHistory* groupHistory_ = nullptr; ///< the history a two-way handle's one undo step is grouped in
 	/// THE LABEL PLACEMENT, kept with everything it is a function of (bounds, scale, what is shown and its numbers, the
 	/// frozen span of a drag): a paint that nothing changed serves it without placing eight labels again.
 	struct LabelKey {
@@ -213,6 +214,7 @@ private:
 	float startY_ = 0.0f;
 	double startMultiplier_ = 1.0;
 	double frozenSpan_ = 1.0;
+	float slack_ = 0.0f; ///< how far the hand is past where a time handle's control stops following it (px, signed)
 	double paintedSpan_ = 0.0; ///< the span of the last repaint asked for
 };
 

@@ -56,10 +56,11 @@ public:
 	static constexpr float kMeterWidth = 22.0f;
 	static constexpr float kRowGap = 8.0f;
 	/// THE MINIMUM (§6.2, derived from the rows it must hold): the strip's three knob cells, the globals'
-	/// four knobs and the pivot box, the meter — and a plot at least 180 px tall.
+	/// row of up to seven cells (Offset, Amount, Tilt, Pivot, Output, Phase, Key Track) at 64 px each — the width
+	/// "Amount" and "Output" need to be printed whole — the meter, and a plot at least 180 px tall.
 	static constexpr float kMinPlotHeight = 180.0f;
 	static constexpr float kStripWidth = 3.0f * 64.0f;
-	static constexpr float kGlobalsWidth = 5.0f * 64.0f;
+	static constexpr float kGlobalsWidth = 7.0f * 64.0f;
 
 	// TEST SEAMS
 	[[nodiscard]] EqGraph* graphForTest() const { return graph_.get(); }

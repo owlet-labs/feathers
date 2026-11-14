@@ -24,6 +24,8 @@
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/fx_control.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/switch_chip.h"
+#include "plugin/ui/value_box.h"
 
 #include <array>
 #include <functional>
@@ -157,6 +159,9 @@ public:
 	[[nodiscard]] std::vector<fx::waypoint::Param> addressedParamsForTest() const;
 
 	[[nodiscard]] const std::vector<std::unique_ptr<Knob>>& knobsForTest() const { return knobs_; }
+	[[nodiscard]] ValueBox* typeForTest() const { return type_.get(); }
+	[[nodiscard]] SwitchChip* keytrackForTest() const { return keytrack_.get(); }
+	[[nodiscard]] SwitchChip* polyForTest() const { return poly_.get(); }
 
 private:
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt — one line, so the toggle, the
@@ -206,6 +211,10 @@ public:
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::vector<std::unique_ptr<Knob>> knobs_;
+	/// The three device-wide choices, which are not knobs: the filter type's list, and two chips.
+	std::unique_ptr<ValueBox> type_;
+	std::unique_ptr<SwitchChip> keytrack_;
+	std::unique_ptr<SwitchChip> poly_;
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;
 };

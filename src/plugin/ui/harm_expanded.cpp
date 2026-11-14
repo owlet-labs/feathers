@@ -62,6 +62,7 @@ std::span<const HarmExpanded::KnobGroup> HarmExpanded::groups() {
 HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id,
                            Notifier* notifier)
     : host_(host), device_(id) {
+	(void)registry; // the chips take none, as the knobs do not
 	scope_ = std::make_unique<HarmScope>(host_, device_);
 	addChild(scope_.get());
 
@@ -98,8 +99,7 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 		}
 	}
 
-	auto poly = std::make_unique<SegmentedControl>(control(hrm::Param::Poly), registry,
-	                                               hrm::kOffOnNames, notifier);
+	auto poly = std::make_unique<SwitchChip>(control(hrm::Param::Poly), "Poly");
 	// ALIVE OR DEAD BY THE DEVICE'S OWN DECLARATION, exactly as the card decides it — HARM declares a
 	// `perVoiceControl` now, so it is alive. Asked rather than assumed, and asked BEFORE the first
 	// paint, because a hand arrives through the mouse road and the mouse road does not wait for a
@@ -108,10 +108,8 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 	addChild(poly.get());
 	poly_ = std::move(poly);
 
-	// DEPTH FOLLOWS ENV — Off and On both on its face, the Poly switch's form (a multivalue toggle is the
-	// project's antipattern; two states drawn side by side is not one).
-	depthEnv_ = std::make_unique<SegmentedControl>(control(hrm::Param::DepthFollowsEnv), registry,
-	                                               hrm::kOffOnNames, notifier);
+	// DEPTH FOLLOWS ENV — a two-state control, so a chip that names itself, as Poly is.
+	depthEnv_ = std::make_unique<SwitchChip>(control(hrm::Param::DepthFollowsEnv), "Env Depth");
 	addChild(depthEnv_.get());
 
 	// NOTCH OR HIGH-PASS (backlog NL) — a chip, because it has two states and both are named on it as it flips.
@@ -219,16 +217,8 @@ visage::Bounds HarmExpanded::polyBounds() const {
 	// THE MODAL ROW, AT THE TOP. Poly is a verb rather than a value — it decides how many of the device
 	// there are — so it heads the panel instead of trailing it. (Enabled, the other verb, is the window
 	// header's chip now, one row up.) Right-aligned, with its caption against it.
-	return { std::max(kPad, width() - kPad - kSwitchWidth), kPad, kSwitchWidth, kSwitchHeight };
-}
-
-visage::Bounds HarmExpanded::polyLabelBounds() const {
-	// LEFT OF THE SWITCH NOW, because the switch is right-aligned in the modal row and a caption
-	// outboard of it would be off the panel. Right-aligned into the gap, so the word sits against
-	// the control it names.
-	const visage::Bounds box = polyBounds();
-	const float left = modeBounds().right() + 8.0f; // clear of the Mode chip
-	return { left, box.y(), std::max(0.0f, box.x() - 8.0f - left), box.height() };
+	return { std::max(kPad, width() - kPad - kSwitchWidth), kPad + (kSwitchHeight - SwitchChip::kHeight) * 0.5f,
+	         kSwitchWidth, SwitchChip::kHeight };
 }
 
 visage::Bounds HarmExpanded::modeBounds() const {
@@ -311,8 +301,8 @@ void HarmExpanded::resized() {
 		// its caption — the group is three knobs in four cells, so nothing moves to make room for it.
 		if (g + 1 == groups().size() && group.knobs.size() < static_cast<size_t>(kRowCells)) {
 			const float x = kPad + cell * static_cast<float>(group.knobs.size());
-			const float w = std::max(0.0f, cell - 8.0f);
-			depthEnvBounds_ = { x + 4.0f, top + (column - kSwitchHeight) * 0.5f, w, kSwitchHeight };
+			const float w = std::max(0.0f, cell - 4.0f);
+			depthEnvBounds_ = { x + 2.0f, top + (column - SwitchChip::kHeight) * 0.5f, w, SwitchChip::kHeight };
 			depthEnv_->setBounds(depthEnvBounds_.x(), depthEnvBounds_.y(), depthEnvBounds_.width(),
 			                     depthEnvBounds_.height());
 		}
@@ -323,12 +313,6 @@ void HarmExpanded::resized() {
 		top += static_cast<float>(rows) * column
 		       + (rows > 1 ? static_cast<float>(rows - 1) * kRowGap : 0.0f);
 	}
-}
-
-visage::Bounds HarmExpanded::depthEnvLabelBounds() const {
-	// ABOVE THE SWITCH, in its own cell — the word that makes "Off | On" mean something.
-	const visage::Bounds box = depthEnvBounds_;
-	return { box.x() - 4.0f, box.y() - kCaptionHeight - 4.0f, box.width() + 8.0f, kCaptionHeight };
 }
 
 std::vector<hrm::Param> HarmExpanded::addressedParamsForTest() const {
@@ -357,20 +341,7 @@ void HarmExpanded::draw(visage::Canvas& canvas) {
 	// NO GROUND OF ITS OWN. The overlay's panel is already a raised surface and a second rectangle on
 	// top of it would be a card inside a card. The knobs, the row and the scope draw themselves.
 
-	// THE SWITCH'S CAPTION. Without it the control is the words "Off" and "On" with no subject —
-	// the defect `filter_card.cpp` names in as many words, and one this panel shipped with for
-	// exactly one render before a capture caught it.
-	const bool polyLive = hrm::kDescriptor.traits.perVoiceControl >= 0;
-	const visage::Bounds polyLabel = polyLabelBounds();
-	canvas.setColor(polyLive ? kMuted : kDisabled);
-	canvas.text(polyText(), font(kKnobReadoutSize), visage::Font::kRight, polyLabel.x(),
-	            polyLabel.y(), polyLabel.width(), polyLabel.height());
-	const visage::Bounds envLabel = depthEnvLabelBounds();
-	if (depthEnvBounds_.width() > 0.0f) {
-		canvas.setColor(drawnMode_ == 1 ? kDisabled : kMuted); // greyed with its switch in High-pass
-		canvas.text("Env Depth", font(kKnobReadoutSize), visage::Font::kCenter, envLabel.x(), envLabel.y(),
-		            envLabel.width(), envLabel.height());
-	}
+	// POLY AND ENV DEPTH ARE CHIPS: each prints its own word, so nothing is drawn beside them.
 
 	// THE GROUP CAPTIONS, AND THEY ARE THE DESIGN PASS, so the expanded view is more intuitive
 	// than a knob list. A list is UNDIFFERENTIATED — these twelve are

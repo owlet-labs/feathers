@@ -440,7 +440,7 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 		// which Additive does not draw. "Shape", because the box under it names WHICH shape.
 		makeKnob(shapeAmountKnobs_, slot, findParam(static_cast<clap_id>(shapeAmountParam(slot))), "Shape");
 		makeKnob(
-		    smoothnessKnobs_, slot, findParam(static_cast<clap_id>(smoothnessParam(slot))), "Smoothness");
+		    smoothnessKnobs_, slot, findParam(static_cast<clap_id>(smoothnessParam(slot))), "Smooth");
 		// THE FIVE FIELD MODIFIER KNOBS, right flank. Same makeKnob, so they are stock Knobs with
 		// Knob's own registry wiring, Knob's anchor-and-delta gesture and Knob's mod ring — which is
 		// what makes them modulation destinations without this file knowing anything about the bus.

@@ -112,7 +112,7 @@ public:
 	static constexpr int kRowCells = 4;
 	static constexpr float kCellWidth = 62.0f;
 	static constexpr float kSwitchHeight = 20.0f;
-	static constexpr float kSwitchWidth = 84.0f;
+	static constexpr float kSwitchWidth = 64.0f;
 
 	/// ONE GROUP OF KNOBS, DECLARED. The constructor builds from these, the layout walks them, and
 	/// `minimumSize` counts them — so a control moving between groups is one line and the height
@@ -143,17 +143,11 @@ public:
 	/// The shared harmonic control — the same widget the card builds, over the same DeviceControl.
 	HarmonicRow* harmonicRow() const { return row_.get(); }
 
-	/// WHERE THE SWITCH'S CAPTION GOES, beside it. Not decoration: without it the control is the
-	/// words "Off" and "On" with no subject, which is the defect `filter_card.cpp` names in as many
-	/// words and which this panel shipped with for exactly one render.
-	visage::Bounds polyLabelBounds() const;
 	/// THE DEPTH-FOLLOWS-ENV SWITCH, in the TEMPORAL group's fourth cell — the one Attack, Release and Porta
 	/// leave empty. It sits beside the two knobs that shape the envelope it hands the notch, because the
 	/// envelope is what it is about. Filled by `resized`.
 	visage::Bounds depthEnvBounds() const { return depthEnvBounds_; }
-	/// Its caption, above it in the same cell.
-	visage::Bounds depthEnvLabelBounds() const;
-	SegmentedControl* depthEnvForTest() const { return depthEnv_.get(); }
+	SwitchChip* depthEnvForTest() const { return depthEnv_.get(); }
 
 
 	/// What that caption says — the word, or the word AND the reason while the switch is dead. The
@@ -176,7 +170,7 @@ public:
 	/// THIS NOW rather than having been deleted — a control that moved is not a control that stopped
 	/// mattering, and a suite that dropped its assertions when the split landed would have paid for
 	/// the split by giving up the guarantees it was meant to preserve.
-	SegmentedControl* polyForTest() const { return poly_.get(); }
+	SwitchChip* polyForTest() const { return poly_.get(); }
 
 	/// THE NOTCH / HIGH-PASS SWITCH (backlog NL), at the left of the modal row — the other verb that decides what
 	/// the device IS rather than how much of it. The card has the same chip; the window is its superset.
@@ -198,8 +192,8 @@ private:
 	    controls_ {};
 	std::vector<std::unique_ptr<Knob>> knobs_;
 	std::vector<fx::harm::Param> knobParams_;
-	std::unique_ptr<SegmentedControl> poly_;
-	std::unique_ptr<SegmentedControl> depthEnv_;
+	std::unique_ptr<SwitchChip> poly_;
+	std::unique_ptr<SwitchChip> depthEnv_;
 	std::unique_ptr<SwitchChip> mode_;
 	int drawnMode_ = -1; ///< the Mode the greying last followed; -1 before the first
 	void followMode(bool highpass);

@@ -5964,7 +5964,8 @@ TEST_CASE("the Automod panel lays out inside the size it asks for") {
 			const bool isCell = dynamic_cast<const ui::Knob*>(child) != nullptr
 			                    || dynamic_cast<const ui::ZoneCoordCell*>(child) != nullptr
 			                    || dynamic_cast<const ui::GammaBox*>(child) != nullptr
-			                    || dynamic_cast<const ui::SwitchChip*>(child) != nullptr; // Keytrack (backlog IS.5)
+			                    || dynamic_cast<const ui::SwitchChip*>(child) != nullptr // Keytrack (backlog IS.5)
+			                    || dynamic_cast<const ui::ValueBox*>(child) != nullptr; // Sync, LFO Mode: choices are boxes
 			// **ROTATE IS A `GammaBox` AND NOT A CELL** — it sits inside the pad (backlog IJ), which
 			// its own case asserts. Excluded by identity, not by type, so gamma is still counted.
 			if (!isCell || child == f.panel->rotateForTest()) {
@@ -34555,7 +34556,10 @@ TEST_CASE("NO: inside a Rack a filter's Poly switch is greyed, refuses the hand 
 	REQUIRE(card->polyForTest() != nullptr);
 	CHECK_FALSE(card->polyForTest()->usable());
 	const float before = chain->fieldAt(inRack, poly);
-	card->polyForTest()->select(before >= 0.5f ? 0 : 1);
+	// A REAL PRESS, through the chip's own handler (`toggleForTest` bypasses the gate a press goes through).
+	ui::SwitchChip* chip = card->polyForTest();
+	chip->onMouseDown().callback(at(chip->width() * 0.5f, chip->height() * 0.5f));
+	chip->onMouseUp().callback(at(chip->width() * 0.5f, chip->height() * 0.5f));
 	CHECK(chain->fieldAt(inRack, poly) == before);
 
 	// AND IN FEATHERS' OWN LANE THE SAME SWITCH IS LIVE.

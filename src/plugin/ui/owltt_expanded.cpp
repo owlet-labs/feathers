@@ -189,6 +189,15 @@ OwlttExpanded::OwlttExpanded(backplane::DeviceHost& host, WidgetRegistry& regist
 			addCoord(dtt::Param::Vibe, dtt::Param::VibeMode, dtt::kVibeModeNames, dtt::kVibeZoneNames);
 			return;
 		}
+		// THE SOFT CLIPPER IS OFF/ON, SO A CHIP, not a dial: it names itself and shows both states at a glance.
+		if (param == dtt::Param::SoftClip) {
+			auto chip = std::make_unique<SwitchChip>(control(param), label);
+			addChild(chip.get());
+			cells_.push_back(chip.get());
+			extraReached_.push_back(param);
+			chips_.push_back(std::move(chip));
+			return;
+		}
 		auto knob = std::make_unique<Knob>(control(param), label, notifier);
 		knob->setFaceDiameter(kKnobDiameter);
 		addChild(knob.get());
@@ -473,9 +482,19 @@ void OwlttExpanded::resized() {
 		for (size_t i = 0; i < group.knobs.size() && next < cells_.size(); ++i, ++next) {
 			const size_t line = i / cells;
 			const size_t at = i % cells;
-			cells_[next]->setBounds(x + cell * static_cast<float>(at),
-			                        top[col] + static_cast<float>(line) * (column + kRowGap), cell,
-			                        column);
+			const visage::Bounds box { x + cell * static_cast<float>(at),
+				                       top[col] + static_cast<float>(line) * (column + kRowGap), cell, column };
+			bool isChip = false;
+			for (const auto& chip : chips_) {
+				isChip = isChip || cells_[next] == chip.get();
+			}
+			if (isChip) {
+				// A CHIP ON THE KNOBS' FACE LINE, centred where a face would be — it is shorter than a column.
+				cells_[next]->setBounds(box.x() + 2.0f, box.y() + 0.5f * (kKnobDiameter - SwitchChip::kHeight),
+				                        box.width() - 4.0f, SwitchChip::kHeight);
+				continue;
+			}
+			cells_[next]->setBounds(box.x(), box.y(), box.width(), box.height());
 		}
 		const size_t rows = group.knobs.empty() ? 0 : (group.knobs.size() + cells - 1) / cells;
 		top[col] += static_cast<float>(rows) * column

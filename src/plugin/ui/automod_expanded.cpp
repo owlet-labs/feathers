@@ -123,6 +123,16 @@ AutomodExpanded::AutomodExpanded(backplane::DeviceHost& host, WidgetRegistry& re
 
 	// ROWS 2, 3 AND 4 — knobs, in row order.
 	const auto addKnob = [&](amd::Param p) {
+		// A NAMED CHOICE (Sync's divisions, the LFO mode) IS A BOX THAT OPENS ITS LIST, NOT A DIAL — as the card has it.
+		// The window captions it itself, under the box, as it captions every cell.
+		if (p == amd::Param::SyncDivision || p == amd::Param::LfoMode) {
+			auto box = std::make_unique<ValueBox>(control(p), shortLabelOf(p));
+			addChild(box.get());
+			cells_.push_back(box.get());
+			choiceParams_.push_back(p);
+			choices_.push_back(std::move(box));
+			return;
+		}
 		auto knob = std::make_unique<Knob>(control(p), shortLabelOf(p), notifier);
 		knob->setFaceDiameter(kKnobDiameter);
 		addChild(knob.get());
@@ -282,6 +292,15 @@ void AutomodExpanded::layOut() {
 			// GAMMA'S BOX IS CENTRED IN THE SPACE A KNOB'S FACE WOULD FILL — one arithmetic, shared
 			// with the card, in `GammaBox::cellBounds`.
 			// KEYTRACK'S CHIP SITS ON THE KNOBS' FACE LINE, centred where a face would be — a chip is shorter.
+			bool isChoice = false;
+			for (const auto& choice : choices_) {
+				isChoice = isChoice || cells_[i] == choice.get();
+			}
+			if (isChoice) {
+				// A BOX IN A KNOB'S CELL: inset, on the face's line, with its caption inside (`ValueBox` draws its own).
+				cells_[i]->setBounds(box.x() + 2.0f, box.y() + 6.0f, box.width() - 4.0f, ValueBox::kHeight);
+				continue;
+			}
 			if (cells_[i] == keytrack_.get()) {
 				const float faceMid = box.y() + kKnobDiameter * 0.5f;
 				keytrack_->setBounds(box.x(), faceMid - SwitchChip::kHeight * 0.5f, box.width(), SwitchChip::kHeight);
@@ -296,6 +315,7 @@ void AutomodExpanded::layOut() {
 
 std::vector<amd::Param> AutomodExpanded::addressedParamsForTest() const {
 	std::vector<amd::Param> out = knobParams_;
+	out.insert(out.end(), choiceParams_.begin(), choiceParams_.end()); // Sync and LFO Mode: boxes, not knobs
 	// THE PAD'S THREE, which no knob holds — a drag writes them and a widget walk cannot see that.
 	out.insert(out.end(), kPadParams.begin(), kPadParams.end());
 	// AND ROTATE, WHICH STOPPED BEING A KNOB when it stopped being bounded. It is reachable through

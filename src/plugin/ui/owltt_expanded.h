@@ -280,6 +280,8 @@ private:
 	std::unique_ptr<OwlttGraph> graph_;
 	std::vector<visage::Bounds> captionBounds_;
 	std::unique_ptr<SwitchChip> stereo_;
+	/// The grid's two-state controls (the soft clipper), seated as cells in place of a dial.
+	std::vector<std::unique_ptr<SwitchChip>> chips_;
 	/// BACKLOG NB: the Drive, a bar left of the graph — the card's, so the window stays a superset.
 	std::unique_ptr<VerticalFader> drive_;
 	/// BACKLOG NK: the band slider banks, each a cell of the grid, and the three controls each one's pills are.

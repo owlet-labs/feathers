@@ -1614,7 +1614,8 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "record_gate", .name = "Record Gate", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
      .unit = device::Unit::Percent, .names = {}, .modulatable = true,
      .tooltip = "Only records while the input is above this level, so silence never overwrites the buffer; it "
-                "stays open for half a second after the input falls. 0 is off"},
+                "stays open for half a second after the input falls. 0 is off",
+     .shortName = "Rec Gate"},
 };
 
 /// **HOW LONG THE RECORD GATE STAYS OPEN AFTER THE INPUT FALLS BELOW ITS THRESHOLD — backlog MJ.** By design a

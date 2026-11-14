@@ -206,8 +206,35 @@ public:
 	/// The key a step made a note sounds at: the terrain's, or the cycle's root.
 	[[nodiscard]] int defaultKeyAt(size_t step) const;
 
+	//-- LOCK ROW (pattern_rowlock.h) -----------------------------------------------------------------------------//
+	/// **A ROW'S HEADER** is the gutter at the lane's left: in Drum and Modulation a lane's name, in the pitched Modes the
+	/// name of a pitch. A press of the context button there opens a menu of one verb — "Lock row" or "Unlock row" — that cuts
+	/// the row loose from the terrain (it keeps the steps it has now) or gives it back. The window's lane only; the card
+	/// draws the same marks. One undo step each way.
+	static constexpr int kNoRow = -100000;
+	static constexpr const char* kRowGestures =
+	    "Right-click a row's header to lock it: the row keeps its steps exactly as they are now while the place moves, and "
+	    "the other rows go on following it. Transpose, Wobble, the feel and the note range still act on it, and a hand's "
+	    "edit still applies. Right-click a locked row's header to unlock it.";
+	/// The row (a lane, or a pitch as semitones above the cycle's root) whose header is under `at`; `kNoRow` elsewhere.
+	[[nodiscard]] int rowAt(visage::Point at) const;
+	[[nodiscard]] bool rowLocked(int id) const;
+	/// The menu's options for row `id`: one, naming the verb it would do.
+	[[nodiscard]] std::vector<std::pair<int, std::string>> rowMenuOptions(int id) const;
+	static constexpr int kRowMenuToggle = 1;
+	/// Locks or unlocks row `id` of the focused pattern, as one undo step; true when the block changed.
+	bool setRowLocked(int id, bool lock);
+	void showRowMenu(visage::Point at, int id);
+	[[nodiscard]] const mod::arp::pattern::RowLocks& locksForTest() const { return locks_; }
+	/// The header's x extent, the lane's left gutter.
+	[[nodiscard]] float gutterWidth() const { return kRowGutter; }
+
 private:
 	void drawDrumGrid(visage::Canvas& canvas);
+	/// THE PITCHED ROWS' HEADERS (the gutter): a pitch's name where a note sounds or a lock holds it, and the lock mark.
+	void drawPitchHeaders(visage::Canvas& canvas, float barHeight);
+	/// A PADLOCK, centred at (cx, cy), `size` high: the one mark a locked row's header wears.
+	static void drawLockMark(visage::Canvas& canvas, float cx, float cy, float size);
 	/// The edits block now, and a write of it (recorded as one undo step against `before` when `record`).
 	[[nodiscard]] mod::arp::pat::EditState editsNow() const;
 	void writeEdits(const mod::arp::pat::EditState& state);
@@ -222,9 +249,12 @@ private:
 	/// Reads the device's playhead; true (and a repaint) when the step drawn moved. Only while playing does it change.
 	bool pollPlayhead();
 	uint8_t drumOn_ = 0xFF; ///< which lanes play (a bit a lane): a lane switched off is drawn dimmed
-	/// WHERE THE STEPS START: past the row labels' gutter in Drum, at the edge otherwise.
-	[[nodiscard]] float leftPad() const { return drum_ ? 3.0f + kDrumGutter : 3.0f; }
-	static constexpr float kDrumGutter = 18.0f;
+	/// WHERE THE STEPS START: past the row headers' gutter.
+	[[nodiscard]] float leftPad() const { return 3.0f + kRowGutter; }
+	static constexpr float kRowGutter = 26.0f;
+	/// The focused pattern's locked rows, as the device reads them (after `poll`).
+	mod::arp::pattern::RowLocks locks_ {};
+	mod::arp::genes::Mode mode_ = mod::arp::genes::Mode::Melody;
 	bool editable_ = false;
 	EditHistory* history_ = nullptr;
 	int selected_ = -1;

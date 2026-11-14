@@ -1484,6 +1484,10 @@ mod::arp::pat::MidiSource midiSourceOf(const backplane::DeviceHost& host, Device
 	if (host.blockAt(id, pt::kEditsBlock, block)) {
 		src.edits = block;
 	}
+	block.assign(pt::kRowLockWords, 0.0f);
+	if (host.blockAt(id, pt::kRowLockBlock, block)) {
+		src.rowLocks = block;
+	}
 	block.assign(mod::arp::kPlayWords, 0.0f);
 	if (host.blockAt(id, 0, block)) {
 		src.play = block;

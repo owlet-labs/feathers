@@ -41469,3 +41469,258 @@ TEST_CASE("OWLTT: the combined-reduction readout has a place of its own — no s
 	}
 	CHECK(headersChecked == 5u * 6u); // not vacuous: the headers were there to be avoided
 }
+
+//------------------------------------------------------------------------------------------------//
+// OWLTT'S MODULATION DISPLAY: the glow arrives with the arm, the live dot follows a moving source,  //
+// and the amount drag runs along the handle's own axis.                                           //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// An OWLTT with its window OPEN over the editor, the way a hand opens it: the card's plot and the window's, both live.
+struct OwlttOpenRig {
+	DynCardFixture<ui::OwlttCard> d { feathers::fx::owltt::kTraits.tag };
+	ui::OwlttExpanded* panel = nullptr;
+	ui::ModState* mod = nullptr;
+
+	OwlttOpenRig() {
+		mod = d.f.gui.modForTest();
+		REQUIRE(mod != nullptr);
+		REQUIRE(d.lane->onExpandDevice != nullptr);
+		d.lane->onExpandDevice(d.slot);
+		panel = findInTree<ui::OwlttExpanded>(d.f.root);
+		REQUIRE(panel != nullptr);
+		REQUIRE(panel->graph() != nullptr);
+	}
+	size_t indexOf(const device::Modulatable& c) const {
+		for (size_t i = 0; i < std::size(feathers::fx::owltt::kParamDescs); ++i) {
+			if (std::string_view(c.desc().key) == feathers::fx::owltt::kParamDescs[i].key) {
+				return i;
+			}
+		}
+		return std::size(feathers::fx::owltt::kParamDescs);
+	}
+};
+
+} // namespace
+
+TEST_CASE("OWLTT: arming and disarming a source repaints the plot and every assignable face with no mouse event") {
+	OwlttOpenRig rig;
+	auto& d = rig.d;
+	ui::OwlttGraph* cardGraph = d.card->graph();
+	ui::OwlttGraph* windowGraph = rig.panel->graph();
+	std::vector<visage::Frame*> frames { cardGraph, windowGraph, rig.panel->driveForTest(), rig.panel->outputForTest() };
+	for (const auto& box : rig.panel->globalBoxesForTest()) {
+		frames.push_back(box.get());
+	}
+	for (size_t row = 0; row < ui::OwlttGraph::kTableRows; ++row) {
+		for (size_t band = 0; band < 3; ++band) {
+			frames.push_back(windowGraph->tableBoxForTest(row, band));
+		}
+	}
+	for (visage::Frame* frame : frames) {
+		REQUIRE(frame != nullptr);
+		CAPTURE(frame->width());
+		// THE ROAD THAT DELIVERS: every one is on the modulation state's watch list, which `arm` notifies.
+		CHECK(rig.mod->watches(frame));
+	}
+	std::vector<std::unique_ptr<RedrawProbe>> probes;
+	for (visage::Frame* frame : frames) {
+		probes.push_back(std::make_unique<RedrawProbe>(frame));
+	}
+	const auto drainCounts = [&] {
+		size_t told = 0;
+		for (auto& probe : probes) {
+			told += probe->count > 0 ? 1 : 0;
+		}
+		return told;
+	};
+	// ARMED WITH NO MOUSE EVENT: the graph and each face asked for a repaint.
+	rig.mod->focus(backplane::Source::core(0));
+	rig.mod->arm(true);
+	(void)d.f.gui.tickForTest();
+	for (size_t i = 0; i < frames.size(); ++i) {
+		CAPTURE(i);
+		CHECK(probes[i]->count > 0);
+	}
+	CHECK(drainCounts() == frames.size());
+	for (auto& probe : probes) {
+		probe->count = 0;
+		probe->rearm();
+	}
+	// AND DISARMED: told again.
+	rig.mod->arm(false);
+	(void)d.f.gui.tickForTest();
+	for (size_t i = 0; i < frames.size(); ++i) {
+		CAPTURE(i);
+		CHECK(probes[i]->count > 0);
+	}
+}
+
+TEST_CASE("OWLTT: every plot handle draws the live modulated position on its own axis, the handle stays at the base, and a quiet plot never repaints") {
+	namespace ow = feathers::fx::owltt;
+	using Handle = ui::OwlttGraph::Handle;
+	OwlttOpenRig rig;
+	auto& d = rig.d;
+	ui::OwlttGraph* graph = rig.panel->graph();
+	const backplane::Source macro = backplane::Source::core(0);
+	rig.mod->focus(macro);
+	rig.mod->arm(true);
+	const visage::Bounds area = graph->barArea();
+	const visage::Bounds plot = graph->plot();
+	const auto yOf = [&](double v) { return area.bottom() - static_cast<float>(std::clamp(v, 0.0, 1.0)) * area.height(); };
+	// THE LOG FREQUENCY AXIS, restated: 20 Hz to 20 kHz across the plot.
+	const auto xOfHz = [&](double hz) { return plot.x() + plot.width() * static_cast<float>(std::log2(hz / 20.0) / std::log2(1000.0)); };
+
+	struct Case {
+		size_t band;
+		Handle handle;
+		bool horizontal;
+	};
+	size_t checked = 0;
+	for (size_t band = 0; band < 3; ++band) {
+		for (const Handle h : { Handle::ThresholdBar, Handle::BandwidthBar, Handle::RatioStrip, Handle::LevelStrip, Handle::DownRatio,
+		                        Handle::UpRatio }) {
+			device::Modulatable& control = graph->handleControl(band, h);
+			const size_t idx = rig.indexOf(control);
+			const bool horizontal = h == Handle::DownRatio || h == Handle::UpRatio;
+			const backplane::Destination dest = backplane::Destination::control(d.device, idx);
+			d.f.bridge.setRouteAmount(macro, dest, 0.2f);
+			const double base = control.value();
+			const ui::ModHandle& mh = graph->bandModHandle(band, h);
+			CHECK(mh.axis(0).horizontal == horizontal);
+			for (const double offset : { 0.1, -0.1 }) {
+				CAPTURE(band);
+				CAPTURE(static_cast<int>(h));
+				CAPTURE(offset);
+				d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(base + offset));
+				const ui::ModHandlePlan plan = graph->bandModPlan(band, h);
+				REQUIRE(plan.axes[0].hasDot);
+				const double live = base + offset;
+				float want = 0.0f;
+				// THE EXPECTED COORDINATE, restated from the plot's own mapping at the defaults (every global at neutral).
+				switch (h) {
+				case Handle::ThresholdBar:
+				case Handle::RatioStrip:
+				case Handle::LevelStrip: want = yOf(live); break;
+				case Handle::BandwidthBar: want = yOf(std::max(0.0, 0.5 - 0.75 * live)); break; // threshold 0.5 at the default
+				case Handle::DownRatio:
+				case Handle::UpRatio: {
+					const ui::OwlttGraph::Track t = graph->ratioTrack(band);
+					want = t.x0 + static_cast<float>(std::clamp(0.5 + live - 0.5, 0.0, 1.0)) * (t.x1 - t.x0);
+					break;
+				}
+				}
+				CHECK(plan.axes[0].dot == doctest::Approx(want).epsilon(1e-3));
+				// THE HANDLE ITSELF STAYS AT THE BASE.
+				const visage::Point c = graph->ringCentre(band, h);
+				CHECK((horizontal ? c.x : c.y) == doctest::Approx(plan.axes[0].base).epsilon(0.01));
+				++checked;
+			}
+			d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(base));
+			d.f.bridge.setRouteAmount(macro, dest, 0.0f);
+		}
+	}
+	// BOTH CROSSOVERS, positive and negative, in hertz on the log axis.
+	for (size_t which = 0; which < 2; ++which) {
+		const size_t idx = static_cast<size_t>(which == 0 ? ow::Param::LowCrossover : ow::Param::HighCrossover);
+		const backplane::Destination dest = backplane::Destination::control(d.device, idx);
+		d.f.bridge.setRouteAmount(macro, dest, 0.05f);
+		const double base = graph->crossoverModHandle(which).axis(0).control->value();
+		for (const double factor : { 1.3, 0.7 }) {
+			d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(base * factor));
+			const ui::ModHandlePlan plan = graph->crossoverModPlan(which);
+			REQUIRE(plan.axes[0].hasDot);
+			CHECK(plan.axes[0].dot == doctest::Approx(xOfHz(base * factor)).epsilon(1e-3));
+			CHECK(graph->crossoverHandle(which).x == doctest::Approx(xOfHz(base)).epsilon(1e-3));
+			++checked;
+		}
+		d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(base));
+		d.f.bridge.setRouteAmount(macro, dest, 0.0f);
+	}
+	CHECK(checked == 3u * 6u * 2u + 2u * 2u);
+
+	// A MOVING ROUTED SOURCE REPAINTS THE PLOT; A STILL ONE, AND A PLOT WITH NOTHING ROUTED, DO NOT.
+	(void)graph->update(); // settle: the first read takes the baseline
+	(void)graph->update();
+	RedrawProbe probe(graph);
+	CHECK_FALSE(graph->update());
+	CHECK(probe.count == 0);
+	const size_t mid = static_cast<size_t>(ow::Param::MidThreshold);
+	d.f.bridge.setRouteAmount(macro, backplane::Destination::control(d.device, mid), 0.2f);
+	d.f.bridge.setFxModulatedForTest(d.slot, mid, 0.62f);
+	CHECK(graph->update());
+	CHECK(probe.count > 0);
+	probe.count = 0;
+	probe.rearm();
+	CHECK_FALSE(graph->update()); // held where it is: no repaint
+	CHECK(probe.count == 0);
+	d.f.bridge.setFxModulatedForTest(d.slot, mid, 0.66f);
+	CHECK(graph->update()); // moved again: told again
+}
+
+TEST_CASE("OWLTT: an amount drag runs along the handle's own axis — across for crossovers and thumbs, up and down for rings and strips — and toward higher values raises it") {
+	namespace ow = feathers::fx::owltt;
+	using Handle = ui::OwlttGraph::Handle;
+	OwlttOpenRig rig;
+	auto& d = rig.d;
+	ui::OwlttGraph* graph = rig.panel->graph();
+	const backplane::Source macro = backplane::Source::core(0);
+	rig.mod->focus(macro);
+	rig.mod->arm(true);
+	constexpr float kPx = 14.0f;
+	const float step = kPx / ui::Knob::kRouteDragRange;
+	const float seed = ui::Knob::kRouteSeedAmount;
+
+	struct Target {
+		visage::Point at;
+		size_t index;
+		bool horizontal;
+		std::string name;
+	};
+	std::vector<Target> targets;
+	for (size_t band = 0; band < 3; ++band) {
+		for (const Handle h : { Handle::ThresholdBar, Handle::BandwidthBar, Handle::RatioStrip, Handle::LevelStrip, Handle::DownRatio,
+		                        Handle::UpRatio }) {
+			targets.push_back({ graph->ringCentre(band, h), rig.indexOf(graph->handleControl(band, h)),
+			                    h == Handle::DownRatio || h == Handle::UpRatio,
+			                    std::string(graph->handleControl(band, h).desc().key) });
+		}
+	}
+	for (size_t which = 0; which < 2; ++which) {
+		targets.push_back({ graph->crossoverHandle(which), rig.indexOf(*graph->crossoverModHandle(which).axis(0).control), true,
+		                    which == 0 ? "low_crossover" : "high_crossover" });
+	}
+	const auto amountOf = [&](size_t index) {
+		return d.f.bridge.routeAmount(macro, backplane::Destination::control(d.device, index));
+	};
+	for (const Target& t : targets) {
+		CAPTURE(t.name);
+		const backplane::Destination dest = backplane::Destination::control(d.device, t.index);
+		const auto press = [&](float dx, float dy) {
+			d.f.bridge.setRouteAmount(macro, dest, 0.0f);
+			graph->onMouseDown().callback(at(t.at.x, t.at.y));
+			graph->onMouseDrag().callback(at(t.at.x + dx, t.at.y + dy));
+			graph->onMouseUp().callback(at(t.at.x + dx, t.at.y + dy));
+			const float got = amountOf(t.index);
+			d.f.bridge.setRouteAmount(macro, dest, 0.0f);
+			return got;
+		};
+		if (t.horizontal) {
+			CHECK(press(kPx, 0.0f) == doctest::Approx(seed + step).epsilon(0.001));   // toward higher values (right) raises it
+			CHECK(press(-kPx, 0.0f) == doctest::Approx(seed - step).epsilon(0.001));
+			CHECK(press(0.0f, kPx) == doctest::Approx(seed).epsilon(0.001));          // across the axis: nothing
+			CHECK(press(0.0f, -kPx) == doctest::Approx(seed).epsilon(0.001));
+		}
+		else {
+			// UP IS HIGHER for a threshold, a ratio and a level; for the BANDWIDTH ring it is down (a wider bandwidth puts the
+			// up bar lower), and "toward higher values raises it" follows the control, not the screen.
+			const float toward = t.name.find("bandwidth") != std::string::npos ? kPx : -kPx;
+			CHECK(press(0.0f, toward) == doctest::Approx(seed + step).epsilon(0.001));
+			CHECK(press(0.0f, -toward) == doctest::Approx(seed - step).epsilon(0.001));
+			CHECK(press(kPx, 0.0f) == doctest::Approx(seed).epsilon(0.001));
+			CHECK(press(-kPx, 0.0f) == doctest::Approx(seed).epsilon(0.001));
+		}
+	}
+	CHECK(targets.size() == 20u);
+}

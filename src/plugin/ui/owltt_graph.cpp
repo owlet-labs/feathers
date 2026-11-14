@@ -19,6 +19,7 @@
 
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/diagnostic.h"
+#include "plugin/ui/mod_route_menu.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/tooltip.h"
 
@@ -538,6 +539,34 @@ void OwlttGraph::setModulation(ModState* mod, EditHistory* history) {
 	for (size_t i = 0; i < controls_.size(); ++i) {
 		control(i).setModulation(mod, history);
 	}
+	refreshWatch();
+}
+
+void OwlttGraph::refreshWatch() {
+	ModState* state = routingStateOf(control(static_cast<size_t>(owltt::Param::LowThreshold)));
+	if (state == watched_) {
+		return;
+	}
+	watched_ = state;
+	watch_ = state != nullptr ? state->watch(this) : Watch {};
+}
+
+/// THE HANDLES' CONTROLS, in one list: the two crossovers, then each band's six.
+bool OwlttGraph::modulationMoved() {
+	std::array<double, 20> now {};
+	size_t n = 0;
+	now[n++] = control(static_cast<size_t>(owltt::Param::LowCrossover)).normalizedModulated();
+	now[n++] = control(static_cast<size_t>(owltt::Param::HighCrossover)).normalizedModulated();
+	for (size_t b = 0; b < 3; ++b) {
+		for (const size_t p : { kBandParams[b].threshold, kBandParams[b].bandwidth, kBandParams[b].ratio,
+		                        kBandParams[b].level, kBandParams[b].downRatio, kBandParams[b].upRatio }) {
+			now[n++] = control(p).normalizedModulated();
+		}
+	}
+	const bool moved = haveModulated_ && now != drawnModulated_;
+	drawnModulated_ = now;
+	haveModulated_ = true;
+	return moved;
 }
 
 DeviceControl& OwlttGraph::controlForHit(ThresholdHit hit) const {
@@ -722,7 +751,7 @@ visage::Point OwlttGraph::centreOfHit(ThresholdHit hit) const {
 	return ringCentre(bandForHit(hit), handleOfHit(hit));
 }
 
-/// **THE MODULATION ROAD OF A HANDLE**: the crossovers and every bar and thumb are `ModHandle`s; the two strips are not.
+/// **THE MODULATION ROAD OF A HANDLE**: the crossovers, every bar and thumb and both strips are `ModHandle`s.
 ModHandle* OwlttGraph::modForHit(ThresholdHit hit) const {
 	if (hit == ThresholdHit::kLowCrossover) {
 		return &crossoverMod(0);
@@ -733,11 +762,7 @@ ModHandle* OwlttGraph::modForHit(ThresholdHit hit) const {
 	if (hit == ThresholdHit::kNone) {
 		return nullptr;
 	}
-	const Handle h = handleOfHit(hit);
-	if (h == Handle::RatioStrip || h == Handle::LevelStrip) {
-		return nullptr;
-	}
-	return &bandMod(bandForHit(hit), h);
+	return &bandMod(bandForHit(hit), handleOfHit(hit));
 }
 
 OwlttGraph::Track OwlttGraph::ratioTrack(size_t band) const {
@@ -769,10 +794,20 @@ ModHandle& OwlttGraph::bandMod(size_t band, Handle handle) const {
 				const float r = std::clamp(e.ratio + static_cast<float>(v) - 0.5f, 0.0f, 1.0f);
 				return t.x0 + r * (t.x1 - t.x0);
 			};
-			bandMod_[b * 4 + 0] = ModHandle({ ModHandleAxis { &control(kBandParams[b].threshold), false, yOfThreshold } });
-			bandMod_[b * 4 + 1] = ModHandle({ ModHandleAxis { &control(kBandParams[b].bandwidth), false, yOfBandwidth } });
-			bandMod_[b * 4 + 2] = ModHandle({ ModHandleAxis { &control(kBandParams[b].downRatio), true, xOfDown } });
-			bandMod_[b * 4 + 3] = ModHandle({ ModHandleAxis { &control(kBandParams[b].upRatio), true, xOfDown } });
+			// THE STRIPS TOO: a vertical axis over the effective value's height, the ratio through the global ratio's shift.
+			const auto yOfRatio = [this, b](double v) {
+				const float eff = std::clamp(static_cast<float>(v) + shiftFor(Handle::RatioStrip), 0.0f, 1.0f);
+				return barArea().bottom() - eff * barArea().height();
+			};
+			const auto yOfLevel = [this](double v) {
+				return barArea().bottom() - std::clamp(static_cast<float>(v), 0.0f, 1.0f) * barArea().height();
+			};
+			bandMod_[b * 6 + 4] = ModHandle({ ModHandleAxis { &control(kBandParams[b].ratio), false, yOfRatio } });
+			bandMod_[b * 6 + 5] = ModHandle({ ModHandleAxis { &control(kBandParams[b].level), false, yOfLevel } });
+			bandMod_[b * 6 + 0] = ModHandle({ ModHandleAxis { &control(kBandParams[b].threshold), false, yOfThreshold } });
+			bandMod_[b * 6 + 1] = ModHandle({ ModHandleAxis { &control(kBandParams[b].bandwidth), false, yOfBandwidth } });
+			bandMod_[b * 6 + 2] = ModHandle({ ModHandleAxis { &control(kBandParams[b].downRatio), true, xOfDown } });
+			bandMod_[b * 6 + 3] = ModHandle({ ModHandleAxis { &control(kBandParams[b].upRatio), true, xOfDown } });
 		}
 		bandModBuilt_ = true;
 	}
@@ -782,9 +817,10 @@ ModHandle& OwlttGraph::bandMod(size_t band, Handle handle) const {
 	case Handle::BandwidthBar: kind = 1; break;
 	case Handle::DownRatio: kind = 2; break;
 	case Handle::UpRatio: kind = 3; break;
-	default: break;
+	case Handle::RatioStrip: kind = 4; break;
+	case Handle::LevelStrip: kind = 5; break;
 	}
-	return bandMod_[std::min<size_t>(band, 2) * 4 + kind];
+	return bandMod_[std::min<size_t>(band, 2) * 6 + kind];
 }
 
 OwlttGraph::HandleLook OwlttGraph::lookOf(size_t band, Handle handle) const {
@@ -800,45 +836,6 @@ OwlttGraph::HandleLook OwlttGraph::lookOf(size_t band, Handle handle) const {
 	return look;
 }
 
-visage::Bounds OwlttGraph::reachOf(size_t band, Handle handle) const {
-	// ONLY THE STRIPS DRAW A REACH RECTANGLE. A bar or a thumb is a `ModHandle`, whose own plan (`bandModPlan`) is the stroke
-	// and the dot it draws.
-	if (handle != Handle::RatioStrip && handle != Handle::LevelStrip) {
-		return {};
-	}
-	const HandleLook look = lookOf(band, handle);
-	if (look.amount == 0.0f) {
-		return {};
-	}
-	const visage::Bounds xover = barArea();
-	const float x0 = band == 0 ? xover.x() : bandEdge(band - 1);
-	const float x1 = band == 2 ? xover.right() : bandEdge(band);
-	const owltt::EffectiveBand eff = effective(band);
-
-	// THE TWO ENDS OF THE REACH, each in the handle's own mapping — the strips are linear over the box,
-	// the bars sweep 0.2..1.0 through `thresholdToY` — and each restated through the SAME functions
-	// the value itself is drawn with, so the reach starts exactly where the ring sits.
-	float yAt = 0.0f;
-	float yUp = 0.0f;
-	float yDown = 0.0f;
-	float x = x0;
-	float width = x1 - x0;
-	if (handle == Handle::RatioStrip || handle == Handle::LevelStrip) {
-		const StripSpan strip = stripSpanOf(x0, x1);
-		const bool ratio = handle == Handle::RatioStrip;
-		const float value = ratio ? eff.ratio : eff.level;
-		const auto y = [&](float v) { return xover.bottom() - std::clamp(v, 0.0f, 1.0f) * xover.height(); };
-		yAt = y(value);
-		yUp = y(value + look.amount);
-		yDown = look.bipolar ? y(value - look.amount) : yAt;
-		x = ratio ? strip.x0 : strip.mid;
-		width = ratio ? strip.mid - strip.x0 : strip.x1 - strip.mid;
-	}
-
-	const float top = std::min({ yAt, yUp, yDown });
-	const float bottom = std::max({ yAt, yUp, yDown });
-	return { x, top, width, bottom - top };
-}
 
 double OwlttGraph::noteHz() const {
 	constexpr size_t kNoteHz = 17; // `Owltt::kReadingCount - 1`: the note Key Track places the crossovers on, or 0
@@ -1163,6 +1160,9 @@ bool OwlttGraph::update() {
 		layoutTable();
 		redraw();
 	}
+	// A ROUTED SOURCE THAT MOVES A HANDLE'S CONTROL REPAINTS THE PLOT (its live dot is drawn from that value); a plot with nothing
+	// routed reads the same numbers every tick and repaints nothing.
+	const bool modulationMovedNow = modulationMoved();
 	const Meters now = meters();
 	// FIELD BY FIELD, and the clip bit with them. A memcmp would be tempting and wrong: the struct
 	// has padding after the bool, and padding is not required to hold any particular value.
@@ -1171,7 +1171,7 @@ bool OwlttGraph::update() {
 	                   || now.clipping != drawnMeters_.clipping || now.clipState != drawnMeters_.clipState
 	                   || now.bandSaturating != drawnMeters_.bandSaturating
 	                   || now.combinedGrDb != drawnMeters_.combinedGrDb || now.grSecond != drawnMeters_.grSecond;
-	if (!moved) {
+	if (!moved && !modulationMovedNow) {
 		return false;
 	}
 	drawnMeters_ = now;
@@ -1180,6 +1180,8 @@ bool OwlttGraph::update() {
 }
 
 void OwlttGraph::draw(visage::Canvas& canvas) {
+	refreshWatch(); // a state installed after the last layout is found here
+
 	// THE BARS, STRIPS AND METERS ARE DRAWN IN `barArea()`, WHICH IS WHAT THE HIT TEST USES. With the
 	// crossover lane on, that is the plot minus the lane at the top; with it off the two are the same
 	// rectangle. Naming the local `xover` keeps the block below unchanged — and the point is that
@@ -1306,20 +1308,7 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			canvas.setColor(kAccent);
 			canvas.segment(region.x0, yUp, region.x1, yUp, 2.5f, true);
 
-			// A HANDLE THE ARMED SOURCE MAY REACH WEARS THE MODULATION COLOUR AND A HALO — the knob's face glow in this
-			// picture's terms (`lookOf`, the same answer the cases read). The strips use it; the bars and thumbs go through
-			// their `ModHandle`, which draws the halo, the amount stroke and the live dot itself.
-			const auto handleRing = [&](const visage::Point& c, Handle h, uint32_t restColour) {
-				const bool lit = lookOf(b, h).lit;
-				if (lit) {
-					canvas.setColor(withAlpha(kModulation, 0.35f));
-					ringOutlineAt(canvas, c.x, c.y, OwlttGraph::kRingRadius + 3.0f, 2.5f);
-				}
-				canvas.setColor(kSurface);
-				ringAt(canvas, c.x, c.y, OwlttGraph::kRingRadius);
-				canvas.setColor(lit ? kModulation : restColour);
-				ringOutlineAt(canvas, c.x, c.y, OwlttGraph::kRingRadius, 1.5f);
-			};
+			// EVERY HANDLE GOES THROUGH ITS `ModHandle`, which draws the halo, the amount stroke and the live dot.
 			const auto modRing = [&](Handle h, uint32_t colour) {
 				const visage::Point c = ringCentre(b, h);
 				bandMod(b, h).drawUnder(canvas, c.x, c.y, OwlttGraph::kRingRadius);
@@ -1439,19 +1428,9 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			const float levelStripH = level * xover.height();
 			canvas.rectangle(stripX1, xover.bottom() - levelStripH, stripX2 - stripX1, levelStripH);
 
-			// THE ROUTED REACH ON A STRIP — from the value to where the armed source can push it.
-			for (const Handle h : { Handle::RatioStrip, Handle::LevelStrip }) {
-				const visage::Bounds reach = reachOf(b, h);
-				if (reach.height() > 0.0f) {
-					canvas.setColor(withAlpha(kModulation, 0.45f));
-					canvas.rectangle(reach.x(), reach.y(), reach.width(), reach.height());
-				}
-			}
-
-			// HANDLE RINGS on the ratio and level strips — sitting on the value they represent, lit
-			// with the halo while the armed source may reach them (see the bars above).
-			handleRing(ringCentre(b, Handle::RatioStrip), Handle::RatioStrip, tokens::kGammaAxis);
-			handleRing(ringCentre(b, Handle::LevelStrip), Handle::LevelStrip, kMuted);
+			// THE STRIPS' HANDLES: the same ring and `ModHandle` as the bars', drawn in the strip's own colour.
+			modRing(Handle::RatioStrip, tokens::kGammaAxis);
+			modRing(Handle::LevelStrip, kMuted);
 
 			if (editor_) {
 				// THE STRIPS' CAPTIONS, once per band, at the top of each strip.

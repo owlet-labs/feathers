@@ -210,7 +210,13 @@ void ModHandle::beginRoute(size_t axisIndex, const visage::MouseEvent& e) {
 	}
 	device::Modulatable& control = *axes_[axisIndex].control;
 	routeAxis_ = axisIndex;
-	routeAnchorY_ = e.position.y;
+	// THE AMOUNT DRAG RUNS ALONG THE HANDLE'S OWN AXIS: across for a horizontal axis, up and down for a vertical one, and its sign
+	// is "toward higher values of the control raises the amount", whichever way the plot's coordinate runs (a height falls as the
+	// value rises, a frequency's x rises with it).
+	routeAnchorY_ = axes_[axisIndex].horizontal ? e.position.x : e.position.y;
+	const ModHandleAxis& axis = axes_[axisIndex];
+	const device::ParamDesc& desc = control.desc();
+	routeSign_ = axis.coordOf && axis.coordOf(desc.max) < axis.coordOf(desc.min) ? -1.0f : 1.0f;
 	const float before = control.display().amount;
 	routeAnchorAmount_ = before != 0.0f ? before : kSeedAmount;
 	// THE KNOB'S OWN SEQUENCE: open the amount gesture, commit the seed so the stroke exists before the hand moves.
@@ -222,7 +228,8 @@ void ModHandle::dragRoute(const visage::MouseEvent& e) {
 	if (routeAxis_ == npos) {
 		return;
 	}
-	const float travel = (routeAnchorY_ - e.position.y) / kDragRange;
+	const float along = axes_[routeAxis_].horizontal ? e.position.x : e.position.y;
+	const float travel = routeSign_ * (along - routeAnchorY_) / kDragRange;
 	axes_[routeAxis_].control->setAmount(
 	    std::clamp(routeAnchorAmount_ + travel, -device::kMaxAmount, device::kMaxAmount));
 }

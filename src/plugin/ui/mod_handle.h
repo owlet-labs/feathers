@@ -130,7 +130,8 @@ private:
 
 	std::vector<ModHandleAxis> axes_;
 	size_t routeAxis_ = npos;
-	float routeAnchorY_ = 0.0f;
+	float routeAnchorY_ = 0.0f; ///< where the press was, along the pressed axis (x for a horizontal one)
+	float routeSign_ = 1.0f;    ///< +1 when the axis' coordinate rises with the value, -1 when it falls
 	float routeAnchorAmount_ = 0.0f;
 };
 

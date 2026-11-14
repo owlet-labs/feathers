@@ -155,6 +155,9 @@ public:
 	/// kDragOctavePixels, so the handle can always reach its control's whole range.
 	[[nodiscard]] double dragSeconds(float x) const;
 	static constexpr double kDragOctavePixels = 40.0;
+	/// TEST ONLY: the span the picture was last told to paint with, and the span a press is tested against now.
+	[[nodiscard]] double paintedSpanForTest() const { return paintedSpan_; }
+	[[nodiscard]] double spanForTest() const { return span(); }
 	/// Where `hz` is drawn up the plot (log frequency, 20 Hz to 20 kHz over its top 58%).
 	[[nodiscard]] float yOfHz(double hz) const;
 
@@ -174,6 +177,7 @@ private:
 	void press(visage::Point p);
 	void drag(visage::Point p);
 	void release();
+	void repaint();
 
 	drum::Kind kind_ { drum::Kind::Membrane };
 	drum::Laws laws_ {};
@@ -209,6 +213,7 @@ private:
 	float startY_ = 0.0f;
 	double startMultiplier_ = 1.0;
 	double frozenSpan_ = 1.0;
+	double paintedSpan_ = 0.0; ///< the span of the last repaint asked for
 };
 
 class DrumPanel : public ExpandedView {

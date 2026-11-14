@@ -128,6 +128,11 @@ void HitPicture::show(drum::Kind kind, const drum::Laws& laws, double decaySecon
 	decaySeconds_ = decaySeconds;
 	levelDb_ = levelDb;
 	controls_ = controls;
+	repaint();
+}
+
+void HitPicture::repaint() {
+	paintedSpan_ = span();
 	redraw();
 }
 
@@ -276,6 +281,9 @@ ParamControl* HitPicture::secondOf(Handle h) const {
 }
 
 void HitPicture::press(visage::Point p) {
+	if (dragging_) {
+		release(); // a release that never came: end its gesture before this press begins another
+	}
 	held_ = handleUnder(p);
 	if (held_ == Handle::kCount) {
 		return;
@@ -404,6 +412,13 @@ void HitPicture::release() {
 	held_ = Handle::kCount;
 	heldControl_ = nullptr;
 	heldSecond_ = nullptr;
+	// THE AXIS LETS GO OF ITS FROZEN SPAN HERE, so the picture drawn so far (at the frozen span) is no longer the one the next
+	// press is tested against (at the natural span). `show` repaints only when a number moved, and the last drag's numbers
+	// were already shown, so without this the drawn handles sat where the old axis put them until another control changed
+	// something (the owner's "frozen until I touch Drive").
+	if (paintedSpan_ != span()) {
+		repaint();
+	}
 }
 
 void HitPicture::dragForTest(Handle h, float dx, float dy) {

@@ -14007,6 +14007,74 @@ TEST_CASE("hardening: a drag on a drum handle ends on the control it began on wh
 	CHECK(f.params.base(feathers::drumParam(1, DrumControl::WireDecay)) != wire0);
 }
 
+TEST_CASE("drum picture: after a drag off the right edge the axis, the drawn handles and the hit test agree, and the next drag lands") {
+	ExploreFixture f;
+	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+	f.selection.select(1); // B, a Snare: Decay, Wire Decay and Click Decay are all time handles
+	ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
+	panel.setBounds(0.0f, 0.0f, panel.minimumSize().x, panel.minimumSize().y);
+	(void)panel.update();
+	using H = ui::HitPicture::Handle;
+	ui::HitPicture& p = panel.pictureForTest();
+	const auto decayId = feathers::drumParam(1, DrumControl::Decay);
+	const auto at = [](float x, float y) {
+		visage::MouseEvent e;
+		e.position = { x, y };
+		return e;
+	};
+	// A HAND'S GESTURE: press on the handle, move in steps (a tick between), release where `endX` is (outside the frame if so).
+	const auto gesture = [&](H h, float dxTotal) {
+		const visage::Point from = p.handleAt(h);
+		p.onMouseDown().callback(at(from.x, from.y));
+		for (int i = 1; i <= 8; ++i) {
+			p.onMouseDrag().callback(at(from.x + dxTotal * static_cast<float>(i) / 8.0f, from.y));
+			f.settleGesture();
+			(void)panel.update();
+		}
+		p.onMouseUp().callback(at(from.x + dxTotal, from.y));
+		f.settleGesture();
+		(void)panel.update();
+	};
+	// EVERY SHOWN HANDLE IS FOUND WHERE IT IS DRAWN, and the axis the picture was painted with is the one it is tested with.
+	const auto consistent = [&] {
+		CHECK(p.paintedSpanForTest() == p.spanForTest());
+		for (size_t i = 0; i < ui::HitPicture::kHandleCount; ++i) {
+			const auto h = static_cast<H>(i);
+			if (!p.handleShown(h)) {
+				continue;
+			}
+			CAPTURE(i);
+			const visage::Point where = p.handleAt(h);
+			const H found = p.handleUnder(where);
+			CHECK(p.handleAt(found).x == doctest::Approx(where.x).epsilon(1.0e-4));
+			CHECK(p.handleAt(found).y == doctest::Approx(where.y).epsilon(1.0e-4));
+		}
+	};
+	consistent();
+	const float right = p.width() - 10.0f;
+	for (const H h : { H::Decay, H::WireDecay, H::Decay }) {
+		CAPTURE(static_cast<int>(h));
+		const auto id = h == H::Decay ? decayId : feathers::drumParam(1, DrumControl::WireDecay);
+		const double before = f.params.base(id);
+		// OUT TO THE RIGHT, WELL PAST THE EDGE, and released outside the frame.
+		gesture(h, (right - p.handleAt(h).x) + 120.0f);
+		const double after = f.params.base(id);
+		CHECK(after > before + 0.5);
+		consistent();
+		// THE NEXT DRAG, on the handle's NEW place, moves its value by the time under the hand at the CURRENT axis.
+		const double t0 = h == H::Decay ? p.lawsForTest().t60 : p.lawsForTest().wireT60;
+		const float x0 = p.handleAt(h).x;
+		const float step = std::max(-30.0f, 0.5f * (p.xOf(0.0) - x0)); // leftwards, inside the plot
+		const double expected = p.secondsAt(x0 + step); // at the axis the press is made on, which the drag freezes
+		gesture(h, step);
+		const double t1 = h == H::Decay ? p.lawsForTest().t60 : p.lawsForTest().wireT60;
+		CHECK(f.params.base(id) < after);
+		CHECK(t1 < t0);
+		CHECK(t1 == doctest::Approx(expected).epsilon(0.02));
+		consistent();
+	}
+}
+
 TEST_CASE("hardening: the drum picture places its labels once for what they depend on") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));

@@ -20,6 +20,7 @@
  */
 
 #include "fx/harm/harm.h"
+#include "fx/scrub.h"
 
 #include "fx/harm/harm_types.h"
 
@@ -560,6 +561,8 @@ void Harm::processStereo(float* left, float* right, int frames) {
 		}
 		return;
 	}
+	// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 before anything sees it (as EQ and Comp do; `fx::scrubNonFinite`).
+	fx::scrubNonFinite(left, right, frames);
 	const double level = static_cast<double>(std::clamp(target_.level, 0.0f, 1.0f));
 	// SPREAD IS A HALF TURN AT THE TOP, and it is separate from Phase — the firmware folded the two
 	// into one control and could not offer a centred oscillator with any width at all.

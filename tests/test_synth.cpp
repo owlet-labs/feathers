@@ -4535,6 +4535,53 @@ TEST_CASE("a per-note-id modulation reaches exactly the params that DECLARE they
 	CHECK(accepted == declared);
 }
 
+TEST_CASE("a non-finite per-note Level modulation is dropped, and an absurd tuning expression is bounded") {
+	// `levelMod` is added to the base Level and `std::clamp` passes a NaN through, so one NaN from a host sat in the
+	// voice's gain for the rest of the note. Its siblings (`setNoteExpression`, `ParamSet::setModOffset`) reject
+	// non-finite values; this one did not. And a finite tuning past ~12000 semitones is an infinite frequency.
+	SUBCASE("Level") {
+		const auto rigHeap = std::make_unique<Rig>();
+		Rig& rig = *rigHeap;
+		rig.setRelease(-1.0);
+		rig.synth.noteOn(0, kKeyC4, 1, 1.0);
+		std::vector<float> l(256, 0.0f);
+		std::vector<float> r(256, 0.0f);
+		rig.synth.render(l.data(), r.data(), 256);
+		const int slot = rig.synth.slotOfKeyForTest(kKeyC4);
+		REQUIRE(slot >= 0);
+		rig.synth.paramModForNote(0, kKeyC4, 1, static_cast<clap_id>(feathers::ParamId::VoiceLevel), -0.25);
+		REQUIRE(rig.synth.voiceLevelModForTest(slot) == -0.25);
+		for (const double bad : { std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(),
+		                          -std::numeric_limits<double>::infinity() }) {
+			rig.synth.paramModForNote(0, kKeyC4, 1, static_cast<clap_id>(feathers::ParamId::VoiceLevel), bad);
+			CHECK(rig.synth.voiceLevelModForTest(slot) == -0.25); // the last good value stands
+			std::fill(l.begin(), l.end(), 0.0f);
+			std::fill(r.begin(), r.end(), 0.0f);
+			rig.synth.render(l.data(), r.data(), 256);
+			CHECK(std::all_of(l.begin(), l.end(), [](float v) { return std::isfinite(v); }));
+			CHECK(std::isfinite(rig.synth.voiceGainForTest(slot)));
+		}
+	}
+	SUBCASE("Tuning") {
+		const auto rigHeap = std::make_unique<Rig>();
+		Rig& rig = *rigHeap;
+		rig.play({ noteOn(0, kKeyC4, 1) }, 256, 64);
+		const int slot = rig.synth.slotOfKeyForTest(kKeyC4);
+		REQUIRE(slot >= 0);
+		rig.synth.noteExpression(0, kKeyC4, 1, CLAP_NOTE_EXPRESSION_TUNING, 1.0e300);
+		rig.play({}, 256, 64);
+		CHECK(std::isfinite(rig.synth.voicePitchForTest(slot)));
+		CHECK(rig.synth.voicePitchForTest(slot) == doctest::Approx(kKeyC4 + 240.0));
+		rig.synth.noteExpression(0, kKeyC4, 1, CLAP_NOTE_EXPRESSION_TUNING, -1.0e300);
+		rig.play({}, 256, 64);
+		CHECK(rig.synth.voicePitchForTest(slot) == doctest::Approx(kKeyC4 - 240.0));
+		// AND A SANE BEND IS NOT TOUCHED.
+		rig.synth.noteExpression(0, kKeyC4, 1, CLAP_NOTE_EXPRESSION_TUNING, 7.0);
+		rig.play({}, 256, 64);
+		CHECK(rig.synth.voicePitchForTest(slot) == doctest::Approx(kKeyC4 + 7.0));
+	}
+}
+
 TEST_CASE("both modulator kinds tick to the values the pre-runner engine produced") {
 	// **THE REFERENCE IS ANOTHER BUILD, NOT THIS ONE.** Every constant below was MEASURED on the
 	// engine at commit a0d96e4 — the typed-array mod strip, before any runner existed — by printing

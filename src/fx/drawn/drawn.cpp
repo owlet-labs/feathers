@@ -16,6 +16,7 @@
  */
 
 #include "fx/drawn/drawn.h"
+#include "fx/scrub.h"
 
 #include "dsp/fast_math_approx.h"
 
@@ -226,6 +227,8 @@ void DrawnFilter::processStereo(float* left, float* right, int frames) {
 	if (left == nullptr || frames <= 0) {
 		return;
 	}
+	// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 before anything sees it (as EQ and Comp do; `fx::scrubNonFinite`).
+	fx::scrubNonFinite(left, right, frames);
 	int done = 0;
 	while (done < frames) {
 		// THE GRID IS ABSOLUTE, carried in gridPhase_ across calls, so where a host's block boundary

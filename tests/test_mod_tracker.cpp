@@ -34,13 +34,14 @@ namespace {
 /// THE TRACKER THROUGH ITS OPS — the two tables the host reaches it by, over one storage.
 struct Ops {
 	void* mem = nullptr;
-	Ops() {
+	explicit Ops(double rate = 48000.0) {
 		const device::ModOps& mod = tracker::kModOps;
 		const size_t align = std::max<size_t>(mod.stateAlign, alignof(std::max_align_t));
 		mem = feathers::test::heapAlignedAlloc(align, ((mod.stateBytes + align - 1) / align) * align);
 		REQUIRE(mem != nullptr);
 		mod.construct(mem);
-		mod.prepare(mem, 48000.0);
+		mod.prepare(mem, rate);
+		tracker::kNoteOps.prepare(mem, rate);
 	}
 	~Ops() {
 		tracker::kModOps.destruct(mem);
@@ -51,13 +52,13 @@ struct Ops {
 
 	/// A ROW OF DECLARED DEFAULTS with the rule and the glide set — glide at zero so the output is the
 	/// target and not a slew toward it.
-	void rule(tracker::Rule rule) {
+	void rule(tracker::Rule rule, float glide = 0.0f) {
 		std::vector<float> row;
 		for (const device::ParamDesc& p : tracker::kDescriptor.params) {
 			row.push_back(static_cast<float>(p.def));
 		}
 		row[static_cast<size_t>(tracker::Param::Rule)] = static_cast<float>(rule);
-		row[static_cast<size_t>(tracker::Param::Glide)] = 0.0f;
+		row[static_cast<size_t>(tracker::Param::Glide)] = glide;
 		tracker::kModOps.setFields(mem, row.data(), row.size());
 		tracker::kNoteOps.setFields(mem, row.data(), row.size());
 	}
@@ -129,4 +130,50 @@ TEST_CASE("the tracker's three rules read the stack three ways — by value, roo
 		case tracker::Rule::Highest: CHECK(out == doctest::Approx(mapped(72))); break;
 		}
 	}
+}
+
+TEST_CASE("the glide is the same TIME at every sample rate, and at 48 kHz it is the original per-tick coefficient to the bit") {
+	// A tick is a fixed 32 samples, so at 96 kHz it is half as long and the same per-tick coefficient made the glide
+	// half the time. The stored number keeps its 48 kHz meaning: `1 - glide^(1/4)` per tick there, and the same time
+	// constant elsewhere.
+	constexpr float kGlide = 0.95f;
+	constexpr int kBlock = 32;
+	const float old48k = std::clamp(1.0f - std::pow(kGlide, 0.25f), 0.0f, 1.0f);
+
+	// THE OLD RECURRENCE RESTATED, from the first note at root 60, spread 2 octaves: key 72 maps to +0.5, the output
+	// starts at 0. Compared to the bit at 48 kHz, tick for tick.
+	{
+		Ops t(48000.0);
+		t.rule(tracker::Rule::Last, kGlide);
+		t.feed(device::NoteEvent::Kind::On, 72);
+		float expected = 0.0f;
+		for (int tick = 0; tick < 200; ++tick) {
+			expected += (0.5f - expected) * old48k;
+			CHECK(t.output(1) == expected);
+		}
+	}
+
+	// THE TIME TO COVER HALF THE DISTANCE, in seconds, at three rates.
+	const auto halfTime = [&](double rate) {
+		Ops t(rate);
+		t.rule(tracker::Rule::Last, kGlide);
+		t.feed(device::NoteEvent::Kind::On, 72);
+		int ticks = 0;
+		while (t.output(1) < 0.25f && ++ticks < 100000) {
+		}
+		REQUIRE(ticks < 100000);
+		return (static_cast<double>(ticks) + 1.0) * kBlock / rate;
+	};
+	const double t48 = halfTime(48000.0);
+	const double t96 = halfTime(96000.0);
+	const double t44 = halfTime(44100.0);
+	const double t192 = halfTime(192000.0);
+	CAPTURE(t48);
+	CAPTURE(t96);
+	// WITHIN ONE TICK OF THE COARSER RATE: the measurement itself is quantised to a tick.
+	CHECK(std::abs(t96 - t48) <= kBlock / 44100.0 + 1e-9);
+	CHECK(std::abs(t44 - t48) <= kBlock / 44100.0 + 1e-9);
+	CHECK(std::abs(t192 - t48) <= kBlock / 44100.0 + 1e-9);
+	// NON-VACUITY: the half time is a real glide (tens of ms), not an instant arrival.
+	CHECK(t48 > 0.02);
 }

@@ -22,6 +22,7 @@
 #include "mod/macros/macros.h"
 
 #include <algorithm>
+#include <cmath>
 #include <new>
 
 namespace feathers::mod::macros {
@@ -35,7 +36,9 @@ void Macros::setFields(const float* fields, size_t count) noexcept {
 	for (size_t n = 0; n < kMacroCount; ++n) {
 		// CLAMPED TO THE DECLARED 0..1, which the engine's resolve already keeps a routed value inside; a
 		// row from anywhere else gets the same guarantee, so a bipolar output can never leave −1..1.
-		value_[n] = std::clamp(at(macroParam(n), 0.0f), 0.0f, 1.0f);
+		// AND A NaN IS NOT A VALUE: `std::clamp` passes it, and it would reach every destination the macro drives.
+		const float raw = at(macroParam(n), 0.0f);
+		value_[n] = std::isnan(raw) ? 0.0f : std::clamp(raw, 0.0f, 1.0f);
 		bipolar_[n] = at(bipolarParam(n), 0.0f) >= 0.5f;
 	}
 	valueR_ = value_; // MONO UNTIL `setFieldsR` SAYS OTHERWISE
@@ -45,7 +48,8 @@ void Macros::setFieldsR(const float* fieldsR, size_t count, const device::Contro
 	for (size_t n = 0; n < kMacroCount; ++n) {
 		const size_t i = macroParam(n);
 		if (fieldsR != nullptr && i < count && live.test(i)) {
-			valueR_[n] = std::clamp(fieldsR[i], 0.0f, 1.0f); // as `setFields` clamps the left
+			// as `setFields` clamps the left; a NaN leaves the right where it was (`std::clamp` would pass it)
+			valueR_[n] = std::isnan(fieldsR[i]) ? valueR_[n] : std::clamp(fieldsR[i], 0.0f, 1.0f);
 		}
 	}
 }

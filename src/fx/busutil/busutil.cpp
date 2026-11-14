@@ -206,12 +206,15 @@ const device::AudioOps kAudioOps {
         },
     // "AS IF JUST SWITCHED ON" — which for this device means the next block starts AT its target
     // instead of sliding to it from wherever the last one ended. Dropping the primed flag and the
-    // slew in flight is the whole of the reset; there is no filter memory to forget.
+    // slew in flight, and the rumble highpass's memory (a biquad keeps two states per channel; the
+    // coefficients stay), are the whole of the reset.
     .reset =
         [](void* storage) {
 	        OpsBusUtil& ops = asBusUtil(storage);
 	        ops.primed = false;
 	        ops.remaining = 0;
+	        ops.dcL.clear();
+	        ops.dcR.clear();
 	        ops.meter.reset();
         },
     .setFields =
@@ -267,8 +270,10 @@ const device::AudioOps kAudioOps {
 					        ops.current.rl += d.rl;
 					        ops.current.rr += d.rr;
 				        }
-				        const float inL = left[i];
-				        const float inR = right[i];
+				        // A NON-FINITE INPUT SAMPLE IS TREATED AS 0 (as Comp and EQ do): it would
+				        // reach the rumble highpass and the K-weighting meter, whose state keeps it.
+				        const float inL = std::isfinite(left[i]) ? left[i] : 0.0f;
+				        const float inR = std::isfinite(right[i]) ? right[i] : 0.0f;
 				        left[i] = ops.current.ll * inL + ops.current.lr * inR;
 				        right[i] = ops.current.rl * inL + ops.current.rr * inR;
 			        }
@@ -305,8 +310,9 @@ const device::AudioOps kAudioOps {
 		        // `right[i]` would feed the new left sample into the right one — a mistake that is
 		        // silent at the defaults, where the off-diagonals are zero, and only appears once
 		        // somebody moves Width or a pan.
-		        const float inL = left[i];
-		        const float inR = right[i];
+		        // A NON-FINITE INPUT SAMPLE IS TREATED AS 0, as above.
+		        const float inL = std::isfinite(left[i]) ? left[i] : 0.0f;
+		        const float inR = std::isfinite(right[i]) ? right[i] : 0.0f;
 		        left[i] = ops.current.ll * inL + ops.current.lr * inR;
 		        right[i] = ops.current.rl * inL + ops.current.rr * inR;
 	        }

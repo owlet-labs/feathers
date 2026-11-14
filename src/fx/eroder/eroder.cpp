@@ -433,6 +433,10 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 	const float outGain = static_cast<float>(d.wetGain) * static_cast<float>(kHeadroom);
 
 	for (int i = 0; i < frames; ++i) {
+		// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 (as Comp and EQ do): `sat()` is a clamp, which
+		// passes a NaN, and the feedback floor test below keeps it, so one NaN circulated for ever.
+		left[i] = std::isfinite(left[i]) ? left[i] : 0.0f;
+		right[i] = std::isfinite(right[i]) ? right[i] : 0.0f;
 		const float inL = left[i];
 		const float inR = right[i];
 

@@ -1829,6 +1829,110 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 }
 
 
+TEST_CASE("EVERY audio device: one NaN and one +Inf sample do not latch — the output after them is finite, and the tail still reaches exact zero") {
+	// **A NON-FINITE SAMPLE IS A HOST FAULT, AND A DEVICE THAT KEEPS IT IS A DEVICE THAT NEEDS A RESET.** A recursive
+	// section holds a NaN for ever, a delay line replays it, and a rest flush whose peak scan is `std::max` reads it as
+	// silence and never clears it. The sweep is the registry's: every device at its DEFAULT row, switched on, fed a
+	// burst with a NaN at one frame and an +Inf at another, then silence.
+	//
+	// WHAT IS ASSERTED, per device: (1) every output sample after the LAST bad input frame is finite — the bad frame's
+	// own output is the host's to have, and a device that passes a dry sample through may pass it; (2) a device whose
+	// CLEAN run reaches exact zero within `silentBlocksFor` reaches it in the bad run too, and by the same halfway mark.
+	// A device that sustains by design (its clean run never goes quiet) is read by the clean run, so no device is
+	// exempted by name here and none is exempted silently.
+	const std::vector<const device::Descriptor*> devices = audioDevices();
+	REQUIRE(devices.size() >= 5);
+
+	constexpr int kFrames = 512;
+	constexpr int kBadNan = 100;
+	constexpr int kBadInf = 200;
+	constexpr int kBurstBlocks = 4;
+	std::vector<float> burst(kFrames, 0.0f);
+	for (int i = 0; i < kFrames; ++i) {
+		burst[i] = 0.8f * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * 0.02 * static_cast<double>(i)));
+	}
+	std::vector<float> l(kFrames, 0.0f);
+	std::vector<float> r(kFrames, 0.0f);
+
+	struct Outcome {
+		bool finite = true;
+		int firstBadBlock = -1;
+		int lastNonZeroBlock = -1;
+		bool holds = false;
+	};
+	const auto run = [&](const device::Descriptor& desc, bool inject) {
+		Outcome out;
+		const DeviceRow row = enabledRowFor(desc);
+		Raw dev(desc, 48000.0, row);
+		const int silentBlocks = silentBlocksFor(desc, 400);
+		const int burstFrames = std::max(framesFor(desc, kFrames), kBurstBlocks * kFrames);
+		int block = 0;
+		for (int done = 0; done < burstFrames; done += kFrames, ++block) {
+			std::copy(burst.begin(), burst.end(), l.begin());
+			std::copy(burst.begin(), burst.end(), r.begin());
+			const bool bad = inject && block == 1;
+			if (bad) {
+				l[kBadNan] = std::numeric_limits<float>::quiet_NaN();
+				r[kBadInf] = std::numeric_limits<float>::infinity();
+			}
+			dev.process(l.data(), r.data(), kFrames);
+			if (inject && block >= 1) {
+				const int from = block == 1 ? kBadInf + 1 : 0;
+				for (int i = from; i < kFrames; ++i) {
+					if (!std::isfinite(l[i]) || !std::isfinite(r[i])) {
+						out.finite = false;
+						out.firstBadBlock = out.firstBadBlock < 0 ? block : out.firstBadBlock;
+					}
+				}
+			}
+		}
+		for (int b = 0; b < silentBlocks; ++b) {
+			std::fill(l.begin(), l.end(), 0.0f);
+			std::fill(r.begin(), r.end(), 0.0f);
+			dev.process(l.data(), r.data(), kFrames);
+			for (int i = 0; i < kFrames; ++i) {
+				if (!std::isfinite(l[i]) || !std::isfinite(r[i])) {
+					out.finite = false;
+					out.firstBadBlock = out.firstBadBlock < 0 ? burstFrames / kFrames + b : out.firstBadBlock;
+				}
+				if (l[i] != 0.0f || r[i] != 0.0f) {
+					out.lastNonZeroBlock = b;
+				}
+			}
+		}
+		out.holds = dev.ops->holdsTail != nullptr && dev.ops->holdsTail(dev.mem);
+		return out;
+	};
+
+	int settled = 0;
+	std::vector<std::string> latched;
+	for (const device::Descriptor* desc : devices) {
+		const std::string who = deviceName(*desc);
+		CAPTURE(who);
+		const int silentBlocks = silentBlocksFor(*desc, 400);
+		const Outcome clean = run(*desc, false);
+		const Outcome bad = run(*desc, true);
+		CHECK_MESSAGE(clean.finite, "the CLEAN run is not finite on ", who);
+		CHECK_MESSAGE(bad.finite, "a NaN/Inf input left a non-finite output on ", who, " (first in block ", bad.firstBadBlock, ")");
+		if (!bad.finite) {
+			latched.push_back(who);
+		}
+		if (clean.lastNonZeroBlock < silentBlocks - 1) {
+			++settled;
+			CHECK_MESSAGE(bad.lastNonZeroBlock < silentBlocks - 1, "the tail no longer reaches exact zero after a NaN/Inf input on ", who);
+			const bool promptly = bad.lastNonZeroBlock <= clean.lastNonZeroBlock + 2 || bad.lastNonZeroBlock < silentBlocks / 2;
+			CHECK_MESSAGE(promptly,
+			              "the tail is far longer after a NaN/Inf input on ", who);
+			CHECK_MESSAGE(bad.holds == clean.holds, "holdsTail differs after a NaN/Inf input on ", who);
+		}
+	}
+	for (const std::string& who : latched) {
+		MESSAGE("NON-FINITE OUTPUT AFTER NaN/Inf INPUT: " << who);
+	}
+	// NON-VACUITY: the tail half is read only where the clean run settles, so most devices have to.
+	CHECK(settled * 2 >= static_cast<int>(devices.size()));
+}
+
 TEST_CASE("a device holding sound behind an exactly silent output says so: holdsTail is true in the gap and false once the tail is gone") {
 	// **THE SLEEP RULE'S SECOND HALF (backlog MC).** A host may SLEEP the plugin on an exactly silent block, and a delay
 	// line is the device whose output is exactly silent while it still holds sound: between a click and its first

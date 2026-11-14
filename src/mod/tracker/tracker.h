@@ -106,7 +106,13 @@ public:
 	float spreadForTest() const noexcept { return spreadOctaves_; }
 	float glideForTest() const noexcept { return glide_; }
 
+	/// **THE GLIDE'S PER-TICK COEFFICIENT AT THE PREPARED RATE** — identical to the original formula at 48 kHz,
+	/// and the same time constant at any other (a tick is a fixed 32 samples, so its length in seconds moves).
+	float glideCoeff() const noexcept;
+
 private:
+	/// The rate the stored Glide number is calibrated at.
+	static constexpr double kReferenceRate = 48000.0;
 	void recomputeTarget() noexcept;
 
 	/// THE KEYS HELD, IN THE ORDER THEY ARRIVED. Order is what `Rule::Last` reads, so a set would not

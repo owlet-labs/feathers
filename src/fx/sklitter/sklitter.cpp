@@ -9,6 +9,7 @@
  */
 
 #include "fx/sklitter/sklitter.h"
+#include "fx/scrub.h"
 
 // FOR `performPushOf` — the perform circle's one builder, which every plan site below calls and none
 // duplicates. `sklitter.h` deliberately does not pull this in: the header's `RestKey` needs `MacroPush`
@@ -1134,6 +1135,11 @@ void Sklitter::processStereo(float* left, float* right, int frames) {
 		return;
 	}
 	tripwireBlock(frames); // the crush tripwire; empty outside a diagnostic build (`tripwire.h`)
+	if (target_.enabled) {
+		// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 before the loop can record it (as EQ and Comp do): a NaN written into
+		// the ring would replay on every pass. A device that is off changes no sample, NaN included.
+		fx::scrubNonFinite(left, right, frames);
+	}
 	landedAtBlock_ = ring_.landed(); // backlog MJ: the record light is whether this call lands a write
 	// **A LOCKED STOP OWES ONE 5 ms RAMP, ARMED ON ITS FIRST STOPPED BLOCK — backlog GT.** See `parked_`. Armed
 	// here rather than in `renderStereo` because the chunk below is cut where the ramp ends; in the rack a

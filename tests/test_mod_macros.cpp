@@ -37,6 +37,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -109,6 +110,20 @@ TEST_CASE("each output is its macro") {
 	}
 	// PAST THE FOURTH IS NOTHING, not a read off the end.
 	CHECK(ops.out(macros::kMacroCount) == 0.0f);
+}
+
+TEST_CASE("a NaN macro value is read as zero, never published") {
+	// `std::clamp` passes a NaN, so one from a row reached every destination the macro drives.
+	Ops ops;
+	std::vector<float> row = defaults();
+	for (size_t n = 0; n < macros::kMacroCount; ++n) {
+		row[macros::macroParam(n)] = kValues[n];
+	}
+	row[macros::macroParam(1)] = std::numeric_limits<float>::quiet_NaN();
+	ops.set(row);
+	CHECK(ops.out(0) == kValues[0]);
+	CHECK(ops.out(1) == 0.0f);
+	CHECK(ops.out(2) == kValues[2]);
 }
 
 TEST_CASE("bipolar maps 2v-1 per output") {

@@ -497,8 +497,12 @@ void MultimodeFilter::processStereo(float* left, float* right, int n) {
 	// nothing left to come out.
 	bool silentInput = true;
 	if (running) {
-		for (int i = 0; i < n && silentInput; ++i) {
-			silentInput = left[i] == 0.0f && right[i] == 0.0f;
+		// A NON-FINITE SAMPLE IS SCRUBBED TO ZERO BEFORE IT REACHES THE STATE, as EQ does: one NaN
+		// in a recursive section is a NaN in every later output. Finite input is untouched.
+		for (int i = 0; i < n; ++i) {
+			left[i] = std::isfinite(left[i]) ? left[i] : 0.0f;
+			right[i] = std::isfinite(right[i]) ? right[i] : 0.0f;
+			silentInput = silentInput && left[i] == 0.0f && right[i] == 0.0f;
 		}
 	}
 	processStereoCore(left, right, n);
@@ -511,8 +515,9 @@ void MultimodeFilter::processMono(float* mono, int n) {
 	const bool running = target_.enabled;
 	bool silentInput = true;
 	if (running) {
-		for (int i = 0; i < n && silentInput; ++i) {
-			silentInput = mono[i] == 0.0f;
+		for (int i = 0; i < n; ++i) {
+			mono[i] = std::isfinite(mono[i]) ? mono[i] : 0.0f;
+			silentInput = silentInput && mono[i] == 0.0f;
 		}
 	}
 	processMonoCore(mono, n);
@@ -521,24 +526,41 @@ void MultimodeFilter::processMono(float* mono, int n) {
 	}
 }
 
-void MultimodeFilter::flushIfAtRest(const float* left, const float* right, int n, bool silentInput) {
+void MultimodeFilter::flushIfAtRest(float* left, float* right, int n, bool silentInput) {
 	if (!silentInput) {
 		restSilence_ = 0;
 		return;
 	}
-	if (restSilence_ < restSilenceNeeded_) {
-		restSilence_ += n;
-		return;
-	}
-	float peak = 0.0f;
+	// A NON-FINITE OUTPUT ON SILENT INPUT IS A POISONED STATE, and it flushes NOW, whatever the wait
+	// and whatever the level: `std::max` ignores a NaN, so the peak scan below would read it as
+	// silence and never get here, and the device would sing NaN for ever. The block's own non-finite
+	// samples are zeroed so what leaves is finite too.
+	bool poisoned = false;
 	for (int i = 0; i < n; ++i) {
-		peak = std::max(peak, std::fabs(left[i]));
-		if (right != nullptr) {
-			peak = std::max(peak, std::fabs(right[i]));
+		if (!std::isfinite(left[i])) {
+			left[i] = 0.0f;
+			poisoned = true;
+		}
+		if (right != nullptr && !std::isfinite(right[i])) {
+			right[i] = 0.0f;
+			poisoned = true;
 		}
 	}
-	if (peak == 0.0f || peak >= kRestLevel) {
-		return;
+	if (!poisoned) {
+		if (restSilence_ < restSilenceNeeded_) {
+			restSilence_ += n;
+			return;
+		}
+		float peak = 0.0f;
+		for (int i = 0; i < n; ++i) {
+			peak = std::max(peak, std::fabs(left[i]));
+			if (right != nullptr) {
+				peak = std::max(peak, std::fabs(right[i]));
+			}
+		}
+		if (peak == 0.0f || peak >= kRestLevel) {
+			return;
+		}
 	}
 	// **THE NUMERIC STATE, AND NOT `reset()`.** The first version of this called `reset()`, on the
 	// reasoning that it is `AudioOps::reset`'s weaker half — forget the delay lines, keep the settings.

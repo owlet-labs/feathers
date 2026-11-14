@@ -117,6 +117,8 @@ private:
 	/// FALSE UNTIL THE FIRST BLOCK, so the heads are seated from the first block's controls rather
 	/// than from a constructor's guess at them.
 	bool seated_ = false;
+	/// True while the last block ran enabled: the first disabled block clears the state, once.
+	bool running_ = false;
 
 	/// THE LAST SAMPLE'S WET, waiting to be written back into the line under Feedback.
 	float loopL_ = 0.0f;

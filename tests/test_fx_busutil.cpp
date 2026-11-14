@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <string>
 #include <utility>
@@ -1270,4 +1271,41 @@ TEST_CASE("DM: the new controls round trip through the row, and an old row witho
 	CHECK(old.sideTrim == 0.0f);
 	CHECK(old.monitor == 0);
 	CHECK_FALSE(old.swap);
+}
+
+TEST_CASE("reset clears the rumble highpass's memory: silence after a reset is exact silence") {
+	// `reset` is "as if just switched on". The highpass's two biquad states survived it (the comment said there was
+	// no filter memory), so a reset after loud audio played the filter's tail out into the next block.
+	Instance inst;
+	bu::Settings on;
+	on.highpass = 4; // 50 Hz
+	inst.set(on);
+	std::vector<float> loud(2048, 0.9f), loudR(2048, 0.9f);
+	inst.process(loud, loudR);
+
+	inst.reset();
+
+	std::vector<float> quiet(256, 0.0f), quietR(256, 0.0f);
+	inst.process(quiet, quietR);
+	for (size_t i = 0; i < quiet.size(); ++i) {
+		CHECK(quiet[i] == 0.0f);
+		CHECK(quietR[i] == 0.0f);
+	}
+}
+
+TEST_CASE("a NaN or an Inf in the input does not reach the highpass or the meter") {
+	Instance inst;
+	bu::Settings on;
+	on.highpass = 4;
+	inst.set(on);
+	std::vector<float> l(512, 0.3f), r(512, 0.3f);
+	l[10] = std::numeric_limits<float>::quiet_NaN();
+	r[20] = std::numeric_limits<float>::infinity();
+	inst.process(l, r);
+	std::vector<float> quiet(4096, 0.0f), quietR(4096, 0.0f);
+	inst.process(quiet, quietR);
+	for (size_t i = 0; i < quiet.size(); ++i) {
+		REQUIRE(std::isfinite(quiet[i]));
+		REQUIRE(std::isfinite(quietR[i]));
+	}
 }

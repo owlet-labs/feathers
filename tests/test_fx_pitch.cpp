@@ -291,6 +291,43 @@ TEST_CASE("Enabled off leaves the buffer alone") {
 	CHECK(l == in);
 }
 
+TEST_CASE("a bypass clears the shifter: re-enabled into silence it is exactly silent, not the audio from before") {
+	// `!enabled` returned with the line, the heads' delays and the feedback loop as they were, so a re-enable replayed
+	// what was playing when the device was switched off.
+	PitchShifter p;
+	p.prepare(kRate);
+	Settings s = defaults();
+	s.shiftSemitones = 7.0f;
+	s.feedback = 0.5f;
+	p.setTarget(s);
+	std::vector<float> l = noise(30000);
+	std::vector<float> r = noise(30000, 777u);
+	run(p, l, r);
+	// NON-VACUITY: it was sounding.
+	float peak = 0.0f;
+	for (size_t i = l.size() - 2000; i < l.size(); ++i) {
+		peak = std::max(peak, std::fabs(l[i]));
+	}
+	REQUIRE(peak > 0.01f);
+
+	Settings off = s;
+	off.enabled = false;
+	p.setTarget(off);
+	std::vector<float> bypassed = noise(9600, 5u);
+	std::vector<float> bypassedR = bypassed;
+	run(p, bypassed, bypassedR);
+
+	p.setTarget(s);
+	std::vector<float> silent(30000, 0.0f);
+	std::vector<float> silentR(30000, 0.0f);
+	run(p, silent, silentR);
+	size_t nonZero = 0;
+	for (size_t i = 0; i < silent.size(); ++i) {
+		nonZero += (silent[i] != 0.0f || silentR[i] != 0.0f) ? 1 : 0;
+	}
+	CHECK(nonZero == 0u);
+}
+
 TEST_CASE("the two heads sum to exactly one: DC in is DC out, in every mode") {
 	for (const Mode mode : { Mode::Smooth, Mode::Tight, Mode::Reverse }) {
 		CAPTURE(static_cast<int>(mode));

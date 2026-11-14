@@ -16,6 +16,7 @@
  */
 
 #include "fx/automod/automod.h"
+#include "fx/scrub.h"
 
 // THE RATE CONTROL'S DECLARED SPAN IS THE CURVE'S (backlog DT): both say ±2 octaves, in two headers
 // that do not include each other, so the agreement is checked where both are visible.
@@ -645,6 +646,8 @@ void Automod::processStereo(float* left, float* right, int frames) {
 		return;
 	}
 	running_ = true;
+	// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 before anything sees it (as EQ and Comp do; `fx::scrubNonFinite`).
+	fx::scrubNonFinite(left, right, frames);
 	for (int i = 0; i < frames; ++i) {
 		// THE TICK IS COUNTED FROM THE STREAM, so where the caller's block boundaries fall changes
 		// nothing. See beginTick.

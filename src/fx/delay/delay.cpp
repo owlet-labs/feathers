@@ -20,6 +20,7 @@
  */
 
 #include "fx/delay/delay.h"
+#include "fx/scrub.h"
 
 #include "dsp/compander.h"
 
@@ -845,6 +846,8 @@ void Delay::processStereo(float* left, float* right, int frames) noexcept {
 	if (capFrames < 4.0) {
 		return;
 	}
+	// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 before anything sees it (as EQ and Comp do; `fx::scrubNonFinite`).
+	fx::scrubNonFinite(left, right, frames);
 
 	// THE CLEAR (delay-love S4): a fade that reached silence empties the line HERE, between blocks, where no head is
 	// mid-sample; then a rising edge starts the next fade. What the clear keeps: the freeze and the duck.

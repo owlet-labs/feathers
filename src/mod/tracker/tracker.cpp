@@ -150,6 +150,19 @@ bool Tracker::busPitch(float* pitchSemitones) const noexcept {
 	return true;
 }
 
+float Tracker::glideCoeff() const noexcept {
+	// THE STORED NUMBER'S MEANING IS ITS 48 kHz ONE: that tick's coefficient, from the original curve.
+	const float at48k = std::clamp(1.0f - std::pow(glide_, 0.25f), 0.0f, 1.0f);
+	if (sampleRate_ == kReferenceRate || at48k <= 0.0f || at48k >= 1.0f) {
+		return at48k;
+	}
+	// A TICK IS A FIXED NUMBER OF SAMPLES, so its length in seconds follows the rate. The one-pole
+	// `1 - exp(-T / tau)` keeps its time constant when only T changes: the 48 kHz coefficient fixes
+	// tau, and the tick's length ratio is the exponent on what is left (`smoothingCoeff`'s pole).
+	const double kept = 1.0 - static_cast<double>(at48k);
+	return static_cast<float>(1.0 - std::pow(kept, kReferenceRate / sampleRate_));
+}
+
 void Tracker::tick() noexcept {
 	if (target_ < 0.0f) {
 		return; // nothing has ever been played
@@ -157,7 +170,7 @@ void Tracker::tick() noexcept {
 	// THE PITCH IT HANDS THE BUS (`busPitch`), glided by the same one-pole as the output below, in SEMITONES —
 	// so a keytracked corner after this Tracker slides between notes over the time its output does. The first
 	// note arrives where it is played: there is nothing to slide from.
-	const float coeff = std::clamp(1.0f - std::pow(glide_, 0.25f), 0.0f, 1.0f);
+	const float coeff = glideCoeff();
 	pitch_ = glide_ <= 0.0f || pitch_ < 0.0f ? target_ : pitch_ + (target_ - pitch_) * coeff;
 	// **A DISTANCE FROM THE ROOT, IN UNITS OF `Spread` OCTAVES.** The root reads 0, the root plus
 	// `Spread` octaves reads +1, and the root minus `Spread` octaves reads −1 — so a note below the
@@ -173,7 +186,7 @@ void Tracker::tick() noexcept {
 		return;
 	}
 	// A ONE-POLE TOWARD THE TARGET. The coefficient is per TICK rather than per sample because that is
-	// what the host calls, and `blockSamples` is what makes a tick's duration knowable at all.
+	// what the host calls; `glideCoeff` turns it into the same TIME at every sample rate.
 	current_ += (mapped - current_) * coeff;
 }
 
@@ -228,8 +241,9 @@ const device::ModOps kModOps {
 	    [](void* storage, const float* fields, size_t fieldsPresent) {
 		    asTracker(storage).setFields(fields, fieldsPresent);
 	    },
-	// ONE TICK PER SAMPLE-BLOCK OF 32, matching the other modulators: the glide is the only thing that
-	// moves between notes, and it does not need audio rate to be smooth.
+	// ONE TICK PER SAMPLE-BLOCK OF 32: the glide is the only thing that moves between notes, and it does
+	// not need audio rate to be smooth. (A tick is this many samples, not a fixed time: `glideCoeff` is
+	// what keeps the Glide's time the same at every rate.)
 	.blockSamples = 32,
 	.tick = [](void* storage, const device::ModTickContext&) { asTracker(storage).tick(); },
 	.outputAt =

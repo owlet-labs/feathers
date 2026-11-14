@@ -16,6 +16,7 @@
  */
 
 #include "fx/spectral/spectral.h"
+#include "fx/scrub.h"
 
 #include <algorithm>
 #include <array>
@@ -324,6 +325,9 @@ void SpectralDevice::processStereo(float* left, float* right, int frames) noexce
 	takePendingFreeze();
 	trackFreeze();
 	stft_.setIdentity(gainsIdentity_ && !stft_.vocodeBusy() && !stft_.formantShiftOn() && !stft_.partialsOn());
+	if (target_.enabled) {
+		fx::scrubNonFinite(left, right, frames);
+	}
 	stft_.process(left, right, frames);
 	publishFreeze();
 	publish();
@@ -336,6 +340,9 @@ void SpectralDevice::processMono(float* mono, int frames) noexcept {
 	takePendingFreeze();
 	trackFreeze();
 	stft_.setIdentity(gainsIdentity_ && !stft_.vocodeBusy() && !stft_.formantShiftOn() && !stft_.partialsOn());
+	if (target_.enabled) {
+		fx::scrubNonFinite(mono, nullptr, frames);
+	}
 	stft_.process(mono, nullptr, frames);
 	publishFreeze();
 	publish();

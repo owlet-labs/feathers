@@ -20,6 +20,7 @@
  */
 
 #include "fx/disperser/disperser.h"
+#include "fx/scrub.h"
 
 #include "character/phi_triangle.hpp"
 #include "character/util.hpp"
@@ -773,6 +774,8 @@ void Disperser::processStereo(float* left, float* right, int frames) noexcept {
 	if (!s.enabled) {
 		return;
 	}
+	// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 before anything sees it (as EQ and Comp do; `fx::scrubNonFinite`).
+	fx::scrubNonFinite(left, right, frames);
 	// THE BLOCK GRID, CARRIED ACROSS CALLS — the Eroder's `untilTick_`, and for its reason: once per
 	// call, as the firmware runs once per buffer, would make the output a function of the host's
 	// block size.

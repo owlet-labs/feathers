@@ -49,6 +49,7 @@
 
 #include "dsp/fast_math_approx.h"
 #include <cmath>
+#include <limits>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -278,6 +279,88 @@ TEST_CASE("off is a return, not a filter set to neutral") {
 	Settings on = lowpassAt(800.0);
 	const std::vector<float> filtered = render(on, input, 64);
 	CHECK(filtered != input);
+}
+
+TEST_CASE("a NaN or an Inf input sample is a zero sample: bit-identical output, finite, and the tail still reaches exact zero") {
+	// A recursive section keeps a NaN for ever, and the rest flush's peak scan (`std::max`) ignores one, so a poisoned
+	// filter used to sing NaN into silence without end. The input is scrubbed to zero like EQ's, so the claim is a
+	// VALUE: the render with the bad samples equals the render with zeros in their place, to the bit.
+	std::vector<float> clean = noise(4096);
+	std::vector<float> bad = clean;
+	bad[1000] = std::numeric_limits<float>::quiet_NaN();
+	bad[2000] = std::numeric_limits<float>::infinity();
+	bad[3000] = -std::numeric_limits<float>::infinity();
+	clean[1000] = 0.0f;
+	clean[2000] = 0.0f;
+	clean[3000] = 0.0f;
+	Settings s = lowpassAt(900.0);
+	s.resonance = 0.7f;
+	const std::vector<float> reference = render(s, clean, 128);
+	const std::vector<float> got = [&] {
+		MultimodeFilter filter;
+		filter.prepare(kSampleRate);
+		filter.setTarget(s);
+		std::vector<float> l = bad;
+		std::vector<float> r = bad;
+		for (size_t at = 0; at < l.size(); at += 128) {
+			filter.processStereo(l.data() + at, r.data() + at, 128);
+		}
+		return l;
+	}();
+	CHECK(got == reference);
+	// NON-VACUITY: the reference is a real signal, and the bad input was bad.
+	CHECK(std::any_of(reference.begin(), reference.end(), [](float v) { return v != 0.0f; }));
+	CHECK(std::any_of(bad.begin(), bad.end(), [](float v) { return !std::isfinite(v); }));
+
+	// AND INTO SILENCE: finite throughout, and exactly zero by the end (the flush runs a second after the input stops),
+	// on the stereo road and the mono road alike.
+	for (const bool mono : { false, true }) {
+		CAPTURE(mono);
+		MultimodeFilter filter;
+		filter.prepare(kSampleRate);
+		filter.setTarget(s);
+		std::vector<float> l = bad;
+		std::vector<float> r = bad;
+		for (size_t at = 0; at < l.size(); at += 128) {
+			if (mono) {
+				filter.processMono(l.data() + at, 128);
+			}
+			else {
+				filter.processStereo(l.data() + at, r.data() + at, 128);
+			}
+		}
+		const int blocks = static_cast<int>(kSampleRate * 2.5 / 128.0);
+		bool allFinite = true;
+		bool lastBlockZero = false;
+		for (int b = 0; b < blocks; ++b) {
+			std::vector<float> ql(128, 0.0f);
+			std::vector<float> qr(128, 0.0f);
+			if (mono) {
+				filter.processMono(ql.data(), 128);
+			}
+			else {
+				filter.processStereo(ql.data(), qr.data(), 128);
+			}
+			lastBlockZero = true;
+			for (size_t i = 0; i < ql.size(); ++i) {
+				allFinite = allFinite && std::isfinite(ql[i]) && std::isfinite(qr[i]);
+				lastBlockZero = lastBlockZero && ql[i] == 0.0f;
+			}
+		}
+		CHECK(allFinite);
+		CHECK(lastBlockZero);
+		// AND THE STATE IS CLEAN, not merely the silent output: a poisoned section answers real input with NaN.
+		std::vector<float> after = noise(512);
+		std::vector<float> afterR = after;
+		if (mono) {
+			filter.processMono(after.data(), 512);
+		}
+		else {
+			filter.processStereo(after.data(), afterR.data(), 512);
+		}
+		CHECK(std::all_of(after.begin(), after.end(), [](float v) { return std::isfinite(v); }));
+		CHECK(std::any_of(after.begin(), after.end(), [](float v) { return v != 0.0f; }));
+	}
 }
 
 TEST_CASE("the block size cannot reach the audio, with the filter engaged and mid-ramp") {

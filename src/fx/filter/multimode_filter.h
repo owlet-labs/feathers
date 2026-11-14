@@ -195,7 +195,7 @@ private:
 	/// READS THE BUFFER, so it runs only when the device is enabled and has written it — the bypass
 	/// contract is that *"not one sample is read"*, and a rest check on a buffer this device did not
 	/// produce would be measuring the caller's audio.
-	void flushIfAtRest(const float* left, const float* right, int n, bool silentInput);
+	void flushIfAtRest(float* left, float* right, int n, bool silentInput);
 
 	/// Consecutive samples of exactly silent INPUT. See `kRestSilentSeconds`.
 	int restSilence_ = 0;

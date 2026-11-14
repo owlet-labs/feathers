@@ -5576,7 +5576,10 @@ void Synth::Responder::setNoteExpression(Voice* voice, int32_t expression, doubl
 	if (expression == CLAP_NOTE_EXPRESSION_TUNING) {
 		// SEMITONES, ABSOLUTE IN THE FIELD AND RELATIVE IN MEANING: CLAP's TUNING is an offset from
 		// the note's own pitch, so the last value received IS the current bend.
-		voice->expressionSemitones = value;
+		// CLAMPED TO TWENTY OCTAVES EITHER WAY: `pitchToHz` is an exp2, so a finite but absurd bend
+		// (past roughly twelve thousand semitones) becomes an infinite frequency and a phase
+		// increment that never recovers. No instrument reaches 240 semitones from its note.
+		voice->expressionSemitones = std::clamp(value, -240.0, 240.0);
 	}
 }
 
@@ -5586,6 +5589,11 @@ void Synth::Responder::setVoicePolyphonicParameterModulation(Voice* voice, uint3
 		// Voice Level is the only param declared CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID. Anything else
 		// addressed to a note is dropped rather than folded into the global lane, which belongs to the
 		// host's automation and would then be wrong for every other voice.
+		return;
+	}
+	if (!std::isfinite(value)) {
+		// NOT FINITE IS NOT A MODULATION: `levelMod` is added to the base Level and `std::clamp`
+		// passes a NaN straight through to the voice gain, where it would stay for the note.
 		return;
 	}
 	voice->levelMod = value;

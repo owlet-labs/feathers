@@ -204,8 +204,16 @@ void PitchShifter::processStereo(float* left, float* right, int frames) noexcept
 	}
 	const Settings s = target_;
 	if (!s.enabled) {
+		// THE STATE IS CLEARED ONCE, ON THE WAY OUT: the line, the heads' delays, the grain phase and
+		// the feedback loop would otherwise resume from the last enabled sample, and a re-enable
+		// would play the audio from before the bypass.
+		if (running_) {
+			running_ = false;
+			reset();
+		}
 		return;
 	}
+	running_ = true;
 	const auto capFrames = static_cast<double>(line_.length());
 	if (capFrames < 4.0) {
 		return;
@@ -243,8 +251,10 @@ void PitchShifter::processStereo(float* left, float* right, int frames) noexcept
 	}
 
 	for (int i = 0; i < frames; ++i) {
-		const float inL = left[i];
-		const float inR = right[i];
+		// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 (as Comp and EQ do): written into the line it
+		// would be read back for ever, and through the feedback loop it would never leave.
+		const float inL = std::isfinite(left[i]) ? left[i] : 0.0f;
+		const float inR = std::isfinite(right[i]) ? right[i] : 0.0f;
 
 		// WRITE FIRST, THEN READ — so a delay of zero is THIS sample, and a shift of zero with no
 		// jitter returns the input to the bit rather than the input one sample late.

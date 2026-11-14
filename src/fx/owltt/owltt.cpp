@@ -889,8 +889,13 @@ void Owltt::processStereo(float* left, float* right, int frames) {
 	}
 	running_ = true;
 	bool silentInput = true;
-	for (int i = 0; i < frames && silentInput; ++i) {
-		silentInput = left[i] == 0.0f && right[i] == 0.0f;
+	// A NON-FINITE INPUT SAMPLE IS TREATED AS 0, before any detector or crossover sees it (as Comp
+	// and EQ do): one NaN in a crossover or an envelope is a NaN in every later sample. Finite
+	// input is untouched.
+	for (int i = 0; i < frames; ++i) {
+		left[i] = std::isfinite(left[i]) ? left[i] : 0.0f;
+		right[i] = std::isfinite(right[i]) ? right[i] : 0.0f;
+		silentInput = silentInput && left[i] == 0.0f && right[i] == 0.0f;
 	}
 
 	int done = 0;
@@ -916,11 +921,18 @@ void Owltt::processStereo(float* left, float* right, int frames) {
 		return;
 	}
 	float peak = 0.0f;
+	bool poisoned = false;
 	for (int i = 0; i < frames; ++i) {
+		// `std::max` ignores a NaN, so a poisoned tail would read as silence and never flush.
+		if (!std::isfinite(left[i]) || !std::isfinite(right[i])) {
+			left[i] = std::isfinite(left[i]) ? left[i] : 0.0f;
+			right[i] = std::isfinite(right[i]) ? right[i] : 0.0f;
+			poisoned = true;
+		}
 		peak = std::max(peak, std::fabs(left[i]));
 		peak = std::max(peak, std::fabs(right[i]));
 	}
-	if (peak == 0.0f || peak >= kRestLevel) {
+	if (!poisoned && (peak == 0.0f || peak >= kRestLevel)) {
 		return;
 	}
 	// `reset()` HERE IS THE WHOLE STATE AND NOTHING ELSE — this device keeps no "which stage is live"

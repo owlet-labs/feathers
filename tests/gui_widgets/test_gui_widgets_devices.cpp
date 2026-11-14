@@ -54,6 +54,7 @@
 #include "composite/composite_types.h"
 #include "fx/eroder/eroder_types.h" // backlog IQ: the Eroder's zone count and Tone
 #include "fx/owltt/owltt_types.h"
+#include "fx/owltt/owltt.h"
 #include "fx/featherverb/featherverb_types.h" // backlog EI's per-panel ceiling table
 // `lfo::eval` — the DSP's own waveform function, which the Phase-rotation case below uses as its
 // independent restatement. The card's header reaches only `lfo_types.h`, which has the settings and
@@ -41124,8 +41125,11 @@ TEST_CASE("OWLTT's window: each band's threshold and bandwidth handles are two c
 			graph->onMouseUp().callback(at(c.x, yOf(0.7f)));
 			const auto after = row();
 			CHECK(after[thresholdAt] == doctest::Approx(0.7f));
+			// THE TOP BAR ALSO WRITES ITS BAND'S BANDWIDTH, so the up threshold stays where it was (the engine derives it from the
+			// two); nothing else in the row moves. The dedicated case below checks the held threshold by value.
+			CHECK(after[bandwidthAt] != before[bandwidthAt]);
 			for (size_t i = 0; i < before.size(); ++i) {
-				if (i != thresholdAt) {
+				if (i != thresholdAt && i != bandwidthAt) {
 					CAPTURE(std::string(ow::kParamDescs[std::min(i, std::size(ow::kParamDescs) - 1)].key));
 					CHECK(after[i] == before[i]);
 				}
@@ -41723,4 +41727,106 @@ TEST_CASE("OWLTT: an amount drag runs along the handle's own axis — across for
 		}
 	}
 	CHECK(targets.size() == 20u);
+}
+
+TEST_CASE("OWLTT: dragging a band's top (threshold) handle holds its up threshold still, stops at it, takes it along past the bandwidth's range, and is one undo step") {
+	namespace ow = feathers::fx::owltt;
+	using Handle = ui::OwlttGraph::Handle;
+	OwlttOpenRig rig;
+	auto& d = rig.d;
+	ui::OwlttGraph* graph = rig.panel->graph();
+	constexpr size_t kBand = 1;
+	const size_t thrAt = static_cast<size_t>(ow::Param::MidThreshold);
+	const size_t bwAt = static_cast<size_t>(ow::Param::MidBandwidth);
+	const visage::Bounds area = graph->barArea();
+	const auto yOf = [&](float v) { return area.bottom() - v * area.height(); };
+	const auto fieldOf = [&](size_t i) {
+		const FxChain chain = d.f.bridge.fxChain();
+		return fxDeviceAtPosition(chain, d.slot).row.field[i];
+	};
+	// WHAT THE COMPRESSOR HOLDS: the stored row run through the engine, read back through its own seams (knob units).
+	struct Thresholds {
+		float down;
+		float up;
+	};
+	const auto engineThresholds = [&] {
+		ow::Row row {};
+		for (size_t i = 0; i < row.size(); ++i) {
+			row[i] = fieldOf(i);
+		}
+		ow::Settings s = ow::stateOf(row);
+		ow::Owltt dsp;
+		dsp.prepare(48000.0);
+		dsp.setTarget(s);
+		std::vector<float> l(256, 0.1f), r(256, 0.1f);
+		dsp.processStereo(l.data(), r.data(), 256);
+		return Thresholds { dsp.thresholdDownForTest(kBand), dsp.thresholdUpForTest(kBand) };
+	};
+	const auto dragTopTo = [&](float target) {
+		const visage::Point c = graph->ringCentre(kBand, Handle::ThresholdBar);
+		graph->onMouseDown().callback(at(c.x, c.y));
+		graph->onMouseDrag().callback(at(c.x, yOf(target)));
+		graph->onMouseUp().callback(at(c.x, yOf(target)));
+	};
+
+	const Thresholds start = engineThresholds();
+	CHECK(start.down == doctest::Approx(0.5f));
+	CHECK(start.up == doctest::Approx(0.125f)); // 0.5 - 0.75 x 0.5, the engine's own gap
+	// SEVERAL SIZES, BOTH WAYS: the down threshold lands on the pointer and the up threshold has not moved.
+	for (const float target : { 0.8f, 0.6f, 0.4f, 0.2f, 0.7f, 0.3f }) {
+		CAPTURE(target);
+		dragTopTo(target);
+		const Thresholds now = engineThresholds();
+		CHECK(now.down == doctest::Approx(target).epsilon(1e-3));
+		CHECK(now.up == doctest::Approx(start.up).epsilon(1e-3));
+	}
+	// THE LOW LIMIT: below the up threshold the bar stops there, the bandwidth reaching zero.
+	dragTopTo(0.02f);
+	{
+		const Thresholds now = engineThresholds();
+		CHECK(now.down == doctest::Approx(start.up).epsilon(1e-3));
+		CHECK(now.up == doctest::Approx(start.up).epsilon(1e-3));
+		CHECK(fieldOf(bwAt) == doctest::Approx(0.0f).epsilon(1e-3));
+	}
+	// THE HIGH LIMIT: past what the bandwidth can span (1.0 -> 0.75 below), the bandwidth sits at its maximum and the up threshold FOLLOWS.
+	dragTopTo(0.5f);
+	dragTopTo(0.97f);
+	{
+		const Thresholds now = engineThresholds();
+		CHECK(fieldOf(bwAt) == doctest::Approx(1.0f));
+		CHECK(now.down == doctest::Approx(0.97f).epsilon(1e-3));
+		// the engine's own relation, restated: up = down - 0.6 x 1 on the internal scale, in knob units
+		const float downInternal = 0.2f + 0.8f * 0.97f;
+		CHECK(now.up == doctest::Approx((std::max(0.2f, downInternal - 0.6f) - 0.2f) / 0.8f).epsilon(1e-3));
+		CHECK(now.up > start.up);
+	}
+
+	// ONE GESTURE, ONE UNDO: from a fresh stroke, a drag leaves one step and undoing it restores BOTH parameters.
+	d.set(thrAt, 0.5f);
+	d.set(bwAt, 0.5f);
+	REQUIRE(d.f.gui.history() != nullptr);
+	while (d.f.gui.history()->canUndo()) {
+		d.f.gui.history()->undo();
+	}
+	d.set(thrAt, 0.5f);
+	d.set(bwAt, 0.5f);
+	dragTopTo(0.8f);
+	CHECK(fieldOf(thrAt) == doctest::Approx(0.8f));
+	CHECK(fieldOf(bwAt) != doctest::Approx(0.5f));
+	REQUIRE(d.f.gui.history()->canUndo());
+	d.f.gui.history()->undo();
+	CHECK_FALSE(d.f.gui.history()->canUndo()); // the drag was ONE step, not two
+	CHECK(fieldOf(thrAt) == doctest::Approx(0.5f));
+	CHECK(fieldOf(bwAt) == doctest::Approx(0.5f));
+
+	// A DOUBLE-CLICK RESET KEEPS ITS SINGLE-PARAMETER MEANING: only the threshold returns to its default.
+	d.set(thrAt, 0.8f);
+	d.set(bwAt, 0.3f);
+	{
+		const visage::Point c = graph->ringCentre(kBand, Handle::ThresholdBar);
+		graph->onMouseDown().callback(doubleAt(c.x, c.y));
+		graph->onMouseUp().callback(doubleAt(c.x, c.y));
+	}
+	CHECK(fieldOf(thrAt) == doctest::Approx(0.5f));
+	CHECK(fieldOf(bwAt) == doctest::Approx(0.3f));
 }

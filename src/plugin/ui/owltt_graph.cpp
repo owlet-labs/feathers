@@ -210,7 +210,7 @@ struct BarPair {
 
 inline BarPair barValuesOf(float threshold, float bandwidth) {
 	const float down = std::clamp(threshold, 0.0f, 1.0f);
-	return { down, std::max(0.0f, down - 0.75f * bandwidth) };
+	return { down, owltt::BandCompressor::upThresholdKnobOf(down, bandwidth) };
 }
 
 
@@ -302,6 +302,20 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		}
 		else {
 			dragState_.routeDragging = false;
+			dragState_.pair = nullptr;
+			if (isThresholdHit(hit)) {
+				// THE TOP BAR WRITES THE THRESHOLD AND ITS BAND'S BANDWIDTH, so the two are ONE gesture: one undo step, and each
+				// parameter's own begin and end for the host.
+				const size_t band = bandForHit(hit);
+				const owltt::EffectiveBand eff = effective(band);
+				dragState_.upHeld = owltt::BandCompressor::upThresholdKnobOf(eff.threshold, eff.bandwidth);
+				dragState_.pair = &control(kBandParams[band].bandwidth);
+				dragState_.history = ctrl.recordsInto();
+				if (dragState_.history != nullptr) {
+					dragState_.history->beginGroup("Threshold");
+				}
+				dragState_.pair->beginGesture();
+			}
 			ctrl.beginGesture();
 		}
 	};
@@ -358,12 +372,20 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 			const size_t band = bandForHit(dragState_.hit);
 			const owltt::EffectiveBand eff = effective(band);
 			const float wantedUp = yToThreshold(e.position.y, xover);
-			const float wantedBandwidth = std::clamp((eff.threshold - wantedUp) / 0.75f, 0.0f, 1.0f);
+			const float wantedBandwidth = owltt::BandCompressor::bandwidthForUpKnob(eff.threshold, wantedUp);
 			ctrl.setValue(owltt::bandValueForEffective(wantedBandwidth, shiftFor(Handle::BandwidthBar)));
 		}
 		else if (isThresholdHit(dragState_.hit)) {
-			ctrl.setValue(owltt::bandValueForEffective(yToThreshold(e.position.y, xover),
-			                                          shiftFor(Handle::ThresholdBar)));
+			// **THE TOP BAR MOVES ALONE: THE UP THRESHOLD STAYS WHERE IT WAS.** The engine defines the up threshold from the down one and
+			// the bandwidth, so writing the threshold alone would slide the lower bar with it. The drag writes the bandwidth that holds
+			// the up threshold still (`BandCompressor::bandwidthForUpKnob`, the engine's own mapping), as one gesture. The top bar stops
+			// at the up threshold (bandwidth 0); once the bandwidth reaches its maximum the up threshold follows it.
+			const size_t band = bandForHit(dragState_.hit);
+			float wanted = yToThreshold(e.position.y, xover);
+			wanted = std::max(wanted, dragState_.upHeld);
+			ctrl.setValue(owltt::bandValueForEffective(wanted, shiftFor(Handle::ThresholdBar)));
+			const float bandwidth = owltt::BandCompressor::bandwidthForUpKnob(wanted, dragState_.upHeld);
+			control(kBandParams[band].bandwidth).setValue(owltt::bandValueForEffective(bandwidth, shiftFor(Handle::BandwidthBar)));
 		}
 		else if (isRatioTrimHit(dragState_.hit)) {
 			// A THUMB IS DRAGGED ALONG ITS BAR: the x is the wanted ratio of that direction; the trim stored is what, on top
@@ -402,6 +424,14 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		}
 		else {
 			ctrl.endGesture();
+			if (dragState_.pair != nullptr) {
+				dragState_.pair->endGesture();
+				dragState_.pair = nullptr;
+				if (dragState_.history != nullptr) {
+					dragState_.history->endGroup();
+					dragState_.history = nullptr;
+				}
+			}
 		}
 		dragState_.active = false;
 		dragState_.hit = ThresholdHit::kNone;
@@ -784,9 +814,13 @@ ModHandle& OwlttGraph::bandMod(size_t band, Handle handle) const {
 				return thresholdToY(eff, barArea());
 			};
 			const auto yOfBandwidth = [this, b](double v) {
-				const owltt::EffectiveBand e = effective(b);
+				// THE UP BAR HANGS FROM THE DOWN THRESHOLD AS MODULATION HAS LEFT IT: the engine derives the up threshold from the two, so a
+				// route on the threshold moves this bar too and its stroke and dot are measured under the modulated threshold.
+				const float thr = std::clamp(static_cast<float>(control(kBandParams[b].threshold).normalizedModulated())
+				                                 + shiftFor(Handle::ThresholdBar),
+				                             0.0f, 1.0f);
 				const float bw = std::clamp(static_cast<float>(v) + shiftFor(Handle::BandwidthBar), 0.0f, 1.0f);
-				return thresholdToY(barValuesOf(e.threshold, bw).up, barArea());
+				return thresholdToY(barValuesOf(thr, bw).up, barArea());
 			};
 			const auto xOfDown = [this, b](double v) {
 				const owltt::EffectiveBand e = effective(b);
@@ -1320,6 +1354,23 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			};
 			// THE RATIO THUMBS: a triangle pointing at its bar from outside the band between the bars, sliding along the
 			// ratio track. Orange above the threshold bar (the downward ratio), blue below the bandwidth bar (the upward).
+			// A ROUTE ON THE THRESHOLD MOVES BOTH BARS (the engine's definition): the threshold ring's own dot says where the top bar is,
+			// and where the up bar is under that modulated threshold is drawn here, unless the bandwidth's own dot already says it.
+			const auto followDot = [&]() {
+				DeviceControl& thr = control(kBandParams[b].threshold);
+				if (std::abs(thr.normalizedModulated() - thr.normalized()) <= 1.0e-4) {
+					return;
+				}
+				if (bandMod(b, Handle::BandwidthBar).plan().axes[0].hasDot) {
+					return;
+				}
+				const owltt::EffectiveBand e = effective(b);
+				const float modulatedThreshold =
+				    std::clamp(static_cast<float>(thr.normalizedModulated()) + shiftFor(Handle::ThresholdBar), 0.0f, 1.0f);
+				const visage::Point c = ringCentre(b, Handle::BandwidthBar);
+				canvas.setColor(kModulatedDot);
+				ringAt(canvas, c.x, thresholdToY(barValuesOf(modulatedThreshold, e.bandwidth).up, barArea()), 3.0f);
+			};
 			const auto drawThumbs = [&]() {
 				const std::array<std::pair<Handle, uint32_t>, 2> thumbs { std::pair { Handle::DownRatio, kValue },
 					                                                    std::pair { Handle::UpRatio, kAccent } };
@@ -1347,6 +1398,7 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			if (!editor_) {
 				modRing(Handle::ThresholdBar, kValue);
 				modRing(Handle::BandwidthBar, kAccent);
+				followDot();
 			}
 
 			// DRAW GR meter — narrowed to central third of band.
@@ -1447,6 +1499,7 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 				// THE RING AND THUMB HANDLES LAST, over the meter and the strips, so nothing darkens them.
 				modRing(Handle::ThresholdBar, kValue);
 				modRing(Handle::BandwidthBar, kAccent);
+				followDot();
 				drawThumbs();
 			}
 
@@ -1548,7 +1601,7 @@ const char* OwlttGraph::tooltipAt(visage::Point pos) const {
 	case ThresholdHit::kMidThreshold:
 	case ThresholdHit::kHighThreshold:
 		// THE LOWER BAR IS THE THRESHOLD ITSELF — loud signals above this are compressed.
-		return "Downward compression threshold — loud signals above this are attenuated";
+		return "Downward threshold — dragging it holds the upward threshold still (the bandwidth follows); at the bandwidth's limits it stops or takes it along";
 	case ThresholdHit::kLowRatio:
 		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::LowRatio)].tooltip;
 	case ThresholdHit::kMidRatio:

@@ -16712,7 +16712,9 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 		REQUIRE(f.bridge.fxChain().device[1].row.field[static_cast<size_t>(fx::owltt::Param::Threshold)]
 		        == doctest::Approx(0.5f));
 		const visage::Point ring = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
-		const float toY = bars.bottom() - ui::OwlttGraph::kRingRadius;
+		// AIMED AT 30% UP: the top bar now stops at the up threshold (0.125 at the defaults), which the floor of the plot is below, so the
+		// sweep it answers over is the part above that.
+		const float toY = bars.bottom() - 0.3f * bars.height();
 		// THE PLOT READS THE THRESHOLD PARAMETER'S OWN 0..1 over the bar area (the compressor's `0.2 + 0.8 t` is its internal
 		// scale for the same range), so the pointer's height IS the effective threshold; this restated `0.2 + 0.8 t`, the
 		// mapping the plot used before it was made to match the sound.
@@ -16739,12 +16741,15 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 
 		// IT MOVED — as far as it could — which is why "the bar did not respond" is the wrong
 		// description and "it stopped early" is the right one.
-		CHECK(f.bridge.fxChain().device[1].row.field[idx] == doctest::Approx(0.0f));
+		// (SINCE THE TOP BAR HOLDS THE UP THRESHOLD STILL, the bar's floor is the up threshold: with the global threshold at its
+		// ceiling and the bandwidth at its default that is 1.0 - 0.75 x 0.5 = 0.625 effective, so the stored value is 0.625 - 0.5. The
+		// bar stops THERE - at the lower bar - before it reaches what the band's own range could express.)
+		CHECK(f.bridge.fxChain().device[1].row.field[idx] == doctest::Approx(0.125f));
 		// AND STOPPED AT THE FLOOR OF WHAT THE BAND CAN EXPRESS, not at the pointer. Y GROWS
 		// DOWNWARD, so a bar that stopped short of the floor sits at a SMALLER y than the target —
 		// the first draft of this line had the comparison the other way up and failed for the
 		// direction rather than for the claim.
-		CHECK(graph->effective(0).threshold == doctest::Approx(0.5f));
+		CHECK(graph->effective(0).threshold == doctest::Approx(0.625f));
 		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y < toY - 10.0f);
 
 		// AND A SECOND DRAG THE SAME WAY DOES NOTHING AT ALL, which is the half a hand reports as

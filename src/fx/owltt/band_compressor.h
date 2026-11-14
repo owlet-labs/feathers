@@ -78,9 +78,30 @@ public:
 	static constexpr float kNepersPerDb = 1.0f / 8.6859f;
 	static constexpr float kThresholdSpanNepers = 60.0f * kNepersPerDb;
 
+	/// **THE THRESHOLD SCALE AND THE GAP, NAMED ONCE** so the window's bars and its drag read the engine's own numbers: the knob t is
+	/// `kThresholdFloor + kThresholdSpan * t` internally, and the up threshold lies `kBandwidthGap * bandwidth` below the down one,
+	/// floored at `kThresholdFloor`. Both functions below are in KNOB units (0..1), the unit the parameters are stored in.
+	static constexpr float kThresholdFloor = 0.2f;
+	static constexpr float kThresholdSpan = 0.8f;
+	static constexpr float kBandwidthGap = 0.6f;
+	/// WHERE THE UP THRESHOLD IS, knob units, for a down threshold and a bandwidth: `setBandwidth`'s arithmetic, read back through
+	/// `getThresholdUp`'s inverse.
+	[[nodiscard]] static float upThresholdKnobOf(float threshold, float bandwidth) {
+		const float down = kThresholdFloor + kThresholdSpan * threshold;
+		const float up = std::max(kThresholdFloor, down - kBandwidthGap * bandwidth);
+		return (up - kThresholdFloor) / kThresholdSpan;
+	}
+	/// THE BANDWIDTH THAT PUTS THE UP THRESHOLD AT `up` under a down threshold, clamped to the control's 0..1: the inverse of the above
+	/// (exact wherever the up threshold is not on its floor).
+	[[nodiscard]] static float bandwidthForUpKnob(float threshold, float up) {
+		const float down = kThresholdFloor + kThresholdSpan * threshold;
+		const float upInternal = kThresholdFloor + kThresholdSpan * up;
+		return std::clamp((down - upInternal) / kBandwidthGap, 0.0f, 1.0f);
+	}
+
 	void setThresholdDown(float t) {
 		thresholdDownKnob_ = t;
-		thresholdDown_ = 0.2f + 0.8f * t;
+		thresholdDown_ = kThresholdFloor + kThresholdSpan * t;
 		// AND THE UP THRESHOLD FOLLOWS IT, because it is defined RELATIVE to this one. It used to be
 		// left where the last `setBandwidth` put it, so moving the threshold slid the gap out from
 		// under the bandwidth that set it -- two numbers that had to agree, kept in step by call
@@ -115,7 +136,7 @@ public:
 
 	void setBandwidth(float bw) {
 		bandwidthKnob_ = bw;
-		const float bandwidthFraction = 0.6f * bw;
+		const float bandwidthFraction = kBandwidthGap * bw;
 		// BELOW THE DOWN THRESHOLD, NOT ABOVE IT — and this is a behaviour change, not a sign fix.
 		//
 		// It was `min(1, thresholdDown + fraction)`, which puts the UP threshold ABOVE the DOWN one.
@@ -132,7 +153,7 @@ public:
 		// MEASURED CONSEQUENCE OF THE OLD ORDER: bandwidth moved the sound by 0.1 dB across its whole
 		// 0..1 range, because widening a region where two opposed gains cancel changes almost
 		// nothing. The control that the entire two-bar picture is about did essentially nothing.
-		thresholdUp_ = std::max(0.2f, thresholdDown_ - bandwidthFraction);
+		thresholdUp_ = std::max(kThresholdFloor, thresholdDown_ - bandwidthFraction);
 	}
 
 	[[nodiscard]] float getAttack() const { return attackKnob_; }

@@ -379,6 +379,11 @@ private:
 		float startY = 0.0f;
 		bool routeDragging = false;
 		float routeAnchorAmount = 0.0f;
+		/// A TOP-BAR DRAG: the up threshold it holds still (knob units, effective), the bandwidth control it also writes, and the
+		/// history group that makes the two writes one undo step.
+		float upHeld = 0.0f;
+		DeviceControl* pair = nullptr;
+		EditHistory* history = nullptr;
 		float routeDragRange = 70.0f;
 		float maxRouteAmount = 2.0f;
 	};

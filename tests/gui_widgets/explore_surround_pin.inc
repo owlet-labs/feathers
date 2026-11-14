@@ -23,6 +23,8 @@
 // test_gui_widgets_dahdsr "backlog LJ: every engine's Explore surround binds the same parameter in the same rectangle as
 // before the slot table" with FEATHERS_LJ_PIN_WRITE=1. One line per drawn control; see that case for the fields.
 // NOT REGENERATED TO MAKE A REFACTOR PASS: a deliberate face change re-takes it and says why in the commit.
+// Kit stance redesign: the Drum surround in Kit mode is the seven kit trims alone (no page box, no pad scalers, and no Radius or Theta,
+// which a kit does not read); every other engine's lines are untouched.
 // 2026-11-06 (the drum kit-wide layer): two lines ADDED and nothing else moved: the Drum surround's page box (Pad, Kit Fields,
 // Kit Place) in the left box slot, at both sizes. The case names a left box "warp mode" whatever stands in it.
 // RE-TAKEN 2026-10-30 (backlog KV): Basic Shapes gained Smoothness in V5's slot and its page box under the right flank.
@@ -160,22 +162,18 @@
 "Pluck s2 374x539 knob 'Sustain' = C Pluck Sustain live10 [300 142.5 74 75]",
 "Pluck s2 374x539 knob 'Theta' = travel live11 [214 316.5 74 63]",
 "Pluck s2 374x539 knob 'Width' = Pluck Width live11 [0 103.5 74 75]",
-"Drum s0 866x534 box left 'warp mode' [80 335 74 20]",
+"Drum s0 866x534 knob 'Kit Length' = Drum Kit Length live11 [712 140 74 75]",
+"Drum s0 866x534 knob 'Kit Metal' = Drum Kit Metal live11 [80 179 74 75]",
+"Drum s0 866x534 knob 'Kit Noise' = Drum Kit Noise live11 [712 374 74 75]",
+"Drum s0 866x534 knob 'Kit Pitch' = Drum Kit Pitch live11 [712 62 74 75]",
+"Drum s0 866x534 knob 'Kit Snap' = Drum Kit Snap live11 [80 101 74 75]",
+"Drum s0 866x534 knob 'Kit Sweep' = Drum Kit Sweep live11 [712 218 74 75]",
+"Drum s0 866x534 knob 'Kit Tone' = Drum Kit Tone live11 [712 296 74 75]",
+"Drum s2 374x539 knob 'Kit Length' = Drum Kit Length live11 [300 142.5 74 75]",
+"Drum s2 374x539 knob 'Kit Metal' = Drum Kit Metal live11 [0 181.5 74 75]",
+"Drum s2 374x539 knob 'Kit Noise' = Drum Kit Noise live11 [300 376.5 74 75]",
+"Drum s2 374x539 knob 'Kit Pitch' = Drum Kit Pitch live11 [300 64.5 74 75]",
+"Drum s2 374x539 knob 'Kit Snap' = Drum Kit Snap live11 [0 103.5 74 75]",
+"Drum s2 374x539 knob 'Kit Sweep' = Drum Kit Sweep live11 [300 220.5 74 75]",
+"Drum s2 374x539 knob 'Kit Tone' = Drum Kit Tone live11 [300 298.5 74 75]",
 // DRUM (2026-11-05, drum proposal §6), appended: a new engine's surround, taken by FEATHERS_LJ_PIN_WRITE=1; every line above unchanged.
-"Drum s0 866x534 knob 'Length' = A Drum Length live11 [712 140 74 75]",
-"Drum s0 866x534 knob 'Noise' = A Drum Noise live11 [712 374 74 75]",
-"Drum s0 866x534 knob 'Pitch' = A Drum Pitch live11 [712 62 74 75]",
-"Drum s0 866x534 knob 'Radius' = travel live11 [626 404 74 63]",
-"Drum s0 866x534 knob 'Snap' = A Drum Snap live11 [80 101 74 75]",
-"Drum s0 866x534 knob 'Sweep' = A Drum Sweep live11 [712 218 74 75]",
-"Drum s0 866x534 knob 'Theta' = travel live11 [626 471 74 63]",
-"Drum s0 866x534 knob 'Tone' = A Drum Tone live11 [712 296 74 75]",
-"Drum s2 374x539 box left 'warp mode' [0 337.5 74 20]",
-"Drum s2 374x539 knob 'Length' = C Drum Length live11 [300 142.5 74 75]",
-"Drum s2 374x539 knob 'Metal' = C Drum Metal live11 [0 181.5 74 75]",
-"Drum s2 374x539 knob 'Noise' = C Drum Noise live11 [300 376.5 74 75]",
-"Drum s2 374x539 knob 'Pitch' = C Drum Pitch live11 [300 64.5 74 75]",
-"Drum s2 374x539 knob 'Radius' = travel live11 [214 249.5 74 63]",
-"Drum s2 374x539 knob 'Snap' = C Drum Snap live11 [0 103.5 74 75]",
-"Drum s2 374x539 knob 'Theta' = travel live11 [214 316.5 74 63]",
-"Drum s2 374x539 knob 'Tone' = C Drum Tone live11 [300 298.5 74 75]",

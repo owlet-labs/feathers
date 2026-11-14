@@ -82,6 +82,8 @@ public:
 	/// A layout cares about cells; an "is every knob wired?" sweep cares about knobs. Two questions,
 	/// two answers, so neither has to be inferred from the other.
 	size_t cellCount() const noexcept { return cells_.size(); }
+	/// Whether the Path knob is on the row (it is not while a Drum Kit is up).
+	[[nodiscard]] bool pathShownForTest() const noexcept { return pathShown_; }
 
 	/// The mock's footer padding, `12px 20px 16px`, around the knob column.
 	static constexpr float kPadX = 20.0f;
@@ -109,6 +111,9 @@ private:
 	/// The one knob whose enablement is a function of the patch rather than of the build — the
 	/// master scale. Null never: the ctor sets it while building the row.
 	Knob* masterWidth_ = nullptr;
+	/// PATH: not drawn while a Drum Kit is up, where the engine reads no path (the kit's place is Pos X/Y through Weather).
+	Knob* path_ = nullptr;
+	bool pathShown_ = true;
 };
 
 } // namespace feathers::ui

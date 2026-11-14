@@ -2956,6 +2956,9 @@ TEST_CASE("grabbing controls measures each string once, through more distinct gr
 	ui::clearFontCache();
 	ui::setTrackedTextAudit(true);
 	const uint64_t measuredBefore = ui::trackedTextMeasures();
+	// THE COUNT OF EVICTIONS IS THE PROCESS'S, kept across editors: an earlier case that sweeps a window's readouts may have
+	// evicted, and that is not this run's claim — this run's is that IT evicted nothing.
+	const uint64_t evictedBefore = ui::trackedTextEvictions();
 	app->redrawAll();
 	pumpEditor(rig.f.gui);
 	std::vector<ui::Knob*> knobs;
@@ -3008,7 +3011,7 @@ TEST_CASE("grabbing controls measures each string once, through more distinct gr
 	                 << ui::trackedTextMeasures() << ", cache " << ui::trackedTextCacheSize() << ", re-measures "
 	                 << ui::trackedTextRemeasures());
 	CHECK(ui::trackedTextRemeasures() == 0); // every string measured once, however often it was drawn
-	CHECK(ui::trackedTextEvictions() == 0);
+	CHECK(ui::trackedTextEvictions() == evictedBefore);
 	REQUIRE(distinctGrabs > 64);                                  // more distinct grabs than the old cache held strings
 	REQUIRE(ui::trackedTextMeasures() - measuredBefore > 64);     // and more distinct strings shown
 	app->redrawAll();

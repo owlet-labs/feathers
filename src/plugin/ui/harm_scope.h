@@ -29,6 +29,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <vector>
 
 // HARM, DRAWN — the notch and the harmonic it is coupled to, on one axis.
 //
@@ -160,8 +161,31 @@ public:
 	/// the handle's home and it moves with Width by construction.
 	float shoulderX() const;
 
-	/// WHICH CONTROL A GRIP EDITS. `Param::kCount` for `Grip::None`.
+	/// WHICH CONTROL A GRIP EDITS. `Param::kCount` for `Grip::None`. The first partial's; `paramFor` is the selected one's.
 	static fx::harm::Param paramOf(Grip grip);
+	fx::harm::Param paramFor(Grip grip) const;
+
+	//----------------------------------------------------------//
+	// FOUR PARTIALS — one picture, the selected one emphasised  //
+	//----------------------------------------------------------//
+
+	/// WHICH PARTIAL THE PICTURE'S GRIPS AND `settings()` ARE ABOUT: view state, set by the window's tab. 0 is the first.
+	void setSelectedPartial(int partial);
+	int selectedPartial() const noexcept { return partial_; }
+
+	/// ONE LINE OF THE DRAW PLAN: a partial that is drawn, and how.
+	struct PlanEntry {
+		int partial = 0;
+		bool selected = false;
+		bool active = true;   ///< false: the selected partial is switched off and is drawn as a ghost
+		float notchX = 0.0f;  ///< where its notch sits on the axis
+		float oscillatorX = 0.0f;
+		float stem = 0.0f;    ///< its Level, as a fraction of the plot's height
+	};
+	/// EVERY ACTIVE PARTIAL, THE SELECTED ONE LAST (plus the selected one if it is off). `draw` walks this list and so does a case.
+	std::vector<PlanEntry> drawPlan() const;
+	/// A partial's own notch curve, in linear amplitude, as `curveGains` gives the selected one's.
+	size_t curveGainsFor(int partial, float* out, size_t capacity) const;
 
 	/// Hand the scope the modulation state, exactly as a card hands it to a knob — and to EVERY
 	/// ADAPTER, not just the ones a widget holds. See `HarmCard::setModulation` for what the other
@@ -186,7 +210,10 @@ public:
 	Grip heldForTest() const noexcept { return held_; }
 
 private:
+	/// The selected partial seen as the first (`partialSlice`).
 	fx::harm::Settings settings() const;
+	/// The whole device's settings, all four partials.
+	fx::harm::Settings fullSettings() const;
 	DeviceControl& control(fx::harm::Param param) const;
 	void commit(fx::harm::Param param, double value);
 	/// What a drag at `at` means for `grip`, in the control's own declared units.
@@ -205,6 +232,7 @@ private:
 	EditHistory* history_ = nullptr;
 
 	bool gripsEnabled_ = false;
+	int partial_ = 0;
 	Grip held_ = Grip::None;
 	bool routeDrag_ = false;
 	/// PER CONTROL, because the stem's drag writes TWO of them. One flag would have closed the

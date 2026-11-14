@@ -17,3 +17,35 @@ param HARM harm_depth_env unit=choice choice=Off|On
 param HARM harm_mode unit=choice choice=Notch|High-pass
 param HARM harm_mix unit=percent min=0 max=1 stepped=0
 param HARM harm_wet_gain unit=fader min=0 max=1 stepped=0
+param HARM harm_p1_active unit=choice choice=Off|On
+param HARM harm_delay unit=log_seconds min=-11 max=3.3219280948873626 stepped=0
+param HARM harm_hold unit=log_seconds min=-11 max=3.3219280948873626 stepped=0
+param HARM harm_decay unit=log_seconds min=-11 max=3.3219280948873626 stepped=0
+param HARM harm_sustain unit=percent min=0 max=1 stepped=0
+param HARM harm_p2_harmonic unit=number min=0 max=101 stepped=1
+param HARM harm_p2_level unit=percent min=0 max=1 stepped=0
+param HARM harm_p2_fine unit=number min=-12 max=12 stepped=0
+param HARM harm_p2_phase unit=percent min=0 max=1 stepped=0
+param HARM harm_p2_spread unit=percent min=0 max=1 stepped=0
+param HARM harm_p2_width unit=percent min=0 max=1 stepped=0
+param HARM harm_p2_depth unit=percent min=0 max=1 stepped=0
+param HARM harm_p2_mode unit=choice choice=Notch|High-pass
+param HARM harm_p2_active unit=choice choice=Off|On
+param HARM harm_p3_harmonic unit=number min=0 max=101 stepped=1
+param HARM harm_p3_level unit=percent min=0 max=1 stepped=0
+param HARM harm_p3_fine unit=number min=-12 max=12 stepped=0
+param HARM harm_p3_phase unit=percent min=0 max=1 stepped=0
+param HARM harm_p3_spread unit=percent min=0 max=1 stepped=0
+param HARM harm_p3_width unit=percent min=0 max=1 stepped=0
+param HARM harm_p3_depth unit=percent min=0 max=1 stepped=0
+param HARM harm_p3_mode unit=choice choice=Notch|High-pass
+param HARM harm_p3_active unit=choice choice=Off|On
+param HARM harm_p4_harmonic unit=number min=0 max=101 stepped=1
+param HARM harm_p4_level unit=percent min=0 max=1 stepped=0
+param HARM harm_p4_fine unit=number min=-12 max=12 stepped=0
+param HARM harm_p4_phase unit=percent min=0 max=1 stepped=0
+param HARM harm_p4_spread unit=percent min=0 max=1 stepped=0
+param HARM harm_p4_width unit=percent min=0 max=1 stepped=0
+param HARM harm_p4_depth unit=percent min=0 max=1 stepped=0
+param HARM harm_p4_mode unit=choice choice=Notch|High-pass
+param HARM harm_p4_active unit=choice choice=Off|On

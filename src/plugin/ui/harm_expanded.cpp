@@ -19,6 +19,7 @@
 #include "plugin/ui/harm_expanded.h"
 
 #include "device/device.h"
+#include "plugin/ui/tab_chip.h"
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -28,77 +29,180 @@ namespace feathers::ui {
 
 namespace hrm = feathers::fx::harm;
 
-std::span<const HarmExpanded::KnobGroup> HarmExpanded::groups() {
-	// SPECTRAL FIRST AND LARGEST, because it is the group the picture is about — the harmonic row and
-	// the scope sit inside it, above its knobs. Level leads: it decides whether the sub is sounding
-	// at all, and the scope's fallback to 1:1 hangs off it.
-	static constexpr KnobEntry kSpectral[] = {
-		{ fx::harm::Param::Level, "Level" },
-		{ fx::harm::Param::Fine, "Fine" },
-		{ fx::harm::Param::Width, "Width" },
-		{ fx::harm::Param::Depth, "Depth" },
-	};
-	// THE SCOPE IS MONO AND CANNOT SHOW THESE TWO. That is not a defect in the picture; it is why
-	// they are a separate group rather than two more circles under it.
-	static constexpr KnobEntry kSpatial[] = {
-		{ fx::harm::Param::Phase, "Phase" },
-		{ fx::harm::Param::Spread, "Spread" },
-	};
-	// AND THE SCOPE HAS NO TIME AXIS AT ALL, which is the sharpest of the four distinctions: no
-	// arrangement of the picture would ever show these.
-	static constexpr KnobEntry kTemporal[] = {
-		{ fx::harm::Param::Attack, "Attack" },
-		{ fx::harm::Param::Release, "Release" },
-		{ fx::harm::Param::Porta, "Porta" },
-	};
-	static constexpr KnobGroup kGroups[] = {
-		{ "SPECTRAL", kSpectral },
-		{ "SPATIAL", kSpatial },
-		{ "TEMPORAL", kTemporal },
-	};
-	return kGroups;
+namespace {
+
+/// THE ENVELOPE'S SIX VALUES, in the order they happen along a note, with the words the boxes carry.
+struct EnvelopeEntry {
+	hrm::Param param;
+	const char* label;
+};
+constexpr EnvelopeEntry kEnvelopeEntries[] = {
+	{ hrm::Param::Delay, "Delay" },   { hrm::Param::Attack, "Attack" }, { hrm::Param::Hold, "Hold" },
+	{ hrm::Param::Decay, "Decay" },   { hrm::Param::Sustain, "Sustain" }, { hrm::Param::Release, "Release" },
+};
+constexpr int kEnvelopeColumns = 3;
+constexpr float kBoxGap = 8.0f;
+
+/// THE SELECTED PARTIAL'S KNOBS: SPECTRAL's three and SPATIAL's two.
+struct KnobEntry {
+	hrm::PartialField field;
+	const char* label;
+};
+constexpr KnobEntry kKnobEntries[] = {
+	{ hrm::PartialField::Fine, "Fine" },   { hrm::PartialField::Width, "Width" }, { hrm::PartialField::Depth, "Depth" },
+	{ hrm::PartialField::Phase, "Phase" }, { hrm::PartialField::Spread, "Spread" },
+};
+constexpr int kSpectralKnobs = 3;
+constexpr float kTabWidth = 56.0f;
+constexpr float kTabGap = 6.0f;
+
+} // namespace
+
+/// EVERY RECTANGLE OF THE WINDOW, from its width — computed once, in one place, so what `resized` places, what `draw` writes and
+/// what a case reads are one geometry.
+struct HarmExpanded::Layout {
+	visage::Bounds partialsCaption, strip;
+	std::array<visage::Bounds, hrm::kPartialCount> tabs {};
+	visage::Bounds spectralCaption, harmonic, mode, scope, spatialCaption, knobRow;
+	visage::Bounds envelopeCaption, envelope;
+	std::array<visage::Bounds, 6> boxes {};
+	visage::Bounds masterCaption, master, porta, poly, depthEnv;
+	float knobCell = 0.0f;
+	float bottom = 0.0f;
+};
+
+HarmExpanded::Layout HarmExpanded::layout() const {
+	return layoutFor(width());
+}
+
+HarmExpanded::Layout HarmExpanded::layoutFor(float totalWidth) const {
+	Layout l;
+	const float inner = std::max(0.0f, totalWidth - 2.0f * kPad);
+	// THE DETAIL'S TWO COLUMNS SHARE WHATEVER WIDTH THERE IS in the proportion they were designed in.
+	const float columns = std::max(0.0f, inner - kColumnGap);
+	const float leftW = columns * kLeftWidth / (kLeftWidth + kRightWidth);
+	const float rightW = columns - leftW;
+	const float rightX = kPad + leftW + kColumnGap;
+
+	float y = kPad;
+	l.partialsCaption = { kPad, y, inner, kCaptionHeight };
+	y += kCaptionHeight + kCaptionGap;
+	l.strip = { kPad, y, inner, HarmPartialStrip::kHeight };
+	y += HarmPartialStrip::kHeight + kRowGap;
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		l.tabs[static_cast<size_t>(k)] = { kPad + (kTabWidth + kTabGap) * static_cast<float>(k), y, kTabWidth, kTabHeight };
+	}
+	y += kTabHeight + kGroupGap;
+	const float bodyTop = y;
+
+	// LEFT: THE SELECTED PARTIAL.
+	y = bodyTop;
+	l.spectralCaption = { kPad, y, leftW, kCaptionHeight };
+	y += kCaptionHeight + kCaptionGap;
+	l.harmonic = { kPad, y, std::max(0.0f, leftW - kModeChipWidth - kRowGap), HarmonicRow::kHeight };
+	l.mode = { l.harmonic.right() + kRowGap, y + (HarmonicRow::kHeight - SwitchChip::kHeight) * 0.5f, kModeChipWidth,
+		       SwitchChip::kHeight };
+	y += HarmonicRow::kHeight + kRowGap;
+	l.scope = { kPad, y, leftW, kScopeHeight };
+	y += kScopeHeight + kRowGap;
+	l.knobCell = leftW / static_cast<float>(kKnobCells);
+	l.spatialCaption = { kPad + l.knobCell * static_cast<float>(kSpectralKnobs), y, l.knobCell * (kKnobCells - kSpectralKnobs),
+		                 kCaptionHeight };
+	y += kCaptionHeight + kCaptionGap;
+	const float column = Knob::columnHeight(kKnobDiameter);
+	l.knobRow = { kPad, y, leftW, column };
+	y += column;
+	const float leftBottom = y;
+
+	// RIGHT: THE ENVELOPE — a caption, its curve, and its six values under it in two rows.
+	y = bodyTop;
+	l.envelopeCaption = { rightX, y, rightW, kCaptionHeight };
+	y += kCaptionHeight + kCaptionGap;
+	const float boxesHeight = 2.0f * ValueBox::kHeight + kBoxGap;
+	const float curveHeight = std::max(60.0f, leftBottom - y - kRowGap - boxesHeight);
+	l.envelope = { rightX, y, rightW, curveHeight };
+	y += curveHeight + kRowGap;
+	const float boxW = (rightW - kBoxGap * static_cast<float>(kEnvelopeColumns - 1)) / static_cast<float>(kEnvelopeColumns);
+	for (size_t i = 0; i < l.boxes.size(); ++i) {
+		const float col = static_cast<float>(i % kEnvelopeColumns);
+		const float row = static_cast<float>(i / kEnvelopeColumns);
+		l.boxes[i] = { rightX + col * (boxW + kBoxGap), y + row * (ValueBox::kHeight + kBoxGap), boxW, ValueBox::kHeight };
+	}
+	y = std::max(leftBottom, y + boxesHeight);
+
+	// MASTER: what belongs to the device and to no one partial.
+	y += kGroupGap;
+	l.masterCaption = { kPad, y, inner, kCaptionHeight };
+	y += kCaptionHeight + kCaptionGap;
+	l.master = { kPad, y, inner, kSwitchHeight + 6.0f };
+	l.porta = { kPad, y, kPortaWidth, ValueBox::kHeight };
+	const float chipY = y + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f;
+	l.poly = { l.porta.right() + kRowGap + 6.0f, chipY, kPolyChipWidth, SwitchChip::kHeight };
+	l.depthEnv = { l.poly.right() + kRowGap, chipY, kEnvDepthChipWidth, SwitchChip::kHeight };
+	y += ValueBox::kHeight;
+	l.bottom = y;
+	return l;
 }
 
 HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id,
                            Notifier* notifier)
     : host_(host), device_(id) {
 	(void)registry; // the chips take none, as the knobs do not
+
+	// THE PICTURE.
 	scope_ = std::make_unique<HarmScope>(host_, device_);
 	addChild(scope_.get());
 
-	// THE HARMONIC ROW, THE SAME WIDGET THE CARD BUILDS. This is what closes the gap the header used
-	// to record: the scope below plots the notch where the harmonic puts it, and until now a hand
-	// could read that and not change it.
-	row_ = std::make_unique<HarmonicRow>(control(hrm::Param::Harmonic));
-	// THE SCOPE REDRAWS WHEN THE HARMONIC MOVES, which is the whole reason this row belongs on this
-	// panel: the picture and the control are the same gesture.
-	row_->onChanged = [this] {
-		if (scope_ != nullptr) {
-			scope_->redraw();
-		}
-		redraw();
-	};
-	addChild(row_.get());
+	// THE STRIP — four partials' number, ratio, Active and Level, on show whichever tab is open.
+	strip_ = std::make_unique<HarmPartialStrip>(host_, device_, notifier);
+	strip_->onSelect = [this](int partial) { selectPartial(partial); };
+	addChild(strip_.get());
 
-	const auto addKnob = [&](hrm::Param param, const char* label) {
-		auto knob = std::make_unique<Knob>(control(param), label, notifier);
-		knob->setFaceDiameter(kKnobDiameter);
-		addChild(knob.get());
-		knobs_.push_back(std::move(knob));
-		// RECORDED AS THE KNOB IS BUILT, in the one place that knows which control it was built for.
-		// FilterCard's rule, and the reachability invariant reads this rather than a list kept beside
-		// it — so a knob added here is reachable-by-declaration without anybody remembering.
-		knobParams_.push_back(param);
-	};
-
-	// BUILT FROM THE DECLARED GROUPS, in the order they are drawn — so `knobs_` and the layout walk
-	// the same list and cannot disagree about which knob is where.
-	for (const KnobGroup& group : groups()) {
-		for (const KnobEntry& entry : group.knobs) {
-			addKnob(entry.param, entry.label);
+	// THE DETAIL, BUILT FOR ALL FOUR AND SHOWN FOR ONE: the same layout bound to four sets of parameters.
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		Detail& d = detail_[static_cast<size_t>(k)];
+		// THE HARMONIC ROW, THE SAME WIDGET THE CARD BUILDS. This is what closes the gap the header used
+		// to record: the scope plots the notch where the harmonic puts it, and until now a hand
+		// could read that and not change it.
+		d.row = std::make_unique<HarmonicRow>(control(hrm::partialParam(k, hrm::PartialField::Harmonic)));
+		// THE SCOPE REDRAWS WHEN THE HARMONIC MOVES, which is the whole reason this row belongs on this
+		// panel: the picture and the control are the same gesture.
+		d.row->onChanged = [this] {
+			if (scope_ != nullptr) {
+				scope_->redraw();
+			}
+			if (strip_ != nullptr) {
+				strip_->refresh();
+			}
+			redraw();
+		};
+		addChild(d.row.get());
+		for (const KnobEntry& entry : kKnobEntries) {
+			const hrm::Param param = hrm::partialParam(k, entry.field);
+			auto knob = std::make_unique<Knob>(control(param), entry.label, notifier);
+			knob->setFaceDiameter(kKnobDiameter);
+			addChild(knob.get());
+			d.knobs.push_back(std::move(knob));
+			// RECORDED AS THE KNOB IS BUILT, in the one place that knows which control it was built for.
+			d.knobParams.push_back(param);
 		}
+		// NOTCH OR HIGH-PASS (backlog NL) — a chip, because it has two states and both are named on it as it flips.
+		d.mode = std::make_unique<SwitchChip>(control(hrm::partialParam(k, hrm::PartialField::Mode)), "Mode");
+		addChild(d.mode.get());
 	}
 
+	// THE ENVELOPE: its curve and its six values.
+	envelopeView_ = std::make_unique<HarmEnvelopeView>(host_, device_);
+	addChild(envelopeView_.get());
+	for (const EnvelopeEntry& entry : kEnvelopeEntries) {
+		auto box = std::make_unique<ValueBox>(control(entry.param), entry.label);
+		addChild(box.get());
+		envelopeBoxes_.push_back(std::move(box));
+	}
+
+	// MASTER.
+	porta_ = std::make_unique<ValueBox>(control(hrm::Param::Porta), "Porta");
+	addChild(porta_.get());
 	auto poly = std::make_unique<SwitchChip>(control(hrm::Param::Poly), "Poly");
 	// ALIVE OR DEAD BY THE DEVICE'S OWN DECLARATION, exactly as the card decides it — HARM declares a
 	// `perVoiceControl` now, so it is alive. Asked rather than assumed, and asked BEFORE the first
@@ -107,15 +211,21 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 	poly->setEnabled(hrm::kDescriptor.traits.perVoiceControl >= 0);
 	addChild(poly.get());
 	poly_ = std::move(poly);
-
 	// DEPTH FOLLOWS ENV — a two-state control, so a chip that names itself, as Poly is.
 	depthEnv_ = std::make_unique<SwitchChip>(control(hrm::Param::DepthFollowsEnv), "Env Depth");
 	addChild(depthEnv_.get());
 
-	// NOTCH OR HIGH-PASS (backlog NL) — a chip, because it has two states and both are named on it as it flips.
-	mode_ = std::make_unique<SwitchChip>(control(hrm::Param::Mode), "Mode");
-	addChild(mode_.get());
-	followMode(host_.fieldAt(device_, static_cast<size_t>(hrm::Param::Mode)) >= 0.5f);
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		for (int k = 0; k < hrm::kPartialCount; ++k) {
+			if (tabBounds(k).contains(e.position)) {
+				selectPartial(k);
+				return;
+			}
+		}
+	};
+
+	selectPartial(0);
+	followState();
 
 	// **THE ENABLE SQUARE THAT STOOD HERE IS THE WINDOW HEADER'S NOW** (devices had been
 	// inconsistently adding their own active chips in the window). The panel chrome draws one chip
@@ -133,19 +243,46 @@ DeviceControl& HarmExpanded::control(hrm::Param param) const {
 	return *controls_[index];
 }
 
-void HarmExpanded::modulationBound(ModState* mod, EditHistory* history) {
-	for (auto& knob : knobs_) {
-		knob->setModulation(mod, history);
+void HarmExpanded::selectPartial(int partial) {
+	partial = std::clamp(partial, 0, hrm::kPartialCount - 1);
+	const bool changed = partial != selected_;
+	selected_ = partial;
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		const bool shown = k == selected_;
+		Detail& d = detail_[static_cast<size_t>(k)];
+		d.row->setVisible(shown);
+		d.mode->setVisible(shown);
+		for (auto& knob : d.knobs) {
+			knob->setVisible(shown);
+		}
 	}
-	// AND THE SCOPE, whose grips are modulation destinations exactly as the knobs are — the same five
-	// controls reached two ways. A picture whose handles could not be armed would be a set of
-	// controls that silently is not one.
+	if (strip_ != nullptr) {
+		strip_->setSelected(selected_);
+	}
+	if (scope_ != nullptr) {
+		scope_->setSelectedPartial(selected_);
+	}
+	if (changed) {
+		redraw();
+	}
+}
+
+void HarmExpanded::modulationBound(ModState* mod, EditHistory* history) {
+	for (Detail& d : detail_) {
+		for (auto& knob : d.knobs) {
+			knob->setModulation(mod, history);
+		}
+	}
+	// AND THE SCOPE, whose grips are modulation destinations exactly as the knobs are — the same controls
+	// reached two ways. A picture whose handles could not be armed would be a set of controls that silently is not one.
 	if (scope_ != nullptr) {
 		scope_->setModulation(mod, history);
 	}
+	if (strip_ != nullptr) {
+		strip_->setModulation(mod, history);
+	}
 	// POLY IS NOT A DESTINATION and is not offered one — the device declares it unmodulatable because
-	// it decides how many of the device there are rather than what one of them does. The card says
-	// the same thing in the same words.
+	// it decides how many of the device there are rather than what one of them does.
 	// AND EVERY ADAPTER, INCLUDING THE ONES NO KNOB HOLDS.
 	//
 	// THIS LINE WAS MISSING AND HARM COULD NOT BE MODULATED AT ALL. A Knob forwards to the control it
@@ -175,81 +312,32 @@ visage::Point HarmExpanded::maximumSize() const {
 }
 
 visage::Point HarmExpanded::minimumSize() const {
-	const float column = Knob::columnHeight(kKnobDiameter);
-	// SUMMED OVER THE DECLARED GROUPS, so a control moving between them moves the height with it.
-	// The spectral group carries the harmonic row and the scope as well as its knobs; the others are
-	// a caption and their rows.
-	float height = kPad + kSwitchHeight; // the modal row
-	for (size_t g = 0; g < groups().size(); ++g) {
-		const KnobGroup& group = groups()[g];
-		height += kGroupGap + kCaptionHeight + kRowGap;
-		if (g == 0) {
-			height += HarmonicRow::kHeight + kRowGap + kScopeHeight + kRowGap;
-		}
-		const size_t rows = group.knobs.empty()
-		                        ? 0
-		                        : (group.knobs.size() + static_cast<size_t>(kRowCells) - 1)
-		                              / static_cast<size_t>(kRowCells);
-		height += static_cast<float>(rows) * column
-		          + (rows > 1 ? static_cast<float>(rows - 1) * kRowGap : 0.0f);
-	}
-	height += kPad;
-	return { 2.0f * kPad + static_cast<float>(kRowCells) * kCellWidth, height };
+	const float minWidth = 2.0f * kPad + kLeftWidth + kColumnGap + kRightWidth;
+	return { minWidth, layoutFor(minWidth).bottom + kPad };
 }
 
-visage::Bounds HarmExpanded::harmonicBounds() const {
-	// INSIDE THE SPECTRAL GROUP AND ABOVE THE SCOPE, because the scope is a picture of what this row
-	// is set to. A control below its own readout reads as a caption for it.
-	return { kPad, modalBottom() + kGroupGap + kCaptionHeight + kRowGap,
-		     std::max(0.0f, width() - 2.0f * kPad), HarmonicRow::kHeight };
+visage::Bounds HarmExpanded::stripBounds() const { return layout().strip; }
+visage::Bounds HarmExpanded::tabBounds(int partial) const {
+	return layout().tabs[static_cast<size_t>(std::clamp(partial, 0, hrm::kPartialCount - 1))];
 }
-
-visage::Bounds HarmExpanded::scopeBounds() const {
-	return { kPad, harmonicBounds().bottom() + kRowGap, std::max(0.0f, width() - 2.0f * kPad),
-		     kScopeHeight };
+std::string HarmExpanded::tabText(int partial) { return std::to_string(partial + 1); }
+visage::Bounds HarmExpanded::harmonicBounds() const { return layout().harmonic; }
+visage::Bounds HarmExpanded::scopeBounds() const { return layout().scope; }
+visage::Bounds HarmExpanded::modeBounds() const { return layout().mode; }
+visage::Bounds HarmExpanded::knobRowBounds() const { return layout().knobRow; }
+visage::Bounds HarmExpanded::envelopeBounds() const { return layout().envelope; }
+visage::Bounds HarmExpanded::envelopeBoxBounds(size_t index) const {
+	const Layout l = layout();
+	return index < l.boxes.size() ? l.boxes[index] : visage::Bounds {};
 }
+visage::Bounds HarmExpanded::masterBounds() const { return layout().master; }
+visage::Bounds HarmExpanded::portaBounds() const { return layout().porta; }
+visage::Bounds HarmExpanded::polyBounds() const { return layout().poly; }
+visage::Bounds HarmExpanded::depthEnvBounds() const { return layout().depthEnv; }
 
 float HarmExpanded::modalBottom() const {
-	return kPad + kSwitchHeight;
-}
-
-visage::Bounds HarmExpanded::polyBounds() const {
-	// THE MODAL ROW, AT THE TOP. Poly is a verb rather than a value — it decides how many of the device
-	// there are — so it heads the panel instead of trailing it. (Enabled, the other verb, is the window
-	// header's chip now, one row up.) Right-aligned, with its caption against it.
-	return { std::max(kPad, width() - kPad - kSwitchWidth), kPad + (kSwitchHeight - SwitchChip::kHeight) * 0.5f,
-	         kSwitchWidth, SwitchChip::kHeight };
-}
-
-visage::Bounds HarmExpanded::modeBounds() const {
-	// THE LEFT OF THE MODAL ROW, centred on the Poly switch's line.
-	return { kPad, kPad + (kSwitchHeight - SwitchChip::kHeight) * 0.5f, kModeChipWidth, SwitchChip::kHeight };
-}
-
-void HarmExpanded::followMode(bool highpass) {
-	drawnMode_ = highpass ? 1 : 0;
-	for (size_t i = 0; i < knobs_.size() && i < knobParams_.size(); ++i) {
-		if (knobParams_[i] == hrm::Param::Width || knobParams_[i] == hrm::Param::Depth) {
-			knobs_[i]->setEnabled(!highpass);
-		}
-	}
-	if (depthEnv_ != nullptr) {
-		depthEnv_->setEnabled(!highpass);
-	}
-	if (scope_ != nullptr) {
-		scope_->redraw();
-	}
-	redraw();
-}
-
-bool HarmExpanded::updateContent() {
-	// THE FIELD, NOT A CONTROL — `HarmCard::updateContent`'s rule: a tick must not construct widgets.
-	const bool highpass = host_.fieldAt(device_, static_cast<size_t>(hrm::Param::Mode)) >= 0.5f;
-	if (drawnMode_ == (highpass ? 1 : 0)) {
-		return false;
-	}
-	followMode(highpass);
-	return true;
+	const Layout l = layout();
+	return l.strip.bottom();
 }
 
 std::string HarmExpanded::polyText() const {
@@ -260,80 +348,112 @@ std::string HarmExpanded::polyText() const {
 	                                                    : "Poly — per-voice not built yet";
 }
 
-void HarmExpanded::resized() {
-	const visage::Bounds row = harmonicBounds();
-	row_->setBounds(row.x(), row.y(), row.width(), row.height());
+std::vector<float> HarmExpanded::signature() const {
+	std::vector<float> out;
+	out.reserve(static_cast<size_t>(hrm::Param::kCount) + 1);
+	for (size_t i = 0; i < static_cast<size_t>(hrm::Param::kCount); ++i) {
+		out.push_back(host_.fieldAt(device_, i));
+	}
+	out.push_back(static_cast<float>(selected_));
+	return out;
+}
 
-	const visage::Bounds scope = scopeBounds();
-	scope_->setBounds(scope.x(), scope.y(), scope.width(), scope.height());
-
-	const visage::Bounds poly = polyBounds();
-	poly_->setBounds(poly.x(), poly.y(), poly.width(), poly.height());
-	const visage::Bounds mode = modeBounds();
-	mode_->setBounds(mode.x(), mode.y(), mode.width(), mode.height());
-
-	const float column = Knob::columnHeight(kKnobDiameter);
-	const float inner = std::max(0.0f, width() - 2.0f * kPad);
-	const float cell = inner / static_cast<float>(kRowCells);
-
-	// ONE WALK OVER THE DECLARED GROUPS, placing captions and knobs together — so the caption a case
-	// reads is the caption `draw` writes, at the rectangle `resized` chose. Two places computing one
-	// geometry is the seam this lane has produced three times in a week.
-	captionBounds_.clear();
-	float top = modalBottom();
-	size_t next = 0;
-	for (size_t g = 0; g < groups().size(); ++g) {
-		const KnobGroup& group = groups()[g];
-		top += kGroupGap;
-		captionBounds_.push_back({ kPad, top, inner, kCaptionHeight });
-		top += kCaptionHeight + kRowGap;
-		if (g == 0) {
-			top = scope.bottom() + kRowGap; // the harmonic row and the scope live inside this group
+void HarmExpanded::followState() {
+	// EACH PARTIAL'S WIDTH AND DEPTH GREY WITH ITS OWN MODE: in High-pass they shape nothing (the brickwall has one shape),
+	// so — the honesty rule — they are not offered as if they did.
+	bool anyNotch = false;
+	bool anyActive = false;
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		const bool highpass = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Mode))) >= 0.5f;
+		const bool active = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Active))) >= 0.5f;
+		Detail& d = detail_[static_cast<size_t>(k)];
+		for (size_t i = 0; i < d.knobs.size() && i < d.knobParams.size(); ++i) {
+			const hrm::Param p = d.knobParams[i];
+			if (p == hrm::partialParam(k, hrm::PartialField::Width) || p == hrm::partialParam(k, hrm::PartialField::Depth)) {
+				d.knobs[i]->setEnabled(!highpass);
+			}
 		}
-		for (size_t i = 0; i < group.knobs.size() && next < knobs_.size(); ++i, ++next) {
-			const size_t line = i / static_cast<size_t>(kRowCells);
-			const size_t at = i % static_cast<size_t>(kRowCells);
-			knobs_[next]->setBounds(kPad + cell * static_cast<float>(at),
-			                        top + static_cast<float>(line) * (column + kRowGap), cell,
-			                        column);
+		if (active) {
+			anyActive = true;
+			anyNotch = anyNotch || !highpass;
 		}
-		// THE TEMPORAL GROUP'S FREE CELL holds the Depth Follows Env switch, centred in the knob column below
-		// its caption — the group is three knobs in four cells, so nothing moves to make room for it.
-		if (g + 1 == groups().size() && group.knobs.size() < static_cast<size_t>(kRowCells)) {
-			const float x = kPad + cell * static_cast<float>(group.knobs.size());
-			const float w = std::max(0.0f, cell - 4.0f);
-			depthEnvBounds_ = { x + 2.0f, top + (column - SwitchChip::kHeight) * 0.5f, w, SwitchChip::kHeight };
-			depthEnv_->setBounds(depthEnvBounds_.x(), depthEnvBounds_.y(), depthEnvBounds_.width(),
-			                     depthEnvBounds_.height());
-		}
-		const size_t rows = group.knobs.empty()
-		                        ? 0
-		                        : (group.knobs.size() + static_cast<size_t>(kRowCells) - 1)
-		                              / static_cast<size_t>(kRowCells);
-		top += static_cast<float>(rows) * column
-		       + (rows > 1 ? static_cast<float>(rows - 1) * kRowGap : 0.0f);
+	}
+	// ENV DEPTH SCALES NOTCH DEPTH, so it has something to act on only while a partial runs a notch.
+	if (depthEnv_ != nullptr) {
+		depthEnv_->setEnabled(!anyActive || anyNotch);
 	}
 }
 
+bool HarmExpanded::updateContent() {
+	// THE FIELDS, NOT A CONTROL — `HarmCard::updateContent`'s rule: a tick must not construct widgets.
+	std::vector<float> now = signature();
+	if (now == drawnSignature_) {
+		return false;
+	}
+	drawnSignature_ = std::move(now);
+	followState();
+	if (strip_ != nullptr) {
+		strip_->refresh();
+	}
+	if (envelopeView_ != nullptr) {
+		envelopeView_->refresh();
+	}
+	if (scope_ != nullptr) {
+		scope_->redraw();
+	}
+	redraw();
+	return true;
+}
+
+void HarmExpanded::resized() {
+	const Layout l = layout();
+	strip_->setBounds(l.strip.x(), l.strip.y(), l.strip.width(), l.strip.height());
+	scope_->setBounds(l.scope.x(), l.scope.y(), l.scope.width(), l.scope.height());
+	for (Detail& d : detail_) {
+		d.row->setBounds(l.harmonic.x(), l.harmonic.y(), l.harmonic.width(), l.harmonic.height());
+		d.mode->setBounds(l.mode.x(), l.mode.y(), l.mode.width(), l.mode.height());
+		for (size_t i = 0; i < d.knobs.size(); ++i) {
+			d.knobs[i]->setBounds(l.knobRow.x() + l.knobCell * static_cast<float>(i), l.knobRow.y(), l.knobCell,
+			                      l.knobRow.height());
+		}
+	}
+	envelopeView_->setBounds(l.envelope.x(), l.envelope.y(), l.envelope.width(), l.envelope.height());
+	for (size_t i = 0; i < envelopeBoxes_.size() && i < l.boxes.size(); ++i) {
+		envelopeBoxes_[i]->setBounds(l.boxes[i].x(), l.boxes[i].y(), l.boxes[i].width(), l.boxes[i].height());
+	}
+	porta_->setBounds(l.porta.x(), l.porta.y(), l.porta.width(), l.porta.height());
+	poly_->setBounds(l.poly.x(), l.poly.y(), l.poly.width(), l.poly.height());
+	depthEnv_->setBounds(l.depthEnv.x(), l.depthEnv.y(), l.depthEnv.width(), l.depthEnv.height());
+
+	// THE CAPTIONS, written once here and read by `draw` and by the cases.
+	captions_.clear();
+	captions_.push_back({ "PARTIALS", l.partialsCaption });
+	captions_.push_back({ "SPECTRAL", l.spectralCaption });
+	captions_.push_back({ "SPATIAL", l.spatialCaption });
+	captions_.push_back({ "ENVELOPE", l.envelopeCaption });
+	captions_.push_back({ "MASTER", l.masterCaption });
+}
+
 std::vector<hrm::Param> HarmExpanded::addressedParamsForTest() const {
-	// THE KNOBS ANSWER FOR THEMSELVES and the switch is named because it is the one bespoke control
-	// here. `Enabled` and `Harmonic` are NOT offered by this surface — see the header for why — and
-	// claiming them would make the reachability invariant pass on a control no hand can reach here.
-	std::vector<hrm::Param> out = knobParams_;
-	if (poly_ != nullptr) {
-		out.push_back(hrm::Param::Poly);
+	// EVERY CONTROL THE WINDOW OFFERS, once each: the strip's Level and Active for all four partials, each partial's ratio, five
+	// knobs and Mode, the envelope's six, and the device's Porta, Poly and Env Depth. `Enabled` IS THE WINDOW HEADER'S chip
+	// (`ExpandedPanel::enableBounds`), and Mix and wet Gain are the slot's furniture.
+	std::vector<hrm::Param> out;
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Level));
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Active));
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Harmonic));
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Mode));
+		for (const hrm::Param p : detail_[static_cast<size_t>(k)].knobParams) {
+			out.push_back(p);
+		}
 	}
-	if (depthEnv_ != nullptr) {
-		out.push_back(hrm::Param::DepthFollowsEnv);
+	for (const EnvelopeEntry& entry : kEnvelopeEntries) {
+		out.push_back(entry.param);
 	}
-	if (mode_ != nullptr) {
-		out.push_back(hrm::Param::Mode);
-	}
-	if (row_ != nullptr) {
-		out.push_back(hrm::Param::Harmonic); // the shared row: two steppers and a 102-entry menu
-	}
-	// `Enabled` IS NOT THIS BODY'S. The window header's chip reaches it for every panel
-	// (`ExpandedPanel::enableBounds`), and the card's head square reaches it on the card.
+	out.push_back(hrm::Param::Porta);
+	out.push_back(hrm::Param::Poly);
+	out.push_back(hrm::Param::DepthFollowsEnv);
 	return out;
 }
 
@@ -341,31 +461,25 @@ void HarmExpanded::draw(visage::Canvas& canvas) {
 	// NO GROUND OF ITS OWN. The overlay's panel is already a raised surface and a second rectangle on
 	// top of it would be a card inside a card. The knobs, the row and the scope draw themselves.
 
-	// POLY AND ENV DEPTH ARE CHIPS: each prints its own word, so nothing is drawn beside them.
+	// THE TABS, drawn as Drawn's frame tabs are. A tab whose partial is off is drawn muted, as the strip's header is.
+	const Layout l = layout();
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		drawTabChip(canvas, l.tabs[static_cast<size_t>(k)], tabText(k), k == selected_);
+	}
 
-	// THE GROUP CAPTIONS, AND THEY ARE THE DESIGN PASS, so the expanded view is more intuitive
-	// than a knob list. A list is UNDIFFERENTIATED — these twelve are
-	// four different kinds of thing, and drawing all of them identically is what made eleven knobs
-	// read as a row of circles rather than as a device.
-	//
-	// READ FROM `captionBounds_` RATHER THAN RECOMPUTED, so the caption is written where `resized`
-	// put it. Two places computing one geometry is the seam this lane has produced three times in a
-	// week, and it costs nothing to not do it a fourth.
-	const std::span<const KnobGroup> all = groups();
-	for (size_t g = 0; g < all.size() && g < captionBounds_.size(); ++g) {
-		const visage::Bounds caption = captionBounds_[g];
+	// THE GROUP CAPTIONS. READ FROM `captions_` RATHER THAN RECOMPUTED, so the caption is written where `resized`
+	// put it. Two places computing one geometry is the seam this lane has produced three times in a week.
+	for (const Caption& caption : captions_) {
 		canvas.setColor(withAlpha(kMuted, 0.75f));
-		drawTracked(canvas, all[g].caption, font(kKnobLabelSize), kKnobLabelTracking, caption.x(),
-		            caption.y(), caption.height());
+		drawTracked(canvas, caption.text, font(kKnobLabelSize), kKnobLabelTracking, caption.bounds.x(),
+		            caption.bounds.y(), caption.bounds.height());
 		// A HAIRLINE ACROSS THE REST OF THE ROW, so the caption reads as a section head rather than
 		// as a stray word above a knob.
-		const float textWidth =
-		    trackedWidth(font(kKnobLabelSize), all[g].caption, kKnobLabelTracking);
-		const float ruleLeft = caption.x() + textWidth + 8.0f;
-		if (caption.right() > ruleLeft) {
+		const float textWidth = trackedWidth(font(kKnobLabelSize), caption.text, kKnobLabelTracking);
+		const float ruleLeft = caption.bounds.x() + textWidth + 8.0f;
+		if (caption.bounds.right() > ruleLeft) {
 			canvas.setColor(withAlpha(kLine, 0.55f));
-			canvas.fill(ruleLeft, caption.y() + caption.height() * 0.5f, caption.right() - ruleLeft,
-			            1.0f);
+			canvas.fill(ruleLeft, caption.bounds.y() + caption.bounds.height() * 0.5f, caption.bounds.right() - ruleLeft, 1.0f);
 		}
 	}
 }

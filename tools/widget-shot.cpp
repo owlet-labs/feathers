@@ -54,6 +54,7 @@
 #include "plugin/ui/header_bar.h"
 #include "plugin/ui/stereo_tool_card.h" // `--stereo-tab`, `--stereo-sweep` (backlog KU)
 #include "plugin/ui/twinfield_card.h"   // `--twinfield-tab`
+#include "plugin/ui/harm_expanded.h"    // `--harm-tab`
 #include "mod/twinfield/twinfield.h"       // `--twinfield-play`
 #include "plugin/ui/sample_hold_card.h" // `--snh-sweep` (backlog MW)
 #include "mod/samplehold/samplehold.h"
@@ -392,6 +393,8 @@ int main(int argc, char** argv) {
 	bool armMacro = false;
 	/// `--stereo-tab <0|1>`: turn the Stereo Tool card's tab (Split, Width) through the card's own verb.
 	int stereoTab = -1;
+	/// `--harm-tab <0..3>`: open HARM's window on that partial's tab (view state, set through the window's own verb).
+	int harmTab = -1;
 	/// `--twinfield-tab <0|1>`: turn the Twin Field card's tab (A, B) through the card's own verb.
 	int twinfieldTab = -1;
 	/// `--twinfield-play`: run the TFIELD offline and publish its orbit phases, so the 2x4 output block shows values.
@@ -935,6 +938,10 @@ int main(int argc, char** argv) {
 		}
 		if (arg == "--twinfield-play") {
 			twinfieldPlay = true;
+			continue;
+		}
+		if (arg == "--harm-tab" && i + 1 < argc) {
+			harmTab = std::atoi(argv[++i]);
 			continue;
 		}
 		if (arg == "--twinfield-tab" && i + 1 < argc) {
@@ -3304,6 +3311,17 @@ int main(int argc, char** argv) {
 	// file-size threshold or an exit code does not have.
 	// **THE STEREO TOOL'S SCOPE IS PHOTOGRAPHED MID-SWEEP** — last before the grab, because a scope scrolls with time:
 	// any settling pump after the sweep would scroll held values across the whole plot and flatten the traces.
+	// `--harm-tab`: HARM'S WINDOW OPENED ON A PARTIAL, through the window's own verb, then a pump so it draws.
+	if (harmTab >= 0) {
+		ui::HarmExpanded* window = findInTree<ui::HarmExpanded>(gui.root());
+		if (window == nullptr) {
+			std::printf("--harm-tab: no HARM window is open\n");
+			return 1;
+		}
+		window->selectPartial(harmTab);
+		std::printf("harm: partial %d shown\n", window->selectedPartial() + 1);
+		pump(300);
+	}
 	// `--twinfield-tab`: THE TWIN FIELD CARD'S TAB, turned through the card's own verb, then a pump so the pad draws it.
 	if (twinfieldTab >= 0) {
 		ui::TwinFieldCard* card = findInTree<ui::TwinFieldCard>(gui.root());

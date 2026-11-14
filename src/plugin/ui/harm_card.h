@@ -197,6 +197,11 @@ public:
 	/// the chip says what is done to it. A chip, because it has two states and names the one it is in.
 	visage::Bounds modeBounds() const;
 	SwitchChip* modeForTest() const { return mode_.get(); }
+
+	/// THE ROW OF FOUR ACTIVE CHIPS AND EACH ONE'S RECTANGLE — drawn, laid out and hit-tested from this one answer.
+	static constexpr float kActiveRowGap = 6.0f;
+	visage::Bounds activeBounds(int partial) const;
+	SwitchChip* activeChipForTest(int partial) const { return activeChips_[static_cast<size_t>(partial)].get(); }
 	static constexpr float kModeChipWidth = 66.0f;
 
 	/// THE ENABLE SQUARE, in the head, inboard of the slot menu — the filter card's, in the same place
@@ -269,6 +274,9 @@ private:
 	std::vector<fx::harm::Param> knobParams_;
 	std::unique_ptr<HarmonicRow> row_;
 	std::unique_ptr<SwitchChip> mode_;
+	/// THE FOUR PARTIALS' SWITCHES, in one small row under the knobs: a partial is switched on or off from the card, and the
+	/// window (which has the tabs, the strip and the rest) is where it is shaped.
+	std::array<std::unique_ptr<SwitchChip>, fx::harm::kPartialCount> activeChips_;
 };
 
 } // namespace feathers::ui

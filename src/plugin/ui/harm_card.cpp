@@ -83,6 +83,13 @@ HarmCard::HarmCard(backplane::DeviceHost& host, WidgetRegistry& registry, Device
 	mode_ = std::make_unique<SwitchChip>(control(hrm::Param::Mode), "Mode");
 	addChild(mode_.get());
 
+	// THE FOUR PARTIALS' ACTIVE SWITCHES. Two states each, so a chip each; named by the partial's number.
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		auto chip = std::make_unique<SwitchChip>(control(hrm::partialParam(k, hrm::PartialField::Active)), std::to_string(k + 1));
+		addChild(chip.get());
+		activeChips_[static_cast<size_t>(k)] = std::move(chip);
+	}
+
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		// A PRESS MAY BECOME A DRAG — recorded before the parts are dispatched, because the part that
 		// wins here (fold, on the head) is the one a drag has to be able to override.
@@ -129,7 +136,7 @@ float HarmCard::openHeight() {
 	                    / static_cast<size_t>(kRowCells);
 	const float knobRows = static_cast<float>(rows) * column
 	                       + (rows > 1 ? static_cast<float>(rows - 1) * kRowGap : 0.0f);
-	return kHeadHeight + kRowGap + kHarmonicRowHeight + kRowGap + knobRows + kPad;
+	return kHeadHeight + kRowGap + kHarmonicRowHeight + kRowGap + knobRows + kActiveRowGap + SwitchChip::kHeight + kPad;
 }
 
 void HarmCard::foldedChanged() {
@@ -145,6 +152,12 @@ void HarmCard::foldedChanged() {
 	}
 	if (mode_ != nullptr) {
 		mode_->setVisible(!folded_);
+	}
+	// AND THE FOUR ACTIVE CHIPS — a folded card is its head and nothing below it.
+	for (auto& chip : activeChips_) {
+		if (chip != nullptr) {
+			chip->setVisible(!folded_);
+		}
 	}
 	// AND THE LANE IS TOLD, because a fold changes this card's HEIGHT and the lane places cards by
 	// asking for it. redraw() alone repaints the card at the size it already had — which is the whole
@@ -211,6 +224,9 @@ std::vector<fx::harm::Param> HarmCard::addressedParamsForTest() const {
 	out.push_back(hrm::Param::Enabled);  // the square in the head
 	out.push_back(hrm::Param::Harmonic); // the two arrows and the ratio box between them
 	out.push_back(hrm::Param::Mode);     // the Notch / High-pass chip beside them
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Active)); // the row of four chips under the knobs
+	}
 	// POLY IS NOT HERE ANY MORE — it moved to `HarmExpanded` with the six knobs. Claiming it would
 	// make the reachability invariant pass on a control no hand can reach from this card, which is
 	// the one failure that invariant exists to prevent.
@@ -274,6 +290,12 @@ void HarmCard::layOut() {
 	const float inner = std::max(0.0f, bodyWidth() - 2.0f * kPad);
 	const float cell = inner / static_cast<float>(kRowCells);
 	const float top = row.bottom() + kRowGap;
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		if (activeChips_[static_cast<size_t>(k)] != nullptr) {
+			const visage::Bounds b = activeBounds(k);
+			activeChips_[static_cast<size_t>(k)]->setBounds(b.x(), b.y(), b.width(), b.height());
+		}
+	}
 
 	// COUNTED, NOT ARITHMETIC ON LITERALS — and this is a CORRECTION to the reduction that preceded
 	// it. That commit's message said "there is no arithmetic left to break"; the constructor and
@@ -291,6 +313,18 @@ void HarmCard::layOut() {
 		knobs_[i]->setBounds(bodyLeft() + kPad + cell * static_cast<float>(at),
 		                     top + static_cast<float>(line) * (column + kRowGap), cell, column);
 	}
+}
+
+visage::Bounds HarmCard::activeBounds(int partial) const {
+	// UNDER THE KNOB ROW, four equal chips across the body.
+	const float column = Knob::columnHeight(kKnobDiameter);
+	const size_t rows = (kCardKnobCount + static_cast<size_t>(kRowCells) - 1) / static_cast<size_t>(kRowCells);
+	const float knobRows = static_cast<float>(rows) * column + (rows > 1 ? static_cast<float>(rows - 1) * kRowGap : 0.0f);
+	const float top = harmonicBounds().bottom() + kRowGap + knobRows + kActiveRowGap;
+	const float inner = std::max(0.0f, bodyWidth() - 2.0f * kPad);
+	const float gap = kRowGap;
+	const float each = (inner - gap * static_cast<float>(hrm::kPartialCount - 1)) / static_cast<float>(hrm::kPartialCount);
+	return { bodyLeft() + kPad + (each + gap) * static_cast<float>(partial), top, std::max(0.0f, each), SwitchChip::kHeight };
 }
 
 bool HarmCard::updateContent() {

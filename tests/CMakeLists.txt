@@ -801,6 +801,12 @@ target_link_libraries(test_fx_harm PRIVATE feathers-fx feathers-warnings)
 target_include_directories(test_fx_harm PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME fx-harm COMMAND test_fx_harm)
 
+# HARM's four partials and its envelope: bit-identity of the single-partial path against a copy of the device as it was.
+add_executable(test_fx_harm_partials test_fx_harm_partials.cpp)
+target_link_libraries(test_fx_harm_partials PRIVATE feathers-fx feathers-warnings)
+target_include_directories(test_fx_harm_partials PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME fx-harm-partials COMMAND test_fx_harm_partials)
+
 # THE DELAY. Links `feathers-fx` ALONE, which is the fx-boundary claim rather than a minimal link
 # line: a `src/plugin` include in the device becomes a link error here.
 add_executable(test_fx_delay test_fx_delay.cpp)

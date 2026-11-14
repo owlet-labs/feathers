@@ -8484,7 +8484,9 @@ TEST_CASE("DD, on the first Mac build: the expanded panel FLOATS — dragged by 
 	auto* overlay = f.gui.expandedForTest();
 	REQUIRE(lane != nullptr);
 	REQUIRE(overlay != nullptr);
-	const size_t harm = f.bridge.addFxDevice(fx::harm::kTraits.tag);
+	// A DEVICE WITH A NARROW WINDOW stands for "the first panel": the second (the shaper's) is 808 wide in a 1240 layer, so the
+	// first has to leave room beside it, and HARM's window — four partials and an envelope — no longer does.
+	const size_t harm = f.bridge.addFxDevice(feathers::mod::arp::kTraits.tag);
 	f.bridge.refresh();
 	lane->resized();
 	lane->scrollCardIntoView(harm);
@@ -8757,8 +8759,10 @@ TEST_CASE("two instances of ONE kind open as TWO panels, each wearing its own ti
 	auto* overlay = f.gui.expandedForTest();
 	REQUIRE(lane != nullptr);
 	REQUIRE(overlay != nullptr);
-	const size_t first = f.bridge.addFxDevice(fx::harm::kTraits.tag);
-	const size_t second = f.bridge.addFxDevice(fx::harm::kTraits.tag);
+	// TWO OF A DEVICE WITH A NARROW WINDOW, so the two panels fit either side of the middle of the layer, where the first one
+	// opens (two HARM windows, at 660 wide, do not: a centred first leaves 290 a side).
+	const size_t first = f.bridge.addFxDevice(fx::automod::kTraits.tag);
+	const size_t second = f.bridge.addFxDevice(fx::automod::kTraits.tag);
 	f.bridge.refresh();
 	lane->resized();
 	REQUIRE(lane->onExpandDevice != nullptr);
@@ -8979,15 +8983,9 @@ TEST_CASE("an open panel's knobs FOLLOW live modulation — the base walk runs f
 	REQUIRE(inner != nullptr);
 	auto* view = dynamic_cast<ui::ExpandedView*>(inner->contentForTest());
 	REQUIRE(view != nullptr);
-	size_t control = fx::harm::kDescriptor.params.size();
-	for (size_t i = 0; i < fx::harm::kDescriptor.params.size(); ++i) {
-		// A KNOB'S CONTROL: the enable is a destination too since backlog KW, and its surface is the header chip.
-		if (fx::harm::kDescriptor.params[i].modulatable && static_cast<int>(i) != fx::harm::kDescriptor.traits.enableControl) {
-			control = i;
-			break;
-		}
-	}
-	REQUIRE(control < fx::harm::kDescriptor.params.size());
+	// A KNOB'S CONTROL: the first partial's Fine. (Level is a fader pill in the strip now, and the enable is the header chip.)
+	const size_t control = static_cast<size_t>(fx::harm::Param::Fine);
+	REQUIRE(fx::harm::kDescriptor.params[control].modulatable);
 
 	// SETTLED: nothing moved, nothing asked for.
 	(void)mounted->update();

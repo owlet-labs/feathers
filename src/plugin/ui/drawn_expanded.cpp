@@ -20,6 +20,7 @@
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/drawn_expanded.h"
 
+#include "plugin/ui/tab_chip.h"
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -902,17 +903,7 @@ void DrawnExpanded::drawPlane(visage::Canvas& canvas) {
 void DrawnExpanded::draw(visage::Canvas& canvas) {
 	for (size_t f = 0; f < dr::kFrames; ++f) {
 		const visage::Bounds tab = tabBounds(f);
-		const bool on = f == frame_;
-		canvas.setColor(on ? kAccent : withAlpha(kLine, 0.35f));
-		if (on) {
-			canvas.roundedRectangle(tab.x(), tab.y(), tab.width(), tab.height(), 3.0f);
-		}
-		else {
-			canvas.roundedRectangleBorder(tab.x(), tab.y(), tab.width(), tab.height(), 3.0f, 1.0f);
-		}
-		canvas.setColor(on ? kSurface : kMuted);
-		drawTracked(canvas, frameTabText(f), font(kControlSize), kControlTracking, tab.x() + 8.0f,
-		            tab.y(), tab.height());
+		drawTabChip(canvas, tab, frameTabText(f), f == frame_);
 	}
 	drawPlane(canvas);
 }

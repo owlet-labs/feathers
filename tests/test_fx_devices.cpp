@@ -1507,6 +1507,15 @@ TEST_CASE("EVERY device with a MONO road: it is the stereo road's left channel, 
 }
 
 
+/// **HARM'S FOUR PARTIALS ALL SOUNDING**, for the sweeps whose subject is a tail: each partial is its own notch and its own sine,
+/// and a tail has to be exact zero with every one of them in the path — in the High-pass too, which is a different filter.
+static void allHarmPartialsOn(DeviceRow& row) {
+	for (int k = 0; k < fx::harm::kPartialCount; ++k) {
+		row.field[static_cast<size_t>(fx::harm::partialParam(k, fx::harm::PartialField::Active))] = 1.0f;
+	}
+	row.field[static_cast<size_t>(fx::harm::partialParam(2, fx::harm::PartialField::Mode))] = 1.0f;
+}
+
 TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as one that does not") {
 	// **A GEOMETRIC DECAY DOES NOT REACH ZERO**, and `puck_motion.h` already paid for that lesson in
 	// this repository: *"Multiplying by 0.982 each tick walks the value down through the denormals and
@@ -1568,6 +1577,9 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 		const std::string who = deviceName(*desc);
 		CAPTURE(who);
 		DeviceRow row = variedRowFor(*desc);
+		if (device::sameTag(desc->traits.tag, fx::harm::kTraits.tag)) {
+			allHarmPartialsOn(row);
+		}
 		// RESONATE'S CYCLE PLAYS ITS DRONE ON ITS OWN (2026-09-27): above Rate 0 it sustains by design, for ever — it is
 		// checked for exactly that below — so the rows whose tail must END have it off.
 		if (device::sameTag(desc->traits.tag, fx::resonate::kTraits.tag)) {
@@ -1862,7 +1874,10 @@ TEST_CASE("EVERY audio device: one NaN and one +Inf sample do not latch — the 
 	};
 	const auto run = [&](const device::Descriptor& desc, bool inject) {
 		Outcome out;
-		const DeviceRow row = enabledRowFor(desc);
+		DeviceRow row = enabledRowFor(desc);
+		if (device::sameTag(desc.traits.tag, fx::harm::kTraits.tag)) {
+			allHarmPartialsOn(row);
+		}
 		Raw dev(desc, 48000.0, row);
 		const int silentBlocks = silentBlocksFor(desc, 400);
 		const int burstFrames = std::max(framesFor(desc, kFrames), kBurstBlocks * kFrames);

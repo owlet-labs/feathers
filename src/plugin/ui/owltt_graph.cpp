@@ -236,6 +236,12 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 	const auto hit = hitTestThreshold(e.position);
 	if (hit != ThresholdHit::kNone) {
 		auto& ctrl = controlForHit(hit);
+		const bool crossover = hit == ThresholdHit::kLowCrossover || hit == ThresholdHit::kHighCrossover;
+		const size_t which = hit == ThresholdHit::kLowCrossover ? 0 : 1;
+		// A RIGHT-CLICK ON A MODULATED CROSSOVER opens the same sources menu a modulated knob does.
+		if (crossover && e.shouldTriggerPopup() && crossoverMod(which).showMenu(*this)) {
+			return;
+		}
 
 		// DOUBLE-CLICK, WHICH THE BARS SIMPLY DID NOT HAVE. A double-click on a bar did not reset
 		// it to its default, and nothing was broken — the
@@ -275,6 +281,17 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		dragState_.hit = hit;
 		dragState_.startY = e.position.y;
 
+		// A CROSSOVER'S ARMED PRESS IS THE SHARED HANDLE'S: the amount gesture, and no value drag.
+		if (crossover) {
+			const visage::Point c = crossoverHandle(which);
+			const size_t axis = crossoverMod(which).routeAxisFor(e.isAltDown(), e.position, c.x, c.y);
+			if (axis != ModHandle::npos) {
+				dragState_.routeDragging = true;
+				crossoverMod(which).beginRoute(axis, e);
+				redraw();
+				return;
+			}
+		}
 		// MODULATION ROAD — copy Knob's branch exactly (knob.cpp:358-366).
 		// Anchor on the existing amount (or seed 0.4 if no route), then drag relative.
 		if (routeGestureWanted(ctrl, e)) {
@@ -358,6 +375,13 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		// so 20..2000 and 200..20000 are enforced where they are declared rather than restated here.
 		if (dragState_.hit == ThresholdHit::kLowCrossover
 		    || dragState_.hit == ThresholdHit::kHighCrossover) {
+			// A ROUTE GESTURE ON A CROSSOVER MOVES THE AMOUNT, NOT THE FREQUENCY: it used to fall into the value
+			// drag below, so an armed press seeded a route and the drag then moved the base.
+			if (dragState_.routeDragging) {
+				crossoverMod(dragState_.hit == ThresholdHit::kLowCrossover ? 0 : 1).dragRoute(e);
+				redraw();
+				return;
+			}
 			// THE FULL PLOT for the axis, not the bar area: the lane is a horizontal strip, so it
 			// removes height and never width, and the frequency sweep spans the whole picture.
 			// KEY TRACK: the corner under the hand is the note moved by the knob's offset, so the knob written is the one
@@ -425,7 +449,11 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 			return;
 		}
 		auto& ctrl = controlForHit(dragState_.hit);
-		if (dragState_.routeDragging) {
+		if (dragState_.routeDragging && (dragState_.hit == ThresholdHit::kLowCrossover
+		                                 || dragState_.hit == ThresholdHit::kHighCrossover)) {
+			crossoverMod(dragState_.hit == ThresholdHit::kLowCrossover ? 0 : 1).endRoute();
+		}
+		else if (dragState_.routeDragging) {
 			// Commit the route — amount dragged back to nothing is not a route at 0%, it is gone.
 			const float amount = std::abs(ctrl.display().amount) < 0.05f ? 0.0f : ctrl.display().amount;
 			if (amount != ctrl.display().amount) {
@@ -790,6 +818,23 @@ visage::Bounds OwlttGraph::barArea() const {
 		     std::max(0.0f, box.height() - kRailHeight) };
 }
 
+ModHandle& OwlttGraph::crossoverMod(size_t which) const {
+	if (!crossoverModBuilt_) {
+		for (size_t i = 0; i < 2; ++i) {
+			const auto param = i == 0 ? owltt::Param::LowCrossover : owltt::Param::HighCrossover;
+			// A CONTROL VALUE TO AN X: the same road `bandEdge` draws the line by — the corner the value runs at
+			// (key-tracked while a note is heard), on the plot's frequency axis. No second formula.
+			crossoverMod_[i] = ModHandle({ ModHandleAxis {
+			    &control(static_cast<size_t>(param)), true, [this](double value) {
+				    const double note = noteHz();
+				    return hzToX(static_cast<float>(owltt::trackedCrossoverHz(value, note > 0.0, note)), plot());
+			    } } });
+		}
+		crossoverModBuilt_ = true;
+	}
+	return crossoverMod_[which];
+}
+
 visage::Point OwlttGraph::crossoverHandle(size_t which) const {
 	const visage::Bounds r = rail();
 	if (r.width() <= 0.0f) {
@@ -823,13 +868,14 @@ OwlttGraph::ThresholdHit OwlttGraph::hitTestThreshold(visage::Point pos) const {
 	// out-rank the bars, the bars are simply not in this rectangle.
 	const visage::Bounds r = rail();
 	if (r.width() > 0.0f && r.contains(pos)) {
-		const float dLow = std::abs(pos.x - crossoverHandle(0).x);
-		const float dHigh = std::abs(pos.x - crossoverHandle(1).x);
 		constexpr float kGrab = 10.0f;
 		// THE NEARER OF THE TWO, and only if it is near at all: a press in the lane far from both
-		// should move neither, rather than jumping the closest one across the spectrum.
-		if (std::min(dLow, dHigh) <= kGrab) {
-			return dLow <= dHigh ? ThresholdHit::kLowCrossover : ThresholdHit::kHighCrossover;
+		// should move neither, rather than jumping the closest one across the spectrum. The rule is the shared
+		// handle's (`ModHandle::nearest`): the nearest CENTRE wins, within a grab radius of at least 8.
+		const std::array<visage::Point, 2> centres { crossoverHandle(0), crossoverHandle(1) };
+		const size_t taken = ModHandle::nearest(centres, pos, kGrab);
+		if (taken != ModHandle::npos) {
+			return taken == 0 ? ThresholdHit::kLowCrossover : ThresholdHit::kHighCrossover;
 		}
 		return ThresholdHit::kNone;
 	}
@@ -1016,10 +1062,13 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		canvas.fill(r.x(), r.bottom() - 1.0f, r.width(), 1.0f);
 		for (size_t which = 0; which < 2; ++which) {
 			const visage::Point c = crossoverHandle(which);
+			// THE HANDLE STAYS AT THE BASE; its halo and amount stroke go under it, the live dot over it.
+			crossoverMod(which).drawUnder(canvas, c.x, c.y, OwlttGraph::kRingRadius);
 			canvas.setColor(kSurface);
 			ringAt(canvas, c.x, c.y, OwlttGraph::kRingRadius);
 			canvas.setColor(kAccent);
 			ringOutlineAt(canvas, c.x, c.y, OwlttGraph::kRingRadius, 1.5f);
+			crossoverMod(which).drawOver(canvas, c.x, c.y, OwlttGraph::kRingRadius);
 		}
 	}
 	// PER-BAND GRAPH CONTROLS — threshold bars, GR meters, level strips.

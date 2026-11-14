@@ -24,6 +24,7 @@
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/fx_control.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/mod_handle.h"
 
 #include <functional>
 #include <memory>
@@ -112,6 +113,9 @@ public:
 	static constexpr size_t kKnobCells = 6;
 
 	static constexpr float kPuckRadius = 5.0f;
+	/// THE DRAWING PLAN of the puck's modulation (amount strokes, dots, halo), for the cases.
+	[[nodiscard]] ModHandlePlan puckModPlan() const { return puckMod().plan(); }
+	[[nodiscard]] const ModHandle& puckModHandle() const { return puckMod(); }
 	/// HOW FAR INBOARD OF ITS CORNER A FRAME LABEL FLOATS, in both axes.
 	///
 	/// **THE NUMBER IS SET BY THE PUCK, not by taste.** The puck's centre reaches the plane's corner
@@ -194,6 +198,12 @@ public:
 	DeviceInstanceId device_ = kNoInstance;
 	Notifier* notifier_ = nullptr;
 	bool holdingPuck_ = false;
+	/// **THE PUCK'S MODULATION ROAD** (`ModHandle`): two axes, Morph X along x and Morph Y up the plane. Built on first
+	/// use, since it reads this card's controls.
+	ModHandle& puckMod() const;
+	mutable ModHandle puckMod_ {};
+	mutable bool puckModBuilt_ = false;
+	bool routingPuck_ = false;
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::vector<std::unique_ptr<Knob>> knobs_;

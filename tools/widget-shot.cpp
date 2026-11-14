@@ -382,6 +382,8 @@ int main(int argc, char** argv) {
 	/// channel as the audio side would (`publishModulated`), so a surface drawing the MODULATED value — Resonate's
 	/// puck — can be photographed modulated without an engine running. The base is left where it is.
 	std::vector<std::pair<std::string, double>> modulatedArg;
+	/// `--route "<control name>=<amount>"`: Macro 1 routed at the control, so a shot shows a route that exists.
+	std::vector<std::pair<std::string, double>> routeArg;
 	/// `--modulated-r`: the RIGHT ear of a stereo-live control (backlog KU), published with its mask — a split ring.
 	std::vector<std::pair<std::string, double>> modulatedRArg;
 	/// `--arm-pair`: a Stereo Tool in the strip, its Split output focused and armed — the stereo-tinted glow.
@@ -997,6 +999,16 @@ int main(int argc, char** argv) {
 			modulatedRArg.emplace_back(spec.substr(0, eq), std::atof(spec.substr(eq + 1).c_str()));
 			continue;
 		}
+		if (arg == "--route" && i + 1 < argc) {
+			const std::string spec = argv[++i];
+			const size_t eq = spec.rfind('=');
+			if (eq == std::string::npos) {
+				std::printf("--route wants \"<control name>=<amount>\", got \"%s\"\n", spec.c_str());
+				return 1;
+			}
+			routeArg.emplace_back(spec.substr(0, eq), std::atof(spec.substr(eq + 1).c_str()));
+			continue;
+		}
 		if (arg == "--modulated" && i + 1 < argc) {
 			const std::string spec = argv[++i];
 			const size_t eq = spec.rfind('=');
@@ -1513,6 +1525,23 @@ int main(int argc, char** argv) {
 		            0.72, 0.51, -14.2, -16.8, -18.3, 0.62, clipArg);
 	}
 
+	if (!routeArg.empty() && !rackMode) {
+		for (const auto& [name, amount] : routeArg) {
+			size_t at = device::kNoControl;
+			for (size_t i = 0; desc != nullptr && i < desc->params.size(); ++i) {
+				if (name == desc->params[i].name) {
+					at = i;
+				}
+			}
+			if (at == device::kNoControl) {
+				std::printf("no control named \"%s\" on %s — refusing rather than routing nothing\n", name.c_str(), tag);
+				return 1;
+			}
+			bridge.setRouteAmount(backplane::Source::core(0), backplane::Destination::control(bridge.fxDeviceAt(slot), at),
+			                      static_cast<float>(amount));
+			std::printf("routed:   Macro 1 -> %-20s %+g\n", name.c_str(), amount);
+		}
+	}
 	if (!modulatedArg.empty() && !rackMode) {
 		FxChain moved = bridge.fxChain();
 		for (const auto& [name, value] : modulatedArg) {

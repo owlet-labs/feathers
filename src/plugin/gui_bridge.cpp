@@ -1672,6 +1672,17 @@ float ParamBridge::fxFieldAt(size_t slot, size_t control) const noexcept {
 	return fieldIn(chains_, kLaneChain, slot, control);
 }
 
+void ParamBridge::setFxModulatedForTest(size_t slot, size_t control, float value) noexcept {
+	FxTelemetry* t = fxTelemetry_.at(slot);
+	if (t == nullptr || control >= kMaxDeviceFields) {
+		return;
+	}
+	t->modulated[control].store(value, std::memory_order_relaxed);
+	if (t->modulatedFieldsPresent.load(std::memory_order_relaxed) <= control) {
+		t->modulatedFieldsPresent.store(control + 1, std::memory_order_relaxed);
+	}
+}
+
 float ParamBridge::fxModulatedFieldAt(size_t slot, size_t control) const noexcept {
 	const FxTelemetry* t = fxTelemetry_.at(slot);
 	if (t == nullptr || control >= kMaxDeviceFields) {

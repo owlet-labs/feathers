@@ -703,6 +703,7 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/parallel_rack_expanded.cpp
 	src/plugin/ui/container_presets.cpp
 	src/plugin/ui/chain_column.cpp
+	src/plugin/ui/mod_handle.cpp
 	src/plugin/ui/mod_route_menu.cpp
 	src/plugin/ui/menu_anchor.cpp
 	src/plugin/ui/waypoint_card.cpp

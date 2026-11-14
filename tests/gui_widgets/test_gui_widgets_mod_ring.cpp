@@ -1797,6 +1797,123 @@ TEST_CASE("the inner glow stays in a band at the edge and never reaches the text
 	CHECK(3.0f + 1.0f <= ui::kBoxGlowExtent);
 }
 
+TEST_CASE("ModHandle: the plan for one axis, in both states, through a plot mapping that is not linear") {
+	// A LOGARITHMIC AXIS, RESTATED HERE: a handle's plot need not be linear in the value, and the helper must not assume
+	// it. coord(v) = 100 * log2(1 + v) over a 0..1 control, so equal steps in the value are unequal on the plot.
+	const auto coord = [](double v) { return static_cast<float>(100.0 * std::log2(1.0 + v)); };
+	FakeModulatable control;
+	control.shown.isDestination = true;
+	control.shown.base = 0.4;
+	control.shown.amount = 0.3f;
+	control.shown.modulated = 0.55;
+	ui::ModHandle handle({ ui::ModHandleAxis { &control, true, coord } });
+	for (const bool armed : { true, false }) {
+		CAPTURE(armed);
+		control.shown.armed = armed;
+		control.shown.routable = armed;
+		const ui::ModHandlePlan plan = handle.plan();
+		REQUIRE(plan.axes.size() == 1);
+		const ui::ModAxisPlan& a = plan.axes[0];
+		REQUIRE(a.offered);
+		CHECK(plan.halo == armed);
+		// THE STROKE: base to base + amount, each end through the mapping — NOT a linear interpolation between them.
+		REQUIRE(a.hasStroke);
+		CHECK(a.strokeLo == doctest::Approx(coord(0.4)).epsilon(1e-5));
+		CHECK(a.strokeHi == doctest::Approx(coord(0.7)).epsilon(1e-5));
+		CHECK(a.glow == doctest::Approx(armed ? 1.0f : 0.8f));
+		// THE DOT: at the modulated value, in both states; and the base is where the handle sits.
+		REQUIRE(a.hasDot);
+		CHECK(a.dot == doctest::Approx(coord(0.55)).epsilon(1e-5));
+		CHECK(a.base == doctest::Approx(coord(0.4)).epsilon(1e-5));
+	}
+	// A NEGATIVE AMOUNT hangs below the base; the stroke clamps to the control's range at the floor.
+	control.shown.amount = -0.6f;
+	control.shown.modulated = 0.4;
+	const ui::ModAxisPlan down = handle.plan().axes[0];
+	CHECK(down.strokeLo == doctest::Approx(coord(0.0)).epsilon(1e-5));
+	CHECK(down.strokeHi == doctest::Approx(coord(0.4)).epsilon(1e-5));
+	CHECK_FALSE(down.hasDot); // the value is at its base
+	// A BIPOLAR SOURCE reaches both ways from the base.
+	control.shown.amount = 0.2f;
+	control.shown.bipolar = true;
+	const ui::ModAxisPlan both = handle.plan().axes[0];
+	CHECK(both.strokeLo == doctest::Approx(coord(0.2)).epsilon(1e-5));
+	CHECK(both.strokeHi == doctest::Approx(coord(0.6)).epsilon(1e-5));
+	// STEREO: two dots, each at its own ear.
+	control.shown.stereo = true;
+	control.shown.stereoLive = true;
+	control.shown.modulated = 0.3;
+	control.shown.modulatedR = 0.5;
+	const ui::ModAxisPlan stereo = handle.plan().axes[0];
+	CHECK(stereo.stereo);
+	CHECK(stereo.dot == doctest::Approx(coord(0.3)).epsilon(1e-5));
+	REQUIRE(stereo.hasDotR);
+	CHECK(stereo.dotR == doctest::Approx(coord(0.5)).epsilon(1e-5));
+}
+
+TEST_CASE("ModHandle: the honesty rule — a control that is not a destination gets no halo, stroke or dot, and no route") {
+	FakeModulatable control;
+	control.shown.isDestination = false;
+	control.shown.routable = true;
+	control.shown.amount = 0.3f;
+	control.shown.base = 0.4;
+	control.shown.modulated = 0.6;
+	ui::ModHandle handle({ ui::ModHandleAxis { &control, true, [](double v) { return static_cast<float>(v * 100.0); } } });
+	const ui::ModHandlePlan plan = handle.plan();
+	CHECK_FALSE(plan.halo);
+	CHECK_FALSE(plan.axes[0].offered);
+	CHECK_FALSE(plan.axes[0].hasStroke);
+	CHECK_FALSE(plan.axes[0].hasDot);
+}
+
+TEST_CASE("ModHandle: two axes each draw their own stroke, and a press takes the axis it is nearer") {
+	FakeModulatable cx;
+	FakeModulatable cy;
+	for (FakeModulatable* c : { &cx, &cy }) {
+		c->shown.isDestination = true;
+		c->shown.routable = true;
+		c->shown.armed = true;
+		c->shown.base = 0.5;
+		c->shown.modulated = 0.5;
+	}
+	cx.shown.amount = 0.2f;
+	cy.shown.amount = -0.3f;
+	ui::ModHandle handle({ ui::ModHandleAxis { &cx, true, [](double v) { return static_cast<float>(10.0 + v * 100.0); } },
+	                       ui::ModHandleAxis { &cy, false, [](double v) { return static_cast<float>(110.0 - v * 100.0); } } });
+	const ui::ModHandlePlan plan = handle.plan();
+	REQUIRE(plan.axes.size() == 2);
+	CHECK(plan.axes[0].strokeLo == doctest::Approx(60.0f));
+	CHECK(plan.axes[0].strokeHi == doctest::Approx(80.0f));
+	CHECK(plan.axes[1].strokeLo == doctest::Approx(60.0f)); // value 0.5 is at y 60, the higher value is the lower y
+	CHECK(plan.axes[1].strokeHi == doctest::Approx(90.0f));
+	// A press just off the horizontal stroke's line takes X; just off the vertical's takes Y; Alt takes neither.
+	CHECK(handle.routeAxisFor(false, { 62.0f, 61.0f }, 60.0f, 60.0f) == 0);
+	CHECK(handle.routeAxisFor(false, { 61.0f, 62.0f }, 60.0f, 60.0f) == 1);
+	CHECK(handle.routeAxisFor(true, { 62.0f, 61.0f }, 60.0f, 60.0f) == ui::ModHandle::npos);
+	// AN UNARMED CONTROL TAKES NO ROUTE PRESS.
+	cx.shown.routable = false;
+	cy.shown.routable = false;
+	CHECK(handle.routeAxisFor(false, { 62.0f, 61.0f }, 60.0f, 60.0f) == ui::ModHandle::npos);
+}
+
+TEST_CASE("ModHandle: the grab radius is at least 8 whatever the drawn radius, and the nearest centre wins") {
+	CHECK(ui::ModHandle::hitRadius(2.0f) == doctest::Approx(8.0f));
+	CHECK(ui::ModHandle::hitRadius(4.0f) == doctest::Approx(8.0f));
+	CHECK(ui::ModHandle::hitRadius(12.0f) == doctest::Approx(12.0f));
+	const std::array<visage::Point, 2> handles { visage::Point { 100.0f, 50.0f }, visage::Point { 108.0f, 50.0f } };
+	// A 3px handle: a press 7px from one is still taken (the grab, not the drawing, decides).
+	CHECK(ui::ModHandle::nearest(handles, { 93.0f, 50.0f }, 3.0f) == 0);
+	CHECK(ui::ModHandle::nearest(handles, { 115.0f, 50.0f }, 3.0f) == 1);
+	// OVERLAPPING GRABS: between the two, the NEARER centre wins — whichever order they are listed in.
+	CHECK(ui::ModHandle::nearest(handles, { 103.0f, 50.0f }, 3.0f) == 0);
+	CHECK(ui::ModHandle::nearest(handles, { 105.0f, 50.0f }, 3.0f) == 1);
+	const std::array<visage::Point, 2> swapped { handles[1], handles[0] };
+	CHECK(ui::ModHandle::nearest(swapped, { 103.0f, 50.0f }, 3.0f) == 1);
+	CHECK(ui::ModHandle::nearest(swapped, { 105.0f, 50.0f }, 3.0f) == 0);
+	// FAR FROM BOTH: nothing is taken.
+	CHECK(ui::ModHandle::nearest(handles, { 100.0f, 80.0f }, 3.0f) == ui::ModHandle::npos);
+}
+
 TEST_CASE("mapping a stereo-live control keeps one reach arc and puts a dot at each ear, at that ear's value") {
 	// **State 2 (armed):** "for the modulation strength we can use the normal arc since its a strength anyway" — one
 	// reach arc, not split, and a dot per ear: `mark` at the LEFT ear, `markR` at the RIGHT.

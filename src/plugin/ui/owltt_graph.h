@@ -23,6 +23,7 @@
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/control_face.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/mod_handle.h"
 
 #include <array>
 #include <memory>
@@ -237,6 +238,9 @@ public:
 
 	/// A CROSSOVER HANDLE'S CENTRE, in the lane. Asked by the drawing and by the cases.
 	visage::Point crossoverHandle(size_t which) const;
+	/// THE DRAWING PLAN of a crossover handle's modulation (the amount stroke, the dot, the halo), for the cases.
+	[[nodiscard]] ModHandlePlan crossoverModPlan(size_t which) const { return crossoverMod(which).plan(); }
+	[[nodiscard]] const ModHandle& crossoverModHandle(size_t which) const { return crossoverMod(which); }
 
 	/// What a press at a point has taken hold of. Public because the cases ask it: a drawn handle is
 	/// not observable headlessly, so what a case CAN check is which control a press resolves to.
@@ -282,6 +286,12 @@ private:
 
 	DeviceControl& control(size_t index) const;
 	DeviceControl& controlForHit(ThresholdHit hit) const;
+
+	/// **THE TWO CROSSOVER HANDLES' MODULATION ROAD** (`ModHandle`): each is one horizontal axis over its crossover
+	/// frequency, mapped through this plot's own (logarithmic, key-tracked) frequency axis. Built on first use.
+	ModHandle& crossoverMod(size_t which) const;
+	mutable std::array<ModHandle, 2> crossoverMod_ {};
+	mutable bool crossoverModBuilt_ = false;
 	size_t bandForHit(ThresholdHit hit) const;
 	/// The inverse of `bandForHit` × the handle kind — so a handle's control is `controlForHit(hitFor(...))`
 	/// and there is one table from a handle to a control, not a second copy of `kBandParams`.

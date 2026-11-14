@@ -157,6 +157,7 @@ void Automod::reset() {
 	gateWas_ = false;
 	lock_.release();
 	silentRun_ = 0;
+	atRest_ = false;
 	// THE TICK GRID RESTARTS WITH THE STREAM, which is what "counted from the start of the stream"
 	// means — a reset IS a new stream.
 	tickPhase_ = 0;
@@ -573,7 +574,13 @@ void Automod::processFrame(float& left, float& right) {
 	// "the effect's decision rather than this object's — which is why nothing is normalised here".
 	// Scaling the input rather than the level also keeps the DERIVATIVE consistent, since both come
 	// off the same follower.
-	envelope_.process(dryL * envTrimGain_, dryR * envTrimGain_);
+	// **AT REST ON SILENCE THE CHAIN IS ZEROS IN, ZEROS OUT**: the flush cleared the envelope, the filter and the comb, and
+	// nothing non-zero has entered since, so none of them can produce or change anything. The springs and the readings
+	// below still advance, and `setBaseDelaySamples` still lands, so resuming is what it would have been.
+	const bool skip = restSkip_ && atRest_ && dryL == 0.0f && dryR == 0.0f;
+	if (!skip) {
+		envelope_.process(dryL * envTrimGain_, dryR * envTrimGain_);
+	}
 
 	// The springs walk toward this block's target, one step per sample.
 	const float modL = filterSpring_[0].tick(block_.springTarget[0]);
@@ -610,8 +617,16 @@ void Automod::processFrame(float& left, float& right) {
 	const FilterMix mix { mixFrom_.low + (mixTo_.low - mixFrom_.low) * along,
 		                  mixFrom_.band + (mixTo_.band - mixFrom_.band) * along,
 		                  mixFrom_.high + (mixTo_.high - mixFrom_.high) * along };
-	filter_.setState(cutoffL, cutoffR, derived_.filterResonance, mix);
 	comb_.setBaseDelaySamples(combBaseFrom_ + (combBaseTo_ - combBaseFrom_) * along);
+	if (skip) {
+		++framesSkipped_;
+		lastCombDelay_ = comb_.delayFor(combModL);
+		left = dryL + (0.0f - dryL) * mixNow_;
+		right = dryR + (0.0f - dryR) * mixNow_;
+		return;
+	}
+	++framesChained_;
+	filter_.setState(cutoffL, cutoffR, derived_.filterResonance, mix);
 
 	float wetL = dryL;
 	float wetR = dryR;
@@ -683,11 +698,13 @@ void Automod::noteInput(float left, float right) {
 					filterSpring_[i].reset();
 					combSpring_[i].reset();
 				}
+				atRest_ = true;
 			}
 		}
 	}
 	else {
 		silentRun_ = 0;
+		atRest_ = false;
 	}
 }
 

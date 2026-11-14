@@ -630,6 +630,8 @@ constexpr int sustainInForce(const Settings& settings) {
 /// by construction — a control appended to Param is sanitised without anyone remembering to come
 /// here.
 void sanitize(Settings* settings);
+/// Whether `sanitize` would leave these settings as they are (the contract of `Shape::tick`; asserted in debug builds).
+[[nodiscard]] bool isSanitisedForDebug(const Settings& settings);
 
 /// One control's value, and setting it. The two halves of what a widget needs, and the only road a
 /// card or a route should take to a field.

@@ -21,6 +21,8 @@
 #include "pffft/pffft.h"
 
 #include <algorithm>
+#include <vector>
+#include <cstring>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -172,6 +174,24 @@ public:
 	[[nodiscard]] const std::array<float, kAnalyserBins>& post() const noexcept { return dbPost_; }
 
 	[[nodiscard]] int fftsForTest() const noexcept { return fftsForTest_; }
+	/// TEST-ONLY: whether the two-span window equals the per-sample-modulo formula it replaced, to the bit, for this tap
+	/// at the ring's current hop position.
+	[[nodiscard]] bool windowMatchesModuloForTest(int tap) const {
+		std::vector<float> spans(static_cast<size_t>(n_));
+		fillWindow(tap, spans.data());
+		const float* ring = rings_[static_cast<size_t>(tap)];
+		const int start = (hopPos_ + ringLen_ - n_) % ringLen_;
+		for (int i = 0; i < n_; ++i) {
+			const float old = ring[(start + i) % ringLen_] * window_[i];
+			if (std::memcmp(&old, &spans[static_cast<size_t>(i)], sizeof(float)) != 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+	[[nodiscard]] int hopPosForTest() const noexcept { return hopPos_; }
+	[[nodiscard]] int ringLenForTest() const noexcept { return ringLen_; }
+	[[nodiscard]] int windowLenForTest() const noexcept { return n_; }
 
 private:
 	struct Span {
@@ -217,13 +237,22 @@ private:
 		}
 	}
 
-	void transform(int tap) noexcept {
+	/// THE WINDOW THAT ENDED AT THE HOP, oldest first, times the Hann window — the same samples for every tap of this hop.
+	/// TWO CONTIGUOUS SPANS, no modulo per sample: from the start to the ring's end, then from its beginning.
+	void fillWindow(int tap, float* dst) const noexcept {
 		const float* ring = rings_[static_cast<size_t>(tap)];
-		// THE WINDOW THAT ENDED AT THE HOP, oldest first — the same samples for every tap of this hop.
 		const int start = (hopPos_ + ringLen_ - n_) % ringLen_;
-		for (int i = 0; i < n_; ++i) {
-			in_[i] = ring[(start + i) % ringLen_] * window_[i];
+		const int head = std::min(n_, ringLen_ - start);
+		for (int i = 0; i < head; ++i) {
+			dst[i] = ring[start + i] * window_[i];
 		}
+		for (int i = head; i < n_; ++i) {
+			dst[i] = ring[i - head] * window_[i];
+		}
+	}
+
+	void transform(int tap) noexcept {
+		fillWindow(tap, in_);
 		pffft_transform_ordered(setup_, in_, out_, work_, PFFFT_FORWARD);
 		++fftsForTest_;
 		// Ordered real layout: [DC, Nyquist, re1, im1, re2, im2, ...].

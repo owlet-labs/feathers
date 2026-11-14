@@ -234,3 +234,35 @@ TEST_CASE("the three rings Sklitter needs are sized from the reference") {
 	delay.prepare(44100.0, kDelaySeconds);
 	CHECK(delay.capacity() == 32768u); // exactly the reference's, at the reference's rate
 }
+
+TEST_CASE("reset clears what was written, not the capacity — and leaves the same zeros a whole-capacity fill would") {
+	// A host tempo ramp restarts the pre-warm nearly every block; each restart zeroed 16 s of two channels. The
+	// counter is the frames actually overwritten: bounded by the written span, and across a growing length too, where
+	// a frame past the old length must still read zero.
+	Ring r;
+	r.prepare(48000.0, kLooperSeconds);
+	const size_t cap = r.capacity();
+	REQUIRE(cap > 100000);
+	r.setLength(1000);
+	for (size_t i = 0; i < 1000; ++i) {
+		r.write(0.5f, -0.25f);
+	}
+	r.setLength(cap);
+	r.writeAt(5000, 0.75f, 0.75f); // past the old length: a longer length reads here again
+	CHECK(r.clearedFramesForTest() == 0u);
+	r.reset();
+	CHECK(r.clearedFramesForTest() == 5001u); // the highest frame written + 1, nowhere near the capacity
+	CHECK(r.clearedFramesForTest() < cap / 10);
+	CHECK_FALSE(r.holdsSound());
+	size_t nonZero = 0;
+	for (size_t i = 0; i < cap; ++i) {
+		float a = 1.0f;
+		float b = 1.0f;
+		r.readAt(i, &a, &b);
+		nonZero += (a != 0.0f || b != 0.0f) ? 1u : 0u;
+	}
+	CHECK(nonZero == 0u);
+	// A reset of a clean ring touches nothing, and a second one still reads zero.
+	r.reset();
+	CHECK(r.clearedFramesForTest() == 5001u);
+}

@@ -516,6 +516,17 @@ private:
 	/// state is cleared. See `kRestSilentSeconds`.
 	long silentRun_ = 0;
 	long restSilenceNeeded_ = 48000;
+	/// TRUE FROM THE FLUSH UNTIL THE NEXT NON-ZERO INPUT SAMPLE: the envelope, the filter and the comb hold exact zeros,
+	/// so a zero input frame through them is a zero output frame and the work is skipped (`processFrame`).
+	bool atRest_ = false;
+	size_t framesChained_ = 0; ///< frames that ran the filter and the comb (test seam)
+	size_t framesSkipped_ = 0; ///< frames at rest that did not
+	bool restSkip_ = true;
+public:
+	/// TEST-ONLY: false runs the whole chain at rest too (the path before the skip existed), for a bit-identity comparison.
+	void setRestSkipForTest(bool on) noexcept { restSkip_ = on; }
+	[[nodiscard]] size_t framesChainedForTest() const noexcept { return framesChained_; }
+	[[nodiscard]] size_t framesSkippedForTest() const noexcept { return framesSkipped_; }
 };
 
 } // namespace feathers::fx::automod

@@ -46,6 +46,7 @@ bool followsSongSeconds(const Settings& s, const TransportClock& clock, float hz
 void Shape::prepare(double sampleRate) {
 	sampleRate_ = (sampleRate > 0.0) ? sampleRate : 48000.0;
 	tickSeconds_ = static_cast<double>(kBlockSamples) / sampleRate_;
+	smoothingCoeffValid_ = false; // the tick length moved
 	reset();
 }
 
@@ -232,7 +233,14 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 	// `1 - exp(-T/tau)`; they agree for a slow smoothing and part company where a fast one lives — at
 	// tau = T, 0.5 against 0.632. The DAHDSR and the MSEG were already on the exact form; this device
 	// was the odd one out, which is what `mod::smoothingCoeff` exists to stop.
-	smoothingCoeff_ = mod::smoothingCoeff(s.smoothing, tickSeconds_);
+	// DESIGNED ONLY WHEN THE KNOB MOVES (the DAHDSR's arrangement): the coefficient is an exp of the knob and the tick
+	// length, and neither changes on most ticks. The same call, so the same bits.
+	if (!smoothingCoeffValid_ || s.smoothing != smoothingKnobWas_) {
+		smoothingKnobWas_ = s.smoothing;
+		smoothingCoeffValid_ = true;
+		smoothingCoeff_ = mod::smoothingCoeff(s.smoothing, tickSeconds_);
+		++smoothingDesigns_;
+	}
 	//
 	// **AND IT ARRIVES, IN DOUBLE** (the DAHDSR's bug, 2026-09-26, asked of this device). The one-pole was in
 	// FLOAT, where a step of `c · diff` below half an ulp adds nothing: MEASURED, a Once ending in [0.5, 1) under 1 s

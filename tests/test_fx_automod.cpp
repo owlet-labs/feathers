@@ -2522,3 +2522,53 @@ TEST_CASE("automod's Free LFO under a Rate route follows the song's step — it 
 	CHECK(worst < 2e-3);
 	REQUIRE(quotientMiss > 0.3); // the old rule would have been elsewhere: the check above is not vacuous
 }
+
+TEST_CASE("automod: at rest on silence the chain is skipped, and the output and the resumed phase are bit-identical to running it") {
+	// After the flush the envelope, filter and comb hold exact zeros, so a zero frame through them is a zero frame out.
+	// The reference is the SAME device with the skip off (the full chain every frame), over burst, silence past the
+	// flush, and a second burst: the LFO and springs must have advanced as if nothing was skipped, so the second burst
+	// comes out to the bit. The counters say the skip happened and where.
+	const Settings s = liveSettings();
+	const int rest = static_cast<int>(kRestSilentSeconds * kSr) + 20000;
+	const std::vector<float> burst = source(4096);
+	const auto render = [&](bool skip, size_t* chained, size_t* skipped) {
+		Automod a;
+		a.prepare(kSr);
+		a.setTarget(s);
+		a.setRestSkipForTest(skip);
+		std::vector<float> out;
+		const auto feed = [&](const std::vector<float>& in) {
+			std::vector<float> l = in;
+			std::vector<float> r = in;
+			for (size_t at = 0; at < l.size(); at += 256) {
+				const int n = static_cast<int>(std::min<size_t>(256, l.size() - at));
+				a.processStereo(l.data() + at, r.data() + at, n);
+			}
+			out.insert(out.end(), l.begin(), l.end());
+			out.insert(out.end(), r.begin(), r.end());
+		};
+		feed(burst);
+		const size_t before = a.framesChainedForTest();
+		feed(std::vector<float>(static_cast<size_t>(rest), 0.0f));
+		*chained = a.framesChainedForTest() - before;
+		feed(burst);
+		*skipped = a.framesSkippedForTest();
+		return out;
+	};
+	size_t chainedRef = 0;
+	size_t skippedRef = 0;
+	size_t chained = 0;
+	size_t skipped = 0;
+	const std::vector<float> ref = render(false, &chainedRef, &skippedRef);
+	const std::vector<float> got = render(true, &chained, &skipped);
+	CHECK(got == ref);
+	CHECK(skippedRef == 0u);
+	CHECK(chainedRef == static_cast<size_t>(rest));
+	// 20000 frames of the silence are past the flush; only the frames before it ran the chain.
+	CHECK(skipped >= 19000u);
+	CHECK(chained + skipped >= static_cast<size_t>(rest));
+	CHECK(chained <= static_cast<size_t>(rest) - 19000u);
+	// NON-VACUITY: the second burst is a real signal.
+	CHECK(std::any_of(got.begin() + static_cast<std::ptrdiff_t>(burst.size() + rest) * 2 - static_cast<std::ptrdiff_t>(burst.size()),
+	                  got.end(), [](float v) { return v != 0.0f; }));
+}

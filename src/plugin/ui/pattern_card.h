@@ -267,6 +267,7 @@ private:
 	DeviceInstanceId device_ = kNoInstance;
 	size_t focus_ = 0;
 	std::vector<float> lastRow_;
+	std::vector<float> rowBuf_; ///< `poll`'s working row, kept so a tick at rest allocates nothing
 	size_t lastFocus_ = mod::arp::pat::kPatterns;
 	mod::arp::pattern::PatternCycle cycle_ {};
 };

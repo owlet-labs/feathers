@@ -197,6 +197,7 @@ private:
 	bool hovering_ = false;
 	visage::Point hover_ {};
 	std::vector<float> drawnFields_;
+	std::vector<float> scratchFields_; ///< `update`'s working row, kept so a tick at rest allocates nothing
 
 	AnalyserView analyser_ {};
 	std::array<float, fx::eq::kAnalyserBins> rawPre_ {};

@@ -19,6 +19,7 @@
 #include "mod/per_note.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <utility>
 
@@ -163,6 +164,12 @@ Settings settingsOf(const Row& row, size_t fieldsPresent) {
 	Settings s = decodeRow(row, fieldsPresent);
 	sanitize(&s);
 	return s;
+}
+
+bool isSanitisedForDebug(const Settings& settings) {
+	Settings copy = settings;
+	sanitize(&copy);
+	return rowOf(copy) == rowOf(settings);
 }
 
 void sanitize(Settings* settings) {
@@ -591,8 +598,11 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 	// own: "the tempo reaches the device, per block" is a claim worth holding before anything depends
 	// on it.
 	clock_ = clock;
-	Settings s = settings;
-	sanitize(&s);
+	// **SANITISED ONCE, AT SET TIME** (`settingsOf`, which `setFieldsOf` goes through) and not on every tick: the old copy
+	// and `sanitize` here round-tripped the whole row per tick. A caller that builds a `Settings` by hand sanitises it
+	// first; a debug build asserts it.
+	assert(isSanitisedForDebug(settings));
+	const Settings& s = settings;
 
 	// THE GATE, ONCE, AT ONE PLACE. Free and LFO Retrig substitute an always-up gate here and
 	// everything downstream goes on reasoning about a single boolean — the DAHDSR's arrangement, kept

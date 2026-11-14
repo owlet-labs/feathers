@@ -139,6 +139,9 @@ public:
 		// THE DRAG AND THE RELEASE ARE THE BASE'S, the press is the card's — see noteCardPress.
 		onMouseDrag() = [this](const visage::MouseEvent& e) { noteCardMove(e); };
 		onMouseUp() = [this](const visage::MouseEvent& e) { noteCardRelease(e); };
+		// A HOVER MOVE IS DELIVERED ONLY WITH NO BUTTON HELD, so a card that still thinks a press is live has lost its
+		// release (the window was left, a menu took the mouse-up): the gesture is cancelled, never completed.
+		onMouseMove() += [this](const visage::MouseEvent&) { cancelCardDrag(); };
 		// **SO THAT A PRESS ON ONE OF THIS CARD'S CONTROLS STILL MOVES THE KEY'S TARGET TO THIS CARD.**
 		//
 		// The bug: deleting a modulator with Backspace did not work, while the menu's remove did at once.
@@ -265,6 +268,20 @@ public:
 	/// which silently dropped everything below: the drag anchor, `dragging_`, `armed_`, and (once the
 	/// press-time road was retired) the fold itself. A handler that is assigned rather than chained
 	/// takes the whole seat.
+	/// ENDS A PRESS WHOSE RELEASE NEVER ARRIVED, without the drop `noteCardRelease` would make: the host hears `Cancel`
+	/// if a drag had begun. Answers whether a gesture was live.
+	bool cancelCardDrag() {
+		const bool live = anchor_.has_value() || dragging_;
+		const bool was = dragging_;
+		anchor_.reset();
+		dragging_ = false;
+		armed_ = false;
+		if (was && onCardDrag) {
+			onCardDrag(DragPhase::Cancel, visage::Point {});
+		}
+		return live;
+	}
+
 	void noteCardRelease(const visage::MouseEvent& e) {
 			const bool was = dragging_;
 			const bool armed = armed_;
@@ -1468,7 +1485,7 @@ public:
 	// verb — fold — keeps working. Same constant and same reason as the sound rail's: the rows are
 	// short and the verbs on them are small, so a threshold big enough to feel deliberate would be a
 	// threshold that swallows the click.
-	enum class DragPhase { Begin, Move, End };
+	enum class DragPhase { Begin, Move, End, Cancel };
 
 	static constexpr float kDragThreshold = 4.0f;
 

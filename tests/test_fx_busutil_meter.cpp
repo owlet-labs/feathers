@@ -414,3 +414,45 @@ TEST_CASE("the raw peak is the larger of the two channels, and is linear rather 
 	// frequencies, so "both read 0.5" is a fact about this reading rather than about the signal.
 	CHECK(low.reading(bu::Reading::ShortTerm) < mid.reading(bu::Reading::ShortTerm) - 3.0f);
 }
+
+TEST_CASE("the integrated reading is made when a 100 ms block closes, and every read in between costs no scan") {
+	// The histogram is 751 bins with a pow per occupied bin; it used to be rescanned on every host block read, though
+	// it moves once per 100 ms block. The reading must equal a fresh scan of the histogram at every read, in a ramp so
+	// the gate and the histogram really move, and the scan count must follow the blocks closed (counted here from the
+	// audio's length), not the reads.
+	bu::Meter m;
+	m.prepare(kRate);
+	const size_t blockFrames = static_cast<size_t>(kRate * 0.1);
+	std::vector<float> l(256);
+	std::vector<float> r(256);
+	size_t framesFed = 0;
+	size_t reads = 0;
+	bool differs = false;
+	float first = 0.0f;
+	for (int chunk = 0; chunk < 4000; ++chunk) {
+		const float amp = 0.02f + 0.4f * static_cast<float>(chunk) / 4000.0f;
+		for (size_t i = 0; i < l.size(); ++i) {
+			l[i] = amp * std::sin(0.13f * static_cast<float>(framesFed + i));
+			r[i] = l[i];
+		}
+		m.process(l.data(), r.data(), static_cast<int>(l.size()));
+		framesFed += l.size();
+		const float got = m.reading(bu::Reading::Integrated);
+		++reads;
+		CHECK(got == m.integratedRecomputedForTest());
+		if (reads == 1) {
+			first = got;
+		}
+		differs = differs || got != first;
+	}
+	CHECK(differs); // NON-VACUITY: the figure moved as the level rose
+	const size_t closed = framesFed / blockFrames;
+	CHECK(m.integratedScansForTest() <= closed + 1u); // one scan per block closed (plus the reset's)
+	CHECK(m.integratedScansForTest() < reads / 4);    // far fewer scans than reads
+	// A RESET reads silence, and a repeated read costs nothing.
+	m.resetIntegrated();
+	const size_t scans = m.integratedScansForTest();
+	CHECK(m.reading(bu::Reading::Integrated) == bu::kSilenceLufs);
+	CHECK(m.reading(bu::Reading::Integrated) == bu::kSilenceLufs);
+	CHECK(m.integratedScansForTest() == scans);
+}

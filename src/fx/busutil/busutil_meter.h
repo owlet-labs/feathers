@@ -152,6 +152,10 @@ public:
 	void process(const float* left, const float* right, int frames) noexcept;
 
 	[[nodiscard]] float reading(Reading r) const noexcept;
+	/// TEST-ONLY: the integrated reading recomputed from the histogram (what every `reading` used to do), and how many
+	/// times the histogram has been scanned since construction.
+	[[nodiscard]] float integratedRecomputedForTest() const noexcept { return computeIntegrated(); }
+	[[nodiscard]] size_t integratedScansForTest() const noexcept { return integratedScans_; }
 
 private:
 	void closeBlock() noexcept;
@@ -199,6 +203,10 @@ private:
 	std::array<uint32_t, kHistogramBins> histogram_ {};
 	double gatedSumEnergy_ = 0.0; ///< blocks above the ABSOLUTE gate
 	uint64_t gatedCount_ = 0;
+	/// THE INTEGRATED READING, made when a block closes (the only time the histogram moves) and when it is reset.
+	float integrated_ = kSilenceLufs;
+	size_t integratedScans_ = 0;
+	[[nodiscard]] float computeIntegrated() const noexcept;
 
 	float peakL_ = 0.0f;
 	float peakR_ = 0.0f;

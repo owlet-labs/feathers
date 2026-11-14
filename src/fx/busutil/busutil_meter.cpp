@@ -148,6 +148,8 @@ void Meter::resetIntegrated() noexcept {
 	histogram_.fill(0u);
 	gatedSumEnergy_ = 0.0;
 	gatedCount_ = 0;
+	++integratedScans_;
+	integrated_ = computeIntegrated();
 }
 
 void Meter::closeBlock() noexcept {
@@ -182,6 +184,9 @@ void Meter::closeBlock() noexcept {
 	++gatedCount_;
 	const long bin = std::lround((blockLoudness - kAbsoluteGateLufs) * 10.0);
 	histogram_[static_cast<size_t>(std::clamp<long>(bin, 0, static_cast<long>(kHistogramBins) - 1))]++;
+	// THE GATE CHANGES ONLY HERE, once per 100 ms block, so the reading is made here and read from the cache.
+	++integratedScans_;
+	integrated_ = computeIntegrated();
 }
 
 void Meter::process(const float* left, const float* right, int frames) noexcept {
@@ -236,6 +241,33 @@ void Meter::process(const float* left, const float* right, int frames) noexcept 
 	}
 }
 
+float Meter::computeIntegrated() const noexcept {
+	if (gatedCount_ == 0) {
+		return kSilenceLufs;
+	}
+	// THE RELATIVE GATE IS COMPUTED FROM THE BLOCKS THAT PASSED THE ABSOLUTE ONE, then applied to
+	// the same population — two passes over one histogram, which is why the histogram exists.
+	const double ungated = loudnessOf(gatedSumEnergy_ / static_cast<double>(gatedCount_));
+	const double threshold = ungated + kRelativeGateLu;
+	double sum = 0.0;
+	uint64_t count = 0;
+	for (size_t bin = 0; bin < kHistogramBins; ++bin) {
+		if (histogram_[bin] == 0u) {
+			continue;
+		}
+		const double binLoudness = kAbsoluteGateLufs + static_cast<double>(bin) * 0.1;
+		if (binLoudness <= threshold) {
+			continue;
+		}
+		sum += energyOf(binLoudness) * static_cast<double>(histogram_[bin]);
+		count += histogram_[bin];
+	}
+	if (count == 0) {
+		return kSilenceLufs;
+	}
+	return static_cast<float>(loudnessOf(sum / static_cast<double>(count)));
+}
+
 float Meter::reading(Reading r) const noexcept {
 	const auto windowed = [this](size_t blocks) -> double {
 		const size_t have = std::min(blocksSeen_, kBlocksShort);
@@ -264,32 +296,8 @@ float Meter::reading(Reading r) const noexcept {
 		return static_cast<float>(windowed(kBlocksMomentary));
 	case Reading::ShortTerm:
 		return static_cast<float>(windowed(kBlocksShort));
-	case Reading::Integrated: {
-		if (gatedCount_ == 0) {
-			return kSilenceLufs;
-		}
-		// THE RELATIVE GATE IS COMPUTED FROM THE BLOCKS THAT PASSED THE ABSOLUTE ONE, then applied to
-		// the same population — two passes over one histogram, which is why the histogram exists.
-		const double ungated = loudnessOf(gatedSumEnergy_ / static_cast<double>(gatedCount_));
-		const double threshold = ungated + kRelativeGateLu;
-		double sum = 0.0;
-		uint64_t count = 0;
-		for (size_t bin = 0; bin < kHistogramBins; ++bin) {
-			if (histogram_[bin] == 0u) {
-				continue;
-			}
-			const double binLoudness = kAbsoluteGateLufs + static_cast<double>(bin) * 0.1;
-			if (binLoudness <= threshold) {
-				continue;
-			}
-			sum += energyOf(binLoudness) * static_cast<double>(histogram_[bin]);
-			count += histogram_[bin];
-		}
-		if (count == 0) {
-			return kSilenceLufs;
-		}
-		return static_cast<float>(loudnessOf(sum / static_cast<double>(count)));
-	}
+	case Reading::Integrated:
+		return integrated_;
 	case Reading::Correlation: {
 		const size_t have = std::min(blocksSeen_, kBlocksShort);
 		if (have == 0) {

@@ -144,7 +144,8 @@ public:
 	[[nodiscard]] double lastBuildMsForTest() const { return lastBuildMs_; }
 
 private:
-	[[nodiscard]] std::vector<float> rowNow() const;
+	/// THE ROW AS THE CONTROLS HOLD IT, in a member buffer refilled in place (valid until the next call).
+	[[nodiscard]] const std::vector<float>& rowNow() const;
 	/// `recentre`: about the place (every rebuild a key change asks for); false keeps the view where a pan put it.
 	void build(const std::vector<float>& row, bool recentre = true);
 	/// The fingerprint of the focused pattern decoded at `place` (16 steps over a held C4: the picture's own road).
@@ -157,6 +158,9 @@ private:
 	size_t focus_ = 0;
 	double zoom_ = 1.0;
 	std::vector<float> key_;
+	mutable std::vector<float> rowBuf_; ///< `rowNow`'s buffer
+	std::vector<float> keyBuf_;         ///< `poll`'s working key, kept so a tick at rest allocates nothing
+	std::vector<float> likedBuf_;       ///< and its likes-and-hand key
 	double keyZoom_ = -1.0;
 	size_t keyFocus_ = mod::arp::pat::kPatterns;
 	std::array<uint32_t, kWide * kHigh> cells_ {};

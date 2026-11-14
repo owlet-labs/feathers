@@ -311,6 +311,9 @@ void Synth::reset() {
 		v.stacked = false;
 	}
 	heldNotes_.fill({}); // every note forgotten — see the declaration
+	hostDown_.fill(false);
+	hostIssued_.fill(kNoHostNote); // a reset is the host's own: it drops what it tracked, so nothing is ended to it
+	noteEndCount_ = 0;
 	// The note-on's draws start over, so a bounce after a reset deals every note the seed it dealt before.
 	stackSeedState_ = 0x9E3779B9u;
 	// And no stand is keyed: the next route re-keys from an empty pool.
@@ -365,6 +368,8 @@ void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity
 	// move the latch without something going red. Nothing in the repository could see that property
 	// go until that case existed.
 	envRetrigger_ = true;
+	hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = noteId;
+	hostDown_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = true;
 	const device::NoteEvent event { device::NoteEvent::Kind::On, noteOffsetInTick(),       noteId, kPort,
 	                                channel,                    key,     velocity };
 	// THE LANE SEES IT ONLY IF THE SYNTH WOULD PLAY IT, which is the latch's own rule one line up: a
@@ -384,6 +389,56 @@ void Synth::noteOff(int16_t channel, int16_t key, int32_t noteId, double velocit
 	                                channel,                     key, velocity };
 	captureNote(event);
 	runLaneFor(&event, 1);
+	for (size_t i = 0; i < hostDown_.size(); ++i) {
+		const int ch = static_cast<int>(i / 128u);
+		const int k = static_cast<int>(i % 128u);
+		if ((channel < 0 || channel == ch) && (key < 0 || key == k)) {
+			hostDown_[i] = false;
+		}
+	}
+	// A NOTE THE LANE SWALLOWED NEVER GOT A VOICE, so no voice will end it: the host's note is over now.
+	if (isPlayableChannel(channel) && isPlayableKey(key)
+	    && hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] != kNoHostNote
+	    && !keyHasLiveVoice(channel, key, nullptr)) {
+		hostNoteEnded(channel, key, hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)], nullptr, false);
+	}
+}
+
+bool Synth::keyHasLiveVoice(int16_t channel, int16_t key, const Voice* except) const noexcept {
+	for (const Voice& v : voices_) {
+		if (&v != except && v.stage != Voice::Stage::Idle && v.stage != Voice::Stage::Stealing && v.channel == channel
+		    && v.key == key) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void Synth::hostNoteEnded(int16_t channel, int16_t key, int32_t noteId, const Voice* except, bool keyStaysLive) noexcept {
+	if (!isPlayableChannel(channel) || !isPlayableKey(key)) {
+		return;
+	}
+	int32_t& record = hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)];
+	if (record == kNoHostNote) {
+		return; // the host never issued a note on this key: an invented note's end is nobody's to hear
+	}
+	const bool others = keyStaysLive || keyHasLiveVoice(channel, key, except)
+	                    || (pendingNoteOn_.valid && pendingNoteOn_.channel == channel && pendingNoteOn_.key == key);
+	// An id-less note (a MIDI host's) is addressed by its key alone, so while another note holds the key its end
+	// would end that one too: the header's own example sends none then.
+	// A voice the lane played on this key carries no id (an invented note's is -1): the host's own id for the key is
+	// the one it is told.
+	const int32_t id = noteId >= 0 ? noteId : record;
+	if (id < 0 && others) {
+		return;
+	}
+	if (noteEndCount_ < noteEnds_.size()) {
+		noteEnds_[(noteEndHead_ + noteEndCount_) % noteEnds_.size()] = NoteEnd { channel, key, id };
+		++noteEndCount_;
+	}
+	if (!others) {
+		record = kNoHostNote;
+	}
 }
 
 void Synth::choke(int16_t channel, int16_t key, int32_t noteId) {
@@ -4240,6 +4295,10 @@ void Synth::renderChunk(float* mix, int n) {
 				// accounting, so exactly one of the two paths reports here.
 				voiceEnded_(&v);
 			}
+			if (wasReleasing && isPlayableChannel(v.channel) && isPlayableKey(v.key)
+			    && !hostDown_[static_cast<size_t>(v.channel) * 128u + static_cast<size_t>(v.key)]) {
+				hostNoteEnded(v.channel, v.key, v.noteId, &v, false);
+			}
 		}
 	}
 
@@ -4408,6 +4467,10 @@ void Synth::renderChunkStereo(float* left, float* right, int n, bool earsLive) {
 			v.levelMod = 0.0;
 			if (wasReleasing && voiceEnded_) {
 				voiceEnded_(&v);
+			}
+			if (wasReleasing && isPlayableChannel(v.channel) && isPlayableKey(v.key)
+			    && !hostDown_[static_cast<size_t>(v.channel) * 128u + static_cast<size_t>(v.key)]) {
+				hostNoteEnded(v.channel, v.key, v.noteId, &v, false);
 			}
 		}
 	}
@@ -5387,6 +5450,7 @@ void Synth::Responder::terminateVoice(Voice* voice) {
 	if (synth.voiceEnded_) {
 		synth.voiceEnded_(voice);
 	}
+	synth.hostNoteEnded(voice->channel, voice->key, voice->noteId, voice, false); // before the id is given up
 	// **THE NOTE LANE IS TOLD THE NOTE IS OVER**. This voice ends without the host's note-off — a steal, a
 	// choke, a cut, the polyphony lowered — and the host, told the note ended, may never send one. A
 	// per-note device (the DAHDSR's table) would keep the note gated at sustain forever, and any voice
@@ -5435,6 +5499,9 @@ void Synth::Responder::retriggerVoiceWithNewNoteID(Voice* voice, int32_t noteId,
 	// reaches the lane through the ordinary road and starts its own entry.
 	if (voice->noteId != noteId) {
 		synth.chokeLaneNote(*voice);
+		if (voice->noteId >= 0) {
+			synth.hostNoteEnded(voice->channel, voice->key, voice->noteId, voice, true); // the old id; the key lives on
+		}
 	}
 	voice->noteId = noteId;
 	// The old note's per-note modulation does not carry over to the new one. It was addressed to a
@@ -5470,6 +5537,10 @@ void Synth::Responder::retriggerVoiceWithNewNoteID(Voice* voice, int32_t noteId,
 void Synth::Responder::moveVoice(Voice* voice, uint16_t, uint16_t channel, uint16_t key, float) {
 	if (voice == nullptr) {
 		return;
+	}
+	if (voice->channel != static_cast<int16_t>(channel) || voice->key != static_cast<int16_t>(key)) {
+		// THE KEY IT LEAVES IS OVER for the host (a legato move keeps one voice for two notes).
+		synth.hostNoteEnded(voice->channel, voice->key, voice->noteId, voice, false);
 	}
 	voice->channel = static_cast<int16_t>(channel);
 	voice->key = static_cast<int16_t>(key);

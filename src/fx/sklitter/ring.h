@@ -65,6 +65,7 @@ public:
 		}
 		capacity_ = want;
 		data_.assign(capacity_ * 2u, 0.0f);
+		dirty_ = 0;
 		length_ = capacity_;
 		writePos_ = 0;
 		filled_ = false;
@@ -76,7 +77,13 @@ public:
 	/// **IT DOES NOT CLEAR `length_`.** That is a configuration rather than a running value, and a
 	/// ring of length zero divides by zero on its next wrap.
 	void reset() noexcept {
-		std::fill(data_.begin(), data_.end(), 0.0f);
+		// ONLY WHAT WAS EVER WRITTEN IS CLEARED: everything past `dirty_` is still the zeros `prepare` made it, so
+		// the ring is bit-identical to a whole-capacity fill at the cost of the written span. A host tempo ramp
+		// restarts the pre-warm nearly every block, and the whole capacity is 16 s of two channels.
+		const size_t span = dirty_;
+		std::fill(data_.begin(), data_.begin() + static_cast<std::ptrdiff_t>(span * 2u), 0.0f);
+		clearedFrames_ += span;
+		dirty_ = 0;
 		writePos_ = 0;
 		filled_ = false;
 		soundFrames_ = 0;
@@ -209,6 +216,8 @@ public:
 	/// capacity and length would read identically either way -- so the one case that matters most
 	/// here, "activate twice and do not malloc", cannot be written without it. Five lines, per the
 	/// rule that the remedy is cheap and the cleverness is not.
+	/// TEST-ONLY. FRAMES `reset` HAS WRITTEN ZEROS OVER, summed over every call: a reset is O(frames written), not O(capacity).
+	[[nodiscard]] size_t clearedFramesForTest() const noexcept { return clearedFrames_; }
 	[[nodiscard]] const float* dataForTest() const noexcept {
 		return data_.empty() ? nullptr : data_.data();
 	}
@@ -224,6 +233,7 @@ private:
 	}
 
 	void store(size_t i, float left, float right) noexcept {
+		dirty_ = i >= dirty_ ? i + 1 : dirty_;
 		const bool was = soundAt(i);
 		// backlog MJ: a write that LANDS, counted where it lands — the record light's reading. Gain 0 lands nothing.
 		landed_ += writeGain_ > 0.0f ? 1u : 0u;
@@ -262,6 +272,9 @@ private:
 	/// Frames holding a non-zero sample, over the whole capacity (backlog MC) — see `holdsSound`.
 	size_t soundFrames_ = 0;
 	size_t landed_ = 0; ///< backlog MJ — see `landed`
+	/// ONE PAST THE HIGHEST FRAME EVER STORED SINCE THE LAST `reset` (or `prepare`): every frame at or past it is zero.
+	size_t dirty_ = 0;
+	size_t clearedFrames_ = 0; ///< see `clearedFramesForTest`
 };
 
 } // namespace feathers::fx::sklitter

@@ -13159,6 +13159,79 @@ TEST_CASE("the scope IS the control — its grips edit through the same road the
 	}
 }
 
+TEST_CASE("hardening: OWLTT's graph repaints for a hover only when a tooltip appears, moves or goes") {
+	FilterFixture f;
+	auto* lane = f.lane;
+	REQUIRE(f.bridge.addFxDevice(fx::owltt::kTraits.tag) == 1);
+	lane->resized();
+	auto* card = dynamic_cast<ui::OwlttCard*>(lane->cardAt(1));
+	REQUIRE(card != nullptr);
+	ui::OwlttGraph* graph = card->graph();
+	REQUIRE(graph != nullptr);
+	const auto move = [&](visage::Point p) {
+		visage::MouseEvent e;
+		e.position = p;
+		graph->onMouseMove().callback(e);
+	};
+	// A BAR, asked of the graph: where a tooltip is.
+	const visage::Point bar { graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).x,
+		                      graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y };
+	// AND A POINT WITH NOTHING UNDER IT: found by looking, so the case cannot hover a tooltip by accident.
+	visage::Point bare { -1.0f, -1.0f };
+	bool found = false;
+	for (float y = 2.0f; y < graph->height() && !found; y += 7.0f) {
+		for (float x = 2.0f; x < graph->width() && !found; x += 7.0f) {
+			const size_t before = graph->hoverRedrawsForTest();
+			move({ x, y });
+			if (graph->hoverRedrawsForTest() == before) {
+				bare = { x, y };
+				found = true;
+			}
+			move({ -50.0f, -50.0f }); // off every target, settling the state for the next probe
+		}
+	}
+	REQUIRE(found);
+	graph->onMouseExit().callback(visage::MouseEvent {});
+
+	const size_t start = graph->hoverRedrawsForTest();
+	for (int i = 0; i < 20; ++i) {
+		move({ bare.x + static_cast<float>(i % 3), bare.y }); // moves among points with nothing under them
+	}
+	CHECK(graph->hoverRedrawsForTest() == start);
+	move(bar); // a tooltip appears
+	CHECK(graph->hoverRedrawsForTest() == start + 1);
+	graph->onMouseExit().callback(visage::MouseEvent {}); // and goes
+	CHECK(graph->hoverRedrawsForTest() == start + 2);
+	graph->onMouseExit().callback(visage::MouseEvent {}); // leaving with none shown draws nothing
+	CHECK(graph->hoverRedrawsForTest() == start + 2);
+}
+
+TEST_CASE("hardening: the envelope card's curve is built once for the settings and handed out without a copy") {
+	namespace dsr = feathers::mod::dahdsr;
+	ModFixture f;
+	feathers::ui::ModState mod;
+	feathers::ui::EditHistory history;
+	const DeviceInstanceId id = f.bridge.rackDeviceAt(0);
+	ui::EnvCard card { f.deviceHost, id, mod, history };
+	card.setBounds(0, 0, static_cast<int>(ui::ModPanel::kCardWidth), static_cast<int>(ui::EnvCard::height()));
+	const std::vector<visage::Point>& first = card.curvePointsForTest();
+	const size_t builds = card.curveRebuildsForTest();
+	REQUIRE_FALSE(first.empty());
+	for (int i = 0; i < 10; ++i) {
+		const std::vector<visage::Point>& again = card.curvePointsForTest();
+		CHECK(&again == &first); // the cache itself, not a copy of it
+	}
+	CHECK(card.curveRebuildsForTest() == builds);
+	// A SETTING MOVES: one rebuild, and the points differ.
+	const std::vector<visage::Point> before = first;
+	const size_t attack = static_cast<size_t>(dsr::Param::Attack);
+	const float now = f.deviceHost.fieldAt(id, attack);
+	f.deviceHost.setField(id, attack, now > 0.5f ? 0.1f : 0.9f);
+	const std::vector<visage::Point>& after = card.curvePointsForTest();
+	CHECK(card.curveRebuildsForTest() == builds + 1);
+	CHECK(after != before);
+}
+
 TEST_CASE("a bar drag on OWLTT's graph moves the control it is on") {
 	// THE GUARD FOR "I CANT SEEM TO DRAG ANYTHING IN THE GRAPH VIEW".
 	//

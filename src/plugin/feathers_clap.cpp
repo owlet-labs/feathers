@@ -1856,6 +1856,7 @@ protected:
 			bridge_.publishPadHits(synth_.padHits()); // the kit pads' pulse (pad_hits.h)
 		}
 		askRestartIfLatencyMoved(); // what the lane RAN this block, against what the host was told (backlog JM)
+		sendNoteEnds(process->out_events, frames);
 
 		// SLEEP is a promise that no further audio arrives without new events. It holds exactly when
 		// nothing is sounding: release tails and steal fades are voices, and they keep it CONTINUE
@@ -2446,6 +2447,32 @@ private:
 			// speak: MIDI 2.0 and SysEx (the port declares only the CLAP and MIDI 1.0 dialects it
 			// reads), extension spaces.
 			break;
+		}
+	}
+
+	/// **NOTE_END FOR EVERY HOST NOTE WHOSE VOICE ENDED THIS BLOCK**, after the block's frames are processed, as the header
+	/// has it ("time: ignored"): stamped at the block's last frame. One that the host's queue refuses stays queued for the
+	/// next call.
+	void sendNoteEnds(const clap_output_events* out, uint32_t frames) noexcept {
+		if (out == nullptr || out->try_push == nullptr) {
+			return;
+		}
+		while (const Synth::NoteEnd* end = synth_.frontNoteEnd()) {
+			clap_event_note e {};
+			e.header.size = sizeof(e);
+			e.header.time = frames > 0 ? frames - 1 : 0;
+			e.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+			e.header.type = CLAP_EVENT_NOTE_END;
+			e.header.flags = 0;
+			e.note_id = end->noteId;
+			e.port_index = 0;
+			e.channel = end->channel;
+			e.key = end->key;
+			e.velocity = 0.0;
+			if (!out->try_push(out, &e.header)) {
+				return;
+			}
+			synth_.dropNoteEnd();
 		}
 	}
 

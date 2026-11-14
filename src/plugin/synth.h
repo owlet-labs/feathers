@@ -405,6 +405,22 @@ public:
 
 	void sustainPedal(int16_t channel, bool down);
 
+	/// **A NOTE THE HOST ISSUED HAS ENDED** (CLAP_EVENT_NOTE_END): the port is ours, the channel, key and id are the
+	/// ones the host's note-on carried. Filled by the voice-end paths, drained by the plugin once per process call.
+	struct NoteEnd {
+		int16_t channel = 0;
+		int16_t key = 0;
+		int32_t noteId = -1;
+	};
+	/// The oldest end not yet taken, or null. `dropNoteEnd` takes it (after the host accepted it).
+	[[nodiscard]] const NoteEnd* frontNoteEnd() const noexcept { return noteEndCount_ > 0 ? &noteEnds_[noteEndHead_] : nullptr; }
+	void dropNoteEnd() noexcept {
+		if (noteEndCount_ > 0) {
+			noteEndHead_ = (noteEndHead_ + 1) % noteEnds_.size();
+			--noteEndCount_;
+		}
+	}
+
 	/// A CLAP param modulation addressed to a note rather than to the whole plugin. Only Level is
 	/// declared per-note-modulatable, and anything else is dropped here rather than silently applied
 	/// to the global lane, which is a different param with a different owner.
@@ -1888,6 +1904,28 @@ private:
 		bool valid = false;
 	};
 	PendingNoteOn pendingNoteOn_ {};
+
+	/// **WHICH KEYS THE HOST HAS A NOTE ON** (NOTE_END's contract: only a note the host issued is ended to it). The id the
+	/// host's note-on carried, per channel and key, or `kNoHostNote`. Set by `noteOn`, which only the host's own events
+	/// reach (a note the lane invents never passes it), and cleared when the key's last voice has ended.
+	static constexpr int32_t kNoHostNote = INT32_MIN;
+	std::array<int32_t, 16 * 128> hostIssued_ = [] {
+		std::array<int32_t, 16 * 128> a {};
+		a.fill(kNoHostNote);
+		return a;
+	}();
+	/// A fixed queue, sized to the voice pool plus its steal spares twice over; full drops the newest.
+	/// Whether the host's note on that key is still held (its note-on seen, its note-off not): a voice the lane plays on a
+	/// key the host is holding (an arp's step) runs out while the host's own note is still down, which is not its end.
+	std::array<bool, 16 * 128> hostDown_ {};
+	std::array<NoteEnd, 256> noteEnds_ {};
+	size_t noteEndHead_ = 0;
+	size_t noteEndCount_ = 0;
+	/// A voice's note is over as far as the host is concerned. `keyStaysLive` is set when a note on the same key is
+	/// taking over (a steal or a retrigger), so the key's record is kept. Exactly the callers of `voiceEnded_` and the
+	/// ones that end a note without it (a retrigger, a legato move) call this, each once per ended note.
+	void hostNoteEnded(int16_t channel, int16_t key, int32_t noteId, const Voice* except, bool keyStaysLive) noexcept;
+	[[nodiscard]] bool keyHasLiveVoice(int16_t channel, int16_t key, const Voice* except) const noexcept;
 	std::array<device::NoteEvent, 8> chokeScratch_ {};
 
 	/// **EVERY KEY THE VOICES HAVE BEEN TOLD IS DOWN, AND THE NOTE ID IT WENT DOWN WITH** (2026-10-07: the

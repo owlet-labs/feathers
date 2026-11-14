@@ -98,6 +98,8 @@ public:
 	/// it moved, so a wheel it cannot use bubbles on.
 	[[nodiscard]] size_t visibleRows() const;
 	[[nodiscard]] size_t firstRow() const;
+	/// `firstRow()` for a list of `count` rows, which the caller already built.
+	[[nodiscard]] size_t firstRowIn(size_t count) const;
 	bool scrollRowsBy(int rows);
 
 	/// The destinations the focused source reaches, in the destination list's own order.
@@ -147,6 +149,13 @@ public:
 	/// case holds them so.
 	visage::Bounds amountBounds(size_t index) const;
 	visage::Bounds chipBounds(size_t index) const;
+	/// THE SAME THREE GEOMETRIES FOR A CALLER THAT HAS THE FIRST VISIBLE ROW IN HAND, so a draw or a hit test that walks
+	/// the rows asks the route list once instead of once per row.
+	visage::Bounds rowBoundsFrom(size_t index, size_t first) const;
+	visage::Bounds amountBoundsFrom(size_t index, size_t first) const;
+	visage::Bounds chipBoundsFrom(size_t index, size_t first) const;
+	/// TEST ONLY: how many times the rows have been built (each a vector, a sort and the inner routes).
+	[[nodiscard]] size_t rowBuildsForTest() const { return rowBuilds_; }
 
 	/// THE ROW'S CURVE, own or inside a chain.
 	backplane::Transfer transferOf(const Row& row) const;
@@ -193,6 +202,7 @@ private:
 	std::vector<Watch> watches_;
 	/// The first row drawn (see `scrollRowsBy`); clamped against the rows there are whenever it is read.
 	size_t firstRow_ = 0;
+	mutable size_t rowBuilds_ = 0;
 	void commitAmount(const Row& row, float amount);
 	void remove(const Row& row);
 	/// The row's amount, name and write, own or inside a chain — the one place the two roads meet.

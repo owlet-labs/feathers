@@ -30,6 +30,7 @@
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
+#include <span>
 #include <cmath>
 #include <initializer_list>
 #include <map>
@@ -834,23 +835,26 @@ bool PatternLane::pollPlayhead() {
 
 bool PatternLane::poll() {
 	const bool moved = pollPlayhead();
-	std::vector<float> row(pt::kParamCount);
+	// ONE MEMBER BUFFER holds the row, the hand's words and the edits, in that order: sized once, refilled in place, so a
+	// tick at rest allocates nothing.
+	std::vector<float>& row = rowBuf_;
+	row.resize(pt::kParamCount + pt::kHandWords + pt::kEditsWords);
 	const size_t present = host_.fieldsPresentAt(device_);
-	for (size_t i = 0; i < row.size(); ++i) {
+	for (size_t i = 0; i < pt::kParamCount; ++i) {
 		row[i] = i < present ? host_.modulatedFieldAt(device_, i) : static_cast<float>(pt::kParamDescs[i].def);
 	}
 	// THE HAND'S BLOCK IS AN INPUT TOO (a Rotate fold, a pin switch): appended to what the lane compares.
-	std::vector<float> handWords(pt::kHandWords, 0.0f);
+	const std::span<float> handWords(row.data() + pt::kParamCount, pt::kHandWords);
+	std::fill(handWords.begin(), handWords.end(), 0.0f);
 	(void)host_.blockAt(device_, 1, handWords);
-	row.insert(row.end(), handWords.begin(), handWords.end());
 	// AND THE HAND'S EDITS.
-	std::vector<float> editWords(pt::kEditsWords, 0.0f);
+	const std::span<float> editWords(row.data() + pt::kParamCount + pt::kHandWords, pt::kEditsWords);
+	std::fill(editWords.begin(), editWords.end(), 0.0f);
 	const bool haveEdits = host_.blockAt(device_, pt::kEditsBlock, editWords);
-	row.insert(row.end(), editWords.begin(), editWords.end());
 	if (row == lastRow_ && focus_ == lastFocus_) {
 		return moved;
 	}
-	lastRow_ = row;
+	lastRow_ = row; // same size as before: assigned in place
 	lastFocus_ = focus_;
 	// THE DEVICE'S OWN ROAD, over a held C4 and every pin switched on (the switches live in the hand's block; a pattern
 	// whose switches are off draws as if they were on — the lane is its shape, the sound is the device's).

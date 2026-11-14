@@ -439,6 +439,8 @@ public:
 	/// HOW MANY TIMES THE SHAPE HAS BEEN SENT BACK TO ITS START since `reset`. A test seam: a restart
 	/// is not recoverable from the output (a looping wave passes its start every cycle anyway).
 	[[nodiscard]] uint32_t restartsForTest() const noexcept { return restarts_; }
+	/// TEST-ONLY: how many times the smoothing coefficient was designed (once per knob value, not per tick).
+	[[nodiscard]] size_t smoothingDesignsForTest() const noexcept { return smoothingDesigns_; }
 
 private:
 	void advance(const Settings& s, float hz, float rateMul);
@@ -457,6 +459,9 @@ private:
 	/// THE ONE-POLE'S STEP, from `mod::smoothingCoeff`. 1 means pass-through, which is what the bottom
 	/// of the Smoothing travel now carries — see `tick`.
 	double smoothingCoeff_ = 1.0;
+	float smoothingKnobWas_ = 0.0f; ///< the knob `smoothingCoeff_` was made for
+	bool smoothingCoeffValid_ = false;
+	size_t smoothingDesigns_ = 0;
 	float raw_ = 0.0f;
 	float value_ = 0.0f;
 	/// THE RIGHT EAR (backlog PA) — its own smoother, the left's coefficient. Held equal to the left's while Stereo Phase

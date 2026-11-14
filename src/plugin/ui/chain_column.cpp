@@ -1059,6 +1059,11 @@ void ChainColumn::cardDragForTest(DeviceInstanceId device, FxCard::DragPhase pha
 	const visage::Point inColumn { box.x() + inCard.x, box.y() + inCard.y };
 
 	switch (phase) {
+	case FxCard::DragPhase::Cancel:
+		dragDevice_.reset();
+		dropGap_.reset();
+		redraw();
+		break;
 	case FxCard::DragPhase::Begin:
 		dragDevice_ = device;
 		dragPoint_ = inColumn;

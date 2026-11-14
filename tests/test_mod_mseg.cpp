@@ -2478,3 +2478,23 @@ TEST_CASE("backlog PA (MSEG): Stereo Phase is stored by its own key, in radians 
 	mseg::sanitize(&s);
 	CHECK(s.stereoPhase == static_cast<float>(M_PI));
 }
+
+TEST_CASE("mseg: settings are sanitised once at set time, so a hostile row still ticks finite and in range") {
+	// `Shape::tick` no longer copies and re-sanitises per tick; the road in (`settingsOf`, through `setFieldsOf`) does it.
+	mseg::Row row = mseg::rowOf(mseg::Settings {});
+	for (float& v : row) {
+		v = std::numeric_limits<float>::quiet_NaN();
+	}
+	const mseg::Settings s = mseg::settingsOf(row, row.size());
+	CHECK(mseg::isSanitisedForDebug(s));
+	mseg::Shape shape;
+	shape.prepare(48000.0);
+	for (int i = 0; i < 2000; ++i) {
+		const float v = shape.tick(s, true, false, feathers::mod::TransportClock::unknown());
+		REQUIRE(std::isfinite(v));
+	}
+	// AND THE PREDICATE IS NOT VACUOUS: a hand-built out-of-range value is reported.
+	mseg::Settings raw = s;
+	raw.startLevel = 1.0e9f;
+	CHECK_FALSE(mseg::isSanitisedForDebug(raw));
+}

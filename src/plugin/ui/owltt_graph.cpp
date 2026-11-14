@@ -305,13 +305,25 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 	// the distinction this file learned the hard way when the bars could not be dragged, because the
 	// drag was written on this slot by mistake. Here it is the right one.
 	onMouseMove() = [this](const visage::MouseEvent& e) {
+		// **A MOVE REPAINTS ONLY WHEN IT CAN CHANGE WHAT IS DRAWN**: the overlay is the tooltip, so a move that begins
+		// with no tooltip and ends on none draws nothing new. (A tooltip follows the pointer, so a move that has one
+		// before or after does repaint.)
 		hover_ = e.position;
 		hovering_ = true;
-		redraw();
+		const bool had = tipShown_;
+		tipShown_ = tooltipAt(hover_) != nullptr;
+		if (had || tipShown_) {
+			++hoverRedraws_;
+			redraw();
+		}
 	};
 	onMouseExit() = [this](const visage::MouseEvent&) {
 		hovering_ = false;
-		redraw();
+		if (tipShown_) {
+			tipShown_ = false;
+			++hoverRedraws_;
+			redraw();
+		}
 	};
 
 	// onMouseDrag, NOT onMouseMove, AND ADDED RATHER THAN ASSIGNED.

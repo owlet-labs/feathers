@@ -666,3 +666,42 @@ TEST_CASE("FUZZ: an engaged device on a rolling song plays, and its cursor moves
 	}
 	CHECK(failures == 0);
 }
+
+TEST_CASE("a host tempo ramp restarts the pre-warm every block, and each restart clears what was written, not the capacity") {
+	// The bar length changes with every tempo step, and each change restarts the warm ring. The restart used to fill the
+	// whole capacity (16 s of two channels) per block. Counted: frames overwritten by resets, against the frames fed.
+	Sklitter s;
+	s.prepare(kSr, 4096);
+	Settings cfg;
+	cfg.enabled = true;
+	cfg.mode = Mode::Shuffle;
+	s.setTarget(cfg);
+	constexpr int kBlock = 128;
+	constexpr int kSteady = 700; // long enough to reach a downbeat and write
+	constexpr int kRamp = 400;
+	constexpr int kBlocks = kSteady + kRamp;
+	std::vector<float> l(kBlock);
+	std::vector<float> r(kBlock);
+	double beats = 0.25;
+	for (int b = 0; b < kBlocks; ++b) {
+		for (int k = 0; k < kBlock; ++k) {
+			l[static_cast<size_t>(k)] = static_cast<float>(0.5 * std::sin(0.03 * static_cast<double>(b * kBlock + k)));
+			r[static_cast<size_t>(k)] = l[static_cast<size_t>(k)];
+		}
+		const double spb = b < kSteady ? 0.5 : 0.5 - 0.0004 * (b - kSteady); // steady, then a ramp: a new bar length every block
+		TransportClock c = TransportClock::fromSecondsPerBeat(spb);
+		c.songPositionBeats = beats;
+		c.playing = true;
+		s.setTransportClock(c);
+		s.processStereo(l.data(), r.data(), kBlock);
+		beats += static_cast<double>(kBlock) / (spb * kSr);
+	}
+	const size_t cleared = s.ringForTest().clearedFramesForTest();
+	CHECK(s.ringForTest().landed() > 0u); // the steady stretch wrote into the ring
+	const size_t capacity = s.ringForTest().capacity();
+	CAPTURE(cleared);
+	CAPTURE(capacity);
+	CHECK(cleared > 0u); // NON-VACUITY: restarts happened and wrote
+	CHECK(cleared <= static_cast<size_t>(kBlock) * kBlocks);
+	CHECK(cleared < capacity); // a single whole-capacity fill per block would be 400 times this
+}

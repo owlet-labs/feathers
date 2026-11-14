@@ -30,6 +30,7 @@
 #include "portable_aligned_alloc.h"
 
 #include "fx/eq/eq_types.h"
+#include "dsp/analyser.h"
 #include "plugin/ui/eq_plot.h"
 
 #include <algorithm>
@@ -597,6 +598,34 @@ TEST_CASE("EQ analyser: a sine lands in its bin, and POST minus PRE is the EQ's 
 	CHECK(std::fabs(far.allReadings[static_cast<size_t>(eq::Reading::PostFirst) + k100]
 	                - far.allReadings[static_cast<size_t>(eq::Reading::PreFirst) + k100])
 	      < 0.2f);
+}
+
+TEST_CASE("EQ analyser: the window is two contiguous spans and equals the per-sample modulo read to the bit, wrapped or not") {
+	feathers::dsp::Analyser<64> an;
+	an.prepare(48000.0);
+	uint32_t x = 12345u;
+	const auto next = [&]() {
+		x = x * 1664525u + 1013904223u;
+		return static_cast<float>(x >> 8) / 8388608.0f - 1.0f;
+	};
+	int checks = 0;
+	int wrapped = 0;
+	int unwrapped = 0;
+	for (int i = 0; i < 200000; ++i) {
+		an.push(next(), next(), next(), next());
+		if (i % 997 == 0) {
+			for (int tap = 0; tap < 4; ++tap) {
+				CHECK(an.windowMatchesModuloForTest(tap));
+			}
+			const int start = (an.hopPosForTest() + an.ringLenForTest() - an.windowLenForTest()) % an.ringLenForTest();
+			(start + an.windowLenForTest() > an.ringLenForTest() ? wrapped : unwrapped)++;
+			++checks;
+		}
+	}
+	// NON-VACUITY: both shapes of window were compared.
+	CHECK(wrapped > 20);
+	CHECK(unwrapped > 20);
+	CHECK(checks > 100);
 }
 
 TEST_CASE("EQ analyser: a tap switched off costs no transforms") {

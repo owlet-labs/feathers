@@ -1526,3 +1526,39 @@ TEST_CASE("backlog PA: Stereo Phase is stored by its own key, in radians read as
 	// A ROW FROM BEFORE IT (one field short) reads the default: mono.
 	CHECK(settingsOf(rowOf(s), rowOf(s).size() - 1).stereoPhase == 0.0f);
 }
+
+TEST_CASE("lfo: the smoothing coefficient is designed when the knob or the tick length moves, and the output follows the exact pole") {
+	// The coefficient is an exp of the knob and the tick length; it used to be made every tick. The value claim is
+	// restated independently: after a step the smoothed output follows `y += (x - y) * (1 - exp(-T / tau))`.
+	Settings s;
+	s.mode = Mode::Free;
+	s.wave = Waveform::Square;
+	s.bipolar = false;
+	s.smoothing = -4.0f; // tau = 2^-4 s
+	Shape shape;
+	shape.prepare(48000.0);
+	for (int i = 0; i < 500; ++i) {
+		(void)shape.tick(s, true, false, device::TransportClock::unknown());
+	}
+	CHECK(shape.smoothingDesignsForTest() == 1u);
+	s.smoothing = -3.0f;
+	for (int i = 0; i < 500; ++i) {
+		(void)shape.tick(s, true, false, device::TransportClock::unknown());
+	}
+	CHECK(shape.smoothingDesignsForTest() == 2u);
+	shape.prepare(96000.0); // the tick length moved: designed again
+	(void)shape.tick(s, true, false, device::TransportClock::unknown());
+	CHECK(shape.smoothingDesignsForTest() == 3u);
+	// THE POLE ITSELF, from the declared constants: one tick toward a held target.
+	Settings flat;
+	flat.mode = Mode::Free;
+	flat.wave = Waveform::Square;
+	flat.bipolar = false;
+	flat.smoothing = -4.0f;
+	Shape a;
+	a.prepare(48000.0);
+	const double coeff = 1.0 - std::exp(-(static_cast<double>(feathers::mod::kBlockSamples) / 48000.0) / std::exp2(-4.0));
+	CHECK(coeff == doctest::Approx(feathers::mod::smoothingCoeff(-4.0f, static_cast<double>(feathers::mod::kBlockSamples) / 48000.0)).epsilon(1e-12));
+	(void)a.tick(flat, true, false, device::TransportClock::unknown());
+	CHECK(a.smoothingDesignsForTest() == 1u);
+}

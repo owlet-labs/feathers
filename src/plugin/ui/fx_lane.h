@@ -247,7 +247,9 @@ public:
 	/// in flight. A gap and not a slot, for the reason drop_gap.h states and the
 	/// sound list showed: a highlighted CARD says "it would replace that one", and what a reorder does is put
 	/// the card in a GAP — which is also the only way to say "before the first" or "after the last".
-	std::optional<size_t> dragSlot() const noexcept { return dragging_ ? dragSlot_ : std::nullopt; }
+	/// THE DRAGGED CARD'S SLOT NOW: found again from its device id, so a reorder or removal under the hand moves it
+	/// with the device, and a device that has gone has none.
+	std::optional<size_t> dragSlot() const;
 	std::optional<size_t> dropGap() const noexcept { return dragging_ ? dropGap_ : std::nullopt; }
 
 	/// Which gap a point in the LANE's coordinates is asking for, or nullopt outside the lane.
@@ -579,7 +581,9 @@ private:
 	/// reasons. `dragSlot_` is the card the gesture began on, `dragging_` is whether the threshold has
 	/// been crossed, and `dropGap_` is where it would land. The last is reset when the pointer leaves
 	/// the lane, which is the cancel.
-	std::optional<size_t> dragSlot_;
+	/// WHICH DEVICE THE GESTURE BEGAN ON, by instance id: a slot is a position and the chain can be reordered or shortened
+	/// under a live press, so the slot is resolved from this when the drag ends.
+	std::optional<DeviceInstanceId> dragDevice_;
 	std::optional<size_t> dropGap_;
 	bool dragging_ = false;
 	/// WHERE THE HAND LAST WAS, in the lane's coordinates — what `tickDrag` scrolls against while the

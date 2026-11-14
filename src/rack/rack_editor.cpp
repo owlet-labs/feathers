@@ -1293,6 +1293,12 @@ void RackEditor::cardDragForTest(DeviceInstanceId device, ui::FxCard::DragPhase 
 		dragDevice_ = device;
 		dragPoint_ = inLane;
 		break;
+	case ui::FxCard::DragPhase::Cancel:
+		dragDevice_.reset();
+		dropGap_.reset();
+		dropIntoPost_ = false;
+		redraw();
+		break;
 	case ui::FxCard::DragPhase::Move:
 		if (!dragDevice_.has_value()) {
 			return;

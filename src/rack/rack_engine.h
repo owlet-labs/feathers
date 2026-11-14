@@ -1460,6 +1460,13 @@ public:
 	/// HOW MANY SELF-CLOCKED DEVICES THE LAST `emitNotesNow` FOUND IN THE CHAIN — a holder ending the notes they invented
 	/// when the last one leaves (a Rack's chain, backlog RN). AUDIO THREAD.
 	[[nodiscard]] size_t emittersSeen() const noexcept { return emittersSeen_; }
+	/// **WHETHER A SELF-CLOCKED DEVICE HAS AN EVENT STILL TO COME WITH NO NEW INPUT** (the SLEEP rule): the last
+	/// `emitNotesNow` found an emitter that named a next call, so an arp holding a chord, or a pattern running on the
+	/// transport, will strike again after a silent gap; and one ARMED on a stopped transport (Run Transport over a chord,
+	/// Trig Transport with none) names one too, because the transport starting is no input event a sleeping plugin is
+	/// woken by. A host told SLEEP there may stop calling, and the step never sounds. False once no emitter could play
+	/// without a new event (no key under Gate, switched off, none in the chain), so SLEEP is still reached. AUDIO THREAD.
+	[[nodiscard]] bool notesScheduled() const noexcept { return notesScheduled_; }
 	/// WHETHER ANY DEVICE IN THE PUBLISHED ORDER TAKES NOTES (`NoteOps`) — a chain that holds none hands its notes on
 	/// untouched. Any thread that may read the order; allocates nothing.
 	[[nodiscard]] bool holdsNoteDevice() const noexcept;
@@ -2183,6 +2190,8 @@ private:
 	/// `Synth::emitLaneNotes` — so neither can play a voice whose off has no maker left.
 	std::array<std::array<bool, 128>, 16> inventedHeld_ {};
 	size_t emittersSeen_ = 0;
+	/// What `notesScheduled` answers: the last `emitNotesNow` heard an emitter name a next call.
+	bool notesScheduled_ = false;
 	/// **WHICH EMITTERS STOOD IN THE CHAIN LAST CALL, BY BUILD** (`Slot::built`, not the id: a load keeps the id) — a count
 	/// alone misses one REPLACED by another (a patch or preset load puts a new Pattern where the old one stood, or a
 	/// classic Arp under the old Pattern's id: the count holds, the old instance's notes have no maker left). Fixed room:

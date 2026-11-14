@@ -358,6 +358,8 @@ public:
 	void setLatentPerVoiceCap(uint32_t samples) noexcept { engine_.setLatentPerVoiceCap(samples); }
 	/// WHETHER A DEVICE ON THE LANE STILL HOLDS SOUND TO COME — `RackEngine::holdsTail` (backlog MC).
 	[[nodiscard]] bool holdsTail() const noexcept { return engine_.holdsTail(); }
+	/// WHETHER A SELF-CLOCKED DEVICE ON THE LANE HAS A STEP STILL TO COME — `RackEngine::notesScheduled`.
+	[[nodiscard]] bool notesScheduled() const noexcept { return engine_.notesScheduled(); }
 	/// THE CLOCK THE LANE WAS LAST HANDED.
 	[[nodiscard]] const device::TransportClock& clockForTest() const noexcept { return clock_; }
 	[[nodiscard]] const rack::RackEngine& engineForTest() const noexcept { return engine_; }

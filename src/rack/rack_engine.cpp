@@ -419,6 +419,7 @@ size_t RackEngine::processNotesNow(const device::NoteEvent* in, size_t count, de
 size_t RackEngine::emitNotesNow(const device::TransportClock& clock, uint64_t sampleNow, device::NoteEvent* out,
                                 size_t capacity, uint32_t* samplesUntilNext) noexcept {
 	uint32_t soonest = std::numeric_limits<uint32_t>::max();
+	bool scheduled = false; // an emitter named a next call (`notesScheduled`)
 	size_t emitters = 0; // how many stand in the chain — `emitPiece` ends their notes when one leaves
 	notesCount_ = 0;
 	notesInA_ = true;
@@ -467,6 +468,7 @@ size_t RackEngine::emitNotesNow(const device::TransportClock& clock, uint64_t sa
 				                                        kMaxNotes - produced, &until);
 				produced += std::min(made, kMaxNotes - produced);
 				soonest = std::min(soonest, std::max<uint32_t>(until, 1));
+				scheduled = scheduled || until != std::numeric_limits<uint32_t>::max();
 			}
 			notesCount_ = produced;
 			notesInA_ = !notesInA_;
@@ -489,6 +491,7 @@ size_t RackEngine::emitNotesNow(const device::TransportClock& clock, uint64_t sa
 	std::copy_n(emitterBuildsNow_.begin(), nowCount, emitterBuilds_.begin());
 	emitterBuildCount_ = nowCount;
 	emittersSeen_ = emitters;
+	notesScheduled_ = scheduled;
 	size_t delivered = 0;
 	if (lost && out != nullptr) {
 		delivered = inventedOffsInto(out, capacity, 0);

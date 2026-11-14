@@ -29,6 +29,9 @@ namespace feathers::mod::arp {
 
 namespace {
 constexpr uint32_t kNever = std::numeric_limits<uint32_t>::max();
+/// "CALL AGAIN, NO SOONER THAN ANYTHING ELSE ASKS": what an armed emitter names. Finite, so a host reads it as an event still
+/// to come; as late as a call can be, so it limits no chunk.
+constexpr uint32_t kArmedWake = kNever - 1;
 } // namespace
 
 void StepEmitter::prepare(double sampleRate) noexcept {
@@ -463,6 +466,13 @@ size_t StepEmitter::emit(const device::TransportClock& clock, uint64_t sampleNow
 	if (clock_ == Clock::None) {
 		restartPending_ = false; // nothing runs, so nothing restarts: a trigger while silent is not saved for later
 		noteRestart_ = false;
+		// **ARMED: IT WOULD PLAY, AND ONLY THE STOPPED TRANSPORT HOLDS IT** (Run Transport over a chord, or Trig Transport
+		// or Restart with none held). The transport starting is no input event, and a host told SLEEP need not call again
+		// until one, so the first steps of the take would be lost. It names a call (`kArmedWake`, no time at all) and so
+		// keeps the plugin awake (`RackEngine::notesScheduled`); with nothing that could play, it names none.
+		if (running && next == kNever) {
+			next = kArmedWake;
+		}
 		return finish();
 	}
 

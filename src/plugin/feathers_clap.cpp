@@ -1889,6 +1889,16 @@ protected:
 			quietSamples_ = 0;
 			return CLAP_PROCESS_CONTINUE;
 		}
+		// **AND NO NOTE DEVICE HAS A STEP STILL TO COME.** An arp on a held chord with a short gate is exactly silent between
+		// its steps once the release has run, and so is a pattern running on the transport with no key: SLEEP there and a
+		// host that honours it stops calling, so the next step never fires. And a pattern ARMED on a stopped transport
+		// (Trig Transport, or Run Transport over a held chord) starts with the transport, which wakes no sleeping plugin:
+		// CLAP promises a call only on an event or a change in the audio input. Awake while an emitter names a next call;
+		// one that could play only on a new event (no key under Gate, switched off) names none, and this may sleep.
+		if (synth_.notesScheduled()) {
+			quietSamples_ = 0;
+			return CLAP_PROCESS_CONTINUE;
+		}
 		// **AND NOT WHILE THE SIDECHAIN SOUNDS**. With no note playing the output is silent, so this said SLEEP
 		// while the sidechain carried audio. CLAP lets a host stay away "until the next event or variation in audio input", and a
 		// host that wakes only for events never calls again: the presence is never re-read and the card's "sidechain silent" is

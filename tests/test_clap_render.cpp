@@ -335,11 +335,24 @@ public:
 		order_.push_back({Kind::Midi, midis_.size() - 1});
 	}
 
+	/// A `CLAP_EVENT_TRANSPORT` at `time` — a host announcing a transport change inside the block.
+	void pushTransport(uint32_t time, const clap_event_transport& transport) {
+		clap_event_transport event = transport;
+		event.header.size = sizeof(event);
+		event.header.time = time;
+		event.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+		event.header.type = CLAP_EVENT_TRANSPORT;
+		event.header.flags = 0;
+		transports_.push_back(event);
+		order_.push_back({Kind::Transport, transports_.size() - 1});
+	}
+
 	void clear() {
 		midis_.clear();
 		notes_.clear();
 		params_.clear();
 		mods_.clear();
+		transports_.clear();
 		order_.clear();
 	}
 
@@ -349,7 +362,7 @@ public:
 	}
 
 private:
-	enum class Kind : uint8_t { Param, Note, Mod, Midi };
+	enum class Kind : uint8_t { Param, Note, Mod, Midi, Transport };
 	struct Ref {
 		Kind kind;
 		size_t index;
@@ -369,6 +382,8 @@ private:
 			return &self->mods_[ref.index].header;
 		case Kind::Midi:
 			return &self->midis_[ref.index].header;
+		case Kind::Transport:
+			return &self->transports_[ref.index].header;
 		case Kind::Param:
 			break;
 		}
@@ -395,6 +410,11 @@ private:
 	std::vector<clap_event_param_mod> mods_{[] {
 		std::vector<clap_event_param_mod> v;
 		v.reserve(64);
+		return v;
+	}()};
+	std::vector<clap_event_transport> transports_{[] {
+		std::vector<clap_event_transport> v;
+		v.reserve(8);
 		return v;
 	}()};
 	std::vector<Ref> order_{[] {
@@ -570,6 +590,9 @@ public:
 	}
 
 	void clearTransport() { transport_.reset(); }
+
+	/// THE TRANSPORT AS GIVEN, for a case that builds its own (`songTransport`).
+	void setTransportEvent(const clap_event_transport& t) { transport_ = t; }
 
 	/// THE HOST'S AUDIO INPUTS for every later `run` (the sidechain, input 0): none by default.
 	void setInputs(const clap_audio_buffer* inputs, uint32_t count) {
@@ -8844,4 +8867,481 @@ TEST_CASE("MIDI dialect: CC 123 releases every note of its channel only; CC 120 
 		CHECK(voicesInStage(host.plugin(), kStageSustain) == 1);
 		CHECK(voicesInStage(host.plugin(), kStageRelease) == 0);
 	}
+}
+
+namespace {
+/// A DAW'S TRANSPORT: both timelines and a tempo, the song at `beats`.
+clap_event_transport songTransport(double beats, double bpm, bool playing) {
+	clap_event_transport t {};
+	t.header.size = sizeof(t);
+	t.header.type = CLAP_EVENT_TRANSPORT;
+	t.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+	t.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE | CLAP_TRANSPORT_HAS_SECONDS_TIMELINE;
+	if (playing) {
+		t.flags |= CLAP_TRANSPORT_IS_PLAYING;
+	}
+	t.tempo = bpm;
+	t.song_pos_beats = static_cast<clap_beattime>(std::llround(beats * CLAP_BEATTIME_FACTOR));
+	t.song_pos_seconds = static_cast<clap_sectime>(std::llround(beats * 60.0 / bpm * CLAP_SECTIME_FACTOR));
+	return t;
+}
+
+/// ONE HOST BLOCK of a transport sweep: its length, the transport it opens with, and optionally a transport event inside
+/// it and a key pressed in it.
+struct SweepBlock {
+	uint32_t frames = 0;
+	bool playing = false;
+	double beats = 0.0;
+	bool event = false;
+	uint32_t eventAt = 0;
+	bool eventPlaying = false;
+	double eventBeats = 0.0;
+	bool key = false;
+	uint32_t keyAt = 0;
+};
+
+/// **WHERE THE STEPS FALL, RESTATED FROM THE HOST'S OWN WORD**: every 1/16 (a quarter beat) the song passes while the
+/// transport plays, as the sample the host would put it on — counted from the instance's first render, as
+/// `delivered_note` counts. A stretch that plays from song position p at block sample s for n samples holds every grid
+/// point in [p, p + n samples).
+std::vector<int64_t> expectedSteps(const std::vector<SweepBlock>& blocks, double bpm) {
+	const double samplesPerBeat = 60.0 / bpm * kSampleRate;
+	std::vector<int64_t> out;
+	int64_t at = 0;
+	for (const SweepBlock& b : blocks) {
+		const auto stretch = [&](uint32_t from, double beats) {
+			const double end = beats + static_cast<double>(b.frames - from) / samplesPerBeat;
+			for (auto g = static_cast<int64_t>(std::ceil(beats / 0.25 - 1e-9)); static_cast<double>(g) * 0.25 < end - 1e-9; ++g) {
+				const double samples = (static_cast<double>(g) * 0.25 - beats) * samplesPerBeat;
+				out.push_back(at + from + static_cast<int64_t>(std::ceil(samples - 1e-6)));
+			}
+		};
+		if (b.playing) {
+			stretch(0, b.beats);
+		}
+		else if (b.event && b.eventPlaying) {
+			stretch(b.eventAt, b.eventBeats);
+		}
+		at += b.frames;
+	}
+	// A POINT IN A STRETCH'S LAST FRACTION OF A SAMPLE FALLS ON THE NEXT SAMPLE: past the run's end it is never rendered,
+	// and where a loop wraps there it is the same instant as the loop's start, one onset.
+	std::erase_if(out, [&](int64_t s) { return s >= at; });
+	out.erase(std::unique(out.begin(), out.end()), out.end());
+	return out;
+}
+
+/// THE HOST'S TIMELINE FOR ONE SCENARIO of the sweep (`kSweepScenarios`), in blocks of `frames` at `bpm`, the key
+/// pressed before the play (`keyBefore`) or in the play's own block, at the play's sample.
+std::vector<SweepBlock> sweepTimeline(int scenario, uint32_t frames, double bpm, bool keyBefore) {
+	const double beatsPerSample = bpm / 60.0 / kSampleRate;
+	std::vector<SweepBlock> out;
+	const auto stopped = [&](int n, double beats) {
+		for (int i = 0; i < n; ++i) {
+			out.push_back(SweepBlock { .frames = frames, .playing = false, .beats = beats });
+		}
+	};
+	// PLAYS for `beatsLong` beats of song from `beats`, block-aligned; the first block takes the key if it is pressed with
+	// the play. Returns the position the song reached.
+	const auto play = [&](double beats, double beatsLong, bool keyHere) {
+		const double end = beats + beatsLong;
+		bool first = true;
+		while (beats < end) {
+			SweepBlock b { .frames = frames, .playing = true, .beats = beats };
+			b.key = first && keyHere;
+			out.push_back(b);
+			first = false;
+			beats += frames * beatsPerSample;
+		}
+		return beats;
+	};
+	stopped(2, 0.0);
+	if (keyBefore) {
+		out.push_back(SweepBlock { .frames = frames, .playing = false, .beats = 0.0, .key = true, .keyAt = frames / 3 });
+	}
+	stopped(6, 0.0);
+	const bool keyWithPlay = !keyBefore;
+	switch (scenario) {
+	case 0: // ON THE BOUNDARY AT SONG ZERO
+		play(0.0, 3.0, keyWithPlay);
+		break;
+	case 1: // FROM BAR 3
+		play(8.0, 3.0, keyWithPlay);
+		break;
+	case 2: { // THE PLAY ANNOUNCED INSIDE THE BLOCK, at a sample past its start (song zero there)
+		const uint32_t o = std::max<uint32_t>(1, frames * 5 / 8);
+		SweepBlock b { .frames = frames, .playing = false, .beats = 0.0, .event = true, .eventAt = o, .eventPlaying = true,
+			           .eventBeats = 0.0, .key = keyWithPlay, .keyAt = o };
+		out.push_back(b);
+		play((frames - o) * beatsPerSample, 3.0, false);
+		break;
+	}
+	case 3: { // THE SAME, FROM BAR 3
+		const uint32_t o = std::max<uint32_t>(1, frames * 5 / 8);
+		SweepBlock b { .frames = frames, .playing = false, .beats = 8.0, .event = true, .eventAt = o, .eventPlaying = true,
+			           .eventBeats = 8.0, .key = keyWithPlay, .keyAt = o };
+		out.push_back(b);
+		play(8.0 + (frames - o) * beatsPerSample, 3.0, false);
+		break;
+	}
+	case 4: // A PRE-ROLL: the first playing block a hair before the song's zero (negative)
+		play(-0.01, 3.0, keyWithPlay);
+		break;
+	case 5: // A PRE-ROLL INTO BAR 2: a few samples before the boundary
+		play(4.0 - 37.0 * beatsPerSample, 3.0, keyWithPlay);
+		break;
+	case 6: // STOP, THEN START AGAIN AT THE SAME PLACE
+		play(4.0, 1.5, keyWithPlay);
+		stopped(6, 4.0);
+		play(4.0, 1.5, false);
+		break;
+	case 7: { // A ONE-BEAT LOOP, THE HOST CUTTING THE BLOCK AT ITS END
+		double beats = 0.0;
+		bool first = true;
+		for (int pass = 0; pass < 4; ++pass) {
+			while (beats < 1.0 - 1e-12) {
+				const double left = (1.0 - beats) / beatsPerSample;
+				const auto n = static_cast<uint32_t>(std::min<double>(frames, std::ceil(left - 1e-9)));
+				SweepBlock b { .frames = n, .playing = true, .beats = beats, .key = first && keyWithPlay };
+				out.push_back(b);
+				first = false;
+				beats += n * beatsPerSample;
+			}
+			beats -= 1.0;
+		}
+		break;
+	}
+	case 8: { // A ONE-BEAT LOOP, THE HOST JUMPING AT THE NEXT BLOCK (no cut): four beats of song played
+		double beats = 0.0;
+		double total = 0.0;
+		bool first = true;
+		while (total < 4.0) {
+			out.push_back(SweepBlock { .frames = frames, .playing = true, .beats = beats, .key = first && keyWithPlay });
+			first = false;
+			beats += frames * beatsPerSample;
+			total += frames * beatsPerSample;
+			if (beats >= 1.0) {
+				beats -= 1.0;
+			}
+		}
+		break;
+	}
+	default:
+		break;
+	}
+	return out;
+}
+inline constexpr int kSweepScenarios = 9;
+
+/// RUNS `blocks` through a fresh instance with the note device `tag` in its modulator lane (set up by `configure`) and
+/// returns the samples of every note-on the voices were handed.
+std::vector<int64_t> sweepOns(const char* tag, bool (*configure)(const clap_plugin*, const clap_plugin_feathers_test_chain*, uint32_t),
+                              const std::vector<SweepBlock>& blocks, uint32_t maxFrames, double bpm) {
+	static const char* seatedTag = nullptr;
+	static uint32_t seated = UINT32_MAX;
+	seatedTag = tag;
+	HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
+		const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(c != nullptr);
+		seated = c->add_mod_device(p, seatedTag);
+		REQUIRE(seated != UINT32_MAX);
+	});
+	const clap_plugin* p = host.plugin();
+	if (maxFrames > kMaxFrames) {
+		p->stop_processing(p);
+		p->deactivate(p);
+		REQUIRE(p->activate(p, kSampleRate, 1, maxFrames));
+		REQUIRE(p->start_processing(p));
+		host.growBuffers(maxFrames);
+	}
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	REQUIRE(configure(p, chain, CLAP_FEATHERS_TEST_STRIP | seated));
+	std::vector<int64_t> ons;
+	uint32_t kind = 0;
+	int32_t key = 0;
+	uint64_t sample = 0;
+	REQUIRE(chain->delivered_note(p, UINT32_MAX, nullptr, nullptr, nullptr));
+	EventList events;
+	for (const SweepBlock& b : blocks) {
+		events.clear();
+		host.setTransportEvent(songTransport(b.beats, bpm, b.playing));
+		// IN TIME ORDER: a transport event before a key at the same sample (the key is pressed into the playing song).
+		if (b.event && (!b.key || b.eventAt <= b.keyAt)) {
+			events.pushTransport(b.eventAt, songTransport(b.eventBeats, bpm, b.eventPlaying));
+		}
+		if (b.key) {
+			events.pushNote(CLAP_EVENT_NOTE_ON, b.keyAt, 60, 1, 1.0);
+		}
+		if (b.event && b.key && b.eventAt > b.keyAt) {
+			events.pushTransport(b.eventAt, songTransport(b.eventBeats, bpm, b.eventPlaying));
+		}
+		host.run(b.frames, events);
+		// DRAINED EVERY BLOCK, so the seam's log (1024 events) never wraps.
+		for (uint32_t i = 0; chain->delivered_note(p, i, &kind, &key, &sample); ++i) {
+			if (kind == 0) {
+				ons.push_back(static_cast<int64_t>(sample));
+			}
+		}
+		REQUIRE(chain->delivered_note(p, UINT32_MAX, nullptr, nullptr, nullptr));
+	}
+	return ons;
+}
+
+/// THE SWEEP ITSELF, over every scenario, block size, tempo and key timing; returns the failures, described.
+std::vector<std::string> transportSweep(const char* tag,
+                                        bool (*configure)(const clap_plugin*, const clap_plugin_feathers_test_chain*, uint32_t),
+                                        bool withKey = true) {
+	std::vector<std::string> failures;
+	size_t runs = 0;
+	for (const uint32_t frames : { 32u, 64u, 480u, 1024u }) {
+		for (const double bpm : { 120.0, 133.3 }) {
+			for (int scenario = 0; scenario < kSweepScenarios; ++scenario) {
+				for (const bool keyBefore : { true, false }) {
+					std::vector<SweepBlock> blocks = sweepTimeline(scenario, frames, bpm, keyBefore);
+					if (!withKey) {
+						for (SweepBlock& b : blocks) {
+							b.key = false; // NO KEY AT ALL: the pattern runs on the transport alone
+						}
+					}
+					const std::vector<int64_t> want = expectedSteps(blocks, bpm);
+					const std::vector<int64_t> got = sweepOns(tag, configure, blocks, std::max(frames, kMaxFrames), bpm);
+					++runs;
+					bool same = want.size() == got.size() && !want.empty();
+					for (size_t i = 0; same && i < want.size(); ++i) {
+						same = std::llabs(want[i] - got[i]) <= 1;
+					}
+					if (!same) {
+						std::string s = "frames " + std::to_string(frames) + " bpm " + std::to_string(bpm) + " scenario "
+						                + std::to_string(scenario) + (keyBefore ? " key before" : " key with play") + ": want "
+						                + std::to_string(want.size()) + " got " + std::to_string(got.size()) + " [";
+						for (size_t i = 0; i < std::max(want.size(), got.size()) && i < 6; ++i) {
+							s += (i < want.size() ? std::to_string(want[i]) : "-") + "/" + (i < got.size() ? std::to_string(got[i]) : "-") + " ";
+						}
+						failures.push_back(s + "]");
+					}
+				}
+			}
+		}
+	}
+	REQUIRE(runs == 4 * 2 * kSweepScenarios * 2);
+	return failures;
+}
+} // namespace
+
+TEST_CASE("RA: an Arp in Feathers' modulator lane plays every 1/16 the transport passes over a held key — from song zero, "
+          "bar 3, inside the block, a pre-roll, a restart and a loop, at 32 to 1024 frames and 120 or 133.3 bpm") {
+	const auto configure = [](const clap_plugin*, const clap_plugin_feathers_test_chain*, uint32_t) { return true; };
+	const std::vector<std::string> failures = transportSweep(feathers::mod::arp::kTraits.tag, configure);
+	for (const std::string& f : failures) {
+		MESSAGE(f);
+	}
+	CHECK(failures.empty());
+}
+
+TEST_CASE("RA: a Pattern in Feathers' modulator lane, every step a note, plays every 1/16 the transport passes over a held "
+          "key — from song zero, bar 3, inside the block, a pre-roll, a restart and a loop, at 32 to 1024 frames and 120 or "
+          "133.3 bpm") {
+	// EVERY STEP A NOTE: no rests (Density), no ties (Hold), no grace notes (Detail).
+	const auto configure = [](const clap_plugin* p, const clap_plugin_feathers_test_chain* c, uint32_t slot) {
+		return c->set_control(p, slot, "P1 Density", 0.0) && c->set_control(p, slot, "P1 Hold", 0.0)
+		       && c->set_control(p, slot, "P1 Detail", 0.0);
+	};
+	const std::vector<std::string> failures = transportSweep(feathers::mod::arp::pat::kTraits.tag, configure);
+	for (const std::string& f : failures) {
+		MESSAGE(f);
+	}
+	CHECK(failures.empty());
+}
+
+TEST_CASE("RA: a Pattern on Trig Transport in Feathers' modulator lane, no key held, plays every 1/16 the transport passes — "
+          "from song zero, bar 3, inside the block, a pre-roll, a restart and a loop, at 32 to 1024 frames and 120 or 133.3 bpm") {
+	// THE NOTES THAT TRIGGER ON TRANSPORT PLAY with nothing else to wake them: Trig Transport plays its idle chord unkeyed.
+	const auto configure = [](const clap_plugin* p, const clap_plugin_feathers_test_chain* c, uint32_t slot) {
+		return c->set_control(p, slot, "P1 Density", 0.0) && c->set_control(p, slot, "P1 Hold", 0.0)
+		       && c->set_control(p, slot, "P1 Detail", 0.0) && c->set_control(p, slot, "P1 Trig", 1.0);
+	};
+	const std::vector<std::string> failures = transportSweep(feathers::mod::arp::pat::kTraits.tag, configure, false);
+	for (const std::string& f : failures) {
+		MESSAGE(f);
+	}
+	CHECK(failures.empty());
+}
+
+namespace {
+/// **A SELF-CLOCKED NOTE DEVICE KEEPS THE PLUGIN AWAKE BETWEEN ITS STEPS** (RB): the note device `tag` in the modulator
+/// lane (set up by `configure`), one step a bar at 120 bpm, a note far shorter than the step, so the voice's release has
+/// run out long before the next step and blocks go exactly silent with a step still to come. Runs `held` seconds with the
+/// transport `playing` and, when `key`, a key struck and let go at once under Latch (the chord plays on with no host key
+/// down: a key held at the host holds the default patch's sound up through the gap, and the gap would not be silent);
+/// then lets go (Latch off; with no key, the device switched off) and stops the transport, and reports what it saw.
+struct WakeRun {
+	int sleepsWhileScheduled = 0; // SLEEP while the device still had a step to play: the defect
+	int silentWhileScheduled = 0; // exactly silent blocks in that stretch: what makes the first count mean something
+	size_t ons = 0;               // the steps that sounded in it
+	bool sleptAfter = false;      // SLEEP reached once the key is let go / the transport stopped
+	int blocksToSleep = 0;
+};
+WakeRun wakeRun(const char* tag, bool (*configure)(const clap_plugin*, const clap_plugin_feathers_test_chain*, uint32_t),
+                bool key, bool playing, double held) {
+	static const char* seatedTag = nullptr;
+	static uint32_t seated = UINT32_MAX;
+	seatedTag = tag;
+	HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
+		const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(c != nullptr);
+		seated = c->add_mod_device(p, seatedTag);
+		REQUIRE(seated != UINT32_MAX);
+	});
+	const clap_plugin* p = host.plugin();
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	REQUIRE(configure(p, chain, CLAP_FEATHERS_TEST_STRIP | seated));
+	constexpr uint32_t kFrames = 256;
+	constexpr double kBpm = 120.0;
+	EventList none;
+	host.setTransportEvent(songTransport(0.0, kBpm, false));
+	for (int b = 0; b < 8; ++b) {
+		host.run(kFrames, none); // the strip adopts its device and its controls
+	}
+	REQUIRE(chain->delivered_note(p, UINT32_MAX, nullptr, nullptr, nullptr));
+	WakeRun r;
+	EventList on;
+	on.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 1, 1.0);
+	EventList off;
+	off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 60, 1, 0.0);
+	const auto heldBlocks = static_cast<int>(held * kSampleRate / kFrames);
+	double beats = 0.0;
+	uint32_t kind = 0;
+	int32_t k = 0;
+	uint64_t sample = 0;
+	for (int b = 0; b < heldBlocks; ++b) {
+		host.setTransportEvent(songTransport(beats, kBpm, playing));
+		const clap_process_status status = host.run(kFrames, b == 0 && key ? on : (b == 1 && key ? off : none));
+		if (playing) {
+			beats += kFrames * kBpm / 60.0 / kSampleRate;
+		}
+		r.sleepsWhileScheduled += status == CLAP_PROCESS_SLEEP ? 1 : 0;
+		r.silentWhileScheduled += peakOf(host.left(), kFrames) == 0.0f && peakOf(host.right(), kFrames) == 0.0f ? 1 : 0;
+	}
+	for (uint32_t i = 0; chain->delivered_note(p, i, &kind, &k, &sample); ++i) {
+		r.ons += kind == 0 ? 1 : 0;
+	}
+	// LET GO: Latch off; with no key, the device switched off (a stopped pattern on Trig Transport is armed, and stays
+	// awake for the transport by design).
+	REQUIRE(chain->set_control(p, CLAP_FEATHERS_TEST_STRIP | seated, key ? "Latch" : "Enabled", 0.0));
+	for (int b = 0; b < 30 * static_cast<int>(kSampleRate) / static_cast<int>(kFrames); ++b) {
+		host.setTransportEvent(songTransport(beats, kBpm, false));
+		const clap_process_status status = host.run(kFrames, none);
+		++r.blocksToSleep;
+		if (status == CLAP_PROCESS_SLEEP) {
+			r.sleptAfter = true;
+			break;
+		}
+	}
+	return r;
+}
+} // namespace
+
+TEST_CASE("RB: a latched chord under an Arp keeps the plugin awake between its steps — SLEEP is never promised while a step is "
+          "still to come, on the free clock or the song's, and once Latch lets go SLEEP is reached") {
+	// ONE STEP A BAR (2 s at 120 bpm), the shortest gate: each note is 20 ms and its release a second, so most of every
+	// step is exactly silent. Run Always, so the stopped transport plays it on the free clock; Latch, so the chord plays
+	// on after the key is up.
+	const auto configure = [](const clap_plugin* p, const clap_plugin_feathers_test_chain* c, uint32_t slot) {
+		return c->set_control(p, slot, "Time Base", 19.0) && c->set_control(p, slot, "Gate", 0.01)
+		       && c->set_control(p, slot, "Run", 0.0) && c->set_control(p, slot, "Latch", 1.0);
+	};
+	for (const bool playing : { false, true }) {
+		CAPTURE(playing);
+		const WakeRun r = wakeRun(feathers::mod::arp::kTraits.tag, configure, true, playing, 7.0);
+		CAPTURE(r.ons);
+		CAPTURE(r.silentWhileScheduled);
+		CAPTURE(r.blocksToSleep);
+		CHECK(r.ons == 4);                     // steps at 0, 2, 4 and 6 s: the device did play on
+		CHECK(r.silentWhileScheduled > 100);   // the gaps were silent: not vacuous
+		CHECK(r.sleepsWhileScheduled == 0);    // and SLEEP was never promised in them
+		CHECK(r.sleptAfter);                   // let go, it sleeps — not a plugin kept awake for ever
+	}
+}
+
+TEST_CASE("RB: a Pattern on Trig Transport keeps the plugin awake between its steps while the transport plays, with no key "
+          "held — and once it is switched off and the transport stops SLEEP is reached") {
+	const auto configure = [](const clap_plugin* p, const clap_plugin_feathers_test_chain* c, uint32_t slot) {
+		return c->set_control(p, slot, "P1 Time Base", 19.0) && c->set_control(p, slot, "P1 Gate", 0.05)
+		       && c->set_control(p, slot, "P1 Density", 0.0) && c->set_control(p, slot, "P1 Hold", 0.0)
+		       && c->set_control(p, slot, "P1 Detail", 0.0) && c->set_control(p, slot, "P1 Trig", 1.0);
+	};
+	const WakeRun r = wakeRun(feathers::mod::arp::pat::kTraits.tag, configure, false, true, 7.0);
+	CAPTURE(r.ons);
+	CAPTURE(r.silentWhileScheduled);
+	CAPTURE(r.blocksToSleep);
+	CHECK(r.ons == 4);
+	CHECK(r.silentWhileScheduled > 100);
+	CHECK(r.sleepsWhileScheduled == 0);
+	CHECK(r.sleptAfter);
+}
+
+TEST_CASE("RB: a stopped Pattern on Trig Transport is armed — the plugin stays awake with no key and no event, the "
+          "transport starting in a block with no input event plays its first step on the block's first sample, and "
+          "switched off it lets the plugin sleep") {
+	// CLAP promises a sleeping plugin a call only on an event or a change in its audio input. A transport start is
+	// neither, so a pattern that starts with the transport must not have let the plugin sleep while it waited.
+	static uint32_t seated = UINT32_MAX;
+	HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
+		const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(c != nullptr);
+		seated = c->add_mod_device(p, feathers::mod::arp::pat::kTraits.tag);
+		REQUIRE(seated != UINT32_MAX);
+	});
+	const clap_plugin* p = host.plugin();
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	const uint32_t slot = CLAP_FEATHERS_TEST_STRIP | seated;
+	REQUIRE(chain->set_control(p, slot, "P1 Trig", 1.0)); // Transport
+	REQUIRE(chain->set_control(p, slot, "P1 Density", 0.0)); // every step a note, so step 0 sounds
+	REQUIRE(chain->set_control(p, slot, "P1 Hold", 0.0));
+	constexpr uint32_t kFrames = 256;
+	constexpr double kBpm = 120.0;
+	EventList none;
+	int64_t at = 0; // samples rendered, as `delivered_note` counts them
+	int sleeps = 0;
+	int silent = 0;
+	host.setTransportEvent(songTransport(0.0, kBpm, false));
+	for (int b = 0; b < 400; ++b) { // two seconds stopped, no key, no event
+		const clap_process_status status = host.run(kFrames, none);
+		at += kFrames;
+		sleeps += status == CLAP_PROCESS_SLEEP ? 1 : 0;
+		silent += peakOf(host.left(), kFrames) == 0.0f && peakOf(host.right(), kFrames) == 0.0f ? 1 : 0;
+	}
+	CHECK(silent == 400);  // nothing sounded: only the armed pattern could keep it awake
+	CHECK(sleeps == 0);
+	REQUIRE(chain->delivered_note(p, UINT32_MAX, nullptr, nullptr, nullptr));
+	// THE TRANSPORT STARTS AT SONG ZERO, in a block that carries no event at all.
+	const int64_t start = at;
+	double beats = 0.0;
+	for (int b = 0; b < 4; ++b) {
+		host.setTransportEvent(songTransport(beats, kBpm, true));
+		host.run(kFrames, none);
+		at += kFrames;
+		beats += kFrames * kBpm / 60.0 / kSampleRate;
+	}
+	uint32_t kind = 0;
+	int32_t key = 0;
+	uint64_t sample = 0;
+	int64_t first = -1;
+	for (uint32_t i = 0; first < 0 && chain->delivered_note(p, i, &kind, &key, &sample); ++i) {
+		if (kind == 0) {
+			first = static_cast<int64_t>(sample);
+		}
+	}
+	CHECK(first == start); // step 0, on the song's zero: the block's first sample
+	// SWITCHED OFF, AND THE TRANSPORT STOPPED: it sleeps.
+	REQUIRE(chain->set_control(p, slot, "Enabled", 0.0));
+	bool slept = false;
+	host.setTransportEvent(songTransport(beats, kBpm, false));
+	for (int b = 0; b < 30 * static_cast<int>(kSampleRate) / static_cast<int>(kFrames) && !slept; ++b) {
+		slept = host.run(kFrames, none) == CLAP_PROCESS_SLEEP;
+	}
+	CHECK(slept);
 }

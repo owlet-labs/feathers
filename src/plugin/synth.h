@@ -365,6 +365,10 @@ public:
 	/// repeats, whose output is exactly silent while its line is not. SLEEP waits for it. AUDIO THREAD, after a block.
 	/// AND EVERY KIT PAD'S FX LANE (drum proposal §17): a pad's reverb rings on after its voices end, and SLEEP waits for it too.
 	[[nodiscard]] bool holdsTail() const noexcept { return lane_.holdsTail() || padLanesHoldTail(); }
+	/// **WHETHER THE NOTE LANE MAY PLAY AGAIN WITH NO NEW EVENT** — an arp on a held or latched chord, a pattern running
+	/// on the transport, between two steps whose gap is exactly silent; or one armed to start with the transport. SLEEP
+	/// waits for it. AUDIO THREAD, after a block.
+	[[nodiscard]] bool notesScheduled() const noexcept { return lane_.notesScheduled(); }
 
 	/// **A KIT PAD'S OWN FX LANE** (drum proposal §17, stage (d); 2026-11-07: per-pad fx lanes, the kit window's right side).
 	/// Each pad's voices sum into its own bus, the bus runs its lane, and the lane's output joins the voices' mix before the

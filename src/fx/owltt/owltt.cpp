@@ -103,7 +103,7 @@ Settings stateOf(const Row& row) {
 	{
 		const float clip = row[i++];
 		s.softClip = clip > 0.5f;
-		s.clipOnly = clip > 2.5f ? 0 : (clip > 1.5f ? 1 : 2); // 3 Both, 2 Bands, 1 Master
+		s.clipOnly = clip > 2.5f ? 1 : (clip > 1.5f ? 2 : 0); // 3 Bands, 2 Master, 1 Both
 	}
 	s.characterMode = static_cast<uint32_t>(std::clamp(std::lround(row[i++]), 0L, 8L));
 	s.vibeMode = static_cast<uint32_t>(std::clamp(std::lround(row[i++]), 0L, 8L));
@@ -174,7 +174,7 @@ Row rowOf(const Settings& s) {
 	row[i++] = s.highCrossover;
 	row[i++] = s.outputGain;
 	row[i++] = s.blend;
-	row[i++] = !s.softClip ? 0.0f : (s.clipOnly == 0 ? 3.0f : (s.clipOnly == 1 ? 2.0f : 1.0f));
+	row[i++] = !s.softClip ? 0.0f : (s.clipOnly == 0 ? 1.0f : (s.clipOnly == 1 ? 3.0f : 2.0f));
 	row[i++] = static_cast<float>(s.characterMode);
 	row[i++] = static_cast<float>(s.vibeMode);
 	row[i++] = s.stereoLink;
@@ -1668,7 +1668,18 @@ const device::TextOps kTextOps {
 				std::snprintf(out, size, "0");
 			}
 			else {
-				std::snprintf(out, size, "%+.0f%%", pct);
+				// TWO DECIMALS, TRAILING ZEROS DROPPED: "+25%", "+43.75%". The text a hand types into must read back to the value
+				// it was opened on, so a whole-percent print would not do.
+				char digits[24];
+				std::snprintf(digits, sizeof(digits), "%+.2f", pct);
+				size_t n = std::strlen(digits);
+				while (n > 0 && digits[n - 1] == '0') {
+					digits[--n] = '\0';
+				}
+				if (n > 0 && digits[n - 1] == '.') {
+					digits[--n] = '\0';
+				}
+				std::snprintf(out, size, "%s%%", digits);
 			}
 			return true;
 		}

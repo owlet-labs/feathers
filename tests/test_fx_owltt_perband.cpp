@@ -488,10 +488,10 @@ TEST_CASE("per-band controls: the Clip choice stores by label, an old On is Both
 	REQUIRE(clip != nullptr);
 	REQUIRE(clip->names.size() == 4u);
 	CHECK(std::string_view(clip->names[0]) == "Off");
-	CHECK(std::string_view(clip->names[1]) == "Master");
-	CHECK(std::string_view(clip->names[2]) == "Bands");
-	CHECK(std::string_view(clip->names[3]) == "Both");
-	CHECK(clip->def == 3.0); // the old On
+	CHECK(std::string_view(clip->names[1]) == "Both"); // index 1 is what On was: a stored or host-held number keeps its meaning
+	CHECK(std::string_view(clip->names[2]) == "Master");
+	CHECK(std::string_view(clip->names[3]) == "Bands");
+	CHECK(clip->def == 1.0);
 	REQUIRE(clip->choiceAliases.size() == 1u);
 	CHECK(std::string_view(clip->choiceAliases[0].from) == "On");
 	CHECK(std::string_view(clip->choiceAliases[0].to) == "Both");
@@ -517,7 +517,7 @@ TEST_CASE("per-band controls: the Clip choice stores by label, an old On is Both
 	std::vector<float> loaded(std::size(nw::kParamDescs), 0.0f);
 	feathers::rack::LoadReport report;
 	feathers::rack::rowOfValues(nw::kDescriptor, saved, loaded, &report, "OWLTT", nullptr);
-	CHECK(loaded[static_cast<size_t>(nw::Param::SoftClip)] == 3.0f); // Both, not Master or Off
+	CHECK(loaded[static_cast<size_t>(nw::Param::SoftClip)] == 1.0f); // Both, at the old On's own index
 	for (size_t i = static_cast<size_t>(nw::Param::LowUpRatio); i < static_cast<size_t>(nw::Param::kCount); ++i) {
 		CHECK(loaded[i] == static_cast<float>(nw::kParamDescs[i].def)); // every new control neutral
 	}
@@ -550,11 +550,11 @@ TEST_CASE("per-band controls: a short row from before them takes the neutral def
 	void* at = storage;
 	ops.construct(at);
 	ops.prepare(at, kRate, 480);
-	// (A NUMBER IS NOT A LABEL: the old On was the value 1, which the four-way choice reads as Master. A file carries labels, and
-	// the alias sends "On" to Both; a bare short row is given Both, the value that means what On meant.)
-	od::Row shortRow = oldRow;
-	shortRow[static_cast<size_t>(od::Param::SoftClip)] = 3.0f;
-	ops.setFields(at, shortRow.data(), shortRow.size());
+	// THE NUMBER 1 IS THE OLD ON, untouched: this is the road a bare value takes (a host slot's parameter, a stored record's row).
+	// (soft_clip is a device control, not one of Feathers' own CLAP parameters; a host reaches it only through a host slot, whose
+	// value arrives at `setFields` as this same row number.)
+	REQUIRE(oldRow[static_cast<size_t>(od::Param::SoftClip)] == 1.0f);
+	ops.setFields(at, oldRow.data(), oldRow.size());
 	const Program in = programOf(9000, false, 99u);
 	std::vector<float> l = in.l, r = in.r;
 	for (size_t i = 0; i < l.size(); i += 480) {
@@ -596,7 +596,7 @@ TEST_CASE("per-band controls: every new control non-default survives a save and 
 		INFO("control " << nw::kParamDescs[i].key);
 		CHECK(std::memcmp(&row[i], &back[i], sizeof(float)) == 0);
 	}
-	CHECK(back[static_cast<size_t>(nw::Param::SoftClip)] == 2.0f); // Bands
+	CHECK(back[static_cast<size_t>(nw::Param::SoftClip)] == 3.0f); // Bands
 	nw::Row loaded {};
 	std::copy(back.begin(), back.end(), loaded.begin());
 	const nw::Settings t = nw::stateOf(loaded);

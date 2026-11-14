@@ -41321,9 +41321,9 @@ TEST_CASE("OWLTT's window: a routed per-band threshold draws its ModHandle strok
 	REQUIRE(clip->entryCount() == 4u);
 	// (a menu row carries a mark for the current choice, so the label is looked for in it)
 	CHECK(clip->choiceLabelAt(0).find("Off") != std::string::npos);
-	CHECK(clip->choiceLabelAt(1).find("Master") != std::string::npos);
-	CHECK(clip->choiceLabelAt(2).find("Bands") != std::string::npos);
-	CHECK(clip->choiceLabelAt(3).find("Both") != std::string::npos);
+	CHECK(clip->choiceLabelAt(1).find("Both") != std::string::npos);
+	CHECK(clip->choiceLabelAt(2).find("Master") != std::string::npos);
+	CHECK(clip->choiceLabelAt(3).find("Bands") != std::string::npos);
 	CHECK(std::string_view(clip->control().desc().key) == "soft_clip");
 
 	// THE GLOBAL ROW, in order and with no hole: nine boxes, left to right at one height, each gap the same.

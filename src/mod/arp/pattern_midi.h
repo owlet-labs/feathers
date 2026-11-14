@@ -46,6 +46,8 @@ struct MidiSource {
 	std::vector<float> row;
 	std::vector<float> hand;
 	std::vector<float> edits;
+	/// The locked rows' block (`pattern.rowlock.v1`): a locked row is exported as it plays.
+	std::vector<float> rowLocks;
 	std::vector<float> play;
 };
 

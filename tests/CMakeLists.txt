@@ -1570,7 +1570,7 @@ add_test(NAME state-blocks COMMAND test_state_blocks)
 
 # A HAND'S BLOCK (`StateBlockDesc::handEdited`): the road for user-edited state too large for the row, over a fixture device.
 add_executable(test_hand_blocks test_hand_blocks.cpp)
-target_link_libraries(test_hand_blocks PRIVATE feathers-rack feathers-fx-sklitter feathers-warnings)
+target_link_libraries(test_hand_blocks PRIVATE feathers-rack feathers-fx-sklitter feathers-mod feathers-warnings)
 target_include_directories(test_hand_blocks PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME hand-blocks COMMAND test_hand_blocks)
 

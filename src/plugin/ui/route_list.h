@@ -24,6 +24,7 @@
 #include "backplane/device_host.h"
 #include "backplane/endpoint.h"
 #include "plugin/ui/edit_history.h"
+#include "plugin/ui/fine_adjust.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/notify_tray.h"
 #include "plugin/ui/text_field.h"
@@ -259,6 +260,7 @@ private:
 	Row dragRow_ {};
 	float anchorY_ = 0.0f;
 	float anchorAmount_ = 0.0f;
+	bool fine_ = false; ///< Shift is held: the travel is worth `kFineAdjust` of itself (re-anchored when it changes)
 	float before_ = 0.0f;
 
 	std::unique_ptr<TextField> field_;

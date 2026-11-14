@@ -36,6 +36,9 @@
 #include "plugin/ui/knob_tray.h"
 #include "plugin/ui/master_meter.h"
 #include "plugin/ui/value_box.h"
+#include "plugin/ui/fader_pill.h"
+#include "plugin/ui/route_list.h"
+#include "fx/filter/filter_types.h"
 #include "plugin/ui/switch_chip.h"
 #include "plugin/ui/text_field.h"
 #include "plugin/ui/macro_slot.h"
@@ -10370,4 +10373,156 @@ TEST_CASE("momentary chip: a hold whose release never arrived lets go at the fir
 	CHECK_FALSE(chip.on());
 	CHECK(spy.v == -2.0);
 	CHECK(spy.ends == 1);
+}
+
+namespace {
+
+namespace fine {
+
+/// A SHIFT-HELD EVENT: `at` with the modifier the hand's Shift key sets.
+visage::MouseEvent shifted(float x, float y) {
+	visage::MouseEvent e = at(x, y);
+	e.modifiers |= visage::kModifierShift;
+	return e;
+}
+
+/// THE FILTER'S RESONANCE, a 0..1 percent control, over a real device on a real bridge — the one quantity all four
+/// widgets are asked about, so the four numbers below are the same arithmetic restated four times.
+struct Resonance {
+	ModFixture f;
+	DeviceInstanceId device = kNoInstance;
+	std::unique_ptr<ui::DeviceControl> control;
+	Resonance() {
+		const size_t slot = f.bridge.addFxDevice(fx::filter::kTraits.tag);
+		REQUIRE(slot < feathers::kMaxFxSlots);
+		device = f.bridge.fxDeviceAt(slot);
+		control = std::make_unique<ui::DeviceControl>(f.deviceHost, device, fx::filter::kDescriptor,
+		                                               static_cast<size_t>(fx::filter::Param::Resonance));
+		control->setValue(0.2);
+	}
+};
+
+constexpr float kTravel = 28.0f;
+
+} // namespace fine
+
+} // namespace
+
+TEST_CASE("fine adjust is one rule on every drag: Shift mid-drag re-anchors, and the travel after it is worth kFineAdjust — Knob") {
+	// **THE SAME EXPERIMENT ON EACH OF THE FOUR DRAGGABLES** (Knob, ValueBox, FaderPill, a route's amount): drag N px
+	// coarse, press Shift, drag N px more. The value must (1) not jump at the modifier change — an event at the same point
+	// with Shift newly down leaves it where it was — and (2) then move by `kFineAdjust` of what N px was worth.
+	// Expected values are restated from the range and the pixel rate, not read off the widget.
+	fine::Resonance r;
+	ui::Knob knob(*r.control, "Res", nullptr);
+	knob.setBounds(0.0f, 0.0f, 52.0f, ui::Knob::kHeight);
+	const float x = 26.0f;
+	const float y0 = 40.0f;
+	const double perPixel = 1.0 / static_cast<double>(ui::Knob::kDragRange); // range is 0..1
+	knob.processMouseDown(at(x, y0));
+	knob.processMouseDrag(at(x, y0 - fine::kTravel));
+	const double coarse = 0.2 + static_cast<double>(fine::kTravel) * perPixel;
+	CHECK(r.control->value() == doctest::Approx(coarse).epsilon(1e-6));
+	knob.processMouseDrag(fine::shifted(x, y0 - fine::kTravel)); // the key goes down, the hand has not moved
+	CHECK(r.control->value() == doctest::Approx(coarse).epsilon(1e-6)); // no jump
+	knob.processMouseDrag(fine::shifted(x, y0 - 2.0f * fine::kTravel));
+	CHECK(r.control->value() == doctest::Approx(coarse + static_cast<double>(fine::kTravel) * perPixel * ui::kFineAdjust).epsilon(1e-6));
+	knob.processMouseUp(fine::shifted(x, y0 - 2.0f * fine::kTravel));
+}
+
+TEST_CASE("fine adjust is one rule on every drag: Shift mid-drag re-anchors, and the travel after it is worth kFineAdjust — ValueBox") {
+	fine::Resonance r;
+	ui::ValueBox box(*r.control, "Res");
+	box.setDragSpan(1.0); // one whole range per kDragRange px, so the arithmetic is the knob's
+	box.setBounds(0.0f, 0.0f, 80.0f, ui::ValueBox::kHeight);
+	const float x = 40.0f;
+	const float y0 = 60.0f;
+	const double perPixel = 1.0 / static_cast<double>(ui::ValueBox::kDragRange);
+	box.processMouseDown(at(x, y0));
+	box.processMouseDrag(at(x, y0 - fine::kTravel));
+	const double coarse = 0.2 + static_cast<double>(fine::kTravel) * perPixel;
+	CHECK(r.control->value() == doctest::Approx(coarse).epsilon(1e-6));
+	box.processMouseDrag(fine::shifted(x, y0 - fine::kTravel));
+	CHECK(r.control->value() == doctest::Approx(coarse).epsilon(1e-6)); // no jump
+	box.processMouseDrag(fine::shifted(x, y0 - 2.0f * fine::kTravel));
+	CHECK(r.control->value() == doctest::Approx(coarse + static_cast<double>(fine::kTravel) * perPixel * ui::kFineAdjust).epsilon(1e-6));
+	// AND LETTING SHIFT GO RE-ANCHORS BACK to the coarse rate, from where the value is now.
+	const double fineValue = r.control->value();
+	box.processMouseDrag(at(x, y0 - 2.0f * fine::kTravel));
+	CHECK(r.control->value() == doctest::Approx(fineValue).epsilon(1e-6));
+	box.processMouseDrag(at(x, y0 - 3.0f * fine::kTravel));
+	CHECK(r.control->value() == doctest::Approx(fineValue + static_cast<double>(fine::kTravel) * perPixel).epsilon(1e-6));
+	box.processMouseUp(at(x, y0 - 3.0f * fine::kTravel));
+}
+
+TEST_CASE("fine adjust is one rule on every drag: Shift mid-drag re-anchors, and the travel after it is worth kFineAdjust — FaderPill") {
+	fine::Resonance r;
+	ui::FaderPill pill(*r.control, "Res");
+	pill.setBounds(0.0f, 0.0f, 160.0f, 18.0f);
+	const float y = 9.0f;
+	const float x0 = 20.0f;
+	const double perPixel = 1.0 / static_cast<double>(ui::FaderPill::kSpan); // range is 0..1
+	pill.processMouseDown(at(x0, y));
+	pill.processMouseDrag(at(x0 + fine::kTravel, y));
+	const double coarse = 0.2 + static_cast<double>(fine::kTravel) * perPixel;
+	CHECK(r.control->value() == doctest::Approx(coarse).epsilon(1e-6));
+	pill.processMouseDrag(fine::shifted(x0 + fine::kTravel, y));
+	CHECK(r.control->value() == doctest::Approx(coarse).epsilon(1e-6)); // no jump
+	pill.processMouseDrag(fine::shifted(x0 + 2.0f * fine::kTravel, y));
+	CHECK(r.control->value() == doctest::Approx(coarse + static_cast<double>(fine::kTravel) * perPixel * ui::kFineAdjust).epsilon(1e-6));
+	pill.processMouseUp(fine::shifted(x0 + 2.0f * fine::kTravel, y));
+}
+
+TEST_CASE("fine adjust is one rule on every drag: Shift mid-drag re-anchors, and the travel after it is worth kFineAdjust — a route's amount") {
+	ModFixture f;
+	ui::ModState* mod = f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	f.arm(backplane::Source::core(0));
+	REQUIRE(mod->armed());
+	ui::Knob* path = f.knobFor(ParamId::Path);
+	REQUIRE(path != nullptr);
+	const int destination = modDestinationIndexOf(ParamId::Path);
+	REQUIRE(destination >= 0);
+	const backplane::Destination dest = backplane::Destination::core(static_cast<size_t>(destination));
+	const visage::Point face = f.faceCentre(path);
+	dragThroughRoot(f.root, face, { face.x, face.y - 35.0f });
+	const auto amountNow = [&] { return f.bridge.routeAmount(backplane::Source::core(0), dest); };
+	const float made = amountNow();
+	REQUIRE(made > 0.0f);
+	auto* list = findInTree<ui::RouteList>(f.root);
+	REQUIRE(list != nullptr);
+	f.root->resized();
+	// A POINT ON THE ROW'S AMOUNT, asked of the list.
+	const auto rows = list->rows();
+	size_t index = rows.size();
+	for (size_t i = 0; i < rows.size(); ++i) {
+		if (rows[i] == dest) {
+			index = i;
+		}
+	}
+	REQUIRE(index < rows.size());
+	const visage::Bounds row = list->rowBounds(index);
+	const float y0 = row.y() + row.height() * 0.5f;
+	float x = -1.0f;
+	for (float px = row.x() + 1.0f; px < row.right(); px += 1.0f) {
+		const ui::RouteList::Hit hit = list->hitAt({ px, y0 });
+		if (hit.part == ui::RouteList::Part::Amount && hit.destination == dest) {
+			x = px;
+			break;
+		}
+	}
+	REQUIRE(x >= 0.0f);
+	const double perPixel = 1.0 / static_cast<double>(ui::RouteList::kDragRange);
+	// SMALL TRAVELS: the amount is clamped, so stay well inside it.
+	const float n = 8.0f;
+	list->processMouseDown(at(x, y0));
+	list->processMouseDrag(at(x, y0 - n));
+	const double coarse = static_cast<double>(made) + static_cast<double>(n) * perPixel;
+	CHECK(static_cast<double>(amountNow()) == doctest::Approx(coarse).epsilon(1e-4));
+	list->processMouseDrag(fine::shifted(x, y0 - n));
+	CHECK(static_cast<double>(amountNow()) == doctest::Approx(coarse).epsilon(1e-4)); // no jump
+	list->processMouseDrag(fine::shifted(x, y0 - 2.0f * n));
+	CHECK(static_cast<double>(amountNow())
+	      == doctest::Approx(coarse + static_cast<double>(n) * perPixel * ui::kFineAdjust).epsilon(1e-4));
+	list->processMouseUp(fine::shifted(x, y0 - 2.0f * n));
 }

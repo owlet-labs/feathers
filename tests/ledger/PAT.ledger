@@ -298,6 +298,7 @@ block PAT pattern_hand floats=1004
 block PAT pattern.likes.v3 floats=23044
 block PAT pattern.edits.v3 floats=2604
 block PAT pattern.edits.v4 floats=4908
+block PAT pattern.rowlock.v1 floats=12388
 out PAT step bipolar=0
 out PAT pitch bipolar=0
 out PAT velocity bipolar=0

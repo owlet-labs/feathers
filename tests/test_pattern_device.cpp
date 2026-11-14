@@ -2905,3 +2905,311 @@ TEST_CASE("cell levels by value: Drum's velocity of a hit, Accent adding a quart
 		}
 	}
 }
+
+//------------------------------------------------------------------------------------------------//
+// LOCK ROW (pattern_rowlock.h)                                                                    //
+//------------------------------------------------------------------------------------------------//
+
+namespace rowlock {
+
+using feathers::mod::arp::HeldChord;
+using feathers::SliceResidue;
+
+/// THE DECODE AT A PLACE over a held C4 (the window's own road: `pattern::build` over `placeOf` and `recipeFor`), no edits.
+dpn::PatternCycle decode(const pat::Settings& s, size_t p = 0) {
+	HeldChord held;
+	held.press(60, 0, 0.8f, 1);
+	dpn::PatternCycle cycle;
+	dpn::build(pat::PatternDevice::placeOf(s.patterns[p], SliceResidue<genes::kRowCount> {}),
+	           pat::recipeFor(s, p, genes::kPinOnByDefault), held, cycle);
+	return cycle;
+}
+
+pat::Settings placeOf(genes::Mode mode, bool b) {
+	pat::Settings s;
+	pat::PatternSettings& q = s.patterns[0];
+	q.mode = mode;
+	q.zone = b ? 333 : 300;
+	q.gamma = b ? 3.0 : 7.0;
+	q.pitchOnNotes = false;
+	if (genes::decodesDrum(mode)) {
+		q.pins[static_cast<size_t>(genes::Pin::Octave)] = 0.0f; // no rolls: one stroke a hit
+		q.pins[static_cast<size_t>(genes::Pin::Density)] = 1.0f;
+	}
+	return s;
+}
+
+int toneKey(const dpn::PatternCycle& c, size_t k, int i) { return i == 0 ? c.keyAt(k, 0) : c.steps[k].keys[static_cast<size_t>(i)]; }
+
+/// THE ROWS A CYCLE HOLDS: a lane with any hit, a pitch with any note.
+std::vector<int> rowsOf(const dpn::PatternCycle& c, genes::Mode mode) {
+	std::set<int> ids;
+	for (size_t k = 0; k < c.length; ++k) {
+		const dpn::PatternStep& st = c.steps[k];
+		if (genes::decodesDrum(mode)) {
+			for (int l = 0; l < static_cast<int>(dpn::kDrumLanes); ++l) {
+				if (((st.drumHits >> l) & 1u) != 0u) {
+					ids.insert(l);
+				}
+			}
+		}
+		else if (st.kind == StepKind::Note) {
+			for (int i = 0; i < st.count; ++i) {
+				ids.insert(toneKey(c, k, i) - c.rootKey);
+			}
+		}
+	}
+	return { ids.begin(), ids.end() };
+}
+
+/// THE STEPS THAT SOUND ROW `id`.
+std::vector<bool> stepsOf(const dpn::PatternCycle& c, genes::Mode mode, int id) {
+	std::vector<bool> on(c.length, false);
+	for (size_t k = 0; k < c.length; ++k) {
+		const dpn::PatternStep& st = c.steps[k];
+		if (genes::decodesDrum(mode)) {
+			on[k] = ((st.drumHits >> id) & 1u) != 0u;
+		}
+		else if (st.kind == StepKind::Note) {
+			for (int i = 0; i < st.count; ++i) {
+				on[k] = on[k] || toneKey(c, k, i) - c.rootKey == id;
+			}
+		}
+	}
+	return on;
+}
+
+/// EVERYTHING A STEP SOUNDS FROM (not the polymeter's index, which a locked note leaves).
+bool sameStep(const dpn::PatternStep& a, const dpn::PatternStep& b) {
+	if (a.kind != b.kind) {
+		return false;
+	}
+	if (a.kind == StepKind::Tie) {
+		return true;
+	}
+	if (a.drumHits != b.drumHits || a.drumAccent != b.drumAccent || a.drumGhost != b.drumGhost || a.drumRoll != b.drumRoll
+	    || a.drumVelocity != b.drumVelocity || a.drumLength != b.drumLength || a.accent != b.accent || a.ratchet != b.ratchet) {
+		return false;
+	}
+	if (a.kind != StepKind::Note) {
+		return true;
+	}
+	if (a.count != b.count || a.holdMask != b.holdMask || a.velocity != b.velocity || a.gate != b.gate || a.slide != b.slide
+	    || a.grace != b.grace || a.degree != b.degree || a.octave != b.octave || (a.grace && a.graceKey != b.graceKey)) {
+		return false;
+	}
+	for (int i = 0; i < a.count; ++i) {
+		if (a.keys[static_cast<size_t>(i)] != b.keys[static_cast<size_t>(i)]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+constexpr genes::Mode kAllModes[] = { genes::Mode::Melody, genes::Mode::MelodyMono, genes::Mode::Chords, genes::Mode::TbMono,
+	                                  genes::Mode::TbGlide, genes::Mode::Drum, genes::Mode::Progression, genes::Mode::Modulation };
+
+bool chordal(genes::Mode m) { return m == genes::Mode::Chords || m == genes::Mode::Progression; }
+
+pat::RowLockState stateWith(const dpn::RowLocks& l) {
+	pat::RowLockState st {};
+	st[0] = l;
+	return st;
+}
+
+} // namespace rowlock
+
+TEST_CASE("row lock: a row locked at the place it was captured changes nothing — every row of every Mode, at several places, step for step") {
+	using namespace rowlock;
+	size_t rows = 0;
+	for (const genes::Mode mode : kAllModes) {
+		for (const int zone : { 300, 333, 411 }) {
+			pat::Settings s = placeOf(mode, false);
+			s.patterns[0].zone = zone;
+			const dpn::PatternCycle terrain = decode(s);
+			const std::vector<int> ids = rowsOf(terrain, mode);
+			CAPTURE(genes::kModeNames[static_cast<size_t>(mode)]);
+			CAPTURE(zone);
+			REQUIRE_FALSE(ids.empty());
+			for (const int id : ids) {
+				CAPTURE(id);
+				dpn::RowLocks locks;
+				REQUIRE(dpn::lockRow(locks, terrain, mode, id));
+				dpn::PatternCycle again = terrain;
+				dpn::applyRowLocks(locks, mode, again);
+				REQUIRE(again.length == terrain.length);
+				for (size_t k = 0; k < terrain.length; ++k) {
+					CAPTURE(k);
+					CHECK(sameStep(terrain.steps[k], again.steps[k]));
+				}
+				++rows;
+			}
+		}
+	}
+	CHECK(rows > 60);
+}
+
+TEST_CASE("row lock: the capture is the row — a lane's hits and levels, a pitch's notes and ties, restated from the decode") {
+	using namespace rowlock;
+	// DRUM: lane 2 (closed hat), every step's hit, accent, ghost, velocity and length, restated bit by bit.
+	{
+		const pat::Settings s = placeOf(genes::Mode::Drum, false);
+		const dpn::PatternCycle c = decode(s);
+		const dpn::LockedRow row = dpn::captureRow(c, genes::Mode::Drum, 2);
+		REQUIRE(row.used);
+		CHECK(row.id == 2);
+		CHECK(row.length == c.length);
+		int hits = 0;
+		for (size_t k = 0; k < c.length; ++k) {
+			const bool hit = ((c.steps[k].drumHits >> 2) & 1u) != 0u;
+			CHECK(row.cell[k].on == hit);
+			if (hit) {
+				CHECK(row.cell[k].velocity == c.steps[k].drumVelocity[2]);
+				CHECK(row.cell[k].length == c.steps[k].drumLength[2]);
+				CHECK(row.cell[k].accent == (((c.steps[k].drumAccent >> 2) & 1u) != 0u));
+				++hits;
+			}
+		}
+		CHECK(hits > 2);
+	}
+	// MELODY: the most-struck pitch; a note is on its steps, never on another pitch's.
+	{
+		const pat::Settings s = placeOf(genes::Mode::Melody, false);
+		const dpn::PatternCycle c = decode(s);
+		std::map<int, int> count;
+		for (size_t k = 0; k < c.length; ++k) {
+			if (c.steps[k].kind == StepKind::Note) {
+				++count[c.keyAt(k, 0) - c.rootKey];
+			}
+		}
+		REQUIRE_FALSE(count.empty());
+		int id = count.begin()->first;
+		for (const auto& [pitch, n] : count) {
+			id = n > count[id] ? pitch : id;
+		}
+		const dpn::LockedRow row = dpn::captureRow(c, genes::Mode::Melody, id);
+		int on = 0;
+		for (size_t k = 0; k < c.length; ++k) {
+			const bool here = c.steps[k].kind == StepKind::Note && c.keyAt(k, 0) - c.rootKey == id;
+			CHECK(row.cell[k].on == here);
+			if (here) {
+				CHECK(row.cell[k].velocity == c.steps[k].velocity);
+				CHECK(row.cell[k].length == c.steps[k].gate);
+				++on;
+			}
+		}
+		CHECK(on == count[id]);
+		CHECK(on > 0);
+	}
+}
+
+TEST_CASE("row lock: a locked row stays as captured when the place moves, and the unlocked rows follow it — by value, every Mode that plays notes, under Swing") {
+	using namespace rowlock;
+	namespace hz = feathers::mod::arp::humanize;
+	struct Ev {
+		int64_t sample;
+		int key;
+		double velocity;
+		bool operator<(const Ev& o) const { return std::tie(sample, key, velocity) < std::tie(o.sample, o.key, o.velocity); }
+		bool operator==(const Ev& o) const { return sample == o.sample && key == o.key && velocity == o.velocity; }
+	};
+	// ONE CYCLE'S ONS (a full cycle after the first, which carries the start-up), by the sample the device put them on.
+	const auto play = [](genes::Mode mode, bool placeB, const pat::RowLockState* locks, int octaves = 0) {
+		Drive d;
+		d.s = placeOf(mode, placeB);
+		d.s.patterns[0].enable = true;
+		for (auto& q : d.s.patterns) {
+			q.pins[static_cast<size_t>(genes::Pin::Detail)] = 0.0f;
+		}
+		d.s.feel = { hz::Mode::Swing16, 0.8, 11 };
+		d.s.transposeOctaves = octaves;
+		d.apply();
+		if (locks != nullptr) {
+			std::vector<float> words(pat::kRowLockWords);
+			pat::writeRowLockState(*locks, words.data());
+			REQUIRE(pat::applyBlock(&d.d, pat::kRowLockBlock, words.data(), words.size()));
+		}
+		d.note(Kind::On, 60);
+		d.runTo(33 * kStep);
+		std::vector<Ev> ons;
+		for (const Logged& l : d.log) {
+			if (l.kind == Kind::On && l.sample >= 16 * kStep && l.sample < 32 * kStep) {
+				ons.push_back({ l.sample, l.key, l.velocity });
+			}
+		}
+		std::sort(ons.begin(), ons.end());
+		return std::pair { ons, d.d.cycleForTest(0) };
+	};
+	// A SWING-LATE NOTE (under 0.4 of a step) still belongs to the step it was late from.
+	const auto stepOf = [](int64_t sample) { return static_cast<size_t>(std::llround(static_cast<double>(sample) / static_cast<double>(kStep))) % 16; };
+	size_t checkedRows = 0;
+	for (const genes::Mode mode : { genes::Mode::Melody, genes::Mode::MelodyMono, genes::Mode::TbMono, genes::Mode::Drum }) {
+		const auto [onsA, cycleA] = play(mode, false, nullptr);
+		const auto [onsC, cycleC] = play(mode, true, nullptr);
+		const bool drum = mode == genes::Mode::Drum;
+		CAPTURE(genes::kModeNames[static_cast<size_t>(mode)]);
+		// THE ROW: one the two places hold differently, the most struck at A.
+		int id = -1000;
+		size_t most = 0;
+		for (const int candidate : rowsOf(cycleA, mode)) {
+			const std::vector<bool> a = stepsOf(cycleA, mode, candidate);
+			const std::vector<bool> c = stepsOf(cycleC, mode, candidate);
+			const size_t n = static_cast<size_t>(std::count(a.begin(), a.end(), true));
+			if (a != c && n > most) {
+				id = candidate;
+				most = n;
+			}
+		}
+		REQUIRE(id != -1000);
+		dpn::RowLocks locks;
+		REQUIRE(dpn::lockRow(locks, cycleA, mode, id));
+		const dpn::LockedRow& row = locks.row[0];
+		const pat::RowLockState state = stateWith(locks);
+		const int rowKey = drum ? placeOf(mode, false).patterns[0].drum.note[static_cast<size_t>(id)] : 60 + id;
+		const auto [onsB, cycleB] = play(mode, true, &state);
+		// THE EXPECTED NOTES, composed from the two UNLOCKED runs: the row's own at the captured place's steps, everything else at the new one's.
+		std::vector<Ev> want;
+		for (const Ev& e : onsA) {
+			if (e.key == rowKey && row.cell[stepOf(e.sample)].on) {
+				want.push_back(e);
+			}
+		}
+		for (const Ev& e : onsC) {
+			if (e.key != rowKey && !(row.cell[stepOf(e.sample)].on && !drum)) {
+				want.push_back(e);
+			}
+		}
+		std::sort(want.begin(), want.end());
+		CHECK(onsB == want);
+		CHECK_FALSE(onsB == onsC); // NOT VACUOUS: the lock changed what plays
+		CHECK_FALSE(onsB == onsA); // ... and the place did too
+		// THE ROW'S OWN ONS ARE THE CAPTURED ONES, whatever the place did to its decode.
+		std::vector<Ev> rowA, rowB;
+		for (const Ev& e : onsA) {
+			if (e.key == rowKey) {
+				rowA.push_back(e);
+			}
+		}
+		for (const Ev& e : onsB) {
+			if (e.key == rowKey) {
+				rowB.push_back(e);
+			}
+		}
+		CHECK(rowB == rowA);
+		CHECK_FALSE(rowA.empty());
+		// ... and the globals still act on it: +1 octave moves every locked note by exactly 12 (the unlocked run's own).
+		const auto [onsUp, cycleUp] = play(mode, true, &state, drum ? 0 : 1);
+		if (!drum) {
+			std::vector<Ev> upRow;
+			for (const Ev& e : onsUp) {
+				if (e.key == rowKey + 12) {
+					upRow.push_back({ e.sample, e.key - 12, e.velocity });
+				}
+			}
+			CHECK(upRow == rowB);
+			(void)cycleUp;
+		}
+		++checkedRows;
+	}
+	CHECK(checkedRows == 4);
+}

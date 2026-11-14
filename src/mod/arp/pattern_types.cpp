@@ -107,6 +107,58 @@ void writeEditState(const EditState& state, float* out) noexcept {
 	}
 }
 
+RowLockState rowLockStateOf(const float* in, size_t n) noexcept {
+	RowLockState out {};
+	if (in == nullptr || n != kRowLockWords) {
+		return out;
+	}
+	device::BlockReader r(in, n);
+	RowLockState read {};
+	for (pattern::RowLocks& locks : read) {
+		locks.mode = static_cast<Mode>(std::min<uint32_t>(r.u16(), static_cast<uint32_t>(Mode::kCount) - 1));
+		for (pattern::LockedRow& row : locks.row) {
+			row.used = r.u16() != 0u;
+			row.id = static_cast<int16_t>(static_cast<int>(r.u16()) - 512);
+			row.length = static_cast<uint16_t>(std::min<uint32_t>(r.u16(), genes::kMaxSteps));
+			for (pattern::LockedCell& c : row.cell) {
+				const uint32_t flags = r.u16();
+				c.on = (flags & 1u) != 0u;
+				c.tie = (flags & 2u) != 0u;
+				c.accent = (flags & 4u) != 0u;
+				c.ghost = (flags & 8u) != 0u;
+				c.roll = (flags & 16u) != 0u;
+				c.slide = (flags & 32u) != 0u;
+				c.grace = (flags & 64u) != 0u;
+				c.held = (flags & 128u) != 0u;
+				c.ratchet = static_cast<uint8_t>(std::clamp<uint32_t>(flags >> 8, 1u, 8u));
+				c.graceKey = static_cast<int16_t>(static_cast<int>(r.u16()) - 512);
+				c.velocity = std::clamp(r.f32(), 0.0f, 1.0f);
+				c.length = std::clamp(r.f32(), 0.0f, 64.0f);
+			}
+		}
+	}
+	return r.ok() ? read : out;
+}
+
+void writeRowLockState(const RowLockState& state, float* out) noexcept {
+	device::BlockWriter w(out, kRowLockWords);
+	for (const pattern::RowLocks& locks : state) {
+		w.u16(static_cast<uint32_t>(locks.mode));
+		for (const pattern::LockedRow& row : locks.row) {
+			w.u16(row.used ? 1u : 0u);
+			w.u16(static_cast<uint32_t>(std::clamp<int>(row.id + 512, 0, 1023)));
+			w.u16(row.length);
+			for (const pattern::LockedCell& c : row.cell) {
+				w.u16((c.on ? 1u : 0u) | (c.tie ? 2u : 0u) | (c.accent ? 4u : 0u) | (c.ghost ? 8u : 0u) | (c.roll ? 16u : 0u)
+				      | (c.slide ? 32u : 0u) | (c.grace ? 64u : 0u) | (c.held ? 128u : 0u) | (static_cast<uint32_t>(std::clamp<int>(c.ratchet, 1, 8)) << 8));
+				w.u16(static_cast<uint32_t>(std::clamp<int>(c.graceKey + 512, 0, 1023)));
+				w.f32(std::clamp(c.velocity, 0.0f, 1.0f));
+				w.f32(std::clamp(c.length, 0.0f, 64.0f));
+			}
+		}
+	}
+}
+
 std::array<float, kAnchorFields> anchorNow(size_t p, const std::function<float(size_t)>& fieldAt) noexcept {
 	std::array<float, kAnchorFields> a {};
 	for (size_t i = 0; i < kAnchorFields; ++i) {

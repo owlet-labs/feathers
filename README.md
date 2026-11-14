@@ -237,6 +237,8 @@ Pre-release builds come from GitHub Actions. Open the [`build` workflow](https:/
 
 Downloading artifacts needs a signed-in GitHub account, and a run keeps its artifacts for **7 days**, so take them from a recent run. These are pre-release builds: expect rough edges, and please [report what you find](https://github.com/owlet-labs/feathers/issues).
 
+**Patches and presets are not stable before 1.0.** Devices and engines are still changing, and a later build may load a saved patch, preset or DAW project differently, or not restore parts of it. Until the 1.0 release, don't rely on Feathers for projects you need to reopen exactly as they were, and keep a bounce of anything that matters.
+
 ### Installing on macOS
 
 GitHub wraps every artifact in a zip, so there are two: unzip the download, then unzip the `Feathers-macos-universal2-….zip` inside it.

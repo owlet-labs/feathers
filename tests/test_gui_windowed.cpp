@@ -1237,18 +1237,13 @@ PixelRect pixelsOf(const visage::Bounds& logical, float scale) {
 //                      editor card plot 220x120+1003+468 — compare with
 //   compare -metric AE <(convert A -crop R +repage png:-) <(convert B -crop R +repage png:-) null:
 //   and md5sum the .ppm files: identical before/again is the settle, differing after is the change.
-// INTERMITTENT ON UNCHANGED CODE — MEASURED by surfaces 2026-09-02: the same tree passed a full ctest,
-// failed the next full ctest (padChanged == 0, plotChanged == 0, plotChangedByKnob == 0, all three at
-// once), passed by name, failed under --each (1 of 8), and passed a third full ctest after an unrelated
-// edit. Three assertions going to zero together is the signature of frames coming back IDENTICAL —
-// the windowed-capture hazard CLAUDE.md names: a run where the window did not repaint reports "nothing
-// changed" and is indistinguishable from a real regression. The headless case beside it in
-// test_gui_widgets ("a Shaper change from any of four sources reaches BOTH plots — counted and read
-// back") is the PROOF; this one is the PICTURE, and a picture that is sometimes blank must not turn the
-// suite red. `may_fail` keeps it running and reporting without failing ctest; a real regression is
-// still caught by the counted case. Remove the decorator when the venue's repaint is made reliable.
-TEST_CASE("the Shaper popout's transfer curve follows the pad and the knobs — photographed"
-          * doctest::may_fail()) {
+// THE PICTURE, NOT THE PROOF. The headless case beside it in test_gui_widgets ("a Shaper change from any of
+// four sources reaches BOTH plots — counted and read back") proves the panel is told; this one photographs a
+// real popout around a pad write and a knob drag. It once read zero pixels changed on the pad write, steadily,
+// and was marked allowed-to-fail as a flaky venue. Measured, the venue was not at fault: the gesture ended at
+// the pad's centre, and the pad is centred on the standing sound, so that drag wrote the travel back to where
+// it began. The case now ends off-centre and asserts the row's travel moved before it looks at pixels.
+TEST_CASE("the Shaper popout's transfer curve follows the pad and the knobs — photographed") {
 	// THE BUG: the table display did not always update with puck/knob changes in the
 	// window view. The headless case in gui-widgets proves the panel is TOLD; this is the picture:
 	// a real popout, pumped the way `Gui::processEvents` pumps it (the tick, then the window's own
@@ -1311,9 +1306,23 @@ TEST_CASE("the Shaper popout's transfer curve follows the pad and the knobs — 
 
 	// A PAD WRITE, from the bottom-left corner to the middle — colour and gamma both move, so the
 	// curve `deriveCurve` gives cannot stay where it was.
+	// THE GESTURE ENDS OFF-CENTRE: the pad is centred on the standing sound, so its centre means "no change" —
+	// a drag that ends there writes the travel back to where it started and nothing on screen can move.
+	const auto travelNow = [&] {
+		std::array<float, fx::shaper::phase_space::kPhaseCount> travel {};
+		const FxChain chain = f.bridge.fxChain();
+		const auto& row = fxDeviceAtPosition(chain, slot).row;
+		for (size_t i = 0; i < travel.size(); ++i) {
+			const size_t at = fx::shaper::kTravelFirst + i;
+			travel[i] = at < row.fieldsPresent ? row.field[at] : 0.0f;
+		}
+		return travel;
+	};
+	const auto travelBefore = travelNow();
 	pad->onMouseDown().callback(pressAt(pad->width() * 0.05f, pad->height() * 0.95f));
-	pad->onMouseDrag().callback(pressAt(pad->width() * 0.5f, pad->height() * 0.5f));
-	pad->onMouseUp().callback(pressAt(pad->width() * 0.5f, pad->height() * 0.5f));
+	pad->onMouseDrag().callback(pressAt(pad->width() * 0.8f, pad->height() * 0.3f));
+	pad->onMouseUp().callback(pressAt(pad->width() * 0.8f, pad->height() * 0.3f));
+	CHECK(travelNow() != travelBefore); // THE VALUE: the write reached the row, whatever the picture does
 	pump(600);
 	const Shot afterPad = capturePpm(handle, base + "-after-pad.ppm");
 	REQUIRE(afterPad.valid());

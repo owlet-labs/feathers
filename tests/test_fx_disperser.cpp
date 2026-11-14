@@ -2741,3 +2741,86 @@ TEST_CASE("NM: on a playing transport the two wobbles are the song's — a fresh
 	CHECK(stopped->widthLfoPhaseForTest() < 0.001f);
 	CHECK(std::abs(static_cast<double>(stopped->widthLfoPhaseForTest()) - (width - std::floor(width))) > 0.01);
 }
+
+TEST_CASE("WIDTH SWITCHED OFF IS MONO: a mono input leaves with left equal to right, sample for sample, whatever else "
+          "is set") {
+	// THE CONTRACT (`kPillOff`: Width off is "none"): every L/R difference the Disperser makes is the stages' L/R
+	// half-offset (`layoutStages`' `lOffsetOct`/`rOffsetOct`) — Twist's width, Topo's own L/R offset (zones 1
+	// and 2), the baseline offset and the two wobble LFOs. Off, all of them go: the routings are symmetric in
+	// L and R, so two equal channels stay equal. THE VALUE is the stages' L and R frequencies, engine and plot.
+	const std::vector<float> in = probe(12000, 0.5f);
+	const auto widthOff = [](Settings s) {
+		s.pillOn[static_cast<size_t>(Pill::Width)] = false;
+		return s;
+	};
+	std::vector<Settings> rows;
+	rows.push_back(defaults());
+	{
+		Settings s = defaults();
+		s.twist = 0.1f; // Twist at Width
+		rows.push_back(s);
+	}
+	for (const float topo : { 1.5f / 8.0f, 2.5f / 8.0f, 3.5f / 8.0f, 6.5f / 8.0f }) { // Topo's own L/R offset, Cross
+		Settings s = defaults();
+		s.topo = topo;
+		s.twist = 5.7f / 8.0f + 1.0f; // the combined Twist a lap in: width, punch, chirp, curve all moving
+		s.stages = 32;
+		rows.push_back(s);
+	}
+	{
+		Settings s = defaults();
+		s.twist = 0.1f;
+		s.pillAmount[static_cast<size_t>(Pill::Width)] = 1.0f; // a route driving the amount to its top
+		s.pillAmount[static_cast<size_t>(Pill::Detune)] = 1.0f;
+		s.gamma = 0.7f;
+		rows.push_back(s);
+	}
+	for (size_t row = 0; row < rows.size(); ++row) {
+		for (const bool playing : { false, true }) {
+			CAPTURE(row);
+			CAPTURE(playing);
+			const Settings s = widthOff(rows[row]);
+			Disperser d;
+			d.prepare(kRef);
+			device::TransportClock clock {};
+			clock.secondsPerBeat = 0.5;
+			clock.playing = playing;
+			clock.songPositionSeconds = 37.25; // the wobbles away from their centre
+			d.setTransportClock(clock);
+			d.setTarget(s);
+			std::vector<float> right;
+			const std::vector<float> left = render(d, in, 256, &right);
+			for (int i = 0; i < std::clamp(s.stages, kMinStages, kMaxStages); ++i) {
+				CAPTURE(i);
+				CHECK(d.stageHzForTest(i, 0) == d.stageHzForTest(i, 1));
+			}
+			CHECK(left == right);
+			const ResponseModel m = responseModelOf(s, false, 60.0, kRef);
+			for (int i = 0; i < m.layout.count; ++i) {
+				CHECK(m.layout.hzL[static_cast<size_t>(i)] == m.layout.hzR[static_cast<size_t>(i)]);
+			}
+			// NOT VACUOUS: the same row with Width on is stereo.
+			Disperser on;
+			on.prepare(kRef);
+			on.setTransportClock(clock);
+			on.setTarget(rows[row]);
+			std::vector<float> onRight;
+			CHECK(render(on, in, 256, &onRight) != onRight);
+		}
+	}
+	// SWITCHED OFF WHILE RUNNING, the stages land on one frequency per stage: the switch is itself a reason to
+	// update. The default, where Twist's width is already 0, with Detune off (an active detune recomputes every
+	// period), so nothing else can trigger the update for it.
+	Settings s = defaults();
+	s.pillOn[static_cast<size_t>(Pill::Detune)] = false;
+	Disperser d;
+	d.prepare(kRef);
+	d.setTarget(s);
+	(void) render(d, in, 256);
+	REQUIRE(d.stageHzForTest(0, 0) != d.stageHzForTest(0, 1));
+	d.setTarget(widthOff(s));
+	(void) render(d, in, 256);
+	for (int i = 0; i < s.stages; ++i) {
+		CHECK(d.stageHzForTest(i, 0) == d.stageHzForTest(i, 1));
+	}
+}

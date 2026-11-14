@@ -882,8 +882,13 @@ struct Routing {
 	double lrOffset = 0.0;
 	double bimodalSeparation = 0.0;
 	double crossMix = 0.0;
+	/// **FALSE WITH THE WIDTH PILL OFF: NO L/R OFFSET AT ALL.** Every difference between the channels is the stages'
+	/// L/R half-offset — Twist's width, Topo's own (`lrOffset`), the baseline and the two wobble LFOs — and the
+	/// routings are symmetric in L and R, so off, a mono input leaves mono, bit for bit. `kPillOff`'s Width 0
+	/// alone took only Twist's share and left the rest stereo.
+	bool stereo = true;
 };
-[[nodiscard]] Routing routingOf(const TopoParams& topo, const TwistParams& twist) noexcept;
+[[nodiscard]] Routing routingOf(const TopoParams& topo, const TwistParams& twist, bool widthOn = true) noexcept;
 
 /// **THE CENTRE, AS THE FIRMWARE'S 0..127 INDEX** (`log2(Hz) = index * 13 / 127`). Key Track off: the
 /// Freq knob. On and a note heard: the note times 2^Offset. On and no note yet: the Offset knob read as
@@ -954,8 +959,9 @@ struct StageLayout {
 
 /// `centerHz = exp2f(freq * 13 / 127)`, from the (continuous) index.
 [[nodiscard]] float centerHzOf(double freqIndex) noexcept;
-/// The L/R half-offset with both LFOs at their centre — what the plot draws. The engine adds the LFOs.
-[[nodiscard]] float restingHalfSpread(double lrOffset) noexcept;
+/// The L/R half-offset with both LFOs at their centre — what the plot draws. The engine adds the LFOs. Zero when
+/// `Routing::stereo` is off.
+[[nodiscard]] float restingHalfSpread(const Routing& routing) noexcept;
 
 extern const device::AudioOps kAudioOps;
 

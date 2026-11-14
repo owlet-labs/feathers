@@ -53,7 +53,7 @@ ResponseModel responseModelOf(const Settings& s, bool haveNote, double noteSemit
 	m.topo = computeTopoParams(topoC.knob, topoC.lap + static_cast<double>(s.topoLap) + gammaTerm, m.twist.phaseOffset);
 	applyPills(s, m.topo, m.twist);
 	m.topo.q = qWithOffset(m.topo.q, static_cast<double>(s.qOffsetOctaves));
-	m.routing = routingOf(m.topo, m.twist);
+	m.routing = routingOf(m.topo, m.twist, s.pillOn[static_cast<size_t>(Pill::Width)]);
 	m.topology = static_cast<Topology>(m.topo.zone);
 	const double freqIndex = freqIndexOf(s, haveNote, noteSemitones);
 	m.tracking = s.keyTrack && haveNote;
@@ -63,7 +63,7 @@ ResponseModel responseModelOf(const Settings& s, bool haveNote, double noteSemit
 
 	const int stages = std::clamp(s.stages, kMinStages, kMaxStages);
 	m.layout = layoutStages(centerHz, static_cast<float>(m.routing.spread * kSpreadOctaves),
-	                        restingHalfSpread(m.routing.lrOffset), static_cast<float>(m.topo.q), stages,
+	                        restingHalfSpread(m.routing), static_cast<float>(m.topo.q), stages,
 	                        static_cast<float>(m.twist.spreadCurve), static_cast<float>(m.twist.qTilt),
 	                        static_cast<float>(m.routing.bimodalSeparation), static_cast<float>(m.topo.detuning),
 	                        static_cast<float>(m.topo.emphasis));

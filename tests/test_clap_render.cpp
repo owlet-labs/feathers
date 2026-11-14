@@ -8088,6 +8088,7 @@ TEST_CASE("SR [measure]: where an IDLE 1024-frame block's time goes outside the 
 	std::filesystem::remove_all(dir);
 	::setenv("FEATHERS_SPIKE_LOG_DIR", dir.string().c_str(), 1);
 	::setenv("FEATHERS_SPIKE_THRESHOLD", "1e-9", 1);
+	::setenv("FEATHERS_SPIKE_DETAIL_PER_MINUTE", "100000", 1); // every block's line: the recorder keeps 60 a minute otherwise
 	constexpr uint32_t kFrames = 1024;
 	{
 		HostedPlugin host;
@@ -8110,6 +8111,7 @@ TEST_CASE("SR [measure]: where an IDLE 1024-frame block's time goes outside the 
 		}
 	} // and the last round
 	::unsetenv("FEATHERS_SPIKE_THRESHOLD");
+	::unsetenv("FEATHERS_SPIKE_DETAIL_PER_MINUTE");
 	std::vector<std::string> fields = { "us", "cpu_us", "devices_us", "other_us", "unattributed_us" };
 	for (const char* s : { "events", "inputs", "params", "voices", "bus", "mods", "rebake", "resolve", "publish" }) {
 		fields.emplace_back(std::string("stages.") + s);

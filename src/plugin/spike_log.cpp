@@ -102,6 +102,7 @@ void Recorder::activate(double sampleRate, double threshold) {
 	ring_.reserve(kRingRecords);
 	sampleRate_ = sampleRate > 0.0 ? sampleRate : 48000.0;
 	threshold_ = threshold > 0.0 ? threshold : kDefaultThreshold;
+	detailPerMinute_ = detailPerMinuteFromEnvironment(detailPerMinute_);
 	tree_.clear();
 	if (!live_) {
 		live_ = true;
@@ -576,6 +577,17 @@ double thresholdFromEnvironment(double fallback) {
 		const double d = std::strtod(v, &end);
 		if (end != v && d > 0.0 && d <= 10.0) {
 			return d;
+		}
+	}
+	return fallback;
+}
+
+size_t detailPerMinuteFromEnvironment(size_t fallback) {
+	if (const char* v = std::getenv("FEATHERS_SPIKE_DETAIL_PER_MINUTE"); v != nullptr && v[0] != '\0') {
+		char* end = nullptr;
+		const unsigned long long n = std::strtoull(v, &end, 10);
+		if (end != v && *end == '\0' && n >= 1 && n <= 1'000'000ull) {
+			return static_cast<size_t>(n);
 		}
 	}
 	return fallback;

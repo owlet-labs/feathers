@@ -30,6 +30,8 @@
 #include "dsp/drum_voice.h"
 #include "dsp/field_override.h"
 #include "dsp/slice_build.h"
+#include "mod/dahdsr/dahdsr_types.h"
+#include "param_routes.h"
 #include "mod/arp/pattern.h"
 #include "plugin/character_params.h"
 #include "plugin/device_registry.h"
@@ -1455,4 +1457,68 @@ TEST_CASE("drum pad lanes (§17 P4): a latent pad lane delays the WHOLE kit to m
 	latentLane(*rig, 5, 100.0f);
 	(void)rig->play(64, 64);
 	CHECK(rig->synth.latencySamples() == 100u);
+}
+
+TEST_CASE("drum kit: the kit is rebuilt once per render call and once per control tick, not per chunk, and the values follow") {
+	constexpr uint32_t kTick = 64; // the control tick, in samples: where a routed source moves
+	SUBCASE("a static patch: one build per tick, and the pad's values stand") {
+		Rig rig;
+		rig.pad(0, DrumControl::Level, -6.0);
+		const uint64_t before = rig.synth.drumKitBuildsForTest();
+		// Eight calls of 128 frames, each on the tick grid: two ticks a call, so two builds a call, where a build per
+		// 32-frame chunk was four.
+		for (int call = 0; call < 8; ++call) {
+			(void)rig.play(128, 128);
+		}
+		CHECK(rig.synth.drumKitBuildsForTest() - before == 8 * (128 / kTick));
+		CHECK(rig.synth.drumKitForTest().pads[0].gain == doctest::Approx(static_cast<float>(std::pow(10.0, -6.0 / 20.0))).epsilon(1.0e-6));
+	}
+	SUBCASE("a host offset set between calls is in the next call's kit") {
+		Rig rig;
+		rig.pad(0, DrumControl::Level, -6.0);
+		(void)rig.play(96, 96); // ends inside a tick, so the next call is not on a tick's edge
+		const float first = rig.synth.drumKitForTest().pads[0].gain;
+		rig.params.setModOffset(static_cast<clap_id>(drumParam(0, DrumControl::Level)), -12.0);
+		(void)rig.play(32, 32); // a call of one chunk: only the call's own build can carry the offset
+		const float second = rig.synth.drumKitForTest().pads[0].gain;
+		CHECK(second == doctest::Approx(static_cast<float>(std::pow(10.0, -18.0 / 20.0))).epsilon(1.0e-6));
+		CHECK(second < first * 0.9f); // and the offset did move it
+	}
+	SUBCASE("a routed source that moves at the tick: one long call ends on the kit that tick-sized calls end on") {
+		namespace dsr = feathers::mod::dahdsr;
+		const auto run = [&](int call) {
+			auto rig = std::make_unique<Rig>();
+			feathers::ModRack rack = feathers::defaultModRack();
+			rack.count = 1;
+			const feathers::device::Descriptor* desc = feathers::deviceForTag(dsr::kTraits.tag);
+			REQUIRE(desc != nullptr);
+			rack.device[0] = feathers::defaultRowFor(*desc, { 1 });
+			rack.device[0].field[static_cast<size_t>(dsr::Param::Attack)] = std::log2(0.05f);
+			rack.device[0].field[static_cast<size_t>(dsr::Param::Sustain)] = 1.0f;
+			rig->synth.provisionDevices(feathers::FxChain {}, rack);
+			rig->synth.setModRack(rack);
+			(void)rig->play(64, 64);
+			feathers::test::Routes routes;
+			routes.set(feathers::backplane::Source::output(rack.instanceAt(0), 0),
+			           feathers::test::param(drumParam(0, DrumControl::Level)), 0.5f);
+			routes.publish(rig->params);
+			rig->pad(0, DrumControl::Level, -30.0);
+			rig->synth.noteOn(0, 36, 1, 1.0);
+			(void)rig->play(64, 64);
+			const float early = rig->synth.drumKitForTest().pads[0].gain;
+			const uint64_t builds = rig->synth.drumKitBuildsForTest();
+			for (int done = 0; done < 1024; done += call) {
+				(void)rig->play(static_cast<uint32_t>(call), call);
+			}
+			return std::tuple<float, float, uint64_t> { early, rig->synth.drumKitForTest().pads[0].gain,
+				                                       rig->synth.drumKitBuildsForTest() - builds };
+		};
+		const auto [earlyA, ticks, ticksBuilds] = run(64);
+		const auto [earlyB, one, oneBuilds] = run(1024);
+		CHECK(ticksBuilds == 1024 / kTick);
+		CHECK(oneBuilds == 1024 / kTick); // a build per tick inside the one call
+		CHECK(one == ticks);
+		CHECK(ticks > earlyA * 1.05f); // the source moved the pad's level across the run: the equality above is not vacuous
+		(void)earlyB;
+	}
 }

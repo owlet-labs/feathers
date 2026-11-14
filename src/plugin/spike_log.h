@@ -244,5 +244,9 @@ bool appendCapped(const std::filesystem::path& file, const std::vector<std::stri
 uint64_t capBytesFromEnvironment();
 /// THE THRESHOLD: `$FEATHERS_SPIKE_THRESHOLD` when it parses to a share in (0, 10], else `fallback`.
 double thresholdFromEnvironment(double fallback);
+/// THE PER-MINUTE DETAIL LIMIT: `$FEATHERS_SPIKE_DETAIL_PER_MINUTE` (a whole number >= 1) when it parses, else `fallback`.
+/// `Recorder::activate` reads it, so a test hosting the real plugin can record every block (`kDetailPerMinute` keeps a
+/// log from filling with one bad minute's blocks).
+size_t detailPerMinuteFromEnvironment(size_t fallback);
 
 } // namespace feathers::spike

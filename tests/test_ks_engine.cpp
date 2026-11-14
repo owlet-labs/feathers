@@ -460,3 +460,16 @@ TEST_CASE("ks voice: each pluck varies subtly and deterministically — its pick
 	CHECK(std::abs(a / lawA - 1.0) <= feathers::ks::kPluckPickVariation);
 	CHECK(std::abs(b / lawB - 1.0) <= feathers::ks::kPluckPickVariation);
 }
+
+TEST_CASE("ks voice: the string controls are handed to the oscillators that render, not to every slot and part every chunk") {
+	auto rig = std::make_unique<SynthRig>(OscType::Pluck);
+	// No voice sounds: nothing renders, so nothing is handed the controls (it was every slot and every part, each chunk).
+	(void)rig->play(32 * 20, 32);
+	CHECK(rig->synth.stringControlSetsForTest() == 0);
+	// One held note, one part: one hand-out per chunk, and the pluck still reads its Hardness control by value.
+	rig->synth.noteOn(0, 48, 1, 1.0);
+	(void)rig->play(32 * 100, 32);
+	CHECK(rig->synth.stringControlSetsForTest() == 100);
+	CHECK(rig->newest().stringPlucksForTest() == 1);
+	CHECK(rig->synth.soundingVoiceCount() == 1);
+}

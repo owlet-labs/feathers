@@ -1693,6 +1693,66 @@ TEST_CASE("the engine keeps the modulated fx lane, so nobody has to recompute wh
 	}
 }
 
+TEST_CASE("the modulated fx lane is copied from the chain when the chain can have moved, and read from the engine every call") {
+	namespace filter = feathers::fx::filter;
+	Rig rig;
+	feathers::FxChain chain;
+	const size_t fxSlot = feathers::addFxDevice(&chain, filter::kTraits.tag);
+	REQUIRE(fxSlot < chain.device.size());
+	rig.synth.provisionDevices(chain, feathers::defaultModRack());
+	rig.synth.setFxChain(chain);
+	size_t cutoff = filter::kDescriptor.params.size();
+	for (size_t i = 0; i < filter::kDescriptor.params.size(); ++i) {
+		if (std::string(filter::kDescriptor.params[i].name).find("Cutoff") != std::string::npos) {
+			cutoff = i;
+			break;
+		}
+	}
+	REQUIRE(cutoff < filter::kDescriptor.params.size());
+	const size_t other = cutoff == 0 ? 1 : 0; // a control nothing routes to
+	REQUIRE(other < chain.device[fxSlot].row.fieldsPresent);
+
+	rig.params.setBase(static_cast<clap_id>(feathers::ParamId::Macro1), 1.0);
+	feathers::test::Routes routes;
+	(void)rig.engineFxSlotOf(fxSlot);
+	routes.set(feathers::test::macro(0),
+	           feathers::backplane::Destination::control(rig.synth.laneForTest().deviceOfStatePosition(feathers::kLaneChain, fxSlot),
+	                                                   cutoff),
+	           0.25f);
+	routes.publish(rig.params);
+	rig.renderTicks(4);
+
+	const auto& modulated = [&]() -> const feathers::DeviceRow& { return rig.synth.modulatedFxChain().device[fxSlot].row; };
+	const double span = feathers::device::routeSpanOf(filter::kDescriptor.params[cutoff]);
+	const float cutoffBase = chain.device[fxSlot].row.field[cutoff];
+	const float otherBase = chain.device[fxSlot].row.field[other];
+	CHECK(modulated().field[cutoff] == doctest::Approx(static_cast<float>(cutoffBase + 0.25 * span)).epsilon(1e-4));
+	CHECK(modulated().field[other] == otherBase);
+
+	SUBCASE("more calls and ticks on the same chain copy it no more, and the values stand") {
+		const uint64_t copies = rig.synth.modulatedFxCopiesForTest();
+		for (int i = 0; i < 6; ++i) {
+			rig.renderTicks(3);
+		}
+		CHECK(rig.synth.modulatedFxCopiesForTest() == copies);
+		CHECK(modulated().field[cutoff] == doctest::Approx(static_cast<float>(cutoffBase + 0.25 * span)).epsilon(1e-4));
+		CHECK(modulated().field[other] == otherBase);
+	}
+	SUBCASE("a new chain handed in is copied once and its values are what the editor reads") {
+		const uint64_t copies = rig.synth.modulatedFxCopiesForTest();
+		feathers::FxChain edited = chain;
+		const size_t second = feathers::addFxDevice(&edited, filter::kTraits.tag);
+		REQUIRE(second < edited.device.size());
+		rig.synth.provisionDevices(edited, feathers::defaultModRack());
+		rig.synth.setFxChain(edited);
+		rig.renderTicks(2);
+		CHECK(rig.synth.modulatedFxCopiesForTest() == copies + 1);
+		CHECK(feathers::fxChainLength(rig.synth.modulatedFxChain()) == feathers::fxChainLength(edited));
+		CHECK(feathers::fxChainLength(edited) == feathers::fxChainLength(chain) + 1);
+		CHECK(modulated().field[other] == otherBase);
+	}
+}
+
 //------------------------------------------------------------------------------------------------//
 // THE ROUTING RULE, THROUGH THE ENGINE — a source reaches only what is downstream of it.           //
 //------------------------------------------------------------------------------------------------//

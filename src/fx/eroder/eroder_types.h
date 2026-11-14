@@ -197,8 +197,63 @@ inline constexpr double kOneZone = 1.0 / static_cast<double>(kZones);
 inline constexpr double kPhaseMax = 8388608.0;
 
 //--------------------------------------------------------------------------------------------------//
+// DUST'S NUMBERS — the second engine (`dust.h`). Ours, chosen; none is a port of anything.           //
+//--------------------------------------------------------------------------------------------------//
+
+/// AMOUNT IS HOW FAR THE READ HEAD TRAVELS EITHER SIDE OF ITS CENTRE, AS A TIME, log2 seconds. The bottom of the
+/// range is "no travel at all" (the LogSeconds convention); the top is 2^-9 s, just under 2 ms.
+inline constexpr double kDustAmountLog2Min = -18.0;
+inline constexpr double kDustAmountLog2Max = -9.0;
+inline constexpr double kDustAmountLog2Default = -13.0; // 122 microseconds
+inline constexpr double kDustAmountMaxSeconds = 1.0 / 512.0;
+
+/// FREQ IS THE CENTRE OF THE BAND THE SHAKING SITS IN (and the sine's frequency), log2 hertz: 20 Hz to 18 kHz.
+inline constexpr double kDustFreqLog2Min = 4.321928094887362;
+inline constexpr double kDustFreqLog2Max = 14.135709286104401;
+inline constexpr double kDustFreqLog2Default = 11.965784284662087; // 4 kHz
+/// Where a tracked or modulated Freq is held: above anything that is not a tremor, below the rate's own ceiling.
+inline constexpr double kDustFreqFloorHz = 5.0;
+inline constexpr double kDustFreqCeilingHz = 20000.0;
+inline constexpr double kDustFreqNyquistFraction = 0.45;
+
+/// WIDTH RUNS THE BAND'S Q from narrow (a wavering tone) to wide (hiss).
+inline constexpr double kDustQNarrow = 16.0;
+inline constexpr double kDustQWide = 0.5;
+
+/// THE BAND NOISE'S RMS AT THE HEAD, whatever the Freq, the Width and the rate. Under one so its peaks mostly fit
+/// the clamp at full travel; a sine, at the other end of Source, is 0.707.
+inline constexpr double kDustNoiseRms = 0.45;
+/// The variance of the generator's uniform draw on [-1, 1).
+inline constexpr double kDustWhiteVariance = 1.0 / 3.0;
+
+/// THE HEAD NEVER COMES CLOSER TO THE WRITE THAN THIS: the four-point interpolation reads two frames ahead of it.
+inline constexpr double kDustMarginFrames = 2.0;
+
+/// Resonance at either end is this much feedback round the line.
+inline constexpr double kDustFeedbackCeiling = 0.9;
+/// What the line may hold, in full scales: far above any signal, and a ceiling should the feedback ever run away.
+inline constexpr float kDustCeiling = 8.0f;
+
+/// Drive at the top is this many octaves of gain into the saturator — 24 dB.
+inline constexpr double kDustDriveOctaves = 4.0;
+
+/// How long the Amount, the Resonance and the Mix take to arrive: a time, applied a sample at a time.
+inline constexpr double kDustSmoothingSeconds = 0.02;
+
+//--------------------------------------------------------------------------------------------------//
 // THE CONTROLS.                                                                                      //
 //--------------------------------------------------------------------------------------------------//
+
+/// **TWO ENGINES IN ONE DEVICE.** `Dust` shakes a very short delay the signal itself passes through, one quantity
+/// to a control. `Comb` is the resonant line whose eleven quantities ride two coordinates. A Choice is stored by its
+/// label, so the order here is free to change.
+enum class Mode : int { Dust, Comb, kCount };
+inline constexpr const char* kModeNames[] = { "Dust", "Comb" };
+inline constexpr uint32_t kModeBit(Mode m) {
+	return 1u << static_cast<uint32_t>(m);
+}
+inline constexpr uint32_t kDustOnly = kModeBit(Mode::Dust);
+inline constexpr uint32_t kCombOnly = kModeBit(Mode::Comb);
 
 enum class Param : int {
 	Enabled,
@@ -206,7 +261,18 @@ enum class Param : int {
 	Character, ///< phase into the character bank: depth, resonance, S&H blend, width, triangle pitch
 	Gamma,     ///< both phases at once, 1024 times coarser
 	Cutoff,    ///< octaves on the SVF, the highpass and the triangle together
-	Mix,       ///< how much wet is ADDED; the dry always passes whole
+	Mix,       ///< Comb: how much wet is ADDED to a whole dry. Dust: the crossfade from dry to shaken
+
+	Mode,      ///< which engine
+	Amount,    ///< Dust: the head's travel, log2 seconds
+	Freq,      ///< Dust: the band's centre and the sine's frequency, log2 hertz
+	Width,     ///< Dust: the band's width
+	Source,    ///< Dust: sine at 0, band noise at 1
+	Grit,      ///< Dust: how much of the shake is a value held between the input's zero crossings
+	Stereo,    ///< Dust: one shake for both sides at 0, one each at 1
+	Resonance, ///< Dust: signed feedback round the line
+	Drive,     ///< Dust: gain into a saturator on the shaken signal
+	Track,     ///< Dust: Freq follows the last note played
 
 	kCount,
 };
@@ -226,9 +292,21 @@ inline constexpr const char* kTags[] = { "distortion", "comb", "fx" };
 ///
 ///   Tone     Character   Cutoff
 ///   Mix      Gamma
+///
+/// AND DUST'S, which shares the room: a control gated to the other engine is not drawn, so only one set shows.
+///
+///   Mode/Track  Amount     Freq
+///   Width       Source     Grit
+///   Stereo      Resonance  Drive
+///   Mix
 inline constexpr uint8_t kFaceOrder[] = {
-	static_cast<uint8_t>(Param::Tone), static_cast<uint8_t>(Param::Character),
-	static_cast<uint8_t>(Param::Cutoff), static_cast<uint8_t>(Param::Mix),
+	static_cast<uint8_t>(Param::Mode),      static_cast<uint8_t>(Param::Track),
+	static_cast<uint8_t>(Param::Amount),    static_cast<uint8_t>(Param::Freq),
+	static_cast<uint8_t>(Param::Width),     static_cast<uint8_t>(Param::Source),
+	static_cast<uint8_t>(Param::Grit),      static_cast<uint8_t>(Param::Stereo),
+	static_cast<uint8_t>(Param::Resonance), static_cast<uint8_t>(Param::Drive),
+	static_cast<uint8_t>(Param::Tone),      static_cast<uint8_t>(Param::Character),
+	static_cast<uint8_t>(Param::Cutoff),    static_cast<uint8_t>(Param::Mix),
 	static_cast<uint8_t>(Param::Gamma),
 };
 
@@ -282,7 +360,10 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
                 "highpass and the pitched wobble's depth, each swept at its own rate so they come "
                 "and go against each other. It keeps turning, and the mark beside it shows which lap",
      .zones = kZones,
-     .modSpan = kOneZone},
+     .modSpan = kOneZone,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kCombOnly},
     {.key = "eroder_character", .name = "Eroder Character",
      .min = -kPhaseMax,
      .max = kPhaseMax,
@@ -296,7 +377,10 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
                 "is sample-and-hold, how wide in stereo, and where the pitched wobble sits. One continuous "
                 "turn — it keeps turning, and the mark beside it shows which lap",
      .zones = kZones,
-     .modSpan = kOneZone},
+     .modSpan = kOneZone,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kCombOnly},
     {.key = "eroder_gamma", .name = "Eroder Gamma",
      .min = -kPhaseMax,
      .max = kPhaseMax,
@@ -307,7 +391,12 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = false,
      .offsetsMayLeaveRange = false,
      .tooltip = "Moves Tone and Character together, a thousand times coarser — a different eroder at "
-                "every step"},
+                "every step",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kCombOnly},
     {.key = "eroder_cutoff", .name = "Eroder Cutoff",
      .min = -kCutoffOctaves,
      .max = kCutoffOctaves,
@@ -322,11 +411,66 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = -1,
-     .gateMask = 0,
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kCombOnly,
      .centred = true,
      .suffix = "oct"},
     {.key = "eroder_mix", .name = "Eroder Mix",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "In Dust, the crossfade from the dry signal to the shaken one. In Comb, how much eroded "
+                "signal is added to a dry that always passes whole"},
+    {.key = "eroder_mode", .name = "Eroder Mode",
+     .min = 0.0,
+     .max = static_cast<double>(Mode::kCount) - 1.0,
+     .def = static_cast<double>(Mode::Dust),
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kModeNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Dust passes the signal through a very short delay whose length is shaken by a band of "
+                "noise or a sine: fine grain to coarse hash, with a control for each part of it. Comb is a "
+                "resonant comb shaken by noise, steered by two coordinates that each move several things at once"},
+    {.key = "eroder_amount", .name = "Eroder Amount",
+     .min = kDustAmountLog2Min,
+     .max = kDustAmountLog2Max,
+     .def = kDustAmountLog2Default,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogSeconds,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How far the delay is shaken, as a time. A few microseconds is a haze on the top end; "
+                "a millisecond tears the signal apart. At the bottom of its travel nothing moves",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly},
+    {.key = "eroder_freq", .name = "Eroder Freq",
+     .min = kDustFreqLog2Min,
+     .max = kDustFreqLog2Max,
+     .def = kDustFreqLog2Default,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogHertz,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Where the shaking sits: the centre of the noise band and the frequency of the sine. Low "
+                "is wobble and flutter, high is hiss and dust",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly},
+    {.key = "eroder_width", .name = "Eroder Width",
      .min = 0.0,
      .max = 1.0,
      .def = 0.5,
@@ -335,8 +479,114 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "How much eroded signal is ADDED. The dry always passes whole, so this is a send and "
-                "not a crossfade; the level is compensated for feedback and drive"},
+     .tooltip = "How wide the noise band is: narrow is a wavering tone around Freq, wide is plain hiss. "
+                "It does nothing to the sine",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly},
+    {.key = "eroder_source", .name = "Eroder Source",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "What shakes the delay: a sine at Freq at the bottom, the noise band at the top, a blend "
+                "between",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly},
+    {.key = "eroder_grit", .name = "Eroder Grit",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Replaces the shake with a random value held until the input next crosses zero, so the "
+                "delay jumps in step with the sound: crackle that follows the pitch",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly},
+    {.key = "eroder_stereo", .name = "Eroder Stereo",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "At the bottom both sides are shaken alike; at the top each has its own noise, and the "
+                "sine runs a quarter turn apart",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly},
+    {.key = "eroder_resonance", .name = "Eroder Resonance",
+     .min = -1.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Feeds the shaken signal back round the delay, so it rings at a pitch Amount sets. Left "
+                "of centre the feedback is inverted, which rings an octave lower and hollow",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly,
+     .centred = true,
+     // "RESONANCE" is as long as "CHARACTER", which touched its cell's border at three across.
+     .shortName = "Reso"},
+    {.key = "eroder_drive", .name = "Eroder Drive",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Pushes the shaken signal into a saturator, up to 24 dB: quiet detail comes up and peaks "
+                "flatten",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly},
+    {.key = "eroder_track", .name = "Eroder Track",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Freq follows the last note played, with middle C leaving it where it is set",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly,
+     .centred = false,
+     .shortName = nullptr,
+     .stacked = true},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -350,7 +600,18 @@ struct Settings {
 	float character = 0.0f;
 	float gamma = 0.0f;
 	float cutoffOctaves = 0.0f;
-	float mix = 0.5f;
+	float mix = 1.0f;
+
+	Mode mode = Mode::Dust;
+	float amount = static_cast<float>(kDustAmountLog2Default); ///< log2 seconds
+	float freq = static_cast<float>(kDustFreqLog2Default);     ///< log2 hertz
+	float width = 0.5f;
+	float source = 1.0f;
+	float grit = 0.0f;
+	float stereo = 1.0f;
+	float resonance = 0.0f;
+	float drive = 0.0f;
+	bool track = false;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -424,6 +685,38 @@ struct Derived {
 /// a fold of a clipped signal and a clip of a folded one are different sounds — and a line order
 /// inside a sample loop is something only a reader can check.
 [[nodiscard]] float shapeWet(float wet, const Derived& derived) noexcept;
+
+//--------------------------------------------------------------------------------------------------//
+// DUST'S MAPPING: ONE QUANTITY PER CONTROL.                                                          //
+//--------------------------------------------------------------------------------------------------//
+
+/// **EVERYTHING DUST'S SAMPLE LOOP RUNS ON.** A pure function of the settings, the note and the rate.
+struct DustDerived {
+	double amountSeconds = 0.0; ///< the head's travel either side of its centre; 0 at the bottom of the range
+	double freqHz = 0.0;        ///< after tracking and the clamps
+	double q = 1.0;
+	// THE BAND'S FILTER, trapezoidal: g = tan(pi f / rate), k = 1 / Q, and the three solved coefficients.
+	double g = 0.0;
+	double k = 1.0;
+	double a1 = 1.0;
+	double a2 = 0.0;
+	double a3 = 0.0;
+	/// What the band's output (two such filters in series) is multiplied by so its RMS is `kDustNoiseRms`.
+	double noiseGain = 0.0;
+	double sineStep = 0.0;        ///< radians a frame
+	double sinePhaseOffset = 0.0; ///< the right side's lead, radians
+	double feedback = 0.0;
+	double wetGain = 0.0; ///< Mix, with the comb's broadband gain taken back out
+	double dryGain = 1.0;
+	double driveGain = 1.0;
+	double driveNorm = 1.0;
+	float source = 1.0f;
+	float grit = 0.0f;
+	float stereo = 1.0f;
+	float stereoNorm = 1.0f;
+};
+
+[[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate) noexcept;
 
 extern const device::AudioOps kAudioOps;
 

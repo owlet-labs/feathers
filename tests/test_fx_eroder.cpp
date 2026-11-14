@@ -46,7 +46,15 @@ using namespace feathers::fx::eroder;
 
 constexpr double kRate = 48000.0;
 
-Settings defaults() { return stateOf(rowOf(State {}), static_cast<size_t>(Param::kCount)).settings; }
+/// THE COMB'S CASES START FROM THE COMB: the device's own default engine is Dust, and its default Mix is Dust's.
+Settings defaults() {
+	Settings s = stateOf(rowOf(State {}), static_cast<size_t>(Param::kCount)).settings;
+	s.mode = Mode::Comb;
+	s.mix = 0.5f;
+	return s;
+}
+/// THE DEVICE'S DEFAULTS, as declared.
+Settings declared() { return stateOf(rowOf(State {}), static_cast<size_t>(Param::kCount)).settings; }
 
 //--------------------------------------------------------------------------------------------------//
 // THE REFERENCE, RESTATED.                                                                           //
@@ -1256,6 +1264,7 @@ WetCompare compareWet(double tonePhase, double charPhase, int mix, float amp) {
 	Eroder e;
 	e.prepare(44100.0);
 	Settings s;
+	s.mode = Mode::Comb;
 	s.tone = static_cast<float>(tonePhase);
 	s.character = static_cast<float>(charPhase);
 	s.mix = static_cast<float>(mix) / 127.0f;
@@ -1356,10 +1365,11 @@ TEST_CASE("the port's wet matches the firmware's loop, run at the firmware's own
 }
 
 TEST_CASE("the codec and the declarations") {
-	const Settings d = defaults();
+	const Settings d = declared();
 	CHECK(d.enabled);
 	CHECK(d.cutoffOctaves == 0.0f);
 	CHECK(d.gamma == 0.0f);
+	CHECK(d.mode == Mode::Dust);
 	CHECK(Settings {} == d);
 
 	State s;
@@ -1398,11 +1408,20 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1);
-	CHECK(kFaceOrder[0] == static_cast<uint8_t>(Param::Tone));
-	CHECK(kFaceOrder[1] == static_cast<uint8_t>(Param::Character));
-	CHECK(kFaceOrder[2] == static_cast<uint8_t>(Param::Cutoff));
-	CHECK(kFaceOrder[3] == static_cast<uint8_t>(Param::Mix));
-	CHECK(kFaceOrder[4] == static_cast<uint8_t>(Param::Gamma));
+	// THE COMB'S FIVE, in that order, among whatever else the face holds: the other engine's are not drawn with them.
+	std::vector<uint8_t> comb;
+	for (const uint8_t c : kFaceOrder) {
+		const auto& desc = kParamDescs[c];
+		if (c == static_cast<uint8_t>(Param::Mix) || (desc.gateControl >= 0 && desc.gateMask == kCombOnly)) {
+			comb.push_back(c);
+		}
+	}
+	REQUIRE(comb.size() == 5);
+	CHECK(comb[0] == static_cast<uint8_t>(Param::Tone));
+	CHECK(comb[1] == static_cast<uint8_t>(Param::Character));
+	CHECK(comb[2] == static_cast<uint8_t>(Param::Cutoff));
+	CHECK(comb[3] == static_cast<uint8_t>(Param::Mix));
+	CHECK(comb[4] == static_cast<uint8_t>(Param::Gamma));
 }
 
 TEST_CASE("SURVEY: what the default coordinate and the eight zone centres derive to") {
@@ -1444,6 +1463,7 @@ TEST_CASE("the pitched triangle WRAPS where the firmware's does, instead of refl
 	Eroder e;
 	e.prepare(44100.0);
 	Settings s;
+	s.mode = Mode::Comb;
 	s.tone = static_cast<float>(tonePhase);
 	s.character = static_cast<float>(charPhase);
 	s.mix = 1.0f;
@@ -1472,4 +1492,591 @@ TEST_CASE("the pitched triangle WRAPS where the firmware's does, instead of refl
 		}
 	}
 	CHECK(wrapsSeen > 0);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// DUST — the second engine. Every expectation below is restated here from the design, in seconds and //
+// hertz, and none reads `deriveDust` to build itself.                                                //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A DETERMINISTIC WHITE INPUT of its own, so nothing here shares a stream with the device.
+std::vector<float> whiteInput(size_t frames, float amp, uint32_t seed = 0x1234567u) {
+	std::vector<float> out(frames);
+	uint32_t x = seed;
+	for (float& v : out) {
+		x = x * 1664525u + 1013904223u;
+		v = amp * (static_cast<float>(static_cast<int32_t>(x) >> 8) * (1.0f / 8388608.0f));
+	}
+	return out;
+}
+
+float secondsToLog2(double seconds) { return static_cast<float>(std::log2(seconds)); }
+float hertzToLog2(double hertz) { return static_cast<float>(std::log2(hertz)); }
+
+Settings dustStill() {
+	// DUST WITH THE HEAD AT REST: Amount at the bottom of its range is no travel at all.
+	Settings s = declared();
+	s.amount = static_cast<float>(kDustAmountLog2Min);
+	return s;
+}
+
+double rmsOf(const std::vector<float>& v, size_t from = 0) {
+	double sum = 0.0;
+	for (size_t i = from; i < v.size(); ++i) {
+		sum += static_cast<double>(v[i]) * static_cast<double>(v[i]);
+	}
+	return std::sqrt(sum / static_cast<double>(v.size() - from));
+}
+
+} // namespace
+
+TEST_CASE("Dust is the declared engine, and its controls are gated to it as the Comb's are to the Comb") {
+	CHECK(declared().mode == Mode::Dust);
+	for (const Param p : { Param::Amount, Param::Freq, Param::Width, Param::Source, Param::Grit, Param::Stereo,
+	                       Param::Resonance, Param::Drive, Param::Track }) {
+		const auto& d = kParamDescs[static_cast<size_t>(p)];
+		CHECK(d.gateControl == static_cast<int16_t>(Param::Mode));
+		CHECK(d.gateMask == (1u << static_cast<uint32_t>(Mode::Dust)));
+	}
+	for (const Param p : { Param::Tone, Param::Character, Param::Gamma, Param::Cutoff }) {
+		const auto& d = kParamDescs[static_cast<size_t>(p)];
+		CHECK(d.gateControl == static_cast<int16_t>(Param::Mode));
+		CHECK(d.gateMask == (1u << static_cast<uint32_t>(Mode::Comb)));
+	}
+	CHECK(kParamDescs[static_cast<size_t>(Param::Mix)].gateControl == -1);
+	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].gateControl == -1);
+
+	// THE CODEC CARRIES EVERY ONE.
+	State s;
+	s.settings.mode = Mode::Comb;
+	s.settings.amount = -11.5f;
+	s.settings.freq = 9.25f;
+	s.settings.width = 0.2f;
+	s.settings.source = 0.4f;
+	s.settings.grit = 0.6f;
+	s.settings.stereo = 0.3f;
+	s.settings.resonance = -0.7f;
+	s.settings.drive = 0.8f;
+	s.settings.track = true;
+	CHECK(stateOf(rowOf(s), static_cast<size_t>(Param::kCount)) == s);
+}
+
+TEST_CASE("Dust: one quantity per control") {
+	Settings s = declared();
+	const double rate = 48000.0;
+
+	// AMOUNT IS A TIME; the bottom of its range is none.
+	s.amount = secondsToLog2(250.0e-6);
+	CHECK(std::abs(deriveDust(s, 60.0, rate).amountSeconds - 250.0e-6) < 1.0e-9);
+	s.amount = static_cast<float>(kDustAmountLog2Min);
+	CHECK(deriveDust(s, 60.0, rate).amountSeconds == 0.0);
+
+	// FREQ IS HERTZ, and with Track on an octave up doubles it; with Track off the note does nothing.
+	s.freq = hertzToLog2(1500.0);
+	CHECK(std::abs(deriveDust(s, 72.0, rate).freqHz - 1500.0) < 0.01);
+	s.track = true;
+	CHECK(std::abs(deriveDust(s, 72.0, rate).freqHz - 3000.0) < 0.02);
+	CHECK(std::abs(deriveDust(s, 60.0, rate).freqHz - 1500.0) < 0.01);
+	// HELD UNDER THE RATE'S CEILING however far a note pushes it.
+	CHECK(deriveDust(s, 127.0, rate).freqHz <= 0.45 * rate);
+	s.track = false;
+
+	// WIDTH: Q 16 at the bottom, a half at the top, even in octaves between.
+	s.width = 0.0f;
+	CHECK(std::abs(deriveDust(s, 60.0, rate).q - 16.0) < 1.0e-9);
+	s.width = 1.0f;
+	CHECK(std::abs(deriveDust(s, 60.0, rate).q - 0.5) < 1.0e-9);
+	s.width = 0.5f;
+	CHECK(std::abs(deriveDust(s, 60.0, rate).q - std::sqrt(16.0 * 0.5)) < 1.0e-6);
+
+	// RESONANCE IS SIGNED FEEDBACK, AND THE WET IS BROUGHT BACK BY THE COMB'S BROADBAND GAIN.
+	s.resonance = -0.5f;
+	s.mix = 0.8f;
+	const DustDerived d = deriveDust(s, 60.0, rate);
+	CHECK(std::abs(d.feedback - (-0.45)) < 1.0e-9);
+	CHECK(std::abs(d.wetGain - 0.8f * std::sqrt(1.0 - 0.45 * 0.45)) < 1.0e-6);
+	CHECK(std::abs(d.dryGain - (1.0 - static_cast<double>(0.8f))) < 1.0e-9);
+
+	// DRIVE: four octaves of gain at the top, none at the bottom.
+	s.drive = 0.0f;
+	CHECK(deriveDust(s, 60.0, rate).driveGain == 1.0);
+	s.drive = 0.5f;
+	CHECK(std::abs(deriveDust(s, 60.0, rate).driveGain - 4.0) < 1.0e-9);
+	CHECK(std::abs(deriveDust(s, 60.0, rate).driveNorm - 0.5) < 1.0e-9);
+}
+
+TEST_CASE("Dust: with the head at rest the wet is the input two frames late, to the bit; at Mix 0 the dry, to the bit") {
+	const size_t frames = 2000;
+	const std::vector<float> in = whiteInput(frames, 0.5f);
+
+	Eroder e;
+	e.prepare(kRate);
+	Settings s = dustStill();
+	s.mix = 1.0f;
+	e.setTarget(s);
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	e.processStereo(l.data(), r.data(), static_cast<int>(frames));
+	CHECK(l[0] == 0.0f);
+	CHECK(l[1] == 0.0f);
+	size_t same = 0;
+	for (size_t i = 2; i < frames; ++i) {
+		same += (l[i] == in[i - 2] && r[i] == in[i - 2]) ? 1u : 0u;
+	}
+	CHECK(same == frames - 2);
+
+	Eroder dry;
+	dry.prepare(kRate);
+	s = declared();
+	s.mix = 0.0f;
+	dry.setTarget(s);
+	l = in;
+	r = in;
+	dry.processStereo(l.data(), r.data(), static_cast<int>(frames));
+	CHECK(l == in);
+	CHECK(r == in);
+	// AND THE LINE KEPT FILLING: Mix 0 does not freeze the engine.
+	CHECK(dry.holdsTail());
+}
+
+TEST_CASE("Dust: the head travels from the margin to the margin plus twice the Amount, and no further") {
+	for (const double rate : { 44100.0, 96000.0 }) {
+		for (const double amount : { 20.0e-6, 300.0e-6, 1.9e-3 }) {
+			for (const float source : { 0.0f, 1.0f }) {
+				Eroder e;
+				e.prepare(rate);
+				Settings s = declared();
+				s.amount = secondsToLog2(amount);
+				s.source = source;
+				s.freq = hertzToLog2(3000.0);
+				e.setTarget(s);
+				double lo = 1.0e9;
+				double hi = -1.0e9;
+				float l = 0.1f;
+				float r = 0.1f;
+				for (int i = 0; i < static_cast<int>(rate); ++i) {
+					l = r = 0.1f;
+					e.processStereo(&l, &r, 1);
+					for (int ch = 0; ch < 2; ++ch) {
+						lo = std::min(lo, e.dustForTest().lastDelayFramesForTest(ch));
+						hi = std::max(hi, e.dustForTest().lastDelayFramesForTest(ch));
+					}
+				}
+				const double travel = amount * rate;
+				CAPTURE(rate);
+				CAPTURE(amount);
+				CAPTURE(source);
+				CHECK(lo >= 2.0);
+				CHECK(hi <= 2.0 + 2.0 * travel * 1.0001);
+				// NOT VACUOUS: it used most of the room it was given.
+				CHECK(hi - lo > 1.5 * travel);
+			}
+		}
+	}
+}
+
+TEST_CASE("Dust: the band noise is as deep at any Freq, Width and rate") {
+	struct Point {
+		double hz;
+		float width;
+		double seconds;
+	};
+	// A NARROW BAND LOW DOWN decorrelates slowly, so it gets longer to average over.
+	const Point points[] = {
+		{ 200.0, 1.0f, 4.0 },   { 200.0, 0.5f, 12.0 },  { 1000.0, 0.0f, 12.0 }, { 1000.0, 1.0f, 3.0 },
+		{ 4000.0, 0.5f, 3.0 },  { 4000.0, 0.0f, 6.0 },  { 12000.0, 0.5f, 3.0 }, { 12000.0, 1.0f, 3.0 },
+		{ 17000.0, 0.0f, 4.0 },
+	};
+	for (const double rate : { 44100.0, 48000.0, 96000.0 }) {
+		for (const Point& p : points) {
+			Eroder e;
+			e.prepare(rate);
+			Settings s = declared();
+			s.freq = hertzToLog2(p.hz);
+			s.width = p.width;
+			e.setTarget(s);
+			const auto frames = static_cast<size_t>(p.seconds * rate);
+			const size_t skip = frames / 8;
+			double sum = 0.0;
+			float l = 0.0f;
+			float r = 0.0f;
+			for (size_t i = 0; i < frames; ++i) {
+				l = r = 0.0f;
+				e.processStereo(&l, &r, 1);
+				if (i >= skip) {
+					const auto n = static_cast<double>(e.dustForTest().lastNoiseForTest(0));
+					sum += n * n;
+				}
+			}
+			const double rms = std::sqrt(sum / static_cast<double>(frames - skip));
+			CAPTURE(rate);
+			CAPTURE(p.hz);
+			CAPTURE(p.width);
+			// WITHIN A DECIBEL OF 0.45, the figure the design names.
+			CHECK(rms > 0.45 / 1.122);
+			CHECK(rms < 0.45 * 1.122);
+		}
+	}
+}
+
+TEST_CASE("Dust: the shaking sits at Freq — the sine exactly, a narrow band about it — at any rate") {
+	for (const double rate : { 44100.0, 96000.0 }) {
+		for (const double hz : { 300.0, 2500.0, 9000.0 }) {
+			for (const float source : { 0.0f, 1.0f }) {
+				Eroder e;
+				e.prepare(rate);
+				Settings s = declared();
+				s.freq = hertzToLog2(hz);
+				s.width = 0.0f;
+				s.source = source;
+				e.setTarget(s);
+				const auto frames = static_cast<size_t>(4.0 * rate);
+				size_t crossings = 0;
+				float prev = 0.0f;
+				float l = 0.0f;
+				float r = 0.0f;
+				for (size_t i = 0; i < frames; ++i) {
+					l = r = 0.0f;
+					e.processStereo(&l, &r, 1);
+					const float m = e.dustForTest().lastModForTest(0);
+					crossings += ((m < 0.0f) != (prev < 0.0f)) ? 1u : 0u;
+					prev = m;
+				}
+				const double measured = static_cast<double>(crossings) / (2.0 * 4.0);
+				CAPTURE(rate);
+				CAPTURE(hz);
+				CAPTURE(source);
+				// A SINE CROSSES TWICE A CYCLE; a Q-16 band's crossings sit within a few percent of its centre.
+				const double tolerance = source == 0.0f ? 0.002 : 0.06;
+				CHECK(std::abs(measured - hz) < tolerance * hz);
+			}
+		}
+	}
+}
+
+TEST_CASE("Dust: Stereo at zero puts both heads on one path; up parts them") {
+	for (const float source : { 0.0f, 1.0f }) {
+		for (const float stereo : { 0.0f, 1.0f }) {
+			Eroder e;
+			e.prepare(kRate);
+			Settings s = declared();
+			s.source = source;
+			s.stereo = stereo;
+			e.setTarget(s);
+			size_t apart = 0;
+			float l = 0.0f;
+			float r = 0.0f;
+			for (int i = 0; i < 4000; ++i) {
+				l = r = 0.2f;
+				e.processStereo(&l, &r, 1);
+				apart += e.dustForTest().lastDelayFramesForTest(0) != e.dustForTest().lastDelayFramesForTest(1) ? 1u : 0u;
+			}
+			CAPTURE(source);
+			CAPTURE(stereo);
+			if (stereo == 0.0f) {
+				CHECK(apart == 0);
+			}
+			else {
+				CHECK(apart > 3900);
+			}
+		}
+	}
+}
+
+TEST_CASE("Dust: Grit holds the head between the input's zero crossings, and re-draws at each") {
+	const double hz = 173.0;
+	Eroder e;
+	e.prepare(kRate);
+	Settings s = declared();
+	s.grit = 1.0f;
+	e.setTarget(s);
+	size_t expectedHolds = 0;
+	size_t movedOffCrossing = 0;
+	float prevIn = 0.0f;
+	double prevDelay = -1.0;
+	float l = 0.0f;
+	float r = 0.0f;
+	for (int i = 0; i < 48000; ++i) {
+		const auto in = static_cast<float>(0.5 * std::sin(2.0 * std::numbers::pi * hz * (static_cast<double>(i) + 0.5) / kRate));
+		const bool crossed = (in < 0.0f) != (prevIn < 0.0f);
+		expectedHolds += crossed ? 1u : 0u;
+		prevIn = in;
+		l = r = in;
+		e.processStereo(&l, &r, 1);
+		const double delay = e.dustForTest().lastDelayFramesForTest(0);
+		if (!crossed && prevDelay >= 0.0 && delay != prevDelay) {
+			++movedOffCrossing;
+		}
+		prevDelay = delay;
+	}
+	CHECK(expectedHolds > 300);
+	CHECK(e.dustForTest().holdsForTest() == expectedHolds);
+	CHECK(movedOffCrossing == 0);
+}
+
+TEST_CASE("Dust: Resonance is feedback round the line — an impulse comes back at r, r squared, … — and no quieter") {
+	// THE HEAD AT REST, so the loop is three frames long — the head's two and the one the tap waits before it is
+	// written back — and the answer can be written down.
+	const double r = 0.6 * 0.9;
+	const size_t frames = 64;
+	std::vector<float> l(frames, 0.0f);
+	l[0] = 1.0f;
+	std::vector<float> rr = l;
+	Eroder e;
+	e.prepare(kRate);
+	Settings s = dustStill();
+	s.resonance = 0.6f;
+	s.mix = 1.0f;
+	e.setTarget(s);
+	e.processStereo(l.data(), rr.data(), static_cast<int>(frames));
+	const double makeup = std::sqrt(1.0 - r * r);
+	for (size_t k = 0; k < 20; ++k) {
+		const double expected = makeup * std::pow(r, static_cast<double>(k));
+		CHECK(std::abs(static_cast<double>(l[2 + 3 * k]) - expected) < 2.0e-6);
+		CHECK(l[3 * k] == 0.0f);
+		CHECK(l[3 * k + 1] == 0.0f);
+	}
+
+	// AND ON A BROADBAND INPUT THE LEVEL HOLDS, either sign.
+	const std::vector<float> in = whiteInput(96000, 0.25f);
+	double level[3] = {};
+	const float settings[3] = { 0.0f, 0.9f, -0.9f };
+	for (int c = 0; c < 3; ++c) {
+		Eroder d;
+		d.prepare(kRate);
+		Settings t = dustStill();
+		t.resonance = settings[c];
+		d.setTarget(t);
+		std::vector<float> a = in;
+		std::vector<float> b = in;
+		d.processStereo(a.data(), b.data(), static_cast<int>(in.size()));
+		level[c] = rmsOf(a, 4800);
+	}
+	CHECK(level[1] / level[0] > 1.0 / 1.122);
+	CHECK(level[1] / level[0] < 1.122);
+	CHECK(level[2] / level[0] > 1.0 / 1.122);
+	CHECK(level[2] / level[0] < 1.122);
+}
+
+TEST_CASE("Dust: Drive at zero is exact; up, the wet is tanh(g x) / sqrt(g)") {
+	const size_t frames = 1000;
+	const std::vector<float> in = whiteInput(frames, 0.9f);
+	Eroder e;
+	e.prepare(kRate);
+	Settings s = dustStill();
+	s.drive = 0.75f; // three octaves: g = 8
+	e.setTarget(s);
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	e.processStereo(l.data(), r.data(), static_cast<int>(frames));
+	double worst = 0.0;
+	for (size_t i = 2; i < frames; ++i) {
+		const double expected = std::tanh(static_cast<double>(in[i - 2]) * 8.0) / std::sqrt(8.0);
+		worst = std::max(worst, std::abs(static_cast<double>(l[i]) - expected));
+	}
+	CHECK(worst < 2.0e-6);
+}
+
+TEST_CASE("Dust: a move of Amount arrives by a TIME, whatever the block length") {
+	for (const int block : { 1, 64, 480 }) {
+		Eroder e;
+		e.prepare(kRate);
+		Settings s = declared();
+		s.amount = secondsToLog2(100.0e-6);
+		e.setTarget(s);
+		std::vector<float> l(4800, 0.0f);
+		std::vector<float> r(4800, 0.0f);
+		e.processStereo(l.data(), r.data(), 480);
+		// THE FIRST BLOCK SNAPPED.
+		CHECK(std::abs(static_cast<double>(e.dustForTest().smoothedAmountFramesForTest()) - 100.0e-6 * kRate) < 1.0e-3);
+		s.amount = secondsToLog2(1000.0e-6);
+		e.setTarget(s);
+		// ONE TIME CONSTANT — 20 ms, 960 frames — LATER it is 1 - 1/e of the way, less the control block it waited for.
+		for (int done = 0; done < 960; done += block) {
+			e.processStereo(l.data(), r.data(), std::min(block, 960 - done));
+		}
+		const double from = 100.0e-6 * kRate;
+		const double to = 1000.0e-6 * kRate;
+		const double at = static_cast<double>(e.dustForTest().smoothedAmountFramesForTest());
+		const double fraction = (at - from) / (to - from);
+		CAPTURE(block);
+		CHECK(fraction > 0.60);
+		CHECK(fraction < 0.64);
+	}
+}
+
+TEST_CASE("Dust: a partition does not change the samples while every control is travelling; reset is as-if-just-switched-on") {
+	const size_t frames = 6000;
+	const std::vector<float> inL = whiteInput(frames, 0.4f, 11u);
+	const std::vector<float> inR = whiteInput(frames, 0.4f, 29u);
+	const auto render = [&](const std::vector<int>& cuts, Eroder& e, std::vector<float>& l, std::vector<float>& r) {
+		l = inL;
+		r = inR;
+		Settings s = declared();
+		s.resonance = 0.5f;
+		s.grit = 0.3f;
+		s.source = 0.6f;
+		s.drive = 0.4f;
+		s.mix = 0.7f;
+		size_t done = 0;
+		size_t cut = 0;
+		while (done < frames) {
+			// EVERY CONTROL MOVES, as a function of where the passage is and not of how it was cut.
+			const double t = static_cast<double>(done / 512) / 12.0;
+			s.amount = secondsToLog2(50.0e-6 * std::exp2(4.0 * t));
+			s.freq = hertzToLog2(500.0 * std::exp2(4.0 * t));
+			s.width = static_cast<float>(t);
+			s.stereo = static_cast<float>(1.0 - t);
+			e.setTarget(s);
+			const size_t toBoundary = 512 - (done % 512);
+			const size_t take = std::min({ static_cast<size_t>(cuts[cut % cuts.size()]), toBoundary, frames - done });
+			e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+			done += take;
+			++cut;
+		}
+	};
+	Eroder a;
+	a.prepare(kRate);
+	std::vector<float> al;
+	std::vector<float> ar;
+	render({ 512 }, a, al, ar);
+	Eroder b;
+	b.prepare(kRate);
+	std::vector<float> bl;
+	std::vector<float> br;
+	render({ 1, 7, 33, 64, 3, 129 }, b, bl, br);
+	CHECK(al == bl);
+	CHECK(ar == br);
+	// NOT VACUOUS: it is doing something to the signal.
+	CHECK(al != inL);
+
+	a.reset();
+	std::vector<float> cl;
+	std::vector<float> cr;
+	render({ 512 }, a, cl, cr);
+	CHECK(cl == al);
+	CHECK(cr == ar);
+}
+
+TEST_CASE("Dust: a change of engine starts the new one as if just switched on") {
+	const size_t frames = 3000;
+	const std::vector<float> in = whiteInput(frames, 0.4f);
+	Eroder fresh;
+	fresh.prepare(kRate);
+	fresh.setTarget(declared());
+	std::vector<float> fl = in;
+	std::vector<float> fr = in;
+	fresh.processStereo(fl.data(), fr.data(), static_cast<int>(frames));
+
+	// DUST, THEN THE COMB, THEN DUST AGAIN: what Dust's line and noise stream were left holding must not come back.
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(declared());
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	e.processStereo(l.data(), r.data(), 777);
+	e.setTarget(defaults()); // the Comb
+	l = in;
+	r = in;
+	e.processStereo(l.data(), r.data(), 64);
+	e.setTarget(declared());
+	l = in;
+	r = in;
+	e.processStereo(l.data(), r.data(), static_cast<int>(frames));
+	CHECK(l == fl);
+	CHECK(r == fr);
+}
+
+TEST_CASE("Dust: the control path runs on its own 32-frame grid, however the host cuts the blocks") {
+	Eroder e;
+	e.prepare(kRate);
+	Settings s = declared();
+	s.amount = secondsToLog2(100.0e-6);
+	e.setTarget(s);
+	float l = 0.0f;
+	float r = 0.0f;
+	for (int i = 0; i < 10; ++i) {
+		e.processStereo(&l, &r, 1);
+	}
+	// A MOVE THAT ARRIVES TEN FRAMES INTO A CONTROL BLOCK is taken up at the next one, frame 32, and not before:
+	// the mapping is solved once a block whatever the host's block length.
+	s.amount = secondsToLog2(400.0e-6);
+	e.setTarget(s);
+	int tookEffectAt = -1;
+	for (int i = 10; i < 80 && tookEffectAt < 0; ++i) {
+		e.processStereo(&l, &r, 1);
+		if (std::abs(e.dustForTest().derivedForTest().amountSeconds - 400.0e-6) < 1.0e-9) {
+			tookEffectAt = i;
+		}
+	}
+	CHECK(tookEffectAt == 32);
+}
+
+TEST_CASE("Dust: a hot signal stays finite and bounded everywhere, and the tail ends in exact silence") {
+	const std::vector<float> in = whiteInput(24000, 4.0f);
+	for (const float resonance : { -1.0f, 0.0f, 1.0f }) {
+		for (const double amount : { 4.0e-6, 200.0e-6, 1.9e-3 }) {
+			for (const double hz : { 20.0, 4000.0, 18000.0 }) {
+				for (const float source : { 0.0f, 1.0f }) {
+					Eroder e;
+					e.prepare(kRate);
+					Settings s = declared();
+					s.resonance = resonance;
+					s.amount = secondsToLog2(amount);
+					s.freq = hertzToLog2(hz);
+					s.source = source;
+					s.grit = 0.5f;
+					s.drive = 0.0f;
+					e.setTarget(s);
+					std::vector<float> l = in;
+					std::vector<float> r = in;
+					e.processStereo(l.data(), r.data(), static_cast<int>(in.size()));
+					float peak = 0.0f;
+					bool finite = true;
+					for (size_t i = 0; i < l.size(); ++i) {
+						finite = finite && std::isfinite(l[i]) && std::isfinite(r[i]);
+						peak = std::max({ peak, std::abs(l[i]), std::abs(r[i]) });
+					}
+					CAPTURE(resonance);
+					CAPTURE(amount);
+					CAPTURE(hz);
+					CAPTURE(source);
+					CHECK(finite);
+					// THE LINE'S OWN CEILING, with the interpolation's overshoot allowed for.
+					CHECK(peak <= kDustCeiling * 1.3f);
+
+					// THE INPUT STOPS. Within two seconds the output is exactly zero and the line holds nothing.
+					std::vector<float> zl(96000, 0.0f);
+					std::vector<float> zr(96000, 0.0f);
+					e.processStereo(zl.data(), zr.data(), static_cast<int>(zl.size()));
+					bool silent = true;
+					for (size_t i = zl.size() - 4800; i < zl.size(); ++i) {
+						silent = silent && zl[i] == 0.0f && zr[i] == 0.0f;
+					}
+					CHECK(silent);
+					CHECK_FALSE(e.holdsTail());
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE("Dust: the mono road is the LEFT channel") {
+	const size_t frames = 2000;
+	const std::vector<float> in = whiteInput(frames, 0.4f);
+	Eroder stereo;
+	stereo.prepare(kRate);
+	stereo.setTarget(declared());
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	stereo.processStereo(l.data(), r.data(), static_cast<int>(frames));
+	Eroder mono;
+	mono.prepare(kRate);
+	mono.setTarget(declared());
+	std::vector<float> m = in;
+	mono.processMono(m.data(), static_cast<int>(frames));
+	CHECK(m == l);
+	CHECK(l != r);
 }

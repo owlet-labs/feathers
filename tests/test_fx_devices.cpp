@@ -1999,9 +1999,13 @@ TEST_CASE("a device holding sound behind an exactly silent output says so: holds
 			  row.field[static_cast<size_t>(fx::pitch::Param::Feedback)] = 0.5f;
 		  },
 		  30 },
-		// THE ERODER: the dry is the click itself, and the wet arrives up to 5.8 ms later.
+		// THE ERODER'S COMB: the dry is the click itself, and the wet arrives up to 5.8 ms later. (Its other engine
+		// reads the click within a few frames, so it has no silent gap to hold through.)
 		{ fx::eroder::kTraits.tag,
-		  [](DeviceRow& row) { row.field[static_cast<size_t>(fx::eroder::Param::Mix)] = 1.0f; },
+		  [](DeviceRow& row) {
+			  row.field[static_cast<size_t>(fx::eroder::Param::Mode)] = static_cast<float>(fx::eroder::Mode::Comb);
+			  row.field[static_cast<size_t>(fx::eroder::Param::Mix)] = 1.0f;
+		  },
 		  10 },
 		// FEATHERVERB, WET ONLY, 50 ms OF PREDELAY: the reverb's own gate holds through it.
 		{ fx::featherverb::kTraits.tag,

@@ -8877,7 +8877,6 @@ TEST_CASE("arming a source lights the knobs on an OPEN expanded panel — floati
 			collectKnobs(overlay->panelForTest(), &knobs);
 			const std::string kind = d.traits.name;
 			CAPTURE(kind);
-			CHECK(!knobs.empty());
 			size_t destinations = 0;
 			size_t lit = 0;
 			size_t unwatched = 0;
@@ -8889,6 +8888,34 @@ TEST_CASE("arming a source lights the knobs on an OPEN expanded panel — floati
 				lit += knob->haloLit() ? 1 : 0;
 				unwatched += mod->watches(knob) ? 0 : 1;
 			}
+			// A WINDOW WITH NO KNOBS (OWLTT's is boxes, faders and plot handles) is judged on the assignable-control
+			// interface instead: every ControlFace frame that DRAWS modulation for a control it offers must glow for the armed
+			// source and be watched. The knob walk above is the same question asked of the one widget class.
+			size_t faces = 0;
+			if (knobs.empty()) {
+				std::function<void(visage::Frame*)> walk = [&](visage::Frame* frame) {
+					if (const auto* face = dynamic_cast<const ui::ControlFace*>(frame)) {
+						std::vector<ui::ControlFace::Offered> offered;
+						face->offeredControls(offered);
+						for (const auto& o : offered) {
+							const ui::ControlFace::ModLook look = face->modLookFor(*o.control);
+							if (!look.drawn || !frame->isVisible()) {
+								continue;
+							}
+							++faces;
+							++destinations;
+							lit += look.armedGlow ? 1 : 0;
+							unwatched += mod->watches(frame) ? 0 : 1;
+						}
+					}
+					for (visage::Frame* child : frame->children()) {
+						walk(child);
+					}
+				};
+				walk(overlay->panelForTest());
+				CAPTURE(faces);
+			}
+			CHECK((!knobs.empty() || faces > 0));
 			CHECK(destinations > 0);
 			CHECK(lit == destinations);
 			CHECK(unwatched == 0);

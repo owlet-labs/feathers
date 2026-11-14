@@ -6374,6 +6374,90 @@ TEST_CASE("TFIELD in the rack: the card's terrain draws the puck where the publi
 	CHECK(pad.rebuildsForTest() == rebuilds);
 }
 
+TEST_CASE("TFIELD with the orbit Off: Rate's cell shows Phase and Sync hides, and the puck stands at Phase's angle on the orbit") {
+	// ONE CELL, TWO CONTROLS: Rate (a speed) while the orbit runs, Phase (a position, its own key and destination) while
+	// it is Off — each shown only where it changes the sound (the honesty rule), Sync with Rate. The puck is RESTATED
+	// from the angle as in the case above: the pan point is the pad's centre, the orbit a circle `Depth` rings wide, Y up.
+	namespace tf = mod::twinfield;
+	using LP = tf::LayerParam;
+	Fixture f;
+	const DeviceInstanceId field = f.add(tf::kTraits.tag);
+	REQUIRE(field != kNoInstance);
+	f.editor.syncCards();
+	f.editor.resized();
+	auto* card = dynamic_cast<ui::TwinFieldCard*>(f.editor.cardOfDeviceForTest(field));
+	REQUIRE(card != nullptr);
+	ui::TwinFieldPad& pad = card->pad();
+	REQUIRE(pad.width() > 10.0f);
+	f.engine.prepare(48000.0, 4096);
+	std::vector<float> l(512, 0.0f), r(512, 0.0f);
+	const auto block = [&] {
+		f.bridge.drain();
+		f.engine.processStereo(l.data(), r.data(), 512, backplane::unknownBlock());
+		f.bridge.publish(f.engine);
+		(void)card->updateContent();
+	};
+	const auto addresses = [](ui::Knob& k, size_t index) {
+		const auto* road = dynamic_cast<const ui::DeviceControl*>(k.control());
+		return road != nullptr && road->control() == index;
+	};
+	block();
+	// THE DEFAULT PATCH (Free): Rate and Sync shown, Phase not.
+	CHECK(card->rate(0).isVisible());
+	CHECK(card->sync(0).isVisible());
+	CHECK_FALSE(card->orbitPhase(0).isVisible());
+	CHECK(addresses(card->rate(0), tf::layerParam(0, LP::Rate)));
+	CHECK(addresses(card->orbitPhase(0), tf::layerParam(0, LP::OrbitPhase)));
+	const visage::Bounds rateCell { card->rate(0).x(), card->rate(0).y(), card->rate(0).width(), card->rate(0).height() };
+
+	const double depth = 0.8;
+	const double angle = 2.2;
+	f.bridge.setField(field, tf::layerParam(0, LP::Sync), 1.0f); // 1 Hz, were it running
+	f.bridge.setField(field, tf::layerParam(0, LP::Depth), static_cast<float>(depth));
+	f.bridge.setField(field, tf::layerParam(0, LP::OrbitPhase), static_cast<float>(angle));
+	f.bridge.setField(field, tf::layerParam(0, LP::Mode), static_cast<float>(tf::Mode::Off));
+	block();
+	CHECK_FALSE(card->rate(0).isVisible());
+	CHECK_FALSE(card->sync(0).isVisible());
+	CHECK(card->orbitPhase(0).isVisible());
+	const visage::Bounds phaseCell { card->orbitPhase(0).x(), card->orbitPhase(0).y(), card->orbitPhase(0).width(),
+		                             card->orbitPhase(0).height() };
+	CHECK(phaseCell.x() == rateCell.x()); // THE SAME CELL
+	CHECK(phaseCell.y() == rateCell.y());
+	CHECK(phaseCell.width() == rateCell.width());
+	CHECK(card->orbitPhase(0).control()->text().find("deg") != std::string::npos);
+	// LAYER B IS ITS OWN GATE: still Free, so its Rate is the one the B tab would show.
+	card->show(1);
+	(void)card->updateContent();
+	CHECK(card->rate(1).isVisible());
+	CHECK_FALSE(card->orbitPhase(1).isVisible());
+	card->show(0);
+	(void)card->updateContent();
+
+	const double half = std::max(std::min(pad.width(), pad.height()) * 0.5, 1.0);
+	const double ppp = 0.125 / half; // zoom 0
+	const double ring = 0.6 * 0.125;
+	const double angleStored = static_cast<double>(static_cast<float>(angle));
+	const double px = pad.width() * 0.5 + depth * ring * std::cos(angleStored) / ppp;
+	const double py = pad.height() * 0.5 - depth * ring * std::sin(angleStored) / ppp;
+	for (int b = 0; b < 8; ++b) {
+		CAPTURE(b);
+		block();
+		const visage::Point puck = pad.puckPixel();
+		CHECK(std::abs(puck.x - px) <= 0.01);
+		CHECK(std::abs(puck.y - py) <= 0.01);
+	}
+	// NOT VACUOUS: the angle is not the orbit's origin, so the puck is not where phase 0 draws it.
+	CHECK(std::abs(pad.puckPixel().y - pad.height() * 0.5) > 5.0);
+
+	// AND BACK: Free shows Rate and Sync again, and hides Phase.
+	f.bridge.setField(field, tf::layerParam(0, LP::Mode), static_cast<float>(tf::Mode::Free));
+	block();
+	CHECK(card->rate(0).isVisible());
+	CHECK(card->sync(0).isVisible());
+	CHECK_FALSE(card->orbitPhase(0).isVisible());
+}
+
 // ---- QN: THE MACROS COLUMN FOLDS (collapsible in the rack and in a chain) ----
 
 TEST_CASE("QN: the Macros column folds to the rail's strip and back — the lane starts at the strip, the column's widgets hide, "

@@ -48,6 +48,9 @@ enum class LayerParam : size_t {
 	Rotate,
 	Gamma,
 	Rate,
+	/// **WHERE THE ORBIT STANDS WHEN MODE IS OFF**, an angle around the orbit (radians, shown in degrees). Its own key:
+	/// Rate's number means a speed and is never read as a position.
+	OrbitPhase,
 	Sync,
 	Mode,
 	Depth,
@@ -70,15 +73,25 @@ enum class Param : size_t {
 }
 [[nodiscard]] constexpr size_t at(Param p) noexcept { return static_cast<size_t>(p); }
 
-/// THE MOTION MODES — AutoMod's LFO modes less Stop, which hands AutoMod's modulation to a Manual knob
-/// this device does not have. Depth 0 is the still puck.
+/// THE MOTION MODES — AutoMod's LFO modes less Stop, plus Off. Depth 0 is the still puck.
+///
+/// **OFF IS APPENDED, NOT INSERTED**: a Choice is stored by its label, so a patch saved before it reads the same
+/// mode, and the default (Free) is unchanged.
 enum class Mode : int {
 	Free,      ///< runs continuously; locked to the song while the transport plays
 	Retrigger, ///< restarts the orbit on each note
 	Once,      ///< one orbit per note, then holds
+	Off,       ///< no motion: the puck stands where Orbit Phase puts it, and Rate and Sync have nothing to say
 	kCount,
 };
-inline constexpr const char* kModeNames[] = { "Free", "Retrigger", "Once" };
+inline constexpr const char* kModeNames[] = { "Free", "Retrigger", "Once", "Off" };
+
+/// THE GATES ON MODE: Rate and Sync are relevant while the orbit runs, Orbit Phase only while it is Off.
+inline constexpr uint32_t kOrbitRunsMask = (1u << static_cast<unsigned>(Mode::Free))
+                                           | (1u << static_cast<unsigned>(Mode::Retrigger))
+                                           | (1u << static_cast<unsigned>(Mode::Once));
+inline constexpr uint32_t kOrbitOffMask = 1u << static_cast<unsigned>(Mode::Off);
+inline constexpr double kOrbitPhaseMax = 2.0 * std::numbers::pi;
 static_assert(std::size(kModeNames) == static_cast<size_t>(Mode::kCount));
 
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
@@ -108,7 +121,7 @@ inline constexpr double kGammaMax = 8.0;
 
 //-- THE PARAMS -----------------------------------------------------------------------------------//
 
-#define FEATHERS_TWINFIELD_LAYER(L, LETTER, GAMMA_DEF)                                                              \
+#define FEATHERS_TWINFIELD_LAYER(L, INDEX, LETTER, GAMMA_DEF)                                                              \
 	{ .key = L ".pan_x", .name = "Pan X " LETTER, .min = -kPanMax, .max = kPanMax, .def = 0.0, .stepped = false,     \
 	  .unit = device::Unit::Number, .names = {}, .modulatable = true,                                                 \
 	  .tooltip = "Where layer " LETTER "'s puck sits across the terrain — drag the pad to move it. Click the pad and the wheel zooms there (Ctrl/Cmd+wheel always does)", \
@@ -139,16 +152,25 @@ inline constexpr double kGammaMax = 8.0;
 	  .shortName = "Gamma" },                                                                                           \
 	{ .key = L ".rate", .name = "Rate " LETTER, .min = -2.0, .max = 2.0, .def = 0.0, .stepped = false,               \
 	  .unit = device::Unit::LogMultiple, .names = {}, .modulatable = true,                                            \
-	  .tooltip = "Scales the orbit rate the Sync list selected — 1X is 1:1", .shortName = "Rate" },                  \
+	  .tooltip = "Scales the orbit rate the Sync list selected — 1X is 1:1",                                       \
+	  .gateControl = static_cast<int16_t>(layerParam(INDEX, LayerParam::Mode)), .gateMask = kOrbitRunsMask,          \
+	  .shortName = "Rate" },                                                                                          \
+	{ .key = L ".orbit_phase", .name = "Orbit Phase " LETTER, .min = 0.0, .max = kOrbitPhaseMax, .def = 0.0,          \
+	  .stepped = false, .unit = device::Unit::Degrees, .names = {}, .modulatable = true,                             \
+	  .tooltip = "With the orbit Off, where layer " LETTER "'s puck stands on its orbit — 0 deg is where the "      \
+	             "orbit starts, counter-clockwise from east",                                                         \
+	  .gateControl = static_cast<int16_t>(layerParam(INDEX, LayerParam::Mode)), .gateMask = kOrbitOffMask,           \
+	  .shortName = "Phase" },                                                                                         \
 	{ .key = L ".sync", .name = "Sync " LETTER, .min = 0.0,                                                          \
 	  .max = static_cast<double>(fx::automod::kSyncChoiceCount) - 1.0, .def = 0.0, .stepped = true,                  \
 	  .unit = device::Unit::Choice, .names = fx::automod::kSyncNames, .modulatable = false,                          \
 	  .tooltip = "A free rate, or a division that locks layer " LETTER "'s orbit to the host's tempo",              \
+	  .gateControl = static_cast<int16_t>(layerParam(INDEX, LayerParam::Mode)), .gateMask = kOrbitRunsMask,          \
 	  .shortName = "Sync" },                                                                                            \
 	{ .key = L ".mode", .name = "Mode " LETTER, .min = 0.0, .max = static_cast<double>(Mode::kCount) - 1.0,          \
 	  .def = 0.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames, .modulatable = false,          \
 	  .tooltip = "Free runs (locked to the song while it plays); Retrigger restarts on a note; Once orbits once "    \
-	             "per note",                                                                                          \
+	             "per note; Off stops the orbit where Phase puts it",                                                                                          \
 	  .shortName = "Mode" },                                                                                            \
 	{ .key = L ".depth", .name = "Depth " LETTER, .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,              \
 	  .unit = device::Unit::Percent, .names = {}, .modulatable = true,                                                \
@@ -165,9 +187,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	{ .key = "solo_b", .name = "Solo B", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
 	  .unit = device::Unit::Choice, .names = kOffOnNames, .modulatable = false,
 	  .tooltip = "Outputs layer B alone, ignoring the crossfade. With both soloed, the crossfade applies" },
-	FEATHERS_TWINFIELD_LAYER("a", "A", 0.0),
+	FEATHERS_TWINFIELD_LAYER("a", 0, "A", 0.0),
 	// B'S GAMMA DEFAULTS HALF A LAP AWAY: two identical layers at load would make the crossfade a dead knob.
-	FEATHERS_TWINFIELD_LAYER("b", "B", 0.5),
+	FEATHERS_TWINFIELD_LAYER("b", 1, "B", 0.5),
 	{ .key = "enabled", .name = "Enabled", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = true,
 	  .unit = device::Unit::Choice, .names = kOffOnNames, .modulatable = true,
 	  .tooltip = "Bypass switch — off: every output rests at 0" },
@@ -193,6 +215,7 @@ struct LayerSettings {
 	double rotate = 0.0;
 	double gamma = 0.0;
 	float rate = 0.0f;
+	double orbitPhase = 0.0; ///< radians, read only while `mode` is Off
 	int sync = 0;
 	Mode mode = Mode::Free;
 	double depth = 0.5;
@@ -229,6 +252,7 @@ struct Settings {
 		ls.rotate = field(layerParam(l, LayerParam::Rotate));
 		ls.gamma = field(layerParam(l, LayerParam::Gamma));
 		ls.rate = static_cast<float>(field(layerParam(l, LayerParam::Rate)));
+		ls.orbitPhase = field(layerParam(l, LayerParam::OrbitPhase));
 		ls.sync = static_cast<int>(std::lround(field(layerParam(l, LayerParam::Sync))));
 		ls.mode = static_cast<Mode>(std::lround(field(layerParam(l, LayerParam::Mode))));
 		ls.depth = field(layerParam(l, LayerParam::Depth));
@@ -252,6 +276,7 @@ struct Settings {
 		row[layerParam(l, LayerParam::Rotate)] = static_cast<float>(ls.rotate);
 		row[layerParam(l, LayerParam::Gamma)] = static_cast<float>(ls.gamma);
 		row[layerParam(l, LayerParam::Rate)] = ls.rate;
+		row[layerParam(l, LayerParam::OrbitPhase)] = static_cast<float>(ls.orbitPhase);
 		row[layerParam(l, LayerParam::Sync)] = static_cast<float>(ls.sync);
 		row[layerParam(l, LayerParam::Mode)] = static_cast<float>(static_cast<int>(ls.mode));
 		row[layerParam(l, LayerParam::Depth)] = static_cast<float>(ls.depth);
@@ -283,6 +308,13 @@ struct Plane {
 /// macro routed to both Zoom and Spread gives the coupling anyway.
 [[nodiscard]] inline double ringRadius(double spreadZones) {
 	return spreadZones * kZonePlane;
+}
+
+/// **THE ORBIT PHASE, IN TURNS, THAT MODE OFF READS AT** — Orbit Phase's angle as a share of the circle, so 0 is the
+/// orbit's own origin (where Free, Retrigger and Once start) and the read point sits at that angle on the orbit's path.
+[[nodiscard]] inline double manualPhaseTurns(double radians) {
+	const double turns = radians / kOrbitPhaseMax;
+	return turns - std::floor(turns);
 }
 
 /// WHERE THE PUCK IS, relative to its pan point, at an orbit phase (turns): a circle of `depth` rings.

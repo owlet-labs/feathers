@@ -88,7 +88,13 @@ std::vector<float> distinctRow() {
 /// THE DESIGN'S WORDS, RESTATED: AutoMod's default coordinate pushed by gamma, the plane `basisFor(rotate,
 /// mean home)`, a ring `Spread` zones wide (one zone = 0.125 plane units; zoom is NOT an input since 2026-11-08), Mod 1 east and counter-clockwise,
 /// the puck orbiting the pan point `depth` rings wide; each reading AutoMod's pad brightness there.
+std::array<double, tf::kPoints> restatedLayerAtAngle(const std::vector<float>& row, size_t layer, double angle);
 std::array<double, tf::kPoints> restatedLayer(const std::vector<float>& row, size_t layer, double phase) {
+	return restatedLayerAtAngle(row, layer, 2.0 * std::numbers::pi * phase);
+}
+/// THE SAME, WITH THE PUCK GIVEN AS AN ANGLE ON ITS ORBIT (radians, counter-clockwise from east) — what Orbit Phase
+/// says in the design's words, so Off's reading is restated from the angle and not from a conversion to turns.
+std::array<double, tf::kPoints> restatedLayerAtAngle(const std::vector<float>& row, size_t layer, double angle) {
 	const double panX = lf(const_cast<std::vector<float>&>(row), layer, LP::PanX);
 	const double panY = lf(const_cast<std::vector<float>&>(row), layer, LP::PanY);
 	const double spread = lf(const_cast<std::vector<float>&>(row), layer, LP::Spread);
@@ -108,8 +114,8 @@ std::array<double, tf::kPoints> restatedLayer(const std::vector<float>& row, siz
 	const ps::Basis basis = ps::basisFor(rotate, mean);
 
 	const double ring = spread * 0.125;
-	const double puckX = panX + depth * ring * std::cos(2.0 * std::numbers::pi * phase);
-	const double puckY = panY + depth * ring * std::sin(2.0 * std::numbers::pi * phase);
+	const double puckX = panX + depth * ring * std::cos(angle);
+	const double puckY = panY + depth * ring * std::sin(angle);
 	amd::AutomodCoords coords {};
 	coords.lfoHz = 1.0f;
 	std::array<double, tf::kPoints> out {};
@@ -551,4 +557,296 @@ TEST_CASE("Spread's default reads where the zoom-coupled ring read at default zo
 	MESSAGE("default patch, old ring vs Spread 0.6: worst coordinate " << worstCoord << ", worst output " << worstOutput);
 	CHECK(worstCoord <= 1e-8);
 	CHECK(worstOutput <= 1e-5);
+}
+
+namespace {
+
+constexpr uint64_t kDefaultStoppedHash = 18370288327403777445ull;
+constexpr uint64_t kDefaultPlayingHash = 14952428909164161333ull;
+
+/// FNV-1a over the bits of every output and both published phases, tick by tick.
+struct BitHash {
+	uint64_t h = 1469598103934665603ull;
+	void add(const void* p, size_t n) {
+		const auto* b = static_cast<const unsigned char*>(p);
+		for (size_t i = 0; i < n; ++i) {
+			h = (h ^ b[i]) * 1099511628211ull;
+		}
+	}
+	void addTick(const tf::TwinField& f) {
+		for (size_t k = 0; k < tf::kPoints; ++k) {
+			const float v = f.outputAt(k);
+			add(&v, sizeof v);
+		}
+		for (size_t l = 0; l < tf::kLayers; ++l) {
+			const double p = f.phaseRead(l);
+			add(&p, sizeof p);
+		}
+	}
+};
+
+} // namespace
+
+TEST_CASE("the default patch's outputs are bit-identical to the build before the orbit had an Off") {
+	// THE GOLDENS WERE TAKEN FROM MAINLINE (2fd85cf68) BY THIS SAME CASE, before Mode grew "Off" and the layers grew
+	// an Orbit Phase: the default row, ticked stopped (the accumulator road) and playing (the song road), every
+	// output's bits and both published phases folded into one hash each. A change to what the default patch reads
+	// moves them.
+	const std::vector<float> row = defaultRow();
+	BitHash stopped;
+	{
+		tf::TwinField f = prepared(row);
+		for (int t = 0; t < 2000; ++t) {
+			f.tick(stoppedContext());
+			stopped.addTick(f);
+		}
+	}
+	BitHash playing;
+	{
+		tf::TwinField f = prepared(row);
+		const double tickSeconds = 64.0 / 48000.0;
+		for (int t = 0; t < 2000; ++t) {
+			device::ModTickContext c {};
+			c.clock.secondsPerBeat = 0.5;
+			c.clock.songPositionSeconds = 1.25 + t * tickSeconds;
+			c.clock.songPositionBeats = (1.25 + t * tickSeconds) / 0.5;
+			c.clock.playing = true;
+			c.retrigger = (t % 300) == 0;
+			f.tick(c);
+			playing.addTick(f);
+		}
+	}
+	MESSAGE("stopped " << stopped.h << " playing " << playing.h);
+	CHECK(stopped.h == kDefaultStoppedHash);
+	CHECK(playing.h == kDefaultPlayingHash);
+}
+
+//-- MODE OFF: THE ORBIT STANDS WHERE ORBIT PHASE PUTS IT -------------------------------------------------------------//
+
+namespace {
+
+device::ModTickContext playingAt(int tick, bool retrigger) {
+	device::ModTickContext c {};
+	const double tickSeconds = 64.0 / 48000.0;
+	c.clock.secondsPerBeat = 0.5;
+	c.clock.songPositionSeconds = 2.0 + tick * tickSeconds;
+	c.clock.songPositionBeats = (2.0 + tick * tickSeconds) / 0.5;
+	c.clock.playing = true;
+	c.retrigger = retrigger;
+	return c;
+}
+
+/// A ROW WITH BOTH LAYERS OFF, each at its own Phase, with the rates and syncs that would move a running orbit fast.
+std::vector<float> offRow(float phaseA, float phaseB) {
+	std::vector<float> row = distinctRow();
+	for (size_t l = 0; l < tf::kLayers; ++l) {
+		lf(row, l, LP::Mode) = static_cast<float>(tf::Mode::Off);
+		lf(row, l, LP::Sync) = 1.0f; // 1 Hz, were it running
+		lf(row, l, LP::Rate) = 1.5f;
+		lf(row, l, LP::Depth) = 0.9f;
+	}
+	lf(row, 0, LP::OrbitPhase) = phaseA;
+	lf(row, 1, LP::OrbitPhase) = phaseB;
+	return row;
+}
+
+} // namespace
+
+TEST_CASE("Mode Off is appended after Once, so a stored Free, Retrigger or Once reads the mode it did, and Free stays the default") {
+	REQUIRE(std::size(tf::kModeNames) == 4);
+	CHECK(std::string(tf::kModeNames[0]) == "Free");
+	CHECK(std::string(tf::kModeNames[1]) == "Retrigger");
+	CHECK(std::string(tf::kModeNames[2]) == "Once");
+	CHECK(std::string(tf::kModeNames[3]) == "Off");
+	for (size_t l = 0; l < tf::kLayers; ++l) {
+		CHECK(tf::kParamDescs[tf::layerParam(l, LP::Mode)].def == 0.0);
+		CHECK(tf::kParamDescs[tf::layerParam(l, LP::OrbitPhase)].def == 0.0);
+		CHECK(std::string(tf::kParamDescs[tf::layerParam(l, LP::OrbitPhase)].key) == (l == 0 ? "a.orbit_phase" : "b.orbit_phase"));
+		CHECK(tf::kParamDescs[tf::layerParam(l, LP::OrbitPhase)].modulatable);
+		// THE GATES: Rate and Sync while the orbit runs, Phase only while it is Off — each on ITS layer's Mode.
+		for (int m = 0; m < static_cast<int>(tf::Mode::kCount); ++m) {
+			CAPTURE(l);
+			CAPTURE(m);
+			const bool off = m == static_cast<int>(tf::Mode::Off);
+			CHECK(tf::kParamDescs[tf::layerParam(l, LP::Rate)].gateControl == static_cast<int16_t>(tf::layerParam(l, LP::Mode)));
+			CHECK(device::relevantFor(tf::kParamDescs[tf::layerParam(l, LP::Rate)], m) == !off);
+			CHECK(device::relevantFor(tf::kParamDescs[tf::layerParam(l, LP::Sync)], m) == !off);
+			CHECK(device::relevantFor(tf::kParamDescs[tf::layerParam(l, LP::OrbitPhase)], m) == off);
+		}
+	}
+}
+
+TEST_CASE("Mode Off holds the eight outputs fixed over many blocks, stopped or playing, through notes, at the restated reading") {
+	const float phaseA = 1.1f;
+	const float phaseB = 4.0f;
+	const std::vector<float> row = offRow(phaseA, phaseB);
+	tf::TwinField f = prepared(row);
+	f.tick(stoppedContext());
+	std::array<float, tf::kPoints> first {};
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		first[k] = f.outputAt(k);
+	}
+	// THE VALUE: each layer's reading restated at the ANGLE Phase names, blended by the default crossfade (0.5).
+	const auto a = restatedLayerAtAngle(row, 0, phaseA);
+	const auto b = restatedLayerAtAngle(row, 1, phaseB);
+	bool layersDiffer = false;
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		CAPTURE(k);
+		CHECK(std::abs(f.readingForTest(0, k) - a[k]) <= kTol);
+		CHECK(std::abs(f.readingForTest(1, k) - b[k]) <= kTol);
+		CHECK(std::abs(first[k] - (0.5 * a[k] + 0.5 * b[k])) <= kTol);
+		layersDiffer = layersDiffer || std::abs(a[k] - b[k]) > 0.01;
+	}
+	CHECK(layersDiffer);
+	// AND IT STAYS: 3000 ticks (four seconds) stopped, then playing with a note every 100 ticks — every output's bits
+	// equal to the first tick's, and the published phase the angle's share of the circle.
+	for (int t = 0; t < 3000; ++t) {
+		f.tick(t < 1500 ? stoppedContext() : playingAt(t, t % 100 == 0));
+		for (size_t k = 0; k < tf::kPoints; ++k) {
+			REQUIRE(f.outputAt(k) == first[k]);
+		}
+	}
+	CHECK(std::abs(f.phaseRead(0) - static_cast<double>(phaseA) / (2.0 * std::numbers::pi)) <= 1e-12);
+	CHECK(std::abs(f.phaseRead(1) - static_cast<double>(phaseB) / (2.0 * std::numbers::pi)) <= 1e-12);
+	// NOT VACUOUS: the same row with the orbit running moves the outputs over the same ticks.
+	std::vector<float> running = row;
+	lf(running, 0, LP::Mode) = static_cast<float>(tf::Mode::Free);
+	lf(running, 1, LP::Mode) = static_cast<float>(tf::Mode::Free);
+	tf::TwinField g = prepared(running);
+	g.tick(stoppedContext());
+	const float g0 = g.outputAt(0);
+	for (int t = 0; t < 200; ++t) {
+		g.tick(stoppedContext());
+	}
+	CHECK(std::abs(g.outputAt(0) - g0) > 1e-3);
+}
+
+TEST_CASE("Orbit Phase puts the read point at that angle on the orbit; at 0 it reads the orbit's own origin") {
+	for (const double angle : { 0.0, 0.5 * std::numbers::pi, 2.0, std::numbers::pi, 5.5 }) {
+		CAPTURE(angle);
+		const std::vector<float> row = offRow(static_cast<float>(angle), static_cast<float>(angle));
+		tf::TwinField f = prepared(row);
+		f.tick(stoppedContext());
+		const double stored = static_cast<double>(static_cast<float>(angle));
+		for (size_t l = 0; l < tf::kLayers; ++l) {
+			const auto want = restatedLayerAtAngle(row, l, stored);
+			for (size_t k = 0; k < tf::kPoints; ++k) {
+				CAPTURE(l);
+				CAPTURE(k);
+				CHECK(std::abs(f.readingForTest(l, k) - want[k]) <= kTol);
+			}
+		}
+	}
+	// PHASE 0 IS WHERE THE ORBIT STARTS: a Free orbit's first tick after reset reads phase 0, and Off at 0 reads the same
+	// eight values, bit for bit, whatever Rate and Sync are.
+	const std::vector<float> off = offRow(0.0f, 0.0f);
+	std::vector<float> free = off;
+	lf(free, 0, LP::Mode) = static_cast<float>(tf::Mode::Free);
+	lf(free, 1, LP::Mode) = static_cast<float>(tf::Mode::Free);
+	tf::TwinField x = prepared(off);
+	tf::TwinField y = prepared(free);
+	x.tick(stoppedContext());
+	y.tick(stoppedContext());
+	REQUIRE(y.phaseRead(0) == 0.0);
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		CHECK(x.outputAt(k) == y.outputAt(k));
+	}
+	// NOT VACUOUS: a quarter turn reads other ground.
+	tf::TwinField q = prepared(offRow(static_cast<float>(0.5 * std::numbers::pi), 0.0f));
+	q.tick(stoppedContext());
+	bool moved = false;
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		moved = moved || std::abs(q.readingForTest(0, k) - x.readingForTest(0, k)) > 1e-3;
+	}
+	CHECK(moved);
+}
+
+TEST_CASE("Orbit Phase is a modulation destination of its own, and a route on it moves the outputs to the restated angle") {
+	// THE SOURCE IS A SECOND TWIN FIELD WITH STILL PUCKS (Depth 0), so its outputs are constant and the route's offset
+	// is a known number: amount x value x span (2 pi), on Orbit Phase's base.
+	rack::RackEngine engine { rack::kRackAxes, hostCatalogue() };
+	const size_t source = engine.addDevice(tf::kTraits.tag);
+	const size_t field = engine.addDevice(tf::kTraits.tag);
+	REQUIRE(source != rack::RackEngine::kNoSlot);
+	REQUIRE(field != rack::RackEngine::kNoSlot);
+	engine.prepare(48000.0, 4096);
+	std::vector<float> still = defaultRow();
+	lf(still, 0, LP::Depth) = 0.0f;
+	lf(still, 1, LP::Depth) = 0.0f;
+	for (size_t i = 0; i < still.size(); ++i) {
+		engine.setField(source, i, still[i]);
+	}
+	const float base = 0.7f;
+	const std::vector<float> row = offRow(base, base);
+	for (size_t i = 0; i < row.size(); ++i) {
+		engine.setField(field, i, row[i]);
+	}
+	std::array<float, 64> l {};
+	std::array<float, 64> r {};
+	const auto run = [&] {
+		for (int b = 0; b < 4; ++b) {
+			engine.processStereo(l.data(), r.data(), 64, backplane::unknownBlock());
+		}
+	};
+	run();
+	std::array<float, tf::kPoints> unrouted {};
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		unrouted[k] = engine.publishedOutputAt(field, k);
+	}
+	const size_t phaseA = tf::layerParam(0, LP::OrbitPhase);
+	const float amount = 0.4f;
+	engine.setRouteAmount(test::outputOf(engine, source, 2), test::controlOf(engine, field, phaseA), amount);
+	run();
+	const double value = engine.publishedOutputAt(source, 2);
+	REQUIRE(value > 0.05);
+	const double angle = base + amount * value * 2.0 * std::numbers::pi;
+	REQUIRE(angle < 2.0 * std::numbers::pi);
+	CHECK(std::abs(engine.resolvedFieldForTest(field, phaseA) - angle) <= 1e-5);
+	// THE OUTPUTS ARE THE BLEND OF A AT THE ROUTED ANGLE AND B AT ITS UNROUTED BASE, restated.
+	const auto a = restatedLayerAtAngle(row, 0, angle);
+	const auto b = restatedLayerAtAngle(row, 1, base);
+	bool moved = false;
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		CAPTURE(k);
+		const float now = engine.publishedOutputAt(field, k);
+		CHECK(std::abs(now - (0.5 * a[k] + 0.5 * b[k])) <= 1e-5);
+		moved = moved || std::abs(now - unrouted[k]) > 1e-3;
+	}
+	CHECK(moved); // NOT VACUOUS: the route changed what a destination receives
+	// AND NOT RATE'S: Rate on the same layer is not moved by it.
+	CHECK(engine.resolvedFieldForTest(field, tf::layerParam(0, LP::Rate)) == doctest::Approx(row[tf::layerParam(0, LP::Rate)]));
+}
+
+TEST_CASE("Mode Off and Orbit Phase survive save and load into a fresh instance, and the outputs come back bit for bit") {
+	persist::Rig run {};
+	const std::vector<float> row = offRow(2.3f, 5.1f);
+	run.seat(tf::kTraits.tag, row);
+	run.block(3);
+	const size_t lane = run.engine.slotOf(run.id);
+	REQUIRE(lane != rack::RackEngine::kNoSlot);
+	std::array<float, tf::kPoints> outs {};
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		outs[k] = run.engine.publishedOutputAt(lane, k);
+	}
+	const std::string saved = run.save();
+	CHECK(saved.find("orbit_phase") != std::string::npos);
+
+	persist::Rig back {};
+	back.load(saved);
+	back.block(7); // a different run length: Off does not depend on it
+	const size_t lane2 = back.engine.slotOf(back.id);
+	REQUIRE(lane2 != rack::RackEngine::kNoSlot);
+	CHECK(back.engine.fieldAt(lane2, tf::layerParam(0, LP::Mode)) == static_cast<float>(tf::Mode::Off));
+	CHECK(back.engine.fieldAt(lane2, tf::layerParam(0, LP::OrbitPhase)) == 2.3f);
+	CHECK(back.engine.fieldAt(lane2, tf::layerParam(1, LP::OrbitPhase)) == 5.1f);
+	for (size_t i = 0; i < row.size(); ++i) {
+		CAPTURE(i);
+		CHECK(back.engine.fieldAt(lane2, i) == row[i]);
+	}
+	bool someNonDefault = false;
+	for (size_t k = 0; k < tf::kPoints; ++k) {
+		CHECK(back.engine.publishedOutputAt(lane2, k) == outs[k]);
+		someNonDefault = someNonDefault || outs[k] != 0.0f;
+	}
+	CHECK(someNonDefault);
 }

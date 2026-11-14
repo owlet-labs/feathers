@@ -28,7 +28,7 @@ namespace feathers::mod::twinfield {
 
 /// THE DEVICE. Holds no randomness and captures nothing: its outputs are a pure function of the row and
 /// each layer's orbit phase, and the phase is derived from the song (Free, playing) or counted from reset
-/// or the last note. So there is no seed and no extra state to persist — the keyed params are the patch.
+/// or the last note, or (Off) is the Orbit Phase param itself. So there is no seed and no extra state to persist — the keyed params are the patch.
 class TwinField {
 public:
 	void prepare(double sampleRate) noexcept;

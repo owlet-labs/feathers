@@ -41,7 +41,9 @@ HarmPartialStrip::HarmPartialStrip(backplane::DeviceHost& host, DeviceInstanceId
 
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		for (int k = 0; k < hrm::kPartialCount; ++k) {
-			if (headerBounds(k).contains(e.position)) {
+			// ANY PART OF THE CELL: its chip and pill are children and take their own presses, so what reaches here is the header or
+			// empty space.
+			if (columnBounds(k).contains(e.position)) {
 				if (onSelect) {
 					onSelect(k);
 				}
@@ -166,8 +168,13 @@ void HarmPartialStrip::draw(visage::Canvas& canvas) {
 		const bool selected = k == selected_;
 		const bool active = partialActive(k);
 		// THE SELECTION OUTLINE round the whole column — the tab, in the strip.
+		// THE SELECTION OUTLINE IS THE ONLY MARK, so it is a tinted cell with a firm accent border; the others are a hairline.
+		if (selected) {
+			canvas.setColor(withAlpha(kAccent, 0.10f));
+			canvas.roundedRectangle(c.x() - 2.0f, c.y() + 1.0f, c.width() + 4.0f, c.height() - 2.0f, 4.0f);
+		}
 		canvas.setColor(selected ? kAccent : withAlpha(kLine, 0.35f));
-		canvas.roundedRectangleBorder(c.x() - 2.0f, c.y() + 1.0f, c.width() + 4.0f, c.height() - 2.0f, 4.0f, selected ? 1.5f : 1.0f);
+		canvas.roundedRectangleBorder(c.x() - 2.0f, c.y() + 1.0f, c.width() + 4.0f, c.height() - 2.0f, 4.0f, selected ? 2.0f : 1.0f);
 		const visage::Bounds header = headerBounds(k);
 		canvas.setColor(selected ? kInk : (active ? kInk : kMuted));
 		canvas.text(headerText(k), font(kKnobLabelSize), visage::Font::kLeft, header.x() + 4.0f, header.y(),

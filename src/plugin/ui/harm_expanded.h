@@ -42,13 +42,13 @@
 //
 //   PARTIALS    a strip of four columns — each partial's number and ratio, its Active switch and its Level — ALWAYS on
 //               show, so every partial is switched and levelled from whichever tab is open;
-//   TABS        "1 2 3 4", drawn as Drawn's frame tabs are (`tab_chip.h`): which partial the detail below is about;
 //   DETAIL      left: the selected partial — its ratio row and Mode, the scope (every active partial's notch and mark, the
 //               selected one emphasised), and Fine, Width, Depth, Phase, Spread. Right: the ENVELOPE, its curve and its six
 //               values;
 //   MASTER      Porta, Poly and Env Depth — the controls that belong to the device and to no one partial.
 //
-// THE TAB IS VIEW STATE, exactly as Drawn's selected frame is: a plain member of the window, not a parameter, not automated,
+// A PRESS ON A STRIP CELL (not on its chip or pill) OPENS THAT PARTIAL; the selection outline on the cell is the only mark.
+// THE SELECTION IS VIEW STATE, exactly as Drawn's selected frame is: a plain member of the window, not a parameter, not automated,
 // not modulated, and not stored. All four partials' detail controls are built once and the selected set is shown, so the four
 // tabs are one layout bound to four sets of parameters.
 //
@@ -91,9 +91,8 @@ public:
 	static constexpr float kCaptionHeight = 14.0f;
 	static constexpr float kCaptionGap = 6.0f;
 	/// THE SCOPE IS THE REASON THE PANEL EXISTS and it does not shrink to make room for controls.
-	static constexpr float kScopeHeight = 120.0f;
+	static constexpr float kScopeHeight = 150.0f;
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
-	static constexpr float kTabHeight = 22.0f;
 	static constexpr float kSwitchHeight = 20.0f;
 	/// THE DETAIL'S TWO COLUMNS: the selected partial on the left, the envelope on the right.
 	static constexpr float kLeftWidth = 340.0f;
@@ -124,9 +123,6 @@ public:
 	}
 
 	visage::Bounds stripBounds() const;
-	visage::Bounds tabBounds(int partial) const;
-	/// What a tab says: the partial's number.
-	static std::string tabText(int partial);
 	visage::Bounds harmonicBounds() const;
 	visage::Bounds scopeBounds() const;
 	visage::Bounds modeBounds() const;

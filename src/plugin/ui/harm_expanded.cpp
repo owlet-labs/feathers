@@ -19,7 +19,6 @@
 #include "plugin/ui/harm_expanded.h"
 
 #include "device/device.h"
-#include "plugin/ui/tab_chip.h"
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -53,8 +52,6 @@ constexpr KnobEntry kKnobEntries[] = {
 	{ hrm::PartialField::Phase, "Phase" }, { hrm::PartialField::Spread, "Spread" },
 };
 constexpr int kSpectralKnobs = 3;
-constexpr float kTabWidth = 56.0f;
-constexpr float kTabGap = 6.0f;
 
 } // namespace
 
@@ -62,7 +59,6 @@ constexpr float kTabGap = 6.0f;
 /// what a case reads are one geometry.
 struct HarmExpanded::Layout {
 	visage::Bounds partialsCaption, strip;
-	std::array<visage::Bounds, hrm::kPartialCount> tabs {};
 	visage::Bounds spectralCaption, harmonic, mode, scope, spatialCaption, knobRow;
 	visage::Bounds envelopeCaption, envelope;
 	std::array<visage::Bounds, 6> boxes {};
@@ -89,10 +85,8 @@ HarmExpanded::Layout HarmExpanded::layoutFor(float totalWidth) const {
 	y += kCaptionHeight + kCaptionGap;
 	l.strip = { kPad, y, inner, HarmPartialStrip::kHeight };
 	y += HarmPartialStrip::kHeight + kRowGap;
-	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		l.tabs[static_cast<size_t>(k)] = { kPad + (kTabWidth + kTabGap) * static_cast<float>(k), y, kTabWidth, kTabHeight };
-	}
-	y += kTabHeight + kGroupGap;
+	// THE STRIP IS THE TAB BAR: a press on a partial's cell opens it, so there is no row of tabs between it and the detail.
+	y += kGroupGap - kRowGap;
 	const float bodyTop = y;
 
 	// LEFT: THE SELECTED PARTIAL.
@@ -106,8 +100,8 @@ HarmExpanded::Layout HarmExpanded::layoutFor(float totalWidth) const {
 	l.scope = { kPad, y, leftW, kScopeHeight };
 	y += kScopeHeight + kRowGap;
 	l.knobCell = leftW / static_cast<float>(kKnobCells);
-	l.spatialCaption = { kPad + l.knobCell * static_cast<float>(kSpectralKnobs), y, l.knobCell * (kKnobCells - kSpectralKnobs),
-		                 kCaptionHeight };
+	l.spatialCaption = { kPad + l.knobCell * static_cast<float>(kSpectralKnobs) + 8.0f, y,
+		                 l.knobCell * (kKnobCells - kSpectralKnobs) - 8.0f, kCaptionHeight };
 	y += kCaptionHeight + kCaptionGap;
 	const float column = Knob::columnHeight(kKnobDiameter);
 	l.knobRow = { kPad, y, leftW, column };
@@ -215,15 +209,6 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 	depthEnv_ = std::make_unique<SwitchChip>(control(hrm::Param::DepthFollowsEnv), "Env Depth");
 	addChild(depthEnv_.get());
 
-	onMouseDown() = [this](const visage::MouseEvent& e) {
-		for (int k = 0; k < hrm::kPartialCount; ++k) {
-			if (tabBounds(k).contains(e.position)) {
-				selectPartial(k);
-				return;
-			}
-		}
-	};
-
 	selectPartial(0);
 	followState();
 
@@ -317,10 +302,6 @@ visage::Point HarmExpanded::minimumSize() const {
 }
 
 visage::Bounds HarmExpanded::stripBounds() const { return layout().strip; }
-visage::Bounds HarmExpanded::tabBounds(int partial) const {
-	return layout().tabs[static_cast<size_t>(std::clamp(partial, 0, hrm::kPartialCount - 1))];
-}
-std::string HarmExpanded::tabText(int partial) { return std::to_string(partial + 1); }
 visage::Bounds HarmExpanded::harmonicBounds() const { return layout().harmonic; }
 visage::Bounds HarmExpanded::scopeBounds() const { return layout().scope; }
 visage::Bounds HarmExpanded::modeBounds() const { return layout().mode; }
@@ -461,10 +442,14 @@ void HarmExpanded::draw(visage::Canvas& canvas) {
 	// NO GROUND OF ITS OWN. The overlay's panel is already a raised surface and a second rectangle on
 	// top of it would be a card inside a card. The knobs, the row and the scope draw themselves.
 
-	// THE TABS, drawn as Drawn's frame tabs are. A tab whose partial is off is drawn muted, as the strip's header is.
-	const Layout l = layout();
-	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		drawTabChip(canvas, l.tabs[static_cast<size_t>(k)], tabText(k), k == selected_);
+
+	// WHERE SPECTRAL'S KNOBS END AND SPATIAL'S BEGIN: Fine, Width and Depth set the pitch and the shape of the notch (spectral);
+	// only Phase and Spread are about the stereo image. A hairline between the two cells says so.
+	{
+		const Layout lay = layout();
+		const float x = lay.knobRow.x() + lay.knobCell * static_cast<float>(kSpectralKnobs);
+		canvas.setColor(withAlpha(kLine, 0.55f));
+		canvas.fill(x, lay.spatialCaption.y(), 1.0f, lay.knobRow.bottom() - lay.spatialCaption.y());
 	}
 
 	// THE GROUP CAPTIONS. READ FROM `captions_` RATHER THAN RECOMPUTED, so the caption is written where `resized`

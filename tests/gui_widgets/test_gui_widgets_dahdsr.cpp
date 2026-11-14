@@ -13225,7 +13225,7 @@ std::set<size_t> harmVisibleOffers(const visage::Frame* root) {
 
 } // namespace
 
-TEST_CASE("HARM's window: a strip of four partials that is always on show, and tabs that choose the detail") {
+TEST_CASE("HARM's window: a strip of four partials that is always on show, whose cells choose the detail") {
 	HarmFixture f;
 	namespace hrm = feathers::fx::harm;
 	ui::HarmExpanded& panel = f.expanded();
@@ -13245,9 +13245,11 @@ TEST_CASE("HARM's window: a strip of four partials that is always on show, and t
 	const hrm::PartialField stripFields[] = { hrm::PartialField::Level, hrm::PartialField::Active };
 
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		panel.selectPartial(k);
+		// SELECTED BY A PRESS ON THE CELL, as a hand does it
+		const visage::Bounds head = strip->headerBounds(k);
+		const_cast<ui::HarmPartialStrip*>(strip)->onMouseDown().callback(at(head.x() + 6.0f, head.y() + 4.0f));
 		(void)panel.updateContent();
-		INFO("tab " << k + 1);
+		INFO("cell " << k + 1);
 		CHECK(panel.selectedPartial() == k);
 		CHECK(strip->selected() == k);
 		CHECK(panel.scopeForTest()->selectedPartial() == k);
@@ -13275,28 +13277,41 @@ TEST_CASE("HARM's window: a strip of four partials that is always on show, and t
 		CHECK(strip->activeChip(k)->isVisible());
 	}
 
-	SUBCASE("a press on a tab, or on a strip column's header, opens that partial — and it is view state, not a parameter") {
-		const visage::Bounds tab = panel.tabBounds(2);
-		panel.onMouseDown().callback(at(tab.x() + tab.width() * 0.5f, tab.y() + tab.height() * 0.5f));
-		CHECK(panel.selectedPartial() == 2);
-
-		// the whole row of the device, before and after a selection: nothing in it moves
-		const hrm::Row before = [&] {
-			hrm::Row row {};
-			for (size_t i = 0; i < row.size(); ++i) {
-				row[i] = f.deviceHost.fieldAt(f.device, i);
+	SUBCASE("a press on a strip cell — its header or empty space — opens that partial; a press on its chip or pill does not, and selection is view state") {
+		const auto row = [&] {
+			hrm::Row r {};
+			for (size_t i = 0; i < r.size(); ++i) {
+				r[i] = f.deviceHost.fieldAt(f.device, i);
 			}
-			return row;
+			return r;
 		}();
-		const visage::Bounds head = strip->headerBounds(3);
-		const ui::HarmPartialStrip* s = strip;
-		const_cast<ui::HarmPartialStrip*>(s)->onMouseDown().callback(at(head.x() + 6.0f, head.y() + 4.0f));
+		ui::HarmPartialStrip* s = const_cast<ui::HarmPartialStrip*>(strip);
+		const visage::Bounds head = s->headerBounds(3);
+		s->onMouseDown().callback(at(head.x() + 6.0f, head.y() + 4.0f));
 		CHECK(panel.selectedPartial() == 3);
+		// empty space in the cell, below the header and right of the chip's end but inside the cell's padding
+		const visage::Bounds cell = s->columnBounds(2);
+		s->onMouseDown().callback(at(cell.x() + 1.0f, cell.bottom() - 1.0f));
+		CHECK(panel.selectedPartial() == 2);
 		hrm::Row after {};
 		for (size_t i = 0; i < after.size(); ++i) {
 			after[i] = f.deviceHost.fieldAt(f.device, i);
 		}
-		CHECK(before == after);
+		CHECK(row == after); // selecting wrote nothing
+
+		// a press on the Active chip toggles THAT partial and leaves the selection where it was
+		panel.selectPartial(0);
+		const visage::Bounds chip = s->chipBounds(1);
+		const bool was = strip->activeChip(1)->on();
+		s->activeChip(1)->onMouseDown().callback(at(chip.width() * 0.5f, chip.height() * 0.5f));
+		s->activeChip(1)->onMouseUp().callback(at(chip.width() * 0.5f, chip.height() * 0.5f));
+		CHECK(panel.selectedPartial() == 0);
+		CHECK(strip->activeChip(1)->on() != was);
+		// and the pill likewise
+		const visage::Bounds pill = s->pillBounds(2);
+		s->levelPill(2)->onMouseDown().callback(at(pill.width() * 0.5f, pill.height() * 0.5f));
+		s->levelPill(2)->onMouseUp().callback(at(pill.width() * 0.5f, pill.height() * 0.5f));
+		CHECK(panel.selectedPartial() == 0);
 	}
 
 	SUBCASE("the strip's chips and pills write the row the engine decodes, for every partial, from any tab") {

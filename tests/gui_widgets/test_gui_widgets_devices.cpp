@@ -32243,7 +32243,8 @@ TEST_CASE("NB: OWLTT's crossover labels never touch a channel letter or each oth
 		float high;
 		float ms;
 	};
-	const Scene scenes[] = { { "defaults", 200.0f, 2000.0f, 0.0f }, { "crowded", 450.0f, 900.0f, 0.0f },
+	const Scene scenes[] = { { "defaults", 200.0f, 2000.0f, 0.0f }, { "close", 800.0f, 900.0f, 0.0f },
+		                     { "crowded", 450.0f, 900.0f, 0.0f },
 		                     { "crowded M/S", 450.0f, 900.0f, 1.0f }, { "wide", 60.0f, 9000.0f, 0.0f } };
 	size_t lettersSeen = 0;
 	for (const Scene& s : scenes) {
@@ -32268,6 +32269,34 @@ TEST_CASE("NB: OWLTT's crossover labels never touch a channel letter or each oth
 				}
 			}
 			CHECK_FALSE(overlap(t.frequency[0], t.frequency[1]));
+			// AND NEVER OVER A HANDLE: not the crossover handles in the lane, not any bar or strip ring, not a ratio thumb, and
+			// not the lane-free card's lights (checked as rings: the bars' rings are what a label could be struck through by).
+			using H = ui::OwlttGraph::Handle;
+			std::vector<visage::Bounds> handles;
+			for (size_t band = 0; band < 3; ++band) {
+				for (const H h : { H::ThresholdBar, H::BandwidthBar, H::RatioStrip, H::LevelStrip }) {
+					const visage::Point c = graph->ringCentre(band, h);
+					handles.push_back({ c.x - 4.0f, c.y - 4.0f, 8.0f, 8.0f });
+				}
+				if (graph->editor()) {
+					for (const H h : { H::DownRatio, H::UpRatio }) {
+						const visage::Point c = graph->ringCentre(band, h);
+						handles.push_back({ c.x - 6.0f, c.y - 6.0f, 12.0f, 12.0f });
+					}
+				}
+			}
+			if (graph->editor()) {
+				for (size_t which = 0; which < 2; ++which) {
+					const visage::Point c = graph->crossoverHandle(which);
+					handles.push_back({ c.x - 4.0f, c.y - 4.0f, 8.0f, 8.0f });
+				}
+			}
+			for (size_t which = 0; which < 2; ++which) {
+				for (const visage::Bounds& hb : handles) {
+					CAPTURE(which);
+					CHECK_FALSE(overlap(t.frequency[which], hb));
+				}
+			}
 		}
 	}
 	CHECK(lettersSeen > 0u); // NOT VACUOUS: the letters were there to be avoided
@@ -41318,4 +41347,40 @@ TEST_CASE("OWLTT's window: a routed per-band threshold draws its ModHandle strok
 	CHECK(character.right() <= vibe.x());
 	CHECK(character.y() == doctest::Approx(vibe.y()));
 	CHECK(character.y() >= boxes[0]->bounds().bottom());
+}
+
+TEST_CASE("OWLTT's window: offsets and ratio trims read and type as signed percentages from their centre, the stored value unchanged") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	ui::ValueBox* attack = graph->tableBoxForTest(2, 0);
+	REQUIRE(attack != nullptr);
+	CHECK(attack->control().text() == "0"); // the default centre
+	d.set(static_cast<size_t>(ow::Param::LowAttack), 0.75f);
+	CHECK(attack->control().text() == "+25%");
+	CHECK(attack->readout() == "+25%"); // and the box prints it so
+	d.set(static_cast<size_t>(ow::Param::LowAttack), 0.1f);
+	CHECK(attack->control().text() == "-40%");
+	// THE THUMB'S CONTROL READS THE SAME WAY.
+	d.set(static_cast<size_t>(ow::Param::MidDownRatio), 0.9f);
+	CHECK(graph->handleControl(1, ui::OwlttGraph::Handle::DownRatio).text() == "+40%");
+	// TYPED ENTRY TAKES THE SIGNED FORM (and a bare number, and a percent sign), as the device's own parse.
+	const auto& ops = *ow::kDescriptor.text;
+	device::TextView view {};
+	double v = 0.0;
+	for (const auto& [text, want01] : { std::pair { "+25%", 0.75 }, std::pair { "-40", 0.1 }, std::pair { "0", 0.5 },
+	                                    std::pair { "-80%", 0.0 } }) {
+		CAPTURE(text);
+		REQUIRE(ops.parse(static_cast<size_t>(ow::Param::HighRelease), text, view, &v));
+		CHECK(v == doctest::Approx(want01).epsilon(1e-9));
+	}
+	CHECK_FALSE(ops.parse(static_cast<size_t>(ow::Param::HighRelease), "abc", view, &v));
+	// THE GLOBAL ROW IS LEFT AS IT WAS: Attack still reads as a percentage of its range.
+	CHECK(panel.globalBoxesForTest()[4]->control().text() == "25%");
 }

@@ -428,7 +428,6 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 	const visage::Font face = font(kKnobReadoutSize);
 	const auto widthOf = [&face](const std::string& s) { return face.stringWidth(std::u32string(s.begin(), s.end())); };
 	constexpr float kRowHeight = 12.0f;
-	constexpr float kRowStep = 13.0f;
 
 	// THE LETTERS, where the meters put them: under each half of the band's gain-reduction column (the central third
 	// of the band), centred — and only when a half is wide enough to hold one, as before.
@@ -462,28 +461,56 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 		return a.x() - 1.0f < b.right() && b.x() - 1.0f < a.right() && a.y() < b.bottom() && b.y() < a.bottom();
 	};
 	const std::array<float, 2> edges { xLow, xHigh };
+	// **THE READOUT STANDS BESIDE ITS CORNER.** In the window that is beside the handle in the lane: right of the ring, flipping to its
+	// left when it would leave the plot or touch the other handle or label. On the card, which has no lane, it is at the top of the
+	// plot beside the crossover line, on the line's left, where the bar rings and the saturation lights are not (the lights sit
+	// right of a line); it flips right on the same conditions. The obstacles are the handles, the other label, the clip square,
+	// the combined-reduction text and the lights, so nothing is drawn over a label.
+	std::vector<visage::Bounds> fixed;
+	const visage::Bounds lane = rail();
+	if (lane.width() > 0.0f) {
+		for (size_t h = 0; h < 2; ++h) {
+			const visage::Point c = crossoverHandle(h);
+			fixed.push_back({ c.x - 8.0f, c.y - 8.0f, 16.0f, 16.0f });
+		}
+	}
+	else {
+		fixed.push_back({ whole.right() - 90.0f, whole.y(), 90.0f, 14.0f }); // the clip square and the combined reduction
+		for (const float left : { whole.x(), xLow, xHigh }) {
+			fixed.push_back({ left + 3.0f, xover.y() + 3.0f, 8.0f, 8.0f }); // a band's saturation light
+		}
+	}
 	for (size_t which = 0; which < 2; ++which) {
-		const auto param = which == 0 ? owltt::Param::LowCrossover : owltt::Param::HighCrossover;
-		(void)param;
 		out.frequencyText[which] = frequencyText(static_cast<float>(cornerHz(which)));
 		const float w = widthOf(out.frequencyText[which]);
-		const bool room = edges[which] + 4.0f + w <= whole.right();
-		visage::Bounds label { room ? edges[which] + 4.0f : edges[which] - 4.0f - w, xover.bottom() - 14.0f, w,
-			                   kRowHeight };
-		for (int row = 0; row < 8; ++row) {
-			bool clear = true;
-			for (const visage::Bounds& letter : out.letters) {
-				clear = clear && !touches(label, letter);
+		const float y = lane.width() > 0.0f ? lane.y() + (lane.height() - kRowHeight) * 0.5f : whole.y() + 2.0f;
+		const float anchor = lane.width() > 0.0f ? crossoverHandle(which).x : edges[which];
+		const float gap = lane.width() > 0.0f ? 10.0f : 4.0f;
+		const auto fits = [&](const visage::Bounds& b) {
+			if (b.x() < whole.x() + 1.0f || b.right() > whole.right() - 1.0f || b.bottom() > xover.bottom() - 14.0f) {
+				return false;
 			}
-			if (which == 1) {
-				clear = clear && !touches(label, out.frequency[0]);
+			for (const visage::Bounds& o : fixed) {
+				if (touches(b, o)) {
+					return false;
+				}
 			}
-			if (clear || label.y() - kRowStep < whole.y()) {
-				break;
+			return which == 0 || !touches(b, out.frequency[0]);
+		};
+		// THE PREFERRED SIDE, THEN THE OTHER, THEN A ROW DOWN on either — a corner crowded against its neighbour steps down rather
+		// than over it.
+		out.frequency[which] = { anchor, y, w, kRowHeight };
+		bool placed = false;
+		for (int row = 0; row < 3 && !placed; ++row) {
+			for (int side = 0; side < 2 && !placed; ++side) {
+				const bool right = (lane.width() > 0.0f) == (side == 0);
+				const visage::Bounds b { right ? anchor + gap : anchor - gap - w, y + static_cast<float>(row) * 13.0f, w, kRowHeight };
+				if (fits(b)) {
+					out.frequency[which] = b;
+					placed = true;
+				}
 			}
-			label = { label.x(), label.y() - kRowStep, label.width(), label.height() };
 		}
-		out.frequency[which] = label;
 	}
 	return out;
 }
@@ -921,8 +948,14 @@ void OwlttGraph::setEditor(bool on) {
 	if (on) {
 		for (size_t row = 0; row < kTableRows; ++row) {
 			for (size_t band = 0; band < 3; ++band) {
-				auto box = std::make_unique<ValueBox>(control(static_cast<size_t>(tableParam(row, band))), "");
+				DeviceControl* ctrl = &control(static_cast<size_t>(tableParam(row, band)));
+				auto box = std::make_unique<ValueBox>(*ctrl, "");
 				box->setCompact(true);
+				if (row >= 2) {
+					// THE OFFSETS READ SIGNED FROM THEIR CENTRE through the device's own words (`kTextOps`): the box prints the
+					// declared unit unless it is told otherwise.
+					box->setReadoutFormatter([ctrl](double v) { return ctrl->textAt(v); });
+				}
 				addChild(box.get());
 				cells_[row][band] = std::move(box);
 			}

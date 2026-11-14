@@ -1654,8 +1654,24 @@ bool isCrossover(size_t control) noexcept {
 
 } // namespace
 
+/// THE PER-BAND TRIMS AND OFFSETS, stored 0..1 with 0.5 meaning none: they read and type as signed percentages from the
+/// centre ("0", "+25%", "-40%"), and the stored value and key are unchanged.
+bool isCentred(size_t control) noexcept {
+	return (control >= static_cast<size_t>(Param::LowUpRatio) && control <= static_cast<size_t>(Param::HighRelease));
+}
+
 const device::TextOps kTextOps {
 	.format = [](size_t control, double value, const device::TextView& view, char* out, size_t size) {
+		if (isCentred(control)) {
+			const double pct = (value - 0.5) * 100.0;
+			if (std::fabs(pct) < 0.5) {
+				std::snprintf(out, size, "0");
+			}
+			else {
+				std::snprintf(out, size, "%+.0f%%", pct);
+			}
+			return true;
+		}
 		if (!isCrossover(control) || !viewTracking(view)) {
 			return false;
 		}
@@ -1665,6 +1681,27 @@ const device::TextOps kTextOps {
 		return true;
 	},
 	.parse = [](size_t control, const char* text, const device::TextView& view, double* value) {
+		if (isCentred(control)) {
+			if (text == nullptr) {
+				return false;
+			}
+			char* end = nullptr;
+			const double pct = std::strtod(text, &end);
+			if (end == text || !std::isfinite(pct)) {
+				return false;
+			}
+			while (*end == ' ') {
+				++end;
+			}
+			if (*end == '%') {
+				++end;
+			}
+			if (*end != '\0') {
+				return false;
+			}
+			*value = std::clamp(0.5 + pct / 100.0, 0.0, 1.0);
+			return true;
+		}
 		if (!isCrossover(control) || !viewTracking(view) || text == nullptr) {
 			return false;
 		}

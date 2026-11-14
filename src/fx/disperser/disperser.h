@@ -143,7 +143,7 @@ private:
 	/// THE CONTROL PATH, once per block, reading the block's first input sample for the transient
 	/// detector as `processBuffer` reads `buffer[0]`.
 	void tick(const Settings& s, float firstL, float firstR) noexcept;
-	void updateCoefficients(double freqIndex, double spread, double lrOffset, double q, int activeStages,
+	void updateCoefficients(double freqIndex, double spread, double lrOffset, bool stereo, double q, int activeStages,
 	                        double spreadCurve, double qTilt, double bimodalSeparation, double detuning,
 	                        double emphasis, double lfoRateScale) noexcept;
 	/// THE SAMPLE LOOP, over a run of frames inside one block.
@@ -250,6 +250,7 @@ private:
 	double lastSpread_ = -1.0;
 	int lastActiveStages_ = -1;
 	float lastLrOffset_ = 0.0f;
+	bool lastStereo_ = true;
 	float lastQ_ = -1.0f;
 	float lastSpreadCurve_ = -1.0f;
 	float lastQTilt_ = 999.0f;

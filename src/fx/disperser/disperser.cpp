@@ -472,8 +472,9 @@ TwistParams computeTwistParams(double knob, double phRaw) noexcept {
 	return combinedTwist(std::clamp(pos, 0.0f, 1.0f), phRaw);
 }
 
-Routing routingOf(const TopoParams& topo, const TwistParams& twist) noexcept {
+Routing routingOf(const TopoParams& topo, const TwistParams& twist, bool widthOn) noexcept {
 	Routing r;
+	r.stereo = widthOn;
 	auto lr = static_cast<float>(twist.width);
 	auto spread = 1.0f;
 	const auto p0 = static_cast<float>(topo.param0);
@@ -584,8 +585,11 @@ float centerHzOf(double freqIndex) noexcept {
 	return static_cast<float>(std::exp2(freqIndex * kFreqOctaves / kFreqIndexMax));
 }
 
-float restingHalfSpread(double lrOffset) noexcept {
-	return std::clamp(static_cast<float>(lrOffset) * 0.5f + static_cast<float>(kBaselineStereoOffset),
+float restingHalfSpread(const Routing& routing) noexcept {
+	if (!routing.stereo) {
+		return 0.0f;
+	}
+	return std::clamp(static_cast<float>(routing.lrOffset) * 0.5f + static_cast<float>(kBaselineStereoOffset),
 	                  -static_cast<float>(kMaxLrOffset), static_cast<float>(kMaxLrOffset));
 }
 
@@ -723,6 +727,7 @@ void Disperser::reset() noexcept {
 	lastFreq_ = lastSpread_ = -1.0;
 	lastActiveStages_ = -1;
 	lastLrOffset_ = 0.0f;
+	lastStereo_ = true;
 	lastQ_ = -1.0f;
 	lastSpreadCurve_ = -1.0f;
 	lastQTilt_ = 999.0f;
@@ -872,7 +877,7 @@ void Disperser::tick(const Settings& s, float firstL, float firstR) noexcept {
 	lastTopoZone_ = topo.zone;
 	topology_ = static_cast<Topology>(topo.zone);
 
-	const Routing routing = routingOf(topo, twist);
+	const Routing routing = routingOf(topo, twist, s.pillOn[static_cast<size_t>(Pill::Width)]);
 	const double freqIndex = freqIndexOf(s, heardNote_, noteSemitones_);
 
 	// `updateCoefficientsSmoothed`: the two smoothers every block, the coefficients every fourth.
@@ -897,7 +902,7 @@ void Disperser::tick(const Settings& s, float firstL, float firstR) noexcept {
 	activeStages_ = stages;
 	if (++coeffUpdateCounter_ >= kCoeffUpdateStride) {
 		coeffUpdateCounter_ = 0;
-		updateCoefficients(smoothedFreq_, smoothedSpread_, routing.lrOffset, topo.q, stages, twist.spreadCurve,
+		updateCoefficients(smoothedFreq_, smoothedSpread_, routing.lrOffset, routing.stereo, topo.q, stages, twist.spreadCurve,
 		                   twist.qTilt, routing.bimodalSeparation, topo.detuning, topo.emphasis, twist.lfoRateScale);
 	}
 
@@ -982,7 +987,7 @@ void Disperser::tick(const Settings& s, float firstL, float firstR) noexcept {
 	}
 }
 
-void Disperser::updateCoefficients(double freqIndex, double spread, double lrOffset, double q, int activeStages,
+void Disperser::updateCoefficients(double freqIndex, double spread, double lrOffset, bool stereo, double q, int activeStages,
                                    double spreadCurve, double qTilt, double bimodalSeparation, double detuning,
                                    double emphasis, double lfoRateScale) noexcept {
 	const auto lrF = static_cast<float>(lrOffset);
@@ -999,7 +1004,7 @@ void Disperser::updateCoefficients(double freqIndex, double spread, double lrOff
 	// its `uint8_t` indices settle.
 	const double freqStep = std::floor(freqIndex);
 	const double spreadStep = std::floor(spread * kFreqIndexMax);
-	const bool lrChanged = std::abs(lrF - lastLrOffset_) > 0.01f;
+	const bool lrChanged = std::abs(lrF - lastLrOffset_) > 0.01f || stereo != lastStereo_;
 	const bool qChanged = std::abs(qF - lastQ_) > 0.05f;
 	const bool stagesChanged = activeStages != lastActiveStages_;
 	const bool curveChanged = std::abs(curveF - lastSpreadCurve_) > 0.02f;
@@ -1016,6 +1021,7 @@ void Disperser::updateCoefficients(double freqIndex, double spread, double lrOff
 	lastFreq_ = freqStep;
 	lastSpread_ = spreadStep;
 	lastLrOffset_ = lrF;
+	lastStereo_ = stereo;
 	lastQ_ = qF;
 	lastActiveStages_ = activeStages;
 	if (stagesChanged) {
@@ -1065,9 +1071,10 @@ void Disperser::updateCoefficients(double freqIndex, double spread, double lrOff
 	}
 	const float widthLfoOffset = lfoTriangle(widthLfoPhase_) * static_cast<float>(kWidthLfoDepth);
 	const float detuneLfoOffset = lfoTriangle(detuneLfoPhase_) * static_cast<float>(kDetuneLfoDepth);
-	const float halfSpread =
-	    std::clamp(lrF * 0.5f + widthLfoOffset + detuneLfoOffset + static_cast<float>(kBaselineStereoOffset),
-	               -static_cast<float>(kMaxLrOffset), static_cast<float>(kMaxLrOffset));
+	// WIDTH OFF IS MONO (`Routing::stereo`): the LFOs keep turning, so switching it back on resumes the song's phase.
+	const float halfSpread = !stereo ? 0.0f
+	    : std::clamp(lrF * 0.5f + widthLfoOffset + detuneLfoOffset + static_cast<float>(kBaselineStereoOffset),
+	                 -static_cast<float>(kMaxLrOffset), static_cast<float>(kMaxLrOffset));
 	const StageLayout layout = layoutStages(centerHz, spreadOctaves, halfSpread, qF, activeStages, curveF, tiltF, bimodalF,
 	                                        detuneF, emphasisF);
 	// **THE LATTICE RAMPS TO EACH UPDATE, IT DOES NOT STEP.** The firmware steps its coefficients every fourth

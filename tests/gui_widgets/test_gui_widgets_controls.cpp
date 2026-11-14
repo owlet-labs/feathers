@@ -21,7 +21,9 @@
 
 // THE EDITOR'S CONTROLS — knobs, the notify tray, the derivation clamp, the perform stage and its sky, the wave display, the sound stack, the order of the list, and the terrain. Lines 1–5819 of the one file, moved verbatim 2026-09-03.
 
+#if !defined(_MSC_VER)
 #include <cxxabi.h>
+#endif
 
 #include "fixtures.h"
 
@@ -6928,11 +6930,15 @@ namespace {
 /// A READABLE TYPE NAME. `typeid::name` is the mangled form on this toolchain, and "1" is not a
 /// finding anybody can act on.
 std::string demangled(const char* mangled) {
+#if defined(_MSC_VER)
+	return mangled; // MSVC's typeid names are already readable ("class visage::Frame")
+#else
 	int status = 0;
 	char* out = abi::__cxa_demangle(mangled, nullptr, nullptr, &status);
 	std::string name = (status == 0 && out != nullptr) ? out : mangled;
 	std::free(out);
 	return name;
+#endif
 }
 } // namespace
 

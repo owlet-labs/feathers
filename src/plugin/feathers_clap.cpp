@@ -1276,6 +1276,8 @@ protected:
 		// wrapper hardcodes Cocoa on MAC without ever asking, opened fine.
 #if defined(__APPLE__)
 		*api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+		*api = CLAP_WINDOW_API_WIN32;
 #else
 		*api = CLAP_WINDOW_API_X11;
 #endif

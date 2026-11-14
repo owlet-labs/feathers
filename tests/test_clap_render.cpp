@@ -1614,6 +1614,8 @@ TEST_CASE("a host that cannot drive the editor is refused an editor, and still g
 	constexpr const char* kEmbedApi =
 #if defined(__APPLE__)
 	    CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	    CLAP_WINDOW_API_WIN32;
 #else
 	    CLAP_WINDOW_API_X11;
 #endif
@@ -1638,9 +1640,11 @@ TEST_CASE("a host that cannot drive the editor is refused an editor, and still g
 		// answers: the platform's embedding is supported in principle...
 		CHECK(gui->is_api_supported(host.plugin(), kEmbedApi, false));
 		CHECK_FALSE(gui->is_api_supported(host.plugin(), kEmbedApi, true));
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 		// ...and creating one against this host is granted: AppKit drives the editor, so this host
-		// can show it. Destroyed here because clap-helpers reports a leak to the host otherwise.
+		// can show it. Windows likewise: the host's own message loop delivers paint and input to
+		// the child window, and visage's vblank thread asks for the frames. Destroyed here because
+		// clap-helpers reports a leak to the host otherwise.
 		CHECK(gui->create(host.plugin(), kEmbedApi, false));
 		gui->destroy(host.plugin());
 #else
@@ -2659,6 +2663,8 @@ struct SilentTimerHost {
 constexpr const char* kEmbedApiHere =
 #if defined(__APPLE__)
     CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+    CLAP_WINDOW_API_WIN32;
 #else
     CLAP_WINDOW_API_X11;
 #endif
@@ -2826,12 +2832,7 @@ TEST_CASE("backlog GP: a host that destroys its container BEFORE guiDestroy gets
 
 TEST_CASE("DE, found on macOS: a device added after init reaches the synth from the EDITOR'S OWN heartbeat, on a host whose timer never fires") {
 	namespace shaper = feathers::fx::shaper;
-#if defined(_WIN32)
-	// NO EDITOR ON WINDOWS YET (PluginWindow::isAvailable): the gui extension is absent, so the editor's heartbeat this
-	// case is about does not exist there. It returns with the embed.
-	MESSAGE("skipped: no Windows editor embed yet");
-	return;
-#elif defined(__linux__)
+#if defined(__linux__)
 	// THE EDITOR NEEDS A DISPLAY TO BE CREATED ON X11 — visage asks X for the monitor's scale inside
 	// `setWindowDimensions` and faults without one (MEASURED under ASan: XLockDisplay on a null
 	// Display from PluginWindow::create). The headless `clap-render` entry skips this case; the

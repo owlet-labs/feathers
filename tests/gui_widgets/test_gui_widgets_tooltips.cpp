@@ -82,7 +82,9 @@
 #include "rack/rack_axes.h"
 #include "rack/rack_engine.h"
 
+#if !defined(_MSC_VER)
 #include <cxxabi.h>
+#endif
 
 #include <memory>
 #include <set>
@@ -116,11 +118,15 @@ struct DetailScope {
 };
 
 std::string demangled(const visage::Frame& f) {
+#if defined(_MSC_VER)
+	return typeid(f).name(); // MSVC's typeid names are already readable ("class visage::Frame")
+#else
 	int status = 0;
 	char* name = abi::__cxa_demangle(typeid(f).name(), nullptr, nullptr, &status);
 	std::string out = status == 0 && name != nullptr ? name : typeid(f).name();
 	std::free(name);
 	return out;
+#endif
 }
 
 /// A MOUSE EVENT AT `local` IN `frame`, WITH NO BUTTON — a hover.

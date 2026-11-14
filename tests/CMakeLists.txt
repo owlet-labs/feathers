@@ -76,7 +76,9 @@ function(feathers_add_sharded_test)
 	# other three runs and in every run since.
 	cmake_parse_arguments(ARG "VENUE" "NAME;TARGET;SOURCE;SHARDS" "LABELS" ${ARGN})
 	set(_launch "")
-	if(ARG_VENUE)
+	# Not on Windows: the venue is an X display (Xvfb) and a POSIX script. There the suites are built and registered
+	# bare, and CI selects them out by their headless-incompatible label as it does on macOS.
+	if(ARG_VENUE AND NOT WIN32)
 		set(_launch ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --)
 	endif()
 	feathers_count_test_cases(_cases "${ARG_SOURCE}")
@@ -520,11 +522,10 @@ add_test(NAME gui-bridge COMMAND test_gui_bridge)
 # needs the widgets, so it exists only where the GUI is built, and it still needs no display: visage's
 # event entry points are ordinary function calls.
 #
-# NOT ON WINDOWS, where visage is built but the editor has no embed yet (PluginWindow::isAvailable answers false):
-# these suites drive an editor no Windows host can open, every entry is labelled headless-incompatible and so
-# excluded from CI on every leg anyway, and their fixtures speak X11 and POSIX (setenv, getpid, cxxabi). They
-# join the Windows build with the Windows embed.
-if(TARGET visage AND NOT WIN32)
+# WINDOWS BUILDS THEM TOO, now the editor embeds there (the Win32 branches of plugin_window.cpp): every entry is
+# labelled headless-incompatible, so CI compiles them on Windows and selects them out of the run, as on macOS; the
+# Win32 embed itself is exercised by test_win32_embed. test_gui_windowed stays X11-only (it drives an X server).
+if(TARGET visage)
 	# THE ASSEMBLED EDITOR, not just its widgets. The controls themselves come from feathers-ui, which
 	# is the same archive the plugin links; gui.cpp is the tree they are placed in, and the routing test
 	# needs the placement to be the REAL one. A report that params could no longer be edited was
@@ -681,6 +682,8 @@ if(TARGET visage AND NOT WIN32)
 	# three tool targets that did not link for a day. The library is that list now: one archive, seven
 	# consumers. This binary keeps its own main() (DOCTEST_CONFIG_IMPLEMENT in test_gui_windowed.cpp)
 	# and includes nothing from gui_widgets/fixtures.h.
+	# X11 ONLY: it drives an X server (XTest, the window's map state).
+	if(NOT WIN32)
 	add_executable(test_gui_windowed test_gui_windowed.cpp)
 	target_link_libraries(test_gui_windowed PRIVATE feathers-gui-widget-fixtures)
 	target_link_libraries(test_gui_windowed
@@ -716,6 +719,7 @@ if(TARGET visage AND NOT WIN32)
 	# label (.github/workflows/build.yml). On a host without them the venue exits 1 with "NOT READY"
 	# rather than a SegFault, which is the same red said more plainly.
 	set_tests_properties(gui-windowed PROPERTIES LABELS "headless-incompatible")
+	endif() # NOT WIN32
 endif()
 
 # THE MODIFIER ROAD THROUGH A REAL X11 WINDOW — tools/alt-probe.cpp, backlog CU. The widget suites
@@ -2073,3 +2077,14 @@ add_executable(test_mod_twinfield test_mod_twinfield.cpp)
 target_link_libraries(test_mod_twinfield PRIVATE feathers-rack feathers-synth feathers-gui-bridge feathers-warnings)
 target_include_directories(test_mod_twinfield PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME mod-twinfield COMMAND test_mod_twinfield)
+
+# THE WIN32 EMBED, ON THE WINDOWS RUNNER'S REAL DESKTOP: the plugin through its own clap_entry, its editor embedded in a
+# top-level window the test makes, twenty open/close cycles, and BMP photographs (win32-editor-*.bmp, uploaded by CI)
+# for a person to look at. See the file's header for what it asserts and what it cannot.
+if(WIN32 AND TARGET visage)
+	add_executable(test_win32_embed test_win32_embed.cpp ${CMAKE_SOURCE_DIR}/src/plugin/feathers_entry.cpp)
+	target_link_libraries(test_win32_embed PRIVATE feathers-impl feathers-warnings user32 gdi32)
+	target_include_directories(test_win32_embed PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+	add_test(NAME win32-embed COMMAND test_win32_embed)
+	set_tests_properties(win32-embed PROPERTIES TIMEOUT 300)
+endif()

@@ -45,6 +45,12 @@
 #if defined(__linux__)
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
+#elif defined(_WIN32)
+// The Win32 embed: SetParent and SetWindowPos on the HWND visage made, the same moves X11 makes with XReparentWindow.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #endif
 #endif
 
@@ -144,12 +150,36 @@ bool usableScreenArea(uint32_t* width, uint32_t* height) {
 	}
 	XCloseDisplay(display);
 	return found;
+#elif defined(_WIN32)
+	// THE PRIMARY MONITOR'S WORK AREA: the screen minus the taskbar, which is what _NET_WORKAREA is on X11.
+	RECT work {};
+	if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) == 0) {
+		return false;
+	}
+	*width = static_cast<uint32_t>(std::max(0L, work.right - work.left));
+	*height = static_cast<uint32_t>(std::max(0L, work.bottom - work.top));
+	return *width > 0 && *height > 0;
 #else
 	(void)width;
 	(void)height;
 	return false;
 #endif
 }
+
+#if defined(_WIN32)
+/// WHERE A DETACHED EDITOR WAITS ON WINDOWS — the twin of X11's "reparented to the root, unmapped".
+///
+/// A child HWND is destroyed with its parent, so the editor must leave the host's container before the host destroys
+/// it (`detachFromParent`). It cannot simply have no parent: visage made it WS_CHILD, and a child of the desktop is a
+/// visible top-level window in all but name. So it is parked under one hidden pop-up window of our own, made once per
+/// process on the UI thread and never shown: a child of an invisible window is invisible, and nobody else can
+/// destroy its parent.
+HWND parkingWindow() {
+	static HWND parking = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"feathers-editor-parking", WS_POPUP, 0, 0, 0, 0,
+	                                      nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+	return parking;
+}
+#endif
 
 #if defined(__linux__)
 /// HEAR WHAT THE SERVER SAYS BACK ON ONE PRIVATE CONNECTION (backlog GQ).
@@ -567,6 +597,27 @@ struct PluginWindow::Impl {
 		}
 		app->window()->reparent(parentHandle);
 		return true;
+#elif defined(_WIN32)
+		// THE WIN32 TWIN: the HWND visage made (WS_CHILD from the start) moves into the host's new container and is
+		// shown at the size it already has. No renderer or swapchain is touched, exactly as on the other two. A child
+		// HWND dies with its parent, so a window that is no longer a window was taken by a host that destroyed its
+		// container before guiDestroy (backlog GP): that is a rebuild, said through `windowGone`.
+		const HWND self = nativeWindow();
+		const auto parent = static_cast<HWND>(parentHandle);
+		if (self == nullptr) {
+			return false; // never shown: nothing to move (setParent shows it instead)
+		}
+		if (!IsWindow(self)) {
+			windowGone = true;
+			return false;
+		}
+		if (parent == nullptr || !IsWindow(parent)) {
+			return false; // where we were going is gone: a failed embed, not a dead editor
+		}
+		SetParent(self, parent);
+		SetWindowPos(self, nullptr, 0, 0, app->nativeWidth(), app->nativeHeight(),
+		             SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+		return GetParent(self) == parent;
 #else
 		(void)parentHandle;
 		return false;
@@ -666,6 +717,24 @@ struct PluginWindow::Impl {
 			return;
 		}
 		app->window()->detachFromParent();
+#elif defined(_WIN32)
+		// THE WIN32 TWIN of the same rule: hidden, and out of the host's container before it can be destroyed with us
+		// inside, under the parking window (see `parkingWindow`). Still built and still ours, for the next open.
+		const HWND self = nativeWindow();
+		if (self == nullptr) {
+			return; // never shown (create, then destroy before any set_parent): nothing is in a container
+		}
+		if (!IsWindow(self)) {
+			// GONE WITH A CONTAINER the host destroyed first (backlog GP); the next set_parent rebuilds. A window that
+			// was never made is NOT this — counting it as gone made the next first open a "rebuild" of nothing, and
+			// set_parent failed (MEASURED, the first Windows embed run: create, destroy, create, set_parent -> false).
+			windowGone = true;
+			return;
+		}
+		ShowWindow(self, SW_HIDE);
+		if (const HWND parking = parkingWindow(); parking != nullptr) {
+			SetParent(self, parking);
+		}
 #endif
 	}
 
@@ -678,6 +747,14 @@ struct PluginWindow::Impl {
 			return 0;
 		}
 		return reinterpret_cast<::Window>(app->window()->nativeHandle());
+	}
+#elif defined(_WIN32)
+	/// The editor's own HWND, which is visage's native handle on this backend.
+	HWND nativeWindow() const {
+		if (app == nullptr || app->window() == nullptr) {
+			return nullptr;
+		}
+		return static_cast<HWND>(app->window()->nativeHandle());
 	}
 #endif
 };
@@ -831,18 +908,12 @@ void PluginWindow::stopTicking() { impl_->stopTicking(); }
 	/// keep ticking an editor that is not on screen.
 
 bool PluginWindow::isAvailable() noexcept {
-#if defined(__linux__) || defined(__APPLE__)
+	// X11 on Linux, Cocoa on macOS, Win32 on Windows: the three embeds this file speaks.
 	return true;
-#else
-	// WINDOWS HAS NO EMBED YET. visage is built there because the widget library compiles against it, but this file
-	// speaks X11 and Cocoa only: no CLAP_WINDOW_API_WIN32 attach, reparent or detach. So the gui extension is absent
-	// (the promise feathers_clap.cpp makes for a platform with no backend) rather than offered and broken.
-	return false;
-#endif
 }
 
 bool PluginWindow::isApiSupported(const char* api, bool isFloating) noexcept {
-	// Embedded X11 on Linux, embedded Cocoa on macOS — and nothing else on either, which is what
+	// Embedded X11 on Linux, embedded Cocoa on macOS, embedded Win32 on Windows — and nothing else on any, which is what
 	// the comment below has always claimed and the code now matches. Accepting X11 on macOS let a
 	// test drive create() through the (since-removed, Linux-only) extension gate into an editor
 	// claiming an embedding no macOS host can provide. Floating is a window the plugin owns and
@@ -850,10 +921,10 @@ bool PluginWindow::isApiSupported(const char* api, bool isFloating) noexcept {
 	return !isFloating && api != nullptr
 #if defined(__APPLE__)
 	       && std::strcmp(api, CLAP_WINDOW_API_COCOA) == 0;
-#elif defined(__linux__)
-	       && std::strcmp(api, CLAP_WINDOW_API_X11) == 0;
+#elif defined(_WIN32)
+	       && std::strcmp(api, CLAP_WINDOW_API_WIN32) == 0;
 #else
-	       && false; // no Windows embed yet: see isAvailable()
+	       && std::strcmp(api, CLAP_WINDOW_API_X11) == 0;
 #endif
 }
 

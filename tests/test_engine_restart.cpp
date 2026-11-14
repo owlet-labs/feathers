@@ -118,6 +118,8 @@ const clap_host kHost = {
 constexpr const char* kEmbedApiHere =
 #if defined(__APPLE__)
     CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+    CLAP_WINDOW_API_WIN32;
 #else
     CLAP_WINDOW_API_X11;
 #endif

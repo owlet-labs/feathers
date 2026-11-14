@@ -1189,13 +1189,6 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 	// INBOARD OF THE LINE, on the side with room, so a label near either edge of the plot stays on the
 	// picture rather than being clipped by it.
 	// PLACED BY `bottomText`, clear of the channel letters and of each other.
-	const BottomText bottom = bottomText();
-	for (size_t which = 0; which < 2; ++which) {
-		const visage::Bounds label = bottom.frequency[which];
-		canvas.setColor(withAlpha(kMuted, 0.85f));
-		canvas.text(bottom.frequencyText[which], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f,
-		            label.y(), label.width() + 4.0f, label.height());
-	}
 
 	// THE CROSSOVER LANE AND ITS TWO HANDLES, when this graph offers them. Drawn against the WHOLE
 	// plot because the lane is the strip the bars were pushed out of.
@@ -1229,6 +1222,15 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			}
 		}
 	}
+	// THE CROSSOVER READOUTS, LAST OF THE LANE'S PAINT: drawn before the lane's fill they were veiled by it.
+	const BottomText bottom = bottomText();
+	for (size_t which = 0; which < 2; ++which) {
+		const visage::Bounds label = bottom.frequency[which];
+		canvas.setColor(withAlpha(kMuted, 0.85f));
+		canvas.text(bottom.frequencyText[which], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f,
+		            label.y(), label.width() + 4.0f, label.height());
+	}
+
 	// PER-BAND GRAPH CONTROLS — threshold bars, GR meters, level strips.
 	{
 		const Meters meters = this->meters();

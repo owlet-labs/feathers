@@ -14007,6 +14007,33 @@ TEST_CASE("hardening: a drag on a drum handle ends on the control it began on wh
 	CHECK(f.params.base(feathers::drumParam(1, DrumControl::WireDecay)) != wire0);
 }
 
+TEST_CASE("hardening: the drum picture places its labels once for what they depend on") {
+	ExploreFixture f;
+	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+	f.selection.select(1);
+	ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
+	panel.setBounds(0.0f, 0.0f, panel.minimumSize().x, panel.minimumSize().y);
+	(void)panel.update();
+	const ui::HitPicture& p = panel.pictureForTest();
+	const auto first = p.labelRects();
+	const size_t builds = p.labelBuildsForTest();
+	for (int i = 0; i < 10; ++i) {
+		const auto again = p.labelRects();
+		for (size_t h = 0; h < ui::HitPicture::kHandleCount; ++h) {
+			CHECK(again[h] == first[h]);
+		}
+	}
+	(void)panel.update(); // a tick at rest
+	(void)p.labelRects();
+	CHECK(p.labelBuildsForTest() == builds);
+	// A KIND CHANGE shows other handles: placed again, and the result is a placement of the new set.
+	f.set(feathers::drumParam(1, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Kick));
+	(void)panel.update();
+	const auto kick = p.labelRects();
+	CHECK(p.labelBuildsForTest() == builds + 1);
+	CHECK(kick != first);
+}
+
 TEST_CASE("drum kit panel: the title names the selected pad's kind now, and the handles' labels never overlap or leave the plot") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));

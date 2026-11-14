@@ -1040,7 +1040,7 @@ EnvCard::Marker EnvCard::marker() const {
 	// re-running the envelope here would put the mark off the line by however much the sampling
 	// rounded a bend. `plot` below is `draw`'s own mapping, restated in the one place that must agree
 	// with it — `plotUnit` is public precisely because a second copy of it was once a real bug.
-	const std::vector<visage::Point> points = curvePoints();
+	const std::vector<visage::Point>& points = curvePoints();
 	const TraceMarker::Landing on =
 	    TraceMarker::locateBy(points.size(), [&points](size_t i) { return points[i].x; }, unitX);
 	if (!on.valid) {
@@ -1067,9 +1067,10 @@ EnvCard::Marker EnvCard::marker() const {
 	return { { TraceMarker::at(on, a.x, b.x), TraceMarker::at(on, a.y, b.y) }, true };
 }
 
-std::vector<visage::Point> EnvCard::curvePoints() const {
+const std::vector<visage::Point>& EnvCard::curvePoints() const {
 	auto* self = const_cast<EnvCard*>(this);
 	if (!haveCurve_ || !(curveFrom_ == settings())) {
+		++self->curveRebuilds_;
 		self->rebuildCurve();
 		self->followMode();
 	}
@@ -1173,7 +1174,8 @@ void EnvCard::drawContent(visage::Canvas& canvas) {
 		drawChoiceCell(canvas, choiceBounds(choice));
 	}
 
-	const std::vector<visage::Point> points = curvePoints();
+	// THE CACHED CURVE BY REFERENCE (settings changing mid-paint cannot happen on this thread). `s` below is the copy.
+	const std::vector<visage::Point>& points = curvePoints();
 	// A COPY, NOT A REFERENCE, AND THE DIFFERENCE WAS UNDEFINED BEHAVIOUR.
 	//
 	// **THE HAZARD IS GONE WITH THE ROAD, AND THE NOTE STAYS BECAUSE THE LESSON DOES NOT.**

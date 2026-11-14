@@ -139,6 +139,8 @@ public:
 	[[nodiscard]] visage::Point handleAt(Handle h) const;
 	/// Where each shown handle's readout is drawn (collision-avoiding), and its text.
 	[[nodiscard]] std::array<visage::Bounds, kHandleCount> labelRects() const;
+	/// TEST ONLY: how many times the placement has been computed rather than served from the cache.
+	[[nodiscard]] size_t labelBuildsForTest() const { return labelBuilds_; }
 	[[nodiscard]] std::string readoutOf(Handle h) const;
 	/// TEST ONLY: a hand's drag of handle `h` by (dx, dy) pixels: press on it, move, release.
 	void dragForTest(Handle h, float dx, float dy);
@@ -168,6 +170,7 @@ private:
 	float yOfLevel(double db) const;
 	double span() const { return dragging_ ? frozenSpan_ : naturalSpan(); }
 	double naturalSpan() const;
+	[[nodiscard]] std::array<visage::Bounds, kHandleCount> placeLabels() const;
 	void press(visage::Point p);
 	void drag(visage::Point p);
 	void release();
@@ -184,6 +187,21 @@ private:
 	/// the panel's own per-pad ones and outlive the picture; only which of them `controls_` names moves.
 	ParamControl* heldControl_ = nullptr;
 	ParamControl* heldSecond_ = nullptr;
+	/// THE LABEL PLACEMENT, kept with everything it is a function of (bounds, scale, what is shown and its numbers, the
+	/// frozen span of a drag): a paint that nothing changed serves it without placing eight labels again.
+	struct LabelKey {
+		float w = -1.0f, h = -1.0f, dpi = -1.0f;
+		drum::Kind kind {};
+		drum::Laws laws {};
+		double decay = 0.0, level = 0.0, frozen = 0.0;
+		Controls controls {};
+		bool dragging = false;
+		friend bool operator==(const LabelKey&, const LabelKey&) = default;
+	};
+	mutable LabelKey labelKey_ {};
+	mutable std::array<visage::Bounds, kHandleCount> labelCache_ {};
+	mutable bool labelCached_ = false;
+	mutable size_t labelBuilds_ = 0;
 	visage::Point pressAt_ {};
 	double startValue_ = 0.0;
 	double startSecond_ = 0.0; ///< the second control's value at the press (Drive Tone, Clap Q)

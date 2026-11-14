@@ -269,6 +269,12 @@ public:
 	/// hovering would be a second place to drift.
 	const char* tooltipAt(visage::Point pos) const;
 
+public:
+	/// TEST ONLY: how many repaints the hover road has asked for.
+	[[nodiscard]] size_t hoverRedrawsForTest() const { return hoverRedraws_; }
+
+private:
+
 private:
 	/// WHAT WAS LAST DRAWN, so `update()` can tell a moving meter from a still one. Defaults match
 	/// `OwlttMeterReading`'s own defaults, which is what a freshly built graph has drawn.
@@ -302,6 +308,8 @@ private:
 	/// the drag road was mistakenly written on first.
 	visage::Point hover_ { -1.0f, -1.0f };
 	bool hovering_ = false;
+	bool tipShown_ = false;     ///< whether the last hover drew a tooltip
+	size_t hoverRedraws_ = 0;   ///< repaints the hover road asked for
 	bool rail_ = false;
 
 	backplane::DeviceHost& host_;

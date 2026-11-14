@@ -97,6 +97,9 @@ public:
 	/// curve beside it. See `trig_pad.h`.
 	[[nodiscard]] visage::Bounds trigPadBounds() const;
 	[[nodiscard]] TrigPad* trigPadForTest() const noexcept { return trigPad_.get(); }
+	/// TEST ONLY: the cached curve, and how many times it has been rebuilt.
+	[[nodiscard]] const std::vector<visage::Point>& curvePointsForTest() const { return curvePoints(); }
+	[[nodiscard]] size_t curveRebuildsForTest() const { return curveRebuilds_; }
 	/// THE SLOT MENU'S DOTS, WHEN A HOST BINDS ONE (a lane: Feathers' fx lane holds modulators since 2026-10-04) —
 	/// `drawSlotMenu` draws nothing where none is bound, so the strip, which draws its own head mark, is unchanged.
 	void drawHeadExtras(visage::Canvas& canvas) override { drawSlotMenu(canvas, kMuted); }
@@ -292,7 +295,9 @@ public:
 	/// which is 0..1 for an ordinary envelope and -1..1 for a bipolar one. Exposed for the reason the
 	/// filter's curveGains is: "the picture is the envelope that plays" is a claim, and a claim about
 	/// geometry has to be checkable against numbers rather than against a screenshot.
-	std::vector<visage::Point> curvePoints() const;
+	/// BY REFERENCE: the cached curve, rebuilt only when the settings moved. A caller that wants it past the next call
+	/// (one that may rebuild) copies it; `draw` and `marker` each read it once per paint and copy nothing.
+	const std::vector<visage::Point>& curvePoints() const;
 
 	/// ADVANCE THE PLAYHEAD, AND SAY WHETHER THE SCREEN IS OUT OF DATE. `MsegCard::update()` is the
 	/// sibling and `OwlttGraph::update()` the original; this is the fourth instance of that contract.
@@ -455,6 +460,7 @@ private:
 	/// plus the constructor's implicit false; it is not worth it for one caption.
 	bool labelledForLoop_ = false;
 	mod::dahdsr::Settings curveFrom_ {};
+	size_t curveRebuilds_ = 0;
 	bool haveCurve_ = false;
 
 	/// The envelope used to DRAW, distinct from the four the engine plays. Constructed once.

@@ -480,8 +480,10 @@ bool EqGraph::update() {
 	if (!isVisible()) {
 		return false;
 	}
-	std::vector<float> now;
-	now.reserve(eq::kParamCount + 8);
+	// THE MEMBER BUFFER, cleared and refilled: a tick at rest allocates nothing (its capacity is kept, and the swap below
+	// hands the old vector's to the next tick).
+	std::vector<float>& now = scratchFields_;
+	now.clear();
 	for (size_t i = 0; i < eq::kParamCount; ++i) {
 		now.push_back(field(i)); // the base: the curve with the handles
 		now.push_back(modulated(i));
@@ -498,7 +500,7 @@ bool EqGraph::update() {
 	if (now == drawnFields_ && !analyserMoved) {
 		return false;
 	}
-	drawnFields_ = std::move(now);
+	drawnFields_.swap(now);
 	redraw();
 	return true;
 }

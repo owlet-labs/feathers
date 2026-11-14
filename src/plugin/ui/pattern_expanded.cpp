@@ -299,8 +299,9 @@ bool PatternTerrain::mouseWheel(const visage::MouseEvent& e) {
 	return true;
 }
 
-std::vector<float> PatternTerrain::rowNow() const {
-	std::vector<float> row(pt::kParamCount);
+const std::vector<float>& PatternTerrain::rowNow() const {
+	std::vector<float>& row = rowBuf_;
+	row.resize(pt::kParamCount);
 	const size_t present = host_.fieldsPresentAt(device_);
 	for (size_t i = 0; i < row.size(); ++i) {
 		row[i] = i < present ? host_.fieldAt(device_, i) : static_cast<float>(pt::kParamDescs[i].def);
@@ -358,10 +359,11 @@ bool PatternTerrain::poll() {
 		edgeSteppedAt_ = now;
 		(void)edgeScroll(dt);
 	}
-	const std::vector<float> row = rowNow();
+	const std::vector<float>& row = rowNow();
 	// THE KEY: the focused pattern's own block, the globals, the zoom — and NOT its place, which the view is centred
 	// on only when the map is rebuilt (a drag inside the map moves the puck, not the map).
-	std::vector<float> key(row.begin(), row.begin() + static_cast<std::ptrdiff_t>(pt::kGlobalCount));
+	std::vector<float>& key = keyBuf_;
+	key.assign(row.begin(), row.begin() + static_cast<std::ptrdiff_t>(pt::kGlobalCount));
 	key.insert(key.end(), row.begin() + static_cast<std::ptrdiff_t>(pt::at(focus_, Field::Enable)),
 	           row.begin() + static_cast<std::ptrdiff_t>(pt::at(focus_, Field::Enable) + pt::kFieldCount));
 	key[pt::kGlobalCount + static_cast<size_t>(Field::PlaceX)] = 0.0f;
@@ -372,12 +374,11 @@ bool PatternTerrain::poll() {
 	const bool puckMoved = puckKey != puckKey_;
 	puckKey_ = puckKey;
 	// THE LIKES ARE AN INPUT TOO: a new like re-brightens the map.
-	std::vector<float> liked(likes::kBlockWords, 0.0f);
-	(void)host_.blockAt(device_, pt::kLikesBlock, liked);
+	std::vector<float>& liked = likedBuf_;
+	liked.assign(likes::kBlockWords + pt::kHandWords, 0.0f);
+	(void)host_.blockAt(device_, pt::kLikesBlock, std::span<float>(liked.data(), likes::kBlockWords));
 	// AND THE HAND'S BLOCK (the banked turns and the pin switches) is an input as well.
-	std::vector<float> hand(pt::kHandWords, 0.0f);
-	(void)host_.blockAt(device_, 1, hand);
-	liked.insert(liked.end(), hand.begin(), hand.end());
+	(void)host_.blockAt(device_, 1, std::span<float>(liked.data() + likes::kBlockWords, pt::kHandWords));
 	if (key == key_ && zoom_ == keyZoom_ && focus_ == keyFocus_ && liked == likesKey_) {
 		if (puckMoved) {
 			redraw();

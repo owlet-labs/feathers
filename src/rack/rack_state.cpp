@@ -393,11 +393,15 @@ bool describe(const CoreCodec& codec, const Holder& holder, const backplane::Rou
 	return true;
 }
 
-/// AN ID A FILE MAY NAME: one the counter can issue. `kNoInstance` names nothing and the top of the id space
-/// is the host's own node, so a file naming either is read as naming no id at all — the device takes a fresh
-/// one, exactly as it does when the id is missing or already held.
+/// THE LARGEST ID A FILE MAY NAME. Ids are a serial counter from 1, one per device ever added to a patch; sixteen million
+/// is far past what any patch's life reaches, while a file naming more than that is damaged or hand-made, and honouring
+/// it would move the counter to that id and spend the space every later add draws from (the top bit is also a site's
+/// key bit, and the top of the space is the host's own node). Such an id is read as naming none: the device takes a
+/// fresh one, exactly as it does when the id is missing or already held.
+constexpr DeviceInstanceId kMaxNamedId = DeviceInstanceId { 1 } << 24;
+
 DeviceInstanceId namedBy(DeviceInstanceId fileId) {
-	return fileId >= backplane::InstanceCounter::kCeiling ? kNoInstance : fileId;
+	return fileId > kMaxNamedId ? kNoInstance : fileId;
 }
 
 /// THE WAY BACK FOR AN ENGINE: which id a device the patch named by `named` WEARS in the engine — the

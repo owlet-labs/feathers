@@ -747,6 +747,18 @@ visage::Bounds FxLane::gapBounds(size_t gap) const {
 	return { kPadX, y, width() - 2.0f * kPadX, thickness };
 }
 
+std::optional<size_t> FxLane::dragSlot() const {
+	if (!dragging_ || !dragDevice_.has_value()) {
+		return std::nullopt;
+	}
+	for (size_t slot = 0; slot < deviceCount(); ++slot) {
+		if (bridge_.fxDeviceAt(slot) == *dragDevice_) {
+			return slot;
+		}
+	}
+	return std::nullopt;
+}
+
 void FxLane::cardDragForTest(size_t slot, FxCard::DragPhase phase, visage::Point inCard) {
 	// THE CONVERSION IS THE LANE'S, and it is the whole reason the card reports in its own
 	// coordinates: only the lane knows where a card sits in it, and the card's own y moves with the
@@ -756,9 +768,15 @@ void FxLane::cardDragForTest(size_t slot, FxCard::DragPhase phase, visage::Point
 
 	switch (phase) {
 	case FxCard::DragPhase::Begin:
-		dragSlot_ = slot;
-		dragging_ = true;
+		dragDevice_ = slot < deviceCount() ? std::optional<DeviceInstanceId>(bridge_.fxDeviceAt(slot)) : std::nullopt;
+		dragging_ = dragDevice_.has_value();
 		dragPoint_ = inLane;
+		break;
+	case FxCard::DragPhase::Cancel:
+		dragDevice_.reset();
+		dropGap_.reset();
+		dragging_ = false;
+		redraw();
 		break;
 	case FxCard::DragPhase::Move:
 		if (!dragging_) {
@@ -769,12 +787,14 @@ void FxLane::cardDragForTest(size_t slot, FxCard::DragPhase phase, visage::Point
 		redraw();
 		break;
 	case FxCard::DragPhase::End: {
-		const std::optional<size_t> from = dragSlot_;
+		// THE SLOT IS RESOLVED NOW, from the device the gesture began on: the chain may have been reordered or shortened
+		// under the hand, and a device that is gone moves nothing (nor does a neighbour that took its place).
+		const std::optional<size_t> from = dragSlot();
 		const std::optional<size_t> gap = dropGap_;
-		dragSlot_.reset();
+		dragDevice_.reset();
 		dropGap_.reset();
 		dragging_ = false;
-		const DeviceInstanceId dragged = from.has_value() && *from < deviceCount() ? bridge_.fxDeviceAt(*from) : kNoInstance;
+		const DeviceInstanceId dragged = from.has_value() ? bridge_.fxDeviceAt(*from) : kNoInstance;
 		if (gap.has_value() && selection_->movesBlock(dragged)) {
 			// **A SELECTED CARD CARRIES THE SELECTION** (backlog OA, D1): the block lands at the gap, in order, one
 			// undo step.
@@ -799,6 +819,14 @@ void FxLane::cardDragForTest(size_t slot, FxCard::DragPhase phase, visage::Point
 
 bool FxLane::tickDrag() {
 	if (!dragging_) {
+		return false;
+	}
+	if (!dragSlot().has_value()) {
+		// THE DEVICE UNDER THE HAND IS GONE (removed, or the chain was replaced): nothing is being dragged.
+		dragDevice_.reset();
+		dropGap_.reset();
+		dragging_ = false;
+		redraw();
 		return false;
 	}
 	const float w = static_cast<float>(width());

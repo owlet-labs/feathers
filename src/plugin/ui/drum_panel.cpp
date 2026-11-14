@@ -600,6 +600,18 @@ std::string HitPicture::readoutOf(Handle h) const {
 }
 
 std::array<visage::Bounds, HitPicture::kHandleCount> HitPicture::labelRects() const {
+	const LabelKey key { width(), height(), dpiScale(), kind_, laws_, decaySeconds_, levelDb_, frozenSpan_, controls_, dragging_ };
+	if (labelCached_ && key == labelKey_) {
+		return labelCache_;
+	}
+	++labelBuilds_;
+	labelCache_ = placeLabels();
+	labelKey_ = key;
+	labelCached_ = true;
+	return labelCache_;
+}
+
+std::array<visage::Bounds, HitPicture::kHandleCount> HitPicture::placeLabels() const {
 	// COLLISION-AVOIDING PLACEMENT: each shown handle's label takes the first of eight places around it that stays inside the
 	// plot and clear of every label placed before it and of every handle; with none clear, the first that stays inside.
 	std::array<visage::Bounds, kHandleCount> out {};

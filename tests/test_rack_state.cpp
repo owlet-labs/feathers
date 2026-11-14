@@ -357,6 +357,48 @@ TEST_CASE("hardening: a file naming the top id is renamed like a missing id, on 
 	CHECK(added != 0xFFFFFFFFu);
 }
 
+TEST_CASE("hardening: a file naming an id no counter could reach is renamed, and the counter is not spent by it") {
+	// A FILE NAMING MORE THAN SIXTEEN MILLION (2^24, the loader's bound) is read as naming none.
+	for (const unsigned named : { 0x1000001u, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFEu }) {
+		CAPTURE(named);
+		std::string doc = documentNamingTheTopId();
+		const std::string was = "4294967295";
+		doc.replace(doc.find(was), was.size(), std::to_string(named));
+		rack::RackPatch parsed;
+		REQUIRE(rack::parseRackText(doc, &parsed));
+		rack::RackEngine engine(kAxes, hostCatalogue());
+		engine.prepare(48000.0, 4096);
+		rack::RackBridge bridge { engine };
+		bridge.prepare(48000.0, 4096);
+		(void)bridge.loadPatch(parsed);
+		bridge.drain();
+		const rack::RackPatch back = bridge.patch();
+		REQUIRE(back.device.size() == 2);
+		CHECK(back.device[0].instanceId != named);
+		CHECK(back.device[0].instanceId < 0x1000001u);
+		CHECK(back.device[1].instanceId == 8);
+		// AND LATER ADDS STILL GET SMALL IDS.
+		const DeviceInstanceId added = bridge.addDevice(fx::filter::kTraits.tag);
+		CHECK(added != kNoInstance);
+		CHECK(added < 0x1000001u);
+	}
+	// THE BOUND ITSELF IS A PLAUSIBLE ID, and is kept.
+	std::string doc = documentNamingTheTopId();
+	const std::string was = "4294967295";
+	doc.replace(doc.find(was), was.size(), "16777216");
+	rack::RackPatch parsed;
+	REQUIRE(rack::parseRackText(doc, &parsed));
+	rack::RackEngine engine(kAxes, hostCatalogue());
+	engine.prepare(48000.0, 4096);
+	rack::RackBridge bridge { engine };
+	bridge.prepare(48000.0, 4096);
+	(void)bridge.loadPatch(parsed);
+	bridge.drain();
+	const rack::RackPatch back = bridge.patch();
+	REQUIRE(back.device.size() == 2);
+	CHECK(back.device[0].instanceId == 16777216u);
+}
+
 TEST_CASE("a route naming a slot nothing landed in is dropped and COUNTED, not silently kept") {
 	rack::RackEngine a(kAxes, hostCatalogue());
 	const size_t fx = a.addDevice(fx::filter::kTraits.tag);

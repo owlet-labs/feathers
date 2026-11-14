@@ -391,6 +391,7 @@ std::vector<backplane::Destination> RouteList::rows() const {
 }
 
 std::vector<RouteList::Row> RouteList::allRows() const {
+	++rowBuilds_;
 	std::vector<Row> out;
 	for (const backplane::Destination& d : rows()) {
 		out.push_back(Row { kNoInstance, d });
@@ -418,8 +419,9 @@ size_t RouteList::visibleRows() const {
 	return static_cast<size_t>(std::max(1.0f, std::floor((height() - kHeadingHeight) / kRowHeight)));
 }
 
-size_t RouteList::firstRow() const {
-	const size_t count = allRows().size();
+size_t RouteList::firstRow() const { return firstRowIn(allRows().size()); }
+
+size_t RouteList::firstRowIn(size_t count) const {
 	const size_t visible = visibleRows();
 	const size_t most = visible == SIZE_MAX || count <= visible ? 0 : count - visible;
 	return std::min(firstRow_, most);
@@ -437,19 +439,21 @@ bool RouteList::scrollRowsBy(int rows) {
 	return now != was;
 }
 
-visage::Bounds RouteList::rowBounds(size_t index) const {
+visage::Bounds RouteList::rowBounds(size_t index) const { return rowBoundsFrom(index, firstRow()); }
+
+visage::Bounds RouteList::rowBoundsFrom(size_t index, size_t first) const {
 	// ROWS ABOVE THE FIRST ARE UP UNDER THE HEADING and rows below the last visible one are past the foot: both are outside
 	// `hitAt` and `draw`'s window, so their bounds only have to be somewhere honest.
-	const float place = static_cast<float>(static_cast<long>(index) - static_cast<long>(firstRow()));
+	const float place = static_cast<float>(static_cast<long>(index) - static_cast<long>(first));
 	return { 0.0f, kHeadingHeight + place * kRowHeight, width(), kRowHeight };
 }
 
 RouteList::Hit RouteList::hitAt(visage::Point pixels) const {
 	const std::vector<Row> found = allRows();
-	const size_t first = firstRow();
+	const size_t first = firstRowIn(found.size());
 	const size_t last = visibleRows() == SIZE_MAX ? found.size() : std::min(found.size(), first + visibleRows());
 	for (size_t index = first; index < last; ++index) {
-		const visage::Bounds row = rowBounds(index);
+		const visage::Bounds row = rowBoundsFrom(index, first);
 		if (!row.contains(pixels)) {
 			continue;
 		}
@@ -460,7 +464,7 @@ RouteList::Hit RouteList::hitAt(visage::Point pixels) const {
 		}
 		// THEN THE CHIP, which sits on the NAME's side of the amount: everything else in the row — the
 		// amount's own text included — is still the amount's drag, as it always was.
-		if (host_.supportsRouteTransfers() && chipBounds(index).contains(pixels)) {
+		if (host_.supportsRouteTransfers() && chipBoundsFrom(index, first).contains(pixels)) {
 			return { Part::Transfer, found[index].destination, found[index].chain };
 		}
 		return { Part::Amount, found[index].destination, found[index].chain };
@@ -468,14 +472,18 @@ RouteList::Hit RouteList::hitAt(visage::Point pixels) const {
 	return {};
 }
 
-visage::Bounds RouteList::amountBounds(size_t index) const {
-	const visage::Bounds row = rowBounds(index);
+visage::Bounds RouteList::amountBounds(size_t index) const { return amountBoundsFrom(index, firstRow()); }
+
+visage::Bounds RouteList::chipBounds(size_t index) const { return chipBoundsFrom(index, firstRow()); }
+
+visage::Bounds RouteList::amountBoundsFrom(size_t index, size_t first) const {
+	const visage::Bounds row = rowBoundsFrom(index, first);
 	return { row.right() - kRemoveWidth - kRowGap - kAmountWidth, row.y(), kAmountWidth, row.height() };
 }
 
-visage::Bounds RouteList::chipBounds(size_t index) const {
-	const visage::Bounds row = rowBounds(index);
-	const visage::Bounds amount = amountBounds(index);
+visage::Bounds RouteList::chipBoundsFrom(size_t index, size_t first) const {
+	const visage::Bounds row = rowBoundsFrom(index, first);
+	const visage::Bounds amount = amountBoundsFrom(index, first);
 	return { amount.x() - kRowGap - kChipWidth, row.y() + (row.height() - kChipHeight) * 0.5f, kChipWidth,
 		     kChipHeight };
 }
@@ -812,12 +820,12 @@ void RouteList::draw(visage::Canvas& canvas) {
 
 	const bool chips = host_.supportsRouteTransfers();
 	const bool bipolar = host_.sourceIsBipolarNow(mod_.source());
-	const size_t first = firstRow();
+	const size_t first = firstRowIn(found.size());
 	const size_t last = visibleRows() == SIZE_MAX ? found.size() : std::min(found.size(), first + visibleRows());
 	for (size_t index = first; index < last; ++index) {
-		const visage::Bounds row = rowBounds(index);
-		const visage::Bounds amount = amountBounds(index);
-		const visage::Bounds chip = chipBounds(index);
+		const visage::Bounds row = rowBoundsFrom(index, first);
+		const visage::Bounds amount = amountBoundsFrom(index, first);
+		const visage::Bounds chip = chipBoundsFrom(index, first);
 		// THE NAME GETS WHAT IS LEFT OF THE CHIP (or of the amount, with no chip), fitted, so a long one
 		// stops short of both rather than running under them.
 		const float nameRight = (chips ? chip.x() : amount.x()) - kRowGap;
@@ -2658,6 +2666,13 @@ void ModPanel::resized() {
 				}
 				dragging_ = true;
 				dropGap_ = dropGapAt(inPanel);
+				redraw();
+				break;
+			case ui::FxCard::DragPhase::Cancel:
+				dragSlot_.reset();
+				dropGap_.reset();
+				dragAnchorY_.reset();
+				dragging_ = false;
 				redraw();
 				break;
 			case ui::FxCard::DragPhase::End: {

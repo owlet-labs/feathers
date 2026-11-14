@@ -66,6 +66,8 @@
 #include "rack/rack_bridge.h"
 #include "fx/featherverb/featherverb.h"
 #include "plugin/ui/featherverb_expanded.h"
+#include <cstdlib>
+#include <new>
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
@@ -40692,4 +40694,271 @@ TEST_CASE("every modulator-strip card at its default fits its labels") {
 		}
 	}
 	CHECK(segmented > 5);
+}
+
+//------------------------------------------------------------------------------------------------//
+// HARDENING: UI POLLS AT REST, THE ROUTE LIST'S ROWS, AND A CARD DRAG KEYED ON ITS DEVICE            //
+//------------------------------------------------------------------------------------------------//
+
+// THE COUNTING OPERATOR NEW EXISTS ONLY WHERE NOTHING ELSE OWNS THE ALLOCATOR: a sanitiser supplies its own and a
+// replacement beside it defeats its tracking. Detected for GCC (`__SANITIZE_*__`) and clang (`__has_feature`).
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define FEATHERS_TEST_SANITISED 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(memory_sanitizer)
+#define FEATHERS_TEST_SANITISED 1
+#endif
+#endif
+
+#ifndef FEATHERS_TEST_SANITISED
+#define FEATHERS_ALLOC_PROBE 1
+namespace alloc_probe {
+/// THIS THREAD'S ALLOCATIONS WHILE ARMED. The global operator new below counts through it; it measures nothing
+/// until a case arms it, and a thread's own counter cannot be moved by another thread's allocation.
+thread_local bool armed = false;
+thread_local size_t count = 0;
+inline void* take(std::size_t n) {
+	if (armed) {
+		++count;
+	}
+	return std::malloc(n != 0 ? n : 1);
+}
+} // namespace alloc_probe
+
+// EVERY PLAIN, ARRAY AND NOTHROW FORM, with its delete (sized and not), so nothing is mismatched. The over-aligned forms
+// are left to the library: they pair with each other and never reach these.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
+void* operator new(std::size_t n) {
+	if (void* p = alloc_probe::take(n)) {
+		return p;
+	}
+	throw std::bad_alloc();
+}
+void* operator new[](std::size_t n) {
+	if (void* p = alloc_probe::take(n)) {
+		return p;
+	}
+	throw std::bad_alloc();
+}
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept { return alloc_probe::take(n); }
+void* operator new[](std::size_t n, const std::nothrow_t&) noexcept { return alloc_probe::take(n); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+void operator delete(void* p, const std::nothrow_t&) noexcept { std::free(p); }
+void operator delete[](void* p, const std::nothrow_t&) noexcept { std::free(p); }
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+#endif
+
+namespace {
+
+/// THE ALLOCATIONS `work` makes on this thread; always 0 when the probe is compiled out (`FEATHERS_ALLOC_PROBE`), which
+/// is why every assertion on it sits under that guard rather than passing on the zero.
+template <typename F> size_t allocationsIn(F&& work) {
+#ifdef FEATHERS_ALLOC_PROBE
+	alloc_probe::count = 0;
+	alloc_probe::armed = true;
+	work();
+	alloc_probe::armed = false;
+	return alloc_probe::count;
+#else
+	work();
+	return 0;
+#endif
+}
+
+} // namespace
+
+TEST_CASE("hardening: the pattern lane's, the terrain's and the EQ graph's polls at rest allocate nothing and report unchanged") {
+	namespace pt = feathers::mod::arp::pat;
+	{
+		ModFixture f;
+		const size_t slot = f.bridge.addRackDevice(pt::kTraits.tag);
+		REQUIRE(slot < feathers::kMaxRackSlots);
+		f.bridge.refresh();
+		const DeviceInstanceId id = f.bridge.rackDeviceAt(slot);
+		ui::WidgetRegistry registry;
+		auto view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, pt::kDescriptor);
+		auto* window = dynamic_cast<ui::PatternExpanded*>(view.get());
+		REQUIRE(window != nullptr);
+		ui::EditHistory history;
+		window->setModulation(nullptr, &history);
+		window->setBounds(0.0f, 0.0f, 900.0f, 1400.0f);
+		(void)window->updateContent();
+		ui::PatternLane& lane = window->lane();
+		ui::PatternTerrain& terrain = window->terrain();
+		// SETTLED: the first polls build the view and size the buffers.
+		for (int i = 0; i < 4; ++i) {
+			(void)lane.poll();
+			(void)terrain.poll();
+		}
+		int moved = 0;
+		const size_t lanes = allocationsIn([&] {
+			for (int i = 0; i < 50; ++i) {
+				moved += lane.poll() ? 1 : 0;
+			}
+		});
+		const size_t terrains = allocationsIn([&] {
+			for (int i = 0; i < 50; ++i) {
+				moved += terrain.poll() ? 1 : 0;
+			}
+		});
+		CHECK(moved == 0);
+#ifdef FEATHERS_ALLOC_PROBE
+		CHECK(lanes == 0);
+		CHECK(terrains == 0);
+#else
+		(void)lanes;
+		(void)terrains;
+		MESSAGE("allocation counts NOT MEASURED in this build (a sanitiser owns the allocator); the unchanged-report was checked");
+#endif
+		// AND THE SEAM IS NOT BLIND: a real change is heard, by the same polls.
+		f.deviceHost.setField(id, pt::at(0, pt::Field::TransposeSteps), 3.0f);
+		CHECK((lane.poll() | terrain.poll()));
+	}
+	{
+		namespace eq = feathers::fx::eq;
+		DynCardFixture<ui::EqCard> d(eq::kTraits.tag);
+		ui::EqGraph* g = d.card->graphForTest();
+		g->setBounds(0.0f, 0.0f, 400.0f, 200.0f);
+		// THE ANALYSER OFF, so the poll is the field comparison alone.
+		d.set(eq::extraIndex(eq::Extra::Pre), 1.0f);
+		d.set(eq::extraIndex(eq::Extra::Post), 1.0f);
+		for (int i = 0; i < 4; ++i) {
+			(void)g->update();
+		}
+		// THE PLUGIN HOST'S OWN READING-COUNT CALL COPIES THE CHAIN (not the graph's): that is the floor a poll cannot go
+		// below, so the graph's own share is what is left over.
+		const size_t hostFloor = allocationsIn([&] { (void)d.f.deviceHost.readingCountAt(d.device); });
+		bool changed = false;
+		const size_t allocations = allocationsIn([&] {
+			for (int i = 0; i < 50; ++i) {
+				changed = g->update() || changed;
+			}
+		});
+		CHECK_FALSE(changed);
+#ifdef FEATHERS_ALLOC_PROBE
+		CHECK(allocations <= 50 * hostFloor);
+#else
+		(void)allocations;
+		(void)hostFloor;
+		MESSAGE("EQ allocation count NOT MEASURED in this build; the unchanged-report was checked");
+#endif
+		d.set(eq::paramIndex(eq::Param::Tilt), 2.0f);
+		CHECK(g->update());
+	}
+}
+
+TEST_CASE("hardening: the route list builds its rows once per hit test, and the geometry is the one the per-row calls gave") {
+	ModFixture f;
+	ui::ModState* mod = f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	f.arm(backplane::Source::core(0));
+	REQUIRE(mod->armed());
+	// TWO ROUTES, from the one armed source.
+	for (const ParamId p : { ParamId::Path, ParamId::FineTune }) {
+		ui::Knob* knob = f.knobFor(p);
+		REQUIRE(knob != nullptr);
+		const int destination = modDestinationIndexOf(p);
+		REQUIRE(destination >= 0);
+		const visage::Point face = f.faceCentre(knob);
+		dragThroughRoot(f.root, face, { face.x, face.y - 35.0f });
+		REQUIRE(f.bridge.routeAmount(backplane::Source::core(0), backplane::Destination::core(static_cast<size_t>(destination))) > 0.0f);
+	}
+	auto* list = findInTree<ui::RouteList>(f.root);
+	REQUIRE(list != nullptr);
+	f.root->resized();
+	const size_t rowCount = list->allRows().size();
+	REQUIRE(rowCount >= 2);
+
+	// THE WORK OF ONE HIT TEST IS ONE BUILD, however many rows there are.
+	const visage::Point aim { 5.0f, list->rowBounds(rowCount - 1).y() + 2.0f };
+	const size_t before = list->rowBuildsForTest();
+	(void)list->hitAt(aim);
+	CHECK(list->rowBuildsForTest() - before == 1);
+
+	// AND THE GEOMETRY IS UNCHANGED: each row under the one before it by one row height, the amount and chip inside it.
+	const size_t first = list->firstRow();
+	for (size_t i = first; i < rowCount; ++i) {
+		CAPTURE(i);
+		const visage::Bounds row = list->rowBounds(i);
+		const visage::Bounds again = list->rowBoundsFrom(i, first);
+		CHECK(again.x() == row.x());
+		CHECK(again.y() == row.y());
+		CHECK(again.width() == row.width());
+		CHECK(again.height() == row.height());
+		if (i > first) {
+			CHECK(row.y() - list->rowBounds(i - 1).y() == doctest::Approx(row.height()));
+		}
+		CHECK(list->amountBoundsFrom(i, first).x() == list->amountBounds(i).x());
+		CHECK(list->chipBoundsFrom(i, first).x() == list->chipBounds(i).x());
+		CHECK(list->chipBounds(i).y() >= row.y());
+		CHECK(list->chipBounds(i).bottom() <= row.bottom());
+	}
+}
+
+TEST_CASE("hardening: a card drag follows its device, not its slot, and a lost release cancels") {
+	FilterFixture f;
+	auto* lane = f.lane;
+	REQUIRE(f.bridge.addFxDevice(fx::owltt::kTraits.tag) == 1);
+	REQUIRE(f.bridge.addFxDevice(fx::harm::kTraits.tag) == 2);
+	lane->resized();
+	REQUIRE(lane->deviceCount() == 3);
+	const DeviceInstanceId filter = f.bridge.fxDeviceAt(0);
+	const DeviceInstanceId owltt = f.bridge.fxDeviceAt(1);
+	const DeviceInstanceId harm = f.bridge.fxDeviceAt(2);
+	const auto dragTo = [&](size_t slot, size_t gap) {
+		lane->resized();
+		const visage::Bounds card = lane->cardBounds(slot);
+		const visage::Bounds bumper = lane->gapBounds(gap);
+		const float inLaneY = std::min(bumper.y() + bumper.height() * 0.5f, static_cast<float>(lane->height()) - 1.0f);
+		lane->cardDragForTest(slot, ui::FxCard::DragPhase::Move, { 20.0f, inLaneY - card.y() });
+	};
+
+	SUBCASE("a device removed ahead of the dragged one: the dragged one moves, not whatever slid into its slot") {
+		lane->cardDragForTest(1, ui::FxCard::DragPhase::Begin, { 20.0f, 4.0f });
+		REQUIRE(f.bridge.removeFxDevice(0));
+		lane->resized();
+		REQUIRE(lane->deviceCount() == 2);
+		// THE DRAGGED CARD IS NOW SLOT 0, and the lane says so.
+		REQUIRE(lane->dragSlot().has_value());
+		CHECK(*lane->dragSlot() == 0);
+		dragTo(0, 2); // the gap after the last card
+		lane->cardDragForTest(0, ui::FxCard::DragPhase::End, { 20.0f, 4.0f });
+		lane->resized();
+		CHECK(f.bridge.fxDeviceAt(0) == harm);
+		CHECK(f.bridge.fxDeviceAt(1) == owltt);
+		(void)filter;
+	}
+
+	SUBCASE("the dragged device removed: the drop moves nothing, and a tick ends the drag") {
+		lane->cardDragForTest(2, ui::FxCard::DragPhase::Begin, { 20.0f, 4.0f });
+		dragTo(2, 0);
+		REQUIRE(f.bridge.removeFxDevice(2));
+		lane->resized();
+		CHECK_FALSE(lane->dragSlot().has_value());
+		(void)lane->tickDrag();
+		CHECK_FALSE(lane->dropGap().has_value());
+		lane->cardDragForTest(0, ui::FxCard::DragPhase::End, { 20.0f, 4.0f });
+		CHECK(f.bridge.fxDeviceAt(0) == filter);
+		CHECK(f.bridge.fxDeviceAt(1) == owltt);
+	}
+
+	SUBCASE("a cancelled drag drops nothing") {
+		lane->cardDragForTest(0, ui::FxCard::DragPhase::Begin, { 20.0f, 4.0f });
+		dragTo(0, 3);
+		REQUIRE(lane->dropGap().has_value());
+		lane->cardDragForTest(0, ui::FxCard::DragPhase::Cancel, { 20.0f, 4.0f });
+		CHECK_FALSE(lane->dragSlot().has_value());
+		CHECK_FALSE(lane->dropGap().has_value());
+		lane->cardDragForTest(0, ui::FxCard::DragPhase::End, { 20.0f, 4.0f });
+		CHECK(f.bridge.fxDeviceAt(0) == filter);
+		CHECK(f.bridge.fxDeviceAt(2) == harm);
+	}
 }

@@ -387,3 +387,124 @@ TEST_CASE("midi: the groove is baked in — every note-on lands on its straight 
 	}
 	CHECK(odd == 8);
 }
+
+namespace {
+
+/// A PATTERN THAT PLAYS A NOTE ON EVERY SIXTEENTH, under the feel `tune` sets.
+pat::MidiSource groovedSource(const std::function<void(pat::Settings&)>& tune) {
+	return sourceOf([&](pat::Settings& s) {
+		s.patterns[0].zone = 333;
+		s.patterns[0].pins[static_cast<size_t>(genes::Pin::Density)] = 0.0f;
+		s.patterns[0].pins[static_cast<size_t>(genes::Pin::Hold)] = 0.0f;
+		tune(s);
+	});
+}
+
+/// **THE EXPORT, AGAINST THE LIVE EMITTER, BY VALUE**: every note's key, velocity, start tick and end tick equal. Both roads
+/// run one `PatternDevice` over the same transport and write the same arithmetic (ticks from the sample), so the tolerance is
+/// zero: a tick of difference is a different note. Returns the parsed file.
+Parsed exportEqualsLive(const pat::MidiSource& src, double bpm) {
+	const Parsed f = parse(pat::patternMidi(src, 0, bpm));
+	REQUIRE(f.ok);
+	const Reference r = reference(src, 0, bpm, static_cast<double>(f.endTick) / 960.0);
+	REQUIRE(f.notes.size() == r.notes.size());
+	REQUIRE(f.notes.size() >= 16);
+	for (size_t i = 0; i < r.notes.size(); ++i) {
+		CAPTURE(i);
+		CHECK(f.notes[i].key == r.notes[i].key);
+		CHECK(f.notes[i].velocity == r.notes[i].velocity);
+		CHECK(f.notes[i].on == r.notes[i].on);
+		CHECK(f.notes[i].off == r.notes[i].off);
+	}
+	return f;
+}
+
+/// THE FILE DIFFERS FROM THE STRAIGHT EXPORT in at least one note's start, end or velocity: the second assertion, showing the
+/// equality above is not an equality of two ungrooved files.
+bool differsFromStraight(const Parsed& grooved) {
+	const Parsed straight = parse(pat::patternMidi(groovedSource([](pat::Settings&) {}), 0, 120.0));
+	if (straight.notes.size() != grooved.notes.size()) {
+		return true;
+	}
+	for (size_t i = 0; i < straight.notes.size(); ++i) {
+		if (straight.notes[i].on != grooved.notes[i].on || straight.notes[i].off != grooved.notes[i].off
+		    || straight.notes[i].velocity != grooved.notes[i].velocity) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/// THE START TICKS THE FEEL'S OWN SHIFT PREDICTS, restated: step g's onset at `g + shift` sixteenths (6000 samples each at 120
+/// bpm and 48 kHz), the first sample at or after it, 0.04 ticks a sample. `feel` carries the values as the row holds them
+/// (floats). Every step of the first bar must have a note-on at that tick (Wobble adds notes to a step, so this is membership,
+/// not equality of the lists). A first step shifted early has no time before the song's start to sound in: it is skipped.
+void checkOnsets(const Parsed& f, const feathers::mod::arp::humanize::Feel& feel) {
+	namespace hz = feathers::mod::arp::humanize;
+	std::vector<uint32_t> ons;
+	for (const FileNote& n : f.notes) {
+		ons.push_back(n.on);
+	}
+	size_t checked = 0;
+	for (int64_t g = 0; g < 16; ++g) {
+		const double shift = hz::shiftSteps(feel, g, 0.125, 0.25);
+		if (g == 0 && shift < 0.0) {
+			continue;
+		}
+		const auto sample = static_cast<int64_t>(std::ceil((static_cast<double>(g) + shift) * 6000.0 - 1e-6));
+		const auto want = static_cast<uint32_t>(std::llround(static_cast<double>(sample) * 0.04));
+		CAPTURE(g);
+		CHECK(std::find(ons.begin(), ons.end(), want) != ons.end());
+		++checked;
+	}
+	CHECK(checked >= 15);
+}
+
+} // namespace
+
+TEST_CASE("midi: every feel family is baked into the file — export equals the live emitter's notes by value, and differs from the straight export") {
+	namespace hz = feathers::mod::arp::humanize;
+	struct Family {
+		const char* name;
+		std::function<void(pat::Settings&)> tune;
+		hz::Feel feel; // the feel as the row holds it, for the onset restatement
+		bool onsets;   // the onset restatement holds (the feel moves timing alone; no flam or strum)
+	};
+	const auto f32 = [](double v) { return static_cast<double>(static_cast<float>(v)); };
+	const std::vector<Family> families = {
+		{ "swing", [](pat::Settings& s) { s.feel = { hz::Mode::Swing16, 0.8, 0 }; },
+		  { hz::Mode::Swing16, f32(0.8), 0, 0.0, 0.0 }, true },
+		{ "groove", [](pat::Settings& s) { s.feel = { hz::Mode::Groove16, 0.7, 0 }; },
+		  { hz::Mode::Groove16, f32(0.7), 0, 0.0, 0.0 }, true },
+		{ "tight", [](pat::Settings& s) { s.feel = { hz::Mode::Tight, 1.0, 5 }; },
+		  { hz::Mode::Tight, 1.0, 5, 0.0, 0.0 }, true },
+		{ "loose", [](pat::Settings& s) { s.feel = { hz::Mode::Loose, 0.9, 11 }; },
+		  { hz::Mode::Loose, f32(0.9), 11, 0.0, 0.0 }, true },
+		{ "drunk", [](pat::Settings& s) { s.feel = { hz::Mode::Drunk, 1.0, 3 }; },
+		  { hz::Mode::Drunk, 1.0, 3, 0.0, 0.0 }, true },
+		{ "free", [](pat::Settings& s) { s.feel = { hz::Mode::Free16, 0.5, 0 }; s.freePhase = 37.25; },
+		  { hz::Mode::Free16, f32(0.5), 0, f32(37.25), 0.0 }, true },
+		{ "wobble", [](pat::Settings& s) { s.feel = { hz::Mode::Straight, 0.5, 0 }; s.feel.wobble = 5.5; },
+		  { hz::Mode::Straight, f32(0.5), 0, 0.0, f32(5.5) }, true },
+		{ "combination", [](pat::Settings& s) {
+			  s.feel = { hz::Mode::Free8, 0.5, 0 };
+			  s.freePhase = 12.5;
+			  s.feel.wobble = 9.25;
+		  },
+		  { hz::Mode::Free8, f32(0.5), 0, f32(12.5), f32(9.25) }, true },
+		{ "swing and wobble", [](pat::Settings& s) {
+			  s.feel = { hz::Mode::Swing8, 0.6, 0 };
+			  s.feel.wobble = 2.75;
+		  },
+		  { hz::Mode::Swing8, f32(0.6), 0, 0.0, f32(2.75) }, true },
+	};
+	for (const Family& fam : families) {
+		const std::string famName = fam.name; CAPTURE(famName);
+		const pat::MidiSource src = groovedSource(fam.tune);
+		const Parsed f = exportEqualsLive(src, 120.0);
+		CHECK(differsFromStraight(f));
+		if (fam.onsets) {
+			checkOnsets(f, fam.feel);
+		}
+	}
+}

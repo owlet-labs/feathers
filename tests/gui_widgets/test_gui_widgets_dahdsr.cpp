@@ -6668,7 +6668,9 @@ TEST_CASE("every control HARM declares is reachable from at least one of its sur
 		// can disagree with itself about a value, a label, or which of 102 entries is selected —
 		// which is the strongest form duplication takes here and the reason §6's "allow it" is not
 		// costing anything.
-		constexpr size_t kExpectedDuplicates = 6;
+		// TEN with the four partials' Active chips: the card carries a switch for each so a partial can be turned on from it, and
+		// the window — the card's superset — carries them in its always-visible strip. By rule, not by accident.
+		constexpr size_t kExpectedDuplicates = 10;
 		size_t duplicated = 0;
 		for (size_t i = 0; i < static_cast<size_t>(fx::harm::Param::kCount); ++i) {
 			if (surfaces.offering(static_cast<fx::harm::Param>(i)) > 1) {
@@ -10007,8 +10009,11 @@ TEST_CASE("HARM's reduced card is one row of three, and it got materially shorte
 		                      + 16.0f + ui::HarmCard::kRowGap;  // the switch row that went with Poly
 		CAPTURE(ui::HarmCard::openHeight());
 		CAPTURE(removed);
-		CHECK(ui::HarmCard::openHeight() < 250.0f - removed + 1.0f);
-		CHECK(ui::HarmCard::openHeight() < 150.0f);
+		// AND IT GREW BY ONE ROW SINCE: the four partials' Active chips, which the card gained so a partial can be switched
+		// from it. The reduction is still this large; the allowance is exactly that row and the gap above it.
+		const float activeRow = ui::SwitchChip::kHeight + ui::HarmCard::kActiveRowGap;
+		CHECK(ui::HarmCard::openHeight() < 250.0f - removed + 1.0f + activeRow);
+		CHECK(ui::HarmCard::openHeight() < 150.0f + activeRow);
 		// AND THE CARD REALLY IS THAT TALL — the height and the layout agreeing, which is the seam
 		// that has bitten twice in this lane this week.
 		CHECK(f.card->height() == doctest::Approx(f.card->laneHeight()));
@@ -12563,13 +12568,39 @@ TEST_CASE("modulation reaches the expanded panel, and the panel is on the notify
 		panel.setModulation(mod, nullptr);
 		panel.setBounds(0, 0, panel.minimumSize().x, panel.minimumSize().y);
 
-		const auto knobFor = [](const ui::HarmExpanded& p, const char* label) -> ui::Knob* {
-			for (const auto& k : p.knobsForTest()) {
-				if (k->label() != nullptr && std::string(k->label()) == label) {
-					return k.get();
+		// WHERE A CONTROL LIVES ON THE PANEL: a knob (a partial's Fine, Width, Depth, Phase, Spread), a fader pill (a partial's
+		// Level, in the strip) or a value box (the envelope's six, Porta). Found by the descriptor it is bound to, in the
+		// four partials' knobs as well as the open one's, and each kind is asked whether it takes an armed source.
+		struct Found {
+			bool present = false;
+			bool destination = false;
+			bool mappable = false;
+		};
+		const auto onPanelFor = [&](size_t i) {
+			Found found;
+			const device::ParamDesc* want = &hrm::kParamDescs[i];
+			for (int k = 0; k < hrm::kPartialCount; ++k) {
+				for (const auto& knob : panel.knobsForTest(k)) {
+					if (knob->control() != nullptr && &knob->control()->desc() == want) {
+						found = { true, knob->isModDestination(), knob->mappable() };
+					}
 				}
 			}
-			return nullptr;
+			for (int k = 0; k < hrm::kPartialCount; ++k) {
+				const ui::FaderPill* pill = panel.stripForTest()->levelPill(k);
+				if (&pill->amountForTest().desc() == want) {
+					found = { true, pill->amountForTest().display().isDestination, pill->mappableForTest() };
+				}
+			}
+			for (const auto& box : panel.envelopeBoxesForTest()) {
+				if (&box->control().desc() == want) {
+					found = { true, box->control().display().isDestination, box->mappable(false) };
+				}
+			}
+			if (&panel.portaForTest()->control().desc() == want) {
+				found = { true, panel.portaForTest()->control().display().isDestination, panel.portaForTest()->mappable(false) };
+			}
+			return found;
 		};
 
 		const backplane::Source envelope = backplane::Source::output(f.bridge.rackDeviceAt(0), 0);
@@ -12582,18 +12613,15 @@ TEST_CASE("modulation reaches the expanded panel, and the panel is on the notify
 				continue; // the furniture arms on the site panel's head row, the enable on the header chip (KW)
 			}
 			CAPTURE(std::string(hrm::kParamDescs[i].name));
-			// THE LABEL IS THE DESCRIPTOR'S NAME LESS ITS DEVICE PREFIX, which both surfaces use.
-			const std::string full = hrm::kParamDescs[i].name;
-			const std::string label = full.substr(full.find(' ') + 1);
-			CAPTURE(label);
-
-			ui::Knob* onPanel = knobFor(panel, label.c_str());
-			REQUIRE(onPanel != nullptr); // the panel is self-contained: every knob is on it
-			CHECK(onPanel->isModDestination());
-			CHECK(onPanel->mappable());
+			const Found onPanel = onPanelFor(i);
+			REQUIRE(onPanel.present); // the panel is self-contained: every modulatable control is on it
+			CHECK(onPanel.destination);
+			CHECK(onPanel.mappable);
 
 			// AND ON THE CARD WHERE THE CARD HAS IT. The card keeps three; the rest moved, and a
 			// control the card does not hold is not a card failure.
+			const std::string full = hrm::kParamDescs[i].name;
+			const std::string label = full.substr(full.find(' ') + 1);
 			if (ui::Knob* onCard = f.cardKnob(label)) {
 				CHECK(onCard->isModDestination());
 				CHECK(onCard->mappable());
@@ -12759,30 +12787,35 @@ TEST_CASE("the open panel does not eat the editor's clicks, so a source can stil
 		};
 
 		size_t checked = 0;
-		for (const double harmonic : { 0.0, 9.0, 45.0, 101.0 }) {
-			for (const double level : { 0.0, 0.5, 1.0 }) {
-				for (const double width : { 0.0, 0.02, 0.5, 1.0 }) {
-					set(hrm::Param::Harmonic, harmonic);
-					set(hrm::Param::Level, level);
-					set(hrm::Param::Width, width);
-					panel->resized();
-					CAPTURE(harmonic);
-					CAPTURE(level);
-					CAPTURE(width);
-					for (const auto& knob : panel->knobsForTest()) {
-						CAPTURE(std::string(knob->label() != nullptr ? knob->label() : "?"));
-						const visage::Point at =
-						    knob->positionInWindow()
-						    + visage::Point { knob->width() * 0.5f, knob->height() * 0.35f };
-						// THE KNOB ITSELF, not merely "not the scope" — a press landing on the panel
-						// or on nothing is just as unresponsive to a hand.
-						CHECK(f.root->frameAtPoint(at) == knob.get());
-						++checked;
+		// ON EVERY TAB: the four partials share one layout, so each partial's five knobs are swept as the open set.
+		for (int partial = 0; partial < hrm::kPartialCount; ++partial) {
+			panel->selectPartial(partial);
+			for (const double harmonic : { 0.0, 9.0, 45.0, 101.0 }) {
+				for (const double level : { 0.0, 0.5, 1.0 }) {
+					for (const double width : { 0.0, 0.02, 0.5, 1.0 }) {
+						set(hrm::partialParam(partial, hrm::PartialField::Harmonic), harmonic);
+						set(hrm::partialParam(partial, hrm::PartialField::Level), level);
+						set(hrm::partialParam(partial, hrm::PartialField::Width), width);
+						panel->resized();
+						CAPTURE(partial);
+						CAPTURE(harmonic);
+						CAPTURE(level);
+						CAPTURE(width);
+						for (const auto& knob : panel->knobsForTest()) {
+							CAPTURE(std::string(knob->label() != nullptr ? knob->label() : "?"));
+							const visage::Point at =
+							    knob->positionInWindow()
+							    + visage::Point { knob->width() * 0.5f, knob->height() * 0.35f };
+							// THE KNOB ITSELF, not merely "not the scope" — a press landing on the panel
+							// or on nothing is just as unresponsive to a hand.
+							CHECK(f.root->frameAtPoint(at) == knob.get());
+							++checked;
+						}
 					}
 				}
 			}
 		}
-		CHECK(checked >= 400); // nine knobs over 48 configurations
+		CHECK(checked >= 400); // five knobs over 48 configurations on each of four tabs
 	}
 
 	SUBCASE("a press inside the panel reaches a CONTROL, not the layer") {
@@ -13157,6 +13190,314 @@ TEST_CASE("the scope IS the control — its grips edit through the same road the
 		CHECK(f.bridge.routeAmount(source, destination) == doctest::Approx(0.5f).epsilon(0.05));
 		CHECK(f.param(hrm::Param::Depth) == doctest::Approx(depthBefore));
 	}
+}
+
+namespace {
+
+/// THE PARAMETERS OF HARM THAT A FRAME TREE OFFERS A HAND RIGHT NOW — only widgets that are EFFECTIVELY visible (they and every ancestor
+/// up to `root` shown), asked what they offer (`ui::ControlFace`), by descriptor identity. A control on a hidden tab is not on offer.
+std::set<size_t> harmVisibleOffers(const visage::Frame* root) {
+	std::set<size_t> out;
+	std::vector<ui::ControlFace::Offered> list;
+	std::vector<std::pair<const visage::Frame*, bool>> stack { { root, true } };
+	const auto& desc = feathers::fx::harm::kDescriptor;
+	while (!stack.empty()) {
+		const auto [fr, shown] = stack.back();
+		stack.pop_back();
+		const bool here = shown && fr->isVisible();
+		if (const auto* face = dynamic_cast<const ui::ControlFace*>(fr); face != nullptr && fr != root && here) {
+			list.clear();
+			face->offeredControls(list);
+			for (const ui::ControlFace::Offered& o : list) {
+				for (size_t i = 0; o.control != nullptr && i < desc.params.size(); ++i) {
+					if (&o.control->desc() == &desc.params[i]) {
+						out.insert(i);
+					}
+				}
+			}
+		}
+		for (const visage::Frame* c : fr->children()) {
+			stack.push_back({ c, here });
+		}
+	}
+	return out;
+}
+
+} // namespace
+
+TEST_CASE("HARM's window: a strip of four partials that is always on show, and tabs that choose the detail") {
+	HarmFixture f;
+	namespace hrm = feathers::fx::harm;
+	ui::HarmExpanded& panel = f.expanded();
+	const ui::HarmPartialStrip* strip = panel.stripForTest();
+	REQUIRE(strip != nullptr);
+
+	const auto write = [&](hrm::Param p, double v) {
+		ui::FxControl c { f.bridge, f.device, hrm::kDescriptor, static_cast<size_t>(p) };
+		c.setValue(v);
+		f.bridge.refresh();
+	};
+	const auto idx = [](int k, hrm::PartialField field) { return static_cast<size_t>(hrm::partialParam(k, field)); };
+	// the fields the DETAIL is made of, and the two the STRIP is
+	const hrm::PartialField detailFields[] = { hrm::PartialField::Harmonic, hrm::PartialField::Fine, hrm::PartialField::Width,
+		                                       hrm::PartialField::Depth,    hrm::PartialField::Phase, hrm::PartialField::Spread,
+		                                       hrm::PartialField::Mode };
+	const hrm::PartialField stripFields[] = { hrm::PartialField::Level, hrm::PartialField::Active };
+
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		panel.selectPartial(k);
+		(void)panel.updateContent();
+		INFO("tab " << k + 1);
+		CHECK(panel.selectedPartial() == k);
+		CHECK(strip->selected() == k);
+		CHECK(panel.scopeForTest()->selectedPartial() == k);
+
+		const std::set<size_t> offered = harmVisibleOffers(&panel);
+		for (int j = 0; j < hrm::kPartialCount; ++j) {
+			INFO("partial " << j + 1);
+			// THE DETAIL IS BOUND TO THE OPEN PARTIAL'S PARAMETERS AND TO NO OTHER'S
+			for (const hrm::PartialField field : detailFields) {
+				CHECK((offered.count(idx(j, field)) == 1) == (j == k));
+			}
+			// THE STRIP IS ON SHOW WHICHEVER TAB IS OPEN: every partial's Level and Active, bound
+			for (const hrm::PartialField field : stripFields) {
+				CHECK(offered.count(idx(j, field)) == 1);
+			}
+		}
+		// the envelope and the master row are the device's, whichever tab is open
+		for (const hrm::Param p : { hrm::Param::Delay, hrm::Param::Attack, hrm::Param::Hold, hrm::Param::Decay, hrm::Param::Sustain,
+		                            hrm::Param::Release, hrm::Param::Porta, hrm::Param::Poly, hrm::Param::DepthFollowsEnv }) {
+			CHECK(offered.count(static_cast<size_t>(p)) == 1);
+		}
+		// the knobs and the row really are the open partial's
+		CHECK(panel.harmonicRow() == panel.harmonicRow(k));
+		CHECK(panel.knobsForTest().size() == 5);
+		CHECK(strip->activeChip(k)->isVisible());
+	}
+
+	SUBCASE("a press on a tab, or on a strip column's header, opens that partial — and it is view state, not a parameter") {
+		const visage::Bounds tab = panel.tabBounds(2);
+		panel.onMouseDown().callback(at(tab.x() + tab.width() * 0.5f, tab.y() + tab.height() * 0.5f));
+		CHECK(panel.selectedPartial() == 2);
+
+		// the whole row of the device, before and after a selection: nothing in it moves
+		const hrm::Row before = [&] {
+			hrm::Row row {};
+			for (size_t i = 0; i < row.size(); ++i) {
+				row[i] = f.deviceHost.fieldAt(f.device, i);
+			}
+			return row;
+		}();
+		const visage::Bounds head = strip->headerBounds(3);
+		const ui::HarmPartialStrip* s = strip;
+		const_cast<ui::HarmPartialStrip*>(s)->onMouseDown().callback(at(head.x() + 6.0f, head.y() + 4.0f));
+		CHECK(panel.selectedPartial() == 3);
+		hrm::Row after {};
+		for (size_t i = 0; i < after.size(); ++i) {
+			after[i] = f.deviceHost.fieldAt(f.device, i);
+		}
+		CHECK(before == after);
+	}
+
+	SUBCASE("the strip's chips and pills write the row the engine decodes, for every partial, from any tab") {
+		panel.selectPartial(1);
+		for (int k = 0; k < hrm::kPartialCount; ++k) {
+			INFO("partial " << k + 1);
+			ui::FxControl chip { f.bridge, f.device, hrm::kDescriptor, idx(k, hrm::PartialField::Active) };
+			CHECK(strip->activeChip(k)->on() == (k == 0)); // partial 1 on by default, the rest off
+			write(hrm::partialParam(k, hrm::PartialField::Active), k == 0 ? 0.0 : 1.0);
+			CHECK(strip->activeChip(k)->on() == (k != 0));
+			write(hrm::partialParam(k, hrm::PartialField::Level), 0.25);
+			const hrm::State state = f.state();
+			const float level = k == 0 ? state.settings.level : state.settings.more[static_cast<size_t>(k - 1)].level;
+			CHECK(level == doctest::Approx(0.25f));
+			CHECK(strip->levelPill(k)->amountForTest().value() == doctest::Approx(0.25));
+		}
+	}
+}
+
+TEST_CASE("HARM's scope draws every active partial, the selected one emphasised and last") {
+	HarmFixture f;
+	namespace hrm = feathers::fx::harm;
+	ui::HarmExpanded& panel = f.expanded();
+	ui::HarmScope* scope = panel.scopeForTest();
+	REQUIRE(scope != nullptr);
+	const auto write = [&](hrm::Param p, double v) {
+		ui::FxControl c { f.bridge, f.device, hrm::kDescriptor, static_cast<size_t>(p) };
+		c.setValue(v);
+		f.bridge.refresh();
+	};
+	const auto ratioIndex = [](int num, int den) { return static_cast<double>(hrm::harmonicIndexOf(num, den)); };
+
+	// partial 1 on (default), partial 3 on at 3:1 and level 0.6, partial 2 and 4 off
+	write(hrm::partialParam(2, hrm::PartialField::Active), 1.0);
+	write(hrm::partialParam(2, hrm::PartialField::Harmonic), ratioIndex(3, 1));
+	write(hrm::partialParam(2, hrm::PartialField::Level), 0.6);
+
+	SUBCASE("tab 1 selected: partials 1 and 3 are drawn, 1 emphasised and last") {
+		panel.selectPartial(0);
+		const auto plan = scope->drawPlan();
+		REQUIRE(plan.size() == 2);
+		CHECK(plan[0].partial == 2);
+		CHECK_FALSE(plan[0].selected);
+		CHECK(plan[1].partial == 0);
+		CHECK(plan[1].selected);
+		CHECK(plan[1].active);
+		// WHERE EACH SITS — the ratio the table holds for the control's index, on the scope's own axis
+		CHECK(plan[0].notchX == doctest::Approx(scope->xForRatio(3.0)));
+		CHECK(plan[1].notchX == doctest::Approx(scope->xForRatio(1.0)));
+		CHECK(plan[0].stem == doctest::Approx(0.6f));
+		CHECK(plan[1].stem == doctest::Approx(1.0f));
+	}
+
+	SUBCASE("tab 3 selected: the same two, now 3 emphasised and last") {
+		panel.selectPartial(2);
+		const auto plan = scope->drawPlan();
+		REQUIRE(plan.size() == 2);
+		CHECK(plan[0].partial == 0);
+		CHECK_FALSE(plan[0].selected);
+		CHECK(plan[1].partial == 2);
+		CHECK(plan[1].selected);
+		// and each partial's own curve has its own trough: partial 3's null sits at 3:1
+		std::vector<float> gains(ui::HarmScope::kMaxCurvePoints);
+		const size_t n = scope->curveGainsFor(2, gains.data(), gains.size());
+		REQUIRE(n > 2);
+		size_t deepest = 0;
+		for (size_t i = 0; i < n; ++i) {
+			if (gains[i] < gains[deepest]) {
+				deepest = i;
+			}
+		}
+		CHECK(gains[deepest] == doctest::Approx(0.0f).epsilon(1.0e-3));
+		const visage::Bounds box = scope->plotBounds();
+		const float x = box.x() + box.width() * static_cast<float>(deepest) / static_cast<float>(n - 1);
+		CHECK(x == doctest::Approx(scope->xForRatio(3.0)).epsilon(0.01));
+	}
+
+	SUBCASE("an inactive partial is not in the plan unless it is the one open, and then as a ghost") {
+		panel.selectPartial(1);
+		const auto plan = scope->drawPlan();
+		REQUIRE(plan.size() == 3);
+		CHECK(plan.back().partial == 1);
+		CHECK(plan.back().selected);
+		CHECK_FALSE(plan.back().active);
+		for (const auto& e : plan) {
+			CHECK((e.partial == 1 || e.active));
+		}
+		write(hrm::partialParam(2, hrm::PartialField::Active), 0.0);
+		CHECK(scope->drawPlan().size() == 2); // partial 3 is out of the picture the moment it is out of the sound
+	}
+}
+
+TEST_CASE("HARM's envelope window: the curve is the envelope's shape, and the six boxes are the six stages") {
+	HarmFixture f;
+	namespace hrm = feathers::fx::harm;
+	ui::HarmExpanded& panel = f.expanded();
+	const ui::HarmEnvelopeView* view = panel.envelopeViewForTest();
+	REQUIRE(view != nullptr);
+	const auto write = [&](hrm::Param p, double v) {
+		ui::FxControl c { f.bridge, f.device, hrm::kDescriptor, static_cast<size_t>(p) };
+		c.setValue(v);
+		f.bridge.refresh();
+		(void)panel.updateContent();
+	};
+
+	SUBCASE("the default envelope is the attack-and-release one: no delay, hold or decay stage, full sustain") {
+		const auto& spans = view->spansForTest();
+		std::vector<hrm::Envelope::Stage> stages;
+		for (const auto& s : spans) {
+			stages.push_back(s.stage);
+		}
+		// attack is off (instant) in the default row, so only the plateau and the release take width
+		CHECK(stages == std::vector<hrm::Envelope::Stage> { hrm::Envelope::Stage::Sustain, hrm::Envelope::Stage::Release });
+		CHECK(view->timesForTest().sustain == 1.0);
+	}
+
+	SUBCASE("every stage shows once it is set, and the curve lands where the law puts each stage") {
+		write(hrm::Param::Delay, -4.0);
+		write(hrm::Param::Attack, -6.0);
+		write(hrm::Param::Hold, -4.0);
+		write(hrm::Param::Decay, -3.0);
+		write(hrm::Param::Sustain, 0.5);
+		write(hrm::Param::Release, -1.0);
+		const auto& spans = view->spansForTest();
+		REQUIRE(spans.size() == 6);
+		const hrm::Envelope::Stage order[] = { hrm::Envelope::Stage::Delay, hrm::Envelope::Stage::Attack, hrm::Envelope::Stage::Hold,
+			                                   hrm::Envelope::Stage::Decay, hrm::Envelope::Stage::Sustain, hrm::Envelope::Stage::Release };
+		for (size_t i = 0; i < spans.size(); ++i) {
+			CHECK(spans[i].stage == order[i]);
+			CHECK(spans[i].to > spans[i].from);
+			if (i > 0) {
+				CHECK(spans[i].from == doctest::Approx(spans[i - 1].to));
+			}
+		}
+		CHECK(spans.back().to == doctest::Approx(1.0f));
+		const auto& curve = view->curvePointsForTest();
+		// the level at the END of each span, against an independent restatement: 0 through the delay, ~1 at the attack's and
+		// hold's ends (the attack hands over within 0.1 %), the sustain at the decay's, and ~0 at the release's
+		const auto levelAtX = [&](float x) {
+			float best = 0.0f;
+			float bestDx = 1.0e9f;
+			for (const auto& p : curve) {
+				if (std::fabs(p.x - x) < bestDx) {
+					bestDx = std::fabs(p.x - x);
+					best = p.y;
+				}
+			}
+			return best;
+		};
+		CHECK(levelAtX(spans[0].to) == doctest::Approx(0.0f).epsilon(1.0e-3));
+		CHECK(levelAtX(spans[1].to) == doctest::Approx(1.0f).epsilon(2.0e-3));
+		CHECK(levelAtX(spans[2].to) == doctest::Approx(1.0f).epsilon(2.0e-3));
+		CHECK(levelAtX(spans[3].to) == doctest::Approx(0.5f).epsilon(2.0e-3));
+		CHECK(levelAtX(spans[4].to) == doctest::Approx(0.5f).epsilon(1.0e-6));
+		CHECK(std::fabs(levelAtX(spans[5].to)) < 1.0e-3f);
+		// and the picture follows the control: its times are the ones the device decodes
+		const hrm::State s = f.state();
+		CHECK(view->timesForTest().attack == doctest::Approx(static_cast<double>(s.settings.attackSeconds)));
+		CHECK(view->timesForTest().sustain == doctest::Approx(static_cast<double>(s.settings.sustain)));
+	}
+
+	SUBCASE("each box is bound to its own stage's control") {
+		const auto& boxes = panel.envelopeBoxesForTest();
+		REQUIRE(boxes.size() == 6);
+		const hrm::Param order[] = { hrm::Param::Delay, hrm::Param::Attack, hrm::Param::Hold,
+			                         hrm::Param::Decay, hrm::Param::Sustain, hrm::Param::Release };
+		for (size_t i = 0; i < boxes.size(); ++i) {
+			CHECK(&boxes[i]->control().desc() == &hrm::kParamDescs[static_cast<size_t>(order[i])]);
+		}
+	}
+}
+
+TEST_CASE("HARM's card carries the four partials' Active chips, and each is the partial's own switch") {
+	HarmFixture f;
+	namespace hrm = feathers::fx::harm;
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		INFO("partial " << k + 1);
+		ui::SwitchChip* chip = f.card->activeChipForTest(k);
+		REQUIRE(chip != nullptr);
+		std::vector<ui::ControlFace::Offered> list;
+		chip->offeredControls(list);
+		REQUIRE(list.size() == 1);
+		CHECK(&list[0].control->desc() == &hrm::kParamDescs[static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Active))]);
+		CHECK(chip->on() == (k == 0));
+		// one small row, inside the card
+		const visage::Bounds b = f.card->activeBounds(k);
+		CHECK(b.x() >= 0.0f);
+		CHECK(b.right() <= f.card->width() + 0.01f);
+		CHECK(b.bottom() <= f.card->height() + 0.01f);
+		CHECK(b.y() == doctest::Approx(f.card->activeBounds(0).y()));
+	}
+	// and the card has no tab bar: its addressed controls are today's plus the four switches
+	std::set<int> onCard;
+	for (const hrm::Param p : f.card->addressedParamsForTest()) {
+		onCard.insert(static_cast<int>(p));
+	}
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		CHECK(onCard.count(static_cast<int>(hrm::partialParam(k, hrm::PartialField::Active))) == 1);
+	}
+	CHECK(onCard.count(static_cast<int>(hrm::partialParam(1, hrm::PartialField::Level))) == 0);
+	CHECK(onCard.count(static_cast<int>(hrm::partialParam(1, hrm::PartialField::Harmonic))) == 0);
 }
 
 TEST_CASE("hardening: OWLTT's graph repaints for a hover only when a tooltip appears, moves or goes") {

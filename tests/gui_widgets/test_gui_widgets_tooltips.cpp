@@ -238,6 +238,8 @@ bool allowListed(const visage::Frame& f, std::string* reason) {
 		{ "feathers::ui::PhaserPad", "a plane through thirty phases, not one control" },
 		{ "feathers::ui::PerformPad", "a plane over several controls, not one control" },
 		{ "feathers::ui::HarmScope", "a picture of the notch and its harmonic, dragged as several controls" },
+		{ "feathers::ui::HarmEnvelopeView", "a picture of the envelope the six boxes beside it set; it edits nothing" },
+		{ "feathers::ui::HarmPartialStrip", "a row whose header opens a partial's tab (view state); its chips and pills are the controls" },
 		{ "feathers::ui::AutomodStrip", "a picture of the modulation, not a control" },
 		{ "feathers::ui::ArpLane", "a picture of the steps the arp played, not a control" },
 		{ "feathers::ui::IrView", "the impulse's own editor — markers and stretch are body operations, not controls" },

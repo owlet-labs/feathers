@@ -68,15 +68,15 @@ HarmScope::HarmScope(backplane::DeviceHost& host, DeviceInstanceId id) : host_(h
 		// it sideways the moment a grip was touched.
 		anchorNotchDx_ = notchX() - e.position.x;
 		anchorValue_ = routeDrag_
-		                   ? static_cast<double>(control(paramOf(held_)).display().amount)
-		                   : control(paramOf(held_)).value();
+		                   ? static_cast<double>(control(paramFor(held_)).display().amount)
+		                   : control(paramFor(held_)).value();
 	};
 
 	onMouseDrag() = [this](const visage::MouseEvent& e) {
 		if (held_ == Grip::None) {
 			return;
 		}
-		const fx::harm::Param param = paramOf(held_);
+		const fx::harm::Param param = paramFor(held_);
 		if (routeDrag_) {
 			// THE AMOUNT, ON THE SAME ROAD A KNOB'S ROUTE DRAG TAKES — vertical travel over the
 			// knob's own drag range, so a hand that learned one learned the other.
@@ -95,7 +95,7 @@ HarmScope::HarmScope(backplane::DeviceHost& host, DeviceInstanceId id) : host_(h
 		// the oscillator's head around the picture is moving the sub-oscillator, and its pitch and its
 		// loudness are the two things that mark is.
 		if (held_ == Grip::Stem) {
-			commit(hrm::Param::Harmonic, harmonicForX(e.position.x + anchorNotchDx_));
+			commit(hrm::partialParam(partial_, hrm::PartialField::Harmonic), harmonicForX(e.position.x + anchorNotchDx_));
 		}
 	};
 
@@ -133,7 +133,7 @@ bool HarmScope::gripMappable(Grip grip) const {
 	}
 	// ONE QUESTION, ASKED OF THE CONTROL — `Knob::mappable`'s exact test, so the picture and the knob
 	// cannot disagree about whether a source may reach the same control.
-	return control(paramOf(grip)).display().routable;
+	return control(paramFor(grip)).display().routable;
 }
 
 hrm::Param HarmScope::paramOf(Grip grip) {
@@ -150,6 +150,34 @@ hrm::Param HarmScope::paramOf(Grip grip) {
 			break;
 	}
 	return hrm::Param::kCount;
+}
+
+hrm::Param HarmScope::paramFor(Grip grip) const {
+	// THE SELECTED PARTIAL'S OWN CONTROL for the grip: the same four meanings, at the partial's own index.
+	switch (grip) {
+		case Grip::Notch:
+			return hrm::partialParam(partial_, hrm::PartialField::Harmonic);
+		case Grip::Trough:
+			return hrm::partialParam(partial_, hrm::PartialField::Depth);
+		case Grip::Stem:
+			return hrm::partialParam(partial_, hrm::PartialField::Level);
+		case Grip::Shoulder:
+			return hrm::partialParam(partial_, hrm::PartialField::Width);
+		case Grip::None:
+			break;
+	}
+	return hrm::Param::kCount;
+}
+
+void HarmScope::setSelectedPartial(int partial) {
+	partial = std::clamp(partial, 0, hrm::kPartialCount - 1);
+	if (partial == partial_) {
+		return;
+	}
+	partial_ = partial;
+	held_ = Grip::None;
+	routeDrag_ = false;
+	redraw();
 }
 
 void HarmScope::commit(hrm::Param param, double value) {
@@ -193,6 +221,12 @@ void HarmScope::endGesture() {
 }
 
 hrm::Settings HarmScope::settings() const {
+	// THE SELECTED PARTIAL, seen as the first (`partialSlice`): every function below that asks "the notch" or "the oscillator"
+	// asks about the partial the window has open, and answers exactly as it did when there was one.
+	return hrm::partialSlice(fullSettings(), partial_);
+}
+
+hrm::Settings HarmScope::fullSettings() const {
 	// ONE READ OF THE DEVICE'S OWN STATE, not a rebuild field by field. `fxFilterAt`'s note records
 	// what the other shape costs: the filter card assembled its curve out of published values and
 	// shipped a picture of a filter the engine was not running twice, once per field somebody
@@ -459,7 +493,7 @@ HarmScope::Grip HarmScope::gripAt(visage::Point point) const {
 
 double HarmScope::valueForDrag(Grip grip, visage::Point at, bool fine) const {
 	const visage::Bounds box = plotBounds();
-	const device::ParamDesc& desc = hrm::kParamDescs[static_cast<size_t>(paramOf(grip))];
+	const device::ParamDesc& desc = hrm::kParamDescs[static_cast<size_t>(paramFor(grip))];
 	switch (grip) {
 		case Grip::Notch:
 			(void)fine;
@@ -510,52 +544,62 @@ void HarmScope::draw(visage::Canvas& canvas) {
 	canvas.setColor(withAlpha(kLine, 0.7f));
 	canvas.fill(box.x(), box.y(), box.width(), 1.0f);
 
-	// THE OSCILLATOR'S HARMONIC, drawn as a stem whose height is Level, BEHIND the curve. It is on
-	// the same axis as the notch that removes it, which is the whole device in one picture: the notch
-	// tracks the oscillator, so the two marks sit at the same place and a hand can see that they do.
-	const float stem = oscillatorStem();
-	const float stemX = oscillatorX();
-	const float stemTop = box.bottom() - box.height() * stem;
-	if (stem > 0.0f && std::isfinite(stemX)) {
-		canvas.setColor(withAlpha(kValue, 0.45f));
-		canvas.fill(stemX - 0.5f, stemTop, 1.5f, box.height() * stem);
+	// EVERY ACTIVE PARTIAL, the selected one emphasised and the others dimmer, and the selected one LAST so it is on top.
+	// Each is its own notch (its curve) and its own sine (its stem, a dot at the top, and its number): the plan is
+	// `drawPlan()`, the same list a case reads, so what is asserted is what is drawn.
+	const std::vector<PlanEntry> plan = drawPlan();
+	const hrm::Settings full = fullSettings();
+	const auto stemOf = [&](const PlanEntry& e) { return box.bottom() - box.height() * e.stem; };
+	for (const PlanEntry& e : plan) {
+		const float emphasis = e.selected ? 1.0f : 0.45f;
+		const float alpha = !e.active ? 0.2f : emphasis;
+		if (e.stem > 0.0f && std::isfinite(e.oscillatorX)) {
+			canvas.setColor(withAlpha(kValue, 0.45f * alpha));
+			canvas.fill(e.oscillatorX - 0.5f, stemOf(e), 1.5f, box.height() * e.stem);
+		}
 	}
 
 	// A FIXED BUFFER RATHER THAN AN ALLOCATION PER FRAME — draw() runs on every frame of a knob drag.
 	std::array<float, kMaxCurvePoints> gainStore {};
-	const size_t points = curveGains(gainStore.data(), gainStore.size());
-	if (points < 2) {
-		return;
-	}
-	const std::span<const float> gains(gainStore.data(), points);
-
-	const auto pointAt = [&](size_t i) {
-		const float t = static_cast<float>(i) / static_cast<float>(points - 1);
-		const float magnitude = std::clamp(gains[i], 0.0f, 1.0f);
-		return visage::Point { box.x() + box.width() * t,
-			                   box.bottom() - box.height() * magnitude };
-	};
-
-	int lastBand = -1;
-	for (size_t i = 1; i < points; ++i) {
-		const float t = static_cast<float>(i) / static_cast<float>(points - 1);
-		const int band = static_cast<int>(std::lround(t * (kColourBands - 1)));
-		if (band != lastBand) {
-			lastBand = band;
-			const float banded = static_cast<float>(band) / static_cast<float>(kColourBands - 1);
-			canvas.setColor(blendColour(desaturate(kAccent, kCurveDesaturation),
-			                            desaturate(kValue, kCurveDesaturation), banded));
-		}
-		const visage::Point from = pointAt(i - 1);
-		const visage::Point to = pointAt(i);
-		// EVERY COMPUTED POINT FINITE-CHECKED BEFORE THE RENDERER — wave_display's rule, and this is
-		// exactly the case it exists for: these come from an evaluated response rather than from a
-		// clamped parameter, and a non-finite one hands the renderer a garbage quad.
-		if (!std::isfinite(from.y) || !std::isfinite(to.y)) {
+	for (const PlanEntry& e : plan) {
+		const size_t points = curveGainsFor(e.partial, gainStore.data(), gainStore.size());
+		if (points < 2) {
 			continue;
 		}
-		canvas.segment(from.x, from.y, to.x, to.y, 1.5f, true);
+		const std::span<const float> gains(gainStore.data(), points);
+		const auto pointAt = [&](size_t i) {
+			const float t = static_cast<float>(i) / static_cast<float>(points - 1);
+			const float magnitude = std::clamp(gains[i], 0.0f, 1.0f);
+			return visage::Point { box.x() + box.width() * t, box.bottom() - box.height() * magnitude };
+		};
+		int lastBand = -1;
+		for (size_t i = 1; i < points; ++i) {
+			if (e.selected && e.active) {
+				const float t = static_cast<float>(i) / static_cast<float>(points - 1);
+				const int band = static_cast<int>(std::lround(t * (kColourBands - 1)));
+				if (band != lastBand) {
+					lastBand = band;
+					const float banded = static_cast<float>(band) / static_cast<float>(kColourBands - 1);
+					canvas.setColor(blendColour(desaturate(kAccent, kCurveDesaturation),
+					                            desaturate(kValue, kCurveDesaturation), banded));
+				}
+			}
+			else if (lastBand != 0) {
+				lastBand = 0;
+				canvas.setColor(withAlpha(kValue, e.active ? 0.4f : 0.15f));
+			}
+			const visage::Point from = pointAt(i - 1);
+			const visage::Point to = pointAt(i);
+			// EVERY COMPUTED POINT FINITE-CHECKED BEFORE THE RENDERER — wave_display's rule, and this is
+			// exactly the case it exists for: these come from an evaluated response rather than from a
+			// clamped parameter, and a non-finite one hands the renderer a garbage quad.
+			if (!std::isfinite(from.y) || !std::isfinite(to.y)) {
+				continue;
+			}
+			canvas.segment(from.x, from.y, to.x, to.y, e.selected ? 1.5f : 1.0f, true);
+		}
 	}
+	(void)full;
 
 	// THE GRIPS, LAST AND ON TOP OF EVERYTHING.
 	//
@@ -602,30 +646,78 @@ void HarmScope::draw(visage::Canvas& canvas) {
 		}
 	}
 
-	// AND THE OSCILLATOR'S HEAD LAST, ON TOP OF THE CURVE.
+	// AND EACH OSCILLATOR'S HEAD LAST, ON TOP OF THE CURVES.
 	//
 	// BECAUSE THE TWO MARKS COINCIDE BY DESIGN AND ONE THEREFORE HIDES THE OTHER. MEASURED on the
 	// first render: at Level 0.7 and Depth 0.8 the stem was drawn to its full 70% and only the
 	// bottom 24% of it was visible, because the notch's own line descends the same column and is
 	// drawn after it. Every geometry assertion passed — the stem was at the right x and the right
 	// height — and the picture still did not show Level at all. A dot at the stem's top is a mark a
-	// 1.5 px line cannot swallow.
-	if (stem > 0.0f && std::isfinite(stemX)) {
+	// 1.5 px line cannot swallow. THE PARTIAL'S NUMBER SITS ABOVE IT, so several heads can be told apart.
+	for (const PlanEntry& e : plan) {
+		if (!(e.stem > 0.0f) || !std::isfinite(e.oscillatorX)) {
+			continue;
+		}
+		const float emphasis = !e.active ? 0.2f : (e.selected ? 1.0f : 0.55f);
 		constexpr float kHead = 3.0f;
-		canvas.setColor(kValue);
-		canvas.circle(stemX - kHead * 0.5f, stemTop - kHead * 0.5f, kHead);
+		canvas.setColor(withAlpha(kValue, emphasis));
+		canvas.circle(e.oscillatorX - kHead * 0.5f, stemOf(e) - kHead * 0.5f, kHead);
+		canvas.setColor(withAlpha(e.selected ? kInk : kMuted, std::max(emphasis, 0.7f)));
+		canvas.text(std::to_string(e.partial + 1), font(kKnobLabelSize), visage::Font::kLeft, e.oscillatorX + 4.0f,
+		            std::max(box.y() + 3.0f, stemOf(e) - 2.0f), 12.0f, 10.0f);
 	}
 }
 
+std::vector<HarmScope::PlanEntry> HarmScope::drawPlan() const {
+	// THE ACTIVE PARTIALS, IN ORDER, WITH THE SELECTED ONE LAST — plus the selected one when it is switched off, as a
+	// ghost, so the picture says where the partial would sit if it were turned on. A partial that is neither active
+	// nor selected is not drawn at all: it is not in the sound.
+	const hrm::Settings full = fullSettings();
+	std::vector<PlanEntry> out;
+	out.reserve(hrm::kPartialCount);
+	for (int pass = 0; pass < 2; ++pass) {
+		for (int k = 0; k < hrm::kPartialCount; ++k) {
+			const bool selected = k == partial_;
+			if ((pass == 1) != selected) {
+				continue;
+			}
+			const hrm::Settings slice = hrm::partialSlice(full, k);
+			if (!slice.active && !selected) {
+				continue;
+			}
+			PlanEntry e;
+			e.partial = k;
+			e.selected = selected;
+			e.active = slice.active;
+			e.notchX = xForRatio(hrm::notchRatio(slice));
+			e.oscillatorX = xForRatio(static_cast<double>(hrm::ratioAt(slice.harmonic))
+			                          * std::exp2(static_cast<double>(slice.fineSemitones) / 12.0));
+			e.stem = std::clamp(slice.level, 0.0f, 1.0f);
+			out.push_back(e);
+		}
+	}
+	return out;
+}
+
+size_t HarmScope::curveGainsFor(int partial, float* out, size_t capacity) const {
+	if (out == nullptr || capacity == 0) {
+		return 0;
+	}
+	const size_t points = std::min(capacity, curvePointCount());
+	hrm::ratioProfile(hrm::partialSlice(fullSettings(), partial), nullptr, out, points);
+	return points;
+}
+
 void HarmScope::offeredControls(std::vector<Offered>& out) const {
-	// THE NOTCH AND ITS HARMONIC, dragged (`HarmScope`'s header): side roads.
+	// THE NOTCH AND ITS HARMONIC, dragged (`HarmScope`'s header): side roads, for the selected partial.
 	// DEPTH AND WIDTH ONLY WHILE THEIR GRIPS EXIST — in High-pass `gripBounds` gives them none (backlog NL).
 	const bool highpass = settings().highpass;
-	for (const hrm::Param p : { hrm::Param::Harmonic, hrm::Param::Depth, hrm::Param::Width, hrm::Param::Level }) {
-		if (highpass && (p == hrm::Param::Depth || p == hrm::Param::Width)) {
+	for (const hrm::PartialField f : { hrm::PartialField::Harmonic, hrm::PartialField::Depth, hrm::PartialField::Width,
+	                                    hrm::PartialField::Level }) {
+		if (highpass && (f == hrm::PartialField::Depth || f == hrm::PartialField::Width)) {
 			continue;
 		}
-		out.push_back({ &control(p), Road::Gesture });
+		out.push_back({ &control(hrm::partialParam(partial_, f)), Road::Gesture });
 	}
 }
 

@@ -588,6 +588,7 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/harm_expanded.cpp
 	src/plugin/ui/harm_scope.cpp
 	src/plugin/ui/harm_envelope_view.cpp
+	src/plugin/ui/harm_partial_strip.cpp
 	src/plugin/ui/harmonic_row.cpp
 	src/plugin/ui/header_bar.cpp
 	src/plugin/ui/settings_screen.cpp

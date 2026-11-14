@@ -17,17 +17,18 @@
 
 #pragma once
 
-#include "plugin/ui/widget_registry.h"
-#include "fx/harm/harm_types.h"
 #include "plugin/ui/controls.h"
 #include "backplane/device_host.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/fx_control.h"
+#include "plugin/ui/harm_envelope_view.h"
+#include "plugin/ui/harm_partial_strip.h"
 #include "plugin/ui/harm_scope.h"
 #include "plugin/ui/harmonic_row.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/switch_chip.h"
+#include "plugin/ui/value_box.h"
 
 #include <array>
 #include <span>
@@ -35,42 +36,30 @@
 #include <string>
 #include <vector>
 
-// HARM'S EXPANDED VIEW — the picture, and the controls the card does not have room for.
+// HARM'S EXPANDED VIEW — four partials and an envelope, composed around the picture.
 //
-// All controls, and a filter-style filter+harmonic visualiser, in the expanded view; only Level,
-// Harmonic, Attack and Release on the card.
+// TOP TO BOTTOM:
 //
-// TWELVE OF TWELVE. The expanded view carries every control — it is self-contained, and
-// self-contained means self-contained: a surface that cannot switch its
-// own device off is the kind of nearly-complete that ships and then gets explained.
+//   PARTIALS    a strip of four columns — each partial's number and ratio, its Active switch and its Level — ALWAYS on
+//               show, so every partial is switched and levelled from whichever tab is open;
+//   TABS        "1 2 3 4", drawn as Drawn's frame tabs are (`tab_chip.h`): which partial the detail below is about;
+//   DETAIL      left: the selected partial — its ratio row and Mode, the scope (every active partial's notch and mark, the
+//               selected one emphasised), and Fine, Width, Depth, Phase, Spread. Right: the ENVELOPE, its curve and its six
+//               values;
+//   MASTER      Porta, Poly and Env Depth — the controls that belong to the device and to no one partial.
 //
-// `Enabled` WAS LEFT OUT AND THE REASONING WAS SOUND FOR THE SURFACE IT WAS ABOUT — "the head has
-// it" is true of a card and false of a panel that stands alone. It was then drawn here, in this body's
-// modal row; since 2026-09-26 it is the WINDOW HEADER'S chip, one for every device (devices had been
-// inconsistently adding their own active chips in the window) — still the declared control, so
-// the window's chip and the card's square are one control addressed one way.
+// THE TAB IS VIEW STATE, exactly as Drawn's selected frame is: a plain member of the window, not a parameter, not automated,
+// not modulated, and not stored. All four partials' detail controls are built once and the selected set is shown, so the four
+// tabs are one layout bound to four sets of parameters.
 //
-// AND IT IS NOT A KNOB LIST: the expanded view should be more intuitive than one. A list is
-// UNDIFFERENTIATED, and these twelve are four different
-// kinds of thing — which the old layout drew identically:
+// THE SLOT'S MIX AND WET GAIN ARE NOT HERE: they are the site panel's furniture, supplied by the slot, and the decision that
+// the window never draws them too is held by a case ("THE PANEL ALONE REACHES ALL …").
 //
-//   MODAL      Enabled, Poly            verbs, not values
-//   (and Depth Follows Env, a switch in the temporal group: it hands the notch the envelope)
-//   SPECTRAL   Harmonic, Fine, Level, Width, Depth    all five are IN the picture already
-//   SPATIAL    Phase, Spread            the scope is mono and cannot show them
-//   TEMPORAL   Attack, Release, Porta   the scope has no time axis at all
+// EVERY CONTROL IS REACHABLE FROM THE WINDOW, which `addressedParamsForTest` lists and a case sweeps over the declarations.
 //
-// So the groups are declared, labelled and laid out separately. **That grouping is the whole of the
-// design pass in this change**; making the scope itself draggable for the spectral five is the next
-// step and is deliberately not smuggled in here.
-//
-// THE REACHABILITY INVARIANT IS WHAT KEEPS THE COUNT HONEST rather than this comment: every control
-// HARM declares must be offered by at least one surface, and the case sweeps `kParamDescs` rather
-// than a list anybody maintains.
-//
-// IT TAKES ITS DATA FROM THE BRIDGE AND ITS SIZE FROM ITSELF. `ExpandedOverlay`'s properties 1 and 3:
-// there is no parent in here, and the only size fact stated is a minimum — because the overlay this
-// sits in today becomes a detached window later, and a window is resizable.
+// IT TAKES ITS DATA FROM THE BRIDGE AND ITS SIZE FROM ITSELF. `ExpandedOverlay`'s properties 1 and 3: there is no parent in here,
+// and the only size fact stated is a minimum — because the overlay this sits in today becomes a detached window later, and a
+// window is resizable.
 
 namespace feathers::ui {
 
@@ -98,57 +87,62 @@ public:
 
 	static constexpr float kPad = 14.0f;
 	static constexpr float kRowGap = 10.0f;
-	static constexpr float kGroupGap = 16.0f;
+	static constexpr float kGroupGap = 14.0f;
 	static constexpr float kCaptionHeight = 14.0f;
-	/// THE SCOPE IS THE REASON THE PANEL EXISTS and it does not shrink to make room for controls —
-	/// the brief says so outright. The overlay is a layer over the whole editor and is not short of
-	/// space.
-	static constexpr float kScopeHeight = 132.0f;
+	static constexpr float kCaptionGap = 6.0f;
+	/// THE SCOPE IS THE REASON THE PANEL EXISTS and it does not shrink to make room for controls.
+	static constexpr float kScopeHeight = 120.0f;
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
-	/// FOUR CELLS, WHICH IS THE WIDEST GROUP. Spectral has four knobs beneath its row, spatial two,
-	/// temporal three — so a four-cell grid holds every group and the short ones leave cells empty
-	/// rather than re-spacing. A row that re-spaced itself would move controls under the pointer for
-	/// no reason a player can see; the card records the same rule.
-	static constexpr int kRowCells = 4;
-	static constexpr float kCellWidth = 62.0f;
+	static constexpr float kTabHeight = 22.0f;
 	static constexpr float kSwitchHeight = 20.0f;
-	static constexpr float kSwitchWidth = 64.0f;
+	/// THE DETAIL'S TWO COLUMNS: the selected partial on the left, the envelope on the right.
+	static constexpr float kLeftWidth = 340.0f;
+	static constexpr float kRightWidth = 250.0f;
+	static constexpr float kColumnGap = 20.0f;
+	static constexpr int kKnobCells = 5;
+	static constexpr float kModeChipWidth = 76.0f;
+	static constexpr float kPolyChipWidth = 64.0f;
+	static constexpr float kEnvDepthChipWidth = 84.0f;
+	static constexpr float kPortaWidth = 100.0f;
 
-	/// ONE GROUP OF KNOBS, DECLARED. The constructor builds from these, the layout walks them, and
-	/// `minimumSize` counts them — so a control moving between groups is one line and the height
-	/// follows it.
-	struct KnobEntry {
-		fx::harm::Param param;
-		const char* label;
+	/// WHICH PARTIAL THE DETAIL IS ABOUT, 0..3 — view state. Setting it shows that partial's controls and tells the scope.
+	int selectedPartial() const noexcept { return selected_; }
+	void selectPartial(int partial);
+
+	/// THE CAPTIONS, in the order they are drawn, and where `resized` put them — one geometry, so a case reads what is drawn.
+	struct Caption {
+		const char* text;
+		visage::Bounds bounds;
 	};
-	struct KnobGroup {
-		const char* caption;
-		std::span<const KnobEntry> knobs;
-	};
+	const std::vector<Caption>& captionsForTest() const { return captions_; }
+	const std::vector<visage::Bounds> captionBoundsForTest() const {
+		std::vector<visage::Bounds> out;
+		for (const Caption& c : captions_) {
+			out.push_back(c.bounds);
+		}
+		return out;
+	}
 
-	/// The groups, in the order they are drawn. See the header note for why these four.
-	static std::span<const KnobGroup> groups();
-
-	visage::Bounds scopeBounds() const;
+	visage::Bounds stripBounds() const;
+	visage::Bounds tabBounds(int partial) const;
+	/// What a tab says: the partial's number.
+	static std::string tabText(int partial);
 	visage::Bounds harmonicBounds() const;
+	visage::Bounds scopeBounds() const;
+	visage::Bounds modeBounds() const;
+	visage::Bounds knobRowBounds() const;
+	visage::Bounds envelopeBounds() const;
+	visage::Bounds envelopeBoxBounds(size_t index) const;
+	visage::Bounds masterBounds() const;
+	visage::Bounds portaBounds() const;
 	visage::Bounds polyBounds() const;
-
-	/// Where each group's caption is drawn, in declaration order. Filled by `resized`, read by
-	/// `draw` — one geometry, so a case reading it reads what the panel writes.
-	const std::vector<visage::Bounds>& captionBoundsForTest() const { return captionBounds_; }
-
-	/// The bottom of the modal row, which is where the groups start.
+	visage::Bounds depthEnvBounds() const;
+	/// The bottom of the strip's caption and the strip itself, which is where the tabs begin.
 	float modalBottom() const;
 
-	/// The shared harmonic control — the same widget the card builds, over the same DeviceControl.
-	HarmonicRow* harmonicRow() const { return row_.get(); }
-
-	/// THE DEPTH-FOLLOWS-ENV SWITCH, in the TEMPORAL group's fourth cell — the one Attack, Release and Porta
-	/// leave empty. It sits beside the two knobs that shape the envelope it hands the notch, because the
-	/// envelope is what it is about. Filled by `resized`.
-	visage::Bounds depthEnvBounds() const { return depthEnvBounds_; }
-	SwitchChip* depthEnvForTest() const { return depthEnv_.get(); }
-
+	/// The selected partial's harmonic control — the same widget the card builds, over the same DeviceControl family.
+	HarmonicRow* harmonicRow() const { return detail_[static_cast<size_t>(selected_)].row.get(); }
+	HarmonicRow* harmonicRow(int partial) const { return detail_[static_cast<size_t>(partial)].row.get(); }
 
 	/// What that caption says — the word, or the word AND the reason while the switch is dead. The
 	/// card's own text, asked of the same declaration, so the two surfaces cannot describe one
@@ -163,45 +157,62 @@ public:
 	/// reachability invariant can take a union over the two without either knowing about the other.
 	std::vector<fx::harm::Param> addressedParamsForTest() const;
 
-	const std::vector<std::unique_ptr<Knob>>& knobsForTest() const { return knobs_; }
+	/// THE SELECTED PARTIAL'S KNOBS (Fine, Width, Depth, Phase, Spread) — those of the others are built and hidden.
+	const std::vector<std::unique_ptr<Knob>>& knobsForTest() const { return detail_[static_cast<size_t>(selected_)].knobs; }
+	const std::vector<std::unique_ptr<Knob>>& knobsForTest(int partial) const { return detail_[static_cast<size_t>(partial)].knobs; }
 	const HarmScope* scopeForTest() const { return scope_.get(); }
+	HarmScope* scopeForTest() { return scope_.get(); }
+	const HarmPartialStrip* stripForTest() const { return strip_.get(); }
+	const HarmEnvelopeView* envelopeViewForTest() const { return envelopeView_.get(); }
+	const std::vector<std::unique_ptr<ValueBox>>& envelopeBoxesForTest() const { return envelopeBoxes_; }
+	ValueBox* portaForTest() const { return porta_.get(); }
 
 	/// The Poly switch, which used to be `HarmCard::polyForTest`. THE CASES THAT ASKED THE CARD ASK
-	/// THIS NOW rather than having been deleted — a control that moved is not a control that stopped
-	/// mattering, and a suite that dropped its assertions when the split landed would have paid for
-	/// the split by giving up the guarantees it was meant to preserve.
+	/// THIS NOW rather than having been deleted.
 	SwitchChip* polyForTest() const { return poly_.get(); }
+	SwitchChip* depthEnvForTest() const { return depthEnv_.get(); }
 
-	/// THE NOTCH / HIGH-PASS SWITCH (backlog NL), at the left of the modal row — the other verb that decides what
-	/// the device IS rather than how much of it. The card has the same chip; the window is its superset.
-	visage::Bounds modeBounds() const;
-	SwitchChip* modeForTest() const { return mode_.get(); }
-	static constexpr float kModeChipWidth = 76.0f;
+	/// THE NOTCH / HIGH-PASS SWITCH (backlog NL) of the selected partial — the other verb that decides what
+	/// that partial IS rather than how much of it. The card has the same chip for the first; the window is its superset.
+	SwitchChip* modeForTest() const { return detail_[static_cast<size_t>(selected_)].mode.get(); }
+	SwitchChip* modeForTest(int partial) const { return detail_[static_cast<size_t>(partial)].mode.get(); }
 
 	/// FOLLOWS THE MODE: in High-pass, Width, Depth and Env Depth shape nothing (the brickwall has one shape), so
 	/// they grey — the honesty rule — and the scope drops their grips. Read off the host's field, like the card.
 	bool updateContent() override;
 
 private:
+	/// One partial's detail, all built together: its ratio row, its five knobs and its Mode chip.
+	struct Detail {
+		std::unique_ptr<HarmonicRow> row;
+		std::vector<std::unique_ptr<Knob>> knobs;
+		std::vector<fx::harm::Param> knobParams;
+		std::unique_ptr<SwitchChip> mode;
+	};
+	struct Layout;
+	Layout layout() const;
+	Layout layoutFor(float totalWidth) const;
 	DeviceControl& control(fx::harm::Param param) const;
+	void followState();
+	/// A cheap signature of every field the picture reads, so a tick redraws only when something moved.
+	std::vector<float> signature() const;
 
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_ = kNoInstance;
+	int selected_ = 0;
 
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(fx::harm::Param::kCount)>
 	    controls_ {};
-	std::vector<std::unique_ptr<Knob>> knobs_;
-	std::vector<fx::harm::Param> knobParams_;
+	std::unique_ptr<HarmPartialStrip> strip_;
+	std::array<Detail, fx::harm::kPartialCount> detail_;
+	std::vector<std::unique_ptr<ValueBox>> envelopeBoxes_;
+	std::unique_ptr<HarmEnvelopeView> envelopeView_;
+	std::unique_ptr<ValueBox> porta_;
 	std::unique_ptr<SwitchChip> poly_;
 	std::unique_ptr<SwitchChip> depthEnv_;
-	std::unique_ptr<SwitchChip> mode_;
-	int drawnMode_ = -1; ///< the Mode the greying last followed; -1 before the first
-	void followMode(bool highpass);
-	visage::Bounds depthEnvBounds_ {};
 	std::unique_ptr<HarmScope> scope_;
-	std::unique_ptr<HarmonicRow> row_;
-	/// Where each group's caption is drawn, filled by `resized` so `draw` and the cases agree.
-	std::vector<visage::Bounds> captionBounds_;
+	std::vector<float> drawnSignature_;
+	std::vector<Caption> captions_;
 };
 
 } // namespace feathers::ui

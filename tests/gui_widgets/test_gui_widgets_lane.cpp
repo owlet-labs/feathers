@@ -2687,6 +2687,29 @@ TEST_CASE("the curve follows a Macros source routed to Cutoff: it is drawn at th
 	CHECK(f.card->settingsForTest().cutoffLog2Hz == doctest::Approx(base).epsilon(1e-6));
 }
 
+TEST_CASE("the curve reads a control nothing can modulate from the stored row, so a Type chosen with no audio running reaches it") {
+	// THE OTHER HALF OF THE MODULATED READ: Type, Slope and the switches have no modulated value of their own — the
+	// engine's published copy is the stored one a block late, and an inactive plugin publishes no block. A STALE copy
+	// is stood on the modulated channel here (the last block's Lowpass) while the hand chooses Highpass; the curve
+	// must draw the hand's choice. And Cutoff, which IS modulatable, on the same channel, must still be followed.
+	namespace flt = fx::filter;
+	FilterFixture f;
+	f.set(flt::Param::Type, static_cast<double>(flt::Type::Lowpass));
+	f.set(flt::Param::Cutoff, std::log2(400.0));
+	const size_t slot = 0;
+	const size_t type = static_cast<size_t>(flt::Param::Type);
+	const size_t cutoff = static_cast<size_t>(flt::Param::Cutoff);
+	REQUIRE_FALSE(flt::kDescriptor.params[type].modulatable);
+	REQUIRE(flt::kDescriptor.params[cutoff].modulatable);
+	f.bridge.setFxModulatedForTest(slot, type, static_cast<float>(flt::Type::Lowpass));
+	f.bridge.setFxModulatedForTest(slot, cutoff, static_cast<float>(std::log2(2000.0)));
+	f.set(flt::Param::Type, static_cast<double>(flt::Type::Highpass));
+	REQUIRE(f.deviceHost.modulatedFieldAt(f.bridge.fxDeviceAt(slot), type) == static_cast<float>(flt::Type::Lowpass));
+	const flt::Settings drawn = f.card->settingsForTest();
+	CHECK(drawn.type == flt::Type::Highpass);
+	CHECK(drawn.cutoffLog2Hz == doctest::Approx(std::log2(2000.0)).epsilon(1e-5));
+}
+
 TEST_CASE("a macro slot a type does not spend gets no knob at all") {
 	// THE HONESTY RULE, IN ITS STRICTEST FORM: not drawn-and-disabled, not drawn-without-a-label —
 	// ABSENT. A knob under the hand that does nothing teaches the hand that knobs on this card might

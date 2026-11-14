@@ -241,7 +241,15 @@ For something newer than the latest release, every [`build` workflow](https://gi
 
 ### Installing on macOS
 
-Unzip the download. (A workflow artifact has one more layer: unzip it, then the `Feathers-macos-universal2-….zip` inside.)
+**Quickest: one command in Terminal.** It downloads the latest release, checks it against the release's checksums, and installs the synth and the Chain (CLAP and VST3) into your own plugin folders, with nothing to unquarantine (files downloaded by `curl` are not quarantined):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.sh | bash
+```
+
+Read it first if you like: [`scripts/install.sh`](scripts/install.sh). `| bash -s -- --version v0.1.0` installs a particular release.
+
+**Or by hand from the download:** unzip it. (A workflow artifact has one more layer: unzip it, then the `Feathers-macos-universal2-….zip` inside.)
 
 The builds are signed ad hoc, **not notarised**, so macOS quarantines them when they are downloaded, and a DAW will refuse to load a quarantined plugin. The included installer clears the quarantine and copies the plugins into place:
 
@@ -259,7 +267,13 @@ If Terminal says "permission denied" for `install.command`, the executable bit w
 
 ### Installing on Linux
 
-Unzip the download and copy the plugins into your user plugin folders, then rescan in your DAW:
+The same one-line installer works on Linux x86-64 (it installs into `~/.clap` and `~/.vst3`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/owlet-labs/feathers/main/scripts/install.sh | bash
+```
+
+Or by hand: unzip the download and copy the plugins into your user plugin folders, then rescan in your DAW:
 
 ```sh
 mkdir -p ~/.clap ~/.vst3

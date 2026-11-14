@@ -115,6 +115,9 @@ public:
 	/// HOW FAR THE POINTER MOVES UP OR DOWN BEFORE A DRAG TOUCHES THE Q OFFSET, in logical pixels.
 	static constexpr float kQDeadZone = 3.0f;
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::disperser::Settings drawnFromForTest() const { return settingsNow(); }
+
 private:
 	[[nodiscard]] DeviceControl& control(size_t index) const;
 	[[nodiscard]] size_t draggedControl() const noexcept;

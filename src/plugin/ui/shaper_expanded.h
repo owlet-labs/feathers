@@ -221,6 +221,9 @@ public:
 	/// text — the same argument every test seam in this device is written under.
 	[[nodiscard]] std::vector<std::string> readoutLinesForTest() const;
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::shaper::Settings drawnFromForTest() const { return settings(); }
+
 private:
 	[[nodiscard]] DeviceControl& control(fx::shaper::Param p) const;
 	[[nodiscard]] fx::shaper::Settings settings() const;

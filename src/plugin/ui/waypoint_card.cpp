@@ -17,6 +17,7 @@
 
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/waypoint_card.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/expanded_views.h"
 #include "plugin/ui/theme.h"
@@ -223,7 +224,7 @@ bool WaypointCard::updateContent() {
 	if (!isVisible()) {
 		return false;
 	}
-	const wp::Settings now = settings();
+	const wp::Settings now = shownSettings();
 	if (haveDrawn_ && now == drawnSettings_) {
 		return false;
 	}
@@ -241,6 +242,13 @@ wp::Settings WaypointCard::settings() const {
 	for (size_t i = 0; i < present; ++i) {
 		row[i] = host_.fieldAt(device_, i);
 	}
+	return wp::stateOf(row, present);
+}
+
+wp::Settings WaypointCard::shownSettings() const {
+	// WHERE MODULATION LEFT THE ROW — what the curves are drawn from. `settings()` stays stored: the dots are the hand's controls.
+	wp::Row row {};
+	const size_t present = readModulatedRow(host_, device_, wp::kDescriptor, row);
 	return wp::stateOf(row, present);
 }
 
@@ -450,7 +458,7 @@ void WaypointCard::drawPlane(visage::Canvas& canvas) {
 	if (box.width() <= 1.0f || box.height() <= 1.0f) {
 		return;
 	}
-	const wp::Settings s = settings();
+	const wp::Settings s = shownSettings();
 
 	canvas.setColor(withAlpha(kLine, 0.25f));
 	canvas.rectangleBorder(box.x(), box.y(), box.width(), box.height(), 1.0f);

@@ -17,6 +17,7 @@
 
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/shaper_card.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/shaper_colour_cell.h"
 
 #include "plugin/ui/expanded_views.h"
@@ -232,10 +233,7 @@ shp::Settings ShaperCard::settings() const {
 	// SAME NUMBERS, NOT MERELY SIMILAR ONES: `BridgeDeviceHost::fieldAt` reads the same `DeviceRow`
 	// this used to walk, so Feathers' behaviour is unchanged by construction rather than by testing.
 	shp::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, shp::kDescriptor, row);
 	shp::Settings s = shp::stateOf(row, present);
 	// **AND THE FOLDED TRAVEL, WHICH `stateOf` CANNOT SEE.** It takes the params-only `Row` by design,
 	// so the eight floats past the params are invisible to it — and a surface that could not see them

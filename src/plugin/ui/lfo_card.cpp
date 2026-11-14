@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/lfo_card.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "device/format_value.h"
 #include "mod/lfo/lfo.h"
@@ -413,6 +414,12 @@ lfo::Settings LfoCard::settings() const {
 	return lfo::settingsOf(row, present);
 }
 
+lfo::Settings LfoCard::shownSettings() const {
+	lfo::Row row {};
+	const size_t present = readModulatedRow(host_, device_, mod::lfo::kDescriptor, row);
+	return lfo::settingsOf(row, present);
+}
+
 void LfoCard::writeSettings(const lfo::Settings& s) {
 	const lfo::Row row = lfo::rowOf(s);
 	// ONE USER ACTION, ONE HOST GESTURE per control it moves (host slots, T6b review).
@@ -442,7 +449,7 @@ void LfoCard::drawContent(visage::Canvas& canvas) {
 	// control fighting the hand for reasons nothing on screen explains.
 	plot::drawGrid(canvas, box);
 
-	const lfo::Settings s = settings();
+	const lfo::Settings s = shownSettings();
 
 	// ZERO/CENTER LINE.
 	const float zeroY = s.bipolar ? 0.5f : 1.0f;
@@ -557,7 +564,7 @@ LfoCard::Marker LfoCard::marker() const {
 	// scrolling instead of the pointing. Leaving this expression in place would have put the star
 	// a fraction of a step ahead of the edge it is supposed to sit on.
 	float phase = where.phase;
-	if (lfo::isRandom(settings().wave)) {
+	if (lfo::isRandom(shownSettings().wave)) {
 		phase = 1.0f;
 	}
 	else {
@@ -567,7 +574,7 @@ LfoCard::Marker LfoCard::marker() const {
 		// the star at the right place on a curve that had moved out from under it — visible the moment
 		// Phase is anything but zero, and invisible in every test that leaves it at the default.
 		const float start =
-		    std::isfinite(settings().phase) ? settings().phase - std::floor(settings().phase) : 0.0f;
+		    std::isfinite(shownSettings().phase) ? shownSettings().phase - std::floor(shownSettings().phase) : 0.0f;
 		const float rotated = phase - start;
 		phase = rotated - std::floor(rotated);
 	}
@@ -597,12 +604,12 @@ std::vector<std::pair<float, float>> LfoCard::curve() const {
 }
 
 std::vector<std::pair<float, float>> LfoCard::curveRight() const {
-	const float lead = settings().stereoLead();
+	const float lead = shownSettings().stereoLead();
 	return lead != 0.0f ? curveAt(lead) : std::vector<std::pair<float, float>> {};
 }
 
 std::vector<std::pair<float, float>> LfoCard::curveAt(float lead) const {
-	const auto s = settings();
+	const auto s = shownSettings();
 	if (lfo::isRandom(s.wave)) {
 		// THE STEP THE ENGINE IS ON, which the playhead's ordinal carries for this waveform alone. A
 		// card with no running device draws the walk from its own beginning, which is what it will play

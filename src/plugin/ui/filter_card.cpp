@@ -21,6 +21,7 @@
 
 #include "plugin/ui/filter_card.h"
 #include "plugin/ui/menu_anchor.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/gui_bridge.h"
 #include "plugin/params.h"
@@ -394,22 +395,11 @@ fx::filter::Settings FilterCard::settings() const {
 	// shipped twice, once when Spread was promoted out of the macro table and once when Slope became
 	// reachable, and both times the curve drew a filter the engine was not running. There is no list
 	// to forget any more — the row holds the settings the engine reads, and this reads the row.
-	// THE ROW, READ THROUGH THE SEAM — `ShaperCard::settings` records why at length. `fxFilterAt`
-	// reaches into a `DeviceRow` through a type only the parameter road has; `fieldsPresentAt` and
-	// `fieldAt` are the same read in the vocabulary both hosts share, over the same `DeviceRow`, so
-	// Feathers' numbers are unchanged by construction rather than by testing.
-	flt::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
-	flt::Settings s = flt::stateOf(row, present).settings;
-	// THE CURVE DRAWS THE FILTER, whether or not it is switched into the signal. The one field this
-	// overrides, and the reason the card cannot simply hand the state back untouched.
-	s.enabled = true;
-	// keyOffsetSemitones stays at its declared zero: the curve draws the filter at the knob's own
-	// corner, which is what it is at middle C and what it is on the bus.
-	return s;
+	//
+	// **AND THE ROW IS WHERE MODULATION LEFT IT, not the stored one.** This read `fieldAt` while the stereo
+	// branch below read `modulatedFieldAt`, so a MONO route — a macro on Cutoff — moved the knob's ring and the
+	// sound and left the curve at the knob's base. The mono picture is the left ear's, read the same way.
+	return settingsFor(false);
 }
 
 bool FilterCard::stereoCurves() const {
@@ -425,14 +415,21 @@ bool FilterCard::stereoCurves() const {
 }
 
 fx::filter::Settings FilterCard::settingsFor(bool right) const {
+	// THE ROW, READ THROUGH THE SEAM — `ShaperCard::settings` records why at length: `fieldsPresentAt` and the
+	// field reads are the vocabulary both hosts share, over the same `DeviceRow`.
+	//
+	// **A CONTROL NOTHING CAN MODULATE IS READ STORED** — Type, Slope, Keytrack, the switches. Its modulated
+	// value is the engine's copy of the stored one, a block late, and on an inactive plugin no block comes, so
+	// a Type chosen there would not reach the curve until audio ran. A modulatable control takes the modulated
+	// road (the left ear's `modulatedFieldAt`, the right's `modulatedFieldRAt` wherever a stereo route reaches).
 	flt::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		float r = 0.0f;
-		row[i] = right && host_.modulatedFieldRAt(device_, i, r) ? r : host_.modulatedFieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, flt::kDescriptor, row, right);
 	flt::Settings s = flt::stateOf(row, present).settings;
-	s.enabled = true; // as `settings()`: the curve draws the filter, switched in or not
+	// THE CURVE DRAWS THE FILTER, whether or not it is switched into the signal. The one field this
+	// overrides, and the reason the card cannot simply hand the state back untouched.
+	s.enabled = true;
+	// keyOffsetSemitones stays at its declared zero: the curve draws the filter at the knob's own
+	// corner, which is what it is at middle C and what it is on the bus.
 	return s;
 }
 
@@ -464,7 +461,7 @@ size_t FilterCard::curveGains(float* out, size_t capacity, bool right) const {
 	// on an ordinary 44.1k session, worst at high cutoff where the clamp bites.
 	//
 	// The number is not the audio thread's: the bridge holds it, written once at activate.
-	// AN EAR EACH while a stereo route reaches the curve's controls (backlog KU); the base otherwise, as always.
+	// AN EAR EACH while a stereo route reaches the curve's controls (backlog KU); one curve, where modulation left it, otherwise.
 	flt::gainProfile(stereoCurves() ? settingsFor(right) : settings(), host_.sampleRate(), freq.data(), out, points);
 	// **AND NOTHING NON-FINITE REACHES THE PLOT.** The rate above is the reason this could happen and
 	// is fixed at its source, but a profile is arithmetic over host-supplied numbers and a NaN in it

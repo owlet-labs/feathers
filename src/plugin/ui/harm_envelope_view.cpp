@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/harm_envelope_view.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/theme.h"
 
@@ -37,10 +38,7 @@ visage::Bounds HarmEnvelopeView::plotBounds() const {
 hrm::EnvelopeTimes HarmEnvelopeView::readTimes() const {
 	// THE DEVICE'S OWN DECODER, as the scope reads its settings: a seam row, `stateOf`, and the seconds are what the DSP runs on.
 	hrm::Row row {};
-	const size_t fields = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < fields; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t fields = readModulatedRow(host_, device_, hrm::kDescriptor, row);
 	const hrm::Settings s = hrm::stateOf(row, fields).settings;
 	hrm::EnvelopeTimes t;
 	t.delay = static_cast<double>(s.delaySeconds);

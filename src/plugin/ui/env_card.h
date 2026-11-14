@@ -394,6 +394,9 @@ public:
 	/// The Trig pad's column at the shape's left — the pad and a gap.
 	static constexpr float kTrigColumn = TrigPad::kDiameter + 6.0f;
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] mod::dahdsr::Settings drawnFromForTest() const { return shownSettings(); }
+
 private:
 	/// **THE SUBSCRIPTIONS, HELD** — see `ui::Watch`. Declared last so they are released FIRST, into
 	/// lists that are still alive.
@@ -409,6 +412,8 @@ private:
 	/// puts ABSENT fields at their declared defaults rather than at zero, which is `device_row.h`'s
 	/// rule and the reason this is not a memcpy.
 	mod::dahdsr::Settings settings() const;
+	/// **THE SAME ROW WHERE MODULATION LEFT IT** — what the plot draws, so the picture follows a routed control as the knob's ring does. `settings()` stays the STORED row: an edit starts from it, and an edit that started from a modulated one would write the modulation into the patch.
+	mod::dahdsr::Settings shownSettings() const;
 
 	/// WRITE THE WHOLE ROW BACK. Replaces `bridge_.setEnvelopeSettings(device_, s)`.
 	void writeSettings(const mod::dahdsr::Settings& settings);

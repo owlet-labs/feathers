@@ -148,6 +148,9 @@ public:
 	/// @param lfo the LFO's value where the star sits, -1..+1 — `Marker::lfo`.
 	[[nodiscard]] CombGlow combGlow(float lfo) const;
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::automod::Settings drawnFromForTest() const { return settings(); }
+
 private:
 	/// THE ENVELOPE'S TRACE — a level line across the same plot the waveform and the response share.
 	void drawEnvelope(visage::Canvas& canvas);

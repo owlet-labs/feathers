@@ -19,6 +19,7 @@
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/drawn_expanded.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/tab_chip.h"
 #include "plugin/ui/theme.h"
@@ -195,10 +196,7 @@ dr::Settings DrawnExpanded::settings() const {
 	// `fieldsPresentAt`/`fieldAt` are that read in the vocabulary both hosts share. It is what lets the
 	// RACK open this panel at all.
 	dr::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, dr::kDescriptor, row);
 	return dr::stateOf(row, present);
 }
 

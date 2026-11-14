@@ -90,6 +90,9 @@ public:
 	[[nodiscard]] FaderPill* pillForTest(size_t i) const { return i < pills_.size() ? pills_[i].get() : nullptr; }
 	[[nodiscard]] const SmoothPictureModel& modelForTest() const { return model_; }
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::smooth::Settings drawnFromForTest() const { return settings(); }
+
 private:
 	[[nodiscard]] DeviceControl& control(fx::smooth::Param p) const;
 	[[nodiscard]] fx::smooth::Settings settings() const;

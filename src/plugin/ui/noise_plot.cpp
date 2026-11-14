@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/noise_plot.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "dsp/random_events.h"
 #include "plugin/ui/knob.h"
@@ -126,10 +127,7 @@ void NoisePlot::setModulation(ModState* mod, EditHistory* history) {
 
 nz::Settings NoisePlot::settingsNow() const {
 	nz::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, nz::kDescriptor, row);
 	return nz::stateOf(row, present);
 }
 

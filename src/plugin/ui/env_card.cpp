@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/env_card.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/celestial.h"
@@ -716,7 +717,7 @@ mod::dahdsr::Stage EnvCard::stageAtX(float x) const {
 }
 
 void EnvCard::rebuildCurve() {
-	const dsr::Settings s = settings();
+	const dsr::Settings s = shownSettings();
 
 	// THE SHAPE IS A LIST OF SEGMENTS, and a LOOPING envelope is a different list rather than the same
 	// list drawn differently.
@@ -1069,7 +1070,7 @@ EnvCard::Marker EnvCard::marker() const {
 
 const std::vector<visage::Point>& EnvCard::curvePoints() const {
 	auto* self = const_cast<EnvCard*>(this);
-	if (!haveCurve_ || !(curveFrom_ == settings())) {
+	if (!haveCurve_ || !(curveFrom_ == shownSettings())) {
 		++self->curveRebuilds_;
 		self->rebuildCurve();
 		self->followMode();
@@ -1085,6 +1086,12 @@ dsr::Settings EnvCard::settings() const {
 	for (size_t i = 0; i < present; ++i) {
 		row[i] = host_.fieldAt(device_, i);
 	}
+	return dsr::settingsOf(row, present);
+}
+
+dsr::Settings EnvCard::shownSettings() const {
+	dsr::Row row {};
+	const size_t present = readModulatedRow(host_, device_, dsr::kDescriptor, row);
 	return dsr::settingsOf(row, present);
 }
 

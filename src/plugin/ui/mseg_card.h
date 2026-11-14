@@ -301,6 +301,9 @@ public:
 		return index < kBoxCount ? boxes_[index].get() : nullptr;
 	}
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] mod::mseg::Settings drawnFromForTest() const { return shownSettings(); }
+
 private:
 	/// **THE SUBSCRIPTIONS, HELD** — see `ui::Watch`. Declared last so they are released FIRST, into
 	/// lists that are still alive.
@@ -319,6 +322,8 @@ private:
 	visage::Point fromUnit(float x, float y) const;
 
 	mod::mseg::Settings settings() const;
+	/// **THE SAME ROW WHERE MODULATION LEFT IT** — what the plot draws, so the picture follows a routed control as the knob's ring does. `settings()` stays the STORED row: an edit starts from it, and an edit that started from a modulated one would write the modulation into the patch.
+	mod::mseg::Settings shownSettings() const;
 
 	/// WHAT PLAYHEAD WAS LAST DRAWN, so `update()` can tell a moving shape from a still one. The
 	/// default matches what a fresh bridge answers — idle — which is what a freshly built card drew.

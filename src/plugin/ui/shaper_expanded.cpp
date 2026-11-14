@@ -17,6 +17,7 @@
 
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/shaper_expanded.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/shaper_colour_cell.h"
 #include "dsp/slice_build.h" // fieldWithOverride — the hysteresis line prints what the engine hears
 #include "plugin/ui/gamma_box.h"
@@ -258,10 +259,7 @@ shp::Settings ShaperExpanded::settings() const {
 	// `fieldsPresentAt`/`fieldAt` are that read in the vocabulary both hosts share. It is what lets the
 	// RACK open this panel at all.
 	shp::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, shp::kDescriptor, row);
 	shp::Settings s = shp::stateOf(row, present);
 	// **AND THE FOLDED TRAVEL, WHICH `stateOf` CANNOT SEE.** It takes the params-only `Row` by design,
 	// so the eight floats past the params are invisible to it — and a surface that could not see them

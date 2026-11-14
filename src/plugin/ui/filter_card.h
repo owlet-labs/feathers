@@ -267,12 +267,11 @@ public:
 	/// many it wrote.
 	///
 	/// `right` (backlog KU): while the plot draws an ear each (`stereoCurves()`), the RIGHT ear's curve; the left's
-	/// otherwise. In mono the argument changes nothing — there is one curve, from the base.
+	/// otherwise. In mono the argument changes nothing — there is one curve, from the modulated row.
 	size_t curveGains(float* out, size_t capacity, bool right = false) const;
 
 	/// **AN EAR EACH** (backlog KU, Q1): true while a stereo route reaches Cutoff, Resonance, Macro 1 or Macro 2 —
-	/// then the plot draws two curves from the MODULATED rows, left and right. Otherwise it draws the base, as it
-	/// always has.
+	/// then the plot draws two curves from the MODULATED rows, left and right. Otherwise one curve, from the left's.
 	bool stereoCurves() const;
 	bool stereoCurvesForTest() const { return stereoCurves(); }
 	size_t curveGainsForTest(float* out, size_t capacity, bool right) const { return curveGains(out, capacity, right); }
@@ -300,11 +299,15 @@ public:
 	/// a case can then compare it field for field against the engine's own, which is the only check
 	/// that catches a control the card forgot to pick up rather than one somebody thought to sample.
 	fx::filter::Settings settingsForTest() const { return settings(); }
+	/// THE CARD'S OWN CONTENT CHECK, apart from `FxCard::update`'s modulation walk — which repaints for a moved
+	/// ring whether or not the curve was recomputed, so `update()` alone cannot say the curve noticed.
+	bool updateContentForTest() { return updateContent(); }
 
 private:
 	fx::filter::Settings settings() const;
 	/// ONE EAR'S SETTINGS, from where modulation left each control (backlog KU) — the left ear's `modulatedFieldAt`,
 	/// the right's `modulatedFieldRAt` wherever a stereo route reaches, the left's elsewhere.
+	/// A control nothing can modulate (Type, Slope, the switches) is read stored. `settings()` is the left ear's.
 	fx::filter::Settings settingsFor(bool right) const;
 
 	/// ASK FOR A FRAME WHEN THE PICTURE THIS CARD DRAWS HAS MOVED.

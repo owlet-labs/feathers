@@ -23,9 +23,17 @@
 
 #include "fixtures.h"
 #include "composite/composite_types.h"
+#include "device/route_resolve.h"
 #include "mod/lfo/lfo_types.h"
+#include "mod/macros/macros_types.h"
+#include "plugin/editor_lanes.h"
+#include "plugin/synth.h"
 #include "plugin/ui/expanded_canvas.h"
 #include "plugin/ui/menu_anchor.h"
+#include "plugin/ui/smooth_card.h"
+#include "plugin/ui/smooth_expanded.h"
+#include "plugin/ui/noise_plot.h"
+#include "plugin/ui/lfo_card.h"
 #include "plugin/ui/spectrum_panel.h"
 
 #include <array>
@@ -2572,6 +2580,437 @@ TEST_CASE("the drawn curve moves when spread moves, and moves the way the filter
 	}
 }
 
+TEST_CASE("the curve follows a Macros source routed to Cutoff: it is drawn at the modulated corner, and the card asks for the frame") {
+	// THE REPORT: a Macros device in the strip routed to the filter's Cutoff, and the macro turned. The knob's ring
+	// followed and the curve stood still. The ring reads `modulatedFieldAt`; the curve, with no stereo route reaching
+	// it, read `fieldAt` — the stored row — so the picture was the knob's base while the sound was the modulated corner.
+	//
+	// THE WHOLE ROAD: the route made on the bridge, the macro moved by a hand's write to the Macros device, the engine
+	// rendering blocks and publishing what it resolved, and the card asked through `update()`, which is the road the
+	// editor's tick drives. The expected corner is restated from the route rule (`routeTerm`, `resolveRouted`), not
+	// read back through the card's own road.
+	namespace flt = fx::filter;
+	namespace mac = feathers::mod::macros;
+	FilterFixture f;
+	f.set(flt::Param::Enabled, 1.0);
+	f.set(flt::Param::Type, static_cast<double>(flt::Type::Lowpass));
+	f.set(flt::Param::Cutoff, std::log2(400.0));
+	f.set(flt::Param::Resonance, 0.5);
+	const size_t macroSlot = f.bridge.addRackDevice(mac::kTraits.tag);
+	REQUIRE(macroSlot < kMaxRackSlots);
+	const DeviceInstanceId macros = f.bridge.rackDeviceAt(macroSlot);
+	const DeviceInstanceId filter = f.bridge.fxDeviceAt(0);
+	REQUIRE(macros != kNoInstance);
+	REQUIRE(filter != kNoInstance);
+	const size_t cutoff = static_cast<size_t>(flt::Param::Cutoff);
+	const backplane::Source source = backplane::Source::output(macros, 0);
+	const backplane::Destination destination = backplane::Destination::control(filter, cutoff);
+	constexpr float kAmount = 0.25f;
+	REQUIRE(f.bridge.mayRoute(source, destination));
+	f.bridge.setRouteAmount(source, destination, kAmount);
+	REQUIRE(f.bridge.routeAmount(source, destination) == doctest::Approx(kAmount));
+	f.deviceHost.setField(macros, mac::macroParam(0), 0.0f);
+	f.settle();
+
+	feathers::Synth synth { f.params };
+	synth.activate(48000.0, 4096);
+	synth.setCatalogue(hostCatalogue());
+	synth.setOuterGateMaker(&rack::ChainRecord::gateOver, &f.bridge.chainRecord());
+	std::vector<float> l(64, 0.0f);
+	std::vector<float> r(64, 0.0f);
+	const auto play = [&] {
+		f.settle();
+		publishEditorLanes(f.bridge, f.params, synth);
+		(void)synth.provisionDevices(f.bridge.chainState(), f.bridge.publishedChains().sequence(), &f.bridge.fxBodies());
+		for (int b = 0; b < 8; ++b) {
+			synth.render(l.data(), r.data(), 64);
+			publishEngineReadings(f.bridge, synth);
+		}
+	};
+	play();
+	(void)f.card->update(); // settle: whatever the first frame had to draw
+	(void)f.card->update();
+	REQUIRE_FALSE(f.card->update());
+	const float base = f.deviceHost.fieldAt(filter, cutoff);
+	REQUIRE(base == doctest::Approx(std::log2(400.0)).epsilon(1e-5));
+	REQUIRE(f.card->settingsForTest().cutoffLog2Hz == base); // the macro at 0: the corner is the base
+	REQUIRE_FALSE(f.card->stereoCurvesForTest()); // a mono route: the case the report was about
+
+	// THE MACRO MOVES — a hand's write to the Macros device, not to the knob.
+	constexpr float kMacro = 0.8f;
+	f.deviceHost.setField(macros, mac::macroParam(0), kMacro);
+	play();
+
+	// THE RESTATEMENT: the stored base plus what one linear route adds, landed by the engine's own rule.
+	const device::ParamDesc& desc = flt::kDescriptor.params[cutoff];
+	const float expected = static_cast<float>(device::resolveRouted(
+	    desc, static_cast<double>(base), device::routeTerm(kAmount, device::Transfer::Lin, kMacro, device::routeSpanOf(desc))));
+	CAPTURE(base);
+	CAPTURE(expected);
+	REQUIRE(std::abs(expected - base) > 0.5f); // NOT VACUOUS: the route moves the corner by more than half an octave
+	// THE ENGINE AGREES with the restatement — or the road this case drives is not the one it describes.
+	REQUIRE(f.deviceHost.modulatedFieldAt(filter, cutoff) == doctest::Approx(expected).epsilon(1e-5));
+	// THE STORED ROW DID NOT MOVE: the knob's base is where the hand left it.
+	REQUIRE(f.deviceHost.fieldAt(filter, cutoff) == base);
+
+	// THE CLAIM: the card's OWN content check asks for a frame — not `update()`, whose modulation walk repaints for a
+	// moved ring whether or not the curve noticed — and the settings it draws from carry the modulated corner.
+	CHECK(f.card->updateContentForTest());
+	CHECK(f.card->settingsForTest().cutoffLog2Hz == doctest::Approx(expected).epsilon(1e-5));
+	// AND THE CURVE ITSELF IS THE MODULATED FILTER'S, point for point, through the module's own evaluator.
+	flt::Settings want = fxFilterAt(f.bridge.fxChain(), 0).settings;
+	want.enabled = true;
+	want.cutoffLog2Hz = expected;
+	constexpr size_t kCap = ui::FilterCard::kMaxCurvePoints;
+	std::vector<float> got(kCap), freq(kCap), wanted(kCap), resting(kCap);
+	const size_t n = f.card->curveGainsForTest(got.data(), kCap, false);
+	REQUIRE(n >= 2);
+	flt::gainProfile(want, f.bridge.sampleRate(), freq.data(), wanted.data(), n);
+	flt::Settings rest = want;
+	rest.cutoffLog2Hz = base;
+	flt::gainProfile(rest, f.bridge.sampleRate(), freq.data(), resting.data(), n);
+	size_t agreed = 0;
+	size_t movedFromRest = 0;
+	for (size_t i = 0; i < n; ++i) {
+		agreed += std::abs(got[i] - wanted[i]) <= 1e-4f * std::max(1.0f, std::abs(wanted[i])) ? 1u : 0u;
+		movedFromRest += std::abs(got[i] - resting[i]) > 1e-3f ? 1u : 0u;
+	}
+	CHECK(agreed == n);
+	// THE SECOND ASSERTION, only so the first is not vacuous: the drawn curve is not the resting one.
+	CHECK(movedFromRest > n / 8);
+
+	// AND ONCE: a second ask with nothing new reports nothing.
+	CHECK_FALSE(f.card->updateContentForTest());
+	(void)f.card->update(); // the ring walk's own frame for the same move
+	CHECK_FALSE(f.card->update());
+
+	// THE MACRO BACK TO ZERO, the curve back to the base.
+	f.deviceHost.setField(macros, mac::macroParam(0), 0.0f);
+	play();
+	CHECK(f.card->updateContentForTest());
+	CHECK(f.card->settingsForTest().cutoffLog2Hz == doctest::Approx(base).epsilon(1e-6));
+}
+
+TEST_CASE("the curve reads a control nothing can modulate from the stored row, so a Type chosen with no audio running reaches it") {
+	// THE OTHER HALF OF THE MODULATED READ: Type, Slope and the switches have no modulated value of their own — the
+	// engine's published copy is the stored one a block late, and an inactive plugin publishes no block. A STALE copy
+	// is stood on the modulated channel here (the last block's Lowpass) while the hand chooses Highpass; the curve
+	// must draw the hand's choice. And Cutoff, which IS modulatable, on the same channel, must still be followed.
+	namespace flt = fx::filter;
+	FilterFixture f;
+	f.set(flt::Param::Type, static_cast<double>(flt::Type::Lowpass));
+	f.set(flt::Param::Cutoff, std::log2(400.0));
+	const size_t slot = 0;
+	const size_t type = static_cast<size_t>(flt::Param::Type);
+	const size_t cutoff = static_cast<size_t>(flt::Param::Cutoff);
+	REQUIRE_FALSE(flt::kDescriptor.params[type].modulatable);
+	REQUIRE(flt::kDescriptor.params[cutoff].modulatable);
+	// A ROUTE REACHES CUTOFF (the plot reads a modulated copy only where one does); none reaches Type, which could not take one.
+	const size_t macroSlot = f.bridge.addRackDevice(feathers::mod::macros::kTraits.tag);
+	REQUIRE(macroSlot < kMaxRackSlots);
+	f.bridge.setRouteAmount(backplane::Source::output(f.bridge.rackDeviceAt(macroSlot), 0),
+	    backplane::Destination::control(f.bridge.fxDeviceAt(slot), cutoff), 0.25f);
+	f.bridge.setFxModulatedForTest(slot, type, static_cast<float>(flt::Type::Lowpass));
+	f.bridge.setFxModulatedForTest(slot, cutoff, static_cast<float>(std::log2(2000.0)));
+	f.set(flt::Param::Type, static_cast<double>(flt::Type::Highpass));
+	REQUIRE(f.deviceHost.modulatedFieldAt(f.bridge.fxDeviceAt(slot), type) == static_cast<float>(flt::Type::Lowpass));
+	const flt::Settings drawn = f.card->settingsForTest();
+	CHECK(drawn.type == flt::Type::Highpass);
+	CHECK(drawn.cutoffLog2Hz == doctest::Approx(std::log2(2000.0)).epsilon(1e-5));
+}
+
+namespace {
+
+/// A MACROS SOURCE ROUTED TO ONE CONTROL OF ANOTHER DEVICE, and the engine rendering it — the road the Filter's case
+/// drives, kept once so a plot's case is only the plot. `play(m)` is a hand's write to the macro, the render and the
+/// publish of what the engine resolved.
+struct MacroRoad {
+	FilterFixture& f;
+	DeviceInstanceId macros = kNoInstance;
+	std::unique_ptr<feathers::Synth> synth;
+	std::vector<float> l = std::vector<float>(64, 0.0f);
+	std::vector<float> r = std::vector<float>(64, 0.0f);
+	float amount = 0.25f;
+
+	MacroRoad(FilterFixture& fixture, DeviceInstanceId target, size_t control) : f(fixture) {
+		namespace mac = feathers::mod::macros;
+		const size_t slot = f.bridge.addRackDevice(mac::kTraits.tag);
+		REQUIRE(slot < kMaxRackSlots);
+		macros = f.bridge.rackDeviceAt(slot);
+		REQUIRE(macros != kNoInstance);
+		const backplane::Source source = backplane::Source::output(macros, 0);
+		const backplane::Destination destination = backplane::Destination::control(target, control);
+		REQUIRE(f.bridge.mayRoute(source, destination));
+		f.bridge.setRouteAmount(source, destination, amount);
+		REQUIRE(f.bridge.routeAmount(source, destination) == doctest::Approx(amount));
+		f.deviceHost.setField(macros, mac::macroParam(0), 0.0f);
+		f.settle();
+		synth = std::make_unique<feathers::Synth>(f.params);
+		synth->activate(48000.0, 4096);
+		synth->setCatalogue(hostCatalogue());
+		synth->setOuterGateMaker(&rack::ChainRecord::gateOver, &f.bridge.chainRecord());
+	}
+
+	void play(float macro) {
+		f.deviceHost.setField(macros, feathers::mod::macros::macroParam(0), macro);
+		f.settle();
+		publishEditorLanes(f.bridge, f.params, *synth);
+		(void)synth->provisionDevices(f.bridge.chainState(), f.bridge.publishedChains().sequence(), &f.bridge.fxBodies());
+		for (int b = 0; b < 8; ++b) {
+			synth->render(l.data(), r.data(), 64);
+			publishEngineReadings(f.bridge, *synth);
+		}
+	}
+};
+
+/// ONE DEVICE'S PLOT, FOLLOWING A ROUTED CONTROL. `decode` is the device's own decoder (`stateOf`/`settingsOf`) over a
+/// row stood up HERE, an independent restatement: the stored row, with one control replaced by what the route rule
+/// (`resolveRouted`, `routeTerm`) says the engine lands it on. `drawn` makes the plot against the live host and says
+/// what it draws from. The control is the first modulatable one whose landing changes the decoded settings, so a
+/// device is not asked about a control its plot ignores.
+template <class Descriptor, class Decode, class Drawn>
+void checkPlotFollowsMacro(const char* label, bool rack, const char* tag, const Descriptor& desc, Decode decode, Drawn drawn) {
+	CAPTURE(label);
+	FilterFixture f;
+	const size_t slot = rack ? f.bridge.addRackDevice(tag) : f.bridge.addFxDevice(tag);
+	REQUIRE(slot < (rack ? kMaxRackSlots : size_t { 64 }));
+	const DeviceInstanceId id = rack ? f.bridge.rackDeviceAt(slot) : f.bridge.fxDeviceAt(slot);
+	REQUIRE(id != kNoInstance);
+	f.settle();
+	const size_t present = f.deviceHost.fieldsPresentAt(id);
+	std::vector<float> stored(present);
+	for (size_t i = 0; i < present; ++i) {
+		stored[i] = f.deviceHost.fieldAt(id, i);
+	}
+	constexpr float kAmount = 0.25f;
+	constexpr float kMacro = 0.8f;
+	const auto landed = [&](size_t i) {
+		const device::ParamDesc& p = desc.params[i];
+		return static_cast<float>(device::resolveRouted(
+		    p, static_cast<double>(stored[i]), device::routeTerm(kAmount, device::Transfer::Lin, kMacro, device::routeSpanOf(p))));
+	};
+	size_t control = present;
+	for (size_t i = 0; i < std::min(present, desc.params.size()) && control == present; ++i) {
+		if (!desc.params[i].modulatable || landed(i) == stored[i]) {
+			continue;
+		}
+		std::vector<float> moved = stored;
+		moved[i] = landed(i);
+		if (!(decode(moved) == decode(stored))) {
+			control = i;
+		}
+	}
+	REQUIRE(control < present); // NOT VACUOUS: some modulatable control changes what the plot draws
+	CAPTURE(control);
+	std::vector<float> expectedRow = stored;
+	expectedRow[control] = landed(control);
+	const auto want = decode(expectedRow);
+	const auto rest = decode(stored);
+	REQUIRE_FALSE(want == rest);
+
+	MacroRoad road { f, id, control };
+	road.amount = kAmount;
+	road.play(0.0f);
+	CHECK(drawn(f, slot, id) == rest); // the macro at 0: the base
+	road.play(kMacro);
+	// THE ENGINE AGREES WITH THE RESTATEMENT, or the road driven is not the one described.
+	REQUIRE(f.deviceHost.modulatedFieldAt(id, control) == doctest::Approx(expectedRow[control]).epsilon(1e-5));
+	REQUIRE(f.deviceHost.fieldAt(id, control) == stored[control]); // the stored row did not move
+	const auto got = drawn(f, slot, id);
+	CHECK(got == want);       // THE CLAIM, by value
+	CHECK_FALSE(got == rest); // and the picture is not the resting one
+}
+
+} // namespace
+
+TEST_CASE("every plot that draws a device follows a Macros source routed to one of its controls") {
+	namespace shp = feathers::fx::shaper;
+	namespace smo = feathers::fx::smooth;
+	namespace wpt = feathers::fx::waypoint;
+	namespace drn = feathers::fx::drawn;
+	namespace dsp = feathers::fx::disperser;
+	namespace noi = feathers::fx::noise;
+	namespace amd = feathers::fx::automod;
+	namespace hrm = feathers::fx::harm;
+	namespace dsr = feathers::mod::dahdsr;
+	namespace msg = feathers::mod::mseg;
+	namespace lf = feathers::mod::lfo;
+	const auto lfoValues = [](const lf::Settings& s) {
+		std::vector<float> out;
+		for (size_t p = 0; p < static_cast<size_t>(lf::Param::kCount); ++p) {
+			out.push_back(static_cast<float>(lf::valueOf(s, static_cast<lf::Param>(p))));
+		}
+		return out;
+	};
+	const auto make = [](auto row, const std::vector<float>& v) {
+		for (size_t i = 0; i < v.size() && i < row.size(); ++i) {
+			row[i] = v[i];
+		}
+		return row;
+	};
+	SUBCASE("shaper card") {
+		checkPlotFollowsMacro("shaper card", false, shp::kTraits.tag, shp::kDescriptor,
+		    [&](const std::vector<float>& v) { return shp::stateOf(make(shp::Row {}, v), v.size()); },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::WidgetRegistry registry;
+			    ui::ShaperCard card { f.deviceHost, registry, id };
+			    return card.drawnFromForTest();
+		    });
+	}
+	SUBCASE("shaper window") {
+		checkPlotFollowsMacro("shaper window", false, shp::kTraits.tag, shp::kDescriptor,
+		    [&](const std::vector<float>& v) { return shp::stateOf(make(shp::Row {}, v), v.size()); },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::WidgetRegistry registry;
+			    auto view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, shp::kDescriptor);
+			    auto* panel = dynamic_cast<ui::ShaperExpanded*>(view.get());
+			    REQUIRE(panel != nullptr);
+			    return panel->drawnFromForTest();
+		    });
+	}
+	SUBCASE("smooth card") {
+		checkPlotFollowsMacro("smooth card", false, smo::kTraits.tag, smo::kDescriptor,
+		    [&](const std::vector<float>& v) { return smo::stateOf(make(smo::Row {}, v), v.size()).settings; },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::WidgetRegistry registry;
+			    ui::SmoothCard card { f.deviceHost, registry, id };
+			    return card.drawnFromForTest();
+		    });
+	}
+	SUBCASE("smooth window") {
+		checkPlotFollowsMacro("smooth window", false, smo::kTraits.tag, smo::kDescriptor,
+		    [&](const std::vector<float>& v) { return smo::stateOf(make(smo::Row {}, v), v.size()).settings; },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::WidgetRegistry registry;
+			    ui::SmoothExpanded panel { f.deviceHost, registry, id };
+			    return panel.drawnFromForTest();
+		    });
+	}
+	SUBCASE("disperser plot") {
+		checkPlotFollowsMacro("disperser plot", false, dsp::kTraits.tag, dsp::kDescriptor,
+		    [&](const std::vector<float>& v) { return dsp::stateOf(make(dsp::Row {}, v), v.size()).settings; },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::DisperserPlot plot { f.deviceHost, id, false };
+			    return plot.drawnFromForTest();
+		    });
+	}
+	SUBCASE("waypoint card") {
+		checkPlotFollowsMacro("waypoint card", false, wpt::kTraits.tag, wpt::kDescriptor,
+		    [&](const std::vector<float>& v) { return wpt::stateOf(make(wpt::Row {}, v), v.size()); },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::WidgetRegistry registry;
+			    ui::WaypointCard card { f.deviceHost, registry, id };
+			    return card.drawnFromForTest();
+		    });
+	}
+	SUBCASE("drawn card") {
+		checkPlotFollowsMacro("drawn card", false, drn::kTraits.tag, drn::kDescriptor,
+		    [&](const std::vector<float>& v) { return drn::stateOf(make(drn::Row {}, v), v.size()); },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::WidgetRegistry registry;
+			    ui::DrawnCard card { f.deviceHost, registry, id };
+			    return card.drawnFromForTest();
+		    });
+	}
+	SUBCASE("noise plot") {
+		checkPlotFollowsMacro("noise plot", false, noi::kTraits.tag, noi::kDescriptor,
+		    [&](const std::vector<float>& v) { return noi::stateOf(make(noi::Row {}, v), v.size()); },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::NoisePlot plot { f.deviceHost, id };
+			    return plot.drawnFromForTest();
+		    });
+	}
+	SUBCASE("harm scope") {
+		checkPlotFollowsMacro("harm scope", false, hrm::kTraits.tag, hrm::kDescriptor,
+		    [&](const std::vector<float>& v) {
+			    hrm::Settings s = hrm::stateOf(make(hrm::Row {}, v), v.size()).settings;
+			    s.enabled = true;
+			    return hrm::partialSlice(s, 0);
+		    },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::HarmScope scope { f.deviceHost, id };
+			    return scope.settingsForTest();
+		    });
+	}
+	SUBCASE("automod strip") {
+		checkPlotFollowsMacro("automod strip", false, amd::kTraits.tag, amd::kDescriptor,
+		    [&](const std::vector<float>& v) {
+			    amd::Row row = amd::rowOf(amd::Settings {});
+			    for (size_t i = 0; i < v.size() && i < row.size(); ++i) {
+				    row[i] = v[i];
+			    }
+			    return amd::settingsOf(row);
+		    },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    ui::AutomodStrip strip { f.deviceHost, id };
+			    return strip.drawnFromForTest();
+		    });
+	}
+	SUBCASE("envelope card") {
+		checkPlotFollowsMacro("envelope card", true, dsr::kTraits.tag, dsr::kDescriptor,
+		    [&](const std::vector<float>& v) { return dsr::settingsOf(make(dsr::Row {}, v), v.size()); },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    feathers::ui::ModState mod;
+			    feathers::ui::EditHistory history;
+			    ui::EnvCard card { f.deviceHost, id, mod, history };
+			    return card.drawnFromForTest();
+		    });
+	}
+	SUBCASE("mseg card") {
+		checkPlotFollowsMacro("mseg card", true, msg::kTraits.tag, msg::kDescriptor,
+		    [&](const std::vector<float>& v) { return msg::settingsOf(make(msg::Row {}, v), v.size()); },
+		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    feathers::ui::ModState mod;
+			    feathers::ui::EditHistory history;
+			    ui::MsegCard card { f.deviceHost, id, mod, history };
+			    return card.drawnFromForTest();
+		    });
+	}
+	SUBCASE("lfo card") {
+		checkPlotFollowsMacro("lfo card", true, lf::kTraits.tag, lf::kDescriptor,
+		    [&](const std::vector<float>& v) { return lfoValues(lf::settingsOf(make(lf::Row {}, v), v.size())); },
+		    [&](FilterFixture& f, size_t, DeviceInstanceId id) {
+			    feathers::ui::ModState mod;
+			    feathers::ui::EditHistory history;
+			    ui::LfoCard card { f.deviceHost, id, mod, history };
+			    return lfoValues(card.drawnFromForTest());
+		    });
+	}
+}
+
+TEST_CASE("the compressor's transfer plot follows a Macros source routed to its Threshold") {
+	namespace cp = feathers::fx::comp;
+	FilterFixture f;
+	const size_t slot = f.bridge.addFxDevice(cp::kTraits.tag);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	REQUIRE(id != kNoInstance);
+	f.settle();
+	const size_t control = static_cast<size_t>(cp::Param::Threshold);
+	REQUIRE(cp::kDescriptor.params[control].modulatable);
+	const float base = f.deviceHost.fieldAt(id, control);
+	MacroRoad road { f, id, control };
+	road.play(0.8f);
+	const device::ParamDesc& desc = cp::kDescriptor.params[control];
+	const float landed = static_cast<float>(device::resolveRouted(
+	    desc, static_cast<double>(base), device::routeTerm(road.amount, device::Transfer::Lin, 0.8f, device::routeSpanOf(desc))));
+	REQUIRE(std::abs(landed - base) > 1.0f); // dB: not vacuous
+	REQUIRE(f.deviceHost.modulatedFieldAt(id, control) == doctest::Approx(landed).epsilon(1e-5));
+	// THE RESTATEMENT: curves from the stored row with Threshold at the landing, through the plot's own builder.
+	const auto expected = comp_plot::curvesOf([&](size_t i) { return i == control ? landed : f.deviceHost.fieldAt(id, i); });
+	const auto resting = comp_plot::curvesOf([&](size_t i) { return f.deviceHost.fieldAt(id, i); });
+	ui::WidgetRegistry registry;
+	ui::CompCard card { f.deviceHost, registry, id };
+	size_t agreed = 0;
+	size_t moved = 0;
+	for (float x = -60.0f; x <= 0.0f; x += 3.0f) {
+		agreed += std::abs(card.transferDb(x) - expected.netDb(x)) < 1e-4f ? 1u : 0u;
+		moved += std::abs(card.transferDb(x) - resting.netDb(x)) > 1e-3f ? 1u : 0u;
+	}
+	CHECK(agreed == 21);
+	CHECK(moved > 0);
+	ui::CompExpanded window { f.deviceHost, registry, id };
+	(void)window;
+}
 TEST_CASE("a macro slot a type does not spend gets no knob at all") {
 	// THE HONESTY RULE, IN ITS STRICTEST FORM: not drawn-and-disabled, not drawn-without-a-label —
 	// ABSENT. A knob under the hand that does nothing teaches the hand that knobs on this card might

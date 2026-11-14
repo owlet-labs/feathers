@@ -148,16 +148,16 @@ public:
 	[[nodiscard]] Handle handleUnder(visage::Point p) const;
 	/// The second control a two-way handle writes (Drive's tone, a bell's time, the clap band's Q), or null.
 	[[nodiscard]] ParamControl* secondOf(Handle h) const;
-	/// Where `seconds` is drawn across the plot (square-root time), and the time under `x`.
+	/// Where `seconds` is drawn across the plot (soft-knee log time, see kAxisKnee), and the time under `x`.
 	[[nodiscard]] float xOf(double seconds) const;
 	[[nodiscard]] double secondsAt(float x) const;
-	/// The time a time handle dragged to `x` sets: `secondsAt` inside the plot, and past its right edge the span doubling every
-	/// kDragOctavePixels, so the handle can always reach its control's whole range.
-	[[nodiscard]] double dragSeconds(float x) const;
-	static constexpr double kDragOctavePixels = 40.0;
-	/// TEST ONLY: the span the picture was last told to paint with, and the span a press is tested against now.
-	[[nodiscard]] double paintedSpanForTest() const { return paintedSpan_; }
-	[[nodiscard]] double spanForTest() const { return span(); }
+	/// The time axis: soft-knee logarithmic and fixed (see `xOf`): linear below kAxisKnee, so 0 stands on the plot's left edge,
+	/// logarithmic above it up to kAxisMax, the longest Decay a pad can have (10 s at Length x4).
+	static constexpr double kAxisKnee = 0.001;
+	static constexpr double kAxisMax = 40.0;
+	/// Where a handle's HIT POINT and dot stand: `handleAt` (its value's place) nudged vertically, in a fixed order, clear of
+	/// every handle before it, so handles at the same time each stay grabbable. `handleUnder` takes marks.
+	[[nodiscard]] visage::Point markAt(Handle h) const;
 	/// Where `hz` is drawn up the plot (log frequency, 20 Hz to 20 kHz over its top 58%).
 	[[nodiscard]] float yOfHz(double hz) const;
 
@@ -171,13 +171,11 @@ private:
 	float envBottom() const { return height() - 8.0f; }
 	double hzAt(float y) const;
 	float yOfLevel(double db) const;
-	double span() const { return dragging_ ? frozenSpan_ : naturalSpan(); }
-	double naturalSpan() const;
+	[[nodiscard]] std::array<visage::Point, kHandleCount> marks() const;
 	[[nodiscard]] std::array<visage::Bounds, kHandleCount> placeLabels() const;
 	void press(visage::Point p);
 	void drag(visage::Point p);
 	void release();
-	void repaint();
 
 	drum::Kind kind_ { drum::Kind::Membrane };
 	drum::Laws laws_ {};
@@ -192,13 +190,13 @@ private:
 	ParamControl* heldControl_ = nullptr;
 	ParamControl* heldSecond_ = nullptr;
 	EditHistory* groupHistory_ = nullptr; ///< the history a two-way handle's one undo step is grouped in
-	/// THE LABEL PLACEMENT, kept with everything it is a function of (bounds, scale, what is shown and its numbers, the
-	/// frozen span of a drag): a paint that nothing changed serves it without placing eight labels again.
+	/// THE LABEL PLACEMENT, kept with everything it is a function of (bounds, scale, what is shown and its numbers):
+	/// a paint that nothing changed serves it without placing eight labels again.
 	struct LabelKey {
 		float w = -1.0f, h = -1.0f, dpi = -1.0f;
 		drum::Kind kind {};
 		drum::Laws laws {};
-		double decay = 0.0, level = 0.0, frozen = 0.0;
+		double decay = 0.0, level = 0.0;
 		Controls controls {};
 		bool dragging = false;
 		friend bool operator==(const LabelKey&, const LabelKey&) = default;
@@ -213,9 +211,7 @@ private:
 	float startX_ = 0.0f;
 	float startY_ = 0.0f;
 	double startMultiplier_ = 1.0;
-	double frozenSpan_ = 1.0;
 	float slack_ = 0.0f; ///< how far the hand is past where a time handle's control stops following it (px, signed)
-	double paintedSpan_ = 0.0; ///< the span of the last repaint asked for
 };
 
 class DrumPanel : public ExpandedView {

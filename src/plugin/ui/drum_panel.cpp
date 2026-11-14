@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <utility>
 #include <string>
 
 namespace feathers::ui {
@@ -102,6 +103,8 @@ constexpr double kLowHz = 20.0;
 constexpr double kHighHz = 20000.0;
 constexpr float kHandleRadius = 6.0f;
 constexpr float kHitSlop = 11.0f;
+/// Two handles' marks stand at least this far apart (see HitPicture::marks).
+constexpr float kMarkGap = 9.0f;
 /// The Drive handle's floor: at Drive 0 it stands this share of the envelope up, clear of the Decay handle's line by more
 /// than the hit slop.
 constexpr float kDriveFloor = 0.25f;
@@ -128,42 +131,21 @@ void HitPicture::show(drum::Kind kind, const drum::Laws& laws, double decaySecon
 	decaySeconds_ = decaySeconds;
 	levelDb_ = levelDb;
 	controls_ = controls;
-	repaint();
-}
-
-void HitPicture::repaint() {
-	paintedSpan_ = span();
 	redraw();
 }
 
-double HitPicture::naturalSpan() const {
-	// A LITTLE PAST WHERE THE BODY HAS FALLEN 60 dB, so the Decay handle sits inside the plot; at least the sweep's landing.
-	const double sweepEnd = laws_.sweepOctaves > 0.0 ? 4.0 * laws_.sweepTau : 0.0;
-	// UP TO THE LONGEST DECAY A PAD CAN HAVE (Decay at 10 s, Length ×4: 40 s), so a long hit's handle stands inside the plot
-	// rather than pinned to its edge (audition bug a, 2026-11-06: it was 6 s, and a longer Decay could only be dragged SHORTER).
-	return std::clamp(std::max(1.35 * laws_.t60, sweepEnd), 0.03, 60.0);
-}
-
 float HitPicture::xOf(double seconds) const {
-	// SQUARE-ROOT TIME: a hit's attack and sweep happen in its first few percent, so the axis gives the start room — a 40 ms
-	// sweep in a 1.4 s view takes a sixth of the width rather than a thirtieth.
-	const double u = std::sqrt(std::clamp(seconds / span(), 0.0, 1.0));
-	return plotLeft() + static_cast<float>(u) * (plotRight() - plotLeft());
+	// A SOFT-KNEE LOG TIME AXIS, FIXED: u = ln(1 + t / kAxisKnee) / ln(1 + kAxisMax / kAxisKnee). Below the knee (1 ms) it is
+	// linear, so 0 stands exactly on the plot's left edge and a handle leaves it smoothly; above it, it is logarithmic, so a
+	// pixel is the same FACTOR of time anywhere (about 130 px a decade here). Every time a control can reach is on it, so the
+	// axis never moves under a hand.
+	const double u = std::log1p(std::max(0.0, seconds) / kAxisKnee) / std::log1p(kAxisMax / kAxisKnee);
+	return plotLeft() + static_cast<float>(std::clamp(u, 0.0, 1.0)) * (plotRight() - plotLeft());
 }
 
 double HitPicture::secondsAt(float x) const {
 	const double u = std::clamp(static_cast<double>((x - plotLeft()) / (plotRight() - plotLeft())), 0.0, 1.0);
-	return u * u * span();
-}
-
-double HitPicture::dragSeconds(float x) const {
-	// A TIME HANDLE REACHES ITS WHOLE RANGE (audition bug c, 2026-11-06): inside the plot, the time under the hand; past its right
-	// edge, the view's span doubled every kDragOctavePixels further, so a short Decay can be dragged all the way out in one
-	// gesture (the axis is frozen while it is held, and a drag used to stop at the edge: 1.35 × the T60 it started at).
-	if (x <= plotRight()) {
-		return secondsAt(x);
-	}
-	return span() * std::exp2(static_cast<double>(x - plotRight()) / kDragOctavePixels);
+	return kAxisKnee * std::expm1(u * std::log1p(kAxisMax / kAxisKnee));
 }
 
 float HitPicture::yOfHz(double hz) const {
@@ -249,15 +231,54 @@ visage::Point HitPicture::handleAt(Handle h) const {
 	}
 }
 
-HitPicture::Handle HitPicture::handleUnder(visage::Point p) const {
-	Handle held = Handle::kCount;
-	float best = kHitSlop;
+std::array<visage::Point, HitPicture::kHandleCount> HitPicture::marks() const {
+	// WHERE EACH HANDLE IS DRAWN AND TAKEN: its place, nudged up or down in fixed steps (0, +9, -9, +18, -18 ... px, in the enum's
+	// order) until it stands at least kMarkGap from every mark placed before it. Handles that coincide in time, or nearly in
+	// time and pitch (everything short), then each keep a hit point of their own. A drag still maps from `handleAt`.
+	std::array<visage::Point, kHandleCount> out {};
+	std::array<bool, kHandleCount> placed {};
 	for (size_t i = 0; i < kHandleCount; ++i) {
 		const auto h = static_cast<Handle>(i);
 		if (!handleShown(h)) {
 			continue;
 		}
-		const visage::Point at = handleAt(h);
+		const visage::Point base = handleAt(h);
+		visage::Point chosen = base;
+		for (int k = 0; k < 13; ++k) {
+			const float dy = static_cast<float>((k + 1) / 2) * kMarkGap * ((k & 1) != 0 ? 1.0f : -1.0f);
+			const visage::Point at { base.x, base.y + dy };
+			if (at.y < kHandleRadius || at.y > height() - kHandleRadius) {
+				continue;
+			}
+			bool clear = true;
+			for (size_t j = 0; j < i && clear; ++j) {
+				clear = !placed[j] || std::hypot(out[j].x - at.x, out[j].y - at.y) >= kMarkGap;
+			}
+			if (clear) {
+				chosen = at;
+				break;
+			}
+		}
+		out[i] = chosen;
+		placed[i] = true;
+	}
+	return out;
+}
+
+visage::Point HitPicture::markAt(Handle h) const {
+	return handleShown(h) ? marks()[static_cast<size_t>(h)] : visage::Point {};
+}
+
+HitPicture::Handle HitPicture::handleUnder(visage::Point p) const {
+	Handle held = Handle::kCount;
+	float best = kHitSlop;
+	const std::array<visage::Point, kHandleCount> marks = this->marks();
+	for (size_t i = 0; i < kHandleCount; ++i) {
+		const auto h = static_cast<Handle>(i);
+		if (!handleShown(h)) {
+			continue;
+		}
+		const visage::Point at = marks[i];
 		const float d = std::hypot(at.x - p.x, at.y - p.y);
 		if (d <= best) {
 			best = d;
@@ -295,12 +316,11 @@ void HitPicture::press(visage::Point p) {
 	}
 	heldControl_ = c;
 	heldSecond_ = secondOf(held_);
-	frozenSpan_ = naturalSpan();
 	dragging_ = true;
 	slack_ = 0.0f;
 	pressAt_ = p;
 	startValue_ = c->value();
-	startX_ = handleAt(held_).x;
+	startX_ = handleAt(held_).x; // THE VALUE'S PLACE, not the mark's offset: a drag maps from where the value is
 	startY_ = handleAt(held_).y;
 	startMultiplier_ = decaySeconds_ > 0.0 ? laws_.t60 / decaySeconds_ : 1.0;
 	if (held_ == Handle::WireDecay) {
@@ -337,12 +357,16 @@ void HitPicture::drag(visage::Point p) {
 		const double lo = control->desc().min;
 		const double hi = control->desc().max;
 		float x = startX_ + dx - slack_;
-		const double v = toValue(dragSeconds(x));
+		// THE AXIS'S OWN ENDS first: a hand beyond the plot is at its edge, and the excess is kept like a control's.
+		const float inside = std::clamp(x, plotLeft(), plotRight());
+		slack_ += x - inside;
+		x = inside;
+		const double v = toValue(secondsAt(x));
 		if (v > hi) {
 			float a = plotLeft(), b = x;
 			for (int i = 0; i < 40; ++i) {
 				const float m = 0.5f * (a + b);
-				(toValue(dragSeconds(m)) > hi ? b : a) = m;
+				(toValue(secondsAt(m)) > hi ? b : a) = m;
 			}
 			slack_ += x - a; // THE HAND'S EXCESS IS KEPT, so coming back moves the value at once rather than after the way home
 			x = a;
@@ -351,12 +375,12 @@ void HitPicture::drag(visage::Point p) {
 			float a = x, b = plotRight();
 			for (int i = 0; i < 40; ++i) {
 				const float m = 0.5f * (a + b);
-				(toValue(dragSeconds(m)) < lo ? a : b) = m;
+				(toValue(secondsAt(m)) < lo ? a : b) = m;
 			}
 			slack_ += x - b;
 			x = b;
 		}
-		return dragSeconds(x);
+		return secondsAt(x);
 	};
 	const auto log2s = [](double floor, double mult = 1.0) { return [=](double t) { return std::log2(std::max(floor, t) / mult); }; };
 	const auto millis = [](double t) { return 1000.0 * t; };
@@ -452,17 +476,10 @@ void HitPicture::release() {
 	held_ = Handle::kCount;
 	heldControl_ = nullptr;
 	heldSecond_ = nullptr;
-	// THE AXIS LETS GO OF ITS FROZEN SPAN HERE, so the picture drawn so far (at the frozen span) is no longer the one the next
-	// press is tested against (at the natural span). `show` repaints only when a number moved, and the last drag's numbers
-	// were already shown, so without this the drawn handles sat where the old axis put them until another control changed
-	// something (the owner's "frozen until I touch Drive").
-	if (paintedSpan_ != span()) {
-		repaint();
-	}
 }
 
 void HitPicture::dragForTest(Handle h, float dx, float dy) {
-	const visage::Point at = handleAt(h);
+	const visage::Point at = markAt(h);
 	press(at);
 	drag({ at.x + dx, at.y + dy });
 	release();
@@ -483,7 +500,7 @@ void HitPicture::draw(visage::Canvas& canvas) {
 	canvas.text("1k", font(kKnobLabelSize), visage::Font::kLeft, plotRight() - 26.0f, yOfHz(1000.0) - 11.0f, 26.0f, 10.0f);
 	canvas.text("10k", font(kKnobLabelSize), visage::Font::kLeft, plotRight() - 26.0f, yOfHz(10000.0) - 11.0f, 26.0f, 10.0f);
 
-	constexpr int kSteps = 64;
+	constexpr int kSteps = 240; // about three pixels a step: the log axis spends its first pixels on the first microseconds
 	// A GATED COMPONENT (a Snare's Shape) falls in 15 ms past its gate, in the picture as in the hit.
 	const auto gatedAt = [](double t, double gate) { return gate > 0.0 && t > gate ? std::pow(10.0, -3.0 * (t - gate) / 0.015) : 1.0; };
 	const double bodyGate = kind_ == drum::Kind::Snare ? laws_.bodyGate : 0.0;
@@ -578,6 +595,15 @@ void HitPicture::draw(visage::Canvas& canvas) {
 
 	// THE AMPLITUDE ENVELOPE, filled, its peak at Level and its knee shaped by Drive through its curve (the engine's own transfer).
 	const double peak = std::pow(10.0, std::clamp(levelDb_, -60.0, 6.0) / 20.0);
+	const uint32_t fill = [] { // the envelope's fill: kValue at 35% over the plot's void
+		uint32_t out = 0xff000000u;
+		for (const int shift : { 0, 8, 16 }) {
+			const float v = static_cast<float>((kVoid >> shift) & 0xffu);
+			const float c = static_cast<float>((kValue >> shift) & 0xffu);
+			out |= static_cast<uint32_t>(0.65f * v + 0.35f * c) << shift;
+		}
+		return out;
+	}();
 
 	for (int i = 0; i < kSteps; ++i) {
 		const double t = secondsAt(plotLeft() + w * (static_cast<float>(i) + 0.5f) / kSteps);
@@ -596,20 +622,30 @@ void HitPicture::draw(visage::Canvas& canvas) {
 		}
 		const double db = 20.0 * std::log10(std::max(1.0e-6, a * peak));
 		const float top = yOfLevel(db);
-		canvas.setColor(alphaOf(kValue, 0.35f));
+		canvas.setColor(fill); // SOLID, not translucent: the steps overlap by half a pixel, and a translucent one shows the overlap as a comb
 		canvas.fill(plotLeft() + w * static_cast<float>(i) / kSteps, top, w / kSteps + 0.5f, envBottom() - top);
 		canvas.setColor(kValue);
 		canvas.fill(plotLeft() + w * static_cast<float>(i) / kSteps, top - 1.0f, w / kSteps + 0.5f, 2.0f);
 	}
 
+	// THE TIME GRID: a faint line at each decade, over the traces and the envelope, its caption in the gap between them.
+	for (const auto& [seconds, caption] : { std::pair { 0.001, "1ms" }, { 0.01, "10ms" }, { 0.1, "100ms" }, { 1.0, "1s" }, { 10.0, "10s" } }) {
+		const float x = xOf(seconds);
+		canvas.setColor(alphaOf(kLine, 0.3f));
+		canvas.fill(x, specTop(), 1.0f, envBottom() - specTop());
+		canvas.setColor(kMuted);
+		canvas.text(caption, font(kKnobLabelSize), visage::Font::kLeft, x + 2.0f, specBottom() + 2.0f, 34.0f, 10.0f);
+	}
+
 	// THE HANDLES, each with its readout.
 	const std::array<visage::Bounds, kHandleCount> labels = labelRects();
+	const std::array<visage::Point, kHandleCount> marks = this->marks();
 	for (size_t i = 0; i < kHandleCount; ++i) {
 		const auto h = static_cast<Handle>(i);
 		if (!handleShown(h)) {
 			continue;
 		}
-		const visage::Point at = handleAt(h);
+		const visage::Point at = marks[i];
 		canvas.setColor(held_ == h ? kInk : kAccent);
 		canvas.circle(at.x - kHandleRadius, at.y - kHandleRadius, 2.0f * kHandleRadius);
 		// ITS READOUT ON A BACKING, where labelRects put it: clear of every other label and handle, so no trace hides it.
@@ -655,7 +691,7 @@ std::string HitPicture::readoutOf(Handle h) const {
 }
 
 std::array<visage::Bounds, HitPicture::kHandleCount> HitPicture::labelRects() const {
-	const LabelKey key { width(), height(), dpiScale(), kind_, laws_, decaySeconds_, levelDb_, frozenSpan_, controls_, dragging_ };
+	const LabelKey key { width(), height(), dpiScale(), kind_, laws_, decaySeconds_, levelDb_, controls_, dragging_ };
 	if (labelCached_ && key == labelKey_) {
 		return labelCache_;
 	}
@@ -672,9 +708,10 @@ std::array<visage::Bounds, HitPicture::kHandleCount> HitPicture::placeLabels() c
 	std::array<visage::Bounds, kHandleCount> out {};
 	std::vector<visage::Bounds> placed;
 	std::vector<visage::Bounds> dots;
+	const std::array<visage::Point, kHandleCount> marks = this->marks();
 	for (size_t i = 0; i < kHandleCount; ++i) {
 		if (handleShown(static_cast<Handle>(i))) {
-			const visage::Point at = handleAt(static_cast<Handle>(i));
+			const visage::Point at = marks[i];
 			dots.push_back({ at.x - kHandleRadius, at.y - kHandleRadius, 2.0f * kHandleRadius, 2.0f * kHandleRadius });
 		}
 	}
@@ -687,7 +724,7 @@ std::array<visage::Bounds, HitPicture::kHandleCount> HitPicture::placeLabels() c
 		if (!handleShown(handle)) {
 			continue;
 		}
-		const visage::Point at = handleAt(handle);
+		const visage::Point at = marks[i];
 		const float w = textWidth(readoutOf(handle), font(kKnobLabelSize)) + 8.0f;
 		const std::array<visage::Point, 8> offsets { { { 9.0f, -h - 4.0f }, { 9.0f, 4.0f }, { -w - 9.0f, -h - 4.0f },
 			                                           { -w - 9.0f, 4.0f }, { 9.0f, -2.0f * h - 6.0f }, { 9.0f, h + 6.0f },

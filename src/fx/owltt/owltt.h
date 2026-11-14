@@ -125,6 +125,10 @@ public:
 	/// TEST ONLY — the per-direction ratios a band's compressor was handed (knob units), and the input gain it
 	/// scales its band by: the target the slice was heading for and where the smoother has got to.
 	[[nodiscard]] float ratioUpForTest(size_t band) const { return bands_[band].getRatioUp(); }
+	/// TEST ONLY — the two thresholds a band's compressor compares against, in knob units (the up one is DERIVED from the down one and
+	/// the bandwidth).
+	[[nodiscard]] float thresholdDownForTest(size_t band) const { return bands_[band].getThresholdDown(); }
+	[[nodiscard]] float thresholdUpForTest(size_t band) const { return bands_[band].getThresholdUp(); }
 	[[nodiscard]] float ratioDownForTest(size_t band) const { return bands_[band].getRatioDown(); }
 	[[nodiscard]] float inputGainTargetForTest(size_t band) const noexcept { return inputGainTarget_[band]; }
 	[[nodiscard]] float inputGainForTest(size_t band) const noexcept { return inputGain_[band]; }

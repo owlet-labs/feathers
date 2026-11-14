@@ -13657,6 +13657,16 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 	using Handle = ui::OwlttGraph::Handle;
 	constexpr std::array<Handle, 4> kHandles { Handle::BandwidthBar, Handle::ThresholdBar, Handle::RatioStrip, Handle::LevelStrip };
 
+	// THE ROUTED REACH IS THE HANDLE'S OWN AMOUNT STROKE (`ModHandle`'s plan): this reads it back as the rectangle the strokes spans,
+	// along the handle's vertical axis, so the assertions below keep their form.
+	const auto reachOf = [&](size_t band, Handle h) {
+		const ui::ModHandlePlan plan = graph->bandModPlan(band, h);
+		if (plan.axes.empty() || !plan.axes[0].hasStroke) {
+			return visage::Bounds {};
+		}
+		const visage::Point c = graph->ringCentre(band, h);
+		return visage::Bounds { c.x - 4.0f, plan.axes[0].strokeLo, 8.0f, plan.axes[0].strokeHi - plan.axes[0].strokeLo };
+	};
 	const backplane::Source macro = backplane::Source::core(0);
 	const DeviceInstanceId owltt = f.bridge.fxDeviceAt(1);
 	const backplane::Destination lowLevel =
@@ -13670,7 +13680,7 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 			CAPTURE(b);
 			CAPTURE(static_cast<int>(h));
 			CHECK_FALSE(graph->lookOf(b, h).lit);
-			CHECK(graph->reachOf(b, h).height() == 0.0f);
+			CHECK(reachOf(b, h).height() == 0.0f);
 		}
 	}
 
@@ -13684,7 +13694,7 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 			CAPTURE(b);
 			CAPTURE(static_cast<int>(h));
 			CHECK(graph->lookOf(b, h).lit);
-			CHECK(graph->reachOf(b, h).height() == 0.0f);
+			CHECK(reachOf(b, h).height() == 0.0f);
 		}
 	}
 
@@ -13697,7 +13707,7 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 		CHECK_FALSE(look.bipolar); // a macro in unipolar mode
 
 		const visage::Point onValue = graph->ringCentre(0, Handle::LevelStrip);
-		const visage::Bounds up = graph->reachOf(0, Handle::LevelStrip);
+		const visage::Bounds up = reachOf(0, Handle::LevelStrip);
 		CAPTURE(onValue.y);
 		CAPTURE(up.y());
 		CAPTURE(up.bottom());
@@ -13708,18 +13718,18 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 		CHECK(up.x() <= onValue.x);
 		CHECK(up.right() >= onValue.x);
 		// AND ONLY THAT STRIP: the Ratio strip beside it has no route and draws no reach.
-		CHECK(graph->reachOf(0, Handle::RatioStrip).height() == 0.0f);
-		CHECK(graph->reachOf(1, Handle::LevelStrip).height() == 0.0f);
+		CHECK(reachOf(0, Handle::RatioStrip).height() == 0.0f);
+		CHECK(reachOf(1, Handle::LevelStrip).height() == 0.0f);
 
 		// TWICE THE AMOUNT IS TWICE THE REACH — the restatement that pins the mapping as linear in the
 		// value without restating the box's height here.
 		f.bridge.setRouteAmount(macro, lowLevel, 2.0f * kAmount);
-		const visage::Bounds twice = graph->reachOf(0, Handle::LevelStrip);
+		const visage::Bounds twice = reachOf(0, Handle::LevelStrip);
 		CHECK(twice.height() == doctest::Approx(2.0f * up.height()).epsilon(0.02));
 
 		// A NEGATIVE AMOUNT HANGS BELOW THE VALUE, same size.
 		f.bridge.setRouteAmount(macro, lowLevel, -kAmount);
-		const visage::Bounds down = graph->reachOf(0, Handle::LevelStrip);
+		const visage::Bounds down = reachOf(0, Handle::LevelStrip);
 		CHECK(down.y() == doctest::Approx(onValue.y).epsilon(0.02));
 		CHECK(down.height() == doctest::Approx(up.height()).epsilon(0.02));
 
@@ -13727,21 +13737,21 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 		// the value with twice the span, ±a identical by construction.
 		f.bridge.setMacroBipolar(0, true);
 		CHECK(graph->lookOf(0, Handle::LevelStrip).bipolar);
-		const visage::Bounds both = graph->reachOf(0, Handle::LevelStrip);
+		const visage::Bounds both = reachOf(0, Handle::LevelStrip);
 		CHECK(both.y() < onValue.y);
 		CHECK(both.bottom() > onValue.y);
 		CHECK(both.height() == doctest::Approx(2.0f * up.height()).epsilon(0.02));
 		f.bridge.setRouteAmount(macro, lowLevel, kAmount);
-		const visage::Bounds bothPlus = graph->reachOf(0, Handle::LevelStrip);
+		const visage::Bounds bothPlus = reachOf(0, Handle::LevelStrip);
 		CHECK(bothPlus.y() == doctest::Approx(both.y()).epsilon(0.001));
 		CHECK(bothPlus.height() == doctest::Approx(both.height()).epsilon(0.001));
 		f.bridge.setMacroBipolar(0, false);
 
-		// DISARMED: the route stays in the table, the picture goes quiet — nothing lit, no reach — as a
-		// knob hides its ring when nothing is armed.
+		// DISARMED: nothing lit, and - as on the crossovers and the Drawn puck - the amount stroke stays, since the handle draws its
+		// route in both states.
 		mod->arm(false);
 		CHECK_FALSE(graph->lookOf(0, Handle::LevelStrip).lit);
-		CHECK(graph->reachOf(0, Handle::LevelStrip).height() == 0.0f);
+		CHECK(reachOf(0, Handle::LevelStrip).height() > 0.0f);
 		CHECK(f.bridge.routeAmount(macro, lowLevel) == doctest::Approx(kAmount));
 	}
 
@@ -13751,7 +13761,6 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 		// A BAR IS A `ModHandle`: its route is the handle's own amount stroke and live dot, not a rectangle (`reachOf` is the
 		// strips' alone). The plan is read by value: the stroke runs from the bar's height at the stored threshold to its
 		// height at the threshold plus the amount, both through the plot's 0..1 vertical mapping, restated here.
-		CHECK(graph->reachOf(0, Handle::ThresholdBar).height() == 0.0f);
 		const visage::Bounds area = graph->barArea();
 		const float stored = f.bridge.fxChain().device[1].row.field[static_cast<size_t>(fx::owltt::Param::LowThreshold)];
 		const auto yOf = [&](float v) { return area.bottom() - v * area.height(); };
@@ -13763,7 +13772,6 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 		CHECK(plan.axes[0].strokeLo == doctest::Approx(yOf(stored + kAmount)).epsilon(0.001));
 		CHECK(plan.axes[0].base == doctest::Approx(yOf(stored)).epsilon(0.001));
 		// AND THE BANDWIDTH BAR, which a threshold route does not touch, draws no stroke.
-		CHECK(graph->reachOf(0, Handle::BandwidthBar).height() == 0.0f);
 		const ui::ModHandlePlan other = graph->bandModPlan(0, Handle::BandwidthBar);
 		REQUIRE(other.axes.size() == 1u);
 		CHECK_FALSE(other.axes[0].hasStroke);
@@ -17060,7 +17068,9 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 		REQUIRE(f.bridge.fxChain().device[1].row.field[static_cast<size_t>(fx::owltt::Param::Threshold)]
 		        == doctest::Approx(0.5f));
 		const visage::Point ring = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
-		const float toY = bars.bottom() - ui::OwlttGraph::kRingRadius;
+		// AIMED AT 30% UP: the top bar now stops at the up threshold (0.125 at the defaults), which the floor of the plot is below, so the
+		// sweep it answers over is the part above that.
+		const float toY = bars.bottom() - 0.3f * bars.height();
 		// THE PLOT READS THE THRESHOLD PARAMETER'S OWN 0..1 over the bar area (the compressor's `0.2 + 0.8 t` is its internal
 		// scale for the same range), so the pointer's height IS the effective threshold; this restated `0.2 + 0.8 t`, the
 		// mapping the plot used before it was made to match the sound.
@@ -17087,12 +17097,15 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 
 		// IT MOVED — as far as it could — which is why "the bar did not respond" is the wrong
 		// description and "it stopped early" is the right one.
-		CHECK(f.bridge.fxChain().device[1].row.field[idx] == doctest::Approx(0.0f));
+		// (SINCE THE TOP BAR HOLDS THE UP THRESHOLD STILL, the bar's floor is the up threshold: with the global threshold at its
+		// ceiling and the bandwidth at its default that is 1.0 - 0.75 x 0.5 = 0.625 effective, so the stored value is 0.625 - 0.5. The
+		// bar stops THERE - at the lower bar - before it reaches what the band's own range could express.)
+		CHECK(f.bridge.fxChain().device[1].row.field[idx] == doctest::Approx(0.125f));
 		// AND STOPPED AT THE FLOOR OF WHAT THE BAND CAN EXPRESS, not at the pointer. Y GROWS
 		// DOWNWARD, so a bar that stopped short of the floor sits at a SMALLER y than the target —
 		// the first draft of this line had the comparison the other way up and failed for the
 		// direction rather than for the claim.
-		CHECK(graph->effective(0).threshold == doctest::Approx(0.5f));
+		CHECK(graph->effective(0).threshold == doctest::Approx(0.625f));
 		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y < toY - 10.0f);
 
 		// AND A SECOND DRAG THE SAME WAY DOES NOTHING AT ALL, which is the half a hand reports as
@@ -22210,9 +22223,10 @@ TEST_CASE("OWLTT's crossover handles are full modulation targets: halo, route on
 		const double before = baseHz();
 		const visage::Point h = graph->crossoverHandle(0);
 		graph->onMouseDown().callback(at(h.x, h.y));
-		// THE DRAG THAT FOLLOWS MOVES THE AMOUNT, NOT THE FREQUENCY: sideways travel must not move the base.
-		graph->onMouseDrag().callback(at(h.x + 40.0f, h.y));
-		graph->onMouseUp().callback(at(h.x + 40.0f, h.y));
+		// THE DRAG THAT FOLLOWS MOVES THE AMOUNT ALONG THE HANDLE'S OWN AXIS, NOT THE FREQUENCY: a crossover slides sideways, so
+		// the amount follows sideways travel, and VERTICAL travel changes neither the amount (it stays the seed) nor the base.
+		graph->onMouseDrag().callback(at(h.x, h.y + 40.0f));
+		graph->onMouseUp().callback(at(h.x, h.y + 40.0f));
 		CHECK(f.bridge.routeAmount(macro, lowX) == doctest::Approx(ui::Knob::kRouteSeedAmount));
 		CHECK(f.bridge.routeAmount(macro, backplane::Destination::control(id, static_cast<size_t>(owl::Param::HighCrossover))) == 0.0f);
 		CHECK(baseHz() == doctest::Approx(before));
@@ -22222,12 +22236,17 @@ TEST_CASE("OWLTT's crossover handles are full modulation targets: halo, route on
 		CHECK_FALSE(f.gui.history()->canUndo()); // ONE entry, not two
 	}
 
-	SUBCASE("a vertical drag while armed edits the amount along the knob's own gearing") {
+	SUBCASE("a SIDEWAYS drag while armed edits the amount along the knob's own gearing, and a vertical one of the same length does nothing") {
 		const visage::Point h = graph->crossoverHandle(0);
 		graph->onMouseDown().callback(at(h.x, h.y));
-		graph->onMouseDrag().callback(at(h.x, h.y - 35.0f));
-		graph->onMouseUp().callback(at(h.x, h.y - 35.0f));
+		graph->onMouseDrag().callback(at(h.x + 35.0f, h.y));
+		graph->onMouseUp().callback(at(h.x + 35.0f, h.y));
 		CHECK(f.bridge.routeAmount(macro, lowX) == doctest::Approx(ui::Knob::kRouteSeedAmount + 35.0f / ui::Knob::kRouteDragRange));
+		// TOWARD HIGHER VALUES RAISES IT: leftward travel lowers it by the same.
+		graph->onMouseDown().callback(at(h.x, h.y));
+		graph->onMouseDrag().callback(at(h.x - 35.0f, h.y));
+		graph->onMouseUp().callback(at(h.x - 35.0f, h.y));
+		CHECK(f.bridge.routeAmount(macro, lowX) == doctest::Approx(ui::Knob::kRouteSeedAmount + 35.0f / ui::Knob::kRouteDragRange - 35.0f / ui::Knob::kRouteDragRange));
 	}
 
 	SUBCASE("the amount stroke, the live dot and the base handle sit where the plot's own axis puts them") {

@@ -21,6 +21,7 @@
 #include "fx/owltt/owltt_types.h"
 #include "plugin/ui/clip_led.h"
 #include "plugin/ui/device_control.h"
+#include "plugin/ui/frame_watchers.h"
 #include "plugin/ui/control_face.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/mod_handle.h"
@@ -149,12 +150,6 @@ public:
 	};
 	HandleLook lookOf(size_t band, Handle handle) const;
 
-	/// **THE REACH THE ROUTE DRAWS** — the span of values the armed source can push this handle across,
-	/// as a rectangle in this frame's coordinates: the strip's width or the band's, from the value to
-	/// `value + amount` (both ways for a bipolar source), clamped to the bar area. Height 0 when there
-	/// is nothing to draw. Asked by `draw` and by the cases, so the reach cannot be painted anywhere
-	/// the value does not put it — the rule `ringCentre` already lives by.
-	visage::Bounds reachOf(size_t band, Handle handle) const;
 
 	/// The x where a band ends, from its crossover frequency on the log axis. NOT thirds: the bands
 	/// move with the crossovers, and a case that assumed thirds tested the wrong band.
@@ -252,6 +247,10 @@ public:
 	/// bars are confined below the lane rather than merely losing to it.
 	static constexpr float kRailHeight = 16.0f;
 	visage::Bounds rail() const;
+	/// The combined-reduction readout's rectangle and the clip square beside it, and a strip header's (`which` 0 RATIO, 1 LEVEL).
+	visage::Bounds readoutBounds() const;
+	visage::Bounds clipSquare() const;
+	visage::Bounds stripHeader(size_t band, size_t which) const;
 
 	/// WHERE THE BARS, STRIPS AND METERS LIVE — the plot minus the lane. Everything that was written
 	/// against `plot()` asks this instead, so a bar cannot be drawn into a lane it cannot be grabbed
@@ -354,7 +353,7 @@ private:
 	ModHandle* modForHit(ThresholdHit hit) const;
 	visage::Point centreOfHit(ThresholdHit hit) const;
 	ModHandle& bandMod(size_t band, Handle handle) const;
-	mutable std::array<ModHandle, 12> bandMod_ {};
+	mutable std::array<ModHandle, 18> bandMod_ {}; // [band][threshold, bandwidth, down, up, ratio, level]
 	mutable bool bandModBuilt_ = false;
 	/// THE TABLE'S BOXES, [row][band], built by `setEditor`.
 	std::array<std::array<std::unique_ptr<ValueBox>, 3>, kTableRows> cells_ {};
@@ -362,12 +361,29 @@ private:
 	void layoutTable();
 	bool editor_ = false;
 
+	/// **THE GRAPH WATCHES THE MODULATION STATE**, as every knob and box does: arming or disarming a source notifies its watchers,
+	/// and a frame that is not one repaints only when something else asks - which is why the handles' glow waited for a mouse move.
+	/// Found through the nest-aware `routingStateOf`, and re-found at every draw (a state installed after the last layout).
+	void refreshWatch();
+	Watch watch_;
+	const ModState* watched_ = nullptr;
+	/// THE MODULATED POSITIONS LAST DRAWN, one per handle control: `update()` repaints when a routed source has moved one, and
+	/// never when nothing is routed (a control with no route is always at its base).
+	std::array<double, 20> drawnModulated_ {};
+	bool haveModulated_ = false;
+	bool modulationMoved();
+
 	struct DragState {
 		bool active = false;
 		ThresholdHit hit = ThresholdHit::kNone;
 		float startY = 0.0f;
 		bool routeDragging = false;
 		float routeAnchorAmount = 0.0f;
+		/// A TOP-BAR DRAG: the up threshold it holds still (knob units, effective), the bandwidth control it also writes, and the
+		/// history group that makes the two writes one undo step.
+		float upHeld = 0.0f;
+		DeviceControl* pair = nullptr;
+		EditHistory* history = nullptr;
 		float routeDragRange = 70.0f;
 		float maxRouteAmount = 2.0f;
 	};

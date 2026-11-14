@@ -824,9 +824,9 @@ float OscVoice::nextSample(int oversampling) {
 	// that choice invisible where it could matter.
 	// THE INDEX CROSSFADES DURING A FADE, as the jitter depth above does (backlog EH, shape 5) — the
 	// stereo twin says why.
-	float fmIndex = fresh_->fmIndexCyclesFor(frequencyHz_);
+	float fmIndex = fmIndexFor(*fresh_, 0);
 	if (fading) {
-		const float staleIndex = stale_->fmIndexCyclesFor(frequencyHz_);
+		const float staleIndex = fmIndexFor(*stale_, 1);
 		fmIndex = staleIndex + (fmIndex - staleIndex) * static_cast<float>(t);
 	}
 	lastFmIndex_ = fmIndex;
@@ -849,6 +849,24 @@ float OscVoice::nextSample(int oversampling) {
 		out = applyAmpNoise(out, gritAmt, heldGrit_);
 	}
 	return out;
+}
+
+float OscVoice::fmIndexFor(const PreparedCharacter& side, size_t slot) const {
+	FmIndexMemo& m = fmIndexMemo_[slot];
+	const FlagshipRecipe& r = side.recipe;
+	if (m.valid && m.engine == side.engine && m.depth == r.fmDepth && m.ratio == r.fmRatio && m.denominator == r.fmDenominator
+	    && m.hz == frequencyHz_) {
+		return m.result;
+	}
+	m.valid = true;
+	m.engine = side.engine;
+	m.depth = r.fmDepth;
+	m.ratio = r.fmRatio;
+	m.denominator = r.fmDenominator;
+	m.hz = frequencyHz_;
+	m.result = side.fmIndexCyclesFor(frequencyHz_);
+	++fmIndexComputes_;
+	return m.result;
 }
 
 float OscVoice::earSample(const PreparedCharacter* fresh, const PreparedCharacter* stale,
@@ -876,9 +894,10 @@ float OscVoice::earSample(const PreparedCharacter* fresh, const PreparedCharacte
 	// AS THE JITTER DEPTH ABOVE DOES (backlog EH, shape 5): this read the fresh table's index alone
 	// under a comment claiming the jitter's behaviour, so every character rebuild stepped the carrier's
 	// phase offset in one sample — a discontinuity in the tone, not a step in the noise floor.
-	float fmIndex = fresh->fmIndexCyclesFor(frequencyHz_);
+	const size_t memoBase = polarity < 0.0 ? 2 : 0;
+	float fmIndex = fmIndexFor(*fresh, memoBase);
 	if (fading) {
-		const float staleIndex = stale->fmIndexCyclesFor(frequencyHz_);
+		const float staleIndex = fmIndexFor(*stale, memoBase + 1);
 		fmIndex = staleIndex + (fmIndex - staleIndex) * static_cast<float>(t);
 	}
 	lastFmIndex_ = fmIndex;

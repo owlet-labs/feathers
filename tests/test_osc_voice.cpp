@@ -275,6 +275,39 @@ TEST_CASE("backlog EH: an FM depth change crossfades its index as the jitter dep
 	}
 }
 
+TEST_CASE("FM index: it is computed when the frequency or the depth moves, not once per sample, and the value is the one a voice with no history computes") {
+	Character c = morph(17, 0.0f);
+	c.flagship = true;
+	c.sounds[0].fmDepth = 0.8f;
+	BankedVoice v;
+	v.setSampleRate(kSampleRate);
+	v.setFrequency(220.0);
+	v.setCharacter(c);
+	std::vector<float> buf(static_cast<size_t>(kBlock));
+	for (int i = 0; i < 4; ++i) {
+		v.render(buf.data(), kBlock);
+	}
+	REQUIRE(v.voice.fmIndexNowForTest() > 0.0f); // FM is on: the index is asked for
+	const uint64_t settled = v.voice.fmIndexComputesForTest();
+	for (int i = 0; i < 4; ++i) {
+		v.render(buf.data(), kBlock); // thousands of samples at the same frequency and depth
+	}
+	CHECK(v.voice.fmIndexComputesForTest() == settled);
+	// A new frequency is one new computation (per slot asked), and its value is a fresh voice's at that frequency.
+	v.setFrequency(660.0);
+	v.render(buf.data(), kBlock);
+	BankedVoice fresh;
+	fresh.setSampleRate(kSampleRate);
+	fresh.setFrequency(660.0);
+	fresh.setCharacter(c);
+	for (int i = 0; i < 5; ++i) {
+		fresh.render(buf.data(), kBlock);
+	}
+	CHECK(v.voice.fmIndexComputesForTest() > settled);
+	CHECK(v.voice.fmIndexComputesForTest() <= settled + 4);
+	CHECK(v.voice.fmIndexNowForTest() == fresh.voice.fmIndexNowForTest());
+}
+
 TEST_CASE("a moving character is INTERPOLATED: each sample between two rebuilds is on the line between the two bakes, and the next fade starts where the last ended (backlog PB (c))") {
 	// THE REBUILD INTERVAL IS THE FADE (kCharacterFadeSeconds, 256 samples at 48 kHz): a request inside a fade waits for
 	// it, and the build that then lands fades in over the whole of the next interval. So a moving character is a chain of

@@ -2725,7 +2725,19 @@ void Synth::applyParamsRoad(bool converge) {
 	// was a modulated row written at
 	// one index while the editor read another — the pair was position-and-lane then, and the lane is
 	// gone. What the lesson leaves is the discipline below: the two indices are still TWO.
-	modulatedFx_ = fxChain_;
+	// COPIED ONLY WHEN WHAT IT COPIES CAN HAVE MOVED, as `modulated_` is (`tickEnvelopes`): every write to `fxChain_` is
+	// one of `setFxChain`, `adoptChains` (both bump `structureRevision_`) or `adoptChainGrowth` (bumps `rackRevision_`). With
+	// those and the length as they were, every byte of `modulatedFx_` outside the fields rewritten below is already
+	// `fxChain_`'s, and those fields are rewritten from the engine on every call, so the rows the editor reads are as fresh as
+	// when the whole chain was copied.
+	if (modulatedFxRackAt_ != rackRevision_ || modulatedFxStructureAt_ != structureRevision_
+	    || modulatedFxLengthAt_ != fxChainLength(fxChain_)) {
+		modulatedFx_ = fxChain_;
+		modulatedFxRackAt_ = rackRevision_;
+		modulatedFxStructureAt_ = structureRevision_;
+		modulatedFxLengthAt_ = fxChainLength(fxChain_);
+		++modulatedFxCopies_;
+	}
 	const rack::RackEngine& engine = lane_.engineForTest();
 	// **TWO INDICES, AND THEY ARE STILL DIFFERENT NUMBERS** (kill-lanes step 3a): the VIEW's row is at the
 	// device's POSITION (the record's lane until 3b, the array's own subscript since 3c), and the ENGINE is
@@ -4612,6 +4624,7 @@ std::optional<double> Synth::lockedPhaseFor(double semitones) const {
 
 void Synth::render(float* left, float* right, int n) {
 	applyParams();
+	drumKitStale_ = true; // a parameter or a source may have moved since the last call
 	beginPadLanes(); // the kit pads' fx lanes, taken and drained for this render call (drum proposal §17)
 	// IS THE ONE STRING LIVE? Only on Resonate. Params cannot move inside a render call (the binding cuts
 	// the call at every event), so this is one answer for the whole call.
@@ -4693,9 +4706,20 @@ void Synth::render(float* left, float* right, int n) {
 		if (params_.oscType() == OscType::Pluck) {
 			const ks::StringControls controls = stringControls();
 			ks_->stereo = controls.width > 0.0;
+			// ONLY WHAT RENDERS THIS CHUNK READS THEM: a sounding voice's part 0 and its live parts (`renderChunk`,
+			// `renderStackParts`). The controls are read inside the oscillator's render alone, and one that starts
+			// (note-on, or a part joining the stack) is sounding or live before the chunk it first renders in, whose
+			// own top is this line — so it is handed the controls before its first sample, as every oscillator was.
 			for (Voice& v : voices_) {
+				if (!v.isSounding()) {
+					continue;
+				}
 				for (int part = 0; part < kMaxStack; ++part) {
+					if (part != 0 && !v.parts[static_cast<size_t>(part)].live) {
+						continue;
+					}
 					partOsc(v, part).setStringControls(controls);
+					++stringControlSets_;
 				}
 			}
 		}
@@ -4703,7 +4727,15 @@ void Synth::render(float* left, float* right, int n) {
 		// road, its voice writing both ears. Centred and on any other engine, the road it was.
 		bool drumStereo = false;
 		if (params_.oscType() == OscType::Drum) {
-			fillDrumKit();
+			// REBUILT ONLY WHEN ITS INPUTS CAN HAVE MOVED: they are the parameters' bases and host offsets (which change
+			// between render calls, the binding cutting the call at every event) and the routed sources' cells (published at the
+			// top of a call and at each control tick). So once per render call and once after each tick; the chunks between
+			// read the kit as it stands.
+			if (drumKitStale_) {
+				fillDrumKit();
+				drumKitStale_ = false;
+				++drumKitBuilds_;
+			}
 			drumStereo = drum_->kit.panned;
 		}
 		// WHERE THIS CHUNK STARTS inside the control tick, so a device reading windows — in the voices and on the bus — reads
@@ -4847,6 +4879,7 @@ void Synth::render(float* left, float* right, int n) {
 		const bool ticked = m >= motion_.samplesUntilTick();
 		motion_.advance(m);
 		if (ticked) {
+			drumKitStale_ = true; // the tick moves the sources the kit reads (see where it is rebuilt)
 			// THE MODULATORS MOVE FIRST, THEN WHAT THEY REACH IS RE-DECIDED. The order matters: an
 			// envelope published after the character was rebuilt would land a tick late on the puck,
 			// and one tick of a 1 ms attack is most of the attack.

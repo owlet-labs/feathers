@@ -21,6 +21,7 @@
 
 #include "dsp/character_bank.h"
 
+#include "dsp/fm_carrier.h"
 #include "dsp/halfband.h"
 #include "character/phi_morph.hpp"
 #include "character/phi_stair.hpp"
@@ -623,6 +624,9 @@ CharacterBank::CharacterBank() {
 void CharacterBank::setSampleRate(double hostSampleRate) {
 	// THE SHAPE LADDERS, built here (and so at construction) so no note ever pays for them on the audio thread.
 	warmShapeTables();
+	// AND THE FM CARRIER'S (a function-local static, built on its first read, which a voice's first FM sample would make on
+	// the audio thread).
+	(void)fm::carrierTable();
 	hostSampleRate_ = hostSampleRate;
 	// At least one sample, so a fade is never a division by zero however absurd the rate.
 	fadeLengthSamples_ =
@@ -990,6 +994,7 @@ StandBank::StandBank() {
 
 void StandBank::setSampleRate(double hostSampleRate) {
 	warmShapeTables();
+	(void)fm::carrierTable();
 	// `CharacterBank::setSampleRate`'s rule, and its reasons: at least a sample, and a running guard widened, never
 	// shortened.
 	hostSampleRate_ = hostSampleRate;

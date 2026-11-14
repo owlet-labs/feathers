@@ -566,6 +566,8 @@ public:
 	/// THE FM INDEX THE LAST RENDERED SAMPLE USED — crossfaded during a fade (backlog EH). A value
 	/// seam, because a rendered buffer cannot say what index made it.
 	float fmIndexNowForTest() const { return lastFmIndex_; }
+	/// How many times the FM index was computed rather than remembered (`fmIndexFor`).
+	uint64_t fmIndexComputesForTest() const { return fmIndexComputes_; }
 
 	/// TEST ONLY. The grid the sample loop is reading for `ear`, and the one it is fading FROM.
 	///
@@ -1012,6 +1014,22 @@ private:
 	/// The FM index the last sample used — see `fmIndexNowForTest`. Mutable because the stereo
 	/// render is const; a seam that records what a const road computed has no other spelling.
 	mutable float lastFmIndex_{0.0f};
+	/// `PreparedCharacter::fmIndexCyclesFor` REMEMBERED, keyed on every value it reads (the engine, the recipe's depth, ratio
+	/// and denominator, the frequency): three divides a call, asked once per sample, for an answer that moves only when
+	/// one of those does. A key of values, not of the side's address, because a side is rewritten in place by a rebuild.
+	/// One slot per (ear, fresh or stale); mutable for the same reason as `lastFmIndex_`.
+	struct FmIndexMemo {
+		bool valid{false};
+		OscEngine engine{};
+		float depth{0.0f};
+		float ratio{0.0f};
+		float denominator{0.0f};
+		double hz{0.0};
+		float result{0.0f};
+	};
+	mutable std::array<FmIndexMemo, 4> fmIndexMemo_{};
+	mutable uint64_t fmIndexComputes_{0};
+	float fmIndexFor(const PreparedCharacter& side, size_t slot) const;
 
 	/// Advance the accumulator by one sample's increment, catchup correction included — THE one
 	/// road both the mono and stereo renders walk, so the two cannot disagree about where the

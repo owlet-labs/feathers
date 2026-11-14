@@ -796,6 +796,9 @@ public:
 	/// The drawer's route scans and `modulated_`'s copies from `rack_` so far (the idle-overhead pass): none at rest.
 	[[nodiscard]] uint64_t drawerScansForTest() const noexcept { return drawerScans_; }
 	[[nodiscard]] uint64_t modulatedCopiesForTest() const noexcept { return modulatedCopies_; }
+	[[nodiscard]] uint64_t modulatedFxCopiesForTest() const noexcept { return modulatedFxCopies_; }
+	[[nodiscard]] uint64_t drumKitBuildsForTest() const noexcept { return drumKitBuilds_; }
+	[[nodiscard]] uint64_t stringControlSetsForTest() const noexcept { return stringControlSets_; }
 	/// The drawer's two patch-wide answers as the last block decided them (`applyParamsRoad`).
 	[[nodiscard]] bool drawerVariesForTest() const noexcept { return drawerVaries_; }
 	[[nodiscard]] bool drawerPairLiveForTest() const noexcept { return drawerPairLive_; }
@@ -2156,6 +2159,17 @@ private:
 	uint64_t modulatedStructureAt_ = ~uint64_t { 0 };
 	size_t modulatedCountAt_ = SIZE_MAX;
 	uint64_t modulatedCopies_ = 0;
+	/// THE SAME KEY FOR `modulatedFx_`'s COPY from `fxChain_` (`applyParamsRoad`), and its count.
+	uint64_t modulatedFxRackAt_ = ~uint64_t { 0 };
+	uint32_t modulatedFxStructureAt_ = 0;
+	size_t modulatedFxLengthAt_ = SIZE_MAX;
+	uint64_t modulatedFxCopies_ = 0;
+	/// `drum_->kit` IS REBUILT ONCE PER RENDER CALL AND ONCE AFTER EACH CONTROL TICK, not per chunk: `drumKitStale_` says it
+	/// is owed, `drumKitBuilds_` counts the builds.
+	bool drumKitStale_ = true;
+	uint64_t drumKitBuilds_ = 0;
+	/// The Pluck engine's per-chunk hand-outs of its string controls (`render`): one per rendering part.
+	uint64_t stringControlSets_ = 0;
 	/// THE WEIGHTS EACH DRAWER IS BLENDED BY: the character each ear plays (the head's twice when the terrain is mono) and
 	/// each keyed stand's (voice stacking step 4: a part on a stand hears that stand's blend, so it hears its drawer too).
 	/// Stamped where each character is ASKED FOR: the bank may still be playing the previous build behind its fade guard

@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 
 namespace feathers::ui {
@@ -57,10 +58,12 @@ float xToHz(float x, const visage::Bounds& box) {
 }
 
 
-/// Map a threshold value (0.2..1.0) to a y-position within the crossover box.
-/// 0.2 = bottom, 1.0 = top.
+/// **A THRESHOLD AS A HEIGHT: THE PARAMETER'S OWN 0..1, bottom to top.** The compressor maps the parameter to its
+/// internal `0.2 + 0.8 t` (`BandCompressor::setThresholdDown`), which is 48 dB of range below full scale, so the
+/// parameter IS the position on the 48 dB window. This used to read the parameter as if it were already the internal
+/// number, which drew the default (0.5) at 37% of the height and could never reach below 0.2.
 float thresholdToY(float threshold, const visage::Bounds& xover) {
-	const float t = std::clamp((threshold - 0.2f) / 0.8f, 0.0f, 1.0f);
+	const float t = std::clamp(threshold, 0.0f, 1.0f);
 	return xover.bottom() - t * xover.height();
 }
 
@@ -112,14 +115,30 @@ inline StripSpan stripSpanOf(float regionX0, float regionX1) {
 /// at 0.70. So the pair is placed inside what the bars actually keep, derived from `stripSpanOf`
 /// rather than from a remembered 0.70: if the strips ever widen, the rings move with them.
 struct RingPair {
-	float upper;
-	float lower;
+	float threshold;
+	float bandwidth;
 };
 
 inline RingPair ringXsOf(float regionX0, float regionX1) {
 	const float usable = stripSpanOf(regionX0, regionX1).x0 - regionX0;
-	return { regionX0 + usable * 0.30f, regionX0 + usable * 0.70f };
+	return { regionX0 + usable * 0.20f, regionX0 + usable * 0.42f };
 }
+
+/// THE RATIO TRACK the two thumbs slide along, left to right for ratio 0..1: across the bars' part of the band, clear of
+/// the strips.
+struct TrackSpan {
+	float x0;
+	float x1;
+};
+
+inline TrackSpan ratioTrackOf(float regionX0, float regionX1) {
+	const float usable = stripSpanOf(regionX0, regionX1).x0 - regionX0;
+	return { regionX0 + usable * 0.08f, regionX0 + usable * 0.94f };
+}
+
+/// HOW FAR A THUMB SITS OFF ITS BAR, pixels: the orange one above the threshold bar, the blue one below the bandwidth bar.
+constexpr float kThumbOffset = 8.0f;
+constexpr float kThumbHalf = 5.0f;
 
 
 /// A HANDLE RING AT A CENTRE — because `visage::Canvas::circle` does not take one.
@@ -178,20 +197,24 @@ inline float ringYInside(float y, const visage::Bounds& box) {
 /// Clamped exactly where the drawing clamped: the lower edge floors at 0.2 (the bottom of the box's
 /// threshold sweep) and the upper ceilings at 1.0, so a wide gap at a high threshold does not draw
 /// off the top.
+///
+/// **THE RELATION AS THE DEVICE HAS IT NOW: THE UP THRESHOLD LIES BELOW THE DOWN ONE** (`BandCompressor::setBandwidth`:
+/// `thresholdUp = max(0.2, thresholdDown - 0.6 * bandwidth)`, in the internal 0.2..1 units, which is `t - 0.75 bw` in
+/// the parameter's). The comment above describes the opposite sign, which an earlier DSP had; the picture kept it, so
+/// the bandwidth bar was drawn above the threshold bar and the orange (downward) edge on the wrong side of the blue.
 struct BarPair {
-	float lower;
-	float upper;
+	float down; ///< the DOWN threshold: downward compression acts above it
+	float up;   ///< the UP threshold: upward compression acts below it
 };
 
 inline BarPair barValuesOf(float threshold, float bandwidth) {
-	const float lower = std::clamp(threshold, 0.2f, 1.0f);
-	return { lower, std::min(1.0f, lower + 0.6f * bandwidth) };
+	const float down = std::clamp(threshold, 0.0f, 1.0f);
+	return { down, std::max(0.0f, down - 0.75f * bandwidth) };
 }
 
 
 float yToThreshold(float y, const visage::Bounds& xover) {
-	const float t = std::clamp((xover.bottom() - y) / xover.height(), 0.0f, 1.0f);
-	return 0.2f + t * 0.8f;
+	return std::clamp((xover.bottom() - y) / xover.height(), 0.0f, 1.0f);
 }
 
 
@@ -200,15 +223,20 @@ struct BandParamIndices {
 	size_t bandwidth;
 	size_t ratio;
 	size_t level;
+	size_t downRatio;
+	size_t upRatio;
 };
 
 static constexpr std::array<BandParamIndices, 3> kBandParams = {{
     {static_cast<size_t>(owltt::Param::LowThreshold), static_cast<size_t>(owltt::Param::LowBandwidth),
-     static_cast<size_t>(owltt::Param::LowRatio), static_cast<size_t>(owltt::Param::LowLevel)},
+     static_cast<size_t>(owltt::Param::LowRatio), static_cast<size_t>(owltt::Param::LowLevel),
+     static_cast<size_t>(owltt::Param::LowDownRatio), static_cast<size_t>(owltt::Param::LowUpRatio)},
     {static_cast<size_t>(owltt::Param::MidThreshold), static_cast<size_t>(owltt::Param::MidBandwidth),
-     static_cast<size_t>(owltt::Param::MidRatio), static_cast<size_t>(owltt::Param::MidLevel)},
+     static_cast<size_t>(owltt::Param::MidRatio), static_cast<size_t>(owltt::Param::MidLevel),
+     static_cast<size_t>(owltt::Param::MidDownRatio), static_cast<size_t>(owltt::Param::MidUpRatio)},
     {static_cast<size_t>(owltt::Param::HighThreshold), static_cast<size_t>(owltt::Param::HighBandwidth),
-     static_cast<size_t>(owltt::Param::HighRatio), static_cast<size_t>(owltt::Param::HighLevel)},
+     static_cast<size_t>(owltt::Param::HighRatio), static_cast<size_t>(owltt::Param::HighLevel),
+     static_cast<size_t>(owltt::Param::HighDownRatio), static_cast<size_t>(owltt::Param::HighUpRatio)},
 }};
 
 
@@ -217,49 +245,25 @@ static constexpr std::array<BandParamIndices, 3> kBandParams = {{
 OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifier* notifier)
     : host_(host), device_(id), notifier_(notifier) {
 	(void)notifier_;
+	// **PRESS, DRAG, RELEASE ARE ONE ROAD FOR EVERY HANDLE.** A handle that is a `ModHandle` (the crossovers, each band's
+	// threshold and bandwidth rings, and the two ratio thumbs) takes the modulation menu on a secondary press, a route
+	// gesture when a source is armed or Alt is held over its stroke, and a value drag otherwise; the strips keep the
+	// plot's own vertical route gesture. A double click resets the value (or drops the route when a source is armed).
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 #ifdef FEATHERS_DIAGNOSTIC
-		// SAYS IT WAS REACHED AT ALL, which is the fact no test could give me: the fixture says this
-		// line runs and the host says nothing in the rectangle responds, so one of those two is
-		// answering a different question and this is which.
 		diagnostic::plotPressed(e.position.x, e.position.y,
 		                        static_cast<int>(hitTestThreshold(e.position)), width(), height());
 #endif
-	// THE PRESS ROAD, WHICH IS NOW THE WHOLE OF THIS FRAME'S MOUSE HANDLING.
-	//
-	// On the card these branches sat under the head's slot menu, enable square, expand mark and fold,
-	// and had to be ordered against them -- `hitTestThreshold(...) == kNone` gated `noteCardPress` so
-	// one drag could not both move a threshold AND pick the card out of the lane. A frame that owns
-	// only the plot has none of that: everything here is the graph's, and the card's head is a
-	// sibling that never sees these events.
-	// THRESHOLD BAR HIT TEST — check before the head's fold swallows it.
-	const auto hit = hitTestThreshold(e.position);
-	if (hit != ThresholdHit::kNone) {
+		const auto hit = hitTestThreshold(e.position);
+		if (hit == ThresholdHit::kNone) {
+			return;
+		}
 		auto& ctrl = controlForHit(hit);
-		const bool crossover = hit == ThresholdHit::kLowCrossover || hit == ThresholdHit::kHighCrossover;
-		const size_t which = hit == ThresholdHit::kLowCrossover ? 0 : 1;
-		// A RIGHT-CLICK ON A MODULATED CROSSOVER opens the same sources menu a modulated knob does.
-		if (crossover && e.shouldTriggerPopup() && crossoverMod(which).showMenu(*this)) {
+		ModHandle* mod = modForHit(hit);
+		if (mod != nullptr && e.shouldTriggerPopup() && mod->showMenu(*this)) {
 			return;
 		}
 
-		// DOUBLE-CLICK, WHICH THE BARS SIMPLY DID NOT HAVE. A double-click on a bar did not reset
-		// it to its default, and nothing was broken — the
-		// branch had never been written. `Knob::onMouseDown` asks `repeatClickCount()` twice
-		// before it anchors anything; this handler reimplemented the DRAG faithfully, down to
-		// borrowing Knob's own constants, and did not reimplement the gesture that is not a
-		// drag. A press that was meant to reset simply started a second drag from where the
-		// bar already sat, which looks exactly like a double-click doing nothing.
-		//
-		// KNOB'S ORDER, NOT A CONVENIENT ONE: the mapping question is asked FIRST, so while a
-		// source is armed a double-click drops the ROUTE and leaves the value where the hand
-		// put it. Resetting the value there would throw away an edit the hand did not aim at,
-		// and worse, would be the opposite of what the same gesture does on every knob in the
-		// window six pixels away.
-		//
-		// Both gestures come from `device::Modulatable` so they ARE Knob's, rather than
-		// matching Knob's today. A bar and a dial pointing at the same parameter cannot
-		// disagree about what its default is.
 		if (e.repeatClickCount() >= 2) {
 			if (routeGestureWanted(ctrl, e)) {
 				ctrl.dropRoute();
@@ -267,12 +271,6 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 			else {
 				ctrl.resetToDefault();
 			}
-			// NO DRAG ARMED — and this branch sits ABOVE the three lines that arm one for
-			// a reason paid for immediately. It was first written below them, with this same
-			// comment claiming the flag stayed false while the line setting it true was four
-			// lines up. The reset landed and was then dragged straight back off the default
-			// by the very next motion, so the case's first assertion passed and only the
-			// subcase failed. A comment stating a rule is not the rule being followed.
 			redraw();
 			return;
 		}
@@ -281,28 +279,18 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		dragState_.hit = hit;
 		dragState_.startY = e.position.y;
 
-		// A CROSSOVER'S ARMED PRESS IS THE SHARED HANDLE'S: the amount gesture, and no value drag.
-		if (crossover) {
-			const visage::Point c = crossoverHandle(which);
-			const size_t axis = crossoverMod(which).routeAxisFor(e.isAltDown(), e.position, c.x, c.y);
+		if (mod != nullptr) {
+			const visage::Point c = centreOfHit(hit);
+			const size_t axis = mod->routeAxisFor(e.isAltDown(), e.position, c.x, c.y);
 			if (axis != ModHandle::npos) {
 				dragState_.routeDragging = true;
-				crossoverMod(which).beginRoute(axis, e);
+				mod->beginRoute(axis, e);
 				redraw();
 				return;
 			}
 		}
-		// MODULATION ROAD — copy Knob's branch exactly (knob.cpp:358-366).
-		// Anchor on the existing amount (or seed 0.4 if no route), then drag relative.
 		if (routeGestureWanted(ctrl, e)) {
 			dragState_.routeDragging = true;
-			// TAKEN FROM KNOB, NOT COPIED FROM IT. These were three local floats carrying
-			// the right values under a comment reading "Same as Knob" — which is a promise
-			// no compiler checks, and this week has four instances of exactly that promise
-			// being broken by an edit to one side. `Knob`'s are public and this file already
-			// includes `knob.h`; `device::kMaxAmount` is the shared ceiling `setAmount`
-			// already clamps to. One definition each, so a change to the gesture reaches
-			// every surface that uses it.
 			const float routeBefore = ctrl.display().amount;
 			dragState_.routeAnchorAmount =
 			    (routeBefore != 0.0f) ? routeBefore : Knob::kRouteSeedAmount;
@@ -315,16 +303,10 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 			dragState_.routeDragging = false;
 			ctrl.beginGesture();
 		}
-	}
 	};
 
-	// THE HOVER ROAD, which is what a tooltip is. `onMouseMove` is delivered with NO button held --
-	// the distinction this file learned the hard way when the bars could not be dragged, because the
-	// drag was written on this slot by mistake. Here it is the right one.
+	// THE HOVER ROAD: repaint only when a tooltip appears, moves or goes (a hover must not repaint the plot every pixel).
 	onMouseMove() = [this](const visage::MouseEvent& e) {
-		// **A MOVE REPAINTS ONLY WHEN IT CAN CHANGE WHAT IS DRAWN**: the overlay is the tooltip, so a move that begins
-		// with no tooltip and ends on none draws nothing new. (A tooltip follows the pointer, so a move that has one
-		// before or after does repaint.)
 		hover_ = e.position;
 		hovering_ = true;
 		const bool had = tipShown_;
@@ -343,49 +325,20 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		}
 	};
 
-	// onMouseDrag, NOT onMouseMove, AND ADDED RATHER THAN ASSIGNED.
-	//
-	// THIS WAS `onMouseMove() = ...` AND NOTHING IN THE GRAPH COULD BE DRAGGED. visage delivers
-	// `onMouseMove` for a HOVER -- pointer moving with no button held -- and `onMouseDrag` while a
-	// button is down. Every other draggable thing in this editor uses the latter: `FxCard`'s own
-	// card-reorder handler and `Knob`'s value drag both. The bars received the press and the release
-	// and never a single motion between them.
-	//
-	// AND `+=` RATHER THAN `=`, because `FxCard`'s constructor already put the card-reorder gesture
-	// on this slot. `CallbackList` appends, so both run; assigning would have traded one broken
-	// gesture for another, which is the shape of half the fixes in this file's history.
 	onMouseDrag() = [this](const visage::MouseEvent& e) {
 		if (!dragState_.active) {
 			return;
 		}
 		auto& ctrl = controlForHit(dragState_.hit);
-		// THE BAR AREA, for the same reason `ringCentre` uses it: a bar is DRAWN in this rectangle and
-		// HIT-TESTED in it, so it must be VALUED in it too. Left as `plot()` the drag mapped the
-		// pointer against a rectangle 16px taller than the one the bar lives in — off by a lane, in
-		// the one place where being off by anything means the value the hand sets is not the value it
-		// aimed at. Third rectangle in one function to get this wrong, which is why they are now one
-		// call rather than three literals.
 		const visage::Bounds xover = barArea();
+		ModHandle* mod = modForHit(dragState_.hit);
 
-		// THE CROSSOVERS MOVE SIDEWAYS, the only gesture on this plot that does. A frequency split IS
-		// a position on the axis, so the pointer's x is the value — read back through the SAME
-		// mapping `bandEdge` uses forwards, never a second formula derived to agree with it.
-		//
-		// CLAMPED BY THE CONTROL'S OWN DECLARATION: `setValue` rounds and clamps by the descriptor,
-		// so 20..2000 and 200..20000 are enforced where they are declared rather than restated here.
-		if (dragState_.hit == ThresholdHit::kLowCrossover
-		    || dragState_.hit == ThresholdHit::kHighCrossover) {
-			// A ROUTE GESTURE ON A CROSSOVER MOVES THE AMOUNT, NOT THE FREQUENCY: it used to fall into the value
-			// drag below, so an armed press seeded a route and the drag then moved the base.
-			if (dragState_.routeDragging) {
-				crossoverMod(dragState_.hit == ThresholdHit::kLowCrossover ? 0 : 1).dragRoute(e);
-				redraw();
-				return;
-			}
-			// THE FULL PLOT for the axis, not the bar area: the lane is a horizontal strip, so it
-			// removes height and never width, and the frequency sweep spans the whole picture.
-			// KEY TRACK: the corner under the hand is the note moved by the knob's offset, so the knob written is the one
-			// whose offset puts it there (`trackedCrossoverHz` read backwards).
+		if (dragState_.routeDragging && mod != nullptr && mod->routing()) {
+			mod->dragRoute(e);
+			redraw();
+			return;
+		}
+		if (dragState_.hit == ThresholdHit::kLowCrossover || dragState_.hit == ThresholdHit::kHighCrossover) {
 			const double hz = static_cast<double>(xToHz(e.position.x, plot()));
 			const double note = noteHz();
 			ctrl.setValue(note > 0.0 ? owltt::kCrossoverKeyRefHz * hz / note : hz);
@@ -394,44 +347,32 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		}
 
 		if (dragState_.routeDragging) {
-			// ROUTE DRAGGING — vertical travel relative to anchor (Knob's approach).
 			const float travel = (dragState_.startY - e.position.y) / dragState_.routeDragRange;
 			ctrl.setAmount(std::clamp(dragState_.routeAnchorAmount + travel,
 			                           -dragState_.maxRouteAmount, dragState_.maxRouteAmount));
 		}
-		else if (isUpperHit(dragState_.hit)) {
-			// THE UPPER BAR IS NOT THE THRESHOLD — IT IS THRESHOLD + 0.6*BANDWIDTH.
-			//
-			// The device computes `thresholdUp = thresholdDown + 0.6 * bandwidth`, so the param called
-			// `Threshold` IS the DOWN threshold and belongs at the LOWER edge. The card drew it at the
-			// top and subtracted; the picture claimed the wrong edge was the threshold.
-			//
-			// Swapping which bar writes what: the upper bar now writes bandwidth (resizing the gap
-			// upward), and the lower bar writes the threshold itself.
-			// AND EVERY QUANTITY HERE IS EFFECTIVE, then converted back at the last step. The pointer
-			// says where the EDGE should be on screen; the edge is drawn from the effective values;
-			// so the gap is solved in effective terms and only the write is in the band's own.
+		else if (isBandwidthHit(dragState_.hit)) {
+			// THE UP BAR: where it is dragged to is the UP threshold; the bandwidth is how far that lies below the
+			// threshold bar, so the threshold bar does not move.
 			const size_t band = bandForHit(dragState_.hit);
 			const owltt::EffectiveBand eff = effective(band);
-			const float wanted = yToThreshold(e.position.y, xover);
-			// Upper edge = lower + 0.6*bandwidth, so the effective bandwidth is (wanted - lower)/0.6.
-			const float wantedBandwidth = std::clamp((wanted - eff.threshold) / 0.6f, 0.0f, 1.0f);
-			ctrl.setValue(owltt::bandValueForEffective(wantedBandwidth,
-			                                          shiftFor(Handle::UpperBar)));
+			const float wantedUp = yToThreshold(e.position.y, xover);
+			const float wantedBandwidth = std::clamp((eff.threshold - wantedUp) / 0.75f, 0.0f, 1.0f);
+			ctrl.setValue(owltt::bandValueForEffective(wantedBandwidth, shiftFor(Handle::BandwidthBar)));
 		}
 		else if (isThresholdHit(dragState_.hit)) {
-			// THE LOWER BAR IS THE THRESHOLD ITSELF — so the pointer's height is the EFFECTIVE value,
-			// and what gets stored is that minus whatever the global is contributing. Without the
-			// subtraction the bar jumps away from the pointer by the global's displacement the moment
-			// the global is anywhere but neutral, which is the same bug as drawing the stored value:
-			// the picture and the device disagreeing about what a threshold is.
 			ctrl.setValue(owltt::bandValueForEffective(yToThreshold(e.position.y, xover),
-			                                          shiftFor(Handle::LowerBar)));
+			                                          shiftFor(Handle::ThresholdBar)));
+		}
+		else if (isRatioTrimHit(dragState_.hit)) {
+			// A THUMB IS DRAGGED ALONG ITS BAR: the x is the wanted ratio of that direction; the trim stored is what, on top
+			// of the band's effective ratio, lands it there.
+			const size_t band = bandForHit(dragState_.hit);
+			const Track track = ratioTrack(band);
+			const float wanted = track.x1 > track.x0 ? std::clamp((e.position.x - track.x0) / (track.x1 - track.x0), 0.0f, 1.0f) : 0.0f;
+			ctrl.setValue(owltt::bandValueForEffective(wanted, effective(band).ratio - 0.5f));
 		}
 		else {
-			// A RATIO OR LEVEL STRIP — the pointer's height is the effective value, converted back the
-			// same way. Level's shift is zero, so this reads identically for both and neither needs a
-			// branch saying which.
 			const float t = std::clamp((xover.bottom() - e.position.y) / xover.height(), 0.0f, 1.0f);
 			const Handle which = (dragState_.hit == ThresholdHit::kLowRatio
 			                      || dragState_.hit == ThresholdHit::kMidRatio
@@ -442,19 +383,16 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 		}
 	};
 
-	// APPENDED for the same reason as the drag: `FxCard` ends its reorder gesture here, and
-	// replacing this slot dropped that.
 	onMouseUp() = [this](const visage::MouseEvent& /*e*/) {
 		if (!dragState_.active) {
 			return;
 		}
 		auto& ctrl = controlForHit(dragState_.hit);
-		if (dragState_.routeDragging && (dragState_.hit == ThresholdHit::kLowCrossover
-		                                 || dragState_.hit == ThresholdHit::kHighCrossover)) {
-			crossoverMod(dragState_.hit == ThresholdHit::kLowCrossover ? 0 : 1).endRoute();
+		ModHandle* mod = modForHit(dragState_.hit);
+		if (dragState_.routeDragging && mod != nullptr && mod->routing()) {
+			mod->endRoute();
 		}
 		else if (dragState_.routeDragging) {
-			// Commit the route — amount dragged back to nothing is not a route at 0%, it is gone.
 			const float amount = std::abs(ctrl.display().amount) < 0.05f ? 0.0f : ctrl.display().amount;
 			if (amount != ctrl.display().amount) {
 				ctrl.setAmount(amount);
@@ -490,7 +428,6 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 	const visage::Font face = font(kKnobReadoutSize);
 	const auto widthOf = [&face](const std::string& s) { return face.stringWidth(std::u32string(s.begin(), s.end())); };
 	constexpr float kRowHeight = 12.0f;
-	constexpr float kRowStep = 13.0f;
 
 	// THE LETTERS, where the meters put them: under each half of the band's gain-reduction column (the central third
 	// of the band), centred — and only when a half is wide enough to hold one, as before.
@@ -524,28 +461,56 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 		return a.x() - 1.0f < b.right() && b.x() - 1.0f < a.right() && a.y() < b.bottom() && b.y() < a.bottom();
 	};
 	const std::array<float, 2> edges { xLow, xHigh };
+	// **THE READOUT STANDS BESIDE ITS CORNER.** In the window that is beside the handle in the lane: right of the ring, flipping to its
+	// left when it would leave the plot or touch the other handle or label. On the card, which has no lane, it is at the top of the
+	// plot beside the crossover line, on the line's left, where the bar rings and the saturation lights are not (the lights sit
+	// right of a line); it flips right on the same conditions. The obstacles are the handles, the other label, the clip square,
+	// the combined-reduction text and the lights, so nothing is drawn over a label.
+	std::vector<visage::Bounds> fixed;
+	const visage::Bounds lane = rail();
+	if (lane.width() > 0.0f) {
+		for (size_t h = 0; h < 2; ++h) {
+			const visage::Point c = crossoverHandle(h);
+			fixed.push_back({ c.x - 8.0f, c.y - 8.0f, 16.0f, 16.0f });
+		}
+	}
+	else {
+		fixed.push_back({ whole.right() - 90.0f, whole.y(), 90.0f, 14.0f }); // the clip square and the combined reduction
+		for (const float left : { whole.x(), xLow, xHigh }) {
+			fixed.push_back({ left + 3.0f, xover.y() + 3.0f, 8.0f, 8.0f }); // a band's saturation light
+		}
+	}
 	for (size_t which = 0; which < 2; ++which) {
-		const auto param = which == 0 ? owltt::Param::LowCrossover : owltt::Param::HighCrossover;
-		(void)param;
 		out.frequencyText[which] = frequencyText(static_cast<float>(cornerHz(which)));
 		const float w = widthOf(out.frequencyText[which]);
-		const bool room = edges[which] + 4.0f + w <= whole.right();
-		visage::Bounds label { room ? edges[which] + 4.0f : edges[which] - 4.0f - w, whole.bottom() - 14.0f, w,
-			                   kRowHeight };
-		for (int row = 0; row < 8; ++row) {
-			bool clear = true;
-			for (const visage::Bounds& letter : out.letters) {
-				clear = clear && !touches(label, letter);
+		const float y = lane.width() > 0.0f ? lane.y() + (lane.height() - kRowHeight) * 0.5f : whole.y() + 2.0f;
+		const float anchor = lane.width() > 0.0f ? crossoverHandle(which).x : edges[which];
+		const float gap = lane.width() > 0.0f ? 10.0f : 4.0f;
+		const auto fits = [&](const visage::Bounds& b) {
+			if (b.x() < whole.x() + 1.0f || b.right() > whole.right() - 1.0f || b.bottom() > xover.bottom() - 14.0f) {
+				return false;
 			}
-			if (which == 1) {
-				clear = clear && !touches(label, out.frequency[0]);
+			for (const visage::Bounds& o : fixed) {
+				if (touches(b, o)) {
+					return false;
+				}
 			}
-			if (clear || label.y() - kRowStep < whole.y()) {
-				break;
+			return which == 0 || !touches(b, out.frequency[0]);
+		};
+		// THE PREFERRED SIDE, THEN THE OTHER, THEN A ROW DOWN on either — a corner crowded against its neighbour steps down rather
+		// than over it.
+		out.frequency[which] = { anchor, y, w, kRowHeight };
+		bool placed = false;
+		for (int row = 0; row < 3 && !placed; ++row) {
+			for (int side = 0; side < 2 && !placed; ++side) {
+				const bool right = (lane.width() > 0.0f) == (side == 0);
+				const visage::Bounds b { right ? anchor + gap : anchor - gap - w, y + static_cast<float>(row) * 13.0f, w, kRowHeight };
+				if (fits(b)) {
+					out.frequency[which] = b;
+					placed = true;
+				}
 			}
-			label = { label.x(), label.y() - kRowStep, label.width(), label.height() };
 		}
-		out.frequency[which] = label;
 	}
 	return out;
 }
@@ -575,22 +540,13 @@ void OwlttGraph::setModulation(ModState* mod, EditHistory* history) {
 DeviceControl& OwlttGraph::controlForHit(ThresholdHit hit) const {
 	const size_t band = bandForHit(hit);
 	switch (hit) {
-	// SWAPPED WITH THE SIGN FIX, AND IT IS THE HALF THAT WAS MISSED. The drag branches were rewritten
-	// so the UPPER bar sizes the gap and the LOWER bar carries the threshold; this mapping was not,
-	// so the upper bar computed a BANDWIDTH and wrote it into the THRESHOLD control and the lower did
-	// the reverse. Each control received the other's units.
-	//
-	// It is invisible to any check that only asks whether the drag moved something -- both roads move
-	// something, both move plausibly, and the numbers stay inside 0..1. `(0.933 - 0.5) / 0.6 = 0.722`
-	// is what a threshold looked like coming out of the bandwidth formula, and the only reason it was
-	// caught is that a case asserted the VALUE the drag implies rather than that a value changed.
-	case ThresholdHit::kLowUpper:
-	case ThresholdHit::kMidUpper:
-	case ThresholdHit::kHighUpper:
+	case ThresholdHit::kLowBandwidth:
+	case ThresholdHit::kMidBandwidth:
+	case ThresholdHit::kHighBandwidth:
 		return control(kBandParams[band].bandwidth);
-	case ThresholdHit::kLowLower:
-	case ThresholdHit::kMidLower:
-	case ThresholdHit::kHighLower:
+	case ThresholdHit::kLowThreshold:
+	case ThresholdHit::kMidThreshold:
+	case ThresholdHit::kHighThreshold:
 		return control(kBandParams[band].threshold);
 	case ThresholdHit::kLowCrossover:
 		return control(static_cast<size_t>(owltt::Param::LowCrossover));
@@ -604,6 +560,14 @@ DeviceControl& OwlttGraph::controlForHit(ThresholdHit hit) const {
 	case ThresholdHit::kMidLevel:
 	case ThresholdHit::kHighLevel:
 		return control(kBandParams[band].level);
+	case ThresholdHit::kLowDownRatio:
+	case ThresholdHit::kMidDownRatio:
+	case ThresholdHit::kHighDownRatio:
+		return control(kBandParams[band].downRatio);
+	case ThresholdHit::kLowUpRatio:
+	case ThresholdHit::kMidUpRatio:
+	case ThresholdHit::kHighUpRatio:
+		return control(kBandParams[band].upRatio);
 	default:
 		return control(0);
 	}
@@ -611,20 +575,26 @@ DeviceControl& OwlttGraph::controlForHit(ThresholdHit hit) const {
 
 size_t OwlttGraph::bandForHit(ThresholdHit hit) const {
 	switch (hit) {
-	case ThresholdHit::kLowUpper:
-	case ThresholdHit::kLowLower:
+	case ThresholdHit::kLowBandwidth:
+	case ThresholdHit::kLowThreshold:
 	case ThresholdHit::kLowRatio:
 	case ThresholdHit::kLowLevel:
+	case ThresholdHit::kLowDownRatio:
+	case ThresholdHit::kLowUpRatio:
 		return 0;
-	case ThresholdHit::kMidUpper:
-	case ThresholdHit::kMidLower:
+	case ThresholdHit::kMidBandwidth:
+	case ThresholdHit::kMidThreshold:
 	case ThresholdHit::kMidRatio:
 	case ThresholdHit::kMidLevel:
+	case ThresholdHit::kMidDownRatio:
+	case ThresholdHit::kMidUpRatio:
 		return 1;
-	case ThresholdHit::kHighUpper:
-	case ThresholdHit::kHighLower:
+	case ThresholdHit::kHighBandwidth:
+	case ThresholdHit::kHighThreshold:
 	case ThresholdHit::kHighRatio:
 	case ThresholdHit::kHighLevel:
+	case ThresholdHit::kHighDownRatio:
+	case ThresholdHit::kHighUpRatio:
 		return 2;
 	default:
 		return 0;
@@ -632,15 +602,13 @@ size_t OwlttGraph::bandForHit(ThresholdHit hit) const {
 }
 
 owltt::EffectiveBand OwlttGraph::effective(size_t band) const {
-	// THE DEVICE'S OWN ARITHMETIC, asked of the device's own header. The graph reads the twelve
-	// per-band controls and the three globals off the same rows the engine renders from, hands them
-	// to `effectiveBandOf`, and draws the answer — so a bar is at the threshold the compressor is
-	// USING rather than at the number its band happens to store.
 	owltt::BandParams params {};
 	params.threshold = static_cast<float>(control(kBandParams[band].threshold).value());
 	params.ratio = static_cast<float>(control(kBandParams[band].ratio).value());
 	params.bandwidth = static_cast<float>(control(kBandParams[band].bandwidth).value());
 	params.level = static_cast<float>(control(kBandParams[band].level).value());
+	params.downRatio = static_cast<float>(control(kBandParams[band].downRatio).value());
+	params.upRatio = static_cast<float>(control(kBandParams[band].upRatio).value());
 
 	owltt::Settings globals {};
 	globals.threshold = static_cast<float>(control(static_cast<size_t>(owltt::Param::Threshold)).value());
@@ -657,9 +625,9 @@ float OwlttGraph::shiftFor(Handle handle) const {
 	globals.ratio = static_cast<float>(control(static_cast<size_t>(owltt::Param::Ratio)).value());
 	globals.bandwidth = static_cast<float>(control(static_cast<size_t>(owltt::Param::Bandwidth)).value());
 	switch (handle) {
-	case Handle::LowerBar:
+	case Handle::ThresholdBar:
 		return owltt::thresholdShiftOf(globals);
-	case Handle::UpperBar:
+	case Handle::BandwidthBar:
 		return owltt::bandwidthShiftOf(globals);
 	case Handle::RatioStrip:
 		return owltt::ratioShiftOf(globals);
@@ -675,32 +643,35 @@ OwlttGraph::BarYs OwlttGraph::barYs(size_t band) const {
 	const owltt::EffectiveBand eff = effective(band);
 	const BarPair values = barValuesOf(eff.threshold, eff.bandwidth);
 	const visage::Bounds bars = barArea();
-	return { thresholdToY(values.upper, bars), thresholdToY(values.lower, bars) };
+	return { thresholdToY(values.down, bars), thresholdToY(values.up, bars) };
 }
 
 visage::Point OwlttGraph::ringCentre(size_t band, Handle handle) const {
-	// THE BAR AREA, NOT THE WHOLE PLOT — the one line that keeps a handle out of the crossover lane.
-	//
-	// This read `plot()`, so a threshold at the top of its sweep put its ring INSIDE the lane, where
-	// the lane's hit test answers first and the bar becomes unreachable at exactly the end of its
-	// travel. HARM recorded that failure (`harm_scope.cpp:324`) and the lane was designed against it;
-	// the design was then undone here by a rectangle that had not been updated. Measured: ring at
-	// y=4 with the lane ending at 16.
 	const visage::Bounds xover = barArea();
 	const float x0 = band == 0 ? xover.x() : bandEdge(band - 1);
 	const float x1 = band == 2 ? xover.right() : bandEdge(band);
-	// `bandEdge` is an x on the full plot; the bar area shares its x span, so only y differs.
 
-	if (handle == Handle::UpperBar || handle == Handle::LowerBar) {
+	if (handle == Handle::BandwidthBar || handle == Handle::ThresholdBar) {
 		const BarYs ys = barYs(band);
 		const RingPair rings = ringXsOf(x0, x1);
-		const bool upper = handle == Handle::UpperBar;
-		return { upper ? rings.upper : rings.lower,
-			     ringYInside(upper ? ys.upper : ys.lower, xover) };
+		const bool bandwidth = handle == Handle::BandwidthBar;
+		return { bandwidth ? rings.bandwidth : rings.threshold,
+			     ringYInside(bandwidth ? ys.bandwidth : ys.threshold, xover) };
 	}
 
-	// THE STRIPS. A strip's ring sits ON its value, which is what makes it a handle rather than a
-	// decoration -- and is exactly why the ends of its travel land on the box's edges.
+	if (handle == Handle::DownRatio || handle == Handle::UpRatio) {
+		// THE THUMBS: x is the direction's ratio along the track, y is a fixed step off its bar - above the threshold
+		// bar for the downward compressor, below the bandwidth bar for the upward one - so the two can never sit on
+		// each other, whatever the gap.
+		const BarYs ys = barYs(band);
+		const owltt::EffectiveBand eff = effective(band);
+		const TrackSpan track = ratioTrackOf(x0, x1);
+		const bool down = handle == Handle::DownRatio;
+		const float ratio = down ? eff.ratioDown : eff.ratioUp;
+		return { track.x0 + ratio * (track.x1 - track.x0),
+			     ringYInside(down ? ys.threshold - kThumbOffset : ys.bandwidth + kThumbOffset, xover) };
+	}
+
 	const StripSpan strip = stripSpanOf(x0, x1);
 	const bool ratio = handle == Handle::RatioStrip;
 	const owltt::EffectiveBand eff = effective(band);
@@ -710,12 +681,107 @@ visage::Point OwlttGraph::ringCentre(size_t band, Handle handle) const {
 }
 
 OwlttGraph::ThresholdHit OwlttGraph::hitFor(size_t band, Handle handle) const {
-	static constexpr ThresholdHit kTable[3][4] = {
-		{ ThresholdHit::kLowUpper, ThresholdHit::kLowLower, ThresholdHit::kLowRatio, ThresholdHit::kLowLevel },
-		{ ThresholdHit::kMidUpper, ThresholdHit::kMidLower, ThresholdHit::kMidRatio, ThresholdHit::kMidLevel },
-		{ ThresholdHit::kHighUpper, ThresholdHit::kHighLower, ThresholdHit::kHighRatio, ThresholdHit::kHighLevel },
+	static constexpr ThresholdHit kTable[3][6] = {
+		{ ThresholdHit::kLowBandwidth, ThresholdHit::kLowThreshold, ThresholdHit::kLowRatio, ThresholdHit::kLowLevel,
+		  ThresholdHit::kLowDownRatio, ThresholdHit::kLowUpRatio },
+		{ ThresholdHit::kMidBandwidth, ThresholdHit::kMidThreshold, ThresholdHit::kMidRatio, ThresholdHit::kMidLevel,
+		  ThresholdHit::kMidDownRatio, ThresholdHit::kMidUpRatio },
+		{ ThresholdHit::kHighBandwidth, ThresholdHit::kHighThreshold, ThresholdHit::kHighRatio, ThresholdHit::kHighLevel,
+		  ThresholdHit::kHighDownRatio, ThresholdHit::kHighUpRatio },
 	};
-	return kTable[std::min<size_t>(band, 2)][std::min<size_t>(static_cast<size_t>(handle), 3)];
+	return kTable[std::min<size_t>(band, 2)][std::min<size_t>(static_cast<size_t>(handle), 5)];
+}
+
+OwlttGraph::Handle OwlttGraph::handleOfHit(ThresholdHit hit) const {
+	for (size_t band = 0; band < 3; ++band) {
+		for (const Handle h : { Handle::BandwidthBar, Handle::ThresholdBar, Handle::RatioStrip, Handle::LevelStrip,
+		                        Handle::DownRatio, Handle::UpRatio }) {
+			if (hitFor(band, h) == hit) {
+				return h;
+			}
+		}
+	}
+	return Handle::ThresholdBar;
+}
+
+bool OwlttGraph::isRatioTrimHit(ThresholdHit hit) const {
+	const Handle h = handleOfHit(hit);
+	return (h == Handle::DownRatio || h == Handle::UpRatio) && hit != ThresholdHit::kNone;
+}
+
+visage::Point OwlttGraph::centreOfHit(ThresholdHit hit) const {
+	if (hit == ThresholdHit::kLowCrossover) {
+		return crossoverHandle(0);
+	}
+	if (hit == ThresholdHit::kHighCrossover) {
+		return crossoverHandle(1);
+	}
+	return ringCentre(bandForHit(hit), handleOfHit(hit));
+}
+
+/// **THE MODULATION ROAD OF A HANDLE**: the crossovers and every bar and thumb are `ModHandle`s; the two strips are not.
+ModHandle* OwlttGraph::modForHit(ThresholdHit hit) const {
+	if (hit == ThresholdHit::kLowCrossover) {
+		return &crossoverMod(0);
+	}
+	if (hit == ThresholdHit::kHighCrossover) {
+		return &crossoverMod(1);
+	}
+	if (hit == ThresholdHit::kNone) {
+		return nullptr;
+	}
+	const Handle h = handleOfHit(hit);
+	if (h == Handle::RatioStrip || h == Handle::LevelStrip) {
+		return nullptr;
+	}
+	return &bandMod(bandForHit(hit), h);
+}
+
+OwlttGraph::Track OwlttGraph::ratioTrack(size_t band) const {
+	const visage::Bounds xover = barArea();
+	const float x0 = band == 0 ? xover.x() : bandEdge(band - 1);
+	const float x1 = band == 2 ? xover.right() : bandEdge(band);
+	const TrackSpan span = ratioTrackOf(x0, x1);
+	return { span.x0, span.x1 };
+}
+
+/// **EACH BAND HANDLE'S MODULATION, mapped through the same picture the handle is drawn from**: one vertical axis for a
+/// bar (the value's height, folded through the global shift and, for the bandwidth, the threshold it hangs from), one
+/// horizontal axis for a thumb (the direction's ratio along the track).
+ModHandle& OwlttGraph::bandMod(size_t band, Handle handle) const {
+	if (!bandModBuilt_) {
+		for (size_t b = 0; b < 3; ++b) {
+			const auto yOfThreshold = [this, b](double v) {
+				const float eff = std::clamp(static_cast<float>(v) + shiftFor(Handle::ThresholdBar), 0.0f, 1.0f);
+				return thresholdToY(eff, barArea());
+			};
+			const auto yOfBandwidth = [this, b](double v) {
+				const owltt::EffectiveBand e = effective(b);
+				const float bw = std::clamp(static_cast<float>(v) + shiftFor(Handle::BandwidthBar), 0.0f, 1.0f);
+				return thresholdToY(barValuesOf(e.threshold, bw).up, barArea());
+			};
+			const auto xOfDown = [this, b](double v) {
+				const owltt::EffectiveBand e = effective(b);
+				const Track t = ratioTrack(b);
+				const float r = std::clamp(e.ratio + static_cast<float>(v) - 0.5f, 0.0f, 1.0f);
+				return t.x0 + r * (t.x1 - t.x0);
+			};
+			bandMod_[b * 4 + 0] = ModHandle({ ModHandleAxis { &control(kBandParams[b].threshold), false, yOfThreshold } });
+			bandMod_[b * 4 + 1] = ModHandle({ ModHandleAxis { &control(kBandParams[b].bandwidth), false, yOfBandwidth } });
+			bandMod_[b * 4 + 2] = ModHandle({ ModHandleAxis { &control(kBandParams[b].downRatio), true, xOfDown } });
+			bandMod_[b * 4 + 3] = ModHandle({ ModHandleAxis { &control(kBandParams[b].upRatio), true, xOfDown } });
+		}
+		bandModBuilt_ = true;
+	}
+	size_t kind = 0;
+	switch (handle) {
+	case Handle::ThresholdBar: kind = 0; break;
+	case Handle::BandwidthBar: kind = 1; break;
+	case Handle::DownRatio: kind = 2; break;
+	case Handle::UpRatio: kind = 3; break;
+	default: break;
+	}
+	return bandMod_[std::min<size_t>(band, 2) * 4 + kind];
 }
 
 OwlttGraph::HandleLook OwlttGraph::lookOf(size_t band, Handle handle) const {
@@ -732,6 +798,11 @@ OwlttGraph::HandleLook OwlttGraph::lookOf(size_t band, Handle handle) const {
 }
 
 visage::Bounds OwlttGraph::reachOf(size_t band, Handle handle) const {
+	// ONLY THE STRIPS DRAW A REACH RECTANGLE. A bar or a thumb is a `ModHandle`, whose own plan (`bandModPlan`) is the stroke
+	// and the dot it draws.
+	if (handle != Handle::RatioStrip && handle != Handle::LevelStrip) {
+		return {};
+	}
 	const HandleLook look = lookOf(band, handle);
 	if (look.amount == 0.0f) {
 		return {};
@@ -760,20 +831,7 @@ visage::Bounds OwlttGraph::reachOf(size_t band, Handle handle) const {
 		x = ratio ? strip.x0 : strip.mid;
 		width = ratio ? strip.mid - strip.x0 : strip.x1 - strip.mid;
 	}
-	else {
-		// THE LOWER BAR IS THE THRESHOLD AND THE UPPER IS THE BANDWIDTH ABOVE IT — the controls
-		// `controlForHit` names for them — so the amount moves that control and the bar follows through
-		// `barValuesOf`, the same arithmetic `barYs` draws with.
-		const bool upper = handle == Handle::UpperBar;
-		const auto y = [&](float delta) {
-			const BarPair values = upper ? barValuesOf(eff.threshold, eff.bandwidth + delta)
-			                             : barValuesOf(eff.threshold + delta, eff.bandwidth);
-			return thresholdToY(upper ? values.upper : values.lower, xover);
-		};
-		yAt = y(0.0f);
-		yUp = y(look.amount);
-		yDown = look.bipolar ? y(-look.amount) : yAt;
-	}
+
 	const float top = std::min({ yAt, yUp, yDown });
 	const float bottom = std::max({ yAt, yUp, yDown });
 	return { x, top, width, bottom - top };
@@ -808,14 +866,103 @@ visage::Bounds OwlttGraph::rail() const {
 
 visage::Bounds OwlttGraph::barArea() const {
 	const visage::Bounds box = plot();
-	if (!rail_) {
-		return box;
+	const float lane = rail_ ? kRailHeight : 0.0f;
+	const float table = editor_ ? kTableHeight : 0.0f;
+	// THE BARS ARE CONFINED BELOW THE LANE AND ABOVE THE TABLE, not merely outranked by them: a grip pushed into either
+	// became unreachable at the end of its travel, which is where a hand goes to bring it back.
+	return { box.x(), box.y() + lane, box.width(), std::max(0.0f, box.height() - lane - table) };
+}
+
+visage::Bounds OwlttGraph::tableArea() const {
+	if (!editor_) {
+		return {};
 	}
-	// THE BARS ARE CONFINED BELOW THE LANE, not merely outranked by it. HARM's scope records what the
-	// other choice costs: a grip pushed into its rail became unreachable at the end of its travel,
-	// which is where a hand goes to bring it back.
-	return { box.x(), box.y() + kRailHeight, box.width(),
-		     std::max(0.0f, box.height() - kRailHeight) };
+	const visage::Bounds box = plot();
+	return { box.x(), box.bottom() - kTableHeight, box.width(), kTableHeight };
+}
+
+fx::owltt::Param OwlttGraph::tableParam(size_t row, size_t band) {
+	using P = owltt::Param;
+	static constexpr P kTable[kTableRows][3] = {
+		{ P::LowInput, P::MidInput, P::HighInput },
+		{ P::LowWidth, P::MidWidth, P::HighWidth },
+		{ P::LowAttack, P::MidAttack, P::HighAttack },
+		{ P::LowRelease, P::MidRelease, P::HighRelease },
+	};
+	return kTable[std::min(row, kTableRows - 1)][std::min<size_t>(band, 2)];
+}
+
+const char* OwlttGraph::tableCaption(size_t row) {
+	static constexpr const char* kCaptions[kTableRows] = { "IN", "WIDTH", "ATK", "REL" };
+	return kCaptions[std::min(row, kTableRows - 1)];
+}
+
+visage::Bounds OwlttGraph::tableCell(size_t row, size_t band) const {
+	// THE COLUMNS ARE THE BANDS: a cell is centred in its band's span (the first band's starts after the captions' gutter) and
+	// a narrow band narrows its cell down to a floor; cells never overlap - one that would is pushed right of the last.
+	const visage::Bounds t = tableArea();
+	const float lows[3] = { t.x() + kTableGutter, bandEdge(0), bandEdge(1) };
+	const float highs[3] = { bandEdge(0), bandEdge(1), t.right() };
+	constexpr float kCellMax = 96.0f;
+	constexpr float kCellMin = 46.0f;
+	constexpr float kCellGap = 4.0f;
+	float previousRight = t.x() + kTableGutter - kCellGap;
+	visage::Bounds out {};
+	for (size_t b = 0; b <= std::min<size_t>(band, 2); ++b) {
+		const float span = std::max(0.0f, highs[b] - lows[b]);
+		const float w = std::clamp(span - 8.0f, kCellMin, kCellMax);
+		float x = lows[b] + (span - w) * 0.5f;
+		x = std::max(x, previousRight + kCellGap);
+		x = std::min(x, std::max(previousRight + kCellGap, t.right() - 2.0f - w));
+		out = { x, t.y() + kTablePad + static_cast<float>(row) * kTableRowHeight, w, kTableRowHeight - 2.0f };
+		previousRight = x + w;
+	}
+	return out;
+}
+
+void OwlttGraph::layoutTable() {
+	if (!editor_) {
+		return;
+	}
+	for (size_t row = 0; row < kTableRows; ++row) {
+		for (size_t band = 0; band < 3; ++band) {
+			if (cells_[row][band] != nullptr) {
+				const visage::Bounds c = tableCell(row, band);
+				cells_[row][band]->setBounds(c.x(), c.y(), c.width(), c.height());
+			}
+		}
+	}
+	tableEdges_ = { bandEdge(0), bandEdge(1) };
+}
+
+void OwlttGraph::resized() {
+	layoutTable();
+}
+
+void OwlttGraph::setEditor(bool on) {
+	if (editor_ == on) {
+		return;
+	}
+	editor_ = on;
+	rail_ = on || rail_;
+	if (on) {
+		for (size_t row = 0; row < kTableRows; ++row) {
+			for (size_t band = 0; band < 3; ++band) {
+				DeviceControl* ctrl = &control(static_cast<size_t>(tableParam(row, band)));
+				auto box = std::make_unique<ValueBox>(*ctrl, "");
+				box->setCompact(true);
+				if (row >= 2) {
+					// THE OFFSETS READ SIGNED FROM THEIR CENTRE through the device's own words (`kTextOps`): the box prints the
+					// declared unit unless it is told otherwise.
+					box->setReadoutFormatter([ctrl](double v) { return ctrl->textAt(v); });
+				}
+				addChild(box.get());
+				cells_[row][band] = std::move(box);
+			}
+		}
+		layoutTable();
+	}
+	redraw();
 }
 
 ModHandle& OwlttGraph::crossoverMod(size_t which) const {
@@ -846,32 +993,29 @@ visage::Point OwlttGraph::crossoverHandle(size_t which) const {
 	return { x, r.y() + r.height() * 0.5f };
 }
 
-bool OwlttGraph::isUpperHit(ThresholdHit hit) const {
-	return hit == ThresholdHit::kLowUpper || hit == ThresholdHit::kMidUpper ||
-	       hit == ThresholdHit::kHighUpper;
+bool OwlttGraph::isBandwidthHit(ThresholdHit hit) const {
+	return hit == ThresholdHit::kLowBandwidth || hit == ThresholdHit::kMidBandwidth ||
+	       hit == ThresholdHit::kHighBandwidth;
 }
 
 bool OwlttGraph::isThresholdHit(ThresholdHit hit) const {
-	return hit == ThresholdHit::kLowUpper || hit == ThresholdHit::kMidUpper ||
-	       hit == ThresholdHit::kHighUpper || hit == ThresholdHit::kLowLower ||
-	       hit == ThresholdHit::kMidLower || hit == ThresholdHit::kHighLower;
+	return hit == ThresholdHit::kLowThreshold || hit == ThresholdHit::kMidThreshold || hit == ThresholdHit::kHighThreshold;
 }
 
 OwlttGraph::ThresholdHit OwlttGraph::hitTestThreshold(visage::Point pos) const {
-	const visage::Bounds xover = plot();
-	if (!xover.contains(pos)) {
+	const visage::Bounds xover = barArea();
+	const visage::Bounds whole = plot();
+	// THE TABLE IS NOT THE PLOT'S: its boxes are children and take their own presses.
+	if (!whole.contains(pos) || (editor_ && tableArea().contains(pos))) {
 		return ThresholdHit::kNone;
 	}
 
-	// THE LANE FIRST, AND IT OWNS ITS BAND OUTRIGHT. Nothing else is drawn in it, so there is no
-	// ordering question of the kind that has cost this file three bugs — the crossovers do not
-	// out-rank the bars, the bars are simply not in this rectangle.
+	// THE LANE FIRST, AND IT OWNS ITS BAND OUTRIGHT. Nothing else is drawn in it, so there is no ordering question of
+	// the kind that has cost this file three bugs: the bars are simply not in this rectangle.
 	const visage::Bounds r = rail();
 	if (r.width() > 0.0f && r.contains(pos)) {
 		constexpr float kGrab = 10.0f;
-		// THE NEARER OF THE TWO, and only if it is near at all: a press in the lane far from both
-		// should move neither, rather than jumping the closest one across the spectrum. The rule is the shared
-		// handle's (`ModHandle::nearest`): the nearest CENTRE wins, within a grab radius of at least 8.
+		// THE NEARER OF THE TWO, within a grab radius (`ModHandle::nearest`).
 		const std::array<visage::Point, 2> centres { crossoverHandle(0), crossoverHandle(1) };
 		const size_t taken = ModHandle::nearest(centres, pos, kGrab);
 		if (taken != ModHandle::npos) {
@@ -885,11 +1029,18 @@ OwlttGraph::ThresholdHit OwlttGraph::hitTestThreshold(visage::Point pos) const {
 
 	constexpr float kBarHitHeight = 8.0f;
 
-	struct BandRegion { float x0, x1; ThresholdHit upper; ThresholdHit lower; ThresholdHit ratio; ThresholdHit level; };
+	struct BandRegion {
+		float x0, x1;
+		ThresholdHit bandwidth, threshold, ratio, level, down, up;
+	};
 	const std::array<BandRegion, 3> regions = {
-	    BandRegion{xover.x(), xLow, ThresholdHit::kLowUpper, ThresholdHit::kLowLower, ThresholdHit::kLowRatio, ThresholdHit::kLowLevel},
-	    BandRegion{xLow, xHigh, ThresholdHit::kMidUpper, ThresholdHit::kMidLower, ThresholdHit::kMidRatio, ThresholdHit::kMidLevel},
-	    BandRegion{xHigh, xover.right(), ThresholdHit::kHighUpper, ThresholdHit::kHighLower, ThresholdHit::kHighRatio, ThresholdHit::kHighLevel},
+	    BandRegion { xover.x(), xLow, ThresholdHit::kLowBandwidth, ThresholdHit::kLowThreshold, ThresholdHit::kLowRatio,
+	                 ThresholdHit::kLowLevel, ThresholdHit::kLowDownRatio, ThresholdHit::kLowUpRatio },
+	    BandRegion { xLow, xHigh, ThresholdHit::kMidBandwidth, ThresholdHit::kMidThreshold, ThresholdHit::kMidRatio,
+	                 ThresholdHit::kMidLevel, ThresholdHit::kMidDownRatio, ThresholdHit::kMidUpRatio },
+	    BandRegion { xHigh, xover.right(), ThresholdHit::kHighBandwidth, ThresholdHit::kHighThreshold,
+	                 ThresholdHit::kHighRatio, ThresholdHit::kHighLevel, ThresholdHit::kHighDownRatio,
+	                 ThresholdHit::kHighUpRatio },
 	};
 
 	for (const auto& region : regions) {
@@ -897,68 +1048,43 @@ OwlttGraph::ThresholdHit OwlttGraph::hitTestThreshold(visage::Point pos) const {
 			continue;
 		}
 
-		// THE STRIPS ARE ASKED FIRST, AND THAT IS THE WHOLE DECISION: the level slider's hit box sits
-		// on top of the threshold's.
-		//
-		// TWO THINGS OVERLAP HERE AND ONLY ONE OF THEM CAN LOSE GRACEFULLY. The bars span the band's
-		// full width; the strips are the right 30% of it and run the FULL HEIGHT. So wherever a bar
-		// crosses a strip the two want the same pixel, and with the bars asked first the strip had a
-		// dead band 16px tall cut across it — at exactly the height the threshold happens to sit,
-		// which is to say it MOVES as you use the thing, and lands on the strip's middle at the
-		// default. That is unusable in a way the reverse is not: the bar surrenders 30% of a wide
-		// target it keeps everywhere else, and the strip stops having a hole in it.
-		//
-		// THE GENERAL FORM, WHICH THIS FILE HAS NOW PAID FOR TWICE: overlapping grab regions cannot be
-		// ordered out of existence — one of them is always unreachable somewhere (harm_scope.cpp:400
-		// says the same thing about a notch and a shoulder). So the order is not a tie-break to be
-		// argued from geometry, it is a decision about WHICH CONTROL CAN AFFORD THE LOSS. The narrow
-		// one cannot.
+		// THE STRIPS ARE ASKED FIRST: they are the narrow control and cannot afford a hole cut across them by a bar. (The
+		// rule this file paid for twice - overlapping grab regions cannot be ordered away, one is always unreachable
+		// somewhere, so the order says which can afford the loss.)
 		const StripSpan strip = stripSpanOf(region.x0, region.x1);
 		if (pos.x >= strip.x0 && pos.x <= strip.x1) {
-			// Ratio on the left half of the strip, level on the right.
 			return pos.x < strip.mid ? region.ratio : region.level;
 		}
 
-		// The threshold bars, over the band's remaining width.
-		const size_t band = bandForHit(region.upper);
-		const owltt::EffectiveBand eff = effective(band);
-		const BarPair values = barValuesOf(eff.threshold, eff.bandwidth);
-		// THE BAR AREA — the fourth and last rectangle in this class that had to be told the lane
-		// exists. `ringCentre` puts a handle here, `draw` paints it here, the drag values it here,
-		// and this decides what a press means. Left as `plot()` it disagreed with the other three by
-		// exactly the lane's height: a threshold at the top of its sweep had its ring at y=20 and its
-		// hit band at y=0, so the control was drawn, visible, and unhittable at the end of its travel
-		// — which is the failure the lane was designed to prevent, reintroduced by the lane itself.
-		const visage::Bounds plotBars = barArea();
-		const float yUpper = thresholdToY(values.upper, plotBars);
-		const float yLower = thresholdToY(values.lower, plotBars);
+		const size_t band = bandForHit(region.threshold);
 
-		// KILO'S TIE-BREAK, KEPT — it answers a case the flat ordering could not.
-		//
-		// AT BANDWIDTH 0 BOTH BARS SIT AT ONE Y and no vertical test can separate them. The old
-		// comment here said "break tie at bandwidth 0 by giving the lower bar priority", which is a
-		// coin toss wearing a rule: the upper bar simply became unreachable at the one setting where
-		// a hand most wants to open the gap. Two sessions reordered this function independently on
-		// the same afternoon and only one of them noticed that; the rings are offset either side of
-		// centre and x decides.
-		//
-		// THE RING POSITIONS COME FROM `ringXsOf`, NOT FROM ARITHMETIC RESTATED HERE. They arrived
-		// written twice — once for this test and once for the drawing, identical, unconnected — which
-		// is the EIGHTH instance of that shape in this file this week and the third in this one
-		// function. The two copies had already been given different jobs; they had not yet been given
-		// different values.
+		// THE THUMBS NEXT (the window only): small and sitting just off their bars, they win over the bar's wide band
+		// where they overlap it.
+		if (editor_) {
+			constexpr float kThumbGrab = 8.0f;
+			const std::array<visage::Point, 2> thumbs { ringCentre(band, Handle::DownRatio),
+				                                        ringCentre(band, Handle::UpRatio) };
+			const size_t taken = ModHandle::nearest(thumbs, pos, kThumbGrab);
+			if (taken != ModHandle::npos) {
+				return taken == 0 ? region.down : region.up;
+			}
+		}
+
+		const BarYs ys = barYs(band);
 		const RingPair rings = ringXsOf(region.x0, region.x1);
-		const bool nearUpperY = std::abs(pos.y - yUpper) < kBarHitHeight;
-		const bool nearLowerY = std::abs(pos.y - yLower) < kBarHitHeight;
+		const bool nearThreshold = std::abs(pos.y - ys.threshold) < kBarHitHeight;
+		const bool nearBandwidth = std::abs(pos.y - ys.bandwidth) < kBarHitHeight;
 
-		if (nearUpperY && !nearLowerY) {
-			return region.upper;
+		if (nearThreshold && !nearBandwidth) {
+			return region.threshold;
 		}
-		if (nearLowerY && !nearUpperY) {
-			return region.lower;
+		if (nearBandwidth && !nearThreshold) {
+			return region.bandwidth;
 		}
-		if (nearUpperY && nearLowerY) {
-			return pos.x < (rings.upper + rings.lower) * 0.5f ? region.upper : region.lower;
+		if (nearThreshold && nearBandwidth) {
+			// THE BARS OVERLAP (a gap of zero, or a threshold at the floor): the left half takes the threshold and the right
+			// the bandwidth, which is where their rings sit.
+			return pos.x < (rings.threshold + rings.bandwidth) * 0.5f ? region.threshold : region.bandwidth;
 		}
 	}
 
@@ -1000,6 +1126,11 @@ OwlttGraph::Meters OwlttGraph::meters() const {
 }
 
 bool OwlttGraph::update() {
+	// THE TABLE FOLLOWS THE CROSSOVERS: its columns are the bands, which move with a drag, a route or a tracked note.
+	if (editor_ && (bandEdge(0) != tableEdges_[0] || bandEdge(1) != tableEdges_[1])) {
+		layoutTable();
+		redraw();
+	}
 	const Meters now = meters();
 	// FIELD BY FIELD, and the clip bit with them. A memcmp would be tempting and wrong: the struct
 	// has padding after the bool, and padding is not required to hold any particular value.
@@ -1036,6 +1167,20 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 	canvas.segment(xLow, whole.y(), xLow, whole.bottom(), 1.0f, true);
 	canvas.segment(xHigh, whole.y(), xHigh, whole.bottom(), 1.0f, true);
 
+	// THE TABLE UNDER THE BARS: a rule above it, the row captions once at the left, and each band's column heading it by
+	// the crossover lines already drawn. The boxes are children and paint themselves.
+	if (editor_) {
+		const visage::Bounds t = tableArea();
+		canvas.setColor(withAlpha(kLine, 0.6f));
+		canvas.fill(t.x(), t.y(), t.width(), 1.0f);
+		canvas.setColor(withAlpha(kMuted, 0.85f));
+		for (size_t row = 0; row < kTableRows; ++row) {
+			canvas.text(tableCaption(row), font(kKnobLabelSize), visage::Font::kLeft, t.x() + 7.0f,
+			            t.y() + kTablePad + static_cast<float>(row) * kTableRowHeight, kTableGutter - 7.0f,
+			            kTableRowHeight - 2.0f);
+		}
+	}
+
 	// THE CROSSOVER FREQUENCIES, ON THE LINES THEY BELONG TO AND ALWAYS VISIBLE. They were shown
 	// nowhere. A multiband compressor is DEFINED by where it splits, and that
 	// number was on no surface: the knobs print a bare `%.2f` through `device::Unit::Number` and the
@@ -1044,13 +1189,6 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 	// INBOARD OF THE LINE, on the side with room, so a label near either edge of the plot stays on the
 	// picture rather than being clipped by it.
 	// PLACED BY `bottomText`, clear of the channel letters and of each other.
-	const BottomText bottom = bottomText();
-	for (size_t which = 0; which < 2; ++which) {
-		const visage::Bounds label = bottom.frequency[which];
-		canvas.setColor(withAlpha(kMuted, 0.85f));
-		canvas.text(bottom.frequencyText[which], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f,
-		            label.y(), label.width() + 4.0f, label.height());
-	}
 
 	// THE CROSSOVER LANE AND ITS TWO HANDLES, when this graph offers them. Drawn against the WHOLE
 	// plot because the lane is the strip the bars were pushed out of.
@@ -1070,7 +1208,29 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			ringOutlineAt(canvas, c.x, c.y, OwlttGraph::kRingRadius, 1.5f);
 			crossoverMod(which).drawOver(canvas, c.x, c.y, OwlttGraph::kRingRadius);
 		}
+		if (editor_) {
+			// THE COLOUR KEY for the bars and thumbs: orange is the downward compressor, blue the upward.
+			float x = r.x() + 8.0f;
+			for (const auto& [text, colour] : { std::pair<const char*, uint32_t> { "DOWN", kValue },
+				                                 std::pair<const char*, uint32_t> { "UP", kAccent } }) {
+				const float w = std::max(14.0f, 6.5f * static_cast<float>(std::strlen(text)));
+				canvas.setColor(colour);
+				canvas.fill(x, r.y() + 5.0f, 5.0f, 5.0f);
+				canvas.setColor(withAlpha(kMuted, 0.9f));
+				canvas.text(text, font(kKnobLabelSize), visage::Font::kLeft, x + 8.0f, r.y(), w, r.height());
+				x += w + 14.0f;
+			}
+		}
 	}
+	// THE CROSSOVER READOUTS, LAST OF THE LANE'S PAINT: drawn before the lane's fill they were veiled by it.
+	const BottomText bottom = bottomText();
+	for (size_t which = 0; which < 2; ++which) {
+		const visage::Bounds label = bottom.frequency[which];
+		canvas.setColor(withAlpha(kMuted, 0.85f));
+		canvas.text(bottom.frequencyText[which], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f,
+		            label.y(), label.width() + 4.0f, label.height());
+	}
+
 	// PER-BAND GRAPH CONTROLS — threshold bars, GR meters, level strips.
 	{
 		const Meters meters = this->meters();
@@ -1099,43 +1259,24 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			// threshold while `ringCentre` and the hit test read the EFFECTIVE one, so the handles
 			// followed the global and the lines under them did not.
 			const BarYs ys = barYs(b);
-			const float yLower = ys.lower;
-			const float yUpper = ys.upper;
+			// THE UPPER LINE IS THE DOWN THRESHOLD (orange): downward compression acts above it. THE LOWER IS THE UP THRESHOLD
+			// (blue): upward compression acts below it. Between them the band is left alone.
+			const float yDown = ys.threshold;
+			const float yUp = ys.bandwidth;
 
-			// DRAW the dead zone (region between bars) — tinted background.
-			canvas.setColor(withAlpha(kAccent, 0.08f));
-			canvas.rectangle(region.x0, yUpper, regionW, yLower - yUpper);
+			canvas.setColor(withAlpha(kValue, 0.07f));
+			canvas.rectangle(region.x0, xover.y(), regionW, std::max(0.0f, yDown - xover.y()));
+			canvas.setColor(withAlpha(kAccent, 0.07f));
+			canvas.rectangle(region.x0, yUp, regionW, std::max(0.0f, xover.bottom() - yUp));
 
-			// DRAW threshold bars — horizontal lines spanning the band.
+			canvas.setColor(kValue);
+			canvas.segment(region.x0, yDown, region.x1, yDown, 2.5f, true);
 			canvas.setColor(kAccent);
-			canvas.segment(region.x0, yUpper, region.x1, yUpper, 3.0f, true);
-			canvas.segment(region.x0, yLower, region.x1, yLower, 3.0f, true);
+			canvas.segment(region.x0, yUp, region.x1, yUp, 2.5f, true);
 
-			// HANDLE RINGS on the threshold bars — small handle circles on the things they move.
-			// A handle ON the thing it moves beats a handle NEAR it (HARM's measured result).
-			// OFFSET LEFT/RIGHT so in the degenerate case where bandwidth=0 and both bars are at the
-			// same y value, you can still grab them separately.
-			// FROM `ringXsOf`, the same call the hit test makes. These were five lines of arithmetic
-			// here and four more in `hitTestThreshold`, computing one pair of positions twice — so a
-			// ring could be moved on screen without moving where it can be grabbed, which is the
-			// failure this card shipped twice already with the strips.
-			// FROM `ringCentre`, which the cases ask too — so a ring cannot be drawn anywhere a press
-			// at its centre does not reach. The positions used to be computed here and again in
-			// `hitTestThreshold`, and the rings were held inside the box in neither.
-			// THE ROUTED REACH ON A BAR — a translucent band of the modulation colour across the region,
-			// from the bar to where the armed source can push it (`reachOf`). Drawn under the rings.
-			for (const Handle h : { Handle::UpperBar, Handle::LowerBar }) {
-				const visage::Bounds reach = reachOf(b, h);
-				if (reach.height() > 0.0f) {
-					canvas.setColor(withAlpha(kModulation, 0.35f));
-					canvas.rectangle(reach.x(), reach.y(), reach.width(), reach.height());
-				}
-			}
-			const visage::Point cUpper = ringCentre(b, Handle::UpperBar);
-			const visage::Point cLower = ringCentre(b, Handle::LowerBar);
-			// A HANDLE THE ARMED SOURCE MAY REACH WEARS THE MODULATION COLOUR AND A HALO — the knob's face
-			// glow in this picture's terms (`lookOf`, the same answer the cases read); otherwise the
-			// bar's own colour. HARM's grips do the same (`harm_scope.cpp`).
+			// A HANDLE THE ARMED SOURCE MAY REACH WEARS THE MODULATION COLOUR AND A HALO — the knob's face glow in this
+			// picture's terms (`lookOf`, the same answer the cases read). The strips use it; the bars and thumbs go through
+			// their `ModHandle`, which draws the halo, the amount stroke and the live dot itself.
 			const auto handleRing = [&](const visage::Point& c, Handle h, uint32_t restColour) {
 				const bool lit = lookOf(b, h).lit;
 				if (lit) {
@@ -1147,8 +1288,45 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 				canvas.setColor(lit ? kModulation : restColour);
 				ringOutlineAt(canvas, c.x, c.y, OwlttGraph::kRingRadius, 1.5f);
 			};
-			handleRing(cUpper, Handle::UpperBar, kAccent);
-			handleRing(cLower, Handle::LowerBar, kAccent);
+			const auto modRing = [&](Handle h, uint32_t colour) {
+				const visage::Point c = ringCentre(b, h);
+				bandMod(b, h).drawUnder(canvas, c.x, c.y, OwlttGraph::kRingRadius);
+				canvas.setColor(kSurface);
+				ringAt(canvas, c.x, c.y, OwlttGraph::kRingRadius);
+				canvas.setColor(colour);
+				ringOutlineAt(canvas, c.x, c.y, OwlttGraph::kRingRadius, 1.5f);
+				bandMod(b, h).drawOver(canvas, c.x, c.y, OwlttGraph::kRingRadius);
+			};
+			// THE RATIO THUMBS: a triangle pointing at its bar from outside the band between the bars, sliding along the
+			// ratio track. Orange above the threshold bar (the downward ratio), blue below the bandwidth bar (the upward).
+			const auto drawThumbs = [&]() {
+				const std::array<std::pair<Handle, uint32_t>, 2> thumbs { std::pair { Handle::DownRatio, kValue },
+					                                                    std::pair { Handle::UpRatio, kAccent } };
+				const Track track = ratioTrack(b);
+				canvas.setColor(withAlpha(kLine, 0.7f));
+				for (const auto& [h, colour] : thumbs) {
+					const visage::Point c = ringCentre(b, h);
+					canvas.fill(track.x0, c.y, track.x1 - track.x0, 1.0f);
+					(void)colour;
+				}
+				for (const auto& [h, colour] : thumbs) {
+					const visage::Point c = ringCentre(b, h);
+					const bool down = h == Handle::DownRatio;
+					bandMod(b, h).drawUnder(canvas, c.x, c.y, kThumbHalf);
+					const float tip = down ? c.y + 5.0f : c.y - 5.0f;
+					const float base = down ? c.y - 4.0f : c.y + 4.0f;
+					canvas.setColor(kSurface);
+					canvas.triangle(c.x - kThumbHalf - 1.5f, base - (down ? 1.5f : -1.5f), c.x + kThumbHalf + 1.5f,
+					                base - (down ? 1.5f : -1.5f), c.x, tip + (down ? 1.5f : -1.5f));
+					canvas.setColor(colour);
+					canvas.triangle(c.x - kThumbHalf, base, c.x + kThumbHalf, base, c.x, tip);
+					bandMod(b, h).drawOver(canvas, c.x, c.y, kThumbHalf);
+				}
+			};
+			if (!editor_) {
+				modRing(Handle::ThresholdBar, kValue);
+				modRing(Handle::BandwidthBar, kAccent);
+			}
 
 			// DRAW GR meter — narrowed to central third of band.
 			const float grX0 = region.x0 + regionW * 0.33f;
@@ -1216,14 +1394,16 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			// level bars could not be found. The modulation colour now means one thing on this picture.
 			canvas.setColor(withAlpha(kSurface, 0.3f));
 			canvas.rectangle(stripX0, xover.y(), stripX1 - stripX0, xover.height());
-			canvas.setColor(withAlpha(kAccent, 0.85f));
+			// THE STRIPS ARE NOT BLUE OR ORANGE: those two colours mean upward and downward on this plot (the bars and
+			// the thumbs), and the base ratio and the level belong to neither.
+			canvas.setColor(withAlpha(tokens::kGammaAxis, 0.6f));
 			const float ratioH = ratio * xover.height();
 			canvas.rectangle(stripX0, xover.bottom() - ratioH, stripX1 - stripX0, ratioH);
 
 			// Level strip (right).
 			canvas.setColor(withAlpha(kSurface, 0.3f));
 			canvas.rectangle(stripX1, xover.y(), stripX2 - stripX1, xover.height());
-			canvas.setColor(kValue);
+			canvas.setColor(withAlpha(kMuted, 0.55f));
 			const float levelStripH = level * xover.height();
 			canvas.rectangle(stripX1, xover.bottom() - levelStripH, stripX2 - stripX1, levelStripH);
 
@@ -1238,8 +1418,24 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 
 			// HANDLE RINGS on the ratio and level strips — sitting on the value they represent, lit
 			// with the halo while the armed source may reach them (see the bars above).
-			handleRing(ringCentre(b, Handle::RatioStrip), Handle::RatioStrip, kAccent);
-			handleRing(ringCentre(b, Handle::LevelStrip), Handle::LevelStrip, kValue);
+			handleRing(ringCentre(b, Handle::RatioStrip), Handle::RatioStrip, tokens::kGammaAxis);
+			handleRing(ringCentre(b, Handle::LevelStrip), Handle::LevelStrip, kMuted);
+
+			if (editor_) {
+				// THE STRIPS' CAPTIONS, once per band, at the top of each strip.
+				canvas.setColor(withAlpha(kMuted, 0.9f));
+				canvas.text("RATIO", font(kKnobLabelSize), visage::Font::kCenter, stripX0 - 4.0f, xover.y() + 2.0f,
+				            stripX1 - stripX0 + 8.0f, 10.0f);
+				canvas.text("LEVEL", font(kKnobLabelSize), visage::Font::kCenter, stripX1 - 4.0f, xover.y() + 2.0f,
+				            stripX2 - stripX1 + 8.0f, 10.0f);
+			}
+
+			if (editor_) {
+				// THE RING AND THUMB HANDLES LAST, over the meter and the strips, so nothing darkens them.
+				modRing(Handle::ThresholdBar, kValue);
+				modRing(Handle::BandwidthBar, kAccent);
+				drawThumbs();
+			}
 
 			// Center line.
 			canvas.setColor(withAlpha(kLine, 0.4f));
@@ -1330,14 +1526,14 @@ const char* OwlttGraph::tooltipAt(visage::Point pos) const {
 	// PER-BAND TOOLTIPS — the threshold bars are NOT params, so their text lives here, beside the
 	// hit test that resolves them. The strips ARE params (LowRatio, LowLevel, etc.), so their text
 	// comes from ParamDesc.
-	case ThresholdHit::kLowUpper:
-	case ThresholdHit::kMidUpper:
-	case ThresholdHit::kHighUpper:
+	case ThresholdHit::kLowBandwidth:
+	case ThresholdHit::kMidBandwidth:
+	case ThresholdHit::kHighBandwidth:
 		// THE UPPER BAR IS THRESHOLD + 0.6*BANDWIDTH — it widens the compressed band upward.
 		return "Upward compression threshold — quiet signals below this are amplified";
-	case ThresholdHit::kLowLower:
-	case ThresholdHit::kMidLower:
-	case ThresholdHit::kHighLower:
+	case ThresholdHit::kLowThreshold:
+	case ThresholdHit::kMidThreshold:
+	case ThresholdHit::kHighThreshold:
 		// THE LOWER BAR IS THE THRESHOLD ITSELF — loud signals above this are compressed.
 		return "Downward compression threshold — loud signals above this are attenuated";
 	case ThresholdHit::kLowRatio:
@@ -1352,6 +1548,19 @@ const char* OwlttGraph::tooltipAt(visage::Point pos) const {
 		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::MidLevel)].tooltip;
 	case ThresholdHit::kHighLevel:
 		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::HighLevel)].tooltip;
+	// THE THUMBS' TEXT IS THEIR PARAMETERS' OWN.
+	case ThresholdHit::kLowDownRatio:
+		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::LowDownRatio)].tooltip;
+	case ThresholdHit::kMidDownRatio:
+		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::MidDownRatio)].tooltip;
+	case ThresholdHit::kHighDownRatio:
+		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::HighDownRatio)].tooltip;
+	case ThresholdHit::kLowUpRatio:
+		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::LowUpRatio)].tooltip;
+	case ThresholdHit::kMidUpRatio:
+		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::MidUpRatio)].tooltip;
+	case ThresholdHit::kHighUpRatio:
+		return owltt::kParamDescs[static_cast<size_t>(owltt::Param::HighUpRatio)].tooltip;
 	}
 	return nullptr;
 }
@@ -1365,6 +1574,15 @@ void OwlttGraph::offeredControls(std::vector<Offered>& out) const {
 	                              owltt::Param::MidRatio, owltt::Param::MidLevel, owltt::Param::HighThreshold,
 	                              owltt::Param::HighBandwidth, owltt::Param::HighRatio, owltt::Param::HighLevel }) {
 		out.push_back({ &control(static_cast<size_t>(p)), Road::Gesture });
+	}
+	// THE WINDOW'S THUMBS offer the six ratio trims; the card draws none, so it offers none. (The table's boxes are
+	// children and declare themselves.)
+	if (editor_) {
+		for (const owltt::Param p : { owltt::Param::LowUpRatio, owltt::Param::LowDownRatio, owltt::Param::MidUpRatio,
+		                              owltt::Param::MidDownRatio, owltt::Param::HighUpRatio,
+		                              owltt::Param::HighDownRatio }) {
+			out.push_back({ &control(static_cast<size_t>(p)), Road::Gesture });
+		}
 	}
 }
 

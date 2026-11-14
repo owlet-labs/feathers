@@ -1348,6 +1348,21 @@ TEST_CASE("every descriptor sits at its own Param's index, named") {
 		{ Param::Drive, "Drive" }, // backlog NB, appended 2026-10-17
 		{ Param::Lookahead, "Lookahead" }, // backlog ND, appended 2026-10-18
 		{ Param::KeyTrack, "OWLTT Key Track" }, // Key Track, appended 2026-10-28
+		{ Param::LowUpRatio, "Low Up Ratio" }, // per-band rebuild, appended
+		{ Param::LowDownRatio, "Low Down Ratio" }, // per-band rebuild, appended
+		{ Param::MidUpRatio, "Mid Up Ratio" }, // per-band rebuild, appended
+		{ Param::MidDownRatio, "Mid Down Ratio" }, // per-band rebuild, appended
+		{ Param::HighUpRatio, "High Up Ratio" }, // per-band rebuild, appended
+		{ Param::HighDownRatio, "High Down Ratio" }, // per-band rebuild, appended
+		{ Param::LowAttack, "Low Attack" },
+		{ Param::LowRelease, "Low Release" },
+		{ Param::MidAttack, "Mid Attack" },
+		{ Param::MidRelease, "Mid Release" },
+		{ Param::HighAttack, "High Attack" },
+		{ Param::HighRelease, "High Release" },
+		{ Param::LowInput, "Low Input" },
+		{ Param::MidInput, "Mid Input" },
+		{ Param::HighInput, "High Input" },
 	};
 	// THE COUNT IS PART OF THE CLAIM, or a list that lost an entry would pass by checking fewer.
 	CHECK(std::size(kExpected) == static_cast<size_t>(Param::kCount));

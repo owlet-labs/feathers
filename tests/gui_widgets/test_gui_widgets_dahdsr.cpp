@@ -13515,8 +13515,8 @@ TEST_CASE("hardening: OWLTT's graph repaints for a hover only when a tooltip app
 		graph->onMouseMove().callback(e);
 	};
 	// A BAR, asked of the graph: where a tooltip is.
-	const visage::Point bar { graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).x,
-		                      graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y };
+	const visage::Point bar { graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).x,
+		                      graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y };
 	// AND A POINT WITH NOTHING UNDER IT: found by looking, so the case cannot hover a tooltip by accident.
 	visage::Point bare { -1.0f, -1.0f };
 	bool found = false;
@@ -13610,8 +13610,8 @@ TEST_CASE("a bar drag on OWLTT's graph moves the control it is on") {
 	// case that asks it aims where a hand aims and cannot drift when the geometry moves again. A test
 	// that restates a layout is the same defect as code that does — this file has now paid for that
 	// twice in the same three cases.
-	const visage::Point on { card->graph()->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).x,
-		                     card->graph()->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y };
+	const visage::Point on { card->graph()->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).x,
+		                     card->graph()->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y };
 
 	card->graph()->onMouseDown().callback(at(on.x, on.y));
 	card->graph()->onMouseDrag().callback(at(on.x, on.y - 20.0f));
@@ -13640,7 +13640,7 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 	ui::ModState* mod = f.gui.modForTest();
 	REQUIRE(mod != nullptr);
 	using Handle = ui::OwlttGraph::Handle;
-	constexpr std::array<Handle, 4> kHandles { Handle::UpperBar, Handle::LowerBar, Handle::RatioStrip, Handle::LevelStrip };
+	constexpr std::array<Handle, 4> kHandles { Handle::BandwidthBar, Handle::ThresholdBar, Handle::RatioStrip, Handle::LevelStrip };
 
 	const backplane::Source macro = backplane::Source::core(0);
 	const DeviceInstanceId owltt = f.bridge.fxDeviceAt(1);
@@ -13733,18 +13733,25 @@ TEST_CASE("OWLTT's graph handles light for the armed source and draw the routed 
 	SUBCASE("a route at the threshold bar draws its reach across the band, from the bar") {
 		constexpr float kAmount = 0.1f;
 		f.bridge.setRouteAmount(macro, lowThreshold, kAmount);
-		const visage::Point onBar = graph->ringCentre(0, Handle::LowerBar);
-		const visage::Bounds reach = graph->reachOf(0, Handle::LowerBar);
-		REQUIRE(reach.height() > 0.0f);
-		// THE BAND'S WIDTH, not a strip's: a bar spans its band, so its reach does too — from the plot's
-		// left edge to the low crossover line.
-		CHECK(reach.x() == doctest::Approx(graph->plot().x()).epsilon(0.01));
-		CHECK(reach.right() == doctest::Approx(graph->bandEdge(0)).epsilon(0.01));
-		// FROM THE BAR UPWARD — the threshold sweeps 0.2..1.0 over the box, so 0.1 of amount is an eighth
-		// of the bar area's height, and the ring sits on the bar (allowing `ringYInside`'s clamp).
-		CHECK(reach.bottom() == doctest::Approx(onBar.y).epsilon(0.05));
-		// AND THE UPPER BAR — the bandwidth's — is untouched by a threshold route.
-		CHECK(graph->reachOf(0, Handle::UpperBar).height() == 0.0f);
+		// A BAR IS A `ModHandle`: its route is the handle's own amount stroke and live dot, not a rectangle (`reachOf` is the
+		// strips' alone). The plan is read by value: the stroke runs from the bar's height at the stored threshold to its
+		// height at the threshold plus the amount, both through the plot's 0..1 vertical mapping, restated here.
+		CHECK(graph->reachOf(0, Handle::ThresholdBar).height() == 0.0f);
+		const visage::Bounds area = graph->barArea();
+		const float stored = f.bridge.fxChain().device[1].row.field[static_cast<size_t>(fx::owltt::Param::LowThreshold)];
+		const auto yOf = [&](float v) { return area.bottom() - v * area.height(); };
+		const ui::ModHandlePlan plan = graph->bandModPlan(0, Handle::ThresholdBar);
+		REQUIRE(plan.axes.size() == 1u);
+		CHECK(plan.axes[0].offered);
+		REQUIRE(plan.axes[0].hasStroke);
+		CHECK(plan.axes[0].strokeHi == doctest::Approx(yOf(stored)).epsilon(0.001));
+		CHECK(plan.axes[0].strokeLo == doctest::Approx(yOf(stored + kAmount)).epsilon(0.001));
+		CHECK(plan.axes[0].base == doctest::Approx(yOf(stored)).epsilon(0.001));
+		// AND THE BANDWIDTH BAR, which a threshold route does not touch, draws no stroke.
+		CHECK(graph->reachOf(0, Handle::BandwidthBar).height() == 0.0f);
+		const ui::ModHandlePlan other = graph->bandModPlan(0, Handle::BandwidthBar);
+		REQUIRE(other.axes.size() == 1u);
+		CHECK_FALSE(other.axes[0].hasStroke);
 	}
 }
 
@@ -13919,7 +13926,7 @@ TEST_CASE("OWLTT's strips win the pixels they share with a threshold bar") {
 	const float x = box.x() + bandW * 0.92f;
 	// THE BAR'S OWN HEIGHT, asked of the card. See the note in the bar-drag case above: this used to
 	// be `bottom - value * height`, which is the STRIP's mapping and not a threshold's.
-	const float barY = card->graph()->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y;
+	const float barY = card->graph()->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y;
 
 	const float endY = barY - 20.0f;
 	card->graph()->onMouseDown().callback(at(x, barY));
@@ -13948,8 +13955,9 @@ TEST_CASE("OWLTT's strips win the pixels they share with a threshold bar") {
 		// handler produced 0.933 -- a wrong number that is close enough to look like a rounding
 		// argument, which is the exact reason the reference has to be the intended path rather than
 		// a plausible one.
-		const float t = std::clamp((box.bottom() - (barY - 20.0f)) / box.height(), 0.0f, 1.0f);
-		const float wanted = 0.2f + t * 0.8f;
+		// (SINCE THE PER-BAND REBUILD a threshold is its own 0..1 over the box too: the plot reads the parameter, not the
+		// compressor's internal 0.2 + 0.8 t, so the mapping the paragraph above warns about is the strip's again.)
+		const float wanted = std::clamp((box.bottom() - (barY - 20.0f)) / box.height(), 0.0f, 1.0f);
 		CHECK(f.bridge.fxChain().device[1].row.field[threshIdx] == doctest::Approx(wanted));
 	}
 }
@@ -13984,7 +13992,7 @@ TEST_CASE("OWLTT's graph bars reset on a double-click") {
 	const visage::Bounds box = card->graph()->plot();
 	const float lowEdge = card->graph()->bandEdge(0);
 	const float x = box.x() + (lowEdge - box.x()) * 0.5f;
-	const float barY = card->graph()->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y;
+	const float barY = card->graph()->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y;
 
 	card->graph()->onMouseDown().callback(at(x, barY));
 	card->graph()->onMouseDrag().callback(at(x, barY - 25.0f));
@@ -13999,7 +14007,7 @@ TEST_CASE("OWLTT's graph bars reset on a double-click") {
 	// asked of the card a SECOND time, because the bar moved and its position is a function of the
 	// value, not a number this case may carry forward. Recomputing it here from `moved` is what it
 	// used to do, with the strip's mapping, and it aimed 20px off the bar in a 160px box.
-	const float movedY = card->graph()->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y;
+	const float movedY = card->graph()->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y;
 	card->graph()->onMouseDown().callback(doubleClickAt(x, movedY));
 
 	CHECK(f.bridge.fxChain().device[1].row.field[idx] == doctest::Approx(def));
@@ -15449,8 +15457,8 @@ TEST_CASE("every OWLTT handle ring is inside the graph and grabs its own control
 	// THE CONTROL EACH RING CLAIMS TO MOVE. The upper bar sizes the gap and the lower carries the
 	// threshold -- the sign the DSP states, `thresholdUp = thresholdDown + 0.6 * bandwidth`.
 	const std::array<Probe, 4> probes { {
-	    { Handle::UpperBar, fx::owltt::Param::LowBandwidth, "upper bar" },
-	    { Handle::LowerBar, fx::owltt::Param::LowThreshold, "lower bar" },
+	    { Handle::BandwidthBar, fx::owltt::Param::LowBandwidth, "upper bar" },
+	    { Handle::ThresholdBar, fx::owltt::Param::LowThreshold, "lower bar" },
 	    { Handle::RatioStrip, fx::owltt::Param::LowRatio, "ratio strip" },
 	    { Handle::LevelStrip, fx::owltt::Param::LowLevel, "level strip" },
 	} };
@@ -15544,11 +15552,20 @@ TEST_CASE("OWLTT's panel fits the editor it opens over") {
 	// EVERY CELL, NOT EVERY KNOB. Two of the twelve are `ZoneCoordBox`es now, and a walk over
 	// `knobs_` would have quietly stopped checking them — the case would still pass, on ten.
 	const auto& knobs = panel.cellsForTest();
-	REQUIRE(knobs.size() == ui::OwlttExpanded::kPanelKnobCount);
+	// THE GLOBAL ROW'S NINE BOXES AND THE TWO TONE CELLS, every one inside the extent.
+	REQUIRE(knobs.size() == ui::OwlttExpanded::globalParams().size() + 2);
 	for (size_t i = 0; i < knobs.size(); ++i) {
 		CAPTURE(i);
 		CHECK(knobs[i]->bounds().bottom() <= want.y);
 		CHECK(knobs[i]->bounds().right() <= want.x);
+	}
+	// AND THE PLOT, THE TWO FADERS AND THE TOP ROW's CONTROLS.
+	for (const visage::Bounds& b : { panel.graphBounds(), panel.driveBounds(), panel.outputBounds(), panel.modeBounds(),
+	                                 panel.clipBounds(), panel.lookaheadBounds(), panel.keyTrackBounds(),
+	                                 panel.stereoBounds() }) {
+		CHECK(b.bottom() <= want.y);
+		CHECK(b.right() <= want.x);
+		CHECK(b.x() >= 0.0f);
 	}
 }
 
@@ -15751,10 +15768,11 @@ TEST_CASE("the panel offers no knob for anything the graph already holds") {
 		onGraph.insert(static_cast<size_t>(p));
 	}
 
-	for (const auto& knob : panel.knobsForTest()) {
-		REQUIRE(knob != nullptr);
-		CAPTURE(std::string(knob->label()));
-		CHECK(onGraph.count(static_cast<size_t>(panel.paramOfKnobForTest(knob.get()))) == 0);
+	// THE GLOBAL ROW'S BOXES: none of them is a control the plot addresses.
+	for (const auto& box : panel.globalBoxesForTest()) {
+		REQUIRE(box != nullptr);
+		CAPTURE(box->label());
+		CHECK(onGraph.count(static_cast<size_t>(panel.paramOfGlobalForTest(box.get()))) == 0);
 	}
 
 	// AND THE TWELVE ARE STILL REACHED, through the picture. Removing a duplicate must not remove a
@@ -15803,7 +15821,7 @@ TEST_CASE("a press through the real tree reaches OWLTT's graph") {
 		auto* g = d->graph();
 		REQUIRE(g != nullptr);
 		const visage::Point p =
-		    g->positionInWindow() + g->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+		    g->positionInWindow() + g->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 		CHECK(f.root->frameAtPoint(p - f.root->positionInWindow())
 		      == static_cast<visage::Frame*>(g));
 	}
@@ -15823,7 +15841,7 @@ TEST_CASE("a press through the real tree reaches OWLTT's graph") {
 
 	// THE QUESTION THE HANDLER CANNOT ANSWER: what does the tree say is at this pixel? Asked of the
 	// ROOT, at the graph's real place in the window, which is what a hand does.
-	const visage::Point inGraph = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+	const visage::Point inGraph = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 	const visage::Point inWindow = graph->positionInWindow() + inGraph;
 	visage::Frame* landed = f.root->frameAtPoint(inWindow - f.root->positionInWindow());
 	CHECK(landed == static_cast<visage::Frame*>(graph));
@@ -15855,7 +15873,7 @@ TEST_CASE("a press through the real tree reaches the panel's graph") {
 	REQUIRE(graph != nullptr);
 	REQUIRE(graph->width() > 0.0f);
 
-	const visage::Point inGraph = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+	const visage::Point inGraph = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 	const visage::Point inWindow = graph->positionInWindow() + inGraph;
 	visage::Frame* landed = f.root->frameAtPoint(inWindow - f.root->positionInWindow());
 	CHECK(landed == static_cast<visage::Frame*>(graph));
@@ -15940,7 +15958,7 @@ TEST_CASE("the crossover lane does not steal a bar's pixels") {
 
 	f.bridge.setDeviceControl(f.bridge.fxDeviceAt(1), static_cast<size_t>(fx::owltt::Param::LowThreshold), 1.0f);
 
-	const visage::Point bar = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+	const visage::Point bar = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 	// CLEAR OF THE LANE at the very top of its travel.
 	CHECK(bar.y >= graph->rail().bottom());
 
@@ -15984,7 +16002,7 @@ TEST_CASE("OWLTT's bars drag in the state the editor opens in") {
 
 	// AND THE DEFAULT BAR ANSWERS A PRESS ROUTED THROUGH THE TREE.
 	const visage::Point p =
-	    graph->positionInWindow() + graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+	    graph->positionInWindow() + graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 	CHECK(f.root->frameAtPoint(p - f.root->positionInWindow())
 	      == static_cast<visage::Frame*>(graph));
 
@@ -16049,11 +16067,11 @@ TEST_CASE("the graph shows the threshold the device is using, not the one the ba
 	auto* graph = card->graph();
 	REQUIRE(graph != nullptr);
 
-	const float atNeutral = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y;
+	const float atNeutral = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y;
 
 	// MOVE THE GLOBAL ALONE. Not one per-band control is touched.
 	f.bridge.setDeviceControl(f.bridge.fxDeviceAt(1), static_cast<size_t>(fx::owltt::Param::Threshold), 0.8f);
-	const float raised = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y;
+	const float raised = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y;
 
 	CAPTURE(atNeutral);
 	CAPTURE(raised);
@@ -16089,7 +16107,7 @@ TEST_CASE("dragging a bar puts it under the pointer whatever the global is doing
 	// A GLOBAL WELL OFF NEUTRAL, which is the only condition under which the two roads differ.
 	f.bridge.setDeviceControl(f.bridge.fxDeviceAt(1), static_cast<size_t>(fx::owltt::Param::Threshold), 0.75f);
 
-	const visage::Point from = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+	const visage::Point from = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 	const float toY = from.y + 30.0f; // drag it down
 
 	graph->onMouseDown().callback(at(from.x, from.y));
@@ -16098,7 +16116,7 @@ TEST_CASE("dragging a bar puts it under the pointer whatever the global is doing
 
 	// THE BAR IS WHERE THE HAND LEFT IT. Asked of the card, which is the whole claim: the handle
 	// follows the pointer rather than the pointer's value minus a shift nobody can see.
-	const float landed = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y;
+	const float landed = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y;
 	CAPTURE(from.y);
 	CAPTURE(toY);
 	CAPTURE(landed);
@@ -16138,11 +16156,11 @@ TEST_CASE("the panel asks for no more canvas than it fills") {
 	// So the rightmost thing that has a size of its OWN is what the extent has to be justified by.
 	float rightmost = 0.0f;
 	float lowest = panel.graphBounds().bottom();
-	REQUIRE_FALSE(panel.knobsForTest().empty());
-	for (const auto& knob : panel.knobsForTest()) {
-		REQUIRE(knob != nullptr);
-		rightmost = std::max(rightmost, knob->bounds().right());
-		lowest = std::max(lowest, knob->bounds().bottom());
+	REQUIRE_FALSE(panel.cellsForTest().empty());
+	for (const visage::Frame* cell : panel.cellsForTest()) {
+		REQUIRE(cell != nullptr);
+		rightmost = std::max(rightmost, cell->bounds().right());
+		lowest = std::max(lowest, cell->bounds().bottom());
 	}
 	CAPTURE(want.x);
 	CAPTURE(want.y);
@@ -16162,10 +16180,11 @@ TEST_CASE("the panel asks for no more canvas than it fills") {
 	// THE PICTURE IS STILL THE LARGER SURFACE. Cutting the graph back must not turn the panel into
 	// the knob list it exists to avoid -- it is the reason a hand opened it.
 	CHECK(panel.graphBounds().height() > Knob::columnHeight(ui::OwlttExpanded::kKnobDiameter));
-	// THE DRIVE BAR (backlog NB) stands at its left and takes its width out of the picture's, so the two together span it.
+	// THE DRIVE (backlog NB) stands at the plot's left and the OUTPUT at its right, each taking its width out of the picture's,
+	// so the three together span the body.
 	CHECK(panel.graphBounds().width()
-	      >= want.x - 2.0f * ui::OwlttExpanded::kPad - ui::OwlttExpanded::kDriveWidth - ui::OwlttExpanded::kDriveGap);
-	CHECK(panel.graphBounds().right() - panel.driveBounds().x() >= want.x - 2.0f * ui::OwlttExpanded::kPad);
+	      >= want.x - 2.0f * ui::OwlttExpanded::kPad - 2.0f * (ui::OwlttExpanded::kDriveWidth + ui::OwlttExpanded::kDriveGap) - 0.5f);
+	CHECK(panel.outputBounds().right() - panel.driveBounds().x() >= want.x - 2.0f * ui::OwlttExpanded::kPad - 0.5f);
 }
 
 TEST_CASE("a bar and its handle move together when the global moves") {
@@ -16199,21 +16218,21 @@ TEST_CASE("a bar and its handle move together when the global moves") {
 		f.bridge.setDeviceControl(f.bridge.fxDeviceAt(1), static_cast<size_t>(fx::owltt::Param::Threshold), global);
 
 		const ui::OwlttGraph::BarYs ys = graph->barYs(0);
-		const visage::Point lowerRing = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
-		const visage::Point upperRing = graph->ringCentre(0, ui::OwlttGraph::Handle::UpperBar);
+		const visage::Point lowerRing = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
+		const visage::Point upperRing = graph->ringCentre(0, ui::OwlttGraph::Handle::BandwidthBar);
 
 		// THE HANDLE IS ON THE LINE. `ringYInside` may hold a ring a radius inside the plot at the
 		// ends of the sweep, so the comparison allows exactly that and no more -- otherwise this
 		// would fail for the clamp rather than for the bug.
-		CHECK(std::abs(lowerRing.y - ys.lower) <= ui::OwlttGraph::kRingRadius + 0.01f);
-		CHECK(std::abs(upperRing.y - ys.upper) <= ui::OwlttGraph::kRingRadius + 0.01f);
+		CHECK(std::abs(lowerRing.y - ys.threshold) <= ui::OwlttGraph::kRingRadius + 0.01f);
+		CHECK(std::abs(upperRing.y - ys.bandwidth) <= ui::OwlttGraph::kRingRadius + 0.01f);
 
 		// AND NOT VACUOUS: the line really does move with the global, so the agreement above is
 		// between two things that are both responding rather than two that are both stuck.
-		if (previous >= 0.0f && std::abs(ys.lower - previous) > 0.5f) {
+		if (previous >= 0.0f && std::abs(ys.threshold - previous) > 0.5f) {
 			everMoved = true;
 		}
-		previous = ys.lower;
+		previous = ys.threshold;
 	}
 	CHECK(everMoved);
 }
@@ -16241,7 +16260,7 @@ TEST_CASE("the graph answers a hover with the device's own words") {
 	// EVERY HANDLE HAS WORDS, asked at the place the handle actually is rather than at a guessed
 	// point -- the lesson this file has paid for three times.
 	using Handle = ui::OwlttGraph::Handle;
-	for (const Handle h : { Handle::UpperBar, Handle::LowerBar, Handle::RatioStrip,
+	for (const Handle h : { Handle::BandwidthBar, Handle::ThresholdBar, Handle::RatioStrip,
 		                    Handle::LevelStrip }) {
 		const visage::Point at = graph->ringCentre(0, h);
 		const char* text = graph->tooltipAt(at);
@@ -16315,10 +16334,21 @@ TEST_CASE("clicking a modulator while the OWLTT panel is open") {
 	// SOURCE 2, NOT 0. The focused source defaults to 0, so arming 0 and then asserting it is 0 is a
 	// test that passes whether or not the click arrived -- which is exactly what the first draft of
 	// this case did.
-	const visage::Point arrow =
-	    f.panel->positionInWindow()
-	    + visage::Point { f.panel->arrowBounds(backplane::Source::core(2)).x() + 8.0f,
-		                  f.panel->arrowBounds(backplane::Source::core(2)).y() + 8.0f };
+	// A SOURCE THE POPOUT DOES NOT COVER, and not 0: the window is as wide as its plot wants, so which arrows it hides depends
+	// on its width. The first of sources 2, 1, 3 whose arrow the window leaves open is clicked.
+	backplane::Source chosen = backplane::Source::core(2);
+	visage::Point arrow {};
+	for (const uint32_t k : { 2u, 1u, 3u }) {
+		const backplane::Source candidate = backplane::Source::core(k);
+		const visage::Point at = f.panel->positionInWindow()
+		                         + visage::Point { f.panel->arrowBounds(candidate).x() + 8.0f,
+			                                       f.panel->arrowBounds(candidate).y() + 8.0f };
+		chosen = candidate;
+		arrow = at;
+		if (f.root->frameAtPoint(at - f.root->positionInWindow()) == static_cast<visage::Frame*>(f.panel)) {
+			break;
+		}
+	}
 	// THE CLICK REALLY REACHES THE PANEL with the popout open -- asserted, because "no crash" from a
 	// click that landed on the overlay instead would be a case passing for the wrong reason.
 	CHECK(f.root->frameAtPoint(arrow - f.root->positionInWindow())
@@ -16330,7 +16360,7 @@ TEST_CASE("clicking a modulator while the OWLTT panel is open") {
 	// and then that the state it was supposed to change actually changed, so a crash-free no-op does
 	// not pass for a working one.
 	CHECK(f.gui.modForTest() != nullptr);
-	CHECK(f.gui.modForTest()->source() == backplane::Source::core(2));
+	CHECK(f.gui.modForTest()->source() == chosen);
 
 	// AND THE NOTIFY WALK ITSELF, driven directly, with the panel still open.
 	const ui::FrameWatchers* watchers = f.gui.stateWatchers();
@@ -17014,7 +17044,7 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 		// shift: a bar that never followed the pointer would satisfy it just as well.
 		REQUIRE(f.bridge.fxChain().device[1].row.field[static_cast<size_t>(fx::owltt::Param::Threshold)]
 		        == doctest::Approx(0.5f));
-		const visage::Point ring = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+		const visage::Point ring = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 		const float toY = bars.bottom() - ui::OwlttGraph::kRingRadius;
 		const float wanted =
 		    0.2f + std::clamp((bars.bottom() - toY) / bars.height(), 0.0f, 1.0f) * 0.8f;
@@ -17023,7 +17053,7 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 		graph->onMouseUp().callback(at(ring.x, toY));
 		CAPTURE(wanted);
 		CHECK(graph->effective(0).threshold == doctest::Approx(wanted).epsilon(0.02));
-		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y
+		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y
 		      == doctest::Approx(toY).epsilon(0.05));
 	}
 
@@ -17032,7 +17062,7 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 		// THE SHIFT IS HALF THE RANGE, so the band's stored 0..1 reaches effective 0.5..1.0.
 		REQUIRE(graph->effective(0).threshold == doctest::Approx(1.0f));
 
-		const visage::Point ring = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+		const visage::Point ring = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 		const float toY = bars.bottom() - ui::OwlttGraph::kRingRadius;
 		graph->onMouseDown().callback(at(ring.x, ring.y));
 		graph->onMouseDrag().callback(at(ring.x, toY));
@@ -17046,15 +17076,15 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 		// the first draft of this line had the comparison the other way up and failed for the
 		// direction rather than for the claim.
 		CHECK(graph->effective(0).threshold == doctest::Approx(0.5f));
-		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y < toY - 10.0f);
+		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y < toY - 10.0f);
 
 		// AND A SECOND DRAG THE SAME WAY DOES NOTHING AT ALL, which is the half a hand reports as
 		// "not responding".
-		const visage::Point stalled = graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar);
+		const visage::Point stalled = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 		graph->onMouseDown().callback(at(stalled.x, stalled.y));
 		graph->onMouseDrag().callback(at(stalled.x, toY));
 		graph->onMouseUp().callback(at(stalled.x, toY));
-		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::LowerBar).y
+		CHECK(graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar).y
 		      == doctest::Approx(stalled.y));
 	}
 }

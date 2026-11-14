@@ -4479,13 +4479,9 @@ TEST_CASE("a coordinate cell is one infinite line, one box, and a zone dropdown"
 		// captions on different lines, so it borrows the knob's row structure instead.
 		CHECK(ui::Knob::columnHeight(ui::Knob::kEngineRailDiameter)
 		      == doctest::Approx(ui::Knob::columnHeight(ui::Knob::kEngineRailDiameter)));
-		const ui::Knob* neighbour = nullptr;
-		for (const auto& knob : panel.knobsForTest()) {
-			neighbour = knob.get();
-			break;
-		}
-		REQUIRE(neighbour != nullptr);
-		CHECK(character.height() == doctest::Approx(neighbour->height()));
+		// THE WINDOW'S TONE GROUP IS A ROW, so its cells take the knob column's rows at a small face
+		// (`OwlttExpanded::kToneFace`) rather than at a knob's: the same row structure, the shorter column.
+		CHECK(character.height() == doctest::Approx(ui::Knob::columnHeight(ui::OwlttExpanded::kToneFace)));
 	}
 }
 
@@ -31952,20 +31948,20 @@ TEST_CASE("LQ: OWLTT's card and window both carry Link and the L/R-M/S chip") {
 	}
 	CHECK_FALSE(lqOverlap(card->stereoForTest()->bounds(), card->linkForTest()->bounds()));
 
-	// THE WINDOW: Link is a MASTER knob, the chip is in the modal row beside the crossover picker.
+	// THE WINDOW: Link is a box in the GLOBAL row, the chip is in the top row beside the crossover picker.
 	ui::WidgetRegistry registry;
 	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
 	const visage::Point want = panel.minimumSize();
 	panel.setBounds(0.0f, 0.0f, want.x, want.y);
 	panel.resized();
-	int linkKnobs = 0;
-	for (const auto& knob : panel.knobsForTest()) {
-		if (panel.paramOfKnobForTest(knob.get()) == ow::Param::StereoLink) {
-			++linkKnobs;
-			CHECK(knob->control()->value() == doctest::Approx(0.42));
+	int linkBoxes = 0;
+	for (const auto& box : panel.globalBoxesForTest()) {
+		if (panel.paramOfGlobalForTest(box.get()) == ow::Param::StereoLink) {
+			++linkBoxes;
+			CHECK(box->control().value() == doctest::Approx(0.42));
 		}
 	}
-	CHECK(linkKnobs == 1);
+	CHECK(linkBoxes == 1);
 	REQUIRE(panel.stereoForTest() != nullptr);
 	CHECK(panel.stereoForTest()->caption() == "M/S");
 	const visage::Bounds chip = panel.stereoForTest()->bounds();
@@ -32009,41 +32005,35 @@ TEST_CASE("LR: OWLTT's card carries the global Width in the stereo strip, and th
 	const visage::Point want = panel.minimumSize();
 	panel.setBounds(0.0f, 0.0f, want.x, want.y);
 	panel.resized();
-	// The global Width is a knob; the three band Widths are ONE slider bank since backlog NK — a pill each, low to high.
+	// The global Width is a box in the GLOBAL row; each band's Width is the WIDTH row of the plot's table, a box under its band.
 	const std::pair<ow::Param, double> widths[] = { { ow::Param::Width, 1.37 }, { ow::Param::LowWidth, 0.21 },
 		                                            { ow::Param::MidWidth, 0.62 }, { ow::Param::HighWidth, 1.83 } };
 	for (const auto& [param, value] : widths) {
 		const std::string name = ow::kParamDescs[static_cast<size_t>(param)].name;
 		CAPTURE(name);
 		int found = 0;
-		for (const auto& knob : panel.knobsForTest()) {
-			if (panel.paramOfKnobForTest(knob.get()) == param) {
+		for (const auto& box : panel.globalBoxesForTest()) {
+			if (panel.paramOfGlobalForTest(box.get()) == param) {
 				++found;
-				CHECK(knob->control()->value() == doctest::Approx(value));
-				CHECK(knob->isVisible());
-				CHECK(knob->bounds().bottom() <= want.y);
+				CHECK(box->control().value() == doctest::Approx(value));
+				CHECK(box->isVisible());
+				CHECK(box->bounds().bottom() <= want.y);
 			}
 		}
-		for (size_t s = 0; s < panel.stacksForTest().size(); ++s) {
-			const ui::PillStack& stack = *panel.stacksForTest()[s];
-			for (size_t k = 0; k < stack.count(); ++k) {
-				if (panel.stackParamsForTest()[s][k] != param) {
-					continue;
-				}
+		for (size_t band = 0; band < 3; ++band) {
+			const ui::ValueBox* cell = panel.graph()->tableBoxForTest(1, band);
+			REQUIRE(cell != nullptr);
+			if (static_cast<size_t>(ui::OwlttGraph::tableParam(1, band)) == static_cast<size_t>(param)) {
 				++found;
-				std::vector<ui::ControlFace::Offered> offered;
-				stack.pill(k).offeredControls(offered);
-				REQUIRE(offered.size() == 1); // amount only: no power on a band's width
-				CHECK(offered[0].control->value() == doctest::Approx(value));
-				CHECK(stack.isVisible());
-				CHECK(stack.bounds().bottom() <= want.y);
+				CHECK(cell->control().value() == doctest::Approx(value));
+				CHECK(cell->isVisible());
 			}
 		}
 		CHECK(found == 1);
 	}
 }
 
-TEST_CASE("NK: OWLTT's window carries the three band Widths as one slider bank — Low, Mid, High top to bottom, each pill its band's own control, in a knob's cell") {
+TEST_CASE("NK: OWLTT's window carries the three band Widths in the plot's table — Low, Mid, High left to right, each box its band's own control, under its band") {
 	namespace ow = feathers::fx::owltt;
 	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
 	d.set(static_cast<size_t>(ow::Param::LowWidth), 0.21f);
@@ -32054,39 +32044,44 @@ TEST_CASE("NK: OWLTT's window carries the three band Widths as one slider bank �
 	const visage::Point want = panel.minimumSize();
 	panel.setBounds(0.0f, 0.0f, want.x, want.y);
 	panel.resized();
-	REQUIRE(panel.stacksForTest().size() == 1);
-	const ui::PillStack& stack = *panel.stacksForTest()[0];
-	REQUIRE(stack.count() == 3);
-	CHECK(stack.title() == "Band Width");
+	REQUIRE(panel.graph() != nullptr);
 	const ow::Param order[] = { ow::Param::LowWidth, ow::Param::MidWidth, ow::Param::HighWidth };
-	const char* captions[] = { "Low", "Mid", "High" };
 	const double values[] = { 0.21, 0.62, 1.83 };
-	for (size_t k = 0; k < 3; ++k) {
-		CAPTURE(k);
-		CHECK(panel.stackParamsForTest()[0][k] == order[k]);
-		CHECK(stack.pill(k).caption() == captions[k]);
+	constexpr size_t kWidthRow = 1;
+	float previousRight = -1.0f;
+	for (size_t band = 0; band < 3; ++band) {
+		CAPTURE(band);
+		ui::ValueBox* cell = panel.graph()->tableBoxForTest(kWidthRow, band);
+		REQUIRE(cell != nullptr);
+		CHECK(ui::OwlttGraph::tableParam(kWidthRow, band) == order[band]);
+		CHECK(std::string(ui::OwlttGraph::tableCaption(kWidthRow)) == "WIDTH");
+		// THE CONTROL BY VALUE: the box reads the field only its band holds, and it is declared through ControlFace.
+		CHECK(cell->control().value() == doctest::Approx(values[band]));
 		std::vector<ui::ControlFace::Offered> offered;
-		stack.pill(k).offeredControls(offered);
+		cell->offeredControls(offered);
 		REQUIRE(offered.size() == 1);
-		// THE CONTROL BY VALUE: the pill's amount reads the field only its band holds.
-		CHECK(offered[0].control->value() == doctest::Approx(values[k]));
-		if (k > 0) {
-			CHECK(stack.pillBounds(k).y() > stack.pillBounds(k - 1).y()); // low on top, high at the bottom
-		}
+		CHECK(offered[0].control == &cell->control());
+		CHECK(std::string_view(offered[0].control->desc().key)
+		      == std::string_view(ow::kParamDescs[static_cast<size_t>(order[band])].key));
+		// LOW LEFT OF MID LEFT OF HIGH, never overlapping, inside the plot, under the bars.
+		CHECK(cell->bounds().x() >= previousRight);
+		previousRight = cell->bounds().right();
+		CHECK(cell->bounds().y() >= panel.graph()->tableArea().y());
+		CHECK(cell->bounds().bottom() <= panel.graph()->height());
+		CHECK(cell->bounds().right() <= panel.graph()->width());
+		CHECK(cell->tooltipAt({ 4.0f, 4.0f }) != nullptr);
 	}
-	// NO KNOB FOR ANY OF THE THREE ANY MORE — the bank replaced them, it does not duplicate them.
-	for (const auto& knob : panel.knobsForTest()) {
-		const ow::Param p = panel.paramOfKnobForTest(knob.get());
+	// NO PILL BANK, NO KNOB FOR THE THREE: the table replaced both, it does not duplicate them.
+	for (const auto& box : panel.globalBoxesForTest()) {
+		const ow::Param p = panel.paramOfGlobalForTest(box.get());
 		CHECK(p != ow::Param::LowWidth);
 		CHECK(p != ow::Param::MidWidth);
 		CHECK(p != ow::Param::HighWidth);
 	}
-	// A KNOB'S CELL: the grid's column height, and as wide as a knob's cell next to it.
-	CHECK(stack.bounds().height() == doctest::Approx(Knob::columnHeight(ui::OwlttExpanded::kKnobDiameter)));
-	CHECK(stack.bounds().width() >= ui::PillStack::kMinWidth);
-	CHECK(stack.bounds().width() == doctest::Approx(panel.knobsForTest().front()->bounds().width()));
-	// NO HAND ON IT YET: the readout names the bank rather than picking a pill nobody asked about.
-	CHECK(stack.readoutText() == "Band Width");
+	const auto addressed = panel.addressedParamsForTest();
+	for (const ow::Param p : order) {
+		CHECK(std::count(addressed.begin(), addressed.end(), p) == 1);
+	}
 }
 
 TEST_CASE("ND: OWLTT's window carries the Lookahead as a box with its menu in the modal row, reading the stored choice") {
@@ -32199,6 +32194,32 @@ TEST_CASE("NB: OWLTT's Drive is a vertical bar LEFT of the graph on the card and
 	CHECK(windowBar->bounds().y() >= panel.modalBottom());
 	const auto addressed = panel.addressedParamsForTest();
 	CHECK(std::count(addressed.begin(), addressed.end(), ow::Param::Drive) == 1);
+
+	// THE OUTPUT FADER MIRRORS IT: the same widget class at the same size, the same distance from the plot and from the
+	// window's edge on the other side, one control (`output_gain`) read in dB.
+	ui::VerticalFader* outBar = panel.outputForTest();
+	REQUIRE(outBar != nullptr);
+	CHECK(outBar->bounds().width() == doctest::Approx(windowBar->bounds().width()));
+	CHECK(outBar->bounds().height() == doctest::Approx(windowBar->bounds().height()));
+	CHECK(outBar->bounds().y() == doctest::Approx(windowBar->bounds().y()));
+	const visage::Bounds plotB = panel.graphBounds();
+	CHECK(plotB.x() - windowBar->bounds().right() == doctest::Approx(outBar->bounds().x() - plotB.right()));
+	CHECK(windowBar->bounds().x() == doctest::Approx(want.x - outBar->bounds().right()));
+	CHECK(outBar->bounds().x() >= plotB.right());
+	CHECK(std::string_view(outBar->control().desc().key) == "output_gain");
+	CHECK(outBar->caption() == "Output");
+	std::vector<ui::ControlFace::Offered> outOffered;
+	outBar->offeredControls(outOffered);
+	REQUIRE(outOffered.size() == 1u);
+	CHECK(outOffered[0].road == ui::ControlFace::Road::Face);
+	CHECK(std::count(addressed.begin(), addressed.end(), ow::Param::OutputGain) == 1);
+	// ITS READOUT IS THE GAIN THE DSP APPLIES, in dB: the knob's 0.5 is unity, 1.0 is +16 dB, 0.25 is -6 dB.
+	d.set(static_cast<size_t>(ow::Param::OutputGain), 0.5f);
+	CHECK(outBar->readout() == "0");
+	d.set(static_cast<size_t>(ow::Param::OutputGain), 1.0f);
+	CHECK(outBar->readout() == "+16");
+	d.set(static_cast<size_t>(ow::Param::OutputGain), 0.25f);
+	CHECK(outBar->readout() == "-6.0");
 }
 
 TEST_CASE("NB: OWLTT's crossover labels never touch a channel letter or each other — on the card and in the window, at the defaults and with the crossovers crowded") {
@@ -32220,7 +32241,8 @@ TEST_CASE("NB: OWLTT's crossover labels never touch a channel letter or each oth
 		float high;
 		float ms;
 	};
-	const Scene scenes[] = { { "defaults", 200.0f, 2000.0f, 0.0f }, { "crowded", 450.0f, 900.0f, 0.0f },
+	const Scene scenes[] = { { "defaults", 200.0f, 2000.0f, 0.0f }, { "close", 800.0f, 900.0f, 0.0f },
+		                     { "crowded", 450.0f, 900.0f, 0.0f },
 		                     { "crowded M/S", 450.0f, 900.0f, 1.0f }, { "wide", 60.0f, 9000.0f, 0.0f } };
 	size_t lettersSeen = 0;
 	for (const Scene& s : scenes) {
@@ -32245,6 +32267,34 @@ TEST_CASE("NB: OWLTT's crossover labels never touch a channel letter or each oth
 				}
 			}
 			CHECK_FALSE(overlap(t.frequency[0], t.frequency[1]));
+			// AND NEVER OVER A HANDLE: not the crossover handles in the lane, not any bar or strip ring, not a ratio thumb, and
+			// not the lane-free card's lights (checked as rings: the bars' rings are what a label could be struck through by).
+			using H = ui::OwlttGraph::Handle;
+			std::vector<visage::Bounds> handles;
+			for (size_t band = 0; band < 3; ++band) {
+				for (const H h : { H::ThresholdBar, H::BandwidthBar, H::RatioStrip, H::LevelStrip }) {
+					const visage::Point c = graph->ringCentre(band, h);
+					handles.push_back({ c.x - 4.0f, c.y - 4.0f, 8.0f, 8.0f });
+				}
+				if (graph->editor()) {
+					for (const H h : { H::DownRatio, H::UpRatio }) {
+						const visage::Point c = graph->ringCentre(band, h);
+						handles.push_back({ c.x - 6.0f, c.y - 6.0f, 12.0f, 12.0f });
+					}
+				}
+			}
+			if (graph->editor()) {
+				for (size_t which = 0; which < 2; ++which) {
+					const visage::Point c = graph->crossoverHandle(which);
+					handles.push_back({ c.x - 4.0f, c.y - 4.0f, 8.0f, 8.0f });
+				}
+			}
+			for (size_t which = 0; which < 2; ++which) {
+				for (const visage::Bounds& hb : handles) {
+					CAPTURE(which);
+					CHECK_FALSE(overlap(t.frequency[which], hb));
+				}
+			}
 		}
 	}
 	CHECK(lettersSeen > 0u); // NOT VACUOUS: the letters were there to be avoided
@@ -40963,4 +41013,372 @@ TEST_CASE("hardening: a card drag follows its device, not its slot, and a lost r
 		CHECK(f.bridge.fxDeviceAt(0) == filter);
 		CHECK(f.bridge.fxDeviceAt(2) == harm);
 	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// OWLTT'S WINDOW, REBUILT AROUND ITS ANALYZER: per-band handles and the table under the bars.     //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE KEYS A BAND'S CONTROLS ARE STORED UNDER, restated here by name so a handle bound to its neighbour's control is a
+/// red, not a pass: nothing below reads a key off the code it checks.
+struct OwlttBandKeys {
+	const char* prefix;
+};
+constexpr OwlttBandKeys kOwlttBands[3] = { { "low" }, { "mid" }, { "high" } };
+
+std::string owlttKey(size_t band, const char* suffix) {
+	return std::string(kOwlttBands[band].prefix) + "_" + suffix;
+}
+
+} // namespace
+
+TEST_CASE("OWLTT's window: each band's threshold and bandwidth handles are two controls, and a drag on one leaves the other alone") {
+	namespace ow = feathers::fx::owltt;
+	using Handle = ui::OwlttGraph::Handle;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	REQUIRE(graph->editor());
+
+	const auto row = [&] {
+		const FxChain chain = d.f.bridge.fxChain();
+		return fxDeviceAtPosition(chain, d.slot).row.field;
+	};
+	const auto indexOfKey = [](const std::string& key) {
+		for (size_t i = 0; i < std::size(ow::kParamDescs); ++i) {
+			if (key == ow::kParamDescs[i].key) {
+				return i;
+			}
+		}
+		return std::size(ow::kParamDescs);
+	};
+
+	for (size_t band = 0; band < 3; ++band) {
+		CAPTURE(band);
+		// EACH HANDLE IS BOUND TO THE PARAMETER ITS POSITION SAYS, by key.
+		const std::pair<Handle, std::string> bound[] = {
+			{ Handle::ThresholdBar, owlttKey(band, "threshold") }, { Handle::BandwidthBar, owlttKey(band, "bandwidth") },
+			{ Handle::RatioStrip, owlttKey(band, "ratio") },       { Handle::LevelStrip, owlttKey(band, "level") },
+			{ Handle::DownRatio, owlttKey(band, "down_ratio") },   { Handle::UpRatio, owlttKey(band, "up_ratio") },
+		};
+		for (const auto& [handle, key] : bound) {
+			CAPTURE(key);
+			CHECK(std::string_view(graph->handleControl(band, handle).desc().key) == key);
+		}
+		CHECK(&graph->handleControl(band, Handle::ThresholdBar) != &graph->handleControl(band, Handle::BandwidthBar));
+	}
+
+	const visage::Bounds area = graph->barArea();
+	const auto yOf = [&](float v) { return area.bottom() - v * area.height(); };
+
+	for (size_t band = 0; band < 3; ++band) {
+		CAPTURE(band);
+		const size_t thresholdAt = indexOfKey(owlttKey(band, "threshold"));
+		const size_t bandwidthAt = indexOfKey(owlttKey(band, "bandwidth"));
+		REQUIRE(thresholdAt < std::size(ow::kParamDescs));
+		REQUIRE(bandwidthAt < std::size(ow::kParamDescs));
+
+		// THE THRESHOLD HANDLE, dragged to 70% of the way up the plot: the threshold control reads 0.7 (the global at its
+		// neutral shifts nothing) and EVERY other field of the row is what it was.
+		{
+			const auto before = row();
+			const visage::Point c = graph->ringCentre(band, Handle::ThresholdBar);
+			graph->onMouseDown().callback(at(c.x, c.y));
+			graph->onMouseDrag().callback(at(c.x, yOf(0.7f)));
+			graph->onMouseUp().callback(at(c.x, yOf(0.7f)));
+			const auto after = row();
+			CHECK(after[thresholdAt] == doctest::Approx(0.7f));
+			for (size_t i = 0; i < before.size(); ++i) {
+				if (i != thresholdAt) {
+					CAPTURE(std::string(ow::kParamDescs[std::min(i, std::size(ow::kParamDescs) - 1)].key));
+					CHECK(after[i] == before[i]);
+				}
+			}
+		}
+		// THE BANDWIDTH HANDLE, dragged so its bar (the UP threshold, below the threshold bar by 0.75 x the bandwidth) stands at 30%:
+		// the bandwidth is (0.7 - 0.3) / 0.75, and the threshold is untouched.
+		{
+			const auto before = row();
+			const visage::Point c = graph->ringCentre(band, Handle::BandwidthBar);
+			graph->onMouseDown().callback(at(c.x, c.y));
+			graph->onMouseDrag().callback(at(c.x, yOf(0.3f)));
+			graph->onMouseUp().callback(at(c.x, yOf(0.3f)));
+			const auto after = row();
+			CHECK(after[bandwidthAt] == doctest::Approx((0.7f - 0.3f) / 0.75f).epsilon(0.001));
+			for (size_t i = 0; i < before.size(); ++i) {
+				if (i != bandwidthAt) {
+					CAPTURE(std::string(ow::kParamDescs[std::min(i, std::size(ow::kParamDescs) - 1)].key));
+					CHECK(after[i] == before[i]);
+				}
+			}
+		}
+		// THE TWO THUMBS: dragged along their track to 80%, each writes its own direction's trim and nothing else.
+		for (const Handle thumb : { Handle::DownRatio, Handle::UpRatio }) {
+			const bool down = thumb == Handle::DownRatio;
+			const size_t at0 = indexOfKey(owlttKey(band, down ? "down_ratio" : "up_ratio"));
+			REQUIRE(at0 < std::size(ow::kParamDescs));
+			const auto before = row();
+			const ui::OwlttGraph::Track track = graph->ratioTrack(band);
+			const visage::Point c = graph->ringCentre(band, thumb);
+			const float x = track.x0 + 0.8f * (track.x1 - track.x0);
+			graph->onMouseDown().callback(at(c.x, c.y));
+			graph->onMouseDrag().callback(at(x, c.y));
+			graph->onMouseUp().callback(at(x, c.y));
+			const auto after = row();
+			// The band's effective ratio is 0.5 at the defaults, so the trim that lands the thumb at 0.8 is 0.8.
+			CHECK(after[at0] == doctest::Approx(0.8f).epsilon(0.001));
+			for (size_t i = 0; i < before.size(); ++i) {
+				if (i != at0) {
+					CAPTURE(std::string(ow::kParamDescs[std::min(i, std::size(ow::kParamDescs) - 1)].key));
+					CHECK(after[i] == before[i]);
+				}
+			}
+			// AND THE THUMB NOW STANDS WHERE THE VALUE IS: asked back through `ringCentre`.
+			CHECK(graph->ringCentre(band, thumb).x == doctest::Approx(x).epsilon(0.002));
+		}
+	}
+}
+
+TEST_CASE("OWLTT's window: the table under the bars is IN, WIDTH, ATK and REL, one column per band, every box bound to its band's control and declared through ControlFace") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+
+	// THE ROWS AND THEIR CAPTIONS, once at the left.
+	const char* captions[] = { "IN", "WIDTH", "ATK", "REL" };
+	const char* suffixes[] = { "input", "width", "attack", "release" };
+	for (size_t row = 0; row < ui::OwlttGraph::kTableRows; ++row) {
+		CHECK(std::string(ui::OwlttGraph::tableCaption(row)) == captions[row]);
+	}
+	const visage::Bounds table = graph->tableArea();
+	CHECK(table.height() == doctest::Approx(ui::OwlttGraph::kTableHeight));
+	CHECK(table.bottom() == doctest::Approx(static_cast<float>(graph->height())));
+	CHECK(graph->barArea().bottom() <= table.y() + 0.01f);
+
+	for (size_t row = 0; row < ui::OwlttGraph::kTableRows; ++row) {
+		for (size_t band = 0; band < 3; ++band) {
+			CAPTURE(row);
+			CAPTURE(band);
+			ui::ValueBox* box = graph->tableBoxForTest(row, band);
+			REQUIRE(box != nullptr);
+			// BOUND TO THE PARAMETER ITS POSITION SAYS (restated by key), through ControlFace.
+			std::vector<ui::ControlFace::Offered> offered;
+			box->offeredControls(offered);
+			REQUIRE(offered.size() == 1u);
+			CHECK(std::string_view(offered[0].control->desc().key) == owlttKey(band, suffixes[row]));
+			CHECK(offered[0].road == ui::ControlFace::Road::Face);
+			// A TOOLTIP THAT NAMES IT, from its parameter.
+			const char* tip = box->tooltipAt({ 3.0f, 3.0f });
+			REQUIRE(tip != nullptr);
+			CHECK(std::string(tip).find(row == 0 ? "input level" : (row == 1 ? "stereo width" : (row == 2 ? "attack" : "release")))
+			      != std::string::npos);
+			// IT SITS IN THE TABLE, and in ITS band's column: the centre of the cell is between the crossover lines that
+			// bound the band (the plot's own edges at the two ends).
+			const visage::Bounds b = box->bounds();
+			CHECK(b.y() >= table.y());
+			CHECK(b.bottom() <= table.bottom());
+			const float centre = b.x() + b.width() * 0.5f;
+			const float lo = band == 0 ? 0.0f : graph->bandEdge(band - 1);
+			const float hi = band == 2 ? static_cast<float>(graph->width()) : graph->bandEdge(band);
+			CHECK(centre > lo);
+			CHECK(centre < hi);
+			// ROWS DESCEND, COLUMNS ASCEND, nothing overlaps its neighbour.
+			if (row > 0) {
+				CHECK(b.y() >= graph->tableBoxForTest(row - 1, band)->bounds().bottom());
+			}
+			if (band > 0) {
+				CHECK(b.x() >= graph->tableBoxForTest(row, band - 1)->bounds().right());
+			}
+		}
+	}
+
+	// THE BOXES WRITE THEIR OWN FIELD: setting one through its control moves that one field of the row.
+	const auto fields = [&] {
+		const FxChain chain = d.f.bridge.fxChain();
+		return fxDeviceAtPosition(chain, d.slot).row.field;
+	};
+	const auto before = fields();
+	ui::ValueBox* attack = graph->tableBoxForTest(2, 1);
+	attack->control().beginGesture();
+	attack->control().setValue(0.9);
+	attack->control().endGesture();
+	const auto after = fields();
+	size_t changed = 0;
+	for (size_t i = 0; i < before.size(); ++i) {
+		if (after[i] != before[i]) {
+			++changed;
+			CHECK(i == static_cast<size_t>(ow::Param::MidAttack));
+		}
+	}
+	CHECK(changed == 1u);
+	CHECK(after[static_cast<size_t>(ow::Param::MidAttack)] == doctest::Approx(0.9f));
+
+	// THE COLUMNS FOLLOW THE CROSSOVERS: moving them moves the cells, and nothing overlaps.
+	d.set(static_cast<size_t>(ow::Param::LowCrossover), 600.0f);
+	d.set(static_cast<size_t>(ow::Param::HighCrossover), 5000.0f);
+	const float midBefore = graph->tableBoxForTest(0, 1)->bounds().x();
+	(void)graph->update();
+	const float midAfter = graph->tableBoxForTest(0, 1)->bounds().x();
+	CHECK(midAfter != doctest::Approx(midBefore));
+	for (size_t row = 0; row < ui::OwlttGraph::kTableRows; ++row) {
+		for (size_t band = 1; band < 3; ++band) {
+			CHECK(graph->tableBoxForTest(row, band)->bounds().x() >= graph->tableBoxForTest(row, band - 1)->bounds().right());
+		}
+	}
+}
+
+TEST_CASE("OWLTT's window: a routed per-band threshold draws its ModHandle stroke and halo, the crossovers have no knobs, and the rows are captioned without holes") {
+	namespace ow = feathers::fx::owltt;
+	using Handle = ui::OwlttGraph::Handle;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	ui::ModState* mod = d.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	// THE OVERLAY GIVES A WINDOW ITS MODULATION STATE when it opens one; built bare, it is given it here.
+	panel.modulationBound(mod, nullptr);
+
+	// A ROUTE ON THE MID BAND'S THRESHOLD: nothing armed draws no halo, armed draws one, and the stroke is the handle's own.
+	const backplane::Source macro = backplane::Source::core(0);
+	const backplane::Destination midThreshold =
+	    backplane::Destination::control(d.device, static_cast<size_t>(ow::Param::MidThreshold));
+	d.f.bridge.setRouteAmount(macro, midThreshold, 0.2f);
+	{
+		const ui::ModHandlePlan quiet = graph->bandModPlan(1, Handle::ThresholdBar);
+		REQUIRE(quiet.axes.size() == 1u);
+		CHECK(quiet.axes[0].offered);
+		CHECK_FALSE(quiet.halo);
+	}
+	mod->focus(macro);
+	mod->arm(true);
+	const ui::ModHandlePlan plan = graph->bandModPlan(1, Handle::ThresholdBar);
+	REQUIRE(plan.axes.size() == 1u);
+	CHECK(plan.halo);
+	CHECK(plan.axes[0].halo);
+	REQUIRE(plan.axes[0].hasStroke);
+	const visage::Bounds area = graph->barArea();
+	const float stored = d.f.bridge.fxChain().device[d.slot].row.field[static_cast<size_t>(ow::Param::MidThreshold)];
+	CHECK(plan.axes[0].strokeHi - plan.axes[0].strokeLo
+	      == doctest::Approx(0.2f * area.height()).epsilon(0.002));
+	CHECK(plan.axes[0].base == doctest::Approx(area.bottom() - stored * area.height()).epsilon(0.001));
+	// A THUMB IS ONE TOO: horizontal, over its own ratio trim.
+	CHECK(graph->bandModHandle(1, Handle::DownRatio).axis(0).horizontal);
+	CHECK_FALSE(graph->bandModHandle(1, Handle::ThresholdBar).axis(0).horizontal);
+	mod->arm(false);
+
+	// THE CROSSOVERS HAVE NO KNOBS IN THE WINDOW: no box or knob anywhere in it is bound to either, and the plot's two
+	// lane handles are how they are reached.
+	std::function<void(const visage::Frame*)> walk = [&](const visage::Frame* frame) {
+		if (const auto* face = dynamic_cast<const ui::ControlFace*>(frame)) {
+			if (frame != graph) {
+				std::vector<ui::ControlFace::Offered> offered;
+				face->offeredControls(offered);
+				for (const auto& o : offered) {
+					CHECK(std::string_view(o.control->desc().key) != "low_crossover");
+					CHECK(std::string_view(o.control->desc().key) != "high_crossover");
+				}
+			}
+		}
+		for (const visage::Frame* child : frame->children()) {
+			walk(child);
+		}
+	};
+	walk(&panel);
+	const auto addressed = panel.addressedParamsForTest();
+	CHECK(std::count(addressed.begin(), addressed.end(), ow::Param::LowCrossover) == 1);
+	CHECK(std::count(addressed.begin(), addressed.end(), ow::Param::HighCrossover) == 1);
+	CHECK(graph->crossoverHandle(0).x < graph->crossoverHandle(1).x);
+
+	// THE TOP ROW, in order: Key Track, Lookahead, L/R, the crossover type, then the Clip choice (a box with a menu of three).
+	CHECK(panel.keyTrackBounds().right() <= panel.lookaheadBounds().x());
+	CHECK(panel.lookaheadBounds().right() <= panel.stereoBounds().x());
+	CHECK(panel.stereoBounds().right() <= panel.modeBounds().x());
+	CHECK(panel.modeBounds().right() <= panel.clipBounds().x());
+	CHECK(panel.clipBounds().bottom() <= panel.graphBounds().y());
+	ui::ValueBox* clip = panel.clipForTest();
+	REQUIRE(clip != nullptr);
+	CHECK(clip->choiceMenuAvailable());
+	REQUIRE(clip->entryCount() == 3u);
+	// (a menu row carries a mark for the current choice, so the label is looked for in it)
+	CHECK(clip->choiceLabelAt(0).find("Off") != std::string::npos);
+	CHECK(clip->choiceLabelAt(1).find("Master") != std::string::npos);
+	CHECK(clip->choiceLabelAt(2).find("Bands") != std::string::npos);
+	CHECK(std::string_view(clip->control().desc().key) == "soft_clip");
+
+	// THE GLOBAL ROW, in order and with no hole: nine boxes, left to right at one height, each gap the same.
+	const auto& boxes = panel.globalBoxesForTest();
+	const ow::Param order[] = { ow::Param::Threshold, ow::Param::Bandwidth, ow::Param::Ratio,   ow::Param::UpDownSkew,
+		                        ow::Param::Attack,    ow::Param::Release,   ow::Param::StereoLink, ow::Param::Width,
+		                        ow::Param::Blend };
+	REQUIRE(boxes.size() == std::size(order));
+	for (size_t i = 0; i < boxes.size(); ++i) {
+		CAPTURE(i);
+		CHECK(panel.paramOfGlobalForTest(boxes[i].get()) == order[i]);
+		CHECK(boxes[i]->bounds().y() == doctest::Approx(boxes[0]->bounds().y()));
+		if (i > 0) {
+			CHECK(boxes[i]->bounds().x() - boxes[i - 1]->bounds().right() == doctest::Approx(ui::OwlttExpanded::kBoxGap).epsilon(0.001));
+		}
+	}
+	CHECK(boxes.back()->bounds().right() == doctest::Approx(static_cast<float>(panel.width()) - ui::OwlttExpanded::kPad));
+	// AND TONE: Character and Vibe side by side as one group, under the global row.
+	REQUIRE(panel.modeCellsForTest().size() == 2u);
+	const visage::Bounds character = panel.modeCellsForTest()[0]->bounds();
+	const visage::Bounds vibe = panel.modeCellsForTest()[1]->bounds();
+	CHECK(character.right() <= vibe.x());
+	CHECK(character.y() == doctest::Approx(vibe.y()));
+	CHECK(character.y() >= boxes[0]->bounds().bottom());
+}
+
+TEST_CASE("OWLTT's window: offsets and ratio trims read and type as signed percentages from their centre, the stored value unchanged") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	ui::ValueBox* attack = graph->tableBoxForTest(2, 0);
+	REQUIRE(attack != nullptr);
+	CHECK(attack->control().text() == "0"); // the default centre
+	d.set(static_cast<size_t>(ow::Param::LowAttack), 0.75f);
+	CHECK(attack->control().text() == "+25%");
+	CHECK(attack->readout() == "+25%"); // and the box prints it so
+	d.set(static_cast<size_t>(ow::Param::LowAttack), 0.1f);
+	CHECK(attack->control().text() == "-40%");
+	// THE THUMB'S CONTROL READS THE SAME WAY.
+	d.set(static_cast<size_t>(ow::Param::MidDownRatio), 0.9f);
+	CHECK(graph->handleControl(1, ui::OwlttGraph::Handle::DownRatio).text() == "+40%");
+	// TYPED ENTRY TAKES THE SIGNED FORM (and a bare number, and a percent sign), as the device's own parse.
+	const auto& ops = *ow::kDescriptor.text;
+	device::TextView view {};
+	double v = 0.0;
+	for (const auto& [text, want01] : { std::pair { "+25%", 0.75 }, std::pair { "-40", 0.1 }, std::pair { "0", 0.5 },
+	                                    std::pair { "-80%", 0.0 } }) {
+		CAPTURE(text);
+		REQUIRE(ops.parse(static_cast<size_t>(ow::Param::HighRelease), text, view, &v));
+		CHECK(v == doctest::Approx(want01).epsilon(1e-9));
+	}
+	CHECK_FALSE(ops.parse(static_cast<size_t>(ow::Param::HighRelease), "abc", view, &v));
+	// THE GLOBAL ROW IS LEFT AS IT WAS: Attack still reads as a percentage of its range.
+	CHECK(panel.globalBoxesForTest()[4]->control().text() == "25%");
 }

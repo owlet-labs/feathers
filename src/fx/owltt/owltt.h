@@ -122,6 +122,12 @@ public:
 	/// test is "a 0.5 ms attack takes 0.5 ms", and a render cannot be asked what a coefficient is.
 	[[nodiscard]] float attackMsForTest(size_t band) const { return bands_[band].getAttackMS(); }
 	[[nodiscard]] float releaseMsForTest(size_t band) const { return bands_[band].getReleaseMS(); }
+	/// TEST ONLY — the per-direction ratios a band's compressor was handed (knob units), and the input gain it
+	/// scales its band by: the target the slice was heading for and where the smoother has got to.
+	[[nodiscard]] float ratioUpForTest(size_t band) const { return bands_[band].getRatioUp(); }
+	[[nodiscard]] float ratioDownForTest(size_t band) const { return bands_[band].getRatioDown(); }
+	[[nodiscard]] float inputGainTargetForTest(size_t band) const noexcept { return inputGainTarget_[band]; }
+	[[nodiscard]] float inputGainForTest(size_t band) const noexcept { return inputGain_[band]; }
 
 	/// Per-band gain reduction in dB (for metering / OTT display). Test-only accessor.
 	[[nodiscard]] float getBandGainReductionDB(size_t band) const {
@@ -403,6 +409,9 @@ private:
 	/// `lastTargetBandGainForTest`; the sample loop never touches it.
 	std::array<std::array<float, 2>, 3> lastTargetBandGain_ {{{1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}}};
 	float smoothedOutputGain_ = 1.0f;
+	/// EACH BAND'S INPUT LEVEL AS A GAIN: where the per-sample smoother has got to, and its target. 1 is 0 dB.
+	std::array<float, 3> inputGain_ { 1.0f, 1.0f, 1.0f };
+	std::array<float, 3> inputGainTarget_ { 1.0f, 1.0f, 1.0f };
 
 	// Output peak with decay (firmware: outputPeak_ = max(peakThisBuffer, outputPeak_ * 0.95)).
 	float outputPeak_ = 0.0f;

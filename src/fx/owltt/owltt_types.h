@@ -144,6 +144,24 @@ enum class Param : uint8_t {
 	/// **KEY TRACK** (the Phaser's form): the played note places the crossovers; Low and High Crossover
 	/// become semitone OFFSETS from it (`trackedCrossoverHz`). Off is the device before it, to the bit. Appended.
 	KeyTrack = 37,
+	/// **PER-BAND UP/DOWN RATIO TRIMS, ATTACK/RELEASE OFFSETS AND INPUT LEVELS (the per-band rebuild).** Appended, so
+	/// nothing above moves. Every one has a neutral default at which the device is the device before it, to the bit:
+	/// the trims and offsets are centred on 0.5 (`effectiveBandOf` states the laws), the input level on 0 dB.
+	LowUpRatio = 38,
+	LowDownRatio = 39,
+	MidUpRatio = 40,
+	MidDownRatio = 41,
+	HighUpRatio = 42,
+	HighDownRatio = 43,
+	LowAttack = 44,
+	LowRelease = 45,
+	MidAttack = 46,
+	MidRelease = 47,
+	HighAttack = 48,
+	HighRelease = 49,
+	LowInput = 50,
+	MidInput = 51,
+	HighInput = 52,
 	kCount
 };
 
@@ -155,6 +173,15 @@ struct BandParams {
 	float level = 0.5f;     // Per-band output level (0..1, 0.5 = unity)
 	/// BACKLOG LR: scales this band's zone width on top of the global Width. 1 is "as the zone sets it".
 	float width = 1.0f;
+	/// THIS BAND'S UPWARD AND DOWNWARD RATIO TRIMS (0..1, 0.5 neutral): added to the band's effective ratio, in the
+	/// ratio's own units, for that direction only. See `effectiveBandOf`.
+	float upRatio = 0.5f;
+	float downRatio = 0.5f;
+	/// THIS BAND'S ATTACK AND RELEASE OFFSETS (0..1, 0.5 neutral) from the global Attack and Release.
+	float attack = 0.5f;
+	float release = 0.5f;
+	/// THIS BAND'S INPUT LEVEL, dB, applied to the band after the split and before its detector and gain.
+	float inputDb = 0.0f;
 };
 
 /// The full OWLTT state: globals + per-band absolutes.
@@ -182,7 +209,11 @@ struct Settings {
 	float highCrossover = 2000.0f; // Hz
 	float outputGain = 0.5f;       // 0..1, 0.5 = unity
 	float blend = 1.0f;            // 0=dry, 1=wet
-	bool softClip = true;          // the band and output soft clippers; On is how the device always ran
+	/// THE CLIP CHOICE, as two flags so the many callers that set `softClip` keep meaning what they meant. `softClip`
+	/// off is Off. On with `clipBandsOnly` false is Master, which is how the device always ran (each band's sum
+	/// clipped, then the output); `clipBandsOnly` true is Bands: each band clipped before the sum, the sum not.
+	bool softClip = true;
+	bool clipBandsOnly = false;
 	/// CHARACTER'S AND VIBE'S MODES (backlog IW): a zone index 0..7, or `kZoneModeFree`. Free is the rolling coordinate.
 	uint32_t characterMode = 8;
 	uint32_t vibeMode = 8;
@@ -196,6 +227,9 @@ struct Settings {
 	/// BACKLOG ND — see `Param::Lookahead`. An index into `kLookaheadNames`; 0 is Off.
 	uint32_t lookahead = 0;
 	bool keyTrack = false;
+
+	/// The band by index, 0 low, 1 mid, 2 high.
+	[[nodiscard]] const BandParams& band(size_t b) const noexcept { return b == 0 ? low : (b == 1 ? mid : high); }
 };
 
 /// **THE LOOKAHEAD'S CHOICES (backlog ND)**: Off, then whole milliseconds up to the chosen 10. `kLookaheadMs` is what each
@@ -234,6 +268,19 @@ inline constexpr float kDryAlignFadeBlend = 0.1f;
 /// threshold sweep spans, enough to move a mix-level source off the downward knee without leaving the picture.
 inline constexpr float kDriveMinDb = -12.0f;
 inline constexpr float kDriveMaxDb = 24.0f;
+
+/// **THE OUTPUT KNOB AS A GAIN** (0..1 to 0..6.31 linear): the lower half is a straight 0..unity, the upper half takes
+/// it up to +16 dB. Moved here from `owltt.cpp`, unchanged, so the window's Output readout reads the number the DSP uses.
+[[nodiscard]] inline float outputGainFromKnob(float knob) {
+	if (knob <= 0.5f) {
+		return knob * 2.0f;
+	}
+	return 1.0f + (knob - 0.5f) * 2.0f * 5.31f;
+}
+
+/// EACH BAND'S INPUT LEVEL RANGE, dB (the per-band rebuild): symmetric, 0 dB the device before it.
+inline constexpr float kBandInputMinDb = -18.0f;
+inline constexpr float kBandInputMaxDb = 18.0f;
 
 /// dB TO LINEAR, as `exp` rather than `pow(10, .)` — COMP's own formula, so a case can restate it.
 [[nodiscard]] inline float driveGainOf(float db) {
@@ -286,6 +333,10 @@ inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", 
                                              "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3"};
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
+/// THE CLIP CHOICE (`soft_clip`). It was Off|On; On is Master, the same index, so a stored 1 means what it meant, and a
+/// patch that stored the label "On" loads as Master through `kClipAliases`.
+inline constexpr const char* kClipNames[] = {"Off", "Master", "Bands"};
+inline constexpr device::ChoiceAlias kClipAliases[] = { { "On", "Master" } };
 /// BACKLOG LQ: what a band's two channels are.
 inline constexpr const char* kStereoModeNames[] = {"L/R", "M/S"};
 
@@ -332,6 +383,12 @@ struct EffectiveBand {
 	float ratio;
 	float bandwidth;
 	float level;
+	/// The two directions' ratios (the band's own `ratio` is what both started from) and the band's attack and release
+	/// knobs, as `setRatioDown`, `setRatioUp`, `setAttack` and `setRelease` take them.
+	float ratioDown;
+	float ratioUp;
+	float attack;
+	float release;
 };
 
 /// How far a global displaces its per-band partner. Zero when the global sits at its own neutral.
@@ -352,6 +409,14 @@ inline EffectiveBand effectiveBandOf(const BandParams& band, const Settings& s) 
 	out.bandwidth = std::clamp(band.bandwidth + bandwidthShiftOf(s), 0.0f, 1.0f);
 	// LEVEL HAS NO GLOBAL PARTNER. Listed anyway so a reader is told rather than left to notice.
 	out.level = band.level;
+	// THE PER-BAND TRIMS AND OFFSETS, IN THE SAME CENTRED FORM AS THE LINKED SHIFTS ABOVE: a displacement from 0.5,
+	// added in the control's own units and clamped to its range. At 0.5 the displacement is exactly 0.0f, so the
+	// value is the one before them to the bit. Up and Down trim the ratio of their own direction (the Up/Down skew
+	// still balances the two globally); Attack and Release offset the global's.
+	out.ratioDown = std::clamp(out.ratio + (band.downRatio - 0.5f), 0.0f, 1.0f);
+	out.ratioUp = std::clamp(out.ratio + (band.upRatio - 0.5f), 0.0f, 1.0f);
+	out.attack = std::clamp(s.attack + (band.attack - 0.5f), 0.0f, 1.0f);
+	out.release = std::clamp(s.release + (band.release - 0.5f), 0.0f, 1.0f);
 	return out;
 }
 
@@ -553,15 +618,18 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .unit = device::Unit::Number, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
      .tooltip = "Mid-high split frequency", .wholeReadout = true, .suffix = "Hz"},
     {"output_gain", "Output Gain", 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,
-     "Makeup gain — output level after compression"},
+     "Output level after the bands are summed, in dB — 0 dB is unity, the top of the range is +16 dB"},
     {"blend", "Blend", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,
      "Wet/dry mix — balance between processed and original"},
     // THE SOFT CLIPPER'S SWITCH (backlog EL). On is how the device always ran: each band's sum is
     // knee-clipped at +6 dB and the output at 0 dBFS. Off lets a hot band through unclipped — the
     // firmware's `setSoftClipEnabled`, which its Mode encoder toggled with a click. Not modulatable:
     // a clipper switching under modulation is a click, not an effect.
-    {"soft_clip", "Soft Clip", 0.0, 1.0, 1.0, true, device::Unit::Choice, kOffOnNames, false, false,
-     "Soft clipper on the bands (+6 dB) and the output (0 dBFS) — off lets peaks through unclipped"},
+    {.key = "soft_clip", .name = "Soft Clip", .min = 0.0, .max = 2.0, .def = 1.0, .stepped = true, .unit = device::Unit::Choice,
+     .names = kClipNames, .modulatable = false, .offsetsMayLeaveRange = false,
+     .tooltip = "Soft clipper — Off lets peaks through; Master clips each band (+6 dB) and then the output (0 dBFS); "
+                "Bands clips each band and leaves the sum alone",
+     .shortName = "Clip", .choiceAliases = kClipAliases},
     // **CHARACTER'S AND VIBE'S MODE CELLS (backlog IW).** Stepped Choices, eight zones then Free, default Free — so a
     // fresh device sounds as it did: Free is the rolling coordinate. Not destinations: a mode switching under a route is
     // a different behaviour arriving mid-note, and IW's modes are chosen, not swept.
@@ -614,6 +682,69 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .tooltip = "The last note played places the crossovers, and each becomes its offset from the note: Low at its "
                 "default sits on the note, High keeps its default distance above",
      .shortName = "Key"},
+    // THE PER-BAND REBUILD: six ratio trims (up and down for each band), six attack/release offsets and three input
+    // levels. The trims and offsets are centred on 0.5 like the three per-band controls beside them; the input is a
+    // gain in dB, Drive's form, per band.
+    {.key = "low_up_ratio", .name = "Low Up Ratio", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Low band upward ratio — trims this band's ratio for the upward compressor only; the centre leaves it as the band ratio sets it",
+     .shortName = "Up"},
+    {.key = "low_down_ratio", .name = "Low Down Ratio", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Low band downward ratio — trims this band's ratio for the downward compressor only; the centre leaves it as the band ratio sets it",
+     .shortName = "Down"},
+    {.key = "mid_up_ratio", .name = "Mid Up Ratio", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Mid band upward ratio — trims this band's ratio for the upward compressor only; the centre leaves it as the band ratio sets it",
+     .shortName = "Up"},
+    {.key = "mid_down_ratio", .name = "Mid Down Ratio", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Mid band downward ratio — trims this band's ratio for the downward compressor only; the centre leaves it as the band ratio sets it",
+     .shortName = "Down"},
+    {.key = "high_up_ratio", .name = "High Up Ratio", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "High band upward ratio — trims this band's ratio for the upward compressor only; the centre leaves it as the band ratio sets it",
+     .shortName = "Up"},
+    {.key = "high_down_ratio", .name = "High Down Ratio", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "High band downward ratio — trims this band's ratio for the downward compressor only; the centre leaves it as the band ratio sets it",
+     .shortName = "Down"},
+    {.key = "low_attack", .name = "Low Attack", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Low band attack — an offset from the global Attack; the centre leaves this band on the global",
+     .shortName = "Att"},
+    {.key = "low_release", .name = "Low Release", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Low band release — an offset from the global Release; the centre leaves this band on the global",
+     .shortName = "Rel"},
+    {.key = "mid_attack", .name = "Mid Attack", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Mid band attack — an offset from the global Attack; the centre leaves this band on the global",
+     .shortName = "Att"},
+    {.key = "mid_release", .name = "Mid Release", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Mid band release — an offset from the global Release; the centre leaves this band on the global",
+     .shortName = "Rel"},
+    {.key = "high_attack", .name = "High Attack", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "High band attack — an offset from the global Attack; the centre leaves this band on the global",
+     .shortName = "Att"},
+    {.key = "high_release", .name = "High Release", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "High band release — an offset from the global Release; the centre leaves this band on the global",
+     .shortName = "Rel"},
+    {.key = "low_input", .name = "Low Input", .min = kBandInputMinDb, .max = kBandInputMaxDb, .def = 0.0, .stepped = false,
+     .unit = device::Unit::Decibel, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Low band input level — gain on this band after the split and before its detector and compressor",
+     .shortName = "In"},
+    {.key = "mid_input", .name = "Mid Input", .min = kBandInputMinDb, .max = kBandInputMaxDb, .def = 0.0, .stepped = false,
+     .unit = device::Unit::Decibel, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Mid band input level — gain on this band after the split and before its detector and compressor",
+     .shortName = "In"},
+    {.key = "high_input", .name = "High Input", .min = kBandInputMinDb, .max = kBandInputMaxDb, .def = 0.0, .stepped = false,
+     .unit = device::Unit::Decibel, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "High band input level — gain on this band after the split and before its detector and compressor",
+     .shortName = "In"},
 };
 
 /// ND'S DEFAULT, PINNED TO THE DESCRIPTOR: Off is the device before the lookahead.

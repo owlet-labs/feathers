@@ -198,6 +198,32 @@ public:
 		out.velocity = e->velocity;
 	}
 
+	/// **A MIDI 1.0 NOTE, DECODED INTO THE SAME STREAM** as `collectNote`'s: note id -1 (MIDI has none), the
+	/// channel the status byte's low nibble, velocity the data byte over 127, and a note-on of velocity 0 a
+	/// note-off. NOTES ONLY: the rack has no pitch-bend or sustain consumer, so those, the other CCs and the
+	/// rest of MIDI are ignored rather than invented.
+	void collectMidi(const clap_event_midi* e, uint32_t time) noexcept {
+		const uint8_t status = e->data[0];
+		const uint8_t type = status & 0xF0;
+		if (type != 0x90 && type != 0x80) {
+			return;
+		}
+		if (noteCount_ >= notesIn_.size()) {
+			return;
+		}
+		const uint8_t vel = e->data[2] & 0x7F;
+		device::NoteEvent& out = notesIn_[noteCount_++];
+		out = device::NoteEvent {};
+		const bool on = type == 0x90 && vel != 0;
+		out.kind = on ? device::NoteEvent::Kind::On : device::NoteEvent::Kind::Off;
+		out.timeSamples = time;
+		out.noteId = -1;
+		out.port = e->port_index;
+		out.channel = static_cast<int16_t>(status & 0x0F);
+		out.key = static_cast<int16_t>(e->data[1] & 0x7F);
+		out.velocity = (on || type == 0x80) ? static_cast<double>(vel) / 127.0 : 0.0;
+	}
+
 	/// **A NOTE EXPRESSION, IN THE SAME STREAM AS ITS NOTE** — `device::NoteEvent`'s own model, which the
 	/// rack did not take: it had no case for `CLAP_EVENT_NOTE_EXPRESSION`, so a Note Expressions modulator
 	/// in the rack sat at neutral under an MPE controller and no keytracking device followed a per-note
@@ -1232,6 +1258,9 @@ private:
 				break;
 			case CLAP_EVENT_NOTE_EXPRESSION:
 				collectExpression(header);
+				break;
+			case CLAP_EVENT_MIDI:
+				collectMidi(reinterpret_cast<const clap_event_midi*>(header), header->time);
 				break;
 			case CLAP_EVENT_TRANSPORT:
 				// A TRANSPORT INSIDE THE BLOCK (backlog NJ (b)) — a locate or a tempo change at its sample; the block

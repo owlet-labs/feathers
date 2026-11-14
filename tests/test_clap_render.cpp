@@ -319,7 +319,24 @@ public:
 		order_.push_back({Kind::Mod, mods_.size() - 1});
 	}
 
+	/// A MIDI 1.0 event as a host on the MIDI dialect sends it: three data bytes, the status byte's low nibble the channel.
+	void pushMidi(uint32_t time, uint8_t status, uint8_t data1, uint8_t data2) {
+		clap_event_midi event{};
+		event.header.size = sizeof(event);
+		event.header.time = time;
+		event.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+		event.header.type = CLAP_EVENT_MIDI;
+		event.header.flags = 0;
+		event.port_index = 0;
+		event.data[0] = status;
+		event.data[1] = data1;
+		event.data[2] = data2;
+		midis_.push_back(event);
+		order_.push_back({Kind::Midi, midis_.size() - 1});
+	}
+
 	void clear() {
+		midis_.clear();
 		notes_.clear();
 		params_.clear();
 		mods_.clear();
@@ -332,7 +349,7 @@ public:
 	}
 
 private:
-	enum class Kind : uint8_t { Param, Note, Mod };
+	enum class Kind : uint8_t { Param, Note, Mod, Midi };
 	struct Ref {
 		Kind kind;
 		size_t index;
@@ -350,6 +367,8 @@ private:
 			return &self->notes_[ref.index].header;
 		case Kind::Mod:
 			return &self->mods_[ref.index].header;
+		case Kind::Midi:
+			return &self->midis_[ref.index].header;
 		case Kind::Param:
 			break;
 		}
@@ -365,6 +384,11 @@ private:
 	}()};
 	std::vector<clap_event_param_value> params_{[] {
 		std::vector<clap_event_param_value> v;
+		v.reserve(64);
+		return v;
+	}()};
+	std::vector<clap_event_midi> midis_{[] {
+		std::vector<clap_event_midi> v;
 		v.reserve(64);
 		return v;
 	}()};
@@ -8524,5 +8548,300 @@ TEST_CASE("a key in the first block after start, or after a state load into a ru
 		const auto later = notesOf(afterLoad, 6);
 		REQUIRE(later.size() >= 2); // the reference plays: not vacuous
 		CHECK(first == later);      // the first block's key is Pattern's, as a later one is
+	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE MIDI 1.0 DIALECT. Expected values are restated from the MIDI 1.0 specification (status byte,  //
+// 14-bit bend centred on 8192, CC 64 sustain at 64 and above, CC 120 / 123) and from CLAP's note   //
+// event definition (note id -1 for a host with none, velocity 0..1) -- never read back from the    //
+// code under test.                                                                                 //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+struct Delivered {
+	uint32_t kind;
+	int32_t key;
+	uint64_t sample;
+	bool operator==(const Delivered& o) const { return kind == o.kind && key == o.key && sample == o.sample; }
+};
+
+std::vector<Delivered> deliveredOf(const clap_plugin* p) {
+	std::vector<Delivered> out;
+	Delivered d{};
+	for (uint32_t i = 0; testChainOf(p)->delivered_note(p, i, &d.kind, &d.key, &d.sample); ++i) {
+		out.push_back(d);
+	}
+	return out;
+}
+
+double synthValue(const clap_plugin* p, uint32_t what) {
+	double v = -1.0;
+	REQUIRE(testChainOf(p)->synth_reading(p, what, &v));
+	return v;
+}
+
+/// Whether any voice is in `stage` (`Voice::Stage` as a number).
+int voicesInStage(const clap_plugin* p, uint32_t stage) {
+	int n = 0;
+	for (uint32_t slot = 0; slot < static_cast<uint32_t>(feathers::kVoiceSlots); ++slot) {
+		if (voiceValue(p, static_cast<int>(slot), CLAP_FEATHERS_VOICE_STAGE) == static_cast<double>(stage)) {
+			++n;
+		}
+	}
+	return n;
+}
+
+constexpr uint32_t kStageSustain = 2;
+constexpr uint32_t kStageRelease = 3;
+
+/// The pitch of the one sounding voice after a few blocks, with `events` in the first.
+double pitchAfter(HostedPlugin& host, const EventList& events) {
+	EventList none;
+	host.run(kBlock, events);
+	for (int i = 0; i < 4; ++i) {
+		host.run(kBlock, none);
+	}
+	const int slot = soundingVoice(host.plugin());
+	REQUIRE(slot >= 0);
+	return voiceValue(host.plugin(), slot, CLAP_FEATHERS_VOICE_PITCH);
+}
+
+} // namespace
+
+TEST_CASE("MIDI dialect: a note on and off reaches the voices as the equivalent CLAP note does, key and sample and pitch") {
+	for (const uint32_t offset : { 0u, 37u, 200u }) {
+		CAPTURE(offset);
+		HostedPlugin clapHost;
+		HostedPlugin midiHost;
+		EventList none;
+		clapHost.run(kBlock, none);
+		midiHost.run(kBlock, none);
+		REQUIRE(testChainOf(clapHost.plugin())->delivered_note(clapHost.plugin(), UINT32_MAX, nullptr, nullptr, nullptr));
+		REQUIRE(testChainOf(midiHost.plugin())->delivered_note(midiHost.plugin(), UINT32_MAX, nullptr, nullptr, nullptr));
+
+		EventList viaClap;
+		viaClap.pushNote(CLAP_EVENT_NOTE_ON, offset, 64, -1, 100.0 / 127.0);
+		EventList viaMidi;
+		viaMidi.pushMidi(offset, 0x90, 64, 100);
+		const double clapPitch = pitchAfter(clapHost, viaClap);
+		const double midiPitch = pitchAfter(midiHost, viaMidi);
+		CHECK(midiPitch == clapPitch);
+		CHECK(midiPitch == doctest::Approx(64.0).epsilon(1e-9)); // key 64, no transposition in the default patch
+		CHECK(synthValue(midiHost.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN) == 1.0);
+
+		// THE NOTE IS HANDED TO THE VOICES AT ITS OWN SAMPLE: the block starts at 256 (one block was rendered first).
+		const std::vector<Delivered> clapSeen = deliveredOf(clapHost.plugin());
+		const std::vector<Delivered> midiSeen = deliveredOf(midiHost.plugin());
+		REQUIRE(midiSeen.size() == 1);
+		CHECK(midiSeen == clapSeen);
+		CHECK(midiSeen[0].kind == 0);
+		CHECK(midiSeen[0].key == 64);
+		CHECK(midiSeen[0].sample == kBlock + offset);
+
+		// The 0x80 off, at its own offset in a later block, ends the key as the CLAP off does.
+		const uint64_t before = 6 * static_cast<uint64_t>(kBlock);
+		EventList offClap;
+		offClap.pushNote(CLAP_EVENT_NOTE_OFF, 11, 64, -1, 64.0 / 127.0);
+		EventList offMidi;
+		offMidi.pushMidi(11, 0x80, 64, 64);
+		clapHost.run(kBlock, offClap);
+		midiHost.run(kBlock, offMidi);
+		CHECK(synthValue(midiHost.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN) == 0.0);
+		const std::vector<Delivered> midiAll = deliveredOf(midiHost.plugin());
+		REQUIRE(midiAll.size() == 2);
+		CHECK(midiAll == deliveredOf(clapHost.plugin()));
+		CHECK(midiAll[1].kind == 1);
+		CHECK(midiAll[1].key == 64);
+		CHECK(midiAll[1].sample == before + 11);
+		CHECK(voicesInStage(midiHost.plugin(), kStageRelease) == 1);
+	}
+}
+
+TEST_CASE("MIDI dialect: a note on with velocity 0 is a note off, at its sample") {
+	HostedPlugin host;
+	EventList none;
+	EventList on;
+	on.pushMidi(0, 0x90, 60, 90);
+	host.run(kBlock, on);
+	REQUIRE(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN) == 1.0);
+	REQUIRE(testChainOf(host.plugin())->delivered_note(host.plugin(), UINT32_MAX, nullptr, nullptr, nullptr));
+	EventList zero;
+	zero.pushMidi(73, 0x90, 60, 0);
+	host.run(kBlock, zero);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN) == 0.0);
+	const std::vector<Delivered> seen = deliveredOf(host.plugin());
+	REQUIRE(seen.size() == 1);
+	CHECK(seen[0].kind == 1);
+	CHECK(seen[0].key == 60);
+	CHECK(seen[0].sample == kBlock + 73);
+	CHECK(voicesInStage(host.plugin(), kStageRelease) == 1);
+}
+
+TEST_CASE("MIDI dialect: the channel is the status byte's low nibble") {
+	HostedPlugin host;
+	EventList on;
+	on.pushMidi(0, 0x95, 60, 100); // channel 5
+	on.pushMidi(0, 0x90, 67, 100); // channel 0
+	host.run(kBlock, on);
+	REQUIRE(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN) == 2.0);
+	// Channel 5's key 60 off on channel 0 releases nothing: key 60 is not down there.
+	EventList wrong;
+	wrong.pushMidi(0, 0x80, 60, 0);
+	host.run(kBlock, wrong);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN) == 2.0);
+	EventList right;
+	right.pushMidi(0, 0x85, 60, 0);
+	host.run(kBlock, right);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN) == 1.0);
+}
+
+TEST_CASE("MIDI dialect: pitch bend 16383, 12288, 8192 and 0 bend by +1, 4096/8191, 0 and -1 of the bend range, on its own channel") {
+	// THE EXPECTED PITCH IS THE KEY PLUS THE WHEEL (the MIDI 1.0 14-bit value, centre 8192, the upper half over 8191 so
+	// 16383 is exactly +1 and the lower over 8192 so 0 is exactly -1) TIMES THE RANGE THE `Bend Range` PARAM NAMES.
+	struct Range { double index; double semitones; };
+	for (const Range range : { Range { 3.0, 12.0 }, Range { 1.0, 2.0 } }) {
+		CAPTURE(range.semitones);
+		HostedPlugin host;
+		EventList setup;
+		setup.pushParam(0, static_cast<clap_id>(feathers::ParamId::BendRange), range.index);
+		setup.pushMidi(0, 0x90, 60, 100);
+		const double centred = pitchAfter(host, setup);
+		REQUIRE(centred == doctest::Approx(60.0).epsilon(1e-9));
+		struct Case { int bend; double wheel; };
+		for (const Case c : { Case { 16383, 1.0 }, Case { 12288, 4096.0 / 8191.0 }, Case { 8192, 0.0 }, Case { 0, -1.0 },
+		                      Case { 4096, -0.5 } }) {
+			CAPTURE(c.bend);
+			EventList bend;
+			bend.pushMidi(0, 0xE0, static_cast<uint8_t>(c.bend & 0x7F), static_cast<uint8_t>(c.bend >> 7));
+			const double pitch = pitchAfter(host, bend);
+			CHECK(pitch == doctest::Approx(60.0 + c.wheel * range.semitones).epsilon(1e-9));
+		}
+		// A bend on ANOTHER channel leaves this channel's voice where it was.
+		EventList centre;
+		centre.pushMidi(0, 0xE0, 0x00, 0x40);
+		REQUIRE(pitchAfter(host, centre) == doctest::Approx(60.0).epsilon(1e-9));
+		EventList other;
+		other.pushMidi(0, 0xE3, 0x7F, 0x7F);
+		CHECK(pitchAfter(host, other) == doctest::Approx(60.0).epsilon(1e-9));
+	}
+}
+
+TEST_CASE("MIDI dialect: a pitch bend takes effect at its sample, not at the block start") {
+	// The bend rides the note lane's clock like a note: the same voice, bent at sample 200 of a block, is still at its
+	// centred pitch when a block ending before 200 is read -- so the block is cut at the event.
+	HostedPlugin host;
+	EventList on;
+	on.pushMidi(0, 0x90, 60, 100);
+	const double base = pitchAfter(host, on);
+	REQUIRE(base == doctest::Approx(60.0).epsilon(1e-9));
+	EventList late;
+	late.pushMidi(200, 0xE0, 0x7F, 0x7F); // +1 at sample 200
+	EventList none;
+	host.run(200, none); // a short block that ends exactly where the event would sit
+	const int slot = soundingVoice(host.plugin());
+	REQUIRE(slot >= 0);
+	CHECK(voiceValue(host.plugin(), slot, CLAP_FEATHERS_VOICE_PITCH) == doctest::Approx(60.0).epsilon(1e-9));
+	host.run(kBlock, late);
+	for (int i = 0; i < 4; ++i) {
+		host.run(kBlock, none);
+	}
+	CHECK(voiceValue(host.plugin(), slot, CLAP_FEATHERS_VOICE_PITCH) == doctest::Approx(72.0).epsilon(1e-9));
+}
+
+TEST_CASE("MIDI dialect: CC 64 at 64 holds a released note, at 63 does not, and the pedal coming up releases it") {
+	EventList none;
+	// The note is struck in one block and let go in the next, as a player does: a gate that opens and shuts inside one
+	// control tick never strikes, which is not what this case is about.
+	const auto play = [&](HostedPlugin& h, uint8_t pedalStatus, uint8_t pedalValue) {
+		EventList strike;
+		strike.pushMidi(0, pedalStatus, 64, pedalValue);
+		strike.pushMidi(0, 0x90, 60, 100);
+		h.run(kBlock, strike);
+		h.run(kBlock, none);
+		REQUIRE(voicesInStage(h.plugin(), kStageSustain) == 1);
+		EventList lift;
+		lift.pushMidi(10, 0x80, 60, 0);
+		h.run(kBlock, lift);
+		h.run(kBlock, none);
+	};
+	HostedPlugin host;
+	play(host, 0xB0, 64); // down
+	// Released by the key but held by the pedal: the voice is still in its sustain, not its release.
+	CHECK(voicesInStage(host.plugin(), kStageSustain) == 1);
+	CHECK(voicesInStage(host.plugin(), kStageRelease) == 0);
+	EventList up;
+	up.pushMidi(0, 0xB0, 64, 0);
+	host.run(kBlock, up);
+	CHECK(voicesInStage(host.plugin(), kStageSustain) == 0);
+	CHECK(voicesInStage(host.plugin(), kStageRelease) == 1);
+
+	SUBCASE("a value of 63 is up") {
+		HostedPlugin other;
+		play(other, 0xB0, 63);
+		CHECK(voicesInStage(other.plugin(), kStageSustain) == 0);
+		CHECK(voicesInStage(other.plugin(), kStageRelease) == 1);
+	}
+	SUBCASE("the pedal is per channel") {
+		HostedPlugin other;
+		play(other, 0xB1, 127); // down on channel 1 only
+		CHECK(voicesInStage(other.plugin(), kStageSustain) == 0);
+		CHECK(voicesInStage(other.plugin(), kStageRelease) == 1);
+	}
+}
+
+TEST_CASE("MIDI dialect: CC 123 releases every note of its channel only; CC 120 chokes them; other CCs and messages do nothing") {
+	const auto keysDown = [](HostedPlugin& h) { return synthValue(h.plugin(), CLAP_FEATHERS_SYNTH_KEYS_DOWN); };
+	EventList none;
+	{
+		HostedPlugin host;
+		EventList on;
+		on.pushMidi(0, 0x90, 60, 100);
+		on.pushMidi(0, 0x90, 64, 100);
+		on.pushMidi(0, 0x91, 67, 100);
+		host.run(kBlock, on);
+		REQUIRE(keysDown(host) == 3.0);
+		EventList off;
+		off.pushMidi(0, 0xB1, 123, 0); // channel 1's
+		host.run(kBlock, off);
+		CHECK(keysDown(host) == 2.0); // channel 0's two keys stay down
+		CHECK(voicesInStage(host.plugin(), kStageRelease) == 1);
+		CHECK(voicesInStage(host.plugin(), kStageSustain) == 2);
+	}
+	{
+		HostedPlugin host;
+		EventList on;
+		on.pushMidi(0, 0x90, 60, 100);
+		on.pushMidi(0, 0x90, 64, 100);
+		on.pushMidi(0, 0x91, 67, 100);
+		host.run(kBlock, on);
+		EventList off;
+		off.pushMidi(0, 0xB1, 120, 0); // channel 1's
+		host.run(kBlock, off);
+		CHECK(keysDown(host) == 2.0);
+		// Choked: faded out by the steal fade and ended well inside the default release, which is a second.
+		for (int i = 0; i < 8; ++i) {
+			host.run(kBlock, none);
+		}
+		CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 2.0);
+		CHECK(voicesInStage(host.plugin(), kStageSustain) == 2);
+	}
+	{
+		HostedPlugin host;
+		EventList on;
+		on.pushMidi(0, 0x90, 60, 100);
+		host.run(kBlock, on);
+		EventList noise;
+		noise.pushMidi(0, 0xB0, 1, 127);   // mod wheel: no destination in v1
+		noise.pushMidi(0, 0xB0, 7, 0);     // channel volume
+		noise.pushMidi(0, 0xD0, 99, 0);    // channel pressure
+		noise.pushMidi(0, 0xC0, 5, 0);     // program change
+		noise.pushMidi(0, 0xA0, 60, 100);  // polyphonic pressure
+		noise.pushMidi(0, 0xF8, 0, 0);     // a system message
+		host.run(kBlock, noise);
+		CHECK(keysDown(host) == 1.0);
+		CHECK(voicesInStage(host.plugin(), kStageSustain) == 1);
+		CHECK(voicesInStage(host.plugin(), kStageRelease) == 0);
 	}
 }

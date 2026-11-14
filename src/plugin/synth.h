@@ -395,6 +395,9 @@ public:
 
 	/// Pitch wheel, -1 to 1, scaled by the Bend Range param. Per channel, because MIDI is.
 	void pitchBend(int16_t channel, double wheel);
+	/// The same from a 14-bit MIDI value, centre 8192: the two halves are scaled by 8191 and 8192 so both
+	/// extremes (16383 and 0) reach exactly +1 and -1.
+	void pitchBend14(int16_t channel, int bend14bit);
 
 	void sustainPedal(int16_t channel, bool down);
 

@@ -715,6 +715,85 @@ TEST_CASE("rack plugin: a note's offset and velocity cross the plugin to the cha
 	CHECK(captured.notes[0].velocity == 0.375);
 }
 
+TEST_CASE("rack plugin: MIDI 1.0 notes reach the note lane as CLAP notes do, and nothing else of MIDI is invented") {
+	// THE EXPECTED VALUES ARE THE MIDI 1.0 SPECIFICATION'S AND CLAP'S: the channel is the status byte's low nibble,
+	// velocity 0 on a note on is a note off, the note id is -1 (MIDI has none), the velocity is the data byte over 127.
+	Venue v;
+	REQUIRE(v.test()->add_device(v.plugin, fx::filter::kTraits.tag) != 0);
+	v.settle();
+
+	struct Midi {
+		std::vector<clap_event_midi> events;
+	} midi;
+	const auto push = [&](uint32_t time, uint8_t status, uint8_t d1, uint8_t d2) {
+		clap_event_midi e {};
+		e.header.size = sizeof(e);
+		e.header.time = time;
+		e.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+		e.header.type = CLAP_EVENT_MIDI;
+		e.header.flags = 0;
+		e.port_index = 0;
+		e.data[0] = status;
+		e.data[1] = d1;
+		e.data[2] = d2;
+		midi.events.push_back(e);
+	};
+	push(10, 0x93, 67, 100);  // note on, channel 3
+	push(20, 0xE3, 0x7F, 0x7F); // pitch bend: the rack has no consumer, so it is not a note
+	push(30, 0xB3, 64, 127);  // sustain: likewise
+	push(40, 0x93, 67, 0);    // note on, velocity 0: a note off
+	push(50, 0x83, 60, 64);   // note off
+	push(60, 0x90, 72, 127);  // note on, channel 0, full velocity
+	clap_input_events in {};
+	in.ctx = &midi;
+	in.size = [](const clap_input_events* l) -> uint32_t {
+		return static_cast<uint32_t>(static_cast<const Midi*>(l->ctx)->events.size());
+	};
+	in.get = [](const clap_input_events* l, uint32_t i) -> const clap_event_header* {
+		return &static_cast<const Midi*>(l->ctx)->events[i].header;
+	};
+
+	struct Captured {
+		std::vector<clap_event_note> notes;
+	} captured;
+	clap_output_events sink {};
+	sink.ctx = &captured;
+	sink.try_push = [](const clap_output_events* list, const clap_event_header* h) {
+		if (h->space_id == CLAP_CORE_EVENT_SPACE_ID
+		    && (h->type == CLAP_EVENT_NOTE_ON || h->type == CLAP_EVENT_NOTE_OFF || h->type == CLAP_EVENT_NOTE_CHOKE)) {
+			static_cast<Captured*>(list->ctx)->notes.push_back(*reinterpret_cast<const clap_event_note*>(h));
+		}
+		return true;
+	};
+	clap_process p {};
+	p.frames_count = static_cast<uint32_t>(v.l.size());
+	p.audio_inputs = &v.in;
+	p.audio_inputs_count = 1;
+	p.audio_outputs = &v.out;
+	p.audio_outputs_count = 1;
+	p.in_events = &in;
+	p.out_events = &sink;
+	REQUIRE(v.plugin->process(v.plugin, &p) == CLAP_PROCESS_CONTINUE);
+
+	REQUIRE(captured.notes.size() == 4); // the bend and the pedal made no note
+	struct Want { uint16_t type; uint32_t time; int16_t channel; int16_t key; double velocity; };
+	const Want want[4] = {
+		{ CLAP_EVENT_NOTE_ON, 10, 3, 67, 100.0 / 127.0 },
+		{ CLAP_EVENT_NOTE_OFF, 40, 3, 67, 0.0 },
+		{ CLAP_EVENT_NOTE_OFF, 50, 3, 60, 64.0 / 127.0 },
+		{ CLAP_EVENT_NOTE_ON, 60, 0, 72, 1.0 },
+	};
+	for (size_t i = 0; i < 4; ++i) {
+		CAPTURE(i);
+		CHECK(captured.notes[i].header.type == want[i].type);
+		CHECK(captured.notes[i].header.time == want[i].time);
+		CHECK(captured.notes[i].channel == want[i].channel);
+		CHECK(captured.notes[i].key == want[i].key);
+		CHECK(captured.notes[i].note_id == -1);
+		CHECK(captured.notes[i].velocity == doctest::Approx(want[i].velocity).epsilon(1e-12));
+	}
+}
+
 TEST_CASE("hardening: notes drained in a block with no output bus are dropped, not replayed with the next block") {
 	Venue v;
 	REQUIRE(v.test()->add_device(v.plugin, fx::filter::kTraits.tag) != 0);

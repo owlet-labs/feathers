@@ -543,6 +543,7 @@ protected:
 	/// With no editor ticking, this visit is also the one that tells the host its patch changed: a slot a host
 	/// write NEWLY anchored is saved with the project (`serviceSlotRoads` marks it).
 	void onMainThread() noexcept override {
+		sayTransportOnce();
 		serviceSlots();
 		if (!loadingState_ && bridge_.takeStateDirty() && _host.canUseState()) {
 			_host.stateMarkDirty();
@@ -2281,26 +2282,45 @@ private:
 		synth_.setTransport(secondsForLock, beats, playing);
 	}
 
-	/// SAY ONCE WHAT THIS HOST ACTUALLY OFFERS, on the same stderr channel the audition settings use.
+	/// RECORD ONCE WHAT THIS HOST ACTUALLY OFFERS, and say it from the main thread (`sayTransportOnce`).
 	///
 	/// It exists because "does this host provide a seconds timeline" is not answerable from the
 	/// headers and decides which road every note takes — and the only venue that can answer it is a
-	/// real DAW, which is expensive to ask and free to overhear. Printed once per instance rather
-	/// than per block, on the first process call, so the answer is in the log of any session anybody
-	/// happens to run.
+	/// real DAW, which is expensive to ask and free to overhear. Recorded on the first process call of
+	/// the instance; this runs on the audio thread, so it writes one atomic and asks the host for a
+	/// main-thread visit, and the stderr write happens there.
 	void reportTransportOnce(const clap_event_transport* transport) noexcept {
 		if (reportedTransport_) {
 			return;
 		}
 		reportedTransport_ = true;
-		if (transport == nullptr) {
+		uint8_t seen = kTransportSeen;
+		if (transport != nullptr) {
+			seen |= (transport->flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE) != 0 ? kTransportSeconds : 0;
+			seen |= (transport->flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) != 0 ? kTransportBeats : 0;
+			seen |= (transport->flags & CLAP_TRANSPORT_HAS_TEMPO) != 0 ? kTransportTempo : 0;
+		} else {
+			seen |= kTransportNone;
+		}
+		transportSeen_.store(seen, std::memory_order_release);
+		_host.requestCallback();
+	}
+
+	/// The main-thread half of `reportTransportOnce`: prints what the audio thread recorded, once.
+	void sayTransportOnce() noexcept {
+		const uint8_t seen = transportSeen_.load(std::memory_order_acquire);
+		if ((seen & kTransportSeen) == 0 || transportSaid_) {
+			return;
+		}
+		transportSaid_ = true;
+		if ((seen & kTransportNone) != 0) {
 			std::fprintf(stderr, "[feathers] transport: none offered — Analog keeps its per-voice"
 			                     " phase\n");
 			return;
 		}
-		const bool seconds = (transport->flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE) != 0;
-		const bool beats = (transport->flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) != 0;
-		const bool tempo = (transport->flags & CLAP_TRANSPORT_HAS_TEMPO) != 0;
+		const bool seconds = (seen & kTransportSeconds) != 0;
+		const bool beats = (seen & kTransportBeats) != 0;
+		const bool tempo = (seen & kTransportTempo) != 0;
 		std::fprintf(stderr,
 		             "[feathers] transport: seconds %s, beats %s, tempo %s — Analog locks to %s\n",
 		             seconds ? "yes" : "no", beats ? "yes" : "no", tempo ? "yes" : "no",
@@ -2317,6 +2337,48 @@ private:
 	}
 	static double beatsOf(clap_beattime t) noexcept {
 		return static_cast<double>(t) / static_cast<double>(CLAP_BEATTIME_FACTOR);
+	}
+
+	/// **A MIDI 1.0 EVENT, THROUGH THE SAME DOORS THE CLAP NOTE EVENTS USE** — so the note lane and the voices
+	/// hear it identically: the note id is -1 (MIDI has none, and matching falls back to channel and key) and
+	/// the velocity is the data byte over 127, which is CLAP's 0..1. The channel is the status byte's low
+	/// nibble; the port index is not read, as the CLAP events' is not.
+	///
+	/// TAKEN: note on (velocity 0 is a note off, as MIDI defines it), note off, pitch bend, CC 64 (sustain,
+	/// 64 and above is down), CC 123 (all notes off: a wildcard release, the road CLAP's own wildcard
+	/// note-off takes) and CC 120 (all sound off: a wildcard choke). IGNORED: every other message — v1 has
+	/// no CC destinations, and the pressure messages have no consumer here.
+	void handleMidi(const clap_event_midi* event) noexcept {
+		const uint8_t status = event->data[0];
+		const int16_t channel = static_cast<int16_t>(status & 0x0F);
+		const uint8_t d1 = event->data[1] & 0x7F;
+		const uint8_t d2 = event->data[2] & 0x7F;
+		switch (status & 0xF0) {
+		case 0x90:
+			if (d2 == 0) {
+				synth_.noteOff(channel, d1, -1, 0.0);
+			} else {
+				synth_.noteOn(channel, d1, -1, static_cast<double>(d2) / 127.0);
+			}
+			break;
+		case 0x80:
+			synth_.noteOff(channel, d1, -1, static_cast<double>(d2) / 127.0);
+			break;
+		case 0xE0:
+			synth_.pitchBend14(channel, d1 | (d2 << 7));
+			break;
+		case 0xB0:
+			if (d1 == 64) {
+				synth_.sustainPedal(channel, d2 >= 64);
+			} else if (d1 == 123) {
+				synth_.noteOff(channel, -1, -1, 0.0);
+			} else if (d1 == 120) {
+				synth_.choke(channel, -1, -1);
+			}
+			break;
+		default:
+			break;
+		}
 	}
 
 	void handleEvent(const clap_event_header* header) noexcept {
@@ -2366,9 +2428,13 @@ private:
 			                      event->value);
 			break;
 		}
+		case CLAP_EVENT_MIDI:
+			handleMidi(reinterpret_cast<const clap_event_midi*>(header));
+			break;
 		default:
 			// Parameter events were taken above, so anything still here is something v1 does not
-			// speak: transport, MIDI dialects, extension spaces.
+			// speak: MIDI 2.0 and SysEx (the port declares only the CLAP and MIDI 1.0 dialects it
+			// reads), extension spaces.
 			break;
 		}
 	}
@@ -3182,6 +3248,11 @@ private:
 	/// Whether this instance has already said what its host offers for transport. See
 	/// reportTransportOnce.
 	bool reportedTransport_{false};
+	/// What the audio thread saw (`reportTransportOnce`), for the main thread to say (`sayTransportOnce`).
+	static constexpr uint8_t kTransportSeen = 0x01, kTransportSeconds = 0x02, kTransportBeats = 0x04,
+	                         kTransportTempo = 0x08, kTransportNone = 0x10;
+	std::atomic<uint8_t> transportSeen_ { 0 };
+	bool transportSaid_ = false; // main thread only
 
 	/// What the host has not been told yet. Bounded by the parameter count because it is deduplicated:
 	/// every id can be waiting at most once, however long its queue stays full.

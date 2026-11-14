@@ -712,6 +712,12 @@ void Synth::pitchBend(int16_t channel, double wheel) {
 	bendWheel_[static_cast<size_t>(channel)] = std::clamp(wheel, -1.0, 1.0);
 }
 
+void Synth::pitchBend14(int16_t channel, int bend14bit) {
+	const int offset = bend14bit - 8192;
+	pitchBend(channel, offset >= 0 ? static_cast<double>(offset) / 8191.0
+	                               : static_cast<double>(offset) / 8192.0);
+}
+
 void Synth::sustainPedal(int16_t channel, bool down) {
 	// Same bounds argument as the note events: the manager keeps one sustain flag per channel in a
 	// sixteen-entry array and indexes it without checking.
@@ -5610,11 +5616,7 @@ void Synth::Responder::setVoiceMIDIMPEChannelPressure(Voice*, int8_t) {}
 void Synth::Responder::setVoiceMIDIMPETimbre(Voice*, int8_t) {}
 
 void Synth::MonoResponder::setMIDIPitchBend(int16_t channel, int16_t bend14bit) {
-	// 14-bit MIDI bend, centre 8192. The two halves are scaled by 8192 and 8191 respectively so both
-	// extremes reach exactly full deflection.
-	const int offset = bend14bit - 8192;
-	synth.pitchBend(channel, offset >= 0 ? static_cast<double>(offset) / 8191.0
-	                                     : static_cast<double>(offset) / 8192.0);
+	synth.pitchBend14(channel, bend14bit);
 }
 
 void Synth::MonoResponder::setMIDI1CC(int16_t, int16_t, int8_t) {

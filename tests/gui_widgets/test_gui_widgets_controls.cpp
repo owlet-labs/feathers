@@ -8999,7 +8999,10 @@ namespace {
 
 namespace ero = feathers::fx::eroder;
 
-/// ERODER's Mix — a Percent control, 0..1, default 50 % — on a knob or a box seated in the editor's own
+/// WHAT A RESET PUTS ERODER's Mix BACK TO: its declared default, read rather than retyped.
+const auto kTypeInDefault = static_cast<float>(ero::kParamDescs[static_cast<size_t>(ero::Param::Mix)].def);
+
+/// ERODER's Mix — a Percent control, 0..1 — on a knob or a box seated in the editor's own
 /// tree, over a `DeviceControl` given the editor's history and panel state, which is how every device card
 /// builds one. In the tree because the field takes the keyboard focus, as the macro rename's does.
 struct TypeInFixture {
@@ -9053,7 +9056,7 @@ TEST_CASE("type-in: a triple-click on a knob opens a field on the value from bef
 	knob.processMouseUp(at(face.x, face.y));
 	knob.processMouseDown(doubleClickAt(face.x, face.y));
 	knob.processMouseUp(at(face.x, face.y));
-	CHECK(t.value() == 0.5f);
+	CHECK(t.value() == kTypeInDefault);
 	CHECK(t.history->length() == steps + 1);
 	CHECK(knob.typeInField() == nullptr); // a double-click opens nothing
 
@@ -9096,7 +9099,7 @@ TEST_CASE("type-in: a triple-click then Escape changes NOTHING — the pre-reset
 		tripleClick(knob, face);
 		REQUIRE(knob.typeInField() != nullptr);
 		REQUIRE(knob.typeInField()->editing());
-		CHECK(t.value() == 0.5f); // the reset ran on the way
+		CHECK(t.value() == kTypeInDefault); // the reset ran on the way
 	};
 	const auto unchanged = [&](const char* how) {
 		INFO(how);
@@ -9259,7 +9262,7 @@ TEST_CASE("type-in: a value box types the same way — the field over its readin
 		box.processMouseUp(at(on.x, on.y));
 		box.processMouseDown(doubleClickAt(on.x, on.y));
 		box.processMouseUp(at(on.x, on.y));
-		CHECK(t.value() == 0.5f);
+		CHECK(t.value() == kTypeInDefault);
 		CHECK(t.history->length() == steps + 1);
 		t.history->undo();
 		CHECK(t.value() == 0.3f);

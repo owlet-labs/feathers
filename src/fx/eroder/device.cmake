@@ -17,7 +17,7 @@ feathers_register_device(
 	CODEC_REG feathers::codecs::kEroderCodec
 	INCLUDES fx/eroder/eroder_types.h
 	TARGET feathers-fx
-	SOURCES src/fx/eroder/eroder.cpp)
+	SOURCES src/fx/eroder/eroder.cpp src/fx/eroder/dust.cpp)
 
 # --- From the hand-written kDevices entry this manifest replaces (device_registry.h, before NY.1): ---
 # **THE ERODER — the reference's, ported as faithfully as float and a variable sample rate allow.**

@@ -22,6 +22,7 @@
 #pragma once
 
 #include "device/device.h"
+#include "fx/eroder/dust.h"
 #include "fx/eroder/eroder_types.h"
 #include "fx/sklitter/ring.h"
 
@@ -74,7 +75,15 @@ public:
 	[[nodiscard]] uint64_t holdsForTest() const noexcept { return holds_; }
 	/// WHETHER THE LINE STILL HOLDS SOUND THE HEAD WILL READ — `AudioOps::holdsTail` (backlog MC): up to 5.8 ms behind a
 	/// click, longer than a small host block. Off or at Mix 0 the line is not read (`processStereo`).
-	[[nodiscard]] bool holdsTail() const noexcept { return target_.enabled && target_.mix > 0.0f && line_.holdsSound(); }
+	/// Dust reads its line at any Mix.
+	[[nodiscard]] bool holdsTail() const noexcept {
+		if (!target_.enabled) {
+			return false;
+		}
+		return target_.mode == Mode::Dust ? dust_.holdsSound() : target_.mix > 0.0f && line_.holdsSound();
+	}
+	/// THE SECOND ENGINE, for its own seams.
+	[[nodiscard]] const Dust& dustForTest() const noexcept { return dust_; }
 	[[nodiscard]] float triangleForTest() const noexcept { return triValue_; }
 	[[nodiscard]] double pitchSemitonesForTest() const noexcept { return pitchSemitones_; }
 	[[nodiscard]] double sampleRateForTest() const noexcept { return sampleRate_; }
@@ -89,6 +98,10 @@ private:
 
 	/// XORSHIFT32 → [-1, 1). The firmware's `getNoise()` is a full-range q31.
 	[[nodiscard]] float nextNoise() noexcept;
+
+	Dust dust_ {};
+	/// WHICH ENGINE THE LAST BLOCK RAN. A block that asks for the other one resets first.
+	Mode running_ = Mode::Dust;
 
 	fx::sklitter::Ring line_ {};
 	double sampleRate_ = 48000.0;

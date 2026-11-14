@@ -120,6 +120,16 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Gamma)] = s.gamma;
 	row[static_cast<size_t>(Param::Cutoff)] = s.cutoffOctaves;
 	row[static_cast<size_t>(Param::Mix)] = s.mix;
+	row[static_cast<size_t>(Param::Mode)] = static_cast<float>(s.mode);
+	row[static_cast<size_t>(Param::Amount)] = s.amount;
+	row[static_cast<size_t>(Param::Freq)] = s.freq;
+	row[static_cast<size_t>(Param::Width)] = s.width;
+	row[static_cast<size_t>(Param::Source)] = s.source;
+	row[static_cast<size_t>(Param::Grit)] = s.grit;
+	row[static_cast<size_t>(Param::Stereo)] = s.stereo;
+	row[static_cast<size_t>(Param::Resonance)] = s.resonance;
+	row[static_cast<size_t>(Param::Drive)] = s.drive;
+	row[static_cast<size_t>(Param::Track)] = s.track ? 1.0f : 0.0f;
 	return row;
 }
 
@@ -140,6 +150,16 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.gamma = read(Param::Gamma);
 	s.cutoffOctaves = read(Param::Cutoff);
 	s.mix = read(Param::Mix);
+	s.mode = read(Param::Mode) >= 0.5f ? Mode::Comb : Mode::Dust;
+	s.amount = read(Param::Amount);
+	s.freq = read(Param::Freq);
+	s.width = read(Param::Width);
+	s.source = read(Param::Source);
+	s.grit = read(Param::Grit);
+	s.stereo = read(Param::Stereo);
+	s.resonance = read(Param::Resonance);
+	s.drive = read(Param::Drive);
+	s.track = read(Param::Track) >= 0.5f;
 	return out;
 }
 
@@ -289,10 +309,12 @@ void Eroder::prepare(double sampleRate) {
 	// longest read and its interpolation neighbour are both inside the line at any rate.
 	line_.prepare(sampleRate_, kLineSeconds + 8.0 / sampleRate_);
 	tickStep_ = kReferenceRate / sampleRate_;
+	dust_.prepare(sampleRate_);
 	reset();
 }
 
 void Eroder::reset() noexcept {
+	dust_.reset();
 	line_.reset();
 	writeCounter_ = 0;
 	placed_ = false;
@@ -322,6 +344,7 @@ void Eroder::setTarget(const Settings& settings) noexcept { target_ = settings; 
 void Eroder::setNoteContext(const device::NoteContext& note) noexcept {
 	if (std::isfinite(note.pitchSemitones)) {
 		pitchSemitones_ = static_cast<double>(note.pitchSemitones);
+		dust_.setPitch(pitchSemitones_);
 	}
 }
 
@@ -338,8 +361,21 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 		return;
 	}
 	const Settings s = target_;
+	if (!s.enabled) {
+		return;
+	}
+	// A CHANGE OF ENGINE STARTS THE NEW ONE AS IF JUST SWITCHED ON: neither line means anything to the other.
+	if (s.mode != running_) {
+		reset();
+		running_ = s.mode;
+	}
+	if (s.mode == Mode::Dust) {
+		// DUST RUNS AT ANY MIX, zero included: its line keeps filling, so bringing Mix back up reads the present.
+		dust_.process(s, left, right, frames);
+		return;
+	}
 	// `isEnabled()` is `mix > 0`: at zero the firmware does not run at all, state included.
-	if (!s.enabled || !(s.mix > 0.0f)) {
+	if (!(s.mix > 0.0f)) {
 		return;
 	}
 	if (line_.length() < 8) {

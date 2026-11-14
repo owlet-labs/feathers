@@ -506,6 +506,21 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 		}
 		fixed.push_back(readoutBounds());
 		fixed.push_back(clipSquare());
+		// A ROUTED HANDLE'S AMOUNT EXTENT AND ITS LIVE DOT ARE DRAWN IN THE LANE TOO, so the label keeps off them: it takes the other side
+		// of the handle than the stroke runs to.
+		for (size_t h = 0; h < 2; ++h) {
+			const ModHandlePlan plan = crossoverModPlan(h);
+			if (plan.axes.empty()) {
+				continue;
+			}
+			const ModAxisPlan& axis = plan.axes[0];
+			if (axis.hasStroke) {
+				fixed.push_back({ axis.strokeLo - 2.0f, lane.y(), axis.strokeHi - axis.strokeLo + 4.0f, lane.height() });
+			}
+			if (axis.hasDot) {
+				fixed.push_back({ axis.dot - 5.0f, lane.y(), 10.0f, lane.height() });
+			}
+		}
 	}
 	else {
 		fixed.push_back(readoutBounds()); // the combined reduction beside the clip square

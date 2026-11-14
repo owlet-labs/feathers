@@ -41830,3 +41830,75 @@ TEST_CASE("OWLTT: dragging a band's top (threshold) handle holds its up threshol
 	CHECK(fieldOf(thrAt) == doctest::Approx(0.5f));
 	CHECK(fieldOf(bwAt) == doctest::Approx(0.3f));
 }
+
+TEST_CASE("OWLTT: a routed crossover's amount stroke and live dot never lie under its label, and a full-scale source puts the dot exactly at the stroke's end — on the log axis and on a linear one") {
+	namespace ow = feathers::fx::owltt;
+	using Handle = ui::OwlttGraph::Handle;
+	OwlttOpenRig rig;
+	auto& d = rig.d;
+	ui::OwlttGraph* graph = rig.panel->graph();
+	const backplane::Source macro = backplane::Source::core(0);
+	rig.mod->focus(macro);
+	rig.mod->arm(true);
+	const auto overlap = [](const visage::Bounds& a, const visage::Bounds& b) {
+		return a.x() < b.right() && b.x() < a.right() && a.y() < b.bottom() && b.y() < a.bottom();
+	};
+
+	for (size_t which = 0; which < 2; ++which) {
+		const size_t idx = static_cast<size_t>(which == 0 ? ow::Param::LowCrossover : ow::Param::HighCrossover);
+		const backplane::Destination dest = backplane::Destination::control(d.device, idx);
+		const device::ParamDesc& desc = ow::kParamDescs[idx];
+		const double span = device::routeSpanOf(desc);
+		for (const float amount : { 0.05f, -0.05f }) {
+			CAPTURE(which);
+			CAPTURE(amount);
+			d.f.bridge.setRouteAmount(macro, dest, amount);
+			const double base = graph->crossoverModHandle(which).axis(0).control->value();
+			// A FULL-SCALE SOURCE: the modulated value is the base plus the whole amount (clamped to the range), which is the end of
+			// the stroke by definition; the dot is drawn at the same VALUE's coordinate, through the log axis, never a linear pixel scale.
+			const double full = std::clamp(base + static_cast<double>(amount) * span, desc.min, desc.max);
+			d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(full));
+			const ui::ModHandlePlan plan = graph->crossoverModPlan(which);
+			REQUIRE(plan.axes[0].hasStroke);
+			REQUIRE(plan.axes[0].hasDot);
+			const float end = amount > 0.0f ? plan.axes[0].strokeHi : plan.axes[0].strokeLo;
+			CHECK(plan.axes[0].dot == doctest::Approx(end).epsilon(1e-4));
+			// A HALF-SCALE SOURCE is NOT at the end on the log axis: the dot sits at the half-VALUE's coordinate, inside the stroke.
+			d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(base + 0.5 * (full - base)));
+			const float half = graph->crossoverModPlan(which).axes[0].dot;
+			CHECK(half > std::min(plan.axes[0].strokeLo, plan.axes[0].strokeHi) - 0.01f);
+			CHECK(half < std::max(plan.axes[0].strokeLo, plan.axes[0].strokeHi) + 0.01f);
+			CHECK(half != doctest::Approx(end).epsilon(1e-4));
+			d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(full));
+
+			// THE LABEL KEEPS OFF BOTH.
+			const ui::OwlttGraph::BottomText t = graph->bottomText();
+			const visage::Bounds lane = graph->rail();
+			const visage::Bounds strokeBox { plan.axes[0].strokeLo, lane.y(), plan.axes[0].strokeHi - plan.axes[0].strokeLo, lane.height() };
+			const visage::Bounds dotBox { plan.axes[0].dot - 4.0f, lane.y(), 8.0f, lane.height() };
+			CHECK_FALSE(overlap(t.frequency[which], strokeBox));
+			CHECK_FALSE(overlap(t.frequency[which], dotBox));
+			d.f.bridge.setFxModulatedForTest(d.slot, idx, static_cast<float>(base));
+		}
+		d.f.bridge.setRouteAmount(macro, dest, 0.0f);
+	}
+
+	// A LINEAR AXIS, THE SAME RULE: a band's threshold ring (vertical, height = value).
+	const size_t thr = static_cast<size_t>(ow::Param::MidThreshold);
+	const backplane::Destination dest = backplane::Destination::control(d.device, thr);
+	const device::ParamDesc& desc = ow::kParamDescs[thr];
+	for (const float amount : { 0.3f, -0.3f }) {
+		CAPTURE(amount);
+		d.f.bridge.setRouteAmount(macro, dest, amount);
+		const double base = graph->handleControl(1, Handle::ThresholdBar).value();
+		const double full = std::clamp(base + static_cast<double>(amount) * device::routeSpanOf(desc), desc.min, desc.max);
+		d.f.bridge.setFxModulatedForTest(d.slot, thr, static_cast<float>(full));
+		const ui::ModHandlePlan plan = graph->bandModPlan(1, Handle::ThresholdBar);
+		REQUIRE(plan.axes[0].hasStroke);
+		REQUIRE(plan.axes[0].hasDot);
+		// On the vertical axis a larger value is a SMALLER y: a positive amount ends at strokeLo.
+		const float end = amount > 0.0f ? plan.axes[0].strokeLo : plan.axes[0].strokeHi;
+		CHECK(plan.axes[0].dot == doctest::Approx(end).epsilon(1e-4));
+		d.f.bridge.setFxModulatedForTest(d.slot, thr, static_cast<float>(base));
+	}
+}

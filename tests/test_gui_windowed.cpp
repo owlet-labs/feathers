@@ -3433,6 +3433,59 @@ const visage::Frame* terrainGroundOf(const visage::Frame& root) {
 
 } // namespace
 
+TEST_CASE("an Explore stage held open with every rail open measures no text and evicts nothing on a steady frame — "
+          "a few dozen strings, far under the cache's cap") {
+	// WHY THIS CASE: the tracked-text cache caps at `trackedTextCacheCapacity()` strings, and the number that reaches
+	// it in the suite (about 550 evictions in one whole-binary run) is made by "the open editor re-measures no text…",
+	// which deliberately pushes cap + 500 distinct strings through it. Explore's own working set is small: this
+	// holds ONE stage open, every rail open, from a cold cache, and counts. A stage that measured a new string every
+	// frame (a readout, a coordinate, a time) or the same text under many keys would show here as measures or
+	// evictions past warm-up.
+	ReopenRig rig;
+	auto* app = static_cast<visage::ApplicationWindow*>(rig.f.root);
+	ui::clearFontCache();
+	showSurfaceByHeader(rig.f.gui, ui::StageMode::Surface::Explore);
+	size_t rails = 0;
+	for (visage::Frame* child : rig.f.root->children()) {
+		if (auto* rail = dynamic_cast<ui::Rail*>(child); rail != nullptr) {
+			(void)rail->setCollapsed(false);
+			CHECK(!rail->collapsed());
+			++rails;
+		}
+	}
+	REQUIRE(rails > 0); // the loop opened something
+	ui::ExploreStage* explore = rig.f.gui.exploreForTest();
+	REQUIRE(explore != nullptr);
+	REQUIRE(explore->isVisible());
+	ui::setTrackedTextAudit(true);
+	const uint64_t coldMeasures = ui::trackedTextMeasures();
+	const uint64_t evictedAtStart = ui::trackedTextEvictions();
+	const auto frame = [&] {
+		app->redrawAll();
+		pumpEditor(rig.f.gui, 2);
+	};
+	for (int i = 0; i < 5; ++i) { // warm-up: the stage and its rails measure their captions
+		frame();
+	}
+	const uint64_t warmed = ui::trackedTextMeasures();
+	const size_t warmSize = ui::trackedTextCacheSize();
+	// Not vacuous: the cold cache did fill, so a frame that measures nothing is a frame that found everything cached.
+	REQUIRE(warmed > coldMeasures);
+	MESSAGE("Explore, every rail open: " << (warmed - coldMeasures) << " strings measured in warm-up, cache " << warmSize
+	                                     << " of " << ui::trackedTextCacheCapacity());
+	for (int i = 0; i < 300; ++i) {
+		frame();
+	}
+	CHECK(ui::trackedTextMeasures() == warmed);
+	CHECK(ui::trackedTextEvictions() == evictedAtStart);
+	CHECK(ui::trackedTextRemeasures() == 0);
+	CHECK(ui::trackedTextCacheSize() == warmSize);
+	// The bound: a working set of ~70 measured; 256 is a sixteenth of the cap, so growth by an order of magnitude
+	// would still have to be explained.
+	CHECK(ui::trackedTextCacheSize() <= 256);
+	ui::setTrackedTextAudit(false);
+}
+
 TEST_CASE("backlog NF: the Explore pane collapses like the fx lane — a 34px EXPLORE strip, the surface hidden, the "
           "editor narrower by the stage's room and the cards their own width, and the desk remembers it") {
 	// Cards are unit size and never stretch; the synth shrinks instead. So the claim is a SIZE: the

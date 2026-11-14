@@ -110,6 +110,7 @@
 #include "plugin/ui/mod_route_menu.h"     // host slots T7: the host rows and their ids
 
 #include <algorithm>
+#include <deque>
 #include <bit>
 #include <set>
 
@@ -38458,7 +38459,7 @@ TEST_CASE("the Pattern window's lane: a click SELECTS and edits nothing; a doubl
 	CHECK(w.window->inspector().labelForTest().empty());
 	// THE TOOLTIP NAMES THE NEW GESTURES.
 	w.window->setFocus(0);
-	CHECK(std::string(lane.tooltipAt({ 4.0f, lane.height() * 0.5f })) == ui::PatternLane::kPitchedGestures);
+	CHECK(std::string(lane.tooltipAt({ lane.width() * 0.5f, lane.height() * 0.5f })) == ui::PatternLane::kPitchedGestures);
 	CHECK(std::string(ui::PatternLane::kPitchedGestures).find("Shift") == std::string::npos);
 	CHECK(std::string(ui::PatternLane::kPitchedGestures).find("double-click") != std::string::npos);
 }
@@ -41898,5 +41899,195 @@ TEST_CASE("OWLTT: a routed crossover's amount stroke and live dot never lie unde
 		const float end = amount > 0.0f ? plan.axes[0].strokeLo : plan.axes[0].strokeHi;
 		CHECK(plan.axes[0].dot == doctest::Approx(end).epsilon(1e-4));
 		d.f.bridge.setFxModulatedForTest(d.slot, thr, static_cast<float>(base));
+	}
+}
+
+TEST_CASE("the Pattern window's lane: a row's header offers 'Lock row' / 'Unlock row' before anything is applied, locking holds the row's steps while the place moves, and one undo step undoes it — pitched rows and Drum lanes") {
+	using namespace lane_check;
+	using Kind = pn::PatternStep::Kind;
+	namespace genes = feathers::mod::arp::genes;
+	for (const genes::Mode mode : { genes::Mode::Melody, genes::Mode::Drum, genes::Mode::Modulation }) {
+		CAPTURE(static_cast<int>(mode));
+		Window w;
+		w.f.deviceHost.setField(w.id, pt::at(0, pt::Field::Mode), static_cast<float>(mode));
+		(void)w.window->updateContent();
+		ui::PatternLane& lane = w.lane();
+		(void)lane.poll();
+		const bool drum = genes::decodesDrum(mode);
+		REQUIRE(lane.cycleForTest().length == 16);
+		// THE ROW: the lane (or pitch) with the most hits.
+		const pn::PatternCycle before = lane.cycleForTest();
+		int id = -1000;
+		size_t most = 0;
+		const auto hits = [&](const pn::PatternCycle& c, int r) {
+			std::vector<bool> on(c.length, false);
+			for (size_t k = 0; k < c.length; ++k) {
+				const pn::PatternStep& st = c.steps[k];
+				on[k] = drum ? ((st.drumHits >> r) & 1u) != 0u : (st.kind == Kind::Note && c.keyAt(k, 0) - c.rootKey == r);
+			}
+			return on;
+		};
+		for (int r = drum ? 0 : -36; r < (drum ? 8 : 36); ++r) {
+			const std::vector<bool> on = hits(before, r);
+			const auto n = static_cast<size_t>(std::count(on.begin(), on.end(), true));
+			if (n > most) {
+				most = n;
+				id = r;
+			}
+		}
+		REQUIRE(id != -1000);
+		// THE HEADER: a point in the gutter at the row finds it; outside the gutter finds none.
+		const float y = drum ? lane.yOfLane(static_cast<size_t>(id)) + 1.0f : lane.yOfKey(before.rootKey + id) + 2.0f;
+		const visage::Point header { lane.gutterWidth() * 0.5f, y };
+		CHECK(lane.rowAt(header) == id);
+		CHECK(lane.rowAt({ lane.xOfStep(2) + 2.0f, y }) == ui::PatternLane::kNoRow);
+		// THE MENU NAMES THE VERB BEFORE IT IS APPLIED: one option, "Lock row", and nothing is locked yet.
+		const auto options = lane.rowMenuOptions(id);
+		REQUIRE(options.size() == 1);
+		CHECK(options[0].second == "Lock row");
+		CHECK_FALSE(lane.rowLocked(id));
+		const std::vector<float> noLocks = [&] {
+			std::vector<float> b(pt::kRowLockWords, 0.0f);
+			(void)w.f.deviceHost.blockAt(w.id, pt::kRowLockBlock, b);
+			return b;
+		}();
+		CHECK(w.history.length() == 0);
+		// APPLIED: locked, the mark's state is the lane's, the verb flips, ONE undo step.
+		REQUIRE(lane.setRowLocked(id, true));
+		CHECK(lane.rowLocked(id));
+		CHECK(lane.rowMenuOptions(id)[0].second == "Unlock row");
+		CHECK(w.history.length() == 1);
+		const std::vector<bool> held = hits(lane.cycleForTest(), id);
+		CHECK(held == hits(before, id));
+		// THE PLACE MOVES: the locked row is as it was; the cycle as a whole is not.
+		w.f.deviceHost.setField(w.id, pt::at(0, pt::Field::Zone), 777.0f);
+		(void)w.window->updateContent();
+		(void)lane.poll();
+		CHECK(hits(lane.cycleForTest(), id) == held);
+		CHECK(lane.rowLocked(id));
+		bool otherMoved = false;
+		for (int r = drum ? 0 : -36; r < (drum ? 8 : 36); ++r) {
+			otherMoved = otherMoved || (r != id && hits(lane.cycleForTest(), r) != hits(before, r));
+		}
+		CHECK(otherMoved);
+		// UNDO: the row follows the terrain again (one step), redo locks it again.
+		w.history.undo();
+		(void)lane.poll();
+		CHECK_FALSE(lane.rowLocked(id));
+		CHECK(w.history.length() == 1);
+		w.history.redo();
+		(void)lane.poll();
+		CHECK(lane.rowLocked(id));
+		CHECK(hits(lane.cycleForTest(), id) == held);
+		// UNLOCK: one more step, back to the decode of the place now.
+		REQUIRE(lane.setRowLocked(id, false));
+		CHECK_FALSE(lane.rowLocked(id));
+		CHECK(w.history.length() == 2);
+		CHECK_FALSE(lane.setRowLocked(id, false)); // not locked: nothing written, no step
+		CHECK(w.history.length() == 2);
+		CHECK(hits(lane.cycleForTest(), id) != held);
+		// A TAB'S RESET TAKES ITS LOCKS WITH IT; A COPY BRINGS THEM.
+		REQUIRE(lane.setRowLocked(id, true));
+		ui::choosePatternTabMenu(w.f.deviceHost, w.id, 0, 1, &w.history); // copy tab 1 to tab 2
+		std::vector<float> block(pt::kRowLockWords, 0.0f);
+		REQUIRE(w.f.deviceHost.blockAt(w.id, pt::kRowLockBlock, block));
+		const pt::RowLockState copied = pt::rowLockStateOf(block.data(), block.size());
+		CHECK(copied[1].any());
+		CHECK(copied[1] == copied[0]);
+		ui::choosePatternTabMenu(w.f.deviceHost, w.id, 0, ui::kPatternMenuReset, &w.history);
+		REQUIRE(w.f.deviceHost.blockAt(w.id, pt::kRowLockBlock, block));
+		CHECK_FALSE(pt::rowLockStateOf(block.data(), block.size())[0].any());
+		CHECK(pt::rowLockStateOf(block.data(), block.size())[1].any());
+		w.history.undo();
+		REQUIRE(w.f.deviceHost.blockAt(w.id, pt::kRowLockBlock, block));
+		CHECK(pt::rowLockStateOf(block.data(), block.size())[0].any());
+	}
+}
+
+TEST_CASE("the Pattern card's lane draws a locked row's mark but offers no menu: only the window's lane locks, and its header tooltip says how") {
+	using namespace lane_check;
+	Window w;
+	ui::PatternLane& lane = w.lane();
+	(void)lane.poll();
+	const pn::PatternCycle c = lane.cycleForTest();
+	size_t k = 0;
+	while (k < 16 && c.steps[k].kind != pn::PatternStep::Kind::Note) {
+		++k;
+	}
+	REQUIRE(k < 16);
+	const int id = c.keyAt(k, 0) - c.rootKey;
+	REQUIRE(lane.setRowLocked(id, true));
+	// THE CARD'S LANE: a view over the same device.
+	ui::PatternLane card(w.f.deviceHost, w.id);
+	card.setBounds(0.0f, 0.0f, 400.0f, 120.0f);
+	card.setFocus(0);
+	(void)card.poll();
+	CHECK(card.rowLocked(id));
+	CHECK(card.locksForTest().any());
+	const size_t locks = w.history.length();
+	card.onMouseDown().callback([&] {
+		visage::MouseEvent e = at(card.gutterWidth() * 0.5f, 60.0f);
+		e.button_id = visage::kMouseButtonRight;
+		e.button_state = visage::kMouseButtonRight;
+		return e;
+	}());
+	CHECK(w.history.length() == locks); // a view: nothing happens
+	CHECK(card.tooltipAt({ 4.0f, 60.0f }) == nullptr);
+	// THE WINDOW'S: the header's tooltip is the lock's, and says what still acts on a locked row.
+	const std::string tip = lane.tooltipAt({ lane.gutterWidth() * 0.5f, lane.yOfKey(c.rootKey + id) + 2.0f });
+	CHECK(tip == ui::PatternLane::kRowGestures);
+	for (const char* named : { "Right-click", "header", "Transpose", "Wobble", "edit" }) {
+		CAPTURE(named);
+		CHECK(tip.find(named) != std::string::npos);
+	}
+}
+
+TEST_CASE("row lock: the lane draws with a row locked and unlocked, Melody and Drum, and FEATHERS_ROWLOCK_SHOT saves the picture for looking") {
+	using namespace lane_check;
+	namespace genes = feathers::mod::arp::genes;
+	constexpr int kW = 520;
+	constexpr int kH = 520;
+	visage::Canvas canvas;
+	markedWindowless(canvas, kW, kH);
+	canvas.setColor(ui::kSurface);
+	canvas.fill(0.0f, 0.0f, static_cast<float>(kW), static_cast<float>(kH));
+	float top = 4.0f;
+	std::deque<visage::Region> regions; // alive until the capture
+	for (const genes::Mode mode : { genes::Mode::Melody, genes::Mode::Drum }) {
+		Window w;
+		w.f.deviceHost.setField(w.id, pt::at(0, pt::Field::Mode), static_cast<float>(mode));
+		(void)w.window->updateContent();
+		ui::PatternLane& lane = w.lane();
+		(void)lane.poll();
+		const pn::PatternCycle c = lane.cycleForTest();
+		int id = 2;
+		if (mode == genes::Mode::Melody) {
+			size_t k = 0;
+			while (k < c.length && c.steps[k].kind != pn::PatternStep::Kind::Note) {
+				++k;
+			}
+			id = c.keyAt(k, 0) - c.rootKey;
+		}
+		for (const bool locked : { false, true }) {
+			if (locked) {
+				REQUIRE(lane.setRowLocked(id, true));
+			}
+			lane.setBounds(0.0f, 0.0f, static_cast<float>(kW) - 8.0f, 120.0f);
+			regions.emplace_back();
+			visage::Region& region = regions.back();
+			region.setBounds(4, static_cast<int>(top), kW - 8, 120);
+			canvas.addRegion(&region);
+			canvas.beginRegion(&region);
+			lane.draw(canvas);
+			canvas.endRegion();
+			top += 128.0f;
+			(void)lane.poll();
+		}
+		CHECK(top > 0.0f);
+	}
+	const visage::Screenshot shot = takeMarkedCapture(canvas, kW, kH);
+	REQUIRE(shot.width() == kW);
+	if (const char* path = std::getenv("FEATHERS_ROWLOCK_SHOT")) {
+		shot.save(path);
 	}
 }

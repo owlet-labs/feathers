@@ -30,6 +30,7 @@
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
+#include <set>
 #include <span>
 #include <cmath>
 #include <initializer_list>
@@ -112,9 +113,10 @@ class PatternSlotsEdit final : public EditRecord {
 public:
 	PatternSlotsEdit(backplane::DeviceHost& host, DeviceInstanceId id, std::vector<DeviceFieldChange> fields,
 	                 std::vector<float> handBefore, std::vector<float> handAfter, std::vector<float> editsBefore,
-	                 std::vector<float> editsAfter, const char* verb)
+	                 std::vector<float> editsAfter, std::vector<float> locksBefore, std::vector<float> locksAfter, const char* verb)
 	    : host_(&host), id_(id), fields_(std::move(fields)), handBefore_(std::move(handBefore)), handAfter_(std::move(handAfter)),
-	      editsBefore_(std::move(editsBefore)), editsAfter_(std::move(editsAfter)), verb_(verb) {}
+	      editsBefore_(std::move(editsBefore)), editsAfter_(std::move(editsAfter)), locksBefore_(std::move(locksBefore)),
+	      locksAfter_(std::move(locksAfter)), verb_(verb) {}
 	void undo() const override { apply(true); }
 	void redo() const override { apply(false); }
 	const char* verb() const override { return verb_; }
@@ -129,12 +131,13 @@ private:
 		}
 		(void)host_->setBlock(id_, 1, back ? handBefore_ : handAfter_);
 		(void)host_->setBlock(id_, pt::kEditsBlock, back ? editsBefore_ : editsAfter_);
+		(void)host_->setBlock(id_, pt::kRowLockBlock, back ? locksBefore_ : locksAfter_);
 		resyncRotateWatch(*host_, id_); // the residue came back with its Rotate: nothing to fold
 	}
 	backplane::DeviceHost* host_;
 	DeviceInstanceId id_;
 	std::vector<DeviceFieldChange> fields_;
-	std::vector<float> handBefore_, handAfter_, editsBefore_, editsAfter_;
+	std::vector<float> handBefore_, handAfter_, editsBefore_, editsAfter_, locksBefore_, locksAfter_;
 	const char* verb_;
 };
 
@@ -182,8 +185,12 @@ void choosePatternTabMenu(backplane::DeviceHost& host, DeviceInstanceId id, size
 	                                              [](float* out) { pt::writeHandState(pt::HandState {}, out); });
 	const std::vector<float> editsBefore = blockOr(host, id, pt::kEditsBlock, pt::kEditsWords,
 	                                               [](float* out) { pt::writeEditState(pt::EditState {}, out); });
+	// THE LOCKED ROWS GO WITH THEIR PATTERN: a copy brings the source's, a reset empties the pattern's.
+	const std::vector<float> locksBefore = blockOr(host, id, pt::kRowLockBlock, pt::kRowLockWords,
+	                                               [](float* out) { pt::writeRowLockState(pt::RowLockState {}, out); });
 	pt::HandState hand = pt::handStateOf(handBefore.data(), handBefore.size());
 	pt::EditState edits = pt::editStateOf(editsBefore.data(), editsBefore.size());
+	pt::RowLockState locks = pt::rowLockStateOf(locksBefore.data(), locksBefore.size());
 	std::vector<DeviceFieldChange> fields;
 	{
 		backplane::ControlGestureScope gesture(host, id);
@@ -207,6 +214,7 @@ void choosePatternTabMenu(backplane::DeviceHost& host, DeviceInstanceId id, size
 			}
 			hand[t] = reset ? pt::HandSlot {} : hand[from];
 			edits[t] = reset ? pt::EditOverlay {} : edits[from];
+			locks[t] = reset ? pn::RowLocks {} : locks[from];
 		}
 	}
 	std::vector<float> handAfter(pt::kHandWords);
@@ -214,13 +222,16 @@ void choosePatternTabMenu(backplane::DeviceHost& host, DeviceInstanceId id, size
 	std::vector<float> editsAfter(pt::kEditsWords);
 	pt::writeEditState(edits, editsAfter.data());
 	(void)host.setBlock(id, 1, handAfter);
+	std::vector<float> locksAfter(pt::kRowLockWords);
+	pt::writeRowLockState(locks, locksAfter.data());
 	(void)host.setBlock(id, pt::kEditsBlock, editsAfter);
+	(void)host.setBlock(id, pt::kRowLockBlock, locksAfter);
 	// THE TARGETS' ROTATE CAME WITH THEIR RESIDUE: the watch takes the row as it now stands, so nothing is folded twice.
 	resyncRotateWatch(host, id);
-	if (history != nullptr && (!fields.empty() || handAfter != handBefore || editsAfter != editsBefore)) {
+	if (history != nullptr && (!fields.empty() || handAfter != handBefore || editsAfter != editsBefore || locksAfter != locksBefore)) {
 		const char* verb = reset ? "Reset pattern" : "Copy pattern";
 		history->record(std::make_unique<PatternSlotsEdit>(host, id, std::move(fields), handBefore, handAfter, editsBefore,
-		                                                   editsAfter, verb));
+		                                                   editsAfter, locksBefore, locksAfter, verb));
 	}
 }
 
@@ -331,13 +342,52 @@ private:
 
 } // namespace
 
+namespace {
+
+/// **LOCKING OR UNLOCKING A ROW AS ONE UNDO STEP**: the locks block before and after, written whole either way.
+class RowLockRecord final : public EditRecord {
+public:
+	RowLockRecord(backplane::DeviceHost& host, DeviceInstanceId id, std::vector<float> before, std::vector<float> after,
+	              const char* verb)
+	    : host_(&host), id_(id), before_(std::move(before)), after_(std::move(after)), verb_(verb) {}
+	void undo() const override { (void)host_->setBlock(id_, pt::kRowLockBlock, before_); }
+	void redo() const override { (void)host_->setBlock(id_, pt::kRowLockBlock, after_); }
+	const char* verb() const override { return verb_; }
+
+private:
+	backplane::DeviceHost* host_;
+	DeviceInstanceId id_;
+	std::vector<float> before_;
+	std::vector<float> after_;
+	const char* verb_;
+};
+
+/// A PITCH'S NAME for a row header: "C4", "F#3" (the middle C is C4).
+void pitchName(int key, char* out, size_t size) {
+	static constexpr const char* kNames[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+	const int k = std::clamp(key, 0, 127);
+	std::snprintf(out, size, "%s%d", kNames[k % 12], k / 12 - 1);
+}
+
+} // namespace
+
 PatternLane::PatternLane(backplane::DeviceHost& host, DeviceInstanceId id) : host_(host), device_(id) {
 	// **SELECT, THEN SET** (a single click selects, a double click adds or deletes): a click selects the
 	// step (the Engine rail beside the lane sets it); a double-click adds a note or deletes the one there (in Drum, toggles
 	// the hit); a drag on a note sets its pitch, or from its right end its length. No modifier edits a step.
 	onMouseDown() = [this](const visage::MouseEvent& e) {
+		// A ROW'S HEADER: the context button opens the lock menu (the window's lane; the card's is a view).
+		if (editable_ && e.shouldTriggerPopup() && cycle_.length > 0) {
+			if (const int row = rowAt(e.position); row != kNoRow) {
+				showRowMenu(e.position, row);
+			}
+			return;
+		}
 		if (!editable_ || cycle_.length == 0 || e.shouldTriggerPopup()) {
 			return;
+		}
+		if (e.position.x < leftPad()) {
+			return; // the header: it selects nothing
 		}
 		// A MARKER'S HANDLE (design §7.8): the press drags that marker, one gesture.
 		if (e.position.y <= kMarkHandle) {
@@ -684,6 +734,9 @@ const char* PatternLane::tooltipAt(visage::Point at) const {
 	if (!editable_) {
 		return nullptr; // THE CARD'S LANE IS A VIEW: it has no gesture to name
 	}
+	if (at.x < leftPad() && rowAt(at) != kNoRow) {
+		return kRowGestures;
+	}
 	// A MARKER'S HANDLE names its control, in the control's own words.
 	if (at.y <= kMarkHandle) {
 		if (const int m = markAt(at.x); m != 0) {
@@ -691,6 +744,65 @@ const char* PatternLane::tooltipAt(visage::Point at) const {
 		}
 	}
 	return drum_ ? kDrumGestures : kPitchedGestures;
+}
+
+int PatternLane::rowAt(visage::Point at) const {
+	if (cycle_.length == 0 || at.x < 0.0f || at.x >= leftPad() || at.y < 0.0f || at.y > static_cast<float>(height())) {
+		return kNoRow;
+	}
+	if (drum_) {
+		return static_cast<int>(laneAt(at.y));
+	}
+	// A PITCH: the semitone under the hand (not snapped to the scale: a row is a pitch, whatever the scale says).
+	const auto h = static_cast<float>(height());
+	const float pad = 3.0f;
+	const float barHeight = std::max(2.0f, (h - 2.0f * pad) / 16.0f);
+	const float u = (h - pad - barHeight * 0.5f - at.y) / std::max(1.0f, h - 2.0f * pad - barHeight);
+	const int key = static_cast<int>(std::lround(static_cast<float>(lo_) + u * span_));
+	return std::clamp(key, 0, 127) - cycle_.rootKey;
+}
+
+bool PatternLane::rowLocked(int id) const { return locks_.mode == mode_ && locks_.find(id) < pn::kMaxLockedRows; }
+
+std::vector<std::pair<int, std::string>> PatternLane::rowMenuOptions(int id) const {
+	return { { kRowMenuToggle, rowLocked(id) ? "Unlock row" : "Lock row" } };
+}
+
+bool PatternLane::setRowLocked(int id, bool lock) {
+	std::vector<float> before(pt::kRowLockWords, 0.0f);
+	if (!host_.blockAt(device_, pt::kRowLockBlock, before)) {
+		pt::writeRowLockState(pt::RowLockState {}, before.data());
+	}
+	pt::RowLockState state = pt::rowLockStateOf(before.data(), before.size());
+	pn::RowLocks& locks = state[focus_];
+	// THE ROW AS THE LANE SHOWS IT BEFORE THE HAND'S EDITS (`terrain_`): what the terrain decodes here, now.
+	const bool changed = lock ? pn::lockRow(locks, terrain_, mode_, id) : (locks.mode == mode_ && pn::unlockRow(locks, id));
+	std::vector<float> after(pt::kRowLockWords);
+	pt::writeRowLockState(state, after.data());
+	if (!changed || after == before) {
+		return false;
+	}
+	(void)host_.setBlock(device_, pt::kRowLockBlock, after);
+	if (history_ != nullptr) {
+		history_->record(std::make_unique<RowLockRecord>(host_, device_, std::move(before), std::move(after),
+		                                                 lock ? "Lock row" : "Unlock row"));
+	}
+	(void)poll();
+	return true;
+}
+
+void PatternLane::showRowMenu(visage::Point at, int id) {
+	visage::PopupMenu menu;
+	for (const auto& option : rowMenuOptions(id)) {
+		menu.addOption(option.first, option.second);
+	}
+	const bool lock = !rowLocked(id);
+	menu.onSelection() = [this, id, lock](int choice) {
+		if (choice == kRowMenuToggle) {
+			(void)setRowLocked(id, lock);
+		}
+	};
+	showMenuAt(std::move(menu), *this, { at.x, at.y, 0.0f, 0.0f });
 }
 
 void PatternLane::setEditable(bool editable, EditHistory* history) {
@@ -838,7 +950,7 @@ bool PatternLane::poll() {
 	// ONE MEMBER BUFFER holds the row, the hand's words and the edits, in that order: sized once, refilled in place, so a
 	// tick at rest allocates nothing.
 	std::vector<float>& row = rowBuf_;
-	row.resize(pt::kParamCount + pt::kHandWords + pt::kEditsWords);
+	row.resize(pt::kParamCount + pt::kHandWords + pt::kEditsWords + pt::kRowLockWords);
 	const size_t present = host_.fieldsPresentAt(device_);
 	for (size_t i = 0; i < pt::kParamCount; ++i) {
 		row[i] = i < present ? host_.modulatedFieldAt(device_, i) : static_cast<float>(pt::kParamDescs[i].def);
@@ -851,6 +963,10 @@ bool PatternLane::poll() {
 	const std::span<float> editWords(row.data() + pt::kParamCount + pt::kHandWords, pt::kEditsWords);
 	std::fill(editWords.begin(), editWords.end(), 0.0f);
 	const bool haveEdits = host_.blockAt(device_, pt::kEditsBlock, editWords);
+	// AND THE LOCKED ROWS (pattern_rowlock.h): an input like the edits.
+	const std::span<float> lockWords(row.data() + pt::kParamCount + pt::kHandWords + pt::kEditsWords, pt::kRowLockWords);
+	std::fill(lockWords.begin(), lockWords.end(), 0.0f);
+	const bool haveLocks = host_.blockAt(device_, pt::kRowLockBlock, lockWords);
 	if (row == lastRow_ && focus_ == lastFocus_) {
 		return moved;
 	}
@@ -870,6 +986,15 @@ bool PatternLane::poll() {
 	drumOn_ = recipe.drum.on;
 	fill_ = s.phase[focus_].fill;
 	pn::build(pt::PatternDevice::placeOf(s.patterns[focus_], hand[focus_].residue), recipe, held, terrain_);
+	// THE LOCKED ROWS, as the device lays them over the decode: before the hand's edits, which are made over this view.
+	mode_ = recipe.mode;
+	locks_ = pn::RowLocks {};
+	if (haveLocks) {
+		locks_ = pt::rowLockStateOf(lockWords.data(), lockWords.size())[focus_];
+		if (locks_.any()) {
+			pn::applyRowLocks(locks_, recipe.mode, terrain_);
+		}
+	}
 	cycle_ = terrain_;
 	// THE HAND'S EDITS, as the device applies them: under the Mode they were made in, on the steps that still match.
 	if (haveEdits) {
@@ -929,14 +1054,16 @@ void PatternLane::draw(visage::Canvas& canvas) {
 		drawDrumGrid(canvas);
 	}
 	else {
-		const float pad = 3.0f;
-		const float column = (w - 2.0f * pad) / static_cast<float>(cycle_.length);
-		const float barHeight = std::max(2.0f, (h - 2.0f * pad) / 16.0f);
+		const float vpad = 3.0f;
+		const float pad = leftPad();
+		const float column = (w - pad - 3.0f) / static_cast<float>(cycle_.length);
+		const float barHeight = std::max(2.0f, (h - 2.0f * vpad) / 16.0f);
 		// THE TONIC'S ROWS, a band under the notes in the ink at a sixteenth — fainter than the playhead, so both read.
 		canvas.setColor(withAlpha(kInk, 0.06f));
 		for (const int key : tonicKeys()) {
-			canvas.fill(pad, yOfKey(key), w - 2.0f * pad, barHeight);
+			canvas.fill(pad, yOfKey(key), w - pad - 3.0f, barHeight);
 		}
+		drawPitchHeaders(canvas, barHeight);
 		// **PROGRESSION'S CHORDS AS BLOCKS** (design §11-quater): each from its strike to the next chord's, a step's gap
 		// between, named by its numeral at the top-left — under the notes, which still show the voicing.
 		if (progression_) {
@@ -951,14 +1078,14 @@ void PatternLane::draw(visage::Canvas& canvas) {
 				const float x = pad + column * static_cast<float>(k);
 				const float bw = std::max(2.0f, column * static_cast<float>(end - k) - 2.0f);
 				canvas.setColor(withAlpha(kMuted, 0.14f));
-				canvas.roundedRectangle(x, pad, bw, h - 2.0f * pad, 2.0f);
+				canvas.roundedRectangle(x, vpad, bw, h - 2.0f * vpad, 2.0f);
 				char numeral[16];
 				mod::arp::pattern::numeralOf(cycle_.steps[k], numeral, sizeof numeral);
 				if (textWidth(numeral, font(kKnobLabelSize)) > bw - 3.0f) {
 					continue; // A BLOCK TOO NARROW FOR ITS NAME SHOWS NONE, rather than a name over its neighbour's
 				}
 				canvas.setColor(kMuted);
-				canvas.text(numeral, font(kKnobLabelSize), visage::Font::kTopLeft, x + 2.0f, pad + 1.0f, bw - 3.0f,
+				canvas.text(numeral, font(kKnobLabelSize), visage::Font::kTopLeft, x + 2.0f, vpad + 1.0f, bw - 3.0f,
 				            kKnobLabelSize + 2.0f);
 			}
 		}
@@ -970,7 +1097,7 @@ void PatternLane::draw(visage::Canvas& canvas) {
 			const float x = pad + column * static_cast<float>(k);
 			// A NOTE'S BAR RUNS AS LONG AS ITS GATE — through its ties — and an accent is drawn in the accent; its
 			// velocity is its strength.
-			const float bw = std::max(2.0f, std::min(st.gate * column, w - pad - x) - 1.0f);
+			const float bw = std::max(2.0f, std::min(st.gate * column, w - 3.0f - x) - 1.0f);
 			canvas.setColor(withAlpha(st.accent ? kAccent : kMuted, 0.45f + 0.55f * std::clamp(st.velocity, 0.0f, 1.0f)));
 			if (st.approach != pn::ApproachKind::None) {
 				// A PICKUP (the Approach pin, design §10-ter): an OUTLINED note, so a lead-in reads apart from the chords it
@@ -1046,6 +1173,69 @@ void PatternLane::draw(visage::Canvas& canvas) {
 	}
 }
 
+void PatternLane::drawLockMark(visage::Canvas& canvas, float cx, float cy, float size) {
+	// A SHACKLE (a ring) over a body (a rounded block), in the accent: it reads at 6 px and does not crowd a name.
+	if (size < 3.0f) {
+		canvas.setColor(kAccent);
+		canvas.fill(cx - 1.5f, cy - 1.0f, 3.0f, 2.0f);
+		return;
+	}
+	const float bodyH = size * 0.55f;
+	const float bodyW = size * 0.8f;
+	canvas.setColor(kAccent);
+	canvas.roundedRectangle(cx - bodyW * 0.5f, cy + size * 0.5f - bodyH, bodyW, bodyH, 1.0f);
+	const float ring = bodyW * 0.7f;
+	canvas.ring(cx - ring * 0.5f, cy + size * 0.5f - bodyH - ring * 0.85f, ring, 1.0f);
+}
+
+void PatternLane::drawPitchHeaders(visage::Canvas& canvas, float barHeight) {
+	// THE KEYS THE GUTTER NAMES: where a note sounds, and where a lock holds a row (an emptied row is still a row).
+	std::set<int> keys;
+	for (size_t k = 0; k < cycle_.length; ++k) {
+		const pn::PatternStep& st = cycle_.steps[k];
+		for (int i = 0; st.kind == pn::PatternStep::Kind::Note && i < st.count; ++i) {
+			keys.insert(i == 0 ? cycle_.keyAt(k, 0) : st.keys[static_cast<size_t>(i)]);
+		}
+	}
+	if (locks_.mode == mode_) {
+		for (const pn::LockedRow& r : locks_.row) {
+			if (r.used) {
+				keys.insert(std::clamp(cycle_.rootKey + r.id, 0, 127));
+			}
+		}
+	}
+	const auto w = static_cast<float>(width());
+	const float fontSize = std::min(kKnobLabelSize, barHeight + 1.0f);
+	// A LOCKED ROW'S NAME AND MARK FIRST; every other name only where it clears what is drawn (a pitch a semitone away is
+	// often under a pixel higher), and only where there is room for it (a short card lane draws the marks alone).
+	std::vector<float> taken;
+	const auto clear = [&](float y) {
+		return std::none_of(taken.begin(), taken.end(), [&](float t) { return std::fabs(t - y) < fontSize + 1.0f; });
+	};
+	for (const bool lockedPass : { true, false }) {
+		for (auto it = keys.rbegin(); it != keys.rend(); ++it) {
+			const int key = *it;
+			const float y = yOfKey(key);
+			const bool locked = rowLocked(key - cycle_.rootKey);
+			if (locked != lockedPass) {
+				continue;
+			}
+			if (locked) {
+				canvas.setColor(withAlpha(kAccent, 0.10f));
+				canvas.fill(2.0f, y, w - 5.0f, barHeight);
+				drawLockMark(canvas, kRowGutter - 5.0f, y + barHeight * 0.5f, std::min(8.0f, barHeight));
+			}
+			if (barHeight >= 6.0f && clear(y)) {
+				char name[8];
+				pitchName(key, name, sizeof name);
+				canvas.setColor(locked ? kAccent : kMuted);
+				canvas.text(name, font(fontSize), visage::Font::kCenter, 2.0f, y, kRowGutter - 9.0f, barHeight);
+				taken.push_back(y);
+			}
+		}
+	}
+}
+
 void PatternLane::drawDrumGrid(visage::Canvas& canvas) {
 	// **THE DRUM GRID** (design §11-ter): one row a lane, kick at the bottom; a hit a cell, an accent in the accent colour,
 	// a ghost faint, a roll split into its strokes; the bar lines every sixteen steps.
@@ -1066,8 +1256,17 @@ void PatternLane::drawDrumGrid(visage::Canvas& canvas) {
 			canvas.setColor(withAlpha(kSurfaceRaised, 0.6f));
 			canvas.fill(pad, y, w - pad - 3.0f, row);
 		}
-		canvas.setColor(on ? kMuted : withAlpha(kMuted, 0.4f));
-		canvas.text(modulation_ ? kModLabels[l] : kLabels[l], font(std::min(kKnobLabelSize, row)), visage::Font::kCenter, 2.0f, y, kDrumGutter, row);
+		const bool locked = rowLocked(static_cast<int>(l));
+		if (locked) {
+			canvas.setColor(withAlpha(kAccent, 0.10f));
+			canvas.fill(2.0f, y, w - 5.0f, row);
+		}
+		canvas.setColor(locked ? kAccent : (on ? kMuted : withAlpha(kMuted, 0.4f)));
+		canvas.text(modulation_ ? kModLabels[l] : kLabels[l], font(std::min(kKnobLabelSize, row)), visage::Font::kCenter, 2.0f, y,
+		            kRowGutter - 9.0f, row);
+		if (locked) {
+			drawLockMark(canvas, kRowGutter - 5.0f, y + row * 0.5f, std::min(8.0f, row - 1.0f));
+		}
 	}
 	canvas.setColor(withAlpha(kLine, 0.5f));
 	for (size_t k = 16; k < cycle_.length; k += 16) {

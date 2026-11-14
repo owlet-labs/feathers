@@ -180,6 +180,9 @@ Reference reference(const pat::MidiSource& src, size_t p, double bpm, double bea
 	d.prepare(48000.0);
 	const pat::Row row = pat::rowOf(s);
 	d.setFields(row.data(), row.size());
+	if (!src.rowLocks.empty()) {
+		REQUIRE(d.writeRowLocks(src.rowLocks.data(), src.rowLocks.size()));
+	}
 	device::NoteEvent on {};
 	on.kind = device::NoteEvent::Kind::On;
 	on.key = 60;
@@ -505,6 +508,67 @@ TEST_CASE("midi: every feel family is baked into the file — export equals the 
 		CHECK(differsFromStraight(f));
 		if (fam.onsets) {
 			checkOnsets(f, fam.feel);
+		}
+	}
+}
+
+TEST_CASE("midi: a locked row is exported as it plays — the file equals the live emitter's notes by value with rows locked, and differs from the unlocked export") {
+	namespace dpn = feathers::mod::arp::pattern;
+	using feathers::SliceResidue;
+	for (const genes::Mode mode : { genes::Mode::Melody, genes::Mode::TbMono, genes::Mode::Drum }) {
+		CAPTURE(static_cast<int>(mode));
+		const auto tune = [&](int zone) {
+			return [mode, zone](pat::Settings& s) {
+				s.patterns[0].mode = mode;
+				s.patterns[0].zone = zone;
+				s.patterns[0].pitchOnNotes = false;
+			};
+		};
+		// THE ROW IS CAPTURED AT ONE PLACE (the lane most struck), THE PATCH THEN SITS AT ANOTHER.
+		const auto cycleAt = [&](int zone) {
+			pat::Settings s;
+			tune(zone)(s);
+			feathers::mod::arp::HeldChord held;
+			held.press(60, 0, 0.8f, 1);
+			dpn::PatternCycle c;
+			dpn::build(pat::PatternDevice::placeOf(s.patterns[0], SliceResidue<genes::kRowCount> {}),
+			           pat::recipeFor(s, 0, genes::kPinOnByDefault), held, c);
+			return c;
+		};
+		const dpn::PatternCycle a = cycleAt(300);
+		int id = -1000;
+		size_t most = 0;
+		for (int r = genes::decodesDrum(mode) ? 0 : -24; r < (genes::decodesDrum(mode) ? 8 : 24); ++r) {
+			size_t n = 0;
+			for (size_t k = 0; k < a.length; ++k) {
+				const dpn::PatternStep& st = a.steps[k];
+				n += genes::decodesDrum(mode) ? ((st.drumHits >> r) & 1u) : (st.kind == dpn::PatternStep::Kind::Note && st.keys[0] - a.rootKey == r ? 1u : 0u);
+			}
+			if (n > most) {
+				most = n;
+				id = r;
+			}
+		}
+		REQUIRE(id != -1000);
+		pat::RowLockState state {};
+		REQUIRE(dpn::lockRow(state[0], a, mode, id));
+		pat::MidiSource src = sourceOf(tune(333));
+		const std::vector<uint8_t> plainBytes = pat::patternMidi(src, 0, 120.0);
+		src.rowLocks.assign(pat::kRowLockWords, 0.0f);
+		pat::writeRowLockState(state, src.rowLocks.data());
+		const std::vector<uint8_t> bytes = pat::patternMidi(src, 0, 120.0);
+		CHECK_FALSE(bytes == plainBytes); // NOT VACUOUS
+		const Parsed f = parse(bytes);
+		REQUIRE(f.ok);
+		const Reference r = reference(src, 0, 120.0, static_cast<double>(f.endTick) / 960.0);
+		REQUIRE(f.notes.size() == r.notes.size());
+		REQUIRE(f.notes.size() > 4);
+		for (size_t i = 0; i < r.notes.size(); ++i) {
+			CAPTURE(i);
+			CHECK(f.notes[i].key == r.notes[i].key);
+			CHECK(f.notes[i].velocity == r.notes[i].velocity);
+			CHECK(f.notes[i].on == r.notes[i].on);
+			CHECK(f.notes[i].off == r.notes[i].off);
 		}
 	}
 }

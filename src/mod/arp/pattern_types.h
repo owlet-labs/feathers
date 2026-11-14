@@ -29,6 +29,7 @@
 #include "mod/arp/humanize.h"
 #include "mod/arp/pattern.h"
 #include "mod/arp/pattern_likes.h"
+#include "mod/arp/pattern_rowlock.h"
 #include "mod/arp/theory.h"
 #include "mod/modulator.h"
 
@@ -781,6 +782,17 @@ void writeEditState(const EditState& state, float* out) noexcept;
 /// The anchor `fieldAt` reads now, for pattern `p`.
 [[nodiscard]] std::array<float, kAnchorFields> anchorNow(size_t p, const std::function<float(size_t)>& fieldAt) noexcept;
 
+/// **THE LOCKED ROWS** (`pattern.rowlock.v1`, `pattern_rowlock.h`): per pattern, the Mode they were captured under and up to
+/// `kMaxLockedRows` rows, each its identity, its length and its steps (velocity and length as floats, two words each: a
+/// capture reads back exactly). Captured state: it saves with the patch, and is written by the editor, never by the audio thread.
+using RowLockState = std::array<pattern::RowLocks, kPatterns>;
+inline constexpr uint32_t kRowCellWords = 6;
+inline constexpr uint32_t kRowWords = 3 + kRowCellWords * static_cast<uint32_t>(genes::kMaxSteps);
+inline constexpr uint32_t kRowLockPatternWords = 1 + kRowWords * static_cast<uint32_t>(pattern::kMaxLockedRows);
+inline constexpr uint32_t kRowLockWords = kRowLockPatternWords * static_cast<uint32_t>(kPatterns);
+[[nodiscard]] RowLockState rowLockStateOf(const float* in, size_t n) noexcept;
+void writeRowLockState(const RowLockState& state, float* out) noexcept;
+
 /// **IS A CONTROL SHOWN UNDER THIS PATTERN'S MODE, BEYOND ITS DECLARED GATE** — Drum hides the pitch boxes its keys never
 /// read (Root, gated on Keys, cannot also be gated on Mode); Modulation hides those and Thru and Trig too, and Smooth Time
 /// outside Modulation (it is gated on Smooth). The card and the window ask it with the declared gate.
@@ -801,10 +813,13 @@ inline constexpr device::StateBlockDesc kBlocks[] = {
 	/// **V4: THE SAME, WITH EACH CELL'S OWN LEVEL** (Drum's velocity, Modulation's value). V3 above is read into it on a load
 	/// (`PatternDevice::restoreEditsV3`) and never written: a patch saved from here carries v4.
 	{ .key = "pattern.edits.v4", .floats = kEditsWords, .handEdited = true },
+	/// **LOCK ROW**: the rows a hand cut loose from the terrain, per pattern, with their captured steps (`pattern_rowlock.h`).
+	{ .key = "pattern.rowlock.v1", .floats = kRowLockWords, .handEdited = true },
 };
 inline constexpr size_t kLikesBlock = 2;
 inline constexpr size_t kEditsBlockV3 = 3;
 inline constexpr size_t kEditsBlock = 4;
+inline constexpr size_t kRowLockBlock = 5;
 inline constexpr device::StateOps kStateOps {
 	.blocks = kBlocks, .read = &readBlock, .restore = &restoreBlock, .apply = &applyBlock
 };

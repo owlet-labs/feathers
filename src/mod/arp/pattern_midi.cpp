@@ -127,6 +127,9 @@ std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, doubl
 	if (!source.edits.empty()) {
 		(void)d->writeEdits(source.edits.data(), source.edits.size());
 	}
+	if (!source.rowLocks.empty()) {
+		(void)d->writeRowLocks(source.rowLocks.data(), source.rowLocks.size());
+	}
 	// THE CHORD IT PLAYS OVER: the latched one, if Latch holds one; else C4 (what the lane draws over).
 	bool latched = false;
 	if (s.latch && !source.play.empty() && d->restorePlay(source.play.data(), source.play.size())) {

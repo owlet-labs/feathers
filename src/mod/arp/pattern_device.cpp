@@ -216,7 +216,7 @@ void PatternDevice::rebuildIfStale(size_t p, const HeldChord& chord) noexcept {
 			}
 		}
 	} release { bank != nullptr ? &warpReading_ : nullptr };
-	if (b.valid && b.from == q && b.chord == chord && b.handSerial == handCopy_.serial && b.editsSerial == editsCopy_.serial && b.keys == s_.keys
+	if (b.valid && b.from == q && b.chord == chord && b.handSerial == handCopy_.serial && b.editsSerial == editsCopy_.serial && b.locksSerial == rowLocksCopy_.serial && b.keys == s_.keys
 	    && b.fixedVelocity == s_.fixedVelocity && b.velocity == s_.velocity && b.warpSerial == warpSerial) {
 		return;
 	}
@@ -228,6 +228,11 @@ void PatternDevice::rebuildIfStale(size_t p, const HeldChord& chord) noexcept {
 	b.chord = chord;
 	b.handSerial = handCopy_.serial;
 	b.editsSerial = editsCopy_.serial;
+	b.locksSerial = rowLocksCopy_.serial;
+	// LOCKED ROWS (pattern_rowlock.h): the captured rows over the decode, before the hand's edits; nothing locked, nothing run.
+	if (rowLocksDecoded_[p].any()) {
+		pattern::applyRowLocks(rowLocksDecoded_[p], q.mode, b.cycle);
+	}
 	// THE HAND'S EDITS, over the steps the terrain still decodes as they were made over (design §15-bis). Made under
 	// another Mode, they are not this cycle's.
 	if (editsDecoded_[p].mode == q.mode) {
@@ -259,6 +264,9 @@ size_t PatternDevice::emit(const device::TransportClock& clock, uint64_t sampleN
 	}
 	if (editsCopy_.pull(edits_, editsScratch_)) {
 		editsDecoded_ = editStateOf(editsCopy_.values.data(), editsCopy_.values.size());
+	}
+	if (rowLocksCopy_.pull(rowLocks_, rowLocksScratch_)) {
+		rowLocksDecoded_ = rowLockStateOf(rowLocksCopy_.values.data(), rowLocksCopy_.values.size());
 	}
 	// THE STEP'S LENGTH, for Humanize: the same law the emitter times the grid by.
 	const ClockSettings& c = em_.settings();
@@ -1093,6 +1101,21 @@ bool PatternDevice::writeEdits(const float* in, size_t n) noexcept {
 	return true;
 }
 
+bool PatternDevice::writeRowLocks(const float* in, size_t n) noexcept {
+	if (n != kRowLockWords) {
+		return false;
+	}
+	device::BlockReader check(in, n);
+	for (size_t i = 0; i < n; ++i) {
+		check.u16();
+	}
+	if (!check.ok()) {
+		return false;
+	}
+	rowLocks_.write(in, n);
+	return true;
+}
+
 bool PatternDevice::restoreEditsV3(const float* in, size_t n) {
 	// A V3 BLOB, FROM A PATCH SAVED BEFORE CELLS: read into v4 with no cell set. A v4 restored first wins
 	// (a patch that carries both is one saved here, whose v3 is a stale copy a host kept), whatever the order they arrive in.
@@ -1501,6 +1524,7 @@ uint64_t readBlock(const void* storage, size_t index, float* out, size_t capacit
 	case 1: return d.readHand(out, capacity);
 	case kLikesBlock: return d.readLikes(out, capacity);
 	case kEditsBlock: return d.readEdits(out, capacity);
+	case kRowLockBlock: return d.readRowLocks(out, capacity);
 	default: return 0;
 	}
 }
@@ -1513,6 +1537,7 @@ bool restoreBlock(void* storage, size_t index, const float* in, size_t n) {
 	case kLikesBlock: return d.writeLikes(in, n);
 	case kEditsBlockV3: return d.restoreEditsV3(in, n);
 	case kEditsBlock: return d.restoreEditsV4(in, n);
+	case kRowLockBlock: return d.writeRowLocks(in, n);
 	default: return false;
 	}
 }
@@ -1523,6 +1548,7 @@ bool applyBlock(void* storage, size_t index, const float* in, size_t n) {
 	case 1: return d.writeHand(in, n);
 	case kLikesBlock: return d.writeLikes(in, n);
 	case kEditsBlock: return d.writeEdits(in, n);
+	case kRowLockBlock: return d.writeRowLocks(in, n);
 	default: return false;
 	}
 }

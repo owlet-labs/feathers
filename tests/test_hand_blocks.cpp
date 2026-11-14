@@ -26,6 +26,8 @@
 #include "rack/rack_bridge.h"
 #include "rack/rack_engine.h"
 #include "rack/rack_state.h"
+#include "mod/arp/pattern_device.h"
+#include "mod/arp/pattern_types.h"
 #include "persist_rig.h"
 #include "portable_aligned_alloc.h"
 
@@ -36,6 +38,7 @@
 #include <cstdlib>
 #include <functional>
 #include <new>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -394,4 +397,70 @@ TEST_CASE("hand blocks: a pull with nothing new copies nothing — the serial it
 	cell.write(second.data(), kN);
 	CHECK(copy.pull(cell, scratch));
 	CHECK(copy.values == second);
+}
+
+TEST_CASE("pattern lock row: the audio thread's pull and rebuild with rows locked allocate nothing — a lock written between blocks, its decode, its overlay and the notes it plays") {
+	namespace pat = feathers::mod::arp::pat;
+	namespace dpn = feathers::mod::arp::pattern;
+	pat::PatternDevice d;
+	d.prepare(48000.0);
+	pat::Settings s;
+	s.patterns[0].pitchOnNotes = false;
+	const pat::Row row = pat::rowOf(s);
+	d.setFields(row.data(), row.size());
+	device::NoteEvent on {};
+	on.kind = device::NoteEvent::Kind::On;
+	on.key = 60;
+	on.velocity = 0.8;
+	std::array<device::NoteEvent, 8> passed {};
+	size_t passedCount = 0;
+	d.processNotes(&on, 1, passed.data(), passed.size(), &passedCount);
+	std::vector<device::NoteEvent> out(512);
+	int64_t now = 0;
+	size_t ons = 0;
+	const auto run = [&](int64_t until) {
+		while (now < until) {
+			device::TransportClock c = device::TransportClock::fromSecondsPerBeat(0.5);
+			c.songPositionBeats = static_cast<double>(now) / 48000.0 / 0.5;
+			c.songPositionSeconds = static_cast<double>(now) / 48000.0;
+			c.playing = true;
+			uint32_t next = 0;
+			const size_t got = d.emit(c, static_cast<uint64_t>(now), out.data(), out.size(), &next);
+			for (size_t i = 0; i < got; ++i) {
+				ons += out[i].kind == device::NoteEvent::Kind::On ? 1u : 0u;
+			}
+			now += std::min<int64_t>(std::max<uint32_t>(next, 1), 64);
+		}
+	};
+	run(48000 * 4); // warm: the first decode
+	// LOCK EVERY ROW THE DECODE HOLDS (the most a pattern keeps), written between blocks.
+	const dpn::PatternCycle& cycle = d.cycleForTest(0);
+	REQUIRE(cycle.playable);
+	pat::RowLockState state {};
+	state[0].mode = pat::Mode::Melody;
+	std::set<int> ids;
+	for (size_t k = 0; k < cycle.length; ++k) {
+		if (cycle.steps[k].kind == dpn::PatternStep::Kind::Note) {
+			ids.insert(cycle.keyAt(k, 0) - cycle.rootKey);
+		}
+	}
+	for (const int id : ids) {
+		(void)dpn::lockRow(state[0], cycle, pat::Mode::Melody, id);
+	}
+	REQUIRE(state[0].any());
+	std::vector<float> words(pat::kRowLockWords);
+	pat::writeRowLockState(state, words.data());
+	REQUIRE(d.writeRowLocks(words.data(), words.size()));
+	Counter::allocations.store(0);
+	Counter::armed.store(true);
+	const size_t before = ons;
+	run(now + 48000 * 4);
+	// A SECOND WRITE (a different lock set) landing under the counter too: the pull and rebuild again.
+	state[0].row[0] = dpn::LockedRow {};
+	pat::writeRowLockState(state, words.data());
+	REQUIRE(d.writeRowLocks(words.data(), words.size()));
+	run(now + 48000 * 4);
+	Counter::armed.store(false);
+	CHECK(Counter::allocations.load() == 0);
+	CHECK(ons > before + 8); // the instrument saw the device play, not a silent one
 }

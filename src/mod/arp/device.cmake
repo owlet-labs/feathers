@@ -36,4 +36,4 @@ feathers_register_device(
 	CARD_REG feathers::ui::cards::kPatternCard
 	INCLUDES mod/arp/pattern_types.h
 	TARGET feathers-mod
-	SOURCES src/mod/arp/pattern_types.cpp src/mod/arp/pattern_cycle.cpp src/mod/arp/pattern_midi.cpp src/mod/arp/pattern_device.cpp src/mod/arp/pattern_text.cpp src/mod/arp/pattern_likes.cpp src/mod/arp/pattern_warp.cpp)
+	SOURCES src/mod/arp/pattern_types.cpp src/mod/arp/pattern_rowlock.cpp src/mod/arp/pattern_cycle.cpp src/mod/arp/pattern_midi.cpp src/mod/arp/pattern_device.cpp src/mod/arp/pattern_text.cpp src/mod/arp/pattern_likes.cpp src/mod/arp/pattern_warp.cpp)

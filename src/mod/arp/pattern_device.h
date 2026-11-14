@@ -173,6 +173,9 @@ public:
 		return ok;
 	}
 	bool restoreEditsV3(const float* in, size_t n);
+	/// THE LOCKED ROWS' BLOCK (`pattern.rowlock.v1`): the same road as the edits'.
+	uint64_t readRowLocks(float* out, size_t capacity) const noexcept { return rowLocks_.read(out, capacity); }
+	bool writeRowLocks(const float* in, size_t n) noexcept;
 
 	/// THE PLACE PATTERN `p` IS AT — the house's decode: home `zone/1023 + offset + gamma` (`sliceHome`), travel at
 	/// its place plus its polar orbit (`pulledPlace`), on the plane `Rotate` aims with what past turns banked
@@ -231,6 +234,7 @@ private:
 		HeldChord chord {};
 		uint64_t handSerial = 0;
 		uint64_t editsSerial = 0;
+		uint64_t locksSerial = 0;
 		Keys keys = Keys::Transpose;
 		bool fixedVelocity = false;
 		float velocity = 0.0f;
@@ -302,6 +306,10 @@ private:
 	device::HandBlockCopy<kEditsWords> editsCopy_;
 	std::array<float, kEditsWords> editsScratch_ {};
 	EditState editsDecoded_ {};
+	device::HandBlock<kRowLockWords> rowLocks_;
+	device::HandBlockCopy<kRowLockWords> rowLocksCopy_;
+	std::array<float, kRowLockWords> rowLocksScratch_ {};
+	RowLockState rowLocksDecoded_ {};
 	/// A v4 edits block was restored into this instance (so a stale v3 beside it is not read over it).
 	bool editsV4Restored_ = false;
 	/// DRUM: one pattern step's hits, sounded lane by lane (design §11-ter).

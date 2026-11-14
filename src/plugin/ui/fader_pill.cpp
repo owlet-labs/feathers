@@ -295,15 +295,22 @@ void FaderPill::draw(visage::Canvas& canvas) {
 		const double live = std::clamp(amount_.normalizedModulated(), 0.0, 1.0);
 		if (std::fabs(live - base) > 1e-4) {
 			const float x = railLeft + (railRight - railLeft) * static_cast<float>(live);
-			canvas.setColor(withAlpha(kModulation, 0.95f));
+			canvas.setColor(withAlpha(kVoid, 0.8f)); // the keyline, as the knob's dot wears
+			canvas.roundedRectangle(x - 2.0f, 1.0f, 4.0f, h - 2.0f, 1.5f);
+			canvas.setColor(kModulatedDot);
 			canvas.roundedRectangle(x - 1.0f, 2.0f, 2.0f, h - 4.0f, 1.0f);
 		}
 	}
 
 	// THE BORDER IS THE MAPPING SIGNAL — the modulation colour while an armed source could route here.
 	// A GREYED PILL'S SIGNAL IS DIMMER (QK, by design): plainly lit, plainly not the live pill beside it.
-	canvas.setColor(lit ? (active_ ? kModulation : withAlpha(kModulation, 0.5f)) : withAlpha(kLine, active_ ? 0.6f : 0.3f));
-	canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, kRadius, 1.0f);
+	if (lit) {
+		drawBoxOutline(canvas, 0.0f, 0.0f, w, h, kRadius, boxOutlineOf(false, true, true), active_ ? 1.0f : 0.5f);
+	}
+	else {
+		canvas.setColor(withAlpha(kLine, active_ ? 0.6f : 0.3f));
+		canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, kRadius, 1.0f);
+	}
 
 	canvas.setColor(!active_ ? kDisabled : (on ? kInk : kMuted));
 	if (readout_.empty()) {

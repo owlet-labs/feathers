@@ -893,4 +893,50 @@ void drawTracked(visage::Canvas& canvas, const std::string& text, const visage::
 	}
 }
 
+BoxOutline boxOutlineOf(bool selected, bool destination, bool assigning) {
+	BoxOutline o;
+	if (selected && destination) {
+		o.kind = BoxOutlineKind::Both;
+		o.outerColour = kAccent;
+		o.innerColour = kModulation;
+		o.strokes = 2;
+	}
+	else if (selected) {
+		o.kind = BoxOutlineKind::Selected;
+		o.outerColour = kAccent;
+		o.strokes = 1;
+	}
+	else if (destination) {
+		o.kind = BoxOutlineKind::Destination;
+		o.outerColour = kModulation;
+		o.innerColour = kModulation;
+		o.strokes = 2;
+	}
+	o.innerGlow = destination && assigning;
+	return o;
+}
+
+void drawBoxOutline(visage::Canvas& canvas, float x, float y, float w, float h, float radius, const BoxOutline& o,
+                    float dim) {
+	if (o.innerGlow) {
+		// THREE NESTED STROKES, FADING INWARD: visage has no inner shadow, and a fill would wash the value text.
+		// The strokes start past the doubled line (insets 3..5) and total under a fifth of the text's contrast.
+		const float fades[3] = { 0.22f, 0.12f, 0.06f };
+		for (int i = 0; i < 3; ++i) {
+			const float inset = 3.0f + static_cast<float>(i);
+			canvas.setColor(withAlpha(kModulation, fades[i] * dim));
+			canvas.roundedRectangleBorder(x + inset, y + inset, w - 2.0f * inset, h - 2.0f * inset,
+			                              std::max(0.0f, radius - inset), 1.0f);
+		}
+	}
+	if (o.strokes >= 1) {
+		canvas.setColor(withAlpha(o.outerColour, dim));
+		canvas.roundedRectangleBorder(x, y, w, h, radius, 1.0f);
+	}
+	if (o.strokes >= 2) {
+		canvas.setColor(withAlpha(o.innerColour, dim));
+		canvas.roundedRectangleBorder(x + 2.0f, y + 2.0f, w - 4.0f, h - 4.0f, std::max(0.0f, radius - 2.0f), 1.0f);
+	}
+}
+
 } // namespace feathers::ui

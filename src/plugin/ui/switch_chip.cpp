@@ -415,8 +415,10 @@ void SwitchChip::draw(visage::Canvas& canvas) {
 		const float dim = enabled_ ? 1.0f : 0.5f;
 		canvas.setColor(withAlpha(kModulation, (0.15f + 0.45f * marks.reach) * dim));
 		canvas.roundedRectangle(0.0f, 0.0f, w, h, 3.0f);
-		canvas.setColor(withAlpha(kModulation, dim));
-		canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, 3.0f, 1.0f);
+		// THE OUTLINE: a chip that is on is SELECTED (one accent stroke); one an armed source may route to is a
+		// DESTINATION (doubled, modulation colour); both draws both. The old code drew the modulation stroke OVER the
+		// accent one on the same pixel line, so an on chip that was also a destination lost its selection.
+		drawBoxOutline(canvas, 0.0f, 0.0f, w, h, 3.0f, boxOutlineOf(lit, true, true), dim);
 	}
 	if (marks.ring) {
 		const float d = std::max(h - 10.0f, 4.0f);

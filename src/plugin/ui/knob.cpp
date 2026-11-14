@@ -56,10 +56,6 @@ constexpr float kPointerInner = 9.0f;
 constexpr float kPointerOuter = 15.0f;
 constexpr float kPointerWidth = 2.0f;
 
-/// The mock's `ctx.lineWidth=5` for the amount, against the track's 3: fatter than what it sits on, so
-/// it is legible where it overlaps the value arc rather than hiding under it.
-constexpr float kModRingWidth = 5.0f;
-
 } // namespace
 
 Knob::Knob(std::unique_ptr<OwnedControl> control, const char* label, Notifier* notifier)
@@ -611,59 +607,16 @@ Knob::ModRing Knob::modRing() const {
 		ring.drawn = true;
 	};
 
-	// EACH EAR'S MARK (backlog KU): left in `mark`, right in `markR`, both always — equal ears coincide.
-	const auto marksPerEar = [&] {
-		ring.stereo = true;
-		ring.mark = modulatedFace();
-		ring.hasMark = true;
-		ring.markR = modulatedFaceR();
-		ring.hasMarkR = true;
-		ring.drawn = true;
-	};
-
-	if (destination && state.armed) {
-		// Armed and unrouted draws no ring at all — the face glow is what says "you may point here",
-		// and a zero-length arc under it would be a mark with nothing to say.
-		if (amount != 0.0f) {
-			reach(1.0f);
-		}
-		// **AND WHERE THE VALUE ACTUALLY IS, WHICH THIS BRANCH USED TO RETURN WITHOUT READING.**
-		// BF: the amount arc masked the displacement arc — it did, by this `return`. The
-		// armed state drew the reach and left, so the live position was never computed while
-		// assigning, which is exactly when a hand wants to see it. The same 0.001 threshold the
-		// running branch uses, and taken from the same place, so the two states agree about what
-		// counts as movement.
-		const float assigning = modulatedFace();
-		if (std::abs(assigning - base) > 0.001f) {
-			ring.mark = assigning;
-			ring.hasMark = true;
-			// THE MARK IMPLIES A RING EVEN WITH NO REACH TO DRAW. An amount of zero with a source
-			// moving underneath it is a real state — the route is being pointed and the value is
-			// already responding — and a mark with `drawn == false` would be discarded by every
-			// caller.
-			ring.drawn = true;
-		}
-		if (state.stereoLive) {
-			marksPerEar();
-		}
-		return ring;
-	}
-
-	// **A STEREO ROUTE REACHES IT, NOT MAPPING** (backlog KU: 2026-10-04): the as-modulated arc splits into an
-	// ear each — two half-thickness arcs, each from the base to where that ear is.
-	if (state.stereoLive) {
-		const float liveL = modulatedFace();
-		const float liveR = modulatedFaceR();
-		if (std::abs(liveL - base) > 0.001f || std::abs(liveR - base) > 0.001f) {
-			ring.split = true;
-			ring.left = { std::min(base, liveL), std::max(base, liveL) };
-			ring.right = { std::min(base, liveR), std::max(base, liveR) };
-			ring.lo = std::min(ring.left.lo, ring.right.lo);
-			ring.hi = std::max(ring.left.hi, ring.right.hi);
-			ring.glow = 0.9f;
-			ring.drawn = true;
-			return ring;
-		}
+	// **THREE FACTS, THREE ELEMENTS, EACH SAYING ONE THING IN BOTH STATES (assigning and running):**
+	//   - THE FACE ARC (drawKnobFace) is the BASE value — not here.
+	//   - THE AMOUNT ARC (`lo`/`hi`) is the route's REACH from the base, and nothing else: the same span whether a
+	//     source is armed (full strength) or only running (a touch quieter), since the amount does not change with the
+	//     mode. It used to be a second arc in running mode — base to where the value is — which made one fact two
+	//     different pictures (a dot while assigning, an arc otherwise).
+	//   - THE DOT (`mark`, and `markR` per ear) is where the value IS, after modulation, in both states. A stereo
+	//     control has two, in the ear colours.
+	if (amount != 0.0f) {
+		reach(state.armed ? 1.0f : 0.8f);
 	}
 
 	// A THOUSANDTH OF THE RANGE, which is PerformStage::showsModulation's own threshold and taken from
@@ -671,16 +624,35 @@ Knob::ModRing Knob::modRing() const {
 	// all but floating-point noise must not leave a permanent second state drawn on top of the first.
 	const float live = modulatedFace();
 	if (std::abs(live - base) > 0.001f) {
-		ring.lo = std::min(base, live);
-		ring.hi = std::max(base, live);
-		ring.glow = 0.9f;
+		ring.mark = live;
+		ring.hasMark = true;
+		// THE MARK IMPLIES A RING EVEN WITH NO REACH TO DRAW: a source moving a control it has no amount on
+		// (a host-modulated macro) is a real state, and a mark with `drawn == false` would be discarded.
 		ring.drawn = true;
-		return ring;
 	}
-	if (amount != 0.0f) {
-		reach(0.28f);
+	if (state.stereoLive) {
+		// EACH EAR'S DOT (backlog KU): left in `mark`, right in `markR`, when either ear is off the base.
+		const float liveR = modulatedFaceR();
+		if (std::abs(live - base) > 0.001f || std::abs(liveR - base) > 0.001f) {
+			ring.stereo = true;
+			ring.mark = live;
+			ring.hasMark = true;
+			ring.markR = liveR;
+			ring.hasMarkR = true;
+			ring.drawn = true;
+		}
 	}
-	if (destination && !(ring.hi > ring.lo) && (amount != 0.0f || state.routedElsewhere)) {
+
+	// WHERE THE REACH OVERLAPS THE FACE ARC'S OWN STRETCH (rest..base), by more than a hair.
+	if (ring.hi > ring.lo) {
+		const float rest = static_cast<float>(control_->restNormalized());
+		const float faceLo = std::min(rest, base);
+		const float faceHi = std::max(rest, base);
+		ring.overFace = std::min(ring.hi, faceHi) - std::max(ring.lo, faceLo) > 1e-4f;
+	}
+	// A ROUTE NO ARC OR DOT CAN SHOW — and not while assigning, where the face glow already says it.
+	if (destination && !state.armed && !(ring.hi > ring.lo) && !ring.hasMark &&
+	    (amount != 0.0f || state.routedElsewhere)) {
 		ring.routedDot = true;
 		ring.drawn = true;
 	}
@@ -804,82 +776,52 @@ void drawKnobFace(visage::Canvas& canvas, float centreX, float centreY, float di
 	}
 }
 
-void drawModulationRing(visage::Canvas& canvas, float centreX, float centreY, float diameter, float lo,
-                        float hi, float glow) {
-	// THE SAME TRACK, WIDER: the mock draws the amount at the value arc's own radius with a fatter
-	// stroke and a shadow, so the two read as one control rather than as a second dial around the
-	// first. The colour is the only thing that distinguishes them, which is why periwinkle is spent on
-	// modulation and on nothing else in this editor.
-	const float trackRadius = diameter * (19.0f / Knob::kDiameter);
-	const float box = trackRadius * 2.0f;
-	const float left = centreX - trackRadius;
-	const float top = centreY - trackRadius;
-	const float from = kArcUp - kHalfSweep + 2.0f * kHalfSweep * lo;
-	const float to = kArcUp - kHalfSweep + 2.0f * kHalfSweep * hi;
-
-	canvas.setColor(withAlpha(kModulation, 0.6f * glow));
-	canvas.arc(left, top, box, diameter * (kModRingWidth / Knob::kDiameter), (from + to) * 0.5f,
-	           (to - from) * 0.5f, true);
-}
-
-void drawModulationMark(visage::Canvas& canvas, float centreX, float centreY, float diameter,
-                        float at) {
-	drawModulationMark(canvas, centreX, centreY, diameter, at, kModulation);
-}
-
-void drawModulationMark(visage::Canvas& canvas, float centreX, float centreY, float diameter,
-                        float at, uint32_t colour) {
-	// **THE DISPLACEMENT, AS A MARK ACROSS THE TRACK RATHER THAN AS A SECOND ARC ALONG IT.**
-	//
-	// BF: the amount arc masked the displacement arc. They were the same [lo, hi] arc in the
-	// same colour at the same radius — ONE visual channel — so drawing one after the other could only
-	// ever replace it. No z-order fixes two facts sharing a channel; they need two channels. The
-	// amount keeps the arc, which is the right shape for a REACH, and the displacement takes a tick,
-	// which is the right shape for a POSITION.
-	//
-	// **BRIGHTER THAN THE SPAN AND CROSSING IT**, because the span is context and the mark is the
-	// live thing: it is the one the eye should find while a modulator is moving, which is the whole
-	// complaint. Radially longer than the track is wide so it reads as a crossing rather than as a
-	// bright spot on the arc.
-	const float trackRadius = diameter * (19.0f / Knob::kDiameter);
-	const float width = diameter * (kModRingWidth / Knob::kDiameter);
-	const float angle = kArcUp - kHalfSweep + 2.0f * kHalfSweep * std::clamp(at, 0.0f, 1.0f);
-	// visage's arcs are centre-and-half-sweep; a mark is an arc of (almost) no sweep, so it is drawn
-	// as the same primitive rather than as a line the geometry would have to place by hand.
-	canvas.setColor(withAlpha(colour, 0.95f));
-	canvas.arc(centreX - trackRadius, centreY - trackRadius, trackRadius * 2.0f, width * 1.6f, angle,
-	           0.035f, true);
-}
-
-RingEarGeometry ringEarGeometry(float diameter) {
-	// THE MONO RING'S FOOTPRINT, as `drawModulationRing` strokes it: a box of radius 19/kDiameter, stroked inward by
-	// the ring's width — so its centre line is half a width inside the box.
-	RingEarGeometry g;
-	const float box = diameter * (19.0f / Knob::kDiameter);
-	g.trackWidth = diameter * (kModRingWidth / Knob::kDiameter);
-	g.trackRadius = box - g.trackWidth * 0.5f;
-	g.outer = { g.trackRadius + g.trackWidth * 0.25f, g.trackWidth * 0.5f };
-	g.inner = { g.trackRadius - g.trackWidth * 0.25f, g.trackWidth * 0.5f };
+ModRingGeometry modRingGeometry(float diameter) {
+	// THE FACE'S TRACK has its OUTER edge at 19 of 52 (drawKnobFace). The amount arc sits clear of it by a gap the
+	// keyline fills, then a stroke of its own; the dot rides the stroke's centre line and is wider than the stroke.
+	const float unit = diameter / Knob::kDiameter;
+	ModRingGeometry g;
+	g.faceTrackOuter = 19.0f * unit;
+	g.arcWidth = 3.0f * unit;
+	g.arcInner = g.faceTrackOuter + 1.75f * unit;
+	g.arcCentre = g.arcInner + g.arcWidth * 0.5f;
+	g.dotRadius = 3.6f * unit;
 	return g;
 }
 
-void drawModulationRingEars(visage::Canvas& canvas, float centreX, float centreY, float diameter, float loL, float hiL,
-                            float loR, float hiR, float glow) {
-	// TWO HALF-THICKNESS ARCS IN THE ONE FOOTPRINT — never N (there are not enough pixels in the rings). In the
-	// contrasting ear colours, opaque enough to read over the marigold value arc beneath.
-	const RingEarGeometry g = ringEarGeometry(diameter);
-	const auto arc = [&](const RingEarGeometry::Arc& a, float lo, float hi, uint32_t colour) {
-		if (hi <= lo) {
-			return;
-		}
-		const float from = kArcUp - kHalfSweep + 2.0f * kHalfSweep * lo;
-		const float to = kArcUp - kHalfSweep + 2.0f * kHalfSweep * hi;
-		const float box = a.radius + a.width * 0.5f; // visage strokes inward from the box
-		canvas.setColor(withAlpha(colour, std::min(1.0f, 0.95f * glow / 0.9f)));
-		canvas.arc(centreX - box, centreY - box, box * 2.0f, a.width, (from + to) * 0.5f, (to - from) * 0.5f, true);
+void drawModulationRing(visage::Canvas& canvas, float centreX, float centreY, float diameter, float lo,
+                        float hi, float glow) {
+	const ModRingGeometry g = modRingGeometry(diameter);
+	const float from = kArcUp - kHalfSweep + 2.0f * kHalfSweep * lo;
+	const float to = kArcUp - kHalfSweep + 2.0f * kHalfSweep * hi;
+	// visage strokes an arc INWARD from its box, so a stroke whose outer edge is `outer` has that box radius.
+	const auto stroke = [&](float outer, float width, uint32_t colour) {
+		canvas.setColor(colour);
+		canvas.arc(centreX - outer, centreY - outer, outer * 2.0f, width, (from + to) * 0.5f, (to - from) * 0.5f, true);
 	};
-	arc(g.outer, loL, hiL, kModulationL);
-	arc(g.inner, loR, hiR, kModulationR);
+	const float outer = g.arcInner + g.arcWidth;
+	// THE KEYLINE FIRST: a dark stroke a pixel wider each side, so the arc reads over the halo and the face alike.
+	stroke(outer + 1.0f, g.arcWidth + 1.5f, withAlpha(kVoid, 0.85f));
+	stroke(outer, g.arcWidth, withAlpha(kModulation, std::min(1.0f, glow)));
+}
+
+void drawModulationDot(visage::Canvas& canvas, float centreX, float centreY, float diameter, float at,
+                       uint32_t colour, uint32_t core) {
+	const ModRingGeometry g = modRingGeometry(diameter);
+	const float angle = kArcUp - kHalfSweep + 2.0f * kHalfSweep * std::clamp(at, 0.0f, 1.0f);
+	const float x = centreX + std::cos(angle) * g.arcCentre;
+	const float y = centreY + std::sin(angle) * g.arcCentre;
+	const float r = g.dotRadius;
+	const float key = r + diameter / Knob::kDiameter * 1.3f;
+	canvas.setColor(withAlpha(kVoid, 0.92f));
+	canvas.circle(x - key, y - key, key * 2.0f);
+	canvas.setColor(colour);
+	canvas.circle(x - r, y - r, r * 2.0f);
+	if (core != 0) {
+		const float c = r * 0.5f;
+		canvas.setColor(core);
+		canvas.circle(x - c, y - c, c * 2.0f);
+	}
 }
 
 float Knob::captionWidth() const {
@@ -1002,23 +944,17 @@ void Knob::draw(visage::Canvas& canvas) {
 	             control_ != nullptr ? static_cast<float>(control_->restNormalized()) : 0.0f);
 
 	if (const ModRing ring = modRing(); ring.drawn) {
-		if (ring.split) {
-			// THE RUNNING STEREO RING (backlog KU): an ear each, outer left, inner right.
-			drawModulationRingEars(canvas, centreX, centreY, faceDiameter_, ring.left.lo, ring.left.hi, ring.right.lo,
-			                       ring.right.hi, ring.glow);
-		} else if (ring.hi > ring.lo) {
+		if (ring.hi > ring.lo) {
 			drawModulationRing(canvas, centreX, centreY, faceDiameter_, ring.lo, ring.hi, ring.glow);
 		}
-		// THE MARK LAST, so it sits ON the span rather than under it — and the span is skipped entirely
-		// when there is no reach to draw, which is the armed-with-zero-amount state where the value is
-		// moving and the reach is nothing.
+		// THE DOT LAST, so it sits ON the arc and the face rather than under them, whatever it overlaps. A stereo
+		// control's two dots keep their ear colours and wear the same bright core, so they still read as "the dot".
 		if (ring.hasMark) {
-			// A STEREO-LIVE CONTROL'S MARKS IN THE EAR COLOURS (backlog KU), left then right.
-			drawModulationMark(canvas, centreX, centreY, faceDiameter_, ring.mark,
-			                   ring.stereo ? kModulationL : kModulation);
+			drawModulationDot(canvas, centreX, centreY, faceDiameter_, ring.mark, ring.stereo ? kModulationL : kModulatedDot,
+			                  ring.stereo ? kModulatedDot : 0u);
 		}
 		if (ring.hasMarkR) {
-			drawModulationMark(canvas, centreX, centreY, faceDiameter_, ring.markR, kModulationR);
+			drawModulationDot(canvas, centreX, centreY, faceDiameter_, ring.markR, kModulationR, kModulatedDot);
 		}
 		if (ring.routedDot) {
 			// LOWER LEFT, opposite the host-slot dot: dim, a footnote saying "a route reaches this".

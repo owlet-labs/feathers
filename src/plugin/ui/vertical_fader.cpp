@@ -193,21 +193,24 @@ void VerticalFader::draw(visage::Canvas& canvas) {
 		}
 		// THE MAPPING SIGNAL (backlog QK): the border in the modulation colour while the armed source may reach it — the
 		// knob's and the box's glow, which this fader only ever drew as a brighter band once a route existed.
-		if (mod.routable) {
-			canvas.setColor(kModulation);
-			canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, kRadius, 1.0f);
-		}
 		// THE MODULATED VALUE, LIVE — where modulation has put it this frame, so a moving value is seen moving.
 		const double live = std::clamp(control_.normalizedModulated(), 0.0, 1.0);
 		if (std::fabs(live - base) > 1e-4) {
-			canvas.setColor(withAlpha(kModulation, 0.95f));
+			canvas.setColor(withAlpha(kVoid, 0.8f)); // the keyline, as the knob's dot wears
+			canvas.roundedRectangle(1.0f, yOf(live) - 2.0f, w - 2.0f, 4.0f, 1.5f);
+			canvas.setColor(kModulatedDot);
 			canvas.roundedRectangle(1.0f, yOf(live) - 1.0f, w - 2.0f, 2.0f, 1.0f);
 		}
 	}
 
 	// THE BORDER IS THE MAPPING SIGNAL — the modulation colour while an armed source could route here.
-	canvas.setColor(lit ? kModulation : withAlpha(kLine, 0.6f));
-	canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, kRadius, 1.0f);
+	if (lit) {
+		drawBoxOutline(canvas, 0.0f, 0.0f, w, h, kRadius, boxOutlineOf(false, true, true));
+	}
+	else {
+		canvas.setColor(withAlpha(kLine, 0.6f));
+		canvas.roundedRectangleBorder(0.0f, 0.0f, w, h, kRadius, 1.0f);
+	}
 
 	canvas.setColor(kInk);
 	canvas.text(readout(), font(kKnobLabelSize), visage::Font::kCenter, 0.0f, 0.0f, w, kTextHeight);

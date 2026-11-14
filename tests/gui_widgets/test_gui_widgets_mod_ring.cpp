@@ -102,10 +102,13 @@ TEST_CASE("the ring follows the live value when nothing is armed, and undo puts 
 		CHECK_FALSE(path->mappable());
 		const ui::Knob::ModRing ring = path->modRing();
 		CHECK(ring.drawn);
-		CHECK(ring.glow == doctest::Approx(0.28f));
+		// THE AMOUNT ARC, a touch quieter than while assigning — and no dot: nothing is moving the value.
+		CHECK(ring.glow == doctest::Approx(0.8f));
+		CHECK(ring.hi == doctest::Approx(std::clamp(path->normalized() + amount, 0.0f, 1.0f)));
+		CHECK_FALSE(ring.hasMark);
 	}
 
-	SUBCASE("disarmed and moving, the ring is the modulated result") {
+	SUBCASE("disarmed and moving, the ring is the amount and the dot is the modulated result") {
 		f.arm(macroSourceAt(0));
 		// What the engine would publish with that macro turned up: base, and base + what the routing
 		// adds. **THROUGH `publish`, WHICH IS ACTUALLY THE DOOR THE PLUGIN USES.**
@@ -147,9 +150,14 @@ TEST_CASE("the ring follows the live value when nothing is armed, and undo puts 
 
 		const ui::Knob::ModRing ring = path->modRing();
 		CHECK(ring.drawn);
-		CHECK(ring.glow == doctest::Approx(0.9f));
+		CHECK(ring.glow == doctest::Approx(0.8f));
+		// THE ARC IS THE ROUTE'S REACH, NOT WHERE THE VALUE IS: unchanged by the macro turning up.
 		CHECK(ring.lo == doctest::Approx(path->normalized()));
-		CHECK(ring.hi > ring.lo);
+		CHECK(ring.hi == doctest::Approx(std::clamp(path->normalized() + amount, 0.0f, 1.0f)));
+		// AND THE DOT IS WHERE IT IS — above the base, inside the reach.
+		REQUIRE(ring.hasMark);
+		CHECK(ring.mark > path->normalized());
+		CHECK(ring.mark <= ring.hi + 1e-4f);
 	}
 
 	SUBCASE("undo walks the amount back, and redo walks it forward") {
@@ -481,30 +489,32 @@ TEST_CASE("a host modulating a macro shows on the macro AND on what the macro fe
 	const Knob::ModRing macroNow = macroKnob.modRing();
 	CHECK(macroNow.drawn);
 	CHECK_FALSE(macroAtRest.drawn); // and it was NOT drawn at rest, so the ring means something
-	// It spans from the base to where the modulator actually put it — asserted as a VALUE against an
-	// independent restatement, because "a ring appeared" would pass on a ring of any length anywhere.
+	// A DOT where the modulator actually put it — asserted as a VALUE against an independent restatement, because
+	// "a ring appeared" would pass on a mark anywhere. A macro has no amount of its own, so there is no arc.
 	const ParamDesc& macroDesc = *findParam(static_cast<clap_id>(macroId));
 	const auto normalise = [](const ParamDesc& d, double v) {
 		return static_cast<float>((v - d.min) / (d.max - d.min));
 	};
-	CHECK(macroNow.hi == doctest::Approx(normalise(macroDesc, params.resolved(macroId))).epsilon(0.01));
-	CHECK(macroNow.lo == doctest::Approx(normalise(macroDesc, params.base(macroId))).epsilon(0.01));
+	REQUIRE(macroNow.hasMark);
+	CHECK(macroNow.mark == doctest::Approx(normalise(macroDesc, params.resolved(macroId))).epsilon(0.01));
+	CHECK_FALSE(macroNow.hi > macroNow.lo);
 
 	// AND THE KNOCK-ON, on the parameter the macro feeds. This half was already working, and checking
 	// it is what says so: the destination is a real destination, so it never hit the guard above.
 	//
-	// THE TWO RINGS MEAN DIFFERENT THINGS, which is what makes "did it move" the wrong question and
-	// cost this case a wrong assertion on its first run. At rest the destination draws the route's
-	// REACH — how far this route could carry it, base to base+amount, dim — and once the source is
-	// live it draws where the parameter actually IS, bright. So `hi` goes DOWN, from the full reach of
-	// 1.0 to the real position of 0.5, and an assertion that the arc grew would fail on correct
-	// behaviour. The value is the claim; the glow says which of the two rings is being read.
+	// THE ARC IS THE REACH AND THE DOT IS THE POSITION: at rest the destination draws the route's REACH (base to
+	// base+amount) and no dot; once the source is live the SAME reach stays and a dot appears where the parameter
+	// actually IS — so `hi` does not move, and the dot is what says the source is live.
 	const Knob::ModRing destNow = destKnob.modRing();
 	CHECK(destNow.drawn);
 	CHECK(destAtRest.drawn);
-	CHECK(destAtRest.glow < destNow.glow); // the dim reach, then the bright live reading
+	CHECK_FALSE(destAtRest.hasMark);
+	CHECK(destNow.glow == doctest::Approx(destAtRest.glow));
+	CHECK(destNow.hi == doctest::Approx(destAtRest.hi));
+	CHECK(destNow.lo == doctest::Approx(destAtRest.lo));
 	const ParamDesc& destDesc = *findParam(static_cast<clap_id>(destId));
-	CHECK(destNow.hi == doctest::Approx(normalise(destDesc, params.resolved(destId))).epsilon(0.01));
+	REQUIRE(destNow.hasMark);
+	CHECK(destNow.mark == doctest::Approx(normalise(destDesc, params.resolved(destId))).epsilon(0.01));
 	CHECK(destNow.lo == doctest::Approx(normalise(destDesc, params.base(destId))).epsilon(0.01));
 }
 
@@ -1530,9 +1540,9 @@ TEST_CASE("Feathers' host answers a control's right ear from the bridge it was p
 	CHECK_FALSE(host.modulatedFieldRAt(filterId, 2, right));
 }
 
-TEST_CASE("running, a stereo-live ring splits into two ears: the outer arc is the left's, the inner the right's") {
-	// **BACKLOG KU,, state 1 (not mapping):** the as-modulated arc splits into two half-thickness arcs,
-	// each from the base to its own ear. Read as values, not a picture.
+TEST_CASE("running, a stereo-live control shows one dot per ear: the left's at the left value, the right's at the right") {
+	// **BACKLOG KU, state 1 (not mapping):** the as-modulated position is two DOTS, the same element the armed state
+	// uses — not an arc each. Read as values, not a picture.
 	FakeModulatable control;
 	control.shown.isDestination = true;
 	control.shown.stereo = true;
@@ -1543,37 +1553,202 @@ TEST_CASE("running, a stereo-live ring splits into two ears: the outer arc is th
 	ui::Knob knob(control, "Fake", nullptr);
 	const ui::Knob::ModRing ring = knob.modRingForTest();
 	REQUIRE(ring.drawn);
-	CHECK(ring.split);
-	CHECK(std::fabs(ring.left.lo - 0.3f) < 1e-4f);
-	CHECK(std::fabs(ring.left.hi - 0.5f) < 1e-4f);
-	// THE RIGHT EAR'S ARC AT THE RIGHT VALUE — reading the left value here fails.
-	CHECK(std::fabs(ring.right.lo - 0.5f) < 1e-4f);
-	CHECK(std::fabs(ring.right.hi - 0.7f) < 1e-4f);
-	CHECK_FALSE(ring.hasMarkR); // running draws arcs, not dots
-	// THE CONTROL: the same values with stereoLive false draw the ordinary ring.
+	CHECK(ring.stereo);
+	REQUIRE(ring.hasMark);
+	REQUIRE(ring.hasMarkR);
+	CHECK(std::fabs(ring.mark - 0.3f) < 1e-4f);
+	// THE RIGHT EAR'S DOT AT THE RIGHT VALUE — reading the left value here fails.
+	CHECK(std::fabs(ring.markR - 0.7f) < 1e-4f);
+	// NO AMOUNT, NO ARC: the dots are the whole picture, and no arc stands in for the position.
+	CHECK_FALSE(ring.hi > ring.lo);
+	// THE CONTROL: the same values with stereoLive false draw one mono dot.
 	control.shown.stereoLive = false;
 	const ui::Knob::ModRing mono = knob.modRingForTest();
-	CHECK_FALSE(mono.split);
-	CHECK(std::fabs(mono.lo - 0.3f) < 1e-4f);
-	CHECK(std::fabs(mono.hi - 0.5f) < 1e-4f);
+	CHECK_FALSE(mono.stereo);
+	CHECK_FALSE(mono.hasMarkR);
+	REQUIRE(mono.hasMark);
+	CHECK(std::fabs(mono.mark - 0.3f) < 1e-4f);
 }
 
-TEST_CASE("the two ear arcs share the ring's footprint exactly — half the width each, touching, outer left") {
+TEST_CASE("the amount arc sits clear of the face arc, and the dot rides it and is wider than it") {
 	for (const float diameter : { ui::Knob::kDiameter, 32.0f, 64.0f }) {
 		CAPTURE(diameter);
-		const ui::RingEarGeometry g = ui::ringEarGeometry(diameter);
-		CHECK(std::fabs(g.outer.width - g.trackWidth * 0.5f) < 1e-5f);
-		CHECK(std::fabs(g.inner.width - g.trackWidth * 0.5f) < 1e-5f);
-		CHECK(std::fabs((g.outer.radius + g.outer.width * 0.5f) - (g.trackRadius + g.trackWidth * 0.5f)) < 1e-5f);
-		CHECK(std::fabs((g.inner.radius - g.inner.width * 0.5f) - (g.trackRadius - g.trackWidth * 0.5f)) < 1e-5f);
-		CHECK(std::fabs((g.outer.radius - g.outer.width * 0.5f) - (g.inner.radius + g.inner.width * 0.5f)) < 1e-5f);
-		CHECK(g.outer.radius > g.inner.radius);
-		// AND THE FOOTPRINT IS THE MONO RING'S: visage strokes inward from its box, whose radius is 19/kDiameter.
-		CHECK(std::fabs((g.trackRadius + g.trackWidth * 0.5f) - diameter * (19.0f / ui::Knob::kDiameter)) < 1e-5f);
+		const ui::ModRingGeometry g = ui::modRingGeometry(diameter);
+		// THE FACE TRACK'S OUTER EDGE IS 19 OF 52, and the amount arc starts beyond it by a gap (the keyline's).
+		CHECK(std::fabs(g.faceTrackOuter - diameter * (19.0f / ui::Knob::kDiameter)) < 1e-5f);
+		CHECK(g.arcInner > g.faceTrackOuter);
+		CHECK(std::fabs(g.arcCentre - (g.arcInner + g.arcWidth * 0.5f)) < 1e-5f);
+		// INSIDE THE KNOB'S OWN FACE, or the widget would clip it.
+		CHECK(g.arcInner + g.arcWidth < diameter * 0.5f);
+		CHECK(g.arcCentre + g.dotRadius < diameter * 0.5f);
+		// THE DOT STANDS PROUD OF THE ARC IT RIDES.
+		CHECK(g.dotRadius * 2.0f > g.arcWidth);
 	}
 }
 
-TEST_CASE("mapping a stereo-live control keeps one reach arc and marks each ear in its own colour, at that ear's value") {
+TEST_CASE("the amount arc is the reach and the dot is the modulated value, in BOTH assign and normal state") {
+	// ONE ELEMENT FOR "WHERE THE VALUE IS", ONE FOR "HOW FAR IT CAN GO". The expectations are stated here by hand
+	// (the reach is [min(b, b+a), max(b, b+a)] clamped to the face), not read back from the code under test.
+	struct Row {
+		const char* what;
+		double base;
+		float amount;
+		bool bipolar;
+		double modulated;
+		float expectLo;
+		float expectHi;
+		bool expectOverFace;
+	};
+	const Row rows[] = {
+		{ "base 80%, amount -60%", 0.8, -0.6f, false, 0.5, 0.2f, 0.8f, true },
+		{ "base 20%, amount -20% clamped at the floor", 0.2, -0.2f, false, 0.05, 0.0f, 0.2f, true },
+		{ "base 50%, bipolar +-30%", 0.5, 0.3f, true, 0.65, 0.2f, 0.8f, true },
+		{ "base 20%, amount +30% reaches up, clear of the face arc", 0.2, 0.3f, false, 0.4, 0.2f, 0.5f, false },
+	};
+	for (const bool armed : { true, false }) {
+		for (const Row& row : rows) {
+			CAPTURE(armed);
+			CAPTURE(row.what);
+			FakeModulatable control;
+			control.shown.isDestination = true;
+			control.shown.routable = armed;
+			control.shown.armed = armed;
+			control.shown.bipolar = row.bipolar;
+			control.shown.base = row.base;
+			control.shown.amount = row.amount;
+			control.shown.modulated = row.modulated;
+			ui::Knob knob(control, "Fake", nullptr);
+			const ui::Knob::ModRing ring = knob.modRingForTest();
+			REQUIRE(ring.drawn);
+			// THE ARC IS THE REACH.
+			CHECK(ring.lo == doctest::Approx(row.expectLo).epsilon(1e-4));
+			CHECK(ring.hi == doctest::Approx(row.expectHi).epsilon(1e-4));
+			CHECK(ring.glow == doctest::Approx(armed ? 1.0f : 0.8f));
+			CHECK(ring.overFace == row.expectOverFace);
+			// THE DOT IS WHERE THE VALUE IS, in the state it is asked in — and the only element that says so.
+			REQUIRE(ring.hasMark);
+			CHECK(ring.mark == doctest::Approx(static_cast<float>(row.modulated)).epsilon(1e-4));
+			CHECK_FALSE(ring.hasMarkR);
+			CHECK_FALSE(ring.stereo);
+			// THE ARC DOES NOT MOVE WITH THE VALUE: the same reach with the source parked at the base.
+			control.shown.modulated = row.base;
+			const ui::Knob::ModRing parked = knob.modRingForTest();
+			CHECK(parked.lo == doctest::Approx(ring.lo));
+			CHECK(parked.hi == doctest::Approx(ring.hi));
+			CHECK_FALSE(parked.hasMark);
+		}
+	}
+}
+
+TEST_CASE("an unmodulated knob draws nothing, and an armed unrouted one draws the glow but no arc and no dot") {
+	FakeModulatable control;
+	control.shown.base = 0.5;
+	control.shown.modulated = 0.5;
+	ui::Knob plain(control, "Fake", nullptr);
+	const ui::Knob::ModRing none = plain.modRingForTest();
+	CHECK_FALSE(none.drawn);
+	CHECK_FALSE(none.hasMark);
+	CHECK_FALSE(none.hi > none.lo);
+
+	control.shown.isDestination = true;
+	control.shown.routable = true;
+	control.shown.armed = true;
+	control.shown.amount = 0.0f;
+	ui::Knob armed(control, "Fake", nullptr);
+	const ui::Knob::ModRing ring = armed.modRingForTest();
+	CHECK_FALSE(ring.hi > ring.lo);
+	CHECK_FALSE(ring.hasMark);
+	CHECK_FALSE(ring.routedDot);
+	CHECK(armed.haloForTest().lit);
+}
+
+namespace {
+
+/// THE SEPARATION METRIC: distance in OKLab (the perceptual space the chrome hue already turns colours in), the
+/// Euclidean norm of (dL, da, db) with a = C cos h, b = C sin h. About 0.02 is the smallest step an eye can name, and
+/// 0.12 is "plainly two colours" for flat fills the size of an arc or a dot.
+double separation(uint32_t x, uint32_t y) {
+	const ui::Oklch a = ui::toOklch(x);
+	const ui::Oklch b = ui::toOklch(y);
+	const double pi = 3.14159265358979323846;
+	const double ar = a.h * pi / 180.0;
+	const double br = b.h * pi / 180.0;
+	const double dL = a.L - b.L;
+	const double da = a.C * std::cos(ar) - b.C * std::cos(br);
+	const double db = a.C * std::sin(ar) - b.C * std::sin(br);
+	return std::sqrt(dL * dL + da * da + db * db);
+}
+
+constexpr double kMinSeparation = 0.12;
+
+} // namespace
+
+TEST_CASE("the face arc, the amount arc and the modulated-value dot stay distinct at every chrome and accent hue") {
+	// SWEPT THROUGH THE WHOLE RANGE of both hue settings, through the pure palette (`rotatedPalette`) so no global is
+	// touched. The face arc reads `kValue`, the amount arc `kModulation`, the dot `kModulatedDot` (the chrome ink).
+	double worst = 1.0;
+	double worstEar = 1.0;
+	for (double chrome = ui::kChromeHueMin; chrome <= ui::kChromeHueMax; chrome += 15.0) {
+		for (const double accent : { -180.0, -90.0, -45.0, 0.0, 45.0, 90.0, 180.0 }) {
+			const ui::ChromePalette p = ui::rotatedPalette(ui::kChromeBase, chrome, accent);
+			CAPTURE(chrome);
+			CAPTURE(accent);
+			const double faceAmount = separation(p.value, p.modulation);
+			const double faceDot = separation(p.value, p.ink);
+			const double amountDot = separation(p.modulation, p.ink);
+			CHECK(faceAmount >= kMinSeparation);
+			CHECK(faceDot >= kMinSeparation);
+			CHECK(amountDot >= kMinSeparation);
+			worst = std::min({ worst, faceAmount, faceDot, amountDot });
+			// A STEREO CONTROL'S DOTS keep their ear colours and wear the dot's bright core: the core must stand out
+			// from each ear, since the ears are data and do not turn with the hue.
+			for (const uint32_t ear : { ui::kModulationL, ui::kModulationR }) {
+				const double core = separation(ear, p.ink);
+				CHECK(core >= kMinSeparation);
+				worstEar = std::min(worstEar, core);
+			}
+		}
+	}
+	MESSAGE("worst pairwise separation over the sweep: " << worst << " (ear core: " << worstEar << ")");
+}
+
+TEST_CASE("a selected box and a modulation-destination box differ in STYLE as well as colour, and the glow is assign-only") {
+	const ui::BoxOutline none = ui::boxOutlineOf(false, false, false);
+	const ui::BoxOutline sel = ui::boxOutlineOf(true, false, false);
+	const ui::BoxOutline dest = ui::boxOutlineOf(false, true, false);
+	const ui::BoxOutline both = ui::boxOutlineOf(true, true, false);
+	CHECK(none.kind == ui::BoxOutlineKind::None);
+	CHECK(none.strokes == 0);
+	CHECK(sel.kind == ui::BoxOutlineKind::Selected);
+	CHECK(dest.kind == ui::BoxOutlineKind::Destination);
+	CHECK(both.kind == ui::BoxOutlineKind::Both);
+	// SELECTED: ONE accent stroke. DESTINATION: TWO modulation strokes. A colour-blind eye counts strokes.
+	CHECK(sel.strokes == 1);
+	CHECK(sel.outerColour == ui::kAccent);
+	CHECK(dest.strokes == 2);
+	CHECK(dest.outerColour == ui::kModulation);
+	CHECK(dest.innerColour == ui::kModulation);
+	CHECK(sel.strokes != dest.strokes);
+	// BOTH draws both, each in its own colour and shape: the selected stroke outside, the destination's line inside.
+	CHECK(both.strokes == 2);
+	CHECK(both.outerColour == ui::kAccent);
+	CHECK(both.innerColour == ui::kModulation);
+	// THE INNER GLOW is assign-mode and destination-only.
+	CHECK_FALSE(dest.innerGlow);
+	CHECK_FALSE(ui::boxOutlineOf(true, false, true).innerGlow);
+	CHECK(ui::boxOutlineOf(false, true, true).innerGlow);
+	CHECK(ui::boxOutlineOf(true, true, true).innerGlow);
+	// THE HUE SWEEP: the style distinction does not depend on the colours at all, so no rotation can collapse it; the
+	// colours' own separation is reported (the two roles are neighbours in the mock's palette).
+	double worst = 1.0;
+	for (double chrome = ui::kChromeHueMin; chrome <= ui::kChromeHueMax; chrome += 15.0) {
+		const ui::ChromePalette p = ui::rotatedPalette(ui::kChromeBase, chrome, 0.0);
+		worst = std::min(worst, separation(p.accent, p.modulation));
+	}
+	MESSAGE("selected vs destination outline colour separation, worst over the sweep: " << worst);
+}
+
+TEST_CASE("mapping a stereo-live control keeps one reach arc and puts a dot at each ear, at that ear's value") {
 	// **State 2 (armed):** "for the modulation strength we can use the normal arc since its a strength anyway" — one
 	// reach arc, not split, and a dot per ear: `mark` at the LEFT ear, `markR` at the RIGHT.
 	FakeModulatable control;
@@ -1588,7 +1763,6 @@ TEST_CASE("mapping a stereo-live control keeps one reach arc and marks each ear 
 	ui::Knob knob(control, "Fake", nullptr);
 	const ui::Knob::ModRing armed = knob.modRingForTest();
 	REQUIRE(armed.drawn);
-	CHECK_FALSE(armed.split);
 	CHECK(armed.stereo);
 	// THE REACH, FROM THE BASE — a strength.
 	CHECK(std::fabs(armed.lo - 0.5f) < 1e-4f);
@@ -1755,3 +1929,4 @@ TEST_CASE("QK: a greyed knob glows DIMMER for an armed source and takes the rout
 		}
 	}
 }
+

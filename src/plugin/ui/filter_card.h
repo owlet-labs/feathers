@@ -276,6 +276,31 @@ public:
 	bool stereoCurvesForTest() const { return stereoCurves(); }
 	size_t curveGainsForTest(float* out, size_t capacity, bool right) const { return curveGains(out, capacity, right); }
 
+	/// **THE AT-REST CURVE, AND THE AS-MODULATED ONE BESIDE IT** — the same relationship as a knob's value arc and its
+	/// modulated dot. The rest curve is the stored row (what the knobs are set to) and is always drawn, in the grey
+	/// the card has always used. While a route reaches a control the curve depends on AND the modulated settings differ
+	/// from the stored ones, a second curve is drawn over it in the modulation colour: one for a mono route, one per
+	/// ear (`kModulationL` / `kModulationR`) while a stereo route reaches. With nothing routed, or the modulated
+	/// settings equal to the stored ones, only the rest curve is drawn.
+	enum class CurveKind { Rest, Modulated, ModulatedL, ModulatedR };
+	struct PlannedCurve {
+		CurveKind kind;
+		fx::filter::Settings settings;
+	};
+	struct CurvePlan {
+		std::array<PlannedCurve, 3> curve {};
+		size_t count = 0;
+	};
+	/// The curves the plot draws now, rest first. `drawContent` draws exactly this list.
+	CurvePlan curvePlan() const;
+	/// The rest curve's gains (the stored row), as `curveGains` is the modulated one's.
+	size_t restCurveGains(float* out, size_t capacity) const;
+	/// What the last `drawContent` actually drew, in order — a plan is not a picture, so a case reads this.
+	size_t drawnCurveCountForTest() const { return drawnCurveCount_; }
+	CurveKind drawnCurveKindForTest(size_t i) const { return drawnCurveKinds_[i]; }
+	/// The stored row's settings (what the rest curve is drawn from).
+	fx::filter::Settings restSettingsForTest() const { return settingsFor(false, false); }
+
 	/// The knobs this card holds, so a case can ask where they ended up rather than restate the
 	/// layout it is checking.
 	const std::vector<std::unique_ptr<Knob>>& knobsForTest() const { return knobs_; }
@@ -308,7 +333,9 @@ private:
 	/// ONE EAR'S SETTINGS, from where modulation left each control (backlog KU) — the left ear's `modulatedFieldAt`,
 	/// the right's `modulatedFieldRAt` wherever a stereo route reaches, the left's elsewhere.
 	/// A control nothing can modulate (Type, Slope, the switches) is read stored. `settings()` is the left ear's.
-	fx::filter::Settings settingsFor(bool right) const;
+	/// `modulated` false reads the STORED row (the rest curve).
+	fx::filter::Settings settingsFor(bool right, bool modulated = true) const;
+	size_t curveGainsOf(const fx::filter::Settings& curve, float* out, size_t capacity) const;
 
 	/// ASK FOR A FRAME WHEN THE PICTURE THIS CARD DRAWS HAS MOVED.
 	///
@@ -324,7 +351,10 @@ private:
 	mutable fx::filter::Settings drawnSettings_ {};
 	/// AND, WHILE AN EAR EACH IS DRAWN (backlog KU), the right ear's — so the card redraws while either ear moves.
 	mutable fx::filter::Settings drawnSettingsR_ {};
+	mutable fx::filter::Settings drawnRest_ {};
 	mutable bool drawnStereo_ = false;
+	mutable size_t drawnCurveCount_ = 0;
+	mutable std::array<CurveKind, 3> drawnCurveKinds_ {};
 	mutable bool haveDrawn_ = false;
 
 public:

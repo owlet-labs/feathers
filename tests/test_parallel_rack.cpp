@@ -38,6 +38,8 @@
 #include "rack/rack_engine.h"
 
 #include <array>
+#include <chrono>
+#include <cstring>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -536,6 +538,45 @@ TEST_CASE("NO: save and load — the chains, their devices, and each chain's lev
 	CHECK_FALSE(pr::kContainerOps.loadState(fresh.mem, body.data(), body.size() - 1));
 	CHECK(fresh.rack().chainCount() == 3);
 	CHECK(fresh.rack().soloed(2));
+}
+
+TEST_CASE("hardening: a body declaring more chains than a rack may hold is refused at once and leaves the rack as it was") {
+	RackRig rig;
+	REQUIRE(rig.rack().addChain() == 1);
+	rig.settle();
+	std::vector<uint8_t> body = rig.save();
+	REQUIRE(body.size() > 10);
+	// THE COUNT SITS AFTER THE 4-BYTE MAGIC AND THE 2-BYTE VERSION; written big, it is far past what the bytes could hold.
+	const auto withCount = [&](uint32_t count) {
+		std::vector<uint8_t> b = body;
+		std::memcpy(b.data() + 6, &count, sizeof(count));
+		return b;
+	};
+	const std::vector<uint8_t> huge = withCount(0x7FFFFFFFu);
+	const auto start = std::chrono::steady_clock::now();
+	CHECK_FALSE(pr::kContainerOps.loadState(rig.mem, huge.data(), huge.size()));
+	const auto took = std::chrono::steady_clock::now() - start;
+	CHECK(took < std::chrono::milliseconds(200));
+	CHECK(rig.rack().chainCount() == 2);
+	// ONE PAST THE CAP, WITH EVERY CHAIN'S BYTES PRESENT: a body that is whole in every other way, so only the count
+	// can refuse it (without the cap it builds a thousand and more inner engines).
+	std::vector<uint8_t> whole(body.begin(), body.begin() + 6);
+	const uint32_t over = pr::kMaxChains + 1;
+	whole.insert(whole.end(), reinterpret_cast<const uint8_t*>(&over), reinterpret_cast<const uint8_t*>(&over) + sizeof(over));
+	for (uint32_t c = 0; c < over; ++c) {
+		const uint16_t id = static_cast<uint16_t>(c);
+		whole.insert(whole.end(), reinterpret_cast<const uint8_t*>(&id), reinterpret_cast<const uint8_t*>(&id) + sizeof(id));
+		whole.push_back(0);                      // no fields
+		whole.insert(whole.end(), 4, uint8_t {}); // no body
+	}
+	whole.insert(whole.end(), 2, uint8_t {}); // no exports
+	const auto startWhole = std::chrono::steady_clock::now();
+	CHECK_FALSE(pr::kContainerOps.loadState(rig.mem, whole.data(), whole.size()));
+	CHECK(std::chrono::steady_clock::now() - startWhole < std::chrono::milliseconds(200));
+	CHECK(rig.rack().chainCount() == 2);
+	// AND THE ORIGINAL BODY STILL LOADS.
+	REQUIRE(pr::kContainerOps.loadState(rig.mem, body.data(), body.size()));
+	CHECK(rig.rack().chainCount() == 2);
 }
 
 TEST_CASE("NO: nested — a Rack in a Chain in a Rack sums by value, and survives a save and load") {

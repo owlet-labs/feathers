@@ -277,6 +277,9 @@ static_assert(static_cast<size_t>(Param::Macro1) == static_cast<size_t>(composit
 // adopts what the DAW writes (`adoptOwnFields`).
 inline constexpr size_t kChainSlots = 64;
 inline constexpr uint8_t kNoChainSlot = 0xFF;
+/// THE MOST CHAINS A BODY MAY DECLARE. Chains past `kChainSlots` are legal (they have no slot), so this is not that;
+/// it is the bound a stored count is held to before any chain is built, since each is a whole inner engine.
+inline constexpr uint32_t kMaxChains = 1024;
 enum class SlotControl : size_t { Level = 0, Mute, Solo, kCount };
 inline constexpr size_t kSlotControls = static_cast<size_t>(SlotControl::kCount);
 inline constexpr size_t kSlotParamBase = static_cast<size_t>(Param::kCount);

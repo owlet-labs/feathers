@@ -281,6 +281,12 @@ void HitPicture::press(visage::Point p) {
 		return;
 	}
 	ParamControl* c = controlOf(held_);
+	if (c == nullptr) {
+		held_ = Handle::kCount; // nothing there to hold
+		return;
+	}
+	heldControl_ = c;
+	heldSecond_ = secondOf(held_);
 	frozenSpan_ = naturalSpan();
 	dragging_ = true;
 	pressAt_ = p;
@@ -291,9 +297,9 @@ void HitPicture::press(visage::Point p) {
 	if (held_ == Handle::WireDecay) {
 		startMultiplier_ = laws_.wireT60 / std::exp2(startValue_); // Length's multiplier on the wires
 	}
-	if (ParamControl* second = secondOf(held_); second != nullptr) {
-		startSecond_ = second->value();
-		second->beginGesture();
+	if (heldSecond_ != nullptr) {
+		startSecond_ = heldSecond_->value();
+		heldSecond_->beginGesture();
 	}
 	c->beginGesture();
 }
@@ -302,8 +308,11 @@ void HitPicture::drag(visage::Point p) {
 	if (!dragging_ || held_ == Handle::kCount) {
 		return;
 	}
-	ParamControl* c = controlOf(held_);
-	ParamControl* second = secondOf(held_);
+	ParamControl* c = heldControl_;
+	ParamControl* second = heldSecond_;
+	if (c == nullptr) {
+		return;
+	}
 	const float dx = p.x - pressAt_.x;
 	const float dy = p.y - pressAt_.y;
 	const float envH = envBottom() - envTop();
@@ -384,14 +393,17 @@ void HitPicture::drag(visage::Point p) {
 }
 
 void HitPicture::release() {
-	if (dragging_ && held_ != Handle::kCount) {
-		controlOf(held_)->endGesture();
-		if (ParamControl* second = secondOf(held_); second != nullptr) {
-			second->endGesture();
+	// ENDED ON WHAT THE PRESS BEGAN, not on what `controls_` names now.
+	if (dragging_ && held_ != Handle::kCount && heldControl_ != nullptr) {
+		heldControl_->endGesture();
+		if (heldSecond_ != nullptr) {
+			heldSecond_->endGesture();
 		}
 	}
 	dragging_ = false;
 	held_ = Handle::kCount;
+	heldControl_ = nullptr;
+	heldSecond_ = nullptr;
 }
 
 void HitPicture::dragForTest(Handle h, float dx, float dy) {

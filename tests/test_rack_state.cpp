@@ -294,6 +294,69 @@ TEST_CASE("a device this build cannot run is skipped, and the route on the devic
 	REQUIRE(refused.routes.count == 0);
 }
 
+namespace {
+
+/// A hand-written document whose first device names the TOP of the id space and whose second names a plain id
+/// the route names; the route is the one that must survive the first being renamed.
+std::string documentNamingTheTopId() {
+	const std::string cutoff = fx::filter::kDescriptor.params[fx::filter::kDescriptor.controlOfNthModulatableBesideEnable(0)].key;
+	return std::string(R"({
+	"format": "feathers.rack",
+	"major": 1,
+	"chains": [[
+		{"tag": ")") + fx::filter::kTraits.tag + R"(", "id": 4294967295, "values": {}, "body": null},
+		{"tag": ")" + fx::filter::kTraits.tag + R"(", "id": 8, "values": {}, "body": null}
+	]],
+	"routes": [{"src": {"macro": 0}, "dst": {"device": 8, "control": ")" + cutoff + R"("}, "amount": 0.5}],
+	"macros": [0, 0, 0, 0, 0, 0, 0, 0],
+	"bipolar": [0, 0, 0, 0, 0, 0, 0, 0],
+	"canvas": {"extent": 0, "collapsed": false}
+})";
+}
+
+} // namespace
+
+TEST_CASE("hardening: a file naming the top id is renamed like a missing id, on the engine road, and its neighbour's route holds") {
+	rack::RackEngine a(kAxes, hostCatalogue());
+	MemStream s;
+	const std::string doc = documentNamingTheTopId();
+	s.bytes.assign(doc.begin(), doc.end());
+	rack::LoadReport report;
+	REQUIRE(loadRack(&s.in, &a, &report));
+	REQUIRE(a.chainLength() == 2);
+	const size_t first = a.deviceAtPosition(0);
+	const size_t second = a.deviceAtPosition(1);
+	const DeviceInstanceId renamed = a.slotAtLane(first).id;
+	CHECK(renamed != kNoInstance);
+	CHECK(renamed != 0xFFFFFFFFu);
+	CHECK(renamed != 8);
+	CHECK(a.slotAtLane(second).id == 8);
+	CHECK(a.routeAmount(test::macro(0), test::ordinalOf(a, second, 1)) == doctest::Approx(0.5f));
+}
+
+TEST_CASE("hardening: a file naming the top id is renamed like a missing id, on the record road, and its neighbour's route holds") {
+	rack::RackPatch parsed;
+	REQUIRE(rack::parseRackText(documentNamingTheTopId(), &parsed));
+	rack::RackEngine engine(kAxes, hostCatalogue());
+	engine.prepare(48000.0, 4096);
+	rack::RackBridge bridge { engine };
+	bridge.prepare(48000.0, 4096);
+	(void)bridge.loadPatch(parsed);
+	bridge.drain();
+	const rack::RackPatch back = bridge.patch();
+	REQUIRE(back.device.size() == 2);
+	CHECK(back.device[0].instanceId != kNoInstance);
+	CHECK(back.device[0].instanceId != 0xFFFFFFFFu);
+	CHECK(back.device[0].instanceId != 8);
+	CHECK(back.device[1].instanceId == 8);
+	REQUIRE(back.route.size() == 1);
+	CHECK(back.route[0].destination.a == 8);
+	// AND A DEVICE ADDED AFTER IS NEITHER THE NO-ID NOR THE TOP ONE.
+	const DeviceInstanceId added = bridge.addDevice(fx::filter::kTraits.tag);
+	CHECK(added != kNoInstance);
+	CHECK(added != 0xFFFFFFFFu);
+}
+
 TEST_CASE("a route naming a slot nothing landed in is dropped and COUNTED, not silently kept") {
 	rack::RackEngine a(kAxes, hostCatalogue());
 	const size_t fx = a.addDevice(fx::filter::kTraits.tag);

@@ -13946,6 +13946,67 @@ TEST_CASE("drum kit panel: a snare's wires, click and moving bell are handles on
 	CHECK_FALSE(panel.drawnForTest(0, DrumControl::Wires));
 }
 
+TEST_CASE("hardening: a drag on a drum handle ends on the control it began on when the pad's Kind changes mid-drag") {
+	ExploreFixture f;
+	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+	f.selection.select(1); // B, a Snare: it has the Wire Decay handle
+	ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
+	panel.setBounds(0.0f, 0.0f, panel.minimumSize().x, panel.minimumSize().y);
+	(void)panel.update();
+	using H = ui::HitPicture::Handle;
+	ui::HitPicture& p = panel.pictureForTest();
+	REQUIRE(p.handleShown(H::WireDecay));
+
+	const auto wire = static_cast<clap_id>(feathers::drumParam(1, DrumControl::WireDecay));
+	int begins = 0;
+	int ends = 0;
+	const auto count = [&] {
+		f.bridge.drain([&](const UiParamEvent& event) {
+			if (event.kind == UiParamEvent::Kind::Value) {
+				f.params.setBase(event.id, event.value); // as `settleGesture` does: the drain is what lands a value
+			}
+			if (event.id != wire) {
+				return;
+			}
+			if (event.kind == UiParamEvent::Kind::GestureBegin) {
+				++begins;
+			}
+			else if (event.kind == UiParamEvent::Kind::GestureEnd) {
+				++ends;
+			}
+		});
+	};
+	count(); // whatever was queued before the press is not this drag's
+	begins = 0;
+	ends = 0;
+
+	const double wire0 = f.params.base(feathers::drumParam(1, DrumControl::WireDecay));
+	const visage::Point at = p.handleAt(H::WireDecay);
+	visage::MouseEvent down;
+	down.position = at;
+	p.onMouseDown().callback(down);
+	count();
+	REQUIRE(begins == 1);
+
+	// THE PAD BECOMES A KICK UNDER THE HAND: the next tick's `show` takes the Wire Decay handle away.
+	f.set(feathers::drumParam(1, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Kick));
+	(void)panel.update();
+	REQUIRE_FALSE(p.handleShown(H::WireDecay));
+
+	visage::MouseEvent move;
+	move.position = { at.x + 30.0f, at.y };
+	p.onMouseDrag().callback(move);
+	visage::MouseEvent up;
+	up.position = move.position;
+	p.onMouseUp().callback(up);
+	count();
+	CHECK(begins == 1);
+	CHECK(ends == 1); // the gesture the press began is the one that ends, once
+	// AND THE DRAG KEPT WRITING THE CONTROL IT HELD: its value moved off where it started.
+	f.bridge.publish(f.params);
+	CHECK(f.params.base(feathers::drumParam(1, DrumControl::WireDecay)) != wire0);
+}
+
 TEST_CASE("drum kit panel: the title names the selected pad's kind now, and the handles' labels never overlap or leave the plot") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));

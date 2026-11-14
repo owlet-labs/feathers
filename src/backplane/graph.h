@@ -243,11 +243,23 @@ namespace feathers::backplane {
 /// counter must then be past it, or the next `add` collides with a restored node.
 class InstanceCounter {
 public:
-	DeviceInstanceId issue() noexcept { return next_++; }
+	/// THE TOP OF THE ID SPACE, which is never issued: the host's own core node stands under it, and one
+	/// past it would wrap to `kNoInstance`.
+	static constexpr DeviceInstanceId kCeiling = 0xFFFFFFFFu;
 
+	/// A fresh id, or `kNoInstance` once the space below `kCeiling` is spent (four billion devices).
+	DeviceInstanceId issue() noexcept {
+		if (next_ >= kCeiling) {
+			return kNoInstance;
+		}
+		return next_++;
+	}
+
+	/// Move the counter past `id`. An id at or above `kCeiling` moves it to the ceiling and no further, so it
+	/// can neither wrap to `kNoInstance` nor hand out the core node's id.
 	void reserve(DeviceInstanceId id) noexcept {
 		if (id >= next_) {
-			next_ = id + 1;
+			next_ = id >= kCeiling ? kCeiling : id + 1;
 		}
 	}
 
@@ -414,6 +426,9 @@ public:
 			return kNoInstance;
 		}
 		const DeviceInstanceId id = ids_->issue();
+		if (id == kNoInstance) {
+			return kNoInstance; // the counter is spent
+		}
 		place(lane, id, desc);
 		recompute();
 		return id;
@@ -427,7 +442,7 @@ public:
 	/// they come back through `writeSliceOfDeviceSlot` on `routes()`, which is what the slice exists
 	/// for. Two separate acts because they are undone separately too.
 	bool restore(const device::Descriptor& desc, DeviceInstanceId id, size_t lane) {
-		if (id == kNoInstance || lane >= coreLane_ || nodes_[lane].live()
+		if (id == kNoInstance || id >= InstanceCounter::kCeiling || lane >= coreLane_ || nodes_[lane].live()
 		    || laneOf(id) != kNoLane) {
 			return false;
 		}
@@ -465,7 +480,7 @@ public:
 	/// reserved on it: the node is not a device, nothing addresses it by id, and taking a serial for it
 	/// would shift every device's id by one for a node no file or route names. A counter that issues
 	/// from `kFirstInstance` upward would need four billion devices to reach this.
-	static constexpr DeviceInstanceId kCoreInstance = 0xFFFFFFFFu;
+	static constexpr DeviceInstanceId kCoreInstance = InstanceCounter::kCeiling;
 
 	bool setCoreNode() {
 		if (nodes_[coreLane_].live()) {

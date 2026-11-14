@@ -179,6 +179,11 @@ private:
 	Controls controls_ {};
 	bool dragging_ = false;
 	Handle held_ = Handle::kCount;
+	/// THE CONTROLS THE PRESS TOOK, held for the life of the drag: `show` rebuilds `controls_` from the pad's current Kind
+	/// every tick, so a Kind or pad change mid-drag would answer another set (or none) to a re-resolve. The objects are
+	/// the panel's own per-pad ones and outlive the picture; only which of them `controls_` names moves.
+	ParamControl* heldControl_ = nullptr;
+	ParamControl* heldSecond_ = nullptr;
 	visage::Point pressAt_ {};
 	double startValue_ = 0.0;
 	double startSecond_ = 0.0; ///< the second control's value at the press (Drive Tone, Clap Q)

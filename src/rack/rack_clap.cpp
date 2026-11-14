@@ -758,6 +758,7 @@ public:
 		// THE NOTE RACK IS HANDED NO AUDIO: the engine runs on silence of its own, so its notes still move every block.
 		const bool scratch = noteRack_ && process->frames_count <= scratchL_.size();
 		if (!scratch && (process->audio_outputs_count < 1 || process->audio_outputs[0].channel_count < 2)) {
+			noteCount_ = 0; // there is no block to deliver them into; left standing they replay with the next one
 			return CLAP_PROCESS_CONTINUE;
 		}
 		float* left = scratch ? scratchL_.data() : process->audio_outputs[0].data32[0];

@@ -238,6 +238,30 @@ void operator delete[](void* p, size_t, std::align_val_t) noexcept {
 // IDENTITY AND THE POOL                                                                //
 //------------------------------------------------------------------------------------//
 
+TEST_CASE("hardening: reserving the top of the id space neither wraps to the no-id nor hands out the core's id") {
+	InstanceCounter ids;
+	ids.reserve(0xFFFFFFFFu);
+	CHECK(ids.next() == InstanceCounter::kCeiling);
+	CHECK(ids.next() != kNoInstance);
+	// SPENT: the counter refuses rather than issue the core's id or wrap.
+	CHECK(ids.issue() == kNoInstance);
+	CHECK(ids.issue() == kNoInstance);
+
+	InstanceCounter near;
+	near.reserve(InstanceCounter::kCeiling - 3);
+	const DeviceInstanceId a = near.issue();
+	const DeviceInstanceId b = near.issue();
+	CHECK(a == InstanceCounter::kCeiling - 2);
+	CHECK(b == InstanceCounter::kCeiling - 1);
+	CHECK(near.issue() == kNoInstance); // the next would be the core's id
+
+	// A GRAPH REFUSES TO RESTORE A DEVICE UNDER THE CORE'S ID.
+	InstanceCounter other;
+	Graph g(kAxes, 1, 8, other);
+	CHECK_FALSE(g.restore(kFx, 0xFFFFFFFFu, 0));
+	CHECK(other.next() == kFirstInstance);
+}
+
 TEST_CASE("an identity is issued once and never reissued while the graph lives") {
 	InstanceCounter ids;
 	Graph g(kAxes, 1, 8, ids);

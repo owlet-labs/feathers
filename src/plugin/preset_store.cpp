@@ -56,15 +56,82 @@ std::vector<uint8_t> readFile(const std::filesystem::path& file) {
 	return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
+/// A FILE IS REPLACED, NEVER WRITTEN IN PLACE: the bytes go to a sibling temp file in the same directory (so the
+/// rename below stays on one filesystem), are flushed and the stream's state checked, and only then take the target's
+/// place. A crash or a full disk mid-write leaves the old preset whole. The temp's extension is not the preset one,
+/// so a listing never mistakes it for a preset.
 bool writeFile(const std::filesystem::path& file, const std::vector<uint8_t>& bytes) {
 	std::error_code ec;
 	std::filesystem::create_directories(file.parent_path(), ec);
-	std::ofstream out(file, std::ios::binary | std::ios::trunc);
-	if (!out) {
+	std::filesystem::path temp = file;
+	temp += ".tmp";
+	{
+		std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+		if (!out) {
+			return false; // nothing was created, so there is nothing of ours to remove
+		}
+		out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+		out.flush();
+		out.close();
+		if (!out.good()) {
+			std::filesystem::remove(temp, ec);
+			return false;
+		}
+	}
+	std::filesystem::rename(temp, file, ec); // atomic over an existing target on POSIX
+#ifdef _WIN32
+	if (ec) {
+		// A platform whose rename will not replace: copy over the target, then drop the temp.
+		ec.clear();
+		std::filesystem::copy_file(temp, file, std::filesystem::copy_options::overwrite_existing, ec);
+		std::error_code ignored;
+		std::filesystem::remove(temp, ignored);
+	}
+#endif
+	if (ec) {
+		std::error_code ignored;
+		std::filesystem::remove(temp, ignored);
 		return false;
 	}
-	out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-	return out.good();
+	return true;
+}
+
+/// THE BYTES OF `s[at..]` AS ONE WELL-FORMED UTF-8 SCALAR, or 0: shortest form only, no surrogates, nothing past
+/// U+10FFFF, and not a C1 control (U+0080..U+009F), which no file name should carry.
+size_t utf8Length(const std::string& s, size_t at) {
+	const auto byte = [&](size_t i) { return static_cast<unsigned char>(s[i]); };
+	const unsigned char lead = byte(at);
+	size_t n = 0;
+	uint32_t cp = 0;
+	if (lead >= 0xC2 && lead <= 0xDF) {
+		n = 2;
+		cp = lead & 0x1Fu;
+	}
+	else if (lead >= 0xE0 && lead <= 0xEF) {
+		n = 3;
+		cp = lead & 0x0Fu;
+	}
+	else if (lead >= 0xF0 && lead <= 0xF4) {
+		n = 4;
+		cp = lead & 0x07u;
+	}
+	else {
+		return 0;
+	}
+	if (at + n > s.size()) {
+		return 0;
+	}
+	for (size_t i = 1; i < n; ++i) {
+		const unsigned char c = byte(at + i);
+		if ((c & 0xC0u) != 0x80u) {
+			return 0;
+		}
+		cp = (cp << 6) | (c & 0x3Fu);
+	}
+	const bool shortest = (n == 2) || (n == 3 && cp >= 0x800) || (n == 4 && cp >= 0x10000);
+	const bool surrogate = cp >= 0xD800 && cp <= 0xDFFF;
+	const bool c1 = cp >= 0x80 && cp <= 0x9F;
+	return shortest && !surrogate && !c1 && cp <= 0x10FFFF ? n : 0;
 }
 
 void jsonString(std::string& out, const std::string& s) {
@@ -315,12 +382,29 @@ std::filesystem::path PresetStore::directory(const PresetBank& bank) {
 }
 
 std::string PresetStore::sanitise(const std::string& name) {
+	// ASCII: only letters, digits, space, '-' and '_' stay (every other byte, the path separators, the control
+	// characters and what Windows forbids in a file name among them, becomes '-'). A BYTE >= 0x80 stays when it is
+	// part of well-formed UTF-8, so "Caf\xC3\xA9" and "Caf\xC3\xA8" are two names; a stray byte is a '-'.
 	std::string out;
 	out.reserve(name.size());
-	for (const char c : name) {
+	for (size_t i = 0; i < name.size();) {
+		const char c = name[i];
+		if (static_cast<unsigned char>(c) >= 0x80) {
+			const size_t n = utf8Length(name, i);
+			if (n == 0) {
+				out.push_back('-');
+				++i;
+			}
+			else {
+				out.append(name, i, n);
+				i += n;
+			}
+			continue;
+		}
 		const bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 		                  || c == ' ' || c == '-' || c == '_';
 		out.push_back(safe ? c : '-');
+		++i;
 	}
 	// Leading and trailing spaces make a filename that is legal and horrible to handle; a name that is
 	// nothing but separators is not a name at all.
@@ -368,7 +452,9 @@ std::filesystem::path PresetStore::pathFor(const std::string& name, const Preset
 		return {};
 	}
 	const std::string folder = sanitiseCategory(category);
-	return (folder.empty() ? dir : dir / folder) / (safe + kExtension);
+	// FROM UTF-8, as a path: a narrow string would be read in the Windows ANSI code page and name another file.
+	const std::u8string leaf(safe.begin(), safe.end());
+	return (folder.empty() ? dir : dir / std::filesystem::path(std::u8string(folder.begin(), folder.end()))) / std::filesystem::path(leaf + u8".fpreset");
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -533,9 +619,15 @@ std::vector<StoredPreset> PresetStore::loadAll(const PresetBank& bank) {
 		if (file.empty() || !decode(file, &preset.meta, &preset.bytes) || preset.bytes.empty()) {
 			continue; // a row that loads nothing when clicked would be a lie
 		}
-		preset.name = entry.path().stem().string();
+		{
+			const std::u8string stem = entry.path().stem().u8string();
+			preset.name.assign(stem.begin(), stem.end());
+		}
 		const std::filesystem::path rel = entry.path().parent_path().lexically_relative(dir);
-		preset.category = rel == "." ? std::string {} : rel.generic_string();
+		{
+			const std::u8string cat = rel.generic_u8string();
+			preset.category = rel == "." ? std::string {} : std::string(cat.begin(), cat.end());
+		}
 		// THE FOLDER WINS LOCALLY: whatever the metadata says, the preset is where it IS, and its next save
 		// writes that (see the header).
 		preset.meta.category = preset.category;

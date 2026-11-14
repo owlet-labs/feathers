@@ -129,16 +129,25 @@ bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bou
 	const auto picked = menu.onSelection();
 	const auto cancelled = menu.onCancel();
 	auto closed = std::make_shared<bool>(false);
-	menu.onSelection() = [closed, picked](int id) {
+	visage::Frame* const top = source.topParentFrame();
+	// **THE SITE'S CALLBACKS RUN ONLY IF THE BOX IS STILL A LIVE FRAME UNDER THE WINDOW**, found again by identity
+	// (`liveUnder`) and never followed: the sites capture `this`, and a card rebuilt by a state or preset load
+	// while its menu is open leaves a pick to run on a dead box. `top` is the popup's own parent, so it is
+	// live whenever either callback is delivered. A pick that finds the box gone only marks the menu closed.
+	visage::Frame* const box = &source;
+	menu.onSelection() = [closed, picked, top, box](int id) {
 		*closed = true;
-		picked.callback(id);
+		if (liveUnder(top, box) != nullptr) {
+			picked.callback(id);
+		}
 	};
-	menu.onCancel() = [closed, cancelled]() {
+	menu.onCancel() = [closed, cancelled, top, box]() {
 		*closed = true;
-		cancelled.callback();
+		if (liveUnder(top, box) != nullptr) {
+			cancelled.callback();
+		}
 	};
 
-	visage::Frame* top = source.topParentFrame();
 	menu.show(&source, { anchor.x(), anchor.bottom() });
 
 	// THE FRAME visage JUST ADDED — the last popup among the top frame's children.
@@ -225,13 +234,14 @@ bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bou
 	// focus and has no key handler, and its parent is the window's top frame, above the editor root, so the
 	// key walked up past nobody. On the editor's Esc stack while it is open, so the order is the one stack's;
 	// a menu holds the focus and any press elsewhere closes it, so in practice it is the top.
-	visage::Frame* const box = &source;
 	const auto escape = [shown, closed, cancelled, box] {
 		if (*closed || shown->opacity() < 1.0f) {
 			return false;
 		}
 		*closed = true;
-		cancelled.callback();
+		if (liveUnder(shown->parent(), box) != nullptr) { // the site's cancel only for a box still there
+			cancelled.callback();
+		}
 		shown->exit();
 		// THE KEYBOARD GOES BACK WHERE THE PRESS THAT OPENED THE MENU LEFT IT — the first frame up from the
 		// box that takes keys — so the next Esc reaches the editor's stack rather than nobody. Only if the box

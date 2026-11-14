@@ -797,6 +797,9 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2) || !in.get(count)) {
 		return false;
 	}
+	if (count > kMaxChains) {
+		return false; // a count no rack wrote: refused before a single chain is built
+	}
 	// ALL OR NOTHING: every chain is built and loaded BESIDE the running ones, and only a body that reads whole
 	// replaces them. Nothing of the old rack is touched on a refusal.
 	std::vector<std::unique_ptr<Branch>> next;

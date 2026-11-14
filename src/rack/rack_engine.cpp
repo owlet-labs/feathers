@@ -1322,6 +1322,13 @@ void RackEngine::prepare(double sampleRate, int maxFrames) {
 }
 
 void RackEngine::setMacro(size_t index, float value) {
+	// A MACRO'S STORED VALUE IS 0..1 IN EITHER POLARITY (the bipolar cell is derived from it below), so a number
+	// a host or a file hands past that is held to the ends, and one that is not a number is not a write: the
+	// macro keeps what it had, since NaN would poison every route that reads the cell.
+	if (!std::isfinite(value)) {
+		return;
+	}
+	value = std::clamp(value, 0.0f, 1.0f);
 	if (index < macros_.size()) {
 		macroRaw_[index] = value;
 		// THE CELL IS THE VALUE READ THROUGH ITS POLARITY (backlog EG) — derived here, at the write, so

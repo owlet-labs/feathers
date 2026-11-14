@@ -6252,6 +6252,52 @@ TEST_CASE("the column a value-box drag grabbed is the column it moves") {
 	CHECK(fallback != doctest::Approx(10.0));
 }
 
+TEST_CASE("hardening: a choice menu's pick runs only if its box is still in the window") {
+	// THE SITE CAPTURES `this`: a card rebuilt (a state or preset load) while its menu is open leaves a pick that
+	// would run on a dead box. The value is the observable, not a crash: with the box merely DETACHED (still alive)
+	// the pick would write the control, so the unguarded road is red without a sanitiser; the destroyed box is the
+	// same road, which a sanitiser run proves is not a use after free.
+	namespace dtt = feathers::fx::owltt;
+	ModFixture f;
+	const size_t slot = f.bridge.addFxDevice(dtt::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	ui::DeviceControl mode { f.deviceHost, f.bridge.fxDeviceAt(slot), dtt::kDescriptor,
+		                      static_cast<size_t>(dtt::Param::Mode), nullptr, nullptr };
+	const int row = 6; // "LR2 Full", as the readout case above names it
+	const std::string label = ui::markedChoiceLabel("LR2 Full", false);
+
+	visage::Frame root;
+	root.setBounds(0.0f, 0.0f, 400.0f, 300.0f);
+	auto box = std::make_unique<ui::ValueBox>(mode, "");
+	box->setBounds(20.0f, 20.0f, 120.0f, 20.0f);
+	root.addChild(box.get());
+	mode.setValue(0.0);
+	const double start = mode.value(); // the control's own floor, whatever it is
+	REQUIRE(start != static_cast<double>(row));
+	REQUIRE(box->showChoiceMenu());
+	visage::PopupMenuFrame* popup = menu_check::newestPopup(*box);
+	REQUIRE(popup != nullptr);
+
+	SUBCASE("the box in the window: the pick writes the control (the road works, so the others mean something)") {
+		REQUIRE(menu_check::pickRow(*popup, label));
+		CHECK(mode.value() == static_cast<double>(row));
+		root.removeChild(box.get());
+	}
+
+	SUBCASE("the box left the window but is not destroyed: the pick runs nothing") {
+		root.removeChild(box.get());
+		REQUIRE(menu_check::pickRow(*popup, label));
+		CHECK(mode.value() == start);
+	}
+
+	SUBCASE("the box destroyed: the pick runs nothing") {
+		root.removeChild(box.get());
+		box.reset();
+		REQUIRE(menu_check::pickRow(*popup, label));
+		CHECK(mode.value() == start);
+	}
+}
+
 TEST_CASE("digit dragging declines where the readout is not the value") {
 	// **THE HONESTY GATE — see `ValueBox::readoutTracksValue`.** Most readouts in this editor are a
 	// translation, not a rendering: a Percent box prints 42 for 0.42, a Choice box prints a word, a

@@ -393,6 +393,13 @@ bool describe(const CoreCodec& codec, const Holder& holder, const backplane::Rou
 	return true;
 }
 
+/// AN ID A FILE MAY NAME: one the counter can issue. `kNoInstance` names nothing and the top of the id space
+/// is the host's own node, so a file naming either is read as naming no id at all — the device takes a fresh
+/// one, exactly as it does when the id is missing or already held.
+DeviceInstanceId namedBy(DeviceInstanceId fileId) {
+	return fileId >= backplane::InstanceCounter::kCeiling ? kNoInstance : fileId;
+}
+
 /// THE WAY BACK FOR AN ENGINE: which id a device the patch named by `named` WEARS in the engine — the
 /// same id when the engine could grant it, a fresh one when it could not (`adoptDevice` hands a wanted id
 /// back on collision and the loader tries again without it). **AN ID TWO DEVICES WORE RESOLVES NOWHERE**
@@ -2003,7 +2010,7 @@ LoadReport applyPatchToRecord(const RackPatch& patch, ChainRecord* record, Conta
 	// device, silently. Move or drop this and the route road stops being correct, with nothing near it
 	// failing.
 	for (const RackPatch::Device& device : patch.device) {
-		if (device.instanceId != kNoInstance) {
+		if (namedBy(device.instanceId) != kNoInstance) {
 			ids->reserve(device.instanceId);
 		}
 	}
@@ -2043,7 +2050,7 @@ size_t placePatchInRecord(const RackPatch& patch, ChainRecord* record, Container
 		std::copy(device.tag.begin(), device.tag.begin() + static_cast<std::ptrdiff_t>(row.tag.size()), row.tag.begin());
 		// UNDER ITS OWN ID IF FREE — a fresh one if not; the routes that named it follow it either way. A placement
 		// with no counter (an undo's put-back) takes the id it names or nothing.
-		if (device.instanceId != kNoInstance && !record->holds(device.instanceId)) {
+		if (namedBy(device.instanceId) != kNoInstance && !record->holds(device.instanceId)) {
 			row.instanceId = device.instanceId;
 		}
 		else if (placement.idsOrFresh != nullptr) {
@@ -2074,13 +2081,13 @@ size_t placePatchInRecord(const RackPatch& patch, ChainRecord* record, Container
 		if (!record->insertRow(chain, at, row)) {
 			continue;
 		}
-		worn.note(device.instanceId, row.instanceId);
+		worn.note(namedBy(device.instanceId), row.instanceId);
 		++placedCount;
 		if (nextAt != ChainRecord::kNoPosition) {
 			nextAt = at + 1;
 		}
 		if (placement.worn != nullptr) {
-			placement.worn->emplace_back(device.instanceId, row.instanceId);
+			placement.worn->emplace_back(namedBy(device.instanceId), row.instanceId);
 		}
 		// ITS OUTPUTS' NAMES, BY KEY, on the bridge's rule: one spelling out the declared name is none. A key
 		// this device does not declare names no output here — carried, so a build that has it reads it back.
@@ -2300,8 +2307,8 @@ void applyRack(const RackPatch& patch, RackEngine* rack, LoadReport* report) {
 		}
 		restoreBlocksOfPatch(*p.desc, p.storage.get(), device, report, where);
 		const device::Descriptor* desc = p.desc;
-		size_t lane = rack->adoptDevice(rack->chainLength(0), std::move(p), device.instanceId);
-		if (lane == RackEngine::kNoSlot && device.instanceId != kNoInstance) {
+		size_t lane = rack->adoptDevice(rack->chainLength(0), std::move(p), namedBy(device.instanceId));
+		if (lane == RackEngine::kNoSlot && namedBy(device.instanceId) != kNoInstance) {
 			lane = rack->adoptDevice(rack->chainLength(0), std::move(p)); // handed back whole on refusal
 		}
 		if (lane == RackEngine::kNoSlot) {
@@ -2313,7 +2320,7 @@ void applyRack(const RackPatch& patch, RackEngine* rack, LoadReport* report) {
 			rack->setField(lane, f, fields[f]);
 		}
 		// THE ID THE FILE NAMED AND THE ONE THE ENGINE GRANTED — the same one unless it collided.
-		placed.note(device.instanceId, rack->slotAtLane(lane).id);
+		placed.note(namedBy(device.instanceId), rack->slotAtLane(lane).id);
 	}
 	const Holder holder { rack, &engineDescOf, &patch, [](const void* h, const char* tag) {
 		                     return static_cast<const RackEngine*>(h)->catalogue()(tag);

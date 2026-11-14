@@ -50,6 +50,7 @@
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -830,4 +831,82 @@ TEST_CASE("Any depth, presets: a Chain preset keeps a nested route that names so
 	const Destination dest = Destination::control(filter, kCutoff);
 	CHECK(inD->routeAmount(Source::core(0).asOuter(), dest) == 0.25f);
 	CHECK(inD->routeAmount(Source::core(0).asOuter().asOuter(), dest) == 0.0f);
+}
+
+namespace {
+
+std::vector<uint8_t> bytesOf(const fs::path& file) {
+	std::ifstream in(file, std::ios::binary);
+	return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+} // namespace
+
+TEST_CASE("hardening: a preset write that fails leaves the old file byte for byte, and a good write replaces it whole") {
+	PresetRoot root;
+	const std::vector<uint8_t> first(64, 0x11);
+	const std::vector<uint8_t> second(4096, 0x22);
+	REQUIRE(PresetStore::save("Keep", first, kChainPresetBank));
+	const fs::path file = PresetStore::pathFor("Keep", kChainPresetBank);
+	const std::vector<uint8_t> before = bytesOf(file);
+	REQUIRE_FALSE(before.empty());
+
+	// THE TEMP'S PLACE IS TAKEN BY A DIRECTORY, so the write cannot open it: the failure a full disk or a lost
+	// permission would be, in a form a test can make by value.
+	fs::path temp = file;
+	temp += ".tmp";
+	REQUIRE(fs::create_directory(temp));
+	CHECK_FALSE(PresetStore::save("Keep", second, kChainPresetBank));
+	CHECK(bytesOf(file) == before);
+	REQUIRE(fs::remove(temp));
+
+	// AND ONCE THE WAY IS CLEAR THE NEW BYTES TAKE THE PLACE, with no temp left beside them.
+	REQUIRE(PresetStore::save("Keep", second, kChainPresetBank));
+	CHECK(bytesOf(file) != before);
+	CHECK_FALSE(fs::exists(temp));
+	const std::vector<StoredPreset> all = PresetStore::loadAll(kChainPresetBank);
+	REQUIRE(all.size() == 1);
+	CHECK(all[0].bytes == second);
+}
+
+TEST_CASE("hardening: names differing only in an accented letter are two presets, and a non-ASCII name round-trips") {
+	PresetRoot root;
+	const std::string e = "Caf\xC3\xA9";   // Cafe with e-acute
+	const std::string g = "Caf\xC3\xA8";   // Cafe with e-grave
+	const std::string cjk = "\xE9\x9F\xB3\xE8\x89\xB2"; // two ideographs, nothing ASCII
+	CHECK(PresetStore::sanitise(e) == e);
+	CHECK(PresetStore::sanitise(e) != PresetStore::sanitise(g));
+	CHECK(PresetStore::sanitise(cjk) == cjk);
+	// EXISTING ASCII BEHAVIOUR IS UNCHANGED, and what must never reach a file name still cannot.
+	CHECK(PresetStore::sanitise("a/b\\c:d*e?f\"g<h>i|j.k") == "a-b-c-d-e-f-g-h-i-j-k");
+	CHECK(PresetStore::sanitise("  Lead 1_x-y  ") == "Lead 1_x-y");
+	CHECK(PresetStore::sanitise("ctl\x01\x7F") == "ctl--");
+	CHECK(PresetStore::sanitise(std::string("a\xC3") + "b") == "a-b");      // a truncated sequence is one stray byte
+	CHECK(PresetStore::sanitise("a\xC0\xAF" "b") == "a--b");                // an overlong '/' is two
+	CHECK(PresetStore::sanitise("a\xC2\x85" "b") == "a-" "-b");             // a C1 control (NEL) is not a name
+
+	const std::vector<uint8_t> pe(8, 0x0E);
+	const std::vector<uint8_t> pg(8, 0x0A);
+	const std::vector<uint8_t> pc(8, 0x0C);
+	REQUIRE(PresetStore::save(e, pe, kChainPresetBank));
+	REQUIRE(PresetStore::save(g, pg, kChainPresetBank));
+	REQUIRE(PresetStore::save(cjk, pc, kChainPresetBank));
+	const std::vector<StoredPreset> all = PresetStore::loadAll(kChainPresetBank);
+	REQUIRE(all.size() == 3);
+	size_t found = 0;
+	for (const StoredPreset& p : all) {
+		if (p.name == e) {
+			CHECK(p.bytes == pe);
+			++found;
+		}
+		else if (p.name == g) {
+			CHECK(p.bytes == pg);
+			++found;
+		}
+		else if (p.name == cjk) {
+			CHECK(p.bytes == pc);
+			++found;
+		}
+	}
+	CHECK(found == 3);
 }

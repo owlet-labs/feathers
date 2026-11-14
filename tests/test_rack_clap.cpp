@@ -82,6 +82,7 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <limits>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -89,6 +90,7 @@
 #include <string>
 #include <cstring>
 #include <map>
+#include <limits>
 #include <vector>
 #include <filesystem>
 #include <fstream>
@@ -711,6 +713,86 @@ TEST_CASE("rack plugin: a note's offset and velocity cross the plugin to the cha
 	CHECK(captured.notes[0].key == 67);
 	CHECK(captured.notes[0].note_id == 5);
 	CHECK(captured.notes[0].velocity == 0.375);
+}
+
+TEST_CASE("hardening: notes drained in a block with no output bus are dropped, not replayed with the next block") {
+	Venue v;
+	REQUIRE(v.test()->add_device(v.plugin, fx::filter::kTraits.tag) != 0);
+	v.settle();
+
+	NoteEvent on(CLAP_EVENT_NOTE_ON);
+	on.note.key = 67;
+	on.note.note_id = 9;
+	on.note.velocity = 0.5;
+
+	struct Captured {
+		std::vector<clap_event_note> notes;
+	};
+	const auto sinkOf = [](Captured* c) {
+		clap_output_events sink {};
+		sink.ctx = c;
+		sink.try_push = [](const clap_output_events* list, const clap_event_header* h) {
+			if (h->space_id == CLAP_CORE_EVENT_SPACE_ID && h->type == CLAP_EVENT_NOTE_ON) {
+				static_cast<Captured*>(list->ctx)->notes.push_back(*reinterpret_cast<const clap_event_note*>(h));
+			}
+			return true;
+		};
+		return sink;
+	};
+
+	// THE BLOCK THAT HAS NO OUTPUT: the note is drained and there is nothing to deliver it into.
+	Captured none;
+	clap_output_events noneSink = sinkOf(&none);
+	clap_process busless {};
+	busless.frames_count = static_cast<uint32_t>(v.l.size());
+	busless.audio_inputs = &v.in;
+	busless.audio_inputs_count = 1;
+	busless.audio_outputs_count = 0;
+	busless.in_events = &on.in;
+	busless.out_events = &noneSink;
+	REQUIRE(v.plugin->process(v.plugin, &busless) == CLAP_PROCESS_CONTINUE);
+
+	// THE NEXT BLOCK, with an output bus and NO events: a note left standing would come out of it.
+	Captured next;
+	clap_output_events nextSink = sinkOf(&next);
+	clap_process p {};
+	p.frames_count = static_cast<uint32_t>(v.l.size());
+	p.audio_inputs = &v.in;
+	p.audio_inputs_count = 1;
+	p.audio_outputs = &v.out;
+	p.audio_outputs_count = 1;
+	p.out_events = &nextSink;
+	REQUIRE(v.plugin->process(v.plugin, &p) == CLAP_PROCESS_CONTINUE);
+	CHECK(next.notes.size() == 0);
+}
+
+TEST_CASE("hardening: a macro written past its range is held to 0..1 and one that is not a number is not a write") {
+	Venue v;
+	const auto* params =
+	    static_cast<const clap_plugin_params*>(v.plugin->get_extension(v.plugin, CLAP_EXT_PARAMS));
+	double value = -1.0;
+
+	OneEvent over(0, 7.5);
+	v.run(&over.in);
+	REQUIRE(params->get_value(v.plugin, 0, &value));
+	CHECK(value == 1.0);
+
+	OneEvent under(0, -3.0);
+	v.run(&under.in);
+	REQUIRE(params->get_value(v.plugin, 0, &value));
+	CHECK(value == 0.0);
+
+	OneEvent good(0, 0.25);
+	v.run(&good.in);
+	OneEvent nan(0, std::numeric_limits<double>::quiet_NaN());
+	v.run(&nan.in);
+	REQUIRE(params->get_value(v.plugin, 0, &value));
+	CHECK(value == 0.25); // the NaN left what the macro held
+
+	OneEvent inf(0, std::numeric_limits<double>::infinity());
+	v.run(&inf.in);
+	REQUIRE(params->get_value(v.plugin, 0, &value));
+	CHECK(value == 0.25);
 }
 
 

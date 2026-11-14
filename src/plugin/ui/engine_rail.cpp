@@ -413,6 +413,15 @@ void EngineRail::showPage(Page page) {
 	redraw();
 }
 
+visage::Bounds EngineRail::engineCaptionBounds() const {
+	// THE ROOM LEFT OF THE BOX, on the box's row: from the rail's pad to a row gap short of the box.
+	return { kPad, engineCaptionY_, std::max(0.0f, engineBox_->x() - kRowGap - kPad), kRowHeight };
+}
+
+float EngineRail::engineCaptionTextWidth() const {
+	return trackedWidth(font(kKnobLabelSize), kEngineCaption, kKnobLabelTracking);
+}
+
 visage::Bounds EngineRail::pageTabBounds(Page page) const {
 	// THE TWO NAMES IN THE HEADING ROW, each as wide as it is drawn, with a heading's own gap between.
 	const visage::Font& label = font(kBylineSize);
@@ -457,11 +466,18 @@ float EngineRail::layOutInto(bool place) {
 		row(seg, seg->vertical() ? kRowHeight * static_cast<float>(options) : kRowHeight);
 	};
 
-	// THE ENGINE CHOICE, FIRST (QH): in the heading row, left of the rail's own toggle, where the "VOICE" caption was (the
-	// box heads the section by being the first thing in it; a separate row would have cost the rail 30 px it does not have).
-	if (place) {
+	// THE ENGINE CHOICE, FIRST (QH), CAPTIONED. In the heading row, left of the rail's own toggle, where the "VOICE" caption
+	// was, with "ENGINE" in front of it in the knobs' caption type (Coarse and Fine wear theirs beside the face the same way):
+	// the box alone said a name with nothing to say what the name was of. BESIDE, NOT ABOVE: a caption row cost the rail
+	// 17 px it does not have ("every Engine rail section fits inside the rail it is drawn in" measured it). The box keeps the
+	// room the longest engine name, "Basic Shapes", needs with its caret.
+	{
 		const visage::Bounds toggle = toggleBounds();
-		engineBox_->setBounds(kPad, y, std::max(40.0f, toggle.x() - kPad - kRowGap), kRowHeight);
+		engineCaptionY_ = y;
+		const float boxX = kPad + engineCaptionTextWidth() + kRowGap;
+		if (place) {
+			engineBox_->setBounds(boxX, y, std::max(40.0f, toggle.x() - kRowGap - boxX), kRowHeight);
+		}
 	}
 	y += kRowHeight + kRowGap;
 	segment(voiceMode_.get(), static_cast<int>(kVoiceModeNames.size()));
@@ -741,6 +757,9 @@ void EngineRail::draw(visage::Canvas& canvas) {
 		}
 	}
 	canvas.setColor(kMuted);
+	const visage::Bounds caption = engineCaptionBounds();
+	drawTracked(canvas, kEngineCaption, font(kKnobLabelSize), kKnobLabelTracking, caption.x(), caption.y(),
+	            caption.height());
 
 	// THE SCROLL BAR, when there is something to scroll (the rail scrolled with no visible bar).
 	// The cards' own bar, on the rail's inner edge, drawn by the rule

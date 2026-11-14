@@ -157,6 +157,62 @@ TEST_CASE("QH: the Engine rail's engine dropdown sets OscType, and the header no
 	CHECK_FALSE(bridge.hasPendingWork());
 }
 
+TEST_CASE("the Engine rail's engine dropdown centres its name in its box and wears a whole ENGINE caption that overlaps "
+          "nothing") {
+	ParamBridge bridge;
+	feathers::BridgeDeviceHost deviceHost { bridge };
+	WidgetRegistry registry;
+	NotifyTray tray;
+	EngineRail rail(bridge, registry, &tray);
+	rail.setBounds(0.0f, 0.0f, EngineRail::kWidth, 700.0f);
+	bridge.refresh();
+	ValueBox* box = rail.engineBoxForTest();
+	REQUIRE(box != nullptr);
+
+	// THE NAME'S ROW IS THE ONE `draw` USES, and its middle is the box's middle: a caption-less stacked box has no caption
+	// row to sit under. Restated: a 14 px row in a box of the box's height, centred, is centred at half that height.
+	const ValueBox::ValueRow row = box->valueRow();
+	CHECK(row.height == doctest::Approx(ValueBox::kValueHeight));
+	CHECK(std::abs((row.top + row.height * 0.5f) - box->height() * 0.5f) <= 1.0f);
+	// ...and the row lies inside the box, which the old one (the caption row's 12 px down, 14 tall in a 24 px box) did not.
+	CHECK(row.top >= 0.0f);
+	CHECK(row.top + row.height <= box->height());
+	// THE CARET IS ON THAT ROW TOO, and the name gives up its room: the two never share pixels.
+	const visage::Bounds caret = box->caretBounds();
+	REQUIRE(caret.width() > 0.0f);
+	CHECK(std::abs((caret.y() + caret.height() * 0.5f) - box->height() * 0.5f) <= 1.0f);
+	CHECK(box->readoutBox().x + box->readoutBox().width <= caret.x());
+
+	// THE CAPTION: whole in the room it has, inside the rail, and touching nothing the rail holds.
+	const visage::Bounds caption = rail.engineCaptionBounds();
+	CHECK(std::string(EngineRail::kEngineCaption) == "ENGINE");
+	CHECK(rail.engineCaptionTextWidth() > 0.0f);
+	CHECK(rail.engineCaptionTextWidth() <= caption.width());
+	CHECK(caption.x() >= 0.0f);
+	CHECK(caption.y() >= 0.0f);
+	CHECK(caption.right() <= rail.width());
+	CHECK_FALSE(caption.overlaps(rail.toggleBounds()));
+	// It names the box: on the box's row, just left of it, nothing between.
+	CHECK(std::abs((caption.y() + caption.height() * 0.5f) - (box->y() + box->height() * 0.5f)) <= 1.0f);
+	CHECK(caption.right() <= box->x());
+	CHECK(box->x() - caption.right() <= 8.0f);
+	// AND THE BOX IT NARROWED STILL HOLDS EVERY ENGINE'S NAME whole, beside its caret.
+	for (const char* name : feathers::kOscTypeNames) {
+		INFO(name);
+		CHECK(ui::textWidth(name, ui::font(ui::kKnobReadoutSize)) <= box->readoutBox().width);
+	}
+	int checked = 0;
+	for (visage::Frame* child : rail.children()) {
+		if (!child->isVisible() || child->width() <= 0.0f || child->height() <= 0.0f) {
+			continue;
+		}
+		INFO("child at y " << child->y());
+		CHECK_FALSE(caption.overlaps(child->bounds()));
+		++checked;
+	}
+	CHECK(checked > 5); // not vacuous: the rail's own controls were walked
+}
+
 TEST_CASE("backlog EJ: the header's UI scale readout — minus and plus step by one, Ctrl/Cmd-wheel steps by sign, "
           "a bare wheel and a header without the road swallow nothing") {
 	ParamBridge bridge;

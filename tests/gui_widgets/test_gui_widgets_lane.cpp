@@ -23,7 +23,11 @@
 
 #include "fixtures.h"
 #include "composite/composite_types.h"
+#include "device/route_resolve.h"
 #include "mod/lfo/lfo_types.h"
+#include "mod/macros/macros_types.h"
+#include "plugin/editor_lanes.h"
+#include "plugin/synth.h"
 #include "plugin/ui/expanded_canvas.h"
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/spectrum_panel.h"
@@ -2570,6 +2574,117 @@ TEST_CASE("the drawn curve moves when spread moves, and moves the way the filter
 		CAPTURE(heardRatio);
 		CHECK(std::abs(drawnRatio - heardRatio) < 0.08);
 	}
+}
+
+TEST_CASE("the curve follows a Macros source routed to Cutoff: it is drawn at the modulated corner, and the card asks for the frame") {
+	// THE REPORT: a Macros device in the strip routed to the filter's Cutoff, and the macro turned. The knob's ring
+	// followed and the curve stood still. The ring reads `modulatedFieldAt`; the curve, with no stereo route reaching
+	// it, read `fieldAt` — the stored row — so the picture was the knob's base while the sound was the modulated corner.
+	//
+	// THE WHOLE ROAD: the route made on the bridge, the macro moved by a hand's write to the Macros device, the engine
+	// rendering blocks and publishing what it resolved, and the card asked through `update()`, which is the road the
+	// editor's tick drives. The expected corner is restated from the route rule (`routeTerm`, `resolveRouted`), not
+	// read back through the card's own road.
+	namespace flt = fx::filter;
+	namespace mac = feathers::mod::macros;
+	FilterFixture f;
+	f.set(flt::Param::Enabled, 1.0);
+	f.set(flt::Param::Type, static_cast<double>(flt::Type::Lowpass));
+	f.set(flt::Param::Cutoff, std::log2(400.0));
+	f.set(flt::Param::Resonance, 0.5);
+	const size_t macroSlot = f.bridge.addRackDevice(mac::kTraits.tag);
+	REQUIRE(macroSlot < kMaxRackSlots);
+	const DeviceInstanceId macros = f.bridge.rackDeviceAt(macroSlot);
+	const DeviceInstanceId filter = f.bridge.fxDeviceAt(0);
+	REQUIRE(macros != kNoInstance);
+	REQUIRE(filter != kNoInstance);
+	const size_t cutoff = static_cast<size_t>(flt::Param::Cutoff);
+	const backplane::Source source = backplane::Source::output(macros, 0);
+	const backplane::Destination destination = backplane::Destination::control(filter, cutoff);
+	constexpr float kAmount = 0.25f;
+	REQUIRE(f.bridge.mayRoute(source, destination));
+	f.bridge.setRouteAmount(source, destination, kAmount);
+	REQUIRE(f.bridge.routeAmount(source, destination) == doctest::Approx(kAmount));
+	f.deviceHost.setField(macros, mac::macroParam(0), 0.0f);
+	f.settle();
+
+	feathers::Synth synth { f.params };
+	synth.activate(48000.0, 4096);
+	synth.setCatalogue(hostCatalogue());
+	synth.setOuterGateMaker(&rack::ChainRecord::gateOver, &f.bridge.chainRecord());
+	std::vector<float> l(64, 0.0f);
+	std::vector<float> r(64, 0.0f);
+	const auto play = [&] {
+		f.settle();
+		publishEditorLanes(f.bridge, f.params, synth);
+		(void)synth.provisionDevices(f.bridge.chainState(), f.bridge.publishedChains().sequence(), &f.bridge.fxBodies());
+		for (int b = 0; b < 8; ++b) {
+			synth.render(l.data(), r.data(), 64);
+			publishEngineReadings(f.bridge, synth);
+		}
+	};
+	play();
+	(void)f.card->update(); // settle: whatever the first frame had to draw
+	(void)f.card->update();
+	REQUIRE_FALSE(f.card->update());
+	const float base = f.deviceHost.fieldAt(filter, cutoff);
+	REQUIRE(base == doctest::Approx(std::log2(400.0)).epsilon(1e-5));
+	REQUIRE(f.card->settingsForTest().cutoffLog2Hz == base); // the macro at 0: the corner is the base
+	REQUIRE_FALSE(f.card->stereoCurvesForTest()); // a mono route: the case the report was about
+
+	// THE MACRO MOVES — a hand's write to the Macros device, not to the knob.
+	constexpr float kMacro = 0.8f;
+	f.deviceHost.setField(macros, mac::macroParam(0), kMacro);
+	play();
+
+	// THE RESTATEMENT: the stored base plus what one linear route adds, landed by the engine's own rule.
+	const device::ParamDesc& desc = flt::kDescriptor.params[cutoff];
+	const float expected = static_cast<float>(device::resolveRouted(
+	    desc, static_cast<double>(base), device::routeTerm(kAmount, device::Transfer::Lin, kMacro, device::routeSpanOf(desc))));
+	CAPTURE(base);
+	CAPTURE(expected);
+	REQUIRE(std::abs(expected - base) > 0.5f); // NOT VACUOUS: the route moves the corner by more than half an octave
+	// THE ENGINE AGREES with the restatement — or the road this case drives is not the one it describes.
+	REQUIRE(f.deviceHost.modulatedFieldAt(filter, cutoff) == doctest::Approx(expected).epsilon(1e-5));
+	// THE STORED ROW DID NOT MOVE: the knob's base is where the hand left it.
+	REQUIRE(f.deviceHost.fieldAt(filter, cutoff) == base);
+
+	// THE CLAIM: the card's OWN content check asks for a frame — not `update()`, whose modulation walk repaints for a
+	// moved ring whether or not the curve noticed — and the settings it draws from carry the modulated corner.
+	CHECK(f.card->updateContentForTest());
+	CHECK(f.card->settingsForTest().cutoffLog2Hz == doctest::Approx(expected).epsilon(1e-5));
+	// AND THE CURVE ITSELF IS THE MODULATED FILTER'S, point for point, through the module's own evaluator.
+	flt::Settings want = fxFilterAt(f.bridge.fxChain(), 0).settings;
+	want.enabled = true;
+	want.cutoffLog2Hz = expected;
+	constexpr size_t kCap = ui::FilterCard::kMaxCurvePoints;
+	std::vector<float> got(kCap), freq(kCap), wanted(kCap), resting(kCap);
+	const size_t n = f.card->curveGainsForTest(got.data(), kCap, false);
+	REQUIRE(n >= 2);
+	flt::gainProfile(want, f.bridge.sampleRate(), freq.data(), wanted.data(), n);
+	flt::Settings rest = want;
+	rest.cutoffLog2Hz = base;
+	flt::gainProfile(rest, f.bridge.sampleRate(), freq.data(), resting.data(), n);
+	size_t agreed = 0;
+	size_t movedFromRest = 0;
+	for (size_t i = 0; i < n; ++i) {
+		agreed += std::abs(got[i] - wanted[i]) <= 1e-4f * std::max(1.0f, std::abs(wanted[i])) ? 1u : 0u;
+		movedFromRest += std::abs(got[i] - resting[i]) > 1e-3f ? 1u : 0u;
+	}
+	CHECK(agreed == n);
+	// THE SECOND ASSERTION, only so the first is not vacuous: the drawn curve is not the resting one.
+	CHECK(movedFromRest > n / 8);
+
+	// AND ONCE: a second ask with nothing new reports nothing.
+	CHECK_FALSE(f.card->updateContentForTest());
+	(void)f.card->update(); // the ring walk's own frame for the same move
+	CHECK_FALSE(f.card->update());
+
+	// THE MACRO BACK TO ZERO, the curve back to the base.
+	f.deviceHost.setField(macros, mac::macroParam(0), 0.0f);
+	play();
+	CHECK(f.card->updateContentForTest());
+	CHECK(f.card->settingsForTest().cutoffLog2Hz == doctest::Approx(base).epsilon(1e-6));
 }
 
 TEST_CASE("a macro slot a type does not spend gets no knob at all") {

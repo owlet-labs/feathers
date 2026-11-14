@@ -119,6 +119,9 @@ VerticalFader::VerticalFader(device::Modulatable& control, std::string caption)
 
 std::string VerticalFader::readout() const {
 	const double v = control_.value();
+	if (formatter_) {
+		return formatter_(v);
+	}
 	if (std::fabs(v) < 0.05) {
 		return "0";
 	}

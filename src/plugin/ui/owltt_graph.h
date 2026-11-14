@@ -24,6 +24,7 @@
 #include "plugin/ui/control_face.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/mod_handle.h"
+#include "plugin/ui/value_box.h"
 
 #include <array>
 #include <memory>
@@ -61,6 +62,7 @@ public:
 	OwlttGraph(backplane::DeviceHost&, size_t, Notifier* = nullptr) = delete; // a lane or a slot is not an id
 
 	void draw(visage::Canvas& canvas) override;
+	void resized() override;
 
 	void setModulation(ModState* mod, EditHistory* history);
 
@@ -114,7 +116,16 @@ public:
 	Meters meters() const;
 
 	/// THE FOUR HANDLE RINGS A BAND DRAWS, by the thing each one moves.
-	enum class Handle { UpperBar, LowerBar, RatioStrip, LevelStrip };
+	///
+	/// THE BAR NAMES FOLLOW THE DEVICE (the per-band rebuild). The band's DOWN threshold is the `threshold` control and
+	/// its UP threshold lies BELOW it by the bandwidth (`BandCompressor::setBandwidth`: `thresholdUp = thresholdDown -
+	/// 0.6 * bandwidth`), so on the plot the threshold bar is the upper line (downward compression acts above it, orange)
+	/// and the bandwidth bar the lower one (upward compression acts below it, blue). Before the rebuild the bandwidth
+	/// bar was drawn ABOVE the threshold bar, which put the picture the wrong way round from the sound.
+	///
+	/// `DownRatio` and `UpRatio` are the window's two sliding thumbs, one on each bar: the horizontal position of a thumb
+	/// is that direction's ratio (the band's own ratio plus the global shift plus the direction's trim).
+	enum class Handle { BandwidthBar, ThresholdBar, RatioStrip, LevelStrip, DownRatio, UpRatio };
 
 	/// WHERE A RING'S CENTRE IS — asked by the drawing AND by the cases, so a ring cannot be drawn
 	/// anywhere a press at its centre does not reach. A drawn position is not observable headlessly
@@ -182,8 +193,8 @@ public:
 	static constexpr float kMeterSplitGap = 2.0f;
 
 	struct BarYs {
-		float upper;
-		float lower;
+		float threshold; ///< the DOWN threshold's line, the upper one
+		float bandwidth; ///< the UP threshold's line (threshold minus the gap), the lower one
 	};
 	BarYs barYs(size_t band) const;
 
@@ -193,6 +204,38 @@ public:
 	/// more grab targets would re-crowd exactly what making the graph taller just fixed. The panel's
 	/// 320px has room for a reserved lane; the card's does not.
 	void setCrossoversDraggable(bool on);
+
+	/// **THE WINDOW'S EDITOR (the per-band rebuild).** On: the crossover lane, the two ratio thumbs on each band's bars,
+	/// and a table under the bars whose columns are the bands — Input, Width, Attack and Release as value boxes, the row
+	/// captions written once at the left. Off (the card) draws none of it. The boxes are this frame's children, so a
+	/// press on one never reaches the plot's own handlers, and the table is excluded from `barArea()`.
+	void setEditor(bool on);
+	bool editor() const noexcept { return editor_; }
+	static constexpr size_t kTableRows = 4;
+	static constexpr float kTableRowHeight = 17.0f;
+	static constexpr float kTablePad = 5.0f;
+	static constexpr float kTableHeight = kTableRows * kTableRowHeight + 2.0f * kTablePad;
+	/// The width the row captions (IN, WIDTH, ATK, REL) take at the left of the plot.
+	static constexpr float kTableGutter = 38.0f;
+	/// What each table row is bound to, band by band.
+	static fx::owltt::Param tableParam(size_t row, size_t band);
+	static const char* tableCaption(size_t row);
+	visage::Bounds tableArea() const;
+	/// A table cell's rectangle in this frame's coordinates, under its band.
+	visage::Bounds tableCell(size_t row, size_t band) const;
+	[[nodiscard]] ValueBox* tableBoxForTest(size_t row, size_t band) const { return cells_[row][band].get(); }
+
+	/// THE RATIO TRACK a band's thumbs slide along, left to right, ratio 0 to 1.
+	struct Track {
+		float x0;
+		float x1;
+	};
+	Track ratioTrack(size_t band) const;
+	/// The DRAWING PLAN of one band handle's modulation (threshold, bandwidth, down and up ratio), for the cases.
+	[[nodiscard]] ModHandlePlan bandModPlan(size_t band, Handle handle) const { return bandMod(band, handle).plan(); }
+	[[nodiscard]] const ModHandle& bandModHandle(size_t band, Handle handle) const { return bandMod(band, handle); }
+	/// The control a handle is bound to (threshold, bandwidth, ratio, level, or a ratio trim).
+	[[nodiscard]] device::Modulatable& handleControl(size_t band, Handle handle) const { return controlForHit(hitFor(band, handle)); }
 	bool crossoversDraggable() const noexcept { return rail_; }
 
 	/// THE RESERVED LANE AT THE TOP, which the crossover handles own outright. Empty when they are
@@ -248,18 +291,24 @@ public:
 		kNone,
 		kLowCrossover,
 		kHighCrossover,
-		kLowUpper,
-		kLowLower,
-		kMidUpper,
-		kMidLower,
-		kHighUpper,
-		kHighLower,
+		kLowBandwidth,
+		kLowThreshold,
+		kMidBandwidth,
+		kMidThreshold,
+		kHighBandwidth,
+		kHighThreshold,
 		kLowRatio,
 		kMidRatio,
 		kHighRatio,
 		kLowLevel,
 		kMidLevel,
 		kHighLevel,
+		kLowDownRatio,
+		kMidDownRatio,
+		kHighDownRatio,
+		kLowUpRatio,
+		kMidUpRatio,
+		kHighUpRatio,
 	};
 	ThresholdHit hitTestThreshold(visage::Point pos) const;
 
@@ -296,8 +345,22 @@ private:
 	/// The inverse of `bandForHit` × the handle kind — so a handle's control is `controlForHit(hitFor(...))`
 	/// and there is one table from a handle to a control, not a second copy of `kBandParams`.
 	ThresholdHit hitFor(size_t band, Handle handle) const;
-	bool isUpperHit(ThresholdHit hit) const;
+	bool isBandwidthHit(ThresholdHit hit) const;
 	bool isThresholdHit(ThresholdHit hit) const;
+	bool isRatioTrimHit(ThresholdHit hit) const;
+	/// Which handle a hit is, and the modulation road it takes: the crossovers, the bars and the thumbs go through a
+	/// `ModHandle`; the strips keep the plot's own route gesture.
+	Handle handleOfHit(ThresholdHit hit) const;
+	ModHandle* modForHit(ThresholdHit hit) const;
+	visage::Point centreOfHit(ThresholdHit hit) const;
+	ModHandle& bandMod(size_t band, Handle handle) const;
+	mutable std::array<ModHandle, 12> bandMod_ {};
+	mutable bool bandModBuilt_ = false;
+	/// THE TABLE'S BOXES, [row][band], built by `setEditor`.
+	std::array<std::array<std::unique_ptr<ValueBox>, 3>, kTableRows> cells_ {};
+	std::array<float, 2> tableEdges_ { -1.0f, -1.0f };
+	void layoutTable();
+	bool editor_ = false;
 
 	struct DragState {
 		bool active = false;

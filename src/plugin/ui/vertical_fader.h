@@ -76,6 +76,8 @@ public:
 	/// WHAT THE TOP OF THE BAR PRINTS — the number alone, signed, in the control's unit: a bar this narrow has no room
 	/// for the unit, which the caption and the tooltip carry.
 	[[nodiscard]] std::string readout() const;
+	/// A READOUT OF THE FADER'S OWN, for a control whose number is not a dB figure (the default reads the value as dB).
+	void setReadoutFormatter(std::function<std::string(double)> formatter) { formatter_ = std::move(formatter); }
 	/// The track the fill runs in, in the bar's own coordinates — asked by `draw`, the drag and the cases.
 	[[nodiscard]] visage::Bounds track() const;
 	/// The y on the track of a 0..1 position along the control's range (1 at the top).
@@ -93,6 +95,7 @@ private:
 	device::Modulatable& control_;
 	std::string caption_;
 	std::function<void(const std::string&)> announce_;
+	std::function<std::string(double)> formatter_;
 
 	// THE PRESS IN FLIGHT.
 	bool pressed_ = false;

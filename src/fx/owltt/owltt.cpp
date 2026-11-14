@@ -60,14 +60,6 @@ constexpr float kMinCrossoverGapHz = 100.0f;
 	return x;
 }
 
-/// Apply q9.22-style gain mapping for output gain knob (0..1 → 0..6.31 linear).
-[[nodiscard]] float outputGainFromKnob(float knob) {
-	if (knob <= 0.5f) {
-		return knob * 2.0f;
-	}
-	return 1.0f + (knob - 0.5f) * 2.0f * 5.31f;
-}
-
 } // namespace
 
 // ========================================================================

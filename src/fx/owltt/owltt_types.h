@@ -269,6 +269,15 @@ inline constexpr float kDryAlignFadeBlend = 0.1f;
 inline constexpr float kDriveMinDb = -12.0f;
 inline constexpr float kDriveMaxDb = 24.0f;
 
+/// **THE OUTPUT KNOB AS A GAIN** (0..1 to 0..6.31 linear): the lower half is a straight 0..unity, the upper half takes
+/// it up to +16 dB. Moved here from `owltt.cpp`, unchanged, so the window's Output readout reads the number the DSP uses.
+[[nodiscard]] inline float outputGainFromKnob(float knob) {
+	if (knob <= 0.5f) {
+		return knob * 2.0f;
+	}
+	return 1.0f + (knob - 0.5f) * 2.0f * 5.31f;
+}
+
 /// EACH BAND'S INPUT LEVEL RANGE, dB (the per-band rebuild): symmetric, 0 dB the device before it.
 inline constexpr float kBandInputMinDb = -18.0f;
 inline constexpr float kBandInputMaxDb = 18.0f;
@@ -609,7 +618,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .unit = device::Unit::Number, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
      .tooltip = "Mid-high split frequency", .wholeReadout = true, .suffix = "Hz"},
     {"output_gain", "Output Gain", 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,
-     "Makeup gain — output level after compression"},
+     "Output level after the bands are summed, in dB — 0 dB is unity, the top of the range is +16 dB"},
     {"blend", "Blend", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,
      "Wet/dry mix — balance between processed and original"},
     // THE SOFT CLIPPER'S SWITCH (backlog EL). On is how the device always ran: each band's sum is

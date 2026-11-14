@@ -137,6 +137,9 @@ struct Controls {
 	double bell2Seconds{0.03};         ///< its level's T60
 	double velocityNoise{0.0};         ///< −1..1: how far velocity moves the noise share, as velocityTone moves Tone
 	double width{0.0};                 ///< 0..1: a Snare's wires or a Clap's band decorrelated between the ears
+	/// THE TERRAIN'S PITCH (kit stance redesign R5): 0 Free (the terrain's contribution as it comes), 1 Semitones (rounded to whole
+	/// semitones before it is applied), 2 Off (none of it). Only the Pitch field's contribution is ever touched; Tune is not.
+	int pitchMode{0};
 	friend bool operator==(const Controls&, const Controls&) = default;
 };
 
@@ -192,11 +195,14 @@ struct PadSetup {
 	/// BEND (decision 8, 2026-11-07): the share of what moves the voice past its key (wheel, expression, a pitch route) that
 	/// moves this pad in Kit mode, held at the strike or moved while it rings. 0 ignores it; Pitched mode follows the voice.
 	double bendAmount{1.0};
-	/// THE LAYER SLOT (drum proposal §12, stage (c)): a second hit struck with this pad, Kit mode alone. It rides the pad's voice
-	/// (its gate, its choke, its pan and Level) and reads the pad's controls through its own kind, at its own place's fields.
+	/// THE SECOND LAYER (kit stance redesign R2): a second, full hit struck with this pad, Kit mode alone. It rides the pad's
+	/// voice (its gate, its choke, its pan and Level) but is its own hit: its own kind, its own copy of every control a hit reads
+	/// (`controls`, `tuneSemitones`), at its own place's fields.
 	struct Layer {
 		bool on{false};
 		Kind kind{Kind::Kick};
+		Controls controls {};
+		double tuneSemitones{0.0};
 		float gain{1.0f};          ///< on top of the pad's Level, linear
 		double delaySeconds{0.0};  ///< after the pad's strike
 		double highPassHz{20.0};   ///< a one-pole high-pass; at 20 Hz (its bottom) bypassed
@@ -213,6 +219,23 @@ struct KitSetup {
 	double transposeSemitones{0.0};
 };
 
+/// **THE TERRAIN'S PITCH CONTRIBUTION** in semitones for a Pitch field value, under `c.pitchMode` (Free, Semitones, Off). The one
+/// function the laws and the editor's settled-pitch reading share.
+double terrainPitchSemitones(float fieldPitch, const Controls& c);
+/// **A LAYER'S SETTLED PITCH** (kit stance redesign R5): the pitch the hit's sweep lands on, in Hz, from its kind, its fields,
+/// its controls and its resting base pitch (`restingBaseHz`, plus any bend held). `defined` is false for a kind with no pitch (a
+/// Clap) and for an Off layer (the caller's to test). Per kind: Kick and String land on the laws' `hz`; Membrane and Snare on
+/// the head's lowest mode (hz x its ratio at this Metal), which is the pitch heard; Metal is inharmonic, so the lowest of its
+/// oscillators is given with `approximate` set.
+struct SettledPitch {
+	bool defined {false};
+	bool approximate {false};
+	double hz {0.0};
+};
+SettledPitch settledPitch(Kind k, const Fields& f, const Controls& c, double baseHz);
+/// The resting base pitch of a layer in Kit mode at no bend: its kind's resting pitch moved by its Tune and the kit's transpose
+/// (Bend's share of what moves the voice past its key is added in semitones by the caller).
+double restingBaseHz(Kind k, double tuneSemitones, double transposeSemitones);
 /// A KIND'S RESTING PITCH at Tune 0 in Kit mode, in Hz (in Pitched mode the key's frequency replaces it).
 double kindBaseHz(Kind k);
 /// The most a full Sweep drops, in octaves.

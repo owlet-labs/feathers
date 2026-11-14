@@ -151,11 +151,12 @@ StringFields oneString(const SliceOrientationPin& fallback, const SoundCoord& s,
 }
 
 /// One sound's drum fields at its own coordinate, through its Additive frame (the guests' host rows), scalers applied.
-drum::Fields oneDrum(const SliceOrientationPin& fallback, const SoundCoord& s, const PhaseWarp* warp = nullptr) {
+drum::Fields oneDrum(const SliceOrientationPin& fallback, const SoundCoord& s, const PhaseWarp* warp,
+                     const DrumBias& bias) {
 	const double home = sliceHome(s.zone, s.phaseOffset, s.gammaBase);
 	return drumFieldsWithOverrides(drumFieldsWithOverrides(readDrumFields(partialFrameOf(fallback, s, home), home, s.travelX,
 	                                                                     s.travelY, warp),
-	                                                       s.drumBias),
+	                                                       bias),
 	                               s.drumKitBias);
 }
 
@@ -725,14 +726,15 @@ DrumCharacter buildDrumFor(const Character& c) {
 		// with no live sound keeps the default fields.
 		for (size_t i = 0; i < n; ++i) {
 			const SoundCoord& s = c.sounds[i];
-			out.pads[s.slot] = oneDrum(c.orientation, s, c.likes.of(s.slot));
-			// ITS LAYER AT ITS OWN PLACE: the pad's, moved by the offset vector (so it follows the pad's drift, the Walk and every
-			// modulation of them), the pad's scalers and the kit's trims applied as to the pad.
+			// LAYER ONE at its place (the stance plus its vector: already the sound's travel).
+			out.pads[s.slot] = oneDrum(c.orientation, s, c.likes.of(s.slot), s.drumBias);
+			// LAYER TWO at its own, through its own scalers (the kit's trims apply to both).
 			if (s.drumLayer) {
 				SoundCoord at = s;
-				at.travelX += s.drumLayerX;
-				at.travelY += s.drumLayerY;
-				out.layers[s.slot] = oneDrum(c.orientation, at, c.likes.of(s.slot));
+				const AnchorPoint place = drumLayerPlace(c.drumStance, { s.drumVectorX[1], s.drumVectorY[1] });
+				at.travelX = place.x;
+				at.travelY = place.y;
+				out.layers[s.slot] = oneDrum(c.orientation, at, c.likes.of(s.slot), s.drumBias2);
 			}
 		}
 		return out;
@@ -755,7 +757,7 @@ DrumCharacter buildDrumFor(const Character& c) {
 		if (w == 0.0) {
 			continue;
 		}
-		const drum::Fields f = oneDrum(c.orientation, s, c.likes.of(s.slot));
+		const drum::Fields f = oneDrum(c.orientation, s, c.likes.of(s.slot), s.drumBias);
 		acc[0] += w * f.pitch;
 		acc[1] += w * f.length;
 		acc[2] += w * f.sweep;

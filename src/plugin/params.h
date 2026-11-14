@@ -399,15 +399,11 @@ enum class ParamId : uint32_t {
 	/// Pluck's in the same unused block. Each pad's own controls are the per-sound block at kDrumBlockBase (drumParam).
 	DrumMode = 0x00C8,        ///< Pitched | Kit
 	DrumPitchedKind = 0x00C9, ///< the kind every voice plays in Pitched mode
-	DrumWalkX = 0x00CA,       ///< -1..1: the Kit Walk, every pad's place moved together (D3)
-	DrumWalkY = 0x00CB,
+	// 0x00CA, 0x00CB: the Kit Walk, retired (the kit stands where the ordinary Pos X/Y and Weather put it). Never reused.
 	DrumSeed = 0x00CC,        ///< 0..999: which hits the noise draws
-	/// **THE KIT-WIDE LAYER** (2026-11-06): neutral by default, so a kit is bit-identical until it moves. Kit Gamma and
-	/// Kit Offset add to every pad's phase offset, Kit Zone to every pad's zone; the seven trims apply the per-pad scaler's own
-	/// law (`fieldWithOverride`) on top of each pad's scaler. Kit mode only, as the Walk is.
-	DrumKitGamma = 0x00CD,
-	DrumKitZone = 0x00CE,
-	DrumKitOffset = 0x00CF,
+	/// **THE KIT-WIDE TRIMS** (2026-11-06): neutral by default, so a kit is bit-identical until it moves. The seven trims apply
+	/// the per-pad scaler's own law (`fieldWithOverride`) on top of each layer's scaler. Kit mode only.
+	// 0x00CD..0x00CF: the Kit Gamma, Zone and Offset, retired (the standard Global Gamma is the kit's). Never reused.
 	DrumKitPitch = 0x00D0,
 	DrumKitLength = 0x00D1,
 	DrumKitSweep = 0x00D2,
@@ -601,6 +597,35 @@ inline constexpr device::RetiredKey kCoreRetiredKeys[] = {
 	{ "terrain.likes.v5", "2026-10-28", "a like stores the angles of EVERY engine's sites (Stair, Resonate and the vowel joined the phase warp): terrain.likes.v6" },
 	{ "terrain.likes.v6", "2026-10-31", "a like stores the Karplus-Strong string's five material sites too (Pluck joined the phase warp): terrain.likes.v7" },
 	{ "terrain.likes.v7", "2026-11-05", "a like stores the drum engine's seven sites and, on Drum, its kind (the drum joined the phase warp): terrain.likes.v8" },
+	{ "drum.walk_x", "2026-11-14", "the Kit Walk is gone: the kit stands where the ordinary Pos X and Weather put it (drum.walk_x was a second, drum-only stance)" },
+	{ "drum.walk_y", "2026-11-14", "the Kit Walk is gone: the kit stands where the ordinary Pos Y and Weather put it" },
+	{ "drum.kit.gamma", "2026-11-14", "the kit's place is the ordinary terrain controls now; each layer keeps its own vector" },
+	{ "drum.kit.zone", "2026-11-14", "the kit's place is the ordinary terrain controls now; each layer keeps its own vector" },
+	{ "drum.kit.offset", "2026-11-14", "the kit's place is the ordinary terrain controls now; each layer keeps its own vector" },
+	{ "a.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: a.drum.l2.lock; the first layer's: a.drum.lock)" },
+	{ "a.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: a.drum.l2.dx; the first layer's: a.drum.dx)" },
+	{ "a.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: a.drum.l2.dy; the first layer's: a.drum.dy)" },
+	{ "b.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: b.drum.l2.lock; the first layer's: b.drum.lock)" },
+	{ "b.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: b.drum.l2.dx; the first layer's: b.drum.dx)" },
+	{ "b.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: b.drum.l2.dy; the first layer's: b.drum.dy)" },
+	{ "c.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: c.drum.l2.lock; the first layer's: c.drum.lock)" },
+	{ "c.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: c.drum.l2.dx; the first layer's: c.drum.dx)" },
+	{ "c.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: c.drum.l2.dy; the first layer's: c.drum.dy)" },
+	{ "d.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: d.drum.l2.lock; the first layer's: d.drum.lock)" },
+	{ "d.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: d.drum.l2.dx; the first layer's: d.drum.dx)" },
+	{ "d.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: d.drum.l2.dy; the first layer's: d.drum.dy)" },
+	{ "e.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: e.drum.l2.lock; the first layer's: e.drum.lock)" },
+	{ "e.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: e.drum.l2.dx; the first layer's: e.drum.dx)" },
+	{ "e.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: e.drum.l2.dy; the first layer's: e.drum.dy)" },
+	{ "f.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: f.drum.l2.lock; the first layer's: f.drum.lock)" },
+	{ "f.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: f.drum.l2.dx; the first layer's: f.drum.dx)" },
+	{ "f.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: f.drum.l2.dy; the first layer's: f.drum.dy)" },
+	{ "g.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: g.drum.l2.lock; the first layer's: g.drum.lock)" },
+	{ "g.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: g.drum.l2.dx; the first layer's: g.drum.dx)" },
+	{ "g.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: g.drum.l2.dy; the first layer's: g.drum.dy)" },
+	{ "h.drum.layer.lock", "2026-11-14", "a layer's Lock is a per-layer, editor-only flag now (the second layer's: h.drum.l2.lock; the first layer's: h.drum.lock)" },
+	{ "h.drum.layer.dx", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: h.drum.l2.dx; the first layer's: h.drum.dx)" },
+	{ "h.drum.layer.dy", "2026-11-14", "the layer's vector is each layer's own now (the second layer's: h.drum.l2.dy; the first layer's: h.drum.dy)" },
 	{ "vocode.freeze", "2026-10-27", "the engine vocoder's held envelope carries the right channel too (OE2 Stereo), a new layout: vocode.held" },
 	{ "a.drum.velocity_tone", "2026-11-07", "absorbed into the Velocity zone (drum proposal §14 lever 2): a.drum.velocity_zone" },
 	{ "a.drum.velocity_tension", "2026-11-07", "absorbed into the Velocity zone (drum proposal §14 lever 2): a.drum.velocity_zone" },
@@ -864,7 +889,10 @@ enum class DrumControl : uint8_t {
 	Bend,
 	// THE LAYER SLOT (drum proposal §12, built 2026-11-07 stage (c)): a second hit of its own Kind struck with the pad, at its
 	// own place (the pad's plus an offset vector), Level, Delay (ms) and High Pass; Lock keeps the offset when the pad is dragged.
-	LayerKind, LayerLevel, LayerDelay, LayerHighPass, LayerLock, LayerOffsetX, LayerOffsetY,
+	LayerKind, LayerLevel, LayerDelay, LayerHighPass,
+	// LAYER ONE'S OWN LOCK, TERRAIN VECTOR AND PITCH MODE (kit stance redesign): the pad's own controls above are layer one's
+	// (Kind, Tune .. Width); layer two's copies of everything a hit reads live in the third block (drumLayerParam).
+	Lock, OffsetX, OffsetY, PitchMode,
 	kCount
 };
 inline constexpr size_t kDrumControlCount = static_cast<size_t>(DrumControl::kCount);
@@ -882,6 +910,52 @@ constexpr ParamId drumParam(size_t slot, DrumControl control) {
 	}
 	return static_cast<ParamId>(kDrumBlockBase + static_cast<uint32_t>(slot) * kDrumSlotStride + c);
 }
+
+/// **A PAD IS TWO LAYERS, each a full hit of its own kind.** Layer one is the pad's own block above (its Kind, Tune .. Width,
+/// Lock, OffsetX/Y and PitchMode). Layer two's Kind is LayerKind (Off, then a kind), its Level, Delay and High Pass are the
+/// layer-only rows above, and everything else a hit reads is a COPY of layer one's, in the third block: these are the controls
+/// that exist once per layer. Pad-level things (Note, Choke, Voices, Trigger, Level, Pan, Release, Mute, Bend) stay the pad's.
+inline constexpr std::array<DrumControl, 39> kDrumLayerControls {
+	DrumControl::Tune, DrumControl::Decay, DrumControl::SweepTime, DrumControl::Drive, DrumControl::Count, DrumControl::Spread,
+	DrumControl::VelocityZone,
+	DrumControl::FieldPitch, DrumControl::FieldLength, DrumControl::FieldSweep, DrumControl::FieldTone, DrumControl::FieldNoise,
+	DrumControl::FieldSnap, DrumControl::FieldMetal,
+	DrumControl::WireDecay, DrumControl::ClickDecay, DrumControl::Wires, DrumControl::Bells, DrumControl::BellStart,
+	DrumControl::BellEnd, DrumControl::BellTime,
+	DrumControl::KickHold, DrumControl::KickDip, DrumControl::KickDipTime, DrumControl::ClickSweep, DrumControl::ClickSweepTime,
+	DrumControl::StartPhase,
+	DrumControl::DriveCurve, DrumControl::DriveTone, DrumControl::ClapQ, DrumControl::ClapHighPass,
+	DrumControl::Bell2Hz, DrumControl::Bell2Time, DrumControl::VelocityNoise, DrumControl::Width,
+	DrumControl::Lock, DrumControl::OffsetX, DrumControl::OffsetY, DrumControl::PitchMode
+};
+/// The third block: layer two's copies, kDrumLayerControls' order, 0x0800 + slot·0x40.
+inline constexpr uint32_t kDrumBlock3Base = 0x0800;
+inline constexpr uint32_t kDrumSlot3Stride = 0x40;
+static_assert(kDrumLayerControls.size() <= kDrumSlot3Stride);
+/// Where `control` sits in kDrumLayerControls, or -1 when a layer does not have its own copy (a pad-level control).
+inline constexpr std::array<int8_t, kDrumControlCount> kDrumLayerIndexOf = [] {
+	std::array<int8_t, kDrumControlCount> t {};
+	t.fill(-1);
+	for (size_t i = 0; i < kDrumLayerControls.size(); ++i) {
+		t[static_cast<size_t>(kDrumLayerControls[i])] = static_cast<int8_t>(i);
+	}
+	return t;
+}();
+constexpr bool drumHasLayerCopy(DrumControl control) { return kDrumLayerIndexOf[static_cast<size_t>(control)] >= 0; }
+/// Layer two's copy of `control` (which must be in kDrumLayerControls).
+constexpr ParamId drumLayer2Param(size_t slot, DrumControl control) {
+	return static_cast<ParamId>(kDrumBlock3Base + static_cast<uint32_t>(slot) * kDrumSlot3Stride
+	                            + static_cast<uint32_t>(kDrumLayerIndexOf[static_cast<size_t>(control)]));
+}
+/// A LAYER'S OWN PARAMETER: layer 0 is the pad's block, layer 1 the third block. `control` must be one a layer has (kDrumLayerControls).
+constexpr ParamId drumLayerParam(size_t slot, size_t layer, DrumControl control) {
+	return layer == 0 ? drumParam(slot, control) : drumLayer2Param(slot, control);
+}
+/// A layer's KIND parameter: the pad's Kind for layer one, LayerKind (Off, then a kind) for layer two.
+constexpr ParamId drumLayerKindParam(size_t slot, size_t layer) {
+	return layer == 0 ? drumParam(slot, DrumControl::Kind) : drumParam(slot, DrumControl::LayerKind);
+}
+
 /// The drum controls that are amounts (each slot's destination run carries them, in this order) and the ones that are
 /// switches or counts (not destinations: a stepped control under a modulator chatters rather than plays).
 inline constexpr std::array<DrumControl, 42> kDrumContinuousControls {
@@ -904,15 +978,34 @@ inline constexpr std::array<DrumControl, 42> kDrumContinuousControls {
 	// THE BEND.
 	DrumControl::Bend,
 	// THE LAYER SLOT.
-	DrumControl::LayerLevel, DrumControl::LayerDelay, DrumControl::LayerHighPass, DrumControl::LayerOffsetX,
-	DrumControl::LayerOffsetY
+	DrumControl::LayerLevel, DrumControl::LayerDelay, DrumControl::LayerHighPass, DrumControl::OffsetX,
+	DrumControl::OffsetY
 };
-inline constexpr std::array<DrumControl, 10> kDrumSteppedControls { DrumControl::Kind,    DrumControl::Note,
+inline constexpr std::array<DrumControl, 11> kDrumSteppedControls { DrumControl::Kind,    DrumControl::Note,
 	                                                              DrumControl::Choke,   DrumControl::Voices,
 	                                                              DrumControl::Trigger, DrumControl::Count,
 	                                                              DrumControl::DriveCurve, DrumControl::Mute,
-	                                                              DrumControl::LayerKind, DrumControl::LayerLock };
+	                                                              DrumControl::LayerKind, DrumControl::Lock,
+	                                                              DrumControl::PitchMode };
 static_assert(kDrumContinuousControls.size() + kDrumSteppedControls.size() == kDrumControlCount);
+/// AND LAYER TWO'S COPIES, the continuous ones then the stepped ones: appended after every earlier destination and knob (a stance
+/// saved before them keeps every earlier member where it was).
+inline constexpr std::array<DrumControl, 35> kDrumLayer2Continuous {
+	DrumControl::Tune, DrumControl::Decay, DrumControl::SweepTime, DrumControl::Drive, DrumControl::Spread,
+	DrumControl::VelocityZone,
+	DrumControl::FieldPitch, DrumControl::FieldLength, DrumControl::FieldSweep, DrumControl::FieldTone, DrumControl::FieldNoise,
+	DrumControl::FieldSnap, DrumControl::FieldMetal,
+	DrumControl::WireDecay, DrumControl::ClickDecay, DrumControl::Wires, DrumControl::Bells, DrumControl::BellStart,
+	DrumControl::BellEnd, DrumControl::BellTime,
+	DrumControl::KickHold, DrumControl::KickDip, DrumControl::KickDipTime, DrumControl::ClickSweep, DrumControl::ClickSweepTime,
+	DrumControl::StartPhase,
+	DrumControl::DriveTone, DrumControl::ClapQ, DrumControl::ClapHighPass,
+	DrumControl::Bell2Hz, DrumControl::Bell2Time, DrumControl::VelocityNoise, DrumControl::Width,
+	DrumControl::OffsetX, DrumControl::OffsetY
+};
+inline constexpr std::array<DrumControl, 4> kDrumLayer2Stepped { DrumControl::Count, DrumControl::DriveCurve, DrumControl::Lock,
+	                                                           DrumControl::PitchMode };
+static_assert(kDrumLayer2Continuous.size() + kDrumLayer2Stepped.size() == kDrumLayerControls.size());
 /// The choices. Voices' labels are the counts they stand for (kDrumVoicesCounts).
 inline constexpr std::array<const char* const, 2> kDrumModeNames { "Pitched", "Kit" };
 inline constexpr std::array<const char* const, 6> kDrumKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap", "String" };
@@ -929,6 +1022,10 @@ inline constexpr std::array<const char* const, 3> kDrumDriveCurveNames { "Tanh",
 inline constexpr std::array<const char* const, 2> kDrumBell2LinkNames { "Free", "Linked" };
 /// The wires' contour (all three on the face): an exponential fall, a straight one, or chopped by a falling sawtooth.
 inline constexpr std::array<const char* const, 3> kDrumWireContourNames { "Exp", "Linear", "Mod" };
+/// THE TERRAIN'S PITCH, per layer: Free is the terrain's pitch contribution as it comes; Semitones rounds it to whole semitones
+/// before it is applied (Tune stays continuous); Off applies none of it.
+inline constexpr std::array<const char* const, 3> kDrumPitchModeNames { "Free", "Semitones", "Off" };
+enum class DrumPitchMode : uint8_t { Free, Semitones, Off };
 enum class DrumMode : uint8_t { Pitched, Kit };
 
 /// **THE DEFAULT KIT** (proposal §5): Pattern Drum's eight lanes, note for note and in its order (test_drum_engine pins the
@@ -1662,10 +1759,8 @@ inline constexpr auto kCoreModDestinations = std::to_array<ParamId>(
      ParamId::KsWidth,
      // AND VELOCITY'S DEPTH ON HARDNESS (2026-10-31), continuous, appended.
      ParamId::KsVelocity,
-     // THE DRUM ENGINE'S KIT WALK (2026-11-05), appended: the engine-wide amounts you play (a slow LFO breathes the kit).
-     ParamId::DrumWalkX, ParamId::DrumWalkY,
-     // AND THE KIT-WIDE LAYER (2026-11-06), appended: Gamma, Zone, Offset and the seven trims, every one modulatable.
-     ParamId::DrumKitGamma, ParamId::DrumKitZone, ParamId::DrumKitOffset, ParamId::DrumKitPitch, ParamId::DrumKitLength,
+     // THE KIT-WIDE TRIMS (2026-11-06), appended: the seven trims, every one modulatable.
+     ParamId::DrumKitPitch, ParamId::DrumKitLength,
      ParamId::DrumKitSweep, ParamId::DrumKitTone, ParamId::DrumKitNoise, ParamId::DrumKitSnap, ParamId::DrumKitMetal});
 
 /// HOW MANY DESTINATIONS A TENANT'S DECLARATIONS CONTRIBUTE — its own `modulatable` flags, counted.
@@ -1756,12 +1851,16 @@ inline constexpr size_t kPerSoundDestinationCount = kMaxSounds * kPerSoundDestin
 inline constexpr std::array<SoundField, 3> kEditOnlyFields { SoundField::Zone, SoundField::Offset, SoundField::Gamma };
 inline constexpr size_t kEditOnlyDestinationCount = kMaxSounds * kEditOnlyFields.size();
 inline constexpr size_t kFirstEditOnlyDestination = kCoreModDestinations.size() + kPerSoundDestinationCount;
+/// **AND THE DRUM PAD'S SECOND LAYER** (kit stance redesign): its copies of every continuous control, slot-major in
+/// `kDrumLayer2Continuous`' order, after the edit-only identity so every earlier destination keeps its place.
+inline constexpr size_t kFirstLayer2Destination = kFirstEditOnlyDestination + kEditOnlyDestinationCount;
+inline constexpr size_t kLayer2DestinationCount = kMaxSounds * kDrumLayer2Continuous.size();
 
-inline constexpr size_t kParamDestinationCount = kFirstEditOnlyDestination + kEditOnlyDestinationCount;
+inline constexpr size_t kParamDestinationCount = kFirstLayer2Destination + kLayer2DestinationCount;
 
 /// A core destination index that only a Relative macro may reach and the engine never resolves (see above).
 constexpr bool isEditOnlyDestination(size_t coreIndex) noexcept {
-	return coreIndex >= kFirstEditOnlyDestination && coreIndex < kParamDestinationCount;
+	return coreIndex >= kFirstEditOnlyDestination && coreIndex < kFirstLayer2Destination;
 }
 
 constexpr std::array<ParamId, kParamDestinationCount> buildModDestinations() {
@@ -1832,6 +1931,12 @@ constexpr std::array<ParamId, kParamDestinationCount> buildModDestinations() {
 			out[at++] = soundParam(slot, field);
 		}
 	}
+	// AND THE DRUM PAD'S SECOND LAYER, slot-major.
+	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
+		for (const DrumControl c : kDrumLayer2Continuous) {
+			out[at++] = drumLayer2Param(slot, c);
+		}
+	}
 	// A COUNT THAT DID NOT FILL THE LIST HANDS BACK AN EMPTY ONE, which the static_assert under this
 	// turns into a build failure. Silently leaving a zero in the tail would be a destination with no
 	// parameter behind it, and every consumer would find that out at a different moment.
@@ -1848,14 +1953,21 @@ inline constexpr std::array<ParamId, kParamDestinationCount> kModDestinations =
 /// AND THE SPECTRAL DRAWER'S STEPPED CONTROLS (its switches, Mode, Link) after the run: settings of the sound that are
 /// not destinations, so the run alone does not hold them.
 /// AND THE DRUM PAD'S STEPPED CONTROLS (Kind, Note, Choke, Voices, Trigger, Count) after those, for the same reason.
-inline constexpr size_t kPerSoundKnobCount =
-    kPerSoundDestinationsPerSlot - 1 + kSpectralSteppedControls.size() + kDrumSteppedControls.size();
+/// AND THE DRUM PAD'S SECOND LAYER AFTER THAT (its continuous copies, then its stepped ones): appended, so every earlier knob
+/// keeps its position in a stance saved before them.
+inline constexpr size_t kPerSoundKnobCount = kPerSoundDestinationsPerSlot - 1 + kSpectralSteppedControls.size()
+                                             + kDrumSteppedControls.size() + kDrumLayer2Continuous.size()
+                                             + kDrumLayer2Stepped.size();
 constexpr ParamId perSoundKnobParam(size_t slot, size_t k) {
 	constexpr size_t run = kPerSoundDestinationsPerSlot - 1;
 	constexpr size_t spectral = run + kSpectralSteppedControls.size();
+	constexpr size_t drum = spectral + kDrumSteppedControls.size();
+	constexpr size_t layer2 = drum + kDrumLayer2Continuous.size();
 	return k < run        ? kModDestinations[kCoreModDestinations.size() + slot * kPerSoundDestinationsPerSlot + 1 + k]
 	       : k < spectral ? spectralParam(slot, kSpectralSteppedControls[k - run])
-	                      : drumParam(slot, kDrumSteppedControls[k - spectral]);
+	       : k < drum     ? drumParam(slot, kDrumSteppedControls[k - spectral])
+	       : k < layer2   ? drumLayer2Param(slot, kDrumLayer2Continuous[k - drum])
+	                      : drumLayer2Param(slot, kDrumLayer2Stepped[k - layer2]);
 }
 static_assert(kModDestinations[kCoreModDestinations.size()] == soundParam(0, SoundField::Width),
               "each slot's destination run leads with its Width, which perSoundKnobParam skips");
@@ -2040,7 +2152,7 @@ constexpr ParamId destinationParamId(size_t destination) {
 /// EVERY PARAMETER ID IS BELOW THIS — the size of the id-to-index tables, so a lookup is one load rather than a scan
 /// (backlog FI: `resolved()` scanned the parameter list on every read, dozens of times a control tick). A table built
 /// from an id past it does not compile.
-inline constexpr size_t kParamIdSpan = 0x0800; // 0x0400..0x05FF: the per-sound spectral drawer; 0x0600..0x07FF: the drum pads' two blocks
+inline constexpr size_t kParamIdSpan = 0x0A00; // 0x0400..0x05FF: the per-sound spectral drawer; 0x0600..0x07FF: the drum pads' two blocks; 0x0800..0x09FF: layer two's
 
 /// Where each id sits in the destination list, -1 where it is not one.
 inline constexpr std::array<int16_t, kParamIdSpan> kModDestinationIndexOfId = [] {
@@ -2235,8 +2347,11 @@ constexpr bool maySourceRouteToIgnoringDevice(backplane::Source source, backplan
 // AND THE KARPLUS-STRONG ENGINE, 2026-10-31: eight engine-wide controls (+8) and five field scalers per sound (19 -> 24).
 // AND THE DRUM ENGINE, 2026-11-05: five engine-wide controls (+5) and a pad block per sound (kDrumControlCount).
 // AND THE KIT-WIDE LAYER, 2026-11-06: Kit Gamma, Zone, Offset and seven field trims (+10).
-inline constexpr size_t kParamCount = 49 + 4 + 1 + 1 + 3 + 6 + 4 + 8 + 5 + 10 + 6 * 3 + kMaxSounds * 24 + kMacroCount
-                                      + kMaxSounds * kSpectralControlCount + kMaxSounds * kDrumControlCount;
+// AND THE KIT STANCE REDESIGN: the Walk and Kit Gamma, Zone, Offset are gone (-5), each pad's second layer has its own
+// copies (kDrumLayerControls) beside the pad's block.
+inline constexpr size_t kParamCount = 49 + 4 + 1 + 1 + 3 + 6 + 4 + 8 + 3 + 7 + 6 * 3 + kMaxSounds * 24 + kMacroCount
+                                      + kMaxSounds * kSpectralControlCount + kMaxSounds * kDrumControlCount
+                                      + kMaxSounds * kDrumLayerControls.size();
 
 /// Every declared param, in table order. Host param indices are positions in this span.
 std::span<const ParamDesc> paramDescs();
@@ -2661,6 +2776,10 @@ public:
 	/// **THE RIGHT EAR'S READING OF A `stereo` PARAMETER** — `resolved(id)` plus every pair input's (R − L), from the
 	/// cells; `resolved(id)` itself when nothing stereo reaches it. For the editor's split ring (`ParamBridge::publish`).
 	[[nodiscard]] double resolvedRight(ParamId id) const;
+	/// **A COUNT OF EVERY WRITE TO A DRUM PAD'S ROW** (host event, editor, state load, modulation offset). `ParamBridge::publish`
+	/// leaves the pads' 736 rows out while the engine is not Drum and publishes them again whenever this has moved, so a write
+	/// made under another engine is never lost and reaches the editor in the next call.
+	[[nodiscard]] uint32_t drumGeneration() const noexcept { return drumGeneration_.load(std::memory_order_relaxed); }
 	/// Whether a route from a source that is a pair NOW reaches this `stereo` parameter.
 	[[nodiscard]] bool stereoLive(ParamId id) const;
 
@@ -2773,6 +2892,12 @@ private:
 
 
 	std::array<std::atomic<double>, kParamCount> base_;
+	std::atomic<uint32_t> drumGeneration_ { 0 };
+	void noteDrumWrite(clap_id id) noexcept {
+		if (id >= kDrumBlockBase && id < kDrumBlock3Base + kMaxSounds * kDrumSlot3Stride) {
+			drumGeneration_.fetch_add(1, std::memory_order_relaxed);
+		}
+	}
 	std::array<double, kParamCount> mod_;
 	/// **THIS NODE'S INPUTS, IN ONE ARRAY THE PER-PARAMETER RANGES INDEX INTO** (kill-lanes §2.4b) — the
 	/// compiled plan for the synth's own parameters, which are the host node's controls. `value` is the

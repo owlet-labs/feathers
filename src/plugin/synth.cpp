@@ -2113,40 +2113,47 @@ void Synth::fillDrumKit() {
 		// PITCHED MODE IS PAD A'S BLOCK UNDER THE ENGINE'S KIND (proposal §7, as built §11): Kind, Note, Choke and Voices are
 		// the kit's, everything else the one drum's.
 		p.kind = kit.kit || slot != 0 ? kindOf(r(DrumControl::Kind)) : kindOf(params_.resolved(ParamId::DrumPitchedKind));
-		p.controls.decaySeconds = std::exp2(r(DrumControl::Decay));
-		p.controls.sweepSeconds = std::exp2(r(DrumControl::SweepTime));
-		p.controls.drive = r(DrumControl::Drive);
-		p.controls.count = static_cast<int>(std::lround(r(DrumControl::Count)));
-		p.controls.spreadSeconds = std::exp2(r(DrumControl::Spread));
-		p.controls.pitchRangeSemitones = kit.kit ? 3.0 : 0.5;
-		// THE THREE ZONE COORDINATES (drum proposal §14): what velocity reaches, the wires, the bells (lawsFor reads them).
-		p.controls.velocityZone = r(DrumControl::VelocityZone);
-		p.controls.wires = r(DrumControl::Wires);
-		p.controls.bells = r(DrumControl::Bells);
-		// THE SNARE'S ENVELOPES AND BELL (read by a Snare alone).
-		p.controls.wireDecaySeconds = std::exp2(r(DrumControl::WireDecay));
-		p.controls.clickDecaySeconds = std::exp2(r(DrumControl::ClickDecay));
-		p.controls.bellStartHz = std::exp2(r(DrumControl::BellStart));
-		p.controls.bellEndHz = std::exp2(r(DrumControl::BellEnd));
-		p.controls.bellSeconds = std::exp2(r(DrumControl::BellTime));
-		// THE KICK'S SHAPE (read by a Kick alone): Hold and the dip's time in ms, the click sweep, the start phase in degrees.
-		p.controls.kickHoldSeconds = r(DrumControl::KickHold) / 1000.0;
-		p.controls.kickDip = r(DrumControl::KickDip);
-		p.controls.kickDipSeconds = r(DrumControl::KickDipTime) / 1000.0;
-		p.controls.clickSweepOctaves = r(DrumControl::ClickSweep);
-		p.controls.clickSweepSeconds = std::exp2(r(DrumControl::ClickSweepTime));
-		p.controls.startPhaseDegrees = r(DrumControl::StartPhase);
-		// THE DRIVE'S CURVE AND TONE (every kind) AND THE CLAP'S FILTER (a Clap alone): the high-pass in Hz.
-		p.controls.driveCurve = static_cast<int>(steppedIndex(r(DrumControl::DriveCurve), kDrumDriveCurveNames.size()));
-		p.controls.driveTone = r(DrumControl::DriveTone);
-		p.controls.clapQ = r(DrumControl::ClapQ);
-		p.controls.clapHighPassHz = std::exp2(r(DrumControl::ClapHighPass));
-		// THE SECOND BELL (a Snare alone): Hz and Time from their logs.
-		p.controls.bell2Hz = std::exp2(r(DrumControl::Bell2Hz));
-		p.controls.bell2Seconds = std::exp2(r(DrumControl::Bell2Time));
-		p.controls.velocityNoise = r(DrumControl::VelocityNoise);
-		// THE WIRES' CONTOUR, BUZZ AND THRESHOLD (a Snare), WIDTH (a Snare, a Clap).
-		p.controls.width = r(DrumControl::Width);
+		// A LAYER'S CONTROLS: everything a hit reads, from that layer's own copy (R2). Layer one is the pad's block, layer two the third.
+		const auto fillControls = [&](drum::Controls& ctl, size_t layer) {
+			const auto rl = [&](DrumControl c) { return params_.resolved(drumLayerParam(slot, layer, c)); };
+			ctl.decaySeconds = std::exp2(rl(DrumControl::Decay));
+			ctl.sweepSeconds = std::exp2(rl(DrumControl::SweepTime));
+			ctl.drive = rl(DrumControl::Drive);
+			ctl.count = static_cast<int>(std::lround(rl(DrumControl::Count)));
+			ctl.spreadSeconds = std::exp2(rl(DrumControl::Spread));
+			ctl.pitchRangeSemitones = kit.kit ? 3.0 : 0.5;
+			// THE THREE ZONE COORDINATES (drum proposal §14): what velocity reaches, the wires, the bells (lawsFor reads them).
+			ctl.velocityZone = rl(DrumControl::VelocityZone);
+			ctl.wires = rl(DrumControl::Wires);
+			ctl.bells = rl(DrumControl::Bells);
+			// THE SNARE'S ENVELOPES AND BELL (read by a Snare alone).
+			ctl.wireDecaySeconds = std::exp2(rl(DrumControl::WireDecay));
+			ctl.clickDecaySeconds = std::exp2(rl(DrumControl::ClickDecay));
+			ctl.bellStartHz = std::exp2(rl(DrumControl::BellStart));
+			ctl.bellEndHz = std::exp2(rl(DrumControl::BellEnd));
+			ctl.bellSeconds = std::exp2(rl(DrumControl::BellTime));
+			// THE KICK'S SHAPE (read by a Kick alone): Hold and the dip's time in ms, the click sweep, the start phase in degrees.
+			ctl.kickHoldSeconds = rl(DrumControl::KickHold) / 1000.0;
+			ctl.kickDip = rl(DrumControl::KickDip);
+			ctl.kickDipSeconds = rl(DrumControl::KickDipTime) / 1000.0;
+			ctl.clickSweepOctaves = rl(DrumControl::ClickSweep);
+			ctl.clickSweepSeconds = std::exp2(rl(DrumControl::ClickSweepTime));
+			ctl.startPhaseDegrees = rl(DrumControl::StartPhase);
+			// THE DRIVE'S CURVE AND TONE (every kind) AND THE CLAP'S FILTER (a Clap alone): the high-pass in Hz.
+			ctl.driveCurve = static_cast<int>(steppedIndex(rl(DrumControl::DriveCurve), kDrumDriveCurveNames.size()));
+			ctl.driveTone = rl(DrumControl::DriveTone);
+			ctl.clapQ = rl(DrumControl::ClapQ);
+			ctl.clapHighPassHz = std::exp2(rl(DrumControl::ClapHighPass));
+			// THE SECOND BELL (a Snare alone): Hz and Time from their logs.
+			ctl.bell2Hz = std::exp2(rl(DrumControl::Bell2Hz));
+			ctl.bell2Seconds = std::exp2(rl(DrumControl::Bell2Time));
+			ctl.velocityNoise = rl(DrumControl::VelocityNoise);
+			// THE WIRES' CONTOUR, BUZZ AND THRESHOLD (a Snare), WIDTH (a Snare, a Clap).
+			ctl.width = rl(DrumControl::Width);
+			// THE TERRAIN'S PITCH MODE (R5): Kit mode alone (Pitched mode keeps the +-0.5 semitone fine pitch as it always was).
+			ctl.pitchMode = kit.kit ? static_cast<int>(steppedIndex(rl(DrumControl::PitchMode), kDrumPitchModeNames.size())) : 0;
+		};
+		fillControls(p.controls, 0);
 		p.tuneSemitones = r(DrumControl::Tune);
 		p.gain = static_cast<float>(std::pow(10.0, r(DrumControl::Level) / 20.0));
 		p.pan = static_cast<float>(r(DrumControl::Pan));
@@ -2161,8 +2168,14 @@ void Synth::fillDrumKit() {
 		p.layer.gain = layerDb <= -60.0 ? 0.0f : static_cast<float>(std::pow(10.0, layerDb / 20.0));
 		p.layer.delaySeconds = r(DrumControl::LayerDelay) / 1000.0;
 		p.layer.highPassHz = std::exp2(r(DrumControl::LayerHighPass));
+		// AND ITS OWN COPY OF EVERYTHING A HIT READS (R2): a full hit of its own kind, not the pad's controls read through it.
+		if (p.layer.on) {
+			fillControls(p.layer.controls, 1);
+			p.layer.tuneSemitones = params_.resolved(drumLayerParam(slot, 1, DrumControl::Tune));
+		}
 		// A PAD WITH WIDTH TAKES THE STEREO ROAD too: its two ears differ by its own decorrelated noise.
-		if ((kit.kit || slot == 0) && (p.pan != 0.0f || (p.controls.width > 0.0 && drum::kindControls(p.kind).width))) {
+		if ((kit.kit || slot == 0) && (p.pan != 0.0f || (p.controls.width > 0.0 && drum::kindControls(p.kind).width)
+		                                   || (p.layer.on && p.layer.controls.width > 0.0 && drum::kindControls(p.layer.kind).width))) {
 			kit.panned = true;
 		}
 	}

@@ -202,6 +202,8 @@ public:
 	/// The first call reports every parameter, so a freshly opened editor draws itself from one code
 	/// path rather than needing a separate initial pass.
 	std::span<const uint32_t> refresh() noexcept;
+	/// Rows the last `publish` visited: every row while Drum (or just after a drum write), the rest alone otherwise.
+	[[nodiscard]] size_t publishedRowsForTest() const noexcept { return publishedWork_; }
 
 	/// TEST ONLY. How many value gestures the editor has opened and not closed. Zero is the only
 	/// correct answer once a hand has let go of everything — see openGestures_.
@@ -2079,6 +2081,14 @@ private:
 	/// is REPORTED like any other change; what it must not do is drag seenBase_ back to the value the
 	/// engine has not yet been told about, which is the bug this pair of arrays exists to separate.
 	std::array<bool, kParamCount> editorTouched_ {};
+	/// THE DRUM PADS' ROWS in the param table, contiguous (each slot's block, slots in order): publish() leaves them out while
+	/// the engine is not Drum, so the 736 rows a kit carries cost every other engine nothing per block.
+	uint32_t drumPublishedGeneration_ {0};
+	bool drumEverPublished_ {false};
+	/// How many rows the last publish() visited (the count the per-call work is proportional to), for the cost case.
+	size_t publishedWork_ {0};
+	size_t drumRowsFirst_ {0};
+	size_t drumRowsEnd_ {0};
 	/// HOW MANY VALUE GESTURES ARE OPEN, and it exists because an unmatched one is HOST-FACING and
 	/// invisible to everything else we have.
 	///

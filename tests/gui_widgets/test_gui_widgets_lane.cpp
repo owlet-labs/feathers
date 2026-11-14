@@ -1029,7 +1029,7 @@ TEST_CASE("arming a card lights every destination and nothing else") {
 		}
 	}
 	// AND THE DRUM (2026-11-05): every pad's amounts that are not field scalers live in the kit panel, a floating window the
-	// Drum tab opens, so they are on no face until it is; the Kit Walk and Sound A's seven scalers are on the Explore surround,
+	// Drum tab opens, so they are on no face until it is; Sound A's seven scalers are on the Explore surround,
 	// live on Drum alone (the surround case pins them there). B..H's scalers are hidden with their sound and not greyed by
 	// the surround, which only greys the selected sound's, so they are not in this list.
 	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
@@ -1040,10 +1040,15 @@ TEST_CASE("arming a card lights every destination and nothing else") {
 			}
 		}
 	}
-	expectedUnlit.emplace_back("Drum Walk X");
-	expectedUnlit.emplace_back("Drum Walk Y");
-	// AND THE KIT-WIDE LAYER (2026-11-06): on the Drum surround's Kit pages, live on a Drum Kit alone.
-	for (const char* name : { "Drum Kit Gamma", "Drum Kit Zone", "Drum Kit Offset", "Drum Kit Pitch", "Drum Kit Length",
+	// AND EACH PAD'S SECOND LAYER (kit stance redesign): its own copy of every amount, in the panel's window when the editor
+	// for it is built, on no face until then.
+	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+		for (const feathers::DrumControl c : feathers::kDrumLayer2Continuous) {
+			expectedUnlit.emplace_back(findParam(static_cast<clap_id>(feathers::drumLayer2Param(slot, c)))->name);
+		}
+	}
+	// AND THE KIT-WIDE TRIMS (2026-11-06): on the Drum surround's Kit page, live on a Drum Kit alone.
+	for (const char* name : { "Drum Kit Pitch", "Drum Kit Length",
 	                          "Drum Kit Sweep", "Drum Kit Tone", "Drum Kit Noise", "Drum Kit Snap", "Drum Kit Metal" }) {
 		expectedUnlit.emplace_back(name);
 	}

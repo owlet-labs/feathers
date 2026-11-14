@@ -2138,8 +2138,13 @@ void OscVoice::addPartialsMixed(int chunk, int fadeLeft0, int readIndex0, bool s
 		d.layerHpX[0] = d.layerHpX[1] = d.layerHpY[0] = d.layerHpY[1] = 0.0f;
 	}
 	if (kit && (d.layerPending || !d.layer.idle())) {
-		const double layerHz = drum::kindBaseHz(d.layerKind) * (baseHz / drum::kindBaseHz(pad.kind));
-		d.layerLaws = drum::lawsFor(d.layerKind, side.drum.layers[d.pad], pad.controls, layerHz, d.velocity);
+		// ITS OWN PITCH, as the pad's is made: its kind's resting pitch at its own Tune and the kit's transpose, moved by the
+		// pad's Bend share of what the voice adds past its key (a bend moves the whole pad, both layers).
+		const double layerHz = drum::kindBaseHz(d.layerKind)
+		                       * std::exp2((layer.tuneSemitones + d.kit->transposeSemitones
+		                                    + pad.bendAmount * (pitch_ - d.keySemitones - d.kit->transposeSemitones))
+		                                   / 12.0);
+		d.layerLaws = drum::lawsFor(d.layerKind, side.drum.layers[d.pad], layer.controls, layerHz, d.velocity);
 		if (!d.layer.idle()) {
 			d.layer.setLaws(d.layerLaws);
 		}

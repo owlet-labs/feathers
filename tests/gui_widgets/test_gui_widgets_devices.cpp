@@ -110,6 +110,7 @@
 #include "plugin/ui/mod_route_menu.h"     // host slots T7: the host rows and their ids
 
 #include <algorithm>
+#include <deque>
 #include <bit>
 #include <set>
 
@@ -42038,5 +42039,55 @@ TEST_CASE("the Pattern card's lane draws a locked row's mark but offers no menu:
 	for (const char* named : { "Right-click", "header", "Transpose", "Wobble", "edit" }) {
 		CAPTURE(named);
 		CHECK(tip.find(named) != std::string::npos);
+	}
+}
+
+TEST_CASE("row lock: the lane draws with a row locked and unlocked, Melody and Drum, and FEATHERS_ROWLOCK_SHOT saves the picture for looking") {
+	using namespace lane_check;
+	namespace genes = feathers::mod::arp::genes;
+	constexpr int kW = 520;
+	constexpr int kH = 520;
+	visage::Canvas canvas;
+	markedWindowless(canvas, kW, kH);
+	canvas.setColor(ui::kSurface);
+	canvas.fill(0.0f, 0.0f, static_cast<float>(kW), static_cast<float>(kH));
+	float top = 4.0f;
+	std::deque<visage::Region> regions; // alive until the capture
+	for (const genes::Mode mode : { genes::Mode::Melody, genes::Mode::Drum }) {
+		Window w;
+		w.f.deviceHost.setField(w.id, pt::at(0, pt::Field::Mode), static_cast<float>(mode));
+		(void)w.window->updateContent();
+		ui::PatternLane& lane = w.lane();
+		(void)lane.poll();
+		const pn::PatternCycle c = lane.cycleForTest();
+		int id = 2;
+		if (mode == genes::Mode::Melody) {
+			size_t k = 0;
+			while (k < c.length && c.steps[k].kind != pn::PatternStep::Kind::Note) {
+				++k;
+			}
+			id = c.keyAt(k, 0) - c.rootKey;
+		}
+		for (const bool locked : { false, true }) {
+			if (locked) {
+				REQUIRE(lane.setRowLocked(id, true));
+			}
+			lane.setBounds(0.0f, 0.0f, static_cast<float>(kW) - 8.0f, 120.0f);
+			regions.emplace_back();
+			visage::Region& region = regions.back();
+			region.setBounds(4, static_cast<int>(top), kW - 8, 120);
+			canvas.addRegion(&region);
+			canvas.beginRegion(&region);
+			lane.draw(canvas);
+			canvas.endRegion();
+			top += 128.0f;
+			(void)lane.poll();
+		}
+		CHECK(top > 0.0f);
+	}
+	const visage::Screenshot shot = takeMarkedCapture(canvas, kW, kH);
+	REQUIRE(shot.width() == kW);
+	if (const char* path = std::getenv("FEATHERS_ROWLOCK_SHOT")) {
+		shot.save(path);
 	}
 }

@@ -1205,24 +1205,33 @@ void PatternLane::drawPitchHeaders(visage::Canvas& canvas, float barHeight) {
 		}
 	}
 	const auto w = static_cast<float>(width());
-	const float fontSize = std::min(kKnobLabelSize, barHeight);
-	int lastY = -1000;
-	for (auto it = keys.rbegin(); it != keys.rend(); ++it) {
-		const int key = *it;
-		const float y = yOfKey(key);
-		const bool locked = rowLocked(key - cycle_.rootKey);
-		if (locked) {
-			canvas.setColor(withAlpha(kAccent, 0.10f));
-			canvas.fill(2.0f, y, w - 5.0f, barHeight);
-			drawLockMark(canvas, kRowGutter - 5.0f, y + barHeight * 0.5f, std::min(8.0f, barHeight));
-		}
-		// A NAME ONLY WHERE THERE IS ROOM FOR IT (a short card lane draws the marks alone) and never over the one above.
-		if (barHeight >= 8.0f && static_cast<int>(y) - lastY >= static_cast<int>(barHeight) - 1) {
-			char name[8];
-			pitchName(key, name, sizeof name);
-			canvas.setColor(locked ? kAccent : kMuted);
-			canvas.text(name, font(fontSize), visage::Font::kCenter, 2.0f, y, kRowGutter - 9.0f, barHeight);
-			lastY = static_cast<int>(y);
+	const float fontSize = std::min(kKnobLabelSize, barHeight + 1.0f);
+	// A LOCKED ROW'S NAME AND MARK FIRST; every other name only where it clears what is drawn (a pitch a semitone away is
+	// often under a pixel higher), and only where there is room for it (a short card lane draws the marks alone).
+	std::vector<float> taken;
+	const auto clear = [&](float y) {
+		return std::none_of(taken.begin(), taken.end(), [&](float t) { return std::fabs(t - y) < fontSize + 1.0f; });
+	};
+	for (const bool lockedPass : { true, false }) {
+		for (auto it = keys.rbegin(); it != keys.rend(); ++it) {
+			const int key = *it;
+			const float y = yOfKey(key);
+			const bool locked = rowLocked(key - cycle_.rootKey);
+			if (locked != lockedPass) {
+				continue;
+			}
+			if (locked) {
+				canvas.setColor(withAlpha(kAccent, 0.10f));
+				canvas.fill(2.0f, y, w - 5.0f, barHeight);
+				drawLockMark(canvas, kRowGutter - 5.0f, y + barHeight * 0.5f, std::min(8.0f, barHeight));
+			}
+			if (barHeight >= 6.0f && clear(y)) {
+				char name[8];
+				pitchName(key, name, sizeof name);
+				canvas.setColor(locked ? kAccent : kMuted);
+				canvas.text(name, font(fontSize), visage::Font::kCenter, 2.0f, y, kRowGutter - 9.0f, barHeight);
+				taken.push_back(y);
+			}
 		}
 	}
 }

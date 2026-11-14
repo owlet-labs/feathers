@@ -21,6 +21,7 @@
 
 #include "plugin/ui/filter_card.h"
 #include "plugin/ui/menu_anchor.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/gui_bridge.h"
 #include "plugin/params.h"
@@ -422,16 +423,7 @@ fx::filter::Settings FilterCard::settingsFor(bool right) const {
 	// a Type chosen there would not reach the curve until audio ran. A modulatable control takes the modulated
 	// road (the left ear's `modulatedFieldAt`, the right's `modulatedFieldRAt` wherever a stereo route reaches).
 	flt::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	const auto& params = flt::kDescriptor.params;
-	for (size_t i = 0; i < present; ++i) {
-		if (i >= params.size() || !params[i].modulatable) {
-			row[i] = host_.fieldAt(device_, i);
-			continue;
-		}
-		float r = 0.0f;
-		row[i] = right && host_.modulatedFieldRAt(device_, i, r) ? r : host_.modulatedFieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, flt::kDescriptor, row, right);
 	flt::Settings s = flt::stateOf(row, present).settings;
 	// THE CURVE DRAWS THE FILTER, whether or not it is switched into the signal. The one field this
 	// overrides, and the reason the card cannot simply hand the state back untouched.

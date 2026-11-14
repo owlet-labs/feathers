@@ -17,6 +17,7 @@
 
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/drawn_card.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/expanded_views.h"
 #include "plugin/ui/theme.h"
@@ -179,7 +180,7 @@ bool DrawnCard::updateContent() {
 	if (!isVisible()) {
 		return false; // `redraw()` is refused for an invisible frame, so a true here would be a lie.
 	}
-	const dr::Settings now = settings();
+	const dr::Settings now = shownSettings();
 	if (haveDrawn_ && now == drawnSettings_) {
 		return false;
 	}
@@ -198,6 +199,14 @@ dr::Settings DrawnCard::settings() const {
 	for (size_t i = 0; i < present; ++i) {
 		row[i] = host_.fieldAt(device_, i);
 	}
+	return dr::stateOf(row, present);
+}
+
+dr::Settings DrawnCard::shownSettings() const {
+	// WHERE MODULATION LEFT THE ROW — what the curve is drawn from. `settings()` stays the stored row: the puck is the HAND's
+	// control, at the base, with the modulated position a separate dot beside it.
+	dr::Row row {};
+	const size_t present = readModulatedRow(host_, device_, dr::kDescriptor, row);
 	return dr::stateOf(row, present);
 }
 
@@ -321,7 +330,7 @@ void DrawnCard::drawCurve(visage::Canvas& canvas) {
 	// THE DEVICE'S OWN CLAIM ABOUT WHAT IT DOES, evaluated in closed form through the same function
 	// the audio path realises its coefficients from — blend, then globals, then realise. A picture
 	// drawn from a second implementation would be a second thing to keep in step.
-	const dr::Realised realised = dr::realisedAt(settings());
+	const dr::Realised realised = dr::realisedAt(shownSettings());
 	canvas.setColor(withAlpha(kAccent, 0.9f));
 	float prevX = box.x();
 	float prevY = unityY;

@@ -163,6 +163,9 @@ public:
 	[[nodiscard]] SwitchChip* keytrackForTest() const { return keytrack_.get(); }
 	[[nodiscard]] SwitchChip* polyForTest() const { return poly_.get(); }
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::waypoint::Settings drawnFromForTest() const { return shownSettings(); }
+
 private:
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt — one line, so the toggle, the
 	/// gesture that records the undo step, and the redraw all live once in the base.
@@ -170,6 +173,7 @@ private:
 
 	[[nodiscard]] DeviceControl& control(fx::waypoint::Param p) const;
 	[[nodiscard]] fx::waypoint::Settings settings() const;
+	[[nodiscard]] fx::waypoint::Settings shownSettings() const;
 
 	/// ASK FOR A FRAME WHEN THE PICTURE THIS CARD DRAWS HAS MOVED.
 	///

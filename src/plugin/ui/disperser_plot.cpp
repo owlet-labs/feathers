@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/disperser_plot.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/knob.h"
 #include "plugin/ui/theme.h"
@@ -178,10 +179,7 @@ size_t DisperserPlot::draggedControl() const noexcept {
 
 dsp::Settings DisperserPlot::settingsNow() const {
 	dsp::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, dsp::kDescriptor, row);
 	return dsp::stateOf(row, present).settings;
 }
 

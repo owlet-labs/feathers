@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/smooth_expanded.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/theme.h"
@@ -90,10 +91,8 @@ DeviceControl& SmoothExpanded::control(sm::Param p) const {
 
 sm::Settings SmoothExpanded::settings() const {
 	sm::Row row {};
-	for (size_t i = 0; i < row.size(); ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
-	return sm::stateOf(row, row.size()).settings;
+	const size_t present = readModulatedRow(host_, device_, sm::kDescriptor, row);
+	return sm::stateOf(row, present).settings;
 }
 
 bool SmoothExpanded::hasReadings() const {

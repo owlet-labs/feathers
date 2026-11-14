@@ -88,6 +88,9 @@ public:
 	static constexpr size_t kMaxHits = 400;
 	static constexpr float kStripHeight = 20.0f;
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::noise::Settings drawnFromForTest() const { return settingsNow(); }
+
 private:
 	[[nodiscard]] DeviceControl& control(fx::noise::Param p) const;
 	[[nodiscard]] fx::noise::Settings settingsNow() const;

@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/mseg_card.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/celestial.h"
@@ -447,6 +448,12 @@ mseg::Settings MsegCard::settings() const {
 	return mod::mseg::settingsOf(row, present);
 }
 
+mseg::Settings MsegCard::shownSettings() const {
+	mod::mseg::Row row {};
+	const size_t present = readModulatedRow(host_, device_, mod::mseg::kDescriptor, row);
+	return mod::mseg::settingsOf(row, present);
+}
+
 void MsegCard::bindBox(size_t index) {
 	ValueBox* box = boxes_[index].get();
 	box->onValueChanged([this]() { redraw(); });
@@ -556,11 +563,11 @@ mseg::Layout MsegCard::layoutNow() const {
 }
 
 std::vector<std::pair<float, float>> MsegCard::curveRight() const {
-	return mseg::polylineRight(settings());
+	return mseg::polylineRight(shownSettings());
 }
 
 std::vector<std::pair<float, float>> MsegCard::curve() const {
-	return mseg::polyline(settings());
+	return mseg::polyline(shownSettings());
 }
 
 bool MsegCard::updateContent() {

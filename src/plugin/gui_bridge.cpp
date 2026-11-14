@@ -1686,7 +1686,7 @@ void ParamBridge::setFxModulatedForTest(size_t slot, size_t control, float value
 float ParamBridge::fxModulatedFieldAt(size_t slot, size_t control) const noexcept {
 	const FxTelemetry* t = fxTelemetry_.at(slot);
 	if (t == nullptr || control >= kMaxDeviceFields) {
-		return 0.0f;
+		return control >= kMaxDeviceFields ? 0.0f : fxFieldAt(slot, control); // no channel yet: unmodulated, not silent
 	}
 	// PAST THE PUBLISHED WIDTH IS THE RAW FIELD, not zero — the rule `rackModulatedFieldAt` and
 	// `RackEngine::modulatedFieldAt` both follow: unmodulated is not silent.
@@ -1761,7 +1761,7 @@ size_t ParamBridge::rackFieldsPresentAt(size_t slot) const noexcept {
 float ParamBridge::rackModulatedFieldAt(size_t slot, size_t control) const noexcept {
 	const RackTelemetry* t = rackTelemetry_.at(slot);
 	if (t == nullptr || control >= kMaxDeviceFields) {
-		return 0.0f;
+		return control >= kMaxDeviceFields ? 0.0f : rackFieldAt(slot, control); // no channel yet: unmodulated, not silent
 	}
 	// PAST THE PUBLISHED WIDTH IS THE RAW FIELD, not zero — a control the modulated row does not
 	// reach is unmodulated, not silent, which is the same rule `RackEngine::modulatedFieldAt` follows.

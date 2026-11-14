@@ -198,6 +198,9 @@ public:
 	/// The hand-drawn parts' tooltips — see `FxCard::contentTooltipAt`.
 	const char* contentTooltipAt(visage::Point local) const override;
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] mod::lfo::Settings drawnFromForTest() const { return shownSettings(); }
+
 private:
 	std::vector<Watch> watches_;
 	void bindBox(size_t index);
@@ -217,6 +220,8 @@ private:
 	visage::Point fromUnit(float x, float y) const;
 
 	mod::lfo::Settings settings() const;
+	/// **THE SAME ROW WHERE MODULATION LEFT IT** — what the plot draws, so the picture follows a routed control as the knob's ring does. `settings()` stays the STORED row: an edit starts from it, and an edit that started from a modulated one would write the modulation into the patch.
+	mod::lfo::Settings shownSettings() const;
 	void writeSettings(const mod::lfo::Settings& settings);
 	mod::Playhead playhead() const;
 	/// The drawn window with the wave read `lead` cycles (steps, for a walk) further on — `curve` at 0, `curveRight` past it.

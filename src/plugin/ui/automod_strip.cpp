@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/automod_strip.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "fx/automod/automod.h"
 #include "fx/filter/filter_types.h"
@@ -315,10 +316,7 @@ amd::Settings AutomodStrip::settings() const {
 	// is the point of the comment above: a zero-filled short row would draw the origin, and the origin
 	// is the one coordinate with no travel in it.
 	amd::Row row = amd::rowOf(amd::Settings {});
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	(void)readModulatedRow(host_, device_, amd::kDescriptor, row);
 	return amd::settingsOf(row);
 }
 

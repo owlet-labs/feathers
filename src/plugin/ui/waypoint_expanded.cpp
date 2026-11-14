@@ -17,6 +17,7 @@
 
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/waypoint_expanded.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/theme.h"
 
@@ -155,10 +156,7 @@ void WaypointExpanded::draw(visage::Canvas& canvas) {
 	// THE ROW, READ THROUGH THE SEAM — `fieldsPresentAt`/`fieldAt` are the chain read without the
 	// container only the parameter road has. Same numbers, by construction.
 	wp::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t present = readModulatedRow(host_, device_, wp::kDescriptor, row);
 	const wp::Settings s = wp::stateOf(row, present);
 
 	canvas.setColor(withAlpha(kLine, 0.25f));

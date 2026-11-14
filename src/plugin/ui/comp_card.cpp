@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/comp_card.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "fx/comp/comp_lanes.h"
 #include "plugin/ui/dyn_meter.h"
@@ -419,7 +420,7 @@ void CompCard::drawContent(visage::Canvas& canvas) {
 //------------------------------------------------------------------------------------------------//
 
 float CompCard::field(cp::Param p) const {
-	return static_cast<float>(host_.fieldAt(device_, static_cast<size_t>(p)));
+	return readModulatedField(host_, device_, cp::kDescriptor, static_cast<size_t>(p));
 }
 
 std::array<float, CompCard::kCurveFields> CompCard::curveFields() const {
@@ -450,7 +451,7 @@ visage::Frame& CompCard::laneChipForTest() const {
 }
 
 comp_plot::Curves CompCard::curves() const {
-	return comp_plot::curvesOf([this](size_t i) { return host_.fieldAt(device_, i); });
+	return comp_plot::curvesOf([this](size_t i) { return readModulatedField(host_, device_, cp::kDescriptor, i); });
 }
 
 float CompCard::transferDb(float xDb) const {

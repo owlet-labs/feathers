@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/comp_expanded.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "fx/comp/comp_lanes.h"
 #include "plugin/ui/control_face.h"
@@ -55,7 +56,7 @@ constexpr std::array<const char*, 15> kCaptions {
 //------------------------------------------------------------------------------------------------//
 
 comp_plot::Curves CompTransferView::curves() const {
-	return comp_plot::curvesOf([this](size_t i) { return host_.fieldAt(id_, i); });
+	return comp_plot::curvesOf([this](size_t i) { return readModulatedField(host_, id_, cp::kDescriptor, i); });
 }
 
 void CompTransferView::draw(visage::Canvas& canvas) {

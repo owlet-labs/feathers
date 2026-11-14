@@ -242,6 +242,9 @@ public:
 	/// THE SETTINGS THIS CARD LAST ASKED FOR A FRAME WITH — see `ShaperExpanded::drawnSettingsForTest`.
 	[[nodiscard]] fx::shaper::Settings drawnSettingsForTest() const noexcept { return drawnSettings_; }
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::shaper::Settings drawnFromForTest() const { return settings(); }
+
 private:
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt — one line, so the toggle, the
 	/// gesture that records the undo step, and the redraw all live once in the base.

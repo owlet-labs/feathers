@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/smooth_card.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/theme.h"
@@ -109,10 +110,8 @@ bool SmoothCard::headEnabled() const {
 
 sm::Settings SmoothCard::settings() const {
 	sm::Row row {};
-	for (size_t i = 0; i < row.size(); ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
-	return sm::stateOf(row, row.size()).settings;
+	const size_t present = readModulatedRow(host_, device_, sm::kDescriptor, row);
+	return sm::stateOf(row, present).settings;
 }
 
 void SmoothCard::setModulation(ModState* mod, EditHistory* history) {

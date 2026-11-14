@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/harm_scope.h"
+#include "plugin/ui/modulated_row.h"
 
 #include "plugin/fx_chain.h"
 #include "plugin/ui/knob.h"
@@ -235,10 +236,7 @@ hrm::Settings HarmScope::fullSettings() const {
 	// type only the parameter road has; the seam gives the same row a field at a time, so this is the
 	// same computation with the host-specific container taken out of the middle.
 	hrm::Row row {};
-	const size_t fields = std::min(host_.fieldsPresentAt(device_), row.size());
-	for (size_t i = 0; i < fields; ++i) {
-		row[i] = host_.fieldAt(device_, i);
-	}
+	const size_t fields = readModulatedRow(host_, device_, hrm::kDescriptor, row);
 	hrm::Settings s = hrm::stateOf(row, fields).settings;
 	// THE PICTURE DRAWS THE DEVICE WHETHER OR NOT IT IS SWITCHED IN, which is the filter card's rule
 	// and the only field overridden here. A player reaching for the Enabled switch wants to see what

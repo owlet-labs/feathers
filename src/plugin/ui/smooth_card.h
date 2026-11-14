@@ -117,6 +117,9 @@ public:
 	[[nodiscard]] bool hasReadings() const;
 	[[nodiscard]] float inputPeak() const;
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::smooth::Settings drawnFromForTest() const { return settings(); }
+
 private:
 	device::Modulatable* enableModulatable() override;
 	[[nodiscard]] DeviceControl& control(fx::smooth::Param p) const;

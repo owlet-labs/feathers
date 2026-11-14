@@ -165,6 +165,9 @@ public:
 	[[nodiscard]] std::vector<fx::drawn::Param> addressedParamsForTest() const;
 	[[nodiscard]] const std::vector<std::unique_ptr<Knob>>& knobsForTest() const { return knobs_; }
 
+	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
+	[[nodiscard]] fx::drawn::Settings drawnFromForTest() const { return shownSettings(); }
+
 private:
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt — one line, so the toggle, the
 	/// gesture that records the undo step, and the redraw all live once in the base.
@@ -172,6 +175,7 @@ private:
 
 	[[nodiscard]] DeviceControl& control(fx::drawn::Param p) const;
 	[[nodiscard]] fx::drawn::Settings settings() const;
+	[[nodiscard]] fx::drawn::Settings shownSettings() const;
 
 	/// ASK FOR A FRAME WHEN THE CURVE THIS CARD DRAWS HAS MOVED.
 	///

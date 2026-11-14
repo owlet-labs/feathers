@@ -17061,8 +17061,10 @@ TEST_CASE("a bar stops where its band's own range runs out, and that is what a d
 		        == doctest::Approx(0.5f));
 		const visage::Point ring = graph->ringCentre(0, ui::OwlttGraph::Handle::ThresholdBar);
 		const float toY = bars.bottom() - ui::OwlttGraph::kRingRadius;
-		const float wanted =
-		    0.2f + std::clamp((bars.bottom() - toY) / bars.height(), 0.0f, 1.0f) * 0.8f;
+		// THE PLOT READS THE THRESHOLD PARAMETER'S OWN 0..1 over the bar area (the compressor's `0.2 + 0.8 t` is its internal
+		// scale for the same range), so the pointer's height IS the effective threshold; this restated `0.2 + 0.8 t`, the
+		// mapping the plot used before it was made to match the sound.
+		const float wanted = std::clamp((bars.bottom() - toY) / bars.height(), 0.0f, 1.0f);
 		graph->onMouseDown().callback(at(ring.x, ring.y));
 		graph->onMouseDrag().callback(at(ring.x, toY));
 		graph->onMouseUp().callback(at(ring.x, toY));

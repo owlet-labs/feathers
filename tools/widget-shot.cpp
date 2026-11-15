@@ -540,6 +540,8 @@ int main(int argc, char** argv) {
 	/// first rail (the others stay collapsed, the state a fresh rack starts in). 0 means not asked.
 	int rackChains = 0;
 	bool rackChainsOpen = false;
+	/// `--rack-arm-macro N` (1..8): press the Rack window's arrow for macro N, as a hand does, so the chains' controls light. 0 is not asked.
+	int rackArmMacro = 0;
 	/// `--chain-window` (backlog OC): the CHAIN device's window over a running body with a filter and a delay in it.
 	bool chainWindow = false;
 	/// `--chain-rack <mode>:<chains>:<band count index>` with `--chain-window`: a RACK beside the Filter in the window's
@@ -1169,6 +1171,10 @@ int main(int argc, char** argv) {
 			const std::string spec = argv[++i];
 			rackChains = std::atoi(spec.c_str());
 			rackChainsOpen = spec.find(":open") != std::string::npos;
+			continue;
+		}
+		if (arg == "--rack-arm-macro" && i + 1 < argc) {
+			rackArmMacro = std::atoi(argv[++i]);
 			continue;
 		}
 		if (arg == "--resonate-drone" && i + 1 < argc) {
@@ -2512,6 +2518,16 @@ int main(int argc, char** argv) {
 			pump(1200);
 			std::printf("rack:     %zu chain(s), panel minimum %.0f x %.0f\n", rack.chainCount(), panel->minimumSize().x,
 			            panel->minimumSize().y);
+			if (rackArmMacro >= 1 && rackArmMacro <= 8) {
+				visage::MouseEvent press {};
+				press.position = { 1.0f, 1.0f };
+				panel->macroArmForTest(static_cast<size_t>(rackArmMacro - 1)).onMouseDown().callback(press);
+				(void)panel->updateContent();
+				pump(600);
+				(void)panel->updateContent();
+				pump(600);
+				std::printf("armed:    the Rack window's Macro %d\n", rackArmMacro);
+			}
 		}
 	}
 

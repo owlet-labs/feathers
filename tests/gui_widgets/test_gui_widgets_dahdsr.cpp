@@ -3366,22 +3366,9 @@ TEST_CASE("every declared parameter a hand should be able to reach has a control
 		REQUIRE(desc != nullptr);
 		expected.push_back(std::string(desc->name));
 	}
-	// THE DRUM PAD'S TWO LAYERS (kit stance redesign): the engine reads every one of these (test_drum_engine's "layer two reads its
-	// OWN copy" case), and the pad editor that gives them a hand is the next piece of the redesign, not this one. Until it lands the
-	// pad panel offers layer two's Lock and its vector (the old layer row) and nothing else of the layers' own: layer one's Lock,
-	// vector and terrain pitch mode, layer two's pitch mode and its copies of every control a hit reads.
-	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
-		for (const feathers::DrumControl c : feathers::kDrumLayerControls) {
-			const bool onPanel = c == feathers::DrumControl::Lock || c == feathers::DrumControl::OffsetX || c == feathers::DrumControl::OffsetY;
-			if (!onPanel) {
-				expected.push_back(std::string(findParam(static_cast<clap_id>(feathers::drumLayer2Param(slot, c)))->name));
-			}
-		}
-		for (const feathers::DrumControl c : { feathers::DrumControl::Lock, feathers::DrumControl::OffsetX, feathers::DrumControl::OffsetY,
-		                                       feathers::DrumControl::PitchMode }) {
-			expected.push_back(std::string(findParam(static_cast<clap_id>(feathers::drumParam(slot, c)))->name));
-		}
-	}
+	// THE DRUM PAD'S TWO LAYERS (kit stance redesign) HAVE NO ALLOWANCE LEFT: every control a layer owns (its Lock, its vector, its pitch
+	// mode, layer two's copies of everything a hit reads, its Kind, Level, Delay and High Pass) is on the pad editor's tabs, so the
+	// declared-but-unreachable set is the one parameter above and nothing of the drum's.
 	std::sort(unreachable.begin(), unreachable.end());
 	std::sort(expected.begin(), expected.end());
 
@@ -14822,9 +14809,9 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 	// PLUCK (2026-10-31, KS design §4.2) reads Smoothness (its pluck's tone is the Additive spectrum) and its five string
 	// scalers (the bank's String build), and its engine-wide knobs (the String page's Width, Decay and Release here; the Pluck
 	// page's four are pinned by test_gui_widgets_explore's Pluck case); its left box is the page box.
-	// DRUM (2026-11-05, drum proposal §6), in Kit mode with pad A (a Kick) selected: the six field scalers a Kick reads (not
-	// Metal: drum::kindReads); its left box is the page box (Pad, Kit Fields). A kit
-	// pad never greys for its switch (every sound is a pad).
+	// DRUM, in Kit mode with pad A (a Kick) selected: the surround holds the seven kit trims and nothing else, so none of this
+	// table's controls is drawn (a pad's own scalers are per layer on the pad editor, and a kit reads no drift or orbit, so no
+	// Radius or Theta).
 	//                                    W  F  Wp S  Q  Sy Fb P  G  Mb Mo R  T  Rs Sh SA Bi St Pk Ds Dm
 	const Row kTable[] = {
 		{ OscType::Morph,       "--------L--LL--------" },
@@ -14834,7 +14821,7 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 		{ OscType::BasicShapes, "LLLL----LL-LL-L------" }, // Q/Sy/Fb/P on its Operators page (backlog KV)
 		{ OscType::Additive,    "L--L-----L-LL--LL----" },
 		{ OscType::Pluck,       "---L-----L-LL----LL--" },
-		{ OscType::Drum,        "---------L-LL------L-" },
+		{ OscType::Drum,        "---------------------" }, // a Kit: the seven kit trims alone (no page box, no pad scalers, no Radius or Theta)
 	};
 	REQUIRE(std::size(kTable) == static_cast<size_t>(OscType::kCount));
 	// PER-SOUND controls grey when the selected sound is parked (its switch is on this face); the engine-wide
@@ -14931,7 +14918,7 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 					// Asked of the draw itself, and of the press the stage's hit test answers.
 					CHECK(f.stage.drawWarpModeBoxForTest(canvas) == drawn);
 					CHECK((f.stage.warpModeLive() || f.stage.bowModeLive() || f.stage.additiveShapeLive()
-					       || f.stage.pluckPageLive() || f.stage.drumPageLive())
+					       || f.stage.pluckPageLive())
 					      == drawn);
 					continue;
 				}

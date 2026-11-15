@@ -278,7 +278,7 @@ constexpr ExploreStage::SlotTable kSurroundSlots = [] {
 		                    C::KsBrightness, C::KsSustain, C::KsPick,    C::KsNoise, C::KsStretch,  C::None };
 	// DRUM (2026-11-05, drum proposal §6): the selected sound's seven field scalers (the bank's Drum build reads them through
 	// drumFieldsWithOverrides) — five on the right flank, Snap and Metal on the left. currentSlotRow takes out what the mode or the selected kind does not read.
-	row(OscType::Drum) = { C::DrumSnap,  C::DrumMetal,  C::None,      C::DrumPage, C::None,
+	row(OscType::Drum) = { C::DrumSnap,  C::DrumMetal,  C::None,      C::None,     C::None,
 		                   C::DrumPitch, C::DrumLength, C::DrumSweep, C::DrumTone, C::DrumNoise, C::None };
 	return table;
 }();
@@ -509,6 +509,14 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 		for (const DrumControl c : { DrumControl::FieldPitch, DrumControl::FieldLength, DrumControl::FieldSweep, DrumControl::FieldTone,
 		                             DrumControl::FieldNoise, DrumControl::FieldSnap, DrumControl::FieldMetal }) {
 			watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(pad, c)), this));
+		}
+		// AND WHERE EACH LAYER STANDS (its vector, which is the pad's place in a kit) and whether layer two is on: the star, the
+		// other pads' marks and the terrain's window all read them.
+		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(pad, DrumControl::LayerKind)), this));
+		for (size_t layer = 0; layer < 2; ++layer) {
+			for (const DrumControl c : { DrumControl::OffsetX, DrumControl::OffsetY }) {
+				watches_.push_back(registry.watchToken(static_cast<clap_id>(drumLayerParam(pad, layer, c)), this));
+			}
 		}
 	}
 	// And the bow mode, which the mode box names on Resonate.
@@ -1129,7 +1137,10 @@ double ExploreStage::selectedHome() const {
 }
 
 double ExploreStage::selectedDrift() const {
-	return bridge_.soundTravel().offset[selection_.slot()].x;
+	if (kitVirtual_) {
+		return kitVirtual_->x;
+	}
+	return placeOf(selection_.slot()).x;
 }
 
 /// **THE OTHER HALF OF THE SOUND'S PLACE** (backlog GY). `SoundTravel::offset` has always been an
@@ -1145,7 +1156,10 @@ double ExploreStage::selectedTheta() const {
 }
 
 double ExploreStage::selectedDriftY() const {
-	return bridge_.soundTravel().offset[selection_.slot()].y;
+	if (kitVirtual_) {
+		return kitVirtual_->y;
+	}
+	return placeOf(selection_.slot()).y;
 }
 
 /// **WHERE THE SELECTED SOUND IS PLAYED — its authored place with the engine's live Radius/Theta pull
@@ -1219,6 +1233,23 @@ size_t ExploreStage::moveKitUnlocked(double dx, double dy) {
 	return written;
 }
 
+AnchorPoint ExploreStage::placeOf(size_t slot) const {
+	slot = std::min(slot, kMaxSounds - 1);
+	if (drumKitShown()) {
+		// IN A KIT THE PLACE A PAD IS PUT AT IS LAYER ONE'S VECTOR (the engine reads no drift there, so showing it would be a
+		// report of a number nothing plays).
+		return { bridge_.value(static_cast<clap_id>(drumLayerParam(slot, 0, DrumControl::OffsetX))),
+			     bridge_.value(static_cast<clap_id>(drumLayerParam(slot, 0, DrumControl::OffsetY))) };
+	}
+	return bridge_.soundTravel().offset[slot];
+}
+
+AnchorPoint ExploreStage::layerPlaceOf(size_t slot, size_t layer) const {
+	slot = std::min(slot, kMaxSounds - 1);
+	return { bridge_.value(static_cast<clap_id>(drumLayerParam(slot, layer, DrumControl::OffsetX))),
+		     bridge_.value(static_cast<clap_id>(drumLayerParam(slot, layer, DrumControl::OffsetY))) };
+}
+
 AnchorPoint ExploreStage::kitStanceNow() const {
 	// The engine's rule (character_params.h): the standard puck's Pos X/Y through Weather's taper; Path is not read in a kit.
 	const double weather = amountTaper(bridge_.modulated(static_cast<clap_id>(ParamId::Weather)));
@@ -1228,6 +1259,9 @@ AnchorPoint ExploreStage::kitStanceNow() const {
 
 AnchorPoint ExploreStage::playedPlace() const {
 	const size_t slot = selection_.slot();
+	if (drumKitShown()) {
+		return placeOf(slot); // a kit reads no drift, orbit or pull: the pad is where its layer's vector puts it
+	}
 	const TravelPulls pulls = bridge_.travelPulls();
 	const SoundTravel travel = bridge_.soundTravel();
 	AnchorPoint at = pulledPlace(travel.offset[slot], travel.orbit[slot], pulls.radius[slot], pulls.theta[slot]);
@@ -1319,7 +1353,22 @@ void ExploreStage::commit(clap_id id, double value) {
 }
 
 void ExploreStage::commitDrift(size_t slot, double x, double y) {
-	const AnchorPoint now = bridge_.soundTravel().offset[std::min(slot, kMaxSounds - 1)];
+	const AnchorPoint now = placeOf(slot);
+	if (drumKitShown() && slot < kMaxSounds) {
+		// A KIT'S DRAG IS THE BULK EDIT AND NOTHING ELSE: the step between where the drag was and where it now asks to be, added to
+		// every unlocked layer's vector. No drift is written (a kit reads none). The reference is the drag's own last point: the
+		// star's place while it moves, and a virtual point (the drag logic's `selectedDrift`, never drawn) while the star's own
+		// layer is locked and stands still, so a locked star neither holds the drag nor makes it repeat each frame.
+		const bool locked = std::lround(bridge_.value(static_cast<clap_id>(drumLayerParam(slot, 0, DrumControl::Lock)))) != 0;
+		const AnchorPoint ref = kitVirtual_.value_or(now);
+		if (locked) {
+			kitVirtual_ = AnchorPoint { x, y };
+		}
+		if (ref.x != x || ref.y != y) {
+			moveKitUnlocked(x - ref.x, y - ref.y);
+		}
+		return;
+	}
 	if (now.x == x && now.y == y) {
 		return;
 	}
@@ -1329,11 +1378,6 @@ void ExploreStage::commitDrift(size_t slot, double x, double y) {
 	if (!driftGestureOpen_) {
 		bridge_.beginSoundTravelGesture();
 		driftGestureOpen_ = true;
-	}
-	// IN A KIT THE PAD'S PLACE IS LAYER ONE'S VECTOR (the engine reads no drift there): a drag is a KIT-WIDE edit, the same step
-	// added to every unlocked layer's vector, in the one gesture.
-	if (drumKitShown() && slot < kMaxSounds) {
-		moveKitUnlocked(x - now.x, y - now.y);
 	}
 	bridge_.setSoundTravel(slot, { x, y });
 }
@@ -1365,7 +1409,7 @@ void ExploreStage::rotateSelectedBy(double radians) {
 	const size_t slot = std::min(selection_.slot(), kMaxSounds - 1);
 	const RotatedSound turned =
 	    rotateSoundBy(bridge_.soundOrientations(), bridge_.soundResidue(), slot, zone, phaseOffset,
-	                  bridge_.orientation(), delta, bridge_.soundTravel().offset[slot],
+	                  bridge_.orientation(), delta, placeOf(slot),
 	                  // Where this sound has been carried to. Without it the turn is banked against
 	                  // the plane of a sound that is not this one.
 	                  bridge_.soundGamma().base[slot]);
@@ -1411,6 +1455,7 @@ void ExploreStage::recordBulk() {
 }
 
 void ExploreStage::endGesture() {
+	kitVirtual_.reset();
 	for (const clap_id id : gesturesOpen_) {
 		bridge_.endGesture(id);
 	}
@@ -1469,7 +1514,7 @@ void ExploreStage::driftTo(double drift) {
 	// subtract, and therefore no term that a host could move mid-drag to write its inverse into the
 	// patch. The compensation this line used to carry, and the captured value that made it safe, are
 	// described in the header; both are gone with the thing they compensated for.
-	const AnchorPoint now = bridge_.soundTravel().offset[selection_.slot()];
+	const AnchorPoint now = placeOf(selection_.slot());
 	commitDrift(selection_.slot(), drift, now.y);
 	repaint();
 }
@@ -2236,12 +2281,6 @@ void ExploreStage::chooseShapesPage(ShapesPage page) {
 	redraw();
 }
 
-void ExploreStage::chooseDrumPage(DrumPage page) {
-	drumPage_ = page;
-	syncWidthKnob();
-	redraw();
-}
-
 void ExploreStage::choosePluckPage(PluckPage page) {
 	pluckPage_ = page;
 	syncWidthKnob();
@@ -2276,22 +2315,18 @@ const ExploreStage::SlotRow& ExploreStage::currentSlotRow() const {
 		                           : static_cast<clap_id>(ParamId::DrumPitchedKind);
 		const drum::FieldUse reads =
 		    drum::kindReads(static_cast<drum::Kind>(steppedIndex(bridge_.value(kindId), kDrumKindNames.size())));
-		// THE PAGE (Kit mode only; Pitched is always the Pad page, with no page box): Pad or Kit Fields.
-		drumRow_ = !kit || drumPage_ == DrumPage::Pad ? slots_[engine]
-		           : drumPage_ == DrumPage::KitFields ? drumKitFieldsRow_
-		                                              : drumKitFieldsRow_;
+		// A KIT'S SURROUND IS THE SEVEN KIT TRIMS AND NOTHING ELSE (a pad's own seven scalers are per layer, on the pad editor);
+		// Pitched mode keeps the selected sound's seven, each drawn only where its kind reads it.
+		drumRow_ = kit ? drumKitFieldsRow_ : slots_[engine];
 		for (SurroundControl& control : drumRow_) {
-			const bool kitOnly = control == SurroundControl::DrumPage
-			                     || (control >= SurroundControl::DrumKitPitch && control <= SurroundControl::DrumKitMetal);
-			const bool shown = kitOnly                                                                   ? kit
-			                   : control == SurroundControl::DrumPitch                                       ? reads.pitch
-			                   : control == SurroundControl::DrumLength                                      ? reads.length
-			                   : control == SurroundControl::DrumSweep                                       ? reads.sweep
-			                   : control == SurroundControl::DrumTone                                        ? reads.tone
-			                   : control == SurroundControl::DrumNoise                                       ? reads.noise
-			                   : control == SurroundControl::DrumSnap                                        ? reads.snap
-			                   : control == SurroundControl::DrumMetal                                       ? reads.metal
-			                                                                                                 : true;
+			const bool shown = control == SurroundControl::DrumPitch    ? reads.pitch
+			                   : control == SurroundControl::DrumLength ? reads.length
+			                   : control == SurroundControl::DrumSweep  ? reads.sweep
+			                   : control == SurroundControl::DrumTone   ? reads.tone
+			                   : control == SurroundControl::DrumNoise  ? reads.noise
+			                   : control == SurroundControl::DrumSnap   ? reads.snap
+			                   : control == SurroundControl::DrumMetal  ? reads.metal
+			                                                            : true;
 			if (!shown) {
 				control = SurroundControl::None;
 			}
@@ -2396,7 +2431,6 @@ Knob* ExploreStage::surroundKnob(SurroundControl control, size_t sound) const {
 	case SurroundControl::Model:
 	case SurroundControl::ShapesPage:
 	case SurroundControl::KsPage:
-	case SurroundControl::DrumPage:
 	case SurroundControl::kCount: break;
 	}
 	return nullptr;
@@ -2426,8 +2460,6 @@ const char* ExploreStage::boxLabel(SurroundControl control) const {
 	case SurroundControl::ShapesPage: return shapesPage_ == ShapesPage::Mix ? "Page: Mix" : "Page: Operators";
 	case SurroundControl::KsPage:
 		return pluckPage_ == PluckPage::String ? "Page: String" : pluckPage_ == PluckPage::Pluck ? "Page: Pluck" : "Page: Velocity";
-	case SurroundControl::DrumPage:
-		return drumPage_ == DrumPage::Pad ? "Page: Pad" : "Page: Kit Fields";
 	default: return "";
 	}
 }
@@ -2461,18 +2493,6 @@ void ExploreStage::showBoxMenu(SurroundControl control) {
 			}
 		};
 		showMenuAt(std::move(menu), *this, boxBounds(SurroundControl::KsPage));
-		return;
-	}
-	case SurroundControl::DrumPage: {
-		visage::PopupMenu menu;
-		menu.addOption(0, "Pad").select(drumPage_ == DrumPage::Pad);
-		menu.addOption(1, "Kit Fields").select(drumPage_ == DrumPage::KitFields);
-		menu.onSelection() = [this](int id) {
-			if (id >= 0 && id <= 1) {
-				chooseDrumPage(static_cast<DrumPage>(id));
-			}
-		};
-		showMenuAt(std::move(menu), *this, boxBounds(SurroundControl::DrumPage));
 		return;
 	}
 	default: return;
@@ -2728,9 +2748,14 @@ void ExploreStage::syncWidthKnob() {
 		for (size_t slot = 0; slot < kMaxSounds; ++slot) {
 			Knob& knob = *array[slot];
 			knob.setBounds(bounds);
-			const bool shown = slot == selected;
+			// A KIT READS NO DRIFT, ORBIT OR PULL (its pads are placed by their layers' vectors), so a Radius or Theta there would move
+			// nothing: not drawn (hidden, not greyed) while a Drum Kit is up.
+			const bool shown = slot == selected && !drumKit;
 			if (knob.isVisible() != shown) {
 				knob.setVisible(shown);
+			}
+			if (knob.enabled() != shown) {
+				knob.setEnabled(shown); // a hidden control is a dead one too
 			}
 		}
 	};
@@ -2819,6 +2844,9 @@ ExploreStage::Part ExploreStage::hitAt(visage::Point position) const {
 	for (const Part part : {
 		     Part::Like, Part::Mutate, Part::Undo, Part::Redo, Part::Gamma, Part::Zoom, Part::Rotate, Part::Radius,
 		     Part::Theta }) {
+		if ((part == Part::Radius || part == Part::Theta) && drumKitShown()) {
+			continue; // not drawn in a kit (see syncPolar): the corner is the chart's
+		}
 		if (partBounds(part).contains(position)) {
 			return part;
 		}
@@ -3964,13 +3992,14 @@ void ExploreStage::drawStar(visage::Canvas& canvas) {
 	// moves and what the orbit turns about, so it keeps the full glyph and the label; the played place
 	// gets a smaller star in the same hue, tied back by a faint line so which sound it belongs to is
 	// never a guess. ONLY WHEN THE TWO DIFFER — a sound with no Radius on it is one thing, drawn once.
-	const visage::Point sheet = sheetAtWorld(selectedDrift(), selectedDriftY());
+	const AnchorPoint real = placeOf(selection_.slot()); // where the pad IS (a locked star stands while the drag goes on)
+	const visage::Point sheet = sheetAtWorld(real.x, real.y);
 	const bool onChart = d.contains(sheet);
 	const uint32_t playedHue = kSeedHues[hueIndexOf(bridge_.soundHues(), selection_.slot())];
 	const AnchorPoint played = playedPlace();
 	playedMarkDrawn_ = false;
 	vectorDrawn_ = false;
-	if (played.x != selectedDrift() || played.y != selectedDriftY()) {
+	if (played.x != real.x || played.y != real.y) {
 		const visage::Point playedSheet = sheetAtWorld(played.x, played.y);
 		// Asked of the SHEET, for the reason above; a played place off the chart draws nothing rather
 		// than a second rim mark — the knobs' own marks carry it there.
@@ -4104,7 +4133,8 @@ void ExploreStage::drawReadouts(visage::Canvas& canvas) const {
 	// automation: a readout re-rasterising three digits at LFO rates on a surface whose glyph atlas
 	// this project has already watched corrupt under text churn. Where the puck has the sound is
 	// Perform's to show.
-	std::snprintf(printed, sizeof(printed), "drift %+.3f", selectedDrift());
+	// IN A KIT THE NUMBER IS LAYER ONE'S VECTOR (a kit reads no drift), and it says so.
+	std::snprintf(printed, sizeof(printed), drumKitShown() ? "vector %+.3f" : "drift %+.3f", selectedDrift());
 	canvas.setColor(withAlpha(tokens::kGrid, 0.55f));
 	canvas.text(printed, face, visage::Font::kLeft, left, y, 180.0f, 12.0f);
 }
@@ -4232,7 +4262,7 @@ bool ExploreStage::drumKitShown() const {
 bool ExploreStage::padInView(size_t slot) const {
 	// THE VIEW AS STORED (not `viewCentre()`, which answers for the new selection once it differs), and the pad's star where
 	// its own chart will draw it: at its travel. Inside the disk and clear of its edge by kPadJumpMargin of the radius.
-	const AnchorPoint at = bridge_.soundTravel().offset[std::min(slot, kMaxSounds - 1)];
+	const AnchorPoint at = placeOf(slot);
 	const double dx = (at.x - travelCentre_) / travelSpan();
 	const double dy = (at.y - viewCentre_) / (homeSpanZones() / 1023.0);
 	return std::hypot(dx, dy) <= 0.5 * (1.0 - kPadJumpMargin);
@@ -4261,7 +4291,6 @@ void ExploreStage::drawPadMarks(visage::Canvas& canvas) {
 		return steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::Kind))), kDrumKindNames.size());
 	};
 	const size_t kind = kindOf(selected);
-	const SoundTravel travel = bridge_.soundTravel();
 	const visage::Font& face = font(kKnobReadoutSize);
 	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
 		if (slot == selected) {
@@ -4269,7 +4298,7 @@ void ExploreStage::drawPadMarks(visage::Canvas& canvas) {
 		}
 		// ITS PLACE AND WHERE IT PLAYS, each decoded on its own plane and projected onto this one (the likes' road).
 		const TerrainWindow own = terrainWindowFor(slot);
-		const AnchorPoint at = travel.offset[slot];
+		const AnchorPoint at = placeOf(slot);
 		const auto onHere = [&](double x, double y) {
 			std::array<double, kTerrainLikePoint> point {};
 			const size_t n = terrainPlacePoint(own, x, y, point);
@@ -4307,6 +4336,37 @@ void ExploreStage::drawPadMarks(visage::Canvas& canvas) {
 		canvas.setColor(withAlpha(tokens::kStar, mark.hollow ? 0.6f : 0.8f));
 		canvas.text(text, face, visage::Font::kLeft, mark.at.x + r + 3.0f, mark.at.y - 7.0f, 90.0f, 14.0f);
 		overlayInk_.add(mark.at, r * 3.0f);
+	}
+	// EVERY LIVE SECOND LAYER, AT ITS OWN VECTOR: a small diamond in its pad's hue (the selected pad's drawn brighter and with its
+	// letter), so the kit reads as sixteen places at most, the layer-one marks above being the pads' first.
+	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
+		if (steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::LayerKind))), kDrumLayerKindNames.size()) == 0) {
+			continue;
+		}
+		const TerrainWindow own = terrainWindowFor(slot);
+		const AnchorPoint at = layerPlaceOf(slot, 1);
+		std::array<double, kTerrainLikePoint> point {};
+		const size_t n = terrainPlacePoint(own, at.x, at.y, point);
+		const PlanePlace place = terrainPlaceOn(here, std::span<const double>(point.data(), n), at.x, at.y);
+		const visage::Point flat = sheetAtWorld(place.x, place.y);
+		if (!std::isfinite(flat.x) || !std::isfinite(flat.y) || !d.contains(flat)) {
+			continue;
+		}
+		const visage::Point glass = Bubble::toGlass(d, flat);
+		const float r = 3.5f * d.glyphScale();
+		const bool mine = slot == selected;
+		canvas.setColor(withAlpha(kSeedHues[hueIndexOf(bridge_.soundHues(), slot)], mine ? 1.0f : 0.8f));
+		canvas.segment(glass.x - r, glass.y, glass.x, glass.y - r, 1.5f, true);
+		canvas.segment(glass.x, glass.y - r, glass.x + r, glass.y, 1.5f, true);
+		canvas.segment(glass.x + r, glass.y, glass.x, glass.y + r, 1.5f, true);
+		canvas.segment(glass.x, glass.y + r, glass.x - r, glass.y, 1.5f, true);
+		if (mine) {
+			char text[8] = {};
+			std::snprintf(text, sizeof(text), "%c2", static_cast<char>('A' + slot));
+			canvas.setColor(withAlpha(tokens::kStar, 0.8f));
+			canvas.text(text, face, visage::Font::kLeft, glass.x + r + 3.0f, glass.y - 7.0f, 40.0f, 14.0f);
+		}
+		overlayInk_.add(glass, r * 3.0f);
 	}
 }
 

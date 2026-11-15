@@ -121,7 +121,11 @@ public:
 	/// **THE CONTROLS' PANEL STATE CHANGED**: re-subscribe now, off the old state's watcher list (backlog PM).
 	void modulationChanged() { refreshWatch(); }
 
+	/// The amount drags in whole units (Shift keeps the fine, unrounded gearing): a Tune pill's semitones.
+	void setWholeSteps(bool whole) noexcept { wholeSteps_ = whole; }
+
 private:
+	bool wholeSteps_ = false;
 	enum class Target { None, Amount, Power };
 
 	[[nodiscard]] bool powered() const;

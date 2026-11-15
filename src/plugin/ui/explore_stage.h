@@ -301,14 +301,10 @@ public:
 	Knob& drumFieldKnobForTest(DrumField f, size_t slot) {
 		return *drumFieldKnobs_[static_cast<size_t>(f)][std::min(slot, kMaxSounds - 1)];
 	}
-	/// THE KIT-WIDE TRIMS' SEVEN KNOBS (2026-11-06), in SurroundControl's order from DrumKitPitch, and the Drum surround's pages:
-	/// Pad (each pad's seven scalers) and Kit Fields (the seven kit trims in the scalers' slots). The pages box stands in the left
-	/// box slot in Kit mode only.
+	/// THE KIT-WIDE TRIMS' SEVEN KNOBS, in SurroundControl's order from DrumKitPitch. In Kit mode they are the whole of the Drum
+	/// surround (a pad's own seven scalers are per layer, on the pad editor); Pitched mode keeps the selected sound's seven.
 	static constexpr size_t kDrumKitKnobCount = 7;
 	Knob& drumKitKnobForTest(size_t i) { return *drumKitKnobs_[std::min(i, kDrumKitKnobCount - 1)]; }
-	enum class DrumPage : uint8_t { Pad, KitFields };
-	void chooseDrumPage(DrumPage page);
-	[[nodiscard]] DrumPage drumPageForTest() const noexcept { return drumPage_; }
 	enum class PluckKnob : uint8_t { Width, Decay, Release, Seed, DecayTrack, Hardness, Pickup, Velocity };
 	static constexpr size_t kPluckKnobCount = 8;
 	Knob& pluckKnobForTest(PluckKnob which) { return *pluckKnobs_[static_cast<size_t>(which)]; }
@@ -318,8 +314,6 @@ public:
 	[[nodiscard]] PluckPage pluckPageForTest() const noexcept { return pluckPage_; }
 	/// Whether the page box stands on the face (Pluck only), as the drawing and the hit test ask.
 	[[nodiscard]] bool pluckPageLive() const { return slotOf(SurroundControl::KsPage).has_value(); }
-	/// Whether the Drum's page box (Pad, Kit Fields, Kit Place) is drawn: a Drum Kit's, in the left box slot.
-	[[nodiscard]] bool drumPageLive() const { return slotOf(SurroundControl::DrumPage).has_value(); }
 
 	/// **THE SPECTRUM TAB** (additive design §4.2, spectrum_panel.h) — on Additive only, on the stage's bottom edge under the
 	/// right flank (the bottom centre is Mutate's row). Its chip is the master switch; its label asks the editor to open or
@@ -497,7 +491,7 @@ public:
 		KsWidth, KsDecay, KsRelease, KsSeed, KsDecayTrack, KsHardness, KsPickup, KsVelocity,
 		DrumKitPitch, DrumKitLength, DrumKitSweep, DrumKitTone, DrumKitNoise,
 		DrumKitSnap, DrumKitMetal,
-		WarpMode, BowMode, AdditiveShape, Model, ShapesPage, KsPage, DrumPage,
+		WarpMode, BowMode, AdditiveShape, Model, ShapesPage, KsPage,
 		kCount
 	};
 	static constexpr size_t kSurroundControlCount = static_cast<size_t>(SurroundControl::kCount);
@@ -740,12 +734,18 @@ public:
 	[[nodiscard]] AnchorPoint playedPlace() const;
 	/// The kit's stance as the engine sees it (the ordinary puck through Weather), for the pad marks and the played mark.
 	[[nodiscard]] AnchorPoint kitStanceNow() const;
+	/// WHERE THE SELECTED KIND OF SOUND IS PUT, by what the engine reads: the sound's drift off a kit; in a Drum Kit its layer one's
+	/// vector (OffsetX/Y), and `layerPlaceOf` either layer's. Every read of a pad's place on this surface goes through them.
+	[[nodiscard]] AnchorPoint placeOf(size_t slot) const;
+	[[nodiscard]] AnchorPoint layerPlaceOf(size_t slot, size_t layer) const;
 	/// **THE KIT-WIDE BULK EDIT**: adds (dx, dy) to the vector of every layer whose Lock is off (both layers of all eight pads),
 	/// through `commit` (one gesture, one undo group with the drag it belongs to); locked vectors are not written. Answers how
 	/// many parameter writes it made (up to 32).
 	size_t moveKitUnlocked(double dx, double dy);
 	/// Each vector parameter the open drag has written, with the value it held before its first write (one undo step at the end).
 	std::vector<std::pair<clap_id, double>> bulkTouched_;
+	/// A kit drag whose star's own layer is locked: where the drag has taken its (undrawn) star, so the bulk edit goes by the pointer's step.
+	std::optional<AnchorPoint> kitVirtual_;
 	struct BulkEntry {
 		clap_id id;
 		double before;
@@ -1481,7 +1481,6 @@ private:
 	std::array<std::unique_ptr<Knob>, kPluckKnobCount> pluckKnobs_;
 	std::array<std::array<std::unique_ptr<Knob>, kMaxSounds>, kDrumFieldCount> drumFieldKnobs_;
 	std::array<std::unique_ptr<Knob>, kDrumKitKnobCount> drumKitKnobs_;
-	DrumPage drumPage_ = DrumPage::Pad;
 	SlotRow drumKitFieldsRow_ {};
 	/// The Drum row as the mode and the selected kind leave it (currentSlotRow): the table's, less what they do not read.
 	mutable SlotRow drumRow_ {};

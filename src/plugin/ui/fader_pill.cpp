@@ -130,7 +130,9 @@ FaderPill::FaderPill(device::Modulatable& amount, std::string caption) : amount_
 		}
 		const device::ParamDesc& d = amount_.desc();
 		const double span = d.max - d.min;
-		amount_.setValue(std::clamp(startValue_ + static_cast<double>(dx / kSpan * scale) * span, d.min, d.max));
+		const double raw = startValue_ + static_cast<double>(dx / kSpan * scale) * span;
+		// WHOLE STEPS (a Tune in semitones), unless Shift asks for the fine gearing.
+		amount_.setValue(std::clamp(wholeSteps_ && !fine_ ? std::round(raw) : raw, d.min, d.max));
 		redraw();
 	};
 

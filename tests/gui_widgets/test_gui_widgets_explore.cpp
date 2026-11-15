@@ -13792,22 +13792,38 @@ TEST_CASE("drum kit panel: the handles on the hit picture set Tune, Decay, Level
 	CHECK(p.handleShown(H::Decay));
 }
 
-TEST_CASE("drum surround: Metal is drawn on a pad that reads it and not on a Kick") {
+TEST_CASE("drum surround: Pitched mode draws the sound's seven scalers where its kind reads them; a Kit draws none of them (the kit trims instead)") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+	f.set(ParamId::DrumMode, 0.0); // Pitched
 	f.stage.update();
 	using DF = ExploreStage::DrumField;
-	CHECK_FALSE(f.stage.drumFieldKnobForTest(DF::Metal, 0).isVisible()); // A, a Kick
+	// THE ENGINE'S KIND decides: a Kick reads no Metal, a Metal reads it and has no Sweep.
+	f.set(ParamId::DrumPitchedKind, static_cast<double>(feathers::drum::Kind::Kick));
+	f.stage.update();
+	CHECK_FALSE(f.stage.drumFieldKnobForTest(DF::Metal, 0).isVisible());
 	CHECK(f.stage.drumFieldKnobForTest(DF::Sweep, 0).isVisible());
-	f.selection.select(2); // C, Metal
+	f.set(ParamId::DrumPitchedKind, static_cast<double>(feathers::drum::Kind::Metal));
 	f.stage.update();
-	CHECK(f.stage.drumFieldKnobForTest(DF::Metal, 2).isVisible());
-	CHECK(f.stage.drumFieldKnobForTest(DF::Metal, 2).enabled());
-	CHECK_FALSE(f.stage.drumFieldKnobForTest(DF::Sweep, 2).isVisible());
-	// A KIT PAD NEVER GREYS FOR ITS SWITCH: C is switched off in the default patch, and is a pad all the same.
-	f.set(ParamId::CEnable, 0.0);
-	f.stage.update();
-	CHECK(f.stage.drumFieldKnobForTest(DF::Metal, 2).enabled());
+	CHECK(f.stage.drumFieldKnobForTest(DF::Metal, 0).isVisible());
+	CHECK(f.stage.drumFieldKnobForTest(DF::Metal, 0).enabled());
+	CHECK_FALSE(f.stage.drumFieldKnobForTest(DF::Sweep, 0).isVisible());
+	// A KIT: a pad's own scalers are per layer, on the pad editor, so none is on the surround whatever the pad or its switch.
+	f.set(ParamId::DrumMode, 1.0);
+	for (const size_t pad : { size_t { 0 }, size_t { 2 } }) {
+		f.selection.select(pad);
+		f.set(ParamId::CEnable, 0.0); // a kit pad never greys for its switch, and none of its scalers is drawn here
+		f.stage.update();
+		for (const DF field : { DF::Pitch, DF::Length, DF::Sweep, DF::Tone, DF::Noise, DF::Snap, DF::Metal }) {
+			CAPTURE(pad);
+			CAPTURE(static_cast<int>(field));
+			CHECK_FALSE(f.stage.drumFieldKnobForTest(field, pad).isVisible());
+			CHECK_FALSE(f.stage.drumFieldKnobForTest(field, pad).enabled());
+		}
+		for (size_t i = 0; i < ExploreStage::kDrumKitKnobCount; ++i) {
+			CHECK(f.stage.drumKitKnobForTest(i).isVisible());
+		}
+	}
 }
 
 TEST_CASE("drum terrain: each place draws the selected sound's kind as heard there, through its scalers, by the bank's road") {
@@ -14460,7 +14476,7 @@ TEST_CASE("drum kit panel: every kind shows Drive on its picture and its curve a
 			const visage::Frame* fa = panel.controlForTest(0, static_cast<DrumControl>(a));
 			for (size_t b = a + 1; b < kDrumControlCount; ++b) {
 				const visage::Frame* fb = panel.controlForTest(0, static_cast<DrumControl>(b));
-				if (fa == nullptr || fb == nullptr || !fa->isVisible() || !fb->isVisible()) {
+				if (fa == nullptr || fb == nullptr || fa == fb || !fa->isVisible() || !fb->isVisible()) { // (OffsetX and Y are one pad)
 					continue;
 				}
 				CAPTURE(a);
@@ -14556,6 +14572,12 @@ TEST_CASE("drum kit panel: a Snare's Wires and Bells zones; Width on a Snare and
 
 namespace {
 
+/// PUT A KIT PAD AT `place`: in a kit a pad is where its layer one's vector puts it (the engine reads no drift there).
+void putKitPad(ExploreFixture& f, size_t slot, AnchorPoint place) {
+	f.set(static_cast<ParamId>(feathers::drumLayerParam(slot, 0, DrumControl::OffsetX)), place.x);
+	f.set(static_cast<ParamId>(feathers::drumLayerParam(slot, 0, DrumControl::OffsetY)), place.y);
+}
+
 /// A Drum Kit on the chart, pad A selected and settled, and pad `slot` put on A's own plane (its zone, offset and gamma) at
 /// `place`, so its projection onto A's chart is exact: it must be drawn at glassAt(place.y, place.x) to the bit.
 void kitWithPadOnAsPlane(ExploreFixture& f, visage::Canvas& canvas, size_t slot, AnchorPoint place) {
@@ -14565,7 +14587,7 @@ void kitWithPadOnAsPlane(ExploreFixture& f, visage::Canvas& canvas, size_t slot,
 	for (const SoundField field : { SoundField::Zone, SoundField::Offset, SoundField::Gamma }) {
 		f.set(soundParam(slot, field), f.read(soundParam(0, field)));
 	}
-	f.bridge.setSoundTravel(slot, place);
+	putKitPad(f, slot, place);
 	f.stage.draw(canvas);
 	f.settleScrub();
 	for (int frame = 0; frame < 64 && f.stage.update(); ++frame) {
@@ -14626,7 +14648,7 @@ TEST_CASE("drum kit chart: selecting a pad in view moves nothing; one off the ch
 	const double sx = f.stage.travelSpanForTest();
 	const double sy = f.stage.homeSpanForTest();
 	// B IN VIEW, a fifth of the radius out: the view to the bit.
-	f.bridge.setSoundTravel(1, { vx + 0.1 * sx, vy + 0.0 });
+	putKitPad(f, 1, { vx + 0.1 * sx, vy + 0.0 });
 	f.selection.select(1);
 	f.stage.draw(canvas);
 	CHECK(f.stage.storedViewCentreForTest() == vy);
@@ -14634,14 +14656,14 @@ TEST_CASE("drum kit chart: selecting a pad in view moves nothing; one off the ch
 	CHECK_FALSE(f.stage.viewGlidingForTest());
 	CHECK(f.stage.viewCentre() == vy); // and it is the view for B now, not one waiting to recentre
 	// D NEAR THE RIM, nine tenths of the radius out: the view jumps onto it, at once.
-	f.bridge.setSoundTravel(3, { vx, vy + 0.45 * sy });
+	putKitPad(f, 3, { vx, vy + 0.45 * sy });
 	f.selection.select(3);
 	f.stage.draw(canvas);
 	CHECK(f.stage.storedViewCentreForTest() == vy + 0.45 * sy);
 	CHECK(f.stage.storedTravelCentreForTest() == vx);
 	CHECK_FALSE(f.stage.viewGlidingForTest());
 	// E OFF THE CHART altogether: the same jump.
-	f.bridge.setSoundTravel(4, { vx + 3.0 * sx, vy });
+	putKitPad(f, 4, { vx + 3.0 * sx, vy });
 	f.selection.select(4);
 	f.stage.draw(canvas);
 	CHECK(f.stage.storedTravelCentreForTest() == vx + 3.0 * sx);
@@ -14664,7 +14686,7 @@ TEST_CASE("drum kit chart: a pad on ANOTHER plane is drawn at its place's projec
 	// G at A's zone but a nudged Offset (a neighbouring home, so another plane that is close by), a little way out.
 	f.set(soundParam(6, SoundField::Zone), f.read(soundParam(0, SoundField::Zone)));
 	f.set(soundParam(6, SoundField::Offset), f.read(soundParam(0, SoundField::Offset)) + 0.02);
-	f.bridge.setSoundTravel(6, { 0.002, -0.001 });
+	putKitPad(f, 6, { 0.002, -0.001 });
 	f.stage.draw(canvas);
 	f.settleScrub();
 	for (int frame = 0; frame < 64 && f.stage.update(); ++frame) {
@@ -14719,27 +14741,30 @@ TEST_CASE("kit layer on the pictures: the trims ride every pad's terrain window,
 	CHECK(std::abs(panel.pictureForTest().lawsForTest().tone - neutralTone) > 1.0e-3);
 }
 
-TEST_CASE("kit layer on the surround: Kit mode offers two pages (Pad, Kit Fields); Pitched offers no page and no kit knob") {
+TEST_CASE("kit layer on the surround: a Kit holds the seven kit trims and nothing else; Pitched holds the pad's seven and no kit knob") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	f.set(ParamId::DrumMode, 1.0);
 	using C = ui::ExploreStage::SurroundControl;
 	const auto shown = [&f](C c) { return f.stage.seatedNowForTest(c); };
-	CHECK(shown(C::DrumPage));
-	CHECK(shown(C::DrumPitch));
-	CHECK_FALSE(shown(C::DrumKitPitch));
-	f.stage.chooseDrumPage(ui::ExploreStage::DrumPage::KitFields);
+	// KIT: the seven trims, and none of the pad's own scalers (those are per layer, on the pad editor), no page box.
 	for (const C c : { C::DrumKitPitch, C::DrumKitLength, C::DrumKitSweep, C::DrumKitTone, C::DrumKitNoise, C::DrumKitSnap,
 	                   C::DrumKitMetal }) {
 		CAPTURE(static_cast<int>(c));
 		CHECK(shown(c));
 	}
-	CHECK_FALSE(shown(C::DrumPitch));
-	CHECK_FALSE(shown(C::DrumPitch));
-	// PITCHED: the Pad page whatever was chosen, no page box, no kit knob.
+	for (const C c : { C::DrumPitch, C::DrumLength, C::DrumSweep, C::DrumTone, C::DrumNoise, C::DrumSnap, C::DrumMetal }) {
+		CAPTURE(static_cast<int>(c));
+		CHECK_FALSE(shown(c));
+	}
+	// AND NOTHING ELSE SEATED on the Drum surround in Kit mode: no box slot is filled.
+	for (const ui::ExploreStage::Slot slot : { ui::ExploreStage::Slot::LeftBox, ui::ExploreStage::Slot::RightBox }) {
+		CHECK(f.stage.slotTable()[static_cast<size_t>(OscType::Drum)][static_cast<size_t>(slot)] == C::None);
+	}
+	// PITCHED: the selected sound's scalers (Membrane: pitch, length, sweep, tone, noise, snap, metal subject to its kind), no kit knob.
 	f.set(ParamId::DrumMode, 0.0);
-	CHECK_FALSE(shown(C::DrumPage));
 	CHECK_FALSE(shown(C::DrumKitPitch));
+	CHECK(shown(C::DrumPitch));
 	// EACH KIT KNOB DRIVES ITS PARAM: the seventh is Kit Metal.
 	CHECK(f.stage.drumKitKnobForTest(6).control()->display().base == doctest::Approx(0.5));
 }
@@ -14839,7 +14864,7 @@ TEST_CASE("drum kit panel (audition bugs a and c): the Decay handle reaches its 
 	CHECK(f.params.base(feathers::drumParam(0, DrumControl::Decay)) < longer);
 }
 
-TEST_CASE("drum kit panel (audition): Level and Tune have explicit pills beside their handles, on every kind, writing the same params") {
+TEST_CASE("drum kit panel (audition): Tune has an explicit pill beside its handle on every kind; Level is the handle (and the sound card's), no second pill") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
@@ -14849,25 +14874,29 @@ TEST_CASE("drum kit panel (audition): Level and Tune have explicit pills beside 
 		CAPTURE(k);
 		f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(k));
 		(void)panel.update();
-		CHECK(panel.drawnForTest(0, DrumControl::Level));
+		CHECK(panel.drawnForTest(0, DrumControl::Level)); // the handle: the pad's Level is still reachable in the window
 		CHECK(panel.drawnForTest(0, DrumControl::Tune));
-		CHECK(panel.pictureForTest().handleShown(H::Level)); // and the handles stay
+		CHECK(panel.pictureForTest().handleShown(H::Level));
 		CHECK(panel.pictureForTest().handleShown(H::Tune));
 	}
-	// THE PILL WRITES THE PAD'S OWN PARAM, read back from the engine's side.
-	auto* level = dynamic_cast<ui::FaderPill*>(panel.controlForTest(0, DrumControl::Level));
+	// NO SECOND LEVEL PILL: the pad's Level is on its sound card, and is the picture's Level handle here.
+	CHECK(panel.controlForTest(0, DrumControl::Level) == nullptr);
+	// THE PILL WRITES THE LAYER'S OWN TUNE, read back from the engine's side.
 	auto* tune = dynamic_cast<ui::FaderPill*>(panel.controlForTest(0, DrumControl::Tune));
-	REQUIRE(level != nullptr);
 	REQUIRE(tune != nullptr);
-	level->amountForTest().beginGesture();
-	level->amountForTest().setValue(-9.0);
-	level->amountForTest().endGesture();
 	tune->amountForTest().beginGesture();
 	tune->amountForTest().setValue(5.0);
 	tune->amountForTest().endGesture();
 	f.settleGesture();
-	CHECK(f.params.base(feathers::drumParam(0, DrumControl::Level)) == doctest::Approx(-9.0));
 	CHECK(f.params.base(feathers::drumParam(0, DrumControl::Tune)) == doctest::Approx(5.0));
+	// AND THE LEVEL HANDLE WRITES THE PAD'S Level by value.
+	f.set(feathers::drumParam(0, DrumControl::Level), 0.0);
+	(void)panel.update();
+	panel.pictureForTest().dragForTest(H::Level, 0.0f, 20.0f);
+	f.settleGesture();
+	const double level = f.params.base(feathers::drumParam(0, DrumControl::Level));
+	CHECK(level < -1.0);
+	CHECK(level > -60.0);
 }
 
 TEST_CASE("drum kit panel (audition): a pad's hit pulses that pad alone at its velocity; each pad wears its sound's colour") {
@@ -15051,13 +15080,14 @@ TEST_CASE("drum layers: dragging a pad is a kit-wide bulk edit: the same step on
 		return v;
 	};
 	before = snapshot();
-	const AnchorPoint star = f.bridge.soundTravel().offset[1];
+	const auto starNow = [&] { return AnchorPoint { f.bridge.value(id(1, 0, DrumControl::OffsetX)), f.bridge.value(id(1, 0, DrumControl::OffsetY)) }; };
+	const AnchorPoint star = starNow(); // the selected pad's layer one: a kit's star is its vector, not a drift
 	const visage::Point centre = f.stage.disk().centre();
 	f.stage.onMouseDown().callback(at(centre.x, centre.y));
 	drain(f.bridge);
 	f.now += 250;
 	f.stage.onMouseDrag().callback(at(centre.x + 120.0f, centre.y));
-	const AnchorPoint after = f.bridge.soundTravel().offset[1];
+	const AnchorPoint after = starNow();
 	const double dx = after.x - star.x;
 	const double dy = after.y - star.y;
 	REQUIRE(std::abs(dx) > 1.0e-3); // a real drag
@@ -15086,14 +15116,15 @@ TEST_CASE("drum layers: dragging a pad is a kit-wide bulk edit: the same step on
 	const size_t steps = f.history.length();
 	f.stage.undo();
 	CHECK(snapshot() == before);
-	CHECK(f.bridge.soundTravel().offset[1].x == star.x);
+	// A KIT'S DRAG WRITES NO DRIFT: the engine reads none there.
+	CHECK(f.bridge.soundTravel().offset[1].x == 0.0);
 	f.stage.redo();
 	CHECK(snapshot() == moved2);
 	CHECK(steps >= 1);
 }
 
-TEST_CASE("drum kit panel (layer slot, stage (c)): Kit mode draws the Layer box; its Level, Delay, High Pass, Lock and offset "
-          "only while it is on; Pitched mode draws none; every one inside the panel") {
+TEST_CASE("drum kit panel (two layers): layer two's tab holds its Kind (with Off) and, once it is on, its Level, Delay, High Pass, Lock and vector; "
+          "Pitched mode has one layer; every control is inside the panel") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	f.set(ParamId::DrumMode, 1.0);
@@ -15102,11 +15133,25 @@ TEST_CASE("drum kit panel (layer slot, stage (c)): Kit mode draws the Layer box;
 	constexpr std::array<DrumControl, 6> kOn { DrumControl::LayerLevel, DrumControl::LayerDelay, DrumControl::LayerHighPass,
 		                                       DrumControl::Lock, DrumControl::OffsetX, DrumControl::OffsetY };
 	(void)panel.update();
+	// LAYER ONE'S TAB IS UP: its Kind (the pad's) is drawn, layer two's Kind is on the other tab, and layer one has its own Lock and vector.
+	CHECK(panel.layerShownForTest() == 0);
+	CHECK(panel.drawnForTest(0, DrumControl::Kind));
+	CHECK_FALSE(panel.drawnForTest(0, DrumControl::LayerKind));
+	CHECK(panel.drawnForTest(0, DrumControl::Lock, 0));
+	CHECK(panel.drawnForTest(0, DrumControl::OffsetX, 0));
+	for (const DrumControl c : { DrumControl::LayerLevel, DrumControl::LayerDelay, DrumControl::LayerHighPass }) {
+		CHECK_FALSE(panel.drawnForTest(0, c, 1)); // layer two's, on the other tab
+	}
+	// LAYER TWO, OFF: its tab draws its Kind and nothing else.
+	panel.showLayerForTest(1);
+	(void)panel.update();
 	CHECK(panel.drawnForTest(0, DrumControl::LayerKind));
 	for (const DrumControl c : kOn) {
 		CAPTURE(static_cast<int>(c));
-		CHECK_FALSE(panel.drawnForTest(0, c));
+		CHECK_FALSE(panel.drawnForTest(0, c, 1));
 	}
+	CHECK_FALSE(panel.drawnForTest(0, DrumControl::Tune, 1));
+	CHECK_FALSE(panel.drawnForTest(0, DrumControl::Kind)); // layer one's Kind is on layer one's tab
 	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
 		CAPTURE(k);
 		f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(k));
@@ -15115,14 +15160,14 @@ TEST_CASE("drum kit panel (layer slot, stage (c)): Kit mode draws the Layer box;
 		(void)panel.update();
 		for (const DrumControl c : kOn) {
 			CAPTURE(static_cast<int>(c));
-			CHECK(panel.drawnForTest(0, c));
-			const visage::Frame* frame = panel.controlForTest(0, c);
+			CHECK(panel.drawnForTest(0, c, 1));
+			const visage::Frame* frame = panel.controlForTest(0, c, 1);
 			REQUIRE(frame != nullptr);
 			CHECK(frame->bottom() <= panel.height() + 1.0e-3f);
 			CHECK(frame->right() <= panel.width() + 1.0e-3f);
 		}
 	}
-	// THE BOX WRITES THE KIND.
+	// THE BOX WRITES THE KIND (Off, then Kick .. Clap).
 	auto* box = dynamic_cast<ui::ValueBox*>(panel.controlForTest(0, DrumControl::LayerKind));
 	REQUIRE(box != nullptr);
 	box->control().beginGesture();
@@ -15130,11 +15175,16 @@ TEST_CASE("drum kit panel (layer slot, stage (c)): Kit mode draws the Layer box;
 	box->control().endGesture();
 	f.settleGesture();
 	CHECK(f.params.base(feathers::drumParam(0, DrumControl::LayerKind)) == doctest::Approx(1.0));
+	// PITCHED: one layer, no tabs, no kit structure.
 	f.set(ParamId::DrumMode, 0.0);
 	(void)panel.update();
+	CHECK_FALSE(panel.layerTabsForTest().isVisible());
 	CHECK_FALSE(panel.drawnForTest(0, DrumControl::LayerKind));
+	CHECK_FALSE(panel.drawnForTest(0, DrumControl::Lock, 0));
+	CHECK_FALSE(panel.drawnForTest(0, DrumControl::OffsetX, 0));
+	CHECK_FALSE(panel.drawnForTest(0, DrumControl::PitchMode, 0));
 	for (const DrumControl c : kOn) {
-		CHECK_FALSE(panel.drawnForTest(0, c));
+		CHECK_FALSE(panel.drawnForTest(0, c, 1));
 	}
 }
 
@@ -15817,4 +15867,458 @@ TEST_CASE("terrain-render-bugs: the terrain is uploaded to the atlas once per ne
 		frame();
 	}
 	CHECK(canvas.imageAtlas()->rawUploads() - beforeRebuild == 1);
+}
+
+//------------------------------------------------------------------------------------------------------------//
+// THE PAD EDITOR, TWO LAYERS (kit stance redesign)                                                           //
+//------------------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A Drum Kit with the pad editor open at its minimum size, pad A selected, layer two of pad A a Snare (so both tabs have a body).
+struct PadEditorFixture : ExploreFixture {
+	ui::DrumPanel panel { bridge, registry, selection, &tray };
+	explicit PadEditorFixture(bool layerTwo = true) {
+		bridge.setEditHistory(&history);
+		set(ParamId::OscType, static_cast<double>(OscType::Drum));
+		set(ParamId::DrumMode, 1.0);
+		if (layerTwo) {
+			set(feathers::drumParam(0, DrumControl::LayerKind), 3.0); // Off, Kick, Membrane, SNARE
+		}
+		panel.setBounds(0.0f, 0.0f, panel.minimumSize().x, panel.minimumSize().y);
+		(void)panel.update();
+	}
+	void show(size_t layer) {
+		panel.showLayerForTest(layer);
+		(void)panel.update();
+	}
+	void write(device::Modulatable& control, double value) {
+		control.beginGesture();
+		control.setValue(value);
+		control.endGesture();
+		settleGesture();
+	}
+	[[nodiscard]] double base(size_t pad, size_t layer, DrumControl c) const {
+		return params.base(feathers::drumLayerParam(pad, layer, c));
+	}
+};
+
+void typeKeyInto(ui::TextField& field, visage::KeyCode key) { field.processKeyPress(visage::KeyEvent { key, 0, true }); }
+
+} // namespace
+
+TEST_CASE("pad editor: a layer tab addresses its own layer's parameters, by id and value, and never the other's") {
+	PadEditorFixture f;
+	using feathers::drumLayerParam;
+	for (size_t layer = 0; layer < 2; ++layer) {
+		CAPTURE(layer);
+		const size_t other = 1 - layer;
+		f.show(layer);
+		const double marker = 2.0 + 3.0 * static_cast<double>(layer); // a value no default holds, different on each tab
+		// THE TAB'S OWN FRAMES ARE DRAWN, THE OTHER TAB'S ARE NOT.
+		CHECK(f.panel.drawnForTest(0, DrumControl::Tune, layer));
+		CHECK_FALSE(f.panel.drawnForTest(0, DrumControl::Tune, other));
+		const double otherTune = f.base(0, other, DrumControl::Tune);
+		const double otherTone = f.base(0, other, DrumControl::FieldTone);
+		const double otherCurve = f.base(0, other, DrumControl::DriveCurve);
+		// A PILL (Tune).
+		auto* tune = dynamic_cast<ui::FaderPill*>(f.panel.controlForTest(0, DrumControl::Tune, layer));
+		REQUIRE(tune != nullptr);
+		f.write(tune->amountForTest(), marker);
+		CHECK(f.base(0, layer, DrumControl::Tune) == doctest::Approx(marker));
+		CHECK(f.params.base(drumLayerParam(0, layer, DrumControl::Tune)) == doctest::Approx(marker));
+		// A FIELD SCALER (Tone: a Kick reads it, and so does a Snare).
+		auto* tone = dynamic_cast<ui::FaderPill*>(f.panel.fieldPillForTest(0, layer, 3));
+		REQUIRE(tone != nullptr);
+		REQUIRE(tone->isVisible());
+		f.write(tone->amountForTest(), 0.8);
+		CHECK(f.base(0, layer, DrumControl::FieldTone) == doctest::Approx(0.8));
+		// A SEGMENTED CONTROL (the drive's curve: Soft Clip).
+		auto* curve = dynamic_cast<ui::SegmentedControl*>(f.panel.controlForTest(0, DrumControl::DriveCurve, layer));
+		REQUIRE(curve != nullptr);
+		curve->select(2);
+		f.settleGesture();
+		CHECK(f.base(0, layer, DrumControl::DriveCurve) == doctest::Approx(2.0));
+		// THE OTHER LAYER'S SAME PARAMETERS ARE WHERE THEY WERE.
+		CHECK(f.base(0, other, DrumControl::Tune) == otherTune);
+		CHECK(f.base(0, other, DrumControl::FieldTone) == otherTone);
+		CHECK(f.base(0, other, DrumControl::DriveCurve) == otherCurve);
+		// A HANDLE ON THE PICTURE: Decay, written by value to this layer's own Decay.
+		using H = ui::HitPicture::Handle;
+		const double decayBefore = f.base(0, layer, DrumControl::Decay);
+		const double decayOther = f.base(0, other, DrumControl::Decay);
+		f.panel.pictureForTest().dragForTest(H::Decay, 40.0f, 0.0f);
+		f.settleGesture();
+		CHECK(f.base(0, layer, DrumControl::Decay) != doctest::Approx(decayBefore));
+		CHECK(f.base(0, other, DrumControl::Decay) == decayOther);
+	}
+	// A PAD-LEVEL CONTROL IS THE SAME ON BOTH TABS: Pan is the pad's own.
+	for (size_t layer = 0; layer < 2; ++layer) {
+		f.show(layer);
+		auto* pan = dynamic_cast<ui::FaderPill*>(f.panel.controlForTest(0, DrumControl::Pan, layer));
+		REQUIRE(pan != nullptr);
+		CHECK(pan->isVisible());
+		f.write(pan->amountForTest(), 0.25 * static_cast<double>(layer + 1));
+		CHECK(f.params.base(feathers::drumParam(0, DrumControl::Pan)) == doctest::Approx(0.25 * static_cast<double>(layer + 1)));
+	}
+	// LAYER TWO'S LEVEL, DELAY AND HIGH PASS write the layer rows (the pad's own block, as the layer's only).
+	f.show(1);
+	for (const auto& [c, value] : { std::pair { DrumControl::LayerLevel, -12.0 }, std::pair { DrumControl::LayerDelay, 7.0 } }) {
+		auto* pill = dynamic_cast<ui::FaderPill*>(f.panel.controlForTest(0, c, 1));
+		REQUIRE(pill != nullptr);
+		f.write(pill->amountForTest(), value);
+		CHECK(f.params.base(feathers::drumParam(0, c)) == doctest::Approx(value));
+	}
+}
+
+TEST_CASE("pad editor: a tab's terrain pad writes that layer's OffsetX and OffsetY and nothing else, in one undo step") {
+	PadEditorFixture f;
+	using feathers::drumLayerParam;
+	for (size_t layer = 0; layer < 2; ++layer) {
+		CAPTURE(layer);
+		f.show(layer);
+		const double x0 = 0.3 - 0.5 * static_cast<double>(layer);
+		const double y0 = -0.2 + 0.4 * static_cast<double>(layer);
+		f.set(static_cast<ParamId>(drumLayerParam(0, layer, DrumControl::OffsetX)), x0);
+		f.set(static_cast<ParamId>(drumLayerParam(0, layer, DrumControl::OffsetY)), y0);
+		(void)f.panel.update();
+		ui::DrumVectorPad& pad = f.panel.vectorPadForTest(0, layer);
+		REQUIRE(pad.isVisible());
+		REQUIRE(pad.width() > 20.0f);
+		// EVERY DRUM PARAMETER OF THE PAD, to check that only the layer's two moved.
+		std::vector<std::pair<clap_id, double>> before;
+		for (size_t l = 0; l < 2; ++l) {
+			for (const DrumControl c : feathers::kDrumLayerControls) {
+				before.emplace_back(static_cast<clap_id>(drumLayerParam(0, l, c)), f.bridge.value(static_cast<clap_id>(drumLayerParam(0, l, c))));
+			}
+		}
+		f.history.clear();
+		const size_t steps = f.history.length();
+		visage::Canvas canvas;
+		pad.draw(canvas); // the frame re-anchors on the vector as it stands now, as it does on the first frame after a move
+		// A PRESS 30 px RIGHT AND 20 px UP OF THE CENTRE at zoom 1: the pad's plane is one unit to the smaller half-side, y up.
+		const float half = std::min(pad.width(), pad.height()) * 0.5f;
+		const float px = pad.width() * 0.5f + 30.0f;
+		const float py = pad.height() * 0.5f - 20.0f;
+		pad.onMouseDown().callback(at(px, py));
+		pad.onMouseUp().callback(at(px, py));
+		const double wantX = x0 + 30.0 / static_cast<double>(half);
+		const double wantY = y0 + 20.0 / static_cast<double>(half);
+		CHECK(f.bridge.value(static_cast<clap_id>(drumLayerParam(0, layer, DrumControl::OffsetX))) == doctest::Approx(wantX).epsilon(1.0e-5));
+		CHECK(f.bridge.value(static_cast<clap_id>(drumLayerParam(0, layer, DrumControl::OffsetY))) == doctest::Approx(wantY).epsilon(1.0e-5));
+		for (const auto& [id, value] : before) {
+			const bool vector = id == static_cast<clap_id>(drumLayerParam(0, layer, DrumControl::OffsetX))
+			                    || id == static_cast<clap_id>(drumLayerParam(0, layer, DrumControl::OffsetY));
+			if (!vector) {
+				CAPTURE(id);
+				CHECK(f.bridge.value(id) == value);
+			}
+		}
+		// ONE GESTURE, ONE STEP; and undo puts both back.
+		f.settleGesture();
+		CHECK(f.history.length() == steps + 1);
+		f.history.undo();
+		CHECK(f.bridge.value(static_cast<clap_id>(drumLayerParam(0, layer, DrumControl::OffsetX))) == doctest::Approx(x0));
+		CHECK(f.bridge.value(static_cast<clap_id>(drumLayerParam(0, layer, DrumControl::OffsetY))) == doctest::Approx(y0));
+	}
+}
+
+TEST_CASE("pad editor: Lock set leaves that layer's vector alone under the kit's bulk edit while the other moves by exactly the step; Lock is the editor's flag") {
+	PadEditorFixture f;
+	using feathers::drumLayerParam;
+	const auto id = [](size_t slot, size_t layer, DrumControl c) { return static_cast<clap_id>(drumLayerParam(slot, layer, c)); };
+	for (const size_t layer : { size_t { 0 }, size_t { 1 } }) {
+		f.set(static_cast<ParamId>(id(0, layer, DrumControl::OffsetX)), 0.25);
+		f.set(static_cast<ParamId>(id(0, layer, DrumControl::OffsetY)), -0.25);
+	}
+	// LOCK LAYER ONE'S BY ITS CHIP, as a hand does.
+	f.show(0);
+	auto* lock = dynamic_cast<ui::SwitchChip*>(f.panel.controlForTest(0, DrumControl::Lock, 0));
+	REQUIRE(lock != nullptr);
+	lock->toggleForTest();
+	f.settleGesture();
+	CHECK(f.base(0, 0, DrumControl::Lock) == doctest::Approx(1.0));
+	CHECK(f.base(0, 1, DrumControl::Lock) == doctest::Approx(0.0)); // layer two's own flag is its own
+	const size_t written = f.stage.moveKitUnlocked(0.125, -0.0625);
+	CHECK(written >= 2);
+	CHECK(f.bridge.value(id(0, 0, DrumControl::OffsetX)) == 0.25); // locked: bit-identical
+	CHECK(f.bridge.value(id(0, 0, DrumControl::OffsetY)) == -0.25);
+	CHECK(f.bridge.value(id(0, 1, DrumControl::OffsetX)) == 0.25 + 0.125); // unlocked: by exactly the step
+	CHECK(f.bridge.value(id(0, 1, DrumControl::OffsetY)) == -0.25 - 0.0625);
+}
+
+TEST_CASE("pad editor: a kit drag with the selected pad's layer one LOCKED still moves every unlocked layer by exactly the step the pointer took, and is one undo step") {
+	using feathers::drumLayerParam;
+	const auto id = [](size_t slot, size_t layer, DrumControl c) { return static_cast<clap_id>(drumLayerParam(slot, layer, c)); };
+	// THE SAME DRAG TWICE: once with nothing locked (the star moves, so its step IS the pointer's step), once with the star's layer locked.
+	const auto drag = [&](bool lockStar, std::vector<double>& after, std::vector<double>& before) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+		f.set(ParamId::DrumMode, 1.0);
+		f.set(feathers::drumParam(1, DrumControl::LayerKind), 2.0);
+		for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+			for (size_t layer = 0; layer < 2; ++layer) {
+				f.set(static_cast<ParamId>(id(slot, layer, DrumControl::OffsetX)), 0.01 * static_cast<double>(slot) - 0.02 * static_cast<double>(layer));
+				f.set(static_cast<ParamId>(id(slot, layer, DrumControl::OffsetY)), 0.005 * static_cast<double>(slot) + 0.01 * static_cast<double>(layer));
+			}
+		}
+		if (lockStar) {
+			f.set(static_cast<ParamId>(id(1, 0, DrumControl::Lock)), 1.0);
+		}
+		f.selection.select(1);
+		const auto snapshot = [&] {
+			std::vector<double> v;
+			for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+				for (size_t layer = 0; layer < 2; ++layer) {
+					v.push_back(f.bridge.value(id(slot, layer, DrumControl::OffsetX)));
+					v.push_back(f.bridge.value(id(slot, layer, DrumControl::OffsetY)));
+				}
+			}
+			return v;
+		};
+		before = snapshot();
+		const visage::Point centre = f.stage.disk().centre();
+		f.stage.onMouseDown().callback(at(centre.x, centre.y));
+		for (int i = 1; i <= 6; ++i) {
+			f.now += 40;
+			f.stage.onMouseDrag().callback(at(centre.x + 20.0f * static_cast<float>(i), centre.y - 5.0f * static_cast<float>(i)));
+			(void)f.stage.update();
+		}
+		f.stage.onMouseUp().callback(at(centre.x + 120.0f, centre.y - 30.0f));
+		f.settleScrub();
+		f.settleGesture();
+		after = snapshot();
+		const size_t steps = f.history.length();
+		f.stage.undo();
+		CHECK(snapshot() == before); // the whole drag, one step
+		CHECK(steps >= 1);
+		CHECK(f.bridge.soundTravel().offset[1].x == 0.0);
+	};
+	std::vector<double> freeBefore, freeAfter, lockedBefore, lockedAfter;
+	drag(false, freeAfter, freeBefore);
+	drag(true, lockedAfter, lockedBefore);
+	const double dx = freeAfter[2 * 2] - freeBefore[2 * 2]; // pad 1, layer 0, X: the star moved by the pointer's step
+	const double dy = freeAfter[2 * 2 + 1] - freeBefore[2 * 2 + 1];
+	REQUIRE(std::abs(dx) > 1.0e-4);
+	for (size_t i = 0; i < freeBefore.size(); i += 2) {
+		CAPTURE(i);
+		if (i == 2 * 2) {
+			CHECK(lockedAfter[i] == lockedBefore[i]); // the locked layer stands, bit-identical
+			CHECK(lockedAfter[i + 1] == lockedBefore[i + 1]);
+			continue;
+		}
+		CHECK(lockedAfter[i] == doctest::Approx(std::clamp(lockedBefore[i] + dx, -feathers::kDrumVectorRange, feathers::kDrumVectorRange)).epsilon(1.0e-9));
+		CHECK(lockedAfter[i + 1] == doctest::Approx(std::clamp(lockedBefore[i + 1] + dy, -feathers::kDrumVectorRange, feathers::kDrumVectorRange)).epsilon(1.0e-9));
+	}
+}
+
+TEST_CASE("pad editor: the Tune pill steps in whole semitones, and Shift moves it finely") {
+	PadEditorFixture f(false);
+	f.set(feathers::drumParam(0, DrumControl::Tune), 1.0);
+	(void)f.panel.update();
+	auto* pill = dynamic_cast<ui::FaderPill*>(f.panel.controlForTest(0, DrumControl::Tune, 0));
+	REQUIRE(pill != nullptr);
+	const auto dragBy = [&](float dx, bool shift) {
+		visage::MouseEvent down = at(40.0f, 10.0f);
+		if (shift) {
+			down.modifiers = visage::kModifierShift;
+		}
+		pill->onMouseDown().callback(down);
+		visage::MouseEvent move = at(40.0f + dx, 10.0f);
+		if (shift) {
+			move.modifiers = visage::kModifierShift;
+		}
+		pill->onMouseDrag().callback(move);
+		pill->onMouseUp().callback(move);
+		f.settleGesture();
+	};
+	dragBy(23.0f, false); // 23 px of 120 over 96 semitones is 18.4: a whole number lands
+	const double t = f.base(0, 0, DrumControl::Tune);
+	CHECK(t == std::round(t));
+	CHECK(t > 1.0);
+	f.set(feathers::drumParam(0, DrumControl::Tune), 1.0);
+	(void)f.panel.update();
+	dragBy(23.0f, true);
+	const double fine = f.base(0, 0, DrumControl::Tune);
+	CHECK(fine != std::round(fine));
+	CHECK(fine == doctest::Approx(1.0 + 23.0 / 120.0 * 96.0 * static_cast<double>(feathers::ui::kFineAdjust)).epsilon(1.0e-6));
+}
+
+TEST_CASE("pad editor: the terrain pitch mode is three choices on the face and writes the layer's own PitchMode by value") {
+	PadEditorFixture f;
+	for (size_t layer = 0; layer < 2; ++layer) {
+		CAPTURE(layer);
+		f.show(layer);
+		auto* mode = dynamic_cast<ui::SegmentedControl*>(f.panel.controlForTest(0, DrumControl::PitchMode, layer));
+		REQUIRE(mode != nullptr);
+		CHECK(mode->isVisible());
+		CHECK(mode->labelsFit()); // all three choices on the face, not a menu
+		for (const int choice : { 1, 2, 0 }) {
+			mode->select(choice);
+			f.settleGesture();
+			CHECK(f.base(0, layer, DrumControl::PitchMode) == doctest::Approx(static_cast<double>(choice)));
+			CHECK(f.base(0, 1 - layer, DrumControl::PitchMode) == doctest::Approx(0.0));
+		}
+	}
+	// EVERY KIND READS THE PITCH FIELD, so every kind draws the mode in a Kit (and Pitched mode, which reads no mode, draws none).
+	f.show(0);
+	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
+		f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(k));
+		(void)f.panel.update();
+		CHECK(f.panel.drawnForTest(0, DrumControl::PitchMode, 0));
+	}
+	f.set(ParamId::DrumMode, 0.0);
+	(void)f.panel.update();
+	CHECK_FALSE(f.panel.drawnForTest(0, DrumControl::PitchMode, 0));
+}
+
+TEST_CASE("pad editor: the settled pitch of a Kick reads 'Hz  note +cents', as an independent computation says") {
+	PadEditorFixture f(false);
+	using feathers::DrumControl;
+	// A KICK, THE TERRAIN'S PITCH MODE OFF: its settled pitch is its resting pitch moved by Tune alone.
+	f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Kick));
+	f.set(feathers::drumParam(0, DrumControl::PitchMode), 2.0);
+	f.set(feathers::drumParam(0, DrumControl::Tune), 7.0);
+	(void)f.panel.update();
+	const double hz = feathers::drum::kindBaseHz(feathers::drum::Kind::Kick) * std::exp2(7.0 / 12.0);
+	// THE RESTATEMENT of the note: midi number, nearest semitone, cents.
+	const double midi = 69.0 + 12.0 * std::log2(hz / 440.0);
+	const long n = std::lround(midi);
+	const int cents = static_cast<int>(std::lround((midi - static_cast<double>(n)) * 100.0));
+	static const char* const kNames[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+	char want[64] = {};
+	std::snprintf(want, sizeof(want), "%.1f Hz  %s%ld %+dc", hz, kNames[((n % 12) + 12) % 12], (n - ((n % 12) + 12) % 12) / 12 - 1, cents);
+	CHECK(f.panel.pitchReadoutForTest(0, 0).textForTest() == want);
+	CHECK(f.panel.pitchReadoutForTest(0, 0).isVisible());
+	// AND ITS VALUE, BY THE ENGINE'S OWN FUNCTION, is that frequency.
+	const feathers::drum::SettledPitch settled = f.panel.settledPitchForTest(0, 0);
+	CHECK(settled.defined);
+	CHECK_FALSE(settled.approximate);
+	CHECK(settled.hz == doctest::Approx(hz).epsilon(1.0e-9));
+	// A METAL IS APPROXIMATE ("~" first); a Clap has no one pitch and draws nothing.
+	f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Metal));
+	(void)f.panel.update();
+	CHECK(f.panel.pitchReadoutForTest(0, 0).textForTest().front() == '~');
+	CHECK(f.panel.pitchReadoutForTest(0, 0).isVisible());
+	f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Clap));
+	(void)f.panel.update();
+	CHECK_FALSE(f.panel.pitchReadoutForTest(0, 0).isVisible());
+	CHECK(f.panel.pitchReadoutForTest(0, 0).textForTest().empty());
+}
+
+TEST_CASE("pad editor: a note or a frequency typed into the readout sets Tune so the settled pitch lands there, within a cent, on either layer") {
+	PadEditorFixture f;
+	using feathers::drumLayerParam;
+	f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Kick));
+	for (size_t layer = 0; layer < 2; ++layer) {
+		CAPTURE(layer);
+		f.show(layer);
+		// A SNARE ON LAYER TWO: the head's lowest mode is the pitch heard; a Kick on layer one: the sweep's landing.
+		for (const auto& [text, hz] : { std::pair<const char*, double> { "A1", 55.0 }, { "c#3", 138.5913154884 },
+		                                { "220", 220.0 }, { "72.5 Hz", 72.5 }, { "A2 +25c", 110.0 * std::exp2(25.0 / 1200.0) } }) {
+			CAPTURE(text);
+			ui::PitchReadout& readout = f.panel.pitchReadoutForTest(0, layer);
+			REQUIRE(readout.isVisible());
+			readout.clickForTest();
+			ui::TextField* field = readout.typeInField();
+			REQUIRE(field != nullptr);
+			REQUIRE(field->editing());
+			field->processTextInput(text);
+			typeKeyInto(*field, visage::KeyCode::Return);
+			f.settleGesture();
+			(void)f.panel.update();
+			const feathers::drum::SettledPitch settled = f.panel.settledPitchForTest(0, layer);
+			REQUIRE(settled.defined);
+			const double cents = 1200.0 * std::log2(settled.hz / hz);
+			CHECK(std::abs(cents) < 1.0);
+		}
+		// THE OTHER LAYER'S TUNE IS WHERE IT WAS (defaults).
+		CHECK(f.base(0, 1 - layer, DrumControl::Tune) == doctest::Approx(layer == 0 ? f.base(0, 1, DrumControl::Tune) : f.base(0, 0, DrumControl::Tune)));
+	}
+	// TEXT THAT IS NEITHER A NOTE NOR A NUMBER CHANGES NOTHING.
+	f.show(0);
+	const double tuned = f.base(0, 0, DrumControl::Tune);
+	ui::PitchReadout& readout = f.panel.pitchReadoutForTest(0, 0);
+	readout.clickForTest();
+	REQUIRE(readout.typeInField() != nullptr);
+	readout.typeInField()->processTextInput("banana");
+	typeKeyInto(*readout.typeInField(), visage::KeyCode::Return);
+	f.settleGesture();
+	CHECK(f.base(0, 0, DrumControl::Tune) == tuned);
+	// A METAL IS APPROXIMATE, so there is no one pitch to land and the field does not open.
+	f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Metal));
+	(void)f.panel.update();
+	ui::PitchReadout& metal = f.panel.pitchReadoutForTest(0, 0);
+	if (ui::TextField* open = metal.typeInField(); open != nullptr) {
+		open->setVisible(false);
+	}
+	metal.clickForTest();
+	CHECK((metal.typeInField() == nullptr || !metal.typeInField()->editing()));
+}
+
+TEST_CASE("pad editor: dragging the readout moves Tune a whole semitone at a time, and Shift moves it finely") {
+	PadEditorFixture f(false);
+	f.set(feathers::drumParam(0, DrumControl::Tune), 1.0);
+	(void)f.panel.update();
+	ui::PitchReadout& readout = f.panel.pitchReadoutForTest(0, 0);
+	// THREE SEMITONES UP is 3 x kPixelsPerSemitone of travel, plus a little that does not make a fourth.
+	readout.dragForTest(3.0f * ui::PitchReadout::kPixelsPerSemitone + 1.5f, false);
+	f.settleGesture();
+	CHECK(f.base(0, 0, DrumControl::Tune) == 4.0);
+	readout.dragForTest(-2.0f * ui::PitchReadout::kPixelsPerSemitone, false);
+	f.settleGesture();
+	CHECK(f.base(0, 0, DrumControl::Tune) == 2.0);
+	// FINE: the same travel is worth kFineAdjust of itself, and is not rounded.
+	readout.dragForTest(4.0f * ui::PitchReadout::kPixelsPerSemitone, true);
+	f.settleGesture();
+	CHECK(f.base(0, 0, DrumControl::Tune) == doctest::Approx(2.0 + 4.0 * static_cast<double>(feathers::ui::kFineAdjust)).epsilon(1.0e-6));
+	// AND THE PICTURE'S TUNE HANDLE STEPS THE SAME WAY.
+	f.set(feathers::drumParam(0, DrumControl::Tune), 0.0);
+	(void)f.panel.update();
+	f.panel.pictureForTest().dragForTest(ui::HitPicture::Handle::Tune, 0.0f, -17.0f);
+	f.settleGesture();
+	const double stepped = f.base(0, 0, DrumControl::Tune);
+	CHECK(stepped == std::round(stepped));
+	CHECK(stepped > 0.0);
+}
+
+TEST_CASE("pad editor: a layer's seven field scalers are drawn where its kind reads them, on both tabs, and the Explore surround holds none of them in a Kit") {
+	PadEditorFixture f;
+	for (size_t layer = 0; layer < 2; ++layer) {
+		CAPTURE(layer);
+		f.show(layer);
+		const auto kind = layer == 0 ? feathers::drum::Kind::Kick : feathers::drum::Kind::Snare;
+		const feathers::drum::FieldUse reads = feathers::drum::kindReads(kind);
+		const std::array<bool, 7> want { reads.pitch, reads.length, reads.sweep, reads.tone, reads.noise, reads.snap, reads.metal };
+		for (size_t field = 0; field < 7; ++field) {
+			CAPTURE(field);
+			REQUIRE(f.panel.fieldPillForTest(0, layer, field) != nullptr);
+			CHECK(f.panel.fieldPillForTest(0, layer, field)->isVisible() == want[field]);
+		}
+	}
+	// AND THE SURROUND: a Kit's holds the seven kit trims alone.
+	f.stage.update();
+	for (size_t i = 0; i < ui::ExploreStage::kDrumFieldCount; ++i) {
+		CHECK_FALSE(f.stage.drumFieldKnobForTest(static_cast<ui::ExploreStage::DrumField>(i), 0).isVisible());
+	}
+}
+
+TEST_CASE("pad editor: the vector terrain is a dark centre where the layer's sound stands and lighter where another place would be a different drum") {
+	PadEditorFixture f(false);
+	f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Membrane));
+	(void)f.panel.update();
+	ui::DrumVectorPad& pad = f.panel.vectorPadForTest(0, 0);
+	visage::Canvas canvas;
+	pad.draw(canvas); // builds the map at the pad's real size
+	const auto& cells = pad.mapForTest();
+	const size_t wide = ui::DrumVectorPad::kMapWide;
+	const size_t high = ui::DrumVectorPad::kMapHigh;
+	const float centre = cells[(high / 2) * wide + wide / 2];
+	float peak = 0.0f;
+	for (const float c : cells) {
+		peak = std::max(peak, c);
+	}
+	CHECK(centre < 0.2f); // the sound as it stands is the darkest place in its own view
+	CHECK(peak > centre + 0.1f); // and the map is not flat
+	CHECK(pad.rebuildsForTest() >= 1);
 }

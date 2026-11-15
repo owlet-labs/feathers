@@ -155,6 +155,11 @@ public:
 	/// second implementation would get subtly wrong.
 	BlendPoint pathPos(double t) const;
 
+	/// Whether a Drum Kit is up. There the engine reads no Path: the kit's stance is Pos X/Y through Weather and nothing else,
+	/// so the puck IS (Pos X, Pos Y) and a drag writes those two alone, never splitting a point into a path position and a
+	/// residual (the residual alone would be all the kit heard of a move along the tour).
+	[[nodiscard]] bool kitUp() const;
+
 	/// The Path that puts the puck as near as the tour allows to a point.
 	///
 	/// Projects onto every leg and keeps the best, which is what the mock's windowed search is an

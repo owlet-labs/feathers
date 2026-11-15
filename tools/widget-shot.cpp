@@ -41,7 +41,9 @@
 #include "fx/automod/automod_types.h"
 #include "mod/lfo/lfo_types.h"
 #include "plugin/gui.h"
+#include "plugin/ui/drum_panel.h"
 #include "plugin/ui/explore_stage.h"
+#include "plugin/ui/ui_state.h"
 #include "plugin/ui/rail.h"
 #include "plugin/ui/expanded_overlay.h"
 #include "host_common.h"
@@ -320,6 +322,9 @@ int main(int argc, char** argv) {
 	bool spectrum = false;
 	/// `--drum-kit`: the drum engine's kit panel, opened by its tab's road (seed `--host "Osc Type=7"`).
 	bool drumKit = false;
+	/// `--drum-layer N` / `--drum-pad N`: with `--drum-kit`, the pad editor's layer tab and the selected pad (0 .. 7).
+	int drumLayer = -1;
+	int drumPad = -1;
 	/// `--width W` (logical): the editor's width, as `--height` sets its height — a large canvas for the terrain.
 	uint32_t shotWidth = 0;
 	/// `--explore-zooms z1,z2,…` (terrain-render-bugs): the Explore surface, then one grab per zoom stop
@@ -747,6 +752,14 @@ int main(int argc, char** argv) {
 		if (arg == "--drum-kit") {
 			drumKit = true;
 			expand = false;
+			continue;
+		}
+		if (arg == "--drum-layer" && i + 1 < argc) {
+			drumLayer = std::atoi(argv[++i]);
+			continue;
+		}
+		if (arg == "--drum-pad" && i + 1 < argc) {
+			drumPad = std::atoi(argv[++i]);
 			continue;
 		}
 		if (arg == "--preset-prompt" && i + 1 < argc) {
@@ -2227,7 +2240,14 @@ int main(int argc, char** argv) {
 			std::printf("--drum-kit: no Explore stage with a drum tab in the tree\n");
 			return 1;
 		}
+		if (drumPad >= 0 && gui.selectionForTest() != nullptr) {
+			gui.selectionForTest()->select(static_cast<size_t>(drumPad));
+		}
 		explore->onDrumTab();
+		pump(300);
+		if (ui::DrumPanel* panel = findInTree<ui::DrumPanel>(gui.root()); panel != nullptr && drumLayer >= 0) {
+			panel->showLayerForTest(static_cast<size_t>(drumLayer));
+		}
 		std::printf("venue:    the drum kit panel, opened by its tab's road\n");
 	}
 	pump(2000);

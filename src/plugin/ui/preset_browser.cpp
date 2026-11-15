@@ -26,6 +26,7 @@
 
 #include "plugin/editor_prefs.h"
 #include "plugin/preset_store.h"
+#include "device/utf8_path.h"
 #include "plugin/ui/notify_tray.h"
 #include "plugin/ui/theme.h"
 
@@ -1068,7 +1069,7 @@ void PresetBrowser::beginExport() {
 
 PresetBrowser::ImportOutcome PresetBrowser::importFile(const std::filesystem::path& file) {
 	pendingImport_.reset();
-	const std::string shown = file.filename().string();
+	const std::string shown = feathers::utf8Of(file.filename());
 	// 1. READ AND DECODE — a file that is not there, is a folder, is huge or is not a preset file stops
 	// here, before anything is asked, loaded or written.
 	std::error_code ec;
@@ -1090,7 +1091,7 @@ PresetBrowser::ImportOutcome PresetBrowser::importFile(const std::filesystem::pa
 		say("Import failed — \"" + shown + "\" is not a preset file");
 		return ImportOutcome::Unreadable;
 	}
-	pending->name = PresetStore::sanitise(file.stem().string());
+	pending->name = PresetStore::sanitise(feathers::utf8Of(file.stem()));
 	if (pending->name.empty()) {
 		pending->name = "Imported";
 	}
@@ -1223,7 +1224,7 @@ bool PresetBrowser::exportTo(std::filesystem::path file) {
 	if (!wrote) {
 		wrote = write(file);
 	}
-	say(wrote ? "Exported \"" + file.filename().string() + "\"" : "Export failed — \"" + file.filename().string() + "\" could not be written");
+	say(wrote ? "Exported \"" + feathers::utf8Of(file.filename()) + "\"" : "Export failed — \"" + feathers::utf8Of(file.filename()) + "\" could not be written");
 	return wrote;
 }
 

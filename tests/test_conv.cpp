@@ -23,11 +23,14 @@
 #include "test_heap.h"
 #include "doctest.h"
 
+#include "device/utf8_path.h"
+#include "fx/conv/ir_browse.h"
 #include "fx/conv/ir_file.h"
 #include "fx/conv/test_ir.h"
 
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
 using namespace feathers::fx::conv;
@@ -517,6 +520,34 @@ TEST_CASE("an IR read from a WAV file on disk: channels, rate and length as writ
 	const LoadedIr missing = loadIrFile("no/such/file.wav", 48000.0);
 	CHECK_FALSE(missing.ok);
 	CHECK(missing.error == "cannot read file");
+}
+
+TEST_CASE("an IR whose file name is not ASCII loads, and is listed beside its neighbours, by its UTF-8 name") {
+	// WHAT THIS CAN AND CANNOT PROVE: Linux file names are bytes, so this pins the round trip through the one UTF-8 crossing
+	// (`feathers::pathFromUtf8`/`utf8Of`); only the Windows leg can show the ANSI code page being avoided.
+	std::vector<float> data(2 * 441, 0.0f);
+	data[0] = 1.0f;
+	const std::string ascii = "test_conv_ir_u8.wav";
+	REQUIRE(writeFloatWav(ascii, data, 2, 48000));
+	const std::string folderName = "test_conv_ir_u8_dir_\xC3\xA9";
+	const std::string fileName = "Caf\xC3\xA9 \xE6\x97\xA5\xE6\x9C\xAC \xF0\x9F\x8E\xB5.wav";
+	const std::filesystem::path folder = feathers::pathFromUtf8(folderName);
+	std::error_code ec;
+	std::filesystem::remove_all(folder, ec);
+	REQUIRE(std::filesystem::create_directories(folder));
+	const std::filesystem::path target = folder / feathers::pathFromUtf8(fileName);
+	std::filesystem::rename(ascii, target, ec);
+	REQUIRE_FALSE(ec);
+	const std::string utf8Path = feathers::utf8Of(target);
+	CHECK(utf8Path == folderName + "/" + fileName);
+	const LoadedIr ir = loadIrFile(utf8Path, 48000.0);
+	REQUIRE(ir.ok);
+	CHECK(ir.fileChannels == 2);
+	CHECK(ir.left.size() == 441);
+	const std::vector<std::string> beside = feathers::fx::conv::irFilesBeside(utf8Path);
+	REQUIRE(beside.size() == 1);
+	CHECK(beside[0] == utf8Path);
+	std::filesystem::remove_all(folder, ec);
 }
 
 //------------------------------------------------------------------------------------------------//

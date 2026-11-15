@@ -25,6 +25,7 @@
 #include "fx/conv/ir_ref.h"
 #include "fx/featherverb/featherverb.h"
 #include "plugin/ui/knob.h"
+#include "device/utf8_path.h"
 #include "plugin/ui/switch_chip.h"
 #include "plugin/ui/theme.h"
 
@@ -222,8 +223,8 @@ private:
 			const fx::conv::IrChoice& c = choices_[i];
 			const bool same = here.generated >= 0 ? c.generated == here.generated
 			                                      : c.generated < 0
-			                                            && std::filesystem::path(c.path).filename()
-			                                                   == std::filesystem::path(here.path).filename();
+			                                            && feathers::pathFromUtf8(c.path).filename()
+			                                                   == feathers::pathFromUtf8(here.path).filename();
 			if (same) {
 				return static_cast<int>(i);
 			}
@@ -285,7 +286,7 @@ std::string FeatherverbExpanded::browseFolder() const {
 	// THE FOLDER: the loaded file's own; on a generated room, the LAST FOLDER BROWSED, so stepping out of the files
 	// into the rooms and back does not lose the way; and before any file, the fixed one (made on first use).
 	if (const fv::Featherverb* v = verb(); v != nullptr && !v->irPath().empty()) {
-		lastFolder_ = std::filesystem::path(v->irPath()).parent_path().string();
+		lastFolder_ = feathers::utf8Of(feathers::pathFromUtf8(v->irPath()).parent_path());
 	}
 	return !lastFolder_.empty() ? lastFolder_ : fx::conv::defaultIrFolder(true);
 }
@@ -308,7 +309,7 @@ bool FeatherverbExpanded::useFolder(const std::string& folder) {
 			return true;
 		}
 	}
-	view_->setError("nothing in " + std::filesystem::path(folder).filename().string() + " loads");
+	view_->setError("nothing in " + feathers::utf8Of(feathers::pathFromUtf8(folder).filename()) + " loads");
 	redraw();
 	return false;
 }
@@ -326,7 +327,7 @@ void FeatherverbExpanded::loadIrFromDialog() {
 			return;
 		}
 		if (r.chosen()) {
-			if (v->loadIr(r.path.string())) {
+			if (v->loadIr(feathers::utf8Of(r.path))) {
 				bodyEdited();
 				view_->clearError();
 				source_->refresh();
@@ -357,7 +358,7 @@ void FeatherverbExpanded::chooseFolderFromDialog() {
 	o.parent = nativeWindowOf(this);
 	(void)irDialog_.open(o, [this](const FileDialogResult& r) {
 		if (r.chosen()) {
-			(void)useFolder(r.path.string());
+			(void)useFolder(feathers::utf8Of(r.path));
 		}
 		else if (r.status == FileDialogResult::Status::Failed) {
 			view_->setError(r.error);

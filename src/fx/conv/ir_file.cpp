@@ -21,10 +21,15 @@
 
 #include "fx/conv/ir_file.h"
 
+#include "device/utf8_path.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <vector>
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -265,14 +270,25 @@ LoadedIr loadIrFile(const std::string& path, double hostRate) {
 	unsigned rate = 0;
 	uint64_t frames = 0;
 	float* data = nullptr;
+	// READ THROUGH A UTF-8 PATH, DECODE FROM MEMORY: the decoders' own file openers take a narrow `fopen` name, which on Windows
+	// is the ANSI code page and cannot name a file with a non-ASCII letter. A stream opened on a real path can.
+	std::vector<char> file;
+	{
+		std::ifstream in(feathers::pathFromUtf8(path), std::ios::binary);
+		if (in) {
+			file.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+		}
+	}
 	const bool flac = endsWithNoCase(path, ".flac");
-	if (flac) {
+	if (file.empty()) {
+		data = nullptr;
+	} else if (flac) {
 		drflac_uint64 n = 0;
-		data = drflac_open_file_and_read_pcm_frames_f32(path.c_str(), &channels, &rate, &n, nullptr);
+		data = drflac_open_memory_and_read_pcm_frames_f32(file.data(), file.size(), &channels, &rate, &n, nullptr);
 		frames = n;
 	} else {
 		drwav_uint64 n = 0;
-		data = drwav_open_file_and_read_pcm_frames_f32(path.c_str(), &channels, &rate, &n, nullptr);
+		data = drwav_open_memory_and_read_pcm_frames_f32(file.data(), file.size(), &channels, &rate, &n, nullptr);
 		frames = n;
 	}
 	if (data == nullptr) {

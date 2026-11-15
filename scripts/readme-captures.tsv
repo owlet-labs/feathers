@@ -22,16 +22,17 @@
 #   name  <slug>  <label>
 #       The label of a card in collage-all-cards.png.
 #
-# --- settings every Explore capture shares (the Additive engine, Explore zoom x1/3) --------------------------------
+# --- settings every Explore capture shares (the Additive engine; the still at x1/3, the rotate GIF at its own GIF_ZOOM) ---
 var	EXPLORE_ENGINE	5
 var	EXPLORE_ZOOM	0.3333333
+var	GIF_ZOOM	0.00909091
 #
 # --- the numbered pictures ---------------------------------------------------------------------------------
 shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/wood_elves_pan.fpreset|--size|2400x1500|--play|3
 shot	f02	-	widget-shot	MSEG|--rack|--rack-add|MATH|--route-curves|--route-phi|1|--height|1500|--macro|1=Knob:Motion:0.65|--mod-run|3
 shot	f03	-	widget-shot	TFIELD|--card|--twinfield-play|--height|1550
 shot	f05	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|@env:FEATHERS_EXPLORE_ZOOM=${EXPLORE_ZOOM}
-shot	rot	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|--explore-rotate|40|--explore-zoom-pump|2500|@env:FEATHERS_EXPLORE_ZOOM=${EXPLORE_ZOOM}
+shot	rot	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|--explore-rotate|40|--explore-zoom-pump|2500|@env:FEATHERS_EXPLORE_ZOOM=${GIF_ZOOM}
 shot	f06	-	widget-shot	FVERB|--host|Osc Type=7|--drum-kit
 crop	01-hero-full-editor.png	hero	-
 crop	02-modulation-lane-and-routes.png	f02	915x1370+0+80

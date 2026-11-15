@@ -15,7 +15,7 @@
 # website's compressed copies, so the pictures can be refreshed with one command whenever the UI changes.
 #
 # Usage: scripts/capture-readme.sh <build-dir> [--only cards|windows|shots|gif|collages|site] [--check]
-#                                  [--site-dir <dir>] [--reuse <dir>] [--keep]
+#                                  [--site-dir <dir>] [--reuse <dir>] [--keep] [--var NAME=VALUE]
 #
 #   <build-dir>   a build configured with -DFEATHERS_BUILD_TOOLS=ON that has widget-shot, guihost and
 #                 feathers.clap (ninja -C <build-dir> widget-shot guihost feathers_clap).
@@ -59,6 +59,7 @@ BUILD=""
 ONLY=""
 CHECK=0
 KEEP=0
+OVERRIDES=()
 SITE_DIR=""
 REUSE=""
 while [ $# -gt 0 ]; do
@@ -66,6 +67,7 @@ while [ $# -gt 0 ]; do
 	--only) ONLY="${2:-}"; shift 2 ;;
 	--check) CHECK=1; shift ;;
 	--keep) KEEP=1; shift ;;
+	--var) OVERRIDES+=("${2:-}"); shift 2 ;;
 	--site-dir) SITE_DIR="${2:-}"; shift 2 ;;
 	--reuse) REUSE="${2:-}"; shift 2 ;;
 	-h | --help) sed -n 14,36p "$0"; exit 0 ;;
@@ -124,6 +126,7 @@ while IFS=$'\t' read -r kind a b c d; do
 	*) die "unknown row kind '$kind' in $TABLE" ;;
 	esac
 done <"$TABLE"
+for o in "${OVERRIDES[@]}"; do VARS[${o%%=*}]=${o#*=}; done
 
 declare -A LABEL
 for row in "${NAMES[@]}"; do

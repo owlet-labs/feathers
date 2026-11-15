@@ -539,7 +539,9 @@ TEST_CASE("an IR whose file name is not ASCII loads, and is listed beside its ne
 	std::filesystem::rename(ascii, target, ec);
 	REQUIRE_FALSE(ec);
 	const std::string utf8Path = feathers::utf8Of(target);
-	CHECK(utf8Path == folderName + "/" + fileName);
+	// Compared as a path, so the platform's separator (a backslash on Windows) is not part of the claim; the claim is that
+	// every non-ASCII character survives the round trip.
+	CHECK(feathers::pathFromUtf8(utf8Path) == feathers::pathFromUtf8(folderName) / feathers::pathFromUtf8(fileName));
 	const LoadedIr ir = loadIrFile(utf8Path, 48000.0);
 	REQUIRE(ir.ok);
 	CHECK(ir.fileChannels == 2);

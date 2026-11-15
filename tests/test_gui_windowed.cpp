@@ -3433,6 +3433,7 @@ const visage::Frame* terrainGroundOf(const visage::Frame& root) {
 
 } // namespace
 
+#if defined(__linux__) // ReopenRig (above) exists only on Linux
 TEST_CASE("an Explore stage held open with every rail open measures no text and evicts nothing on a steady frame — "
           "a few dozen strings, far under the cache's cap") {
 	// WHY THIS CASE: the tracked-text cache caps at `trackedTextCacheCapacity()` strings, and the number that reaches
@@ -3485,6 +3486,7 @@ TEST_CASE("an Explore stage held open with every rail open measures no text and 
 	CHECK(ui::trackedTextCacheSize() <= 256);
 	ui::setTrackedTextAudit(false);
 }
+#endif // defined(__linux__): ReopenRig is Linux-only
 
 TEST_CASE("backlog NF: the Explore pane collapses like the fx lane — a 34px EXPLORE strip, the surface hidden, the "
           "editor narrower by the stage's room and the cards their own width, and the desk remembers it") {

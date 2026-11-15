@@ -288,6 +288,33 @@ private:
 	std::function<void()> changed_;
 };
 
+/// **A PAD'S PREVIEW BUTTON** (a play glyph): a press strikes the pad, the release lets it go, through the editor's note ring into the synth's own
+/// note road (the pad's Note key, so choke groups, trigger modes, voices, the pad's fx lane and note devices behave as for a host note).
+/// Not a parameter and not a modulation target; velocity is fixed at 100/127. Whatever ends a press (the mouse up, the pad being switched away,
+/// the editor closing, the widget being destroyed) sends the off, so a note is never left stuck.
+class PadPlayButton : public visage::Frame, public TooltipSource {
+public:
+	static constexpr float kVelocity = 100.0f / 127.0f;
+	static constexpr float kWidth = 30.0f;
+	static constexpr float kHeight = 22.0f;
+	PadPlayButton(ParamBridge& bridge, size_t slot);
+	~PadPlayButton() override;
+	void draw(visage::Canvas& canvas) override;
+	const char* tooltipAt(visage::Point) const override;
+	void offeredControls(std::vector<Offered>&) const override {} // no control: a key, not a parameter
+	/// A press: the pad's key on. A release: its off, for the key that was pressed (the Note may have moved since).
+	void press();
+	void release();
+	[[nodiscard]] bool held() const noexcept { return held_; }
+	[[nodiscard]] int heldKey() const noexcept { return heldKey_; }
+
+private:
+	ParamBridge& bridge_;
+	size_t slot_;
+	bool held_ = false;
+	int heldKey_ = 0;
+};
+
 /// The settled pitch of a layer, drawn as text, with a hand on it: a click types a note or Hz into it, a drag moves Tune in whole
 /// semitones (Shift: fine, `kFineAdjust` of the travel, not rounded).
 class PitchReadout : public visage::Frame, public TooltipSource {
@@ -385,6 +412,7 @@ public:
 	/// TEST ONLY: pad `pad`'s Mute and Solo chips.
 	[[nodiscard]] SwitchChip& muteChipForTest(size_t pad) const { return *pads_[pad].mute; }
 	[[nodiscard]] SwitchChip& soloChipForTest(size_t pad) const { return *pads_[pad].solo; }
+	[[nodiscard]] PadPlayButton& playButtonForTest(size_t pad) const { return *pads_[pad].play; }
 	[[nodiscard]] visage::Frame* fieldPillForTest(size_t pad, size_t layer, size_t field) const;
 	[[nodiscard]] DrumVectorPad& vectorPadForTest(size_t pad, size_t layer) const { return *pads_[pad].layer[layer].vectorPad; }
 	[[nodiscard]] PitchReadout& pitchReadoutForTest(size_t pad, size_t layer) const { return *pads_[pad].layer[layer].readout; }
@@ -446,6 +474,7 @@ private:
 		std::unique_ptr<FaderPill> pan, release, bend;
 		/// MUTE (the pad's own Mute) and SOLO (the preview of this pad alone), as chips on the pad row.
 		std::unique_ptr<SwitchChip> mute, solo;
+		std::unique_ptr<PadPlayButton> play;
 		std::unique_ptr<PadSoloControl> soloControl;
 		std::array<LayerSet, 2> layer {};
 	};

@@ -16408,3 +16408,87 @@ TEST_CASE("pad editor: Mute is the pad's own Mute and Solo the existing preview 
 	CHECK_FALSE(f.panel.muteChipForTest(0).isVisible());
 	CHECK_FALSE(f.panel.soloChipForTest(0).isVisible());
 }
+
+TEST_CASE("pad editor: the play button posts the pad's note on at a press and off at the release, velocity 100/127, and is Kit-only") {
+	PadEditorFixture f(false);
+	f.set(feathers::drumParam(2, DrumControl::Note), 47.0);
+	f.panel.clickPadForTest(2);
+	(void)f.panel.update();
+	ui::PadPlayButton& play = f.panel.playButtonForTest(2);
+	REQUIRE(play.isVisible());
+	feathers::UiNoteEvent e;
+	CHECK_FALSE(f.bridge.popNote(e));
+	play.onMouseDown().callback(at(5.0f, 5.0f));
+	CHECK(play.held());
+	REQUIRE(f.bridge.popNote(e));
+	CHECK(e.key == 47);
+	CHECK(e.on);
+	CHECK(e.velocity == doctest::Approx(100.0f / 127.0f));
+	CHECK_FALSE(f.bridge.popNote(e)); // exactly one note-on
+	// THE NOTE MOVES WHILE IT IS HELD: the off is for the key that was struck.
+	f.set(feathers::drumParam(2, DrumControl::Note), 50.0);
+	play.onMouseUp().callback(at(5.0f, 5.0f));
+	CHECK_FALSE(play.held());
+	REQUIRE(f.bridge.popNote(e));
+	CHECK(e.key == 47);
+	CHECK_FALSE(e.on);
+	CHECK_FALSE(f.bridge.popNote(e));
+	// A RELEASE WITH NO PRESS SENDS NOTHING.
+	play.onMouseUp().callback(at(5.0f, 5.0f));
+	CHECK_FALSE(f.bridge.popNote(e));
+	// PITCHED MODE HAS NO PADS TO PLAY.
+	f.set(ParamId::DrumMode, 0.0);
+	(void)f.panel.update();
+	CHECK_FALSE(play.isVisible());
+}
+
+TEST_CASE("pad editor: a press ended by anything else sends the off: the pad switched away, the mode switched, the button destroyed") {
+	PadEditorFixture f(false);
+	feathers::UiNoteEvent e;
+	const auto expectPair = [&](int key) {
+		REQUIRE(f.bridge.popNote(e));
+		CHECK(e.key == key);
+		CHECK(e.on);
+		REQUIRE(f.bridge.popNote(e));
+		CHECK(e.key == key);
+		CHECK_FALSE(e.on);
+		CHECK_FALSE(f.bridge.popNote(e));
+	};
+	const int noteA = static_cast<int>(f.bridge.value(static_cast<clap_id>(feathers::drumParam(0, DrumControl::Note))));
+	// THE PAD IS SWITCHED AWAY MID-PRESS.
+	f.panel.playButtonForTest(0).onMouseDown().callback(at(5.0f, 5.0f));
+	f.panel.clickPadForTest(3);
+	(void)f.panel.update();
+	CHECK_FALSE(f.panel.playButtonForTest(0).held());
+	expectPair(noteA);
+	// THE MODE IS SWITCHED TO PITCHED MID-PRESS.
+	f.panel.clickPadForTest(0);
+	(void)f.panel.update();
+	f.panel.playButtonForTest(0).onMouseDown().callback(at(5.0f, 5.0f));
+	f.set(ParamId::DrumMode, 0.0);
+	(void)f.panel.update();
+	expectPair(noteA);
+	// THE BUTTON IS DESTROYED MID-PRESS (the editor closing, the panel going).
+	{
+		ui::PadPlayButton lone(f.bridge, 5);
+		lone.onMouseDown().callback(at(5.0f, 5.0f));
+		REQUIRE(f.bridge.popNote(e));
+		CHECK(e.on);
+	}
+	REQUIRE(f.bridge.popNote(e));
+	CHECK_FALSE(e.on);
+	CHECK(e.key == static_cast<int>(f.bridge.value(static_cast<clap_id>(feathers::drumParam(5, DrumControl::Note)))));
+}
+
+TEST_CASE("pad editor: a press while the ring is full is dropped and counted, owes no off, and crashes nothing") {
+	PadEditorFixture f(false);
+	for (size_t i = 0; i < feathers::UiNoteRing::kCapacity; ++i) {
+		REQUIRE(f.bridge.postNote(60, true, 0.5f));
+	}
+	ui::PadPlayButton& play = f.panel.playButtonForTest(0);
+	play.onMouseDown().callback(at(5.0f, 5.0f));
+	CHECK_FALSE(play.held());
+	CHECK(f.bridge.droppedNotes() == 1);
+	play.onMouseUp().callback(at(5.0f, 5.0f)); // nothing held: nothing sent
+	CHECK(f.bridge.droppedNotes() == 1);
+}

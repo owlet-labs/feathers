@@ -925,6 +925,45 @@ void PadSoloControl::setValue(double value) {
 	}
 }
 
+PadPlayButton::PadPlayButton(ParamBridge& bridge, size_t slot) : bridge_(bridge), slot_(slot) {
+	onMouseDown() = [this](const visage::MouseEvent&) { press(); };
+	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
+	installTooltipHover(*this, *this);
+}
+
+PadPlayButton::~PadPlayButton() { release(); }
+
+const char* PadPlayButton::tooltipAt(visage::Point) const {
+	return "Strike this pad: held while the button is held, as a key on the pad's note. Not saved and not modulated.";
+}
+
+void PadPlayButton::press() {
+	if (held_) {
+		return;
+	}
+	heldKey_ = static_cast<int>(std::lround(bridge_.value(static_cast<clap_id>(drumParam(slot_, DrumControl::Note)))));
+	held_ = bridge_.postNote(heldKey_, true, kVelocity); // a full ring drops the press (and counts it); no off is owed then
+	redraw();
+}
+
+void PadPlayButton::release() {
+	if (!held_) {
+		return;
+	}
+	held_ = false;
+	(void)bridge_.postNote(heldKey_, false, 0.0f);
+	redraw();
+}
+
+void PadPlayButton::draw(visage::Canvas& canvas) {
+	canvas.setColor(held_ ? kAccent : kSurfaceRaised);
+	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 4.0f);
+	canvas.setColor(alphaOf(kLine, 0.8f));
+	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 4.0f, 1.0f);
+	canvas.setColor(held_ ? kVoid : kInk);
+	canvas.triangleRight(width() * 0.5f - 3.0f, height() * 0.5f - 5.0f, 5.0f);
+}
+
 PitchReadout::PitchReadout(SettledPitchControl& control) : control_(control) {
 	onMouseDown() = [this](const visage::MouseEvent& e) { beginHand(e.position.y, e.isShiftDown()); };
 	onMouseDrag() = [this](const visage::MouseEvent& e) { moveHand(e.position.y, e.isShiftDown()); };
@@ -1131,6 +1170,8 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 		});
 		set.solo = std::make_unique<SwitchChip>(*set.soloControl, "Solo");
 		addChild(set.solo.get());
+		set.play = std::make_unique<PadPlayButton>(bridge, slot);
+		addChild(set.play.get());
 		// The pad's kind and Trigger decide what is drawn, so a move of either re-lays the panel.
 		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Kind)), this));
 		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Trigger)), this));
@@ -1587,8 +1628,11 @@ bool DrumPanel::sync() {
 		if (!own) {
 			for (visage::Frame* f : std::initializer_list<visage::Frame*> { set.note.get(), set.choke.get(), set.voices.get(),
 			                                                                set.trigger.get(), set.pan.get(), set.release.get(),
-			                                                                set.bend.get(), set.mute.get(), set.solo.get() }) {
+			                                                                set.bend.get(), set.mute.get(), set.solo.get(), set.play.get() }) {
 				show(f, false);
+				if (f == set.play.get()) {
+					set.play->release(); // a pad switched away mid-press lets go
+				}
 			}
 			continue;
 		}
@@ -1610,6 +1654,10 @@ bool DrumPanel::sync() {
 		seat(set.release.get(), gate, 92.0f, 22.0f);
 		seat(set.mute.get(), kit, 54.0f, SwitchChip::kHeight); // the pad's own Mute and the preview of it alone (kit pads only)
 		seat(set.solo.get(), kit, 54.0f, SwitchChip::kHeight);
+		seat(set.play.get(), kit, PadPlayButton::kWidth, PadPlayButton::kHeight);
+		if (!kit) {
+			set.play->release();
+		}
 		float y = flow.bottom() + 10.0f;
 		LayerSet& s = set.layer[layer];
 		// THE LAYER TABS, and beside them the shown layer's Kind (layer two's with Off) and, on layer two, Level, Delay and High Pass.

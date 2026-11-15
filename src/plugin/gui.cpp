@@ -1434,6 +1434,10 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 		if (bridge.hasPendingWork()) {
 			host.guiRequestFlush();
 		}
+		// A KEY THE EDITOR PRESSED waits for the audio thread, which a sleeping plugin is not running: ask the host to process.
+		if (bridge.hasPendingNotes()) {
+			host.guiRequestProcess();
+		}
 		// The two things that move on a clock rather than on an event, so they are the two that need a
 		// frame to notice time has passed. Both decide for themselves whether the screen is out of
 		// date: the readout only while it is fading, the stage every frame it is animating and never

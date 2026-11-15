@@ -147,7 +147,8 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 			freq.setValue(freqValueForX(e.position.x));
 			// THE AMOUNT: up is more. Relative to the press, past a dead zone, the whole range to the plot's height.
 			const float rise = drag_.startY - e.position.y;
-			if (drag_.amountGesture || std::abs(rise) > kAmountDeadZone) {
+			// RUST HAS NO AMOUNT: up and down write nothing there.
+			if (!rust_ && (drag_.amountGesture || std::abs(rise) > kAmountDeadZone)) {
 				DeviceControl& amount = control(ero::Param::Amount);
 				if (!drag_.amountGesture) {
 					drag_.amountGesture = true;
@@ -255,6 +256,14 @@ float EroderPlot::dbToY(float db) const noexcept {
 	return plotFoot() - t * (plotFoot() - plotTop());
 }
 
+float EroderPlot::handleY() const noexcept {
+	// DUST: the Amount's height. RUST has no Amount; its band stands at a fixed height.
+	if (rust_) {
+		return plotFoot() - kRustBandShare * (plotFoot() - plotTop());
+	}
+	return amountToY(static_cast<double>(settings_.amount));
+}
+
 float EroderPlot::amountToY(double log2Seconds) const noexcept {
 	const double t = std::clamp((log2Seconds - ero::kDustAmountLog2Min)
 	                                / (ero::kDustAmountLog2Max - ero::kDustAmountLog2Min),
@@ -284,7 +293,7 @@ float EroderPlot::edgeX() const noexcept {
 
 float EroderPlot::edgeY() const noexcept {
 	const float foot = plotFoot();
-	const float rise = foot - amountToY(static_cast<double>(settings_.amount));
+	const float rise = foot - handleY();
 	const auto level = static_cast<float>(std::clamp(1.0 - kEdgeDb / static_cast<double>(kBandFloorDb), 0.0, 1.0));
 	return foot - rise * level;
 }
@@ -320,7 +329,9 @@ bool EroderPlot::update() {
 	if (!computed_ || row != row_ || pitch != pitch_ || rate != rate_) {
 		row_ = row;
 		settings_ = ero::stateOf(row, present).settings;
-		dust_ = settings_.mode == ero::Mode::Dust;
+		// DUST AND RUST DRAW THE BAND (one moves a head by it, the other multiplies by it); the Comb its bars.
+		dust_ = settings_.mode != ero::Mode::Comb;
+		rust_ = settings_.mode == ero::Mode::Rust;
 		pitch_ = pitch;
 		rate_ = rate;
 		band_ = ero::deriveDust(settings_, pitch_, rate_);
@@ -399,7 +410,7 @@ const char* EroderPlot::tooltipAt(visage::Point p) const {
 	}
 	// THE HANDLE SPEAKS FOR THE AMOUNT, the rest of the axis for Freq.
 	if (std::abs(p.x - hzToX(band_.freqHz)) < kHandleReach
-	    && std::abs(p.y - amountToY(static_cast<double>(settings_.amount))) < kHandleReach) {
+	    && std::abs(p.y - handleY()) < kHandleReach) {
 		return tooltipOf(&control(ero::Param::Amount));
 	}
 	return tooltipOf(&control(ero::Param::Freq));
@@ -462,7 +473,7 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 
 	// THE BAND: the noise half as its filter's curve, the sine half as a stem, each as strong as Source makes it.
 	const float handleX = hzToX(band_.freqHz);
-	const float handleY = amountToY(static_cast<double>(settings_.amount));
+	const float handleY = this->handleY();
 	const float rise = foot - handleY;
 	const float noise = std::clamp(settings_.source, 0.0f, 1.0f);
 	if (noise > 0.0f && rise > 0.0f) {
@@ -510,10 +521,13 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 
 	char text[40];
 	canvas.setColor(kMuted);
-	canvas.text(large_ ? "in (grey), out (line), and the band that shakes the head" : "spectrum + band",
+	canvas.text(large_ ? rust_ ? "in (grey), out (line), and the band that multiplies it"
+	                   : "in (grey), out (line), and the band that shakes the head" : "spectrum + band",
 	            font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, in - 1.0f, w * 0.75f, 11.0f);
-	formatSeconds(text, sizeof(text), band_.amountSeconds);
-	canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, w - in - 70.0f, in - 1.0f, 68.0f, 11.0f);
+	if (!rust_) {
+		formatSeconds(text, sizeof(text), band_.amountSeconds);
+		canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, w - in - 70.0f, in - 1.0f, 68.0f, 11.0f);
+	}
 	if (large_) {
 		for (const double hz : { 100.0, 1000.0, 10000.0 }) {
 			formatHz(text, sizeof(text), hz);

@@ -39,6 +39,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 // THE ERODER'S WINDOW — laid out for its room:
@@ -79,43 +80,47 @@ public:
 
 	[[nodiscard]] EroderPlot* plotForTest() const { return plot_.get(); }
 	[[nodiscard]] SegmentedControl* modeForTest() const { return mode_.get(); }
+	/// WHAT ONE ENGINE SHOWS AND THE OTHERS DO NOT ALL SHOW: Dust's, the Comb's, Rust's.
 	[[nodiscard]] std::vector<visage::Frame*> dustWidgetsForTest() const;
 	[[nodiscard]] std::vector<visage::Frame*> combWidgetsForTest() const;
-	[[nodiscard]] Knob* widthForTest() const;
+	[[nodiscard]] std::vector<visage::Frame*> rustWidgetsForTest() const;
+	/// A plain knob by the control it drives, or null.
+	[[nodiscard]] Knob* knobForTest(fx::eroder::Param p) const { return knob(p); }
+	[[nodiscard]] Knob* widthForTest() const { return knob(fx::eroder::Param::Width); }
 	[[nodiscard]] Knob* driveForTest() const { return drive_.get(); }
 	[[nodiscard]] ModeValueCell* driveCellForTest() const { return driveCell_.get(); }
 	[[nodiscard]] PairCell* drivePairForTest() const { return drivePair_.get(); }
-	[[nodiscard]] Knob* hpWetForTest() const { return hpWet_.get(); }
+	[[nodiscard]] Knob* hpWetForTest() const { return knob(fx::eroder::Param::HpWet); }
 	[[nodiscard]] SwitchChip* subThruForTest() const { return subThru_.get(); }
-	[[nodiscard]] Knob* followForTest() const { return follow_.get(); }
+	[[nodiscard]] SwitchChip* blendForTest() const { return blend_.get(); }
+	[[nodiscard]] Knob* followForTest() const { return knob(fx::eroder::Param::Follow); }
 
 private:
 	[[nodiscard]] DeviceControl& control(fx::eroder::Param p) const;
-	[[nodiscard]] bool dust() const;
+	[[nodiscard]] Knob* knob(fx::eroder::Param p) const;
+	[[nodiscard]] fx::eroder::Mode engine() const;
 	void layOut();
 	void refreshHonesty();
 
 	backplane::DeviceHost& dhost_;
 	DeviceInstanceId device_ = kNoInstance;
 	Notifier* notifier_ = nullptr;
-	int laidOutDust_ = -1;
+	/// THE ENGINE THE WIDGETS WERE LAST LAID OUT FOR.
+	int laidOutEngine_ = -1;
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<EroderPlot> plot_;
 	std::unique_ptr<SegmentedControl> mode_;
-	/// DUST'S SEVEN PLAIN KNOBS, in the grid's order. Follow and Mix come after them and are the Comb's too.
-	std::vector<std::unique_ptr<Knob>> dustKnobs_;
-	std::unique_ptr<Knob> follow_;
+	/// EVERY PLAIN KNOB, by the control it drives; which are shown is the engine's (`layOut`).
+	std::vector<std::pair<fx::eroder::Param, std::unique_ptr<Knob>>> knobs_;
 	std::unique_ptr<Knob> drive_;
 	std::unique_ptr<ModeValueCell> driveCell_;
 	std::unique_ptr<PairCell> drivePair_;
-	std::unique_ptr<Knob> hpWet_;
 	std::unique_ptr<SwitchChip> subThru_;
-	std::unique_ptr<Knob> mix_;
 	std::unique_ptr<SwitchChip> track_;
+	std::unique_ptr<SwitchChip> blend_;
 	std::unique_ptr<ZoneCoordCell> tone_;
 	std::unique_ptr<ZoneCoordCell> character_;
-	std::unique_ptr<Knob> cutoff_;
 	std::unique_ptr<GammaBox> gamma_;
 };
 

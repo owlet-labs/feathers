@@ -9351,6 +9351,50 @@ TEST_CASE("RB: a latched chord under an Arp keeps the plugin awake between its s
 	}
 }
 
+TEST_CASE("RS: a host key held under an Arp does not hold the voice up through the gaps between the Arp's steps") {
+	// ONE STEP A BAR at 120 bpm, the shortest gate (20 ms) and a release of about a second: with only the Arp's own notes
+	// sounding, the second half of every step is exactly silent. The Arp is APPENDED, so it sits after the default
+	// patch's amplitude envelope, which must not hear the host key the Arp swallowed.
+	static uint32_t seated = UINT32_MAX;
+	HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
+		const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(c != nullptr);
+		seated = c->add_mod_device(p, feathers::mod::arp::kTraits.tag);
+		REQUIRE(seated != UINT32_MAX);
+	});
+	const clap_plugin* p = host.plugin();
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	const uint32_t slot = CLAP_FEATHERS_TEST_STRIP | seated;
+	REQUIRE(chain->set_control(p, slot, "Time Base", 19.0));
+	REQUIRE(chain->set_control(p, slot, "Gate", 0.01));
+	REQUIRE(chain->set_control(p, slot, "Run", 0.0));
+	constexpr uint32_t kFrames = 256;
+	EventList none;
+	host.setTransportEvent(songTransport(0.0, 120.0, false));
+	for (int b = 0; b < 8; ++b) {
+		host.run(kFrames, none);
+	}
+	EventList on;
+	on.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 1, 1.0);
+	const int blocks = static_cast<int>(5.0 * kSampleRate / kFrames);
+	int gapBlocks = 0;
+	int gapSounding = 0;
+	for (int b = 0; b < blocks; ++b) {
+		host.run(kFrames, b == 0 ? on : none);
+		// 1.2 s to 1.9 s after a step (steps at 0, 2 and 4 s): the 20 ms note and its release are long over
+		const double t = b * kFrames / kSampleRate;
+		const double phase = t - 2.0 * std::floor(t / 2.0);
+		if (t > 1.0 && phase > 1.2 && phase < 1.9) {
+			++gapBlocks;
+			gapSounding += peakOf(host.left(), kFrames) > 1.0e-4f || peakOf(host.right(), kFrames) > 1.0e-4f ? 1 : 0;
+		}
+	}
+	CAPTURE(gapBlocks);
+	CHECK(gapBlocks > 100);   // the gaps were examined: not vacuous
+	CHECK(gapSounding == 0);  // and nothing sounded in them
+}
+
 TEST_CASE("RB: a Pattern on Trig Transport keeps the plugin awake between its steps while the transport plays, with no key "
           "held — and once it is switched off and the transport stops SLEEP is reached") {
 	const auto configure = [](const clap_plugin* p, const clap_plugin_feathers_test_chain* c, uint32_t slot) {

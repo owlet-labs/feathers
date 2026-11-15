@@ -1,0 +1,160 @@
+/*
+ * Copyright © 2026 Owlet Records
+ *
+ * This file is part of Feathers.
+ *
+ * Feathers is free software: you can redistribute it and/or modify it under the terms of the GNU
+ * General Public License as published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+ * the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with Feathers. If not, see
+ * <https://www.gnu.org/licenses/>.
+ */
+
+#include "plugin/ui/drum_device_ui.h"
+
+#include "plugin/ui/theme.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace feathers::ui {
+
+DeviceControl& DrumDeviceModel::control(dd::Param p) const {
+	const auto i = static_cast<size_t>(p);
+	if (controls_[i] == nullptr) {
+		controls_[i] = std::make_unique<DeviceControl>(host_, id_, dd::kDescriptor, i);
+	}
+	return *controls_[i];
+}
+
+dd::Settings DrumDeviceModel::settings() const {
+	dd::Row row {};
+	const size_t present = std::min(host_.fieldsPresentAt(id_), row.size());
+	for (size_t i = 0; i < present; ++i) {
+		row[i] = host_.modulatedFieldAt(id_, i);
+	}
+	return dd::stateOf(row, present);
+}
+
+feathers::drum::Kind DrumDeviceModel::kind() const {
+	return static_cast<feathers::drum::Kind>(std::clamp(settings().index(dd::Param::Kind), 0, static_cast<int>(feathers::drum::kKindCount) - 1));
+}
+
+bool DrumDeviceModel::relevant(dd::Param p) const {
+	const device::ParamDesc& d = dd::kParamDescs[static_cast<size_t>(p)];
+	if (d.gateControl < 0 || static_cast<size_t>(d.gateControl) >= static_cast<size_t>(dd::Param::kCount)) {
+		return true;
+	}
+	return device::relevantFor(d, settings().v[static_cast<size_t>(d.gateControl)]);
+}
+
+feathers::drum::Laws DrumDeviceModel::laws() const {
+	const dd::Settings s = settings();
+	const feathers::drum::Kind k = kind();
+	return feathers::drum::lawsFor(k, dd::fieldsOf(s), dd::controlsOf(s), dd::baseHzOf(k, s, 0.0), 0.8);
+}
+
+feathers::drum::SettledPitch DrumDeviceModel::settled() const {
+	const dd::Settings s = settings();
+	const feathers::drum::Kind k = kind();
+	return feathers::drum::settledPitch(k, dd::fieldsOf(s), dd::controlsOf(s), dd::baseHzOf(k, s, 0.0));
+}
+
+double DrumDeviceModel::decaySeconds() const { return std::exp2(static_cast<double>(settings().at(dd::Param::Decay))); }
+double DrumDeviceModel::levelDb() const { return static_cast<double>(settings().at(dd::Param::Level)); }
+int DrumDeviceModel::noteKey() const { return static_cast<int>(std::lround(host_.fieldAt(id_, static_cast<size_t>(dd::Param::Note)))); }
+
+HitPicture::Controls DrumDeviceModel::handles() const {
+	const feathers::drum::ControlUse uses = feathers::drum::kindControls(kind());
+	const auto c = [&](dd::Param p) -> device::Modulatable* { return &control(p); };
+	HitPicture::Controls h;
+	h.tune = c(dd::Param::Tune);
+	h.decay = c(dd::Param::Decay);
+	h.level = c(dd::Param::Level);
+	if (uses.sweepTime) {
+		h.sweepTime = c(dd::Param::SweepTime);
+	}
+	if (uses.drive) {
+		h.drive = c(dd::Param::Drive);
+		h.driveTone = c(dd::Param::DriveTone);
+	}
+	if (uses.snareEnvelopes) {
+		h.wireDecay = c(dd::Param::WireDecay);
+		h.clickDecay = c(dd::Param::ClickDecay);
+	}
+	if (uses.bell) {
+		h.bellStart = c(dd::Param::BellStart);
+		h.bellEnd = c(dd::Param::BellEnd);
+		h.bellTime = c(dd::Param::BellTime);
+		h.bell2 = c(dd::Param::Bell2Hz);
+		h.bell2Time = c(dd::Param::Bell2Time);
+	}
+	if (uses.kickShape) {
+		h.hold = c(dd::Param::KickHold);
+		h.dip = c(dd::Param::KickDip);
+		h.dipTime = c(dd::Param::KickDipTime);
+		h.clickSweep = c(dd::Param::ClickSweep);
+		h.clickSweepTime = c(dd::Param::ClickSweepTime);
+		h.startPhase = c(dd::Param::StartPhase);
+	}
+	if (uses.spread) {
+		h.spread = c(dd::Param::Spread);
+	}
+	if (uses.clapFilter) {
+		h.clapHighPass = c(dd::Param::ClapHighPass);
+		h.clapQ = c(dd::Param::ClapQ);
+	}
+	return h;
+}
+
+void DrumDeviceModel::setModulation(ModState* mod, EditHistory* history) {
+	for (size_t i = 0; i < controls_.size(); ++i) {
+		control(static_cast<dd::Param>(i)).setModulation(mod, history);
+	}
+}
+
+DrumPlayButton::DrumPlayButton(backplane::DeviceHost& host, std::function<int()> key) : host_(host), key_(std::move(key)) {
+	onMouseDown() = [this](const visage::MouseEvent&) { press(); };
+	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
+	installTooltipHover(*this, *this);
+}
+
+DrumPlayButton::~DrumPlayButton() { release(); }
+
+const char* DrumPlayButton::tooltipAt(visage::Point) const {
+	return "Strike this drum on its Note, held while the button is held. Not saved and not modulated.";
+}
+
+void DrumPlayButton::press() {
+	if (held_) {
+		return;
+	}
+	heldKey_ = key_ ? key_() : 0;
+	held_ = host_.postNote(heldKey_, true, kVelocity);
+	redraw();
+}
+
+void DrumPlayButton::release() {
+	if (!held_) {
+		return;
+	}
+	held_ = false;
+	(void)host_.postNote(heldKey_, false, 0.0f);
+	redraw();
+}
+
+void DrumPlayButton::draw(visage::Canvas& canvas) {
+	canvas.setColor(held_ ? kAccent : kSurfaceRaised);
+	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 4.0f);
+	canvas.setColor(kLine);
+	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 4.0f, 1.0f);
+	canvas.setColor(held_ ? kVoid : kInk);
+	canvas.triangleRight(width() * 0.5f - 3.0f, height() * 0.5f - 5.0f, 5.0f);
+}
+
+} // namespace feathers::ui

@@ -4223,16 +4223,27 @@ TEST_CASE("EVERY audio device in the lane: the plugin renders the same samples a
 	//
 	// DRIVEN FROM THE REGISTRY, so the sixth device is covered without anybody coming back. The one
 	// existing case of this shape drives the FILTER and only the filter.
-	const std::vector<const feathers::device::Descriptor*> devices = [] {
+	// A NOTE GENERATOR SOUNDS ONLY FROM THE NOTES IT IS HANDED, and the notes this rig plays go to the synth, not to a rack device: the
+	// drum would be a wire here whatever its row says. The same claim, asked WITH NOTES delivered to the drum, is held by
+	// `test_drum_device.cpp`'s "the same host notes in any block sizes are the same sound, to the bit" (five partitions, each asserted
+	// equal to the whole-block render, which itself must not be silent). A second generator joining is a decision made in this list.
+	const std::vector<std::string> kNoteGenerators { "Drum" };
+	std::vector<std::string> generatorsSkipped;
+	const std::vector<const feathers::device::Descriptor*> devices = [&] {
 		std::vector<const feathers::device::Descriptor*> out;
 		for (const feathers::device::Descriptor& d : feathers::kDevices) {
 			// A LISTENER RENDERS NOTHING (`AudioOps::listensOnly`, the Follower): this case would see a wire.
 			if (d.audio != nullptr && !d.audio->listensOnly) {
+				if (std::find(kNoteGenerators.begin(), kNoteGenerators.end(), std::string(d.traits.name)) != kNoteGenerators.end()) {
+					generatorsSkipped.push_back(d.traits.name);
+					continue;
+				}
 				out.push_back(&d);
 			}
 		}
 		return out;
 	}();
+	CHECK(generatorsSkipped == kNoteGenerators);
 	REQUIRE(devices.size() >= 5);
 
 	constexpr uint32_t kFrames = 4096;

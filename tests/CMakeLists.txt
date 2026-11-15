@@ -1733,6 +1733,12 @@ target_link_libraries(test_latency PRIVATE feathers-rack-ui feathers-synth feath
 target_include_directories(test_latency PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME latency COMMAND test_latency)
 
+# THE STANDALONE RACK'S ROAD FOR AN EDITOR KEY (a Drum's play button): its own binary, because it replaces operator new to count allocations.
+add_executable(test_rack_preview test_rack_preview.cpp)
+target_link_libraries(test_rack_preview PRIVATE feathers-rack-ui feathers-warnings)
+target_include_directories(test_rack_preview PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-preview COMMAND test_rack_preview)
+
 # THE RACK RESOLVES FEATHERS' WAY — through the published edge list and the shared span and landing
 # rules — pinned as values, with the list following the graph through every mutation.
 add_executable(test_rack_resolve test_rack_resolve.cpp)

@@ -28,6 +28,9 @@
 #include "plugin/ui/gamma_box.h"
 #include "mod/twinfield/twinfield_types.h"
 #include "plugin/ui/twinfield_card.h"
+#include "plugin/ui/drum_device_card.h"
+#include "plugin/ui/drum_device_expanded.h"
+#include "fx/drum/drum_types.h"
 #include "plugin/ui/likes_log.h"
 #include "plugin/ui/pattern_likes_log.h"
 #include "plugin/ui/inject_card.h"
@@ -42490,4 +42493,344 @@ TEST_CASE("ERODER's plot asks for the spectrum while Dust's picture is shown, an
 	(void)plot->update();
 	(void)plot->update();
 	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// THE DRUM DEVICE'S CARD AND WINDOW                                                                                            //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+namespace {
+
+namespace ddv = feathers::fx::drumdevice;
+
+/// A Drum in the lane, its card, and its window built over the same device, both addressed by control INDEX.
+struct DrumUi {
+	DynCardFixture<ui::DrumDeviceCard> d { ddv::kTraits.tag };
+	ui::WidgetRegistry registry; // a device's controls have no clap id, so nothing watches by id
+	std::unique_ptr<ui::DrumDeviceExpanded> win;
+	DrumUi() {
+		win = std::make_unique<ui::DrumDeviceExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+		win->setBounds(0.0f, 0.0f, ui::DrumDeviceExpanded::kWidth, ui::DrumDeviceExpanded::kMinimumHeight);
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	}
+	void set(ddv::Param p, double v) {
+		d.set(static_cast<size_t>(p), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	}
+	[[nodiscard]] float field(ddv::Param p) const { return d.f.deviceHost.fieldAt(d.device, static_cast<size_t>(p)); }
+	[[nodiscard]] std::vector<float> row() const {
+		std::vector<float> out;
+		for (size_t i = 0; i < static_cast<size_t>(ddv::Param::kCount); ++i) {
+			out.push_back(d.f.deviceHost.fieldAt(d.device, i));
+		}
+		return out;
+	}
+};
+
+}
+
+TEST_CASE("drum device card: each widget is bound to its control by index, writes that field and no other") {
+	DrumUi u;
+	const auto before = u.row();
+	// KIND (a choice box), NOTE (a box), LEVEL and TUNE (pills): each addresses its own descriptor entry.
+	CHECK(&u.d.card->kindForTest().control().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Kind)]);
+	CHECK(&u.d.card->noteForTest().control().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Note)]);
+	CHECK(&u.d.card->levelForTest().amountForTest().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Level)]);
+	CHECK(&u.d.card->tuneForTest().amountForTest().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Tune)]);
+	const auto write = [&](device::Modulatable& c, double v) {
+		c.beginGesture();
+		c.setValue(v);
+		c.endGesture();
+	};
+	write(u.d.card->kindForTest().control(), 2.0);
+	write(u.d.card->noteForTest().control(), 40.0);
+	write(u.d.card->levelForTest().amountForTest(), -9.0);
+	write(u.d.card->tuneForTest().amountForTest(), 5.0);
+	const auto after = u.row();
+	for (size_t i = 0; i < after.size(); ++i) {
+		CAPTURE(i);
+		const auto p = static_cast<ddv::Param>(i);
+		const float want = p == ddv::Param::Kind ? 2.0f : p == ddv::Param::Note ? 40.0f : p == ddv::Param::Level ? -9.0f : p == ddv::Param::Tune ? 5.0f : before[i];
+		CHECK(after[i] == want);
+	}
+	// THE PLAY BUTTON IS THERE (this host has a note road) and strikes the Note by value; the release lets go.
+	REQUIRE(u.d.card->playForTest() != nullptr);
+	feathers::UiNoteEvent e;
+	CHECK_FALSE(u.d.f.bridge.popNote(e));
+	u.d.card->playForTest()->press();
+	REQUIRE(u.d.f.bridge.popNote(e));
+	CHECK(e.key == 40);
+	CHECK(e.on);
+	u.d.card->playForTest()->release();
+	REQUIRE(u.d.f.bridge.popNote(e));
+	CHECK(e.key == 40);
+	CHECK_FALSE(e.on);
+}
+
+TEST_CASE("drum device: the picture's handles write their own controls by value, Tune in whole semitones and Shift fine, and a Kind shows only its own") {
+	DrumUi u;
+	using H = ui::HitPicture::Handle;
+	ui::HitPicture& pic = u.win->pictureForTest();
+	// A KICK: Tune, Decay, Level, Sweep Time, Drive, and the kick's shape are on the plot; a snare's are not.
+	for (const H h : { H::Tune, H::Decay, H::Level, H::SweepTime, H::Drive, H::Hold, H::Dip, H::ClickSweep, H::StartPhase }) {
+		CAPTURE(static_cast<int>(h));
+		CHECK(pic.handleShown(h));
+	}
+	for (const H h : { H::WireDecay, H::ClickDecay, H::BellStart, H::BellEnd, H::Bell2, H::Spread, H::ClapBand }) {
+		CHECK_FALSE(pic.handleShown(h));
+	}
+	const float tune0 = u.field(ddv::Param::Tune);
+	pic.dragForTest(H::Tune, 0.0f, -17.0f);
+	const float tuned = u.field(ddv::Param::Tune);
+	CHECK(tuned > tune0);
+	CHECK(tuned == std::round(tuned)); // whole semitones
+	pic.dragForTest(H::Tune, 0.0f, -17.0f, true);
+	CHECK(u.field(ddv::Param::Tune) != std::round(u.field(ddv::Param::Tune))); // Shift: fine, not rounded
+	const auto row = u.row();
+	pic.dragForTest(H::Decay, 40.0f, 0.0f);
+	const auto moved = u.row();
+	for (size_t i = 0; i < row.size(); ++i) {
+		CAPTURE(i);
+		CHECK((moved[i] != row[i]) == (static_cast<ddv::Param>(i) == ddv::Param::Decay));
+	}
+	// THE LEVEL HANDLE.
+	const float level0 = u.field(ddv::Param::Level);
+	pic.dragForTest(H::Level, 0.0f, 20.0f);
+	CHECK(u.field(ddv::Param::Level) < level0);
+	// A SNARE'S: its wires, click and bells are the plot's, a kick's shape is gone.
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Snare));
+	for (const H h : { H::WireDecay, H::ClickDecay, H::BellStart, H::BellEnd, H::Bell2 }) {
+		CHECK(pic.handleShown(h));
+	}
+	for (const H h : { H::Hold, H::Dip, H::ClickSweep, H::StartPhase, H::SweepTime }) {
+		CHECK_FALSE(pic.handleShown(h));
+	}
+}
+
+TEST_CASE("drum device window: a control the Kind does not read is hidden, one it reads is drawn, for every Kind") {
+	DrumUi u;
+	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
+		CAPTURE(k);
+		u.set(ddv::Param::Kind, static_cast<double>(k));
+		for (size_t i = 0; i < static_cast<size_t>(ddv::Param::kCount); ++i) {
+			const auto p = static_cast<ddv::Param>(i);
+			visage::Frame* w = u.win->widgetForTest(p);
+			if (w == nullptr) {
+				continue; // the header chip's (Enabled)
+			}
+			CAPTURE(ddv::kParamDescs[i].name);
+			const bool read = device::relevantFor(ddv::kParamDescs[i], ddv::kParamDescs[i].gateControl >= 0 ? u.field(static_cast<ddv::Param>(ddv::kParamDescs[i].gateControl)) : 0.0);
+			CHECK(w->isVisible() == read);
+		}
+	}
+	// AND AGAINST THE ENGINE'S OWN STATEMENT: a Kick reads Hold, a Clap does not; a Clap reads Claps, a Kick does not; Release only on a Gate.
+	u.set(ddv::Param::Kind, 0.0);
+	CHECK(u.win->widgetForTest(ddv::Param::KickHold)->isVisible());
+	CHECK_FALSE(u.win->widgetForTest(ddv::Param::Claps)->isVisible());
+	CHECK_FALSE(u.win->widgetForTest(ddv::Param::Release)->isVisible());
+	u.set(ddv::Param::Trigger, 1.0);
+	CHECK(u.win->widgetForTest(ddv::Param::Release)->isVisible());
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Clap));
+	CHECK(u.win->widgetForTest(ddv::Param::Claps)->isVisible());
+	CHECK_FALSE(u.win->widgetForTest(ddv::Param::KickHold)->isVisible());
+}
+
+TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {
+	DrumUi u;
+	for (size_t i = 0; i < static_cast<size_t>(ddv::Param::kCount); ++i) {
+		const auto p = static_cast<ddv::Param>(i);
+		visage::Frame* w = u.win->widgetForTest(p);
+		if (w == nullptr) {
+			continue;
+		}
+		const device::Modulatable* bound = nullptr;
+		if (auto* box = dynamic_cast<ui::ValueBox*>(w)) {
+			bound = &box->control();
+		}
+		else if (auto* pill = dynamic_cast<ui::FaderPill*>(w)) {
+			bound = &pill->amountForTest();
+		}
+		else if (auto* seg = dynamic_cast<ui::SegmentedControl*>(w)) {
+			bound = seg->control();
+		}
+		REQUIRE(bound != nullptr);
+		CAPTURE(ddv::kParamDescs[i].name);
+		CHECK(&bound->desc() == &ddv::kParamDescs[i]);
+	}
+}
+
+TEST_CASE("drum device window: a note or a frequency typed into the readout sets Tune so the settled pitch lands there, within a cent") {
+	DrumUi u;
+	u.set(ddv::Param::PitchMode, 2.0); // the terrain's pitch off: a Kick's settled pitch is its resting pitch moved by Tune alone
+	ui::PitchReadout& readout = u.win->readoutForTest();
+	REQUIRE(readout.isVisible());
+	for (const auto& [text, hz] : { std::pair<const char*, double> { "A1", 55.0 }, { "c#3", 138.5913154884 }, { "72.5 Hz", 72.5 } }) {
+		CAPTURE(text);
+		readout.clickForTest();
+		ui::TextField* field = readout.typeInField();
+		REQUIRE(field != nullptr);
+		REQUIRE(field->editing());
+		field->processTextInput(text);
+		field->processKeyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true });
+		(void)u.win->updateContent();
+		const feathers::drum::SettledPitch settled = u.win->modelForTest().settled();
+		REQUIRE(settled.defined);
+		CHECK(std::abs(1200.0 * std::log2(settled.hz / hz)) < 1.0);
+	}
+	// A METAL IS APPROXIMATE: no one pitch, so the field does not open.
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Metal));
+	ui::PitchReadout& metal = u.win->readoutForTest();
+	const float tune = u.field(ddv::Param::Tune);
+	metal.clickForTest();
+	CHECK((metal.typeInField() == nullptr || !metal.typeInField()->editing()));
+	CHECK(u.field(ddv::Param::Tune) == tune);
+}
+
+TEST_CASE("drum device window: the terrain pad writes Travel X and Travel Y only, unbounded, and the view follows") {
+	DrumUi u;
+	ui::DrumDevicePad& pad = u.win->padForTest();
+	REQUIRE(pad.width() > 20.0f);
+	visage::Canvas canvas;
+	pad.draw(canvas);
+	const auto row = u.row();
+	const float half = std::min(pad.width(), pad.height()) * 0.5f;
+	const float px = pad.width() * 0.5f + 30.0f;
+	const float py = pad.height() * 0.5f - 20.0f;
+	const auto at = [](float x, float y) {
+		visage::MouseEvent e;
+		e.position = { x, y };
+		return e;
+	};
+	pad.onMouseDown().callback(at(px, py));
+	pad.onMouseUp().callback(at(px, py));
+	const auto moved = u.row();
+	for (size_t i = 0; i < row.size(); ++i) {
+		CAPTURE(i);
+		const auto p = static_cast<ddv::Param>(i);
+		CHECK((moved[i] != row[i]) == (p == ddv::Param::TravelX || p == ddv::Param::TravelY));
+	}
+	CHECK(u.field(ddv::Param::TravelX) == doctest::Approx(30.0 / half).epsilon(1.0e-5));
+	CHECK(u.field(ddv::Param::TravelY) == doctest::Approx(20.0 / half).epsilon(1.0e-5));
+	// UNBOUNDED: held at the pad's edge the view scrolls and the value goes past anything a window would hold.
+	pad.draw(canvas);
+	pad.onMouseDown().callback(at(pad.width() * 0.5f, pad.height() * 0.5f));
+	pad.onMouseDrag().callback(at(pad.width() - 1.0f, pad.height() * 0.5f));
+	for (int i = 0; i < 200; ++i) {
+		(void)pad.tickForTest(0.05);
+	}
+	CHECK(u.field(ddv::Param::TravelX) > 5.0f);
+	CHECK(std::abs(pad.viewForTest().first) > 5.0);
+	pad.onMouseUp().callback(at(px, py));
+}
+
+TEST_CASE("drum device: the window offers every control the card offers, by descriptor entry") {
+	DrumUi u;
+	const auto collect = [](visage::Frame* root) {
+		std::set<const device::ParamDesc*> out;
+		const std::function<void(visage::Frame*)> walk = [&](visage::Frame* f) {
+			if (const auto* face = dynamic_cast<const ui::ControlFace*>(f)) {
+				std::vector<ui::ControlFace::Offered> list;
+				face->offeredControls(list);
+				for (const auto& o : list) {
+					const device::ParamDesc* d = &o.control->desc();
+					if (d > std::begin(ddv::kParamDescs) && d < std::end(ddv::kParamDescs)) { // the DRUM's own controls, but Enabled: the head chip is the window's too
+						out.insert(d);
+					}
+				}
+			}
+			for (visage::Frame* c : f->children()) {
+				walk(c);
+			}
+		};
+		walk(root);
+		return out;
+	};
+	const auto card = collect(u.d.card);
+	const auto window = collect(u.win.get());
+	CHECK(card.size() >= 4);
+	for (const device::ParamDesc* d : card) {
+		CAPTURE(d - std::begin(ddv::kParamDescs));
+		CAPTURE(d->name);
+		CHECK(window.count(d) == 1);
+	}
+}
+
+TEST_CASE("drum device window: the picture's handles are modulation targets: a halo when armed, a route on an armed press along the handle's own axis, an amount arc where the plot's axis puts it") {
+	DrumUi u;
+	ui::ModState* mod = u.d.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	u.win->setModulation(mod, u.d.f.gui.history());
+	(void)u.win->updateContent();
+	using H = ui::HitPicture::Handle;
+	ui::HitPicture& pic = u.win->pictureForTest();
+	const auto at = [](float x, float y) {
+		visage::MouseEvent e;
+		e.position = { x, y };
+		return e;
+	};
+	const backplane::Source macro = backplane::Source::core(0);
+	const auto dest = [&](ddv::Param p) { return backplane::Destination::control(u.d.device, static_cast<size_t>(p)); };
+	// NOTHING ARMED: offered (a destination) but quiet.
+	ui::ModHandlePlan quiet = pic.modPlanOf(H::Tune);
+	REQUIRE(quiet.axes.size() == 1);
+	CHECK(quiet.axes[0].offered);
+	CHECK_FALSE(quiet.halo);
+	CHECK_FALSE(quiet.axes[0].hasStroke);
+	// ARMED: the halo on every handle whose control the source may reach.
+	mod->focus(macro);
+	mod->arm(true);
+	REQUIRE(u.d.f.bridge.mayRoute(macro, dest(ddv::Param::Tune)));
+	CHECK(pic.modPlanOf(H::Tune).halo);
+	CHECK(pic.modPlanOf(H::Decay).halo);
+	CHECK(pic.modPlanOf(H::Level).halo);
+	SUBCASE("an armed press on a VERTICAL handle (Tune) routes, and only vertical travel edits the amount; the value does not move") {
+		const visage::Point h = pic.markAt(H::Tune);
+		const float before = u.field(ddv::Param::Tune);
+		pic.onMouseDown().callback(at(h.x, h.y));
+		pic.onMouseDrag().callback(at(h.x + 40.0f, h.y)); // sideways: nothing
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Tune)) == doctest::Approx(ui::Knob::kRouteSeedAmount));
+		pic.onMouseDrag().callback(at(h.x + 40.0f, h.y - 30.0f)); // up: more
+		pic.onMouseUp().callback(at(h.x + 40.0f, h.y - 30.0f));
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Tune)) == doctest::Approx(ui::Knob::kRouteSeedAmount + 30.0f / ui::Knob::kRouteDragRange));
+		CHECK(u.field(ddv::Param::Tune) == before);
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Decay)) == 0.0f);
+	}
+	SUBCASE("an armed press on an ACROSS handle (Decay) routes along its own axis: sideways edits the amount, vertical does nothing") {
+		const visage::Point h = pic.markAt(H::Decay);
+		const float before = u.field(ddv::Param::Decay);
+		pic.onMouseDown().callback(at(h.x, h.y));
+		pic.onMouseDrag().callback(at(h.x, h.y - 30.0f));
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Decay)) == doctest::Approx(ui::Knob::kRouteSeedAmount));
+		pic.onMouseDrag().callback(at(h.x + 35.0f, h.y - 30.0f));
+		pic.onMouseUp().callback(at(h.x + 35.0f, h.y - 30.0f));
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Decay)) == doctest::Approx(ui::Knob::kRouteSeedAmount + 35.0f / ui::Knob::kRouteDragRange));
+		CHECK(u.field(ddv::Param::Decay) == before);
+	}
+	SUBCASE("the amount arc runs from the handle's base to base + amount through the plot's own axis (Tune: the frequency axis)") {
+		const double hz = u.win->modelForTest().laws().hz;
+		for (const float amount : { 0.05f, -0.05f }) {
+			CAPTURE(amount);
+			u.d.f.bridge.setRouteAmount(macro, dest(ddv::Param::Tune), amount);
+			(void)u.win->updateContent();
+			const ui::ModHandlePlan plan = pic.modPlanOf(H::Tune);
+			REQUIRE(plan.axes[0].hasStroke);
+			const double span = 96.0; // Tune's declared range: a full-depth route moves it this far
+			const float a = pic.yOfHz(hz);
+			const float b = pic.yOfHz(hz * std::exp2(static_cast<double>(amount) * span / 12.0));
+			CHECK(plan.axes[0].strokeLo == doctest::Approx(std::min(a, b)).epsilon(1.0e-3));
+			CHECK(plan.axes[0].strokeHi == doctest::Approx(std::max(a, b)).epsilon(1.0e-3));
+			CHECK(plan.axes[0].base == doctest::Approx(a).epsilon(1.0e-3));
+		}
+	}
+	// UNARMED AGAIN, A PRESS IS A VALUE DRAG AS BEFORE.
+	mod->arm(false);
+	const visage::Point h = pic.markAt(H::Level);
+	const float level0 = u.field(ddv::Param::Level);
+	pic.onMouseDown().callback(at(h.x, h.y));
+	pic.onMouseDrag().callback(at(h.x, h.y + 20.0f));
+	pic.onMouseUp().callback(at(h.x, h.y + 20.0f));
+	CHECK(u.field(ddv::Param::Level) < level0);
 }

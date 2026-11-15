@@ -264,6 +264,11 @@ public:
 	/// **WHETHER THIS HOST RUNS ANYTHING PER VOICE** — Feathers' lane does; a rack with no voices (the standalone rack,
 	/// or a chain inside a Rack) does not. What `runsPerVoice` stands on.
 	[[nodiscard]] virtual bool hostsVoices() const { return false; }
+	/// **A KEY THE EDITOR PRESSES** (a Drum's play button): whether this host has a road from the editor's thread to its notes, and posting one
+	/// (`key`, `on`, velocity 0..1; false when refused or the road is full). NONE BY DEFAULT: a host with no such road (the standalone rack) draws no
+	/// button rather than one that does nothing. Feathers' synth plugin has one (`ParamBridge::postNote`, the audio thread's ring).
+	[[nodiscard]] virtual bool canPostNote() const { return false; }
+	virtual bool postNote(int /*key*/, bool /*on*/, float /*velocity*/) { return false; }
 	/// **WHETHER DEVICE `device` RUNS INSIDE THE VOICES** by its own row: this host has voices, nothing outside says they
 	/// are unavailable, and the device's Poly switch is on — the engine's own test (`polyInRow`), asked of the record. A
 	/// site's PRE does not run then (D4), and its panel says so.

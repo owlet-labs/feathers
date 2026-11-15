@@ -23,6 +23,7 @@
 
 #include "device/device.h"
 #include "fx/owltt/owltt_types.h"
+#include "fx/drum/drum_types.h"
 #include "fx/harm/harm_types.h"
 #include "mod/arp/arp_types.h"
 #include "mod/arp/pattern_types.h"
@@ -39,6 +40,7 @@
 #include "plugin/ui/eq_expanded.h"
 #include "plugin/ui/spectral_expanded.h"
 #include "plugin/ui/waypoint_expanded.h"
+#include "plugin/ui/drum_device_expanded.h"
 #include "plugin/ui/harm_expanded.h"
 #include "plugin/ui/automod_expanded.h"
 #include "plugin/ui/shaper_expanded.h"
@@ -104,6 +106,12 @@ const Entry* entryFor(const device::Descriptor& desc) {
 		  [](backplane::DeviceHost& h, ParamBridge*, WidgetRegistry& r, DeviceInstanceId s, Notifier* n)
 		      -> std::unique_ptr<ExpandedView> {
 			  return std::make_unique<SklitterExpanded>(h, r, s, fx::sklitter::kDescriptor, n);
+		  } },
+		// THE DRUM DEVICE'S WINDOW: the hit picture, the terrain pad and every control, bound by index (`DrumDeviceExpanded`).
+		{ fx::drumdevice::kTraits.tag,
+		  [](backplane::DeviceHost& h, ParamBridge*, WidgetRegistry& r, DeviceInstanceId s, Notifier* n)
+		      -> std::unique_ptr<ExpandedView> {
+			  return std::make_unique<DrumDeviceExpanded>(h, r, s, n);
 		  } },
 		{ fx::harm::kTraits.tag,
 		  [](backplane::DeviceHost& h, ParamBridge*, WidgetRegistry& r, DeviceInstanceId s, Notifier* n)

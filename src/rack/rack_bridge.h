@@ -18,6 +18,7 @@
 #pragma once
 
 #include "backplane/device_host.h"
+#include "plugin/ui_note_ring.h"
 #include "backplane/inner_routes.h"
 #include "backplane/route_list.h"
 #include "backplane/container_bodies.h"
@@ -330,6 +331,19 @@ public:
 	backplane::Source containerExport(DeviceInstanceId container, backplane::Source inner) override;
 	/// A rack runs per voice only with voices of its own (Feathers' lane does; the standalone rack has none).
 	bool hostsVoices() const override { return engine_.voiceCount() > 0; }
+
+	/// **THE EDITOR'S KEYS** (a Drum's play button): the rack's road from the editor's thread to its note input, the synth plugin's own ring type
+	/// (`UiNoteRing`). Posted here, drained by the audio thread at the start of a block into the engine's notes at offset 0 (`RackPlugin::process`).
+	[[nodiscard]] bool canPostNote() const override { return true; }
+	bool postNote(int key, bool on, float velocity) override {
+		if (key < 0 || key > 127) {
+			return false;
+		}
+		return notes_.push({ static_cast<int16_t>(key), velocity, on });
+	}
+	bool popNote(UiNoteEvent& out) noexcept { return notes_.pop(out); }
+	[[nodiscard]] bool hasPendingNotes() const noexcept { return !notes_.empty(); }
+	[[nodiscard]] uint32_t droppedNotes() const noexcept { return notes_.droppedCount(); }
 	/// Held against this rack's reap (backlog JX) — the carrier its converger reads pins from.
 	void pinContainerSurface(const void* surface) override { bodies_.pin(surface); }
 	void unpinContainerSurface(const void* surface) override { bodies_.unpin(surface); }
@@ -912,6 +926,7 @@ private:
 	static float loadFloat(const float& cell) noexcept { return relaxedLoad(cell); }
 	static size_t loadSize(const size_t& cell) noexcept { return relaxedLoad(cell); }
 
+	UiNoteRing notes_;
 	RackEngine& engine_;
 	/// See `secondsPerBeat`: written by `publish` (audio thread), read by the cards.
 	std::atomic<double> secondsPerBeat_ { 0.0 };

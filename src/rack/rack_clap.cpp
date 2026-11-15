@@ -248,6 +248,35 @@ public:
 	static_assert(RackEngine::kTuningExpression == CLAP_NOTE_EXPRESSION_TUNING,
 	              "the engine folds CLAP's tuning expression into the rack's note by its CLAP id");
 
+	/// **THE EDITOR'S KEYS, MERGED AT OFFSET 0** ahead of the block's host notes (a Drum's play button): drained from the bridge's ring into the
+	/// front of this block's note stream, carrying the reserved `kUiNoteId` so no host id can be mistaken for one. A full stream drops what does
+	/// not fit, as host notes do. No allocation, lock or syscall.
+	void takeEditorNotes() noexcept {
+		std::array<device::NoteEvent, UiNoteRing::kCapacity> ui;
+		size_t n = 0;
+		for (UiNoteEvent key; n < ui.size() && bridge_.popNote(key);) {
+			device::NoteEvent& e = ui[n++];
+			e = device::NoteEvent {};
+			e.kind = key.on ? device::NoteEvent::Kind::On : device::NoteEvent::Kind::Off;
+			e.timeSamples = 0;
+			e.noteId = kUiNoteId;
+			e.port = 0;
+			e.channel = 0;
+			e.key = key.key;
+			e.velocity = key.on ? static_cast<double>(key.velocity) : 0.0;
+		}
+		if (n == 0) {
+			return;
+		}
+		const size_t room = notesIn_.size() - noteCount_;
+		n = std::min(n, notesIn_.size());
+		const size_t keep = std::min(noteCount_, notesIn_.size() - n); // host notes that still fit behind the keys
+		std::memmove(notesIn_.data() + n, notesIn_.data(), keep * sizeof(device::NoteEvent));
+		std::memcpy(notesIn_.data(), ui.data(), n * sizeof(device::NoteEvent));
+		noteCount_ = n + keep;
+		(void)room;
+	}
+
 	/// WHAT LEFT THE CHAIN, HANDED BACK TO THE HOST.
 	///
 	/// **PASS-THROUGH IS WHY THIS IS NOT CONDITIONAL.** A rack containing one filter emits exactly
@@ -260,6 +289,10 @@ public:
 			return;
 		}
 		for (const device::NoteEvent& n : engine_.blockNotesOut()) {
+			// A PREVIEW NEVER LEAVES THE PLUGIN: a key the editor posted is for this rack's own devices to hear, not a note played to the host.
+			if (n.noteId == kUiNoteId) {
+				continue;
+			}
 			// **AN EXPRESSION LEAVES AS AN EXPRESSION.** Every kind that was not On or Off went out as a
 			// CHOKE, which was harmless only while no expression could arrive: one passing through would
 			// have choked its note in whatever follows the rack.
@@ -785,6 +818,8 @@ public:
 		const bool scratch = noteRack_ && process->frames_count <= scratchL_.size();
 		if (!scratch && (process->audio_outputs_count < 1 || process->audio_outputs[0].channel_count < 2)) {
 			noteCount_ = 0; // there is no block to deliver them into; left standing they replay with the next one
+			for (UiNoteEvent dropped; bridge_.popNote(dropped);) {
+			} // and an editor key has none either: it is not kept to sound late
 			return CLAP_PROCESS_CONTINUE;
 		}
 		float* left = scratch ? scratchL_.data() : process->audio_outputs[0].data32[0];
@@ -845,6 +880,7 @@ public:
 			const rack::StageScope stage(rack::Stage::Inputs); // the patch drain
 			bridge_.drain();
 		}
+		takeEditorNotes();
 		engine_.setBlockNotes(notesIn_.data(), noteCount_);
 		{
 			const rack::StageScope stage(rack::Stage::Bus); // its devices taken out, and the engine's own Resolve and Mods
@@ -902,6 +938,7 @@ public:
 		// ONLY NOW IS THERE A HOST TO ASK. The editor works out WHAT size it wants; asking is the
 		// plugin's job because the plugin is what holds a `clap_host`.
 		gui_.setResizeRequester([this](uint32_t w, uint32_t h) { _host.guiRequestResize(w, h); });
+		gui_.setProcessRequester([this] { _host.requestProcess(); });
 		const bool made = gui_.create(api, isFloating);
 		log_.say(std::string(made ? "gui-create api=" : "gui-create FAILED api=") + (api != nullptr ? api : "?")
 		         + (isFloating ? " floating" : " embedded"));

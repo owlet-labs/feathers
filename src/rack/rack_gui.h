@@ -92,6 +92,8 @@ public:
 
 	/// HOW THE EDITOR ASKS ITS HOST FOR A SIZE. Installed by the plugin, because only the plugin holds
 	/// a `clap_host`. Absent is fine and means the editor never asks — which is what a venue gets.
+	/// AND HOW IT ASKS THE HOST TO PROCESS, when a key the editor posted waits for the audio thread (`clap_host::request_process`).
+	void setProcessRequester(std::function<void()> request) { requestProcess_ = std::move(request); }
 	void setResizeRequester(std::function<void(uint32_t, uint32_t)> request) {
 		requestResize_ = std::move(request);
 	}
@@ -197,6 +199,7 @@ private:
 	void setUiScale(double next);
 	void openSettings();
 	std::function<void(uint32_t, uint32_t)> requestResize_;
+	std::function<void()> requestProcess_;
 	LoadReport pending_ {};
 };
 

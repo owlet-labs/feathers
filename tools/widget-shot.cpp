@@ -335,6 +335,9 @@ int main(int argc, char** argv) {
 	/// `--explore-zoom-pump ms`: how long each zoom stop is pumped before its grab (default 1500) — short catches a zoom
 	/// IN FLIGHT, the picture of the old window scaled while the new one builds.
 	int exploreZoomPump = 1500;
+	/// `--explore-rotate N`: the Explore surface, then N grabs (`<out stem>-r<k>.png`) with the selected sound's plane
+	/// turned 2*pi/N more before each one: a full turn under Rotate, set frame by frame so it is deterministic.
+	int exploreRotateFrames = 0;
 	/// `--explore-time N` (terrain-render-bugs): N zoom steps of x1.06 (in for N/2, out for N/2), one per 40 ms of wall
 	/// time, timing the editor's own `processEvents` (where a frame is drawn) and counting ground and stage paints and
 	/// terrain builds.
@@ -715,6 +718,12 @@ int main(int argc, char** argv) {
 		}
 		if (arg == "--explore-time" && i + 1 < argc) {
 			exploreTimeSteps = std::max(2, std::atoi(argv[++i]));
+			exploreSurface = true;
+			expand = false;
+			continue;
+		}
+		if (arg == "--explore-rotate" && i + 1 < argc) {
+			exploreRotateFrames = std::max(2, std::atoi(argv[++i]));
 			exploreSurface = true;
 			expand = false;
 			continue;
@@ -2209,6 +2218,32 @@ int main(int argc, char** argv) {
 				return 1;
 			}
 			std::printf("grab:     %s\n", path.c_str());
+		}
+	}
+	if (exploreRotateFrames > 0) {
+		ui::ExploreStage* explore = findInTree<ui::ExploreStage>(gui.root());
+		if (explore == nullptr) {
+			std::printf("--explore-rotate: no Explore stage in the tree\n");
+			return 1;
+		}
+		const std::string stem = out.size() > 4 ? out.substr(0, out.size() - 4) : out;
+		const double step = 2.0 * 3.14159265358979323846 / exploreRotateFrames;
+		for (int k = 0; k < exploreRotateFrames; ++k) {
+			if (k > 0) {
+				explore->rotateSelectedByForTest(step);
+			}
+			pump(exploreZoomPump);
+			char suffix[32];
+			std::snprintf(suffix, sizeof(suffix), "-r%02d.png", k);
+			const std::string path = stem + suffix;
+			char command[1024];
+			std::snprintf(command, sizeof(command), "import -depth 8 -window 0x%lx %s",
+			              static_cast<unsigned long>(captureTarget(display, parent)), path.c_str());
+			if (std::system(command) != 0) {
+				std::printf("--explore-rotate: `import` failed for %s\n", path.c_str());
+				return 1;
+			}
+			std::printf("grab:     %s (rotate %.1f deg)\n", path.c_str(), k * 360.0 / exploreRotateFrames);
 		}
 	}
 	if (radiusRouteBase >= 0.0) {

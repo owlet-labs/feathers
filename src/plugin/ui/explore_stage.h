@@ -569,6 +569,8 @@ public:
 	/// and a smaller step are the same intention, at every zoom (see `mutate`).
 	double zoom() const noexcept { return zoom_; }
 	void setZoom(double zoom);
+	/// Test seam for the capture tool: turn the selected sound's plane by `radians`, as a Rotate drag does.
+	void rotateSelectedByForTest(double radians) { rotateSelectedBy(radians); }
 
 	/// **THE ZOOM A FRESH EXPLORE OPENS AT, PER ENGINE.** Additive's terrain is read from far out (x1/100), the V5 flagship's from close in (x7); every other engine opens
 	/// at x1. Zoom is a view scale held by this surface alone (it is not stored in a patch), so this is the whole of "default": a

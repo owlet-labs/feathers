@@ -1053,6 +1053,59 @@ TEST_CASE("a reverb's tail keeps the plugin awake: SLEEP is never promised while
 	CHECK(slept); // it does sleep in the end: a decaying reverb reaches exact silence
 }
 
+TEST_CASE("an EQ in the plugin's chain computes its spectrum only while a view renews the lease, on the plugin's own sink road") {
+	// THE WHOLE ROAD BUT THE GRAPH'S OWN ASK (which the widget case "EQ's graph asks the device ..." covers): the EQ is
+	// built into the plugin's lane, feathers_clap installs ITS sink and its `wanted` lambda on it, the lease is renewed on the
+	// plugin's bridge (`want_readings`, what `DeviceHost::wantReadings` ends in), and what the analyser computed is read
+	// back off the same bridge's readings (`FrameA`, a counter the analyser moves once per finished frame).
+	HostedPlugin host;
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(
+	    host.plugin()->get_extension(host.plugin(), CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	REQUIRE(chain->want_readings != nullptr);
+	const uint32_t slot = chain->add_device(host.plugin(), feathers::fx::eq::kTraits.tag);
+	REQUIRE(slot != UINT32_MAX);
+	const clap_plugin* p = host.plugin();
+	p->stop_processing(p);
+	p->deactivate(p);
+	REQUIRE(p->activate(p, 48000.0, 1, 4096));
+	REQUIRE(p->start_processing(p));
+
+	constexpr uint32_t kFrames = 256;
+	EventList events;
+	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 1, 1.0);
+	host.run(kFrames, events);
+	events.clear();
+	const auto frameA = [&] {
+		float v = 0.0f;
+		return chain->device_reading(p, slot, static_cast<uint32_t>(feathers::fx::eq::Reading::FrameA), &v) ? v : 0.0f;
+	};
+	const auto blocks = [&](int n, bool ask) {
+		for (int b = 0; b < n; ++b) {
+			if (ask) {
+				REQUIRE(chain->want_readings(p, slot));
+			}
+			host.run(kFrames, events);
+		}
+	};
+	// NOBODY ASKS: a second and a half of audio and no frame was computed.
+	blocks(150, false);
+	CHECK(frameA() == 0.0f);
+	// A VIEW ASKS EVERY BLOCK: frames arrive.
+	blocks(100, true);
+	const float shown = frameA();
+	CHECK(shown > 0.0f);
+	// IT STOPS ASKING (the editor closed): the lease lapses within half a second of audio, then nothing moves.
+	blocks(120, false);
+	const float lapsed = frameA();
+	blocks(100, false);
+	CHECK(frameA() == lapsed);
+	// IT REOPENS: the analyser runs again, from nothing (the counter restarts), so it is not the lapsed frame.
+	blocks(100, true);
+	CHECK(frameA() > 0.0f);
+	CHECK(frameA() != lapsed);
+}
+
 TEST_CASE("LW: HARM behind a linear-phase EQ keeps the plugin awake until it has been handed its late note — SLEEP is never promised before") {
 	// THE SLEEP RULE (CLAUDE.md), copied from the reverb case above for the latency domains (backlog LW). HARM behind a
 	// linear-phase EQ is handed its note eq::linearLatency late, and its harmonic starts from the NOTE, not from anything

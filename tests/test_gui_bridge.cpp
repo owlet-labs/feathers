@@ -9593,7 +9593,8 @@ TEST_CASE("publish: the drum pads' rows are left out under another engine, never
 	};
 	// A NON-DRUM ENGINE: the work is every row but the pads', and a second call does the same.
 	params.setBase(idOf(ParamId::OscType), static_cast<double>(feathers::OscType::V5));
-	settle();
+	settle(); // the first call has every row to publish
+	params.setBase(idOf(ParamId::OscType), static_cast<double>(feathers::OscType::V5)); // a write that is not a pad's
 	settle();
 	const size_t withoutDrum = bridge.publishedRowsForTest();
 	const size_t pads = feathers::kMaxSounds * (feathers::kDrumControlCount + feathers::kDrumLayerControls.size());
@@ -9606,7 +9607,9 @@ TEST_CASE("publish: the drum pads' rows are left out under another engine, never
 	CHECK(bridge.publishedRowsForTest() == feathers::kParamCount); // the rows came back for that call
 	CHECK(bridge.value(tune) == 7.0);
 	CHECK(bridge.value(tuneTwo) == -4.0);
-	settle(); // and then are left out again, until the next write
+	// (a non-drum write moves the walk again, and the pads are left out of it)
+	params.setBase(idOf(ParamId::OscType), static_cast<double>(feathers::OscType::V5));
+	settle();
 	CHECK(bridge.publishedRowsForTest() == withoutDrum);
 	// AN EDITOR WRITE under that engine, drained into the engine as the plugin's binding does, comes back the same way.
 	bridge.setValue(tune, 2.5);
@@ -9622,8 +9625,9 @@ TEST_CASE("publish: the drum pads' rows are left out under another engine, never
 	params.setBase(idOf(ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
 	settle();
 	CHECK(bridge.publishedRowsForTest() == feathers::kParamCount);
+	params.setBase(idOf(ParamId::MasterGain), -2.0); // any write: the whole count again while Drum
 	settle();
-	CHECK(bridge.publishedRowsForTest() == feathers::kParamCount); // work proportional to the whole count, every call, while Drum
+	CHECK(bridge.publishedRowsForTest() == feathers::kParamCount); // work proportional to the whole count, every call that walks, while Drum
 	// A WRITE MADE AS THE ENGINE SWITCHES is the first thing the editor sees.
 	params.setBase(tune, -9.0);
 	settle();
@@ -9634,4 +9638,100 @@ TEST_CASE("publish: the drum pads' rows are left out under another engine, never
 	CHECK(params.base(tuneTwo) == 6.0);
 	settle();
 	CHECK(params.base(tune) == -9.0);
+}
+
+TEST_CASE("publish: with nothing written and nothing routed the walk is left, and every kind of write brings it back") {
+	ParamBridge bridge;
+	ParamSet params;
+	const clap_id gain = idOf(ParamId::MasterGain);
+	const auto settle = [&] {
+		bridge.publish(params);
+		bridge.refresh();
+	};
+	settle();
+	CHECK(bridge.publishedRowsForTest() > 0);
+	for (int i = 0; i < 50; ++i) {
+		settle();
+		REQUIRE(bridge.publishedRowsForTest() == 0); // 50 clean calls: no row walked
+	}
+	// EACH WRITER, and the editor sees the value in that very call.
+	params.setBase(gain, -6.0);
+	settle();
+	CHECK(bridge.publishedRowsForTest() > 0);
+	CHECK(bridge.value(gain) == doctest::Approx(-6.0).epsilon(1e-9));
+	settle();
+	CHECK(bridge.publishedRowsForTest() == 0);
+	params.setModOffset(gain, 3.0); // the host's modulation
+	settle();
+	CHECK(bridge.publishedRowsForTest() > 0);
+	CHECK(bridge.modulated(gain) == doctest::Approx(params.resolved(gain)).epsilon(1e-9));
+	params.clearModulation();
+	settle();
+	CHECK(bridge.publishedRowsForTest() > 0);
+	CHECK(bridge.modulated(gain) == doctest::Approx(-6.0).epsilon(1e-9));
+	params.reset();
+	settle();
+	CHECK(bridge.publishedRowsForTest() > 0);
+	CHECK(bridge.value(gain) == doctest::Approx(params.base(gain)).epsilon(1e-9));
+	// A LIVE ROUTE reads sources that move every block, so the walk is never left while one exists; the list going away
+	// is itself a write, so the call after it walks once more and then the walk is left again.
+	{
+		namespace bp = feathers::backplane;
+		const int dest = feathers::modDestinationIndexOf(ParamId::VoiceLevel);
+		REQUIRE(dest >= 0);
+		bp::RouteList list;
+		list.begin();
+		list.add({ bp::Source::core(0), bp::Destination::core(static_cast<size_t>(dest)), 0.5f });
+		list.end();
+		REQUIRE(params.adoptRoutes(list));
+		REQUIRE(params.anyRouteLive());
+		for (int i = 0; i < 5; ++i) {
+			settle();
+			CHECK(bridge.publishedRowsForTest() > 0);
+		}
+		list.begin();
+		list.end();
+		REQUIRE(params.adoptRoutes(list));
+		REQUIRE_FALSE(params.anyRouteLive());
+		settle();
+		CHECK(bridge.publishedRowsForTest() > 0);
+		settle();
+		CHECK(bridge.publishedRowsForTest() == 0);
+	}
+	// A SECOND INSTANCE AT THE SAME GENERATION is not mistaken for the first (the stamp is a serial, not an address).
+	ParamSet other;
+	params.setBase(gain, -3.0);
+	settle();
+	while (other.writeGeneration() < params.writeGeneration()) {
+		other.setBase(gain, -12.0);
+	}
+	REQUIRE(other.writeGeneration() == params.writeGeneration()); // the same generation, a different instance
+	bridge.publish(other);
+	CHECK(bridge.publishedRowsForTest() > 0);
+	bridge.refresh();
+	CHECK(bridge.value(gain) == doctest::Approx(-12.0).epsilon(1e-9));
+}
+
+TEST_CASE("a device's picture is wanted for a lease of audio that a view renews and a block spends") {
+	ParamBridge bridge;
+	const size_t slot = 1;
+	CHECK_FALSE(bridge.deviceReadingsWanted(slot, 256)); // nobody has asked
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 0);
+	bridge.wantDeviceReadings(slot);
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 24000);
+	int blocks = 0;
+	while (bridge.deviceReadingsWanted(slot, 256)) {
+		++blocks;
+		REQUIRE(blocks < 1000);
+	}
+	CHECK(blocks == 24000 / 256 + 1); // the call that leaves it empty is the last one answered
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 0);
+	// A slot's lease is its own.
+	bridge.wantDeviceReadings(slot);
+	CHECK(bridge.deviceReadingsLeaseForTest(slot + 1) == 0);
+	CHECK_FALSE(bridge.deviceReadingsWanted(slot + 1, 256));
+	// A renewal restores the whole lease, not an addition to what was left.
+	(void)bridge.deviceReadingsWanted(slot, 10000);
+	bridge.wantDeviceReadings(slot);
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 24000);
 }

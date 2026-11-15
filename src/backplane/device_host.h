@@ -412,6 +412,9 @@ public:
 	/// device's readings would be the last voice to write rather than anything meaningful.
 	virtual size_t readingCountAt(DeviceInstanceId device) const noexcept = 0;
 	virtual float readingAt(DeviceInstanceId device, size_t index) const noexcept = 0;
+	/// **A VIEW THAT DRAWS A DEVICE'S COSTLY PICTURE SAYS SO, every frame it draws** (`ReadingsSink::wanted`): the device
+	/// computes it while asked and stops when no view has asked for half a second. A host with no such road ignores it.
+	virtual void wantReadings(DeviceInstanceId) noexcept {}
 
 	//--------------------------------------------------------------------------------------------//
 	// THE ROUTING ROAD                                                                             //

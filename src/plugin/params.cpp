@@ -1462,7 +1462,11 @@ int bendRangeSemitonesAt(double index) {
 	return kBendRangeSemitones[steppedIndex(index, kBendRangeSemitones.size())];
 }
 
-ParamSet::ParamSet() {
+namespace {
+std::atomic<uint64_t> g_paramSetSerial { 0 }; // namespace scope: constructed before main, never lazily on a thread
+}
+
+ParamSet::ParamSet() : serial_(g_paramSetSerial.fetch_add(1, std::memory_order_relaxed) + 1) {
 	static_assert(std::atomic<double>::is_always_lock_free,
 	              "base values are read from the main thread while the audio thread writes them; a "
 	              "std::atomic that took a lock would take it inside process()");
@@ -1470,6 +1474,7 @@ ParamSet::ParamSet() {
 }
 
 void ParamSet::reset() {
+	writeGeneration_.fetch_add(1, std::memory_order_release);
 	for (size_t i = 0; i < kParamCount; ++i) {
 		base_[i].store(kParams[i].def, std::memory_order_relaxed);
 		mod_[i] = 0.0;
@@ -1524,6 +1529,7 @@ bool ParamSet::adoptRoutes(const backplane::RouteList& published) {
 		return false;
 	}
 	stagedCount_ = count;
+	writeGeneration_.fetch_add(1, std::memory_order_release); // the list changed: a route going away moves what resolves
 	routesGeneration_.store(seen, std::memory_order_relaxed);
 	// THE COUNT THAT MOVES ON EVERY PUBLISH THAT ACTUALLY RAN — what `Synth::compileRoutes` compares.
 	++routePublishes_;
@@ -2179,6 +2185,7 @@ void ParamSet::setModOffset(clap_id id, double offset) {
 }
 
 void ParamSet::clearModulation() {
+	writeGeneration_.fetch_add(1, std::memory_order_release);
 	mod_.fill(0.0);
 }
 
@@ -2737,6 +2744,7 @@ bool ParamSet::read(const clap_istream* stream, Staged* staged, ReadFailure* why
 }
 
 void ParamSet::commit(const Staged& staged) {
+	writeGeneration_.fetch_add(1, std::memory_order_release);
 	for (size_t i = 0; i < kParamCount; ++i) {
 		base_[i].store(staged.base[i], std::memory_order_relaxed);
 	}

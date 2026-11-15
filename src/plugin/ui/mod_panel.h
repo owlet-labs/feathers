@@ -593,7 +593,11 @@ public:
 	/// handle — lands on the strip and never reaches the card. The fx lane had to push the same
 	/// gesture down into its cards because a card there fills the lane. Second time that difference
 	/// has paid rather than cost.
-	std::optional<size_t> dragSlot() const noexcept { return dragging_ ? dragSlot_ : std::nullopt; }
+	///
+	/// **THE GESTURE HOLDS THE DEVICE'S INSTANCE ID, NEVER ITS POSITION**: a slot is a position, and the strip can be reordered,
+	/// shortened or replaced under a live press (a removal elsewhere, an undo, a patch load). `dragSlot()` is found again
+	/// from the id each time it is asked; a device that is gone answers nothing.
+	std::optional<size_t> dragSlot() const;
 	std::optional<size_t> dropGap() const noexcept { return dragging_ ? dropGap_ : std::nullopt; }
 
 	/// Which gap a point in the strip's coordinates is asking for, or nullopt outside it.
@@ -811,7 +815,11 @@ private:
 	/// set's key and nothing outside needs it.
 	DeviceInstanceId instanceOfSource(backplane::Source source) const;
 
-	std::optional<size_t> dragSlot_;
+	std::optional<DeviceInstanceId> dragDevice_;
+	/// The held device's position NOW (whether or not the threshold has been crossed), or nullopt when it is gone.
+	[[nodiscard]] std::optional<size_t> heldSlot() const;
+	/// Nothing is being dragged: the gesture, its target and its anchor all dropped.
+	void cancelDrag();
 	std::optional<size_t> dropGap_;
 	std::optional<float> dragAnchorY_;
 	bool dragging_ = false;

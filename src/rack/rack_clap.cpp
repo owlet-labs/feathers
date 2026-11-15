@@ -1834,6 +1834,7 @@ private:
 			nullptr, // synth_reading (/11): the rack has no voices
 			&RackPlugin::chainParamIndexOf,
 			&RackPlugin::chainParamInfoBuilds,
+			nullptr, // want_readings (/13): no readings lease in the rack
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_RACK_TEST) == 0) {
 			return &kTest;

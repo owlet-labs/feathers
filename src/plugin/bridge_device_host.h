@@ -333,6 +333,11 @@ public:
 		return bridge_.deviceReadingCount(slot);
 	}
 
+	void wantReadings(DeviceInstanceId device) noexcept override {
+		// NO CHAIN COPY: this is asked every frame a picture is drawn, and a slot with no telemetry is refused by the bridge.
+		bridge_.wantDeviceReadings(bridge_.fxSlotOf(device));
+	}
+
 	float readingAt(DeviceInstanceId device, size_t index) const noexcept override {
 		// **THE COUNT IS ASKED OF THE SAME DEVICE, NOT OF A NUMBER DERIVED FROM IT.** This asked the count
 		// with a position where it took a lane — equal until the first move, and then OWLTT's bars froze

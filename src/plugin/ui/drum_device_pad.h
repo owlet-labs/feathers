@@ -18,6 +18,7 @@
 #pragma once
 
 #include "plugin/ui/explore_pad.h"
+#include "plugin/ui/tooltip.h"
 
 #include "fx/drum/drum_types.h"
 
@@ -56,9 +57,29 @@ struct DrumDevicePadPolicy {
 
 extern template class ExplorePad<DrumDevicePadPolicy>;
 
-class DrumDevicePad final : public ExplorePad<DrumDevicePadPolicy> {
+class DrumDevicePad final : public ExplorePad<DrumDevicePadPolicy>, public TooltipSource {
 public:
 	using ExplorePad::ExplorePad;
+	/// THE CONTROLS A DRAG WRITES, declared through ControlFace (a gesture on the plane): Travel X and Travel Y. Set once by the owner.
+	void setTravelControls(device::Modulatable* x, device::Modulatable* y) {
+		travelX_ = x;
+		travelY_ = y;
+	}
+	const char* tooltipAt(visage::Point) const override {
+		return "The terrain the drum stands on: press or drag to place it. It has no edge: the view follows, and Travel X and Y keep going.";
+	}
+	void offeredControls(std::vector<Offered>& out) const override {
+		if (travelX_ != nullptr) {
+			out.push_back({ travelX_, Road::Gesture });
+		}
+		if (travelY_ != nullptr) {
+			out.push_back({ travelY_, Road::Gesture });
+		}
+	}
+
+private:
+	device::Modulatable* travelX_ = nullptr;
+	device::Modulatable* travelY_ = nullptr;
 };
 
 } // namespace feathers::ui

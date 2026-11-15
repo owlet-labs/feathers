@@ -64,6 +64,8 @@ public:
 	void beginGesture() override { tune_.beginGesture(); }
 	void endGesture() override { tune_.endGesture(); }
 	std::string text() const override { return drum_pitch::readoutText(settled_()); }
+	/// The Tune it reads and writes (a typed note or a drag sets it).
+	[[nodiscard]] device::Modulatable& tune() const { return tune_; }
 	[[nodiscard]] std::optional<std::string> editText() const override;
 	[[nodiscard]] std::optional<double> parseText(std::string_view text, double shown) const override;
 
@@ -80,8 +82,8 @@ public:
 	void draw(visage::Canvas& canvas) override;
 	void resized() override;
 	const char* tooltipAt(visage::Point) const override;
-	/// It OFFERS NOTHING: Tune is the pill's (and the picture handle's) to route; this is a reading with a type-in, which glows for no source.
-	void offeredControls(std::vector<Offered>&) const override {}
+	/// IT DECLARES TUNE, which a typed note or a drag writes, as a gesture (not a face: the pill is Tune's face and the one that glows).
+	void offeredControls(std::vector<Offered>& out) const override { out.push_back({ &control_.tune(), Road::Gesture }); }
 	/// The text drawn, and the field a click opens (null until it has).
 	[[nodiscard]] std::string textForTest() const { return control_.text(); }
 	/// Repaint if what it says has changed since it last drew (the panel asks every tick).

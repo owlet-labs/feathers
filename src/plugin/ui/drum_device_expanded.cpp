@@ -113,6 +113,8 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 			padGroup_ = nullptr;
 		}
 	};
+	pad_->setTravelControls(&model_.control(dd::Param::TravelX), &model_.control(dd::Param::TravelY));
+	installTooltipHover(*pad_, *pad_); // after the pad's own press handlers
 	addChild(pad_.get());
 	// THE SETTLED PITCH over Tune: typed note or Hz sets Tune, refused where there is no one pitch.
 	settledControl_ = std::make_unique<SettledPitchControl>(model_.control(dd::Param::Tune), [this] { return model_.settled(); });

@@ -70,11 +70,37 @@ constexpr device::ParamDesc kMuteNoSlotDesc { "chain_mute", "Chain Mute", 0.0, 1
 constexpr device::ParamDesc kSoloNoSlotDesc { "chain_solo", "Chain Solo", 0.0, 1.0, 0.0, true, device::Unit::Choice,
 	                                          kOffOn, false, false, pr::kNoSlotWhy };
 
+/// THE KEY'S CHOICE: "Any", then the 128 notes by name. A value is the key + 1, so the stored Any (-1) is the Choice's 0.
+struct KeyNames {
+	std::array<std::array<char, 8>, 129> text {};
+	std::array<const char*, 129> names {};
+	KeyNames() {
+		static constexpr const char* kPitch[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+		std::snprintf(text[0].data(), text[0].size(), "Any");
+		for (int k = 0; k < 128; ++k) {
+			std::snprintf(text[static_cast<size_t>(k) + 1].data(), 8, "%s%d", kPitch[k % 12], k / 12 - 1);
+		}
+		for (size_t i = 0; i < names.size(); ++i) {
+			names[i] = text[i].data();
+		}
+	}
+};
+
+[[nodiscard]] const device::ParamDesc& keyDesc() {
+	static const KeyNames table;
+	static const device::ParamDesc desc { "chain_key", "Chain Key", 0.0, 128.0, 0.0, true, device::Unit::Choice,
+		                                  std::span<const char* const>(table.names), false, false,
+		                                  "The note this chain answers: only that key's notes enter its devices. Any takes every note. "
+		                                  "Every note still passes on through the rack" };
+	return desc;
+}
+
 [[nodiscard]] pr::SlotControl slotControlOf(ChainControl::Kind kind) noexcept {
 	switch (kind) {
 	case ChainControl::Kind::Level: return pr::SlotControl::Level;
 	case ChainControl::Kind::Mute: return pr::SlotControl::Mute;
 	case ChainControl::Kind::Solo: return pr::SlotControl::Solo;
+	case ChainControl::Kind::Key: break;
 	}
 	return pr::SlotControl::Level;
 }
@@ -101,6 +127,7 @@ const device::ParamDesc& ChainControl::desc() const {
 	case Kind::Level: return !real ? kLevelDesc : slotted ? kLevelSlotDesc : kLevelNoSlotDesc;
 	case Kind::Mute: return !real ? kMuteDesc : slotted ? kMuteSlotDesc : kMuteNoSlotDesc;
 	case Kind::Solo: return !real ? kSoloDesc : slotted ? kSoloSlotDesc : kSoloNoSlotDesc;
+	case Kind::Key: return keyDesc();
 	}
 	return kLevelDesc;
 }
@@ -121,6 +148,9 @@ bool ChainControl::unpinFromHost() {
 }
 
 DeviceControl* ChainControl::slotControl() const {
+	if (kind_ == Kind::Key) {
+		return nullptr; // the key is not a destination
+	}
 	const uint8_t s = slot();
 	if (s >= pr::kChainSlots) {
 		return nullptr;
@@ -183,6 +213,7 @@ double ChainControl::value() const {
 	case Kind::Level: return r->level(at);
 	case Kind::Mute: return r->muted(at) ? 1.0 : 0.0;
 	case Kind::Solo: return r->soloed(at) ? 1.0 : 0.0;
+	case Kind::Key: return static_cast<double>(r->chainKey(at) + 1);
 	}
 	return 0.0;
 }
@@ -215,6 +246,7 @@ void ChainControl::apply(double value) {
 	case Kind::Level: r->setLevel(at, static_cast<float>(value)); break;
 	case Kind::Mute: r->setMuted(at, value >= 0.5); break;
 	case Kind::Solo: r->setSoloed(at, value >= 0.5); break;
+	case Kind::Key: r->setChainKey(at, static_cast<int>(std::lround(value)) - 1); break;
 	}
 }
 
@@ -233,6 +265,7 @@ public:
 		case ChainControl::Kind::Level: return "Chain level";
 		case ChainControl::Kind::Mute: return "Chain mute";
 		case ChainControl::Kind::Solo: return "Chain solo";
+		case ChainControl::Kind::Key: return "Chain key";
 		}
 		return "Chain";
 	}
@@ -351,6 +384,9 @@ void ChainPresenceEdit::take() const {
 
 std::string ChainControl::text() const {
 	const double v = value();
+	if (kind_ == Kind::Key) {
+		return keyDesc().names[static_cast<size_t>(std::clamp(std::lround(v), 0L, 128L))];
+	}
 	if (kind_ != Kind::Level) {
 		return v >= 0.5 ? "On" : "Off";
 	}
@@ -451,11 +487,13 @@ void ChainFader::draw(visage::Canvas& canvas) {
 ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint16_t chain, std::string caption,
                        std::function<void(uint16_t)> onRemove)
     : level_(host, rack, chain, ChainControl::Kind::Level), muted_(host, rack, chain, ChainControl::Kind::Mute),
-      soloed_(host, rack, chain, ChainControl::Kind::Solo), onRemove_(std::move(onRemove)) {
+      soloed_(host, rack, chain, ChainControl::Kind::Solo), keyed_(host, rack, chain, ChainControl::Kind::Key), onRemove_(std::move(onRemove)) {
 	pill_ = std::make_unique<FaderPill>(level_, std::move(caption));
 	fader_ = std::make_unique<ChainFader>(level_);
 	mute_ = std::make_unique<SwitchChip>(muted_, "M");
 	solo_ = std::make_unique<SwitchChip>(soloed_, "S");
+	keyBox_ = std::make_unique<ValueBox>(keyed_, "");
+	keyBox_->setCompact(true); // one row: the strip is 20 high
 	// A CHAIN'S MUTE AND SOLO ARE DESTINATIONS (backlog NO item 2): they glow and take a route as the level's pill does.
 	mute_->setShowsModulation(true);
 	solo_->setShowsModulation(true);
@@ -464,6 +502,7 @@ ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint1
 	addChild(fader_.get());
 	addChild(mute_.get());
 	addChild(solo_.get());
+	addChild(keyBox_.get());
 	addChild(meter_.get());
 	fader_->setVisible(false); // the column's; `resized` shows it when the strip is a column
 	meter_->setVisible(true);  // THE CARD'S STRIPS AND THE WINDOW'S BOTH METER THEIR CHAIN
@@ -530,6 +569,9 @@ void ChainStrip::resized() {
 		mute_->setBounds(cx, y + (kColumnRow - chipH) * 0.5f, kChipWidth, chipH);
 		y += kColumnRow;
 		solo_->setBounds(cx, y + (kColumnRow - chipH) * 0.5f, kChipWidth, chipH);
+		y += kColumnRow;
+		const float keyW = std::min(kKeyWidth, w - 2.0f);
+		keyBox_->setBounds(std::round((w - keyW) * 0.5f), y + (kColumnRow - ValueBox::kCompactHeight) * 0.5f, keyW, ValueBox::kCompactHeight);
 		y += kColumnRow + kGap;
 		removeBounds_ = { cx, std::max(y, h - kColumnRow), kChipWidth, kColumnRow };
 		const float bottom = removeBounds_.y() - kGap;
@@ -556,6 +598,8 @@ void ChainStrip::resized() {
 		right -= kChipWidth + kGap;
 		mute_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
 		right -= kChipWidth + kGap;
+		keyBox_->setBounds(right - kKeyWidth, std::max(0.0f, (h - ValueBox::kCompactHeight) * 0.5f), kKeyWidth, ValueBox::kCompactHeight);
+		right -= kKeyWidth + kGap;
 		pill_->setBounds(x, 0.0f, std::max(0.0f, right - x), h);
 	}
 	meter_->setBounds(meterTrack_);

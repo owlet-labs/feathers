@@ -195,8 +195,19 @@ h1 { font-weight: 400; letter-spacing: -.01em; }
 /* the lockup's subtitle, aligned under the name */
 .labs .tag.lab-sub { font-family: 'Montserrat', var(--disp); font-weight: 300; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); font-size: clamp(.85rem, 2vw, 1.1rem); margin: .6em 0 0; }
 
+/* the home page's smaller project cards, two to a row on wide screens */
+.proj-row { display: grid; gap: 20px; grid-template-columns: 1fr; max-width: 56rem; margin-top: 20px; }
+@media (min-width: 700px) { .proj-row { grid-template-columns: 1fr 1fr; } }
+.proj.small { grid-template-columns: 1fr; align-items: start; }
+.proj.small h2 { font-size: 1.5rem; }
+.proj.small img { aspect-ratio: 16 / 10; object-fit: cover; object-position: top; }
+.proj.soon { border-style: dashed; background: transparent; }
+.proj.soon:hover { border-color: var(--line); }
+.projects .more { display: inline-block; margin-top: 18px; }
+
 /* stickers: "Free" and "GPL" on a project card */
 .stickers { display: flex; gap: 8px; margin: 0 0 .5em; }
 .card .stickers { margin: 0; }
 .sticker { display: inline-block; font: 800 .78rem/1 var(--disp); letter-spacing: .06em; text-transform: uppercase; padding: .45em .8em; border-radius: 999px; background: var(--value); color: var(--btn-ink); transform: rotate(-4deg); box-shadow: 0 2px 0 color-mix(in srgb, var(--value) 45%, var(--bg)); }
 .sticker.alt { background: var(--accent); transform: rotate(3deg); box-shadow: 0 2px 0 color-mix(in srgb, var(--accent) 45%, var(--bg)); }
+.card.soon { border-style: dashed; background: transparent; }

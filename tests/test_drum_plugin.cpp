@@ -711,7 +711,6 @@ TEST_CASE("the host's parameters are the device's controls, named, with ids that
 		CHECK(chain->param_index_of(v.plugin, id) == -1);
 	}
 }
-}
 
 TEST_CASE("every named parameter id reaches its control: a write by id moves the device's value (read from the engine) and reads back by id") {
 	constexpr uint32_t kFrames = 128;

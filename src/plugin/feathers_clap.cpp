@@ -2947,6 +2947,14 @@ private:
 		return true;
 	}
 
+	static bool testChainWantReadings(const clap_plugin* plugin, uint32_t position) noexcept {
+		if (plugin == nullptr || plugin->plugin_data == nullptr) {
+			return false;
+		}
+		fromClap(plugin)->bridge_.wantDeviceReadings(position);
+		return true;
+	}
+
 	static bool testChainSetCoreRoute(const clap_plugin* plugin, uint32_t source, uint32_t destination, double amount) noexcept {
 		if (plugin == nullptr || plugin->plugin_data == nullptr) {
 			return false;
@@ -3212,6 +3220,7 @@ private:
 			&FeathersPlugin::testChainSynthReading,
 			&FeathersPlugin::testChainParamIndexOf,
 			&FeathersPlugin::testChainParamInfoBuilds,
+			&FeathersPlugin::testChainWantReadings,
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_TEST_CHAIN) == 0) {
 			return &kTestChain;

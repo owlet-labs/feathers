@@ -78,7 +78,10 @@
 // **/11 (2026-11-09) appended `param_index_of` and `param_info_builds`**: the index the plugin's clap-helpers base is told
 // for a param id (`getParamIndexForParamId`, which the base asks on every value/text call) and how many `clap_param_info`
 // the plugin has built, so a case can say BY VALUE that the lookup agrees with a `get_info` walk and costs no walk.
-static constexpr char CLAP_EXT_FEATHERS_TEST_CHAIN[] = "com.owletrecords.feathers.test-chain/12";
+//
+// **/13 appended `want_readings`**: the lease a view showing a device's costly picture renews (`DeviceHost::wantReadings`),
+// on the plugin's own bridge, so a case drives the road the editor's graph takes without an editor.
+static constexpr char CLAP_EXT_FEATHERS_TEST_CHAIN[] = "com.owletrecords.feathers.test-chain/13";
 
 /// What `voice_reading` reads (`Synth::voicePitchForTest`, `voicePhaseForTest`, `voiceEdgeLevelForTest`).
 enum clap_feathers_voice_reading : uint32_t {
@@ -303,6 +306,8 @@ struct clap_plugin_feathers_test_chain {
 	/// **HOW MANY `clap_param_info` THE PLUGIN HAS BUILT** (/12), every `paramsInfo` call counted, the host's and the
 	/// plugin's own.
 	uint64_t (*param_info_builds)(const clap_plugin* plugin);
+	/// **RENEW THE PICTURE LEASE OF THE LANE DEVICE AT `position`** (/13), as a view showing it does each frame. False in the rack.
+	bool (*want_readings)(const clap_plugin* plugin, uint32_t position);
 };
 
 } // extern "C"

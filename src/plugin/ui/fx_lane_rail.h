@@ -228,6 +228,8 @@ public:
 	[[nodiscard]] ModState& modForTest() noexcept { return mod_; }
 	/// The same state, for a holder that relays an arm made here out to its own host (a Rack's panel, backlog NZ (b)).
 	[[nodiscard]] const ModState& modulation() const noexcept { return mod_; }
+	/// The same state, to lend (`BorrowedArmRelay`): a holder arming it for a source of its own for a while.
+	[[nodiscard]] ModState& modState() noexcept { return mod_; }
 
 	void draw(visage::Canvas& canvas) override;
 	void resized() override;

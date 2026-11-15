@@ -2624,3 +2624,40 @@ TEST_CASE("NO item 2 follow-up: a base the host moved is adopted into the body a
 	CHECK(s.inner().level(0) == 0.9f);
 	CHECK(s.base(s.inner().slotOf(0), pr::SlotControl::Level) == 0.9f);
 }
+
+TEST_CASE("Rack macros are sources inside its chains: a route from macro 1 to a Filter's Cutoff in chain 1 moves the resolved Cutoff by value") {
+	RackRig rig;
+	rack::RackBridge* bridge = rig.rack().chainAt(0)->bridge();
+	REQUIRE(bridge != nullptr);
+	const DeviceInstanceId filter = bridge->addDevice(fx::filter::kTraits.tag);
+	REQUIRE(filter != kNoInstance);
+	const device::Descriptor& desc = fx::filter::kDescriptor;
+	size_t cutoff = desc.params.size();
+	for (size_t i = 0; i < desc.params.size(); ++i) {
+		if (std::string(desc.params[i].name).find("Cutoff") != std::string::npos && cutoff == desc.params.size()) {
+			cutoff = i;
+		}
+	}
+	REQUIRE(cutoff < desc.params.size());
+	REQUIRE(desc.params[cutoff].modulatable);
+	rig.settle();
+	rack::RackEngine& engine = rig.rack().chainAt(0)->engine();
+	const size_t lane = engine.slotOf(filter);
+	const float base = engine.fieldAt(lane, cutoff);
+	const float amount = 0.25f;
+	bridge->setRouteAmount(backplane::Source::core(0), backplane::Destination::control(filter, cutoff), amount);
+	rig.settle();
+	CHECK(engine.resolvedFieldForTest(lane, cutoff) == doctest::Approx(base)); // macro at zero moves nothing
+	rig.set(pr::Param::Macro1, 1.0f);
+	rig.settle();
+	const device::ParamDesc& p = desc.params[cutoff];
+	const double expected = std::min(static_cast<double>(base) + amount * device::routeSpanOf(p),
+	                                 p.offsetsMayLeaveRange ? 1e300 : p.max);
+	CHECK(engine.resolvedFieldForTest(lane, cutoff) == doctest::Approx(expected));
+	CHECK(engine.resolvedFieldForTest(lane, cutoff) != doctest::Approx(base)); // not vacuous
+	// ANOTHER MACRO IS ANOTHER SOURCE: macro 2 up and macro 1 down leaves it at the base.
+	rig.set(pr::Param::Macro1, 0.0f);
+	rig.set(pr::Param::Macro2, 1.0f);
+	rig.settle();
+	CHECK(engine.resolvedFieldForTest(lane, cutoff) == doctest::Approx(base));
+}

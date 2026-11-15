@@ -60,6 +60,14 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 		knob->setFaceDiameter(Knob::kEngineRailDiameter);
 		addChild(knob.get());
 		knobs_.push_back(std::move(knob));
+		// A MACRO IS A SOURCE INSIDE THE RACK as well as a destination of its host: its arrow arms it for every chain.
+		if (i >= kTopKnobs) {
+			auto arm = std::make_unique<SourceArm>(macroMod_, device::Source::core(i - kTopKnobs));
+			arm->setTooltip("Arm Macro " + std::to_string(i - kTopKnobs + 1)
+			                + " as a modulation source: then drag a control inside the chains to set how far it moves it. Press again to put it away");
+			addChild(arm.get());
+			macroArms_.push_back(std::move(arm));
+		}
 	}
 	// STAGE 2: THE MODE (a dropdown) AND THE POSITION, every control the card offers (window ⊇ card).
 	modeControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Mode));
@@ -223,7 +231,14 @@ void ParallelRackExpanded::layOut() {
 	}
 	for (size_t i = 0; i < knobs_.size(); ++i) {
 		const size_t col = i < kTopKnobs ? i : (i - kTopKnobs) % kPerRow;
-		knobs_[i]->setBounds(kPad + static_cast<float>(col) * cell, knobY(i), cell, kCellHeight);
+		knobs_[i]->setBounds(kPad + static_cast<float>(col) * cell, knobY(i),
+		                      i < kTopKnobs ? cell : kMacroKnobWidth, kCellHeight);
+		if (i >= kTopKnobs) {
+			// THE ARROW BESIDE ITS KNOB, level with the dial's face (a Chain's macro row).
+			macroArms_[i - kTopKnobs]->setBounds(kPad + static_cast<float>(col) * cell + kMacroKnobWidth,
+			                                     knobY(i) + (Knob::kEngineRailDiameter - SourceArm::kHeight) * 0.5f,
+			                                     cell - kMacroKnobWidth, SourceArm::kHeight);
+		}
 	}
 	// THE RAILS LEFT TO RIGHT IN CHAIN ORDER, after the column — under the strip or the bar when the mode has one.
 	const float top = railsTop();
@@ -551,7 +566,24 @@ bool ParallelRackExpanded::updateContent() {
 	return moved;
 }
 
+void ParallelRackExpanded::syncMacroArm() {
+	// **A MACRO'S ARROW ARMS THE MACRO IN EVERY CHAIN.** The lend is by the hand's arm only (`armedLocally`: the host's own arm does
+	// not count), and a rail the hand armed for something of its own is left alone.
+	const bool want = macroMod_.armedLocally();
+	for (auto& r : rails_) {
+		ModState& state = r->rail->modState();
+		r->macroRelay.setTarget(&state);
+		if (want && (!state.armedLocally() || r->macroRelay.relayed())) {
+			(void)r->macroRelay.relay(macroMod_.source());
+		}
+		else {
+			(void)r->macroRelay.release();
+		}
+	}
+}
+
 bool ParallelRackExpanded::relayArm() {
+	syncMacroArm();
 	// **THE GLOW OUT THE BACK OF A RACK** (backlog NZ (b); a Chain's panel does the same, `ChainExpanded::relayArm`). Each
 	// rail's state is its own, so the first one a hand armed LOCALLY names the source; its inner ids are unique across the
 	// Rack's chains, which is how the Rack's table knows which chain holds it. The host answers nobody for what does not
@@ -595,6 +627,7 @@ void ParallelRackExpanded::modulationBound(ModState* mod, EditHistory* history) 
 	for (auto& r : rails_) {
 		r->rail->setOuterModulation(mod, history, [this] { return watchedDevice(); });
 	}
+	macroMod_.setParent(mod);
 }
 
 void ParallelRackExpanded::setPresentedOn(SurfaceLayers* host) {

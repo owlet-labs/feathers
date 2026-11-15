@@ -309,6 +309,10 @@ bool speaksItsOwnLine(const visage::Frame& f, const std::string& text) {
 	}
 	// THE PATTERN CARD'S TABS: the focus is the card's UI state, not a device control, so the numbers say what they do.
 	// THE MIDI GRIP on each Pattern tab (design §7.9): a drag source, not a control.
+	// THE RACK WINDOW'S MACRO ARROWS: a source to point at the controls inside the chains, not a device control.
+	if (cls == "feathers::ui::SourceArm") {
+		return prefixed("Arm Macro ");
+	}
 	if (cls == "feathers::ui::MidiGrip") {
 		return text == "Drag this pattern into your DAW as a MIDI clip (a bar-aligned loop at the song's tempo)";
 	}

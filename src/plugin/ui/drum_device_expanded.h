@@ -88,6 +88,7 @@ private:
 	EditHistory* padGroup_ = nullptr;
 	feathers::drum::Kind shownKind_ = feathers::drum::Kind::kCount;
 	bool shownGate_ = false;
+	bool shownPitched_ = false;
 	bool shownSettled_ = false;
 	float contentBottom_ = 0.0f;
 };

@@ -55,3 +55,4 @@ param DRUM drum_kick_dip_time unit=number min=2 max=80 stepped=0
 param DRUM drum_click_sweep unit=number min=0 max=6 stepped=0
 param DRUM drum_click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
 param DRUM drum_start_phase unit=number min=0 max=90 stepped=0
+param DRUM drum_keys unit=choice choice=One Key|Pitched

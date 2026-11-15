@@ -1431,3 +1431,259 @@ TEST_CASE("drum: in a rack, a host note lands on its own sample whatever the blo
 		}
 	}
 }
+
+//--------------------------------------------------------------------------------------------------//
+// PITCHED KEYS                                                                                        //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A PITCHED ROW: a Kick with no sweep (a sine at the key's frequency, so the fundamental IS the key; a Membrane's lowest mode sits at a
+/// ratio above its head), every key answered. The terrain's own fine pitch (half a semitone either way, in Pitched)
+/// is left where the row puts it.
+dd::Row pitchedRow(int note = 36) {
+	dd::Row r = defaultRow();
+	r[at(Param::Kind)] = static_cast<float>(drum::Kind::Kick);
+	r[at(Param::Keys)] = 1.0f;
+	r[at(Param::ClickSweep)] = 0.0f;
+	r[at(Param::Note)] = static_cast<float>(note);
+	r[at(Param::FieldSweep)] = 0.0f;
+	r[at(Param::Decay)] = static_cast<float>(std::log2(1.5));
+	return r;
+}
+
+/// THE FUNDAMENTAL, MEASURED: the lag of the strongest normalised autocorrelation peak between `lo` and `hi` Hz, over a stretch of the
+/// render past the strike's first milliseconds. An independent road to a frequency, not the engine's own laws.
+double measuredHz(const std::vector<float>& x, double lo, double hi) {
+	const size_t from = static_cast<size_t>(0.02 * kSr);
+	const size_t len = static_cast<size_t>(0.25 * kSr);
+	REQUIRE(x.size() >= from + len + static_cast<size_t>(kSr / lo) + 2);
+	const size_t lagLo = static_cast<size_t>(kSr / hi);
+	const size_t lagHi = static_cast<size_t>(kSr / lo);
+	std::vector<double> ac(lagHi + 2, 0.0);
+	for (size_t lag = lagLo; lag <= lagHi + 1; ++lag) {
+		double s = 0.0;
+		for (size_t i = 0; i < len; ++i) {
+			s += static_cast<double>(x[from + i]) * static_cast<double>(x[from + i + lag]);
+		}
+		ac[lag] = s;
+	}
+	// THE FIRST PEAK THAT REACHES 90% OF THE BEST (the fundamental's lag, not its multiples), refined by a parabola.
+	double best = 0.0;
+	for (size_t lag = lagLo; lag <= lagHi; ++lag) {
+		best = std::max(best, ac[lag]);
+	}
+	for (size_t lag = lagLo + 1; lag <= lagHi; ++lag) {
+		if (ac[lag] >= 0.9 * best && ac[lag] >= ac[lag - 1] && ac[lag] >= ac[lag + 1]) {
+			const double a = ac[lag - 1];
+			const double b = ac[lag];
+			const double c = ac[lag + 1];
+			const double shift = 0.5 * (a - c) / (a - 2.0 * b + c);
+			return kSr / (static_cast<double>(lag) + shift);
+		}
+	}
+	return 0.0;
+}
+
+std::vector<float> renderKey(const dd::Row& row, int key, int frames = 16384) {
+	Dev d;
+	d.row = row;
+	d.apply();
+	(void)d.notes({ on(key, 0) });
+	Out o(frames);
+	d.render(o.l.data(), o.r.data(), frames);
+	return o.l;
+}
+
+double keyHz(int key, double tuneSemis = 0.0) {
+	return 440.0 * std::exp2((static_cast<double>(key) - 69.0 + tuneSemis) / 12.0);
+}
+
+} // namespace
+
+TEST_CASE("drum Pitched: it answers a key other than Note, and One Key still does not") {
+	for (const bool pitched : { true, false }) {
+		CAPTURE(pitched);
+		dd::Row r = pitchedRow(36);
+		r[at(Param::Keys)] = pitched ? 1.0f : 0.0f;
+		const std::vector<float> got = renderKey(r, 52, 4096);
+		// KEY 52 IS NOT NOTE (36): Pitched strikes, One Key lets the note pass untouched and makes no sound.
+		CHECK(allZero(got) == !pitched);
+		const std::vector<float> own = renderKey(r, 36, 4096);
+		CHECK_FALSE(allZero(own));
+	}
+	// AND A CHOKE ON ANOTHER KEY reaches a Pitched hit on that key: the hit fades out.
+	Dev d;
+	d.row = pitchedRow(36);
+	d.apply();
+	(void)d.notes({ on(70, 0) });
+	Out warm(512);
+	d.render(warm.l.data(), warm.r.data(), 512);
+	REQUIRE(d.dsp().soundingForTest() == 1);
+	(void)d.notes({ choke(70, 0) });
+	Out after(2048);
+	d.render(after.l.data(), after.r.data(), 2048);
+	CHECK(d.dsp().soundingForTest() == 0);
+}
+
+TEST_CASE("drum Pitched: the fundamental is the key's own frequency, Tune moves it, an octave up doubles it") {
+	for (const int key : { 48, 60, 72 }) {
+		CAPTURE(key);
+		const double want = keyHz(key);
+		const double hz = measuredHz(renderKey(pitchedRow(), key), want * 0.7, want * 1.4);
+		CAPTURE(hz);
+		CAPTURE(want);
+		// THE VALUE, to within the half semitone the terrain's own fine pitch may move it (Pitched's reach), and not a hair outside.
+		CHECK(hz >= want * std::exp2(-0.5 / 12.0) * 0.998);
+		CHECK(hz <= want * std::exp2(0.5 / 12.0) * 1.002);
+	}
+	// TWO KEYS AN OCTAVE APART: the terrain moves them alike, so the ratio is exact.
+	const double lowHz = measuredHz(renderKey(pitchedRow(), 48), keyHz(48) * 0.7, keyHz(48) * 1.4);
+	const double highHz = measuredHz(renderKey(pitchedRow(), 60), keyHz(60) * 0.7, keyHz(60) * 1.4);
+	CHECK(highHz / lowHz == doctest::Approx(2.0).epsilon(0.004));
+	// TUNE (+7 semitones) ON THE SAME KEY: the ratio is the fifth, 2^(7/12).
+	dd::Row tuned = pitchedRow();
+	tuned[at(Param::Tune)] = 7.0f;
+	const double fifth = measuredHz(renderKey(tuned, 48), keyHz(48) * 0.7, keyHz(48, 7.0) * 1.4);
+	CHECK(fifth / lowHz == doctest::Approx(std::exp2(7.0 / 12.0)).epsilon(0.004));
+	// AND THE KEY'S TUNING EXPRESSION moves it as a bend moves a synth voice (the whole of it: Bend is the kit's alone).
+	Dev d;
+	d.row = pitchedRow();
+	d.row[at(Param::Bend)] = 0.0f; // would silence the move in One Key; Pitched does not read it
+	d.apply();
+	(void)d.notes({ on(48, 0), tuning(48, 12.0) });
+	Out o(16384);
+	d.render(o.l.data(), o.r.data(), 16384);
+	// THE TUNING ARRIVES AFTER THE STRIKE and is read when the laws refresh: the ring is an octave up from the start of the next tick.
+	const double bent = measuredHz(o.l, keyHz(48) * 1.4, keyHz(60) * 1.4);
+	CHECK(bent / lowHz == doctest::Approx(2.0).epsilon(0.006));
+}
+
+TEST_CASE("drum Pitched: One Key is untouched, bit for bit, by the Keys control being there") {
+	for (const drum::Kind kind : { drum::Kind::Kick, drum::Kind::Snare, drum::Kind::Clap, drum::Kind::String }) {
+		CAPTURE(static_cast<int>(kind));
+		const dd::Row want = variedRow(kind); // the row as it was before Keys existed (Keys at its default, One Key)
+		REQUIRE(want[at(Param::Keys)] == 0.0f);
+		// A PATCH FROM BEFORE KEYS carries 54 fields: the new one is its default, One Key, and the sound is the independent restatement's.
+		Dev a;
+		a.row = want;
+		a.apply();
+		(void)a.notes({ on(36, 0, 0.8) });
+		Out oa(2048);
+		a.render(oa.l.data(), oa.r.data(), 2048);
+		const Out ref = refRender(want, 0.8, 2048);
+		CHECK(oa.l == ref.l);
+		CHECK(oa.r == ref.r);
+		const dd::Settings old = dd::stateOf(want, static_cast<size_t>(Param::Keys));
+		CHECK_FALSE(old.pitched());
+		CHECK(old.index(Param::Keys) == 0);
+	}
+}
+
+TEST_CASE("drum Pitched: the same keys in any block sizes are the same sound, to the bit") {
+	constexpr backplane::Axes kAxes { .coreSources = 8, .coreDestinations = 0, .deviceSlots = 4, .outputStride = 8 };
+	constexpr int kTotal = 1500;
+	// KEYS THE DRUM IS NOT ASKED FOR BY NOTE: a chord, a re-strike on one of its keys, a release (Gate), a choke.
+	const std::vector<std::pair<int, NoteEvent>> script = { { 50, on(48, 0, 0.9) }, { 51, on(55, 0, 0.7) }, { 333, on(48, 0, 0.5) },
+		                                                    { 700, off(55, 0) },    { 1000, on(60, 0, 1.0) }, { 1200, choke(48, 0) } };
+	const auto render = [&](const std::vector<int>& blocks) {
+		rack::RackEngine engine(kAxes, hostCatalogue());
+		engine.prepare(kSr, 4096);
+		const size_t slot = engine.addDevice(dd::kTraits.tag);
+		REQUIRE(slot != rack::RackEngine::kNoSlot);
+		engine.prepare(kSr, 4096);
+		const dd::Row row = pitchedRow();
+		for (size_t i = 0; i < row.size(); ++i) {
+			engine.setField(slot, i, row[i]);
+		}
+		engine.setField(slot, at(Param::Trigger), 1.0f);
+		engine.setField(slot, at(Param::Voices), 1.0f);
+		engine.setField(slot, at(Param::Release), static_cast<float>(std::log2(0.03)));
+		Out out(kTotal);
+		int start = 0;
+		for (const int n : blocks) {
+			std::vector<NoteEvent> here;
+			for (const auto& [t, e] : script) {
+				if (t >= start && t < start + n) {
+					NoteEvent ev = e;
+					ev.timeSamples = static_cast<uint32_t>(t - start);
+					here.push_back(ev);
+				}
+			}
+			engine.setBlockNotes(here.data(), here.size());
+			engine.processStereo(out.l.data() + start, out.r.data() + start, n, backplane::unknownBlock());
+			start += n;
+		}
+		REQUIRE(start == kTotal);
+		return out;
+	};
+	const Out whole = render({ kTotal });
+	CHECK_FALSE(allZero(whole.l));
+	// NON-VACUITY: the strikes on the keys the Note does not name are what is in it (One Key would make none of this sound).
+	const std::vector<std::vector<int>> cuts = {
+		{ 500, 500, 500 }, { 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 28 },
+		{ 37, 1, 100, 62, 300, 5, 995 }, { 1499, 1 }, { 333, 367, 300, 500 },
+	};
+	for (const auto& cut : cuts) {
+		const Out got = render(cut);
+		CHECK(got.l == whole.l);
+		CHECK(got.r == whole.r);
+	}
+}
+
+TEST_CASE("drum Pitched: Voices is per key, the drum holds four across keys, and the pool never allocates") {
+	Dev d;
+	d.row = pitchedRow();
+	d.row[at(Param::Voices)] = 1.0f; // two per key
+	d.apply();
+	Out o(256);
+	// THREE STRIKES ON ONE KEY: the third fades the first (two live, one fading).
+	(void)d.notes({ on(48, 0), on(48, 0), on(48, 0) });
+	d.render(o.l.data(), o.r.data(), 64);
+	CHECK(d.dsp().soundingForTest() == 2);
+	CHECK(d.dsp().fadingForTest() == 1);
+	// A SECOND KEY IS ITS OWN COUNT: two more live on it, and the drum is at its four.
+	(void)d.notes({ on(55, 0), on(55, 0) });
+	d.render(o.l.data(), o.r.data(), 64);
+	CHECK(d.dsp().soundingForTest() == 4);
+	// A FIFTH ACROSS KEYS fades the oldest, so the drum never rings more than four.
+	(void)d.notes({ on(60, 0) });
+	d.render(o.l.data(), o.r.data(), 64);
+	CHECK(d.dsp().soundingForTest() == 4);
+	{
+		(void)d.notes({ on(62, 0), on(64, 0), on(65, 0) }); // the vector this makes is the test's own
+		AllocWindow w;
+		d.render(o.l.data(), o.r.data(), 64);
+		CHECK(w.allocs() == 0);
+	}
+}
+
+TEST_CASE("drum Pitched: a patch saved and loaded into a fresh rack keeps Keys, and a patch from before it is One Key") {
+	persist::Rig a;
+	a.seat(dd::kTraits.tag);
+	const dd::Row want = pitchedRow(41);
+	for (size_t i = 0; i < want.size(); ++i) {
+		a.bridge->setField(a.id, i, want[i]);
+	}
+	a.block(2);
+	REQUIRE(a.as<dd::DrumDsp>().settingsForTest().pitched());
+	const std::string text = a.save();
+	persist::Rig b;
+	b.load(text);
+	b.block(2);
+	CHECK(b.as<dd::DrumDsp>().settingsForTest().pitched());
+	CHECK(b.as<dd::DrumDsp>().settingsForTest() == a.as<dd::DrumDsp>().settingsForTest());
+	CHECK(b.as<dd::DrumDsp>().settingsForTest().index(Param::Note) == 41);
+	// THE SAVED TEXT NAMES THE CONTROL BY ITS KEY (a patch is by key, so its order is free).
+	CHECK(text.find("drum_keys") != std::string::npos);
+	// A PATCH FROM BEFORE KEYS has no such key: it loads as One Key, the control's default.
+	std::string old = text;
+	for (size_t at = old.find("drum_keys"); at != std::string::npos; at = old.find("drum_keys", at)) {
+		old.replace(at, 9, "drum_zzzz");
+		at += 9;
+	}
+	persist::Rig c;
+	c.load(old);
+	c.block(2);
+	CHECK_FALSE(c.as<dd::DrumDsp>().settingsForTest().pitched());
+}

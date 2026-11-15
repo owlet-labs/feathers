@@ -55,6 +55,8 @@ inline constexpr int kVoicesCounts[] = { 1, 2, 4 };
 inline constexpr int kMaxVoices = 4;
 inline constexpr const char* kDriveCurveNames[] = { "Tanh", "Tube", "Soft Clip" };
 inline constexpr const char* kPitchModeNames[] = { "Free", "Semitones", "Off" };
+/// KEYS: the drum answers one key (Note), or every key and plays it as a pitch (the engine's Pitched mode).
+inline constexpr const char* kKeysNames[] = { "One Key", "Pitched" };
 
 /// WHICH KINDS READ A CONTROL, as a bit per `feathers::drum::Kind` (Kick 0 .. String 5). `kindReads` and `kindControls`
 /// (dsp/drum_voice.h) are the engine's own statement of the same; test_drum_device holds these equal to them.
@@ -124,12 +126,16 @@ enum class Param : uint8_t {
 	ClickSweep,
 	ClickSweepTime,
 	StartPhase,
+	Keys, ///< appended last so the order stays stable: One Key | Pitched
 	kCount
 };
-static_assert(static_cast<size_t>(Param::kCount) == 54);
+static_assert(static_cast<size_t>(Param::kCount) == 55);
 
 inline constexpr int16_t kKindControl = static_cast<int16_t>(Param::Kind);
 inline constexpr int16_t kTriggerControl = static_cast<int16_t>(Param::Trigger);
+inline constexpr int16_t kKeysControl = static_cast<int16_t>(Param::Keys);
+/// A control that only One Key reads (Note: Pitched answers every key; Bend and Terrain Pitch: the engine's Pitched mode leaves them out).
+inline constexpr uint32_t kOneKeyOnly = 0x1u;
 
 inline constexpr const char* kTags[] = { "drum", "generator" };
 
@@ -166,7 +172,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "Which drum this is: a pitch-swept Kick, a ringing Membrane, a Snare, a Metal cymbal or hat, a Clap, or a struck String"},
 	{.key = "drum_note", .name = "Note", .min = 0.0, .max = 127.0, .def = 36.0, .stepped = true,
 	 .unit = device::Unit::Note, .names = {}, .modulatable = false,
-	 .tooltip = "The key this drum answers. Every note passes through whatever it does, so several drums on one key sound together"},
+	 .tooltip = "The key this drum answers. Every note passes through whatever it does, so several drums on one key sound together",
+	 .gateControl = kKeysControl,
+	 .gateMask = kOneKeyOnly},
 	{.key = "drum_level", .name = "Level", .min = -60.0, .max = 6.0, .def = 0.0, .stepped = false,
 	 .unit = device::Unit::Decibel, .names = {}, .modulatable = true,
 	 .tooltip = "How loud the drum is, added to what comes in"},
@@ -205,7 +213,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .gateMask = 0x2u},
 	{.key = "drum_bend", .name = "Bend", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = false,
 	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
-	 .tooltip = "How far a tuning expression on the key moves this drum, held when it is struck or moved while it rings: at 100% the whole move, at 0 the drum ignores it"},
+	 .tooltip = "How far a tuning expression on the key moves this drum, held when it is struck or moved while it rings: at 100% the whole move, at 0 the drum ignores it",
+	 .gateControl = kKeysControl,
+	 .gateMask = kOneKeyOnly},
 	{.key = "drum_delay", .name = "Delay", .min = 0.0, .max = 10.0, .def = 0.0, .stepped = false,
 	 .unit = device::Unit::Number, .names = {}, .modulatable = true,
 	 .tooltip = "How long, in ms, after the note the drum strikes"},
@@ -247,7 +257,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .digitBox = true},
 	{.key = "drum_pitch_mode", .name = "Terrain Pitch", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kPitchModeNames, .modulatable = false,
-	 .tooltip = "How the terrain's pitch reaches the drum: Free follows it, Semitones rounds it to whole semitones, Off ignores it"},
+	 .tooltip = "How the terrain's pitch reaches the drum: Free follows it, Semitones rounds it to whole semitones, Off ignores it",
+	 .gateControl = kKeysControl,
+	 .gateMask = kOneKeyOnly},
 	{.key = "drum_f_pitch", .name = "Pitch", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
 	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
 	 .tooltip = "The terrain's fine pitch: the middle is the terrain as found"},
@@ -390,6 +402,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "Where, in degrees, a Kick's sine starts: 0 is smooth; toward 90 the first cycle hits harder",
 	 .gateControl = kKindControl,
 	 .gateMask = kKickKinds},
+	{.key = "drum_keys", .name = "Keys", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+	 .unit = device::Unit::Choice, .names = kKeysNames, .modulatable = false,
+	 .tooltip = "One Key answers the one key Note names, at the drum's own pitch. Pitched answers every key and plays it as a pitch, so the drum is played across the keyboard; Tune moves it from the key"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -404,6 +419,8 @@ struct Settings {
 
 	[[nodiscard]] float at(Param p) const { return v[static_cast<size_t>(p)]; }
 	[[nodiscard]] int index(Param p) const { return static_cast<int>(std::lround(at(p))); }
+	/// Whether the drum answers every key and plays it as a pitch (the engine's Pitched mode), not one key at its own pitch.
+	[[nodiscard]] bool pitched() const { return index(Param::Keys) == 1; }
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
 
@@ -421,7 +438,7 @@ inline constexpr device::Descriptor kDescriptor {
 	.audio = &kAudioOps,
 	// **THE NOTE ROAD SHARES `.audio`'S STORAGE**, as RESONATE's does: `RackEngine` takes the first non-null ops and allocates once.
 	.notes = &kNoteOps,
-	.category = device::Category::RhythmGlitch,
+	.category = device::Category::Oscillators,
 };
 
 } // namespace feathers::fx::drumdevice

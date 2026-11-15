@@ -906,6 +906,25 @@ std::optional<double> SettledPitchControl::parseText(std::string_view text, doub
 	return std::clamp(shown + 12.0 * std::log2(*hz / pitch.hz), d.min, d.max);
 }
 
+const device::ParamDesc& PadSoloControl::desc() const {
+	static const device::ParamDesc d { "solo", "Solo", 0.0, 1.0, 0.0, true, device::Unit::Number, {}, false, false,
+		                               "Hear this pad alone: the preview the sound cards' S marks, so every other pad is silent while it is on. "
+		                               "Not saved with the patch." };
+	return d;
+}
+
+void PadSoloControl::setValue(double value) {
+	if (value >= 0.5) {
+		bridge_.setPreview(slot_);
+	}
+	else if (bridge_.preview().active() && bridge_.preview().slot == slot_) {
+		bridge_.clearPreview();
+	}
+	if (changed_) {
+		changed_();
+	}
+}
+
 PitchReadout::PitchReadout(SettledPitchControl& control) : control_(control) {
 	onMouseDown() = [this](const visage::MouseEvent& e) { beginHand(e.position.y, e.isShiftDown()); };
 	onMouseDrag() = [this](const visage::MouseEvent& e) { moveHand(e.position.y, e.isShiftDown()); };
@@ -1042,8 +1061,9 @@ void LayerTabs::draw(visage::Canvas& canvas) {
 // DrumPanel //
 //-----------//
 
-DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelection& selection, Notifier* notifier)
-    : bridge_(bridge), selection_(selection) {
+DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelection& selection, Notifier* notifier,
+                     FrameWatchers* previewWatchers)
+    : bridge_(bridge), previewWatchers_(previewWatchers), selection_(selection) {
 	mode_ = std::make_unique<SegmentedControl>(bridge, registry, descOf(ParamId::DrumMode), kDrumModeNames, notifier);
 	pitchedKindControl_ = std::make_unique<ParamControl>(bridge, &descOf(ParamId::DrumPitchedKind));
 	pitchedKind_ = std::make_unique<ValueBox>(*pitchedKindControl_, "Kind");
@@ -1052,6 +1072,9 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumPitchedKind), pitchedKind_.get()));
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumSeed), seed_.get()));
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumMode), this));
+	if (previewWatchers_ != nullptr) {
+		watches_.push_back(previewWatchers_->watch(this));
+	}
 	noRotate_ = std::make_unique<ParamControl>(bridge, nullptr);
 	tabs_ = std::make_unique<LayerTabs>([this](size_t layer) { chooseLayer(layer); });
 	addChild(&picture_);
@@ -1096,6 +1119,18 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 		pill(set.panControl, set.pan, drumParam(slot, DrumControl::Pan), "Pan");
 		pill(set.releaseControl, set.release, drumParam(slot, DrumControl::Release), "Release");
 		pill(set.bendControl, set.bend, drumParam(slot, DrumControl::Bend), "Bend");
+		// MUTE is the pad's own Mute; SOLO the preview of this pad alone (the cards' S), which the synth already honours.
+		control(set.muteControl, drumParam(slot, DrumControl::Mute), nullptr);
+		set.mute = std::make_unique<SwitchChip>(*set.muteControl, "Mute");
+		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Mute)), set.mute.get()));
+		addChild(set.mute.get());
+		set.soloControl = std::make_unique<PadSoloControl>(bridge, slot, [this] {
+			if (previewWatchers_ != nullptr) {
+				previewWatchers_->notify();
+			}
+		});
+		set.solo = std::make_unique<SwitchChip>(*set.soloControl, "Solo");
+		addChild(set.solo.get());
 		// The pad's kind and Trigger decide what is drawn, so a move of either re-lays the panel.
 		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Kind)), this));
 		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Trigger)), this));
@@ -1552,7 +1587,7 @@ bool DrumPanel::sync() {
 		if (!own) {
 			for (visage::Frame* f : std::initializer_list<visage::Frame*> { set.note.get(), set.choke.get(), set.voices.get(),
 			                                                                set.trigger.get(), set.pan.get(), set.release.get(),
-			                                                                set.bend.get() }) {
+			                                                                set.bend.get(), set.mute.get(), set.solo.get() }) {
 				show(f, false);
 			}
 			continue;
@@ -1573,6 +1608,8 @@ bool DrumPanel::sync() {
 		seat(set.pan.get(), true, 92.0f, 22.0f);
 		seat(set.bend.get(), kit, 92.0f, 22.0f); // the pitch bend's share (decision 8): a kit pad's alone; Pitched mode follows the voice
 		seat(set.release.get(), gate, 92.0f, 22.0f);
+		seat(set.mute.get(), kit, 54.0f, SwitchChip::kHeight); // the pad's own Mute and the preview of it alone (kit pads only)
+		seat(set.solo.get(), kit, 54.0f, SwitchChip::kHeight);
 		float y = flow.bottom() + 10.0f;
 		LayerSet& s = set.layer[layer];
 		// THE LAYER TABS, and beside them the shown layer's Kind (layer two's with Off) and, on layer two, Level, Delay and High Pass.
@@ -1670,6 +1707,16 @@ void DrumPanel::resized() {
 
 bool DrumPanel::updateContent() {
 	bool moved = sync();
+	// THE SOLO CHIPS FOLLOW THE PREVIEW, which moves from the sound cards too and is no parameter any watch would carry.
+	const Preview preview = bridge_.preview();
+	const std::optional<size_t> solo = preview.active() ? std::optional<size_t> { preview.slot } : std::nullopt;
+	if (solo != soloSeen_) {
+		soloSeen_ = solo;
+		for (PadSet& set : pads_) {
+			set.solo->redraw();
+		}
+		moved = true;
+	}
 	// THE PAD FX RAIL, RE-ASKED EVERY TICK (the house habit), its cards advanced, its add menu opened once a fresh lane's
 	// column exists.
 	moved = followLane() || moved;

@@ -5295,6 +5295,10 @@ TEST_CASE("drum: a kit saved before the stance redesign (its Walk, Kit Gamma/Zon
 			double x = 9.0;
 			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::OffsetX)), &x));
 			CHECK(std::abs(x) <= feathers::kDrumVectorRange);
+			// AND NO LAYER COMES UP LOCKED: the old layer lock's default was ON, and a kit saved then must not load stuck at home.
+			double lock = 1.0;
+			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::Lock)), &lock));
+			CHECK(lock == 0.0);
 		}
 	}
 	EventList events;

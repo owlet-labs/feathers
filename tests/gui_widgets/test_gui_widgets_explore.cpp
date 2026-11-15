@@ -14596,47 +14596,20 @@ void kitWithPadOnAsPlane(ExploreFixture& f, visage::Canvas& canvas, size_t slot,
 	f.stage.draw(canvas);
 }
 
-std::optional<ui::ExploreStage::PadMark> markOf(const ExploreFixture& f, size_t slot) {
-	for (const ui::ExploreStage::PadMark& m : f.stage.padMarksForTest()) {
-		if (m.slot == slot) {
-			return m;
-		}
-	}
-	return std::nullopt;
-}
-
 } // namespace
 
-TEST_CASE("drum kit chart: another pad is drawn at its place on the selected pad's plane, HOLLOW when its kind differs, with the Walk's arrow") {
+TEST_CASE("drum kit chart: nothing per-pad is drawn on a kit's terrain (no star, no marks, no layer diamonds); a Pitched drum still draws its star") {
 	ExploreFixture f;
 	visage::Canvas canvas;
 	kitWithPadOnAsPlane(f, canvas, 2, { 0.003, 0.004 });
-	// C is a Metal and A a Kick (the default kit): a hollow mark, exactly where its place is on A's plane.
-	REQUIRE(markOf(f, 2).has_value());
-	const visage::Point want = f.stage.glassAt(0.004, 0.003);
-	CHECK(markOf(f, 2)->at.x == doctest::Approx(want.x).epsilon(1.0e-5));
-	CHECK(markOf(f, 2)->at.y == doctest::Approx(want.y).epsilon(1.0e-5));
-	CHECK(markOf(f, 2)->hollow);
-	CHECK_FALSE(markOf(f, 2)->arrow); // no arrow
-	CHECK_FALSE(markOf(f, 0).has_value()); // the selected pad is the star, not a mark
-	// C MADE A KICK: the same mark, filled.
-	f.set(feathers::drumParam(2, DrumControl::Kind), static_cast<double>(feathers::drum::Kind::Kick));
-	f.stage.draw(canvas);
-	REQUIRE(markOf(f, 2).has_value());
-	CHECK_FALSE(markOf(f, 2)->hollow);
-	// THE PERFORMANCE IS NOT DRAWN HERE: moving the stance (the ordinary puck through Weather) leaves every mark where the pad is
-	// put, and no arrow is drawn.
-	f.set(ParamId::Weather, 1.0);
-	f.set(ParamId::PosX, 0.002);
-	f.set(ParamId::PosY, 0.001);
-	f.stage.draw(canvas);
-	REQUIRE(markOf(f, 2).has_value());
-	CHECK_FALSE(markOf(f, 2)->arrow);
-	CHECK(markOf(f, 2)->at.x == doctest::Approx(want.x).epsilon(1.0e-5));
-	// NOT ON A DRUM KIT: no marks at all (Pitched mode, the puck and sounds as on every engine).
-	f.set(ParamId::DrumMode, 0.0);
+	f.set(feathers::drumParam(0, DrumControl::LayerKind), 3.0); // a second layer on pad A
 	f.stage.draw(canvas);
 	CHECK(f.stage.padMarksForTest().empty());
+	CHECK_FALSE(f.stage.playedMarkDrawn());
+	CHECK_FALSE(f.stage.starDrawnForTest());
+	f.set(ParamId::DrumMode, 0.0);
+	f.stage.draw(canvas);
+	CHECK(f.stage.starDrawnForTest());
 }
 
 TEST_CASE("drum kit chart: selecting a pad in view moves nothing; one off the chart or near its rim makes the view JUMP onto it, unanimated") {
@@ -14675,39 +14648,6 @@ TEST_CASE("drum kit chart: selecting a pad in view moves nothing; one off the ch
 	f.selection.select(5);
 	f.stage.draw(canvas);
 	CHECK(f.stage.storedTravelCentreForTest() == before + 0.1 * sx);
-}
-
-TEST_CASE("drum kit chart: a pad on ANOTHER plane is drawn at its place's projection onto the selected pad's, not at its raw travel") {
-	ExploreFixture f;
-	visage::Canvas canvas;
-	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
-	f.set(ParamId::DrumMode, 1.0);
-	f.selection.select(0);
-	// G at A's zone but a nudged Offset (a neighbouring home, so another plane that is close by), a little way out.
-	f.set(soundParam(6, SoundField::Zone), f.read(soundParam(0, SoundField::Zone)));
-	f.set(soundParam(6, SoundField::Offset), f.read(soundParam(0, SoundField::Offset)) + 0.02);
-	putKitPad(f, 6, { 0.002, -0.001 });
-	f.stage.draw(canvas);
-	f.settleScrub();
-	for (int frame = 0; frame < 64 && f.stage.update(); ++frame) {
-		f.now += 16;
-	}
-	f.stage.draw(canvas);
-	// THE RESTATEMENT: G's place decoded on G's own window, projected onto A's (terrain.h's public road, as a like's is).
-	const TerrainWindow g = f.stage.terrainWindowFor(6);
-	const TerrainWindow a = f.stage.terrainWindowNow();
-	std::array<double, kTerrainLikePoint> point {};
-	const size_t n = terrainPlacePoint(g, 0.002, -0.001, point);
-	const PlanePlace place = terrainPlaceOn(a, std::span<const double>(point.data(), n), 0.002, -0.001);
-	REQUIRE_FALSE(place.exact); // another plane, or the case says nothing the first did not
-	const auto mark = markOf(f, 6);
-	const visage::Point want = f.stage.glassAtWorld(place.y, place.x);
-	const visage::Point raw = f.stage.glassAt(-0.001, 0.002);
-	REQUIRE(mark.has_value());
-	CHECK(mark->at.x == doctest::Approx(want.x).epsilon(1.0e-5));
-	CHECK(mark->at.y == doctest::Approx(want.y).epsilon(1.0e-5));
-	MESSAGE("projected " << place.x << ", " << place.y << " from raw 0.002, -0.001");
-	CHECK(std::hypot(want.x - raw.x, want.y - raw.y) > 0.5f); // and that is not where its raw travel would put it
 }
 
 TEST_CASE("kit layer on the pictures: the trims ride every pad's terrain window, and the hit picture reads them") {
@@ -16321,4 +16261,150 @@ TEST_CASE("pad editor: the vector terrain is a dark centre where the layer's sou
 	CHECK(centre < 0.2f); // the sound as it stands is the darkest place in its own view
 	CHECK(peak > centre + 0.1f); // and the map is not flat
 	CHECK(pad.rebuildsForTest() >= 1);
+}
+
+TEST_CASE("pad editor: every layer of every pad comes up UNLOCKED by default, on the declaration and on the chip") {
+	PadEditorFixture f;
+	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+		for (size_t layer = 0; layer < 2; ++layer) {
+			CAPTURE(slot);
+			CAPTURE(layer);
+			const clap_id id = static_cast<clap_id>(feathers::drumLayerParam(slot, layer, DrumControl::Lock));
+			REQUIRE(feathers::findParam(id) != nullptr);
+			CHECK(feathers::findParam(id)->def == 0.0);
+			CHECK(f.bridge.value(id) == 0.0);
+		}
+	}
+	auto* lock = dynamic_cast<ui::SwitchChip*>(f.panel.controlForTest(0, DrumControl::Lock, 0));
+	REQUIRE(lock != nullptr);
+	CHECK_FALSE(lock->on());
+}
+
+TEST_CASE("pad editor: along each axis and the diagonal of a layer's whole vector range no kind has a flat band wider than 4% of the range, in each pitch mode") {
+	// MEASURED (a 81 x 81 grid over [-2, 2]^2, the fields the bank builds, kind-independent): over the full range noise is exactly 0 on
+	// 50.8% of cells and metal on 72.9%, sweep sits on its 0.6 floor over 22.6% of the cells (locally flat), and pitch, length, tone
+	// and snap are never flat (under 0.5% of cells at 0 or 1). So no band is dead for a KIND, because every kind reads pitch, length,
+	// tone and snap; the dead regions are single fields'. This pins that: the metric is every field the kind reads (pitch through
+	// the layer's mode, in semitones) and a step is flat when none moves by 0.002.
+	ExploreFixture f;
+	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
+	f.set(ParamId::DrumMode, 1.0);
+	const int n = 200;
+	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
+		f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(k));
+		const auto reads = feathers::drum::kindReads(static_cast<feathers::drum::Kind>(k));
+		for (int mode = 0; mode < 3; ++mode) {
+			for (int axis = 0; axis < 3; ++axis) {
+				CAPTURE(k);
+				CAPTURE(mode);
+				CAPTURE(axis);
+				int run = 0;
+				int longest = 0;
+				std::array<double, 7> prev {};
+				for (int i = 0; i <= n; ++i) {
+					const double v = -2.0 + 4.0 * i / n;
+					f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetX)), axis == 1 ? 0.0 : v);
+					f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetY)), axis == 0 ? 0.0 : v);
+					const auto read = [&f](ParamId id) { return f.params.base(id); };
+					const Character c = feathers::characterFromParams(read, OscType::Drum, feathers::AuditionTuning {}, feathers::AnchorPoint {},
+					                                                  feathers::SoundTravel {}, feathers::SoundOrientations {},
+					                                                  feathers::SoundResidue {}, feathers::SoundGamma {}, feathers::Preview {},
+					                                                  feathers::EarSide::Head);
+					const feathers::drum::Fields fl = feathers::buildDrumFor(c).pads[0];
+					feathers::drum::Controls ctl;
+					ctl.pitchMode = mode;
+					ctl.pitchRangeSemitones = 3.0;
+					const std::array<double, 7> cur { reads.pitch ? feathers::drum::terrainPitchSemitones(fl.pitch, ctl) / 3.0 : 0.0,
+						                              reads.length ? fl.length : 0.0f, reads.sweep ? fl.sweep : 0.0f, reads.tone ? fl.tone : 0.0f,
+						                              reads.noise ? fl.noise : 0.0f, reads.snap ? fl.snap : 0.0f, reads.metal ? fl.metal : 0.0f };
+					if (i > 0) {
+						double moved = 0.0;
+						for (size_t j = 0; j < cur.size(); ++j) {
+							moved = std::max(moved, std::abs(cur[j] - prev[j]));
+						}
+						run = moved < 0.002 ? run + 1 : 0;
+						longest = std::max(longest, run);
+					}
+					prev = cur;
+				}
+				CHECK(longest <= n / 25); // 4% of the range
+			}
+		}
+	}
+	// A WALL AT THE EDGE, PUT BACK BY HAND: the bank places a layer at (stance + vector) with no clamp of its own, so the only wall a
+	// pad can have is the parameter's range, which the next case holds the pad inside.
+}
+
+TEST_CASE("pad editor: the terrain pad's star never leaves the vector's reach, so no drag shows a place the parameter would refuse") {
+	PadEditorFixture f(false);
+	f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetX)), 1.9);
+	f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetY)), -1.95);
+	(void)f.panel.update();
+	ui::DrumVectorPad& pad = f.panel.vectorPadForTest(0, 0);
+	visage::Canvas canvas;
+	pad.draw(canvas);
+	// A PRESS FAR PAST THE REACH: at the bottom-right corner, 80 px beyond the centre.
+	const float px = pad.width() * 0.5f + 70.0f;
+	const float py = pad.height() * 0.5f + 70.0f;
+	pad.onMouseDown().callback(at(px, py));
+	pad.onMouseDrag().callback(at(px + 200.0f, py + 200.0f));
+	const auto [sx, sy] = pad.starForTest();
+	CHECK(1.9 + sx <= feathers::kDrumVectorRange + 1.0e-6);
+	CHECK(-1.95 + sy >= -feathers::kDrumVectorRange - 1.0e-6);
+	CHECK(f.bridge.value(static_cast<clap_id>(feathers::drumLayerParam(0, 0, DrumControl::OffsetX))) == doctest::Approx(feathers::kDrumVectorRange));
+	CHECK(f.bridge.value(static_cast<clap_id>(feathers::drumLayerParam(0, 0, DrumControl::OffsetY))) == doctest::Approx(-feathers::kDrumVectorRange));
+	pad.onMouseUp().callback(at(px, py));
+	// THE TERRAIN BEYOND THE REACH IS DRAWN AS NOTHING: the cell at the far corner of the map, past +2, is dark.
+	pad.draw(canvas);
+	CHECK(pad.mapForTest()[ui::DrumVectorPad::kMapWide - 1] < 0.05f);
+}
+
+TEST_CASE("pad editor: Mute is the pad's own Mute and Solo the existing preview of that pad alone, per pad, in Kit mode only") {
+	PadEditorFixture f(false);
+	for (const size_t pad : { size_t { 0 }, size_t { 3 }, size_t { 6 } }) {
+		CAPTURE(pad);
+		f.panel.clickPadForTest(pad);
+		(void)f.panel.update();
+		ui::SwitchChip& mute = f.panel.muteChipForTest(pad);
+		ui::SwitchChip& solo = f.panel.soloChipForTest(pad);
+		REQUIRE(mute.isVisible());
+		REQUIRE(solo.isVisible());
+		CHECK_FALSE(mute.on());
+		CHECK_FALSE(solo.on());
+		// MUTE writes this pad's Mute, and no other pad's.
+		mute.toggleForTest();
+		f.settleGesture();
+		CHECK(f.params.base(feathers::drumParam(pad, DrumControl::Mute)) == 1.0);
+		for (size_t other = 0; other < feathers::kMaxSounds; ++other) {
+			if (other != pad) {
+				CHECK(f.params.base(feathers::drumParam(other, DrumControl::Mute)) == 0.0);
+			}
+		}
+		CHECK(mute.on());
+		mute.toggleForTest();
+		f.settleGesture();
+		CHECK(f.params.base(feathers::drumParam(pad, DrumControl::Mute)) == 0.0);
+		// SOLO is the preview of THIS pad: nothing is stored, and the preview names the pad.
+		solo.toggleForTest();
+		CHECK(f.bridge.preview().active());
+		CHECK(f.bridge.preview().slot == pad);
+		CHECK(solo.on());
+		(void)f.panel.update();
+		solo.toggleForTest();
+		CHECK_FALSE(f.bridge.preview().active());
+		CHECK_FALSE(solo.on());
+	}
+	// SOLOING ANOTHER PAD MOVES THE PREVIEW, and the first pad's chip lets go.
+	f.panel.clickPadForTest(1);
+	(void)f.panel.update();
+	f.panel.soloChipForTest(1).toggleForTest();
+	CHECK(f.bridge.preview().slot == 1);
+	f.bridge.setPreview(4); // from a sound card
+	CHECK_FALSE(f.panel.soloChipForTest(1).on());
+	// PITCHED MODE has no pads to mute or solo.
+	f.bridge.clearPreview();
+	f.set(ParamId::DrumMode, 0.0);
+	(void)f.panel.update();
+	CHECK_FALSE(f.panel.muteChipForTest(0).isVisible());
+	CHECK_FALSE(f.panel.soloChipForTest(0).isVisible());
 }

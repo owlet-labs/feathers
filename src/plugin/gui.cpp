@@ -475,7 +475,7 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 		    || oscTypeFromValue(bridge.value(static_cast<clap_id>(ParamId::OscType))) != OscType::Drum) {
 			return;
 		}
-		auto panel = std::make_unique<ui::DrumPanel>(bridge, registry, selection, notify.get());
+		auto panel = std::make_unique<ui::DrumPanel>(bridge, registry, selection, notify.get(), &previewWatchers);
 		panel->setModulation(&mod, &history);
 		ui::DrumPanel* raw = panel.get();
 		if (expandedWindow != nullptr && prefs.flag(kPopoutWindowKey, false)) {

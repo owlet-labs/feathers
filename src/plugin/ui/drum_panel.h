@@ -266,6 +266,28 @@ private:
 	std::function<drum::SettledPitch()> settled_;
 };
 
+/// **A PAD'S SOLO**: the editor's existing preview (the sound cards' S: this pad alone is heard), as a two-state control for a SwitchChip.
+/// Not a parameter and not a modulation target; it reads and writes `ParamBridge::setPreview`/`clearPreview`, which the synth's `padAudible`
+/// already honours, and nothing is stored with the patch.
+class PadSoloControl final : public device::Modulatable {
+public:
+	PadSoloControl(ParamBridge& bridge, size_t slot, std::function<void()> changed)
+	    : bridge_(bridge), slot_(slot), changed_(std::move(changed)) {}
+	const device::ParamDesc& desc() const override;
+	double value() const override { return bridge_.preview().active() && bridge_.preview().slot == slot_ ? 1.0 : 0.0; }
+	void setValue(double value) override;
+	device::ModDisplay display() const override { return {}; }
+	void setAmount(float) override {}
+	void beginGesture() override {}
+	void endGesture() override {}
+	std::string text() const override { return value() != 0.0 ? "On" : "Off"; }
+
+private:
+	ParamBridge& bridge_;
+	size_t slot_;
+	std::function<void()> changed_;
+};
+
 /// The settled pitch of a layer, drawn as text, with a hand on it: a click types a note or Hz into it, a drag moves Tune in whole
 /// semitones (Shift: fine, `kFineAdjust` of the travel, not rounded).
 class PitchReadout : public visage::Frame, public TooltipSource {
@@ -324,7 +346,9 @@ public:
 	static constexpr float kMinimumWidth = 642.0f; // ONE ROW OF EIGHT PADS: 2·12 + 8·72 + 7·6, locked
 	static constexpr float kMinimumHeight = 704.0f; // the picture, the pad row, the pad's controls, the layer tabs and a tab's body
 
-	DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelection& selection, Notifier* notifier);
+	/// `previewWatchers` (optional) is who the editor tells when a pad's Solo moves, so the sound cards' S marks follow it.
+	DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelection& selection, Notifier* notifier,
+	          FrameWatchers* previewWatchers = nullptr);
 	~DrumPanel() override;
 
 	void draw(visage::Canvas& canvas) override;
@@ -358,6 +382,9 @@ public:
 	/// Whether pad `pad`'s control `c` of layer `layer` is drawn and live, wherever it lives (a box, a pill, or a handle on the picture).
 	[[nodiscard]] bool drawnForTest(size_t pad, DrumControl c, size_t layer = 0) const;
 	/// The layer's field scaler pill for field `field` (0 Pitch .. 6 Metal), its terrain pad, its settled-pitch readout.
+	/// TEST ONLY: pad `pad`'s Mute and Solo chips.
+	[[nodiscard]] SwitchChip& muteChipForTest(size_t pad) const { return *pads_[pad].mute; }
+	[[nodiscard]] SwitchChip& soloChipForTest(size_t pad) const { return *pads_[pad].solo; }
 	[[nodiscard]] visage::Frame* fieldPillForTest(size_t pad, size_t layer, size_t field) const;
 	[[nodiscard]] DrumVectorPad& vectorPadForTest(size_t pad, size_t layer) const { return *pads_[pad].layer[layer].vectorPad; }
 	[[nodiscard]] PitchReadout& pitchReadoutForTest(size_t pad, size_t layer) const { return *pads_[pad].layer[layer].readout; }
@@ -415,8 +442,11 @@ private:
 		std::unique_ptr<SegmentedControl> voices, trigger;
 		/// The pills: Pan, Release (a Gate pad's), Bend (Kit mode alone; decision 8). The pad's Level is on its sound card and is the
 		/// Level handle on layer one's picture.
-		std::unique_ptr<ParamControl> panControl, releaseControl, bendControl;
+		std::unique_ptr<ParamControl> panControl, releaseControl, bendControl, muteControl;
 		std::unique_ptr<FaderPill> pan, release, bend;
+		/// MUTE (the pad's own Mute) and SOLO (the preview of this pad alone), as chips on the pad row.
+		std::unique_ptr<SwitchChip> mute, solo;
+		std::unique_ptr<PadSoloControl> soloControl;
 		std::array<LayerSet, 2> layer {};
 	};
 
@@ -454,6 +484,8 @@ private:
 	void refreshVectorContext(size_t pad, size_t layer, const Character& character);
 
 	ParamBridge& bridge_;
+	FrameWatchers* previewWatchers_ = nullptr;
+	std::optional<size_t> soloSeen_; ///< whose Solo the chips last drew (the preview moves from the cards too)
 	std::array<uint32_t, kMaxSounds> pulseSeen_ {};
 	std::array<float, kMaxSounds> pulseLevel_ {};
 	std::array<int64_t, kMaxSounds> pulseAt_ {};

@@ -1,0 +1,57 @@
+# Schema ledger for DRUM (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
+# difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
+device DRUM - schema=1
+param DRUM drum_enabled unit=choice choice=Off|On
+param DRUM drum_kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
+param DRUM drum_note unit=note min=0 max=127 stepped=1
+param DRUM drum_level unit=decibel min=-60 max=6 stepped=0
+param DRUM drum_pan unit=percent min=-1 max=1 stepped=0
+param DRUM drum_tune unit=number min=-48 max=48 stepped=0
+param DRUM drum_decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
+param DRUM drum_f_tone unit=percent min=0 max=1 stepped=0
+param DRUM drum_f_noise unit=percent min=0 max=1 stepped=0
+param DRUM drum_drive unit=percent min=0 max=1 stepped=0
+param DRUM drum_trigger unit=choice choice=One-shot|Gate
+param DRUM drum_voices unit=choice choice=1|2|4
+param DRUM drum_release unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param DRUM drum_bend unit=percent min=0 max=1 stepped=0
+param DRUM drum_delay unit=number min=0 max=10 stepped=0
+param DRUM drum_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param DRUM drum_seed unit=number min=0 max=65535 stepped=1
+param DRUM drum_zone unit=number min=0 max=1023 stepped=1
+param DRUM drum_zone_offset unit=number min=0 max=1 stepped=0
+param DRUM drum_gamma unit=number min=-8388608 max=8388608 stepped=0
+param DRUM drum_rotate unit=number min=-8388608 max=8388608 stepped=0
+param DRUM drum_travel_x unit=number min=-8388608 max=8388608 stepped=0
+param DRUM drum_travel_y unit=number min=-8388608 max=8388608 stepped=0
+param DRUM drum_pitch_mode unit=choice choice=Free|Semitones|Off
+param DRUM drum_f_pitch unit=percent min=0 max=1 stepped=0
+param DRUM drum_f_length unit=percent min=0 max=1 stepped=0
+param DRUM drum_f_sweep unit=percent min=0 max=1 stepped=0
+param DRUM drum_f_snap unit=percent min=0 max=1 stepped=0
+param DRUM drum_f_metal unit=percent min=0 max=1 stepped=0
+param DRUM drum_sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param DRUM drum_drive_curve unit=choice choice=Tanh|Tube|Soft Clip
+param DRUM drum_drive_tone unit=percent min=0 max=1 stepped=0
+param DRUM drum_velocity_zone unit=number min=-8 max=8 stepped=0
+param DRUM drum_velocity_noise unit=percent min=-1 max=1 stepped=0
+param DRUM drum_width unit=percent min=0 max=1 stepped=0
+param DRUM drum_claps unit=number min=1 max=8 stepped=1
+param DRUM drum_spread unit=log_seconds min=-7.643856189774724 max=-3.321928094887362 stepped=0
+param DRUM drum_clap_q unit=number min=0.5 max=8 stepped=0
+param DRUM drum_clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
+param DRUM drum_wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
+param DRUM drum_click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
+param DRUM drum_wires unit=number min=-8 max=8 stepped=0
+param DRUM drum_bells unit=number min=-8 max=8 stepped=0
+param DRUM drum_bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param DRUM drum_bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
+param DRUM drum_bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
+param DRUM drum_bell2_hz unit=log_hertz min=7.965784284662087 max=11.287712379549449 stepped=0
+param DRUM drum_bell2_time unit=log_seconds min=-8.380821783940931 max=-3.643856189774724 stepped=0
+param DRUM drum_kick_hold unit=number min=0 max=200 stepped=0
+param DRUM drum_kick_dip unit=percent min=0 max=1 stepped=0
+param DRUM drum_kick_dip_time unit=number min=2 max=80 stepped=0
+param DRUM drum_click_sweep unit=number min=0 max=6 stepped=0
+param DRUM drum_click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
+param DRUM drum_start_phase unit=number min=0 max=90 stepped=0

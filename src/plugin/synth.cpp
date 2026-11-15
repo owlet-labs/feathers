@@ -469,6 +469,21 @@ void Synth::retriggerLaneNote(const Voice& voice) noexcept {
 	(void)lane_.processNotes(&event, 1, chokeScratch_.data(), chokeScratch_.size());
 }
 
+int32_t Synth::laneNoteIdOf(const Voice& voice) const noexcept {
+	// **A NOTE THE LANE INVENTED ANSWERS ONLY TO NOTES OF ITS OWN KIND.** An Arp's or Pattern's notes wear id -1, and a
+	// lane device's per-note table reads -1 as "any id" -- so an invented note on a key the host holds found the HOST
+	// note's shape (a device ahead of the note device hears the host's key), and a lane envelope in sustain held the
+	// voice through every gap (backlog RS). A voice with no id on a key the host holds under an id of its own is such a
+	// note (a passed-through host note carries the host's id), and looks itself up under an id no host note wears.
+	if (voice.noteId == -1 && isPlayableChannel(voice.channel) && isPlayableKey(voice.key)) {
+		const size_t at = static_cast<size_t>(voice.channel) * 128u + static_cast<size_t>(voice.key);
+		if (hostDown_[at] && hostIssued_[at] >= 0) {
+			return kInventedNoteId;
+		}
+	}
+	return voice.noteId;
+}
+
 int32_t Synth::heldNoteIdOr(int16_t channel, int16_t key, int32_t fallback) noexcept {
 	if (!isPlayableChannel(channel) || !isPlayableKey(key)) {
 		return fallback;
@@ -2369,8 +2384,8 @@ void Synth::startVoiceSources(const Voice& voice) {
 				continue;
 			}
 			lane_.startOutputForVoice(id, output, static_cast<size_t>(voice.slot),
-			                          lane_.outputForNoteOf(id, output, voice.noteId, voice.channel, voice.key));
-			lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(voice.slot), voice.noteId, voice.channel,
+			                          lane_.outputForNoteOf(id, output, laneNoteIdOf(voice), voice.channel, voice.key));
+			lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(voice.slot), laneNoteIdOf(voice), voice.channel,
 			                              voice.key, true);
 		}
 	});
@@ -2425,7 +2440,7 @@ bool Synth::tickEnvelopes() {
 			lane_.clearVoiceNote(static_cast<size_t>(v.slot));
 		}
 		else {
-			lane_.setVoiceNote(static_cast<size_t>(v.slot), v.noteId, v.channel, v.key);
+			lane_.setVoiceNote(static_cast<size_t>(v.slot), laneNoteIdOf(v), v.channel, v.key);
 		}
 	}
 	lane_.tickModulators(context, static_cast<int>(PuckMotion::kTickSamples));
@@ -2547,9 +2562,9 @@ bool Synth::tickEnvelopes() {
 				// BY THE WHOLE NOTE — id, channel, key — because a keyboard's notes all wear id -1 and
 				// by id alone every voice read the first note the device held.
 				lane_.writeOutputForVoice(id, output, static_cast<size_t>(v.slot),
-				                          lane_.outputForNoteOf(id, output, v.noteId, v.channel, v.key));
+				                          lane_.outputForNoteOf(id, output, laneNoteIdOf(v), v.channel, v.key));
 				// AND ITS RIGHT EAR, while the output is a pair (backlog PA: the LFO's Stereo Phase); nothing otherwise.
-				lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(v.slot), v.noteId, v.channel, v.key, false);
+				lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(v.slot), laneNoteIdOf(v), v.channel, v.key, false);
 			}
 		}
 	});

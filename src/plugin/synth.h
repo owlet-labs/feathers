@@ -1950,6 +1950,9 @@ private:
 	}
 	/// The id of the note held on (channel, key), or `fallback` when that key is not down.
 	[[nodiscard]] int32_t heldNoteIdOr(int16_t channel, int16_t key, int32_t fallback) noexcept;
+	/// THE NOTE ID A VOICE LOOKS ITSELF UP UNDER IN THE LANE'S PER-NOTE TABLES (see the definition).
+	static constexpr int32_t kInventedNoteId = -2;
+	[[nodiscard]] int32_t laneNoteIdOf(const Voice& voice) const noexcept;
 	/// Every held key an off or a choke names lets go; -1 in any field is a wildcard, as on the note itself.
 	void liftHeldNotes(int16_t channel, int16_t key, int32_t noteId) noexcept;
 

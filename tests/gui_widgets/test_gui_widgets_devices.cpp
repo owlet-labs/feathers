@@ -36476,6 +36476,45 @@ TEST_CASE("NO item 2: a chain's level, mute and solo are destinations through it
 	REQUIRE(f.bridge.removeFxDevice(r.slot));
 }
 
+TEST_CASE("a chain strip's key box shows Any or the note name, edits the chain's key as one undo step, and is no destination") {
+	namespace pr = feathers::rack::parallel;
+	ui::ModState mod;
+	ui::EditHistory history;
+	ModFixture f;
+	RackOnLane r(f);
+	r.rack().setOuterGate(ParamBridge::outerGateOver(&f.bridge, r.id));
+	(void)f.bridge.serviceOwnControls();
+	auto* lane = findInTree<ui::FxLane>(f.root);
+	REQUIRE(lane != nullptr);
+	lane->resized();
+	auto* card = dynamic_cast<ui::ParallelRackCard*>(lane->cardAt(r.slot));
+	REQUIRE(card != nullptr);
+	card->setModulation(&mod, &history);
+	(void)card->update();
+	REQUIRE(card->stripsForTest().size() == 1);
+	ui::ChainStrip& strip = *card->stripsForTest()[0];
+	ui::ChainControl& key = strip.keyControlForTest();
+	// DEFAULT ANY: the control's value is 0 and the box's text says so.
+	CHECK(r.rack().chainKey(0) == pr::kAnyKey);
+	CHECK(key.value() == 0.0);
+	CHECK(key.text() == "Any");
+	CHECK(strip.keyBox().isVisible());
+	// 61 is C#4 (a key plus one is the Choice's value).
+	key.setValue(62.0);
+	CHECK(r.rack().chainKey(0) == 61);
+	CHECK(key.text() == "C#4");
+	CHECK(key.value() == 62.0);
+	history.undo();
+	CHECK(r.rack().chainKey(0) == pr::kAnyKey);
+	CHECK(key.text() == "Any");
+	history.redo();
+	CHECK(r.rack().chainKey(0) == 61);
+	// NOT A DESTINATION: it has no slot param, so nothing can be routed to it and it offers no host slot.
+	CHECK_FALSE(key.display().isDestination);
+	CHECK(key.hostSlot().state == feathers::device::HostSlotStatus::State::Unavailable);
+	card->setModulation(nullptr, nullptr);
+}
+
 TEST_CASE("the Arp is offered by Feathers' modulator-lane picker, and a pick seats it with its own card") {
 	// 2026-10-30: the Arp showed in the rack but not in this picker. The picker offers what the rack can hold AND
 	// what calls itself a modulator (`isTaggedModulator`); the browser's category test could not see that, because the

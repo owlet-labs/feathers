@@ -428,8 +428,7 @@ StringFields buildStringFieldsFor(const Character& c);
 inline AnchorPoint drumLayerPlace(const AnchorPoint& stance, const AnchorPoint& vector) {
 	return { stance.x + vector.x, stance.y + vector.y };
 }
-/// How far a layer's vector parameter reaches either side (the declared range of its Offset X/Y).
-inline constexpr double kDrumVectorRange = 2.0;
+// (A layer's vector has no bound: its parameter's declared range, params.h's kDrumVectorReach, is only a host's fader.)
 
 /// THE DRUM PADS' FIELDS (drum proposal §3): in Kit mode each live sound's seven at its own coordinate, scalers applied, at its
 /// slot; in Pitched mode the live sounds' blended (buildStringFieldsFor's shares) into pad 0.

@@ -73,6 +73,7 @@ ParamControl::ParamControl(ParamBridge& bridge, const ParamDesc* desc, ModState*
 	converted_.stepped = (desc_->flags & CLAP_PARAM_IS_STEPPED) != 0;
 	converted_.unit = convertUnit(desc_->unit);
 	converted_.names = desc_->names;
+	converted_.modSpan = desc_->modSpan; // a coordinate's route is in units, not in the declared reach
 	converted_.stereo = desc_->stereo; // a stereo destination (backlog KU): Phase
 	// AND ITS TOOLTIP, which a core row declares as a device control does (voice stacking step 5 found it dropped here:
 	// the Engine rail's knobs and boxes answered with the bare name).

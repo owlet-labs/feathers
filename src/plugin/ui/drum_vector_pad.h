@@ -62,13 +62,8 @@ struct DrumVectorPolicy {
 	};
 	/// THE IDENTITY: the plane's axes are the vector's.
 	[[nodiscard]] static SliceBasis<kPhaseCount> basisAt(const RowReader&, double, const Phases&);
-	/// THE VECTOR AS STORED: held to the parameter's own reach (kDrumVectorRange either side).
+	/// THE VECTOR AS STORED: the travel itself (it has no end: the parameter's declared reach, `kDrumVectorReach`, is only what a host draws a fader over).
 	static void wrapForStorage(const Phases& accumulator, std::array<float, kPhaseCount>& stored);
-	/// THE STAR (AND THE VIEW) STAY WITHIN THE VECTOR'S REACH: the basis is the identity, so a plane position is the vector less where the frame stands.
-	static void clampStar(const Phases& origin, const Phases&, const Phases&, double& x, double& y) {
-		x = std::clamp(x, -kDrumVectorRange - origin[0], kDrumVectorRange - origin[0]);
-		y = std::clamp(y, -kDrumVectorRange - origin[1], kDrumVectorRange - origin[1]);
-	}
 	static void paint(ExploreMap& map, const Key& key, const ExplorePlane<kPhaseCount>& plane);
 	[[nodiscard]] static Key keyOf(const RowReader& row, double rotate, double zoom, const Phases& standing, const Context& context);
 	/// The coarse grid's side; odd, so the centre cell is the sound where it stands.

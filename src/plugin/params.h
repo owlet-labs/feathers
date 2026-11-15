@@ -895,6 +895,9 @@ enum class DrumControl : uint8_t {
 	Lock, OffsetX, OffsetY, PitchMode,
 	kCount
 };
+/// **A LAYER'S VECTOR IS UNBOUNDED** (kit stance redesign): the declared range is only what a host draws a fader over (SKLITTER's `kCoordMax`:
+/// a coordinate is one infinite line, and `offsetsMayLeaveRange` says so). Nothing in the engine or the editor holds it to this.
+inline constexpr double kDrumVectorReach = 8388608.0;
 inline constexpr size_t kDrumControlCount = static_cast<size_t>(DrumControl::kCount);
 inline constexpr uint32_t kDrumBlockBase = 0x0600;
 inline constexpr uint32_t kDrumSlotStride = 0x20;
@@ -1343,7 +1346,15 @@ struct ParamDesc {
 	/// from a source that is a PAIR reaches the two ears apart. Set on Phase only, the one core parameter with a per-ear
 	/// reader (`Synth::seatReadPhase`). Every other row is mono: both ears hear the left.
 	bool stereo = false;
+
+	/// **WHAT A FULL-DEPTH ROUTE IS WORTH**, in the control's units, or 0 for the declared range (`device::ParamDesc::modSpan`'s meaning for a
+	/// core row). A control whose range is only what a host draws a fader over (an unbounded coordinate) says one unit here, so a route into it
+	/// moves it by units rather than by millions.
+	double modSpan = 0.0;
 };
+
+/// The span a route's amount is stated in for core row `d`: its `modSpan` where it declares one, else its range.
+inline double modSpanOf(const ParamDesc& d) noexcept { return d.modSpan > 0.0 ? d.modSpan : d.max - d.min; }
 
 /// Pitch-bend ranges the user can pick, in semitones. `ParamId::BendRange` is an INDEX into this,
 /// not a semitone count: the choices are not contiguous, so a stepped param over the values

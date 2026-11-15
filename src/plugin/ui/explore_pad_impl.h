@@ -159,11 +159,6 @@ void ExplorePad<Policy>::placeStar() {
 	const double k = planePerPixel();
 	starX_ = viewX_ + (px - width() * 0.5) * k;
 	starY_ = viewY_ + (height() * 0.5 - py) * k; // UP IS MORE
-	// A POLICY WITH A HARD LIMIT (the drum layer's vector, held to its parameter's reach) keeps the star inside it, so the picture never
-	// shows a place the storage would refuse: past the limit the star would move and the sound would not.
-	if constexpr (requires { Policy::clampStar(origin_, basisX_, basisY_, starX_, starY_); }) {
-		Policy::clampStar(origin_, basisX_, basisY_, starX_, starY_);
-	}
 }
 
 template <class Policy>
@@ -190,9 +185,6 @@ bool ExplorePad<Policy>::edgeScroll(double seconds) {
 	const auto [hx, hy] = viewHalf();
 	viewX_ += vx * seconds * 2.0 * hx;
 	viewY_ += vy * seconds * 2.0 * hy;
-	if constexpr (requires { Policy::clampStar(origin_, basisX_, basisY_, viewX_, viewY_); }) {
-		Policy::clampStar(origin_, basisX_, basisY_, viewX_, viewY_); // the view stays over ground the policy allows
-	}
 	keepMapCovering();
 	// THE PUCK STAYS UNDER THE HAND while the ground slides — so the sound walks with the view.
 	placeStar();

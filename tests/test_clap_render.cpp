@@ -5403,7 +5403,7 @@ TEST_CASE("drum: a kit saved before the stance redesign (its Walk, Kit Gamma/Zon
 		for (const size_t layer : { size_t { 0 }, size_t { 1 } }) {
 			double x = 9.0;
 			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::OffsetX)), &x));
-			CHECK(std::abs(x) <= feathers::kDrumVectorRange);
+			CHECK(std::abs(x) <= feathers::kDrumVectorReach);
 			// AND NO LAYER COMES UP LOCKED: the old layer lock's default was ON, and a kit saved then must not load stuck at home.
 			double lock = 1.0;
 			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::Lock)), &lock));
@@ -5422,6 +5422,41 @@ TEST_CASE("drum: a kit saved before the stance redesign (its Walk, Kit Gamma/Zon
 	}
 	CHECK(peak > 0.02f);
 	CHECK(peak < 1.5f);
+}
+
+TEST_CASE("drum: a layer's vector is unbounded: a value of 50 and one of -1234.5 survive save and load, and the kit still sounds finite far out") {
+	HostedPlugin host;
+	EventList events;
+	constexpr uint32_t kFrames = 256;
+	const auto idx = static_cast<clap_id>(feathers::drumLayerParam(0, 0, feathers::DrumControl::OffsetX));
+	const auto idy = static_cast<clap_id>(feathers::drumLayerParam(0, 1, feathers::DrumControl::OffsetY));
+	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
+	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(0, feathers::DrumControl::LayerKind)), 3.0);
+	events.pushParam(0, idx, 50.0);
+	events.pushParam(0, idy, -1234.5);
+	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 36, 1, 0.8);
+	float peak = 0.0f;
+	for (int block = 0; block < 8; ++block) {
+		CHECK(host.run(kFrames, events) != CLAP_PROCESS_ERROR);
+		events.clear();
+		CHECK(host.allocationsInLastProcess() == 0);
+		CHECK(allFinite(host.left(), kFrames));
+		peak = std::max(peak, peakOf(host.left(), kFrames));
+	}
+	CHECK(peak > 1.0e-3f);
+	const auto* params = static_cast<const clap_plugin_params*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_PARAMS));
+	double v = 0.0;
+	REQUIRE(params->get_value(host.plugin(), idx, &v));
+	CHECK(v == 50.0);
+	StateBytes saved;
+	REQUIRE(saveState(host.plugin(), &saved));
+	HostedPlugin fresh;
+	REQUIRE(loadState(fresh.plugin(), &saved));
+	const auto* freshParams = static_cast<const clap_plugin_params*>(fresh.plugin()->get_extension(fresh.plugin(), CLAP_EXT_PARAMS));
+	REQUIRE(freshParams->get_value(fresh.plugin(), idx, &v));
+	CHECK(v == 50.0);
+	REQUIRE(freshParams->get_value(fresh.plugin(), idy, &v));
+	CHECK(v == -1234.5);
 }
 
 TEST_CASE("every test-tagged factory preset loads into a fresh instance and renders a block") {

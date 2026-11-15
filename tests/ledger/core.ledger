@@ -281,8 +281,8 @@ param core a.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core a.drum.wires unit=number min=-8 max=8 stepped=0
 param core a.drum.bells unit=number min=-8 max=8 stepped=0
 param core a.drum.lock unit=integer min=0 max=1 stepped=1
-param core a.drum.dx unit=percent min=-2 max=2 stepped=0
-param core a.drum.dy unit=percent min=-2 max=2 stepped=0
+param core a.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core a.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core a.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core a.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core a.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -320,8 +320,8 @@ param core a.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core a.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core a.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core a.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core a.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core a.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core a.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core a.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core a.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core b.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
 param core b.drum.note unit=integer min=0 max=127 stepped=1
@@ -373,8 +373,8 @@ param core b.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core b.drum.wires unit=number min=-8 max=8 stepped=0
 param core b.drum.bells unit=number min=-8 max=8 stepped=0
 param core b.drum.lock unit=integer min=0 max=1 stepped=1
-param core b.drum.dx unit=percent min=-2 max=2 stepped=0
-param core b.drum.dy unit=percent min=-2 max=2 stepped=0
+param core b.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core b.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core b.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core b.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core b.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -412,8 +412,8 @@ param core b.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core b.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core b.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core b.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core b.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core b.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core b.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core b.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core b.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core c.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
 param core c.drum.note unit=integer min=0 max=127 stepped=1
@@ -465,8 +465,8 @@ param core c.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core c.drum.wires unit=number min=-8 max=8 stepped=0
 param core c.drum.bells unit=number min=-8 max=8 stepped=0
 param core c.drum.lock unit=integer min=0 max=1 stepped=1
-param core c.drum.dx unit=percent min=-2 max=2 stepped=0
-param core c.drum.dy unit=percent min=-2 max=2 stepped=0
+param core c.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core c.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core c.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core c.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core c.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -504,8 +504,8 @@ param core c.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core c.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core c.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core c.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core c.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core c.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core c.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core c.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core c.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core d.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
 param core d.drum.note unit=integer min=0 max=127 stepped=1
@@ -557,8 +557,8 @@ param core d.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core d.drum.wires unit=number min=-8 max=8 stepped=0
 param core d.drum.bells unit=number min=-8 max=8 stepped=0
 param core d.drum.lock unit=integer min=0 max=1 stepped=1
-param core d.drum.dx unit=percent min=-2 max=2 stepped=0
-param core d.drum.dy unit=percent min=-2 max=2 stepped=0
+param core d.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core d.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core d.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core d.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core d.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -596,8 +596,8 @@ param core d.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core d.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core d.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core d.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core d.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core d.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core d.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core d.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core d.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core e.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
 param core e.drum.note unit=integer min=0 max=127 stepped=1
@@ -649,8 +649,8 @@ param core e.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core e.drum.wires unit=number min=-8 max=8 stepped=0
 param core e.drum.bells unit=number min=-8 max=8 stepped=0
 param core e.drum.lock unit=integer min=0 max=1 stepped=1
-param core e.drum.dx unit=percent min=-2 max=2 stepped=0
-param core e.drum.dy unit=percent min=-2 max=2 stepped=0
+param core e.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core e.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core e.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core e.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core e.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -688,8 +688,8 @@ param core e.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core e.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core e.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core e.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core e.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core e.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core e.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core e.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core e.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core f.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
 param core f.drum.note unit=integer min=0 max=127 stepped=1
@@ -741,8 +741,8 @@ param core f.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core f.drum.wires unit=number min=-8 max=8 stepped=0
 param core f.drum.bells unit=number min=-8 max=8 stepped=0
 param core f.drum.lock unit=integer min=0 max=1 stepped=1
-param core f.drum.dx unit=percent min=-2 max=2 stepped=0
-param core f.drum.dy unit=percent min=-2 max=2 stepped=0
+param core f.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core f.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core f.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core f.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core f.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -780,8 +780,8 @@ param core f.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core f.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core f.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core f.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core f.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core f.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core f.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core f.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core f.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core g.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
 param core g.drum.note unit=integer min=0 max=127 stepped=1
@@ -833,8 +833,8 @@ param core g.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core g.drum.wires unit=number min=-8 max=8 stepped=0
 param core g.drum.bells unit=number min=-8 max=8 stepped=0
 param core g.drum.lock unit=integer min=0 max=1 stepped=1
-param core g.drum.dx unit=percent min=-2 max=2 stepped=0
-param core g.drum.dy unit=percent min=-2 max=2 stepped=0
+param core g.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core g.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core g.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core g.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core g.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -872,8 +872,8 @@ param core g.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core g.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core g.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core g.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core g.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core g.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core g.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core g.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core g.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core h.drum.kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String
 param core h.drum.note unit=integer min=0 max=127 stepped=1
@@ -925,8 +925,8 @@ param core h.drum.velocity_zone unit=number min=-8 max=8 stepped=0
 param core h.drum.wires unit=number min=-8 max=8 stepped=0
 param core h.drum.bells unit=number min=-8 max=8 stepped=0
 param core h.drum.lock unit=integer min=0 max=1 stepped=1
-param core h.drum.dx unit=percent min=-2 max=2 stepped=0
-param core h.drum.dy unit=percent min=-2 max=2 stepped=0
+param core h.drum.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core h.drum.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core h.drum.pitch_mode unit=choice choice=Free|Semitones|Off
 param core h.drum.l2.tune unit=semitones min=-48 max=48 stepped=0
 param core h.drum.l2.decay unit=log_seconds min=-6.643856189774724 max=3.321928094887362 stepped=0
@@ -964,8 +964,8 @@ param core h.drum.l2.velocity_zone unit=number min=-8 max=8 stepped=0
 param core h.drum.l2.wires unit=number min=-8 max=8 stepped=0
 param core h.drum.l2.bells unit=number min=-8 max=8 stepped=0
 param core h.drum.l2.lock unit=integer min=0 max=1 stepped=1
-param core h.drum.l2.dx unit=percent min=-2 max=2 stepped=0
-param core h.drum.l2.dy unit=percent min=-2 max=2 stepped=0
+param core h.drum.l2.dx unit=percent min=-8388608 max=8388608 stepped=0
+param core h.drum.l2.dy unit=percent min=-8388608 max=8388608 stepped=0
 param core h.drum.l2.pitch_mode unit=choice choice=Free|Semitones|Off
 param core voice.level unit=gain min=0 max=1 stepped=0
 param core output.level unit=gain min=0 max=1 stepped=0

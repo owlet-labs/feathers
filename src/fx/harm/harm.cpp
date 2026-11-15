@@ -150,6 +150,8 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Hold)] = log2Of(state.settings.holdSeconds);
 	row[static_cast<size_t>(Param::Decay)] = log2Of(state.settings.decaySeconds);
 	row[static_cast<size_t>(Param::Sustain)] = state.settings.sustain;
+	row[static_cast<size_t>(Param::MasterLevel)] = state.settings.masterLevel;
+	row[static_cast<size_t>(Param::MasterDepth)] = state.settings.masterDepth;
 	for (int k = 1; k < kPartialCount; ++k) {
 		const PartialSettings& p = state.settings.more[static_cast<size_t>(k - 1)];
 		const auto at = [k](PartialField f) { return static_cast<size_t>(partialParam(k, f)); };
@@ -199,6 +201,8 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	out.settings.holdSeconds = secondsOf(read(Param::Hold));
 	out.settings.decaySeconds = secondsOf(read(Param::Decay));
 	out.settings.sustain = read(Param::Sustain);
+	out.settings.masterLevel = read(Param::MasterLevel);
+	out.settings.masterDepth = read(Param::MasterDepth);
 	for (int k = 1; k < kPartialCount; ++k) {
 		PartialSettings& p = out.settings.more[static_cast<size_t>(k - 1)];
 		const auto at = [k, &read](PartialField f) { return read(partialParam(k, f)); };
@@ -277,7 +281,8 @@ double notchCentreHz(const Settings& s) {
 }
 
 double notchDepth(const Settings& s) {
-	return std::clamp(static_cast<double>(s.depth), 0.0, 1.0);
+	// THE PARTIAL'S DEPTH TIMES THE MASTER: both clamped to 0..1, so the product is too, and the master is one factor on every partial.
+	return std::clamp(static_cast<double>(s.depth), 0.0, 1.0) * std::clamp(static_cast<double>(s.masterDepth), 0.0, 1.0);
 }
 
 double playedNoteHz(const Settings& s) {
@@ -631,6 +636,9 @@ void Harm::processStereo(float* left, float* right, int frames) {
 		phaseOffset[k] = static_cast<double>(std::clamp(slice[k].phase, 0.0f, 1.0f));
 	}
 
+	// THE MASTER LEVEL, over the whole output: the stripped signal and every partial's sine, summed, then scaled once. Unity by
+	// default, and an exact multiply at unity, so a default patch keeps its bits. Clamped as the other level controls are.
+	const float masterGain = std::clamp(target_.masterLevel, 0.0f, 1.0f);
 	int done = 0;
 	while (done < frames) {
 		// THE GRID IS ABSOLUTE, carried in gridPhase_ across calls, so where a host's block boundary
@@ -714,6 +722,8 @@ void Harm::processStereo(float* left, float* right, int frames) {
 				}
 			}
 
+			l *= masterGain;
+			r *= masterGain;
 			left[at] = l;
 			if (right != nullptr) {
 				right[at] = r;

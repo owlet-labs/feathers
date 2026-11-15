@@ -5973,13 +5973,13 @@ struct HarmFixture : ModFixture {
 	/// test. These cases used to press the card at the arrows' card-space rectangles; they press the
 	/// same control at the same place, one frame down.
 	void pressRow(visage::Bounds partInRow) {
-		ui::HarmonicRow* row = card->harmonicRow();
+		ui::HarmonicRow* row = expanded().harmonicRow();
 		REQUIRE(row != nullptr);
 		const visage::Point p = centreOf(partInRow);
 		row->onMouseDown().callback(at(p.x, p.y));
 	}
-	visage::Bounds rowPrev() const { return card->harmonicRow()->prevArrowBounds(); }
-	visage::Bounds rowNext() const { return card->harmonicRow()->nextArrowBounds(); }
+	visage::Bounds rowPrev() { return expanded().harmonicRow()->prevArrowBounds(); }
+	visage::Bounds rowNext() { return expanded().harmonicRow()->nextArrowBounds(); }
 
 	/// A KNOB ON THE CARD, by label.
 	ui::Knob* cardKnob(const std::string& label) const {
@@ -6694,11 +6694,6 @@ TEST_CASE("every control HARM declares is reachable from at least one of its sur
 		// there is as a VALUE — so duplication arriving by accident is visible, and duplication
 		// arriving by decision is written down.
 		//
-		// TEN TODAY, AND THAT IS THE TRANSITION SHOWING. The card still carries every control while
-		// the expanded view carries ten of them; the card reduction takes the card down to Enabled,
-		// Harmonic, Level, Attack and Release, at which point the overlap is the THREE knobs the
-		// expanded view keeps a copy of because it is meant to be complete on its own.
-		//
 		// UPDATING THIS NUMBER IS NOT THE THING THIS CASE FORBIDS. The forbidden edit is narrowing
 		// the SWEEP — removing a control from the reachability check because it moved. Recording a
 		// changed count is stating a fact; deleting a control from the sweep is switching the guard
@@ -6711,14 +6706,10 @@ TEST_CASE("every control HARM declares is reachable from at least one of its sur
 		// SIX with the Notch / High-pass chip (backlog NL, 2026-10-26): on the card beside the harmonic row it acts on,
 		// and in the window because the window is the card's superset — a duplicate by rule, not by accident.
 		//
-		// TWO OF THE FIVE ARE NOT COPIES AT ALL. The harmonic row is ONE WIDGET built twice over one
-		// `FxControl`, and the enable square is one INDEX drawn twice from one declaration. Neither
-		// can disagree with itself about a value, a label, or which of 102 entries is selected —
-		// which is the strongest form duplication takes here and the reason §6's "allow it" is not
-		// costing anything.
-		// TEN with the four partials' Active chips: the card carries a switch for each so a partial can be turned on from it, and
-		// the window — the card's superset — carries them in its always-visible strip. By rule, not by accident.
-		constexpr size_t kExpectedDuplicates = 10;
+		// THE CARD NOW HOLDS THE GLOBAL CONTROLS, and the window holds each of them too: the two masters, the envelope's six,
+		// Poly, Env Depth, and the head square. Eleven, all by rule (the card is the window's subset). The per-partial controls
+		// are on the window alone, so none of them is counted. (The harmonic row and the partial switches left the card.)
+		constexpr size_t kExpectedDuplicates = 11;
 		size_t duplicated = 0;
 		for (size_t i = 0; i < static_cast<size_t>(fx::harm::Param::kCount); ++i) {
 			if (surfaces.offering(static_cast<fx::harm::Param>(i)) > 1) {
@@ -6747,7 +6738,7 @@ TEST_CASE("a drag on HARM's card leaves the value in the row the engine decodes"
 	//
 	// THE PANEL'S OWN ROAD IS ASSERTED SEPARATELY, in "HARM's head opens its expanded view" — there
 	// through the overlay, which is the only place the panel is really in the tree.
-	ui::Knob* width = f.cardKnob("Level");
+	ui::Knob* width = f.cardKnob("Master");
 	REQUIRE(width != nullptr);
 
 	// STARTED FROM A STATED PLACE RATHER THAN FROM THE DEFAULT. This read `REQUIRE(Level == 0)` and
@@ -6756,14 +6747,14 @@ TEST_CASE("a drag on HARM's card leaves the value in the row the engine decodes"
 	// where that is instead of inheriting it.
 	{
 		ui::FxControl start { f.bridge, f.device, fx::harm::kDescriptor,
-			                  static_cast<size_t>(fx::harm::Param::Level) };
+			                  static_cast<size_t>(fx::harm::Param::MasterLevel) };
 		start.setValue(0.0);
 		f.bridge.refresh();
 	}
-	REQUIRE(f.param(fx::harm::Param::Level) == doctest::Approx(0.0));
+	REQUIRE(f.param(fx::harm::Param::MasterLevel) == doctest::Approx(0.0));
 
 	constexpr float kTravel = 35.0f;
-	const device::ParamDesc& desc = fx::harm::kParamDescs[static_cast<size_t>(fx::harm::Param::Level)];
+	const device::ParamDesc& desc = fx::harm::kParamDescs[static_cast<size_t>(fx::harm::Param::MasterLevel)];
 	const double expected = desc.min
 	                        + static_cast<double>(kTravel / ui::Knob::kDragRange)
 	                              * (desc.max - desc.min);
@@ -6779,7 +6770,7 @@ TEST_CASE("a drag on HARM's card leaves the value in the row the engine decodes"
 	dragThroughRoot(f.root, centre, { centre.x, centre.y - kTravel });
 
 	// THE VALUE, THROUGH THE DECODER THE AUDIO THREAD USES.
-	CHECK(f.state().settings.level == doctest::Approx(static_cast<float>(expected)));
+	CHECK(f.state().settings.masterLevel == doctest::Approx(static_cast<float>(expected)));
 	// AND IN HARM'S SLOT ONLY. The filter is in slot 0 and its own controls must not have moved — the
 	// assertion a card wired to slot 0 fails on.
 	//
@@ -6815,7 +6806,7 @@ TEST_CASE("a drag on HARM's card leaves the value in the row the engine decodes"
 		CHECK(static_cast<double>(f.state().settings.attackSeconds)
 		      == doctest::Approx(std::exp2(attackDesc.min + attackKnob)).epsilon(1e-4));
 		// AND LEVEL IS STILL WHERE THE FIRST DRAG LEFT IT.
-		CHECK(f.state().settings.level == doctest::Approx(static_cast<float>(expected)));
+		CHECK(f.state().settings.masterLevel == doctest::Approx(static_cast<float>(expected)));
 	}
 }
 
@@ -6828,32 +6819,32 @@ TEST_CASE("HARM's arrows step the harmonic table by exactly one entry") {
 	// The default is unison, and the box says so in the vocabulary a player reads.
 	CHECK(f.param(fx::harm::Param::Harmonic)
 	      == doctest::Approx(static_cast<double>(fx::harm::kUnisonHarmonic)));
-	CHECK(f.card->ratioText() == "1:1");
+	CHECK(f.expanded().harmonicRow()->ratioText() == "1:1");
 
 	f.pressRow(f.rowNext());
 	CHECK(f.param(fx::harm::Param::Harmonic)
 	      == doctest::Approx(static_cast<double>(fx::harm::kUnisonHarmonic) + 1.0));
 	// AND THE BOX SAYS THE TABLE'S OWN RATIO, not a decimal and not the index.
-	CHECK(f.card->ratioText() == "9:8");
+	CHECK(f.expanded().harmonicRow()->ratioText() == "9:8");
 
 	f.pressRow(f.rowPrev());
 	CHECK(f.param(fx::harm::Param::Harmonic)
 	      == doctest::Approx(static_cast<double>(fx::harm::kUnisonHarmonic)));
-	CHECK(f.card->ratioText() == "1:1");
+	CHECK(f.expanded().harmonicRow()->ratioText() == "1:1");
 
 	SUBCASE("and it stops at the ends of the table rather than wrapping") {
 		for (size_t i = 0; i < fx::harm::kHarmonicCount + 4; ++i) {
 			f.pressRow(f.rowPrev());
 		}
 		CHECK(f.param(fx::harm::Param::Harmonic) == doctest::Approx(0.0));
-		CHECK(f.card->ratioText() == "1:8");
+		CHECK(f.expanded().harmonicRow()->ratioText() == "1:8");
 
 		for (size_t i = 0; i < fx::harm::kHarmonicCount + 4; ++i) {
 			f.pressRow(f.rowNext());
 		}
 		CHECK(f.param(fx::harm::Param::Harmonic)
 		      == doctest::Approx(static_cast<double>(fx::harm::kHarmonicCount) - 1.0));
-		CHECK(f.card->ratioText() == "32:1");
+		CHECK(f.expanded().harmonicRow()->ratioText() == "32:1");
 	}
 
 	SUBCASE("and the head is still the fold, so a step cannot collapse the card") {
@@ -6925,8 +6916,8 @@ TEST_CASE("HARM's card offers no way to set the notch centre") {
 
 	// THE CARD HAS NO NOTE, which is the whole reason. What it states instead is the RATIO, and a
 	// ratio is true at every pitch.
-	CHECK(f.card->ratioText().find(':') != std::string::npos);
-	CHECK(f.card->ratioText().find("Hz") == std::string::npos);
+	CHECK(f.expanded().harmonicRow()->ratioText().find(':') != std::string::npos);
+	CHECK(f.expanded().harmonicRow()->ratioText().find("Hz") == std::string::npos);
 
 	// AND THE SAME SETTING READS AS TWO DIFFERENT CENTRES depending only on the note — the fact that
 	// makes a drawn frequency dishonest, asserted rather than asserted-about.
@@ -7177,13 +7168,13 @@ TEST_CASE("HARM's card reads as inert until it is SWITCHED ON, like every other 
 		// with nothing dialled in — which used to be the default state and is not any more. Stating
 		// it keeps the case testing the STRONGEST version rather than whichever one the defaults
 		// happen to make easy.
-		for (const auto param : { fx::harm::Param::Level, fx::harm::Param::Width }) {
+		for (const auto param : { fx::harm::Param::MasterLevel, fx::harm::Param::MasterDepth }) {
 			ui::FxControl c { f.bridge, f.device, fx::harm::kDescriptor, static_cast<size_t>(param) };
 			c.setValue(0.0);
 		}
 		f.bridge.refresh();
-		REQUIRE(f.state().settings.level == doctest::Approx(0.0f));
-		REQUIRE(f.state().settings.width == doctest::Approx(0.0f));
+		REQUIRE(f.state().settings.masterLevel == doctest::Approx(0.0f));
+		REQUIRE(f.state().settings.masterDepth == doctest::Approx(0.0f));
 		f.card->draw(canvas);
 		for (const auto& knob : f.card->knobsForTest()) {
 			CAPTURE(std::string(knob->label()));
@@ -7194,10 +7185,10 @@ TEST_CASE("HARM's card reads as inert until it is SWITCHED ON, like every other 
 	SUBCASE("and turning the halves up does NOT wake it, which is the retired convention") {
 		// THE OTHER DIRECTION, and the one that pins the removal rather than the addition. Level and
 		// Width no longer double as a power switch: a HARM with both up and its switch off is off.
-		f.knob("Level")->control()->setValue(1.0);
-		f.knob("Width")->control()->setValue(1.0);
-		REQUIRE(f.state().settings.level == doctest::Approx(1.0f));
-		REQUIRE(f.state().settings.width == doctest::Approx(1.0f));
+		f.knob("Master")->control()->setValue(1.0);
+		f.knob("Depth")->control()->setValue(1.0);
+		REQUIRE(f.state().settings.masterLevel == doctest::Approx(1.0f));
+		REQUIRE(f.state().settings.masterDepth == doctest::Approx(1.0f));
 		f.card->draw(canvas);
 		for (const auto& knob : f.card->knobsForTest()) {
 			CAPTURE(std::string(knob->label()));
@@ -10024,148 +10015,101 @@ TEST_CASE("a harmonic reads as an interval a musician would say, beside the rati
 
 	SUBCASE("and the card shows the label, with the list and the arrows both reaching it") {
 		HarmFixture f;
-		CHECK(f.card->harmonicText() == hrm::harmonicLabel(hrm::kUnisonHarmonic));
-		// THE FOLDED HEAD KEEPS THE BARE RATIO, which is all it has room for.
-		CHECK(f.card->ratioText() == "1:1");
+		CHECK(f.expanded().harmonicRow()->label() == hrm::harmonicLabel(hrm::kUnisonHarmonic));
+		// THE RATIO BOX SAYS THE BARE RATIO, which is what the folded row has room for.
+		CHECK(f.expanded().harmonicRow()->ratioText() == "1:1");
 
 		// THE RATIO BOX IS A LIST, and the arrows still step — it was found the arrows and wanted the
 		// dropdown as well, not instead. Asked of the ROW now, which is where those parts live since
 		// both surfaces build the same widget.
-		ui::HarmonicRow* row = f.card->harmonicRow();
+		ui::HarmonicRow* row = f.expanded().harmonicRow();
 		REQUIRE(row != nullptr);
 		const visage::Bounds box = row->boxBounds();
 		CHECK(row->partAt({ box.x() + box.width() * 0.5f, box.y() + box.height() * 0.5f })
 		      == ui::HarmonicRow::Part::Menu);
 		CHECK(row->partAt({ row->prevArrowBounds().x() + 2.0f, row->prevArrowBounds().y() + 8.0f })
 		      == ui::HarmonicRow::Part::Prev);
-		// AND THE CARD'S OWN HIT TEST NO LONGER CLAIMS THEM — a card still answering for the row
-		// would mean two hit tests over one control, which is how one of them goes stale.
-		const visage::Bounds inCard = f.card->harmonicBounds();
-		CHECK(f.card->partAt({ inCard.x() + inCard.width() * 0.5f,
-		                       inCard.y() + inCard.height() * 0.5f })
-		      == ui::HarmCard::Part::None);
 
 		f.pressRow(f.rowNext());
-		CHECK(f.card->harmonicText() == hrm::harmonicLabel(hrm::kUnisonHarmonic + 1));
+		CHECK(f.expanded().harmonicRow()->label() == hrm::harmonicLabel(hrm::kUnisonHarmonic + 1));
 	}
 }
 
-TEST_CASE("HARM's reduced card is one row of three, and it got materially shorter for it") {
-	// The split: every control and a filter-style filter+harmonic visualizer in the expanded view;
-	// only Level, harmonic Attack and Release on the card.
-	//
-	// THIS CASE ASKED ABOUT NINE KNOBS IN TWO ROWS AND WAS RIGHT TO. It is REWRITTEN rather than
-	// deleted because its subject — how this card lays out and how tall it is — did not go away; the
-	// arrangement did. What it must not become is a case that stopped asking.
-	//
-	// THE 43px CELLS ARE FIXED BY THE REDUCTION rather than traded against it. Five cells for nine
-	// knobs made them 43px for a 38px knob, which was the complaint (hands-on item 2). Three
-	// knobs in the same width are asserted below to be comfortably wider than the knob they hold.
+TEST_CASE("HARM's card holds the global controls, two rows of four, with Poly and Env Depth under them") {
+	// THE CARD IS THE DEVICE'S GLOBAL CONTROLS. Anything addressing one partial lives in the window, where the partials are
+	// shaped. Counted from the declared list, never a literal, so adding a global control moves the count with it.
 	HarmFixture f;
 	const auto& knobs = f.card->knobsForTest();
 
-	// COUNTED FROM THE DECLARED LIST, never a literal. `CHECK(knobs.size() == 3)` is the mistake that
-	// went red within the hour when Depth landed on the old card.
 	REQUIRE(knobs.size() == ui::HarmCard::kCardKnobCount);
-	// AND THE LIST IS THE ONE THE DESIGN NAMES, asserted by param rather than by label so a renamed knob
-	// does not quietly become a different control.
 	std::set<int> onCard;
 	for (const auto& entry : ui::HarmCard::kCardKnobs) {
 		onCard.insert(static_cast<int>(entry.param));
 	}
-	CHECK(onCard.count(static_cast<int>(fx::harm::Param::Level)) == 1);
+	CHECK(onCard.count(static_cast<int>(fx::harm::Param::MasterLevel)) == 1);
+	CHECK(onCard.count(static_cast<int>(fx::harm::Param::MasterDepth)) == 1);
 	CHECK(onCard.count(static_cast<int>(fx::harm::Param::Attack)) == 1);
 	CHECK(onCard.count(static_cast<int>(fx::harm::Param::Release)) == 1);
 	CHECK(onCard.size() == ui::HarmCard::kCardKnobCount);
+	// NO PER-PARTIAL CONTROL IS ON THE CARD. A card that drew one would be a second home for a partial's controls.
+	for (const fx::harm::Param p : f.card->addressedParamsForTest()) {
+		CAPTURE(std::string(fx::harm::kParamDescs[static_cast<size_t>(p)].name));
+		CHECK(p != fx::harm::Param::Level);
+		CHECK(p != fx::harm::Param::Harmonic);
+		CHECK(p != fx::harm::Param::Mode);
+		CHECK(p != fx::harm::Param::Width);
+		CHECK(p != fx::harm::Param::Depth);
+		CHECK(p != fx::harm::Param::Porta);
+	}
 
-	SUBCASE("one row, one grid, and every knob inside the card") {
+	SUBCASE("two rows of four, one grid, and every knob inside the card") {
 		std::set<int> rows;
 		for (const auto& k : knobs) {
 			rows.insert(static_cast<int>(std::lround(k->y())));
 		}
-		CHECK(rows.size() == 1);
+		CHECK(rows.size() == 2);
 		for (const auto& k : knobs) {
 			CAPTURE(std::string(k->label()));
 			CHECK(k->x() >= 0.0f);
 			CHECK(k->x() + k->width() <= f.card->width() + 1.0f);
 			CHECK(k->y() + k->height() <= f.card->height() + 1.0f);
-			// ONE GRID: every cell the same width, so no knob is drawn at a different size.
 			CHECK(k->width() == doctest::Approx(knobs.front()->width()));
 		}
 	}
 
-	SUBCASE("the cells stopped being cramped, which is the point of the reduction") {
-		// THE COMPLAINT WAS 43px CELLS FOR A 38px KNOB — five pixels of air. MEASURED after the
-		// reduction: **72px**, on a 236px card. The claim is stated as a RATIO to the knob rather
-		// than as a pixel count so it survives a change to either.
+	SUBCASE("every caption is whole: the cell is wider than the knob by the margin the grid was chosen for") {
 		REQUIRE_FALSE(knobs.empty());
 		const float cell = knobs.front()->width();
 		CAPTURE(cell);
-		CAPTURE(ui::HarmCard::kKnobDiameter);
-		CHECK(cell > ui::HarmCard::kKnobDiameter * 1.5f);
-		// AND THE OLD ARRANGEMENT WOULD NOT HAVE PASSED THIS, which is what makes it a claim about
-		// the change rather than about the card: five cells across the same width is 43px, and
-		// 43 < 38 * 1.5.
-		const float oldCell = (f.card->width() - 2.0f * ui::HarmCard::kPad) / 5.0f;
-		CAPTURE(oldCell);
-		CHECK(oldCell < ui::HarmCard::kKnobDiameter * 1.5f);
+		// FOUR CELLS: 54px for a 38px knob. The caption fit itself is the tooltips suite's to assert, not this.
+		CHECK(cell > ui::HarmCard::kKnobDiameter * 1.4f);
 	}
 
-	SUBCASE("the card is materially shorter, by a whole knob row and the switch row it lost") {
-		// MEASURED, 2026-08-24: **250px before the reduction, 146px after** — 104px back, two fifths
-		// of the card. Stated as a bound derived from what was REMOVED rather than as the two
-		// numbers, so a change to the knob size moves the claim with it: a knob row is 72 + 8 and the
-		// switch row was 16 + 8, which is the 104 exactly.
-		const float column = ui::Knob::columnHeight(ui::HarmCard::kKnobDiameter);
-		const float removed = column + ui::HarmCard::kRowGap    // the second knob row
-		                      + 16.0f + ui::HarmCard::kRowGap;  // the switch row that went with Poly
-		CAPTURE(ui::HarmCard::openHeight());
-		CAPTURE(removed);
-		// AND IT GREW BY ONE ROW SINCE: the four partials' Active chips, which the card gained so a partial can be switched
-		// from it. The reduction is still this large; the allowance is exactly that row and the gap above it.
-		const float activeRow = ui::SwitchChip::kHeight + ui::HarmCard::kActiveRowGap;
-		CHECK(ui::HarmCard::openHeight() < 250.0f - removed + 1.0f + activeRow);
-		CHECK(ui::HarmCard::openHeight() < 150.0f + activeRow);
-		// AND THE CARD REALLY IS THAT TALL — the height and the layout agreeing, which is the seam
-		// that has bitten twice in this lane this week.
+	SUBCASE("Poly and Env Depth sit in the switch row under the knobs") {
+		REQUIRE(f.card->chipForTest(fx::harm::Param::Poly) != nullptr);
+		REQUIRE(f.card->chipForTest(fx::harm::Param::DepthFollowsEnv) != nullptr);
+		const float knobBottom = knobs.back()->y() + knobs.back()->height();
+		CHECK(f.card->chipForTest(fx::harm::Param::Poly)->y() >= knobBottom);
+		CHECK(f.card->chipForTest(fx::harm::Param::Poly)->y() == doctest::Approx(
+		          f.card->chipForTest(fx::harm::Param::DepthFollowsEnv)->y()));
+	}
+
+	SUBCASE("the card's height is the layout's, and the layout is the lane's") {
 		CHECK(f.card->height() == doctest::Approx(f.card->laneHeight()));
 		CHECK(f.card->laneHeight() == doctest::Approx(ui::HarmCard::openHeight()));
 	}
 
-	SUBCASE("and nothing became unreachable, which is what a reduction must not cost") {
-		// THE HONESTY RULE, AND THE WHOLE REASON THE REDUCTION WAITED FOR THE EXPANDED VIEW. Six
-		// knobs and a switch left this card; if they had left the EDITOR the card would simply have
-		// stopped offering seven controls the engine still reads.
-		//
-		// ASKED AS A UNION over both surfaces, computed from `kParamDescs` — the same shape as the
-		// invariant one file up, restated here because this is the case a reader lands on when they
-		// ask "where did Width go".
+	SUBCASE("nothing became unreachable: every control the card offers the window offers too") {
 		std::set<int> reachable;
-		for (const fx::harm::Param p : f.card->addressedParamsForTest()) {
-			reachable.insert(static_cast<int>(p));
-		}
 		for (const fx::harm::Param p : f.expanded().addressedParamsForTest()) {
 			reachable.insert(static_cast<int>(p));
 		}
-		for (size_t i = 0; i < static_cast<size_t>(fx::harm::Param::kCount); ++i) {
-			if (harmSlotFurniture(i)) {
-				continue;
-			}
-			CAPTURE(std::string(fx::harm::kParamDescs[i].name));
-			CHECK(reachable.count(static_cast<int>(i)) == 1);
-		}
-		// AND THE SEVEN REALLY DID LEAVE THE CARD — or this subcase would be green on a card that
-		// never reduced at all.
-		std::set<int> stillOnCard;
 		for (const fx::harm::Param p : f.card->addressedParamsForTest()) {
-			stillOnCard.insert(static_cast<int>(p));
-		}
-		for (const fx::harm::Param moved :
-		     { fx::harm::Param::Fine, fx::harm::Param::Phase, fx::harm::Param::Spread,
-		       fx::harm::Param::Width, fx::harm::Param::Depth, fx::harm::Param::Porta,
-		       fx::harm::Param::Poly }) {
-			CAPTURE(std::string(fx::harm::kParamDescs[static_cast<size_t>(moved)].name));
-			CHECK(stillOnCard.count(static_cast<int>(moved)) == 0);
+			if (harmSlotFurniture(static_cast<size_t>(p)) || p == fx::harm::Param::Enabled) {
+				continue; // the head square is the window header's chip, as it always was
+			}
+			CAPTURE(std::string(fx::harm::kParamDescs[static_cast<size_t>(p)].name));
+			CHECK(reachable.count(static_cast<int>(p)) == 1);
 		}
 	}
 }
@@ -12418,7 +12362,7 @@ TEST_CASE("HARM's head opens its expanded view, and the panel edits the same row
 	}
 }
 
-TEST_CASE("the harmonic row is ONE widget on two surfaces, over one control") {
+TEST_CASE("the harmonic row is ONE widget, the window's, over one control") {
 	// THE GAP THIS CLOSES WAS WRITTEN DOWN BEFORE IT WAS FIXED: the expanded view PLOTS the harmonic
 	// on its scope and a hand could not move it from there, because the row was four rectangles and
 	// a 102-entry popup living inside `HarmCard`.
@@ -12430,12 +12374,10 @@ TEST_CASE("the harmonic row is ONE widget on two surfaces, over one control") {
 	HarmFixture f;
 	namespace hrm = feathers::fx::harm;
 
-	ui::HarmonicRow* onCard = f.card->harmonicRow();
+	ui::HarmonicRow* onCard = f.expanded().harmonicRow();
 	ui::HarmonicRow* onPanel = f.expanded().harmonicRow();
 	REQUIRE(onCard != nullptr);
 	REQUIRE(onPanel != nullptr);
-	// TWO FRAMES, NOT ONE — a panel that reparented the card's row would take it off the card.
-	CHECK(onCard != onPanel);
 
 	SUBCASE("a step on either surface is the same number, read from the other") {
 		// THE VALUE, and read through the DSP's own decoder as well as through the sibling widget:
@@ -12450,7 +12392,7 @@ TEST_CASE("the harmonic row is ONE widget on two surfaces, over one control") {
 		CHECK(onCard->label() == hrm::harmonicLabel(hrm::kUnisonHarmonic + 1));
 		// AND THE CARD'S FOLDED HEAD FOLLOWS IT, which is the thing a card shows when it has nothing
 		// else — so a change made in the panel is visible the moment the panel closes.
-		CHECK(f.card->ratioText() == "9:8");
+		CHECK(f.expanded().harmonicRow()->ratioText() == "9:8");
 
 		onCard->step(-1);
 		CHECK(f.param(hrm::Param::Harmonic)
@@ -12570,7 +12512,7 @@ TEST_CASE("the harmonic row is ONE widget on two surfaces, over one control") {
 		CHECK(text.width() < box.width());
 	}
 
-	SUBCASE("the row recedes with a switched-out card and never with the panel") {
+	SUBCASE("the window's row never recedes, with its device switched out or in") {
 		// A DIFFERENCE BETWEEN THE SURFACES THAT IS DELIBERATE, so it is pinned rather than left to
 		// be discovered. The card dims because it sits in a lane beside devices that are running; a
 		// panel you deliberately opened to edit one device is not making that comparison.
@@ -12586,13 +12528,11 @@ TEST_CASE("the harmonic row is ONE widget on two surfaces, over one control") {
 		enabled.setValue(0.0);
 		f.bridge.refresh();
 		f.card->draw(canvas);
-		CHECK_FALSE(onCard->active());
 		CHECK(onPanel->active());
 
 		enabled.setValue(1.0);
 		f.bridge.refresh();
 		f.card->draw(canvas);
-		CHECK(onCard->active());
 		CHECK(onPanel->active());
 	}
 }
@@ -12709,6 +12649,11 @@ TEST_CASE("modulation reaches the expanded panel, and the panel is on the notify
 					found = { true, box->control().display().isDestination, box->mappable(false) };
 				}
 			}
+			for (ui::ValueBox* master : { panel.masterLevelForTest(), panel.masterDepthForTest() }) {
+				if (&master->control().desc() == want) {
+					found = { true, master->control().display().isDestination, master->mappable(false) };
+				}
+			}
 			if (&panel.portaForTest()->control().desc() == want) {
 				found = { true, panel.portaForTest()->control().display().isDestination, panel.portaForTest()->mappable(false) };
 			}
@@ -12732,9 +12677,13 @@ TEST_CASE("modulation reaches the expanded panel, and the panel is on the notify
 
 			// AND ON THE CARD WHERE THE CARD HAS IT. The card keeps three; the rest moved, and a
 			// control the card does not hold is not a card failure.
-			const std::string full = hrm::kParamDescs[i].name;
-			const std::string label = full.substr(full.find(' ') + 1);
-			if (ui::Knob* onCard = f.cardKnob(label)) {
+			ui::Knob* onCard = nullptr;
+			for (const auto& k : f.card->knobsForTest()) {
+				if (k->control() != nullptr && &k->control()->desc() == &hrm::kParamDescs[i]) {
+					onCard = k.get();
+				}
+			}
+			if (onCard != nullptr) {
 				CHECK(onCard->isModDestination());
 				CHECK(onCard->mappable());
 			}
@@ -13596,35 +13545,24 @@ TEST_CASE("HARM's envelope window: the curve is the envelope's shape, and the si
 	}
 }
 
-TEST_CASE("HARM's card carries the four partials' Active chips, and each is the partial's own switch") {
+TEST_CASE("HARM's card carries no partial switch: the four Active chips are the window's, and each is the partial's own") {
 	HarmFixture f;
 	namespace hrm = feathers::fx::harm;
-	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		INFO("partial " << k + 1);
-		ui::SwitchChip* chip = f.card->activeChipForTest(k);
-		REQUIRE(chip != nullptr);
-		std::vector<ui::ControlFace::Offered> list;
-		chip->offeredControls(list);
-		REQUIRE(list.size() == 1);
-		CHECK(&list[0].control->desc() == &hrm::kParamDescs[static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Active))]);
-		CHECK(chip->on() == (k == 0));
-		// one small row, inside the card
-		const visage::Bounds b = f.card->activeBounds(k);
-		CHECK(b.x() >= 0.0f);
-		CHECK(b.right() <= f.card->width() + 0.01f);
-		CHECK(b.bottom() <= f.card->height() + 0.01f);
-		CHECK(b.y() == doctest::Approx(f.card->activeBounds(0).y()));
-	}
-	// and the card has no tab bar: its addressed controls are today's plus the four switches
 	std::set<int> onCard;
 	for (const hrm::Param p : f.card->addressedParamsForTest()) {
 		onCard.insert(static_cast<int>(p));
 	}
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		CHECK(onCard.count(static_cast<int>(hrm::partialParam(k, hrm::PartialField::Active))) == 1);
+		CHECK(onCard.count(static_cast<int>(hrm::partialParam(k, hrm::PartialField::Active))) == 0);
 	}
-	CHECK(onCard.count(static_cast<int>(hrm::partialParam(1, hrm::PartialField::Level))) == 0);
-	CHECK(onCard.count(static_cast<int>(hrm::partialParam(1, hrm::PartialField::Harmonic))) == 0);
+	// AND THE WINDOW'S STRIP OFFERS EACH ONE, bound to the partial's own control.
+	std::set<int> inWindow;
+	for (const hrm::Param p : f.expanded().addressedParamsForTest()) {
+		inWindow.insert(static_cast<int>(p));
+	}
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		CHECK(inWindow.count(static_cast<int>(hrm::partialParam(k, hrm::PartialField::Active))) == 1);
+	}
 }
 
 TEST_CASE("hardening: OWLTT's graph repaints for a hover only when a tooltip appears, moves or goes") {
@@ -22547,6 +22485,56 @@ TEST_CASE("the Drawn puck is a full modulation target on both axes: route on pre
 				found = found || o.control == c;
 			}
 			CHECK(found);
+		}
+	}
+}
+
+TEST_CASE("HARM's card tabs and the window's strip are one selection, both ways") {
+	HarmFixture f;
+	const std::shared_ptr<ui::HarmView> view = ui::harmViewFor(f.device);
+	REQUIRE(view != nullptr);
+	CHECK(f.card->selectedPartial() == 0);
+	CHECK(f.expanded().selectedPartial() == 0);
+	CHECK(view->partial == 0);
+
+	const auto centreOf = [](visage::Bounds b) {
+		return visage::Point { b.x() + b.width() * 0.5f, b.y() + b.height() * 0.5f };
+	};
+
+	SUBCASE("a tab pressed on the card selects that partial in the window") {
+		const visage::Point p = centreOf(f.card->tabBounds(2));
+		f.card->onMouseDown().callback(at(p.x, p.y));
+		CHECK(f.card->selectedPartial() == 2);
+		CHECK(view->partial == 2);
+		f.expanded().updateContent();
+		CHECK(f.expanded().selectedPartial() == 2);
+		CHECK(f.expanded().stripForTest()->selected() == 2);
+	}
+
+	SUBCASE("a column pressed on the window's strip moves the card's tabs") {
+		auto* strip = const_cast<ui::HarmPartialStrip*>(f.expanded().stripForTest());
+		REQUIRE(strip != nullptr);
+		const visage::Point p = centreOf(strip->columnBounds(3));
+		strip->onMouseDown().callback(at(p.x, p.y));
+		CHECK(f.expanded().selectedPartial() == 3);
+		CHECK(view->partial == 3);
+		CHECK(f.card->updateContent());
+		CHECK(f.card->selectedPartial() == 3);
+	}
+
+	SUBCASE("each tab says its partial's ratio and whether the partial is on") {
+		CHECK(f.card->tabTextForTest(0) == "1  1:1 on");
+		CHECK(f.card->tabTextForTest(1) == "2  2:1 off");
+		CHECK(f.card->tabTextForTest(2) == "3  3:1 off");
+		CHECK(f.card->tabTextForTest(3) == "4  4:1 off");
+	}
+
+	SUBCASE("the global controls sit below the tabs, outside their scope") {
+		const float tabsBottom = f.card->tabBounds(0).bottom();
+		REQUIRE(!f.card->knobsForTest().empty());
+		for (const auto& knob : f.card->knobsForTest()) {
+			CAPTURE(std::string(knob->label()));
+			CHECK(knob->y() > tabsBottom);
 		}
 	}
 }

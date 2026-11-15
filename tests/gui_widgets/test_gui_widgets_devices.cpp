@@ -26397,39 +26397,6 @@ TEST_CASE("a long choice list opens scrolled so the current choice sits in its m
 	using menu_check::inTop;
 	using menu_check::newestPopup;
 	using menu_check::rowsOf;
-	SUBCASE("HARM's harmonic box, at a mid ratio and at both ends") {
-		FilterFixture f;
-		const size_t slot = f.bridge.addFxDevice(fx::harm::kTraits.tag);
-		REQUIRE(slot < feathers::kMaxFxSlots);
-		f.bridge.refresh();
-		f.lane->resized();
-		f.lane->scrollCardIntoView(slot);
-		auto* card = dynamic_cast<ui::HarmCard*>(f.lane->cardAt(slot));
-		REQUIRE(card != nullptr);
-		ui::HarmonicRow* row = card->harmonicRow();
-		REQUIRE(row != nullptr);
-		const DeviceInstanceId id = card->device();
-		namespace hrm = feathers::fx::harm;
-		const int count = static_cast<int>(hrm::kHarmonicCount);
-		for (const int want : { count / 2, 1, count - 2 }) {
-			CAPTURE(want);
-			f.deviceHost.setField(id, static_cast<size_t>(fx::harm::Param::Harmonic), static_cast<float>(want));
-			row->showMenu();
-			visage::PopupMenuFrame* popup = newestPopup(*row);
-			REQUIRE(popup != nullptr);
-			visage::PopupList* list = rowsOf(*popup);
-			REQUIRE(list != nullptr);
-			REQUIRE(list->numOptions() == count);
-			const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
-			CHECK(placed.current == want);
-			CHECK(placed.scroll == doctest::Approx(list->yPosition()));
-			checkMarkedOnly(*list, want);
-			checkCentred(*list, want);
-			// AND STILL HANGING OFF ITS BOX: the scroll moved the rows inside the list, not the list.
-			checkHangsOff(placed, inTop(*row, row->boxBounds()));
-			ui::dismissMenuOf(*row);
-		}
-	}
 	SUBCASE("Pattern's Scale box, at a mid scale") {
 		namespace pt = feathers::mod::arp::pat;
 		ModFixture f;
@@ -26532,20 +26499,6 @@ TEST_CASE("SHOT choice menus opened on a mid-list choice: HARM's ratio and Patte
 		             << p.anchor.height() << " scale " << root->dpiScale() << " shot " << shot.width() << "x" << shot.height()
 		             << " -> " << path);
 	};
-	{
-		namespace hrm = feathers::fx::harm;
-		DynCardFixture<ui::HarmCard> d(hrm::kTraits.tag);
-		auto* root = dynamic_cast<visage::ApplicationEditor*>(d.f.root);
-		REQUIRE(root != nullptr);
-		root->setWindowless(static_cast<int>(d.f.root->width()), static_cast<int>(d.f.root->height()));
-		d.set(static_cast<size_t>(hrm::Param::Harmonic), static_cast<float>(hrm::kHarmonicCount / 2));
-		(void)d.card->updateContent();
-		ui::HarmonicRow* row = d.card->harmonicRow();
-		REQUIRE(row != nullptr);
-		row->showMenu();
-		shoot(d.f.root, *row, "choice_menu_harm");
-		ui::dismissMenuOf(*row);
-	}
 	{
 		namespace pt = feathers::mod::arp::pat;
 		ModFixture f;
@@ -26715,20 +26668,6 @@ TEST_CASE("GG placement: every dropdown in the editor hangs off the box it was o
 		checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*knob, { 0.0f, 0.0f, knob->width(), knob->height() }));
 	}
 
-	SUBCASE("HARM's harmonic box") {
-		FilterFixture f;
-		const size_t slot = f.bridge.addFxDevice(fx::harm::kTraits.tag);
-		REQUIRE(slot < feathers::kMaxFxSlots);
-		f.bridge.refresh();
-		f.lane->resized();
-		f.lane->scrollCardIntoView(slot);
-		auto* card = dynamic_cast<ui::HarmCard*>(f.lane->cardAt(slot));
-		REQUIRE(card != nullptr);
-		ui::HarmonicRow* row = card->harmonicRow();
-		REQUIRE(row != nullptr);
-		row->showMenu();
-		checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*row, row->boxBounds()));
-	}
 
 	SUBCASE("the drawn filter's band-type menu, which opens at the point pressed") {
 		namespace dr = feathers::fx::drawn;
@@ -43127,4 +43066,55 @@ TEST_CASE("ERODER's plot in Rust draws the band at a height of its own and write
 	plot->onMouseUp().callback(at(x0 + 20.0f, y0 - 40.0f));
 	CHECK(eroField(d, ero::Param::Freq) == doctest::Approx(std::log2(plot->xToHzForTest(x0 + 20.0f))).epsilon(1e-5));
 	CHECK(eroField(d, ero::Param::Amount) == -16.0f);
+}
+
+TEST_CASE("HARM's window: the harmonic box's popup is placed, centred and hangs off its box (moved from the card)") {
+	// THE CARD NO LONGER HAS A HARMONIC ROW (its partials' controls live in the window), so this check stands on the WINDOW'S row,
+	// which is the same widget with the same placement rules. The window is opened the way a hand opens it, through the lane.
+	using menu_check::checkHangsOff;
+	using menu_check::inTop;
+	using menu_check::newestPopup;
+	using menu_check::rowsOf;
+	ModFixture f;
+	auto* lane = findInTree<ui::FxLane>(f.root);
+	auto* overlay = f.gui.expandedForTest();
+	REQUIRE(lane != nullptr);
+	REQUIRE(overlay != nullptr);
+	namespace hrm = feathers::fx::harm;
+	const size_t slot = f.bridge.addFxDevice(hrm::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	f.bridge.refresh();
+	lane->resized();
+	lane->scrollCardIntoView(slot);
+	lane->resized();
+	(void)f.gui.canvasForTest()->setCollapsed(true);
+	lane->onExpandDevice(slot);
+	REQUIRE(overlay->open());
+	auto* panel = presentedAs<ui::HarmExpanded>(overlay);
+	REQUIRE(panel != nullptr);
+	ui::HarmonicRow* row = panel->harmonicRow();
+	REQUIRE(row != nullptr);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	const int count = static_cast<int>(hrm::kHarmonicCount);
+	for (const int want : { count / 2, 1, count - 2 }) {
+		CAPTURE(want);
+		f.deviceHost.setField(id, static_cast<size_t>(hrm::Param::Harmonic), static_cast<float>(want));
+		row->showMenu();
+		visage::PopupMenuFrame* popup = newestPopup(*row);
+		REQUIRE(popup != nullptr);
+		visage::PopupList* list = rowsOf(*popup);
+		REQUIRE(list != nullptr);
+		REQUIRE(list->numOptions() == count);
+		const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+		CHECK(placed.current == want);
+		CHECK(placed.scroll == doctest::Approx(list->yPosition()));
+		checkMarkedOnly(*list, want);
+		checkCentred(*list, want);
+		// AND STILL HANGING OFF ITS BOX: the scroll moved the rows inside the list, not the list.
+		checkHangsOff(placed, inTop(*row, row->boxBounds()));
+		ui::dismissMenuOf(*row);
+	}
+	row->showMenu();
+	checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*row, row->boxBounds()));
+	ui::dismissMenuOf(*row);
 }

@@ -42463,3 +42463,31 @@ TEST_CASE("ERODER's window knobs are watched for arm, all ten of them, once the 
 	}
 }
 
+
+TEST_CASE("ERODER's plot asks for the spectrum while Dust's picture is shown, and not hidden or in Comb") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::EroderPlot* plot = d.card->plotForTest();
+	const size_t slot = d.f.bridge.fxSlotOf(d.device);
+	const auto spend = [&] {
+		while (d.f.bridge.deviceReadingsWanted(slot, 24000)) {
+		}
+		REQUIRE(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+	};
+	REQUIRE(eroField(d, ero::Param::Mode) == static_cast<float>(ero::Mode::Dust));
+	// SHOWN, DUST: the whole half second the bridge grants.
+	spend();
+	plot->setVisible(true);
+	(void)plot->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 24000);
+	// HIDDEN: no renewal.
+	spend();
+	plot->setVisible(false);
+	(void)plot->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+	// COMB draws no spectrum, so it asks for none.
+	plot->setVisible(true);
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	(void)plot->update();
+	(void)plot->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+}

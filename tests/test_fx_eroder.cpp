@@ -2270,3 +2270,73 @@ TEST_CASE("Readings: a sink changes no sample, in either engine, and the tap doe
 	CHECK(e.spectrumTransformsForTest() <= 100);
 }
 
+namespace {
+/// A HOST'S LEASE: samples of audio the spectrum is still wanted for, spent by each block.
+struct Lease {
+	int64_t left = 0;
+	int asks = 0;
+	static bool wanted(void* context, int frames) {
+		auto& self = *static_cast<Lease*>(context);
+		++self.asks;
+		if (self.left <= 0) {
+			return false;
+		}
+		self.left -= frames;
+		return true;
+	}
+	static void publish(void*, const float*, size_t) {}
+	device::ReadingsSink sink() { return { this, &Lease::publish, &Lease::wanted }; }
+};
+
+std::vector<float> leased(Eroder& e, int frames) {
+	std::vector<float> l(static_cast<size_t>(frames));
+	std::vector<float> r(static_cast<size_t>(frames));
+	for (size_t i = 0; i < l.size(); ++i) {
+		l[i] = r[i] = 0.4f * static_cast<float>(std::sin(0.031 * static_cast<double>(i)));
+	}
+	for (int done = 0; done < frames; done += 256) {
+		e.processStereo(l.data() + done, r.data() + done, std::min(256, frames - done));
+	}
+	return l;
+}
+} // namespace
+
+TEST_CASE("Readings: no transform runs while no view has asked or nobody listens, and the sound is the same") {
+	// NOBODY TO PUBLISH TO: no spectrum at all.
+	Eroder bare;
+	bare.prepare(48000.0);
+	bare.setTarget(declared());
+	const std::vector<float> heardBare = leased(bare, 48000);
+	CHECK(bare.spectrumTransformsForTest() == 0);
+	// A HOST THAT NEVER LEARNED THE QUESTION: always.
+	Eroder always;
+	always.prepare(48000.0);
+	always.setTarget(declared());
+	always.setReadingsSink({ nullptr, &Lease::publish });
+	CHECK(leased(always, 48000) == heardBare);
+	const int expected = always.spectrumTransformsForTest();
+	REQUIRE(expected >= 80);
+	// NO READER: asked once a block, not one transform, the same sound.
+	Lease none;
+	Eroder idle;
+	idle.prepare(48000.0);
+	idle.setTarget(declared());
+	idle.setReadingsSink(none.sink());
+	CHECK(leased(idle, 48000) == heardBare);
+	CHECK(idle.spectrumTransformsForTest() == 0);
+	CHECK(none.asks == 48000 / 256 + 1);
+	// HALF A SECOND OF LEASE: about half the transforms, then none; and asking again starts it again.
+	Lease half;
+	half.left = 24000;
+	Eroder part;
+	part.prepare(48000.0);
+	part.setTarget(declared());
+	part.setReadingsSink(half.sink());
+	CHECK(leased(part, 48000) == heardBare);
+	const int ran = part.spectrumTransformsForTest();
+	CHECK(ran > expected * 40 / 100);
+	CHECK(ran < expected * 60 / 100);
+	half.left = 24000;
+	(void)leased(part, 8192);
+	CHECK(part.spectrumTransformsForTest() > 0); // a picture that was idle starts again from nothing, its count with it
+}

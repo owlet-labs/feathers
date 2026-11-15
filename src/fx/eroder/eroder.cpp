@@ -319,6 +319,7 @@ void Eroder::reset() noexcept {
 	dust_.reset();
 	analyser_.reset();
 	untilAnalyserStep_ = 0;
+	analyserLive_ = true;
 	readings_.fill(0.0f);
 	line_.reset();
 	writeCounter_ = 0;
@@ -378,24 +379,38 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 	// **THE ENGINE RUNS IN RUNS OF AT MOST A CONTROL BLOCK, WITH THE SPECTRUM TAP LISTENING EITHER SIDE.** The cuts
 	// are the tap's own grid, carried across calls; each engine keeps its own grid inside and comes out the same
 	// however it is cut (the partition cases), so the sound is what it was before anything listened.
+	// THE SPECTRUM IS COMPUTED ONLY WHILE A VIEW IS ASKING (`ReadingsSink::wanted`; a host that never learned the
+	// question says always), and never with nobody to publish to. A picture that was idle starts from nothing rather
+	// than from a window of old audio.
+	const bool analysing = sink_.publish != nullptr && (sink_.wanted == nullptr || sink_.wanted(sink_.context, frames));
+	if (analysing && !analyserLive_) {
+		analyser_.reset();
+	}
+	analyserLive_ = analysing;
 	float nearFrames[2] = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
 	float farFrames[2] = { 0.0f, 0.0f };
 	int done = 0;
 	while (done < frames) {
 		if (untilAnalyserStep_ <= 0) {
-			analyser_.step();
+			if (analysing) {
+				analyser_.step();
+			}
 			untilAnalyserStep_ = kControlFrames;
 		}
 		const int take = std::min(frames - done, untilAnalyserStep_);
 		float dryL[kControlFrames];
 		float dryR[kControlFrames];
-		for (int i = 0; i < take; ++i) {
-			dryL[i] = left[done + i];
-			dryR[i] = right[done + i];
+		if (analysing) {
+			for (int i = 0; i < take; ++i) {
+				dryL[i] = left[done + i];
+				dryR[i] = right[done + i];
+			}
 		}
 		runEngine(s, left + done, right + done, take);
-		for (int i = 0; i < take; ++i) {
-			analyser_.push(dryL[i], dryR[i], left[done + i], right[done + i]);
+		if (analysing) {
+			for (int i = 0; i < take; ++i) {
+				analyser_.push(dryL[i], dryR[i], left[done + i], right[done + i]);
+			}
 		}
 		for (int c = 0; c < 2; ++c) {
 			const auto at = static_cast<float>(s.mode == Mode::Dust ? dust_.lastDelayFramesForTest(c) : lastDelayFrames_[c]);

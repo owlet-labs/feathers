@@ -284,6 +284,10 @@ bool EroderPlot::update() {
 		++recomputes_;
 		changed = true;
 	}
+	// THE DEVICE COMPUTES THE SPECTRUM ONLY WHILE A VIEW ASKS (`ReadingsSink::wanted`), and only Dust's picture draws it.
+	if (dust_ && isVisible()) {
+		host_.wantReadings(device_);
+	}
 
 	// THE SPECTRUM: a frame is taken only whole (the counter both ends) and only when it is a new one.
 	if (publishing) {

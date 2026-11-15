@@ -117,6 +117,7 @@ private:
 	/// is there; its buffers are allocated in `prepare`.
 	dsp::Analyser<kControlFrames> analyser_ {};
 	int untilAnalyserStep_ = 0;
+	bool analyserLive_ = true; ///< the last block computed the spectrum (`ReadingsSink::wanted`)
 	device::ReadingsSink sink_ {};
 	std::array<float, kReadingCount> readings_ {};
 	/// WHICH ENGINE THE LAST BLOCK RAN. A block that asks for the other one resets first.

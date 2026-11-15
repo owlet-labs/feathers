@@ -29,6 +29,7 @@
 #include "fx/drum/drum.h"
 #include "fx/drum/drum_types.h"
 #include "plugin/device_registry.h"
+#include "plugin/feathers_test_chain.h"
 #include "plugin/ui/drum_device_expanded.h"
 #include "plugin/ui/expanded_views.h"
 #include "plugin/ui/plugin_window.h"
@@ -697,13 +698,19 @@ TEST_CASE("the host's parameters are the device's controls, named, with ids that
 		CHECK((info.flags & CLAP_PARAM_IS_MODULATABLE) == 0);
 		CHECK((info.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0);
 	}
-	// NO MACROS AND NO OTHER SLOT: ids 0..7 and every slot past the list are no parameter at all.
-	clap_param_info extra {};
-	CHECK_FALSE(params->get_info(v.plugin, dp::kHostParamCount, &extra));
-	double value = 0.0;
-	for (const clap_id id : { clap_id { 0 }, clap_id { 7 }, clap_id { 0x1000 + static_cast<clap_id>(dp::kHostParamCount) }, clap_id { 0x1000 + 200 } }) {
-		CHECK_FALSE(params->get_value(v.plugin, id, &value));
+	// NO MACROS AND NO OTHER SLOT: ids 0..7 and every slot past the list are no parameter at all. Asked of the plugin's own index
+	// (the one clap-helpers is told), not of the host API: a non-NDEBUG build of clap-helpers TERMINATES on a host that asks about an id
+	// the plugin does not have (the sanitizer gate's build), and that is a host's fault, not a state to provoke here.
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(v.plugin->get_extension(v.plugin, CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	REQUIRE(chain->param_index_of != nullptr);
+	for (uint32_t i = 0; i < dp::kHostParamCount; ++i) {
+		CHECK(chain->param_index_of(v.plugin, 0x1000 + i) == static_cast<int32_t>(i));
 	}
+	for (const uint32_t id : { 0u, 7u, 8u, 0x0fffu, 0x1000u + static_cast<uint32_t>(dp::kHostParamCount), 0x1000u + 200u, 0x1000u + 255u, 0x1100u }) {
+		CHECK(chain->param_index_of(v.plugin, id) == -1);
+	}
+}
 }
 
 TEST_CASE("every named parameter id reaches its control: a write by id moves the device's value (read from the engine) and reads back by id") {

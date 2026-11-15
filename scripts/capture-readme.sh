@@ -14,7 +14,7 @@
 # Regenerates every image of the README (docs/readme/) from a build with the tools on, and optionally the
 # website's compressed copies, so the pictures can be refreshed with one command whenever the UI changes.
 #
-# Usage: scripts/capture-readme.sh <build-dir> [--only cards|windows|shots|collages|site] [--check]
+# Usage: scripts/capture-readme.sh <build-dir> [--only cards|windows|shots|gif|collages|site] [--check]
 #                                  [--site-dir <dir>] [--reuse <dir>] [--keep]
 #
 #   <build-dir>   a build configured with -DFEATHERS_BUILD_TOOLS=ON that has widget-shot, guihost and
@@ -73,8 +73,8 @@ while [ $# -gt 0 ]; do
 	*) [ -z "$BUILD" ] || die "one build directory only"; BUILD="$1"; shift ;;
 	esac
 done
-[ -n "$BUILD" ] || die "usage: scripts/capture-readme.sh <build-dir> [--only cards|windows|shots|collages|site] [--check]"
-case "$ONLY" in "" | cards | windows | shots | collages | site) ;; *) die "--only takes cards, windows, shots, collages or site" ;; esac
+[ -n "$BUILD" ] || die "usage: scripts/capture-readme.sh <build-dir> [--only cards|windows|shots|gif|collages|site] [--check]"
+case "$ONLY" in "" | cards | windows | shots | gif | collages | site) ;; *) die "--only takes cards, windows, shots, gif, collages or site" ;; esac
 BUILD=$(cd "$BUILD" 2>/dev/null && pwd) || die "no such build directory"
 for tool in convert identify montage md5sum; do
 	command -v "$tool" >/dev/null 2>&1 || die "$tool (ImageMagick/coreutils) is required"
@@ -110,8 +110,8 @@ mkdir -p "$OUT/cards" "$OUT/windows"
 wants() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
 
 # --- the tables ------------------------------------------------------------------------------------------
-declare -A SHOT_GEOM SHOT_TOOL SHOT_ARGS LIVE
-declare -a CROPS=() NAMES=()
+declare -A SHOT_GEOM SHOT_TOOL SHOT_ARGS LIVE VARS
+declare -a CROPS=() NAMES=() GIFS=()
 while IFS=$'\t' read -r kind a b c d; do
 	case "$kind" in
 	"" | \#*) continue ;;
@@ -119,6 +119,8 @@ while IFS=$'\t' read -r kind a b c d; do
 	crop) CROPS+=("$a	$b	$c") ;;
 	name) NAMES+=("$a	$b") ;;
 	live) LIVE[$a]=1 ;;
+	var) VARS[$a]="$b" ;;
+	gif) GIFS+=("$a	$b	$c	$d")  ;;
 	*) die "unknown row kind '$kind' in $TABLE" ;;
 	esac
 done <"$TABLE"
@@ -177,6 +179,18 @@ capture() {
 			;;
 		esac
 	done
+	# ${NAME} is a setting from a "var" row; "@env:K=V" sets a variable for this capture only.
+	local envs=() kept=() name
+	for i in "${!args[@]}"; do
+		for name in "${!VARS[@]}"; do
+			args[$i]=${args[$i]//\$\{$name\}/${VARS[$name]}}
+		done
+		case "${args[$i]}" in
+		@env:*) envs+=("${args[$i]#@env:}") ;;
+		*) kept+=("${args[$i]}") ;;
+		esac
+	done
+	args=("${kept[@]}")
 	case "$tool" in
 	widget-shot) cmd=("$BUILD/widget-shot" "${args[0]}" "$dst" "${args[@]:1}") ;;
 	guihost)
@@ -189,7 +203,7 @@ capture() {
 	(
 		cd "$ROOT" &&
 			FEATHERS_UI_SCALE=$UI_SCALE FEATHERS_REDUCED_MOTION=1 VISAGE_FULL_REDRAW=1 FEATHERS_XVFB_GEOMETRY="$geom" \
-				timeout "$SHOT_SECONDS_LIMIT" nice -n 10 scripts/venue-xvfb.sh run -- "${cmd[@]}"
+				env "${envs[@]}" timeout "$SHOT_SECONDS_LIMIT" nice -n 10 scripts/venue-xvfb.sh run -- "${cmd[@]}"
 	) >"$TMP/shots/$id.log" 2>&1 || {
 		tail -8 "$TMP/shots/$id.log" >&2
 		die "capture $id failed"
@@ -369,6 +383,33 @@ run_collages() {
 	done
 }
 
+# --- animated GIFs ---------------------------------------------------------------------------------------
+# The frames are separate, deterministic captures (widget-shot sets the plane's turn per frame, no real-time
+# animation); each is cropped and scaled, and they are assembled with one loop lasting <loop ms>.
+GIF_MAX_BYTES=3000000
+run_gif() {
+	local row file id rect frames loop scale colours k src dst delay sum
+	for row in "${GIFS[@]}"; do
+		IFS=$'\t' read -r file id rect frames loop scale colours <<<"$row"
+		capture "$id"
+		local dir="$TMP/gif-$id"
+		mkdir -p "$dir"
+		declare -A seen=()
+		for ((k = 0; k < frames; k++)); do
+			printf -v src '%s/shots/%s-r%02d.png' "$TMP" "$id" "$k"
+			if [ -n "$REUSE" ] && [ ! -s "$src" ]; then cp "$REUSE/$id-r$(printf %02d "$k").png" "$src"; fi
+			[ -s "$src" ] || die "gif $file: frame $k was not written ($src)"
+			dst="$dir/f$(printf %02d "$k").png"
+			convert "$src" -crop "$rect" +repage -resize "${scale}%" -depth 8 -strip "$dst"
+			verify_image "$dst" "gif $file frame $k"
+		done
+		delay=$((loop / 10 / frames))
+		convert -delay "$delay" -loop 0 "$dir"/f*.png -layers Optimize -colors "$colours" -strip "$OUT/$file"
+		[ "$(stat -c %s "$OUT/$file")" -le "$GIF_MAX_BYTES" ] || die "$file is $(stat -c %s "$OUT/$file") bytes, over $GIF_MAX_BYTES"
+		echo "$file: $frames frames, $(stat -c %s "$OUT/$file") bytes, loop $((delay * frames * 10)) ms"
+	done
+}
+
 # --- the website's copies --------------------------------------------------------------------------------
 # name  source image  width. The same sources and widths the site was built from, WebP at quality 82.
 SITE_TABLE=(
@@ -394,6 +435,12 @@ run_site() {
 		convert "$OUT/$src" -resize "${w}x" -quality "$WEBP_QUALITY" "$SITE_OUT/$name"
 		[ -s "$SITE_OUT/$name" ] || die "site: $name was not written"
 	done
+	# The animated pictures go as they are.
+	for row in "${GIFS[@]}"; do
+		name=${row%%$'\t'*}
+		[ -s "$OUT/$name" ] || die "site needs $OUT/$name (run --only gif)"
+		cp "$OUT/$name" "$SITE_OUT/$name"
+	done
 }
 
 # --- run -------------------------------------------------------------------------------------------------
@@ -401,6 +448,7 @@ START=$(date +%s)
 wants cards && run_crops cards
 wants windows && run_crops windows
 wants shots && run_crops shots
+wants gif && run_gif
 wants collages && run_collages
 wants site && run_site
 
@@ -414,6 +462,10 @@ if [ "$CHECK" = 1 ]; then
 		if [ ! -e "$old" ]; then
 			echo "NEW      $name"
 			DIFFS=$((DIFFS + 1))
+			return
+		fi
+		if [[ "$name" == *.gif ]]; then
+			if cmp -s "$new" "$old"; then SAME=$((SAME + 1)); else echo "DIFFERS  $name  (bytes differ)"; DIFFS=$((DIFFS + 1)); fi
 			return
 		fi
 		ndim=$(identify -format '%wx%h' "$new" 2>/dev/null | head -1)
@@ -437,10 +489,14 @@ if [ "$CHECK" = 1 ]; then
 	while read -r f; do
 		f=${f#./}
 		compare_one "$OUT/$f" "$README_DIR/$f" "$f"
-	done < <(cd "$OUT" && find . -name '*.png' | sort)
+	done < <(cd "$OUT" && find . \( -name '*.png' -o -name '*.gif' \) | sort)
 	if wants site && [ -n "$SITE_OUT" ]; then
 		for row in "${SITE_TABLE[@]}"; do
 			name=${row%%|*}
+			compare_one "$SITE_OUT/$name" "$SITE_DIR/$name" "site/$name"
+		done
+		for row in "${GIFS[@]}"; do
+			name=${row%%$'\t'*}
 			compare_one "$SITE_OUT/$name" "$SITE_DIR/$name" "site/$name"
 		done
 	fi

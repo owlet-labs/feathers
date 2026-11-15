@@ -13,20 +13,32 @@
 #   live  <file under docs/readme>
 #       An image with a live scope or analyser in it, whose pixels vary a little from run to run under load.
 #       --check calls it stale only when more than 8 percent of its pixels differ.
+#   var   <NAME>  <value>
+#       A setting; ${NAME} in a shot's arguments is replaced by it. An argument "@env:K=V" sets an environment
+#       variable for that capture (FEATHERS_EXPLORE_ZOOM is how Explore is opened at a zoom).
+#   gif   <file>  <shot id>  <crop WxH+X+Y>  <frames>  <loop ms>  <scale percent>  <colours>
+#       An animated GIF from a shot's frames (widget-shot --explore-rotate writes <id>-rNN.png), each cropped and
+#       scaled, one loop in <loop ms>, at most 3 MB.
 #   name  <slug>  <label>
 #       The label of a card in collage-all-cards.png.
+#
+# --- settings every Explore capture shares (the Additive engine, Explore zoom x1/3) --------------------------------
+var	EXPLORE_ENGINE	5
+var	EXPLORE_ZOOM	0.3333333
 #
 # --- the numbered pictures ---------------------------------------------------------------------------------
 shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/wood_elves_pan.fpreset|--size|2400x1500|--play|3
 shot	f02	-	widget-shot	MSEG|--rack|--rack-add|MATH|--route-curves|--route-phi|1|--height|1500|--macro|1=Knob:Motion:0.65|--mod-run|3
 shot	f03	-	widget-shot	TFIELD|--card|--twinfield-play|--height|1550
-shot	f05	-	widget-shot	FVERB|--explore|--likes|6|--radius-route|0.4:0.5
+shot	f05	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|@env:FEATHERS_EXPLORE_ZOOM=${EXPLORE_ZOOM}
+shot	rot	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|--explore-rotate|40|--explore-zoom-pump|2500|@env:FEATHERS_EXPLORE_ZOOM=${EXPLORE_ZOOM}
 shot	f06	-	widget-shot	FVERB|--host|Osc Type=7|--drum-kit
 crop	01-hero-full-editor.png	hero	-
 crop	02-modulation-lane-and-routes.png	f02	915x1370+0+80
 crop	03-twin-field-modulator.png	f03	354x647+1491+669
 crop	04-pattern-window.png	w_PAT	1222x1000+320+0
 crop	05-explore-terrain.png	f05	562x810+914+80
+gif	explore-rotate.gif	rot	562x810+914+80	40	4000	60	64
 crop	06-drum-kit.png	f06	1052x1084+404+0
 # 07-13 are the window shots below with one more pixel of the editor on every side.
 crop	07-phaser-flanger.png	w_PHFL	1118x698+371+202

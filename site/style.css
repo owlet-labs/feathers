@@ -165,3 +165,20 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: s
 .proj p { margin: 0; color: var(--mute); }
 .proj img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--shot-bg); }
 @media (min-width: 700px) { .proj { grid-template-columns: 1fr 1.2fr; align-items: center; } }
+
+/* shared site nav */
+.sitenav { font-size: .85rem; border-bottom: 1px solid var(--line); background: var(--surface); }
+.sitenav .wrap { display: flex; gap: 20px; padding-top: 6px; padding-bottom: 6px; }
+.sitenav a { color: var(--mute); text-decoration: none; }
+.sitenav a:hover { color: var(--ink); }
+
+/* plugins page: a grid of cards, add more as more plugins ship */
+.cards { display: grid; gap: 20px; grid-template-columns: 1fr; padding: 8px 0 0; }
+@media (min-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } }
+.card { display: flex; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.card img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; border: 1px solid var(--line); border-radius: 8px; background: var(--shot-bg); }
+.card h2 { font-size: 1.7rem; margin: 0; }
+.card p { margin: 0; }
+.card .meta { color: var(--mute); font-size: .92rem; }
+.card .cta { align-self: flex-start; margin-top: auto; }
+.proj .more { color: var(--accent); white-space: nowrap; }

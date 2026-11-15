@@ -1134,7 +1134,9 @@ ModPanel::ModPanel(ParamBridge& bridge, backplane::DeviceHost& host, WidgetRegis
 		// because the parts that win here — fold, the dots — are the ones a drag has to override, and
 		// below the threshold they still do.
 		if (hit.part == Part::Fold || hit.part == Part::SlotMenu) {
-			dragSlot_ = rackSlotOfSource(hit.source);
+			const size_t pressed = rackSlotOfSource(hit.source);
+			const DeviceInstanceId pressedId = instanceAtSlot(pressed);
+			dragDevice_ = pressedId != kNoInstance ? std::optional<DeviceInstanceId>(pressedId) : std::nullopt;
 			dragAnchorY_ = e.position.y;
 			dragging_ = false;
 			// **A PRESS ON A FOLDED CARD'S HEAD SELECTS IT TOO.** An OPEN card's head is the card
@@ -1142,7 +1144,7 @@ ModPanel::ModPanel(ParamBridge& bridge, backplane::DeviceHost& host, WidgetRegis
 			// head and nothing else, and `foldBounds` records that the frame at a folded head is the
 			// PANEL. "Anywhere on their face" has to include the only face a folded card has.
 			// WITH THE MODIFIER THE HAND HELD (backlog PN): the same two roads a card's own frame takes.
-			if (const DeviceInstanceId id = instanceAtSlot(*dragSlot_); id != kNoInstance) {
+			if (const DeviceInstanceId id = pressedId; id != kNoInstance) {
 				selection_->focusPress(id);
 				selection_->cardPress(id, e.isShiftDown()        ? CardSelection::Press::Range
 				                          : e.isMainModifier() ? CardSelection::Press::Toggle
@@ -1161,7 +1163,13 @@ ModPanel::ModPanel(ParamBridge& bridge, backplane::DeviceHost& host, WidgetRegis
 			selection_->lassoMove(e.position);
 			return;
 		}
-		if (!dragSlot_.has_value() || !dragAnchorY_.has_value()) {
+		if (!dragDevice_.has_value() || !dragAnchorY_.has_value()) {
+			return;
+		}
+		if (!heldSlot().has_value()) {
+			// THE DEVICE UNDER THE HAND IS GONE (removed, or the strip was replaced): nothing is being dragged.
+			cancelDrag();
+			redraw();
 			return;
 		}
 		if (!dragging_ && std::abs(e.position.y - *dragAnchorY_) < kDragThreshold) {
@@ -1178,19 +1186,19 @@ ModPanel::ModPanel(ParamBridge& bridge, backplane::DeviceHost& host, WidgetRegis
 			selection_->lassoEnd();
 			return;
 		}
-		const std::optional<size_t> from = dragSlot_;
+		// THE SLOT IS RESOLVED NOW, from the device the gesture began on: a device that is gone moves nothing, and nor does
+		// the neighbour that took its place.
+		const std::optional<size_t> from = heldSlot();
+		const std::optional<DeviceInstanceId> held = dragDevice_;
 		const std::optional<size_t> gap = dropGap_;
 		const bool moved = dragging_;
-		dragSlot_.reset();
-		dropGap_.reset();
-		dragAnchorY_.reset();
-		dragging_ = false;
+		cancelDrag();
 		if (moved && from.has_value() && gap.has_value()) {
 			dropCard(*from, *gap);
 		}
-		else if (!moved && from.has_value()) {
+		else if (!moved && from.has_value() && held.has_value()) {
 			// A FOLDED HEAD'S PRESS THAT DID NOT DRAG: inside a selection of several, it collapses to the card here.
-			selection_->cardClick(instanceAtSlot(*from));
+			selection_->cardClick(*held);
 		}
 		redraw();
 	};
@@ -1695,6 +1703,30 @@ bool ModPanel::removeDeviceAtLane(size_t slot) {
 	resized();
 	redraw();
 	return true;
+}
+
+std::optional<size_t> ModPanel::heldSlot() const {
+	if (!dragDevice_.has_value()) {
+		return std::nullopt;
+	}
+	const ModRack rack = bridge_.modRack();
+	for (size_t slot = 0; slot < rack.count && slot < rack.device.size(); ++slot) {
+		if (rack.device[slot].instanceId == *dragDevice_) {
+			return slot;
+		}
+	}
+	return std::nullopt;
+}
+
+std::optional<size_t> ModPanel::dragSlot() const {
+	return dragging_ ? heldSlot() : std::nullopt;
+}
+
+void ModPanel::cancelDrag() {
+	dragDevice_.reset();
+	dropGap_.reset();
+	dragAnchorY_.reset();
+	dragging_ = false;
 }
 
 DeviceInstanceId ModPanel::instanceAtSlot(size_t slot) const {
@@ -2649,9 +2681,9 @@ void ModPanel::resized() {
 		// **THE CARD'S DRAG, WIRED TO THE PANEL'S REORDER — it never was.**
 		//
 		// The defect: collapsing mod cards worked, dragging them did not. The panel has had a complete
-		// reorder road all along — `dragSlot_`, `dropGapAt`, `rowForGap`, `moveDevice` — armed from its
+		// reorder road all along — `dragDevice_`, `dropGapAt`, `rowForGap`, `moveDevice` — armed from its
 		// OWN `onMouseDown`. But a press on an OPEN card goes to the CARD: `frameAtPoint` answers the
-		// card frame, so the panel's handler never runs and `dragSlot_` is never set. The road was
+		// card frame, so the panel's handler never runs and `dragDevice_` is never set. The road was
 		// reachable only on the strip's bare background.
 		//
 		// The fx lane and the rack both bind `onCardDrag` for exactly this reason. This is the third
@@ -2662,13 +2694,20 @@ void ModPanel::resized() {
 			const visage::Bounds box = sourceBounds(sourceOfOutput(slot, 0));
 			const visage::Point inPanel { box.x() + inCard.x, box.y() + inCard.y };
 			switch (phase) {
-			case ui::FxCard::DragPhase::Begin:
-				dragSlot_ = slot;
+			case ui::FxCard::DragPhase::Begin: {
+				const DeviceInstanceId begun = instanceAtSlot(slot);
+				dragDevice_ = begun != kNoInstance ? std::optional<DeviceInstanceId>(begun) : std::nullopt;
 				dragAnchorY_ = inPanel.y;
 				dragging_ = false;
 				break;
+			}
 			case ui::FxCard::DragPhase::Move:
-				if (!dragSlot_.has_value()) {
+				if (!dragDevice_.has_value()) {
+					return;
+				}
+				if (!heldSlot().has_value()) {
+					cancelDrag(); // the device under the hand is gone
+					redraw();
 					return;
 				}
 				dragging_ = true;
@@ -2676,20 +2715,14 @@ void ModPanel::resized() {
 				redraw();
 				break;
 			case ui::FxCard::DragPhase::Cancel:
-				dragSlot_.reset();
-				dropGap_.reset();
-				dragAnchorY_.reset();
-				dragging_ = false;
+				cancelDrag();
 				redraw();
 				break;
 			case ui::FxCard::DragPhase::End: {
-				const std::optional<size_t> from = dragSlot_;
+				const std::optional<size_t> from = heldSlot();
 				const std::optional<size_t> gap = dropGap_;
 				const bool moved = dragging_;
-				dragSlot_.reset();
-				dropGap_.reset();
-				dragAnchorY_.reset();
-				dragging_ = false;
+				cancelDrag();
 				if (moved && from.has_value() && gap.has_value()) {
 					dropCard(*from, *gap); // the block when the card is in a selection of several (backlog PN)
 				}

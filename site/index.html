@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feathers: a CLAP synthesizer and effects rack</title>
+<meta name="description" content="Feathers is a polyphonic synthesizer and effects rack for CLAP and VST3, with oscillators that read their character from a terrain. Open source, GPL-3.0-or-later.">
+<meta name="color-scheme" content="dark light">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+	<div class="wrap">
+		<a class="brand" href="#top">Feathers</a>
+		<nav aria-label="Sections">
+			<a href="#install">Install</a>
+			<a href="#what">What it is</a>
+			<a href="#platforms">Platforms</a>
+			<a href="#open">Open source</a>
+			<a href="https://github.com/owlet-labs/feathers">GitHub</a>
+		</nav>
+	</div>
+</header>
+
+<main id="top">
+<div class="hero">
+	<div class="wrap">
+		<h1>Feathers</h1>
+		<p class="tag">A polyphonic synthesizer and effects rack for CLAP and VST3. Its oscillators read their character from a terrain you move through, not a list of waveforms.</p>
+		<div class="ctas">
+			<a class="cta" href="#install">Install</a>
+			<a class="cta alt" href="https://github.com/owlet-labs/feathers">Source on GitHub</a>
+		</div>
+		<figure>
+			<img class="shot" src="img/hero.webp" width="1600" height="1000" alt="The full Feathers editor with a factory preset: engine rail, modulator lane, sounds and blend geometry, and the post-fx lane.">
+			<figcaption>The full editor with a factory preset. From left to right: the Engine rail, the modulator lane (DAHDSR, two LFOs), the sounds and their blend geometry, and the post-fx lane (Eroder, Resonate, Delay).</figcaption>
+		</figure>
+	</div>
+</div>
+
+<section id="install">
+	<div class="wrap">
+		<h2>Install</h2>
+		<p>Paste one line. It downloads the latest release, checks it, and installs the synth and the Chain (CLAP and VST3) into your own plugin folders: no clone, no GitHub account, no administrator password, and on macOS nothing to unquarantine.</p>
+		<p class="oslabel">macOS and Linux (Terminal)</p>
+		<pre><code>curl -fsSL https://feathers.owletrecords.com/install.sh | bash</code></pre>
+		<p class="oslabel">Windows (PowerShell)</p>
+		<pre><code>irm https://feathers.owletrecords.com/install.ps1 | iex</code></pre>
+		<p>Then restart your DAW or rescan its plugins. Prefer to download by hand? Take the zip for your platform from the <a href="https://github.com/owlet-labs/feathers/releases/latest">latest release</a>; <code>SHA256SUMS.txt</code> beside it lets you check the download. The scripts are short and readable: <a href="install.sh">install.sh</a>, <a href="install.ps1">install.ps1</a>. Per-platform notes and options are in the <a href="https://github.com/owlet-labs/feathers#trying-it">README</a>.</p>
+		<p class="note"><strong>Pre-1.0.</strong> Patches and presets are not stable before 1.0. Devices and engines are still changing, and a later build may load a saved patch, preset or DAW project differently, or not restore parts of it. Don't rely on Feathers for projects you need to reopen exactly as they were, and keep a bounce of anything that matters.</p>
+	</div>
+</section>
+
+<section id="what">
+	<div class="wrap">
+		<h2>What it is</h2>
+		<p>Around the oscillators sit a modulation system where modulators are devices like any other, and an effects lane of devices that can hold lanes, chains and racks of their own.</p>
+	</div>
+
+	<div class="wrap">
+		<h3>Engines and terrain</h3>
+		<p>Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include V5, Additive, Pluck, Drum, Resonate and Basic Shapes, plus the original Morph and Stair.</p>
+		<div class="pair">
+			<figure>
+				<img class="shot" src="img/terrain.webp" width="1000" height="1441" loading="lazy" alt="The Explore window showing a terrain with a puck, with Rotate, Theta and Radius on its rim.">
+				<figcaption>Explore: the terrain under a sound, with Rotate, Theta and Radius on its rim, and Mutate, Undo, Redo and the like heart.</figcaption>
+			</figure>
+			<figure>
+				<img class="shot" src="img/rack.webp" width="1000" height="1200" loading="lazy" alt="A Rack device holding parallel chains, each with level, mute and solo, and a column of eight macros.">
+				<figcaption>A Rack: parallel chains, each with a level, mute and solo and its own devices, plus a column of eight macros.</figcaption>
+			</figure>
+		</div>
+	</div>
+
+	<div class="wrap">
+		<h3>Modulation as a first-class system</h3>
+		<p>Modulators live in a lane of their own and are added, reordered and removed like effects: DAHDSR, LFO, MSEG, Math, Twin Field, Pattern, Step Seq, Sample &amp; Hold, Random Trigger, Follower, Macros and Note Expressions. Every output is a source you can route to any modulatable parameter, on the engine or on a device.</p>
+		<ul>
+			<li><strong>Routes have transfer curves</strong>: linear, exponential, logarithmic, φ, and rectifiers for bipolar sources.</li>
+			<li><strong>Live readouts</strong>: a modulated control shows its ring and its as-modulated value, and when a source is armed every destination it can reach glows.</li>
+			<li><strong>Deterministic and persistent</strong>: values that can be derived from the seed and the song position are derived, so a reload reproduces them; the rest (held samples, frozen buffers, random draws, mutate results) are saved with the patch.</li>
+		</ul>
+		<figure>
+			<img class="shot" src="img/modulation.webp" width="1600" height="508" loading="lazy" alt="Collage: the modulation lane and route list, the Explore terrain, the Twin Field modulator and the Pattern sequencer.">
+			<figcaption>The modulation lane and routes, Explore, Twin Field and the Pattern sequencer.</figcaption>
+		</figure>
+	</div>
+
+	<div class="wrap">
+		<h3>Effects depth</h3>
+		<p>Effects are devices in a lane. Each has a compact card and a larger window that offers every control on the card and usually more. Several devices hold lanes of their own: the Delay's feedback path, the Compressor's lane between its two halves, Resonate's drone and wet lanes, SKLITTER's grain and post lanes.</p>
+		<figure>
+			<img class="shot" src="img/effects.webp" width="1600" height="810" loading="lazy" alt="Collage of the Phaser/Flanger, Compressor, Resonate and SKLITTER windows.">
+			<figcaption>Phaser/Flanger, Compressor, Resonate and SKLITTER.</figcaption>
+		</figure>
+		<figure>
+			<img class="shot" src="img/cards.webp" width="1400" height="2154" loading="lazy" alt="The compact card of every one of the 40 devices, labelled and grouped by category.">
+			<figcaption>The card of all 40 devices, the compact face each one shows in a lane, grouped by category.</figcaption>
+		</figure>
+	</div>
+
+	<div class="wrap">
+		<h3>Rack modes</h3>
+		<p><strong>Chain</strong> and <strong>Rack</strong> devices nest whole chains, in series or in parallel, to any depth. A Rack's mode decides what each of its chains hears and how they come back together:</p>
+		<ul>
+			<li><strong>Parallel</strong>: every chain hears the input, and their outputs sum.</li>
+			<li><strong>Select</strong> and <strong>Blend</strong>: a Position control picks one chain, or crossfades between neighbours. Modulate it and the rack becomes a morphing switcher.</li>
+			<li><strong>Mid/Side</strong> and <strong>Left/Right</strong>: one chain per half of the signal, so you can widen, saturate or delay only the sides.</li>
+			<li><strong>Bands</strong>: a multiband splitter into 2, 3 or 5 bands with adjustable crossovers and slope (Linkwitz-Riley), one chain per band. Filtering can sit before the chain, after it (so the harmonics a chain creates stay inside its band), or both. With Key Track, the played note places the crossovers.</li>
+		</ul>
+	</div>
+
+	<div class="wrap">
+		<h3>An open standard for devices</h3>
+		<p>A device declares its controls, outputs and traits (names, ranges, units and choices) with nothing naming CLAP or Feathers, then supplies tables for what it does: audio, modulation, notes. It can draw its own card and window or take the generic card for free. Every device in Feathers is built on this contract, and two hosts already run it: Feathers itself and the separate Feathers Chain plugin. The device SDK in the repository is MIT-licensed, so devices built on it can be open or closed source, while Feathers itself stays GPL-3.0-or-later. Its shape is still open, and plugin authors who would build on it are the people best placed to shape it.</p>
+	</div>
+
+	<div class="wrap">
+		<h3>Hosting</h3>
+		<p><strong>Built today:</strong> Feathers' core parameters are host parameters, and controls inside devices reach the DAW through a pool of pre-declared host parameters ("slots"), in both CLAP and VST3. Right-click a control and choose "Expose to host": turning the knob records automation, and DAW automation and modulation move the knob. Slots map devices at any depth and are saved with the project.</p>
+		<p><strong>Planned, not built:</strong> hosting third-party CLAP plugins inside Feathers' chains and racks, and native devices from third parties with their own cards, windows and the full modulation system.</p>
+	</div>
+</section>
+
+<section id="platforms">
+	<div class="wrap">
+		<h2>Platforms</h2>
+		<div class="cols">
+			<div class="card">
+				<h3>Linux x86-64</h3>
+				<p>First-class. Feathers is developed and played on Linux every day, in Bitwig, and every pre-release build ships for it.</p>
+			</div>
+			<div class="card">
+				<h3>macOS universal</h3>
+				<p>Apple silicon and Intel in one build. Signed ad hoc, not notarised; the one-line installer clears the quarantine for you.</p>
+			</div>
+			<div class="card">
+				<h3>Windows x86-64</h3>
+				<p>The editor is new: it passes tests on CI's Windows desktop, but nobody on the team has played it on a Windows machine yet. Please <a href="https://github.com/owlet-labs/feathers/issues">report</a> anything odd.</p>
+			</div>
+		</div>
+		<p>Each build contains the synth and the Chain as CLAP and VST3; the Linux and Windows builds also include the synth's standalone.</p>
+	</div>
+</section>
+
+<section id="open">
+	<div class="wrap">
+		<h2>Open source</h2>
+		<p>The core of Feathers is, and will remain, open source under the GNU General Public License, version 3 or later. The open device standard means anyone can build devices on top of that core. Feathers is in active development, and we would like to hear from collaborators (DSP, UI or platform people who want to work on a deep, test-heavy C++ codebase) and from sound designers, producers and performers willing to use pre-release builds and give feedback.</p>
+		<p><a class="cta" href="https://github.com/owlet-labs/feathers">Contribute on GitHub</a></p>
+	</div>
+</section>
+</main>
+
+<footer>
+	<div class="wrap">
+		<span>Owlet Records</span>
+		<span><a href="https://github.com/owlet-labs/feathers">GitHub</a> · <a href="https://github.com/owlet-labs/feathers/issues">Issues</a></span>
+		<span>Licensed GPL-3.0-or-later; the device SDK is MIT.</span>
+	</div>
+</footer>
+</body>
+</html>

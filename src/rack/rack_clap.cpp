@@ -20,6 +20,8 @@
  */
 
 #include "rack/rack_clap.h"
+#include "rack/drum_plugin.h"
+#include "fx/drum/drum_types.h"
 
 #include "plugin/clap_checking.h"
 #include "plugin/event_log.h"
@@ -150,6 +152,29 @@ const clap_plugin_descriptor kNoteRackDescriptor = {
     FEATHERS_VERSION,
     "Feathers' arps, patterns and modulators as a note effect, before any instrument",
     kNoteRackFeatures,
+};
+
+// **FEATHERS DRUM — THE DRUM DEVICE AS AN INSTRUMENT** (rack/drum_plugin.h): the same engine and window shell holding exactly one Drum
+// device, notes in and stereo audio out, for a host's own drum container to hold one per pad. A third plugin in this bundle, so
+// it installs with it.
+const char* const kDrumFeatures[] = {
+    CLAP_PLUGIN_FEATURE_INSTRUMENT,
+    CLAP_PLUGIN_FEATURE_DRUM,
+    CLAP_PLUGIN_FEATURE_STEREO,
+    nullptr,
+};
+
+const clap_plugin_descriptor kDrumDescriptor = {
+    CLAP_VERSION_INIT,
+    drumplugin::kPluginId,
+    drumplugin::kPluginName,
+    "Owlet Records",
+    "https://owletrecords.com",
+    "",
+    "",
+    FEATHERS_VERSION,
+    "One Feathers drum: a kick, membrane, snare, metal, clap or string, played by notes",
+    kDrumFeatures,
 };
 
 // THE RACK'S SHAPE lives in rack/rack_axes.h now: a rack inside a chain is this same engine and must
@@ -329,8 +354,9 @@ public:
 		}
 	}
 
-	RackPlugin(const clap_host* host, bool noteRack)
-	    : PluginBase(noteRack ? &kNoteRackDescriptor : &kDescriptor, host), noteRack_(noteRack) {
+	RackPlugin(const clap_host* host, bool noteRack, bool drum = false)
+	    : PluginBase(drum ? &kDrumDescriptor : noteRack ? &kNoteRackDescriptor : &kDescriptor, host), noteRack_(noteRack),
+	      drum_(drum) {
 		// THE NOTE RACK OFFERS MODULATORS AND NOTE EFFECTS ONLY — no audio effect in a rack with no audio.
 		if (noteRack_) {
 			gui_.offerFilter = [](const device::Descriptor& d) { return belongsInModulationRack(d); };
@@ -348,6 +374,86 @@ public:
 		macroRenamed_ = bridge_.subscribeMacroRename([this](size_t) { onMacroRenamed(); });
 		// A FIRST GRAB IS SERVICED AT ITS BEGIN (`RackBridge::beginControlGesture`), as Feathers' is.
 		bridge_.setFirstGrabService([this] { serviceSlots(); });
+		if (drum_) {
+			setUpDrum();
+		}
+	}
+
+	//--------------------------------------------------------------------------------------------//
+	// FEATHERS DRUM (drum_ only): ONE DRUM DEVICE, AND ITS CONTROLS AS THE HOST'S NAMED PARAMETERS  //
+	//--------------------------------------------------------------------------------------------//
+
+	/// THE DEVICE, ADDED AND ITS CONTROLS PINNED IN THE LIST'S ORDER (drum_plugin.h). Main thread, construction.
+	/// A fresh pool hands the lowest empty slot to each pin, so the key at place `n` is slot `n` and its id
+	/// `kFirstSlotId + n`; `pinDrumControls` is also what a state load runs, to put back any pin a saved pool lacks.
+	void setUpDrum() {
+		const DeviceInstanceId id = bridge_.addDevice(fx::drumdevice::kTraits.tag);
+		if (id == kNoInstance) {
+			return;
+		}
+		pinDrumControls(false); // the host's first visit (activate, or a timer) binds them: nothing talks to the host from a constructor
+		(void)bridge_.takeStateDirty(); // a new instance is not an edited one
+		gui_.setDrumMode(true);
+	}
+
+	/// WHICH CONTROL OF THE DEVICE EACH PLACE IN THE LIST IS (`kNoControl` for a key this build's device lacks), and its
+	/// slot's declaration, for `paramsInfo`'s flags. Rebuilt by `pinDrumControls`.
+	static constexpr size_t kNoControl = static_cast<size_t>(-1);
+
+	void pinDrumControls(bool service = true) {
+		const DeviceInstanceId id = bridge_.deviceAtPosition(0);
+		const device::Descriptor* desc = bridge_.descriptorOf(id);
+		drumControlOfPlace_.fill(kNoControl);
+		if (desc == nullptr) {
+			drumDevice_.store(kNoInstance, std::memory_order_relaxed);
+			return;
+		}
+		drumDevice_.store(id, std::memory_order_relaxed);
+		drumNoteControl_.store(static_cast<uint32_t>(kNoControl), std::memory_order_relaxed);
+		for (size_t c = 0; c < desc->params.size(); ++c) {
+			if (std::strcmp(desc->params[c].key, "drum_note") == 0) {
+				drumNoteControl_.store(static_cast<uint32_t>(c), std::memory_order_relaxed);
+			}
+		}
+		for (size_t place = 0; place < drumplugin::kHostParamCount; ++place) {
+			for (size_t c = 0; c < desc->params.size(); ++c) {
+				if (std::strcmp(desc->params[c].key, drumplugin::kHostKeys[place]) != 0) {
+					continue;
+				}
+				drumControlOfPlace_[place] = c;
+				std::string displaced;
+				if (!bridge_.hostSlotOf(id, c).slotted()) {
+					(void)bridge_.exposeToHost(id, c, &displaced);
+				}
+				break;
+			}
+		}
+		if (service) {
+			serviceSlots();
+		}
+	}
+
+	/// THE HOST'S PARAMETER INDEX FOR A CLAP ID: the slot's place in the list, or -1. A macro id is not a parameter here.
+	[[nodiscard]] int32_t drumIndexOf(clap_id id) const noexcept {
+		if (!hostslots::isSlotId(id)) {
+			return -1;
+		}
+		const hostslots::SlotIndex n = hostslots::slotOfId(id);
+		return n < drumplugin::kHostParamCount ? static_cast<int32_t>(n) : -1;
+	}
+
+	/// **ANY KEY, AT A FIXED PITCH** — a host's drum container sends each pad only its own note, and whatever note that is,
+	/// this drum plays. The device answers the key its Note control names and strikes at its kind's pitch (the key never
+	/// pitches a drum), so every incoming key is put on that one: read from the engine's mirror of the control, which the
+	/// audio thread may read. WHEN THE DEVICE'S KEY MODE (One Key | Any Key | Pitched) MERGES, THIS PLUGIN SETS "Any Key" AT
+	/// CONSTRUCTION AND THIS FUNCTION AND ITS TWO CALLS ARE DELETED; nothing in src/fx/drum changes for it.
+	void answerAnyKey(device::NoteEvent& e) const noexcept {
+		const uint32_t control = drumNoteControl_.load(std::memory_order_relaxed);
+		if (control == static_cast<uint32_t>(kNoControl)) {
+			return;
+		}
+		const float key = bridge_.modulatedFieldAt(drumDevice_.load(std::memory_order_relaxed), control);
+		e.key = static_cast<int16_t>(std::clamp(static_cast<int>(std::lround(key)), 0, 127));
 	}
 
 	/// A HOST THAT DESTROYS US SAYS SO; a process that dies says so by this line's absence.
@@ -370,7 +476,9 @@ public:
 	// **THE NOTE RACK HAS NONE**: a note effect carries notes, not
 	// audio, as Bitwig's own Note FX devices do; and a plugin with audio ports risks being offered as an audio effect. Lead's
 	// call, to be confirmed, once it has been placed in Bitwig.
-	uint32_t audioPortsCount(bool isInput) const noexcept override { return noteRack_ ? 0 : (isInput ? 2 : 1); }
+	uint32_t audioPortsCount(bool isInput) const noexcept override {
+		return noteRack_ ? 0 : (drum_ ? (isInput ? 0 : 1) : (isInput ? 2 : 1)); // an instrument has no audio input
+	}
 	bool audioPortsInfo(uint32_t index, bool isInput,
 	                    clap_audio_port_info* info) const noexcept override {
 		if (info == nullptr) {
@@ -393,7 +501,7 @@ public:
 		info->flags = CLAP_AUDIO_PORT_IS_MAIN;
 		info->channel_count = 2;
 		info->port_type = CLAP_PORT_STEREO;
-		info->in_place_pair = isInput ? 1 : 0;
+		info->in_place_pair = drum_ ? CLAP_INVALID_ID : (isInput ? 1 : 0);
 		return true;
 	}
 
@@ -415,7 +523,7 @@ public:
 	// contents is a route that VANISHES when a device is removed, and the player has to rebuild it.
 	// It would also have needed `clap_host_note_ports::rescan` on every chain edit, for nothing.
 	bool implementsNotePorts() const noexcept override { return true; }
-	uint32_t notePortsCount(bool) const noexcept override { return 1; }
+	uint32_t notePortsCount(bool isInput) const noexcept override { return drum_ ? (isInput ? 1u : 0u) : 1u; } // a drum plays notes, emits none
 	bool notePortsInfo(uint32_t index, bool isInput,
 	                   clap_note_port_info* info) const noexcept override {
 		if (index != 0 || info == nullptr) {
@@ -438,6 +546,9 @@ public:
 	/// FIXED WHILE ACTIVE, as every count must be: the slots are declared whether or not anything is mapped to
 	/// them, and a mapping only renames. Feathers' shape (`FeathersPlugin::paramsCount`).
 	uint32_t paramsCount() const noexcept override {
+		if (drum_) {
+			return static_cast<uint32_t>(drumplugin::kHostParamCount); // the device's controls and nothing else
+		}
 		return static_cast<uint32_t>(kMacroCount) + hostslots::kDeclaredSlots;
 	}
 
@@ -447,6 +558,9 @@ public:
 	/// every value and text call, and its own version walks `paramsInfo` over every param. A macro's id is its index;
 	/// the slots follow, in slot order. -1 for anything else, as the base says.
 	int32_t getParamIndexForParamId(clap_id paramId) const noexcept override {
+		if (drum_) {
+			return drumIndexOf(paramId);
+		}
 		if (paramId < kMacroCount) {
 			return static_cast<int32_t>(paramId);
 		}
@@ -461,6 +575,9 @@ public:
 		if (info == nullptr) {
 			return false;
 		}
+		if (drum_) {
+			return drumParamInfo(index, info);
+		}
 		if (index >= kMacroCount) {
 			// PAST THE MACROS ARE THE SLOTS, in slot order; the pool (on the bridge) says what each names.
 			return slotHost_.info(static_cast<hostslots::SlotIndex>(index - kMacroCount), info);
@@ -473,6 +590,29 @@ public:
 		info->default_value = 0.0;
 		std::snprintf(info->name, sizeof(info->name), "%s", paramDisplayName(index).c_str());
 		std::snprintf(info->module, sizeof(info->module), "Macros");
+		return true;
+	}
+
+	/// **ONE OF THE DRUM'S NAMED PARAMETERS**: the slot the control is pinned on speaks (its id, its label, its 0..1 range), under
+	/// the module "Drum", with the flags the control's own declaration earns — not modulatable where the device says it may not
+	/// be, and neither automatable nor modulatable for the unbounded travel (an editor's drag window, not a value a lane can draw).
+	bool drumParamInfo(uint32_t index, clap_param_info* info) const noexcept {
+		if (index >= drumplugin::kHostParamCount || !slotHost_.info(static_cast<hostslots::SlotIndex>(index), info)) {
+			return false;
+		}
+		std::snprintf(info->module, sizeof(info->module), "Drum");
+		const size_t control = drumControlOfPlace_[index];
+		const device::Descriptor* desc = bridge_.descriptorOf(bridge_.deviceAtPosition(0));
+		if (desc != nullptr && control < desc->params.size()) {
+			const device::ParamDesc& p = desc->params[control];
+			info->flags &= ~static_cast<clap_param_info_flags>(CLAP_PARAM_IS_HIDDEN);
+			if (!p.modulatable) {
+				info->flags &= ~static_cast<clap_param_info_flags>(CLAP_PARAM_IS_MODULATABLE);
+			}
+			if (device::isDragWindow(p)) {
+				info->flags &= ~static_cast<clap_param_info_flags>(CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE);
+			}
+		}
 		return true;
 	}
 
@@ -620,7 +760,10 @@ public:
 		// **EVERY PARAMS CALL ASKS `isSlotId` FIRST** — a slot id is no macro, and read as one it would index
 		// past the macros rather than fail loudly.
 		if (hostslots::isSlotId(id)) {
-			return slotHost_.value(id, value);
+			return (!drum_ || drumIndexOf(id) >= 0) && slotHost_.value(id, value);
+		}
+		if (drum_) {
+			return false; // no macros on a drum
 		}
 		if (id >= kMacroCount || value == nullptr) {
 			return false;
@@ -635,7 +778,10 @@ public:
 	bool paramsValueToText(clap_id id, double value, char* out,
 	                       uint32_t size) noexcept override {
 		if (hostslots::isSlotId(id)) {
-			return slotHost_.valueToText(id, value, out, size); // the target's own text: "1.2 kHz", "Saw"
+			return (!drum_ || drumIndexOf(id) >= 0) && slotHost_.valueToText(id, value, out, size); // the target's own text: "1.2 kHz", "Saw"
+		}
+		if (drum_) {
+			return false;
 		}
 		if (id >= kMacroCount || out == nullptr) {
 			return false;
@@ -646,7 +792,10 @@ public:
 
 	bool paramsTextToValue(clap_id id, const char* text, double* value) noexcept override {
 		if (hostslots::isSlotId(id)) {
-			return slotHost_.textToValue(id, text, value);
+			return (!drum_ || drumIndexOf(id) >= 0) && slotHost_.textToValue(id, text, value);
+		}
+		if (drum_) {
+			return false;
 		}
 		if (id >= kMacroCount || text == nullptr || value == nullptr) {
 			return false;
@@ -825,7 +974,7 @@ public:
 		float* left = scratch ? scratchL_.data() : process->audio_outputs[0].data32[0];
 		float* right = scratch ? scratchR_.data() : process->audio_outputs[0].data32[1];
 		const auto frames = static_cast<int>(process->frames_count);
-		if (scratch) {
+		if (scratch || drum_) { // an instrument is handed no input: the engine runs on silence of its own, in the host's buffers
 			std::fill_n(left, frames, 0.0f);
 			std::fill_n(right, frames, 0.0f);
 		}
@@ -881,6 +1030,11 @@ public:
 			bridge_.drain();
 		}
 		takeEditorNotes();
+		if (drum_) {
+			for (size_t n = 0; n < noteCount_; ++n) {
+				answerAnyKey(notesIn_[n]);
+			}
+		}
 		engine_.setBlockNotes(notesIn_.data(), noteCount_);
 		{
 			const rack::StageScope stage(rack::Stage::Bus); // its devices taken out, and the engine's own Resolve and Mods
@@ -894,12 +1048,34 @@ public:
 			bridge_.publish(engine_);
 		}
 		askRestartIfLatencyMoved();
-		emitNotes(process->out_events);
+		if (!drum_) { // a drum plays its notes and passes none on
+			emitNotes(process->out_events);
+		}
 		// AND THE COLLECTOR IS EMPTIED FOR THE NEXT BLOCK. Left standing, a note would be replayed
 		// every block for the life of the plugin — silent for a filter, a stuck arp for anything that
 		// reads them.
+		const bool hadNotes = noteCount_ != 0;
 		noteCount_ = 0;
+		if (drum_) {
+			return drumStatus(left, right, frames, hadNotes);
+		}
 		return CLAP_PROCESS_CONTINUE;
+	}
+
+	/// **SLEEP, WHEN THE OUTPUT IS DONE AND NOTHING IS STILL TO COME** (Feathers' rule, `FeathersPlugin::sleepOrContinue`): the
+	/// block's output is EXACTLY silent, no note arrived in it or waits in the editor's ring, and the engine holds no sound to come —
+	/// a hit sounding or waiting its Delay, a high-pass still ringing (`RackEngine::holdsTail`). A silent block alone is not a
+	/// finished tail. Notes and parameter writes wake the host's call (`paramsFlush` is where a write lands while asleep).
+	clap_process_status drumStatus(const float* left, const float* right, int frames, bool hadNotes) const noexcept {
+		for (int i = 0; i < frames; ++i) {
+			if (left[i] != 0.0f || right[i] != 0.0f) {
+				return CLAP_PROCESS_CONTINUE;
+			}
+		}
+		if (hadNotes || bridge_.hasPendingNotes() || engine_.holdsTail()) {
+			return CLAP_PROCESS_CONTINUE;
+		}
+		return CLAP_PROCESS_SLEEP;
 	}
 
 	//--------------------------------------------------------------------------------------------//
@@ -1191,8 +1367,18 @@ public:
 		// THE LOAD TELLS US ONCE PER MACRO WHOSE NAME MOVED; THE HOST HEARS IT ONCE, folded into the values'
 		// rescan below. Nothing between the two assignments can return, so no scope is needed to settle the
 		// debt on a refusal — and a refusal above changed nothing, so it owes the host no rescan at all.
+		// A DRUM HOLDS ONE DRUM: a state of anything else (a chain saved by the Chain plugin) is refused whole, nothing changed.
+		if (drum_ && !(patch.device.size() == 1 && std::strcmp(patch.device[0].tag.data(), fx::drumdevice::kTraits.tag) == 0)) {
+			log_.say("state-load FAILED why=not-a-drum-state; nothing changed");
+			notLoaded.note(LoadReport::Kind::NotLoaded, "patch", "", "this is not a Feathers Drum state");
+			lastRefusals_ = notLoaded;
+			return false;
+		}
 		loadingState_ = true;
 		const LoadReport refused = bridge_.loadPatch(patch);
+		if (drum_) {
+			pinDrumControls(); // the saved pool's pins stand; any control it lacked is pinned in the list's order
+		}
 		// THE SLOTS THE PATCH RESTORED ARE BOUND AND RENAMED NOW, before any host event: an anchored slot is
 		// anchored when this returns (design §6). Their renames ride the macros' one rescan below.
 		serviceSlots();
@@ -1252,8 +1438,13 @@ private:
 				const auto* e = reinterpret_cast<const clap_event_param_value*>(header);
 				// A HOST SLOT FIRST — `isSlotId` before the macros, as every params call site asks it.
 				if (hostslots::isSlotId(e->param_id)) {
-					onHostSlotValue(hostslots::slotOfId(e->param_id), e->value);
+					if (!drum_ || drumIndexOf(e->param_id) >= 0) { // a drum answers its own places only
+						onHostSlotValue(hostslots::slotOfId(e->param_id), e->value);
+					}
 					break;
+				}
+				if (drum_) {
+					break; // and has no macros
 				}
 				// **THROUGH THE BRIDGE (CD commit 4), and the ORDER is why it works.** This walk runs
 				// inside `drain(const clap_input_events*)`, which both call sites invoke BEFORE
@@ -1271,7 +1462,7 @@ private:
 				const auto* e = reinterpret_cast<const clap_event_param_mod*>(header);
 				rack::SlotOwner* slots = bridge_.hostSlots();
 				if (hostslots::isSlotId(e->param_id) && slots != nullptr && e->note_id == -1 && e->key == -1
-				    && e->channel == -1) {
+				    && e->channel == -1 && (!drum_ || drumIndexOf(e->param_id) >= 0)) {
 					slots->onHostMod(hostslots::slotOfId(e->param_id), e->amount);
 					if (e->amount != 0.0) {
 						_host.requestCallback(); // a non-zero amount anchors and marks the slot (2026-09-26)
@@ -1936,6 +2127,13 @@ private:
 	RackGui gui_ { bridge_ };
 	/// **THE NOTE RACK** (`kNoteRackDescriptor`): the same engine and editor with no audio ports and a notes-only offer.
 	bool noteRack_ = false;
+	/// **FEATHERS DRUM** (`kDrumDescriptor`): the same engine and window shell holding one Drum device (drum_plugin.h).
+	bool drum_ = false;
+	/// Which control of the device each place of `drumplugin::kHostKeys` is (main thread), and the device's id and its Note control
+	/// as the audio thread reads them for `answerAnyKey` (written by `pinDrumControls`, which a state load reruns).
+	std::array<size_t, drumplugin::kHostParamCount> drumControlOfPlace_ {};
+	std::atomic<DeviceInstanceId> drumDevice_ { kNoInstance };
+	std::atomic<uint32_t> drumNoteControl_ { static_cast<uint32_t>(static_cast<size_t>(-1)) };
 	/// Its audio: silence the engine runs on, sized at activate (a note rack is handed no buffers).
 	std::vector<float> scratchL_, scratchR_;
 	int guiFd_ = -1;
@@ -1980,22 +2178,25 @@ const clap_plugin_descriptor* descriptor() noexcept {
 namespace {
 
 //------------------------------------------------------------------------------------------------//
-// THE FACTORY — two plugins (the Chain, the Note Rack), and the entry points a host dlsyms its way to.        //
+// THE FACTORY — three plugins (the Chain, the Note Rack, the Drum), and the entry points a host dlsyms its way to. //
 //------------------------------------------------------------------------------------------------//
 
 uint32_t CLAP_ABI factoryPluginCount(const clap_plugin_factory*) noexcept {
-	return 2; // the Chain, and the Note Rack
+	return 3; // the Chain, the Note Rack, and the Drum
 }
 
 const clap_plugin_descriptor* CLAP_ABI factoryPluginDescriptor(const clap_plugin_factory*,
                                                                uint32_t index) noexcept {
-	return index == 0 ? &kDescriptor : index == 1 ? &kNoteRackDescriptor : nullptr;
+	return index == 0 ? &kDescriptor : index == 1 ? &kNoteRackDescriptor : index == 2 ? &kDrumDescriptor : nullptr;
 }
 
 const clap_plugin* CLAP_ABI factoryCreatePlugin(const clap_plugin_factory*, const clap_host* host,
                                                 const char* pluginId) noexcept {
 	if (host != nullptr && pluginId != nullptr && std::strcmp(pluginId, kNoteRackDescriptor.id) == 0) {
 		return createNoteRack(host);
+	}
+	if (host != nullptr && pluginId != nullptr && std::strcmp(pluginId, kDrumDescriptor.id) == 0) {
+		return createDrum(host);
 	}
 	if (host == nullptr || pluginId == nullptr || std::strcmp(pluginId, kDescriptor.id) != 0) {
 		return nullptr;
@@ -2036,6 +2237,15 @@ const clap_plugin* createNoteRack(const clap_host* host) noexcept {
 
 const clap_plugin_descriptor* noteRackDescriptor() noexcept {
 	return &kNoteRackDescriptor;
+}
+
+const clap_plugin* createDrum(const clap_host* host) noexcept {
+	auto* plugin = new RackPlugin(host, false, true);
+	return plugin->clapPlugin();
+}
+
+const clap_plugin_descriptor* drumDescriptor() noexcept {
+	return &kDrumDescriptor;
 }
 
 } // namespace feathers::rack

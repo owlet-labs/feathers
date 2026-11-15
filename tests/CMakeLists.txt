@@ -1397,6 +1397,14 @@ target_link_libraries(test_terrain_fit PRIVATE feathers-ui feathers-warnings)
 target_include_directories(test_terrain_fit PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME terrain-fit COMMAND test_terrain_fit)
 
+# FEATHERS DRUM — the Drum device as a CLAP instrument (a third plugin in the Chain's bundle), through the real CLAP API: the factory,
+# ports, named parameters, notes and audio at any block size, SLEEP, state, the editor. On the private display for the editor's cases.
+add_executable(test_drum_plugin test_drum_plugin.cpp)
+target_link_libraries(test_drum_plugin PRIVATE feathers-rack-ui feathers-warnings)
+target_include_directories(test_drum_plugin PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME drum-plugin COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_drum_plugin>)
+set_tests_properties(drum-plugin PROPERTIES LABELS "headless-incompatible")
+
 # THE CHROME HUE (backlog LG) — OKLCH L, C and h of every token the offset turns, by value, and the prefs
 # road on a scratch desk its own main() makes. No window: colours are numbers here.
 add_executable(test_chrome_hue test_chrome_hue.cpp)

@@ -34,5 +34,8 @@ const clap_plugin* create(const clap_host* host) noexcept;
 /// notes-and-modulators offer. The bundle's second plugin.
 const clap_plugin_descriptor* noteRackDescriptor() noexcept;
 const clap_plugin* createNoteRack(const clap_host* host) noexcept;
+/// FEATHERS DRUM: one Drum device as a CLAP instrument (rack/drum_plugin.h) — notes in, stereo audio out. The bundle's third plugin.
+const clap_plugin_descriptor* drumDescriptor() noexcept;
+const clap_plugin* createDrum(const clap_host* host) noexcept;
 
 } // namespace feathers::rack

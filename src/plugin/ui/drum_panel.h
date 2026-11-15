@@ -295,8 +295,8 @@ private:
 class PadPlayButton : public visage::Frame, public TooltipSource {
 public:
 	static constexpr float kVelocity = 100.0f / 127.0f;
-	static constexpr float kWidth = 30.0f;
-	static constexpr float kHeight = 22.0f;
+	static constexpr float kWidth = 20.0f;
+	static constexpr float kHeight = 14.0f;
 	PadPlayButton(ParamBridge& bridge, size_t slot);
 	~PadPlayButton() override;
 	void draw(visage::Canvas& canvas) override;

@@ -14804,7 +14804,7 @@ TEST_CASE("drum kit panel (audition bugs a and c): the Decay handle reaches its 
 	CHECK(f.params.base(feathers::drumParam(0, DrumControl::Decay)) < longer);
 }
 
-TEST_CASE("drum kit panel (audition): Tune has an explicit pill beside its handle on every kind; Level is the handle (and the sound card's), no second pill") {
+TEST_CASE("drum kit panel (audition): Tune has an explicit pill beside its handle on every kind; Level is a pill on layer one's tab, the handle, and the sound card's") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
@@ -14819,8 +14819,16 @@ TEST_CASE("drum kit panel (audition): Tune has an explicit pill beside its handl
 		CHECK(panel.pictureForTest().handleShown(H::Level));
 		CHECK(panel.pictureForTest().handleShown(H::Tune));
 	}
-	// NO SECOND LEVEL PILL: the pad's Level is on its sound card, and is the picture's Level handle here.
-	CHECK(panel.controlForTest(0, DrumControl::Level) == nullptr);
+	// LAYER ONE'S TAB HAS A LEVEL PILL bound to the pad's Level (the sound card's param), beside the picture's Level handle.
+	auto* levelPill = dynamic_cast<ui::FaderPill*>(panel.controlForTest(0, DrumControl::Level));
+	REQUIRE(levelPill != nullptr);
+	CHECK(levelPill->isVisible());
+	levelPill->amountForTest().beginGesture();
+	levelPill->amountForTest().setValue(-7.0);
+	levelPill->amountForTest().endGesture();
+	f.settleGesture();
+	CHECK(f.params.base(feathers::drumParam(0, DrumControl::Level)) == doctest::Approx(-7.0));
+	CHECK(f.params.base(feathers::drumParam(0, DrumControl::LayerLevel)) == doctest::Approx(0.0)); // layer two's own is its own
 	// THE PILL WRITES THE LAYER'S OWN TUNE, read back from the engine's side.
 	auto* tune = dynamic_cast<ui::FaderPill*>(panel.controlForTest(0, DrumControl::Tune));
 	REQUIRE(tune != nullptr);
@@ -16465,7 +16473,50 @@ TEST_CASE("pad editor: the play button posts the pad's note on at a press and of
 	CHECK_FALSE(play.isVisible());
 }
 
-TEST_CASE("pad editor: a press ended by anything else sends the off: the pad switched away, the mode switched, the button destroyed") {
+TEST_CASE("pad editor: every pad's tile wears its own play button, which strikes that pad's key without selecting it, and no two controls on the strip overlap") {
+	PadEditorFixture f(false);
+	for (size_t pad = 0; pad < feathers::kMaxSounds; ++pad) {
+		f.set(feathers::drumParam(pad, DrumControl::Note), 40.0 + static_cast<double>(pad));
+	}
+	(void)f.panel.update();
+	f.panel.clickPadForTest(0);
+	feathers::UiNoteEvent e;
+	for (size_t pad = 0; pad < feathers::kMaxSounds; ++pad) {
+		CAPTURE(pad);
+		ui::PadPlayButton& play = f.panel.playButtonForTest(pad);
+		REQUIRE(play.isVisible());
+		// INSIDE ITS OWN TILE, clear of the tile's neighbours.
+		const visage::Bounds tile = f.panel.padBoundsForTest(pad);
+		CHECK(play.x() >= tile.x());
+		CHECK(play.right() <= tile.right() + 1.0e-3f);
+		CHECK(play.y() >= tile.y());
+		CHECK(play.bottom() <= tile.bottom() + 1.0e-3f);
+		play.onMouseDown().callback(at(5.0f, 5.0f));
+		REQUIRE(f.bridge.popNote(e));
+		CHECK(e.key == 40 + static_cast<int>(pad));
+		CHECK(e.on);
+		play.onMouseUp().callback(at(5.0f, 5.0f));
+		REQUIRE(f.bridge.popNote(e));
+		CHECK(e.key == 40 + static_cast<int>(pad));
+		CHECK_FALSE(e.on);
+		CHECK(f.selection.slot() == 0); // pressing it selected nothing
+	}
+	// A CLICK ON THE REST OF THE TILE STILL SELECTS: the tile's own area clear of the button.
+	const visage::Bounds tile = f.panel.padBoundsForTest(4);
+	f.panel.onMouseDown().callback(at(tile.x() + 6.0f, tile.y() + 6.0f));
+	CHECK(f.selection.slot() == 4);
+	// THE BUTTON'S HIT AREA IS NOT THE MUTE OR SOLO CHIPS' (they stand under the strip).
+	for (size_t pad = 0; pad < feathers::kMaxSounds; ++pad) {
+		const visage::Frame& play = f.panel.playButtonForTest(pad);
+		for (const visage::Frame* chip : { static_cast<const visage::Frame*>(&f.panel.muteChipForTest(pad)), static_cast<const visage::Frame*>(&f.panel.soloChipForTest(pad)) }) {
+			if (chip->isVisible()) {
+				CHECK_FALSE((play.x() < chip->right() && chip->x() < play.right() && play.y() < chip->bottom() && chip->y() < play.bottom()));
+			}
+		}
+	}
+}
+
+TEST_CASE("pad editor: a press ended by anything else sends the off: the mode switched, the button destroyed; selecting another pad does not end it") {
 	PadEditorFixture f(false);
 	feathers::UiNoteEvent e;
 	const auto expectPair = [&](int key) {
@@ -16478,11 +16529,12 @@ TEST_CASE("pad editor: a press ended by anything else sends the off: the pad swi
 		CHECK_FALSE(f.bridge.popNote(e));
 	};
 	const int noteA = static_cast<int>(f.bridge.value(static_cast<clap_id>(feathers::drumParam(0, DrumControl::Note))));
-	// THE PAD IS SWITCHED AWAY MID-PRESS.
+	// SELECTING ANOTHER PAD MID-PRESS DOES NOT END IT (the button is on the tile, not the editor): the release still sends the off.
 	f.panel.playButtonForTest(0).onMouseDown().callback(at(5.0f, 5.0f));
 	f.panel.clickPadForTest(3);
 	(void)f.panel.update();
-	CHECK_FALSE(f.panel.playButtonForTest(0).held());
+	CHECK(f.panel.playButtonForTest(0).held());
+	f.panel.playButtonForTest(0).onMouseUp().callback(at(5.0f, 5.0f));
 	expectPair(noteA);
 	// THE MODE IS SWITCHED TO PITCHED MID-PRESS.
 	f.panel.clickPadForTest(0);

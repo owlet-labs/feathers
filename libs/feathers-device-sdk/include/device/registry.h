@@ -218,6 +218,11 @@ struct NoteContext {
 	/// part plays the same table (a plain stack, exactly); below 1, and even below 0, when a Pos route or Width puts the
 	/// parts on stands of their own. The synth computes it where it knows the stands (`Synth::updateStackCoherence`).
 	float stackCoherence = 1.0f;
+	/// **WHERE THE CALL ABOUT TO RUN STARTS INSIDE ITS 64-SAMPLE CONTROL TICK**, or -1 when the host does not cut its blocks on the
+	/// tick. `NoteEvent::timeSamples` is an offset in the tick (it is the tick's offset, not the call's), so a device that places a
+	/// note on its own sample reads `timeSamples - tickPhase` as the sample inside the call it is about to render. -1, the default,
+	/// is a host that says nothing: a device then takes `timeSamples` as an offset from the start of its next call.
+	int tickPhase = -1;
 };
 /// A HOST'S EAR FOR A DEVICE'S METERS — see `AudioOps::setReadingsSink`. Two words, so a device stores it
 /// by value and calls it without owning anything of the host's.

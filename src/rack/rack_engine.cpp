@@ -4287,7 +4287,10 @@ void RackEngine::runDevice(Slot& slot, size_t lane, const device::Descriptor& d,
 	// with its level up produced silence.
 	// Not user error.
 	if (ops.setNoteContext != nullptr) {
-		ops.setNoteContext(slot.storage.get(), (*busNote_)[lane]);
+		// THE TICK PHASE IS THIS CALL'S, stamped on the copy (`NoteContext::tickPhase`): -1 for a host off the tick grid.
+		device::NoteContext note = (*busNote_)[lane];
+		note.tickPhase = tickPhase_;
+		ops.setNoteContext(slot.storage.get(), note);
 	}
 	// **THE DECLARED CONTROLS THAT MOVE INSIDE THIS CALL**, as runs over exactly its samples: the tick phase
 	// says where this call starts inside the tick (`setTickPhase`), and a host off the tick grid set none.

@@ -7143,6 +7143,7 @@ TEST_CASE("backlog LG: the chrome hue is never in the patch — a state saved at
 	struct Reset {
 		~Reset() { (void)feathers::ui::setChromeHueOffset(0.0); }
 	} reset;
+	(void)feathers::ui::setChromeHueOffset(0.0); // the base palette, the reference for this comparison
 	REQUIRE(feathers::ui::chromeHueOffset() == 0.0);
 	HostedPlugin h;
 	StateBytes atZero;

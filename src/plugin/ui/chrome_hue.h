@@ -131,10 +131,38 @@ ChromePalette rotatedPalette(const ChromePalette& base, double degrees) noexcept
 /// `rotatedPalette(base, chromeDegrees)` exactly.
 ChromePalette rotatedPalette(const ChromePalette& base, double chromeDegrees, double accentDegrees) noexcept;
 
+/// THE DEFAULTS: what a fresh editor (no stored value) shows, and what a double click on a strip returns to.
+/// The one place they are named: the prefs fallback, the live palette's first value and both strips' reset
+/// all read these. `kChromeBase` stays the reference the rotation is defined from.
+inline constexpr double kChromeHueDefault = 60.0;
+inline constexpr double kAccentHueDefault = 4.0;
+
+/// `rotatedPalette(kChromeBase, kChromeHueDefault, kAccentHueDefault)`, written out. rotatedPalette is
+/// not constexpr (OKLCH needs cbrt and pow), and a dynamic initialiser for `gChrome` would run in an
+/// unspecified order against the other translation units' statics, so a role read early would see the
+/// base's blue, or a half-built value. A literal keeps `gChrome` constant-initialised: the first frame
+/// of a fresh editor already draws the default hues. test_chrome_hue compares it value by value with
+/// rotatedPalette, so a change to the defaults or to the rotation turns that case red until this is
+/// regenerated.
+inline constexpr ChromePalette kChromeDefault {
+	0xff030103u, 0xff0e080eu, 0xff1a101bu, 0xff462b43u, 0xfff8f2f7u, 0xffa38b9fu, 0xff755970u, 0xfff8f2f7u,
+	0xff0e080eu, 0xffc790cdu, 0xffacc27eu, 0xffd88dc3u, 0xcc1a101bu,
+	{
+	    0xffb18edeu,
+	    0xff9fc069u,
+	    0xff00d1e1u,
+	    0xfff5695au,
+	    0xff6cf0b6u,
+	    0xff8cc4ffu,
+	    0xffc48e00u,
+	    0xffdf799fu,
+	},
+};
+
 namespace chrome_detail {
-/// THE LIVE PALETTE. Constant-initialised from the base, so a role read during static initialisation
-/// anywhere still sees the mock's colours. Written only by `setChromeHueOffset`.
-inline ChromePalette gChrome = kChromeBase;
+/// THE LIVE PALETTE. Constant-initialised from the default palette, so a role read during static initialisation
+/// anywhere sees the default colours. Written only by `setChromeHueOffset`.
+inline ChromePalette gChrome = kChromeDefault;
 } // namespace chrome_detail
 
 /// The offset's range and its default. The ends are the same hue; both are allowed so a strip can be

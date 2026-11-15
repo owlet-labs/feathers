@@ -16626,7 +16626,9 @@ TEST_CASE("the ground BEHIND the circle is Feathers' perform ground, and it is t
 	// `Gui::Impl::drawBackground`'s `canvas.setColor(kVoid)`. `theme.h` has `kVoid =
 	// tokens::kVoidPerform`, a GENERATED token, so the value is the mock's own `--void-perform`. The
 	// mock agrees from the other end: `drawBlendView` fills that circle's aperture `TH.voidP`.
-	CHECK(ui::CircleRail::kGround == feathers::tokens::kVoidPerform);
+	const uint32_t expectedGround = ui::rotatedPalette(ui::kChromeBase, ui::chromeHueOffset(), ui::accentHueOffset()).voidGround;
+	CHECK(ui::CircleRail::kGround == expectedGround);
+	CHECK(expectedGround == ui::rotateHue(feathers::tokens::kVoidPerform, ui::chromeHueOffset()));
 	// **NOT VACUOUS, AND IT IS THE WHOLE POINT OF THE CHANGE**: the rail no longer wears the surface
 	// every other rail wears. A ground equal to `kSurfaceRaised` is this case passing on the build it
 	// exists to reject.

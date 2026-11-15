@@ -1218,8 +1218,9 @@ size_t ExploreStage::moveKitUnlocked(double dx, double dy) {
 				continue;
 			}
 			const auto id = [&](DrumControl c) { return static_cast<clap_id>(drumLayerParam(slot, layer, c)); };
-			const double x = std::clamp(bridge_.value(id(DrumControl::OffsetX)) + dx, -kDrumVectorRange, kDrumVectorRange);
-			const double y = std::clamp(bridge_.value(id(DrumControl::OffsetY)) + dy, -kDrumVectorRange, kDrumVectorRange);
+			// NO CLAMP: a layer's vector is an unbounded coordinate, like a sound's drift.
+			const double x = bridge_.value(id(DrumControl::OffsetX)) + dx;
+			const double y = bridge_.value(id(DrumControl::OffsetY)) + dy;
 			for (const auto& [target, value] : { std::pair<clap_id, double> { id(DrumControl::OffsetX), x },
 			                                     std::pair<clap_id, double> { id(DrumControl::OffsetY), y } }) {
 				if (std::none_of(bulkTouched_.begin(), bulkTouched_.end(), [&](const auto& t) { return t.first == target; })) {

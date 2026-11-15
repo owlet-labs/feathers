@@ -483,7 +483,7 @@ TEST_CASE("the param table is what it was") {
 		// And each pad's Bend 0..1 default 1 (the whole Bend range).
 		// And the layer: Kind 0..5 default Off, Level -60..6 dB default 0, Delay 0..10 ms default 0, High Pass log2 20 Hz..2048 Hz
 		// default 20 Hz, Lock 0..1 default 1, Offset X and Y -1..1 default 0.
-		constexpr uint64_t kRecordedRanges =  0xee991eb72076293eull;
+		constexpr uint64_t kRecordedRanges =  0xa362d7dfd80c23feull; // (the drum layers' Offset X and Y widened to +-kDrumVectorReach: an unbounded coordinate)
 		CHECK(paramRangeFingerprint() == kRecordedRanges);
 	}
 }
@@ -1314,6 +1314,11 @@ TEST_CASE("a knob's range stops modulation, and it is the range rather than the 
 	for (const feathers::ParamDesc& d : feathers::paramDescs()) {
 		CAPTURE(std::string(d.name));
 		if (d.id == ParamId::OscPhase) {
+			CHECK(d.offsetsMayLeaveRange);
+			continue;
+		}
+		// AND A DRUM LAYER'S VECTOR, an unbounded coordinate (its declared range is only a host's fader).
+		if (d.max == feathers::kDrumVectorReach && d.min == -feathers::kDrumVectorReach) {
 			CHECK(d.offsetsMayLeaveRange);
 			continue;
 		}
@@ -2735,4 +2740,19 @@ TEST_CASE("a sound's knob list is pinned: perSoundKnobParam's order is the stanc
 	                                           SpectralControl::Filter2On, SpectralControl::Filter2Mode,
 	                                           SpectralControl::FilterRouting, SpectralControl::PartialsMode,
 	                                           SpectralControl::VocodeOn });
+}
+
+TEST_CASE("a drum layer's vector is an unbounded coordinate: a huge declared range that offsets may leave, and a route worth one unit") {
+	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
+		for (size_t layer = 0; layer < 2; ++layer) {
+			for (const feathers::DrumControl c : { feathers::DrumControl::OffsetX, feathers::DrumControl::OffsetY }) {
+				const feathers::ParamDesc* d = feathers::findParam(static_cast<clap_id>(feathers::drumLayerParam(slot, layer, c)));
+				REQUIRE(d != nullptr);
+				CHECK(d->min == -feathers::kDrumVectorReach);
+				CHECK(d->max == feathers::kDrumVectorReach);
+				CHECK(d->offsetsMayLeaveRange);
+				CHECK(feathers::modSpanOf(*d) == 1.0); // a full-depth route is one unit, not sixteen million
+			}
+		}
+	}
 }

@@ -934,7 +934,7 @@ PadPlayButton::PadPlayButton(ParamBridge& bridge, size_t slot) : bridge_(bridge)
 PadPlayButton::~PadPlayButton() { release(); }
 
 const char* PadPlayButton::tooltipAt(visage::Point) const {
-	return "Strike this pad: held while the button is held, as a key on the pad's note. Not saved and not modulated.";
+	return "Strike this pad without selecting it: held while the button is held, as a key on the pad's note. Not saved and not modulated.";
 }
 
 void PadPlayButton::press() {
@@ -961,7 +961,7 @@ void PadPlayButton::draw(visage::Canvas& canvas) {
 	canvas.setColor(alphaOf(kLine, 0.8f));
 	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 4.0f, 1.0f);
 	canvas.setColor(held_ ? kVoid : kInk);
-	canvas.triangleRight(width() * 0.5f - 3.0f, height() * 0.5f - 5.0f, 5.0f);
+	canvas.triangleRight(width() * 0.5f - 2.0f, height() * 0.5f - 4.0f, 4.0f);
 }
 
 PitchReadout::PitchReadout(SettledPitchControl& control) : control_(control) {
@@ -1215,6 +1215,10 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 			L.tunePill->setWholeSteps(true); // semitones, as the readout and the picture's handle
 			pill(L.velocityNoiseControl, L.velocityNoise, id(DrumControl::VelocityNoise), "Vel Noise");
 			pill(L.widthControl, L.width, id(DrumControl::Width), "Width");
+			if (layer == 0) {
+				// LAYER ONE'S LEVEL IS THE PAD'S Level, the param the sound card's fader drives, so the two stay one control.
+				pill(L.levelPillControl, L.levelPill, drumParam(slot, DrumControl::Level), "Level");
+			}
 			if (layer == 1) {
 				pill(L.levelPillControl, L.levelPill, drumParam(slot, DrumControl::LayerLevel), "Level");
 				pill(L.delayControl, L.delay, drumParam(slot, DrumControl::LayerDelay), "Delay");
@@ -1625,14 +1629,22 @@ bool DrumPanel::sync() {
 				show(f.get(), false);
 			}
 		}
+		// EVERY PAD'S TILE WEARS ITS OWN PLAY BUTTON (bottom right, clear of the FX mark and the choke text): it strikes that pad without
+		// selecting it, and a press ended by the mode switching lets go.
+		show(set.play.get(), kit);
+		if (kit) {
+			const visage::Bounds tile = padBounds(slot);
+			set.play->setBounds(tile.right() - PadPlayButton::kWidth - 3.0f, tile.bottom() - PadPlayButton::kHeight - 3.0f,
+			                    PadPlayButton::kWidth, PadPlayButton::kHeight);
+		}
+		else {
+			set.play->release();
+		}
 		if (!own) {
 			for (visage::Frame* f : std::initializer_list<visage::Frame*> { set.note.get(), set.choke.get(), set.voices.get(),
 			                                                                set.trigger.get(), set.pan.get(), set.release.get(),
-			                                                                set.bend.get(), set.mute.get(), set.solo.get(), set.play.get() }) {
+			                                                                set.bend.get(), set.mute.get(), set.solo.get() }) {
 				show(f, false);
-				if (f == set.play.get()) {
-					set.play->release(); // a pad switched away mid-press lets go
-				}
 			}
 			continue;
 		}
@@ -1654,10 +1666,6 @@ bool DrumPanel::sync() {
 		seat(set.release.get(), gate, 92.0f, 22.0f);
 		seat(set.mute.get(), kit, 54.0f, SwitchChip::kHeight); // the pad's own Mute and the preview of it alone (kit pads only)
 		seat(set.solo.get(), kit, 54.0f, SwitchChip::kHeight);
-		seat(set.play.get(), kit, PadPlayButton::kWidth, PadPlayButton::kHeight);
-		if (!kit) {
-			set.play->release();
-		}
 		float y = flow.bottom() + 10.0f;
 		LayerSet& s = set.layer[layer];
 		// THE LAYER TABS, and beside them the shown layer's Kind (layer two's with Off) and, on layer two, Level, Delay and High Pass.
@@ -1832,8 +1840,8 @@ void DrumPanel::draw(visage::Canvas& canvas) {
 		                                  kDrumChokeNames.size());
 		if (choke != 0) {
 			canvas.setColor(kModulation);
-			canvas.text(std::string("choke ") + kDrumChokeNames[choke], font(kKnobLabelSize), visage::Font::kCenter, b.x(),
-			            b.y() + b.height() - 14.0f, b.width(), 12.0f);
+			canvas.text(std::string("ch ") + kDrumChokeNames[choke], font(kKnobLabelSize), visage::Font::kCenter, b.x() + 24.0f,
+			            b.y() + b.height() - 14.0f, 26.0f, 12.0f); // between the FX mark and the play button
 		}
 		// THE FX DOT (drum proposal §17 P3): this pad's lane holds a device, so its hits go through it.
 		if (padHasFx(pad)) {
@@ -1903,6 +1911,7 @@ visage::Frame* DrumPanel::controlForTest(size_t pad, DrumControl c, size_t layer
 	// THE LAYER'S: the kind box (layer one's is the pad's Kind), and every control a hit reads, each layer's own copy.
 	case DrumControl::Kind: return set.layer[0].kind.get();
 	case DrumControl::LayerKind: return set.layer[1].kind.get();
+	case DrumControl::Level: return set.layer[0].levelPill.get(); // the pad's own Level, as the card's fader
 	case DrumControl::LayerLevel: return set.layer[1].levelPill.get();
 	case DrumControl::LayerDelay: return set.layer[1].delay.get();
 	case DrumControl::LayerHighPass: return set.layer[1].highPass.get();

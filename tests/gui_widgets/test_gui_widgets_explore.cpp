@@ -14804,7 +14804,7 @@ TEST_CASE("drum kit panel (audition bugs a and c): the Decay handle reaches its 
 	CHECK(f.params.base(feathers::drumParam(0, DrumControl::Decay)) < longer);
 }
 
-TEST_CASE("drum kit panel (audition): Tune has an explicit pill beside its handle on every kind; Level is the handle (and the sound card's), no second pill") {
+TEST_CASE("drum kit panel (audition): Tune has an explicit pill beside its handle on every kind; Level is a pill on layer one's tab, the handle, and the sound card's") {
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
@@ -14819,8 +14819,16 @@ TEST_CASE("drum kit panel (audition): Tune has an explicit pill beside its handl
 		CHECK(panel.pictureForTest().handleShown(H::Level));
 		CHECK(panel.pictureForTest().handleShown(H::Tune));
 	}
-	// NO SECOND LEVEL PILL: the pad's Level is on its sound card, and is the picture's Level handle here.
-	CHECK(panel.controlForTest(0, DrumControl::Level) == nullptr);
+	// LAYER ONE'S TAB HAS A LEVEL PILL bound to the pad's Level (the sound card's param), beside the picture's Level handle.
+	auto* levelPill = dynamic_cast<ui::FaderPill*>(panel.controlForTest(0, DrumControl::Level));
+	REQUIRE(levelPill != nullptr);
+	CHECK(levelPill->isVisible());
+	levelPill->amountForTest().beginGesture();
+	levelPill->amountForTest().setValue(-7.0);
+	levelPill->amountForTest().endGesture();
+	f.settleGesture();
+	CHECK(f.params.base(feathers::drumParam(0, DrumControl::Level)) == doctest::Approx(-7.0));
+	CHECK(f.params.base(feathers::drumParam(0, DrumControl::LayerLevel)) == doctest::Approx(0.0)); // layer two's own is its own
 	// THE PILL WRITES THE LAYER'S OWN TUNE, read back from the engine's side.
 	auto* tune = dynamic_cast<ui::FaderPill*>(panel.controlForTest(0, DrumControl::Tune));
 	REQUIRE(tune != nullptr);
@@ -15044,8 +15052,8 @@ TEST_CASE("drum layers: dragging a pad is a kit-wide bulk edit: the same step on
 				CHECK(moved[layerIndex + 1] == before[layerIndex + 1]);
 			}
 			else {
-				CHECK(moved[layerIndex] == std::clamp(before[layerIndex] + dx, -feathers::kDrumVectorRange, feathers::kDrumVectorRange));
-				CHECK(moved[layerIndex + 1] == std::clamp(before[layerIndex + 1] + dy, -feathers::kDrumVectorRange, feathers::kDrumVectorRange));
+				CHECK(moved[layerIndex] == before[layerIndex] + dx);
+				CHECK(moved[layerIndex + 1] == before[layerIndex + 1] + dy);
 			}
 		}
 	}
@@ -16047,8 +16055,8 @@ TEST_CASE("pad editor: a kit drag with the selected pad's layer one LOCKED still
 			CHECK(lockedAfter[i + 1] == lockedBefore[i + 1]);
 			continue;
 		}
-		CHECK(lockedAfter[i] == doctest::Approx(std::clamp(lockedBefore[i] + dx, -feathers::kDrumVectorRange, feathers::kDrumVectorRange)).epsilon(1.0e-9));
-		CHECK(lockedAfter[i + 1] == doctest::Approx(std::clamp(lockedBefore[i + 1] + dy, -feathers::kDrumVectorRange, feathers::kDrumVectorRange)).epsilon(1.0e-9));
+		CHECK(lockedAfter[i] == doctest::Approx(lockedBefore[i] + dx).epsilon(1.0e-9));
+		CHECK(lockedAfter[i + 1] == doctest::Approx(lockedBefore[i + 1] + dy).epsilon(1.0e-9));
 	}
 }
 
@@ -16280,7 +16288,7 @@ TEST_CASE("pad editor: every layer of every pad comes up UNLOCKED by default, on
 	CHECK_FALSE(lock->on());
 }
 
-TEST_CASE("pad editor: along each axis and the diagonal of a layer's whole vector range no kind has a flat band wider than 4% of the range, in each pitch mode") {
+TEST_CASE("pad editor: along each axis and the diagonal of a layer's vector from -10 to 10 no kind has a flat band wider than 4% of the sweep, in each pitch mode") {
 	// MEASURED (a 81 x 81 grid over [-2, 2]^2, the fields the bank builds, kind-independent): over the full range noise is exactly 0 on
 	// 50.8% of cells and metal on 72.9%, sweep sits on its 0.6 floor over 22.6% of the cells (locally flat), and pitch, length, tone
 	// and snap are never flat (under 0.5% of cells at 0 or 1). So no band is dead for a KIND, because every kind reads pitch, length,
@@ -16289,7 +16297,7 @@ TEST_CASE("pad editor: along each axis and the diagonal of a layer's whole vecto
 	ExploreFixture f;
 	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
 	f.set(ParamId::DrumMode, 1.0);
-	const int n = 200;
+	const int n = 1000; // 0.02 a step over [-10, 10]
 	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
 		f.set(feathers::drumParam(0, DrumControl::Kind), static_cast<double>(k));
 		const auto reads = feathers::drum::kindReads(static_cast<feathers::drum::Kind>(k));
@@ -16302,7 +16310,7 @@ TEST_CASE("pad editor: along each axis and the diagonal of a layer's whole vecto
 				int longest = 0;
 				std::array<double, 7> prev {};
 				for (int i = 0; i <= n; ++i) {
-					const double v = -2.0 + 4.0 * i / n;
+					const double v = -10.0 + 20.0 * i / n;
 					f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetX)), axis == 1 ? 0.0 : v);
 					f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetY)), axis == 0 ? 0.0 : v);
 					const auto read = [&f](ParamId id) { return f.params.base(id); };
@@ -16327,7 +16335,7 @@ TEST_CASE("pad editor: along each axis and the diagonal of a layer's whole vecto
 					}
 					prev = cur;
 				}
-				CHECK(longest <= n / 25); // 4% of the range
+				CHECK(longest <= n / 25); // 4% of the sweep
 			}
 		}
 	}
@@ -16335,28 +16343,51 @@ TEST_CASE("pad editor: along each axis and the diagonal of a layer's whole vecto
 	// pad can have is the parameter's range, which the next case holds the pad inside.
 }
 
-TEST_CASE("pad editor: the terrain pad's star never leaves the vector's reach, so no drag shows a place the parameter would refuse") {
+TEST_CASE("pad editor: the terrain pad is an infinite field: a drag past the old reach writes the larger value, the place is stance plus it, and the view follows the star") {
 	PadEditorFixture f(false);
-	f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetX)), 1.9);
-	f.set(static_cast<ParamId>(feathers::drumLayerParam(0, 0, DrumControl::OffsetY)), -1.95);
+	using feathers::drumLayerParam;
+	const auto idx = static_cast<clap_id>(drumLayerParam(0, 0, DrumControl::OffsetX));
+	const auto idy = static_cast<clap_id>(drumLayerParam(0, 0, DrumControl::OffsetY));
+	f.set(ParamId::Weather, 1.0);
+	f.set(ParamId::PosX, 0.25);
+	f.set(static_cast<ParamId>(idx), 1.9);
+	f.set(static_cast<ParamId>(idy), -1.95);
 	(void)f.panel.update();
 	ui::DrumVectorPad& pad = f.panel.vectorPadForTest(0, 0);
 	visage::Canvas canvas;
 	pad.draw(canvas);
-	// A PRESS FAR PAST THE REACH: at the bottom-right corner, 80 px beyond the centre.
-	const float px = pad.width() * 0.5f + 70.0f;
-	const float py = pad.height() * 0.5f + 70.0f;
+	const float half = std::min(pad.width(), pad.height()) * 0.5f;
+	// A PRESS 70 px RIGHT AND 70 px BELOW THE CENTRE puts the star 70/half past the old reach on both axes.
+	const float px = pad.width() * 0.5f + 50.0f;
+	const float py = pad.height() * 0.5f + 50.0f;
 	pad.onMouseDown().callback(at(px, py));
-	pad.onMouseDrag().callback(at(px + 200.0f, py + 200.0f));
-	const auto [sx, sy] = pad.starForTest();
-	CHECK(1.9 + sx <= feathers::kDrumVectorRange + 1.0e-6);
-	CHECK(-1.95 + sy >= -feathers::kDrumVectorRange - 1.0e-6);
-	CHECK(f.bridge.value(static_cast<clap_id>(feathers::drumLayerParam(0, 0, DrumControl::OffsetX))) == doctest::Approx(feathers::kDrumVectorRange));
-	CHECK(f.bridge.value(static_cast<clap_id>(feathers::drumLayerParam(0, 0, DrumControl::OffsetY))) == doctest::Approx(-feathers::kDrumVectorRange));
+	const double wantX = 1.9 + 50.0 / static_cast<double>(half);
+	const double wantY = -1.95 - 50.0 / static_cast<double>(half);
+	CHECK(f.bridge.value(idx) == doctest::Approx(wantX).epsilon(1.0e-5));
+	CHECK(f.bridge.value(idy) == doctest::Approx(wantY).epsilon(1.0e-5));
+	CHECK(f.bridge.value(idx) > 2.0);
+	CHECK(f.bridge.value(idy) < -2.0);
+	// THE VIEW FOLLOWS: held at the edge, the view scrolls on with the star (edge scroll) and the value keeps growing, with no wall.
+	const double before = f.bridge.value(idx);
+	pad.onMouseDrag().callback(at(pad.width() - 1.0f, py));
+	for (int i = 0; i < 40; ++i) {
+		(void)pad.tickForTest(0.05);
+	}
+	CHECK(f.bridge.value(idx) > before + 1.0);
+	CHECK(std::abs(pad.viewForTest().first) > 1.0); // the view has left where it started
 	pad.onMouseUp().callback(at(px, py));
-	// THE TERRAIN BEYOND THE REACH IS DRAWN AS NOTHING: the cell at the far corner of the map, past +2, is dark.
-	pad.draw(canvas);
-	CHECK(pad.mapForTest()[ui::DrumVectorPad::kMapWide - 1] < 0.05f);
+	pad.finishGlideForTest();
+	// THE RESOLVED PLACE IS THE STANCE PLUS THE VECTOR, past the old reach too.
+	const auto read = [&f](ParamId id) { return f.bridge.value(static_cast<clap_id>(id)); };
+	const Character c = feathers::characterFromParams(read, OscType::Drum, feathers::AuditionTuning {}, feathers::AnchorPoint {},
+	                                                  feathers::SoundTravel {}, feathers::SoundOrientations {}, feathers::SoundResidue {},
+	                                                  feathers::SoundGamma {}, feathers::Preview {}, feathers::EarSide::Head);
+	const double weather = feathers::amountTaper(f.bridge.value(static_cast<clap_id>(ParamId::Weather)));
+	CHECK(c.sounds[0].travelX == doctest::Approx(weather * 0.25 + f.bridge.value(idx)).epsilon(1.0e-6));
+	CHECK(c.sounds[0].drumVectorX[0] == doctest::Approx(f.bridge.value(idx)));
+	// A VALUE OF 50 SURVIVES THE PARAMETER ROAD (no clamp at the old reach).
+	f.set(static_cast<ParamId>(idx), 50.0);
+	CHECK(f.bridge.value(idx) == 50.0);
 }
 
 TEST_CASE("pad editor: Mute is the pad's own Mute and Solo the existing preview of that pad alone, per pad, in Kit mode only") {
@@ -16442,7 +16473,50 @@ TEST_CASE("pad editor: the play button posts the pad's note on at a press and of
 	CHECK_FALSE(play.isVisible());
 }
 
-TEST_CASE("pad editor: a press ended by anything else sends the off: the pad switched away, the mode switched, the button destroyed") {
+TEST_CASE("pad editor: every pad's tile wears its own play button, which strikes that pad's key without selecting it, and no two controls on the strip overlap") {
+	PadEditorFixture f(false);
+	for (size_t pad = 0; pad < feathers::kMaxSounds; ++pad) {
+		f.set(feathers::drumParam(pad, DrumControl::Note), 40.0 + static_cast<double>(pad));
+	}
+	(void)f.panel.update();
+	f.panel.clickPadForTest(0);
+	feathers::UiNoteEvent e;
+	for (size_t pad = 0; pad < feathers::kMaxSounds; ++pad) {
+		CAPTURE(pad);
+		ui::PadPlayButton& play = f.panel.playButtonForTest(pad);
+		REQUIRE(play.isVisible());
+		// INSIDE ITS OWN TILE, clear of the tile's neighbours.
+		const visage::Bounds tile = f.panel.padBoundsForTest(pad);
+		CHECK(play.x() >= tile.x());
+		CHECK(play.right() <= tile.right() + 1.0e-3f);
+		CHECK(play.y() >= tile.y());
+		CHECK(play.bottom() <= tile.bottom() + 1.0e-3f);
+		play.onMouseDown().callback(at(5.0f, 5.0f));
+		REQUIRE(f.bridge.popNote(e));
+		CHECK(e.key == 40 + static_cast<int>(pad));
+		CHECK(e.on);
+		play.onMouseUp().callback(at(5.0f, 5.0f));
+		REQUIRE(f.bridge.popNote(e));
+		CHECK(e.key == 40 + static_cast<int>(pad));
+		CHECK_FALSE(e.on);
+		CHECK(f.selection.slot() == 0); // pressing it selected nothing
+	}
+	// A CLICK ON THE REST OF THE TILE STILL SELECTS: the tile's own area clear of the button.
+	const visage::Bounds tile = f.panel.padBoundsForTest(4);
+	f.panel.onMouseDown().callback(at(tile.x() + 6.0f, tile.y() + 6.0f));
+	CHECK(f.selection.slot() == 4);
+	// THE BUTTON'S HIT AREA IS NOT THE MUTE OR SOLO CHIPS' (they stand under the strip).
+	for (size_t pad = 0; pad < feathers::kMaxSounds; ++pad) {
+		const visage::Frame& play = f.panel.playButtonForTest(pad);
+		for (const visage::Frame* chip : { static_cast<const visage::Frame*>(&f.panel.muteChipForTest(pad)), static_cast<const visage::Frame*>(&f.panel.soloChipForTest(pad)) }) {
+			if (chip->isVisible()) {
+				CHECK_FALSE((play.x() < chip->right() && chip->x() < play.right() && play.y() < chip->bottom() && chip->y() < play.bottom()));
+			}
+		}
+	}
+}
+
+TEST_CASE("pad editor: a press ended by anything else sends the off: the mode switched, the button destroyed; selecting another pad does not end it") {
 	PadEditorFixture f(false);
 	feathers::UiNoteEvent e;
 	const auto expectPair = [&](int key) {
@@ -16455,11 +16529,12 @@ TEST_CASE("pad editor: a press ended by anything else sends the off: the pad swi
 		CHECK_FALSE(f.bridge.popNote(e));
 	};
 	const int noteA = static_cast<int>(f.bridge.value(static_cast<clap_id>(feathers::drumParam(0, DrumControl::Note))));
-	// THE PAD IS SWITCHED AWAY MID-PRESS.
+	// SELECTING ANOTHER PAD MID-PRESS DOES NOT END IT (the button is on the tile, not the editor): the release still sends the off.
 	f.panel.playButtonForTest(0).onMouseDown().callback(at(5.0f, 5.0f));
 	f.panel.clickPadForTest(3);
 	(void)f.panel.update();
-	CHECK_FALSE(f.panel.playButtonForTest(0).held());
+	CHECK(f.panel.playButtonForTest(0).held());
+	f.panel.playButtonForTest(0).onMouseUp().callback(at(5.0f, 5.0f));
 	expectPair(noteA);
 	// THE MODE IS SWITCHED TO PITCHED MID-PRESS.
 	f.panel.clickPadForTest(0);
@@ -16492,3 +16567,4 @@ TEST_CASE("pad editor: a press while the ring is full is dropped and counted, ow
 	play.onMouseUp().callback(at(5.0f, 5.0f)); // nothing held: nothing sent
 	CHECK(f.bridge.droppedNotes() == 1);
 }
+

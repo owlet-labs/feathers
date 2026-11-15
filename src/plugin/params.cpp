@@ -446,10 +446,10 @@ constexpr double lastIndexOf(std::span<const char* const> names) {
     {DP(slot, DrumControl::Lock), L NM " Lock", "Sound " L, 0.0, 1.0, 0.0, kStepped, ParamUnit::Integer, {}, false, \
      "Locked, a kit-wide edit on the Explore terrain leaves this layer where it stands; unlocked, the edit moves it with the rest. Perform's moves reach every layer either way.", \
      l KEY ".lock"}, \
-    {DP(slot, DrumControl::OffsetX), L NM " Offset X", "Sound " L, -2.0, 2.0, 0.0, kContinuous, ParamUnit::Percent, {}, false, \
-     "Where this layer stands across on the terrain: its own place, added to the kit's stance.", l KEY ".dx"}, \
-    {DP(slot, DrumControl::OffsetY), L NM " Offset Y", "Sound " L, -2.0, 2.0, 0.0, kContinuous, ParamUnit::Percent, {}, false, \
-     "Where this layer stands up or down on the terrain: its own place, added to the kit's stance.", l KEY ".dy"}, \
+    {DP(slot, DrumControl::OffsetX), L NM " Offset X", "Sound " L, -kDrumVectorReach, kDrumVectorReach, 0.0, kContinuous, ParamUnit::Percent, {}, true, \
+     "Where this layer stands across on the terrain: its own place, added to the kit's stance. It has no end.", l KEY ".dx", false, 1.0}, \
+    {DP(slot, DrumControl::OffsetY), L NM " Offset Y", "Sound " L, -kDrumVectorReach, kDrumVectorReach, 0.0, kContinuous, ParamUnit::Percent, {}, true, \
+     "Where this layer stands up or down on the terrain: its own place, added to the kit's stance. It has no end.", l KEY ".dy", false, 1.0}, \
     {DP(slot, DrumControl::PitchMode), L NM " Terrain Pitch", "Sound " L, 0.0, lastIndexOf(kDrumPitchModeNames), 0.0, kStepped, \
      ParamUnit::Choice, kDrumPitchModeNames, false, \
      "How the terrain's pitch reaches this layer: Free follows it, Semitones rounds it to whole semitones, Off ignores it.", \
@@ -1687,7 +1687,7 @@ void ParamSet::buildWindowPlan(ParamId id, WindowPlan& plan) const {
 	    || static_cast<size_t>(destination) >= kParamDestinationCount) {
 		return;
 	}
-	const double span = desc.max - desc.min;
+	const double span = modSpanOf(desc);
 	const CoreRange& range = coreRanges_[static_cast<size_t>(destination)];
 	const uint32_t count = range.count.load(std::memory_order_acquire);
 	const uint32_t first = range.first.load(std::memory_order_relaxed);
@@ -1886,7 +1886,7 @@ double ParamSet::resolvedRight(ParamId id) const {
 		return value;
 	}
 	const ParamDesc& desc = kParams[static_cast<size_t>(index)];
-	const double span = desc.max - desc.min;
+	const double span = modSpanOf(desc);
 	const CoreRange& range = coreRanges_[static_cast<size_t>(destination)];
 	const uint32_t count = range.count.load(std::memory_order_acquire);
 	const uint32_t first = range.first.load(std::memory_order_relaxed);
@@ -1923,7 +1923,7 @@ double ParamSet::perVoiceOffset(ParamId id, int voice) const {
 		return 0.0;
 	}
 	const ParamDesc& desc = kParams[static_cast<size_t>(index)];
-	const double span = desc.max - desc.min;
+	const double span = modSpanOf(desc);
 	const CoreRange& range = coreRanges_[static_cast<size_t>(destination)];
 	const uint32_t count = range.count.load(std::memory_order_acquire);
 	const uint32_t first = range.first.load(std::memory_order_relaxed);
@@ -2042,7 +2042,7 @@ double ParamSet::sourceOffsetAt(int index, int voice) const {
 	// distance on a knob that runs 0..1 and on one that runs -100..100 — which is what lets the ring on
 	// the face be drawn from the amount without asking what the parameter is.
 	const ParamDesc& desc = kParams[static_cast<size_t>(index)];
-	return pullAt(static_cast<size_t>(destination), desc.max - desc.min, voice);
+	return pullAt(static_cast<size_t>(destination), modSpanOf(desc), voice);
 }
 
 double ParamSet::pullAt(size_t destination, double span, int voice) const {
@@ -2090,7 +2090,7 @@ bool ParamSet::probeRoute(backplane::Destination destination, backplane::Source 
 		return false;
 	}
 	const ParamDesc& desc = kParams[static_cast<size_t>(index)];
-	const double span = desc.max - desc.min;
+	const double span = modSpanOf(desc);
 	const uint64_t key = (uint64_t { source.device } << 32) | source.index;
 	backplane::RouteProbe p;
 	p.span = span;

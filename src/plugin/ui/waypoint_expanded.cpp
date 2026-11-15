@@ -155,9 +155,10 @@ void WaypointExpanded::draw(visage::Canvas& canvas) {
 	// That reuse is what `settingsAtMorph` returning the filter's own type was for.
 	// THE ROW, READ THROUGH THE SEAM — `fieldsPresentAt`/`fieldAt` are the chain read without the
 	// container only the parameter road has. Same numbers, by construction.
-	wp::Row row {};
-	const size_t present = readModulatedRow(host_, device_, wp::kDescriptor, row);
-	const wp::Settings s = wp::stateOf(row, present);
+	wp::Row restRow {};
+	const wp::Settings s = wp::stateOf(restRow, readStoredRow(host_, device_, restRow));
+	wp::Row movedRow {};
+	const wp::Settings moved = wp::stateOf(movedRow, readModulatedRow(host_, device_, wp::kDescriptor, movedRow));
 
 	canvas.setColor(withAlpha(kLine, 0.25f));
 	canvas.rectangleBorder(box.x(), box.y(), box.width(), box.height(), 1.0f);
@@ -196,6 +197,11 @@ void WaypointExpanded::draw(visage::Canvas& canvas) {
 		drawCurve(fs, withAlpha(kLine, 0.35f), 1.0f);
 	}
 	drawCurve(wp::settingsAtMorph(s, static_cast<double>(s.morph)), withAlpha(kAccent, 0.9f), 2.0f);
+	// THE AS-MODULATED LIVE CURVE, over the rest one, in the modulation colour.
+	if (drawsModulatedShape(s, moved)) {
+		drawCurve(wp::settingsAtMorph(moved, static_cast<double>(moved.morph)), withAlpha(kModulation, 0.95f), 1.75f);
+		drawCurve(wp::settingsAtMorph(moved, static_cast<double>(moved.morph)), withAlpha(kModulatedDot, 0.9f), 0.8f); // the dot's core
+	}
 }
 
 std::vector<wp::Param> WaypointExpanded::addressedParamsForTest() const {

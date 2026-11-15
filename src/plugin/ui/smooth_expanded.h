@@ -92,10 +92,13 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] fx::smooth::Settings drawnFromForTest() const { return settings(); }
+	/// The stored row's settings (the rest shape) and whether a second, modulated shape is drawn over it.
+	[[nodiscard]] fx::smooth::Settings restFromForTest() const { return settings(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return model_.hasMod; }
 
 private:
 	[[nodiscard]] DeviceControl& control(fx::smooth::Param p) const;
-	[[nodiscard]] fx::smooth::Settings settings() const;
+	[[nodiscard]] fx::smooth::Settings settings(bool modulated = true) const;
 	[[nodiscard]] bool hasReadings() const;
 	void layOut();
 

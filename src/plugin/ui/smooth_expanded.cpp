@@ -78,7 +78,7 @@ SmoothExpanded::SmoothExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	         harmonic_.get(), harmonicPhase_.get(), gamma_.get(), twist_.get() }) {
 		addChild(f);
 	}
-	(void)model_.refresh(settings());
+	(void)model_.refresh(settings(), settings(false));
 }
 
 DeviceControl& SmoothExpanded::control(sm::Param p) const {
@@ -89,9 +89,9 @@ DeviceControl& SmoothExpanded::control(sm::Param p) const {
 	return *controls_[i];
 }
 
-sm::Settings SmoothExpanded::settings() const {
+sm::Settings SmoothExpanded::settings(bool modulated) const {
 	sm::Row row {};
-	const size_t present = readModulatedRow(host_, device_, sm::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, sm::kDescriptor, row) : readStoredRow(host_, device_, row);
 	return sm::stateOf(row, present).settings;
 }
 
@@ -170,7 +170,7 @@ bool SmoothExpanded::updateContent() {
 	if (!isVisible()) {
 		return false;
 	}
-	bool changed = model_.refresh(settings());
+	bool changed = model_.refresh(settings(), settings(false));
 	const bool has = hasReadings();
 	const float peak = has ? host_.readingAt(device_, static_cast<size_t>(sm::Reading::InPeak)) : 0.0f;
 	if (has != drawnHadPeak_ || (has && peak != drawnPeak_)) {

@@ -24,6 +24,7 @@
 #include "backplane/device_host.h"
 #include "mod/dahdsr/dahdsr.h"
 #include "plugin/ui/device_control.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/trig_pad.h"
@@ -396,12 +397,15 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] mod::dahdsr::Settings drawnFromForTest() const { return shownSettings(); }
+	[[nodiscard]] mod::dahdsr::Settings restFromForTest() const { return settings(); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(settings(), shownSettings()); }
 
 private:
 	/// **THE SUBSCRIPTIONS, HELD** — see `ui::Watch`. Declared last so they are released FIRST, into
 	/// lists that are still alive.
 	std::vector<Watch> watches_;
 	void rebuildCurve();
+	void rebuildCurveFor(const mod::dahdsr::Settings& s, bool modulatedPass);
 	void bindBox(size_t index);
 
 	backplane::DeviceHost& host_;
@@ -465,6 +469,9 @@ private:
 	/// plus the constructor's implicit false; it is not worth it for one caption.
 	bool labelledForLoop_ = false;
 	mod::dahdsr::Settings curveFrom_ {};
+	mod::dahdsr::Settings modFrom_ {};
+	std::vector<visage::Point> modCurve_;
+	bool hasMod_ = false;
 	size_t curveRebuilds_ = 0;
 	bool haveCurve_ = false;
 

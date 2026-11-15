@@ -24,6 +24,7 @@
 
 #include "dsp/random_events.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/modulated_shape.h"
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -50,6 +51,7 @@ NoisePlot::NoisePlot(backplane::DeviceHost& host, DeviceInstanceId id) : host_(h
 	controls_.resize(static_cast<size_t>(nz::Param::kCount));
 	spectrumDb_.assign(kPoints, 0.0);
 	filterDb_.assign(kPoints, 0.0);
+	modSpectrumDb_.assign(kPoints, 0.0);
 
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		DeviceControl& cutoff = control(nz::Param::Cutoff);
@@ -125,9 +127,9 @@ void NoisePlot::setModulation(ModState* mod, EditHistory* history) {
 	}
 }
 
-nz::Settings NoisePlot::settingsNow() const {
+nz::Settings NoisePlot::settingsNow(bool modulated) const {
 	nz::Row row {};
-	const size_t present = readModulatedRow(host_, device_, nz::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, nz::kDescriptor, row) : readStoredRow(host_, device_, row);
 	return nz::stateOf(row, present);
 }
 
@@ -178,7 +180,7 @@ void NoisePlot::place(const visage::MouseEvent& e) {
 	control(nz::Param::Resonance).setValue(static_cast<double>(yToResonance(e.position.y)));
 }
 
-void NoisePlot::recompute(const nz::Settings& s) {
+void NoisePlot::recompute(const nz::Settings& s, const nz::Settings& sMod) {
 	const double fs = rate();
 	nz::Tilt tilt;
 	tilt.design(s.colour, fs);
@@ -193,6 +195,20 @@ void NoisePlot::recompute(const nz::Settings& s) {
 		filterDb_[i] = 20.0 * log10Of(f);
 		spectrumDb_[i] = 20.0 * log10Of(f * t);
 	}
+	// THE AS-MODULATED SPECTRUM, only where modulation moved the plot.
+	hasMod_ = drawsModulatedShape(s, sMod);
+	if (hasMod_) {
+		nz::Tilt modTilt;
+		modTilt.design(sMod.colour, fs);
+		nz::Svf modSvf;
+		modSvf.design(sMod.filterType, std::exp2(static_cast<double>(sMod.cutoff)), sMod.resonance, fs);
+		const bool modNoise = sMod.source == static_cast<int>(nz::Source::Noise);
+		for (size_t i = 0; i < kPoints; ++i) {
+			const double hz = hzAt(i);
+			modSpectrumDb_[i] = 20.0 * log10Of(modSvf.gain(hz) * (modNoise ? modTilt.gain(hz) : 1.0));
+		}
+	}
+	drawnMod_ = sMod;
 
 	hitTimes_.clear();
 	hitValues_.clear();
@@ -217,13 +233,14 @@ void NoisePlot::recompute(const nz::Settings& s) {
 }
 
 bool NoisePlot::update() {
-	const nz::Settings s = settingsNow();
+	const nz::Settings s = settingsNow(false);
+	const nz::Settings sMod = settingsNow();
 	const device::ModDisplay shown = control(nz::Param::Cutoff).display();
 	const bool armed = shown.armed && shown.isDestination;
 	const float amount = armed ? shown.amount : 0.0f;
 	bool changed = false;
-	if (!computed_ || !(s == drawn_) || rate() != drawnRate_) {
-		recompute(s);
+	if (!computed_ || !(s == drawn_) || !(sMod == drawnMod_) || rate() != drawnRate_) {
+		recompute(s, sMod);
 		changed = true;
 	}
 	if (armed != drawnArmed_ || amount != drawnAmount_) {
@@ -272,6 +289,9 @@ void NoisePlot::draw(visage::Canvas& canvas) {
 	canvas.setColor(kAccent);
 	for (size_t i = 1; i < kPoints; ++i) {
 		canvas.segment(hzToX(hzAt(i - 1)), dbToY(spectrumDb_[i - 1]), hzToX(hzAt(i)), dbToY(spectrumDb_[i]), 1.5f, true);
+	}
+	if (hasMod_) {
+		strokeModulatedShape(canvas, kPoints, [&](size_t i) { return visage::Point { hzToX(hzAt(i)), dbToY(modSpectrumDb_[i]) }; });
 	}
 	// THE FILTER ALONE, under Noise, so the tilt and the filter read apart.
 	if (!impulses()) {

@@ -21,6 +21,7 @@
 #include "mod/mseg/mseg_types.h"
 #include "backplane/device_host.h"
 #include "plugin/ui/device_control.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/trig_pad.h"
@@ -256,10 +257,10 @@ public:
 	[[nodiscard]] visage::Point fromUnitForTest(float x, float y) const { return fromUnit(x, y); }
 
 	/// The polyline, in the unit box: x across, y in the shape's own range.
-	std::vector<std::pair<float, float>> curve() const;
+	std::vector<std::pair<float, float>> curve(bool modulated = false) const;
 	/// **AND THE RIGHT EAR'S** (backlog PA) — `mseg::polylineRight`, at the same xs; empty while Stereo Phase is 0, and
 	/// then nothing but the left ear is drawn.
-	std::vector<std::pair<float, float>> curveRight() const;
+	std::vector<std::pair<float, float>> curveRight(bool modulated = false) const;
 	/// HOW MANY STROKES THE LAST PAINT GAVE THE RIGHT EAR'S LINE — counted by the paint itself, so a case asks whether
 	/// the trace was drawn rather than whether it could have been (a repaint is not observable headlessly).
 	[[nodiscard]] size_t rightStrokesDrawnForTest() const noexcept { return rightStrokes_; }
@@ -303,6 +304,8 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] mod::mseg::Settings drawnFromForTest() const { return shownSettings(); }
+	[[nodiscard]] mod::mseg::Settings restFromForTest() const { return settings(); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(settings(), shownSettings()); }
 
 private:
 	/// **THE SUBSCRIPTIONS, HELD** — see `ui::Watch`. Declared last so they are released FIRST, into

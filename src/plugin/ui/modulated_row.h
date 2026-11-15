@@ -75,3 +75,27 @@ size_t readModulatedRow(const backplane::DeviceHost& host, DeviceInstanceId devi
 }
 
 } // namespace feathers::ui
+
+namespace feathers::ui {
+
+/// **THE STORED ROW** — what the knobs are set to, read without any modulation: the AT-REST shape of a plot, drawn beside
+/// the as-modulated one (`readModulatedRow`) while a route moves it. The same fill `readModulatedRow` does, minus the
+/// modulated road.
+template <class Row>
+size_t readStoredRow(const backplane::DeviceHost& host, DeviceInstanceId device, Row& row) {
+	const size_t present = std::min(host.fieldsPresentAt(device), row.size());
+	for (size_t i = 0; i < present; ++i) {
+		row[i] = host.fieldAt(device, i);
+	}
+	return present;
+}
+
+/// **A SECOND SHAPE IS DRAWN ONLY WHERE MODULATION MOVED THE PLOT**: the as-modulated settings differ from the stored
+/// ones. Unrouted, or routed with the modulator at its resting value, only the rest shape is drawn. One predicate for
+/// every plot, so the draw and the test seam cannot disagree.
+template <class Settings>
+bool drawsModulatedShape(const Settings& rest, const Settings& modulated) {
+	return !(rest == modulated);
+}
+
+}

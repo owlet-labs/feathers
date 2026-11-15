@@ -21,6 +21,7 @@
 
 #include "plugin/ui/env_card.h"
 #include "plugin/ui/modulated_row.h"
+#include "plugin/ui/modulated_shape.h"
 
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/celestial.h"
@@ -717,7 +718,17 @@ mod::dahdsr::Stage EnvCard::stageAtX(float x) const {
 }
 
 void EnvCard::rebuildCurve() {
-	const dsr::Settings s = shownSettings();
+	// THE REST SHAPE from the stored row (what the knobs are set to), and — where modulation moved it — the as-modulated
+	// one beside it, drawn over it in the modulation colour. The spans and stage edges are the rest shape's.
+	rebuildCurveFor(settings(), false);
+	modFrom_ = shownSettings();
+	hasMod_ = drawsModulatedShape(curveFrom_, modFrom_);
+	if (hasMod_) {
+		rebuildCurveFor(modFrom_, true);
+	}
+}
+
+void EnvCard::rebuildCurveFor(const dsr::Settings& s, bool modulatedPass) {
 
 	// THE SHAPE IS A LIST OF SEGMENTS, and a LOOPING envelope is a different list rather than the same
 	// list drawn differently.
@@ -817,24 +828,28 @@ void EnvCard::rebuildCurve() {
 	}
 
 	// EVERY SEGMENT'S SPAN, both cycles of a loop included — what the bend hit-tests and lights (backlog MN).
-	spans_.clear();
+	std::vector<Span> scratchSpans;
+	std::vector<Span>& spans = modulatedPass ? scratchSpans : spans_;
+	spans.clear();
 	for (size_t i = 0; i < segments.size(); ++i) {
-		spans_.push_back({ segments[i].stage, i == 0 ? 0.0f : endX[i - 1], endX[i] });
+		spans.push_back({ segments[i].stage, i == 0 ? 0.0f : endX[i - 1], endX[i] });
 	}
 
-	// stageEndX_ still answers per STAGE, for the cases and the marker. With two cycles a stage ends
+	// edgeOut still answers per STAGE, for the cases and the marker. With two cycles a stage ends
 	// twice; the LAST one is the answer, because that is where its region of the picture stops.
-	stageEndX_.fill(0.0f);
+	std::array<float, 6> scratchEnd {};
+	std::array<float, 6>& edgeOut = modulatedPass ? scratchEnd : stageEndX_;
+	edgeOut.fill(0.0f);
 	for (size_t i = 0; i < segments.size(); ++i) {
 		const int slot = stageSlot(segments[i].stage);
 		if (slot >= 0) {
-			stageEndX_[static_cast<size_t>(slot)] = endX[i];
+			edgeOut[static_cast<size_t>(slot)] = endX[i];
 		}
 	}
 	// A stage with no segment of its own inherits its predecessor's edge, so stageAtX stays monotone
 	// and a zero-width stage cannot swallow a coordinate.
-	for (size_t i = 1; i < stageEndX_.size(); ++i) {
-		stageEndX_[i] = std::max(stageEndX_[i], stageEndX_[i - 1]);
+	for (size_t i = 1; i < edgeOut.size(); ++i) {
+		edgeOut[i] = std::max(edgeOut[i], edgeOut[i - 1]);
 	}
 
 	const auto secondsOf = [&s](dsr::Stage st) -> double {
@@ -917,11 +932,12 @@ void EnvCard::rebuildCurve() {
 
 	// RESAMPLED INTO EACH SEGMENT'S OWN WIDTH. A segment with no samples — one the shape declared and
 	// the envelope skipped — takes no width either, so the polyline steps over it.
-	curve_.clear();
+	std::vector<visage::Point>& curve = modulatedPass ? modCurve_ : curve_;
+	curve.clear();
 	// SEEDED AT THE VALUE THE ENVELOPE RESTS AT, which is not always zero. dahdsr.cpp states the
 	// convention where it applies it: a bipolar envelope is 2v-1, so idle reads -1 rather than 0. A
 	// literal zero here drew a bipolar shape starting from its own midpoint.
-	curve_.push_back({ 0.0f, s.bipolar ? -1.0f : 0.0f });
+	curve.push_back({ 0.0f, s.bipolar ? -1.0f : 0.0f });
 	float x0 = 0.0f;
 	for (size_t i = 0; i < segments.size(); ++i) {
 		const float x1 = endX[i];
@@ -935,14 +951,17 @@ void EnvCard::rebuildCurve() {
 			const float t = static_cast<float>(p) / kPointsPerStage;
 			const auto index = std::min(run.size() - 1,
 			                            static_cast<size_t>(t * static_cast<float>(run.size() - 1)));
-			curve_.push_back({ x0 + t * (x1 - x0), run[index] });
+			curve.push_back({ x0 + t * (x1 - x0), run[index] });
 		}
 		x0 = x1;
 	}
-	if (curve_.size() < 2) {
-		curve_.push_back({ 1.0f, 0.0f });
+	if (curve.size() < 2) {
+		curve.push_back({ 1.0f, 0.0f });
 	}
 
+	if (modulatedPass) {
+		return;
+	}
 	curveFrom_ = s;
 	haveCurve_ = true;
 }
@@ -1070,7 +1089,7 @@ EnvCard::Marker EnvCard::marker() const {
 
 const std::vector<visage::Point>& EnvCard::curvePoints() const {
 	auto* self = const_cast<EnvCard*>(this);
-	if (!haveCurve_ || !(curveFrom_ == shownSettings())) {
+	if (!haveCurve_ || !(curveFrom_ == settings()) || !(modFrom_ == shownSettings())) {
 		++self->curveRebuilds_;
 		self->rebuildCurve();
 		self->followMode();
@@ -1255,6 +1274,10 @@ void EnvCard::drawContent(visage::Canvas& canvas) {
 		const visage::Point a = plot(points[i - 1]);
 		const visage::Point b = plot(points[i]);
 		canvas.segment(a.x, a.y, b.x, b.y, 1.6f, true);
+	}
+	// THE AS-MODULATED SHAPE, over the rest one, in the modulation colour (its own stage widths, so its own x).
+	if (hasMod_) {
+		strokeModulatedShape(canvas, modCurve_.size(), [&](size_t i) { return plot(modCurve_[i]); });
 	}
 	if (lit.kind != BendTarget::Kind::None) {
 		canvas.setColor(kAccent);

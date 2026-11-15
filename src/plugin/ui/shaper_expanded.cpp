@@ -253,13 +253,13 @@ void ShaperExpanded::showInSignal(bool live) {
 	}
 	inSignal_ = live;
 }
-shp::Settings ShaperExpanded::settings() const {
+shp::Settings ShaperExpanded::settings(bool modulated) const {
 	// THE ROW, READ THROUGH THE SEAM — the same change as the card's `settings()`, for the same reason:
 	// `fxChain()` reaches a `DeviceRow` through a type only the parameter road has, and
 	// `fieldsPresentAt`/`fieldAt` are that read in the vocabulary both hosts share. It is what lets the
 	// RACK open this panel at all.
 	shp::Row row {};
-	const size_t present = readModulatedRow(host_, device_, shp::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, shp::kDescriptor, row) : readStoredRow(host_, device_, row);
 	shp::Settings s = shp::stateOf(row, present);
 	// **AND THE FOLDED TRAVEL, WHICH `stateOf` CANNOT SEE.** It takes the params-only `Row` by design,
 	// so the eight floats past the params are invisible to it — and a surface that could not see them
@@ -393,12 +393,14 @@ bool ShaperExpanded::updateContent() {
 	float drive = 0.0f;
 	const bool metered = host_.drivePeakAt(device_, drive);
 	const bool driveMoved = metered != haveDrive_ || std::fabs(drive - drawnDrive_) > 0.0025f;
-	if (haveDrawn_ && now == drawnSettings_ && !driveMoved && !modeSwapped) {
+	const shp::Settings rest = settings(false);
+	if (haveDrawn_ && now == drawnSettings_ && rest == drawnRest_ && !driveMoved && !modeSwapped) {
 		return false;
 	}
 	drawnDrive_ = drive;
 	haveDrive_ = metered;
 	drawnSettings_ = now;
+	drawnRest_ = rest;
 	// THE SAME HOOK THE CARD USES, and for the same reason: this is the one place that knows the
 	// settings moved. See `ShaperCard::update`.
 	showInSignal(!now.linear());
@@ -494,7 +496,8 @@ void ShaperExpanded::draw(visage::Canvas& canvas) {
 	if (!host_.drivePeakAt(device_, drive)) {
 		drive = 0.0f;
 	}
-	drawShaperCurve(canvas, plotBounds(), s, false, drive);
+	const shp::Settings rest = settings(false);
+	drawShaperCurve(canvas, plotBounds(), rest, false, drive, drawsModulatedShape(rest, s) ? &s : nullptr);
 	canvas.setColor(withAlpha(kMuted, 0.8f));
 	canvas.text("Transfer curve", font(kKnobLabelSize), visage::Font::kLeft, plotBounds().x(),
 	            plotBounds().y() - 13.0f, kPlotWidth, 12.0f);

@@ -932,6 +932,17 @@ void FilterCard::drawContent(visage::Canvas& canvas) {
 			}
 			canvas.segment(from.x, from.y, to.x, to.y, restCurve ? 1.5f : 1.75f, true);
 		}
+		// A MONO MODULATED CURVE WEARS THE DOT'S COLOUR AS A CORE, as every plot's does (strokeModulatedShape).
+		if (planned.kind == CurveKind::Modulated) {
+			canvas.setColor(stated(withAlpha(kModulatedDot, 0.9f)));
+			for (size_t i = 1; i < points; ++i) {
+				const visage::Point from = pointAt(i - 1);
+				const visage::Point to = pointAt(i);
+				if (std::isfinite(from.y) && std::isfinite(to.y)) {
+					canvas.segment(from.x, from.y, to.x, to.y, 0.8f, true);
+				}
+			}
+		}
 	}
 	if (tooFew) {
 		return; // as the mono picture always has: no curve, and nothing drawn after it

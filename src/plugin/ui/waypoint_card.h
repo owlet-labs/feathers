@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/widget_registry.h"
 #include "fx/waypoint/waypoint_types.h"
 #include "backplane/device_host.h"
@@ -165,6 +166,8 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] fx::waypoint::Settings drawnFromForTest() const { return shownSettings(); }
+	[[nodiscard]] fx::waypoint::Settings restFromForTest() const { return shownSettings(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(shownSettings(false), shownSettings()); }
 
 private:
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt — one line, so the toggle, the
@@ -173,7 +176,7 @@ private:
 
 	[[nodiscard]] DeviceControl& control(fx::waypoint::Param p) const;
 	[[nodiscard]] fx::waypoint::Settings settings() const;
-	[[nodiscard]] fx::waypoint::Settings shownSettings() const;
+	[[nodiscard]] fx::waypoint::Settings shownSettings(bool modulated = true) const;
 
 	/// ASK FOR A FRAME WHEN THE PICTURE THIS CARD DRAWS HAS MOVED.
 	///
@@ -187,6 +190,7 @@ private:
 private:
 	/// WHAT THE PICTURE ON SCREEN WAS DRAWN FROM — compared against `settings()` once a tick.
 	mutable fx::waypoint::Settings drawnSettings_ {};
+	mutable fx::waypoint::Settings drawnRest_ {};
 	mutable bool haveDrawn_ = false;
 
 public:

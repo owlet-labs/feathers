@@ -57,7 +57,13 @@ struct SmoothPictureModel {
 	/// THE LEVEL THE BARS ARE MEASURED AT: a full voice, 1.0 = the reference's 0 dBFS.
 	static constexpr float kHarmonicLevel = 1.0f;
 
+	/// `drawn` is the AS-MODULATED settings; `rest` the stored ones. `picture`, `curve` and `harmonics` are the REST shape (what the
+	/// knobs are set to, drawn as ever); `modCurve` / `modHarmonics` are the modulated shape, drawn over it while `hasMod`.
 	fx::smooth::Settings drawn {};
+	fx::smooth::Settings rest {};
+	bool hasMod = false;
+	std::array<float, kCurvePoints> modCurve {};
+	std::array<float, fx::smooth::kHarmonicCount> modHarmonics {};
 	bool have = false;
 	fx::smooth::Picture picture {};
 	std::array<float, kCurvePoints> curve {};
@@ -69,7 +75,7 @@ struct SmoothPictureModel {
 	uint32_t computations = 0;
 
 	/// Recompute if `now` differs from what was drawn. Returns whether anything changed.
-	bool refresh(const fx::smooth::Settings& now);
+	bool refresh(const fx::smooth::Settings& now, const fx::smooth::Settings& restNow);
 
 	/// The input level at curve point `i`.
 	[[nodiscard]] static float inputAt(int i) {
@@ -148,6 +154,7 @@ public:
 	[[nodiscard]] static float fractionOfLevel(float level);
 
 	[[nodiscard]] visage::Bounds barBounds(int harmonic) const;
+	[[nodiscard]] visage::Bounds modBarBounds(int harmonic) const;
 	[[nodiscard]] visage::Bounds barsArea() const;
 
 private:

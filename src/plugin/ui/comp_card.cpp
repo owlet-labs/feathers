@@ -369,7 +369,8 @@ bool CompCard::updateContent() {
 		changed = true;
 	}
 	// THE TRANSFER PLOT (backlog QG) follows the knobs that shape it, whoever moved them.
-	if (const auto curve = curveFields(); curve != drawnCurve_) {
+	if (const auto curve = curveFields(), rest = curveFields(false); curve != drawnCurve_ || rest != drawnRestCurve_) {
+		drawnRestCurve_ = rest;
 		drawnCurve_ = curve;
 		changed = true;
 	}
@@ -419,11 +420,14 @@ void CompCard::drawContent(visage::Canvas& canvas) {
 // THE TRANSFER PLOT (backlog QG)                                                                  //
 //------------------------------------------------------------------------------------------------//
 
-float CompCard::field(cp::Param p) const {
+float CompCard::field(cp::Param p, bool modulated) const {
+	if (!modulated) {
+		return host_.fieldAt(device_, static_cast<size_t>(p));
+	}
 	return readModulatedField(host_, device_, cp::kDescriptor, static_cast<size_t>(p));
 }
 
-std::array<float, CompCard::kCurveFields> CompCard::curveFields() const {
+std::array<float, CompCard::kCurveFields> CompCard::curveFields(bool modulated) const {
 	std::array<float, kCurveFields> out {};
 	static constexpr std::array<cp::Param, kCurveFields> kFields { cp::Param::Mode,     cp::Param::Threshold, cp::Param::Ratio,
 		                                                           cp::Param::Knee,     cp::Param::CmpRatio,  cp::Param::CmpRange,
@@ -431,7 +435,7 @@ std::array<float, CompCard::kCurveFields> CompCard::curveFields() const {
 		                                                           cp::Param::Ceiling,  cp::Param::Topology,  cp::Param::CmpLink,
 		                                                           cp::Param::CmpRatio2 };
 	for (size_t i = 0; i < kFields.size(); ++i) {
-		out[i] = field(kFields[i]);
+		out[i] = field(kFields[i], modulated);
 	}
 	return out;
 }
@@ -450,8 +454,10 @@ visage::Frame& CompCard::laneChipForTest() const {
 	return *laneChip_;
 }
 
-comp_plot::Curves CompCard::curves() const {
-	return comp_plot::curvesOf([this](size_t i) { return readModulatedField(host_, device_, cp::kDescriptor, i); });
+comp_plot::Curves CompCard::curves(bool modulated) const {
+	return comp_plot::curvesOf([this, modulated](size_t i) {
+		return modulated ? readModulatedField(host_, device_, cp::kDescriptor, i) : host_.fieldAt(device_, i);
+	});
 }
 
 float CompCard::transferDb(float xDb) const {
@@ -469,7 +475,9 @@ void CompCard::drawTransfer(visage::Canvas& canvas) {
 		return;
 	}
 	const bool has = hasReadings();
-	comp_plot::paint(canvas, plot_, curves(), has, has ? reading(cp::Reading::InPeak) : 0.0f);
+	const comp_plot::Curves rest = curves(false);
+	const comp_plot::Curves moved = curves();
+	comp_plot::paint(canvas, plot_, rest, has, has ? reading(cp::Reading::InPeak) : 0.0f, drawsModulatedShape(rest.s, moved.s) ? &moved : nullptr);
 }
 
 std::vector<cp::Param> CompCard::addressedParamsForTest() const {

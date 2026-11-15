@@ -90,10 +90,12 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] fx::noise::Settings drawnFromForTest() const { return settingsNow(); }
+	[[nodiscard]] fx::noise::Settings restFromForTest() const { return settingsNow(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const noexcept { return hasMod_; }
 
 private:
 	[[nodiscard]] DeviceControl& control(fx::noise::Param p) const;
-	[[nodiscard]] fx::noise::Settings settingsNow() const;
+	[[nodiscard]] fx::noise::Settings settingsNow(bool modulated = true) const;
 	[[nodiscard]] double rate() const noexcept;
 	[[nodiscard]] double hzAt(size_t i) const noexcept;
 	[[nodiscard]] float hzToX(double hz) const noexcept;
@@ -104,7 +106,7 @@ private:
 	[[nodiscard]] float plotTop() const noexcept;
 	[[nodiscard]] float plotFoot() const noexcept;
 	[[nodiscard]] bool impulses() const noexcept;
-	void recompute(const fx::noise::Settings& s);
+	void recompute(const fx::noise::Settings& s, const fx::noise::Settings& sMod);
 	void place(const visage::MouseEvent& e);
 
 	backplane::DeviceHost& host_;
@@ -115,11 +117,15 @@ private:
 
 	std::vector<double> spectrumDb_;
 	std::vector<double> filterDb_;
+	/// THE AS-MODULATED SPECTRUM, drawn over the rest one while `hasMod_`.
+	std::vector<double> modSpectrumDb_;
+	bool hasMod_ = false;
 	std::vector<float> hitTimes_;
 	std::vector<float> hitValues_;
 
 	bool computed_ = false;
 	fx::noise::Settings drawn_ {};
+	fx::noise::Settings drawnMod_ {};
 	double drawnRate_ = 0.0;
 	bool drawnArmed_ = false;
 	float drawnAmount_ = 0.0f;

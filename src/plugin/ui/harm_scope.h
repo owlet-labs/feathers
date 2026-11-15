@@ -185,7 +185,7 @@ public:
 	/// EVERY ACTIVE PARTIAL, THE SELECTED ONE LAST (plus the selected one if it is off). `draw` walks this list and so does a case.
 	std::vector<PlanEntry> drawPlan() const;
 	/// A partial's own notch curve, in linear amplitude, as `curveGains` gives the selected one's.
-	size_t curveGainsFor(int partial, float* out, size_t capacity) const;
+	size_t curveGainsFor(int partial, float* out, size_t capacity, bool modulated = false) const;
 
 	/// Hand the scope the modulation state, exactly as a card hands it to a knob — and to EVERY
 	/// ADAPTER, not just the ones a widget holds. See `HarmCard::setModulation` for what the other
@@ -204,6 +204,10 @@ public:
 	/// promise about an assembly needs the assembly readable, and the only check that catches a
 	/// control the picture forgot is comparing it field for field against the device's own state.
 	fx::harm::Settings settingsForTest() const { return settings(); }
+	/// The picture is drawn from the STORED row (the rest shape); where modulation moved it, the modulated notch curves are
+	/// drawn over them. These two say what the second shape is drawn from, and whether it is drawn.
+	fx::harm::Settings modulatedSettingsForTest() const;
+	bool drawsModulatedShapeForTest() const;
 
 	/// The grip a drag is currently on, so a case can prove a press took hold rather than that a
 	/// value happened to move.
@@ -213,7 +217,7 @@ private:
 	/// The selected partial seen as the first (`partialSlice`).
 	fx::harm::Settings settings() const;
 	/// The whole device's settings, all four partials.
-	fx::harm::Settings fullSettings() const;
+	fx::harm::Settings fullSettings(bool modulated = false) const;
 	DeviceControl& control(fx::harm::Param param) const;
 	void commit(fx::harm::Param param, double value);
 	/// What a drag at `at` means for `grip`, in the control's own declared units.

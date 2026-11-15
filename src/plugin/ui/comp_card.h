@@ -22,6 +22,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/fx_card.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/comp_plot.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/switch_chip.h"
@@ -144,7 +145,10 @@ public:
 	[[nodiscard]] float transferDb(float xDb) const;
 	[[nodiscard]] visage::Bounds plotBounds() const { return plot_; }
 	/// THE PLOT'S CURVES, BY VALUE — the net, and each half's (`comp_plot::Curves`).
-	[[nodiscard]] comp_plot::Curves curves() const;
+	[[nodiscard]] comp_plot::Curves curves(bool modulated = true) const;
+	/// The stored row's curves (the rest shape): the plot draws them, and the modulated ones over them where they differ.
+	[[nodiscard]] comp_plot::Curves restCurves() const { return curves(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(curves(false).s, curves().s); }
 	[[nodiscard]] SegmentedControl* topologyForTest() const { return topology_.get(); }
 	/// THE LANE CHIP: the frame (its press opens the window) and what it says.
 	[[nodiscard]] visage::Frame& laneChipForTest() const;
@@ -177,8 +181,8 @@ private:
 	[[nodiscard]] size_t laneDevices() const;
 	[[nodiscard]] bool plotFits() const;
 	[[nodiscard]] std::string laneChipText() const;
-	[[nodiscard]] float field(fx::comp::Param p) const;
-	[[nodiscard]] std::array<float, kCurveFields> curveFields() const;
+	[[nodiscard]] float field(fx::comp::Param p, bool modulated = true) const;
+	[[nodiscard]] std::array<float, kCurveFields> curveFields(bool modulated = true) const;
 
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_ = kNoInstance;
@@ -205,6 +209,7 @@ private:
 	bool drawnSilent_ = false;
 	/// WHAT THE PLOT ON SCREEN WAS DRAWN FROM — `updateContent`'s contract, as for the meter.
 	std::array<float, kCurveFields> drawnCurve_ {};
+	std::array<float, kCurveFields> drawnRestCurve_ {};
 	visage::Bounds plot_ {};
 	std::unique_ptr<ValueBox> scHpf_;
 	std::unique_ptr<SwitchChip> stereo_;

@@ -207,12 +207,14 @@ bool ShaperCard::updateContent() {
 	float drive = 0.0f;
 	const bool metered = host_.drivePeakAt(device_, drive);
 	const bool driveMoved = metered != haveDrive_ || std::fabs(drive - drawnDrive_) > 0.0025f;
-	if (haveDrawn_ && now == drawnSettings_ && !driveMoved && !modeSwapped) {
+	const shp::Settings rest = settings(false);
+	if (haveDrawn_ && now == drawnSettings_ && rest == drawnRest_ && !driveMoved && !modeSwapped) {
 		return false;
 	}
 	drawnDrive_ = drive;
 	haveDrive_ = metered;
 	drawnSettings_ = now;
+	drawnRest_ = rest;
 	// **AND THE PANEL LEARNS WHETHER IT REACHES THE SOUND, HERE, because this is the one place that
 	// knows the settings CHANGED.** Setting it in `drawContent` would recompute it every frame for an
 	// answer that moves only when Knee crosses its threshold; setting it in the constructor would
@@ -223,7 +225,7 @@ bool ShaperCard::updateContent() {
 	return true;
 }
 
-shp::Settings ShaperCard::settings() const {
+shp::Settings ShaperCard::settings(bool modulated) const {
 	// THE ROW, READ THROUGH THE SEAM. This was `fxChain()` and then reaching into
 	// `chain.device[device_].row` — which is `DeviceHost::fieldsPresentAt` and `fieldAt` spelled the long
 	// way round, through a type only the parameter road has. Reading it through the seam is what lets
@@ -233,7 +235,7 @@ shp::Settings ShaperCard::settings() const {
 	// SAME NUMBERS, NOT MERELY SIMILAR ONES: `BridgeDeviceHost::fieldAt` reads the same `DeviceRow`
 	// this used to walk, so Feathers' behaviour is unchanged by construction rather than by testing.
 	shp::Row row {};
-	const size_t present = readModulatedRow(host_, device_, shp::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, shp::kDescriptor, row) : readStoredRow(host_, device_, row);
 	shp::Settings s = shp::stateOf(row, present);
 	// **AND THE FOLDED TRAVEL, WHICH `stateOf` CANNOT SEE.** It takes the params-only `Row` by design,
 	// so the eight floats past the params are invisible to it — and a surface that could not see them
@@ -577,7 +579,8 @@ void ShaperCard::drawContent(visage::Canvas& canvas) {
 	if (!host_.drivePeakAt(device_, drive)) {
 		drive = 0.0f;
 	}
-	drawShaperCurve(canvas, plotBounds(), s, false, drive);
+	const shp::Settings rest = settings(false);
+	drawShaperCurve(canvas, plotBounds(), rest, false, drive, drawsModulatedShape(rest, s) ? &s : nullptr);
 
 
 }

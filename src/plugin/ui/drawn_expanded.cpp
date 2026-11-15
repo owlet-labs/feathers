@@ -190,13 +190,13 @@ DeviceControl& DrawnExpanded::control(size_t index) const {
 	return *controls_[index];
 }
 
-dr::Settings DrawnExpanded::settings() const {
+dr::Settings DrawnExpanded::settings(bool modulated) const {
 	// THE ROW, READ THROUGH THE SEAM — the same change as the card's `settings()`, for the same reason:
 	// `fxChain()` reaches a `DeviceRow` through a type only the parameter road has, and
 	// `fieldsPresentAt`/`fieldAt` are that read in the vocabulary both hosts share. It is what lets the
 	// RACK open this panel at all.
 	dr::Row row {};
-	const size_t present = readModulatedRow(host_, device_, dr::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, dr::kDescriptor, row) : readStoredRow(host_, device_, row);
 	return dr::stateOf(row, present);
 }
 
@@ -821,23 +821,32 @@ void DrawnExpanded::drawPlane(visage::Canvas& canvas) {
 	// THE RESPONSE OF THE FRAME BEING EDITED, behind the handles — the curve the hand is drawing. Not
 	// the blended one the card shows: this panel edits ONE frame, and drawing the blend here would
 	// show a curve the handles do not control.
-	const dr::Settings s = settings();
-	const dr::Realised realised = dr::realise(dr::withGlobals(s.frame[frame_], s.cutoff, s.res));
-	canvas.setColor(withAlpha(kAccent, 0.35f));
-	float prevX = box.x();
-	float prevY = box.bottom();
-	for (size_t i = 0; i < kCurvePoints; ++i) {
-		const float t = static_cast<float>(i) / static_cast<float>(kCurvePoints - 1);
-		const float nu = std::exp2(dr::kMinAngleLog2 * (1.0f - t));
-		const float db = 20.0f * std::log10(std::max(dr::magnitudeAt(realised, nu), 1e-6f));
-		const float ty = std::clamp((kCurveTopDb - db) / (kCurveTopDb - kCurveBottomDb), 0.0f, 1.0f);
-		const float x = box.x() + box.width() * t;
-		const float y = box.y() + ty * box.height();
-		if (i > 0) {
-			canvas.segment(prevX, prevY, x, y, 1.5f, true);
+	const dr::Settings s = settings(false);
+	const dr::Settings moved = settings();
+	const auto drawResponse = [&](const dr::Settings& at, uint32_t colour, float width) {
+		const dr::Realised realised = dr::realise(dr::withGlobals(at.frame[frame_], at.cutoff, at.res));
+		canvas.setColor(colour);
+		float prevX = box.x();
+		float prevY = box.bottom();
+		for (size_t i = 0; i < kCurvePoints; ++i) {
+			const float t = static_cast<float>(i) / static_cast<float>(kCurvePoints - 1);
+			const float nu = std::exp2(dr::kMinAngleLog2 * (1.0f - t));
+			const float db = 20.0f * std::log10(std::max(dr::magnitudeAt(realised, nu), 1e-6f));
+			const float ty = std::clamp((kCurveTopDb - db) / (kCurveTopDb - kCurveBottomDb), 0.0f, 1.0f);
+			const float x = box.x() + box.width() * t;
+			const float y = box.y() + ty * box.height();
+			if (i > 0) {
+				canvas.segment(prevX, prevY, x, y, width, true);
+			}
+			prevX = x;
+			prevY = y;
 		}
-		prevX = x;
-		prevY = y;
+	};
+	drawResponse(s, withAlpha(kAccent, 0.35f), 1.5f);
+	// THE AS-MODULATED RESPONSE, over the rest one, in the modulation colour.
+	if (drawsModulatedShape(s, moved)) {
+		drawResponse(moved, withAlpha(kModulation, 0.9f), 1.75f);
+		drawResponse(moved, withAlpha(kModulatedDot, 0.9f), 0.8f); // the dot's core
 	}
 
 	// **THE UNIT CIRCLE, AS A LINE.** Everything below it is stable; a pole above it would not be, and

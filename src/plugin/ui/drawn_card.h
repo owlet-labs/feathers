@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/widget_registry.h"
 #include "fx/drawn/drawn_types.h"
 #include "backplane/device_host.h"
@@ -167,6 +168,8 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] fx::drawn::Settings drawnFromForTest() const { return shownSettings(); }
+	[[nodiscard]] fx::drawn::Settings restFromForTest() const { return shownSettings(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(shownSettings(false), shownSettings()); }
 
 private:
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt — one line, so the toggle, the
@@ -175,7 +178,7 @@ private:
 
 	[[nodiscard]] DeviceControl& control(fx::drawn::Param p) const;
 	[[nodiscard]] fx::drawn::Settings settings() const;
-	[[nodiscard]] fx::drawn::Settings shownSettings() const;
+	[[nodiscard]] fx::drawn::Settings shownSettings(bool modulated = true) const;
 
 	/// ASK FOR A FRAME WHEN THE CURVE THIS CARD DRAWS HAS MOVED.
 	///
@@ -189,6 +192,7 @@ private:
 private:
 	/// WHAT THE CURVE ON SCREEN WAS DRAWN FROM — compared against `settings()` once a tick.
 	mutable fx::drawn::Settings drawnSettings_ {};
+	mutable fx::drawn::Settings drawnRest_ {};
 	mutable bool haveDrawn_ = false;
 
 public:

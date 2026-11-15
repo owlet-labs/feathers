@@ -225,10 +225,12 @@ bool WaypointCard::updateContent() {
 		return false;
 	}
 	const wp::Settings now = shownSettings();
-	if (haveDrawn_ && now == drawnSettings_) {
+	const wp::Settings rest = shownSettings(false);
+	if (haveDrawn_ && now == drawnSettings_ && rest == drawnRest_) {
 		return false;
 	}
 	drawnSettings_ = now;
+	drawnRest_ = rest;
 	haveDrawn_ = true;
 	redraw();
 	return true;
@@ -245,10 +247,10 @@ wp::Settings WaypointCard::settings() const {
 	return wp::stateOf(row, present);
 }
 
-wp::Settings WaypointCard::shownSettings() const {
+wp::Settings WaypointCard::shownSettings(bool modulated) const {
 	// WHERE MODULATION LEFT THE ROW — what the curves are drawn from. `settings()` stays stored: the dots are the hand's controls.
 	wp::Row row {};
-	const size_t present = readModulatedRow(host_, device_, wp::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, wp::kDescriptor, row) : readStoredRow(host_, device_, row);
 	return wp::stateOf(row, present);
 }
 
@@ -458,7 +460,8 @@ void WaypointCard::drawPlane(visage::Canvas& canvas) {
 	if (box.width() <= 1.0f || box.height() <= 1.0f) {
 		return;
 	}
-	const wp::Settings s = shownSettings();
+	const wp::Settings s = shownSettings(false);
+	const wp::Settings moved = shownSettings();
 
 	canvas.setColor(withAlpha(kLine, 0.25f));
 	canvas.rectangleBorder(box.x(), box.y(), box.width(), box.height(), 1.0f);
@@ -503,6 +506,11 @@ void WaypointCard::drawPlane(visage::Canvas& canvas) {
 		drawCurve(fs, withAlpha(kLine, 0.35f), 1.0f);
 	}
 	drawCurve(wp::settingsAtMorph(s, static_cast<double>(s.morph)), withAlpha(kAccent, 0.9f), 2.0f);
+	// THE AS-MODULATED LIVE CURVE, over the rest one, in the modulation colour.
+	if (drawsModulatedShape(s, moved)) {
+		drawCurve(wp::settingsAtMorph(moved, static_cast<double>(moved.morph)), withAlpha(kModulation, 0.95f), 1.75f);
+		drawCurve(wp::settingsAtMorph(moved, static_cast<double>(moved.morph)), withAlpha(kModulatedDot, 0.9f), 0.8f); // the dot's core
+	}
 
 	// THE POLYLINE, IN INDEX ORDER, because that is the order Morph walks. It is a picture of the
 	// visiting order and nothing more: the morph does NOT travel it by arc length, so this line's

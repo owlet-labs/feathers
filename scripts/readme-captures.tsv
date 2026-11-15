@@ -22,10 +22,10 @@
 #   name  <slug>  <label>
 #       The label of a card in collage-all-cards.png.
 #
-# --- settings every Explore capture shares (the Additive engine; the still at x1/3, the rotate GIF at its own GIF_ZOOM) ---
+# --- settings every Explore capture shares (the Additive engine; the still at x1/3, the rotate GIF at its own GIF_ZOOM, x1/30) ---
 var	EXPLORE_ENGINE	5
 var	EXPLORE_ZOOM	0.3333333
-var	GIF_ZOOM	0.00909091
+var	GIF_ZOOM	0.0333333
 #
 # --- the numbered pictures ---------------------------------------------------------------------------------
 shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/wood_elves_pan.fpreset|--size|2400x1500|--play|3

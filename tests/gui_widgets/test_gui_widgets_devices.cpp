@@ -36498,6 +36498,14 @@ TEST_CASE("a chain strip's key box shows Any or the note name, edits the chain's
 	CHECK(r.rack().chainKey(0) == pr::kAnyKey);
 	CHECK(key.value() == 0.0);
 	CHECK(key.text() == "Any");
+	// WHERE IT SHOWS: a wide row has it; a narrow card strip leaves the room to the level pill's caption; the window's column has it.
+	strip.setBounds(0.0f, 0.0f, 600.0f, 20.0f);
+	CHECK(strip.keyBox().isVisible());
+	strip.setBounds(0.0f, 0.0f, 150.0f, 20.0f);
+	CHECK_FALSE(strip.keyBox().isVisible());
+	strip.setInRail(true);
+	strip.setBounds(0.0f, 0.0f, 40.0f, 160.0f);
+	CHECK(strip.columnLayoutForTest());
 	CHECK(strip.keyBox().isVisible());
 	// 61 is C#4 (a key plus one is the Choice's value).
 	key.setValue(62.0);

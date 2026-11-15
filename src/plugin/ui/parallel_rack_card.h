@@ -275,7 +275,8 @@ public:
 
 	static constexpr float kHeight = 20.0f;
 	static constexpr float kChipWidth = 22.0f;
-	static constexpr float kKeyWidth = 34.0f; ///< the key box: "Any" or "C#4"
+	static constexpr float kKeyWidth = 30.0f;
+	static constexpr float kPillMinWidth = 90.0f; ///< the least the level pill keeps, caption and readout, beside the key box ///< the key box: "Any" or "C#4"
 	static constexpr float kGap = 4.0f;
 	static constexpr float kSummaryWidth = 0.42f; ///< of the strip, when a summary is drawn
 	static constexpr float kMeterWidth = 1.0f; ///< MK's one-pixel line, run vertically

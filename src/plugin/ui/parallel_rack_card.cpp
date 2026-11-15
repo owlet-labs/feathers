@@ -571,6 +571,7 @@ void ChainStrip::resized() {
 		solo_->setBounds(cx, y + (kColumnRow - chipH) * 0.5f, kChipWidth, chipH);
 		y += kColumnRow;
 		const float keyW = std::min(kKeyWidth, w - 2.0f);
+		keyBox_->setVisible(true);
 		keyBox_->setBounds(std::round((w - keyW) * 0.5f), y + (kColumnRow - ValueBox::kCompactHeight) * 0.5f, keyW, ValueBox::kCompactHeight);
 		y += kColumnRow + kGap;
 		removeBounds_ = { cx, std::max(y, h - kColumnRow), kChipWidth, kColumnRow };
@@ -598,8 +599,13 @@ void ChainStrip::resized() {
 		right -= kChipWidth + kGap;
 		mute_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
 		right -= kChipWidth + kGap;
-		keyBox_->setBounds(right - kKeyWidth, std::max(0.0f, (h - ValueBox::kCompactHeight) * 0.5f), kKeyWidth, ValueBox::kCompactHeight);
-		right -= kKeyWidth + kGap;
+// THE KEY BOX ONLY WHERE THE PILL KEEPS ITS CAPTION: a card's narrow strip leaves it to the window's rail (the column has it).
+		const bool roomForKey = right - kKeyWidth - kGap - x >= kPillMinWidth;
+		keyBox_->setVisible(roomForKey);
+		if (roomForKey) {
+			keyBox_->setBounds(right - kKeyWidth, std::max(0.0f, (h - ValueBox::kCompactHeight) * 0.5f), kKeyWidth, ValueBox::kCompactHeight);
+			right -= kKeyWidth + kGap;
+		}
 		pill_->setBounds(x, 0.0f, std::max(0.0f, right - x), h);
 	}
 	meter_->setBounds(meterTrack_);

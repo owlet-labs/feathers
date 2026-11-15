@@ -42956,3 +42956,54 @@ TEST_CASE("ERODER's plot has a handle on the band's edge that drags Width across
 	CHECK_FALSE(plot->onMouseWheel().callback(wheel));
 	CHECK(eroField(d, ero::Param::Width) == 0.5f);
 }
+
+TEST_CASE("HARM's window: the harmonic box's popup is placed, centred and hangs off its box (moved from the card)") {
+	// THE CARD NO LONGER HAS A HARMONIC ROW (its partials' controls live in the window), so this check stands on the WINDOW'S row,
+	// which is the same widget with the same placement rules. The window is opened the way a hand opens it, through the lane.
+	using menu_check::checkHangsOff;
+	using menu_check::inTop;
+	using menu_check::newestPopup;
+	using menu_check::rowsOf;
+	ModFixture f;
+	auto* lane = findInTree<ui::FxLane>(f.root);
+	auto* overlay = f.gui.expandedForTest();
+	REQUIRE(lane != nullptr);
+	REQUIRE(overlay != nullptr);
+	namespace hrm = feathers::fx::harm;
+	const size_t slot = f.bridge.addFxDevice(hrm::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	f.bridge.refresh();
+	lane->resized();
+	lane->scrollCardIntoView(slot);
+	lane->resized();
+	(void)f.gui.canvasForTest()->setCollapsed(true);
+	lane->onExpandDevice(slot);
+	REQUIRE(overlay->open());
+	auto* panel = presentedAs<ui::HarmExpanded>(overlay);
+	REQUIRE(panel != nullptr);
+	ui::HarmonicRow* row = panel->harmonicRow();
+	REQUIRE(row != nullptr);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	const int count = static_cast<int>(hrm::kHarmonicCount);
+	for (const int want : { count / 2, 1, count - 2 }) {
+		CAPTURE(want);
+		f.deviceHost.setField(id, static_cast<size_t>(hrm::Param::Harmonic), static_cast<float>(want));
+		row->showMenu();
+		visage::PopupMenuFrame* popup = newestPopup(*row);
+		REQUIRE(popup != nullptr);
+		visage::PopupList* list = rowsOf(*popup);
+		REQUIRE(list != nullptr);
+		REQUIRE(list->numOptions() == count);
+		const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+		CHECK(placed.current == want);
+		CHECK(placed.scroll == doctest::Approx(list->yPosition()));
+		checkMarkedOnly(*list, want);
+		checkCentred(*list, want);
+		// AND STILL HANGING OFF ITS BOX: the scroll moved the rows inside the list, not the list.
+		checkHangsOff(placed, inTop(*row, row->boxBounds()));
+		ui::dismissMenuOf(*row);
+	}
+	row->showMenu();
+	checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*row, row->boxBounds()));
+	ui::dismissMenuOf(*row);
+}

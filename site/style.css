@@ -15,6 +15,7 @@
 	--code-bg: #0b101b;
 	--btn-ink: #020307;
 	--shot-glow: rgba(127, 168, 232, .16);
+	--shot-bg: #020307;
 	--disp: 'Bricolage Grotesque', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
 	--mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 	color-scheme: dark;
@@ -92,7 +93,7 @@ h1 { font-size: clamp(4rem, 17vw, 9.5rem); line-height: .9; letter-spacing: -.04
 .ctas { display: flex; flex-wrap: wrap; gap: 10px; }
 
 figure { margin: 0 0 2em; }
-figure img, .shot { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; background: #020307; }
+figure img, .shot { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--shot-bg); }
 figcaption { font-size: .92rem; color: var(--mute); margin-top: .7em; max-width: 46rem; }
 .hero figure { margin-top: 48px; }
 .hero .shot { box-shadow: 0 0 0 1px var(--line), 0 30px 80px -20px var(--shot-glow), 0 0 120px -30px var(--shot-glow); }

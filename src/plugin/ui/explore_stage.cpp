@@ -3341,7 +3341,11 @@ TerrainWindow ExploreStage::askForTerrain() {
 }
 
 double ExploreStage::defaultZoomFor(OscType engine) noexcept {
-	return engine == OscType::Additive ? 1.0 / 100.0 : kUnitZoom;
+	switch (engine) {
+	case OscType::Additive: return 1.0 / 100.0;
+	case OscType::V5: return 7.0; // the flagship (params.h OscType::V5), read zoomed in
+	default: return kUnitZoom;
+	}
 }
 
 bool ExploreStage::update() {

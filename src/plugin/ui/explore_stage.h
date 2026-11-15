@@ -570,7 +570,7 @@ public:
 	double zoom() const noexcept { return zoom_; }
 	void setZoom(double zoom);
 
-	/// **THE ZOOM A FRESH EXPLORE OPENS AT, PER ENGINE.** Additive's terrain is read from far out (x1/100); every other engine opens
+	/// **THE ZOOM A FRESH EXPLORE OPENS AT, PER ENGINE.** Additive's terrain is read from far out (x1/100), the V5 flagship's from close in (x7); every other engine opens
 	/// at x1. Zoom is a view scale held by this surface alone (it is not stored in a patch), so this is the whole of "default": a
 	/// new editor opens at it, and a switch of engine moves a zoom that is still the old engine's default to the new one's, while a
 	/// zoom the hand has moved is kept. (A hand that sets exactly the old default is indistinguishable from one that never touched it.)

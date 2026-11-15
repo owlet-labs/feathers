@@ -327,6 +327,7 @@ void Delay::reset() noexcept {
 	wowPhaseB_ = 0.0;
 	flutterPhaseA_ = 0.0;
 	flutterPhaseB_ = 0.0;
+	lastWobble_ = 0.0;
 	tapeLpL_ = 0.0f;
 	tapeLpR_ = 0.0f;
 	lastTapSeconds_ = 0.0;
@@ -1020,6 +1021,14 @@ void Delay::processStereo(float* left, float* right, int frames) noexcept {
 	const double wowIncB = kWowHzB / sampleRate_;
 	const double flutterIncA = kFlutterHzA / sampleRate_;
 	const double flutterIncB = kFlutterHzB / sampleRate_;
+	// THE WOBBLE'S FOUR SINES, ANCHORED AT THE EXACT PHASES ONCE A BLOCK (the phases advance only where a rotor does, so the
+	// two stay together through a block); `std::sin` per sample is what this replaced.
+	if (tape) {
+		tapeRotor_[0].anchor(wowPhaseA_, wowIncA);
+		tapeRotor_[1].anchor(wowPhaseB_, wowIncB);
+		tapeRotor_[2].anchor(flutterPhaseA_, flutterIncA);
+		tapeRotor_[3].anchor(flutterPhaseB_, flutterIncB);
+	}
 	// THE PER-PASS HF LOSS: a geometric sweep from wide open down to `kHfLossMinHz`, so equal knob
 	// travel is equal octaves. Zero outside Tape, which for a lowpass coefficient means wide open.
 	const float tapeLpCoeff =
@@ -1311,10 +1320,14 @@ void Delay::processStereo(float* left, float* right, int frames) noexcept {
 			// the same capstan. Decorrelating them would be wider and would not be tape.
 			double wobble = 0.0;
 			if (tape) {
-				wobble = wowFramesA * std::sin(kTwoPi * wowPhaseA_)
-				         + wowFramesB * std::sin(kTwoPi * wowPhaseB_)
-				         + flutterFramesA * std::sin(kTwoPi * flutterPhaseA_)
-				         + flutterFramesB * std::sin(kTwoPi * flutterPhaseB_);
+				wobble = wowFramesA * tapeRotor_[0].s
+				         + wowFramesB * tapeRotor_[1].s
+				         + flutterFramesA * tapeRotor_[2].s
+				         + flutterFramesB * tapeRotor_[3].s;
+				lastWobble_ = wobble;
+				for (WhineRotor& rotor : tapeRotor_) {
+					rotor.step();
+				}
 				wowPhaseA_ += wowIncA;
 				wowPhaseB_ += wowIncB;
 				flutterPhaseA_ += flutterIncA;

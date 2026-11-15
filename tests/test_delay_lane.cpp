@@ -1465,3 +1465,44 @@ TEST_CASE("FB (holder): a switched-off device switched back ON is heard again â€
 	const std::vector<float> on = dev.render(impulse(3 * kD + 10), 256);
 	CHECK(std::fabs(on[2 * kD] - 0.5f * fx::busutil::faderGain(0.4f)) <= 2.0e-3f);
 }
+
+TEST_CASE("Tape: the four-sine wobble is solved by phasors, and stays on the library sines to 1e-9 of a frame") {
+	// THE WOBBLE USED TO BE FOUR `std::sin` A SAMPLE; it is four rotating phasors re-anchored at each block's start. THE BOUND:
+	// the read position may differ from the library sines' by under 1e-9 of a FRAME (2e-14 s at 48 kHz; the deepest wobble
+	// here is about 70 frames, so under 1e-11 relative), which no ear or float can see. Restated independently from the
+	// declared deviations and the phases, one step back (the sample's own phases were advanced after it was read).
+	constexpr double kTwoPi = 6.283185307179586;
+	for (const int block : { 1024, 333, 64 }) {
+		CAPTURE(block);
+		dl::Settings s = wetOnly(0.0f);
+		s.mode = dl::Mode::Tape;
+		s.wow = 1.0f;
+		s.flutter = 1.0f;
+		s.saturation = 0.0f;
+		s.hfLoss = 0.0f;
+		auto d = fresh(s);
+		const double hz[4] = { dl::kWowHzA, dl::kWowHzB, dl::kFlutterHzA, dl::kFlutterHzB };
+		double amp[4];
+		for (int i = 0; i < 4; ++i) {
+			const double dev = 0.5 * static_cast<double>(i < 2 ? s.wow : s.flutter) * (i < 2 ? dl::kWowMaxDeviation : dl::kFlutterMaxDeviation);
+			amp[i] = dev * kRate / (kTwoPi * hz[i]);
+		}
+		std::vector<float> l(static_cast<size_t>(block), 0.1f);
+		std::vector<float> r(static_cast<size_t>(block), 0.1f);
+		double worst = 0.0;
+		double deepest = 0.0;
+		const int blocks = 20 * 48000 / block;
+		for (int b = 0; b < blocks; ++b) {
+			d->processStereo(l.data(), r.data(), block);
+			double exact = 0.0;
+			for (int i = 0; i < 4; ++i) {
+				exact += amp[i] * std::sin(kTwoPi * (d->tapePhaseForTest(i) - hz[i] / kRate));
+			}
+			worst = std::max(worst, std::fabs(d->tapeWobbleForTest() - exact));
+			deepest = std::max(deepest, std::fabs(exact));
+		}
+		CAPTURE(worst);
+		CHECK(deepest > 10.0); // the wobble is really moving (a stuck phasor would sit at zero or at its anchor)
+		CHECK(worst < 1.0e-9);
+	}
+}

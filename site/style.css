@@ -160,7 +160,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: s
 /* the Owlet Labs lockup: the Libra beside the name, the name in its own display face */
 .lockup { display: flex; align-items: center; gap: clamp(14px, 3vw, 32px); margin: 0 0 .3em; }
 .lockup .hero-libra { width: auto; height: clamp(64px, 13vw, 132px); margin: 0; flex: none; }
-.lockup h1 { margin: 0; font-family: 'Montserrat', var(--disp); font-weight: 400; font-variation-settings: normal; letter-spacing: -.01em; line-height: .95; font-size: clamp(2.6rem, 10vw, 6.2rem); }
+.lockup h1 { margin: 0; font-family: 'Montserrat', var(--disp); font-weight: 400; font-variation-settings: normal; letter-spacing: -.01em; line-height: .95; font-size: clamp(2rem, 9vw, 6.2rem); white-space: nowrap; }
 .labs .tag { margin-bottom: 0; }
 .projects { padding: 24px 0 0; }
 .proj { display: grid; gap: 20px; grid-template-columns: 1fr; max-width: 56rem; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); text-decoration: none; }

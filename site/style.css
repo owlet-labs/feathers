@@ -187,6 +187,11 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: s
 .card .cta { align-self: flex-start; margin-top: auto; }
 .proj .more { color: var(--accent); white-space: nowrap; }
 
+/* one display face for every page's headline and for the brand name */
+h1, .brand { font-family: 'Montserrat', var(--disp); font-variation-settings: normal; }
+h1 { font-weight: 400; letter-spacing: -.01em; }
+.brand { font-weight: 500; letter-spacing: .01em; }
+
 /* the lockup's subtitle, aligned under the name */
 .labs .tag.lab-sub { font-family: 'Montserrat', var(--disp); font-weight: 300; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); font-size: clamp(.85rem, 2vw, 1.1rem); margin: .6em 0 0; }
 

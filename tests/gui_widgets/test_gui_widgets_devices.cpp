@@ -42443,7 +42443,7 @@ TEST_CASE("ERODER's Comb picture is the eleven quantities Tone and Character tur
 	CHECK(before != d.card->plotForTest()->barsForTest());
 }
 
-TEST_CASE("ERODER's window knobs are watched for arm, all ten of them, once the window is given the panel state") {
+TEST_CASE("ERODER's window knobs are watched for arm, all twelve of them, once the window is given the panel state") {
 	// THE SUBSCRIPTION IS THE GLOW (the lane's own case says why, for the card): a knob the panel does not watch
 	// cannot be told to light. The lane sweep covers cards only, so the window says it here.
 	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
@@ -42455,8 +42455,8 @@ TEST_CASE("ERODER's window knobs are watched for arm, all ten of them, once the 
 	REQUIRE(mod != nullptr);
 	std::vector<ui::Knob*> knobs;
 	collectKnobs(view.get(), &knobs);
-	// Dust's eight, Mix, and the Comb's Cutoff.
-	REQUIRE(knobs.size() == 10);
+	// Dust's seven plain ones, Drive, HP Wet, Follow, Mix, and the Comb's Cutoff.
+	REQUIRE(knobs.size() == 12);
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -42833,4 +42833,187 @@ TEST_CASE("drum device window: the picture's handles are modulation targets: a h
 	pic.onMouseDrag().callback(at(h.x, h.y + 20.0f));
 	pic.onMouseUp().callback(at(h.x, h.y + 20.0f));
 	CHECK(u.field(ddv::Param::Level) < level0);
+}
+
+TEST_CASE("A pair cell holds its two cells side by side under one caption, and a flowed grid never parts them") {
+	visage::Frame a;
+	visage::Frame b;
+	ui::PairCell pair("Drive", a, b);
+	CHECK(a.parent() == &pair);
+	CHECK(b.parent() == &pair);
+	CHECK(pair.caption() == "Drive");
+	pair.setBounds(10.0f, 20.0f, 120.0f, ui::PairCell::heightFor(60.0f));
+	CHECK(a.x() == 0.0f);
+	CHECK(a.width() == 60.0f);
+	CHECK(b.x() == 60.0f);
+	CHECK(b.width() == 60.0f);
+	CHECK(a.y() == ui::PairCell::kCaptionHeight);
+	CHECK(a.height() == 60.0f);
+	CHECK(b.height() == 60.0f);
+	pair.setSplit(0.25f);
+	CHECK(a.width() == 30.0f);
+	CHECK(b.x() == 30.0f);
+	CHECK(b.width() == 90.0f);
+
+	// THE FLOW: three columns; two singles, then a pair that does not fit the one column left — it wraps whole.
+	visage::Frame one;
+	visage::Frame two;
+	visage::Frame hidden;
+	visage::Frame after;
+	const std::vector<ui::FlowItem> items {
+		{ &one, 1, true, 50.0f }, { &two, 1, true, 50.0f }, { &hidden, 1, false, 50.0f },
+		{ &pair, 2, true, 62.0f }, { &after, 1, true, 50.0f },
+	};
+	const float foot = ui::flowCells(items, 3, 100.0f, 10.0f, 40.0f, 6.0f);
+	CHECK(one.x() == 100.0f);
+	CHECK(two.x() == 140.0f);
+	CHECK(one.y() == 10.0f);
+	CHECK_FALSE(hidden.isVisible());
+	CHECK(pair.x() == 100.0f); // not the third column of the first row
+	CHECK(pair.y() == 10.0f + 50.0f + 6.0f);
+	CHECK(pair.width() == 80.0f);
+	CHECK(after.x() == 180.0f); // beside it, on the pair's row
+	CHECK(after.y() == pair.y());
+	CHECK(foot == pair.y() + 62.0f);
+	// AND A PAIR THAT FITS STAYS ON ITS ROW.
+	const std::vector<ui::FlowItem> fits { { &one, 1, true, 50.0f }, { &pair, 2, true, 62.0f } };
+	(void)ui::flowCells(fits, 3, 0.0f, 0.0f, 40.0f, 6.0f);
+	CHECK(pair.x() == 40.0f);
+	CHECK(pair.y() == 0.0f);
+}
+
+TEST_CASE("ERODER's Drive is one pair in the card and the window: the knob, and the Type whose Shape is its own control") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	(void)d.card->updateContent();
+	(void)panel->updateContent();
+
+	const auto check = [&](ui::PairCell* pair, ui::Knob* knob, ui::ModeValueCell* cell, float surfaceWidth) {
+		REQUIRE(pair != nullptr);
+		CHECK(pair->caption() == "Drive");
+		CHECK(knob->parent() == pair);
+		CHECK(cell->parent() == pair);
+		CHECK(pair->isVisible());
+		// SIDE BY SIDE, ON ONE LINE, inside the surface.
+		CHECK(knob->y() == cell->y());
+		CHECK(knob->right() <= cell->x());
+		CHECK(pair->x() >= 0.0f);
+		CHECK(pair->right() <= surfaceWidth);
+		// THE KNOB IS DRIVE; THE SELECTOR IS THE TYPE; THE BOX IS SHAPE, a control of its own — so a Shape at its end
+		// has nowhere to roll to.
+		REQUIRE(knob->control() != nullptr);
+		CHECK(knob->control()->desc().key == std::string_view("eroder_drive_amount"));
+		CHECK(cell->select().control().desc().key == std::string_view("eroder_drive_mode"));
+		CHECK(cell->activeParam() == static_cast<long>(eroAt(ero::Param::DriveShape)));
+		REQUIRE(cell->boxFor(eroAt(ero::Param::DriveShape)) != nullptr);
+		CHECK(cell->boxFor(eroAt(ero::Param::DriveShape))->isVisible());
+		CHECK(cell->boxFor(eroAt(ero::Param::DriveShape))->control().desc().key == std::string_view("eroder_drive_shape"));
+	};
+	check(d.card->drivePairForTest(), d.card->driveForTest(), d.card->driveCellForTest(), d.card->width());
+	check(panel->drivePairForTest(), panel->driveForTest(), panel->driveCellForTest(), panel->width());
+
+	// SHAPE AT ITS TOP, PUSHED FURTHER: it stays at the top and the Type is what it was.
+	d.set(eroAt(ero::Param::DriveMode), static_cast<float>(ero::DriveMode::Fold));
+	ui::ValueBox* shape = d.card->driveCellForTest()->boxFor(eroAt(ero::Param::DriveShape));
+	shape->control().beginGesture();
+	shape->control().setValue(1.0);
+	shape->control().setValue(1.7);
+	shape->control().endGesture();
+	CHECK(eroField(d, ero::Param::DriveShape) == 1.0f);
+	CHECK(eroField(d, ero::Param::DriveMode) == static_cast<float>(ero::DriveMode::Fold));
+	shape->control().beginGesture();
+	shape->control().setValue(-0.4);
+	shape->control().endGesture();
+	CHECK(eroField(d, ero::Param::DriveShape) == 0.0f);
+	CHECK(eroField(d, ero::Param::DriveMode) == static_cast<float>(ero::DriveMode::Fold));
+
+	// THE COMB HAS NO DRIVE: the pair goes with Dust's controls; Follow stays, in both.
+	CHECK(d.card->followForTest()->isVisible());
+	CHECK(panel->followForTest()->isVisible());
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	(void)d.card->updateContent();
+	(void)panel->updateContent();
+	CHECK_FALSE(d.card->drivePairForTest()->isVisible());
+	CHECK_FALSE(panel->drivePairForTest()->isVisible());
+	CHECK_FALSE(panel->hpWetForTest()->isVisible());
+	CHECK_FALSE(panel->subThruForTest()->isVisible());
+	CHECK(d.card->followForTest()->isVisible());
+	CHECK(panel->followForTest()->isVisible());
+}
+
+TEST_CASE("ERODER draws out of the signal what another control makes inert: Width with no noise, Sub Thru with no highpass") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	(void)d.card->updateContent();
+	(void)panel->updateContent();
+	// AS DECLARED: Source is all noise, HP Wet is at the bottom.
+	CHECK(d.card->widthForTest()->active());
+	CHECK(panel->widthForTest()->active());
+	CHECK_FALSE(panel->subThruForTest()->enabled());
+
+	d.set(eroAt(ero::Param::Source), 0.0f);
+	d.set(eroAt(ero::Param::HpWet), 9.0f);
+	(void)d.card->updateContent();
+	(void)panel->updateContent();
+	CHECK_FALSE(d.card->widthForTest()->active());
+	CHECK_FALSE(panel->widthForTest()->active());
+	CHECK(panel->subThruForTest()->enabled());
+
+	d.set(eroAt(ero::Param::Source), 0.01f);
+	(void)d.card->updateContent();
+	(void)panel->updateContent();
+	CHECK(d.card->widthForTest()->active());
+	CHECK(panel->widthForTest()->active());
+}
+
+TEST_CASE("ERODER's plot has a handle on the band's edge that drags Width across; with no noise there is no edge and the wheel turns nothing") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	d.set(eroAt(ero::Param::Freq), 9.0f);
+	d.set(eroAt(ero::Param::Amount), -11.0f);
+	d.set(eroAt(ero::Param::Width), 0.5f);
+	(void)d.card->updateContent();
+	ui::EroderPlot* plot = d.card->plotForTest();
+	// THE EDGE IS WHERE THE DRAWN BAND IS 12 dB DOWN, above its centre.
+	const double edgeHz = plot->edgeHzForTest();
+	CHECK(edgeHz > plot->bandForTest().freqHz);
+	CHECK(plot->bandDbForTest(edgeHz) == doctest::Approx(ui::EroderPlot::kEdgeDb).epsilon(1e-4));
+	CHECK(plot->edgeXForTest() == doctest::Approx(plot->hzToXForTest(edgeHz)));
+
+	// A PRESS ON IT AND A DRAG ACROSS: Width by the pointer's travel, Freq and Amount untouched.
+	const float span = (plot->hzToXForTest(ui::EroderPlot::kMaxHz) - plot->hzToXForTest(ui::EroderPlot::kMinHz))
+	                   * ui::EroderPlot::kWidthDragShare;
+	const float ex = plot->edgeXForTest();
+	const float ey = plot->edgeYForTest();
+	plot->onMouseDown().callback(at(ex, ey));
+	plot->onMouseDrag().callback(at(ex + 12.0f, ey - 9.0f));
+	CHECK(eroField(d, ero::Param::Width) == doctest::Approx(0.5 + 12.0 / static_cast<double>(span)).epsilon(1e-5));
+	plot->onMouseDrag().callback(at(ex - 6.0f, ey));
+	CHECK(eroField(d, ero::Param::Width) == doctest::Approx(0.5 - 6.0 / static_cast<double>(span)).epsilon(1e-5));
+	plot->onMouseDrag().callback(at(ex + 4000.0f, ey));
+	CHECK(eroField(d, ero::Param::Width) == 1.0f);
+	plot->onMouseUp().callback(at(ex, ey));
+	CHECK(eroField(d, ero::Param::Freq) == 9.0f);
+	CHECK(eroField(d, ero::Param::Amount) == -11.0f);
+
+	// ALL SINE: the same press is the band's own handle (it writes Freq), and the wheel is nobody's.
+	d.set(eroAt(ero::Param::Width), 0.5f);
+	d.set(eroAt(ero::Param::Source), 0.0f);
+	(void)d.card->updateContent();
+	plot->onMouseDown().callback(at(ex, ey));
+	plot->onMouseDrag().callback(at(ex + 12.0f, ey));
+	plot->onMouseUp().callback(at(ex + 12.0f, ey));
+	CHECK(eroField(d, ero::Param::Width) == 0.5f);
+	CHECK(eroField(d, ero::Param::Freq) != 9.0f);
+	visage::MouseEvent wheel = at(ex, ey);
+	wheel.wheel_delta_y = 1.0f;
+	CHECK_FALSE(plot->onMouseWheel().callback(wheel));
+	CHECK(eroField(d, ero::Param::Width) == 0.5f);
 }

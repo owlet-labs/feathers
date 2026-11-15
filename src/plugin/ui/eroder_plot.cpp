@@ -100,6 +100,18 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		DeviceControl& freq = control(ero::Param::Freq);
 		drag_.active = true;
 		drag_.startY = e.position.y;
+		// THE BAND'S EDGE: a press on it drags Width, across. Only where there is a band (Source above nothing).
+		// A press nearer the band's own handle is that handle's.
+		if (settings_.source > 0.0f && std::abs(e.position.x - edgeX()) <= kEdgeReach
+		    && std::abs(e.position.y - edgeY()) <= kEdgeReach
+		    && std::abs(e.position.x - edgeX()) < std::abs(e.position.x - hzToX(band_.freqHz))) {
+			drag_.width = true;
+			drag_.startX = e.position.x;
+			drag_.startWidth = static_cast<double>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::Width)));
+			control(ero::Param::Width).beginGesture();
+			update();
+			return;
+		}
 		if (!e.isAltDown() && freq.display().routable) {
 			drag_.route = true;
 			const float before = freq.display().amount;
@@ -119,6 +131,14 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 			return;
 		}
 		DeviceControl& freq = control(ero::Param::Freq);
+		if (drag_.width) {
+			// OUTWARD IS WIDER: the whole of Width to a fixed share of the plot, relative to the press.
+			const float span = std::max(1.0f, (hzToX(kMaxHz) - hzToX(kMinHz)) * kWidthDragShare);
+			control(ero::Param::Width)
+			    .setValue(std::clamp(drag_.startWidth + static_cast<double>((e.position.x - drag_.startX) / span), 0.0, 1.0));
+			update();
+			return;
+		}
 		if (drag_.route) {
 			const float travel = (drag_.startY - e.position.y) / Knob::kRouteDragRange;
 			freq.setAmount(std::clamp(drag_.anchor + travel, -device::kMaxAmount, device::kMaxAmount));
@@ -147,6 +167,12 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 			return;
 		}
 		DeviceControl& freq = control(ero::Param::Freq);
+		if (drag_.width) {
+			control(ero::Param::Width).endGesture();
+			drag_ = {};
+			update();
+			return;
+		}
 		if (drag_.route) {
 			// A route dragged back to nothing is not a route at 0%, it is gone.
 			const float amount = freq.display().amount;
@@ -165,7 +191,8 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		update();
 	};
 	onMouseWheel() = [this](const visage::MouseEvent& e) {
-		if (!dust_ || e.wheel_delta_y == 0.0f) {
+		// WIDTH IS THE NOISE BAND'S: with the shake all sine the wheel has nothing to turn.
+		if (!dust_ || e.wheel_delta_y == 0.0f || !(settings_.source > 0.0f)) {
 			return false;
 		}
 		DeviceControl& width = control(ero::Param::Width);
@@ -233,6 +260,33 @@ float EroderPlot::amountToY(double log2Seconds) const noexcept {
 	                                / (ero::kDustAmountLog2Max - ero::kDustAmountLog2Min),
 	                            0.0, 1.0);
 	return plotFoot() - static_cast<float>(t) * (plotFoot() - plotTop());
+}
+
+double EroderPlot::edgeHz() const noexcept {
+	// THE CURVE FALLS FROM ITS CENTRE: bisect, in octaves, for where it has fallen `kEdgeDb`.
+	double low = 0.0;
+	double high = 12.0;
+	for (int i = 0; i < 40; ++i) {
+		const double mid = 0.5 * (low + high);
+		if (bandDb(band_.freqHz * std::exp2(mid)) > kEdgeDb) {
+			low = mid;
+		}
+		else {
+			high = mid;
+		}
+	}
+	return band_.freqHz * std::exp2(0.5 * (low + high));
+}
+
+float EroderPlot::edgeX() const noexcept {
+	return hzToX(std::min(edgeHz(), kMaxHz));
+}
+
+float EroderPlot::edgeY() const noexcept {
+	const float foot = plotFoot();
+	const float rise = foot - amountToY(static_cast<double>(settings_.amount));
+	const auto level = static_cast<float>(std::clamp(1.0 - kEdgeDb / static_cast<double>(kBandFloorDb), 0.0, 1.0));
+	return foot - rise * level;
 }
 
 double EroderPlot::bandDb(double hz) const noexcept {
@@ -431,6 +485,12 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 	if (noise < 1.0f) {
 		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * (1.0f - noise)));
 		canvas.fill(handleX - 0.75f, handleY, 1.5f, std::max(0.0f, rise));
+	}
+
+	// THE BAND'S EDGE, where it is 12 dB down above its centre: the handle Width is dragged by.
+	if (noise > 0.0f && rise > 0.0f) {
+		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * noise));
+		canvas.circle(edgeX() - 2.5f, edgeY() - 2.5f, 5.0f);
 	}
 
 	// THE MODULATION REACH on Freq, along the foot, in octaves.

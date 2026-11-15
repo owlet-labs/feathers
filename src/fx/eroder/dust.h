@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "fx/dyn/oversampler.h"
 #include "fx/eroder/eroder_types.h"
 #include "fx/sklitter/ring.h"
 
@@ -48,6 +49,8 @@ public:
 	void reset() noexcept;
 
 	void setPitch(double semitones) noexcept { pitchSemitones_ = semitones; }
+	/// THE INPUT'S LEVEL AS THE DEVICE FOLLOWS IT, for the frames about to be processed (`Param::Follow`).
+	void setEnvelope(float envelope) noexcept { envelope_ = envelope; }
 
 	void process(const Settings& settings, float* left, float* right, int frames) noexcept;
 
@@ -67,11 +70,18 @@ public:
 	[[nodiscard]] float lastNoiseForTest(int channel) const noexcept { return lastNoise_[channel & 1]; }
 	[[nodiscard]] uint64_t holdsForTest() const noexcept { return holds_; }
 	[[nodiscard]] float smoothedAmountFramesForTest() const noexcept { return amountFrames_; }
+	[[nodiscard]] float followGainForTest() const noexcept { return followGain_; }
+	/// THE LEFT SIDE'S LAST FRAME AT THREE POINTS: what the head read, what the shaper made of it, and what was fed
+	/// back round the line.
+	[[nodiscard]] float lastReadForTest() const noexcept { return lastRead_; }
+	[[nodiscard]] float lastShapedForTest() const noexcept { return lastShaped_; }
+	[[nodiscard]] float lastTapForTest() const noexcept { return lastTap_; }
 
 private:
 	void tick(const Settings& settings) noexcept;
 	void renderChunk(float* left, float* right, int frames) noexcept;
 	[[nodiscard]] float nextNoise() noexcept;
+	void resetShaper() noexcept;
 
 	fx::sklitter::Ring line_ {};
 	double sampleRate_ = 48000.0;
@@ -107,6 +117,24 @@ private:
 	float feedbackL_ = 0.0f;
 	float feedbackR_ = 0.0f;
 
+	/// THE SHAPER'S RUNNING STATE: the oversampler round the curves, Crush's hold, Tube's offset.
+	dyn::Oversampler4x over_ {};
+	static constexpr int kQuietFrames = 256;
+	int quiet_ = 0;
+	double crushPhase_ = 0.0;
+	float crushL_ = 0.0f;
+	float crushR_ = 0.0f;
+	float dcL_ = 0.0f;
+	float dcR_ = 0.0f;
+	float dcCoefficient_ = 0.0f;
+	/// HP WET, a side, and the same filter on the dry for Sub Thru.
+	Band hpWet_[2] = {};
+	Band hpDry_[2] = {};
+	/// FOLLOW: the level handed in, and the gain made of it, glided.
+	float envelope_ = 0.0f;
+	float followGain_ = 1.0f;
+	float followSmoothing_ = 1.0f;
+
 	/// **NOT SAVED WITH THE PATCH, AND WHY**: a per-sample texture from a constant seed; the value it holds is
 	/// re-drawn at every zero crossing of the input, so nothing reached by it outlives a reload's first cycle.
 	uint32_t rng_ = kRngSeed;
@@ -115,6 +143,9 @@ private:
 	double lastDelayFrames_[2] = {};
 	float lastMod_[2] = {};
 	float lastNoise_[2] = {};
+	float lastRead_ = 0.0f;
+	float lastShaped_ = 0.0f;
+	float lastTap_ = 0.0f;
 	uint64_t holds_ = 0;
 };
 

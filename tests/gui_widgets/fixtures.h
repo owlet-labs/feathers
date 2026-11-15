@@ -105,6 +105,7 @@
 #include "plugin/ui/disperser_expanded.h"
 #include "plugin/ui/eroder_card.h"
 #include "plugin/ui/eroder_expanded.h"
+#include "plugin/ui/pair_cell.h"
 #include "plugin/ui/phaser_card.h"
 #include "plugin/ui/phaser_expanded.h"
 #include "plugin/ui/clip_card.h"

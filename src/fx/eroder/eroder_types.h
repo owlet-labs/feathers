@@ -235,8 +235,40 @@ inline constexpr double kDustFeedbackCeiling = 0.9;
 /// What the line may hold, in full scales: far above any signal, and a ceiling should the feedback ever run away.
 inline constexpr float kDustCeiling = 8.0f;
 
-/// Drive at the top is this many octaves of gain into the saturator — 24 dB.
-inline constexpr double kDustDriveOctaves = 4.0;
+/// **DRIVE IS A GAIN INTO A SHAPER, FROM UNDER ITS KNEE TO FAR OVER IT**: 2^-3 at the bottom of the knob, where a
+/// full-scale signal sits in the shaper's straight part and comes out as it went in, to 2^4 at the top. So the
+/// knob arrives at the sound rather than switching it on.
+inline constexpr double kDriveLog2Min = -3.0;
+inline constexpr double kDriveLog2Max = 4.0;
+/// THE LEVEL THE SHAPER'S MAKE-UP IS MATCHED AT: a sine of this peak comes out with the RMS it went in with, at any
+/// Drive, Type and Shape. Quieter detail comes up from there; louder peaks come down.
+inline constexpr double kDriveReferencePeak = 0.5;
+inline constexpr int kDriveReferencePoints = 128;
+/// Tube's bias, in the shaper's own units: a little at the bottom of Shape, well up the knee at the top.
+inline constexpr float kTubeBiasMin = 0.25f;
+inline constexpr float kTubeBiasSpan = 0.95f;
+/// Wreck's folder at the top of Shape reaches this many quarter-periods past its first peak.
+inline constexpr float kWreckFoldSpan = 4.0f;
+/// CRUSH HOLDS EACH SAMPLE FOR A TIME: nothing at the bottom of Drive, 1 / 500 s at the top, whatever the rate.
+inline constexpr double kCrushTopHz = 40000.0;
+inline constexpr double kCrushOctaves = 6.3;
+/// And rounds it to a step: 16 bits at the bottom of Shape, 3 at the top.
+inline constexpr double kCrushBitsFine = 16.0;
+inline constexpr double kCrushBitsCoarse = 3.0;
+/// Tube leaves a standing offset; this takes it back out.
+inline constexpr double kDriveDcHz = 10.0;
+
+/// **HP WET**, log2 hertz: the bottom of the range is "no filter at all", the top 8 kHz.
+inline constexpr double kHpWetLog2Min = 4.321928094887362;  // 20 Hz
+inline constexpr double kHpWetLog2Max = 12.965784284662087; // 8 kHz
+inline constexpr double kHpWetQ = 0.7071067811865476;
+
+/// **FOLLOW**: the input's peak, fast up and slow down, read against a level at which the shake is whole.
+inline constexpr double kFollowAttackSeconds = 0.002;
+inline constexpr double kFollowReleaseSeconds = 0.12;
+inline constexpr float kFollowFullAt = 0.5f; // -6 dB
+/// Below this the follower is nothing, so silence ends it.
+inline constexpr float kFollowFloor = 1.0e-9f;
 
 /// How long the Amount, the Resonance and the Mix take to arrive: a time, applied a sample at a time.
 inline constexpr double kDustSmoothingSeconds = 0.02;
@@ -256,6 +288,17 @@ inline constexpr uint32_t kModeBit(Mode m) {
 inline constexpr uint32_t kDustOnly = kModeBit(Mode::Dust);
 inline constexpr uint32_t kCombOnly = kModeBit(Mode::Comb);
 
+/// **WHAT DRIVE PUSHES THE SHAKEN SIGNAL INTO.** Each has one coordinate of its own (`Param::DriveShape`), which
+/// stops at its ends: a Shape never rolls into the next Type.
+///   Soft   a tanh; Shape hardens it into a flat clip
+///   Tube   a tanh read from a bias, so it leans; Shape is how far, so the even harmonics
+///   Fold   a wavefolder; Shape goes from a sine's rounded folds to a triangle's
+///   Crush  no shaper: Drive holds each sample longer, Shape rounds it coarser
+///   Wreck  a tanh into a folder, in series; Shape is how far past its first peak the folder is pushed, and the
+///          line's feedback is taken AFTER the pair, so Resonance rings through them
+enum class DriveMode : int { Soft, Tube, Fold, Crush, Wreck, kCount };
+inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Crush", "Wreck" };
+
 enum class Param : int {
 	Enabled,
 	Tone,      ///< phase into the tone bank: delay, feedback, clip, fold, highpass, triangle depth
@@ -272,8 +315,13 @@ enum class Param : int {
 	Grit,      ///< Dust: how much of the shake is a value held between the input's zero crossings
 	Stereo,    ///< Dust: one shake for both sides at 0, one each at 1
 	Resonance, ///< Dust: signed feedback round the line
-	Drive,     ///< Dust: gain into a saturator on the shaken signal
+	Drive,     ///< Dust: how hard the shaken signal is pushed into `DriveMode`'s shaper
 	Track,     ///< Dust: Freq follows the last note played
+	DriveMode, ///< Dust: which shaper
+	DriveShape, ///< Dust: the shaper's own coordinate, 0..1, stopping at both ends
+	HpWet,     ///< Dust: a highpass on the shaken signal, after the shaper; log2 hertz, the bottom is none
+	SubThru,   ///< Dust: what HP Wet took from the shaken signal is given back from the dry
+	Follow,    ///< both engines: how much of the shake rides the input's level
 
 	kCount,
 };
@@ -306,9 +354,17 @@ inline constexpr uint8_t kFaceOrder[] = {
 	static_cast<uint8_t>(Param::Width),     static_cast<uint8_t>(Param::Source),
 	static_cast<uint8_t>(Param::Grit),      static_cast<uint8_t>(Param::Stereo),
 	static_cast<uint8_t>(Param::Resonance), static_cast<uint8_t>(Param::Drive),
+	static_cast<uint8_t>(Param::DriveMode), static_cast<uint8_t>(Param::DriveShape),
+	static_cast<uint8_t>(Param::HpWet),     static_cast<uint8_t>(Param::SubThru),
+	static_cast<uint8_t>(Param::Follow),
 	static_cast<uint8_t>(Param::Tone),      static_cast<uint8_t>(Param::Character),
 	static_cast<uint8_t>(Param::Cutoff),    static_cast<uint8_t>(Param::Mix),
 	static_cast<uint8_t>(Param::Gamma),
+};
+
+inline constexpr device::RetiredKey kRetiredKeys[] = {
+	{ "eroder_drive", "2026-11-15",
+	  "a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)" },
 };
 
 inline constexpr fx::TenantTraits kTraits {
@@ -330,6 +386,7 @@ inline constexpr fx::TenantTraits kTraits {
 	// into its own number. Two rows either way, so the width costs nothing.
 	.faceColumns = 3,
 	.tags = kTags,
+	.retiredKeys = kRetiredKeys,
 	// ITS MIX IS ITS OWN (backlog NR, D2): named for the frame, made by the device, so the slot does not blend and a
 	// POST chain is a series insert after it.
 	.mixControl = static_cast<int>(Param::Mix),
@@ -554,7 +611,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .centred = true,
      // "RESONANCE" is as long as "CHARACTER", which touched its cell's border at three across.
      .shortName = "Reso"},
-    {.key = "eroder_drive", .name = "Eroder Drive",
+    {.key = "eroder_drive_amount", .name = "Eroder Drive",
      .min = 0.0,
      .max = 1.0,
      .def = 0.0,
@@ -563,8 +620,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Pushes the shaken signal into a saturator, up to 24 dB: quiet detail comes up and peaks "
-                "flatten",
+     .tooltip = "How hard the shaken signal is pushed into the shaper Type names. It comes in from nothing, "
+                "and the level is held about where it was. In Crush it is how long each sample is held",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -588,6 +645,95 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .centred = false,
      .shortName = nullptr,
      .stacked = true},
+    {.key = "eroder_drive_mode", .name = "Eroder Drive Type",
+     .min = 0.0,
+     .max = static_cast<double>(static_cast<int>(DriveMode::kCount) - 1),
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kDriveModeNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "What Drive pushes into: Soft rounds the peaks, Tube leans to one side, Fold turns them back "
+                "on themselves, Crush holds and rounds each sample, Wreck is a distortion into a folder with "
+                "the feedback running through both",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly,
+     .centred = false,
+     .shortName = "Type"},
+    {.key = "eroder_drive_shape", .name = "Eroder Drive Shape",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "The Type's own colour: Soft's knee from round to flat, Tube's lean, Fold's corners from "
+                "round to sharp, how coarsely Crush rounds, how far Wreck folds",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly,
+     .centred = false,
+     .shortName = "Shape"},
+    {.key = "eroder_hp_wet", .name = "Eroder HP Wet",
+     .min = kHpWetLog2Min,
+     .max = kHpWetLog2Max,
+     .def = kHpWetLog2Min,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogHertz,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Takes the low end out of the shaken signal, after the shaper. At the bottom there is no "
+                "filter",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly,
+     .centred = false,
+     .shortName = "HP Wet"},
+    {.key = "eroder_sub_thru", .name = "Eroder Sub Thru",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Gives back from the dry signal what HP Wet took away, so the low end stays whole at any Mix",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kDustOnly,
+     .centred = false,
+     .shortName = "Sub Thru",
+     .stacked = true},
+    {.key = "eroder_follow", .name = "Eroder Follow",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How much of the shaking rides the input's level: at the top it is still while nothing "
+                "plays and whole once the input reaches half scale",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -613,6 +759,11 @@ struct Settings {
 	float resonance = 0.0f;
 	float drive = 0.0f;
 	bool track = false;
+	DriveMode driveMode = DriveMode::Soft;
+	float driveShape = 0.0f;
+	float hpWet = static_cast<float>(kHpWetLog2Min); ///< log2 hertz; the bottom is no filter
+	bool subThru = false;
+	float follow = 0.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -709,15 +860,48 @@ struct DustDerived {
 	double feedback = 0.0;
 	double wetGain = 0.0; ///< Mix, with the comb's broadband gain taken back out
 	double dryGain = 1.0;
+	/// THE SHAPER (`shapeDrive`): off at the bottom of Drive, else the gain in and the make-up out.
+	bool driven = false;
+	DriveMode driveMode = DriveMode::Soft;
+	float driveShape = 0.0f;
 	double driveGain = 1.0;
 	double driveNorm = 1.0;
+	/// Crush: how many frames a sample is held, and the step it is rounded to.
+	double crushHoldFrames = 1.0;
+	double crushStep = 0.0;
+	/// HP WET, trapezoidal like the band: off at the bottom of the range.
+	bool hpOn = false;
+	double hpHz = 0.0;
+	double hpG = 0.0;
+	double hpK = 0.0;
+	double hpA1 = 1.0;
+	double hpA2 = 0.0;
+	double hpA3 = 0.0;
+	bool subThru = false;
+	float follow = 0.0f;
 	float source = 1.0f;
 	float grit = 0.0f;
 	float stereo = 1.0f;
 	float stereoNorm = 1.0f;
 };
 
-[[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate) noexcept;
+/// @param reuse  a result this one may take the shaper's make-up from when the Drive, Type and Shape are the same —
+///               the make-up is a quadrature, and the control path asks for it every block.
+[[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate,
+                                     const DustDerived* reuse = nullptr) noexcept;
+
+/// **THE SHAPER'S CURVE**, of a signal already multiplied by the Drive's gain: Soft, Tube, Fold and Wreck. Every one
+/// is 0 at 0 and straight through it. Crush is not a curve (it is the identity here).
+[[nodiscard]] float shapeDrive(DriveMode mode, float driven, float shape) noexcept;
+/// The make-up that follows it: `kDriveReferencePeak`'s sine out at the RMS it went in with.
+[[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape) noexcept;
+/// THE SHAPER'S GAIN FOR A VANISHING SIGNAL, make-up included: what a feedback through it is divided by, so a tail
+/// always dies.
+[[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept;
+/// The curve's slope at zero.
+[[nodiscard]] double driveSlope(DriveMode mode, float shape) noexcept;
+/// WHAT FOLLOW MAKES OF THE FOLLOWER: 1 at no Follow, the follower's reach of `kFollowFullAt` at all of it.
+[[nodiscard]] float followGain(float follow, float envelope) noexcept;
 
 //--------------------------------------------------------------------------------------------------//
 // WHAT THE DEVICE PUBLISHES FOR ITS CARD AND WINDOW.                                                 //

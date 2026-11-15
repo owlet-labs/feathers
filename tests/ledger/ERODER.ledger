@@ -15,5 +15,11 @@ param ERODER eroder_source unit=percent min=0 max=1 stepped=0
 param ERODER eroder_grit unit=percent min=0 max=1 stepped=0
 param ERODER eroder_stereo unit=percent min=0 max=1 stepped=0
 param ERODER eroder_resonance unit=percent min=-1 max=1 stepped=0
-param ERODER eroder_drive unit=percent min=0 max=1 stepped=0
+param ERODER eroder_drive_amount unit=percent min=0 max=1 stepped=0
 param ERODER eroder_track unit=choice choice=Off|On
+param ERODER eroder_drive_mode unit=choice choice=Soft|Tube|Fold|Crush|Wreck
+param ERODER eroder_drive_shape unit=percent min=0 max=1 stepped=0
+param ERODER eroder_hp_wet unit=log_hertz min=4.321928094887362 max=12.965784284662087 stepped=0
+param ERODER eroder_sub_thru unit=choice choice=Off|On
+param ERODER eroder_follow unit=percent min=0 max=1 stepped=0
+retired ERODER eroder_drive 2026-11-15 a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)

@@ -102,6 +102,13 @@ public:
 	/// The band's level at `hz`, dB below its peak: the engine's filter restated.
 	[[nodiscard]] double bandDbForTest(double hz) const noexcept { return bandDb(hz); }
 	[[nodiscard]] float handleXForTest() const noexcept { return hzToX(band_.freqHz); }
+	[[nodiscard]] float edgeXForTest() const noexcept { return edgeX(); }
+	[[nodiscard]] float edgeYForTest() const noexcept { return edgeY(); }
+	[[nodiscard]] double edgeHzForTest() const noexcept { return edgeHz(); }
+	/// How far from the edge handle a press still takes it, and the share of the plot's width that is all of Width.
+	static constexpr float kEdgeReach = 7.0f;
+	static constexpr float kWidthDragShare = 0.3f;
+	static constexpr double kEdgeDb = -12.0;
 	[[nodiscard]] float handleYForTest() const noexcept { return amountToY(static_cast<double>(settings_.amount)); }
 	[[nodiscard]] float hzToXForTest(double hz) const noexcept { return hzToX(hz); }
 	[[nodiscard]] double xToHzForTest(float x) const noexcept { return xToHz(x); }
@@ -135,6 +142,10 @@ private:
 	[[nodiscard]] float dbToY(float db) const noexcept;
 	[[nodiscard]] float amountToY(double log2Seconds) const noexcept;
 	[[nodiscard]] double bandDb(double hz) const noexcept;
+	/// WHERE THE BAND IS `kEdgeDb` DOWN ABOVE ITS CENTRE, and the handle drawn there.
+	[[nodiscard]] double edgeHz() const noexcept;
+	[[nodiscard]] float edgeX() const noexcept;
+	[[nodiscard]] float edgeY() const noexcept;
 	[[nodiscard]] double pitchRatio() const noexcept;
 	/// THE VALUE A PRESS AT `x` WRITES INTO FREQ: the pointer's hertz with the note's ratio taken back out.
 	[[nodiscard]] double freqValueForX(float x) const noexcept;
@@ -179,6 +190,9 @@ private:
 		float startY = 0.0f;
 		double startAmount = 0.0;
 		float anchor = 0.0f;
+		bool width = false;
+		float startX = 0.0f;
+		double startWidth = 0.0;
 	} drag_ {};
 };
 

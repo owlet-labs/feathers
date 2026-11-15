@@ -32,6 +32,8 @@
 #include "plugin/ui/pattern_expanded.h"
 #include "plugin/ui/owltt_expanded.h"
 #include "plugin/ui/disperser_expanded.h"
+#include "plugin/ui/eroder_expanded.h"
+#include "fx/eroder/eroder_types.h"
 #include "plugin/ui/phaser_expanded.h"
 #include "plugin/ui/drawn_expanded.h"
 #include "plugin/ui/eq_expanded.h"
@@ -117,6 +119,12 @@ const Entry* entryFor(const device::Descriptor& desc) {
 		  [](backplane::DeviceHost& h, ParamBridge*, WidgetRegistry& r, DeviceInstanceId s, Notifier* n)
 		      -> std::unique_ptr<ExpandedView> {
 			  return std::make_unique<DisperserExpanded>(h, r, s, n);
+		  } },
+		// THE ERODER'S WINDOW: the picture large with the read head under it, and every control of the running engine.
+		{ fx::eroder::kTraits.tag,
+		  [](backplane::DeviceHost& h, ParamBridge*, WidgetRegistry& r, DeviceInstanceId s, Notifier* n)
+		      -> std::unique_ptr<ExpandedView> {
+			  return std::make_unique<EroderExpanded>(h, r, s, n);
 		  } },
 		// THE PHASER/FLANGER'S WINDOW: the response large, the explore pad and Rotate, and what the card leaves out.
 		{ fx::phaser::kTraits.tag,

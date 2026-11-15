@@ -1,0 +1,557 @@
+/*
+ * Copyright © 2026 Owlet Records
+ *
+ * This file is part of Feathers.
+ *
+ * Feathers is free software: you can redistribute it and/or modify it under the
+ * terms of the GNU General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with this program.
+ * If not, see <https://www.gnu.org/licenses/>.
+ *
+ * --- Additional terms under GNU GPL version 3 section 7 ---
+ * This file requires preservation of the above copyright notice and author attribution
+ * in all copies or substantial portions of this file.
+ */
+
+
+#include "plugin/ui/eroder_plot.h"
+#include "plugin/ui/modulated_row.h"
+
+#include "plugin/ui/knob.h"
+#include "plugin/ui/theme.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <numbers>
+#include <string>
+
+namespace feathers::ui {
+
+namespace ero = fx::eroder;
+
+namespace {
+
+constexpr float kInsetCard = 4.0f;
+constexpr float kInsetLarge = 8.0f;
+constexpr float kFootHeight = 7.0f;
+constexpr float kHandleReach = 10.0f;
+
+constexpr const char* kCombTip =
+    "What Tone and Character are turning right now: six quantities ride Tone and five ride Character, each "
+    "swept at its own rate";
+constexpr const char* kHeadTip = "Where each side's read head has been behind the write, the last few seconds";
+
+struct BarName {
+	const char* brief;
+	const char* full;
+};
+constexpr std::array<BarName, EroderPlot::kBars> kBarNames { {
+	{ "Dly", "Delay" },
+	{ "Fb", "Fdbk" },
+	{ "Clp", "Clip" },
+	{ "Fld", "Fold" },
+	{ "HP", "HP" },
+	{ "Wob", "Wob" },
+	{ "Shk", "Shake" },
+	{ "Res", "Reso" },
+	{ "Hld", "Hold" },
+	{ "Wid", "Width" },
+	{ "Pit", "Pitch" },
+} };
+
+void formatHz(char* out, size_t size, double hz) {
+	if (hz >= 1000.0) {
+		std::snprintf(out, size, "%.1f kHz", hz / 1000.0);
+	}
+	else {
+		std::snprintf(out, size, "%.0f Hz", hz);
+	}
+}
+
+void formatSeconds(char* out, size_t size, double seconds) {
+	if (seconds >= 0.001) {
+		std::snprintf(out, size, "%.2f ms", seconds * 1000.0);
+	}
+	else {
+		std::snprintf(out, size, "%.3f ms", seconds * 1000.0);
+	}
+}
+
+} // namespace
+
+EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool large)
+    : host_(host), device_(id), large_(large) {
+	controls_.resize(static_cast<size_t>(ero::Param::kCount));
+	pre_.fill(feathers::dsp::kAnalyserFloorDb);
+	post_.fill(feathers::dsp::kAnalyserFloorDb);
+
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		drag_ = {};
+		if (!dust_ || e.position.y > plotFoot() + kFootHeight) {
+			return;
+		}
+		DeviceControl& freq = control(ero::Param::Freq);
+		drag_.active = true;
+		drag_.startY = e.position.y;
+		if (!e.isAltDown() && freq.display().routable) {
+			drag_.route = true;
+			const float before = freq.display().amount;
+			drag_.anchor = before != 0.0f ? before : Knob::kRouteSeedAmount;
+			freq.beginAmountGesture();
+			freq.setAmount(drag_.anchor);
+		}
+		else {
+			freq.beginGesture();
+			freq.setValue(freqValueForX(e.position.x));
+			drag_.startAmount = static_cast<double>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::Amount)));
+		}
+		update();
+	};
+	onMouseDrag() = [this](const visage::MouseEvent& e) {
+		if (!drag_.active) {
+			return;
+		}
+		DeviceControl& freq = control(ero::Param::Freq);
+		if (drag_.route) {
+			const float travel = (drag_.startY - e.position.y) / Knob::kRouteDragRange;
+			freq.setAmount(std::clamp(drag_.anchor + travel, -device::kMaxAmount, device::kMaxAmount));
+		}
+		else {
+			freq.setValue(freqValueForX(e.position.x));
+			// THE AMOUNT: up is more. Relative to the press, past a dead zone, the whole range to the plot's height.
+			const float rise = drag_.startY - e.position.y;
+			if (drag_.amountGesture || std::abs(rise) > kAmountDeadZone) {
+				DeviceControl& amount = control(ero::Param::Amount);
+				if (!drag_.amountGesture) {
+					drag_.amountGesture = true;
+					amount.beginGesture();
+				}
+				const float past = std::max(std::abs(rise) - kAmountDeadZone, 0.0f) * (rise < 0.0f ? -1.0f : 1.0f);
+				const double span = ero::kDustAmountLog2Max - ero::kDustAmountLog2Min;
+				const double perPixel = span / static_cast<double>(std::max(1.0f, plotFoot() - plotTop()));
+				amount.setValue(std::clamp(drag_.startAmount + static_cast<double>(past) * perPixel,
+				                           ero::kDustAmountLog2Min, ero::kDustAmountLog2Max));
+			}
+		}
+		update();
+	};
+	onMouseUp() = [this](const visage::MouseEvent&) {
+		if (!drag_.active) {
+			return;
+		}
+		DeviceControl& freq = control(ero::Param::Freq);
+		if (drag_.route) {
+			// A route dragged back to nothing is not a route at 0%, it is gone.
+			const float amount = freq.display().amount;
+			if (std::abs(amount) < 0.05f && amount != 0.0f) {
+				freq.setAmount(0.0f);
+			}
+			freq.endAmountGesture();
+		}
+		else {
+			freq.endGesture();
+			if (drag_.amountGesture) {
+				control(ero::Param::Amount).endGesture();
+			}
+		}
+		drag_ = {};
+		update();
+	};
+	onMouseWheel() = [this](const visage::MouseEvent& e) {
+		if (!dust_ || e.wheel_delta_y == 0.0f) {
+			return false;
+		}
+		DeviceControl& width = control(ero::Param::Width);
+		const double now = static_cast<double>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::Width)));
+		width.beginGesture();
+		width.setValue(std::clamp(now + (e.wheel_delta_y > 0.0f ? kWidthPerNotch : -kWidthPerNotch), 0.0, 1.0));
+		width.endGesture();
+		update();
+		return true;
+	};
+	// THE HOVER ROAD, LAST — `+=` beside the handlers above (`tooltip.h` says why it must come last).
+	installTooltipHover(*this, *this);
+}
+
+DeviceControl& EroderPlot::control(ero::Param p) const {
+	const auto index = static_cast<size_t>(p);
+	if (controls_[index] == nullptr) {
+		controls_[index] = std::make_unique<DeviceControl>(host_, device_, ero::kDescriptor, index, mod_, history_);
+	}
+	return *controls_[index];
+}
+
+void EroderPlot::offeredControls(std::vector<Offered>& out) const {
+	// A SIDE ROAD for each: x is Freq, y is Amount, the wheel is Width.
+	out.push_back({ &control(ero::Param::Freq), Road::Gesture });
+	out.push_back({ &control(ero::Param::Amount), Road::Gesture });
+	out.push_back({ &control(ero::Param::Width), Road::Gesture });
+}
+
+void EroderPlot::setModulation(ModState* mod, EditHistory* history) {
+	mod_ = mod;
+	history_ = history;
+	for (const ero::Param p : { ero::Param::Freq, ero::Param::Amount, ero::Param::Width }) {
+		control(p).setModulation(mod, history);
+	}
+}
+
+float EroderPlot::inset() const noexcept { return large_ ? kInsetLarge : kInsetCard; }
+
+float EroderPlot::plotTop() const noexcept { return inset() + (large_ ? 12.0f : 10.0f); }
+
+float EroderPlot::plotFoot() const noexcept {
+	return height() - inset() - kFootHeight - (large_ ? kHeadStripHeight + 6.0f : 0.0f);
+}
+
+float EroderPlot::hzToX(double hz) const noexcept {
+	const float w = std::max(1.0f, width() - 2.0f * inset());
+	const double t = std::log(std::max(hz, 1e-9) / kMinHz) / std::log(kMaxHz / kMinHz);
+	return inset() + static_cast<float>(std::clamp(t, 0.0, 1.0)) * w;
+}
+
+double EroderPlot::xToHz(float x) const noexcept {
+	const float w = std::max(1.0f, width() - 2.0f * inset());
+	const double t = std::clamp(static_cast<double>((x - inset()) / w), 0.0, 1.0);
+	return kMinHz * std::pow(kMaxHz / kMinHz, t);
+}
+
+float EroderPlot::dbToY(float db) const noexcept {
+	const float t = std::clamp((db - kFootDb) / (kTopDb - kFootDb), 0.0f, 1.0f);
+	return plotFoot() - t * (plotFoot() - plotTop());
+}
+
+float EroderPlot::amountToY(double log2Seconds) const noexcept {
+	const double t = std::clamp((log2Seconds - ero::kDustAmountLog2Min)
+	                                / (ero::kDustAmountLog2Max - ero::kDustAmountLog2Min),
+	                            0.0, 1.0);
+	return plotFoot() - static_cast<float>(t) * (plotFoot() - plotTop());
+}
+
+double EroderPlot::bandDb(double hz) const noexcept {
+	// THE ENGINE'S FILTER: a trapezoidal bandpass is its analogue prototype at a WARPED frequency, tan(pi f / rate)
+	// against the centre's own g. Two of them in series, so the level in dB is twice one's.
+	const double warped = std::tan(std::numbers::pi * std::min(hz, 0.499 * rate_) / rate_) / std::max(band_.g, 1e-12);
+	const double off = 1.0 - warped * warped;
+	const double damp = warped * band_.k;
+	const double one = damp * damp / std::max(off * off + damp * damp, 1e-30);
+	return 2.0 * 10.0 * std::log10(std::max(one, 1e-30));
+}
+
+double EroderPlot::pitchRatio() const noexcept {
+	return settings_.track ? std::exp2((pitch_ - ero::kReferenceNote) / 12.0) : 1.0;
+}
+
+double EroderPlot::freqValueForX(float x) const noexcept {
+	return std::clamp(std::log2(xToHz(x) / pitchRatio()), ero::kDustFreqLog2Min, ero::kDustFreqLog2Max);
+}
+
+bool EroderPlot::update() {
+	ero::Row row {};
+	const size_t present = readModulatedRow(host_, device_, ero::kDescriptor, row);
+	const size_t count = host_.readingCountAt(device_);
+	const bool publishing = count >= ero::kReadingCount;
+	const auto at = [&](ero::Reading r) { return host_.readingAt(device_, static_cast<size_t>(r)); };
+	const double pitch = publishing ? static_cast<double>(at(ero::Reading::PitchSemitones)) : ero::kReferenceNote;
+	const double rate = host_.sampleRate() > 0.0 ? host_.sampleRate() : 48000.0;
+
+	bool changed = false;
+	if (!computed_ || row != row_ || pitch != pitch_ || rate != rate_) {
+		row_ = row;
+		settings_ = ero::stateOf(row, present).settings;
+		dust_ = settings_.mode == ero::Mode::Dust;
+		pitch_ = pitch;
+		rate_ = rate;
+		band_ = ero::deriveDust(settings_, pitch_, rate_);
+		const ero::Phases phases = ero::phasesOf(static_cast<double>(settings_.tone),
+		                                         static_cast<double>(settings_.character),
+		                                         static_cast<double>(settings_.gamma));
+		comb_ = ero::derive(phases, static_cast<double>(settings_.cutoffOctaves), static_cast<double>(settings_.mix), pitch_,
+		                    rate_);
+		const ero::ToneBank tone = ero::evalToneBank(phases.tone);
+		const ero::CharacterBank ch = ero::evalCharacterBank(phases.character);
+		const auto floorAt = static_cast<float>(ero::kBankFloor);
+		bars_ = { std::max(floorAt, tone[0]), std::max(floorAt, tone[1]), tone[2], tone[3], tone[4], tone[5],
+			      std::max(static_cast<float>(ero::kDepthFloor), ch[0]), ch[1], ch[2], ch[3], ch[4] };
+		computed_ = true;
+		++recomputes_;
+		changed = true;
+	}
+
+	// THE SPECTRUM: a frame is taken only whole (the counter both ends) and only when it is a new one.
+	if (publishing) {
+		const float a = at(ero::Reading::FrameA);
+		if (a != frame_ && a > 0.0f) {
+			Bins pre {};
+			Bins post {};
+			for (size_t k = 0; k < pre.size(); ++k) {
+				pre[k] = host_.readingAt(device_, static_cast<size_t>(ero::Reading::PreFirst) + k);
+				post[k] = host_.readingAt(device_, static_cast<size_t>(ero::Reading::PostFirst) + k);
+			}
+			if (at(ero::Reading::FrameB) == a) {
+				pre_ = pre;
+				post_ = post;
+				frame_ = a;
+				haveSpectrum_ = true;
+				changed = true;
+			}
+		}
+		// THE HEAD: one column each time the device says something new.
+		if (large_) {
+			const Head now { at(ero::Reading::HeadNearL), at(ero::Reading::HeadFarL), at(ero::Reading::HeadNearR),
+				             at(ero::Reading::HeadFarR) };
+			if (!(now == lastHead_)) {
+				lastHead_ = now;
+				head_[headNext_] = now;
+				headNext_ = (headNext_ + 1) % head_.size();
+				headCount_ = std::min(headCount_ + 1, head_.size());
+				changed = true;
+			}
+		}
+	}
+
+	const device::ModDisplay shown = control(ero::Param::Freq).display();
+	const bool armed = shown.armed && shown.isDestination;
+	const float amount = armed ? shown.amount : 0.0f;
+	if (armed != armed_ || amount != routeAmount_ || shown.bipolar != routeBipolar_) {
+		armed_ = armed;
+		routeAmount_ = amount;
+		routeBipolar_ = shown.bipolar;
+		changed = true;
+	}
+	if (changed) {
+		redraw();
+	}
+	return changed;
+}
+
+const char* EroderPlot::tooltipAt(visage::Point p) const {
+	if (large_ && p.y > plotFoot() + kFootHeight) {
+		return kHeadTip;
+	}
+	if (!dust_) {
+		return kCombTip;
+	}
+	// THE HANDLE SPEAKS FOR THE AMOUNT, the rest of the axis for Freq.
+	if (std::abs(p.x - hzToX(band_.freqHz)) < kHandleReach
+	    && std::abs(p.y - amountToY(static_cast<double>(settings_.amount))) < kHandleReach) {
+		return tooltipOf(&control(ero::Param::Amount));
+	}
+	return tooltipOf(&control(ero::Param::Freq));
+}
+
+void EroderPlot::draw(visage::Canvas& canvas) {
+	canvas.setColor(kSurface);
+	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 5.0f);
+	canvas.setColor(kLine);
+	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 5.0f, 1.0f);
+	if (dust_) {
+		drawDust(canvas);
+	}
+	else {
+		drawComb(canvas);
+	}
+	if (large_) {
+		drawHead(canvas);
+	}
+}
+
+void EroderPlot::drawDust(visage::Canvas& canvas) {
+	const float w = width();
+	const float in = inset();
+	const float top = plotTop();
+	const float foot = plotFoot();
+
+	canvas.setColor(withAlpha(kLine, 0.6f));
+	for (const double hz : { 100.0, 1000.0, 10000.0 }) {
+		canvas.fill(hzToX(hz), in, 1.0f, foot - in);
+	}
+
+	// THE SPECTRA: what came in as a grey fill, what went out as a line, and the difference lit where it is more.
+	if (haveSpectrum_) {
+		const auto tilted = [](float db, double hz) {
+			return db + EroderPlot::kTiltDbPerOctave * static_cast<float>(std::log2(hz / 1000.0));
+		};
+		float prevX = 0.0f;
+		float prevY = 0.0f;
+		for (size_t k = 0; k < pre_.size(); ++k) {
+			const double hz = feathers::dsp::analyserBinHz(k);
+			const float x = hzToX(hz);
+			const float yIn = dbToY(tilted(pre_[k], hz));
+			const float yOut = dbToY(tilted(post_[k], hz));
+			const float step = std::max(1.5f, (w - 2.0f * in) / static_cast<float>(pre_.size()));
+			canvas.setColor(withAlpha(kMuted, 0.35f));
+			canvas.fill(x - step * 0.5f, yIn, step, std::max(0.0f, foot - yIn));
+			if (yOut < yIn) {
+				canvas.setColor(withAlpha(kAccent, 0.35f));
+				canvas.fill(x - step * 0.5f, yOut, step, yIn - yOut);
+			}
+			if (k > 0) {
+				canvas.setColor(withAlpha(kAccent, 0.9f));
+				canvas.segment(prevX, prevY, x, yOut, 1.2f, true);
+			}
+			prevX = x;
+			prevY = yOut;
+		}
+	}
+
+	// THE BAND: the noise half as its filter's curve, the sine half as a stem, each as strong as Source makes it.
+	const float handleX = hzToX(band_.freqHz);
+	const float handleY = amountToY(static_cast<double>(settings_.amount));
+	const float rise = foot - handleY;
+	const float noise = std::clamp(settings_.source, 0.0f, 1.0f);
+	if (noise > 0.0f && rise > 0.0f) {
+		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * noise));
+		const int points = large_ ? 220 : 96;
+		float prevX = 0.0f;
+		float prevY = 0.0f;
+		for (int i = 0; i <= points; ++i) {
+			const double hz = kMinHz * std::pow(kMaxHz / kMinHz, static_cast<double>(i) / points);
+			const auto level = static_cast<float>(std::clamp(1.0 - bandDb(hz) / static_cast<double>(kBandFloorDb), 0.0, 1.0));
+			const float x = hzToX(hz);
+			const float y = foot - rise * level;
+			if (i > 0) {
+				canvas.segment(prevX, prevY, x, y, 1.5f, true);
+			}
+			prevX = x;
+			prevY = y;
+		}
+	}
+	if (noise < 1.0f) {
+		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * (1.0f - noise)));
+		canvas.fill(handleX - 0.75f, handleY, 1.5f, std::max(0.0f, rise));
+	}
+
+	// THE MODULATION REACH on Freq, along the foot, in octaves.
+	if (armed_ && routeAmount_ != 0.0f) {
+		const auto& desc = ero::kParamDescs[static_cast<size_t>(ero::Param::Freq)];
+		const double octaves = static_cast<double>(routeAmount_) * (desc.max - desc.min);
+		const float xUp = hzToX(band_.freqHz * std::exp2(octaves));
+		const float xDown = routeBipolar_ ? hzToX(band_.freqHz * std::exp2(-octaves)) : handleX;
+		canvas.setColor(withAlpha(kModulation, 0.55f));
+		canvas.fill(std::min(xUp, xDown), foot + 1.0f, std::abs(xUp - xDown), 3.0f);
+	}
+
+	// THE HANDLE: a tick on the foot and the dot at the Amount's height — the note's colour while it is tracked.
+	canvas.setColor(settings_.track ? kValue : kInk);
+	canvas.fill(handleX - 3.0f, foot - 1.0f, 6.0f, 2.0f);
+	canvas.circle(handleX - 3.5f, handleY - 3.5f, 7.0f);
+
+	char text[40];
+	canvas.setColor(kMuted);
+	canvas.text(large_ ? "in (grey), out (line), and the band that shakes the head" : "spectrum + band",
+	            font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, in - 1.0f, w * 0.75f, 11.0f);
+	formatSeconds(text, sizeof(text), band_.amountSeconds);
+	canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, w - in - 70.0f, in - 1.0f, 68.0f, 11.0f);
+	if (large_) {
+		for (const double hz : { 100.0, 1000.0, 10000.0 }) {
+			formatHz(text, sizeof(text), hz);
+			canvas.text(text, font(kKnobReadoutSize), visage::Font::kCenter, hzToX(hz) - 30.0f, foot - 12.0f, 60.0f,
+			            11.0f);
+		}
+		formatHz(text, sizeof(text), band_.freqHz);
+		const bool left = handleX > w * 0.75f;
+		canvas.setColor(withAlpha(kSurface, 0.9f));
+		canvas.roundedRectangle(left ? handleX - 62.0f : handleX + 6.0f, handleY - 6.0f, 56.0f, 12.0f, 3.0f);
+		canvas.setColor(settings_.track ? kValue : kInk);
+		canvas.text(text, font(kKnobReadoutSize), visage::Font::kCenter, left ? handleX - 62.0f : handleX + 6.0f,
+		            handleY - 6.0f, 56.0f, 12.0f);
+	}
+	(void)top;
+}
+
+void EroderPlot::drawComb(visage::Canvas& canvas) {
+	const float w = width();
+	const float in = inset();
+	const float top = plotTop() + 2.0f;
+	const float labels = large_ ? 26.0f : 11.0f;
+	const float foot = plotFoot() + kFootHeight - labels;
+	const float groupGap = large_ ? 18.0f : 8.0f;
+	const float cell = (w - 2.0f * in - groupGap) / static_cast<float>(kBars);
+	const float barW = std::max(2.0f, cell * (large_ ? 0.5f : 0.6f));
+
+	canvas.setColor(kMuted);
+	canvas.text("TONE", font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, in - 1.0f, 60.0f, 11.0f);
+	canvas.text("CHARACTER", font(kKnobReadoutSize), visage::Font::kLeft,
+	            in + 2.0f + cell * static_cast<float>(kToneBars) + groupGap, in - 1.0f, 90.0f, 11.0f);
+
+	char text[32];
+	for (size_t i = 0; i < kBars; ++i) {
+		const float x = in + cell * static_cast<float>(i) + (i >= kToneBars ? groupGap : 0.0f);
+		const float barX = x + (cell - barW) * 0.5f;
+		const float tall = std::max(0.0f, foot - top);
+		canvas.setColor(withAlpha(kLine, 0.8f));
+		canvas.fill(barX, top, barW, tall);
+		canvas.setColor(i < kToneBars ? kAccent : kValue);
+		const float fill = tall * std::clamp(bars_[i], 0.0f, 1.0f);
+		canvas.fill(barX, foot - fill, barW, fill);
+		canvas.setColor(kMuted);
+		canvas.text(large_ ? kBarNames[i].full : kBarNames[i].brief, font(kKnobReadoutSize), visage::Font::kCenter,
+		            x - 8.0f, foot + 1.0f, cell + 16.0f, 11.0f);
+		if (large_) {
+			switch (i) {
+			case 0: formatSeconds(text, sizeof(text), comb_.baseDelaySeconds); break;
+			case 1: std::snprintf(text, sizeof(text), "%.0f%%", comb_.feedback * 100.0); break;
+			case 2: std::snprintf(text, sizeof(text), "x%.1f", comb_.clipIntensity > 0.0 ? comb_.clipDrive : 0.0); break;
+			case 3: std::snprintf(text, sizeof(text), "x%.1f", comb_.foldIntensity > 0.0 ? comb_.foldDrive : 0.0); break;
+			case 4: formatHz(text, sizeof(text), comb_.hpfHz); break;
+			case 5: std::snprintf(text, sizeof(text), "%.0f%%", comb_.triangleDepth * 100.0); break;
+			case 6: std::snprintf(text, sizeof(text), "%.0f%%", comb_.depth * 100.0); break;
+			case 7: std::snprintf(text, sizeof(text), "%.0f%%", comb_.resonance * 100.0); break;
+			case 8: std::snprintf(text, sizeof(text), "%.0f%%", comb_.shBlend * 100.0); break;
+			case 9: std::snprintf(text, sizeof(text), "%.0f%%", comb_.width * 100.0); break;
+			default: formatHz(text, sizeof(text), comb_.triangleHz); break;
+			}
+			canvas.setColor(kInk);
+			canvas.text(text, font(kKnobReadoutSize), visage::Font::kCenter, x - 8.0f, foot + 13.0f, cell + 16.0f,
+			            11.0f);
+		}
+	}
+}
+
+void EroderPlot::drawHead(visage::Canvas& canvas) {
+	const float in = inset();
+	const float stripTop = height() - in - kHeadStripHeight;
+	const float w = width() - 2.0f * in;
+	canvas.setColor(withAlpha(kLine, 0.8f));
+	canvas.fill(in, stripTop - 3.0f, w, 1.0f);
+	canvas.setColor(kMuted);
+	canvas.text("READ HEAD", font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, stripTop, 80.0f, 11.0f);
+	if (headCount_ == 0) {
+		canvas.text("no signal yet", font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, stripTop + 16.0f, 120.0f,
+		            11.0f);
+		return;
+	}
+	float farthest = 1.0e-6f;
+	for (size_t i = 0; i < headCount_; ++i) {
+		farthest = std::max({ farthest, head_[i].farL, head_[i].farR });
+	}
+	char text[32];
+	formatSeconds(text, sizeof(text), static_cast<double>(farthest));
+	canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, in + w - 72.0f, stripTop, 70.0f, 11.0f);
+	// TWO LANES, left over right; the newest column at the right edge.
+	const float laneTop = stripTop + 12.0f;
+	const float laneH = (kHeadStripHeight - 14.0f) * 0.5f;
+	const float column = w / static_cast<float>(head_.size());
+	for (size_t n = 0; n < headCount_; ++n) {
+		const Head& h = head_[(headNext_ + head_.size() - 1 - n) % head_.size()];
+		const float x = in + w - column * static_cast<float>(n + 1);
+		const auto lane = [&](float nearAt, float farAt, float y, uint32_t colour) {
+			const float lo = y + laneH * (1.0f - std::clamp(farAt / farthest, 0.0f, 1.0f));
+			const float hi = y + laneH * (1.0f - std::clamp(nearAt / farthest, 0.0f, 1.0f));
+			canvas.setColor(colour);
+			canvas.fill(x, lo, std::max(1.0f, column), std::max(1.0f, hi - lo));
+		};
+		lane(h.nearL, h.farL, laneTop, kModulationL);
+		lane(h.nearR, h.farR, laneTop + laneH + 1.0f, kModulationR);
+	}
+}
+
+} // namespace feathers::ui

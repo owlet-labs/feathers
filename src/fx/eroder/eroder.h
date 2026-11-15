@@ -22,11 +22,13 @@
 #pragma once
 
 #include "device/device.h"
+#include "dsp/analyser.h"
 #include "fx/eroder/dust.h"
 #include "fx/eroder/eroder_types.h"
 #include "fx/sklitter/ring.h"
 
 #include <cstddef>
+#include <array>
 #include <cstdint>
 
 namespace feathers::fx::eroder {
@@ -52,6 +54,9 @@ public:
 	void setNoteContext(const device::NoteContext& note) noexcept;
 
 	void processStereo(float* left, float* right, int frames) noexcept;
+
+	/// WHERE THE READINGS GO — see `Reading`. Installed once by the host that adopts the instance.
+	void setReadingsSink(device::ReadingsSink sink) noexcept { sink_ = sink; }
 
 	/// DECLARED. The stereo road over one buffer, yielding the LEFT channel because `processStereo`
 	/// stores right-then-left — and here it matters more than usual: the right channel's noise is
@@ -82,6 +87,9 @@ public:
 		}
 		return target_.mode == Mode::Dust ? dust_.holdsSound() : target_.mix > 0.0f && line_.holdsSound();
 	}
+	/// WHAT THE LAST PROCESS CALL PUBLISHED, in `Reading` order.
+	[[nodiscard]] const std::array<float, kReadingCount>& readingsForTest() const noexcept { return readings_; }
+	[[nodiscard]] int spectrumTransformsForTest() const noexcept { return analyser_.fftsForTest(); }
 	/// THE SECOND ENGINE, for its own seams.
 	[[nodiscard]] const Dust& dustForTest() const noexcept { return dust_; }
 	[[nodiscard]] float triangleForTest() const noexcept { return triValue_; }
@@ -95,11 +103,22 @@ private:
 	void tick(const Settings& settings) noexcept;
 	/// THE SAMPLE LOOP, over a run of frames that lies inside one control block.
 	void renderChunk(float* left, float* right, int frames) noexcept;
+	/// THE ENGINE THE SETTINGS ASK FOR, over a run of frames. What `processStereo` was before it listened.
+	void runEngine(const Settings& settings, float* left, float* right, int frames) noexcept;
+	void publishReadings() noexcept;
 
 	/// XORSHIFT32 → [-1, 1). The firmware's `getNoise()` is a full-range q31.
 	[[nodiscard]] float nextNoise() noexcept;
 
 	Dust dust_ {};
+
+	/// **THE SPECTRUM TAP**: what came in and what went out, on a grid of its own carried across calls, one transform
+	/// at most a control block (`dsp/analyser.h`). It listens and writes nothing back, so the sound does not know it
+	/// is there; its buffers are allocated in `prepare`.
+	dsp::Analyser<kControlFrames> analyser_ {};
+	int untilAnalyserStep_ = 0;
+	device::ReadingsSink sink_ {};
+	std::array<float, kReadingCount> readings_ {};
 	/// WHICH ENGINE THE LAST BLOCK RAN. A block that asks for the other one resets first.
 	Mode running_ = Mode::Dust;
 

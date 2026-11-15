@@ -25,6 +25,7 @@
 #include "fx/ring_lerp.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <numbers>
 
@@ -310,11 +311,15 @@ void Eroder::prepare(double sampleRate) {
 	line_.prepare(sampleRate_, kLineSeconds + 8.0 / sampleRate_);
 	tickStep_ = kReferenceRate / sampleRate_;
 	dust_.prepare(sampleRate_);
+	analyser_.prepare(sampleRate_);
 	reset();
 }
 
 void Eroder::reset() noexcept {
 	dust_.reset();
+	analyser_.reset();
+	untilAnalyserStep_ = 0;
+	readings_.fill(0.0f);
 	line_.reset();
 	writeCounter_ = 0;
 	placed_ = false;
@@ -369,6 +374,59 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 		reset();
 		running_ = s.mode;
 	}
+
+	// **THE ENGINE RUNS IN RUNS OF AT MOST A CONTROL BLOCK, WITH THE SPECTRUM TAP LISTENING EITHER SIDE.** The cuts
+	// are the tap's own grid, carried across calls; each engine keeps its own grid inside and comes out the same
+	// however it is cut (the partition cases), so the sound is what it was before anything listened.
+	float nearFrames[2] = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+	float farFrames[2] = { 0.0f, 0.0f };
+	int done = 0;
+	while (done < frames) {
+		if (untilAnalyserStep_ <= 0) {
+			analyser_.step();
+			untilAnalyserStep_ = kControlFrames;
+		}
+		const int take = std::min(frames - done, untilAnalyserStep_);
+		float dryL[kControlFrames];
+		float dryR[kControlFrames];
+		for (int i = 0; i < take; ++i) {
+			dryL[i] = left[done + i];
+			dryR[i] = right[done + i];
+		}
+		runEngine(s, left + done, right + done, take);
+		for (int i = 0; i < take; ++i) {
+			analyser_.push(dryL[i], dryR[i], left[done + i], right[done + i]);
+		}
+		for (int c = 0; c < 2; ++c) {
+			const auto at = static_cast<float>(s.mode == Mode::Dust ? dust_.lastDelayFramesForTest(c) : lastDelayFrames_[c]);
+			nearFrames[c] = std::min(nearFrames[c], at);
+			farFrames[c] = std::max(farFrames[c], at);
+		}
+		untilAnalyserStep_ -= take;
+		done += take;
+	}
+	const auto perFrame = static_cast<float>(1.0 / sampleRate_);
+	readings_[static_cast<size_t>(Reading::HeadNearL)] = nearFrames[0] * perFrame;
+	readings_[static_cast<size_t>(Reading::HeadFarL)] = farFrames[0] * perFrame;
+	readings_[static_cast<size_t>(Reading::HeadNearR)] = nearFrames[1] * perFrame;
+	readings_[static_cast<size_t>(Reading::HeadFarR)] = farFrames[1] * perFrame;
+	publishReadings();
+}
+
+void Eroder::publishReadings() noexcept {
+	readings_[static_cast<size_t>(Reading::FrameA)] = analyser_.frame();
+	for (size_t k = 0; k < dsp::kAnalyserBins; ++k) {
+		readings_[static_cast<size_t>(Reading::PreFirst) + k] = analyser_.pre()[k];
+		readings_[static_cast<size_t>(Reading::PostFirst) + k] = analyser_.post()[k];
+	}
+	readings_[static_cast<size_t>(Reading::FrameB)] = analyser_.frame();
+	readings_[static_cast<size_t>(Reading::PitchSemitones)] = static_cast<float>(pitchSemitones_);
+	if (sink_.publish != nullptr) {
+		sink_.publish(sink_.context, readings_.data(), readings_.size());
+	}
+}
+
+void Eroder::runEngine(const Settings& s, float* left, float* right, int frames) noexcept {
 	if (s.mode == Mode::Dust) {
 		// DUST RUNS AT ANY MIX, zero included: its line keeps filling, so bringing Mix back up reads the present.
 		dust_.process(s, left, right, frames);
@@ -614,6 +672,8 @@ const device::AudioOps kAudioOps {
         },
     .processMono =
         [](void* storage, float* mono, int frames) { asEroder(storage).processMono(mono, frames); },
+    .setReadingsSink =
+        [](void* storage, device::ReadingsSink sink) { asEroder(storage).setReadingsSink(sink); },
     .holdsTail = [](const void* storage) { return static_cast<const Eroder*>(storage)->holdsTail(); },
 };
 

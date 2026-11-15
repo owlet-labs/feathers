@@ -15,6 +15,8 @@ feathers_register_device(
 	DESCRIPTOR fx::eroder::kDescriptor
 	CODEC_INCLUDE device_codecs/eroder.h
 	CODEC_REG feathers::codecs::kEroderCodec
+	CARD_INCLUDE plugin/ui/cards/eroder.h
+	CARD_REG feathers::ui::cards::kEroderCard
 	INCLUDES fx/eroder/eroder_types.h
 	TARGET feathers-fx
 	SOURCES src/fx/eroder/eroder.cpp src/fx/eroder/dust.cpp)

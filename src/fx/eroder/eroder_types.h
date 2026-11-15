@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "dsp/analyser_bins.h"
 #include "device/registry.h"
 #include "fx/fx_tenant.h"
 
@@ -314,7 +315,7 @@ inline constexpr fx::TenantTraits kTraits {
 	.tag = "ERODER",
 	.name = "Eroder",
 	.hasCard = true,
-	.hasExpanded = false,
+	.hasExpanded = true,
 	// ON THE BUS, FOLLOWING THE LAST NOTE — by design, and the firmware's own arrangement
 	// (`getLastNoteCode()`).
 	.perVoiceControl = -1,
@@ -717,6 +718,33 @@ struct DustDerived {
 };
 
 [[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate) noexcept;
+
+//--------------------------------------------------------------------------------------------------//
+// WHAT THE DEVICE PUBLISHES FOR ITS CARD AND WINDOW.                                                 //
+//--------------------------------------------------------------------------------------------------//
+
+/// **FACTS ONLY THE RUNNING DEVICE HAS**, once per process call, in this order:
+///   - THE SPECTRUM FRAME, the EQ's layout (`dsp/analyser.h`): a counter, 96 bins of what came in, 96 of what went
+///     out (dB, power density), and the counter again. The readings store has no seqlock, so a reader that finds the
+///     two counters different has read a frame half-written and drops it;
+///   - THE NOTE the bus last played, in semitones: what Track and the Comb's tuning follow;
+///   - WHERE THE READ HEAD HAS BEEN during the call, each side: the nearest and the farthest it sat behind the write,
+///     in seconds, sampled once a control block. Both engines publish it.
+/// Everything else either surface draws (the band, the Comb's eleven quantities) is a pure function of the controls
+/// and the note: `deriveDust` and `derive`, run where they are drawn.
+enum class Reading : size_t {
+	FrameA = 0,
+	PreFirst = 1,
+	PostFirst = 1 + dsp::kAnalyserBins,
+	FrameB = 1 + 2 * dsp::kAnalyserBins,
+	PitchSemitones,
+	HeadNearL,
+	HeadFarL,
+	HeadNearR,
+	HeadFarR,
+	kCount,
+};
+inline constexpr size_t kReadingCount = static_cast<size_t>(Reading::kCount);
 
 extern const device::AudioOps kAudioOps;
 

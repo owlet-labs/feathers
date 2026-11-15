@@ -27,10 +27,12 @@
 #include "fx/eroder/eroder_types.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <numbers>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // **A PORT IS A CLAIM ABOUT ANOTHER PROGRAM, SO THIS SUITE RESTATES THAT PROGRAM.** "It sounds like
@@ -2080,3 +2082,191 @@ TEST_CASE("Dust: the mono road is the LEFT channel") {
 	CHECK(m == l);
 	CHECK(l != r);
 }
+
+//--------------------------------------------------------------------------------------------------//
+// WHAT THE DEVICE PUBLISHES FOR ITS SURFACES.                                                        //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A sine at `hz`, amplitude `level`, both sides, through a prepared device in blocks of `block`; returns the readings
+/// the device handed its sink on the last call.
+struct Heard {
+	std::array<float, kReadingCount> values {};
+	int calls = 0;
+	size_t count = 0;
+};
+
+Heard listen(Eroder& e, double rate, double hz, float level, int frames, int block = 256) {
+	Heard heard;
+	e.setReadingsSink({ &heard, [](void* context, const float* values, size_t count) {
+		                   auto& h = *static_cast<Heard*>(context);
+		                   h.count = count;
+		                   ++h.calls;
+		                   std::copy(values, values + std::min(count, h.values.size()), h.values.begin());
+	                   } });
+	std::vector<float> l(static_cast<size_t>(block));
+	std::vector<float> r(static_cast<size_t>(block));
+	for (int done = 0; done < frames; done += block) {
+		for (int i = 0; i < block; ++i) {
+			const double t = static_cast<double>(done + i) / rate;
+			l[static_cast<size_t>(i)] = r[static_cast<size_t>(i)] = level * static_cast<float>(std::sin(2.0 * std::numbers::pi * hz * t));
+		}
+		e.processStereo(l.data(), r.data(), block);
+	}
+	return heard;
+}
+
+size_t binOf(double hz) {
+	size_t best = 0;
+	for (size_t k = 1; k < feathers::dsp::kAnalyserBins; ++k) {
+		if (std::abs(std::log(feathers::dsp::analyserBinHz(k) / hz)) < std::abs(std::log(feathers::dsp::analyserBinHz(best) / hz))) {
+			best = k;
+		}
+	}
+	return best;
+}
+
+float reading(const Heard& h, Reading r, size_t offset = 0) { return h.values[static_cast<size_t>(r) + offset]; }
+
+} // namespace
+
+TEST_CASE("Readings: a whole spectrum frame of what came in and what went out, the counter at both ends") {
+	Eroder e;
+	e.prepare(48000.0);
+	Settings s = declared();
+	s.mix = 0.0f; // Dust at Mix 0 is the dry, to the bit: what went out IS what came in.
+	e.setTarget(s);
+	const Heard h = listen(e, 48000.0, 1000.0, 0.5f, 48000);
+	CHECK(h.count == kReadingCount);
+	CHECK(h.calls == 48000 / 256 + 1);
+	// A FRAME HAS BEEN FINISHED, and it is whole.
+	CHECK(reading(h, Reading::FrameA) >= 1.0f);
+	CHECK(reading(h, Reading::FrameA) == reading(h, Reading::FrameB));
+	// THE SINE IS IN ITS OWN BIN, and far above the bins an octave either side.
+	const size_t at = binOf(1000.0);
+	size_t loudest = 0;
+	for (size_t k = 1; k < feathers::dsp::kAnalyserBins; ++k) {
+		if (reading(h, Reading::PreFirst, k) > reading(h, Reading::PreFirst, loudest)) {
+			loudest = k;
+		}
+	}
+	CHECK(loudest == at);
+	CHECK(reading(h, Reading::PreFirst, at) > -30.0f);
+	CHECK(reading(h, Reading::PreFirst, at) - reading(h, Reading::PreFirst, binOf(500.0)) > 40.0f);
+	CHECK(reading(h, Reading::PreFirst, at) - reading(h, Reading::PreFirst, binOf(2000.0)) > 40.0f);
+	// OUT IS IN, bin for bin, because the samples are.
+	for (size_t k = 0; k < feathers::dsp::kAnalyserBins; ++k) {
+		CAPTURE(k);
+		CHECK(reading(h, Reading::PostFirst, k) == reading(h, Reading::PreFirst, k));
+	}
+	// AND WHAT THE SINK HEARD IS WHAT THE DEVICE HOLDS.
+	CHECK(h.values == e.readingsForTest());
+}
+
+TEST_CASE("Readings: the shaking shows in what went out and not in what came in") {
+	Eroder e;
+	e.prepare(48000.0);
+	Settings s = declared();
+	s.amount = static_cast<float>(kDustAmountLog2Max);
+	e.setTarget(s);
+	const Heard h = listen(e, 48000.0, 1000.0, 0.5f, 48000);
+	REQUIRE(reading(h, Reading::FrameA) == reading(h, Reading::FrameB));
+	// A PURE SINE IN: nothing two octaves up. A SHAKEN ONE OUT: sidebands there, tens of dB over the input's floor.
+	const size_t up = binOf(4000.0);
+	CHECK(reading(h, Reading::PostFirst, up) - reading(h, Reading::PreFirst, up) > 30.0f);
+}
+
+TEST_CASE("Readings: where the read head has been, in seconds, inside the travel the Amount allows") {
+	const double rate = 48000.0;
+	const auto margin = static_cast<float>(kDustMarginFrames / rate);
+	SUBCASE("no Amount: the head sits on its margin, both sides, the whole call") {
+		Eroder e;
+		e.prepare(rate);
+		Settings s = declared();
+		s.amount = static_cast<float>(kDustAmountLog2Min);
+		e.setTarget(s);
+		const Heard h = listen(e, rate, 300.0, 0.5f, 9600);
+		for (const Reading r : { Reading::HeadNearL, Reading::HeadFarL, Reading::HeadNearR, Reading::HeadFarR }) {
+			CHECK(reading(h, r) == doctest::Approx(margin).epsilon(1e-6));
+		}
+	}
+	SUBCASE("with an Amount: near and far apart, and both inside margin .. margin + 2 x Amount") {
+		Eroder e;
+		e.prepare(rate);
+		Settings s = declared();
+		s.amount = -11.0f; // 488 microseconds
+		e.setTarget(s);
+		const Heard h = listen(e, rate, 300.0, 0.5f, 9600, 2048);
+		const auto reach = static_cast<float>(2.0 * std::exp2(-11.0));
+		for (const auto& [nearAt, farAt] : { std::pair { Reading::HeadNearL, Reading::HeadFarL },
+		                                    std::pair { Reading::HeadNearR, Reading::HeadFarR } }) {
+			CHECK(reading(h, nearAt) >= margin * 0.999f);
+			CHECK(reading(h, farAt) <= (margin + reach) * 1.001f);
+			// A 2048-frame call holds 64 control blocks of a 4 kHz band: the head has been over most of its travel.
+			CHECK(reading(h, farAt) - reading(h, nearAt) > 0.4f * reach);
+		}
+	}
+	SUBCASE("the Comb publishes its head too: between its shortest line and its longest") {
+		Eroder e;
+		e.prepare(rate);
+		Settings s = defaults();
+		e.setTarget(s);
+		const Heard h = listen(e, rate, 300.0, 0.5f, 9600);
+		CHECK(reading(h, Reading::HeadFarL) > 0.0f);
+		CHECK(reading(h, Reading::HeadFarL) <= static_cast<float>(1.5 * kMaxBaseDelaySeconds + 4.0 / rate));
+		CHECK(reading(h, Reading::HeadNearL) <= reading(h, Reading::HeadFarL));
+	}
+}
+
+TEST_CASE("Readings: the note the bus last played is published as it was given") {
+	Eroder e;
+	e.prepare(48000.0);
+	e.setTarget(declared());
+	device::NoteContext note {};
+	note.pitchSemitones = 67.5f;
+	e.setNoteContext(note);
+	const Heard h = listen(e, 48000.0, 300.0, 0.25f, 512);
+	CHECK(reading(h, Reading::PitchSemitones) == 67.5f);
+}
+
+// THAT THE TAP ITSELF LEAVES THE SOUND ALONE is held by the cases that pin the sound to the bit (the Comb against its
+// reference loop, Dust's head at rest): both run through it. This one holds the sink to the same.
+TEST_CASE("Readings: a sink changes no sample, in either engine, and the tap does run") {
+	const auto render = [](bool withSink, Mode mode) {
+		Eroder e;
+		e.prepare(48000.0);
+		Settings s = mode == Mode::Dust ? declared() : defaults();
+		e.setTarget(s);
+		Heard heard;
+		if (withSink) {
+			e.setReadingsSink({ &heard, [](void*, const float*, size_t) {} });
+		}
+		std::vector<float> l(6000);
+		std::vector<float> r(6000);
+		for (size_t i = 0; i < l.size(); ++i) {
+			l[i] = 0.4f * static_cast<float>(std::sin(0.031 * static_cast<double>(i)));
+			r[i] = 0.4f * static_cast<float>(std::sin(0.047 * static_cast<double>(i)));
+		}
+		// AN AWKWARD PARTITION, so the tap's own grid falls across the host's cuts.
+		for (size_t done = 0; done < l.size();) {
+			const size_t take = std::min<size_t>(l.size() - done, 37 + done % 211);
+			e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+			done += take;
+		}
+		l.insert(l.end(), r.begin(), r.end());
+		return l;
+	};
+	for (const Mode mode : { Mode::Dust, Mode::Comb }) {
+		CAPTURE(static_cast<int>(mode));
+		CHECK(render(true, mode) == render(false, mode));
+	}
+	// AND THE TAP DID RUN: a second of audio is more than twenty hops, four transforms each.
+	Eroder e;
+	e.prepare(48000.0);
+	e.setTarget(declared());
+	(void)listen(e, 48000.0, 1000.0, 0.5f, 48000);
+	CHECK(e.spectrumTransformsForTest() >= 80);
+	CHECK(e.spectrumTransformsForTest() <= 100);
+}
+

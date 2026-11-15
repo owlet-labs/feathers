@@ -103,6 +103,8 @@
 #include "fx/comp/comp_lanes.h"
 #include "plugin/ui/disperser_card.h"
 #include "plugin/ui/disperser_expanded.h"
+#include "plugin/ui/eroder_card.h"
+#include "plugin/ui/eroder_expanded.h"
 #include "plugin/ui/phaser_card.h"
 #include "plugin/ui/phaser_expanded.h"
 #include "plugin/ui/clip_card.h"

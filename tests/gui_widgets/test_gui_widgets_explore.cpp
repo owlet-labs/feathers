@@ -53,6 +53,13 @@
 // pretends to do.
 
 
+/// THE ZOOM THE OLDER CASES ARE WRITTEN AT: x1, both fields (the V5 flagship opens at x7, `ExploreStage::defaultZoomFor`).
+void pinUnitZoom(ExploreFixture& f) {
+	f.stage.setZoom(1.0);
+	f.now += 10000;
+	f.stage.update();
+}
+
 TEST_CASE("a scrub moves the selected sound's Y travel to where the pointer is") {
 	// **THE VERTICAL AXIS IS THE DECODED PLANE'S Y** (backlog GY). It was the sound's HOME, and the
 	// whole of this case's change is the probe following the axis: what a press means has not moved by
@@ -360,6 +367,7 @@ TEST_CASE("a breadcrumb records the identity you left, and the trail is capped")
 
 TEST_CASE("zoom is the view scale and the mutation scale at once") {
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	f.selection.select(1);
 	const double wideSpan = f.stage.homeSpanZones();
 
@@ -1101,6 +1109,7 @@ TEST_CASE("a modulated sound's star orbits: drawn where the engine plays it, lea
 	// reaches the editor by, so publishing on it is the platform's contract rather than a guess at it;
 	// that the engine really publishes what it plays is test_synth's half.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	f.selection.select(2);
 	// A 3-4-5 place, small enough that a quarter turn round the origin stays on the chart at x1.
@@ -1340,6 +1349,7 @@ TEST_CASE("the Radius corner sets how far from its place the sound is played, an
 
 TEST_CASE("the Theta corner turns the sound about ITS OWN PLACE, and changes neither the place nor the radius") {
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	f.selection.select(2);
 	f.bridge.setSoundTravel(2, { 0.003, 0.004 });
@@ -1400,6 +1410,7 @@ TEST_CASE("with no Radius the Theta corner moves nothing on the chart, and the a
 	// A SOUND PLAYED ON ITS OWN PLACE HAS NOTHING FOR AN ANGLE TO TURN — true, and not a dead knob: the
 	// angle is stored, and the moment there is a radius it is the direction the sound leaves in.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	f.selection.select(2);
 	f.stage.draw(canvas);
@@ -3436,6 +3447,76 @@ TEST_CASE("every breadcrumb is placed from its own identity, not from the live s
 	CHECK(f.stage.crumbAt(2).x != doctest::Approx(f.stage.crumbAt(0).x));
 }
 
+TEST_CASE("explore: each engine opens at its own default zoom — Additive at x1/100, V5 at x7, the rest at x1 — and a zoom the hand set is kept") {
+	// ZOOM IS A VIEW SCALE HELD BY THE SURFACE ALONE (nothing in a patch), so "default" is what a new editor opens at and what a switch of
+	// engine moves a still-default zoom to. Asserted on the values: both zoom fields (no dwell from x1), the span, and the readout's number.
+	const auto clock = [] { return int64_t { 1000 }; };
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::V5));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 7.0);
+		CHECK(fresh.terrainZoom() == 7.0);
+		CHECK(f.stage.zoom() == 7.0); // the fixture's own stage opened on V5
+	}
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 1.0 / 100.0);
+		CHECK(fresh.terrainZoom() == fresh.zoom()); // no dwell animation on first paint
+		CHECK(fresh.travelSpan() == doctest::Approx(ExploreStage::kBaseTravel * 100.0));
+		CHECK(std::lround(1.0 / fresh.zoom()) == 100); // formatZoom prints "x1/%.0f" of this
+		// THE WHEEL STEPS FROM THERE.
+		fresh.setZoom(fresh.zoom() * ExploreStage::kZoomStep);
+		CHECK(fresh.zoom() == doctest::Approx(0.01 * ExploreStage::kZoomStep));
+	}
+	for (const OscType other : { OscType::Morph, OscType::Drum, OscType::Pluck }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(other));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 1.0);
+		CHECK(fresh.terrainZoom() == 1.0);
+	}
+	// A SWITCH OF ENGINE: a zoom still at the old default follows to the new one's, both fields; one the hand set stays.
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Pluck));
+		f.stage.update();
+		REQUIRE(f.stage.zoom() == 1.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 1.0 / 100.0);
+		CHECK(f.stage.terrainZoom() == 1.0 / 100.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Pluck));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 1.0);
+		CHECK(f.stage.terrainZoom() == 1.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::V5));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 7.0);
+		CHECK(f.stage.terrainZoom() == 7.0);
+	}
+	{
+		ExploreFixture f;
+		f.stage.setZoom(5.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 5.0);
+		CHECK(f.stage.zoomEngine() == OscType::Additive);
+	}
+	// THE ENV OVERRIDE STILL WINS.
+	setenv("FEATHERS_EXPLORE_ZOOM", "4", 1);
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 4.0);
+		CHECK(fresh.terrainZoom() == 4.0);
+	}
+	unsetenv("FEATHERS_EXPLORE_ZOOM");
+}
+
 TEST_CASE("Explore zooms on the wheel") {
 	// The symptom: touchpad gesture zoom did nothing on Explore. The first fact is blunter than the gesture
 	// question — the surface answered NO scroll event at all. Zoom was a corner-knob drag and nothing
@@ -3446,6 +3527,7 @@ TEST_CASE("Explore zooms on the wheel") {
 	// testable here; whether a touchpad produces one is a question about X11 and libinput that no
 	// in-process test can answer. See the header, and FEATHERS_TRACE_WHEEL.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	const visage::Point centre = f.stage.disk().centre();
 	const auto wheel = [&](float dy) {
 		visage::MouseEvent e = at(centre.x, centre.y);
@@ -3670,6 +3752,7 @@ TEST_CASE("a wheel zoom rebuilds the terrain with no gesture to end") {
 	// The gate is gone, so this asserts the general policy rather than a wheel special case: the window
 	// changed, therefore a build is asked for, with nothing pressed and nothing released.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	f.selection.select(0);
 	visage::Canvas canvas;
 	f.stage.draw(canvas);
@@ -4461,6 +4544,7 @@ TEST_CASE("a crumb outside the view does not draw a line across the whole window
 	// so a crumb left at any other home projects THOUSANDS of pixels away — and a segment drawn from
 	// there to the star crosses the entire window on its way in. Measured below rather than argued.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	f.selection.select(1);
 	const visage::Point centre = f.stage.disk().centre();
 
@@ -6912,6 +6996,7 @@ TEST_CASE("the terrain follows a zoom once the zoom rests, or once it has moved 
 	// pop. Asserted on the zoom the map is BUILT at (`terrainZoom`) and on the window the builder was asked for, with the
 	// fixture's clock wound by hand.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	const visage::Point centre = f.stage.disk().centre();
 	const auto wheel = [&](float dy) {

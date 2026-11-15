@@ -1034,6 +1034,18 @@ std::span<const uint32_t> ParamBridge::refresh() noexcept {
 
 void ParamBridge::publish(const ParamSet& params) noexcept {
 	const std::span<const ParamDesc> descs = paramDescs();
+	// **NOTHING WAS WRITTEN AND NOTHING IS ROUTED: what was published is still true.** `resolved` is base + host offset +
+	// routed sources, and with no route live the sources add nothing, so it moves only through a write, and every write
+	// moves `writeGeneration` (read before the walk: a write racing the walk is seen at the next call). The instance is
+	// named by its serial, not its address.
+	const uint32_t written = params.writeGeneration();
+	if (publishedEver_ && !params.anyRouteLive() && params.serial() == publishedSerial_ && written == publishedWriteGeneration_) {
+		publishedWork_ = 0;
+		return;
+	}
+	publishedSerial_ = params.serial();
+	publishedWriteGeneration_ = written;
+	publishedEver_ = true;
 	// THE DRUM PADS' ROWS are published only while the engine is Drum (no other engine's editor shows or reads them): at 736
 	// rows they would otherwise cost every engine a quarter more than the whole of the rest, every block.
 	// ...AND WHENEVER A DRUM ROW HAS BEEN WRITTEN since they last were (a host or editor write under another engine is never lost,

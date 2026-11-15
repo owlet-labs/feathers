@@ -2780,6 +2780,13 @@ public:
 	/// leaves the pads' 736 rows out while the engine is not Drum and publishes them again whenever this has moved, so a write
 	/// made under another engine is never lost and reaches the editor in the next call.
 	[[nodiscard]] uint32_t drumGeneration() const noexcept { return drumGeneration_.load(std::memory_order_relaxed); }
+	/// **EVERY WRITE TO WHAT `resolved` READS** (a base, a host modulation offset, a whole patch, a reset, and the route
+	/// list being adopted) moves this, and `serial` names this instance for good (a monotonic stamp, never an address),
+	/// so `ParamBridge::publish` can leave the walk when neither moved and no route is live (a live route reads sources
+	/// that move every block, so the walk is never skipped then).
+	[[nodiscard]] uint32_t writeGeneration() const noexcept { return writeGeneration_.load(std::memory_order_acquire); }
+	[[nodiscard]] uint64_t serial() const noexcept { return serial_; }
+	[[nodiscard]] bool anyRouteLive() const noexcept { return anyRoute_.load(std::memory_order_relaxed); }
 	/// Whether a route from a source that is a pair NOW reaches this `stereo` parameter.
 	[[nodiscard]] bool stereoLive(ParamId id) const;
 
@@ -2893,7 +2900,10 @@ private:
 
 	std::array<std::atomic<double>, kParamCount> base_;
 	std::atomic<uint32_t> drumGeneration_ { 0 };
+	std::atomic<uint32_t> writeGeneration_ { 0 };
+	uint64_t serial_ { 0 };
 	void noteDrumWrite(clap_id id) noexcept {
+		writeGeneration_.fetch_add(1, std::memory_order_release);
 		if (id >= kDrumBlockBase && id < kDrumBlock3Base + kMaxSounds * kDrumSlot3Stride) {
 			drumGeneration_.fetch_add(1, std::memory_order_relaxed);
 		}

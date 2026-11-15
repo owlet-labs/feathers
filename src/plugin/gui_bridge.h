@@ -2084,6 +2084,9 @@ private:
 	/// THE DRUM PADS' ROWS in the param table, contiguous (each slot's block, slots in order): publish() leaves them out while
 	/// the engine is not Drum, so the 736 rows a kit carries cost every other engine nothing per block.
 	uint32_t drumPublishedGeneration_ {0};
+	uint64_t publishedSerial_ {0};
+	uint32_t publishedWriteGeneration_ {0};
+	bool publishedEver_ {false};
 	bool drumEverPublished_ {false};
 	/// How many rows the last publish() visited (the count the per-call work is proportional to), for the cost case.
 	size_t publishedWork_ {0};

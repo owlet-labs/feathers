@@ -63,6 +63,8 @@
 
 namespace feathers::ui {
 
+struct HarmView;
+
 class HarmExpanded final : public ExpandedView {
 public:
 	HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id,
@@ -198,6 +200,8 @@ private:
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_ = kNoInstance;
 	int selected_ = 0;
+	/// THE PARTIAL THE CARD SHARES: a press here moves the card's tabs, and a press on a card tab moves this window.
+	std::shared_ptr<HarmView> view_;
 
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(fx::harm::Param::kCount)>
 	    controls_ {};

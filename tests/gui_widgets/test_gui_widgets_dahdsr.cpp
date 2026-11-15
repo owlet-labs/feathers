@@ -22488,3 +22488,53 @@ TEST_CASE("the Drawn puck is a full modulation target on both axes: route on pre
 		}
 	}
 }
+
+TEST_CASE("HARM's card tabs and the window's strip are one selection, both ways") {
+	HarmFixture f;
+	const std::shared_ptr<ui::HarmView> view = ui::harmViewFor(f.device);
+	REQUIRE(view != nullptr);
+	CHECK(f.card->selectedPartial() == 0);
+	CHECK(f.expanded().selectedPartial() == 0);
+	CHECK(view->partial == 0);
+
+	const auto centreOf = [](visage::Bounds b) {
+		return visage::Point { b.x() + b.width() * 0.5f, b.y() + b.height() * 0.5f };
+	};
+
+	SUBCASE("a tab pressed on the card selects that partial in the window") {
+		const visage::Point p = centreOf(f.card->tabBounds(2));
+		f.card->onMouseDown().callback(at(p.x, p.y));
+		CHECK(f.card->selectedPartial() == 2);
+		CHECK(view->partial == 2);
+		f.expanded().updateContent();
+		CHECK(f.expanded().selectedPartial() == 2);
+		CHECK(f.expanded().stripForTest()->selected() == 2);
+	}
+
+	SUBCASE("a column pressed on the window's strip moves the card's tabs") {
+		auto* strip = const_cast<ui::HarmPartialStrip*>(f.expanded().stripForTest());
+		REQUIRE(strip != nullptr);
+		const visage::Point p = centreOf(strip->columnBounds(3));
+		strip->onMouseDown().callback(at(p.x, p.y));
+		CHECK(f.expanded().selectedPartial() == 3);
+		CHECK(view->partial == 3);
+		CHECK(f.card->updateContent());
+		CHECK(f.card->selectedPartial() == 3);
+	}
+
+	SUBCASE("each tab says its partial's ratio and whether the partial is on") {
+		CHECK(f.card->tabTextForTest(0) == "1  1:1 on");
+		CHECK(f.card->tabTextForTest(1) == "2  2:1 off");
+		CHECK(f.card->tabTextForTest(2) == "3  3:1 off");
+		CHECK(f.card->tabTextForTest(3) == "4  4:1 off");
+	}
+
+	SUBCASE("the global controls sit below the tabs, outside their scope") {
+		const float tabsBottom = f.card->tabBounds(0).bottom();
+		REQUIRE(!f.card->knobsForTest().empty());
+		for (const auto& knob : f.card->knobsForTest()) {
+			CAPTURE(std::string(knob->label()));
+			CHECK(knob->y() > tabsBottom);
+		}
+	}
+}

@@ -34,10 +34,10 @@
 
 // HARM'S CARD — the fx lane's second tenant on the glass.
 //
-// THE CARD SHOWS HARM'S GLOBAL CONTROLS ONLY. Anything that addresses one partial (a partial's harmonic, its Mode, its Level,
-// its Active switch) lives in the window, where the partials are shaped. The card holds the two master controls, the
-// envelope's Attack, Release, Delay, Hold, Decay and Sustain, and the two device switches Poly and Env Depth. Porta stays in the
-// window's master row.
+// THE CARD HAS TWO HALVES, AND THE TABS ARE THE LINE BETWEEN THEM. The four partial tabs (each its number, its ratio and On/Off)
+// select the partial the window shows, and that selection is one shared state. Below them, under a GLOBAL caption, are the two
+// master controls, the envelope's six values and Poly and Env Depth: none of those is inside a tab's scope. Porta lives in the
+// window only. A partial's own controls (its harmonic, Mode, Level, Active switch) are in the window, where the partial is shaped.
 //
 // THREE THINGS THIS CARD MUST NOT DO:
 //
@@ -47,6 +47,17 @@
 //   - IT MUST NOT CUT A CAPTION. Every label is whole at the card's cell width; the tooltips suite measures it.
 
 namespace feathers::ui {
+
+/// THE PARTIAL THE HARM CARD AND ITS WINDOW HAVE OPEN. It is view state, not a parameter: it is never stored in a patch and never
+/// automated. It is shared so the card's tabs and the window's strip are one selection, whichever one a hand presses.
+struct HarmView {
+	int partial = 0;
+};
+
+/// THE VIEW STATE FOR ONE DEVICE INSTANCE. Keyed by its serial (`DeviceInstanceId` is monotonic, so an id is never reused and
+/// nothing can be aliased into a stale selection), and held weakly: the card and any window for the device share one object
+/// while either is alive, and a removed device's entry expires with its last surface.
+std::shared_ptr<HarmView> harmViewFor(DeviceInstanceId id);
 
 class HarmCard final : public FxCard {
 public:
@@ -73,6 +84,16 @@ public:
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
 	/// The gap between the knob rows and the switch row.
 	static constexpr float kActiveRowGap = 6.0f;
+	/// THE PARTIAL TABS: a caption band over them, then a row of four tabs, each two lines tall (its number and ratio, then On/Off).
+	static constexpr float kCaptionBand = 12.0f;
+	static constexpr float kTabRowHeight = 30.0f;
+	static constexpr float kTabGap = 4.0f;
+	/// The tab a point is over, or -1. The partial it selects is `HarmView::partial`.
+	int tabAt(visage::Point position) const;
+	visage::Bounds tabBounds(int partial) const;
+	int selectedPartial() const { return view_->partial; }
+	void selectPartial(int partial);
+	std::string tabTextForTest(int partial) const;
 
 	struct CardKnob {
 		fx::harm::Param param;
@@ -125,6 +146,9 @@ public:
 
 private:
 	void layOut();
+	/// Where the knob rows start: under the partial tabs and the GLOBAL caption.
+	float knobsTop() const;
+	void drawPartialTabs(visage::Canvas& canvas, bool deviceOn);
 	device::Modulatable* enableModulatable() override;
 	void toggleEnabled();
 	DeviceControl& control(fx::harm::Param param) const;
@@ -134,6 +158,8 @@ private:
 	DeviceInstanceId device_ = kNoInstance;
 	bool drawnEnabled_ = false;
 	bool haveDrawnEnabled_ = false;
+	std::shared_ptr<HarmView> view_;
+	int drawnPartial_ = -1;
 
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(fx::harm::Param::kCount)>
 	    controls_ {};

@@ -40,6 +40,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <new>
 #include <numbers>
@@ -1170,6 +1171,31 @@ TEST_CASE("drum: the same host notes in any block sizes are the same sound, to t
 		const Out got = render(cut);
 		CHECK(got.l == whole.l);
 		CHECK(got.r == whole.r);
+	}
+}
+
+TEST_CASE("drum: a sample that is not a number is not passed on, and the drum is added to a clean input unchanged") {
+	Dev d;
+	d.row = variedRow(drum::Kind::Membrane);
+	Out in(512);
+	for (size_t i = 0; i < 512; ++i) {
+		in.l[i] = 0.25f * std::sin(0.02f * static_cast<float>(i));
+		in.r[i] = -in.l[i];
+	}
+	in.l[5] = std::numeric_limits<float>::quiet_NaN();
+	in.r[77] = std::numeric_limits<float>::infinity();
+	in.l[300] = -std::numeric_limits<float>::infinity();
+	const Out clean = in;
+	(void)d.notes({ on(36, 0) });
+	d.render(in.l.data(), in.r.data(), 512);
+	const Out ref = refRender(d.row, 1.0, 512);
+	for (size_t i = 0; i < 512; ++i) {
+		REQUIRE(std::isfinite(in.l[i]));
+		REQUIRE(std::isfinite(in.r[i]));
+		const float wantL = std::isfinite(clean.l[i]) ? clean.l[i] : 0.0f;
+		const float wantR = std::isfinite(clean.r[i]) ? clean.r[i] : 0.0f;
+		REQUIRE(in.l[i] == wantL + ref.l[i]);
+		REQUIRE(in.r[i] == wantR + ref.r[i]);
 	}
 }
 

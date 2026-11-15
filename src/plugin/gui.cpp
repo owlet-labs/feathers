@@ -475,7 +475,7 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 		    || oscTypeFromValue(bridge.value(static_cast<clap_id>(ParamId::OscType))) != OscType::Drum) {
 			return;
 		}
-		auto panel = std::make_unique<ui::DrumPanel>(bridge, registry, selection, notify.get());
+		auto panel = std::make_unique<ui::DrumPanel>(bridge, registry, selection, notify.get(), &previewWatchers);
 		panel->setModulation(&mod, &history);
 		ui::DrumPanel* raw = panel.get();
 		if (expandedWindow != nullptr && prefs.flag(kPopoutWindowKey, false)) {
@@ -1433,6 +1433,10 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 		// the host only needs telling that there is something waiting.
 		if (bridge.hasPendingWork()) {
 			host.guiRequestFlush();
+		}
+		// A KEY THE EDITOR PRESSED waits for the audio thread, which a sleeping plugin is not running: ask the host to process.
+		if (bridge.hasPendingNotes()) {
+			host.guiRequestProcess();
 		}
 		// The two things that move on a clock rather than on an event, so they are the two that need a
 		// frame to notice time has passed. Both decide for themselves whether the screen is out of

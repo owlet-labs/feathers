@@ -9610,6 +9610,70 @@ TEST_CASE("a card can be dragged to reorder it, in both lanes, and the bumper sa
 		}
 	}
 
+	SUBCASE("the modulator rack's drag follows its device by id when the rack is reordered or shortened under the hand") {
+		ModFixture f;
+		auto* panel = f.panel;
+		REQUIRE(panel != nullptr);
+		while (panel->deviceCount() < 3) {
+			REQUIRE(panel->addChoiceForTest(0) < feathers::kMaxRackSlots);
+		}
+		std::array<feathers::DeviceInstanceId, 3> order {};
+		for (size_t slot = 0; slot < 3; ++slot) {
+			order[slot] = f.bridge.modRack().device[slot].instanceId;
+		}
+		panel->setScroll(panel->maxScroll());
+		const auto grab = [&](size_t slot) {
+			const visage::Bounds head = panel->envCardBounds(slot);
+			const visage::Point start { head.x() + 40.0f, head.y() + 6.0f };
+			REQUIRE(panel->hitAt(start).part != ui::ModPanel::Part::None);
+			panel->onMouseDown().callback(at(start.x, start.y));
+			return start;
+		};
+		// REORDERED UNDER THE HAND: A is grabbed at slot 0 and dropped at the bottom gap, but another edit has moved A to the end
+		// meanwhile. The drop is A's (a no-op: it is already last); an index kept across the gesture would have moved B.
+		{
+			const visage::Point start = grab(0);
+			const visage::Bounds bumper = panel->gapBounds(3);
+			const visage::Point end { start.x, bumper.y() + bumper.height() * 0.5f };
+			REQUIRE(end.y < panel->height());
+			panel->onMouseDrag().callback(at(end.x, end.y));
+			REQUIRE(panel->dragSlot().has_value());
+			REQUIRE(*panel->dragSlot() == 0);
+			REQUIRE(f.bridge.moveRackDevice(0, 2));
+			CHECK(f.bridge.modRack().device[2].instanceId == order[0]);
+			CHECK(panel->dragSlot() == std::optional<size_t>(2)); // found again by id
+			const size_t steps = f.gui.history()->length();
+			panel->onMouseUp().callback(at(end.x, end.y));
+			CHECK(f.bridge.modRack().device[0].instanceId == order[1]);
+			CHECK(f.bridge.modRack().device[1].instanceId == order[2]);
+			CHECK(f.bridge.modRack().device[2].instanceId == order[0]);
+			CHECK(f.gui.history()->length() == steps); // moved nothing, spent nothing
+			CHECK_FALSE(panel->dragSlot().has_value());
+		}
+		// REMOVED UNDER THE HAND: the grabbed device is gone, the drag is cancelled cleanly and nothing else moves.
+		{
+			const feathers::DeviceInstanceId held = f.bridge.modRack().device[1].instanceId;
+			const visage::Point start = grab(1);
+			const visage::Bounds bumper = panel->gapBounds(0);
+			const visage::Point end { start.x, bumper.y() + bumper.height() * 0.5f };
+			panel->onMouseDrag().callback(at(end.x, end.y));
+			REQUIRE(panel->dragSlot().has_value());
+			REQUIRE(f.bridge.removeRackDevice(1));
+			panel->resized();
+			CHECK_FALSE(panel->dragSlot().has_value()); // gone, not whoever slid into slot 1
+			const std::array<feathers::DeviceInstanceId, 2> left { f.bridge.modRack().device[0].instanceId,
+				                                                   f.bridge.modRack().device[1].instanceId };
+			const size_t steps = f.gui.history()->length();
+			panel->onMouseUp().callback(at(end.x, end.y));
+			CHECK(f.bridge.modRack().device[0].instanceId == left[0]);
+			CHECK(f.bridge.modRack().device[1].instanceId == left[1]);
+			CHECK(f.bridge.modRack().device[0].instanceId != held);
+			CHECK(f.bridge.modRack().device[1].instanceId != held);
+			CHECK(f.gui.history()->length() == steps);
+			CHECK_FALSE(panel->dropGap().has_value());
+		}
+	}
+
 	SUBCASE("and dropping a card back where it came from moves nothing and spends no undo step") {
 		// THE NO-OP, IN A REAL WIDGET. A hand that picks a card up, thinks better of it and lets go
 		// must leave the history alone — otherwise the undo stack fills with edits that changed

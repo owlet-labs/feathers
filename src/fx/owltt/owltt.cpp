@@ -1569,14 +1569,14 @@ const device::AudioOps kAudioOps {
 	.processMono = nullptr, // Stereo only
 	// THE HOST'S EAR FOR THE METERS (`device::ReadingsSink`): the ten readings a OWLTT surface reads back —
 	// three bands of gain reduction, input level and output level, then clipping — packed and handed on
-	// every block. The callback captures the sink by value (two words) so it never allocates.
+	// every block. The callback captures the sink's two words (context, publish) by value so it never allocates: the whole sink is now three words, past a std::function's small buffer.
 	.setReadingsSink = [](void* storage, device::ReadingsSink sink) {
 		// SEVENTEEN READINGS SINCE BACKLOG LQ: the ten above, then a light per band (10..12), the combined gain
 		// reduction in dB (13) — backlog EL — and each band's SECOND channel's gain reduction (14..16: R, or S
 		// in M/S), readings 0..2 being the first's. `OwlttGraph::meters` reads them back in this order.
 		// AND THE EIGHTEENTH, KEY TRACK'S NOTE (17): the note's Hz while it places the crossovers, 0 while it does not —
 		// the Phaser's `NoteHz`, what the knobs' readout and the graph ask. It rides in the extras, as every road does.
-		static_cast<Owltt*>(storage)->setMeterCallback([sink](size_t, const std::array<float, 3>& grDB,
+		static_cast<Owltt*>(storage)->setMeterCallback([context = sink.context, publish = sink.publish](size_t, const std::array<float, 3>& grDB,
 		                                                     const std::array<float, 3>& inputLevelDB,
 		                                                     const std::array<float, 3>& outputLevelDB, bool clipping,
 		                                                     const Owltt::MeterExtras& extras) {
@@ -1591,8 +1591,8 @@ const device::AudioOps kAudioOps {
 			values[9] = clipping ? 1.0f : 0.0f;
 			values[13] = extras.combinedGrDb;
 			values[17] = extras.noteHz;
-			if (sink.publish != nullptr) {
-				sink.publish(sink.context, values, Owltt::kReadingCount);
+			if (publish != nullptr) {
+				publish(context, values, Owltt::kReadingCount);
 			}
 		});
 	},

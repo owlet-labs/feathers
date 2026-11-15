@@ -24,6 +24,7 @@
 #include "mod/arp/pattern_device.h" // the soak's Pattern readings (`soakReadingForTest`) only
 #include "plugin/feathers_test_chain.h"
 #include "plugin/synth.h"
+#include "plugin/ui_note_ring.h"
 
 #include "plugin/stack_index.h"
 #include "plugin/character_params.h"
@@ -368,8 +369,12 @@ void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity
 	// move the latch without something going red. Nothing in the repository could see that property
 	// go until that case existed.
 	envRetrigger_ = true;
-	hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = noteId;
-	hostDown_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = true;
+	// **THE EDITOR'S PREVIEW KEY IS NOT THE HOST'S**: it neither records an id the host is to be told of nor marks the key host-held, so a
+	// host note on the same key keeps its own record, and the preview's end is never sent to the host under the reserved id.
+	if (noteId != kUiNoteId) {
+		hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = noteId;
+		hostDown_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = true;
+	}
 	const device::NoteEvent event { device::NoteEvent::Kind::On, noteOffsetInTick(),       noteId, kPort,
 	                                channel,                    key,     velocity };
 	// THE LANE SEES IT ONLY IF THE SYNTH WOULD PLAY IT, which is the latch's own rule one line up: a
@@ -389,6 +394,9 @@ void Synth::noteOff(int16_t channel, int16_t key, int32_t noteId, double velocit
 	                                channel,                     key, velocity };
 	captureNote(event);
 	runLaneFor(&event, 1);
+	if (noteId == kUiNoteId) {
+		return; // the editor's key lifts no host key and ends no host note (see `noteOn`)
+	}
 	for (size_t i = 0; i < hostDown_.size(); ++i) {
 		const int ch = static_cast<int>(i / 128u);
 		const int k = static_cast<int>(i % 128u);
@@ -417,6 +425,9 @@ bool Synth::keyHasLiveVoice(int16_t channel, int16_t key, const Voice* except) c
 void Synth::hostNoteEnded(int16_t channel, int16_t key, int32_t noteId, const Voice* except, bool keyStaysLive) noexcept {
 	if (!isPlayableChannel(channel) || !isPlayableKey(key)) {
 		return;
+	}
+	if (noteId == kUiNoteId) {
+		return; // an editor preview voice ending: the host never issued it
 	}
 	int32_t& record = hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)];
 	if (record == kNoHostNote) {

@@ -955,6 +955,8 @@ public:
 	[[nodiscard]] visage::Point playedMarkAt() const noexcept { return playedMarkAt_; }
 	[[nodiscard]] bool playedMarkDrawn() const noexcept { return playedMarkDrawn_; }
 	[[nodiscard]] bool vectorDrawn() const noexcept { return vectorDrawn_; }
+	/// Whether the last draw put the selected sound's star on the chart (a Drum Kit draws none).
+	[[nodiscard]] bool starDrawnForTest() const noexcept { return starDrawn_; }
 	[[nodiscard]] visage::Point vectorFrom() const noexcept { return vectorFrom_; }
 	[[nodiscard]] visage::Point vectorTip() const noexcept { return vectorTip_; }
 	[[nodiscard]] bool starDrawnOnChart() const noexcept { return starDrawnOnChart_; }
@@ -1421,6 +1423,7 @@ private:
 	/// — see drawStar. The main star (`starDrawnAt_`) stays on the place.
 	visage::Point playedMarkAt_ {};
 	bool playedMarkDrawn_ = false;
+	bool starDrawn_ = false;
 	/// The vector from the place to the played place — drawn only with both ends on the chart and far
 	/// enough apart to have a shaft. Recorded where it is drawn, like the stars.
 	visage::Point vectorFrom_ {};

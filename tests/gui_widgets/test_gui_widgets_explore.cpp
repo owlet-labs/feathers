@@ -16776,3 +16776,38 @@ TEST_CASE("fitted map: ON, the cells come from the fitted road, their values are
 		}
 	}
 }
+
+TEST_CASE("fitted map: a popup press on the chart opens the menu where it has an item, and is the scrub it always was where it has none") {
+	const auto rightPress = [](float x, float y) {
+		visage::MouseEvent event = at(x, y);
+		event.button_id = visage::kMouseButtonRight;
+		event.button_state = visage::kMouseButtonRight;
+		return event;
+	};
+	for (const OscType engine : { OscType::Additive, OscType::Morph }) {
+		ExploreFixture f;
+		f.selection.select(1);
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		const visage::Point centre = f.stage.disk().centre();
+		const double before = f.stage.selectedDrift();
+		// THE CONTROL: a plain left press at the same place moves the star, so "did not move" below is not vacuous.
+		{
+			ExploreFixture g;
+			g.selection.select(1);
+			g.set(ParamId::OscType, static_cast<double>(engine));
+			g.stage.onMouseDown().callback(at(centre.x + 60.0f, centre.y));
+			g.stage.onMouseUp().callback(at(centre.x + 60.0f, centre.y));
+			g.settleGesture();
+			REQUIRE(g.stage.selectedDrift() != before);
+		}
+		f.stage.onMouseDown().callback(rightPress(centre.x + 60.0f, centre.y));
+		f.stage.onMouseUp().callback(rightPress(centre.x + 60.0f, centre.y));
+		f.settleGesture();
+		if (f.stage.fittedMapAvailable()) {
+			CHECK(f.stage.selectedDrift() == before); // the press opened the menu and scrubbed nothing
+		}
+		else {
+			CHECK(f.stage.selectedDrift() != before); // no item to show: the press is the one it always was
+		}
+	}
+}

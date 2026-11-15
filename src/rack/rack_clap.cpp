@@ -1835,6 +1835,7 @@ private:
 			&RackPlugin::chainParamIndexOf,
 			&RackPlugin::chainParamInfoBuilds,
 			nullptr, // want_readings (/13): no readings lease in the rack
+			nullptr, // post_note (/13): the rack has no synth and no editor note ring
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_RACK_TEST) == 0) {
 			return &kTest;

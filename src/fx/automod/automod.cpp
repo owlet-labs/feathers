@@ -799,12 +799,12 @@ const device::AudioOps kAudioOps {
 		static_cast<Automod*>(storage)->processMono(mono, frames);
 	},
 	// THE HOST'S EAR FOR THE READINGS (`device::ReadingsSink`): phase, then envelope — the two an automod
-	// surface reads back. Captured by value; never allocates.
+	// surface reads back. Captures context and publish by value (not the whole sink, which is past a std::function's small buffer); never allocates.
 	.setReadingsSink = [](void* storage, device::ReadingsSink sink) {
-		static_cast<Automod*>(storage)->setReadingsCallback([sink](float phase, float envelope) {
+		static_cast<Automod*>(storage)->setReadingsCallback([context = sink.context, publish = sink.publish](float phase, float envelope) {
 			const float values[2] = { phase, envelope };
-			if (sink.publish != nullptr) {
-				sink.publish(sink.context, values, 2);
+			if (publish != nullptr) {
+				publish(context, values, 2);
 			}
 		});
 	},

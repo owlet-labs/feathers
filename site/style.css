@@ -1,40 +1,42 @@
-/* Feathers site. Tokens follow the plugin's own UI palette: navy ground, blue accent,
-   amber for values, lavender for modulation. The motif is a terrain seen as contour lines
-   with one modulation arc crossing it. */
+/* Owlet Labs and Feathers. Tokens are the plugin's own default palette (burgundy ground,
+   orchid accent, pink modulation, green values). The motif is a terrain seen as contour lines
+   with one modulation arc crossing it; the Libra constellation is the mark. */
 :root {
-	--bg: #020307;
-	--surface: #070a12;
-	--surface2: #0e1420;
-	--line: #232b46;
-	--contour: #3a4a7a;
-	--ink: #f2f4fa;
-	--mute: #98a0ba;
-	--accent: #7fa8e8;
-	--mod: #a3b2f7;
-	--value: #e5a97a;
-	--code-bg: #0b101b;
-	--btn-ink: #020307;
-	--shot-glow: rgba(127, 168, 232, .16);
-	--shot-bg: #020307;
+	--bg: #030103;
+	--surface: #0e080e;
+	--surface2: #1a101b;
+	--line: #462b43;
+	--contour: #6f5069;
+	--ink: #f8f2f7;
+	--mute: #a38b9f;
+	--disabled: #755970;
+	--accent: #c790cd;
+	--mod: #d88dc3;
+	--value: #acc27e;
+	--code-bg: #150c15;
+	--btn-ink: #030103;
+	--shot-glow: rgba(199, 144, 205, .16);
+	--shot-bg: #030103;
 	--disp: 'Bricolage Grotesque', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
 	--mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 	color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
 	:root {
-		--bg: #f4f6fb;
-		--surface: #ffffff;
-		--surface2: #eaeef7;
-		--line: #cdd4e6;
-		--contour: #9aa8d0;
-		--ink: #10142a;
-		--mute: #4d5572;
-		--accent: #2a58ad;
-		--mod: #4551bd;
-		--value: #9c4a14;
-		--code-bg: #e6eaf5;
+		--bg: #f6eff3;
+		--surface: #fbf7f9;
+		--surface2: #ebdfe7;
+		--line: #d6c3d0;
+		--contour: #b595ab;
+		--ink: #2a0f26;
+		--mute: #6a4a66;
+		--disabled: #a58ba0;
+		--accent: #7a3b84;
+		--mod: #a02f7e;
+		--value: #4f6a1e;
+		--code-bg: #ebdfe7;
 		--btn-ink: #ffffff;
-		--shot-glow: rgba(42, 88, 173, .14);
+		--shot-glow: rgba(122, 59, 132, .14);
 		color-scheme: light;
 	}
 }
@@ -64,7 +66,7 @@ strong { font-weight: 650; }
 header.top { position: sticky; top: 0; z-index: 5; padding: 12px 0; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
 header.top .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 20px; }
 .brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 700; font-size: 1.2rem; color: var(--ink); text-decoration: none; letter-spacing: -.01em; }
-.brand svg { width: 28px; height: 20px; }
+.brand svg { width: 22px; height: 29px; color: var(--ink); }
 nav { display: flex; flex-wrap: wrap; gap: 2px 18px; font-size: .95rem; }
 nav a { color: var(--mute); text-decoration: none; padding: 4px 0; }
 nav a:hover { color: var(--ink); }
@@ -148,3 +150,18 @@ dl.modes dd { margin: .2em 0 0; color: var(--ink); }
 footer { margin-top: 72px; padding: 28px 0 40px; border-top: 1px solid var(--line); color: var(--mute); font-size: .95rem; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* the Libra mark */
+.hero-libra { display: block; width: clamp(84px, 16vw, 140px); aspect-ratio: 109 / 143; height: auto; color: var(--ink); margin: 0 0 28px; }
+
+/* Owlet Labs landing page */
+.labs .hero { padding-bottom: 8px; }
+.labs h1 { font-size: clamp(3rem, 12vw, 6.5rem); }
+.labs .tag { margin-bottom: 0; }
+.projects { padding: 24px 0 0; }
+.proj { display: grid; gap: 20px; grid-template-columns: 1fr; max-width: 56rem; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); text-decoration: none; }
+.proj:hover { border-color: var(--accent); color: var(--ink); }
+.proj h2 { font-size: 1.8rem; margin: 0 0 .3em; }
+.proj p { margin: 0; color: var(--mute); }
+.proj img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--shot-bg); }
+@media (min-width: 700px) { .proj { grid-template-columns: 1fr 1.2fr; align-items: center; } }

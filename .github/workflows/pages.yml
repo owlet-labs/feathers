@@ -1,5 +1,5 @@
 # Publishes the site/ folder (plus the two installer scripts) to GitHub Pages
-# at https://feathers.owletrecords.com.
+# at https://labs.owletrecords.com (Feathers under /feathers/).
 #
 # INERT UNTIL PAGES IS ENABLED: until the repository's Settings > Pages source
 # is set to "GitHub Actions", the deploy job has nothing to deploy to and fails;
@@ -36,7 +36,8 @@ jobs:
         run: |
           mkdir -p _site
           cp -R site/. _site/
-          cp scripts/install.sh scripts/install.ps1 _site/
+          mkdir -p _site/feathers
+          cp scripts/install.sh scripts/install.ps1 _site/feathers/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

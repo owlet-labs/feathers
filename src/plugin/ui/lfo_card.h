@@ -20,6 +20,7 @@
 #include "mod/lfo/lfo_types.h"
 #include "backplane/device_host.h"
 #include "plugin/ui/device_control.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/trig_pad.h"
@@ -178,10 +179,10 @@ public:
 	[[nodiscard]] Marker marker() const;
 
 	/// THE WAVEFORM POLYLINE in the unit box.
-	std::vector<std::pair<float, float>> curve() const;
+	std::vector<std::pair<float, float>> curve(bool modulated = false) const;
 	/// **AND THE RIGHT EAR'S** (backlog PA): the same window, the wave read `Settings::stereoLead` further on — empty
 	/// while Stereo Phase is 0, and then nothing but the left ear is drawn.
-	std::vector<std::pair<float, float>> curveRight() const;
+	std::vector<std::pair<float, float>> curveRight(bool modulated = false) const;
 	/// HOW MANY STROKES THE LAST PAINT GAVE THE RIGHT EAR'S LINE — a count made by the paint itself, so a case can ask
 	/// whether the trace was drawn rather than whether it could have been (a repaint is not observable headlessly).
 	[[nodiscard]] size_t rightStrokesDrawnForTest() const noexcept { return rightStrokes_; }
@@ -200,6 +201,8 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] mod::lfo::Settings drawnFromForTest() const { return shownSettings(); }
+	[[nodiscard]] mod::lfo::Settings restFromForTest() const { return settings(); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return shapeMoved(); }
 
 private:
 	std::vector<Watch> watches_;
@@ -222,10 +225,12 @@ private:
 	mod::lfo::Settings settings() const;
 	/// **THE SAME ROW WHERE MODULATION LEFT IT** — what the plot draws, so the picture follows a routed control as the knob's ring does. `settings()` stays the STORED row: an edit starts from it, and an edit that started from a modulated one would write the modulation into the patch.
 	mod::lfo::Settings shownSettings() const;
+	/// Modulation moved the shape: the LFO's Settings has no `==`, so the rows (what the device reads) are compared.
+	bool shapeMoved() const { return mod::lfo::rowOf(settings()) != mod::lfo::rowOf(shownSettings()); }
 	void writeSettings(const mod::lfo::Settings& settings);
 	mod::Playhead playhead() const;
 	/// The drawn window with the wave read `lead` cycles (steps, for a walk) further on — `curve` at 0, `curveRight` past it.
-	std::vector<std::pair<float, float>> curveAt(float lead) const;
+	std::vector<std::pair<float, float>> curveAt(float lead, bool modulated = false) const;
 	/// See `rightStrokesDrawnForTest`.
 	size_t rightStrokes_ = 0;
 

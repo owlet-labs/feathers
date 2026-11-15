@@ -287,6 +287,7 @@ struct OpsEq {
 	dyn::HeldPeak outPeak;
 	device::ReadingsSink sink {};
 	Analyser analyser;
+	bool analyserLive = true; ///< the last block computed the picture (`ReadingsSink::wanted`)
 	std::array<float, kExtraState> extra {};
 	std::array<float, kReadingCount> readings {};
 
@@ -510,10 +511,20 @@ struct OpsEq {
 		if (state.linearPhase != linearOn) {
 			switchPhase(state.linearPhase);
 		}
+		// THE PICTURE IS COMPUTED ONLY WHILE A VIEW IS ASKING (`ReadingsSink::wanted`; a host that never learned the question
+		// says always). It is a side channel: nothing the signal does depends on it. A picture that was idle starts from
+		// nothing rather than from a window of old audio.
+		const bool analysing = sink.wanted == nullptr || sink.wanted(sink.context, frames);
+		if (analysing && !analyserLive) {
+			analyser.reset();
+		}
+		analyserLive = analysing;
 		for (int i = 0; i < frames; ++i) {
 			if (gridPhase == 0) {
 				control(false);
-				analyser.step();
+				if (analysing) {
+					analyser.step();
+				}
 				if (linearOn) {
 					if (linearDirty && linear.request(target())) {
 						linearDirty = false;
@@ -533,7 +544,9 @@ struct OpsEq {
 				left[i] = 0.0f;
 				right[i] = 0.0f;
 				outPeak.push(0.0f);
-				analyser.push(0.0f, 0.0f, 0.0f, 0.0f);
+				if (analysing) {
+					analyser.push(0.0f, 0.0f, 0.0f, 0.0f);
+				}
 				continue;
 			}
 			resting = false;
@@ -560,7 +573,9 @@ struct OpsEq {
 				left[i] = dL;
 				right[i] = dR;
 				outPeak.push(std::max(std::fabs(dL), std::fabs(dR)));
-				analyser.push(dL, dR, dL, dR);
+				if (analysing) {
+					analyser.push(dL, dR, dL, dR);
+				}
 				quietRun = 0;
 				continue;
 			}
@@ -588,7 +603,9 @@ struct OpsEq {
 			left[i] = yL;
 			right[i] = yR;
 			outPeak.push(std::max(std::fabs(yL), std::fabs(yR)));
-			analyser.push(dL, dR, yL, yR);
+			if (analysing) {
+				analyser.push(dL, dR, yL, yR);
+			}
 
 			// THE REST: in linear phase only once the FIR's whole span has passed with nothing in.
 			if (silentIn && std::fabs(yL) < kRestLevel && std::fabs(yR) < kRestLevel) {
@@ -647,6 +664,7 @@ struct OpsEq {
 		bypass.reset();
 		outPeak.reset();
 		analyser.reset();
+		analyserLive = true;
 		for (BandRun& b : bands) {
 			b.designed = false;
 		}

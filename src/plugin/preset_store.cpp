@@ -20,6 +20,7 @@
  */
 
 #include "plugin/preset_store.h"
+#include "device/utf8_path.h"
 
 #include <algorithm>
 #include <cctype>
@@ -44,7 +45,7 @@ constexpr uint32_t kMaxMetaBytes = 1u << 20;
 constexpr int kMaxDepth = 8;
 
 bool hidden(const std::filesystem::path& p) {
-	const std::string name = p.filename().string();
+	const std::string name = feathers::utf8Of(p.filename());
 	return !name.empty() && name[0] == '.';
 }
 
@@ -454,7 +455,7 @@ std::filesystem::path PresetStore::pathFor(const std::string& name, const Preset
 	const std::string folder = sanitiseCategory(category);
 	// FROM UTF-8, as a path: a narrow string would be read in the Windows ANSI code page and name another file.
 	const std::u8string leaf(safe.begin(), safe.end());
-	return (folder.empty() ? dir : dir / std::filesystem::path(std::u8string(folder.begin(), folder.end()))) / std::filesystem::path(leaf + u8".fpreset");
+	return (folder.empty() ? dir : dir / feathers::pathFromUtf8(folder)) / std::filesystem::path(leaf + u8".fpreset");
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -679,8 +680,8 @@ int PresetStore::installFactoryFiles(const PresetBank& bank, std::span<const Fac
 		}
 		std::filesystem::path file = r;
 		bool usable = true;
-		for (const std::filesystem::path& part : std::filesystem::path(std::string(f.path))) {
-			const std::string s = part.string();
+		for (const std::filesystem::path& part : feathers::pathFromUtf8(f.path)) {
+			const std::string s = feathers::utf8Of(part);
 			usable = usable && !s.empty() && s != "." && s != ".." && s != "/";
 			file /= part;
 		}

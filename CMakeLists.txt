@@ -637,6 +637,7 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/twinfield_card.cpp
 	src/plugin/ui/shaper_pad.cpp
 	src/plugin/ui/phaser_pad.cpp
+	src/plugin/ui/drum_vector_pad.cpp
 	src/plugin/ui/sound_identity.cpp
 	src/plugin/ui/sound_stack.cpp
 	src/plugin/ui/source_grid.cpp

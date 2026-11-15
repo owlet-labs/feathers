@@ -30,8 +30,13 @@
 #include "rack/rack_bridge.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <numbers>
+#include <optional>
 #include <utility>
 #include <string>
 
@@ -45,6 +50,10 @@ constexpr float kRowHeight = 30.0f;
 constexpr float kPadCellWidth = 72.0f;
 constexpr float kPadCellHeight = 48.0f;
 constexpr float kPadGap = 6.0f;
+/// A layer's terrain pad: square, at the body's left.
+constexpr float kVectorPadSize = 148.0f;
+/// The zone cells' face in the kit window's list rows.
+constexpr float kZoneFace = 22.0f;
 // THE PANEL IS EXACTLY ONE ROW OF EIGHT PADS WIDE, header's kMinimumWidth, and no wider (maximumSize).
 static_assert(DrumPanel::kMinimumWidth == 2.0f * kPad + 8.0f * kPadCellWidth + 7.0f * kPadGap);
 
@@ -110,14 +119,18 @@ constexpr float kMarkGap = 9.0f;
 constexpr float kDriveFloor = 0.25f;
 /// The Hold handle stands this far under the level line, clear of the Level handle by more than the hit slop.
 constexpr float kHoldDrop = 16.0f;
-/// The zone cells' face in the kit window's list rows.
-constexpr float kZoneFace = 22.0f;
 
 } // namespace
 
 HitPicture::HitPicture() {
-	onMouseDown() = [this](const visage::MouseEvent& e) { press(e.position); };
-	onMouseDrag() = [this](const visage::MouseEvent& e) { drag(e.position); };
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		fine_ = e.isShiftDown();
+		press(e.position);
+	};
+	onMouseDrag() = [this](const visage::MouseEvent& e) {
+		fine_ = e.isShiftDown();
+		drag(e.position);
+	};
 	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
 }
 
@@ -317,6 +330,7 @@ void HitPicture::press(visage::Point p) {
 	heldControl_ = c;
 	heldSecond_ = secondOf(held_);
 	dragging_ = true;
+	tuneFine_ = fine_;
 	slack_ = 0.0f;
 	pressAt_ = p;
 	startValue_ = c->value();
@@ -346,6 +360,12 @@ void HitPicture::drag(visage::Point p) {
 	ParamControl* second = heldSecond_;
 	if (c == nullptr) {
 		return;
+	}
+	if (held_ == Handle::Tune && fine_ != tuneFine_) {
+		// SHIFT CHANGING MID-DRAG RE-ANCHORS (the knob's rule): the drag restarts from where the value is, at the new gearing.
+		tuneFine_ = fine_;
+		startValue_ = c->value();
+		pressAt_.y = p.y;
 	}
 	const float dx = p.x - pressAt_.x;
 	const float dy = p.y - pressAt_.y;
@@ -388,7 +408,9 @@ void HitPicture::drag(visage::Point p) {
 	case Handle::Tune: {
 		// SEMITONES BY THE PLOT'S OWN SCALE: a drag of one octave's height is twelve.
 		const float perOctave = (specBottom() - specTop()) / static_cast<float>(std::log2(kHighHz / kLowHz));
-		c->setValue(startValue_ - 12.0 * static_cast<double>(dy / perOctave));
+		const double raw = startValue_ - 12.0 * static_cast<double>(dy / perOctave);
+		// WHOLE SEMITONES, A DRUM'S NOTES; Shift is the fine gearing (`kFineAdjust` of the travel, not rounded).
+		c->setValue(fine_ ? startValue_ + (raw - startValue_) * static_cast<double>(kFineAdjust) : std::round(raw));
 		break;
 	}
 	case Handle::SweepTime:
@@ -478,11 +500,13 @@ void HitPicture::release() {
 	heldSecond_ = nullptr;
 }
 
-void HitPicture::dragForTest(Handle h, float dx, float dy) {
+void HitPicture::dragForTest(Handle h, float dx, float dy, bool fine) {
 	const visage::Point at = markAt(h);
+	fine_ = fine;
 	press(at);
 	drag({ at.x + dx, at.y + dy });
 	release();
+	fine_ = false;
 }
 
 void HitPicture::draw(visage::Canvas& canvas) {
@@ -759,12 +783,326 @@ std::array<visage::Bounds, HitPicture::kHandleCount> HitPicture::placeLabels() c
 	return out;
 }
 
+//------------------//
+// The settled pitch //
+//------------------//
+
+namespace drum_pitch {
+
+namespace {
+constexpr std::array<const char*, 12> kNoteNames { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+}
+
+NoteReading noteOf(double hz) {
+	NoteReading out;
+	if (!(hz > 0.0) || !std::isfinite(hz)) {
+		return out;
+	}
+	const double midi = 69.0 + 12.0 * std::log2(hz / 440.0);
+	const long n = std::lround(midi);
+	out.cents = static_cast<int>(std::lround((midi - static_cast<double>(n)) * 100.0));
+	const long within = ((n % 12) + 12) % 12;
+	const long octave = (n - within) / 12 - 1;
+	out.name = std::string(kNoteNames[static_cast<size_t>(within)]) + std::to_string(octave);
+	return out;
+}
+
+std::string readoutText(const drum::SettledPitch& pitch) {
+	if (!pitch.defined) {
+		return {};
+	}
+	const NoteReading note = noteOf(pitch.hz);
+	char text[64] = {};
+	std::snprintf(text, sizeof(text), "%s%.1f Hz  %s %+dc", pitch.approximate ? "~" : "", pitch.hz, note.name.c_str(), note.cents);
+	return text;
+}
+
+std::optional<double> parseHz(std::string_view text) {
+	std::string t;
+	for (const char c : text) {
+		t += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	const auto first = t.find_first_not_of(" \t");
+	if (first == std::string::npos) {
+		return std::nullopt;
+	}
+	t = t.substr(first);
+	// A NOTE NAME: a letter A..G, an optional # or b, the octave, then optional cents ("+12", "-7c").
+	if (t[0] >= 'a' && t[0] <= 'g') {
+		static constexpr std::array<int, 7> kSemitone { 9, 11, 0, 2, 4, 5, 7 }; // a b c d e f g
+		int semitone = kSemitone[static_cast<size_t>(t[0] - 'a')];
+		size_t at = 1;
+		if (at < t.size() && (t[at] == '#' || t[at] == 'b')) {
+			semitone += t[at] == '#' ? 1 : -1;
+			++at;
+		}
+		const char* begin = t.c_str() + at;
+		char* end = nullptr;
+		const long octave = std::strtol(begin, &end, 10);
+		if (end == begin) {
+			return std::nullopt; // no octave: not a note
+		}
+		double cents = 0.0;
+		const char* rest = end;
+		while (*rest == ' ') {
+			++rest;
+		}
+		if (*rest == '+' || *rest == '-') {
+			char* centsEnd = nullptr;
+			cents = std::strtod(rest, &centsEnd);
+			if (centsEnd == rest) {
+				return std::nullopt;
+			}
+			rest = centsEnd;
+			if (*rest == 'c') {
+				++rest;
+			}
+		}
+		while (*rest == ' ') {
+			++rest;
+		}
+		if (*rest != '\0') {
+			return std::nullopt;
+		}
+		const double midi = 12.0 * static_cast<double>(octave + 1) + static_cast<double>(semitone) + cents / 100.0;
+		return 440.0 * std::exp2((midi - 69.0) / 12.0);
+	}
+	// A FREQUENCY: a number, then nothing or "hz" (and whatever follows it: the readout's own note text reads back).
+	const char* begin = t.c_str();
+	char* end = nullptr;
+	const double hz = std::strtod(begin, &end);
+	if (end == begin || !std::isfinite(hz) || hz <= 0.0) {
+		return std::nullopt;
+	}
+	const char* rest = end;
+	while (*rest == ' ') {
+		++rest;
+	}
+	if (*rest == '\0' || (rest[0] == 'h' && rest[1] == 'z')) {
+		return hz;
+	}
+	return std::nullopt;
+}
+
+} // namespace drum_pitch
+
+std::optional<std::string> SettledPitchControl::editText() const {
+	const drum::SettledPitch pitch = settled_();
+	if (!pitch.defined || pitch.approximate) {
+		return std::nullopt; // no one pitch to land: refuse rather than take a number for something else
+	}
+	return drum_pitch::readoutText(pitch);
+}
+
+std::optional<double> SettledPitchControl::parseText(std::string_view text, double shown) const {
+	const drum::SettledPitch pitch = settled_();
+	const std::optional<double> hz = drum_pitch::parseHz(text);
+	if (!hz || !pitch.defined || pitch.approximate || !(pitch.hz > 0.0)) {
+		return std::nullopt;
+	}
+	// TUNE IS A LOG OF THE BASE PITCH and every kind's settled pitch is proportional to the base, so the Tune that lands it on
+	// `hz` is where Tune stands now plus the semitones between the two.
+	const device::ParamDesc& d = tune_.desc();
+	return std::clamp(shown + 12.0 * std::log2(*hz / pitch.hz), d.min, d.max);
+}
+
+const device::ParamDesc& PadSoloControl::desc() const {
+	static const device::ParamDesc d { "solo", "Solo", 0.0, 1.0, 0.0, true, device::Unit::Number, {}, false, false,
+		                               "Hear this pad alone: the preview the sound cards' S marks, so every other pad is silent while it is on. "
+		                               "Not saved with the patch." };
+	return d;
+}
+
+void PadSoloControl::setValue(double value) {
+	if (value >= 0.5) {
+		bridge_.setPreview(slot_);
+	}
+	else if (bridge_.preview().active() && bridge_.preview().slot == slot_) {
+		bridge_.clearPreview();
+	}
+	if (changed_) {
+		changed_();
+	}
+}
+
+PadPlayButton::PadPlayButton(ParamBridge& bridge, size_t slot) : bridge_(bridge), slot_(slot) {
+	onMouseDown() = [this](const visage::MouseEvent&) { press(); };
+	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
+	installTooltipHover(*this, *this);
+}
+
+PadPlayButton::~PadPlayButton() { release(); }
+
+const char* PadPlayButton::tooltipAt(visage::Point) const {
+	return "Strike this pad: held while the button is held, as a key on the pad's note. Not saved and not modulated.";
+}
+
+void PadPlayButton::press() {
+	if (held_) {
+		return;
+	}
+	heldKey_ = static_cast<int>(std::lround(bridge_.value(static_cast<clap_id>(drumParam(slot_, DrumControl::Note)))));
+	held_ = bridge_.postNote(heldKey_, true, kVelocity); // a full ring drops the press (and counts it); no off is owed then
+	redraw();
+}
+
+void PadPlayButton::release() {
+	if (!held_) {
+		return;
+	}
+	held_ = false;
+	(void)bridge_.postNote(heldKey_, false, 0.0f);
+	redraw();
+}
+
+void PadPlayButton::draw(visage::Canvas& canvas) {
+	canvas.setColor(held_ ? kAccent : kSurfaceRaised);
+	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 4.0f);
+	canvas.setColor(alphaOf(kLine, 0.8f));
+	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 4.0f, 1.0f);
+	canvas.setColor(held_ ? kVoid : kInk);
+	canvas.triangleRight(width() * 0.5f - 3.0f, height() * 0.5f - 5.0f, 5.0f);
+}
+
+PitchReadout::PitchReadout(SettledPitchControl& control) : control_(control) {
+	onMouseDown() = [this](const visage::MouseEvent& e) { beginHand(e.position.y, e.isShiftDown()); };
+	onMouseDrag() = [this](const visage::MouseEvent& e) { moveHand(e.position.y, e.isShiftDown()); };
+	onMouseUp() = [this](const visage::MouseEvent&) { endHand(); };
+	installTooltipHover(*this, *this);
+}
+
+void PitchReadout::resized() { typeIn_.place(typeInBounds()); }
+
+const char* PitchReadout::tooltipAt(visage::Point) const {
+	return "The pitch this hit settles on, at the pad's resting pitch, its Tune and the terrain's. Click to type a note (A1, C#4) "
+	       "or a frequency; drag to move Tune a semitone at a time, Shift for fine.";
+}
+
+void PitchReadout::refresh(const std::string& text) {
+	if (!isVisible()) {
+		drawn_ = text; // nothing is drawn while it is hidden, so nothing is owed a repaint
+		return;
+	}
+	if (text != drawn_) {
+		redraw();
+	}
+}
+
+void PitchReadout::draw(visage::Canvas& canvas) {
+	drawn_ = control_.text();
+	canvas.setColor(kSurfaceRaised);
+	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 4.0f);
+	canvas.setColor(alphaOf(kLine, 0.8f));
+	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 4.0f, 1.0f);
+	canvas.setColor(kInk);
+	canvas.text(drawn_, font(kKnobReadoutSize), visage::Font::kCenter, 0.0f, 0.0f, width(), height());
+}
+
+void PitchReadout::beginHand(float y, bool fine) {
+	const bool closedField = typeIn_.closeIfOpen();
+	pressed_ = !closedField;
+	dragged_ = false;
+	fine_ = fine;
+	anchorY_ = y;
+	anchorValue_ = control_.value();
+}
+
+void PitchReadout::moveHand(float y, bool fine) {
+	if (!pressed_) {
+		return;
+	}
+	if (!dragged_) {
+		if (std::fabs(anchorY_ - y) < 3.0f) {
+			return; // a click that wandered a pixel is still a click
+		}
+		dragged_ = true;
+		control_.beginGesture();
+	}
+	if (fine != fine_) {
+		// SHIFT CHANGING MID-DRAG RE-ANCHORS (the knob's rule), so nothing jumps.
+		fine_ = fine;
+		anchorY_ = y;
+		anchorValue_ = control_.value();
+	}
+	const double semitones = static_cast<double>(anchorY_ - y) / static_cast<double>(kPixelsPerSemitone);
+	control_.setValue(fine_ ? anchorValue_ + semitones * static_cast<double>(kFineAdjust) : std::round(anchorValue_ + semitones));
+	redraw();
+}
+
+void PitchReadout::endHand() {
+	if (!pressed_) {
+		return;
+	}
+	pressed_ = false;
+	if (dragged_) {
+		control_.endGesture();
+		dragged_ = false;
+		return;
+	}
+	// A CLICK TYPES: the field opens on the readout's own text, a note or a frequency lands the settled pitch there.
+	typeIn_.beginReset(control_, false, true);
+	(void)typeIn_.open(typeInBounds());
+}
+
+void PitchReadout::clickForTest() {
+	beginHand(10.0f, false);
+	endHand();
+}
+
+void PitchReadout::dragForTest(float dy, bool fine) {
+	beginHand(100.0f, fine);
+	moveHand(100.0f - dy, fine);
+	endHand();
+}
+
+//------------//
+// LayerTabs  //
+//------------//
+
+LayerTabs::LayerTabs(std::function<void(size_t)> choose) : choose_(std::move(choose)) {
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		const int tab = tabAt(e.position);
+		if (tab >= 0 && choose_) {
+			choose_(static_cast<size_t>(tab));
+		}
+	};
+}
+
+int LayerTabs::tabAt(visage::Point p) const {
+	if (p.y < 0.0f || p.y > height() || p.x < 0.0f || p.x >= 2.0f * kTabWidth) {
+		return -1;
+	}
+	return p.x < kTabWidth ? 0 : 1;
+}
+
+void LayerTabs::setShown(size_t layer) {
+	if (layer != shown_) {
+		shown_ = layer;
+		redraw();
+	}
+}
+
+void LayerTabs::draw(visage::Canvas& canvas) {
+	for (size_t i = 0; i < 2; ++i) {
+		const float x = static_cast<float>(i) * kTabWidth;
+		const bool lit = i == shown_;
+		canvas.setColor(lit ? kSurfaceRaised : kSurface);
+		canvas.roundedRectangle(x + 1.0f, 0.0f, kTabWidth - 2.0f, height(), 4.0f);
+		canvas.setColor(lit ? kAccent : kMuted);
+		canvas.text(i == 0 ? "Layer 1" : "Layer 2", font(kControlSize), visage::Font::kCenter, x, 0.0f, kTabWidth, height());
+		if (lit) {
+			canvas.fill(x + 10.0f, height() - 2.0f, kTabWidth - 20.0f, 2.0f);
+		}
+	}
+}
+
 //-----------//
 // DrumPanel //
 //-----------//
 
-DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelection& selection, Notifier* notifier)
-    : bridge_(bridge), selection_(selection) {
+DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelection& selection, Notifier* notifier,
+                     FrameWatchers* previewWatchers)
+    : bridge_(bridge), previewWatchers_(previewWatchers), selection_(selection) {
 	mode_ = std::make_unique<SegmentedControl>(bridge, registry, descOf(ParamId::DrumMode), kDrumModeNames, notifier);
 	pitchedKindControl_ = std::make_unique<ParamControl>(bridge, &descOf(ParamId::DrumPitchedKind));
 	pitchedKind_ = std::make_unique<ValueBox>(*pitchedKindControl_, "Kind");
@@ -773,114 +1111,190 @@ DrumPanel::DrumPanel(ParamBridge& bridge, WidgetRegistry& registry, SoundSelecti
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumPitchedKind), pitchedKind_.get()));
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumSeed), seed_.get()));
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumMode), this));
+	if (previewWatchers_ != nullptr) {
+		watches_.push_back(previewWatchers_->watch(this));
+	}
+	noRotate_ = std::make_unique<ParamControl>(bridge, nullptr);
+	tabs_ = std::make_unique<LayerTabs>([this](size_t layer) { chooseLayer(layer); });
 	addChild(&picture_);
+	addChild(tabs_.get());
 	addChild(mode_.get());
 	addChild(pitchedKind_.get());
 	addChild(seed_.get());
+
+	// ONE ParamControl PER WIDGET (the spectrum panel's pattern), every one handed the modulation state when the panel is bound.
+	const auto control = [&](std::unique_ptr<ParamControl>& out, ParamId id, visage::Frame* watcher) {
+		const ParamDesc& d = descOf(id);
+		out = std::make_unique<ParamControl>(bridge, &d);
+		allControls_.push_back(out.get());
+		if (watcher != nullptr) {
+			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), watcher));
+		}
+	};
+	const auto box = [&](std::unique_ptr<ParamControl>& out, std::unique_ptr<ValueBox>& widget, ParamId id, const char* label) {
+		control(out, id, nullptr);
+		widget = std::make_unique<ValueBox>(*out, label);
+		watches_.push_back(registry.watchToken(static_cast<clap_id>(id), widget.get()));
+		addChild(widget.get());
+	};
+	const auto pill = [&](std::unique_ptr<ParamControl>& out, std::unique_ptr<FaderPill>& widget, ParamId id, const char* caption) {
+		control(out, id, nullptr);
+		widget = std::make_unique<FaderPill>(*out, caption);
+		watches_.push_back(registry.watchToken(static_cast<clap_id>(id), widget.get()));
+		addChild(widget.get());
+	};
+	const auto segmented = [&](std::unique_ptr<SegmentedControl>& out, ParamId id, const auto& names) { // (a span keeps a reference to them)
+		out = std::make_unique<SegmentedControl>(bridge, registry, descOf(id), names, notifier);
+		addChild(out.get());
+	};
+
 	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
 		PadSet& set = pads_[slot];
-		const auto box = [&](std::unique_ptr<ParamControl>& control, std::unique_ptr<ValueBox>& out, DrumControl c,
-		                     const char* label) {
-			const ParamDesc& d = descOf(drumParam(slot, c));
-			control = std::make_unique<ParamControl>(bridge, &d);
-			out = std::make_unique<ValueBox>(*control, label);
-			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), out.get()));
-			addChild(out.get());
-		};
-		box(set.kindControl, set.kind, DrumControl::Kind, "Kind");
-		box(set.noteControl, set.note, DrumControl::Note, "Note");
-		box(set.chokeControl, set.choke, DrumControl::Choke, "Choke");
-		box(set.countControl, set.count, DrumControl::Count, "Claps");
-		set.voices = std::make_unique<SegmentedControl>(bridge, registry, descOf(drumParam(slot, DrumControl::Voices)),
-		                                                kDrumVoicesNames, notifier);
-		set.trigger = std::make_unique<SegmentedControl>(bridge, registry, descOf(drumParam(slot, DrumControl::Trigger)),
-		                                                 kDrumTriggerNames, notifier);
-		addChild(set.voices.get());
-		addChild(set.trigger.get());
-		// THE HANDLES' CONTROLS: the picture writes them for the selected pad, and watches every pad's, so a host move
-		// redraws it and each of them is reached by a hand (the reachability guard asks the registry).
-		const auto handle = [&](std::unique_ptr<ParamControl>& control, DrumControl c) {
-			const ParamDesc& d = descOf(drumParam(slot, c));
-			control = std::make_unique<ParamControl>(bridge, &d);
-			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), &picture_));
-		};
-		handle(set.tune, DrumControl::Tune);
-		handle(set.sweepTime, DrumControl::SweepTime);
-		handle(set.decay, DrumControl::Decay);
-		handle(set.level, DrumControl::Level);
-		handle(set.drive, DrumControl::Drive);
-		handle(set.driveTone, DrumControl::DriveTone);
-		handle(set.wireDecay, DrumControl::WireDecay);
-		handle(set.clickDecay, DrumControl::ClickDecay);
-		handle(set.bellStart, DrumControl::BellStart);
-		handle(set.bellEnd, DrumControl::BellEnd);
-		handle(set.bellTime, DrumControl::BellTime);
-		handle(set.bell2Hz, DrumControl::Bell2Hz);
-		handle(set.bell2Time, DrumControl::Bell2Time);
-		handle(set.hold, DrumControl::KickHold);
-		handle(set.dip, DrumControl::KickDip);
-		handle(set.dipTime, DrumControl::KickDipTime);
-		handle(set.clickSweep, DrumControl::ClickSweep);
-		handle(set.clickSweepTime, DrumControl::ClickSweepTime);
-		handle(set.startPhase, DrumControl::StartPhase);
-		handle(set.spread, DrumControl::Spread);
-		handle(set.clapQ, DrumControl::ClapQ);
-		handle(set.clapHighPass, DrumControl::ClapHighPass);
-		const auto pill = [&](std::unique_ptr<ParamControl>& control, std::unique_ptr<FaderPill>& out, DrumControl c,
-		                      const char* caption, bool layerTwo = false) {
-			const ParamDesc& d = descOf(layerTwo ? drumLayer2Param(slot, c) : drumParam(slot, c));
-			control = std::make_unique<ParamControl>(bridge, &d);
-			out = std::make_unique<FaderPill>(*control, caption);
-			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), out.get()));
-			addChild(out.get());
-		};
-		pill(set.levelMirrorControl, set.levelMirror, DrumControl::Level, "Level");
-		pill(set.tuneMirrorControl, set.tuneMirror, DrumControl::Tune, "Tune");
-		pill(set.panControl, set.pan, DrumControl::Pan, "Pan");
-		pill(set.releaseControl, set.release, DrumControl::Release, "Release");
-		pill(set.velocityNoiseControl, set.velocityNoise, DrumControl::VelocityNoise, "Vel Noise");
-		pill(set.widthControl, set.width, DrumControl::Width, "Width");
-		pill(set.bendControl, set.bend, DrumControl::Bend, "Bend");
-		// THE LAYER ROW (stage (c)).
-		box(set.layerKindControl, set.layerKind, DrumControl::LayerKind, "Layer");
-		pill(set.layerLevelControl, set.layerLevel, DrumControl::LayerLevel, "Layer Lvl");
-		pill(set.layerDelayControl, set.layerDelay, DrumControl::LayerDelay, "Delay");
-		pill(set.layerHighPassControl, set.layerHighPass, DrumControl::LayerHighPass, "Layer HP");
-		pill(set.layerOffsetXControl, set.layerOffsetX, DrumControl::OffsetX, "Offset X", true);
-		pill(set.layerOffsetYControl, set.layerOffsetY, DrumControl::OffsetY, "Offset Y", true);
-		{
-			const ParamDesc& d = descOf(drumLayer2Param(slot, DrumControl::Lock));
-			set.layerLockControl = std::make_unique<ParamControl>(bridge, &d);
-			set.layerLock = std::make_unique<SwitchChip>(*set.layerLockControl, "Lock");
-			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), set.layerLock.get()));
-			addChild(set.layerLock.get());
-		}
-		// THE ZONE CONTROLS (drum proposal §14): one coordinate each, its zone named in a dropdown, in the list row's layout.
-		const auto zone = [&](std::unique_ptr<ParamControl>& control, std::unique_ptr<ZoneCoordCell>& out, DrumControl c,
-		                      const char* caption, auto names) {
-			const ParamDesc& d = descOf(drumParam(slot, c));
-			control = std::make_unique<ParamControl>(bridge, &d);
-			std::vector<ZoneSelect::ZoneName> zoneNames;
-			for (const char* n : names) {
-				zoneNames.push_back({ n, "" });
+		// THE PAD-LEVEL CONTROLS: Note, Choke, Voices, Trigger, Pan, Bend, Release (Level is the sound card's, and layer one's Level handle).
+		box(set.noteControl, set.note, drumParam(slot, DrumControl::Note), "Note");
+		box(set.chokeControl, set.choke, drumParam(slot, DrumControl::Choke), "Choke");
+		segmented(set.voices, drumParam(slot, DrumControl::Voices), kDrumVoicesNames);
+		segmented(set.trigger, drumParam(slot, DrumControl::Trigger), kDrumTriggerNames);
+		pill(set.panControl, set.pan, drumParam(slot, DrumControl::Pan), "Pan");
+		pill(set.releaseControl, set.release, drumParam(slot, DrumControl::Release), "Release");
+		pill(set.bendControl, set.bend, drumParam(slot, DrumControl::Bend), "Bend");
+		// MUTE is the pad's own Mute; SOLO the preview of this pad alone (the cards' S), which the synth already honours.
+		control(set.muteControl, drumParam(slot, DrumControl::Mute), nullptr);
+		set.mute = std::make_unique<SwitchChip>(*set.muteControl, "Mute");
+		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Mute)), set.mute.get()));
+		addChild(set.mute.get());
+		set.soloControl = std::make_unique<PadSoloControl>(bridge, slot, [this] {
+			if (previewWatchers_ != nullptr) {
+				previewWatchers_->notify();
 			}
-			out = std::make_unique<ZoneCoordCell>(*control, caption, std::move(zoneNames), ZoneSelect::kCoordinatePerLap);
-			out->setRowLayout(true);
-			watches_.push_back(registry.watchToken(static_cast<clap_id>(d.id), out.get()));
-			addChild(out.get());
-		};
-		zone(set.velocityZoneControl, set.velocityZone, DrumControl::VelocityZone, "Velocity", drum::kVelocityZoneNames);
-		zone(set.wiresControl, set.wires, DrumControl::Wires, "Wires", drum::kWiresZoneNames);
-		zone(set.bellsControl, set.bells, DrumControl::Bells, "Bells", drum::kBellsZoneNames);
-		set.driveCurve = std::make_unique<SegmentedControl>(bridge, registry, descOf(drumParam(slot, DrumControl::DriveCurve)),
-		                                                    kDrumDriveCurveNames, notifier);
-		addChild(set.driveCurve.get());
-		// The Bells zone decides whether the second bell is linked, which is what its handle writes, so a move re-lays.
-		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Bells)), this));
+		});
+		set.solo = std::make_unique<SwitchChip>(*set.soloControl, "Solo");
+		addChild(set.solo.get());
+		set.play = std::make_unique<PadPlayButton>(bridge, slot);
+		addChild(set.play.get());
 		// The pad's kind and Trigger decide what is drawn, so a move of either re-lays the panel.
 		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Kind)), this));
 		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::Trigger)), this));
 		watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, DrumControl::LayerKind)), this));
+
+		for (size_t layer = 0; layer < 2; ++layer) {
+			LayerSet& L = set.layer[layer];
+			const auto id = [&](DrumControl c) { return drumLayerParam(slot, layer, c); };
+			// THE HANDLES' CONTROLS: the picture writes them for the shown layer, and watches every layer's, so a host move
+			// redraws it and each of them is reached by a hand (the reachability guard asks the registry).
+			const auto handle = [&](std::unique_ptr<ParamControl>& out, DrumControl c) { control(out, id(c), &picture_); };
+			handle(L.tune, DrumControl::Tune);
+			handle(L.sweepTime, DrumControl::SweepTime);
+			handle(L.decay, DrumControl::Decay);
+			handle(L.drive, DrumControl::Drive);
+			handle(L.driveTone, DrumControl::DriveTone);
+			handle(L.wireDecay, DrumControl::WireDecay);
+			handle(L.clickDecay, DrumControl::ClickDecay);
+			handle(L.bellStart, DrumControl::BellStart);
+			handle(L.bellEnd, DrumControl::BellEnd);
+			handle(L.bellTime, DrumControl::BellTime);
+			handle(L.bell2Hz, DrumControl::Bell2Hz);
+			handle(L.bell2Time, DrumControl::Bell2Time);
+			handle(L.hold, DrumControl::KickHold);
+			handle(L.dip, DrumControl::KickDip);
+			handle(L.dipTime, DrumControl::KickDipTime);
+			handle(L.clickSweep, DrumControl::ClickSweep);
+			handle(L.clickSweepTime, DrumControl::ClickSweepTime);
+			handle(L.startPhase, DrumControl::StartPhase);
+			handle(L.spread, DrumControl::Spread);
+			handle(L.clapQ, DrumControl::ClapQ);
+			handle(L.clapHighPass, DrumControl::ClapHighPass);
+			// THE LEVEL HANDLE: the pad's Level on layer one, the layer's own Level (on top of the pad's) on layer two.
+			control(L.level, layer == 0 ? drumParam(slot, DrumControl::Level) : drumParam(slot, DrumControl::LayerLevel), &picture_);
+			// THE KIND: the pad's own (a kind of the six), or the layer's, whose first choice is Off.
+			box(L.kindControl, L.kind, drumLayerKindParam(slot, layer), "Kind");
+			box(L.countControl, L.count, id(DrumControl::Count), "Claps");
+			segmented(L.driveCurve, id(DrumControl::DriveCurve), kDrumDriveCurveNames);
+			segmented(L.pitchMode, id(DrumControl::PitchMode), kDrumPitchModeNames);
+			pill(L.tuneControl, L.tunePill, id(DrumControl::Tune), "Tune");
+			L.tunePill->setWholeSteps(true); // semitones, as the readout and the picture's handle
+			pill(L.velocityNoiseControl, L.velocityNoise, id(DrumControl::VelocityNoise), "Vel Noise");
+			pill(L.widthControl, L.width, id(DrumControl::Width), "Width");
+			if (layer == 1) {
+				pill(L.levelPillControl, L.levelPill, drumParam(slot, DrumControl::LayerLevel), "Level");
+				pill(L.delayControl, L.delay, drumParam(slot, DrumControl::LayerDelay), "Delay");
+				pill(L.highPassControl, L.highPass, drumParam(slot, DrumControl::LayerHighPass), "HP");
+			}
+			// THE SEVEN FIELD SCALERS of this layer (Pitch .. Metal), each drawn only where its kind reads it.
+			static constexpr std::array<DrumControl, 7> kFields { DrumControl::FieldPitch, DrumControl::FieldLength, DrumControl::FieldSweep,
+				                                                  DrumControl::FieldTone,  DrumControl::FieldNoise,  DrumControl::FieldSnap,
+				                                                  DrumControl::FieldMetal };
+			static constexpr std::array<const char*, 7> kFieldCaptions { "Pitch", "Length", "Sweep", "Tone", "Noise", "Snap", "Metal" };
+			for (size_t f = 0; f < kFields.size(); ++f) {
+				pill(L.fieldControl[f], L.field[f], id(kFields[f]), kFieldCaptions[f]);
+			}
+			// THE ZONE CONTROLS (drum proposal §14): one coordinate each, its zone named in a dropdown, in the list row's layout.
+			const auto zone = [&](std::unique_ptr<ParamControl>& out, std::unique_ptr<ZoneCoordCell>& cell, DrumControl c,
+			                      const char* caption, auto names) {
+				control(out, id(c), nullptr);
+				std::vector<ZoneSelect::ZoneName> zoneNames;
+				for (const char* n : names) {
+					zoneNames.push_back({ n, "" });
+				}
+				cell = std::make_unique<ZoneCoordCell>(*out, caption, std::move(zoneNames), ZoneSelect::kCoordinatePerLap);
+				cell->setRowLayout(true);
+				watches_.push_back(registry.watchToken(static_cast<clap_id>(id(c)), cell.get()));
+				addChild(cell.get());
+			};
+			zone(L.velocityZoneControl, L.velocityZone, DrumControl::VelocityZone, "Velocity", drum::kVelocityZoneNames);
+			zone(L.wiresControl, L.wires, DrumControl::Wires, "Wires", drum::kWiresZoneNames);
+			zone(L.bellsControl, L.bells, DrumControl::Bells, "Bells", drum::kBellsZoneNames);
+			// The Bells zone decides whether the second bell is linked, which is what its handle writes, so a move re-lays.
+			watches_.push_back(registry.watchToken(static_cast<clap_id>(id(DrumControl::Bells)), this));
+			watches_.push_back(registry.watchToken(static_cast<clap_id>(id(DrumControl::PitchMode)), this));
+			// THE LAYER'S VECTOR: its terrain pad, and Lock beside it.
+			control(L.lockControl, id(DrumControl::Lock), nullptr);
+			L.lock = std::make_unique<SwitchChip>(*L.lockControl, "Lock");
+			watches_.push_back(registry.watchToken(static_cast<clap_id>(id(DrumControl::Lock)), L.lock.get()));
+			addChild(L.lock.get());
+			// THE VECTOR'S CONTROLS FIRST: the pad reads its row as it is built.
+			control(L.offsetXControl, id(DrumControl::OffsetX), nullptr);
+			control(L.offsetYControl, id(DrumControl::OffsetY), nullptr);
+			L.vectorContext.slot = static_cast<uint8_t>(slot);
+			L.vectorContext.layer = static_cast<uint8_t>(layer);
+			L.vectorPad = std::make_unique<DrumVectorPad>(
+			    [this, slot, layer](size_t index, float value) {
+				    LayerSet& l = pads_[slot].layer[layer];
+				    (index == 0 ? l.offsetXControl : l.offsetYControl)->setValue(static_cast<double>(value));
+			    },
+			    [this, slot, layer](size_t field) {
+				    const LayerSet& l = pads_[slot].layer[layer];
+				    return static_cast<float>((field == 0 ? l.offsetXControl : l.offsetYControl)->value());
+			    },
+			    *noRotate_);
+			watches_.push_back(registry.watchToken(static_cast<clap_id>(id(DrumControl::OffsetX)), L.vectorPad.get()));
+			watches_.push_back(registry.watchToken(static_cast<clap_id>(id(DrumControl::OffsetY)), L.vectorPad.get()));
+			L.vectorPad->context = [this, slot, layer]() -> const DrumVectorContext& { return pads_[slot].layer[layer].vectorContext; };
+			// ONE DRAG OF THE PAD IS ONE UNDO STEP, as the picture's two-way handles are: both vector parameters in one group.
+			L.vectorPad->onHoldBegan = [this, slot, layer] {
+				LayerSet& l = pads_[slot].layer[layer];
+				l.vectorGroup = l.offsetXControl->recordsInto();
+				if (l.vectorGroup != nullptr) {
+					l.vectorGroup->beginGroup("Move layer");
+				}
+				l.offsetXControl->beginGesture();
+				l.offsetYControl->beginGesture();
+			};
+			L.vectorPad->onHoldEnded = [this, slot, layer] {
+				LayerSet& l = pads_[slot].layer[layer];
+				l.offsetXControl->endGesture();
+				l.offsetYControl->endGesture();
+				if (l.vectorGroup != nullptr) {
+					l.vectorGroup->endGroup();
+					l.vectorGroup = nullptr;
+				}
+			};
+			addChild(L.vectorPad.get());
+			// THE SETTLED PITCH, over this layer's Tune: its own text, a hand on it.
+			L.settledControl = std::make_unique<SettledPitchControl>(*L.tuneControl, [this, slot, layer] { return settledOf(slot, layer); });
+			L.readout = std::make_unique<PitchReadout>(*L.settledControl);
+			addChild(L.readout.get());
+		}
 	}
 	// THE PAD FX RAIL (drum proposal §17 P3): the focused pad's lane, hanging off the right side as SKLITTER's inner chain
 	// does. Built with the panel, CLOSED (SKLITTER's rule: a chain is not the instrument, and a pad's tile wears a dot while
@@ -923,18 +1337,8 @@ std::string DrumPanel::headerTitle() const {
 }
 
 void DrumPanel::modulationBound(ModState* mod, EditHistory* history) {
-	for (PadSet& set : pads_) {
-		for (ParamControl* c :
-		     { set.tune.get(), set.sweepTime.get(), set.decay.get(), set.level.get(), set.drive.get(), set.driveTone.get(),
-		       set.wireDecay.get(), set.clickDecay.get(), set.bellStart.get(), set.bellEnd.get(), set.bellTime.get(),
-		       set.bell2Hz.get(), set.bell2Time.get(), set.hold.get(), set.dip.get(), set.dipTime.get(), set.clickSweep.get(),
-		       set.clickSweepTime.get(), set.startPhase.get(), set.spread.get(), set.clapQ.get(), set.clapHighPass.get(),
-		       set.velocityZoneControl.get(), set.wiresControl.get(), set.bellsControl.get(), set.levelMirrorControl.get(),
-		       set.tuneMirrorControl.get(), set.panControl.get(), set.releaseControl.get(), set.velocityNoiseControl.get(),
-		       set.widthControl.get(), set.bendControl.get(), set.layerLevelControl.get(), set.layerDelayControl.get(),
-		       set.layerHighPassControl.get(), set.layerOffsetXControl.get(), set.layerOffsetYControl.get() }) {
-			c->setModulation(mod, history);
-		}
+	for (ParamControl* c : allControls_) {
+		c->setModulation(mod, history);
 	}
 }
 
@@ -943,16 +1347,30 @@ bool DrumPanel::kitMode() const {
 	       == static_cast<size_t>(DrumMode::Kit);
 }
 
+size_t DrumPanel::shownPad() const { return kitMode() ? std::min(selection_.slot(), kMaxSounds - 1) : 0; }
+
 drum::Kind DrumPanel::kindOf(size_t pad) const {
 	const clap_id id = kitMode() ? static_cast<clap_id>(drumParam(pad, DrumControl::Kind))
 	                             : static_cast<clap_id>(ParamId::DrumPitchedKind);
 	return static_cast<drum::Kind>(steppedIndex(bridge_.value(id), kDrumKindNames.size()));
 }
 
-drum::Fields DrumPanel::fieldsOf(size_t pad) const {
+std::optional<drum::Kind> DrumPanel::layerKindOf(size_t pad, size_t layer) const {
+	if (layer == 0) {
+		return kindOf(pad);
+	}
+	// LAYER TWO'S KINDS ARE Off, THEN Kick..Clap in Kind's own order, so index - 1 is the Kind.
+	const size_t index = steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(pad, DrumControl::LayerKind))), kDrumLayerKindNames.size());
+	if (!kitMode() || index == 0) {
+		return std::nullopt;
+	}
+	return static_cast<drum::Kind>(index - 1);
+}
+
+Character DrumPanel::characterNow() const {
 	// THE PAD WHERE IT REALLY STANDS (the honesty rule: what you see is what the pad plays): the character the synth builds, by
 	// WaveDisplay's road — modulated values, the played travel (drift and pulls), the planes, residue, gamma and the likes'
-	// warp — then the bank's own build of the pads (buildDrumFor). Measured cost: seven triangle reads a sound.
+	// warp. Measured cost: seven triangle reads a sound.
 	const auto read = [this](ParamId id) { return bridge_.modulated(static_cast<clap_id>(id)); };
 	Character c = characterFromParams(read, OscType::Drum, bridge_.tuning(), bridge_.puckVelocity(),
 	                                  playedTravel(bridge_.soundTravel(), bridge_.travelPulls()), bridge_.soundOrientations(),
@@ -965,21 +1383,27 @@ drum::Fields DrumPanel::fieldsOf(size_t pad) const {
 	if (any) {
 		c.likes = { &likeTable_, bridge_.likeSerial() + 1 };
 	}
-	const DrumCharacter d = buildDrumFor(c);
-	return d.pads[d.kit ? pad : 0];
+	return c;
 }
 
-drum::Laws DrumPanel::lawsOf(size_t pad) const {
-	// THE VOICE'S MAPPING (OscVoice::controlDrum): the pad's controls over its real fields, at velocity 0.8. In Kit mode the
-	// kind's resting pitch at Tune; in Pitched mode a C3 at Tune.
-	const auto v = [&](DrumControl c) { return bridge_.modulated(static_cast<clap_id>(drumParam(pad, c))); };
+drum::Fields DrumPanel::fieldsFrom(size_t pad, size_t layer, const DrumCharacter& built) const {
+	if (layer == 0) {
+		return built.pads[built.kit ? pad : 0];
+	}
+	return built.kit ? built.layers[pad] : drum::Fields {};
+}
+
+drum::Controls DrumPanel::controlsOf(size_t pad, size_t layer) const {
+	// THE VOICE'S MAPPING (Synth::fillDrumKit's `fillControls`): the layer's own controls over its real fields.
+	const auto v = [&](DrumControl c) { return bridge_.modulated(static_cast<clap_id>(drumLayerParam(pad, layer, c))); };
+	const bool kit = kitMode();
 	drum::Controls c;
 	c.decaySeconds = std::exp2(v(DrumControl::Decay));
 	c.sweepSeconds = std::exp2(v(DrumControl::SweepTime));
 	c.drive = v(DrumControl::Drive);
 	c.count = static_cast<int>(std::lround(v(DrumControl::Count)));
 	c.spreadSeconds = std::exp2(v(DrumControl::Spread));
-	c.pitchRangeSemitones = kitMode() ? 3.0 : 0.5;
+	c.pitchRangeSemitones = kit ? 3.0 : 0.5;
 	c.velocityZone = v(DrumControl::VelocityZone);
 	c.wires = v(DrumControl::Wires);
 	c.bells = v(DrumControl::Bells);
@@ -1002,9 +1426,46 @@ drum::Laws DrumPanel::lawsOf(size_t pad) const {
 	c.bell2Seconds = std::exp2(v(DrumControl::Bell2Time));
 	c.velocityNoise = v(DrumControl::VelocityNoise);
 	c.width = v(DrumControl::Width);
-	const drum::Kind k = kindOf(pad);
-	const double base = (kitMode() ? drum::kindBaseHz(k) : 130.8127826502993) * std::exp2(v(DrumControl::Tune) / 12.0);
-	return drum::lawsFor(k, fieldsOf(pad), c, base, 0.8);
+	// THE TERRAIN'S PITCH MODE: Kit mode alone (Pitched mode keeps the +-0.5 semitone fine pitch as it always was).
+	c.pitchMode = kit ? static_cast<int>(steppedIndex(v(DrumControl::PitchMode), kDrumPitchModeNames.size())) : 0;
+	return c;
+}
+
+namespace {
+/// THE KIT-WIDE TRANSPOSE in semitones, as the synth sums it (Synth::fillDrumKit): the Engine rail's Oct, St, Coarse and Fine.
+double kitTransposeOf(const ParamBridge& bridge) {
+	const auto v = [&](ParamId id) { return bridge.modulated(static_cast<clap_id>(id)); };
+	return 12.0 * v(ParamId::TransposeOct) + v(ParamId::TransposeSemi) + v(ParamId::Coarse) + v(ParamId::FineTune) / 100.0;
+}
+} // namespace
+
+drum::Laws DrumPanel::lawsFrom(size_t pad, size_t layer, const DrumCharacter& built) const {
+	const drum::Kind k = layerKindOf(pad, layer).value_or(kindOf(pad));
+	const double tune = bridge_.modulated(static_cast<clap_id>(drumLayerParam(pad, layer, DrumControl::Tune)));
+	// THE RESTING PITCH: a kit's kind's own (the kit's transpose in), or a C3 in Pitched mode; then Tune.
+	const double base = kitMode() ? drum::restingBaseHz(k, tune, kitTransposeOf(bridge_)) : 130.8127826502993 * std::exp2(tune / 12.0);
+	return drum::lawsFor(k, fieldsFrom(pad, layer, built), controlsOf(pad, layer), base, 0.8);
+}
+
+drum::SettledPitch DrumPanel::settledFrom(size_t pad, size_t layer, const DrumCharacter& built) const {
+	const std::optional<drum::Kind> k = layerKindOf(pad, layer);
+	if (!k || !kitMode()) {
+		return {};
+	}
+	const double tune = bridge_.modulated(static_cast<clap_id>(drumLayerParam(pad, layer, DrumControl::Tune)));
+	return drum::settledPitch(*k, fieldsFrom(pad, layer, built), controlsOf(pad, layer), drum::restingBaseHz(*k, tune, kitTransposeOf(bridge_)));
+}
+
+drum::SettledPitch DrumPanel::settledOf(size_t pad, size_t layer) const {
+	return settledFrom(pad, layer, buildDrumFor(characterNow()));
+}
+
+void DrumPanel::refreshVectorContext(size_t pad, size_t layer, const Character& character) {
+	DrumVectorContext& ctx = pads_[pad].layer[layer].vectorContext;
+	ctx.character = character;
+	ctx.slot = static_cast<uint8_t>(pad);
+	ctx.layer = static_cast<uint8_t>(layer);
+	ctx.kind = layerKindOf(pad, layer).value_or(kindOf(pad));
 }
 
 visage::Bounds DrumPanel::padBounds(size_t pad) const {
@@ -1016,60 +1477,91 @@ visage::Bounds DrumPanel::padBounds(size_t pad) const {
 		     kPadCellWidth, kPadCellHeight };
 }
 
+void DrumPanel::chooseLayer(size_t layer) {
+	layer = std::min<size_t>(layer, 1);
+	if (layer == layerShown_) {
+		return;
+	}
+	layerShown_ = layer;
+	tabs_->setShown(layer);
+	shownPad_ = kMaxSounds; // lay out again for the other tab
+	sync();
+	redraw();
+}
+
 bool DrumPanel::sync() {
 	const bool kit = kitMode();
-	const size_t pad = kit ? std::min(selection_.slot(), kMaxSounds - 1) : 0;
-	const drum::Kind kind = kindOf(pad);
+	const size_t pad = shownPad();
+	const size_t layer = kit ? layerShown_ : 0; // Pitched mode has layer one alone
+	const std::optional<drum::Kind> shownKindOpt = layerKindOf(pad, layer);
+	const bool layerOn = shownKindOpt.has_value();
+	const drum::Kind kind = shownKindOpt.value_or(kindOf(pad));
 	const drum::ControlUse uses = drum::kindControls(kind);
+	const drum::FieldUse reads = drum::kindReads(kind);
 	const bool gate = steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(pad, DrumControl::Trigger))),
 	                               kDrumTriggerNames.size())
 	                  == 1;
-	const bool layered = kit && steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(pad, DrumControl::LayerKind))),
-	                                         kDrumLayerKindNames.size())
-	                                    > 0;
 	PadSet& mine = pads_[pad];
+	LayerSet& L = mine.layer[layer];
+	const Character character = layerOn ? characterNow() : Character {};
+	const DrumCharacter built = layerOn ? buildDrumFor(character) : DrumCharacter {};
+	const drum::SettledPitch settled = layerOn ? settledFrom(pad, layer, built) : drum::SettledPitch {};
 	HitPicture::Controls handles;
-	handles.tune = mine.tune.get();
-	handles.decay = mine.decay.get();
-	handles.level = mine.level.get();
-	handles.sweepTime = uses.sweepTime ? mine.sweepTime.get() : nullptr;
-	handles.drive = uses.drive ? mine.drive.get() : nullptr;
-	handles.driveTone = uses.drive ? mine.driveTone.get() : nullptr;
-	if (uses.snareEnvelopes) {
-		handles.wireDecay = mine.wireDecay.get();
-		handles.clickDecay = mine.clickDecay.get();
+	if (layerOn) {
+		handles.tune = L.tune.get();
+		handles.decay = L.decay.get();
+		handles.level = L.level.get();
+		handles.sweepTime = uses.sweepTime ? L.sweepTime.get() : nullptr;
+		handles.drive = uses.drive ? L.drive.get() : nullptr;
+		handles.driveTone = uses.drive ? L.driveTone.get() : nullptr;
+		if (uses.snareEnvelopes) {
+			handles.wireDecay = L.wireDecay.get();
+			handles.clickDecay = L.clickDecay.get();
+		}
+		if (uses.bell) {
+			handles.bellStart = L.bellStart.get();
+			handles.bellEnd = L.bellEnd.get();
+			handles.bellTime = L.bellTime.get();
+			handles.bell2 = L.bell2Hz.get();
+			handles.bell2Time = L.bell2Time.get();
+		}
+		if (uses.kickShape) {
+			handles.hold = L.hold.get();
+			handles.dip = L.dip.get();
+			handles.dipTime = L.dipTime.get();
+			handles.clickSweep = L.clickSweep.get();
+			handles.clickSweepTime = L.clickSweepTime.get();
+			handles.startPhase = L.startPhase.get();
+		}
+		if (uses.spread) {
+			handles.spread = L.spread.get();
+		}
+		if (uses.clapFilter) {
+			handles.clapHighPass = L.clapHighPass.get();
+			handles.clapQ = L.clapQ.get();
+		}
+		const double levelDb = bridge_.modulated(static_cast<clap_id>(layer == 0 ? drumParam(pad, DrumControl::Level)
+		                                                                          : drumParam(pad, DrumControl::LayerLevel)));
+		picture_.show(kind, lawsFrom(pad, layer, built),
+		              std::exp2(bridge_.modulated(static_cast<clap_id>(drumLayerParam(pad, layer, DrumControl::Decay)))), levelDb,
+		              handles);
+		refreshVectorContext(pad, layer, character);
+		L.readout->refresh(drum_pitch::readoutText(settled));
 	}
-	if (uses.bell) {
-		handles.bellStart = mine.bellStart.get();
-		handles.bellEnd = mine.bellEnd.get();
-		handles.bellTime = mine.bellTime.get();
-		handles.bell2 = mine.bell2Hz.get();
-		handles.bell2Time = mine.bell2Time.get();
+	else {
+		picture_.show(kind, drum::Laws {}, 0.5, 0.0, handles);
 	}
-	if (uses.kickShape) {
-		handles.hold = mine.hold.get();
-		handles.dip = mine.dip.get();
-		handles.dipTime = mine.dipTime.get();
-		handles.clickSweep = mine.clickSweep.get();
-		handles.clickSweepTime = mine.clickSweepTime.get();
-		handles.startPhase = mine.startPhase.get();
-	}
-	if (uses.spread) {
-		handles.spread = mine.spread.get();
-	}
-	if (uses.clapFilter) {
-		handles.clapHighPass = mine.clapHighPass.get();
-		handles.clapQ = mine.clapQ.get();
-	}
-	picture_.show(kind, lawsOf(pad), std::exp2(bridge_.modulated(static_cast<clap_id>(drumParam(pad, DrumControl::Decay)))),
-	              bridge_.modulated(static_cast<clap_id>(drumParam(pad, DrumControl::Level))), handles);
-	if (pad == shownPad_ && kit == shownKit_ && kind == shownKind_ && gate == shownGate_) {
+	if (pad == shownPad_ && layer == shownLayer_ && kit == shownKit_ && kind == shownKind_ && layerOn == shownLayerOn_
+	    && gate == shownGate_ && settled.defined == shownSettled_) {
 		return false;
 	}
 	shownPad_ = pad;
+	shownLayer_ = layer;
 	shownKit_ = kit;
 	shownKind_ = kind;
+	shownLayerOn_ = layerOn;
 	shownGate_ = gate;
+	shownSettled_ = settled.defined;
 	padsShown_ = kit;
 	const auto show = [](auto* frame, bool shown) {
 		if (frame->isVisible() != shown) {
@@ -1081,8 +1573,11 @@ bool DrumPanel::sync() {
 		}
 	};
 	show(pitchedKind_.get(), !kit);
+	show(tabs_.get(), kit);
+	tabs_->setShown(layerShown_);
+	show(&picture_, layerOn);
 	// THE LAYOUT: the picture with its handles across the top; under it the engine row (Mode, the Pitched Kind, Seed); then
-	// the pads at the left, and the pad's own boxes and pills at the right.
+	// the pads, the pad-level controls, the layer tabs, and the shown tab's body.
 	// THE CONTENT IS THE PAD ROW'S WIDTH; the pad fx rail hangs to its right (Kit mode alone, drum proposal §17 P3).
 	const float rail = railWidthNow();
 	show(lane_.get(), kit);
@@ -1093,84 +1588,162 @@ bool DrumPanel::sync() {
 	mode_->setBounds(kPad, rowY, 150.0f, 24.0f);
 	pitchedKind_->setBounds(kPad + 160.0f, rowY - 4.0f, 90.0f, ValueBox::kHeight);
 	seed_->setBounds(w - kPad - 80.0f, rowY - 4.0f, 80.0f, ValueBox::kHeight);
-	// THE CONTROLS UNDER THE PADS, across the whole width; in Pitched mode (no pads) where
-	// the pads would be.
-	const float controlsX = kPad;
-	const float boxY = kit ? padBounds(0).bottom() + kPad : rowY + kRowHeight + kPad;
+
+	// A ROW-WRAPPING FLOW: items in a line, each `rowH` tall and centred in it, wrapping when the next would pass the right edge.
+	struct Flow {
+		float x0, xMax, x, y, rowH, gap;
+		void place(visage::Frame* f, float width, float height) {
+			if (x > x0 && x + width > xMax) {
+				x = x0;
+				y += rowH + 2.0f;
+			}
+			f->setBounds(x, y + (rowH - height) * 0.5f, width, height);
+			x += width + gap;
+		}
+		[[nodiscard]] float bottom() const { return y + rowH; }
+	};
+	const float padLevelY = kit ? padBounds(0).bottom() + kPad : rowY + kRowHeight + kPad;
+	float bodyBottom = padLevelY;
 	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
 		PadSet& set = pads_[slot];
 		const bool own = slot == pad;
-		float x = controlsX;
-		const auto seatBox = [&](auto* f, bool shown, float width) {
-			show(f, own && shown);
-			f->setBounds(x, boxY, width, ValueBox::kHeight);
-			if (own && shown) {
-				x += width + 6.0f;
+		// EVERY CONTROL OF A PAD THAT IS NOT THE SHOWN ONE IS HIDDEN (and dead), both layers'.
+		for (size_t l = 0; l < 2; ++l) {
+			LayerSet& s = set.layer[l];
+			if (own && l == layer) {
+				continue;
 			}
-		};
-		seatBox(set.kind.get(), kit, 86.0f);
-		seatBox(set.note.get(), kit, 52.0f);
-		seatBox(set.choke.get(), kit, 52.0f);
-		seatBox(set.count.get(), uses.count, 52.0f);
-		const float segY = boxY + ValueBox::kHeight + 6.0f;
-		show(set.voices.get(), own && kit);
-		set.voices->setBounds(controlsX, segY, 96.0f, 22.0f);
-		show(set.trigger.get(), own);
-		set.trigger->setBounds(controlsX + (kit ? 104.0f : 0.0f), segY, 128.0f, 22.0f);
-		// THE ZONE ROW (drum proposal §14): Velocity on every kind, Wires and Bells on a Snare, side by side in list rows.
-		const float zoneY = segY + 30.0f;
-		const float zoneH = Knob::rowHeight(kZoneFace);
-		const float zoneW = std::floor((w - kPad - controlsX - 2.0f * 6.0f) / 3.0f);
-		float zx = controlsX;
-		for (const auto& [cell, shown] : { std::pair { set.velocityZone.get(), true }, std::pair { set.wires.get(), uses.wireContour },
-		                                   std::pair { set.bells.get(), uses.bell } }) {
-			show(cell, own && shown);
-			cell->setFaceDiameter(kZoneFace);
-			cell->setBounds(zx, zoneY, zoneW, zoneH);
-			if (own && shown) {
-				zx += zoneW + 6.0f;
+			for (visage::Frame* f : std::initializer_list<visage::Frame*> {
+			         s.kind.get(), s.count.get(), s.driveCurve.get(), s.pitchMode.get(), s.velocityZone.get(), s.wires.get(),
+			         s.bells.get(), s.tunePill.get(), s.velocityNoise.get(), s.width.get(), s.levelPill.get(), s.delay.get(),
+			         s.highPass.get(), s.lock.get(), s.vectorPad.get(), s.readout.get() }) {
+				if (f != nullptr) {
+					show(f, false);
+				}
+			}
+			for (auto& f : s.field) {
+				show(f.get(), false);
 			}
 		}
-		// THE PILLS, FLOWING INTO ROWS: Level and Tune (mirroring their handles), Pan, Release on a Gate pad, the drive's curve
-		// (all three on its face) wherever Drive is read, Velocity Noise where Noise is read, Width on a Snare or a Clap.
-		float px = controlsX;
-		float pillY = zoneY + zoneH + 8.0f;
-		const float pillW = 92.0f;
-		int pillRow = 0;
-		const auto seat = [&](auto* p, bool shown, float width) {
-			show(p, own && shown);
-			if (own && shown && px > controlsX && px + width > w - kPad) {
-				px = controlsX;
-				++pillRow;
+		if (!own) {
+			for (visage::Frame* f : std::initializer_list<visage::Frame*> { set.note.get(), set.choke.get(), set.voices.get(),
+			                                                                set.trigger.get(), set.pan.get(), set.release.get(),
+			                                                                set.bend.get(), set.mute.get(), set.solo.get(), set.play.get() }) {
+				show(f, false);
+				if (f == set.play.get()) {
+					set.play->release(); // a pad switched away mid-press lets go
+				}
 			}
-			p->setBounds(px, pillY + static_cast<float>(pillRow) * 28.0f, width, 22.0f);
-			if (own && shown) {
-				px += width + 6.0f;
+			continue;
+		}
+		// THE PAD-LEVEL CONTROLS, one flowing line (two when a Gate pad adds its Release): Note, Choke, Voices (Kit mode), Trigger,
+		// Pan, Bend (Kit), Release (Gate).
+		Flow flow { kPad, w - kPad, kPad, padLevelY, ValueBox::kHeight, 6.0f };
+		const auto seat = [&](visage::Frame* f, bool shown, float width, float height) {
+			show(f, shown);
+			if (shown) {
+				flow.place(f, width, height);
 			}
 		};
-		seat(set.levelMirror.get(), true, pillW);
-		seat(set.tuneMirror.get(), true, pillW);
-		seat(set.pan.get(), true, pillW);
-		seat(set.bend.get(), kit, pillW); // the pitch bend's share (decision 8): a kit pad's alone; Pitched mode follows the voice
-		seat(set.release.get(), gate, pillW);
-		seat(set.driveCurve.get(), uses.drive, 2.0f * pillW);
-		seat(set.velocityNoise.get(), uses.velNoise, pillW);
-		seat(set.width.get(), uses.width, pillW);
-		// THE LAYER ROW (stage (c)), Kit mode alone, on a line of its own under the pills: its kind, and while it is on its
-		// Level, Delay, High Pass, Lock and offset vector, flowing on.
-		const float layerY = pillY + static_cast<float>(pillRow + 1) * 28.0f + 4.0f;
-		show(set.layerKind.get(), own && kit);
-		set.layerKind->setBounds(controlsX, layerY - 4.0f, 86.0f, ValueBox::kHeight);
-		px = controlsX + 92.0f;
-		pillY = layerY;
-		pillRow = 0;
-		seat(set.layerLevel.get(), layered, pillW);
-		seat(set.layerDelay.get(), layered, pillW);
-		seat(set.layerHighPass.get(), layered, pillW);
-		seat(set.layerLock.get(), layered, 60.0f);
-		seat(set.layerOffsetX.get(), layered, pillW);
-		seat(set.layerOffsetY.get(), layered, pillW);
+		seat(set.note.get(), kit, 52.0f, ValueBox::kHeight);
+		seat(set.choke.get(), kit, 52.0f, ValueBox::kHeight);
+		seat(set.voices.get(), kit, 96.0f, 22.0f);
+		seat(set.trigger.get(), true, 128.0f, 22.0f);
+		seat(set.pan.get(), true, 92.0f, 22.0f);
+		seat(set.bend.get(), kit, 92.0f, 22.0f); // the pitch bend's share (decision 8): a kit pad's alone; Pitched mode follows the voice
+		seat(set.release.get(), gate, 92.0f, 22.0f);
+		seat(set.mute.get(), kit, 54.0f, SwitchChip::kHeight); // the pad's own Mute and the preview of it alone (kit pads only)
+		seat(set.solo.get(), kit, 54.0f, SwitchChip::kHeight);
+		seat(set.play.get(), kit, PadPlayButton::kWidth, PadPlayButton::kHeight);
+		if (!kit) {
+			set.play->release();
+		}
+		float y = flow.bottom() + 10.0f;
+		LayerSet& s = set.layer[layer];
+		// THE LAYER TABS, and beside them the shown layer's Kind (layer two's with Off) and, on layer two, Level, Delay and High Pass.
+		if (kit) {
+			tabs_->setBounds(kPad, y, 2.0f * LayerTabs::kTabWidth, LayerTabs::kHeight);
+			Flow top { 2.0f * LayerTabs::kTabWidth + kPad + 12.0f, w - kPad, 0.0f, y - 2.0f, ValueBox::kHeight, 6.0f };
+			top.x = top.x0;
+			show(s.kind.get(), true);
+			top.place(s.kind.get(), 86.0f, ValueBox::kHeight);
+			for (visage::Frame* f : std::initializer_list<visage::Frame*> { s.levelPill.get(), s.delay.get(), s.highPass.get() }) {
+				if (f != nullptr) {
+					show(f, layerOn);
+					if (layerOn) {
+						top.place(f, 88.0f, 22.0f);
+					}
+				}
+			}
+			y += LayerTabs::kHeight + 12.0f;
+		}
+		else {
+			show(s.kind.get(), false);
+		}
+		bodyBottom = y;
+		if (!layerOn) {
+			// AN OFF LAYER HAS A KIND AND NOTHING ELSE: no vector, no pitch, nothing to hear.
+			for (visage::Frame* f : std::initializer_list<visage::Frame*> { s.count.get(), s.driveCurve.get(), s.pitchMode.get(),
+			                                                                s.velocityZone.get(), s.wires.get(), s.bells.get(),
+			                                                                s.tunePill.get(), s.velocityNoise.get(), s.width.get(), s.lock.get(),
+			                                                                s.vectorPad.get(), s.readout.get() }) {
+				if (f != nullptr) {
+					show(f, false);
+				}
+			}
+			for (auto& f : s.field) {
+				show(f.get(), false);
+			}
+			continue;
+		}
+		// THE TAB'S BODY: the terrain pad and its Lock at the left (Kit mode), everything else flowing at the right.
+		float x0 = kPad;
+		if (kit) {
+			show(s.vectorPad.get(), true);
+			s.vectorPad->setBounds(kPad, y, kVectorPadSize, kVectorPadSize);
+			show(s.lock.get(), true);
+			s.lock->setBounds(kPad, y + kVectorPadSize + 6.0f, 60.0f, SwitchChip::kHeight);
+			x0 = kPad + kVectorPadSize + 12.0f;
+		}
+		else {
+			show(s.vectorPad.get(), false);
+			show(s.lock.get(), false);
+		}
+		Flow body { x0, w - kPad, x0, y, 28.0f, 6.0f };
+		const auto put = [&](visage::Frame* f, bool shown, float width, float height) {
+			show(f, shown);
+			if (shown) {
+				body.place(f, width, height);
+			}
+		};
+		put(s.tunePill.get(), true, 92.0f, 22.0f);
+		put(s.readout.get(), kit && settled.defined, 188.0f, 24.0f);
+		put(s.pitchMode.get(), kit && reads.pitch, 196.0f, 22.0f);
+		put(s.driveCurve.get(), uses.drive, 184.0f, 22.0f);
+		put(s.count.get(), uses.count, 52.0f, ValueBox::kHeight);
+		put(s.velocityNoise.get(), uses.velNoise, 92.0f, 22.0f);
+		put(s.width.get(), uses.width, 92.0f, 22.0f);
+		// THE SEVEN FIELD SCALERS of this layer (Kit mode: the Explore surround holds the kit's trims, and Pitched mode's own seven).
+		const std::array<bool, 7> fieldShown { reads.pitch, reads.length, reads.sweep, reads.tone, reads.noise, reads.snap, reads.metal };
+		for (size_t f = 0; f < s.field.size(); ++f) {
+			put(s.field[f].get(), kit && fieldShown[f], 92.0f, 22.0f);
+		}
+		// THE ZONE ROWS (drum proposal §14): Velocity on every kind, Wires and Bells on a Snare, one to a line.
+		const float zoneH = Knob::rowHeight(kZoneFace);
+		float zy = body.bottom() + 6.0f;
+		for (const auto& [cell, shown] : { std::pair { s.velocityZone.get(), true }, std::pair { s.wires.get(), uses.wireContour },
+		                                   std::pair { s.bells.get(), uses.bell } }) {
+			show(cell, shown);
+			cell->setFaceDiameter(kZoneFace);
+			if (shown) {
+				cell->setBounds(x0, zy, w - kPad - x0, zoneH);
+				zy += zoneH + 2.0f;
+			}
+		}
+		bodyBottom = std::max(zy, kit ? y + kVectorPadSize + 6.0f + SwitchChip::kHeight : zy);
 	}
+	// THE PICTURE'S PLACE WHEN LAYER TWO IS OFF is said in words (draw): the content ends where the controls end.
+	contentBottom_ = bodyBottom;
 	redraw();
 	return true;
 }
@@ -1182,6 +1755,16 @@ void DrumPanel::resized() {
 
 bool DrumPanel::updateContent() {
 	bool moved = sync();
+	// THE SOLO CHIPS FOLLOW THE PREVIEW, which moves from the sound cards too and is no parameter any watch would carry.
+	const Preview preview = bridge_.preview();
+	const std::optional<size_t> solo = preview.active() ? std::optional<size_t> { preview.slot } : std::nullopt;
+	if (solo != soloSeen_) {
+		soloSeen_ = solo;
+		for (PadSet& set : pads_) {
+			set.solo->redraw();
+		}
+		moved = true;
+	}
 	// THE PAD FX RAIL, RE-ASKED EVERY TICK (the house habit), its cards advanced, its add menu opened once a fresh lane's
 	// column exists.
 	moved = followLane() || moved;
@@ -1202,6 +1785,24 @@ void DrumPanel::draw(visage::Canvas& canvas) {
 		return;
 	}
 	const size_t selected = std::min(selection_.slot(), kMaxSounds - 1);
+	if (!shownLayerOn_) {
+		// AN OFF LAYER HAS NO PICTURE: said in words where the picture would be.
+		canvas.setColor(kVoid);
+		canvas.roundedRectangle(kPad, kPad, std::max(0.0f, width() - railWidthNow()) - 2.0f * kPad, kPictureHeight, 6.0f);
+		canvas.setColor(kMuted);
+		canvas.text("Layer 2 is off. Choose its Kind to strike a second hit with this pad.", font(kControlSize), visage::Font::kCenter,
+		            kPad, kPad, std::max(0.0f, width() - railWidthNow()) - 2.0f * kPad, kPictureHeight);
+	}
+	else {
+		// THE LAYER'S VECTOR, in numbers beside its Lock under the terrain pad.
+		const LayerSet& L = pads_[selected].layer[layerShown_];
+		if (L.vectorPad != nullptr && L.vectorPad->isVisible()) {
+			char text[48] = {};
+			std::snprintf(text, sizeof(text), "x %+.2f   y %+.2f", L.offsetXControl->value(), L.offsetYControl->value());
+			canvas.setColor(kMuted);
+			canvas.text(text, font(kKnobLabelSize), visage::Font::kLeft, L.lock->right() + 8.0f, L.lock->y(), 110.0f, L.lock->height());
+		}
+	}
 	for (size_t pad = 0; pad < kMaxSounds; ++pad) {
 		const visage::Bounds b = padBounds(pad);
 		const uint32_t hue = padHue(pad);
@@ -1287,48 +1888,64 @@ void DrumPanel::clickPadForTest(size_t pad) {
 	}
 }
 
-visage::Frame* DrumPanel::controlForTest(size_t pad, DrumControl c) const {
+visage::Frame* DrumPanel::controlForTest(size_t pad, DrumControl c, size_t layer) const {
 	const PadSet& set = pads_[pad];
+	const LayerSet& L = set.layer[std::min<size_t>(layer, 1)];
 	switch (c) {
-	case DrumControl::Kind: return set.kind.get();
+	// THE PAD'S OWN.
 	case DrumControl::Note: return set.note.get();
 	case DrumControl::Choke: return set.choke.get();
-	case DrumControl::Count: return set.count.get();
 	case DrumControl::Voices: return set.voices.get();
 	case DrumControl::Trigger: return set.trigger.get();
-	case DrumControl::Level: return set.levelMirror.get();
-	case DrumControl::Tune: return set.tuneMirror.get();
 	case DrumControl::Pan: return set.pan.get();
 	case DrumControl::Release: return set.release.get();
-	case DrumControl::DriveCurve: return set.driveCurve.get();
-	case DrumControl::VelocityNoise: return set.velocityNoise.get();
-	case DrumControl::Width: return set.width.get();
 	case DrumControl::Bend: return set.bend.get();
-	case DrumControl::LayerKind: return set.layerKind.get();
-	case DrumControl::LayerLevel: return set.layerLevel.get();
-	case DrumControl::LayerDelay: return set.layerDelay.get();
-	case DrumControl::LayerHighPass: return set.layerHighPass.get();
-	case DrumControl::Lock: return set.layerLock.get();
-	case DrumControl::OffsetX: return set.layerOffsetX.get();
-	case DrumControl::OffsetY: return set.layerOffsetY.get();
-	case DrumControl::VelocityZone: return set.velocityZone.get();
-	case DrumControl::Wires: return set.wires.get();
-	case DrumControl::Bells: return set.bells.get();
+	// THE LAYER'S: the kind box (layer one's is the pad's Kind), and every control a hit reads, each layer's own copy.
+	case DrumControl::Kind: return set.layer[0].kind.get();
+	case DrumControl::LayerKind: return set.layer[1].kind.get();
+	case DrumControl::LayerLevel: return set.layer[1].levelPill.get();
+	case DrumControl::LayerDelay: return set.layer[1].delay.get();
+	case DrumControl::LayerHighPass: return set.layer[1].highPass.get();
+	case DrumControl::Count: return L.count.get();
+	case DrumControl::Tune: return L.tunePill.get();
+	case DrumControl::DriveCurve: return L.driveCurve.get();
+	case DrumControl::PitchMode: return L.pitchMode.get();
+	case DrumControl::VelocityNoise: return L.velocityNoise.get();
+	case DrumControl::Width: return L.width.get();
+	case DrumControl::Lock: return L.lock.get();
+	case DrumControl::OffsetX:
+	case DrumControl::OffsetY: return L.vectorPad.get();
+	case DrumControl::VelocityZone: return L.velocityZone.get();
+	case DrumControl::Wires: return L.wires.get();
+	case DrumControl::Bells: return L.bells.get();
+	case DrumControl::FieldPitch: return L.field[0].get();
+	case DrumControl::FieldLength: return L.field[1].get();
+	case DrumControl::FieldSweep: return L.field[2].get();
+	case DrumControl::FieldTone: return L.field[3].get();
+	case DrumControl::FieldNoise: return L.field[4].get();
+	case DrumControl::FieldSnap: return L.field[5].get();
+	case DrumControl::FieldMetal: return L.field[6].get();
 	default: return nullptr;
 	}
 }
 
-bool DrumPanel::drawnForTest(size_t pad, DrumControl c) const {
-	if (visage::Frame* f = controlForTest(pad, c); f != nullptr) {
+visage::Frame* DrumPanel::fieldPillForTest(size_t pad, size_t layer, size_t field) const {
+	return pads_[pad].layer[std::min<size_t>(layer, 1)].field[std::min<size_t>(field, 6)].get();
+}
+
+bool DrumPanel::drawnForTest(size_t pad, DrumControl c, size_t layer) const {
+	// A frame is drawn when it is visible AND its pad is the shown one (a hidden pad's frames are hidden too, but the pad's kit
+	// structure answers for itself).
+	if (visage::Frame* f = controlForTest(pad, c, layer); f != nullptr) {
 		return f->isVisible();
 	}
-	const bool selected = (kitMode() ? std::min(selection_.slot(), kMaxSounds - 1) : 0) == pad;
+	const bool selected = shownPad() == pad && (kitMode() ? layerShown_ : 0) == layer;
 	using H = HitPicture::Handle;
 	switch (c) {
-	case DrumControl::Tune: return selected && picture_.handleShown(H::Tune);
+	// THE PAD'S LEVEL is its sound card's, and layer one's Level handle on the picture.
+	case DrumControl::Level: return selected && picture_.handleShown(H::Level);
 	case DrumControl::SweepTime: return selected && picture_.handleShown(H::SweepTime);
 	case DrumControl::Decay: return selected && picture_.handleShown(H::Decay);
-	case DrumControl::Level: return selected && picture_.handleShown(H::Level);
 	case DrumControl::Drive: return selected && picture_.handleShown(H::Drive);
 	case DrumControl::WireDecay: return selected && picture_.handleShown(H::WireDecay);
 	case DrumControl::ClickDecay: return selected && picture_.handleShown(H::ClickDecay);

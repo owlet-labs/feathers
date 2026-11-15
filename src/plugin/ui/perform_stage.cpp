@@ -339,14 +339,20 @@ double PerformStage::pathModulated() const {
 	return bridge_.modulated(pathId());
 }
 
+bool PerformStage::kitUp() const {
+	return oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType))) == OscType::Drum
+	       && steppedIndex(bridge_.value(static_cast<clap_id>(ParamId::DrumMode)), kDrumModeNames.size())
+	              == static_cast<size_t>(DrumMode::Kit);
+}
+
 BlendPoint PerformStage::puck() const {
-	const BlendPoint on = pathPos(pathModulated());
+	const BlendPoint on = kitUp() ? BlendPoint { 0.0f, 0.0f } : pathPos(pathModulated());
 	return { on.x + static_cast<float>(bridge_.modulated(static_cast<clap_id>(ParamId::PosX))),
 		     on.y + static_cast<float>(bridge_.modulated(static_cast<clap_id>(ParamId::PosY))) };
 }
 
 BlendPoint PerformStage::puckBase() const {
-	const BlendPoint on = pathPos(pathValue());
+	const BlendPoint on = kitUp() ? BlendPoint { 0.0f, 0.0f } : pathPos(pathValue());
 	return { on.x + static_cast<float>(bridge_.value(static_cast<clap_id>(ParamId::PosX))),
 		     on.y + static_cast<float>(bridge_.value(static_cast<clap_id>(ParamId::PosY))) };
 }
@@ -423,6 +429,13 @@ void PerformStage::dragTo(visage::Point pixels) {
 	const float reach = std::hypot(at.x, at.y);
 	if (reach > 1.0f) {
 		at = { at.x / reach, at.y / reach };
+	}
+	if (kitUp()) {
+		// A KIT'S PUCK IS (Pos X, Pos Y): Path is unread there, so it is left where it is.
+		commit(static_cast<clap_id>(ParamId::PosX), static_cast<double>(at.x));
+		commit(static_cast<clap_id>(ParamId::PosY), static_cast<double>(at.y));
+		redraw();
+		return;
 	}
 	const double t = nearestPathT(at);
 	const BlendPoint on = pathPos(t);

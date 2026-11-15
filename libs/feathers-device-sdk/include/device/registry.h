@@ -224,6 +224,12 @@ struct NoteContext {
 struct ReadingsSink {
 	void* context = nullptr;
 	void (*publish)(void* context, const float* values, size_t count) = nullptr;
+	/// **IS ANYONE READING THE HEAVY READINGS RIGHT NOW?** Optional: a null `wanted` means "always", so a host that
+	/// never learned the question changes nothing. A device with a costly picture (a spectrum) asks once a block with
+	/// the block's `frames`, and computes the picture only while it answers true. The host answers from a lease the
+	/// viewer renews and the audio advances, so a viewer torn down without saying so cannot leave it running.
+	/// Audio thread: no allocation, no lock.
+	bool (*wanted)(void* context, int frames) = nullptr;
 };
 
 

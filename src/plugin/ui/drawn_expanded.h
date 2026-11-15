@@ -309,7 +309,7 @@ public:
 
 private:
 	[[nodiscard]] DeviceControl& control(size_t index) const;
-	[[nodiscard]] fx::drawn::Settings settings() const;
+	[[nodiscard]] fx::drawn::Settings settings(bool modulated = true) const;
 	[[nodiscard]] const fx::drawn::Band& band(size_t index) const;
 	[[nodiscard]] size_t fieldIndex(size_t band, fx::drawn::BandField field) const;
 

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "plugin/ui/modulated_row.h"
 #include "fx/automod/automod_derived.h"
 #include "fx/automod/automod_types.h"
 #include "plugin/gui_bridge.h"
@@ -149,7 +150,10 @@ public:
 	[[nodiscard]] CombGlow combGlow(float lfo) const;
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
-	[[nodiscard]] fx::automod::Settings drawnFromForTest() const { return settings(); }
+	/// The strip draws its REST shape from the stored row and, where modulation moved it, the modulated response over it.
+	[[nodiscard]] fx::automod::Settings drawnFromForTest() const { return settings(true); }
+	[[nodiscard]] fx::automod::Settings restFromForTest() const { return settings(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(settings(false), settings(true)); }
 
 private:
 	/// THE ENVELOPE'S TRACE — a level line across the same plot the waveform and the response share.
@@ -201,7 +205,7 @@ public:
 		/// nothing.
 		float liveHz = 0.0f;
 	};
-	[[nodiscard]] ResponseTrace responseTrace() const;
+	[[nodiscard]] ResponseTrace responseTrace(bool modulated = false) const;
 
 	/// WHAT THE STRIP WILL DRAW, AS NUMBERS.
 	///
@@ -252,7 +256,7 @@ public:
 		fx::automod::Settings settings;
 		fx::automod::AutomodDerived derived;
 	};
-	[[nodiscard]] const View& view() const;
+	[[nodiscard]] const View& view(bool modulated = false) const;
 
 	/// HOW MANY TIMES THE DERIVE HAS ACTUALLY RUN.
 	///
@@ -265,7 +269,7 @@ public:
 	/// THE DEVICE'S SETTINGS AS THE STRIP READS THEM — declared defaults under whatever the row
 	/// carries. Public because a case that checks the picture has to be able to say what it is a
 	/// picture OF.
-	[[nodiscard]] fx::automod::Settings settings() const;
+	[[nodiscard]] fx::automod::Settings settings(bool modulated = false) const;
 
 private:
 	/// THE MARKER, GIVEN A TRACE ALREADY IN HAND. `draw` has one; `marker()` builds one. **The split
@@ -301,10 +305,13 @@ private:
 	/// THE SHAPE ON SCREEN, beside the phase. Watching the phase alone left the curve stale while the
 	/// star moved over it — see `update()`.
 	fx::automod::Settings drawnShape_ {};
+	fx::automod::Settings drawnModShape_ {};
 	bool haveDrawnShape_ = false;
 
 	mutable View view_ {};
 	mutable bool viewValid_ = false;
+	mutable View modView_ {};
+	mutable bool modViewValid_ = false;
 	mutable size_t deriveCount_ = 0;
 };
 

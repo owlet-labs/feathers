@@ -24,6 +24,7 @@
 #include "mod/arp/pattern_device.h" // the soak's Pattern readings (`soakReadingForTest`) only
 #include "plugin/feathers_test_chain.h"
 #include "plugin/synth.h"
+#include "plugin/ui_note_ring.h"
 
 #include "plugin/stack_index.h"
 #include "plugin/character_params.h"
@@ -368,8 +369,12 @@ void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity
 	// move the latch without something going red. Nothing in the repository could see that property
 	// go until that case existed.
 	envRetrigger_ = true;
-	hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = noteId;
-	hostDown_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = true;
+	// **THE EDITOR'S PREVIEW KEY IS NOT THE HOST'S**: it neither records an id the host is to be told of nor marks the key host-held, so a
+	// host note on the same key keeps its own record, and the preview's end is never sent to the host under the reserved id.
+	if (noteId != kUiNoteId) {
+		hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = noteId;
+		hostDown_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = true;
+	}
 	const device::NoteEvent event { device::NoteEvent::Kind::On, noteOffsetInTick(),       noteId, kPort,
 	                                channel,                    key,     velocity };
 	// THE LANE SEES IT ONLY IF THE SYNTH WOULD PLAY IT, which is the latch's own rule one line up: a
@@ -389,6 +394,9 @@ void Synth::noteOff(int16_t channel, int16_t key, int32_t noteId, double velocit
 	                                channel,                     key, velocity };
 	captureNote(event);
 	runLaneFor(&event, 1);
+	if (noteId == kUiNoteId) {
+		return; // the editor's key lifts no host key and ends no host note (see `noteOn`)
+	}
 	for (size_t i = 0; i < hostDown_.size(); ++i) {
 		const int ch = static_cast<int>(i / 128u);
 		const int k = static_cast<int>(i % 128u);
@@ -417,6 +425,9 @@ bool Synth::keyHasLiveVoice(int16_t channel, int16_t key, const Voice* except) c
 void Synth::hostNoteEnded(int16_t channel, int16_t key, int32_t noteId, const Voice* except, bool keyStaysLive) noexcept {
 	if (!isPlayableChannel(channel) || !isPlayableKey(key)) {
 		return;
+	}
+	if (noteId == kUiNoteId) {
+		return; // an editor preview voice ending: the host never issued it
 	}
 	int32_t& record = hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)];
 	if (record == kNoHostNote) {
@@ -467,6 +478,21 @@ void Synth::retriggerLaneNote(const Voice& voice) noexcept {
 	const device::NoteEvent event { device::NoteEvent::Kind::On, noteOffsetInTick(), held.noteId, kPort,
 	                                voice.channel,              voice.key,          held.velocity };
 	(void)lane_.processNotes(&event, 1, chokeScratch_.data(), chokeScratch_.size());
+}
+
+int32_t Synth::laneNoteIdOf(const Voice& voice) const noexcept {
+	// **A NOTE THE LANE INVENTED ANSWERS ONLY TO NOTES OF ITS OWN KIND.** An Arp's or Pattern's notes wear id -1, and a
+	// lane device's per-note table reads -1 as "any id" -- so an invented note on a key the host holds found the HOST
+	// note's shape (a device ahead of the note device hears the host's key), and a lane envelope in sustain held the
+	// voice through every gap (backlog RS). A voice with no id on a key the host holds under an id of its own is such a
+	// note (a passed-through host note carries the host's id), and looks itself up under an id no host note wears.
+	if (voice.noteId == -1 && isPlayableChannel(voice.channel) && isPlayableKey(voice.key)) {
+		const size_t at = static_cast<size_t>(voice.channel) * 128u + static_cast<size_t>(voice.key);
+		if (hostDown_[at] && hostIssued_[at] >= 0) {
+			return kInventedNoteId;
+		}
+	}
+	return voice.noteId;
 }
 
 int32_t Synth::heldNoteIdOr(int16_t channel, int16_t key, int32_t fallback) noexcept {
@@ -2369,8 +2395,8 @@ void Synth::startVoiceSources(const Voice& voice) {
 				continue;
 			}
 			lane_.startOutputForVoice(id, output, static_cast<size_t>(voice.slot),
-			                          lane_.outputForNoteOf(id, output, voice.noteId, voice.channel, voice.key));
-			lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(voice.slot), voice.noteId, voice.channel,
+			                          lane_.outputForNoteOf(id, output, laneNoteIdOf(voice), voice.channel, voice.key));
+			lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(voice.slot), laneNoteIdOf(voice), voice.channel,
 			                              voice.key, true);
 		}
 	});
@@ -2425,7 +2451,7 @@ bool Synth::tickEnvelopes() {
 			lane_.clearVoiceNote(static_cast<size_t>(v.slot));
 		}
 		else {
-			lane_.setVoiceNote(static_cast<size_t>(v.slot), v.noteId, v.channel, v.key);
+			lane_.setVoiceNote(static_cast<size_t>(v.slot), laneNoteIdOf(v), v.channel, v.key);
 		}
 	}
 	lane_.tickModulators(context, static_cast<int>(PuckMotion::kTickSamples));
@@ -2547,9 +2573,9 @@ bool Synth::tickEnvelopes() {
 				// BY THE WHOLE NOTE — id, channel, key — because a keyboard's notes all wear id -1 and
 				// by id alone every voice read the first note the device held.
 				lane_.writeOutputForVoice(id, output, static_cast<size_t>(v.slot),
-				                          lane_.outputForNoteOf(id, output, v.noteId, v.channel, v.key));
+				                          lane_.outputForNoteOf(id, output, laneNoteIdOf(v), v.channel, v.key));
 				// AND ITS RIGHT EAR, while the output is a pair (backlog PA: the LFO's Stereo Phase); nothing otherwise.
-				lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(v.slot), v.noteId, v.channel, v.key, false);
+				lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(v.slot), laneNoteIdOf(v), v.channel, v.key, false);
 			}
 		}
 	});

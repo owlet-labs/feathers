@@ -824,7 +824,7 @@ OwlttGraph::Track OwlttGraph::ratioTrack(size_t band) const {
 ModHandle& OwlttGraph::bandMod(size_t band, Handle handle) const {
 	if (!bandModBuilt_) {
 		for (size_t b = 0; b < 3; ++b) {
-			const auto yOfThreshold = [this, b](double v) {
+			const auto yOfThreshold = [this](double v) {
 				const float eff = std::clamp(static_cast<float>(v) + shiftFor(Handle::ThresholdBar), 0.0f, 1.0f);
 				return thresholdToY(eff, barArea());
 			};
@@ -844,7 +844,7 @@ ModHandle& OwlttGraph::bandMod(size_t band, Handle handle) const {
 				return t.x0 + r * (t.x1 - t.x0);
 			};
 			// THE STRIPS TOO: a vertical axis over the effective value's height, the ratio through the global ratio's shift.
-			const auto yOfRatio = [this, b](double v) {
+			const auto yOfRatio = [this](double v) {
 				const float eff = std::clamp(static_cast<float>(v) + shiftFor(Handle::RatioStrip), 0.0f, 1.0f);
 				return barArea().bottom() - eff * barArea().height();
 			};

@@ -21,6 +21,7 @@
 #include "plugin/ui/shaper_plot.h"
 #include "plugin/ui/switch_chip.h"
 #include "plugin/ui/widget_registry.h"
+#include "plugin/ui/modulated_row.h"
 #include "fx/shaper/shaper_types.h"
 #include "backplane/device_host.h"
 #include "plugin/ui/device_control.h"
@@ -244,6 +245,9 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] fx::shaper::Settings drawnFromForTest() const { return settings(); }
+	/// THE STORED ROW's settings: the rest shape, drawn beneath the modulated one while modulation moves it.
+	[[nodiscard]] fx::shaper::Settings restFromForTest() const { return settings(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(settings(false), settings()); }
 
 private:
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt — one line, so the toggle, the
@@ -251,7 +255,7 @@ private:
 	device::Modulatable* enableModulatable() override;
 
 	[[nodiscard]] DeviceControl& control(fx::shaper::Param p) const;
-	[[nodiscard]] fx::shaper::Settings settings() const;
+	[[nodiscard]] fx::shaper::Settings settings(bool modulated = true) const;
 	void layOut();
 
 	backplane::DeviceHost& host_;
@@ -259,6 +263,7 @@ private:
 	/// one comparison, a `redraw()` only when they differ. Copied from `OwlttGraph::update`, which is
 	/// the shipped and measured version of this.
 	mutable fx::shaper::Settings drawnSettings_ {};
+	mutable fx::shaper::Settings drawnRest_ {};
 	mutable bool haveDrawn_ = false;
 	/// THE METER AS LAST DRAWN — a READING, so `drawnSettings_` cannot see it. See `update`.
 	mutable float drawnDrive_ = 0.0f;

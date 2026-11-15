@@ -159,6 +159,11 @@ void ExplorePad<Policy>::placeStar() {
 	const double k = planePerPixel();
 	starX_ = viewX_ + (px - width() * 0.5) * k;
 	starY_ = viewY_ + (height() * 0.5 - py) * k; // UP IS MORE
+	// A POLICY WITH A HARD LIMIT (the drum layer's vector, held to its parameter's reach) keeps the star inside it, so the picture never
+	// shows a place the storage would refuse: past the limit the star would move and the sound would not.
+	if constexpr (requires { Policy::clampStar(origin_, basisX_, basisY_, starX_, starY_); }) {
+		Policy::clampStar(origin_, basisX_, basisY_, starX_, starY_);
+	}
 }
 
 template <class Policy>
@@ -185,6 +190,9 @@ bool ExplorePad<Policy>::edgeScroll(double seconds) {
 	const auto [hx, hy] = viewHalf();
 	viewX_ += vx * seconds * 2.0 * hx;
 	viewY_ += vy * seconds * 2.0 * hy;
+	if constexpr (requires { Policy::clampStar(origin_, basisX_, basisY_, viewX_, viewY_); }) {
+		Policy::clampStar(origin_, basisX_, basisY_, viewX_, viewY_); // the view stays over ground the policy allows
+	}
 	keepMapCovering();
 	// THE PUCK STAYS UNDER THE HAND while the ground slides — so the sound walks with the view.
 	placeStar();
@@ -270,7 +278,7 @@ void ExplorePad<Policy>::buildMap() {
 	}
 	// THE KEY FIRST, AND THE PAINTER READS ONLY IT — so the map is a picture of exactly what `built_` says it is,
 	// whatever the row does during the build (see the header's note on the Task 9a review).
-	const View key = Policy::keyOf(readRow_, rotate_.value(), zoom_, origin_);
+	const View key = keyFor(origin_);
 	Policy::paint(map_, key, plane);
 	built_ = key;
 	builtW_ = static_cast<int>(std::lround(width()));
@@ -299,7 +307,18 @@ bool ExplorePad<Policy>::keyMoved() const {
 	for (size_t i = 0; i < kPhaseCount; ++i) {
 		standing[i] = static_cast<double>(readRow_(Policy::kTravelFirst + i));
 	}
-	return !(Policy::keyOf(readRow_, rotate_.value(), zoom_, standing) == built_);
+	return !(keyFor(standing) == built_);
+}
+
+template <class Policy>
+typename ExplorePad<Policy>::View ExplorePad<Policy>::keyFor(const Phases& standing) const {
+	if constexpr (requires { typename Policy::Context; }) {
+		static const Context none {};
+		return Policy::keyOf(readRow_, rotate_.value(), zoom_, standing, context ? context() : none);
+	}
+	else {
+		return Policy::keyOf(readRow_, rotate_.value(), zoom_, standing);
+	}
 }
 
 template <class Policy>

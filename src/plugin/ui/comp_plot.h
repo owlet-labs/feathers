@@ -119,6 +119,9 @@ template <typename At>
 void paintMeter(visage::Canvas& canvas, const visage::Bounds& box, const Meter& m);
 
 /// PAINT THE PLOT INTO `box`. `inPeak` (linear) places the dot on the net curve when `hasPeak`.
-void paint(visage::Canvas& canvas, const visage::Bounds& box, const Curves& c, bool hasPeak, float inPeak);
+/// `modulated`, when given and different from `c`, is drawn over the rest net curve in the modulation colour (and carries
+/// the input-peak dot, since that is the curve the signal rides).
+void paint(visage::Canvas& canvas, const visage::Bounds& box, const Curves& c, bool hasPeak, float inPeak,
+           const Curves* modulated = nullptr);
 
 } // namespace feathers::ui::comp_plot

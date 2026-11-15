@@ -356,6 +356,10 @@ public:
 		order_.clear();
 	}
 
+	/// Called whenever the plugin reads the event count, i.e. from inside process(), after the block's ring drain.
+	void (*onRead)(void*) = nullptr;
+	void* onReadCtx = nullptr;
+
 	clap_input_events input() const {
 		// ctx is a void*, and the plugin only ever reads through it.
 		return clap_input_events{const_cast<EventList*>(this), sizeFn, getFn};
@@ -369,6 +373,9 @@ private:
 	};
 
 	static uint32_t CLAP_ABI sizeFn(const clap_input_events* list) {
+		if (const auto* self = static_cast<const EventList*>(list->ctx); self->onRead != nullptr) {
+			self->onRead(self->onReadCtx); // a test posting to the editor note ring from inside the block
+		}
 		return static_cast<uint32_t>(static_cast<const EventList*>(list->ctx)->order_.size());
 	}
 
@@ -997,6 +1004,55 @@ TEST_CASE("drum: process allocates nothing — kit notes, two layers, a choke, a
 	CHECK(host.allocationsInLastProcess() == 0);
 }
 
+TEST_CASE("drum: a preview key the editor posts, with no host event at all, sounds the pad and the plugin does not sleep over it; it allocates nothing") {
+	// THE EDITOR'S NOTE RING (ui_note_ring.h): a pad's preview button posts a key the audio thread drains at the start of a block, into the
+	// synth's own note road. The host sends nothing here, so a sound that comes out came from the ring alone.
+	HostedPlugin host;
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(
+	    host.plugin()->get_extension(host.plugin(), CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	REQUIRE(chain->post_note != nullptr);
+	EventList events;
+	constexpr uint32_t kFrames = 256;
+	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
+	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(0, feathers::DrumControl::Decay)), std::log2(0.05));
+	host.run(kFrames, events);
+	events.clear();
+	// THE PLUGIN IS ASLEEP FIRST (nothing sounding, so SLEEP is promised over exact silence).
+	clap_process_status status = CLAP_PROCESS_CONTINUE;
+	for (int block = 0; block < 400 && status != CLAP_PROCESS_SLEEP; ++block) {
+		status = host.run(kFrames, events);
+	}
+	REQUIRE(status == CLAP_PROCESS_SLEEP);
+	CHECK(peakOf(host.left(), kFrames) == 0.0f);
+	// A PREVIEW: the kick pad's key (36), 100/127, on. No host event.
+	REQUIRE(chain->post_note(host.plugin(), 36, true, 100.0f / 127.0f));
+	status = host.run(kFrames, events);
+	CHECK(status == CLAP_PROCESS_CONTINUE);
+	CHECK(host.allocationsInLastProcess() == 0);
+	float peak = peakOf(host.left(), kFrames);
+	for (int block = 0; block < 4; ++block) {
+		CHECK(host.run(kFrames, events) == CLAP_PROCESS_CONTINUE); // the hit rings: never SLEEP over it
+		CHECK(host.allocationsInLastProcess() == 0);
+		peak = std::max(peak, peakOf(host.left(), kFrames));
+	}
+	CAPTURE(peak);
+	CHECK(peak > 1.0e-3f);
+	// THE RELEASE (a One-shot pad ignores it, a Gate pad ends on it) and a burst of presses and releases: still no allocation, still finite.
+	REQUIRE(chain->post_note(host.plugin(), 36, false, 0.0f));
+	for (int i = 0; i < 20; ++i) {
+		(void)chain->post_note(host.plugin(), 36 + (i % 4), (i % 2) == 0, 0.8f);
+	}
+	for (int block = 0; block < 4; ++block) {
+		host.run(kFrames, events);
+		CHECK(host.allocationsInLastProcess() == 0);
+		CHECK(allFinite(host.left(), kFrames));
+	}
+	// A KEY OUTSIDE 0..127 IS REFUSED.
+	CHECK_FALSE(chain->post_note(host.plugin(), 128, true, 0.8f));
+	CHECK_FALSE(chain->post_note(host.plugin(), -1, true, 0.8f));
+}
+
 TEST_CASE("a reverb's tail keeps the plugin awake: SLEEP is never promised while the output is still sounding") {
 	// A crackle in the LATE, QUIET tail of every reverb that decays (Owl, which sustains, was clean),
 	// at any buffer size and either Oversample. The plugin returned SLEEP the moment the last VOICE died — "release
@@ -1051,6 +1107,59 @@ TEST_CASE("a reverb's tail keeps the plugin awake: SLEEP is never promised while
 	// And the tail did ring on past the voice: the plugin stayed awake for it (a second or more of blocks).
 	CHECK(blocks > 48000 / static_cast<int>(kFrames));
 	CHECK(slept); // it does sleep in the end: a decaying reverb reaches exact silence
+}
+
+TEST_CASE("an EQ in the plugin's chain computes its spectrum only while a view renews the lease, on the plugin's own sink road") {
+	// THE WHOLE ROAD BUT THE GRAPH'S OWN ASK (which the widget case "EQ's graph asks the device ..." covers): the EQ is
+	// built into the plugin's lane, feathers_clap installs ITS sink and its `wanted` lambda on it, the lease is renewed on the
+	// plugin's bridge (`want_readings`, what `DeviceHost::wantReadings` ends in), and what the analyser computed is read
+	// back off the same bridge's readings (`FrameA`, a counter the analyser moves once per finished frame).
+	HostedPlugin host;
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(
+	    host.plugin()->get_extension(host.plugin(), CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	REQUIRE(chain->want_readings != nullptr);
+	const uint32_t slot = chain->add_device(host.plugin(), feathers::fx::eq::kTraits.tag);
+	REQUIRE(slot != UINT32_MAX);
+	const clap_plugin* p = host.plugin();
+	p->stop_processing(p);
+	p->deactivate(p);
+	REQUIRE(p->activate(p, 48000.0, 1, 4096));
+	REQUIRE(p->start_processing(p));
+
+	constexpr uint32_t kFrames = 256;
+	EventList events;
+	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 1, 1.0);
+	host.run(kFrames, events);
+	events.clear();
+	const auto frameA = [&] {
+		float v = 0.0f;
+		return chain->device_reading(p, slot, static_cast<uint32_t>(feathers::fx::eq::Reading::FrameA), &v) ? v : 0.0f;
+	};
+	const auto blocks = [&](int n, bool ask) {
+		for (int b = 0; b < n; ++b) {
+			if (ask) {
+				REQUIRE(chain->want_readings(p, slot));
+			}
+			host.run(kFrames, events);
+		}
+	};
+	// NOBODY ASKS: a second and a half of audio and no frame was computed.
+	blocks(150, false);
+	CHECK(frameA() == 0.0f);
+	// A VIEW ASKS EVERY BLOCK: frames arrive.
+	blocks(100, true);
+	const float shown = frameA();
+	CHECK(shown > 0.0f);
+	// IT STOPS ASKING (the editor closed): the lease lapses within half a second of audio, then nothing moves.
+	blocks(120, false);
+	const float lapsed = frameA();
+	blocks(100, false);
+	CHECK(frameA() == lapsed);
+	// IT REOPENS: the analyser runs again, from nothing (the counter restarts), so it is not the lapsed frame.
+	blocks(100, true);
+	CHECK(frameA() > 0.0f);
+	CHECK(frameA() != lapsed);
 }
 
 TEST_CASE("LW: HARM behind a linear-phase EQ keeps the plugin awake until it has been handed its late note — SLEEP is never promised before") {
@@ -5295,6 +5404,10 @@ TEST_CASE("drum: a kit saved before the stance redesign (its Walk, Kit Gamma/Zon
 			double x = 9.0;
 			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::OffsetX)), &x));
 			CHECK(std::abs(x) <= feathers::kDrumVectorRange);
+			// AND NO LAYER COMES UP LOCKED: the old layer lock's default was ON, and a kit saved then must not load stuck at home.
+			double lock = 1.0;
+			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::Lock)), &lock));
+			CHECK(lock == 0.0);
 		}
 	}
 	EventList events;
@@ -9351,6 +9464,50 @@ TEST_CASE("RB: a latched chord under an Arp keeps the plugin awake between its s
 	}
 }
 
+TEST_CASE("RS: a host key held under an Arp does not hold the voice up through the gaps between the Arp's steps") {
+	// ONE STEP A BAR at 120 bpm, the shortest gate (20 ms) and a release of about a second: with only the Arp's own notes
+	// sounding, the second half of every step is exactly silent. The Arp is APPENDED, so it sits after the default
+	// patch's amplitude envelope, which must not hear the host key the Arp swallowed.
+	static uint32_t seated = UINT32_MAX;
+	HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
+		const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(c != nullptr);
+		seated = c->add_mod_device(p, feathers::mod::arp::kTraits.tag);
+		REQUIRE(seated != UINT32_MAX);
+	});
+	const clap_plugin* p = host.plugin();
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	const uint32_t slot = CLAP_FEATHERS_TEST_STRIP | seated;
+	REQUIRE(chain->set_control(p, slot, "Time Base", 19.0));
+	REQUIRE(chain->set_control(p, slot, "Gate", 0.01));
+	REQUIRE(chain->set_control(p, slot, "Run", 0.0));
+	constexpr uint32_t kFrames = 256;
+	EventList none;
+	host.setTransportEvent(songTransport(0.0, 120.0, false));
+	for (int b = 0; b < 8; ++b) {
+		host.run(kFrames, none);
+	}
+	EventList on;
+	on.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 1, 1.0);
+	const int blocks = static_cast<int>(5.0 * kSampleRate / kFrames);
+	int gapBlocks = 0;
+	int gapSounding = 0;
+	for (int b = 0; b < blocks; ++b) {
+		host.run(kFrames, b == 0 ? on : none);
+		// 1.2 s to 1.9 s after a step (steps at 0, 2 and 4 s): the 20 ms note and its release are long over
+		const double t = b * kFrames / kSampleRate;
+		const double phase = t - 2.0 * std::floor(t / 2.0);
+		if (t > 1.0 && phase > 1.2 && phase < 1.9) {
+			++gapBlocks;
+			gapSounding += peakOf(host.left(), kFrames) > 1.0e-4f || peakOf(host.right(), kFrames) > 1.0e-4f ? 1 : 0;
+		}
+	}
+	CAPTURE(gapBlocks);
+	CHECK(gapBlocks > 100);   // the gaps were examined: not vacuous
+	CHECK(gapSounding == 0);  // and nothing sounded in them
+}
+
 TEST_CASE("RB: a Pattern on Trig Transport keeps the plugin awake between its steps while the transport plays, with no key "
           "held — and once it is switched off and the transport stops SLEEP is reached") {
 	const auto configure = [](const clap_plugin* p, const clap_plugin_feathers_test_chain* c, uint32_t slot) {
@@ -9661,4 +9818,167 @@ TEST_CASE("NOTE_END: voices an arp plays on keys and ids the host never sent pro
 		CAPTURE(k);
 		CHECK(n == 1);
 	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE EDITOR'S PREVIEW NOTES (ui_note_ring.h): what they must never tell the host, how they meet a //
+// host's own note on the same key, the sleep guard, and the ring's edges.                          //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+bool postPreview(HostedPlugin& host, int32_t key, bool on, float velocity = 0.8f) {
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(
+	    host.plugin()->get_extension(host.plugin(), CLAP_EXT_FEATHERS_TEST_CHAIN));
+	return chain->post_note(host.plugin(), key, on, velocity);
+}
+
+/// Runs silent blocks until `voices` sounding voices read zero, appending what the plugin sent.
+void runUntilNoVoices(HostedPlugin& host, OutputLog& log, int maxBlocks = 4 * 48000 / static_cast<int>(kBlock)) {
+	EventList none;
+	for (int b = 0; b < maxBlocks; ++b) {
+		host.run(kBlock, none, &log);
+		if (synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 0.0) {
+			return;
+		}
+	}
+}
+
+} // namespace
+
+TEST_CASE("preview: a UI note ends with no NOTE_END and nothing the host sees carries the reserved id") {
+	HostedPlugin host;
+	OutputLog log;
+	REQUIRE(postPreview(host, 60, true));
+	EventList none;
+	host.run(kBlock, none, &log);
+	REQUIRE(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) >= 1.0); // not vacuous: it sounds
+	REQUIRE(postPreview(host, 60, false));
+	runUntilNoVoices(host, log);
+	REQUIRE(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 0.0); // and it ended, tail included
+	runCollecting(host, log, 20, [] { return false; });
+	CHECK(noteEndsIn(log).empty());
+	for (const OutputLog::Event& e : log.events) {
+		CAPTURE(e.type);
+		CHECK(e.noteId != feathers::kUiNoteId);
+	}
+	// A HOST NOTE ON ANOTHER KEY, for contrast: the same road does end its own (the check above is not blind to NOTE_END).
+	EventList on;
+	on.pushNote(CLAP_EVENT_NOTE_ON, 0, 64, 9, 1.0);
+	host.run(kBlock, on, &log);
+	EventList off;
+	off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 64, 9, 0.0);
+	host.run(kBlock, off, &log);
+	runUntilNoVoices(host, log);
+	REQUIRE(noteEndsIn(log).size() == 1);
+	CHECK(noteEndsIn(log)[0].noteId == 9);
+}
+
+TEST_CASE("preview: a preview on a key the host holds under a real id leaves the host's note, its id and its end alone") {
+	HostedPlugin host;
+	OutputLog log;
+	EventList on;
+	on.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 7, 1.0);
+	host.run(kBlock, on, &log);
+	EventList none;
+	host.run(kBlock, none, &log);
+	// THE PREVIEW PRESSES AND RELEASES THE SAME KEY while the host still holds it.
+	REQUIRE(postPreview(host, 60, true));
+	host.run(kBlock, none, &log);
+	REQUIRE(postPreview(host, 60, false));
+	runCollecting(host, log, 8, [] { return false; });
+	CHECK(noteEndsIn(log).empty()); // the host's note is still held: nothing may have ended it
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) >= 1.0);
+	EventList off;
+	off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 60, 7, 0.0);
+	host.run(kBlock, off, &log);
+	runUntilNoVoices(host, log);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 0.0); // no stuck voice
+	runCollecting(host, log, 20, [] { return false; });
+	const auto ends = noteEndsIn(log);
+	REQUIRE(ends.size() == 1); // the host's note ends exactly once, under the host's own id
+	CHECK(ends[0].noteId == 7);
+	CHECK(ends[0].key == 60);
+	for (const OutputLog::Event& e : log.events) {
+		CHECK(e.noteId != feathers::kUiNoteId);
+	}
+	// THE OTHER ORDER: the host releases first while the preview is still held, and the preview lets go later.
+	log.events.clear();
+	EventList on2;
+	on2.pushNote(CLAP_EVENT_NOTE_ON, 0, 62, 8, 1.0);
+	host.run(kBlock, on2, &log);
+	REQUIRE(postPreview(host, 62, true));
+	host.run(kBlock, none, &log);
+	EventList off2;
+	off2.pushNote(CLAP_EVENT_NOTE_OFF, 0, 62, 8, 0.0);
+	host.run(kBlock, off2, &log);
+	runCollecting(host, log, 6, [] { return false; });
+	REQUIRE(postPreview(host, 62, false));
+	runUntilNoVoices(host, log);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 0.0);
+	runCollecting(host, log, 20, [] { return false; });
+	const auto ends2 = noteEndsIn(log);
+	REQUIRE(ends2.size() == 1);
+	CHECK(ends2[0].noteId == 8);
+	for (const OutputLog::Event& e : log.events) {
+		CHECK(e.noteId != feathers::kUiNoteId);
+	}
+}
+
+TEST_CASE("preview: a key posted from inside a block keeps the plugin awake over a silent block; drained and silent it may sleep") {
+	HostedPlugin host;
+	EventList events;
+	clap_process_status status = CLAP_PROCESS_CONTINUE;
+	for (int block = 0; block < 400 && status != CLAP_PROCESS_SLEEP; ++block) {
+		status = host.run(kBlock, events);
+	}
+	REQUIRE(status == CLAP_PROCESS_SLEEP);
+	// The editor posts while the audio thread is inside process(), after the block's drain: the key waits for the next block.
+	// An OFF for a key nobody holds, so the block's output stays exactly silent and only the pending key can keep it awake.
+	struct Poster {
+		HostedPlugin* host;
+		int posted = 0;
+	} poster{ &host };
+	events.onReadCtx = &poster;
+	events.onRead = [](void* ctx) {
+		auto* p = static_cast<Poster*>(ctx);
+		if (p->posted++ == 0) {
+			(void)postPreview(*p->host, 100, false);
+		}
+	};
+	status = host.run(kBlock, events);
+	CHECK(peakOf(host.left(), kBlock) == 0.0f);
+	CHECK(status == CLAP_PROCESS_CONTINUE); // a key is waiting: SLEEP would strand it
+	events.onRead = nullptr;
+	status = host.run(kBlock, events); // drained at the start of this block, nothing sounds
+	CHECK(peakOf(host.left(), kBlock) == 0.0f);
+	for (int block = 0; block < 400 && status != CLAP_PROCESS_SLEEP; ++block) {
+		status = host.run(kBlock, events);
+	}
+	CHECK(status == CLAP_PROCESS_SLEEP);
+}
+
+TEST_CASE("preview: a full ring refuses the 65th press, an off after the editor is gone still drains, nothing allocates and no voice sticks") {
+	HostedPlugin host;
+	OutputLog log;
+	EventList none;
+	host.run(kBlock, none, &log);
+	// 64 presses fit; the 65th is refused. Alternating keys so the drain exercises on/off on the same road.
+	int taken = 0;
+	for (int i = 0; i < 65; ++i) {
+		taken += postPreview(host, 60 + (i % 2), true) ? 1 : 0;
+	}
+	CHECK(taken == 64);
+	host.run(kBlock, none, &log);
+	CHECK(host.allocationsInLastProcess() == 0);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) >= 1.0);
+	// THE EDITOR IS GONE (its widgets' destructors post the offs they owe, to the plugin's bridge, which outlives it): the offs
+	// are taken and drained on the next block with nothing there to receive anything.
+	REQUIRE(postPreview(host, 60, false));
+	REQUIRE(postPreview(host, 61, false));
+	host.run(kBlock, none, &log);
+	CHECK(host.allocationsInLastProcess() == 0);
+	runUntilNoVoices(host, log);
+	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 0.0);
+	CHECK(noteEndsIn(log).empty());
 }

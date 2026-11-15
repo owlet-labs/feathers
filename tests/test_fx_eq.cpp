@@ -131,6 +131,7 @@ public:
 			                                         self->allReadings.assign(values, values + count);
 		                                         } });
 	}
+	void setSink(const feathers::device::ReadingsSink& sink) { eq::kAudioOps.setReadingsSink(mem(), sink); }
 	size_t readingCount = 0;
 	float lastReading = -1.0f;
 	std::vector<float> allReadings;
@@ -645,6 +646,71 @@ TEST_CASE("EQ analyser: a tap switched off costs no transforms") {
 	CHECK(transforms(true, false) == both / 2);
 	CHECK(transforms(false, true) == both / 2);
 	CHECK(transforms(false, false) == 0);
+}
+
+namespace {
+/// A HOST'S LEASE, AS THE BRIDGE KEEPS ONE: samples of audio the picture is still wanted for, spent by each block.
+struct TestLease {
+	int64_t left = 0;
+	int asks = 0;
+	static bool wanted(void* context, int frames) {
+		auto& self = *static_cast<TestLease*>(context);
+		++self.asks;
+		if (self.left <= 0) {
+			return false;
+		}
+		self.left -= frames;
+		return true;
+	}
+	static void publish(void*, const float*, size_t) {}
+	feathers::device::ReadingsSink sink() { return { this, &TestLease::publish, &TestLease::wanted }; }
+};
+
+std::vector<float> sineThrough(Instance& dev, double hz, int samples) {
+	std::vector<float> l(static_cast<size_t>(samples)), r(static_cast<size_t>(samples));
+	for (int i = 0; i < samples; ++i) {
+		l[static_cast<size_t>(i)] = r[static_cast<size_t>(i)] = static_cast<float>(0.25 * std::sin(2.0 * kPi * hz * i / kRate));
+	}
+	dev.run(l, r, 256);
+	return l;
+}
+} // namespace
+
+TEST_CASE("EQ analyser: no transform runs while no view has asked, and the sound is the same either way") {
+	// THE SPECTRUM IS A SIDE CHANNEL: it is computed only while the host's lease says a view is reading it (`ReadingsSink::wanted`;
+	// a host that never learned the question says always, and the case above is that road).
+	const eq::Settings s = withBell(2, 700.0, 6.0f, 1.2);
+	// THE ALWAYS ROAD: a sink with no question asked, the transforms a second of audio takes.
+	Instance always;
+	always.set(s);
+	always.listen();
+	const std::vector<float> heardAlways = sineThrough(always, 440.0, 48000);
+	const int expected = eq::analyserTransformsForTest(always.storage());
+	REQUIRE(expected >= 4 * 22);
+	// NO READER: not one transform in a second, and the output is bit for bit what the always road heard.
+	TestLease none;
+	Instance idle;
+	idle.set(s);
+	idle.setSink(none.sink());
+	const std::vector<float> heardIdle = sineThrough(idle, 440.0, 48000);
+	CHECK(eq::analyserTransformsForTest(idle.storage()) == 0);
+	CHECK(none.asks == 48000 / 256 + 1); // asked once a block (the last is a partial one)
+	CHECK(heardIdle == heardAlways);
+	// A LEASE FOR HALF A SECOND, then lapsing: transforms ran for about half the second and stopped.
+	TestLease half;
+	half.left = 24000;
+	Instance part;
+	part.set(s);
+	part.setSink(half.sink());
+	const std::vector<float> heardPart = sineThrough(part, 440.0, 48000);
+	const int ran = eq::analyserTransformsForTest(part.storage());
+	CHECK(ran > expected * 40 / 100);
+	CHECK(ran < expected * 60 / 100);
+	CHECK(heardPart == heardAlways);
+	// AND A VIEW THAT ASKS AGAIN GETS A PICTURE: the lease renewed, the counter moves once more.
+	half.left = 24000;
+	(void)sineThrough(part, 440.0, 4096);
+	CHECK(eq::analyserTransformsForTest(part.storage()) > 0);
 }
 
 // ---------------------------------------------------------------------------------------------------

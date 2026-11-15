@@ -23,6 +23,7 @@
 #include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/knob.h"
+#include "plugin/ui/modulated_shape.h"
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -74,6 +75,8 @@ DisperserPlot::DisperserPlot(backplane::DeviceHost& host, DeviceInstanceId id, b
 	const size_t points = large ? kPointsLarge : kPointsCard;
 	delayL_.assign(points, 0.0);
 	delayR_.assign(points, 0.0);
+	modDelayL_.assign(points, 0.0);
+	modDelayR_.assign(points, 0.0);
 
 	// THE AXIS IS THE FREQ CONTROL. A press places the centre under the pointer (or starts a route drag
 	// with a source armed — `Knob`'s gesture, as OWLTT's graph takes it); a drag moves it.
@@ -177,9 +180,9 @@ size_t DisperserPlot::draggedControl() const noexcept {
 	return static_cast<size_t>(tracking ? dsp::Param::Offset : dsp::Param::Freq);
 }
 
-dsp::Settings DisperserPlot::settingsNow() const {
+dsp::Settings DisperserPlot::settingsNow(bool modulated) const {
 	dsp::Row row {};
-	const size_t present = readModulatedRow(host_, device_, dsp::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, dsp::kDescriptor, row) : readStoredRow(host_, device_, row);
 	return dsp::stateOf(row, present).settings;
 }
 
@@ -240,7 +243,8 @@ double DisperserPlot::valueForX(float x) const noexcept {
 	return (index - dsp::kOffsetCentreIndex) * dsp::kOffsetOctavesPerHalf / dsp::kOffsetCentreIndex;
 }
 
-void DisperserPlot::recompute(const dsp::Settings& s, bool haveNote, double note, const float* gains) {
+void DisperserPlot::recompute(const dsp::Settings& s, const dsp::Settings& sMod, bool haveNote, double note,
+                              const float* gains) {
 	const double rate = host_.sampleRate() > 0.0 ? host_.sampleRate() : 48000.0;
 	model_ = dsp::responseModelOf(s, haveNote, note, rate);
 	dsp::useStageGains(model_, gains);
@@ -249,6 +253,18 @@ void DisperserPlot::recompute(const dsp::Settings& s, bool haveNote, double note
 		delayL_[i] = d[0];
 		delayR_[i] = d[1];
 	}
+	// THE AS-MODULATED SHAPE, only where modulation moved the plot.
+	hasMod_ = drawsModulatedShape(s, sMod);
+	if (hasMod_) {
+		dsp::ResponseModel moved = dsp::responseModelOf(sMod, haveNote, note, rate);
+		dsp::useStageGains(moved, gains);
+		for (size_t i = 0; i < modDelayL_.size(); ++i) {
+			const auto d = dsp::groupDelayMs(moved, hzAt(i));
+			modDelayL_[i] = d[0];
+			modDelayR_[i] = d[1];
+		}
+	}
+	drawnMod_ = sMod;
 	snapAxis();
 	drawnSettings_ = s;
 	drawnHeard_ = haveNote;
@@ -262,6 +278,9 @@ void DisperserPlot::snapAxis() {
 	double peak = 0.0;
 	for (size_t i = 0; i < delayL_.size(); ++i) {
 		peak = std::max({ peak, delayL_[i], delayR_[i] });
+		if (hasMod_) {
+			peak = std::max({ peak, modDelayL_[i], modDelayR_[i] });
+		}
 	}
 	peak = std::max(peak, 0.01);
 	// A DECADE, WITH HYSTERESIS: up only past 95% of the current top, down only under 40% of the decade
@@ -273,7 +292,8 @@ void DisperserPlot::snapAxis() {
 }
 
 bool DisperserPlot::update() {
-	const dsp::Settings s = settingsNow();
+	const dsp::Settings s = settingsNow(false);
+	const dsp::Settings sMod = settingsNow();
 	const size_t count = host_.readingCountAt(device_);
 	const bool heard = count > static_cast<size_t>(dsp::Reading::NoteHeard)
 	                   && host_.readingAt(device_, static_cast<size_t>(dsp::Reading::NoteHeard)) >= 0.5f;
@@ -294,9 +314,9 @@ bool DisperserPlot::update() {
 	}
 
 	bool changed = false;
-	if (!computed_ || !(s == drawnSettings_) || heard != drawnHeard_ || note != drawnNote_ || rate != drawnRate_
+	if (!computed_ || !(s == drawnSettings_) || !(sMod == drawnMod_) || heard != drawnHeard_ || note != drawnNote_ || rate != drawnRate_
 	    || hasGains != drawnHasGains_ || (hasGains && gains != drawnGains_)) {
-		recompute(s, heard, note, hasGains ? gains.data() : nullptr);
+		recompute(s, sMod, heard, note, hasGains ? gains.data() : nullptr);
 		drawnHasGains_ = hasGains;
 		drawnGains_ = gains;
 		changed = true;
@@ -361,6 +381,15 @@ void DisperserPlot::draw(visage::Canvas& canvas) {
 	};
 	curve(delayR_, withAlpha(kValue, 0.85f), 1.2f);
 	curve(delayL_, kAccent, 1.5f);
+	if (hasMod_) {
+		// THE AS-MODULATED DELAY, over the rest curves, in the modulation colour (both ears, one colour: the plot's
+		// own ears already differ only by the stereo spread).
+		for (const std::vector<double>* d : { &modDelayR_, &modDelayL_ }) {
+			strokeModulatedShape(canvas, d->size(), [&](size_t i) {
+				return visage::Point { hzToX(hzAt(i)), msToY((*d)[i]) };
+			}, 1.5f);
+		}
+	}
 
 	// THE MODULATION REACH, along the axis, in the dragged control's own units.
 	const size_t index = draggedControl();

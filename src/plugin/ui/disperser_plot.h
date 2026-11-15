@@ -117,11 +117,15 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] fx::disperser::Settings drawnFromForTest() const { return settingsNow(); }
+	/// The stored row (the rest shape), and whether the modulated one is drawn over it, and its group delay.
+	[[nodiscard]] fx::disperser::Settings restFromForTest() const { return settingsNow(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const noexcept { return hasMod_; }
+	[[nodiscard]] double modDelayForTest(int channel, size_t i) const { return channel == 0 ? modDelayL_[i] : modDelayR_[i]; }
 
 private:
 	[[nodiscard]] DeviceControl& control(size_t index) const;
 	[[nodiscard]] size_t draggedControl() const noexcept;
-	[[nodiscard]] fx::disperser::Settings settingsNow() const;
+	[[nodiscard]] fx::disperser::Settings settingsNow(bool modulated = true) const;
 	[[nodiscard]] double hzAt(size_t i) const noexcept;
 	[[nodiscard]] float hzToX(double hz) const noexcept;
 	[[nodiscard]] double xToHz(float x) const noexcept;
@@ -133,7 +137,8 @@ private:
 	[[nodiscard]] float plotFoot() const noexcept;
 	/// THE VALUE A PRESS AT `x` WRITES into the dragged control.
 	[[nodiscard]] double valueForX(float x) const noexcept;
-	void recompute(const fx::disperser::Settings& s, bool haveNote, double note, const float* gains);
+	void recompute(const fx::disperser::Settings& s, const fx::disperser::Settings& sMod, bool haveNote, double note,
+	               const float* gains);
 	void snapAxis();
 
 	backplane::DeviceHost& host_;
@@ -146,11 +151,16 @@ private:
 	fx::disperser::ResponseModel model_ {};
 	std::vector<double> delayL_;
 	std::vector<double> delayR_;
+	/// THE AS-MODULATED GROUP DELAY, drawn over the rest one while `hasMod_` (the same predicate as every plot).
+	std::vector<double> modDelayL_;
+	std::vector<double> modDelayR_;
+	bool hasMod_ = false;
 	double axisTopMs_ = 10.0;
 
 	// WHAT THE PICTURE ON SCREEN WAS COMPUTED FROM — `update()`'s comparison.
 	bool computed_ = false;
 	fx::disperser::Settings drawnSettings_ {};
+	fx::disperser::Settings drawnMod_ {};
 	bool drawnHeard_ = false;
 	double drawnNote_ = 0.0;
 	double drawnRate_ = 0.0;

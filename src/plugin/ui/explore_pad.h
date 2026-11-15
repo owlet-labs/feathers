@@ -111,10 +111,31 @@ struct ExplorePlane {
 	}
 };
 
+namespace explore_pad_detail {
+/// What a policy with no `Context` is handed: nothing, and nothing in its key.
+struct NoContext {
+	friend bool operator==(const NoContext&, const NoContext&) = default;
+};
+template <class P, class = void>
+struct ContextOf {
+	using type = NoContext;
+};
+template <class P>
+struct ContextOf<P, std::void_t<typename P::Context>> {
+	using type = typename P::Context;
+};
+} // namespace explore_pad_detail
+
 template <class Policy>
 class ExplorePad : public visage::Frame {
 public:
 	static constexpr size_t kPhaseCount = Policy::kPhaseCount;
+	/// **A POLICY'S OPTIONAL CONTEXT**: what its terrain is a picture of when that is not in the row (the drum layer pad's: the
+	/// pad's whole character, which a row of floats cannot carry). A policy that names `using Context = X;` has `keyOf` handed
+	/// the pad's `context()` as a fifth argument, so the key names it; one that does not is called exactly as before.
+	using Context = typename explore_pad_detail::ContextOf<Policy>::type;
+	/// Set by the owner; read at every key (a reference that stays valid, refreshed by the owner between frames).
+	std::function<const Context&()> context;
 	using Phases = std::array<double, kPhaseCount>;
 	using View = typename Policy::Key;
 
@@ -290,6 +311,8 @@ private:
 	void finishGlide();
 	/// Whether the policy's key no longer names what the map was built for (the size is `draw`'s own check).
 	[[nodiscard]] bool keyMoved() const;
+	/// The policy's key for `standing`, with the context when the policy has one.
+	[[nodiscard]] View keyFor(const Phases& standing) const;
 	[[nodiscard]] std::chrono::steady_clock::time_point clockNow() const {
 		return clockForTest_ ? *clockForTest_ : std::chrono::steady_clock::now();
 	}

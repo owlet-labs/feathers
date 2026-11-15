@@ -17,12 +17,14 @@
 
 #include "plugin/ui/comp_plot.h"
 
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/plot_grid.h"
 #include "plugin/ui/theme.h"
 
 namespace feathers::ui::comp_plot {
 
-void paint(visage::Canvas& canvas, const visage::Bounds& box, const Curves& c, bool hasPeak, float inPeak) {
+void paint(visage::Canvas& canvas, const visage::Bounds& box, const Curves& c, bool hasPeak, float inPeak,
+           const Curves* modulated) {
 	if (box.width() <= 2.0f || box.height() <= 2.0f) {
 		return;
 	}
@@ -63,12 +65,20 @@ void paint(visage::Canvas& canvas, const visage::Bounds& box, const Curves& c, b
 	// THE NET CURVE, one segment a dB.
 	canvas.setColor(kMeterAccent);
 	curve([&](float db) { return c.netDb(db); }, 1.5f);
+	// THE AS-MODULATED NET CURVE, over the rest one, in the modulation colour — only where modulation moved the plot.
+	const bool moved = modulated != nullptr && drawsModulatedShape(c.s, modulated->s);
+	if (moved) {
+		canvas.setColor(withAlpha(kModulation, 0.95f));
+		curve([&](float db) { return modulated->netDb(db); }, 1.75f);
+		canvas.setColor(withAlpha(kModulatedDot, 0.9f)); // the dot's core: the accent and the modulation colour are neighbours
+		curve([&](float db) { return modulated->netDb(db); }, 0.8f);
+	}
 	// THE INPUT PEAK ON THE NET CURVE, while something is publishing: where the signal is sitting now.
 	if (hasPeak && inPeak > 0.0f) {
 		const float db = std::clamp(20.0f * std::log10(inPeak), kFloorDb, 0.0f);
 		canvas.setColor(kMeterValue);
 		constexpr float r = 2.5f;
-		canvas.circle(px(db) - r, py(c.netDb(db)) - r, 2.0f * r);
+		canvas.circle(px(db) - r, py((moved ? *modulated : c).netDb(db)) - r, 2.0f * r);
 	}
 }
 

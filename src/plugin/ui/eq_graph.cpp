@@ -480,6 +480,10 @@ bool EqGraph::update() {
 	if (!isVisible()) {
 		return false;
 	}
+	// THE DEVICE COMPUTES THE SPECTRUM ONLY WHILE A VIEW ASKS (`ReadingsSink::wanted`): this graph is the one that reads it.
+	if (preOn() || postOn()) {
+		host_.wantReadings(device_);
+	}
 	// THE MEMBER BUFFER, cleared and refilled: a tick at rest allocates nothing (its capacity is kept, and the swap below
 	// hands the old vector's to the next tick).
 	std::vector<float>& now = scratchFields_;

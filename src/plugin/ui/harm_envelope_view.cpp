@@ -17,6 +17,7 @@
 
 #include "plugin/ui/harm_envelope_view.h"
 #include "plugin/ui/modulated_row.h"
+#include "plugin/ui/modulated_shape.h"
 
 #include "plugin/ui/theme.h"
 
@@ -35,10 +36,10 @@ visage::Bounds HarmEnvelopeView::plotBounds() const {
 	return { 0.0f, 0.0f, width(), height() };
 }
 
-hrm::EnvelopeTimes HarmEnvelopeView::readTimes() const {
+hrm::EnvelopeTimes HarmEnvelopeView::readTimes(bool modulated) const {
 	// THE DEVICE'S OWN DECODER, as the scope reads its settings: a seam row, `stateOf`, and the seconds are what the DSP runs on.
 	hrm::Row row {};
-	const size_t fields = readModulatedRow(host_, device_, hrm::kDescriptor, row);
+	const size_t fields = modulated ? readModulatedRow(host_, device_, hrm::kDescriptor, row) : readStoredRow(host_, device_, row);
 	const hrm::Settings s = hrm::stateOf(row, fields).settings;
 	hrm::EnvelopeTimes t;
 	t.delay = static_cast<double>(s.delaySeconds);
@@ -50,10 +51,20 @@ hrm::EnvelopeTimes HarmEnvelopeView::readTimes() const {
 	return t;
 }
 
+namespace {
+
+bool sameTimes(const hrm::EnvelopeTimes& a, const hrm::EnvelopeTimes& b) {
+	return a.delay == b.delay && a.attack == b.attack && a.hold == b.hold && a.decay == b.decay && a.sustain == b.sustain
+	       && a.release == b.release;
+}
+
+} // namespace
+
 bool HarmEnvelopeView::refresh() {
-	const hrm::EnvelopeTimes now = readTimes();
-	if (built_ && now.delay == times_.delay && now.attack == times_.attack && now.hold == times_.hold
-	    && now.decay == times_.decay && now.sustain == times_.sustain && now.release == times_.release) {
+	// BOTH READS: the stored times (the rest shape) and where modulation left them (drawn over it where they differ).
+	const hrm::EnvelopeTimes now = readTimes(false);
+	const hrm::EnvelopeTimes nowMod = readTimes(true);
+	if (built_ && sameTimes(now, times_) && sameTimes(nowMod, modTimes_)) {
 		return false;
 	}
 	rebuild();
@@ -62,9 +73,19 @@ bool HarmEnvelopeView::refresh() {
 }
 
 void HarmEnvelopeView::rebuild() {
-	times_ = readTimes();
+	times_ = readTimes(false);
+	modTimes_ = readTimes(true);
 	built_ = true;
-	const std::vector<hrm::EnvelopeSegment> segments = hrm::envelopeSegments(times_);
+	shapeOf(times_, curve_, spans_);
+	hasMod_ = !sameTimes(times_, modTimes_);
+	if (hasMod_) {
+		std::vector<Span> unused;
+		shapeOf(modTimes_, modCurve_, unused);
+	}
+}
+
+void HarmEnvelopeView::shapeOf(const hrm::EnvelopeTimes& times, std::vector<visage::Point>& curve, std::vector<Span>& spans) {
+	const std::vector<hrm::EnvelopeSegment> segments = hrm::envelopeSegments(times);
 
 	// A STAGE'S WIDTH IS ITS LENGTH IN SECONDS, the sustain plateau a fixed share, and a stage that happens never less than a
 	// floor of the whole — the modulator card's law (env_card.cpp `shareOf`, `kSustainShare`, `kMinLiveShare`).
@@ -104,9 +125,9 @@ void HarmEnvelopeView::rebuild() {
 		total = 1.0f;
 	}
 
-	curve_.clear();
-	spans_.clear();
-	curve_.push_back({ 0.0f, 0.0f });
+	curve.clear();
+	spans.clear();
+	curve.push_back({ 0.0f, 0.0f });
 	float x0 = 0.0f;
 	constexpr int kPointsPerStage = 24;
 	for (size_t i = 0; i < segments.size(); ++i) {
@@ -116,13 +137,13 @@ void HarmEnvelopeView::rebuild() {
 			for (int p = 1; p <= kPointsPerStage; ++p) {
 				const float t = static_cast<float>(p) / kPointsPerStage;
 				const double at = static_cast<double>(t) * std::max(0.0, seg.seconds);
-				curve_.push_back({ x0 + t * (x1 - x0), static_cast<float>(hrm::envelopeLevelAt(seg, times_, at)) });
+				curve.push_back({ x0 + t * (x1 - x0), static_cast<float>(hrm::envelopeLevelAt(seg, times, at)) });
 			}
-			spans_.push_back({ seg.stage, x0, x1 });
+			spans.push_back({ seg.stage, x0, x1 });
 		}
 		else {
 			// A STAGE THAT DOES NOT TAKE TIME STILL MOVES THE LEVEL: a vertical edge to where it lands.
-			curve_.push_back({ x0, static_cast<float>(seg.to) });
+			curve.push_back({ x0, static_cast<float>(seg.to) });
 		}
 		x0 = x1;
 	}
@@ -161,6 +182,10 @@ void HarmEnvelopeView::draw(visage::Canvas& canvas) {
 			continue;
 		}
 		canvas.segment(a.x, a.y, b.x, b.y, 1.6f, true);
+	}
+	// THE AS-MODULATED ENVELOPE, over the rest one, in the modulation colour (the modulated stage widths differ, so its own x).
+	if (hasMod_) {
+		strokeModulatedShape(canvas, modCurve_.size(), [&](size_t i) { return plot(modCurve_[i]); }, 1.75f);
 	}
 }
 

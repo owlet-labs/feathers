@@ -326,7 +326,13 @@ TEST_CASE("per-band controls: each one moved alone changes exactly the quantity 
 	for (const Move& m : moves) {
 		INFO(m.what << " on band " << m.band);
 		nw::Settings s = base;
-		(m.band == 0 ? s.low : (m.band == 1 ? s.mid : s.high)).*m.field = m.value;
+		// THE BAND BY NAME AND THE FIELD BY POINTER, in two plain steps: the write must land in `s`, and the check below says so
+		// before anything is compared, so a write that went nowhere reads as itself and not as "the quantity did not move".
+		nw::BandParams& target = m.band == 0 ? s.low : (m.band == 1 ? s.mid : s.high);
+		float& slot = target.*m.field;
+		slot = m.value;
+		REQUIRE(s.band(m.band).*m.field == m.value);
+		REQUIRE(s.band(m.band).*m.field != base.band(m.band).*m.field);
 		const Quantities got = seamOf(s);
 		expectNear(got, lawOf(s));
 		// AND ONLY THE NAMED QUANTITY MOVED: every other number is the baseline's, bit for bit.

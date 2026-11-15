@@ -28411,6 +28411,34 @@ TEST_CASE("EQ's globals are greyed while nothing they act on is active") {
 	CHECK(amount->active());
 }
 
+TEST_CASE("EQ's graph asks the device for its spectrum while it is shown, and not while it is hidden or both taps are off") {
+	namespace eq = feathers::fx::eq;
+	DynCardFixture<ui::EqCard> d(eq::kTraits.tag);
+	ui::EqGraph* g = d.card->graphForTest();
+	const size_t slot = d.f.bridge.fxSlotOf(d.device);
+	const auto spend = [&] {
+		while (d.f.bridge.deviceReadingsWanted(slot, 24000)) {
+		}
+		REQUIRE(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+	};
+	spend();
+	// SHOWN, TAPS ON (the default): the lease is the whole half second the bridge grants.
+	g->setVisible(true);
+	(void)g->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 24000);
+	// HIDDEN: no renewal.
+	spend();
+	g->setVisible(false);
+	(void)g->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+	// BOTH TAPS OFF: nothing to draw, nothing asked for.
+	g->setVisible(true);
+	d.f.deviceHost.setField(d.device, eq::extraIndex(eq::Extra::Pre), 1.0f);
+	d.f.deviceHost.setField(d.device, eq::extraIndex(eq::Extra::Post), 1.0f);
+	(void)g->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+}
+
 TEST_CASE("EQ's selection lives in the extra state and moves the strip") {
 	namespace eq = feathers::fx::eq;
 	DynCardFixture<ui::EqCard> d(eq::kTraits.tag);

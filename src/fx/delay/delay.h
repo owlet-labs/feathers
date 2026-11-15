@@ -198,6 +198,12 @@ public:
 	/// THE CLOCK'S PHASE (cycles) and the whine phasor's sine after the last frame (backlog PV): the phasor must be
 	/// sin(2π·phase), whatever the blocks were.
 	[[nodiscard]] double bbdPhaseForTest(int channel) const noexcept { return bbdPhase_[channel == 0 ? 0 : 1]; }
+	/// THE TAPE WOBBLE the last sample was read with (frames), and the four phases (cycles) after it: the wobble must be
+	/// the sum of four sines of the phases one step back, whatever the blocks were.
+	[[nodiscard]] double tapeWobbleForTest() const noexcept { return lastWobble_; }
+	[[nodiscard]] double tapePhaseForTest(int i) const noexcept {
+		return i == 0 ? wowPhaseA_ : i == 1 ? wowPhaseB_ : i == 2 ? flutterPhaseA_ : flutterPhaseB_;
+	}
 	[[nodiscard]] double bbdWhineForTest(int channel) const noexcept { return bbdWhine_[channel == 0 ? 0 : 1].s; }
 	/// SWARM: the draws of the FIRST grains spawned since reset (offset frames, pan -1..1, semitones), at most 1024; and how
 	/// many grains Swarm has drawn for in all.
@@ -380,6 +386,10 @@ private:
 	double wowPhaseB_ = 0.0;
 	double flutterPhaseA_ = 0.0;
 	double flutterPhaseB_ = 0.0;
+	/// **THE FOUR SINES OF THE WOBBLE AS ROTATING PHASORS** (`bbd_math.h`), re-anchored from the exact phases at every
+	/// block's start and stepped beside the phases, so no `std::sin` runs per sample; drift is under 1e-12 a block.
+	std::array<WhineRotor, 4> tapeRotor_ {};
+	double lastWobble_ = 0.0; ///< the wobble (frames) the last Tape sample was read with
 	/// THE PER-PASS HF LOSS'S POLE, one per channel, in the feedback path beside the Tone pair.
 	float tapeLpL_ = 0.0f;
 	float tapeLpR_ = 0.0f;

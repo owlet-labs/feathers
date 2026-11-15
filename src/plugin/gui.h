@@ -119,6 +119,11 @@ public:
 	/// queue until the user pressed play. Main thread.
 	virtual void guiRequestFlush() noexcept = 0;
 
+	/// Ask the host to PROCESS, because the editor has posted a note (a drum pad's preview) and a sleeping plugin is not called until an
+	/// event or an audio change. Without it a preview pressed while the plugin sleeps would wait for something else to wake it. Main thread.
+	/// Default no-op: the test and tool hosts have no host to ask.
+	virtual void guiRequestProcess() noexcept {}
+
 	/// Ask the host to resize the window it gave us, because the editor's own contents changed size —
 	/// a DPI scale change, or visage settling on a size that is not exactly what was requested. Without
 	/// this the host's container and the editor inside it disagree, and the difference shows as a

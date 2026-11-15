@@ -1034,6 +1034,18 @@ std::span<const uint32_t> ParamBridge::refresh() noexcept {
 
 void ParamBridge::publish(const ParamSet& params) noexcept {
 	const std::span<const ParamDesc> descs = paramDescs();
+	// **NOTHING WAS WRITTEN AND NOTHING IS ROUTED: what was published is still true.** `resolved` is base + host offset +
+	// routed sources, and with no route live the sources add nothing, so it moves only through a write, and every write
+	// moves `writeGeneration` (read before the walk: a write racing the walk is seen at the next call). The instance is
+	// named by its serial, not its address.
+	const uint32_t written = params.writeGeneration();
+	if (publishedEver_ && !params.anyRouteLive() && params.serial() == publishedSerial_ && written == publishedWriteGeneration_) {
+		publishedWork_ = 0;
+		return;
+	}
+	publishedSerial_ = params.serial();
+	publishedWriteGeneration_ = written;
+	publishedEver_ = true;
 	// THE DRUM PADS' ROWS are published only while the engine is Drum (no other engine's editor shows or reads them): at 736
 	// rows they would otherwise cost every engine a quarter more than the whole of the rest, every block.
 	// ...AND WHENEVER A DRUM ROW HAS BEEN WRITTEN since they last were (a host or editor write under another engine is never lost,
@@ -2393,6 +2405,32 @@ void ParamBridge::publishDeviceReadings(size_t slot, const float* values, size_t
 	// count promising values still being written. It is not a lock and does not pretend to be; it is
 	// the cheap ordering that makes the common case right.
 	t->readingCount.store(static_cast<uint32_t>(take), std::memory_order_relaxed);
+}
+
+void ParamBridge::wantDeviceReadings(size_t slot) noexcept {
+	if (auto* t = fxTelemetry_.at(slot); t != nullptr) {
+		t->readingsLease.store(24000, std::memory_order_relaxed);
+	}
+}
+
+bool ParamBridge::deviceReadingsWanted(size_t slot, int frames) noexcept {
+	auto* t = fxTelemetry_.at(slot);
+	if (t == nullptr) {
+		return false;
+	}
+	const int64_t left = t->readingsLease.load(std::memory_order_relaxed);
+	if (left <= 0) {
+		return false;
+	}
+	// A renewal landing between the load and the store is overwritten by a smaller lease for one block at most: the next
+	// renewal (a frame later) restores it, and a picture that misses one block is a hop late, not wrong.
+	t->readingsLease.store(std::max<int64_t>(0, left - std::max(frames, 0)), std::memory_order_relaxed);
+	return true;
+}
+
+int64_t ParamBridge::deviceReadingsLeaseForTest(size_t slot) const noexcept {
+	auto* t = fxTelemetry_.at(slot);
+	return t == nullptr ? 0 : t->readingsLease.load(std::memory_order_relaxed);
 }
 
 size_t ParamBridge::deviceReadingCount(size_t slot) const noexcept {

@@ -570,6 +570,14 @@ public:
 	double zoom() const noexcept { return zoom_; }
 	void setZoom(double zoom);
 
+	/// **THE ZOOM A FRESH EXPLORE OPENS AT, PER ENGINE.** Additive's terrain is read from far out (x1/100), the V5 flagship's from close in (x7); every other engine opens
+	/// at x1. Zoom is a view scale held by this surface alone (it is not stored in a patch), so this is the whole of "default": a
+	/// new editor opens at it, and a switch of engine moves a zoom that is still the old engine's default to the new one's, while a
+	/// zoom the hand has moved is kept. (A hand that sets exactly the old default is indistinguishable from one that never touched it.)
+	[[nodiscard]] static double defaultZoomFor(OscType engine) noexcept;
+	/// The engine the zoom's default was last taken from. TEST SEAM.
+	[[nodiscard]] OscType zoomEngine() const noexcept { return zoomEngine_; }
+
 	/// THE WIDEST THE VIEW GOES, and it is a LEGIBILITY limit now rather than an addressing one.
 	///
 	/// The zoom needed more range outward. It stopped at ×1 — 64 zones, one neighbourhood, a keyhole. Then at the whole band,
@@ -823,6 +831,18 @@ public:
 	/// **THE HEART'S CONTEXT MENU**: "Clear all likes on <engine>, sound <letter>", this terrain's only, greyed with none. Built here so a case can read it
 	/// and pick from it; a popup trigger on the heart opens it.
 	[[nodiscard]] visage::PopupMenu likesMenu();
+	/// **THE CHART'S CONTEXT MENU (a popup trigger on the map)**: one checkable item, "Fitted map (audition)", that draws the
+	/// map's cells from the offline-fitted model (terrain_fit.h) instead of measuring each. SHOWN ONLY FOR AN ENGINE WITH A
+	/// FITTED TABLE and hidden otherwise (the honesty rule: a switch only an engine could enable is not drawn), in which case
+	/// a popup press on the chart is the press it always was. OFF by default and OFF on every open, per editor instance,
+	/// and NOT SAVED WITH THE PATCH: it is an audition of a picture, not a property of a sound. FEATHERS_TERRAIN_FIT=1 opens
+	/// the stage with it on, for a capture (a venue with no pointer cannot reach a menu).
+	[[nodiscard]] bool fittedMapAvailable() const;
+	[[nodiscard]] visage::PopupMenu terrainMenu();
+	static constexpr int kFittedMap = 200;
+	/// Whether the switch is on (what the user asked; the window ANDs it with the table).
+	[[nodiscard]] bool fittedMap() const { return fittedMap_; }
+	void setFittedMap(bool on);
 	static constexpr int kClearLikes = 1;
 	/// **THE LIKES' STRENGTH** (backlog ON): "Like strength ×1/×2/×4" on the heart's menu, ids kLikeStrength + s. Weighs
 	/// every like as s likes in every sound's phase warp; stage state, not saved, ×1 on every open.
@@ -1273,6 +1293,7 @@ private:
 	Clock clock_;
 
 	double zoom_ = 1.0;
+	OscType zoomEngine_ = OscType::V5;
 	/// See `terrainZoom()`, and when `zoom_` last moved (`clock_`).
 	double terrainZoom_ = 1.0;
 	int64_t zoomMovedAt_ = 0;
@@ -1394,6 +1415,8 @@ private:
 	mutable std::array<std::optional<LikeWarpKey>, kMaxSounds> likeKeys_ {};
 	mutable std::array<feathers::LikeWarp, kMaxSounds> likeWarps_ {};
 	double likeStrength_ = 1.0;
+	/// THE FITTED-MAP AUDITION (terrainMenu): stage state, never saved, off on every open unless FEATHERS_TERRAIN_FIT=1.
+	bool fittedMap_ = false;
 	/// THE LIKE-SET LOG (likes_log.h): an edit as its deltas (a snapshot first if the log describes another set).
 	void logLikesEdit(const char* cause, const TerrainLikes& before, const TerrainLikes& after);
 	/// A walk line for the stance being tracked, now.

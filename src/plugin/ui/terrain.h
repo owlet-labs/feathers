@@ -585,6 +585,12 @@ struct TerrainWindow {
 	/// KEYED THROUGH AdditivePicture's DEFAULTED ==, a deliberate exception to the hand-written key below: the struct is
 	/// nothing but picture inputs, so a member added to it is in the key by construction rather than by remembering.
 	AdditivePicture additive {};
+	/// **THE FITTED MAP (AUDITION)** — draw the cells from the offline-fitted model (terrain_fit.h) instead of measuring each
+	/// from a cycle the engine builds. Off by default; only an engine with a table can have it on (the stage sets it from
+	/// the switch AND the table, so a window never claims a fit that does not exist). In the key because the builder reads
+	/// it: turning it on is a different picture of the same place, and the old map must not be carried as if it were this
+	/// one. STAGE STATE, NOT SAVED WITH THE PATCH — see ExploreStage::fittedMap.
+	bool fittedMap = false;
 	/// **THE LIKES** (backlog ON): every like the patch holds. In the content key because the builder reads them — they
 	/// decide every texel's score. Shared and immutable, compared by CONTENT (`sameLikes`), so a window that carries the
 	/// same likes through a new pointer is the same window. Null and empty are the same: no likes.
@@ -635,7 +641,8 @@ struct TerrainWindow {
 		       && a.feedbackScale == b.feedbackScale && a.pointScale == b.pointScale
 		       && a.gritScale == b.gritScale && a.warpDepth == b.warpDepth
 		       && a.warpMode == b.warpMode && a.weaveModel == b.weaveModel && a.resonateShaping == b.resonateShaping
-		       && a.shapesMix == b.shapesMix && a.additive == b.additive && sameLikes(a.likes, b.likes)
+		       && a.shapesMix == b.shapesMix && a.additive == b.additive && a.fittedMap == b.fittedMap
+		       && sameLikes(a.likes, b.likes)
 		       && a.likeWarp == b.likeWarp && a.likeStrength == b.likeStrength && a.likeParams == b.likeParams;
 	}
 };
@@ -721,6 +728,10 @@ struct TerrainSnapshot {
 	/// editor's to do.
 	std::vector<uint32_t> fine;
 	int fineScale = 0;
+
+	/// WHICH ROAD BUILT THIS MAP'S CELLS: true when they came from the fitted model (terrain_fit.h), false for the engine's
+	/// own measurement. The builder sets it from what it actually ran, so a test can read the road off the snapshot.
+	bool fitted = false;
 
 	/// The map's stair pattern family, or -1 under morph — one number for the whole map (the dial picks it; see the
 	/// builder), and the other half `terrainColour` needs.
@@ -899,6 +910,9 @@ public:
 	uint64_t texelsComputed() const noexcept {
 		return texelsComputed_.load(std::memory_order_relaxed);
 	}
+	/// HOW MANY OF THOSE TEXELS CAME FROM THE FITTED MODEL (a subset of `texelsComputed`; each is one fitted cell, per sample
+	/// point): the count a case reads to say the fitted road was taken or was not, and what a map's cost scales with.
+	uint64_t fittedTexels() const noexcept { return fittedTexels_.load(std::memory_order_relaxed); }
 	/// HOW MANY WIDER MAPS HAVE BEEN PREFETCHED (`prefetched_`) — a test's way to wait for one, since the thing itself is
 	/// never drawn and a picture cannot show it.
 	uint64_t prefetches() const noexcept { return prefetches_.load(std::memory_order_relaxed); }
@@ -1024,6 +1038,7 @@ private:
 	std::atomic<uint64_t> prefetches_ { 0 };
 	std::atomic<bool> fineWanted_ { false };
 	std::atomic<uint64_t> texelsComputed_ { 0 };
+	std::atomic<uint64_t> fittedTexels_ { 0 };
 
 	mutable std::mutex mutex_;
 	std::condition_variable wake_;

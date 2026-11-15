@@ -40,6 +40,7 @@
 #include "rack/rack_bridge.h"
 #include "plugin/ui/spectrum_panel.h"
 #include "plugin/ui/switch_chip.h"
+#include "plugin/ui/terrain_fit.h"
 #include "plugin/ui/travel_control.h"
 #include "../param_routes.h"
 
@@ -52,6 +53,13 @@
 // unbuilt corners answer. The picture is checked by photographing it, which no assertion below
 // pretends to do.
 
+
+/// THE ZOOM THE OLDER CASES ARE WRITTEN AT: x1, both fields (the V5 flagship opens at x7, `ExploreStage::defaultZoomFor`).
+void pinUnitZoom(ExploreFixture& f) {
+	f.stage.setZoom(1.0);
+	f.now += 10000;
+	f.stage.update();
+}
 
 TEST_CASE("a scrub moves the selected sound's Y travel to where the pointer is") {
 	// **THE VERTICAL AXIS IS THE DECODED PLANE'S Y** (backlog GY). It was the sound's HOME, and the
@@ -360,6 +368,7 @@ TEST_CASE("a breadcrumb records the identity you left, and the trail is capped")
 
 TEST_CASE("zoom is the view scale and the mutation scale at once") {
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	f.selection.select(1);
 	const double wideSpan = f.stage.homeSpanZones();
 
@@ -1101,6 +1110,7 @@ TEST_CASE("a modulated sound's star orbits: drawn where the engine plays it, lea
 	// reaches the editor by, so publishing on it is the platform's contract rather than a guess at it;
 	// that the engine really publishes what it plays is test_synth's half.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	f.selection.select(2);
 	// A 3-4-5 place, small enough that a quarter turn round the origin stays on the chart at x1.
@@ -1340,6 +1350,7 @@ TEST_CASE("the Radius corner sets how far from its place the sound is played, an
 
 TEST_CASE("the Theta corner turns the sound about ITS OWN PLACE, and changes neither the place nor the radius") {
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	f.selection.select(2);
 	f.bridge.setSoundTravel(2, { 0.003, 0.004 });
@@ -1400,6 +1411,7 @@ TEST_CASE("with no Radius the Theta corner moves nothing on the chart, and the a
 	// A SOUND PLAYED ON ITS OWN PLACE HAS NOTHING FOR AN ANGLE TO TURN — true, and not a dead knob: the
 	// angle is stored, and the moment there is a radius it is the direction the sound leaves in.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	f.selection.select(2);
 	f.stage.draw(canvas);
@@ -3436,6 +3448,76 @@ TEST_CASE("every breadcrumb is placed from its own identity, not from the live s
 	CHECK(f.stage.crumbAt(2).x != doctest::Approx(f.stage.crumbAt(0).x));
 }
 
+TEST_CASE("explore: each engine opens at its own default zoom — Additive at x1/100, V5 at x7, the rest at x1 — and a zoom the hand set is kept") {
+	// ZOOM IS A VIEW SCALE HELD BY THE SURFACE ALONE (nothing in a patch), so "default" is what a new editor opens at and what a switch of
+	// engine moves a still-default zoom to. Asserted on the values: both zoom fields (no dwell from x1), the span, and the readout's number.
+	const auto clock = [] { return int64_t { 1000 }; };
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::V5));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 7.0);
+		CHECK(fresh.terrainZoom() == 7.0);
+		CHECK(f.stage.zoom() == 7.0); // the fixture's own stage opened on V5
+	}
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 1.0 / 100.0);
+		CHECK(fresh.terrainZoom() == fresh.zoom()); // no dwell animation on first paint
+		CHECK(fresh.travelSpan() == doctest::Approx(ExploreStage::kBaseTravel * 100.0));
+		CHECK(std::lround(1.0 / fresh.zoom()) == 100); // formatZoom prints "x1/%.0f" of this
+		// THE WHEEL STEPS FROM THERE.
+		fresh.setZoom(fresh.zoom() * ExploreStage::kZoomStep);
+		CHECK(fresh.zoom() == doctest::Approx(0.01 * ExploreStage::kZoomStep));
+	}
+	for (const OscType other : { OscType::Morph, OscType::Drum, OscType::Pluck }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(other));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 1.0);
+		CHECK(fresh.terrainZoom() == 1.0);
+	}
+	// A SWITCH OF ENGINE: a zoom still at the old default follows to the new one's, both fields; one the hand set stays.
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Pluck));
+		f.stage.update();
+		REQUIRE(f.stage.zoom() == 1.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 1.0 / 100.0);
+		CHECK(f.stage.terrainZoom() == 1.0 / 100.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Pluck));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 1.0);
+		CHECK(f.stage.terrainZoom() == 1.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::V5));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 7.0);
+		CHECK(f.stage.terrainZoom() == 7.0);
+	}
+	{
+		ExploreFixture f;
+		f.stage.setZoom(5.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 5.0);
+		CHECK(f.stage.zoomEngine() == OscType::Additive);
+	}
+	// THE ENV OVERRIDE STILL WINS.
+	setenv("FEATHERS_EXPLORE_ZOOM", "4", 1);
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 4.0);
+		CHECK(fresh.terrainZoom() == 4.0);
+	}
+	unsetenv("FEATHERS_EXPLORE_ZOOM");
+}
+
 TEST_CASE("Explore zooms on the wheel") {
 	// The symptom: touchpad gesture zoom did nothing on Explore. The first fact is blunter than the gesture
 	// question — the surface answered NO scroll event at all. Zoom was a corner-knob drag and nothing
@@ -3446,6 +3528,7 @@ TEST_CASE("Explore zooms on the wheel") {
 	// testable here; whether a touchpad produces one is a question about X11 and libinput that no
 	// in-process test can answer. See the header, and FEATHERS_TRACE_WHEEL.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	const visage::Point centre = f.stage.disk().centre();
 	const auto wheel = [&](float dy) {
 		visage::MouseEvent e = at(centre.x, centre.y);
@@ -3670,6 +3753,7 @@ TEST_CASE("a wheel zoom rebuilds the terrain with no gesture to end") {
 	// The gate is gone, so this asserts the general policy rather than a wheel special case: the window
 	// changed, therefore a build is asked for, with nothing pressed and nothing released.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	f.selection.select(0);
 	visage::Canvas canvas;
 	f.stage.draw(canvas);
@@ -4461,6 +4545,7 @@ TEST_CASE("a crumb outside the view does not draw a line across the whole window
 	// so a crumb left at any other home projects THOUSANDS of pixels away — and a segment drawn from
 	// there to the star crosses the entire window on its way in. Measured below rather than argued.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	f.selection.select(1);
 	const visage::Point centre = f.stage.disk().centre();
 
@@ -6912,6 +6997,7 @@ TEST_CASE("the terrain follows a zoom once the zoom rests, or once it has moved 
 	// pop. Asserted on the zoom the map is BUILT at (`terrainZoom`) and on the window the builder was asked for, with the
 	// fixture's clock wound by hand.
 	ExploreFixture f;
+	pinUnitZoom(f); // these cases are written at x1; V5 opens at x7
 	visage::Canvas canvas;
 	const visage::Point centre = f.stage.disk().centre();
 	const auto wheel = [&](float dy) {
@@ -16568,3 +16654,245 @@ TEST_CASE("pad editor: a press while the ring is full is dropped and counted, ow
 	CHECK(f.bridge.droppedNotes() == 1);
 }
 
+
+//-----------------------------------------------------------------------------------------------------------------
+// THE FITTED MAP (AUDITION): a second road for the map's cells on Additive and V5, behind a switch that is off.
+//-----------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// The cell the engine's own road gives at a texel of `window`, restated from terrainFeaturesAt: what main's map holds there.
+TerrainFeatures engineCellAt(const TerrainWindow& window, int column, int row) {
+	return terrainFeaturesAt(window.engine, window.pin, static_cast<uint16_t>(std::lround(window.zoneBaseline)),
+	                         static_cast<float>(window.offsetBaseline), TerrainMap::travelXAtColumn(window, column),
+	                         TerrainMap::travelYAtRow(window, row), window.residue, window.gammaBase, window.scales(),
+	                         window.warpMode, window.weaveModel, window.resonateShaping, window.shapesMix, window.additive);
+}
+
+/// The cell the FITTED road gives, restated from its two halves (the decode and the table's polynomials), the way a
+/// reader of terrain_fit.h would compose them.
+TerrainFeatures fittedCellAt(const TerrainWindow& window, int column, int row) {
+	const uint16_t zone = static_cast<uint16_t>(std::lround(window.zoneBaseline));
+	const float offset = static_cast<float>(window.offsetBaseline);
+	const TerrainFrames frames = terrainFramesAt(window.pin, terrainPlaneHome(window), window.residue);
+	double in[ui::kFitMaxInputs];
+	REQUIRE(ui::terrainFitDecode(window.engine, frames, zone, offset, TerrainMap::travelXAtColumn(window, column),
+	                             TerrainMap::travelYAtRow(window, row), window.gammaBase, window.scales(), window.additive, nullptr,
+	                             in)
+	        == ui::terrainFitInputs(window.engine));
+	const ui::FitEngineTable* table = ui::terrainFitTableFor(window.engine);
+	REQUIRE(table != nullptr);
+	const auto p = ui::terrainFitPredict(*table, in);
+	TerrainFeatures out;
+	out.energy = static_cast<float>(p[0]);
+	out.centroid = static_cast<float>(p[1]);
+	out.roughness = static_cast<float>(p[2]);
+	out.parity = static_cast<float>(p[3]);
+	out.fundamental = static_cast<float>(p[4]);
+	return out;
+}
+
+bool sameFeatures(const TerrainFeatures& a, const TerrainFeatures& b) {
+	return a.energy == b.energy && a.centroid == b.centroid && a.roughness == b.roughness && a.parity == b.parity
+	       && a.fundamental == b.fundamental;
+}
+
+constexpr std::pair<int, int> kFitProbe[] = { { 3, 5 }, { 30, 40 }, { 64, 64 }, { 101, 17 }, { 127, 120 }, { 64, 3 } };
+
+size_t builtTexels(const TerrainSnapshot& map) {
+	size_t n = 0;
+	for (const uint8_t c : map.computed) {
+		n += c != 0u ? 1u : 0u;
+	}
+	return n;
+}
+
+} // namespace
+
+TEST_CASE("fitted map: off by default and per instance; the window carries the switch only where a table exists") {
+	for (const OscType engine : { OscType::Additive, OscType::V5, OscType::Morph }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		CHECK_FALSE(f.stage.fittedMap());
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+		// The switch is the stage's, not the patch's: a second stage is its own, off.
+		f.stage.setFittedMap(true);
+		const bool table = engine != OscType::Morph;
+		CHECK(f.stage.fittedMap()); // what was asked
+		CHECK(f.stage.terrainWindowNow().fittedMap == table); // but only a table makes it a claim
+		ExploreFixture other;
+		other.set(ParamId::OscType, static_cast<double>(engine));
+		CHECK_FALSE(other.stage.fittedMap());
+		CHECK_FALSE(other.stage.terrainWindowNow().fittedMap);
+	}
+}
+
+TEST_CASE("fitted map: the chart's menu offers 'Fitted map (audition)' checkable, toggles it, and is empty for an engine with no table") {
+	for (const OscType engine : { OscType::Additive, OscType::V5 }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		REQUIRE(f.stage.fittedMapAvailable());
+		{
+			const visage::PopupMenu menu = f.stage.terrainMenu();
+			REQUIRE(menu.options().size() == 1);
+			CHECK(menu.options()[0].id() == ExploreStage::kFittedMap);
+			CHECK(std::string(menu.options()[0].name().toUtf8()) == "Fitted map (audition)");
+			CHECK_FALSE(menu.options()[0].selected());
+		}
+		f.stage.terrainMenu().onSelection().callback(ExploreStage::kFittedMap);
+		CHECK(f.stage.fittedMap());
+		CHECK(f.stage.terrainWindowNow().fittedMap);
+		CHECK(f.stage.terrainMenu().options()[0].selected());
+		f.stage.terrainMenu().onSelection().callback(ExploreStage::kFittedMap);
+		CHECK_FALSE(f.stage.fittedMap());
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+		CHECK_FALSE(f.stage.terrainMenu().options()[0].selected());
+	}
+	// HIDDEN, NOT GREYED: an engine without a table has no item at all, and a stale pick of it moves nothing.
+	for (const OscType engine : { OscType::Morph, OscType::Stair, OscType::Resonate, OscType::BasicShapes, OscType::Pluck, OscType::Drum }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		CHECK_FALSE(f.stage.fittedMapAvailable());
+		CHECK(f.stage.terrainMenu().options().empty());
+		f.stage.terrainMenu().onSelection().callback(ExploreStage::kFittedMap);
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+	}
+}
+
+TEST_CASE("fitted map: FEATHERS_TERRAIN_FIT=1 opens a stage with it on; anything else leaves it off") {
+	const char* before = std::getenv("FEATHERS_TERRAIN_FIT");
+	const std::string kept = before != nullptr ? before : "";
+	const auto restore = [&] {
+		if (before != nullptr) {
+			::setenv("FEATHERS_TERRAIN_FIT", kept.c_str(), 1);
+		}
+		else {
+			::unsetenv("FEATHERS_TERRAIN_FIT");
+		}
+	};
+	::setenv("FEATHERS_TERRAIN_FIT", "1", 1);
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		CHECK(f.stage.fittedMap());
+		CHECK(f.stage.terrainWindowNow().fittedMap);
+		CHECK(f.stage.terrainMenu().options()[0].selected());
+	}
+	::setenv("FEATHERS_TERRAIN_FIT", "0", 1);
+	{
+		ExploreFixture f;
+		CHECK_FALSE(f.stage.fittedMap());
+	}
+	::unsetenv("FEATHERS_TERRAIN_FIT");
+	{
+		ExploreFixture f;
+		CHECK_FALSE(f.stage.fittedMap());
+	}
+	// ON for an engine with no table is inert: the variable asks, the table decides.
+	::setenv("FEATHERS_TERRAIN_FIT", "1", 1);
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Morph));
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+	}
+	restore();
+}
+
+TEST_CASE("fitted map: OFF, the map is the engine's own road to the bit and the fitted road is never evaluated") {
+	for (const OscType engine : { OscType::Additive, OscType::V5 }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		const TerrainWindow window = f.stage.terrainWindowNow();
+		REQUIRE_FALSE(window.fittedMap);
+		const uint64_t evaluated = ui::terrainFitEvaluations();
+		f.terrain.request(window);
+		REQUIRE(settle(f.terrain, window));
+		const std::shared_ptr<const TerrainSnapshot> map = f.terrain.snapshot();
+		CHECK_FALSE(map->fitted);
+		CHECK(f.terrain.fittedTexels() == 0);
+		CHECK(f.terrain.texelsComputed() >= static_cast<uint64_t>(TerrainMap::kResolution * TerrainMap::kResolution));
+		CHECK(ui::terrainFitEvaluations() == evaluated); // not even called
+		for (const auto& [column, row] : kFitProbe) {
+			const TerrainFeatures expected = engineCellAt(window, column, row);
+			INFO("engine " << static_cast<int>(engine) << " texel " << column << "," << row);
+			CHECK(sameFeatures(map->featuresAt(column, row), expected));
+		}
+	}
+}
+
+TEST_CASE("fitted map: ON, the cells come from the fitted road, their values are the evaluator's, and a map costs one evaluation per cell") {
+	for (const OscType engine : { OscType::Additive, OscType::V5 }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		const TerrainWindow off = f.stage.terrainWindowNow();
+		f.stage.setFittedMap(true);
+		const TerrainWindow window = f.stage.terrainWindowNow();
+		REQUIRE(window.fittedMap);
+		REQUIRE_FALSE(window == off); // a different picture of the same place: it is in the content key
+		const uint64_t evaluated = ui::terrainFitEvaluations();
+		f.terrain.request(window);
+		REQUIRE(settle(f.terrain, window));
+		const std::shared_ptr<const TerrainSnapshot> map = f.terrain.snapshot();
+		CHECK(map->fitted); // the seam: which road built the cells
+		// ONE EVALUATION PER CELL, counted rather than timed: every texel this terrain computed went through the fitted road
+		// (and none through the measurement), and the map holds a texel per cell.
+		CHECK(builtTexels(*map) == static_cast<size_t>(TerrainMap::kResolution * TerrainMap::kResolution));
+		CHECK(f.terrain.fittedTexels() == f.terrain.texelsComputed());
+		CHECK(ui::terrainFitEvaluations() - evaluated == f.terrain.fittedTexels());
+		CHECK(f.terrain.fittedTexels() >= static_cast<uint64_t>(TerrainMap::kResolution * TerrainMap::kResolution));
+		// THE VALUES ARE THE EVALUATOR'S, restated from the decode and the table, bit for bit as floats...
+		bool differs = false;
+		for (const auto& [column, row] : kFitProbe) {
+			INFO("engine " << static_cast<int>(engine) << " texel " << column << "," << row);
+			CHECK(sameFeatures(map->featuresAt(column, row), fittedCellAt(window, column, row)));
+			// ...and NOT the engine's own measurement, or the check above could be passing on the old road.
+			differs = differs || !sameFeatures(map->featuresAt(column, row), engineCellAt(window, column, row));
+		}
+		CHECK(differs);
+		// And turned off again, the very same window key is the engine's road once more.
+		f.stage.setFittedMap(false);
+		const TerrainWindow back = f.stage.terrainWindowNow();
+		CHECK(back == off);
+		f.terrain.request(back);
+		REQUIRE(settle(f.terrain, back));
+		CHECK_FALSE(f.terrain.snapshot()->fitted);
+		for (const auto& [column, row] : kFitProbe) {
+			CHECK(sameFeatures(f.terrain.snapshot()->featuresAt(column, row), engineCellAt(back, column, row)));
+		}
+	}
+}
+
+TEST_CASE("fitted map: a popup press on the chart opens the menu where it has an item, and is the scrub it always was where it has none") {
+	const auto rightPress = [](float x, float y) {
+		visage::MouseEvent event = at(x, y);
+		event.button_id = visage::kMouseButtonRight;
+		event.button_state = visage::kMouseButtonRight;
+		return event;
+	};
+	for (const OscType engine : { OscType::Additive, OscType::Morph }) {
+		ExploreFixture f;
+		f.selection.select(1);
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		const visage::Point centre = f.stage.disk().centre();
+		const double before = f.stage.selectedDrift();
+		// THE CONTROL: a plain left press at the same place moves the star, so "did not move" below is not vacuous.
+		{
+			ExploreFixture g;
+			g.selection.select(1);
+			g.set(ParamId::OscType, static_cast<double>(engine));
+			g.stage.onMouseDown().callback(at(centre.x + 60.0f, centre.y));
+			g.stage.onMouseUp().callback(at(centre.x + 60.0f, centre.y));
+			g.settleGesture();
+			REQUIRE(g.stage.selectedDrift() != before);
+		}
+		f.stage.onMouseDown().callback(rightPress(centre.x + 60.0f, centre.y));
+		f.stage.onMouseUp().callback(rightPress(centre.x + 60.0f, centre.y));
+		f.settleGesture();
+		if (f.stage.fittedMapAvailable()) {
+			CHECK(f.stage.selectedDrift() == before); // the press opened the menu and scrubbed nothing
+		}
+		else {
+			CHECK(f.stage.selectedDrift() != before); // no item to show: the press is the one it always was
+		}
+	}
+}

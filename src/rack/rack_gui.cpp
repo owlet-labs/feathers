@@ -371,6 +371,10 @@ void RackGui::tick() {
 	// the one that changed it. `syncCards` compares before building, so a beat with nothing new costs
 	// a walk over the slots and no allocation.
 	syncCards();
+	// A KEY THE EDITOR PRESSED waits for the audio thread: ask the host to process.
+	if (bridge_.hasPendingNotes() && requestProcess_) {
+		requestProcess_();
+	}
 	if (editor_ != nullptr) {
 		editor_->syncMacros();
 		editor_->syncCanvas();

@@ -22,6 +22,7 @@
 #include "plugin/ui/frame_watchers.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/fine_adjust.h"
+#include "plugin/ui/mod_handle.h"
 #include "plugin/ui/tooltip.h"
 
 #include <array>
@@ -88,6 +89,13 @@ public:
 	};
 
 	HitPicture();
+	/// **EVERY HANDLE A MODULATION TARGET** (`ui::ModHandle`, as OWLTT's plot handles are): where a handle's control is a destination it wears an
+	/// amount arc along its axis, a live dot where modulation has put it, and takes the sources menu, an armed press or Alt as a route gesture,
+	/// and a value drag otherwise. Off by default (the synth's panel keeps its own pills); the Drum device's window turns it on.
+	void setModHandles(bool on) { modHandles_ = on; redraw(); }
+	[[nodiscard]] bool modHandles() const noexcept { return modHandles_; }
+	/// The handle's modulation plan (its axes' arcs and dots), for the cases; empty axes where the control is no destination.
+	[[nodiscard]] ModHandlePlan modPlanOf(Handle h) const { return mods_[static_cast<size_t>(h)].plan(); }
 	/// A COMPACT PICTURE (a card's) draws its handles without their readouts, which would crowd a small plot; the tooltip still names them.
 	void setLabelsShown(bool shown) { if (shown != labels_) { labels_ = shown; redraw(); } }
 	[[nodiscard]] bool labelsShown() const noexcept { return labels_; }
@@ -176,6 +184,11 @@ private:
 	float startY_ = 0.0f;
 	double startMultiplier_ = 1.0;
 	bool labels_ = true;
+	bool modHandles_ = false;
+	std::array<ModHandle, kHandleCount> mods_ {};
+	Handle routeHandle_ = Handle::kCount; ///< the handle whose route gesture is open
+	void rebuildMods();
+	[[nodiscard]] std::vector<ModHandleAxis> modAxesFor(Handle h);
 	bool fine_ = false;     ///< Shift is held (the Tune handle moves whole semitones, or with Shift, finely)
 	bool tuneFine_ = false; ///< the gearing the Tune handle's anchor was taken at
 	float slack_ = 0.0f; ///< how far the hand is past where a time handle's control stops following it (px, signed)

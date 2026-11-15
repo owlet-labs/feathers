@@ -85,14 +85,134 @@ void HitPicture::offeredControls(std::vector<Offered>& out) const {
 HitPicture::HitPicture() {
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		fine_ = e.isShiftDown();
+		if (modHandles_) {
+			const Handle h = handleUnder(e.position);
+			if (h != Handle::kCount && controlOf(h) != nullptr) {
+				ModHandle& mod = mods_[static_cast<size_t>(h)];
+				// THE SOURCES MENU on a secondary press, and a ROUTE GESTURE when a source is armed (or Alt is held over the stroke): the knob's roads.
+				if (e.shouldTriggerPopup() && mod.showMenu(*this)) {
+					return;
+				}
+				const visage::Point c = markAt(h);
+				const size_t axis = mod.routeAxisFor(e.isAltDown(), e.position, c.x, c.y);
+				if (axis != ModHandle::npos) {
+					routeHandle_ = h;
+					mod.beginRoute(axis, e);
+					redraw();
+					return;
+				}
+			}
+		}
 		press(e.position);
 	};
 	onMouseDrag() = [this](const visage::MouseEvent& e) {
+		if (routeHandle_ != Handle::kCount) {
+			mods_[static_cast<size_t>(routeHandle_)].dragRoute(e);
+			redraw();
+			return;
+		}
 		fine_ = e.isShiftDown();
 		drag(e.position);
 	};
-	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
+	onMouseUp() = [this](const visage::MouseEvent&) {
+		if (routeHandle_ != Handle::kCount) {
+			(void)mods_[static_cast<size_t>(routeHandle_)].endRoute();
+			routeHandle_ = Handle::kCount;
+			redraw();
+			return;
+		}
+		release();
+	};
 	installTooltipHover(*this, *this); // LAST, after every `=` above
+}
+
+std::vector<ModHandleAxis> HitPicture::modAxesFor(Handle h) {
+	// EACH AXIS: the control it edits, whether it runs across (time) or up and down, and the plot's own map from the control's VALUE to a
+	// coordinate (the same arithmetic `handleAt` and `drag` use, restated per control). Read at the live laws, so an arc follows the picture.
+	const auto modulated = [](const device::Modulatable* c) { return c->display().modulated; };
+	const auto across = [this](device::Modulatable* c, std::function<float(double)> f) { return ModHandleAxis { c, true, std::move(f) }; };
+	const auto upDown = [this](device::Modulatable* c, std::function<float(double)> f) { return ModHandleAxis { c, false, std::move(f) }; };
+	const auto xOfSeconds = [this](double s) { return xOf(s); };
+	const auto xOfLog2 = [this](double v) { return xOf(std::exp2(v)); };
+	const auto yOfLog2Hz = [this](double v) { return yOfHz(std::exp2(v)); };
+	const Controls& c = controls_;
+	std::vector<ModHandleAxis> out;
+	switch (h) {
+	case Handle::Tune:
+		out.push_back(upDown(c.tune, [this, c, modulated](double v) { return yOfHz(laws_.hz * std::exp2((v - modulated(c.tune)) / 12.0)); }));
+		break;
+	case Handle::SweepTime: out.push_back(across(c.sweepTime, [xOfLog2](double v) { return xOfLog2(v); })); break;
+	case Handle::Decay:
+		out.push_back(across(c.decay, [this, xOfLog2](double v) {
+			const double mult = decaySeconds_ > 0.0 ? laws_.t60 / decaySeconds_ : 1.0;
+			return xOf(std::exp2(v) * mult);
+		}));
+		break;
+	case Handle::Level: out.push_back(upDown(c.level, [this](double v) { return yOfLevel(v); })); break;
+	case Handle::Drive:
+		out.push_back(upDown(c.drive, [this](double v) {
+			return envBottom() - (kDriveFloor + (1.0f - kDriveFloor) * static_cast<float>(v)) * (envBottom() - envTop());
+		}));
+		if (c.driveTone != nullptr) {
+			out.push_back(across(c.driveTone, [this, c, modulated](double v) {
+				return plotLeft() + 0.25f * (plotRight() - plotLeft()) + static_cast<float>(v - modulated(c.driveTone)) * 0.5f * (plotRight() - plotLeft());
+			}));
+		}
+		break;
+	case Handle::WireDecay:
+		out.push_back(across(c.wireDecay, [this, c, modulated](double v) { return xOf(std::exp2(v) * laws_.wireT60 / std::exp2(modulated(c.wireDecay))); }));
+		break;
+	case Handle::ClickDecay: out.push_back(across(c.clickDecay, [xOfLog2](double v) { return xOfLog2(v); })); break;
+	case Handle::BellStart: out.push_back(upDown(c.bellStart, [yOfLog2Hz](double v) { return yOfLog2Hz(v); })); break;
+	case Handle::BellEnd:
+		out.push_back(upDown(c.bellEnd, [yOfLog2Hz](double v) { return yOfLog2Hz(v); }));
+		if (c.bellTime != nullptr) {
+			out.push_back(across(c.bellTime, [xOfLog2](double v) { return xOfLog2(v); }));
+		}
+		break;
+	case Handle::Bell2:
+		out.push_back(across(c.bell2Time, [xOfLog2](double v) { return xOfLog2(v); }));
+		if (c.bell2 != nullptr) {
+			out.push_back(upDown(c.bell2, [yOfLog2Hz](double v) { return yOfLog2Hz(v); }));
+		}
+		break;
+	case Handle::Hold: out.push_back(across(c.hold, [xOfSeconds](double v) { return xOfSeconds(v / 1000.0); })); break;
+	case Handle::Dip:
+		out.push_back(upDown(c.dip, [this](double v) {
+			return yOfLevel(levelDb_ + 20.0 * std::log10(std::max(1.0e-3, 1.0 - v)));
+		}));
+		if (c.dipTime != nullptr) {
+			out.push_back(across(c.dipTime, [xOfSeconds](double v) { return xOfSeconds(v / 1000.0); }));
+		}
+		break;
+	case Handle::ClickSweep:
+		out.push_back(upDown(c.clickSweep, [this](double v) { return yOfHz(laws_.hz * std::exp2(laws_.sweepOctaves + v)); }));
+		if (c.clickSweepTime != nullptr) {
+			out.push_back(across(c.clickSweepTime, [xOfLog2](double v) { return xOfLog2(v); }));
+		}
+		break;
+	case Handle::StartPhase:
+		out.push_back(upDown(c.startPhase, [this](double v) { return envBottom() - static_cast<float>(v / 90.0) * (envBottom() - envTop()); }));
+		break;
+	case Handle::Spread: out.push_back(across(c.spread, [xOfLog2](double v) { return xOfLog2(v); })); break;
+	case Handle::ClapBand:
+		out.push_back(upDown(c.clapHighPass, [yOfLog2Hz](double v) { return yOfLog2Hz(v); }));
+		if (c.clapQ != nullptr) {
+			out.push_back(across(c.clapQ, [this, c, modulated](double v) {
+				return plotLeft() + 0.86f * (plotRight() - plotLeft()) + 80.0f * static_cast<float>(std::log2(std::max(1.0e-3, v / std::max(1.0e-3, modulated(c.clapQ)))));
+			}));
+		}
+		break;
+	default: break;
+	}
+	return out;
+}
+
+void HitPicture::rebuildMods() {
+	for (size_t i = 0; i < kHandleCount; ++i) {
+		const auto h = static_cast<Handle>(i);
+		mods_[i] = controlOf(h) != nullptr ? ModHandle(modAxesFor(h)) : ModHandle {};
+	}
 }
 
 void HitPicture::show(drum::Kind kind, const drum::Laws& laws, double decaySeconds, double levelDb, const Controls& controls) {
@@ -105,6 +225,7 @@ void HitPicture::show(drum::Kind kind, const drum::Laws& laws, double decaySecon
 	decaySeconds_ = decaySeconds;
 	levelDb_ = levelDb;
 	controls_ = controls;
+	rebuildMods();
 	redraw();
 }
 
@@ -631,8 +752,14 @@ void HitPicture::draw(visage::Canvas& canvas) {
 			continue;
 		}
 		const visage::Point at = marks[i];
+		if (modHandles_) {
+			mods_[i].drawUnder(canvas, at.x, at.y, kHandleRadius); // the halo and the amount arc, under the dot
+		}
 		canvas.setColor(held_ == h ? kInk : kAccent);
 		canvas.circle(at.x - kHandleRadius, at.y - kHandleRadius, 2.0f * kHandleRadius);
+		if (modHandles_) {
+			mods_[i].drawOver(canvas, at.x, at.y, kHandleRadius); // and the live dot over it
+		}
 		if (!labels_) {
 			continue;
 		}

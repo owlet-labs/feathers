@@ -65,6 +65,7 @@ bool isSegmented(dd::Param p) {
 
 DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id, Notifier* notifier)
     : host_(host), device_(id), model_(host, id) {
+	picture_.setModHandles(true); // every handle whose control is a destination is a modulation target
 	addChild(&picture_);
 	for (size_t i = 0; i < widgets_.size(); ++i) {
 		const auto p = static_cast<dd::Param>(i);

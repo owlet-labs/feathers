@@ -42757,3 +42757,80 @@ TEST_CASE("drum device: the window offers every control the card offers, by desc
 		CHECK(window.count(d) == 1);
 	}
 }
+
+TEST_CASE("drum device window: the picture's handles are modulation targets: a halo when armed, a route on an armed press along the handle's own axis, an amount arc where the plot's axis puts it") {
+	DrumUi u;
+	ui::ModState* mod = u.d.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	u.win->setModulation(mod, u.d.f.gui.history());
+	(void)u.win->updateContent();
+	using H = ui::HitPicture::Handle;
+	ui::HitPicture& pic = u.win->pictureForTest();
+	const auto at = [](float x, float y) {
+		visage::MouseEvent e;
+		e.position = { x, y };
+		return e;
+	};
+	const backplane::Source macro = backplane::Source::core(0);
+	const auto dest = [&](ddv::Param p) { return backplane::Destination::control(u.d.device, static_cast<size_t>(p)); };
+	// NOTHING ARMED: offered (a destination) but quiet.
+	ui::ModHandlePlan quiet = pic.modPlanOf(H::Tune);
+	REQUIRE(quiet.axes.size() == 1);
+	CHECK(quiet.axes[0].offered);
+	CHECK_FALSE(quiet.halo);
+	CHECK_FALSE(quiet.axes[0].hasStroke);
+	// ARMED: the halo on every handle whose control the source may reach.
+	mod->focus(macro);
+	mod->arm(true);
+	REQUIRE(u.d.f.bridge.mayRoute(macro, dest(ddv::Param::Tune)));
+	CHECK(pic.modPlanOf(H::Tune).halo);
+	CHECK(pic.modPlanOf(H::Decay).halo);
+	CHECK(pic.modPlanOf(H::Level).halo);
+	SUBCASE("an armed press on a VERTICAL handle (Tune) routes, and only vertical travel edits the amount; the value does not move") {
+		const visage::Point h = pic.markAt(H::Tune);
+		const float before = u.field(ddv::Param::Tune);
+		pic.onMouseDown().callback(at(h.x, h.y));
+		pic.onMouseDrag().callback(at(h.x + 40.0f, h.y)); // sideways: nothing
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Tune)) == doctest::Approx(ui::Knob::kRouteSeedAmount));
+		pic.onMouseDrag().callback(at(h.x + 40.0f, h.y - 30.0f)); // up: more
+		pic.onMouseUp().callback(at(h.x + 40.0f, h.y - 30.0f));
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Tune)) == doctest::Approx(ui::Knob::kRouteSeedAmount + 30.0f / ui::Knob::kRouteDragRange));
+		CHECK(u.field(ddv::Param::Tune) == before);
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Decay)) == 0.0f);
+	}
+	SUBCASE("an armed press on an ACROSS handle (Decay) routes along its own axis: sideways edits the amount, vertical does nothing") {
+		const visage::Point h = pic.markAt(H::Decay);
+		const float before = u.field(ddv::Param::Decay);
+		pic.onMouseDown().callback(at(h.x, h.y));
+		pic.onMouseDrag().callback(at(h.x, h.y - 30.0f));
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Decay)) == doctest::Approx(ui::Knob::kRouteSeedAmount));
+		pic.onMouseDrag().callback(at(h.x + 35.0f, h.y - 30.0f));
+		pic.onMouseUp().callback(at(h.x + 35.0f, h.y - 30.0f));
+		CHECK(u.d.f.bridge.routeAmount(macro, dest(ddv::Param::Decay)) == doctest::Approx(ui::Knob::kRouteSeedAmount + 35.0f / ui::Knob::kRouteDragRange));
+		CHECK(u.field(ddv::Param::Decay) == before);
+	}
+	SUBCASE("the amount arc runs from the handle's base to base + amount through the plot's own axis (Tune: the frequency axis)") {
+		const double hz = u.win->modelForTest().laws().hz;
+		for (const float amount : { 0.05f, -0.05f }) {
+			CAPTURE(amount);
+			u.d.f.bridge.setRouteAmount(macro, dest(ddv::Param::Tune), amount);
+			(void)u.win->updateContent();
+			const ui::ModHandlePlan plan = pic.modPlanOf(H::Tune);
+			REQUIRE(plan.axes[0].hasStroke);
+			const double span = 96.0; // Tune's declared range: a full-depth route moves it this far
+			const float a = pic.yOfHz(hz);
+			const float b = pic.yOfHz(hz * std::exp2(static_cast<double>(amount) * span / 12.0));
+			CHECK(plan.axes[0].strokeLo == doctest::Approx(std::min(a, b)).epsilon(1.0e-3));
+			CHECK(plan.axes[0].strokeHi == doctest::Approx(std::max(a, b)).epsilon(1.0e-3));
+			CHECK(plan.axes[0].base == doctest::Approx(a).epsilon(1.0e-3));
+		}
+	}
+	// UNARMED AGAIN, A PRESS IS A VALUE DRAG AS BEFORE.
+	mod->arm(false);
+	const visage::Point h = pic.markAt(H::Level);
+	const float level0 = u.field(ddv::Param::Level);
+	pic.onMouseDown().callback(at(h.x, h.y));
+	pic.onMouseDrag().callback(at(h.x, h.y + 20.0f));
+	pic.onMouseUp().callback(at(h.x, h.y + 20.0f));
+	CHECK(u.field(ddv::Param::Level) < level0);
+}

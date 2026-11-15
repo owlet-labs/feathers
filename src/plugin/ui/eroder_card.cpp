@@ -49,6 +49,7 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 		return k;
 	};
 	amount_ = knob(ero::Param::Amount, "Amount");
+	bias_ = knob(ero::Param::RustBias, "Bias");
 	freq_ = knob(ero::Param::Freq, "Freq");
 	width_ = knob(ero::Param::Width, "Width");
 	mix_ = knob(ero::Param::Mix, "Mix");
@@ -131,15 +132,15 @@ void EroderCard::setModulation(ModState* mod, EditHistory* history) {
 	}
 	plot_->setModulation(mod, history);
 	// THE KNOBS DRAW THEIR OWN ARM GLOW, and watch the panel state for it (`CompCard::setModulation`).
-	for (Knob* knob : { amount_.get(), freq_.get(), width_.get(), mix_.get(), cutoff_.get(), drive_.get(),
-	                    hpWet_.get(), follow_.get() }) {
+	for (Knob* knob : { amount_.get(), bias_.get(), freq_.get(), width_.get(), mix_.get(), cutoff_.get(),
+	                    drive_.get(), hpWet_.get(), follow_.get() }) {
 		knob->setModulation(mod, history);
 	}
 }
 
-bool EroderCard::dust() const {
-	return static_cast<int>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::Mode)) + 0.5f)
-	       == static_cast<int>(ero::Mode::Dust);
+ero::Mode EroderCard::engine() const {
+	const int at = static_cast<int>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::Mode)) + 0.5f);
+	return static_cast<ero::Mode>(std::clamp(at, 0, static_cast<int>(ero::Mode::kCount) - 1));
 }
 
 float EroderCard::openHeight() {
@@ -157,7 +158,13 @@ float EroderCard::laneExtent(float cross) const {
 }
 
 std::vector<visage::Frame*> EroderCard::dustWidgetsForTest() const {
-	return { amount_.get(), freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get(), hpWet_.get() };
+	return { amount_.get() };
+}
+
+std::vector<visage::Frame*> EroderCard::rustWidgetsForTest() const { return { bias_.get() }; }
+
+std::vector<visage::Frame*> EroderCard::shakerWidgetsForTest() const {
+	return { freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get() };
 }
 
 std::vector<visage::Frame*> EroderCard::combWidgetsForTest() const {
@@ -169,8 +176,9 @@ void EroderCard::resized() { layOut(); }
 void EroderCard::foldedChanged() { layOut(); }
 
 void EroderCard::layOut() {
-	const bool isDust = dust();
-	laidOutDust_ = isDust ? 1 : 0;
+	const ero::Mode mode = engine();
+	laidOutEngine_ = static_cast<int>(mode);
+	const bool comb = mode == ero::Mode::Comb;
 	const bool open = !folded();
 	const float left = bodyLeft() + kPad;
 	const float width = std::max(0.0f, bodyWidth() - 2.0f * kPad);
@@ -188,14 +196,20 @@ void EroderCard::layOut() {
 	// THE KNOB ROW: four cells, Mix the last of them in both engines so it does not move on the switch.
 	const float cell = width / 4.0f;
 	const float knobH = Knob::columnHeight(kKnobDiameter);
-	visage::Frame* const dustRow[] = { amount_.get(), freq_.get(), width_.get() };
+	// THE FIRST CELL IS THE ENGINE'S OWN DEPTH: Dust's Amount, Rust's Bias, the Comb's Tone.
+	amount_->setBounds(left, y, cell, knobH);
+	amount_->setVisible(open && mode == ero::Mode::Dust);
+	bias_->setBounds(left, y, cell, knobH);
+	bias_->setVisible(open && mode == ero::Mode::Rust);
+	visage::Frame* const shakerRow[] = { freq_.get(), width_.get() };
 	visage::Frame* const combRow[] = { tone_.get(), character_.get(), cutoff_.get() };
+	for (size_t i = 0; i < 2; ++i) {
+		shakerRow[i]->setBounds(left + cell * static_cast<float>(i + 1), y, cell, knobH);
+		shakerRow[i]->setVisible(open && !comb);
+	}
 	for (size_t i = 0; i < 3; ++i) {
-		const float x = left + cell * static_cast<float>(i);
-		dustRow[i]->setBounds(x, y, cell, knobH);
-		dustRow[i]->setVisible(open && isDust);
-		combRow[i]->setBounds(x, y, cell, knobH);
-		combRow[i]->setVisible(open && !isDust);
+		combRow[i]->setBounds(left + cell * static_cast<float>(i), y, cell, knobH);
+		combRow[i]->setVisible(open && comb);
 	}
 	mix_->setBounds(left + cell * 3.0f, y, cell, knobH);
 	mix_->setVisible(open);
@@ -209,20 +223,19 @@ void EroderCard::layOut() {
 	source_->setBounds(left, boxY, boxW, ValueBox::kCompactHeight);
 	grit_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
 	track_->setBounds(left + width - chipW, y, chipW, SwitchChip::kHeight);
-	source_->setVisible(open && isDust);
-	grit_->setVisible(open && isDust);
-	track_->setVisible(open && isDust);
+	source_->setVisible(open && !comb);
+	grit_->setVisible(open && !comb);
+	track_->setVisible(open && !comb);
 	gamma_->setBounds(left, boxY, width * 0.5f, ValueBox::kCompactHeight);
-	gamma_->setVisible(open && !isDust);
+	gamma_->setVisible(open && comb);
 	y += kSmallRowHeight + kRowGap;
 
-	// THE THIRD ROW, both engines': the Drive pair across two cells, and Follow in the fourth. Dust's HP Wet is
-	// between them.
+	// THE THIRD ROW, every engine's: the Drive pair across two cells, HP Wet, Follow.
 	const float under = y + PairCell::kCaptionHeight;
 	drivePair_->setBounds(left, y, 2.0f * cell, PairCell::heightFor(knobH));
 	drivePair_->setVisible(open);
 	hpWet_->setBounds(left + cell * 2.0f, under, cell, knobH);
-	hpWet_->setVisible(open && isDust);
+	hpWet_->setVisible(open);
 	follow_->setBounds(left + cell * 3.0f, under, cell, knobH);
 	follow_->setVisible(open);
 	refreshHonesty();
@@ -240,7 +253,7 @@ void EroderCard::refreshHonesty() {
 bool EroderCard::updateContent() {
 	bool changed = false;
 	// THE ENGINE MOVED (a hand, automation, undo, a preset): the other engine's controls show.
-	if ((dust() ? 1 : 0) != laidOutDust_) {
+	if (static_cast<int>(engine()) != laidOutEngine_) {
 		layOut();
 		changed = true;
 	}

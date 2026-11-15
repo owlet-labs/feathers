@@ -71,6 +71,7 @@ public:
 	[[nodiscard]] uint64_t holdsForTest() const noexcept { return holds_; }
 	[[nodiscard]] float smoothedAmountFramesForTest() const noexcept { return amountFrames_; }
 	[[nodiscard]] float followGainForTest() const noexcept { return followGain_; }
+	[[nodiscard]] float lastRingForTest(int channel) const noexcept { return lastRing_[channel & 1]; }
 	/// THE LEFT SIDE'S LAST FRAME AT THREE POINTS: what the head read, what the shaper made of it, and what was fed
 	/// back round the line.
 	[[nodiscard]] float lastReadForTest() const noexcept { return lastRead_; }
@@ -118,9 +119,15 @@ private:
 
 	/// THE SHAPER (`drive_stage.h`).
 	DriveStage shaper_ {};
-	/// HP WET, a side, and the same filter on the dry for Sub Thru.
-	Band hpWet_[2] = {};
-	Band hpDry_[2] = {};
+	/// HP WET, and the same filter on the dry for Sub Thru (`drive_stage.h`).
+	WetHighpass highpass_ {};
+	/// THE SHAKE'S EXTRAS: the right sine's own phase while it is detuned, and Step's hold.
+	double sinePhaseRight_ = 0.0;
+	double stepPhase_ = 0.0;
+	float stepL_ = 0.0f;
+	float stepR_ = 0.0f;
+	/// RUST: what each side was multiplied by on the last frame.
+	float lastRing_[2] = { 1.0f, 1.0f };
 	/// FOLLOW: the level handed in, and the gain made of it, glided.
 	float envelope_ = 0.0f;
 	float followGain_ = 1.0f;

@@ -574,7 +574,7 @@ TEST_CASE("the pitched triangle REACHES the read head: its depth is the head's e
 	CHECK(highest - lowest >= fromTriangle * 0.95);
 }
 
-TEST_CASE("Enabled off, and Mix at zero, leave the buffer alone and the state unmoved") {
+TEST_CASE("Enabled off, and Mix at zero, leave the buffer alone; switched off the state does not move, at no Mix it does") {
 	for (const bool byMix : { false, true }) {
 		Eroder e;
 		e.prepare(kRate);
@@ -586,9 +586,15 @@ TEST_CASE("Enabled off, and Mix at zero, leave the buffer alone and the state un
 		std::vector<float> l = in;
 		std::vector<float> r = in;
 		run(e, l, r);
-		CHECK(l == in);
-		CHECK(r == in);
-		CHECK(e.holdsForTest() == 0); // `isEnabled()` is `mix > 0`: the reference does not run at all
+		const bool untouched = l == in && r == in;
+		CHECK(untouched);
+		if (byMix) {
+			// AT NO MIX THE COMB STILL RUNS, so bringing Mix up reads the present and not a line left standing.
+			CHECK(e.holdsForTest() > 0);
+		}
+		else {
+			CHECK(e.holdsForTest() == 0);
+		}
 	}
 }
 
@@ -960,7 +966,7 @@ TEST_CASE("a hot signal everywhere in the bank stays finite, and the wet stays i
 		std::vector<float> l = in;
 		std::vector<float> r = in;
 		run(e, l, r);
-		const auto gain = static_cast<float>(e.derivedForTest().wetGain);
+		const auto gain = static_cast<float>(e.derivedForTest().wetGain * e.derivedForTest().levelMakeUp);
 		for (size_t i = 0; i < l.size(); ++i) {
 			REQUIRE(std::isfinite(l[i]));
 			REQUIRE(std::isfinite(r[i]));
@@ -1280,6 +1286,14 @@ WetCompare compareWet(double tonePhase, double charPhase, int mix, float amp) {
 		e.processStereo(pl.data() + i, pr.data() + i, 1);
 		portHolds[i] = e.holdsForTest();
 	}
+	// **THE PORT'S LEVEL LAW IS NOT THE REFERENCE'S, ON PURPOSE**: its wet is the reference's times
+	// sqrt((1 + fb) / (1 - fb)), so that a higher feedback is no quieter (`Derived::levelMakeUp`). Restated here from
+	// the feedback and taken back out, so what is compared is the loop.
+	const double fb = e.derivedForTest().feedback;
+	const double makeUp = std::sqrt((1.0 + fb) / (1.0 - fb));
+	for (size_t i = 0; i < frames; ++i) {
+		pl[i] = static_cast<float>(static_cast<double>(in[i]) + (static_cast<double>(pl[i]) - static_cast<double>(in[i])) / makeUp);
+	}
 
 	RefEroder ref;
 	std::vector<q31_t> ql(frames);
@@ -1410,7 +1424,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1);
-	// THE COMB'S FIVE, in that order, among whatever else the face holds: the other engine's are not drawn with them.
+	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
 		const auto& desc = kParamDescs[c];
@@ -1418,7 +1432,9 @@ TEST_CASE("the codec and the declarations") {
 			comb.push_back(c);
 		}
 	}
-	REQUIRE(comb.size() == 5);
+	REQUIRE(comb.size() == 7);
+	CHECK(comb[5] == static_cast<uint8_t>(Param::Heat));
+	CHECK(comb[6] == static_cast<uint8_t>(Param::Blend));
 	CHECK(comb[0] == static_cast<uint8_t>(Param::Tone));
 	CHECK(comb[1] == static_cast<uint8_t>(Param::Character));
 	CHECK(comb[2] == static_cast<uint8_t>(Param::Cutoff));
@@ -1536,11 +1552,26 @@ double rmsOf(const std::vector<float>& v, size_t from = 0) {
 
 TEST_CASE("Dust is the declared engine, and its controls are gated to it as the Comb's are to the Comb") {
 	CHECK(declared().mode == Mode::Dust);
-	for (const Param p : { Param::Amount, Param::Freq, Param::Width, Param::Source, Param::Grit, Param::Stereo,
-	                       Param::Resonance, Param::Track, Param::HpWet, Param::SubThru }) {
+	const auto gatedTo = [](Param p, uint32_t mask) {
 		const auto& d = kParamDescs[static_cast<size_t>(p)];
-		CHECK(d.gateControl == static_cast<int16_t>(Param::Mode));
-		CHECK(d.gateMask == (1u << static_cast<uint32_t>(Mode::Dust)));
+		return d.gateControl == static_cast<int16_t>(Param::Mode) && d.gateMask == mask;
+	};
+	const uint32_t dust = 1u << static_cast<uint32_t>(Mode::Dust);
+	const uint32_t rust = 1u << static_cast<uint32_t>(Mode::Rust);
+	// THE HEAD'S OWN: only Dust has a line to move and feed back round.
+	for (const Param p : { Param::Amount, Param::Resonance }) {
+		CHECK(gatedTo(p, dust));
+	}
+	// THE SHAKER'S: Dust moves a head with it, Rust multiplies by it.
+	for (const Param p : { Param::Freq, Param::Width, Param::Source, Param::Grit, Param::Stereo, Param::Track,
+	                       Param::Step, Param::Detune, Param::ModFold }) {
+		CHECK(gatedTo(p, dust | rust));
+	}
+	for (const Param p : { Param::RustBias, Param::RustRectify }) {
+		CHECK(gatedTo(p, rust));
+	}
+	for (const Param p : { Param::Heat, Param::Blend }) {
+		CHECK(gatedTo(p, 1u << static_cast<uint32_t>(Mode::Comb)));
 	}
 	for (const Param p : { Param::Tone, Param::Character, Param::Gamma, Param::Cutoff }) {
 		const auto& d = kParamDescs[static_cast<size_t>(p)];
@@ -1548,7 +1579,8 @@ TEST_CASE("Dust is the declared engine, and its controls are gated to it as the 
 		CHECK(d.gateMask == (1u << static_cast<uint32_t>(Mode::Comb)));
 	}
 	// BOTH ENGINES': the Mix, the engine itself, the Drive stage and Follow.
-	for (const Param p : { Param::Mix, Param::Mode, Param::Drive, Param::DriveMode, Param::DriveShape, Param::Follow }) {
+	for (const Param p : { Param::Mix, Param::Mode, Param::Drive, Param::DriveMode, Param::DriveShape, Param::Follow,
+	                       Param::HpWet, Param::SubThru }) {
 		CHECK(kParamDescs[static_cast<size_t>(p)].gateControl == -1);
 	}
 
@@ -1569,6 +1601,13 @@ TEST_CASE("Dust is the declared engine, and its controls are gated to it as the 
 	s.settings.hpWet = 8.5f;
 	s.settings.subThru = true;
 	s.settings.follow = 0.45f;
+	s.settings.rustBias = 0.2f;
+	s.settings.rustRectify = 0.9f;
+	s.settings.step = -9.0f;
+	s.settings.detune = 0.3f;
+	s.settings.modFold = 0.7f;
+	s.settings.heat = 0.55f;
+	s.settings.blend = true;
 	CHECK(stateOf(rowOf(s), static_cast<size_t>(Param::kCount)) == s);
 }
 
@@ -2806,6 +2845,10 @@ TEST_CASE("Comb: with Drive at work it is bounded, the same at any partition, an
 		s.driveMode = mode;
 		s.driveShape = 1.0f;
 		s.follow = 0.5f;
+		s.heat = 0.6f;
+		s.hpWet = 9.0f;
+		s.blend = true;
+		s.subThru = true;
 		const std::vector<float> in = whiteInput(24000, 0.9f);
 		const auto render = [&](int block) {
 			Eroder e;
@@ -2839,4 +2882,394 @@ TEST_CASE("Comb: with Drive at work it is bounded, the same at any partition, an
 		}
 		CHECK(silent);
 	}
+}
+
+namespace {
+/// THE WET HIGHPASS, RESTATED: a two-pole trapezoidal highpass at Q 0.707, one channel.
+struct RefHighpass {
+	double g = 0.0;
+	double ic1 = 0.0;
+	double ic2 = 0.0;
+	explicit RefHighpass(double hz) : g(std::tan(std::numbers::pi * hz / kRate)) {}
+	double run(double x) {
+		const double k = std::sqrt(2.0);
+		const double a1 = 1.0 / (1.0 + g * (g + k));
+		const double v3 = x - ic2;
+		const double v1 = a1 * ic1 + g * a1 * v3;
+		const double v2 = ic2 + g * a1 * ic1 + g * g * a1 * v3;
+		ic1 = 2.0 * v1 - ic1;
+		ic2 = 2.0 * v2 - ic2;
+		return x - k * v1 - v2;
+	}
+};
+
+int signChanges(const std::vector<float>& v) {
+	int n = 0;
+	for (size_t i = 1; i < v.size(); ++i) {
+		n += (v[i] < 0.0f) != (v[i - 1] < 0.0f) ? 1 : 0;
+	}
+	return n;
+}
+
+/// THE LEFT (or right) SHAKE, frame by frame, of a device fed a steady tone.
+std::vector<float> shakeOf(const Settings& s, int channel, size_t frames) {
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	std::vector<float> out(frames);
+	for (size_t i = 0; i < frames; ++i) {
+		float l = 0.3f * static_cast<float>(std::sin(0.05 * static_cast<double>(i)));
+		float r = l;
+		e.processStereo(&l, &r, 1);
+		out[i] = e.dustForTest().lastModForTest(channel);
+	}
+	return out;
+}
+} // namespace
+
+TEST_CASE("Step holds the shake for a time; at the bottom of its range it moves every frame") {
+	Settings s = declared();
+	CHECK(deriveDust(s, 60.0, kRate).stepHoldFrames == 1.0);
+	s.step = static_cast<float>(std::log2(0.001));
+	CHECK(std::abs(deriveDust(s, 60.0, kRate).stepHoldFrames - 48.0) < 1.0e-3);
+	s.step = 0.0f; // past the top: held at the top, 1/32 s
+	CHECK(std::abs(deriveDust(s, 60.0, kRate).stepHoldFrames - kRate / 32.0) < 1.0e-6);
+
+	const auto changes = [](const std::vector<float>& v) {
+		int n = 0;
+		for (size_t i = 1; i < v.size(); ++i) {
+			n += v[i] != v[i - 1] ? 1 : 0;
+		}
+		return n;
+	};
+	// FREE: a band of noise moves on every frame.
+	Settings freeRun = declared();
+	CHECK(changes(shakeOf(freeRun, 0, 9600)) > 9000); // all but the frames it sits against its clamp
+	// A MILLISECOND: one new value a hold, 200 of them in 9600 frames.
+	Settings held = declared();
+	held.step = static_cast<float>(std::log2(0.001));
+	const int stairs = changes(shakeOf(held, 0, 9600));
+	CHECK(stairs <= 200);
+	CHECK(stairs >= 195);
+}
+
+TEST_CASE("Detune runs the right side's sine above the left's; Mod Fold turns the sine back at its peaks; neither is run at nothing") {
+	Settings s = declared();
+	s.source = 0.0f;
+	s.stereo = 0.0f; // no lead, so the two sides differ only by what is under test
+	s.freq = static_cast<float>(std::log2(100.0));
+	const DustDerived plain = deriveDust(s, 60.0, kRate);
+	CHECK_FALSE(plain.detuned);
+	CHECK(plain.modFold == 0.0f);
+	const std::vector<float> left = shakeOf(s, 0, 48000);
+	const bool same = shakeOf(s, 1, 48000) == left;
+	CHECK(same);
+	CHECK(std::abs(signChanges(left) - 200) <= 2);
+
+	// AN OCTAVE: twice the crossings on the right, the left unmoved.
+	Settings twin = s;
+	twin.detune = 1.0f;
+	const DustDerived d = deriveDust(twin, 60.0, kRate);
+	CHECK(d.detuned);
+	CHECK(std::abs(d.sineStepRight / d.sineStep - 2.0) < 1.0e-12);
+	twin.detune = 0.5f;
+	CHECK(std::abs(deriveDust(twin, 60.0, kRate).sineStepRight / d.sineStep - std::sqrt(2.0)) < 1.0e-12);
+	twin.detune = 1.0f;
+	const bool leftUnmoved = shakeOf(twin, 0, 48000) == left;
+	CHECK(leftUnmoved);
+	CHECK(std::abs(signChanges(shakeOf(twin, 1, 48000)) - 400) <= 2);
+
+	// THE FOLD: the sine times five, turned back by a triangle of period four — restated from the plain sine.
+	Settings folded = s;
+	folded.modFold = 1.0f;
+	const std::vector<float> turned = shakeOf(folded, 0, 4800);
+	double worst = 0.0;
+	for (size_t i = 0; i < turned.size(); ++i) {
+		const double u = 5.0 * static_cast<double>(left[i]);
+		const double phase = u + 1.0 - 4.0 * std::floor((u + 1.0) / 4.0);
+		const double want = phase < 2.0 ? phase - 1.0 : 3.0 - phase;
+		worst = std::max(worst, std::abs(static_cast<double>(turned[i]) - want));
+	}
+	CHECK(worst < 2.0e-5);
+	CHECK(signChanges(turned) > 3 * signChanges({ left.begin(), left.begin() + 4800 }));
+}
+
+TEST_CASE("Rust multiplies the signal by the shake: Rectify folds the carrier to one side, Bias lets the signal past, and there is no line") {
+	Settings s = declared();
+	s.mode = Mode::Rust;
+	s.resonance = 0.8f; // Dust's; Rust has nothing to feed back round
+	const DustDerived d = deriveDust(s, 60.0, kRate);
+	CHECK(d.ring);
+	CHECK(d.feedback == 0.0);
+	CHECK(d.wetGain == 1.0);
+	CHECK_FALSE(deriveDust(declared(), 60.0, kRate).ring);
+
+	for (const auto& [bias, rectify] : { std::pair { 0.0f, 0.0f }, std::pair { 0.0f, 1.0f }, std::pair { 0.6f, 0.3f } }) {
+		CAPTURE(bias);
+		CAPTURE(rectify);
+		s.rustBias = bias;
+		s.rustRectify = rectify;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		double worst = 0.0;
+		float least = 9.0f;
+		for (int i = 0; i < 4800; ++i) {
+			const float in = 0.4f * static_cast<float>(std::sin(0.07 * i));
+			float l = in;
+			float r = in;
+			e.processStereo(&l, &r, 1);
+			const Dust& dust = e.dustForTest();
+			// THE OUTPUT IS THE INPUT TIMES THE MULTIPLIER, exactly, with no delay.
+			REQUIRE(l == in * dust.lastRingForTest(0));
+			// AND THE MULTIPLIER IS THE SHAKE, folded and let past — restated.
+			const double c = static_cast<double>(dust.lastModForTest(0));
+			const double carrier = c + static_cast<double>(rectify) * (std::abs(c) - c);
+			const double want = static_cast<double>(bias) + (1.0 - static_cast<double>(bias)) * carrier;
+			worst = std::max(worst, std::abs(static_cast<double>(dust.lastRingForTest(0)) - want));
+			least = std::min(least, dust.lastRingForTest(0));
+			REQUIRE(dust.lastDelayFramesForTest(0) == 0.0);
+		}
+		CHECK(worst < 1.0e-6);
+		// RECTIFIED WHOLE, the carrier never goes negative.
+		if (rectify == 1.0f) {
+			CHECK(least >= 0.0f);
+		}
+		else if (bias == 0.0f) {
+			CHECK(least < -0.2f);
+		}
+	}
+
+	// FOLLOW: at all of it, with next to nothing coming in, the multiplier stays at one.
+	s.follow = 1.0f;
+	Eroder quiet;
+	quiet.prepare(kRate);
+	quiet.setTarget(s);
+	float far = 0.0f;
+	for (int i = 0; i < 4800; ++i) {
+		float l = 1.0e-4f * static_cast<float>(std::sin(0.07 * i));
+		float r = l;
+		quiet.processStereo(&l, &r, 1);
+		far = std::max(far, std::abs(quiet.dustForTest().lastRingForTest(0) - 1.0f));
+	}
+	CHECK(far < 1.0e-3f);
+}
+
+TEST_CASE("Rust with everything at work: bounded, the same at any partition, and silent the moment the input is") {
+	Settings s = declared();
+	s.mode = Mode::Rust;
+	s.rustRectify = 0.5f;
+	s.step = -10.0f;
+	s.detune = 0.4f;
+	s.modFold = 0.5f;
+	s.source = 0.5f;
+	s.drive = 0.8f;
+	s.driveMode = DriveMode::Fold;
+	s.hpWet = 8.0f;
+	s.subThru = true;
+	s.follow = 0.5f;
+	const std::vector<float> in = whiteInput(24000, 0.9f);
+	const auto render = [&](int block) {
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l = in;
+		std::vector<float> r = in;
+		l.resize(in.size() + 48000, 0.0f);
+		r.resize(in.size() + 48000, 0.0f);
+		for (size_t done = 0; done < l.size();) {
+			const size_t take = std::min<size_t>(l.size() - done, static_cast<size_t>(block));
+			e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+			done += take;
+		}
+		return l;
+	};
+	const std::vector<float> whole = render(4096);
+	const bool sameByOnes = render(1) == whole;
+	const bool sameByOdd = render(37) == whole;
+	CHECK(sameByOnes);
+	CHECK(sameByOdd);
+	float peak = 0.0f;
+	for (const float v : whole) {
+		REQUIRE(std::isfinite(v));
+		peak = std::max(peak, std::abs(v));
+	}
+	CHECK(peak < 8.0f);
+	CHECK(peak > 0.05f);
+	bool silent = true;
+	for (size_t i = whole.size() - 24000; i < whole.size(); ++i) {
+		silent = silent && whole[i] == 0.0f;
+	}
+	CHECK(silent);
+}
+
+TEST_CASE("Comb: Heat is the same comb on a hotter signal — the device at no Heat, fed that much more and turned down again") {
+	Settings s = defaults();
+	s.mix = 1.0f;
+	Eroder cold;
+	cold.prepare(kRate);
+	cold.setTarget(s);
+	Settings hotSettings = s;
+	hotSettings.heat = 3.0f / 7.0f; // three octaves: eight times
+	Eroder hot;
+	hot.prepare(kRate);
+	hot.setTarget(hotSettings);
+	const std::vector<float> in = whiteInput(9600, 0.5f);
+	double worst = 0.0;
+	double moved = 0.0;
+	for (size_t i = 0; i < in.size(); ++i) {
+		float a = in[i];
+		float b = in[i];
+		hot.processStereo(&a, &b, 1);
+		float c = in[i] * 8.0f;
+		float d = c;
+		cold.processStereo(&c, &d, 1);
+		// THE WET ALONE, each side: the hot device's, and the cold one's turned down by the same eight.
+		const double wetHot = static_cast<double>(a) - static_cast<double>(in[i]);
+		const double wetCold = (static_cast<double>(c) - static_cast<double>(in[i]) * 8.0) / 8.0;
+		worst = std::max(worst, std::abs(wetHot - wetCold));
+		moved = std::max(moved, std::abs(wetHot));
+	}
+	CHECK(hot.combHeatForTest() == 8.0f);
+	CHECK(cold.combHeatForTest() == 1.0f);
+	CHECK(moved > 0.01);
+	CHECK(worst < 1.0e-5);
+}
+
+TEST_CASE("Comb: the level law's make-up is sqrt((1 + fb) / (1 - fb)), and the wet goes out at the reference's gain times it") {
+	for (const double tone : { 0.05, 0.31, 0.47, 0.83 }) {
+		CAPTURE(tone);
+		const Derived d = derive({ tone, 0.2 }, 0.0, 0.7, 60.0, kRate);
+		CHECK(std::abs(d.levelMakeUp - std::sqrt((1.0 + d.feedback) / (1.0 - d.feedback))) < 1.0e-12);
+		CHECK(d.levelMakeUp >= 1.0);
+		Eroder e;
+		e.prepare(kRate);
+		Settings s = defaults();
+		s.tone = static_cast<float>(tone);
+		s.character = 0.2f;
+		s.mix = 0.7f;
+		e.setTarget(s);
+		std::vector<float> l(64, 0.1f);
+		std::vector<float> r(64, 0.1f);
+		e.processStereo(l.data(), r.data(), 64);
+		const Derived& ran = e.derivedForTest();
+		CHECK(e.combOutGainForTest()
+		      == doctest::Approx(ran.wetGain * std::sqrt((1.0 + ran.feedback) / (1.0 - ran.feedback)) * 128.0).epsilon(1e-6));
+		CHECK(e.combDryGainForTest() == 1.0f);
+	}
+}
+
+TEST_CASE("Comb: Mix, Cutoff and Gamma arrive by a TIME, whatever the block length") {
+	for (const int block : { 1, 64, 480 }) {
+		CAPTURE(block);
+		Eroder e;
+		e.prepare(kRate);
+		Settings s = defaults();
+		s.mix = 0.2f;
+		s.cutoffOctaves = 0.0f;
+		s.gamma = 0.0f;
+		e.setTarget(s);
+		std::vector<float> l(4800, 0.1f);
+		std::vector<float> r(4800, 0.1f);
+		const auto run = [&](size_t frames) {
+			for (size_t done = 0; done < frames; done += static_cast<size_t>(block)) {
+				const size_t take = std::min<size_t>(static_cast<size_t>(block), frames - done);
+				e.processStereo(l.data(), r.data(), static_cast<int>(take));
+			}
+		};
+		run(960);
+		const float startGain = e.combOutGainForTest();
+		s.mix = 0.8f;
+		e.setTarget(s);
+		run(2400); // a twentieth of a second: one time constant
+		// THE MIX, a sample at a time: 1 - 1/e of the way, to the frame.
+		{
+			const Derived& d = e.derivedForTest();
+			const double target = d.wetGain * d.levelMakeUp * 128.0;
+			REQUIRE(target > 2.0 * static_cast<double>(startGain));
+			const double want = target + (static_cast<double>(startGain) - target) * std::exp(-2400.0 / (0.05 * kRate));
+			CHECK(e.combOutGainForTest() == doctest::Approx(want).epsilon(2e-3));
+		}
+		s.cutoffOctaves = 2.0f;
+		s.gamma = 0.01f;
+		e.setTarget(s);
+		run(2400);
+		// CUTOFF AND GAMMA, a control block at a time: 75 blocks of a one-pole.
+		const double left = std::pow(std::exp(-32.0 / (0.05 * kRate)), 75.0);
+		CHECK(e.smoothedCutoffForTest() == doctest::Approx(2.0 * (1.0 - left)).epsilon(1e-6));
+		CHECK(e.smoothedGammaForTest() == doctest::Approx(0.01 * (1.0 - left)).epsilon(1e-6));
+		// AND AT REST THEY LAND ON WHAT THEY ARE SET TO.
+		run(48000);
+		run(48000);
+		CHECK(e.smoothedCutoffForTest() == 2.0);
+		CHECK(e.combOutGainForTest() == static_cast<float>(e.derivedForTest().wetGain * e.derivedForTest().levelMakeUp) * 128.0f);
+	}
+}
+
+TEST_CASE("Comb: Blend crossfades to the comb alone; HP Wet filters the wet after the shaper; Sub Thru gives the crossfade's low end back") {
+	Settings s = defaults();
+	s.blend = true;
+	s.mix = 1.0f;
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	const std::vector<float> in = whiteInput(4800, 0.4f);
+	for (size_t i = 0; i < in.size(); ++i) {
+		float l = in[i];
+		float r = in[i];
+		e.processStereo(&l, &r, 1);
+		// AT ALL OF MIX THERE IS NO DRY IN IT: the output is the comb's wet, exactly.
+		REQUIRE(e.combDryGainForTest() == 0.0f);
+		REQUIRE(l == e.lastCombShapedForTest());
+	}
+	// PART WAY: the dry at one minus Mix.
+	s.mix = 0.3f;
+	Eroder part;
+	part.prepare(kRate);
+	part.setTarget(s);
+	float a = 0.2f;
+	float b = 0.2f;
+	part.processStereo(&a, &b, 1);
+	CHECK(part.combDryGainForTest() == 1.0f - 0.3f);
+
+	// HP WET at 1 kHz, Sub Thru on, Mix 60%: out = dry * 0.4 + HP(wet) + 0.6 * (dry - HP(dry)), restated.
+	s.mix = 0.6f;
+	s.hpWet = static_cast<float>(std::log2(1000.0));
+	s.subThru = true;
+	Eroder f;
+	f.prepare(kRate);
+	f.setTarget(s);
+	RefHighpass wetFilter(1000.0);
+	RefHighpass dryFilter(1000.0);
+	double worst = 0.0;
+	double taken = 0.0;
+	for (size_t i = 0; i < in.size(); ++i) {
+		float l = in[i];
+		float r = in[i];
+		f.processStereo(&l, &r, 1);
+		const auto dry = static_cast<double>(in[i]);
+		const double filtered = wetFilter.run(static_cast<double>(f.lastCombShapedForTest()));
+		const double low = dry - dryFilter.run(dry);
+		const double want = dry * static_cast<double>(1.0f - 0.6f) + filtered + static_cast<double>(0.6f) * low;
+		worst = std::max(worst, std::abs(static_cast<double>(l) - want));
+		taken = std::max(taken, std::abs(low));
+	}
+	CHECK(worst < 2.0e-5);
+	CHECK(taken > 0.01); // the filter is taking something, so the sum above is not the unfiltered one
+
+	// WITH THE DRY WHOLE (Blend off) SUB THRU HAS NOTHING TO GIVE BACK: the same bits either way.
+	s.blend = false;
+	const auto render = [&](bool sub) {
+		Settings t = s;
+		t.subThru = sub;
+		Eroder g;
+		g.prepare(kRate);
+		g.setTarget(t);
+		std::vector<float> l = in;
+		std::vector<float> r = in;
+		g.processStereo(l.data(), r.data(), static_cast<int>(in.size()));
+		return l;
+	};
+	const bool inert = render(true) == render(false);
+	CHECK(inert);
 }

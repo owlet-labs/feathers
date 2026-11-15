@@ -98,6 +98,9 @@ public:
 	// TEST SEAMS — the plotted VALUES, so a case asserts the picture's numbers.                      //
 	//----------------------------------------------------------------------------------------------//
 	[[nodiscard]] bool showsDustForTest() const noexcept { return dust_; }
+	[[nodiscard]] bool showsRustForTest() const noexcept { return rust_; }
+	/// How far up the plot Rust's band stands.
+	static constexpr float kRustBandShare = 0.7f;
 	[[nodiscard]] const fx::eroder::DustDerived& bandForTest() const noexcept { return band_; }
 	/// The band's level at `hz`, dB below its peak: the engine's filter restated.
 	[[nodiscard]] double bandDbForTest(double hz) const noexcept { return bandDb(hz); }
@@ -109,7 +112,7 @@ public:
 	static constexpr float kEdgeReach = 7.0f;
 	static constexpr float kWidthDragShare = 0.3f;
 	static constexpr double kEdgeDb = -12.0;
-	[[nodiscard]] float handleYForTest() const noexcept { return amountToY(static_cast<double>(settings_.amount)); }
+	[[nodiscard]] float handleYForTest() const noexcept { return handleY(); }
 	[[nodiscard]] float hzToXForTest(double hz) const noexcept { return hzToX(hz); }
 	[[nodiscard]] double xToHzForTest(float x) const noexcept { return xToHz(x); }
 	/// THE BAND'S AXIS: its foot (no travel) and its top (the most), in the frame's y.
@@ -143,6 +146,7 @@ private:
 	[[nodiscard]] float amountToY(double log2Seconds) const noexcept;
 	[[nodiscard]] double bandDb(double hz) const noexcept;
 	/// WHERE THE BAND IS `kEdgeDb` DOWN ABOVE ITS CENTRE, and the handle drawn there.
+	[[nodiscard]] float handleY() const noexcept;
 	[[nodiscard]] double edgeHz() const noexcept;
 	[[nodiscard]] float edgeX() const noexcept;
 	[[nodiscard]] float edgeY() const noexcept;
@@ -165,6 +169,7 @@ private:
 	fx::eroder::Row row_ {};
 	fx::eroder::Settings settings_ {};
 	bool dust_ = true;
+	bool rust_ = false;
 	double pitch_ = fx::eroder::kReferenceNote;
 	double rate_ = 48000.0;
 	fx::eroder::DustDerived band_ {};

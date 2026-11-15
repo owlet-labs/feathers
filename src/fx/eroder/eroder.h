@@ -85,7 +85,7 @@ public:
 		if (!target_.enabled) {
 			return false;
 		}
-		return target_.mode == Mode::Dust ? dust_.holdsSound() : target_.mix > 0.0f && line_.holdsSound();
+		return target_.mode == Mode::Comb ? line_.holdsSound() : dust_.holdsSound();
 	}
 	/// WHAT THE LAST PROCESS CALL PUBLISHED, in `Reading` order.
 	[[nodiscard]] const std::array<float, kReadingCount>& readingsForTest() const noexcept { return readings_; }
@@ -93,6 +93,11 @@ public:
 	[[nodiscard]] float envelopeForTest() const noexcept { return envelope_; }
 	[[nodiscard]] float combFollowForTest() const noexcept { return combFollow_; }
 	[[nodiscard]] float lastCombWetForTest() const noexcept { return lastCombWet_; }
+	[[nodiscard]] float combOutGainForTest() const noexcept { return outGain_; }
+	[[nodiscard]] float combDryGainForTest() const noexcept { return dryGain_; }
+	[[nodiscard]] float combHeatForTest() const noexcept { return heatGain_; }
+	[[nodiscard]] double smoothedCutoffForTest() const noexcept { return smoothedCutoff_; }
+	[[nodiscard]] double smoothedGammaForTest() const noexcept { return smoothedGamma_; }
 	[[nodiscard]] float lastCombShapedForTest() const noexcept { return lastCombShaped_; }
 	[[nodiscard]] const DriveSettings& combDriveForTest() const noexcept { return combShaper_.settings(); }
 	/// THE SECOND ENGINE, for its own seams.
@@ -130,6 +135,18 @@ private:
 	float combFollow_ = 1.0f;
 	/// THE COMB'S DRIVE STAGE (`drive_stage.h`), and its last left frame either side of it.
 	DriveStage combShaper_ {};
+	WetHighpass combHighpass_ {};
+	bool subThru_ = false;
+	/// HEAT, and the two gains the sample loop glides (`tick`).
+	float heatGain_ = 1.0f;
+	float outGain_ = 0.0f;
+	float outGainTarget_ = 0.0f;
+	float dryGain_ = 1.0f;
+	float dryGainTarget_ = 1.0f;
+	float gainSmoothing_ = 1.0f;
+	bool gainsPlaced_ = false;
+	double smoothedCutoff_ = 0.0;
+	double smoothedGamma_ = 0.0;
 	float lastCombWet_ = 0.0f;
 	float lastCombShaped_ = 0.0f;
 	device::ReadingsSink sink_ {};

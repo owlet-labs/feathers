@@ -90,7 +90,9 @@ float sat(float x) noexcept { return std::clamp(x, -1.0f, 1.0f); }
 /// resonance and depth the filter still overflows, wraps to the opposite extreme, and throws the
 /// read head half a base delay in one sample. MEASURED against a q31 transcription of the loop
 /// (`test_fx_eroder.cpp`): a third of a coordinate grid wraps; at one Character setting 43% of all
-/// samples do, and the default Character wraps thousands of times a second. A float port without
+/// samples do (some 19,000 a second), while the default coordinate wraps a handful of times a second. Those
+/// filter wraps are caught by the saturation after them and move no head; the wraps that are heard are the
+/// triangle's and the filter's at a high corner. A float port without
 /// this is a smooth noise-modulated comb; the reference's is not. The triangle's `+=` and the wet
 /// highpass's plain adds wrap too, and are reproduced for the same reason.
 float wrap(float x) noexcept {
@@ -105,6 +107,13 @@ float wrap(float x) noexcept {
 /// denormals and stays there for thousands of laps, which is the defect `test_fx_devices.cpp`'s
 /// silence sweep exists to find. Below this the feedback tap is flushed.
 constexpr float kSilenceFloor = 1.0e-7f / static_cast<float>(kHeadroom);
+
+/// ONE POLE TOWARD A TARGET, LANDING ON IT: a float one-pole stalls a little short of where it is going (the step
+/// rounds away), and the last of the way is taken at once.
+float glideTo(float value, float target, float coefficient) noexcept {
+	const float next = value + (target - value) * coefficient;
+	return next == value ? target : next;
+}
 
 } // namespace
 
@@ -136,6 +145,13 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::HpWet)] = s.hpWet;
 	row[static_cast<size_t>(Param::SubThru)] = s.subThru ? 1.0f : 0.0f;
 	row[static_cast<size_t>(Param::Follow)] = s.follow;
+	row[static_cast<size_t>(Param::RustBias)] = s.rustBias;
+	row[static_cast<size_t>(Param::RustRectify)] = s.rustRectify;
+	row[static_cast<size_t>(Param::Step)] = s.step;
+	row[static_cast<size_t>(Param::Detune)] = s.detune;
+	row[static_cast<size_t>(Param::ModFold)] = s.modFold;
+	row[static_cast<size_t>(Param::Heat)] = s.heat;
+	row[static_cast<size_t>(Param::Blend)] = s.blend ? 1.0f : 0.0f;
 	return row;
 }
 
@@ -156,7 +172,8 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.gamma = read(Param::Gamma);
 	s.cutoffOctaves = read(Param::Cutoff);
 	s.mix = read(Param::Mix);
-	s.mode = read(Param::Mode) >= 0.5f ? Mode::Comb : Mode::Dust;
+	s.mode = static_cast<Mode>(
+	    std::clamp(static_cast<int>(std::lround(read(Param::Mode))), 0, static_cast<int>(Mode::kCount) - 1));
 	s.amount = read(Param::Amount);
 	s.freq = read(Param::Freq);
 	s.width = read(Param::Width);
@@ -172,6 +189,13 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.hpWet = read(Param::HpWet);
 	s.subThru = read(Param::SubThru) >= 0.5f;
 	s.follow = read(Param::Follow);
+	s.rustBias = read(Param::RustBias);
+	s.rustRectify = read(Param::RustRectify);
+	s.step = read(Param::Step);
+	s.detune = read(Param::Detune);
+	s.modFold = read(Param::ModFold);
+	s.heat = read(Param::Heat);
+	s.blend = read(Param::Blend) >= 0.5f;
 	return out;
 }
 
@@ -264,6 +288,7 @@ Derived derive(const Phases& phases, double cutoffOctaves, double mix, double pi
 	const double angle = std::min(std::numbers::pi * d.svfHz / kReferenceRate, std::numbers::pi * 0.5);
 	d.svfCoefficient = std::min(2.0 * std::sin(angle), kSvfCoefficientMax);
 
+	d.levelMakeUp = std::sqrt((1.0 + d.feedback) / (1.0 - d.feedback));
 	// "Compensation: (1-feedback)/drive tames comb resonance + waveshaper amplification."
 	double compensation = 1.0 - d.feedback;
 	if (d.clipIntensity > 0.0) {
@@ -324,6 +349,7 @@ void Eroder::prepare(double sampleRate) {
 	dust_.prepare(sampleRate_);
 	analyser_.prepare(sampleRate_);
 	combShaper_.prepare(sampleRate_);
+	gainSmoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kSmoothingSeconds * sampleRate_)));
 	followAttack_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
 	followRelease_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowReleaseSeconds * sampleRate_)));
 	reset();
@@ -337,6 +363,13 @@ void Eroder::reset() noexcept {
 	envelope_ = 0.0f;
 	combFollow_ = 1.0f;
 	combShaper_.reset();
+	combHighpass_.reset();
+	gainsPlaced_ = false;
+	outGain_ = outGainTarget_ = 0.0f;
+	dryGain_ = dryGainTarget_ = 1.0f;
+	heatGain_ = 1.0f;
+	smoothedCutoff_ = 0.0;
+	smoothedGamma_ = 0.0;
 	readings_.fill(0.0f);
 	line_.reset();
 	writeCounter_ = 0;
@@ -445,7 +478,7 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 			}
 		}
 		for (int c = 0; c < 2; ++c) {
-			const auto at = static_cast<float>(s.mode == Mode::Dust ? dust_.lastDelayFramesForTest(c) : lastDelayFrames_[c]);
+			const auto at = static_cast<float>(s.mode == Mode::Comb ? lastDelayFrames_[c] : dust_.lastDelayFramesForTest(c));
 			nearFrames[c] = std::min(nearFrames[c], at);
 			farFrames[c] = std::max(farFrames[c], at);
 		}
@@ -474,15 +507,13 @@ void Eroder::publishReadings() noexcept {
 }
 
 void Eroder::runEngine(const Settings& s, float* left, float* right, int frames) noexcept {
-	if (s.mode == Mode::Dust) {
-		// DUST RUNS AT ANY MIX, zero included: its line keeps filling, so bringing Mix back up reads the present.
+	if (s.mode != Mode::Comb) {
+		// DUST AND RUST RUN AT ANY MIX, zero included: the line keeps filling, so bringing Mix back up reads the present.
 		dust_.process(s, left, right, frames);
 		return;
 	}
-	// `isEnabled()` is `mix > 0`: at zero the firmware does not run at all, state included.
-	if (!(s.mix > 0.0f)) {
-		return;
-	}
+	// THE COMB RUNS AT ANY MIX TOO. The reference does not run at all at zero, state included, so a Mix brought up
+	// from nothing read a line that had stood still since it went down.
 	if (line_.length() < 8) {
 		return;
 	}
@@ -511,21 +542,45 @@ void Eroder::tick(const Settings& s) noexcept {
 	// SMOOTH THE TWO COORDINATES — per control block, by a TIME.
 	const auto toneTarget = static_cast<double>(s.tone);
 	const auto characterTarget = static_cast<double>(s.character);
+	// CUTOFF AND GAMMA GLIDE WITH THEM: a route on either was a staircase of control blocks.
+	const auto cutoffTarget = static_cast<double>(s.cutoffOctaves);
+	const auto gammaTarget = static_cast<double>(s.gamma);
 	if (!placed_) {
 		smoothedTone_ = toneTarget;
 		smoothedCharacter_ = characterTarget;
+		smoothedCutoff_ = cutoffTarget;
+		smoothedGamma_ = gammaTarget;
 		placed_ = true;
 	}
 	else {
 		const double alpha =
 		    1.0 - std::exp(-static_cast<double>(kControlFrames) / (kSmoothingSeconds * sampleRate_));
+		// LANDING ON THE TARGET, so a control at rest derives exactly what it is set to.
+		const auto toward = [alpha](double value, double target) {
+			const double gap = target - value;
+			return std::abs(gap) < 1.0e-9 ? target : value + gap * alpha;
+		};
 		smoothedTone_ += (toneTarget - smoothedTone_) * alpha;
 		smoothedCharacter_ += (characterTarget - smoothedCharacter_) * alpha;
+		smoothedCutoff_ = toward(smoothedCutoff_, cutoffTarget);
+		smoothedGamma_ = toward(smoothedGamma_, gammaTarget);
 	}
 
-	derived_ = derive(phasesOf(smoothedTone_, smoothedCharacter_, static_cast<double>(s.gamma)),
-	                  static_cast<double>(s.cutoffOctaves), static_cast<double>(s.mix), pitchSemitones_,
-	                  sampleRate_);
+	derived_ = derive(phasesOf(smoothedTone_, smoothedCharacter_, smoothedGamma_), smoothedCutoff_,
+	                  static_cast<double>(s.mix), pitchSemitones_, sampleRate_);
+	// HEAT: the wet path's units moved up toward full scale, so its clip and fold are reached. None is the
+	// reference's level exactly.
+	heatGain_ = static_cast<float>(std::exp2(kHeatOctaves * std::clamp(static_cast<double>(s.heat), 0.0, 1.0)));
+	// THE TWO GAINS THE SAMPLE LOOP GLIDES TO: the wet's, with the level law's make-up; the dry's, whole unless Blend.
+	outGainTarget_ = static_cast<float>(derived_.wetGain * derived_.levelMakeUp) * static_cast<float>(kHeadroom) / heatGain_;
+	dryGainTarget_ = s.blend ? 1.0f - std::clamp(s.mix, 0.0f, 1.0f) : 1.0f;
+	subThru_ = s.subThru;
+	combHighpass_.set(deriveHighpass(s.hpWet, sampleRate_));
+	if (!gainsPlaced_) {
+		outGain_ = outGainTarget_;
+		dryGain_ = dryGainTarget_;
+		gainsPlaced_ = true;
+	}
 	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
 	const DriveSettings before = combShaper_.settings();
 	combShaper_.set(deriveDrive(s.drive, s.driveMode, s.driveShape, sampleRate_, &before));
@@ -574,8 +629,7 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 	// fold's period sit as far above it as they do on the hardware; out, the wet is scaled back up.
 	// Linear in between, so the two factors cancel exactly wherever nothing is clipping — which on
 	// the reference is almost everywhere.
-	const float kFromFullScale = 1.0f / static_cast<float>(kHeadroom);
-	const float outGain = static_cast<float>(d.wetGain) * static_cast<float>(kHeadroom);
+	const float kFromFullScale = heatGain_ / static_cast<float>(kHeadroom);
 
 	for (int i = 0; i < frames; ++i) {
 		// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 (as Comp and EQ do): `sat()` is a clamp, which
@@ -679,13 +733,26 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 
 		// ADDITIVE, the dry at unity. RIGHT THEN LEFT — `processMono` runs this over one buffer and
 		// the survivor must be the left. NOT SATURATED: see `eroder_types.h`.
-		float outL = wetL * outGain;
-		float outR = wetR * outGain;
+		// MIX ARRIVES BY A TIME, a sample at a time: it was a staircase of control blocks.
+		outGain_ = glideTo(outGain_, outGainTarget_, gainSmoothing_);
+		dryGain_ = glideTo(dryGain_, dryGainTarget_, gainSmoothing_);
+		float outL = wetL * outGain_;
+		float outR = wetR * outGain_;
 		lastCombWet_ = outL;
 		combShaper_.process(outL, outR);
 		lastCombShaped_ = outL;
-		right[i] = inR + outR;
-		left[i] = inL + outL;
+		// HP WET, after the shaper. Sub Thru gives back what Blend's crossfade took of the dry's low end; with the
+		// dry whole there is nothing to give back, and it adds nothing.
+		if (combHighpass_.on()) {
+			outL = combHighpass_.wet(0, outL);
+			outR = combHighpass_.wet(1, outR);
+			if (subThru_) {
+				outL += (1.0f - dryGain_) * combHighpass_.taken(0, inL);
+				outR += (1.0f - dryGain_) * combHighpass_.taken(1, inR);
+			}
+		}
+		right[i] = inR * dryGain_ + outR;
+		left[i] = inL * dryGain_ + outL;
 	}
 }
 

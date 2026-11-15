@@ -127,4 +127,49 @@ private:
 	float dcCoefficient_ = 0.0f;
 };
 
+/// **HP WET: A TWO-POLE HIGHPASS ON THE WET, AFTER THE SHAPER, and the same filter on the dry for Sub Thru** — what it
+/// took from the wet is `dry - highpass(dry)`. Trapezoidal, so it is stable to the top of its range; a filter that
+/// has rung down to nothing is set there, so a tail ends.
+class WetHighpass {
+public:
+	void reset() noexcept {
+		for (State& state : wet_) {
+			state = State {};
+		}
+		for (State& state : dry_) {
+			state = State {};
+		}
+	}
+	void set(const HighpassSettings& settings) noexcept { settings_ = settings; }
+	[[nodiscard]] bool on() const noexcept { return settings_.on; }
+
+	[[nodiscard]] float wet(int channel, float x) noexcept { return run(wet_[channel & 1], x); }
+	/// WHAT THE FILTER TOOK from the dry: its low end.
+	[[nodiscard]] float taken(int channel, float dry) noexcept { return dry - run(dry_[channel & 1], dry); }
+
+private:
+	struct State {
+		float ic1 = 0.0f;
+		float ic2 = 0.0f;
+	};
+	[[nodiscard]] float run(State& state, float x) const noexcept {
+		const HighpassSettings& s = settings_;
+		const float v3 = x - state.ic2;
+		const float v1 = s.a1 * state.ic1 + s.a2 * v3;
+		const float v2 = state.ic2 + s.a2 * state.ic1 + s.a3 * v3;
+		state.ic1 = 2.0f * v1 - state.ic1;
+		state.ic2 = 2.0f * v2 - state.ic2;
+		if (x == 0.0f && std::abs(state.ic1) < kFloor && std::abs(state.ic2) < kFloor) {
+			state.ic1 = state.ic2 = 0.0f;
+			return 0.0f;
+		}
+		return x - s.k * v1 - v2;
+	}
+	static constexpr float kFloor = 1.0e-9f;
+
+	HighpassSettings settings_ {};
+	State wet_[2] = {};
+	State dry_[2] = {};
+};
+
 } // namespace feathers::fx::eroder

@@ -263,6 +263,16 @@ inline constexpr double kHpWetLog2Min = 4.321928094887362;  // 20 Hz
 inline constexpr double kHpWetLog2Max = 12.965784284662087; // 8 kHz
 inline constexpr double kHpWetQ = 0.7071067811865476;
 
+/// **STEP** holds the shake for a time, log2 seconds: none at the bottom of the range, 1/32 s at the top.
+inline constexpr double kStepLog2Min = -15.0;
+inline constexpr double kStepLog2Max = -5.0;
+/// Detune at the top puts the right side's sine this many octaves above the left's.
+inline constexpr double kDetuneOctaves = 1.0;
+/// Mod Fold at the top drives the sine this many times past its peak before it is folded.
+inline constexpr float kModFoldSpan = 4.0f;
+/// **HEAT** at the top runs the Comb's wet this many octaves hotter into its clip and fold (`kHeadroom` is seven).
+inline constexpr double kHeatOctaves = 7.0;
+
 /// **FOLLOW**: the input's peak, fast up and slow down, read against a level at which the shake is whole.
 inline constexpr double kFollowAttackSeconds = 0.002;
 inline constexpr double kFollowReleaseSeconds = 0.12;
@@ -280,13 +290,18 @@ inline constexpr double kDustSmoothingSeconds = 0.02;
 /// **TWO ENGINES IN ONE DEVICE.** `Dust` shakes a very short delay the signal itself passes through, one quantity
 /// to a control. `Comb` is the resonant line whose eleven quantities ride two coordinates. A Choice is stored by its
 /// label, so the order here is free to change.
-enum class Mode : int { Dust, Comb, kCount };
-inline constexpr const char* kModeNames[] = { "Dust", "Comb" };
+/// **AND A THIRD, `Rust`**: Dust's shaker (the band of noise, the sine, the hold) MULTIPLYING the signal instead of
+/// moving a read head — a ring modulator whose carrier is that band. It shares Dust's modulator controls.
+enum class Mode : int { Dust, Comb, Rust, kCount };
+inline constexpr const char* kModeNames[] = { "Dust", "Comb", "Rust" };
 inline constexpr uint32_t kModeBit(Mode m) {
 	return 1u << static_cast<uint32_t>(m);
 }
 inline constexpr uint32_t kDustOnly = kModeBit(Mode::Dust);
 inline constexpr uint32_t kCombOnly = kModeBit(Mode::Comb);
+inline constexpr uint32_t kRustOnly = kModeBit(Mode::Rust);
+/// The modulator's controls: the two engines a band of noise and a sine shake or multiply.
+inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 
 /// **WHAT DRIVE PUSHES THE SHAKEN SIGNAL INTO.** Each has one coordinate of its own (`Param::DriveShape`), which
 /// stops at its ends: a Shape never rolls into the next Type.
@@ -321,9 +336,16 @@ enum class Param : int {
 	Track,     ///< Dust: Freq follows the last note played
 	DriveMode, ///< both engines: which shaper
 	DriveShape, ///< both engines: the shaper's own coordinate, 0..1, stopping at both ends
-	HpWet,     ///< Dust: a highpass on the shaken signal, after the shaper; log2 hertz, the bottom is none
-	SubThru,   ///< Dust: what HP Wet took from the shaken signal is given back from the dry
-	Follow,    ///< both engines: how much of the shake rides the input's level
+	HpWet,     ///< every engine: a highpass on the wet, after the shaper; log2 hertz, the bottom is none
+	SubThru,   ///< every engine: what HP Wet took from the wet is given back from the dry
+	Follow,    ///< every engine: how much of the shake rides the input's level
+	RustBias,  ///< Rust: how much of the signal passes the multiplier untouched — ring at 0, tremolo toward 1
+	RustRectify, ///< Rust: how much of the carrier is folded to one side
+	Step,      ///< Dust, Rust: the shake is held for this long at a time, log2 seconds; the bottom is not at all
+	Detune,    ///< Dust, Rust: how far the right side's sine runs above the left's, up to an octave
+	ModFold,   ///< Dust, Rust: the sine pushed past its peaks and folded back
+	Heat,      ///< Comb: how hot the wet runs into its own clip and fold
+	Blend,     ///< Comb: Mix crossfades from dry to wet instead of adding the wet to a whole dry
 
 	kCount,
 };
@@ -358,10 +380,13 @@ inline constexpr uint8_t kFaceOrder[] = {
 	static_cast<uint8_t>(Param::Resonance), static_cast<uint8_t>(Param::Drive),
 	static_cast<uint8_t>(Param::DriveMode), static_cast<uint8_t>(Param::DriveShape),
 	static_cast<uint8_t>(Param::HpWet),     static_cast<uint8_t>(Param::SubThru),
-	static_cast<uint8_t>(Param::Follow),
+	static_cast<uint8_t>(Param::Follow),    static_cast<uint8_t>(Param::RustBias),
+	static_cast<uint8_t>(Param::RustRectify), static_cast<uint8_t>(Param::Step),
+	static_cast<uint8_t>(Param::Detune),    static_cast<uint8_t>(Param::ModFold),
 	static_cast<uint8_t>(Param::Tone),      static_cast<uint8_t>(Param::Character),
 	static_cast<uint8_t>(Param::Cutoff),    static_cast<uint8_t>(Param::Mix),
-	static_cast<uint8_t>(Param::Gamma),
+	static_cast<uint8_t>(Param::Gamma),     static_cast<uint8_t>(Param::Heat),
+	static_cast<uint8_t>(Param::Blend),
 };
 
 inline constexpr device::RetiredKey kRetiredKeys[] = {
@@ -484,8 +509,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "In Dust, the crossfade from the dry signal to the shaken one. In Comb, how much eroded "
-                "signal is added to a dry that always passes whole"},
+     .tooltip = "In Dust and Rust, the crossfade from the dry signal to the effect. In Comb, how much comb "
+                "is added to a dry that passes whole, or the same crossfade with Blend on"},
     {.key = "eroder_mode", .name = "Eroder Mode",
      .min = 0.0,
      .max = static_cast<double>(Mode::kCount) - 1.0,
@@ -497,7 +522,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .offsetsMayLeaveRange = false,
      .tooltip = "Dust passes the signal through a very short delay whose length is shaken by a band of "
                 "noise or a sine: fine grain to coarse hash, with a control for each part of it. Comb is a "
-                "resonant comb shaken by noise, steered by two coordinates that each move several things at once"},
+                "resonant comb shaken by noise, steered by two coordinates that each move several things at "
+                "once. Rust multiplies the signal by that same band of noise or sine instead of delaying it"},
     {.key = "eroder_amount", .name = "Eroder Amount",
      .min = kDustAmountLog2Min,
      .max = kDustAmountLog2Max,
@@ -529,7 +555,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly},
+     .gateMask = kShakers},
     {.key = "eroder_width", .name = "Eroder Width",
      .min = 0.0,
      .max = 1.0,
@@ -545,7 +571,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly},
+     .gateMask = kShakers},
     {.key = "eroder_source", .name = "Eroder Source",
      .min = 0.0,
      .max = 1.0,
@@ -561,7 +587,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly},
+     .gateMask = kShakers},
     {.key = "eroder_grit", .name = "Eroder Grit",
      .min = 0.0,
      .max = 1.0,
@@ -577,7 +603,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly},
+     .gateMask = kShakers},
     {.key = "eroder_stereo", .name = "Eroder Stereo",
      .min = 0.0,
      .max = 1.0,
@@ -593,7 +619,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly},
+     .gateMask = kShakers},
     {.key = "eroder_resonance", .name = "Eroder Resonance",
      .min = -1.0,
      .max = 1.0,
@@ -643,7 +669,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly,
+     .gateMask = kShakers,
      .centred = false,
      .shortName = nullptr,
      .stacked = true},
@@ -698,8 +724,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly,
+     .gateControl = -1,
+     .gateMask = 0,
      .centred = false,
      .shortName = "HP Wet"},
     {.key = "eroder_sub_thru", .name = "Eroder Sub Thru",
@@ -715,8 +741,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly,
+     .gateControl = -1,
+     .gateMask = 0,
      .centred = false,
      .shortName = "Sub Thru",
      .stacked = true},
@@ -736,6 +762,133 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .zoneNames = {},
      .gateControl = -1,
      .gateMask = 0},
+    {.key = "eroder_rust_bias", .name = "Eroder Bias",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How much of the signal passes the multiplier untouched. At the bottom the band replaces the "
+                "signal's own pitch with sums and differences; toward the top it is a rough tremolo",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kRustOnly,
+     .centred = false,
+     .shortName = "Bias"},
+    {.key = "eroder_rust_rectify", .name = "Eroder Rectify",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Folds the multiplying band to one side, which doubles its pitch and lets more of the signal "
+                "through",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kRustOnly,
+     .centred = false,
+     .shortName = "Rectify"},
+    {.key = "eroder_step", .name = "Eroder Step",
+     .min = kStepLog2Min,
+     .max = kStepLog2Max,
+     .def = kStepLog2Min,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogSeconds,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Holds the shake still for this long at a time, so it moves in steps. At the bottom it moves "
+                "freely",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kShakers,
+     .centred = false,
+     .shortName = "Step"},
+    {.key = "eroder_detune", .name = "Eroder Detune",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Runs the right side's sine above the left's, up to an octave, so the two sides beat against "
+                "each other. It is the sine's: with Source all noise there is nothing to detune",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kShakers,
+     .centred = false,
+     .shortName = "Detune"},
+    {.key = "eroder_mod_fold", .name = "Eroder Mod Fold",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Pushes the sine past its peaks and folds it back, which adds overtones to the shake. It is "
+                "the sine's: with Source all noise there is nothing to fold",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kShakers,
+     .centred = false,
+     .shortName = "Mod Fold"},
+    {.key = "eroder_heat", .name = "Eroder Heat",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How hot the comb runs into its own clip and fold. At the bottom they barely touch the signal; "
+                "up, they bite",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kCombOnly,
+     .centred = false,
+     .shortName = "Heat"},
+    {.key = "eroder_blend", .name = "Eroder Blend",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Mix crossfades from the dry signal to the comb, so the top is the comb alone. Off, the comb is "
+                "added to the whole dry signal",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kCombOnly,
+     .centred = false,
+     .shortName = "Blend",
+     .stacked = true},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -766,6 +919,13 @@ struct Settings {
 	float hpWet = static_cast<float>(kHpWetLog2Min); ///< log2 hertz; the bottom is no filter
 	bool subThru = false;
 	float follow = 0.0f;
+	float rustBias = 0.0f;
+	float rustRectify = 0.0f;
+	float step = static_cast<float>(kStepLog2Min); ///< log2 seconds; the bottom is no hold
+	float detune = 0.0f;
+	float modFold = 0.0f;
+	float heat = 0.0f;
+	bool blend = false;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -822,6 +982,11 @@ struct Derived {
 	double width = 0.0;
 	double svfHz = 0.0;
 	double svfCoefficient = kSvfReferenceCoefficient;
+	/// **WHAT `wetGain`'S `(1 - feedback)` TAKES TOO MUCH OF.** A comb's broadband power gain is 1 / (1 - fb^2), so
+	/// the gain that holds its level is sqrt(1 - fb^2); `(1 - fb)` is that times sqrt((1 - fb) / (1 + fb)), which made
+	/// a higher feedback QUIETER. This is the factor back: sqrt((1 + fb) / (1 - fb)). Kept apart from `wetGain`,
+	/// which stays the reference's arithmetic.
+	double levelMakeUp = 1.0;
 	/// `wetLevel * (1 - feedback) / clipDrive / foldDrive`, each drive only when its stage is on.
 	double wetGain = 0.0;
 };
@@ -881,6 +1046,15 @@ struct DustDerived {
 	double hpA3 = 0.0;
 	bool subThru = false;
 	float follow = 0.0f;
+	/// THE SHAKE'S EXTRAS: frames it is held for (one is every frame), the right sine's step, the sine's fold.
+	double stepHoldFrames = 1.0;
+	double sineStepRight = 0.0;
+	bool detuned = false;
+	float modFold = 0.0f;
+	/// RUST: the engine multiplies instead of reading a moved head.
+	bool ring = false;
+	float rustBias = 0.0f;
+	float rustRectify = 0.0f;
 	float source = 1.0f;
 	float grit = 0.0f;
 	float stereo = 1.0f;
@@ -902,6 +1076,18 @@ struct DriveSettings {
 [[nodiscard]] DriveSettings deriveDrive(float drive, DriveMode mode, float shape, double sampleRate,
                                         const DriveSettings* reuse = nullptr) noexcept;
 
+/// **WHAT A `WetHighpass` RUNS ON**: off at the bottom of HP Wet, else the trapezoidal coefficients of a two-pole
+/// highpass at `hz`.
+struct HighpassSettings {
+	bool on = false;
+	double hz = 0.0;
+	float a1 = 1.0f;
+	float a2 = 0.0f;
+	float a3 = 0.0f;
+	float k = 0.0f;
+};
+[[nodiscard]] HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept;
+
 /// @param reuse  a result this one may take the shaper's make-up from when the Drive, Type and Shape are the same —
 ///               the make-up is a quadrature, and the control path asks for it every block.
 [[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate,
@@ -915,6 +1101,7 @@ struct DriveSettings {
 /// THE SHAPER'S GAIN FOR A VANISHING SIGNAL, make-up included: what a feedback through it is divided by, so a tail
 /// always dies.
 [[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept;
+[[nodiscard]] HighpassSettings highpassOf(const DustDerived& derived) noexcept;
 /// The stage's settings as `deriveDust` found them.
 [[nodiscard]] DriveSettings driveOf(const DustDerived& derived) noexcept;
 /// The curve's slope at zero.

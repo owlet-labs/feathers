@@ -47,14 +47,15 @@
 //   │ └──────────────────────────────────────┘   │  the wheel Width. COMB: the eleven bars.
 //   │ [   Dust   |   Comb   ]                     │  the engine, both choices on the face
 //   │  Amount    Freq     Width     Mix           │  DUST's knobs          COMB: Tone  Char  Cutoff  Mix
+//   │                                             │  RUST: Bias where Dust has Amount
 //   │ [Source 100%] [Grit 0%] (Track)             │  DUST's small row      COMB: [Gamma]
 //   │ ┌─ DRIVE ─────────┐                         │
-//   │ │ Amount Soft 0%  │  HP Wet   Follow        │  the shaper pair and Follow are both engines'; HP Wet is DUST's
+//   │ │ Amount Soft 0%  │  HP Wet   Follow        │  the shaper pair, HP Wet and Follow are every engine's
 //   │ └─────────────────┘                         │
 //   └─────────────────────────────────────────────┘
 //
 // **ONLY THE RUNNING ENGINE'S CONTROLS ARE DRAWN**: the other engine's are hidden, not greyed, since nothing but
-// the engine switch could enable them. Stereo, Resonance and Sub Thru are the window's.
+// the engine switch could enable them. The rest of each engine's controls are the window's.
 // **DRIVE IS A PAIR** (`pair_cell.h`): how hard, and into what — the Type and its own Shape in one mode cell.
 // **THE KNOBS STAY BESIDE THE PLOT'S HANDLE**: Amount and Width have no route gesture on the plot, so the knob is
 // where a route to them is made.
@@ -95,6 +96,10 @@ public:
 	/// THE ENGINE'S OWN WIDGETS, in the order they are laid out: the knob row, then the small row.
 	[[nodiscard]] std::vector<visage::Frame*> dustWidgetsForTest() const;
 	[[nodiscard]] std::vector<visage::Frame*> combWidgetsForTest() const;
+	/// Rust's own: its Bias, where Dust has Amount.
+	[[nodiscard]] std::vector<visage::Frame*> rustWidgetsForTest() const;
+	/// What Dust and Rust share and the Comb does not show: the shaker's controls.
+	[[nodiscard]] std::vector<visage::Frame*> shakerWidgetsForTest() const;
 	[[nodiscard]] Knob* mixForTest() const { return mix_.get(); }
 	[[nodiscard]] Knob* widthForTest() const { return width_.get(); }
 	[[nodiscard]] Knob* driveForTest() const { return drive_.get(); }
@@ -106,7 +111,7 @@ public:
 private:
 	device::Modulatable* enableModulatable() override;
 	[[nodiscard]] DeviceControl& control(fx::eroder::Param p) const;
-	[[nodiscard]] bool dust() const;
+	[[nodiscard]] fx::eroder::Mode engine() const;
 	void layOut();
 	/// What is drawn out of the signal because another control makes it so (the honesty rule).
 	void refreshHonesty();
@@ -115,7 +120,7 @@ private:
 	DeviceInstanceId device_ = kNoInstance;
 	Notifier* notifier_ = nullptr;
 	/// THE ENGINE THE WIDGETS WERE LAST LAID OUT FOR.
-	int laidOutDust_ = -1;
+	int laidOutEngine_ = -1;
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<EroderPlot> plot_;
@@ -126,6 +131,7 @@ private:
 	std::unique_ptr<Knob> hpWet_;
 	std::unique_ptr<Knob> follow_;
 	std::unique_ptr<Knob> amount_;
+	std::unique_ptr<Knob> bias_;
 	std::unique_ptr<Knob> freq_;
 	std::unique_ptr<Knob> width_;
 	std::unique_ptr<Knob> mix_;

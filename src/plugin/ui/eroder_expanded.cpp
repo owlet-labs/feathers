@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <span>
 
 namespace feathers::ui {
 
@@ -39,17 +40,24 @@ struct KnobSpec {
 	ero::Param param;
 	const char* caption;
 };
-/// DUST'S PLAIN KNOBS. Follow and Mix follow them (the eighth and ninth cells, the Comb's fifth and fourth), then
-/// the Drive pair and HP Wet.
-constexpr std::array<KnobSpec, 7> kDustKnobs { {
-	{ ero::Param::Amount, "Amount" },
-	{ ero::Param::Freq, "Freq" },
-	{ ero::Param::Width, "Width" },
-	{ ero::Param::Source, "Source" },
-	{ ero::Param::Grit, "Grit" },
-	{ ero::Param::Stereo, "Stereo" },
-	{ ero::Param::Resonance, "Reso" },
-} };
+/// EVERY PLAIN KNOB THE WINDOW HAS. Which are drawn, and in what order, is the engine's (`layOut`).
+constexpr KnobSpec kKnobs[] = {
+	{ ero::Param::Amount, "Amount" },   { ero::Param::Freq, "Freq" },         { ero::Param::Width, "Width" },
+	{ ero::Param::Source, "Source" },   { ero::Param::Grit, "Grit" },         { ero::Param::Stereo, "Stereo" },
+	{ ero::Param::Resonance, "Reso" },  { ero::Param::Follow, "Follow" },     { ero::Param::Mix, "Mix" },
+	{ ero::Param::HpWet, "HP Wet" },    { ero::Param::Step, "Step" },         { ero::Param::Detune, "Detune" },
+	{ ero::Param::ModFold, "Mod Fold" }, { ero::Param::RustBias, "Bias" },    { ero::Param::RustRectify, "Rectify" },
+	{ ero::Param::Cutoff, "Cutoff" },   { ero::Param::Heat, "Heat" },
+};
+
+using P = ero::Param;
+/// THE GRID, an engine at a time, three across. The Drive pair and HP Wet follow in every one.
+constexpr P kDustGrid[] = { P::Amount, P::Freq, P::Width, P::Source, P::Grit, P::Stereo, P::Resonance, P::Follow, P::Mix };
+constexpr P kRustGrid[] = { P::RustBias, P::RustRectify, P::Freq, P::Width, P::Source, P::Grit, P::Stereo, P::Follow, P::Mix };
+/// Tone and Character lead the Comb's and are coordinate cells, not knobs.
+constexpr P kCombGrid[] = { P::Cutoff, P::Heat, P::Follow, P::Mix };
+/// THE SHAKE'S EXTRAS, a row of their own under the pair: Dust's and Rust's.
+constexpr P kShakeRow[] = { P::Step, P::Detune, P::ModFold };
 
 } // namespace
 
@@ -62,21 +70,20 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	mode_ = std::make_unique<SegmentedControl>(control(ero::Param::Mode), registry, ero::kModeNames, notifier_);
 	addChild(mode_.get());
 
-	const auto knob = [this](ero::Param p, const char* caption) {
-		auto k = std::make_unique<Knob>(control(p), caption, notifier_);
+	for (const KnobSpec& spec : kKnobs) {
+		auto k = std::make_unique<Knob>(control(spec.param), spec.caption, notifier_);
 		k->setFaceDiameter(kFace);
 		addChild(k.get());
-		return k;
-	};
-	for (const KnobSpec& spec : kDustKnobs) {
-		dustKnobs_.push_back(knob(spec.param, spec.caption));
+		knobs_.emplace_back(spec.param, std::move(k));
 	}
-	mix_ = knob(ero::Param::Mix, "Mix");
-	cutoff_ = knob(ero::Param::Cutoff, "Cutoff");
-	follow_ = knob(ero::Param::Follow, "Follow");
-	hpWet_ = knob(ero::Param::HpWet, "HP Wet");
-	subThru_ = std::make_unique<SwitchChip>(control(ero::Param::SubThru), "Sub Thru");
-	addChild(subThru_.get());
+	const auto chip = [this](ero::Param p, const char* caption) {
+		auto c = std::make_unique<SwitchChip>(control(p), caption);
+		addChild(c.get());
+		return c;
+	};
+	track_ = chip(ero::Param::Track, "Track");
+	subThru_ = chip(ero::Param::SubThru, "Sub Thru");
+	blend_ = chip(ero::Param::Blend, "Blend");
 
 	// DRIVE, A PAIR (`EroderCard`'s constructor).
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
@@ -93,8 +100,6 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	(void)driveCell_->refresh();
 	drivePair_ = std::make_unique<PairCell>("Drive", *drive_, *driveCell_);
 	addChild(drivePair_.get());
-	track_ = std::make_unique<SwitchChip>(control(ero::Param::Track), "Track");
-	addChild(track_.get());
 
 	const auto coordinate = [this](ero::Param p, const char* caption) {
 		const device::ParamDesc& d = ero::kParamDescs[static_cast<size_t>(p)];
@@ -118,53 +123,60 @@ DeviceControl& EroderExpanded::control(ero::Param p) const {
 	return *controls_[i];
 }
 
+Knob* EroderExpanded::knob(ero::Param p) const {
+	for (const auto& [param, k] : knobs_) {
+		if (param == p) {
+			return k.get();
+		}
+	}
+	return nullptr;
+}
+
 void EroderExpanded::modulationBound(ModState* mod, EditHistory* history) {
 	for (size_t i = 0; i < static_cast<size_t>(ero::Param::kCount); ++i) {
 		control(static_cast<ero::Param>(i)).setModulation(mod, history);
 	}
 	plot_->setModulation(mod, history);
 	// THE KNOBS DRAW THEIR OWN ARM GLOW, and watch the panel state for it (`CompExpanded::modulationBound`).
-	for (auto& knob : dustKnobs_) {
-		knob->setModulation(mod, history);
+	for (const auto& entry : knobs_) {
+		entry.second->setModulation(mod, history);
 	}
-	for (Knob* knob : { mix_.get(), cutoff_.get(), follow_.get(), drive_.get(), hpWet_.get() }) {
-		knob->setModulation(mod, history);
-	}
+	drive_->setModulation(mod, history);
 }
 
 std::string EroderExpanded::title() const { return ero::kTraits.name; }
 
 visage::Point EroderExpanded::minimumSize() const {
-	const float side = kSwitchHeight + kGap + 3.0f * (Knob::columnHeight(kFace) + kGap)
-	                   + PairCell::heightFor(Knob::columnHeight(kFace)) + kGap + SwitchChip::kHeight + 2.0f * kPad;
+	// THE TALLEST ENGINE'S COLUMN: three rows of knobs, the pair, the shake's row, the chips.
+	const float knobH = Knob::columnHeight(kFace);
+	const float side = kSwitchHeight + kGap + 4.0f * (knobH + kGap) + PairCell::heightFor(knobH) + kGap
+	                   + SwitchChip::kHeight + 2.0f * kPad;
 	return { 700.0f, std::max(380.0f, side) };
 }
 
-bool EroderExpanded::dust() const {
-	return static_cast<int>(dhost_.fieldAt(device_, static_cast<size_t>(ero::Param::Mode)) + 0.5f)
-	       == static_cast<int>(ero::Mode::Dust);
+ero::Mode EroderExpanded::engine() const {
+	const int at = static_cast<int>(dhost_.fieldAt(device_, static_cast<size_t>(ero::Param::Mode)) + 0.5f);
+	return static_cast<ero::Mode>(std::clamp(at, 0, static_cast<int>(ero::Mode::kCount) - 1));
 }
 
 std::vector<visage::Frame*> EroderExpanded::dustWidgetsForTest() const {
-	std::vector<visage::Frame*> out;
-	for (const auto& k : dustKnobs_) {
-		out.push_back(k.get());
-	}
-	out.push_back(hpWet_.get());
-	out.push_back(track_.get());
-	out.push_back(subThru_.get());
-	return out;
+	return { knob(P::Amount), knob(P::Resonance) };
 }
 
 std::vector<visage::Frame*> EroderExpanded::combWidgetsForTest() const {
-	return { tone_.get(), character_.get(), cutoff_.get(), gamma_.get() };
+	return { tone_.get(), character_.get(), knob(P::Cutoff), knob(P::Heat), gamma_.get(), blend_.get() };
+}
+
+std::vector<visage::Frame*> EroderExpanded::rustWidgetsForTest() const {
+	return { knob(P::RustBias), knob(P::RustRectify) };
 }
 
 void EroderExpanded::resized() { layOut(); }
 
 void EroderExpanded::layOut() {
-	const bool isDust = dust();
-	laidOutDust_ = isDust ? 1 : 0;
+	const ero::Mode mode = engine();
+	laidOutEngine_ = static_cast<int>(mode);
+	const bool comb = mode == ero::Mode::Comb;
 	const float plotW = std::max(0.0f, width() - 2.0f * kPad - kSideWidth - kGap);
 	plot_->setBounds(kPad, kPad, plotW, std::max(0.0f, height() - 2.0f * kPad));
 
@@ -175,48 +187,62 @@ void EroderExpanded::layOut() {
 
 	const float cell = kSideWidth / static_cast<float>(kPerRow);
 	const float knobH = Knob::columnHeight(kFace);
-	// ONE FLOW FOR BOTH ENGINES: a hidden item takes no room, and the Drive pair wraps whole (`flowCells`).
-	std::vector<FlowItem> items;
-	for (const auto& knob : dustKnobs_) {
-		items.push_back({ knob.get(), 1, isDust, knobH });
+	// EVERYTHING IS HIDDEN, THEN THE ENGINE'S OWN ARE FLOWED: a hidden item takes no room, and the Drive pair wraps
+	// whole (`flowCells`).
+	for (const auto& entry : knobs_) {
+		entry.second->setVisible(false);
 	}
-	items.push_back({ tone_.get(), 1, !isDust, knobH });
-	items.push_back({ character_.get(), 1, !isDust, knobH });
-	items.push_back({ cutoff_.get(), 1, !isDust, knobH });
-	// DUST: Follow then Mix close the third row. COMB: Mix then Follow open the second.
-	items.push_back({ isDust ? follow_.get() : mix_.get(), 1, true, knobH });
-	items.push_back({ isDust ? mix_.get() : follow_.get(), 1, true, knobH });
-	// THE DRIVE PAIR IS BOTH ENGINES'. In the Comb it follows Follow on the second row; in Dust it has a row.
+	std::vector<FlowItem> items;
+	items.push_back({ tone_.get(), 1, comb, knobH });
+	items.push_back({ character_.get(), 1, comb, knobH });
+	const auto add = [&](std::span<const P> grid) {
+		for (const P p : grid) {
+			items.push_back({ knob(p), 1, true, knobH });
+		}
+	};
+	add(mode == ero::Mode::Dust ? std::span<const P>(kDustGrid)
+	                            : comb ? std::span<const P>(kCombGrid) : std::span<const P>(kRustGrid));
 	items.push_back({ drivePair_.get(), 2, true, PairCell::heightFor(knobH) });
+	items.push_back({ knob(P::HpWet), 1, true, PairCell::heightFor(knobH) });
+	if (!comb) {
+		add(kShakeRow);
+	}
 	const float under = flowCells(items, static_cast<int>(kPerRow), x, y, cell, kGap) + kGap;
 	// HP WET SITS BESIDE THE PAIR, level with the cells inside it.
-	hpWet_->setBounds(x + 2.0f * cell, drivePair_->y() + PairCell::kCaptionHeight, cell, knobH);
-	hpWet_->setVisible(isDust);
+	Knob* hp = knob(P::HpWet);
+	hp->setBounds(hp->x(), drivePair_->y() + PairCell::kCaptionHeight, cell, knobH);
 
+	// THE CHIPS: Track (the shakers') or Blend (the Comb's), then Sub Thru; the Comb's Gamma under them.
 	track_->setBounds(x, under, 64.0f, SwitchChip::kHeight);
-	track_->setVisible(isDust);
+	track_->setVisible(!comb);
+	blend_->setBounds(x, under, 64.0f, SwitchChip::kHeight);
+	blend_->setVisible(comb);
 	subThru_->setBounds(x + 2.0f * cell, under, cell, SwitchChip::kHeight);
-	subThru_->setVisible(isDust);
-	gamma_->setBounds(x, under, 2.0f * cell, ValueBox::kCompactHeight);
-	gamma_->setVisible(!isDust);
+	subThru_->setVisible(true);
+	gamma_->setBounds(x, under + SwitchChip::kHeight + kGap, 2.0f * cell, ValueBox::kCompactHeight);
+	gamma_->setVisible(comb);
 	refreshHonesty();
 }
-
-Knob* EroderExpanded::widthForTest() const { return dustKnobs_[2].get(); }
 
 void EroderExpanded::refreshHonesty() {
 	ero::Row row {};
 	(void)readModulatedRow(dhost_, device_, ero::kDescriptor, row);
-	// WIDTH IS THE NOISE BAND'S (`EroderCard::refreshHonesty`).
-	dustKnobs_[2]->setActive(row[static_cast<size_t>(ero::Param::Source)] > 0.0f);
-	// SUB THRU GIVES BACK WHAT HP WET TOOK: with no filter there is nothing to give back.
-	subThru_->setEnabled(static_cast<double>(row[static_cast<size_t>(ero::Param::HpWet)]) > ero::kHpWetLog2Min);
+	const float source = row[static_cast<size_t>(ero::Param::Source)];
+	// WIDTH IS THE NOISE BAND'S (`EroderCard::refreshHonesty`); Detune and Mod Fold are the sine's.
+	knob(P::Width)->setActive(source > 0.0f);
+	knob(P::Detune)->setActive(source < 1.0f);
+	knob(P::ModFold)->setActive(source < 1.0f);
+	// SUB THRU GIVES BACK WHAT HP WET TOOK OF A DRY THAT WAS TURNED DOWN: with no filter there is nothing to give
+	// back, and in the Comb the dry is whole unless Blend crossfades it.
+	const bool filtering = static_cast<double>(row[static_cast<size_t>(ero::Param::HpWet)]) > ero::kHpWetLog2Min;
+	const bool crossfades = engine() != ero::Mode::Comb || row[static_cast<size_t>(ero::Param::Blend)] >= 0.5f;
+	subThru_->setEnabled(filtering && crossfades);
 	(void)driveCell_->refresh();
 }
 
 bool EroderExpanded::updateContent() {
 	bool changed = false;
-	if ((dust() ? 1 : 0) != laidOutDust_) {
+	if (static_cast<int>(engine()) != laidOutEngine_) {
 		layOut();
 		changed = true;
 	}

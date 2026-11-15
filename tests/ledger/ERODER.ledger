@@ -7,7 +7,7 @@ param ERODER eroder_character unit=number min=-8388608 max=8388608 stepped=0 zon
 param ERODER eroder_gamma unit=number min=-8388608 max=8388608 stepped=0
 param ERODER eroder_cutoff unit=number min=-2 max=2 stepped=0
 param ERODER eroder_mix unit=percent min=0 max=1 stepped=0
-param ERODER eroder_mode unit=choice choice=Dust|Comb
+param ERODER eroder_mode unit=choice choice=Dust|Comb|Rust
 param ERODER eroder_amount unit=log_seconds min=-18 max=-9 stepped=0
 param ERODER eroder_freq unit=log_hertz min=4.321928094887362 max=14.135709286104401 stepped=0
 param ERODER eroder_width unit=percent min=0 max=1 stepped=0
@@ -22,4 +22,11 @@ param ERODER eroder_drive_shape unit=percent min=0 max=1 stepped=0
 param ERODER eroder_hp_wet unit=log_hertz min=4.321928094887362 max=12.965784284662087 stepped=0
 param ERODER eroder_sub_thru unit=choice choice=Off|On
 param ERODER eroder_follow unit=percent min=0 max=1 stepped=0
+param ERODER eroder_rust_bias unit=percent min=0 max=1 stepped=0
+param ERODER eroder_rust_rectify unit=percent min=0 max=1 stepped=0
+param ERODER eroder_step unit=log_seconds min=-15 max=-5 stepped=0
+param ERODER eroder_detune unit=percent min=0 max=1 stepped=0
+param ERODER eroder_mod_fold unit=percent min=0 max=1 stepped=0
+param ERODER eroder_heat unit=percent min=0 max=1 stepped=0
+param ERODER eroder_blend unit=choice choice=Off|On
 retired ERODER eroder_drive 2026-11-15 a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)

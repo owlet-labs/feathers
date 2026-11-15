@@ -42199,9 +42199,12 @@ TEST_CASE("ERODER's card and window draw only the running engine's controls, and
 	// THE DECLARED DEFAULT IS DUST.
 	REQUIRE(eroField(d, ero::Param::Mode) == static_cast<float>(ero::Mode::Dust));
 	CHECK(allVisible(d.card->dustWidgetsForTest(), true));
+	CHECK(allVisible(d.card->shakerWidgetsForTest(), true));
 	CHECK(allVisible(d.card->combWidgetsForTest(), false));
+	CHECK(allVisible(d.card->rustWidgetsForTest(), false));
 	CHECK(allVisible(panel->dustWidgetsForTest(), true));
 	CHECK(allVisible(panel->combWidgetsForTest(), false));
+	CHECK(allVisible(panel->rustWidgetsForTest(), false));
 	CHECK(d.card->plotForTest()->showsDustForTest());
 	CHECK(d.card->mixForTest()->isVisible());
 	const float mixX = d.card->mixForTest()->x();
@@ -42210,8 +42213,11 @@ TEST_CASE("ERODER's card and window draw only the running engine's controls, and
 	CHECK(d.card->updateContent());
 	CHECK(panel->updateContent());
 	CHECK(allVisible(d.card->dustWidgetsForTest(), false));
+	CHECK(allVisible(d.card->shakerWidgetsForTest(), false));
+	CHECK(allVisible(d.card->rustWidgetsForTest(), false));
 	CHECK(allVisible(d.card->combWidgetsForTest(), true));
 	CHECK(allVisible(panel->dustWidgetsForTest(), false));
+	CHECK(allVisible(panel->rustWidgetsForTest(), false));
 	CHECK(allVisible(panel->combWidgetsForTest(), true));
 	CHECK_FALSE(d.card->plotForTest()->showsDustForTest());
 	CHECK_FALSE(panel->plotForTest()->showsDustForTest());
@@ -42219,24 +42225,65 @@ TEST_CASE("ERODER's card and window draw only the running engine's controls, and
 	CHECK(d.card->mixForTest()->isVisible());
 	CHECK(d.card->mixForTest()->x() == mixX);
 
-	// NOTHING OF EITHER ENGINE OVERLAPS ITS NEIGHBOUR OR LEAVES THE CARD, in either state.
-	for (const float mode : { 0.0f, 1.0f }) {
-		d.set(eroAt(ero::Param::Mode), mode);
-		(void)d.card->updateContent();
-		const auto shown = mode == 0.0f ? d.card->dustWidgetsForTest() : d.card->combWidgetsForTest();
+	// RUST: the band's picture and the shaker's controls, its own Bias where Dust has Amount, nothing of the Comb's.
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Rust));
+	CHECK(d.card->updateContent());
+	CHECK(panel->updateContent());
+	CHECK(allVisible(d.card->rustWidgetsForTest(), true));
+	CHECK(allVisible(d.card->shakerWidgetsForTest(), true));
+	CHECK(allVisible(d.card->dustWidgetsForTest(), false));
+	CHECK(allVisible(d.card->combWidgetsForTest(), false));
+	CHECK(allVisible(panel->rustWidgetsForTest(), true));
+	CHECK(allVisible(panel->dustWidgetsForTest(), false));
+	CHECK(allVisible(panel->combWidgetsForTest(), false));
+	CHECK(d.card->plotForTest()->showsDustForTest());
+	CHECK(d.card->plotForTest()->showsRustForTest());
+	CHECK(d.card->rustWidgetsForTest()[0]->x() == d.card->dustWidgetsForTest()[0]->x());
+	CHECK(d.card->mixForTest()->x() == mixX);
+
+	// NOTHING OF ANY ENGINE OVERLAPS ITS NEIGHBOUR OR LEAVES THE CARD OR THE WINDOW, in any state.
+	const auto within = [](const std::vector<visage::Frame*>& shown, float width, float height) {
 		for (size_t i = 0; i < shown.size(); ++i) {
-			CAPTURE(mode);
 			CAPTURE(i);
 			CHECK(shown[i]->width() > 20.0f);
 			CHECK(shown[i]->x() >= 0.0f);
-			CHECK(shown[i]->right() <= d.card->width());
-			CHECK(shown[i]->bottom() <= ui::EroderCard::openHeight());
+			CHECK(shown[i]->right() <= width);
+			CHECK(shown[i]->bottom() <= height);
 			for (size_t j = i + 1; j < shown.size(); ++j) {
+				CAPTURE(j);
 				const bool apart = shown[i]->right() <= shown[j]->x() || shown[j]->right() <= shown[i]->x()
 				                   || shown[i]->bottom() <= shown[j]->y() || shown[j]->bottom() <= shown[i]->y();
 				CHECK(apart);
 			}
 		}
+	};
+	for (const float mode : { 0.0f, 1.0f, 2.0f }) {
+		CAPTURE(mode);
+		d.set(eroAt(ero::Param::Mode), mode);
+		(void)d.card->updateContent();
+		(void)panel->updateContent();
+		// THE WINDOW: every child it shows, whatever it is.
+		std::vector<visage::Frame*> inWindow;
+		for (visage::Frame* child : panel->children()) {
+			if (child->isVisible()) {
+				inWindow.push_back(child);
+			}
+		}
+		REQUIRE(inWindow.size() >= 10);
+		within(inWindow, panel->width(), panel->height());
+		auto shown = mode == 1.0f ? d.card->combWidgetsForTest()
+		                          : mode == 0.0f ? d.card->dustWidgetsForTest() : d.card->rustWidgetsForTest();
+		if (mode != 1.0f) {
+			for (visage::Frame* f : d.card->shakerWidgetsForTest()) {
+				shown.push_back(f);
+			}
+		}
+		shown.push_back(d.card->drivePairForTest());
+		shown.push_back(d.card->hpWetForTest());
+		shown.push_back(d.card->followForTest());
+		shown.push_back(d.card->mixForTest());
+		CHECK(allVisible(shown, true));
+		within(shown, d.card->width(), ui::EroderCard::openHeight());
 	}
 }
 
@@ -42443,7 +42490,7 @@ TEST_CASE("ERODER's Comb picture is the eleven quantities Tone and Character tur
 	CHECK(before != d.card->plotForTest()->barsForTest());
 }
 
-TEST_CASE("ERODER's window knobs are watched for arm, all twelve of them, once the window is given the panel state") {
+TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once the window is given the panel state") {
 	// THE SUBSCRIPTION IS THE GLOW (the lane's own case says why, for the card): a knob the panel does not watch
 	// cannot be told to light. The lane sweep covers cards only, so the window says it here.
 	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
@@ -42455,8 +42502,13 @@ TEST_CASE("ERODER's window knobs are watched for arm, all twelve of them, once t
 	REQUIRE(mod != nullptr);
 	std::vector<ui::Knob*> knobs;
 	collectKnobs(view.get(), &knobs);
-	// Dust's seven plain ones, Drive, HP Wet, Follow, Mix, and the Comb's Cutoff.
-	REQUIRE(knobs.size() == 12);
+	// One for every continuous control the device declares but the three that are not knobs in the window (the
+	// Comb's two coordinates and Gamma) and Drive's Shape, which is a box in its mode cell.
+	size_t continuous = 0;
+	for (const auto& desc : ero::kParamDescs) {
+		continuous += desc.stepped ? 0u : 1u;
+	}
+	REQUIRE(knobs.size() == continuous - 4);
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -42931,7 +42983,7 @@ TEST_CASE("ERODER's Drive is one pair in the card and the window: the knob, and 
 	CHECK(eroField(d, ero::Param::DriveShape) == 0.0f);
 	CHECK(eroField(d, ero::Param::DriveMode) == static_cast<float>(ero::DriveMode::Fold));
 
-	// THE PAIR AND FOLLOW ARE BOTH ENGINES'; HP Wet and Sub Thru are Dust's and go with it.
+	// THE PAIR, FOLLOW AND HP WET ARE EVERY ENGINE'S.
 	CHECK(d.card->followForTest()->isVisible());
 	CHECK(panel->followForTest()->isVisible());
 	CHECK(d.card->hpWetForTest()->isVisible());
@@ -42947,9 +42999,10 @@ TEST_CASE("ERODER's Drive is one pair in the card and the window: the knob, and 
 	CHECK(d.card->drivePairForTest()->y() == cardPairY);
 	CHECK(panel->drivePairForTest()->right() <= panel->width());
 	CHECK(panel->drivePairForTest()->bottom() <= panel->height());
-	CHECK_FALSE(d.card->hpWetForTest()->isVisible());
-	CHECK_FALSE(panel->hpWetForTest()->isVisible());
-	CHECK_FALSE(panel->subThruForTest()->isVisible());
+	// AS ARE HP WET AND SUB THRU NOW.
+	CHECK(d.card->hpWetForTest()->isVisible());
+	CHECK(panel->hpWetForTest()->isVisible());
+	CHECK(panel->subThruForTest()->isVisible());
 	CHECK(d.card->followForTest()->isVisible());
 	CHECK(panel->followForTest()->isVisible());
 }
@@ -42976,11 +43029,31 @@ TEST_CASE("ERODER draws out of the signal what another control makes inert: Widt
 	CHECK_FALSE(panel->widthForTest()->active());
 	CHECK(panel->subThruForTest()->enabled());
 
+	// DETUNE AND MOD FOLD ARE THE SINE'S: in the signal here (Source is all sine), out of it once it is all noise.
+	CHECK(panel->knobForTest(ero::Param::Detune)->active());
+	CHECK(panel->knobForTest(ero::Param::ModFold)->active());
+
 	d.set(eroAt(ero::Param::Source), 0.01f);
 	(void)d.card->updateContent();
 	(void)panel->updateContent();
 	CHECK(d.card->widthForTest()->active());
 	CHECK(panel->widthForTest()->active());
+	d.set(eroAt(ero::Param::Source), 1.0f);
+	(void)panel->updateContent();
+	CHECK_FALSE(panel->knobForTest(ero::Param::Detune)->active());
+	CHECK_FALSE(panel->knobForTest(ero::Param::ModFold)->active());
+
+	// IN THE COMB THE DRY IS WHOLE, so with the highpass on Sub Thru still has nothing to give back — until Blend
+	// crossfades the dry away.
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	(void)panel->updateContent();
+	CHECK_FALSE(panel->subThruForTest()->enabled());
+	d.set(eroAt(ero::Param::Blend), 1.0f);
+	(void)panel->updateContent();
+	CHECK(panel->subThruForTest()->enabled());
+	d.set(eroAt(ero::Param::HpWet), static_cast<float>(ero::kHpWetLog2Min));
+	(void)panel->updateContent();
+	CHECK_FALSE(panel->subThruForTest()->enabled());
 }
 
 TEST_CASE("ERODER's plot has a handle on the band's edge that drags Width across; with no noise there is no edge and the wheel turns nothing") {
@@ -43025,4 +43098,31 @@ TEST_CASE("ERODER's plot has a handle on the band's edge that drags Width across
 	wheel.wheel_delta_y = 1.0f;
 	CHECK_FALSE(plot->onMouseWheel().callback(wheel));
 	CHECK(eroField(d, ero::Param::Width) == 0.5f);
+}
+
+TEST_CASE("ERODER's plot in Rust draws the band at a height of its own and writes no Amount") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Rust));
+	d.set(eroAt(ero::Param::Freq), 9.0f);
+	d.set(eroAt(ero::Param::Amount), -11.0f);
+	(void)d.card->updateContent();
+	ui::EroderPlot* plot = d.card->plotForTest();
+	REQUIRE(plot->showsRustForTest());
+	const float foot = plot->plotFootForTest();
+	const float top = plot->plotTopForTest();
+	CHECK(plot->handleYForTest() == doctest::Approx(foot - ui::EroderPlot::kRustBandShare * (foot - top)));
+	// THE HEIGHT IS NOT THE AMOUNT'S: moving Dust's Amount underneath moves nothing.
+	const float before = plot->handleYForTest();
+	d.set(eroAt(ero::Param::Amount), -16.0f);
+	(void)d.card->updateContent();
+	CHECK(plot->handleYForTest() == before);
+
+	// ACROSS IS STILL FREQ; UP AND DOWN ARE NOBODY'S.
+	const float x0 = plot->handleXForTest();
+	const float y0 = 0.5f * (top + foot);
+	plot->onMouseDown().callback(at(x0, y0));
+	plot->onMouseDrag().callback(at(x0 + 20.0f, y0 - 40.0f));
+	plot->onMouseUp().callback(at(x0 + 20.0f, y0 - 40.0f));
+	CHECK(eroField(d, ero::Param::Freq) == doctest::Approx(std::log2(plot->xToHzForTest(x0 + 20.0f))).epsilon(1e-5));
+	CHECK(eroField(d, ero::Param::Amount) == -16.0f);
 }

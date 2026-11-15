@@ -15,6 +15,8 @@ feathers_register_device(
 	DESCRIPTOR fx::drumdevice::kDescriptor
 	CODEC_INCLUDE device_codecs/drum.h
 	CODEC_REG feathers::codecs::kDrumCodec
+	CARD_INCLUDE plugin/ui/cards/drum.h
+	CARD_REG feathers::ui::cards::kDrumCard
 	INCLUDES fx/drum/drum_types.h
 	TARGET feathers-fx
 	SOURCES src/fx/drum/drum_types.cpp

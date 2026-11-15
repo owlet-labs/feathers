@@ -242,6 +242,7 @@ bool allowListed(const visage::Frame& f, std::string* reason) {
 		{ "feathers::ui::AutomodPad", "a plane over two coordinates, not one control" },
 		{ "feathers::ui::ShaperPad", "a plane over two coordinates, not one control" },
 		{ "feathers::ui::PhaserPad", "a plane through thirty phases, not one control" },
+		{ "feathers::ui::DrumDevicePad", "a plane over the drum's two unbounded travel coordinates, not one control" },
 		{ "feathers::ui::PerformPad", "a plane over several controls, not one control" },
 		{ "feathers::ui::HarmScope", "a picture of the notch and its harmonic, dragged as several controls" },
 		{ "feathers::ui::HarmEnvelopeView", "a picture of the envelope the six boxes beside it set; it edits nothing" },

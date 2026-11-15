@@ -125,6 +125,10 @@ public:
 
 	const backplane::Axes& axes() const noexcept override { return feathersAxes(); }
 
+	/// THE SYNTH PLUGIN'S ROAD FOR AN EDITOR KEY (`ParamBridge::postNote`): the lane's notes are the synth's, so a Drum in the lane answers it.
+	[[nodiscard]] bool canPostNote() const override { return true; }
+	bool postNote(int key, bool on, float velocity) override { return bridge_.postNote(key, on, velocity); }
+
 	/// THE RECORD'S VIEW, BY ID — what each device is and where it stands, for the routing authority.
 	backplane::DeviceView devices() const noexcept override { return bridge_.devices(); }
 

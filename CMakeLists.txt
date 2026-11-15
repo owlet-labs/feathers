@@ -638,6 +638,12 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/shaper_pad.cpp
 	src/plugin/ui/phaser_pad.cpp
 	src/plugin/ui/drum_vector_pad.cpp
+	src/plugin/ui/drum_hit_picture.cpp
+	src/plugin/ui/drum_pitch_readout.cpp
+	src/plugin/ui/drum_device_ui.cpp
+	src/plugin/ui/drum_device_pad.cpp
+	src/plugin/ui/drum_device_card.cpp
+	src/plugin/ui/drum_device_expanded.cpp
 	src/plugin/ui/sound_identity.cpp
 	src/plugin/ui/sound_stack.cpp
 	src/plugin/ui/source_grid.cpp

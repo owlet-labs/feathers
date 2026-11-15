@@ -186,3 +186,9 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: s
 .card .meta { color: var(--mute); font-size: .92rem; }
 .card .cta { align-self: flex-start; margin-top: auto; }
 .proj .more { color: var(--accent); white-space: nowrap; }
+
+/* stickers: "Free" and "GPL" on a project card */
+.stickers { display: flex; gap: 8px; margin: 0 0 .5em; }
+.card .stickers { margin: 0; }
+.sticker { display: inline-block; font: 800 .78rem/1 var(--disp); letter-spacing: .06em; text-transform: uppercase; padding: .45em .8em; border-radius: 999px; background: var(--value); color: var(--btn-ink); transform: rotate(-4deg); box-shadow: 0 2px 0 color-mix(in srgb, var(--value) 45%, var(--bg)); }
+.sticker.alt { background: var(--accent); transform: rotate(3deg); box-shadow: 0 2px 0 color-mix(in srgb, var(--accent) 45%, var(--bg)); }

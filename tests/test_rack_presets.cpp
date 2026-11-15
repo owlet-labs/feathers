@@ -23,6 +23,7 @@
 #include "doctest.h"
 
 #include "backplane/block_context.h"
+#include "device/utf8_path.h"
 #include "composite/composite_types.h"
 #include "fx/delay/delay_types.h"
 #include "fx/filter/filter_types.h"
@@ -909,4 +910,51 @@ TEST_CASE("hardening: names differing only in an accented letter are two presets
 		}
 	}
 	CHECK(found == 3);
+}
+
+TEST_CASE("hardening: UTF-8 names reach the file system as UTF-8: save, list, load, rename and erase of accents, ideographs and an emoji") {
+	// WHAT THIS CAN AND CANNOT PROVE. Linux file names are bytes, so a narrow path and a UTF-8 path are the same here: this case
+	// pins the round trip and the helpers' contract, and it is the Windows CI leg that proves the code-page road (there a narrow
+	// `path::string()` of these names throws, and a narrow path names a different file).
+	PresetRoot root;
+	const std::vector<std::string> names = {
+		"Caf\xC3\xA9",                       // e-acute
+		"\xC3\x9C" "ber",                    // U-diaeresis
+		"\xE6\x97\xA5\xE6\x9C\xAC",          // two ideographs
+		"Lead \xF0\x9F\x8E\xB5",             // an emoji outside the BMP
+		"\xC3\xA9" "x\xC3\xBC\xE6\x97\xA5",  // all of them in one name, accent first
+	};
+	for (size_t i = 0; i < names.size(); ++i) {
+		const std::vector<uint8_t> bytes(8, static_cast<uint8_t>(0x30 + i));
+		REQUIRE(PresetStore::save(names[i], bytes, kChainPresetBank));
+	}
+	const std::vector<StoredPreset> all = PresetStore::loadAll(kChainPresetBank);
+	REQUIRE(all.size() == names.size());
+	for (size_t i = 0; i < names.size(); ++i) {
+		INFO("name " << i);
+		bool found = false;
+		for (const StoredPreset& p : all) {
+			if (p.name == names[i]) {
+				found = true;
+				CHECK(p.bytes == std::vector<uint8_t>(8, static_cast<uint8_t>(0x30 + i)));
+				// THE PATH A LISTING HANDS BACK NAMES THE FILE IT WAS READ FROM, in UTF-8, by the one crossing.
+				CHECK(feathers::utf8Of(p.path.stem()) == names[i]);
+				CHECK(p.path == PresetStore::pathFor(names[i], kChainPresetBank));
+			}
+		}
+		CHECK(found);
+	}
+	// RENAME AND ERASE take the same paths.
+	const std::filesystem::path from = PresetStore::pathFor(names[3], kChainPresetBank);
+	const std::filesystem::path to = PresetStore::pathFor("\xE6\x97\xA5" "2 \xF0\x9F\x8E\xB6", kChainPresetBank);
+	REQUIRE(PresetStore::rename(from, to));
+	CHECK_FALSE(fs::exists(from));
+	CHECK(fs::exists(to));
+	CHECK(PresetStore::erase(to));
+	CHECK(PresetStore::loadAll(kChainPresetBank).size() == names.size() - 1);
+	// THE HELPERS' CONTRACT: bytes in, the same bytes out.
+	for (const std::string& n : names) {
+		CHECK(feathers::utf8Of(feathers::pathFromUtf8(n)) == n);
+		CHECK(feathers::utf8Of(feathers::pathFromUtf8("dir/" + n + ".x").filename()) == n + ".x");
+	}
 }

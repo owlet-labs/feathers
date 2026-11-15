@@ -21,6 +21,8 @@
 
 #include "fx/conv/ir_browse.h"
 
+#include "device/utf8_path.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -92,7 +94,7 @@ bool naturalLess(const std::string& a, const std::string& b) {
 } // namespace
 
 bool isIrFileName(const std::string& name) {
-	const std::string ext = lower(std::filesystem::path(name).extension().string());
+	const std::string ext = lower(feathers::utf8Of(feathers::pathFromUtf8(name).extension()));
 	return ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".flac";
 }
 
@@ -105,7 +107,7 @@ std::vector<std::string> irFilesBeside(const std::string& path) {
 	if (path.empty()) {
 		return out;
 	}
-	return filesIn(fs::path(path).parent_path());
+	return filesIn(feathers::pathFromUtf8(path).parent_path());
 }
 
 std::vector<std::string> filesIn(const std::filesystem::path& folder) {
@@ -118,13 +120,13 @@ std::vector<std::string> filesIn(const std::filesystem::path& folder) {
 		if (!it->is_regular_file(fe) || fe) {
 			continue;
 		}
-		const std::string name = it->path().filename().string();
+		const std::string name = feathers::utf8Of(it->path().filename());
 		if (isIrFileName(name)) {
-			out.push_back((folder / name).string());
+			out.push_back(feathers::utf8Of(folder / feathers::pathFromUtf8(name)));
 		}
 	}
 	std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
-		return naturalLess(fs::path(a).filename().string(), fs::path(b).filename().string());
+		return naturalLess(feathers::utf8Of(feathers::pathFromUtf8(a).filename()), feathers::utf8Of(feathers::pathFromUtf8(b).filename()));
 	});
 	return out;
 }
@@ -135,11 +137,11 @@ std::string steppedIr(const std::string& path, int step) {
 	if (files.empty()) {
 		return {};
 	}
-	const std::string name = fs::path(path).filename().string();
+	const std::string name = feathers::utf8Of(feathers::pathFromUtf8(path).filename());
 	// WHERE `path` IS, or where it WOULD sort if it has gone.
 	long at = -1;
 	for (size_t i = 0; i < files.size(); ++i) {
-		if (fs::path(files[i]).filename().string() == name) {
+		if (feathers::utf8Of(feathers::pathFromUtf8(files[i]).filename()) == name) {
 			at = static_cast<long>(i);
 			break;
 		}
@@ -147,7 +149,7 @@ std::string steppedIr(const std::string& path, int step) {
 	const auto n = static_cast<long>(files.size());
 	if (at < 0) {
 		const auto upper = std::upper_bound(files.begin(), files.end(), path, [](const std::string& a, const std::string& b) {
-			return naturalLess(fs::path(a).filename().string(), fs::path(b).filename().string());
+			return naturalLess(feathers::utf8Of(feathers::pathFromUtf8(a).filename()), feathers::utf8Of(feathers::pathFromUtf8(b).filename()));
 		});
 		const auto slot = static_cast<long>(upper - files.begin()); // the first one after where it would sit
 		const long from = step > 0 ? slot - 1 : slot;               // stepping +1 lands on `slot`, -1 on slot-1
@@ -180,12 +182,13 @@ std::string defaultIrFolder(bool create) {
 	if (home == nullptr || *home == '\0') {
 		return {};
 	}
+	// `home` is the environment's own narrow text, which Windows means in the ANSI code page: a path from it is right as it stands, and its UTF-8 is what leaves.
 	const fs::path folder = fs::path(home) / "Documents" / "Owlet" / "Feathers" / "IRs";
 	if (create) {
 		std::error_code ec;
 		fs::create_directories(folder, ec); // a folder that cannot be made is simply empty
 	}
-	return folder.string();
+	return feathers::utf8Of(folder);
 }
 
 std::vector<IrChoice> irChoices(int generatedRooms, const std::string& folder) {
@@ -210,7 +213,7 @@ IrChoice steppedChoice(const std::vector<IrChoice>& choices, const IrChoice& her
 	for (size_t i = 0; i < choices.size(); ++i) {
 		const IrChoice& c = choices[i];
 		const bool same = here.generated >= 0 ? c.generated == here.generated
-		                                      : c.generated < 0 && fs::path(c.path).filename() == fs::path(here.path).filename();
+		                                      : c.generated < 0 && feathers::pathFromUtf8(c.path).filename() == feathers::pathFromUtf8(here.path).filename();
 		if (same) {
 			at = static_cast<long>(i);
 			break;
@@ -239,14 +242,14 @@ std::vector<std::string> subfoldersIn(const std::string& folder) {
 		if (!it->is_directory(fe) || fe) {
 			continue;
 		}
-		const std::string name = it->path().filename().string();
+		const std::string name = feathers::utf8Of(it->path().filename());
 		if (name.empty() || name.front() == '.') {
 			continue;
 		}
-		out.push_back((fs::path(folder) / name).string());
+		out.push_back(feathers::utf8Of(feathers::pathFromUtf8(folder) / feathers::pathFromUtf8(name)));
 	}
 	std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) {
-		return naturalLess(fs::path(a).filename().string(), fs::path(b).filename().string());
+		return naturalLess(feathers::utf8Of(feathers::pathFromUtf8(a).filename()), feathers::utf8Of(feathers::pathFromUtf8(b).filename()));
 	});
 	return out;
 }
@@ -255,18 +258,18 @@ std::vector<FolderRow> folderRows(const std::string& folder, const std::string& 
 	namespace fs = std::filesystem;
 	using Kind = FolderRow::Kind;
 	std::vector<FolderRow> rows;
-	const fs::path here = fs::path(folder).lexically_normal();
+	const fs::path here = feathers::pathFromUtf8(folder).lexically_normal();
 	const auto same = [&here](const std::string& other) {
-		return !other.empty() && fs::path(other).lexically_normal() == here;
+		return !other.empty() && feathers::pathFromUtf8(other).lexically_normal() == here;
 	};
 	const auto nameOf = [](const fs::path& p) {
-		const std::string n = p.filename().string();
-		return n.empty() ? p.string() : n;
+		const std::string n = feathers::utf8Of(p.filename());
+		return n.empty() ? feathers::utf8Of(p) : n;
 	};
 	// WHERE THE MENU IS, the home folder written as "~" so a deep path still fits.
-	std::string shown = here.string();
+	std::string shown = feathers::utf8Of(here);
 	if (!home.empty()) {
-		const std::string h = fs::path(home).lexically_normal().string();
+		const std::string h = feathers::utf8Of(feathers::pathFromUtf8(home).lexically_normal());
 		if (shown.rfind(h, 0) == 0) {
 			shown = "~" + shown.substr(h.size());
 		}
@@ -276,15 +279,15 @@ std::vector<FolderRow> folderRows(const std::string& folder, const std::string& 
 	rows.push_back({ Kind::Use,
 	                 count == 0 ? std::string("Use this folder (no impulses)")
 	                            : "Use this folder (" + std::to_string(count) + (count == 1 ? " impulse)" : " impulses)"),
-	                 here.string(), count > 0 });
+	                 feathers::utf8Of(here), count > 0 });
 	rows.push_back({ Kind::Break, {}, {}, false });
 	// A trailing separator has an empty filename; the normalised path does not end in one except at the root.
 	const fs::path parent = here.has_relative_path() ? here.parent_path() : here;
 	if (parent != here && !parent.empty()) {
-		rows.push_back({ Kind::Enter, "Up: " + nameOf(parent), parent.string(), true });
+		rows.push_back({ Kind::Enter, "Up: " + nameOf(parent), feathers::utf8Of(parent), true });
 	}
-	for (const std::string& sub : subfoldersIn(here.string())) {
-		rows.push_back({ Kind::Enter, nameOf(fs::path(sub)) + "/", sub, true });
+	for (const std::string& sub : subfoldersIn(feathers::utf8Of(here))) {
+		rows.push_back({ Kind::Enter, nameOf(feathers::pathFromUtf8(sub)) + "/", sub, true });
 	}
 	const bool rootRow = !irRoot.empty() && !same(irRoot);
 	const bool homeRow = !home.empty() && !same(home);

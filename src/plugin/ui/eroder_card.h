@@ -30,6 +30,8 @@
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/gamma_box.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/mode_value_cell.h"
+#include "plugin/ui/pair_cell.h"
 #include "plugin/ui/switch_chip.h"
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/widget_registry.h"
@@ -46,10 +48,14 @@
 //   │ [   Dust   |   Comb   ]                     │  the engine, both choices on the face
 //   │  Amount    Freq     Width     Mix           │  DUST's knobs          COMB: Tone  Char  Cutoff  Mix
 //   │ [Source 100%] [Grit 0%] (Track)             │  DUST's small row      COMB: [Gamma]
+//   │ ┌─ DRIVE ─────────┐                         │
+//   │ │ Drive  Soft 0%  │  HP Wet   Follow        │  DUST's shaper pair and wet highpass; Follow is both engines'
+//   │ └─────────────────┘                         │
 //   └─────────────────────────────────────────────┘
 //
 // **ONLY THE RUNNING ENGINE'S CONTROLS ARE DRAWN**: the other engine's are hidden, not greyed, since nothing but
-// the engine switch could enable them. Stereo, Resonance and Drive are the window's.
+// the engine switch could enable them. Stereo, Resonance and Sub Thru are the window's.
+// **DRIVE IS A PAIR** (`pair_cell.h`): how hard, and into what — the Type and its own Shape in one mode cell.
 // **THE KNOBS STAY BESIDE THE PLOT'S HANDLE**: Amount and Width have no route gesture on the plot, so the knob is
 // where a route to them is made.
 
@@ -76,7 +82,7 @@ public:
 
 	static constexpr float kPad = 8.0f;
 	static constexpr float kRowGap = 6.0f;
-	static constexpr float kPlotHeight = 112.0f;
+	static constexpr float kPlotHeight = 98.0f;
 	static constexpr float kSwitchHeight = 16.0f;
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
 	static constexpr float kSmallRowHeight = 16.0f;
@@ -90,12 +96,20 @@ public:
 	[[nodiscard]] std::vector<visage::Frame*> dustWidgetsForTest() const;
 	[[nodiscard]] std::vector<visage::Frame*> combWidgetsForTest() const;
 	[[nodiscard]] Knob* mixForTest() const { return mix_.get(); }
+	[[nodiscard]] Knob* widthForTest() const { return width_.get(); }
+	[[nodiscard]] Knob* driveForTest() const { return drive_.get(); }
+	[[nodiscard]] ModeValueCell* driveCellForTest() const { return driveCell_.get(); }
+	[[nodiscard]] PairCell* drivePairForTest() const { return drivePair_.get(); }
+	[[nodiscard]] Knob* hpWetForTest() const { return hpWet_.get(); }
+	[[nodiscard]] Knob* followForTest() const { return follow_.get(); }
 
 private:
 	device::Modulatable* enableModulatable() override;
 	[[nodiscard]] DeviceControl& control(fx::eroder::Param p) const;
 	[[nodiscard]] bool dust() const;
 	void layOut();
+	/// What is drawn out of the signal because another control makes it so (the honesty rule).
+	void refreshHonesty();
 
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_ = kNoInstance;
@@ -106,6 +120,11 @@ private:
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<EroderPlot> plot_;
 	std::unique_ptr<SegmentedControl> mode_;
+	std::unique_ptr<Knob> drive_;
+	std::unique_ptr<ModeValueCell> driveCell_;
+	std::unique_ptr<PairCell> drivePair_;
+	std::unique_ptr<Knob> hpWet_;
+	std::unique_ptr<Knob> follow_;
 	std::unique_ptr<Knob> amount_;
 	std::unique_ptr<Knob> freq_;
 	std::unique_ptr<Knob> width_;

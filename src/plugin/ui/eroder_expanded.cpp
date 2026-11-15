@@ -23,6 +23,7 @@
 #include "plugin/ui/eroder_expanded.h"
 
 #include "plugin/ui/generic_card.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -38,8 +39,9 @@ struct KnobSpec {
 	ero::Param param;
 	const char* caption;
 };
-/// DUST'S GRID, Mix excepted (it is the ninth cell and the Comb's fourth).
-constexpr std::array<KnobSpec, 8> kDustKnobs { {
+/// DUST'S PLAIN KNOBS. Follow and Mix follow them (the eighth and ninth cells, the Comb's fifth and fourth), then
+/// the Drive pair and HP Wet.
+constexpr std::array<KnobSpec, 7> kDustKnobs { {
 	{ ero::Param::Amount, "Amount" },
 	{ ero::Param::Freq, "Freq" },
 	{ ero::Param::Width, "Width" },
@@ -47,7 +49,6 @@ constexpr std::array<KnobSpec, 8> kDustKnobs { {
 	{ ero::Param::Grit, "Grit" },
 	{ ero::Param::Stereo, "Stereo" },
 	{ ero::Param::Resonance, "Reso" },
-	{ ero::Param::Drive, "Drive" },
 } };
 
 } // namespace
@@ -72,6 +73,26 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	}
 	mix_ = knob(ero::Param::Mix, "Mix");
 	cutoff_ = knob(ero::Param::Cutoff, "Cutoff");
+	follow_ = knob(ero::Param::Follow, "Follow");
+	hpWet_ = knob(ero::Param::HpWet, "HP Wet");
+	subThru_ = std::make_unique<SwitchChip>(control(ero::Param::SubThru), "Sub Thru");
+	addChild(subThru_.get());
+
+	// DRIVE, A PAIR (`EroderCard`'s constructor).
+	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
+	drive_->setFaceDiameter(kFace);
+	std::vector<ZoneSelect::ZoneName> types;
+	for (const char* name : ero::kDriveModeNames) {
+		types.push_back({ name, {} });
+	}
+	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
+	                                             [](size_t) { return true; });
+	driveCell_->setFaceDiameter(kFace);
+	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::DriveShape),
+	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""));
+	(void)driveCell_->refresh();
+	drivePair_ = std::make_unique<PairCell>("Drive", *drive_, *driveCell_);
+	addChild(drivePair_.get());
 	track_ = std::make_unique<SwitchChip>(control(ero::Param::Track), "Track");
 	addChild(track_.get());
 
@@ -106,15 +127,16 @@ void EroderExpanded::modulationBound(ModState* mod, EditHistory* history) {
 	for (auto& knob : dustKnobs_) {
 		knob->setModulation(mod, history);
 	}
-	mix_->setModulation(mod, history);
-	cutoff_->setModulation(mod, history);
+	for (Knob* knob : { mix_.get(), cutoff_.get(), follow_.get(), drive_.get(), hpWet_.get() }) {
+		knob->setModulation(mod, history);
+	}
 }
 
 std::string EroderExpanded::title() const { return ero::kTraits.name; }
 
 visage::Point EroderExpanded::minimumSize() const {
-	const float side = kSwitchHeight + kGap + 3.0f * (Knob::columnHeight(kFace) + kGap) + SwitchChip::kHeight
-	                   + 2.0f * kPad;
+	const float side = kSwitchHeight + kGap + 3.0f * (Knob::columnHeight(kFace) + kGap)
+	                   + PairCell::heightFor(Knob::columnHeight(kFace)) + kGap + SwitchChip::kHeight + 2.0f * kPad;
 	return { 700.0f, std::max(380.0f, side) };
 }
 
@@ -128,7 +150,10 @@ std::vector<visage::Frame*> EroderExpanded::dustWidgetsForTest() const {
 	for (const auto& k : dustKnobs_) {
 		out.push_back(k.get());
 	}
+	out.push_back(drivePair_.get());
+	out.push_back(hpWet_.get());
 	out.push_back(track_.get());
+	out.push_back(subThru_.get());
 	return out;
 }
 
@@ -151,27 +176,42 @@ void EroderExpanded::layOut() {
 
 	const float cell = kSideWidth / static_cast<float>(kPerRow);
 	const float knobH = Knob::columnHeight(kFace);
-	const auto place = [&](visage::Frame* frame, size_t index, bool shown) {
-		const auto row = static_cast<float>(index / kPerRow);
-		const auto column = static_cast<float>(index % kPerRow);
-		frame->setBounds(x + column * cell, y + row * (knobH + kGap), cell, knobH);
-		frame->setVisible(shown);
-	};
-	for (size_t i = 0; i < dustKnobs_.size(); ++i) {
-		place(dustKnobs_[i].get(), i, isDust);
+	// ONE FLOW FOR BOTH ENGINES: a hidden item takes no room, and the Drive pair wraps whole (`flowCells`).
+	std::vector<FlowItem> items;
+	for (const auto& knob : dustKnobs_) {
+		items.push_back({ knob.get(), 1, isDust, knobH });
 	}
-	place(tone_.get(), 0, !isDust);
-	place(character_.get(), 1, !isDust);
-	place(cutoff_.get(), 2, !isDust);
-	// MIX: the ninth cell of Dust's grid, the fourth of the Comb's.
-	place(mix_.get(), isDust ? dustKnobs_.size() : 3, true);
+	items.push_back({ tone_.get(), 1, !isDust, knobH });
+	items.push_back({ character_.get(), 1, !isDust, knobH });
+	items.push_back({ cutoff_.get(), 1, !isDust, knobH });
+	// DUST: Follow then Mix close the third row. COMB: Mix then Follow open the second.
+	items.push_back({ isDust ? follow_.get() : mix_.get(), 1, true, knobH });
+	items.push_back({ isDust ? mix_.get() : follow_.get(), 1, true, knobH });
+	items.push_back({ drivePair_.get(), 2, isDust, PairCell::heightFor(knobH) });
+	const float under = flowCells(items, static_cast<int>(kPerRow), x, y, cell, kGap) + kGap;
+	// HP WET SITS BESIDE THE PAIR, level with the cells inside it.
+	hpWet_->setBounds(x + 2.0f * cell, drivePair_->y() + PairCell::kCaptionHeight, cell, knobH);
+	hpWet_->setVisible(isDust);
 
-	const float under = y + (isDust ? 3.0f : 2.0f) * (knobH + kGap);
 	track_->setBounds(x, under, 64.0f, SwitchChip::kHeight);
 	track_->setVisible(isDust);
-	gamma_->setBounds(x + cell, y + knobH + kGap + (knobH - ValueBox::kCompactHeight) * 0.5f, 2.0f * cell,
-	                  ValueBox::kCompactHeight);
+	subThru_->setBounds(x + 2.0f * cell, under, cell, SwitchChip::kHeight);
+	subThru_->setVisible(isDust);
+	gamma_->setBounds(x, under, 2.0f * cell, ValueBox::kCompactHeight);
 	gamma_->setVisible(!isDust);
+	refreshHonesty();
+}
+
+Knob* EroderExpanded::widthForTest() const { return dustKnobs_[2].get(); }
+
+void EroderExpanded::refreshHonesty() {
+	ero::Row row {};
+	(void)readModulatedRow(dhost_, device_, ero::kDescriptor, row);
+	// WIDTH IS THE NOISE BAND'S (`EroderCard::refreshHonesty`).
+	dustKnobs_[2]->setActive(row[static_cast<size_t>(ero::Param::Source)] > 0.0f);
+	// SUB THRU GIVES BACK WHAT HP WET TOOK: with no filter there is nothing to give back.
+	subThru_->setEnabled(static_cast<double>(row[static_cast<size_t>(ero::Param::HpWet)]) > ero::kHpWetLog2Min);
+	(void)driveCell_->refresh();
 }
 
 bool EroderExpanded::updateContent() {
@@ -183,6 +223,7 @@ bool EroderExpanded::updateContent() {
 	if (plot_->update()) {
 		changed = true;
 	}
+	refreshHonesty();
 	if (changed) {
 		redraw();
 	}

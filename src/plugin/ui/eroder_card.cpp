@@ -22,6 +22,8 @@
 
 #include "plugin/ui/eroder_card.h"
 
+#include "plugin/ui/modulated_row.h"
+
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/theme.h"
 
@@ -51,6 +53,25 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	width_ = knob(ero::Param::Width, "Width");
 	mix_ = knob(ero::Param::Mix, "Mix");
 	cutoff_ = knob(ero::Param::Cutoff, "Cutoff");
+	hpWet_ = knob(ero::Param::HpWet, "HP Wet");
+	follow_ = knob(ero::Param::Follow, "Follow");
+
+	// DRIVE, A PAIR: the knob, and the Type with its own Shape under it — a Shape stops at its ends and only the
+	// selector changes the Type (`mode_value_cell.h`).
+	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
+	drive_->setFaceDiameter(kKnobDiameter);
+	std::vector<ZoneSelect::ZoneName> types;
+	for (const char* name : ero::kDriveModeNames) {
+		types.push_back({ name, {} });
+	}
+	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
+	                                             [](size_t) { return true; });
+	driveCell_->setFaceDiameter(kKnobDiameter);
+	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::DriveShape),
+	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""));
+	(void)driveCell_->refresh();
+	drivePair_ = std::make_unique<PairCell>("Drive", *drive_, *driveCell_);
+	addChild(drivePair_.get());
 
 	const auto box = [this](ero::Param p, const char* caption) {
 		auto b = std::make_unique<ValueBox>(control(p), caption);
@@ -110,7 +131,8 @@ void EroderCard::setModulation(ModState* mod, EditHistory* history) {
 	}
 	plot_->setModulation(mod, history);
 	// THE KNOBS DRAW THEIR OWN ARM GLOW, and watch the panel state for it (`CompCard::setModulation`).
-	for (Knob* knob : { amount_.get(), freq_.get(), width_.get(), mix_.get(), cutoff_.get() }) {
+	for (Knob* knob : { amount_.get(), freq_.get(), width_.get(), mix_.get(), cutoff_.get(), drive_.get(),
+	                    hpWet_.get(), follow_.get() }) {
 		knob->setModulation(mod, history);
 	}
 }
@@ -122,7 +144,7 @@ bool EroderCard::dust() const {
 
 float EroderCard::openHeight() {
 	return kSlotHeadHeight + 4.0f + kPlotHeight + kRowGap + kSwitchHeight + kRowGap + Knob::columnHeight(kKnobDiameter)
-	       + kRowGap + kSmallRowHeight + kPad;
+	       + kRowGap + kSmallRowHeight + kRowGap + PairCell::heightFor(Knob::columnHeight(kKnobDiameter)) + kPad;
 }
 
 float EroderCard::laneHeightAt(float) const { return folded() ? foldedHeight() : openHeight(); }
@@ -135,7 +157,8 @@ float EroderCard::laneExtent(float cross) const {
 }
 
 std::vector<visage::Frame*> EroderCard::dustWidgetsForTest() const {
-	return { amount_.get(), freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get() };
+	return { amount_.get(), freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get(), drivePair_.get(),
+		     hpWet_.get() };
 }
 
 std::vector<visage::Frame*> EroderCard::combWidgetsForTest() const {
@@ -192,6 +215,26 @@ void EroderCard::layOut() {
 	track_->setVisible(open && isDust);
 	gamma_->setBounds(left, boxY, width * 0.5f, ValueBox::kCompactHeight);
 	gamma_->setVisible(open && !isDust);
+	y += kSmallRowHeight + kRowGap;
+
+	// THE THIRD ROW. Dust: the Drive pair across two cells, then HP Wet. Follow is the fourth cell in both engines.
+	const float under = y + PairCell::kCaptionHeight;
+	drivePair_->setBounds(left, y, 2.0f * cell, PairCell::heightFor(knobH));
+	drivePair_->setVisible(open && isDust);
+	hpWet_->setBounds(left + cell * 2.0f, under, cell, knobH);
+	hpWet_->setVisible(open && isDust);
+	follow_->setBounds(left + cell * 3.0f, under, cell, knobH);
+	follow_->setVisible(open);
+	refreshHonesty();
+}
+
+void EroderCard::refreshHonesty() {
+	// WIDTH IS THE NOISE BAND'S: with the shake all sine there is no band, so it is drawn out of the signal (and
+	// still takes the hand — it is a setting the engine reads the moment Source comes up).
+	ero::Row row {};
+	(void)readModulatedRow(host_, device_, ero::kDescriptor, row);
+	width_->setActive(row[static_cast<size_t>(ero::Param::Source)] > 0.0f);
+	(void)driveCell_->refresh();
 }
 
 bool EroderCard::updateContent() {
@@ -204,6 +247,7 @@ bool EroderCard::updateContent() {
 	if (!folded() && plot_->update()) {
 		changed = true;
 	}
+	refreshHonesty();
 	if (changed) {
 		redraw();
 	}

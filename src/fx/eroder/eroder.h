@@ -90,6 +90,8 @@ public:
 	/// WHAT THE LAST PROCESS CALL PUBLISHED, in `Reading` order.
 	[[nodiscard]] const std::array<float, kReadingCount>& readingsForTest() const noexcept { return readings_; }
 	[[nodiscard]] int spectrumTransformsForTest() const noexcept { return analyser_.fftsForTest(); }
+	[[nodiscard]] float envelopeForTest() const noexcept { return envelope_; }
+	[[nodiscard]] float combFollowForTest() const noexcept { return combFollow_; }
 	/// THE SECOND ENGINE, for its own seams.
 	[[nodiscard]] const Dust& dustForTest() const noexcept { return dust_; }
 	[[nodiscard]] float triangleForTest() const noexcept { return triValue_; }
@@ -118,6 +120,11 @@ private:
 	dsp::Analyser<kControlFrames> analyser_ {};
 	int untilAnalyserStep_ = 0;
 	bool analyserLive_ = true; ///< the last block computed the spectrum (`ReadingsSink::wanted`)
+	/// THE FOLLOWER (`Param::Follow`): the input's peak, and what the Comb's depth is multiplied by for it.
+	float envelope_ = 0.0f;
+	float followAttack_ = 1.0f;
+	float followRelease_ = 1.0f;
+	float combFollow_ = 1.0f;
 	device::ReadingsSink sink_ {};
 	std::array<float, kReadingCount> readings_ {};
 	/// WHICH ENGINE THE LAST BLOCK RAN. A block that asks for the other one resets first.

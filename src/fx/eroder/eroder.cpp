@@ -131,6 +131,11 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Resonance)] = s.resonance;
 	row[static_cast<size_t>(Param::Drive)] = s.drive;
 	row[static_cast<size_t>(Param::Track)] = s.track ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::DriveMode)] = static_cast<float>(s.driveMode);
+	row[static_cast<size_t>(Param::DriveShape)] = s.driveShape;
+	row[static_cast<size_t>(Param::HpWet)] = s.hpWet;
+	row[static_cast<size_t>(Param::SubThru)] = s.subThru ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::Follow)] = s.follow;
 	return row;
 }
 
@@ -161,6 +166,12 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.resonance = read(Param::Resonance);
 	s.drive = read(Param::Drive);
 	s.track = read(Param::Track) >= 0.5f;
+	s.driveMode = static_cast<DriveMode>(std::clamp(static_cast<int>(std::lround(read(Param::DriveMode))), 0,
+	                                                static_cast<int>(DriveMode::kCount) - 1));
+	s.driveShape = read(Param::DriveShape);
+	s.hpWet = read(Param::HpWet);
+	s.subThru = read(Param::SubThru) >= 0.5f;
+	s.follow = read(Param::Follow);
 	return out;
 }
 
@@ -312,6 +323,8 @@ void Eroder::prepare(double sampleRate) {
 	tickStep_ = kReferenceRate / sampleRate_;
 	dust_.prepare(sampleRate_);
 	analyser_.prepare(sampleRate_);
+	followAttack_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
+	followRelease_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowReleaseSeconds * sampleRate_)));
 	reset();
 }
 
@@ -320,6 +333,8 @@ void Eroder::reset() noexcept {
 	analyser_.reset();
 	untilAnalyserStep_ = 0;
 	analyserLive_ = true;
+	envelope_ = 0.0f;
+	combFollow_ = 1.0f;
 	readings_.fill(0.0f);
 	line_.reset();
 	writeCounter_ = 0;
@@ -396,6 +411,10 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 				analyser_.step();
 			}
 			untilAnalyserStep_ = kControlFrames;
+			// THE LEVEL THE NEXT CONTROL BLOCK'S SHAKE RIDES IS THE FOLLOWER AS IT STOOD WHEN THE BLOCK BEGAN: taken
+			// on the grid, so however the host cuts its blocks the engines are told the same thing at the same frame.
+			dust_.setEnvelope(envelope_);
+			combFollow_ = followGain(s.follow, envelope_);
 		}
 		const int take = std::min(frames - done, untilAnalyserStep_);
 		float dryL[kControlFrames];
@@ -404,6 +423,17 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 			for (int i = 0; i < take; ++i) {
 				dryL[i] = left[done + i];
 				dryR[i] = right[done + i];
+			}
+		}
+		// THE FOLLOWER: the input's peak, fast up and slow down (`Param::Follow`). Always kept, so turning Follow up
+		// finds it current.
+		for (int i = 0; i < take; ++i) {
+			const float l = std::isfinite(left[done + i]) ? std::abs(left[done + i]) : 0.0f;
+			const float r = std::isfinite(right[done + i]) ? std::abs(right[done + i]) : 0.0f;
+			const float peak = std::max(l, r);
+			envelope_ += (peak - envelope_) * (peak > envelope_ ? followAttack_ : followRelease_);
+			if (envelope_ < kFollowFloor) {
+				envelope_ = 0.0f;
 			}
 		}
 		runEngine(s, left + done, right + done, take);
@@ -509,7 +539,8 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 
 	// DEPTH IS BAKED INTO THE BLEND WEIGHTS, as the firmware bakes it, and the right channel's white
 	// noise is `(1 - width)` of the left's plus `width` of its own.
-	const auto depth = static_cast<float>(d.depth);
+	// FOLLOW RIDES THE DEPTH (a gain of exactly one at no Follow, which changes no bit).
+	const float depth = static_cast<float>(d.depth) * combFollow_;
 	const auto shBlend = static_cast<float>(d.shBlend);
 	const auto width = static_cast<float>(d.width);
 	const float whiteDepth = (1.0f - shBlend) * depth;

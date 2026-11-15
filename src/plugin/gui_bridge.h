@@ -1564,6 +1564,12 @@ public:
 	/// slot nothing has run in yet. Both draw as no meter, which is right: `device_host.h` says a
 	/// caller cannot tell those apart and should not need to.
 	[[nodiscard]] size_t deviceReadingCount(size_t slot) const noexcept;
+	/// **A VIEW SHOWING THIS SLOT'S PICTURE ASKS FOR IT** (`ReadingsSink::wanted`): a lease of half a second of audio at
+	/// 48 kHz, renewed by every call and spent by `readingsWanted`'s `frames`. Message thread asks, audio thread spends;
+	/// no allocation. A slot is a position, the same key the readings themselves are published under.
+	void wantDeviceReadings(size_t slot) noexcept;
+	[[nodiscard]] bool deviceReadingsWanted(size_t slot, int frames) noexcept;
+	[[nodiscard]] int64_t deviceReadingsLeaseForTest(size_t slot) const noexcept;
 	[[nodiscard]] float deviceReading(size_t slot, size_t index) const noexcept;
 
 	/// HOW MUCH OF EACH SOUND IS BEING HEARD — the activation weights, travelling the same way the
@@ -1979,6 +1985,8 @@ private:
 		/// STORED RATHER THAN ASSUMED** — a count taken from a neighbour is how OWLTT's bars froze.
 		std::array<std::atomic<float>, kMaxDeviceReadings> readings {};
 		std::atomic<uint32_t> readingCount { 0 };
+		/// Samples of audio the picture is still wanted for (`wantDeviceReadings`).
+		std::atomic<int64_t> readingsLease { 0 };
 		/// **THE DRIVE METER STARTS AT THE SENTINEL, NOT AT ZERO.** 0.0f is a REAL level; the negative says
 		/// "nobody has published here", which is the true picture before the engine's first block — and a
 		/// position the pool has only just grown must say the same. See `publishFxDrivePeak`.

@@ -9711,3 +9711,27 @@ TEST_CASE("publish: with nothing written and nothing routed the walk is left, an
 	bridge.refresh();
 	CHECK(bridge.value(gain) == doctest::Approx(-12.0).epsilon(1e-9));
 }
+
+TEST_CASE("a device's picture is wanted for a lease of audio that a view renews and a block spends") {
+	ParamBridge bridge;
+	const size_t slot = 1;
+	CHECK_FALSE(bridge.deviceReadingsWanted(slot, 256)); // nobody has asked
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 0);
+	bridge.wantDeviceReadings(slot);
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 24000);
+	int blocks = 0;
+	while (bridge.deviceReadingsWanted(slot, 256)) {
+		++blocks;
+		REQUIRE(blocks < 1000);
+	}
+	CHECK(blocks == 24000 / 256 + 1); // the call that leaves it empty is the last one answered
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 0);
+	// A slot's lease is its own.
+	bridge.wantDeviceReadings(slot);
+	CHECK(bridge.deviceReadingsLeaseForTest(slot + 1) == 0);
+	CHECK_FALSE(bridge.deviceReadingsWanted(slot + 1, 256));
+	// A renewal restores the whole lease, not an addition to what was left.
+	(void)bridge.deviceReadingsWanted(slot, 10000);
+	bridge.wantDeviceReadings(slot);
+	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 24000);
+}

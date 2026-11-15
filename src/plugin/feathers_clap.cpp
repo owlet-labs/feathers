@@ -274,6 +274,10 @@ public:
 					                                       auto* hop = static_cast<ReadingsHop*>(context);
 					                                       hop->bridge->publishDeviceReadings(hop->slot, values,
 					                                                                          count);
+				                                       },
+				                                       [](void* context, int frames) {
+					                                       auto* hop = static_cast<ReadingsHop*>(context);
+					                                       return hop->bridge->deviceReadingsWanted(hop->slot, frames);
 				                                       } });
 			}
 		});

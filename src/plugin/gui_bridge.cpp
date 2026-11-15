@@ -2407,6 +2407,32 @@ void ParamBridge::publishDeviceReadings(size_t slot, const float* values, size_t
 	t->readingCount.store(static_cast<uint32_t>(take), std::memory_order_relaxed);
 }
 
+void ParamBridge::wantDeviceReadings(size_t slot) noexcept {
+	if (auto* t = fxTelemetry_.at(slot); t != nullptr) {
+		t->readingsLease.store(24000, std::memory_order_relaxed);
+	}
+}
+
+bool ParamBridge::deviceReadingsWanted(size_t slot, int frames) noexcept {
+	auto* t = fxTelemetry_.at(slot);
+	if (t == nullptr) {
+		return false;
+	}
+	const int64_t left = t->readingsLease.load(std::memory_order_relaxed);
+	if (left <= 0) {
+		return false;
+	}
+	// A renewal landing between the load and the store is overwritten by a smaller lease for one block at most: the next
+	// renewal (a frame later) restores it, and a picture that misses one block is a hop late, not wrong.
+	t->readingsLease.store(std::max<int64_t>(0, left - std::max(frames, 0)), std::memory_order_relaxed);
+	return true;
+}
+
+int64_t ParamBridge::deviceReadingsLeaseForTest(size_t slot) const noexcept {
+	auto* t = fxTelemetry_.at(slot);
+	return t == nullptr ? 0 : t->readingsLease.load(std::memory_order_relaxed);
+}
+
 size_t ParamBridge::deviceReadingCount(size_t slot) const noexcept {
 	auto* t = fxTelemetry_.at(slot);
 	if (t == nullptr) {

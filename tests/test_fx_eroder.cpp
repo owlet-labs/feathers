@@ -1537,7 +1537,7 @@ double rmsOf(const std::vector<float>& v, size_t from = 0) {
 TEST_CASE("Dust is the declared engine, and its controls are gated to it as the Comb's are to the Comb") {
 	CHECK(declared().mode == Mode::Dust);
 	for (const Param p : { Param::Amount, Param::Freq, Param::Width, Param::Source, Param::Grit, Param::Stereo,
-	                       Param::Resonance, Param::Drive, Param::Track }) {
+	                       Param::Resonance, Param::Track, Param::HpWet, Param::SubThru }) {
 		const auto& d = kParamDescs[static_cast<size_t>(p)];
 		CHECK(d.gateControl == static_cast<int16_t>(Param::Mode));
 		CHECK(d.gateMask == (1u << static_cast<uint32_t>(Mode::Dust)));
@@ -1547,8 +1547,10 @@ TEST_CASE("Dust is the declared engine, and its controls are gated to it as the 
 		CHECK(d.gateControl == static_cast<int16_t>(Param::Mode));
 		CHECK(d.gateMask == (1u << static_cast<uint32_t>(Mode::Comb)));
 	}
-	CHECK(kParamDescs[static_cast<size_t>(Param::Mix)].gateControl == -1);
-	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].gateControl == -1);
+	// BOTH ENGINES': the Mix, the engine itself, the Drive stage and Follow.
+	for (const Param p : { Param::Mix, Param::Mode, Param::Drive, Param::DriveMode, Param::DriveShape, Param::Follow }) {
+		CHECK(kParamDescs[static_cast<size_t>(p)].gateControl == -1);
+	}
 
 	// THE CODEC CARRIES EVERY ONE.
 	State s;
@@ -1562,6 +1564,11 @@ TEST_CASE("Dust is the declared engine, and its controls are gated to it as the 
 	s.settings.resonance = -0.7f;
 	s.settings.drive = 0.8f;
 	s.settings.track = true;
+	s.settings.driveMode = DriveMode::Crush;
+	s.settings.driveShape = 0.35f;
+	s.settings.hpWet = 8.5f;
+	s.settings.subThru = true;
+	s.settings.follow = 0.45f;
 	CHECK(stateOf(rowOf(s), static_cast<size_t>(Param::kCount)) == s);
 }
 
@@ -2742,4 +2749,94 @@ TEST_CASE("Readings: no transform runs while no view has asked or nobody listens
 	half.left = 24000;
 	(void)leased(part, 8192);
 	CHECK(part.spectrumTransformsForTest() > 0); // a picture that was idle starts again from nothing, its count with it
+}
+
+TEST_CASE("Comb: the Drive stage is the last thing on its wet — the same settings as Dust's, the dry untouched") {
+	// THE SETTINGS ARE THE ONES DUST DERIVES from the same three controls.
+	Settings s = defaults();
+	s.drive = 0.7f;
+	s.driveMode = DriveMode::Fold;
+	s.driveShape = 0.4f;
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	const std::vector<float> in = whiteInput(4800, 0.3f);
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	e.processStereo(l.data(), r.data(), static_cast<int>(in.size()));
+	const DriveSettings want = deriveDrive(0.7f, DriveMode::Fold, 0.4f, kRate);
+	const DriveSettings& got = e.combDriveForTest();
+	CHECK(got.driven);
+	CHECK(got.mode == DriveMode::Fold);
+	CHECK(got.shape == want.shape);
+	CHECK(got.gain == want.gain);
+	CHECK(got.norm == want.norm);
+
+	// CRUSH, BARELY ON, IS A ROUNDING OF EVERY FRAME: so what the stage did to the wet, and that the dry went round
+	// it, can be read frame by frame.
+	s.driveMode = DriveMode::Crush;
+	s.drive = 1.0e-6f;
+	s.driveShape = 1.0f; // a step of a quarter
+	Eroder c;
+	c.prepare(kRate);
+	c.setTarget(s);
+	int rounded = 0;
+	int moved = 0;
+	for (size_t i = 0; i < 4000; ++i) {
+		float a = in[i];
+		float b = in[i];
+		c.processStereo(&a, &b, 1);
+		const float wet = c.lastCombWetForTest();
+		const float shaped = c.lastCombShapedForTest();
+		rounded += shaped == std::round(wet / 0.25f) * 0.25f ? 1 : 0;
+		moved += shaped != wet ? 1 : 0;
+		// THE OUTPUT IS THE DRY PLUS THE SHAPED WET, exactly.
+		REQUIRE(a == in[i] + shaped);
+	}
+	CHECK(rounded >= 3990); // a hold of one frame and a millionth skips one in a great many
+	CHECK(moved > 3000);    // and the wet was not on the grid already
+}
+
+TEST_CASE("Comb: with Drive at work it is bounded, the same at any partition, and its tail ends in exact silence") {
+	for (const DriveMode mode : { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Crush, DriveMode::Wreck }) {
+		CAPTURE(static_cast<int>(mode));
+		Settings s = defaults();
+		s.mix = 1.0f;
+		s.drive = 1.0f;
+		s.driveMode = mode;
+		s.driveShape = 1.0f;
+		s.follow = 0.5f;
+		const std::vector<float> in = whiteInput(24000, 0.9f);
+		const auto render = [&](int block) {
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			std::vector<float> l = in;
+			std::vector<float> r = in;
+			l.resize(in.size() + 144000, 0.0f);
+			r.resize(in.size() + 144000, 0.0f);
+			for (size_t done = 0; done < l.size();) {
+				const size_t take = std::min<size_t>(l.size() - done, static_cast<size_t>(block));
+				e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+				done += take;
+			}
+			return l;
+		};
+		const std::vector<float> whole = render(4096);
+		const bool sameByOnes = render(1) == whole;
+		const bool sameByOdd = render(37) == whole;
+		CHECK(sameByOnes);
+		CHECK(sameByOdd);
+		float peak = 0.0f;
+		for (const float v : whole) {
+			REQUIRE(std::isfinite(v));
+			peak = std::max(peak, std::abs(v));
+		}
+		CHECK(peak < 8.0f);
+		bool silent = true;
+		for (size_t i = whole.size() - 24000; i < whole.size(); ++i) {
+			silent = silent && whole[i] == 0.0f;
+		}
+		CHECK(silent);
+	}
 }

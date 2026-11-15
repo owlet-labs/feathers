@@ -150,7 +150,6 @@ std::vector<visage::Frame*> EroderExpanded::dustWidgetsForTest() const {
 	for (const auto& k : dustKnobs_) {
 		out.push_back(k.get());
 	}
-	out.push_back(drivePair_.get());
 	out.push_back(hpWet_.get());
 	out.push_back(track_.get());
 	out.push_back(subThru_.get());
@@ -187,7 +186,8 @@ void EroderExpanded::layOut() {
 	// DUST: Follow then Mix close the third row. COMB: Mix then Follow open the second.
 	items.push_back({ isDust ? follow_.get() : mix_.get(), 1, true, knobH });
 	items.push_back({ isDust ? mix_.get() : follow_.get(), 1, true, knobH });
-	items.push_back({ drivePair_.get(), 2, isDust, PairCell::heightFor(knobH) });
+	// THE DRIVE PAIR IS BOTH ENGINES'. In the Comb it follows Follow on the second row; in Dust it has a row.
+	items.push_back({ drivePair_.get(), 2, true, PairCell::heightFor(knobH) });
 	const float under = flowCells(items, static_cast<int>(kPerRow), x, y, cell, kGap) + kGap;
 	// HP WET SITS BESIDE THE PAIR, level with the cells inside it.
 	hpWet_->setBounds(x + 2.0f * cell, drivePair_->y() + PairCell::kCaptionHeight, cell, knobH);

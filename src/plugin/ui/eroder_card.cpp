@@ -157,8 +157,7 @@ float EroderCard::laneExtent(float cross) const {
 }
 
 std::vector<visage::Frame*> EroderCard::dustWidgetsForTest() const {
-	return { amount_.get(), freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get(), drivePair_.get(),
-		     hpWet_.get() };
+	return { amount_.get(), freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get(), hpWet_.get() };
 }
 
 std::vector<visage::Frame*> EroderCard::combWidgetsForTest() const {
@@ -217,10 +216,11 @@ void EroderCard::layOut() {
 	gamma_->setVisible(open && !isDust);
 	y += kSmallRowHeight + kRowGap;
 
-	// THE THIRD ROW. Dust: the Drive pair across two cells, then HP Wet. Follow is the fourth cell in both engines.
+	// THE THIRD ROW, both engines': the Drive pair across two cells, and Follow in the fourth. Dust's HP Wet is
+	// between them.
 	const float under = y + PairCell::kCaptionHeight;
 	drivePair_->setBounds(left, y, 2.0f * cell, PairCell::heightFor(knobH));
-	drivePair_->setVisible(open && isDust);
+	drivePair_->setVisible(open);
 	hpWet_->setBounds(left + cell * 2.0f, under, cell, knobH);
 	hpWet_->setVisible(open && isDust);
 	follow_->setBounds(left + cell * 3.0f, under, cell, knobH);

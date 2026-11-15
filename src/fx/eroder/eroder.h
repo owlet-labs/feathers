@@ -92,6 +92,9 @@ public:
 	[[nodiscard]] int spectrumTransformsForTest() const noexcept { return analyser_.fftsForTest(); }
 	[[nodiscard]] float envelopeForTest() const noexcept { return envelope_; }
 	[[nodiscard]] float combFollowForTest() const noexcept { return combFollow_; }
+	[[nodiscard]] float lastCombWetForTest() const noexcept { return lastCombWet_; }
+	[[nodiscard]] float lastCombShapedForTest() const noexcept { return lastCombShaped_; }
+	[[nodiscard]] const DriveSettings& combDriveForTest() const noexcept { return combShaper_.settings(); }
 	/// THE SECOND ENGINE, for its own seams.
 	[[nodiscard]] const Dust& dustForTest() const noexcept { return dust_; }
 	[[nodiscard]] float triangleForTest() const noexcept { return triValue_; }
@@ -125,6 +128,10 @@ private:
 	float followAttack_ = 1.0f;
 	float followRelease_ = 1.0f;
 	float combFollow_ = 1.0f;
+	/// THE COMB'S DRIVE STAGE (`drive_stage.h`), and its last left frame either side of it.
+	DriveStage combShaper_ {};
+	float lastCombWet_ = 0.0f;
+	float lastCombShaped_ = 0.0f;
 	device::ReadingsSink sink_ {};
 	std::array<float, kReadingCount> readings_ {};
 	/// WHICH ENGINE THE LAST BLOCK RAN. A block that asks for the other one resets first.

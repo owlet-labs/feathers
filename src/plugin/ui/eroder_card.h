@@ -49,7 +49,7 @@
 //   │  Amount    Freq     Width     Mix           │  DUST's knobs          COMB: Tone  Char  Cutoff  Mix
 //   │ [Source 100%] [Grit 0%] (Track)             │  DUST's small row      COMB: [Gamma]
 //   │ ┌─ DRIVE ─────────┐                         │
-//   │ │ Drive  Soft 0%  │  HP Wet   Follow        │  DUST's shaper pair and wet highpass; Follow is both engines'
+//   │ │ Amount Soft 0%  │  HP Wet   Follow        │  the shaper pair and Follow are both engines'; HP Wet is DUST's
 //   │ └─────────────────┘                         │
 //   └─────────────────────────────────────────────┘
 //

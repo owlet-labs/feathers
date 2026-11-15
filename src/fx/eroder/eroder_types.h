@@ -294,8 +294,10 @@ inline constexpr uint32_t kCombOnly = kModeBit(Mode::Comb);
 ///   Tube   a tanh read from a bias, so it leans; Shape is how far, so the even harmonics
 ///   Fold   a wavefolder; Shape goes from a sine's rounded folds to a triangle's
 ///   Crush  no shaper: Drive holds each sample longer, Shape rounds it coarser
-///   Wreck  a tanh into a folder, in series; Shape is how far past its first peak the folder is pushed, and the
-///          line's feedback is taken AFTER the pair, so Resonance rings through them
+///   Wreck  a tanh into a folder, in series; Shape is how far past its first peak the folder is pushed, and in
+///          Dust the line's feedback is taken AFTER the pair, so Resonance rings through them
+/// BOTH ENGINES HAVE THE STAGE (`drive_stage.h`), last on their wet: Dust's before its HP Wet, the Comb's on the wet
+/// it is about to add to the dry.
 enum class DriveMode : int { Soft, Tube, Fold, Crush, Wreck, kCount };
 inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Crush", "Wreck" };
 
@@ -315,10 +317,10 @@ enum class Param : int {
 	Grit,      ///< Dust: how much of the shake is a value held between the input's zero crossings
 	Stereo,    ///< Dust: one shake for both sides at 0, one each at 1
 	Resonance, ///< Dust: signed feedback round the line
-	Drive,     ///< Dust: how hard the shaken signal is pushed into `DriveMode`'s shaper
+	Drive,     ///< both engines: how hard the wet is pushed into `DriveMode`'s shaper
 	Track,     ///< Dust: Freq follows the last note played
-	DriveMode, ///< Dust: which shaper
-	DriveShape, ///< Dust: the shaper's own coordinate, 0..1, stopping at both ends
+	DriveMode, ///< both engines: which shaper
+	DriveShape, ///< both engines: the shaper's own coordinate, 0..1, stopping at both ends
 	HpWet,     ///< Dust: a highpass on the shaken signal, after the shaper; log2 hertz, the bottom is none
 	SubThru,   ///< Dust: what HP Wet took from the shaken signal is given back from the dry
 	Follow,    ///< both engines: how much of the shake rides the input's level
@@ -620,13 +622,13 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "How hard the shaken signal is pushed into the shaper Type names. It comes in from nothing, "
-                "and the level is held about where it was. In Crush it is how long each sample is held",
+     .tooltip = "How hard the effect's own signal is pushed into the shaper Type names. It comes in from "
+                "nothing, and the level is held about where it was. In Crush it is how long each sample is held",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly},
+     .gateControl = -1,
+     .gateMask = 0},
     {.key = "eroder_track", .name = "Eroder Track",
      .min = 0.0,
      .max = 1.0,
@@ -655,13 +657,13 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = false,
      .offsetsMayLeaveRange = false,
      .tooltip = "What Drive pushes into: Soft rounds the peaks, Tube leans to one side, Fold turns them back "
-                "on themselves, Crush holds and rounds each sample, Wreck is a distortion into a folder with "
-                "the feedback running through both",
+                "on themselves, Crush holds and rounds each sample, Wreck is a distortion into a folder (in "
+                "Dust the feedback runs through both)",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly,
+     .gateControl = -1,
+     .gateMask = 0,
      .centred = false,
      .shortName = "Type"},
     {.key = "eroder_drive_shape", .name = "Eroder Drive Shape",
@@ -678,8 +680,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly,
+     .gateControl = -1,
+     .gateMask = 0,
      .centred = false,
      .shortName = "Shape"},
     {.key = "eroder_hp_wet", .name = "Eroder HP Wet",
@@ -885,6 +887,21 @@ struct DustDerived {
 	float stereoNorm = 1.0f;
 };
 
+/// **WHAT A `DriveStage` RUNS ON** (`drive_stage.h`): both engines derive one from the same three controls.
+struct DriveSettings {
+	bool driven = false; ///< false at the bottom of Drive: the stage is not run
+	DriveMode mode = DriveMode::Soft;
+	float shape = 0.0f;
+	float gain = 1.0f; ///< into the curve
+	float norm = 1.0f; ///< the make-up out of it
+	double crushHoldFrames = 1.0;
+	float crushStep = 0.0f;
+};
+/// @param reuse  settings this may take the make-up from when the Drive, Type and Shape are the same — the make-up
+///               is a quadrature, and the control path asks for it every block.
+[[nodiscard]] DriveSettings deriveDrive(float drive, DriveMode mode, float shape, double sampleRate,
+                                        const DriveSettings* reuse = nullptr) noexcept;
+
 /// @param reuse  a result this one may take the shaper's make-up from when the Drive, Type and Shape are the same —
 ///               the make-up is a quadrature, and the control path asks for it every block.
 [[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate,
@@ -898,6 +915,8 @@ struct DustDerived {
 /// THE SHAPER'S GAIN FOR A VANISHING SIGNAL, make-up included: what a feedback through it is divided by, so a tail
 /// always dies.
 [[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept;
+/// The stage's settings as `deriveDust` found them.
+[[nodiscard]] DriveSettings driveOf(const DustDerived& derived) noexcept;
 /// The curve's slope at zero.
 [[nodiscard]] double driveSlope(DriveMode mode, float shape) noexcept;
 /// WHAT FOLLOW MAKES OF THE FOLLOWER: 1 at no Follow, the follower's reach of `kFollowFullAt` at all of it.

@@ -228,6 +228,29 @@ float followGain(float follow, float envelope) noexcept {
 	return (1.0f - f) + f * reach;
 }
 
+DriveSettings deriveDrive(float driveKnob, DriveMode mode, float shape, double sampleRate,
+                          const DriveSettings* reuse) noexcept {
+	const double rate = sampleRate > 0.0 ? sampleRate : kReferenceRate;
+	// At the bottom of Drive the stage is not run at all; just above, the signal is under the curve's knee.
+	const double drive = std::clamp(static_cast<double>(driveKnob), 0.0, 1.0);
+	DriveSettings d;
+	d.driven = drive > 0.0;
+	d.mode = mode;
+	d.shape = std::clamp(shape, 0.0f, 1.0f);
+	d.gain = static_cast<float>(std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * drive));
+	const bool same = reuse != nullptr && reuse->mode == d.mode && reuse->shape == d.shape && reuse->gain == d.gain;
+	d.norm = same ? reuse->norm : static_cast<float>(driveMakeUp(d.mode, static_cast<double>(d.gain), d.shape));
+	d.crushHoldFrames = 1.0 + rate * (std::exp2(kCrushOctaves * drive) - 1.0) / kCrushTopHz;
+	d.crushStep = static_cast<float>(
+	    std::exp2(1.0 - (kCrushBitsFine + (kCrushBitsCoarse - kCrushBitsFine) * static_cast<double>(d.shape))));
+	return d;
+}
+
+DriveSettings driveOf(const DustDerived& d) noexcept {
+	return { d.driven, d.driveMode, d.driveShape, static_cast<float>(d.driveGain), static_cast<float>(d.driveNorm),
+		     d.crushHoldFrames, static_cast<float>(d.crushStep) };
+}
+
 DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRate, const DustDerived* reuse) noexcept {
 	const double rate = sampleRate > 0.0 ? sampleRate : kReferenceRate;
 	DustDerived d;
@@ -265,17 +288,19 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	d.source = std::clamp(s.source, 0.0f, 1.0f);
 	d.grit = std::clamp(s.grit, 0.0f, 1.0f);
 
-	// THE SHAPER. At the bottom of Drive it is not run at all; just above, the signal is under its knee.
-	const double drive = std::clamp(static_cast<double>(s.drive), 0.0, 1.0);
-	d.driven = drive > 0.0;
-	d.driveMode = s.driveMode;
-	d.driveShape = std::clamp(s.driveShape, 0.0f, 1.0f);
-	d.driveGain = std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * drive);
-	const bool same = reuse != nullptr && reuse->driveMode == d.driveMode && reuse->driveShape == d.driveShape
-	                  && reuse->driveGain == d.driveGain;
-	d.driveNorm = same ? reuse->driveNorm : driveMakeUp(d.driveMode, d.driveGain, d.driveShape);
-	d.crushHoldFrames = 1.0 + rate * (std::exp2(kCrushOctaves * drive) - 1.0) / kCrushTopHz;
-	d.crushStep = std::exp2(1.0 - (kCrushBitsFine + (kCrushBitsCoarse - kCrushBitsFine) * static_cast<double>(d.driveShape)));
+	// THE SHAPER (`deriveDrive`).
+	DriveSettings before;
+	if (reuse != nullptr) {
+		before = driveOf(*reuse);
+	}
+	const DriveSettings shaper = deriveDrive(s.drive, s.driveMode, s.driveShape, rate, reuse != nullptr ? &before : nullptr);
+	d.driven = shaper.driven;
+	d.driveMode = shaper.mode;
+	d.driveShape = shaper.shape;
+	d.driveGain = static_cast<double>(shaper.gain);
+	d.driveNorm = static_cast<double>(shaper.norm);
+	d.crushHoldFrames = shaper.crushHoldFrames;
+	d.crushStep = static_cast<double>(shaper.crushStep);
 
 	d.hpOn = static_cast<double>(s.hpWet) > kHpWetLog2Min;
 	d.hpHz = std::min(std::exp2(static_cast<double>(s.hpWet)), kDustFreqNyquistFraction * rate);
@@ -308,7 +333,7 @@ void Dust::prepare(double sampleRate) {
 	line_.prepare(sampleRate_, 2.0 * kDustAmountMaxSeconds + (kDustMarginFrames + 8.0) / sampleRate_);
 	smoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDustSmoothingSeconds * sampleRate_)));
 	followSmoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
-	dcCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * kDriveDcHz / sampleRate_));
+	shaper_.prepare(sampleRate_);
 	reset();
 }
 
@@ -329,7 +354,7 @@ void Dust::reset() noexcept {
 	prevMid_ = 0.0f;
 	feedbackL_ = feedbackR_ = 0.0f;
 	rng_ = kRngSeed;
-	resetShaper();
+	shaper_.reset();
 	for (Band& band : hpWet_) {
 		band = Band {};
 	}
@@ -341,14 +366,6 @@ void Dust::reset() noexcept {
 	lastMod_[0] = lastMod_[1] = 0.0f;
 	lastNoise_[0] = lastNoise_[1] = 0.0f;
 	holds_ = 0;
-}
-
-void Dust::resetShaper() noexcept {
-	over_.reset();
-	quiet_ = 0;
-	crushPhase_ = 0.0;
-	crushL_ = crushR_ = 0.0f;
-	dcL_ = dcR_ = 0.0f;
 }
 
 float Dust::nextNoise() noexcept {
@@ -377,13 +394,8 @@ void Dust::process(const Settings& settings, float* left, float* right, int fram
 }
 
 void Dust::tick(const Settings& settings) noexcept {
-	const bool wasDriven = derived_.driven;
-	const DriveMode was = derived_.driveMode;
 	derived_ = deriveDust(settings, pitchSemitones_, sampleRate_, &derived_);
-	// A SHAPER THAT WAS RESTING, OR ANOTHER ONE, STARTS FROM NOTHING rather than from what it last held.
-	if (derived_.driven && (!wasDriven || was != derived_.driveMode)) {
-		resetShaper();
-	}
+	shaper_.set(driveOf(derived_));
 	if (!placed_) {
 		followGain_ = followGain(derived_.follow, envelope_);
 		amountFrames_ = static_cast<float>(derived_.amountSeconds * sampleRate_);
@@ -421,13 +433,7 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 	const float source = d.source;
 	const float grit = d.grit;
 
-	const bool driven = d.driven;
-	const DriveMode driveMode = d.driveMode;
-	const float driveShape = d.driveShape;
-	const auto driveGain = static_cast<float>(d.driveGain);
-	const auto driveNorm = static_cast<float>(d.driveNorm);
-	const auto crushStep = static_cast<float>(d.crushStep);
-	const float dcCoefficient = dcCoefficient_;
+	const bool wreck = d.driven && d.driveMode == DriveMode::Wreck;
 
 	const auto hpA1 = static_cast<float>(d.hpA1);
 	const auto hpA2 = static_cast<float>(d.hpA2);
@@ -517,53 +523,10 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		float tapL = wetL;
 		float tapR = wetR;
 		lastRead_ = wetL;
-		if (driven && driveMode == DriveMode::Crush) {
-			// HELD FOR A TIME, ROUNDED TO A STEP. A hold of one frame is every frame.
-			crushPhase_ += 1.0;
-			if (crushPhase_ >= d.crushHoldFrames) {
-				crushPhase_ -= d.crushHoldFrames;
-				crushL_ = std::round(wetL / crushStep) * crushStep;
-				crushR_ = std::round(wetR / crushStep) * crushStep;
-			}
-			wetL = crushL_;
-			wetR = crushR_;
-		}
-		else if (driven) {
-			const bool silentIn = wetL == 0.0f && wetR == 0.0f;
-			// FOUR TIMES OVER, so what the curve adds above the band is filtered off rather than folded back into it.
-			over_.process(&wetL, &wetR, 1, [driveMode, driveGain, driveShape](float& l, float& r) {
-				l = shapeDrive(driveMode, l * driveGain, driveShape);
-				r = shapeDrive(driveMode, r * driveGain, driveShape);
-			});
-			wetL *= driveNorm;
-			wetR *= driveNorm;
-			if (driveMode == DriveMode::Tube) {
-				dcL_ += (wetL - dcL_) * dcCoefficient;
-				dcR_ += (wetR - dcR_) * dcCoefficient;
-				wetL -= dcL_;
-				wetR -= dcR_;
-			}
-			// THE OVERSAMPLER'S FILTERS RING DOWN FOR EVER IN A FLOAT: once nothing has gone in and next to nothing
-			// has come out for a while, they are emptied and the shaper puts out nothing until something goes in.
-			if (silentIn && std::abs(wetL) < kFeedbackFloor && std::abs(wetR) < kFeedbackFloor) {
-				if (quiet_ < kQuietFrames) {
-					++quiet_;
-					if (quiet_ == kQuietFrames) {
-						over_.reset();
-						dcL_ = dcR_ = 0.0f;
-					}
-				}
-				if (quiet_ >= kQuietFrames) {
-					wetL = wetR = 0.0f;
-				}
-			}
-			else {
-				quiet_ = 0;
-			}
-			if (driveMode == DriveMode::Wreck) {
-				tapL = wetL;
-				tapR = wetR;
-			}
+		shaper_.process(wetL, wetR);
+		if (wreck) {
+			tapL = wetL;
+			tapR = wetR;
 		}
 
 		lastShaped_ = wetL;

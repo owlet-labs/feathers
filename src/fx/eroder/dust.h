@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "fx/dyn/oversampler.h"
+#include "fx/eroder/drive_stage.h"
 #include "fx/eroder/eroder_types.h"
 #include "fx/sklitter/ring.h"
 
@@ -81,7 +81,6 @@ private:
 	void tick(const Settings& settings) noexcept;
 	void renderChunk(float* left, float* right, int frames) noexcept;
 	[[nodiscard]] float nextNoise() noexcept;
-	void resetShaper() noexcept;
 
 	fx::sklitter::Ring line_ {};
 	double sampleRate_ = 48000.0;
@@ -117,16 +116,8 @@ private:
 	float feedbackL_ = 0.0f;
 	float feedbackR_ = 0.0f;
 
-	/// THE SHAPER'S RUNNING STATE: the oversampler round the curves, Crush's hold, Tube's offset.
-	dyn::Oversampler4x over_ {};
-	static constexpr int kQuietFrames = 256;
-	int quiet_ = 0;
-	double crushPhase_ = 0.0;
-	float crushL_ = 0.0f;
-	float crushR_ = 0.0f;
-	float dcL_ = 0.0f;
-	float dcR_ = 0.0f;
-	float dcCoefficient_ = 0.0f;
+	/// THE SHAPER (`drive_stage.h`).
+	DriveStage shaper_ {};
 	/// HP WET, a side, and the same filter on the dry for Sub Thru.
 	Band hpWet_[2] = {};
 	Band hpDry_[2] = {};

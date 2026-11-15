@@ -42931,14 +42931,23 @@ TEST_CASE("ERODER's Drive is one pair in the card and the window: the knob, and 
 	CHECK(eroField(d, ero::Param::DriveShape) == 0.0f);
 	CHECK(eroField(d, ero::Param::DriveMode) == static_cast<float>(ero::DriveMode::Fold));
 
-	// THE COMB HAS NO DRIVE: the pair goes with Dust's controls; Follow stays, in both.
+	// THE PAIR AND FOLLOW ARE BOTH ENGINES'; HP Wet and Sub Thru are Dust's and go with it.
 	CHECK(d.card->followForTest()->isVisible());
 	CHECK(panel->followForTest()->isVisible());
+	CHECK(d.card->hpWetForTest()->isVisible());
+	const float cardPairX = d.card->drivePairForTest()->x();
+	const float cardPairY = d.card->drivePairForTest()->y();
 	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
 	(void)d.card->updateContent();
 	(void)panel->updateContent();
-	CHECK_FALSE(d.card->drivePairForTest()->isVisible());
-	CHECK_FALSE(panel->drivePairForTest()->isVisible());
+	CHECK(d.card->drivePairForTest()->isVisible());
+	CHECK(panel->drivePairForTest()->isVisible());
+	// ON THE CARD IT DOES NOT MOVE when the engine does.
+	CHECK(d.card->drivePairForTest()->x() == cardPairX);
+	CHECK(d.card->drivePairForTest()->y() == cardPairY);
+	CHECK(panel->drivePairForTest()->right() <= panel->width());
+	CHECK(panel->drivePairForTest()->bottom() <= panel->height());
+	CHECK_FALSE(d.card->hpWetForTest()->isVisible());
 	CHECK_FALSE(panel->hpWetForTest()->isVisible());
 	CHECK_FALSE(panel->subThruForTest()->isVisible());
 	CHECK(d.card->followForTest()->isVisible());

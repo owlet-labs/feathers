@@ -323,6 +323,7 @@ void Eroder::prepare(double sampleRate) {
 	tickStep_ = kReferenceRate / sampleRate_;
 	dust_.prepare(sampleRate_);
 	analyser_.prepare(sampleRate_);
+	combShaper_.prepare(sampleRate_);
 	followAttack_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
 	followRelease_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowReleaseSeconds * sampleRate_)));
 	reset();
@@ -335,6 +336,7 @@ void Eroder::reset() noexcept {
 	analyserLive_ = true;
 	envelope_ = 0.0f;
 	combFollow_ = 1.0f;
+	combShaper_.reset();
 	readings_.fill(0.0f);
 	line_.reset();
 	writeCounter_ = 0;
@@ -524,6 +526,9 @@ void Eroder::tick(const Settings& s) noexcept {
 	derived_ = derive(phasesOf(smoothedTone_, smoothedCharacter_, static_cast<double>(s.gamma)),
 	                  static_cast<double>(s.cutoffOctaves), static_cast<double>(s.mix), pitchSemitones_,
 	                  sampleRate_);
+	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
+	const DriveSettings before = combShaper_.settings();
+	combShaper_.set(deriveDrive(s.drive, s.driveMode, s.driveShape, sampleRate_, &before));
 }
 
 void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
@@ -674,8 +679,13 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 
 		// ADDITIVE, the dry at unity. RIGHT THEN LEFT — `processMono` runs this over one buffer and
 		// the survivor must be the left. NOT SATURATED: see `eroder_types.h`.
-		right[i] = inR + wetR * outGain;
-		left[i] = inL + wetL * outGain;
+		float outL = wetL * outGain;
+		float outR = wetR * outGain;
+		lastCombWet_ = outL;
+		combShaper_.process(outL, outR);
+		lastCombShaped_ = outL;
+		right[i] = inR + outR;
+		left[i] = inL + outL;
 	}
 }
 

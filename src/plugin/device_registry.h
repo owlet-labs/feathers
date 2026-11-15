@@ -154,6 +154,9 @@ static_assert(fx::resonate::kReadingCount <= rack::RackEngine::kMaxReadings,
 // **THE EQ, THE SECOND PICTURE** (its analyser frame): the line the note above asks for.
 static_assert(fx::eq::kReadingCount <= rack::RackEngine::kMaxReadings,
               "the EQ publishes more readings than the rack stores; raise RackEngine::kMaxReadings");
+// AND THE ERODER'S, the same frame and the read head beside it.
+static_assert(fx::eroder::kReadingCount <= rack::RackEngine::kMaxReadings,
+              "the Eroder publishes more readings than the rack stores; raise RackEngine::kMaxReadings");
 // THE PHASER/FLANGER'S SWEEP READINGS — ten today, a line here so a later picture cannot outgrow the store quietly.
 static_assert(fx::phaser::kReadingCount <= rack::RackEngine::kMaxReadings,
               "the Phaser/Flanger publishes more readings than the rack stores; raise RackEngine::kMaxReadings");

@@ -680,6 +680,9 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/disperser_card.cpp
 	src/plugin/ui/disperser_plot.cpp
 	src/plugin/ui/disperser_expanded.cpp
+	src/plugin/ui/eroder_card.cpp
+	src/plugin/ui/eroder_plot.cpp
+	src/plugin/ui/eroder_expanded.cpp
 	src/plugin/ui/phaser_card.cpp
 	src/plugin/ui/phaser_plot.cpp
 	src/plugin/ui/phaser_expanded.cpp

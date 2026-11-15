@@ -42146,3 +42146,348 @@ TEST_CASE("row lock: the lane draws with a row locked and unlocked, Melody and D
 		shot.save(path);
 	}
 }
+
+//--------------------------------------------------------------------------------------------------//
+// THE ERODER'S CARD, PLOT AND WINDOW.                                                                //
+//--------------------------------------------------------------------------------------------------//
+
+namespace ero = feathers::fx::eroder;
+
+namespace {
+
+constexpr size_t eroAt(ero::Param p) { return static_cast<size_t>(p); }
+
+float eroField(DynCardFixture<ui::EroderCard>& d, ero::Param p) { return d.f.deviceHost.fieldAt(d.device, eroAt(p)); }
+
+/// A WHOLE FRAME OF READINGS: `pre` and `post` flat at the levels given, the counters as given.
+std::array<float, ero::kReadingCount> eroFrame(float frameA, float frameB, float preDb, float postDb) {
+	std::array<float, ero::kReadingCount> v {};
+	v[static_cast<size_t>(ero::Reading::FrameA)] = frameA;
+	for (size_t k = 0; k < feathers::dsp::kAnalyserBins; ++k) {
+		v[static_cast<size_t>(ero::Reading::PreFirst) + k] = preDb - static_cast<float>(k);
+		v[static_cast<size_t>(ero::Reading::PostFirst) + k] = postDb - static_cast<float>(k);
+	}
+	v[static_cast<size_t>(ero::Reading::FrameB)] = frameB;
+	v[static_cast<size_t>(ero::Reading::PitchSemitones)] = 60.0f;
+	return v;
+}
+
+bool allVisible(const std::vector<visage::Frame*>& frames, bool want) {
+	for (const visage::Frame* f : frames) {
+		if (f == nullptr || f->isVisible() != want) {
+			return false;
+		}
+	}
+	return !frames.empty();
+}
+
+} // namespace
+
+TEST_CASE("ERODER's card and window draw only the running engine's controls, and trade them when the engine changes") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	(void)d.card->updateContent();
+	(void)panel->updateContent();
+
+	// THE DECLARED DEFAULT IS DUST.
+	REQUIRE(eroField(d, ero::Param::Mode) == static_cast<float>(ero::Mode::Dust));
+	CHECK(allVisible(d.card->dustWidgetsForTest(), true));
+	CHECK(allVisible(d.card->combWidgetsForTest(), false));
+	CHECK(allVisible(panel->dustWidgetsForTest(), true));
+	CHECK(allVisible(panel->combWidgetsForTest(), false));
+	CHECK(d.card->plotForTest()->showsDustForTest());
+	CHECK(d.card->mixForTest()->isVisible());
+	const float mixX = d.card->mixForTest()->x();
+
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	CHECK(d.card->updateContent());
+	CHECK(panel->updateContent());
+	CHECK(allVisible(d.card->dustWidgetsForTest(), false));
+	CHECK(allVisible(d.card->combWidgetsForTest(), true));
+	CHECK(allVisible(panel->dustWidgetsForTest(), false));
+	CHECK(allVisible(panel->combWidgetsForTest(), true));
+	CHECK_FALSE(d.card->plotForTest()->showsDustForTest());
+	CHECK_FALSE(panel->plotForTest()->showsDustForTest());
+	// MIX IS BOTH ENGINES', and does not move on the card when the engine does.
+	CHECK(d.card->mixForTest()->isVisible());
+	CHECK(d.card->mixForTest()->x() == mixX);
+
+	// NOTHING OF EITHER ENGINE OVERLAPS ITS NEIGHBOUR OR LEAVES THE CARD, in either state.
+	for (const float mode : { 0.0f, 1.0f }) {
+		d.set(eroAt(ero::Param::Mode), mode);
+		(void)d.card->updateContent();
+		const auto shown = mode == 0.0f ? d.card->dustWidgetsForTest() : d.card->combWidgetsForTest();
+		for (size_t i = 0; i < shown.size(); ++i) {
+			CAPTURE(mode);
+			CAPTURE(i);
+			CHECK(shown[i]->width() > 20.0f);
+			CHECK(shown[i]->x() >= 0.0f);
+			CHECK(shown[i]->right() <= d.card->width());
+			CHECK(shown[i]->bottom() <= ui::EroderCard::openHeight());
+			for (size_t j = i + 1; j < shown.size(); ++j) {
+				const bool apart = shown[i]->right() <= shown[j]->x() || shown[j]->right() <= shown[i]->x()
+				                   || shown[i]->bottom() <= shown[j]->y() || shown[j]->bottom() <= shown[i]->y();
+				CHECK(apart);
+			}
+		}
+	}
+}
+
+TEST_CASE("ERODER's plot draws Dust's band from the device's own mapping: the handle at Freq and Amount, the skirt the engine's filter") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	d.set(eroAt(ero::Param::Freq), 10.0f);    // 1024 Hz
+	d.set(eroAt(ero::Param::Amount), -12.0f); // 244 microseconds
+	d.set(eroAt(ero::Param::Width), 0.25f);
+	(void)d.card->updateContent();
+	ui::EroderPlot* plot = d.card->plotForTest();
+	REQUIRE(plot != nullptr);
+	const double rate = d.f.deviceHost.sampleRate();
+
+	CHECK(plot->bandForTest().freqHz == doctest::Approx(1024.0).epsilon(1e-9));
+	CHECK(plot->bandForTest().amountSeconds == doctest::Approx(std::exp2(-12.0)).epsilon(1e-9));
+	CHECK(plot->handleXForTest() == doctest::Approx(plot->hzToXForTest(1024.0)));
+	// THE AMOUNT'S HEIGHT: the foot is no travel, the top the most, even in octaves of time between.
+	const float foot = plot->plotFootForTest();
+	const float top = plot->plotTopForTest();
+	REQUIRE(foot > top + 40.0f);
+	const double t = (-12.0 - ero::kDustAmountLog2Min) / (ero::kDustAmountLog2Max - ero::kDustAmountLog2Min);
+	CHECK(plot->handleYForTest() == doctest::Approx(foot - static_cast<float>(t) * (foot - top)).epsilon(1e-5));
+	CHECK(plot->amountToYForTest(ero::kDustAmountLog2Min) == doctest::Approx(foot));
+	CHECK(plot->amountToYForTest(ero::kDustAmountLog2Max) == doctest::Approx(top));
+
+	// THE SKIRT, RESTATED HERE: two trapezoidal bandpasses in series are their analogue prototype at the warped
+	// frequency, so the level is twice 20 log10 of one's, with Q even in octaves between narrow and wide.
+	const double q = ero::kDustQNarrow * std::pow(ero::kDustQWide / ero::kDustQNarrow, 0.25);
+	const auto want = [&](double hz) {
+		const double x = std::tan(std::numbers::pi * hz / rate) / std::tan(std::numbers::pi * 1024.0 / rate);
+		const double one = (x / q) * (x / q) / ((1.0 - x * x) * (1.0 - x * x) + (x / q) * (x / q));
+		return 20.0 * std::log10(one);
+	};
+	CHECK(plot->bandDbForTest(1024.0) == doctest::Approx(0.0).epsilon(1e-9));
+	for (const double hz : { 100.0, 512.0, 900.0, 1200.0, 2048.0, 9000.0 }) {
+		CAPTURE(hz);
+		CHECK(plot->bandDbForTest(hz) == doctest::Approx(want(hz)).epsilon(1e-6));
+	}
+	// NON-VACUITY: it is a band — an octave off is tens of dB down at this width.
+	CHECK(plot->bandDbForTest(2048.0) < -20.0);
+
+	// TRACK: the band follows the published note, an octave up for twelve semitones.
+	d.set(eroAt(ero::Param::Track), 1.0f);
+	auto frame = eroFrame(0.0f, 0.0f, -160.0f, -160.0f);
+	frame[static_cast<size_t>(ero::Reading::PitchSemitones)] = 72.0f;
+	d.publish(frame);
+	d.f.bridge.refresh();
+	(void)d.card->updateContent();
+	CHECK(plot->bandForTest().freqHz == doctest::Approx(2048.0).epsilon(1e-6));
+}
+
+TEST_CASE("ERODER's plot handle writes Freq across and Amount up, the wheel Width; the Comb's picture writes nothing") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	d.set(eroAt(ero::Param::Freq), 10.0f);
+	d.set(eroAt(ero::Param::Amount), -13.0f);
+	d.set(eroAt(ero::Param::Width), 0.5f);
+	(void)d.card->updateContent();
+	ui::EroderPlot* plot = d.card->plotForTest();
+	const float y0 = 0.5f * (plot->plotTopForTest() + plot->plotFootForTest());
+	const float x0 = plot->handleXForTest();
+
+	// ACROSS: the pointer's hertz, as log2, and the Amount untouched inside the dead zone.
+	plot->onMouseDown().callback(at(x0, y0));
+	for (int step = 1; step <= 10; ++step) {
+		const float x = x0 + 3.0f * static_cast<float>(step);
+		plot->onMouseDrag().callback(at(x, y0 + ui::EroderPlot::kAmountDeadZone));
+		CHECK(eroField(d, ero::Param::Freq) == doctest::Approx(std::log2(plot->xToHzForTest(x))).epsilon(1e-5));
+		CHECK(eroField(d, ero::Param::Amount) == -13.0f);
+	}
+	plot->onMouseUp().callback(at(x0 + 30.0f, y0));
+	CHECK(eroField(d, ero::Param::Freq) > 10.2f); // non-vacuity: it moved
+
+	// UP: relative to the press, past the dead zone, the whole range to the plot's height.
+	const float span = plot->plotFootForTest() - plot->plotTopForTest();
+	const double perPixel = (ero::kDustAmountLog2Max - ero::kDustAmountLog2Min) / static_cast<double>(span);
+	const float x1 = plot->handleXForTest();
+	plot->onMouseDown().callback(at(x1, y0));
+	plot->onMouseDrag().callback(at(x1, y0 - ui::EroderPlot::kAmountDeadZone - 20.0f));
+	CHECK(eroField(d, ero::Param::Amount) == doctest::Approx(-13.0 + 20.0 * perPixel).epsilon(1e-5));
+	plot->onMouseDrag().callback(at(x1, y0 + ui::EroderPlot::kAmountDeadZone + 10.0f));
+	CHECK(eroField(d, ero::Param::Amount) == doctest::Approx(-13.0 - 10.0 * perPixel).epsilon(1e-5));
+	plot->onMouseUp().callback(at(x1, y0));
+
+	// THE WHEEL: one notch of Width each way, held inside 0..1.
+	visage::MouseEvent wheel = at(x1, y0);
+	wheel.wheel_delta_y = 1.0f;
+	CHECK(plot->onMouseWheel().callback(wheel));
+	CHECK(eroField(d, ero::Param::Width) == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
+	wheel.wheel_delta_y = -1.0f;
+	(void)plot->onMouseWheel().callback(wheel);
+	(void)plot->onMouseWheel().callback(wheel);
+	CHECK(eroField(d, ero::Param::Width) == doctest::Approx(0.5 - ui::EroderPlot::kWidthPerNotch));
+	d.set(eroAt(ero::Param::Width), 0.99f);
+	wheel.wheel_delta_y = 1.0f;
+	(void)plot->onMouseWheel().callback(wheel);
+	CHECK(eroField(d, ero::Param::Width) == 1.0f);
+
+	// THE COMB: nothing on its picture is a control.
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	(void)d.card->updateContent();
+	const float freqBefore = eroField(d, ero::Param::Freq);
+	const float amountBefore = eroField(d, ero::Param::Amount);
+	const float widthBefore = eroField(d, ero::Param::Width);
+	plot->onMouseDown().callback(at(20.0f, y0));
+	plot->onMouseDrag().callback(at(60.0f, y0 - 30.0f));
+	plot->onMouseUp().callback(at(60.0f, y0 - 30.0f));
+	CHECK_FALSE(plot->onMouseWheel().callback(wheel));
+	CHECK(eroField(d, ero::Param::Freq) == freqBefore);
+	CHECK(eroField(d, ero::Param::Amount) == amountBefore);
+	CHECK(eroField(d, ero::Param::Width) == widthBefore);
+}
+
+TEST_CASE("ERODER's plot takes a spectrum frame only whole and only when it is new, and rests when nothing is published") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	(void)d.card->updateContent();
+	ui::EroderPlot* plot = d.card->plotForTest();
+	CHECK_FALSE(plot->hasSpectrumForTest());
+	// AT REST: nothing moves, so nothing repaints.
+	CHECK_FALSE(d.card->updateContent());
+	CHECK_FALSE(d.card->updateContent());
+
+	// HALF-WRITTEN (the counters disagree): dropped.
+	d.publish(eroFrame(3.0f, 2.0f, -40.0f, -30.0f));
+	d.f.bridge.refresh();
+	(void)d.card->updateContent();
+	CHECK_FALSE(plot->hasSpectrumForTest());
+
+	// WHOLE: taken, bin for bin.
+	d.publish(eroFrame(3.0f, 3.0f, -40.0f, -30.0f));
+	d.f.bridge.refresh();
+	CHECK(d.card->updateContent());
+	REQUIRE(plot->hasSpectrumForTest());
+	for (const size_t k : { size_t { 0 }, size_t { 17 }, feathers::dsp::kAnalyserBins - 1 }) {
+		CHECK(plot->preDbForTest(k) == -40.0f - static_cast<float>(k));
+		CHECK(plot->postDbForTest(k) == -30.0f - static_cast<float>(k));
+	}
+	// THE SAME FRAME AGAIN IS NOT NEWS.
+	CHECK_FALSE(d.card->updateContent());
+	// A NEW COUNTER IS.
+	d.publish(eroFrame(4.0f, 4.0f, -50.0f, -45.0f));
+	d.f.bridge.refresh();
+	CHECK(d.card->updateContent());
+	CHECK(plot->preDbForTest(0) == -50.0f);
+}
+
+TEST_CASE("ERODER's window keeps the read head's history, one column for each new reading; the card keeps none") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	(void)panel->updateContent();
+	CHECK(panel->plotForTest()->headSamplesForTest() == 0);
+	auto frame = eroFrame(1.0f, 1.0f, -60.0f, -60.0f);
+	for (int n = 1; n <= 5; ++n) {
+		frame[static_cast<size_t>(ero::Reading::HeadNearL)] = 0.0001f;
+		frame[static_cast<size_t>(ero::Reading::HeadFarL)] = 0.0001f * static_cast<float>(n + 1);
+		d.publish(frame);
+		d.f.bridge.refresh();
+		CHECK(panel->updateContent());
+		CHECK(panel->plotForTest()->headSamplesForTest() == static_cast<size_t>(n));
+		// THE SAME READING AGAIN adds nothing and repaints nothing.
+		CHECK_FALSE(panel->updateContent());
+	}
+	(void)d.card->updateContent();
+	CHECK(d.card->plotForTest()->headSamplesForTest() == 0);
+}
+
+TEST_CASE("ERODER's Comb picture is the eleven quantities Tone and Character turn, with the floors the engine applies") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	for (const auto& [tone, character, gamma] :
+	     { std::array { 0.0f, 0.0f, 0.0f }, std::array { 0.37f, 2.61f, 0.0f }, std::array { 5.25f, 0.5f, 0.002f } }) {
+		d.set(eroAt(ero::Param::Tone), tone);
+		d.set(eroAt(ero::Param::Character), character);
+		d.set(eroAt(ero::Param::Gamma), gamma);
+		(void)d.card->updateContent();
+		const ero::Phases phases = ero::phasesOf(tone, character, gamma);
+		const ero::ToneBank t = ero::evalToneBank(phases.tone);
+		const ero::CharacterBank c = ero::evalCharacterBank(phases.character);
+		const auto& bars = d.card->plotForTest()->barsForTest();
+		CAPTURE(tone);
+		CHECK(bars[0] == std::max(static_cast<float>(ero::kBankFloor), t[0]));
+		CHECK(bars[1] == std::max(static_cast<float>(ero::kBankFloor), t[1]));
+		for (size_t i = 2; i < 6; ++i) {
+			CHECK(bars[i] == t[i]);
+		}
+		CHECK(bars[6] == std::max(static_cast<float>(ero::kDepthFloor), c[0]));
+		for (size_t i = 1; i < 5; ++i) {
+			CHECK(bars[6 + i] == c[i]);
+		}
+		for (const float bar : bars) {
+			CHECK(bar >= 0.0f);
+			CHECK(bar <= 1.0f);
+		}
+	}
+	// NON-VACUITY: the coordinates do move the bars.
+	d.set(eroAt(ero::Param::Tone), 0.0f);
+	(void)d.card->updateContent();
+	const auto before = d.card->plotForTest()->barsForTest();
+	d.set(eroAt(ero::Param::Tone), 0.37f);
+	(void)d.card->updateContent();
+	CHECK(before != d.card->plotForTest()->barsForTest());
+}
+
+TEST_CASE("ERODER's window knobs are watched for arm, all ten of them, once the window is given the panel state") {
+	// THE SUBSCRIPTION IS THE GLOW (the lane's own case says why, for the card): a knob the panel does not watch
+	// cannot be told to light. The lane sweep covers cards only, so the window says it here.
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	REQUIRE(view != nullptr);
+	view->setBounds(0.0f, 0.0f, view->minimumSize().x, view->minimumSize().y);
+	ui::ModState* mod = d.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	std::vector<ui::Knob*> knobs;
+	collectKnobs(view.get(), &knobs);
+	// Dust's eight, Mix, and the Comb's Cutoff.
+	REQUIRE(knobs.size() == 10);
+	for (const ui::Knob* knob : knobs) {
+		CHECK_FALSE(mod->watches(knob));
+	}
+	view->setModulation(mod, nullptr);
+	for (const ui::Knob* knob : knobs) {
+		CHECK(mod->watches(knob));
+	}
+}
+
+
+TEST_CASE("ERODER's plot asks for the spectrum while Dust's picture is shown, and not hidden or in Comb") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::EroderPlot* plot = d.card->plotForTest();
+	const size_t slot = d.f.bridge.fxSlotOf(d.device);
+	const auto spend = [&] {
+		while (d.f.bridge.deviceReadingsWanted(slot, 24000)) {
+		}
+		REQUIRE(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+	};
+	REQUIRE(eroField(d, ero::Param::Mode) == static_cast<float>(ero::Mode::Dust));
+	// SHOWN, DUST: the whole half second the bridge grants.
+	spend();
+	plot->setVisible(true);
+	(void)plot->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 24000);
+	// HIDDEN: no renewal.
+	spend();
+	plot->setVisible(false);
+	(void)plot->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+	// COMB draws no spectrum, so it asks for none.
+	plot->setVisible(true);
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	(void)plot->update();
+	(void)plot->update();
+	CHECK(d.f.bridge.deviceReadingsLeaseForTest(slot) == 0);
+}

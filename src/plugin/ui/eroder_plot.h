@@ -1,0 +1,185 @@
+/*
+ * Copyright © 2026 Owlet Records
+ *
+ * This file is part of Feathers.
+ *
+ * Feathers is free software: you can redistribute it and/or modify it under the
+ * terms of the GNU General Public License as published by the Free Software Foundation,
+ * either version 3 of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with this program.
+ * If not, see <https://www.gnu.org/licenses/>.
+ *
+ * --- Additional terms under GNU GPL version 3 section 7 ---
+ * This file requires preservation of the above copyright notice and author attribution
+ * in all copies or substantial portions of this file.
+ */
+
+
+#pragma once
+
+#include "backplane/device_host.h"
+#include "fx/eroder/eroder_types.h"
+#include "plugin/ui/device_control.h"
+#include "plugin/ui/tooltip.h"
+
+#include <visage/ui.h>
+
+#include <array>
+#include <memory>
+#include <vector>
+
+// THE ERODER'S PICTURE — one frame, two pictures, by the engine that is running.
+//
+// **DUST: THE SPECTRUM, AND THE BAND THAT SHAKES THE HEAD DRAWN ON IT.** Behind, what came in (grey) and what went
+// out (the line; where it stands above the grey is what the shaking added), both the device's own analyser frame
+// (`fx::eroder::Reading`). In front, the modulator's band: `deriveDust`'s centre and Q through the engine's own
+// filter (two trapezoidal bandpasses in series, drawn with the same frequency warp), its peak at the height of the
+// Amount. The sine half of Source is a stem at the centre.
+//
+// **THE BAND'S HANDLE IS THREE CONTROLS.** A press places the centre under the pointer and a drag moves it: Freq.
+// The same drag up and down is the Amount, RELATIVE to where the press landed and only past a dead zone, so a
+// sideways drag does not touch it. The wheel is the Width. With a source armed the press is a ROUTE drag on Freq,
+// `Knob`'s gesture, and the reach is drawn along the foot. Each of the three also has a knob beside the plot, which
+// is where its own routes are made.
+//
+// **COMB: ELEVEN BARS**, the eleven quantities Tone and Character turn (`evalToneBank`, `evalCharacterBank`, with
+// the floors `derive` applies), in two groups; the window prints each one's real number under it (`derive`).
+// Nothing on this picture is draggable: its two coordinates are the cells beside it.
+//
+// **THE WINDOW'S PLOT CARRIES THE READ HEAD UNDER IT**: where each side's head has been behind the write, the last
+// few seconds, left over right, from the device's readings.
+//
+// **IT REPAINTS ONLY WHEN WHAT IT DRAWS CHANGES**: `update()` compares the controls, the note, the analyser's
+// frame counter, the head and the arm state against what the last frame was drawn from. A device that is not
+// processing publishes nothing new, so the picture rests.
+
+namespace feathers::ui {
+
+class ModState;
+class EditHistory;
+
+class EroderPlot final : public visage::Frame, public TooltipSource {
+public:
+	/// @param large the window's size: axis labels, the bars' numbers, the head strip.
+	EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool large);
+
+	void draw(visage::Canvas& canvas) override;
+	const char* tooltipAt(visage::Point) const override;
+	void offeredControls(std::vector<Offered>& out) const override;
+	void setModulation(ModState* mod, EditHistory* history);
+
+	/// RECOMPUTE IF AN INPUT CHANGED, and report whether it did — the card's `updateContent` contract.
+	bool update();
+
+	static constexpr double kMinHz = 20.0;
+	static constexpr double kMaxHz = 20000.0;
+	/// THE SPECTRUM'S WINDOW, dB of power density after the tilt: the top and the foot of the plot.
+	static constexpr float kTopDb = -18.0f;
+	static constexpr float kFootDb = -102.0f;
+	/// PINK NOISE DRAWS FLAT: dB an octave added about 1 kHz.
+	static constexpr float kTiltDbPerOctave = 3.0f;
+	/// HOW FAR DOWN THE BAND'S SKIRT IS DRAWN before it meets the foot.
+	static constexpr float kBandFloorDb = -36.0f;
+	/// HOW FAR THE POINTER MOVES UP OR DOWN BEFORE A DRAG TOUCHES THE AMOUNT, in logical pixels.
+	static constexpr float kAmountDeadZone = 3.0f;
+	/// ONE WHEEL NOTCH OF WIDTH.
+	static constexpr double kWidthPerNotch = 0.04;
+	static constexpr size_t kBars = 11;
+	static constexpr size_t kToneBars = 6;
+	static constexpr size_t kHeadHistory = 180;
+	static constexpr float kHeadStripHeight = 46.0f;
+
+	//----------------------------------------------------------------------------------------------//
+	// TEST SEAMS — the plotted VALUES, so a case asserts the picture's numbers.                      //
+	//----------------------------------------------------------------------------------------------//
+	[[nodiscard]] bool showsDustForTest() const noexcept { return dust_; }
+	[[nodiscard]] const fx::eroder::DustDerived& bandForTest() const noexcept { return band_; }
+	/// The band's level at `hz`, dB below its peak: the engine's filter restated.
+	[[nodiscard]] double bandDbForTest(double hz) const noexcept { return bandDb(hz); }
+	[[nodiscard]] float handleXForTest() const noexcept { return hzToX(band_.freqHz); }
+	[[nodiscard]] float handleYForTest() const noexcept { return amountToY(static_cast<double>(settings_.amount)); }
+	[[nodiscard]] float hzToXForTest(double hz) const noexcept { return hzToX(hz); }
+	[[nodiscard]] double xToHzForTest(float x) const noexcept { return xToHz(x); }
+	/// THE BAND'S AXIS: its foot (no travel) and its top (the most), in the frame's y.
+	[[nodiscard]] float plotFootForTest() const noexcept { return plotFoot(); }
+	[[nodiscard]] float plotTopForTest() const noexcept { return plotTop(); }
+	[[nodiscard]] float amountToYForTest(double log2Seconds) const noexcept { return amountToY(log2Seconds); }
+	[[nodiscard]] const std::array<float, kBars>& barsForTest() const noexcept { return bars_; }
+	[[nodiscard]] bool hasSpectrumForTest() const noexcept { return haveSpectrum_; }
+	[[nodiscard]] float preDbForTest(size_t bin) const noexcept { return pre_[bin]; }
+	[[nodiscard]] float postDbForTest(size_t bin) const noexcept { return post_[bin]; }
+	[[nodiscard]] size_t headSamplesForTest() const noexcept { return headCount_; }
+	[[nodiscard]] int recomputesForTest() const noexcept { return recomputes_; }
+
+private:
+	using Bins = std::array<float, feathers::dsp::kAnalyserBins>;
+	struct Head {
+		float nearL = 0.0f;
+		float farL = 0.0f;
+		float nearR = 0.0f;
+		float farR = 0.0f;
+		bool operator==(const Head&) const = default;
+	};
+
+	[[nodiscard]] DeviceControl& control(fx::eroder::Param p) const;
+	[[nodiscard]] float inset() const noexcept;
+	[[nodiscard]] float plotTop() const noexcept;
+	[[nodiscard]] float plotFoot() const noexcept;
+	[[nodiscard]] float hzToX(double hz) const noexcept;
+	[[nodiscard]] double xToHz(float x) const noexcept;
+	[[nodiscard]] float dbToY(float db) const noexcept;
+	[[nodiscard]] float amountToY(double log2Seconds) const noexcept;
+	[[nodiscard]] double bandDb(double hz) const noexcept;
+	[[nodiscard]] double pitchRatio() const noexcept;
+	/// THE VALUE A PRESS AT `x` WRITES INTO FREQ: the pointer's hertz with the note's ratio taken back out.
+	[[nodiscard]] double freqValueForX(float x) const noexcept;
+	void drawDust(visage::Canvas& canvas);
+	void drawComb(visage::Canvas& canvas);
+	void drawHead(visage::Canvas& canvas);
+
+	backplane::DeviceHost& host_;
+	DeviceInstanceId device_ = kNoInstance;
+	bool large_ = false;
+	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
+	ModState* mod_ = nullptr;
+	EditHistory* history_ = nullptr;
+
+	// WHAT THE PICTURE ON SCREEN WAS COMPUTED FROM — `update()`'s comparison.
+	bool computed_ = false;
+	fx::eroder::Row row_ {};
+	fx::eroder::Settings settings_ {};
+	bool dust_ = true;
+	double pitch_ = fx::eroder::kReferenceNote;
+	double rate_ = 48000.0;
+	fx::eroder::DustDerived band_ {};
+	fx::eroder::Derived comb_ {};
+	std::array<float, kBars> bars_ {};
+	bool haveSpectrum_ = false;
+	float frame_ = -1.0f;
+	Bins pre_ {};
+	Bins post_ {};
+	bool armed_ = false;
+	float routeAmount_ = 0.0f;
+	bool routeBipolar_ = false;
+	std::array<Head, kHeadHistory> head_ {};
+	size_t headNext_ = 0;
+	size_t headCount_ = 0;
+	Head lastHead_ {};
+	int recomputes_ = 0;
+
+	struct Drag {
+		bool active = false;
+		bool route = false;
+		bool amountGesture = false;
+		float startY = 0.0f;
+		double startAmount = 0.0;
+		float anchor = 0.0f;
+	} drag_ {};
+};
+
+} // namespace feathers::ui

@@ -77,7 +77,7 @@ std::vector<ChromeHueWatch*>& hueWatches() {
 }
 
 double& offsetSlot() {
-	static double offset = 0.0;
+	static double offset = kChromeHueDefault;
 	return offset;
 }
 
@@ -87,7 +87,7 @@ std::vector<AccentHueWatch*>& accentWatches() {
 }
 
 double& accentSlot() {
-	static double offset = 0.0;
+	static double offset = kAccentHueDefault;
 	return offset;
 }
 

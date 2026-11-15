@@ -5333,20 +5333,20 @@ TEST_CASE("backlog LG: the rack's Libra mark opens the same settings screen, and
 
 	// THE HUE, through the screen, onto the rack's desk.
 	visage::MouseEvent onStrip;
-	onStrip.position = { screen->hueX(60.0), screen->hueStripBounds().y() + 2.0f };
+	onStrip.position = { screen->hueX(90.0), screen->hueStripBounds().y() + 2.0f };
 	screen->mouseDown(onStrip);
 	screen->mouseUp(onStrip);
-	CHECK(ui::chromeHueOffset() == 60.0);
+	CHECK(ui::chromeHueOffset() == 90.0);
 	feathers::EditorPrefs again;
 	again.load();
-	CHECK(again.number(ui::kChromeHuePrefKey, 0.0) == 60.0);
+	CHECK(again.number(ui::kChromeHuePrefKey, 0.0) == 90.0);
 	// THE ACCENT HUE, the second axis, onto the rack's desk through the rack's own watch.
 	visage::MouseEvent onAccent;
 	onAccent.position = { screen->accentX(-30.0), screen->accentStripBounds().y() + 2.0f };
 	screen->mouseDown(onAccent);
 	screen->mouseUp(onAccent);
 	CHECK(ui::accentHueOffset() == -30.0);
-	CHECK(ui::chromeHueOffset() == 60.0);
+	CHECK(ui::chromeHueOffset() == 90.0);
 	{
 		feathers::EditorPrefs accentDesk;
 		accentDesk.load();

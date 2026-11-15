@@ -1643,9 +1643,10 @@ TEST_CASE("backlog LG: the Libra mark opens the settings screen, whose hue strip
 		}
 	} reset;
 	clearPrefsFile();
-	REQUIRE(ui::chromeHueOffset() == 0.0);
 	{
 		EditorFixture f;
+		CHECK(ui::chromeHueOffset() == ui::kChromeHueDefault); // no desk line: a fresh editor comes up at the default
+		CHECK(ui::accentHueOffset() == ui::kAccentHueDefault);
 		ui::HeaderBar* header = f.gui.headerForTest();
 		ui::SettingsScreen* screen = f.gui.settingsForTest();
 		REQUIRE(header != nullptr);
@@ -1674,7 +1675,7 @@ TEST_CASE("backlog LG: the Libra mark opens the settings screen, whose hue strip
 		                          screen->hueStripBounds().height() });
 		CHECK(ui::chromeHueOffset() == doctest::Approx(120.0).epsilon(0.01));
 		const double chosen = ui::chromeHueOffset();
-		CHECK(ui::kAccent == ui::rotateHue(feathers::tokens::kAccent, chosen));
+		CHECK(ui::kAccent == ui::rotateHue(feathers::tokens::kAccent, chosen + ui::kAccentHueDefault));
 		CHECK(ui::kLine == ui::rotateHue(feathers::tokens::kLine, chosen));
 		{
 			feathers::EditorPrefs again;
@@ -1683,12 +1684,12 @@ TEST_CASE("backlog LG: the Libra mark opens the settings screen, whose hue strip
 		}
 		// A DOUBLE CLICK ON THE STRIP GOES HOME; RESET DOES TOO.
 		pressSettings(*screen, screen->hueStripBounds(), 2);
-		CHECK(ui::chromeHueOffset() == 0.0);
+		CHECK(ui::chromeHueOffset() == ui::kChromeHueDefault);
 		pressSettings(*screen, { screen->hueX(-90.0) - 0.5f, screen->hueStripBounds().y(), 1.0f,
 		                          screen->hueStripBounds().height() });
 		CHECK(ui::chromeHueOffset() == doctest::Approx(-90.0).epsilon(0.02));
 		pressSettings(*screen, screen->hueResetBounds());
-		CHECK(ui::chromeHueOffset() == 0.0);
+		CHECK(ui::chromeHueOffset() == ui::kChromeHueDefault);
 		pressSettings(*screen, { screen->hueX(120.0) - 0.5f, screen->hueStripBounds().y(), 1.0f,
 		                          screen->hueStripBounds().height() });
 		REQUIRE(ui::chromeHueOffset() == doctest::Approx(chosen));

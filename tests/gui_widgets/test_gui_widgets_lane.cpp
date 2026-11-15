@@ -2295,6 +2295,21 @@ TEST_CASE("the camera writes the colours the editor drew") {
 	// gamma-correct, and none of that can turn the accent's blue into its red. kAccent is 0xff7FA8E8,
 	// where blue is the largest channel and red the smallest; a swapped writer reverses exactly that.
 	FilterFixture f;
+	// THIS CASE READS HUES OFF THE BASE PALETTE (blue accent, warm value): pin it there, because the shipped
+	// default is a rotated one whose accent is not blue. The editor restores the desk hue when it is made, so
+	// this comes AFTER the fixture, and puts back what the process held.
+	struct BasePalette {
+		double chrome = ui::chromeHueOffset();
+		double accent = ui::accentHueOffset();
+		BasePalette() {
+			(void)ui::setChromeHueOffset(0.0);
+			(void)ui::setAccentHueOffset(0.0);
+		}
+		~BasePalette() {
+			(void)ui::setChromeHueOffset(chrome);
+			(void)ui::setAccentHueOffset(accent);
+		}
+	} basePalette;
 	auto* editor = dynamic_cast<visage::ApplicationEditor*>(f.root);
 	REQUIRE(editor != nullptr);
 
@@ -4228,6 +4243,21 @@ TEST_CASE("the response curve is drawn in greys rather than in a blue-to-orange 
 	// measures 106 of 255 at its ends and fails this; a grey line cannot, whatever brightness it is
 	// drawn at, which is what makes chroma the right thing to bound rather than "is it kMuted".
 	FilterFixture f;
+	// THIS CASE READS HUES OFF THE BASE PALETTE (blue accent, warm value): pin it there, because the shipped
+	// default is a rotated one whose accent is not blue. The editor restores the desk hue when it is made, so
+	// this comes AFTER the fixture, and puts back what the process held.
+	struct BasePalette {
+		double chrome = ui::chromeHueOffset();
+		double accent = ui::accentHueOffset();
+		BasePalette() {
+			(void)ui::setChromeHueOffset(0.0);
+			(void)ui::setAccentHueOffset(0.0);
+		}
+		~BasePalette() {
+			(void)ui::setChromeHueOffset(chrome);
+			(void)ui::setAccentHueOffset(accent);
+		}
+	} basePalette;
 	// SWITCHED IN, so the curve draws at full strength. A switched-out card fades everything by
 	// kOffAlpha, and a faded colour over the ground measures a chroma nobody chose.
 	f.click(f.card->enableBounds());

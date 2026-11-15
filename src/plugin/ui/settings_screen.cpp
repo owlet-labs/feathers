@@ -341,24 +341,24 @@ void SettingsScreen::mouseDown(const visage::MouseEvent& e) {
 	}
 #endif
 	if (hueResetBounds().contains(p)) {
-		(void)setChromeHueOffset(0.0);
+		(void)setChromeHueOffset(kChromeHueDefault);
 		redraw();
 		return;
 	}
 	if (hueStripBounds().contains(p)) {
 		// A DOUBLE CLICK ON THE STRIP IS THE OTHER WAY HOME, as on every knob in this editor.
-		(void)setChromeHueOffset(e.repeatClickCount() >= 2 ? 0.0 : hueAt(p.x));
+		(void)setChromeHueOffset(e.repeatClickCount() >= 2 ? kChromeHueDefault : hueAt(p.x));
 		dragging_ = e.repeatClickCount() < 2 ? Dragging::Chrome : Dragging::None;
 		redraw();
 		return;
 	}
 	if (accentResetBounds().contains(p)) {
-		(void)setAccentHueOffset(0.0);
+		(void)setAccentHueOffset(kAccentHueDefault);
 		redraw();
 		return;
 	}
 	if (accentStripBounds().contains(p)) {
-		(void)setAccentHueOffset(e.repeatClickCount() >= 2 ? 0.0 : accentAt(p.x));
+		(void)setAccentHueOffset(e.repeatClickCount() >= 2 ? kAccentHueDefault : accentAt(p.x));
 		dragging_ = e.repeatClickCount() < 2 ? Dragging::Accent : Dragging::None;
 		redraw();
 	}

@@ -130,8 +130,8 @@ std::vector<ModHandleAxis> HitPicture::modAxesFor(Handle h) {
 	// EACH AXIS: the control it edits, whether it runs across (time) or up and down, and the plot's own map from the control's VALUE to a
 	// coordinate (the same arithmetic `handleAt` and `drag` use, restated per control). Read at the live laws, so an arc follows the picture.
 	const auto modulated = [](const device::Modulatable* c) { return c->display().modulated; };
-	const auto across = [this](device::Modulatable* c, std::function<float(double)> f) { return ModHandleAxis { c, true, std::move(f) }; };
-	const auto upDown = [this](device::Modulatable* c, std::function<float(double)> f) { return ModHandleAxis { c, false, std::move(f) }; };
+	const auto across = [](device::Modulatable* c, std::function<float(double)> f) { return ModHandleAxis { c, true, std::move(f) }; };
+	const auto upDown = [](device::Modulatable* c, std::function<float(double)> f) { return ModHandleAxis { c, false, std::move(f) }; };
 	const auto xOfSeconds = [this](double s) { return xOf(s); };
 	const auto xOfLog2 = [this](double v) { return xOf(std::exp2(v)); };
 	const auto yOfLog2Hz = [this](double v) { return yOfHz(std::exp2(v)); };

@@ -55,8 +55,9 @@ inline constexpr int kVoicesCounts[] = { 1, 2, 4 };
 inline constexpr int kMaxVoices = 4;
 inline constexpr const char* kDriveCurveNames[] = { "Tanh", "Tube", "Soft Clip" };
 inline constexpr const char* kPitchModeNames[] = { "Free", "Semitones", "Off" };
-/// KEYS: the drum answers one key (Note), or every key and plays it as a pitch (the engine's Pitched mode).
-inline constexpr const char* kKeysNames[] = { "One Key", "Pitched" };
+/// KEYS: the drum answers one key (Note); or every key, each struck as if it were Note (the key is not a pitch); or every key, played as a
+/// pitch (the engine's Pitched mode). Stored by label.
+inline constexpr const char* kKeysNames[] = { "One Key", "Any Key", "Pitched" };
 
 /// WHICH KINDS READ A CONTROL, as a bit per `feathers::drum::Kind` (Kick 0 .. String 5). `kindReads` and `kindControls`
 /// (dsp/drum_voice.h) are the engine's own statement of the same; test_drum_device holds these equal to them.
@@ -126,7 +127,7 @@ enum class Param : uint8_t {
 	ClickSweep,
 	ClickSweepTime,
 	StartPhase,
-	Keys, ///< appended last so the order stays stable: One Key | Pitched
+	Keys, ///< appended last so the order stays stable: One Key | Any Key | Pitched
 	kCount
 };
 static_assert(static_cast<size_t>(Param::kCount) == 55);
@@ -134,8 +135,10 @@ static_assert(static_cast<size_t>(Param::kCount) == 55);
 inline constexpr int16_t kKindControl = static_cast<int16_t>(Param::Kind);
 inline constexpr int16_t kTriggerControl = static_cast<int16_t>(Param::Trigger);
 inline constexpr int16_t kKeysControl = static_cast<int16_t>(Param::Keys);
-/// A control that only One Key reads (Note: Pitched answers every key; Bend and Terrain Pitch: the engine's Pitched mode leaves them out).
+/// WHICH KEYS MODES READ A CONTROL, as a bit per mode: Note is One Key's alone (Any Key and Pitched answer every key); Bend and Terrain Pitch are
+/// the drum's own pitch, read by One Key and Any Key (Pitched takes the key's pitch and the engine leaves them out).
 inline constexpr uint32_t kOneKeyOnly = 0x1u;
+inline constexpr uint32_t kOwnPitchKeys = 0x3u;
 
 inline constexpr const char* kTags[] = { "drum", "generator" };
 
@@ -215,7 +218,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
 	 .tooltip = "How far a tuning expression on the key moves this drum, held when it is struck or moved while it rings: at 100% the whole move, at 0 the drum ignores it",
 	 .gateControl = kKeysControl,
-	 .gateMask = kOneKeyOnly},
+	 .gateMask = kOwnPitchKeys},
 	{.key = "drum_delay", .name = "Delay", .min = 0.0, .max = 10.0, .def = 0.0, .stepped = false,
 	 .unit = device::Unit::Number, .names = {}, .modulatable = true,
 	 .tooltip = "How long, in ms, after the note the drum strikes"},
@@ -259,7 +262,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .unit = device::Unit::Choice, .names = kPitchModeNames, .modulatable = false,
 	 .tooltip = "How the terrain's pitch reaches the drum: Free follows it, Semitones rounds it to whole semitones, Off ignores it",
 	 .gateControl = kKeysControl,
-	 .gateMask = kOneKeyOnly},
+	 .gateMask = kOwnPitchKeys},
 	{.key = "drum_f_pitch", .name = "Pitch", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
 	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
 	 .tooltip = "The terrain's fine pitch: the middle is the terrain as found"},
@@ -402,9 +405,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "Where, in degrees, a Kick's sine starts: 0 is smooth; toward 90 the first cycle hits harder",
 	 .gateControl = kKindControl,
 	 .gateMask = kKickKinds},
-	{.key = "drum_keys", .name = "Keys", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+	{.key = "drum_keys", .name = "Keys", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kKeysNames, .modulatable = false,
-	 .tooltip = "One Key answers the one key Note names, at the drum's own pitch. Pitched answers every key and plays it as a pitch, so the drum is played across the keyboard; Tune moves it from the key"},
+	 .tooltip = "One Key answers the one key Note names. Any Key answers every key and sounds just as One Key does, whatever key arrives. Pitched answers every key and plays it as a pitch, so the drum is played across the keyboard; Tune moves it from the key"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -420,7 +423,9 @@ struct Settings {
 	[[nodiscard]] float at(Param p) const { return v[static_cast<size_t>(p)]; }
 	[[nodiscard]] int index(Param p) const { return static_cast<int>(std::lround(at(p))); }
 	/// Whether the drum answers every key and plays it as a pitch (the engine's Pitched mode), not one key at its own pitch.
-	[[nodiscard]] bool pitched() const { return index(Param::Keys) == 1; }
+	[[nodiscard]] bool pitched() const { return index(Param::Keys) == 2; }
+	/// Whether the drum answers every key it is handed (Any Key and Pitched), not only the one Note names.
+	[[nodiscard]] bool answersEveryKey() const { return index(Param::Keys) >= 1; }
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
 

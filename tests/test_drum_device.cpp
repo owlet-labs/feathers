@@ -1444,7 +1444,7 @@ namespace {
 dd::Row pitchedRow(int note = 36) {
 	dd::Row r = defaultRow();
 	r[at(Param::Kind)] = static_cast<float>(drum::Kind::Kick);
-	r[at(Param::Keys)] = 1.0f;
+	r[at(Param::Keys)] = 2.0f; // Pitched
 	r[at(Param::ClickSweep)] = 0.0f;
 	r[at(Param::Note)] = static_cast<float>(note);
 	r[at(Param::FieldSweep)] = 0.0f;
@@ -1505,7 +1505,7 @@ TEST_CASE("drum Pitched: it answers a key other than Note, and One Key still doe
 	for (const bool pitched : { true, false }) {
 		CAPTURE(pitched);
 		dd::Row r = pitchedRow(36);
-		r[at(Param::Keys)] = pitched ? 1.0f : 0.0f;
+		r[at(Param::Keys)] = pitched ? 2.0f : 0.0f;
 		const std::vector<float> got = renderKey(r, 52, 4096);
 		// KEY 52 IS NOT NOTE (36): Pitched strikes, One Key lets the note pass untouched and makes no sound.
 		CHECK(allZero(got) == !pitched);
@@ -1686,4 +1686,97 @@ TEST_CASE("drum Pitched: a patch saved and loaded into a fresh rack keeps Keys, 
 	c.load(old);
 	c.block(2);
 	CHECK_FALSE(c.as<dd::DrumDsp>().settingsForTest().pitched());
+}
+
+TEST_CASE("drum Any Key: every key is answered and sounds exactly as One Key does on its Note, bit for bit") {
+	for (const drum::Kind kind : { drum::Kind::Kick, drum::Kind::Snare, drum::Kind::Clap, drum::Kind::Metal }) {
+		CAPTURE(static_cast<int>(kind));
+		dd::Row one = variedRow(kind);
+		one[at(Param::Note)] = 36.0f;
+		const auto strike = [&](const dd::Row& row, int key) {
+			Dev d;
+			d.row = row;
+			d.apply();
+			(void)d.notes({ on(key, 0, 0.8) });
+			Out o(2048);
+			d.render(o.l.data(), o.r.data(), 2048);
+			return o;
+		};
+		const Out reference = strike(one, 36);
+		REQUIRE_FALSE(allZero(reference.l));
+		dd::Row any = one;
+		any[at(Param::Keys)] = 1.0f;
+		for (const int key : { 20, 36, 52, 99 }) {
+			CAPTURE(key);
+			const Out got = strike(any, key);
+			CHECK(got.l == reference.l);
+			CHECK(got.r == reference.r);
+		}
+		// NON-VACUITY: One Key does not answer those keys at all.
+		CHECK(allZero(strike(one, 52).l));
+	}
+}
+
+TEST_CASE("drum Any Key: the same keys in any block sizes are the same sound, to the bit") {
+	constexpr backplane::Axes kAxes { .coreSources = 8, .coreDestinations = 0, .deviceSlots = 4, .outputStride = 8 };
+	constexpr int kTotal = 1500;
+	const std::vector<std::pair<int, NoteEvent>> script = { { 50, on(48, 0, 0.9) }, { 333, on(55, 0, 0.5) }, { 700, off(48, 0) },
+		                                                    { 1000, on(60, 0, 1.0) }, { 1200, choke(55, 0) } };
+	const auto render = [&](const std::vector<int>& blocks) {
+		rack::RackEngine engine(kAxes, hostCatalogue());
+		engine.prepare(kSr, 4096);
+		const size_t slot = engine.addDevice(dd::kTraits.tag);
+		REQUIRE(slot != rack::RackEngine::kNoSlot);
+		engine.prepare(kSr, 4096);
+		dd::Row row = pitchedRow();
+		row[at(Param::Keys)] = 1.0f; // Any Key
+		for (size_t i = 0; i < row.size(); ++i) {
+			engine.setField(slot, i, row[i]);
+		}
+		engine.setField(slot, at(Param::Trigger), 1.0f);
+		engine.setField(slot, at(Param::Release), static_cast<float>(std::log2(0.03)));
+		Out out(kTotal);
+		int start = 0;
+		for (const int n : blocks) {
+			std::vector<NoteEvent> here;
+			for (const auto& [t, e] : script) {
+				if (t >= start && t < start + n) {
+					NoteEvent ev = e;
+					ev.timeSamples = static_cast<uint32_t>(t - start);
+					here.push_back(ev);
+				}
+			}
+			engine.setBlockNotes(here.data(), here.size());
+			engine.processStereo(out.l.data() + start, out.r.data() + start, n, backplane::unknownBlock());
+			start += n;
+		}
+		REQUIRE(start == kTotal);
+		return out;
+	};
+	const Out whole = render({ kTotal });
+	CHECK_FALSE(allZero(whole.l));
+	for (const auto& cut : std::vector<std::vector<int>> { { 500, 500, 500 }, { 37, 1, 100, 62, 300, 5, 995 }, { 1499, 1 }, { 333, 367, 300, 500 } }) {
+		const Out got = render(cut);
+		CHECK(got.l == whole.l);
+		CHECK(got.r == whole.r);
+	}
+}
+
+TEST_CASE("drum Any Key: a patch saved and loaded into a fresh rack keeps it") {
+	persist::Rig a;
+	a.seat(dd::kTraits.tag);
+	dd::Row want = defaultRow();
+	want[at(Param::Keys)] = 1.0f;
+	for (size_t i = 0; i < want.size(); ++i) {
+		a.bridge->setField(a.id, i, want[i]);
+	}
+	a.block(2);
+	REQUIRE(a.as<dd::DrumDsp>().settingsForTest().index(Param::Keys) == 1);
+	const std::string text = a.save();
+	persist::Rig b;
+	b.load(text);
+	b.block(2);
+	CHECK(b.as<dd::DrumDsp>().settingsForTest().index(Param::Keys) == 1);
+	CHECK_FALSE(b.as<dd::DrumDsp>().settingsForTest().pitched());
+	CHECK(b.as<dd::DrumDsp>().settingsForTest() == a.as<dd::DrumDsp>().settingsForTest());
 }

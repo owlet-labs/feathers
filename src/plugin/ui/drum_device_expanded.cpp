@@ -58,7 +58,7 @@ bool isBox(dd::Param p) {
 	}
 }
 bool isSegmented(dd::Param p) {
-	return p == dd::Param::Trigger || p == dd::Param::Voices || p == dd::Param::PitchMode || p == dd::Param::DriveCurve;
+	return p == dd::Param::Trigger || p == dd::Param::Keys || p == dd::Param::Voices || p == dd::Param::PitchMode || p == dd::Param::DriveCurve;
 }
 
 } // namespace
@@ -74,9 +74,6 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 		std::unique_ptr<visage::Frame> w;
 		if (p == dd::Param::Enabled) {
 			continue; // THE HEADER CHIP IS THE ONLY DEVICE-ENABLE (a window body carries none of its own)
-		}
-		else if (p == dd::Param::Keys) {
-			w = std::make_unique<SwitchChip>(control, d.name); // a two-way choice: a chip that prints its value
 		}
 		else if (isSegmented(p)) {
 			w = std::make_unique<SegmentedControl>(control, registry, d.names, notifier);
@@ -151,7 +148,7 @@ void DrumDeviceExpanded::layOut() {
 	const feathers::drum::Kind kind = model_.kind();
 	shownKind_ = kind;
 	shownGate_ = model_.settings().index(dd::Param::Trigger) == 1;
-	shownPitched_ = model_.settings().pitched();
+	shownKeys_ = model_.settings().index(dd::Param::Keys);
 	const feathers::drum::SettledPitch settled = model_.settled();
 	shownSettled_ = settled.defined;
 	picture_.setBounds(kPad, kPad, w - 2.0f * kPad, kPictureHeight);
@@ -174,7 +171,7 @@ void DrumDeviceExpanded::layOut() {
 	// STRIKE: what a pad has around its sound.
 	Flow strike { kPad, xMax, kPad, kPad + kPictureHeight + kGap }; // x0, xMax, x, y
 	seat(strike, dd::Param::Kind, 86.0f, ValueBox::kHeight);
-	seat(strike, dd::Param::Keys, 78.0f, SwitchChip::kHeight);
+	seat(strike, dd::Param::Keys, 168.0f, 22.0f);
 	seat(strike, dd::Param::Note, 56.0f, ValueBox::kHeight);
 	if (play_ != nullptr) {
 		strike.place(play_.get(), 30.0f, 22.0f);
@@ -232,9 +229,9 @@ bool DrumDeviceExpanded::updateContent() {
 	const feathers::drum::Kind kind = model_.kind();
 	const bool gate = model_.settings().index(dd::Param::Trigger) == 1;
 	const bool settled = model_.settled().defined;
-	const bool pitched = model_.settings().pitched();
+	const int keys = model_.settings().index(dd::Param::Keys);
 	bool moved = false;
-	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || pitched != shownPitched_) {
+	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || keys != shownKeys_) {
 		layOut();
 		moved = true;
 	}

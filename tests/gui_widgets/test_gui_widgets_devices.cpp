@@ -42732,10 +42732,12 @@ TEST_CASE("drum device window: the terrain pad writes Travel X and Travel Y only
 TEST_CASE("drum device: Keys is a chip on the card and the window, and Pitched hides what it does not read (not greys it)") {
 	DrumUi u;
 	// THE CHIP, BOUND BY INDEX, on both surfaces; Keys is a two-state SwitchChip, not a box.
-	CHECK(&u.d.card->keysForTest().control().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Keys)]);
-	auto* windowChip = dynamic_cast<ui::SwitchChip*>(u.win->widgetForTest(ddv::Param::Keys));
-	REQUIRE(windowChip != nullptr);
-	CHECK(&windowChip->control().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Keys)]);
+	REQUIRE(u.d.card->keysForTest().control() != nullptr);
+	CHECK(&u.d.card->keysForTest().control()->desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Keys)]);
+	auto* windowKeys = dynamic_cast<ui::SegmentedControl*>(u.win->widgetForTest(ddv::Param::Keys));
+	REQUIRE(windowKeys != nullptr);
+	REQUIRE(windowKeys->control() != nullptr);
+	CHECK(&windowKeys->control()->desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Keys)]);
 	const auto shown = [&](ddv::Param p) { return u.win->widgetForTest(p)->isVisible(); };
 	// ONE KEY: Note, Bend and Terrain Pitch are drawn, the card's Note box too, and the pitch readout.
 	CHECK(u.d.card->noteForTest().isVisible());
@@ -42745,7 +42747,14 @@ TEST_CASE("drum device: Keys is a chip on the card and the window, and Pitched h
 	CHECK(u.win->readoutForTest().isVisible());
 	// PITCHED: the key is the pitch, so Note is not read, the kit's Bend share and Terrain Pitch are not read (the engine's Pitched
 	// mode leaves them out), and there is no one settled pitch to read or type. Hidden everywhere, not greyed.
+	// ANY KEY: Note is not read (every key is answered), but the drum's own pitch is, so Bend, Terrain Pitch and the readout stay.
 	u.set(ddv::Param::Keys, 1.0);
+	CHECK_FALSE(u.d.card->noteForTest().isVisible());
+	CHECK_FALSE(shown(ddv::Param::Note));
+	CHECK(shown(ddv::Param::Bend));
+	CHECK(shown(ddv::Param::PitchMode));
+	CHECK(u.win->readoutForTest().isVisible());
+	u.set(ddv::Param::Keys, 2.0);
 	CHECK_FALSE(u.d.card->noteForTest().isVisible());
 	CHECK_FALSE(shown(ddv::Param::Note));
 	CHECK_FALSE(shown(ddv::Param::Bend));
@@ -42761,7 +42770,7 @@ TEST_CASE("drum device: Keys is a chip on the card and the window, and Pitched h
 	CHECK(u.win->readoutForTest().isVisible());
 	// THE PLAY BUTTON strikes middle C when Pitched (Note is not read), and the Note otherwise.
 	CHECK(u.d.card->modelForTest().noteKey() == static_cast<int>(u.field(ddv::Param::Note)));
-	u.set(ddv::Param::Keys, 1.0);
+	u.set(ddv::Param::Keys, 2.0);
 	CHECK(u.d.card->modelForTest().noteKey() == 60);
 }
 

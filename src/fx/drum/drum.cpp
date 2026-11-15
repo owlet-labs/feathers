@@ -226,7 +226,7 @@ void DrumDsp::queueNotes(const device::NoteEvent* in, size_t count) {
 		}
 		// ONLY THE KEY IT ANSWERS (a choke may be a wildcard). A dropped event is a later one: an off before an on is kept first.
 		// PITCHED answers every key (the key is the pitch); One Key only the one Note names.
-		const bool mine = s_.pitched() || e.key == s_.index(Param::Note);
+		const bool mine = s_.answersEveryKey() || e.key == s_.index(Param::Note);
 		const bool wildcardChoke = e.kind == device::NoteEvent::Kind::Choke && e.key < 0;
 		if ((mine || wildcardChoke) && queued_ < queue_.size()) {
 			queue_[queued_++] = e;
@@ -433,11 +433,14 @@ void DrumDsp::handle(const device::NoteEvent& e, int pos, int /*base*/) {
 			const double ticks = std::floor((clock_.songPositionSeconds * sr_ + static_cast<double>(pos)) / static_cast<double>(kSpan));
 			tick = std::isfinite(ticks) && ticks >= 0.0 ? static_cast<int64_t>(ticks) : -1;
 		}
-		const uint32_t count = keyStrikes_[static_cast<size_t>(e.key & 127)];
+		// ANY KEY SOUNDS AS ONE KEY DOES AT ITS NOTE, whatever key came: the noise is the Note's own stream (its seed and its strike count), so
+		// two different keys give the sound One Key gives on Note, to the bit. The hit still remembers the key that struck it, for its release.
+		const int seedKey = s_.index(Param::Keys) == 1 ? s_.index(Param::Note) : e.key;
+		const uint32_t count = keyStrikes_[static_cast<size_t>(seedKey & 127)];
 		if (tick < 0) {
-			++keyStrikes_[static_cast<size_t>(e.key & 127)];
+			++keyStrikes_[static_cast<size_t>(seedKey & 127)];
 		}
-		s->seed = strikeSeed(static_cast<uint64_t>(std::lround(s_.at(Param::Seed))), e.key, s->kind, tick, count);
+		s->seed = strikeSeed(static_cast<uint64_t>(std::lround(s_.at(Param::Seed))), seedKey, s->kind, tick, count);
 		s->delayLeft = static_cast<int>(std::lround(std::max(0.0, static_cast<double>(s_.at(Param::Delay))) * sr_ / 1000.0));
 		if (s->delayLeft == 0) {
 			strikeNow(*s);

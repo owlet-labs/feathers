@@ -570,6 +570,14 @@ public:
 	double zoom() const noexcept { return zoom_; }
 	void setZoom(double zoom);
 
+	/// **THE ZOOM A FRESH EXPLORE OPENS AT, PER ENGINE.** Additive's terrain is read from far out (x1/100); every other engine opens
+	/// at x1. Zoom is a view scale held by this surface alone (it is not stored in a patch), so this is the whole of "default": a
+	/// new editor opens at it, and a switch of engine moves a zoom that is still the old engine's default to the new one's, while a
+	/// zoom the hand has moved is kept. (A hand that sets exactly the old default is indistinguishable from one that never touched it.)
+	[[nodiscard]] static double defaultZoomFor(OscType engine) noexcept;
+	/// The engine the zoom's default was last taken from. TEST SEAM.
+	[[nodiscard]] OscType zoomEngine() const noexcept { return zoomEngine_; }
+
 	/// THE WIDEST THE VIEW GOES, and it is a LEGIBILITY limit now rather than an addressing one.
 	///
 	/// The zoom needed more range outward. It stopped at ×1 — 64 zones, one neighbourhood, a keyhole. Then at the whole band,
@@ -1273,6 +1281,7 @@ private:
 	Clock clock_;
 
 	double zoom_ = 1.0;
+	OscType zoomEngine_ = OscType::V5;
 	/// See `terrainZoom()`, and when `zoom_` last moved (`clock_`).
 	double terrainZoom_ = 1.0;
 	int64_t zoomMovedAt_ = 0;

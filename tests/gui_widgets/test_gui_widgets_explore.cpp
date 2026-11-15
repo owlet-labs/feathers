@@ -3436,6 +3436,62 @@ TEST_CASE("every breadcrumb is placed from its own identity, not from the live s
 	CHECK(f.stage.crumbAt(2).x != doctest::Approx(f.stage.crumbAt(0).x));
 }
 
+TEST_CASE("explore: each engine opens at its own default zoom — Additive at x1/100, the rest at x1 — and a zoom the hand set is kept") {
+	// ZOOM IS A VIEW SCALE HELD BY THE SURFACE ALONE (nothing in a patch), so "default" is what a new editor opens at and what a switch of
+	// engine moves a still-default zoom to. Asserted on the values: both zoom fields (no dwell from x1), the span, and the readout's number.
+	const auto clock = [] { return int64_t { 1000 }; };
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 1.0 / 100.0);
+		CHECK(fresh.terrainZoom() == fresh.zoom()); // no dwell animation on first paint
+		CHECK(fresh.travelSpan() == doctest::Approx(ExploreStage::kBaseTravel * 100.0));
+		CHECK(std::lround(1.0 / fresh.zoom()) == 100); // formatZoom prints "x1/%.0f" of this
+		// THE WHEEL STEPS FROM THERE.
+		fresh.setZoom(fresh.zoom() * ExploreStage::kZoomStep);
+		CHECK(fresh.zoom() == doctest::Approx(0.01 * ExploreStage::kZoomStep));
+	}
+	for (const OscType other : { OscType::V5, OscType::Drum, OscType::Pluck }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(other));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 1.0);
+		CHECK(fresh.terrainZoom() == 1.0);
+	}
+	// A SWITCH OF ENGINE: a zoom still at the old default follows to the new one's, both fields; one the hand set stays.
+	{
+		ExploreFixture f;
+		REQUIRE(f.stage.zoom() == 1.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 1.0 / 100.0);
+		CHECK(f.stage.terrainZoom() == 1.0 / 100.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::V5));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 1.0);
+		CHECK(f.stage.terrainZoom() == 1.0);
+	}
+	{
+		ExploreFixture f;
+		f.stage.setZoom(5.0);
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		f.stage.update();
+		CHECK(f.stage.zoom() == 5.0);
+		CHECK(f.stage.zoomEngine() == OscType::Additive);
+	}
+	// THE ENV OVERRIDE STILL WINS.
+	setenv("FEATHERS_EXPLORE_ZOOM", "4", 1);
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		ExploreStage fresh { f.bridge, f.registry, f.selection, f.history, f.terrain, &f.tray, clock };
+		CHECK(fresh.zoom() == 4.0);
+		CHECK(fresh.terrainZoom() == 4.0);
+	}
+	unsetenv("FEATHERS_EXPLORE_ZOOM");
+}
+
 TEST_CASE("Explore zooms on the wheel") {
 	// The symptom: touchpad gesture zoom did nothing on Explore. The first fact is blunter than the gesture
 	// question — the surface answered NO scroll event at all. Zoom was a corner-knob drag and nothing

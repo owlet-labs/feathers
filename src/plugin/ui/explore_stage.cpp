@@ -307,6 +307,10 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 		clock_ = [] { return static_cast<int64_t>(visage::time::milliseconds()); };
 	}
 
+	// THE ENGINE'S OWN DEFAULT ZOOM, both fields at once so there is no dwell from x1 on the first paint.
+	zoomEngine_ = oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType)));
+	zoom_ = terrainZoom_ = clampZoom(defaultZoomFor(zoomEngine_));
+
 	// FEATHERS_EXPLORE_ZOOM=<x> opens the chart at a zoom, and it exists for the same reason
 	// FEATHERS_SURFACE does (A17): zoom is a VIEW scale rather than a parameter, so a host cannot
 	// drive it and a venue with no pointer cannot reach it — which left the one place the overlay bugs
@@ -3336,7 +3340,18 @@ TerrainWindow ExploreStage::askForTerrain() {
 	return window;
 }
 
+double ExploreStage::defaultZoomFor(OscType engine) noexcept {
+	return engine == OscType::Additive ? 1.0 / 100.0 : kUnitZoom;
+}
+
 bool ExploreStage::update() {
+	// A SWITCH OF ENGINE moves a zoom still at the old engine's default to the new engine's (no dwell: both fields); one the hand moved stays.
+	if (const OscType now = oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType))); now != zoomEngine_) {
+		if (zoom_ == clampZoom(defaultZoomFor(zoomEngine_))) {
+			zoom_ = terrainZoom_ = clampZoom(defaultZoomFor(now));
+		}
+		zoomEngine_ = now;
+	}
 	// The width knob first: selection, engine and enablement all move between frames, and each of
 	// the syncs is guarded, so a frame where nothing moved costs a handful of reads and no redraw.
 	syncWidthKnob();

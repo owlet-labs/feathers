@@ -24,8 +24,12 @@
 #include "menu_placement_check.h"
 #include <thread>
 #include <atomic>
+#include <cstddef>
+#include <memory>
 
 #include "device/format_value.h"
+#include "fx/drum/drum.h"
+#include "fx/drum/drum_types.h"
 #include "fx/featherverb/featherverb_types.h"
 #include "fx/filter/filter_types.h"
 #include "fx/sklitter/sklitter_types.h"
@@ -713,6 +717,81 @@ TEST_CASE("rack plugin: a note's offset and velocity cross the plugin to the cha
 	CHECK(captured.notes[0].key == 67);
 	CHECK(captured.notes[0].note_id == 5);
 	CHECK(captured.notes[0].velocity == 0.375);
+}
+
+TEST_CASE("rack plugin: a host note into a chain holding a Drum device gives sound from its own sample, and only for its key") {
+	// THE DRUM IS A GENERATOR, so the input is silence and everything out is the drum. The reference is the same device driven
+	// directly with the note at sample 0: the plugin's output must be that, shifted to the note's own sample, bit for bit.
+	namespace dd = feathers::fx::drumdevice;
+	constexpr int kAt = 100;
+	Venue v;
+	REQUIRE(v.test()->add_device(v.plugin, dd::kTraits.tag) != 0);
+	v.settle();
+	std::fill(v.inL.begin(), v.inL.end(), 0.0f);
+	std::fill(v.inR.begin(), v.inR.end(), 0.0f);
+
+	std::vector<float> ref(v.l.size(), 0.0f);
+	{
+		const device::AudioOps& a = dd::kAudioOps;
+		std::vector<std::byte> storage(a.stateBytes + a.stateAlign);
+		void* st = storage.data();
+		std::size_t space = storage.size();
+		st = std::align(a.stateAlign, a.stateBytes, st, space);
+		REQUIRE(st != nullptr);
+		a.construct(st);
+		a.prepare(st, 48000.0, 512);
+		dd::Row row {};
+		for (size_t i = 0; i < row.size(); ++i) {
+			row[i] = static_cast<float>(dd::kParamDescs[i].def);
+		}
+		a.setFields(st, row.data(), row.size());
+		device::NoteEvent e;
+		e.key = 36;
+		device::NoteEvent out[2];
+		size_t n = 0;
+		dd::kNoteOps.processNotes(st, &e, 1, out, 2, &n);
+		std::vector<float> r(ref.size(), 0.0f);
+		a.processStereo(st, ref.data(), r.data(), static_cast<int>(ref.size()));
+		a.destruct(st);
+	}
+	int refFirst = -1;
+	for (size_t i = 0; i < ref.size() && refFirst < 0; ++i) {
+		refFirst = ref[i] != 0.0f ? static_cast<int>(i) : -1;
+	}
+	REQUIRE(refFirst >= 0);
+
+	NoteEvent n(CLAP_EVENT_NOTE_ON);
+	n.note.header.time = kAt;
+	n.note.key = 36;
+	REQUIRE(v.run(&n.in) == CLAP_PROCESS_CONTINUE);
+	for (int i = 0; i < kAt; ++i) {
+		REQUIRE(v.l[static_cast<size_t>(i)] == 0.0f);
+		REQUIRE(v.r[static_cast<size_t>(i)] == 0.0f);
+	}
+	int first = -1;
+	for (size_t i = 0; i < v.l.size() && first < 0; ++i) {
+		first = v.l[i] != 0.0f ? static_cast<int>(i) : -1;
+	}
+	CHECK(first == kAt + refFirst);
+	bool same = true;
+	for (size_t i = 0; i + kAt < v.l.size(); ++i) {
+		same = same && v.l[kAt + i] == ref[i];
+	}
+	CHECK(same);
+
+	// ANOTHER KEY ON A FRESH PLUGIN: nothing.
+	Venue w;
+	REQUIRE(w.test()->add_device(w.plugin, dd::kTraits.tag) != 0);
+	w.settle();
+	NoteEvent other(CLAP_EVENT_NOTE_ON);
+	other.note.header.time = kAt;
+	other.note.key = 40;
+	w.run(&other.in);
+	float peak = 0.0f;
+	for (size_t i = 0; i < w.l.size(); ++i) {
+		peak = std::max({ peak, std::fabs(w.l[i]), std::fabs(w.r[i]) });
+	}
+	CHECK(peak == 0.0f);
 }
 
 TEST_CASE("rack plugin: MIDI 1.0 notes reach the note lane as CLAP notes do, and nothing else of MIDI is invented") {

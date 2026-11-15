@@ -81,6 +81,8 @@
 //
 // **/13 appended `want_readings`**: the lease a view showing a device's costly picture renews (`DeviceHost::wantReadings`),
 // on the plugin's own bridge, so a case drives the road the editor's graph takes without an editor.
+// **/13 also appended `post_note`**: a key posted as the editor's preview button posts it (`ParamBridge::postNote`), with no host event
+// and no host call, so a case can say a UI-originated note sounds, and that it keeps the plugin awake. Null in the rack.
 static constexpr char CLAP_EXT_FEATHERS_TEST_CHAIN[] = "com.owletrecords.feathers.test-chain/13";
 
 /// What `voice_reading` reads (`Synth::voicePitchForTest`, `voicePhaseForTest`, `voiceEdgeLevelForTest`).
@@ -308,6 +310,8 @@ struct clap_plugin_feathers_test_chain {
 	uint64_t (*param_info_builds)(const clap_plugin* plugin);
 	/// **RENEW THE PICTURE LEASE OF THE LANE DEVICE AT `position`** (/13), as a view showing it does each frame. False in the rack.
 	bool (*want_readings)(const clap_plugin* plugin, uint32_t position);
+	/// **A PREVIEW KEY AS THE EDITOR POSTS IT** (/13): false for a key outside 0..127 or a full ring.
+	bool (*post_note)(const clap_plugin* plugin, int32_t key, bool on, float velocity);
 };
 
 } // extern "C"

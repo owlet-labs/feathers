@@ -47,6 +47,7 @@
 #include "plugin/mod_rack.h"
 #include "plugin/params.h"
 #include "plugin/preview.h"
+#include "plugin/ui_note_ring.h"
 #include "plugin/sound_orientation.h"
 #include "plugin/sound_residue.h"
 #include "plugin/sound_gamma.h"
@@ -293,6 +294,19 @@ public:
 	}
 
 	const UiParamQueue& queue() const noexcept { return queue_; }
+
+	/// **THE EDITOR'S KEYS** (a drum pad's preview button): posted from the editor's thread, drained by the audio thread at the start of a
+	/// block into the synth's own note road. Out-of-range keys are refused; a full ring drops the event and counts it.
+	bool postNote(int key, bool on, float velocity) noexcept {
+		if (key < 0 || key > 127) {
+			return false;
+		}
+		return notes_.push({ static_cast<int16_t>(key), velocity, on });
+	}
+	bool popNote(UiNoteEvent& out) noexcept { return notes_.pop(out); }
+	/// Whether a posted key waits for the audio thread (the binding asks the host to process, since a sleeping plugin is not called).
+	[[nodiscard]] bool hasPendingNotes() const noexcept { return !notes_.empty(); }
+	[[nodiscard]] uint32_t droppedNotes() const noexcept { return notes_.droppedCount(); }
 
 	//---------------------------------//
 	// The audition orientation channel //
@@ -1736,6 +1750,7 @@ private:
 	                  std::span<const backplane::Route> routes) noexcept;
 
 	UiParamQueue queue_;
+	UiNoteRing notes_;
 
 	std::atomic<bool> orientationPinned_ { false };
 	std::atomic<float> orientationRotate_ { 0.0f };

@@ -9735,3 +9735,38 @@ TEST_CASE("a device's picture is wanted for a lease of audio that a view renews 
 	bridge.wantDeviceReadings(slot);
 	CHECK(bridge.deviceReadingsLeaseForTest(slot) == 24000);
 }
+
+TEST_CASE("the editor's note ring: keys come out in order with their velocity, an out-of-range key is refused, and a full ring drops and counts") {
+	feathers::ParamBridge bridge;
+	CHECK_FALSE(bridge.hasPendingNotes());
+	feathers::UiNoteEvent out;
+	CHECK_FALSE(bridge.popNote(out));
+	CHECK(bridge.postNote(36, true, 0.75f));
+	CHECK(bridge.postNote(36, false, 0.0f));
+	CHECK(bridge.hasPendingNotes());
+	REQUIRE(bridge.popNote(out));
+	CHECK(out.key == 36);
+	CHECK(out.on);
+	CHECK(out.velocity == 0.75f);
+	REQUIRE(bridge.popNote(out));
+	CHECK(out.key == 36);
+	CHECK_FALSE(out.on);
+	CHECK_FALSE(bridge.popNote(out));
+	CHECK_FALSE(bridge.hasPendingNotes());
+	CHECK_FALSE(bridge.postNote(-1, true, 0.5f));
+	CHECK_FALSE(bridge.postNote(128, true, 0.5f));
+	CHECK(bridge.droppedNotes() == 0); // a refusal is not a drop
+	// A FULL RING: the next five are dropped and counted, the first kCapacity are intact, and nothing crashes.
+	for (size_t i = 0; i < feathers::UiNoteRing::kCapacity + 5; ++i) {
+		const bool taken = bridge.postNote(static_cast<int>(i % 100), true, 0.5f);
+		CHECK(taken == (i < feathers::UiNoteRing::kCapacity));
+	}
+	CHECK(bridge.droppedNotes() == 5);
+	size_t drained = 0;
+	while (bridge.popNote(out)) {
+		CHECK(out.key == static_cast<int>(drained % 100));
+		++drained;
+	}
+	CHECK(drained == feathers::UiNoteRing::kCapacity);
+	CHECK(bridge.postNote(60, true, 0.5f)); // room again
+}

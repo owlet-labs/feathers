@@ -3975,6 +3975,13 @@ void ExploreStage::drawCrumbs(visage::Canvas& canvas) {
 }
 
 void ExploreStage::drawStar(visage::Canvas& canvas) {
+	// A KIT'S TERRAIN IS THE WHOLE KIT'S: nothing per-pad is drawn on it (a pad's layers are placed on the pad editor's own pads).
+	starDrawn_ = !drumKitShown();
+	if (drumKitShown()) {
+		playedMarkDrawn_ = false;
+		vectorDrawn_ = false;
+		return;
+	}
 	const StageDisk d = disk();
 	// AT THE SOUND'S OWN IDENTITY, both coordinates: home up the chart, its own drift across it. The
 	// performance term the engine adds — Weather x (puck - anchor) — is not drawn on this surface at
@@ -4279,95 +4286,10 @@ void ExploreStage::followSelection() {
 	recentre();
 }
 
-void ExploreStage::drawPadMarks(visage::Canvas& canvas) {
+void ExploreStage::drawPadMarks(visage::Canvas&) {
+	// NOTHING PER-PAD IS DRAWN ON A KIT'S TERRAIN (the star, the other pads' marks and the layers' diamonds are gone): the terrain is the
+	// whole kit's, and a pad's layers are placed on the pad editor's own terrain pads.
 	padMarkCount_ = 0;
-	if (!drumKitShown()) {
-		return;
-	}
-	const size_t selected = std::min(selection_.slot(), kMaxSounds - 1);
-	const TerrainWindow here = terrainWindowNow();
-	const StageDisk d = disk();
-	const auto kindOf = [this](size_t slot) {
-		return steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::Kind))), kDrumKindNames.size());
-	};
-	const size_t kind = kindOf(selected);
-	const visage::Font& face = font(kKnobReadoutSize);
-	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-		if (slot == selected) {
-			continue; // the star is the selected pad's mark, and its played mark carries the Walk
-		}
-		// ITS PLACE AND WHERE IT PLAYS, each decoded on its own plane and projected onto this one (the likes' road).
-		const TerrainWindow own = terrainWindowFor(slot);
-		const AnchorPoint at = placeOf(slot);
-		const auto onHere = [&](double x, double y) {
-			std::array<double, kTerrainLikePoint> point {};
-			const size_t n = terrainPlacePoint(own, x, y, point);
-			return terrainPlaceOn(here, std::span<const double>(point.data(), n), x, y);
-		};
-		const PlanePlace place = onHere(at.x, at.y);
-		const visage::Point flat = sheetAtWorld(place.x, place.y);
-		if (!std::isfinite(flat.x) || !std::isfinite(flat.y) || !d.contains(flat)) {
-			continue;
-		}
-		PadMark& mark = padMarks_[padMarkCount_++];
-		mark = PadMark {};
-		mark.slot = slot;
-		mark.at = Bubble::toGlass(d, flat);
-		mark.hollow = kindOf(slot) != kind;
-		const uint32_t hue = kSeedHues[hueIndexOf(bridge_.soundHues(), slot)];
-		const float r = 4.5f * d.glyphScale();
-		if (mark.hollow) {
-			canvas.setColor(withAlpha(hue, 0.85f));
-			canvas.ring(mark.at.x - r, mark.at.y - r, 2.0f * r, 1.5f);
-		}
-		else {
-			canvas.setColor(withAlpha(hue, 0.9f));
-			canvas.circle(mark.at.x - r, mark.at.y - r, 2.0f * r);
-		}
-		// ITS LETTER, and on a hollow mark its kind: the colour under it means nothing for that kind, so the label says what
-		// it is instead of a tooltip the stage has no road for.
-		char text[24] = {};
-		if (mark.hollow) {
-			std::snprintf(text, sizeof(text), "%c %s", static_cast<char>('A' + slot), kDrumKindNames[kindOf(slot)]);
-		}
-		else {
-			std::snprintf(text, sizeof(text), "%c", static_cast<char>('A' + slot));
-		}
-		canvas.setColor(withAlpha(tokens::kStar, mark.hollow ? 0.6f : 0.8f));
-		canvas.text(text, face, visage::Font::kLeft, mark.at.x + r + 3.0f, mark.at.y - 7.0f, 90.0f, 14.0f);
-		overlayInk_.add(mark.at, r * 3.0f);
-	}
-	// EVERY LIVE SECOND LAYER, AT ITS OWN VECTOR: a small diamond in its pad's hue (the selected pad's drawn brighter and with its
-	// letter), so the kit reads as sixteen places at most, the layer-one marks above being the pads' first.
-	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-		if (steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::LayerKind))), kDrumLayerKindNames.size()) == 0) {
-			continue;
-		}
-		const TerrainWindow own = terrainWindowFor(slot);
-		const AnchorPoint at = layerPlaceOf(slot, 1);
-		std::array<double, kTerrainLikePoint> point {};
-		const size_t n = terrainPlacePoint(own, at.x, at.y, point);
-		const PlanePlace place = terrainPlaceOn(here, std::span<const double>(point.data(), n), at.x, at.y);
-		const visage::Point flat = sheetAtWorld(place.x, place.y);
-		if (!std::isfinite(flat.x) || !std::isfinite(flat.y) || !d.contains(flat)) {
-			continue;
-		}
-		const visage::Point glass = Bubble::toGlass(d, flat);
-		const float r = 3.5f * d.glyphScale();
-		const bool mine = slot == selected;
-		canvas.setColor(withAlpha(kSeedHues[hueIndexOf(bridge_.soundHues(), slot)], mine ? 1.0f : 0.8f));
-		canvas.segment(glass.x - r, glass.y, glass.x, glass.y - r, 1.5f, true);
-		canvas.segment(glass.x, glass.y - r, glass.x + r, glass.y, 1.5f, true);
-		canvas.segment(glass.x + r, glass.y, glass.x, glass.y + r, 1.5f, true);
-		canvas.segment(glass.x, glass.y + r, glass.x - r, glass.y, 1.5f, true);
-		if (mine) {
-			char text[8] = {};
-			std::snprintf(text, sizeof(text), "%c2", static_cast<char>('A' + slot));
-			canvas.setColor(withAlpha(tokens::kStar, 0.8f));
-			canvas.text(text, face, visage::Font::kLeft, glass.x + r + 3.0f, glass.y - 7.0f, 40.0f, 14.0f);
-		}
-		overlayInk_.add(glass, r * 3.0f);
-	}
 }
 
 void ExploreStage::drawLikes(visage::Canvas& canvas) {

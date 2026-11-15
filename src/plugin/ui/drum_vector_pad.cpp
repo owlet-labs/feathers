@@ -100,6 +100,10 @@ void DrumVectorPolicy::paint(ExploreMap& map, const Key& key, const ExplorePlane
 			const float ux = (static_cast<float>(gx) + 0.5f) / static_cast<float>(kGrid);
 			const float uy = (static_cast<float>(gy) + 0.5f) / static_cast<float>(kGrid);
 			const std::array<float, kPhaseCount> at = plane.travelAt(ux, uy);
+			if (std::abs(at[0]) > kDrumVectorRange || std::abs(at[1]) > kDrumVectorRange) {
+				coarse[gy * kGrid + gx] = 0.0f; // beyond the vector's reach: no place, drawn as nothing
+				continue;
+			}
 			const float d = static_cast<float>(distance(fieldsAt(at[0], at[1]), home));
 			coarse[gy * kGrid + gx] = std::isfinite(d) ? d : 0.0f;
 			hi = std::max(hi, coarse[gy * kGrid + gx]);

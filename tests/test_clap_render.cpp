@@ -997,6 +997,55 @@ TEST_CASE("drum: process allocates nothing — kit notes, two layers, a choke, a
 	CHECK(host.allocationsInLastProcess() == 0);
 }
 
+TEST_CASE("drum: a preview key the editor posts, with no host event at all, sounds the pad and the plugin does not sleep over it; it allocates nothing") {
+	// THE EDITOR'S NOTE RING (ui_note_ring.h): a pad's preview button posts a key the audio thread drains at the start of a block, into the
+	// synth's own note road. The host sends nothing here, so a sound that comes out came from the ring alone.
+	HostedPlugin host;
+	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(
+	    host.plugin()->get_extension(host.plugin(), CLAP_EXT_FEATHERS_TEST_CHAIN));
+	REQUIRE(chain != nullptr);
+	REQUIRE(chain->post_note != nullptr);
+	EventList events;
+	constexpr uint32_t kFrames = 256;
+	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
+	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(0, feathers::DrumControl::Decay)), std::log2(0.05));
+	host.run(kFrames, events);
+	events.clear();
+	// THE PLUGIN IS ASLEEP FIRST (nothing sounding, so SLEEP is promised over exact silence).
+	clap_process_status status = CLAP_PROCESS_CONTINUE;
+	for (int block = 0; block < 400 && status != CLAP_PROCESS_SLEEP; ++block) {
+		status = host.run(kFrames, events);
+	}
+	REQUIRE(status == CLAP_PROCESS_SLEEP);
+	CHECK(peakOf(host.left(), kFrames) == 0.0f);
+	// A PREVIEW: the kick pad's key (36), 100/127, on. No host event.
+	REQUIRE(chain->post_note(host.plugin(), 36, true, 100.0f / 127.0f));
+	status = host.run(kFrames, events);
+	CHECK(status == CLAP_PROCESS_CONTINUE);
+	CHECK(host.allocationsInLastProcess() == 0);
+	float peak = peakOf(host.left(), kFrames);
+	for (int block = 0; block < 4; ++block) {
+		CHECK(host.run(kFrames, events) == CLAP_PROCESS_CONTINUE); // the hit rings: never SLEEP over it
+		CHECK(host.allocationsInLastProcess() == 0);
+		peak = std::max(peak, peakOf(host.left(), kFrames));
+	}
+	CAPTURE(peak);
+	CHECK(peak > 1.0e-3f);
+	// THE RELEASE (a One-shot pad ignores it, a Gate pad ends on it) and a burst of presses and releases: still no allocation, still finite.
+	REQUIRE(chain->post_note(host.plugin(), 36, false, 0.0f));
+	for (int i = 0; i < 20; ++i) {
+		(void)chain->post_note(host.plugin(), 36 + (i % 4), (i % 2) == 0, 0.8f);
+	}
+	for (int block = 0; block < 4; ++block) {
+		host.run(kFrames, events);
+		CHECK(host.allocationsInLastProcess() == 0);
+		CHECK(allFinite(host.left(), kFrames));
+	}
+	// A KEY OUTSIDE 0..127 IS REFUSED.
+	CHECK_FALSE(chain->post_note(host.plugin(), 128, true, 0.8f));
+	CHECK_FALSE(chain->post_note(host.plugin(), -1, true, 0.8f));
+}
+
 TEST_CASE("a reverb's tail keeps the plugin awake: SLEEP is never promised while the output is still sounding") {
 	// A crackle in the LATE, QUIET tail of every reverb that decays (Owl, which sustains, was clean),
 	// at any buffer size and either Oversample. The plugin returned SLEEP the moment the last VOICE died — "release
@@ -5348,6 +5397,10 @@ TEST_CASE("drum: a kit saved before the stance redesign (its Walk, Kit Gamma/Zon
 			double x = 9.0;
 			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::OffsetX)), &x));
 			CHECK(std::abs(x) <= feathers::kDrumVectorRange);
+			// AND NO LAYER COMES UP LOCKED: the old layer lock's default was ON, and a kit saved then must not load stuck at home.
+			double lock = 1.0;
+			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::Lock)), &lock));
+			CHECK(lock == 0.0);
 		}
 	}
 	EventList events;

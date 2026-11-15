@@ -293,6 +293,8 @@ public:
 		}
 	}
 
+	void guiRequestProcess() noexcept override { _host.requestProcess(); }
+
 	void guiRequestResize(uint32_t width, uint32_t height) noexcept override {
 		if (_host.canUseGui()) {
 			_host.guiRequestResize(width, height);
@@ -1778,6 +1780,18 @@ protected:
 			synth_.settleLaneBeforeEvents();
 		}
 
+		// THE EDITOR'S KEYS (a drum pad's preview button), at the start of the block and ahead of the host's events: through the same
+		// doors a host note takes, with the reserved UI note id so a host's note is never mistaken for one of these. Drained here too when
+		// the block has no audio port (the early return below), so a press is never left waiting.
+		for (UiNoteEvent note; bridge_.popNote(note);) {
+			if (note.on) {
+				synth_.noteOn(0, note.key, kUiNoteId, static_cast<double>(note.velocity));
+			}
+			else {
+				synth_.noteOff(0, note.key, kUiNoteId, 0.0);
+			}
+		}
+
 		const uint32_t frames = process->frames_count;
 		float* left = channelOf(process, 0);
 		float* right = channelOf(process, 1);
@@ -1919,6 +1933,10 @@ protected:
 		// than that has ended with every block so far silent, and SLEEP there is broken the moment it comes out.
 		// Everything in flight entered within the lane's latency of the last voice or sound, so once more quiet
 		// samples than that have passed, it has come out — and it would have reset this count if it were not silent.
+		if (bridge_.hasPendingNotes()) { // a key the editor posted during this block is the next one's to play
+			quietSamples_ = 0;
+			return CLAP_PROCESS_CONTINUE;
+		}
 		quietSamples_ += frames;
 		if (quietSamples_ <= laneLatency) {
 			return CLAP_PROCESS_CONTINUE;
@@ -2891,6 +2909,12 @@ private:
 		}
 		return fromClap(plugin)->getParamIndexForParamId(id);
 	}
+	static bool testChainPostNote(const clap_plugin* plugin, int32_t key, bool on, float velocity) noexcept {
+		if (plugin == nullptr || plugin->plugin_data == nullptr) {
+			return false;
+		}
+		return fromClap(plugin)->bridge_.postNote(key, on, velocity);
+	}
 	static uint64_t testChainParamInfoBuilds(const clap_plugin* plugin) noexcept {
 		if (plugin == nullptr || plugin->plugin_data == nullptr) {
 			return 0;
@@ -3221,6 +3245,7 @@ private:
 			&FeathersPlugin::testChainParamIndexOf,
 			&FeathersPlugin::testChainParamInfoBuilds,
 			&FeathersPlugin::testChainWantReadings,
+			&FeathersPlugin::testChainPostNote,
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_TEST_CHAIN) == 0) {
 			return &kTestChain;

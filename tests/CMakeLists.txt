@@ -1390,6 +1390,13 @@ add_test(NAME takeover COMMAND test_takeover)
 # keyed by injection, never shown. The label was on it because it was copied from `rack-editor` below,
 # which is the way a wrong label spreads: it is inherited from a neighbour rather than decided.
 
+# THE FITTED TERRAIN MAP'S EVALUATOR against the offline fit (src/plugin/ui/terrain_fit.h; the sample is written by
+# tools/fit-terrain-map.cpp). No window, no engine render: decoded numbers in, predictions out.
+add_executable(test_terrain_fit test_terrain_fit.cpp)
+target_link_libraries(test_terrain_fit PRIVATE feathers-ui feathers-warnings)
+target_include_directories(test_terrain_fit PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME terrain-fit COMMAND test_terrain_fit)
+
 # THE CHROME HUE (backlog LG) — OKLCH L, C and h of every token the offset turns, by value, and the prefs
 # road on a scratch desk its own main() makes. No window: colours are numbers here.
 add_executable(test_chrome_hue test_chrome_hue.cpp)

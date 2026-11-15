@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/terrain.h"
+#include "plugin/ui/terrain_fit.h"
 
 #include <span>
 
@@ -1711,6 +1712,11 @@ std::shared_ptr<const TerrainSnapshot> TerrainMap::buildMap(const TerrainWindow&
 	// Negative under PhiMorph, which has no families to anchor to.
 	const int family = window.engine == OscType::Stair ? stairFamilyAt(zone) : -1;
 	building->family = family;
+	// THE FITTED ROAD, when the window asks for it AND the engine has a table (the stage already ANDs the two; a window built
+	// by anything else is held to the same rule, so `fitted` below is what actually ran). Off, the line it guards is never
+	// reached and the map is the engine's own to the bit.
+	const bool fitted = window.fittedMap && terrainFitAvailable(window.engine);
+	building->fitted = fitted;
 
 	// HOW MUCH WORLD ONE TEXEL COVERS, and therefore how many points it is built from. Both spans
 	// divide by the same zoom (A13's matched-span rule), so the cell is square in the coordinate the
@@ -1924,10 +1930,15 @@ std::shared_ptr<const TerrainSnapshot> TerrainMap::buildMap(const TerrainWindow&
 					// whatever rotate does. It also happens to cost 1 basis build per map instead of
 					// 128, which is a consequence rather than the reason.
 				const TerrainFeatures one =
-				    terrainFeaturesOn(window.engine, planeFrames, zone, phaseOffset, place.x,
-				                      place.y, window.gammaBase, window.scales(),
-				                      window.warpMode, window.weaveModel, window.resonateShaping, window.shapesMix,
-				                      window.additive, nullptr, window.likeWarp.warp);
+				    fitted ? terrainFeaturesFitted(window.engine, planeFrames, zone, phaseOffset, place.x, place.y,
+				                                   window.gammaBase, window.scales(), window.additive, window.likeWarp.warp)
+				           : terrainFeaturesOn(window.engine, planeFrames, zone, phaseOffset, place.x,
+				                               place.y, window.gammaBase, window.scales(),
+				                               window.warpMode, window.weaveModel, window.resonateShaping, window.shapesMix,
+				                               window.additive, nullptr, window.likeWarp.warp);
+				if (fitted) {
+					fittedTexels_.fetch_add(1, std::memory_order_relaxed);
+				}
 					mean.energy += one.energy;
 					mean.centroid += one.centroid;
 					mean.roughness += one.roughness;

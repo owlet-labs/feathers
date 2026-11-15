@@ -23,6 +23,10 @@
 
 #include "fx/eq/eq_types.h"
 #include "plugin/ui/param_control.h"
+#include "fx/drum/drum_types.h"
+#include "plugin/ui/drum_device_card.h"
+#include "plugin/ui/drum_device_expanded.h"
+#include "plugin/ui/tooltip.h"
 #include <cstdio>
 #include <cstdlib>
 #include "plugin/ui/delay_expanded.h"
@@ -5220,6 +5224,47 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		e.reached.insert(static_cast<size_t>(rs::Param::DroneToWetFx));
 		CHECK(panel.size() == static_cast<size_t>(rs::Param::kCount) - 1);
 		CHECK(e.reached.size() == static_cast<size_t>(rs::Param::kCount));
+		table.push_back(std::move(e));
+	}
+	// THE DRUM: its OWN card (`DrumDeviceCard`) and window (`DrumDeviceExpanded`), asked what each OFFERS through `ui::ControlFace`,
+	// which every widget that writes a device control declares (value boxes, pills, segmented controls, the picture's handles, the
+	// terrain pad, the pitch readout). Built directly, over no instance: what a widget declares does not depend on a row. The head's
+	// Enabled chip is the header's, as for every device.
+	{
+		namespace ddv2 = feathers::fx::drumdevice;
+		ui::WidgetRegistry drumRegistry;
+		ui::DrumDeviceCard drumCard { f.deviceHost, drumRegistry, kNoInstance, nullptr };
+		ui::DrumDeviceExpanded drumWindow { f.deviceHost, drumRegistry, kNoInstance, nullptr };
+		drumWindow.setBounds(0.0f, 0.0f, ui::DrumDeviceExpanded::kWidth, ui::DrumDeviceExpanded::kMinimumHeight);
+		Entry e { ddv2::kTraits.tag, {}, {}, false };
+		const auto offered = [&](visage::Frame* root, std::set<size_t>& into) {
+			const std::function<void(visage::Frame*)> walk = [&](visage::Frame* fr) {
+				if (const auto* face = dynamic_cast<const ui::ControlFace*>(fr)) {
+					std::vector<ui::ControlFace::Offered> list;
+					face->offeredControls(list);
+					for (const auto& o : list) {
+						const auto* d = &o.control->desc();
+						if (d >= std::begin(ddv2::kParamDescs) && d < std::end(ddv2::kParamDescs)) {
+							into.insert(static_cast<size_t>(d - std::begin(ddv2::kParamDescs)));
+						}
+					}
+				}
+				for (visage::Frame* c : fr->children()) {
+					walk(c);
+				}
+			};
+			walk(root);
+		};
+		std::set<size_t> card;
+		std::set<size_t> window;
+		offered(&drumCard, card);
+		offered(&drumWindow, window);
+		CHECK(card.size() >= 4);
+		e.reached = card;
+		e.reached.insert(window.begin(), window.end());
+		if (ddv2::kTraits.enableControl >= 0) {
+			e.reached.insert(static_cast<size_t>(ddv2::kTraits.enableControl));
+		}
 		table.push_back(std::move(e));
 	}
 	}

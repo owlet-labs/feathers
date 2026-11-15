@@ -231,6 +231,9 @@ TEST_CASE("every registered device files under the category it was assigned") {
 		// THE ARP AND PATTERN (2026-11-04): Note FX — a 'note' category, so Pattern and Arp do not ride along with the modulators.
 		{ "Arp", device::Category::Notes },
 		{ "Pattern", device::Category::Notes },
+		// THE DRUM (kit voice device): a rhythm instrument, filed where its descriptor files it, beside the looper (the one other
+		// device whose job is the beat itself). It is not a Note FX (it makes sound and takes notes in) and not a Utility.
+		{ "Drum", device::Category::RhythmGlitch },
 	};
 	size_t matched = 0;
 	for (const device::Descriptor& d : kDevices) {

@@ -21,18 +21,3 @@ today's map channel against its audio counterpart (pool): R2 of the straight lin
   roughness    R2 1.000  Spearman 1.000  map = -7.41853e-06 + 1.00105 * measured (not applied: the target is the measured value)
   parity       R2 1.000  Spearman 1.000  map = 0.000484397 + 0.999202 * measured (not applied: the target is the measured value)
   fundamental  R2 1.000  Spearman 1.000  map = -7.73401e-05 + 1.00006 * measured (not applied: the target is the measured value)
-
-== v5: 12000 stances (pool 9600, held-out 2400), 38 inputs; energy source: linear(rms)
-channel      model      lambda  ncoef  tgtSD      R2    RMSE Spearman | map raw R2/RMSE/Sp         | map affine R2/RMSE/Sp     
-energy       rcubic       1000    818  0.102   0.411  0.0783    0.607 |   0.903  0.0318    0.944      |   0.914  0.0300    0.944
-centroid     rcubic        100    818  0.103   0.728  0.0539    0.858 |   0.963  0.0200    0.987      |   0.974  0.0167    0.987
-roughness    rcubic        100    818  0.111   0.611  0.0694    0.791 |   0.934  0.0286    0.978      |   0.954  0.0239    0.978
-parity       rcubic        100    818  0.149   0.364  0.1189    0.583 |   0.978  0.0219    0.988      |   0.979  0.0218    0.988
-fundamental  rcubic        100    818  0.190   0.641  0.1136    0.813 |   0.995  0.0134    0.997      |   0.996  0.0124    0.997
-today's map channel against its audio counterpart (pool): R2 of the straight line / Spearman
-  energy       R2 0.914  Spearman 0.944  map = 0.0625271 + 0.908426 * measured (applied to the target)
-  centroid     R2 0.970  Spearman 0.986  map = 0.00456793 + 1.01901 * measured (not applied: the target is the measured value)
-  roughness    R2 0.943  Spearman 0.973  map = 0.00946967 + 1.01842 * measured (not applied: the target is the measured value)
-  parity       R2 0.978  Spearman 0.987  map = 0.0138086 + 0.973891 * measured (not applied: the target is the measured value)
-  fundamental  R2 0.995  Spearman 0.996  map = -0.000826275 + 0.987266 * measured (not applied: the target is the measured value)
-

@@ -21,11 +21,9 @@
 
 #include "plugin/ui/terrain_fit.h"
 
-#include "dsp/flagship.h"
 #include "dsp/partial_spectrum.h"
 #include "dsp/phase_warp.h"
 #include "dsp/slice_build.h"
-#include "dsp/vox_bake.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,11 +31,6 @@
 namespace feathers::ui {
 
 namespace {
-
-constexpr int kMorphWaypoints = owlet::dsp::kPhiMorphMovableWaypoints;
-constexpr int kMorphSegments = owlet::dsp::kPhiMorphMaxSegments;
-static_assert(kMorphWaypoints + kMorphWaypoints + kMorphSegments + 4 + 7 + 5 == kFitV5Inputs,
-              "the V5 decode's width is the table's");
 
 std::atomic<uint64_t> g_evaluations { 0 };
 
@@ -71,54 +64,6 @@ int decodeAdditive(const TerrainFrames& frames, double home, double travelX, dou
 	return kFitAdditiveInputs;
 }
 
-int decodeV5(const TerrainFrames& frames, uint16_t zone, float offset, double home, double travelX, double travelY,
-             double gammaBase, const feathers::FieldScales& scales, const feathers::PhaseWarp* warp, double* out) {
-	const feathers::AngleWarpScope likes(warp);
-	int n = 0;
-	// THE MORPH TABLE'S OWN READS (35 triangles; the table is not evaluated).
-	const owlet::dsp::PhiMorphWavetable m =
-	    feathers::buildMorphSliced(zone, offset, travelX, travelY, frames.morph, gammaBase, scales.grit);
-	for (int i = 0; i < kMorphWaypoints; ++i) {
-		out[n++] = static_cast<double>(m.phases[i]);
-	}
-	for (int i = 0; i < kMorphWaypoints; ++i) {
-		out[n++] = static_cast<double>(m.amplitudes[i]);
-	}
-	for (int i = 0; i < kMorphSegments; ++i) {
-		out[n++] = static_cast<double>(m.curvatures[i]);
-	}
-	out[n++] = static_cast<double>(m.gain);
-	out[n++] = static_cast<double>(m.endpointAmp);
-	out[n++] = static_cast<double>(m.phaseJitter);
-	out[n++] = static_cast<double>(m.ampNoise);
-	// THE OPERATOR AUTHORS, through the sound's field knobs exactly as buildFlagshipSliced applies them.
-	const feathers::FlagshipAuthors a = feathers::flagshipAuthorsAt(frames.morph, frames.stair, home, travelX, travelY);
-	out[n++] = static_cast<double>(feathers::fieldWithOverride(a.fields.quantize, scales.quantize));
-	out[n++] = static_cast<double>(
-	    1.0f + (feathers::kFlagshipSyncMaxRatio - 1.0f) * feathers::fieldWithOverride(a.fields.sync, scales.sync));
-	out[n++] = static_cast<double>(feathers::fieldWithOverride(a.fields.feedback, scales.feedback));
-	out[n++] = static_cast<double>(a.stepCount);
-	out[n++] = static_cast<double>(a.riserSlope);
-	out[n++] = static_cast<double>(feathers::fieldWithOverride(a.fields.smoothness, scales.smoothness));
-	out[n++] = static_cast<double>(feathers::pointCountWithOverride(
-	    feathers::pointFieldWithOverride(a.fields.pointCount, scales.points), scales.smoothness));
-	// AND THE VOWEL: its presence (the species field at the lead coordinate), whether it is voiced, and the two
-	// formants and the breath only where it is.
-	const float presence = feathers::voxPresenceAt(feathers::flagshipLeadCoordinate(frames.morph, home, travelX, travelY));
-	bool voiced = false;
-	feathers::VoxParams vox {};
-	if (presence > 0.0f) {
-		vox = feathers::buildVoxSliced(zone, offset, travelX, travelY, frames.vox, gammaBase);
-		voiced = feathers::voxParamsVoiced(vox);
-	}
-	out[n++] = static_cast<double>(presence);
-	out[n++] = voiced ? 1.0 : 0.0;
-	out[n++] = voiced ? static_cast<double>(vox.formant[0].frequencyHz) * 1e-3 : 0.0;
-	out[n++] = voiced ? static_cast<double>(vox.formant[1].frequencyHz) * 1e-3 : 0.0;
-	out[n++] = voiced ? static_cast<double>(vox.breath) : 0.0;
-	return n;
-}
-
 } // namespace
 
 bool terrainFitAvailable(OscType engine) {
@@ -128,7 +73,7 @@ bool terrainFitAvailable(OscType engine) {
 
 int terrainFitInputs(OscType engine) {
 	// A property of the decode, not of the table: the offline tool decodes before any table exists.
-	return engine == OscType::Additive ? kFitAdditiveInputs : engine == OscType::V5 ? kFitV5Inputs : 0;
+	return engine == OscType::Additive ? kFitAdditiveInputs : 0;
 }
 
 int terrainFitDecode(OscType engine, const TerrainFrames& frames, uint16_t zone, float offset, double travelX,
@@ -137,9 +82,6 @@ int terrainFitDecode(OscType engine, const TerrainFrames& frames, uint16_t zone,
 	const double home = feathers::sliceHome(zone, offset, gammaBase);
 	if (engine == OscType::Additive) {
 		return decodeAdditive(frames, home, travelX, travelY, scales, additive, warp, out);
-	}
-	if (engine == OscType::V5) {
-		return decodeV5(frames, zone, offset, home, travelX, travelY, gammaBase, scales, warp, out);
 	}
 	return 0;
 }

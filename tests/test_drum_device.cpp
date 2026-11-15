@@ -1199,6 +1199,145 @@ TEST_CASE("drum: a sample that is not a number is not passed on, and the drum is
 	}
 }
 
+TEST_CASE("drum: at its longest decay and release, every kind reaches exact zero on both channels within a bound, stays zero, and lets go of holdsTail") {
+	// THE GENERIC SILENCE SWEEP (test_fx_devices, "the tail reaches exact silence") ASKED WITH NOTES: a burst, then silence; the
+	// output must be exactly 0.0f from some block on and holdsTail false. The longest settings: Decay at its maximum (10 s), the
+	// terrain's Length at its maximum, and for the Gate the longest Release (2 s). Bounds in blocks of 64 at 48 kHz.
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		for (const bool gate : { true, false }) {
+			CAPTURE(drum::kKindNames[k]);
+			CAPTURE(gate);
+			Dev d;
+			d.row = variedRow(static_cast<drum::Kind>(k));
+			d.set(Param::Decay, dd::kParamDescs[at(Param::Decay)].max);
+			d.set(Param::FieldLength, 1.0);
+			d.set(Param::Release, dd::kParamDescs[at(Param::Release)].max);
+			d.set(Param::Trigger, gate ? 1.0 : 0.0);
+			d.set(Param::HighPass, std::log2(300.0));
+			(void)d.notes({ on(36, 0), on(36, 150) });
+			int lastNonzero = -1;
+			int block = 0;
+			// A gate is let go after 100 blocks; a one-shot rings its whole (very long) body.
+			const int kBound = gate ? 6000 : 100000;
+			for (; block < kBound && (block == 0 || d.holds()); ++block) {
+				if (gate && block == 100) {
+					(void)d.notes({ off(36, 0) });
+				}
+				Out o(64);
+				d.render(o.l.data(), o.r.data(), 64);
+				if (firstNonzero(o.l) >= 0 || firstNonzero(o.r) >= 0) {
+					lastNonzero = block;
+				}
+			}
+			REQUIRE(block < kBound);
+			REQUIRE(lastNonzero >= 100);
+			CHECK_FALSE(d.holds());
+			for (int more = 0; more < 400; ++more) {
+				Out o(64);
+				d.render(o.l.data(), o.r.data(), 64);
+				REQUIRE(allZero(o.l));
+				REQUIRE(allZero(o.r));
+			}
+			CHECK_FALSE(d.holds());
+		}
+	}
+}
+
+TEST_CASE("drum: NaN and infinity on the input or in a control do not latch the device, and a later hit equals a clean instance's") {
+	// THE GENERIC SWEEP ("one NaN and one +Inf sample do not latch") ASKED WITH A DRUM SOUNDING: bad samples go through a ringing hit,
+	// then clean silence, then a new hit. The twin heard the same notes with a clean input.
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		CAPTURE(drum::kKindNames[k]);
+		Dev bad;
+		Dev clean;
+		bad.row = clean.row = variedRow(static_cast<drum::Kind>(k));
+		for (Dev* d : { &bad, &clean }) {
+			(void)d->notes({ on(36, 0) });
+		}
+		Out a(512);
+		Out b(512);
+		a.l[3] = std::numeric_limits<float>::quiet_NaN();
+		a.r[10] = std::numeric_limits<float>::infinity();
+		a.l[200] = -std::numeric_limits<float>::infinity();
+		a.r[300] = std::numeric_limits<float>::quiet_NaN();
+		bad.render(a.l.data(), a.r.data(), 512);
+		clean.render(b.l.data(), b.r.data(), 512);
+		CHECK(a.l[3] == b.l[3]); // the NaN became a zero, so it is the hit alone
+		for (size_t i = 0; i < 512; ++i) {
+			REQUIRE(std::isfinite(a.l[i]));
+			REQUIRE(std::isfinite(a.r[i]));
+		}
+		// A NON-FINITE CONTROL is its declared default, as a row holding it is cleaned.
+		bad.row[at(Param::Tune)] = std::numeric_limits<float>::quiet_NaN();
+		bad.row[at(Param::Decay)] = std::numeric_limits<float>::infinity();
+		bad.row[at(Param::Pan)] = -std::numeric_limits<float>::infinity();
+		bad.row[at(Param::TravelX)] = std::numeric_limits<float>::quiet_NaN();
+		Out c(256);
+		bad.render(c.l.data(), c.r.data(), 256);
+		for (size_t i = 0; i < 256; ++i) {
+			REQUIRE(std::isfinite(c.l[i]));
+			REQUIRE(std::isfinite(c.r[i]));
+		}
+		bad.row = clean.row;
+		Out d2(256);
+		clean.render(d2.l.data(), d2.r.data(), 256);
+		// NEW HITS ON BOTH, after the bad input has stopped. The hits' own history differs only through the bad controls above, which
+		// never reach the struck hit (it is struck from the restored row): the same notes must give the same sound.
+		Dev bad2;
+		Dev clean2;
+		bad2.row = clean2.row = clean.row;
+		Out x(1024);
+		Out y(1024);
+		(void)bad2.notes({ on(36, 0) });
+		(void)clean2.notes({ on(36, 0) });
+		bad2.render(x.l.data(), x.r.data(), 512);
+		clean2.render(y.l.data(), y.r.data(), 512);
+		Out junk(512);
+		junk.l[7] = std::numeric_limits<float>::quiet_NaN();
+		junk.r[9] = std::numeric_limits<float>::infinity();
+		bad2.render(junk.l.data(), junk.r.data(), 512); // bad input, then
+		Out z1(512), z2(512);
+		clean2.render(z2.l.data(), z2.r.data(), 512);
+		Out fresh1(512), fresh2(512);
+		(void)bad2.notes({ on(36, 20) });
+		(void)clean2.notes({ on(36, 20) });
+		bad2.render(fresh1.l.data(), fresh1.r.data(), 512);
+		clean2.render(fresh2.l.data(), fresh2.r.data(), 512);
+		for (size_t i = 0; i < 512; ++i) {
+			REQUIRE(std::isfinite(fresh1.l[i]));
+		}
+		CHECK(fresh1.l == fresh2.l);
+		CHECK(fresh1.r == fresh2.r);
+		CHECK_FALSE(allZero(fresh1.l));
+	}
+}
+
+TEST_CASE("drum: every control at each end of its range, in every kind, stays a finite signal") {
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		CAPTURE(drum::kKindNames[k]);
+		for (size_t p = 0; p < std::size(dd::kParamDescs); ++p) {
+			if (static_cast<int>(p) == dd::kTraits.enableControl) {
+				continue;
+			}
+			const device::ParamDesc& desc = dd::kParamDescs[p];
+			for (const double v : { desc.min, desc.max, desc.max - desc.min > 1.0e6 ? 1.0e6 : desc.max }) {
+				CAPTURE(desc.key);
+				Dev d;
+				d.row = variedRow(static_cast<drum::Kind>(k));
+				d.row[p] = static_cast<float>(v);
+				d.set(Param::Trigger, 1.0);
+				(void)d.notes({ on(36, 0), on(36, 100) });
+				Out o(1024);
+				d.render(o.l.data(), o.r.data(), 1024);
+				for (size_t i = 0; i < 1024; ++i) {
+					REQUIRE(std::isfinite(o.l[i]));
+					REQUIRE(std::isfinite(o.r[i]));
+				}
+			}
+		}
+	}
+}
+
 //--------------------------------------------------------------------------------------------------//
 // STATE                                                                                              //
 //--------------------------------------------------------------------------------------------------//

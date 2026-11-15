@@ -805,6 +805,12 @@ target_link_libraries(test_fx_harm PRIVATE feathers-fx feathers-warnings)
 target_include_directories(test_fx_harm PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME fx-harm COMMAND test_fx_harm)
 
+# DRUM — one drum, a generator in a chain. Its sound is the engine's own hit, so the suite holds the device to it bit for bit.
+add_executable(test_drum_device test_drum_device.cpp)
+target_link_libraries(test_drum_device PRIVATE feathers-fx feathers-synth feathers-gui-bridge feathers-rack feathers-fx-sklitter feathers-warnings)
+target_include_directories(test_drum_device PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME drum-device COMMAND test_drum_device)
+
 # HARM's four partials and its envelope: bit-identity of the single-partial path against a copy of the device as it was.
 add_executable(test_fx_harm_partials test_fx_harm_partials.cpp)
 target_link_libraries(test_fx_harm_partials PRIVATE feathers-fx feathers-warnings)
@@ -1837,7 +1843,7 @@ if(FEATHERS_SANITIZE)
 	# and test_pattern_device tears one down mid-fit; a use after free there does not fault either.
 	# **AND GROUP-COPY**: its rigs destroy a top rack's bridge — the slot pool's owner —
 	# before the engine that holds racks nested several deep with sites; a link left pointing at the freed owner reads it.
-	foreach(_suite rack-engine rack-state rack-editor synth container-bodies container-state rack-nesting rack-voices lane-rack converger chain-record fx-sklitter fx-sklitter-modes fx-sklitter-ring fx-sklitter-engage inner-chain sklitter-chain fx-delay fx-pitch fx-eroder fx-disperser fx-phaser fx-comp fx-clip file-dialog state-json fx-shaper fx-eq takeover pattern-device group-copy)
+	foreach(_suite rack-engine rack-state rack-editor synth container-bodies container-state rack-nesting rack-voices lane-rack converger chain-record fx-sklitter fx-sklitter-modes fx-sklitter-ring fx-sklitter-engage inner-chain sklitter-chain fx-delay fx-pitch fx-eroder fx-disperser fx-phaser fx-comp fx-clip file-dialog state-json fx-shaper fx-eq takeover pattern-device group-copy drum-device)
 		string(REPLACE "-" "_" _target "test_${_suite}")
 		add_test(NAME sanitize-${_suite} COMMAND ${_feathers_each} $<TARGET_FILE:${_target}>)
 		# **RUN_CASES_TIMEOUT HERE TOO, AND ITS ABSENCE WAS A HOLE IN THE GATE RATHER THAN A FINDING IN

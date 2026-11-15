@@ -96,6 +96,21 @@ std::vector<const device::Descriptor*> audioDevices() {
 	return out;
 }
 
+/// **DEVICES THAT SOUND ONLY FROM NOTES — a generator**, which adds its sound to the input and has none of its own to carry: a probe
+/// through one comes out as it went in, whatever its row says, so the sweeps below that compare a probe's journey (a reset, a rate, a
+/// partition, a note's pitch, a control's reach) are blind on it. Each skips them and asserts the set, so a second generator joining is
+/// a decision made here; the same claims, asked WITH NOTES, are held in `test_drum_device.cpp`.
+constexpr std::string_view kNoteGenerators[] = { "Drum" };
+
+bool isNoteGenerator(const device::Descriptor& d) {
+	for (const std::string_view name : kNoteGenerators) {
+		if (std::string_view(d.traits.name) == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace
 
 //==================================================================================================
@@ -550,9 +565,14 @@ TEST_CASE("EVERY audio device: reset means AS IF JUST SWITCHED ON, not merely wi
 
 	constexpr int kFrames = 256;
 
+	std::vector<std::string> generators;
 	for (const device::Descriptor* desc : devices) {
 		const std::string who = deviceName(*desc);
 		CAPTURE(who);
+		if (isNoteGenerator(*desc)) {
+			generators.push_back(who); // no history in a probe: held in test_drum_device ("reset is as if just switched on")
+			continue;
+		}
 		// PER DEVICE, because one of them cannot be heard inside 256 frames. See `framesFor`.
 		const int frames = framesFor(*desc, kFrames);
 		const std::vector<float> probe = probeSignal(frames, 0.25f, 0x51ed1234u);
@@ -609,6 +629,7 @@ TEST_CASE("EVERY audio device: reset means AS IF JUST SWITCHED ON, not merely wi
 		CAPTURE(worst);
 		CHECK_MESSAGE(resetDiffs == 0, "reset did not restore the just-switched-on state on ", who);
 	}
+	CHECK(generators == std::vector<std::string> { "Drum" });
 }
 
 TEST_CASE("EVERY audio device: the same samples in a different partition are the same samples out") {
@@ -648,9 +669,14 @@ TEST_CASE("EVERY audio device: the same samples in a different partition are the
 	};
 
 	std::vector<std::string> dependent;
+	std::vector<std::string> generators;
 	for (const device::Descriptor* desc : devices) {
 		const std::string who = deviceName(*desc);
 		CAPTURE(who);
+		if (isNoteGenerator(*desc)) {
+			generators.push_back(who); // a probe has no journey through it: held in test_drum_device, through the rack's own cuts
+			continue;
+		}
 		const DeviceRow row = enabledRowFor(*desc);
 		const DeviceRow elsewhere = variedRowFor(*desc);
 
@@ -774,6 +800,7 @@ TEST_CASE("EVERY audio device: the same samples in a different partition are the
 	const std::vector<std::string> expected { "OWLTT" };
 	CHECK(dependent == expected);
 	CHECK(unseenPartition == std::vector<std::string> {});
+	CHECK(generators == std::vector<std::string> { "Drum" });
 }
 
 TEST_CASE("EVERY audio device: a hot signal through extreme settings stays a finite signal") {
@@ -963,9 +990,14 @@ TEST_CASE("EVERY audio device: the sample rate reaches the DSP, and prepare is w
 	const std::vector<float> probe = probeSignal(kFrames, 0.3f, 0x5a1e5a1eu);
 
 	std::vector<std::string> rateFree;
+	std::vector<std::string> generators;
 	for (const device::Descriptor* desc : devices) {
 		const std::string who = deviceName(*desc);
 		CAPTURE(who);
+		if (isNoteGenerator(*desc)) {
+			generators.push_back(who); // a wire without a note: held in test_drum_device ("the rate is read")
+			continue;
+		}
 		// `variedRowFor` AND NOT `enabledRowFor`, and the difference is a real property of one device
 		// rather than a convenience. **Drawn's shipped default is EXACTLY a wire** — the default is
 		// flat by design, and `test_fx_drawn.cpp` asserts it at exact
@@ -1099,6 +1131,7 @@ TEST_CASE("EVERY audio device: the sample rate reaches the DSP, and prepare is w
 	// sidechain gain, the enable), none a number of seconds or hertz; its ramps are a fixed TIME, which `travelling` covers.
 	const std::vector<std::string> expected { "Drawn", "Bus Utility", "Chain", "Clipper", "Rack", "Sidechain Inject" };
 	CHECK(rateFree == expected);
+	CHECK(generators == std::vector<std::string> { "Drum" });
 }
 
 TEST_CASE("OWLTT renders a block longer than its own stack buffer, instead of writing past it") {
@@ -1220,12 +1253,20 @@ TEST_CASE("EVERY device with a NOTE road: fields and notes may arrive in either 
 	std::vector<std::string> reachesOnlyThroughMembers { "Chain", "Compressor", "Delay", "Rack", "Resonate", "SKLITTER" };
 	std::sort(reachesOnlyThroughMembers.begin(), reachesOnlyThroughMembers.end());
 	std::vector<std::string> throughMembers;
+	// **A GENERATOR'S NOTE CONTEXT CARRIES THE TICK PHASE ALONE** (`NoteContext::tickPhase`, where its call starts in the control tick,
+	// so a note lands on its own sample): the pitch and the gate it also receives reach nothing, the notes themselves arriving by the note
+	// road. Listed, as the members' are; its tick phase is held in test_drum_device (the rack places a note on its sample at every cut).
+	std::vector<std::string> readsTickOnly;
 	for (const device::Descriptor* desc : devices) {
 		if (desc->audio->setNoteContext == nullptr) {
 			continue;
 		}
 		const std::string who = deviceName(*desc);
 		CAPTURE(who);
+		if (isNoteGenerator(*desc)) {
+			readsTickOnly.push_back(who);
+			continue;
+		}
 		if (desc->container != nullptr) {
 			throughMembers.push_back(who);
 			continue;
@@ -1404,6 +1445,7 @@ TEST_CASE("EVERY device with a NOTE road: fields and notes may arrive in either 
 	CHECK(swept >= 3);
 	std::sort(throughMembers.begin(), throughMembers.end());
 	CHECK(throughMembers == reachesOnlyThroughMembers);
+	CHECK(readsTickOnly == std::vector<std::string> { "Drum" });
 }
 
 TEST_CASE("EVERY device with a MONO road: it is the stereo road's left channel, sample for sample") {
@@ -2990,10 +3032,11 @@ TEST_CASE("EVERY declared control of EVERY other device changes the sound in SOM
 				return false;
 			}
 		}
-		return true;
+		// A GENERATOR NEEDS NOTES, WHICH THIS SWEEP DOES NOT SEND: `test_drum_device.cpp` sweeps every control of it, with notes.
+		return !isNoteGenerator(d);
 	});
-	// AND THE PARTS TOGETHER ARE THE WHOLE: every audio device is in exactly one of the four.
-	CHECK(sweep.swept.size() + std::size(kHonestySweptAlone) == audioDevices().size());
+	// AND THE PARTS TOGETHER ARE THE WHOLE: every audio device is in exactly one of the parts, or is a generator.
+	CHECK(sweep.swept.size() + std::size(kHonestySweptAlone) + std::size(kNoteGenerators) == audioDevices().size());
 	// EVERY ACCOUNTED-FOR ENTRY STILL NAMES A DEVICE. Unsplit, a stale entry failed `dead == expected`; split, each part
 	// keeps only its own devices' entries, so an entry naming no device at all would be dropped by every part.
 	for (const std::string& e : honestyExpected()) {

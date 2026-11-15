@@ -68,9 +68,8 @@ jobs:
       # are Linux only. Off everywhere else because the hosts need an X display.
       #
       # Windows: MSVC through Ninja (the msvc-dev-cmd step below). The plugin builds with visage compiled
-      # in but NO EDITOR offered to a host: the Windows embed is not written yet (PluginWindow::isAvailable),
-      # so for now a Windows host gets the synth without its window. The widget suites are not built there
-      # for the same reason (tests/CMakeLists.txt, the `if(TARGET visage AND NOT WIN32)` block).
+      # in and the editor embedded in the host's window (src/plugin/ui/plugin_window.cpp's Win32 branch); the
+      # test_win32_embed case opens, sizes and photographs it on the runner's desktop.
       CMAKE_EXTRA: ${{ matrix.leg == 'macos-universal2' && '-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DFEATHERS_BUILD_TOOLS=ON' || '' }}
     strategy:
       # One platform failing should not hide what the other two would have said.
@@ -452,8 +451,8 @@ jobs:
           body: |
             A pre-release build of Feathers for Linux x86-64, macOS (universal) and Windows x86-64, as CLAP
             and VST3 plugins with a standalone. See the README's "Trying it" section for installing, including
-            clearing macOS quarantine. The macOS builds are ad-hoc signed, not notarised. On Windows the
-            plugins load and play but have no editor window yet.
+            clearing macOS quarantine. The macOS builds are ad-hoc signed, not notarised. The Windows editor
+            is new and tested on CI only; please report anything odd.
           files: |
             out/*.zip
             out/SHA256SUMS.txt

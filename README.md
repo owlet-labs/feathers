@@ -2,7 +2,7 @@
 
 [![Linux x86-64](https://img.shields.io/badge/Linux-x86--64-FCC624?logo=linux&logoColor=black)](#install)
 [![macOS universal](https://img.shields.io/badge/macOS-universal%20(arm64%20%2B%20x86--64)-000000?logo=apple&logoColor=white)](#install)
-[![Windows x86-64](https://img.shields.io/badge/Windows-x86--64%20(no%20editor%20yet)-0078D6?logo=windows&logoColor=white)](#installing-on-windows)
+[![Windows x86-64](https://img.shields.io/badge/Windows-x86--64%20(new)-0078D6?logo=windows&logoColor=white)](#installing-on-windows)
 [![CLAP](https://img.shields.io/badge/plugin-CLAP-5a3e85)](#trying-it)
 [![VST3](https://img.shields.io/badge/plugin-VST3-5a3e85)](#trying-it)
 [![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue)](#licence)
@@ -12,8 +12,8 @@
 Feathers is a polyphonic synthesizer and effects rack, built as a CLAP plugin (VST3 and a standalone come from the same code). Its oscillators read their character from a **terrain**, a field you move through instead of a list of waveforms. Around that engine sit a **modulation system** where modulators are devices like any other, and an **effects lane** of devices that can hold lanes, chains and racks of their own.
 
 **Linux is a first-class platform.** Feathers is developed and played on Linux every day (in Bitwig), and every
-pre-release build ships for Linux x86-64 alongside the universal macOS build and Windows x86-64. On Windows the
-synth plays but has no editor window yet: the window embed for Windows is still to be written.
+pre-release build ships for Linux x86-64 alongside the universal macOS build and Windows x86-64. The Windows
+editor is new: it is tested on CI's Windows desktop but nobody on the team has played it on a Windows machine yet.
 
 ## Install
 
@@ -257,7 +257,7 @@ Download the latest build from the [**Releases** page](https://github.com/owlet-
 |---|---|---|
 | macOS (Apple silicon and Intel) | `feathers-<version>-macos-universal2.zip` | the synth and the Chain, as CLAP and VST3, plus `install.command` |
 | Linux x86-64 | `feathers-<version>-linux-x86_64.zip` | the synth and the Chain, as CLAP and VST3, plus the synth's standalone |
-| Windows x86-64 | `feathers-<version>-windows-x86_64.zip` | the synth and the Chain, as CLAP and VST3, plus the synth's standalone `.exe`; **no editor window yet** |
+| Windows x86-64 | `feathers-<version>-windows-x86_64.zip` | the synth and the Chain, as CLAP and VST3, plus the synth's standalone `.exe`; the editor is new on Windows |
 
 For something newer than the latest release, every [`build` workflow](https://github.com/owlet-labs/feathers/actions/workflows/build.yml) run also keeps its builds as artifacts (bottom of the run's page) for 7 days; downloading those needs a signed-in GitHub account, and GitHub wraps each one in an extra zip. These are pre-release builds: expect rough edges, and please [report what you find](https://github.com/owlet-labs/feathers/issues).
 
@@ -295,7 +295,7 @@ Feathers is built and played daily in Bitwig on Linux. If your DAW runs as a Fla
 
 #### Installing on Windows
 
-**There is no editor window on Windows yet.** The plugins load and play (parameters, automation, presets saved by the host, MIDI), but the host shows no Feathers window: the window embed for Windows is still to be written. Everything else is the same build as Linux and macOS, and passes the same test suite.
+**The Windows editor is new.** It opens inside the host's window and passes CI's tests on a real Windows desktop (it opens, sizes, follows a host resize, draws, and survives repeated open and close), but nobody on the team has a Windows machine, so it has not been played by a person yet. Please [report](https://github.com/owlet-labs/feathers/issues) anything odd. Everything else is the same build as Linux and macOS, and passes the same test suite.
 
 Unzip the download. Inside are:
 

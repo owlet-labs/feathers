@@ -17,6 +17,7 @@
 
 #include "plugin/ui/lfo_card.h"
 #include "plugin/ui/modulated_row.h"
+#include "plugin/ui/modulated_shape.h"
 
 #include "device/format_value.h"
 #include "mod/lfo/lfo.h"
@@ -449,7 +450,7 @@ void LfoCard::drawContent(visage::Canvas& canvas) {
 	// control fighting the hand for reasons nothing on screen explains.
 	plot::drawGrid(canvas, box);
 
-	const lfo::Settings s = shownSettings();
+	const lfo::Settings s = settings();
 
 	// ZERO/CENTER LINE.
 	const float zeroY = s.bipolar ? 0.5f : 1.0f;
@@ -489,6 +490,15 @@ void LfoCard::drawContent(visage::Canvas& canvas) {
 		const visage::Point a = fromUnit(points[i - 1].first, points[i - 1].second);
 		const visage::Point b = fromUnit(points[i].first, points[i].second);
 		canvas.segment(a.x, a.y, b.x, b.y, 2.0f, true);
+	}
+
+	// THE AS-MODULATED WAVEFORM, over the rest one, in the modulation colour — only where modulation moved the shape.
+	if (shapeMoved()) {
+		const auto strokeMoved = [&](const std::vector<std::pair<float, float>>& line) {
+			strokeModulatedShape(canvas, line.size(), [&](size_t i) { return fromUnit(line[i].first, line[i].second); }, 2.0f);
+		};
+		strokeMoved(curve(true));
+		strokeMoved(curveRight(true));
 	}
 
 	// Playhead star.
@@ -564,7 +574,7 @@ LfoCard::Marker LfoCard::marker() const {
 	// scrolling instead of the pointing. Leaving this expression in place would have put the star
 	// a fraction of a step ahead of the edge it is supposed to sit on.
 	float phase = where.phase;
-	if (lfo::isRandom(shownSettings().wave)) {
+	if (lfo::isRandom(settings().wave)) {
 		phase = 1.0f;
 	}
 	else {
@@ -574,7 +584,7 @@ LfoCard::Marker LfoCard::marker() const {
 		// the star at the right place on a curve that had moved out from under it — visible the moment
 		// Phase is anything but zero, and invisible in every test that leaves it at the default.
 		const float start =
-		    std::isfinite(shownSettings().phase) ? shownSettings().phase - std::floor(shownSettings().phase) : 0.0f;
+		    std::isfinite(settings().phase) ? settings().phase - std::floor(settings().phase) : 0.0f;
 		const float rotated = phase - start;
 		phase = rotated - std::floor(rotated);
 	}
@@ -599,17 +609,17 @@ mod::Playhead LfoCard::playhead() const {
 	return { ordinal, phase };
 }
 
-std::vector<std::pair<float, float>> LfoCard::curve() const {
-	return curveAt(0.0f);
+std::vector<std::pair<float, float>> LfoCard::curve(bool modulated) const {
+	return curveAt(0.0f, modulated);
 }
 
-std::vector<std::pair<float, float>> LfoCard::curveRight() const {
-	const float lead = shownSettings().stereoLead();
-	return lead != 0.0f ? curveAt(lead) : std::vector<std::pair<float, float>> {};
+std::vector<std::pair<float, float>> LfoCard::curveRight(bool modulated) const {
+	const float lead = (modulated ? shownSettings() : settings()).stereoLead();
+	return lead != 0.0f ? curveAt(lead, modulated) : std::vector<std::pair<float, float>> {};
 }
 
-std::vector<std::pair<float, float>> LfoCard::curveAt(float lead) const {
-	const auto s = shownSettings();
+std::vector<std::pair<float, float>> LfoCard::curveAt(float lead, bool modulated) const {
+	const auto s = modulated ? shownSettings() : settings();
 	if (lfo::isRandom(s.wave)) {
 		// THE STEP THE ENGINE IS ON, which the playhead's ordinal carries for this waveform alone. A
 		// card with no running device draws the walk from its own beginning, which is what it will play

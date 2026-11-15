@@ -68,12 +68,15 @@ public:
 	const std::vector<Span>& spansForTest() const { return spans_; }
 	/// The settings the picture was last built from.
 	const fx::harm::EnvelopeTimes& timesForTest() const { return times_; }
+	const fx::harm::EnvelopeTimes& modulatedTimesForTest() const { return modTimes_; }
+	bool drawsModulatedShapeForTest() const { return hasMod_; }
 	/// The box the curve is drawn in, in this frame's own coordinates.
 	visage::Bounds plotBounds() const;
 
 private:
 	void rebuild();
-	fx::harm::EnvelopeTimes readTimes() const;
+	static void shapeOf(const fx::harm::EnvelopeTimes& times, std::vector<visage::Point>& curve, std::vector<Span>& spans);
+	fx::harm::EnvelopeTimes readTimes(bool modulated = true) const;
 
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_ = kNoInstance;
@@ -81,6 +84,10 @@ private:
 	bool built_ = false;
 	std::vector<visage::Point> curve_;
 	std::vector<Span> spans_;
+	/// THE AS-MODULATED TIMES AND SHAPE, drawn over the rest one while `hasMod_`.
+	fx::harm::EnvelopeTimes modTimes_ {};
+	std::vector<visage::Point> modCurve_;
+	bool hasMod_ = false;
 };
 
 } // namespace feathers::ui

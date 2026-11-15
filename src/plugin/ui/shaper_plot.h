@@ -20,6 +20,7 @@
 #include "fx/shaper/shaper_curve.h"
 #include "fx/shaper/shaper_types.h"
 #include "plugin/ui/shaper_plot_curve.h"
+#include "plugin/ui/modulated_shape.h"
 #include "plugin/ui/theme.h"
 
 #include <visage/ui.h>
@@ -53,7 +54,8 @@ namespace feathers::ui {
 /// publishes one. It colours the reached part of the curve — see the note at the drawing loop.
 
 inline void drawShaperCurve(visage::Canvas& canvas, const visage::Bounds& box,
-                            const fx::shaper::Settings& settings, bool dimmed, float drive = 0.0f) {
+                            const fx::shaper::Settings& settings, bool dimmed, float drive = 0.0f,
+                            const fx::shaper::Settings* modulated = nullptr) {
 	if (box.width() <= 2.0f || box.height() <= 2.0f) {
 		return;
 	}
@@ -141,6 +143,14 @@ inline void drawShaperCurve(visage::Canvas& canvas, const visage::Bounds& box,
 		}
 		prevX = x;
 		prevY = y;
+	}
+	// THE AS-MODULATED TRANSFER, over the rest one, in the modulation colour (see strokeModulatedShape).
+	if (modulated != nullptr && !inert) {
+		const std::array<float, kShaperPlotPoints> moved = shaperPlotCurve(*modulated);
+		strokeModulatedShape(canvas, kShaperPlotPoints, [&](size_t i) {
+			const float t = static_cast<float>(i) / static_cast<float>(kShaperPlotPoints - 1);
+			return visage::Point { box.x() + t * box.width(), box.y() + (1.0f - (moved[i] + 1.0f) * 0.5f) * box.height() };
+		});
 	}
 }
 

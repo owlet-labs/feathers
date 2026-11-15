@@ -17,6 +17,7 @@
 
 #include "plugin/ui/automod_strip.h"
 #include "plugin/ui/modulated_row.h"
+#include "plugin/ui/modulated_shape.h"
 
 #include "fx/automod/automod.h"
 #include "fx/filter/filter_types.h"
@@ -272,12 +273,14 @@ bool AutomodStrip::update() {
 	const float now = phase();
 	const float env = envelope();
 	const amd::Settings shape = settings();
-	if (now == drawnPhase_ && env == drawnEnvelope_ && haveDrawnShape_ && shape == drawnShape_) {
+	const amd::Settings modShape = settings(true);
+	if (now == drawnPhase_ && env == drawnEnvelope_ && haveDrawnShape_ && shape == drawnShape_ && modShape == drawnModShape_) {
 		return false;
 	}
 	drawnPhase_ = now;
 	drawnEnvelope_ = env;
 	drawnShape_ = shape;
+	drawnModShape_ = modShape;
 	haveDrawnShape_ = true;
 	redraw();
 	return true;
@@ -292,18 +295,20 @@ visage::Bounds AutomodStrip::responsePlot() const {
 	return (picture_ == Picture::LfoOnly) ? visage::Bounds {} : plot();
 }
 
-const AutomodStrip::View& AutomodStrip::view() const {
-	const amd::Settings now = settings();
-	if (!viewValid_ || !(now == view_.settings)) {
-		view_.settings = now;
-		view_.derived = amd::deriveAutomod(amd::coordsOf(now, amd::nominalRateHz(now)));
-		viewValid_ = true;
+const AutomodStrip::View& AutomodStrip::view(bool modulated) const {
+	View& cache = modulated ? modView_ : view_;
+	bool& valid = modulated ? modViewValid_ : viewValid_;
+	const amd::Settings now = settings(modulated);
+	if (!valid || !(now == cache.settings)) {
+		cache.settings = now;
+		cache.derived = amd::deriveAutomod(amd::coordsOf(now, amd::nominalRateHz(now)));
+		valid = true;
 		++deriveCount_;
 	}
-	return view_;
+	return cache;
 }
 
-amd::Settings AutomodStrip::settings() const {
+amd::Settings AutomodStrip::settings(bool modulated) const {
 	// THE DECLARED DEFAULTS FIRST, THEN WHATEVER THE ROW ACTUALLY CARRIES, which is the road
 	// `device_row.h` names in its own words: *"Fields past the returned count are LEFT UNTOUCHED
 	// rather than zeroed, so a caller may pre-fill `out` with defaults if it prefers that road."*
@@ -316,7 +321,7 @@ amd::Settings AutomodStrip::settings() const {
 	// is the point of the comment above: a zero-filled short row would draw the origin, and the origin
 	// is the one coordinate with no travel in it.
 	amd::Row row = amd::rowOf(amd::Settings {});
-	(void)readModulatedRow(host_, device_, amd::kDescriptor, row);
+	(void)(modulated ? readModulatedRow(host_, device_, amd::kDescriptor, row) : readStoredRow(host_, device_, row));
 	return amd::settingsOf(row);
 }
 
@@ -331,8 +336,8 @@ AutomodStrip::CornerTravel AutomodStrip::cornerTravel() const {
 	return { *lo, *hi };
 }
 
-AutomodStrip::ResponseTrace AutomodStrip::responseTrace() const {
-	const View& v = view();
+AutomodStrip::ResponseTrace AutomodStrip::responseTrace(bool modulated) const {
+	const View& v = view(modulated);
 	const amd::Settings& s = v.settings;
 	const amd::AutomodDerived& d = v.derived;
 	const double rate = host_.sampleRate();
@@ -640,6 +645,14 @@ void AutomodStrip::drawResponse(visage::Canvas& canvas) {
 	for (size_t i = 1; i < trace.hz.size(); ++i) {
 		canvas.segment(xAt(i - 1), yAt(trace.gain[i - 1]), xAt(i), yAt(trace.gain[i]), kTraceWeight,
 		               true);
+	}
+	// THE AS-MODULATED RESPONSE, over the rest one, in the modulation colour — only where modulation moved the strip.
+	if (drawsModulatedShape(settings(false), settings(true))) {
+		const ResponseTrace moved = responseTrace(true);
+		if (moved.hz.size() == trace.hz.size()) {
+			strokeModulatedShape(canvas, moved.hz.size(), [&](size_t i) { return visage::Point { xAt(i), yAt(moved.gain[i]) }; },
+			                     kTraceWeight);
+		}
 	}
 }
 

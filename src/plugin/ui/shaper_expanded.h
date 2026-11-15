@@ -18,6 +18,7 @@
 #pragma once
 
 #include "plugin/ui/widget_registry.h"
+#include "plugin/ui/modulated_row.h"
 #include "fx/shaper/shaper_types.h"
 #include "backplane/device_host.h"
 #include "plugin/ui/device_control.h"
@@ -223,10 +224,13 @@ public:
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
 	[[nodiscard]] fx::shaper::Settings drawnFromForTest() const { return settings(); }
+	/// THE STORED ROW's settings: the rest shape, drawn beneath the modulated one while modulation moves it.
+	[[nodiscard]] fx::shaper::Settings restFromForTest() const { return settings(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(settings(false), settings()); }
 
 private:
 	[[nodiscard]] DeviceControl& control(fx::shaper::Param p) const;
-	[[nodiscard]] fx::shaper::Settings settings() const;
+	[[nodiscard]] fx::shaper::Settings settings(bool modulated = true) const;
 	void layOut();
 
 	backplane::DeviceHost& host_;
@@ -266,6 +270,7 @@ private:
 	/// is painted: a headless case can then see the road settle, which a paint it cannot cause would
 	/// keep from it.
 	fx::shaper::Settings drawnSettings_ {};
+	fx::shaper::Settings drawnRest_ {};
 	bool haveDrawn_ = false;
 	/// THE METER AS LAST DRAWN — a READING, so `drawnSettings_` cannot see it. See `update`.
 	float drawnDrive_ = 0.0f;

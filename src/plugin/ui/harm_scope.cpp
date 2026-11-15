@@ -17,6 +17,7 @@
 
 #include "plugin/ui/harm_scope.h"
 #include "plugin/ui/modulated_row.h"
+#include "plugin/ui/modulated_shape.h"
 
 #include "plugin/fx_chain.h"
 #include "plugin/ui/knob.h"
@@ -227,7 +228,15 @@ hrm::Settings HarmScope::settings() const {
 	return hrm::partialSlice(fullSettings(), partial_);
 }
 
-hrm::Settings HarmScope::fullSettings() const {
+hrm::Settings HarmScope::modulatedSettingsForTest() const {
+	return hrm::partialSlice(fullSettings(true), partial_);
+}
+
+bool HarmScope::drawsModulatedShapeForTest() const {
+	return drawsModulatedShape(fullSettings(false), fullSettings(true));
+}
+
+hrm::Settings HarmScope::fullSettings(bool modulated) const {
 	// ONE READ OF THE DEVICE'S OWN STATE, not a rebuild field by field. `fxFilterAt`'s note records
 	// what the other shape costs: the filter card assembled its curve out of published values and
 	// shipped a picture of a filter the engine was not running twice, once per field somebody
@@ -236,7 +245,7 @@ hrm::Settings HarmScope::fullSettings() const {
 	// type only the parameter road has; the seam gives the same row a field at a time, so this is the
 	// same computation with the host-specific container taken out of the middle.
 	hrm::Row row {};
-	const size_t fields = readModulatedRow(host_, device_, hrm::kDescriptor, row);
+	const size_t fields = modulated ? readModulatedRow(host_, device_, hrm::kDescriptor, row) : readStoredRow(host_, device_, row);
 	hrm::Settings s = hrm::stateOf(row, fields).settings;
 	// THE PICTURE DRAWS THE DEVICE WHETHER OR NOT IT IS SWITCHED IN, which is the filter card's rule
 	// and the only field overridden here. A player reaching for the Enabled switch wants to see what
@@ -597,6 +606,23 @@ void HarmScope::draw(visage::Canvas& canvas) {
 			canvas.segment(from.x, from.y, to.x, to.y, e.selected ? 1.5f : 1.0f, true);
 		}
 	}
+	// THE AS-MODULATED NOTCH CURVES, over the rest ones in the modulation colour — only where modulation moved the plot.
+	if (drawsModulatedShape(full, fullSettings(true))) {
+		for (const PlanEntry& e : plan) {
+			if (!e.active) {
+				continue;
+			}
+			const size_t points = curveGainsFor(e.partial, gainStore.data(), gainStore.size(), true);
+			if (points < 2) {
+				continue;
+			}
+			strokeModulatedShape(canvas, points, [&](size_t i) {
+				const float t = static_cast<float>(i) / static_cast<float>(points - 1);
+				const float magnitude = std::clamp(gainStore[i], 0.0f, 1.0f);
+				return visage::Point { box.x() + box.width() * t, box.bottom() - box.height() * magnitude };
+			}, e.selected ? 1.75f : 1.25f);
+		}
+	}
 	(void)full;
 
 	// THE GRIPS, LAST AND ON TOP OF EVERYTHING.
@@ -697,12 +723,12 @@ std::vector<HarmScope::PlanEntry> HarmScope::drawPlan() const {
 	return out;
 }
 
-size_t HarmScope::curveGainsFor(int partial, float* out, size_t capacity) const {
+size_t HarmScope::curveGainsFor(int partial, float* out, size_t capacity, bool modulated) const {
 	if (out == nullptr || capacity == 0) {
 		return 0;
 	}
 	const size_t points = std::min(capacity, curvePointCount());
-	hrm::ratioProfile(hrm::partialSlice(fullSettings(), partial), nullptr, out, points);
+	hrm::ratioProfile(hrm::partialSlice(fullSettings(modulated), partial), nullptr, out, points);
 	return points;
 }
 

@@ -22,6 +22,8 @@
 #include "plugin/ui/smooth_picture.h"
 
 #include "plugin/ui/knob.h"
+#include "plugin/ui/modulated_row.h"
+#include "plugin/ui/modulated_shape.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/zone_coord_cell.h"
 #include "plugin/ui/zone_select.h"
@@ -51,20 +53,31 @@ bool routeGestureWanted(const device::Modulatable& ctrl, const visage::MouseEven
 // THE MODEL                                                                                         //
 //--------------------------------------------------------------------------------------------------//
 
-bool SmoothPictureModel::refresh(const sm::Settings& now) {
-	if (have && now == drawn) {
+bool SmoothPictureModel::refresh(const sm::Settings& now, const sm::Settings& restNow) {
+	if (have && now == drawn && restNow == rest) {
 		return false;
 	}
 	drawn = now;
+	rest = restNow;
 	have = true;
-	picture = sm::pictureOf(now);
+	picture = sm::pictureOf(restNow);
 	float peak = 0.0f;
 	for (int i = 0; i < kCurvePoints; ++i) {
 		curve[static_cast<size_t>(i)] = sm::transferAt(picture, inputAt(i));
 		peak = std::max(peak, std::fabs(curve[static_cast<size_t>(i)]));
 	}
-	outputSpan = std::max(1.0f, peak * 1.08f);
 	harmonics = sm::harmonicsOf(picture, kHarmonicLevel);
+	// THE MODULATED SHAPE, only where modulation moved the plot (one predicate: `drawsModulatedShape`).
+	hasMod = drawsModulatedShape(restNow, now);
+	if (hasMod) {
+		const sm::Picture moved = sm::pictureOf(now);
+		for (int i = 0; i < kCurvePoints; ++i) {
+			modCurve[static_cast<size_t>(i)] = sm::transferAt(moved, inputAt(i));
+			peak = std::max(peak, std::fabs(modCurve[static_cast<size_t>(i)]));
+		}
+		modHarmonics = sm::harmonicsOf(moved, kHarmonicLevel);
+	}
+	outputSpan = std::max(1.0f, peak * 1.08f);
 	++computations;
 	return true;
 }
@@ -275,6 +288,14 @@ void SmoothCurveView::draw(visage::Canvas& canvas) {
 		canvas.segment(x0, y0, x1, y1, 1.8f, true);
 	}
 
+	// THE AS-MODULATED CURVE, over the rest one, in the modulation colour.
+	if (model_.hasMod) {
+		strokeModulatedShape(canvas, SmoothPictureModel::kCurvePoints, [&](size_t i) {
+			return visage::Point { xOfInput(SmoothPictureModel::inputAt(static_cast<int>(i))),
+				                   std::clamp(yOfOutput(model_.modCurve[i]), b.y(), b.bottom()) };
+		});
+	}
+
 	// THE LIVE INPUT PEAK, both sides of the axis, when the bus is publishing it.
 	if (hasPeak_) {
 		const float px = std::min(peak_, SmoothPictureModel::kInputSpan);
@@ -363,6 +384,14 @@ visage::Bounds SmoothHarmonicsView::barBounds(int harmonic) const {
 	return { a.x() + slot * static_cast<float>(harmonic) + (slot - w) * 0.5f, a.bottom() - h, w, h };
 }
 
+visage::Bounds SmoothHarmonicsView::modBarBounds(int harmonic) const {
+	const visage::Bounds a = barsArea();
+	const float slot = a.width() / static_cast<float>(sm::kHarmonicCount);
+	const float w = std::max(2.0f, slot * 0.62f);
+	const float h = a.height() * fractionOfLevel(model_.modHarmonics[static_cast<size_t>(harmonic)]);
+	return { a.x() + slot * static_cast<float>(harmonic) + (slot - w) * 0.5f, a.bottom() - h, w, h };
+}
+
 void SmoothHarmonicsView::draw(visage::Canvas& canvas) {
 	const visage::Bounds a = barsArea();
 	if (a.width() <= 4.0f || a.height() <= 4.0f) {
@@ -380,6 +409,12 @@ void SmoothHarmonicsView::draw(visage::Canvas& canvas) {
 		canvas.setColor(k == 0 ? withAlpha(kInk, 0.7f) : withAlpha(kAccent, 0.9f));
 		if (bar.height() > 0.5f) {
 			canvas.rectangle(bar.x(), bar.y(), bar.width(), bar.height());
+		}
+		// THE AS-MODULATED BAR, outlined in the modulation colour over the rest bar.
+		if (model_.hasMod) {
+			const visage::Bounds mb = modBarBounds(k);
+			canvas.setColor(withAlpha(kModulation, 0.95f));
+			canvas.rectangleBorder(mb.x(), mb.y(), mb.width(), std::max(mb.height(), 1.0f), 1.5f);
 		}
 		char label[4];
 		std::snprintf(label, sizeof label, "%d", k + 1);

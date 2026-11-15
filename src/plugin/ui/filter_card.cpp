@@ -377,9 +377,13 @@ bool FilterCard::updateContent() {
 	const bool stereo = stereoCurves();
 	const fx::filter::Settings now = stereo ? settingsFor(false) : settings();
 	const fx::filter::Settings nowR = stereo ? settingsFor(true) : now;
-	if (haveDrawn_ && stereo == drawnStereo_ && now == drawnSettings_ && nowR == drawnSettingsR_) {
+	// AND THE STORED ROW, which is the rest curve: a knob moved while a route holds the modulated corner elsewhere
+	// moves the rest curve and not the modulated one.
+	const fx::filter::Settings rest = settingsFor(false, false);
+	if (haveDrawn_ && stereo == drawnStereo_ && now == drawnSettings_ && nowR == drawnSettingsR_ && rest == drawnRest_) {
 		return false;
 	}
+	drawnRest_ = rest;
 	drawnSettings_ = now;
 	drawnSettingsR_ = nowR;
 	drawnStereo_ = stereo;
@@ -414,7 +418,40 @@ bool FilterCard::stereoCurves() const {
 	return false;
 }
 
-fx::filter::Settings FilterCard::settingsFor(bool right) const {
+FilterCard::CurvePlan FilterCard::curvePlan() const {
+	CurvePlan plan;
+	const flt::Settings rest = settingsFor(false, false);
+	plan.curve[plan.count++] = { CurveKind::Rest, rest };
+	if (stereoCurves()) {
+		const flt::Settings l = settingsFor(false);
+		const flt::Settings r = settingsFor(true);
+		// An ear whose settings equal the stored ones adds nothing to see: it would sit on the rest curve.
+		if (!(l == rest)) {
+			plan.curve[plan.count++] = { CurveKind::ModulatedL, l };
+		}
+		if (!(r == rest)) {
+			plan.curve[plan.count++] = { CurveKind::ModulatedR, r };
+		}
+	} else {
+		const flt::Settings m = settingsFor(false);
+		if (!(m == rest)) {
+			plan.curve[plan.count++] = { CurveKind::Modulated, m };
+		}
+	}
+	return plan;
+}
+
+fx::filter::Settings FilterCard::settingsFor(bool right, bool modulated) const {
+	if (!modulated) {
+		flt::Row stored {};
+		const size_t have = std::min(host_.fieldsPresentAt(device_), stored.size());
+		for (size_t i = 0; i < have; ++i) {
+			stored[i] = host_.fieldAt(device_, i);
+		}
+		flt::Settings s = flt::stateOf(stored, have).settings;
+		s.enabled = true;
+		return s;
+	}
 	// THE ROW, READ THROUGH THE SEAM — `ShaperCard::settings` records why at length: `fieldsPresentAt` and the
 	// field reads are the vocabulary both hosts share, over the same `DeviceRow`.
 	//
@@ -441,6 +478,14 @@ size_t FilterCard::curvePointCount() const {
 }
 
 size_t FilterCard::curveGains(float* out, size_t capacity, bool right) const {
+	return curveGainsOf(stereoCurves() ? settingsFor(right) : settings(), out, capacity);
+}
+
+size_t FilterCard::restCurveGains(float* out, size_t capacity) const {
+	return curveGainsOf(settingsFor(false, false), out, capacity);
+}
+
+size_t FilterCard::curveGainsOf(const flt::Settings& curve, float* out, size_t capacity) const {
 	if (out == nullptr || capacity == 0) {
 		return 0;
 	}
@@ -462,7 +507,7 @@ size_t FilterCard::curveGains(float* out, size_t capacity, bool right) const {
 	//
 	// The number is not the audio thread's: the bridge holds it, written once at activate.
 	// AN EAR EACH while a stereo route reaches the curve's controls (backlog KU); one curve, where modulation left it, otherwise.
-	flt::gainProfile(stereoCurves() ? settingsFor(right) : settings(), host_.sampleRate(), freq.data(), out, points);
+	flt::gainProfile(curve, host_.sampleRate(), freq.data(), out, points);
 	// **AND NOTHING NON-FINITE REACHES THE PLOT.** The rate above is the reason this could happen and
 	// is fixed at its source, but a profile is arithmetic over host-supplied numbers and a NaN in it
 	// draws as an invisible curve rather than as an error — the quietest possible failure. Clamping
@@ -826,23 +871,31 @@ void FilterCard::drawContent(visage::Canvas& canvas) {
 	// A FIXED BUFFER RATHER THAN AN ALLOCATION PER FRAME. draw() runs on every parameter change,
 	// which is every frame of a knob drag, and kMaxCurvePoints of float is 8 KB of stack.
 	std::array<float, kMaxCurvePoints> gainStore{};
-	// AN EAR EACH (backlog KU, Q1): while a stereo route reaches the curve's controls, two curves from the modulated
-	// rows — left in the left ear's colour, right in the right's — drawn by the same loop as the mono one.
-	const bool stereo = stereoCurves();
+	// TWO CURVES WHEN MODULATION HAS MOVED THE FILTER: the rest curve (the stored row, the grey gradient the card has
+	// always drawn) and, over it, the as-modulated one in the modulation colour — a knob's value arc and its modulated
+	// dot. A stereo route draws one modulated curve per ear (`kModulationL` / `kModulationR`) over the same rest curve.
+	const CurvePlan plan = curvePlan();
+	drawnCurveCount_ = 0;
 	bool tooFew = false;
-	for (int ear = 0; ear < (stereo ? 2 : 1); ++ear) {
-		const size_t points = curveGains(gainStore.data(), gainStore.size(), ear == 1);
+	for (size_t c = 0; c < plan.count && !tooFew; ++c) {
+		const PlannedCurve& planned = plan.curve[c];
+		const size_t points = curveGainsOf(planned.settings, gainStore.data(), gainStore.size());
 		const std::span<const float> gains(gainStore.data(), points);
 		if (points < 2) {
 			tooFew = true;
 			break;
 		}
+		drawnCurveKinds_[drawnCurveCount_++] = planned.kind;
 		const auto pointAt = [&](size_t i) {
 			const float t = static_cast<float>(i) / static_cast<float>(points - 1);
 			const float db = std::clamp(dbOf(gains[i]), kCurveBottomDb, kCurveTopDb);
 			const float y = box.y() + box.height() * (kCurveTopDb - db) / (kCurveTopDb - kCurveBottomDb);
 			return visage::Point{box.x() + box.width() * t, y};
 		};
+		const bool restCurve = planned.kind == CurveKind::Rest;
+		const uint32_t modTint = planned.kind == CurveKind::ModulatedL ? kModulationL
+		                       : planned.kind == CurveKind::ModulatedR ? kModulationR
+		                                                                : kModulation;
 
 		// COLOUR QUANTISED INTO BANDS, and only pushed when the band changes — wave_display.cpp:305-308,
 		// copied along with its reason: a per-point colour puts one gradient-atlas entry per point on
@@ -851,10 +904,10 @@ void FilterCard::drawContent(visage::Canvas& canvas) {
 		for (size_t i = 1; i < points; ++i) {
 			const float t = static_cast<float>(i) / static_cast<float>(points - 1);
 			const int band = static_cast<int>(std::lround(t * (kColourBands - 1)));
-			if (stereo) {
+			if (!restCurve) {
 				if (band != lastBand) {
 					lastBand = band;
-					canvas.setColor(stated(withAlpha(ear == 0 ? kModulationL : kModulationR, 0.9f)));
+					canvas.setColor(stated(withAlpha(modTint, 0.95f)));
 				}
 			} else if (band != lastBand) {
 				lastBand = band;
@@ -877,7 +930,18 @@ void FilterCard::drawContent(visage::Canvas& canvas) {
 			if (!std::isfinite(from.y) || !std::isfinite(to.y)) {
 				continue;
 			}
-			canvas.segment(from.x, from.y, to.x, to.y, 1.5f, true);
+			canvas.segment(from.x, from.y, to.x, to.y, restCurve ? 1.5f : 1.75f, true);
+		}
+		// A MONO MODULATED CURVE WEARS THE DOT'S COLOUR AS A CORE, as every plot's does (strokeModulatedShape).
+		if (planned.kind == CurveKind::Modulated) {
+			canvas.setColor(stated(withAlpha(kModulatedDot, 0.9f)));
+			for (size_t i = 1; i < points; ++i) {
+				const visage::Point from = pointAt(i - 1);
+				const visage::Point to = pointAt(i);
+				if (std::isfinite(from.y) && std::isfinite(to.y)) {
+					canvas.segment(from.x, from.y, to.x, to.y, 0.8f, true);
+				}
+			}
 		}
 	}
 	if (tooFew) {

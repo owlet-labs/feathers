@@ -19,6 +19,7 @@
 
 #include "backplane/device_host.h"
 #include "fx/comp/comp_types.h"
+#include "plugin/ui/modulated_row.h"
 #include "plugin/ui/comp_plot.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
@@ -64,7 +65,9 @@ public:
 	void offeredControls(std::vector<Offered>&) const override {}
 	CompTransferView(backplane::DeviceHost& host, DeviceInstanceId id) : host_(host), id_(id) {}
 	void draw(visage::Canvas& canvas) override;
-	[[nodiscard]] comp_plot::Curves curves() const;
+	[[nodiscard]] comp_plot::Curves curves(bool modulated = true) const;
+	[[nodiscard]] comp_plot::Curves restCurves() const { return curves(false); }
+	[[nodiscard]] bool drawsModulatedShapeForTest() const { return drawsModulatedShape(curves(false).s, curves().s); }
 
 private:
 	backplane::DeviceHost& host_;
@@ -172,6 +175,7 @@ private:
 	bool pendingAddMenu_ = false;
 	int laidOutMode_ = -1;
 	std::array<float, 16> drawnCurve_ {};
+	fx::comp::Settings drawnRestSettings_ {};
 };
 
 } // namespace feathers::ui

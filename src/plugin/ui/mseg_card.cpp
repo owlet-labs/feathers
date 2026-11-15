@@ -17,6 +17,7 @@
 
 #include "plugin/ui/mseg_card.h"
 #include "plugin/ui/modulated_row.h"
+#include "plugin/ui/modulated_shape.h"
 
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/celestial.h"
@@ -562,12 +563,12 @@ mseg::Layout MsegCard::layoutNow() const {
 	return mseg::layoutOf(settings());
 }
 
-std::vector<std::pair<float, float>> MsegCard::curveRight() const {
-	return mseg::polylineRight(shownSettings());
+std::vector<std::pair<float, float>> MsegCard::curveRight(bool modulated) const {
+	return mseg::polylineRight(modulated ? shownSettings() : settings());
 }
 
-std::vector<std::pair<float, float>> MsegCard::curve() const {
-	return mseg::polyline(shownSettings());
+std::vector<std::pair<float, float>> MsegCard::curve(bool modulated) const {
+	return mseg::polyline(modulated ? shownSettings() : settings());
 }
 
 bool MsegCard::updateContent() {
@@ -894,6 +895,15 @@ void MsegCard::drawContent(visage::Canvas& canvas) {
 		const visage::Point a = fromUnit(points[i - 1].first, points[i - 1].second);
 		const visage::Point b = fromUnit(points[i].first, points[i].second);
 		canvas.segment(a.x, a.y, b.x, b.y, 1.6f, true);
+	}
+
+	// THE AS-MODULATED SHAPE, over the rest one, in the modulation colour — only where modulation moved the shape.
+	if (drawsModulatedShape(settings(), shownSettings())) {
+		const auto strokeMoved = [&](const std::vector<std::pair<float, float>>& line) {
+			strokeModulatedShape(canvas, line.size(), [&](size_t i) { return fromUnit(line[i].first, line[i].second); });
+		};
+		strokeMoved(curve(true));
+		strokeMoved(curveRight(true));
 	}
 
 	// **AND WHERE THE SHAPE IS RIGHT NOW.** `celestial.h`'s `starGlyph` — the same glyph the automod

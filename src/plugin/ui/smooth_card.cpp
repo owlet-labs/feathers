@@ -89,7 +89,7 @@ SmoothCard::SmoothCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 			}
 		}
 	};
-	(void)model_.refresh(settings());
+	(void)model_.refresh(settings(), settings(false));
 }
 
 DeviceControl& SmoothCard::control(sm::Param p) const {
@@ -108,9 +108,9 @@ bool SmoothCard::headEnabled() const {
 	return control(sm::Param::Enabled).value() >= 0.5;
 }
 
-sm::Settings SmoothCard::settings() const {
+sm::Settings SmoothCard::settings(bool modulated) const {
 	sm::Row row {};
-	const size_t present = readModulatedRow(host_, device_, sm::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, sm::kDescriptor, row) : readStoredRow(host_, device_, row);
 	return sm::stateOf(row, present).settings;
 }
 
@@ -211,7 +211,7 @@ float SmoothCard::inputPeak() const {
 
 bool SmoothCard::updateContent() {
 	bool changed = false;
-	if (model_.refresh(settings())) {
+	if (model_.refresh(settings(), settings(false))) {
 		changed = true;
 	}
 	// THE MARKER MOVES ONLY WHEN THE READING DOES; published-to-unpublished is a change too (`ClipCard`).

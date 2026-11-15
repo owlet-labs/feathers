@@ -181,10 +181,12 @@ bool DrawnCard::updateContent() {
 		return false; // `redraw()` is refused for an invisible frame, so a true here would be a lie.
 	}
 	const dr::Settings now = shownSettings();
-	if (haveDrawn_ && now == drawnSettings_) {
+	const dr::Settings rest = shownSettings(false);
+	if (haveDrawn_ && now == drawnSettings_ && rest == drawnRest_) {
 		return false;
 	}
 	drawnSettings_ = now;
+	drawnRest_ = rest;
 	haveDrawn_ = true;
 	redraw();
 	return true;
@@ -202,11 +204,11 @@ dr::Settings DrawnCard::settings() const {
 	return dr::stateOf(row, present);
 }
 
-dr::Settings DrawnCard::shownSettings() const {
+dr::Settings DrawnCard::shownSettings(bool modulated) const {
 	// WHERE MODULATION LEFT THE ROW — what the curve is drawn from. `settings()` stays the stored row: the puck is the HAND's
 	// control, at the base, with the modulated position a separate dot beside it.
 	dr::Row row {};
-	const size_t present = readModulatedRow(host_, device_, dr::kDescriptor, row);
+	const size_t present = modulated ? readModulatedRow(host_, device_, dr::kDescriptor, row) : readStoredRow(host_, device_, row);
 	return dr::stateOf(row, present);
 }
 
@@ -330,24 +332,34 @@ void DrawnCard::drawCurve(visage::Canvas& canvas) {
 	// THE DEVICE'S OWN CLAIM ABOUT WHAT IT DOES, evaluated in closed form through the same function
 	// the audio path realises its coefficients from — blend, then globals, then realise. A picture
 	// drawn from a second implementation would be a second thing to keep in step.
-	const dr::Realised realised = dr::realisedAt(shownSettings());
-	canvas.setColor(withAlpha(kAccent, 0.9f));
-	float prevX = box.x();
-	float prevY = unityY;
-	for (size_t i = 0; i < kCurvePoints; ++i) {
-		const float t = static_cast<float>(i) / static_cast<float>(kCurvePoints - 1);
-		// LOG FREQUENCY ACROSS THE STRIP, over the same span the device's own coordinate spans: the
-		// left edge is `kMinAngleLog2` octaves below Nyquist and the right edge IS Nyquist.
-		const float nu = std::exp2(dr::kMinAngleLog2 * (1.0f - t));
-		const float db = 20.0f * std::log10(std::max(dr::magnitudeAt(realised, nu), 1e-6f));
-		const float ty = std::clamp((kCurveTopDb - db) / (kCurveTopDb - kCurveBottomDb), 0.0f, 1.0f);
-		const float x = box.x() + box.width() * t;
-		const float y = box.y() + ty * box.height();
-		if (i > 0) {
-			canvas.segment(prevX, prevY, x, y, 2.0f, true);
+	// THE REST CURVE (the stored row), then — only where modulation moved it — the as-modulated one over it in the modulation colour.
+	const dr::Settings restSettings = shownSettings(false);
+	const dr::Settings movedSettings = shownSettings();
+	const auto drawResponse = [&](const dr::Settings& at, uint32_t colour, float width) {
+		const dr::Realised realised = dr::realisedAt(at);
+		canvas.setColor(colour);
+		float prevX = box.x();
+		float prevY = unityY;
+		for (size_t i = 0; i < kCurvePoints; ++i) {
+			const float t = static_cast<float>(i) / static_cast<float>(kCurvePoints - 1);
+			// LOG FREQUENCY ACROSS THE STRIP, over the same span the device's own coordinate spans: the
+			// left edge is `kMinAngleLog2` octaves below Nyquist and the right edge IS Nyquist.
+			const float nu = std::exp2(dr::kMinAngleLog2 * (1.0f - t));
+			const float db = 20.0f * std::log10(std::max(dr::magnitudeAt(realised, nu), 1e-6f));
+			const float ty = std::clamp((kCurveTopDb - db) / (kCurveTopDb - kCurveBottomDb), 0.0f, 1.0f);
+			const float x = box.x() + box.width() * t;
+			const float y = box.y() + ty * box.height();
+			if (i > 0) {
+				canvas.segment(prevX, prevY, x, y, width, true);
+			}
+			prevX = x;
+			prevY = y;
 		}
-		prevX = x;
-		prevY = y;
+	};
+	drawResponse(restSettings, withAlpha(kAccent, 0.9f), 2.0f);
+	if (drawsModulatedShape(restSettings, movedSettings)) {
+		drawResponse(movedSettings, withAlpha(kModulation, 0.95f), 1.75f);
+		drawResponse(movedSettings, withAlpha(kModulatedDot, 0.9f), 0.8f); // the dot's core: the accent and the modulation colour are neighbours
 	}
 
 	// **THE CURVE'S OWN AXIS, BECAUSE IT IS NOT THE PAD'S.** The rectangle now carries two pictures

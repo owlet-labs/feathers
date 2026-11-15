@@ -2696,6 +2696,122 @@ TEST_CASE("the curve follows a Macros source routed to Cutoff: it is drawn at th
 	CHECK(f.card->settingsForTest().cutoffLog2Hz == doctest::Approx(base).epsilon(1e-6));
 }
 
+TEST_CASE("a Macros route on Cutoff draws two curves: the stored one at rest and the modulated one beside it; unrouted draws one") {
+	// THE RELATIONSHIP OF A KNOB'S VALUE ARC AND ITS MODULATED DOT, on the plot: the rest curve is the stored row and does
+	// not move when a macro does; the modulated curve is the filter the engine runs. The expected modulated corner is
+	// restated from the route rule, not read back through the card.
+	namespace flt = fx::filter;
+	namespace mac = feathers::mod::macros;
+	FilterFixture f;
+	f.set(flt::Param::Enabled, 1.0);
+	f.set(flt::Param::Type, static_cast<double>(flt::Type::Lowpass));
+	f.set(flt::Param::Cutoff, std::log2(400.0));
+	f.set(flt::Param::Resonance, 0.5);
+	visage::Canvas canvas;
+	// NO ROUTE: one curve, and it is the rest curve.
+	{
+		const auto plan = f.card->curvePlan();
+		REQUIRE(plan.count == 1);
+		CHECK(plan.curve[0].kind == ui::FilterCard::CurveKind::Rest);
+		f.card->draw(canvas);
+		REQUIRE(f.card->drawnCurveCountForTest() == 1);
+		CHECK(f.card->drawnCurveKindForTest(0) == ui::FilterCard::CurveKind::Rest);
+	}
+	const size_t macroSlot = f.bridge.addRackDevice(mac::kTraits.tag);
+	REQUIRE(macroSlot < kMaxRackSlots);
+	const DeviceInstanceId macros = f.bridge.rackDeviceAt(macroSlot);
+	const DeviceInstanceId filter = f.bridge.fxDeviceAt(0);
+	const size_t cutoff = static_cast<size_t>(flt::Param::Cutoff);
+	const backplane::Source source = backplane::Source::output(macros, 0);
+	const backplane::Destination destination = backplane::Destination::control(filter, cutoff);
+	constexpr float kAmount = 0.25f;
+	REQUIRE(f.bridge.mayRoute(source, destination));
+	f.bridge.setRouteAmount(source, destination, kAmount);
+	f.deviceHost.setField(macros, mac::macroParam(0), 0.0f);
+	f.settle();
+
+	feathers::Synth synth { f.params };
+	synth.activate(48000.0, 4096);
+	synth.setCatalogue(hostCatalogue());
+	synth.setOuterGateMaker(&rack::ChainRecord::gateOver, &f.bridge.chainRecord());
+	std::vector<float> l(64, 0.0f);
+	std::vector<float> r(64, 0.0f);
+	const auto play = [&] {
+		f.settle();
+		publishEditorLanes(f.bridge, f.params, synth);
+		(void)synth.provisionDevices(f.bridge.chainState(), f.bridge.publishedChains().sequence(), &f.bridge.fxBodies());
+		for (int b = 0; b < 8; ++b) {
+			synth.render(l.data(), r.data(), 64);
+			publishEngineReadings(f.bridge, synth);
+		}
+	};
+	play();
+	const float base = f.deviceHost.fieldAt(filter, cutoff);
+	// A ROUTE WITH THE MACRO AT ZERO: modulated settings equal the stored ones, so still one curve.
+	CHECK(f.card->curvePlan().count == 1);
+	f.card->draw(canvas);
+	CHECK(f.card->drawnCurveCountForTest() == 1);
+
+	constexpr float kMacro = 0.8f;
+	f.deviceHost.setField(macros, mac::macroParam(0), kMacro);
+	play();
+	const device::ParamDesc& desc = flt::kDescriptor.params[cutoff];
+	const float expected = static_cast<float>(device::resolveRouted(
+	    desc, static_cast<double>(base), device::routeTerm(kAmount, device::Transfer::Lin, kMacro, device::routeSpanOf(desc))));
+	REQUIRE(std::abs(expected - base) > 0.5f);
+	REQUIRE_FALSE(f.card->stereoCurvesForTest());
+
+	const auto plan = f.card->curvePlan();
+	REQUIRE(plan.count == 2);
+	CHECK(plan.curve[0].kind == ui::FilterCard::CurveKind::Rest);
+	CHECK(plan.curve[1].kind == ui::FilterCard::CurveKind::Modulated);
+	// REST == STORED: the knob's base, untouched by the macro.
+	CHECK(plan.curve[0].settings.cutoffLog2Hz == base);
+	CHECK(f.card->restSettingsForTest().cutoffLog2Hz == base);
+	// MODULATED == THE RESTATED CORNER.
+	CHECK(plan.curve[1].settings.cutoffLog2Hz == doctest::Approx(expected).epsilon(1e-5));
+
+	// THE CURVES THEMSELVES, point for point through the module's own evaluator.
+	constexpr size_t kCap = ui::FilterCard::kMaxCurvePoints;
+	std::vector<float> restGot(kCap), modGot(kCap), freq(kCap), restWant(kCap), modWant(kCap);
+	const size_t n = f.card->restCurveGains(restGot.data(), kCap);
+	REQUIRE(f.card->curveGainsForTest(modGot.data(), kCap, false) == n);
+	flt::Settings want = f.card->restSettingsForTest();
+	flt::gainProfile(want, f.bridge.sampleRate(), freq.data(), restWant.data(), n);
+	want.cutoffLog2Hz = expected;
+	flt::gainProfile(want, f.bridge.sampleRate(), freq.data(), modWant.data(), n);
+	size_t restAgreed = 0;
+	size_t modAgreed = 0;
+	size_t apart = 0;
+	for (size_t i = 0; i < n; ++i) {
+		restAgreed += std::abs(restGot[i] - restWant[i]) <= 1e-4f * std::max(1.0f, restWant[i]) ? 1u : 0u;
+		modAgreed += std::abs(modGot[i] - modWant[i]) <= 1e-4f * std::max(1.0f, modWant[i]) ? 1u : 0u;
+		apart += std::abs(restGot[i] - modGot[i]) > 1e-3f ? 1u : 0u;
+	}
+	CHECK(restAgreed == n);
+	CHECK(modAgreed == n);
+	CHECK(apart > n / 8); // NOT VACUOUS: the two curves are different curves
+
+	// AND THEY ARE DRAWN: the draw reports what it put on the canvas, rest first, then the modulated one.
+	f.card->draw(canvas);
+	REQUIRE(f.card->drawnCurveCountForTest() == 2);
+	CHECK(f.card->drawnCurveKindForTest(0) == ui::FilterCard::CurveKind::Rest);
+	CHECK(f.card->drawnCurveKindForTest(1) == ui::FilterCard::CurveKind::Modulated);
+	// A KNOB MOVED WHILE ROUTED moves the rest curve, and the card asks for the frame.
+	(void)f.card->updateContentForTest();
+	f.set(flt::Param::Resonance, 0.8);
+	play();
+	CHECK(f.card->updateContentForTest());
+	CHECK(f.card->curvePlan().curve[0].settings == f.card->restSettingsForTest());
+
+	// THE MACRO BACK TO ZERO: one curve again.
+	f.deviceHost.setField(macros, mac::macroParam(0), 0.0f);
+	play();
+	CHECK(f.card->curvePlan().count == 1);
+	f.card->draw(canvas);
+	CHECK(f.card->drawnCurveCountForTest() == 1);
+}
+
 TEST_CASE("the curve reads a control nothing can modulate from the stored row, so a Type chosen with no audio running reaches it") {
 	// THE OTHER HALF OF THE MODULATED READ: Type, Slope and the switches have no modulated value of their own — the
 	// engine's published copy is the stored one a block late, and an inactive plugin publishes no block. A STALE copy
@@ -2816,14 +2932,24 @@ void checkPlotFollowsMacro(const char* label, bool rack, const char* tag, const 
 	MacroRoad road { f, id, control };
 	road.amount = kAmount;
 	road.play(0.0f);
-	CHECK(drawn(f, slot, id) == rest); // the macro at 0: the base
+	{
+		// THE MACRO AT 0: modulated == stored, so ONE shape, and the rest shape is the stored row.
+		const auto [shown, restShape, twoShapes] = drawn(f, slot, id);
+		CHECK(shown == rest);
+		CHECK(restShape == rest);
+		CHECK_FALSE(twoShapes);
+	}
 	road.play(kMacro);
 	// THE ENGINE AGREES WITH THE RESTATEMENT, or the road driven is not the one described.
 	REQUIRE(f.deviceHost.modulatedFieldAt(id, control) == doctest::Approx(expectedRow[control]).epsilon(1e-5));
 	REQUIRE(f.deviceHost.fieldAt(id, control) == stored[control]); // the stored row did not move
-	const auto got = drawn(f, slot, id);
-	CHECK(got == want);       // THE CLAIM, by value
-	CHECK_FALSE(got == rest); // and the picture is not the resting one
+	// TWO SHAPES: the REST one is the stored row (the knobs), the MODULATED one is the restated landing, and the plot says it
+	// draws the second over the first. `twoShapes` is the predicate the draw itself branches on.
+	const auto [got, restGot, twoGot] = drawn(f, slot, id);
+	CHECK(got == want);          // THE MODULATED SHAPE, by value
+	CHECK(restGot == rest);      // THE REST SHAPE, by value: it did not move with the macro
+	CHECK_FALSE(got == restGot); // and the two are not the same shape
+	CHECK(twoGot);               // and the second is drawn
 }
 
 } // namespace
@@ -2859,7 +2985,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::WidgetRegistry registry;
 			    ui::ShaperCard card { f.deviceHost, registry, id };
-			    return card.drawnFromForTest();
+			    return std::make_tuple(card.drawnFromForTest(), card.restFromForTest(), card.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("shaper window") {
@@ -2870,7 +2996,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 			    auto view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, shp::kDescriptor);
 			    auto* panel = dynamic_cast<ui::ShaperExpanded*>(view.get());
 			    REQUIRE(panel != nullptr);
-			    return panel->drawnFromForTest();
+			    return std::make_tuple(panel->drawnFromForTest(), panel->restFromForTest(), panel->drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("smooth card") {
@@ -2879,7 +3005,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::WidgetRegistry registry;
 			    ui::SmoothCard card { f.deviceHost, registry, id };
-			    return card.drawnFromForTest();
+			    return std::make_tuple(card.drawnFromForTest(), card.restFromForTest(), card.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("smooth window") {
@@ -2888,7 +3014,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::WidgetRegistry registry;
 			    ui::SmoothExpanded panel { f.deviceHost, registry, id };
-			    return panel.drawnFromForTest();
+			    return std::make_tuple(panel.drawnFromForTest(), panel.restFromForTest(), panel.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("disperser plot") {
@@ -2896,7 +3022,8 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    [&](const std::vector<float>& v) { return dsp::stateOf(make(dsp::Row {}, v), v.size()).settings; },
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::DisperserPlot plot { f.deviceHost, id, false };
-			    return plot.drawnFromForTest();
+			    (void)plot.update(); // the road the editor's tick drives: it computes the shapes the draw reads
+			    return std::make_tuple(plot.drawnFromForTest(), plot.restFromForTest(), plot.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("waypoint card") {
@@ -2905,7 +3032,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::WidgetRegistry registry;
 			    ui::WaypointCard card { f.deviceHost, registry, id };
-			    return card.drawnFromForTest();
+			    return std::make_tuple(card.drawnFromForTest(), card.restFromForTest(), card.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("drawn card") {
@@ -2914,7 +3041,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::WidgetRegistry registry;
 			    ui::DrawnCard card { f.deviceHost, registry, id };
-			    return card.drawnFromForTest();
+			    return std::make_tuple(card.drawnFromForTest(), card.restFromForTest(), card.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("noise plot") {
@@ -2922,7 +3049,8 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    [&](const std::vector<float>& v) { return noi::stateOf(make(noi::Row {}, v), v.size()); },
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::NoisePlot plot { f.deviceHost, id };
-			    return plot.drawnFromForTest();
+			    (void)plot.update(); // the road the editor's tick drives: it computes the shapes the draw reads
+			    return std::make_tuple(plot.drawnFromForTest(), plot.restFromForTest(), plot.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("harm scope") {
@@ -2934,7 +3062,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    },
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::HarmScope scope { f.deviceHost, id };
-			    return scope.settingsForTest();
+			    return std::make_tuple(scope.modulatedSettingsForTest(), scope.settingsForTest(), scope.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("automod strip") {
@@ -2948,7 +3076,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 		    },
 		    [](FilterFixture& f, size_t, DeviceInstanceId id) {
 			    ui::AutomodStrip strip { f.deviceHost, id };
-			    return strip.drawnFromForTest();
+			    return std::make_tuple(strip.drawnFromForTest(), strip.restFromForTest(), strip.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("envelope card") {
@@ -2958,7 +3086,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 			    feathers::ui::ModState mod;
 			    feathers::ui::EditHistory history;
 			    ui::EnvCard card { f.deviceHost, id, mod, history };
-			    return card.drawnFromForTest();
+			    return std::make_tuple(card.drawnFromForTest(), card.restFromForTest(), card.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("mseg card") {
@@ -2968,7 +3096,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 			    feathers::ui::ModState mod;
 			    feathers::ui::EditHistory history;
 			    ui::MsegCard card { f.deviceHost, id, mod, history };
-			    return card.drawnFromForTest();
+			    return std::make_tuple(card.drawnFromForTest(), card.restFromForTest(), card.drawsModulatedShapeForTest());
 		    });
 	}
 	SUBCASE("lfo card") {
@@ -2978,7 +3106,7 @@ TEST_CASE("every plot that draws a device follows a Macros source routed to one 
 			    feathers::ui::ModState mod;
 			    feathers::ui::EditHistory history;
 			    ui::LfoCard card { f.deviceHost, id, mod, history };
-			    return lfoValues(card.drawnFromForTest());
+			    return std::make_tuple(lfoValues(card.drawnFromForTest()), lfoValues(card.restFromForTest()), card.drawsModulatedShapeForTest());
 		    });
 	}
 }
@@ -3013,6 +3141,15 @@ TEST_CASE("the compressor's transfer plot follows a Macros source routed to its 
 	}
 	CHECK(agreed == 21);
 	CHECK(moved > 0);
+	// TWO SHAPES: the rest net curve is the stored row's (the knob's Threshold), the modulated one is the landing, and the
+	// plot draws the second over the first.
+	size_t restAgreed = 0;
+	for (float x = -60.0f; x <= 0.0f; x += 3.0f) {
+		restAgreed += std::abs(card.restCurves().netDb(x) - resting.netDb(x)) < 1e-4f ? 1u : 0u;
+	}
+	CHECK(restAgreed == 21);
+	CHECK(card.restCurves().s.thresholdDb == doctest::Approx(base).epsilon(1e-5));
+	CHECK(card.drawsModulatedShapeForTest());
 	ui::CompExpanded window { f.deviceHost, registry, id };
 	(void)window;
 }

@@ -55,14 +55,18 @@ constexpr std::array<const char*, 15> kCaptions {
 // THE PLOT                                                                                        //
 //------------------------------------------------------------------------------------------------//
 
-comp_plot::Curves CompTransferView::curves() const {
-	return comp_plot::curvesOf([this](size_t i) { return readModulatedField(host_, id_, cp::kDescriptor, i); });
+comp_plot::Curves CompTransferView::curves(bool modulated) const {
+	return comp_plot::curvesOf([this, modulated](size_t i) {
+		return modulated ? readModulatedField(host_, id_, cp::kDescriptor, i) : host_.fieldAt(id_, i);
+	});
 }
 
 void CompTransferView::draw(visage::Canvas& canvas) {
 	const bool has = host_.readingCountAt(id_) >= static_cast<size_t>(cp::Reading::kCount);
 	const float in = has ? host_.readingAt(id_, static_cast<size_t>(cp::Reading::InPeak)) : 0.0f;
-	comp_plot::paint(canvas, visage::Bounds { 0.0f, 0.0f, width(), height() }, curves(), has, in);
+	const comp_plot::Curves rest = curves(false);
+	const comp_plot::Curves moved = curves();
+	comp_plot::paint(canvas, visage::Bounds { 0.0f, 0.0f, width(), height() }, rest, has, in, drawsModulatedShape(rest.s, moved.s) ? &moved : nullptr);
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -333,7 +337,9 @@ bool CompExpanded::updateContent() {
 		meter_->redraw();
 		moved = true;
 	}
-	if (curve != drawnCurve_) {
+	const fx::comp::Settings restNow = plot_->curves(false).s;
+	if (curve != drawnCurve_ || !(restNow == drawnRestSettings_)) {
+		drawnRestSettings_ = restNow;
 		drawnCurve_ = curve;
 		plot_->redraw();
 		moved = true;

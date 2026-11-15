@@ -1883,8 +1883,9 @@ if(FEATHERS_SANITIZE)
 			ENVIRONMENT "${_feathers_asan_env};RUN_CASES_TIMEOUT=2400"
 			FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer")
 	endforeach()
-	# THE TWO CLAP-HOSTING SUITES open an editor, so they run on a private display like the widget ones.
-	foreach(_suite rack-clap clap-render)
+	# THE CLAP-HOSTING SUITES open an editor, so they run on a private display like the widget ones. drum-plugin joined with the Drum
+	# instrument: its plugin owns a rack engine, a bridge and the slot pool a host's writes land in, and opens the drum's editor.
+	foreach(_suite rack-clap clap-render drum-plugin)
 		string(REPLACE "-" "_" _target "test_${_suite}")
 		add_test(NAME sanitize-${_suite} COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --
 			${_feathers_each} $<TARGET_FILE:${_target}>)

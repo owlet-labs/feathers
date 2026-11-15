@@ -40,6 +40,7 @@
 #include "rack/rack_bridge.h"
 #include "plugin/ui/spectrum_panel.h"
 #include "plugin/ui/switch_chip.h"
+#include "plugin/ui/terrain_fit.h"
 #include "plugin/ui/travel_control.h"
 #include "../param_routes.h"
 
@@ -16568,3 +16569,210 @@ TEST_CASE("pad editor: a press while the ring is full is dropped and counted, ow
 	CHECK(f.bridge.droppedNotes() == 1);
 }
 
+
+//-----------------------------------------------------------------------------------------------------------------
+// THE FITTED MAP (AUDITION): a second road for the map's cells on Additive and V5, behind a switch that is off.
+//-----------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// The cell the engine's own road gives at a texel of `window`, restated from terrainFeaturesAt: what main's map holds there.
+TerrainFeatures engineCellAt(const TerrainWindow& window, int column, int row) {
+	return terrainFeaturesAt(window.engine, window.pin, static_cast<uint16_t>(std::lround(window.zoneBaseline)),
+	                         static_cast<float>(window.offsetBaseline), TerrainMap::travelXAtColumn(window, column),
+	                         TerrainMap::travelYAtRow(window, row), window.residue, window.gammaBase, window.scales(),
+	                         window.warpMode, window.weaveModel, window.resonateShaping, window.shapesMix, window.additive);
+}
+
+/// The cell the FITTED road gives, restated from its two halves (the decode and the table's polynomials), the way a
+/// reader of terrain_fit.h would compose them.
+TerrainFeatures fittedCellAt(const TerrainWindow& window, int column, int row) {
+	const uint16_t zone = static_cast<uint16_t>(std::lround(window.zoneBaseline));
+	const float offset = static_cast<float>(window.offsetBaseline);
+	const TerrainFrames frames = terrainFramesAt(window.pin, terrainPlaneHome(window), window.residue);
+	double in[ui::kFitMaxInputs];
+	REQUIRE(ui::terrainFitDecode(window.engine, frames, zone, offset, TerrainMap::travelXAtColumn(window, column),
+	                             TerrainMap::travelYAtRow(window, row), window.gammaBase, window.scales(), window.additive, nullptr,
+	                             in)
+	        == ui::terrainFitInputs(window.engine));
+	const ui::FitEngineTable* table = ui::terrainFitTableFor(window.engine);
+	REQUIRE(table != nullptr);
+	const auto p = ui::terrainFitPredict(*table, in);
+	TerrainFeatures out;
+	out.energy = static_cast<float>(p[0]);
+	out.centroid = static_cast<float>(p[1]);
+	out.roughness = static_cast<float>(p[2]);
+	out.parity = static_cast<float>(p[3]);
+	out.fundamental = static_cast<float>(p[4]);
+	return out;
+}
+
+bool sameFeatures(const TerrainFeatures& a, const TerrainFeatures& b) {
+	return a.energy == b.energy && a.centroid == b.centroid && a.roughness == b.roughness && a.parity == b.parity
+	       && a.fundamental == b.fundamental;
+}
+
+constexpr std::pair<int, int> kFitProbe[] = { { 3, 5 }, { 30, 40 }, { 64, 64 }, { 101, 17 }, { 127, 120 }, { 64, 3 } };
+
+size_t builtTexels(const TerrainSnapshot& map) {
+	size_t n = 0;
+	for (const uint8_t c : map.computed) {
+		n += c != 0u ? 1u : 0u;
+	}
+	return n;
+}
+
+} // namespace
+
+TEST_CASE("fitted map: off by default and per instance; the window carries the switch only where a table exists") {
+	for (const OscType engine : { OscType::Additive, OscType::V5, OscType::Morph }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		CHECK_FALSE(f.stage.fittedMap());
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+		// The switch is the stage's, not the patch's: a second stage is its own, off.
+		f.stage.setFittedMap(true);
+		const bool table = engine != OscType::Morph;
+		CHECK(f.stage.fittedMap()); // what was asked
+		CHECK(f.stage.terrainWindowNow().fittedMap == table); // but only a table makes it a claim
+		ExploreFixture other;
+		other.set(ParamId::OscType, static_cast<double>(engine));
+		CHECK_FALSE(other.stage.fittedMap());
+		CHECK_FALSE(other.stage.terrainWindowNow().fittedMap);
+	}
+}
+
+TEST_CASE("fitted map: the chart's menu offers 'Fitted map (audition)' checkable, toggles it, and is empty for an engine with no table") {
+	for (const OscType engine : { OscType::Additive, OscType::V5 }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		REQUIRE(f.stage.fittedMapAvailable());
+		{
+			const visage::PopupMenu menu = f.stage.terrainMenu();
+			REQUIRE(menu.options().size() == 1);
+			CHECK(menu.options()[0].id() == ExploreStage::kFittedMap);
+			CHECK(std::string(menu.options()[0].name().toUtf8()) == "Fitted map (audition)");
+			CHECK_FALSE(menu.options()[0].selected());
+		}
+		f.stage.terrainMenu().onSelection().callback(ExploreStage::kFittedMap);
+		CHECK(f.stage.fittedMap());
+		CHECK(f.stage.terrainWindowNow().fittedMap);
+		CHECK(f.stage.terrainMenu().options()[0].selected());
+		f.stage.terrainMenu().onSelection().callback(ExploreStage::kFittedMap);
+		CHECK_FALSE(f.stage.fittedMap());
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+		CHECK_FALSE(f.stage.terrainMenu().options()[0].selected());
+	}
+	// HIDDEN, NOT GREYED: an engine without a table has no item at all, and a stale pick of it moves nothing.
+	for (const OscType engine : { OscType::Morph, OscType::Stair, OscType::Resonate, OscType::BasicShapes, OscType::Pluck, OscType::Drum }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		CHECK_FALSE(f.stage.fittedMapAvailable());
+		CHECK(f.stage.terrainMenu().options().empty());
+		f.stage.terrainMenu().onSelection().callback(ExploreStage::kFittedMap);
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+	}
+}
+
+TEST_CASE("fitted map: FEATHERS_TERRAIN_FIT=1 opens a stage with it on; anything else leaves it off") {
+	const char* before = std::getenv("FEATHERS_TERRAIN_FIT");
+	const std::string kept = before != nullptr ? before : "";
+	const auto restore = [&] {
+		if (before != nullptr) {
+			::setenv("FEATHERS_TERRAIN_FIT", kept.c_str(), 1);
+		}
+		else {
+			::unsetenv("FEATHERS_TERRAIN_FIT");
+		}
+	};
+	::setenv("FEATHERS_TERRAIN_FIT", "1", 1);
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Additive));
+		CHECK(f.stage.fittedMap());
+		CHECK(f.stage.terrainWindowNow().fittedMap);
+		CHECK(f.stage.terrainMenu().options()[0].selected());
+	}
+	::setenv("FEATHERS_TERRAIN_FIT", "0", 1);
+	{
+		ExploreFixture f;
+		CHECK_FALSE(f.stage.fittedMap());
+	}
+	::unsetenv("FEATHERS_TERRAIN_FIT");
+	{
+		ExploreFixture f;
+		CHECK_FALSE(f.stage.fittedMap());
+	}
+	// ON for an engine with no table is inert: the variable asks, the table decides.
+	::setenv("FEATHERS_TERRAIN_FIT", "1", 1);
+	{
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(OscType::Morph));
+		CHECK_FALSE(f.stage.terrainWindowNow().fittedMap);
+	}
+	restore();
+}
+
+TEST_CASE("fitted map: OFF, the map is the engine's own road to the bit and the fitted road is never evaluated") {
+	for (const OscType engine : { OscType::Additive, OscType::V5 }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		const TerrainWindow window = f.stage.terrainWindowNow();
+		REQUIRE_FALSE(window.fittedMap);
+		const uint64_t evaluated = ui::terrainFitEvaluations();
+		f.terrain.request(window);
+		REQUIRE(settle(f.terrain, window));
+		const std::shared_ptr<const TerrainSnapshot> map = f.terrain.snapshot();
+		CHECK_FALSE(map->fitted);
+		CHECK(f.terrain.fittedTexels() == 0);
+		CHECK(f.terrain.texelsComputed() >= static_cast<uint64_t>(TerrainMap::kResolution * TerrainMap::kResolution));
+		CHECK(ui::terrainFitEvaluations() == evaluated); // not even called
+		for (const auto& [column, row] : kFitProbe) {
+			const TerrainFeatures expected = engineCellAt(window, column, row);
+			INFO("engine " << static_cast<int>(engine) << " texel " << column << "," << row);
+			CHECK(sameFeatures(map->featuresAt(column, row), expected));
+		}
+	}
+}
+
+TEST_CASE("fitted map: ON, the cells come from the fitted road, their values are the evaluator's, and a map costs one evaluation per cell") {
+	for (const OscType engine : { OscType::Additive, OscType::V5 }) {
+		ExploreFixture f;
+		f.set(ParamId::OscType, static_cast<double>(engine));
+		const TerrainWindow off = f.stage.terrainWindowNow();
+		f.stage.setFittedMap(true);
+		const TerrainWindow window = f.stage.terrainWindowNow();
+		REQUIRE(window.fittedMap);
+		REQUIRE_FALSE(window == off); // a different picture of the same place: it is in the content key
+		const uint64_t evaluated = ui::terrainFitEvaluations();
+		f.terrain.request(window);
+		REQUIRE(settle(f.terrain, window));
+		const std::shared_ptr<const TerrainSnapshot> map = f.terrain.snapshot();
+		CHECK(map->fitted); // the seam: which road built the cells
+		// ONE EVALUATION PER CELL, counted rather than timed: every texel this terrain computed went through the fitted road
+		// (and none through the measurement), and the map holds a texel per cell.
+		CHECK(builtTexels(*map) == static_cast<size_t>(TerrainMap::kResolution * TerrainMap::kResolution));
+		CHECK(f.terrain.fittedTexels() == f.terrain.texelsComputed());
+		CHECK(ui::terrainFitEvaluations() - evaluated == f.terrain.fittedTexels());
+		CHECK(f.terrain.fittedTexels() >= static_cast<uint64_t>(TerrainMap::kResolution * TerrainMap::kResolution));
+		// THE VALUES ARE THE EVALUATOR'S, restated from the decode and the table, bit for bit as floats...
+		bool differs = false;
+		for (const auto& [column, row] : kFitProbe) {
+			INFO("engine " << static_cast<int>(engine) << " texel " << column << "," << row);
+			CHECK(sameFeatures(map->featuresAt(column, row), fittedCellAt(window, column, row)));
+			// ...and NOT the engine's own measurement, or the check above could be passing on the old road.
+			differs = differs || !sameFeatures(map->featuresAt(column, row), engineCellAt(window, column, row));
+		}
+		CHECK(differs);
+		// And turned off again, the very same window key is the engine's road once more.
+		f.stage.setFittedMap(false);
+		const TerrainWindow back = f.stage.terrainWindowNow();
+		CHECK(back == off);
+		f.terrain.request(back);
+		REQUIRE(settle(f.terrain, back));
+		CHECK_FALSE(f.terrain.snapshot()->fitted);
+		for (const auto& [column, row] : kFitProbe) {
+			CHECK(sameFeatures(f.terrain.snapshot()->featuresAt(column, row), engineCellAt(back, column, row)));
+		}
+	}
+}

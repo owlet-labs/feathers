@@ -41,6 +41,7 @@
 #include "plugin/sound_hues.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/likes_log.h"
+#include "plugin/ui/terrain_fit.h"
 
 #include <visage/graphics.h>
 #include <visage/utils.h>
@@ -319,6 +320,13 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 		}
 	}
 
+	// FEATHERS_TERRAIN_FIT=1 opens the fitted-map audition ON, for the same reason FEATHERS_EXPLORE_ZOOM exists: the switch
+	// is a context menu, which a venue with no pointer cannot reach. Only "1" turns it on; the window still ANDs it with
+	// the engine having a table, so it is inert on every other engine.
+	if (const char* fit = std::getenv("FEATHERS_TERRAIN_FIT")) {
+		fittedMap_ = std::strcmp(fit, "1") == 0;
+	}
+
 	// Everything the chart draws or the scrub writes: the identity of every sound, because the
 	// selection can move to any of them, and the engine, because it decides what the map means.
 	//
@@ -570,6 +578,13 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 			followSelection();
 		}
 		grabbed_ = hitAt(e.position);
+		// A POPUP TRIGGER ON THE MAP (a right press, or ctrl-left on a Mac) opens the chart's menu — but only where it has an
+		// item to show. An engine without a fitted table gets no menu and the press is the scrub it always was.
+		if (grabbed_ == Part::Chart && e.shouldTriggerPopup() && fittedMapAvailable()) {
+			showMenuAt(terrainMenu(), *this, visage::Bounds(e.position.x, e.position.y, 1, 1));
+			grabbed_ = Part::None;
+			return;
+		}
 		grabY_ = e.position.y;
 		grabFine_ = (e.modifiers & visage::kModifierShift) != 0;
 		grabLastY_ = e.position.y;
@@ -1751,6 +1766,32 @@ visage::PopupMenu ExploreStage::likesMenu() {
 		}
 	};
 	return menu;
+}
+
+bool ExploreStage::fittedMapAvailable() const {
+	return terrainFitAvailable(oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType))));
+}
+
+visage::PopupMenu ExploreStage::terrainMenu() {
+	visage::PopupMenu menu;
+	// HIDDEN, NOT GREYED, for an engine with no table: the menu is empty then and the press never opens it.
+	if (fittedMapAvailable()) {
+		menu.addOption(kFittedMap, "Fitted map (audition)").select(fittedMap_);
+	}
+	menu.onSelection() = [this](int id) {
+		if (id == kFittedMap) {
+			setFittedMap(!fittedMap_);
+		}
+	};
+	return menu;
+}
+
+void ExploreStage::setFittedMap(bool on) {
+	if (fittedMap_ == on) {
+		return;
+	}
+	fittedMap_ = on;
+	redraw(); // the next frame asks the terrain for the window, which now carries the switch
 }
 
 void ExploreStage::clearLikes() {
@@ -3291,6 +3332,8 @@ TerrainWindow ExploreStage::terrainWindowFor(size_t slot) const {
 	// by the window so every texel is built through the same warp the voice plays.
 	window.likeStrength = likeStrength_;
 	window.likeWarp = likeWarpFor(slot, window);
+	// THE FITTED-MAP AUDITION, ANDed with the engine having a table so a window never claims a fit that does not exist.
+	window.fittedMap = fittedMap_ && terrainFitAvailable(window.engine);
 	return window;
 }
 

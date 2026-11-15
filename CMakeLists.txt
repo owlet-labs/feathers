@@ -643,6 +643,8 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/source_grid.cpp
 	src/plugin/ui/stack_index_plot.cpp
 	src/plugin/ui/terrain.cpp
+	src/plugin/ui/terrain_fit.cpp
+	src/plugin/ui/terrain_fit_table.cpp
 	src/plugin/ui/terrain_likes.cpp
 	src/plugin/ui/likes_log.cpp
 	src/plugin/ui/terrain_warp.cpp
@@ -1404,6 +1406,17 @@ if(FEATHERS_BUILD_TOOLS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
 		        feathers-warnings)
 	target_include_directories(bake-feature-norm PRIVATE ${FEATHERS_TOKENS_DIR})
 	add_dependencies(bake-feature-norm feathers-tokens)
+
+	# THE OFFLINE FIT BEHIND THE FITTED TERRAIN MAP (an audition; src/plugin/ui/terrain_fit.h). Renders stances through the
+	# real engine, fits the map's cell features from the decoded parameters, and writes the generated table that is
+	# committed (scripts/fit-terrain-map.sh). The build never runs it.
+	add_executable(fit-terrain-map tools/fit-terrain-map.cpp)
+	target_link_libraries(fit-terrain-map
+		PRIVATE feathers-ui feathers-rack-editor feathers-gui-bridge feathers-synth feathers-dsp feathers-character visage
+		        feathers-warnings)
+	target_include_directories(fit-terrain-map PRIVATE ${FEATHERS_TOKENS_DIR})
+	target_compile_options(fit-terrain-map PRIVATE ${FEATHERS_FP_EXACT})
+	add_dependencies(fit-terrain-map feathers-tokens)
 
 	foreach(tool guihost bitwighost cyclehost)
 		# THE EVENT LOG OFF (src/plugin/event_log.h): the one file of ours beside the dlopened plugin, and it holds no

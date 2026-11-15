@@ -350,7 +350,11 @@ enum class Param : int {
 	/// **PARTIALS 2 TO 4**, nine controls each in `PartialField` order, so a partial's control is `partialParam`. Generated from
 	/// one macro, below, so the four cannot drift.
 	Partial2Harmonic,
-	kCount = Partial2Harmonic + 3 * 9,
+	/// **THE MASTER CONTROLS** (appended last, so no existing index moves): one master Level over the whole output, and one master
+	/// Depth multiplying every partial's Depth. Both default to unity, so a patch that stores neither plays exactly as before.
+	MasterLevel = Partial2Harmonic + 3 * 9,
+	MasterDepth,
+	kCount,
 };
 
 /// HOW MANY HARMONICS ONE HARM PLAYS: four identical partials, each its own notch and its own sine. The first keeps the
@@ -505,6 +509,12 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     FEATHERS_HARM_PARTIAL_DESCS("harm_p2_", "Harm 2 ", 19, "second")
     FEATHERS_HARM_PARTIAL_DESCS("harm_p3_", "Harm 3 ", 29, "third")
     FEATHERS_HARM_PARTIAL_DESCS("harm_p4_", "Harm 4 ", 39, "fourth")
+    // THE MASTER CONTROLS, appended after the four partials so no existing index moves. Master Level scales the whole device's
+    // output, the stripped signal and every partial's sine with it; Master Depth multiplies each partial's Depth. Both unity.
+    {"harm_master_level", "Harm Master Level", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,
+     "Master level of the whole HARM output, every partial summed. Scales the stripped signal too"},
+    {"harm_master_depth", "Harm Master Depth", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,
+     "Scales the Depth of every partial at once — 1 keeps each partial's own depth, 0 takes every notch to a wire. Notch mode only"},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
@@ -681,6 +691,9 @@ struct Settings {
 	float holdSeconds { 0.0f };
 	float decaySeconds { 0.0f };
 	float sustain { 1.0f };
+	/// THE MASTER CONTROLS (see Param::MasterLevel). Unity, and carried through partialSlice unchanged, so every partial sees the same two.
+	float masterLevel { 1.0f };
+	float masterDepth { 1.0f };
 	/// PARTIALS 2, 3 AND 4, in that order.
 	std::array<PartialSettings, 3> more { defaultExtraPartials() };
 
@@ -731,6 +744,8 @@ static_assert(Settings {}.highpass == (kParamDescs[static_cast<size_t>(Param::Mo
 
 static_assert(Settings {}.active == (kParamDescs[static_cast<size_t>(Param::Partial1Active)].def >= 0.5));
 static_assert(Settings {}.sustain == static_cast<float>(kParamDescs[static_cast<size_t>(Param::Sustain)].def));
+static_assert(Settings {}.masterLevel == static_cast<float>(kParamDescs[static_cast<size_t>(Param::MasterLevel)].def));
+static_assert(Settings {}.masterDepth == static_cast<float>(kParamDescs[static_cast<size_t>(Param::MasterDepth)].def));
 static_assert(Settings {}.more[0].harmonic
               == static_cast<size_t>(kParamDescs[static_cast<size_t>(partialParam(1, PartialField::Harmonic))].def));
 static_assert(Settings {}.more[1].harmonic
@@ -795,6 +810,7 @@ double notchQ(const Settings& s);
 
 /// THE DEPTH THE BIQUAD USES, clamped — 0..1, where 1 is a true notch and 0 is a wire. The
 /// attenuation at the centre is exactly `1 - depth` in linear terms; see Param::Depth.
+/// IT IS THE PARTIAL'S DEPTH TIMES THE MASTER DEPTH, both clamped, so the master scales every partial by the same factor.
 double notchDepth(const Settings& s);
 
 //------------------------------------------------------------------------------------------------//

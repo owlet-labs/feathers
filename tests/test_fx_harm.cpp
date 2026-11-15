@@ -1246,7 +1246,7 @@ TEST_CASE("every declared default agrees with the struct's, not just the five wi
 		MESSAGE("DEFAULT DISAGREES: " << s);
 	}
 	CHECK(disagreed.empty());
-	CHECK(checked == 48); // sixteen as they were, partial 1's switch, the envelope's D/H/D/S, and three more partials of nine
+	CHECK(checked == 50); // sixteen as they were, partial 1's switch, the envelope's D/H/D/S, three more partials of nine, and the two masters
 
 	// AND THE ROUND TRIP, which is the claim as a caller meets it: a patch that omits every field
 	// decodes to the same device as `State {}`.

@@ -62,7 +62,7 @@ struct HarmExpanded::Layout {
 	visage::Bounds spectralCaption, harmonic, mode, scope, spatialCaption, knobRow;
 	visage::Bounds envelopeCaption, envelope;
 	std::array<visage::Bounds, 6> boxes {};
-	visage::Bounds masterCaption, master, porta, poly, depthEnv;
+	visage::Bounds masterCaption, master, porta, masterLevel, masterDepth, poly, depthEnv;
 	float knobCell = 0.0f;
 	float bottom = 0.0f;
 };
@@ -131,7 +131,9 @@ HarmExpanded::Layout HarmExpanded::layoutFor(float totalWidth) const {
 	l.master = { kPad, y, inner, kSwitchHeight + 6.0f };
 	l.porta = { kPad, y, kPortaWidth, ValueBox::kHeight };
 	const float chipY = y + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f;
-	l.poly = { l.porta.right() + kRowGap + 6.0f, chipY, kPolyChipWidth, SwitchChip::kHeight };
+	l.masterLevel = { l.porta.right() + kRowGap, y, kPortaWidth, ValueBox::kHeight };
+	l.masterDepth = { l.masterLevel.right() + kRowGap, y, kPortaWidth, ValueBox::kHeight };
+	l.poly = { l.masterDepth.right() + kRowGap + 6.0f, chipY, kPolyChipWidth, SwitchChip::kHeight };
 	l.depthEnv = { l.poly.right() + kRowGap, chipY, kEnvDepthChipWidth, SwitchChip::kHeight };
 	y += ValueBox::kHeight;
 	l.bottom = y;
@@ -197,6 +199,11 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 	// MASTER.
 	porta_ = std::make_unique<ValueBox>(control(hrm::Param::Porta), "Porta");
 	addChild(porta_.get());
+	// THE TWO MASTERS, pills beside Porta: the same controls as the card's Master and Depth knobs, on the same road.
+	masterLevel_ = std::make_unique<ValueBox>(control(hrm::Param::MasterLevel), "Master Level");
+	addChild(masterLevel_.get());
+	masterDepth_ = std::make_unique<ValueBox>(control(hrm::Param::MasterDepth), "Master Depth");
+	addChild(masterDepth_.get());
 	auto poly = std::make_unique<SwitchChip>(control(hrm::Param::Poly), "Poly");
 	// ALIVE OR DEAD BY THE DEVICE'S OWN DECLARATION, exactly as the card decides it — HARM declares a
 	// `perVoiceControl` now, so it is alive. Asked rather than assumed, and asked BEFORE the first
@@ -403,6 +410,8 @@ void HarmExpanded::resized() {
 		envelopeBoxes_[i]->setBounds(l.boxes[i].x(), l.boxes[i].y(), l.boxes[i].width(), l.boxes[i].height());
 	}
 	porta_->setBounds(l.porta.x(), l.porta.y(), l.porta.width(), l.porta.height());
+	masterLevel_->setBounds(l.masterLevel.x(), l.masterLevel.y(), l.masterLevel.width(), l.masterLevel.height());
+	masterDepth_->setBounds(l.masterDepth.x(), l.masterDepth.y(), l.masterDepth.width(), l.masterDepth.height());
 	poly_->setBounds(l.poly.x(), l.poly.y(), l.poly.width(), l.poly.height());
 	depthEnv_->setBounds(l.depthEnv.x(), l.depthEnv.y(), l.depthEnv.width(), l.depthEnv.height());
 
@@ -417,7 +426,7 @@ void HarmExpanded::resized() {
 
 std::vector<hrm::Param> HarmExpanded::addressedParamsForTest() const {
 	// EVERY CONTROL THE WINDOW OFFERS, once each: the strip's Level and Active for all four partials, each partial's ratio, five
-	// knobs and Mode, the envelope's six, and the device's Porta, Poly and Env Depth. `Enabled` IS THE WINDOW HEADER'S chip
+	// knobs and Mode, the envelope's six, and the device's Porta, the two masters, Poly and Env Depth. `Enabled` IS THE WINDOW HEADER'S chip
 	// (`ExpandedPanel::enableBounds`), and Mix and wet Gain are the slot's furniture.
 	std::vector<hrm::Param> out;
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
@@ -433,6 +442,8 @@ std::vector<hrm::Param> HarmExpanded::addressedParamsForTest() const {
 		out.push_back(entry.param);
 	}
 	out.push_back(hrm::Param::Porta);
+	out.push_back(hrm::Param::MasterLevel);
+	out.push_back(hrm::Param::MasterDepth);
 	out.push_back(hrm::Param::Poly);
 	out.push_back(hrm::Param::DepthFollowsEnv);
 	return out;

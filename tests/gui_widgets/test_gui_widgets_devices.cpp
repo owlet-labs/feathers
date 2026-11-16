@@ -42512,8 +42512,8 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 		continuous += desc.stepped ? 0u : 1u;
 	}
 	// THE SHARED SECTION'S FOUR CONTINUOUS CONTROLS (Emphasis, Smear, Loop, Interval) are knobs in the window now.
-	// ETCH'S SLOT AMOUNTS, SHAPES AND MIXES (six), which no face draws yet.
-	REQUIRE(knobs.size() == continuous - 4 - 6);
+	// ETCH'S SLOT SHAPES AND MIXES (four) are boxes inside the slots' Type cells; its two Amounts are knobs.
+	REQUIRE(knobs.size() == continuous - 4 - 4);
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -43941,4 +43941,177 @@ TEST_CASE("The slot row is photographed at the card width at scale 1 and 1.75 wh
 		ground.removeChild(r.outer.get());
 		editor.removeChild(&ground);
 	}
+}
+
+
+//--------------------------------------------------------------------------------------------------//
+// ETCH'S FACES: two slots and their route on one line.                                               //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+visage::Point eroCentre(const visage::Bounds& b) {
+	return { b.x() + b.width() * 0.5f, b.y() + b.height() * 0.5f };
+}
+
+} // namespace
+
+TEST_CASE("ETCH's card draws its slot row on one line, both slots and the route inside the card and apart, with Freq and Mix as boxes under it") {
+	EroFaces e;
+	auto& card = *e.d.card;
+	e.mode(ero::Mode::Etch);
+	REQUIRE(ui::EroderCard::openHeight() <= ui::kCardUnitHeight);
+	std::vector<visage::Frame*> want = card.etchWidgetsForTest();
+	want.push_back(card.drivePairForTest());
+	want.push_back(card.emphasisForTest());
+	want.push_back(card.resonanceForTest());
+	const auto shown = eroVisible(&card, { card.plotForTest(), card.modeForTest() });
+	CHECK(eroSameSet(shown, want));
+	eroApart(shown, card.width(), ui::EroderCard::openHeight());
+
+	ui::EtchSlots& slots = card.etchSlotsForTest();
+	const float cell = static_cast<float>(card.drivePairForTest()->width()) * 0.5f;
+	CHECK(slots.outer->width() == doctest::Approx(4.0f * cell));
+	CHECK(slots.outer->bare());
+	// ONE LINE: A, the route, B left to right, top-aligned, none over another, all inside the row and so inside the card.
+	CHECK(slots.innerA->right() <= slots.route->x());
+	CHECK(slots.route->right() <= slots.innerB->x());
+	CHECK(slots.innerA->y() == slots.innerB->y());
+	CHECK(slots.route->y() >= 0.0f);
+	CHECK(slots.route->bottom() <= slots.outer->height());
+	CHECK(slots.innerB->right() <= slots.outer->width());
+	CHECK(slots.outer->x() + slots.outer->width() <= card.width());
+	CHECK(slots.outer->bottom() <= ui::EroderCard::openHeight());
+	// BOTH PAIRS ARE WHOLE.
+	CHECK(slots.innerA->first().parent() == slots.innerA.get());
+	CHECK(slots.innerB->second().parent() == slots.innerB.get());
+	CHECK(slots.knobA->control()->desc().key == std::string_view("eroder_slot_a_amount"));
+	CHECK(slots.knobB->control()->desc().key == std::string_view("eroder_slot_b_amount"));
+	CHECK(slots.route->control().desc().key == std::string_view("eroder_slot_route"));
+	for (ui::ModeValueCell* m : { slots.cellA.get(), slots.cellB.get() }) {
+		CHECK(m->stacked());
+		CHECK(m->followerParams().size() == 2);
+	}
+	// FREQ AND MIX ARE BOXES IN THE SMALL ROW, with Track at its end, none over another.
+	CHECK(card.freqBoxForTest()->control().desc().key == std::string_view("eroder_freq"));
+	CHECK(card.mixBoxForTest()->control().desc().key == std::string_view("eroder_mix"));
+	CHECK(card.freqBoxForTest()->isCompact());
+	CHECK(card.freqBoxForTest()->y() >= slots.outer->bottom());
+	CHECK(card.freqBoxForTest()->right() <= card.mixBoxForTest()->x());
+	CHECK(card.mixBoxForTest()->right() <= card.etchWidgetsForTest()[3]->x());
+	// ETCH USES NEITHER AMOUNT, SOURCE NOR GRIT: none is drawn.
+	CHECK_FALSE(card.mixForTest()->isVisible());
+	CHECK_FALSE(card.widthForTest()->isVisible());
+	for (visage::Frame* f : card.dustWidgetsForTest()) {
+		CHECK_FALSE(f->isVisible());
+	}
+	for (visage::Frame* f : card.rustWidgetsForTest()) {
+		CHECK_FALSE(f->isVisible());
+	}
+	// THE ENGINE SELECTOR OFFERS FOUR, and the plot draws the marker, not a band.
+	CHECK(card.plotForTest()->showsEtchForTest());
+	CHECK_FALSE(card.plotForTest()->showsRustForTest());
+}
+
+TEST_CASE("ETCH's slot row writes the slots' own parameters: the route glyph, and each Type selector its own slot's Type") {
+	EroFaces e;
+	auto& card = *e.d.card;
+	e.mode(ero::Mode::Etch);
+	ui::EtchSlots& slots = card.etchSlotsForTest();
+	ui::RouteSwitch& sw = *slots.route;
+	CHECK(eroField(e.d, ero::Param::SlotRoute) == 0.0f);
+	CHECK(sw.litChoice() == ui::RouteSwitch::Series);
+	const visage::Bounds parallel = sw.glyphBounds(ui::RouteSwitch::Parallel);
+	const visage::Bounds series = sw.glyphBounds(ui::RouteSwitch::Series);
+	sw.onMouseDown().callback(at(eroCentre(parallel).x, eroCentre(parallel).y));
+	sw.onMouseUp().callback(at(eroCentre(parallel).x, eroCentre(parallel).y));
+	CHECK(eroField(e.d, ero::Param::SlotRoute) == 1.0f);
+	CHECK(sw.litChoice() == ui::RouteSwitch::Parallel);
+	sw.onMouseDown().callback(at(eroCentre(series).x, eroCentre(series).y));
+	sw.onMouseUp().callback(at(eroCentre(series).x, eroCentre(series).y));
+	CHECK(eroField(e.d, ero::Param::SlotRoute) == 0.0f);
+
+	(void)eroField(e.d, ero::Param::SlotAType);
+	const float bBefore = eroField(e.d, ero::Param::SlotBType);
+	slots.cellA->select().selectZone(2);
+	e.refresh();
+	CHECK(eroField(e.d, ero::Param::SlotAType) == 2.0f);
+	CHECK(eroField(e.d, ero::Param::SlotBType) == bBefore);
+	slots.cellB->select().selectZone(4);
+	e.refresh();
+	CHECK(eroField(e.d, ero::Param::SlotAType) == 2.0f);
+	CHECK(eroField(e.d, ero::Param::SlotBType) == 4.0f);
+	// AND THE DRIVE'S OWN TYPE IS UNTOUCHED.
+	CHECK(eroField(e.d, ero::Param::DriveMode) == static_cast<float>(ero::kParamDescs[eroAt(ero::Param::DriveMode)].def));
+}
+
+TEST_CASE("ETCH's slot row goes with the engine: leaving Etch hides it and restores the top row, and returning brings it back") {
+	EroFaces e;
+	auto& card = *e.d.card;
+	ui::EtchSlots& slots = card.etchSlotsForTest();
+	for (const ero::Mode away : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb }) {
+		CAPTURE(static_cast<int>(away));
+		e.mode(ero::Mode::Etch);
+		CHECK(slots.outer->isVisible());
+		CHECK(card.freqBoxForTest()->isVisible());
+		CHECK_FALSE(card.mixForTest()->isVisible());
+		e.mode(away);
+		CHECK_FALSE(slots.outer->isVisible());
+		CHECK_FALSE(card.freqBoxForTest()->isVisible());
+		CHECK_FALSE(card.mixBoxForTest()->isVisible());
+		CHECK(card.mixForTest()->isVisible());
+		CHECK(card.mixForTest()->y() == slots.outer->y());
+		e.mode(ero::Mode::Etch);
+		CHECK(slots.outer->isVisible());
+		CHECK_FALSE(card.mixForTest()->isVisible());
+	}
+	// A NOISE SOURCE MEANS NOTHING TO ETCH: Width is the Bell's alone.
+	e.set(ero::Param::Source, 1.0f);
+	e.set(ero::Param::EmphAmount, 0.0f);
+	CHECK_FALSE(e.panel->widthForTest()->active());
+	e.set(ero::Param::EmphAmount, 9.0f);
+	e.set(ero::Param::EmphShape, 1.0f);
+	CHECK(e.panel->widthForTest()->active());
+}
+
+TEST_CASE("ETCH's window offers the slot row and every control Etch uses, nothing it does not, and nothing overlapping") {
+	EroFaces e;
+	auto& panel = *e.panel;
+	e.mode(ero::Mode::Etch);
+	const auto visible = [](visage::Frame* f) { return f != nullptr && f->isVisible(); };
+	ui::EtchSlots& slots = panel.etchSlotsForTest();
+	CHECK(visible(slots.outer.get()));
+	CHECK(slots.outer->caption() == "Slots");
+	CHECK(slots.outer->width() == doctest::Approx(ui::EroderExpanded::kSideWidth));
+	CHECK(slots.innerA->right() <= slots.route->x());
+	CHECK(slots.route->right() <= slots.innerB->x());
+	for (const ero::Param p : { ero::Param::Freq, ero::Param::Width, ero::Param::Resonance, ero::Param::Follow, ero::Param::Mix,
+	                            ero::Param::HpWet, ero::Param::Smear, ero::Param::EmphAmount, ero::Param::Loop,
+	                            ero::Param::LoopInterval }) {
+		CAPTURE(static_cast<int>(p));
+		CHECK(visible(panel.knobForTest(p)));
+	}
+	for (const ero::Param p : { ero::Param::Amount, ero::Param::Source, ero::Param::Grit, ero::Param::Stereo, ero::Param::Step,
+	                            ero::Param::Detune, ero::Param::ModFold, ero::Param::RustBias, ero::Param::RustRectify }) {
+		CAPTURE(static_cast<int>(p));
+		CHECK_FALSE(visible(panel.knobForTest(p)));
+	}
+	CHECK(visible(panel.drivePairForTest()));
+	CHECK(visible(panel.emphasisPairForTest()));
+	CHECK(visible(panel.loopPairForTest()));
+	CHECK(visible(panel.shapeForTest()));
+	for (visage::Frame* chip : { static_cast<visage::Frame*>(panel.restoreForTest()), static_cast<visage::Frame*>(panel.inLoopForTest()),
+	                             static_cast<visage::Frame*>(panel.tapForTest()), static_cast<visage::Frame*>(panel.subThruForTest()) }) {
+		CHECK(visible(chip));
+	}
+	std::vector<visage::Frame*> flat = eroVisible(&panel, { panel.plotForTest(), panel.modeForTest() });
+	CHECK(std::find(flat.begin(), flat.end(), static_cast<visage::Frame*>(slots.outer.get())) != flat.end());
+	eroApart(flat, panel.width(), panel.height());
+	// THE SLOT ROW IS ABSENT FROM THE OTHER ENGINES' WINDOWS.
+	e.mode(ero::Mode::Rust);
+	CHECK_FALSE(visible(slots.outer.get()));
+	CHECK(panel.plotForTest()->showsEtchForTest() == false);
+	e.mode(ero::Mode::Etch);
+	CHECK(visible(slots.outer.get()));
+	CHECK(panel.plotForTest()->showsEtchForTest());
 }

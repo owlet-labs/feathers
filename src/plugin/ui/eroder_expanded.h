@@ -27,6 +27,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/eroder_plot.h"
+#include "plugin/ui/etch_slots.h"
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/gamma_box.h"
 #include "plugin/ui/knob.h"
@@ -99,6 +100,7 @@ public:
 	[[nodiscard]] SegmentedControl* shapeForTest() const { return shape_.get(); }
 	[[nodiscard]] PairCell* emphasisPairForTest() const { return emphasisPair_.get(); }
 	[[nodiscard]] PairCell* loopPairForTest() const { return loopPair_.get(); }
+	[[nodiscard]] EtchSlots& etchSlotsForTest() { return etch_; }
 	[[nodiscard]] Knob* followForTest() const { return knob(fx::eroder::Param::Follow); }
 
 private:
@@ -119,6 +121,7 @@ private:
 	std::unique_ptr<SegmentedControl> mode_;
 	/// EVERY PLAIN KNOB, by the control it drives; which are shown is the engine's (`layOut`).
 	std::vector<std::pair<fx::eroder::Param, std::unique_ptr<Knob>>> knobs_;
+	EtchSlots etch_;
 	std::unique_ptr<Knob> drive_;
 	std::unique_ptr<ModeValueCell> driveCell_;
 	std::unique_ptr<PairCell> drivePair_;

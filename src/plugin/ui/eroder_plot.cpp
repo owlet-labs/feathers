@@ -100,12 +100,13 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		if (!dust_ || e.position.y > plotFoot() + kFootHeight) {
 			return;
 		}
+		// (Etch has no band, so no edge handle: only Freq answers the press.)
 		DeviceControl& freq = control(ero::Param::Freq);
 		drag_.active = true;
 		drag_.startY = e.position.y;
 		// THE BAND'S EDGE: a press on it drags Width, across. Only where there is a band (Source above nothing).
 		// A press nearer the band's own handle is that handle's.
-		if (settings_.source > 0.0f && std::abs(e.position.x - edgeX()) <= kEdgeReach
+		if (!etch_ && settings_.source > 0.0f && std::abs(e.position.x - edgeX()) <= kEdgeReach
 		    && std::abs(e.position.y - edgeY()) <= kEdgeReach
 		    && std::abs(e.position.x - edgeX()) < std::abs(e.position.x - hzToX(band_.freqHz))) {
 			drag_.width = true;
@@ -151,7 +152,7 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 			// THE AMOUNT: up is more. Relative to the press, past a dead zone, the whole range to the plot's height.
 			const float rise = drag_.startY - e.position.y;
 			// RUST HAS NO AMOUNT: up and down write nothing there.
-			if (!rust_ && (drag_.amountGesture || std::abs(rise) > kAmountDeadZone)) {
+			if (!rust_ && !etch_ && (drag_.amountGesture || std::abs(rise) > kAmountDeadZone)) {
 				DeviceControl& amount = control(ero::Param::Amount);
 				if (!drag_.amountGesture) {
 					drag_.amountGesture = true;
@@ -196,7 +197,7 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 	};
 	onMouseWheel() = [this](const visage::MouseEvent& e) {
 		// WIDTH IS THE NOISE BAND'S: with the shake all sine the wheel has nothing to turn.
-		if (!dust_ || e.wheel_delta_y == 0.0f || !(settings_.source > 0.0f)) {
+		if (!dust_ || etch_ || e.wheel_delta_y == 0.0f || !(settings_.source > 0.0f)) {
 			return false;
 		}
 		DeviceControl& width = control(ero::Param::Width);
@@ -361,7 +362,9 @@ bool EroderPlot::update() {
 		settings_ = ero::stateOf(row, present).settings;
 		// DUST AND RUST DRAW THE BAND (one moves a head by it, the other multiplies by it); the Comb its bars.
 		dust_ = settings_.mode != ero::Mode::Comb;
-		rust_ = settings_.mode == ero::Mode::Rust || settings_.mode == ero::Mode::Etch; // Etch is drawn as Rust until it has its own plot
+		rust_ = settings_.mode == ero::Mode::Rust;
+		// ETCH DRAWS NO BAND: the spectra, the emphasis, and a marker at Freq.
+		etch_ = settings_.mode == ero::Mode::Etch;
 		pitch_ = pitch;
 		rate_ = rate;
 		band_ = ero::deriveDust(settings_, pitch_, rate_);
@@ -439,7 +442,7 @@ const char* EroderPlot::tooltipAt(visage::Point p) const {
 		return kCombTip;
 	}
 	// THE HANDLE SPEAKS FOR THE AMOUNT, the rest of the axis for Freq.
-	if (std::abs(p.x - hzToX(band_.freqHz)) < kHandleReach
+	if (!etch_ && std::abs(p.x - hzToX(band_.freqHz)) < kHandleReach
 	    && std::abs(p.y - handleY()) < kHandleReach) {
 		return tooltipOf(&control(ero::Param::Amount));
 	}
@@ -531,7 +534,8 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 	const float handleX = hzToX(band_.freqHz);
 	const float handleY = this->handleY();
 	const float rise = foot - handleY;
-	const float noise = std::clamp(settings_.source, 0.0f, 1.0f);
+	// (Etch has no noise to show, whatever the hidden Source holds.)
+	const float noise = etch_ ? 0.0f : std::clamp(settings_.source, 0.0f, 1.0f);
 	if (noise > 0.0f && rise > 0.0f) {
 		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * noise));
 		const int points = large_ ? 220 : 96;
@@ -549,7 +553,12 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 			prevY = y;
 		}
 	}
-	if (noise < 1.0f) {
+	if (etch_) {
+		// ETCH'S MARKER AT FREQ: a thin line the plot's height, where the inner loop's delay and the emphasis pivot.
+		canvas.setColor(withAlpha(settings_.track ? kValue : kInk, 0.6f));
+		canvas.fill(handleX - 0.5f, top, 1.0f, std::max(0.0f, foot - top));
+	}
+	else if (noise < 1.0f) {
 		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * (1.0f - noise)));
 		canvas.fill(handleX - 0.75f, handleY, 1.5f, std::max(0.0f, rise));
 	}
@@ -573,14 +582,17 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 	// THE HANDLE: a tick on the foot and the dot at the Amount's height — the note's colour while it is tracked.
 	canvas.setColor(settings_.track ? kValue : kInk);
 	canvas.fill(handleX - 3.0f, foot - 1.0f, 6.0f, 2.0f);
-	canvas.circle(handleX - 3.5f, handleY - 3.5f, 7.0f);
+	if (!etch_) {
+		canvas.circle(handleX - 3.5f, handleY - 3.5f, 7.0f);
+	}
 
 	char text[40];
 	canvas.setColor(kMuted);
-	canvas.text(large_ ? rust_ ? "in (grey), out (line), and the band that multiplies it"
+	canvas.text(etch_ ? large_ ? "in (grey), out (line), the emphasis, and Freq" : "spectrum + Freq"
+	            : large_ ? rust_ ? "in (grey), out (line), and the band that multiplies it"
 	                   : "in (grey), out (line), and the band that shakes the head" : "spectrum + band",
 	            font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, in - 1.0f, w * 0.75f, 11.0f);
-	if (!rust_) {
+	if (!rust_ && !etch_) {
 		formatSeconds(text, sizeof(text), band_.amountSeconds);
 		canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, w - in - 70.0f, in - 1.0f, 68.0f, 11.0f);
 	}
@@ -593,10 +605,11 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 		formatHz(text, sizeof(text), band_.freqHz);
 		const bool left = handleX > w * 0.75f;
 		canvas.setColor(withAlpha(kSurface, 0.9f));
-		canvas.roundedRectangle(left ? handleX - 62.0f : handleX + 6.0f, handleY - 6.0f, 56.0f, 12.0f, 3.0f);
+		const float labelY = etch_ ? top + 2.0f : handleY - 6.0f;
+		canvas.roundedRectangle(left ? handleX - 62.0f : handleX + 6.0f, labelY, 56.0f, 12.0f, 3.0f);
 		canvas.setColor(settings_.track ? kValue : kInk);
 		canvas.text(text, font(kKnobReadoutSize), visage::Font::kCenter, left ? handleX - 62.0f : handleX + 6.0f,
-		            handleY - 6.0f, 56.0f, 12.0f);
+		            labelY, 56.0f, 12.0f);
 	}
 }
 

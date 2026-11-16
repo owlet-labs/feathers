@@ -83,6 +83,13 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	};
 	source_ = box(ero::Param::Source, "Source");
 	grit_ = box(ero::Param::Grit, "Grit");
+	// ETCH'S SMALL ROW: Freq and Mix as compact boxes (they are boxes on the knob row's place, which is the slots'). A box
+	// is a modulation target and takes a drag as a knob does (`ValueBox`), so neither is lost to the card.
+	freqBox_ = box(ero::Param::Freq, "Freq");
+	mixBox_ = box(ero::Param::Mix, "Mix");
+	// ETCH'S SLOT ROW, bare: a caption band would not fit the card's height.
+	etch_.build([this](ero::Param p) -> DeviceControl& { return control(p); }, kKnobDiameter, notifier_, "");
+	addChild(etch_.outer.get());
 	track_ = std::make_unique<SwitchChip>(control(ero::Param::Track), "Track");
 	addChild(track_.get());
 	// THE COMB'S TWO CHIPS: Tap (on is Driven) and Restore.
@@ -137,6 +144,7 @@ void EroderCard::setModulation(ModState* mod, EditHistory* history) {
 		control(static_cast<ero::Param>(i)).setModulation(mod, history);
 	}
 	plot_->setModulation(mod, history);
+	etch_.setModulation(mod, history);
 	// THE KNOBS DRAW THEIR OWN ARM GLOW, and watch the panel state for it (`CompCard::setModulation`).
 	for (Knob* knob : { amount_.get(), bias_.get(), freq_.get(), width_.get(), mix_.get(), cutoff_.get(),
 	                    drive_.get(), emphasis_.get(), resonance_.get(), loop_.get() }) {
@@ -173,6 +181,10 @@ std::vector<visage::Frame*> EroderCard::shakerWidgetsForTest() const {
 	return { freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get() };
 }
 
+std::vector<visage::Frame*> EroderCard::etchWidgetsForTest() const {
+	return { etch_.outer.get(), freqBox_.get(), mixBox_.get(), track_.get() };
+}
+
 std::vector<visage::Frame*> EroderCard::combWidgetsForTest() const {
 	return { tone_.get(), character_.get(), cutoff_.get(), gamma_.get(), tap_.get(), restore_.get(), loop_.get() };
 }
@@ -185,6 +197,7 @@ void EroderCard::layOut() {
 	const ero::Mode mode = engine();
 	laidOutEngine_ = static_cast<int>(mode);
 	const bool comb = mode == ero::Mode::Comb;
+	const bool etch = mode == ero::Mode::Etch;
 	const bool open = !folded();
 	const float left = bodyLeft() + kPad;
 	const float width = std::max(0.0f, bodyWidth() - 2.0f * kPad);
@@ -211,14 +224,17 @@ void EroderCard::layOut() {
 	visage::Frame* const combRow[] = { tone_.get(), character_.get(), cutoff_.get() };
 	for (size_t i = 0; i < 2; ++i) {
 		shakerRow[i]->setBounds(left + cell * static_cast<float>(i + 1), y, cell, knobH);
-		shakerRow[i]->setVisible(open && !comb);
+		shakerRow[i]->setVisible(open && !comb && !etch);
 	}
 	for (size_t i = 0; i < 3; ++i) {
 		combRow[i]->setBounds(left + cell * static_cast<float>(i), y, cell, knobH);
 		combRow[i]->setVisible(open && comb);
 	}
 	mix_->setBounds(left + cell * 3.0f, y, cell, knobH);
-	mix_->setVisible(open);
+	mix_->setVisible(open && !etch);
+	// ETCH'S KNOB ROW IS THE SLOTS: A, its Type with Shape and Mix, the route, B (one line, the card's four cells).
+	etch_.outer->setBounds(left, y, 4.0f * cell, etch_.heightFor(knobH));
+	etch_.setShown(open && etch);
 	y += knobH + kRowGap;
 
 	// THE SMALL ROW. Dust: Source, Grit, Track. Comb: Gamma.
@@ -230,8 +246,12 @@ void EroderCard::layOut() {
 	grit_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
 	track_->setBounds(left + width - chipW, y, chipW, SwitchChip::kHeight);
 	// ETCH HAS NO SHAKE: Source and Grit are not drawn (a control only the other engines could enable is hidden).
-	source_->setVisible(open && !comb && mode != ero::Mode::Etch);
-	grit_->setVisible(open && !comb && mode != ero::Mode::Etch);
+	source_->setVisible(open && !comb && !etch);
+	grit_->setVisible(open && !comb && !etch);
+	freqBox_->setBounds(left, boxY, boxW, ValueBox::kCompactHeight);
+	mixBox_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
+	freqBox_->setVisible(open && etch);
+	mixBox_->setVisible(open && etch);
 	track_->setVisible(open && !comb);
 	// THE COMB'S SMALL ROW: Gamma, then Tap (Driven) and Restore.
 	const float restoreW = 52.0f;
@@ -267,7 +287,9 @@ void EroderCard::refreshHonesty() {
 	// ... OR THE EMPHASIS IS A BELL, whose width Width is.
 	const bool emphasised = row[static_cast<size_t>(ero::Param::EmphAmount)] != 0.0f;
 	const bool bell = row[static_cast<size_t>(ero::Param::EmphShape)] >= 0.5f;
-	width_->setActive(row[static_cast<size_t>(ero::Param::Source)] > 0.0f || (bell && emphasised));
+	// ETCH HAS NO NOISE BAND: Source is not its business, the Bell's width is.
+	const bool etch = engine() == ero::Mode::Etch;
+	width_->setActive((!etch && row[static_cast<size_t>(ero::Param::Source)] > 0.0f) || (bell && emphasised));
 	// RESTORE PUTS BACK WHAT THE EMPHASIS TOOK: with none there is nothing to put back. (The Tap is always live in the
 	// Comb: its inner loop never stops, `kBankFloor`.)
 	restore_->setEnabled(emphasised);

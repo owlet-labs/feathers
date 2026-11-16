@@ -81,7 +81,7 @@ constexpr P kRustGrid[] = { P::RustBias, P::RustRectify, P::Freq, P::Width, P::S
 constexpr P kCombGrid[] = { P::Cutoff, P::Heat, P::Width, P::Follow, P::Mix };
 /// THE SHAKE'S EXTRAS, a row of their own under the pair: Dust's and Rust's.
 constexpr P kShakeRow[] = { P::Step, P::Detune, P::ModFold };
-/// Etch has no shake: the shared section's pitch and width, the loop, Follow and Mix (its own slots are drawn by a later layout).
+/// Etch has no shake: the shared section's pitch and width (the Bell's), the loop, Follow and Mix; its slots lead the grid.
 constexpr P kEtchGrid[] = { P::Freq, P::Width, P::Resonance, P::Follow, P::Mix };
 
 } // namespace
@@ -123,6 +123,10 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	addChild(loopPair_.get());
 
 	// DRIVE, A PAIR (`EroderCard`'s constructor).
+	// ETCH'S SLOT ROW, captioned (the window has the room).
+	etch_.build([this](ero::Param p) -> DeviceControl& { return control(p); }, kFace, notifier_, "Slots");
+	addChild(etch_.outer.get());
+
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
 	drive_->setFaceDiameter(kFace);
 	std::vector<ZoneSelect::ZoneName> types;
@@ -179,6 +183,7 @@ void EroderExpanded::modulationBound(ModState* mod, EditHistory* history) {
 		entry.second->setModulation(mod, history);
 	}
 	drive_->setModulation(mod, history);
+	etch_.setModulation(mod, history);
 }
 
 std::string EroderExpanded::title() const { return ero::kTraits.name; }
@@ -216,6 +221,7 @@ void EroderExpanded::layOut() {
 	const ero::Mode mode = engine();
 	laidOutEngine_ = static_cast<int>(mode);
 	const bool comb = mode == ero::Mode::Comb;
+	const bool etch = mode == ero::Mode::Etch;
 	const float plotW = std::max(0.0f, width() - 2.0f * kPad - kSideWidth - kGap);
 	plot_->setBounds(kPad, kPad, plotW, std::max(0.0f, height() - 2.0f * kPad));
 
@@ -236,6 +242,8 @@ void EroderExpanded::layOut() {
 		}
 	}
 	std::vector<FlowItem> items;
+	// ETCH'S SLOTS LEAD ITS WINDOW, one row across all four columns.
+	items.push_back({ etch_.outer.get(), static_cast<int>(kPerRow), etch, etch_.heightFor(knobH) });
 	items.push_back({ tone_.get(), 1, comb, knobH });
 	items.push_back({ character_.get(), 1, comb, knobH });
 	const auto add = [&](std::span<const P> grid) {
@@ -243,7 +251,6 @@ void EroderExpanded::layOut() {
 			items.push_back({ knob(p), 1, true, knobH });
 		}
 	};
-	const bool etch = mode == ero::Mode::Etch;
 	add(mode == ero::Mode::Dust ? std::span<const P>(kDustGrid)
 	                            : comb ? std::span<const P>(kCombGrid)
 	                                   : etch ? std::span<const P>(kEtchGrid) : std::span<const P>(kRustGrid));
@@ -256,6 +263,7 @@ void EroderExpanded::layOut() {
 		add(kShakeRow);
 	}
 	const float under = flowCells(items, static_cast<int>(kPerRow), x, y, cell, kGap) + kGap;
+	etch_.setShown(etch);
 	// HP WET SITS BESIDE THE PAIR WHEN THE FLOW PUTS IT THERE, level with the cells inside it.
 	Knob* hp = knob(P::HpWet);
 	if (hp->y() == drivePair_->y()) {
@@ -292,7 +300,8 @@ void EroderExpanded::refreshHonesty() {
 	const bool emphasised = row[static_cast<size_t>(ero::Param::EmphAmount)] != 0.0f;
 	const bool bell = row[static_cast<size_t>(ero::Param::EmphShape)] >= 0.5f;
 	// THE BELL'S WIDTH IS WIDTH (the Comb has no band, so there it is the bell's alone).
-	knob(P::Width)->setActive((!comb && source > 0.0f) || (bell && emphasised));
+	const bool etch = engine() == ero::Mode::Etch;
+	knob(P::Width)->setActive((!comb && !etch && source > 0.0f) || (bell && emphasised));
 	knob(P::Detune)->setActive(source < 1.0f);
 	knob(P::ModFold)->setActive(source < 1.0f);
 	// SUB THRU GIVES BACK WHAT HP WET TOOK OF A DRY THAT WAS TURNED DOWN: with no filter there is nothing to give

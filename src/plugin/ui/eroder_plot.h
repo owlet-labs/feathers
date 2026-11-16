@@ -100,6 +100,7 @@ public:
 	//----------------------------------------------------------------------------------------------//
 	[[nodiscard]] bool showsDustForTest() const noexcept { return dust_; }
 	[[nodiscard]] bool showsRustForTest() const noexcept { return rust_; }
+	[[nodiscard]] bool showsEtchForTest() const noexcept { return etch_; }
 	/// How far up the plot Rust's band stands.
 	static constexpr float kRustBandShare = 0.7f;
 	[[nodiscard]] const fx::eroder::DustDerived& bandForTest() const noexcept { return band_; }
@@ -181,6 +182,7 @@ private:
 	fx::eroder::Settings settings_ {};
 	bool dust_ = true;
 	bool rust_ = false;
+	bool etch_ = false;
 	double pitch_ = fx::eroder::kReferenceNote;
 	double rate_ = 48000.0;
 	fx::eroder::DustDerived band_ {};

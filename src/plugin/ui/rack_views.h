@@ -79,6 +79,48 @@ private:
 	std::function<void(bool)> setOpen_;
 };
 
+/// **THE PADS' LESS / MORE PAIR**: two arrows side by side that step what is in front of the selected pad one state each way (Closed,
+/// First, Whole). Less points up in a top-down lane and left in a left-right one, more down and right. The arrow that cannot step
+/// further is not drawn (its place stays, so the other never jumps), and the whole pair is absent when there is nothing to show.
+class RackPadsStep final : public visage::Frame, public TooltipSource {
+public:
+	/// `state` reads 0 (closed), 1 (first) or 2 (whole); `count` is how many cards the viewed chain holds; `set` writes a state.
+	RackPadsStep(RackFlow flow, std::function<int()> state, std::function<size_t()> count, std::function<void(int)> set);
+
+	void draw(visage::Canvas& canvas) override;
+	const char* tooltipAt(visage::Point at) const override;
+	/// It declares nothing: it folds editor state and writes no control.
+	void offeredControls(std::vector<Offered>&) const override {}
+	void refresh() { redraw(); }
+	void setFlow(RackFlow flow) {
+		if (flow != flow_) {
+			flow_ = flow;
+			redraw();
+		}
+	}
+	/// Which arrows are drawn now.
+	[[nodiscard]] bool lessShown() const;
+	[[nodiscard]] bool moreShown() const;
+	/// A press on the less / more arrow, as the hand makes it (a press on one that is not drawn does nothing).
+	void pressLessForTest() { step(-1); }
+	void pressMoreForTest() { step(1); }
+	/// Where each arrow's hit target is, in this frame's own coordinates.
+	[[nodiscard]] visage::Bounds lessBounds() const { return { 0.0f, 0.0f, kButton, kButton }; }
+	[[nodiscard]] visage::Bounds moreBounds() const { return { kButton, 0.0f, kButton, kButton }; }
+
+	/// Each target is as large as a card's header (`kCardHeadHeight`), a square.
+	static constexpr float kButton = 24.0f;
+	static constexpr float kWidth = 2.0f * kButton;
+
+private:
+	void step(int by);
+	int slotAt(visage::Point at) const;
+	RackFlow flow_;
+	std::function<int()> state_;
+	std::function<size_t()> count_;
+	std::function<void(int)> set_;
+};
+
 class RackTabBar final : public visage::Frame, public TooltipSource {
 public:
 	RackTabBar(RackViewModel& model, RackFlow flow);

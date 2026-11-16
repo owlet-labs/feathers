@@ -214,6 +214,89 @@ void RackDrawerArrow::draw(visage::Canvas& canvas) {
 }
 
 //--------------------------------------------------------------------------------------------------//
+// THE PADS' LESS / MORE PAIR                                                                          //
+//--------------------------------------------------------------------------------------------------//
+
+RackPadsStep::RackPadsStep(RackFlow flow, std::function<int()> state, std::function<size_t()> count, std::function<void(int)> set)
+    : flow_(flow), state_(std::move(state)), count_(std::move(count)), set_(std::move(set)) {
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		const int slot = slotAt(e.position);
+		if (slot == 0) {
+			step(-1);
+		}
+		else if (slot == 1) {
+			step(1);
+		}
+	};
+	onDpiChange() += [this] { setBounds(bounds()); };
+	installTooltipHover(*this, *this);
+}
+
+bool RackPadsStep::lessShown() const {
+	return count_ && count_() > 0 && state_ && state_() > 0;
+}
+
+bool RackPadsStep::moreShown() const {
+	if (!count_ || !state_) {
+		return false;
+	}
+	const size_t n = count_();
+	const int s = state_();
+	return n > 0 && ((s == 0) || (s == 1 && n > 1));
+}
+
+int RackPadsStep::slotAt(visage::Point at) const {
+	if (at.y < 0.0f || at.y >= kButton || at.x < 0.0f || at.x >= kWidth) {
+		return -1;
+	}
+	const int slot = at.x < kButton ? 0 : 1;
+	return (slot == 0 ? lessShown() : moreShown()) ? slot : -1;
+}
+
+const char* RackPadsStep::tooltipAt(visage::Point at) const {
+	const int slot = slotAt(at);
+	if (slot == 0) {
+		return "Show less: put the last card of this pad's chain away";
+	}
+	return slot == 1 ? "Show more: bring the next card of this pad's chain forward" : "";
+}
+
+void RackPadsStep::step(int by) {
+	if (!set_ || !state_ || (by < 0 ? !lessShown() : !moreShown())) {
+		return;
+	}
+	set_(std::clamp(state_() + by, 0, 2));
+	redraw();
+}
+
+void RackPadsStep::draw(visage::Canvas& canvas) {
+	const float r = kButton * 0.26f;
+	canvas.setColor(kInk);
+	for (int slot = 0; slot < 2; ++slot) {
+		if (!(slot == 0 ? lessShown() : moreShown())) {
+			continue;
+		}
+		const float cx = (static_cast<float>(slot) + 0.5f) * kButton;
+		const float cy = kButton * 0.5f;
+		// LESS points up (or left), MORE down (or right).
+		if (flow_ == RackFlow::TopDown) {
+			if (slot == 0) {
+				canvas.triangle(cx - r, cy + r * 0.6f, cx + r, cy + r * 0.6f, cx, cy - r * 0.8f);
+			}
+			else {
+				canvas.triangle(cx - r, cy - r * 0.6f, cx + r, cy - r * 0.6f, cx, cy + r * 0.8f);
+			}
+		}
+		else if (slot == 0) {
+			canvas.triangle(cx + r * 0.6f, cy - r, cx + r * 0.6f, cy + r, cx - r * 0.8f, cy);
+		}
+		else {
+			canvas.triangle(cx - r * 0.6f, cy - r, cx - r * 0.6f, cy + r, cx + r * 0.8f, cy);
+		}
+	}
+}
+
+//--------------------------------------------------------------------------------------------------//
 // THE TAB BAR                                                                                         //
 //--------------------------------------------------------------------------------------------------//
 

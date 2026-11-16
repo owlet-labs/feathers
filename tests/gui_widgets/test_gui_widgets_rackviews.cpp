@@ -1122,47 +1122,126 @@ TEST_CASE("rack views over a real rack: the cards in front are as wide as the ca
 	CHECK(cards[1]->bounds().y() == doctest::Approx(cards[0]->bounds().y()));
 }
 
-TEST_CASE("rack views over a real rack: in Pads the selected pad's chain is in front as real cards, an arrow (always there) puts it away and back, and viewing another pad rebinds") {
+TEST_CASE("rack views over a real rack: in Pads the selected pad's chain steps closed, first, whole by a less/more pair, in both flows, and Tabs keeps its one arrow") {
+	for (const bool horizontal : { false, true }) {
+		RealRack r;
+		r.chains(3, 2, true);
+		(void)r.rack().chainAt(1)->bridge()->addDevice("DRUM"); // chain 2 holds three cards; chain 3 none yet
+		r.view_(2);
+		const auto settle = [&] {
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+				if (horizontal) {
+					r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+				}
+			}
+		};
+		if (horizontal) {
+			r.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+		}
+		settle();
+		ui::RackPadGrid& grid = r.card->padsForTest().gridForTest();
+		feathers::rack::RackBridge& chain1 = *r.rack().chainAt(1)->bridge();
+		grid.pressForTest(grid.padCentre(1)); // key 1 = chain 2, three devices
+		grid.releaseForTest();
+		settle();
+		ui::RackPadsStep& step = r.card->padsStepForTest();
+		const auto extent = [&] { return horizontal ? r.card->laneExtent(ui::kCardUnitHeight) : r.card->laneHeightAt(static_cast<float>(r.card->width())); };
+		// FIRST BY DEFAULT: the first card alone, the pair present with MORE and LESS both drawn, and Tabs' arrow not drawn in Pads.
+		std::vector<ui::FxCard*> cards = shownCards(*r.card);
+		REQUIRE(cards.size() == 1);
+		CHECK(cards[0]->device() == chain1.deviceAtPosition(0));
+		CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(1));
+		CHECK(r.card->padsFrontForTest() == 1);
+		REQUIRE(step.isVisible());
+		CHECK(step.lessShown());
+		CHECK(step.moreShown());
+		CHECK_FALSE(r.card->chainArrowForTest().isVisible());
+		// THE TARGETS are at least a card header's height and as wide, and sit on the boundary: before the cards, after the pads.
+		CHECK(step.lessBounds().width() >= ui::kCardHeadHeight);
+		CHECK(step.lessBounds().height() >= ui::kCardHeadHeight);
+		CHECK(step.moreBounds().width() >= ui::kCardHeadHeight);
+		const float first = extent();
+		if (!horizontal) {
+			CHECK(step.bounds().y() >= r.card->padsForTest().bounds().y() + r.card->padsForTest().height());
+			CHECK(step.bounds().y() + step.height() <= r.card->frontForTest().bounds().y());
+		}
+		else {
+			CHECK(step.bounds().x() >= r.card->padsForTest().bounds().x() + r.card->padsForTest().width());
+			CHECK(step.bounds().x() + step.width() <= r.card->frontForTest().bounds().x());
+		}
+		// MORE brings the whole chain (all three, in order); the arrow that cannot step further is gone, and the card is bigger.
+		step.pressMoreForTest();
+		settle();
+		cards = shownCards(*r.card);
+		REQUIRE(cards.size() == 3);
+		for (size_t i = 0; i < 3; ++i) {
+			CHECK(cards[i]->device() == chain1.deviceAtPosition(i));
+		}
+		CHECK(r.card->padsFrontForTest() == 2);
+		CHECK(step.lessShown());
+		CHECK_FALSE(step.moreShown());
+		CHECK(extent() > first);
+		step.pressMoreForTest(); // not drawn: does nothing
+		settle();
+		CHECK(shownCards(*r.card).size() == 3);
+		// LESS twice: closed, no card, the pair still there with only MORE, and the card smaller than at first (it sizes to its content).
+		step.pressLessForTest();
+		step.pressLessForTest();
+		settle();
+		CHECK(shownCards(*r.card).empty());
+		CHECK(r.card->padsFrontForTest() == 0);
+		REQUIRE(step.isVisible());
+		CHECK_FALSE(step.lessShown());
+		CHECK(step.moreShown());
+		CHECK(extent() < first);
+		step.pressLessForTest(); // not drawn: does nothing
+		CHECK(r.card->padsFrontForTest() == 0);
+		// THE GRID and its kit level are still there closed.
+		CHECK(r.card->padsForTest().isVisible());
+		// MORE from closed is first again, and viewing another pad keeps the step (per rack, not per chain).
+		step.pressMoreForTest();
+		settle();
+		CHECK(shownCards(*r.card).size() == 1);
+		grid.pressForTest(grid.padCentre(0));
+		grid.releaseForTest();
+		settle();
+		CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(0));
+		CHECK(shownCards(*r.card).size() == 1);
+		// AN EMPTY CHAIN: nothing to step, so the pair is absent. A ONE-DEVICE CHAIN: first is the whole chain, so LESS is drawn and MORE is not.
+		grid.pressForTest(grid.padCentre(2));
+		grid.releaseForTest();
+		settle();
+		CHECK_FALSE(step.isVisible());
+		(void)r.rack().chainAt(2)->bridge()->addDevice("DRUM");
+		settle();
+		REQUIRE(step.isVisible());
+		CHECK(step.lessShown());
+		CHECK_FALSE(step.moreShown());
+		CHECK(shownCards(*r.card).size() == 1);
+	}
+}
+
+TEST_CASE("rack views over a real rack: Tabs' arrow is drawn only when the chain holds more than one card, and the Pads pair is never drawn in Tabs") {
 	RealRack r;
-	r.chains(3, 2, true);
-	r.view_(2);
+	r.chains(2, 0, true);
+	(void)r.rack().chainAt(0)->bridge()->addDevice("DRUM"); // one card
+	(void)r.rack().chainAt(1)->bridge()->addDevice("DRUM");
+	(void)r.rack().chainAt(1)->bridge()->addDevice("DELAY"); // two
+	r.view_(1);
 	for (int i = 0; i < 3; ++i) {
 		r.refresh();
 	}
-	ui::RackPadGrid& grid = r.card->padsForTest().gridForTest();
-	feathers::rack::RackBridge& chain1 = *r.rack().chainAt(1)->bridge();
-	grid.pressForTest(grid.padCentre(1)); // key 1 = chain 2
-	grid.releaseForTest();
-	const auto settle = [&] {
-		for (int i = 0; i < 3; ++i) {
-			r.refresh();
-		}
-	};
-	settle();
-	// SHOWN BY DEFAULT: the whole chain, in order, with the arrow under it.
-	std::vector<ui::FxCard*> cards = shownCards(*r.card);
-	REQUIRE(cards.size() == 2);
-	CHECK(cards[0]->device() == chain1.deviceAtPosition(0));
-	CHECK(cards[1]->device() == chain1.deviceAtPosition(1));
-	CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(1));
-	REQUIRE(r.card->chainArrowForTest().isVisible());
-	CHECK(r.card->chainArrowForTest().bounds().y() >= r.card->frontForTest().bounds().y() + r.card->frontForTest().height()); // under the cards
-	// THE ARROW PUTS IT AWAY (no card, the arrow stays) and BRINGS IT BACK; the pad need not be pressed again.
-	const float open = r.card->laneHeightAt(static_cast<float>(r.card->width()));
-	r.card->chainArrowForTest().toggleForTest();
-	settle();
-	CHECK(shownCards(*r.card).empty());
+	ui::RackTabBar& bar = r.card->tabBarForTest();
+	bar.pressForTest(bar.tabCentre(0));
+	r.refresh();
+	CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(0));
+	CHECK_FALSE(r.card->chainArrowForTest().isVisible()); // nothing more to open: no dead control
+	CHECK_FALSE(r.card->padsStepForTest().isVisible());
+	bar.pressForTest(bar.tabCentre(1));
+	r.refresh();
 	CHECK(r.card->chainArrowForTest().isVisible());
-	CHECK(r.card->laneHeightAt(static_cast<float>(r.card->width())) < open);
-	r.card->chainArrowForTest().toggleForTest();
-	settle();
-	CHECK(shownCards(*r.card).size() == 2);
-	// A CHAIN OF ONE DEVICE HAS THE ARROW TOO IN PADS (it closes), where Tabs has none (there is nothing more to open).
-	(void)r.rack().chainAt(2)->bridge()->addDevice("DRUM"); // chain 3 gets one device
-	grid.pressForTest(grid.padCentre(2));
-	grid.releaseForTest();
-	settle();
-	CHECK(r.card->chainArrowForTest().isVisible());
+	CHECK_FALSE(r.card->padsStepForTest().isVisible());
 }
 
 namespace {

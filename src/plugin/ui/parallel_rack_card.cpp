@@ -718,15 +718,15 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
 	front_ = std::make_unique<RackFrontColumn>(host_, device_, registry, notifier_);
 	chainArrow_ = std::make_unique<RackDrawerArrow>(
-	    RackFlow::TopDown, "Open the whole chain here, or close it again",
-	    [this] { return padsView() ? model_->padsFrontShown() : model_->expanded(model_->viewedChain()); },
+	    RackFlow::TopDown, "Open the whole chain here, or close it again", [this] { return model_->expanded(model_->viewedChain()); },
 	    [this](bool open) {
-		    if (padsView()) {
-			    model_->setPadsFrontShown(open);
-		    }
-		    else {
-			    model_->setExpanded(model_->viewedChain(), open);
-		    }
+		    model_->setExpanded(model_->viewedChain(), open);
+		    (void)updateContent();
+	    });
+	padsStep_ = std::make_unique<RackPadsStep>(
+	    RackFlow::TopDown, [this] { return model_->padsFront(); }, [this] { return front_->deviceCount(); },
+	    [this](int state) {
+		    model_->setPadsFront(state);
 		    (void)updateContent();
 	    });
 	// THE MACRO ROW behind its own arrow (collapsed by default, and no arrow at all unless the rack has macros): the same idiom as the chain's.
@@ -745,7 +745,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 		macroKnobs_[i]->setVisible(false);
 	}
 	for (visage::Frame* f : { static_cast<visage::Frame*>(tabs_.get()), static_cast<visage::Frame*>(pads_.get()),
-	                          static_cast<visage::Frame*>(front_.get()), static_cast<visage::Frame*>(chainArrow_.get()),
+	                          static_cast<visage::Frame*>(front_.get()), static_cast<visage::Frame*>(chainArrow_.get()), static_cast<visage::Frame*>(padsStep_.get()),
 	                          static_cast<visage::Frame*>(macroArrow_.get()) }) {
 		addChild(f);
 		f->setVisible(false);
@@ -831,9 +831,10 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 		p.missing = p.rows = p.overflow = 0;
 		// WHAT IS IN FRONT is the viewed chain's REAL cards (`RackFrontColumn`): as tall as they are at the card's content width.
 		p.frontExtent = static_cast<int>(std::lround(frontExtentFor(horizontalLane() ? lanesCross() : bodyWidth() - 2.0f * kPad)));
-		// THE ARROW IS ALWAYS THERE IN PADS (it puts the selected pad's chain away and brings it back); in Tabs it is there when there is more
-		// to open than the card in front.
-		p.arrow = p.view == RackViewKind::Pads ? front_->deviceCount() > 0 : front_->deviceCount() > 1;
+		// TABS' ARROW is there when there is more to open than the card in front; PADS' pair is there whenever the chain holds a card (it
+		// steps closed, first, whole, and is still there closed).
+		p.arrow = p.view == RackViewKind::Tabs && front_->deviceCount() > 1;
+		p.step = p.view == RackViewKind::Pads && front_->deviceCount() > 0;
 		p.macros = macrosPresent();
 		p.macrosOpen = p.macros && model_->macrosOpen();
 		return p;
@@ -883,6 +884,9 @@ float ParallelRackCard::viewHeight(const Plan& p) const {
 	if (p.arrow) {
 		h += RackDrawerArrow::kSize + kRowGap;
 	}
+	if (p.step) {
+		h += RackPadsStep::kButton + kRowGap;
+	}
 	h += ((p.unusedRow ? 1.0f : 0.0f) + (p.playingRow ? 1.0f : 0.0f)) * (ValueBox::kHeight + kRowGap);
 	return h;
 }
@@ -906,7 +910,7 @@ float ParallelRackCard::laneExtent(float cross) const {
 		// (the first alone while the chain is closed, all of it open), their arrow and the padding. Never sized to the largest chain.
 		const float lead = model_->view() == RackViewKind::Tabs ? RackTabBar::kThickness : pads_->naturalSize().x;
 		const float front = frontExtentFor(std::max(0.0f, cross - 2.0f * kPad));
-		const float arrow = front_->deviceCount() > 1 ? RackDrawerArrow::kSize + kRowGap : 0.0f;
+		const float arrow = model_->view() == RackViewKind::Tabs && front_->deviceCount() > 1 ? RackDrawerArrow::kSize + kRowGap : 0.0f;
 		return kCardHeadHeight + lead + kRowGap + kLeftColumnWidth + kRowGap + front + arrow + kPad;
 	}
 	return FxCard::laneExtent(cross);
@@ -925,11 +929,13 @@ void ParallelRackCard::layOut() {
 	tabs_->setFlow(flow);
 	pads_->setFlow(flow);
 	chainArrow_->setFlow(flow);
+	padsStep_->setFlow(flow);
 	const bool open = !folded();
 	tabs_->setVisible(open && p.view == RackViewKind::Tabs);
 	pads_->setVisible(open && p.view == RackViewKind::Pads);
 	front_->setVisible(open && !strips);
 	chainArrow_->setVisible(open && !strips && p.arrow);
+	padsStep_->setVisible(open && !strips && p.step);
 	macroArrow_->setVisible(open && !strips && p.macros);
 	macroArrow_->setFlow(flow);
 	for (auto& k : macroKnobs_) {
@@ -951,6 +957,11 @@ void ParallelRackCard::layOut() {
 				top = y + n.y + kRowGap;
 			}
 			placeMacros(p, left, wide, top);
+			// PADS' LESS / MORE PAIR sits on the boundary between the pads and the cards, present at every step.
+			if (p.step) {
+				padsStep_->setBounds(left, top, RackPadsStep::kWidth, RackPadsStep::kButton);
+				top += RackPadsStep::kButton + kRowGap;
+			}
 			// THE CARDS IN FRONT run down a column as wide as the card's content (the hairline and the cap sit in the padding beside it).
 			const auto stack = static_cast<float>(p.frontExtent);
 			front_->setBounds(left, top, wide, stack);
@@ -981,6 +992,10 @@ void ParallelRackCard::layOut() {
 			front_->setBounds(frontLeft, kPad, static_cast<float>(p.frontExtent), std::max(0.0f, h - 2.0f * kPad));
 			chainArrow_->setBounds(frontLeft + static_cast<float>(p.frontExtent) + kRowGap, 0.0f, RackDrawerArrow::kSize, h);
 			y = kRowGap;
+			if (p.step) {
+				padsStep_->setBounds(left, y, RackPadsStep::kWidth, RackPadsStep::kButton);
+				y += RackPadsStep::kButton + kRowGap;
+			}
 			placeMacros(p, left, wide, y);
 		}
 	}
@@ -1272,10 +1287,11 @@ bool ParallelRackCard::followView() {
 	// THE REAL CARDS OF THE VIEWED CHAIN: bound by the chain's id and bridge (a tab switch rebinds), advanced like any lane's.
 	front_->setHorizontal(horizontalLane());
 	front_->setNest(DeviceNest::under(nest(), device_));
-	moved = front_->follow(viewed, padsView() || model_->expanded(viewed), !padsView() || model_->padsFrontShown()) || moved;
+	moved = front_->follow(viewed, padsView() ? model_->padsFront() == 2 : model_->expanded(viewed), !padsView() || model_->padsFront() > 0) || moved;
 	moved = front_->updateCards() > 0 || moved;
 	tabs_->refresh();
 	chainArrow_->refresh();
+	padsStep_->refresh();
 	macroArrow_->refresh();
 	moved = refreshMacroNames() || moved;
 	if (model_->view() == RackViewKind::Pads) {

@@ -390,6 +390,8 @@ public:
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackFrontColumn& frontForTest() const { return *front_; }
 	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
+	[[nodiscard]] int padsFrontForTest() const { return model_->padsFront(); }
+	[[nodiscard]] RackPadsStep& padsStepForTest() const { return *padsStep_; }
 	[[nodiscard]] RackDrawerArrow& macroArrowForTest() const { return *macroArrow_; }
 	[[nodiscard]] Knob& macroKnobForTest(size_t i) const { return *macroKnobs_[i]; }
 	[[nodiscard]] bool macroArrowShownForTest() const { return macroArrow_->isVisible(); }
@@ -427,6 +429,8 @@ private:
 		/// How tall the cards in front are at this width (whole pixels: it is part of what the layout was made for).
 		int frontExtent = 0;
 		bool arrow = false;
+		/// The Pads' less / more pair (above the cards, present at every step while the chain holds a card).
+		bool step = false;
 		/// Tabs and Pads put Select's playing chain on a row of its own under the view (the three words need the width).
 		bool playingRow = false;
 		bool unusedRow = false; ///< a role mode's Unused choice, on a row of its own
@@ -489,6 +493,7 @@ private:
 	std::unique_ptr<RackDrawerArrow> macroArrow_;
 	SurfaceLayers* presenter_ = nullptr;
 	std::unique_ptr<RackDrawerArrow> chainArrow_;
+	std::unique_ptr<RackPadsStep> padsStep_;
 	Plan laidOut_ {};
 	/// **THE EXTENT THE HOST LAST PLACED THIS CARD AT** (recorded in `resized`), so a change of chains — which arrives
 	/// through the running body and is no layout of the host's — tells the host once (`FxCard::extentChanged`).

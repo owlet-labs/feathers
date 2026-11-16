@@ -56,18 +56,28 @@ bool DrumDeviceModel::relevant(dd::Param p) const {
 feathers::drum::Laws DrumDeviceModel::laws() const {
 	const dd::Settings s = settings();
 	const feathers::drum::Kind k = kind();
-	return feathers::drum::lawsFor(k, dd::fieldsOf(s), dd::controlsOf(s), dd::baseHzOf(k, s, 0.0), 0.8);
+	// IN PITCHED, THE PICTURE IS THE DRUM AS PLAYED ON MIDDLE C (the key is the pitch, and a picture needs one).
+	return feathers::drum::lawsFor(k, dd::fieldsOf(s), dd::controlsOf(s), dd::baseHzOf(k, s, kPictureKey, 0.0), 0.8);
 }
 
 feathers::drum::SettledPitch DrumDeviceModel::settled() const {
 	const dd::Settings s = settings();
+	if (s.pitched()) {
+		return {}; // THE KEY SETS THE PITCH: there is no one settled pitch to read or to type
+	}
 	const feathers::drum::Kind k = kind();
 	return feathers::drum::settledPitch(k, dd::fieldsOf(s), dd::controlsOf(s), dd::baseHzOf(k, s, 0.0));
 }
 
 double DrumDeviceModel::decaySeconds() const { return std::exp2(static_cast<double>(settings().at(dd::Param::Decay))); }
 double DrumDeviceModel::levelDb() const { return static_cast<double>(settings().at(dd::Param::Level)); }
-int DrumDeviceModel::noteKey() const { return static_cast<int>(std::lround(host_.fieldAt(id_, static_cast<size_t>(dd::Param::Note)))); }
+int DrumDeviceModel::noteKey() const {
+	// PITCHED answers every key and Note is not read: the play button strikes the picture's key.
+	if (settings().pitched()) {
+		return kPictureKey;
+	}
+	return static_cast<int>(std::lround(host_.fieldAt(id_, static_cast<size_t>(dd::Param::Note))));
+}
 
 HitPicture::Controls DrumDeviceModel::handles() const {
 	const feathers::drum::ControlUse uses = feathers::drum::kindControls(kind());
@@ -127,7 +137,7 @@ DrumPlayButton::DrumPlayButton(backplane::DeviceHost& host, std::function<int()>
 DrumPlayButton::~DrumPlayButton() { release(); }
 
 const char* DrumPlayButton::tooltipAt(visage::Point) const {
-	return "Strike this drum on its Note, held while the button is held. Not saved and not modulated.";
+	return "Strike this drum on its Note (middle C when it is Pitched), held while the button is held. Not saved and not modulated.";
 }
 
 void DrumPlayButton::press() {

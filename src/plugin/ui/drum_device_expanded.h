@@ -75,8 +75,6 @@ private:
 	void layOut();
 	void follow();
 
-	backplane::DeviceHost& host_;
-	DeviceInstanceId device_ = kNoInstance;
 	DrumDeviceModel model_;
 	HitPicture picture_;
 	std::array<std::unique_ptr<visage::Frame>, static_cast<size_t>(dd::Param::kCount)> widgets_ {};
@@ -88,6 +86,7 @@ private:
 	EditHistory* padGroup_ = nullptr;
 	feathers::drum::Kind shownKind_ = feathers::drum::Kind::kCount;
 	bool shownGate_ = false;
+	int shownKeys_ = 0;
 	bool shownSettled_ = false;
 	float contentBottom_ = 0.0f;
 };

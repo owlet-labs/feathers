@@ -55,6 +55,9 @@ inline constexpr int32_t kTuningExpression = 2;
 
 /// THE RESTING PITCH of a hit: its kind's, at Tune, moved by the Bend share of `movedSemitones` (the key's tuning expression).
 [[nodiscard]] double baseHzOf(feathers::drum::Kind kind, const Settings& s, double movedSemitones) noexcept;
+/// THE SAME FOR A HIT ON `key`: One Key as above (the key is not read); Pitched, the key's frequency (A4 = 440) moved by the whole of
+/// `movedSemitones`, with Tune on top (the engine's Pitched mode).
+[[nodiscard]] double baseHzOf(feathers::drum::Kind kind, const Settings& s, int key, double movedSemitones) noexcept;
 
 class DrumDsp {
 public:
@@ -119,7 +122,8 @@ private:
 
 	void handle(const device::NoteEvent& e, int pos, int base);
 	void endKey(const device::NoteEvent& e);
-	Slot* acquire();
+	Slot* acquire(int key);
+	Slot* claimSlot();
 	void strikeNow(Slot& s);
 	void release(Slot& s);
 	void fade(Slot& s);

@@ -58,13 +58,13 @@ bool isBox(dd::Param p) {
 	}
 }
 bool isSegmented(dd::Param p) {
-	return p == dd::Param::Trigger || p == dd::Param::Voices || p == dd::Param::PitchMode || p == dd::Param::DriveCurve;
+	return p == dd::Param::Trigger || p == dd::Param::Keys || p == dd::Param::Voices || p == dd::Param::PitchMode || p == dd::Param::DriveCurve;
 }
 
 } // namespace
 
 DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id, Notifier* notifier)
-    : host_(host), device_(id), model_(host, id) {
+    : model_(host, id) {
 	picture_.setModHandles(true); // every handle whose control is a destination is a modulation target
 	addChild(&picture_);
 	for (size_t i = 0; i < widgets_.size(); ++i) {
@@ -148,6 +148,7 @@ void DrumDeviceExpanded::layOut() {
 	const feathers::drum::Kind kind = model_.kind();
 	shownKind_ = kind;
 	shownGate_ = model_.settings().index(dd::Param::Trigger) == 1;
+	shownKeys_ = model_.settings().index(dd::Param::Keys);
 	const feathers::drum::SettledPitch settled = model_.settled();
 	shownSettled_ = settled.defined;
 	picture_.setBounds(kPad, kPad, w - 2.0f * kPad, kPictureHeight);
@@ -170,6 +171,7 @@ void DrumDeviceExpanded::layOut() {
 	// STRIKE: what a pad has around its sound.
 	Flow strike { kPad, xMax, kPad, kPad + kPictureHeight + kGap }; // x0, xMax, x, y
 	seat(strike, dd::Param::Kind, 86.0f, ValueBox::kHeight);
+	seat(strike, dd::Param::Keys, 168.0f, 22.0f);
 	seat(strike, dd::Param::Note, 56.0f, ValueBox::kHeight);
 	if (play_ != nullptr) {
 		strike.place(play_.get(), 30.0f, 22.0f);
@@ -227,8 +229,9 @@ bool DrumDeviceExpanded::updateContent() {
 	const feathers::drum::Kind kind = model_.kind();
 	const bool gate = model_.settings().index(dd::Param::Trigger) == 1;
 	const bool settled = model_.settled().defined;
+	const int keys = model_.settings().index(dd::Param::Keys);
 	bool moved = false;
-	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_) {
+	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || keys != shownKeys_) {
 		layOut();
 		moved = true;
 	}

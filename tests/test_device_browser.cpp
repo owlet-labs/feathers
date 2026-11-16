@@ -159,7 +159,7 @@ TEST_CASE("the browser's groups are the categories, in category order, devices a
 	}
 	CHECK(names
 	      == std::vector<std::string> { "Filter & EQ", "Dynamics", "Drive & Colour", "Time & Space", "Pitch",
-	                                    "Rhythm & Glitch", "Modulation FX", "Utility", "Modulators", "Note FX", "Containers" });
+	                                    "Rhythm & Glitch", "Modulation FX", "Utility", "Modulators", "Note FX", "Oscillators", "Containers" });
 	for (const auto& g : groups) {
 		if (g.name == "Time & Space") {
 			REQUIRE(g.entries.size() == 2);
@@ -231,9 +231,9 @@ TEST_CASE("every registered device files under the category it was assigned") {
 		// THE ARP AND PATTERN (2026-11-04): Note FX — a 'note' category, so Pattern and Arp do not ride along with the modulators.
 		{ "Arp", device::Category::Notes },
 		{ "Pattern", device::Category::Notes },
-		// THE DRUM (kit voice device): a rhythm instrument, filed where its descriptor files it, beside the looper (the one other
-		// device whose job is the beat itself). It is not a Note FX (it makes sound and takes notes in) and not a Utility.
-		{ "Drum", device::Category::RhythmGlitch },
+		// THE DRUM (a generator): it makes sound of its own from notes and adds it to what comes in, so it files under Oscillators, not under a
+		// Note FX (it is heard) or Rhythm & Glitch (which shapes what passes).
+		{ "Drum", device::Category::Oscillators },
 	};
 	size_t matched = 0;
 	for (const device::Descriptor& d : kDevices) {
@@ -278,7 +278,7 @@ TEST_CASE("groupByCategory files every offered device exactly once, headings in 
 	const std::vector<std::string> expected = { "Filter & EQ",     "Dynamics",      "Drive & Colour",
 		                                        "Time & Space",    "Pitch",         "Rhythm & Glitch",
 		                                        "Modulation FX",   "Utility",       "Modulators",      "Note FX",
-		                                        "Containers" };
+		                                        "Oscillators",     "Containers" };
 	std::vector<std::string> headings;
 	for (const auto& g : groups) {
 		headings.emplace_back(device::categoryName(g.category));
@@ -300,6 +300,7 @@ TEST_CASE("groupByCategory files every offered device exactly once, headings in 
 	CHECK(namesOf(device::Category::Modulators)
 	      == std::vector<std::string> { "DAHDSR", "Follower", "LFO", "Macros", "Math", "MSEG", "Note Expressions", "Random Trigger", "Sample & Hold", "Step Seq", "Stereo Tool", "Tracker", "Twin Field" });
 	CHECK(namesOf(device::Category::Notes) == std::vector<std::string> { "Arp", "Pattern" });
+	CHECK(namesOf(device::Category::Oscillators) == std::vector<std::string> { "Drum" });
 	CHECK(namesOf(device::Category::Utility) == std::vector<std::string> { "Bus Utility", "Harm", "Noise", "Sidechain Inject" });
 	CHECK(namesOf(device::Category::FilterEq) == std::vector<std::string> { "Drawn", "EQ", "Filter", "Resonate", "Spectral", "Waypoint" });
 }

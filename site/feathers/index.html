@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="dark light">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Montserrat:wght@300..500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300..600&display=swap">
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -29,38 +29,17 @@
 
 <main id="top">
 <div class="hero">
-	<svg class="field" viewBox="0 0 1000 600" preserveAspectRatio="xMaxYMin slice" aria-hidden="true" focusable="false">
-		<defs><path id="blob" class="ct" d="M0 -300 C170 -310 330 -180 310 -20 C290 150 150 290 -20 300 C-190 310 -320 170 -300 0 C-280 -170 -160 -290 0 -300Z"/></defs>
-		<g transform="translate(740 250)">
-			<use href="#blob" transform="scale(.14) rotate(10)"/>
-			<use href="#blob" transform="scale(.3) rotate(24)"/>
-			<use href="#blob" transform="scale(.46) rotate(38)"/>
-			<use href="#blob" transform="scale(.62) rotate(52)"/>
-			<use href="#blob" transform="scale(.78) rotate(64)"/>
-			<use href="#blob" transform="scale(.94) rotate(76)"/>
-			<use href="#blob" transform="scale(1.1) rotate(88)"/>
-		</g>
-		<g transform="translate(300 440) scale(1.25 .8)">
-			<use href="#blob" transform="scale(.2) rotate(-20)"/>
-			<use href="#blob" transform="scale(.42) rotate(-8)"/>
-			<use href="#blob" transform="scale(.64) rotate(6)"/>
-			<use href="#blob" transform="scale(.86) rotate(20)"/>
-		</g>
-		<path class="arc" pathLength="1" d="M60 560 C300 120 560 640 760 210"/>
-		<circle class="puck-ring" cx="760" cy="210" r="13"/>
-		<circle class="puck" cx="760" cy="210" r="5"/>
-	</svg>
 	<div class="wrap">
 		<svg class="hero-libra" role="img" aria-label="Libra constellation, the Owlet mark"><use href="#libra"/></svg>
 		<h1>Feathers</h1>
-		<p class="tag">A polyphonic synthesizer and effects rack for CLAP and VST3. <span>Its oscillators are procedural wavetables: an infinite field of waveforms you move through, not a list you scroll.</span></p>
+		<p class="tag">A polyphonic synthesizer and effects rack for CLAP and VST3. <span>Its oscillators are procedural wavetables: an infinite field of waveforms you glide through, not a list you scroll.</span></p>
 		<div class="ctas">
 			<a class="cta" href="#install">Install</a>
 			<a class="cta alt" href="https://github.com/owlet-labs/feathers">Source on GitHub</a>
 		</div>
 		<figure>
 			<img class="shot" src="img/hero.webp" width="1600" height="1000" alt="The full Feathers editor with a factory preset: engine rail, modulator lane, sounds and blend geometry, and the post-fx lane.">
-			<figcaption>The full editor with a factory preset. From left to right: the Engine rail, the modulator lane (DAHDSR, two LFOs), the sounds and their blend geometry, and the post-fx lane (Eroder, Resonate, Delay).</figcaption>
+			<figcaption>The full editor with a factory preset: engine, modulators, sounds and effects, all in one window.</figcaption>
 		</figure>
 	</div>
 </div>
@@ -68,7 +47,7 @@
 <section id="install">
 	<div class="wrap sec">
 		<h2>Install</h2>
-		<p>Paste one line. It downloads the latest release, checks it, and installs the synth and the Chain (CLAP and VST3) into your own plugin folders: no clone, no GitHub account, no administrator password, and on macOS nothing to unquarantine.</p>
+		<p>Paste one line. It downloads the latest release, checks it, and installs the synth and the Chain (CLAP and VST3) into your own plugin folders.</p>
 		<p class="oslabel">macOS and Linux (Terminal)</p>
 		<div class="cmd"><pre data-prompt="$"><code>curl -fsSL https://labs.owletrecords.com/feathers/install.sh | bash</code></pre></div>
 		<p class="oslabel">Windows (PowerShell)</p>
@@ -82,50 +61,50 @@
 <section id="what">
 	<div class="wrap sec">
 		<h2>What it is</h2>
-		<p>Around the oscillators sit a modulation system where modulators are devices like any other, and an effects lane of devices that can hold lanes, chains and racks of their own.</p>
+		<p>A synthesizer with a deep modulation system and a rack of effects around it. Modulators and effects are added, moved and removed the same way, and effects can hold chains and racks of their own.</p>
 	</div>
 
 	<div class="wrap sec sub">
 		<h3>Engines and terrain</h3>
-		<p>The terrain is a procedural wavetable with no edges: every position on it builds its own waveform, so instead of scrolling through stored frames you move through an infinite field of them. Each sound is a position on that terrain, and the Explore surface shows the terrain under the puck and lets you mutate it, undo and redo. Engines include V5, Additive, Pluck, Drum, Resonate and Basic Shapes, plus the original Morph and Stair.</p>
+		<p>The terrain is a procedural wavetable with no edges: every position on it has its own waveform, so you glide through an endless field of timbres instead of stepping through stored frames. Each sound is a position on that terrain. The Explore surface shows it under the puck, and you can mutate it, then undo and redo. Engines include V5, Additive, Pluck, Drum, Resonate, Basic Shapes, Morph and Stair.</p>
 			<p><strong>It learns what you like.</strong> Heart a sound and the terrain bends toward it: your likes reshape the field so more of it sounds like what you liked.</p>
 			<p><strong>Perform</strong> turns your sounds into waypoints: each one sits as a star in a blend circle, and one puck interpolates between all of their settings at once. Glide the puck and the patch morphs continuously from sound to sound; route a modulator to its position and it tours the waypoints for you.</p>
 		<div class="pair">
 			<figure>
 				<img class="shot" src="img/explore-rotate.gif" width="337" height="486" loading="lazy" alt="The Explore terrain turning under Rotate: bands of the field swing round under the sound.">
-				<figcaption>Explore: the terrain turning under Rotate. Every point of the field is a waveform; Rotate turns the whole field under the sound.</figcaption>
+				<figcaption>Explore: turn the Rotate knob and the whole field swings under the sound, changing its tone.</figcaption>
 			</figure>
 			<figure>
 				<img class="shot" src="img/rack.webp" width="1000" height="1200" loading="lazy" alt="A Rack device holding parallel chains, each with level, mute and solo, and a column of eight macros.">
-				<figcaption>A Rack: parallel chains, each with a level, mute and solo and its own devices, plus a column of eight macros.</figcaption>
+				<figcaption>A Rack: several effect chains side by side, each with its own level, mute and solo, and eight macros to play them with.</figcaption>
 			</figure>
 		</div>
 	</div>
 
 	<div class="wrap sec sub">
-		<h3>Modulation as a first-class system</h3>
-		<p>Modulators live in a lane of their own and are added, reordered and removed like effects: DAHDSR, LFO, MSEG, Math, Twin Field, Pattern, Step Seq, Sample &amp; Hold, Random Trigger, Follower, Macros and Note Expressions. Every output is a source you can route to any modulatable parameter, on the engine or on a device.</p>
+		<h3>Modulation everywhere</h3>
+		<p>Modulators sit in a lane of their own and are added, reordered and removed like effects: DAHDSR, LFO, MSEG, Math, Twin Field, Pattern, Step Seq, Sample &amp; Hold, Random Trigger, Follower, Macros and Note Expressions. Send any of them to almost any knob, on the synth or on an effect.</p>
 		<ul>
-			<li><strong>Routes have transfer curves</strong>: linear, exponential, logarithmic, φ, and rectifiers for bipolar sources.</li>
-			<li><strong>Live readouts</strong>: a modulated control shows its ring and its as-modulated value, and when a source is armed every destination it can reach glows.</li>
-			<li><strong>Deterministic and persistent</strong>: values that can be derived from the seed and the song position are derived, so a reload reproduces them; the rest (held samples, frozen buffers, random draws, mutate results) are saved with the patch.</li>
+			<li><strong>Shape the response</strong>: each route can follow a linear, exponential or logarithmic curve, or rectify a bipolar source.</li>
+			<li><strong>See what moves</strong>: a modulated knob shows a ring and its live value, and when you pick a modulator every knob it can reach lights up.</li>
+			<li><strong>Random stays put</strong>: random and held values are saved with the patch, so reloading it gives you the same sound.</li>
 		</ul>
 		<figure>
 			<img class="shot" src="img/modulation.webp" width="1600" height="508" loading="lazy" alt="Collage: the modulation lane and route list, the Explore terrain, the Twin Field modulator and the Pattern sequencer.">
-			<figcaption>The modulation lane and routes, Explore, Twin Field and the Pattern sequencer.</figcaption>
+			<figcaption>The modulator lane, Explore, Twin Field and the Pattern sequencer.</figcaption>
 		</figure>
 	</div>
 
 	<div class="wrap sec sub">
 		<h3>Effects depth</h3>
-		<p>Effects are devices in a lane. Each has a compact card and a larger window that offers every control on the card and usually more. Several devices hold lanes of their own: the Delay's feedback path, the Compressor's lane between its two halves, Resonate's drone and wet lanes, SKLITTER's grain and post lanes.</p>
+		<p>Effects sit in a lane. Each has a compact card for quick moves and a larger window with every control on the card and usually more. Several can hold effects of their own: you can put a filter in the Delay's feedback, for instance, or process the middle of the Compressor.</p>
 		<figure>
 			<img class="shot" src="img/effects.webp" width="1600" height="810" loading="lazy" alt="Collage of the Phaser/Flanger, Compressor, Resonate and SKLITTER windows.">
-			<figcaption>Phaser/Flanger, Compressor, Resonate and SKLITTER.</figcaption>
+			<figcaption>Four effect windows: Phaser/Flanger, Compressor, Resonate and SKLITTER.</figcaption>
 		</figure>
 		<figure>
 			<img class="shot" src="img/cards.webp" width="1400" height="2154" loading="lazy" alt="The compact card of every one of the 40 devices, labelled and grouped by category.">
-			<figcaption>The card of all 40 devices, the compact face each one shows in a lane, grouped by category.</figcaption>
+			<figcaption>All 40 devices at a glance, grouped by what they do.</figcaption>
 		</figure>
 	</div>
 
@@ -140,19 +119,20 @@
 			<dt>Mid/Side and Left/Right</dt>
 			<dd>One chain per half of the signal, so you can widen, saturate or delay only the sides.</dd>
 			<dt>Bands</dt>
-			<dd>A multiband splitter into 2, 3 or 5 bands with adjustable crossovers and slope (Linkwitz-Riley), one chain per band. Filtering can sit before the chain, after it (so the harmonics a chain creates stay inside its band), or both. With Key Track, the played note places the crossovers.</dd>
+			<dd>A multiband splitter into 2, 3 or 5 bands with adjustable crossovers and slope, one chain per band. Band filtering can sit before the chain, after it (so the harmonics a chain creates stay inside its band), or both. With Key Track, the note you play places the crossovers.</dd>
 		</dl>
 	</div>
 
 	<div class="wrap sec sub">
 		<h3>An open standard for devices</h3>
-		<p>A device declares its controls, outputs and traits (names, ranges, units and choices) with nothing naming CLAP or Feathers, then supplies tables for what it does: audio, modulation, notes. It can draw its own card and window or take the generic card for free. Every device in Feathers is built on this contract, and two hosts already run it: Feathers itself and the separate Feathers Chain plugin. The device SDK in the repository is MIT-licensed, so devices built on it can be open or closed source, while Feathers itself stays GPL-3.0-or-later. Its shape is still open, and plugin authors who would build on it are the people best placed to shape it.</p>
+		<p>Every effect and modulator in Feathers is a device built on one shared design. A device describes its controls, with their names, ranges, units and choices, and says what it does with audio, modulation and notes. It can draw its own card and window, or take the standard card for free. The same devices run in Feathers and in the separate Feathers Chain plugin, and the aim is for the design to become a standard other plugin makers can build on.</p>
+		<p>The device SDK in the repository is MIT-licensed, so devices built on it can be open or closed source, while Feathers itself stays GPL-3.0-or-later. The design is still open, and plugin makers who would build on it are the people best placed to shape it.</p>
 	</div>
 
 	<div class="wrap sec sub">
 		<h3>Hosting</h3>
-		<p><strong>Built today:</strong> Feathers' core parameters are host parameters, and controls inside devices reach the DAW through a pool of pre-declared host parameters ("slots"), in both CLAP and VST3. Right-click a control and choose "Expose to host": turning the knob records automation, and DAW automation and modulation move the knob. Slots map devices at any depth and are saved with the project.</p>
-		<p><strong>Planned, not built:</strong> hosting third-party CLAP plugins inside Feathers' chains and racks, and native devices from third parties with their own cards, windows and the full modulation system.</p>
+		<p><strong>Built today:</strong> You can automate any Feathers control from your DAW, however deep it sits in chains and racks, in both CLAP and VST3. The synth's own parameters are always available. Device controls, at any depth, share a pool of 256 host slots: touch a control and it is given a slot automatically, so your DAW can record and automate it. When all 256 are in use, the one you touched longest ago is reused. To keep a control in place, right-click it and choose &quot;Expose to host&quot;. Turning a knob records automation, DAW automation and modulation move the knob, and your slots are saved with the project.</p>
+		<p><strong>Planned, not built:</strong> running other CLAP plugins inside Feathers' chains and racks, and devices from other makers that look and modulate like Feathers' own.</p>
 	</div>
 </section>
 

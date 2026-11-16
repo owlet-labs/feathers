@@ -73,17 +73,6 @@ nav a:hover { color: var(--ink); }
 
 /* hero: the terrain, with one modulation arc crossing it */
 .hero { position: relative; padding: 56px 0 24px; overflow: hidden; }
-.field { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
-.field .ct { fill: none; stroke: var(--contour); stroke-width: 1.1; vector-effect: non-scaling-stroke; opacity: .55; }
-.field .arc { fill: none; stroke: var(--mod); stroke-width: 2.5; stroke-linecap: round; vector-effect: non-scaling-stroke; stroke-dasharray: 1; stroke-dashoffset: 0; }
-.field .puck-ring { fill: none; stroke: var(--value); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.field .puck { fill: var(--value); }
-@media (prefers-reduced-motion: no-preference) {
-	.field .arc { animation: draw 2.4s .2s cubic-bezier(.3, .6, .2, 1) both; }
-	.field .puck, .field .puck-ring { animation: appear .5s 2.2s both; }
-}
-@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-@keyframes appear { from { opacity: 0; } to { opacity: 1; } }
 .hero .wrap { position: relative; }
 h1 { font-size: clamp(4rem, 17vw, 9.5rem); line-height: .9; letter-spacing: -.045em; font-weight: 800; margin: 0 0 .22em -.04em; font-variation-settings: 'wdth' 80; }
 .hero .tag { font-size: clamp(1.15rem, 3.4vw, 1.6rem); line-height: 1.4; max-width: 34rem; margin: 0 0 1.4em; }
@@ -188,7 +177,8 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: s
 .proj .more { color: var(--accent); white-space: nowrap; }
 
 /* one display face for every page's headline and for the brand name */
-h1, .brand { font-family: 'Montserrat', var(--disp); font-variation-settings: normal; }
+h1, h2, h3, .brand, .card h2, .proj h2 { font-family: 'Montserrat', var(--disp); font-variation-settings: normal; }
+h2, h3 { font-weight: 500; letter-spacing: -.005em; }
 h1 { font-weight: 400; letter-spacing: -.01em; }
 .brand { font-weight: 500; letter-spacing: .01em; }
 

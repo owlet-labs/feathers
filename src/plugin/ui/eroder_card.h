@@ -50,7 +50,7 @@
 //   │                                             │  RUST: Bias where Dust has Amount
 //   │ [Source 100%] [Grit 0%] (Track)             │  DUST's small row      COMB: [Gamma]
 //   │ ┌─ DRIVE ─────────┐                         │
-//   │ │ Amount Soft 0%  │  HP Wet   Follow        │  the shaper pair, HP Wet and Follow are every engine's
+//   │ │ Amount Soft 0%  │  Emph     Reso          │  the shaper pair, Emphasis and the feedback are every engine's
 //   │ └─────────────────┘                         │
 //   └─────────────────────────────────────────────┘
 //
@@ -105,8 +105,13 @@ public:
 	[[nodiscard]] Knob* driveForTest() const { return drive_.get(); }
 	[[nodiscard]] ModeValueCell* driveCellForTest() const { return driveCell_.get(); }
 	[[nodiscard]] PairCell* drivePairForTest() const { return drivePair_.get(); }
-	[[nodiscard]] Knob* hpWetForTest() const { return hpWet_.get(); }
-	[[nodiscard]] Knob* followForTest() const { return follow_.get(); }
+	/// THE SHARED SECTION'S CELLS ON THE CARD: the emphasis knob, the feedback knob (Resonance in the shakers, the outer
+	/// Loop in the Comb), and the Comb's two chips. HP Wet and Follow are the window's.
+	[[nodiscard]] Knob* emphasisForTest() const { return emphasis_.get(); }
+	[[nodiscard]] Knob* resonanceForTest() const { return resonance_.get(); }
+	[[nodiscard]] Knob* loopForTest() const { return loop_.get(); }
+	[[nodiscard]] SwitchChip* tapForTest() const { return tap_.get(); }
+	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
 
 private:
 	device::Modulatable* enableModulatable() override;
@@ -128,8 +133,11 @@ private:
 	std::unique_ptr<Knob> drive_;
 	std::unique_ptr<ModeValueCell> driveCell_;
 	std::unique_ptr<PairCell> drivePair_;
-	std::unique_ptr<Knob> hpWet_;
-	std::unique_ptr<Knob> follow_;
+	std::unique_ptr<Knob> emphasis_;
+	std::unique_ptr<Knob> resonance_;
+	std::unique_ptr<Knob> loop_;
+	std::unique_ptr<SwitchChip> tap_;
+	std::unique_ptr<SwitchChip> restore_;
 	std::unique_ptr<Knob> amount_;
 	std::unique_ptr<Knob> bias_;
 	std::unique_ptr<Knob> freq_;

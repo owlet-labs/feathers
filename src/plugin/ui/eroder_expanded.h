@@ -73,10 +73,10 @@ public:
 
 	static constexpr float kPad = 14.0f;
 	static constexpr float kGap = 10.0f;
-	static constexpr float kSideWidth = 252.0f;
+	static constexpr float kSideWidth = 336.0f;
 	static constexpr float kFace = 44.0f;
 	static constexpr float kSwitchHeight = 18.0f;
-	static constexpr size_t kPerRow = 3;
+	static constexpr size_t kPerRow = 4;
 
 	[[nodiscard]] EroderPlot* plotForTest() const { return plot_.get(); }
 	[[nodiscard]] SegmentedControl* modeForTest() const { return mode_.get(); }
@@ -93,6 +93,12 @@ public:
 	[[nodiscard]] Knob* hpWetForTest() const { return knob(fx::eroder::Param::HpWet); }
 	[[nodiscard]] SwitchChip* subThruForTest() const { return subThru_.get(); }
 	[[nodiscard]] SwitchChip* blendForTest() const { return blend_.get(); }
+	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
+	[[nodiscard]] SwitchChip* inLoopForTest() const { return inLoop_.get(); }
+	[[nodiscard]] SwitchChip* tapForTest() const { return tap_.get(); }
+	[[nodiscard]] SegmentedControl* shapeForTest() const { return shape_.get(); }
+	[[nodiscard]] PairCell* emphasisPairForTest() const { return emphasisPair_.get(); }
+	[[nodiscard]] PairCell* loopPairForTest() const { return loopPair_.get(); }
 	[[nodiscard]] Knob* followForTest() const { return knob(fx::eroder::Param::Follow); }
 
 private:
@@ -119,6 +125,14 @@ private:
 	std::unique_ptr<SwitchChip> subThru_;
 	std::unique_ptr<SwitchChip> track_;
 	std::unique_ptr<SwitchChip> blend_;
+	std::unique_ptr<SwitchChip> restore_;
+	std::unique_ptr<SwitchChip> inLoop_;
+	std::unique_ptr<SwitchChip> tap_;
+	/// THE EMPHASIS SHAPE'S CELL: a frame that centres the Tilt | Bell strip in the pair's half.
+	std::unique_ptr<visage::Frame> shapeCell_;
+	std::unique_ptr<SegmentedControl> shape_;
+	std::unique_ptr<PairCell> emphasisPair_;
+	std::unique_ptr<PairCell> loopPair_;
 	std::unique_ptr<ZoneCoordCell> tone_;
 	std::unique_ptr<ZoneCoordCell> character_;
 	std::unique_ptr<GammaBox> gamma_;

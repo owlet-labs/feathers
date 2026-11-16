@@ -21,6 +21,8 @@
 
 
 #include "plugin/ui/eroder_plot.h"
+#include "fx/eroder/loops.h"
+#include "fx/eroder/shell.h"
 #include "plugin/ui/modulated_row.h"
 
 #include "plugin/ui/knob.h"
@@ -28,6 +30,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <numbers>
 #include <string>
@@ -308,6 +311,33 @@ double EroderPlot::bandDb(double hz) const noexcept {
 	return 2.0 * 10.0 * std::log10(std::max(one, 1e-30));
 }
 
+std::optional<double> EroderPlot::emphasisDb(double hz) const noexcept {
+	if (!dust_ || !(settings_.emphAmount != 0.0f) || !std::isfinite(settings_.emphAmount)) {
+		return std::nullopt;
+	}
+	// THE ENGINE'S OWN CLAMPS (`EmphasisPair::set`), then its own sections.
+	const double db = std::clamp(static_cast<double>(settings_.emphAmount), -ero::kEmphasisMaxDb, ero::kEmphasisMaxDb);
+	const double centre = std::clamp(band_.freqHz, 5.0, rate_ * 0.45);
+	const double w = 2.0 * std::numbers::pi * std::clamp(hz, 1.0, 0.499 * rate_) / rate_;
+	if (settings_.emphBell) {
+		const double octaves =
+		    std::clamp(ero::SharedSection::emphasisWidthOctaves(settings_.width), 0.1, 6.0);
+		const auto bell = ero::EmphasisPair::bellSection(db, centre, octaves, rate_, false);
+		return 20.0 * std::log10(std::max(std::abs(bell.response(w)), 1e-12));
+	}
+	const auto t = fx::shaper::tiltSection(db, centre, rate_, false);
+	const std::complex<double> z1 = std::polar(1.0, -w);
+	const std::complex<double> h = (static_cast<double>(t.b0) + static_cast<double>(t.b1) * z1)
+	                               / (1.0 + static_cast<double>(t.a1) * z1);
+	return 20.0 * std::log10(std::max(std::abs(h), 1e-12));
+}
+
+float EroderPlot::emphasisY(double db) const noexcept {
+	// ZERO dB IS THE PLOT'S MIDDLE; +-kEmphasisDbPerQuarter is a quarter of its height either way.
+	const float mid = 0.5f * (plotTop() + plotFoot());
+	return mid - static_cast<float>(db / kEmphasisDbPerQuarter) * 0.25f * (plotFoot() - plotTop());
+}
+
 double EroderPlot::pitchRatio() const noexcept {
 	return settings_.track ? std::exp2((pitch_ - ero::kReferenceNote) / 12.0) : 1.0;
 }
@@ -471,6 +501,32 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 		}
 	}
 
+	// THE EMPHASIS, where there is one: a thin curve across the axis (the filter in front of the engine), on its own colour.
+	if (emphasisDb(1000.0).has_value()) {
+		canvas.setColor(withAlpha(tokens::kGammaAxis, 0.35f));
+		canvas.fill(in, emphasisY(0.0), w - 2.0f * in, 1.0f);
+		canvas.setColor(withAlpha(tokens::kGammaAxis, 0.95f));
+		const int points = large_ ? 160 : 72;
+		float prevX = 0.0f;
+		float prevY = 0.0f;
+		for (int i = 0; i <= points; ++i) {
+			const double hz = kMinHz * std::pow(kMaxHz / kMinHz, static_cast<double>(i) / points);
+			const float x = hzToX(hz);
+			const float y = std::clamp(emphasisY(*emphasisDb(hz)), top, foot);
+			if (i > 0) {
+				canvas.segment(prevX, prevY, x, y, 1.0f, true);
+			}
+			prevX = x;
+			prevY = y;
+		}
+		if (large_) {
+			char label[40];
+			std::snprintf(label, sizeof(label), "emphasis %+.1f dB", static_cast<double>(settings_.emphAmount));
+			canvas.setColor(tokens::kGammaAxis);
+			canvas.text(label, font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, in + 11.0f, 120.0f, 11.0f);
+		}
+	}
+
 	// THE BAND: the noise half as its filter's curve, the sine half as a stem, each as strong as Source makes it.
 	const float handleX = hzToX(band_.freqHz);
 	const float handleY = this->handleY();
@@ -542,7 +598,6 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 		canvas.text(text, font(kKnobReadoutSize), visage::Font::kCenter, left ? handleX - 62.0f : handleX + 6.0f,
 		            handleY - 6.0f, 56.0f, 12.0f);
 	}
-	(void)top;
 }
 
 void EroderPlot::drawComb(visage::Canvas& canvas) {

@@ -54,8 +54,9 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	width_ = knob(ero::Param::Width, "Width");
 	mix_ = knob(ero::Param::Mix, "Mix");
 	cutoff_ = knob(ero::Param::Cutoff, "Cutoff");
-	hpWet_ = knob(ero::Param::HpWet, "HP Wet");
-	follow_ = knob(ero::Param::Follow, "Follow");
+	emphasis_ = knob(ero::Param::EmphAmount, "Emph");
+	resonance_ = knob(ero::Param::Resonance, "Reso");
+	loop_ = knob(ero::Param::Loop, "Loop");
 
 	// DRIVE, A PAIR: the knob, and the Type with its own Shape under it — a Shape stops at its ends and only the
 	// selector changes the Type (`mode_value_cell.h`).
@@ -84,6 +85,11 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	grit_ = box(ero::Param::Grit, "Grit");
 	track_ = std::make_unique<SwitchChip>(control(ero::Param::Track), "Track");
 	addChild(track_.get());
+	// THE COMB'S TWO CHIPS: Tap (on is Driven) and Restore.
+	tap_ = std::make_unique<SwitchChip>(control(ero::Param::FbTap), "Driven");
+	addChild(tap_.get());
+	restore_ = std::make_unique<SwitchChip>(control(ero::Param::EmphRestore), "Restore");
+	addChild(restore_.get());
 
 	// THE COMB'S TWO COORDINATES: zoned, so a coordinate cell each (`GenericCard`'s reason), "Char" because the whole
 	// word does not fit a quarter of the card.
@@ -133,7 +139,7 @@ void EroderCard::setModulation(ModState* mod, EditHistory* history) {
 	plot_->setModulation(mod, history);
 	// THE KNOBS DRAW THEIR OWN ARM GLOW, and watch the panel state for it (`CompCard::setModulation`).
 	for (Knob* knob : { amount_.get(), bias_.get(), freq_.get(), width_.get(), mix_.get(), cutoff_.get(),
-	                    drive_.get(), hpWet_.get(), follow_.get() }) {
+	                    drive_.get(), emphasis_.get(), resonance_.get(), loop_.get() }) {
 		knob->setModulation(mod, history);
 	}
 }
@@ -168,7 +174,7 @@ std::vector<visage::Frame*> EroderCard::shakerWidgetsForTest() const {
 }
 
 std::vector<visage::Frame*> EroderCard::combWidgetsForTest() const {
-	return { tone_.get(), character_.get(), cutoff_.get(), gamma_.get() };
+	return { tone_.get(), character_.get(), cutoff_.get(), gamma_.get(), tap_.get(), restore_.get(), loop_.get() };
 }
 
 void EroderCard::resized() { layOut(); }
@@ -226,18 +232,29 @@ void EroderCard::layOut() {
 	source_->setVisible(open && !comb);
 	grit_->setVisible(open && !comb);
 	track_->setVisible(open && !comb);
-	gamma_->setBounds(left, boxY, width * 0.5f, ValueBox::kCompactHeight);
+	// THE COMB'S SMALL ROW: Gamma, then Tap (Driven) and Restore.
+	const float restoreW = 52.0f;
+	const float tapW = 48.0f;
+	const float gammaW = std::max(0.0f, width - restoreW - tapW - 2.0f * gap);
+	gamma_->setBounds(left, boxY, gammaW, ValueBox::kCompactHeight);
 	gamma_->setVisible(open && comb);
+	tap_->setBounds(left + gammaW + gap, y, tapW, SwitchChip::kHeight);
+	tap_->setVisible(open && comb);
+	restore_->setBounds(left + width - restoreW, y, restoreW, SwitchChip::kHeight);
+	restore_->setVisible(open && comb);
 	y += kSmallRowHeight + kRowGap;
 
-	// THE THIRD ROW, every engine's: the Drive pair across two cells, HP Wet, Follow.
+	// THE THIRD ROW, every engine's: the Drive pair across two cells, Emphasis, and the feedback (Resonance, or the Comb's
+	// outer Loop). HP Wet and Follow are the window's.
 	const float under = y + PairCell::kCaptionHeight;
 	drivePair_->setBounds(left, y, 2.0f * cell, PairCell::heightFor(knobH));
 	drivePair_->setVisible(open);
-	hpWet_->setBounds(left + cell * 2.0f, under, cell, knobH);
-	hpWet_->setVisible(open);
-	follow_->setBounds(left + cell * 3.0f, under, cell, knobH);
-	follow_->setVisible(open);
+	emphasis_->setBounds(left + cell * 2.0f, under, cell, knobH);
+	emphasis_->setVisible(open);
+	resonance_->setBounds(left + cell * 3.0f, under, cell, knobH);
+	resonance_->setVisible(open && !comb);
+	loop_->setBounds(left + cell * 3.0f, under, cell, knobH);
+	loop_->setVisible(open && comb);
 	refreshHonesty();
 }
 
@@ -246,7 +263,13 @@ void EroderCard::refreshHonesty() {
 	// still takes the hand — it is a setting the engine reads the moment Source comes up).
 	ero::Row row {};
 	(void)readModulatedRow(host_, device_, ero::kDescriptor, row);
-	width_->setActive(row[static_cast<size_t>(ero::Param::Source)] > 0.0f);
+	// ... OR THE EMPHASIS IS A BELL, whose width Width is.
+	const bool emphasised = row[static_cast<size_t>(ero::Param::EmphAmount)] != 0.0f;
+	const bool bell = row[static_cast<size_t>(ero::Param::EmphShape)] >= 0.5f;
+	width_->setActive(row[static_cast<size_t>(ero::Param::Source)] > 0.0f || (bell && emphasised));
+	// RESTORE PUTS BACK WHAT THE EMPHASIS TOOK: with none there is nothing to put back. (The Tap is always live in the
+	// Comb: its inner loop never stops, `kBankFloor`.)
+	restore_->setEnabled(emphasised);
 	(void)driveCell_->refresh();
 }
 

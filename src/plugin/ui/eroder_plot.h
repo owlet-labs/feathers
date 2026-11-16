@@ -31,6 +31,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <vector>
 
 // THE ERODER'S PICTURE — one frame, two pictures, by the engine that is running.
@@ -125,6 +126,12 @@ public:
 	[[nodiscard]] float postDbForTest(size_t bin) const noexcept { return post_[bin]; }
 	[[nodiscard]] size_t headSamplesForTest() const noexcept { return headCount_; }
 	[[nodiscard]] int recomputesForTest() const noexcept { return recomputes_; }
+	/// **THE EMPHASIS CURVE'S dB AT `hz`** as drawn, or nothing where none is drawn (Emphasis at 0, or the Comb's bars,
+	/// which have no frequency axis).
+	[[nodiscard]] std::optional<double> emphasisDbForTest(double hz) const noexcept { return emphasisDb(hz); }
+	/// How far up and down the plot the curve reaches: this many dB is a quarter of the plot's height from its middle.
+	static constexpr double kEmphasisDbPerQuarter = 9.0;
+	[[nodiscard]] float emphasisYForTest(double db) const noexcept { return emphasisY(db); }
 
 private:
 	using Bins = std::array<float, feathers::dsp::kAnalyserBins>;
@@ -145,6 +152,10 @@ private:
 	[[nodiscard]] float dbToY(float db) const noexcept;
 	[[nodiscard]] float amountToY(double log2Seconds) const noexcept;
 	[[nodiscard]] double bandDb(double hz) const noexcept;
+	/// THE EMPHASIS-IN'S RESPONSE, from the sections the engine builds (`EmphasisPair`, `shaper::tiltSection`), pivoting or
+	/// centred on the engine's Freq; the Bell's width is Width's octaves.
+	[[nodiscard]] std::optional<double> emphasisDb(double hz) const noexcept;
+	[[nodiscard]] float emphasisY(double db) const noexcept;
 	/// WHERE THE BAND IS `kEdgeDb` DOWN ABOVE ITS CENTRE, and the handle drawn there.
 	[[nodiscard]] float handleY() const noexcept;
 	[[nodiscard]] double edgeHz() const noexcept;

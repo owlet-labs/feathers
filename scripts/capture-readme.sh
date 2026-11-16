@@ -173,6 +173,7 @@ capture() {
 	local i hdr
 	for i in "${!args[@]}"; do
 		case "${args[$i]}" in
+		@path:*) args[$i]="$ROOT/${args[$i]#@path:}" ;; # a repository-relative file, made absolute
 		@fpreset:*)
 			local pf="$ROOT/${args[$i]#@fpreset:}"
 			[ -r "$pf" ] || die "shot $id: no preset $pf"

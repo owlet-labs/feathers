@@ -78,6 +78,12 @@
 #include "rack/site_chains.h"
 #include "rack/site_expanded.h"
 #include "rack/parallel_rack.h" // `--rack-chains` (backlog OC)
+#include "plugin/chain_preset.h" // `--rack-preset`
+#include "plugin/device_preset.h"
+#include "plugin/preset_store.h"
+#include "plugin/bridge_device_host.h"
+#include <fstream>
+#include <iterator>
 #include "plugin/ui/parallel_rack_expanded.h"
 #include "rack/chain_expanded.h" // `--chain-window`
 #include "rack/rack_device.h"
@@ -540,6 +546,8 @@ int main(int argc, char** argv) {
 	/// first rail (the others stay collapsed, the state a fresh rack starts in). 0 means not asked.
 	int rackChains = 0;
 	bool rackChainsOpen = false;
+	/// `--rack-preset <file.fpreset>` with `--rack-chains`: that Rack preset is loaded into the Rack (the road the preset browser uses) instead of the harness's own chains.
+	std::string rackPreset;
 	/// `--rack-arm-macro N` (1..8): press the Rack window's arrow for macro N, as a hand does, so the chains' controls light. 0 is not asked.
 	int rackArmMacro = 0;
 	/// `--chain-window` (backlog OC): the CHAIN device's window over a running body with a filter and a delay in it.
@@ -1171,6 +1179,10 @@ int main(int argc, char** argv) {
 			const std::string spec = argv[++i];
 			rackChains = std::atoi(spec.c_str());
 			rackChainsOpen = spec.find(":open") != std::string::npos;
+			continue;
+		}
+		if (arg == "--rack-preset" && i + 1 < argc) {
+			rackPreset = argv[++i];
 			continue;
 		}
 		if (arg == "--rack-arm-macro" && i + 1 < argc) {
@@ -2478,20 +2490,35 @@ int main(int argc, char** argv) {
 		audio.prepare(held, 48000.0, 4096);
 		bridge.fxBodies().attach(bridge.fxDeviceAt(slot), held);
 		pr::Rack& rack = *pr::rackOf(held);
-		while (rack.chainCount() < static_cast<size_t>(rackChains)) {
-			(void)rack.addChain();
+		if (!rackPreset.empty()) {
+			// A SAVED RACK PRESET, through the browser's own road (applyDevicePreset): the whole rack, mode and chains.
+			std::ifstream in(rackPreset, std::ios::binary);
+			const std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			BridgeDeviceHost rackHost(bridge);
+			PresetMeta meta;
+			std::vector<uint8_t> payload;
+			if (file.empty() || !PresetStore::decode(file, &meta, &payload)
+			    || applyDevicePreset(rackHost, rackPresetDescriptor(), bridge.fxDeviceAt(slot), payload) != DevicePresetLoad::Loaded) {
+				std::printf("--rack-preset %s: not loaded\n", rackPreset.c_str());
+				return 1;
+			}
 		}
-		(void)rack.chainAt(0)->bridge()->addDevice(fx::filter::kTraits.tag);
-		const float levels[] = { 0.75f, 0.5f, 0.25f, 0.9f };
-		for (size_t c = 0; c < rack.chainCount(); ++c) {
-			rack.setLevel(c, levels[c % 4]);
-		}
-		if (rack.chainCount() > 2) {
-			rack.setMuted(2, true);
-		}
-		if (rack.chainCount() > 1) {
-			rack.setSoloed(1, true);
-			rack.setSoloed(0, true);
+		else {
+			while (rack.chainCount() < static_cast<size_t>(rackChains)) {
+				(void)rack.addChain();
+			}
+			(void)rack.chainAt(0)->bridge()->addDevice(fx::filter::kTraits.tag);
+			const float levels[] = { 0.75f, 0.5f, 0.25f, 0.9f };
+			for (size_t c = 0; c < rack.chainCount(); ++c) {
+				rack.setLevel(c, levels[c % 4]);
+			}
+			if (rack.chainCount() > 2) {
+				rack.setMuted(2, true);
+			}
+			if (rack.chainCount() > 1) {
+				rack.setSoloed(1, true);
+				rack.setSoloed(0, true);
+			}
 		}
 		std::vector<float> l(256);
 		std::vector<float> r(256);

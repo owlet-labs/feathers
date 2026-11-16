@@ -844,6 +844,12 @@ target_link_libraries(test_fx_eroder PRIVATE feathers-fx feathers-warnings)
 target_include_directories(test_fx_eroder PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME fx-eroder COMMAND test_fx_eroder)
 
+# THE ERODER'S SHARED SECTION: emphasis pair, smear, loop limiter, slew. Header-only (src/fx/eroder/shell.h).
+add_executable(test_fx_eroder_shell test_fx_eroder_shell.cpp)
+target_link_libraries(test_fx_eroder_shell PRIVATE feathers-fx feathers-warnings)
+target_include_directories(test_fx_eroder_shell PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME fx-eroder-shell COMMAND test_fx_eroder_shell)
+
 # THE DISPERSER. The suite carries the firmware's own loop transcribed in q31 — the instrument the
 # Eroder's first release lacked — and holds the port to it sample for sample.
 add_executable(test_fx_disperser test_fx_disperser.cpp)

@@ -391,6 +391,10 @@ public:
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackFrontColumn& frontForTest() const { return *front_; }
 	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
+	[[nodiscard]] RackDrawerArrow& macroArrowForTest() const { return *macroArrow_; }
+	[[nodiscard]] Knob& macroKnobForTest(size_t i) const { return *macroKnobs_[i]; }
+	[[nodiscard]] bool macroArrowShownForTest() const { return macroArrow_->isVisible(); }
+	[[nodiscard]] bool macroRowShownForTest() const { return macroKnobs_[0]->isVisible(); }
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
 	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
 	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
@@ -428,6 +432,9 @@ private:
 		bool arrow = false;
 		/// Tabs and Pads put Select's playing chain on a row of its own under the view (the three words need the width).
 		bool playingRow = false;
+		/// THE MACRO ROW: offered (the rack has macros: some are named or off zero) and open (its arrow, collapsed by default).
+		bool macros = false;
+		bool macrosOpen = false;
 		friend bool operator==(const Plan&, const Plan&) = default;
 	};
 	[[nodiscard]] Plan plan() const;
@@ -440,6 +447,14 @@ private:
 	/// The rack's colour for the group hairline: its instance's edge, or the accent.
 	[[nodiscard]] uint32_t frontTint() const;
 	[[nodiscard]] float lanesCross() const;
+	/// Whether the rack has macros worth a row: any is NAMED (its window renamed it) or stands off zero.
+	[[nodiscard]] bool macrosPresent() const;
+	/// The row's height at a width (two rows of four knobs), and its re-read captions.
+	[[nodiscard]] static float macroRowsHeight() { return 2.0f * kMacroCell; }
+	bool refreshMacroNames();
+	void placeMacros(const Plan& p, float left, float wide, float& y);
+	static constexpr float kMacroCell = 46.0f;
+	static constexpr float kMacroDiameter = 26.0f;
 	[[nodiscard]] float frontExtentFor(float cross) const;
 	/// The rows above the chains a plan lays out: the mode row, and Bands', the spectrum's and the bar's where shown.
 	[[nodiscard]] static float fixedRowsHeight(const Plan& p);
@@ -475,6 +490,10 @@ private:
 	std::unique_ptr<RackTabBar> tabs_;
 	std::unique_ptr<RackPadsPanel> pads_;
 	std::unique_ptr<RackFrontColumn> front_;
+	/// THE MACRO ROW'S CAPTIONS (the knobs point into them: declared first) and its knobs, behind `macroArrow_`.
+	std::array<std::string, 8> macroCaption_;
+	std::array<std::unique_ptr<Knob>, 8> macroKnobs_;
+	std::unique_ptr<RackDrawerArrow> macroArrow_;
 	SurfaceLayers* presenter_ = nullptr;
 	std::unique_ptr<RackDrawerArrow> chainArrow_;
 	Plan laidOut_ {};

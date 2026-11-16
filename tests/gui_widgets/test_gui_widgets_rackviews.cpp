@@ -882,3 +882,111 @@ TEST_CASE("rack views over a real rack: the window offers every control the card
 	REQUIRE(offered.size() == 1);
 	CHECK(&offered[0].control->desc() == &pr::kDescriptor.params[static_cast<size_t>(pr::Param::Playing)]);
 }
+
+namespace {
+
+/// A RACK INSIDE A CHAIN of `bridge`, with `chains` chains of its own each holding a Drum, in Tabs view when `tabs`; returns its id.
+feathers::DeviceInstanceId nestedRack(feathers::rack::RackBridge& bridge, size_t chains, bool tabs) {
+	const feathers::DeviceInstanceId id = bridge.addDevice(pr::kTraits.tag);
+	REQUIRE(id != feathers::kNoInstance);
+	bridge.drain();
+	pr::Rack* inner = pr::rackOf(bridge.containerSurfaceOf(id));
+	REQUIRE(inner != nullptr);
+	while (inner->chainCount() < chains) {
+		REQUIRE(inner->addChain() != SIZE_MAX);
+	}
+	if (tabs) {
+		bridge.setField(id, static_cast<size_t>(pr::Param::View), 1.0f);
+	}
+	return id;
+}
+
+} // namespace
+
+TEST_CASE("rack views over a real rack: a Tabs rack as the first device shows its own bar inside, full width, and two levels stack three bars") {
+	RealRack r;
+	r.chains(2, 0);
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId n1 = nestedRack(chain0, 3, true);
+	pr::Rack* inner1 = pr::rackOf(chain0.containerSurfaceOf(n1));
+	feathers::rack::RackBridge& inner1chain0 = *inner1->chainAt(0)->bridge();
+	const feathers::DeviceInstanceId n2 = nestedRack(inner1chain0, 2, true);
+	(void)n2;
+	r.view_(1);
+	for (int i = 0; i < 4; ++i) {
+		r.refresh();
+	}
+	std::vector<ui::FxCard*> level1 = shownCards(*r.card);
+	REQUIRE(level1.size() == 1);
+	auto* card1 = dynamic_cast<ui::ParallelRackCard*>(level1[0]);
+	REQUIRE(card1 != nullptr);
+	CHECK(card1->device() == n1);
+	CHECK(card1->tabsShownForTest());
+	std::vector<ui::FxCard*> level2 = shownCards(*card1);
+	REQUIRE(level2.size() == 1);
+	auto* card2 = dynamic_cast<ui::ParallelRackCard*>(level2[0]);
+	REQUIRE(card2 != nullptr);
+	CHECK(card2->tabsShownForTest());
+	// THE CHILD'S BAR SPANS THE FULL WIDTH OF ITS PARENT'S CONTENT, in native pixels, at every level: the parent's front column is as wide as
+	// the first child's card and its bar, and the first child's front as the second child's card and its bar.
+	const int content = r.card->frontForTest().nativeWidth();
+	CHECK(content > 0);
+	CHECK(card1->nativeWidth() == content);
+	CHECK(card1->tabBarForTest().nativeWidth() == content);
+	CHECK(card2->nativeWidth() == card1->frontForTest().nativeWidth());
+	CHECK(card2->tabBarForTest().nativeWidth() == card2->nativeWidth());
+	// A MEMBER CARD KEEPS NO PADDING OF ITS OWN across the flow: each rack's front is its content (its width less the card's two margins), and the
+	// card inside it is exactly that wide.
+	CHECK(card1->frontForTest().nativeWidth() == card1->nativeWidth() - static_cast<int>(2.0f * ui::ParallelRackCard::kPad * card1->dpiScale() + 0.5f));
+	// THREE BARS STACKED, top to bottom, none over another.
+	const float y0 = r.card->tabBarForTest().positionInWindow().y;
+	const float y1 = card1->tabBarForTest().positionInWindow().y;
+	const float y2 = card2->tabBarForTest().positionInWindow().y;
+	CHECK(y0 < y1);
+	CHECK(y1 < y2);
+	CHECK(y1 >= y0 + ui::RackTabBar::kThickness);
+	CHECK(y2 >= y1 + ui::RackTabBar::kThickness);
+	// EACH IS ITS RACK'S OWN: the bars count their own chains (2, 3, 2).
+	CHECK(r.card->tabBarForTest().tabsForTest().size() == 2);
+	CHECK(card1->tabBarForTest().tabsForTest().size() == 3);
+	CHECK(card2->tabBarForTest().tabsForTest().size() == 2);
+}
+
+TEST_CASE("rack views over a real rack: the macro row is behind its own arrow, collapsed by default, and there is no arrow unless the rack has macros") {
+	RealRack r;
+	r.chains(2, 1);
+	r.view_(1);
+	// NO MACROS (none named, all at zero): no arrow, no row.
+	CHECK_FALSE(r.card->macroArrowShownForTest());
+	CHECK_FALSE(r.card->macroRowShownForTest());
+	// A MACRO OFF ZERO: the arrow is offered, the row stays collapsed.
+	r.set(pr::Param::Macro3, 0.5f);
+	r.refresh();
+	CHECK(r.card->macroArrowShownForTest());
+	CHECK_FALSE(r.card->macroRowShownForTest());
+	const float closed = r.card->laneHeightAt(static_cast<float>(r.card->width()));
+	// THE ARROW OPENS IT (the editor's own state, not the rack's): eight knobs on the rack's own macro controls, the card taller by the row.
+	r.card->macroArrowForTest().toggleForTest();
+	r.refresh();
+	CHECK(r.card->viewModelForTest().macrosOpen());
+	CHECK(r.card->macroRowShownForTest());
+	CHECK(r.card->laneHeightAt(static_cast<float>(r.card->width())) > closed);
+	for (size_t i = 0; i < 8; ++i) {
+		REQUIRE(r.card->macroKnobForTest(i).control() != nullptr);
+		CHECK(&r.card->macroKnobForTest(i).control()->desc() == &pr::kDescriptor.params[static_cast<size_t>(pr::Param::Macro1) + i]);
+	}
+	// A KNOB ON THE ROW WRITES ITS MACRO.
+	r.card->macroKnobForTest(0).control()->setValue(0.25);
+	CHECK(r.field(pr::Param::Macro1) == doctest::Approx(0.25f));
+	// BACK TO ZERO EVERYWHERE: the arrow goes (a rack without macros has none), and so does the row.
+	r.card->macroKnobForTest(0).control()->setValue(0.0);
+	r.set(pr::Param::Macro3, 0.0f);
+	r.refresh();
+	CHECK_FALSE(r.card->macroArrowShownForTest());
+	CHECK_FALSE(r.card->macroRowShownForTest());
+	// AND STRIPS NEVER SHOWS IT.
+	r.set(pr::Param::Macro3, 0.5f);
+	r.view_(0);
+	CHECK_FALSE(r.card->macroArrowShownForTest());
+	CHECK_FALSE(r.card->macroRowShownForTest());
+}

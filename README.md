@@ -38,7 +38,7 @@ Then restart your DAW or rescan its plugins. Options, the manual download and pe
 
 ## Sound engines
 
-Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include V5, Additive, Pluck, Drum, Resonate and Basic Shapes, plus the original Morph and Stair.
+Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include V5, Additive, Pluck, Drum, Resonate, Basic Shapes, Morph and Stair.
 
 | | |
 |---|---|

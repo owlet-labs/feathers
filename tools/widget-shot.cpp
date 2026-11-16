@@ -156,6 +156,31 @@ Window captureTarget(Display* display, Window parent) {
 	return target;
 }
 
+/// THE NESTED VENUE: a Tabs rack as the FIRST device of chain 2 (or 1, with one chain) of `rack` (three chains, the first empty save for a Tabs
+/// rack of two chains, the others a Drum), so the card shows three bars stacked.
+void buildNestedRacks(rack::parallel::Rack& rack) {
+	namespace pr = rack::parallel;
+	const auto nestedRack = [](rack::RackBridge& bridge, size_t chains, bool emptyFirst) {
+		const DeviceInstanceId id = bridge.addDevice(pr::kTraits.tag);
+		bridge.drain();
+		if (pr::Rack* inner = pr::rackOf(bridge.containerSurfaceOf(id)); inner != nullptr) {
+			while (inner->chainCount() < chains) {
+				(void)inner->addChain();
+			}
+			for (size_t c = emptyFirst ? 1 : 0; c < inner->chainCount(); ++c) {
+				(void)inner->chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
+			}
+		}
+		bridge.setField(id, static_cast<size_t>(pr::Param::View), 1.0f);
+		return id;
+	};
+	rack::RackBridge& chainOne = *rack.chainAt(rack.chainCount() > 1 ? 1 : 0)->bridge();
+	const DeviceInstanceId outer = nestedRack(chainOne, 3, true);
+	if (pr::Rack* mid = pr::rackOf(chainOne.containerSurfaceOf(outer)); mid != nullptr) {
+		(void)nestedRack(*mid->chainAt(0)->bridge(), 2, false);
+	}
+}
+
 /// A FAKE RACK for `--rack-views`: the widgets are drawn over a model with five chains on keys 36..40, a hit on key 38 and a page of
 /// used keys, so a capture shows every state the widgets draw (no engine behind it).
 class ShotRack final : public ui::RackViewModel {
@@ -633,6 +658,8 @@ int main(int argc, char** argv) {
 	/// `--rack-chains N:keyed` puts chain k on key 36 + k, `:devices` a Drum (and, on every other chain, a Delay) in each chain after the first.
 	bool rackChainsKeyed = false;
 	bool rackChainsDevices = false;
+	/// `:nested` puts a Tabs rack as the FIRST device of chain 2 (three chains of Drums), and a Tabs rack of two chains in ITS first chain: three bars stacked.
+	bool rackChainsNested = false;
 	/// `--rack-arm-macro N` (1..8): press the Rack window's arrow for macro N, as a hand does, so the chains' controls light. 0 is not asked.
 	int rackArmMacro = 0;
 	/// `--chain-window` (backlog OC): the CHAIN device's window over a running body with a filter and a delay in it.
@@ -1270,6 +1297,7 @@ int main(int argc, char** argv) {
 			rackChainsOpen = spec.find(":open") != std::string::npos;
 			rackChainsKeyed = spec.find(":keyed") != std::string::npos;
 			rackChainsDevices = spec.find(":devices") != std::string::npos;
+			rackChainsNested = spec.find(":nested") != std::string::npos;
 			continue;
 		}
 		if (arg == "--rack-preset" && i + 1 < argc) {
@@ -2494,7 +2522,9 @@ int main(int argc, char** argv) {
 			int chains = 1;
 			int bands = 0;
 			int viewKind = 0; // a fourth number: the Rack's View (1 Tabs, 2 Pads), with a Drum (and on even chains a Delay) in every chain, keyed 36 + k
-			(void)std::sscanf(chainRack.c_str(), "%d:%d:%d:%d", &mode, &chains, &bands, &viewKind);
+			int nested = 0;   // a fifth: 1 puts a Tabs rack (itself holding one) first in chain 2, and that chain in front
+			int open = 0;     // a sixth: 1 opens every chain inline on the card
+			(void)std::sscanf(chainRack.c_str(), "%d:%d:%d:%d:%d:%d", &mode, &chains, &bands, &viewKind, &nested, &open);
 			rack::RackBridge& inner = *rack::bridgeOf(held);
 			const DeviceInstanceId rackId = inner.addDevice(pr::kTraits.tag);
 			inner.setField(rackId, static_cast<size_t>(pr::Param::Mode), static_cast<float>(mode));
@@ -2508,10 +2538,17 @@ int main(int argc, char** argv) {
 					inner.setField(rackId, static_cast<size_t>(pr::Param::View), static_cast<float>(viewKind));
 					for (size_t c = 0; c < rk->chainCount(); ++c) {
 						rk->setChainKey(c, 36 + static_cast<int>(c));
-						(void)rk->chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
-						if (c % 2 == 0) {
-							(void)rk->chainAt(c)->bridge()->addDevice("DELAY");
+						if (!(nested != 0 && c == 1)) {
+							(void)rk->chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
+							if (c % 2 == 0) {
+								(void)rk->chainAt(c)->bridge()->addDevice("DELAY");
+							}
 						}
+						rk->setOpen(c, open != 0);
+					}
+					if (nested != 0 && rk->chainCount() > 1) {
+						buildNestedRacks(*rk);
+						inner.setField(rackId, static_cast<size_t>(pr::Param::ViewedChain), 1.0f);
 					}
 				}
 			}
@@ -2606,17 +2643,26 @@ int main(int argc, char** argv) {
 			}
 		}
 		else {
+		// THE CHAINS the option asks for (the loop a merge dropped from this block: without it every venue had one chain).
+		while (rack.chainCount() < static_cast<size_t>(rackChains)) {
+			if (rack.addChain() == SIZE_MAX) {
+				break;
+			}
+		}
 		(void)rack.chainAt(0)->bridge()->addDevice(fx::filter::kTraits.tag);
 		for (size_t c = 0; c < rack.chainCount(); ++c) {
 			if (rackChainsKeyed) {
 				rack.setChainKey(c, 36 + static_cast<int>(c));
 			}
-			if (rackChainsDevices && c > 0) {
+			if (rackChainsDevices && c > 0 && !(rackChainsNested && c == 1)) {
 				(void)rack.chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
 				if (c % 2 == 0) {
 					(void)rack.chainAt(c)->bridge()->addDevice("DELAY");
 				}
 			}
+		}
+		if (rackChainsNested) {
+			buildNestedRacks(rack);
 		}
 		for (size_t c = 0; c < rack.chainCount(); ++c) {
 			rack.setOpen(c, rackChainsOpen); // open inline on the card (Tabs, Pads), as its rail is open in the window

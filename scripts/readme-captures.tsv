@@ -28,7 +28,8 @@ var	EXPLORE_ZOOM	0.0333333
 var	GIF_ZOOM	0.0333333
 #
 # --- the numbered pictures ---------------------------------------------------------------------------------
-shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/wood_elves_pan.fpreset|--size|2400x1500|--play|3
+# The hero is the PERFORM view (the editor opens on Perform; no surface switch is made), on a six-sound patch.
+shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/Perform/Constellation.fpreset|--size|2400x1500|--play|3
 shot	f02	-	widget-shot	MSEG|--rack|--rack-add|MATH|--route-curves|--route-phi|1|--height|1500|--macro|1=Knob:Motion:0.65|--mod-run|3
 shot	f03	-	widget-shot	TFIELD|--card|--twinfield-play|--height|1550
 shot	f05	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|@env:FEATHERS_EXPLORE_ZOOM=${EXPLORE_ZOOM}

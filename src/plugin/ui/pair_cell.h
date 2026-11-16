@@ -52,8 +52,20 @@ public:
 
 	PairCell(std::string caption, visage::Frame& first, visage::Frame& second);
 
-	/// THE FIRST CELL'S SHARE OF THE WIDTH, 0..1; half by default.
+	/// THE FIRST CELL'S SHARE OF THE WIDTH, 0..1; half by default. With a middle (`setMiddle`), the share of what the
+	/// middle leaves.
 	void setSplit(float firstShare);
+	/// **A NARROW THIRD FRAME BETWEEN THE TWO** (a route switch between two slots): `width` wide, centred on the cells
+	/// under the caption, `height` tall (0: the cells' height, and never taller). The two halves share what is left.
+	/// The frame is parented here and not owned; a second call replaces the first.
+	void setMiddle(visage::Frame& middle, float width, float height = 0.0f);
+	[[nodiscard]] visage::Frame* middle() const noexcept { return middle_; }
+	[[nodiscard]] float middleWidth() const noexcept { return middleWidth_; }
+	/// **A BARE PAIR (empty caption) HAS NO CAPTION BAND AND NO OUTLINE** — its cells take the whole height and it draws
+	/// nothing, so a pair can sit inside another (`PairCell("Slots", PairCell("", a, b), PairCell("", c, d))`) and
+	/// leave the one outline and the one caption to the outer.
+	[[nodiscard]] bool bare() const noexcept { return caption_.empty(); }
+	[[nodiscard]] float captionBand() const noexcept { return bare() ? 0.0f : kCaptionHeight; }
 	[[nodiscard]] float split() const noexcept { return split_; }
 	[[nodiscard]] const std::string& caption() const noexcept { return caption_; }
 	[[nodiscard]] visage::Frame& first() const noexcept { return first_; }
@@ -67,6 +79,9 @@ private:
 	visage::Frame& first_;
 	visage::Frame& second_;
 	float split_ = 0.5f;
+	visage::Frame* middle_ = nullptr;
+	float middleWidth_ = 0.0f;
+	float middleHeight_ = 0.0f;
 };
 
 /// ONE ITEM OF A FLOWED GRID: a frame and how many columns it takes. Null frames and hidden items take no room.

@@ -216,7 +216,6 @@ private:
 	RackKeyMask steady_ {};
 	bool reduced_ = false;
 	bool wasLive_ = false;
-	bool seenAny_ = false;
 	size_t lastTold_ = 0;
 };
 

@@ -19,6 +19,7 @@
 // the sound, off what a recording device was handed, or off the state.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <bit>
 #include "test_heap.h"
 #include "doctest.h"
 
@@ -613,7 +614,7 @@ TEST_CASE("view routing: the strike mask reports exactly the keys struck since i
 	d.rk->takeStrikeMask(m);
 	CHECK((m[0] >> 36 & 1u) == 1u);
 	CHECK((m[0] >> 50 & 1u) == 1u);
-	CHECK(__builtin_popcountll(m[0]) + __builtin_popcountll(m[1]) == 2);
+	CHECK(std::popcount(m[0]) + std::popcount(m[1]) == 2);
 }
 
 TEST_CASE("view routing: Keyed routes notes by key alone — a chain on Any is handed none — and its audio is Parallel's") {

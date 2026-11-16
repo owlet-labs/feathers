@@ -27,7 +27,10 @@
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/theme.h"
 
+#include "plugin/ui/control_face.h"
+
 #include <algorithm>
+#include <functional>
 
 namespace feathers::ui {
 
@@ -54,8 +57,9 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	width_ = knob(ero::Param::Width, "Width");
 	mix_ = knob(ero::Param::Mix, "Mix");
 	cutoff_ = knob(ero::Param::Cutoff, "Cutoff");
-	hpWet_ = knob(ero::Param::HpWet, "HP Wet");
-	follow_ = knob(ero::Param::Follow, "Follow");
+	emphasis_ = knob(ero::Param::EmphAmount, "Emph");
+	resonance_ = knob(ero::Param::Resonance, "Reso");
+	loop_ = knob(ero::Param::Loop, "Loop");
 
 	// DRIVE, A PAIR: the knob, and the Type with its own Shape under it — a Shape stops at its ends and only the
 	// selector changes the Type (`mode_value_cell.h`).
@@ -82,8 +86,20 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	};
 	source_ = box(ero::Param::Source, "Source");
 	grit_ = box(ero::Param::Grit, "Grit");
+	// ETCH'S SMALL ROW: Freq and Mix as compact boxes (they are boxes on the knob row's place, which is the slots'). A box
+	// is a modulation target and takes a drag as a knob does (`ValueBox`), so neither is lost to the card.
+	freqBox_ = box(ero::Param::Freq, "Freq");
+	mixBox_ = box(ero::Param::Mix, "Mix");
+	// ETCH'S SLOT ROW, bare: a caption band would not fit the card's height.
+	etch_.build([this](ero::Param p) -> DeviceControl& { return control(p); }, kKnobDiameter, notifier_, "");
+	addChild(etch_.outer.get());
 	track_ = std::make_unique<SwitchChip>(control(ero::Param::Track), "Track");
 	addChild(track_.get());
+	// THE COMB'S TWO CHIPS: Tap (on is Driven) and Restore.
+	tap_ = std::make_unique<SwitchChip>(control(ero::Param::FbTap), "Driven");
+	addChild(tap_.get());
+	restore_ = std::make_unique<SwitchChip>(control(ero::Param::EmphRestore), "Restore");
+	addChild(restore_.get());
 
 	// THE COMB'S TWO COORDINATES: zoned, so a coordinate cell each (`GenericCard`'s reason), "Char" because the whole
 	// word does not fit a quarter of the card.
@@ -131,9 +147,10 @@ void EroderCard::setModulation(ModState* mod, EditHistory* history) {
 		control(static_cast<ero::Param>(i)).setModulation(mod, history);
 	}
 	plot_->setModulation(mod, history);
+	etch_.setModulation(mod, history);
 	// THE KNOBS DRAW THEIR OWN ARM GLOW, and watch the panel state for it (`CompCard::setModulation`).
 	for (Knob* knob : { amount_.get(), bias_.get(), freq_.get(), width_.get(), mix_.get(), cutoff_.get(),
-	                    drive_.get(), hpWet_.get(), follow_.get() }) {
+	                    drive_.get(), emphasis_.get(), resonance_.get(), loop_.get() }) {
 		knob->setModulation(mod, history);
 	}
 }
@@ -167,8 +184,12 @@ std::vector<visage::Frame*> EroderCard::shakerWidgetsForTest() const {
 	return { freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get() };
 }
 
+std::vector<visage::Frame*> EroderCard::etchWidgetsForTest() const {
+	return { etch_.outer.get(), freqBox_.get(), mixBox_.get(), track_.get() };
+}
+
 std::vector<visage::Frame*> EroderCard::combWidgetsForTest() const {
-	return { tone_.get(), character_.get(), cutoff_.get(), gamma_.get() };
+	return { tone_.get(), character_.get(), cutoff_.get(), gamma_.get(), tap_.get(), restore_.get(), loop_.get() };
 }
 
 void EroderCard::resized() { layOut(); }
@@ -179,6 +200,7 @@ void EroderCard::layOut() {
 	const ero::Mode mode = engine();
 	laidOutEngine_ = static_cast<int>(mode);
 	const bool comb = mode == ero::Mode::Comb;
+	const bool etch = mode == ero::Mode::Etch;
 	const bool open = !folded();
 	const float left = bodyLeft() + kPad;
 	const float width = std::max(0.0f, bodyWidth() - 2.0f * kPad);
@@ -205,14 +227,17 @@ void EroderCard::layOut() {
 	visage::Frame* const combRow[] = { tone_.get(), character_.get(), cutoff_.get() };
 	for (size_t i = 0; i < 2; ++i) {
 		shakerRow[i]->setBounds(left + cell * static_cast<float>(i + 1), y, cell, knobH);
-		shakerRow[i]->setVisible(open && !comb);
+		shakerRow[i]->setVisible(open && !comb && !etch);
 	}
 	for (size_t i = 0; i < 3; ++i) {
 		combRow[i]->setBounds(left + cell * static_cast<float>(i), y, cell, knobH);
 		combRow[i]->setVisible(open && comb);
 	}
 	mix_->setBounds(left + cell * 3.0f, y, cell, knobH);
-	mix_->setVisible(open);
+	mix_->setVisible(open && !etch);
+	// ETCH'S KNOB ROW IS THE SLOTS: A, its Type with Shape and Mix, the route, B (one line, the card's four cells).
+	etch_.outer->setBounds(left, y, 4.0f * cell, etch_.heightFor(knobH));
+	etch_.setShown(open && etch);
 	y += knobH + kRowGap;
 
 	// THE SMALL ROW. Dust: Source, Grit, Track. Comb: Gamma.
@@ -224,21 +249,36 @@ void EroderCard::layOut() {
 	grit_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
 	track_->setBounds(left + width - chipW, y, chipW, SwitchChip::kHeight);
 	// ETCH HAS NO SHAKE: Source and Grit are not drawn (a control only the other engines could enable is hidden).
-	source_->setVisible(open && !comb && mode != ero::Mode::Etch);
-	grit_->setVisible(open && !comb && mode != ero::Mode::Etch);
+	source_->setVisible(open && !comb && !etch);
+	grit_->setVisible(open && !comb && !etch);
+	freqBox_->setBounds(left, boxY, boxW, ValueBox::kCompactHeight);
+	mixBox_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
+	freqBox_->setVisible(open && etch);
+	mixBox_->setVisible(open && etch);
 	track_->setVisible(open && !comb);
-	gamma_->setBounds(left, boxY, width * 0.5f, ValueBox::kCompactHeight);
+	// THE COMB'S SMALL ROW: Gamma, then Tap (Driven) and Restore.
+	const float restoreW = 52.0f;
+	const float tapW = 48.0f;
+	const float gammaW = std::max(0.0f, width - restoreW - tapW - 2.0f * gap);
+	gamma_->setBounds(left, boxY, gammaW, ValueBox::kCompactHeight);
 	gamma_->setVisible(open && comb);
+	tap_->setBounds(left + gammaW + gap, y, tapW, SwitchChip::kHeight);
+	tap_->setVisible(open && comb);
+	restore_->setBounds(left + width - restoreW, y, restoreW, SwitchChip::kHeight);
+	restore_->setVisible(open && comb);
 	y += kSmallRowHeight + kRowGap;
 
-	// THE THIRD ROW, every engine's: the Drive pair across two cells, HP Wet, Follow.
+	// THE THIRD ROW, every engine's: the Drive pair across two cells, Emphasis, and the feedback (Resonance, or the Comb's
+	// outer Loop). HP Wet and Follow are the window's.
 	const float under = y + PairCell::kCaptionHeight;
 	drivePair_->setBounds(left, y, 2.0f * cell, PairCell::heightFor(knobH));
 	drivePair_->setVisible(open);
-	hpWet_->setBounds(left + cell * 2.0f, under, cell, knobH);
-	hpWet_->setVisible(open);
-	follow_->setBounds(left + cell * 3.0f, under, cell, knobH);
-	follow_->setVisible(open);
+	emphasis_->setBounds(left + cell * 2.0f, under, cell, knobH);
+	emphasis_->setVisible(open);
+	resonance_->setBounds(left + cell * 3.0f, under, cell, knobH);
+	resonance_->setVisible(open && !comb);
+	loop_->setBounds(left + cell * 3.0f, under, cell, knobH);
+	loop_->setVisible(open && comb);
 	refreshHonesty();
 }
 
@@ -247,7 +287,15 @@ void EroderCard::refreshHonesty() {
 	// still takes the hand — it is a setting the engine reads the moment Source comes up).
 	ero::Row row {};
 	(void)readModulatedRow(host_, device_, ero::kDescriptor, row);
-	width_->setActive(row[static_cast<size_t>(ero::Param::Source)] > 0.0f);
+	// ... OR THE EMPHASIS IS A BELL, whose width Width is.
+	const bool emphasised = row[static_cast<size_t>(ero::Param::EmphAmount)] != 0.0f;
+	const bool bell = row[static_cast<size_t>(ero::Param::EmphShape)] >= 0.5f;
+	// ETCH HAS NO NOISE BAND: Source is not its business, the Bell's width is.
+	const bool etch = engine() == ero::Mode::Etch;
+	width_->setActive((!etch && row[static_cast<size_t>(ero::Param::Source)] > 0.0f) || (bell && emphasised));
+	// RESTORE PUTS BACK WHAT THE EMPHASIS TOOK: with none there is nothing to put back. (The Tap is always live in the
+	// Comb: its inner loop never stops, `kBankFloor`.)
+	restore_->setEnabled(emphasised);
 	(void)driveCell_->refresh();
 }
 
@@ -271,5 +319,33 @@ bool EroderCard::updateContent() {
 void EroderCard::drawHeadExtras(visage::Canvas& canvas) { drawSlotMenu(canvas, kMuted); }
 
 void EroderCard::drawContent(visage::Canvas&) {}
+
+std::vector<ero::Param> EroderCard::addressedParamsForTest() const {
+	// **READ OFF THE WIDGET TREE** (`ControlFace`), hidden ones and every engine's included: each frame says which controls it
+	// offers (the plot's handles by their gesture, the slot row's cells by their face) and the answer is mapped to the
+	// parameter by the control the face was built over. Nothing here lists a parameter.
+	std::vector<ero::Param> out;
+	std::vector<ControlFace::Offered> offered;
+	std::function<void(const visage::Frame*)> walk = [&](const visage::Frame* frame) {
+		if (const auto* face = dynamic_cast<const ControlFace*>(frame)) {
+			offered.clear();
+			face->offeredControls(offered);
+			for (const ControlFace::Offered& o : offered) {
+				for (size_t i = 0; i < controls_.size(); ++i) {
+					const auto p = static_cast<ero::Param>(i);
+					if (controls_[i] != nullptr && static_cast<const device::Modulatable*>(controls_[i].get()) == o.control
+					    && std::find(out.begin(), out.end(), p) == out.end()) {
+						out.push_back(p);
+					}
+				}
+			}
+		}
+		for (const visage::Frame* child : frame->children()) {
+			walk(child);
+		}
+	};
+	walk(this);
+	return out;
+}
 
 } // namespace feathers::ui

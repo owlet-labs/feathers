@@ -40,6 +40,8 @@
 #include "plugin/ui/generic_expanded.h"
 #include "mod/arp/pattern_types.h"
 #include "plugin/ui/pattern_card.h"
+#include "plugin/ui/eroder_card.h"
+#include "plugin/ui/eroder_expanded.h"
 #include "plugin/ui/smooth_card.h"
 #include "plugin/ui/spectral_card.h"
 #include "plugin/ui/spectral_expanded.h"
@@ -5098,14 +5100,20 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		CHECK(e.reached.count(static_cast<size_t>(feathers::fx::delay::Param::Clear)) == 1);
 		table.push_back(std::move(e));
 	}
-	// THE ERODER, likewise.
+	// THE ERODER: its own card (`EroderCard`) AND its window, each asked what its widgets offer — read off the tree, every
+	// engine's controls and the plot's handles included (`ControlFace`). The shared section and Etch's slots are on both.
 	{
-		ui::GenericCard eroderCard { f.deviceHost, kNoInstance, feathers::fx::eroder::kDescriptor,
-			                         nullptr };
+		ui::WidgetRegistry eroderRegistry;
+		ui::EroderCard eroderCard { f.deviceHost, eroderRegistry, kNoInstance };
+		ui::EroderExpanded eroderPanel { f.deviceHost, eroderRegistry, kNoInstance };
 		Entry e { feathers::fx::eroder::kTraits.tag, {}, {}, false };
-		for (const size_t index : eroderCard.paramIndicesForTest()) {
-			e.reached.insert(index);
+		for (const feathers::fx::eroder::Param p : eroderCard.addressedParamsForTest()) {
+			e.reached.insert(static_cast<size_t>(p));
 		}
+		for (const feathers::fx::eroder::Param p : eroderPanel.addressedParamsForTest()) {
+			e.reached.insert(static_cast<size_t>(p));
+		}
+		// AND THE ENABLE, WHICH THE CARD'S HEAD DRAWS (and the overlay's header, for the window).
 		if (feathers::fx::eroder::kTraits.enableControl >= 0) {
 			e.reached.insert(static_cast<size_t>(feathers::fx::eroder::kTraits.enableControl));
 		}

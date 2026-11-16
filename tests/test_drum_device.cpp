@@ -833,7 +833,17 @@ TEST_CASE("drum: two drums on one key sum, each as it sounds alone, and each pas
 		const std::vector<NoteEvent> mid = a.notes(in);
 		const std::vector<NoteEvent> out = b.notes(mid);
 		REQUIRE(out.size() == 1);
-		CHECK(std::memcmp(&out[0], &in[0], sizeof(NoteEvent)) == 0);
+		// FIELD BY FIELD, not memcmp: the struct's padding bytes are indeterminate, and differ between compilers.
+		CHECK(out[0].kind == in[0].kind);
+		CHECK(out[0].timeSamples == in[0].timeSamples);
+		CHECK(out[0].noteId == in[0].noteId);
+		CHECK(out[0].port == in[0].port);
+		CHECK(out[0].channel == in[0].channel);
+		CHECK(out[0].key == in[0].key);
+		CHECK(out[0].velocity == in[0].velocity);
+		CHECK(out[0].expressionId == in[0].expressionId);
+		CHECK(out[0].expressionValue == in[0].expressionValue);
+		CHECK(out[0].fromSteal == in[0].fromSteal);
 		a.render(chain.l.data(), chain.r.data(), 1500);
 		b.render(chain.l.data(), chain.r.data(), 1500);
 	}

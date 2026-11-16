@@ -5490,46 +5490,6 @@ TEST_CASE("backlog KQ: in the rack, every control a hand-written card shows is i
 	}
 }
 
-TEST_CASE("JB: the undo and redo buttons name themselves on hover — each its own words, nothing between them, and shown through the editor's own tooltip layer") {
-	// TWO HOOKED ARROWS SAY NOTHING ON THEIR OWN. They sit on the editor rather than on a card, so they have no card's
-	// layer to speak through: the editor is a `TooltipHost` and its tick advances the delay (`RackGui::tick`).
-	Fixture f;
-	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
-	f.editor.setSettingsDoor([] {});
-	rack::UndoRedoButtons* buttons = f.editor.undoRedoForTest();
-	REQUIRE(buttons != nullptr);
-	const visage::Point undoAt { buttons->undoBounds().x() + 4.0f, 4.0f };
-	const visage::Point redoAt { buttons->redoBounds().x() + 4.0f, 4.0f };
-	const visage::Point between { rack::UndoRedoButtons::kButton + 0.5f * rack::UndoRedoButtons::kGap, 4.0f };
-	const char* undoText = buttons->tooltipAt(undoAt);
-	const char* redoText = buttons->tooltipAt(redoAt);
-	REQUIRE(undoText != nullptr);
-	REQUIRE(redoText != nullptr);
-	CHECK(std::string(undoText).rfind("Undo", 0) == 0);
-	CHECK(std::string(redoText).rfind("Redo", 0) == 0);
-	CHECK(buttons->tooltipAt(between) == nullptr); // the gap between them is neither
-
-	// THROUGH THE LAYER, as a hand's hover arrives: enter, rest past the delay, the box shows that button's words.
-	ui::TooltipLayer& layer = f.editor.tooltipLayer();
-	double now = 0.0;
-	layer.setClock([&now] { return now; });
-	const auto hoverShows = [&](visage::Point at, const char* word) {
-		CAPTURE(std::string(word));
-		visage::MouseEvent e = ui::MouseEventForTest();
-		e.position = at;
-		buttons->processMouseEnter(e);
-		REQUIRE(layer.state() == ui::TooltipLayer::State::Pending);
-		now += ui::TooltipLayer::kDelayMs + 100.0;
-		(void)f.editor.tickTooltips();
-		CHECK(layer.shown());
-		CHECK(layer.text().rfind(word, 0) == 0);
-		buttons->processMouseExit(e);
-		(void)layer.clear();
-	};
-	hoverShows(undoAt, "Undo");
-	hoverShows(redoAt, "Redo");
-}
-
 TEST_CASE("OC: the standalone rack has its Macros column at the left — macros two across and four tall with their arms BESIDE them, the route list under them — and the lane starts after it with no band above") {
 	Fixture f;
 	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
@@ -6225,35 +6185,6 @@ TEST_CASE("backlog GM, the roads not yet tried: SKLITTER's card in a real rack e
 	check("1.75x");
 }
 
-TEST_CASE("JB: the rack editor shows undo and redo beside its settings door — a press walks the history, the chain restored by value, and they repaint when the history moves") {
-	Fixture f;
-	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
-	CHECK(f.editor.undoRedoForTest() == nullptr); // no door row, no buttons (a nested editor uses the keys)
-	f.editor.setSettingsDoor([] {});
-	rack::UndoRedoButtons* buttons = f.editor.undoRedoForTest();
-	REQUIRE(buttons != nullptr);
-	CHECK(buttons->isVisible());
-	CHECK(buttons->width() == doctest::Approx(rack::UndoRedoButtons::kWidth));
-	CHECK(buttons->right() <= rack::RackEditor::kLaneLeft); // in the column, not over the lane
-	const size_t told = f.history.framesToldForTest();
-	const DeviceInstanceId a = f.editor.addDeviceByTag(fx::filter::kTraits.tag);
-	f.bridge.drain();
-	REQUIRE(a != kNoInstance);
-	CHECK(f.history.framesToldForTest() > told); // the buttons were told: they repaint lit
-
-	visage::MouseEvent e = ui::MouseEventForTest();
-	e.position = { buttons->undoBounds().x() + 4.0f, 4.0f };
-	buttons->onMouseDown().callback(e);
-	f.bridge.drain();
-	CHECK(f.bridge.chainLength() == 0);
-	CHECK(f.history.canRedo());
-	e.position = { buttons->redoBounds().x() + 4.0f, 4.0f };
-	buttons->onMouseDown().callback(e);
-	f.bridge.drain();
-	REQUIRE(f.bridge.chainLength() == 1);
-	CHECK(f.bridge.deviceAtPosition(0) == a);
-}
-
 TEST_CASE("TFIELD in the rack: the card's 2x4 output block shows the values a route receives, block after block") {
 	// THE BLOCK RECOMPUTES the eight outputs from the published orbit phases (playhead: A as the phase, B as the level)
 	// and the MODULATED row, through the device's own `readLayer` and `blend`. The claim is a VALUE: what the card shows
@@ -6610,4 +6541,118 @@ TEST_CASE("TFIELD in the rack: the card draws the ring at its terrain size, so z
 	CHECK(std::abs(ringAt(1.0f, 0.6f) - 2.0f * base) <= 0.01f);  // zoom in one octave: twice as large on the glass
 	CHECK(std::abs(ringAt(0.0f, 1.2f) - 2.0f * base) <= 0.01f);  // twice the Spread: twice as large
 	CHECK(std::abs(ringAt(-1.0f, 1.2f) - base) <= 0.01f);        // and the two cancel
+}
+
+TEST_CASE("SHOT the Chain plugin's header: door, presets and what stands between them") {
+	// NOT A CASE — A CAMERA, gated on FEATHERS_SHOT_DIR. The rack plugin's header as `RackGui` builds it: the settings door and
+	// the presets (`makeTopPresets`), over an editor with one device. Written as raw RGBA, byte zero red.
+	const char* dir = std::getenv("FEATHERS_SHOT_DIR");
+	if (dir == nullptr) {
+		return;
+	}
+	Fixture f;
+	REQUIRE(f.add(fx::filter::kTraits.tag) != kNoInstance);
+	f.editor.syncCards();
+	f.editor.setSettingsDoor([] {});
+	ui::ContainerPresets presets = ui::makeTopPresets(f.bridge, &f.editor.notifier(), [] {});
+	f.editor.setPresetBrowser(presets.browser.get());
+	const int w = rack::RackEditor::kWidth;
+	const int h = kEditorHeight;
+	visage::ApplicationEditor app;
+	app.setBounds(0, 0, w, h);
+	app.addChild(&f.editor);
+	f.editor.setBounds(0, 0, w, h);
+	app.setWindowless(w, h);
+	if (!visage::Renderer::instance().supported()) {
+		MESSAGE("SKIP no renderer: " << visage::Renderer::instance().errorMessage());
+		app.removeChild(&f.editor);
+		return;
+	}
+	app.redrawAll();
+	app.drawWindow();
+	app.drawWindow();
+	app.drawWindow();
+	const visage::Screenshot& shot = app.takeScreenshot();
+	if (shot.width() > 0) {
+		const std::string path = std::string(dir) + "/chain_header_" + (std::getenv("FEATHERS_SHOT_TAG") != nullptr ? std::getenv("FEATHERS_SHOT_TAG") : "x") + ".rgba";
+		std::ofstream out(path, std::ios::binary);
+		out.write(reinterpret_cast<const char*>(shot.data()), static_cast<std::streamsize>(shot.width()) * shot.height() * 4);
+		MESSAGE("wrote " << path << " (" << shot.width() << "x" << shot.height() << " RGBA)");
+	}
+	app.removeChild(&f.editor);
+}
+
+TEST_CASE("the rack editor's undo keys: Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y walk a device change, and a rename being typed keeps its own Ctrl+Z") {
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const auto press = [&](visage::KeyCode code, int modifiers) {
+		return f.editor.onKeyPress().callback(visage::KeyEvent { code, modifiers, true });
+	};
+	const int ctrl = visage::kModifierRegCtrl;
+	const int shift = visage::kModifierShift;
+	const DeviceInstanceId a = f.editor.addDeviceByTag(fx::filter::kTraits.tag);
+	f.bridge.drain();
+	REQUIRE(a != kNoInstance);
+	REQUIRE(f.bridge.chainLength() == 1);
+
+	// A KEY WITHOUT THE CHORD IS NOT THE EDITOR'S (Alt makes it someone else's).
+	CHECK_FALSE(press(visage::KeyCode::Z, 0));
+	CHECK_FALSE(press(visage::KeyCode::Z, ctrl | visage::kModifierAlt));
+	CHECK(f.bridge.chainLength() == 1);
+
+	CHECK(press(visage::KeyCode::Z, ctrl));
+	f.bridge.drain();
+	CHECK(f.bridge.chainLength() == 0);
+	CHECK(press(visage::KeyCode::Z, ctrl | shift));
+	f.bridge.drain();
+	REQUIRE(f.bridge.chainLength() == 1);
+	CHECK(f.bridge.deviceAtPosition(0) == a);
+	CHECK(press(visage::KeyCode::Z, ctrl));
+	f.bridge.drain();
+	CHECK(f.bridge.chainLength() == 0);
+	CHECK(press(visage::KeyCode::Y, ctrl));
+	f.bridge.drain();
+	CHECK(f.bridge.chainLength() == 1);
+	// NOTHING TO REDO: the key goes back to the host unhandled.
+	CHECK_FALSE(press(visage::KeyCode::Y, ctrl));
+
+	// THE WINDOW'S OWN ROAD, which the key takes when nothing inside the editor holds the keyboard.
+	CHECK(f.editor.walkHistoryFromKey(false));
+	f.bridge.drain();
+	CHECK(f.bridge.chainLength() == 0);
+	CHECK(f.editor.walkHistoryFromKey(true));
+	f.bridge.drain();
+	CHECK(f.bridge.chainLength() == 1);
+
+	// A NAME BEING TYPED KEEPS ITS CHORD: Ctrl+Z while a macro's rename field is open undoes nothing.
+	ui::MacroSlot* slot = f.editor.macrosForTest()[0].get();
+	REQUIRE(slot != nullptr);
+	slot->beginRename();
+	REQUIRE(slot->renaming());
+	CHECK_FALSE(press(visage::KeyCode::Z, ctrl));
+	f.bridge.drain();
+	CHECK(f.bridge.chainLength() == 1);
+}
+
+TEST_CASE("the Chain plugin's header has no undo buttons, and the preset stepper is whole: both arrows and the name sit inside the room the row gives it") {
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	f.editor.setSettingsDoor([] {});
+	ui::ContainerPresets presets = ui::makeTopPresets(f.bridge, &f.editor.notifier(), [] {});
+	f.editor.setPresetBrowser(presets.browser.get());
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const ui::PresetBrowser::Style& s = presets.browser->style();
+	const float stepper = 2.0f * s.arrowWidth + s.nameWidth;
+	// THE BROWSER IS LAID OUT TO THE ROOM THE ROW HAS (door and macros toggle taken out), and the stepper — ◀ name ▶ — fits it.
+	CHECK(presets.browser->width() >= stepper);
+	// AND IT STOPS BEFORE THE MACROS TOGGLE'S CORNER.
+	CHECK(presets.browser->x() + presets.browser->width()
+	      <= rack::RackEditor::kLaneLeft - 7.0f - rack::RackEditor::kMacrosToggleRoom);
+	// UNDO IS THE KEYS' ALONE: a device change walks back through the chord, with no button in the header to press.
+	const DeviceInstanceId a = f.editor.addDeviceByTag(fx::filter::kTraits.tag);
+	f.bridge.drain();
+	REQUIRE(a != kNoInstance);
+	CHECK(f.editor.onKeyPress().callback(visage::KeyEvent { visage::KeyCode::Z, visage::kModifierRegCtrl, true }));
+	f.bridge.drain();
+	CHECK(f.bridge.chainLength() == 0);
 }

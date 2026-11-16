@@ -964,7 +964,7 @@ TEST_CASE("the editor is the drum's own window: it opens at the view's size, reo
 	uint32_t w = 0, h = 0;
 	REQUIRE(gui->get_size(v.plugin, &w, &h));
 	CHECK(w == static_cast<uint32_t>(ui::DrumDeviceExpanded::kWidth));
-	CHECK(h == static_cast<uint32_t>(ui::DrumDeviceExpanded::kMinimumHeight));
+	CHECK(h == static_cast<uint32_t>(ui::DrumDeviceExpanded::kMinimumHeight) + rack::RackGui::kDrumHeaderHeight); // the view under the Libra strip
 	CHECK(v.test()->editor(v.plugin) == nullptr); // the chain editor does not exist in a drum
 	gui->destroy(v.plugin);
 	REQUIRE(gui->create(v.plugin, api, false));

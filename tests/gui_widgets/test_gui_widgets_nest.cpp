@@ -2664,3 +2664,111 @@ TEST_CASE("NZ any depth: an LFO armed in a Chain's panel INSIDE another Chain's 
 	innerView.reset();
 	outerView.reset();
 }
+
+TEST_CASE("Rack macros are the synth's macro slots: the same right-click menu, a pick writes every chain, a rename is one undo step and "
+          "survives save and load into a fresh rack") {
+	SiteHost h;
+	const DeviceInstanceId rackId = h.bridge.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(rackId != kNoInstance);
+	auto* rk = rack::parallel::rackOf(h.bridge.containerSurfaceOf(rackId));
+	REQUIRE(rk != nullptr);
+	while (rk->chainCount() < 3) {
+		(void)rk->addChain();
+	}
+	ui::ModState host;
+	ui::EditHistory history;
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(h.bridge, nullptr, registry, rackId, *h.bridge.descriptorOf(rackId));
+	auto* panel = dynamic_cast<ui::ParallelRackExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->modulationBound(&host, &history);
+	panel->setBounds(0, 0, 1200, 700);
+	(void)panel->updateContent();
+
+	// THE MENU: the knob's right-click offers it, and it lists what the synth's macro menu lists (no Relative: the rack has no relative road).
+	for (size_t n = 0; n < 8; ++n) {
+		CAPTURE(n);
+		CHECK(panel->macroSlotForTest(n).knob().hasMacroMenuForTest());
+	}
+	ui::MacroSlot& slot = panel->macroSlotForTest(2);
+	CHECK(ui::macroMenuLabelsForTest(slot.menuHooks())
+	      == std::vector<std::string> { "X  Knob", "     Latch", "     Momentary", "", "X  Unipolar  0..100%",
+	                                    "     Bipolar  -100..100%", "", "Rename…" });
+
+	// A PICK writes the macro in EVERY chain, and the menu reads it back.
+	ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuMomentary);
+	ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuBipolar);
+	for (size_t c = 0; c < rk->chainCount(); ++c) {
+		CAPTURE(c);
+		CHECK(rk->chainAt(c)->bridge()->macroType(2) == device::MacroType::Momentary);
+		CHECK(rk->chainAt(c)->bridge()->macroBipolar(2));
+		CHECK(rk->chainAt(c)->bridge()->macroType(1) == device::MacroType::Knob);
+	}
+	CHECK(slot.type() == device::MacroType::Momentary);
+	CHECK(ui::macroMenuLabelsForTest(slot.menuHooks())
+	      == std::vector<std::string> { "     Knob", "     Latch", "X  Momentary", "", "     Unipolar  0..100%",
+	                                    "X  Bipolar  -100..100%", "", "Rename…" });
+
+	// RENAME: the menu's row opens the field, Enter commits, every chain holds the name, the caption and the route list read it.
+	ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuRename);
+	REQUIRE(slot.renaming());
+	slot.field().processTextInput("Sweep");
+	slot.field().processKeyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true });
+	CHECK_FALSE(slot.renaming());
+	for (size_t c = 0; c < rk->chainCount(); ++c) {
+		CAPTURE(c);
+		CHECK(rk->chainAt(c)->bridge()->macroName(2) == "Sweep");
+	}
+	CHECK(rk->macroName(2) == "Sweep");
+	CHECK_FALSE(rk->macroRenamed(3));
+	CHECK(slot.caption() == "Sweep");
+	char label[96] = {};
+	const device::Descriptor* desc = h.bridge.descriptorOf(rackId);
+	REQUIRE(desc->container->macroLabel != nullptr);
+	CHECK(desc->container->macroLabel(rk, 2, label, sizeof(label)) == 5);
+	CHECK(std::string(label) == "Sweep");
+
+	// A CHAIN ADDED LATER IS NAMED, TYPED AND SIGNED AS THE RACK'S ARE.
+	const size_t added = rk->addChain();
+	REQUIRE(added != SIZE_MAX);
+	CHECK(rk->chainAt(added)->bridge()->macroName(2) == "Sweep");
+	CHECK(rk->chainAt(added)->bridge()->macroType(2) == device::MacroType::Momentary);
+	CHECK(rk->chainAt(added)->bridge()->macroBipolar(2));
+
+	// ONE UNDO STEP, and a redo.
+	REQUIRE(history.canUndo());
+	history.undo();
+	CHECK(rk->macroName(2) == "Macro 3");
+	(void)panel->updateContent();
+	CHECK(slot.caption() == "M3"); // the panel's short caption while there is no name
+	history.redo();
+	CHECK(rk->macroName(2) == "Sweep");
+	(void)panel->updateContent();
+	CHECK(slot.caption() == "Sweep");
+
+	// SAVE, THEN LOAD INTO A FRESH RACK: the name, the type and the polarity come back, and a new window shows them.
+	std::vector<uint8_t> body;
+	const device::ByteSink sink { &body, [](void* ctx, const uint8_t* data, size_t bytes) {
+		                             auto* out = static_cast<std::vector<uint8_t>*>(ctx);
+		                             out->insert(out->end(), data, data + bytes);
+	                             } };
+	REQUIRE(rk->saveState(sink));
+	SiteHost fresh;
+	const DeviceInstanceId freshId = fresh.bridge.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(freshId != kNoInstance);
+	auto* rk2 = rack::parallel::rackOf(fresh.bridge.containerSurfaceOf(freshId));
+	REQUIRE(rk2 != nullptr);
+	CHECK(rk2->macroName(2) == "Macro 3");
+	REQUIRE(rk2->loadState(body.data(), body.size()));
+	CHECK(rk2->macroName(2) == "Sweep");
+	CHECK(rk2->macroType(2) == device::MacroType::Momentary);
+	CHECK(rk2->macroBipolar(2));
+	CHECK_FALSE(rk2->macroRenamed(0));
+	auto view2 = ui::makeExpandedView(fresh.bridge, nullptr, registry, freshId, *fresh.bridge.descriptorOf(freshId));
+	auto* panel2 = dynamic_cast<ui::ParallelRackExpanded*>(view2.get());
+	REQUIRE(panel2 != nullptr);
+	panel2->setBounds(0, 0, 1200, 700);
+	(void)panel2->updateContent();
+	CHECK(panel2->macroSlotForTest(2).caption() == "Sweep");
+	CHECK(panel2->macroSlotForTest(2).type() == device::MacroType::Momentary);
+}

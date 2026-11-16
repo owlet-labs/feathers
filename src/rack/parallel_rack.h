@@ -586,6 +586,18 @@ public:
 	/// A stable id for the chain at `index` (what the body stores it under), or 0xFFFF.
 	[[nodiscard]] uint16_t chainIdAt(size_t index) const noexcept;
 
+	/// **THE RACK'S EIGHT MACROS' NAME, TYPE AND POLARITY** — the same three a Chain's macros carry, set once and fanned out to
+	/// every chain's own (a macro is one source in every chain), read back from the first chain. They are saved with the chains'
+	/// bodies, which carry them already, so no key of the rack's own is needed; a chain added later takes the first one's.
+	/// A rack with no chain holds none (the macros have nothing to drive): reads answer the defaults, writes do nothing.
+	[[nodiscard]] std::string macroName(size_t macro) const;
+	[[nodiscard]] bool macroRenamed(size_t macro) const;
+	void setMacroName(size_t macro, std::string_view name);
+	[[nodiscard]] bool macroBipolar(size_t macro) const;
+	void setMacroBipolar(size_t macro, bool bipolar);
+	[[nodiscard]] device::MacroType macroType(size_t macro) const;
+	void setMacroType(size_t macro, device::MacroType type);
+
 	/// ADD AN EMPTY CHAIN at the end — built, adopted and prepared here, handed to the audio thread at its next
 	/// drain. Returns its index, or `SIZE_MAX` before a catalogue has been adopted (nothing could go in it).
 	size_t addChain();

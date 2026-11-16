@@ -416,6 +416,66 @@ void Rack::markDirty() const {
 	}
 }
 
+std::string Rack::macroName(size_t macro) const {
+	const InnerChain* c = chainAt(0);
+	return c != nullptr && c->bridge() != nullptr ? c->bridge()->macroName(macro) : device::defaultMacroName(macro);
+}
+
+bool Rack::macroRenamed(size_t macro) const {
+	const InnerChain* c = chainAt(0);
+	return c != nullptr && c->bridge() != nullptr && c->bridge()->macroRenamed(macro);
+}
+
+void Rack::setMacroName(size_t macro, std::string_view name) {
+	bool moved = false;
+	for (auto& b : chains_) {
+		if (b->chain.bridge() != nullptr) {
+			const std::string before = b->chain.bridge()->macroName(macro);
+			b->chain.bridge()->setMacroName(macro, name);
+			moved = moved || before != b->chain.bridge()->macroName(macro);
+		}
+	}
+	if (moved) {
+		markDirty();
+	}
+}
+
+bool Rack::macroBipolar(size_t macro) const {
+	const InnerChain* c = chainAt(0);
+	return c != nullptr && c->bridge() != nullptr && c->bridge()->macroBipolar(macro);
+}
+
+void Rack::setMacroBipolar(size_t macro, bool bipolar) {
+	bool moved = false;
+	for (auto& b : chains_) {
+		if (b->chain.bridge() != nullptr) {
+			moved = moved || b->chain.bridge()->macroBipolar(macro) != bipolar;
+			b->chain.bridge()->setMacroBipolar(macro, bipolar);
+		}
+	}
+	if (moved) {
+		markDirty();
+	}
+}
+
+device::MacroType Rack::macroType(size_t macro) const {
+	const InnerChain* c = chainAt(0);
+	return c != nullptr && c->bridge() != nullptr ? c->bridge()->macroType(macro) : device::MacroType::Knob;
+}
+
+void Rack::setMacroType(size_t macro, device::MacroType type) {
+	bool moved = false;
+	for (auto& b : chains_) {
+		if (b->chain.bridge() != nullptr) {
+			moved = moved || b->chain.bridge()->macroType(macro) != type;
+			b->chain.bridge()->setMacroType(macro, type);
+		}
+	}
+	if (moved) {
+		markDirty();
+	}
+}
+
 size_t Rack::addChain() {
 	if (!adopted_) {
 		return SIZE_MAX;
@@ -423,6 +483,16 @@ size_t Rack::addChain() {
 	auto branch = makeBranch(nextChainId_++);
 	branch->slot = freeSlot(kNoChainSlot);
 	mirror(*branch); // a reused slot's params put back to a fresh chain's values
+	// **A NEW CHAIN IS A CHAIN OF THIS RACK**: its macros are named, typed and signed as the rack's are (the first chain's).
+	if (!chains_.empty() && chains_.front()->chain.bridge() != nullptr && branch->chain.bridge() != nullptr) {
+		const RackBridge& from = *chains_.front()->chain.bridge();
+		RackBridge& to = *branch->chain.bridge();
+		for (size_t n = 0; n < composite::kMacroCount; ++n) {
+			to.setMacroName(n, from.macroRenamed(n) ? from.macroName(n) : std::string_view {});
+			to.setMacroType(n, from.macroType(n));
+			to.setMacroBipolar(n, from.macroBipolar(n));
+		}
+	}
 	chains_.push_back(std::move(branch));
 	publish();
 	markDirty();
@@ -2552,6 +2622,22 @@ const device::ContainerOps kContainerOps {
 	    [](const void* storage, device::Destination inner, char* out, size_t capacity) {
 		    const InnerChain* c = rackAt(storage).holding(inner.device);
 		    return c != nullptr ? c->nameDestination(inner, out, capacity) : size_t { 0 };
+	    },
+	.macroLabel =
+	    [](const void* storage, size_t macro, char* out, size_t capacity) {
+		    if (out == nullptr || capacity == 0) {
+			    return size_t { 0 };
+		    }
+		    out[0] = '\0';
+		    const Rack& rack = rackAt(storage);
+		    if (!rack.macroRenamed(macro)) {
+			    return size_t { 0 };
+		    }
+		    const std::string name = rack.macroName(macro);
+		    const size_t n = std::min(name.size(), capacity - 1);
+		    std::memcpy(out, name.data(), n);
+		    out[n] = '\0';
+		    return n;
 	    },
 	.applyState = [](void* storage, const uint8_t* data, size_t bytes) { return rackAt(storage).applyState(data, bytes); },
 	.exportRow = [](void* storage, backplane::Source inner) { return rackAt(storage).exportRow(inner); },

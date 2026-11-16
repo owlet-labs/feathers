@@ -27,6 +27,7 @@
 #include "plugin/ui/drum_device_expanded.h"
 #include "plugin/ui/emitters_front.h"
 #include "plugin/ui/full_redraw.h"
+#include "plugin/ui/libra_door.h"
 #include "plugin/ui/escape_stack.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/plugin_window.h"
@@ -125,6 +126,7 @@ public:
 	const visage::ApplicationWindow* appForTest() const noexcept { return window_.app(); }
 	/// THE SETTINGS SCREEN (backlog LG), opened from the Libra mark at the head of the macro row.
 	ui::SettingsScreen* settingsForTest() noexcept { return settings_.get(); }
+	ui::LibraDoor* drumDoorForTest() noexcept { return drumDoor_.get(); }
 
 	/// SAY A LOAD'S REFUSALS, if there is a surface to say them on.
 	///
@@ -163,7 +165,9 @@ public:
 	[[nodiscard]] std::pair<uint32_t, uint32_t> rackViewSize() const;
 	/// THE DRUM WINDOW'S SIZE: its view's own (a column of fixed width, and the height its content needs).
 	static constexpr uint32_t kDrumWidth = static_cast<uint32_t>(ui::DrumDeviceExpanded::kWidth);
-	static constexpr uint32_t kDrumHeight = static_cast<uint32_t>(ui::DrumDeviceExpanded::kMinimumHeight);
+	/// THE STRIP ABOVE THE DRUM VIEW that holds the Libra mark (Settings), the Chain header's door.
+	static constexpr uint32_t kDrumHeaderHeight = 30;
+	static constexpr uint32_t kDrumHeight = static_cast<uint32_t>(ui::DrumDeviceExpanded::kMinimumHeight) + kDrumHeaderHeight;
 	uint32_t canvasExtent() const noexcept {
 		if (drum_ || rack_) {
 			return 0; // no canvas
@@ -239,6 +243,9 @@ private:
 	/// THE SETTINGS SCREEN, built with the editor and hidden until the door opens it. Hidden rather than
 	/// destroyed on close, because the close arrives from inside its own mouse handler.
 	std::unique_ptr<ui::SettingsScreen> settings_;
+	/// The Drum window's Libra mark; null in the Chain, whose editor holds its own door.
+	std::unique_ptr<ui::LibraDoor> drumDoor_;
+	void buildSettings(visage::ApplicationWindow& app);
 	/// Apply, persist and say a UI scale — the keys' road and the settings screen's, one place.
 	void setUiScale(double next);
 	void openSettings();

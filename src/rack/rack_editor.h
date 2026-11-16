@@ -134,29 +134,6 @@ class ColumnBackdrop;
 /// overflows. It sits in the pad under the lane, so it costs no vertical room either way. A press on the thumb drags it;
 /// a press on the track beside it jumps the thumb's centre there and keeps dragging. The wheel, the trackpad and the
 /// edge scroll under a held card (`RackEditor::tickDrag`) all move the same scroll, and the thumb follows them.
-/// **UNDO AND REDO, VISIBLE** (backlog JB: a visible undo/redo in the rack editor): two glyph buttons beside the
-/// settings door, over the editor's history (the rack plugin's one; a nested editor's forwards to the outermost). Dim
-/// while there is nothing to walk; they repaint when the history moves (`EditHistory::watch`).
-class UndoRedoButtons final : public visage::Frame, public ui::TooltipSource {
-public:
-	static constexpr float kButton = 22.0f;
-	static constexpr float kGap = 4.0f;
-	static constexpr float kWidth = 2.0f * kButton + kGap;
-	explicit UndoRedoButtons(ui::EditHistory& history);
-	void draw(visage::Canvas& canvas) override;
-	/// The two halves, in this frame's coordinates.
-	[[nodiscard]] visage::Bounds undoBounds() const { return { 0.0f, 0.0f, kButton, height() }; }
-	[[nodiscard]] visage::Bounds redoBounds() const { return { kButton + kGap, 0.0f, kButton, height() }; }
-	/// WHICH BUTTON THE POINTER IS ON, in words — the icons are two hooked arrows and say nothing on their own.
-	const char* tooltipAt(visage::Point local) const override;
-	/// Writes no device control (it walks the shared history), so it offers none to the window-superset guard.
-	void offeredControls(std::vector<Offered>&) const override {}
-
-private:
-	ui::EditHistory& history_;
-	ui::Watch watch_;
-};
-
 class LaneScrollBar final : public visage::Frame {
 public:
 	static constexpr float kHeight = 8.0f;
@@ -343,8 +320,10 @@ public:
 	ui::TooltipLayer& tooltipLayer() override { return tips_; }
 	/// The lane's horizontal scroll bar (backlog NE).
 	[[nodiscard]] LaneScrollBar& laneScrollBarForTest() const noexcept { return *laneScrollBar_; }
-	/// The visible undo/redo, or null while this editor has no door row.
-	[[nodiscard]] UndoRedoButtons* undoRedoForTest() const noexcept { return undoRedo_.get(); }
+	/// **THE UNDO CHORD'S ACT, THE ONE ROAD UNDO HAS HERE** (the header carries no buttons): walk the history if it can be walked and
+	/// nothing is being typed under this editor or under `root` (the window's frame, when the key arrived there). True only when it
+	/// moved, so a key that did nothing goes back to the host. The window hands the chord here when nothing inside the editor holds the keyboard.
+	bool walkHistoryFromKey(bool redo, visage::Frame* root = nullptr);
 	static constexpr float kEdgeScrollBand = 28.0f;
 	static constexpr float kEdgeScrollStep = 6.0f;
 	DeviceInstanceId focusedDeviceForTest() const noexcept { return focusedDevice_; }
@@ -796,9 +775,7 @@ private:
 	/// the column, and a card passing it is hidden here rather than drawn through the macros. The column items are raised
 	/// above the cards whenever one was added (`columnDirty_`), never on every beat (a re-added frame drops its drag).
 	std::unique_ptr<ColumnBackdrop> columnBackdrop_;
-	/// THE VISIBLE UNDO/REDO (backlog JB), on the settings door's row while there is one (the rack plugin's editor).
-	std::unique_ptr<UndoRedoButtons> undoRedo_;
-	/// THE EDITOR'S OWN TOOLTIP LAYER, for what sits on the editor rather than on a card (the undo and redo buttons). Last
+	/// THE EDITOR'S OWN TOOLTIP LAYER, for what sits on the editor rather than on a card. Last
 	/// among the raised layers (`raiseTopLayers`), advanced on the tick (`tickTooltips`).
 	ui::TooltipLayer tips_;
 	/// THE LANE'S HORIZONTAL SCROLL BAR (backlog NE), in the pad under the lane, raised with the column over the cards.

@@ -54,7 +54,7 @@ namespace feathers::ui {
 
 class ChainControl final : public device::Modulatable, public RoutedControl {
 public:
-	enum class Kind : uint8_t { Level, Mute, Solo };
+	enum class Kind : uint8_t { Level, Mute, Solo, Key };
 	ChainControl(backplane::DeviceHost& host, DeviceInstanceId rack, uint16_t chain, Kind kind) noexcept
 	    : host_(host), rack_(rack), chain_(chain), kind_(kind) {}
 
@@ -224,15 +224,19 @@ public:
 		level_.setMaterialise(materialise);
 		muted_.setMaterialise(materialise);
 		soloed_.setMaterialise(materialise);
+		keyed_.setMaterialise(materialise);
 	}
 	[[nodiscard]] ChainControl& muteControlForTest() noexcept { return muted_; }
 	[[nodiscard]] ChainControl& levelControlForTest() noexcept { return level_; }
 	[[nodiscard]] ChainControl& soloControlForTest() noexcept { return soloed_; }
+	[[nodiscard]] ChainControl& keyControlForTest() noexcept { return keyed_; }
+	[[nodiscard]] ValueBox& keyBox() noexcept { return *keyBox_; }
 	/// Where its three controls record their undo steps, and the panel state their routes are armed from.
 	void setModulation(ModState* mod, EditHistory* history) {
 		level_.setModulation(mod, history);
 		muted_.setModulation(mod, history);
 		soloed_.setModulation(mod, history);
+		keyed_.setModulation(mod, history);
 		// AND THE WIDGETS RE-WATCH NOW (backlog PM): a pill or chip still on the OLD state's watcher list would unwatch
 		// into it later, after its owner may have let it go — they otherwise re-subscribe only at their next paint.
 		pill_->modulationChanged();
@@ -271,6 +275,8 @@ public:
 
 	static constexpr float kHeight = 20.0f;
 	static constexpr float kChipWidth = 22.0f;
+	static constexpr float kKeyWidth = 30.0f;
+	static constexpr float kPillMinWidth = 90.0f; ///< the least the level pill keeps, caption and readout, beside the key box ///< the key box: "Any" or "C#4"
 	static constexpr float kGap = 4.0f;
 	static constexpr float kSummaryWidth = 0.42f; ///< of the strip, when a summary is drawn
 	static constexpr float kMeterWidth = 1.0f; ///< MK's one-pixel line, run vertically
@@ -281,12 +287,15 @@ public:
 	static constexpr float kLabelHeight = 14.0f;
 	static constexpr float kColumnRow = 20.0f;
 	/// The shortest the column may be and still hold its rows and a meter worth reading.
-	static constexpr float kColumnMinimumHeight = kLabelHeight + 2.0f * kColumnRow + kGap + 60.0f + kGap + kColumnRow;
+	static constexpr float kColumnMinimumHeight = kLabelHeight + 3.0f * kColumnRow + kGap + 60.0f + kGap + kColumnRow;
 
 private:
 	ChainControl level_;
 	ChainControl muted_;
 	ChainControl soloed_;
+	/// **THE NOTE THIS CHAIN ANSWERS** (`Rack::chainKey`): value 0 is Any, 1..128 the keys 0..127. Not a slot param, so no route.
+	ChainControl keyed_;
+	std::unique_ptr<ValueBox> keyBox_;
 	std::unique_ptr<FaderPill> pill_;
 	std::unique_ptr<ChainFader> fader_;
 	std::unique_ptr<SwitchChip> mute_;

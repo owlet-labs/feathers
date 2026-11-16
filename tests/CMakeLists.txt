@@ -1658,6 +1658,12 @@ target_link_libraries(test_rack_notes PRIVATE feathers-gui-bridge feathers-synth
 target_include_directories(test_rack_notes PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME rack-notes COMMAND test_rack_notes)
 
+# A CHAIN'S KEY: each chain of a parallel Rack may answer one note, so only that key's notes enter its devices.
+add_executable(test_rack_chain_key test_rack_chain_key.cpp)
+target_link_libraries(test_rack_chain_key PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_rack_chain_key PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-chain-key COMMAND test_rack_chain_key)
+
 # BACKLOG LW — events and modulation that follow the audio past a latent device:
 # each node's arrival latency, and what a late device is handed, by value.
 add_executable(test_latency_domains test_latency_domains.cpp)

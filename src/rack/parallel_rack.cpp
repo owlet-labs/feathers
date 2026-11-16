@@ -145,6 +145,11 @@ struct Rack::Branch {
 	std::atomic<float> level { static_cast<float>(composite::kFaderUnity) };
 	std::atomic<bool> mute { false };
 	std::atomic<bool> solo { false };
+	/// **THE NOTE IT ANSWERS** (`kAnyKey` or 0..127): written on the message thread, read by the audio thread once a call.
+	std::atomic<int> key { kAnyKey };
+	/// **WHICH KEYS IT HAS BEEN HANDED AN ON FOR AND NOT YET AN OFF** (a bit per key), AUDIO THREAD: a key change under a held note
+	/// must not hang it, so that note's off, choke and expressions still enter whatever the key now says.
+	std::array<uint64_t, 2> held {};
 	/// **ITS SLOT** (backlog NO): the block of slot params its level, mute and solo are, for its life — set on the message
 	/// thread before the lineup that holds it is published, so the audio thread reads it plainly.
 	uint8_t slot = kNoChainSlot;
@@ -452,6 +457,7 @@ Rack::ChainSnapshot Rack::snapshotChain(size_t index) const {
 	out.solo = b.solo.load(std::memory_order_relaxed);
 	out.open = b.open;
 	out.slot = b.slot;
+	out.key = b.key.load(std::memory_order_relaxed);
 	(void)b.chain.saveState(vectorSink(&out.body));
 	return out;
 }
@@ -469,6 +475,7 @@ size_t Rack::insertChain(size_t index, const ChainSnapshot& snap) {
 	branch->mute.store(snap.mute, std::memory_order_relaxed);
 	branch->solo.store(snap.solo, std::memory_order_relaxed);
 	branch->open = snap.open;
+	branch->key.store(snap.key, std::memory_order_relaxed);
 	branch->slot = freeSlot(snap.slot);
 	mirror(*branch);
 	const size_t at = std::min(index, chains_.size());
@@ -506,6 +513,18 @@ void Rack::setMuted(size_t index, bool muted) noexcept {
 	if (index < chains_.size() && chains_[index]->mute.exchange(muted, std::memory_order_relaxed) != muted) {
 		++revision_;
 		mirror(*chains_[index]);
+		markDirty();
+	}
+}
+
+int Rack::chainKey(size_t index) const noexcept {
+	return index < chains_.size() ? chains_[index]->key.load(std::memory_order_relaxed) : kAnyKey;
+}
+
+void Rack::setChainKey(size_t index, int key) noexcept {
+	const int wanted = key < 0 || key > 127 ? kAnyKey : key;
+	if (index < chains_.size() && chains_[index]->key.exchange(wanted, std::memory_order_relaxed) != wanted) {
+		++revision_;
 		markDirty();
 	}
 }
@@ -555,6 +574,8 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	noteRecords_.assign(kMaxNoteRecords, NoteRecord {});
 	staged_.assign(kMaxStagedNotes, StagedNote {});
 	chainNotes_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
+	keyedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
+	skippedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	owedOffs_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	recordCount_ = 0;
 	stagedCount_ = 0;
@@ -720,18 +741,27 @@ bool Rack::saveState(const device::ByteSink& sink) const {
 	put(sink, static_cast<uint32_t>(chains_.size()));
 	for (const auto& branch : chains_) {
 		put(sink, branch->id);
-		const struct {
+		struct Field {
 			const char* key;
 			float value;
-		} fields[] = {
-			{ kLevelKey, branch->level.load(std::memory_order_relaxed) },
-			{ kMuteKey, branch->mute.load(std::memory_order_relaxed) ? 1.0f : 0.0f },
-			{ kSoloKey, branch->solo.load(std::memory_order_relaxed) ? 1.0f : 0.0f },
-			{ kOpenKey, branch->open ? 1.0f : 0.0f },
-			{ kSlotKey, branch->slot < kChainSlots ? static_cast<float>(branch->slot) : -1.0f },
 		};
-		put(sink, static_cast<uint8_t>(std::size(fields)));
-		for (const auto& f : fields) {
+		std::array<Field, 6> fields {
+			Field { kLevelKey, branch->level.load(std::memory_order_relaxed) },
+			Field { kMuteKey, branch->mute.load(std::memory_order_relaxed) ? 1.0f : 0.0f },
+			Field { kSoloKey, branch->solo.load(std::memory_order_relaxed) ? 1.0f : 0.0f },
+			Field { kOpenKey, branch->open ? 1.0f : 0.0f },
+			Field { kSlotKey, branch->slot < kChainSlots ? static_cast<float>(branch->slot) : -1.0f },
+			Field { kKeyKey, 0.0f },
+		};
+		// THE KEY IS WRITTEN ONLY WHEN SET: a chain on Any saves exactly the five fields it always did.
+		const int chainKey = branch->key.load(std::memory_order_relaxed);
+		size_t written = fields.size() - 1;
+		if (chainKey != kAnyKey) {
+			fields[written++].value = static_cast<float>(chainKey);
+		}
+		put(sink, static_cast<uint8_t>(written));
+		for (size_t fi = 0; fi < written; ++fi) {
+			const Field& f = fields[fi];
 			const auto len = static_cast<uint8_t>(std::strlen(f.key));
 			put(sink, len);
 			sink(reinterpret_cast<const uint8_t*>(f.key), len);
@@ -815,6 +845,7 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 		bool solo = false;
 		bool open = false;
 		uint8_t slot = kNoChainSlot;
+		int chainKey = kAnyKey;
 		for (uint8_t f = 0; f < fields; ++f) {
 			uint8_t len = 0;
 			if (!in.get(len) || in.size - in.at < len) {
@@ -838,6 +869,9 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 			else if (key == kSoloKey) {
 				solo = value >= 0.5f;
 			}
+			else if (key == kKeyKey) {
+				chainKey = value >= 0.0f && value < 128.0f ? static_cast<int>(value) : kAnyKey;
+			}
 			else if (key == kSlotKey) {
 				slot = value >= 0.0f && value < static_cast<float>(kChainSlots) ? static_cast<uint8_t>(value) : kNoChainSlot;
 			}
@@ -860,6 +894,7 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 		branch->mute.store(mute, std::memory_order_relaxed);
 		branch->solo.store(solo, std::memory_order_relaxed);
 		branch->open = open;
+		branch->key.store(chainKey, std::memory_order_relaxed);
 		branch->slot = slot; // taken (or re-chosen) below, once the old lineup's slots are accounted for
 		highest = std::max(highest, id);
 		next.push_back(std::move(branch));
@@ -1392,6 +1427,71 @@ void Rack::stageNote(const device::NoteEvent& e, uint16_t source, float factor, 
 	}
 }
 
+namespace {
+
+[[nodiscard]] bool heldBit(const std::array<uint64_t, 2>& held, int key) noexcept {
+	return key >= 0 && key < 128 && ((held[static_cast<size_t>(key) >> 6] >> (key & 63)) & 1u) != 0;
+}
+void setHeld(std::array<uint64_t, 2>& held, int key, bool on) noexcept {
+	if (key < 0 || key > 127) {
+		return;
+	}
+	const uint64_t bit = uint64_t { 1 } << (key & 63);
+	uint64_t& word = held[static_cast<size_t>(key) >> 6];
+	word = on ? (word | bit) : (word & ~bit);
+}
+
+/// WHICH OF `in` A CHAIN ANSWERING `key` IS HANDED — written to `out` (room for `count`), the count returned. The ons of its key
+/// enter and are remembered; the offs, chokes and note expressions of its key enter, and so do those of a note it was handed the
+/// on of under a key it no longer answers (no hung note); a wildcard off or choke ends whatever it holds. `kAnyKey` hands over all. What
+/// it does not hand over is written to `skipped`: the rack passes those on as the chain would, untouched, so no note is consumed.
+size_t keyFilter(std::array<uint64_t, 2>& held, int key, const device::NoteEvent* in, size_t count, device::NoteEvent* out,
+                 device::NoteEvent* skipped, size_t* skippedCount) noexcept {
+	size_t n = 0;
+	size_t s = 0;
+	const bool any = key == kAnyKey;
+	for (size_t i = 0; i < count; ++i) {
+		const device::NoteEvent& e = in[i];
+		const bool mine = e.key == key;
+		bool pass = false;
+		switch (e.kind) {
+		case device::NoteEvent::Kind::On:
+			if (e.velocity > 0.0) {
+				pass = any || mine;
+				if (pass) {
+					setHeld(held, e.key, true);
+				}
+				break;
+			}
+			[[fallthrough]]; // a zero-velocity on is an off
+		case device::NoteEvent::Kind::Off:
+		case device::NoteEvent::Kind::Choke:
+			if (e.key < 0) {
+				pass = any || held[0] != 0 || held[1] != 0;
+				held = {};
+			}
+			else {
+				pass = any || mine || heldBit(held, e.key);
+				setHeld(held, e.key, false);
+			}
+			break;
+		case device::NoteEvent::Kind::Expression:
+			pass = any || e.key < 0 || mine || heldBit(held, e.key);
+			break;
+		}
+		if (pass) {
+			out[n++] = e;
+		}
+		else {
+			skipped[s++] = e;
+		}
+	}
+	*skippedCount = s;
+	return n;
+}
+
+} // namespace
+
 size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::NoteEvent* out, size_t capacity) noexcept {
 	const Lineup* live = live_.load(std::memory_order_acquire);
 	bool anyNotes = false;
@@ -1418,10 +1518,26 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 		}
 		for (size_t k = 0; k < live->branches.size(); ++k) {
 			Branch* b = live->branches[k];
-			const size_t made = b->chain.engine().processNotesNow(in, count, chainNotes_.data(), chainNotes_.size());
+			// THE KEY'S FILTER: a chain on Any is handed `in` itself (what it always was); a keyed one, what its key lets in.
+			const device::NoteEvent* chainIn = in;
+			size_t chainCount = count;
+			size_t skippedCount = 0;
+			if (count <= keyedIn_.size() && count <= skippedIn_.size()) {
+				const int chainKey = b->key.load(std::memory_order_relaxed);
+				chainCount = keyFilter(b->held, chainKey, in, count, keyedIn_.data(), skippedIn_.data(), &skippedCount);
+				if (chainKey != kAnyKey) {
+					chainIn = keyedIn_.data();
+				}
+			}
+			const size_t made = b->chain.engine().processNotesNow(chainIn, chainCount, chainNotes_.data(), chainNotes_.size());
 			const float f = noteFactor(live, k, anySolo);
 			for (size_t i = 0; i < made; ++i) {
 				stageNote(chainNotes_[i], b->id, f, false);
+			}
+			// WHAT ITS KEY KEPT FROM ITS DEVICES STILL PASSES, as a transparent chain passes it: the rack's note output is the same
+			// with keys as without.
+			for (size_t i = 0; i < skippedCount; ++i) {
+				stageNote(skippedIn_[i], b->id, f, false);
 			}
 		}
 	}

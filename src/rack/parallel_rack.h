@@ -546,6 +546,11 @@ inline constexpr const char* kSoloKey = "solo";
 inline constexpr const char* kOpenKey = "open";
 /// A CHAIN'S SLOT (backlog NO): which block of slot params is its, −1 for none.
 inline constexpr const char* kSlotKey = "slot";
+/// **A CHAIN'S KEY** (the kit rack's pad is a chain keyed to a note): stored by this key beside level, mute and solo, written only
+/// when set, so a body with every chain on Any is byte for byte what it was.
+inline constexpr const char* kKeyKey = "key";
+/// A chain that takes every note, as it always did.
+inline constexpr int kAnyKey = -1;
 /// **WHAT A POLY SWITCH SAYS INSIDE A RACK** (backlog NO, option A): no host voice reaches a rack's chains, so the
 /// switch changes nothing and is greyed with this line (`device::Modulatable::unavailable`).
 inline constexpr const char* kPolyInsideRack =
@@ -596,6 +601,7 @@ public:
 		bool open = false;
 		/// The slot it held — taken again on a put-back when still free, else the lowest free one.
 		uint8_t slot = kNoChainSlot;
+		int key = kAnyKey;
 	};
 	[[nodiscard]] ChainSnapshot snapshotChain(size_t index) const;
 	/// PUT A CHAIN BACK at `index`, under its own id — refused (`SIZE_MAX`) for an id the rack holds, a body the
@@ -609,6 +615,10 @@ public:
 	void setLevel(size_t index, float position) noexcept;
 	void setMuted(size_t index, bool muted) noexcept;
 	void setSoloed(size_t index, bool soloed) noexcept;
+	/// **THE NOTE A CHAIN ANSWERS: `kAnyKey` (every note, today's behaviour) or 0..127**, so only that key's notes (on, off, choke and
+	/// note expressions) enter the chain's devices. The rack's own note output is unchanged. A note already held keeps its off.
+	[[nodiscard]] int chainKey(size_t index) const noexcept;
+	void setChainKey(size_t index, int key) noexcept;
 	/// **THE CHAIN'S SLOT** (backlog NO) — which block of `kAllParamDescs` its level, mute and solo are, for its life; or
 	/// `kNoChainSlot` past the last slot (`kChainSlots`).
 	[[nodiscard]] uint8_t slotOf(size_t index) const noexcept;
@@ -872,6 +882,10 @@ private:
 	std::vector<StagedNote> staged_;
 	size_t stagedCount_ = 0;
 	std::vector<device::NoteEvent> chainNotes_;
+	/// What a keyed chain is handed: the notes of `processNotes` that its key lets in. Sized at prepare.
+	std::vector<device::NoteEvent> keyedIn_;
+	/// And what its key held back, which the rack passes on itself.
+	std::vector<device::NoteEvent> skippedIn_;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call
 	size_t owedCount_ = 0;
 	bool releaseAll_ = false;

@@ -58,6 +58,8 @@ constexpr P kRustGrid[] = { P::RustBias, P::RustRectify, P::Freq, P::Width, P::S
 constexpr P kCombGrid[] = { P::Cutoff, P::Heat, P::Follow, P::Mix };
 /// THE SHAKE'S EXTRAS, a row of their own under the pair: Dust's and Rust's.
 constexpr P kShakeRow[] = { P::Step, P::Detune, P::ModFold };
+/// Etch has no shake: the shared section's pitch and width, the loop, Follow and Mix (its own slots are drawn by a later layout).
+constexpr P kEtchGrid[] = { P::Freq, P::Width, P::Resonance, P::Follow, P::Mix };
 
 } // namespace
 
@@ -200,11 +202,13 @@ void EroderExpanded::layOut() {
 			items.push_back({ knob(p), 1, true, knobH });
 		}
 	};
+	const bool etch = mode == ero::Mode::Etch;
 	add(mode == ero::Mode::Dust ? std::span<const P>(kDustGrid)
-	                            : comb ? std::span<const P>(kCombGrid) : std::span<const P>(kRustGrid));
+	                            : comb ? std::span<const P>(kCombGrid)
+	                                   : etch ? std::span<const P>(kEtchGrid) : std::span<const P>(kRustGrid));
 	items.push_back({ drivePair_.get(), 2, true, PairCell::heightFor(knobH) });
 	items.push_back({ knob(P::HpWet), 1, true, PairCell::heightFor(knobH) });
-	if (!comb) {
+	if (!comb && !etch) {
 		add(kShakeRow);
 	}
 	const float under = flowCells(items, static_cast<int>(kPerRow), x, y, cell, kGap) + kGap;

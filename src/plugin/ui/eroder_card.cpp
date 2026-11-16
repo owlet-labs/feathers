@@ -223,8 +223,9 @@ void EroderCard::layOut() {
 	source_->setBounds(left, boxY, boxW, ValueBox::kCompactHeight);
 	grit_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
 	track_->setBounds(left + width - chipW, y, chipW, SwitchChip::kHeight);
-	source_->setVisible(open && !comb);
-	grit_->setVisible(open && !comb);
+	// ETCH HAS NO SHAKE: Source and Grit are not drawn (a control only the other engines could enable is hidden).
+	source_->setVisible(open && !comb && mode != ero::Mode::Etch);
+	grit_->setVisible(open && !comb && mode != ero::Mode::Etch);
 	track_->setVisible(open && !comb);
 	gamma_->setBounds(left, boxY, width * 0.5f, ValueBox::kCompactHeight);
 	gamma_->setVisible(open && comb);

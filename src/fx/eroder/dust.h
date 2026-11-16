@@ -72,6 +72,9 @@ public:
 	[[nodiscard]] uint64_t holdsForTest() const noexcept { return holds_; }
 	[[nodiscard]] float smoothedAmountFramesForTest() const noexcept { return amountFrames_; }
 	[[nodiscard]] float followGainForTest() const noexcept { return followGain_; }
+	/// ETCH'S SLOTS AS THE LAST FRAME RAN THEM: the stage's settings (its mix is the control's times Follow's gain) and
+	/// whether it ran.
+	[[nodiscard]] const DriveStage& slotForTest(int slot) const noexcept { return slot == 0 ? slotA_ : slotB_; }
 	[[nodiscard]] float lastRingForTest(int channel) const noexcept { return lastRing_[channel & 1]; }
 	/// THE LEFT SIDE'S LAST FRAME AT THREE POINTS: what the head read, what the shaper made of it, and what was fed
 	/// back round the line.
@@ -86,6 +89,8 @@ public:
 private:
 	void tick(const Settings& settings) noexcept;
 	void renderChunk(float* left, float* right, int frames) noexcept;
+	/// ETCH'S TWO SLOTS over one frame, in place.
+	void runSlots(float& left, float& right) noexcept;
 	[[nodiscard]] float nextNoise() noexcept;
 
 	fx::sklitter::Ring line_ {};
@@ -126,6 +131,9 @@ private:
 	SharedSection shared_ {};
 	/// THE SHAPER (`drive_stage.h`).
 	DriveStage shaper_ {};
+	/// ETCH'S SLOTS (`drive_stage.h`).
+	DriveStage slotA_ {};
+	DriveStage slotB_ {};
 	/// HP WET, and the same filter on the dry for Sub Thru (`drive_stage.h`).
 	WetHighpass highpass_ {};
 	/// THE SHAKE'S EXTRAS: the right sine's own phase while it is detuned, and Step's hold.

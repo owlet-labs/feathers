@@ -42509,7 +42509,8 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 		continuous += desc.stepped ? 0u : 1u;
 	}
 	// AND THE SHARED SECTION'S FOUR CONTINUOUS CONTROLS (Emphasis, Smear, Loop, Interval), which no face draws yet.
-	REQUIRE(knobs.size() == continuous - 4 - 4);
+	// AND ETCH'S SLOT AMOUNTS, SHAPES AND MIXES (six), which no face draws yet.
+	REQUIRE(knobs.size() == continuous - 4 - 4 - 6);
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}

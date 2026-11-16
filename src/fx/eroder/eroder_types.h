@@ -321,14 +321,20 @@ inline constexpr double kLoopLineSeconds = 0.85;
 /// label, so the order here is free to change.
 /// **AND A THIRD, `Rust`**: Dust's shaker (the band of noise, the sine, the hold) MULTIPLYING the signal instead of
 /// moving a read head — a ring modulator whose carrier is that band. It shares Dust's modulator controls.
-enum class Mode : int { Dust, Comb, Rust, kCount };
-inline constexpr const char* kModeNames[] = { "Dust", "Comb", "Rust" };
+/// **AND A FOURTH, `Etch`**: no shake and no delay at all, two `DriveStage` slots of their own (Type, Amount, Shape and
+/// Mix each) in series or in parallel, between the shared section's Smear and the Drive. At rest it is a true bypass.
+enum class Mode : int { Dust, Comb, Rust, Etch, kCount };
+inline constexpr const char* kModeNames[] = { "Dust", "Comb", "Rust", "Etch" };
 inline constexpr uint32_t kModeBit(Mode m) {
 	return 1u << static_cast<uint32_t>(m);
 }
 inline constexpr uint32_t kDustOnly = kModeBit(Mode::Dust);
 inline constexpr uint32_t kCombOnly = kModeBit(Mode::Comb);
 inline constexpr uint32_t kRustOnly = kModeBit(Mode::Rust);
+inline constexpr uint32_t kEtchOnly = kModeBit(Mode::Etch);
+/// What the shared section needs from the shaker's controls: Freq, Width, Resonance and Track are live in Etch too (the
+/// emphasis's centre and width, the loops' pitch).
+inline constexpr uint32_t kShakersAndEtch = kDustOnly | kRustOnly | kEtchOnly;
 /// The modulator's controls: the two engines a band of noise and a sine shake or multiply.
 inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 
@@ -408,14 +414,27 @@ enum class Param : int {
 	FbTap,        ///< where the inner feedback is taken: Clean (before the Drive) or Driven (after it)
 	Loop,         ///< the outer loop's amount: the Driven tap through a delay of one period of Freq, shifted by Interval
 	LoopInterval, ///< semitones; the outer delay is the period of Freq times 2^(-interval / 12)
+	// ETCH'S TWO SLOTS (`drive_stage.h`), each a Drive stage of its own.
+	SlotAAmount, ///< Etch: slot A's Type's amount, as Drive's
+	SlotAType,
+	SlotAShape,
+	SlotAMix,
+	SlotBAmount,
+	SlotBType,
+	SlotBShape,
+	SlotBMix,
+	SlotRoute, ///< Etch: B after A (Series) or both on the same input, their changes added (Parallel)
 
 	kCount,
 };
 /// How many controls the shared section added after the first release of the face (they are not on it yet).
 inline constexpr size_t kSharedParamCount = 8;
+/// And the nine Etch added after them (its slots and their route), likewise not on the face yet.
+inline constexpr size_t kEtchParamCount = 9;
 
 inline constexpr const char* kEmphShapeNames[] = { "Tilt", "Bell" };
 inline constexpr const char* kFbTapNames[] = { "Clean", "Driven" };
+inline constexpr const char* kSlotRouteNames[] = { "Series", "Parallel" };
 
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
 
@@ -624,7 +643,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kShakers},
+     .gateMask = kShakersAndEtch},
     {.key = "eroder_width", .name = "Eroder Width",
      .min = 0.0,
      .max = 1.0,
@@ -640,7 +659,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kShakers},
+     .gateMask = kShakersAndEtch},
     {.key = "eroder_source", .name = "Eroder Source",
      .min = 0.0,
      .max = 1.0,
@@ -704,7 +723,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kShakers,
+     .gateMask = kShakersAndEtch,
      .centred = true,
      // "RESONANCE" is as long as "CHARACTER", which touched its cell's border at three across.
      .shortName = "Reso"},
@@ -739,7 +758,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kShakers,
+     .gateMask = kShakersAndEtch,
      .centred = false,
      .shortName = nullptr,
      .stacked = true},
@@ -1112,12 +1131,174 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .centred = true,
      .shortName = "Interval",
      .suffix = "st"},
+    {.key = "eroder_slot_a_amount", .name = "Eroder Slot A Amount",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How hard slot A's Type works on the signal, as Drive does: the gain into a curve, how long a sample is held, how slow a slew is. At the bottom the slot is not run",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "A"},
+    {.key = "eroder_slot_a_type", .name = "Eroder Slot A Type",
+     .min = 0.0,
+     .max = static_cast<double>(static_cast<int>(DriveMode::kCount) - 1),
+     .def = static_cast<double>(DriveMode::Slew),
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kDriveModeNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "What slot A pushes the signal into: any of the Drive's Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Type"},
+    {.key = "eroder_slot_a_shape", .name = "Eroder Slot A Shape",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "The Type's own colour in slot A, as Drive's Shape is",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Shape"},
+    {.key = "eroder_slot_a_mix", .name = "Eroder Slot A Mix",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How much of slot A's result is heard against what went into it. At the bottom the slot is not run",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Mix"},
+    {.key = "eroder_slot_b_amount", .name = "Eroder Slot B Amount",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How hard slot B's Type works on the signal, as Drive does: the gain into a curve, how long a sample is held, how slow a slew is. At the bottom the slot is not run",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "B"},
+    {.key = "eroder_slot_b_type", .name = "Eroder Slot B Type",
+     .min = 0.0,
+     .max = static_cast<double>(static_cast<int>(DriveMode::kCount) - 1),
+     .def = static_cast<double>(DriveMode::Decimate),
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kDriveModeNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "What slot B pushes the signal into: any of the Drive's Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Type"},
+    {.key = "eroder_slot_b_shape", .name = "Eroder Slot B Shape",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "The Type's own colour in slot B, as Drive's Shape is",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Shape"},
+    {.key = "eroder_slot_b_mix", .name = "Eroder Slot B Mix",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How much of slot B's result is heard against what went into it. At the bottom the slot is not run",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Mix"},
+    {.key = "eroder_slot_route", .name = "Eroder Slot Route",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kSlotRouteNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Series puts slot B after slot A. Parallel gives both the same input and adds what each changed",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Route"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
 //--------------------------------------------------------------------------------------------------//
 // WHAT A PATCH STORES.                                                                               //
 //--------------------------------------------------------------------------------------------------//
+
+/// ONE OF ETCH'S TWO SLOTS: a Drive stage with its own four controls.
+struct SlotSettings {
+	float amount = 0.0f;
+	DriveMode type = DriveMode::Slew;
+	float shape = 0.0f;
+	float mix = 1.0f;
+	friend bool operator==(const SlotSettings&, const SlotSettings&) = default;
+};
 
 struct Settings {
 	bool enabled = true;
@@ -1158,6 +1339,10 @@ struct Settings {
 	bool tapDriven = false;
 	float loop = 0.0f;
 	float loopInterval = 0.0f; ///< semitones
+	// ETCH'S SLOTS.
+	SlotSettings slotA { 0.0f, DriveMode::Slew, 0.0f, 1.0f };
+	SlotSettings slotB { 0.0f, DriveMode::Decimate, 0.0f, 1.0f };
+	bool slotParallel = false;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -1260,11 +1445,34 @@ struct LoopDerived {
 	/// `loop * kLoopMaxGain * (1 - |inner loop's gain as set|) / driveDivisor / emphDivisor`; exactly 0 at Loop 0. The inner loop's
 	/// gain as set is what it comes to through the Drive and the emphasis's peak, with both divisions put back.
 	double loopGain = 0.0;
-	/// One period of Freq, and the outer delay: that times `2^(-interval / 12)`. Seconds, before the smear's delay comes off.
+	/// ETCH: the slots' small-signal gain (Series the product, Parallel one plus each one's excess), never under one, at the
+	/// controls' mixes. Both loops are divided by it, in addition to the Drive's and the emphasis's.
+	double slotDivisor = 1.0;
+	/// The steepest slope of each slot's curve as last scanned, 0 when not scanned: kept so an unmoved curve is not rescanned.
+	double slotSlopeA = 0.0;
+	double slotSlopeB = 0.0;
+	/// One period of Freq, and the outer delay: that times `2^(-interval / 12)`. Seconds, as set: the Smear's own delay adds inside the loop.
 	double periodSeconds = 0.0;
 	double outerSeconds = 0.0;
 };
 
+/// **WHAT A `DriveStage` RUNS ON** (`drive_stage.h`): both engines derive one from the same three controls.
+struct DriveSettings {
+	bool driven = false; ///< false at the bottom of Drive: the stage is not run
+	DriveMode mode = DriveMode::Soft;
+	float shape = 0.0f;
+	float gain = 1.0f; ///< into the curve
+	float norm = 1.0f; ///< the make-up out of it
+	double crushHoldFrames = 1.0;
+	float crushStep = 0.0f;
+	/// Slew and Lopside: the rate frequency, the curve and the balance the stage's `Slew` is set to.
+	float slewHz = 0.0f;
+	float slewCurve = 0.0f;
+	float slewBalance = 0.0f;
+	/// THE STAGE'S OWN MIX, 0..1: the output is `dry + mix * (processed - dry)`. At 0 the stage is not run and the
+	/// signal is the bits it was; at 1 nothing is blended (the stage is exactly what it is without a mix).
+	float mix = 1.0f;
+};
 /// **EVERYTHING DUST'S SAMPLE LOOP RUNS ON.** A pure function of the settings, the note and the rate.
 struct DustDerived {
 	double amountSeconds = 0.0; ///< the head's travel either side of its centre; 0 at the bottom of the range
@@ -1320,27 +1528,16 @@ struct DustDerived {
 	float grit = 0.0f;
 	float stereo = 1.0f;
 	float stereoNorm = 1.0f;
+	/// ETCH: no shake and no line; two slots, each its own stage's settings with the mix as the control gave it (Follow
+	/// scales it per sample), and whether they run side by side.
+	bool etch = false;
+	DriveSettings slotA {};
+	DriveSettings slotB {};
+	bool slotParallel = false;
 	/// THE SHARED SECTION'S LOOPS, for this engine's Freq.
 	LoopDerived loops {};
 };
 
-/// **WHAT A `DriveStage` RUNS ON** (`drive_stage.h`): both engines derive one from the same three controls.
-struct DriveSettings {
-	bool driven = false; ///< false at the bottom of Drive: the stage is not run
-	DriveMode mode = DriveMode::Soft;
-	float shape = 0.0f;
-	float gain = 1.0f; ///< into the curve
-	float norm = 1.0f; ///< the make-up out of it
-	double crushHoldFrames = 1.0;
-	float crushStep = 0.0f;
-	/// Slew and Lopside: the rate frequency, the curve and the balance the stage's `Slew` is set to.
-	float slewHz = 0.0f;
-	float slewCurve = 0.0f;
-	float slewBalance = 0.0f;
-	/// THE STAGE'S OWN MIX, 0..1: the output is `dry + mix * (processed - dry)`. At 0 the stage is not run and the
-	/// signal is the bits it was; at 1 nothing is blended (the stage is exactly what it is without a mix).
-	float mix = 1.0f;
-};
 /// @param reuse  settings this may take the make-up from when the Drive, Type and Shape are the same — the make-up
 ///               is a quadrature, and the control path asks for it every block.
 /// @param mix    the stage's own mix, for a caller that sets one; the Drive control itself is always at 1
@@ -1348,6 +1545,10 @@ struct DriveSettings {
                                         const DriveSettings* reuse = nullptr, float mix = 1.0f) noexcept;
 /// THE STAGE'S GAIN FOR A VANISHING SIGNAL, make-up included; 1 when it is not run or not a curve.
 [[nodiscard]] double driveLoopGain(const DriveSettings& drive) noexcept;
+/// THE STEEPEST SLOPE A CURVE STAGE HAS AT ANY LEVEL up to twice full scale, make-up included (1 when it is not run or not a
+/// curve): a folder with a bias is steeper away from zero than at it, so the loop gain that matters is this, not the slope at
+/// rest. A scan of the curve; the stage's own mix is not in it.
+[[nodiscard]] double driveMaxSlope(const DriveSettings& drive) noexcept;
 /// THE EMPHASIS'S PEAK LINEAR GAIN: `10^(|dB| / 20)` where the shape boosts (a tilt always does, a bell only above zero), else 1.
 [[nodiscard]] double emphasisPeakGain(const Settings& settings) noexcept;
 /// @param centreHz   the engine's Freq (the Comb's own pitch)

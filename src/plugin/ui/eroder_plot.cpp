@@ -331,7 +331,7 @@ bool EroderPlot::update() {
 		settings_ = ero::stateOf(row, present).settings;
 		// DUST AND RUST DRAW THE BAND (one moves a head by it, the other multiplies by it); the Comb its bars.
 		dust_ = settings_.mode != ero::Mode::Comb;
-		rust_ = settings_.mode == ero::Mode::Rust;
+		rust_ = settings_.mode == ero::Mode::Rust || settings_.mode == ero::Mode::Etch; // Etch is drawn as Rust until it has its own plot
 		pitch_ = pitch;
 		rate_ = rate;
 		band_ = ero::deriveDust(settings_, pitch_, rate_);

@@ -2300,6 +2300,18 @@ HonestySweep honestySweep(const std::function<bool(const device::Descriptor&)>& 
 				arrangements.push_back(pair);
 			}
 		}
+		// **ETCH'S SLOTS** run only with the engine set to Etch AND their Amount up (a slot at no Amount, or no Mix, is skipped, and
+		// the whole device is a bypass at rest), so each slot's Type, Shape and Mix, and the Route (heard only with both slots
+		// running), are gated twice over and one control moved per arrangement never reaches them. So the ERODER gets a base in
+		// Etch with both slots up.
+		if (device::sameTag(desc->traits.tag, fx::eroder::kTraits.tag)) {
+			DeviceRow etch = enabledRowFor(*desc);
+			etch.field[static_cast<size_t>(fx::eroder::Param::Mode)] = static_cast<float>(fx::eroder::Mode::Etch);
+			etch.field[static_cast<size_t>(fx::eroder::Param::Mix)] = 1.0f;
+			etch.field[static_cast<size_t>(fx::eroder::Param::SlotAAmount)] = 0.7f;
+			etch.field[static_cast<size_t>(fx::eroder::Param::SlotBAmount)] = 0.7f;
+			arrangements.push_back(etch);
+		}
 		arrangementsBuilt += static_cast<int>(arrangements.size());
 
 		const auto renderWith = [&](const DeviceRow& row, std::vector<float>& left,

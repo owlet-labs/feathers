@@ -639,14 +639,11 @@ void SettingsScreen::draw(visage::Canvas& canvas) {
 	// (the × owns the left end when the desk puts window controls there, and the wordmark follows it)
 	float pen = panel.x() + kPad + (windowControlsSide() == WindowControlsSide::Left ? kHeadHeight - kPad * 0.5f : 0.0f);
 	const float wordTop = panel.y() + (kHeadHeight - kWordmarkSize * 1.4f) * 0.5f;
-	const std::string parts[3] = { "FEA", "TH", "ERS" };
-	const uint32_t colours[3] = { kInk, kAccent, kInk };
-	for (int i = 0; i < 3; ++i) {
-		canvas.setColor(colours[i]);
-		drawTracked(canvas, parts[i], wordmark, kWordmarkTracking, pen, wordTop, kWordmarkSize * 1.4f);
-		pen += trackedWidth(wordmark, parts[i], kWordmarkTracking) +
-		       kWordmarkTracking * static_cast<float>(wordmark.size());
-	}
+	// One colour, as in the header: every letter is ink.
+	canvas.setColor(kInk);
+	drawTracked(canvas, "FEATHERS", wordmark, kWordmarkTracking, pen, wordTop, kWordmarkSize * 1.4f);
+	pen += trackedWidth(wordmark, "FEATHERS", kWordmarkTracking) +
+	       kWordmarkTracking * static_cast<float>(wordmark.size());
 	canvas.setColor(kMuted);
 	drawTracked(canvas, "SETTINGS", font(kBylineSize), kBylineTracking, pen + 10.0f, panel.y(), kHeadHeight);
 	const visage::Bounds close = closeBounds();

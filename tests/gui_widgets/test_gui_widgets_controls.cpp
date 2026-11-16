@@ -10676,3 +10676,59 @@ TEST_CASE("fine adjust is one rule on every drag: Shift mid-drag re-anchors, and
 	      == doctest::Approx(coarse + static_cast<double>(n) * perPixel * ui::kFineAdjust).epsilon(1e-4));
 	list->processMouseUp(fine::shifted(x, y0 - 2.0f * n));
 }
+
+TEST_CASE("the FEATHERS wordmark draws in one colour: no letter in the accent, and the ink is there") {
+	// RENDERED, NOT READ FROM THE SOURCE. The wordmark used to set "TH" in the accent; a case that only
+	// read the constants would pass the day the split came back. The distance is per channel, the largest
+	// of the three, so an antialiased edge is not mistaken for a letter in the other colour.
+	constexpr int kW = 708;
+	constexpr int kH = static_cast<int>(HeaderBar::kHeight);
+	const auto channelGap = [](uint32_t a, uint32_t b) {
+		int gap = 0;
+		for (int shift : { 16, 8, 0 }) {
+			gap = std::max(gap, std::abs(static_cast<int>((a >> shift) & 0xffu) - static_cast<int>((b >> shift) & 0xffu)));
+		}
+		return gap;
+	};
+	const uint32_t ink = kInk;
+	const uint32_t accent = kAccent;
+	REQUIRE_MESSAGE(channelGap(ink, accent) > 60, "the ink and the accent are too close to tell apart on a capture");
+
+	ParamBridge bridge;
+	feathers::BridgeDeviceHost deviceHost { bridge };
+	WidgetRegistry registry;
+	StageMode mode;
+	HeaderBar header(bridge, registry, mode);
+	header.setBounds(0.0f, 0.0f, static_cast<float>(kW), HeaderBar::kHeight);
+	bridge.refresh();
+
+	visage::Canvas canvas;
+	markedWindowless(canvas, kW, kH);
+	canvas.setColor(0xff000000);
+	canvas.fill(0.0f, 0.0f, static_cast<float>(kW), static_cast<float>(kH));
+	visage::Region region;
+	region.setBounds(0, 0, kW, kH);
+	canvas.addRegion(&region);
+	canvas.beginRegion(&region);
+	header.draw(canvas);
+	canvas.endRegion();
+	const visage::Screenshot& shot = takeMarkedCapture(canvas, kW, kH);
+
+	const visage::Bounds word = header.wordmarkBounds();
+	// THE INK IS REACHED, NOT MATCHED: 15 px strokes never hit full coverage, so the closest glyph pixel is
+	// the value to read (measured at 11 per channel from the ink). THE ACCENT IS NEVER REACHED: no pixel
+	// is nearer the accent than the ink, which is what a split "TH" would fail.
+	int bestInkGap = 999;
+	int accentPixels = 0;
+	for (int y = static_cast<int>(word.y()); y < static_cast<int>(word.bottom()); ++y) {
+		for (int x = static_cast<int>(word.x()); x < static_cast<int>(word.right()); ++x) {
+			const visage::Color c = shot.sample(x, y);
+			const uint32_t px = 0xff000000u | (static_cast<uint32_t>(c.hexRed()) << 16) |
+			                    (static_cast<uint32_t>(c.hexGreen()) << 8) | static_cast<uint32_t>(c.hexBlue());
+			bestInkGap = std::min(bestInkGap, channelGap(px, ink));
+			accentPixels += channelGap(px, accent) <= 24 && channelGap(px, ink) > 24 ? 1 : 0;
+		}
+	}
+	CHECK_MESSAGE(bestInkGap <= 16, "no glyph of the wordmark reached the ink colour");
+	CHECK_MESSAGE(accentPixels == 0, "a letter of the wordmark is drawn in the accent");
+}

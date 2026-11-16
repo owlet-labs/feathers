@@ -7,7 +7,7 @@ param ERODER eroder_character unit=number min=-8388608 max=8388608 stepped=0 zon
 param ERODER eroder_gamma unit=number min=-8388608 max=8388608 stepped=0
 param ERODER eroder_cutoff unit=number min=-2 max=2 stepped=0
 param ERODER eroder_mix unit=percent min=0 max=1 stepped=0
-param ERODER eroder_mode unit=choice choice=Dust|Comb|Rust
+param ERODER eroder_mode unit=choice choice=Dust|Comb|Rust|Etch
 param ERODER eroder_amount unit=log_seconds min=-18 max=-9 stepped=0
 param ERODER eroder_freq unit=log_hertz min=4.321928094887362 max=14.135709286104401 stepped=0
 param ERODER eroder_width unit=percent min=0 max=1 stepped=0
@@ -29,4 +29,21 @@ param ERODER eroder_detune unit=percent min=0 max=1 stepped=0
 param ERODER eroder_mod_fold unit=percent min=0 max=1 stepped=0
 param ERODER eroder_heat unit=percent min=0 max=1 stepped=0
 param ERODER eroder_blend unit=choice choice=Off|On
+param ERODER eroder_emph_amount unit=decibel min=-18 max=18 stepped=0
+param ERODER eroder_emph_shape unit=choice choice=Tilt|Bell
+param ERODER eroder_emph_restore unit=choice choice=Off|On
+param ERODER eroder_emph_in_loop unit=choice choice=Off|On
+param ERODER eroder_smear unit=percent min=0 max=1 stepped=0
+param ERODER eroder_fb_tap unit=choice choice=Clean|Driven
+param ERODER eroder_loop unit=percent min=0 max=1 stepped=0
+param ERODER eroder_loop_interval unit=number min=-24 max=24 stepped=0
+param ERODER eroder_slot_a_amount unit=percent min=0 max=1 stepped=0
+param ERODER eroder_slot_a_type unit=choice choice=Soft|Tube|Fold|Wreck|Jag|Lean|Paunch|Crush|Decimate|Slew|Lopside
+param ERODER eroder_slot_a_shape unit=percent min=0 max=1 stepped=0
+param ERODER eroder_slot_a_mix unit=percent min=0 max=1 stepped=0
+param ERODER eroder_slot_b_amount unit=percent min=0 max=1 stepped=0
+param ERODER eroder_slot_b_type unit=choice choice=Soft|Tube|Fold|Wreck|Jag|Lean|Paunch|Crush|Decimate|Slew|Lopside
+param ERODER eroder_slot_b_shape unit=percent min=0 max=1 stepped=0
+param ERODER eroder_slot_b_mix unit=percent min=0 max=1 stepped=0
+param ERODER eroder_slot_route unit=choice choice=Series|Parallel
 retired ERODER eroder_drive 2026-11-15 a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)

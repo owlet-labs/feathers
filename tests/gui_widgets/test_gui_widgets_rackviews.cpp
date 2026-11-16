@@ -1492,3 +1492,87 @@ TEST_CASE("rack pads: a press strikes the pad's own cell and nothing else — no
 		}
 	}
 }
+
+TEST_CASE("add menus: Containers lists Tabs and Pads next to Rack and Chain, and picking one adds a Rack already in that view and routing") {
+	RealRack r;
+	r.chains(1, 0);
+	r.view_(1);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	ui::ChainColumn* column = r.card->frontForTest().columnForTest();
+	REQUIRE(column != nullptr);
+	const size_t offered = column->addable().size();
+	struct Want {
+		const char* name;
+		float view;
+		pr::Mode mode;
+	};
+	for (const Want want : { Want { "Tabs", 1.0f, pr::Mode::Parallel }, Want { "Pads", 2.0f, pr::Mode::Keyed } }) {
+		CAPTURE(want.name);
+		visage::PopupMenu menu = column->addMenuForTest();
+		// THE ROW IS UNDER CONTAINERS, with the container devices, and after the devices the menu lists.
+		const visage::PopupMenu* containers = nullptr;
+		for (const visage::PopupMenu& entry : menu.options()) {
+			if (entry.name().toUtf8() == "Containers") {
+				containers = &entry;
+			}
+		}
+		REQUIRE(containers != nullptr);
+		std::vector<std::string> names;
+		int id = -1;
+		for (const visage::PopupMenu& row : containers->options()) {
+			names.push_back(row.name().toUtf8());
+			if (row.name().toUtf8() == want.name) {
+				id = row.id();
+			}
+		}
+		CHECK(std::find(names.begin(), names.end(), "Rack") != names.end());
+		CHECK(std::find(names.begin(), names.end(), "Chain") != names.end());
+		REQUIRE(id >= static_cast<int>(offered));
+		// PICKING IT: a Rack arrives in the chain, in that view, with that routing.
+		feathers::rack::RackBridge& chain = *r.rack().chainAt(0)->bridge();
+		const size_t before = chain.chainLength();
+		menu.onSelection().callback(id);
+		REQUIRE(chain.chainLength() == before + 1);
+		const feathers::DeviceInstanceId made = chain.deviceAtPosition(before);
+		REQUIRE(chain.descriptorOf(made) != nullptr);
+		CHECK(std::string(chain.descriptorOf(made)->traits.tag) == "RACK");
+		CHECK(chain.fieldAt(made, static_cast<size_t>(pr::Param::View)) == want.view);
+		CHECK(chain.fieldAt(made, static_cast<size_t>(pr::Param::Mode)) == static_cast<float>(want.mode));
+	}
+}
+
+TEST_CASE("rack window: in Tabs the chain in front is always open and has no collapse control, whatever its stored flag says; Strips is as it was") {
+	RealRack r;
+	r.chains(3, 1, true);
+	for (size_t i = 0; i < 3; ++i) {
+		r.rack().setOpen(i, false); // every chain stored closed
+	}
+	r.refresh();
+	// STRIPS: closed as stored, with its toggle.
+	for (size_t i = 0; i < 3; ++i) {
+		CHECK(r.panel->railForTest(i).collapsed());
+		CHECK(r.panel->railForTest(i).collapsible());
+	}
+	const visage::Bounds toggle = r.panel->railForTest(0).toggleBounds();
+	CHECK(r.panel->railForTest(0).toggleHit({ toggle.x() + 2.0f, toggle.y() + 2.0f }));
+	// TABS: open, no toggle (a press where it was does nothing), the stored flag untouched.
+	r.view_(1);
+	r.refresh();
+	for (size_t i = 0; i < 3; ++i) {
+		CAPTURE(i);
+		CHECK_FALSE(r.panel->railForTest(i).collapsed());
+		CHECK_FALSE(r.panel->railForTest(i).collapsible());
+		CHECK_FALSE(r.rack().open(i)); // the card's arrow's own state is left alone
+	}
+	CHECK_FALSE(r.panel->railForTest(0).toggleHit({ toggle.x() + 2.0f, toggle.y() + 2.0f }));
+	CHECK(r.panel->railForTest(0).width() > 40.0f); // the open column, not the 34 px strip
+	// BACK TO STRIPS: each as it was stored.
+	r.view_(0);
+	r.refresh();
+	for (size_t i = 0; i < 3; ++i) {
+		CHECK(r.panel->railForTest(i).collapsed());
+		CHECK(r.panel->railForTest(i).collapsible());
+	}
+}

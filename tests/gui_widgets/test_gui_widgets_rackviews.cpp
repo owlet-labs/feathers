@@ -1023,3 +1023,74 @@ TEST_CASE("rack tabs: eight tabs keep their room for names (the set-playing dot 
 	// A TAB'S ROOM FOR ITS NAME IS ITS WIDTH LESS A FIXED MARGIN: the dot takes none of it.
 	CHECK(bar.labelRoomForTest(0) == doctest::Approx(260.0f / 8.0f - 8.0f).epsilon(0.05));
 }
+
+TEST_CASE("rack views over a real rack: the cards in front are as wide as the card's content across the flow, top-down and left-right, so the hairline adds no space") {
+	RealRack r;
+	r.chains(2, 2);
+	r.view_(1);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	// TOP-DOWN: a member card is exactly the card's width less its two margins (native pixels).
+	{
+		std::vector<ui::FxCard*> cards = shownCards(*r.card);
+		REQUIRE(cards.size() == 1);
+		const int margins = static_cast<int>(std::lround(2.0f * ui::ParallelRackCard::kPad * r.card->dpiScale()));
+		CHECK(cards[0]->nativeWidth() == r.card->nativeWidth() - margins);
+		CHECK(r.card->frontForTest().nativeWidth() == cards[0]->nativeWidth());
+	}
+	// LEFT-RIGHT: the same across the other axis: the card's height less its two margins.
+	r.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+	r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+		r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+	}
+	std::vector<ui::FxCard*> cards = shownCards(*r.card);
+	REQUIRE(cards.size() == 1);
+	const int margins = static_cast<int>(std::lround(2.0f * ui::ParallelRackCard::kPad * r.card->dpiScale()));
+	CHECK(cards[0]->nativeHeight() == r.card->nativeHeight() - margins);
+	CHECK(r.card->frontForTest().columnForTest()->horizontal());
+	// THE BAR RUNS DOWN THE SIDE, THE FULL HEIGHT OF THE CARD, and the cards run right of it: opening the chain makes the card wider by a card.
+	CHECK(r.card->tabBarForTest().nativeHeight() == r.card->nativeHeight());
+	CHECK(r.card->tabBarForTest().nativeWidth() < r.card->nativeHeight());
+	const float closed = r.card->laneExtent(ui::kCardUnitHeight);
+	r.card->chainArrowForTest().toggleForTest();
+	r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+		r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+	}
+	cards = shownCards(*r.card);
+	REQUIRE(cards.size() == 2);
+	CHECK(r.card->laneExtent(ui::kCardUnitHeight) > closed);
+	CHECK(cards[1]->bounds().x() > cards[0]->bounds().x()); // in flow order: left to right
+	CHECK(cards[1]->bounds().y() == doctest::Approx(cards[0]->bounds().y()));
+}
+
+TEST_CASE("rack views over a real rack: in Pads the selected pad's chain is in front as real cards, and viewing another pad rebinds") {
+	RealRack r;
+	r.chains(3, 2, true);
+	r.view_(2);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	ui::RackPadGrid& grid = r.card->padsForTest().gridForTest();
+	feathers::rack::RackBridge& chain1 = *r.rack().chainAt(1)->bridge();
+	grid.pressForTest(grid.padCentre(1)); // key 1 = chain 2
+	grid.releaseForTest();
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	std::vector<ui::FxCard*> cards = shownCards(*r.card);
+	REQUIRE(cards.size() == 1);
+	CHECK(cards[0]->device() == chain1.deviceAtPosition(0));
+	CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(1));
+	r.card->chainArrowForTest().toggleForTest();
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	cards = shownCards(*r.card);
+	REQUIRE(cards.size() == 2);
+	CHECK(cards[1]->device() == chain1.deviceAtPosition(1));
+}

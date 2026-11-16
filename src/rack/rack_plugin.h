@@ -48,6 +48,7 @@ inline constexpr const char* kHostKeys[] = {
 	"macro_5", "macro_6", "macro_7", "macro_8",
 	"rack_position", "rack_cut_1", "rack_cut_2", "rack_cut_3",
 	"rack_cut_4", "rack_key_track",
+	"rack_playing", // appended: Select's playing chain (rack views), automatable like Position
 };
 inline constexpr size_t kHostParamCount = sizeof(kHostKeys) / sizeof(kHostKeys[0]);
 

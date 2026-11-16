@@ -1679,6 +1679,12 @@ target_link_libraries(test_rack_chain_key PRIVATE feathers-gui-bridge feathers-s
 target_include_directories(test_rack_chain_key PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME rack-chain-key COMMAND test_rack_chain_key)
 
+# A RACK IN SERIES: chain 1 feeds chain 2, and the last chain's output is the wet.
+add_executable(test_rack_series test_rack_series.cpp)
+target_link_libraries(test_rack_series PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_rack_series PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-series COMMAND test_rack_series)
+
 # A RACK'S VIEW, ROUTING, CHOKE GROUPS AND STRIKE MASK: the engine and state half.
 add_executable(test_rack_view_routing test_rack_view_routing.cpp)
 target_link_libraries(test_rack_view_routing PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)

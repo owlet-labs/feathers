@@ -128,8 +128,10 @@ enum class Param : size_t {
 /// **KEYED** is Parallel's audio (it is mapped onto Parallel in the engine, so switching between them fades nothing) with the
 /// notes routed by key alone: a chain whose key is Any is handed no notes (its notes still pass on). In Parallel a key that is set
 /// filters too, and an Any chain takes every note.
-enum class Mode : uint8_t { Parallel = 0, Select, Blend, MidSide, LeftRight, Bands, Keyed, kCount };
-inline constexpr const char* kModeNames[] = { "Parallel", "Select", "Blend", "Mid/Side", "Left/Right", "Bands", "Keyed" };
+/// **SERIES** runs the chains one after another: chain 1's output is chain 2's input, and the last chain's is the rack's wet. A muted chain
+/// (or one another chain's solo leaves out) is bypassed — the signal passes through it — and a chain's level applies to its own output.
+enum class Mode : uint8_t { Parallel = 0, Select, Blend, MidSide, LeftRight, Bands, Keyed, Series, kCount };
+inline constexpr const char* kModeNames[] = { "Parallel", "Select", "Blend", "Mid/Side", "Left/Right", "Bands", "Keyed", "Series" };
 static_assert(std::size(kModeNames) == static_cast<size_t>(Mode::kCount));
 inline constexpr uint32_t kModeBit(Mode m) { return 1u << static_cast<uint32_t>(m); }
 /// WHERE THE POSITION MEANS SOMETHING: Select and Blend. In Parallel it is hidden, not greyed.
@@ -855,6 +857,8 @@ private:
 	/// switch (`snap`), else ramped: Select's chain change over `selectSamples_`, equal-gain, every chain on one count
 	/// so the weights keep summing to one; Blend's over the rack's 5 ms.
 	void aimWeights(const Lineup* live, bool snap) noexcept;
+	/// Each chain's gain target and, in Series, its bypass target, from the hand's and the routes' level, mute and solo (`snap`: at once).
+	void aimGains(const Lineup* live, bool snap) noexcept;
 	/// **WHAT ROLE `role` IS HANDED** (§1's split): the input, or its mid (M, M), side (S, −S), left (L, 0) or right
 	/// (0, R), into `workL_`/`workR_` for `n` samples from `inL_`/`inR_`.
 	void roleInput(size_t role, int n) noexcept;
@@ -1127,6 +1131,8 @@ private:
 
 	std::vector<float> inL_, inR_;     ///< the input, kept for every chain and for the dry
 	std::vector<float> workL_, workR_; ///< one chain's pass
+	/// SERIES: the signal as it stands between chains, and a chain's input held back by its own latency (what a bypassed chain passes).
+	std::vector<float> serL_, serR_, bypL_, bypR_;
 	std::vector<float> sumL_, sumR_;   ///< the chains' sum
 	device::CompensationDelay dryDelay_;
 

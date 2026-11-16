@@ -904,6 +904,25 @@ TEST_CASE("text conversion round-trips every param") {
 	}
 }
 
+TEST_CASE("the flagship engine is named Forge, and a patch saved as the flagship's index loads as it") {
+	// Core parameters are stored by CLAP id and VALUE, not by label, so a patch saved while the engine was
+	// called "V5" holds the number 2 and nothing else. The rename therefore needs no ChoiceAlias: the same
+	// stored index must land on the same engine, now shown as Forge. The enum keeps its name (OscType::V5).
+	ParamSet params;
+	char text[CLAP_NAME_SIZE] = {};
+
+	// The saved value, as a loaded patch sets it (the state load writes each core param through setBase).
+	params.setBase(static_cast<clap_id>(ParamId::OscType), 2.0);
+	CHECK(params.oscType() == feathers::OscType::V5);
+	REQUIRE(params.valueToText(static_cast<clap_id>(ParamId::OscType), 2.0, text, sizeof(text)));
+	CHECK(std::string(text) == "Forge");
+	CHECK(std::string(feathers::kOscTypeNames[2]) == "Forge");
+
+	double value = 0.0;
+	REQUIRE(params.textToValue(static_cast<clap_id>(ParamId::OscType), "Forge", &value));
+	CHECK(value == doctest::Approx(2.0));
+}
+
 TEST_CASE("the enum params print and parse their entry names") {
 	ParamSet params;
 	char text[CLAP_NAME_SIZE] = {};

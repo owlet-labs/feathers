@@ -705,7 +705,7 @@ bool EngineRail::pressCollapse(visage::Point pixels) {
 	}
 	if (toggleCollapsed() && notifier_ != nullptr) {
 		// THE CLOSED STRIP HAS NO ROOM FOR THE ENGINE'S NAME (the longest label any rail carries is 160 px, `Rail::kCollapsedLabelRun`;
-		// "ENGINE \xc2\xb7 PhiV5" alone is 185), so the notice that closes it says which engine is sounding (QH).
+		// "ENGINE \xc2\xb7 PhiForge" alone is 185), so the notice that closes it says which engine is sounding (QH).
 		notifier_->say(collapsed() ? std::string("Engine minimised \xc2\xb7 ")
 		                                 + engineDisplayName(static_cast<int>(std::lround(
 		                                     bridge_.value(static_cast<clap_id>(ParamId::OscType)))))

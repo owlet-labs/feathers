@@ -38,7 +38,7 @@
 //     had been still when written; `dwell` how long the PREVIOUS logged stance was held in all (absent on the first).
 //     These are the walk's implicit negatives, and lingering is carried without repeating a line.
 //
-// EVERY LINE: {"v":2,"t":<unix s>,"session":"<pid>.<start>","event":…,"cause":…,"engine":"V5","engineId":2,"slot":0,
+// EVERY LINE: {"v":2,"t":<unix s>,"session":"<pid>.<start>","event":…,"cause":…,"engine":"Forge","engineId":2,"slot":0,
 //   "scheme":"P-MOBIUS","hp":{"k0":3,"kMax":4,"knn":2,"iters":40,"lut":129,"widthFloor":0.005,"pinWidth":0.02},"strength":1,
 //   then per event "index", "sound", "like":{x, y, home, engine, slot, sound, pointCount, point[], spectrum[48],
 //   angles[385]}, "likes":[…], "held", "dwell"}. Doubles to 17 digits and floats to 9, so a replay refits exactly what the

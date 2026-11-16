@@ -31,5 +31,5 @@ one (where a table exists); the variable exists for captures, because a venue wi
 ## Regenerating
 
 `scripts/fit-terrain-map.sh` renders stances through the real engine (build with `-DFEATHERS_BUILD_TOOLS=ON`) and
-rewrites the table, the report and the evaluator's cross-check sample. The build never runs it. V5 was fitted the
+rewrites the table, the report and the evaluator's cross-check sample. The build never runs it. Forge was fitted the
 same way and left out: its fit was too weak to draw from.

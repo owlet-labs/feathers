@@ -216,7 +216,7 @@ if [[ $build -eq 1 ]]; then
 	ninja -C "$dir" -j "${SANITIZE_GATE_JOBS:-4}" test_gui_widgets_controls test_gui_widgets_explore test_gui_widgets_lane test_gui_widgets_dahdsr test_gui_widgets_devices test_gui_widgets_mod_ring test_gui_widgets_nest test_gui_widgets_presets test_gui_widgets_tooltips test_gui_widgets_undo test_rack_editor test_rack_engine test_rack_state test_synth test_container_bodies test_container_state test_rack_nesting test_rack_voices test_lane_rack test_converger test_chain_record \
 		test_fx_sklitter test_fx_sklitter_modes test_fx_sklitter_ring test_fx_sklitter_engage \
 		test_inner_chain test_sklitter_chain test_fx_delay test_fx_pitch test_fx_eroder test_fx_disperser test_fx_phaser test_fx_comp test_fx_clip test_file_dialog test_state_json \
-		test_fx_shaper test_fx_eq test_takeover test_rack_clap test_clap_render test_drum_plugin test_pattern_device test_group_copy test_drum_device test_rack_preview \
+		test_fx_shaper test_fx_eq test_takeover test_rack_clap test_clap_render test_drum_plugin test_rack_plugin test_pattern_device test_group_copy test_drum_device test_rack_preview \
 		|| die "build failed"
 fi
 

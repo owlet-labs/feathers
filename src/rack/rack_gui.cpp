@@ -160,7 +160,7 @@ bool RackGui::create(const char* api, bool isFloating) noexcept {
 	installWindowHandlers(*app);
 
 	// A DRUM'S WINDOW IS ITS DEVICE'S VIEW and nothing else: no chain, no canvas, no presets, no settings door.
-	if (drum_) {
+	if (drum_ || rack_) {
 		buildDrumView();
 		window_.syncScaleAndLayout();
 		window_.startTicking();
@@ -243,6 +243,10 @@ void RackGui::buildDrumView() {
 		return;
 	}
 	drumView_->setModulation(&mod_, &history_);
+	if (rack_) {
+		// THE VIEW GROWS WITH ITS CHAINS AND ITS MODE: the window is asked for the room it now needs.
+		drumView_->onMinimumSizeChanged([this] { window_.preferredSizeChanged(); });
+	}
 	app->addChild(drumView_.get());
 	drumView_->setBounds(0, 0, app->width(), app->height());
 }
@@ -392,9 +396,20 @@ void RackGui::syncCards() {
 		editor_->syncCards();
 	}
 	// A DRUM'S VIEW FOLLOWS ITS DEVICE: a state load may have put another instance of it in the record.
-	if (drum_ && window_.app() != nullptr && bridge_.deviceAtPosition(0) != drumShown_) {
+	if ((drum_ || rack_) && window_.app() != nullptr && bridge_.deviceAtPosition(0) != drumShown_) {
 		buildDrumView();
 	}
+}
+
+/// A first guess before the view exists: a rack with its two chains open in Parallel; the view's own minimum after.
+std::pair<uint32_t, uint32_t> RackGui::rackViewSize() const {
+#if defined(FEATHERS_GUI_VISAGE)
+	if (drumView_ != nullptr) {
+		const visage::Point p = drumView_->minimumSize();
+		return { static_cast<uint32_t>(std::ceil(p.x)), static_cast<uint32_t>(std::ceil(p.y)) };
+	}
+#endif
+	return { 960u, 640u };
 }
 
 void RackGui::layout() {

@@ -386,7 +386,7 @@ int blocksToSleep(Venue& v, uint32_t frames, int limit) {
 TEST_CASE("the factory lists the Drum beside the two existing plugins, whose ids and names are unchanged, and creates each by id") {
 	const auto* factory = static_cast<const clap_plugin_factory*>(rack::entryGetFactory(CLAP_PLUGIN_FACTORY_ID));
 	REQUIRE(factory != nullptr);
-	REQUIRE(factory->get_plugin_count(factory) == 3);
+	REQUIRE(factory->get_plugin_count(factory) == 4);
 	const char* const ids[3] = { "com.owlet.feathers-chain", "com.owlet.feathers.noterack", "com.owlet.feathers.drum" };
 	const char* const names[3] = { "Feathers Chain", "Feathers Note Rack", "Feathers Drum" };
 	for (uint32_t i = 0; i < 3; ++i) {
@@ -400,7 +400,7 @@ TEST_CASE("the factory lists the Drum beside the two existing plugins, whose ids
 		CHECK(std::string(p->desc->id) == ids[i]);
 		p->destroy(p);
 	}
-	CHECK(factory->get_plugin_descriptor(factory, 3) == nullptr);
+	CHECK(factory->get_plugin_descriptor(factory, 4) == nullptr); // the Rack is the fourth (test_rack_plugin)
 	clap_host host = makeHost();
 	CHECK(factory->create_plugin(factory, &host, "com.owlet.feathers.nothing") == nullptr);
 	// THE EXISTING ONES' ACCESSORS ANSWER THE SAME DESCRIPTORS.

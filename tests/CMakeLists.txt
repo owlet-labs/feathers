@@ -1411,6 +1411,13 @@ target_include_directories(test_drum_plugin PRIVATE ${CMAKE_SOURCE_DIR}/libs/doc
 add_test(NAME drum-plugin COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_drum_plugin>)
 set_tests_properties(drum-plugin PROPERTIES LABELS "headless-incompatible")
 
+# FEATHERS RACK — the parallel Rack as a plugin of its own (a fourth plugin in the Chain's bundle), through the real CLAP API.
+add_executable(test_rack_plugin test_rack_plugin.cpp)
+target_link_libraries(test_rack_plugin PRIVATE feathers-rack-ui feathers-warnings)
+target_include_directories(test_rack_plugin PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-plugin COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_rack_plugin>)
+set_tests_properties(rack-plugin PROPERTIES LABELS "headless-incompatible")
+
 # THE CHROME HUE (backlog LG) — OKLCH L, C and h of every token the offset turns, by value, and the prefs
 # road on a scratch desk its own main() makes. No window: colours are numbers here.
 add_executable(test_chrome_hue test_chrome_hue.cpp)
@@ -1897,7 +1904,7 @@ if(FEATHERS_SANITIZE)
 	endforeach()
 	# THE CLAP-HOSTING SUITES open an editor, so they run on a private display like the widget ones. drum-plugin joined with the Drum
 	# instrument: its plugin owns a rack engine, a bridge and the slot pool a host's writes land in, and opens the drum's editor.
-	foreach(_suite rack-clap clap-render drum-plugin)
+	foreach(_suite rack-clap clap-render drum-plugin rack-plugin)
 		string(REPLACE "-" "_" _target "test_${_suite}")
 		add_test(NAME sanitize-${_suite} COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --
 			${_feathers_each} $<TARGET_FILE:${_target}>)

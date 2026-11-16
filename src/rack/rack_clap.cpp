@@ -21,6 +21,8 @@
 
 #include "rack/rack_clap.h"
 #include "rack/drum_plugin.h"
+#include "rack/rack_plugin.h"
+#include "rack/parallel_rack.h"
 #include "fx/drum/drum_types.h"
 
 #include "plugin/clap_checking.h"
@@ -175,6 +177,28 @@ const clap_plugin_descriptor kDrumDescriptor = {
     FEATHERS_VERSION,
     "One Feathers drum: a kick, membrane, snare, metal, clap or string, played by notes",
     kDrumFeatures,
+};
+
+// **FEATHERS RACK — THE PARALLEL RACK AS A PLUGIN OF ITS OWN** (rack/rack_plugin.h): the same engine holding exactly one Rack device, the
+// window that device's own view, so every mode is reachable from one plugin. A fourth plugin in this bundle, so it installs with it.
+const char* const kRackFeatures[] = {
+    CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
+    CLAP_PLUGIN_FEATURE_UTILITY,
+    CLAP_PLUGIN_FEATURE_STEREO,
+    nullptr,
+};
+
+const clap_plugin_descriptor kRackDescriptor = {
+    CLAP_VERSION_INIT,
+    rackplugin::kPluginId,
+    rackplugin::kPluginName,
+    "Owlet Records",
+    "https://owletrecords.com",
+    "",
+    "",
+    FEATHERS_VERSION,
+    "A parallel rack: chains side by side, summed, split by mid and side, left and right or by band, or switched between",
+    kRackFeatures,
 };
 
 // THE RACK'S SHAPE lives in rack/rack_axes.h now: a rack inside a chain is this same engine and must
@@ -354,9 +378,9 @@ public:
 		}
 	}
 
-	RackPlugin(const clap_host* host, bool noteRack, bool drum = false)
-	    : PluginBase(drum ? &kDrumDescriptor : noteRack ? &kNoteRackDescriptor : &kDescriptor, host), noteRack_(noteRack),
-	      drum_(drum) {
+	RackPlugin(const clap_host* host, bool noteRack, bool drum = false, bool rack = false)
+	    : PluginBase(rack ? &kRackDescriptor : drum ? &kDrumDescriptor : noteRack ? &kNoteRackDescriptor : &kDescriptor, host),
+	      noteRack_(noteRack), drum_(drum), rack_(rack) {
 		// THE NOTE RACK OFFERS MODULATORS AND NOTE EFFECTS ONLY — no audio effect in a rack with no audio.
 		if (noteRack_) {
 			gui_.offerFilter = [](const device::Descriptor& d) { return belongsInModulationRack(d); };
@@ -376,7 +400,20 @@ public:
 		bridge_.setFirstGrabService([this] { serviceSlots(); });
 		if (drum_) {
 			setUpDrum();
+		} else if (rack_) {
+			setUpRack();
 		}
+	}
+
+	/// **FEATHERS RACK**: ONE RACK DEVICE, ITS OWN CONTROLS PINNED IN THE LIST'S ORDER (rack_plugin.h), the pool free for the rest.
+	/// A new Rack is as the browser makes one (Parallel, fully wet). Main thread, construction.
+	void setUpRack() {
+		if (bridge_.addDevice(rack::parallel::kTraits.tag) == kNoInstance) {
+			return;
+		}
+		pinDrumControls(false);
+		(void)bridge_.takeStateDirty(); // a new instance is not an edited one
+		gui_.setRackMode(true);
 	}
 
 	//--------------------------------------------------------------------------------------------//
@@ -408,6 +445,11 @@ public:
 	/// WHICH CONTROL OF THE DEVICE EACH PLACE IN THE LIST IS (`kNoControl` for a key this build's device lacks), and its
 	/// slot's declaration, for `paramsInfo`'s flags. Rebuilt by `pinDrumControls`.
 	static constexpr size_t kNoControl = static_cast<size_t>(-1);
+	/// WHAT IS PINNED, in order: the Drum's list or the Rack's.
+	[[nodiscard]] size_t pinnedCount() const noexcept { return rack_ ? rackplugin::kHostParamCount : drumplugin::kHostParamCount; }
+	[[nodiscard]] const char* pinnedKey(size_t place) const noexcept {
+		return rack_ ? rackplugin::kHostKeys[place] : drumplugin::kHostKeys[place];
+	}
 
 	void pinDrumControls(bool service = true) {
 		const DeviceInstanceId id = bridge_.deviceAtPosition(0);
@@ -417,9 +459,9 @@ public:
 			return;
 		}
 
-		for (size_t place = 0; place < drumplugin::kHostParamCount; ++place) {
+		for (size_t place = 0; place < pinnedCount(); ++place) {
 			for (size_t c = 0; c < desc->params.size(); ++c) {
-				if (std::strcmp(desc->params[c].key, drumplugin::kHostKeys[place]) != 0) {
+				if (std::strcmp(desc->params[c].key, pinnedKey(place)) != 0) {
 					continue;
 				}
 				drumControlOfPlace_[place] = c;
@@ -441,6 +483,9 @@ public:
 			return -1;
 		}
 		const hostslots::SlotIndex n = hostslots::slotOfId(id);
+		if (rack_) {
+			return static_cast<int32_t>(n); // every slot is a parameter: the pinned controls first, then the pool
+		}
 		return n < drumplugin::kHostParamCount ? static_cast<int32_t>(n) : -1;
 	}
 
@@ -535,6 +580,9 @@ public:
 	/// FIXED WHILE ACTIVE, as every count must be: the slots are declared whether or not anything is mapped to
 	/// them, and a mapping only renames. Feathers' shape (`FeathersPlugin::paramsCount`).
 	uint32_t paramsCount() const noexcept override {
+		if (rack_) {
+			return hostslots::kDeclaredSlots; // the slots only: the rack's pinned controls first, then the pool
+		}
 		if (drum_) {
 			return static_cast<uint32_t>(drumplugin::kHostParamCount); // the device's controls and nothing else
 		}
@@ -547,6 +595,9 @@ public:
 	/// every value and text call, and its own version walks `paramsInfo` over every param. A macro's id is its index;
 	/// the slots follow, in slot order. -1 for anything else, as the base says.
 	int32_t getParamIndexForParamId(clap_id paramId) const noexcept override {
+		if (rack_) {
+			return drumIndexOf(paramId);
+		}
 		if (drum_) {
 			return drumIndexOf(paramId);
 		}
@@ -563,6 +614,9 @@ public:
 		++infoBuilds_;
 		if (info == nullptr) {
 			return false;
+		}
+		if (rack_) {
+			return rackParamInfo(index, info);
 		}
 		if (drum_) {
 			return drumParamInfo(index, info);
@@ -585,6 +639,18 @@ public:
 	/// **ONE OF THE DRUM'S NAMED PARAMETERS**: the slot the control is pinned on speaks (its id, its label, its 0..1 range), under
 	/// the module "Drum", with the flags the control's own declaration earns — not modulatable where the device says it may not
 	/// be, and neither automatable nor modulatable for the unbounded travel (an editor's drag window, not a value a lane can draw).
+	/// THE RACK'S: slot `index` speaks; a pinned place is the rack's own control (module "Rack"), a later one the pool's.
+	bool rackParamInfo(uint32_t index, clap_param_info* info) const noexcept {
+		if (index >= hostslots::kDeclaredSlots || !slotHost_.info(static_cast<hostslots::SlotIndex>(index), info)) {
+			return false;
+		}
+		if (index < rackplugin::kHostParamCount) {
+			std::snprintf(info->module, sizeof(info->module), "Rack");
+			info->flags &= ~static_cast<clap_param_info_flags>(CLAP_PARAM_IS_HIDDEN);
+		}
+		return true;
+	}
+
 	bool drumParamInfo(uint32_t index, clap_param_info* info) const noexcept {
 		if (index >= drumplugin::kHostParamCount || !slotHost_.info(static_cast<hostslots::SlotIndex>(index), info)) {
 			return false;
@@ -751,8 +817,8 @@ public:
 		if (hostslots::isSlotId(id)) {
 			return (!drum_ || drumIndexOf(id) >= 0) && slotHost_.value(id, value);
 		}
-		if (drum_) {
-			return false; // no macros on a drum
+		if (drum_ || rack_) {
+			return false; // no engine macros: the rack's own are slots
 		}
 		if (id >= kMacroCount || value == nullptr) {
 			return false;
@@ -769,7 +835,7 @@ public:
 		if (hostslots::isSlotId(id)) {
 			return (!drum_ || drumIndexOf(id) >= 0) && slotHost_.valueToText(id, value, out, size); // the target's own text: "1.2 kHz", "Saw"
 		}
-		if (drum_) {
+		if (drum_ || rack_) {
 			return false;
 		}
 		if (id >= kMacroCount || out == nullptr) {
@@ -783,7 +849,7 @@ public:
 		if (hostslots::isSlotId(id)) {
 			return (!drum_ || drumIndexOf(id) >= 0) && slotHost_.textToValue(id, text, value);
 		}
-		if (drum_) {
+		if (drum_ || rack_) {
 			return false;
 		}
 		if (id >= kMacroCount || text == nullptr || value == nullptr) {
@@ -1358,9 +1424,16 @@ public:
 			lastRefusals_ = notLoaded;
 			return false;
 		}
+		// A RACK HOLDS ONE RACK: a state of anything else is refused whole, nothing changed.
+		if (rack_ && !(patch.device.size() == 1 && std::strcmp(patch.device[0].tag.data(), rack::parallel::kTraits.tag) == 0)) {
+			log_.say("state-load FAILED why=not-a-rack-state; nothing changed");
+			notLoaded.note(LoadReport::Kind::NotLoaded, "patch", "", "this is not a Feathers Rack state");
+			lastRefusals_ = notLoaded;
+			return false;
+		}
 		loadingState_ = true;
 		const LoadReport refused = bridge_.loadPatch(patch);
-		if (drum_) {
+		if (drum_ || rack_) {
 			pinDrumControls(); // the saved pool's pins stand; any control it lacked is pinned in the list's order
 		}
 		// THE SLOTS THE PATCH RESTORED ARE BOUND AND RENAMED NOW, before any host event: an anchored slot is
@@ -1427,7 +1500,7 @@ private:
 					}
 					break;
 				}
-				if (drum_) {
+				if (drum_ || rack_) {
 					break; // and has no macros
 				}
 				// **THROUGH THE BRIDGE (CD commit 4), and the ORDER is why it works.** This walk runs
@@ -2114,7 +2187,10 @@ private:
 	/// **FEATHERS DRUM** (`kDrumDescriptor`): the same engine and window shell holding one Drum device (drum_plugin.h).
 	bool drum_ = false;
 	/// Which control of the device each place of `drumplugin::kHostKeys` is (main thread; `pinDrumControls` rebuilds it).
-	std::array<size_t, drumplugin::kHostParamCount> drumControlOfPlace_ {};
+	std::array<size_t, 64> drumControlOfPlace_ {};
+	static_assert(drumplugin::kHostParamCount <= 64 && rackplugin::kHostParamCount <= 64);
+	/// **FEATHERS RACK** (`kRackDescriptor`): the same engine holding one Rack device (rack_plugin.h); `drumControlOfPlace_` serves it too.
+	bool rack_ = false;
 	/// Its audio: silence the engine runs on, sized at activate (a note rack is handed no buffers).
 	std::vector<float> scratchL_, scratchR_;
 	int guiFd_ = -1;
@@ -2163,12 +2239,12 @@ namespace {
 //------------------------------------------------------------------------------------------------//
 
 uint32_t CLAP_ABI factoryPluginCount(const clap_plugin_factory*) noexcept {
-	return 3; // the Chain, the Note Rack, and the Drum
+	return 4; // the Chain, the Note Rack, the Drum and the Rack
 }
 
 const clap_plugin_descriptor* CLAP_ABI factoryPluginDescriptor(const clap_plugin_factory*,
                                                                uint32_t index) noexcept {
-	return index == 0 ? &kDescriptor : index == 1 ? &kNoteRackDescriptor : index == 2 ? &kDrumDescriptor : nullptr;
+	return index == 0 ? &kDescriptor : index == 1 ? &kNoteRackDescriptor : index == 2 ? &kDrumDescriptor : index == 3 ? &kRackDescriptor : nullptr;
 }
 
 const clap_plugin* CLAP_ABI factoryCreatePlugin(const clap_plugin_factory*, const clap_host* host,
@@ -2178,6 +2254,9 @@ const clap_plugin* CLAP_ABI factoryCreatePlugin(const clap_plugin_factory*, cons
 	}
 	if (host != nullptr && pluginId != nullptr && std::strcmp(pluginId, kDrumDescriptor.id) == 0) {
 		return createDrum(host);
+	}
+	if (host != nullptr && pluginId != nullptr && std::strcmp(pluginId, kRackDescriptor.id) == 0) {
+		return createRack(host);
 	}
 	if (host == nullptr || pluginId == nullptr || std::strcmp(pluginId, kDescriptor.id) != 0) {
 		return nullptr;
@@ -2227,6 +2306,15 @@ const clap_plugin* createDrum(const clap_host* host) noexcept {
 
 const clap_plugin_descriptor* drumDescriptor() noexcept {
 	return &kDrumDescriptor;
+}
+
+const clap_plugin* createRack(const clap_host* host) noexcept {
+	auto* plugin = new RackPlugin(host, false, false, true);
+	return plugin->clapPlugin();
+}
+
+const clap_plugin_descriptor* rackDescriptor() noexcept {
+	return &kRackDescriptor;
 }
 
 } // namespace feathers::rack

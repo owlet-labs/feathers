@@ -41,16 +41,39 @@ void PairCell::setSplit(float firstShare) {
 	redraw();
 }
 
+void PairCell::setMiddle(visage::Frame& middle, float width, float height) {
+	if (middle_ != nullptr && middle_ != &middle) {
+		removeChild(middle_);
+	}
+	middle_ = &middle;
+	middleWidth_ = std::max(0.0f, width);
+	middleHeight_ = std::max(0.0f, height);
+	if (middle.parent() != this) {
+		addChild(&middle);
+	}
+	resized();
+	redraw();
+}
+
 void PairCell::resized() {
+	const float band = captionBand();
 	const float w = static_cast<float>(width());
-	const float h = std::max(0.0f, static_cast<float>(height()) - kCaptionHeight);
-	const float firstW = w * split_;
+	const float h = std::max(0.0f, static_cast<float>(height()) - band);
+	const float mid = middle_ != nullptr ? std::min(middleWidth_, w) : 0.0f;
+	const float firstW = (w - mid) * split_;
 	// `setBounds` UNCONDITIONALLY: a scale change moves nothing logical.
-	first_.setBounds(0.0f, kCaptionHeight, firstW, h);
-	second_.setBounds(firstW, kCaptionHeight, w - firstW, h);
+	first_.setBounds(0.0f, band, firstW, h);
+	if (middle_ != nullptr) {
+		const float midH = middleHeight_ > 0.0f ? std::min(middleHeight_, h) : h;
+		middle_->setBounds(firstW, band + (h - midH) * 0.5f, mid, midH);
+	}
+	second_.setBounds(firstW + mid, band, w - mid - firstW, h);
 }
 
 void PairCell::draw(visage::Canvas& canvas) {
+	if (bare()) {
+		return;
+	}
 	const float w = static_cast<float>(width());
 	const float h = static_cast<float>(height());
 	// THE OUTLINE ROUND THE TWO CELLS, the caption over its top edge.

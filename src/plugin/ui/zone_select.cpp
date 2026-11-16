@@ -231,12 +231,46 @@ void ZoneSelect::selectZone(size_t index) {
 
 //-- geometry ---------------------------------------------------------------------------------//
 
+bool ZoneSelect::arrowsShown() const {
+	return !tight_ || minimumWidth() <= static_cast<float>(width());
+}
+
+void ZoneSelect::setTightFace(bool tight) {
+	tight_ = tight;
+	redraw();
+}
+
+float ZoneSelect::nameSize() const {
+	if (!tight_) {
+		return kKnobReadoutSize;
+	}
+	// THE WIDEST NAME IN THE SET sets the size, so it does not change as the choice steps.
+	float widest = 0.0f;
+	std::string widestName;
+	for (size_t i = 0; i < names_.size(); ++i) {
+		const std::string text = captionOf(i);
+		const float w = font(kKnobReadoutSize).stringWidth(std::u32string(text.begin(), text.end()));
+		if (w >= widest) {
+			widest = w;
+			widestName = text;
+		}
+	}
+	const float room = std::max(0.0f, static_cast<float>(width()) - 2.0f * 2.0f - (arrowsShown() ? 2.0f * kArrowWidth : 0.0f));
+	return fitName(widestName, room, kKnobReadoutSize, kNameFitFloorSize, 0.0f).size;
+}
+
 visage::Bounds ZoneSelect::prevBounds() const {
+	if (!arrowsShown()) {
+		return { 0.0f, 0.0f, 0.0f, static_cast<float>(height()) };
+	}
 	const float w = std::min(kArrowWidth, static_cast<float>(width()) * 0.25f);
 	return { 0.0f, 0.0f, w, static_cast<float>(height()) };
 }
 
 visage::Bounds ZoneSelect::nextBounds() const {
+	if (!arrowsShown()) {
+		return { static_cast<float>(width()), 0.0f, 0.0f, static_cast<float>(height()) };
+	}
 	const float w = std::min(kArrowWidth, static_cast<float>(width()) * 0.25f);
 	return { static_cast<float>(width()) - w, 0.0f, w, static_cast<float>(height()) };
 }
@@ -352,7 +386,7 @@ void ZoneSelect::draw(visage::Canvas& canvas) {
 	// back. A SINGLE chevron each way, deliberately: the rail spends a DOUBLE one on "move this panel
 	// aside" and this editor already spends filled triangles on the modulator arrow and on solo, so a
 	// third filled triangle would have made three different verbs look like one family.
-	for (int side = 0; side < 2; ++side) {
+	for (int side = 0; side < (arrowsShown() ? 2 : 0); ++side) {
 		const visage::Bounds cell = side == 0 ? prevBounds() : nextBounds();
 		const float mid = cell.y() + cell.height() * 0.5f;
 		const float tipX = side == 0 ? cell.x() + cell.width() * 0.38f
@@ -366,7 +400,7 @@ void ZoneSelect::draw(visage::Canvas& canvas) {
 	// row carries the coordinate, and printing one here would be the coarse:fine pair again.
 	const visage::Bounds caption = captionBounds();
 	canvas.setColor(ink);
-	canvas.text(captionText(), font(kKnobReadoutSize), visage::Font::kCenter, caption.x(), caption.y(),
+	canvas.text(captionText(), font(nameSize()), visage::Font::kCenter, caption.x(), caption.y(),
 	            caption.width(), caption.height());
 
 	// **MODULATION, AS A DROPDOWN SHOWS IT** (`modLookFor`): the border in the modulation colour while an armed source may

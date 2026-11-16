@@ -433,7 +433,8 @@ TEST_CASE("OU: each browser lists only its own kind") {
 	ui::ContainerPresets rackDevice = ui::makeRackDevicePresets(*rig.top, rackId, nullptr);
 	ui::ContainerPresets top = ui::makeTopPresets(*rig.top, nullptr);
 	const std::vector<std::string> chains { "Init", "Lead Chain" };
-	const std::vector<std::string> racks { "Init", "Wide Rack" };
+	// The factory Racks bank (Multiband Saturation) installs into a fresh root, so it is listed too.
+	const std::vector<std::string> racks { "Init", "Multiband Saturation", "Wide Rack" };
 	CHECK(chainDevice.browser->bank() == kChainPresetBank);
 	CHECK(rackDevice.browser->bank() == kRackPresetBank);
 	CHECK(namesOf(*chainDevice.browser) == chains);

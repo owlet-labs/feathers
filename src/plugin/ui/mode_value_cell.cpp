@@ -63,18 +63,45 @@ ValueBox* ModeValueCell::boxFor(size_t param) const {
 bool ModeValueCell::refresh() {
 	long live = -1;
 	for (size_t i = 0; i < params_.size(); ++i) {
-		const bool on = live < 0 && relevant_ && relevant_(params_[i]);
+		const bool isLive = relevant_ && relevant_(params_[i]);
+		// STACKED: every live follower is shown. Otherwise the first live one is, and no other.
+		const bool on = stacked_ ? isLive : (live < 0 && isLive);
 		boxes_[i]->setVisible(on);
-		if (on) {
+		if (on && live < 0) {
 			live = static_cast<long>(params_[i]);
 		}
 	}
-	if (live == active_) {
+	// STACKED, A CHANGE IN WHICH ROWS ARE SHOWN IS A CHANGE even where the first live one stayed the same.
+	unsigned mask = 0;
+	for (size_t i = 0; i < boxes_.size() && i < 32; ++i) {
+		mask |= boxes_[i]->isVisible() ? 1u << i : 0u;
+	}
+	const bool shownMoved = mask != shownMask_;
+	shownMask_ = mask;
+	if (live == active_ && !shownMoved) {
 		return false;
 	}
 	active_ = live;
 	redraw();
 	return true;
+}
+
+void ModeValueCell::setStacked(bool stacked) {
+	stacked_ = stacked;
+	shownMask_ = ~0u;
+	resized();
+	redraw();
+}
+
+ModeValueCell::StackedRows ModeValueCell::stackedRowsFor(float faceDiameter) {
+	// THE SELECTOR, TWO BOXES AND THE CAPTION, in the column's height less the plate's inset above and below.
+	constexpr float gap = 2.0f;
+	StackedRows rows {};
+	rows.select = ZoneCoordCell::kPlateInset;
+	rows.box = rows.select + Knob::kReadoutHeight + gap;
+	rows.pitch = ValueBox::kCompactHeight + gap;
+	rows.caption = ZoneCoordCell::columnRowsFor(faceDiameter).caption;
+	return rows;
 }
 
 void ModeValueCell::setFaceDiameter(float diameter) {
@@ -95,6 +122,14 @@ float ModeValueCell::nameRowTop() const {
 void ModeValueCell::resized() {
 	const float inset = ZoneCoordCell::kPlateInsetX + ZoneCoordCell::kPlateInset;
 	const float usable = std::max(0.0f, static_cast<float>(width()) - inset * 2.0f);
+	if (stacked_) {
+		const StackedRows rows = stackedRowsFor(faceDiameter_);
+		for (size_t i = 0; i < boxes_.size(); ++i) {
+			boxes_[i]->setBounds(inset, rows.box + rows.pitch * static_cast<float>(i), usable, ValueBox::kCompactHeight);
+		}
+		select_->setBounds(inset, rows.select, usable, Knob::kReadoutHeight);
+		return;
+	}
 	for (const std::unique_ptr<ValueBox>& box : boxes_) {
 		box->setBounds(inset, coordinateRowTop(), usable, ValueBox::kCompactHeight);
 	}
@@ -112,7 +147,7 @@ void ModeValueCell::draw(visage::Canvas& canvas) {
 
 	// NO FOLLOWER LIVE (Straight): the first follower's own print for this mode, muted — not a box, since
 	// a drag there would change nothing (the honesty rule).
-	if (active_ < 0 && !boxes_.empty()) {
+	if (active_ < 0 && !boxes_.empty() && !stacked_) {
 		const std::string idle = boxes_.front()->readout();
 		const float inset = ZoneCoordCell::kPlateInsetX + ZoneCoordCell::kPlateInset;
 		canvas.setColor(kDisabled);

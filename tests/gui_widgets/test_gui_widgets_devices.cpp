@@ -25,6 +25,7 @@
 #include "../card_head_check.h"
 #include "plugin/ui/edge_pan.h"
 #include "plugin/ui/mode_value_cell.h"
+#include "plugin/ui/route_switch.h"
 #include "plugin/ui/gamma_box.h"
 #include "mod/twinfield/twinfield_types.h"
 #include "plugin/ui/twinfield_card.h"
@@ -43125,4 +43126,356 @@ TEST_CASE("ERODER's plot in Rust draws the band at a height of its own and write
 	plot->onMouseUp().callback(at(x0 + 20.0f, y0 - 40.0f));
 	CHECK(eroField(d, ero::Param::Freq) == doctest::Approx(std::log2(plot->xToHzForTest(x0 + 20.0f))).epsilon(1e-5));
 	CHECK(eroField(d, ero::Param::Amount) == -16.0f);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE SLOT ROW: a pair of pairs with a route switch between, and the three-row mode cell and the
+// route switch it is made of. Stand-ins are the Eroder's own Drive, Type, Shape, Mix and Track.
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+struct SlotNotes final : ui::Notifier {
+	std::vector<std::string> said;
+	void say(std::string_view text) override { said.emplace_back(text); }
+};
+
+/// THE WHOLE SLOT ROW at the Eroder card's row width: `PairCell("Slots", PairCell("", Knob, ModeValueCell), PairCell("",
+/// Knob, ModeValueCell))` with a `RouteSwitch` between them.
+struct SlotRow {
+	DynCardFixture<ui::EroderCard> d;
+	SlotNotes notes;
+	std::vector<std::unique_ptr<ui::DeviceControl>> controls;
+	std::unique_ptr<ui::Knob> knobA, knobB;
+	std::unique_ptr<ui::ModeValueCell> cellA, cellB;
+	std::unique_ptr<ui::PairCell> innerA, innerB, outer;
+	std::unique_ptr<ui::RouteSwitch> route;
+	float cell = 0.0f; ///< one column of the card's four-across row
+	float rowW = 0.0f;
+	float rowH = 0.0f;
+
+	SlotRow() : d(ero::kTraits.tag) {
+		cell = static_cast<float>(d.card->drivePairForTest()->width()) * 0.5f;
+		rowW = cell * 4.0f;
+		rowH = ui::PairCell::heightFor(ui::Knob::columnHeight(ui::EroderCard::kKnobDiameter));
+		const auto control = [this](ero::Param p) -> ui::DeviceControl& {
+			controls.push_back(std::make_unique<ui::DeviceControl>(d.f.deviceHost, d.device, ero::kDescriptor, eroAt(p)));
+			return *controls.back();
+		};
+		const auto slot = [&](std::unique_ptr<ui::Knob>& knob, std::unique_ptr<ui::ModeValueCell>& mode,
+		                      std::unique_ptr<ui::PairCell>& pair, ero::Param amount) {
+			knob = std::make_unique<ui::Knob>(control(amount), "Amount", &notes);
+			knob->setFaceDiameter(ui::EroderCard::kKnobDiameter);
+			std::vector<ui::ZoneSelect::ZoneName> types;
+			for (const char* name : ero::kDriveModeNames) {
+				types.push_back({ name, {} });
+			}
+			mode = std::make_unique<ui::ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
+			                                           [](size_t) { return true; });
+			mode->setFaceDiameter(ui::EroderCard::kKnobDiameter);
+			(void)mode->addFollower(eroAt(ero::Param::DriveShape),
+			                        std::make_unique<ui::ValueBox>(control(ero::Param::DriveShape), ""));
+			(void)mode->addFollower(eroAt(ero::Param::Mix), std::make_unique<ui::ValueBox>(control(ero::Param::Mix), ""));
+			mode->setStacked(true);
+			(void)mode->refresh();
+			pair = std::make_unique<ui::PairCell>("", *knob, *mode);
+		};
+		slot(knobA, cellA, innerA, ero::Param::Drive);
+		slot(knobB, cellB, innerB, ero::Param::Amount);
+		route = std::make_unique<ui::RouteSwitch>(control(ero::Param::Track), &notes);
+		outer = std::make_unique<ui::PairCell>("Slots", *innerA, *innerB);
+		outer->setMiddle(*route, ui::RouteSwitch::kWidth);
+		outer->setBounds(0.0f, 0.0f, rowW, rowH);
+	}
+
+	/// A frame's rectangle in the outer pair's own coordinates.
+	[[nodiscard]] visage::Bounds inOuter(const visage::Frame& f) const {
+		float x = 0.0f;
+		float y = 0.0f;
+		for (const visage::Frame* p = &f; p != outer.get(); p = p->parent()) {
+			x += static_cast<float>(p->x());
+			y += static_cast<float>(p->y());
+		}
+		return { x, y, static_cast<float>(f.width()), static_cast<float>(f.height()) };
+	}
+};
+
+} // namespace
+
+TEST_CASE("A pair cell can carry a narrow middle, and a bare pair nests in another") {
+	visage::Frame a;
+	visage::Frame b;
+	visage::Frame mid;
+	ui::PairCell pair("Slots", a, b);
+	pair.setMiddle(mid, 22.0f);
+	pair.setBounds(0.0f, 0.0f, 122.0f, ui::PairCell::heightFor(60.0f));
+	// THE TWO HALVES SHARE WHAT THE MIDDLE LEAVES.
+	CHECK(a.width() == 50.0f);
+	CHECK(mid.x() == 50.0f);
+	CHECK(mid.width() == 22.0f);
+	CHECK(b.x() == 72.0f);
+	CHECK(b.width() == 50.0f);
+	// THE MIDDLE IS CENTRED ON THE CELLS, under the caption, and one given a height is centred at it.
+	CHECK(mid.y() == ui::PairCell::kCaptionHeight);
+	CHECK(mid.height() == 60.0f);
+	pair.setMiddle(mid, 22.0f, 40.0f);
+	CHECK(mid.y() == ui::PairCell::kCaptionHeight + 10.0f);
+	CHECK(mid.height() == 40.0f);
+	pair.setSplit(0.25f);
+	CHECK(a.width() == 25.0f);
+	CHECK(mid.x() == 25.0f);
+	CHECK(b.x() == 47.0f);
+
+	// WITHOUT A MIDDLE NOTHING IS CHANGED: the cells take the whole width.
+	visage::Frame c;
+	visage::Frame e;
+	ui::PairCell plain("Drive", c, e);
+	plain.setBounds(0.0f, 0.0f, 120.0f, ui::PairCell::heightFor(60.0f));
+	CHECK(c.width() == 60.0f);
+	CHECK(e.x() == 60.0f);
+	CHECK(plain.middle() == nullptr);
+
+	// A BARE PAIR HAS NO CAPTION BAND: its cells take the whole height, so it nests.
+	visage::Frame p;
+	visage::Frame q;
+	ui::PairCell bare("", p, q);
+	CHECK(bare.bare());
+	bare.setBounds(0.0f, 0.0f, 80.0f, 60.0f);
+	CHECK(p.y() == 0.0f);
+	CHECK(p.height() == 60.0f);
+	CHECK(q.x() == 40.0f);
+}
+
+TEST_CASE("A route switch shows both of its choices, lights the one the control holds, and a press on the other chooses it") {
+	SlotRow r;
+	ui::RouteSwitch& sw = *r.route;
+	sw.setBounds(0.0f, 0.0f, ui::RouteSwitch::kWidth, ui::RouteSwitch::heightFor(ui::EroderCard::kKnobDiameter));
+	CHECK(sw.control().desc().key == std::string_view("eroder_track"));
+
+	// BOTH GLYPHS HAVE A RECTANGLE, one over the other, neither outside the switch.
+	const visage::Bounds top = sw.glyphBounds(ui::RouteSwitch::Series);
+	const visage::Bounds bottom = sw.glyphBounds(ui::RouteSwitch::Parallel);
+	CHECK(top.width() > 0.0f);
+	CHECK(top.height() > 0.0f);
+	CHECK(top.bottom() <= bottom.y());
+	CHECK(bottom.bottom() <= sw.height());
+	CHECK(top.x() >= 0.0f);
+	CHECK(top.right() <= sw.width());
+
+	const auto centre = [](const visage::Bounds& b) { return visage::Point { b.x() + b.width() * 0.5f, b.y() + b.height() * 0.5f }; };
+	const auto press = [&](visage::Point p) {
+		sw.onMouseDown().callback(at(p.x, p.y));
+		sw.onMouseUp().callback(at(p.x, p.y));
+	};
+
+	r.d.set(eroAt(ero::Param::Track), 0.0f);
+	CHECK(sw.litChoice() == ui::RouteSwitch::Series);
+	r.notes.said.clear();
+	press(centre(bottom));
+	CHECK(eroField(r.d, ero::Param::Track) == 1.0f);
+	CHECK(sw.litChoice() == ui::RouteSwitch::Parallel);
+	REQUIRE(r.notes.said.size() == 1);
+	CHECK(r.notes.said[0] == "Eroder Track Parallel");
+	press(centre(top));
+	CHECK(eroField(r.d, ero::Param::Track) == 0.0f);
+	CHECK(sw.litChoice() == ui::RouteSwitch::Series);
+	REQUIRE(r.notes.said.size() == 2);
+	CHECK(r.notes.said[1] == "Eroder Track Series");
+
+	// A PRESS ON THE LIT GLYPH WRITES AND SAYS NOTHING.
+	press(centre(top));
+	CHECK(eroField(r.d, ero::Param::Track) == 0.0f);
+	CHECK(r.notes.said.size() == 2);
+
+	// A PRESS OUTSIDE BOTH GLYPHS — the gap between, and outside the switch — DOES NOTHING.
+	const visage::Point gap { sw.width() * 0.5f, (top.bottom() + bottom.y()) * 0.5f };
+	REQUIRE(top.bottom() < bottom.y());
+	CHECK(sw.choiceAt(gap) == -1);
+	press(gap);
+	press({ sw.width() + 5.0f, 3.0f });
+	CHECK(eroField(r.d, ero::Param::Track) == 0.0f);
+	CHECK(r.notes.said.size() == 2);
+
+	// THE LIT GLYPH FOLLOWS THE CONTROL, whoever moved it.
+	r.d.set(eroAt(ero::Param::Track), 1.0f);
+	CHECK(sw.litChoice() == ui::RouteSwitch::Parallel);
+
+	// A RIGHT PRESS IS NOT A PRESS OF THE SWITCH, and a greyed switch takes none.
+	r.d.set(eroAt(ero::Param::Track), 0.0f);
+	sw.setEnabled(false);
+	press(centre(bottom));
+	CHECK(eroField(r.d, ero::Param::Track) == 0.0f);
+	sw.setEnabled(true);
+
+	// IT DECLARES ITS CONTROL, so the card/window superset guard can see it.
+	std::vector<ui::ControlFace::Offered> offered;
+	sw.offeredControls(offered);
+	REQUIRE(offered.size() == 1);
+	CHECK(offered[0].control == &sw.control());
+	CHECK(std::string(sw.tooltipAt({ 3.0f, 3.0f })).size() > 0);
+}
+
+TEST_CASE("A stacked mode cell carries a selector and two value boxes in the height of one knob column") {
+	SlotRow r;
+	ui::ModeValueCell& m = *r.cellA;
+	const float h = ui::Knob::columnHeight(ui::EroderCard::kKnobDiameter);
+	m.setBounds(0.0f, 0.0f, r.cell - 6.0f, h);
+	CHECK(m.stacked());
+	CHECK(m.followerParams().size() == 2);
+	ui::ValueBox* shape = m.boxFor(eroAt(ero::Param::DriveShape));
+	ui::ValueBox* mix = m.boxFor(eroAt(ero::Param::Mix));
+	REQUIRE(shape != nullptr);
+	REQUIRE(mix != nullptr);
+	CHECK(shape->isVisible());
+	CHECK(mix->isVisible());
+	// THREE ROWS, TOP DOWN: the selector, Shape, Mix — no two overlap and all are inside the cell above the caption.
+	const visage::Bounds sel { m.select().x(), m.select().y(), m.select().width(), m.select().height() };
+	const visage::Bounds b1 { shape->x(), shape->y(), shape->width(), shape->height() };
+	const visage::Bounds b2 { mix->x(), mix->y(), mix->width(), mix->height() };
+	CHECK_FALSE(overlaps(sel, b1));
+	CHECK_FALSE(overlaps(b1, b2));
+	CHECK_FALSE(overlaps(sel, b2));
+	CHECK(sel.bottom() <= b1.y());
+	CHECK(b1.bottom() <= b2.y());
+	CHECK(b2.bottom() <= ui::ModeValueCell::stackedRowsFor(ui::EroderCard::kKnobDiameter).caption);
+	CHECK(b2.bottom() <= h);
+	CHECK(sel.y() >= 0.0f);
+	// AT THE WIDTH A QUARTER-ROW CELL GIVES ONCE THE SWITCH HAS TAKEN ITS SHARE, the selector still prints its widest name.
+	// (`minimumWidth` is the widest Type name between its arrows: the card's own Drive cell is narrower than it too, and
+	// shows a name that fits — see the slot-row case, which prints both.)
+	CHECK(b1.width() > 0.0f);
+	CHECK(m.select().width() > 0.0f);
+
+	// A FOLLOWER THE GATE CLOSES LEAVES ITS ROW ONLY; the other keeps its place.
+	bool mixLive = false;
+	ui::ModeValueCell gated(*r.controls.front(), "Type",
+	                        { { "A", {} }, { "B", {} } },
+	                        [&](size_t p) { return p != eroAt(ero::Param::Mix) || mixLive; });
+	gated.setFaceDiameter(ui::EroderCard::kKnobDiameter);
+	(void)gated.addFollower(eroAt(ero::Param::DriveShape),
+	                        std::make_unique<ui::ValueBox>(*r.controls.front(), ""));
+	(void)gated.addFollower(eroAt(ero::Param::Mix), std::make_unique<ui::ValueBox>(*r.controls.front(), ""));
+	gated.setStacked(true);
+	gated.setBounds(0.0f, 0.0f, 60.0f, h);
+	(void)gated.refresh();
+	CHECK(gated.boxFor(eroAt(ero::Param::DriveShape))->isVisible());
+	CHECK_FALSE(gated.boxFor(eroAt(ero::Param::Mix))->isVisible());
+	mixLive = true;
+	CHECK(gated.refresh()); // the second row appeared although the first live follower did not change
+	CHECK(gated.boxFor(eroAt(ero::Param::Mix))->isVisible());
+}
+
+TEST_CASE("The slot row: two slots and a route switch between them are one item of four columns on one line") {
+	for (const float scale : { 1.0f, 1.75f }) {
+		CAPTURE(scale);
+		SlotRow r;
+		r.outer->setDpiScale(scale);
+		r.outer->setBounds(0.0f, 0.0f, r.rowW, r.rowH);
+		MESSAGE("slot row at scale " << scale << ": column " << r.cell << " row " << r.rowW << " x " << r.rowH
+		                             << ", mode cell " << r.cellA->width() << " (minimum " << r.cellA->minimumWidth() << ")");
+		const visage::Frame* const five[] = { r.knobA.get(), r.cellA.get(), r.route.get(), r.knobB.get(), r.cellB.get() };
+		const visage::Bounds outerBounds { 0.0f, 0.0f, r.rowW, r.rowH };
+		for (size_t i = 0; i < 5; ++i) {
+			const visage::Bounds bi = r.inOuter(*five[i]);
+			CHECK(bi.width() > 0.0f);
+			CHECK(bi.x() >= 0.0f);
+			CHECK(bi.y() >= ui::PairCell::kCaptionHeight);
+			CHECK(bi.right() <= outerBounds.right());
+			CHECK(bi.bottom() <= outerBounds.bottom());
+			// NATIVE WIDTHS follow the scale, and are positive.
+			CHECK(five[i]->nativeWidth() > 0);
+			CHECK(static_cast<float>(five[i]->nativeWidth()) >= bi.width() * scale - 2.0f);
+			for (size_t j = i + 1; j < 5; ++j) {
+				CHECK_FALSE(overlaps(bi, r.inOuter(*five[j])));
+			}
+		}
+		// ONE LINE, LEFT TO RIGHT: Amount, Type, route, Amount, Type, the three cells top-aligned.
+		for (size_t i = 0; i + 1 < 5; ++i) {
+			CHECK(r.inOuter(*five[i]).right() <= r.inOuter(*five[i + 1]).x());
+			CHECK(r.inOuter(*five[i]).y() == r.inOuter(*five[0]).y());
+		}
+		CHECK(r.route->width() == ui::RouteSwitch::kWidth);
+		// THE CAPTION AND THE SELECTORS FIT: the caption's tracked width is inside the row, and the Type cell prints its
+		// widest name. (Knob captions are cut to their column by `Knob` itself and are not measured here.)
+		const visage::Font& face = ui::font(ui::kKnobLabelSize);
+		CHECK(ui::trackedWidth(face, "SLOTS", ui::kKnobLabelTracking) <= r.rowW);
+		// THE ARITHMETIC OF THE ROW: the halves share what the 22 px middle leaves, and each splits in two.
+		CHECK(r.cellA->width() == doctest::Approx(((r.rowW - ui::RouteSwitch::kWidth) * 0.5f) * 0.5f).epsilon(0.001));
+		MESSAGE("Type cell " << r.cellA->width() << " wide; its minimumWidth " << r.cellA->minimumWidth()
+		                     << "; the card's own Drive cell is " << r.d.card->driveCellForTest()->width()
+		                     << " (minimum " << r.d.card->driveCellForTest()->minimumWidth() << ")");
+		CHECK(r.cellA->width() >= r.d.card->driveCellForTest()->width() - 6.0f);
+		// BOTH TYPE CELLS ARE THREE ROWS WITH NONE OVER ANOTHER.
+		for (ui::ModeValueCell* m : { r.cellA.get(), r.cellB.get() }) {
+			ui::ValueBox* shape = m->boxFor(eroAt(ero::Param::DriveShape));
+			ui::ValueBox* mix = m->boxFor(eroAt(ero::Param::Mix));
+			CHECK(m->select().bottom() <= shape->y());
+			CHECK(shape->bottom() <= mix->y());
+			CHECK(mix->bottom() <= m->height());
+		}
+
+		// THE FLOW: the composite is one item of span 4 and never splits.
+		visage::Frame lead;
+		visage::Frame after;
+		const std::vector<ui::FlowItem> items { { &lead, 1, true, 40.0f }, { r.outer.get(), 4, true, r.rowH }, { &after, 1, true, 40.0f } };
+		const float foot = ui::flowCells(items, 4, 10.0f, 0.0f, r.cell, 6.0f);
+		CHECK(lead.x() == 10.0f);
+		CHECK(r.outer->x() == 10.0f); // wrapped whole, to the start of the next row
+		CHECK(r.outer->y() == 46.0f);
+		CHECK(r.outer->width() == r.cell * 4.0f);
+		CHECK(after.y() == r.outer->y() + r.rowH + 6.0f);
+		CHECK(foot == after.y() + 40.0f);
+		// AND ON A ROW OF ITS OWN IT STAYS.
+		const std::vector<ui::FlowItem> alone { { r.outer.get(), 4, true, r.rowH } };
+		(void)ui::flowCells(alone, 4, 0.0f, 0.0f, r.cell, 6.0f);
+		CHECK(r.outer->x() == 0.0f);
+		CHECK(r.outer->y() == 0.0f);
+		CHECK(r.outer->width() == r.rowW);
+	}
+}
+
+// A PICTURE OF THE ROW, when FEATHERS_SLOT_SHOT_DIR names a directory: the composite on the card's ground at both scales.
+TEST_CASE("The slot row is photographed at the card width at scale 1 and 1.75 when asked") {
+	const char* dir = std::getenv("FEATHERS_SLOT_SHOT_DIR");
+	if (dir == nullptr) {
+		return;
+	}
+	for (const float scale : { 1.0f, 1.75f }) {
+		SlotRow r;
+		struct Ground final : visage::Frame {
+			void draw(visage::Canvas& canvas) override {
+				canvas.setColor(ui::kSurface);
+				canvas.fill(0.0f, 0.0f, static_cast<float>(width()), static_cast<float>(height()));
+			}
+		} ground;
+		constexpr float kMargin = 8.0f;
+		const float w = r.rowW + 2.0f * kMargin;
+		const float h = r.rowH + 2.0f * kMargin;
+		ground.addChild(r.outer.get());
+		visage::ApplicationEditor editor;
+		editor.setDpiScale(scale);
+		editor.setBounds(0.0f, 0.0f, w, h);
+		editor.addChild(&ground);
+		ground.setBounds(0.0f, 0.0f, w, h);
+		r.outer->setBounds(kMargin, kMargin, r.rowW, r.rowH);
+		const int pw = static_cast<int>(std::ceil(w * scale));
+		const int ph = static_cast<int>(std::ceil(h * scale));
+		editor.setWindowless(pw, ph);
+		if (!visage::Renderer::instance().supported()) {
+			MESSAGE("SKIP no renderer: " << visage::Renderer::instance().errorMessage());
+			ground.removeChild(r.outer.get());
+			editor.removeChild(&ground);
+			return;
+		}
+		editor.redrawAll();
+		editor.drawWindow();
+		editor.drawWindow();
+		const visage::Screenshot& shot = editor.takeScreenshot();
+		char name[64];
+		std::snprintf(name, sizeof(name), "/slotrow-%.2f.png", static_cast<double>(scale));
+		shot.save(std::string(dir) + name);
+		MESSAGE("saved " << dir << name << " " << shot.width() << "x" << shot.height());
+		ground.removeChild(r.outer.get());
+		editor.removeChild(&ground);
+	}
 }

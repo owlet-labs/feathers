@@ -73,6 +73,20 @@ public:
 	/// it from its layout pass; nothing here polls.
 	bool refresh();
 
+	/// **THREE ROWS: THE SELECTOR, THEN EVERY LIVE FOLLOWER'S BOX UNDER IT** (a Type with its Shape and its Mix). By default
+	/// exactly one follower is shown, the first that is live, all in the one value row; stacked, each live follower
+	/// is shown in a row of its own, in the order they were added, and a gate that closes one hides that row only.
+	/// The rows fit the knob column (`stackedRowsFor`), so a stacked cell is no taller than an unstacked one.
+	void setStacked(bool stacked);
+	[[nodiscard]] bool stacked() const noexcept { return stacked_; }
+	struct StackedRows {
+		float select;  ///< the selector's top
+		float box;     ///< the first box's top
+		float pitch;   ///< the distance from one box to the next
+		float caption; ///< the caption's top, below the last box of two
+	};
+	[[nodiscard]] static StackedRows stackedRowsFor(float faceDiameter);
+
 	/// The param the shown box drives, or -1 where none is live (Straight).
 	[[nodiscard]] long activeParam() const noexcept { return active_; }
 	[[nodiscard]] const std::vector<size_t>& followerParams() const noexcept { return params_; }
@@ -102,6 +116,8 @@ private:
 	long active_ = -2; ///< -2: never refreshed, so the first refresh always reports a change
 	float faceDiameter_ = Knob::kDiameter;
 	bool enabled_ = true;
+	bool stacked_ = false;
+	unsigned shownMask_ = ~0u; ///< which boxes the last `refresh` showed; all-ones: never
 };
 
 } // namespace feathers::ui

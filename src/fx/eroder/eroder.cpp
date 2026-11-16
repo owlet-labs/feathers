@@ -152,6 +152,14 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::ModFold)] = s.modFold;
 	row[static_cast<size_t>(Param::Heat)] = s.heat;
 	row[static_cast<size_t>(Param::Blend)] = s.blend ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::EmphAmount)] = s.emphAmount;
+	row[static_cast<size_t>(Param::EmphShape)] = s.emphBell ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::EmphRestore)] = s.emphRestore ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::EmphInLoop)] = s.emphInLoop ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::Smear)] = s.smear;
+	row[static_cast<size_t>(Param::FbTap)] = s.tapDriven ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::Loop)] = s.loop;
+	row[static_cast<size_t>(Param::LoopInterval)] = s.loopInterval;
 	return row;
 }
 
@@ -196,6 +204,14 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.modFold = read(Param::ModFold);
 	s.heat = read(Param::Heat);
 	s.blend = read(Param::Blend) >= 0.5f;
+	s.emphAmount = read(Param::EmphAmount);
+	s.emphBell = read(Param::EmphShape) >= 0.5f;
+	s.emphRestore = read(Param::EmphRestore) >= 0.5f;
+	s.emphInLoop = read(Param::EmphInLoop) >= 0.5f;
+	s.smear = read(Param::Smear);
+	s.tapDriven = read(Param::FbTap) >= 0.5f;
+	s.loop = read(Param::Loop);
+	s.loopInterval = read(Param::LoopInterval);
 	return out;
 }
 
@@ -349,6 +365,8 @@ void Eroder::prepare(double sampleRate) {
 	dust_.prepare(sampleRate_);
 	analyser_.prepare(sampleRate_);
 	combShaper_.prepare(sampleRate_);
+	combTapShaper_.prepare(sampleRate_);
+	shared_.prepare(sampleRate_, false);
 	gainSmoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kSmoothingSeconds * sampleRate_)));
 	followAttack_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
 	followRelease_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowReleaseSeconds * sampleRate_)));
@@ -363,6 +381,9 @@ void Eroder::reset() noexcept {
 	envelope_ = 0.0f;
 	combFollow_ = 1.0f;
 	combShaper_.reset();
+	combTapShaper_.reset();
+	tapStageRan_ = false;
+	shared_.reset();
 	combHighpass_.reset();
 	gainsPlaced_ = false;
 	outGain_ = outGainTarget_ = 0.0f;
@@ -572,7 +593,14 @@ void Eroder::tick(const Settings& s) noexcept {
 	// reference's level exactly.
 	heatGain_ = static_cast<float>(std::exp2(kHeatOctaves * std::clamp(static_cast<double>(s.heat), 0.0, 1.0)));
 	// THE TWO GAINS THE SAMPLE LOOP GLIDES TO: the wet's, with the level law's make-up; the dry's, whole unless Blend.
-	outGainTarget_ = static_cast<float>(derived_.wetGain * derived_.levelMakeUp) * static_cast<float>(kHeadroom) / heatGain_;
+	// THE COMB'S LOOPS (`loops.h`), for the pitch of its own line. The level law's make-up assumes a clean loop, so a Driven tap goes without.
+	const DriveSettings driveBefore = combShaper_.settings();
+	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, s.driveShape, sampleRate_, &driveBefore);
+	combLoops_ = deriveLoops(s, 1.0 / derived_.baseDelaySeconds, driveLoopGain(drive), derived_.feedback);
+	shared_.setThreshold(heatGain_ / static_cast<float>(kHeadroom));
+	shared_.set(s, combLoops_, 1.0 / derived_.baseDelaySeconds);
+	outGainTarget_ = static_cast<float>(derived_.wetGain * (combLoops_.tapDriven ? 1.0 : derived_.levelMakeUp)) *
+	                 static_cast<float>(kHeadroom) / heatGain_;
 	dryGainTarget_ = s.blend ? 1.0f - std::clamp(s.mix, 0.0f, 1.0f) : 1.0f;
 	subThru_ = s.subThru;
 	combHighpass_.set(deriveHighpass(s.hpWet, sampleRate_));
@@ -582,8 +610,8 @@ void Eroder::tick(const Settings& s) noexcept {
 		gainsPlaced_ = true;
 	}
 	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
-	const DriveSettings before = combShaper_.settings();
-	combShaper_.set(deriveDrive(s.drive, s.driveMode, s.driveShape, sampleRate_, &before));
+	combShaper_.set(drive);
+	combTapShaper_.set(drive);
 }
 
 void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
@@ -595,7 +623,22 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 	const auto minDelay = static_cast<float>(kMinDelaySeconds * sampleRate_);
 	const auto maxDelay = static_cast<float>(kMaxBaseDelaySeconds * sampleRate_);
 	const float modScale = baseDelay * static_cast<float>(kModExcursion);
-	const auto feedback = static_cast<float>(d.feedback);
+	// THE INNER LOOP'S GAIN: the bank's, less the Driven tap's and the emphasis's divisions (none, and so the bits it was, at neither).
+	const auto feedback = static_cast<float>(combLoops_.innerFeedback);
+	lastFeedbackGain_ = feedback;
+	const bool tapDriven = combLoops_.tapDriven;
+	const bool emph = shared_.emphOn();
+	const bool emphInLoop = shared_.emphInLoop();
+	const bool smearOn = shared_.smearOn();
+	const bool limitInner = shared_.limitInner();
+	// THE LINE'S CENTRE GIVES UP THE SMEAR'S DELAY, so the comb's pitch holds.
+	const float centreDelay =
+	    smearOn ? std::max(minDelay, baseDelay - static_cast<float>(shared_.smearDelayFrames())) : baseDelay;
+	const bool tapStage = combShaper_.settings().driven && (tapDriven || shared_.outerWanted());
+	if (tapStage && !tapStageRan_) {
+		combTapShaper_.reset();
+	}
+	tapStageRan_ = tapStage;
 
 	// DEPTH IS BAKED INTO THE BLEND WEIGHTS, as the firmware bakes it, and the right channel's white
 	// noise is `(1 - width)` of the left's plus `width` of its own.
@@ -630,6 +673,7 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 	// Linear in between, so the two factors cancel exactly wherever nothing is clipping — which on
 	// the reference is almost everywhere.
 	const float kFromFullScale = heatGain_ / static_cast<float>(kHeadroom);
+	const float toFullScale = static_cast<float>(kHeadroom) / heatGain_;
 
 	for (int i = 0; i < frames; ++i) {
 		// A NON-FINITE INPUT SAMPLE IS TREATED AS 0 (as Comp and EQ do): `sat()` is a clamp, which
@@ -641,7 +685,31 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 
 		// "Write input + feedback to delay (IIR comb filter topology)."
 		// INTO THE FIRMWARE'S UNITS: a full-scale input is 1/128 of the ceiling every clamp below sits at.
-		line_.write(sat(inL * kFromFullScale + feedbackL_ * feedback), sat(inR * kFromFullScale + feedbackR_ * feedback));
+		// THE SUM: the input (through the emphasis unless that is in the loop), the inner loop and the outer's return; then Smear.
+		float aL = inL;
+		float aR = inR;
+		if (emph && !emphInLoop) {
+			shared_.emphIn(aL, aR);
+		}
+		float fbL = feedbackL_;
+		float fbR = feedbackR_;
+		if (limitInner) {
+			shared_.limitInner(fbL, fbR);
+		}
+		lastFedBack_ = fbL;
+		float xL = aL * kFromFullScale + fbL * feedback;
+		float xR = aR * kFromFullScale + fbR * feedback;
+		const bool outer = shared_.outerBegin();
+		if (outer) {
+			shared_.outerReturn(xL, xR);
+		}
+		if (emph && emphInLoop) {
+			shared_.emphIn(xL, xR);
+		}
+		if (smearOn) {
+			shared_.smear(xL, xR);
+		}
+		line_.write(sat(xL), sat(xR));
 		++writeCounter_;
 		const auto newest = static_cast<double>(writeCounter_ - 1u);
 
@@ -700,8 +768,8 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		tickPhase_ += tickStep_;
 
 		// THE READ HEADS, each channel shaken by its own noise.
-		const float delayL = std::clamp(baseDelay + modL_ * modScale, minDelay, maxDelay);
-		const float delayR = std::clamp(baseDelay + modR_ * modScale, minDelay, maxDelay);
+		const float delayL = std::clamp(centreDelay + modL_ * modScale, minDelay, maxDelay);
+		const float delayR = std::clamp(centreDelay + modR_ * modScale, minDelay, maxDelay);
 		lastDelayFrames_[0] = static_cast<double>(delayL);
 		lastDelayFrames_[1] = static_cast<double>(delayR);
 
@@ -714,6 +782,31 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		// "Feedback tap BEFORE waveshaping."
 		feedbackL_ = std::abs(wetL) < kSilenceFloor ? 0.0f : wetL;
 		feedbackR_ = std::abs(wetR) < kSilenceFloor ? 0.0f : wetR;
+		const float readL = wetL;
+		const float readR = wetR;
+
+		// TAP D: the read, through the Drive stage again in the full-scale domain. IT IS TAKEN BEFORE THE COMB'S OWN CLIP AND FOLD,
+		// which carry a gain of up to twenty that only the output's level law takes back out, so a loop through them would not be
+		// the Drive's gain divided out. The outer loop is always taken here; the inner loop only when Tap says Driven. At the
+		// defaults none of this runs.
+		if (tapStage || outer || tapDriven) {
+			float tapL = readL;
+			float tapR = readR;
+			if (tapStage) {
+				tapL *= toFullScale;
+				tapR *= toFullScale;
+				combTapShaper_.process(tapL, tapR);
+				tapL *= kFromFullScale;
+				tapR *= kFromFullScale;
+			}
+			if (tapDriven) {
+				feedbackL_ = std::abs(tapL) < kSilenceFloor ? 0.0f : tapL;
+				feedbackR_ = std::abs(tapR) < kSilenceFloor ? 0.0f : tapR;
+			}
+			if (outer) {
+				shared_.outerWrite(tapL, tapR);
+			}
+		}
 
 		// SOFT CLIP, THEN FOLD.
 		wetL = shapeWet(wetL, d);
@@ -741,6 +834,10 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		lastCombWet_ = outL;
 		combShaper_.process(outL, outR);
 		lastCombShaped_ = outL;
+		// EMPHASIS OUT: after both taps and the Drive.
+		if (emph) {
+			shared_.emphOut(outL, outR);
+		}
 		// HP WET, after the shaper. Sub Thru gives back what Blend's crossfade took of the dry's low end; with the
 		// dry whole there is nothing to give back, and it adds nothing.
 		if (combHighpass_.on()) {

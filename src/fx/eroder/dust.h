@@ -23,6 +23,7 @@
 
 #include "fx/eroder/drive_stage.h"
 #include "fx/eroder/eroder_types.h"
+#include "fx/eroder/loops.h"
 #include "fx/sklitter/ring.h"
 
 #include <cstdint>
@@ -55,7 +56,7 @@ public:
 	void process(const Settings& settings, float* left, float* right, int frames) noexcept;
 
 	/// WHETHER THE LINE STILL HOLDS SOUND THE HEAD WILL READ.
-	[[nodiscard]] bool holdsSound() const noexcept { return line_.holdsSound(); }
+	[[nodiscard]] bool holdsSound() const noexcept { return line_.holdsSound() || shared_.holdsSound(); }
 
 	//----------------------------------------------------------------------------------------------//
 	// TEST SEAMS — a claim about a value cannot be inferred from a rendered buffer.                  //
@@ -77,6 +78,10 @@ public:
 	[[nodiscard]] float lastReadForTest() const noexcept { return lastRead_; }
 	[[nodiscard]] float lastShapedForTest() const noexcept { return lastShaped_; }
 	[[nodiscard]] float lastTapForTest() const noexcept { return lastTap_; }
+	/// THE SHARED SECTION (`loops.h`) as the last control block left it, and the fed-back sample as the loop's write saw it.
+	[[nodiscard]] const SharedSection& sharedForTest() const noexcept { return shared_; }
+	[[nodiscard]] float lastFedBackForTest() const noexcept { return lastFedBack_; }
+	[[nodiscard]] float lastLimiterGainForTest() const noexcept { return lastLimiterGain_; }
 
 private:
 	void tick(const Settings& settings) noexcept;
@@ -117,6 +122,8 @@ private:
 	float feedbackL_ = 0.0f;
 	float feedbackR_ = 0.0f;
 
+	/// THE SHARED SECTION: emphasis, Smear and the two loops. Rust's inner loop lives here too (it has no line).
+	SharedSection shared_ {};
 	/// THE SHAPER (`drive_stage.h`).
 	DriveStage shaper_ {};
 	/// HP WET, and the same filter on the dry for Sub Thru (`drive_stage.h`).
@@ -144,6 +151,8 @@ private:
 	float lastRead_ = 0.0f;
 	float lastShaped_ = 0.0f;
 	float lastTap_ = 0.0f;
+	float lastFedBack_ = 0.0f;
+	float lastLimiterGain_ = 1.0f;
 	uint64_t holds_ = 0;
 };
 

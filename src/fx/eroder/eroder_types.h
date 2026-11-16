@@ -295,6 +295,24 @@ inline constexpr float kFollowFloor = 1.0e-9f;
 inline constexpr double kDustSmoothingSeconds = 0.02;
 
 //--------------------------------------------------------------------------------------------------//
+// THE SHARED SECTION'S NUMBERS (`loops.h`): emphasis, smear and the two feedback loops, the same for every engine.   //
+//--------------------------------------------------------------------------------------------------//
+
+/// THE EMPHASIS RANGE, dB either way.
+inline constexpr double kEmphasisMaxDb = 18.0;
+/// **WIDTH IS THE BELL'S WIDTH, in octaves between the half-gain points, log-mapped:** 0 is a quarter of an octave, 1 is three.
+/// (`Width` is the noise band's control in the shaking engines; the emphasis reads the same coordinate, so the Comb, which
+/// does not draw it, keeps whatever it was left at.)
+inline constexpr double kEmphasisWidthOctavesMin = 0.25;
+inline constexpr double kEmphasisWidthOctavesMax = 3.0;
+/// **THE OUTER LOOP'S GAIN AT THE TOP OF ITS KNOB**, before the divisions that keep it under one: just short of the edge.
+inline constexpr double kLoopMaxGain = 0.98;
+/// THE INTERVAL, semitones either way: the outer delay is the period of Freq times `2^(-interval / 12)`.
+inline constexpr double kLoopIntervalSemitones = 24.0;
+/// What the loops' delay lines can hold, seconds: five hertz (the lowest Freq a route can reach) two octaves down.
+inline constexpr double kLoopLineSeconds = 0.85;
+
+//--------------------------------------------------------------------------------------------------//
 // THE CONTROLS.                                                                                      //
 //--------------------------------------------------------------------------------------------------//
 
@@ -381,9 +399,23 @@ enum class Param : int {
 	ModFold,   ///< Dust, Rust: the sine pushed past its peaks and folded back
 	Heat,      ///< Comb: how hot the wet runs into its own clip and fold
 	Blend,     ///< Comb: Mix crossfades from dry to wet instead of adding the wet to a whole dry
+	// THE SHARED SECTION, every engine (`loops.h`).
+	EmphAmount,   ///< dB: a filter before the engine and (with Restore) its inverse after the Drive; 0 is neither
+	EmphShape,    ///< Tilt (pivots at Freq) or Bell (peaks at Freq, Width octaves wide)
+	EmphRestore,  ///< the inverse after the Drive
+	EmphInLoop,   ///< the filter sits after the sum, so each pass round a loop goes through it
+	Smear,        ///< eight allpass sections centred on Freq, before the engine
+	FbTap,        ///< where the inner feedback is taken: Clean (before the Drive) or Driven (after it)
+	Loop,         ///< the outer loop's amount: the Driven tap through a delay of one period of Freq, shifted by Interval
+	LoopInterval, ///< semitones; the outer delay is the period of Freq times 2^(-interval / 12)
 
 	kCount,
 };
+/// How many controls the shared section added after the first release of the face (they are not on it yet).
+inline constexpr size_t kSharedParamCount = 8;
+
+inline constexpr const char* kEmphShapeNames[] = { "Tilt", "Bell" };
+inline constexpr const char* kFbTapNames[] = { "Clean", "Driven" };
 
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
 
@@ -666,13 +698,13 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Feeds the shaken signal back round the delay, so it rings at a pitch Amount sets. Left "
-                "of centre the feedback is inverted, which rings an octave lower and hollow",
+     .tooltip = "Feeds the shaken signal back round the delay, so it rings at a pitch Amount sets (in Rust, one "
+                "period of Freq). Left of centre the feedback is inverted, which rings an octave lower and hollow",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kDustOnly,
+     .gateMask = kShakers,
      .centred = true,
      // "RESONANCE" is as long as "CHARACTER", which touched its cell's border at three across.
      .shortName = "Reso"},
@@ -933,6 +965,153 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .centred = false,
      .shortName = "Blend",
      .stacked = true},
+    {.key = "eroder_emph_amount", .name = "Eroder Emphasis",
+     .min = -kEmphasisMaxDb,
+     .max = kEmphasisMaxDb,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Decibel,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Tilts or bends the signal on its way into the effect, and (with Restore) back on its way out, so what "
+                "the Drive and the loops bite on is not what you hear. At zero neither filter runs",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = true,
+     .shortName = "Emphasis"},
+    {.key = "eroder_emph_shape", .name = "Eroder Emphasis Shape",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kEmphShapeNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Tilt lifts one side of Freq and lowers the other. Bell lifts or lowers a band centred on Freq, as wide "
+                "as Width says: a quarter of an octave at the bottom, three at the top",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Shape"},
+    {.key = "eroder_emph_restore", .name = "Eroder Restore",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Puts the opposite filter after the Drive, so the effect's tone comes back and only what the Drive made "
+                "of the emphasised signal is left. Off, the emphasis stays in the sound",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Restore",
+     .stacked = true},
+    {.key = "eroder_emph_in_loop", .name = "Eroder In Loop",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Moves the emphasis to after the feedback joins the signal, so every trip round a loop goes through it "
+                "again. Only matters with an emphasis and a loop; the loops are turned down to stay under one",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "In Loop",
+     .stacked = true},
+    {.key = "eroder_smear", .name = "Eroder Smear",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Eight allpass filters centred on Freq: the level stays where it is and the timing is thrown out of step "
+                "about Freq, so a click becomes a chirp and a square's corners come apart. Inside the loops",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Smear"},
+    {.key = "eroder_fb_tap", .name = "Eroder Tap",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kFbTapNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Where the feedback is taken: Clean, before the Drive, so the Drive colours only what you hear; Driven, "
+                "after it, so the loop rings through the Drive. The loop is turned down by the Drive's own gain",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Tap"},
+    {.key = "eroder_loop", .name = "Eroder Loop",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "A second feedback, from after the Drive through a delay of one period of Freq, moved by Interval, and "
+                "a limiter. Its top is the edge of ringing for ever; it never goes past it",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Loop"},
+    {.key = "eroder_loop_interval", .name = "Eroder Interval",
+     .min = -kLoopIntervalSemitones,
+     .max = kLoopIntervalSemitones,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How far above (or, below zero, under) the pitch of Freq the outer loop rings: its delay is one period "
+                "of Freq divided by two for every twelve semitones",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = true,
+     .shortName = "Interval",
+     .suffix = "st"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -970,6 +1149,15 @@ struct Settings {
 	float modFold = 0.0f;
 	float heat = 0.0f;
 	bool blend = false;
+	// THE SHARED SECTION.
+	float emphAmount = 0.0f; ///< dB
+	bool emphBell = false;   ///< false is Tilt
+	bool emphRestore = true;
+	bool emphInLoop = false;
+	float smear = 0.0f;
+	bool tapDriven = false;
+	float loop = 0.0f;
+	float loopInterval = 0.0f; ///< semitones
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -1053,6 +1241,30 @@ struct Derived {
 // DUST'S MAPPING: ONE QUANTITY PER CONTROL.                                                          //
 //--------------------------------------------------------------------------------------------------//
 
+/// **WHAT THE SHARED SECTION'S LOOPS RUN ON** (`loops.h`): a pure function of the settings, the engine's Freq and the Drive's
+/// gain, so each of the stability rules is an equality on a struct.
+struct LoopDerived {
+	bool tapDriven = false;
+	bool inLoop = false;  ///< In Loop is on AND there is an emphasis
+	bool emphOn = false;
+	/// The inner feedback runs through the limiter: Driven, or the emphasis in the loop.
+	bool limitInner = false;
+	/// What the Driven tap's gain is divided by (the Drive's small-signal gain, never under one) and what the emphasis in the
+	/// loop divides both loops by (its peak gain).
+	double tapDivisor = 1.0;
+	double emphDivisor = 1.0;
+	/// The Drive's small-signal gain, never under one: what the OUTER loop (always a Driven tap) is divided by.
+	double driveDivisor = 1.0;
+	/// The inner loop's effective gain, signed, after both divisions.
+	double innerFeedback = 0.0;
+	/// `loop * kLoopMaxGain * (1 - |inner loop's gain as set|) / driveDivisor / emphDivisor`; exactly 0 at Loop 0. The inner loop's
+	/// gain as set is what it comes to through the Drive and the emphasis's peak, with both divisions put back.
+	double loopGain = 0.0;
+	/// One period of Freq, and the outer delay: that times `2^(-interval / 12)`. Seconds, before the smear's delay comes off.
+	double periodSeconds = 0.0;
+	double outerSeconds = 0.0;
+};
+
 /// **EVERYTHING DUST'S SAMPLE LOOP RUNS ON.** A pure function of the settings, the note and the rate.
 struct DustDerived {
 	double amountSeconds = 0.0; ///< the head's travel either side of its centre; 0 at the bottom of the range
@@ -1108,6 +1320,8 @@ struct DustDerived {
 	float grit = 0.0f;
 	float stereo = 1.0f;
 	float stereoNorm = 1.0f;
+	/// THE SHARED SECTION'S LOOPS, for this engine's Freq.
+	LoopDerived loops {};
 };
 
 /// **WHAT A `DriveStage` RUNS ON** (`drive_stage.h`): both engines derive one from the same three controls.
@@ -1132,6 +1346,15 @@ struct DriveSettings {
 /// @param mix    the stage's own mix, for a caller that sets one; the Drive control itself is always at 1
 [[nodiscard]] DriveSettings deriveDrive(float drive, DriveMode mode, float shape, double sampleRate,
                                         const DriveSettings* reuse = nullptr, float mix = 1.0f) noexcept;
+/// THE STAGE'S GAIN FOR A VANISHING SIGNAL, make-up included; 1 when it is not run or not a curve.
+[[nodiscard]] double driveLoopGain(const DriveSettings& drive) noexcept;
+/// THE EMPHASIS'S PEAK LINEAR GAIN: `10^(|dB| / 20)` where the shape boosts (a tilt always does, a bell only above zero), else 1.
+[[nodiscard]] double emphasisPeakGain(const Settings& settings) noexcept;
+/// @param centreHz   the engine's Freq (the Comb's own pitch)
+/// @param driveGain  `driveLoopGain` of the stage the Driven tap passes
+/// @param innerFeedbackRaw  the engine's inner loop gain before the Driven tap's and the emphasis's divisions, signed
+[[nodiscard]] LoopDerived deriveLoops(const Settings& settings, double centreHz, double driveGain,
+                                      double innerFeedbackRaw) noexcept;
 
 /// **WHAT A `WetHighpass` RUNS ON**: off at the bottom of HP Wet, else the trapezoidal coefficients of a two-pole
 /// highpass at `hz`.

@@ -29,4 +29,12 @@ param ERODER eroder_detune unit=percent min=0 max=1 stepped=0
 param ERODER eroder_mod_fold unit=percent min=0 max=1 stepped=0
 param ERODER eroder_heat unit=percent min=0 max=1 stepped=0
 param ERODER eroder_blend unit=choice choice=Off|On
+param ERODER eroder_emph_amount unit=decibel min=-18 max=18 stepped=0
+param ERODER eroder_emph_shape unit=choice choice=Tilt|Bell
+param ERODER eroder_emph_restore unit=choice choice=Off|On
+param ERODER eroder_emph_in_loop unit=choice choice=Off|On
+param ERODER eroder_smear unit=percent min=0 max=1 stepped=0
+param ERODER eroder_fb_tap unit=choice choice=Clean|Driven
+param ERODER eroder_loop unit=percent min=0 max=1 stepped=0
+param ERODER eroder_loop_interval unit=number min=-24 max=24 stepped=0
 retired ERODER eroder_drive 2026-11-15 a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)

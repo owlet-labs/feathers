@@ -25,6 +25,7 @@
 #include "dsp/analyser.h"
 #include "fx/eroder/dust.h"
 #include "fx/eroder/eroder_types.h"
+#include "fx/eroder/loops.h"
 #include "fx/sklitter/ring.h"
 
 #include <cstddef>
@@ -100,6 +101,11 @@ public:
 	[[nodiscard]] double smoothedGammaForTest() const noexcept { return smoothedGamma_; }
 	[[nodiscard]] float lastCombShapedForTest() const noexcept { return lastCombShaped_; }
 	[[nodiscard]] const DriveSettings& combDriveForTest() const noexcept { return combShaper_.settings(); }
+	/// THE SHARED SECTION AS THE COMB RUNS IT, and the loops it was derived to.
+	[[nodiscard]] const SharedSection& combSharedForTest() const noexcept { return shared_; }
+	[[nodiscard]] const LoopDerived& combLoopsForTest() const noexcept { return combLoops_; }
+	[[nodiscard]] float combFedBackForTest() const noexcept { return lastFedBack_; }
+	[[nodiscard]] float combFeedbackGainForTest() const noexcept { return lastFeedbackGain_; }
 	/// THE SECOND ENGINE, for its own seams.
 	[[nodiscard]] const Dust& dustForTest() const noexcept { return dust_; }
 	[[nodiscard]] float triangleForTest() const noexcept { return triValue_; }
@@ -135,6 +141,14 @@ private:
 	float combFollow_ = 1.0f;
 	/// THE COMB'S DRIVE STAGE (`drive_stage.h`), and its last left frame either side of it.
 	DriveStage combShaper_ {};
+	/// THE SAME STAGE ON THE TAP: the Driven tap (and the outer loop's) is taken after a Drive stage of its own, run on the
+	/// wet in the full-scale domain the stage is made for, since the output's stage sits behind the Mix and the level law.
+	DriveStage combTapShaper_ {};
+	bool tapStageRan_ = false;
+	SharedSection shared_ {};
+	LoopDerived combLoops_ {};
+	float lastFedBack_ = 0.0f;
+	float lastFeedbackGain_ = 0.0f;
 	WetHighpass combHighpass_ {};
 	bool subThru_ = false;
 	/// HEAT, and the two gains the sample loop glides (`tick`).

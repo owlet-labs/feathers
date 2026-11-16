@@ -300,6 +300,44 @@ HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept {
 	return h;
 }
 
+double driveLoopGain(const DriveSettings& d) noexcept {
+	if (!d.driven || d.mix <= 0.0f || driveIsNotCurve(d.mode)) {
+		return 1.0;
+	}
+	return std::max(1.0, driveSlope(d.mode, d.shape) * static_cast<double>(d.gain) * static_cast<double>(d.norm));
+}
+
+double emphasisPeakGain(const Settings& s) noexcept {
+	const double db = std::clamp(static_cast<double>(s.emphAmount), -kEmphasisMaxDb, kEmphasisMaxDb);
+	if (db == 0.0 || (s.emphBell && db < 0.0)) {
+		return 1.0;
+	}
+	return std::pow(10.0, std::abs(db) / 20.0);
+}
+
+LoopDerived deriveLoops(const Settings& s, double centreHz, double driveGain, double innerFeedbackRaw) noexcept {
+	LoopDerived l;
+	l.emphOn = std::isfinite(s.emphAmount) && s.emphAmount != 0.0f;
+	l.inLoop = s.emphInLoop && l.emphOn;
+	l.tapDriven = s.tapDriven;
+	l.limitInner = l.tapDriven || l.inLoop;
+	l.driveDivisor = std::max(1.0, driveGain);
+	l.tapDivisor = l.tapDriven ? l.driveDivisor : 1.0;
+	l.emphDivisor = l.inLoop ? emphasisPeakGain(s) : 1.0;
+	l.innerFeedback = innerFeedbackRaw / (l.tapDivisor * l.emphDivisor);
+	const double loop = std::clamp(static_cast<double>(s.loop), 0.0, 1.0);
+	// THE INNER LOOP'S SHARE OF THE EDGE IS ITS GAIN AS IT WAS ASKED FOR: through the Drive (Driven) or round it (Clean) and
+	// at the emphasis's peak, the divisions put back, it is the raw gain (or less, under a Drive gain of under one). So the two
+	// loops together, loudest, stay under one.
+	const double innerAtPeak = std::min(std::abs(innerFeedbackRaw), 1.0);
+	l.loopGain = loop == 0.0 ? 0.0 : loop * kLoopMaxGain * (1.0 - innerAtPeak) / l.driveDivisor / l.emphDivisor;
+	const double hz = std::max(centreHz, 1.0e-3);
+	l.periodSeconds = 1.0 / hz;
+	const double interval = std::clamp(static_cast<double>(s.loopInterval), -kLoopIntervalSemitones, kLoopIntervalSemitones);
+	l.outerSeconds = l.periodSeconds * std::exp2(-interval / 12.0);
+	return l;
+}
+
 HighpassSettings highpassOf(const DustDerived& d) noexcept {
 	return { d.hpOn, d.hpHz, static_cast<float>(d.hpA1), static_cast<float>(d.hpA2), static_cast<float>(d.hpA3),
 		     static_cast<float>(d.hpK) };
@@ -387,13 +425,13 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	d.rustBias = std::clamp(s.rustBias, 0.0f, 1.0f);
 	d.rustRectify = std::clamp(s.rustRectify, 0.0f, 1.0f);
 
-	// RUST HAS NO LINE, so nothing to feed back round.
-	d.feedback = d.ring ? 0.0 : std::clamp(static_cast<double>(s.resonance), -1.0, 1.0) * kDustFeedbackCeiling;
-	// WRECK'S (AND JAG'S) FEEDBACK RUNS THROUGH THE SHAPER, which may be a gain: taken back out of the loop, so no curve of it is
-	// steeper than the line's own feedback and a tail always dies.
-	if (d.driven && (d.driveMode == DriveMode::Wreck || d.driveMode == DriveMode::Jag)) {
-		d.feedback /= std::max(1.0, driveSlope(d.driveMode, d.driveShape) * d.driveGain * d.driveNorm);
-	}
+	// RUST'S INNER LOOP IS A DELAY OF ITS OWN (`loops.h`), so it has Resonance too.
+	d.feedback = std::clamp(static_cast<double>(s.resonance), -1.0, 1.0) * kDustFeedbackCeiling;
+	// THE TAP DECIDES, FOR EVERY TYPE: Driven takes the feedback after the shaper, and its small-signal gain is taken back out of the
+	// loop, so no curve of it is steeper than the line's own feedback and a tail always dies. The emphasis in the loop
+	// divides it by its peak. Clean, with no emphasis in the loop, leaves it as it was.
+	d.loops = deriveLoops(s, d.freqHz, driveLoopGain(driveOf(d)), d.feedback);
+	d.feedback = d.loops.innerFeedback;
 	const double mix = std::clamp(static_cast<double>(s.mix), 0.0, 1.0);
 	// A COMB'S BROADBAND POWER GAIN IS 1 / (1 - fb^2): taking it back out leaves the peaks louder and the whole no
 	// quieter, which is what turning a resonance up should sound like.
@@ -410,6 +448,8 @@ void Dust::prepare(double sampleRate) {
 	smoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDustSmoothingSeconds * sampleRate_)));
 	followSmoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
 	shaper_.prepare(sampleRate_);
+	shared_.prepare(sampleRate_, true);
+	shared_.setThreshold(1.0f);
 	reset();
 }
 
@@ -432,6 +472,7 @@ void Dust::reset() noexcept {
 	rng_ = kRngSeed;
 	shaper_.reset();
 	highpass_.reset();
+	shared_.reset();
 	sinePhaseRight_ = 0.0;
 	stepPhase_ = 0.0;
 	stepL_ = stepR_ = 0.0f;
@@ -471,6 +512,8 @@ void Dust::tick(const Settings& settings) noexcept {
 	derived_ = deriveDust(settings, pitchSemitones_, sampleRate_, &derived_);
 	shaper_.set(driveOf(derived_));
 	highpass_.set(highpassOf(derived_));
+	// THE SHARED SECTION IS LATCHED HERE, ON THE GRID, and nowhere a host's block length can reach.
+	shared_.set(settings, derived_.loops, derived_.freqHz);
 	if (!placed_) {
 		followGain_ = followGain(derived_.follow, envelope_);
 		amountFrames_ = static_cast<float>(derived_.amountSeconds * sampleRate_);
@@ -508,7 +551,11 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 	const float source = d.source;
 	const float grit = d.grit;
 
-	const bool wreck = d.driven && (d.driveMode == DriveMode::Wreck || d.driveMode == DriveMode::Jag);
+	const bool tapDriven = d.loops.tapDriven;
+	const bool emph = shared_.emphOn();
+	const bool emphInLoop = shared_.emphInLoop();
+	const bool smearOn = shared_.smearOn();
+	const bool limitInner = shared_.limitInner();
 
 	const bool stepping = d.stepHoldFrames > 1.0;
 	const float foldDrive = 1.0f + kModFoldSpan * d.modFold;
@@ -526,10 +573,46 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		dryGain_ = glide(dryGain_, dryTarget, smoothing_);
 		followGain_ = glide(followGain_, followTarget, followSmoothing_);
 
+		// THE SUM: the input (through the emphasis unless that is in the loop), the inner loop's return and the outer's.
+		float aL = inL;
+		float aR = inR;
+		if (emph && !emphInLoop) {
+			shared_.emphIn(aL, aR);
+		}
+		// RUST'S INNER LOOP IS A DELAY OF ITS OWN; DUST'S IS ITS LINE, whose tap waited a frame in `feedbackL_`.
+		const bool innerRuns = d.ring && shared_.innerBegin(feedback_ != 0.0f || feedbackTarget != 0.0f);
+		float fbL = feedbackL_;
+		float fbR = feedbackR_;
+		if (innerRuns) {
+			shared_.innerRead(fbL, fbR);
+		}
+		else if (limitInner && !d.ring) {
+			shared_.limitInner(fbL, fbR);
+		}
+		lastFedBack_ = fbL;
+		float vL = aL;
+		float vR = aR;
+		if (!d.ring || innerRuns) {
+			vL += fbL * feedback_;
+			vR += fbR * feedback_;
+		}
+		const bool outer = shared_.outerBegin();
+		if (outer) {
+			shared_.outerReturn(vL, vR);
+		}
+		if (emph && emphInLoop) {
+			shared_.emphIn(vL, vR);
+		}
+		if (smearOn) {
+			shared_.smear(vL, vR);
+		}
 		if (!d.ring) {
-			line_.write(std::clamp(inL + feedbackL_ * feedback_, -kDustCeiling, kDustCeiling),
-			            std::clamp(inR + feedbackR_ * feedback_, -kDustCeiling, kDustCeiling));
+			line_.write(std::clamp(vL, -kDustCeiling, kDustCeiling), std::clamp(vR, -kDustCeiling, kDustCeiling));
 			++writeCounter_;
+		}
+		else if (innerRuns || outer) {
+			vL = std::clamp(vL, -kDustCeiling, kDustCeiling);
+			vR = std::clamp(vR, -kDustCeiling, kDustCeiling);
 		}
 		const auto newest = static_cast<double>(writeCounter_ - 1u);
 
@@ -608,8 +691,8 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 			const float gainR = d.rustBias + (1.0f - d.rustBias) * carrierR;
 			lastRing_[0] = 1.0f + followGain_ * (gainL - 1.0f);
 			lastRing_[1] = 1.0f + followGain_ * (gainR - 1.0f);
-			wetL = inL * lastRing_[0];
-			wetR = inR * lastRing_[1];
+			wetL = vL * lastRing_[0];
+			wetR = vR * lastRing_[1];
 			lastDelayFrames_[0] = lastDelayFrames_[1] = 0.0;
 		}
 		else {
@@ -622,16 +705,29 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		float tapR = wetR;
 		lastRead_ = wetL;
 		shaper_.process(wetL, wetR);
-		if (wreck) {
+		// TAP C IS BEFORE THE DRIVE, TAP D AFTER IT — for every Type.
+		if (tapDriven) {
 			tapL = wetL;
 			tapR = wetR;
 		}
 
 		lastShaped_ = wetL;
 		lastTap_ = tapL;
-		// THE TAP GOES BACK IN ON THE NEXT FRAME'S WRITE, so the loop is one frame longer than the head's delay.
+		// THE TAP GOES BACK IN ON THE NEXT FRAME'S SUM, so the loop is one frame longer than the head's delay.
 		feedbackL_ = std::abs(tapL) < kFeedbackFloor ? 0.0f : tapL;
 		feedbackR_ = std::abs(tapR) < kFeedbackFloor ? 0.0f : tapR;
+		if (innerRuns) {
+			shared_.innerWrite(feedbackL_, feedbackR_);
+		}
+		// THE OUTER LOOP IS ALWAYS TAKEN AFTER THE DRIVE.
+		if (outer) {
+			shared_.outerWrite(wetL, wetR);
+			lastLimiterGain_ = shared_.outerLimiterGainForTest();
+		}
+		// EMPHASIS OUT: after both taps.
+		if (emph) {
+			shared_.emphOut(wetL, wetR);
+		}
 
 		// HP WET, AFTER THE SHAPER; and what it took, given back from the dry when asked.
 		if (highpass_.on()) {

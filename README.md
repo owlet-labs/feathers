@@ -45,6 +45,9 @@ Each sound is a position on a terrain. The Explore surface shows the terrain und
 | ![Explore terrain](docs/readme/05-explore-terrain.png) | ![Drum kit](docs/readme/06-drum-kit.png) |
 | *Explore: the terrain under sound A, with Rotate, Theta and Radius on its rim, Mutate / Undo / Redo and the like heart. A macro route into Radius is drawn along the knob's face.* | *The Drum engine's kit window: eight pads, each with its own kind, note and choke group, and the hit picture with draggable handles for click, sweep, tune, dip, drive and decay. The PAD FX rail is folded at the right.* |
 
+![The Explore terrain turning under Rotate](docs/readme/explore-rotate.gif)
+*The terrain turning under Rotate (Additive engine): every point of the field is a waveform, and Rotate turns the whole field under the sound.*
+
 ## Modulation as a first-class system
 
 Modulators live in a lane of their own and are added, reordered and removed like effects. The ones shown here: DAHDSR, LFO, MSEG, Math, Twin Field and Pattern. Others include Step Seq, Sample & Hold, Random Trigger, Follower, Macros and Note Expressions. Every output is a source you can route to any modulatable parameter, whether on the engine or on a device.

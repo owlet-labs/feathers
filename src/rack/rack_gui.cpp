@@ -20,6 +20,7 @@
  */
 
 #include "rack/rack_gui.h"
+#include "plugin/ui/undo_chord.h"
 
 #include "plugin/ui/expanded_views.h"
 
@@ -40,6 +41,7 @@
 
 
 #include <cmath>
+#include <optional>
 #include <string>
 
 #if defined(FEATHERS_GUI_VISAGE)
@@ -264,6 +266,11 @@ void RackGui::installWindowHandlers(visage::ApplicationWindow& app) {
 	// (`ModState::arm`), and it is the one a player would be stuck in. Esc with nothing armed is not ours.
 	app.setAcceptsKeystrokes(true);
 	app.onKeyPress() = [this](const visage::KeyEvent& e) {
+		// UNDO AND REDO, with no buttons in the header: the chord reaches the editor's history whichever frame holds the keyboard
+		// (the editor's own handler takes it first when focus is inside; this is the window's, for focus on the root or none).
+		if (const std::optional<bool> redo = ui::undoChordOf(e); redo.has_value()) {
+			return editor_ != nullptr && editor_->walkHistoryFromKey(*redo, window_.app());
+		}
 		if (e.isCtrlDown() || e.isCmdDown()) {
 			const int direction = ui::PluginWindow::uiScaleStepFor(static_cast<int>(e.keyCode()));
 			if (direction == 2) {

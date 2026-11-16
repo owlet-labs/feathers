@@ -24,6 +24,8 @@
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/fx_lane_rail.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/macro_polarity.h"
+#include "plugin/ui/macro_slot.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/parallel_rack_card.h"
 #include "plugin/ui/source_arm.h"
@@ -95,6 +97,8 @@ public:
 	static constexpr float kColumnWidth = 2.0f * 76.0f;
 	/// A MACRO'S KNOB CELL, and beside it the arrow that arms it (`macroArmForTest`): the cell is `kColumnWidth / 2` wide.
 	static constexpr float kMacroKnobWidth = 52.0f;
+	/// Mix and Gain, the knobs before the macros in `knobBoundsForTest` order.
+	static constexpr size_t kTopKnobCount = 2;
 	static constexpr float kAddWidth = 64.0f;
 	static constexpr float kAddHeight = 20.0f;
 
@@ -102,7 +106,13 @@ public:
 	[[nodiscard]] std::vector<rack::parallel::Param> addressedParamsForTest() const;
 	[[nodiscard]] size_t railCountForTest() const noexcept { return rails_.size(); }
 	/// The knob at `i` in `addressedParamsForTest` order (Mix, Gain, M1..M8), and the divider and "+ Chain" boxes.
-	[[nodiscard]] visage::Bounds knobBoundsForTest(size_t i) const { return knobs_[i]->bounds(); }
+	[[nodiscard]] visage::Bounds knobBoundsForTest(size_t i) const {
+		return i < kTopKnobCount ? knobs_[i]->bounds() : macroSlots_[i - kTopKnobCount]->bounds();
+	}
+	/// **THE MACRO AT `n` (0-based) AS THE SYNTH'S MACROS ARE SEATED**: one `MacroSlot` — the right-click menu (type, polarity,
+	/// Rename), the field the name is typed into, the pad a Latch or Momentary becomes. The name, type and polarity are the rack's
+	/// (`Rack::setMacroName`), saved in its chains' bodies.
+	[[nodiscard]] MacroSlot& macroSlotForTest(size_t n) const { return *macroSlots_[n]; }
 	/// The arrow of macro `n` (0-based), and the state it arms.
 	[[nodiscard]] SourceArm& macroArmForTest(size_t n) const { return *macroArms_[n]; }
 	[[nodiscard]] ModState& macroModForTest() noexcept { return macroMod_; }
@@ -191,7 +201,18 @@ private:
 	/// HELD BEFORE THE RAILS ARE BUILT OVER IT, AND DECLARED BEFORE THEM so it outlives their teardown (backlog JX).
 	backplane::DeviceHost::SurfacePin pin_;
 	std::vector<std::unique_ptr<DeviceControl>> controls_;
+	/// Mix and Gain.
 	std::vector<std::unique_ptr<Knob>> knobs_;
+	/// **THE EIGHT MACROS, EACH A `MacroSlot`** over its control seen through the rack's polarity. The hooks and the naming hold
+	/// `alive_` weakly: a menu is parented to the root frame and can be picked after this window is gone.
+	std::shared_ptr<void> alive_ = std::make_shared<char>(0);
+	std::vector<std::unique_ptr<BipolarMacro>> macroViews_;
+	std::vector<std::unique_ptr<MacroSlot>> macroSlots_;
+	[[nodiscard]] MacroMenuHooks macroHooks(size_t n);
+	[[nodiscard]] MacroSlot::Naming macroNaming(size_t n);
+	[[nodiscard]] rack::parallel::Rack* rackNow() const;
+	/// Re-seat any slot whose type or name moved under it. True when one did.
+	bool syncMacroSlots();
 	std::unique_ptr<DeviceControl> modeControl_;
 	std::unique_ptr<DeviceControl> positionControl_;
 	std::unique_ptr<ValueBox> modeBox_;

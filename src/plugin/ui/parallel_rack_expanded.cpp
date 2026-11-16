@@ -17,6 +17,7 @@
 
 #include "plugin/ui/parallel_rack_expanded.h"
 
+#include "plugin/ui/stored_edit.h"
 #include "plugin/ui/theme.h"
 #include "rack/inner_chain.h"
 
@@ -56,18 +57,29 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		controls_.push_back(
 		    std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(kKnobs[i])));
-		auto knob = std::make_unique<Knob>(*controls_.back(), kCaptions[i], notifier);
-		knob->setFaceDiameter(Knob::kEngineRailDiameter);
-		addChild(knob.get());
-		knobs_.push_back(std::move(knob));
-		// A MACRO IS A SOURCE INSIDE THE RACK as well as a destination of its host: its arrow arms it for every chain.
-		if (i >= kTopKnobs) {
-			auto arm = std::make_unique<SourceArm>(macroMod_, device::Source::core(i - kTopKnobs));
-			arm->setTooltip("Arm Macro " + std::to_string(i - kTopKnobs + 1)
-			                + " as a modulation source: then drag a control inside the chains to set how far it moves it. Press again to put it away");
-			addChild(arm.get());
-			macroArms_.push_back(std::move(arm));
+		if (i < kTopKnobs) {
+			auto knob = std::make_unique<Knob>(*controls_.back(), kCaptions[i], notifier);
+			knob->setFaceDiameter(Knob::kEngineRailDiameter);
+			addChild(knob.get());
+			knobs_.push_back(std::move(knob));
+			continue;
 		}
+		// A MACRO IS THE SAME SLOT THE SYNTH'S MACROS ARE (right-click: type, polarity, Rename), read through the rack's polarity.
+		const size_t n = i - kTopKnobs;
+		macroViews_.push_back(std::make_unique<BipolarMacro>(*controls_.back(), [this, n] {
+			const pr::Rack* rack = rackNow();
+			return rack != nullptr && rack->macroBipolar(n);
+		}));
+		auto slot = std::make_unique<MacroSlot>(*macroViews_.back(), kCaptions[i], macroNaming(n), macroHooks(n), notifier);
+		slot->setFaceDiameter(Knob::kEngineRailDiameter);
+		addChild(slot.get());
+		macroSlots_.push_back(std::move(slot));
+		// A MACRO IS A SOURCE INSIDE THE RACK as well as a destination of its host: its arrow arms it for every chain.
+		auto arm = std::make_unique<SourceArm>(macroMod_, device::Source::core(n));
+		arm->setTooltip("Arm Macro " + std::to_string(n + 1)
+		                + " as a modulation source: then drag a control inside the chains to set how far it moves it. Press again to put it away");
+		addChild(arm.get());
+		macroArms_.push_back(std::move(arm));
 	}
 	// STAGE 2: THE MODE (a dropdown) AND THE POSITION, every control the card offers (window ⊇ card).
 	modeControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Mode));
@@ -229,10 +241,11 @@ void ParallelRackExpanded::layOut() {
 	for (size_t k = 0; k < 4; ++k) {
 		cuts_[k]->setBounds(bx, y + static_cast<float>(k) * (kCellHeight + kPad * 0.5f), kColumnWidth, kCellHeight);
 	}
-	for (size_t i = 0; i < knobs_.size(); ++i) {
+	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		const size_t col = i < kTopKnobs ? i : (i - kTopKnobs) % kPerRow;
-		knobs_[i]->setBounds(kPad + static_cast<float>(col) * cell, knobY(i),
-		                      i < kTopKnobs ? cell : kMacroKnobWidth, kCellHeight);
+		visage::Frame& cellFrame = i < kTopKnobs ? static_cast<visage::Frame&>(*knobs_[i])
+		                                          : static_cast<visage::Frame&>(*macroSlots_[i - kTopKnobs]);
+		cellFrame.setBounds(kPad + static_cast<float>(col) * cell, knobY(i), i < kTopKnobs ? cell : kMacroKnobWidth, kCellHeight);
 		if (i >= kTopKnobs) {
 			// THE ARROW BESIDE ITS KNOB, level with the dial's face (a Chain's macro row).
 			macroArms_[i - kTopKnobs]->setBounds(kPad + static_cast<float>(col) * cell + kMacroKnobWidth,
@@ -559,9 +572,102 @@ bool ParallelRackExpanded::updateContent() {
 	}
 	moved = spectrum_->refresh() || moved;
 	moved = (positionBar_->isVisible() && positionBar_->refresh()) || moved;
+	moved = syncMacroSlots() || moved;
 	moved = relayArm() || moved;
 	if (moved) {
 		redraw();
+	}
+	return moved;
+}
+
+pr::Rack* ParallelRackExpanded::rackNow() const { return pr::rackOf(host_.containerSurfaceOf(id_)); }
+
+MacroMenuHooks ParallelRackExpanded::macroHooks(size_t n) {
+	// **THE RACK'S OWN VERBS, asked afresh by id** (a surface handle is never kept), and only while this window lives (`alive_`):
+	// the menu keeps a copy of these until a pick and is parented to the root frame. A reader answers the default, a writer does nothing.
+	const std::weak_ptr<void> alive = alive_;
+	return {
+		.readBipolar =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr && rack->macroBipolar(n);
+		    },
+		.writeBipolar =
+		    [this, n, alive](bool bipolar) {
+			    pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    if (rack != nullptr) {
+				    rack->setMacroBipolar(n, bipolar);
+				    macroSlots_[n]->knob().redraw();
+				    macroSlots_[n]->chip().redraw();
+			    }
+		    },
+		.readType =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr ? rack->macroType(n) : device::MacroType::Knob;
+		    },
+		.writeType =
+		    [this, n, alive](device::MacroType type) {
+			    pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    if (rack != nullptr) {
+				    rack->setMacroType(n, type);
+			    }
+		    },
+		// THE SLOT'S OWN: `MacroSlot` answers Rename with its field.
+		.beginRename = [] {},
+	};
+}
+
+MacroSlot::Naming ParallelRackExpanded::macroNaming(size_t n) {
+	const std::weak_ptr<void> alive = alive_;
+	return {
+		.name =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr ? rack->macroName(n) : device::defaultMacroName(n);
+		    },
+		.renamed =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr && rack->macroRenamed(n);
+		    },
+		.rename =
+		    [this, n, alive](const std::string& name) {
+			    if (alive.expired()) {
+				    return;
+			    }
+			    // ONE UNDO STEP, by device id: the step outlives this window, so it holds the host and the id and asks for the rack on replay.
+			    backplane::DeviceHost& host = host_;
+			    const DeviceInstanceId id = id_;
+			    const auto rackOfId = [&host, id] { return pr::rackOf(host.containerSurfaceOf(id)); };
+			    (void)writeStoredAsEdit<std::string>(
+			        history_,
+			        [rackOfId, n] {
+				        const pr::Rack* rack = rackOfId();
+				        return rack != nullptr ? rack->macroName(n) : std::string {};
+			        },
+			        [rackOfId, n](const std::string& label) {
+				        if (pr::Rack* rack = rackOfId()) {
+					        rack->setMacroName(n, label);
+				        }
+			        },
+			        name, "Rename");
+		    },
+	};
+}
+
+bool ParallelRackExpanded::syncMacroSlots() {
+	bool moved = false;
+	for (size_t n = 0; n < macroSlots_.size(); ++n) {
+		moved = macroSlots_[n]->syncType() || moved;
+		// THE CAPTION ON SHOW AGAINST WHAT IT SHOULD BE: the user's name, or the short one. A rename typed in the slot's own field
+		// has already moved the caption; one made elsewhere (an undo, a load, the host) has not.
+		const MacroSlot::Naming naming = macroNaming(n);
+		const std::string want = naming.renamed() ? naming.name() : std::string(kCaptions[kTopKnobs + n]);
+		if (want != macroSlots_[n]->caption()) {
+			macroSlots_[n]->refresh();
+			moved = true;
+		}
 	}
 	return moved;
 }
@@ -623,6 +729,9 @@ void ParallelRackExpanded::modulationBound(ModState* mod, EditHistory* history) 
 	}
 	for (auto& k : knobs_) {
 		k->setModulation(mod, history);
+	}
+	for (auto& s : macroSlots_) {
+		s->setModulation(mod, history);
 	}
 	for (auto& r : rails_) {
 		r->rail->setOuterModulation(mod, history, [this] { return watchedDevice(); });

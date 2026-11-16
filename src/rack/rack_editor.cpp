@@ -30,6 +30,7 @@
 
 #include "plugin/ui/drop_gap.h"
 #include "plugin/ui/theme.h"
+#include "plugin/ui/undo_chord.h"
 #include "plugin/device_registry.h"
 #include "rack/rack_bridge.h"
 #include "composite/composite_types.h"
@@ -224,18 +225,11 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	// only shows up when a second road wants it.
 	setAcceptsKeystrokes(true);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
-		// UNDO AND REDO (backlog JB C10): main modifier + Z, + Shift + Z or + Y — Feathers' chord — walk this editor's
-		// history, which in a nested window forwards to the outermost host's: one history per plugin.
-		if (e.isMainModifier() && !e.isAltDown()) {
-			if (e.keyCode() == visage::KeyCode::Z || (e.keyCode() == visage::KeyCode::Y && !e.isShiftDown())) {
-				if (e.keyCode() == visage::KeyCode::Y || e.isShiftDown()) {
-					history_.redo();
-				}
-				else {
-					history_.undo();
-				}
-				return true;
-			}
+		// UNDO AND REDO (backlog JB C10): main modifier + Z, + Shift + Z or + Y — Feathers' chord (`ui::undoChordOf`) — walk this
+		// editor's history, which in a nested window forwards to the outermost host's: one history per plugin. THE ONLY ROAD: the
+		// header has no buttons, so the keys must work, and `RackGui` hands the chord here when nothing inside the editor holds the keyboard.
+		if (const std::optional<bool> redo = ui::undoChordOf(e); redo.has_value()) {
+			return walkHistoryFromKey(*redo);
 		}
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more — POST's while it
 		// holds the selection.
@@ -751,7 +745,6 @@ void RackEditor::raiseTopLayers() {
 		raise(columnBackdrop_.get());
 		raise(laneScrollBar_.get()); // over the cards, as the column is
 		raise(settingsDoor_.get());
-		raise(undoRedo_.get());
 		raise(presets_);
 		raise(routes_.get()); // the Macros column's list stands over the column's ground
 		for (auto& knob : outerLevelKnobs_) {
@@ -2224,14 +2217,9 @@ float RackEditor::layOutColumn(float top) {
 		if (settingsDoor_ != nullptr) {
 			settingsDoor_->setBounds(x0, y, kSettingsDoorWidth, row);
 		}
-		// UNDO/REDO AT THE ROW'S RIGHT END (backlog JB); the presets take what is between.
+		// THE PRESETS TAKE THE ROW from the door to the macros toggle: undo and redo are keys only (Ctrl/Cmd+Z, +Shift+Z, +Y).
 		// LEFT OF THE MACROS TOGGLE'S CORNER (QN), which stands at the column's top right.
 		float right = std::min(x0 + kMacroColumnWidth, kLaneLeft - kPad * 0.5f - kMacrosToggleRoom - kColumnGap);
-		if (undoRedo_ != nullptr) {
-			right -= UndoRedoButtons::kWidth;
-			undoRedo_->setBounds(right, y, UndoRedoButtons::kWidth, row);
-			right -= kColumnGap;
-		}
 		if (presets_ != nullptr) {
 			// BESIDE THE DOOR, centred on its row, and no wider than the column it heads.
 			const float left = x0 + (settingsDoor_ != nullptr ? kSettingsDoorWidth + kColumnGap : 0.0f);
@@ -2273,13 +2261,26 @@ float RackEditor::layOutColumn(float top) {
 }
 
 
+bool RackEditor::walkHistoryFromKey(bool redo, visage::Frame* root) {
+	if (ui::textEntryFocusedUnder(this) || ui::textEntryFocusedUnder(root)) {
+		return false; // a name being typed: Ctrl+Z is the field's, or the host's
+	}
+	if (redo ? !history_.canRedo() : !history_.canUndo()) {
+		return false;
+	}
+	if (redo) {
+		history_.redo();
+	}
+	else {
+		history_.undo();
+	}
+	return true;
+}
+
 void RackEditor::setSettingsDoor(std::function<void()> open) {
 	if (settingsDoor_ == nullptr) {
 		settingsDoor_ = std::make_unique<ui::LibraDoor>();
 		addChild(settingsDoor_.get());
-		// AND UNDO/REDO ON THE SAME ROW (backlog JB): the door's row is the rack plugin's own head.
-		undoRedo_ = std::make_unique<UndoRedoButtons>(history_);
-		addChild(undoRedo_.get());
 		columnDirty_ = true;
 	}
 	// UNDER THE NOTIFIER AND THE SURFACE HOST, like every other child: a panel presented over the editor must
@@ -2303,54 +2304,6 @@ void RackEditor::setPresetBrowser(visage::Frame* browser) {
 	}
 	raiseTopLayers(); // under the notifier and the surface host, as the door is
 	resized();
-}
-
-//------------------------------------------------------------------------------------------------//
-// UndoRedoButtons (backlog JB)                                                                     //
-//------------------------------------------------------------------------------------------------//
-
-UndoRedoButtons::UndoRedoButtons(ui::EditHistory& history) : history_(history) {
-	watch_ = history_.watch(this); // lit and dim as the history moves
-	onMouseDown() = [this](const visage::MouseEvent& e) {
-		if (undoBounds().contains(e.position)) {
-			history_.undo();
-		}
-		else if (redoBounds().contains(e.position)) {
-			history_.redo();
-		}
-		redraw();
-	};
-	// LAST, after every `=` above (`installTooltipHover`'s hazard).
-	ui::installTooltipHover(*this, *this);
-}
-
-const char* UndoRedoButtons::tooltipAt(visage::Point local) const {
-	if (undoBounds().contains(local)) {
-		return "Undo the last edit (Ctrl/Cmd+Z)";
-	}
-	if (redoBounds().contains(local)) {
-		return "Redo the edit just undone (Ctrl/Cmd+Shift+Z)";
-	}
-	return nullptr;
-}
-
-void UndoRedoButtons::draw(visage::Canvas& canvas) {
-	const auto glyph = [&](visage::Bounds b, bool live, bool redo) {
-		canvas.setColor(ui::withAlpha(ui::kLine, live ? 0.9f : 0.35f));
-		canvas.roundedRectangleBorder(b.x(), b.y(), b.width(), b.height(), 3.0f, 1.0f);
-		// A HOOKED ARROW, drawn: a short arc of segments and a head, mirrored for redo.
-		canvas.setColor(ui::withAlpha(ui::kInk, live ? 0.9f : 0.3f));
-		const float cx = b.x() + b.width() * 0.5f;
-		const float cy = b.y() + b.height() * 0.5f;
-		const float r = std::min(b.width(), b.height()) * 0.28f;
-		const float s = redo ? -1.0f : 1.0f;
-		canvas.segment(cx + s * r, cy + r * 0.6f, cx + s * r, cy - r * 0.2f, 1.2f, true);
-		canvas.segment(cx + s * r, cy - r * 0.2f, cx - s * r * 0.6f, cy - r * 0.2f, 1.2f, true);
-		canvas.segment(cx - s * r * 0.6f, cy - r * 0.2f, cx - s * r * 0.1f, cy - r * 0.7f, 1.2f, true);
-		canvas.segment(cx - s * r * 0.6f, cy - r * 0.2f, cx - s * r * 0.1f, cy + r * 0.3f, 1.2f, true);
-	};
-	glyph(undoBounds(), history_.canUndo(), false);
-	glyph(redoBounds(), history_.canRedo(), true);
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -2518,7 +2471,6 @@ void RackEditor::showColumn(bool shown) {
 	};
 	show(settingsDoor_.get());
 	show(presets_);
-	show(undoRedo_.get());
 	show(columnBackdrop_.get());
 	show(routes_.get());
 	for (auto& k : outerLevelKnobs_) {

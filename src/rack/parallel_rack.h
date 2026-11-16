@@ -787,6 +787,7 @@ public:
 	/// The mode the audio thread runs now — the wanted one only once the fade has reached silence.
 	[[nodiscard]] Mode modeForTest() const noexcept { return mode_; }
 	[[nodiscard]] int selectSamplesForTest() const noexcept { return selectSamples_; }
+	[[nodiscard]] int viewForTest() const noexcept { return view_; }
 	/// The mode change's fade on the chains' sum: 1 settled, 0 at the switch.
 	[[nodiscard]] float modeGainForTest() const noexcept { return modeGain_; }
 	/// **HOW MANY CALLS THE CHAIN AT LIVE POSITION `index` HAS RUN** (§2a's run-count seam): an unrouted chain under Ring
@@ -952,6 +953,10 @@ private:
 	std::array<std::atomic<uint64_t>, 2> struck_ {};
 	bool keyedWanted_ = false;
 	int playing_ = 0;
+	/// What the view params last said (the layout is the window's; nothing here reads them).
+	int view_ = 0;
+	int viewedChain_ = 0;
+	int padsPage_ = 0;
 	/// And what its key held back, which the rack passes on itself.
 	std::vector<device::NoteEvent> skippedIn_;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call

@@ -37,6 +37,7 @@
 #include "rack/rack_state.h"
 
 #include <algorithm>
+#include <utility>
 #include <functional>
 #include <memory>
 
@@ -78,6 +79,9 @@ public:
 	/// **FEATHERS DRUM** (drum_plugin.h): the window holds the Drum device's own expanded view (its card's controls included) instead of
 	/// the chain editor. Set once, by the plugin, before any window.
 	void setDrumMode(bool on) noexcept { drum_ = on; }
+	/// **FEATHERS RACK** (rack_plugin.h): the window holds the Rack device's own view, as the Drum's does its device's, at the size the
+	/// view asks for (it grows with its chains and its mode). Set once, by the plugin, before any window.
+	void setRackMode(bool on) noexcept { rack_ = on; }
 	/// The drum's view, for a venue; null outside Drum mode and before the window.
 	ui::ExpandedView* drumViewForTest() noexcept { return drumView_.get(); }
 	/// WHAT THE EDITOR'S ADD MENU OFFERS (`RackEditor::offerFilter`), handed to each editor this builds — the Note Rack's narrowing.
@@ -143,15 +147,25 @@ public:
 	/// asks the host for, not room taken from the lane. Before
 	/// the editor exists the canvas is open, which is its default, so the first size a host is told
 	/// already has it.
-	uint32_t logicalWidth() const override { return drum_ ? kDrumWidth : RackEditor::kWidth; }
-	uint32_t logicalHeight() const override { return drum_ ? kDrumHeight : RackEditor::kHeight + canvasExtent(); }
-	uint32_t minimumWidth() const override { return drum_ ? kDrumWidth : RackEditor::kWidth; }
-	uint32_t minimumHeight() const override { return drum_ ? kDrumHeight : RackEditor::kHeight + canvasExtent(); }
+	uint32_t logicalWidth() const override { return rack_ ? std::max(rackViewSize().first, kRackWidth) : drum_ ? kDrumWidth : RackEditor::kWidth; }
+	uint32_t logicalHeight() const override {
+		return rack_ ? std::max(rackViewSize().second, kRackHeight) : drum_ ? kDrumHeight : RackEditor::kHeight + canvasExtent();
+	}
+	/// THE RACK WINDOW OPENS AT A WORKING SIZE (its view's own minimum is a closed strip), and is never smaller than the view asks.
+	static constexpr uint32_t kRackWidth = 0;
+	static constexpr uint32_t kRackHeight = 600;
+	static constexpr uint32_t kRackHeader = 30;
+	uint32_t minimumWidth() const override { return rack_ ? rackViewSize().first : drum_ ? kDrumWidth : RackEditor::kWidth; }
+	uint32_t minimumHeight() const override {
+		return rack_ ? rackViewSize().second : drum_ ? kDrumHeight : RackEditor::kHeight + canvasExtent();
+	}
+	/// THE RACK VIEW'S OWN MINIMUM (it moves with the chains and the mode), or a first guess before the window exists.
+	[[nodiscard]] std::pair<uint32_t, uint32_t> rackViewSize() const;
 	/// THE DRUM WINDOW'S SIZE: its view's own (a column of fixed width, and the height its content needs).
 	static constexpr uint32_t kDrumWidth = static_cast<uint32_t>(ui::DrumDeviceExpanded::kWidth);
 	static constexpr uint32_t kDrumHeight = static_cast<uint32_t>(ui::DrumDeviceExpanded::kMinimumHeight);
 	uint32_t canvasExtent() const noexcept {
-		if (drum_) {
+		if (drum_ || rack_) {
 			return 0; // no canvas
 		}
 		if (editor_ != nullptr) {
@@ -189,10 +203,15 @@ private:
 	ui::EditHistory history_;
 	/// DRUM MODE: the view of the one device. After `mod_` and `history_`, which it holds, and before the window, so it goes first.
 	bool drum_ = false;
+	bool rack_ = false;
 	ui::WidgetRegistry registry_;
 	std::unique_ptr<ui::ExpandedView> drumView_;
 	DeviceInstanceId drumShown_ = kNoInstance;
 	void buildDrumView();
+	/// The view under the header row (the Rack plugin's), or filling the window (the Drum's).
+	void layoutDeviceView();
+	/// THE RACK PLUGIN'S HEADER ROW: the Racks browser the view owns, lent to the window (not owned here).
+	visage::Frame* rackHeader_ = nullptr;
 	/// THE PLUGIN'S PRESET BROWSER (backlog OU), lent to the editor — declared BEFORE it, so the editor goes first.
 	ui::ContainerPresets presets_;
 	std::unique_ptr<RackEditor> editor_;

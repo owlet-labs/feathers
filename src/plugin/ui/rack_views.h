@@ -115,17 +115,28 @@ public:
 	[[nodiscard]] bool raised(size_t k) const;
 	/// A press at `at`, as the hand makes it.
 	void pressForTest(visage::Point at) { press(at); }
+	/// The pointer over `at` (or off the bar: a point outside it), as a mouse move makes it.
+	void hoverForTest(visage::Point at) { hover(at); }
+	/// **THE SET-PLAYING TARGET APPEARS ON HOVER**: a lit dot on the playing tab only, and on the tab under the pointer (Select routing) a
+	/// faint one where a press sets it playing. Nothing is drawn on the other tabs, so eight tabs keep their room for their names.
+	[[nodiscard]] bool hoverDotShown(size_t k) const;
+	/// The name tab k draws: shrunk toward the floor size and then cut with an ellipsis ("..."), never clipped mid-glyph, and how wide it may be.
+	[[nodiscard]] std::string labelForTest(size_t k) const;
+	[[nodiscard]] float labelRoomForTest(size_t k) const;
 
 private:
 	[[nodiscard]] bool horizontal() const noexcept { return flow_ == RackFlow::TopDown; }
 	[[nodiscard]] int nativeLength() const;
 	[[nodiscard]] float scale() const;
 	[[nodiscard]] int tabAtNative(float along, size_t count) const;
+	void hover(visage::Point at);
+	[[nodiscard]] float labelRoom(size_t k) const;
 	[[nodiscard]] bool inDotArea(visage::Point at, size_t k) const;
 	void press(visage::Point at);
 
 	RackViewModel& model_;
 	RackFlow flow_;
+	int hover_ = -1;
 };
 
 class RackPadGrid final : public visage::Frame, public TooltipSource {

@@ -154,12 +154,47 @@ void RackDrawerArrow::draw(visage::Canvas& canvas) {
 
 RackTabBar::RackTabBar(RackViewModel& model, RackFlow flow) : model_(model), flow_(flow) {
 	onMouseDown() = [this](const visage::MouseEvent& e) { press(e.position); };
+	onMouseMove() += [this](const visage::MouseEvent& e) { hover(e.position); };
+	onMouseExit() += [this](const visage::MouseEvent&) { hover({ -1.0f, -1.0f }); };
 	// A SCALE CHANGE MOVES NOTHING LOGICAL: re-set the bounds, so the native extents are cut again.
 	onDpiChange() += [this] {
 		setBounds(bounds());
 		redraw();
 	};
 	installTooltipHover(*this, *this);
+}
+
+void RackTabBar::hover(visage::Point at) {
+	int now = -1;
+	if (at.x >= 0.0f && at.y >= 0.0f && at.x < static_cast<float>(width()) && at.y < static_cast<float>(height())) {
+		const size_t n = tabbedChains(model_).size();
+		now = tabAtNative((horizontal() ? at.x : at.y) * scale(), n);
+	}
+	if (now != hover_) {
+		hover_ = now;
+		redraw();
+	}
+}
+
+bool RackTabBar::hoverDotShown(size_t k) const {
+	return model_.routing() == RackRoutingKind::Select && hover_ == static_cast<int>(k) && !dotShown(k);
+}
+
+float RackTabBar::labelRoom(size_t k) const {
+	const auto [a, b] = tabNativeExtent(k);
+	return std::max(0.0f, static_cast<float>(b - a) / scale() - 8.0f);
+}
+
+float RackTabBar::labelRoomForTest(size_t k) const {
+	return labelRoom(k);
+}
+
+std::string RackTabBar::labelForTest(size_t k) const {
+	const std::vector<size_t> tabs = tabbedChains(model_);
+	if (k >= tabs.size()) {
+		return {};
+	}
+	return fitName(labelOfChain(model_.chain(tabs[k]), tabs[k]), labelRoom(k), 9.0f, kNameFitFloorSize, 0.0f).text;
 }
 
 float RackTabBar::scale() const {
@@ -290,8 +325,7 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 		}
 		// THE NAME, ALONE: shrunk toward the floor size and then cut, so eight tabs stay legible and never overflow into a neighbour.
 		const std::string name = labelOfChain(model_.chain(tabs[k]), tabs[k]);
-		const float room = (horizontal() ? tw : th) - 8.0f;
-		const FittedName fit = fitName(name, std::max(0.0f, room), 9.0f, kNameFitFloorSize, 0.0f);
+		const FittedName fit = fitName(name, labelRoom(k), 9.0f, kNameFitFloorSize, 0.0f);
 		canvas.setColor(front ? kPointer : kMuted);
 		if (horizontal()) {
 			canvas.text(fit.text, font(fit.size), visage::Font::kCenter, x, y, tw, th);
@@ -299,16 +333,17 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 		else {
 			canvas.text(fit.text, font(fit.size), visage::Font::kCenter, x, y, tw, th, visage::Direction::Left);
 		}
-		// THE PLAYING DOT (Select): lit on the playing chain, a faint ring elsewhere so the place that sets it can be found.
+		// THE PLAYING DOT (Select): lit on the playing chain ALONE; on the tab under the pointer a faint one where a press sets it playing.
+		// No other tab draws anything, so a bar of eight keeps its room for the names.
 		if (model_.routing() == RackRoutingKind::Select) {
 			const visage::Point c = dotCentre(k);
 			if (model_.playingChain() == tabs[k]) {
 				canvas.setColor(kAccent);
 				canvas.circle(c.x - 3.0f, c.y - 3.0f, 6.0f);
 			}
-			else {
-				canvas.setColor(withAlpha(kLine, 0.9f));
-				canvas.circle(c.x - 2.5f, c.y - 2.5f, 5.0f);
+			else if (hover_ == static_cast<int>(k)) {
+				canvas.setColor(withAlpha(kAccent, 0.45f));
+				canvas.circle(c.x - 3.0f, c.y - 3.0f, 6.0f);
 			}
 		}
 	}

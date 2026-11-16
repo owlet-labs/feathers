@@ -990,3 +990,36 @@ TEST_CASE("rack views over a real rack: the macro row is behind its own arrow, c
 	CHECK_FALSE(r.card->macroArrowShownForTest());
 	CHECK_FALSE(r.card->macroRowShownForTest());
 }
+
+TEST_CASE("rack tabs: eight tabs keep their room for names (the set-playing dot shows on the playing tab and under the pointer only), and a name that does not fit is cut with an ellipsis") {
+	FakeRack rack;
+	rack.fill(8);
+	rack.route = ui::RackRoutingKind::Select;
+	rack.playing = 2;
+	rack.chains[5].name = "A very long chain name";
+	ui::RackTabBar bar(rack, ui::RackFlow::TopDown);
+	bar.setBounds(0.0f, 0.0f, 260.0f, kBar);
+	// THE DOT: lit on the playing tab alone; no other tab claims any of its room unless the pointer is over it.
+	for (size_t k = 0; k < 8; ++k) {
+		CHECK(bar.dotShown(k) == (k == 2));
+		CHECK_FALSE(bar.hoverDotShown(k));
+	}
+	bar.hoverForTest(bar.tabCentre(5));
+	CHECK(bar.hoverDotShown(5));
+	CHECK_FALSE(bar.hoverDotShown(4));
+	CHECK_FALSE(bar.hoverDotShown(2)); // the playing tab's is the lit one
+	bar.hoverForTest({ -1.0f, -1.0f });
+	CHECK_FALSE(bar.hoverDotShown(5));
+	// THE DOT'S PRESS STILL SETS PLAYING (the hover only shows where it is).
+	bar.pressForTest(bar.dotCentre(4));
+	CHECK(rack.playing == 4);
+	// THE NAMES: a short one is whole; the long one ends in an ellipsis ("...", three full stops) and is shorter than itself.
+	CHECK(bar.labelForTest(0) == "A");
+	const std::string cut = bar.labelForTest(5);
+	CHECK(cut.size() >= 3);
+	CHECK(cut.substr(cut.size() - 3) == "...");
+	CHECK(cut.size() < rack.chains[5].name.size());
+	CHECK(bar.labelRoomForTest(5) > 0.0f);
+	// A TAB'S ROOM FOR ITS NAME IS ITS WIDTH LESS A FIXED MARGIN: the dot takes none of it.
+	CHECK(bar.labelRoomForTest(0) == doctest::Approx(260.0f / 8.0f - 8.0f).epsilon(0.05));
+}

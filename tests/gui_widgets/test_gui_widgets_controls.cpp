@@ -458,7 +458,7 @@ TEST_CASE("Engine rail: the engine menu offers Resonate and choosing it sets Osc
 	CHECK(std::string(feathers::kOscTypeNames[6]) == "Pluck");
 	CHECK(std::string(feathers::kOscTypeNames[7]) == "Drum");
 	// The φ engines wear the prefix on the selector; Basic Shapes, Additive and Pluck do not.
-	CHECK(EngineRail::engineDisplayName(2) == "PhiV5");
+	CHECK(EngineRail::engineDisplayName(2) == "PhiForge");
 	CHECK(EngineRail::engineDisplayName(4) == "Basic Shapes");
 	CHECK(EngineRail::engineDisplayName(5) == "Additive");
 	CHECK(EngineRail::engineDisplayName(7) == "Drum"); // nor Drum (2026-11-05)

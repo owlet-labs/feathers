@@ -44,7 +44,7 @@ PAT	Pattern: a terrain arpeggiator with four patterns, fills and routable output
 TFIELD	Twin Field: eight modulation outputs read off the φ terrain in two crossfaded layers.
 engine:Morph	The original PhiMorph oscillator.
 engine:Stair	The original PhiStair oscillator.
-engine:V5	The default engine.
+engine:Forge	The default engine.
 engine:Resonate	A resonator engine: a string, bar, tube or membrane model.
 engine:Basic Shapes	Classic oscillator shapes.
 engine:Additive	Additive synthesis, with a spectrum panel of partial operators and a vocoder.

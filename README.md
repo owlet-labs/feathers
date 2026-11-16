@@ -38,7 +38,7 @@ Then restart your DAW or rescan its plugins. Options, the manual download and pe
 
 ## Sound engines
 
-Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include V5, Additive, Pluck, Drum, Resonate, Basic Shapes, Morph and Stair.
+Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include Forge, Additive, Pluck, Drum, Resonate, Basic Shapes, Morph and Stair.
 
 | | |
 |---|---|
@@ -121,7 +121,7 @@ Racks nest inside racks and chains to any depth.
 
 - **Morph**: The original PhiMorph oscillator.
 - **Stair**: The original PhiStair oscillator.
-- **V5**: The default engine.
+- **Forge**: The default engine.
 - **Resonate**: A resonator engine: a string, bar, tube or membrane model.
 - **Basic Shapes**: Classic oscillator shapes.
 - **Additive**: Additive synthesis, with a spectrum panel of partial operators and a vocoder.

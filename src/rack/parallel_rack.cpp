@@ -1099,6 +1099,15 @@ void Rack::setFields(const float* fields, size_t present) {
 	if (keyedWanted_) {
 		modeWanted_ = Mode::Parallel;
 	}
+	// THE VIEW'S THREE, held so the rack can say what it was told (no audio reads them): cleaned into their declared ranges.
+	const auto whole = [&](Param p) {
+		const double v = static_cast<double>(at(p));
+		const device::ParamDesc& d = kParamDescs[static_cast<size_t>(p)];
+		return static_cast<int>(std::isfinite(v) ? std::lround(std::clamp(v, d.min, d.max)) : std::lround(d.def));
+	};
+	view_ = whole(Param::View);
+	viewedChain_ = whole(Param::ViewedChain);
+	padsPage_ = whole(Param::PadsPage);
 	const float playing = at(Param::Playing);
 	playing_ = std::isfinite(playing) ? static_cast<int>(std::lround(std::clamp(playing, 0.0f, 64.0f))) : 0;
 	position_ = std::isfinite(position) ? std::clamp(position, 0.0f, 1.0f) : 0.0f;
@@ -2351,6 +2360,9 @@ float Rack::fieldForTest(Param p) const noexcept {
 	case Param::Mode: return static_cast<float>(keyedWanted_ ? Mode::Keyed : modeWanted_);
 	case Param::Position: return position_;
 	case Param::Playing: return static_cast<float>(playing_);
+	case Param::View: return static_cast<float>(view_);
+	case Param::ViewedChain: return static_cast<float>(viewedChain_);
+	case Param::PadsPage: return static_cast<float>(padsPage_);
 	case Param::Unused: return unusedStop_ ? 1.0f : 0.0f;
 	case Param::BandCount: return static_cast<float>(bandsWanted_ == 2 ? 0 : (bandsWanted_ == 3 ? 1 : 2));
 	case Param::Cut1:

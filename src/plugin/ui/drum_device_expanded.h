@@ -75,8 +75,6 @@ private:
 	void layOut();
 	void follow();
 
-	backplane::DeviceHost& host_;
-	DeviceInstanceId device_ = kNoInstance;
 	DrumDeviceModel model_;
 	HitPicture picture_;
 	std::array<std::unique_ptr<visage::Frame>, static_cast<size_t>(dd::Param::kCount)> widgets_ {};

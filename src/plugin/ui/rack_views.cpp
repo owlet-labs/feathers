@@ -367,6 +367,14 @@ int RackPadGrid::padAt(visage::Point at) const {
 	return (3 - rowTop) * 4 + column;
 }
 
+visage::Point RackPadGrid::plusCentre(int index) const {
+	const auto [xa, xb] = columnNativeExtent(padColumn(index));
+	const auto [ya, yb] = rowNativeExtent(3 - padRowFromBottom(index));
+	(void)xa;
+	(void)yb;
+	return { static_cast<float>(xb) / scale() - kPlusArea * 0.5f - kInset, static_cast<float>(ya) / scale() + kPlusArea * 0.5f + kInset };
+}
+
 visage::Point RackPadGrid::padCentre(int index) const {
 	const auto [xa, xb] = columnNativeExtent(padColumn(index));
 	const auto [ya, yb] = rowNativeExtent(3 - padRowFromBottom(index));
@@ -398,6 +406,15 @@ void RackPadGrid::press(visage::Point at) {
 		return;
 	}
 	const int key = padKey(model_.page(), index);
+	// THE "+" OF AN EMPTY PAD makes a chain on this key and plays nothing.
+	if (onAdd_ && chainForKey(model_, key) == kNoChain) {
+		const visage::Point c = plusCentre(index);
+		if (std::fabs(at.x - c.x) <= kPlusArea * 0.5f && std::fabs(at.y - c.y) <= kPlusArea * 0.5f) {
+			onAdd_(key);
+			redraw();
+			return;
+		}
+	}
 	// PLAY THE KEY (the note road, where the host has one) AND VIEW ITS CHAIN, if there is one.
 	if (model_.canTrigger() && model_.trigger(key, true, kVelocity)) {
 		held_ = key;
@@ -457,6 +474,13 @@ void RackPadGrid::draw(visage::Canvas& canvas) {
 		const FittedName fit = fitName(label, std::max(0.0f, w - 6.0f), used ? 9.0f : 8.0f, kNameFitFloorSize, 0.0f);
 		canvas.setColor(used ? kPointer : withAlpha(kMuted, 0.6f));
 		canvas.text(fit.text, font(fit.size), visage::Font::kCenter, x, y, w, h);
+		if (!used && onAdd_) {
+			// A SMALL "+" in the corner: the window's way to put a chain on this key.
+			const visage::Point c = plusCentre(index);
+			canvas.setColor(withAlpha(kAccent, 0.8f));
+			canvas.fill(c.x - 3.5f, c.y - 0.5f, 7.0f, 1.0f);
+			canvas.fill(c.x - 0.5f, c.y - 3.5f, 1.0f, 7.0f);
+		}
 	}
 }
 
@@ -560,6 +584,73 @@ void RackPadPages::draw(visage::Canvas& canvas) {
 			canvas.setColor(colour);
 			canvas.fill(cx + 0.5f, cy + 0.5f, std::max(1.0f, cw - 1.0f), std::max(1.0f, ch - 1.0f));
 		}
+	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE FRONT STACK                                                                                     //
+//--------------------------------------------------------------------------------------------------//
+
+void RackFrontStack::setContent(std::vector<std::string> names, bool open, uint32_t tint) {
+	if (names != names_ || open != open_ || tint != tint_) {
+		names_ = std::move(names);
+		open_ = open;
+		tint_ = tint;
+		redraw();
+	}
+}
+
+size_t RackFrontStack::tilesShown() const {
+	if (names_.empty()) {
+		return 1;
+	}
+	return open_ ? names_.size() : 1;
+}
+
+float RackFrontStack::extentFor(size_t tiles) const {
+	const float tile = flow_ == RackFlow::TopDown ? kTileHeight : kTileWidth;
+	return static_cast<float>(tiles) * tile + static_cast<float>(tiles > 0 ? tiles - 1 : 0) * kGap + kGap;
+}
+
+float RackFrontStack::extentAlongFlow() const {
+	return extentFor(tilesShown());
+}
+
+void RackFrontStack::draw(visage::Canvas& canvas) {
+	const float w = static_cast<float>(width());
+	const float h = static_cast<float>(height());
+	const size_t n = tilesShown();
+	const bool down = flow_ == RackFlow::TopDown;
+	for (size_t k = 0; k < n; ++k) {
+		const float along = static_cast<float>(k) * ((down ? kTileHeight : kTileWidth) + kGap);
+		const float x = down ? kPadding : along;
+		const float y = down ? along : kPadding;
+		const float tw = down ? w - kPadding : kTileWidth;
+		const float th = down ? kTileHeight : h - kPadding - kGap;
+		canvas.setColor(kSurfaceRaised);
+		canvas.roundedRectangle(x, y, tw, th, 6.0f);
+		canvas.setColor(kLine);
+		canvas.roundedRectangleBorder(x, y, tw, th, 6.0f, 1.0f);
+		const std::string name = names_.empty() ? "empty" : names_[k];
+		const FittedName fit = fitName(name, std::max(0.0f, tw - 22.0f), 10.0f, kNameFitFloorSize, 0.0f);
+		canvas.setColor(names_.empty() ? kMuted : kPointer);
+		canvas.text(fit.text, font(fit.size), visage::Font::kLeft, x + 9.0f, y, tw - 18.0f, th);
+		if (!names_.empty()) {
+			canvas.setColor(kMuted);
+			canvas.text(std::to_string(k + 1), font(8.0f), visage::Font::kRight, x, y, tw - 7.0f, th);
+		}
+	}
+	// THE GROUP HAIRLINE (one line, the rack's colour, in the padding) and the END CAP after the last tile.
+	const uint32_t rack = tint_ != 0 ? tint_ : kAccent;
+	const float last = extentFor(n) - kGap;
+	canvas.setColor(rack);
+	if (down) {
+		canvas.fill(3.0f, 0.0f, 1.0f, last + 2.0f);
+		canvas.fill(3.0f, last + 1.0f, w - 3.0f, 2.0f);
+	}
+	else {
+		canvas.fill(0.0f, 3.0f, last + 2.0f, 1.0f);
+		canvas.fill(last + 1.0f, 3.0f, 2.0f, h - 3.0f);
 	}
 }
 

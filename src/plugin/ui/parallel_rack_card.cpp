@@ -663,6 +663,9 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
                                    Notifier* notifier)
     : host_(host), device_(id), notifier_(notifier) {
 	controls_.resize(static_cast<size_t>(pr::Param::kCount));
+	model_ = std::make_unique<RackViewAdapter>(host_, device_,
+	                                           RackViewAdapter::Controls { &control(pr::Param::Playing), &control(pr::Param::Mode),
+	                                                                       &control(pr::Param::Position), &control(pr::Param::Gain) });
 	mix_ = std::make_unique<Knob>(control(pr::Param::Mix), "Mix", notifier_);
 	gain_ = std::make_unique<Knob>(control(pr::Param::Gain), "Gain", notifier_);
 	// STAGE 2: THE MODE AS A DROPDOWN (a ValueBox over a Choice opens its list — never a cycling chip), and the
@@ -671,7 +674,10 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	addChild(modeBox_.get());
 	viewSeg_ = std::make_unique<SegmentedControl>(control(pr::Param::View), registry, pr::kViewNames, notifier_);
 	playingBox_ = std::make_unique<ValueBox>(control(pr::Param::Playing), "Playing");
+	viewPairControl_ = std::make_unique<RackViewPairControl>(control(pr::Param::View));
+	viewPair_ = std::make_unique<SegmentedControl>(*viewPairControl_, registry, RackViewPairControl::kNames, notifier_);
 	addChild(viewSeg_.get());
+	addChild(viewPair_.get());
 	addChild(playingBox_.get());
 	position_ = std::make_unique<Knob>(control(pr::Param::Position), "Position", notifier_);
 	for (Knob* k : { mix_.get(), gain_.get(), position_.get() }) {
@@ -709,6 +715,23 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	positionBar_ = std::make_unique<RackPositionBar>(host_, device_, control(pr::Param::Position), control(pr::Param::Mode));
 	addChild(positionBar_.get());
 	gated_.push_back({ positionBar_.get(), pr::Param::Position });
+	// THE TABS AND PADS VIEWS: a bar of the chains' names, or the pads, with what is in front of the viewed chain and its arrow. Hidden
+	// until the View asks for them (Strips draws exactly as it always did).
+	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
+	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
+	front_ = std::make_unique<RackFrontStack>(RackFlow::TopDown);
+	chainArrow_ = std::make_unique<RackDrawerArrow>(
+	    RackFlow::TopDown, "Open the whole chain here, or close it again",
+	    [this] { return model_->expanded(model_->viewedChain()); },
+	    [this](bool open) {
+		    model_->setExpanded(model_->viewedChain(), open);
+		    (void)updateContent();
+	    });
+	for (visage::Frame* f : { static_cast<visage::Frame*>(tabs_.get()), static_cast<visage::Frame*>(pads_.get()),
+	                          static_cast<visage::Frame*>(front_.get()), static_cast<visage::Frame*>(chainArrow_.get()) }) {
+		addChild(f);
+		f->setVisible(false);
+	}
 	(void)showForMode();
 	(void)follow();
 
@@ -776,6 +799,22 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 	const size_t roles = pr::roleCount(p.mode, strips_.size(), pr::bandCountOf(control(pr::Param::BandCount).value()));
 	p.missing = (pr::kRoleModes & pr::kModeBit(p.mode)) != 0 && roles > strips_.size() ? roles - strips_.size() : 0;
 	p.strips = strips_.size();
+	p.view = model_->view();
+	if (p.view != RackViewKind::Strips) {
+		// TABS AND PADS lay out no chain rows, bands, spectrum or position bar (the window has them): what is in front of the viewed chain
+		// is one tile, or all of them once it is open (as many as the unit has room for, in a horizontal lane).
+		p.bands = p.spectrum = p.bar = false;
+		p.missing = p.rows = p.overflow = 0;
+		const std::vector<std::string> names = model_->deviceNames(model_->viewedChain());
+		size_t tiles = names.empty() || !model_->expanded(model_->viewedChain()) ? 1 : names.size();
+		if (horizontalLane() && height() > 0) {
+			const float room = static_cast<float>(height()) - 2.0f * (ValueBox::kHeight + kRowGap) - RackDrawerArrow::kSize - 5.0f * kRowGap;
+			tiles = std::min(tiles, static_cast<size_t>(std::max(1.0f, std::floor(room / (RackFrontStack::kTileHeight + RackFrontStack::kGap)))));
+		}
+		p.tiles = tiles;
+		p.arrow = names.size() > 1;
+		return p;
+	}
 	// THE ROWS THE UNIT HAS ROOM FOR: what is left of `kCardUnitHeight` under everything else, a row per chain — and when
 	// that is not all of them, one row fewer, for the line that says how many the window holds.
 	const float row = ChainStrip::kHeight + kRowGap;
@@ -805,22 +844,99 @@ std::string ParallelRackCard::overflowTextForTest() const {
 	return static_cast<const OverflowLine*>(overflow_.get())->text;
 }
 
+float ParallelRackCard::viewHeight(const Plan& p) const {
+	float h = 0.0f;
+	if (p.view == RackViewKind::Tabs) {
+		h += RackTabBar::kThickness;
+	}
+	else {
+		h += pads_->naturalSize().y;
+	}
+	h += kRowGap;
+	h += RackFrontStack::extentForTiles(p.tiles) + kRowGap;
+	if (p.arrow) {
+		h += RackDrawerArrow::kSize + kRowGap;
+	}
+	h += 2.0f * (ValueBox::kHeight + kRowGap);
+	return h;
+}
+
 float ParallelRackCard::bodyHeight() const {
 	const Plan p = plan();
+	if (p.view != RackViewKind::Strips) {
+		return viewHeight(p);
+	}
 	const size_t rows = p.rows + (p.overflow > 0 ? 1 : 0);
 	return fixedRowsHeight(p) + static_cast<float>(rows) * (ChainStrip::kHeight + kRowGap) + Knob::kHeight;
 }
 
 float ParallelRackCard::laneExtent(float cross) const {
-	return folded() ? kCardHeadHeight : FxCard::laneExtent(cross);
+	if (folded()) {
+		return kCardHeadHeight;
+	}
+	// A PADS CARD IN A HORIZONTAL LANE needs its panel's width and a column beside it for what is in front and the mode and view.
+	if (horizontalLane() && model_->view() == RackViewKind::Pads) {
+		return kCardHeadHeight + pads_->naturalSize().x + kRowGap + 140.0f + kPad;
+	}
+	return FxCard::laneExtent(cross);
 }
 
 void ParallelRackCard::layOut() {
 	const Plan p = plan();
 	laidOut_ = p;
-	const float left = bodyLeft() + kPad;
-	const float wide = std::max(0.0f, bodyWidth() - 2.0f * kPad);
+	float left = bodyLeft() + kPad;
+	float wide = std::max(0.0f, bodyWidth() - 2.0f * kPad);
 	float y = kSlotHeadHeight + kRowGap;
+	// THE VIEW'S OWN PIECES: the bar (across the top, or down the side in a horizontal lane) or the pads panel, then what is in front of the
+	// viewed chain and its arrow, all ABOVE the mode and view rows. Strips places none of them.
+	const bool strips = p.view == RackViewKind::Strips;
+	const RackFlow flow = horizontalLane() ? RackFlow::LeftRight : RackFlow::TopDown;
+	tabs_->setFlow(flow);
+	pads_->setFlow(flow);
+	chainArrow_->setFlow(flow);
+	const bool open = !folded();
+	tabs_->setVisible(open && p.view == RackViewKind::Tabs);
+	pads_->setVisible(open && p.view == RackViewKind::Pads);
+	front_->setVisible(open && !strips);
+	chainArrow_->setVisible(open && !strips && p.arrow);
+	mix_->setVisible(open && strips);
+	gain_->setVisible(open && strips);
+	if (!strips) {
+		float top = horizontalLane() ? kRowGap : y;
+		if (p.view == RackViewKind::Tabs) {
+			if (!horizontalLane()) {
+				tabs_->setBounds(bodyLeft(), kSlotHeadHeight, bodyWidth(), RackTabBar::kThickness);
+				top = kSlotHeadHeight + RackTabBar::kThickness + kRowGap;
+			}
+			else {
+				tabs_->setBounds(bodyLeft(), 0.0f, RackTabBar::kThickness, static_cast<float>(height()));
+				left = bodyLeft() + RackTabBar::kThickness + kRowGap;
+				wide = std::max(0.0f, static_cast<float>(width()) - left - kPad);
+			}
+		}
+		else {
+			const visage::Point n = pads_->naturalSize();
+			if (!horizontalLane()) {
+				pads_->setBounds(bodyLeft(), y, bodyWidth(), n.y);
+				top = y + n.y + kRowGap;
+			}
+			else {
+				pads_->setBounds(bodyLeft(), 0.0f, n.x, std::min(n.y, static_cast<float>(height())));
+				left = bodyLeft() + n.x + kRowGap;
+				wide = std::max(0.0f, static_cast<float>(width()) - left - kPad);
+			}
+		}
+		const size_t viewed = model_->viewedChain();
+		front_->setContent(model_->deviceNames(viewed), model_->expanded(viewed), frontTint());
+		const float stack = front_->extentFor(p.tiles);
+		front_->setBounds(left, top, wide, stack);
+		top += stack + kRowGap;
+		if (p.arrow) {
+			chainArrow_->setBounds(left, top, wide, RackDrawerArrow::kSize);
+			top += RackDrawerArrow::kSize + kRowGap;
+		}
+		y = top;
+	}
 	// THE MODE ON ITS OWN ROW ABOVE THE CHAINS: it decides what the strips below mean.
 	const float modeWide = std::min(wide, kModeWidth);
 	modeBox_->setBounds(left, y, modeWide, ValueBox::kHeight);
@@ -831,6 +947,7 @@ void ParallelRackCard::layOut() {
 	{
 		const float viewWide = std::round(wide * 0.62f);
 		viewSeg_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, viewWide - kRowGap, kSegmentHeight);
+		viewPair_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, viewWide - kRowGap, kSegmentHeight);
 		playingBox_->setBounds(left + viewWide, y, std::max(0.0f, wide - viewWide), ValueBox::kHeight);
 		y += ValueBox::kHeight + kRowGap;
 	}
@@ -1030,13 +1147,23 @@ bool ParallelRackCard::showForMode() {
 		layOut();
 		changed = true;
 	}
+	// TABS IS OFFERED ONLY TO A RACK OF EIGHT CHAINS OR FEWER (hidden, not greyed): past it the choice is Strips | Pads, except while the view
+	// IS Tabs (a load, or a ninth chain added under it), which the three-way can still show.
+	const bool tabsOffered = model_->chainCount() <= kMaxRackTabs || model_->view() == RackViewKind::Tabs;
+	if (viewSeg_->isVisible() != (!folded() && tabsOffered) || viewPair_->isVisible() != (!folded() && !tabsOffered)) {
+		viewSeg_->setVisible(!folded() && tabsOffered);
+		viewPair_->setVisible(!folded() && !tabsOffered);
+		changed = true;
+	}
 	const bool spectrumShown = !folded() && laidOut_.spectrum;
 	if (spectrum_->isVisible() != spectrumShown) {
 		spectrum_->setVisible(spectrumShown);
 		changed = true;
 	}
 	for (const auto& [frame, param] : gated_) {
-		const bool shown = !folded() && pr::controlShown(param, mode, bands);
+		// TABS AND PADS show the rack's Playing (Select) and nothing else of what the mode adds; the window has the rest.
+		const bool shown = !folded() && pr::controlShown(param, mode, bands)
+		                   && (laidOut_.view == RackViewKind::Strips || frame == playingBox_.get());
 		if (frame->isVisible() != shown) {
 			frame->setVisible(shown);
 			changed = true;
@@ -1045,9 +1172,32 @@ bool ParallelRackCard::showForMode() {
 	return changed;
 }
 
+uint32_t ParallelRackCard::frontTint() const {
+	const uint32_t tint = instanceTintFor(device_, nest());
+	return tint != 0 ? instanceEdgeColor(tint) : kAccent;
+}
+
+bool ParallelRackCard::followView() {
+	if (model_->view() == RackViewKind::Strips || folded()) {
+		return false;
+	}
+	bool moved = false;
+	const size_t viewed = model_->viewedChain();
+	front_->setContent(model_->deviceNames(viewed), model_->expanded(viewed), frontTint());
+	tabs_->refresh();
+	chainArrow_->refresh();
+	if (model_->view() == RackViewKind::Pads) {
+		pads_->refresh();
+		// THE STRIKE PULSE: one look a tick; no frame is told when nothing was struck (zero repaints at rest).
+		moved = pulse_.poll(*model_) > 0 || moved;
+	}
+	return moved;
+}
+
 bool ParallelRackCard::updateContent() {
 	const bool shown = showForMode();
 	bool moved = follow() || shown;
+	moved = followView() || moved;
 	if (!(plan() == laidOut_)) {
 		layOut(); // a chain added or removed moves the phantoms
 		moved = true;

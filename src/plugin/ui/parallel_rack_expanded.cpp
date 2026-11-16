@@ -83,7 +83,10 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	playingControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Playing));
 	viewSeg_ = std::make_unique<SegmentedControl>(*viewControl_, registry, pr::kViewNames, notifier);
 	playingBox_ = std::make_unique<ValueBox>(*playingControl_, "Playing");
+	viewPairControl_ = std::make_unique<RackViewPairControl>(*viewControl_);
+	viewPair_ = std::make_unique<SegmentedControl>(*viewPairControl_, registry, RackViewPairControl::kNames, notifier);
 	addChild(viewSeg_.get());
+	addChild(viewPair_.get());
 	addChild(playingBox_.get());
 	unusedControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Unused));
 	unused_ = std::make_unique<SegmentedControl>(*unusedControl_, registry, pr::kUnusedFaceNames, notifier);
@@ -123,6 +126,29 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	positionBar_ = std::make_unique<RackPositionBar>(host_, id_, *positionControl_, *modeControl_);
 	addChild(positionBar_.get());
 	gated_.push_back({ positionBar_.get(), pr::Param::Position });
+	// THE TABS AND PADS VIEWS: the bar over the rails and the pads panel beside them, hidden until `View` asks. The chain strips keep
+	// every per-chain control (level, mute, solo, key, choke) for the chain in front; an empty pad offers "+".
+	model_ = std::make_unique<RackViewAdapter>(host_, id_,
+	                                           RackViewAdapter::Controls { playingControl_.get(), modeControl_.get(), positionControl_.get(),
+	                                                                       controls_[1].get() });
+	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
+	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
+	pads_->gridForTest().setAddHandler([this](int key) {
+		if (const size_t at = model_->addKeyedChain(key, history_); at != kNoChain) {
+			model_->viewChain(at);
+			if (follow()) {
+				minimumSizeChanged();
+				redraw();
+			}
+			if (notifier_ != nullptr) {
+				notifier_->say("Chain added");
+			}
+		}
+	});
+	addChild(tabs_.get());
+	addChild(pads_.get());
+	tabs_->setVisible(false);
+	pads_->setVisible(false);
 	(void)showForMode();
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		if (addBounds().contains(e.position)) {
@@ -207,6 +233,10 @@ visage::Bounds ParallelRackExpanded::addSlotBounds() const {
 
 bool ParallelRackExpanded::addShown() const {
 	const auto mode = static_cast<pr::Mode>(std::lround(modeControl_->value()));
+	// TABS HOLD AT MOST EIGHT CHAINS: past them the add control is gone (not greyed).
+	if (model_ != nullptr && model_->view() == RackViewKind::Tabs && model_->chainCount() >= kMaxRackTabs) {
+		return false;
+	}
 	return (pr::kRoleModes & pr::kModeBit(mode)) == 0;
 }
 
@@ -227,6 +257,7 @@ void ParallelRackExpanded::layOut() {
 		const float vy = kPad + kCellHeight + kPad * 0.5f;
 		const float viewWide = std::round(kColumnWidth * 0.62f);
 		viewSeg_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
+		viewPair_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
 		playingBox_->setBounds(kPad + viewWide, vy, kColumnWidth - viewWide, ValueBox::kHeight);
 	}
 	// THE BANDS COLUMN, beside the macros: count and filtering stacked, the slope, then the corners A VERTICAL STACK, one per
@@ -256,19 +287,47 @@ void ParallelRackExpanded::layOut() {
 		}
 	}
 	// THE RAILS LEFT TO RIGHT IN CHAIN ORDER, after the column — under the strip or the bar when the mode has one.
-	const float top = railsTop();
+	float top = railsTop();
 	const float x0 = railsLeft();
-	float x = x0;
-	for (auto& r : rails_) {
+	float railX0 = x0;
+	// TABS: the bar across the top of the rails and only the chain in front below it. PADS: the panel before the rails, and only the
+	// selected pad's chain. STRIPS: every rail, as before.
+	const RackViewKind view = model_->view();
+	tabs_->setVisible(view == RackViewKind::Tabs);
+	pads_->setVisible(view == RackViewKind::Pads);
+	if (view == RackViewKind::Tabs) {
+		tabs_->setBounds(x0, top, std::max(0.0f, static_cast<float>(width()) - x0 - kPad), RackTabBar::kThickness);
+		top += RackTabBar::kThickness + kPad * 0.5f;
+	}
+	else if (view == RackViewKind::Pads) {
+		const visage::Point n = pads_->naturalSize();
+		pads_->setBounds(x0, top, n.x, n.y);
+		railX0 = x0 + n.x + kPad;
+	}
+	const size_t viewed = model_->viewedChain();
+	laidOutView_ = static_cast<int>(view);
+	laidOutViewed_ = viewed;
+	float x = railX0;
+	for (size_t i = 0; i < rails_.size(); ++i) {
+		auto& r = rails_[i];
+		const bool shown = view == RackViewKind::Strips || i == viewed;
+		r->rail->setVisible(shown);
+		if (!shown) {
+			continue;
+		}
 		const float wide = r->rail->railWidth();
 		r->rail->setBounds(x, top, wide, std::max(0.0f, static_cast<float>(height()) - top));
 		x += wide;
 	}
-	const float across = std::max(x - x0 + phantomsWidth(), kPlaceholderWidth);
+	const float across = std::max(x - railX0 + phantomsWidth(), kPlaceholderWidth);
 	spectrum_->setBounds(x0, kPad * 0.5f, across, RackSpectrumStrip::kWindowHeight);
 	positionBar_->setBounds(x0, kPad * 0.5f, across, RackPositionBar::kHeight);
 	// A ROLE NO CHAIN FILLS (§2a): a PHANTOM RAIL after the last real one, an empty chain's face.
 	for (auto& phantom : phantoms_) {
+		phantom->rail->setVisible(view == RackViewKind::Strips);
+		if (view != RackViewKind::Strips) {
+			continue;
+		}
 		// THE SAME RAIL A REAL EMPTY CHAIN GETS, at its own width: collapsed, the 34 px channel strip; open, its column.
 		const float wide = phantom->rail->railWidth();
 		phantom->rail->setBounds(x, top, wide, std::max(0.0f, static_cast<float>(height()) - top));
@@ -548,6 +607,13 @@ bool ParallelRackExpanded::showForMode() {
 		layOut();
 		changed = true;
 	}
+	// TABS IS OFFERED ONLY TO A RACK OF EIGHT CHAINS OR FEWER (hidden, not greyed); see the card's.
+	const bool tabsOffered = model_->chainCount() <= kMaxRackTabs || model_->view() == RackViewKind::Tabs;
+	if (viewSeg_->isVisible() != tabsOffered || viewPair_->isVisible() == tabsOffered) {
+		viewSeg_->setVisible(tabsOffered);
+		viewPair_->setVisible(!tabsOffered);
+		changed = true;
+	}
 	const bool spectrumShown = (pr::kSpectrumModes & pr::kModeBit(static_cast<pr::Mode>(std::lround(mode)))) != 0;
 	if (spectrum_->isVisible() != spectrumShown) {
 		spectrum_->setVisible(spectrumShown);
@@ -574,6 +640,20 @@ bool ParallelRackExpanded::updateContent() {
 	}
 	moved = spectrum_->refresh() || moved;
 	moved = (positionBar_->isVisible() && positionBar_->refresh()) || moved;
+	// THE VIEW MOVED (or the chain in front): the rails are laid out again.
+	if (static_cast<int>(model_->view()) != laidOutView_ || model_->viewedChain() != laidOutViewed_) {
+		minimumSizeChanged();
+		layOut();
+		moved = true;
+	}
+	if (model_->view() != RackViewKind::Strips) {
+		tabs_->refresh();
+		if (model_->view() == RackViewKind::Pads) {
+			pads_->refresh();
+			// THE STRIKE PULSE: one look a tick; no frame is told when nothing was struck.
+			moved = pulse_.poll(*model_) > 0 || moved;
+		}
+	}
 	moved = relayArm() || moved;
 	if (moved) {
 		redraw();

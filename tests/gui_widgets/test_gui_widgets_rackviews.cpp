@@ -17,8 +17,17 @@
 
 #include "fixtures.h"
 
+#include "fx/drum/drum_types.h"
+#include "plugin/device_registry.h"
+#include "plugin/ui/fx_lane.h"
+#include "plugin/ui/parallel_rack_card.h"
+#include "plugin/ui/parallel_rack_expanded.h"
+#include "plugin/ui/rack_view_adapter.h"
 #include "plugin/ui/rack_view_model.h"
 #include "plugin/ui/rack_views.h"
+#include "plugin/ui_note_ring.h"
+#include "rack/rack_axes.h"
+#include "rack/rack_engine.h"
 
 // THE RACK'S TAB BAR AND PAD VIEW, over a fake model: tab counts and native widths, what a press does, the pad order and its pulse, the
 // page strip, and a scale change. The model is the interface the Rack card will adapt its record to, so these hold whatever sits behind it.
@@ -215,7 +224,7 @@ TEST_CASE("rack pads: the keys of a page run left to right then bottom to top, a
 	rack.fill(0);
 	ui::RackStrikePulse pulse;
 	ui::RackPadGrid grid(rack, pulse);
-	grid.setBounds(0.0f, 0.0f, 204.0f, 204.0f);
+	grid.setBounds(0.0f, 0.0f, 196.0f, 196.0f);
 	for (const int page : { 0, 5 }) {
 		rack.pageNow = page;
 		struct Corner {
@@ -223,7 +232,7 @@ TEST_CASE("rack pads: the keys of a page run left to right then bottom to top, a
 			int offset;
 		};
 		// A POINT NEAR EACH CORNER, written down here and not taken from the widget's own centres.
-		for (const Corner c : { Corner { 5.0f, 199.0f, 0 }, Corner { 199.0f, 199.0f, 3 }, Corner { 5.0f, 5.0f, 12 }, Corner { 199.0f, 5.0f, 15 } }) {
+		for (const Corner c : { Corner { 5.0f, 191.0f, 0 }, Corner { 191.0f, 191.0f, 3 }, Corner { 5.0f, 5.0f, 12 }, Corner { 191.0f, 5.0f, 15 } }) {
 			CAPTURE(page);
 			CAPTURE(c.offset);
 			rack.triggers.clear();
@@ -239,7 +248,7 @@ TEST_CASE("rack pads: the keys of a page run left to right then bottom to top, a
 	}
 	// THE MIDDLE OF THE BOTTOM ROW AND THE ROW ABOVE IT: 0 1 2 3, then 4 5 6 7 above them.
 	rack.pageNow = 0;
-	CHECK(grid.padAt({ 70.0f, 199.0f }) == 1);
+	CHECK(grid.padAt({ 70.0f, 191.0f }) == 1);
 	CHECK(grid.padAt({ 70.0f, 140.0f }) == 5);
 }
 
@@ -250,7 +259,7 @@ TEST_CASE("rack pads: a used pad shows its chain, an empty one its note, and a p
 	rack.viewed = 0;
 	ui::RackStrikePulse pulse;
 	ui::RackPadGrid grid(rack, pulse);
-	grid.setBounds(0.0f, 0.0f, 204.0f, 204.0f);
+	grid.setBounds(0.0f, 0.0f, 196.0f, 196.0f);
 	CHECK(grid.usedForTest(0));
 	CHECK(grid.labelForTest(0) == "Kick");
 	CHECK(grid.usedForTest(2));
@@ -297,7 +306,7 @@ TEST_CASE("rack pads: a struck key flashes its pad and its page cell, the poll r
 	pulse.setReducedMotion(false);
 	pulse.setClock([&] { return t; });
 	ui::RackPadGrid grid(rack, pulse);
-	grid.setBounds(0.0f, 0.0f, 204.0f, 204.0f);
+	grid.setBounds(0.0f, 0.0f, 196.0f, 196.0f);
 	ui::RackPadPages pages(rack, pulse, ui::RackFlow::TopDown);
 	pages.setBounds(0.0f, 0.0f, 208.0f, ui::RackPadPages::kThickness);
 	// NOTHING STRUCK: nothing is told.
@@ -332,7 +341,7 @@ TEST_CASE("rack pads: under reduced motion a strike is one steady highlight unti
 	pulse.setReducedMotion(true);
 	pulse.setClock([&] { return t; });
 	ui::RackPadGrid grid(rack, pulse);
-	grid.setBounds(0.0f, 0.0f, 204.0f, 204.0f);
+	grid.setBounds(0.0f, 0.0f, 196.0f, 196.0f);
 	maskSet(rack.struck, 3);
 	CHECK(pulse.poll(rack) >= 1);
 	CHECK(grid.flashForTest(3) == 1.0f);
@@ -482,4 +491,352 @@ TEST_CASE("rack views: the expand arrows toggle through the model, and point dow
 		chain.toggleForTest();
 		CHECK_FALSE(rack.expanded(0));
 	}
+}
+
+//==================================================================================================
+// OVER A REAL RACK: the card and the window in each view
+//==================================================================================================
+
+namespace {
+
+namespace pr = feathers::rack::parallel;
+
+/// A rack on the lane, as the devices suite's step-4 cases build one, with the card and the window laid out.
+struct RealRack {
+	ModFixture f;
+	feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+	void* body = nullptr;
+	feathers::DeviceInstanceId id = feathers::kNoInstance;
+	size_t slot = 0;
+	ui::ParallelRackCard* card = nullptr;
+	ui::WidgetRegistry registry;
+	std::unique_ptr<ui::ExpandedView> view;
+	ui::ParallelRackExpanded* panel = nullptr;
+
+	RealRack() {
+		bodies.prepare(48000.0, 4096);
+		const size_t at = bodies.addDevice(pr::kTraits.tag);
+		REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+		body = bodies.slotAtLane(at).storage.get();
+		REQUIRE(body != nullptr);
+		slot = f.bridge.addFxDevice(pr::kTraits.tag);
+		REQUIRE(slot < feathers::kMaxFxSlots);
+		id = f.bridge.fxDeviceAt(slot);
+		f.bridge.fxBodies().attach(id, body);
+		auto* lane = findInTree<ui::FxLane>(f.root);
+		REQUIRE(lane != nullptr);
+		lane->resized();
+		card = dynamic_cast<ui::ParallelRackCard*>(lane->cardAt(slot));
+		REQUIRE(card != nullptr);
+		view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, pr::kDescriptor);
+		panel = dynamic_cast<ui::ParallelRackExpanded*>(view.get());
+		REQUIRE(panel != nullptr);
+		panel->setBounds(0.0f, 0.0f, 1200.0f, std::max(panel->minimumSize().y, 700.0f));
+		refresh();
+	}
+	~RealRack() {
+		view.reset();
+		f.bridge.fxBodies().detach(id, body);
+		(void)f.bridge.removeFxDevice(slot);
+	}
+	pr::Rack& rack() const { return *pr::rackOf(body); }
+	void set(pr::Param p, float v) { f.deviceHost.setField(id, static_cast<size_t>(p), v); }
+	float field(pr::Param p) const { return f.deviceHost.fieldAt(id, static_cast<size_t>(p)); }
+	void refresh() {
+		(void)card->update();
+		(void)panel->update();
+		card->resized();
+		panel->resized();
+		(void)card->update();
+		(void)panel->update();
+	}
+	/// Chains up to `count`, the first `withDevices` holding a Drum then a Delay, each keyed to its own index when `keyed`.
+	void chains(size_t count, size_t withDevices, bool keyed = false) {
+		while (rack().chainCount() < count) {
+			REQUIRE(rack().addChain() != SIZE_MAX);
+		}
+		for (size_t i = 0; i < count; ++i) {
+			if (keyed) {
+				rack().setChainKey(i, static_cast<int>(i));
+			}
+			if (i < withDevices) {
+				feathers::rack::RackBridge& b = *rack().chainAt(i)->bridge();
+				if (b.chainLength() == 0) {
+					(void)b.addDevice("DRUM");
+					(void)b.addDevice("DELAY");
+				}
+			}
+		}
+		refresh();
+	}
+	void view_(int v) {
+		set(pr::Param::View, static_cast<float>(v));
+		refresh();
+	}
+};
+
+} // namespace
+
+TEST_CASE("rack views over a real rack: Strips draws as it always did, and a round trip through Tabs and Pads puts it back exactly") {
+	RealRack r;
+	r.chains(3, 3);
+	CHECK_FALSE(r.card->tabsShownForTest());
+	CHECK_FALSE(r.card->padsShownForTest());
+	CHECK_FALSE(r.card->frontShownForTest());
+	CHECK(r.card->stripsForTest().size() == 3);
+	const float height = r.card->laneHeightAt(static_cast<float>(r.card->width()));
+	std::vector<visage::Bounds> bounds;
+	for (const auto& strip : r.card->stripsForTest()) {
+		CHECK(strip->isVisible());
+		bounds.push_back(strip->bounds());
+	}
+	for (const int v : { 1, 2, 1, 0 }) {
+		r.view_(v);
+	}
+	CHECK(r.card->laneHeightAt(static_cast<float>(r.card->width())) == height);
+	for (size_t i = 0; i < bounds.size(); ++i) {
+		CHECK(r.card->stripsForTest()[i]->isVisible());
+		CHECK(r.card->stripsForTest()[i]->bounds() == bounds[i]);
+	}
+	CHECK_FALSE(r.card->tabsShownForTest());
+	// THE WINDOW'S RAILS: all of them, with neither piece of the new views.
+	CHECK(r.panel->railShownForTest(0));
+	CHECK(r.panel->railShownForTest(2));
+	CHECK_FALSE(r.panel->tabBarForTest().isVisible());
+}
+
+TEST_CASE("rack views over a real rack: Tabs shows a tab per chain and the viewed chain's devices, a press on a tab views that chain, and the arrow opens the chain") {
+	RealRack r;
+	r.chains(3, 1); // chain 1 holds a Drum and a Delay; chains 2 and 3 are empty
+	(void)r.rack().chainAt(1)->bridge()->addDevice("DELAY"); // chain 2 holds a Delay alone
+	r.refresh();
+	r.view_(1);
+	REQUIRE(r.card->tabsShownForTest());
+	CHECK(r.card->frontShownForTest());
+	CHECK_FALSE(r.card->padsShownForTest());
+	// NO PER-CHAIN LEVEL, MUTE OR SOLO ON THE CARD: the strips are gone.
+	for (const auto& strip : r.card->stripsForTest()) {
+		CHECK_FALSE(strip->isVisible());
+	}
+	ui::RackTabBar& bar = r.card->tabBarForTest();
+	CHECK(bar.tabsForTest().size() == 3);
+	// THE FRONT IS THE VIEWED CHAIN'S FIRST DEVICE alone; the chain holds two, so the arrow is there.
+	const std::vector<std::string> two { "Drum", "Delay" };
+	CHECK(r.card->frontForTest().namesForTest() == two);
+	CHECK(r.card->frontForTest().tilesShown() == 1);
+	CHECK(r.card->chainArrowForTest().isVisible());
+	const float closed = r.card->laneHeightAt(static_cast<float>(r.card->width()));
+	r.card->chainArrowForTest().toggleForTest();
+	r.refresh();
+	CHECK(r.rack().open(0));
+	CHECK(r.card->frontForTest().tilesShown() == 2);
+	CHECK(r.card->laneHeightAt(static_cast<float>(r.card->width())) > closed); // the card sizes to what is in front
+	// A PRESS ON TAB 2 VIEWS CHAIN 2 (the rack's own ViewedChain), and the front follows it: its one device, so no arrow.
+	bar.pressForTest(bar.tabCentre(1));
+	r.refresh();
+	CHECK(r.field(pr::Param::ViewedChain) == 1.0f);
+	CHECK(r.card->viewModelForTest().viewedChain() == 1);
+	const std::vector<std::string> one { "Delay" };
+	CHECK(r.card->frontForTest().namesForTest() == one);
+	CHECK(r.card->frontForTest().tilesShown() == 1);
+	CHECK_FALSE(r.card->chainArrowForTest().isVisible());
+	// AN EMPTY CHAIN IN FRONT: one tile saying so.
+	bar.pressForTest(bar.tabCentre(2));
+	r.refresh();
+	CHECK(r.card->frontForTest().namesForTest().empty());
+	CHECK(r.card->frontForTest().tilesShown() == 1);
+	CHECK_FALSE(r.card->chainArrowForTest().isVisible());
+}
+
+TEST_CASE("rack views over a real rack: in Select the playing chain differs from the viewed one and the dot moves the real parameter") {
+	RealRack r;
+	r.chains(3, 3);
+	r.set(pr::Param::Mode, static_cast<float>(pr::Mode::Select));
+	r.view_(1);
+	ui::RackTabBar& bar = r.card->tabBarForTest();
+	bar.pressForTest(bar.tabCentre(0));
+	r.refresh();
+	CHECK(r.card->viewModelForTest().viewedChain() == 0);
+	const float playingBefore = r.field(pr::Param::Playing);
+	bar.pressForTest(bar.dotCentre(2));
+	r.refresh();
+	CHECK(r.field(pr::Param::Playing) == 3.0f); // chain 3, one-based in the control
+	CHECK(r.card->viewModelForTest().playingChain() == 2);
+	CHECK(r.card->viewModelForTest().viewedChain() == 0); // the viewed one did not move
+	CHECK(r.field(pr::Param::Playing) != playingBefore);
+	CHECK(bar.dotShown(2));
+	CHECK(bar.raised(0));
+	CHECK_FALSE(bar.raised(2));
+}
+
+TEST_CASE("rack views over a real rack: Pads lights the keys that have a chain, a press posts the key and views its chain, and a struck key flashes") {
+	RealRack r;
+	r.chains(3, 3, true); // keys 0, 1, 2
+	r.view_(2);
+	REQUIRE(r.card->padsShownForTest());
+	ui::RackPadGrid& grid = r.card->padsForTest().gridForTest();
+	for (int i = 0; i < 16; ++i) {
+		CHECK(grid.usedForTest(i) == (i < 3));
+	}
+	// THE STRIP: page 0's cells for those keys are lit, and a later page is empty.
+	ui::RackPadPages& pages = r.card->padsForTest().pagesForTest();
+	CHECK(pages.cellUsedForTest(0, 1));
+	CHECK_FALSE(pages.cellUsedForTest(0, 5));
+	CHECK_FALSE(pages.cellUsedForTest(5, 1));
+	// A PRESS ON PAD 2 (key 2): the note is posted (on, then off at the release) and chain 2 is viewed.
+	feathers::UiNoteEvent e;
+	while (r.f.bridge.popNote(e)) {
+	}
+	REQUIRE(r.card->viewModelForTest().canTrigger());
+	grid.pressForTest(grid.padCentre(2));
+	grid.releaseForTest();
+	REQUIRE(r.f.bridge.popNote(e));
+	CHECK(e.key == 2);
+	CHECK(e.on);
+	REQUIRE(r.f.bridge.popNote(e));
+	CHECK(e.key == 2);
+	CHECK_FALSE(e.on);
+	CHECK(r.field(pr::Param::ViewedChain) == 2.0f);
+	// PAGES: a press on page 5 changes the rack's own PadsPage, and it is that page's keys the grid maps (80..95).
+	pages.pressForTest(pages.pageCentre(5));
+	r.refresh();
+	CHECK(r.field(pr::Param::PadsPage) == 5.0f);
+	grid.pressForTest(grid.padCentre(0));
+	grid.releaseForTest();
+	REQUIRE(r.f.bridge.popNote(e));
+	CHECK(e.key == 80);
+	while (r.f.bridge.popNote(e)) {
+	}
+	// THE PULSE FROM THE REAL STRIKE MASK: a note entering the rack flashes its pad (reduced motion: one steady highlight), and at rest
+	// nothing is told.
+	r.set(pr::Param::PadsPage, 0.0f);
+	r.refresh();
+	r.card->pulseForTest().setReducedMotion(true);
+	(void)r.card->pulseForTest().poll(r.card->viewModelForTest()); // drains whatever the setup struck
+	feathers::device::NoteEvent on {};
+	on.kind = feathers::device::NoteEvent::Kind::On;
+	on.key = 1;
+	on.velocity = 1.0;
+	feathers::device::NoteEvent out[8];
+	(void)r.rack().processNotes(&on, 1, out, 8);
+	(void)r.card->update();
+	CHECK(grid.flashForTest(1) == 1.0f);
+	CHECK(grid.flashForTest(0) == 0.0f);
+	(void)r.card->update(); // the next look: nothing struck, the highlight goes out
+	CHECK(grid.flashForTest(1) == 0.0f);
+	CHECK(r.card->pulseForTest().poll(r.card->viewModelForTest()) == 0); // and at rest, no frame is told
+}
+
+TEST_CASE("rack views over a real rack: the window in Tabs shows only the chain in front, in Pads the panel and the selected chain, and a + on an empty pad makes a keyed chain") {
+	RealRack r;
+	r.chains(3, 3, true);
+	r.view_(1);
+	CHECK(r.panel->tabBarForTest().isVisible());
+	CHECK(r.panel->railShownForTest(0));
+	CHECK_FALSE(r.panel->railShownForTest(1));
+	r.panel->tabBarForTest().pressForTest(r.panel->tabBarForTest().tabCentre(1));
+	r.refresh();
+	CHECK_FALSE(r.panel->railShownForTest(0));
+	CHECK(r.panel->railShownForTest(1));
+	// PADS: the panel and only the selected pad's chain.
+	r.view_(2);
+	CHECK(r.panel->padsForTest().isVisible());
+	CHECK_FALSE(r.panel->tabBarForTest().isVisible());
+	ui::RackPadGrid& grid = r.panel->padsForTest().gridForTest();
+	CHECK_FALSE(grid.usedForTest(7));
+	// "+" ON EMPTY PAD 7 (key 7): a chain keyed to it, with a Drum on Any Key, and it becomes the viewed chain.
+	const size_t before = r.rack().chainCount();
+	grid.pressForTest(grid.plusCentre(7));
+	r.refresh();
+	REQUIRE(r.rack().chainCount() == before + 1);
+	CHECK(r.rack().chainKey(before) == 7);
+	CHECK(grid.usedForTest(7));
+	CHECK(r.rack().chainAt(before)->bridge()->chainLength() == 1);
+	CHECK(r.panel->viewModelForTest().viewedChain() == before);
+	// THE ADD CONTROL IS GONE AT EIGHT CHAINS IN TABS (not greyed), and back in Strips.
+	r.chains(8, 0);
+	r.view_(1);
+	CHECK(r.panel->addBoundsForTest().width() == 0.0f);
+	r.view_(0);
+	CHECK(r.panel->addBoundsForTest().width() > 0.0f);
+}
+
+TEST_CASE("rack views over a real rack: Tabs is offered in the View control only up to eight chains (hidden past it, not greyed), on the card and the window") {
+	RealRack r;
+	r.chains(8, 0);
+	r.refresh();
+	CHECK(r.card->viewSegForTest().isVisible());
+	CHECK_FALSE(r.card->viewPairForTest().isVisible());
+	CHECK(r.panel->viewSegForTest().isVisible());
+	CHECK_FALSE(r.panel->viewPairForTest().isVisible());
+	// THE NINTH CHAIN: the choice is Strips | Pads, and it writes the SAME control (Pads is the control's 2).
+	r.chains(9, 0);
+	r.refresh();
+	CHECK_FALSE(r.card->viewSegForTest().isVisible());
+	CHECK(r.card->viewPairForTest().isVisible());
+	CHECK_FALSE(r.panel->viewSegForTest().isVisible());
+	CHECK(r.panel->viewPairForTest().isVisible());
+	REQUIRE(r.card->viewPairForTest().control() != nullptr);
+	r.card->viewPairForTest().control()->setValue(1.0);
+	r.refresh();
+	CHECK(r.field(pr::Param::View) == 2.0f);
+	CHECK(r.card->padsShownForTest());
+	r.card->viewPairForTest().control()->setValue(0.0);
+	r.refresh();
+	CHECK(r.field(pr::Param::View) == 0.0f);
+	// A RACK ALREADY IN TABS (a load) still shows the three-way, which can say where it is.
+	r.view_(1);
+	CHECK(r.card->viewSegForTest().isVisible());
+	CHECK_FALSE(r.card->viewPairForTest().isVisible());
+}
+
+TEST_CASE("rack views over a real rack: the window offers every control the card offers, in Strips, Tabs and Pads, with chains of every kind") {
+	RealRack r;
+	r.chains(3, 3, true);
+	const auto collect = [](visage::Frame* root) {
+		std::set<const device::ParamDesc*> out;
+		const auto* first = pr::kDescriptor.params.data();
+		// THE RACK'S OWN CONTROLS (the entries past `Param::kCount` are the chain slots' level, mute and solo, which a strip's routes use).
+		const auto* last = first + static_cast<size_t>(pr::Param::kCount);
+		const std::function<void(visage::Frame*)> walk = [&](visage::Frame* f) {
+			if (const auto* face = dynamic_cast<const ui::ControlFace*>(f)) {
+				std::vector<ui::ControlFace::Offered> list;
+				face->offeredControls(list);
+				for (const auto& o : list) {
+					const device::ParamDesc* d = &o.control->desc();
+					if (d > first && d < last) { // but Enabled (entry 0): the head chip is the window's too
+						out.insert(d);
+					}
+				}
+			}
+			for (visage::Frame* c : f->children()) {
+				walk(c);
+			}
+		};
+		walk(root);
+		return out;
+	};
+	for (const int view : { 0, 1, 2 }) {
+		for (const pr::Mode mode : { pr::Mode::Parallel, pr::Mode::Select, pr::Mode::Keyed }) {
+			r.set(pr::Param::Mode, static_cast<float>(mode));
+			r.view_(view);
+			const auto card = collect(r.card);
+			const auto window = collect(r.panel);
+			CAPTURE(view);
+			CAPTURE(static_cast<int>(mode));
+			CHECK(card.size() >= 5);
+			for (const device::ParamDesc* d : card) {
+				CAPTURE(std::string(d->name));
+				CAPTURE(d - pr::kDescriptor.params.data());
+				CHECK(window.count(d) == 1);
+			}
+		}
+	}
+	// NON-VACUITY: the playing chain's control is on the card's bar in Select + Tabs, and is among what is compared.
+	r.set(pr::Param::Mode, static_cast<float>(pr::Mode::Select));
+	r.view_(1);
+	std::vector<ui::ControlFace::Offered> offered;
+	r.card->tabBarForTest().offeredControls(offered);
+	REQUIRE(offered.size() == 1);
+	CHECK(&offered[0].control->desc() == &pr::kDescriptor.params[static_cast<size_t>(pr::Param::Playing)]);
 }

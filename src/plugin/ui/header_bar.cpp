@@ -153,13 +153,11 @@ std::vector<uint32_t> rasteriseLibraMark(int width, int height) {
 }
 
 visage::Bounds HeaderBar::wordmarkBounds() const {
-	// The same pen walk `draw` makes, so the box is the word as drawn.
+	// The same advance `draw` makes, so the box is the word as drawn.
 	const visage::Font& wordmark = font(kWordmarkSize);
-	float right = kPadX;
-	for (const char* part : { "FEA", "TH", "ERS" }) {
-		right += trackedWidth(wordmark, part, kWordmarkTracking) + kWordmarkTracking * static_cast<float>(wordmark.size());
-	}
-	return { kPadX, height() * 0.22f, right - kPadX, kWordmarkSize * 1.4f };
+	const float width = trackedWidth(wordmark, "FEATHERS", kWordmarkTracking) +
+	                    kWordmarkTracking * static_cast<float>(wordmark.size());
+	return { kPadX, height() * 0.22f, width, kWordmarkSize * 1.4f };
 }
 
 bool HeaderBar::hitsSettings(visage::Point position) const {
@@ -339,20 +337,10 @@ void HeaderBar::draw(visage::Canvas& canvas) {
 
 	drawLogo(canvas);
 
-	// FEATHERS, with "TH" in accent — the mock spells it `Fea<span>th</span>ers`, and the highlighted
-	// pair is the wordmark's one piece of colour.
+	// FEATHERS, every letter in ink. The wordmark is one colour: the accent is not part of it.
 	const visage::Font& wordmark = font(kWordmarkSize);
-	const float wordTop = h * 0.22f;
-	const float wordHeight = kWordmarkSize * 1.4f;
-	float pen = kPadX;
-	const std::string parts[3] = {"FEA", "TH", "ERS"};
-	const uint32_t colours[3] = {kInk, kAccent, kInk};
-	for (int i = 0; i < 3; ++i) {
-		canvas.setColor(colours[i]);
-		drawTracked(canvas, parts[i], wordmark, kWordmarkTracking, pen, wordTop, wordHeight);
-		pen += trackedWidth(wordmark, parts[i], kWordmarkTracking) +
-		       kWordmarkTracking * static_cast<float>(wordmark.size());
-	}
+	canvas.setColor(kInk);
+	drawTracked(canvas, "FEATHERS", wordmark, kWordmarkTracking, kPadX, h * 0.22f, kWordmarkSize * 1.4f);
 
 	// The byline names what Feathers is; the build stamp lives on the settings screen's About column.
 	const visage::Font& byline = font(kBylineSize);

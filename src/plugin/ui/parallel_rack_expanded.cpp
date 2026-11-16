@@ -182,6 +182,12 @@ float ParallelRackExpanded::railsWidth() const {
 visage::Point ParallelRackExpanded::minimumSize() const {
 	visage::Point p { railsLeft() + railsWidth() + phantomsWidth(),
 		              std::max(addSlotBounds().bottom(), bandsBottom()) + kPad };
+	// PADS: the panel stands before the rails, so the window is at least its width and height.
+	if (model_ != nullptr && model_->view() == RackViewKind::Pads) {
+		const visage::Point n = pads_->naturalSize();
+		p.x = std::max(p.x, railsLeft() + n.x + kPad + 34.0f); // and a collapsed rail (34 px) beside it
+		p.y = std::max(p.y, railsTop() + n.y + kPad);
+	}
 	for (const auto& r : rails_) {
 		// A CLOSED RAIL IS A CHANNEL STRIP NOW (backlog OC), and needs its column's height; an open one its floor.
 		p.y = std::max(p.y, r->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight

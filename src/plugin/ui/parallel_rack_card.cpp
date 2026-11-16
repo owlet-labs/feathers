@@ -693,6 +693,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// THE CORNERS' KNOBS AND THE KEY TRACK SWITCH ARE THE WINDOW'S (with them the card was too tall in a
 	// horizontal chain). The card's spectrum strip still carries every corner, and a drag on it writes the cut.
 	gated_ = { { position_.get(), pr::Param::Position }, { unused_.get(), pr::Param::Unused }, { playingBox_.get(), pr::Param::Playing },
+	           { viewSeg_.get(), pr::Param::View },
 	           { bandsBox_.get(), pr::Param::BandCount }, { filteringBox_.get(), pr::Param::Filtering },
 	           { slope_.get(), pr::Param::Slope } };
 	overflow_ = std::make_unique<OverflowLine>();

@@ -1938,7 +1938,7 @@ if(FEATHERS_SANITIZE)
 		# to four of these run at once, each with RUN_CASES_JOBS=4 case processes and its own Xvfb — a
 		# heavier moment than the one widget entry stacking on the rack suites was; the gate's cost line
 		# is the place to re-measure it.
-		foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo)
+		foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 			string(REPLACE "_" "-" _suite_name "${_suite}")
 			add_test(NAME sanitize-gui-widgets-${_suite_name} COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --
 				${_feathers_each} $<TARGET_FILE:test_gui_widgets_${_suite}>)

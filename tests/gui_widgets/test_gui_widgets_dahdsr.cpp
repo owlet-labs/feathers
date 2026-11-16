@@ -5104,6 +5104,28 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		if (feathers::fx::eroder::kTraits.enableControl >= 0) {
 			e.reached.insert(static_cast<size_t>(feathers::fx::eroder::kTraits.enableControl));
 		}
+		// KNOWN GAP FOR v0.2.0: the shared section (Emphasis, Smear, Tap, Loop) and Etch's two slots shipped in the engine
+		// before their card and window; until those land they are reached by host automation and modulation only. Listed
+		// by name, so this flips red the moment the card or window reaches any of them (and the entry must then go).
+		{
+			static constexpr const char* kNoFaceYet = "the Eroder's shared section and Etch slots have no card or window "
+			                                          "controls yet (v0.2.0); automation and modulation only";
+			const std::set<std::string> unfaced {
+				"Eroder Emphasis", "Eroder Emphasis Shape", "Eroder In Loop", "Eroder Interval", "Eroder Loop",
+				"Eroder Restore", "Eroder Slot A Amount", "Eroder Slot A Mix", "Eroder Slot A Shape", "Eroder Slot A Type",
+				"Eroder Slot B Amount", "Eroder Slot B Mix", "Eroder Slot B Shape", "Eroder Slot B Type",
+				"Eroder Slot Route", "Eroder Smear", "Eroder Tap",
+			};
+			const auto& eroParams = feathers::fx::eroder::kDescriptor.params;
+			size_t named = 0;
+			for (size_t i = 0; i < eroParams.size(); ++i) {
+				if (unfaced.count(eroParams[i].name) > 0) {
+					e.knownGaps[i] = kNoFaceYet;
+					++named;
+				}
+			}
+			REQUIRE(named == unfaced.size()); // every listed name is a real control, so a rename cannot hide one
+		}
 		table.push_back(std::move(e));
 	}
 	// THE SMOOTH SHAPER: its own card AND its panel, each listing what a hand reaches on it — the card leaves the

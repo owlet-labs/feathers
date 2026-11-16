@@ -13,6 +13,7 @@
 #   live  <file under docs/readme>
 #       An image with a live scope or analyser in it, whose pixels vary a little from run to run under load.
 #       --check calls it stale only when more than 8 percent of its pixels differ.
+#   (an argument "@path:<file>" is a repository-relative file, made absolute)
 #   var   <NAME>  <value>
 #       A setting; ${NAME} in a shot's arguments is replaced by it. An argument "@env:K=V" sets an environment
 #       variable for that capture (FEATHERS_EXPLORE_ZOOM is how Explore is opened at a zoom).
@@ -28,7 +29,8 @@ var	EXPLORE_ZOOM	0.0333333
 var	GIF_ZOOM	0.0333333
 #
 # --- the numbered pictures ---------------------------------------------------------------------------------
-shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/wood_elves_pan.fpreset|--size|2400x1500|--play|3
+# The hero is the PERFORM view (the editor opens on Perform; no surface switch is made), on a six-sound patch.
+shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/Perform/Constellation.fpreset|--size|2400x1500|--play|3
 shot	f02	-	widget-shot	MSEG|--rack|--rack-add|MATH|--route-curves|--route-phi|1|--height|1500|--macro|1=Knob:Motion:0.65|--mod-run|3
 shot	f03	-	widget-shot	TFIELD|--card|--twinfield-play|--height|1550
 shot	f05	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|@env:FEATHERS_EXPLORE_ZOOM=${EXPLORE_ZOOM}
@@ -47,7 +49,7 @@ crop	08-delay-multitap.png	w_DELAY	1304x644+278+229
 crop	09-compressor-excomper.png	w_comp	1367x567+247+268
 crop	10-sklitter.png	w_SKLITTER	1860x881+0+110
 crop	11-resonate-with-fx-lanes.png	w_RESONATE	1860x795+0+154
-crop	12-rack-parallel-chains.png	w_RACK	734x881+806+110
+crop	12-rack-parallel-chains.png	w_RACK	1704x880+154+110
 crop	13-chain-window.png	w_cmps	1436x779+212+161
 #
 # --- the expanded windows (the panel floating over the editor) ----------------------------------------------
@@ -60,7 +62,8 @@ shot	w_HARM	-	widget-shot	HARM|--audio|3
 shot	w_OWLTT	-	widget-shot	OWLTT|--audio|3
 shot	w_PAT	-	widget-shot	PAT|--pattern-like
 shot	w_PHFL	-	widget-shot	PHFL|Phaser Feedback=0.6|Phaser LFO Depth=0.6|--audio|3
-shot	w_RACK	-	widget-shot	RACK|--rack-chains|3:open|--audio|3
+# The Rack window loaded with the factory Bands-mode preset (the browser's own load road), audio running through it.
+shot	w_RACK	-	widget-shot	RACK|--rack-chains|1:open|--rack-preset|@path:presets/factory/Racks/Multiband Saturation.fpreset|--audio|3
 shot	w_RESONATE	-	widget-shot	RESONATE|--resonate-drone|FVERB|--resonate-wet|DELAY|--audio|3
 shot	w_SHPR	-	widget-shot	SHPR|--audio|3
 shot	w_SKLITTER	-	widget-shot	SKLITTER|--rails|both|--chain-add|DELAY|--grain-add|PITCH|Engage=1|--audio|3
@@ -80,7 +83,7 @@ crop	windows/harm.png	w_HARM	993x796+434+153
 crop	windows/owltt.png	w_OWLTT	1086x805+387+149
 crop	windows/pattern.png	w_PAT	1221x1101+320+0
 crop	windows/phaser-flanger.png	w_PHFL	1116x696+372+203
-crop	windows/rack.png	w_RACK	732x879+807+111
+crop	windows/rack.png	w_RACK	1704x880+154+110
 crop	windows/resonate.png	w_RESONATE	1860x793+0+155
 crop	windows/shaper.png	w_SHPR	1212x846+324+128
 crop	windows/sklitter.png	w_SKLITTER	1860x879+0+111

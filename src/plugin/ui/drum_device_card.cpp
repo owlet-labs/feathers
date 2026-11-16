@@ -25,15 +25,16 @@ namespace feathers::ui {
 
 DrumDeviceCard::DrumDeviceCard(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id, Notifier* notifier)
     : host_(host), notifier_(notifier), device_(id), model_(host, id) {
-	(void)registry; // a device's controls have no clap id: nothing to watch by id
 	picture_.setLabelsShown(false);
 	addChild(&picture_);
 	kind_ = std::make_unique<ValueBox>(model_.control(dd::Param::Kind), "Kind");
 	note_ = std::make_unique<ValueBox>(model_.control(dd::Param::Note), "Note");
+	keys_ = std::make_unique<SegmentedControl>(model_.control(dd::Param::Keys), registry, dd::kParamDescs[static_cast<size_t>(dd::Param::Keys)].names, notifier);
 	level_ = std::make_unique<FaderPill>(model_.control(dd::Param::Level), "Level");
 	tune_ = std::make_unique<FaderPill>(model_.control(dd::Param::Tune), "Tune");
 	tune_->setWholeSteps(true); // semitones, Shift fine
 	addChild(kind_.get());
+	addChild(keys_.get());
 	addChild(note_.get());
 	addChild(level_.get());
 	addChild(tune_.get());
@@ -55,7 +56,7 @@ DrumDeviceCard::DrumDeviceCard(backplane::DeviceHost& host, WidgetRegistry& regi
 }
 
 float DrumDeviceCard::openHeight() {
-	return kHeadHeight + kGap + kPictureHeight + kGap + ValueBox::kHeight + kGap + kPillHeight + kPad;
+	return kHeadHeight + kGap + kPictureHeight + kGap + ValueBox::kHeight + kGap + kKeysHeight + kGap + kPillHeight + kPad;
 }
 
 void DrumDeviceCard::toggleEnabled() {
@@ -67,7 +68,7 @@ void DrumDeviceCard::toggleEnabled() {
 }
 
 void DrumDeviceCard::foldedChanged() {
-	for (visage::Frame* f : { static_cast<visage::Frame*>(&picture_), static_cast<visage::Frame*>(kind_.get()), static_cast<visage::Frame*>(note_.get()),
+	for (visage::Frame* f : { static_cast<visage::Frame*>(&picture_), static_cast<visage::Frame*>(kind_.get()), static_cast<visage::Frame*>(keys_.get()), static_cast<visage::Frame*>(note_.get()),
 	                          static_cast<visage::Frame*>(level_.get()), static_cast<visage::Frame*>(tune_.get()), static_cast<visage::Frame*>(play_.get()) }) {
 		if (f != nullptr) {
 			f->setVisible(!folded_);
@@ -89,14 +90,22 @@ void DrumDeviceCard::resized() {
 	const float playW = play_ != nullptr ? 30.0f : 0.0f;
 	const float playGap = play_ != nullptr ? kGap : 0.0f;
 	const float boxes = w - playW - playGap;
-	const float kindW = std::max(0.0f, boxes - 52.0f - kGap);
+	// KIND, THEN NOTE (One Key's alone: hidden, not greyed, in Any Key and Pitched, and Kind takes its width).
+	const bool noteShown = model_.relevant(dd::Param::Note);
+	noteShown_ = noteShown;
+	const float noteW = noteShown ? 52.0f + kGap : 0.0f;
+	const float kindW = std::max(0.0f, boxes - noteW);
 	kind_->setBounds(left, y, kindW, ValueBox::kHeight);
 	note_->setBounds(left + kindW + kGap, y, 52.0f, ValueBox::kHeight);
+	note_->setVisible(!folded_ && noteShown);
 	if (play_ != nullptr) {
 		play_->setBounds(left + w - playW, y + (ValueBox::kHeight - 22.0f) * 0.5f, playW, 22.0f);
 	}
 	y += ValueBox::kHeight + kGap;
-	// ROW TWO: Level and Tune, sharing the width.
+	// ROW TWO: the Keys choice across the width (three labels on the face, before one is applied).
+	keys_->setBounds(left, y, w, kKeysHeight);
+	y += kKeysHeight + kGap;
+	// ROW THREE: Level and Tune, sharing the width.
 	const float each = (w - kGap) * 0.5f;
 	level_->setBounds(left, y, each, kPillHeight);
 	tune_->setBounds(left + each + kGap, y, each, kPillHeight);
@@ -107,6 +116,10 @@ bool DrumDeviceCard::updateContent() {
 		return false;
 	}
 	picture_.show(model_.kind(), model_.laws(), model_.decaySeconds(), model_.levelDb(), model_.handles());
+	if (model_.relevant(dd::Param::Note) != noteShown_) {
+		noteShown_ = !noteShown_;
+		resized();
+	}
 	const bool on = model_.control(dd::Param::Enabled).value() >= 0.5;
 	for (visage::Frame* f : { static_cast<visage::Frame*>(level_.get()), static_cast<visage::Frame*>(tune_.get()) }) {
 		(void)f;

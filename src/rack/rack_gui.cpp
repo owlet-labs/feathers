@@ -21,6 +21,8 @@
 
 #include "rack/rack_gui.h"
 
+#include "plugin/ui/expanded_views.h"
+
 #include "rack/chain_expanded.h"
 
 #include "rack/rack_bridge.h"
@@ -137,6 +139,14 @@ bool RackGui::create(const char* api, bool isFloating) noexcept {
 	// window that never paints.
 	installWindowHandlers(*app);
 
+	// A DRUM'S WINDOW IS ITS DEVICE'S VIEW and nothing else: no chain, no canvas, no presets, no settings door.
+	if (drum_) {
+		buildDrumView();
+		window_.syncScaleAndLayout();
+		window_.startTicking();
+		return true;
+	}
+
 	editor_ = std::make_unique<RackEditor>(bridge_, mod_, history_);
 	editor_->offerFilter = offerFilter;
 	// ASSIGN MODE ON THE EDITOR'S ESC STACK (backlog NN) — the rack's whole follow-tree, nested chains included.
@@ -193,6 +203,30 @@ bool RackGui::create(const char* api, bool isFloating) noexcept {
 }
 
 #if defined(FEATHERS_GUI_VISAGE)
+void RackGui::buildDrumView() {
+	visage::ApplicationWindow* app = window_.app();
+	if (app == nullptr) {
+		return;
+	}
+	if (drumView_ != nullptr) {
+		app->removeChild(drumView_.get());
+		drumView_.reset();
+	}
+	const DeviceInstanceId id = bridge_.deviceAtPosition(0);
+	const device::Descriptor* desc = bridge_.descriptorOf(id);
+	drumShown_ = id;
+	if (desc == nullptr) {
+		return;
+	}
+	drumView_ = ui::makeExpandedView(bridge_, nullptr, registry_, id, *desc, nullptr);
+	if (drumView_ == nullptr) {
+		return;
+	}
+	drumView_->setModulation(&mod_, &history_);
+	app->addChild(drumView_.get());
+	drumView_->setBounds(0, 0, app->width(), app->height());
+}
+
 void RackGui::installWindowHandlers(visage::ApplicationWindow& app) {
 	app.onDraw() = [](visage::Canvas& canvas) {
 		canvas.setColor(ui::kSurface);
@@ -263,6 +297,7 @@ void RackGui::openSettings() {
 	}
 }
 #else
+void RackGui::buildDrumView() {}
 void RackGui::installWindowHandlers(visage::ApplicationWindow&) {}
 #endif
 
@@ -335,11 +370,18 @@ void RackGui::syncCards() {
 	if (editor_ != nullptr) {
 		editor_->syncCards();
 	}
+	// A DRUM'S VIEW FOLLOWS ITS DEVICE: a state load may have put another instance of it in the record.
+	if (drum_ && window_.app() != nullptr && bridge_.deviceAtPosition(0) != drumShown_) {
+		buildDrumView();
+	}
 }
 
 void RackGui::layout() {
 #if defined(FEATHERS_GUI_VISAGE)
 	visage::ApplicationWindow* app = window_.app();
+	if (app != nullptr && drumView_ != nullptr) {
+		drumView_->setBounds(0, 0, app->width(), app->height());
+	}
 	if (app == nullptr || editor_ == nullptr) {
 		return;
 	}
@@ -374,6 +416,9 @@ void RackGui::tick() {
 	// A KEY THE EDITOR PRESSED waits for the audio thread: ask the host to process.
 	if (bridge_.hasPendingNotes() && requestProcess_) {
 		requestProcess_();
+	}
+	if (drumView_ != nullptr && drumView_->update()) {
+		drumView_->redraw(); // what it draws from a live reading moved
 	}
 	if (editor_ != nullptr) {
 		editor_->syncMacros();

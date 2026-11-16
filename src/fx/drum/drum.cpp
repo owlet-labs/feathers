@@ -66,7 +66,8 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	c.count = s.index(Param::Claps);
 	c.spreadSeconds = exp2Of(s, Param::Spread);
 	// THE KIT'S REACH: the terrain's Pitch field moves a hit up to 3 semitones either side (the engine's kit stance).
-	c.pitchRangeSemitones = 3.0;
+	// In Pitched the engine's reach is half a semitone (the key sets the pitch; the terrain only fine-tunes it).
+	c.pitchRangeSemitones = s.pitched() ? 0.5 : 3.0;
 	c.velocityZone = static_cast<double>(s.at(Param::VelocityZone));
 	c.wires = static_cast<double>(s.at(Param::Wires));
 	c.bells = static_cast<double>(s.at(Param::Bells));
@@ -89,7 +90,8 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	c.bell2Seconds = exp2Of(s, Param::Bell2Time);
 	c.velocityNoise = static_cast<double>(s.at(Param::VelocityNoise));
 	c.width = static_cast<double>(s.at(Param::Width));
-	c.pitchMode = s.index(Param::PitchMode);
+	// THE TERRAIN'S PITCH MODE is the kit's alone (the engine's Pitched mode keeps the half-semitone fine pitch as it always was).
+	c.pitchMode = s.pitched() ? 0 : s.index(Param::PitchMode);
 	return c;
 }
 
@@ -115,6 +117,15 @@ feathers::drum::Fields fieldsOf(const Settings& s) {
 double baseHzOf(Kind kind, const Settings& s, double movedSemitones) noexcept {
 	return feathers::drum::kindBaseHz(kind)
 	       * std::exp2((static_cast<double>(s.at(Param::Tune)) + static_cast<double>(s.at(Param::Bend)) * movedSemitones) / 12.0);
+}
+
+double baseHzOf(Kind kind, const Settings& s, int key, double movedSemitones) noexcept {
+	if (!s.pitched()) {
+		return baseHzOf(kind, s, movedSemitones);
+	}
+	// PITCHED: the engine's own, the voice's frequency (A4 = 440 on key 69, the whole of a tuning expression moving it) with Tune on top.
+	// The kind's resting pitch and the Bend share are not read.
+	return 440.0 * std::exp2((static_cast<double>(key) + movedSemitones - 69.0 + static_cast<double>(s.at(Param::Tune))) / 12.0);
 }
 
 DrumDsp::DrumDsp() {
@@ -214,7 +225,8 @@ void DrumDsp::queueNotes(const device::NoteEvent* in, size_t count) {
 			keyTuning_[static_cast<size_t>(e.key)] = 0.0f; // a fresh note is untuned
 		}
 		// ONLY THE KEY IT ANSWERS (a choke may be a wildcard). A dropped event is a later one: an off before an on is kept first.
-		const bool mine = e.key == s_.index(Param::Note);
+		// PITCHED answers every key (the key is the pitch); One Key only the one Note names.
+		const bool mine = s_.answersEveryKey() || e.key == s_.index(Param::Note);
 		const bool wildcardChoke = e.kind == device::NoteEvent::Kind::Choke && e.key < 0;
 		if ((mine || wildcardChoke) && queued_ < queue_.size()) {
 			queue_[queued_++] = e;
@@ -287,8 +299,42 @@ void DrumDsp::fade(Slot& s) {
 	s.fading = true;
 }
 
-DrumDsp::Slot* DrumDsp::acquire() {
+DrumDsp::Slot* DrumDsp::acquire(int key) {
 	const int limit = kVoicesCounts[std::clamp(s_.index(Param::Voices), 0, 2)];
+	if (s_.pitched()) {
+		// PITCHED: VOICES IS PER KEY (a chord is not one drum): the same key struck again past it fades that key's oldest hit, and
+		// the whole drum holds at most `kMaxVoices` live hits across keys, the oldest of them fading when another key comes in.
+		for (;;) {
+			int sameKey = 0;
+			int live = 0;
+			Slot* oldestSame = nullptr;
+			Slot* oldest = nullptr;
+			for (Slot& s : slots_) {
+				if (s.used && !s.fading) {
+					++live;
+					if (oldest == nullptr || s.order < oldest->order) {
+						oldest = &s;
+					}
+					if (s.key == key) {
+						++sameKey;
+						if (oldestSame == nullptr || s.order < oldestSame->order) {
+							oldestSame = &s;
+						}
+					}
+				}
+			}
+			if (sameKey >= limit && oldestSame != nullptr) {
+				fade(*oldestSame);
+			}
+			else if (live >= kMaxVoices && oldest != nullptr) {
+				fade(*oldest);
+			}
+			else {
+				break;
+			}
+		}
+		return claimSlot();
+	}
 	// ONE MORE THAN VOICES FADES THE OLDEST: count the live ones and fade from the oldest until there is room for this one.
 	for (;;) {
 		int live = 0;
@@ -306,6 +352,10 @@ DrumDsp::Slot* DrumDsp::acquire() {
 		}
 		fade(*oldest);
 	}
+	return claimSlot();
+}
+
+DrumDsp::Slot* DrumDsp::claimSlot() {
 	Slot* taken = nullptr;
 	for (Slot& s : slots_) {
 		if (!s.used) {
@@ -336,7 +386,7 @@ DrumDsp::Slot* DrumDsp::acquire() {
 
 void DrumDsp::strikeNow(Slot& s) {
 	const double moved = static_cast<double>(keyTuning_[static_cast<size_t>(s.key & 127)]);
-	const feathers::drum::Laws laws = feathers::drum::lawsFor(s.kind, fields_, controls_, baseHzOf(s.kind, s_, moved), s.velocity);
+	const feathers::drum::Laws laws = feathers::drum::lawsFor(s.kind, fields_, controls_, baseHzOf(s.kind, s_, s.key, moved), s.velocity);
 	s.hit.strike(s.kind, laws, s.seed, static_cast<float>(std::clamp(s.velocity, 0.0, 1.0)));
 	s.struck = true;
 	++strikes_;
@@ -371,7 +421,7 @@ void DrumDsp::handle(const device::NoteEvent& e, int pos, int /*base*/) {
 			endKey(e); // a zero-velocity on is an off
 			break;
 		}
-		Slot* s = acquire();
+		Slot* s = acquire(e.key);
 		s->kind = static_cast<Kind>(std::clamp(s_.index(Param::Kind), 0, static_cast<int>(feathers::drum::kKindCount) - 1));
 		s->key = e.key;
 		s->noteId = e.noteId;
@@ -383,11 +433,14 @@ void DrumDsp::handle(const device::NoteEvent& e, int pos, int /*base*/) {
 			const double ticks = std::floor((clock_.songPositionSeconds * sr_ + static_cast<double>(pos)) / static_cast<double>(kSpan));
 			tick = std::isfinite(ticks) && ticks >= 0.0 ? static_cast<int64_t>(ticks) : -1;
 		}
-		const uint32_t count = keyStrikes_[static_cast<size_t>(e.key & 127)];
+		// ANY KEY SOUNDS AS ONE KEY DOES AT ITS NOTE, whatever key came: the noise is the Note's own stream (its seed and its strike count), so
+		// two different keys give the sound One Key gives on Note, to the bit. The hit still remembers the key that struck it, for its release.
+		const int seedKey = s_.index(Param::Keys) == 1 ? s_.index(Param::Note) : e.key;
+		const uint32_t count = keyStrikes_[static_cast<size_t>(seedKey & 127)];
 		if (tick < 0) {
-			++keyStrikes_[static_cast<size_t>(e.key & 127)];
+			++keyStrikes_[static_cast<size_t>(seedKey & 127)];
 		}
-		s->seed = strikeSeed(static_cast<uint64_t>(std::lround(s_.at(Param::Seed))), e.key, s->kind, tick, count);
+		s->seed = strikeSeed(static_cast<uint64_t>(std::lround(s_.at(Param::Seed))), seedKey, s->kind, tick, count);
 		s->delayLeft = static_cast<int>(std::lround(std::max(0.0, static_cast<double>(s_.at(Param::Delay))) * sr_ / 1000.0));
 		if (s->delayLeft == 0) {
 			strikeNow(*s);
@@ -413,7 +466,7 @@ void DrumDsp::refreshLaws() {
 		}
 		// THE CONTROL TICK'S REFRESH: a sounding hit follows the row (a route on Decay, Tone, Zone; the key's tuning) and keeps its velocity.
 		const double moved = static_cast<double>(keyTuning_[static_cast<size_t>(s.key & 127)]);
-		s.hit.setLaws(feathers::drum::lawsFor(s.kind, fields_, controls_, baseHzOf(s.kind, s_, moved), s.velocity));
+		s.hit.setLaws(feathers::drum::lawsFor(s.kind, fields_, controls_, baseHzOf(s.kind, s_, s.key, moved), s.velocity));
 	}
 }
 

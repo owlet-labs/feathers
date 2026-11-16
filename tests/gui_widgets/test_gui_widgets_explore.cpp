@@ -12719,7 +12719,7 @@ TEST_CASE("ON: a like belongs to its engine and sound — another engine's likes
 	CHECK(f.stage.terrainWindowNow().likes->front() == f.bridge.terrainLikes().likes[0]);
 	// CLEAR, ON V5, CLEARS V5'S AND SAYS SO; MORPH'S STAYS.
 	const visage::PopupMenu menu = f.stage.likesMenu();
-	CHECK(std::string(menu.options()[0].name().toUtf8()) == "Clear all likes on V5, sound B");
+	CHECK(std::string(menu.options()[0].name().toUtf8()) == "Clear all likes on Forge, sound B");
 	menu.onSelection().callback(ExploreStage::kClearLikes);
 	REQUIRE(f.bridge.terrainLikes().likes.size() == 1);
 	CHECK(f.bridge.terrainLikes().likes[0].engine == static_cast<uint16_t>(OscType::Morph));

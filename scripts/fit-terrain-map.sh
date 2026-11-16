@@ -21,7 +21,7 @@ mkdir -p "$work"
 i=0
 for range in 1 4 24; do
 	i=$((i + 1))
-	for engine in additive v5; do
+	for engine in additive; do
 		out="$work/${engine}_r${range}.csv"
 		if [ ! -s "$out" ]; then
 			# one seed per (engine, range): the stream of a range never depends on another's
@@ -34,5 +34,4 @@ flags=()
 [ "${FEATHERS_FIT_CALIBRATE_RATIOS:-0}" = 1 ] && flags+=(--calibrate-ratios)
 "$tool" fit "$here/src/plugin/ui/terrain_fit_table.cpp" "$here/docs/terrain-fit-report.txt" \
 	"$here/tests/fixtures/terrain_fit_sample.inc" \
-	--additive "$work"/additive_r1.csv "$work"/additive_r4.csv "$work"/additive_r24.csv \
-	--v5 "$work"/v5_r1.csv "$work"/v5_r4.csv "$work"/v5_r24.csv "${flags[@]}"
+	--additive "$work"/additive_r1.csv "$work"/additive_r4.csv "$work"/additive_r24.csv "${flags[@]}"

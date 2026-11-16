@@ -18,6 +18,8 @@
 #include "fixtures.h"
 
 #include "fx/drum/drum_types.h"
+#include "plugin/ui/chain_column.h"
+#include "plugin/ui/drum_device_card.h"
 #include "plugin/device_registry.h"
 #include "plugin/ui/fx_lane.h"
 #include "plugin/ui/parallel_rack_card.h"
@@ -605,7 +607,28 @@ TEST_CASE("rack views over a real rack: Strips draws as it always did, and a rou
 	CHECK_FALSE(r.panel->tabBarForTest().isVisible());
 }
 
-TEST_CASE("rack views over a real rack: Tabs shows a tab per chain and the viewed chain's devices, a press on a tab views that chain, and the arrow opens the chain") {
+namespace {
+
+/// The REAL cards in front of a rack card, in order: what a viewer sees (a card the column holds but did not show is not counted).
+std::vector<ui::FxCard*> shownCards(ui::ParallelRackCard& card) {
+	std::vector<ui::FxCard*> out;
+	if (ui::ChainColumn* column = card.frontForTest().columnForTest(); column != nullptr) {
+		for (ui::FxCard* c : column->cardsForTest()) {
+			if (c != nullptr && c->isVisible()) {
+				out.push_back(c);
+			}
+		}
+	}
+	return out;
+}
+
+std::string deviceNameOf(const ui::FxCard& card) {
+	return card.descriptor() != nullptr ? card.descriptor()->traits.name : "";
+}
+
+} // namespace
+
+TEST_CASE("rack views over a real rack: Tabs shows a tab per chain and the viewed chain's REAL first card, a press on a tab rebinds to that chain's device, and the arrow opens the whole chain") {
 	RealRack r;
 	r.chains(3, 1); // chain 1 holds a Drum and a Delay; chains 2 and 3 are empty
 	(void)r.rack().chainAt(1)->bridge()->addDevice("DELAY"); // chain 2 holds a Delay alone
@@ -620,31 +643,50 @@ TEST_CASE("rack views over a real rack: Tabs shows a tab per chain and the viewe
 	}
 	ui::RackTabBar& bar = r.card->tabBarForTest();
 	CHECK(bar.tabsForTest().size() == 3);
-	// THE FRONT IS THE VIEWED CHAIN'S FIRST DEVICE alone; the chain holds two, so the arrow is there.
-	const std::vector<std::string> two { "Drum", "Delay" };
-	CHECK(r.card->frontForTest().namesForTest() == two);
-	CHECK(r.card->frontForTest().tilesShown() == 1);
+	// THE FRONT IS THE VIEWED CHAIN'S FIRST DEVICE alone, as its REAL card type; the chain holds two, so the arrow is there.
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId first = chain0.deviceAtPosition(0);
+	std::vector<ui::FxCard*> cards = shownCards(*r.card);
+	REQUIRE(cards.size() == 1);
+	CHECK(cards[0]->device() == first); // by device id
+	auto* drum = dynamic_cast<ui::DrumDeviceCard*>(cards[0]);
+	REQUIRE(drum != nullptr); // the card type the lane builds for that device, not a stand-in
 	CHECK(r.card->chainArrowForTest().isVisible());
+	// THE CARD DRIVES ITS REAL PARAM: a Level written on the embedded card is the device's Level in the chain.
+	drum->levelForTest().amountForTest().setValue(-9.0);
+	CHECK(chain0.fieldAt(first, static_cast<size_t>(fx::drumdevice::Param::Level)) == doctest::Approx(-9.0f));
 	const float closed = r.card->laneHeightAt(static_cast<float>(r.card->width()));
 	r.card->chainArrowForTest().toggleForTest();
 	r.refresh();
 	CHECK(r.rack().open(0));
-	CHECK(r.card->frontForTest().tilesShown() == 2);
+	cards = shownCards(*r.card);
+	REQUIRE(cards.size() == 2); // N devices, N cards, in chain order
+	CHECK(cards[0]->device() == chain0.deviceAtPosition(0));
+	CHECK(cards[1]->device() == chain0.deviceAtPosition(1));
+	CHECK(deviceNameOf(*cards[1]) == "Delay");
+	CHECK(cards[1]->bounds().y() > cards[0]->bounds().y());
 	CHECK(r.card->laneHeightAt(static_cast<float>(r.card->width())) > closed); // the card sizes to what is in front
-	// A PRESS ON TAB 2 VIEWS CHAIN 2 (the rack's own ViewedChain), and the front follows it: its one device, so no arrow.
+	// A PRESS ON TAB 2 REBINDS to chain 2's device (by id), and the old chain's cards are gone from the column.
+	feathers::rack::RackBridge& chain1 = *r.rack().chainAt(1)->bridge();
+	const feathers::DeviceInstanceId second = chain1.deviceAtPosition(0);
+	const uint16_t before = r.card->frontForTest().chainIdForTest();
 	bar.pressForTest(bar.tabCentre(1));
 	r.refresh();
 	CHECK(r.field(pr::Param::ViewedChain) == 1.0f);
-	CHECK(r.card->viewModelForTest().viewedChain() == 1);
-	const std::vector<std::string> one { "Delay" };
-	CHECK(r.card->frontForTest().namesForTest() == one);
-	CHECK(r.card->frontForTest().tilesShown() == 1);
-	CHECK_FALSE(r.card->chainArrowForTest().isVisible());
-	// AN EMPTY CHAIN IN FRONT: one tile saying so.
+	CHECK(r.card->frontForTest().chainIdForTest() != before);
+	CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(1));
+	cards = shownCards(*r.card);
+	REQUIRE(cards.size() == 1);
+	CHECK(cards[0]->device() == second);
+	CHECK(deviceNameOf(*cards[0]) == "Delay");
+	REQUIRE(r.card->frontForTest().columnForTest() != nullptr);
+	CHECK(r.card->frontForTest().columnForTest()->cardCountForTest() == 1); // the first chain's two cards were torn down, not kept
+	CHECK_FALSE(r.card->chainArrowForTest().isVisible());                    // one device: nothing more to open
+	// AN EMPTY CHAIN IN FRONT: no card, the (+) so its first device can be added.
 	bar.pressForTest(bar.tabCentre(2));
 	r.refresh();
-	CHECK(r.card->frontForTest().namesForTest().empty());
-	CHECK(r.card->frontForTest().tilesShown() == 1);
+	CHECK(shownCards(*r.card).empty());
+	CHECK(r.card->frontForTest().columnForTest()->addShown());
 	CHECK_FALSE(r.card->chainArrowForTest().isVisible());
 }
 

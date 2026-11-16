@@ -384,6 +384,16 @@ public:
 	[[nodiscard]] visage::Bounds cardBounds(size_t position) const;
 	/// How tall the whole column's content is: the cards, the gaps and the (+).
 	[[nodiscard]] float contentHeight() const;
+	/// **THE COLUMN AS A PART OF A CARD** (the Rack card's Tabs and Pads views hold one chain's cards in front): the same column, with the
+	/// padding it sits in set by its host (zero, so a member card is as wide as its host's content), only the first `n` devices laid out
+	/// (the chain closed), and no (+) (the window holds the editing of the chain). Defaults are the column's own, unchanged.
+	void setPadding(float cross, float flow, float slotGap);
+	void setShownLimit(size_t n);
+	void setAddShown(bool shown);
+	[[nodiscard]] size_t shownCount() const;
+	[[nodiscard]] bool addShown() const noexcept { return addShown_; }
+	/// How tall the content is at a column `width` wide, for the host that sizes itself to it: the shown cards, their gaps and the padding.
+	[[nodiscard]] float contentHeightFor(float width) const;
 	[[nodiscard]] float maxScroll() const;
 	void setScroll(float y);
 	[[nodiscard]] float scrollForTest() const noexcept { return scroll_; }
@@ -531,6 +541,12 @@ private:
 	/// **DECLARED AFTER THE CARDS SO IT OUTLIVES THEM** — a card's `onExpand` reaches through it.
 	std::unique_ptr<SurfaceLayers> surfaces_;
 	std::vector<SurfaceId> expanded_;
+	// THE HOST'S SAY over padding, how many cards, and the (+) (see `setPadding`); the defaults are the column's own.
+	float padX_ = kPadX;
+	float padY_ = kPadY;
+	float slotGap_ = kSlotGap;
+	size_t shownLimit_ = static_cast<size_t>(-1);
+	bool addShown_ = true;
 };
 
 } // namespace feathers::ui

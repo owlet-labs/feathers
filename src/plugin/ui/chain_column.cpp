@@ -524,6 +524,8 @@ void ChainColumn::wireCard(FxCard& card, DeviceInstanceId device) {
 	// THE CARD WEARS THE CHAIN'S NEST, so its tint is this chain's and not the outer host's — two
 	// devices that are both instance 1 in two different chains are two colours (`DeviceNest`).
 	card.setNest(nest_);
+	// A CARD THAT HOLDS CARDS (a rack inside this chain) opens ITS panels on this column's layers, which escalate to the outermost host.
+	card.setPresentedOn(surfaces_.get());
 	card.onSlotMenu = [this, device] { showSlotMenu(device); };
 	// **THE SELECTION'S TWO ROADS** (backlog OA, D1; `LaneSelection`'s banner).
 	card.onCardPressed = [this, device] { selection_->focusPress(device); };
@@ -998,7 +1000,7 @@ bool ChainColumn::moveDeviceTo(DeviceInstanceId device, size_t to) {
 }
 
 std::optional<size_t> ChainColumn::dropGapAt(visage::Point position) const {
-	const size_t devices = deviceCount();
+	const size_t devices = shownCount();
 	if (devices == 0) {
 		return std::nullopt;
 	}
@@ -1020,16 +1022,16 @@ std::optional<size_t> ChainColumn::dropGapAt(visage::Point position) const {
 }
 
 visage::Bounds ChainColumn::gapBounds(size_t gap) const {
-	const size_t devices = deviceCount();
+	const size_t devices = shownCount();
 	if (devices == 0 || gap > devices) {
 		return {};
 	}
 	constexpr float thickness = 2.0f;
 	// CENTRED IN THE SPACE BETWEEN TWO CARDS rather than butted against one, which would read as
 	// belonging to that card.
-	const float y = gap < devices ? cardBounds(gap).y() - kSlotGap * 0.5f - thickness * 0.5f
-	                              : cardBounds(devices - 1).bottom() + kSlotGap * 0.5f - thickness * 0.5f;
-	return { kPadX, y, std::max(0.0f, width() - 2.0f * kPadX), thickness };
+	const float y = gap < devices ? cardBounds(gap).y() - slotGap_ * 0.5f - thickness * 0.5f
+	                              : cardBounds(devices - 1).bottom() + slotGap_ * 0.5f - thickness * 0.5f;
+	return { padX_, y, std::max(0.0f, width() - 2.0f * padX_), thickness };
 }
 
 std::optional<size_t> ChainColumn::dropPositionAtWindow(visage::Point inWindow) const {
@@ -1194,35 +1196,73 @@ visage::Bounds ChainColumn::cardBounds(size_t position) const {
 	// THE GENERAL ROAD, ASKED VERTICALLY. `FxCard::laneExtent(cross)` is what a lane asks whichever way
 	// it runs; this column is vertical, so the cross extent is the card's width and the answer is its
 	// height. WALKED rather than indexed, because a card above this one may be folded.
-	const float cross = std::max(0.0f, width() - 2.0f * kPadX);
-	float top = kPadY;
+	const float cross = std::max(0.0f, width() - 2.0f * padX_);
+	float top = padY_;
 	const size_t devices = deviceCount();
 	for (size_t above = 0; above < position && above < devices; ++above) {
 		if (const FxCard* card = cardOf(deviceAt(above)); card != nullptr) {
-			top += card->laneExtent(cross) + kSlotGap;
+			top += card->laneExtent(cross) + slotGap_;
 		}
 	}
 	const FxCard* here = position < devices ? cardOf(deviceAt(position)) : nullptr;
 	const float tall = here != nullptr ? here->laneExtent(cross) : 0.0f;
 	// THE SCROLL IS IN THE GEOMETRY, so the hit test, the placement and the drawing all follow it from
 	// one place rather than three that must agree.
-	return { kPadX, top - scroll_, cross, tall };
+	return { padX_, top - scroll_, cross, tall };
 }
 
 float ChainColumn::contentHeight() const {
+	return contentHeightFor(static_cast<float>(width()));
+}
+
+float ChainColumn::contentHeightFor(float columnWidth) const {
 	// SUMMED RATHER THAN MULTIPLIED, because two devices' cards have different heights and either can
 	// fold. This is the number the scroll is clamped against, so a fold that did not reach it would
 	// leave the column able to scroll past its own end.
-	float total = kPadY;
-	const float cross = std::max(0.0f, width() - 2.0f * kPadX);
-	for (size_t position = 0; position < deviceCount(); ++position) {
+	float total = padY_;
+	const float cross = std::max(0.0f, columnWidth - 2.0f * padX_);
+	for (size_t position = 0; position < shownCount(); ++position) {
 		if (const FxCard* card = cardOf(deviceAt(position)); card != nullptr) {
-			total += card->laneExtent(cross) + kSlotGap;
+			total += card->laneExtent(cross) + slotGap_;
 		}
 	}
 	// AND THE (+) IS IN THE SUM — the modulator strip's own recorded bug: a row the scroll extent does
-	// not know about is a row a full column cannot be scrolled far enough to reach.
-	return total + kAddHeight + kPadY;
+	// not know about is a row a full column cannot be scrolled far enough to reach. A host that took the (+) away has nothing to add;
+	// its last gap is padding it may not want, so a column with no (+) ends where its last card does.
+	if (!addShown_) {
+		return std::max(padY_, total - slotGap_ + padY_);
+	}
+	return total + kAddHeight + padY_;
+}
+
+size_t ChainColumn::shownCount() const {
+	return std::min(deviceCount(), shownLimit_);
+}
+
+void ChainColumn::setPadding(float cross, float flow, float slotGap) {
+	padX_ = cross;
+	padY_ = flow;
+	slotGap_ = slotGap;
+	resized();
+	redraw();
+}
+
+void ChainColumn::setShownLimit(size_t n) {
+	if (n == shownLimit_) {
+		return;
+	}
+	shownLimit_ = n;
+	resized();
+	redraw();
+}
+
+void ChainColumn::setAddShown(bool shown) {
+	if (shown == addShown_) {
+		return;
+	}
+	addShown_ = shown;
+	resized();
+	redraw();
 }
 
 float ChainColumn::maxScroll() const {
@@ -1267,10 +1307,13 @@ bool ChainColumn::mouseWheel(const visage::MouseEvent& e) {
 }
 
 visage::Bounds ChainColumn::addBounds() const {
-	const size_t devices = deviceCount();
+	if (!addShown_) {
+		return {};
+	}
+	const size_t devices = shownCount();
 	const visage::Bounds last = devices > 0 ? cardBounds(devices - 1) : visage::Bounds {};
-	const float top = devices > 0 ? last.bottom() + kSlotGap : kPadY - scroll_;
-	return { kPadX, top, std::max(0.0f, width() - 2.0f * kPadX), kAddHeight };
+	const float top = devices > 0 ? last.bottom() + slotGap_ : padY_ - scroll_;
+	return { padX_, top, std::max(0.0f, width() - 2.0f * padX_), kAddHeight };
 }
 
 ChainColumn::Part ChainColumn::partAt(visage::Point pixels) const {
@@ -1312,7 +1355,7 @@ void ChainColumn::resized() {
 		// `FrameWatchers::notify()` redraws every VISIBLE frame under every watcher, so cards left
 		// visible off the top of the lane cost a repaint each on every state notify (measured there at
 		// 56% of a block-rate workload with seven devices seated).
-		const bool onScreen = box.bottom() > 0.0f && box.y() < static_cast<float>(height());
+		const bool onScreen = position < shownCount() && box.bottom() > 0.0f && box.y() < static_cast<float>(height());
 		card->setVisible(onScreen);
 	}
 	// A CARD WHOSE DEVICE HAS LEFT is hidden rather than left where it was — `syncCards` retires it on
@@ -1357,6 +1400,9 @@ void ChainColumn::draw(visage::Canvas& canvas) {
 	// THE (+), DRAWN FOR AN EMPTY CHAIN AND A FULL ONE ALIKE. AN OUTLINE RATHER THAN A FILLED CARD,
 	// because it is a VERB and not a thing in the chain; DIMMED rather than hidden at capacity, because
 	// a control that vanished at the bound would leave a player wondering where it went.
+	if (!addShown_) {
+		return;
+	}
 	const visage::Bounds add = addBounds();
 	const bool atCapacity = full();
 	canvas.setColor(withAlpha(kLine, atCapacity ? 0.35f : 0.75f));
@@ -1365,12 +1411,12 @@ void ChainColumn::draw(visage::Canvas& canvas) {
 	// GEOMETRY RATHER THAN A GLYPH, the rule the harmonic arrows are drawn by: this font has no
 	// guarantee of a "+" that centres, and a missing glyph is an invisible control.
 	const float plus = 7.0f;
-	const float cx = add.x() + kPadX + plus * 0.5f;
+	const float cx = add.x() + padX_ + plus * 0.5f;
 	const float cy = add.y() + add.height() * 0.5f;
 	canvas.segment(cx - plus * 0.5f, cy, cx + plus * 0.5f, cy, 1.4f, true);
 	canvas.segment(cx, cy - plus * 0.5f, cx, cy + plus * 0.5f, 1.4f, true);
 	canvas.text(atCapacity ? "chain full" : "add effect", font(kKnobLabelSize), visage::Font::kLeft,
-	            cx + plus, add.y(), add.width() - kPadX - plus * 2.0f, add.height());
+	            cx + plus, add.y(), add.width() - padX_ - plus * 2.0f, add.height());
 
 	// **AND WHAT AN EMPTY CHAIN DOES, SAID UNDER THE (+) RATHER THAN OVER IT.** `fx_lane.h`'s rule is
 	// that an empty chain is drawn as an empty chain; here the (+) is the whole of the drawing, because

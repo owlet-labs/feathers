@@ -26,7 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 
-// CLIP — a clipper with five characters and a 4x oversampling switch.
+// CLIP — a clipper with eleven characters and a 4x oversampling switch.
 //
 // The clipper stands alone, with character modes and an oversampling toggle; the control once
 // called Detail is named Texture.
@@ -71,12 +71,19 @@ enum class Param : int {
 	/// the bit. They wait on `kOversampleLatency`: until 4x was declared, the slot's dry combed against the wet.
 	Mix,
 	WetGain,
+	/// THE ERODER'S DRIVE SHAPE, for the six modes taken from it (`kShapeModes`), 0..1: Tube's lower-half steepness,
+	/// Jag's fold span, Lean's bias, Paunch's turn-over of the right channel, Slew's curve, and Lopside's balance
+	/// (`2 shape - 1`). APPENDED, so no earlier control's place moves.
+	Shape,
 
 	kCount,
 };
 
-enum class Mode : int { Soft, Texture, Grit, Fold, Bits, kCount };
-inline constexpr const char* kModeNames[] = { "Soft", "Texture", "Grit", "Fold", "Bits" };
+/// **SIX MODES ARE THE ERODER'S DRIVE TYPES** (`fx/eroder/eroder_types.h`), appended after Bits: Tube, Jag, Lean and
+/// Paunch are its curves, Slew and Lopside its slew limiter. Their curve is the Eroder's own function; Clip's Drive is
+/// the gain into it (and, for the two slews, the rate, as the Eroder's Drive knob is) and its Ceiling the top.
+enum class Mode : int { Soft, Texture, Grit, Fold, Bits, Tube, Jag, Lean, Paunch, Slew, Lopside, kCount };
+inline constexpr const char* kModeNames[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Paunch", "Slew", "Lopside" };
 static_assert(std::size(kModeNames) == static_cast<size_t>(Mode::kCount));
 
 /// WHICH MODES A GATED CONTROL BELONGS TO, as a mask over `Mode` — the delay's shape.
@@ -90,6 +97,9 @@ inline constexpr uint32_t kTextureOnly = kModeBit(Mode::Texture);
 inline constexpr uint32_t kGritOnly = kModeBit(Mode::Grit);
 inline constexpr uint32_t kFoldOnly = kModeBit(Mode::Fold);
 inline constexpr uint32_t kBitsOnly = kModeBit(Mode::Bits);
+/// THE SIX MODES THAT READ Shape.
+inline constexpr uint32_t kShapeModes = kModeBit(Mode::Tube) | kModeBit(Mode::Jag) | kModeBit(Mode::Lean) |
+                                        kModeBit(Mode::Paunch) | kModeBit(Mode::Slew) | kModeBit(Mode::Lopside);
 
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
 inline constexpr const char* kOversampleNames[] = { "Off", "4x" };
@@ -122,6 +132,7 @@ struct Settings {
 	float depth = 1.0f;
 	/// INDEX INTO `kBitsNames`: 0 is 1 bit, 1 is 2 bits.
 	int bits = 0;
+	float shape = 0.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -160,9 +171,12 @@ enum class Reading : size_t {
 };
 
 /// WHERE THE CURRENT MODE STARTS ACTING, in the normalised domain: `1 - knee` for the knee modes, 1 for
-/// Fold (which is exact below ±1 whatever its depth).
+/// Fold (which is exact below ±1 whatever its depth) and for the Eroder's six (their top is the hard clip at ±1).
 [[nodiscard]] inline float onset(int mode, float knee) {
-	return mode == static_cast<int>(Mode::Fold) ? 1.0f : 1.0f - std::clamp(knee, 0.0f, 1.0f);
+	if (mode == static_cast<int>(Mode::Fold) || (kShapeModes >> static_cast<uint32_t>(mode) & 1u) != 0u) {
+		return 1.0f;
+	}
+	return 1.0f - std::clamp(knee, 0.0f, 1.0f);
 }
 
 /// FOLD: the overshoot folds back as a triangle instead of flattening. EXACT below ±1 — the early
@@ -233,7 +247,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "clip_mode", .name = "Clip Mode", .min = 0.0, .max = static_cast<double>(std::size(kModeNames) - 1), .def = 0.0,
      .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
      .tooltip = "What the top of the wave becomes — a soft shoulder, carved-back detail, grit, a fold, or "
-                "steps"},
+                "steps; or one of the Eroder's drive shapers: Tube (a harder lower half), Jag (a triangle fold), "
+                "Lean (a leaning tanh), Paunch (the right side turned toward the dry), Slew (a rate limit) or "
+                "Lopside (rising and falling at different rates)"},
     {.key = "clip_drive", .name = "Clip Drive", .min = -24.0, .max = 24.0, .def = 0.0, .stepped = false, .unit = device::Unit::Decibel,
      .names = {}, .modulatable = true, .tooltip = "Gain into the clipper — below 0 dB it reaches the curve quieter, so it clips less"},
     {.key = "clip_ceiling", .name = "Clip Ceiling", .min = -24.0, .max = 0.0, .def = 0.0, .stepped = false,
@@ -277,6 +293,13 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "clip_wet_gain", .name = "Clip Wet Gain", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
      .unit = device::Unit::Fader, .names = {}, .modulatable = true,
      .tooltip = "Level of the clipped signal alone, unity at twelve o'clock; the dry in a partial Mix is untouched"},
+    {.key = "clip_shape", .name = "Clip Shape", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "The mode's own coordinate. Tube: how much steeper the lower half is. Jag: how far the triangle "
+                "folds. Lean: how far the curve leans, which adds even harmonics. Paunch: how far the right "
+                "side is turned toward the clean signal. Slew: from a hard rate limit to a one-pole. Lopside: "
+                "from slow rises to slow falls, even in the middle. Drive sets the rate in Slew and Lopside",
+     .gateControl = kModeControl, .gateMask = kShapeModes},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
@@ -299,6 +322,7 @@ static_assert(Settings {}.foldback == detail::defOf(Param::Foldback));
 static_assert(Settings {}.grit == detail::defOf(Param::Grit));
 static_assert(Settings {}.depth == detail::defOf(Param::Depth));
 static_assert(Settings {}.bits == static_cast<int>(detail::defOf(Param::Bits)));
+static_assert(Settings {}.shape == detail::defOf(Param::Shape));
 
 /// THE RENDER PATH.
 extern const device::AudioOps kAudioOps;

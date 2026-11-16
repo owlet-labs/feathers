@@ -464,6 +464,15 @@ int RackPadGrid::padAt(visage::Point at) const {
 			break;
 		}
 	}
+	// THE PAD'S OWN CELL AND NOTHING AROUND IT: the gap a pad leaves between itself and its neighbours (what is drawn is inset by `kInset`) is
+	// no pad, so a press there strikes nothing.
+	const auto [xa, xb] = columnNativeExtent(column);
+	const auto [ya, yb] = rowNativeExtent(rowTop);
+	const float inset = kInset * scale();
+	if (nx < static_cast<float>(xa) + inset || nx >= static_cast<float>(xb) - inset || ny < static_cast<float>(ya) + inset
+	    || ny >= static_cast<float>(yb) - inset) {
+		return -1;
+	}
 	// LEFT TO RIGHT, THEN BOTTOM TO TOP: the bottom row holds indices 0..3.
 	return (3 - rowTop) * 4 + column;
 }

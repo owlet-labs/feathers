@@ -44,6 +44,7 @@
 #include <visage/ui.h>
 
 #include <algorithm>
+#include <set>
 #include <string>
 
 namespace feathers::ui {
@@ -1173,8 +1174,13 @@ visage::PopupMenu FxLane::addMenuForTest(size_t before, bool after) {
 	const bool inserting = before < deviceCount();
 	const DeviceInstanceId anchor = inserting ? bridge_.fxDeviceAt(before) : kNoInstance;
 	menu.onSelection() = [this, offered, inserting, anchor, after](int id) {
-		if (id >= 0 && static_cast<size_t>(id) < offered.size()) {
-			const char* tag = offered[static_cast<size_t>(id)]->traits.tag;
+		const AddShortcut* shortcut = shortcutOfId(offered.size(), id);
+		if (shortcut != nullptr || (id >= 0 && static_cast<size_t>(id) < offered.size())) {
+			const char* tag = shortcut != nullptr ? shortcut->tag : offered[static_cast<size_t>(id)]->traits.tag;
+			std::set<DeviceInstanceId> knownBefore;
+			for (size_t i = 0; i < bridge_.fxChain().count; ++i) {
+				knownBefore.insert(bridge_.fxDeviceAt(i));
+			}
 			if (inserting && after) {
 				insertDeviceAfter(anchor, tag);
 			}
@@ -1183,6 +1189,20 @@ visage::PopupMenu FxLane::addMenuForTest(size_t before, bool after) {
 			}
 			else {
 				addDevice(tag);
+			}
+			// A SHORTCUT IS THE DEVICE, SET UP ON THE WAY IN: the one that arrived (the lane grew by one) is written its two settings.
+			if (shortcut != nullptr && bridge_.fxChain().count > knownBefore.size()) {
+				DeviceInstanceId made = kNoInstance;
+				for (size_t i = 0; i < bridge_.fxChain().count; ++i) {
+					const DeviceInstanceId candidate = bridge_.fxDeviceAt(i);
+					if (candidate != kNoInstance && !knownBefore.contains(candidate)) {
+						made = candidate;
+					}
+				}
+				if (made != kNoInstance) {
+					bridge_.setDeviceControl(made, shortcut->view, shortcut->viewValue);
+					bridge_.setDeviceControl(made, shortcut->mode, shortcut->modeValue);
+				}
 			}
 		}
 	};

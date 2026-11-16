@@ -87,6 +87,9 @@ public:
 	void setPage(int page) override;
 	bool expanded(size_t slot) const override;
 	void setExpanded(size_t slot, bool expanded) override;
+	/// THE PADS' CHAIN IN FRONT: shown (the whole of it) or put away behind its arrow, editor-only and shown by default. Tabs never puts it away.
+	[[nodiscard]] bool padsFrontShown() const noexcept { return padsFrontShown_; }
+	void setPadsFrontShown(bool shown) noexcept { padsFrontShown_ = shown; }
 	bool macrosOpen() const override { return macrosOpen_; }
 	void setMacrosOpen(bool open) override { macrosOpen_ = open; }
 	RackKeyMask takeStruck() override;
@@ -116,6 +119,7 @@ private:
 	DeviceInstanceId id_;
 	Controls controls_;
 	bool macrosOpen_ = false;
+	bool padsFrontShown_ = true;
 };
 
 } // namespace feathers::ui

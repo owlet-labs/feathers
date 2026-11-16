@@ -815,33 +815,75 @@ TEST_CASE("rack views over a real rack: the window in Tabs shows only the chain 
 	CHECK(r.panel->addBoundsForTest().width() > 0.0f);
 }
 
-TEST_CASE("rack views over a real rack: Tabs is offered in the View control only up to eight chains (hidden past it, not greyed), on the card and the window") {
+TEST_CASE("rack views over a real rack: Tabs is offered in the View control only up to eight chains (hidden past it, not greyed), in the window — the card has no selectors") {
 	RealRack r;
 	r.chains(8, 0);
 	r.refresh();
-	CHECK(r.card->viewSegForTest().isVisible());
-	CHECK_FALSE(r.card->viewPairForTest().isVisible());
 	CHECK(r.panel->viewSegForTest().isVisible());
 	CHECK_FALSE(r.panel->viewPairForTest().isVisible());
 	// THE NINTH CHAIN: the choice is Strips | Pads, and it writes the SAME control (Pads is the control's 2).
 	r.chains(9, 0);
 	r.refresh();
-	CHECK_FALSE(r.card->viewSegForTest().isVisible());
-	CHECK(r.card->viewPairForTest().isVisible());
 	CHECK_FALSE(r.panel->viewSegForTest().isVisible());
 	CHECK(r.panel->viewPairForTest().isVisible());
-	REQUIRE(r.card->viewPairForTest().control() != nullptr);
-	r.card->viewPairForTest().control()->setValue(1.0);
+	REQUIRE(r.panel->viewPairForTest().control() != nullptr);
+	r.panel->viewPairForTest().control()->setValue(1.0);
 	r.refresh();
 	CHECK(r.field(pr::Param::View) == 2.0f);
 	CHECK(r.card->padsShownForTest());
-	r.card->viewPairForTest().control()->setValue(0.0);
+	r.panel->viewPairForTest().control()->setValue(0.0);
 	r.refresh();
 	CHECK(r.field(pr::Param::View) == 0.0f);
 	// A RACK ALREADY IN TABS (a load) still shows the three-way, which can say where it is.
 	r.view_(1);
-	CHECK(r.card->viewSegForTest().isVisible());
-	CHECK_FALSE(r.card->viewPairForTest().isVisible());
+	CHECK(r.panel->viewSegForTest().isVisible());
+	CHECK_FALSE(r.panel->viewPairForTest().isVisible());
+}
+
+TEST_CASE("rack card: it draws neither the Mode selector nor the Strips | Tabs | Pads selector, in any view and in any mode") {
+	RealRack r;
+	r.chains(3, 1, true);
+	const auto offersAny = [](visage::Frame* root, size_t first, size_t last) {
+		bool found = false;
+		const std::function<void(visage::Frame*)> walk = [&](visage::Frame* f) {
+			if (const auto* face = dynamic_cast<const ui::ControlFace*>(f); face != nullptr && f->isVisible()) {
+				std::vector<ui::ControlFace::Offered> list;
+				face->offeredControls(list);
+				for (const auto& o : list) {
+					const auto* d = &o.control->desc();
+					const auto* base = pr::kDescriptor.params.data();
+					if (d >= base + first && d <= base + last) {
+						found = true;
+					}
+				}
+			}
+			for (visage::Frame* c : f->children()) {
+				if (c->isVisible()) {
+					walk(c);
+				}
+			}
+		};
+		walk(root);
+		return found;
+	};
+	for (const int view : { 0, 1, 2 }) {
+		for (const pr::Mode mode : { pr::Mode::Parallel, pr::Mode::Select, pr::Mode::Bands }) {
+			r.set(pr::Param::Mode, static_cast<float>(mode));
+			r.view_(view);
+			for (int i = 0; i < 2; ++i) {
+				r.refresh();
+			}
+			CAPTURE(view);
+			CAPTURE(static_cast<int>(mode));
+			const size_t modeIndex = static_cast<size_t>(pr::Param::Mode);
+			const size_t viewIndex = static_cast<size_t>(pr::Param::View);
+			CHECK_FALSE(offersAny(r.card, modeIndex, modeIndex));
+			CHECK_FALSE(offersAny(r.card, viewIndex, viewIndex));
+			// AND THE WINDOW HAS THEM (the superset rule is the other direction, but they must still be somewhere).
+			CHECK(offersAny(r.panel, modeIndex, modeIndex));
+			CHECK(offersAny(r.panel, viewIndex, viewIndex));
+		}
+	}
 }
 
 TEST_CASE("rack views over a real rack: the window offers every control the card offers, in Strips, Tabs and Pads, with chains of every kind") {
@@ -1080,7 +1122,7 @@ TEST_CASE("rack views over a real rack: the cards in front are as wide as the ca
 	CHECK(cards[1]->bounds().y() == doctest::Approx(cards[0]->bounds().y()));
 }
 
-TEST_CASE("rack views over a real rack: in Pads the selected pad's chain is in front as real cards, and viewing another pad rebinds") {
+TEST_CASE("rack views over a real rack: in Pads the selected pad's chain is in front as real cards, an arrow (always there) puts it away and back, and viewing another pad rebinds") {
 	RealRack r;
 	r.chains(3, 2, true);
 	r.view_(2);
@@ -1091,20 +1133,36 @@ TEST_CASE("rack views over a real rack: in Pads the selected pad's chain is in f
 	feathers::rack::RackBridge& chain1 = *r.rack().chainAt(1)->bridge();
 	grid.pressForTest(grid.padCentre(1)); // key 1 = chain 2
 	grid.releaseForTest();
-	for (int i = 0; i < 3; ++i) {
-		r.refresh();
-	}
+	const auto settle = [&] {
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+	};
+	settle();
+	// SHOWN BY DEFAULT: the whole chain, in order, with the arrow under it.
 	std::vector<ui::FxCard*> cards = shownCards(*r.card);
-	REQUIRE(cards.size() == 1);
-	CHECK(cards[0]->device() == chain1.deviceAtPosition(0));
-	CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(1));
-	r.card->chainArrowForTest().toggleForTest();
-	for (int i = 0; i < 3; ++i) {
-		r.refresh();
-	}
-	cards = shownCards(*r.card);
 	REQUIRE(cards.size() == 2);
+	CHECK(cards[0]->device() == chain1.deviceAtPosition(0));
 	CHECK(cards[1]->device() == chain1.deviceAtPosition(1));
+	CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(1));
+	REQUIRE(r.card->chainArrowForTest().isVisible());
+	CHECK(r.card->chainArrowForTest().bounds().y() >= r.card->frontForTest().bounds().y() + r.card->frontForTest().height()); // under the cards
+	// THE ARROW PUTS IT AWAY (no card, the arrow stays) and BRINGS IT BACK; the pad need not be pressed again.
+	const float open = r.card->laneHeightAt(static_cast<float>(r.card->width()));
+	r.card->chainArrowForTest().toggleForTest();
+	settle();
+	CHECK(shownCards(*r.card).empty());
+	CHECK(r.card->chainArrowForTest().isVisible());
+	CHECK(r.card->laneHeightAt(static_cast<float>(r.card->width())) < open);
+	r.card->chainArrowForTest().toggleForTest();
+	settle();
+	CHECK(shownCards(*r.card).size() == 2);
+	// A CHAIN OF ONE DEVICE HAS THE ARROW TOO IN PADS (it closes), where Tabs has none (there is nothing more to open).
+	(void)r.rack().chainAt(2)->bridge()->addDevice("DRUM"); // chain 3 gets one device
+	grid.pressForTest(grid.padCentre(2));
+	grid.releaseForTest();
+	settle();
+	CHECK(r.card->chainArrowForTest().isVisible());
 }
 
 namespace {
@@ -1365,6 +1423,72 @@ TEST_CASE("rack window: the view selector gives every label its segment, and the
 					CHECK(apart);
 				}
 			}
+		}
+	}
+}
+
+namespace {
+
+/// A REAL PRESS ON THE CARD at `inCard` (the card's own coordinates): found by the frame tree as the window finds it, delivered as it
+/// delivers (to the frame under the point, then up through its parents), and the note keys it posted, on then off.
+std::vector<std::pair<int, bool>> pressOnCard(RealRack& r, visage::Point inCard) {
+	feathers::UiNoteEvent drain;
+	while (r.f.bridge.popNote(drain)) {
+	}
+	visage::Frame* target = r.card->frameAtPoint(inCard);
+	if (target != nullptr) {
+		visage::MouseEvent down {};
+		down.event_frame = target;
+		const visage::Point topLeft = target->positionInWindow() - r.card->positionInWindow();
+		down.position = inCard - topLeft;
+		down.window_position = r.card->positionInWindow() + inCard;
+		target->processMouseDown(down);
+		visage::MouseEvent up = down;
+		target->processMouseUp(up);
+	}
+	std::vector<std::pair<int, bool>> out;
+	feathers::UiNoteEvent e;
+	while (r.f.bridge.popNote(e)) {
+		out.emplace_back(e.key, e.on);
+	}
+	return out;
+}
+
+} // namespace
+
+TEST_CASE("rack pads: a press strikes the pad's own cell and nothing else — not a gap, not the rest of the card — with one pad populated or several") {
+	for (const size_t populated : { size_t { 1 }, size_t { 3 } }) {
+		CAPTURE(populated);
+		RealRack r;
+		r.chains(populated, 0, true); // chain k answers key k: pads 0..populated-1
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		ui::RackPadGrid& grid = r.card->padsForTest().gridForTest();
+		const visage::Point origin = grid.positionInWindow() - r.card->positionInWindow();
+		const auto inCard = [&](visage::Point inGrid) { return visage::Point { origin.x + inGrid.x, origin.y + inGrid.y }; };
+		// EVERY CELL'S CENTRE strikes its own key (on, then off), populated or empty.
+		for (int index = 0; index < 16; ++index) {
+			CAPTURE(index);
+			const auto got = pressOnCard(r, inCard(grid.padCentre(index)));
+			REQUIRE(got.size() == 2);
+			CHECK(got[0] == std::pair<int, bool> { index, true });
+			CHECK(got[1] == std::pair<int, bool> { index, false });
+		}
+		// A GAP between two cells (the inset a pad leaves) strikes nothing.
+		const visage::Point gap = inCard({ grid.padCentre(0).x + (grid.padCentre(1).x - grid.padCentre(0).x) * 0.5f, grid.padCentre(0).y });
+		CHECK(pressOnCard(r, gap).empty());
+		// THE GRID'S MARGIN, THE STRIP, THE REST OF THE CARD: nothing is struck. Points all over the card outside the grid.
+		const float w = static_cast<float>(r.card->width());
+		const float h = static_cast<float>(r.card->height());
+		for (const visage::Point p : { visage::Point { 2.0f, 2.0f }, visage::Point { w - 2.0f, 40.0f }, visage::Point { w * 0.5f, h - 4.0f },
+		                               visage::Point { 3.0f, h * 0.5f }, visage::Point { origin.x - 4.0f, origin.y + 20.0f },
+		                               visage::Point { origin.x + static_cast<float>(grid.width()) + 4.0f, origin.y + 20.0f },
+		                               visage::Point { origin.x + 20.0f, origin.y + static_cast<float>(grid.height()) + 3.0f } }) {
+			CAPTURE(p.x);
+			CAPTURE(p.y);
+			CHECK(pressOnCard(r, p).empty());
 		}
 	}
 }

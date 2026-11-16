@@ -106,7 +106,7 @@ void Rail::drawRailChrome(visage::Canvas& canvas) {
 	const float front = left ? toggle.x() + step : toggle.right() - step * 2.0f;
 
 	canvas.setColor(kMuted);
-	for (int chevron = 0; chevron < 2; ++chevron) {
+	for (int chevron = 0; collapsible_ && chevron < 2; ++chevron) {
 		const float tipX = front + static_cast<float>(chevron) * step * (pointsLeft ? 1.0f : -1.0f)
 		                   + (pointsLeft ? 0.0f : step);
 		const float tailX = pointsLeft ? tipX + step : tipX - step;

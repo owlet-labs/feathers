@@ -365,7 +365,6 @@ public:
 	/// The controls the card seats: Mode, Position, Mix and Gain (the enable is the head's).
 	[[nodiscard]] std::vector<rack::parallel::Param> addressedParamsForTest() const;
 	/// THE MODE'S DROPDOWN and THE POSITION'S KNOB (stage 2) — the knob shown only where the mode reads it.
-	[[nodiscard]] ValueBox& modeBoxForTest() const { return *modeBox_; }
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
 	[[nodiscard]] SegmentedControl& unusedChipForTest() const { return *unused_; }
 	[[nodiscard]] SegmentedControl& slopeForTest() const { return *slope_; }
@@ -397,8 +396,6 @@ public:
 	[[nodiscard]] bool macroRowShownForTest() const { return macroKnobs_[0]->isVisible(); }
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
 	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
-	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
-	[[nodiscard]] SegmentedControl& viewPairForTest() const { return *viewPair_; }
 	/// What the card lays out for the view now (for the cases): whether the bar, the pads panel and the front stack are shown.
 	[[nodiscard]] bool tabsShownForTest() const { return tabs_->isVisible(); }
 	[[nodiscard]] bool padsShownForTest() const { return pads_->isVisible(); }
@@ -432,6 +429,7 @@ private:
 		bool arrow = false;
 		/// Tabs and Pads put Select's playing chain on a row of its own under the view (the three words need the width).
 		bool playingRow = false;
+		bool unusedRow = false; ///< a role mode's Unused choice, on a row of its own
 		/// THE MACRO ROW: offered (the rack has macros: some are named or off zero) and open (its arrow, collapsed by default).
 		bool macros = false;
 		bool macrosOpen = false;
@@ -442,6 +440,7 @@ private:
 	/// THE TABS OR PADS VIEW'S HEIGHT (a vertical lane): the bar or the panel, what is in front, its arrow, and the mode and view rows.
 	[[nodiscard]] float viewHeight(const Plan& p) const;
 	[[nodiscard]] bool horizontalLane() const { return headEdge() == CardHeadEdge::Left; }
+	[[nodiscard]] bool padsView() const { return model_->view() == RackViewKind::Pads; }
 	/// Re-read what is in front (the viewed chain's devices) and the pulse; true when anything drawn changed.
 	bool followView();
 	/// The rack's colour for the group hairline: its instance's edge, or the accent.
@@ -471,12 +470,6 @@ private:
 	RackStrikePulse pulse_;
 	std::unique_ptr<Knob> mix_;
 	std::unique_ptr<Knob> gain_;
-	std::unique_ptr<ValueBox> modeBox_;
-	/// THE VIEW (no audio effect) and the playing chain Select sounds: the same controls the window offers.
-	std::unique_ptr<SegmentedControl> viewSeg_;
-	/// Strips | Pads, shown instead of the three-way where Tabs is not offered (more than eight chains).
-	std::unique_ptr<RackViewPairControl> viewPairControl_;
-	std::unique_ptr<SegmentedControl> viewPair_;
 	std::unique_ptr<ValueBox> playingBox_;
 	std::unique_ptr<Knob> position_;
 	std::unique_ptr<SegmentedControl> unused_;

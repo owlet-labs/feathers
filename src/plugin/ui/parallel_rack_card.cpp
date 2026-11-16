@@ -671,14 +671,8 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	gain_ = std::make_unique<Knob>(control(pr::Param::Gain), "Gain", notifier_);
 	// STAGE 2: THE MODE AS A DROPDOWN (a ValueBox over a Choice opens its list — never a cycling chip), and the
 	// POSITION Select and Blend read, hidden in Parallel.
-	modeBox_ = std::make_unique<ValueBox>(control(pr::Param::Mode), "Mode");
-	addChild(modeBox_.get());
-	viewSeg_ = std::make_unique<SegmentedControl>(control(pr::Param::View), registry, pr::kViewNames, notifier_);
+	// THE MODE AND THE VIEW ARE THE WINDOW'S: the card draws neither selector (it carries what the rack is, not how it is set up).
 	playingBox_ = std::make_unique<ValueBox>(control(pr::Param::Playing), "Playing");
-	viewPairControl_ = std::make_unique<RackViewPairControl>(control(pr::Param::View));
-	viewPair_ = std::make_unique<SegmentedControl>(*viewPairControl_, registry, RackViewPairControl::kNames, notifier_);
-	addChild(viewSeg_.get());
-	addChild(viewPair_.get());
 	addChild(playingBox_.get());
 	position_ = std::make_unique<Knob>(control(pr::Param::Position), "Position", notifier_);
 	for (Knob* k : { mix_.get(), gain_.get(), position_.get() }) {
@@ -725,9 +719,14 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	front_ = std::make_unique<RackFrontColumn>(host_, device_, registry, notifier_);
 	chainArrow_ = std::make_unique<RackDrawerArrow>(
 	    RackFlow::TopDown, "Open the whole chain here, or close it again",
-	    [this] { return model_->expanded(model_->viewedChain()); },
+	    [this] { return padsView() ? model_->padsFrontShown() : model_->expanded(model_->viewedChain()); },
 	    [this](bool open) {
-		    model_->setExpanded(model_->viewedChain(), open);
+		    if (padsView()) {
+			    model_->setPadsFrontShown(open);
+		    }
+		    else {
+			    model_->setExpanded(model_->viewedChain(), open);
+		    }
 		    (void)updateContent();
 	    });
 	// THE MACRO ROW behind its own arrow (collapsed by default, and no arrow at all unless the rack has macros): the same idiom as the chain's.
@@ -823,6 +822,8 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 	p.missing = (pr::kRoleModes & pr::kModeBit(p.mode)) != 0 && roles > strips_.size() ? roles - strips_.size() : 0;
 	p.strips = strips_.size();
 	p.view = model_->view();
+	p.playingRow = pr::controlShown(pr::Param::Playing, control(pr::Param::Mode).value(), control(pr::Param::BandCount).value());
+	p.unusedRow = pr::controlShown(pr::Param::Unused, control(pr::Param::Mode).value(), control(pr::Param::BandCount).value());
 	if (p.view != RackViewKind::Strips) {
 		// TABS AND PADS lay out no chain rows, bands, spectrum or position bar (the window has them): what is in front of the viewed chain
 		// is one tile, or all of them once it is open (as many as the unit has room for, in a horizontal lane).
@@ -830,10 +831,11 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 		p.missing = p.rows = p.overflow = 0;
 		// WHAT IS IN FRONT is the viewed chain's REAL cards (`RackFrontColumn`): as tall as they are at the card's content width.
 		p.frontExtent = static_cast<int>(std::lround(frontExtentFor(horizontalLane() ? lanesCross() : bodyWidth() - 2.0f * kPad)));
-		p.arrow = front_->deviceCount() > 1;
+		// THE ARROW IS ALWAYS THERE IN PADS (it puts the selected pad's chain away and brings it back); in Tabs it is there when there is more
+		// to open than the card in front.
+		p.arrow = p.view == RackViewKind::Pads ? front_->deviceCount() > 0 : front_->deviceCount() > 1;
 		p.macros = macrosPresent();
 		p.macrosOpen = p.macros && model_->macrosOpen();
-		p.playingRow = pr::controlShown(pr::Param::Playing, control(pr::Param::Mode).value(), control(pr::Param::BandCount).value());
 		return p;
 	}
 	// THE ROWS THE UNIT HAS ROOM FOR: what is left of `kCardUnitHeight` under everything else, a row per chain — and when
@@ -848,7 +850,7 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 }
 
 float ParallelRackCard::fixedRowsHeight(const Plan& p) {
-	float h = 2.0f * (ValueBox::kHeight + kRowGap); // the mode row and the view row
+	float h = ((p.unusedRow ? 1.0f : 0.0f) + (p.playingRow ? 1.0f : 0.0f)) * (ValueBox::kHeight + kRowGap); // the rows the mode adds
 	if (p.bands) {
 		h += ValueBox::kHeight + kRowGap;
 	}
@@ -881,7 +883,7 @@ float ParallelRackCard::viewHeight(const Plan& p) const {
 	if (p.arrow) {
 		h += RackDrawerArrow::kSize + kRowGap;
 	}
-	h += (p.playingRow ? 3.0f : 2.0f) * (ValueBox::kHeight + kRowGap);
+	h += ((p.unusedRow ? 1.0f : 0.0f) + (p.playingRow ? 1.0f : 0.0f)) * (ValueBox::kHeight + kRowGap);
 	return h;
 }
 
@@ -982,28 +984,12 @@ void ParallelRackCard::layOut() {
 			placeMacros(p, left, wide, y);
 		}
 	}
-	// THE MODE ON ITS OWN ROW ABOVE THE CHAINS: it decides what the strips below mean.
-	const float modeWide = std::min(wide, kModeWidth);
-	modeBox_->setBounds(left, y, modeWide, ValueBox::kHeight);
-	unused_->setBounds(left + modeWide + kRowGap, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f,
-	                   std::max(0.0f, wide - modeWide - kRowGap), kSegmentHeight);
-	y += ValueBox::kHeight + kRowGap;
-	// THE VIEW (no audio effect) on a row of its own, and Select's playing chain beside it where Select is the mode.
-	if (!strips) {
-		// TABS AND PADS: the view across the card's whole width (its three words need it), Select's playing chain on the row under it.
-		viewSeg_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, wide, kSegmentHeight);
-		viewPair_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, wide, kSegmentHeight);
-		y += ValueBox::kHeight + kRowGap;
-		playingBox_->setBounds(left, y, wide, ValueBox::kHeight);
-		y += p.playingRow ? ValueBox::kHeight + kRowGap : 0.0f;
-	}
-	else {
-		const float viewWide = std::round(wide * 0.62f);
-		viewSeg_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, viewWide - kRowGap, kSegmentHeight);
-		viewPair_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, viewWide - kRowGap, kSegmentHeight);
-		playingBox_->setBounds(left + viewWide, y, std::max(0.0f, wide - viewWide), ValueBox::kHeight);
-		y += ValueBox::kHeight + kRowGap;
-	}
+	// WHAT A ROLE MODE ASKS OF A CHAIN IT GIVES NO ROLE, and Select's playing chain: each on a row of its own where the mode reads it (the
+	// mode and the view are the window's).
+	unused_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, wide, kSegmentHeight);
+	y += p.unusedRow ? ValueBox::kHeight + kRowGap : 0.0f;
+	playingBox_->setBounds(left, y, wide, ValueBox::kHeight);
+	y += p.playingRow ? ValueBox::kHeight + kRowGap : 0.0f;
 	if (p.bands) {
 		// THE SLOPE'S TWO LABELS NEED THE ROOM: the count narrow, the filtering middling, the slope the rest.
 		const float countW = std::round(wide * 0.22f);
@@ -1112,7 +1098,6 @@ void ParallelRackCard::foldedChanged() {
 	const bool shown = !folded();
 	mix_->setVisible(shown);
 	gain_->setVisible(shown);
-	modeBox_->setVisible(shown);
 	(void)showForMode();
 	spectrum_->setVisible(shown && laidOut_.spectrum);
 	layOut(); // the chain rows and the overflow line follow the fold, each only where the unit has room for it
@@ -1200,14 +1185,6 @@ bool ParallelRackCard::showForMode() {
 		layOut();
 		changed = true;
 	}
-	// TABS IS OFFERED ONLY TO A RACK OF EIGHT CHAINS OR FEWER (hidden, not greyed): past it the choice is Strips | Pads, except while the view
-	// IS Tabs (a load, or a ninth chain added under it), which the three-way can still show.
-	const bool tabsOffered = model_->chainCount() <= kMaxRackTabs || model_->view() == RackViewKind::Tabs;
-	if (viewSeg_->isVisible() != (!folded() && tabsOffered) || viewPair_->isVisible() != (!folded() && !tabsOffered)) {
-		viewSeg_->setVisible(!folded() && tabsOffered);
-		viewPair_->setVisible(!folded() && !tabsOffered);
-		changed = true;
-	}
 	const bool spectrumShown = !folded() && laidOut_.spectrum;
 	if (spectrum_->isVisible() != spectrumShown) {
 		spectrum_->setVisible(spectrumShown);
@@ -1216,7 +1193,7 @@ bool ParallelRackCard::showForMode() {
 	for (const auto& [frame, param] : gated_) {
 		// TABS AND PADS show the rack's Playing (Select) and nothing else of what the mode adds; the window has the rest.
 		const bool shown = !folded() && pr::controlShown(param, mode, bands)
-		                   && (laidOut_.view == RackViewKind::Strips || frame == playingBox_.get());
+		                   && (laidOut_.view == RackViewKind::Strips || frame == playingBox_.get() || frame == unused_.get());
 		if (frame->isVisible() != shown) {
 			frame->setVisible(shown);
 			changed = true;
@@ -1295,7 +1272,7 @@ bool ParallelRackCard::followView() {
 	// THE REAL CARDS OF THE VIEWED CHAIN: bound by the chain's id and bridge (a tab switch rebinds), advanced like any lane's.
 	front_->setHorizontal(horizontalLane());
 	front_->setNest(DeviceNest::under(nest(), device_));
-	moved = front_->follow(viewed, model_->expanded(viewed)) || moved;
+	moved = front_->follow(viewed, padsView() || model_->expanded(viewed), !padsView() || model_->padsFrontShown()) || moved;
 	moved = front_->updateCards() > 0 || moved;
 	tabs_->refresh();
 	chainArrow_->refresh();

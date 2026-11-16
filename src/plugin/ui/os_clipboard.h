@@ -26,5 +26,7 @@ namespace feathers::ui {
 /// which serve the X11 selection requests, so another application (or another plugin instance's process) can read it.
 void bindOsClipboard();
 void unbindOsClipboard();
+/// How many editors hold the road now (for a case that asks whether an editor bound it).
+[[nodiscard]] int osClipboardBindings() noexcept;
 
 } // namespace feathers::ui

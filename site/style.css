@@ -213,3 +213,13 @@ h1 { font-weight: 400; letter-spacing: -.01em; }
 .devtable tr.group th { background: var(--surface2); color: var(--value); font-weight: 600; letter-spacing: .02em; }
 .devtable td:last-child { color: var(--mute); }
 .devnote { max-width: 44rem; color: var(--mute); }
+
+/* ---- the austere pass: flat, square, hairlines, no ornament ---- */
+code, .cta, .copy, .cmd, figure img, .shot, .proj, .proj img, .card, .card img, .devtable { border-radius: 0; }
+.hero .shot { box-shadow: none; }
+.ridge { height: 0; margin: 56px 0 0; background: none; opacity: 1; -webkit-mask: none; mask: none; border: 0; border-top: 1px solid var(--line); }
+.cta { font-size: .8rem; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; padding: .9em 1.6em; }
+.cta.alt { border-color: var(--line); }
+.copy { font-weight: 500; letter-spacing: .1em; text-transform: uppercase; font-size: .7rem; }
+.sticker, .sticker.alt { transform: none; box-shadow: none; background: transparent; color: var(--mute); border: 1px solid var(--line); font: 500 .68rem/1 var(--disp); letter-spacing: .16em; padding: .55em .75em; }
+.proj:hover, .card:hover { border-color: var(--mute); }

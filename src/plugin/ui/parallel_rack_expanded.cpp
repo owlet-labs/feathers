@@ -43,7 +43,7 @@ constexpr float kMacroRows = 4.0f;
 constexpr float kCellHeight = Knob::columnHeight(Knob::kEngineRailDiameter);
 /// THE MODE ROW above Mix and Gain (stage 2): one knob cell and its gap.
 /// THE VIEW'S ROW sits under the mode row, over the macros.
-constexpr float kViewRow = ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f;
+constexpr float kViewRow = 2.0f * (ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f);
 constexpr float kModeRow = kCellHeight + ParallelRackExpanded::kPad + kViewRow;
 
 /// EACH RAIL IS HANDED ITS OWN CHAIN as the handle, so its cast is the identity.
@@ -88,6 +88,13 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	addChild(viewSeg_.get());
 	addChild(viewPair_.get());
 	addChild(playingBox_.get());
+	// WHICH CHAIN AND WHICH PAGE THE VIEW IS ON: the window's alone (the card has no tabs or pads to point them at).
+	viewedControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::ViewedChain));
+	pageControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::PadsPage));
+	viewedBox_ = std::make_unique<ValueBox>(*viewedControl_, "Viewing");
+	pageBox_ = std::make_unique<ValueBox>(*pageControl_, "Page");
+	addChild(viewedBox_.get());
+	addChild(pageBox_.get());
 	unusedControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Unused));
 	unused_ = std::make_unique<SegmentedControl>(*unusedControl_, registry, pr::kUnusedFaceNames, notifier);
 	addChild(unused_.get());
@@ -265,6 +272,9 @@ void ParallelRackExpanded::layOut() {
 		viewSeg_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
 		viewPair_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
 		playingBox_->setBounds(kPad + viewWide, vy, kColumnWidth - viewWide, ValueBox::kHeight);
+		const float vy2 = vy + ValueBox::kHeight + kPad * 0.5f;
+		viewedBox_->setBounds(kPad, vy2, kColumnWidth * 0.5f - kPad * 0.5f, ValueBox::kHeight);
+		pageBox_->setBounds(kPad + kColumnWidth * 0.5f, vy2, kColumnWidth * 0.5f, ValueBox::kHeight);
 	}
 	// THE BANDS COLUMN, beside the macros: count and filtering stacked, the slope, then the corners A VERTICAL STACK, one per
 	// row, lowest first — the order they stand in on the spectrum.

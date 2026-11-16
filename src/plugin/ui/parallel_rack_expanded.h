@@ -126,6 +126,8 @@ public:
 	[[nodiscard]] ValueBox& modeBoxForTest() const { return *modeBox_; }
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
 	[[nodiscard]] SegmentedControl& unusedChipForTest() const { return *unused_; }
+	[[nodiscard]] ValueBox& viewedBoxForTest() const { return *viewedBox_; }
+	[[nodiscard]] ValueBox& pageBoxForTest() const { return *pageBox_; }
 	[[nodiscard]] RackSpectrumStrip& spectrumForTest() const { return *spectrum_; }
 	[[nodiscard]] RackPositionBar& positionBarForTest() const { return *positionBar_; }
 	[[nodiscard]] size_t placeholderCountForTest() const noexcept { return phantoms_.size(); }
@@ -211,6 +213,10 @@ private:
 	std::unique_ptr<RackViewPairControl> viewPairControl_;
 	std::unique_ptr<SegmentedControl> viewPair_;
 	std::unique_ptr<ValueBox> playingBox_;
+	std::unique_ptr<DeviceControl> viewedControl_;
+	std::unique_ptr<DeviceControl> pageControl_;
+	std::unique_ptr<ValueBox> viewedBox_;
+	std::unique_ptr<ValueBox> pageBox_;
 	std::unique_ptr<Knob> position_;
 	std::unique_ptr<DeviceControl> unusedControl_;
 	std::unique_ptr<SegmentedControl> unused_;

@@ -4896,6 +4896,11 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		// 2026-10-29 (the card keeps the corners as drags on its spectrum strip) — each its own widget, asked by name.
 		(void)rackPanel->keyTrackForTest();
 		e.reached.insert(static_cast<size_t>(pr::Param::KeyTrack));
+		// AND THE VIEW'S POINTERS, the window's alone: which chain it is looking at, and which page of pads.
+		(void)rackPanel->viewedBoxForTest();
+		(void)rackPanel->pageBoxForTest();
+		e.reached.insert(static_cast<size_t>(pr::Param::ViewedChain));
+		e.reached.insert(static_cast<size_t>(pr::Param::PadsPage));
 		for (size_t k = 0; k < 4; ++k) {
 			REQUIRE(rackPanel->cutKnobForTest(k).control() != nullptr);
 			e.reached.insert(static_cast<size_t>(pr::Param::Cut1) + k);

@@ -36458,6 +36458,18 @@ TEST_CASE("a chain strip's key box shows Any or the note name, edits the chain's
 	CHECK(key.text() == "Any");
 	history.redo();
 	CHECK(r.rack().chainKey(0) == 61);
+	// THE CHOKE GROUP BESIDE IT: None, then 1..8; one undo step; the column has the box, a narrow card row does not.
+	ui::ChainControl& choke = strip.chokeControlForTest();
+	CHECK(choke.text() == "None");
+	choke.setValue(3.0);
+	CHECK(r.rack().chainChoke(0) == 3);
+	CHECK(choke.text() == "3");
+	history.undo();
+	CHECK(r.rack().chainChoke(0) == 0);
+	history.redo();
+	CHECK(r.rack().chainChoke(0) == 3);
+	CHECK(strip.chokeBox().isVisible());
+	CHECK_FALSE(choke.display().isDestination);
 	// NOT A DESTINATION: it has no slot param, so nothing can be routed to it and it offers no host slot.
 	CHECK_FALSE(key.display().isDestination);
 	CHECK(key.hostSlot().state == feathers::device::HostSlotStatus::State::Unavailable);

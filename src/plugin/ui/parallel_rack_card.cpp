@@ -95,12 +95,19 @@ struct KeyNames {
 	return desc;
 }
 
+/// THE CHOKE GROUP'S CHOICE: None, then 1..8. A value is the group itself.
+constexpr const char* kChokeNames[] = { "None", "1", "2", "3", "4", "5", "6", "7", "8" };
+constexpr device::ParamDesc kChokeDesc { "chain_choke", "Chain Choke", 0.0, 8.0, 0.0, true, device::Unit::Choice, kChokeNames, false,
+	                                     false, "A note this chain takes cuts off every other chain in the same group, as a closed hat "
+	                                            "stops an open one. None takes part in no group" };
+
 [[nodiscard]] pr::SlotControl slotControlOf(ChainControl::Kind kind) noexcept {
 	switch (kind) {
 	case ChainControl::Kind::Level: return pr::SlotControl::Level;
 	case ChainControl::Kind::Mute: return pr::SlotControl::Mute;
 	case ChainControl::Kind::Solo: return pr::SlotControl::Solo;
-	case ChainControl::Kind::Key: break;
+	case ChainControl::Kind::Key:
+	case ChainControl::Kind::Choke: break;
 	}
 	return pr::SlotControl::Level;
 }
@@ -128,6 +135,7 @@ const device::ParamDesc& ChainControl::desc() const {
 	case Kind::Mute: return !real ? kMuteDesc : slotted ? kMuteSlotDesc : kMuteNoSlotDesc;
 	case Kind::Solo: return !real ? kSoloDesc : slotted ? kSoloSlotDesc : kSoloNoSlotDesc;
 	case Kind::Key: return keyDesc();
+	case Kind::Choke: return kChokeDesc;
 	}
 	return kLevelDesc;
 }
@@ -148,8 +156,8 @@ bool ChainControl::unpinFromHost() {
 }
 
 DeviceControl* ChainControl::slotControl() const {
-	if (kind_ == Kind::Key) {
-		return nullptr; // the key is not a destination
+	if (kind_ == Kind::Key || kind_ == Kind::Choke) {
+		return nullptr; // neither is a destination
 	}
 	const uint8_t s = slot();
 	if (s >= pr::kChainSlots) {
@@ -214,6 +222,7 @@ double ChainControl::value() const {
 	case Kind::Mute: return r->muted(at) ? 1.0 : 0.0;
 	case Kind::Solo: return r->soloed(at) ? 1.0 : 0.0;
 	case Kind::Key: return static_cast<double>(r->chainKey(at) + 1);
+	case Kind::Choke: return static_cast<double>(r->chainChoke(at));
 	}
 	return 0.0;
 }
@@ -247,6 +256,7 @@ void ChainControl::apply(double value) {
 	case Kind::Mute: r->setMuted(at, value >= 0.5); break;
 	case Kind::Solo: r->setSoloed(at, value >= 0.5); break;
 	case Kind::Key: r->setChainKey(at, static_cast<int>(std::lround(value)) - 1); break;
+	case Kind::Choke: r->setChainChoke(at, static_cast<int>(std::lround(value))); break;
 	}
 }
 
@@ -266,6 +276,7 @@ public:
 		case ChainControl::Kind::Mute: return "Chain mute";
 		case ChainControl::Kind::Solo: return "Chain solo";
 		case ChainControl::Kind::Key: return "Chain key";
+		case ChainControl::Kind::Choke: return "Chain choke group";
 		}
 		return "Chain";
 	}
@@ -384,6 +395,9 @@ void ChainPresenceEdit::take() const {
 
 std::string ChainControl::text() const {
 	const double v = value();
+	if (kind_ == Kind::Choke) {
+		return kChokeNames[static_cast<size_t>(std::clamp(std::lround(v), 0L, 8L))];
+	}
 	if (kind_ == Kind::Key) {
 		return keyDesc().names[static_cast<size_t>(std::clamp(std::lround(v), 0L, 128L))];
 	}
@@ -487,13 +501,16 @@ void ChainFader::draw(visage::Canvas& canvas) {
 ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint16_t chain, std::string caption,
                        std::function<void(uint16_t)> onRemove)
     : level_(host, rack, chain, ChainControl::Kind::Level), muted_(host, rack, chain, ChainControl::Kind::Mute),
-      soloed_(host, rack, chain, ChainControl::Kind::Solo), keyed_(host, rack, chain, ChainControl::Kind::Key), onRemove_(std::move(onRemove)) {
+      soloed_(host, rack, chain, ChainControl::Kind::Solo), keyed_(host, rack, chain, ChainControl::Kind::Key),
+      choked_(host, rack, chain, ChainControl::Kind::Choke), onRemove_(std::move(onRemove)) {
 	pill_ = std::make_unique<FaderPill>(level_, std::move(caption));
 	fader_ = std::make_unique<ChainFader>(level_);
 	mute_ = std::make_unique<SwitchChip>(muted_, "M");
 	solo_ = std::make_unique<SwitchChip>(soloed_, "S");
 	keyBox_ = std::make_unique<ValueBox>(keyed_, "");
 	keyBox_->setCompact(true); // one row: the strip is 20 high
+	chokeBox_ = std::make_unique<ValueBox>(choked_, "");
+	chokeBox_->setCompact(true);
 	// A CHAIN'S MUTE AND SOLO ARE DESTINATIONS (backlog NO item 2): they glow and take a route as the level's pill does.
 	mute_->setShowsModulation(true);
 	solo_->setShowsModulation(true);
@@ -503,6 +520,7 @@ ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint1
 	addChild(mute_.get());
 	addChild(solo_.get());
 	addChild(keyBox_.get());
+	addChild(chokeBox_.get());
 	addChild(meter_.get());
 	fader_->setVisible(false); // the column's; `resized` shows it when the strip is a column
 	meter_->setVisible(true);  // THE CARD'S STRIPS AND THE WINDOW'S BOTH METER THEIR CHAIN
@@ -573,6 +591,9 @@ void ChainStrip::resized() {
 		const float keyW = std::min(kKeyWidth, w - 2.0f);
 		keyBox_->setVisible(true);
 		keyBox_->setBounds(std::round((w - keyW) * 0.5f), y + (kColumnRow - ValueBox::kCompactHeight) * 0.5f, keyW, ValueBox::kCompactHeight);
+		y += kColumnRow;
+		chokeBox_->setVisible(true);
+		chokeBox_->setBounds(std::round((w - keyW) * 0.5f), y + (kColumnRow - ValueBox::kCompactHeight) * 0.5f, keyW, ValueBox::kCompactHeight);
 		y += kColumnRow + kGap;
 		removeBounds_ = { cx, std::max(y, h - kColumnRow), kChipWidth, kColumnRow };
 		const float bottom = removeBounds_.y() - kGap;
@@ -600,6 +621,7 @@ void ChainStrip::resized() {
 		mute_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
 		right -= kChipWidth + kGap;
 // THE KEY BOX ONLY WHERE THE PILL KEEPS ITS CAPTION: a card's narrow strip leaves it to the window's rail (the column has it).
+		chokeBox_->setVisible(false); // the window's column carries the choke group
 		const bool roomForKey = right - kKeyWidth - kGap - x >= kPillMinWidth;
 		keyBox_->setVisible(roomForKey);
 		if (roomForKey) {
@@ -647,6 +669,10 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// POSITION Select and Blend read, hidden in Parallel.
 	modeBox_ = std::make_unique<ValueBox>(control(pr::Param::Mode), "Mode");
 	addChild(modeBox_.get());
+	viewSeg_ = std::make_unique<SegmentedControl>(control(pr::Param::View), registry, pr::kViewNames, notifier_);
+	playingBox_ = std::make_unique<ValueBox>(control(pr::Param::Playing), "Playing");
+	addChild(viewSeg_.get());
+	addChild(playingBox_.get());
 	position_ = std::make_unique<Knob>(control(pr::Param::Position), "Position", notifier_);
 	for (Knob* k : { mix_.get(), gain_.get(), position_.get() }) {
 		k->setFaceDiameter(kKnobDiameter);
@@ -666,7 +692,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	}
 	// THE CORNERS' KNOBS AND THE KEY TRACK SWITCH ARE THE WINDOW'S (with them the card was too tall in a
 	// horizontal chain). The card's spectrum strip still carries every corner, and a drag on it writes the cut.
-	gated_ = { { position_.get(), pr::Param::Position }, { unused_.get(), pr::Param::Unused },
+	gated_ = { { position_.get(), pr::Param::Position }, { unused_.get(), pr::Param::Unused }, { playingBox_.get(), pr::Param::Playing },
 	           { bandsBox_.get(), pr::Param::BandCount }, { filteringBox_.get(), pr::Param::Filtering },
 	           { slope_.get(), pr::Param::Slope } };
 	overflow_ = std::make_unique<OverflowLine>();
@@ -729,7 +755,7 @@ void ParallelRackCard::setModulation(ModState* mod, EditHistory* history) {
 
 std::vector<pr::Param> ParallelRackCard::addressedParamsForTest() const {
 	// THE CORNERS BY A GESTURE: dragged on the spectrum strip (asserted by value in "...a drag writes the cut").
-	return { pr::Param::Mode,  pr::Param::Position, pr::Param::Unused, pr::Param::BandCount, pr::Param::Filtering,
+	return { pr::Param::Mode,  pr::Param::Position, pr::Param::Unused, pr::Param::View, pr::Param::Playing, pr::Param::BandCount, pr::Param::Filtering,
 		     pr::Param::Slope, pr::Param::Cut1,     pr::Param::Cut2,   pr::Param::Cut3,      pr::Param::Cut4,
 		     pr::Param::Mix,   pr::Param::Gain };
 }
@@ -762,7 +788,7 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 }
 
 float ParallelRackCard::fixedRowsHeight(const Plan& p) {
-	float h = ValueBox::kHeight + kRowGap; // the mode row
+	float h = 2.0f * (ValueBox::kHeight + kRowGap); // the mode row and the view row
 	if (p.bands) {
 		h += ValueBox::kHeight + kRowGap;
 	}
@@ -801,6 +827,13 @@ void ParallelRackCard::layOut() {
 	unused_->setBounds(left + modeWide + kRowGap, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f,
 	                   std::max(0.0f, wide - modeWide - kRowGap), kSegmentHeight);
 	y += ValueBox::kHeight + kRowGap;
+	// THE VIEW (no audio effect) on a row of its own, and Select's playing chain beside it where Select is the mode.
+	{
+		const float viewWide = std::round(wide * 0.62f);
+		viewSeg_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, viewWide - kRowGap, kSegmentHeight);
+		playingBox_->setBounds(left + viewWide, y, std::max(0.0f, wide - viewWide), ValueBox::kHeight);
+		y += ValueBox::kHeight + kRowGap;
+	}
 	if (p.bands) {
 		// THE SLOPE'S TWO LABELS NEED THE ROOM: the count narrow, the filtering middling, the slope the rest.
 		const float countW = std::round(wide * 0.22f);

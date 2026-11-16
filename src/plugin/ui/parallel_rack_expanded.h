@@ -195,6 +195,10 @@ private:
 	std::unique_ptr<DeviceControl> modeControl_;
 	std::unique_ptr<DeviceControl> positionControl_;
 	std::unique_ptr<ValueBox> modeBox_;
+	std::unique_ptr<DeviceControl> viewControl_;
+	std::unique_ptr<DeviceControl> playingControl_;
+	std::unique_ptr<SegmentedControl> viewSeg_;
+	std::unique_ptr<ValueBox> playingBox_;
 	std::unique_ptr<Knob> position_;
 	std::unique_ptr<DeviceControl> unusedControl_;
 	std::unique_ptr<SegmentedControl> unused_;

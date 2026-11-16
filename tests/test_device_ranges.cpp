@@ -200,6 +200,12 @@ const Exemption kExemptions[] = {
 	{ "Drawn :: Drawn Wet Gain", "the slot applies it; the device does not read it" },
 	{ "Harm :: Harm Mix", "the slot applies it; the device does not read it" },
 	{ "Harm :: Harm Wet Gain", "the slot applies it; the device does not read it" },
+	// THE RACK'S VIEW STATE is the editor's: how the window lays the chains out, which one it looks at and which page of pads. It has no audio
+	// effect and the engine's decode (`parallel_rack.cpp`) never reads it, so there is nothing in the decode to carry it; it rides in the
+	// record's row and the patch (asserted in `test_rack_view_routing`'s save and load case).
+	{ "Rack :: Rack View", "view state: no audio effect, never read by the engine's decode" },
+	{ "Rack :: Rack Viewed Chain", "view state: no audio effect, never read by the engine's decode" },
+	{ "Rack :: Rack Pads Page", "view state: no audio effect, never read by the engine's decode" },
 };
 
 [[nodiscard]] const Exemption* exemptionFor(const std::string& control) {

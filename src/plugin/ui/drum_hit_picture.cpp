@@ -143,7 +143,7 @@ std::vector<ModHandleAxis> HitPicture::modAxesFor(Handle h) {
 		break;
 	case Handle::SweepTime: out.push_back(across(c.sweepTime, [xOfLog2](double v) { return xOfLog2(v); })); break;
 	case Handle::Decay:
-		out.push_back(across(c.decay, [this, xOfLog2](double v) {
+		out.push_back(across(c.decay, [this](double v) {
 			const double mult = decaySeconds_ > 0.0 ? laws_.t60 / decaySeconds_ : 1.0;
 			return xOf(std::exp2(v) * mult);
 		}));

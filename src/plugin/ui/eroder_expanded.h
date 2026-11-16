@@ -102,6 +102,8 @@ public:
 	[[nodiscard]] PairCell* loopPairForTest() const { return loopPair_.get(); }
 	[[nodiscard]] EtchSlots& etchSlotsForTest() { return etch_; }
 	[[nodiscard]] Knob* followForTest() const { return knob(fx::eroder::Param::Follow); }
+	/// **READ OFF THE WIDGET TREE** (`ControlFace`), every engine's and hidden ones included: what a hand can reach here.
+	[[nodiscard]] std::vector<fx::eroder::Param> addressedParamsForTest() const;
 
 private:
 	[[nodiscard]] DeviceControl& control(fx::eroder::Param p) const;

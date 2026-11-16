@@ -120,6 +120,8 @@ public:
 	[[nodiscard]] Knob* loopForTest() const { return loop_.get(); }
 	[[nodiscard]] SwitchChip* tapForTest() const { return tap_.get(); }
 	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
+	/// **READ OFF THE WIDGET TREE** (`ControlFace`), every engine's and hidden ones included: what a hand can reach here.
+	[[nodiscard]] std::vector<fx::eroder::Param> addressedParamsForTest() const;
 
 private:
 	device::Modulatable* enableModulatable() override;

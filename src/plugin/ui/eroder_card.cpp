@@ -27,7 +27,10 @@
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/theme.h"
 
+#include "plugin/ui/control_face.h"
+
 #include <algorithm>
+#include <functional>
 
 namespace feathers::ui {
 
@@ -316,5 +319,33 @@ bool EroderCard::updateContent() {
 void EroderCard::drawHeadExtras(visage::Canvas& canvas) { drawSlotMenu(canvas, kMuted); }
 
 void EroderCard::drawContent(visage::Canvas&) {}
+
+std::vector<ero::Param> EroderCard::addressedParamsForTest() const {
+	// **READ OFF THE WIDGET TREE** (`ControlFace`), hidden ones and every engine's included: each frame says which controls it
+	// offers (the plot's handles by their gesture, the slot row's cells by their face) and the answer is mapped to the
+	// parameter by the control the face was built over. Nothing here lists a parameter.
+	std::vector<ero::Param> out;
+	std::vector<ControlFace::Offered> offered;
+	std::function<void(const visage::Frame*)> walk = [&](const visage::Frame* frame) {
+		if (const auto* face = dynamic_cast<const ControlFace*>(frame)) {
+			offered.clear();
+			face->offeredControls(offered);
+			for (const ControlFace::Offered& o : offered) {
+				for (size_t i = 0; i < controls_.size(); ++i) {
+					const auto p = static_cast<ero::Param>(i);
+					if (controls_[i] != nullptr && static_cast<const device::Modulatable*>(controls_[i].get()) == o.control
+					    && std::find(out.begin(), out.end(), p) == out.end()) {
+						out.push_back(p);
+					}
+				}
+			}
+		}
+		for (const visage::Frame* child : frame->children()) {
+			walk(child);
+		}
+	};
+	walk(this);
+	return out;
+}
 
 } // namespace feathers::ui

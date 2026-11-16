@@ -40,6 +40,8 @@
 #include "plugin/ui/generic_expanded.h"
 #include "mod/arp/pattern_types.h"
 #include "plugin/ui/pattern_card.h"
+#include "plugin/ui/eroder_card.h"
+#include "plugin/ui/eroder_expanded.h"
 #include "plugin/ui/smooth_card.h"
 #include "plugin/ui/spectral_card.h"
 #include "plugin/ui/spectral_expanded.h"
@@ -5093,38 +5095,22 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		CHECK(e.reached.count(static_cast<size_t>(feathers::fx::delay::Param::Clear)) == 1);
 		table.push_back(std::move(e));
 	}
-	// THE ERODER, likewise.
+	// THE ERODER: its own card (`EroderCard`) AND its window, each asked what its widgets offer — read off the tree, every
+	// engine's controls and the plot's handles included (`ControlFace`). The shared section and Etch's slots are on both.
 	{
-		ui::GenericCard eroderCard { f.deviceHost, kNoInstance, feathers::fx::eroder::kDescriptor,
-			                         nullptr };
+		ui::WidgetRegistry eroderRegistry;
+		ui::EroderCard eroderCard { f.deviceHost, eroderRegistry, kNoInstance };
+		ui::EroderExpanded eroderPanel { f.deviceHost, eroderRegistry, kNoInstance };
 		Entry e { feathers::fx::eroder::kTraits.tag, {}, {}, false };
-		for (const size_t index : eroderCard.paramIndicesForTest()) {
-			e.reached.insert(index);
+		for (const feathers::fx::eroder::Param p : eroderCard.addressedParamsForTest()) {
+			e.reached.insert(static_cast<size_t>(p));
 		}
+		for (const feathers::fx::eroder::Param p : eroderPanel.addressedParamsForTest()) {
+			e.reached.insert(static_cast<size_t>(p));
+		}
+		// AND THE ENABLE, WHICH THE CARD'S HEAD DRAWS (and the overlay's header, for the window).
 		if (feathers::fx::eroder::kTraits.enableControl >= 0) {
 			e.reached.insert(static_cast<size_t>(feathers::fx::eroder::kTraits.enableControl));
-		}
-		// KNOWN GAP FOR v0.2.0: the shared section (Emphasis, Smear, Tap, Loop) and Etch's two slots shipped in the engine
-		// before their card and window; until those land they are reached by host automation and modulation only. Listed
-		// by name, so this flips red the moment the card or window reaches any of them (and the entry must then go).
-		{
-			static constexpr const char* kNoFaceYet = "the Eroder's shared section and Etch slots have no card or window "
-			                                          "controls yet (v0.2.0); automation and modulation only";
-			const std::set<std::string> unfaced {
-				"Eroder Emphasis", "Eroder Emphasis Shape", "Eroder In Loop", "Eroder Interval", "Eroder Loop",
-				"Eroder Restore", "Eroder Slot A Amount", "Eroder Slot A Mix", "Eroder Slot A Shape", "Eroder Slot A Type",
-				"Eroder Slot B Amount", "Eroder Slot B Mix", "Eroder Slot B Shape", "Eroder Slot B Type",
-				"Eroder Slot Route", "Eroder Smear", "Eroder Tap",
-			};
-			const auto& eroParams = feathers::fx::eroder::kDescriptor.params;
-			size_t named = 0;
-			for (size_t i = 0; i < eroParams.size(); ++i) {
-				if (unfaced.count(eroParams[i].name) > 0) {
-					e.knownGaps[i] = kNoFaceYet;
-					++named;
-				}
-			}
-			REQUIRE(named == unfaced.size()); // every listed name is a real control, so a rename cannot hide one
 		}
 		table.push_back(std::move(e));
 	}

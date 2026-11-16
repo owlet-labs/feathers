@@ -20,6 +20,7 @@
 
 #include "fx/dyn/oversampler.h"
 #include "fx/eroder/eroder_types.h"
+#include "fx/eroder/shell.h"
 
 #include <cmath>
 
@@ -28,8 +29,12 @@ namespace feathers::fx::eroder {
 /// **THE DRIVE STAGE: A STEREO SIGNAL PUSHED INTO THE SHAPER `DriveSettings` NAMES.** Both engines run one, on their
 /// wet: Dust on what its head reads, the Comb on its wet as it is about to be added to the dry. The curves
 /// (`shapeDrive`) run four times oversampled, so what they add above the band is filtered off rather than folded back
-/// into it; Crush is not a curve and is not oversampled — its steps are the sound. Tube's standing offset is taken
-/// back out. Not run at all at the bottom of Drive, so there the signal is the bits it was.
+/// into it; Crush, Decimate, Slew and Lopside are not curves and are not oversampled (their steps and edges are the
+/// sound) and are not level-matched. Tube's, Fold's and Lean's standing offsets are taken back out (Lean's opposite on
+/// the two sides). Not run at all at the bottom of Drive, so there the signal is the bits it was.
+///
+/// **THE STAGE'S OWN MIX** (`DriveSettings::mix`): `dry + mix * (processed - dry)`. At 0 the stage is not run; at 1 the
+/// blend is not computed, so the output is exactly what it is without one.
 ///
 /// No allocation; a frame at a time, so a host that cuts its blocks anywhere gets the same bits.
 class DriveStage {
@@ -37,6 +42,8 @@ public:
 	void prepare(double sampleRate) noexcept {
 		const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
 		dcCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * kDriveDcHz / rate));
+		slew_.prepare(rate);
+		slewSet_ = false; // the slew was just turned off: the next settings turn it on
 		reset();
 	}
 
@@ -45,26 +52,62 @@ public:
 		quiet_ = 0;
 		crushPhase_ = 0.0;
 		crushL_ = crushR_ = 0.0f;
+		prevL_ = prevR_ = 0.0f;
+		slew_.reset();
 		dcL_ = dcR_ = 0.0f;
 	}
 
 	/// THE SETTINGS FOR THE FRAMES THAT FOLLOW. A shaper that was resting, or another Type, starts from nothing rather
 	/// than from what it last held.
 	void set(const DriveSettings& settings) noexcept {
-		if (settings.driven && (!settings_.driven || settings_.mode != settings.mode)) {
+		if (running(settings) && (!running(settings_) || settings_.mode != settings.mode)) {
 			reset();
 		}
 		settings_ = settings;
+		if (running(settings)) {
+			if (settings.slewHz != slewHz_ || settings.slewCurve != slewCurve_ || settings.slewBalance != slewBalance_ ||
+			    !slewSet_) {
+				slewHz_ = settings.slewHz;
+				slewCurve_ = settings.slewCurve;
+				slewBalance_ = settings.slewBalance;
+				slewSet_ = true;
+				SlewSettings slew;
+				slew.on = true;
+				slew.hz = slewHz_;
+				slew.curve = slewCurve_;
+				slew.balance = slewBalance_;
+				slew_.set(slew);
+			}
+		}
 	}
 
 	[[nodiscard]] const DriveSettings& settings() const noexcept { return settings_; }
+	/// The stage's `Slew`, as it is set (a test reads the rate it was given).
+	[[nodiscard]] const Slew& slewForTest() const noexcept { return slew_; }
 
 	/// ONE FRAME, in place.
 	void process(float& left, float& right) noexcept {
 		const DriveSettings& s = settings_;
-		if (!s.driven) {
+		if (!running(s)) {
 			return;
 		}
+		if (s.mix >= 1.0f) {
+			run(left, right);
+			return;
+		}
+		const float dryL = left;
+		const float dryR = right;
+		run(left, right);
+		left = dryL + s.mix * (left - dryL);
+		right = dryR + s.mix * (right - dryR);
+	}
+
+private:
+	/// Not run: at the bottom of Drive, or with none of the stage in the signal.
+	[[nodiscard]] static bool running(const DriveSettings& s) noexcept { return s.driven && s.mix > 0.0f; }
+
+	void run(float& left, float& right) noexcept {
+		const DriveSettings& s = settings_;
 		if (s.mode == DriveMode::Crush) {
 			// HELD FOR A TIME, ROUNDED TO A STEP. A hold of one frame is every frame.
 			crushPhase_ += 1.0;
@@ -77,17 +120,64 @@ public:
 			right = crushR_;
 			return;
 		}
+		if (s.mode == DriveMode::Decimate) {
+			// HELD FOR A TIME, NOT ROUNDED. Shape 0 is the held value; Shape 1 a straight line from the previous held
+			// value to the current one across the hold (a first-order hold: it lags by one hold period); between,
+			// the two outputs blended.
+			crushPhase_ += 1.0;
+			if (crushPhase_ >= s.crushHoldFrames) {
+				crushPhase_ -= s.crushHoldFrames;
+				prevL_ = crushL_;
+				prevR_ = crushR_;
+				crushL_ = left;
+				crushR_ = right;
+			}
+			if (s.shape <= 0.0f) {
+				left = crushL_;
+				right = crushR_;
+				return;
+			}
+			const auto t = static_cast<float>(crushPhase_ / s.crushHoldFrames);
+			const float lineL = prevL_ + (crushL_ - prevL_) * t;
+			const float lineR = prevR_ + (crushR_ - prevR_) * t;
+			if (s.shape >= 1.0f) {
+				left = lineL;
+				right = lineR;
+				return;
+			}
+			left = crushL_ + s.shape * (lineL - crushL_);
+			right = crushR_ + s.shape * (lineR - crushR_);
+			return;
+		}
+		if (s.mode == DriveMode::Slew || s.mode == DriveMode::Lopside) {
+			left = slew_.process(0, left);
+			right = slew_.process(1, right);
+			return;
+		}
 		const bool silentIn = left == 0.0f && right == 0.0f;
 		const DriveMode mode = s.mode;
 		const float gain = s.gain;
 		const float shape = s.shape;
-		over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) {
-			l = shapeDrive(mode, l * gain, shape);
-			r = shapeDrive(mode, r * gain, shape);
-		});
-		left *= s.norm;
-		right *= s.norm;
-		if (mode == DriveMode::Tube) {
+		const float norm = s.norm;
+		if (mode == DriveMode::Paunch) {
+			// THE RIGHT'S RESIDUE (the tanh less the clean signal) IS TURNED OVER BY SHAPE: r + (1 - 2 shape)(yr - r),
+			// written as yr + 2 shape (r - yr) so that at the bottom it is exactly yr. Norm is applied here.
+			over_.process(&left, &right, 1, [gain, shape, norm](float& l, float& r) {
+				const float yl = std::tanh(gain * l) * norm;
+				const float yr = std::tanh(gain * r) * norm;
+				l = yl;
+				r = yr + 2.0f * shape * (r - yr);
+			});
+		}
+		else {
+			over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) {
+				l = shapeDrive(mode, l * gain, shape, gain);
+				r = shapeDriveRight(mode, r * gain, shape, gain);
+			});
+			left *= norm;
+			right *= norm;
+		}
+		if (mode == DriveMode::Tube || mode == DriveMode::Fold || mode == DriveMode::Lean) {
 			dcL_ += (left - dcL_) * dcCoefficient_;
 			dcR_ += (right - dcR_) * dcCoefficient_;
 			left -= dcL_;
@@ -112,19 +202,25 @@ public:
 		}
 	}
 
-private:
 	static constexpr int kQuietFrames = 256;
 	static constexpr float kQuietLevel = 1.0e-9f;
 
 	DriveSettings settings_ {};
 	dyn::Oversampler4x over_ {};
+	Slew slew_ {};
 	int quiet_ = 0;
 	double crushPhase_ = 0.0;
 	float crushL_ = 0.0f;
 	float crushR_ = 0.0f;
+	float prevL_ = 0.0f;
+	float prevR_ = 0.0f;
 	float dcL_ = 0.0f;
 	float dcR_ = 0.0f;
 	float dcCoefficient_ = 0.0f;
+	float slewHz_ = 0.0f;
+	float slewCurve_ = 0.0f;
+	float slewBalance_ = 0.0f;
+	bool slewSet_ = false;
 };
 
 /// **HP WET: A TWO-POLE HIGHPASS ON THE WET, AFTER THE SHAPER, and the same filter on the dry for Sub Thru** — what it

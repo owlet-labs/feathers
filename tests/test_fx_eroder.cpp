@@ -1629,6 +1629,20 @@ TEST_CASE("Dust: one quantity per control") {
 	CHECK(std::abs(deriveDust(s, 60.0, rate).freqHz - 1500.0) < 0.01);
 	// HELD UNDER THE RATE'S CEILING however far a note pushes it.
 	CHECK(deriveDust(s, 127.0, rate).freqHz <= 0.45 * rate);
+	// A ROUTE MAY CARRY FREQ PAST THE KNOB'S TOP, which is what lets a tracked low note reach the top of the band:
+	// two octaves under middle C the knob's own top is a quarter of it, and two octaves of offset give it back.
+	REQUIRE(kDescriptor.params[static_cast<size_t>(Param::Freq)].offsetsMayLeaveRange);
+	s.freq = static_cast<float>(kDustFreqLog2Max);
+	const double top = std::exp2(kDustFreqLog2Max);
+	CHECK(std::abs(deriveDust(s, 36.0, rate).freqHz / (top / 4.0) - 1.0) < 1.0e-4);
+	s.freq = static_cast<float>(kDustFreqLog2Max + 2.0);
+	CHECK(std::abs(deriveDust(s, 36.0, rate).freqHz / top - 1.0) < 1.0e-4);
+	// AND HELD IN HERTZ AT BOTH ENDS however far a route goes.
+	s.freq = static_cast<float>(kDustFreqLog2Max + 9.0);
+	CHECK(deriveDust(s, 36.0, rate).freqHz == std::min(20000.0, 0.45 * rate));
+	s.freq = static_cast<float>(kDustFreqLog2Min - 9.0);
+	CHECK(deriveDust(s, 36.0, rate).freqHz == 5.0);
+	s.freq = hertzToLog2(1500.0);
 	s.track = false;
 
 	// WIDTH: Q 16 at the bottom, a half at the top, even in octaves between.
@@ -1943,44 +1957,68 @@ double dbOf(double ratio) {
 	return 20.0 * std::log10(std::max(ratio, 1.0e-12));
 }
 
-/// THE CURVES, RESTATED IN DOUBLE from their descriptions.
-double curveOf(DriveMode mode, double u, double shape) {
+/// THE CURVES, RESTATED IN DOUBLE from their descriptions. `gain` is the Drive's, which Soft's dead zone is a share of.
+double curveOf(DriveMode mode, double u, double shape, double gain = 1.0) {
 	const double halfPi = std::numbers::pi * 0.5;
 	switch (mode) {
-	case DriveMode::Soft:
-		return (1.0 - shape) * std::tanh(u) + shape * std::clamp(u, -1.0, 1.0);
+	case DriveMode::Soft: {
+		// STARVED: nothing under 0.6 of the reference peak (0.5) at full Shape, then the tanh of what is over it.
+		const double zone = 0.6 * shape * gain * 0.5;
+		const double over = std::max(0.0, std::abs(u) - zone);
+		return std::tanh(u < 0.0 ? -over : over);
+	}
 	case DriveMode::Tube: {
-		// A TANH READ FROM A BIAS, brought back through zero at a slope of one.
-		const double b = 0.25 + 0.95 * shape;
-		return (std::tanh(u + b) - std::tanh(b)) / (1.0 - std::tanh(b) * std::tanh(b));
+		// TWO HALVES: a tanh above zero; below it a tanh of r u, over r, with r from 1.5 to 8 geometrically.
+		const double r = 1.5 * std::pow(8.0 / 1.5, shape);
+		return u >= 0.0 ? std::tanh(u) : std::tanh(r * u) / r;
 	}
 	case DriveMode::Fold: {
-		// A TRIANGLE OF PERIOD FOUR through the origin at a slope of one.
-		const double phase = u - 4.0 * std::floor((u + 1.0) / 4.0);
-		const double tri = phase <= 1.0 ? phase : 2.0 - phase;
-		return (1.0 - shape) * std::sin(halfPi * u) + shape * tri;
+		// A SINE FOLDER READ FROM A BIAS of 0.75 shape quarter-periods, back through zero.
+		const double b = 0.75 * shape;
+		return std::sin(halfPi * (u + b)) - std::sin(halfPi * b);
 	}
 	case DriveMode::Wreck:
 		return std::sin(halfPi * std::tanh(u) * (1.0 + 4.0 * shape));
+	case DriveMode::Jag: {
+		// A TRIANGLE OF PERIOD FOUR through the origin at a slope of one, after the tanh.
+		const double x = std::tanh(u) * (1.0 + 4.0 * shape);
+		const double phase = x - 4.0 * std::floor((x + 1.0) / 4.0);
+		return phase <= 1.0 ? phase : 2.0 - phase;
+	}
+	case DriveMode::Paunch:
+		return std::tanh(u);
+	case DriveMode::Lean: {
+		// A TANH READ FROM A BIAS, its bias from nothing, back through zero at a slope of one.
+		const double b = 1.2 * shape;
+		return (std::tanh(u + b) - std::tanh(b)) / (1.0 - std::tanh(b) * std::tanh(b));
+	}
 	default:
 		return u;
 	}
 }
 
-constexpr DriveMode kCurves[] = { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Wreck };
+constexpr DriveMode kAllDrives[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
+	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Paunch,   DriveMode::Crush,
+	                                 DriveMode::Decimate, DriveMode::Slew, DriveMode::Lopside };
+constexpr DriveMode kCurves[] = { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Wreck,
+	                                  DriveMode::Jag, DriveMode::Lean, DriveMode::Paunch };
 } // namespace
 
 TEST_CASE("Drive: each Type's curve is the one it is described as, through zero at zero") {
 	for (const DriveMode mode : kCurves) {
 		CAPTURE(static_cast<int>(mode));
 		for (const float shape : { 0.0f, 0.3f, 1.0f }) {
-			CHECK(shapeDrive(mode, 0.0f, shape) == 0.0f);
-			for (const float u : { -7.3f, -1.6f, -0.4f, 0.05f, 0.7f, 1.3f, 2.9f, 11.0f }) {
-				CAPTURE(u);
-				CAPTURE(shape);
-				CHECK(std::abs(static_cast<double>(shapeDrive(mode, u, shape))
-				               - curveOf(mode, static_cast<double>(u), static_cast<double>(shape)))
-				      < 2.0e-5);
+			for (const float gain : { 0.25f, 1.0f, 12.0f }) {
+				CHECK(shapeDrive(mode, 0.0f, shape, gain) == 0.0f);
+				for (const float u : { -7.3f, -1.6f, -0.4f, 0.05f, 0.7f, 1.3f, 2.9f, 11.0f }) {
+					CAPTURE(u);
+					CAPTURE(shape);
+					CAPTURE(gain);
+					CHECK(std::abs(static_cast<double>(shapeDrive(mode, u, shape, gain))
+					               - curveOf(mode, static_cast<double>(u), static_cast<double>(shape),
+					                         static_cast<double>(gain)))
+					      < 2.0e-5);
+				}
 			}
 		}
 	}
@@ -1994,11 +2032,36 @@ TEST_CASE("Drive: each Type's curve is the one it is described as, through zero 
 	past.driveShape = -0.3f;
 	CHECK(deriveDust(past, 60.0, kRate).driveShape == 0.0f);
 	CHECK(deriveDust(past, 60.0, kRate).driveMode == DriveMode::Fold);
-	// CRUSH IS NOT A CURVE.
-	CHECK(shapeDrive(DriveMode::Crush, 0.37f, 0.5f) == 0.37f);
-	// TUBE LEANS, more with Shape: the top side flattens long before the bottom.
-	CHECK(shapeDrive(DriveMode::Tube, 2.0f, 0.0f) < -0.8f * shapeDrive(DriveMode::Tube, -2.0f, 0.0f));
-	CHECK(shapeDrive(DriveMode::Tube, 2.0f, 1.0f) < -0.2f * shapeDrive(DriveMode::Tube, -2.0f, 1.0f));
+	// THE TYPES THAT ARE NOT CURVES ARE THE IDENTITY HERE.
+	for (const DriveMode mode : { DriveMode::Crush, DriveMode::Decimate, DriveMode::Slew, DriveMode::Lopside }) {
+		CHECK(shapeDrive(mode, 0.37f, 0.5f, 4.0f) == 0.37f);
+	}
+	// TUBE'S TWO HALVES DIFFER, more with Shape, and both go through zero at a slope of one: the negative half
+	// (the steeper) is flat long before the positive.
+	for (const float shape : { 0.0f, 0.5f, 1.0f }) {
+		CHECK(std::abs(shapeDrive(DriveMode::Tube, 1.0e-4f, shape, 1.0f) / 1.0e-4f - 1.0f) < 1.0e-3f);
+		CHECK(std::abs(shapeDrive(DriveMode::Tube, -1.0e-4f, shape, 1.0f) / -1.0e-4f - 1.0f) < 1.0e-3f);
+	}
+	CHECK(shapeDrive(DriveMode::Tube, -2.0f, 0.0f, 1.0f) > -0.9f * shapeDrive(DriveMode::Tube, 2.0f, 0.0f, 1.0f));
+	CHECK(shapeDrive(DriveMode::Tube, -2.0f, 1.0f, 1.0f) > -0.2f * shapeDrive(DriveMode::Tube, 2.0f, 1.0f, 1.0f));
+	// SOFT STARVES: at full Shape everything under 0.6 of the reference peak (times the Drive's gain) is exactly
+	// nothing, and above it comes up from the edge of the zone; at none it is a plain tanh, to the bit.
+	for (const float gain : { 0.5f, 3.0f }) {
+		const float zone = 0.6f * 0.5f * gain;
+		CHECK(shapeDrive(DriveMode::Soft, 0.99f * zone, 1.0f, gain) == 0.0f);
+		CHECK(shapeDrive(DriveMode::Soft, -0.99f * zone, 1.0f, gain) == 0.0f);
+		CHECK(shapeDrive(DriveMode::Soft, zone + 0.5f, 1.0f, gain) > 0.4f);
+		CHECK(shapeDrive(DriveMode::Soft, -zone - 0.5f, 1.0f, gain) < -0.4f);
+		for (const float u : { -2.5f, -0.3f, 0.7f, 5.0f }) {
+			CHECK(shapeDrive(DriveMode::Soft, u, 0.0f, gain) == std::tanh(u));
+		}
+	}
+	// A DEAD ZONE HAS NO SLOPE AT ZERO; the others' are as described.
+	CHECK(driveSlope(DriveMode::Soft, 0.0f) == 1.0);
+	CHECK(driveSlope(DriveMode::Soft, 0.2f) == 0.0);
+	CHECK(driveSmallSignalGain(DriveMode::Soft, 4.0, 1.0f) == 0.0);
+	CHECK(std::abs(driveSlope(DriveMode::Fold, 1.0f) - std::numbers::pi * 0.5 * std::cos(std::numbers::pi * 0.5 * 0.75)) < 1.0e-12);
+	CHECK(driveSlope(DriveMode::Tube, 1.0f) == 1.0);
 }
 
 TEST_CASE("Drive: the make-up puts the reference sine out at the level it went in, and a vanishing signal's gain is the curve's slope") {
@@ -2014,7 +2077,7 @@ TEST_CASE("Drive: the make-up puts the reference sine out at the level it went i
 				const int n = 4096;
 				for (int i = 0; i < n; ++i) {
 					const double y = curveOf(mode, gain * 0.5 * std::sin(2.0 * std::numbers::pi * (i + 0.5) / n),
-					                         static_cast<double>(shape));
+					                         static_cast<double>(shape), gain);
 					sum += y;
 					squares += y * y;
 				}
@@ -2022,12 +2085,22 @@ TEST_CASE("Drive: the make-up puts the reference sine out at the level it went i
 				const double makeUp = driveMakeUp(mode, gain, shape);
 				CHECK(std::abs(dbOf(makeUp * rms / (0.5 / std::sqrt(2.0)))) < 0.25);
 				// THE SLOPE AT ZERO, by a small step on the restated curve.
-				const double slope = curveOf(mode, 1.0e-4, static_cast<double>(shape)) / 1.0e-4;
-				CHECK(std::abs(driveSmallSignalGain(mode, gain, shape) / (slope * gain * makeUp) - 1.0) < 1.0e-3);
+				const double slope = curveOf(mode, 1.0e-4, static_cast<double>(shape), gain) / 1.0e-4;
+				if (mode == DriveMode::Soft && shape > 0.0f) {
+					// A DEAD ZONE: no slope at zero, so nothing for a feedback through it to be divided by.
+					CHECK(slope == 0.0);
+					CHECK(driveSmallSignalGain(mode, gain, shape) == 0.0);
+				}
+				else {
+					CHECK(std::abs(driveSmallSignalGain(mode, gain, shape) / (slope * gain * makeUp) - 1.0) < 1.0e-3);
+				}
 			}
 		}
 	}
-	CHECK(driveMakeUp(DriveMode::Crush, 16.0, 1.0f) == 1.0);
+	for (const DriveMode mode : { DriveMode::Crush, DriveMode::Decimate, DriveMode::Slew, DriveMode::Lopside }) {
+		CHECK(driveMakeUp(mode, 16.0, 1.0f) == 1.0);
+		CHECK(driveSmallSignalGain(mode, 16.0, 1.0f) == 1.0);
+	}
 }
 
 TEST_CASE("Drive: at zero it is not run; just above, the sound is all but the same; the level holds all the way up") {
@@ -2056,6 +2129,20 @@ TEST_CASE("Drive: at zero it is not run; just above, the sound is all but the sa
 			CHECK(std::abs(dbOf(rmsOf(out) / rmsOf(clean))) < 1.0);
 		}
 	}
+	// AT FULL SHAPE the reference sine (this one) is still put out at its level, whatever the Type; a quieter signal is
+	// not, and Soft's dead zone cannot hold level for one that is under it (it is silent: its own case below).
+	s.driveShape = 1.0f;
+	for (const DriveMode mode : kCurves) {
+		CAPTURE(static_cast<int>(mode));
+		s.driveMode = mode;
+		for (const float drive : { 0.25f, 0.5f, 0.75f, 1.0f }) {
+			CAPTURE(drive);
+			s.drive = drive;
+			const std::vector<float> out = stillSine(s, 1000.0, 0.5, 4800, 4800);
+			CHECK(std::abs(dbOf(rmsOf(out) / rmsOf(clean))) < 1.5);
+		}
+	}
+	s.driveShape = 0.0f;
 	// AT THE TOP IT IS A DISTORTION: Soft's third harmonic is within 20 dB of its fundamental.
 	s.driveMode = DriveMode::Soft;
 	s.drive = 1.0f;
@@ -2063,22 +2150,187 @@ TEST_CASE("Drive: at zero it is not run; just above, the sound is all but the sa
 	CHECK(dbOf(toneAt(hard, 3000.0) / toneAt(hard, 1000.0)) > -20.0);
 }
 
-TEST_CASE("Drive: Tube's lean is even harmonics and no standing offset; Soft has no lean") {
+namespace {
+double meanOf(const std::vector<float>& v) {
+	double mean = 0.0;
+	for (const float x : v) {
+		mean += static_cast<double>(x);
+	}
+	return mean / static_cast<double>(v.size());
+}
+} // namespace
+
+TEST_CASE("Drive: Tube's halves differ and Fold reads from a bias — even harmonics and no standing offset; Soft has none, nor has Fold at the bottom of Shape") {
 	Settings s = dustStill();
 	s.drive = 0.8f;
 	s.driveMode = DriveMode::Tube;
 	s.driveShape = 1.0f;
 	const std::vector<float> lean = stillSine(s, 1000.0, 0.5, 4800, 48000);
-	CHECK(dbOf(toneAt(lean, 2000.0) / toneAt(lean, 1000.0)) > -30.0);
+	MESSAGE("Tube Shape 1: 2nd " << dbOf(toneAt(lean, 2000.0) / toneAt(lean, 1000.0)) << " dB, mean " << meanOf(lean));
+	CHECK(dbOf(toneAt(lean, 2000.0) / toneAt(lean, 1000.0)) > -20.0);
+	CHECK(std::abs(meanOf(lean)) < 1.0e-3);
+	// FOLD READ FROM A BIAS: the even harmonics, and the blocker takes the offset out.
+	s.driveMode = DriveMode::Fold;
+	const std::vector<float> biased = stillSine(s, 1000.0, 0.5, 4800, 48000);
+	MESSAGE("Fold Shape 1: 2nd " << dbOf(toneAt(biased, 2000.0) / toneAt(biased, 1000.0)) << " dB, mean " << meanOf(biased));
+	CHECK(dbOf(toneAt(biased, 2000.0) / toneAt(biased, 1000.0)) > -20.0);
+	CHECK(std::abs(meanOf(biased)) < 1.0e-3);
+	s.driveShape = 0.0f;
+	const std::vector<float> even = stillSine(s, 1000.0, 0.5, 4800, 48000);
+	CHECK(dbOf(toneAt(even, 2000.0) / toneAt(even, 1000.0)) < -70.0);
+	CHECK(dbOf(toneAt(even, 4000.0) / toneAt(even, 1000.0)) < -70.0);
+	// SOFT HAS NONE AT ALL, starved or not.
+	s.driveMode = DriveMode::Soft;
+	for (const float shape : { 0.0f, 1.0f }) {
+		s.driveShape = shape;
+		const std::vector<float> level = stillSine(s, 1000.0, 0.5, 4800, 48000);
+		CHECK(dbOf(toneAt(level, 2000.0) / toneAt(level, 1000.0)) < -70.0);
+	}
+}
+
+TEST_CASE("Drive: Soft at full Shape is exactly silent under its dead zone and sounds over it") {
+	// DRIVE 0.8 IS A GAIN OF 2^2.6, so the zone is 0.6 of the reference peak, 0.3, whatever the gain.
+	const auto run = [](float peak, std::vector<float>& out) {
+		DriveStage stage;
+		stage.prepare(kRate);
+		stage.set(deriveDrive(0.8f, DriveMode::Soft, 1.0f, kRate, nullptr));
+		for (size_t i = 0; i < 96000; ++i) {
+			const auto x = static_cast<float>(peak * std::sin(2.0 * std::numbers::pi * 1000.0 * static_cast<double>(i) / kRate));
+			float l = x;
+			float r = x;
+			stage.process(l, r);
+			if (i >= 48000) {
+				out.push_back(l);
+			}
+		}
+	};
+	std::vector<float> under;
+	run(0.25f, under);
+	bool silent = true;
+	for (const float v : under) {
+		silent = silent && v == 0.0f;
+	}
+	CHECK(silent);
+	std::vector<float> over;
+	run(0.4f, over);
+	MESSAGE("over the zone: 1 kHz " << toneAt(over, 1000.0));
+	CHECK(toneAt(over, 1000.0) > 0.05);
+}
+
+TEST_CASE("Drive: Lean leans the two sides opposite ways — the even harmonics are the side, the mid has none, and at the bottom of Shape it is Soft's tanh") {
+	// THE RIGHT'S CURVE IS THE LEFT'S TURNED OVER, in Lean alone.
+	for (const float u : { -2.1f, -0.3f, 0.6f, 1.7f }) {
+		CHECK(shapeDriveRight(DriveMode::Lean, u, 0.7f, 1.0f) == -shapeDrive(DriveMode::Lean, -u, 0.7f, 1.0f));
+		CHECK(shapeDriveRight(DriveMode::Lean, u, 0.7f, 1.0f) != shapeDrive(DriveMode::Lean, u, 0.7f, 1.0f));
+		CHECK(shapeDriveRight(DriveMode::Tube, u, 0.7f, 1.0f) == shapeDrive(DriveMode::Tube, u, 0.7f, 1.0f));
+		CHECK(shapeDrive(DriveMode::Lean, u, 0.0f, 1.0f) == shapeDrive(DriveMode::Soft, u, 0.0f, 1.0f));
+	}
+	// THE STAGE, the same sine on both sides.
+	const auto run = [](float shape, std::vector<float>& mid, std::vector<float>& side, std::vector<float>& left) {
+		DriveStage stage;
+		stage.prepare(kRate);
+		stage.set(deriveDrive(0.8f, DriveMode::Lean, shape, kRate, nullptr));
+		const size_t settle = 48000;
+		const size_t frames = 4800;
+		for (size_t i = 0; i < settle + frames; ++i) {
+			const auto x = static_cast<float>(0.5 * std::sin(2.0 * std::numbers::pi * 1000.0 * static_cast<double>(i) / kRate));
+			float l = x;
+			float r = x;
+			stage.process(l, r);
+			if (i >= settle) {
+				mid.push_back(0.5f * (l + r));
+				side.push_back(0.5f * (l - r));
+				left.push_back(l);
+			}
+		}
+	};
+	std::vector<float> mid;
+	std::vector<float> side;
+	std::vector<float> left;
+	run(1.0f, mid, side, left);
+	const double fundamental = toneAt(mid, 1000.0);
+	// EACH SIDE LEANS: a second harmonic within 30 dB of the fundamental, and no standing offset.
+	CHECK(dbOf(toneAt(left, 2000.0) / toneAt(left, 1000.0)) > -30.0);
 	double mean = 0.0;
-	for (const float v : lean) {
+	for (const float v : left) {
 		mean += static_cast<double>(v);
 	}
-	CHECK(std::abs(mean / static_cast<double>(lean.size())) < 1.0e-3);
-	// SOFT HAS NO LEAN AT ALL.
-	s.driveMode = DriveMode::Soft;
-	const std::vector<float> level = stillSine(s, 1000.0, 0.5, 4800, 48000);
-	CHECK(dbOf(toneAt(level, 2000.0) / toneAt(level, 1000.0)) < -70.0);
+	CHECK(std::abs(mean / static_cast<double>(left.size())) < 1.0e-3);
+	// THE SIDE IS THE EVEN HARMONICS and none of the odd; the mid is the odd and none of the even.
+	CHECK(dbOf(toneAt(side, 2000.0) / toneAt(left, 2000.0)) > -0.1);
+	CHECK(dbOf(toneAt(side, 1000.0) / fundamental) < -80.0);
+	CHECK(dbOf(toneAt(side, 3000.0) / fundamental) < -80.0);
+	CHECK(dbOf(toneAt(mid, 2000.0) / fundamental) < -80.0);
+	CHECK(dbOf(toneAt(mid, 4000.0) / fundamental) < -80.0);
+	CHECK(dbOf(toneAt(mid, 3000.0) / fundamental) > -40.0);
+	// AT THE BOTTOM OF SHAPE THERE IS NO SIDE AT ALL.
+	std::vector<float> flatMid;
+	std::vector<float> flatSide;
+	std::vector<float> flatLeft;
+	run(0.0f, flatMid, flatSide, flatLeft);
+	for (const float v : flatSide) {
+		REQUIRE(v == 0.0f);
+	}
+	CHECK(toneAt(flatMid, 1000.0) > 0.1);
+}
+
+TEST_CASE("Drive: Paunch puts the odd harmonics in opposite polarity — Shape 0 is Soft's tanh, 0.5 leaves the right clean, 1 makes the mono sum the clean signal") {
+	const auto run = [](DriveMode type, float shape, std::vector<float>& left, std::vector<float>& right) {
+		DriveStage stage;
+		stage.prepare(kRate);
+		stage.set(deriveDrive(0.8f, type, shape, kRate, nullptr));
+		const size_t settle = 48000;
+		const size_t frames = 4800;
+		for (size_t i = 0; i < settle + frames; ++i) {
+			const auto x = static_cast<float>(0.5 * std::sin(2.0 * std::numbers::pi * 1000.0 * static_cast<double>(i) / kRate));
+			float l = x;
+			float r = x;
+			stage.process(l, r);
+			if (i >= settle) {
+				left.push_back(l);
+				right.push_back(r);
+			}
+		}
+	};
+	std::vector<float> l0;
+	std::vector<float> r0;
+	run(DriveMode::Paunch, 0.0f, l0, r0);
+	std::vector<float> softL;
+	std::vector<float> softR;
+	run(DriveMode::Soft, 0.0f, softL, softR);
+	float worst = 0.0f;
+	for (size_t i = 0; i < l0.size(); ++i) {
+		REQUIRE(l0[i] == r0[i]); // the side is exactly nothing
+		worst = std::max(worst, std::abs(l0[i] - softL[i]));
+	}
+	MESSAGE("Paunch Shape 0 against Soft Shape 0, worst difference: " << worst);
+	CHECK(worst < 1.0e-6f);
+	CHECK(toneAt(l0, 1000.0) > 0.1);
+
+	std::vector<float> l1;
+	std::vector<float> r1;
+	run(DriveMode::Paunch, 1.0f, l1, r1);
+	std::vector<float> mid(l1.size());
+	std::vector<float> side(l1.size());
+	for (size_t i = 0; i < l1.size(); ++i) {
+		mid[i] = 0.5f * (l1[i] + r1[i]);
+		side[i] = 0.5f * (l1[i] - r1[i]);
+	}
+	const double fundamental = toneAt(mid, 1000.0);
+	MESSAGE("mid 1 kHz " << fundamental << ", mid 3 kHz " << dbOf(toneAt(mid, 3000.0) / fundamental) << " dB, 5 kHz "
+	                     << dbOf(toneAt(mid, 5000.0) / fundamental) << " dB, side 3 kHz vs left "
+	                     << dbOf(toneAt(side, 3000.0) / toneAt(l1, 3000.0)) << " dB, side 2 kHz "
+	                     << dbOf(toneAt(side, 2000.0) / fundamental) << " dB");
+	CHECK(std::abs(dbOf(fundamental / 0.5)) < 0.05);
+	CHECK(dbOf(toneAt(mid, 3000.0) / fundamental) < -80.0);
+	CHECK(dbOf(toneAt(mid, 5000.0) / fundamental) < -80.0);
+	CHECK(std::abs(dbOf(toneAt(side, 3000.0) / toneAt(l1, 3000.0))) < 0.1);
+	CHECK(dbOf(toneAt(side, 2000.0) / fundamental) < -80.0);
+
+	std::vector<float> lh;
+	std::vector<float> rh;
+	run(DriveMode::Paunch, 0.5f, lh, rh);
+	CHECK(dbOf(toneAt(rh, 3000.0) / toneAt(rh, 1000.0)) < -80.0);
 }
 
 TEST_CASE("Drive: what the curve adds above the band is filtered off, not folded back into it") {
@@ -2101,44 +2353,255 @@ TEST_CASE("Drive: Crush holds each sample for a time the knob sets and rounds it
 	const DustDerived d = deriveDust(s, 60.0, kRate);
 	// THE HOLD: one frame at the bottom, 1 / 500 s more than nothing at the top.
 	CHECK(std::abs(d.crushHoldFrames - (1.0 + kRate * (std::exp2(6.3) - 1.0) / 40000.0)) < 1.0e-9);
-	CHECK(std::abs(d.crushStep - 0.25) < 1.0e-12); // three bits across -1..1
+	CHECK(std::abs(d.crushStep - std::exp2(1.0 - 1.5)) < 1.0e-7); // a bit and a half across -1..1: 2^(1 - bits)
 	s.driveShape = 0.0f;
-	CHECK(std::abs(deriveDust(s, 60.0, kRate).crushStep - std::exp2(-15.0)) < 1.0e-15);
+	CHECK(std::abs(deriveDust(s, 60.0, kRate).crushStep - std::exp2(1.0 - 10.0)) < 1.0e-15);
 	s.driveShape = 1.0f;
 
 	const std::vector<float> out = stillSine(s, 220.0, 0.9, 48000, 480);
 	size_t changes = 0;
 	for (size_t i = 1; i < out.size(); ++i) {
 		changes += out[i] != out[i - 1] ? 1u : 0u;
-		const float steps = out[i] / 0.25f;
-		REQUIRE(steps == std::round(steps)); // every sample is on the grid
+		const double steps = static_cast<double>(out[i]) / std::exp2(1.0 - 1.5);
+		REQUIRE(std::abs(steps - std::round(steps)) < 1.0e-5); // every sample is on the grid, the restated step's
 	}
-	// AT MOST ONE NEW VALUE A HOLD, and a 220 Hz sine across four-level steps changes at most of them.
+	// AT MOST ONE NEW VALUE A HOLD, and a 220 Hz sine across three-level steps changes at most of them.
 	const double holds = 48000.0 / d.crushHoldFrames;
+	MESSAGE("Crush changes " << changes << " of " << holds << " holds");
 	CHECK(static_cast<double>(changes) <= holds + 1.0);
-	CHECK(static_cast<double>(changes) > 0.5 * holds);
+	CHECK(static_cast<double>(changes) > 0.3 * holds);
+	// AT THE BOTTOM OF SHAPE THE STEP IS 2^-9, whatever the hold.
+	s.driveShape = 0.0f;
+	const std::vector<float> fine = stillSine(s, 220.0, 0.9, 48000, 480);
+	for (const float v : fine) {
+		const double steps = static_cast<double>(v) / std::exp2(-9.0);
+		REQUIRE(std::abs(steps - std::round(steps)) < 1.0e-3);
+	}
 }
 
-TEST_CASE("Drive: Wreck's feedback runs through the shaper, with the shaper's gain taken back out of the loop") {
-	Settings s = declared();
-	s.resonance = 1.0f;
-	s.driveMode = DriveMode::Wreck;
-	s.driveShape = 1.0f;
-	s.drive = 1.0f;
-	const DustDerived wreck = deriveDust(s, 60.0, kRate);
-	const double gain = driveSmallSignalGain(DriveMode::Wreck, 16.0, 1.0f);
-	REQUIRE(gain > 1.0);
-	CHECK(std::abs(wreck.feedback - 0.9 / gain) < 1.0e-9);
-	// ANY OTHER TYPE LEAVES THE LINE'S FEEDBACK ALONE, as does Wreck at no Drive.
-	s.driveMode = DriveMode::Fold;
-	CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
-	s.driveMode = DriveMode::Wreck;
-	s.drive = 0.0f;
-	CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
+namespace {
+/// A STAGE RUN FRAME BY FRAME on the same signal both sides; the left comes back.
+std::vector<float> stageOf(const DriveSettings& settings, const std::vector<float>& in) {
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.set(settings);
+	std::vector<float> out(in.size());
+	for (size_t i = 0; i < in.size(); ++i) {
+		float l = in[i];
+		float r = in[i];
+		stage.process(l, r);
+		out[i] = l;
+	}
+	return out;
+}
+
+/// A SIGNAL THAT MOVES FROM FRAME TO FRAME, so a held value is told from its neighbours.
+std::vector<float> wanderOf(size_t frames) {
+	std::vector<float> v(frames);
+	for (size_t i = 0; i < frames; ++i) {
+		v[i] = static_cast<float>(0.6 * std::sin(0.37 * static_cast<double>(i)) + 0.3 * std::sin(1.9 * static_cast<double>(i) + 1.0));
+	}
+	return v;
+}
+
+DriveSettings plainSettings(DriveMode mode, float shape, double hold) {
+	DriveSettings d;
+	d.driven = true;
+	d.mode = mode;
+	d.shape = shape;
+	d.crushHoldFrames = hold;
+	return d;
+}
+} // namespace
+
+TEST_CASE("Drive: Decimate holds each sample as Crush does, as steps at the bottom of Shape and as a lagging line at the top") {
+	// THE KNOB SETS THE HOLD BY CRUSH'S LAW, and rounds nothing.
+	for (const float knob : { 0.1f, 0.5f, 1.0f }) {
+		const double want = 1.0 + kRate * (std::exp2(6.3 * static_cast<double>(knob)) - 1.0) / 40000.0;
+		CHECK(std::abs(deriveDrive(knob, DriveMode::Decimate, 0.5f, kRate).crushHoldFrames - want) < 1.0e-9);
+		CHECK(deriveDrive(knob, DriveMode::Decimate, 0.5f, kRate).norm == 1.0f);
+	}
+	const size_t hold = 8;
+	const std::vector<float> in = wanderOf(200);
+	// THE FRAME A HOLD STARTS ON, restated: the first of them is the eighth frame, and so on every eighth.
+	const auto startOf = [&](size_t i) { return static_cast<std::ptrdiff_t>((i + 1) / hold * hold) - 1; };
+	const std::vector<float> steps = stageOf(plainSettings(DriveMode::Decimate, 0.0f, static_cast<double>(hold)), in);
+	for (size_t i = 0; i < in.size(); ++i) {
+		const std::ptrdiff_t c = startOf(i);
+		CAPTURE(i);
+		CHECK(steps[i] == (c < 0 ? 0.0f : in[static_cast<size_t>(c)]));
+	}
+	const std::vector<float> lines = stageOf(plainSettings(DriveMode::Decimate, 1.0f, static_cast<double>(hold)), in);
+	int constantRuns = 0;
+	for (size_t i = 0; i < in.size(); ++i) {
+		const std::ptrdiff_t c = startOf(i);
+		if (c < 0) {
+			CHECK(lines[i] == 0.0f);
+			continue;
+		}
+		const double held = in[static_cast<size_t>(c)];
+		const double previous = c >= static_cast<std::ptrdiff_t>(hold) ? in[static_cast<size_t>(c) - hold] : 0.0;
+		CAPTURE(i);
+		// THE LINE: from the previous held value to the current one across the hold, so one hold behind.
+		CHECK(std::abs(static_cast<double>(lines[i]) - (previous + (held - previous) * static_cast<double>(i - static_cast<size_t>(c)) / static_cast<double>(hold))) < 1.0e-6);
+		if (i + 1 < in.size() && startOf(i + 1) == c) {
+			CHECK(std::abs(static_cast<double>(lines[i + 1] - lines[i]) - (held - previous) / static_cast<double>(hold)) < 1.0e-6);
+			++constantRuns;
+		}
+	}
+	CHECK(constantRuns > 100);
+	// BETWEEN IS THE LINEAR BLEND OF THE TWO.
+	const std::vector<float> half = stageOf(plainSettings(DriveMode::Decimate, 0.5f, static_cast<double>(hold)), in);
+	for (size_t i = 0; i < in.size(); ++i) {
+		CHECK(std::abs(static_cast<double>(half[i]) - 0.5 * (static_cast<double>(steps[i]) + static_cast<double>(lines[i]))) < 1.0e-6);
+	}
+	// A HOLD OF ONE FRAME AT SHAPE 0 IS THE INPUT, to the bit; at Shape 1 it is the input a frame late.
+	CHECK(stageOf(plainSettings(DriveMode::Decimate, 0.0f, 1.0), in) == in);
+	const std::vector<float> late = stageOf(plainSettings(DriveMode::Decimate, 1.0f, 1.0), in);
+	CHECK(late[0] == 0.0f);
+	for (size_t i = 1; i < in.size(); ++i) {
+		REQUIRE(late[i] == in[i - 1]);
+	}
+}
+
+TEST_CASE("Drive: Slew and Lopside run the stage's Slew at the rate the knob sets, and drag by the balance Shape sets") {
+	const auto hzOf = [](double knob) { return 20000.0 * std::pow(50.0 / 20000.0, knob); };
+	for (const DriveMode mode : { DriveMode::Slew, DriveMode::Lopside }) {
+		for (const float knob : { 0.25f, 0.5f, 1.0f }) {
+			DriveStage stage;
+			stage.prepare(kRate);
+			stage.set(deriveDrive(knob, mode, 0.3f, kRate));
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(knob);
+			CHECK(stage.slewForTest().on());
+			// THE HARD LIMIT IS 4 * 0.5 * hz / rate A FRAME, hz the restated one.
+			CHECK(std::abs(static_cast<double>(stage.slewForTest().limit()) - 2.0 * hzOf(static_cast<double>(knob)) / kRate) < 1.0e-7);
+		}
+	}
+	// THE KNOB'S BOTTOM IS HELD UNDER 0.45 OF THE RATE.
+	CHECK(deriveDrive(1.0e-6f, DriveMode::Slew, 0.0f, 24000.0).slewHz <= 0.45 * 24000.0);
+	CHECK(deriveDrive(1.0f, DriveMode::Slew, 0.0f, kRate).slewHz == 50.0f);
+	CHECK(deriveDrive(0.5f, DriveMode::Slew, 0.7f, kRate).slewCurve == 0.7f);
+	CHECK(deriveDrive(0.5f, DriveMode::Slew, 0.7f, kRate).slewBalance == 0.0f);
+	CHECK(deriveDrive(0.5f, DriveMode::Lopside, 0.7f, kRate).slewCurve == 0.0f);
+	CHECK(deriveDrive(0.5f, DriveMode::Lopside, 0.0f, kRate).slewBalance == -1.0f);
+	CHECK(deriveDrive(0.5f, DriveMode::Lopside, 1.0f, kRate).slewBalance == 1.0f);
+	CHECK(deriveDrive(0.5f, DriveMode::Lopside, 0.5f, kRate).slewBalance == 0.0f);
+
+	// A FAST 0.5-PEAK SINE (1 kHz at the bottom of the rate: its slope is thirty times the limit's) COMES OUT A
+	// TRIANGLE, every step the limit but where it turns.
+	const size_t frames = 48000;
+	std::vector<float> sine(frames);
+	for (size_t i = 0; i < frames; ++i) {
+		sine[i] = static_cast<float>(0.5 * std::sin(2.0 * std::numbers::pi * 1000.0 * static_cast<double>(i) / kRate));
+	}
+	const double limit = 2.0 * hzOf(1.0) / kRate;
+	const std::vector<float> tri = stageOf(deriveDrive(1.0f, DriveMode::Slew, 0.0f, kRate), sine);
+	int atLimit = 0;
+	int total = 0;
+	for (size_t i = 24000; i < frames; ++i) {
+		const double step = std::abs(static_cast<double>(tri[i] - tri[i - 1]));
+		CHECK(step <= limit * (1.0 + 1.0e-4));
+		atLimit += std::abs(step - limit) < limit * 1.0e-3 ? 1 : 0;
+		++total;
+	}
+	MESSAGE("Slew: " << atLimit << " of " << total << " steps at the limit " << limit);
+	CHECK(atLimit > total * 9 / 10);
+	// LOPSIDE: RISING STEPS 2^balance THE LIMIT, FALLING 2^-balance; the two ends are reciprocals, the middle alike.
+	double rise[3] = {};
+	double fall[3] = {};
+	int c = 0;
+	for (const float shape : { 0.0f, 1.0f, 0.5f }) {
+		const std::vector<float> out = stageOf(deriveDrive(1.0f, DriveMode::Lopside, shape, kRate), sine);
+		for (size_t i = 24000; i < frames; ++i) {
+			const double step = static_cast<double>(out[i] - out[i - 1]);
+			rise[c] = std::max(rise[c], step);
+			fall[c] = std::max(fall[c], -step);
+		}
+		const double balance = 2.0 * static_cast<double>(shape) - 1.0;
+		CAPTURE(shape);
+		CHECK(std::abs(rise[c] - limit * std::exp2(balance)) < limit * 1.0e-3);
+		CHECK(std::abs(fall[c] - limit * std::exp2(-balance)) < limit * 1.0e-3);
+		++c;
+	}
+	CHECK(std::abs(rise[0] / fall[0] * (rise[1] / fall[1]) - 1.0) < 1.0e-3);
+	CHECK(std::abs(rise[0] / fall[0] - 0.25) < 1.0e-3);
+	CHECK(std::abs(rise[2] / fall[2] - 1.0) < 1.0e-3);
+}
+
+TEST_CASE("Drive: the stage's own Mix — 0 is the bits that went in, 1 is the stage as it was, between is the restated blend") {
+	const std::vector<float> in = wanderOf(4000);
+	for (const DriveMode mode : kAllDrives) {
+		CAPTURE(static_cast<int>(mode));
+		const DriveSettings off = deriveDrive(0.8f, mode, 0.7f, kRate, nullptr, 0.0f);
+		CHECK(off.mix == 0.0f);
+		const std::vector<float> out = stageOf(off, in);
+		CHECK(out == in);
+		// DEFAULT MIX IS 1.
+		CHECK(deriveDrive(0.8f, mode, 0.7f, kRate).mix == 1.0f);
+	}
+	// AT 1 THE STAGE IS WHAT IT WAS: Soft's frame, restated through the oversampler by hand, to the bit.
+	{
+		const DriveSettings d = deriveDrive(0.8f, DriveMode::Soft, 0.7f, kRate, nullptr, 1.0f);
+		const std::vector<float> got = stageOf(d, in);
+		fx::dyn::Oversampler4x over;
+		over.reset();
+		std::vector<float> want(in.size());
+		for (size_t i = 0; i < in.size(); ++i) {
+			float l = in[i];
+			float r = in[i];
+			const float gain = d.gain;
+			const float shape = d.shape;
+			over.process(&l, &r, 1, [gain, shape](float& a, float& b) {
+				a = shapeDrive(DriveMode::Soft, a * gain, shape, gain);
+				b = shapeDriveRight(DriveMode::Soft, b * gain, shape, gain);
+			});
+			want[i] = l * d.norm;
+		}
+		const bool same = got == want;
+		CHECK(same);
+	}
+	// BETWEEN IS dry + mix (processed - dry), one oversampled Type and one not.
+	for (const DriveMode mode : { DriveMode::Fold, DriveMode::Decimate }) {
+		CAPTURE(static_cast<int>(mode));
+		const std::vector<float> processed = stageOf(deriveDrive(0.8f, mode, 0.7f, kRate), in);
+		const std::vector<float> half = stageOf(deriveDrive(0.8f, mode, 0.7f, kRate, nullptr, 0.5f), in);
+		double worst = 0.0;
+		double moved = 0.0;
+		for (size_t i = 0; i < in.size(); ++i) {
+			const double want = static_cast<double>(in[i]) + 0.5 * (static_cast<double>(processed[i]) - static_cast<double>(in[i]));
+			worst = std::max(worst, std::abs(static_cast<double>(half[i]) - want));
+			moved = std::max(moved, std::abs(static_cast<double>(processed[i]) - static_cast<double>(in[i])));
+		}
+		MESSAGE("worst difference " << worst);
+		CHECK(worst < 1.0e-6);
+		CHECK(moved > 0.1); // the blend is not between two equal things
+	}
+}
+
+TEST_CASE("Drive: Wreck's and Jag's feedback runs through the shaper, with the shaper's gain taken back out of the loop") {
+	for (const DriveMode type : { DriveMode::Wreck, DriveMode::Jag }) {
+		CAPTURE(static_cast<int>(type));
+		Settings s = declared();
+		s.resonance = 1.0f;
+		s.driveMode = type;
+		s.driveShape = 1.0f;
+		s.drive = 1.0f;
+		const DustDerived wreck = deriveDust(s, 60.0, kRate);
+		const double gain = driveSmallSignalGain(type, 16.0, 1.0f);
+		REQUIRE(gain > 1.0);
+		CHECK(std::abs(wreck.feedback - 0.9 / gain) < 1.0e-9);
+		// ANY OTHER TYPE LEAVES THE LINE'S FEEDBACK ALONE, as does the Type at no Drive.
+		s.driveMode = DriveMode::Fold;
+		CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
+		s.driveMode = type;
+		s.drive = 0.0f;
+		CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
+	}
 
 	// AND THE TAP IS ON THE FAR SIDE OF THE SHAPER IN WRECK, the near side in any other Type: frame by frame, what is
 	// fed back is what the shaper made, or what the head read.
-	for (const DriveMode mode : { DriveMode::Wreck, DriveMode::Fold, DriveMode::Crush }) {
+	for (const DriveMode mode : { DriveMode::Wreck, DriveMode::Jag, DriveMode::Fold, DriveMode::Crush }) {
 		CAPTURE(static_cast<int>(mode));
 		Eroder e;
 		e.prepare(kRate);
@@ -2160,7 +2623,7 @@ TEST_CASE("Drive: Wreck's feedback runs through the shaper, with the shaper's ga
 			differ += d.lastShapedForTest() != d.lastReadForTest() ? 1 : 0;
 		}
 		REQUIRE(differ > 1900); // the shaper is doing something, so the two sides are told apart
-		if (mode == DriveMode::Wreck) {
+		if (mode == DriveMode::Wreck || mode == DriveMode::Jag) {
 			CHECK(shaped == 2000);
 		}
 		else {
@@ -2170,7 +2633,7 @@ TEST_CASE("Drive: Wreck's feedback runs through the shaper, with the shaper's ga
 }
 
 TEST_CASE("Drive, HP Wet and Follow at work: bounded, the same at any partition, and the tail ends in exact silence") {
-	for (const DriveMode mode : { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Crush, DriveMode::Wreck }) {
+	for (const DriveMode mode : kAllDrives) {
 		CAPTURE(static_cast<int>(mode));
 		Settings s = declared();
 		s.resonance = -1.0f;
@@ -2815,19 +3278,20 @@ TEST_CASE("Comb: the Drive stage is the last thing on its wet — the same setti
 	// it, can be read frame by frame.
 	s.driveMode = DriveMode::Crush;
 	s.drive = 1.0e-6f;
-	s.driveShape = 1.0f; // a step of a quarter
+	s.driveShape = 1.0f; // a step of 2^-0.5
 	Eroder c;
 	c.prepare(kRate);
 	c.setTarget(s);
 	int rounded = 0;
 	int moved = 0;
+	const auto step = static_cast<float>(std::exp2(-0.5));
 	for (size_t i = 0; i < 4000; ++i) {
 		float a = in[i];
 		float b = in[i];
 		c.processStereo(&a, &b, 1);
 		const float wet = c.lastCombWetForTest();
 		const float shaped = c.lastCombShapedForTest();
-		rounded += shaped == std::round(wet / 0.25f) * 0.25f ? 1 : 0;
+		rounded += shaped == std::round(wet / step) * step ? 1 : 0;
 		moved += shaped != wet ? 1 : 0;
 		// THE OUTPUT IS THE DRY PLUS THE SHAPED WET, exactly.
 		REQUIRE(a == in[i] + shaped);
@@ -2837,7 +3301,7 @@ TEST_CASE("Comb: the Drive stage is the last thing on its wet — the same setti
 }
 
 TEST_CASE("Comb: with Drive at work it is bounded, the same at any partition, and its tail ends in exact silence") {
-	for (const DriveMode mode : { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Crush, DriveMode::Wreck }) {
+	for (const DriveMode mode : kAllDrives) {
 		CAPTURE(static_cast<int>(mode));
 		Settings s = defaults();
 		s.mix = 1.0f;

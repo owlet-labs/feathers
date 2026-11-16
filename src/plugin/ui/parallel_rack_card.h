@@ -354,6 +354,8 @@ public:
 
 	static constexpr float kPad = 10.0f;
 	static constexpr float kRowGap = 6.0f;
+	/// A left-right card's column of the mode and view rows, between the bar (or the pads) and the cards in front.
+	static constexpr float kLeftColumnWidth = 150.0f;
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
 	/// The Mode dropdown's width on its row (stage 2).
 	static constexpr float kModeWidth = 96.0f;
@@ -437,6 +439,8 @@ private:
 	bool followView();
 	/// The rack's colour for the group hairline: its instance's edge, or the accent.
 	[[nodiscard]] uint32_t frontTint() const;
+	[[nodiscard]] float lanesCross() const;
+	[[nodiscard]] float frontExtentFor(float cross) const;
 	/// The rows above the chains a plan lays out: the mode row, and Bands', the spectrum's and the bar's where shown.
 	[[nodiscard]] static float fixedRowsHeight(const Plan& p);
 	/// A PHANTOM'S FIRST EDIT: the chain made (one undo step), its id returned. Never on a mode change (§2a).

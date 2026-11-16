@@ -524,6 +524,7 @@ void ChainColumn::wireCard(FxCard& card, DeviceInstanceId device) {
 	// THE CARD WEARS THE CHAIN'S NEST, so its tint is this chain's and not the outer host's — two
 	// devices that are both instance 1 in two different chains are two colours (`DeviceNest`).
 	card.setNest(nest_);
+	card.setLaneAxis(horizontal_ ? FxCard::LaneAxis::Horizontal : FxCard::LaneAxis::Vertical);
 	// A CARD THAT HOLDS CARDS (a rack inside this chain) opens ITS panels on this column's layers, which escalate to the outermost host.
 	card.setPresentedOn(surfaces_.get());
 	card.onSlotMenu = [this, device] { showSlotMenu(device); };
@@ -1016,9 +1017,9 @@ std::optional<size_t> ChainColumn::dropGapAt(visage::Point position) const {
 	spans.reserve(devices);
 	for (size_t p = 0; p < devices; ++p) {
 		const visage::Bounds box = cardBounds(p);
-		spans.push_back({ box.y(), box.bottom() });
+		spans.push_back({ flowStart(box), flowEnd(box) });
 	}
-	return gapAlong(position.y, spans);
+	return gapAlong(along(position), spans);
 }
 
 visage::Bounds ChainColumn::gapBounds(size_t gap) const {
@@ -1029,9 +1030,9 @@ visage::Bounds ChainColumn::gapBounds(size_t gap) const {
 	constexpr float thickness = 2.0f;
 	// CENTRED IN THE SPACE BETWEEN TWO CARDS rather than butted against one, which would read as
 	// belonging to that card.
-	const float y = gap < devices ? cardBounds(gap).y() - slotGap_ * 0.5f - thickness * 0.5f
-	                              : cardBounds(devices - 1).bottom() + slotGap_ * 0.5f - thickness * 0.5f;
-	return { padX_, y, std::max(0.0f, width() - 2.0f * padX_), thickness };
+	const float at = gap < devices ? flowStart(cardBounds(gap)) - slotGap_ * 0.5f - thickness * 0.5f
+	                               : flowEnd(cardBounds(devices - 1)) + slotGap_ * 0.5f - thickness * 0.5f;
+	return placed(at, thickness, padX_, std::max(0.0f, crossSize() - 2.0f * padX_));
 }
 
 std::optional<size_t> ChainColumn::dropPositionAtWindow(visage::Point inWindow) const {
@@ -1123,10 +1124,11 @@ bool ChainColumn::tickDrag() {
 		return false; // outside the column is the cancel, not a scroll
 	}
 	float to = scroll_;
-	if (dragPoint_.y < kEdgeScrollBand) {
+	const float flowAt = along(dragPoint_);
+	if (flowAt < kEdgeScrollBand) {
 		to -= kEdgeScrollStep;
 	}
-	else if (dragPoint_.y >= h - kEdgeScrollBand) {
+	else if (flowAt >= (horizontal_ ? w : h) - kEdgeScrollBand) {
 		to += kEdgeScrollStep;
 	}
 	else {
@@ -1196,7 +1198,7 @@ visage::Bounds ChainColumn::cardBounds(size_t position) const {
 	// THE GENERAL ROAD, ASKED VERTICALLY. `FxCard::laneExtent(cross)` is what a lane asks whichever way
 	// it runs; this column is vertical, so the cross extent is the card's width and the answer is its
 	// height. WALKED rather than indexed, because a card above this one may be folded.
-	const float cross = std::max(0.0f, width() - 2.0f * padX_);
+	const float cross = std::max(0.0f, crossSize() - 2.0f * padX_);
 	float top = padY_;
 	const size_t devices = deviceCount();
 	for (size_t above = 0; above < position && above < devices; ++above) {
@@ -1208,19 +1210,19 @@ visage::Bounds ChainColumn::cardBounds(size_t position) const {
 	const float tall = here != nullptr ? here->laneExtent(cross) : 0.0f;
 	// THE SCROLL IS IN THE GEOMETRY, so the hit test, the placement and the drawing all follow it from
 	// one place rather than three that must agree.
-	return { padX_, top - scroll_, cross, tall };
+	return placed(top - scroll_, tall, padX_, cross);
 }
 
 float ChainColumn::contentHeight() const {
-	return contentHeightFor(static_cast<float>(width()));
+	return contentHeightFor(crossSize());
 }
 
-float ChainColumn::contentHeightFor(float columnWidth) const {
+float ChainColumn::contentHeightFor(float columnCross) const {
 	// SUMMED RATHER THAN MULTIPLIED, because two devices' cards have different heights and either can
 	// fold. This is the number the scroll is clamped against, so a fold that did not reach it would
 	// leave the column able to scroll past its own end.
 	float total = padY_;
-	const float cross = std::max(0.0f, columnWidth - 2.0f * padX_);
+	const float cross = std::max(0.0f, columnCross - 2.0f * padX_);
 	for (size_t position = 0; position < shownCount(); ++position) {
 		if (const FxCard* card = cardOf(deviceAt(position)); card != nullptr) {
 			total += card->laneExtent(cross) + slotGap_;
@@ -1256,6 +1258,22 @@ void ChainColumn::setShownLimit(size_t n) {
 	redraw();
 }
 
+void ChainColumn::setHorizontal(bool horizontal) {
+	if (horizontal == horizontal_) {
+		return;
+	}
+	horizontal_ = horizontal;
+	scroll_ = 0.0f;
+	// EVERY CARD LAYS ITSELF OUT FOR THE AXIS (`FxCard::setLaneAxis`), including cards built later (`wireCard`).
+	for (const CardEntry& entry : cards_) {
+		if (entry.card != nullptr) {
+			entry.card->setLaneAxis(horizontal_ ? FxCard::LaneAxis::Horizontal : FxCard::LaneAxis::Vertical);
+		}
+	}
+	resized();
+	redraw();
+}
+
 void ChainColumn::setAddShown(bool shown) {
 	if (shown == addShown_) {
 		return;
@@ -1266,7 +1284,7 @@ void ChainColumn::setAddShown(bool shown) {
 }
 
 float ChainColumn::maxScroll() const {
-	return std::max(0.0f, contentHeight() - static_cast<float>(height()));
+	return std::max(0.0f, contentHeight() - flowSize());
 }
 
 void ChainColumn::setScroll(float y) {
@@ -1286,14 +1304,14 @@ void ChainColumn::scrollCardIntoView(size_t position) {
 		return;
 	}
 	const visage::Bounds box = cardBounds(position);
-	if (box.bottom() > static_cast<float>(height())) {
+	if (flowEnd(box) > flowSize()) {
 		// BOTTOM FIRST, then top — so a card TALLER than the column ends up showing its top rather than
 		// its bottom. The head is where the fold and the slot menu live.
-		setScroll(scroll_ + (box.bottom() - static_cast<float>(height())));
+		setScroll(scroll_ + (flowEnd(box) - flowSize()));
 	}
 	const visage::Bounds after = cardBounds(position);
-	if (after.y() < 0.0f) {
-		setScroll(scroll_ + after.y());
+	if (flowStart(after) < 0.0f) {
+		setScroll(scroll_ + flowStart(after));
 	}
 }
 
@@ -1302,7 +1320,8 @@ bool ChainColumn::mouseWheel(const visage::MouseEvent& e) {
 		// NOT CONSUMED when there is nothing to scroll, so the event goes on to whatever else wants it.
 		return false;
 	}
-	setScroll(scroll_ - e.precise_wheel_delta_y * kScrollNotch);
+	// A HORIZONTAL COLUMN takes the sideways wheel, and the ordinary one too (there is nothing else for it to scroll).
+	setScroll(scroll_ - (horizontal_ && e.precise_wheel_delta_x != 0.0f ? e.precise_wheel_delta_x : e.precise_wheel_delta_y) * kScrollNotch);
 	return true;
 }
 
@@ -1312,8 +1331,8 @@ visage::Bounds ChainColumn::addBounds() const {
 	}
 	const size_t devices = shownCount();
 	const visage::Bounds last = devices > 0 ? cardBounds(devices - 1) : visage::Bounds {};
-	const float top = devices > 0 ? last.bottom() + slotGap_ : padY_ - scroll_;
-	return { padX_, top, std::max(0.0f, width() - 2.0f * padX_), kAddHeight };
+	const float top = devices > 0 ? flowEnd(last) + slotGap_ : padY_ - scroll_;
+	return placed(top, kAddHeight, padX_, std::max(0.0f, crossSize() - 2.0f * padX_));
 }
 
 ChainColumn::Part ChainColumn::partAt(visage::Point pixels) const {
@@ -1355,7 +1374,7 @@ void ChainColumn::resized() {
 		// `FrameWatchers::notify()` redraws every VISIBLE frame under every watcher, so cards left
 		// visible off the top of the lane cost a repaint each on every state notify (measured there at
 		// 56% of a block-rate workload with seven devices seated).
-		const bool onScreen = position < shownCount() && box.bottom() > 0.0f && box.y() < static_cast<float>(height());
+		const bool onScreen = position < shownCount() && flowEnd(box) > 0.0f && flowStart(box) < flowSize();
 		card->setVisible(onScreen);
 	}
 	// A CARD WHOSE DEVICE HAS LEFT is hidden rather than left where it was — `syncCards` retires it on
@@ -1380,11 +1399,16 @@ void ChainColumn::draw(visage::Canvas& canvas) {
 	// THE SCROLL INDICATOR, only while there is something to scroll: a track that is always drawn is
 	// furniture rather than information.
 	if (maxScroll() > 0.0f) {
-		const float view = static_cast<float>(height());
-		const float thumbHeight = std::max(24.0f, view * (view / contentHeight()));
-		const float thumbY = (view - thumbHeight) * (scroll_ / maxScroll());
+		const float view = flowSize();
+		const float thumbLength = std::max(24.0f, view * (view / contentHeight()));
+		const float thumbAt = (view - thumbLength) * (scroll_ / maxScroll());
 		canvas.setColor(withAlpha(kLine, 0.9f));
-		canvas.roundedRectangle(width() - 4.0f, thumbY, 2.0f, thumbHeight, 1.0f);
+		if (horizontal_) {
+			canvas.roundedRectangle(thumbAt, height() - 4.0f, thumbLength, 2.0f, 1.0f);
+		}
+		else {
+			canvas.roundedRectangle(width() - 4.0f, thumbAt, 2.0f, thumbLength, 1.0f);
+		}
 	}
 
 	// THE BUMPER, while a card is being dragged — drawn by the COLUMN, because a gap belongs to the list
@@ -1411,12 +1435,14 @@ void ChainColumn::draw(visage::Canvas& canvas) {
 	// GEOMETRY RATHER THAN A GLYPH, the rule the harmonic arrows are drawn by: this font has no
 	// guarantee of a "+" that centres, and a missing glyph is an invisible control.
 	const float plus = 7.0f;
-	const float cx = add.x() + padX_ + plus * 0.5f;
+	const float cx = horizontal_ ? add.x() + add.width() * 0.5f : add.x() + padX_ + plus * 0.5f;
 	const float cy = add.y() + add.height() * 0.5f;
 	canvas.segment(cx - plus * 0.5f, cy, cx + plus * 0.5f, cy, 1.4f, true);
 	canvas.segment(cx, cy - plus * 0.5f, cx, cy + plus * 0.5f, 1.4f, true);
-	canvas.text(atCapacity ? "chain full" : "add effect", font(kKnobLabelSize), visage::Font::kLeft,
-	            cx + plus, add.y(), add.width() - padX_ - plus * 2.0f, add.height());
+	if (!horizontal_) { // a horizontal column's (+) is a narrow bar: the plus alone says it
+		canvas.text(atCapacity ? "chain full" : "add effect", font(kKnobLabelSize), visage::Font::kLeft,
+		            cx + plus, add.y(), add.width() - padX_ - plus * 2.0f, add.height());
+	}
 
 	// **AND WHAT AN EMPTY CHAIN DOES, SAID UNDER THE (+) RATHER THAN OVER IT.** `fx_lane.h`'s rule is
 	// that an empty chain is drawn as an empty chain; here the (+) is the whole of the drawing, because

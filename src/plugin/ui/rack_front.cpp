@@ -66,6 +66,7 @@ bool RackFrontColumn::follow(size_t viewed, bool open) {
 			column_->setPresentedOn(presenter_);
 			column_->setNest(nest_);
 			column_->setPadding(0.0f, 0.0f, kGap);
+			column_->setHorizontal(horizontal_);
 			addChild(column_.get());
 		}
 		changed = true;
@@ -113,11 +114,18 @@ void RackFrontColumn::setNest(DeviceNest nest) {
 	}
 }
 
-float RackFrontColumn::naturalHeight(float width) const {
+void RackFrontColumn::setHorizontal(bool horizontal) {
+	horizontal_ = horizontal;
+	if (column_ != nullptr) {
+		column_->setHorizontal(horizontal);
+	}
+}
+
+float RackFrontColumn::naturalExtent(float cross) const {
 	if (column_ == nullptr) {
 		return 22.0f; // the line that says there is nothing running to show
 	}
-	return column_->contentHeightFor(width);
+	return column_->contentHeightFor(cross);
 }
 
 size_t RackFrontColumn::deviceCount() const {

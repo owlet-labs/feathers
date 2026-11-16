@@ -60,8 +60,12 @@ public:
 	void setPresentedOn(SurfaceLayers* host);
 	void setNest(DeviceNest nest);
 
-	/// How tall the cards need to be at `width` wide: the shown cards and their gaps, the (+) of an empty chain, or a line saying why not.
-	[[nodiscard]] float naturalHeight(float width) const;
+	/// **THE FRONT RUNS WITH THE CARD'S FLOW**: down a column in a top-down lane, along a row in a left-right one (the cards then take the
+	/// card's height as their cross extent).
+	void setHorizontal(bool horizontal);
+	/// How far the cards need to run ALONG the flow when the card gives them `cross` across it: the shown cards and their gaps, the (+) of an
+	/// empty chain, or a line saying why not.
+	[[nodiscard]] float naturalExtent(float cross) const;
 	/// How many devices the viewed chain holds (the arrow is offered when it holds more than the one in front), and how many cards are shown.
 	[[nodiscard]] size_t deviceCount() const;
 	[[nodiscard]] size_t shownCount() const;
@@ -88,6 +92,7 @@ private:
 	rack::RackBridge* bridge_ = nullptr;
 	uint16_t chainId_ = 0xFFFF;
 	bool open_ = false;
+	bool horizontal_ = false;
 	std::unique_ptr<ChainColumn> column_;
 };
 

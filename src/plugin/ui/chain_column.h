@@ -390,7 +390,10 @@ public:
 	void setPadding(float cross, float flow, float slotGap);
 	void setShownLimit(size_t n);
 	void setAddShown(bool shown);
-	[[nodiscard]] size_t shownCount() const;
+	/// **THE COLUMN RUNS LEFT TO RIGHT** (a host whose flow is horizontal): the cards are laid out along x with the column's height as their
+	/// cross extent (`FxCard::setLaneAxis`), it scrolls and drags along x, and the (+) follows the last card. Vertical is the column's own.
+	void setHorizontal(bool horizontal);
+	[[nodiscard]] bool horizontal() const noexcept { return horizontal_; }	[[nodiscard]] size_t shownCount() const;
 	[[nodiscard]] bool addShown() const noexcept { return addShown_; }
 	/// How tall the content is at a column `width` wide, for the host that sizes itself to it: the shown cards, their gaps and the padding.
 	[[nodiscard]] float contentHeightFor(float width) const;
@@ -542,8 +545,18 @@ private:
 	std::unique_ptr<SurfaceLayers> surfaces_;
 	std::vector<SurfaceId> expanded_;
 	// THE HOST'S SAY over padding, how many cards, and the (+) (see `setPadding`); the defaults are the column's own.
-	float padX_ = kPadX;
-	float padY_ = kPadY;
+	bool horizontal_ = false;
+	[[nodiscard]] float flowSize() const { return static_cast<float>(horizontal_ ? width() : height()); }
+	[[nodiscard]] float crossSize() const { return static_cast<float>(horizontal_ ? height() : width()); }
+	/// A rectangle given along the flow and across it, as a column-coordinate one.
+	[[nodiscard]] visage::Bounds placed(float flowPos, float flowLen, float crossPos, float crossLen) const {
+		return horizontal_ ? visage::Bounds { flowPos, crossPos, flowLen, crossLen } : visage::Bounds { crossPos, flowPos, crossLen, flowLen };
+	}
+	[[nodiscard]] float along(visage::Point p) const { return horizontal_ ? p.x : p.y; }
+	[[nodiscard]] float flowStart(const visage::Bounds& b) const { return horizontal_ ? b.x() : b.y(); }
+	[[nodiscard]] float flowEnd(const visage::Bounds& b) const { return horizontal_ ? b.right() : b.bottom(); }
+	float padX_ = kPadX; ///< across the flow
+	float padY_ = kPadY; ///< along it, at the start and the end
 	float slotGap_ = kSlotGap;
 	size_t shownLimit_ = static_cast<size_t>(-1);
 	bool addShown_ = true;

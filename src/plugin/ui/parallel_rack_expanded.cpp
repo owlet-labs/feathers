@@ -42,7 +42,9 @@ constexpr float kMacroRows = 4.0f;
 /// A KNOB CELL AT THE ENGINE RAIL'S FACE SIZE (38), not the footer's 52: four rows of macros have to fit under Mix and Gain.
 constexpr float kCellHeight = Knob::columnHeight(Knob::kEngineRailDiameter);
 /// THE MODE ROW above Mix and Gain (stage 2): one knob cell and its gap.
-constexpr float kModeRow = kCellHeight + ParallelRackExpanded::kPad;
+/// THE VIEW'S ROW sits under the mode row, over the macros.
+constexpr float kViewRow = ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f;
+constexpr float kModeRow = kCellHeight + ParallelRackExpanded::kPad + kViewRow;
 
 /// EACH RAIL IS HANDED ITS OWN CHAIN as the handle, so its cast is the identity.
 rack::InnerChain* chainItself(void* surface) { return static_cast<rack::InnerChain*>(surface); }
@@ -77,6 +79,12 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	position_ = std::make_unique<Knob>(*positionControl_, "Position", notifier);
 	position_->setFaceDiameter(Knob::kEngineRailDiameter);
 	addChild(position_.get());
+	viewControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::View));
+	playingControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Playing));
+	viewSeg_ = std::make_unique<SegmentedControl>(*viewControl_, registry, pr::kViewNames, notifier);
+	playingBox_ = std::make_unique<ValueBox>(*playingControl_, "Playing");
+	addChild(viewSeg_.get());
+	addChild(playingBox_.get());
 	unusedControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Unused));
 	unused_ = std::make_unique<SegmentedControl>(*unusedControl_, registry, pr::kUnusedFaceNames, notifier);
 	addChild(unused_.get());
@@ -99,7 +107,7 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	}
 	keyTrack_ = std::make_unique<SwitchChip>(*own(pr::Param::KeyTrack), "Key Track");
 	addChild(keyTrack_.get());
-	gated_ = { { keyTrack_.get(), pr::Param::KeyTrack }, { position_.get(), pr::Param::Position },   { unused_.get(), pr::Param::Unused },
+	gated_ = { { keyTrack_.get(), pr::Param::KeyTrack }, { playingBox_.get(), pr::Param::Playing }, { position_.get(), pr::Param::Position },   { unused_.get(), pr::Param::Unused },
 	           { bandsBox_.get(), pr::Param::BandCount },  { filteringBox_.get(), pr::Param::Filtering },
 	           { slope_.get(), pr::Param::Slope },         { cuts_[0].get(), pr::Param::Cut1 },
 	           { cuts_[1].get(), pr::Param::Cut2 },        { cuts_[2].get(), pr::Param::Cut3 },
@@ -214,6 +222,13 @@ void ParallelRackExpanded::layOut() {
 	// UNUSED UNDER THE MODE, THE COLUMN'S FULL WIDTH: its two words need the room (they ran together in one cell), and it
 	// shows only in the role modes, where the position's knob does not.
 	unused_->setBounds(kPad, kPad + kCellHeight - SwitchChip::kHeight, kColumnWidth, SwitchChip::kHeight);
+	// THE VIEW (no audio effect) UNDER THE MODE ROW, and Select's playing chain beside it.
+	{
+		const float vy = kPad + kCellHeight + kPad * 0.5f;
+		const float viewWide = std::round(kColumnWidth * 0.62f);
+		viewSeg_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
+		playingBox_->setBounds(kPad + viewWide, vy, kColumnWidth - viewWide, ValueBox::kHeight);
+	}
 	// THE BANDS COLUMN, beside the macros: count and filtering stacked, the slope, then the corners A VERTICAL STACK, one per
 	// row, lowest first — the order they stand in on the spectrum.
 	const float bx = kColumnWidth + 2.0f * kPad;

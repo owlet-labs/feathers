@@ -35435,8 +35435,8 @@ TEST_CASE("Rack stage 2: the card and the window offer the Mode as a dropdown an
 	refresh();
 
 	// THE MODE IS A LIST SHOWN BEFORE ANYTHING MOVES (CLAUDE.md: a multivalue toggle is an antipattern): every mode,
-	// the menu the box opens itself, on the card and in the window.
-	for (ui::ValueBox* box : { &card->modeBoxForTest(), &panel->modeBoxForTest() }) {
+	// the menu the box opens itself, in the window (the card carries no mode selector).
+	for (ui::ValueBox* box : { &panel->modeBoxForTest() }) {
 		CHECK(box->choiceMenuAvailable());
 		CHECK(box->opensMenu());
 		CHECK(box->entryCount() == static_cast<size_t>(pr::Mode::kCount));
@@ -35453,7 +35453,7 @@ TEST_CASE("Rack stage 2: the card and the window offer the Mode as a dropdown an
 		refresh();
 		CHECK(card->positionKnobForTest().isVisible());
 		CHECK(panel->positionKnobForTest().isVisible());
-		CHECK(card->modeBoxForTest().readout() == pr::kModeNames[static_cast<size_t>(mode)]);
+		CHECK(panel->modeBoxForTest().readout() == pr::kModeNames[static_cast<size_t>(mode)]);
 	}
 	// THE READOUT IS THE RACK'S OWN WORDS, through the device's hook and the rack's live chain count.
 	f.deviceHost.setField(r.id, static_cast<size_t>(pr::Param::Mode), static_cast<float>(pr::Mode::Select));
@@ -35609,7 +35609,7 @@ TEST_CASE("Rack stage 2, step 4: every multi-choice control shows its choices be
 	RackViews v;
 	v.set(pr::Param::Mode, static_cast<float>(pr::Mode::Bands));
 	v.refresh();
-	for (ui::ValueBox* box : { &v.card->modeBoxForTest(), &v.card->bandsBoxForTest() }) {
+	for (ui::ValueBox* box : { &v.panel->modeBoxForTest(), &v.card->bandsBoxForTest() }) {
 		CHECK(box->choiceMenuAvailable());
 		CHECK(box->opensMenu());
 	}

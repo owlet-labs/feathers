@@ -31,6 +31,7 @@
 #include <utility>
 #include <vector>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <system_error>
 #include <dlfcn.h>
@@ -310,7 +311,17 @@ inline Loaded loadPlugin(const char* path, const clap_host* host) {
 		std::printf("plugin factory is empty\n");
 		return {};
 	}
+	// THE FIRST PLUGIN OF THE BUNDLE, unless FEATHERS_HOST_PLUGIN_ID names another (the Note Rack, the Drum): a bundle holds several.
 	out.descriptor = factory->get_plugin_descriptor(factory, 0);
+	if (const char* wanted = std::getenv("FEATHERS_HOST_PLUGIN_ID"); wanted != nullptr && *wanted != '\0') {
+		out.descriptor = nullptr;
+		for (uint32_t i = 0; i < factory->get_plugin_count(factory); ++i) {
+			const clap_plugin_descriptor* d = factory->get_plugin_descriptor(factory, i);
+			if (d != nullptr && std::strcmp(d->id, wanted) == 0) {
+				out.descriptor = d;
+			}
+		}
+	}
 	if (out.descriptor == nullptr) {
 		std::printf("plugin factory returned no descriptor\n");
 		return {};

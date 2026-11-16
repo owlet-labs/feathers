@@ -27,18 +27,19 @@
 #include <atomic>
 #include <cstdint>
 
-// THE FITTED TERRAIN MAP (an audition): the Explore map's per-cell features for Additive and V5, predicted from the
-// engine's DECODED parameters by polynomials fitted offline (tools/fit-terrain-map.cpp) against the sound the engine
-// really renders, instead of measured from a 32-sample cycle built at every cell.
+// THE FITTED TERRAIN MAP: Additive's per-cell features for the Explore map, predicted from the engine's DECODED parameters
+// by polynomials fitted offline (tools/fit-terrain-map.cpp) against the sound the engine really renders, instead of
+// measured from a 32-sample cycle built at every cell. ADDITIVE ONLY: it is that engine's map by default, and the real
+// map (the measurement) is one right-click away (ExploreStage's chart menu, "Fitted map"). No other engine has a table,
+// so every other engine draws the real map exactly as it always did.
 //
 // THE FIT IS A PICTURE OF THE SOUND AT DEFAULT CONTROLS, and says so: it was trained on the engine at its neutral
 // knobs, so what it reads from the selected sound is the six Additive bias knobs and Smoothness (they act on the
-// decoded fields, which the decode here applies exactly as the bank does) and nothing else. V5's field scalers,
-// the Shape Amount and the likes' phase warp are not modelled. Where the fit cannot resolve a view, it draws what it
-// gives: the report (docs/terrain-fit-report.txt) lists the zooms.
+// decoded fields, which the decode here applies exactly as the bank does) and nothing else. The Shape Amount and the
+// likes' phase warp are not modelled. Where the fit cannot resolve a view, it draws what it gives: the report
+// (docs/terrain-fit-report.txt) and docs/terrain-fit.md list the zooms.
 //
-// NOT SAVED WITH THE PATCH, and nothing here is state: the table is generated code, the switch is the editor's.
-
+// NOT SAVED WITH THE PATCH, and nothing here is state: the table is generated code, the switch is the stage's.
 namespace feathers::ui {
 
 /// How many features a cell carries. They are TerrainFeatures' five members, in this order, and a fitted map must supply
@@ -46,7 +47,6 @@ namespace feathers::ui {
 /// second axis); fundamental is carried through the cell and the upsampler.
 inline constexpr int kFitChannels = 5;
 inline constexpr int kFitAdditiveInputs = 20; ///< the clamped, smoothed Additive fields, in PartialFields' order
-inline constexpr int kFitV5Inputs = 38;       ///< 26 morph-table reads, 7 operator authors, 5 vowel reads
 inline constexpr int kFitMaxInputs = 40;
 /// The generated table's layout version: the evaluator refuses a table of another one.
 inline constexpr int kFitFormatVersion = 1;
@@ -72,7 +72,7 @@ struct FitEngineTable {
 	std::array<FitChannelModel, kFitChannels> channel {};
 };
 
-/// The generated tables (terrain_fit_table.cpp), and null for an engine with none.
+/// The generated table (terrain_fit_table.cpp), and null for an engine with none (every engine but Additive).
 const FitEngineTable* terrainFitTableFor(OscType engine);
 
 /// Whether the engine has a fitted table: the editor offers the switch for those and hides it for the rest.
@@ -81,8 +81,7 @@ int terrainFitInputs(OscType engine);
 
 /// THE LEAN DECODE, once per cell and shared by every channel: what the engine reads from the place before it builds
 /// anything. Additive: the 20 fields through the sound's bias and Smoothness, clamped and smoothed as buildSound does
-/// (no spectrum is built). V5: the morph table's seven phases, amplitudes and eight curvatures and four scalars, the
-/// seven operator authors, and the vowel's species and formants. Writes `terrainFitInputs(engine)` values to `out`
+/// (no spectrum is built). Writes `terrainFitInputs(engine)` values to `out`
 /// and returns that count (0 for an engine the decode does not cover). It does not need a table: the offline tool
 /// decodes with it before one exists.
 int terrainFitDecode(OscType engine, const TerrainFrames& frames, uint16_t zone, float offset, double travelX,

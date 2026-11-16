@@ -22,10 +22,10 @@
 // THE OFFLINE FIT BEHIND THE FITTED TERRAIN MAP (plugin/ui/terrain_fit.h). Developer tool: the build does not run it,
 // the table it writes is committed.
 //
-//   gen    <additive|v5> <count> <seed> <hold_s> <range> <out.csv>
+//   gen    <additive> <count> <seed> <hold_s> <range> <out.csv>
 //            renders <count> stances through the real engine (one fixed note) and writes, per stance, the decoded
 //            inputs, today's map features, and the measurements of the audio that stand in for them
-//   fit    <table.cpp> <report.txt> <sample.inc> --additive <csv>... --v5 <csv>... [--calibrate-ratios]
+//   fit    <table.cpp> <report.txt> <sample.inc> --additive <csv>... [--calibrate-ratios]
 //            fits each channel (quadratic or restricted cubic, ridge chosen on a validation split) and writes the
 //            generated table, the held-out report and the evaluator's cross-check sample. Deterministic.
 //   zooms  <out.txt>   per engine and zoom: how much the true map varies across the window against the fit's error
@@ -82,8 +82,9 @@ struct EngineInfo {
 	OscType engine;
 	int inputs;
 };
-const EngineInfo kEngines[] = { { "additive", OscType::Additive, ui::kFitAdditiveInputs },
-	                            { "v5", OscType::V5, ui::kFitV5Inputs } };
+// ADDITIVE ONLY: the fitted map ships for that engine and no other (V5's polynomials fitted too weakly to draw from).
+const EngineInfo kEngines[] = { { "additive", OscType::Additive, ui::kFitAdditiveInputs } };
+constexpr int kEngineCount = static_cast<int>(sizeof(kEngines) / sizeof(kEngines[0]));
 
 const EngineInfo* engineByName(const std::string& name) {
 	for (const EngineInfo& e : kEngines) {
@@ -964,16 +965,13 @@ int runFit(int argc, char** argv) {
 	if (argc < 5) {
 		return 2;
 	}
-	std::vector<std::string> files[2];
+	std::vector<std::string> files[kEngineCount];
 	int target = -1;
 	bool calibrateRatios = false;
 	for (int i = 5; i < argc; ++i) {
 		const std::string a = argv[i];
 		if (a == "--additive") {
 			target = 0;
-		}
-		else if (a == "--v5") {
-			target = 1;
 		}
 		else if (a == "--calibrate-ratios") {
 			calibrateRatios = true;
@@ -983,7 +981,7 @@ int runFit(int argc, char** argv) {
 		}
 	}
 	std::vector<EngineFit> fits;
-	for (int e = 0; e < 2; ++e) {
+	for (int e = 0; e < kEngineCount; ++e) {
 		if (files[e].empty()) {
 			continue;
 		}
@@ -1031,15 +1029,12 @@ int runZooms(int argc, char** argv) {
 	if (argc < 4) {
 		return 2;
 	}
-	std::vector<std::string> files[2];
+	std::vector<std::string> files[kEngineCount];
 	int target = -1;
 	for (int i = 3; i < argc; ++i) {
 		const std::string a = argv[i];
 		if (a == "--additive") {
 			target = 0;
-		}
-		else if (a == "--v5") {
-			target = 1;
 		}
 		else if (target >= 0) {
 			files[target].push_back(a);
@@ -1058,7 +1053,7 @@ int runZooms(int argc, char** argv) {
 	                "held-out RMSE: the variation the view shows is smaller than the error the fit makes, so the picture the fit gives\n"
 	                "there is its error, not the sound. R2w / Sp are the fit against the truth WITHIN the window.\n\n",
 	             kGrid, kGrid);
-	for (int e = 0; e < 2; ++e) {
+	for (int e = 0; e < kEngineCount; ++e) {
 		if (files[e].empty()) {
 			continue;
 		}

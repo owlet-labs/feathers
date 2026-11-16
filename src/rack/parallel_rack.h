@@ -109,13 +109,24 @@ enum class Param : size_t {
 	/// **KEY TRACK**: the played note places the corners; each Cut becomes a
 	/// semitone OFFSET from it.
 	KeyTrack,
+	/// **THE VIEW** (no audio effect): how the window lays the chains out, which chain it is looking at, and which page of pads.
+	/// Patch state like a chain's `open` — kept with the patch, not modulatable, never on a DAW lane.
+	View,
+	ViewedChain,
+	PadsPage,
+	/// **SELECT'S PLAYING CHAIN**: 0 follows the Position (as Select always did), 1.. names the chain that sounds, independent of the
+	/// viewed one.
+	Playing,
 	kCount,
 };
 
 /// **THE MODES, IN MENU ORDER** — a Choice stored by label, so Bands, Mid/Side and Left/Right append in later steps
 /// (§9) without moving a saved patch. Only the modes that do something are offered (the honesty rule).
-enum class Mode : uint8_t { Parallel = 0, Select, Blend, MidSide, LeftRight, Bands, kCount };
-inline constexpr const char* kModeNames[] = { "Parallel", "Select", "Blend", "Mid/Side", "Left/Right", "Bands" };
+/// **KEYED** is Parallel's audio (it is mapped onto Parallel in the engine, so switching between them fades nothing) with the
+/// notes routed by key alone: a chain whose key is Any is handed no notes (its notes still pass on). In Parallel a key that is set
+/// filters too, and an Any chain takes every note.
+enum class Mode : uint8_t { Parallel = 0, Select, Blend, MidSide, LeftRight, Bands, Keyed, kCount };
+inline constexpr const char* kModeNames[] = { "Parallel", "Select", "Blend", "Mid/Side", "Left/Right", "Bands", "Keyed" };
 static_assert(std::size(kModeNames) == static_cast<size_t>(Mode::kCount));
 inline constexpr uint32_t kModeBit(Mode m) { return 1u << static_cast<uint32_t>(m); }
 /// WHERE THE POSITION MEANS SOMETHING: Select and Blend. In Parallel it is hidden, not greyed.
@@ -155,6 +166,15 @@ inline constexpr size_t kMaxRoles = 5;
 	return (kRoleModes & kModeBit(mode)) != 0 ? size_t { 2 } : chains;
 }
 inline constexpr const char* kUnusedNames[] = { "Ring out", "Stop" };
+inline constexpr const char* kViewNames[] = { "Strips", "Tabs", "Pads" };
+inline constexpr int kPadsPages = 8;
+/// THE PLAYING CHAIN'S CHOICE: "Position", then the chains 1..64 (a Choice is stored by label, so the list may grow).
+inline constexpr const char* kPlayingNames[] = {
+	"Position", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21",
+	"22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43",
+	"44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64",
+};
+inline constexpr uint32_t kSelectOnly = 1u << 1; // Mode::Select's bit
 
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
 inline constexpr const char* kTags[] = { "utility", "routing" };
@@ -251,6 +271,23 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .tooltip = "The last note played places the corners, and each Cut becomes its offset from the note: Cut 1 at its "
                 "default sits on the note, the others keep the default layout above it",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .shortName = "Key"},
+    // VIEW STATE: kept with the patch, no audio effect, not automatable (a window's layout is not a lane) and not on a host slot.
+    {.key = "rack_view", .name = "Rack View", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Choice, .names = kViewNames, .modulatable = false,
+     .tooltip = "How the window lays the chains out: strips in a column, one chain at a time under tabs, or a grid of pads. "
+                "It changes nothing you hear",
+     .hostSlot = false},
+    {.key = "rack_viewed_chain", .name = "Rack Viewed Chain", .min = 0.0, .max = 1023.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Number, .names = {}, .modulatable = false,
+     .tooltip = "Which chain the window is looking at (the first is 0). It is not the chain that plays", .hostSlot = false},
+    {.key = "rack_pads_page", .name = "Rack Pads Page", .min = 0.0, .max = 7.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Number, .names = {}, .modulatable = false,
+     .tooltip = "Which page of sixteen pads the window shows", .hostSlot = false},
+    {.key = "rack_playing", .name = "Rack Playing", .min = 0.0, .max = 64.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Choice, .names = kPlayingNames, .modulatable = true,
+     .tooltip = "Select: the one chain that sounds. Position follows the Position knob, as Select always did; a number names the "
+                "chain. Changing it crossfades, and the other chains keep running, so their tails and modulators carry on",
+     .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kSelectOnly, .shortName = "Playing"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 static_assert(static_cast<size_t>(Param::Macro1) == static_cast<size_t>(composite::Param::Macro1));
@@ -480,9 +517,17 @@ extern const device::TextOps kTextOps;
 /// **SELECT'S AND BLEND'S WEIGHT ON CHAIN k** of `chains` at `position` (§3): Select the nearest at 1, Blend the
 /// linear triangle of the two either side (summing to one); 1 in any other mode. The engine and the position bar both
 /// read it, so the bar's fill is the weight the sum uses.
-[[nodiscard]] inline float positionWeight(Mode mode, double position, size_t k, size_t chains) noexcept {
+/// **THE CHAIN SELECT PLAYS**: the Playing control's chain (1-based, held to the chains there are) or, at 0, the one the Position names.
+[[nodiscard]] inline size_t playingChain(double position, size_t chains, int playing) noexcept {
+	if (playing > 0 && chains > 0) {
+		return std::min(static_cast<size_t>(playing) - 1, chains - 1);
+	}
+	return selectedChain(position, chains);
+}
+
+[[nodiscard]] inline float positionWeight(Mode mode, double position, size_t k, size_t chains, int playing = 0) noexcept {
 	if (mode == Mode::Select) {
-		return k == selectedChain(position, chains) ? 1.0f : 0.0f;
+		return k == playingChain(position, chains, playing) ? 1.0f : 0.0f;
 	}
 	if (mode != Mode::Blend || chains <= 1) {
 		return 1.0f;
@@ -546,6 +591,16 @@ inline constexpr const char* kSoloKey = "solo";
 inline constexpr const char* kOpenKey = "open";
 /// A CHAIN'S SLOT (backlog NO): which block of slot params is its, −1 for none.
 inline constexpr const char* kSlotKey = "slot";
+/// **A CHAIN'S KEY** (the kit rack's pad is a chain keyed to a note): stored by this key beside level, mute and solo, written only
+/// when set, so a body with every chain on Any is byte for byte what it was.
+inline constexpr const char* kKeyKey = "key";
+/// A chain that takes every note, as it always did.
+inline constexpr int kAnyKey = -1;
+/// **A CHAIN'S CHOKE GROUP**: 0 is none, 1..8 a group; a note-on handed to a chain chokes every other chain of its group.
+inline constexpr const char* kChokeKey = "choke";
+inline constexpr int kMaxChokeGroup = 8;
+/// WHAT MARKS A CHOKE THE RACK MADE (`NoteEvent::port`): the chain's devices see a plain choke, and the rack takes the mark off what leaves.
+inline constexpr int16_t kRackChokePort = 0x4B43;
 /// **WHAT A POLY SWITCH SAYS INSIDE A RACK** (backlog NO, option A): no host voice reaches a rack's chains, so the
 /// switch changes nothing and is greyed with this line (`device::Modulatable::unavailable`).
 inline constexpr const char* kPolyInsideRack =
@@ -581,6 +636,18 @@ public:
 	/// A stable id for the chain at `index` (what the body stores it under), or 0xFFFF.
 	[[nodiscard]] uint16_t chainIdAt(size_t index) const noexcept;
 
+	/// **THE RACK'S EIGHT MACROS' NAME, TYPE AND POLARITY** — the same three a Chain's macros carry, set once and fanned out to
+	/// every chain's own (a macro is one source in every chain), read back from the first chain. They are saved with the chains'
+	/// bodies, which carry them already, so no key of the rack's own is needed; a chain added later takes the first one's.
+	/// A rack with no chain holds none (the macros have nothing to drive): reads answer the defaults, writes do nothing.
+	[[nodiscard]] std::string macroName(size_t macro) const;
+	[[nodiscard]] bool macroRenamed(size_t macro) const;
+	void setMacroName(size_t macro, std::string_view name);
+	[[nodiscard]] bool macroBipolar(size_t macro) const;
+	void setMacroBipolar(size_t macro, bool bipolar);
+	[[nodiscard]] device::MacroType macroType(size_t macro) const;
+	void setMacroType(size_t macro, device::MacroType type);
+
 	/// ADD AN EMPTY CHAIN at the end — built, adopted and prepared here, handed to the audio thread at its next
 	/// drain. Returns its index, or `SIZE_MAX` before a catalogue has been adopted (nothing could go in it).
 	size_t addChain();
@@ -596,6 +663,8 @@ public:
 		bool open = false;
 		/// The slot it held — taken again on a put-back when still free, else the lowest free one.
 		uint8_t slot = kNoChainSlot;
+		int key = kAnyKey;
+		int choke = 0;
 	};
 	[[nodiscard]] ChainSnapshot snapshotChain(size_t index) const;
 	/// PUT A CHAIN BACK at `index`, under its own id — refused (`SIZE_MAX`) for an id the rack holds, a body the
@@ -609,6 +678,16 @@ public:
 	void setLevel(size_t index, float position) noexcept;
 	void setMuted(size_t index, bool muted) noexcept;
 	void setSoloed(size_t index, bool soloed) noexcept;
+	/// **THE NOTE A CHAIN ANSWERS: `kAnyKey` (every note, today's behaviour) or 0..127**, so only that key's notes (on, off, choke and
+	/// note expressions) enter the chain's devices. The rack's own note output is unchanged. A note already held keeps its off.
+	[[nodiscard]] int chainKey(size_t index) const noexcept;
+	void setChainKey(size_t index, int key) noexcept;
+	[[nodiscard]] int chainChoke(size_t index) const noexcept;
+	void setChainChoke(size_t index, int group) noexcept;
+	/// **WHICH KEYS WERE STRUCK SINCE THE EDITOR LAST LOOKED**: a bit per key, 0..127, the audio thread's `fetch_or` and this call's
+	/// `exchange(0)` — lock-free, no allocation. Notes entering the rack count, whichever chain takes them.
+	void takeStrikeMask(uint64_t out[2]) noexcept;
+	[[nodiscard]] bool keyStruckForTest(int key) const noexcept;
 	/// **THE CHAIN'S SLOT** (backlog NO) — which block of `kAllParamDescs` its level, mute and solo are, for its life; or
 	/// `kNoChainSlot` past the last slot (`kChainSlots`).
 	[[nodiscard]] uint8_t slotOf(size_t index) const noexcept;
@@ -719,6 +798,8 @@ public:
 	[[nodiscard]] float chainWeightForTest(size_t index) const noexcept;
 	/// The mode the audio thread runs now — the wanted one only once the fade has reached silence.
 	[[nodiscard]] Mode modeForTest() const noexcept { return mode_; }
+	[[nodiscard]] int selectSamplesForTest() const noexcept { return selectSamples_; }
+	[[nodiscard]] int viewForTest() const noexcept { return view_; }
 	/// The mode change's fade on the chains' sum: 1 settled, 0 at the switch.
 	[[nodiscard]] float modeGainForTest() const noexcept { return modeGain_; }
 	/// **HOW MANY CALLS THE CHAIN AT LIVE POSITION `index` HAS RUN** (§2a's run-count seam): an unrouted chain under Ring
@@ -872,6 +953,24 @@ private:
 	std::vector<StagedNote> staged_;
 	size_t stagedCount_ = 0;
 	std::vector<device::NoteEvent> chainNotes_;
+	/// What a keyed chain is handed: the notes of `processNotes` that its key lets in. Sized at prepare.
+	std::vector<device::NoteEvent> keyedIn_;
+	/// A chain's keyed notes with the chokes made for it merged in, by time.
+	std::vector<device::NoteEvent> mergedIn_;
+	struct ChokeFor {
+		uint16_t chain = 0;
+		device::NoteEvent e {};
+	};
+	std::vector<ChokeFor> chokes_;
+	std::array<std::atomic<uint64_t>, 2> struck_ {};
+	bool keyedWanted_ = false;
+	int playing_ = 0;
+	/// What the view params last said (the layout is the window's; nothing here reads them).
+	int view_ = 0;
+	int viewedChain_ = 0;
+	int padsPage_ = 0;
+	/// And what its key held back, which the rack passes on itself.
+	std::vector<device::NoteEvent> skippedIn_;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call
 	size_t owedCount_ = 0;
 	bool releaseAll_ = false;

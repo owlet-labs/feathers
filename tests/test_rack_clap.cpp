@@ -22,6 +22,9 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 #include "menu_placement_check.h"
+#include "plugin/ui/os_clipboard.h"
+#include "rack/fragment.h"
+#include <visage/app.h>
 #include <thread>
 #include <atomic>
 #include <cstddef>
@@ -29,6 +32,8 @@
 
 #include "device/format_value.h"
 #include "fx/drum/drum.h"
+#include "plugin/ui/expanded_views.h"
+#include "plugin/ui/libra_door.h"
 #include "fx/drum/drum_types.h"
 #include "fx/featherverb/featherverb_types.h"
 #include "fx/filter/filter_types.h"
@@ -1031,6 +1036,38 @@ TEST_CASE("the editor opens, reports a usable size, and a second open reuses the
 	REQUIRE(h2 == h);
 
 	gui->destroy(v.plugin);
+}
+
+TEST_CASE("a rack editor takes the system clipboard road while its window is open, and gives it back on close") {
+	// THE BUG: a Chain never saw a clip copied in another binary, because only Feathers' own editor installed the seam,
+	// so "Paste after" was greyed. Asserted as the value the verb reads: with the in-process board empty, a clip of ours
+	// on the REAL system clipboard (visage's) is what `pasteboardHolds` answers from, and only while the editor is open.
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	Venue v;
+	const auto* gui =
+	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
+	REQUIRE(gui != nullptr);
+	REQUIRE(ui::osClipboardBindings() == 0);
+	rack::clearPasteboard();
+	REQUIRE_FALSE(rack::pasteboardHolds());
+	REQUIRE(gui->create(v.plugin, CLAP_WINDOW_API_X11, false));
+	CHECK(ui::osClipboardBindings() == 1);
+	// ANOTHER BINARY'S COPY: header-only text is enough for the board to claim it holds one.
+	const std::string clip = "{\"feathersClip\":1,\"patch\":{}}";
+	REQUIRE(rack::isClipText(clip));
+	visage::setClipboardText(clip);
+	CHECK(rack::pasteboardHolds());
+	// A reopen does not bind twice, and the close releases the road whole.
+	gui->destroy(v.plugin);
+	CHECK(ui::osClipboardBindings() == 0);
+	REQUIRE(gui->create(v.plugin, CLAP_WINDOW_API_X11, false));
+	CHECK(ui::osClipboardBindings() == 1);
+	gui->destroy(v.plugin);
+	CHECK(ui::osClipboardBindings() == 0);
+	CHECK_FALSE(rack::pasteboardHolds());
+	rack::clearPasteboard();
 }
 
 TEST_CASE("the rack's editor reports the lane plus the canvas, and a fold changes the size it reports") {
@@ -5333,20 +5370,20 @@ TEST_CASE("backlog LG: the rack's Libra mark opens the same settings screen, and
 
 	// THE HUE, through the screen, onto the rack's desk.
 	visage::MouseEvent onStrip;
-	onStrip.position = { screen->hueX(60.0), screen->hueStripBounds().y() + 2.0f };
+	onStrip.position = { screen->hueX(90.0), screen->hueStripBounds().y() + 2.0f };
 	screen->mouseDown(onStrip);
 	screen->mouseUp(onStrip);
-	CHECK(ui::chromeHueOffset() == 60.0);
+	CHECK(ui::chromeHueOffset() == 90.0);
 	feathers::EditorPrefs again;
 	again.load();
-	CHECK(again.number(ui::kChromeHuePrefKey, 0.0) == 60.0);
+	CHECK(again.number(ui::kChromeHuePrefKey, 0.0) == 90.0);
 	// THE ACCENT HUE, the second axis, onto the rack's desk through the rack's own watch.
 	visage::MouseEvent onAccent;
 	onAccent.position = { screen->accentX(-30.0), screen->accentStripBounds().y() + 2.0f };
 	screen->mouseDown(onAccent);
 	screen->mouseUp(onAccent);
 	CHECK(ui::accentHueOffset() == -30.0);
-	CHECK(ui::chromeHueOffset() == 60.0);
+	CHECK(ui::chromeHueOffset() == 90.0);
 	{
 		feathers::EditorPrefs accentDesk;
 		accentDesk.load();
@@ -6591,4 +6628,102 @@ TEST_CASE("rack note out: a key passing through when Pattern is added still gets
 		}
 		CHECK(offs == 1);
 	}
+}
+
+TEST_CASE("the Drum plugin's window carries the Libra mark and opens the synth's Settings; a hue set there is the pref the synth reads") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	const char* xdg = std::getenv("XDG_CONFIG_HOME");
+	REQUIRE(xdg != nullptr);
+	REQUIRE(std::string(xdg).find("feathers-venue-config") != std::string::npos);
+	struct Reset {
+		~Reset() { (void)ui::setChromeHueOffset(0.0); }
+	} reset;
+	rack::RackEngine engine { rack::kRackAxes, hostCatalogue() };
+	rack::RackBridge bridge { engine };
+	REQUIRE(bridge.addDevice(fx::drumdevice::kTraits.tag) != kNoInstance);
+	bridge.drain();
+	rack::RackGui gui { bridge };
+	gui.setDrumMode(true);
+	REQUIRE(gui.create(CLAP_WINDOW_API_X11, false));
+	ui::LibraDoor* door = gui.drumDoorForTest();
+	ui::SettingsScreen* screen = gui.settingsForTest();
+	REQUIRE(door != nullptr);
+	REQUIRE(screen != nullptr);
+	REQUIRE(gui.drumViewForTest() != nullptr);
+	CHECK(door->isVisible());
+	CHECK(door->markBounds().width() > 0.0f);
+	// THE VIEW STARTS UNDER THE STRIP the mark sits in.
+	CHECK(gui.drumViewForTest()->y() >= door->y() + door->height());
+	CHECK_FALSE(screen->isVisible());
+	visage::MouseEvent press;
+	press.position = { door->width() * 0.5f, door->height() * 0.5f };
+	door->mouseDown(press);
+	CHECK(screen->isVisible());
+	CHECK(gui.appForTest()->children().back() == screen);
+	// THE HUE, through the screen, onto the desk the synth reads.
+	visage::MouseEvent onStrip;
+	onStrip.position = { screen->hueX(90.0), screen->hueStripBounds().y() + 2.0f };
+	screen->mouseDown(onStrip);
+	screen->mouseUp(onStrip);
+	CHECK(ui::chromeHueOffset() == 90.0);
+	feathers::EditorPrefs again;
+	again.load();
+	CHECK(again.number(ui::kChromeHuePrefKey, 0.0) == 90.0);
+	visage::MouseEvent close;
+	close.position = { screen->closeBounds().x() + 4.0f, screen->closeBounds().y() + 4.0f };
+	screen->mouseDown(close);
+	CHECK_FALSE(screen->isVisible());
+	(void)ui::setChromeHueOffset(0.0);
+	gui.destroy();
+}
+
+TEST_CASE("SHOT the Drum window's Libra strip") {
+	// NOT A CASE — A CAMERA, gated on FEATHERS_SHOT_DIR: the strip the Drum window reserves (the Libra door) over the device's view,
+	// drawn windowless at the logical size. Raw RGBA, byte zero red.
+	const char* dir = std::getenv("FEATHERS_SHOT_DIR");
+	if (dir == nullptr || !rack::RackGui::isAvailable()) {
+		return;
+	}
+	rack::RackEngine engine { rack::kRackAxes, hostCatalogue() };
+	rack::RackBridge bridge { engine };
+	const DeviceInstanceId id = bridge.addDevice(fx::drumdevice::kTraits.tag);
+	REQUIRE(id != kNoInstance);
+	bridge.drain();
+	ui::WidgetRegistry registry;
+	ui::ModState mod;
+	ui::EditHistory history;
+	auto view = ui::makeExpandedView(bridge, nullptr, registry, id, *bridge.descriptorOf(id), nullptr);
+	REQUIRE(view != nullptr);
+	view->setModulation(&mod, &history);
+	ui::LibraDoor door;
+	const int w = static_cast<int>(rack::RackGui::kDrumWidth);
+	const int h = static_cast<int>(rack::RackGui::kDrumHeight);
+	visage::ApplicationEditor app;
+	app.setBounds(0, 0, w, h);
+	app.addChild(view.get());
+	app.addChild(&door);
+	view->setBounds(0, static_cast<float>(rack::RackGui::kDrumHeaderHeight), static_cast<float>(w),
+	                static_cast<float>(h - static_cast<int>(rack::RackGui::kDrumHeaderHeight)));
+	door.setBounds(12.0f, 4.0f, 22.0f, static_cast<float>(rack::RackGui::kDrumHeaderHeight) - 8.0f);
+	app.onDraw() = [](visage::Canvas& canvas) {
+		canvas.setColor(ui::kSurface);
+		canvas.fill(0, 0, canvas.width(), canvas.height());
+	};
+	app.setWindowless(w, h);
+	if (visage::Renderer::instance().supported()) {
+		app.redrawAll();
+		app.drawWindow();
+		app.drawWindow();
+		app.drawWindow();
+		const visage::Screenshot& shot = app.takeScreenshot();
+		if (shot.width() > 0) {
+			std::ofstream out(std::string(dir) + "/drum_strip.rgba", std::ios::binary);
+			out.write(reinterpret_cast<const char*>(shot.data()), static_cast<std::streamsize>(shot.width()) * shot.height() * 4);
+			MESSAGE("wrote " << shot.width() << "x" << shot.height());
+		}
+	}
+	app.removeChild(view.get());
+	app.removeChild(&door);
 }

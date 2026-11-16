@@ -145,15 +145,95 @@ std::vector<Pair> pairsAt(double offset) {
 	return out;
 }
 
-/// Puts the process back at offset 0 whatever a case did — the palette is process-global.
+/// Puts the process at the base palette (offset 0, the reference the rotation is defined from) for a case
+/// that measures against `kChromeBase`, and back there afterwards whatever the case did: the palette is
+/// process-global, and the shipped DEFAULT is not 0 (the default has its own cases).
 struct ResetHue {
-	~ResetHue() {
+	ResetHue() { zero(); }
+	~ResetHue() { zero(); }
+	static void zero() {
 		(void)ui::setChromeHueOffset(0.0);
 		(void)ui::setAccentHueOffset(0.0);
 	}
 };
 
 } // namespace
+
+TEST_CASE("default palette: a fresh process draws the default hues from its first frame — the live palette is "
+          "rotatedPalette(kChromeBase, 60, 4), value by value, and a stored value still wins") {
+	// FIRST CASE IN THE FILE ON PURPOSE: nothing has moved the process yet, so this reads what a fresh editor
+	// with no prefs shows before restoreChromeHue/restoreAccentHue run.
+	CHECK(ui::kChromeHueDefault == 60.0);
+	CHECK(ui::kAccentHueDefault == 4.0);
+	CHECK(ui::chromeHueOffset() == ui::kChromeHueDefault);
+	CHECK(ui::accentHueOffset() == ui::kAccentHueDefault);
+	const ui::ChromePalette want = ui::rotatedPalette(ui::kChromeBase, 60.0, 4.0);
+	// THE WRITTEN-OUT LITERAL (what the live palette is constant-initialised from) IS THE ROTATION.
+	CHECK(ui::kChromeDefault.voidGround == want.voidGround);
+	CHECK(ui::kChromeDefault.surface == want.surface);
+	CHECK(ui::kChromeDefault.surfaceRaised == want.surfaceRaised);
+	CHECK(ui::kChromeDefault.line == want.line);
+	CHECK(ui::kChromeDefault.ink == want.ink);
+	CHECK(ui::kChromeDefault.muted == want.muted);
+	CHECK(ui::kChromeDefault.disabled == want.disabled);
+	CHECK(ui::kChromeDefault.pointer == want.pointer);
+	CHECK(ui::kChromeDefault.notifyGround == want.notifyGround);
+	CHECK(ui::kChromeDefault.accent == want.accent);
+	CHECK(ui::kChromeDefault.value == want.value);
+	CHECK(ui::kChromeDefault.modulation == want.modulation);
+	CHECK(ui::kChromeDefault.disabledVeil == want.disabledVeil);
+	CHECK(ui::kChromeDefault.instanceTints == want.instanceTints);
+	// AND THE LIVE ROLES, READ THROUGH THEME.H's NAMES, ARE IT.
+	CHECK(ui::kVoid == want.voidGround);
+	CHECK(ui::kSurface == want.surface);
+	CHECK(ui::kSurfaceRaised == want.surfaceRaised);
+	CHECK(ui::kLine == want.line);
+	CHECK(ui::kInk == want.ink);
+	CHECK(ui::kMuted == want.muted);
+	CHECK(ui::kDisabled == want.disabled);
+	CHECK(ui::kPointer == want.pointer);
+	CHECK(ui::kNotifyGround == want.notifyGround);
+	CHECK(ui::kAccent == want.accent);
+	CHECK(ui::kValue == want.value);
+	CHECK(ui::kModulation == want.modulation);
+	CHECK(ui::kDisabledVeil == want.disabledVeil);
+	CHECK(ui::kInstanceTints == want.instanceTints);
+	// NOT VACUOUS: the default is not the base.
+	CHECK(ui::kAccent != tokens::kAccent);
+	CHECK(ui::kSurface != tokens::kSurface);
+}
+
+TEST_CASE("default palette: a double click on either strip, and each reset button, returns to the defaults — not to 0") {
+	ResetHue reset;
+	ui::SettingsScreen screen;
+	screen.uiScaleNow = [] { return 1.0; };
+	screen.setBounds(0.0f, 0.0f, 1240.0f, 800.0f);
+	const auto click = [&](visage::Bounds b, int count) {
+		visage::MouseEvent e;
+		e.position = { b.x() + b.width() * 0.5f, b.y() + b.height() * 0.5f };
+		e.repeat_click_count = count;
+		screen.mouseDown(e);
+		screen.mouseUp(e);
+	};
+	(void)ui::setChromeHueOffset(-100.0);
+	(void)ui::setAccentHueOffset(120.0);
+	click(screen.hueStripBounds(), 2);
+	CHECK(ui::chromeHueOffset() == 60.0);
+	CHECK(ui::accentHueOffset() == 120.0);
+	click(screen.accentStripBounds(), 2);
+	CHECK(ui::accentHueOffset() == 4.0);
+	CHECK(ui::chromeHueOffset() == 60.0);
+	CHECK(ui::kAccent == ui::rotatedPalette(ui::kChromeBase, 60.0, 4.0).accent);
+	(void)ui::setChromeHueOffset(-100.0);
+	(void)ui::setAccentHueOffset(120.0);
+	click(screen.hueResetBounds(), 1);
+	click(screen.accentResetBounds(), 1);
+	CHECK(ui::chromeHueOffset() == 60.0);
+	CHECK(ui::accentHueOffset() == 4.0);
+	// A SINGLE CLICK ON THE STRIP STILL SETS WHERE IT LANDS (not vacuous).
+	click(screen.hueStripBounds(), 1);
+	CHECK(ui::chromeHueOffset() != 60.0);
+}
 
 TEST_CASE("backlog LG: the chrome hue turns every chrome token in OKLCH — L kept, h moved by exactly the offset, C "
           "kept where sRGB allows and never grown") {
@@ -360,7 +440,7 @@ TEST_CASE("backlog LG: the offset is a desk preference — written to the editor
 		EditorPrefs prefs;
 		prefs.load();
 		ui::restoreChromeHue(prefs);
-		CHECK(ui::chromeHueOffset() == 0.0); // no line: the mock's colours
+		CHECK(ui::chromeHueOffset() == ui::kChromeHueDefault); // no line: the default
 		const auto watch = ui::keepChromeHueIn(prefs, nullptr);
 		(void)ui::setChromeHueOffset(-75.0);
 		CHECK(prefs.number(ui::kChromeHuePrefKey, 0.0) == -75.0);
@@ -850,7 +930,7 @@ TEST_CASE("accent hue: the live roles read chrome + accent, the accent tells onl
 }
 
 TEST_CASE("accent hue: a desk preference — written to the editor prefs, restored from them, and old prefs without the "
-          "key load as 0") {
+          "key load as the default") {
 	ResetHue reset;
 	const char* xdg = std::getenv("XDG_CONFIG_HOME");
 	REQUIRE(xdg != nullptr);
@@ -868,7 +948,7 @@ TEST_CASE("accent hue: a desk preference — written to the editor prefs, restor
 		prefs.load();
 		(void)ui::setAccentHueOffset(70.0); // whatever the process held before
 		ui::restoreAccentHue(prefs);
-		CHECK(ui::accentHueOffset() == 0.0);
+		CHECK(ui::accentHueOffset() == ui::kAccentHueDefault);
 		const auto watch = ui::keepAccentHueIn(prefs, nullptr);
 		(void)ui::setAccentHueOffset(-110.0);
 		CHECK(prefs.number(ui::kAccentHuePrefKey, 0.0) == -110.0);
@@ -926,7 +1006,7 @@ TEST_CASE("accent hue: the settings strip sets the accent offset by press and dr
 	press.position = { r.x() + r.width() * 0.5f, r.y() + r.height() * 0.5f };
 	screen.mouseDown(press);
 	screen.mouseUp(press);
-	CHECK(ui::accentHueOffset() == 0.0);
+	CHECK(ui::accentHueOffset() == ui::kAccentHueDefault);
 	CHECK(ui::chromeHueOffset() == 20.0);
 	// AND THE CHROME STRIP'S DRAG DOES NOT MOVE THE ACCENT.
 	(void)ui::setAccentHueOffset(15.0);

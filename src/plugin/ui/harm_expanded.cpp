@@ -17,6 +17,7 @@
 
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/harm_expanded.h"
+#include "plugin/ui/harm_card.h"
 
 #include "device/device.h"
 #include "plugin/ui/theme.h"
@@ -39,7 +40,7 @@ constexpr EnvelopeEntry kEnvelopeEntries[] = {
 	{ hrm::Param::Delay, "Delay" },   { hrm::Param::Attack, "Attack" }, { hrm::Param::Hold, "Hold" },
 	{ hrm::Param::Decay, "Decay" },   { hrm::Param::Sustain, "Sustain" }, { hrm::Param::Release, "Release" },
 };
-constexpr int kEnvelopeColumns = 3;
+constexpr int kEnvelopeColumns = 2;
 constexpr float kBoxGap = 8.0f;
 
 /// THE SELECTED PARTIAL'S KNOBS: SPECTRAL's three and SPATIAL's two.
@@ -62,7 +63,7 @@ struct HarmExpanded::Layout {
 	visage::Bounds spectralCaption, harmonic, mode, scope, spatialCaption, knobRow;
 	visage::Bounds envelopeCaption, envelope;
 	std::array<visage::Bounds, 6> boxes {};
-	visage::Bounds masterCaption, master, porta, poly, depthEnv;
+	visage::Bounds masterCaption, master, porta, masterLevel, masterDepth, poly, depthEnv;
 	float knobCell = 0.0f;
 	float bottom = 0.0f;
 };
@@ -74,66 +75,62 @@ HarmExpanded::Layout HarmExpanded::layout() const {
 HarmExpanded::Layout HarmExpanded::layoutFor(float totalWidth) const {
 	Layout l;
 	const float inner = std::max(0.0f, totalWidth - 2.0f * kPad);
-	// THE DETAIL'S TWO COLUMNS SHARE WHATEVER WIDTH THERE IS in the proportion they were designed in.
-	const float columns = std::max(0.0f, inner - kColumnGap);
-	const float leftW = columns * kLeftWidth / (kLeftWidth + kRightWidth);
-	const float rightW = columns - leftW;
-	const float rightX = kPad + leftW + kColumnGap;
 
+	// THE PARTIALS: the strip, which is the tab bar for the selected partial below it.
 	float y = kPad;
 	l.partialsCaption = { kPad, y, inner, kCaptionHeight };
 	y += kCaptionHeight + kCaptionGap;
 	l.strip = { kPad, y, inner, HarmPartialStrip::kHeight };
 	y += HarmPartialStrip::kHeight + kRowGap;
-	// THE STRIP IS THE TAB BAR: a press on a partial's cell opens it, so there is no row of tabs between it and the detail.
-	y += kGroupGap - kRowGap;
-	const float bodyTop = y;
 
-	// LEFT: THE SELECTED PARTIAL.
-	y = bodyTop;
+	// THE SELECTED PARTIAL'S DETAIL: its ratio, its mode, its scope and its knobs, across the full width. Everything here is
+	// the one partial that is selected, and nothing else.
+	y += kGroupGap - kRowGap;
+	const float leftW = inner;
 	l.spectralCaption = { kPad, y, leftW, kCaptionHeight };
 	y += kCaptionHeight + kCaptionGap;
 	l.harmonic = { kPad, y, std::max(0.0f, leftW - kModeChipWidth - kRowGap), HarmonicRow::kHeight };
 	l.mode = { l.harmonic.right() + kRowGap, y + (HarmonicRow::kHeight - SwitchChip::kHeight) * 0.5f, kModeChipWidth,
-		       SwitchChip::kHeight };
+	           SwitchChip::kHeight };
 	y += HarmonicRow::kHeight + kRowGap;
 	l.scope = { kPad, y, leftW, kScopeHeight };
 	y += kScopeHeight + kRowGap;
 	l.knobCell = leftW / static_cast<float>(kKnobCells);
 	l.spatialCaption = { kPad + l.knobCell * static_cast<float>(kSpectralKnobs) + 8.0f, y,
-		                 l.knobCell * (kKnobCells - kSpectralKnobs) - 8.0f, kCaptionHeight };
+	                     l.knobCell * (kKnobCells - kSpectralKnobs) - 8.0f, kCaptionHeight };
 	y += kCaptionHeight + kCaptionGap;
 	const float column = Knob::columnHeight(kKnobDiameter);
 	l.knobRow = { kPad, y, leftW, column };
 	y += column;
-	const float leftBottom = y;
 
-	// RIGHT: THE ENVELOPE — a caption, its curve, and its six values under it in two rows.
-	y = bodyTop;
-	l.envelopeCaption = { rightX, y, rightW, kCaptionHeight };
-	y += kCaptionHeight + kCaptionGap;
-	const float boxesHeight = 2.0f * ValueBox::kHeight + kBoxGap;
-	const float curveHeight = std::max(60.0f, leftBottom - y - kRowGap - boxesHeight);
-	l.envelope = { rightX, y, rightW, curveHeight };
-	y += curveHeight + kRowGap;
-	const float boxW = (rightW - kBoxGap * static_cast<float>(kEnvelopeColumns - 1)) / static_cast<float>(kEnvelopeColumns);
-	for (size_t i = 0; i < l.boxes.size(); ++i) {
-		const float col = static_cast<float>(i % kEnvelopeColumns);
-		const float row = static_cast<float>(i / kEnvelopeColumns);
-		l.boxes[i] = { rightX + col * (boxW + kBoxGap), y + row * (ValueBox::kHeight + kBoxGap), boxW, ValueBox::kHeight };
-	}
-	y = std::max(leftBottom, y + boxesHeight);
-
-	// MASTER: what belongs to the device and to no one partial.
+	// THE GLOBAL SECTION: one caption over everything here, and it says so. Nothing below belongs to the selected partial. Its
+	// first row is the device's own controls and the two masters; its second is the envelope, which every partial shares.
 	y += kGroupGap;
 	l.masterCaption = { kPad, y, inner, kCaptionHeight };
 	y += kCaptionHeight + kCaptionGap;
 	l.master = { kPad, y, inner, kSwitchHeight + 6.0f };
 	l.porta = { kPad, y, kPortaWidth, ValueBox::kHeight };
 	const float chipY = y + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f;
-	l.poly = { l.porta.right() + kRowGap + 6.0f, chipY, kPolyChipWidth, SwitchChip::kHeight };
+	l.masterLevel = { l.porta.right() + kRowGap, y, kPortaWidth, ValueBox::kHeight };
+	l.masterDepth = { l.masterLevel.right() + kRowGap, y, kPortaWidth, ValueBox::kHeight };
+	l.poly = { l.masterDepth.right() + kRowGap + 6.0f, chipY, kPolyChipWidth, SwitchChip::kHeight };
 	l.depthEnv = { l.poly.right() + kRowGap, chipY, kEnvDepthChipWidth, SwitchChip::kHeight };
-	y += ValueBox::kHeight;
+	y += ValueBox::kHeight + kRowGap;
+
+	// THE ENVELOPE AND ITS SIX VALUES SIDE BY SIDE: the curve on the left, the values in two columns of three on the right. Stacked,
+	// the block was 30px taller, and two of these windows then could not sit side by side in the editor.
+	const float blockH = 3.0f * ValueBox::kHeight + 2.0f * kBoxGap;
+	const float curveW = (inner - kColumnGap) * 0.5f;
+	l.envelope = { kPad, y, curveW, blockH };
+	const float rightX = kPad + curveW + kColumnGap;
+	const float rightW = inner - curveW - kColumnGap;
+	const float boxW = (rightW - kBoxGap * static_cast<float>(kEnvelopeColumns - 1)) / static_cast<float>(kEnvelopeColumns);
+	for (size_t i = 0; i < l.boxes.size(); ++i) {
+		const float col = static_cast<float>(i % kEnvelopeColumns);
+		const float row = static_cast<float>(i / kEnvelopeColumns);
+		l.boxes[i] = { rightX + col * (boxW + kBoxGap), y + row * (ValueBox::kHeight + kBoxGap), boxW, ValueBox::kHeight };
+	}
+	y += blockH + kRowGap;
 	l.bottom = y;
 	return l;
 }
@@ -142,6 +139,7 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
                            Notifier* notifier)
     : host_(host), device_(id) {
 	(void)registry; // the chips take none, as the knobs do not
+	view_ = harmViewFor(id);
 
 	// THE PICTURE.
 	scope_ = std::make_unique<HarmScope>(host_, device_);
@@ -197,6 +195,11 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 	// MASTER.
 	porta_ = std::make_unique<ValueBox>(control(hrm::Param::Porta), "Porta");
 	addChild(porta_.get());
+	// THE TWO MASTERS, pills beside Porta: the same controls as the card's Master and Depth knobs, on the same road.
+	masterLevel_ = std::make_unique<ValueBox>(control(hrm::Param::MasterLevel), "Master Level");
+	addChild(masterLevel_.get());
+	masterDepth_ = std::make_unique<ValueBox>(control(hrm::Param::MasterDepth), "Master Depth");
+	addChild(masterDepth_.get());
 	auto poly = std::make_unique<SwitchChip>(control(hrm::Param::Poly), "Poly");
 	// ALIVE OR DEAD BY THE DEVICE'S OWN DECLARATION, exactly as the card decides it — HARM declares a
 	// `perVoiceControl` now, so it is alive. Asked rather than assumed, and asked BEFORE the first
@@ -209,7 +212,7 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 	depthEnv_ = std::make_unique<SwitchChip>(control(hrm::Param::DepthFollowsEnv), "Env Depth");
 	addChild(depthEnv_.get());
 
-	selectPartial(0);
+	selectPartial(view_->partial);
 	followState();
 
 	// **THE ENABLE SQUARE THAT STOOD HERE IS THE WINDOW HEADER'S NOW** (devices had been
@@ -232,6 +235,7 @@ void HarmExpanded::selectPartial(int partial) {
 	partial = std::clamp(partial, 0, hrm::kPartialCount - 1);
 	const bool changed = partial != selected_;
 	selected_ = partial;
+	view_->partial = selected_; // the card's tabs read this
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
 		const bool shown = k == selected_;
 		Detail& d = detail_[static_cast<size_t>(k)];
@@ -366,6 +370,10 @@ void HarmExpanded::followState() {
 }
 
 bool HarmExpanded::updateContent() {
+	// THE CARD'S TABS MOVE THE SELECTION TOO: a tab pressed on the card arrives here as a change of the shared partial.
+	if (view_ != nullptr && view_->partial != selected_) {
+		selectPartial(view_->partial);
+	}
 	// THE FIELDS, NOT A CONTROL — `HarmCard::updateContent`'s rule: a tick must not construct widgets.
 	std::vector<float> now = signature();
 	if (now == drawnSignature_) {
@@ -403,6 +411,8 @@ void HarmExpanded::resized() {
 		envelopeBoxes_[i]->setBounds(l.boxes[i].x(), l.boxes[i].y(), l.boxes[i].width(), l.boxes[i].height());
 	}
 	porta_->setBounds(l.porta.x(), l.porta.y(), l.porta.width(), l.porta.height());
+	masterLevel_->setBounds(l.masterLevel.x(), l.masterLevel.y(), l.masterLevel.width(), l.masterLevel.height());
+	masterDepth_->setBounds(l.masterDepth.x(), l.masterDepth.y(), l.masterDepth.width(), l.masterDepth.height());
 	poly_->setBounds(l.poly.x(), l.poly.y(), l.poly.width(), l.poly.height());
 	depthEnv_->setBounds(l.depthEnv.x(), l.depthEnv.y(), l.depthEnv.width(), l.depthEnv.height());
 
@@ -412,12 +422,12 @@ void HarmExpanded::resized() {
 	captions_.push_back({ "SPECTRAL", l.spectralCaption });
 	captions_.push_back({ "SPATIAL", l.spatialCaption });
 	captions_.push_back({ "ENVELOPE", l.envelopeCaption });
-	captions_.push_back({ "MASTER", l.masterCaption });
+	captions_.push_back({ "GLOBAL \u00b7 EVERY PARTIAL, NOT THE SELECTED ONE", l.masterCaption });
 }
 
 std::vector<hrm::Param> HarmExpanded::addressedParamsForTest() const {
 	// EVERY CONTROL THE WINDOW OFFERS, once each: the strip's Level and Active for all four partials, each partial's ratio, five
-	// knobs and Mode, the envelope's six, and the device's Porta, Poly and Env Depth. `Enabled` IS THE WINDOW HEADER'S chip
+	// knobs and Mode, the envelope's six, and the device's Porta, the two masters, Poly and Env Depth. `Enabled` IS THE WINDOW HEADER'S chip
 	// (`ExpandedPanel::enableBounds`), and Mix and wet Gain are the slot's furniture.
 	std::vector<hrm::Param> out;
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
@@ -433,6 +443,8 @@ std::vector<hrm::Param> HarmExpanded::addressedParamsForTest() const {
 		out.push_back(entry.param);
 	}
 	out.push_back(hrm::Param::Porta);
+	out.push_back(hrm::Param::MasterLevel);
+	out.push_back(hrm::Param::MasterDepth);
 	out.push_back(hrm::Param::Poly);
 	out.push_back(hrm::Param::DepthFollowsEnv);
 	return out;

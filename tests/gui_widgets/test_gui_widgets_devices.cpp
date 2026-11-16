@@ -16627,7 +16627,9 @@ TEST_CASE("the ground BEHIND the circle is Feathers' perform ground, and it is t
 	// `Gui::Impl::drawBackground`'s `canvas.setColor(kVoid)`. `theme.h` has `kVoid =
 	// tokens::kVoidPerform`, a GENERATED token, so the value is the mock's own `--void-perform`. The
 	// mock agrees from the other end: `drawBlendView` fills that circle's aperture `TH.voidP`.
-	CHECK(ui::CircleRail::kGround == feathers::tokens::kVoidPerform);
+	const uint32_t expectedGround = ui::rotatedPalette(ui::kChromeBase, ui::chromeHueOffset(), ui::accentHueOffset()).voidGround;
+	CHECK(ui::CircleRail::kGround == expectedGround);
+	CHECK(expectedGround == ui::rotateHue(feathers::tokens::kVoidPerform, ui::chromeHueOffset()));
 	// **NOT VACUOUS, AND IT IS THE WHOLE POINT OF THE CHANGE**: the rail no longer wears the surface
 	// every other rail wears. A ground equal to `kSurfaceRaised` is this case passing on the build it
 	// exists to reject.
@@ -26396,39 +26398,6 @@ TEST_CASE("a long choice list opens scrolled so the current choice sits in its m
 	using menu_check::inTop;
 	using menu_check::newestPopup;
 	using menu_check::rowsOf;
-	SUBCASE("HARM's harmonic box, at a mid ratio and at both ends") {
-		FilterFixture f;
-		const size_t slot = f.bridge.addFxDevice(fx::harm::kTraits.tag);
-		REQUIRE(slot < feathers::kMaxFxSlots);
-		f.bridge.refresh();
-		f.lane->resized();
-		f.lane->scrollCardIntoView(slot);
-		auto* card = dynamic_cast<ui::HarmCard*>(f.lane->cardAt(slot));
-		REQUIRE(card != nullptr);
-		ui::HarmonicRow* row = card->harmonicRow();
-		REQUIRE(row != nullptr);
-		const DeviceInstanceId id = card->device();
-		namespace hrm = feathers::fx::harm;
-		const int count = static_cast<int>(hrm::kHarmonicCount);
-		for (const int want : { count / 2, 1, count - 2 }) {
-			CAPTURE(want);
-			f.deviceHost.setField(id, static_cast<size_t>(fx::harm::Param::Harmonic), static_cast<float>(want));
-			row->showMenu();
-			visage::PopupMenuFrame* popup = newestPopup(*row);
-			REQUIRE(popup != nullptr);
-			visage::PopupList* list = rowsOf(*popup);
-			REQUIRE(list != nullptr);
-			REQUIRE(list->numOptions() == count);
-			const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
-			CHECK(placed.current == want);
-			CHECK(placed.scroll == doctest::Approx(list->yPosition()));
-			checkMarkedOnly(*list, want);
-			checkCentred(*list, want);
-			// AND STILL HANGING OFF ITS BOX: the scroll moved the rows inside the list, not the list.
-			checkHangsOff(placed, inTop(*row, row->boxBounds()));
-			ui::dismissMenuOf(*row);
-		}
-	}
 	SUBCASE("Pattern's Scale box, at a mid scale") {
 		namespace pt = feathers::mod::arp::pat;
 		ModFixture f;
@@ -26531,20 +26500,6 @@ TEST_CASE("SHOT choice menus opened on a mid-list choice: HARM's ratio and Patte
 		             << p.anchor.height() << " scale " << root->dpiScale() << " shot " << shot.width() << "x" << shot.height()
 		             << " -> " << path);
 	};
-	{
-		namespace hrm = feathers::fx::harm;
-		DynCardFixture<ui::HarmCard> d(hrm::kTraits.tag);
-		auto* root = dynamic_cast<visage::ApplicationEditor*>(d.f.root);
-		REQUIRE(root != nullptr);
-		root->setWindowless(static_cast<int>(d.f.root->width()), static_cast<int>(d.f.root->height()));
-		d.set(static_cast<size_t>(hrm::Param::Harmonic), static_cast<float>(hrm::kHarmonicCount / 2));
-		(void)d.card->updateContent();
-		ui::HarmonicRow* row = d.card->harmonicRow();
-		REQUIRE(row != nullptr);
-		row->showMenu();
-		shoot(d.f.root, *row, "choice_menu_harm");
-		ui::dismissMenuOf(*row);
-	}
 	{
 		namespace pt = feathers::mod::arp::pat;
 		ModFixture f;
@@ -26714,20 +26669,6 @@ TEST_CASE("GG placement: every dropdown in the editor hangs off the box it was o
 		checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*knob, { 0.0f, 0.0f, knob->width(), knob->height() }));
 	}
 
-	SUBCASE("HARM's harmonic box") {
-		FilterFixture f;
-		const size_t slot = f.bridge.addFxDevice(fx::harm::kTraits.tag);
-		REQUIRE(slot < feathers::kMaxFxSlots);
-		f.bridge.refresh();
-		f.lane->resized();
-		f.lane->scrollCardIntoView(slot);
-		auto* card = dynamic_cast<ui::HarmCard*>(f.lane->cardAt(slot));
-		REQUIRE(card != nullptr);
-		ui::HarmonicRow* row = card->harmonicRow();
-		REQUIRE(row != nullptr);
-		row->showMenu();
-		checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*row, row->boxBounds()));
-	}
 
 	SUBCASE("the drawn filter's band-type menu, which opens at the point pressed") {
 		namespace dr = feathers::fx::drawn;
@@ -35685,15 +35626,23 @@ TEST_CASE("Rack stage 2, step 4: every multi-choice control shows its choices be
 TEST_CASE("Rack stage 2, step 4 / §7a: the spectrum strip shows in Bands, Mid/Side and Left/Right only, its corner lines stand at the corners the ENGINE runs, and a drag writes the cut — pushing a neighbour a third of an octave clear") {
 	namespace pr = feathers::rack::parallel;
 	RackViews v;
+	bool previousStrip = false;
 	for (size_t m = 0; m < static_cast<size_t>(pr::Mode::kCount); ++m) {
 		CAPTURE(m);
+		if (static_cast<pr::Mode>(m) == pr::Mode::Keyed) {
+			continue; // Parallel's view and audio; it comes after Bands here, where the strip's lease is still running down
+		}
 		v.set(pr::Param::Mode, static_cast<float>(m));
 		v.refresh();
 		const bool strip = (pr::kSpectrumModes & pr::kModeBit(static_cast<pr::Mode>(m))) != 0;
 		CHECK(v.card->spectrumForTest().isVisible() == strip);
 		CHECK(v.panel->spectrumForTest().isVisible() == strip);
-		// THE LEASE: a strip that is shown asks the rack for readings; none is asked for where none is shown.
-		CHECK((v.r.rack().leaseForTest() > 0) == strip);
+		// THE LEASE: a strip that is shown asks the rack for readings; none is asked for where none is shown. A lease is a time (it runs out
+		// by itself, and no audio runs here), so the first mode WITHOUT a strip after one WITH it still holds the last one's: not asked.
+		if (strip || !previousStrip) {
+			CHECK((v.r.rack().leaseForTest() > 0) == strip);
+		}
+		previousStrip = strip;
 	}
 	v.set(pr::Param::Mode, static_cast<float>(pr::Mode::Bands));
 	v.set(pr::Param::BandCount, 2.0f); // 5 bands
@@ -36475,6 +36424,65 @@ TEST_CASE("NO item 2: a chain's level, mute and solo are destinations through it
 	card->setModulation(nullptr, nullptr);
 	f.bridge.fxBodies().detach(r.id, r.body);
 	REQUIRE(f.bridge.removeFxDevice(r.slot));
+}
+
+TEST_CASE("a chain strip's key box shows Any or the note name, edits the chain's key as one undo step, and is no destination") {
+	namespace pr = feathers::rack::parallel;
+	ui::ModState mod;
+	ui::EditHistory history;
+	ModFixture f;
+	RackOnLane r(f);
+	r.rack().setOuterGate(ParamBridge::outerGateOver(&f.bridge, r.id));
+	(void)f.bridge.serviceOwnControls();
+	auto* lane = findInTree<ui::FxLane>(f.root);
+	REQUIRE(lane != nullptr);
+	lane->resized();
+	auto* card = dynamic_cast<ui::ParallelRackCard*>(lane->cardAt(r.slot));
+	REQUIRE(card != nullptr);
+	card->setModulation(&mod, &history);
+	(void)card->update();
+	REQUIRE(card->stripsForTest().size() == 1);
+	ui::ChainStrip& strip = *card->stripsForTest()[0];
+	ui::ChainControl& key = strip.keyControlForTest();
+	// DEFAULT ANY: the control's value is 0 and the box's text says so.
+	CHECK(r.rack().chainKey(0) == pr::kAnyKey);
+	CHECK(key.value() == 0.0);
+	CHECK(key.text() == "Any");
+	// WHERE IT SHOWS: a wide row has it; a narrow card strip leaves the room to the level pill's caption; the window's column has it.
+	strip.setBounds(0.0f, 0.0f, 600.0f, 20.0f);
+	CHECK(strip.keyBox().isVisible());
+	strip.setBounds(0.0f, 0.0f, 150.0f, 20.0f);
+	CHECK_FALSE(strip.keyBox().isVisible());
+	strip.setInRail(true);
+	strip.setBounds(0.0f, 0.0f, 40.0f, 160.0f);
+	CHECK(strip.columnLayoutForTest());
+	CHECK(strip.keyBox().isVisible());
+	// 61 is C#4 (a key plus one is the Choice's value).
+	key.setValue(62.0);
+	CHECK(r.rack().chainKey(0) == 61);
+	CHECK(key.text() == "C#4");
+	CHECK(key.value() == 62.0);
+	history.undo();
+	CHECK(r.rack().chainKey(0) == pr::kAnyKey);
+	CHECK(key.text() == "Any");
+	history.redo();
+	CHECK(r.rack().chainKey(0) == 61);
+	// THE CHOKE GROUP BESIDE IT: None, then 1..8; one undo step; the column has the box, a narrow card row does not.
+	ui::ChainControl& choke = strip.chokeControlForTest();
+	CHECK(choke.text() == "None");
+	choke.setValue(3.0);
+	CHECK(r.rack().chainChoke(0) == 3);
+	CHECK(choke.text() == "3");
+	history.undo();
+	CHECK(r.rack().chainChoke(0) == 0);
+	history.redo();
+	CHECK(r.rack().chainChoke(0) == 3);
+	CHECK(strip.chokeBox().isVisible());
+	CHECK_FALSE(choke.display().isDestination);
+	// NOT A DESTINATION: it has no slot param, so nothing can be routed to it and it offers no host slot.
+	CHECK_FALSE(key.display().isDestination);
+	CHECK(key.hostSlot().state == feathers::device::HostSlotStatus::State::Unavailable);
+	card->setModulation(nullptr, nullptr);
 }
 
 TEST_CASE("the Arp is offered by Feathers' modulator-lane picker, and a pick seats it with its own card") {
@@ -42713,6 +42721,9 @@ TEST_CASE("drum device window: every widget is bound to its control by index, an
 		else if (auto* seg = dynamic_cast<ui::SegmentedControl*>(w)) {
 			bound = seg->control();
 		}
+		else if (auto* chip = dynamic_cast<ui::SwitchChip*>(w)) {
+			bound = &chip->control();
+		}
 		REQUIRE(bound != nullptr);
 		CAPTURE(ddv::kParamDescs[i].name);
 		CHECK(&bound->desc() == &ddv::kParamDescs[i]);
@@ -42781,6 +42792,51 @@ TEST_CASE("drum device window: the terrain pad writes Travel X and Travel Y only
 	CHECK(u.field(ddv::Param::TravelX) > 5.0f);
 	CHECK(std::abs(pad.viewForTest().first) > 5.0);
 	pad.onMouseUp().callback(at(px, py));
+}
+
+TEST_CASE("drum device: Keys is a chip on the card and the window, and Pitched hides what it does not read (not greys it)") {
+	DrumUi u;
+	// THE CHIP, BOUND BY INDEX, on both surfaces; Keys is a two-state SwitchChip, not a box.
+	REQUIRE(u.d.card->keysForTest().control() != nullptr);
+	CHECK(&u.d.card->keysForTest().control()->desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Keys)]);
+	auto* windowKeys = dynamic_cast<ui::SegmentedControl*>(u.win->widgetForTest(ddv::Param::Keys));
+	REQUIRE(windowKeys != nullptr);
+	REQUIRE(windowKeys->control() != nullptr);
+	CHECK(&windowKeys->control()->desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Keys)]);
+	const auto shown = [&](ddv::Param p) { return u.win->widgetForTest(p)->isVisible(); };
+	// ONE KEY: Note, Bend and Terrain Pitch are drawn, the card's Note box too, and the pitch readout.
+	CHECK(u.d.card->noteForTest().isVisible());
+	CHECK(shown(ddv::Param::Note));
+	CHECK(shown(ddv::Param::Bend));
+	CHECK(shown(ddv::Param::PitchMode));
+	CHECK(u.win->readoutForTest().isVisible());
+	// PITCHED: the key is the pitch, so Note is not read, the kit's Bend share and Terrain Pitch are not read (the engine's Pitched
+	// mode leaves them out), and there is no one settled pitch to read or type. Hidden everywhere, not greyed.
+	// ANY KEY: Note is not read (every key is answered), but the drum's own pitch is, so Bend, Terrain Pitch and the readout stay.
+	u.set(ddv::Param::Keys, 1.0);
+	CHECK_FALSE(u.d.card->noteForTest().isVisible());
+	CHECK_FALSE(shown(ddv::Param::Note));
+	CHECK(shown(ddv::Param::Bend));
+	CHECK(shown(ddv::Param::PitchMode));
+	CHECK(u.win->readoutForTest().isVisible());
+	u.set(ddv::Param::Keys, 2.0);
+	CHECK_FALSE(u.d.card->noteForTest().isVisible());
+	CHECK_FALSE(shown(ddv::Param::Note));
+	CHECK_FALSE(shown(ddv::Param::Bend));
+	CHECK_FALSE(shown(ddv::Param::PitchMode));
+	CHECK_FALSE(u.win->readoutForTest().isVisible());
+	// What it DOES read stays: Tune, the picture, Level.
+	CHECK(shown(ddv::Param::Tune));
+	CHECK(u.d.card->tuneForTest().isVisible());
+	// BACK TO ONE KEY brings them back.
+	u.set(ddv::Param::Keys, 0.0);
+	CHECK(u.d.card->noteForTest().isVisible());
+	CHECK(shown(ddv::Param::Note));
+	CHECK(u.win->readoutForTest().isVisible());
+	// THE PLAY BUTTON strikes middle C when Pitched (Note is not read), and the Note otherwise.
+	CHECK(u.d.card->modelForTest().noteKey() == static_cast<int>(u.field(ddv::Param::Note)));
+	u.set(ddv::Param::Keys, 2.0);
+	CHECK(u.d.card->modelForTest().noteKey() == 60);
 }
 
 TEST_CASE("drum device: the window offers every control the card offers, by descriptor entry") {
@@ -44114,4 +44170,55 @@ TEST_CASE("ETCH's window offers the slot row and every control Etch uses, nothin
 	e.mode(ero::Mode::Etch);
 	CHECK(visible(slots.outer.get()));
 	CHECK(panel.plotForTest()->showsEtchForTest());
+}
+
+TEST_CASE("HARM's window: the harmonic box's popup is placed, centred and hangs off its box (moved from the card)") {
+	// THE CARD NO LONGER HAS A HARMONIC ROW (its partials' controls live in the window), so this check stands on the WINDOW'S row,
+	// which is the same widget with the same placement rules. The window is opened the way a hand opens it, through the lane.
+	using menu_check::checkHangsOff;
+	using menu_check::inTop;
+	using menu_check::newestPopup;
+	using menu_check::rowsOf;
+	ModFixture f;
+	auto* lane = findInTree<ui::FxLane>(f.root);
+	auto* overlay = f.gui.expandedForTest();
+	REQUIRE(lane != nullptr);
+	REQUIRE(overlay != nullptr);
+	namespace hrm = feathers::fx::harm;
+	const size_t slot = f.bridge.addFxDevice(hrm::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	f.bridge.refresh();
+	lane->resized();
+	lane->scrollCardIntoView(slot);
+	lane->resized();
+	(void)f.gui.canvasForTest()->setCollapsed(true);
+	lane->onExpandDevice(slot);
+	REQUIRE(overlay->open());
+	auto* panel = presentedAs<ui::HarmExpanded>(overlay);
+	REQUIRE(panel != nullptr);
+	ui::HarmonicRow* row = panel->harmonicRow();
+	REQUIRE(row != nullptr);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	const int count = static_cast<int>(hrm::kHarmonicCount);
+	for (const int want : { count / 2, 1, count - 2 }) {
+		CAPTURE(want);
+		f.deviceHost.setField(id, static_cast<size_t>(hrm::Param::Harmonic), static_cast<float>(want));
+		row->showMenu();
+		visage::PopupMenuFrame* popup = newestPopup(*row);
+		REQUIRE(popup != nullptr);
+		visage::PopupList* list = rowsOf(*popup);
+		REQUIRE(list != nullptr);
+		REQUIRE(list->numOptions() == count);
+		const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+		CHECK(placed.current == want);
+		CHECK(placed.scroll == doctest::Approx(list->yPosition()));
+		checkMarkedOnly(*list, want);
+		checkCentred(*list, want);
+		// AND STILL HANGING OFF ITS BOX: the scroll moved the rows inside the list, not the list.
+		checkHangsOff(placed, inTop(*row, row->boxBounds()));
+		ui::dismissMenuOf(*row);
+	}
+	row->showMenu();
+	checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*row, row->boxBounds()));
+	ui::dismissMenuOf(*row);
 }

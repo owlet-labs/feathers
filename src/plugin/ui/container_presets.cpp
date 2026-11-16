@@ -67,14 +67,14 @@ bool captured(Notifier* notifier, bool ok) {
 }
 
 ContainerPresets browserOver(const device::Descriptor& kind, const char* bank, std::unique_ptr<PresetProvider> provider,
-                             Notifier* notifier) {
+                             Notifier* notifier, PresetBrowser::Style style = PresetBrowser::kPanelStyle) {
 	ContainerPresets out;
 	out.provider = std::move(provider);
 	out.browser = std::make_unique<PresetBrowser>(std::vector<std::string> { "Init" },
 	                                              std::vector<PresetData> { PresetData { initDevicePreset(kind) } },
-	                                              bank, PresetBrowser::kPanelStyle);
+	                                              bank, style);
 	out.browser->accepts = [&kind](std::span<const uint8_t> bytes) { return isPresetOf(kind, bytes); };
-	out.browser->setBounds(0.0f, 0.0f, out.browser->barWidth(), PresetBrowser::kPanelStyle.height);
+	out.browser->setBounds(0.0f, 0.0f, out.browser->barWidth(), style.height);
 	out.browser->loadBankFromDisk();
 	out.browser->setProvider(out.provider.get());
 	out.browser->setNotifier(notifier);
@@ -120,7 +120,10 @@ ContainerPresets makeTopPresets(rack::RackBridge& bridge, Notifier* notifier, st
 		    }
 		    return true;
 	    });
-	ContainerPresets out = browserOver(chainPresetDescriptor(), kChainPresetBank, std::move(provider), notifier);
+	// THE STEPPER MUST FIT THE HEADER ROW: the door, this, and the macros toggle share one 200 px column, so the name panel is narrower than a
+	// device panel's (124) and both arrows stay on the face.
+	constexpr PresetBrowser::Style kHeaderStyle { PresetBrowser::kPanelStyle.height, 106.0f, PresetBrowser::kPanelStyle.arrowWidth };
+	ContainerPresets out = browserOver(chainPresetDescriptor(), kChainPresetBank, std::move(provider), notifier, kHeaderStyle);
 	// THE RACK PLUGIN'S BROWSER OPENS ON THE PRESET ITS PATCH CAME FROM (backlog QC): the bridge's `topPreset`, saved at the
 	// patch's root.
 	bindPresetIdentity(

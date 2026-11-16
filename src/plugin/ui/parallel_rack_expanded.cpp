@@ -17,6 +17,7 @@
 
 #include "plugin/ui/parallel_rack_expanded.h"
 
+#include "plugin/ui/stored_edit.h"
 #include "plugin/ui/theme.h"
 #include "rack/inner_chain.h"
 
@@ -42,7 +43,9 @@ constexpr float kMacroRows = 4.0f;
 /// A KNOB CELL AT THE ENGINE RAIL'S FACE SIZE (38), not the footer's 52: four rows of macros have to fit under Mix and Gain.
 constexpr float kCellHeight = Knob::columnHeight(Knob::kEngineRailDiameter);
 /// THE MODE ROW above Mix and Gain (stage 2): one knob cell and its gap.
-constexpr float kModeRow = kCellHeight + ParallelRackExpanded::kPad;
+/// THE VIEW'S ROW sits under the mode row, over the macros.
+constexpr float kViewRow = 2.0f * (ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f);
+constexpr float kModeRow = kCellHeight + ParallelRackExpanded::kPad + kViewRow;
 
 /// EACH RAIL IS HANDED ITS OWN CHAIN as the handle, so its cast is the identity.
 rack::InnerChain* chainItself(void* surface) { return static_cast<rack::InnerChain*>(surface); }
@@ -56,10 +59,29 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		controls_.push_back(
 		    std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(kKnobs[i])));
-		auto knob = std::make_unique<Knob>(*controls_.back(), kCaptions[i], notifier);
-		knob->setFaceDiameter(Knob::kEngineRailDiameter);
-		addChild(knob.get());
-		knobs_.push_back(std::move(knob));
+		if (i < kTopKnobs) {
+			auto knob = std::make_unique<Knob>(*controls_.back(), kCaptions[i], notifier);
+			knob->setFaceDiameter(Knob::kEngineRailDiameter);
+			addChild(knob.get());
+			knobs_.push_back(std::move(knob));
+			continue;
+		}
+		// A MACRO IS THE SAME SLOT THE SYNTH'S MACROS ARE (right-click: type, polarity, Rename), read through the rack's polarity.
+		const size_t n = i - kTopKnobs;
+		macroViews_.push_back(std::make_unique<BipolarMacro>(*controls_.back(), [this, n] {
+			const pr::Rack* rack = rackNow();
+			return rack != nullptr && rack->macroBipolar(n);
+		}));
+		auto slot = std::make_unique<MacroSlot>(*macroViews_.back(), kCaptions[i], macroNaming(n), macroHooks(n), notifier);
+		slot->setFaceDiameter(Knob::kEngineRailDiameter);
+		addChild(slot.get());
+		macroSlots_.push_back(std::move(slot));
+		// A MACRO IS A SOURCE INSIDE THE RACK as well as a destination of its host: its arrow arms it for every chain.
+		auto arm = std::make_unique<SourceArm>(macroMod_, device::Source::core(n));
+		arm->setTooltip("Arm Macro " + std::to_string(n + 1)
+		                + " as a modulation source: then drag a control inside the chains to set how far it moves it. Press again to put it away");
+		addChild(arm.get());
+		macroArms_.push_back(std::move(arm));
 	}
 	// STAGE 2: THE MODE (a dropdown) AND THE POSITION, every control the card offers (window ⊇ card).
 	modeControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Mode));
@@ -69,6 +91,22 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	position_ = std::make_unique<Knob>(*positionControl_, "Position", notifier);
 	position_->setFaceDiameter(Knob::kEngineRailDiameter);
 	addChild(position_.get());
+	viewControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::View));
+	playingControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Playing));
+	viewSeg_ = std::make_unique<SegmentedControl>(*viewControl_, registry, pr::kViewNames, notifier);
+	playingBox_ = std::make_unique<ValueBox>(*playingControl_, "Playing");
+	viewPairControl_ = std::make_unique<RackViewPairControl>(*viewControl_);
+	viewPair_ = std::make_unique<SegmentedControl>(*viewPairControl_, registry, RackViewPairControl::kNames, notifier);
+	addChild(viewSeg_.get());
+	addChild(viewPair_.get());
+	addChild(playingBox_.get());
+	// WHICH CHAIN AND WHICH PAGE THE VIEW IS ON: the window's alone (the card has no tabs or pads to point them at).
+	viewedControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::ViewedChain));
+	pageControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::PadsPage));
+	viewedBox_ = std::make_unique<ValueBox>(*viewedControl_, "Viewing");
+	pageBox_ = std::make_unique<ValueBox>(*pageControl_, "Page");
+	addChild(viewedBox_.get());
+	addChild(pageBox_.get());
 	unusedControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Unused));
 	unused_ = std::make_unique<SegmentedControl>(*unusedControl_, registry, pr::kUnusedFaceNames, notifier);
 	addChild(unused_.get());
@@ -91,7 +129,7 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	}
 	keyTrack_ = std::make_unique<SwitchChip>(*own(pr::Param::KeyTrack), "Key Track");
 	addChild(keyTrack_.get());
-	gated_ = { { keyTrack_.get(), pr::Param::KeyTrack }, { position_.get(), pr::Param::Position },   { unused_.get(), pr::Param::Unused },
+	gated_ = { { keyTrack_.get(), pr::Param::KeyTrack }, { playingBox_.get(), pr::Param::Playing }, { position_.get(), pr::Param::Position },   { unused_.get(), pr::Param::Unused },
 	           { bandsBox_.get(), pr::Param::BandCount },  { filteringBox_.get(), pr::Param::Filtering },
 	           { slope_.get(), pr::Param::Slope },         { cuts_[0].get(), pr::Param::Cut1 },
 	           { cuts_[1].get(), pr::Param::Cut2 },        { cuts_[2].get(), pr::Param::Cut3 },
@@ -107,6 +145,29 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	positionBar_ = std::make_unique<RackPositionBar>(host_, id_, *positionControl_, *modeControl_);
 	addChild(positionBar_.get());
 	gated_.push_back({ positionBar_.get(), pr::Param::Position });
+	// THE TABS AND PADS VIEWS: the bar over the rails and the pads panel beside them, hidden until `View` asks. The chain strips keep
+	// every per-chain control (level, mute, solo, key, choke) for the chain in front; an empty pad offers "+".
+	model_ = std::make_unique<RackViewAdapter>(host_, id_,
+	                                           RackViewAdapter::Controls { playingControl_.get(), modeControl_.get(), positionControl_.get(),
+	                                                                       controls_[1].get() });
+	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
+	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
+	pads_->gridForTest().setAddHandler([this](int key) {
+		if (const size_t at = model_->addKeyedChain(key, history_); at != kNoChain) {
+			model_->viewChain(at);
+			if (follow()) {
+				minimumSizeChanged();
+				redraw();
+			}
+			if (notifier_ != nullptr) {
+				notifier_->say("Chain added");
+			}
+		}
+	});
+	addChild(tabs_.get());
+	addChild(pads_.get());
+	tabs_->setVisible(false);
+	pads_->setVisible(false);
 	(void)showForMode();
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		if (addBounds().contains(e.position)) {
@@ -140,6 +201,12 @@ float ParallelRackExpanded::railsWidth() const {
 visage::Point ParallelRackExpanded::minimumSize() const {
 	visage::Point p { railsLeft() + railsWidth() + phantomsWidth(),
 		              std::max(addSlotBounds().bottom(), bandsBottom()) + kPad };
+	// PADS: the panel stands before the rails, so the window is at least its width and height.
+	if (model_ != nullptr && model_->view() == RackViewKind::Pads) {
+		const visage::Point n = pads_->naturalSize();
+		p.x = std::max(p.x, railsLeft() + n.x + kPad + 34.0f); // and a collapsed rail (34 px) beside it
+		p.y = std::max(p.y, railsTop() + n.y + kPad);
+	}
 	for (const auto& r : rails_) {
 		// A CLOSED RAIL IS A CHANNEL STRIP NOW (backlog OC), and needs its column's height; an open one its floor.
 		p.y = std::max(p.y, r->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
@@ -191,6 +258,10 @@ visage::Bounds ParallelRackExpanded::addSlotBounds() const {
 
 bool ParallelRackExpanded::addShown() const {
 	const auto mode = static_cast<pr::Mode>(std::lround(modeControl_->value()));
+	// TABS HOLD AT MOST EIGHT CHAINS: past them the add control is gone (not greyed).
+	if (model_ != nullptr && model_->view() == RackViewKind::Tabs && model_->chainCount() >= kMaxRackTabs) {
+		return false;
+	}
 	return (pr::kRoleModes & pr::kModeBit(mode)) == 0;
 }
 
@@ -206,6 +277,17 @@ void ParallelRackExpanded::layOut() {
 	// UNUSED UNDER THE MODE, THE COLUMN'S FULL WIDTH: its two words need the room (they ran together in one cell), and it
 	// shows only in the role modes, where the position's knob does not.
 	unused_->setBounds(kPad, kPad + kCellHeight - SwitchChip::kHeight, kColumnWidth, SwitchChip::kHeight);
+	// THE VIEW (no audio effect) UNDER THE MODE ROW, and Select's playing chain beside it.
+	{
+		const float vy = kPad + kCellHeight + kPad * 0.5f;
+		const float viewWide = std::round(kColumnWidth * 0.62f);
+		viewSeg_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
+		viewPair_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
+		playingBox_->setBounds(kPad + viewWide, vy, kColumnWidth - viewWide, ValueBox::kHeight);
+		const float vy2 = vy + ValueBox::kHeight + kPad * 0.5f;
+		viewedBox_->setBounds(kPad, vy2, kColumnWidth * 0.5f - kPad * 0.5f, ValueBox::kHeight);
+		pageBox_->setBounds(kPad + kColumnWidth * 0.5f, vy2, kColumnWidth * 0.5f, ValueBox::kHeight);
+	}
 	// THE BANDS COLUMN, beside the macros: count and filtering stacked, the slope, then the corners A VERTICAL STACK, one per
 	// row, lowest first — the order they stand in on the spectrum.
 	const float bx = kColumnWidth + 2.0f * kPad;
@@ -221,24 +303,60 @@ void ParallelRackExpanded::layOut() {
 	for (size_t k = 0; k < 4; ++k) {
 		cuts_[k]->setBounds(bx, y + static_cast<float>(k) * (kCellHeight + kPad * 0.5f), kColumnWidth, kCellHeight);
 	}
-	for (size_t i = 0; i < knobs_.size(); ++i) {
+	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		const size_t col = i < kTopKnobs ? i : (i - kTopKnobs) % kPerRow;
-		knobs_[i]->setBounds(kPad + static_cast<float>(col) * cell, knobY(i), cell, kCellHeight);
+		visage::Frame& cellFrame = i < kTopKnobs ? static_cast<visage::Frame&>(*knobs_[i])
+		                                          : static_cast<visage::Frame&>(*macroSlots_[i - kTopKnobs]);
+		cellFrame.setBounds(kPad + static_cast<float>(col) * cell, knobY(i), i < kTopKnobs ? cell : kMacroKnobWidth, kCellHeight);
+		if (i >= kTopKnobs) {
+			// THE ARROW BESIDE ITS KNOB, level with the dial's face (a Chain's macro row).
+			macroArms_[i - kTopKnobs]->setBounds(kPad + static_cast<float>(col) * cell + kMacroKnobWidth,
+			                                     knobY(i) + (Knob::kEngineRailDiameter - SourceArm::kHeight) * 0.5f,
+			                                     cell - kMacroKnobWidth, SourceArm::kHeight);
+		}
 	}
 	// THE RAILS LEFT TO RIGHT IN CHAIN ORDER, after the column — under the strip or the bar when the mode has one.
-	const float top = railsTop();
+	float top = railsTop();
 	const float x0 = railsLeft();
-	float x = x0;
-	for (auto& r : rails_) {
+	float railX0 = x0;
+	// TABS: the bar across the top of the rails and only the chain in front below it. PADS: the panel before the rails, and only the
+	// selected pad's chain. STRIPS: every rail, as before.
+	const RackViewKind view = model_->view();
+	tabs_->setVisible(view == RackViewKind::Tabs);
+	pads_->setVisible(view == RackViewKind::Pads);
+	if (view == RackViewKind::Tabs) {
+		tabs_->setBounds(x0, top, std::max(0.0f, static_cast<float>(width()) - x0 - kPad), RackTabBar::kThickness);
+		top += RackTabBar::kThickness + kPad * 0.5f;
+	}
+	else if (view == RackViewKind::Pads) {
+		const visage::Point n = pads_->naturalSize();
+		pads_->setBounds(x0, top, n.x, n.y);
+		railX0 = x0 + n.x + kPad;
+	}
+	const size_t viewed = model_->viewedChain();
+	laidOutView_ = static_cast<int>(view);
+	laidOutViewed_ = viewed;
+	float x = railX0;
+	for (size_t i = 0; i < rails_.size(); ++i) {
+		auto& r = rails_[i];
+		const bool shown = view == RackViewKind::Strips || i == viewed;
+		r->rail->setVisible(shown);
+		if (!shown) {
+			continue;
+		}
 		const float wide = r->rail->railWidth();
 		r->rail->setBounds(x, top, wide, std::max(0.0f, static_cast<float>(height()) - top));
 		x += wide;
 	}
-	const float across = std::max(x - x0 + phantomsWidth(), kPlaceholderWidth);
+	const float across = std::max(x - railX0 + phantomsWidth(), kPlaceholderWidth);
 	spectrum_->setBounds(x0, kPad * 0.5f, across, RackSpectrumStrip::kWindowHeight);
 	positionBar_->setBounds(x0, kPad * 0.5f, across, RackPositionBar::kHeight);
 	// A ROLE NO CHAIN FILLS (§2a): a PHANTOM RAIL after the last real one, an empty chain's face.
 	for (auto& phantom : phantoms_) {
+		phantom->rail->setVisible(view == RackViewKind::Strips);
+		if (view != RackViewKind::Strips) {
+			continue;
+		}
 		// THE SAME RAIL A REAL EMPTY CHAIN GETS, at its own width: collapsed, the 34 px channel strip; open, its column.
 		const float wide = phantom->rail->railWidth();
 		phantom->rail->setBounds(x, top, wide, std::max(0.0f, static_cast<float>(height()) - top));
@@ -518,6 +636,13 @@ bool ParallelRackExpanded::showForMode() {
 		layOut();
 		changed = true;
 	}
+	// TABS IS OFFERED ONLY TO A RACK OF EIGHT CHAINS OR FEWER (hidden, not greyed); see the card's.
+	const bool tabsOffered = model_->chainCount() <= kMaxRackTabs || model_->view() == RackViewKind::Tabs;
+	if (viewSeg_->isVisible() != tabsOffered || viewPair_->isVisible() == tabsOffered) {
+		viewSeg_->setVisible(tabsOffered);
+		viewPair_->setVisible(!tabsOffered);
+		changed = true;
+	}
 	const bool spectrumShown = (pr::kSpectrumModes & pr::kModeBit(static_cast<pr::Mode>(std::lround(mode)))) != 0;
 	if (spectrum_->isVisible() != spectrumShown) {
 		spectrum_->setVisible(spectrumShown);
@@ -544,6 +669,21 @@ bool ParallelRackExpanded::updateContent() {
 	}
 	moved = spectrum_->refresh() || moved;
 	moved = (positionBar_->isVisible() && positionBar_->refresh()) || moved;
+	moved = syncMacroSlots() || moved;
+	// THE VIEW MOVED (or the chain in front): the rails are laid out again.
+	if (static_cast<int>(model_->view()) != laidOutView_ || model_->viewedChain() != laidOutViewed_) {
+		minimumSizeChanged();
+		layOut();
+		moved = true;
+	}
+	if (model_->view() != RackViewKind::Strips) {
+		tabs_->refresh();
+		if (model_->view() == RackViewKind::Pads) {
+			pads_->refresh();
+			// THE STRIKE PULSE: one look a tick; no frame is told when nothing was struck.
+			moved = pulse_.poll(*model_) > 0 || moved;
+		}
+	}
 	moved = relayArm() || moved;
 	if (moved) {
 		redraw();
@@ -551,7 +691,116 @@ bool ParallelRackExpanded::updateContent() {
 	return moved;
 }
 
+pr::Rack* ParallelRackExpanded::rackNow() const { return pr::rackOf(host_.containerSurfaceOf(id_)); }
+
+MacroMenuHooks ParallelRackExpanded::macroHooks(size_t n) {
+	// **THE RACK'S OWN VERBS, asked afresh by id** (a surface handle is never kept), and only while this window lives (`alive_`):
+	// the menu keeps a copy of these until a pick and is parented to the root frame. A reader answers the default, a writer does nothing.
+	const std::weak_ptr<void> alive = alive_;
+	return {
+		.readBipolar =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr && rack->macroBipolar(n);
+		    },
+		.writeBipolar =
+		    [this, n, alive](bool bipolar) {
+			    pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    if (rack != nullptr) {
+				    rack->setMacroBipolar(n, bipolar);
+				    macroSlots_[n]->knob().redraw();
+				    macroSlots_[n]->chip().redraw();
+			    }
+		    },
+		.readType =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr ? rack->macroType(n) : device::MacroType::Knob;
+		    },
+		.writeType =
+		    [this, n, alive](device::MacroType type) {
+			    pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    if (rack != nullptr) {
+				    rack->setMacroType(n, type);
+			    }
+		    },
+		// THE SLOT'S OWN: `MacroSlot` answers Rename with its field.
+		.beginRename = [] {},
+	};
+}
+
+MacroSlot::Naming ParallelRackExpanded::macroNaming(size_t n) {
+	const std::weak_ptr<void> alive = alive_;
+	return {
+		.name =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr ? rack->macroName(n) : device::defaultMacroName(n);
+		    },
+		.renamed =
+		    [this, n, alive] {
+			    const pr::Rack* rack = alive.expired() ? nullptr : rackNow();
+			    return rack != nullptr && rack->macroRenamed(n);
+		    },
+		.rename =
+		    [this, n, alive](const std::string& name) {
+			    if (alive.expired()) {
+				    return;
+			    }
+			    // ONE UNDO STEP, by device id: the step outlives this window, so it holds the host and the id and asks for the rack on replay.
+			    backplane::DeviceHost& host = host_;
+			    const DeviceInstanceId id = id_;
+			    const auto rackOfId = [&host, id] { return pr::rackOf(host.containerSurfaceOf(id)); };
+			    (void)writeStoredAsEdit<std::string>(
+			        history_,
+			        [rackOfId, n] {
+				        const pr::Rack* rack = rackOfId();
+				        return rack != nullptr ? rack->macroName(n) : std::string {};
+			        },
+			        [rackOfId, n](const std::string& label) {
+				        if (pr::Rack* rack = rackOfId()) {
+					        rack->setMacroName(n, label);
+				        }
+			        },
+			        name, "Rename");
+		    },
+	};
+}
+
+bool ParallelRackExpanded::syncMacroSlots() {
+	bool moved = false;
+	for (size_t n = 0; n < macroSlots_.size(); ++n) {
+		moved = macroSlots_[n]->syncType() || moved;
+		// THE CAPTION ON SHOW AGAINST WHAT IT SHOULD BE: the user's name, or the short one. A rename typed in the slot's own field
+		// has already moved the caption; one made elsewhere (an undo, a load, the host) has not.
+		const MacroSlot::Naming naming = macroNaming(n);
+		const std::string want = naming.renamed() ? naming.name() : std::string(kCaptions[kTopKnobs + n]);
+		if (want != macroSlots_[n]->caption()) {
+			macroSlots_[n]->refresh();
+			moved = true;
+		}
+	}
+	return moved;
+}
+
+void ParallelRackExpanded::syncMacroArm() {
+	// **A MACRO'S ARROW ARMS THE MACRO IN EVERY CHAIN.** The lend is by the hand's arm only (`armedLocally`: the host's own arm does
+	// not count), and a rail the hand armed for something of its own is left alone.
+	const bool want = macroMod_.armedLocally();
+	for (auto& r : rails_) {
+		ModState& state = r->rail->modState();
+		r->macroRelay.setTarget(&state);
+		if (want && (!state.armedLocally() || r->macroRelay.relayed())) {
+			(void)r->macroRelay.relay(macroMod_.source());
+		}
+		else {
+			(void)r->macroRelay.release();
+		}
+	}
+}
+
 bool ParallelRackExpanded::relayArm() {
+	syncMacroArm();
 	// **THE GLOW OUT THE BACK OF A RACK** (backlog NZ (b); a Chain's panel does the same, `ChainExpanded::relayArm`). Each
 	// rail's state is its own, so the first one a hand armed LOCALLY names the source; its inner ids are unique across the
 	// Rack's chains, which is how the Rack's table knows which chain holds it. The host answers nobody for what does not
@@ -592,9 +841,13 @@ void ParallelRackExpanded::modulationBound(ModState* mod, EditHistory* history) 
 	for (auto& k : knobs_) {
 		k->setModulation(mod, history);
 	}
+	for (auto& s : macroSlots_) {
+		s->setModulation(mod, history);
+	}
 	for (auto& r : rails_) {
 		r->rail->setOuterModulation(mod, history, [this] { return watchedDevice(); });
 	}
+	macroMod_.setParent(mod);
 }
 
 void ParallelRackExpanded::setPresentedOn(SurfaceLayers* host) {

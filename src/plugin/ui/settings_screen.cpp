@@ -341,24 +341,24 @@ void SettingsScreen::mouseDown(const visage::MouseEvent& e) {
 	}
 #endif
 	if (hueResetBounds().contains(p)) {
-		(void)setChromeHueOffset(0.0);
+		(void)setChromeHueOffset(kChromeHueDefault);
 		redraw();
 		return;
 	}
 	if (hueStripBounds().contains(p)) {
 		// A DOUBLE CLICK ON THE STRIP IS THE OTHER WAY HOME, as on every knob in this editor.
-		(void)setChromeHueOffset(e.repeatClickCount() >= 2 ? 0.0 : hueAt(p.x));
+		(void)setChromeHueOffset(e.repeatClickCount() >= 2 ? kChromeHueDefault : hueAt(p.x));
 		dragging_ = e.repeatClickCount() < 2 ? Dragging::Chrome : Dragging::None;
 		redraw();
 		return;
 	}
 	if (accentResetBounds().contains(p)) {
-		(void)setAccentHueOffset(0.0);
+		(void)setAccentHueOffset(kAccentHueDefault);
 		redraw();
 		return;
 	}
 	if (accentStripBounds().contains(p)) {
-		(void)setAccentHueOffset(e.repeatClickCount() >= 2 ? 0.0 : accentAt(p.x));
+		(void)setAccentHueOffset(e.repeatClickCount() >= 2 ? kAccentHueDefault : accentAt(p.x));
 		dragging_ = e.repeatClickCount() < 2 ? Dragging::Accent : Dragging::None;
 		redraw();
 	}
@@ -639,14 +639,11 @@ void SettingsScreen::draw(visage::Canvas& canvas) {
 	// (the × owns the left end when the desk puts window controls there, and the wordmark follows it)
 	float pen = panel.x() + kPad + (windowControlsSide() == WindowControlsSide::Left ? kHeadHeight - kPad * 0.5f : 0.0f);
 	const float wordTop = panel.y() + (kHeadHeight - kWordmarkSize * 1.4f) * 0.5f;
-	const std::string parts[3] = { "FEA", "TH", "ERS" };
-	const uint32_t colours[3] = { kInk, kAccent, kInk };
-	for (int i = 0; i < 3; ++i) {
-		canvas.setColor(colours[i]);
-		drawTracked(canvas, parts[i], wordmark, kWordmarkTracking, pen, wordTop, kWordmarkSize * 1.4f);
-		pen += trackedWidth(wordmark, parts[i], kWordmarkTracking) +
-		       kWordmarkTracking * static_cast<float>(wordmark.size());
-	}
+	// One colour, as in the header: every letter is ink.
+	canvas.setColor(kInk);
+	drawTracked(canvas, "FEATHERS", wordmark, kWordmarkTracking, pen, wordTop, kWordmarkSize * 1.4f);
+	pen += trackedWidth(wordmark, "FEATHERS", kWordmarkTracking) +
+	       kWordmarkTracking * static_cast<float>(wordmark.size());
 	canvas.setColor(kMuted);
 	drawTracked(canvas, "SETTINGS", font(kBylineSize), kBylineTracking, pen + 10.0f, panel.y(), kHeadHeight);
 	const visage::Bounds close = closeBounds();

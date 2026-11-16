@@ -24,10 +24,16 @@
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/fx_lane_rail.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/macro_polarity.h"
+#include "plugin/ui/macro_slot.h"
+#include "plugin/ui/mod_state.h"
 #include "plugin/ui/parallel_rack_card.h"
+#include "plugin/ui/source_arm.h"
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/rack_mode_views.h"
+#include "plugin/ui/rack_view_adapter.h"
+#include "plugin/ui/rack_views.h"
 #include "plugin/ui/widget_registry.h"
 
 #include <array>
@@ -90,7 +96,11 @@ public:
 
 	static constexpr float kPad = 14.0f;
 	/// TWO MACROS ACROSS AND NO WIDER (backlog OC, corrected): Mix and Gain on the top row, an H-line, the eight macros 2 across and 4 tall.
-	static constexpr float kColumnWidth = 2.0f * 56.0f;
+	static constexpr float kColumnWidth = 2.0f * 76.0f;
+	/// A MACRO'S KNOB CELL, and beside it the arrow that arms it (`macroArmForTest`): the cell is `kColumnWidth / 2` wide.
+	static constexpr float kMacroKnobWidth = 52.0f;
+	/// Mix and Gain, the knobs before the macros in `knobBoundsForTest` order.
+	static constexpr size_t kTopKnobCount = 2;
 	static constexpr float kAddWidth = 64.0f;
 	static constexpr float kAddHeight = 20.0f;
 
@@ -98,15 +108,36 @@ public:
 	[[nodiscard]] std::vector<rack::parallel::Param> addressedParamsForTest() const;
 	[[nodiscard]] size_t railCountForTest() const noexcept { return rails_.size(); }
 	/// The knob at `i` in `addressedParamsForTest` order (Mix, Gain, M1..M8), and the divider and "+ Chain" boxes.
-	[[nodiscard]] visage::Bounds knobBoundsForTest(size_t i) const { return knobs_[i]->bounds(); }
+	[[nodiscard]] visage::Bounds knobBoundsForTest(size_t i) const {
+		return i < kTopKnobCount ? knobs_[i]->bounds() : macroSlots_[i - kTopKnobCount]->bounds();
+	}
+	/// **THE MACRO AT `n` (0-based) AS THE SYNTH'S MACROS ARE SEATED**: one `MacroSlot` — the right-click menu (type, polarity,
+	/// Rename), the field the name is typed into, the pad a Latch or Momentary becomes. The name, type and polarity are the rack's
+	/// (`Rack::setMacroName`), saved in its chains' bodies.
+	[[nodiscard]] MacroSlot& macroSlotForTest(size_t n) const { return *macroSlots_[n]; }
+	/// The arrow of macro `n` (0-based), and the state it arms.
+	[[nodiscard]] SourceArm& macroArmForTest(size_t n) const { return *macroArms_[n]; }
+	[[nodiscard]] ModState& macroModForTest() noexcept { return macroMod_; }
+	/// Runs the macro lend now, as the tick does.
+	void syncMacroArmForTest() { syncMacroArm(); }
 	[[nodiscard]] visage::Bounds dividerBoundsForTest() const { return dividerBounds(); }
 	[[nodiscard]] visage::Bounds addBoundsForTest() const { return addBounds(); }
 	[[nodiscard]] FxLaneRail& railForTest(size_t i) const { return *rails_[i]->rail; }
 	[[nodiscard]] ChainStrip& stripForTest(size_t i) const { return *rails_[i]->strip; }
 	/// THE MODE'S DROPDOWN AND THE POSITION'S KNOB (stage 2), on the row above Mix and Gain.
+	/// THE TABS AND PADS VIEWS (`View`): the bar, the pads panel, the model, and which rails are shown.
+	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
+	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
+	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
+	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
+	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
+	[[nodiscard]] SegmentedControl& viewPairForTest() const { return *viewPair_; }
+	[[nodiscard]] bool railShownForTest(size_t i) const { return rails_[i]->rail->isVisible(); }
 	[[nodiscard]] ValueBox& modeBoxForTest() const { return *modeBox_; }
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
 	[[nodiscard]] SegmentedControl& unusedChipForTest() const { return *unused_; }
+	[[nodiscard]] ValueBox& viewedBoxForTest() const { return *viewedBox_; }
+	[[nodiscard]] ValueBox& pageBoxForTest() const { return *pageBox_; }
 	[[nodiscard]] RackSpectrumStrip& spectrumForTest() const { return *spectrum_; }
 	[[nodiscard]] RackPositionBar& positionBarForTest() const { return *positionBar_; }
 	[[nodiscard]] size_t placeholderCountForTest() const noexcept { return phantoms_.size(); }
@@ -136,6 +167,8 @@ private:
 		std::string caption;
 		std::unique_ptr<ChainStrip> strip;
 		std::unique_ptr<FxLaneRail> rail;
+		/// Declared AFTER the rail it borrows, so it lets go first.
+		BorrowedArmRelay macroRelay;
 	};
 
 	void layOut();
@@ -180,10 +213,31 @@ private:
 	/// HELD BEFORE THE RAILS ARE BUILT OVER IT, AND DECLARED BEFORE THEM so it outlives their teardown (backlog JX).
 	backplane::DeviceHost::SurfacePin pin_;
 	std::vector<std::unique_ptr<DeviceControl>> controls_;
+	/// Mix and Gain.
 	std::vector<std::unique_ptr<Knob>> knobs_;
+	/// **THE EIGHT MACROS, EACH A `MacroSlot`** over its control seen through the rack's polarity. The hooks and the naming hold
+	/// `alive_` weakly: a menu is parented to the root frame and can be picked after this window is gone.
+	std::shared_ptr<void> alive_ = std::make_shared<char>(0);
+	std::vector<std::unique_ptr<BipolarMacro>> macroViews_;
+	std::vector<std::unique_ptr<MacroSlot>> macroSlots_;
+	[[nodiscard]] MacroMenuHooks macroHooks(size_t n);
+	[[nodiscard]] MacroSlot::Naming macroNaming(size_t n);
+	[[nodiscard]] rack::parallel::Rack* rackNow() const;
+	/// Re-seat any slot whose type or name moved under it. True when one did.
+	bool syncMacroSlots();
 	std::unique_ptr<DeviceControl> modeControl_;
 	std::unique_ptr<DeviceControl> positionControl_;
 	std::unique_ptr<ValueBox> modeBox_;
+	std::unique_ptr<DeviceControl> viewControl_;
+	std::unique_ptr<DeviceControl> playingControl_;
+	std::unique_ptr<SegmentedControl> viewSeg_;
+	std::unique_ptr<RackViewPairControl> viewPairControl_;
+	std::unique_ptr<SegmentedControl> viewPair_;
+	std::unique_ptr<ValueBox> playingBox_;
+	std::unique_ptr<DeviceControl> viewedControl_;
+	std::unique_ptr<DeviceControl> pageControl_;
+	std::unique_ptr<ValueBox> viewedBox_;
+	std::unique_ptr<ValueBox> pageBox_;
 	std::unique_ptr<Knob> position_;
 	std::unique_ptr<DeviceControl> unusedControl_;
 	std::unique_ptr<SegmentedControl> unused_;
@@ -194,6 +248,13 @@ private:
 	std::unique_ptr<SegmentedControl> slope_;
 	std::unique_ptr<RackSpectrumStrip> spectrum_;
 	std::unique_ptr<RackPositionBar> positionBar_;
+	/// THE TABS AND PADS VIEWS: the model and the strike pulse are declared BEFORE the widgets that read them, so they outlive them.
+	std::unique_ptr<RackViewAdapter> model_;
+	RackStrikePulse pulse_;
+	std::unique_ptr<RackTabBar> tabs_;
+	std::unique_ptr<RackPadsPanel> pads_;
+	int laidOutView_ = -1;
+	size_t laidOutViewed_ = static_cast<size_t>(-1);
 	std::vector<std::unique_ptr<PhantomRail>> phantoms_;
 	rack::parallel::Mode phantomMode_ = rack::parallel::Mode::Parallel;
 	/// A drop zone pressed: the chain it made, whose add menu opens once its rail exists (0xFFFF: none).
@@ -210,7 +271,15 @@ private:
 	/// **A MODULATOR ARMED IN ONE OF THE RACK'S CHAINS LIGHTS WHAT FOLLOWS THE RACK** (backlog NZ (b)): the rail's arm,
 	/// mirrored into the host's state as the Rack's export — borrowed and put back as found (`BorrowedArmRelay`).
 	BorrowedArmRelay relay_;
+	/// **THE EIGHT MACROS' ARROWS ARM HERE, and the rails follow** (a Chain's macro row, for a rack of chains). A macro is the same
+	/// source in every chain (`Rack::setMacro` fans it out), and each rail's state is its own, so the arrow arms this one state
+	/// (a child of the host's: one hand, one arm) and `syncMacroArm` lends its source to every rail. Declared before the arrows.
+	ModState macroMod_;
+	std::vector<std::unique_ptr<SourceArm>> macroArms_;
 	bool relayArm();
+	/// **A MACRO ARMED HERE IS ARMED IN EVERY CHAIN** (see `macroMod_`): each rail's state is borrowed for the macro's source
+	/// while the hand holds it, and put back as found when it lets go.
+	void syncMacroArm();
 	ContainerPresets presets_;
 };
 

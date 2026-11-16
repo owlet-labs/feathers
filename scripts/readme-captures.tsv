@@ -1,0 +1,237 @@
+# Capture and crop tables for scripts/capture-readme.sh. Tab-separated; blank lines and '#' lines are ignored.
+#
+#   shot  <id>  <xvfb geometry | ->  <tool>  <arguments, separated by '|'>
+#       One capture. <tool> is widget-shot (first argument is the device tag; the output path is added after it)
+#       or guihost (the plugin path and an output directory are added in front). Every argument is one argv word,
+#       so a control name with spaces stays whole. '-' is the default 2560x1600x24 display. The scale (1.5), full
+#       redraw, reduced motion and the lavapipe Vulkan driver are set by the script, not here.
+#   crop  <file under docs/readme>  <shot id>  <WxH+X+Y | ->
+#       One image of the README, cut from one capture ('-' keeps the whole frame). The rectangles are pixel
+#       positions of the editor at 1.5x on the 1860x1101 (or taller, --height) capture, so a change to a
+#       window's size or a card's place moves them: the script refuses a crop that runs off its frame, and
+#       --check shows the rest.
+#   live  <file under docs/readme>
+#       An image with a live scope or analyser in it, whose pixels vary a little from run to run under load.
+#       --check calls it stale only when more than 8 percent of its pixels differ.
+#   (an argument "@path:<file>" is a repository-relative file, made absolute)
+#   var   <NAME>  <value>
+#       A setting; ${NAME} in a shot's arguments is replaced by it. An argument "@env:K=V" sets an environment
+#       variable for that capture (FEATHERS_EXPLORE_ZOOM is how Explore is opened at a zoom).
+#   gif   <file>  <shot id>  <crop WxH+X+Y>  <frames>  <loop ms>  <scale percent>  <colours>
+#       An animated GIF from a shot's frames (widget-shot --explore-rotate writes <id>-rNN.png), each cropped and
+#       scaled, one loop in <loop ms>, at most 3 MB.
+#   name  <slug>  <label>
+#       The label of a card in collage-all-cards.png.
+#
+# --- settings every Explore capture shares (the Additive engine; the still and the rotate GIF both at x1/30) ---
+var	EXPLORE_ENGINE	5
+var	EXPLORE_ZOOM	0.0333333
+var	GIF_ZOOM	0.0333333
+#
+# --- the numbered pictures ---------------------------------------------------------------------------------
+# The hero is the PERFORM view (the editor opens on Perform; no surface switch is made), on a six-sound patch.
+shot	hero	-	guihost	--state|@fpreset:presets/factory/Feathers/Perform/Constellation.fpreset|--size|2400x1500|--play|3
+shot	f02	-	widget-shot	MSEG|--rack|--rack-add|MATH|--route-curves|--route-phi|1|--height|1500|--macro|1=Knob:Motion:0.65|--mod-run|3
+shot	f03	-	widget-shot	TFIELD|--card|--twinfield-play|--height|1550
+shot	f05	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|@env:FEATHERS_EXPLORE_ZOOM=${EXPLORE_ZOOM}
+shot	rot	-	widget-shot	FVERB|--host|Osc Type=${EXPLORE_ENGINE}|--explore|--likes|6|--radius-route|0.4:0.5|--explore-rotate|40|--explore-zoom-pump|2500|@env:FEATHERS_EXPLORE_ZOOM=${GIF_ZOOM}
+shot	f06	-	widget-shot	FVERB|--host|Osc Type=7|--drum-kit
+crop	01-hero-full-editor.png	hero	-
+crop	02-modulation-lane-and-routes.png	f02	915x1370+0+80
+crop	03-twin-field-modulator.png	f03	354x647+1491+669
+crop	04-pattern-window.png	w_PAT	1222x1000+320+0
+crop	05-explore-terrain.png	f05	562x810+914+80
+gif	explore-rotate.gif	rot	562x810+914+80	40	4000	60	64
+crop	06-drum-kit.png	f06	1052x1084+404+0
+# 07-13 are the window shots below with one more pixel of the editor on every side.
+crop	07-phaser-flanger.png	w_PHFL	1118x698+371+202
+crop	08-delay-multitap.png	w_DELAY	1304x644+278+229
+crop	09-compressor-excomper.png	w_comp	1367x567+247+268
+crop	10-sklitter.png	w_SKLITTER	1860x881+0+110
+crop	11-resonate-with-fx-lanes.png	w_RESONATE	1860x795+0+154
+crop	12-rack-parallel-chains.png	w_RACK	1704x880+154+110
+crop	13-chain-window.png	w_cmps	1436x779+212+161
+#
+# --- the expanded windows (the panel floating over the editor) ----------------------------------------------
+shot	w_AMOD	-	widget-shot	AMOD|--audio|3
+shot	w_ARP	-	widget-shot	ARP|--arp-play|Latch=1
+shot	w_DELAY	-	widget-shot	DELAY|Delay Mode=4|Delay Taps=6|Delay Tap Pattern=0.7|Delay Tap Levels=0.3|Delay Feedback=0.5|Delay Mix=0.4|--audio|3
+shot	w_DISPERSE	-	widget-shot	DISPERSE|--audio|3
+shot	w_FVERB	-	widget-shot	FVERB|Featherverb Size=0.7|Featherverb Decay=0.6|Featherverb Room=0.7|Featherverb Conv Mode=1|--audio|3
+shot	w_HARM	-	widget-shot	HARM|--audio|3
+shot	w_OWLTT	-	widget-shot	OWLTT|--audio|3
+shot	w_PAT	-	widget-shot	PAT|--pattern-like
+shot	w_PHFL	-	widget-shot	PHFL|Phaser Feedback=0.6|Phaser LFO Depth=0.6|--audio|3
+# The Rack window loaded with the factory Bands-mode preset (the browser's own load road), audio running through it.
+shot	w_RACK	-	widget-shot	RACK|--rack-chains|1:open|--rack-preset|@path:presets/factory/Racks/Multiband Saturation.fpreset|--audio|3
+shot	w_RESONATE	-	widget-shot	RESONATE|--resonate-drone|FVERB|--resonate-wet|DELAY|--audio|3
+shot	w_SHPR	-	widget-shot	SHPR|--audio|3
+shot	w_SKLITTER	-	widget-shot	SKLITTER|--rails|both|--chain-add|DELAY|--grain-add|PITCH|Engage=1|--audio|3
+shot	w_cmps	-	widget-shot	cmps|--chain-window|--chain-with|DELAY|--chain-with|RESONATE|--audio|3
+shot	w_comp	-	widget-shot	comp|Comp Mode=2|Comp Compander Topology=3|--audio|3
+shot	w_drwn	-	widget-shot	drwn|1.3 Type=7|1.3 Pole Q=0.985|1.3 Zero R=0.93|1.3 Zero Freq=-7|1.5 Type=7|1.5 Pole Q=0.9|1.5 Zero R=1.0|1.5 Zero Freq=-3|1.2 Type=7|1.2 Pole Q=0.995|1.2 Zero R=1.0|1.2 Zero Freq=-6|2.3 Type=7|2.3 Pole Q=0.985|2.3 Zero R=0.93|2.3 Zero Freq=-7|2.5 Type=7|2.5 Pole Q=0.9|2.5 Zero R=1.0|2.5 Zero Freq=-3|2.2 Type=7|2.2 Pole Q=0.995|2.2 Zero R=1.0|2.2 Zero Freq=-6|3.3 Type=7|3.3 Pole Q=0.985|3.3 Zero R=0.93|3.3 Zero Freq=-7|3.5 Type=7|3.5 Pole Q=0.9|3.5 Zero R=1.0|3.5 Zero Freq=-3|3.2 Type=7|3.2 Pole Q=0.995|3.2 Zero R=1.0|3.2 Zero Freq=-6|4.3 Type=7|4.3 Pole Q=0.985|4.3 Zero R=0.93|4.3 Zero Freq=-7|4.5 Type=7|4.5 Pole Q=0.9|4.5 Zero R=1.0|4.5 Zero Freq=-3|4.2 Type=7|4.2 Pole Q=0.995|4.2 Zero R=1.0|4.2 Zero Freq=-6|--audio|3
+shot	w_eq	-	widget-shot	eq|--audio|3
+shot	w_smth	-	widget-shot	smth|--audio|3
+shot	w_spectral	-	widget-shot	spectral|--audio|3
+shot	w_wayp	-	widget-shot	wayp|--audio|3
+crop	windows/automod.png	w_AMOD	582x1077+639+12
+crop	windows/arp.png	w_ARP	624x733+618+185
+crop	windows/delay.png	w_DELAY	1302x642+279+230
+crop	windows/disperser.png	w_DISPERSE	996x618+432+242
+crop	windows/featherverb.png	w_FVERB	624x1003+618+50
+crop	windows/harm.png	w_HARM	993x796+434+153
+crop	windows/owltt.png	w_OWLTT	1086x805+387+149
+crop	windows/pattern.png	w_PAT	1221x1101+320+0
+crop	windows/phaser-flanger.png	w_PHFL	1116x696+372+203
+crop	windows/rack.png	w_RACK	1704x880+154+110
+crop	windows/resonate.png	w_RESONATE	1860x793+0+155
+crop	windows/shaper.png	w_SHPR	1212x846+324+128
+crop	windows/sklitter.png	w_SKLITTER	1860x879+0+111
+crop	windows/chain.png	w_cmps	1434x777+213+162
+crop	windows/compressor.png	w_comp	1365x565+248+269
+crop	windows/drawn.png	w_drwn	828x721+516+191
+crop	windows/eq.png	w_eq	1044x526+408+288
+crop	windows/smooth-shaper.png	w_smth	1092x730+384+186
+crop	windows/spectral.png	w_spectral	1176x828+342+137
+crop	windows/waypoint.png	w_wayp	744x919+558+92
+#
+# --- the device cards (one per device, in its lane) ---------------------------------------------------------
+# An fx card is 354 wide at +1491+669 in the fx lane, a modulator card 324 wide at +267+573 in the rack lane.
+shot	flt1	-	widget-shot	flt1|--card|--height|1550|--audio|3
+shot	HARM	-	widget-shot	HARM|--card|--height|1550|--audio|3
+shot	OWLTT	-	widget-shot	OWLTT|--card|--height|1550|--audio|3
+shot	wayp	-	widget-shot	wayp|--card|--height|1550|--audio|3
+shot	SHPR	-	widget-shot	SHPR|--card|--height|1550|--audio|3
+shot	AMOD	-	widget-shot	AMOD|--card|--height|1550|--audio|3
+shot	busu	-	widget-shot	busu|--card|--height|1550|--audio|3
+shot	cmps	-	widget-shot	cmps|--card|--height|1550|--audio|3
+shot	DELAY	-	widget-shot	DELAY|--card|--height|1550|--audio|3
+shot	PITCH	-	widget-shot	PITCH|--card|--height|1550|--audio|3
+shot	ERODER	-	widget-shot	ERODER|--card|--height|1550|--audio|3
+shot	clip	-	widget-shot	clip|--card|--height|1550|--audio|3
+shot	RESONATE	-	widget-shot	RESONATE|--card|--height|1550|--audio|3
+shot	smth	-	widget-shot	smth|--card|--height|1550|--audio|3
+shot	eq	-	widget-shot	eq|--card|--height|1550|--audio|3
+shot	DISPERSE	-	widget-shot	DISPERSE|--card|--height|1550|--audio|3
+shot	PHFL	-	widget-shot	PHFL|--card|--height|1550|--audio|3
+shot	spectral	-	widget-shot	spectral|--card|--height|1550|--audio|3
+shot	noise	-	widget-shot	noise|--card|--height|1550|--audio|3
+shot	inject	-	widget-shot	inject|--card|--height|1550|--audio|3
+shot	SKLITTER	-	widget-shot	SKLITTER|--card|--height|1550|Engage=1|--audio|3
+shot	comp	2560x2200x24	widget-shot	comp|--card|--height|2100|--audio|3
+shot	ARP	-	widget-shot	ARP|--card|--height|1550|--arp-play|Latch=1
+shot	PAT	2560x2200x24	widget-shot	PAT|--card|--height|2100
+shot	DHDS	-	widget-shot	DHDS|--rack|--card|--height|1550|--mod-run|3
+shot	MSEG	-	widget-shot	MSEG|--rack|--card|--height|1550|--mod-run|3
+shot	TRAK	-	widget-shot	TRAK|--rack|--card|--height|1550|--mod-run|3
+shot	NEXP	-	widget-shot	NEXP|--rack|--card|--height|1550|--mod-run|3
+shot	LFO	-	widget-shot	LFO|--rack|--card|--height|1550|--mod-run|3
+shot	MACROS	-	widget-shot	MACROS|--rack|--card|--height|1550|--mod-run|3
+shot	MATH	-	widget-shot	MATH|--rack|--card|--height|1550|--mod-run|3
+shot	rtrig	-	widget-shot	rtrig|--rack|--card|--height|1550|--mod-run|3
+shot	TFIELD	-	widget-shot	TFIELD|--rack|--card|--height|1550|--mod-run|3
+shot	FOLLOWER	-	widget-shot	FOLLOWER|--rack|--card|--height|1550|--mod-run|3|Mode=1
+shot	SNH	-	widget-shot	SNH|--rack|--card|--height|1550|--mod-run|3|Rate=8
+shot	STEPSEQ	-	widget-shot	STEPSEQ|--rack|--card|--height|1550|--stepseq-randomise|vgprs|--mod-run|3
+shot	STEREO	-	widget-shot	STEREO|--rack|--card|--height|1550|--stereo-sweep
+shot	drwn_card	-	widget-shot	drwn|1.3 Type=7|1.3 Pole Q=0.985|1.3 Zero R=0.93|1.3 Zero Freq=-7|1.5 Type=7|1.5 Pole Q=0.9|1.5 Zero R=1.0|1.5 Zero Freq=-3|1.2 Type=7|1.2 Pole Q=0.995|1.2 Zero R=1.0|1.2 Zero Freq=-6|2.3 Type=7|2.3 Pole Q=0.985|2.3 Zero R=0.93|2.3 Zero Freq=-7|2.5 Type=7|2.5 Pole Q=0.9|2.5 Zero R=1.0|2.5 Zero Freq=-3|2.2 Type=7|2.2 Pole Q=0.995|2.2 Zero R=1.0|2.2 Zero Freq=-6|3.3 Type=7|3.3 Pole Q=0.985|3.3 Zero R=0.93|3.3 Zero Freq=-7|3.5 Type=7|3.5 Pole Q=0.9|3.5 Zero R=1.0|3.5 Zero Freq=-3|3.2 Type=7|3.2 Pole Q=0.995|3.2 Zero R=1.0|3.2 Zero Freq=-6|--card|--height|1550|--audio|3
+shot	FVERB	-	widget-shot	FVERB|Featherverb Conv Mode=1|--card|--height|1550|--audio|3
+shot	RACK	-	widget-shot	RACK|--card|--height|1550|--rack-chains|3|--audio|3
+crop	cards/filter.png	flt1	354x519+1491+669
+crop	cards/harm.png	HARM	354x245+1491+669
+crop	cards/owltt.png	OWLTT	354x452+1491+669
+crop	cards/waypoint.png	wayp	354x555+1491+669
+crop	cards/shaper.png	SHPR	354x492+1491+669
+crop	cards/automod.png	AMOD	354x482+1491+669
+crop	cards/bus-utility.png	busu	354x596+1491+669
+crop	cards/chain.png	cmps	354x464+1491+669
+crop	cards/delay.png	DELAY	354x413+1491+669
+crop	cards/pitch.png	PITCH	354x288+1491+669
+crop	cards/eroder.png	ERODER	354x288+1491+669
+crop	cards/clipper.png	clip	354x324+1491+669
+crop	cards/resonate.png	RESONATE	354x512+1491+669
+crop	cards/smooth-shaper.png	smth	354x561+1491+669
+crop	cards/eq.png	eq	354x453+1491+669
+crop	cards/disperser.png	DISPERSE	354x431+1491+669
+crop	cards/phaser-flanger.png	PHFL	354x417+1491+669
+crop	cards/spectral.png	spectral	354x392+1491+669
+crop	cards/noise.png	noise	354x585+1491+669
+crop	cards/sidechain-inject.png	inject	354x194+1491+669
+crop	cards/sklitter.png	SKLITTER	354x581+1491+669
+crop	cards/compressor.png	comp	354x623+1491+669
+crop	cards/arp.png	ARP	354x453+1491+669
+crop	cards/pattern.png	PAT	354x657+1491+669
+crop	cards/dahdsr.png	DHDS	324x285+267+573
+crop	cards/mseg.png	MSEG	324x279+267+573
+crop	cards/tracker.png	TRAK	324x426+267+573
+crop	cards/note-expressions.png	NEXP	324x285+267+573
+crop	cards/lfo.png	LFO	324x363+267+573
+crop	cards/macros.png	MACROS	324x218+267+573
+crop	cards/math.png	MATH	324x276+267+573
+crop	cards/random-trigger.png	rtrig	324x414+267+573
+crop	cards/twin-field.png	TFIELD	324x647+267+573
+crop	cards/follower.png	FOLLOWER	324x413+267+573
+crop	cards/sample-hold.png	SNH	324x375+267+573
+crop	cards/step-seq.png	STEPSEQ	324x488+267+573
+crop	cards/stereo-tool.png	STEREO	324x359+267+573
+crop	cards/drawn.png	drwn_card	354x510+1491+669
+crop	cards/featherverb.png	FVERB	354x401+1491+669
+crop	cards/rack.png	RACK	354x350+1491+669
+#
+# --- labels of collage-all-cards.png ------------------------------------------------------------------------
+name	drawn	Drawn
+name	eq	EQ
+name	filter	Filter
+name	resonate	Resonate
+name	spectral	Spectral
+name	waypoint	Waypoint
+name	compressor	Compressor
+name	owltt	OWLTT
+name	clipper	Clipper
+name	eroder	Eroder
+name	shaper	Shaper
+name	smooth-shaper	Smooth Shaper
+name	delay	Delay
+name	featherverb	Featherverb
+name	pitch	Pitch
+name	sklitter	SKLITTER
+name	automod	Automod
+name	disperser	Disperser
+name	phaser-flanger	Phaser/Flanger
+name	bus-utility	Bus Utility
+name	harm	Harm
+name	noise	Noise
+name	sidechain-inject	Sidechain Inject
+name	dahdsr	DAHDSR
+name	follower	Follower
+name	lfo	LFO
+name	macros	Macros
+name	math	Math
+name	mseg	MSEG
+name	note-expressions	Note Expressions
+name	random-trigger	Random Trigger
+name	sample-hold	Sample & Hold
+name	step-seq	Step Seq
+name	stereo-tool	Stereo Tool
+name	tracker	Tracker
+name	twin-field	Twin Field
+name	arp	Arp
+name	pattern	Pattern
+name	chain	Chain
+name	rack	Rack
+#
+# --- images that carry a live display ---------------------------------------------------------------------
+live	cards/eq.png
+live	cards/follower.png
+live	cards/random-trigger.png
+live	cards/sample-hold.png
+live	cards/stereo-tool.png
+live	cards/twin-field.png
+live	windows/eq.png
+live	windows/sklitter.png
+live	collage-all-cards.png
+live	collage-all-windows.png
+live	02-modulation-lane-and-routes.png
+live	10-sklitter.png
+live	collage-modulation.png
+live	collage-effects.png

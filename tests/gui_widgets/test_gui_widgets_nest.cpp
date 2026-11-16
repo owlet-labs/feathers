@@ -1960,6 +1960,104 @@ TEST_CASE("NZ (b): an LFO armed in one of a Rack's chain rails lights the host's
 	CHECK_FALSE(afterKnob.display().routable);
 }
 
+TEST_CASE("Rack macro arrows: each of the eight arms ITS macro for every chain, the controls inside the chains light, a drag from "
+          "it writes an inner route that moves the control, and the macro knob stays a destination of the outer host") {
+	SiteHost h;
+	const DeviceInstanceId rackId = h.bridge.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(rackId != kNoInstance);
+	auto* rk = rack::parallel::rackOf(h.bridge.containerSurfaceOf(rackId));
+	REQUIRE(rk != nullptr);
+	while (rk->chainCount() < 2) {
+		(void)rk->addChain();
+	}
+	rack::RackBridge* chain0 = rk->chainAt(0)->bridge();
+	rack::RackBridge* chain1 = rk->chainAt(1)->bridge();
+	REQUIRE(chain0 != nullptr);
+	REQUIRE(chain1 != nullptr);
+	const DeviceInstanceId f0 = chain0->addDevice(fx::filter::kTraits.tag);
+	const DeviceInstanceId f1 = chain1->addDevice(fx::filter::kTraits.tag);
+	REQUIRE(f0 != kNoInstance);
+	REQUIRE(f1 != kNoInstance);
+	ui::ModState host;
+	ui::EditHistory history;
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(h.bridge, nullptr, registry, rackId, *h.bridge.descriptorOf(rackId));
+	auto* panel = dynamic_cast<ui::ParallelRackExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->modulationBound(&host, &history);
+	panel->setBounds(0, 0, 1200, 700);
+	(void)panel->updateContent();
+	REQUIRE(panel->railCountForTest() == 2);
+
+	const auto cutoff = static_cast<size_t>(fx::filter::Param::Cutoff);
+	ui::DeviceControl in0 { *chain0, f0, fx::filter::kDescriptor, cutoff, &panel->railForTest(0).modForTest(), nullptr };
+	ui::DeviceControl in1 { *chain1, f1, fx::filter::kDescriptor, cutoff, &panel->railForTest(1).modForTest(), nullptr };
+	CHECK_FALSE(in0.display().routable);
+	CHECK_FALSE(in1.display().routable);
+
+	for (size_t n = 0; n < 8; ++n) {
+		INFO("macro " << n);
+		ui::SourceArm& arm = panel->macroArmForTest(n);
+		CHECK(arm.width() > 0.0f);
+		visage::MouseEvent press {};
+		press.position = { 1.0f, 1.0f };
+		arm.onMouseDown().callback(press);
+		// THE ARROW ARMS MACRO n, as the rack's own source — and nothing else.
+		CHECK(panel->macroModForTest().armedLocally());
+		CHECK(panel->macroModForTest().source() == backplane::Source::core(n));
+		CHECK(panel->relayArmForTest() == true);
+		// EVERY CHAIN'S STATE IS ARMED FOR THAT SAME INNER MACRO, so every control inside lights.
+		for (size_t c = 0; c < 2; ++c) {
+			CHECK(panel->railForTest(c).modForTest().armedLocally());
+			CHECK(panel->railForTest(c).modForTest().source() == backplane::Source::core(n));
+		}
+		CHECK(in0.display().routable);
+		CHECK(in1.display().routable);
+		// A DRAG FROM THE ARMED MACRO WRITES AN INNER ROUTE, in the chain the control is in.
+		in0.setAmount(0.4f);
+		CHECK(chain0->routeAmount(backplane::Source::core(n), backplane::Destination::control(f0, cutoff)) == 0.4f);
+		CHECK(chain1->routeAmount(backplane::Source::core(n), backplane::Destination::control(f1, cutoff)) == 0.0f);
+		in0.setAmount(0.0f);
+		// PRESSING THE ARMED ARROW DISARMS, and the chains are put back.
+		arm.onMouseDown().callback(press);
+		CHECK_FALSE(panel->macroModForTest().armedLocally());
+		(void)panel->relayArmForTest();
+		for (size_t c = 0; c < 2; ++c) {
+			CHECK_FALSE(panel->railForTest(c).modForTest().armedLocally());
+		}
+		CHECK_FALSE(in0.display().routable);
+	}
+
+	// THE MACRO KNOB IS STILL A DESTINATION OF THE OUTER HOST: an outer source armed lights it, an arrow of its own does not.
+	host.focus(backplane::Source::core(0));
+	host.arm(true);
+	const auto& rackDesc = rack::parallel::kDescriptor;
+	ui::DeviceControl macroKnob { h.bridge, rackId, rackDesc, static_cast<size_t>(rack::parallel::Param::Macro1), &host, nullptr };
+	CHECK(macroKnob.display().routable);
+	host.arm(false);
+}
+
+TEST_CASE("Rack macro arrows: the window's arrows stand beside the macro knobs, level with the dial, inside the window") {
+	SiteHost h;
+	const DeviceInstanceId rackId = h.bridge.addDevice(rack::parallel::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(h.bridge, nullptr, registry, rackId, *h.bridge.descriptorOf(rackId));
+	auto* panel = dynamic_cast<ui::ParallelRackExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0, 0, 1200, 700);
+	(void)panel->updateContent();
+	for (size_t n = 0; n < 8; ++n) {
+		INFO("macro " << n);
+		const visage::Bounds knob = panel->knobBoundsForTest(2 + n);
+		const visage::Bounds arm = panel->macroArmForTest(n).bounds();
+		CHECK(arm.x() >= knob.right());
+		CHECK(arm.right() <= static_cast<float>(panel->width()));
+		CHECK(arm.width() >= ui::SourceArm::kHeight);
+		CHECK(arm.y() >= knob.y());
+		CHECK(arm.bottom() <= knob.bottom());
+	}
+}
+
 TEST_CASE("NZ (b): under a borrowed PRE arm a Chain's open panel after the holder lights its inner device — the PRE "
           "export reaches inside the chain, and the chain's state follows the host's") {
 	rack::registerChainExpandedView();
@@ -2565,4 +2663,112 @@ TEST_CASE("NZ any depth: an LFO armed in a Chain's panel INSIDE another Chain's 
 	p2->modulationBound(nullptr, nullptr);
 	innerView.reset();
 	outerView.reset();
+}
+
+TEST_CASE("Rack macros are the synth's macro slots: the same right-click menu, a pick writes every chain, a rename is one undo step and "
+          "survives save and load into a fresh rack") {
+	SiteHost h;
+	const DeviceInstanceId rackId = h.bridge.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(rackId != kNoInstance);
+	auto* rk = rack::parallel::rackOf(h.bridge.containerSurfaceOf(rackId));
+	REQUIRE(rk != nullptr);
+	while (rk->chainCount() < 3) {
+		(void)rk->addChain();
+	}
+	ui::ModState host;
+	ui::EditHistory history;
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(h.bridge, nullptr, registry, rackId, *h.bridge.descriptorOf(rackId));
+	auto* panel = dynamic_cast<ui::ParallelRackExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->modulationBound(&host, &history);
+	panel->setBounds(0, 0, 1200, 700);
+	(void)panel->updateContent();
+
+	// THE MENU: the knob's right-click offers it, and it lists what the synth's macro menu lists (no Relative: the rack has no relative road).
+	for (size_t n = 0; n < 8; ++n) {
+		CAPTURE(n);
+		CHECK(panel->macroSlotForTest(n).knob().hasMacroMenuForTest());
+	}
+	ui::MacroSlot& slot = panel->macroSlotForTest(2);
+	CHECK(ui::macroMenuLabelsForTest(slot.menuHooks())
+	      == std::vector<std::string> { "X  Knob", "     Latch", "     Momentary", "", "X  Unipolar  0..100%",
+	                                    "     Bipolar  -100..100%", "", "Rename…" });
+
+	// A PICK writes the macro in EVERY chain, and the menu reads it back.
+	ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuMomentary);
+	ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuBipolar);
+	for (size_t c = 0; c < rk->chainCount(); ++c) {
+		CAPTURE(c);
+		CHECK(rk->chainAt(c)->bridge()->macroType(2) == device::MacroType::Momentary);
+		CHECK(rk->chainAt(c)->bridge()->macroBipolar(2));
+		CHECK(rk->chainAt(c)->bridge()->macroType(1) == device::MacroType::Knob);
+	}
+	CHECK(slot.type() == device::MacroType::Momentary);
+	CHECK(ui::macroMenuLabelsForTest(slot.menuHooks())
+	      == std::vector<std::string> { "     Knob", "     Latch", "X  Momentary", "", "     Unipolar  0..100%",
+	                                    "X  Bipolar  -100..100%", "", "Rename…" });
+
+	// RENAME: the menu's row opens the field, Enter commits, every chain holds the name, the caption and the route list read it.
+	ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuRename);
+	REQUIRE(slot.renaming());
+	slot.field().processTextInput("Sweep");
+	slot.field().processKeyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true });
+	CHECK_FALSE(slot.renaming());
+	for (size_t c = 0; c < rk->chainCount(); ++c) {
+		CAPTURE(c);
+		CHECK(rk->chainAt(c)->bridge()->macroName(2) == "Sweep");
+	}
+	CHECK(rk->macroName(2) == "Sweep");
+	CHECK_FALSE(rk->macroRenamed(3));
+	CHECK(slot.caption() == "Sweep");
+	char label[96] = {};
+	const device::Descriptor* desc = h.bridge.descriptorOf(rackId);
+	REQUIRE(desc->container->macroLabel != nullptr);
+	CHECK(desc->container->macroLabel(rk, 2, label, sizeof(label)) == 5);
+	CHECK(std::string(label) == "Sweep");
+
+	// A CHAIN ADDED LATER IS NAMED, TYPED AND SIGNED AS THE RACK'S ARE.
+	const size_t added = rk->addChain();
+	REQUIRE(added != SIZE_MAX);
+	CHECK(rk->chainAt(added)->bridge()->macroName(2) == "Sweep");
+	CHECK(rk->chainAt(added)->bridge()->macroType(2) == device::MacroType::Momentary);
+	CHECK(rk->chainAt(added)->bridge()->macroBipolar(2));
+
+	// ONE UNDO STEP, and a redo.
+	REQUIRE(history.canUndo());
+	history.undo();
+	CHECK(rk->macroName(2) == "Macro 3");
+	(void)panel->updateContent();
+	CHECK(slot.caption() == "M3"); // the panel's short caption while there is no name
+	history.redo();
+	CHECK(rk->macroName(2) == "Sweep");
+	(void)panel->updateContent();
+	CHECK(slot.caption() == "Sweep");
+
+	// SAVE, THEN LOAD INTO A FRESH RACK: the name, the type and the polarity come back, and a new window shows them.
+	std::vector<uint8_t> body;
+	const device::ByteSink sink { &body, [](void* ctx, const uint8_t* data, size_t bytes) {
+		                             auto* out = static_cast<std::vector<uint8_t>*>(ctx);
+		                             out->insert(out->end(), data, data + bytes);
+	                             } };
+	REQUIRE(rk->saveState(sink));
+	SiteHost fresh;
+	const DeviceInstanceId freshId = fresh.bridge.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(freshId != kNoInstance);
+	auto* rk2 = rack::parallel::rackOf(fresh.bridge.containerSurfaceOf(freshId));
+	REQUIRE(rk2 != nullptr);
+	CHECK(rk2->macroName(2) == "Macro 3");
+	REQUIRE(rk2->loadState(body.data(), body.size()));
+	CHECK(rk2->macroName(2) == "Sweep");
+	CHECK(rk2->macroType(2) == device::MacroType::Momentary);
+	CHECK(rk2->macroBipolar(2));
+	CHECK_FALSE(rk2->macroRenamed(0));
+	auto view2 = ui::makeExpandedView(fresh.bridge, nullptr, registry, freshId, *fresh.bridge.descriptorOf(freshId));
+	auto* panel2 = dynamic_cast<ui::ParallelRackExpanded*>(view2.get());
+	REQUIRE(panel2 != nullptr);
+	panel2->setBounds(0, 0, 1200, 700);
+	(void)panel2->updateContent();
+	CHECK(panel2->macroSlotForTest(2).caption() == "Sweep");
+	CHECK(panel2->macroSlotForTest(2).type() == device::MacroType::Momentary);
 }

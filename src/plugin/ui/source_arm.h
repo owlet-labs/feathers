@@ -31,6 +31,7 @@
 #include "device/registry.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/theme.h"
+#include "plugin/ui/tooltip.h"
 
 #include <visage/ui.h>
 
@@ -45,7 +46,7 @@ namespace feathers::ui {
 
 /// Arms one modulation source. Sticky and exclusive: pressing the armed arm disarms, pressing another
 /// moves the focus and stays armed, so a hand can route from one source to several controls.
-class SourceArm : public visage::Frame {
+class SourceArm : public visage::Frame, public TooltipSource {
 public:
 	SourceArm(ModState& mod, device::Source source, std::string label = {});
 	~SourceArm() override;
@@ -86,6 +87,19 @@ public:
 			redraw();
 		}
 	}
+
+	/// WHAT A HOVER SAYS, for a host that wants one: the hover road is installed with the first non-empty text (so an arm that
+	/// is given none behaves exactly as before). Last among the arm's own handlers (`installTooltipHover`'s hazard).
+	void setTooltip(std::string text) {
+		const bool first = tooltip_.empty() && !text.empty();
+		tooltip_ = std::move(text);
+		if (first) {
+			installTooltipHover(*this, *this);
+		}
+	}
+	[[nodiscard]] const char* tooltipAt(visage::Point) const override { return tooltip_.empty() ? nullptr : tooltip_.c_str(); }
+	/// An arm writes no device control: it points a source at them.
+	void offeredControls(std::vector<Offered>&) const override {}
 
 	/// WHERE THE GLYPH ITSELF IS, in the PARENT's coordinates. The whole widget is the button — a
 	/// press on the label arms too, which is what makes the word part of the control rather than a
@@ -132,6 +146,7 @@ private:
 	device::Source fixedSource_ {};
 	std::function<device::Source()> source_;
 	std::string label_;
+	std::string tooltip_;
 };
 
 //------------------------------------------------------------------------------------------------//

@@ -45,7 +45,7 @@
 //   DETAIL      left: the selected partial — its ratio row and Mode, the scope (every active partial's notch and mark, the
 //               selected one emphasised), and Fine, Width, Depth, Phase, Spread. Right: the ENVELOPE, its curve and its six
 //               values;
-//   MASTER      Porta, Poly and Env Depth — the controls that belong to the device and to no one partial.
+//   MASTER      Porta, the two masters, Poly and Env Depth — the controls that belong to the device and to no one partial.
 //
 // A PRESS ON A STRIP CELL (not on its chip or pill) OPENS THAT PARTIAL; the selection outline on the cell is the only mark.
 // THE SELECTION IS VIEW STATE, exactly as Drawn's selected frame is: a plain member of the window, not a parameter, not automated,
@@ -62,6 +62,8 @@
 // window is resizable.
 
 namespace feathers::ui {
+
+struct HarmView;
 
 class HarmExpanded final : public ExpandedView {
 public:
@@ -162,6 +164,8 @@ public:
 	const HarmEnvelopeView* envelopeViewForTest() const { return envelopeView_.get(); }
 	const std::vector<std::unique_ptr<ValueBox>>& envelopeBoxesForTest() const { return envelopeBoxes_; }
 	ValueBox* portaForTest() const { return porta_.get(); }
+	ValueBox* masterLevelForTest() const { return masterLevel_.get(); }
+	ValueBox* masterDepthForTest() const { return masterDepth_.get(); }
 
 	/// The Poly switch, which used to be `HarmCard::polyForTest`. THE CASES THAT ASKED THE CARD ASK
 	/// THIS NOW rather than having been deleted.
@@ -196,6 +200,8 @@ private:
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_ = kNoInstance;
 	int selected_ = 0;
+	/// THE PARTIAL THE CARD SHARES: a press here moves the card's tabs, and a press on a card tab moves this window.
+	std::shared_ptr<HarmView> view_;
 
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(fx::harm::Param::kCount)>
 	    controls_ {};
@@ -204,6 +210,8 @@ private:
 	std::vector<std::unique_ptr<ValueBox>> envelopeBoxes_;
 	std::unique_ptr<HarmEnvelopeView> envelopeView_;
 	std::unique_ptr<ValueBox> porta_;
+	std::unique_ptr<ValueBox> masterLevel_;
+	std::unique_ptr<ValueBox> masterDepth_;
 	std::unique_ptr<SwitchChip> poly_;
 	std::unique_ptr<SwitchChip> depthEnv_;
 	std::unique_ptr<HarmScope> scope_;

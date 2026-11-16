@@ -569,6 +569,8 @@ public:
 	/// and a smaller step are the same intention, at every zoom (see `mutate`).
 	double zoom() const noexcept { return zoom_; }
 	void setZoom(double zoom);
+	/// Test seam for the capture tool: turn the selected sound's plane by `radians`, as a Rotate drag does.
+	void rotateSelectedByForTest(double radians) { rotateSelectedBy(radians); }
 
 	/// **THE ZOOM A FRESH EXPLORE OPENS AT, PER ENGINE.** Additive's terrain is read from far out (x1/100), the V5 flagship's from close in (x7); every other engine opens
 	/// at x1. Zoom is a view scale held by this surface alone (it is not stored in a patch), so this is the whole of "default": a
@@ -831,12 +833,12 @@ public:
 	/// **THE HEART'S CONTEXT MENU**: "Clear all likes on <engine>, sound <letter>", this terrain's only, greyed with none. Built here so a case can read it
 	/// and pick from it; a popup trigger on the heart opens it.
 	[[nodiscard]] visage::PopupMenu likesMenu();
-	/// **THE CHART'S CONTEXT MENU (a popup trigger on the map)**: one checkable item, "Fitted map (audition)", that draws the
-	/// map's cells from the offline-fitted model (terrain_fit.h) instead of measuring each. SHOWN ONLY FOR AN ENGINE WITH A
-	/// FITTED TABLE and hidden otherwise (the honesty rule: a switch only an engine could enable is not drawn), in which case
-	/// a popup press on the chart is the press it always was. OFF by default and OFF on every open, per editor instance,
-	/// and NOT SAVED WITH THE PATCH: it is an audition of a picture, not a property of a sound. FEATHERS_TERRAIN_FIT=1 opens
-	/// the stage with it on, for a capture (a venue with no pointer cannot reach a menu).
+	/// **THE CHART'S CONTEXT MENU (a popup trigger on the map)**: one checkable item, "Fitted map", that draws the
+	/// map's cells from the offline-fitted model (terrain_fit.h) instead of measuring each, and unchecked is the way back to the
+	/// real map. SHOWN ONLY FOR AN ENGINE WITH A FITTED TABLE (Additive) and hidden otherwise (the honesty rule: a switch only an
+	/// engine could enable is not drawn), in which case a popup press on the chart is the press it always was. ON by default
+	/// on every open, per editor instance, and NOT SAVED WITH THE PATCH: it is a way of drawing a picture, not a property of
+	/// a sound. FEATHERS_TERRAIN_FIT=1 forces it on and =0 forces the real map (a venue with no pointer cannot reach a menu).
 	[[nodiscard]] bool fittedMapAvailable() const;
 	[[nodiscard]] visage::PopupMenu terrainMenu();
 	static constexpr int kFittedMap = 200;
@@ -1415,8 +1417,8 @@ private:
 	mutable std::array<std::optional<LikeWarpKey>, kMaxSounds> likeKeys_ {};
 	mutable std::array<feathers::LikeWarp, kMaxSounds> likeWarps_ {};
 	double likeStrength_ = 1.0;
-	/// THE FITTED-MAP AUDITION (terrainMenu): stage state, never saved, off on every open unless FEATHERS_TERRAIN_FIT=1.
-	bool fittedMap_ = false;
+	/// THE FITTED MAP (terrainMenu): stage state, never saved, ON on every open unless FEATHERS_TERRAIN_FIT=0.
+	bool fittedMap_ = true;
 	/// THE LIKE-SET LOG (likes_log.h): an edit as its deltas (a snapshot first if the log describes another set).
 	void logLikesEdit(const char* cause, const TerrainLikes& before, const TerrainLikes& after);
 	/// A walk line for the stance being tracked, now.

@@ -50,7 +50,6 @@ struct Sample {
 
 const Sample kSamples[] = {
 	{ OscType::Additive, kFitSample_additive, std::size(kFitSample_additive) },
-	{ OscType::V5, kFitSample_v5, std::size(kFitSample_v5) },
 };
 
 int termCountOf(int n, int kind) {
@@ -135,7 +134,7 @@ TEST_CASE("terrainFeaturesFitted maps the five predictions onto the cell's featu
 	}
 }
 
-TEST_CASE("the generated table is the shape the evaluator reads, and only Additive and V5 have one") {
+TEST_CASE("the generated table is the shape the evaluator reads, and only Additive has one (V5's was dropped)") {
 	for (const Sample& sample : kSamples) {
 		const FitEngineTable* table = terrainFitTableFor(sample.engine);
 		REQUIRE(table != nullptr);
@@ -153,7 +152,7 @@ TEST_CASE("the generated table is the shape the evaluator reads, and only Additi
 			CHECK(channel.coef != nullptr);
 		}
 	}
-	for (const OscType engine : { OscType::Morph, OscType::Stair, OscType::Resonate, OscType::BasicShapes, OscType::Pluck, OscType::Drum }) {
+	for (const OscType engine : { OscType::Morph, OscType::Stair, OscType::V5, OscType::Resonate, OscType::BasicShapes, OscType::Pluck, OscType::Drum }) {
 		CHECK_FALSE(terrainFitAvailable(engine));
 		CHECK(terrainFitTableFor(engine) == nullptr);
 		CHECK(terrainFitInputs(engine) == 0);

@@ -533,9 +533,9 @@ void WaveDisplay::draw(visage::Canvas& canvas) {
 	const float inset = 8.0f * scale;
 	// The flagship reads off its flag rather than OscEngine — it renders on the morph path by
 	// design, and a badge keyed on the render path alone would name the wrong instrument at the
-	// audition (review-flagship-s2, LOW 1). "PHI V5" is the working name (assumption V1); the real
-	// one lands at first sound.
-	canvas.text(built_.flagship                     ? "PHI V5"
+	// audition (review-flagship-s2, LOW 1). "PHI FORGE" is the flagship's badge, the engine's name
+	// (Forge) with the phi prefix the other phi engines wear.
+	canvas.text(built_.flagship                     ? "PHI FORGE"
 	            : built_.engine == OscEngine::Stair ? "PHI STAIR"
 	            : built_.engine == OscEngine::Weave ? "PHI RESONATE"
 	            : built_.engine == OscEngine::Shapes ? "BASIC SHAPES"

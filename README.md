@@ -38,12 +38,15 @@ Then restart your DAW or rescan its plugins. Options, the manual download and pe
 
 ## Sound engines
 
-Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include V5, Additive, Pluck, Drum, Resonate and Basic Shapes, plus the original Morph and Stair.
+Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include Forge, Additive, Pluck, Drum, Resonate, Basic Shapes, Morph and Stair.
 
 | | |
 |---|---|
 | ![Explore terrain](docs/readme/05-explore-terrain.png) | ![Drum kit](docs/readme/06-drum-kit.png) |
 | *Explore: the terrain under sound A, with Rotate, Theta and Radius on its rim, Mutate / Undo / Redo and the like heart. A macro route into Radius is drawn along the knob's face.* | *The Drum engine's kit window: eight pads, each with its own kind, note and choke group, and the hit picture with draggable handles for click, sweep, tune, dip, drive and decay. The PAD FX rail is folded at the right.* |
+
+![The Explore terrain turning under Rotate](docs/readme/explore-rotate.gif)
+*The terrain turning under Rotate (Additive engine): every point of the field is a waveform, and Rotate turns the whole field under the sound.*
 
 ## Modulation as a first-class system
 
@@ -118,7 +121,7 @@ Racks nest inside racks and chains to any depth.
 
 - **Morph**: The original PhiMorph oscillator.
 - **Stair**: The original PhiStair oscillator.
-- **V5**: The default engine.
+- **Forge**: The default engine.
 - **Resonate**: A resonator engine: a string, bar, tube or membrane model.
 - **Basic Shapes**: Classic oscillator shapes.
 - **Additive**: Additive synthesis, with a spectrum panel of partial operators and a vocoder.
@@ -219,19 +222,19 @@ What is still open, and where we want help: extracting the contract into its own
 
 ## Hosting: what is built, and what is planned
 
-**Built today: exposing Feathers to the DAW ("host slots").** Feathers' core parameters are host parameters. Controls inside devices reach the DAW through a pool of pre-declared host parameters ("slots"), which works in both CLAP and VST3. Right-click a control and choose "Expose to host" to pin it to a slot. Turning the knob records automation, and DAW automation and modulation move the knob. Slots map devices at any depth, including racks nested inside racks, and they are saved with the project. Still being built: devices proposing default mappings for their headline controls, presets carrying their pinned slots, and CLAP remote-controls pages.
+**Built today: exposing Feathers to the DAW ("host slots").** Every Feathers parameter can reach your DAW, at any depth of chains and racks. The synth's own parameters are host parameters, and device controls share a pool of 256 pre-declared host parameters ("slots"), in both CLAP and VST3: touch any control and it is automatically given a slot, so the DAW can record and automate it. When all 256 are in use, the least recently used slot is recycled; right-click a control and choose "Expose to host" to pin it so it is never recycled. Turning a knob records automation, DAW automation and modulation move the knob, and slots are saved with the project.
 
-**Planned, not built: hosting third-party plugins inside Feathers' chains and racks.** The design is a generic wrapper that lifts a third-party CLAP plugin in as a device:
+**Planned, not built: hosting third-party plugins inside Feathers' chains and racks.** The design is a generic wrapper that lifts a third-party CLAP or VST3 plugin in as a device:
 
 - its parameters are read from the plugin and become device controls;
-- modulation routes reach it as CLAP's native parameter-modulation events, which use the same base-plus-offset model as ours, so the plugin never needs to know a modulator exists;
+- modulation routes reach a CLAP plugin as its native parameter-modulation events, which use the same base-plus-offset model as ours, so the plugin never needs to know a modulator exists; VST3 has no modulation events, so a VST3 plugin receives the modulated value as ordinary parameter changes;
 - glow, arming and route editing come from our side.
 
 This work is deferred, not dropped, and it is shaping the architecture now. Device descriptors must tolerate parameters known only at run time, and the latency design treats a hosted plugin's changing latency and its event stream as part of the graph's node contract rather than something special. The first version runs the plugin in-process, behind the generic card. Not yet in scope: showing the plugin's own GUI inside ours, and out-of-process sandboxing. The design so far covers CLAP plugins.
 
-**Planned: native devices from third parties, open or closed.** Beyond wrapping any CLAP plugin, the goal is for other people's devices to be first-class: their own cards and windows, docking, and the full modulation system (arming, glow, routes, transfer curves), exactly like the devices in these screenshots. To make that possible, the device vocabulary and modulation interface are to be published as a separate **device SDK under a permissive licence**. A device built on the SDK can be **open source or closed source**; Feathers itself stays GPL-3.0-or-later. So the roadmap for hosting is two roads:
+**Planned: native devices from third parties, open or closed.** Beyond wrapping any CLAP or VST3 plugin, the goal is for other people's devices to be first-class: their own cards and windows, docking, and the full modulation system (arming, glow, routes, transfer curves), exactly like the devices in these screenshots. To make that possible, the device vocabulary and modulation interface are to be published as a separate **device SDK under a permissive licence**. A device built on the SDK can be **open source or closed source**; Feathers itself stays GPL-3.0-or-later. So the roadmap for hosting is two roads:
 
-1. **Any CLAP plugin**, open or closed, through the generic wrapper above.
+1. **Any CLAP or VST3 plugin**, open or closed, through the generic wrapper above.
 2. **Devices built on the Feathers device SDK**, open or closed, hosted natively with Feathers' cards and modulation.
 
 If you build plugins and would like your devices to run natively inside Feathers, we would like to hear from you: the SDK's shape is still open.

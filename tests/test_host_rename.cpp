@@ -317,7 +317,7 @@ TEST_CASE("clap host: the chain plugin ships as feathers-chain.clap, named Feath
 	const std::string path = FEATHERS_RACK_CLAP_PATH;
 	CHECK(path.substr(path.find_last_of('/') + 1) == "feathers-chain.clap");
 	const clap_plugin_factory* factory = rackClap().factory;
-	REQUIRE(factory->get_plugin_count(factory) == 2); // the Chain, and the Note Rack (2026-11-04)
+	REQUIRE(factory->get_plugin_count(factory) == 4); // the Chain, the Note Rack, the Drum and the Rack
 	const clap_plugin_descriptor* d = factory->get_plugin_descriptor(factory, 0);
 	REQUIRE(d != nullptr);
 	CHECK(std::string(d->id) == "com.owlet.feathers-chain");
@@ -335,6 +335,29 @@ TEST_CASE("clap host: the chain plugin ships as feathers-chain.clap, named Feath
 	}
 	CHECK(noteEffect);
 	CHECK_FALSE(audioEffect);
+	// AND THE DRUM, a CLAP instrument (a host files it under Instruments, and in a drum container).
+	const clap_plugin_descriptor* drum = factory->get_plugin_descriptor(factory, 2);
+	REQUIRE(drum != nullptr);
+	CHECK(std::string(drum->id) == "com.owlet.feathers.drum");
+	CHECK(std::string(drum->name) == "Feathers Drum");
+	bool instrument = false;
+	bool drumFeature = false;
+	for (const char* const* f = drum->features; f != nullptr && *f != nullptr; ++f) {
+		instrument = instrument || std::string(*f) == CLAP_PLUGIN_FEATURE_INSTRUMENT;
+		drumFeature = drumFeature || std::string(*f) == CLAP_PLUGIN_FEATURE_DRUM;
+	}
+	CHECK(instrument);
+	CHECK(drumFeature);
+	// AND THE RACK, an audio effect of its own: the parallel rack, every mode on its face.
+	const clap_plugin_descriptor* rackPlugin = factory->get_plugin_descriptor(factory, 3);
+	REQUIRE(rackPlugin != nullptr);
+	CHECK(std::string(rackPlugin->id) == "com.owlet.feathers.rack");
+	CHECK(std::string(rackPlugin->name) == "Feathers Rack");
+	bool rackEffect = false;
+	for (const char* const* f = rackPlugin->features; f != nullptr && *f != nullptr; ++f) {
+		rackEffect = rackEffect || std::string(*f) == CLAP_PLUGIN_FEATURE_AUDIO_EFFECT;
+	}
+	CHECK(rackEffect);
 }
 
 TEST_CASE("clap host: a live rename is one RESCAN_INFO, and get_info then answers the new name on the same id") {

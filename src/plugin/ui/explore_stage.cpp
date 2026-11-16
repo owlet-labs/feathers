@@ -324,9 +324,10 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 		}
 	}
 
-	// FEATHERS_TERRAIN_FIT=1 opens the fitted-map audition ON, for the same reason FEATHERS_EXPLORE_ZOOM exists: the switch
-	// is a context menu, which a venue with no pointer cannot reach. Only "1" turns it on; the window still ANDs it with
-	// the engine having a table, so it is inert on every other engine.
+	// THE FITTED MAP IS ON BY DEFAULT (fittedMap_ starts true) and the window ANDs it with the engine having a table, so it
+	// is Additive's map and nothing else's. FEATHERS_TERRAIN_FIT overrides the opening state, for the same reason
+	// FEATHERS_EXPLORE_ZOOM exists: the switch is a context menu, which a venue with no pointer cannot reach. "1" forces
+	// the fitted map (where a table exists), anything else ("0") forces the real one.
 	if (const char* fit = std::getenv("FEATHERS_TERRAIN_FIT")) {
 		fittedMap_ = std::strcmp(fit, "1") == 0;
 	}
@@ -583,7 +584,7 @@ ExploreStage::ExploreStage(ParamBridge& bridge, WidgetRegistry& registry, SoundS
 		}
 		grabbed_ = hitAt(e.position);
 		// A POPUP TRIGGER ON THE MAP (a right press, or ctrl-left on a Mac) opens the chart's menu — but only where it has an
-		// item to show. An engine without a fitted table gets no menu and the press is the scrub it always was.
+		// item to show. An engine without a fitted table (every engine but Additive) gets no menu and the press is the scrub it always was.
 		if (grabbed_ == Part::Chart && e.shouldTriggerPopup() && fittedMapAvailable()) {
 			showMenuAt(terrainMenu(), *this, visage::Bounds(e.position.x, e.position.y, 1, 1));
 			grabbed_ = Part::None;
@@ -1780,7 +1781,7 @@ visage::PopupMenu ExploreStage::terrainMenu() {
 	visage::PopupMenu menu;
 	// HIDDEN, NOT GREYED, for an engine with no table: the menu is empty then and the press never opens it.
 	if (fittedMapAvailable()) {
-		menu.addOption(kFittedMap, "Fitted map (audition)").select(fittedMap_);
+		menu.addOption(kFittedMap, "Fitted map").select(fittedMap_);
 	}
 	menu.onSelection() = [this](int id) {
 		if (id == kFittedMap) {
@@ -3336,7 +3337,7 @@ TerrainWindow ExploreStage::terrainWindowFor(size_t slot) const {
 	// by the window so every texel is built through the same warp the voice plays.
 	window.likeStrength = likeStrength_;
 	window.likeWarp = likeWarpFor(slot, window);
-	// THE FITTED-MAP AUDITION, ANDed with the engine having a table so a window never claims a fit that does not exist.
+	// THE FITTED MAP, ANDed with the engine having a table so a window never claims a fit that does not exist.
 	window.fittedMap = fittedMap_ && terrainFitAvailable(window.engine);
 	return window;
 }

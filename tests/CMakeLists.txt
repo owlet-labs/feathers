@@ -621,7 +621,9 @@ if(TARGET visage)
 	# undo — backlog JB: every road that changes the patch is one step in the editor's one history, undone and
 	#        redone by value, and a parameter's undo reaches the host as a gesture.
 	set(_feathers_widget_shards_undo 1)
-	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo)
+	# rackviews — the Rack's Tabs and Pads views (src/plugin/ui/rack_views.h) over a fake model.
+	set(_feathers_widget_shards_rackviews 1)
+	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 		string(REPLACE "_" "-" _suite_name "${_suite}")
 		add_executable(test_gui_widgets_${_suite}
 			gui_widgets/test_gui_widgets_${_suite}.cpp
@@ -1403,6 +1405,21 @@ target_link_libraries(test_terrain_fit PRIVATE feathers-ui feathers-warnings)
 target_include_directories(test_terrain_fit PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME terrain-fit COMMAND test_terrain_fit)
 
+# FEATHERS DRUM — the Drum device as a CLAP instrument (a third plugin in the Chain's bundle), through the real CLAP API: the factory,
+# ports, named parameters, notes and audio at any block size, SLEEP, state, the editor. On the private display for the editor's cases.
+add_executable(test_drum_plugin test_drum_plugin.cpp)
+target_link_libraries(test_drum_plugin PRIVATE feathers-rack-ui feathers-warnings)
+target_include_directories(test_drum_plugin PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME drum-plugin COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_drum_plugin>)
+set_tests_properties(drum-plugin PROPERTIES LABELS "headless-incompatible")
+
+# FEATHERS RACK — the parallel Rack as a plugin of its own (a fourth plugin in the Chain's bundle), through the real CLAP API.
+add_executable(test_rack_plugin test_rack_plugin.cpp)
+target_link_libraries(test_rack_plugin PRIVATE feathers-rack-ui feathers-warnings)
+target_include_directories(test_rack_plugin PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-plugin COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_rack_plugin>)
+set_tests_properties(rack-plugin PROPERTIES LABELS "headless-incompatible")
+
 # THE CHROME HUE (backlog LG) — OKLCH L, C and h of every token the offset turns, by value, and the prefs
 # road on a scratch desk its own main() makes. No window: colours are numbers here.
 add_executable(test_chrome_hue test_chrome_hue.cpp)
@@ -1656,6 +1673,18 @@ target_link_libraries(test_rack_notes PRIVATE feathers-gui-bridge feathers-synth
 target_include_directories(test_rack_notes PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME rack-notes COMMAND test_rack_notes)
 
+# A CHAIN'S KEY: each chain of a parallel Rack may answer one note, so only that key's notes enter its devices.
+add_executable(test_rack_chain_key test_rack_chain_key.cpp)
+target_link_libraries(test_rack_chain_key PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_rack_chain_key PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-chain-key COMMAND test_rack_chain_key)
+
+# A RACK'S VIEW, ROUTING, CHOKE GROUPS AND STRIKE MASK: the engine and state half.
+add_executable(test_rack_view_routing test_rack_view_routing.cpp)
+target_link_libraries(test_rack_view_routing PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_rack_view_routing PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-view-routing COMMAND test_rack_view_routing)
+
 # BACKLOG LW — events and modulation that follow the audio past a latent device:
 # each node's arrival latency, and what a late device is handed, by value.
 add_executable(test_latency_domains test_latency_domains.cpp)
@@ -1881,8 +1910,9 @@ if(FEATHERS_SANITIZE)
 			ENVIRONMENT "${_feathers_asan_env};RUN_CASES_TIMEOUT=2400"
 			FAIL_REGULAR_EXPRESSION "ERROR: AddressSanitizer")
 	endforeach()
-	# THE TWO CLAP-HOSTING SUITES open an editor, so they run on a private display like the widget ones.
-	foreach(_suite rack-clap clap-render)
+	# THE CLAP-HOSTING SUITES open an editor, so they run on a private display like the widget ones. drum-plugin joined with the Drum
+	# instrument: its plugin owns a rack engine, a bridge and the slot pool a host's writes land in, and opens the drum's editor.
+	foreach(_suite rack-clap clap-render drum-plugin rack-plugin)
 		string(REPLACE "-" "_" _target "test_${_suite}")
 		add_test(NAME sanitize-${_suite} COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --
 			${_feathers_each} $<TARGET_FILE:${_target}>)
@@ -1921,7 +1951,7 @@ if(FEATHERS_SANITIZE)
 		# to four of these run at once, each with RUN_CASES_JOBS=4 case processes and its own Xvfb — a
 		# heavier moment than the one widget entry stacking on the rack suites was; the gate's cost line
 		# is the place to re-measure it.
-		foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo)
+		foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 			string(REPLACE "_" "-" _suite_name "${_suite}")
 			add_test(NAME sanitize-gui-widgets-${_suite_name} COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --
 				${_feathers_each} $<TARGET_FILE:test_gui_widgets_${_suite}>)

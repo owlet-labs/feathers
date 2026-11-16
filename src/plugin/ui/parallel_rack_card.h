@@ -30,6 +30,8 @@
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/rack_mode_views.h"
+#include "plugin/ui/rack_view_adapter.h"
+#include "plugin/ui/rack_views.h"
 #include "rack/parallel_rack.h"
 
 #include <array>
@@ -54,7 +56,7 @@ namespace feathers::ui {
 
 class ChainControl final : public device::Modulatable, public RoutedControl {
 public:
-	enum class Kind : uint8_t { Level, Mute, Solo };
+	enum class Kind : uint8_t { Level, Mute, Solo, Key, Choke };
 	ChainControl(backplane::DeviceHost& host, DeviceInstanceId rack, uint16_t chain, Kind kind) noexcept
 	    : host_(host), rack_(rack), chain_(chain), kind_(kind) {}
 
@@ -224,15 +226,23 @@ public:
 		level_.setMaterialise(materialise);
 		muted_.setMaterialise(materialise);
 		soloed_.setMaterialise(materialise);
+		keyed_.setMaterialise(materialise);
+		choked_.setMaterialise(materialise);
 	}
 	[[nodiscard]] ChainControl& muteControlForTest() noexcept { return muted_; }
 	[[nodiscard]] ChainControl& levelControlForTest() noexcept { return level_; }
 	[[nodiscard]] ChainControl& soloControlForTest() noexcept { return soloed_; }
+	[[nodiscard]] ChainControl& keyControlForTest() noexcept { return keyed_; }
+	[[nodiscard]] ValueBox& keyBox() noexcept { return *keyBox_; }
+	[[nodiscard]] ChainControl& chokeControlForTest() noexcept { return choked_; }
+	[[nodiscard]] ValueBox& chokeBox() noexcept { return *chokeBox_; }
 	/// Where its three controls record their undo steps, and the panel state their routes are armed from.
 	void setModulation(ModState* mod, EditHistory* history) {
 		level_.setModulation(mod, history);
 		muted_.setModulation(mod, history);
 		soloed_.setModulation(mod, history);
+		keyed_.setModulation(mod, history);
+		choked_.setModulation(mod, history);
 		// AND THE WIDGETS RE-WATCH NOW (backlog PM): a pill or chip still on the OLD state's watcher list would unwatch
 		// into it later, after its owner may have let it go — they otherwise re-subscribe only at their next paint.
 		pill_->modulationChanged();
@@ -271,6 +281,9 @@ public:
 
 	static constexpr float kHeight = 20.0f;
 	static constexpr float kChipWidth = 22.0f;
+	static constexpr float kKeyWidth = 30.0f;
+	static constexpr float kChokeWidth = 30.0f;
+	static constexpr float kPillMinWidth = 90.0f; ///< the least the level pill keeps, caption and readout, beside the key box ///< the key box: "Any" or "C#4"
 	static constexpr float kGap = 4.0f;
 	static constexpr float kSummaryWidth = 0.42f; ///< of the strip, when a summary is drawn
 	static constexpr float kMeterWidth = 1.0f; ///< MK's one-pixel line, run vertically
@@ -281,12 +294,18 @@ public:
 	static constexpr float kLabelHeight = 14.0f;
 	static constexpr float kColumnRow = 20.0f;
 	/// The shortest the column may be and still hold its rows and a meter worth reading.
-	static constexpr float kColumnMinimumHeight = kLabelHeight + 2.0f * kColumnRow + kGap + 60.0f + kGap + kColumnRow;
+	static constexpr float kColumnMinimumHeight = kLabelHeight + 4.0f * kColumnRow + kGap + 60.0f + kGap + kColumnRow;
 
 private:
 	ChainControl level_;
 	ChainControl muted_;
 	ChainControl soloed_;
+	/// **THE NOTE THIS CHAIN ANSWERS** (`Rack::chainKey`): value 0 is Any, 1..128 the keys 0..127. Not a slot param, so no route.
+	ChainControl keyed_;
+	std::unique_ptr<ValueBox> keyBox_;
+	/// **ITS CHOKE GROUP** (`Rack::chainChoke`): value 0 is None, 1..8 a group. Not a slot param either.
+	ChainControl choked_;
+	std::unique_ptr<ValueBox> chokeBox_;
 	std::unique_ptr<FaderPill> pill_;
 	std::unique_ptr<ChainFader> fader_;
 	std::unique_ptr<SwitchChip> mute_;
@@ -361,6 +380,19 @@ public:
 	[[nodiscard]] std::string overflowTextForTest() const;
 	[[nodiscard]] ValueBox& bandsBoxForTest() const { return *bandsBox_; }
 	[[nodiscard]] const std::vector<std::unique_ptr<ChainStrip>>& stripsForTest() const { return strips_; }
+	/// THE TABS AND PADS VIEWS (`View`): the bar, the pads panel, what is in front of the chain, its arrow, the model and the strike pulse.
+	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
+	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
+	[[nodiscard]] RackFrontStack& frontForTest() const { return *front_; }
+	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
+	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
+	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
+	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
+	[[nodiscard]] SegmentedControl& viewPairForTest() const { return *viewPair_; }
+	/// What the card lays out for the view now (for the cases): whether the bar, the pads panel and the front stack are shown.
+	[[nodiscard]] bool tabsShownForTest() const { return tabs_->isVisible(); }
+	[[nodiscard]] bool padsShownForTest() const { return pads_->isVisible(); }
+	[[nodiscard]] bool frontShownForTest() const { return front_->isVisible(); }
 
 private:
 	device::Modulatable* enableModulatable() override;
@@ -383,10 +415,23 @@ private:
 		/// The chain rows (strips, then phantoms) drawn, and how many the unit has no room for.
 		size_t rows = 0;
 		size_t overflow = 0;
+		/// THE VIEW (Strips draws as it always did): the front stack's tiles and whether its arrow is shown.
+		RackViewKind view = RackViewKind::Strips;
+		size_t tiles = 0;
+		bool arrow = false;
+		/// Tabs and Pads put Select's playing chain on a row of its own under the view (the three words need the width).
+		bool playingRow = false;
 		friend bool operator==(const Plan&, const Plan&) = default;
 	};
 	[[nodiscard]] Plan plan() const;
 	[[nodiscard]] float bodyHeight() const;
+	/// THE TABS OR PADS VIEW'S HEIGHT (a vertical lane): the bar or the panel, what is in front, its arrow, and the mode and view rows.
+	[[nodiscard]] float viewHeight(const Plan& p) const;
+	[[nodiscard]] bool horizontalLane() const { return headEdge() == CardHeadEdge::Left; }
+	/// Re-read what is in front (the viewed chain's devices) and the pulse; true when anything drawn changed.
+	bool followView();
+	/// The rack's colour for the group hairline: its instance's edge, or the accent.
+	[[nodiscard]] uint32_t frontTint() const;
 	/// The rows above the chains a plan lays out: the mode row, and Bands', the spectrum's and the bar's where shown.
 	[[nodiscard]] static float fixedRowsHeight(const Plan& p);
 	/// A PHANTOM'S FIRST EDIT: the chain made (one undo step), its id returned. Never on a mode change (§2a).
@@ -396,9 +441,19 @@ private:
 	DeviceInstanceId device_ = kNoInstance;
 	Notifier* notifier_ = nullptr;
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
+	/// THE VIEW MODEL AND THE PULSE: declared BEFORE the widgets that read them, so they outlive them (the pulse's watch list must be empty
+	/// when it dies).
+	std::unique_ptr<RackViewAdapter> model_;
+	RackStrikePulse pulse_;
 	std::unique_ptr<Knob> mix_;
 	std::unique_ptr<Knob> gain_;
 	std::unique_ptr<ValueBox> modeBox_;
+	/// THE VIEW (no audio effect) and the playing chain Select sounds: the same controls the window offers.
+	std::unique_ptr<SegmentedControl> viewSeg_;
+	/// Strips | Pads, shown instead of the three-way where Tabs is not offered (more than eight chains).
+	std::unique_ptr<RackViewPairControl> viewPairControl_;
+	std::unique_ptr<SegmentedControl> viewPair_;
+	std::unique_ptr<ValueBox> playingBox_;
 	std::unique_ptr<Knob> position_;
 	std::unique_ptr<SegmentedControl> unused_;
 	std::unique_ptr<ValueBox> bandsBox_;
@@ -408,6 +463,10 @@ private:
 	std::unique_ptr<visage::Frame> overflow_;
 	std::unique_ptr<RackSpectrumStrip> spectrum_;
 	std::unique_ptr<RackPositionBar> positionBar_;
+	std::unique_ptr<RackTabBar> tabs_;
+	std::unique_ptr<RackPadsPanel> pads_;
+	std::unique_ptr<RackFrontStack> front_;
+	std::unique_ptr<RackDrawerArrow> chainArrow_;
 	Plan laidOut_ {};
 	/// **THE EXTENT THE HOST LAST PLACED THIS CARD AT** (recorded in `resized`), so a change of chains — which arrives
 	/// through the running body and is no layout of the host's — tells the host once (`FxCard::extentChanged`).

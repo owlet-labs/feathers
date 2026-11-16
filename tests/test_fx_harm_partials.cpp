@@ -569,3 +569,205 @@ TEST_CASE("every new parameter round-trips through a fresh instance, and an old 
 		CHECK(fromOld.settings == stateOf(rowOf(State {}), 16).settings);
 	}
 }
+
+namespace {
+
+/// FNV-1a over the bit patterns of every sample, so a golden value is one 64-bit number.
+uint64_t hashBits(const std::vector<float>& x) {
+	uint64_t h = 1469598103934665603ull;
+	for (const float f : x) {
+		uint32_t bits = 0;
+		std::memcpy(&bits, &f, sizeof bits);
+		h ^= bits;
+		h *= 1099511628211ull;
+	}
+	return h;
+}
+
+} // namespace
+
+TEST_CASE("a default patch renders the golden bits the device rendered before the master controls") {
+	// THE DEFAULT PATCH, BIT FOR BIT. The hash was taken from the device as it stood before the master Level and master Depth
+	// existed, and it must not move: both masters default to unity, and unity is an exact multiply.
+	const std::vector<float> in = testInput(9600, 7);
+	uint64_t combined = 0;
+	for (const bool highpass : { false, true }) {
+		for (const bool stereo : { true, false }) {
+			Settings s;
+			s.highpass = highpass;
+			s.gate = false;
+			s.noteSemitones = 52.0f;
+			Harm h;
+			h.prepare(kRate);
+			const auto out = render(h, s, in, 480, stereo, nullptr);
+			uint64_t hash = hashBits(out.first);
+			if (stereo) {
+				hash = hash * 1099511628211ull + hashBits(out.second);
+			}
+			combined ^= hash * (highpass ? 3u : 5u) + (stereo ? 7u : 11u);
+		}
+	}
+	CHECK(combined == 2828392639871082162ull);
+}
+
+namespace {
+
+/// The number of samples in two renders whose bits differ, over both channels.
+size_t bitMismatches(const std::vector<float>& a, const std::vector<float>& b) {
+	size_t n = 0;
+	for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+		uint32_t x = 0;
+		uint32_t y = 0;
+		std::memcpy(&x, &a[i], sizeof x);
+		std::memcpy(&y, &b[i], sizeof y);
+		n += x != y ? 1u : 0u;
+	}
+	return n;
+}
+
+size_t countNonZero(const std::vector<float>& x) {
+	size_t n = 0;
+	for (const float f : x) {
+		n += f != 0.0f ? 1u : 0u;
+	}
+	return n;
+}
+
+/// A device with all four partials sounding, each on a different harmonic, at the default notch.
+Settings allPartialsOn() {
+	Settings s;
+	s.noteSemitones = 52.0f;
+	const std::array<size_t, 4> harmonics { kUnisonHarmonic, indexOfRatio(2, 1), indexOfRatio(3, 1), indexOfRatio(4, 1) };
+	for (size_t k = 0; k < 3; ++k) {
+		s.more[k].active = true;
+		s.more[k].harmonic = harmonics[k + 1];
+	}
+	s.harmonic = harmonics[0];
+	return s;
+}
+
+} // namespace
+
+TEST_CASE("master level at one half halves every output sample against master level at one, bit for bit") {
+	// THE VALUE, NOT A SHAPE: a power-of-two scale is exact in binary floating point, so the half-level output must equal half the
+	// full-level output sample for sample. Both channels, every block size, the stripped signal and the sines together.
+	const std::vector<float> in = testInput(9600, 11);
+	for (const int block : { 64, 480 }) {
+		for (const bool stereo : { true, false }) {
+			Settings full = allPartialsOn();
+			full.masterLevel = 1.0f;
+			Settings half = full;
+			half.masterLevel = 0.5f;
+			Harm a;
+			a.prepare(kRate);
+			Harm b;
+			b.prepare(kRate);
+			const auto one = render(a, full, in, block, stereo, nullptr);
+			const auto low = render(b, half, in, block, stereo, nullptr);
+			INFO("block " << block << (stereo ? " stereo" : " mono"));
+			CHECK(countNonZero(one.first) > in.size() / 2);
+			std::vector<float> expected = one.first;
+			for (float& f : expected) {
+				f *= 0.5f;
+			}
+			CHECK(bitMismatches(expected, low.first) == 0);
+			if (stereo) {
+				std::vector<float> expectedR = one.second;
+				for (float& f : expectedR) {
+					f *= 0.5f;
+				}
+				CHECK(bitMismatches(expectedR, low.second) == 0);
+			}
+		}
+	}
+	SUBCASE("non-vacuity: the level reaches the output at all — zero is silence") {
+		Settings zero = allPartialsOn();
+		zero.masterLevel = 0.0f;
+		Harm z;
+		z.prepare(kRate);
+		const auto out = render(z, zero, in, 480, false, nullptr);
+		CHECK(countNonZero(out.first) == 0);
+	}
+}
+
+TEST_CASE("master depth multiplies every partial's depth, and depth zero is the same render as every partial's depth at zero") {
+	const std::vector<float> in = testInput(9600, 13);
+
+	SUBCASE("the scale is the product, restated here independently of notchDepth") {
+		Settings s = allPartialsOn();
+		s.depth = 0.8f;
+		s.more[0].depth = 0.6f;
+		s.more[1].depth = 1.0f;
+		s.more[2].depth = 0.25f;
+		s.masterDepth = 0.5f;
+		for (int k = 0; k < kPartialCount; ++k) {
+			const Settings slice = partialSlice(s, k);
+			const float own = k == 0 ? 0.8f : (k == 1 ? 0.6f : (k == 2 ? 1.0f : 0.25f));
+			CHECK(notchDepth(slice) == doctest::Approx(static_cast<double>(own) * 0.5));
+		}
+	}
+
+	SUBCASE("master depth zero renders the same bits as every partial's depth at zero, all four partials sounding") {
+		Settings masterZero = allPartialsOn();
+		masterZero.masterDepth = 0.0f;
+		Settings partialsZero = allPartialsOn();
+		for (PartialSettings& p : partialsZero.more) {
+			p.depth = 0.0f;
+		}
+		partialsZero.depth = 0.0f;
+		Harm a;
+		a.prepare(kRate);
+		Harm b;
+		b.prepare(kRate);
+		const auto x = render(a, masterZero, in, 480, true, nullptr);
+		const auto y = render(b, partialsZero, in, 480, true, nullptr);
+		CHECK(bitMismatches(x.first, y.first) == 0);
+		CHECK(bitMismatches(x.second, y.second) == 0);
+		CHECK(countNonZero(x.first) > in.size() / 2);
+	}
+
+	SUBCASE("a master of one half on unity depths renders the bits of unity master on half depths") {
+		Settings master = allPartialsOn();
+		master.masterDepth = 0.5f;
+		Settings depths = allPartialsOn();
+		depths.depth = 0.5f;
+		for (PartialSettings& p : depths.more) {
+			p.depth = 0.5f;
+		}
+		Harm a;
+		a.prepare(kRate);
+		Harm b;
+		b.prepare(kRate);
+		const auto x = render(a, master, in, 480, true, nullptr);
+		const auto y = render(b, depths, in, 480, true, nullptr);
+		CHECK(bitMismatches(x.first, y.first) == 0);
+		CHECK(bitMismatches(x.second, y.second) == 0);
+	}
+}
+
+TEST_CASE("the master controls are declared, default to unity, and round-trip through the row") {
+	const size_t levelAt = static_cast<size_t>(Param::MasterLevel);
+	const size_t depthAt = static_cast<size_t>(Param::MasterDepth);
+	CHECK(levelAt == static_cast<size_t>(partialParam(3, PartialField::Active)) + 1);
+	CHECK(depthAt == levelAt + 1);
+	CHECK(static_cast<size_t>(Param::kCount) == depthAt + 1);
+	CHECK(std::string(kParamDescs[levelAt].key) == "harm_master_level");
+	CHECK(std::string(kParamDescs[depthAt].key) == "harm_master_depth");
+	CHECK(kParamDescs[levelAt].def == 1.0);
+	CHECK(kParamDescs[depthAt].def == 1.0);
+	CHECK(kParamDescs[levelAt].modulatable);
+	CHECK(kParamDescs[depthAt].modulatable);
+
+	State st;
+	setValueOf(&st, Param::MasterLevel, 0.25f);
+	setValueOf(&st, Param::MasterDepth, 0.75f);
+	CHECK(st.settings.masterLevel == 0.25f);
+	CHECK(st.settings.masterDepth == 0.75f);
+	CHECK(valueOf(st, Param::MasterLevel) == 0.25f);
+	CHECK(valueOf(st, Param::MasterDepth) == 0.75f);
+	// A patch that stores neither (every patch before the controls existed) gets unity for both.
+	const State old = stateOf(rowOf(State {}), static_cast<size_t>(partialParam(3, PartialField::Active)) + 1);
+	CHECK(old.settings.masterLevel == 1.0f);
+	CHECK(old.settings.masterDepth == 1.0f);
+}
+

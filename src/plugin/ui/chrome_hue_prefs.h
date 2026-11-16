@@ -34,12 +34,12 @@
 
 namespace feathers::ui {
 
-/// The key the editors keep the offset under, in degrees. No line reads as 0, the mock's own colours.
+/// The key the editors keep the offset under, in degrees. No line reads as `kChromeHueDefault`.
 inline constexpr const char* kChromeHuePrefKey = "ui.hue";
 
 /// At an editor's startup: the stored offset becomes the process's.
 inline void restoreChromeHue(const EditorPrefs& prefs) {
-	(void)setChromeHueOffset(prefs.number(kChromeHuePrefKey, 0.0));
+	(void)setChromeHueOffset(prefs.number(kChromeHuePrefKey, kChromeHueDefault));
 }
 
 /// For an editor's lifetime: every `setChromeHueOffset` in the process is written to `prefs`, and
@@ -60,7 +60,7 @@ inline constexpr const char* kAccentHuePrefKey = "ui.accent_hue";
 
 /// At an editor's startup: the stored accent offset becomes the process's.
 inline void restoreAccentHue(const EditorPrefs& prefs) {
-	(void)setAccentHueOffset(prefs.number(kAccentHuePrefKey, 0.0));
+	(void)setAccentHueOffset(prefs.number(kAccentHuePrefKey, kAccentHueDefault));
 }
 
 /// For an editor's lifetime: every `setAccentHueOffset` is written to `prefs`, and `repaint` is called.

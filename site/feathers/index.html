@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feathers: a terrain-based procedural synthesizer</title>
+<meta name="description" content="Feathers is a terrain-based procedural synthesizer for CLAP and VST3, with a modular effects rack. Every sound is a position on a terrain. Open source, GPL-3.0-or-later.">
+<meta name="color-scheme" content="dark light">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300..600&display=swap">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="libra" viewBox="800 135 109 143"><path fill="currentColor" stroke="currentColor" stroke-width="1" d="M 850.01,140.04 C 862.98,139.76 859.53,156.36 850.01,154.25 843.49,152.80 841.14,143.90 850.01,140.04 Z M 892.04,171.78 C 903.99,169.86 904.01,183.77 895.98,185.53 888.79,187.11 882.50,177.17 892.04,171.78 Z M 835.31,182.08 C 838.48,181.38 841.78,182.99 840.34,186.69 838.78,190.74 829.55,188.07 835.31,182.08 Z M 829.31,196.04 C 836.43,193.92 836.59,200.85 832.78,202.72 829.44,204.36 824.89,200.81 829.31,196.04 Z M 809.31,197.08 C 815.66,195.69 816.21,202.07 812.76,203.92 809.51,205.67 804.84,201.80 809.31,197.08 Z M 886.00,224.66 C 900.53,223.88 899.82,241.97 889.00,243.52 882.87,244.39 877.12,238.01 878.47,232.00 879.40,227.86 882.31,225.99 886.00,224.66 Z M 853.44,248.08 C 859.62,246.66 860.18,253.17 856.77,254.60 854.02,255.76 849.59,252.54 853.44,248.08 Z M 853.60,268.03 C 855.85,267.22 859.11,267.59 857.60,270.73 856.24,273.56 850.66,272.70 853.60,268.03 Z" /> </symbol></svg>
+<nav class="sitenav" aria-label="Owlet Labs"><div class="wrap"><a href="/">Owlet Labs</a><a href="/plugins/">Plugins</a><a href="https://github.com/owlet-labs">GitHub</a></div></nav>
+<header class="top">
+	<div class="wrap">
+		<a class="brand" href="#top"><svg class="libra" aria-hidden="true"><use href="#libra"/></svg>Feathers</a>
+		<nav aria-label="Sections">
+			<a href="#install">Install</a>
+			<a href="#what">Overview</a>
+			<a href="#platforms">Platforms</a>
+			<a href="#open">Open source</a>
+			<a href="https://github.com/owlet-labs/feathers">GitHub</a>
+		</nav>
+	</div>
+</header>
+
+<main id="top">
+<div class="hero">
+	<div class="wrap">
+		<div class="lockup">
+			<svg class="hero-libra" role="img" aria-label="Libra constellation, the Owlet mark"><use href="#libra"/></svg>
+			<h1>Feathers</h1>
+		</div>
+		<p class="tag">A terrain-based procedural synthesizer for CLAP and VST3, with a modular effects rack. <span>Every sound is a position on a terrain. Eight engines read it: procedural wavetables, additive spectra, plucked strings, drums.</span></p>
+		<div class="ctas">
+			<a class="cta" href="#install">Install</a>
+			<a class="cta alt" href="https://github.com/owlet-labs/feathers">Source on GitHub</a>
+		</div>
+		<figure>
+			<img class="shot" src="img/hero.webp" width="1600" height="1000" alt="The full Feathers editor with a factory preset: engine rail, modulator lane, sounds and blend geometry, and the post-fx lane.">
+			<figcaption>Editor with a factory preset.</figcaption>
+		</figure>
+	</div>
+</div>
+
+<section id="install">
+	<div class="wrap sec">
+		<h2>Install</h2>
+		<p>One line downloads the latest release, checks it, and installs the synth and the Chain (CLAP and VST3) into the user plugin folders.</p>
+		<p class="oslabel">macOS and Linux (Terminal)</p>
+		<div class="cmd"><pre data-prompt="$"><code>curl -fsSL https://labs.owletrecords.com/feathers/install.sh | bash</code></pre></div>
+		<p class="oslabel">Windows (PowerShell)</p>
+		<div class="cmd"><pre data-prompt="&gt;"><code>irm https://labs.owletrecords.com/feathers/install.ps1 | iex</code></pre></div>
+		<p>Restart the DAW or rescan plugins. Manual download: the zip for each platform is on the <a href="https://github.com/owlet-labs/feathers/releases/latest">latest release</a>; <code>SHA256SUMS.txt</code> verifies it. Scripts: <a href="install.sh">install.sh</a>, <a href="install.ps1">install.ps1</a>. Per-platform notes: the <a href="https://github.com/owlet-labs/feathers#trying-it">README</a>.</p>
+		<p class="note"><strong>Pre-1.0.</strong> Patches and presets are not stable before 1.0. A later build may load a saved patch, preset or DAW project differently, or not restore parts of it. Keep bounces of anything that matters.</p>
+	</div>
+</section>
+
+<hr class="ridge">
+<section id="what">
+	<div class="wrap sec">
+		<h2>Overview</h2>
+		<p>A synthesizer, a modulation system and a rack of effects. Modulators and effects are added, moved and removed the same way. Effects can hold chains and racks.</p>
+	</div>
+
+	<div class="wrap sec sub">
+		<h3>Terrain</h3>
+		<p>The terrain is a field with no edges. Every position is a different sound. In Morph, Stair and Forge it is a procedural wavetable, a waveform computed for each position; in the other engines it sets a spectrum, a string or a drum. The Explore surface shows it under the puck. It can be mutated, with undo and redo. Engines are tabled below.</p>
+			<p><strong>Likes.</strong> Hearting a sound bends the terrain toward it.</p>
+			<p><strong>Perform.</strong> Sounds become waypoints, stars in a blend circle. One puck interpolates between all their settings. A modulator routed to the puck position steps through the waypoints.</p>
+		<div class="pair">
+			<figure>
+				<img class="shot" src="img/explore-rotate.gif" width="337" height="486" loading="lazy" alt="The Explore terrain turning under Rotate: bands of the field swing round under the sound.">
+				<figcaption>Explore. The terrain under one sound, turning under Rotate.</figcaption>
+			</figure>
+			<figure>
+				<img class="shot" src="img/rack.webp" width="1000" height="1200" loading="lazy" alt="A Rack device holding parallel chains, each with level, mute and solo, and a column of eight macros.">
+				<figcaption>Rack. Parallel chains, each with level, mute and solo. Eight macros.</figcaption>
+			</figure>
+		</div>
+	</div>
+
+	<div class="wrap sec sub" id="engines">
+		<h3>The engines</h3>
+		<p>One terrain, eight engines. The engine decides what a position becomes.</p>
+		<div class="devtable" role="region" aria-label="Engines" tabindex="0">
+		<table>
+			<caption>The eight engines, in the order of the Engine menu.</caption>
+			<thead><tr><th scope="col">Engine</th><th scope="col">Sound</th><th scope="col">What the terrain shapes</th></tr></thead>
+			<tbody>
+			<tr><th scope="row">Morph</th><td>A procedural wavetable: a waveform drawn through a chain of waypoints.</td><td>The shape of the waveform at every position.</td></tr>
+			<tr><th scope="row">Stair</th><td>A procedural wavetable built as a staircase of up to sixteen steps, from hard edges to smooth ramps.</td><td>The height and width of each step, and how steep the risers are.</td></tr>
+			<tr><th scope="row">Forge</th><td>A procedural wavetable: Morph's waveform pushed through hard sync, self-feedback and quantize.</td><td>The waveform, and how much of each of the three operators it gets.</td></tr>
+			<tr><th scope="row">Resonate</th><td>A resonator model of a string, bar, tube or membrane.</td><td></td></tr>
+			<tr><th scope="row">Basic Shapes</th><td>Sine, triangle, saw and square, mixed together.</td><td>How much FM each position applies.</td></tr>
+			<tr><th scope="row">Additive</th><td>A sound built from a spectrum of sine partials, with a spectrum panel for reshaping them.</td><td>The partial spectrum: how loud each partial is and how bright the sound.</td></tr>
+			<tr><th scope="row">Pluck</th><td>A plucked string.</td><td>The brightness and noise of the pluck, where it is picked, how long it rings and how sharp its upper partials are.</td></tr>
+			<tr><th scope="row">Drum</th><td>Layered drum synthesis: kick, membrane, snare, metal, clap and string kinds, in an eight-pad kit.</td><td>The same seven qualities for every kind (pitch sweep, tone, snap, decay and the like), so a place keeps its meaning from one kind to the next.</td></tr>
+			</tbody>
+		</table>
+		</div>
+	</div>
+
+	<div class="wrap sec sub">
+		<h3>Modulation</h3>
+		<p>Modulators sit in their own lane and are managed like effects: DAHDSR, LFO, MSEG, Math, Twin Field, Pattern, Step Seq, Sample &amp; Hold, Random Trigger, Follower, Macros and Note Expressions. Any of them can be routed to almost any knob, on the synth or an effect.</p>
+		<ul>
+			<li><strong>Response</strong>: each route is linear, exponential or logarithmic, or rectifies a bipolar source.</li>
+			<li><strong>Display</strong>: a modulated knob shows a ring and its live value. Selecting a modulator lights every knob it can reach.</li>
+			<li><strong>Random values persist</strong>: random and held values are saved with the patch.</li>
+		</ul>
+		<figure>
+			<img class="shot" src="img/modulation.webp" width="1600" height="508" loading="lazy" alt="Collage: the modulation lane and route list, the Explore terrain, the Twin Field modulator and the Pattern sequencer.">
+			<figcaption>Modulator lane, Explore, Twin Field, Pattern.</figcaption>
+		</figure>
+	</div>
+
+	<div class="wrap sec sub">
+		<h3>Effects</h3>
+		<p>Effects sit in a lane. Each has a compact card and a larger window with every card control and usually more. Several hold effects of their own: a filter in the Delay feedback, or processing in the middle of the Compressor.</p>
+		<figure>
+			<img class="shot" src="img/effects.webp" width="1600" height="810" loading="lazy" alt="Collage of the Phaser/Flanger, Compressor, Resonate and SKLITTER windows.">
+			<figcaption>Phaser/Flanger, Compressor, Resonate, SKLITTER.</figcaption>
+		</figure>
+		<figure>
+			<img class="shot" src="img/cards.webp" width="1400" height="2154" loading="lazy" alt="The compact card of every device, grouped by category.">
+			<figcaption>All devices, by category. <a href="#devices">Full list</a>.</figcaption>
+		</figure>
+		<p><a href="#devices">Every device</a></p>
+	</div>
+
+	<div class="wrap sec sub">
+		<h3>Racks</h3>
+		<p><strong>Chain</strong> and <strong>Rack</strong> devices nest chains, in series or in parallel, to any depth. A Rack mode sets what each chain hears and how the chains recombine.</p>
+		<dl class="modes">
+			<dt>Parallel</dt>
+			<dd>Every chain hears the input, and their outputs sum.</dd>
+			<dt>Select and Blend</dt>
+			<dd>A Position control picks one chain or crossfades between neighbours. Modulated, it switches or morphs.</dd>
+			<dt>Mid/Side and Left/Right</dt>
+			<dd>One chain per half of the signal.</dd>
+			<dt>Bands</dt>
+			<dd>Multiband split into 2, 3 or 5 bands with adjustable crossovers and slope, one chain per band. Band filtering sits before the chain, after it (harmonics the chain creates stay in its band), or both. With Key Track, the played note places the crossovers.</dd>
+		</dl>
+	</div>
+
+	<div class="wrap sec sub">
+		<h3>Device standard</h3>
+		<p>Every effect and modulator is a device built on one shared design. A device declares its controls (names, ranges, units, choices) and what it does with audio, modulation and notes. It can draw its own card and window or use the standard card. The same devices run in Feathers and in Feathers Chain. The aim is a standard other plugin makers can build on.</p>
+		<p>The device SDK in the repository is MIT-licensed: devices built on it can be open or closed source. Feathers itself stays GPL-3.0-or-later. The design is not final. Plugin makers who would build on it are invited to shape it.</p>
+	</div>
+
+	<div class="wrap sec sub">
+		<h3>Hosting</h3>
+		<p><strong>Built:</strong> any control, at any depth in chains and racks, reaches the DAW, in CLAP and VST3. The synth's own parameters are always available. Device controls share 256 host slots. A touched control takes a slot automatically; when all 256 are in use, the least recently used is reused. Right-click a control and choose &quot;Expose to host&quot; to pin it. Turning a knob records automation; DAW automation and modulation move the knob. Slots are saved with the project.</p>
+		<p><strong>Planned, not built:</strong> hosting other CLAP and VST3 plugins inside chains and racks, and third-party devices that look and modulate like Feathers' own.</p>
+	</div>
+</section>
+
+<hr class="ridge">
+<section id="platforms">
+	<div class="wrap sec">
+		<h2>Platforms</h2>
+		<div class="plat">
+			<h3>Linux x86-64</h3>
+			<p>First-class. Developed and played on Linux daily, in Bitwig. Every pre-release build ships for it.</p>
+		</div>
+		<div class="plat">
+			<h3>macOS universal</h3>
+			<p>Apple silicon and Intel in one build. Signed ad hoc, not notarised. The one-line installer uses curl, which macOS does not quarantine. A browser download needs the README's unquarantine step.</p>
+		</div>
+		<div class="plat">
+			<h3>Windows x86-64</h3>
+			<p>The editor is new. It passes tests on CI, but has not yet been played on a Windows machine by the team. Please <a href="https://github.com/owlet-labs/feathers/issues">report</a> problems.</p>
+		</div>
+		<p style="margin-top:1.2em">Each build holds the synth and the Chain as CLAP and VST3. Linux and Windows builds also include the synth standalone.</p>
+	</div>
+</section>
+
+<hr class="ridge">
+<section id="open">
+	<div class="wrap sec">
+		<h2>Open source</h2>
+		<p>The Feathers core is open source under the GNU General Public License, version 3 or later, and stays so. The device standard lets anyone build devices on it. Wanted: collaborators (DSP, UI, platform; C++, test-heavy codebase) and sound designers, producers and performers to try pre-release builds and report.</p>
+		<p><a class="cta" href="https://github.com/owlet-labs/feathers">Contribute on GitHub</a></p>
+	</div>
+</section>
+<hr class="ridge">
+<section id="devices">
+	<div class="wrap">
+		<h2 id="devtable-title">Every device</h2>
+		<p class="devnote">Effects, modulators, note devices and containers. Generated from the devices' own declarations.</p>
+		<!-- device-table:begin -->
+<div class="devtable" role="region" aria-labelledby="devtable-title" tabindex="0">
+<table>
+<caption>41 devices by category, with what each one can do.</caption>
+<thead><tr><th scope="col">Device</th><th scope="col">Description</th><th scope="col">Extras</th></tr></thead>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Filter &amp; EQ</th></tr>
+<tr><th scope="row">Drawn</th><td>A filter whose response is drawn: four frames blended on an XY pad.</td><td>Window</td></tr>
+<tr><th scope="row">EQ</th><td>Parametric EQ for surgical and mastering work, with an analyser.</td><td>Window, Keytrack, Linear phase, Latency</td></tr>
+<tr><th scope="row">Filter</th><td>Multimode filter: lowpass, bandpass, highpass and more, with drive, spread and morph.</td><td>Poly, Keytrack</td></tr>
+<tr><th scope="row">Resonate</th><td>Scanned-string resonator: bowed and plucked notes plus a drone, with effects lanes for each.</td><td>Window, Note input, Note output, Latency</td></tr>
+<tr><th scope="row">Spectral</th><td>Spectral effect: the Additive engine's partial operators applied to any audio.</td><td>Window, Poly, Keytrack, Sidechain, Latency</td></tr>
+<tr><th scope="row">Waypoint</th><td>Four filter states on a plane, and one Morph that walks between them.</td><td>Window, Poly, Keytrack</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Dynamics</th></tr>
+<tr><th scope="row">Compressor</th><td>Compressor, limiter and compander, with a lane between the compander's halves.</td><td>Window, Sidechain, Latency</td></tr>
+<tr><th scope="row">OWLTT</th><td>Three-band upward and downward compressor, with Character and Vibe zones.</td><td>Window, Keytrack, Latency</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Drive &amp; Colour</th></tr>
+<tr><th scope="row">Clipper</th><td>Clipper with five characters and 4x oversampling.</td><td>Latency</td></tr>
+<tr><th scope="row">Eroder</th><td>A very short comb whose delay is shaken by filtered noise, then soft-clipped and folded.</td><td>Window, Keytrack</td></tr>
+<tr><th scope="row">Shaper</th><td>Table waveshaper whose curve is a place in a φ-field rather than a preset.</td><td>Window, Poly</td></tr>
+<tr><th scope="row">Smooth Shaper</th><td>Eight waveshapers behind one knob, and a Twist that sweeps four modifiers at once.</td><td>Window, Poly</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Time &amp; Space</th></tr>
+<tr><th scope="row">Delay</th><td>Delay with Clean, Granular, Xfade, Tape, Multi-Tap, Reverse and Buckets modes, and an effects lane in its feedback loop.</td><td>Window</td></tr>
+<tr><th scope="row">Featherverb</th><td>An algorithmic reverb, extended with a convolution section.</td><td>Window</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Pitch</th></tr>
+<tr><th scope="row">Pitch</th><td>Pitch shifter, with an option to lock to a scale.</td><td></td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Rhythm &amp; Glitch</th></tr>
+<tr><th scope="row">SKLITTER</th><td>Stutterer: eight slicing modes over one ring buffer, a perform circle, grain and post lanes.</td><td>Window, Mod outputs, Latency</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Modulation FX</th></tr>
+<tr><th scope="row">Automod</th><td>The Automodulator: an auto-wah whose filter, comb and envelope response are read from one position in the φ-field.</td><td>Window, Keytrack</td></tr>
+<tr><th scope="row">Disperser</th><td>A dispersion (allpass group-delay) effect.</td><td>Window, Keytrack</td></tr>
+<tr><th scope="row">Phaser/Flanger</th><td>Phaser and flanger, with a response view and an explore field.</td><td>Window, Keytrack, Latency</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Utility</th></tr>
+<tr><th scope="row">Bus Utility</th><td>Gain, pan, dual pan, width and polarity.</td><td></td></tr>
+<tr><th scope="row">Harm</th><td>Strips the fundamental with a note-tracking notch and puts a clean sine sub-harmonic back.</td><td>Window, Poly</td></tr>
+<tr><th scope="row">Noise</th><td>Adds noise or pseudorandom impulses to whatever passes, through its own filter.</td><td>Poly, Keytrack, Mod outputs</td></tr>
+<tr><th scope="row">Sidechain Inject</th><td>Brings the plugin's sidechain input into the chain at this point.</td><td>Sidechain</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Modulators</th></tr>
+<tr><th scope="row">DAHDSR</th><td>Delay, attack, hold, decay, sustain, release envelope.</td><td>Mod outputs, Note input</td></tr>
+<tr><th scope="row">Follower</th><td>Envelope follower, and a threshold that turns any signal into trigger pulses.</td><td>Poly, Mod outputs</td></tr>
+<tr><th scope="row">LFO</th><td>Low-frequency oscillator with shapes, sync, phase and its own preview.</td><td>Mod outputs, Note input</td></tr>
+<tr><th scope="row">Macros</th><td>Four macro knobs as a modulator device.</td><td>Mod outputs</td></tr>
+<tr><th scope="row">Math</th><td>Combines two modulation inputs into one output, through a transfer curve.</td><td>Mod outputs</td></tr>
+<tr><th scope="row">MSEG</th><td>Multi-segment envelope: a shape made of segments you draw.</td><td>Mod outputs, Note input</td></tr>
+<tr><th scope="row">Note Expressions</th><td>Seven per-note controllers (volume, pan, tune, vibrato, expression, brightness and more) as routable outputs.</td><td>Mod outputs, Note input, Note output</td></tr>
+<tr><th scope="row">Random Trigger</th><td>Pseudorandom events as modulation.</td><td>Mod outputs, Note input</td></tr>
+<tr><th scope="row">Sample &amp; Hold</th><td>Sample &amp; Hold, with a built-in noise source and a trigger threshold.</td><td>Mod outputs, Note input</td></tr>
+<tr><th scope="row">Step Seq</th><td>Step sequencer: up to 32 steps of value, gate, probability, ratchet and slew, with randomisation.</td><td>Mod outputs, Note input</td></tr>
+<tr><th scope="row">Stereo Tool</th><td>Left/right modulation sources (split, width) for stereo routes.</td><td>Mod outputs</td></tr>
+<tr><th scope="row">Tracker</th><td>Pitch tracker: the held note's pitch as a modulation source, with a rule for which note of a chord it follows.</td><td>Mod outputs, Note input, Note output</td></tr>
+<tr><th scope="row">Twin Field</th><td>Eight modulation outputs read off the φ terrain in two crossfaded layers.</td><td>Mod outputs</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Note FX</th></tr>
+<tr><th scope="row">Arp</th><td>Classic arpeggiator: makes notes from the held chord.</td><td>Window, Mod outputs, Note input, Note output</td></tr>
+<tr><th scope="row">Pattern</th><td>A terrain arpeggiator with four patterns, fills and routable outputs.</td><td>Window, Mod outputs, Note input, Note output</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Oscillators</th></tr>
+<tr><th scope="row">Drum</th><td>One drum as a device in a chain: it takes notes, strikes a synthesised hit on the key it answers and adds it to what comes in, so two drums on one key layer.</td><td>Window, Note input, Note output</td></tr>
+</tbody>
+<tbody>
+<tr class="group"><th scope="rowgroup" colspan="3">Containers</th></tr>
+<tr><th scope="row">Chain</th><td>Devices in series inside one slot, with its own macros and routes.</td><td>Window, Sidechain, Latency</td></tr>
+<tr><th scope="row">Rack</th><td>Chains side by side, combined by mode (Parallel, Select/Blend, Mid/Side, Left/Right, Bands), each with level, mute and solo, plus eight macros.</td><td>Window, Keytrack, Sidechain, Note input, Note output, Latency</td></tr>
+</tbody>
+</table>
+</div>
+		<!-- device-table:end -->
+	</div>
+</section>
+</main>
+
+<footer>
+	<div class="wrap">
+		<span>© Owlet Records</span>
+		<span><a href="https://github.com/owlet-labs/feathers">GitHub</a> · <a href="https://github.com/owlet-labs/feathers/issues">Issues</a></span>
+		<span>Licensed GPL-3.0-or-later; the device SDK is MIT.</span>
+	</div>
+</footer>
+<script>
+(function () {
+	if (!navigator.clipboard) return;
+	document.querySelectorAll('.cmd').forEach(function (box) {
+		var b = document.createElement('button');
+		b.type = 'button'; b.className = 'copy'; b.textContent = 'Copy';
+		b.addEventListener('click', function () {
+			navigator.clipboard.writeText(box.querySelector('code').textContent).then(function () {
+				b.textContent = 'Copied';
+				setTimeout(function () { b.textContent = 'Copy'; }, 1800);
+			});
+		});
+		box.classList.add('js'); box.appendChild(b);
+	});
+})();
+</script>
+</body>
+</html>

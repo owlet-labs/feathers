@@ -1339,6 +1339,9 @@ enum class Category : uint8_t {
 	/// **A DEVICE THAT MAKES NOTES FROM NOTES — the arps** (a category of their own, so pattern and
 	/// arp do not ride along with modulators). Its own heading, after the modulators it sits beside in Feathers' strip.
 	Notes,
+	/// **A DEVICE THAT MAKES SOUND OF ITS OWN FROM NOTES — the drum** (a generator: it adds its voice to what comes in). Its own
+	/// heading, after the note effects that feed it and before the containers.
+	Oscillators,
 	/// A device that holds devices — the Chain. Its own heading, last.
 	Containers,
 };
@@ -1358,6 +1361,7 @@ constexpr const char* categoryName(Category c) {
 	case Category::Utility: return "Utility";
 	case Category::Modulators: return "Modulators";
 	case Category::Notes: return "Note FX"; // Bitwig's word for the slot before an instrument
+	case Category::Oscillators: return "Oscillators";
 	case Category::Containers: return "Containers";
 	case Category::None: break;
 	}

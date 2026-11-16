@@ -580,7 +580,7 @@ enum class OscType : uint8_t { Morph, Stair, V5, Resonate, BasicShapes, Additive
 /// three copies of this arithmetic before it was hoisted.
 size_t steppedIndex(double value, size_t count);
 
-inline constexpr std::array<const char* const, 8> kOscTypeNames{"Morph", "Stair", "V5", "Resonate", "Basic Shapes",
+inline constexpr std::array<const char* const, 8> kOscTypeNames{"Morph", "Stair", "Forge", "Resonate", "Basic Shapes",
                                                                 "Additive", "Pluck", "Drum"};
 
 /// THE ADDITIVE SHAPE's choices, in `partials::ShapeKind`'s order: character_params.h static_asserts the count where the

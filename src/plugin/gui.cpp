@@ -67,6 +67,7 @@
 #include "plugin/ui/tuning_row.h"
 #include "plugin/ui/wave_display.h"
 #include "plugin/ui/text_field.h"
+#include "plugin/ui/undo_chord.h"
 #include "plugin/ui/drum_panel.h"
 #include "plugin/ui/spectrum_panel.h"
 #include "plugin/ui/widget_registry.h"
@@ -255,44 +256,9 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 	GuiHost& host;
 	ParamBridge& bridge;
 
-	/// WHICH WAY AN UNDO CHORD WALKS: false for undo (main modifier + Z), true for redo (main modifier +
-	/// Shift + Z, or main modifier + Y); nullopt for any other key. Alt held is someone else's chord.
-	static std::optional<bool> undoChordOf(const visage::KeyEvent& e) {
-		if (!e.isMainModifier() || e.isAltDown()) {
-			return std::nullopt;
-		}
-		if (e.keyCode() == visage::KeyCode::Z) {
-			return e.isShiftDown();
-		}
-		if (e.keyCode() == visage::KeyCode::Y && !e.isShiftDown()) {
-			return true;
-		}
-		return std::nullopt;
-	}
-
-	/// A TEXT ENTRY THAT IS EDITING AND HOLDS THE KEYBOARD, anywhere under `frame`. Its Ctrl+Z is the
-	/// field's (visage's `TextEditor` keeps its own undo and never lets the chord up) or, for our
-	/// `TextField`, which has none, the host's — never this editor's history.
-	static bool textEntryFocusedUnder(visage::Frame* frame) {
-		if (frame == nullptr || !frame->isVisible()) {
-			return false;
-		}
-		// OUR FIELD BY ITS OWN WORD: it edits only while it holds the keyboard (a focus loss ends the edit),
-		// so `editing()` is the answer even where no window event handler tracks the focus.
-		if (const auto* field = dynamic_cast<const TextField*>(frame); field != nullptr && field->editing()) {
-			return true;
-		}
-		// visage's `TextEditor` answers `receivesTextInput` whenever it exists, so only a FOCUSED one counts.
-		if (frame->hasKeyboardFocus() && frame->receivesTextInput()) {
-			return true;
-		}
-		for (visage::Frame* child : frame->children()) {
-			if (textEntryFocusedUnder(child)) {
-				return true;
-			}
-		}
-		return false;
-	}
+	/// The undo chord and the typing test are `ui/undo_chord.h`'s — the rack plugin's editor asks the same two questions.
+	static std::optional<bool> undoChordOf(const visage::KeyEvent& e) { return ui::undoChordOf(e); }
+	static bool textEntryFocusedUnder(visage::Frame* frame) { return ui::textEntryFocusedUnder(frame); }
 
 	/// THE CHORD'S ACT: walk the history if it can be walked and nothing is typing. True only when it
 	/// moved — the key is then ours; false hands it back to the host unhandled.

@@ -57,6 +57,8 @@ public:
 	[[nodiscard]] double decaySeconds() const;
 	[[nodiscard]] double levelDb() const;
 	[[nodiscard]] int noteKey() const;
+	/// The key the picture and the play button use when the drum is Pitched (middle C).
+	static constexpr int kPictureKey = 60;
 	/// The picture's handles for the current Kind, each bound to its device control (the kind's own only).
 	[[nodiscard]] HitPicture::Controls handles() const;
 	void setModulation(ModState* mod, EditHistory* history);

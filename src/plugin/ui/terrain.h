@@ -585,8 +585,8 @@ struct TerrainWindow {
 	/// KEYED THROUGH AdditivePicture's DEFAULTED ==, a deliberate exception to the hand-written key below: the struct is
 	/// nothing but picture inputs, so a member added to it is in the key by construction rather than by remembering.
 	AdditivePicture additive {};
-	/// **THE FITTED MAP (AUDITION)** — draw the cells from the offline-fitted model (terrain_fit.h) instead of measuring each
-	/// from a cycle the engine builds. Off by default; only an engine with a table can have it on (the stage sets it from
+	/// **THE FITTED MAP** — draw the cells from the offline-fitted model (terrain_fit.h) instead of measuring each
+	/// from a cycle the engine builds. A bare window is the real map; the stage turns it on by default, and only an engine with a table (Additive) can have it on (the stage sets it from
 	/// the switch AND the table, so a window never claims a fit that does not exist). In the key because the builder reads
 	/// it: turning it on is a different picture of the same place, and the old map must not be carried as if it were this
 	/// one. STAGE STATE, NOT SAVED WITH THE PATCH — see ExploreStage::fittedMap.

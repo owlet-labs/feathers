@@ -42,9 +42,10 @@ inject	Sidechain Inject: brings the plugin's sidechain input into the chain at t
 ARP	Classic arpeggiator: makes notes from the held chord.
 PAT	Pattern: a terrain arpeggiator with four patterns, fills and routable outputs.
 TFIELD	Twin Field: eight modulation outputs read off the φ terrain in two crossfaded layers.
+DRUM	One drum as a device in a chain: it takes notes, strikes a synthesised hit on the key it answers and adds it to what comes in, so two drums on one key layer.
 engine:Morph	The original PhiMorph oscillator.
 engine:Stair	The original PhiStair oscillator.
-engine:V5	The default engine.
+engine:Forge	The default engine.
 engine:Resonate	A resonator engine: a string, bar, tube or membrane model.
 engine:Basic Shapes	Classic oscillator shapes.
 engine:Additive	Additive synthesis, with a spectrum panel of partial operators and a vocoder.

@@ -25,6 +25,7 @@
 #include "plugin/ui/drum_hit_picture.h"
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/fx_card.h"
+#include "plugin/ui/controls.h"
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/widget_registry.h"
 
@@ -32,7 +33,7 @@
 #include <string>
 
 // THE DRUM DEVICE'S CARD: composed around the hit picture (the standing rule: a visualiser, the controls on the plot), not a list of knobs.
-// Under it: Kind, Note, a play button where the host has a note road, and Level and Tune. Everything else is in the window.
+// Under it: Kind, Note (One Key only: hidden, not greyed, in Any Key and Pitched), the Keys choice, a play button where the host has a note road, and Level and Tune. Everything else is in the window.
 
 namespace feathers::ui {
 
@@ -57,12 +58,14 @@ public:
 	static constexpr float kGap = 6.0f;
 	static constexpr float kPictureHeight = 120.0f;
 	static constexpr float kPillHeight = 22.0f;
+	static constexpr float kKeysHeight = 22.0f;
 	static float openHeight();
 
 	/// For the cases: the widgets, by what they are bound to.
 	[[nodiscard]] HitPicture& pictureForTest() { return picture_; }
 	[[nodiscard]] ValueBox& kindForTest() const { return *kind_; }
 	[[nodiscard]] ValueBox& noteForTest() const { return *note_; }
+	[[nodiscard]] SegmentedControl& keysForTest() const { return *keys_; }
 	[[nodiscard]] FaderPill& levelForTest() const { return *level_; }
 	[[nodiscard]] FaderPill& tuneForTest() const { return *tune_; }
 	/// Null where the host has no note road (the button is not built there).
@@ -79,8 +82,10 @@ private:
 	DrumDeviceModel model_;
 	HitPicture picture_;
 	std::unique_ptr<ValueBox> kind_, note_;
+	std::unique_ptr<SegmentedControl> keys_;
 	std::unique_ptr<FaderPill> level_, tune_;
 	std::unique_ptr<DrumPlayButton> play_;
+	bool noteShown_ = true; ///< Note's last laid-out visibility (it follows Keys)
 };
 
 } // namespace feathers::ui

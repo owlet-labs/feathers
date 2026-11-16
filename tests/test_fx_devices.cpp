@@ -2727,6 +2727,13 @@ std::vector<std::string> honestyExpected() {
 	// AND CUTS 3 AND 4 (step 3): corners of the 5-band layout, and this sweep varies one control at a time from a base
 	// with fewer bands — no arrangement it builds reaches them. Not dead: `test_parallel_rack.cpp`, "Rack stage 2, Bands
 	// (Before): each chain hears its band" runs all four, by value; and the card hides them below 5 bands.
+	// THE RACK'S VIEW, VIEWED CHAIN AND PADS PAGE are how the window is laid out, kept with the patch: they change nothing you hear,
+	// by design (held by value in `test_rack_view_routing.cpp`, "the view, the viewed chain and the pads page change nothing you
+	// hear"). RACK PLAYING is Select's chain, and a one-chain rack has only the one (by value there: "Select sounds only the playing chain").
+	expected.push_back("Rack :: Rack View");
+	expected.push_back("Rack :: Rack Viewed Chain");
+	expected.push_back("Rack :: Rack Pads Page");
+	expected.push_back("Rack :: Rack Playing");
 	expected.push_back("Rack :: Rack Cut 3");
 	expected.push_back("Rack :: Rack Cut 4");
 	// THE CHAIN SLOTS (backlog NO item 2) are not on this list because the sweep does not vary them: `sweptControls`

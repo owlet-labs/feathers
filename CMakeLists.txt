@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(feathers VERSION 0.1.0 LANGUAGES C CXX)
+project(feathers VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -716,6 +716,8 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/chain_card.cpp
 	src/plugin/ui/parallel_rack_card.cpp
 	src/plugin/ui/rack_mode_views.cpp
+	src/plugin/ui/rack_views.cpp
+	src/plugin/ui/rack_view_adapter.cpp
 	src/plugin/ui/parallel_rack_expanded.cpp
 	src/plugin/ui/container_presets.cpp
 	src/plugin/ui/chain_column.cpp

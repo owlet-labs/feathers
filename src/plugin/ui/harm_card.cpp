@@ -66,12 +66,18 @@ HarmCard::HarmCard(backplane::DeviceHost& host, WidgetRegistry& registry, Device
 		knobParams_.push_back(knob.param);
 	}
 
-	for (const hrm::Param param : kCardChips) {
-		auto chip = std::make_unique<SwitchChip>(control(param), param == hrm::Param::Poly ? "Poly" : "Env Depth");
-		addChild(chip.get());
-		chips_.push_back(std::move(chip));
+	// EACH PARTIAL HAS ITS OWN THREE CONTROLS, built over that partial's own parameters and shown only while its tab is open.
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		PartialSet& set = sets_[static_cast<size_t>(k)];
+		set.active = std::make_unique<SwitchChip>(control(hrm::partialParam(k, hrm::PartialField::Active)), "Active");
+		addChild(set.active.get());
+		set.row = std::make_unique<HarmonicRow>(control(hrm::partialParam(k, hrm::PartialField::Harmonic)));
+		set.row->onChanged = [this] { redraw(); }; // the tab's ratio reads the same field
+		addChild(set.row.get());
+		set.level = std::make_unique<FaderPill>(control(hrm::partialParam(k, hrm::PartialField::Level)), "Level");
+		addChild(set.level.get());
 	}
-
+	applySelection();
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		noteCardPress(e);
 		if (const int tab = tabAt(e.position); tab >= 0) {
@@ -103,31 +109,32 @@ DeviceControl& HarmCard::control(hrm::Param param) const {
 	return *controls_[index];
 }
 
-namespace {
-
-size_t knobRowCount() {
-	return (HarmCard::kCardKnobCount + static_cast<size_t>(HarmCard::kRowCells) - 1)
-	       / static_cast<size_t>(HarmCard::kRowCells);
+float HarmCard::openHeight() {
+	// head, the tab row, the frame (its top edge is the tab row's bottom edge), then the masters under their caption.
+	return kHeadHeight + kRowGap + kTabRowHeight + kFrameHeight + kRowGap + kCaptionBand + kTabGap
+	       + Knob::columnHeight(kKnobDiameter) + kPad;
 }
 
-} // namespace
+bool HarmCard::partialActive(int partial) const {
+	return host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(partial, hrm::PartialField::Active))) >= 0.5f;
+}
 
-float HarmCard::openHeight() {
-	const float column = Knob::columnHeight(kKnobDiameter);
-	const size_t rows = knobRowCount();
-	const float knobRows = static_cast<float>(rows) * column
-	                       + (rows > 1 ? static_cast<float>(rows - 1) * kRowGap : 0.0f);
-	return kHeadHeight + kRowGap + kCaptionBand + kTabGap + kTabRowHeight + kRowGap + kCaptionBand + kTabGap + knobRows
-	       + kActiveRowGap + SwitchChip::kHeight + kPad;
+void HarmCard::applySelection() {
+	const int selected = selectedPartial();
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		const bool shown = !folded_ && k == selected;
+		PartialSet& set = sets_[static_cast<size_t>(k)];
+		set.active->setVisible(shown);
+		set.row->setVisible(shown);
+		set.level->setVisible(shown);
+	}
 }
 
 void HarmCard::foldedChanged() {
 	for (auto& knob : knobs_) {
 		knob->setVisible(!folded_);
 	}
-	for (auto& chip : chips_) {
-		chip->setVisible(!folded_);
-	}
+	applySelection();
 }
 
 void HarmCard::setModulation(ModState* state, EditHistory* history) {
@@ -143,29 +150,15 @@ visage::Bounds HarmCard::headBounds() const {
 	return ownFrame().head;
 }
 
-visage::Bounds HarmCard::chipBounds(size_t index) const {
-	const float top = knobsTop() + static_cast<float>(knobRowCount()) * Knob::columnHeight(kKnobDiameter)
-	                  + static_cast<float>(knobRowCount() - 1) * kRowGap + kActiveRowGap;
-	const float inner = std::max(0.0f, bodyWidth() - 2.0f * kPad);
-	const float each = (inner - kRowGap) / static_cast<float>(kCardChipCount);
-	return { bodyLeft() + kPad + (each + kRowGap) * static_cast<float>(index), top, std::max(0.0f, each),
-	         SwitchChip::kHeight };
-}
-
-SwitchChip* HarmCard::chipForTest(hrm::Param param) const {
-	for (size_t i = 0; i < kCardChipCount; ++i) {
-		if (kCardChips[i] == param) {
-			return chips_[i].get();
-		}
-	}
-	return nullptr;
-}
 
 std::vector<hrm::Param> HarmCard::addressedParamsForTest() const {
 	std::vector<hrm::Param> out = knobParams_;
 	out.push_back(hrm::Param::Enabled); // the square in the head
-	for (const hrm::Param p : kCardChips) {
-		out.push_back(p);
+	// The frame's three controls, for every partial: each is on the card while its tab is open.
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Active));
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Harmonic));
+		out.push_back(hrm::partialParam(k, hrm::PartialField::Level));
 	}
 	return out;
 }
@@ -198,6 +191,7 @@ HarmCard::Part HarmCard::partAt(visage::Point position) const {
 	return Part::None;
 }
 
+
 void HarmCard::resized() {
 	layOut();
 }
@@ -208,14 +202,19 @@ void HarmCard::layOut() {
 	const float cell = inner / static_cast<float>(kRowCells);
 	const float top = knobsTop();
 	for (size_t i = 0; i < knobs_.size(); ++i) {
-		const size_t line = i / static_cast<size_t>(kRowCells);
-		const size_t at = i % static_cast<size_t>(kRowCells);
-		knobs_[i]->setBounds(bodyLeft() + kPad + cell * static_cast<float>(at),
-		                     top + static_cast<float>(line) * (column + kRowGap), cell, column);
+		knobs_[i]->setBounds(bodyLeft() + kPad + cell * static_cast<float>(i), top, cell, column);
 	}
-	for (size_t i = 0; i < chips_.size(); ++i) {
-		const visage::Bounds b = chipBounds(i);
-		chips_[i]->setBounds(b.x(), b.y(), b.width(), b.height());
+	// THE FRAME'S TWO ROWS, the same places for every partial's set: Active chip then the harmonic box, then Level.
+	const visage::Bounds frame = frameBounds();
+	const float x = frame.x() + kFramePad;
+	const float w = std::max(0.0f, frame.width() - 2.0f * kFramePad);
+	const float rowY = frame.y() + kFramePad;
+	const float levelY = rowY + HarmonicRow::kHeight + kFrameRowGap;
+	const float rowX = x + kChipWidth + 8.0f;
+	for (PartialSet& set : sets_) {
+		set.active->setBounds(x, rowY + (HarmonicRow::kHeight - SwitchChip::kHeight) * 0.5f, kChipWidth, SwitchChip::kHeight);
+		set.row->setBounds(rowX, rowY, std::max(0.0f, x + w - rowX), HarmonicRow::kHeight);
+		set.level->setBounds(x, levelY, w, kFrameLevelHeight);
 	}
 }
 
@@ -225,13 +224,22 @@ bool HarmCard::updateContent() {
 	}
 	// READ THE FIELD, DO NOT ASK FOR A CONTROL: `control()` constructs a widget, and a tick is the wrong moment for that.
 	const bool enabled = host_.fieldAt(device_, static_cast<size_t>(hrm::Param::Enabled)) >= 0.5f;
-	// THE SELECTED PARTIAL is shared with the window, so a change made there arrives here as a redraw of the tabs.
+	// THE SELECTED PARTIAL is shared with the window, so a change made there arrives here as a redraw of the tabs and a new set.
 	const int partial = selectedPartial();
-	if (haveDrawnEnabled_ && enabled == drawnEnabled_ && partial == drawnPartial_) {
+	bool activeMoved = false;
+	for (int k = 0; k < hrm::kPartialCount; ++k) {
+		const int now = partialActive(k) ? 1 : 0;
+		activeMoved = activeMoved || now != drawnActive_[static_cast<size_t>(k)];
+		drawnActive_[static_cast<size_t>(k)] = now;
+	}
+	if (haveDrawnEnabled_ && enabled == drawnEnabled_ && partial == drawnPartial_ && !activeMoved) {
 		return false;
 	}
 	drawnEnabled_ = enabled;
 	haveDrawnEnabled_ = true;
+	if (partial != drawnPartial_) {
+		applySelection();
+	}
 	drawnPartial_ = partial;
 	redraw();
 	return true;
@@ -247,27 +255,12 @@ void HarmCard::drawContent(visage::Canvas& canvas) {
 	for (auto& knob : knobs_) {
 		knob->setActive(on);
 	}
-
-	// Env Depth scales the notch's depth, so it has something to act on only while a partial runs a notch. The window
-	// makes the same decision from the same fields.
-	bool anyNotch = false;
-	bool anyActive = false;
+	// A partial that is switched off sounds nothing, so its harmonic and Level recede with it, and everything recedes with the device.
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		const bool highpass = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Mode))) >= 0.5f;
-		const bool active = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Active))) >= 0.5f;
-		if (active) {
-			anyActive = true;
-			anyNotch = anyNotch || !highpass;
-		}
-	}
-	for (size_t i = 0; i < kCardChipCount; ++i) {
-		if (kCardChips[i] == hrm::Param::Poly) {
-			// Live or dead by the device's own declaration, as the window decides it.
-			chips_[i]->setEnabled(hrm::kDescriptor.traits.perVoiceControl >= 0);
-		}
-		else {
-			chips_[i]->setEnabled(!anyActive || anyNotch);
-		}
+		PartialSet& set = sets_[static_cast<size_t>(k)];
+		const bool live = on && partialActive(k);
+		set.row->setActive(live);
+		set.level->setActive(live);
 	}
 
 	drawPartialTabs(canvas, on);
@@ -283,15 +276,19 @@ void HarmCard::drawContent(visage::Canvas& canvas) {
 	}
 }
 
+visage::Bounds HarmCard::frameBounds() const {
+	const float top = bodyTopEdge() + kRowGap + kTabRowHeight;
+	return { bodyLeft() + kPad, top, std::max(0.0f, bodyWidth() - 2.0f * kPad), kFrameHeight };
+}
+
 float HarmCard::knobsTop() const {
-	// The partial tabs and the GLOBAL caption sit between the head and the knobs; see `drawContent`.
-	return bodyTopEdge() + kRowGap + kCaptionBand + kTabGap + kTabRowHeight + kRowGap + kCaptionBand + kTabGap;
+	return frameBounds().bottom() + kRowGap + kCaptionBand + kTabGap;
 }
 
 visage::Bounds HarmCard::tabBounds(int partial) const {
 	const float inner = std::max(0.0f, bodyWidth() - 2.0f * kPad);
 	const float each = (inner - kTabGap * static_cast<float>(hrm::kPartialCount - 1)) / static_cast<float>(hrm::kPartialCount);
-	const float top = bodyTopEdge() + kRowGap + kCaptionBand + kTabGap;
+	const float top = bodyTopEdge() + kRowGap;
 	return { bodyLeft() + kPad + (each + kTabGap) * static_cast<float>(partial), top, std::max(0.0f, each), kTabRowHeight };
 }
 
@@ -310,6 +307,8 @@ void HarmCard::selectPartial(int partial) {
 		return;
 	}
 	view_->partial = next;
+	drawnPartial_ = next;
+	applySelection();
 	redraw();
 }
 
@@ -326,35 +325,43 @@ std::string tabLineOf(int partial, double harmonic) {
 
 std::string HarmCard::tabTextForTest(int partial) const {
 	const double harmonic = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(partial, hrm::PartialField::Harmonic)));
-	const bool active = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(partial, hrm::PartialField::Active))) >= 0.5f;
-	return tabLineOf(partial, harmonic) + (active ? " on" : " off");
+	return tabLineOf(partial, harmonic) + (partialActive(partial) ? " on" : " off");
 }
 
 void HarmCard::drawPartialTabs(visage::Canvas& canvas, bool deviceOn) {
-	// THE CAPTIONS: the tabs are the partials, and the knobs below are the device's global controls, outside any tab's scope.
-	const float inner = std::max(0.0f, bodyWidth() - 2.0f * kPad);
-	canvas.setColor(withAlpha(kMuted, 0.75f));
-	drawTracked(canvas, "PARTIAL", font(kKnobLabelSize), kKnobLabelTracking, bodyLeft() + kPad,
-	            bodyTopEdge() + kRowGap, kCaptionBand);
-	const float globalY = bodyTopEdge() + kRowGap + kCaptionBand + kTabGap + kTabRowHeight + kRowGap;
-	drawTracked(canvas, "GLOBAL · EVERY PARTIAL", font(kKnobLabelSize), kKnobLabelTracking, bodyLeft() + kPad, globalY,
-	            kCaptionBand);
-	canvas.setColor(withAlpha(kLine, 0.55f));
-	canvas.fill(bodyLeft() + kPad, globalY + kCaptionBand, inner, 1.0f);
-
 	const int selected = selectedPartial();
+	const visage::Bounds frame = frameBounds();
+
+	// THE FRAME FIRST, in the selected tab's own colour, so the tab and the panel read as one object. Its top edge runs under the
+	// selected tab, which is then drawn solid down through that edge.
+	canvas.setColor(withAlpha(kAccent, 0.75f));
+	canvas.roundedRectangleBorder(frame.x(), frame.y(), frame.width(), frame.height(), 3.0f, 1.0f);
+
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		const visage::Bounds tab = tabBounds(k);
+		visage::Bounds tab = tabBounds(k);
 		const bool isSelected = k == selected;
+		if (isSelected) {
+			// The selected tab runs 2px into the frame, over the border's top edge, so the line is broken under it.
+			tab = { tab.x(), tab.y(), tab.width(), tab.height() + 2.0f };
+		}
 		drawTabChip(canvas, tab, std::string {}, isSelected);
+		const bool active = partialActive(k);
 		const double harmonic = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Harmonic)));
-		const bool active = host_.fieldAt(device_, static_cast<size_t>(hrm::partialParam(k, hrm::PartialField::Active))) >= 0.5f;
-		const float half = tab.height() * 0.5f;
+		const float half = kTabRowHeight * 0.5f;
 		canvas.setColor(isSelected ? kSurface : (deviceOn && active ? kMuted : kDisabled));
 		drawTracked(canvas, tabLineOf(k, harmonic), font(kKnobLabelSize), kKnobLabelTracking, tab.x() + 6.0f, tab.y(), half);
 		drawTracked(canvas, active ? "ON" : "OFF", font(kKnobLabelSize), kKnobLabelTracking, tab.x() + 6.0f, tab.y() + half,
 		            half);
 	}
+
+	// THE MASTERS' CAPTION, under the frame and outside it.
+	const float globalY = frame.bottom() + kRowGap;
+	const float inner = std::max(0.0f, bodyWidth() - 2.0f * kPad);
+	canvas.setColor(withAlpha(kMuted, 0.75f));
+	drawTracked(canvas, "GLOBAL · EVERY PARTIAL", font(kKnobLabelSize), kKnobLabelTracking, bodyLeft() + kPad, globalY,
+	            kCaptionBand);
+	canvas.setColor(withAlpha(kLine, 0.55f));
+	canvas.fill(bodyLeft() + kPad, globalY + kCaptionBand, inner, 1.0f);
 }
 
 } // namespace feathers::ui

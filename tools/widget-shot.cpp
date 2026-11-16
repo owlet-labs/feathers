@@ -59,6 +59,7 @@
 #include "plugin/ui/rack_views.h"        // `--rack-views`
 #include "fx/drum/drum_types.h"          // `--rack-chains N:devices`
 #include "plugin/ui/harm_expanded.h"    // `--harm-tab`
+#include "plugin/ui/harm_card.h"
 #include "mod/twinfield/twinfield.h"       // `--twinfield-play`
 #include "plugin/ui/sample_hold_card.h" // `--snh-sweep` (backlog MW)
 #include "mod/samplehold/samplehold.h"
@@ -3582,12 +3583,22 @@ int main(int argc, char** argv) {
 	if (harmTab >= 0) {
 		ui::HarmExpanded* window = findInTree<ui::HarmExpanded>(gui.root());
 		if (window == nullptr) {
-			std::printf("--harm-tab: no HARM window is open\n");
-			return 1;
+			// THE CARD ALONE (`--card`): the tab is turned through the card's own verb.
+			if (auto* card = findInTree<ui::HarmCard>(gui.root()); card != nullptr) {
+				card->selectPartial(harmTab);
+				std::printf("harm: card partial %d shown\n", card->selectedPartial() + 1);
+				pump(300);
+			}
+			else {
+				std::printf("--harm-tab: no HARM window or card is open\n");
+				return 1;
+			}
 		}
-		window->selectPartial(harmTab);
-		std::printf("harm: partial %d shown\n", window->selectedPartial() + 1);
-		pump(300);
+		else {
+			window->selectPartial(harmTab);
+			std::printf("harm: partial %d shown\n", window->selectedPartial() + 1);
+			pump(300);
+		}
 	}
 	// `--rack-views`: THE RACK'S TAB BARS AND PAD VIEWS over a fake model, on a backdrop over the editor: tabs with 4 chains and 8 chains
 	// top-down (the playing chain differs from the viewed one), a vertical bar left-right, and the pad panel in both flows with one

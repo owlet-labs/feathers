@@ -191,7 +191,6 @@ private:
 	RackKeyMask steady_ {};
 	bool reduced_ = false;
 	bool wasLive_ = false;
-	bool seenAny_ = false;
 };
 
 } // namespace feathers::ui

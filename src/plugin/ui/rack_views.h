@@ -291,7 +291,7 @@ public:
 	[[nodiscard]] visage::Point naturalSize() const;
 
 private:
-	RackViewModel& model_;
+	[[maybe_unused]] RackViewModel& model_; // held for the view's lifetime; this class reads it through its children
 	RackFlow flow_;
 	RackPadGrid grid_;
 	RackPadPages pages_;

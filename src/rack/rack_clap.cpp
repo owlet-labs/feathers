@@ -391,6 +391,15 @@ public:
 		if (id == kNoInstance) {
 			return;
 		}
+		// A DRUM IN A HOST'S DRUM CONTAINER IS HANDED ONLY ITS PAD'S NOTE, WHATEVER IT IS: a new instance answers Any Key (the device's own
+		// key mode, whose default is One Key). Keys stays a control — exposed to the host and the editor — so Pitched is reachable.
+		if (const device::Descriptor* d = bridge_.descriptorOf(id); d != nullptr) {
+			for (size_t c = 0; c < d->params.size(); ++c) {
+				if (std::strcmp(d->params[c].key, "drum_keys") == 0) {
+					bridge_.setField(id, c, 1.0f);
+				}
+			}
+		}
 		pinDrumControls(false); // the host's first visit (activate, or a timer) binds them: nothing talks to the host from a constructor
 		(void)bridge_.takeStateDirty(); // a new instance is not an edited one
 		gui_.setDrumMode(true);
@@ -405,16 +414,9 @@ public:
 		const device::Descriptor* desc = bridge_.descriptorOf(id);
 		drumControlOfPlace_.fill(kNoControl);
 		if (desc == nullptr) {
-			drumDevice_.store(kNoInstance, std::memory_order_relaxed);
 			return;
 		}
-		drumDevice_.store(id, std::memory_order_relaxed);
-		drumNoteControl_.store(static_cast<uint32_t>(kNoControl), std::memory_order_relaxed);
-		for (size_t c = 0; c < desc->params.size(); ++c) {
-			if (std::strcmp(desc->params[c].key, "drum_note") == 0) {
-				drumNoteControl_.store(static_cast<uint32_t>(c), std::memory_order_relaxed);
-			}
-		}
+
 		for (size_t place = 0; place < drumplugin::kHostParamCount; ++place) {
 			for (size_t c = 0; c < desc->params.size(); ++c) {
 				if (std::strcmp(desc->params[c].key, drumplugin::kHostKeys[place]) != 0) {
@@ -442,19 +444,6 @@ public:
 		return n < drumplugin::kHostParamCount ? static_cast<int32_t>(n) : -1;
 	}
 
-	/// **ANY KEY, AT A FIXED PITCH** — a host's drum container sends each pad only its own note, and whatever note that is,
-	/// this drum plays. The device answers the key its Note control names and strikes at its kind's pitch (the key never
-	/// pitches a drum), so every incoming key is put on that one: read from the engine's mirror of the control, which the
-	/// audio thread may read. WHEN THE DEVICE'S KEY MODE (One Key | Any Key | Pitched) MERGES, THIS PLUGIN SETS "Any Key" AT
-	/// CONSTRUCTION AND THIS FUNCTION AND ITS TWO CALLS ARE DELETED; nothing in src/fx/drum changes for it.
-	void answerAnyKey(device::NoteEvent& e) const noexcept {
-		const uint32_t control = drumNoteControl_.load(std::memory_order_relaxed);
-		if (control == static_cast<uint32_t>(kNoControl)) {
-			return;
-		}
-		const float key = bridge_.modulatedFieldAt(drumDevice_.load(std::memory_order_relaxed), control);
-		e.key = static_cast<int16_t>(std::clamp(static_cast<int>(std::lround(key)), 0, 127));
-	}
 
 	/// A HOST THAT DESTROYS US SAYS SO; a process that dies says so by this line's absence.
 	~RackPlugin() override {
@@ -1030,11 +1019,6 @@ public:
 			bridge_.drain();
 		}
 		takeEditorNotes();
-		if (drum_) {
-			for (size_t n = 0; n < noteCount_; ++n) {
-				answerAnyKey(notesIn_[n]);
-			}
-		}
 		engine_.setBlockNotes(notesIn_.data(), noteCount_);
 		{
 			const rack::StageScope stage(rack::Stage::Bus); // its devices taken out, and the engine's own Resolve and Mods
@@ -2129,11 +2113,8 @@ private:
 	bool noteRack_ = false;
 	/// **FEATHERS DRUM** (`kDrumDescriptor`): the same engine and window shell holding one Drum device (drum_plugin.h).
 	bool drum_ = false;
-	/// Which control of the device each place of `drumplugin::kHostKeys` is (main thread), and the device's id and its Note control
-	/// as the audio thread reads them for `answerAnyKey` (written by `pinDrumControls`, which a state load reruns).
+	/// Which control of the device each place of `drumplugin::kHostKeys` is (main thread; `pinDrumControls` rebuilds it).
 	std::array<size_t, drumplugin::kHostParamCount> drumControlOfPlace_ {};
-	std::atomic<DeviceInstanceId> drumDevice_ { kNoInstance };
-	std::atomic<uint32_t> drumNoteControl_ { static_cast<uint32_t>(static_cast<size_t>(-1)) };
 	/// Its audio: silence the engine runs on, sized at activate (a note rack is handed no buffers).
 	std::vector<float> scratchL_, scratchR_;
 	int guiFd_ = -1;

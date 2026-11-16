@@ -355,6 +355,7 @@ std::vector<float> referenceHit(size_t frames) {
 	for (size_t i = 0; i < row.size(); ++i) {
 		row[i] = static_cast<float>(dd::kParamDescs[i].def);
 	}
+	row[static_cast<size_t>(dd::Param::Keys)] = 1.0f; // THE PLUGIN'S DRUM ANSWERS ANY KEY
 	a.setFields(st, row.data(), row.size());
 	device::NoteEvent e;
 	e.key = 36;
@@ -406,6 +407,38 @@ TEST_CASE("the factory lists the Drum beside the two existing plugins, whose ids
 	CHECK(std::string(rack::descriptor()->id) == ids[0]);
 	CHECK(std::string(rack::noteRackDescriptor()->id) == ids[1]);
 	CHECK(std::string(rack::drumDescriptor()->id) == ids[2]);
+}
+
+TEST_CASE("the host-parameter list is append-only: the first 54 places are what shipped to this point, and Keys follows them") {
+	// A FINGERPRINT OF THE FIRST 54 KEYS IN ORDER (FNV-1a over each key and its NUL): moving, removing or inserting before any of them
+	// changes it, and a host's lanes live on those ids. New controls are appended after, and this number stays.
+	uint64_t h = 0xcbf29ce484222325ull;
+	for (size_t i = 0; i < 54; ++i) {
+		for (const char* c = dp::kHostKeys[i];; ++c) {
+			h ^= static_cast<unsigned char>(*c);
+			h *= 0x100000001b3ull;
+			if (*c == '\0') {
+				break;
+			}
+		}
+	}
+	CHECK(h == 0x4015774dbc430875ull);
+	REQUIRE(dp::kHostParamCount >= 55);
+	CHECK(std::string(dp::kHostKeys[54]) == "drum_keys");
+}
+
+TEST_CASE("a new drum answers Any Key, and Keys is a host parameter that reaches Pitched") {
+	Venue v;
+	const clap_id keys = v.idOf("Keys");
+	CHECK(keys == 0x1000 + 54);
+	double value = -1.0;
+	REQUIRE(v.params()->get_value(v.plugin, keys, &value));
+	CHECK(value == 0.5); // Any Key of One Key | Any Key | Pitched
+	Events e;
+	e.param(keys, 1.0);
+	v.run(128, &e);
+	v.mainThread();
+	CHECK(v.test()->resolved_field(v.plugin, v.bridge().deviceAtPosition(0), controlOfKey("drum_keys")) == 2.0f);
 }
 
 TEST_CASE("the Drum declares itself an instrument and a drum, with notes in, stereo audio out and nothing else") {

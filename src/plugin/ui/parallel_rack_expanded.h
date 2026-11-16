@@ -32,6 +32,8 @@
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/rack_mode_views.h"
+#include "plugin/ui/rack_view_adapter.h"
+#include "plugin/ui/rack_views.h"
 #include "plugin/ui/widget_registry.h"
 
 #include <array>
@@ -123,9 +125,19 @@ public:
 	[[nodiscard]] FxLaneRail& railForTest(size_t i) const { return *rails_[i]->rail; }
 	[[nodiscard]] ChainStrip& stripForTest(size_t i) const { return *rails_[i]->strip; }
 	/// THE MODE'S DROPDOWN AND THE POSITION'S KNOB (stage 2), on the row above Mix and Gain.
+	/// THE TABS AND PADS VIEWS (`View`): the bar, the pads panel, the model, and which rails are shown.
+	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
+	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
+	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
+	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
+	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
+	[[nodiscard]] SegmentedControl& viewPairForTest() const { return *viewPair_; }
+	[[nodiscard]] bool railShownForTest(size_t i) const { return rails_[i]->rail->isVisible(); }
 	[[nodiscard]] ValueBox& modeBoxForTest() const { return *modeBox_; }
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
 	[[nodiscard]] SegmentedControl& unusedChipForTest() const { return *unused_; }
+	[[nodiscard]] ValueBox& viewedBoxForTest() const { return *viewedBox_; }
+	[[nodiscard]] ValueBox& pageBoxForTest() const { return *pageBox_; }
 	[[nodiscard]] RackSpectrumStrip& spectrumForTest() const { return *spectrum_; }
 	[[nodiscard]] RackPositionBar& positionBarForTest() const { return *positionBar_; }
 	[[nodiscard]] size_t placeholderCountForTest() const noexcept { return phantoms_.size(); }
@@ -216,6 +228,16 @@ private:
 	std::unique_ptr<DeviceControl> modeControl_;
 	std::unique_ptr<DeviceControl> positionControl_;
 	std::unique_ptr<ValueBox> modeBox_;
+	std::unique_ptr<DeviceControl> viewControl_;
+	std::unique_ptr<DeviceControl> playingControl_;
+	std::unique_ptr<SegmentedControl> viewSeg_;
+	std::unique_ptr<RackViewPairControl> viewPairControl_;
+	std::unique_ptr<SegmentedControl> viewPair_;
+	std::unique_ptr<ValueBox> playingBox_;
+	std::unique_ptr<DeviceControl> viewedControl_;
+	std::unique_ptr<DeviceControl> pageControl_;
+	std::unique_ptr<ValueBox> viewedBox_;
+	std::unique_ptr<ValueBox> pageBox_;
 	std::unique_ptr<Knob> position_;
 	std::unique_ptr<DeviceControl> unusedControl_;
 	std::unique_ptr<SegmentedControl> unused_;
@@ -226,6 +248,13 @@ private:
 	std::unique_ptr<SegmentedControl> slope_;
 	std::unique_ptr<RackSpectrumStrip> spectrum_;
 	std::unique_ptr<RackPositionBar> positionBar_;
+	/// THE TABS AND PADS VIEWS: the model and the strike pulse are declared BEFORE the widgets that read them, so they outlive them.
+	std::unique_ptr<RackViewAdapter> model_;
+	RackStrikePulse pulse_;
+	std::unique_ptr<RackTabBar> tabs_;
+	std::unique_ptr<RackPadsPanel> pads_;
+	int laidOutView_ = -1;
+	size_t laidOutViewed_ = static_cast<size_t>(-1);
 	std::vector<std::unique_ptr<PhantomRail>> phantoms_;
 	rack::parallel::Mode phantomMode_ = rack::parallel::Mode::Parallel;
 	/// A drop zone pressed: the chain it made, whose add menu opens once its rail exists (0xFFFF: none).

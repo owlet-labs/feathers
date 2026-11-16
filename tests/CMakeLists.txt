@@ -621,7 +621,9 @@ if(TARGET visage)
 	# undo — backlog JB: every road that changes the patch is one step in the editor's one history, undone and
 	#        redone by value, and a parameter's undo reaches the host as a gesture.
 	set(_feathers_widget_shards_undo 1)
-	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo)
+	# rackviews — the Rack's Tabs and Pads views (src/plugin/ui/rack_views.h) over a fake model.
+	set(_feathers_widget_shards_rackviews 1)
+	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 		string(REPLACE "_" "-" _suite_name "${_suite}")
 		add_executable(test_gui_widgets_${_suite}
 			gui_widgets/test_gui_widgets_${_suite}.cpp
@@ -1677,6 +1679,12 @@ target_link_libraries(test_rack_chain_key PRIVATE feathers-gui-bridge feathers-s
 target_include_directories(test_rack_chain_key PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME rack-chain-key COMMAND test_rack_chain_key)
 
+# A RACK'S VIEW, ROUTING, CHOKE GROUPS AND STRIKE MASK: the engine and state half.
+add_executable(test_rack_view_routing test_rack_view_routing.cpp)
+target_link_libraries(test_rack_view_routing PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_rack_view_routing PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-view-routing COMMAND test_rack_view_routing)
+
 # BACKLOG LW — events and modulation that follow the audio past a latent device:
 # each node's arrival latency, and what a late device is handed, by value.
 add_executable(test_latency_domains test_latency_domains.cpp)
@@ -1943,7 +1951,7 @@ if(FEATHERS_SANITIZE)
 		# to four of these run at once, each with RUN_CASES_JOBS=4 case processes and its own Xvfb — a
 		# heavier moment than the one widget entry stacking on the rack suites was; the gate's cost line
 		# is the place to re-measure it.
-		foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo)
+		foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 			string(REPLACE "_" "-" _suite_name "${_suite}")
 			add_test(NAME sanitize-gui-widgets-${_suite_name} COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --
 				${_feathers_each} $<TARGET_FILE:test_gui_widgets_${_suite}>)

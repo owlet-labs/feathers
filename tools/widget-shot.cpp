@@ -56,6 +56,8 @@
 #include "plugin/ui/header_bar.h"
 #include "plugin/ui/stereo_tool_card.h" // `--stereo-tab`, `--stereo-sweep` (backlog KU)
 #include "plugin/ui/twinfield_card.h"   // `--twinfield-tab`
+#include "plugin/ui/rack_views.h"        // `--rack-views`
+#include "fx/drum/drum_types.h"          // `--rack-chains N:devices`
 #include "plugin/ui/harm_expanded.h"    // `--harm-tab`
 #include "mod/twinfield/twinfield.h"       // `--twinfield-play`
 #include "plugin/ui/sample_hold_card.h" // `--snh-sweep` (backlog MW)
@@ -153,6 +155,42 @@ Window captureTarget(Display* display, Window parent) {
 	}
 	return target;
 }
+
+/// A FAKE RACK for `--rack-views`: the widgets are drawn over a model with five chains on keys 36..40, a hit on key 38 and a page of
+/// used keys, so a capture shows every state the widgets draw (no engine behind it).
+class ShotRack final : public ui::RackViewModel {
+public:
+	ui::RackRoutingKind route = ui::RackRoutingKind::Select;
+	size_t chainCount = 4;
+	size_t viewed = 2;
+	size_t playing = 0;
+	int pageNow = 0;
+	ui::RackKeyMask struck {};
+	ui::RackViewKind view() const override { return ui::RackViewKind::Tabs; }
+	ui::RackRoutingKind routing() const override { return route; }
+	size_t chainSlots() const override { return chainCount; }
+	ui::RackChainView chain(size_t slot) const override {
+		static const char* const kNames[] = { "Kick", "Snare", "Hat", "Clap", "Tom", "Rim", "Perc", "Crash" };
+		return { slot < chainCount, kNames[slot % 8], static_cast<int>(36 + slot), 0 };
+	}
+	size_t viewedChain() const override { return viewed; }
+	void viewChain(size_t slot) override { viewed = slot; }
+	size_t playingChain() const override { return playing; }
+	void setPlayingChain(size_t slot) override { playing = slot; }
+	device::Modulatable* playingControl() override { return nullptr; }
+	int page() const override { return pageNow; }
+	void setPage(int page) override { pageNow = page; }
+	bool expanded(size_t) const override { return false; }
+	void setExpanded(size_t, bool) override {}
+	bool macrosOpen() const override { return false; }
+	void setMacrosOpen(bool) override {}
+	ui::RackKeyMask takeStruck() override {
+		const ui::RackKeyMask out = struck;
+		struck = {};
+		return out;
+	}
+	device::Modulatable* kitLevel() override { return nullptr; }
+};
 
 /// The first frame of type `T` anywhere under `root`, or null. Depth-first over the real tree, which
 /// is the only thing that cannot be wrong about which panel is on screen — see `--rails` for why the
@@ -453,6 +491,8 @@ int main(int argc, char** argv) {
 	int harmTab = -1;
 	/// `--twinfield-tab <0|1>`: turn the Twin Field card's tab (A, B) through the card's own verb.
 	int twinfieldTab = -1;
+	/// `--rack-views`: the rack's tab bars and pad views, drawn over a fake model on top of the editor, one of each flow.
+	bool rackViews = false;
 	/// `--twinfield-play`: run the TFIELD offline and publish its orbit phases, so the 2x4 output block shows values.
 	bool twinfieldPlay = false;
 	/// `--stereo-sweep`: four seconds of an engine-shaped stereo route — In's two ears in quadrature, Amount swaying —
@@ -590,6 +630,9 @@ int main(int argc, char** argv) {
 	bool rackChainsOpen = false;
 	/// `--rack-preset <file.fpreset>` with `--rack-chains`: that Rack preset is loaded into the Rack (the road the preset browser uses) instead of the harness's own chains.
 	std::string rackPreset;
+	/// `--rack-chains N:keyed` puts chain k on key 36 + k, `:devices` a Drum (and, on every other chain, a Delay) in each chain after the first.
+	bool rackChainsKeyed = false;
+	bool rackChainsDevices = false;
 	/// `--rack-arm-macro N` (1..8): press the Rack window's arrow for macro N, as a hand does, so the chains' controls light. 0 is not asked.
 	int rackArmMacro = 0;
 	/// `--chain-window` (backlog OC): the CHAIN device's window over a running body with a filter and a delay in it.
@@ -1018,6 +1061,10 @@ int main(int argc, char** argv) {
 			harmTab = std::atoi(argv[++i]);
 			continue;
 		}
+		if (arg == "--rack-views") {
+			rackViews = true;
+			continue;
+		}
 		if (arg == "--twinfield-tab" && i + 1 < argc) {
 			twinfieldTab = std::atoi(argv[++i]);
 			continue;
@@ -1221,6 +1268,8 @@ int main(int argc, char** argv) {
 			const std::string spec = argv[++i];
 			rackChains = std::atoi(spec.c_str());
 			rackChainsOpen = spec.find(":open") != std::string::npos;
+			rackChainsKeyed = spec.find(":keyed") != std::string::npos;
+			rackChainsDevices = spec.find(":devices") != std::string::npos;
 			continue;
 		}
 		if (arg == "--rack-preset" && i + 1 < argc) {
@@ -2444,7 +2493,8 @@ int main(int argc, char** argv) {
 			int mode = 0;
 			int chains = 1;
 			int bands = 0;
-			(void)std::sscanf(chainRack.c_str(), "%d:%d:%d", &mode, &chains, &bands);
+			int viewKind = 0; // a fourth number: the Rack's View (1 Tabs, 2 Pads), with a Drum (and on even chains a Delay) in every chain, keyed 36 + k
+			(void)std::sscanf(chainRack.c_str(), "%d:%d:%d:%d", &mode, &chains, &bands, &viewKind);
 			rack::RackBridge& inner = *rack::bridgeOf(held);
 			const DeviceInstanceId rackId = inner.addDevice(pr::kTraits.tag);
 			inner.setField(rackId, static_cast<size_t>(pr::Param::Mode), static_cast<float>(mode));
@@ -2453,6 +2503,16 @@ int main(int argc, char** argv) {
 			if (pr::Rack* rk = pr::rackOf(inner.containerSurfaceOf(rackId)); rk != nullptr) {
 				while (rk->chainCount() < static_cast<size_t>(chains)) {
 					(void)rk->addChain();
+				}
+				if (viewKind > 0) {
+					inner.setField(rackId, static_cast<size_t>(pr::Param::View), static_cast<float>(viewKind));
+					for (size_t c = 0; c < rk->chainCount(); ++c) {
+						rk->setChainKey(c, 36 + static_cast<int>(c));
+						(void)rk->chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
+						if (c % 2 == 0) {
+							(void)rk->chainAt(c)->bridge()->addDevice("DELAY");
+						}
+					}
 				}
 			}
 			std::printf("chain-rack: mode %d, %d chain(s), bands index %d\n", mode, chains, bands);
@@ -2546,21 +2606,32 @@ int main(int argc, char** argv) {
 			}
 		}
 		else {
-			while (rack.chainCount() < static_cast<size_t>(rackChains)) {
-				(void)rack.addChain();
+		(void)rack.chainAt(0)->bridge()->addDevice(fx::filter::kTraits.tag);
+		for (size_t c = 0; c < rack.chainCount(); ++c) {
+			if (rackChainsKeyed) {
+				rack.setChainKey(c, 36 + static_cast<int>(c));
 			}
-			(void)rack.chainAt(0)->bridge()->addDevice(fx::filter::kTraits.tag);
-			const float levels[] = { 0.75f, 0.5f, 0.25f, 0.9f };
-			for (size_t c = 0; c < rack.chainCount(); ++c) {
-				rack.setLevel(c, levels[c % 4]);
+			if (rackChainsDevices && c > 0) {
+				(void)rack.chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
+				if (c % 2 == 0) {
+					(void)rack.chainAt(c)->bridge()->addDevice("DELAY");
+				}
 			}
-			if (rack.chainCount() > 2) {
-				rack.setMuted(2, true);
-			}
-			if (rack.chainCount() > 1) {
-				rack.setSoloed(1, true);
-				rack.setSoloed(0, true);
-			}
+		}
+		for (size_t c = 0; c < rack.chainCount(); ++c) {
+			rack.setOpen(c, rackChainsOpen); // open inline on the card (Tabs, Pads), as its rail is open in the window
+		}
+		const float levels[] = { 0.75f, 0.5f, 0.25f, 0.9f };
+		for (size_t c = 0; c < rack.chainCount(); ++c) {
+			rack.setLevel(c, levels[c % 4]);
+		}
+		if (rack.chainCount() > 2) {
+			rack.setMuted(2, true);
+		}
+		if (rack.chainCount() > 1) {
+			rack.setSoloed(1, true);
+			rack.setSoloed(0, true);
+		}
 		}
 		std::vector<float> l(256);
 		std::vector<float> r(256);
@@ -3471,6 +3542,45 @@ int main(int argc, char** argv) {
 		window->selectPartial(harmTab);
 		std::printf("harm: partial %d shown\n", window->selectedPartial() + 1);
 		pump(300);
+	}
+	// `--rack-views`: THE RACK'S TAB BARS AND PAD VIEWS over a fake model, on a backdrop over the editor: tabs with 4 chains and 8 chains
+	// top-down (the playing chain differs from the viewed one), a vertical bar left-right, and the pad panel in both flows with one
+	// key struck. Run under FEATHERS_REDUCED_MOTION=1 so the strike is the steady one-frame highlight the widgets draw there.
+	if (rackViews) {
+		static ShotRack four;
+		static ShotRack eight;
+		static ShotRack pads;
+		eight.chainCount = 8;
+		eight.viewed = 5;
+		eight.playing = 1;
+		pads.chainCount = 6;
+		pads.viewed = 1;
+		pads.pageNow = 2; // keys 36..41 live on page 2 (pads 4..9)
+		static ui::RackStrikePulse pulse;
+		static visage::Frame backdrop;
+		backdrop.setBounds(0.0f, 0.0f, 1240.0f, 734.0f);
+		backdrop.onDraw() = [](visage::Canvas& canvas) {
+			canvas.setColor(ui::kSurfaceRaised);
+			canvas.fill(0.0f, 0.0f, 1240.0f, 734.0f);
+		};
+		gui.root()->addChild(&backdrop);
+		static ui::RackTabBar tabsFour(four, ui::RackFlow::TopDown);
+		static ui::RackTabBar tabsEight(eight, ui::RackFlow::TopDown);
+		static ui::RackTabBar tabsSide(four, ui::RackFlow::LeftRight);
+		static ui::RackPadsPanel padsDown(pads, pulse, ui::RackFlow::TopDown);
+		static ui::RackPadsPanel padsSide(pads, pulse, ui::RackFlow::LeftRight);
+		for (visage::Frame* f : std::vector<visage::Frame*> { &tabsFour, &tabsEight, &tabsSide, &padsDown, &padsSide }) {
+			backdrop.addChild(f);
+		}
+		tabsFour.setBounds(40.0f, 40.0f, 260.0f, ui::RackTabBar::kThickness);
+		tabsEight.setBounds(40.0f, 100.0f, 260.0f, ui::RackTabBar::kThickness);
+		tabsSide.setBounds(40.0f, 160.0f, ui::RackTabBar::kThickness, 300.0f);
+		padsDown.setBounds(340.0f, 40.0f, padsDown.naturalSize().x, padsDown.naturalSize().y);
+		padsSide.setBounds(660.0f, 40.0f, padsSide.naturalSize().x, padsSide.naturalSize().y);
+		ui::maskSet(pads.struck, 38);
+		(void)pulse.poll(pads);
+		std::printf("rack-views: 5 widgets drawn over a fake rack\n");
+		pump(400);
 	}
 	// `--twinfield-tab`: THE TWIN FIELD CARD'S TAB, turned through the card's own verb, then a pump so the pad draws it.
 	if (twinfieldTab >= 0) {

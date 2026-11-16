@@ -147,6 +147,8 @@ struct Rack::Branch {
 	std::atomic<bool> solo { false };
 	/// **THE NOTE IT ANSWERS** (`kAnyKey` or 0..127): written on the message thread, read by the audio thread once a call.
 	std::atomic<int> key { kAnyKey };
+	/// **ITS CHOKE GROUP** (0 none, 1..8): a note-on handed to it chokes the other chains of its group.
+	std::atomic<int> choke { 0 };
 	/// **WHICH KEYS IT HAS BEEN HANDED AN ON FOR AND NOT YET AN OFF** (a bit per key), AUDIO THREAD: a key change under a held note
 	/// must not hang it, so that note's off, choke and expressions still enter whatever the key now says.
 	std::array<uint64_t, 2> held {};
@@ -528,6 +530,7 @@ Rack::ChainSnapshot Rack::snapshotChain(size_t index) const {
 	out.open = b.open;
 	out.slot = b.slot;
 	out.key = b.key.load(std::memory_order_relaxed);
+	out.choke = b.choke.load(std::memory_order_relaxed);
 	(void)b.chain.saveState(vectorSink(&out.body));
 	return out;
 }
@@ -546,6 +549,7 @@ size_t Rack::insertChain(size_t index, const ChainSnapshot& snap) {
 	branch->solo.store(snap.solo, std::memory_order_relaxed);
 	branch->open = snap.open;
 	branch->key.store(snap.key, std::memory_order_relaxed);
+	branch->choke.store(snap.choke, std::memory_order_relaxed);
 	branch->slot = freeSlot(snap.slot);
 	mirror(*branch);
 	const size_t at = std::min(index, chains_.size());
@@ -599,6 +603,27 @@ void Rack::setChainKey(size_t index, int key) noexcept {
 	}
 }
 
+int Rack::chainChoke(size_t index) const noexcept {
+	return index < chains_.size() ? chains_[index]->choke.load(std::memory_order_relaxed) : 0;
+}
+
+void Rack::setChainChoke(size_t index, int group) noexcept {
+	const int wanted = group < 1 || group > kMaxChokeGroup ? 0 : group;
+	if (index < chains_.size() && chains_[index]->choke.exchange(wanted, std::memory_order_relaxed) != wanted) {
+		++revision_;
+		markDirty();
+	}
+}
+
+void Rack::takeStrikeMask(uint64_t out[2]) noexcept {
+	out[0] = struck_[0].exchange(0, std::memory_order_relaxed);
+	out[1] = struck_[1].exchange(0, std::memory_order_relaxed);
+}
+
+bool Rack::keyStruckForTest(int key) const noexcept {
+	return key >= 0 && key < 128 && ((struck_[static_cast<size_t>(key) >> 6].load(std::memory_order_relaxed) >> (key & 63)) & 1u) != 0;
+}
+
 void Rack::setSoloed(size_t index, bool soloed) noexcept {
 	if (index < chains_.size() && chains_[index]->solo.exchange(soloed, std::memory_order_relaxed) != soloed) {
 		++revision_;
@@ -645,6 +670,8 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	staged_.assign(kMaxStagedNotes, StagedNote {});
 	chainNotes_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	keyedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
+	mergedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
+	chokes_.assign(RackEngine::kMaxNotes, ChokeFor {});
 	skippedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	owedOffs_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	recordCount_ = 0;
@@ -815,19 +842,23 @@ bool Rack::saveState(const device::ByteSink& sink) const {
 			const char* key;
 			float value;
 		};
-		std::array<Field, 6> fields {
+		std::array<Field, 7> fields {
 			Field { kLevelKey, branch->level.load(std::memory_order_relaxed) },
 			Field { kMuteKey, branch->mute.load(std::memory_order_relaxed) ? 1.0f : 0.0f },
 			Field { kSoloKey, branch->solo.load(std::memory_order_relaxed) ? 1.0f : 0.0f },
 			Field { kOpenKey, branch->open ? 1.0f : 0.0f },
 			Field { kSlotKey, branch->slot < kChainSlots ? static_cast<float>(branch->slot) : -1.0f },
 			Field { kKeyKey, 0.0f },
+			Field { kChokeKey, 0.0f },
 		};
 		// THE KEY IS WRITTEN ONLY WHEN SET: a chain on Any saves exactly the five fields it always did.
 		const int chainKey = branch->key.load(std::memory_order_relaxed);
-		size_t written = fields.size() - 1;
+		size_t written = fields.size() - 2;
 		if (chainKey != kAnyKey) {
-			fields[written++].value = static_cast<float>(chainKey);
+			fields[written++] = Field { kKeyKey, static_cast<float>(chainKey) };
+		}
+		if (const int group = branch->choke.load(std::memory_order_relaxed); group != 0) {
+			fields[written++] = Field { kChokeKey, static_cast<float>(group) };
 		}
 		put(sink, static_cast<uint8_t>(written));
 		for (size_t fi = 0; fi < written; ++fi) {
@@ -916,6 +947,7 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 		bool open = false;
 		uint8_t slot = kNoChainSlot;
 		int chainKey = kAnyKey;
+		int chokeGroup = 0;
 		for (uint8_t f = 0; f < fields; ++f) {
 			uint8_t len = 0;
 			if (!in.get(len) || in.size - in.at < len) {
@@ -938,6 +970,9 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 			}
 			else if (key == kSoloKey) {
 				solo = value >= 0.5f;
+			}
+			else if (key == kChokeKey) {
+				chokeGroup = value >= 1.0f && value < static_cast<float>(kMaxChokeGroup) + 1.0f ? static_cast<int>(value) : 0;
 			}
 			else if (key == kKeyKey) {
 				chainKey = value >= 0.0f && value < 128.0f ? static_cast<int>(value) : kAnyKey;
@@ -965,6 +1000,7 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 		branch->solo.store(solo, std::memory_order_relaxed);
 		branch->open = open;
 		branch->key.store(chainKey, std::memory_order_relaxed);
+		branch->choke.store(chokeGroup, std::memory_order_relaxed);
 		branch->slot = slot; // taken (or re-chosen) below, once the old lineup's slots are accounted for
 		highest = std::max(highest, id);
 		next.push_back(std::move(branch));
@@ -1061,14 +1097,15 @@ namespace {
 /// **w_k** (§1): the weight `mode` gives chain `k` of `chains` at `position` — 1 in Parallel, the nearest chain in
 /// Select, the two neighbours' linear triangle in Blend (weights summing to one, so identical chains sound the same at
 /// every position; DECIDED 2026-10-27, Q3).
-float modeWeight(Mode mode, double position, size_t k, size_t chains, int bands) noexcept {
+float modeWeight(Mode mode, double position, size_t k, size_t chains, int bands, int playing) noexcept {
 	switch (mode) {
 	case Mode::Select:
-	case Mode::Blend: return positionWeight(mode, position, k, chains);
+	case Mode::Blend: return positionWeight(mode, position, k, chains, playing);
 	case Mode::MidSide:
 	case Mode::LeftRight:
 	case Mode::Bands: return k < roleCount(mode, chains, bands) ? 1.0f : 0.0f; // the roles at unity, the rest unrouted
 	case Mode::Parallel:
+	case Mode::Keyed: // (never the engine's mode: `setFields` maps it onto Parallel)
 	case Mode::kCount: break;
 	}
 	return 1.0f;
@@ -1081,7 +1118,7 @@ void Rack::aimWeights(const Lineup* live, bool snap) noexcept {
 	bool moved = false;
 	for (size_t k = 0; k < count; ++k) {
 		Branch* b = live->branches[k];
-		const float target = modeWeight(mode_, position_, k, count, bands_);
+		const float target = modeWeight(mode_, position_, k, count, bands_, playing_);
 		if (snap) {
 			b->weightNow = b->weightTarget = target;
 			b->weightStep = 0.0f;
@@ -1105,7 +1142,7 @@ void Rack::aimWeights(const Lineup* live, bool snap) noexcept {
 	const int samples = mode_ == Mode::Select ? selectSamples_ : rampSamples_;
 	for (size_t k = 0; k < count; ++k) {
 		Branch* b = live->branches[k];
-		b->weightTarget = modeWeight(mode_, position_, k, count, bands_);
+		b->weightTarget = modeWeight(mode_, position_, k, count, bands_, playing_);
 		b->weightStep = (b->weightTarget - b->weightNow) / static_cast<float>(samples);
 		b->weightRemaining = samples;
 	}
@@ -1127,6 +1164,22 @@ void Rack::setFields(const float* fields, size_t present) {
 	const float position = at(Param::Position);
 	modeWanted_ = static_cast<Mode>(
 	    std::isfinite(mode) ? std::lround(std::clamp(mode, 0.0f, static_cast<float>(Mode::kCount) - 1.0f)) : 0L);
+	// KEYED IS PARALLEL'S AUDIO: the engine's mode stays Parallel (no fade between them) and only the notes know the difference.
+	keyedWanted_ = modeWanted_ == Mode::Keyed;
+	if (keyedWanted_) {
+		modeWanted_ = Mode::Parallel;
+	}
+	// THE VIEW'S THREE, held so the rack can say what it was told (no audio reads them): cleaned into their declared ranges.
+	const auto whole = [&](Param p) {
+		const double v = static_cast<double>(at(p));
+		const device::ParamDesc& d = kParamDescs[static_cast<size_t>(p)];
+		return static_cast<int>(std::isfinite(v) ? std::lround(std::clamp(v, d.min, d.max)) : std::lround(d.def));
+	};
+	view_ = whole(Param::View);
+	viewedChain_ = whole(Param::ViewedChain);
+	padsPage_ = whole(Param::PadsPage);
+	const float playing = at(Param::Playing);
+	playing_ = std::isfinite(playing) ? static_cast<int>(std::lround(std::clamp(playing, 0.0f, 64.0f))) : 0;
 	position_ = std::isfinite(position) ? std::clamp(position, 0.0f, 1.0f) : 0.0f;
 	unusedStop_ = at(Param::Unused) >= 0.5f;
 	const auto choice = [&](Param p, int last) {
@@ -1266,6 +1319,7 @@ void Rack::roleInput(size_t role, int n) noexcept {
 	case Mode::Parallel:
 	case Mode::Select:
 	case Mode::Blend:
+	case Mode::Keyed:
 	case Mode::kCount: break;
 	}
 	std::memcpy(workL_.data(), inL_.data(), count * sizeof(float));
@@ -1486,7 +1540,7 @@ float Rack::noteFactor(const Lineup* live, size_t k, bool anySolo) const noexcep
 	// SELECT AND BLEND WEIGH THE CHAINS BY POSITION; every other mode merges them, as Parallel does.
 	const Mode mode = modeWanted_;
 	const float w = mode == Mode::Select || mode == Mode::Blend
-	                    ? positionWeight(mode, position_, k, live->branches.size())
+	                    ? positionWeight(mode, position_, k, live->branches.size(), playing_)
 	                    : 1.0f;
 	return mix_ * w;
 }
@@ -1515,14 +1569,14 @@ void setHeld(std::array<uint64_t, 2>& held, int key, bool on) noexcept {
 /// enter and are remembered; the offs, chokes and note expressions of its key enter, and so do those of a note it was handed the
 /// on of under a key it no longer answers (no hung note); a wildcard off or choke ends whatever it holds. `kAnyKey` hands over all. What
 /// it does not hand over is written to `skipped`: the rack passes those on as the chain would, untouched, so no note is consumed.
-size_t keyFilter(std::array<uint64_t, 2>& held, int key, const device::NoteEvent* in, size_t count, device::NoteEvent* out,
+size_t keyFilter(std::array<uint64_t, 2>& held, int key, bool takesAll, const device::NoteEvent* in, size_t count, device::NoteEvent* out,
                  device::NoteEvent* skipped, size_t* skippedCount) noexcept {
 	size_t n = 0;
 	size_t s = 0;
-	const bool any = key == kAnyKey;
+	const bool any = takesAll && key == kAnyKey;
 	for (size_t i = 0; i < count; ++i) {
 		const device::NoteEvent& e = in[i];
-		const bool mine = e.key == key;
+		const bool mine = key >= 0 && e.key == key;
 		bool pass = false;
 		switch (e.kind) {
 		case device::NoteEvent::Kind::On:
@@ -1563,6 +1617,23 @@ size_t keyFilter(std::array<uint64_t, 2>& held, int key, const device::NoteEvent
 } // namespace
 
 size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::NoteEvent* out, size_t capacity) noexcept {
+	// THE STRIKE MASK FIRST, whichever chain takes the note (and when none holds a note device): a bit per key struck.
+	if (count > 0) {
+		uint64_t lo = 0;
+		uint64_t hi = 0;
+		for (size_t i = 0; i < count; ++i) {
+			const device::NoteEvent& e = in[i];
+			if (e.kind == device::NoteEvent::Kind::On && e.velocity > 0.0 && e.key >= 0 && e.key < 128) {
+				(e.key < 64 ? lo : hi) |= uint64_t { 1 } << (e.key & 63);
+			}
+		}
+		if (lo != 0) {
+			struck_[0].fetch_or(lo, std::memory_order_relaxed);
+		}
+		if (hi != 0) {
+			struck_[1].fetch_or(hi, std::memory_order_relaxed);
+		}
+	}
 	const Lineup* live = live_.load(std::memory_order_acquire);
 	bool anyNotes = false;
 	if (live != nullptr) {
@@ -1586,7 +1657,39 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 		for (const Branch* b : live->branches) {
 			anySolo = anySolo || chainSoloed(b);
 		}
-		for (size_t k = 0; k < live->branches.size(); ++k) {
+		const bool takesAllWhenAny = !keyedWanted_;
+		const size_t chainsHere = live->branches.size();
+		// **THE CHOKES, MADE BEFORE ANY CHAIN RUNS**: a note-on a chain takes chokes every OTHER chain of its group at that note's
+		// own offset. A chain keyed to a note is choked on that key; one on Any, on every key (CLAP's wildcard).
+		size_t chokeCount = 0;
+		for (size_t a = 0; a < chainsHere; ++a) {
+			const int group = live->branches[a]->choke.load(std::memory_order_relaxed);
+			if (group == 0) {
+				continue;
+			}
+			const int keyA = live->branches[a]->key.load(std::memory_order_relaxed);
+			for (size_t i = 0; i < count; ++i) {
+				const device::NoteEvent& e = in[i];
+				const bool takes = keyA >= 0 ? e.key == keyA : takesAllWhenAny;
+				if (e.kind != device::NoteEvent::Kind::On || e.velocity <= 0.0 || !takes) {
+					continue;
+				}
+				for (size_t other = 0; other < chainsHere && chokeCount < chokes_.size(); ++other) {
+					if (other == a || live->branches[other]->choke.load(std::memory_order_relaxed) != group) {
+						continue;
+					}
+					device::NoteEvent c {};
+					c.kind = device::NoteEvent::Kind::Choke;
+					c.timeSamples = e.timeSamples;
+					c.noteId = -1;
+					c.port = kRackChokePort;
+					c.channel = e.channel;
+					c.key = static_cast<int16_t>(live->branches[other]->key.load(std::memory_order_relaxed));
+					chokes_[chokeCount++] = ChokeFor { static_cast<uint16_t>(other), c };
+				}
+			}
+		}
+		for (size_t k = 0; k < chainsHere; ++k) {
 			Branch* b = live->branches[k];
 			// THE KEY'S FILTER: a chain on Any is handed `in` itself (what it always was); a keyed one, what its key lets in.
 			const device::NoteEvent* chainIn = in;
@@ -1594,12 +1697,43 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 			size_t skippedCount = 0;
 			if (count <= keyedIn_.size() && count <= skippedIn_.size()) {
 				const int chainKey = b->key.load(std::memory_order_relaxed);
-				chainCount = keyFilter(b->held, chainKey, in, count, keyedIn_.data(), skippedIn_.data(), &skippedCount);
-				if (chainKey != kAnyKey) {
+				chainCount = keyFilter(b->held, chainKey, takesAllWhenAny, in, count, keyedIn_.data(), skippedIn_.data(), &skippedCount);
+				if (chainKey != kAnyKey || !takesAllWhenAny) {
 					chainIn = keyedIn_.data();
 				}
 			}
-			const size_t made = b->chain.engine().processNotesNow(chainIn, chainCount, chainNotes_.data(), chainNotes_.size());
+			// THE CHOKES MADE FOR THIS CHAIN, merged in by time (before a note at the same sample: choke the old, strike the new).
+			if (chokeCount > 0) {
+				size_t merged = 0;
+				for (size_t i = 0; i < chainCount && merged < mergedIn_.size(); ++i) {
+					mergedIn_[merged++] = chainIn[i];
+				}
+				for (size_t c = 0; c < chokeCount; ++c) {
+					if (chokes_[c].chain != k || merged >= mergedIn_.size()) {
+						continue;
+					}
+					size_t at = 0;
+					while (at < merged && mergedIn_[at].timeSamples < chokes_[c].e.timeSamples) {
+						++at;
+					}
+					for (size_t m = merged; m > at; --m) {
+						mergedIn_[m] = mergedIn_[m - 1];
+					}
+					mergedIn_[at] = chokes_[c].e;
+					++merged;
+				}
+				chainIn = mergedIn_.data();
+				chainCount = merged;
+			}
+			size_t made = b->chain.engine().processNotesNow(chainIn, chainCount, chainNotes_.data(), chainNotes_.size());
+			// WHAT THE RACK MADE LEAVES NO MARK: a choke it sent a chain is not a note the chain handed on.
+			size_t kept = 0;
+			for (size_t i = 0; i < made; ++i) {
+				if (!(chainNotes_[i].kind == device::NoteEvent::Kind::Choke && chainNotes_[i].port == kRackChokePort)) {
+					chainNotes_[kept++] = chainNotes_[i];
+				}
+			}
+			made = kept;
 			const float f = noteFactor(live, k, anySolo);
 			for (size_t i = 0; i < made; ++i) {
 				stageNote(chainNotes_[i], b->id, f, false);
@@ -2293,8 +2427,12 @@ float Rack::fieldForTest(Param p) const noexcept {
 	case Param::Enabled: return enabled_ ? 1.0f : 0.0f;
 	case Param::Mix: return mix_;
 	case Param::Gain: return gain_;
-	case Param::Mode: return static_cast<float>(modeWanted_);
+	case Param::Mode: return static_cast<float>(keyedWanted_ ? Mode::Keyed : modeWanted_);
 	case Param::Position: return position_;
+	case Param::Playing: return static_cast<float>(playing_);
+	case Param::View: return static_cast<float>(view_);
+	case Param::ViewedChain: return static_cast<float>(viewedChain_);
+	case Param::PadsPage: return static_cast<float>(padsPage_);
 	case Param::Unused: return unusedStop_ ? 1.0f : 0.0f;
 	case Param::BandCount: return static_cast<float>(bandsWanted_ == 2 ? 0 : (bandsWanted_ == 3 ? 1 : 2));
 	case Param::Cut1:

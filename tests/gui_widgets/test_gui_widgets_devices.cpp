@@ -35625,15 +35625,23 @@ TEST_CASE("Rack stage 2, step 4: every multi-choice control shows its choices be
 TEST_CASE("Rack stage 2, step 4 / §7a: the spectrum strip shows in Bands, Mid/Side and Left/Right only, its corner lines stand at the corners the ENGINE runs, and a drag writes the cut — pushing a neighbour a third of an octave clear") {
 	namespace pr = feathers::rack::parallel;
 	RackViews v;
+	bool previousStrip = false;
 	for (size_t m = 0; m < static_cast<size_t>(pr::Mode::kCount); ++m) {
 		CAPTURE(m);
+		if (static_cast<pr::Mode>(m) == pr::Mode::Keyed) {
+			continue; // Parallel's view and audio; it comes after Bands here, where the strip's lease is still running down
+		}
 		v.set(pr::Param::Mode, static_cast<float>(m));
 		v.refresh();
 		const bool strip = (pr::kSpectrumModes & pr::kModeBit(static_cast<pr::Mode>(m))) != 0;
 		CHECK(v.card->spectrumForTest().isVisible() == strip);
 		CHECK(v.panel->spectrumForTest().isVisible() == strip);
-		// THE LEASE: a strip that is shown asks the rack for readings; none is asked for where none is shown.
-		CHECK((v.r.rack().leaseForTest() > 0) == strip);
+		// THE LEASE: a strip that is shown asks the rack for readings; none is asked for where none is shown. A lease is a time (it runs out
+		// by itself, and no audio runs here), so the first mode WITHOUT a strip after one WITH it still holds the last one's: not asked.
+		if (strip || !previousStrip) {
+			CHECK((v.r.rack().leaseForTest() > 0) == strip);
+		}
+		previousStrip = strip;
 	}
 	v.set(pr::Param::Mode, static_cast<float>(pr::Mode::Bands));
 	v.set(pr::Param::BandCount, 2.0f); // 5 bands
@@ -36458,6 +36466,18 @@ TEST_CASE("a chain strip's key box shows Any or the note name, edits the chain's
 	CHECK(key.text() == "Any");
 	history.redo();
 	CHECK(r.rack().chainKey(0) == 61);
+	// THE CHOKE GROUP BESIDE IT: None, then 1..8; one undo step; the column has the box, a narrow card row does not.
+	ui::ChainControl& choke = strip.chokeControlForTest();
+	CHECK(choke.text() == "None");
+	choke.setValue(3.0);
+	CHECK(r.rack().chainChoke(0) == 3);
+	CHECK(choke.text() == "3");
+	history.undo();
+	CHECK(r.rack().chainChoke(0) == 0);
+	history.redo();
+	CHECK(r.rack().chainChoke(0) == 3);
+	CHECK(strip.chokeBox().isVisible());
+	CHECK_FALSE(choke.display().isDestination);
 	// NOT A DESTINATION: it has no slot param, so nothing can be routed to it and it offers no host slot.
 	CHECK_FALSE(key.display().isDestination);
 	CHECK(key.hostSlot().state == feathers::device::HostSlotStatus::State::Unavailable);

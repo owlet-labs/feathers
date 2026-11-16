@@ -160,11 +160,11 @@ public:
 		m.hz = static_cast<float>(centreHz);
 		smear_.set(m);
 		loops_ = loops;
-		// THE SMEAR'S GROUP DELAY AT ITS CENTRE IS TAKEN OUT OF THE TUNED DELAYS, so the pitch holds; never under two frames.
-		const double smearFrames = smear_.on() ? smear_.delayAtCentre() : 0.0;
+		// THE TUNED DELAYS ARE AS SET: a period of Freq, and that moved by Interval. The Smear's own delay (it is longer than
+		// a period at its centre) simply adds inside the loop, so the first return is not earlier than the tuned delay.
 		const double limit = static_cast<double>(outer_.capacity()) - 3.0;
-		innerFrames_ = std::clamp(loops.periodSeconds * rate_ - smearFrames, 2.0, limit);
-		outerFrames_ = std::clamp(loops.outerSeconds * rate_ - smearFrames, 2.0, limit);
+		innerFrames_ = std::clamp(loops.periodSeconds * rate_, 2.0, limit);
+		outerFrames_ = std::clamp(loops.outerSeconds * rate_, 2.0, limit);
 		outerTarget_ = static_cast<float>(loops.loopGain);
 		// THE FIRST BLOCK SNAPS the gain to its control, as the engines' own gains do.
 		if (!placed_) {
@@ -181,7 +181,7 @@ public:
 	/// WITH THE EMPHASIS ON AND IN THE LOOP: the filter is after the sum.
 	[[nodiscard]] bool emphInLoop() const noexcept { return loops_.inLoop && emphOn(); }
 	[[nodiscard]] bool smearOn() const noexcept { return smear_.on(); }
-	/// THE SMEAR'S GROUP DELAY AT ITS CENTRE, in frames (0 when it is not run): what the tuned delays give up.
+	/// THE SMEAR'S GROUP DELAY AT ITS CENTRE, in frames (0 when it is not run): what it adds to a loop's tuned delay.
 	[[nodiscard]] double smearDelayFrames() const noexcept { return smear_.on() ? smear_.delayAtCentre() : 0.0; }
 	/// WHETHER THE OUTER LOOP IS ASKED FOR OR STILL TRAVELLING DOWN.
 	[[nodiscard]] bool outerWanted() const noexcept { return outerTarget_ != 0.0f || outerGain_ != 0.0f; }

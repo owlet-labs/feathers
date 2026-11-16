@@ -307,6 +307,32 @@ double driveLoopGain(const DriveSettings& d) noexcept {
 	return std::max(1.0, driveSlope(d.mode, d.shape) * static_cast<double>(d.gain) * static_cast<double>(d.norm));
 }
 
+double driveMaxSlope(const DriveSettings& d) noexcept {
+	if (!d.driven || driveIsNotCurve(d.mode)) {
+		return 1.0;
+	}
+	const double gain = static_cast<double>(d.gain);
+	const double norm = static_cast<double>(d.norm);
+	const double sh = static_cast<double>(d.shape);
+	const double h = std::min(0.01, 0.05 / std::max(gain, 1.0));
+	const auto value = [&](double x, bool right) {
+		if (d.mode == DriveMode::Paunch) {
+			const double y = std::tanh(gain * x) * norm;
+			return right ? y + 2.0 * sh * (x - y) : y;
+		}
+		const auto u = static_cast<float>(x * gain);
+		const float y = right ? shapeDriveRight(d.mode, u, d.shape, d.gain) : shapeDrive(d.mode, u, d.shape, d.gain);
+		return static_cast<double>(y) * norm;
+	};
+	double best = 1.0;
+	for (double x = -2.0; x < 2.0; x += h) {
+		for (const bool right : { false, true }) {
+			best = std::max(best, std::abs(value(x + h, right) - value(x, right)) / h);
+		}
+	}
+	return best;
+}
+
 double emphasisPeakGain(const Settings& s) noexcept {
 	const double db = std::clamp(static_cast<double>(s.emphAmount), -kEmphasisMaxDb, kEmphasisMaxDb);
 	if (db == 0.0 || (s.emphBell && db < 0.0)) {
@@ -422,6 +448,19 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	d.sineStepRight = std::min(d.sineStep * std::exp2(detune * kDetuneOctaves), std::numbers::pi * 0.9);
 	d.modFold = std::clamp(s.modFold, 0.0f, 1.0f);
 	d.ring = s.mode == Mode::Rust;
+	// ETCH: two slots, each a stage of its own; the mix is the control's, and Follow scales it a frame at a time.
+	d.etch = s.mode == Mode::Etch;
+	const DriveSettings slotBeforeA = reuse != nullptr ? reuse->slotA : DriveSettings {};
+	const DriveSettings slotBeforeB = reuse != nullptr ? reuse->slotB : DriveSettings {};
+	const double slopeBeforeA = reuse != nullptr ? reuse->loops.slotSlopeA : 0.0;
+	const double slopeBeforeB = reuse != nullptr ? reuse->loops.slotSlopeB : 0.0;
+	if (d.etch) {
+		const DriveSettings beforeA = reuse != nullptr ? reuse->slotA : DriveSettings {};
+		const DriveSettings beforeB = reuse != nullptr ? reuse->slotB : DriveSettings {};
+		d.slotA = deriveDrive(s.slotA.amount, s.slotA.type, s.slotA.shape, rate, reuse != nullptr ? &beforeA : nullptr, s.slotA.mix);
+		d.slotB = deriveDrive(s.slotB.amount, s.slotB.type, s.slotB.shape, rate, reuse != nullptr ? &beforeB : nullptr, s.slotB.mix);
+		d.slotParallel = s.slotParallel;
+	}
 	d.rustBias = std::clamp(s.rustBias, 0.0f, 1.0f);
 	d.rustRectify = std::clamp(s.rustRectify, 0.0f, 1.0f);
 
@@ -431,7 +470,36 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	// loop, so no curve of it is steeper than the line's own feedback and a tail always dies. The emphasis in the loop
 	// divides it by its peak. Clean, with no emphasis in the loop, leaves it as it was.
 	d.loops = deriveLoops(s, d.freqHz, driveLoopGain(driveOf(d)), d.feedback);
+	if (d.etch) {
+		// EACH SLOT'S SMALL-SIGNAL GAIN, at the control's mix (Follow's gain only ever lowers the mix, and it is glided a frame
+		// at a time, not latched here, so the control's is the safe side). Types that are not curves count as one.
+		// THE SCAN IS COSTLY, so a slot whose curve has not moved since the last tick keeps the slope it had.
+		const auto sameCurve = [](const DriveSettings& x, const DriveSettings& y) {
+			return x.driven == y.driven && x.mode == y.mode && x.shape == y.shape && x.gain == y.gain && x.norm == y.norm;
+		};
+		const auto slotGain = [&](const DriveSettings& slot, const DriveSettings& before, double slopeBefore, double& slope) {
+			if (!slot.driven || driveIsNotCurve(slot.mode)) {
+				slope = 0.0;
+				return 1.0;
+			}
+			slope = (slopeBefore > 0.0 && sameCurve(slot, before)) ? slopeBefore : driveMaxSlope(slot);
+			if (slot.mix <= 0.0f) {
+				return 1.0;
+			}
+			const double g = std::max(driveSmallSignalGain(slot.mode, static_cast<double>(slot.gain), slot.shape), slope);
+			return std::max(1.0, 1.0 + static_cast<double>(slot.mix) * (g - 1.0));
+		};
+		const double gA = slotGain(d.slotA, slotBeforeA, slopeBeforeA, d.loops.slotSlopeA);
+		const double gB = slotGain(d.slotB, slotBeforeB, slopeBeforeB, d.loops.slotSlopeB);
+		d.loops.slotDivisor = d.slotParallel ? std::max(1.0, 1.0 + (gA - 1.0) + (gB - 1.0)) : gA * gB;
+		d.loops.innerFeedback /= d.loops.slotDivisor;
+		d.loops.loopGain /= d.loops.slotDivisor;
+	}
 	d.feedback = d.loops.innerFeedback;
+	// A SLOT CAN ADD GAIN THE LOOP DOES NOT DIVIDE OUT, so Etch's inner loop is limited whenever any stage of it runs.
+	if (d.etch && (d.driven || (d.slotA.driven && d.slotA.mix > 0.0f) || (d.slotB.driven && d.slotB.mix > 0.0f))) {
+		d.loops.limitInner = true;
+	}
 	const double mix = std::clamp(static_cast<double>(s.mix), 0.0, 1.0);
 	// A COMB'S BROADBAND POWER GAIN IS 1 / (1 - fb^2): taking it back out leaves the peaks louder and the whole no
 	// quieter, which is what turning a resonance up should sound like.
@@ -448,6 +516,8 @@ void Dust::prepare(double sampleRate) {
 	smoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDustSmoothingSeconds * sampleRate_)));
 	followSmoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
 	shaper_.prepare(sampleRate_);
+	slotA_.prepare(sampleRate_);
+	slotB_.prepare(sampleRate_);
 	shared_.prepare(sampleRate_, true);
 	shared_.setThreshold(1.0f);
 	reset();
@@ -471,6 +541,8 @@ void Dust::reset() noexcept {
 	feedbackL_ = feedbackR_ = 0.0f;
 	rng_ = kRngSeed;
 	shaper_.reset();
+	slotA_.reset();
+	slotB_.reset();
 	highpass_.reset();
 	shared_.reset();
 	sinePhaseRight_ = 0.0;
@@ -511,6 +583,8 @@ void Dust::process(const Settings& settings, float* left, float* right, int fram
 void Dust::tick(const Settings& settings) noexcept {
 	derived_ = deriveDust(settings, pitchSemitones_, sampleRate_, &derived_);
 	shaper_.set(driveOf(derived_));
+	slotA_.set(derived_.slotA);
+	slotB_.set(derived_.slotB);
 	highpass_.set(highpassOf(derived_));
 	// THE SHARED SECTION IS LATCHED HERE, ON THE GRID, and nowhere a host's block length can reach.
 	shared_.set(settings, derived_.loops, derived_.freqHz);
@@ -521,6 +595,42 @@ void Dust::tick(const Settings& settings) noexcept {
 		wetGain_ = static_cast<float>(derived_.wetGain);
 		dryGain_ = static_cast<float>(derived_.dryGain);
 		placed_ = true;
+	}
+}
+
+void Dust::runSlots(float& left, float& right) noexcept {
+	const DustDerived& d = derived_;
+	// FOLLOW SCALES BOTH SLOTS' MIX, by the gain latched on the grid (exactly one at no Follow, so the mix is the control's).
+	slotA_.setMix(d.slotA.mix * followGain_);
+	slotB_.setMix(d.slotB.mix * followGain_);
+	const bool a = slotA_.active();
+	const bool b = slotB_.active();
+	if (!d.slotParallel) {
+		// SERIES: A, then B on what A made. A slot that is not run leaves the signal as it is.
+		if (a) {
+			slotA_.process(left, right);
+		}
+		if (b) {
+			slotB_.process(left, right);
+		}
+		return;
+	}
+	// PARALLEL: both read the same input and what each changed is added to it. One alone is exactly its own output.
+	if (a && b) {
+		float aL = left;
+		float aR = right;
+		float bL = left;
+		float bR = right;
+		slotA_.process(aL, aR);
+		slotB_.process(bL, bR);
+		left = left + (aL - left) + (bL - left);
+		right = right + (aR - right) + (bR - right);
+	}
+	else if (a) {
+		slotA_.process(left, right);
+	}
+	else if (b) {
+		slotB_.process(left, right);
 	}
 }
 
@@ -552,6 +662,8 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 	const float grit = d.grit;
 
 	const bool tapDriven = d.loops.tapDriven;
+	// RUST AND ETCH HAVE NO LINE: their inner loop is the shared section's own delay.
+	const bool ownLoop = d.ring || d.etch;
 	const bool emph = shared_.emphOn();
 	const bool emphInLoop = shared_.emphInLoop();
 	const bool smearOn = shared_.smearOn();
@@ -580,19 +692,19 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 			shared_.emphIn(aL, aR);
 		}
 		// RUST'S INNER LOOP IS A DELAY OF ITS OWN; DUST'S IS ITS LINE, whose tap waited a frame in `feedbackL_`.
-		const bool innerRuns = d.ring && shared_.innerBegin(feedback_ != 0.0f || feedbackTarget != 0.0f);
+		const bool innerRuns = ownLoop && shared_.innerBegin(feedback_ != 0.0f || feedbackTarget != 0.0f);
 		float fbL = feedbackL_;
 		float fbR = feedbackR_;
 		if (innerRuns) {
 			shared_.innerRead(fbL, fbR);
 		}
-		else if (limitInner && !d.ring) {
+		else if (limitInner && !ownLoop) {
 			shared_.limitInner(fbL, fbR);
 		}
 		lastFedBack_ = fbL;
 		float vL = aL;
 		float vR = aR;
-		if (!d.ring || innerRuns) {
+		if (!ownLoop || innerRuns) {
 			vL += fbL * feedback_;
 			vR += fbR * feedback_;
 		}
@@ -606,7 +718,7 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		if (smearOn) {
 			shared_.smear(vL, vR);
 		}
-		if (!d.ring) {
+		if (!ownLoop) {
 			line_.write(std::clamp(vL, -kDustCeiling, kDustCeiling), std::clamp(vR, -kDustCeiling, kDustCeiling));
 			++writeCounter_;
 		}
@@ -695,6 +807,13 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 			wetR = vR * lastRing_[1];
 			lastDelayFrames_[0] = lastDelayFrames_[1] = 0.0;
 		}
+		else if (d.etch) {
+			// ETCH: the sum itself, through no delay; its two slots stand where the engine does.
+			wetL = vL;
+			wetR = vR;
+			lastDelayFrames_[0] = lastDelayFrames_[1] = 0.0;
+			runSlots(wetL, wetR);
+		}
 		else {
 			float unused = 0.0f;
 			readHermite(line_, newest - static_cast<double>(delayL), &wetL, &unused);
@@ -739,6 +858,14 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 			}
 		}
 
+		// ETCH AT REST IS A TRUE BYPASS, at any Mix: nothing in the wet path runs, so the wet is the input and the input
+		// goes through as it is, rather than as two equal signals cross-faded.
+		if (d.etch && !slotA_.active() && !slotB_.active() && !shaper_.active() && !emph && !smearOn &&
+		    !highpass_.on() && feedback_ == 0.0f && feedbackTarget == 0.0f && !outer) {
+			right[i] = inR;
+			left[i] = inL;
+			continue;
+		}
 		// RIGHT THEN LEFT: the mono road runs this over one buffer and the survivor must be the left.
 		right[i] = inR * dryGain_ + wetR * wetGain_;
 		left[i] = inL * dryGain_ + wetL * wetGain_;

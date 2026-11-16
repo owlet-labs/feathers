@@ -81,6 +81,18 @@ public:
 		}
 	}
 
+	/// WHETHER THE STAGE RUNS ON THE NEXT FRAME: its Drive is up and its mix is above zero. Otherwise the signal is untouched.
+	[[nodiscard]] bool active() const noexcept { return running(settings_); }
+	/// THE STAGE'S MIX ALONE, between control blocks (Etch scales a slot's by Follow a frame at a time). A stage that was
+	/// not running starts from nothing when its mix comes up, as `set` does.
+	void setMix(float mix) noexcept {
+		const float clamped = std::clamp(mix, 0.0f, 1.0f);
+		if (settings_.driven && clamped > 0.0f && !running(settings_)) {
+			reset();
+		}
+		settings_.mix = clamped;
+	}
+
 	[[nodiscard]] const DriveSettings& settings() const noexcept { return settings_; }
 	/// The stage's `Slew`, as it is set (a test reads the rate it was given).
 	[[nodiscard]] const Slew& slewForTest() const noexcept { return slew_; }

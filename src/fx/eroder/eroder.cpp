@@ -160,6 +160,15 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::FbTap)] = s.tapDriven ? 1.0f : 0.0f;
 	row[static_cast<size_t>(Param::Loop)] = s.loop;
 	row[static_cast<size_t>(Param::LoopInterval)] = s.loopInterval;
+	row[static_cast<size_t>(Param::SlotAAmount)] = s.slotA.amount;
+	row[static_cast<size_t>(Param::SlotAType)] = static_cast<float>(s.slotA.type);
+	row[static_cast<size_t>(Param::SlotAShape)] = s.slotA.shape;
+	row[static_cast<size_t>(Param::SlotAMix)] = s.slotA.mix;
+	row[static_cast<size_t>(Param::SlotBAmount)] = s.slotB.amount;
+	row[static_cast<size_t>(Param::SlotBType)] = static_cast<float>(s.slotB.type);
+	row[static_cast<size_t>(Param::SlotBShape)] = s.slotB.shape;
+	row[static_cast<size_t>(Param::SlotBMix)] = s.slotB.mix;
+	row[static_cast<size_t>(Param::SlotRoute)] = s.slotParallel ? 1.0f : 0.0f;
 	return row;
 }
 
@@ -212,6 +221,17 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.tapDriven = read(Param::FbTap) >= 0.5f;
 	s.loop = read(Param::Loop);
 	s.loopInterval = read(Param::LoopInterval);
+	s.slotA.amount = read(Param::SlotAAmount);
+	s.slotA.type = static_cast<DriveMode>(
+	    std::clamp(static_cast<int>(std::lround(read(Param::SlotAType))), 0, static_cast<int>(DriveMode::kCount) - 1));
+	s.slotA.shape = read(Param::SlotAShape);
+	s.slotA.mix = read(Param::SlotAMix);
+	s.slotB.amount = read(Param::SlotBAmount);
+	s.slotB.type = static_cast<DriveMode>(
+	    std::clamp(static_cast<int>(std::lround(read(Param::SlotBType))), 0, static_cast<int>(DriveMode::kCount) - 1));
+	s.slotB.shape = read(Param::SlotBShape);
+	s.slotB.mix = read(Param::SlotBMix);
+	s.slotParallel = read(Param::SlotRoute) >= 0.5f;
 	return out;
 }
 
@@ -631,9 +651,8 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 	const bool emphInLoop = shared_.emphInLoop();
 	const bool smearOn = shared_.smearOn();
 	const bool limitInner = shared_.limitInner();
-	// THE LINE'S CENTRE GIVES UP THE SMEAR'S DELAY, so the comb's pitch holds.
-	const float centreDelay =
-	    smearOn ? std::max(minDelay, baseDelay - static_cast<float>(shared_.smearDelayFrames())) : baseDelay;
+	// THE LINE'S CENTRE IS AS SET: the Smear's own delay adds inside the loop.
+	const float centreDelay = baseDelay;
 	const bool tapStage = combShaper_.settings().driven && (tapDriven || shared_.outerWanted());
 	if (tapStage && !tapStageRan_) {
 		combTapShaper_.reset();

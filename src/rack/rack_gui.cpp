@@ -163,6 +163,11 @@ bool RackGui::create(const char* api, bool isFloating) noexcept {
 
 	// A DRUM'S WINDOW IS ITS DEVICE'S VIEW and nothing else: no chain, no canvas, no presets, no settings door.
 	if (drum_) {
+		buildSettings(*app);
+		// THE LIBRA MARK, the Chain's door and the synth's logo: a strip of its own above the device's view, opening Settings.
+		drumDoor_ = std::make_unique<ui::LibraDoor>();
+		drumDoor_->onClick = [this] { openSettings(); };
+		app->addChild(drumDoor_.get());
 		buildDrumView();
 		window_.syncScaleAndLayout();
 		window_.startTicking();
@@ -197,16 +202,7 @@ bool RackGui::create(const char* api, bool isFloating) noexcept {
 	app->addChild(editor_.get());
 	// THE SETTINGS SCREEN (backlog LG): built now and hidden, opened by the Libra mark the macro row makes
 	// room for. It covers the whole window — the canvas band included — when it is open.
-	settings_ = std::make_unique<ui::SettingsScreen>();
-	settings_->uiScaleNow = [this] { return window_.uiScale(); };
-	settings_->onUiScale = [this](double scale) { setUiScale(scale); };
-	settings_->onClose = [this] {
-		if (settings_ != nullptr) {
-			settings_->setVisible(false);
-		}
-		settingsEscape_.release();
-	};
-	app->addChild(settings_.get(), false);
+	buildSettings(*app);
 	editor_->setSettingsDoor([this] { openSettings(); });
 	// THE PLUGIN'S PRESETS (backlog OU), beside the door: a chain preset is this plugin's whole state. After a load the
 	// cards follow the record at once, as after a state load.
@@ -225,6 +221,21 @@ bool RackGui::create(const char* api, bool isFloating) noexcept {
 }
 
 #if defined(FEATHERS_GUI_VISAGE)
+void RackGui::buildSettings(visage::ApplicationWindow& app) {
+	// THE SETTINGS SCREEN, built hidden and shared by the Chain and the Drum window: chrome and accent hue, UI scale, tooltips,
+	// debug options and About are the synth's `SettingsScreen`, over the same editor prefs. It covers the whole window when open.
+	settings_ = std::make_unique<ui::SettingsScreen>();
+	settings_->uiScaleNow = [this] { return window_.uiScale(); };
+	settings_->onUiScale = [this](double scale) { setUiScale(scale); };
+	settings_->onClose = [this] {
+		if (settings_ != nullptr) {
+			settings_->setVisible(false);
+		}
+		settingsEscape_.release();
+	};
+	app.addChild(settings_.get(), false);
+}
+
 void RackGui::buildDrumView() {
 	visage::ApplicationWindow* app = window_.app();
 	if (app == nullptr) {
@@ -246,7 +257,7 @@ void RackGui::buildDrumView() {
 	}
 	drumView_->setModulation(&mod_, &history_);
 	app->addChild(drumView_.get());
-	drumView_->setBounds(0, 0, app->width(), app->height());
+	drumView_->setBounds(0, kDrumHeaderHeight, app->width(), std::max(0.0f, app->height() - static_cast<float>(kDrumHeaderHeight)));
 }
 
 void RackGui::installWindowHandlers(visage::ApplicationWindow& app) {
@@ -284,6 +295,14 @@ void RackGui::installWindowHandlers(visage::ApplicationWindow& app) {
 		}
 		// **THE MOST RECENTLY OPENED THING, WHATEVER KIND IT IS** (backlog NN) — the arm is one entry on the
 		// editor's Esc stack beside its windows, browsers, prompt and settings, in the order they opened.
+		if (editor_ == nullptr) {
+			// A DRUM HAS NO ESCAPE STACK: its one closable thing is the Settings screen.
+			if (settings_ != nullptr && settings_->isVisible() && settings_->onClose) {
+				settings_->onClose();
+				return true;
+			}
+			return false;
+		}
 		return editor_ != nullptr && editor_->escapeStack().closeTop();
 	};
 }
@@ -408,7 +427,14 @@ void RackGui::layout() {
 #if defined(FEATHERS_GUI_VISAGE)
 	visage::ApplicationWindow* app = window_.app();
 	if (app != nullptr && drumView_ != nullptr) {
-		drumView_->setBounds(0, 0, app->width(), app->height());
+		drumView_->setBounds(0, kDrumHeaderHeight, app->width(), std::max(0.0f, app->height() - static_cast<float>(kDrumHeaderHeight)));
+		if (drumDoor_ != nullptr) {
+			// 22 PX SQUARE AT THE HEAD'S LEFT, as the Chain's door sits on its row (`kSettingsDoorWidth`).
+			drumDoor_->setBounds(12.0f, 4.0f, RackEditor::kSettingsDoorWidth, static_cast<float>(kDrumHeaderHeight) - 8.0f);
+		}
+		if (settings_ != nullptr) {
+			settings_->setBounds(0, 0, app->width(), app->height());
+		}
 	}
 	if (app == nullptr || editor_ == nullptr) {
 		return;

@@ -821,6 +821,11 @@ struct ParamDesc {
 	/// under a knob says nothing about a hundred of what. Typed text may carry it or not ("200" and "200Hz" are the same
 	/// value). Only `Unit::Number` reads it; the other units already carry theirs. Appended LAST for `shortName`'s reason.
 	const char* suffix = nullptr;
+	/// **A `Percent` CONTROL THAT READS IN DEGREES: the stored value times this is the angle shown**, so a 0..1 control
+	/// whose full travel is a half turn declares 180 and prints "90°" at 0.5. Display and typing only ("90", "90°" and
+	/// "90 deg" all parse) — the value, its range and its modulation are untouched, so the unit enum and the schema
+	/// ledger do not change. 0 is every other control. Only `Unit::Percent` reads it. Appended LAST for `shortName`'s reason.
+	double readoutDegrees = 0.0;
 };
 
 /// HOW CLOSE TO AN `offAtEnd` END A VALUE MAY SIT AND STILL BE OFF, in the control's own units — a ten-thousandth

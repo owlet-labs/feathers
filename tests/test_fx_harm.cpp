@@ -23,6 +23,7 @@
 #include "doctest.h"
 
 #include "fx/harm/harm.h"
+#include "device/format_value.h"
 #include "fx/harm/harm_types.h"
 
 #include <array>
@@ -31,6 +32,7 @@
 #include <algorithm>
 #include <new>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -1705,4 +1707,91 @@ TEST_CASE("NL: Mode is a stored control, Notch by default, stored by label, and 
 	CHECK(st.settings.highpass);
 	CHECK(valueOf(st, Param::Mode) == 1.0f);
 	CHECK(stateOf(rowOf(st), static_cast<size_t>(Param::kCount)).settings.highpass);
+}
+
+//------------------------------------------------------------------------------------------------//
+// SPREAD READS IN DEGREES: the displayed angle is the L/R phase difference the engine renders       //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// The phase of `x` at `hz`, by demodulating over [from, to): atan2 of the quadrature sums. Independent of the engine's
+/// own arithmetic — it measures the rendered sine.
+std::complex<double> demod(const std::vector<float>& x, double hz, size_t from, size_t to) {
+	std::complex<double> z { 0.0, 0.0 };
+	for (size_t i = from; i < to; ++i) {
+		const double t = 2.0 * std::numbers::pi * hz * static_cast<double>(i) / kRate;
+		z += static_cast<double>(x[i]) * std::complex<double>(std::cos(t), -std::sin(t));
+	}
+	return z;
+}
+
+/// The L/R phase difference, in degrees (R ahead of L is positive), of HARM's sine at `spread`.
+double measuredOffsetDegrees(float spread, double* monoOverStereoRms = nullptr) {
+	Settings s;
+	s.enabled = true;
+	s.level = 0.8f;
+	s.noteSemitones = 69.0f;
+	s.gate = true;
+	s.spread = spread;
+	const std::vector<float> silence(16384, 0.0f);
+	const Run run = render(s, silence, 128);
+	const double hz = run.currentHz;
+	REQUIRE(hz > 100.0);
+	const std::complex<double> l = demod(run.left, hz, 4096, 16384);
+	const std::complex<double> r = demod(run.right, hz, 4096, 16384);
+	REQUIRE(std::abs(l) > 100.0);
+	if (monoOverStereoRms != nullptr) {
+		std::vector<float> mono(run.left.size());
+		for (size_t i = 0; i < mono.size(); ++i) {
+			mono[i] = run.left[i] + run.right[i];
+		}
+		*monoOverStereoRms = rmsOf(mono, 4096) / (2.0 * rmsOf(run.left, 4096));
+	}
+	return std::arg(r / l) * 180.0 / std::numbers::pi;
+}
+
+} // namespace
+
+TEST_CASE("Spread reads in degrees: the value that reads 90 degrees renders a 90 degree L/R phase offset, mono-safe") {
+	const auto& desc = kParamDescs[static_cast<size_t>(Param::Spread)];
+	const std::optional<double> typed = feathers::device::parseValue(desc, "90\xc2\xb0", 0.0);
+	REQUIRE(typed.has_value());
+	CHECK(*typed == doctest::Approx(0.5).epsilon(1e-12));
+	double mono = 0.0;
+	CHECK(std::fabs(measuredOffsetDegrees(static_cast<float>(*typed), &mono) - 90.0) < 1.0);
+	// 90 degrees sums to -3 dB, not to nothing: cos(45 deg) of the in-phase sum.
+	CHECK(std::fabs(mono - std::sqrt(0.5)) < 0.01);
+
+	// Not vacuous: the other readings land elsewhere, and the full travel is the antiphase it always was.
+	CHECK(std::fabs(measuredOffsetDegrees(0.25f) - 45.0) < 1.0);
+	CHECK(std::fabs(std::fabs(measuredOffsetDegrees(1.0f)) - 180.0) < 1.0);
+	CHECK(std::fabs(measuredOffsetDegrees(0.0f)) < 1.0);
+}
+
+TEST_CASE("Spread text round trip: 90 degrees, in the oscillator's control and every partial's") {
+	std::vector<const feathers::device::ParamDesc*> all { &kParamDescs[static_cast<size_t>(Param::Spread)] };
+	for (int k = 0; k < kPartialCount; ++k) {
+		all.push_back(&kParamDescs[static_cast<size_t>(partialParam(k, PartialField::Spread))]);
+	}
+	for (const auto* d : all) {
+		CAPTURE(d->key);
+		CHECK(feathers::device::formatValue(*d, 0.5) == "90\xc2\xb0");
+		CHECK(feathers::device::formatValue(*d, 1.0) == "180\xc2\xb0");
+		for (const char* text : { "90", "90\xc2\xb0", "90 deg", "90deg" }) {
+			CAPTURE(text);
+			const std::optional<double> v = feathers::device::parseValue(*d, text, 0.0);
+			REQUIRE(v.has_value());
+			CHECK(*v == doctest::Approx(0.5).epsilon(1e-12));
+			CHECK(feathers::device::formatValue(*d, *v) == "90\xc2\xb0");
+		}
+		CHECK_FALSE(feathers::device::parseValue(*d, "90%", 0.0).has_value());
+		// editText feeds the type-in: it must come back through the parser as the same value.
+		const std::string edit = feathers::device::editText(*d, 0.5);
+		const std::optional<double> back = feathers::device::parseValue(*d, edit, 0.0);
+		REQUIRE(back.has_value());
+		CHECK(*back == doctest::Approx(0.5).epsilon(1e-9));
+		// Phase is untouched: still a percent.
+	}
+	CHECK(feathers::device::formatValue(kParamDescs[static_cast<size_t>(Param::Phase)], 0.5) == "50%");
 }

@@ -101,6 +101,11 @@ std::string formatValue(const ParamDesc& desc, double value) {
 		return out;
 	}
 	case Unit::Percent:
+		if (desc.readoutDegrees != 0.0) {
+			// WHOLE DEGREES, "°" after: `ParamDesc::readoutDegrees`.
+			std::snprintf(out, sizeof(out), "%.0f\xc2\xb0", std::round(value * desc.readoutDegrees));
+			return out;
+		}
 		// SIGNED WHEN THE RANGE IS, unsigned when it is not. A curve runs -1..1 and its sign is the
 		// whole of what it says, so "+42%" reads as a direction; a sustain runs 0..1 and a "+" in
 		// front of it would be noise.
@@ -347,6 +352,9 @@ std::string renderForEdit(const ParamDesc& desc, double value, int significant) 
 		return hz >= 1000.0 ? decimal(hz / 1000.0, significant) + "kHz" : decimal(hz, significant) + "Hz";
 	}
 	case Unit::Percent:
+		if (desc.readoutDegrees != 0.0) {
+			return decimal(value * desc.readoutDegrees, significant) + "\xc2\xb0";
+		}
 		return (desc.min < 0.0 ? signedDecimal(value * 100.0, significant) : decimal(value * 100.0, significant)) + "%";
 	case Unit::Choice:
 	case Unit::Note:
@@ -507,6 +515,12 @@ std::optional<double> parseValue(const ParamDesc& desc, std::string_view text, d
 		}
 		return clamped(std::log2(n));
 	case Unit::Percent:
+		if (desc.readoutDegrees != 0.0) {
+			if (!unit.empty() && unit != "deg" && unit != "\xc2\xb0") {
+				return std::nullopt;
+			}
+			return clamped(n / desc.readoutDegrees);
+		}
 		if (!unit.empty() && unit != "%") {
 			return std::nullopt;
 		}

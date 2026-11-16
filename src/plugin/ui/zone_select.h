@@ -218,7 +218,19 @@ public:
 	void setEnabled(bool on);
 	[[nodiscard]] bool enabled() const noexcept { return enabled_; }
 
+	/// **A TIGHT FACE (a stacked mode cell's selector, a narrow quarter of a card):** where the widest name would not fit
+	/// between the two arrows, DROP THE ARROWS, give the name the whole width (shrunk a pixel at a time to fit, `fitName`),
+	/// and leave the choice menu to a press on the name — which now covers the whole face. Off by default, so every
+	/// other selector is as it was.
+	void setTightFace(bool tight);
+	[[nodiscard]] bool tightFace() const noexcept { return tight_; }
+	/// Whether the arrows are drawn and answer a press now: false in a tight face too narrow for the widest name.
+	[[nodiscard]] bool arrowsShown() const;
+	/// The size the name is drawn at — the readout size, or smaller where a tight face fits it.
+	[[nodiscard]] float nameSize() const;
+
 private:
+	bool tight_ = false;
 	/// HOW MANY ZONES FROM THE ORIGIN, signed and unwrapped — the one derivation `zoneIndex`, `lap`
 	/// and `positionInZone` all read, so the three cannot disagree about where the boundaries are.
 	[[nodiscard]] double zonesFromOrigin() const;

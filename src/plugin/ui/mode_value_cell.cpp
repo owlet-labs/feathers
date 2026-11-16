@@ -51,6 +51,11 @@ ValueBox& ModeValueCell::addFollower(size_t param, std::unique_ptr<ValueBox> box
 	return *boxes_.back();
 }
 
+ValueBox& ModeValueCell::addFollower(size_t param, std::unique_ptr<ValueBox> box, std::string label) {
+	box->setLabel(std::move(label));
+	return addFollower(param, std::move(box));
+}
+
 ValueBox* ModeValueCell::boxFor(size_t param) const {
 	for (size_t i = 0; i < params_.size(); ++i) {
 		if (params_[i] == param) {
@@ -88,6 +93,8 @@ bool ModeValueCell::refresh() {
 
 void ModeValueCell::setStacked(bool stacked) {
 	stacked_ = stacked;
+	// THE THREE ROWS ARE NARROW: the selector drops its arrows where its widest name would not fit between them.
+	select_->setTightFace(stacked);
 	shownMask_ = ~0u;
 	resized();
 	redraw();
@@ -120,7 +127,8 @@ float ModeValueCell::nameRowTop() const {
 }
 
 void ModeValueCell::resized() {
-	const float inset = ZoneCoordCell::kPlateInsetX + ZoneCoordCell::kPlateInset;
+	// A STACKED CELL'S ROWS TAKE THE PLATE'S WIDTH LESS ONE PIXEL: its boxes carry a label and a value side by side.
+	const float inset = stacked_ ? ZoneCoordCell::kPlateInsetX + 1.0f : ZoneCoordCell::kPlateInsetX + ZoneCoordCell::kPlateInset;
 	const float usable = std::max(0.0f, static_cast<float>(width()) - inset * 2.0f);
 	if (stacked_) {
 		const StackedRows rows = stackedRowsFor(faceDiameter_);

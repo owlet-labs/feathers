@@ -43163,8 +43163,9 @@ struct SlotRow {
 			return *controls.back();
 		};
 		const auto slot = [&](std::unique_ptr<ui::Knob>& knob, std::unique_ptr<ui::ModeValueCell>& mode,
-		                      std::unique_ptr<ui::PairCell>& pair, ero::Param amount) {
-			knob = std::make_unique<ui::Knob>(control(amount), "Amount", &notes);
+		                      std::unique_ptr<ui::PairCell>& pair, ero::Param amount, const char* name) {
+			// THE KNOB IS CAPTIONED WITH ITS SLOT'S NAME, one letter: a word does not fit half a quarter-row.
+			knob = std::make_unique<ui::Knob>(control(amount), name, &notes);
 			knob->setFaceDiameter(ui::EroderCard::kKnobDiameter);
 			std::vector<ui::ZoneSelect::ZoneName> types;
 			for (const char* name : ero::kDriveModeNames) {
@@ -43174,14 +43175,14 @@ struct SlotRow {
 			                                           [](size_t) { return true; });
 			mode->setFaceDiameter(ui::EroderCard::kKnobDiameter);
 			(void)mode->addFollower(eroAt(ero::Param::DriveShape),
-			                        std::make_unique<ui::ValueBox>(control(ero::Param::DriveShape), ""));
-			(void)mode->addFollower(eroAt(ero::Param::Mix), std::make_unique<ui::ValueBox>(control(ero::Param::Mix), ""));
+			                        std::make_unique<ui::ValueBox>(control(ero::Param::DriveShape), ""), "S");
+			(void)mode->addFollower(eroAt(ero::Param::Mix), std::make_unique<ui::ValueBox>(control(ero::Param::Mix), ""), "M");
 			mode->setStacked(true);
 			(void)mode->refresh();
 			pair = std::make_unique<ui::PairCell>("", *knob, *mode);
 		};
-		slot(knobA, cellA, innerA, ero::Param::Drive);
-		slot(knobB, cellB, innerB, ero::Param::Amount);
+		slot(knobA, cellA, innerA, ero::Param::Drive, "A");
+		slot(knobB, cellB, innerB, ero::Param::Amount, "B");
 		route = std::make_unique<ui::RouteSwitch>(control(ero::Param::Track), &notes);
 		outer = std::make_unique<ui::PairCell>("Slots", *innerA, *innerB);
 		outer->setMiddle(*route, ui::RouteSwitch::kWidth);
@@ -43287,6 +43288,18 @@ TEST_CASE("A route switch shows both of its choices, lights the one the control 
 	CHECK(eroField(r.d, ero::Param::Track) == 0.0f);
 	CHECK(r.notes.said.size() == 2);
 
+	// EACH GLYPH'S INK IS INSIDE ITS PLATE WITH A MARGIN on every side, and the two weigh alike (the same height of line).
+	for (const int choice : { static_cast<int>(ui::RouteSwitch::Series), static_cast<int>(ui::RouteSwitch::Parallel) }) {
+		const visage::Bounds plate = sw.glyphBounds(choice);
+		const visage::Bounds ink = sw.inkBounds(choice);
+		CAPTURE(choice);
+		CHECK(ink.x() >= plate.x() + ui::RouteSwitch::kInkMargin);
+		CHECK(ink.right() <= plate.right() - ui::RouteSwitch::kInkMargin);
+		CHECK(ink.y() >= plate.y() + ui::RouteSwitch::kInkMargin);
+		CHECK(ink.bottom() <= plate.bottom() - ui::RouteSwitch::kInkMargin);
+	}
+	CHECK(sw.inkBounds(ui::RouteSwitch::Series).height() == sw.inkBounds(ui::RouteSwitch::Parallel).height());
+
 	// A PRESS OUTSIDE BOTH GLYPHS — the gap between, and outside the switch — DOES NOTHING.
 	const visage::Point gap { sw.width() * 0.5f, (top.bottom() + bottom.y()) * 0.5f };
 	REQUIRE(top.bottom() < bottom.y());
@@ -43328,6 +43341,9 @@ TEST_CASE("A stacked mode cell carries a selector and two value boxes in the hei
 	REQUIRE(mix != nullptr);
 	CHECK(shape->isVisible());
 	CHECK(mix->isVisible());
+	// EACH ROW SAYS WHICH CONTROL IT IS, by an inline label.
+	CHECK(shape->label() == "S");
+	CHECK(mix->label() == "M");
 	// THREE ROWS, TOP DOWN: the selector, Shape, Mix — no two overlap and all are inside the cell above the caption.
 	const visage::Bounds sel { m.select().x(), m.select().y(), m.select().width(), m.select().height() };
 	const visage::Bounds b1 { shape->x(), shape->y(), shape->width(), shape->height() };
@@ -43345,6 +43361,25 @@ TEST_CASE("A stacked mode cell carries a selector and two value boxes in the hei
 	// shows a name that fits — see the slot-row case, which prints both.)
 	CHECK(b1.width() > 0.0f);
 	CHECK(m.select().width() > 0.0f);
+	// THE LONGEST TYPE NAMES ("Decimate", "Lopside") DO NOT FIT BETWEEN TWO ARROWS IN THIS WIDTH, so the selector drops its
+	// arrows, draws the name at a size that fits the whole face, and a press anywhere on it opens the choice menu.
+	CHECK(m.select().tightFace());
+	CHECK_FALSE(m.select().arrowsShown());
+	CHECK(m.select().nameSize() < ui::kKnobReadoutSize);
+	CHECK(m.select().nameSize() >= ui::kNameFitFloorSize);
+	for (const float x : { 1.0f, m.select().width() * 0.5f, m.select().width() - 1.0f }) {
+		CHECK(m.select().verbAt({ x, 3.0f }) == ui::ZoneSelect::Verb::Menu);
+	}
+	// A WIDE ENOUGH STACKED CELL KEEPS ITS ARROWS, and an unstacked one never drops them.
+	m.setBounds(0.0f, 0.0f, 120.0f, h);
+	CHECK(m.select().arrowsShown());
+	CHECK(m.select().verbAt({ 2.0f, 3.0f }) == ui::ZoneSelect::Verb::Prev);
+	m.setStacked(false);
+	m.setBounds(0.0f, 0.0f, r.cell - 6.0f, h);
+	CHECK(m.select().arrowsShown());
+	CHECK_FALSE(m.select().tightFace());
+	m.setStacked(true);
+	m.setBounds(0.0f, 0.0f, r.cell - 6.0f, h);
 
 	// A FOLLOWER THE GATE CLOSES LEAVES ITS ROW ONLY; the other keeps its place.
 	bool mixLive = false;
@@ -43440,8 +43475,11 @@ TEST_CASE("The slot row is photographed at the card width at scale 1 and 1.75 wh
 	if (dir == nullptr) {
 		return;
 	}
+	for (const auto& [tag, type] : { std::pair<const char*, ero::DriveMode> { "", ero::DriveMode::Decimate },
+	                                 std::pair<const char*, ero::DriveMode> { "-lopside", ero::DriveMode::Lopside } })
 	for (const float scale : { 1.0f, 1.75f }) {
 		SlotRow r;
+		r.d.set(eroAt(ero::Param::DriveMode), static_cast<float>(type));
 		struct Ground final : visage::Frame {
 			void draw(visage::Canvas& canvas) override {
 				canvas.setColor(ui::kSurface);
@@ -43472,7 +43510,7 @@ TEST_CASE("The slot row is photographed at the card width at scale 1 and 1.75 wh
 		editor.drawWindow();
 		const visage::Screenshot& shot = editor.takeScreenshot();
 		char name[64];
-		std::snprintf(name, sizeof(name), "/slotrow-%.2f.png", static_cast<double>(scale));
+		std::snprintf(name, sizeof(name), "/slotrow2%s-%.2f.png", tag, static_cast<double>(scale));
 		shot.save(std::string(dir) + name);
 		MESSAGE("saved " << dir << name << " " << shot.width() << "x" << shot.height());
 		ground.removeChild(r.outer.get());

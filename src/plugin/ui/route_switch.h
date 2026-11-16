@@ -68,6 +68,10 @@ public:
 	[[nodiscard]] int litChoice() const;
 	/// A glyph's hit rectangle, in this frame's own coordinates; the plates are what is drawn and what is hit.
 	[[nodiscard]] visage::Bounds glyphBounds(int choice) const;
+	/// **WHERE A GLYPH'S INK LIES**, in this frame's coordinates: the picture's own extent, inside its plate with `kInkMargin`
+	/// to spare on every side. `draw` builds the picture from the same numbers.
+	[[nodiscard]] visage::Bounds inkBounds(int choice) const;
+	static constexpr float kInkMargin = 2.0f;
 	/// Which glyph a point falls in, or -1 between and outside them.
 	[[nodiscard]] int choiceAt(visage::Point position) const;
 	/// Choose as a press would. A choice already lit, one out of range, or an unavailable control does nothing.

@@ -89,6 +89,30 @@ void RouteSwitch::setEnabled(bool enabled) {
 	}
 }
 
+namespace {
+
+// THE PICTURES' NUMBERS, in whole pixels so a line is one crisp pixel: both glyphs are built of 5 px squares and 1 px
+// lines, so they weigh the same. A glyph is centred on the pixel column `cx` (its stem is [cx, cx + 1)).
+constexpr float kSquare = 5.0f;
+constexpr float kStub = 5.0f; ///< the line's reach from the plate's edge, top and bottom
+constexpr float kForkDrop = 3.0f;
+constexpr float kSideShift = 3.5f; ///< a side-by-side square's centre from the stem's centre
+
+} // namespace
+
+visage::Bounds RouteSwitch::inkBounds(int choice) const {
+	const visage::Bounds plate = glyphBounds(choice);
+	const float cx = std::floor(plate.x() + plate.width() * 0.5f);
+	const float top = plate.y() + kStub;
+	const float bottom = plate.bottom() - kStub;
+	if (choice == Series) {
+		return { cx - 2.0f, top, kSquare, bottom - top };
+	}
+	// PARALLEL: the two squares are the widest part, [cx - 6, cx - 1) and [cx + 2, cx + 7).
+	const float reach = kSideShift + kSquare * 0.5f;
+	return { cx + 0.5f - reach, top, 2.0f * reach, bottom - top };
+}
+
 void RouteSwitch::drawGlyph(visage::Canvas& canvas, const visage::Bounds& plate, int choice, bool lit) const {
 	// THE CHIP'S OWN FILL, BORDER AND LIT RULE (`SwitchChip::draw`): a lit plate is one accent wash and a selected outline.
 	canvas.setColor(lit ? withAlpha(kAccent, 0.22f) : kVoid);
@@ -99,32 +123,29 @@ void RouteSwitch::drawGlyph(visage::Canvas& canvas, const visage::Bounds& plate,
 	canvas.setColor(lit ? kInk : kMuted);
 	const float cx = std::floor(plate.x() + plate.width() * 0.5f);
 	const float cy = std::floor(plate.y() + plate.height() * 0.5f);
-	const float s = 6.0f;      // a square's side
-	const float stub = 5.0f;   // the line's reach from the plate's edge
-	const float top = plate.y() + stub;
-	const float bottom = plate.bottom() - stub;
+	const float top = plate.y() + kStub;
+	const float bottom = plate.bottom() - kStub;
 	if (choice == Series) {
 		// ONE VERTICAL LINE THROUGH TWO SQUARES, one above the other.
 		canvas.fill(cx, top, 1.0f, bottom - top);
-		canvas.fill(cx - s * 0.5f + 0.5f, cy - s - 2.0f, s, s);
-		canvas.fill(cx - s * 0.5f + 0.5f, cy + 2.0f, s, s);
+		canvas.fill(cx - 2.0f, cy - kSquare - 2.0f, kSquare, kSquare);
+		canvas.fill(cx - 2.0f, cy + 2.0f, kSquare, kSquare);
 		return;
 	}
 	// A LINE FORKING ABOVE, TWO SQUARES SIDE BY SIDE, AND A LINE JOINING BELOW.
-	const float arm = 4.0f + s * 0.5f; // the squares' centres, either side of the middle
-	const float leftX = std::floor(cx - arm);
-	const float rightX = std::floor(cx + arm);
-	const float forkY = top + 3.0f;
-	const float joinY = bottom - 3.0f;
-	const float squareY = cy - s * 0.5f;
+	const float leftX = cx - 4.0f;  // a square's own centre column: [cx - 6, cx - 1) holds it
+	const float rightX = cx + 4.0f; // and [cx + 2, cx + 7)
+	const float forkY = top + kForkDrop;
+	const float joinY = bottom - kForkDrop - 1.0f;
+	const float squareY = cy - kSquare * 0.5f;
 	canvas.fill(cx, top, 1.0f, forkY - top);
 	canvas.fill(leftX, forkY, rightX - leftX + 1.0f, 1.0f);
 	canvas.fill(leftX, forkY, 1.0f, squareY - forkY);
 	canvas.fill(rightX, forkY, 1.0f, squareY - forkY);
-	canvas.fill(leftX - s * 0.5f + 0.5f, squareY, s, s);
-	canvas.fill(rightX - s * 0.5f + 0.5f, squareY, s, s);
-	canvas.fill(leftX, squareY + s, 1.0f, joinY - squareY - s);
-	canvas.fill(rightX, squareY + s, 1.0f, joinY - squareY - s);
+	canvas.fill(cx - 6.0f, squareY, kSquare, kSquare);
+	canvas.fill(cx + 2.0f, squareY, kSquare, kSquare);
+	canvas.fill(leftX, squareY + kSquare, 1.0f, joinY - squareY - kSquare);
+	canvas.fill(rightX, squareY + kSquare, 1.0f, joinY - squareY - kSquare);
 	canvas.fill(leftX, joinY, rightX - leftX + 1.0f, 1.0f);
 	canvas.fill(cx, joinY, 1.0f, bottom - joinY);
 }

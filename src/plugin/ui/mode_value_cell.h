@@ -68,6 +68,10 @@ public:
 
 	/// A control gated on the mode, and the box that drives it. The cell owns the box and parents it.
 	ValueBox& addFollower(size_t param, std::unique_ptr<ValueBox> box);
+	/// **THE SAME, WITH A SHORT INLINE LABEL** ("S" for Shape): the box's own compact label, drawn dim at the left of its row
+	/// with the value right-aligned, so a stacked cell's rows say which control each one is. An empty label is the
+	/// plain overload.
+	ValueBox& addFollower(size_t param, std::unique_ptr<ValueBox> box, std::string label);
 
 	/// **SHOWS THE BOX OF THE FOLLOWER THAT IS LIVE NOW**, and reports whether that changed. The panel calls
 	/// it from its layout pass; nothing here polls.

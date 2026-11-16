@@ -715,6 +715,7 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/chain_card.cpp
 	src/plugin/ui/parallel_rack_card.cpp
 	src/plugin/ui/rack_mode_views.cpp
+	src/plugin/ui/rack_strike_hub.cpp
 	src/plugin/ui/rack_views.cpp
 	src/plugin/ui/rack_view_adapter.cpp
 	src/plugin/ui/parallel_rack_expanded.cpp

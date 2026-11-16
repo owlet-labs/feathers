@@ -131,11 +131,13 @@ public:
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
 	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
 	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
+	[[nodiscard]] SwitchChip& followChipForTest() const { return *followChip_; }
 	[[nodiscard]] SegmentedControl& viewPairForTest() const { return *viewPair_; }
 	[[nodiscard]] bool railShownForTest(size_t i) const { return rails_[i]->rail->isVisible(); }
 	[[nodiscard]] ValueBox& modeBoxForTest() const { return *modeBox_; }
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
 	[[nodiscard]] SegmentedControl& unusedChipForTest() const { return *unused_; }
+	[[nodiscard]] ValueBox& playingBoxForTest() const { return *playingBox_; }
 	[[nodiscard]] ValueBox& viewedBoxForTest() const { return *viewedBox_; }
 	[[nodiscard]] ValueBox& pageBoxForTest() const { return *pageBox_; }
 	[[nodiscard]] RackSpectrumStrip& spectrumForTest() const { return *spectrum_; }
@@ -236,6 +238,8 @@ private:
 	std::unique_ptr<ValueBox> playingBox_;
 	std::unique_ptr<DeviceControl> viewedControl_;
 	std::unique_ptr<DeviceControl> pageControl_;
+	std::unique_ptr<DeviceControl> followControl_;
+	std::unique_ptr<SwitchChip> followChip_;
 	std::unique_ptr<ValueBox> viewedBox_;
 	std::unique_ptr<ValueBox> pageBox_;
 	std::unique_ptr<Knob> position_;

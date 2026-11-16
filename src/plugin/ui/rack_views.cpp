@@ -80,16 +80,23 @@ bool RackStrikePulse::live(double nowSeconds) const noexcept {
 	return false;
 }
 
-size_t RackStrikePulse::poll(RackViewModel& model, double nowSeconds) {
-	const RackKeyMask mask = model.takeStruck();
-	if (reduced_) {
-		// ONE STEADY HIGHLIGHT per look: the keys of THIS look, held until the next one, no decay and no animation.
-		steady_ = mask;
+RackStrikePulse::~RackStrikePulse() {
+	if (hub_ != nullptr) {
+		RackStrikeHub::detach(key_, this);
 	}
-	else {
-		for (int k = 0; k < 128; ++k) {
-			if (maskHas(mask, k)) {
-				struckAt_[static_cast<size_t>(k)] = nowSeconds;
+}
+
+size_t RackStrikePulse::look(const RackKeyMask& mask, double nowSeconds, bool fresh) {
+	if (fresh) {
+		if (reduced_) {
+			// ONE STEADY HIGHLIGHT per look: the keys of THIS look, held until the next one, no decay and no animation.
+			steady_ = mask;
+		}
+		else {
+			for (int k = 0; k < 128; ++k) {
+				if (maskHas(mask, k)) {
+					struckAt_[static_cast<size_t>(k)] = nowSeconds;
+				}
 			}
 		}
 	}
@@ -100,7 +107,65 @@ size_t RackStrikePulse::poll(RackViewModel& model, double nowSeconds) {
 		told = watchers_.notify();
 	}
 	wasLive_ = liveNow;
+	lastTold_ = told;
 	return told;
+}
+
+void RackStrikePulse::join(const RackStrikeKey& key) {
+	if (hub_ == nullptr && key.valid()) {
+		key_ = key;
+		hub_ = RackStrikeHub::attach(key_, this);
+	}
+}
+
+void RackStrikePulse::follow(RackViewModel& model, const RackKeyMask& mask) {
+	// THE LAST STRUCK KEY THAT HAS A CHAIN, so a chord settles on its highest pad; a key with no chain moves nothing.
+	size_t target = kNoChain;
+	int page = 0;
+	for (int k = 0; k < 128; ++k) {
+		if (!maskHas(mask, k)) {
+			continue;
+		}
+		if (const size_t chain = chainForKey(model, k); chain != kNoChain) {
+			target = chain;
+			page = k / kPadsPerPage;
+		}
+	}
+	if (target == kNoChain) {
+		return;
+	}
+	if (model.viewedChain() != target) {
+		model.viewChain(target);
+	}
+	if (model.page() != page) {
+		model.setPage(page);
+	}
+}
+
+size_t RackStrikePulse::poll(RackViewModel& model, double nowSeconds) {
+	// THE RACK'S ONE LOOK: this pulse joins its rack's hub (by device id, not address) on the first poll, and whichever pulse polls first in
+	// a round takes the mask once and hands it to the rest, so every surface of the rack shows every strike.
+	join(model.strikeKey());
+	if (hub_ == nullptr) {
+		const RackKeyMask mask = model.takeStruck();
+		if (model.followPlayed()) {
+			follow(model, mask);
+		}
+		return look(mask, nowSeconds, true);
+	}
+	if (!hub_->openRound(nowSeconds, this)) {
+		return look({}, nowSeconds, false); // another surface took this tick's mask and handed it on
+	}
+	const RackKeyMask mask = model.takeStruck();
+	if (model.followPlayed()) {
+		follow(model, mask);
+	}
+	for (RackStrikePulse* other : *hub_) {
+		if (other != this) {
+			(void)other->look(mask, nowSeconds, true);
+		}
+	}
+	return look(mask, nowSeconds, true);
 }
 
 //--------------------------------------------------------------------------------------------------//
@@ -319,6 +384,7 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 //--------------------------------------------------------------------------------------------------//
 
 RackPadGrid::RackPadGrid(RackViewModel& model, RackStrikePulse& pulse) : model_(model), pulse_(pulse) {
+	pulse_.join(model_.strikeKey()); // on the rack's one look from the start, so the first strike reaches every surface
 	watch_ = pulse_.watchers().watch(this);
 	onMouseDown() = [this](const visage::MouseEvent& e) { press(e.position); };
 	onMouseUp() = [this](const visage::MouseEvent&) { release(); };

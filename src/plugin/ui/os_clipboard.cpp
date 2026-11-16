@@ -40,4 +40,8 @@ void unbindOsClipboard() {
 	}
 }
 
+int osClipboardBindings() noexcept {
+	return bound;
+}
+
 } // namespace feathers::ui

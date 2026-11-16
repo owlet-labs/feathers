@@ -22,6 +22,9 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 #include "menu_placement_check.h"
+#include "plugin/ui/os_clipboard.h"
+#include "rack/fragment.h"
+#include <visage/app.h>
 #include <thread>
 #include <atomic>
 #include <cstddef>
@@ -1031,6 +1034,38 @@ TEST_CASE("the editor opens, reports a usable size, and a second open reuses the
 	REQUIRE(h2 == h);
 
 	gui->destroy(v.plugin);
+}
+
+TEST_CASE("a rack editor takes the system clipboard road while its window is open, and gives it back on close") {
+	// THE BUG: a Chain never saw a clip copied in another binary, because only Feathers' own editor installed the seam,
+	// so "Paste after" was greyed. Asserted as the value the verb reads: with the in-process board empty, a clip of ours
+	// on the REAL system clipboard (visage's) is what `pasteboardHolds` answers from, and only while the editor is open.
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	Venue v;
+	const auto* gui =
+	    static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
+	REQUIRE(gui != nullptr);
+	REQUIRE(ui::osClipboardBindings() == 0);
+	rack::clearPasteboard();
+	REQUIRE_FALSE(rack::pasteboardHolds());
+	REQUIRE(gui->create(v.plugin, CLAP_WINDOW_API_X11, false));
+	CHECK(ui::osClipboardBindings() == 1);
+	// ANOTHER BINARY'S COPY: header-only text is enough for the board to claim it holds one.
+	const std::string clip = "{\"feathersClip\":1,\"patch\":{}}";
+	REQUIRE(rack::isClipText(clip));
+	visage::setClipboardText(clip);
+	CHECK(rack::pasteboardHolds());
+	// A reopen does not bind twice, and the close releases the road whole.
+	gui->destroy(v.plugin);
+	CHECK(ui::osClipboardBindings() == 0);
+	REQUIRE(gui->create(v.plugin, CLAP_WINDOW_API_X11, false));
+	CHECK(ui::osClipboardBindings() == 1);
+	gui->destroy(v.plugin);
+	CHECK(ui::osClipboardBindings() == 0);
+	CHECK_FALSE(rack::pasteboardHolds());
+	rack::clearPasteboard();
 }
 
 TEST_CASE("the rack's editor reports the lane plus the canvas, and a fold changes the size it reports") {

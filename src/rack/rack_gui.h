@@ -173,6 +173,11 @@ private:
 	/// rebuilt window alike.
 	void installWindowHandlers(visage::ApplicationWindow& app);
 
+	/// THE SYSTEM CLIPBOARD ROAD (`ui::bindOsClipboard`), held while the window is open.
+	void holdClipboard() noexcept;
+	void releaseClipboard() noexcept;
+	bool clipboardBound_ = false;
+
 	/// **THE EDITOR'S HOST, OWNED BY THE PLUGIN.** In 1a this class owned the bridge, because a
 	/// forwarder needs nothing more. The mirrors moved ownership up: they are published from
 	/// `process`, and this class does not exist between editor closes. So the plugin owns it and hands

@@ -34,6 +34,7 @@
 #include "plugin/ui/emitters_front_prefs.h"
 #include "plugin/ui/settings_screen.h"
 
+#include "plugin/ui/os_clipboard.h"
 #include "plugin/ui/theme.h"
 #include "rack/rack_engine.h"
 
@@ -49,7 +50,25 @@ namespace feathers::rack {
 
 RackGui::RackGui(RackBridge& bridge) : bridge_(bridge) {}
 
-RackGui::~RackGui() = default;
+RackGui::~RackGui() {
+	releaseClipboard();
+}
+
+void RackGui::holdClipboard() noexcept {
+	// COPY AND CUT REACH THE SYSTEM CLIPBOARD, AND PASTE READS A CLIP OF OURS FROM IT, exactly as Feathers' editor does
+	// (`Gui::Impl`). Without it a Chain never sees a clip copied in another binary. Once per open window.
+	if (!clipboardBound_) {
+		clipboardBound_ = true;
+		ui::bindOsClipboard();
+	}
+}
+
+void RackGui::releaseClipboard() noexcept {
+	if (clipboardBound_) {
+		clipboardBound_ = false;
+		ui::unbindOsClipboard();
+	}
+}
 
 bool RackGui::create(const char* api, bool isFloating) noexcept {
 	// THE CHAIN DEVICE'S EXPANDED VIEW, filed before any card can ask for it (a hook, not an include).
@@ -114,6 +133,7 @@ bool RackGui::create(const char* api, bool isFloating) noexcept {
 	if (!window_.create(api, isFloating, &built)) {
 		return false;
 	}
+	holdClipboard();
 	if (!built) {
 		return true; // a reopen: the window and its contents are already there
 	}
@@ -310,6 +330,7 @@ void RackGui::destroy() noexcept {
 	if (const visage::Frame* top = window_.app(); top != nullptr) {
 		(void)ui::PresetBrowser::closePromptsUnder(*top);
 	}
+	releaseClipboard();
 	window_.destroy();
 }
 

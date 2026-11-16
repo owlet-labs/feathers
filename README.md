@@ -222,7 +222,7 @@ What is still open, and where we want help: extracting the contract into its own
 
 ## Hosting: what is built, and what is planned
 
-**Built today: exposing Feathers to the DAW ("host slots").** Feathers' core parameters are host parameters. Controls inside devices reach the DAW through a pool of pre-declared host parameters ("slots"), which works in both CLAP and VST3. Right-click a control and choose "Expose to host" to pin it to a slot. Turning the knob records automation, and DAW automation and modulation move the knob. Slots map devices at any depth, including racks nested inside racks, and they are saved with the project. Still being built: devices proposing default mappings for their headline controls, presets carrying their pinned slots, and CLAP remote-controls pages.
+**Built today: exposing Feathers to the DAW ("host slots").** Every Feathers parameter can reach your DAW, at any depth of chains and racks. The synth's own parameters are host parameters, and device controls share a pool of 256 pre-declared host parameters ("slots"), in both CLAP and VST3: touch any control and it is automatically given a slot, so the DAW can record and automate it. When all 256 are in use, the least recently used slot is recycled; right-click a control and choose "Expose to host" to pin it so it is never recycled. Turning a knob records automation, DAW automation and modulation move the knob, and slots are saved with the project.
 
 **Planned, not built: hosting third-party plugins inside Feathers' chains and racks.** The design is a generic wrapper that lifts a third-party CLAP plugin in as a device:
 

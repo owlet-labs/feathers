@@ -83,6 +83,7 @@
 #include "plugin/preset_store.h"
 #include "plugin/bridge_device_host.h"
 #include <fstream>
+#include <filesystem>
 #include <iterator>
 #include "plugin/ui/parallel_rack_expanded.h"
 #include "rack/chain_expanded.h" // `--chain-window`
@@ -2535,6 +2536,16 @@ int main(int argc, char** argv) {
 		}
 		else {
 			(void)panel->updateContent();
+			if (!rackPreset.empty()) {
+				// THE FACE NAMES THE PRESET, as the browser's own pick leaves it (onCurrentChanged -> the device's stored identity).
+				const std::string stem = std::filesystem::path(rackPreset).stem().string();
+				if (panel->presetBrowserForTest().restoreCurrent(stem, "")) {
+					bridge.setDevicePreset(bridge.fxDeviceAt(slot), PresetIdentity { stem, "" });
+				}
+				else {
+					std::printf("--rack-preset: \"%s\" is not in the Racks bank the browser lists; the face keeps its name\n", stem.c_str());
+				}
+			}
 			if (rackChainsOpen) {
 				panel->railForTest(0).setCollapsed(false);
 			}

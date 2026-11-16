@@ -959,3 +959,21 @@ TEST_CASE("hardening: UTF-8 names reach the file system as UTF-8: save, list, lo
 		CHECK(feathers::utf8Of(feathers::pathFromUtf8("dir/" + n + ".x").filename()) == n + ".x");
 	}
 }
+
+TEST_CASE("OU: a Rack preset picked in the Rack's browser names the browser's face and is stored as the device's preset") {
+	PresetRoot root;
+	Rig rig;
+	const DeviceInstanceId rackId = rig.add(kRackTag);
+	std::vector<uint8_t> rackBytes;
+	REQUIRE(captureContainerPreset(*rig.top, rackPresetDescriptor(), rackId, &rackBytes));
+	REQUIRE(PresetStore::save("Wide Rack", rackBytes, kRackPresetBank));
+
+	ui::ContainerPresets presets = ui::makeRackDevicePresets(*rig.top, rackId, nullptr);
+	CHECK(presets.browser->currentName() == "Init");
+	const int at = presets.browser->indexOf("Wide Rack");
+	REQUIRE(at >= 0);
+	REQUIRE(presets.browser->selectIndex(at));
+	rig.settle();
+	CHECK(presets.browser->currentName() == "Wide Rack");
+	CHECK(rig.top->devicePreset(rackId).name == "Wide Rack");
+}

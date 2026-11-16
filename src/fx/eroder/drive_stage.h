@@ -29,7 +29,7 @@ namespace feathers::fx::eroder {
 /// wet: Dust on what its head reads, the Comb on its wet as it is about to be added to the dry. The curves
 /// (`shapeDrive`) run four times oversampled, so what they add above the band is filtered off rather than folded back
 /// into it; Crush is not a curve and is not oversampled — its steps are the sound. Tube's standing offset is taken
-/// back out. Not run at all at the bottom of Drive, so there the signal is the bits it was.
+/// back out, and Lean's, which is opposite on the two sides. Not run at all at the bottom of Drive, so there the signal is the bits it was.
 ///
 /// No allocation; a frame at a time, so a host that cuts its blocks anywhere gets the same bits.
 class DriveStage {
@@ -81,13 +81,26 @@ public:
 		const DriveMode mode = s.mode;
 		const float gain = s.gain;
 		const float shape = s.shape;
-		over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) {
-			l = shapeDrive(mode, l * gain, shape);
-			r = shapeDrive(mode, r * gain, shape);
-		});
-		left *= s.norm;
-		right *= s.norm;
-		if (mode == DriveMode::Tube) {
+		const float norm = s.norm;
+		if (mode == DriveMode::Paunch) {
+			// THE RIGHT'S RESIDUE (the tanh less the clean signal) IS TURNED OVER BY SHAPE: r + (1 - 2 shape)(yr - r),
+			// written as yr + 2 shape (r - yr) so that at the bottom it is exactly yr. Norm is applied here.
+			over_.process(&left, &right, 1, [gain, shape, norm](float& l, float& r) {
+				const float yl = std::tanh(gain * l) * norm;
+				const float yr = std::tanh(gain * r) * norm;
+				l = yl;
+				r = yr + 2.0f * shape * (r - yr);
+			});
+		}
+		else {
+			over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) {
+				l = shapeDrive(mode, l * gain, shape);
+				r = shapeDriveRight(mode, r * gain, shape);
+			});
+			left *= norm;
+			right *= norm;
+		}
+		if (mode == DriveMode::Tube || mode == DriveMode::Lean) {
 			dcL_ += (left - dcL_) * dcCoefficient_;
 			dcR_ += (right - dcR_) * dcCoefficient_;
 			left -= dcL_;

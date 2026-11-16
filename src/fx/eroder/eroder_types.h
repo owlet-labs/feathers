@@ -249,6 +249,8 @@ inline constexpr float kTubeBiasMin = 0.25f;
 inline constexpr float kTubeBiasSpan = 0.95f;
 /// Wreck's folder at the top of Shape reaches this many quarter-periods past its first peak.
 inline constexpr float kWreckFoldSpan = 4.0f;
+/// Lean's bias at the top of Shape, in the tanh's own units; none at the bottom.
+inline constexpr float kLeanBiasSpan = 1.2f;
 /// CRUSH HOLDS EACH SAMPLE FOR A TIME: nothing at the bottom of Drive, 1 / 500 s at the top, whatever the rate.
 inline constexpr double kCrushTopHz = 40000.0;
 inline constexpr double kCrushOctaves = 6.3;
@@ -311,10 +313,18 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 ///   Crush  no shaper: Drive holds each sample longer, Shape rounds it coarser
 ///   Wreck  a tanh into a folder, in series; Shape is how far past its first peak the folder is pushed, and in
 ///          Dust the line's feedback is taken AFTER the pair, so Resonance rings through them
+///   Jag    a tanh into a TRIANGLE folder, Wreck's sharp counterpart; Shape is how far past its first peak it is pushed,
+///          and in Dust the feedback is taken after the pair, as in Wreck
+///   Lean   a tanh read from a bias like Tube's, but the two channels lean OPPOSITE ways: the even harmonics come
+///          out in opposite polarity left and right, so they are width, and summed to mono they cancel and leave
+///          the tanh's odd ones. Shape is the lean, so the width; at its bottom there is none and both are a tanh
+///   Paunch a plain tanh on the left; on the right the tanh's residue is turned over by Shape, so the ODD harmonics
+///          come out in opposite polarity left and right: at full Shape the mono sum is the clean signal and the
+///          distortion is all side; at half the right is clean; at the bottom both are Soft's tanh
 /// BOTH ENGINES HAVE THE STAGE (`drive_stage.h`), last on their wet: Dust's before its HP Wet, the Comb's on the wet
 /// it is about to add to the dry.
-enum class DriveMode : int { Soft, Tube, Fold, Crush, Wreck, kCount };
-inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Crush", "Wreck" };
+enum class DriveMode : int { Soft, Tube, Fold, Crush, Wreck, Jag, Lean, Paunch, kCount };
+inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Crush", "Wreck", "Jag", "Lean", "Paunch" };
 
 enum class Param : int {
 	Enabled,
@@ -548,7 +558,9 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .unit = fx::ParamUnit::LogHertz,
      .names = {},
      .modulatable = true,
-     .offsetsMayLeaveRange = false,
+     // A ROUTE MAY CARRY IT PAST THE KNOB: with Track on, the note's ratio is applied after this value, so a low
+     // note needs more than the knob's top to reach the top of the band. `deriveDust` holds the result in hertz.
+     .offsetsMayLeaveRange = true,
      .tooltip = "Where the shaking sits: the centre of the noise band and the frequency of the sine. Low "
                 "is wobble and flutter, high is hiss and dust",
      .zones = 0,
@@ -683,8 +695,11 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = false,
      .offsetsMayLeaveRange = false,
      .tooltip = "What Drive pushes into: Soft rounds the peaks, Tube leans to one side, Fold turns them back "
-                "on themselves, Crush holds and rounds each sample, Wreck is a distortion into a folder (in "
-                "Dust the feedback runs through both)",
+                "on themselves (a sine folder at the bottom of Shape), Crush holds and rounds each sample, "
+                "Wreck is a distortion into a folder (in Dust the feedback runs through both), Jag is a "
+                "distortion into a sharp folder, Lean leans left and right opposite ways, so its even "
+                "harmonics are stereo width, Paunch puts its odd harmonics in opposite polarity left and "
+                "right; at full Shape the mono sum is the clean signal",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -702,7 +717,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "The Type's own colour: Soft's knee from round to flat, Tube's lean, Fold's corners from "
-                "round to sharp, how coarsely Crush rounds, how far Wreck folds",
+                "round to sharp, how coarsely Crush rounds, how far Wreck folds, how far Jag folds, "
+                "how wide Lean leans, how much of Paunch's distortion is turned over on the right",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1093,9 +1109,12 @@ struct HighpassSettings {
 [[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate,
                                      const DustDerived* reuse = nullptr) noexcept;
 
-/// **THE SHAPER'S CURVE**, of a signal already multiplied by the Drive's gain: Soft, Tube, Fold and Wreck. Every one
+/// **THE SHAPER'S CURVE**, of a signal already multiplied by the Drive's gain: Soft, Tube, Fold, Wreck, Jag, Lean and Paunch (its left). Every one
 /// is 0 at 0 and straight through it. Crush is not a curve (it is the identity here).
 [[nodiscard]] float shapeDrive(DriveMode mode, float driven, float shape) noexcept;
+/// THE RIGHT CHANNEL'S CURVE: the left's, except in Lean, where it is the left's turned over (`-f(-u)`) — the same
+/// odd harmonics, the even ones in the other polarity.
+[[nodiscard]] float shapeDriveRight(DriveMode mode, float driven, float shape) noexcept;
 /// The make-up that follows it: `kDriveReferencePeak`'s sine out at the RMS it went in with.
 [[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape) noexcept;
 /// THE SHAPER'S GAIN FOR A VANISHING SIGNAL, make-up included: what a feedback through it is divided by, so a tail

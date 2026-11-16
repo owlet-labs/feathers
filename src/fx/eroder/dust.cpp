@@ -178,11 +178,28 @@ float shapeDrive(DriveMode mode, float driven, float shape) noexcept {
 	}
 	case DriveMode::Wreck:
 		return std::sin(kHalfPi * std::tanh(u) * (1.0f + kWreckFoldSpan * shape));
+	case DriveMode::Jag: {
+		// A TRIANGLE OF PERIOD FOUR through the origin at a slope of one, after the tanh.
+		const float x = std::tanh(u) * (1.0f + kWreckFoldSpan * shape);
+		return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
+	}
+	case DriveMode::Paunch:
+		// THE PLAIN TANH: the stage's right channel does its own turning-over (`drive_stage.h`).
+		return std::tanh(u);
+	case DriveMode::Lean: {
+		// TUBE'S FORM FROM NO BIAS UP: at the bottom of Shape it is a tanh.
+		const float rest = std::tanh(kLeanBiasSpan * shape);
+		return (std::tanh(u + kLeanBiasSpan * shape) - rest) / (1.0f - rest * rest);
+	}
 	case DriveMode::Crush:
 	case DriveMode::kCount:
 		break;
 	}
 	return u;
+}
+
+float shapeDriveRight(DriveMode mode, float driven, float shape) noexcept {
+	return mode == DriveMode::Lean ? -shapeDrive(mode, -driven, shape) : shapeDrive(mode, driven, shape);
 }
 
 double driveMakeUp(DriveMode mode, double gain, float shape) noexcept {
@@ -211,6 +228,9 @@ double driveSlope(DriveMode mode, float shape) noexcept {
 	}
 	if (mode == DriveMode::Wreck) {
 		return std::numbers::pi * 0.5 * (1.0 + static_cast<double>(kWreckFoldSpan * shape));
+	}
+	if (mode == DriveMode::Jag) {
+		return 1.0 + static_cast<double>(kWreckFoldSpan * shape);
 	}
 	return 1.0;
 }
@@ -346,9 +366,9 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 
 	// RUST HAS NO LINE, so nothing to feed back round.
 	d.feedback = d.ring ? 0.0 : std::clamp(static_cast<double>(s.resonance), -1.0, 1.0) * kDustFeedbackCeiling;
-	// WRECK'S FEEDBACK RUNS THROUGH THE SHAPER, which may be a gain: taken back out of the loop, so no curve of it is
+	// WRECK'S (AND JAG'S) FEEDBACK RUNS THROUGH THE SHAPER, which may be a gain: taken back out of the loop, so no curve of it is
 	// steeper than the line's own feedback and a tail always dies.
-	if (d.driven && d.driveMode == DriveMode::Wreck) {
+	if (d.driven && (d.driveMode == DriveMode::Wreck || d.driveMode == DriveMode::Jag)) {
 		d.feedback /= std::max(1.0, driveSlope(d.driveMode, d.driveShape) * d.driveGain * d.driveNorm);
 	}
 	const double mix = std::clamp(static_cast<double>(s.mix), 0.0, 1.0);
@@ -465,7 +485,7 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 	const float source = d.source;
 	const float grit = d.grit;
 
-	const bool wreck = d.driven && d.driveMode == DriveMode::Wreck;
+	const bool wreck = d.driven && (d.driveMode == DriveMode::Wreck || d.driveMode == DriveMode::Jag);
 
 	const bool stepping = d.stepHoldFrames > 1.0;
 	const float foldDrive = 1.0f + kModFoldSpan * d.modFold;

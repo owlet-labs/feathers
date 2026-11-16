@@ -4901,6 +4901,8 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		// AND THE VIEW'S POINTERS, the window's alone: which chain it is looking at, and which page of pads.
 		(void)rackPanel->viewedBoxForTest();
 		(void)rackPanel->pageBoxForTest();
+		(void)rackPanel->followChipForTest(); // Follow played note: the switch under the Pads panel
+		e.reached.insert(static_cast<size_t>(pr::Param::FollowPlayed));
 		e.reached.insert(static_cast<size_t>(pr::Param::ViewedChain));
 		// AND FOLLOW PLAYED NOTE, the window's switch under the Pads panel.
 		(void)rackPanel->followChipForTest();

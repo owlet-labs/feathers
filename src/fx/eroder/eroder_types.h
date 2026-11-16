@@ -424,6 +424,7 @@ enum class Param : int {
 	SlotBShape,
 	SlotBMix,
 	SlotRoute, ///< Etch: B after A (Series) or both on the same input, their changes added (Parallel)
+	EmphOffset, ///< every engine: semitones from Freq to where the emphasis is tuned (Smear and the loops stay at Freq)
 
 	kCount,
 };
@@ -431,6 +432,10 @@ enum class Param : int {
 inline constexpr size_t kSharedParamCount = 8;
 /// And the nine Etch added after them (its slots and their route), likewise not on the face yet.
 inline constexpr size_t kEtchParamCount = 9;
+/// And the emphasis offset after those.
+inline constexpr size_t kEmphOffsetParamCount = 1;
+/// The emphasis offset's range, in semitones either way.
+inline constexpr double kEmphOffsetSemitones = 48.0;
 
 inline constexpr const char* kEmphShapeNames[] = { "Tilt", "Bell" };
 inline constexpr const char* kFbTapNames[] = { "Clean", "Driven" };
@@ -1284,6 +1289,25 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateMask = kEtchOnly,
      .centred = false,
      .shortName = "Route"},
+    {.key = "eroder_emph_offset", .name = "Eroder Emphasis Offset",
+     .min = -kEmphOffsetSemitones,
+     .max = kEmphOffsetSemitones,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Moves the emphasis away from Freq: it is tuned this many semitones above (or, below zero, under) it. "
+                "Smear and the loops stay on Freq",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = true,
+     .shortName = "Offset",
+     .suffix = "st"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1339,6 +1363,7 @@ struct Settings {
 	bool tapDriven = false;
 	float loop = 0.0f;
 	float loopInterval = 0.0f; ///< semitones
+	float emphOffset = 0.0f;   ///< semitones from Freq to the emphasis's tuning
 	// ETCH'S SLOTS.
 	SlotSettings slotA { 0.0f, DriveMode::Slew, 0.0f, 1.0f };
 	SlotSettings slotB { 0.0f, DriveMode::Decimate, 0.0f, 1.0f };

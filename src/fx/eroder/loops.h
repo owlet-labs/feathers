@@ -151,7 +151,7 @@ public:
 		EmphasisSettings e;
 		e.shape = s.emphBell ? EmphasisShape::Bell : EmphasisShape::Tilt;
 		e.amountDb = s.emphAmount;
-		e.hz = static_cast<float>(centreHz);
+		e.hz = static_cast<float>(emphasisHz(centreHz, s.emphOffset, rate_));
 		e.widthOctaves = static_cast<float>(emphasisWidthOctaves(s.width));
 		e.restore = s.emphRestore;
 		emphasis_.set(e);
@@ -249,6 +249,16 @@ public:
 	void limitInner(float& left, float& right) noexcept { innerLimiter_.process(left, right); }
 
 	[[nodiscard]] bool holdsSound() const noexcept { return outer_.holdsSound() || inner_.holdsSound(); }
+
+	/// WHERE THE EMPHASIS IS TUNED: Freq moved by `offsetSemitones`, held to 20 Hz .. min(20 kHz, 0.45 of the rate). An
+	/// offset of exactly zero is Freq as it was, untouched, so the emphasis is the bits it was.
+	[[nodiscard]] static double emphasisHz(double centreHz, double offsetSemitones, double rate) noexcept {
+		if (!(offsetSemitones != 0.0)) {
+			return centreHz;
+		}
+		const double offset = std::clamp(offsetSemitones, -kEmphOffsetSemitones, kEmphOffsetSemitones);
+		return std::clamp(centreHz * std::exp2(offset / 12.0), 20.0, std::min(20000.0, 0.45 * rate));
+	}
 
 	/// THE BELL'S WIDTH IN OCTAVES FROM THE WIDTH CONTROL: 0 is a quarter of an octave, 1 is three, geometrically between.
 	[[nodiscard]] static double emphasisWidthOctaves(float width) noexcept {

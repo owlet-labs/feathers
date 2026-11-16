@@ -5117,6 +5117,18 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		if (feathers::fx::eroder::kTraits.enableControl >= 0) {
 			e.reached.insert(static_cast<size_t>(feathers::fx::eroder::kTraits.enableControl));
 		}
+		// KNOWN GAP: the emphasis offset shipped in the engine ahead of its control. Named, so this flips red the moment the
+		// card or window reaches it (and the entry must then go).
+		{
+			static constexpr const char* kOffsetGap = "the emphasis offset's control lands with the window regroup; "
+			                                          "automation and modulation only";
+			const auto& eroParams = feathers::fx::eroder::kDescriptor.params;
+			const auto offset = static_cast<size_t>(feathers::fx::eroder::Param::EmphOffset);
+			REQUIRE(std::string_view(eroParams[offset].name) == "Eroder Emphasis Offset");
+			if (e.reached.count(offset) == 0) {
+				e.knownGaps[offset] = kOffsetGap;
+			}
+		}
 		table.push_back(std::move(e));
 	}
 	// THE SMOOTH SHAPER: its own card AND its panel, each listing what a hand reaches on it — the card leaves the

@@ -408,8 +408,13 @@ public:
 	/// **FEATHERS RACK**: ONE RACK DEVICE, ITS OWN CONTROLS PINNED IN THE LIST'S ORDER (rack_plugin.h), the pool free for the rest.
 	/// A new Rack is as the browser makes one (Parallel, fully wet). Main thread, construction.
 	void setUpRack() {
-		if (bridge_.addDevice(rack::parallel::kTraits.tag) == kNoInstance) {
+		const DeviceInstanceId root = bridge_.addDevice(rack::parallel::kTraits.tag);
+		if (root == kNoInstance) {
 			return;
+		}
+		// ITS FIRST CHAIN OPENS ('+ add effect' in view): a new user sees where effects go. View state, saved with the patch.
+		if (rack::parallel::Rack* rack = rack::parallel::rackOf(bridge_.containerSurfaceOf(root)); rack != nullptr) {
+			rack->setOpen(0, true);
 		}
 		pinDrumControls(false);
 		(void)bridge_.takeStateDirty(); // a new instance is not an edited one

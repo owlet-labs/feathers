@@ -28,7 +28,10 @@
 #include "device/format_value.h"
 #include "plugin/device_registry.h"
 #include "plugin/feathers_test_chain.h"
+#include "plugin/chain_preset.h"
+#include "plugin/ui/container_presets.h"
 #include "plugin/ui/parallel_rack_expanded.h"
+#include "plugin/ui/preset_browser.h"
 #include "plugin/ui/expanded_views.h"
 #include "plugin/ui/plugin_window.h"
 #include "plugin/ui/widget_registry.h"
@@ -716,4 +719,58 @@ TEST_CASE("the editor opens on the Rack's own view, with the mode selector visib
 	CHECK(w2 == w);
 	CHECK(h2 == h);
 	gui->destroy(v.plugin);
+}
+
+//---------------------------------------------------------------------------------------------------------------------------------
+// THE HEADER ROW AND THE OPEN CHAIN
+//---------------------------------------------------------------------------------------------------------------------------------
+
+TEST_CASE("a new Rack opens with its first chain expanded, so the effect slot is visible") {
+	Venue v;
+	CHECK(rackOf(v).open(0));
+	// AND IT SURVIVES A SAVE AND A LOAD: view state, kept with the patch.
+	Venue b;
+	REQUIRE(load(b.plugin, save(v.plugin)));
+	CHECK(rackOf(b).open(0));
+}
+
+TEST_CASE("the header's browser lists the Racks bank, and loading a rack through it replaces the root Rack: Bands, three chains") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	// THE RACK TO LOAD: another instance, in Bands mode with three chains, captured as a Racks preset.
+	Venue a;
+	REQUIRE(rackOf(a).addChain() == 1);
+	REQUIRE(rackOf(a).addChain() == 2);
+	const DeviceInstanceId aId = a.bridge().deviceAtPosition(0);
+	a.bridge().setField(aId, controlOfKey("rack_mode"), static_cast<float>(pr::Mode::Bands));
+	a.bridge().setField(aId, controlOfKey("rack_bands"), 1.0f); // three bands
+	runHeld(a, 0.5f, 0.5f, 4);
+	ui::PresetData preset;
+	REQUIRE(captureContainerPreset(a.bridge(), rackPresetDescriptor(), aId, &preset.bytes));
+
+	Venue v;
+	const DeviceInstanceId id = v.bridge().deviceAtPosition(0);
+	CHECK(rackOf(v).modeForTest() == pr::Mode::Parallel);
+	CHECK(rackOf(v).liveChainsForTest() == 1);
+	// THE HEADER'S BROWSER IS THE RACK VIEW'S OWN (the window seats it above the view): the Racks bank, from Init.
+	ui::WidgetRegistry registry;
+	const device::Descriptor* desc = v.bridge().descriptorOf(id);
+	REQUIRE(desc != nullptr);
+	std::unique_ptr<ui::ExpandedView> view = ui::makeExpandedView(v.bridge(), nullptr, registry, id, *desc, nullptr);
+	REQUIRE(view != nullptr);
+	auto* browser = dynamic_cast<ui::PresetBrowser*>(view->titleAccessory());
+	REQUIRE(browser != nullptr);
+	CHECK(browser->bank() == kRackPresetBank);
+	REQUIRE(browser->count() >= 1);
+	CHECK(browser->entry(0).name == "Init");
+	// LOADING THROUGH THE SAME PROVIDER THE BROWSER HOLDS PUTS THE RACK IN BANDS MODE WITH THREE CHAINS.
+	ui::ContainerPresets presets = ui::makeRackDevicePresets(v.bridge(), id, nullptr);
+	REQUIRE(presets.provider->apply(preset));
+	v.run(512);
+	v.mainThread();
+	CHECK(rackOf(v).modeForTest() == pr::Mode::Bands);
+	CHECK(rackOf(v).liveChainsForTest() == 3);
+	// AND THE ROOT IS STILL ONE RACK DEVICE: the load replaced the rack's contents, not the plugin's root.
+	CHECK(v.bridge().deviceAtPosition(1) == kNoInstance);
 }

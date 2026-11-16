@@ -152,8 +152,9 @@ public:
 		return rack_ ? std::max(rackViewSize().second, kRackHeight) : drum_ ? kDrumHeight : RackEditor::kHeight + canvasExtent();
 	}
 	/// THE RACK WINDOW OPENS AT A WORKING SIZE (its view's own minimum is a closed strip), and is never smaller than the view asks.
-	static constexpr uint32_t kRackWidth = 960;
-	static constexpr uint32_t kRackHeight = 640;
+	static constexpr uint32_t kRackWidth = 0;
+	static constexpr uint32_t kRackHeight = 600;
+	static constexpr uint32_t kRackHeader = 30;
 	uint32_t minimumWidth() const override { return rack_ ? rackViewSize().first : drum_ ? kDrumWidth : RackEditor::kWidth; }
 	uint32_t minimumHeight() const override {
 		return rack_ ? rackViewSize().second : drum_ ? kDrumHeight : RackEditor::kHeight + canvasExtent();
@@ -207,6 +208,10 @@ private:
 	std::unique_ptr<ui::ExpandedView> drumView_;
 	DeviceInstanceId drumShown_ = kNoInstance;
 	void buildDrumView();
+	/// The view under the header row (the Rack plugin's), or filling the window (the Drum's).
+	void layoutDeviceView();
+	/// THE RACK PLUGIN'S HEADER ROW: the Racks browser the view owns, lent to the window (not owned here).
+	visage::Frame* rackHeader_ = nullptr;
 	/// THE PLUGIN'S PRESET BROWSER (backlog OU), lent to the editor — declared BEFORE it, so the editor goes first.
 	ui::ContainerPresets presets_;
 	std::unique_ptr<RackEditor> editor_;

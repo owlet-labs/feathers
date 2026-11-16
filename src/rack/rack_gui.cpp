@@ -229,6 +229,10 @@ void RackGui::buildDrumView() {
 		return;
 	}
 	if (drumView_ != nullptr) {
+		if (rackHeader_ != nullptr) {
+			app->removeChild(rackHeader_); // the view's own browser, lent to the header: back before the view goes
+			rackHeader_ = nullptr;
+		}
 		app->removeChild(drumView_.get());
 		drumView_.reset();
 	}
@@ -248,7 +252,28 @@ void RackGui::buildDrumView() {
 		drumView_->onMinimumSizeChanged([this] { window_.preferredSizeChanged(); });
 	}
 	app->addChild(drumView_.get());
-	drumView_->setBounds(0, 0, app->width(), app->height());
+	if (rack_) {
+		// THE HEADER ROW: the Rack's Racks browser (prev/next, the bank), the view's own, seated above it.
+		rackHeader_ = drumView_->titleAccessory();
+		if (rackHeader_ != nullptr) {
+			app->addChild(rackHeader_);
+		}
+	}
+	layoutDeviceView();
+}
+
+void RackGui::layoutDeviceView() {
+#if defined(FEATHERS_GUI_VISAGE)
+	visage::ApplicationWindow* app = window_.app();
+	if (app == nullptr || drumView_ == nullptr) {
+		return;
+	}
+	const float head = rack_ ? static_cast<float>(kRackHeader) : 0.0f;
+	if (rackHeader_ != nullptr) {
+		rackHeader_->setBounds(10.0f, (head - rackHeader_->height()) * 0.5f, rackHeader_->width(), rackHeader_->height());
+	}
+	drumView_->setBounds(0, head, app->width(), app->height() - head);
+#endif
 }
 
 void RackGui::installWindowHandlers(visage::ApplicationWindow& app) {
@@ -406,7 +431,7 @@ std::pair<uint32_t, uint32_t> RackGui::rackViewSize() const {
 #if defined(FEATHERS_GUI_VISAGE)
 	if (drumView_ != nullptr) {
 		const visage::Point p = drumView_->minimumSize();
-		return { static_cast<uint32_t>(std::ceil(p.x)), static_cast<uint32_t>(std::ceil(p.y)) };
+		return { static_cast<uint32_t>(std::ceil(p.x)), static_cast<uint32_t>(std::ceil(p.y)) + kRackHeader };
 	}
 #endif
 	return { 960u, 640u };
@@ -416,7 +441,7 @@ void RackGui::layout() {
 #if defined(FEATHERS_GUI_VISAGE)
 	visage::ApplicationWindow* app = window_.app();
 	if (app != nullptr && drumView_ != nullptr) {
-		drumView_->setBounds(0, 0, app->width(), app->height());
+		layoutDeviceView();
 	}
 	if (app == nullptr || editor_ == nullptr) {
 		return;

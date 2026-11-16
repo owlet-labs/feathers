@@ -621,7 +621,9 @@ if(TARGET visage)
 	# undo — backlog JB: every road that changes the patch is one step in the editor's one history, undone and
 	#        redone by value, and a parameter's undo reaches the host as a gesture.
 	set(_feathers_widget_shards_undo 1)
-	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo)
+	# rackviews — the Rack's Tabs and Pads views (src/plugin/ui/rack_views.h) over a fake model.
+	set(_feathers_widget_shards_rackviews 1)
+	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 		string(REPLACE "_" "-" _suite_name "${_suite}")
 		add_executable(test_gui_widgets_${_suite}
 			gui_widgets/test_gui_widgets_${_suite}.cpp

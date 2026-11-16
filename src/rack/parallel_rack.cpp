@@ -682,6 +682,7 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	mergedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	chokes_.assign(RackEngine::kMaxNotes, ChokeFor {});
 	skippedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
+	auditionIn_.assign(UiNoteRing::kCapacity, device::NoteEvent {});
 	owedOffs_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	recordCount_ = 0;
 	stagedCount_ = 0;
@@ -1675,7 +1676,17 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 	for (size_t i = 0; i < count; ++i) {
 		stageNote(in[i], kDrySource, dry, false);
 	}
-	if (live != nullptr && count > 0) {
+	// THE EDITOR'S KEYS INSIDE THE CHAINS (a Drum's play button): a chain's own bridge holds its ring, and nothing above it drains that, so this
+	// rack does, into that chain alone — past the key filter, the mode and the chokes, which are about what a PLAYER sent, not about an
+	// audition of this device. Whether any is waiting is a few relaxed loads.
+	bool auditionWaiting = false;
+	if (live != nullptr) {
+		for (Branch* b : live->branches) {
+			const RackBridge* bridge = b->chain.bridge();
+			auditionWaiting = auditionWaiting || (bridge != nullptr && bridge->hasPendingNotes());
+		}
+	}
+	if (live != nullptr && (count > 0 || auditionWaiting)) {
 		bool anySolo = false;
 		for (const Branch* b : live->branches) {
 			anySolo = anySolo || chainSoloed(b);
@@ -1725,6 +1736,28 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 					chainIn = keyedIn_.data();
 				}
 			}
+			// THE AUDITION KEYS WAITING IN THIS CHAIN'S BRIDGE go in first, at offset 0, carrying the editor's reserved id.
+			if (RackBridge* bridge = b->chain.bridge(); bridge != nullptr && bridge->hasPendingNotes()) {
+				size_t aud = 0;
+				for (UiNoteEvent u; aud < auditionIn_.size() && bridge->popNote(u);) {
+					device::NoteEvent& e = auditionIn_[aud++];
+					e = device::NoteEvent {};
+					e.kind = u.on ? device::NoteEvent::Kind::On : device::NoteEvent::Kind::Off;
+					e.noteId = kUiNoteId;
+					e.key = u.key;
+					e.velocity = u.on ? static_cast<double>(u.velocity) : 0.0;
+				}
+				if (aud > 0 && aud + chainCount <= mergedIn_.size()) {
+					for (size_t i = chainCount; i > 0; --i) {
+						mergedIn_[aud + i - 1] = chainIn[i - 1]; // (back to front: `chainIn` may be this buffer already)
+					}
+					for (size_t i = 0; i < aud; ++i) {
+						mergedIn_[i] = auditionIn_[i];
+					}
+					chainIn = mergedIn_.data();
+					chainCount += aud;
+				}
+			}
 			// THE CHOKES MADE FOR THIS CHAIN, merged in by time (before a note at the same sample: choke the old, strike the new).
 			if (chokeCount > 0) {
 				size_t merged = 0;
@@ -1753,6 +1786,14 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 			size_t kept = 0;
 			for (size_t i = 0; i < made; ++i) {
 				if (!(chainNotes_[i].kind == device::NoteEvent::Kind::Choke && chainNotes_[i].port == kRackChokePort)) {
+					chainNotes_[kept++] = chainNotes_[i];
+				}
+			}
+			made = kept;
+			// AND AN AUDITION IS NOT A NOTE THE RACK PLAYED: it sounded the device and goes no further.
+			kept = 0;
+			for (size_t i = 0; i < made; ++i) {
+				if (chainNotes_[i].noteId != kUiNoteId) {
 					chainNotes_[kept++] = chainNotes_[i];
 				}
 			}

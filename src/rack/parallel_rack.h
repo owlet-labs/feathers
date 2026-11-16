@@ -988,6 +988,8 @@ private:
 	uint64_t serial_ = 0;
 	/// And what its key held back, which the rack passes on itself.
 	std::vector<device::NoteEvent> skippedIn_;
+	/// The editor's keys (a play button's) drained from one chain's bridge for that chain alone.
+	std::vector<device::NoteEvent> auditionIn_;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call
 	size_t owedCount_ = 0;
 	bool releaseAll_ = false;

@@ -57,6 +57,7 @@
 #include "plugin/ui/stereo_tool_card.h" // `--stereo-tab`, `--stereo-sweep` (backlog KU)
 #include "plugin/ui/twinfield_card.h"   // `--twinfield-tab`
 #include "plugin/ui/rack_views.h"        // `--rack-views`
+#include "fx/drum/drum_types.h"          // `--rack-chains N:devices`
 #include "plugin/ui/harm_expanded.h"    // `--harm-tab`
 #include "mod/twinfield/twinfield.h"       // `--twinfield-play`
 #include "plugin/ui/sample_hold_card.h" // `--snh-sweep` (backlog MW)
@@ -579,6 +580,9 @@ int main(int argc, char** argv) {
 	/// first rail (the others stay collapsed, the state a fresh rack starts in). 0 means not asked.
 	int rackChains = 0;
 	bool rackChainsOpen = false;
+	/// `--rack-chains N:keyed` puts chain k on key 36 + k, `:devices` a Drum (and, on every other chain, a Delay) in each chain after the first.
+	bool rackChainsKeyed = false;
+	bool rackChainsDevices = false;
 	/// `--rack-arm-macro N` (1..8): press the Rack window's arrow for macro N, as a hand does, so the chains' controls light. 0 is not asked.
 	int rackArmMacro = 0;
 	/// `--chain-window` (backlog OC): the CHAIN device's window over a running body with a filter and a delay in it.
@@ -1214,6 +1218,8 @@ int main(int argc, char** argv) {
 			const std::string spec = argv[++i];
 			rackChains = std::atoi(spec.c_str());
 			rackChainsOpen = spec.find(":open") != std::string::npos;
+			rackChainsKeyed = spec.find(":keyed") != std::string::npos;
+			rackChainsDevices = spec.find(":devices") != std::string::npos;
 			continue;
 		}
 		if (arg == "--rack-arm-macro" && i + 1 < argc) {
@@ -2433,7 +2439,8 @@ int main(int argc, char** argv) {
 			int mode = 0;
 			int chains = 1;
 			int bands = 0;
-			(void)std::sscanf(chainRack.c_str(), "%d:%d:%d", &mode, &chains, &bands);
+			int viewKind = 0; // a fourth number: the Rack's View (1 Tabs, 2 Pads), with a Drum (and on even chains a Delay) in every chain, keyed 36 + k
+			(void)std::sscanf(chainRack.c_str(), "%d:%d:%d:%d", &mode, &chains, &bands, &viewKind);
 			rack::RackBridge& inner = *rack::bridgeOf(held);
 			const DeviceInstanceId rackId = inner.addDevice(pr::kTraits.tag);
 			inner.setField(rackId, static_cast<size_t>(pr::Param::Mode), static_cast<float>(mode));
@@ -2442,6 +2449,16 @@ int main(int argc, char** argv) {
 			if (pr::Rack* rk = pr::rackOf(inner.containerSurfaceOf(rackId)); rk != nullptr) {
 				while (rk->chainCount() < static_cast<size_t>(chains)) {
 					(void)rk->addChain();
+				}
+				if (viewKind > 0) {
+					inner.setField(rackId, static_cast<size_t>(pr::Param::View), static_cast<float>(viewKind));
+					for (size_t c = 0; c < rk->chainCount(); ++c) {
+						rk->setChainKey(c, 36 + static_cast<int>(c));
+						(void)rk->chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
+						if (c % 2 == 0) {
+							(void)rk->chainAt(c)->bridge()->addDevice("DELAY");
+						}
+					}
 				}
 			}
 			std::printf("chain-rack: mode %d, %d chain(s), bands index %d\n", mode, chains, bands);
@@ -2525,6 +2542,20 @@ int main(int argc, char** argv) {
 			(void)rack.addChain();
 		}
 		(void)rack.chainAt(0)->bridge()->addDevice(fx::filter::kTraits.tag);
+		for (size_t c = 0; c < rack.chainCount(); ++c) {
+			if (rackChainsKeyed) {
+				rack.setChainKey(c, 36 + static_cast<int>(c));
+			}
+			if (rackChainsDevices && c > 0) {
+				(void)rack.chainAt(c)->bridge()->addDevice(fx::drumdevice::kTraits.tag);
+				if (c % 2 == 0) {
+					(void)rack.chainAt(c)->bridge()->addDevice("DELAY");
+				}
+			}
+		}
+		for (size_t c = 0; c < rack.chainCount(); ++c) {
+			rack.setOpen(c, rackChainsOpen); // open inline on the card (Tabs, Pads), as its rail is open in the window
+		}
 		const float levels[] = { 0.75f, 0.5f, 0.25f, 0.9f };
 		for (size_t c = 0; c < rack.chainCount(); ++c) {
 			rack.setLevel(c, levels[c % 4]);

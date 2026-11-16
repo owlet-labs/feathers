@@ -114,7 +114,16 @@ RackChainView RackViewAdapter::chain(size_t slot) const {
 	if (r == nullptr || slot >= r->chainCount()) {
 		return {};
 	}
-	return { true, chainTitle(slot), r->chainKey(slot) == pr::kAnyKey ? kChainAnyKey : r->chainKey(slot), r->chainChoke(slot) };
+	// A NAME IS THE FIRST DEVICE'S; two chains alike are told apart by their order ("Drum", "Drum 2"), so no two tabs read the same.
+	std::string name = chainTitle(slot);
+	size_t same = 1;
+	for (size_t i = 0; i < slot && !name.empty(); ++i) {
+		same += chainTitle(i) == name ? 1 : 0;
+	}
+	if (same > 1) {
+		name += " " + std::to_string(same);
+	}
+	return { true, name, r->chainKey(slot) == pr::kAnyKey ? kChainAnyKey : r->chainKey(slot), r->chainChoke(slot) };
 }
 
 size_t RackViewAdapter::viewedChain() const {

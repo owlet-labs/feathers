@@ -813,6 +813,7 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 		}
 		p.tiles = tiles;
 		p.arrow = names.size() > 1;
+		p.playingRow = pr::controlShown(pr::Param::Playing, control(pr::Param::Mode).value(), control(pr::Param::BandCount).value());
 		return p;
 	}
 	// THE ROWS THE UNIT HAS ROOM FOR: what is left of `kCardUnitHeight` under everything else, a row per chain — and when
@@ -857,7 +858,7 @@ float ParallelRackCard::viewHeight(const Plan& p) const {
 	if (p.arrow) {
 		h += RackDrawerArrow::kSize + kRowGap;
 	}
-	h += 2.0f * (ValueBox::kHeight + kRowGap);
+	h += (p.playingRow ? 3.0f : 2.0f) * (ValueBox::kHeight + kRowGap);
 	return h;
 }
 
@@ -944,7 +945,15 @@ void ParallelRackCard::layOut() {
 	                   std::max(0.0f, wide - modeWide - kRowGap), kSegmentHeight);
 	y += ValueBox::kHeight + kRowGap;
 	// THE VIEW (no audio effect) on a row of its own, and Select's playing chain beside it where Select is the mode.
-	{
+	if (!strips) {
+		// TABS AND PADS: the view across the card's whole width (its three words need it), Select's playing chain on the row under it.
+		viewSeg_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, wide, kSegmentHeight);
+		viewPair_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, wide, kSegmentHeight);
+		y += ValueBox::kHeight + kRowGap;
+		playingBox_->setBounds(left, y, wide, ValueBox::kHeight);
+		y += p.playingRow ? ValueBox::kHeight + kRowGap : 0.0f;
+	}
+	else {
 		const float viewWide = std::round(wide * 0.62f);
 		viewSeg_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, viewWide - kRowGap, kSegmentHeight);
 		viewPair_->setBounds(left, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, viewWide - kRowGap, kSegmentHeight);

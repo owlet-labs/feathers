@@ -419,6 +419,8 @@ private:
 		RackViewKind view = RackViewKind::Strips;
 		size_t tiles = 0;
 		bool arrow = false;
+		/// Tabs and Pads put Select's playing chain on a row of its own under the view (the three words need the width).
+		bool playingRow = false;
 		friend bool operator==(const Plan&, const Plan&) = default;
 	};
 	[[nodiscard]] Plan plan() const;

@@ -2157,6 +2157,8 @@ bool Gui::create(const char* api, bool isFloating) noexcept {
 		impl_->surfaces = std::move(layers);
 		impl_->surfaces->setCanvas(impl_->canvas.get());
 	}
+	// THE FX LANE'S CARDS THAT HOLD CARDS (the Rack's Tabs and Pads views) open their panels on the editor's layers.
+	impl_->fxLane->setPresentedOn(impl_->surfaces.get());
 	// THE PANEL RIDES THE STATE CHANNEL ITSELF. A swallowed device's controls are not parameters, so
 	// this is the only road that repaints them — and handing the layer the watchers rather than
 	// having the panel walk up to find them is re-parenting property 5.

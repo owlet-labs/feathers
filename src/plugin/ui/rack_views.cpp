@@ -80,16 +80,23 @@ bool RackStrikePulse::live(double nowSeconds) const noexcept {
 	return false;
 }
 
-size_t RackStrikePulse::poll(RackViewModel& model, double nowSeconds) {
-	const RackKeyMask mask = model.takeStruck();
-	if (reduced_) {
-		// ONE STEADY HIGHLIGHT per look: the keys of THIS look, held until the next one, no decay and no animation.
-		steady_ = mask;
+RackStrikePulse::~RackStrikePulse() {
+	if (hub_ != nullptr) {
+		RackStrikeHub::detach(key_, this);
 	}
-	else {
-		for (int k = 0; k < 128; ++k) {
-			if (maskHas(mask, k)) {
-				struckAt_[static_cast<size_t>(k)] = nowSeconds;
+}
+
+size_t RackStrikePulse::look(const RackKeyMask& mask, double nowSeconds, bool fresh) {
+	if (fresh) {
+		if (reduced_) {
+			// ONE STEADY HIGHLIGHT per look: the keys of THIS look, held until the next one, no decay and no animation.
+			steady_ = mask;
+		}
+		else {
+			for (int k = 0; k < 128; ++k) {
+				if (maskHas(mask, k)) {
+					struckAt_[static_cast<size_t>(k)] = nowSeconds;
+				}
 			}
 		}
 	}
@@ -100,7 +107,65 @@ size_t RackStrikePulse::poll(RackViewModel& model, double nowSeconds) {
 		told = watchers_.notify();
 	}
 	wasLive_ = liveNow;
+	lastTold_ = told;
 	return told;
+}
+
+void RackStrikePulse::join(const RackStrikeKey& key) {
+	if (hub_ == nullptr && key.valid()) {
+		key_ = key;
+		hub_ = RackStrikeHub::attach(key_, this);
+	}
+}
+
+void RackStrikePulse::follow(RackViewModel& model, const RackKeyMask& mask) {
+	// THE LAST STRUCK KEY THAT HAS A CHAIN, so a chord settles on its highest pad; a key with no chain moves nothing.
+	size_t target = kNoChain;
+	int page = 0;
+	for (int k = 0; k < 128; ++k) {
+		if (!maskHas(mask, k)) {
+			continue;
+		}
+		if (const size_t chain = chainForKey(model, k); chain != kNoChain) {
+			target = chain;
+			page = k / kPadsPerPage;
+		}
+	}
+	if (target == kNoChain) {
+		return;
+	}
+	if (model.viewedChain() != target) {
+		model.viewChain(target);
+	}
+	if (model.page() != page) {
+		model.setPage(page);
+	}
+}
+
+size_t RackStrikePulse::poll(RackViewModel& model, double nowSeconds) {
+	// THE RACK'S ONE LOOK: this pulse joins its rack's hub (by device id, not address) on the first poll, and whichever pulse polls first in
+	// a round takes the mask once and hands it to the rest, so every surface of the rack shows every strike.
+	join(model.strikeKey());
+	if (hub_ == nullptr) {
+		const RackKeyMask mask = model.takeStruck();
+		if (model.followPlayed()) {
+			follow(model, mask);
+		}
+		return look(mask, nowSeconds, true);
+	}
+	if (!hub_->openRound(nowSeconds, this)) {
+		return look({}, nowSeconds, false); // another surface took this tick's mask and handed it on
+	}
+	const RackKeyMask mask = model.takeStruck();
+	if (model.followPlayed()) {
+		follow(model, mask);
+	}
+	for (RackStrikePulse* other : *hub_) {
+		if (other != this) {
+			(void)other->look(mask, nowSeconds, true);
+		}
+	}
+	return look(mask, nowSeconds, true);
 }
 
 //--------------------------------------------------------------------------------------------------//
@@ -154,12 +219,47 @@ void RackDrawerArrow::draw(visage::Canvas& canvas) {
 
 RackTabBar::RackTabBar(RackViewModel& model, RackFlow flow) : model_(model), flow_(flow) {
 	onMouseDown() = [this](const visage::MouseEvent& e) { press(e.position); };
+	onMouseMove() += [this](const visage::MouseEvent& e) { hover(e.position); };
+	onMouseExit() += [this](const visage::MouseEvent&) { hover({ -1.0f, -1.0f }); };
 	// A SCALE CHANGE MOVES NOTHING LOGICAL: re-set the bounds, so the native extents are cut again.
 	onDpiChange() += [this] {
 		setBounds(bounds());
 		redraw();
 	};
 	installTooltipHover(*this, *this);
+}
+
+void RackTabBar::hover(visage::Point at) {
+	int now = -1;
+	if (at.x >= 0.0f && at.y >= 0.0f && at.x < static_cast<float>(width()) && at.y < static_cast<float>(height())) {
+		const size_t n = tabbedChains(model_).size();
+		now = tabAtNative((horizontal() ? at.x : at.y) * scale(), n);
+	}
+	if (now != hover_) {
+		hover_ = now;
+		redraw();
+	}
+}
+
+bool RackTabBar::hoverDotShown(size_t k) const {
+	return model_.routing() == RackRoutingKind::Select && hover_ == static_cast<int>(k) && !dotShown(k);
+}
+
+float RackTabBar::labelRoom(size_t k) const {
+	const auto [a, b] = tabNativeExtent(k);
+	return std::max(0.0f, static_cast<float>(b - a) / scale() - 8.0f);
+}
+
+float RackTabBar::labelRoomForTest(size_t k) const {
+	return labelRoom(k);
+}
+
+std::string RackTabBar::labelForTest(size_t k) const {
+	const std::vector<size_t> tabs = tabbedChains(model_);
+	if (k >= tabs.size()) {
+		return {};
+	}
+	return fitName(labelOfChain(model_.chain(tabs[k]), tabs[k]), labelRoom(k), 9.0f, kNameFitFloorSize, 0.0f).text;
 }
 
 float RackTabBar::scale() const {
@@ -290,8 +390,7 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 		}
 		// THE NAME, ALONE: shrunk toward the floor size and then cut, so eight tabs stay legible and never overflow into a neighbour.
 		const std::string name = labelOfChain(model_.chain(tabs[k]), tabs[k]);
-		const float room = (horizontal() ? tw : th) - 8.0f;
-		const FittedName fit = fitName(name, std::max(0.0f, room), 9.0f, kNameFitFloorSize, 0.0f);
+		const FittedName fit = fitName(name, labelRoom(k), 9.0f, kNameFitFloorSize, 0.0f);
 		canvas.setColor(front ? kPointer : kMuted);
 		if (horizontal()) {
 			canvas.text(fit.text, font(fit.size), visage::Font::kCenter, x, y, tw, th);
@@ -299,16 +398,17 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 		else {
 			canvas.text(fit.text, font(fit.size), visage::Font::kCenter, x, y, tw, th, visage::Direction::Left);
 		}
-		// THE PLAYING DOT (Select): lit on the playing chain, a faint ring elsewhere so the place that sets it can be found.
+		// THE PLAYING DOT (Select): lit on the playing chain ALONE; on the tab under the pointer a faint one where a press sets it playing.
+		// No other tab draws anything, so a bar of eight keeps its room for the names.
 		if (model_.routing() == RackRoutingKind::Select) {
 			const visage::Point c = dotCentre(k);
 			if (model_.playingChain() == tabs[k]) {
 				canvas.setColor(kAccent);
 				canvas.circle(c.x - 3.0f, c.y - 3.0f, 6.0f);
 			}
-			else {
-				canvas.setColor(withAlpha(kLine, 0.9f));
-				canvas.circle(c.x - 2.5f, c.y - 2.5f, 5.0f);
+			else if (hover_ == static_cast<int>(k)) {
+				canvas.setColor(withAlpha(kAccent, 0.45f));
+				canvas.circle(c.x - 3.0f, c.y - 3.0f, 6.0f);
 			}
 		}
 	}
@@ -319,6 +419,7 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 //--------------------------------------------------------------------------------------------------//
 
 RackPadGrid::RackPadGrid(RackViewModel& model, RackStrikePulse& pulse) : model_(model), pulse_(pulse) {
+	pulse_.join(model_.strikeKey()); // on the rack's one look from the start, so the first strike reaches every surface
 	watch_ = pulse_.watchers().watch(this);
 	onMouseDown() = [this](const visage::MouseEvent& e) { press(e.position); };
 	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
@@ -584,73 +685,6 @@ void RackPadPages::draw(visage::Canvas& canvas) {
 			canvas.setColor(colour);
 			canvas.fill(cx + 0.5f, cy + 0.5f, std::max(1.0f, cw - 1.0f), std::max(1.0f, ch - 1.0f));
 		}
-	}
-}
-
-//--------------------------------------------------------------------------------------------------//
-// THE FRONT STACK                                                                                     //
-//--------------------------------------------------------------------------------------------------//
-
-void RackFrontStack::setContent(std::vector<std::string> names, bool open, uint32_t tint) {
-	if (names != names_ || open != open_ || tint != tint_) {
-		names_ = std::move(names);
-		open_ = open;
-		tint_ = tint;
-		redraw();
-	}
-}
-
-size_t RackFrontStack::tilesShown() const {
-	if (names_.empty()) {
-		return 1;
-	}
-	return open_ ? names_.size() : 1;
-}
-
-float RackFrontStack::extentFor(size_t tiles) const {
-	const float tile = flow_ == RackFlow::TopDown ? kTileHeight : kTileWidth;
-	return static_cast<float>(tiles) * tile + static_cast<float>(tiles > 0 ? tiles - 1 : 0) * kGap + kGap;
-}
-
-float RackFrontStack::extentAlongFlow() const {
-	return extentFor(tilesShown());
-}
-
-void RackFrontStack::draw(visage::Canvas& canvas) {
-	const float w = static_cast<float>(width());
-	const float h = static_cast<float>(height());
-	const size_t n = tilesShown();
-	const bool down = flow_ == RackFlow::TopDown;
-	for (size_t k = 0; k < n; ++k) {
-		const float along = static_cast<float>(k) * ((down ? kTileHeight : kTileWidth) + kGap);
-		const float x = down ? kPadding : along;
-		const float y = down ? along : kPadding;
-		const float tw = down ? w - kPadding : kTileWidth;
-		const float th = down ? kTileHeight : h - kPadding - kGap;
-		canvas.setColor(kSurfaceRaised);
-		canvas.roundedRectangle(x, y, tw, th, 6.0f);
-		canvas.setColor(kLine);
-		canvas.roundedRectangleBorder(x, y, tw, th, 6.0f, 1.0f);
-		const std::string name = names_.empty() ? "empty" : names_[k];
-		const FittedName fit = fitName(name, std::max(0.0f, tw - 22.0f), 10.0f, kNameFitFloorSize, 0.0f);
-		canvas.setColor(names_.empty() ? kMuted : kPointer);
-		canvas.text(fit.text, font(fit.size), visage::Font::kLeft, x + 9.0f, y, tw - 18.0f, th);
-		if (!names_.empty()) {
-			canvas.setColor(kMuted);
-			canvas.text(std::to_string(k + 1), font(8.0f), visage::Font::kRight, x, y, tw - 7.0f, th);
-		}
-	}
-	// THE GROUP HAIRLINE (one line, the rack's colour, in the padding) and the END CAP after the last tile.
-	const uint32_t rack = tint_ != 0 ? tint_ : kAccent;
-	const float last = extentFor(n) - kGap;
-	canvas.setColor(rack);
-	if (down) {
-		canvas.fill(3.0f, 0.0f, 1.0f, last + 2.0f);
-		canvas.fill(3.0f, last + 1.0f, w - 3.0f, 2.0f);
-	}
-	else {
-		canvas.fill(0.0f, 3.0f, last + 2.0f, 1.0f);
-		canvas.fill(last + 1.0f, 3.0f, 2.0f, h - 3.0f);
 	}
 }
 

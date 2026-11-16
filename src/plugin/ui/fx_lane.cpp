@@ -380,6 +380,15 @@ void FxLane::setModulation(ModState* mod, EditHistory* history) {
 	}
 }
 
+void FxLane::setPresentedOn(SurfaceLayers* host) {
+	presenter_ = host;
+	for (std::unique_ptr<FxCard>& card : cards_) {
+		if (card != nullptr) {
+			card->setPresentedOn(host);
+		}
+	}
+}
+
 void FxLane::ensureCard(size_t slot) {
 	reserveCards(slot + 1);
 	// WHAT THE SLOT ACTUALLY HOLDS, asked of the chain rather than remembered — a patch load can put
@@ -544,6 +553,7 @@ void FxLane::ensureCard(size_t slot) {
 		}
 	}
 	cards_[slot]->setModulation(mod_, history_);
+	cards_[slot]->setPresentedOn(presenter_);
 	// THE LANE'S VERBS, HANDED OVER AS THE CARD IS BUILT — the same place and the same reason as the
 	// state-road subscription below. Only the lane knows which slot a card is the face of, and a card
 	// rebuilt after a remove is the face of a DIFFERENT device, so the slot has to be bound here

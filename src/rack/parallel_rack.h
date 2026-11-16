@@ -117,6 +117,9 @@ enum class Param : size_t {
 	/// **SELECT'S PLAYING CHAIN**: 0 follows the Position (as Select always did), 1.. names the chain that sounds, independent of the
 	/// viewed one.
 	Playing,
+	/// **FOLLOW PLAYED NOTE** (Pads, no audio effect): a struck key that has a chain makes it the viewed chain and turns the page to it.
+	/// View state like the view itself: kept with the patch, not modulatable, never on a DAW lane.
+	FollowPlayed,
 	kCount,
 };
 
@@ -288,6 +291,11 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .tooltip = "Select: the one chain that sounds. Position follows the Position knob, as Select always did; a number names the "
                 "chain. Changing it crossfades, and the other chains keep running, so their tails and modulators carry on",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kSelectOnly, .shortName = "Playing"},
+    {.key = "rack_follow_played", .name = "Rack Follow Played", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Choice, .names = kOffOnNames, .modulatable = false,
+     .tooltip = "Pads: a key struck in the rack that has a chain makes that chain the one the window looks at and turns the pads to its page. "
+                "Off moves nothing. It changes nothing you hear",
+     .shortName = "Follow", .hostSlot = false},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 static_assert(static_cast<size_t>(Param::Macro1) == static_cast<size_t>(composite::Param::Macro1));
@@ -725,6 +733,9 @@ public:
 
 	/// A COUNT THAT MOVES WHENEVER THE CHAINS OR THEIR CONTROLS DO — what a card re-reads on.
 	[[nodiscard]] uint64_t revision() const noexcept { return revision_; }
+	/// **WHICH RACK THIS IS, FOR AS LONG AS IT STANDS**: a serial stamped where it is built (never an address, which a slot reuses), so an
+	/// editor can key what it shares between its surfaces on it. Never 0.
+	[[nodiscard]] uint64_t serial() const noexcept { return serial_; }
 
 	/// FREE what the audio thread has moved past (superseded lineups, removed chains).
 	void reap();
@@ -969,6 +980,8 @@ private:
 	int view_ = 0;
 	int viewedChain_ = 0;
 	int padsPage_ = 0;
+	int followPlayed_ = 0;
+	uint64_t serial_ = 0;
 	/// And what its key held back, which the rack passes on itself.
 	std::vector<device::NoteEvent> skippedIn_;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call

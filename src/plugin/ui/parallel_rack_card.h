@@ -30,6 +30,7 @@
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/rack_mode_views.h"
+#include "plugin/ui/rack_front.h"
 #include "plugin/ui/rack_view_adapter.h"
 #include "plugin/ui/rack_views.h"
 #include "rack/parallel_rack.h"
@@ -335,6 +336,9 @@ public:
 	ParallelRackCard(backplane::DeviceHost&, WidgetRegistry&, size_t, Notifier* = nullptr) = delete;
 
 	void drawHeadExtras(visage::Canvas& canvas) override;
+	void drawContent(visage::Canvas& canvas) override;
+	/// WHERE THE CARDS IN FRONT OPEN THEIR PANELS: the editor's layers (the lane hands them down), which the front column escalates to.
+	void setPresentedOn(SurfaceLayers* host) override;
 	std::string headCaption() const override;
 	bool headEnabled() const override;
 	void resized() override;
@@ -350,6 +354,8 @@ public:
 
 	static constexpr float kPad = 10.0f;
 	static constexpr float kRowGap = 6.0f;
+	/// A left-right card's column of the mode and view rows, between the bar (or the pads) and the cards in front.
+	static constexpr float kLeftColumnWidth = 150.0f;
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
 	/// The Mode dropdown's width on its row (stage 2).
 	static constexpr float kModeWidth = 96.0f;
@@ -383,8 +389,12 @@ public:
 	/// THE TABS AND PADS VIEWS (`View`): the bar, the pads panel, what is in front of the chain, its arrow, the model and the strike pulse.
 	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
-	[[nodiscard]] RackFrontStack& frontForTest() const { return *front_; }
+	[[nodiscard]] RackFrontColumn& frontForTest() const { return *front_; }
 	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
+	[[nodiscard]] RackDrawerArrow& macroArrowForTest() const { return *macroArrow_; }
+	[[nodiscard]] Knob& macroKnobForTest(size_t i) const { return *macroKnobs_[i]; }
+	[[nodiscard]] bool macroArrowShownForTest() const { return macroArrow_->isVisible(); }
+	[[nodiscard]] bool macroRowShownForTest() const { return macroKnobs_[0]->isVisible(); }
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
 	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
 	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
@@ -417,10 +427,14 @@ private:
 		size_t overflow = 0;
 		/// THE VIEW (Strips draws as it always did): the front stack's tiles and whether its arrow is shown.
 		RackViewKind view = RackViewKind::Strips;
-		size_t tiles = 0;
+		/// How tall the cards in front are at this width (whole pixels: it is part of what the layout was made for).
+		int frontExtent = 0;
 		bool arrow = false;
 		/// Tabs and Pads put Select's playing chain on a row of its own under the view (the three words need the width).
 		bool playingRow = false;
+		/// THE MACRO ROW: offered (the rack has macros: some are named or off zero) and open (its arrow, collapsed by default).
+		bool macros = false;
+		bool macrosOpen = false;
 		friend bool operator==(const Plan&, const Plan&) = default;
 	};
 	[[nodiscard]] Plan plan() const;
@@ -432,6 +446,16 @@ private:
 	bool followView();
 	/// The rack's colour for the group hairline: its instance's edge, or the accent.
 	[[nodiscard]] uint32_t frontTint() const;
+	[[nodiscard]] float lanesCross() const;
+	/// Whether the rack has macros worth a row: any is NAMED (its window renamed it) or stands off zero.
+	[[nodiscard]] bool macrosPresent() const;
+	/// The row's height at a width (two rows of four knobs), and its re-read captions.
+	[[nodiscard]] static float macroRowsHeight() { return 2.0f * kMacroCell; }
+	bool refreshMacroNames();
+	void placeMacros(const Plan& p, float left, float wide, float& y);
+	static constexpr float kMacroCell = 46.0f;
+	static constexpr float kMacroDiameter = 26.0f;
+	[[nodiscard]] float frontExtentFor(float cross) const;
 	/// The rows above the chains a plan lays out: the mode row, and Bands', the spectrum's and the bar's where shown.
 	[[nodiscard]] static float fixedRowsHeight(const Plan& p);
 	/// A PHANTOM'S FIRST EDIT: the chain made (one undo step), its id returned. Never on a mode change (§2a).
@@ -465,7 +489,12 @@ private:
 	std::unique_ptr<RackPositionBar> positionBar_;
 	std::unique_ptr<RackTabBar> tabs_;
 	std::unique_ptr<RackPadsPanel> pads_;
-	std::unique_ptr<RackFrontStack> front_;
+	std::unique_ptr<RackFrontColumn> front_;
+	/// THE MACRO ROW'S CAPTIONS (the knobs point into them: declared first) and its knobs, behind `macroArrow_`.
+	std::array<std::string, 8> macroCaption_;
+	std::array<std::unique_ptr<Knob>, 8> macroKnobs_;
+	std::unique_ptr<RackDrawerArrow> macroArrow_;
+	SurfaceLayers* presenter_ = nullptr;
 	std::unique_ptr<RackDrawerArrow> chainArrow_;
 	Plan laidOut_ {};
 	/// **THE EXTENT THE HOST LAST PLACED THIS CARD AT** (recorded in `resized`), so a change of chains — which arrives

@@ -44,7 +44,7 @@ constexpr float kMacroRows = 4.0f;
 constexpr float kCellHeight = Knob::columnHeight(Knob::kEngineRailDiameter);
 /// THE MODE ROW above Mix and Gain (stage 2): one knob cell and its gap.
 /// THE VIEW'S ROW sits under the mode row, over the macros.
-constexpr float kViewRow = 2.0f * (ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f);
+constexpr float kViewRow = (SwitchChip::kHeight + ParallelRackExpanded::kPad * 0.5f) + (ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f);
 constexpr float kModeRow = kCellHeight + ParallelRackExpanded::kPad + kViewRow;
 
 /// EACH RAIL IS HANDED ITS OWN CHAIN as the handle, so its cast is the identity.
@@ -147,9 +147,14 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	gated_.push_back({ positionBar_.get(), pr::Param::Position });
 	// THE TABS AND PADS VIEWS: the bar over the rails and the pads panel beside them, hidden until `View` asks. The chain strips keep
 	// every per-chain control (level, mute, solo, key, choke) for the chain in front; an empty pad offers "+".
+	// FOLLOW PLAYED NOTE: a two-state chip under the pads panel (the window's alone — the card has no room), off by default.
+	followControl_ = std::make_unique<DeviceControl>(host_, id_, pr::kDescriptor, static_cast<size_t>(pr::Param::FollowPlayed));
+	followChip_ = std::make_unique<SwitchChip>(*followControl_, "Follow played note");
+	addChild(followChip_.get());
+	followChip_->setVisible(false);
 	model_ = std::make_unique<RackViewAdapter>(host_, id_,
 	                                           RackViewAdapter::Controls { playingControl_.get(), modeControl_.get(), positionControl_.get(),
-	                                                                       controls_[1].get() });
+	                                                                       controls_[1].get(), followControl_.get() });
 	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
 	pads_->gridForTest().setAddHandler([this](int key) {
@@ -277,16 +282,20 @@ void ParallelRackExpanded::layOut() {
 	// UNUSED UNDER THE MODE, THE COLUMN'S FULL WIDTH: its two words need the room (they ran together in one cell), and it
 	// shows only in the role modes, where the position's knob does not.
 	unused_->setBounds(kPad, kPad + kCellHeight - SwitchChip::kHeight, kColumnWidth, SwitchChip::kHeight);
-	// THE VIEW (no audio effect) UNDER THE MODE ROW, and Select's playing chain beside it.
+	// THE VIEW (no audio effect) UNDER THE MODE ROW, in two rows of its own so nothing runs together: the selector across the WHOLE column
+	// (a third of it each: "Strips", "Tabs" and "Pads" need the room), then three equal boxes — Select's playing chain, the chain the
+	// window is looking at, and the page of pads. A box that is not shown keeps its cell, so the others never move.
 	{
 		const float vy = kPad + kCellHeight + kPad * 0.5f;
-		const float viewWide = std::round(kColumnWidth * 0.62f);
-		viewSeg_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
-		viewPair_->setBounds(kPad, vy + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, viewWide - kPad * 0.5f, SwitchChip::kHeight);
-		playingBox_->setBounds(kPad + viewWide, vy, kColumnWidth - viewWide, ValueBox::kHeight);
-		const float vy2 = vy + ValueBox::kHeight + kPad * 0.5f;
-		viewedBox_->setBounds(kPad, vy2, kColumnWidth * 0.5f - kPad * 0.5f, ValueBox::kHeight);
-		pageBox_->setBounds(kPad + kColumnWidth * 0.5f, vy2, kColumnWidth * 0.5f, ValueBox::kHeight);
+		const float selY = vy + (SwitchChip::kHeight - SwitchChip::kHeight) * 0.5f;
+		viewSeg_->setBounds(kPad, selY, kColumnWidth, SwitchChip::kHeight);
+		viewPair_->setBounds(kPad, selY, kColumnWidth, SwitchChip::kHeight);
+		const float vy2 = vy + SwitchChip::kHeight + kPad * 0.5f;
+		const float third = std::floor((kColumnWidth - 2.0f * kPad * 0.5f) / 3.0f);
+		const float gap = kPad * 0.5f;
+		playingBox_->setBounds(kPad, vy2, third, ValueBox::kHeight);
+		viewedBox_->setBounds(kPad + third + gap, vy2, third, ValueBox::kHeight);
+		pageBox_->setBounds(kPad + 2.0f * (third + gap), vy2, kColumnWidth - 2.0f * (third + gap), ValueBox::kHeight);
 	}
 	// THE BANDS COLUMN, beside the macros: count and filtering stacked, the slope, then the corners A VERTICAL STACK, one per
 	// row, lowest first — the order they stand in on the spectrum.
@@ -324,6 +333,7 @@ void ParallelRackExpanded::layOut() {
 	const RackViewKind view = model_->view();
 	tabs_->setVisible(view == RackViewKind::Tabs);
 	pads_->setVisible(view == RackViewKind::Pads);
+	followChip_->setVisible(view == RackViewKind::Pads);
 	if (view == RackViewKind::Tabs) {
 		tabs_->setBounds(x0, top, std::max(0.0f, static_cast<float>(width()) - x0 - kPad), RackTabBar::kThickness);
 		top += RackTabBar::kThickness + kPad * 0.5f;
@@ -331,6 +341,7 @@ void ParallelRackExpanded::layOut() {
 	else if (view == RackViewKind::Pads) {
 		const visage::Point n = pads_->naturalSize();
 		pads_->setBounds(x0, top, n.x, n.y);
+		followChip_->setBounds(x0, top + n.y + kPad * 0.5f, n.x, SwitchChip::kHeight);
 		railX0 = x0 + n.x + kPad;
 	}
 	const size_t viewed = model_->viewedChain();

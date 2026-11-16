@@ -4902,6 +4902,9 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		(void)rackPanel->viewedBoxForTest();
 		(void)rackPanel->pageBoxForTest();
 		e.reached.insert(static_cast<size_t>(pr::Param::ViewedChain));
+		// AND FOLLOW PLAYED NOTE, the window's switch under the Pads panel.
+		(void)rackPanel->followChipForTest();
+		e.reached.insert(static_cast<size_t>(pr::Param::FollowPlayed));
 		e.reached.insert(static_cast<size_t>(pr::Param::PadsPage));
 		for (size_t k = 0; k < 4; ++k) {
 			REQUIRE(rackPanel->cutKnobForTest(k).control() != nullptr);

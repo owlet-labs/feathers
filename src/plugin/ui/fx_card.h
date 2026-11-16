@@ -67,6 +67,8 @@
 
 namespace feathers::ui {
 
+class SurfaceLayers;
+
 /// **THE ONE GREYING FOR EVERY CARD — A CHILD ON TOP, NOT A FILL UNDERNEATH.**
 ///
 /// Backlog CY: devices had different semantics for "disabled grey" — some greyed their knobs, some
@@ -1020,6 +1022,10 @@ public:
 		redraw();
 	}
 	[[nodiscard]] DeviceNest nest() const noexcept { return nest_; }
+
+	/// **WHERE A PANEL THIS CARD HOLDS CARDS FOR OPENS IT** — the editor's layers, handed down by the lane (and by a chain column to the cards in
+	/// it). A card that holds other cards (the Rack's Tabs and Pads views) passes them on; the rest need nothing and take the default.
+	virtual void setPresentedOn(SurfaceLayers* host) { (void)host; }
 
 	/// WHAT TO DO WHEN A HEAD MARK IS PRESSED. Installed by the host, because only the host knows
 	/// what folding or opening a menu MEANS for the slot this card sits in.

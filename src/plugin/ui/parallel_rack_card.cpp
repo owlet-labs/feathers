@@ -17,6 +17,7 @@
 
 #include "plugin/ui/parallel_rack_card.h"
 
+#include "backplane/inner_routes.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/rack_mode_views.h"
 #include "rack/rack_bridge.h"
@@ -721,7 +722,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// until the View asks for them (Strips draws exactly as it always did).
 	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
-	front_ = std::make_unique<RackFrontStack>(RackFlow::TopDown);
+	front_ = std::make_unique<RackFrontColumn>(host_, device_, registry, notifier_);
 	chainArrow_ = std::make_unique<RackDrawerArrow>(
 	    RackFlow::TopDown, "Open the whole chain here, or close it again",
 	    [this] { return model_->expanded(model_->viewedChain()); },
@@ -729,8 +730,24 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 		    model_->setExpanded(model_->viewedChain(), open);
 		    (void)updateContent();
 	    });
+	// THE MACRO ROW behind its own arrow (collapsed by default, and no arrow at all unless the rack has macros): the same idiom as the chain's.
+	macroArrow_ = std::make_unique<RackDrawerArrow>(
+	    RackFlow::TopDown, "Show the rack's macros here, or put them away", [this] { return model_->macrosOpen(); },
+	    [this](bool open) {
+		    model_->setMacrosOpen(open);
+		    (void)updateContent();
+	    });
+	for (size_t i = 0; i < macroKnobs_.size(); ++i) {
+		macroCaption_[i] = "M" + std::to_string(i + 1);
+		macroKnobs_[i] = std::make_unique<Knob>(control(static_cast<pr::Param>(static_cast<size_t>(pr::Param::Macro1) + i)),
+		                                        macroCaption_[i].c_str(), notifier_);
+		macroKnobs_[i]->setFaceDiameter(kMacroDiameter);
+		addChild(macroKnobs_[i].get());
+		macroKnobs_[i]->setVisible(false);
+	}
 	for (visage::Frame* f : { static_cast<visage::Frame*>(tabs_.get()), static_cast<visage::Frame*>(pads_.get()),
-	                          static_cast<visage::Frame*>(front_.get()), static_cast<visage::Frame*>(chainArrow_.get()) }) {
+	                          static_cast<visage::Frame*>(front_.get()), static_cast<visage::Frame*>(chainArrow_.get()),
+	                          static_cast<visage::Frame*>(macroArrow_.get()) }) {
 		addChild(f);
 		f->setVisible(false);
 	}
@@ -768,6 +785,9 @@ void ParallelRackCard::setModulation(ModState* mod, EditHistory* history) {
 	mix_->setModulation(mod, history);
 	gain_->setModulation(mod, history);
 	position_->setModulation(mod, history);
+	for (auto& knob : macroKnobs_) {
+		knob->setModulation(mod, history); // the macro row's knobs are mod targets like every other knob on the card
+	}
 	for (size_t i = 0; i < static_cast<size_t>(pr::Param::kCount); ++i) {
 		control(static_cast<pr::Param>(i)).setModulation(mod, history);
 	}
@@ -776,6 +796,7 @@ void ParallelRackCard::setModulation(ModState* mod, EditHistory* history) {
 	for (auto& strip : strips_) {
 		strip->setModulation(mod, history);
 	}
+	front_->setOuterModulation(mod, history, [this] { return device_; });
 }
 
 std::vector<pr::Param> ParallelRackCard::addressedParamsForTest() const {
@@ -807,14 +828,11 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 		// is one tile, or all of them once it is open (as many as the unit has room for, in a horizontal lane).
 		p.bands = p.spectrum = p.bar = false;
 		p.missing = p.rows = p.overflow = 0;
-		const std::vector<std::string> names = model_->deviceNames(model_->viewedChain());
-		size_t tiles = names.empty() || !model_->expanded(model_->viewedChain()) ? 1 : names.size();
-		if (horizontalLane() && height() > 0) {
-			const float room = static_cast<float>(height()) - 2.0f * (ValueBox::kHeight + kRowGap) - RackDrawerArrow::kSize - 5.0f * kRowGap;
-			tiles = std::min(tiles, static_cast<size_t>(std::max(1.0f, std::floor(room / (RackFrontStack::kTileHeight + RackFrontStack::kGap)))));
-		}
-		p.tiles = tiles;
-		p.arrow = names.size() > 1;
+		// WHAT IS IN FRONT is the viewed chain's REAL cards (`RackFrontColumn`): as tall as they are at the card's content width.
+		p.frontExtent = static_cast<int>(std::lround(frontExtentFor(horizontalLane() ? lanesCross() : bodyWidth() - 2.0f * kPad)));
+		p.arrow = front_->deviceCount() > 1;
+		p.macros = macrosPresent();
+		p.macrosOpen = p.macros && model_->macrosOpen();
 		p.playingRow = pr::controlShown(pr::Param::Playing, control(pr::Param::Mode).value(), control(pr::Param::BandCount).value());
 		return p;
 	}
@@ -856,7 +874,10 @@ float ParallelRackCard::viewHeight(const Plan& p) const {
 		h += pads_->naturalSize().y;
 	}
 	h += kRowGap;
-	h += RackFrontStack::extentForTiles(p.tiles) + kRowGap;
+	if (p.macros) {
+		h += RackDrawerArrow::kSize + kRowGap + (p.macrosOpen ? macroRowsHeight() + kRowGap : 0.0f);
+	}
+	h += static_cast<float>(p.frontExtent) + kRowGap;
 	if (p.arrow) {
 		h += RackDrawerArrow::kSize + kRowGap;
 	}
@@ -878,8 +899,13 @@ float ParallelRackCard::laneExtent(float cross) const {
 		return kCardHeadHeight;
 	}
 	// A PADS CARD IN A HORIZONTAL LANE needs its panel's width and a column beside it for what is in front and the mode and view.
-	if (horizontalLane() && model_->view() == RackViewKind::Pads) {
-		return kCardHeadHeight + pads_->naturalSize().x + kRowGap + 140.0f + kPad;
+	if (horizontalLane() && model_->view() != RackViewKind::Strips) {
+		// LEFT TO RIGHT the card is as wide as what is in front: the spine, the bar or the pads panel, the mode and view column, the cards
+		// (the first alone while the chain is closed, all of it open), their arrow and the padding. Never sized to the largest chain.
+		const float lead = model_->view() == RackViewKind::Tabs ? RackTabBar::kThickness : pads_->naturalSize().x;
+		const float front = frontExtentFor(std::max(0.0f, cross - 2.0f * kPad));
+		const float arrow = front_->deviceCount() > 1 ? RackDrawerArrow::kSize + kRowGap : 0.0f;
+		return kCardHeadHeight + lead + kRowGap + kLeftColumnWidth + kRowGap + front + arrow + kPad;
 	}
 	return FxCard::laneExtent(cross);
 }
@@ -902,43 +928,59 @@ void ParallelRackCard::layOut() {
 	pads_->setVisible(open && p.view == RackViewKind::Pads);
 	front_->setVisible(open && !strips);
 	chainArrow_->setVisible(open && !strips && p.arrow);
+	macroArrow_->setVisible(open && !strips && p.macros);
+	macroArrow_->setFlow(flow);
+	for (auto& k : macroKnobs_) {
+		k->setVisible(open && !strips && p.macrosOpen);
+	}
 	mix_->setVisible(open && strips);
 	gain_->setVisible(open && strips);
 	if (!strips) {
-		float top = horizontalLane() ? kRowGap : y;
-		if (p.view == RackViewKind::Tabs) {
-			if (!horizontalLane()) {
+		front_->setHorizontal(horizontalLane());
+		if (!horizontalLane()) {
+			float top = y;
+			if (p.view == RackViewKind::Tabs) {
 				tabs_->setBounds(bodyLeft(), kSlotHeadHeight, bodyWidth(), RackTabBar::kThickness);
 				top = kSlotHeadHeight + RackTabBar::kThickness + kRowGap;
 			}
 			else {
-				tabs_->setBounds(bodyLeft(), 0.0f, RackTabBar::kThickness, static_cast<float>(height()));
-				left = bodyLeft() + RackTabBar::kThickness + kRowGap;
-				wide = std::max(0.0f, static_cast<float>(width()) - left - kPad);
-			}
-		}
-		else {
-			const visage::Point n = pads_->naturalSize();
-			if (!horizontalLane()) {
+				const visage::Point n = pads_->naturalSize();
 				pads_->setBounds(bodyLeft(), y, bodyWidth(), n.y);
 				top = y + n.y + kRowGap;
 			}
-			else {
-				pads_->setBounds(bodyLeft(), 0.0f, n.x, std::min(n.y, static_cast<float>(height())));
-				left = bodyLeft() + n.x + kRowGap;
-				wide = std::max(0.0f, static_cast<float>(width()) - left - kPad);
+			placeMacros(p, left, wide, top);
+			// THE CARDS IN FRONT run down a column as wide as the card's content (the hairline and the cap sit in the padding beside it).
+			const auto stack = static_cast<float>(p.frontExtent);
+			front_->setBounds(left, top, wide, stack);
+			top += stack + kRowGap;
+			if (p.arrow) {
+				chainArrow_->setBounds(left, top, wide, RackDrawerArrow::kSize);
+				top += RackDrawerArrow::kSize + kRowGap;
 			}
+			y = top;
 		}
-		const size_t viewed = model_->viewedChain();
-		front_->setContent(model_->deviceNames(viewed), model_->expanded(viewed), frontTint());
-		const float stack = front_->extentFor(p.tiles);
-		front_->setBounds(left, top, wide, stack);
-		top += stack + kRowGap;
-		if (p.arrow) {
-			chainArrow_->setBounds(left, top, wide, RackDrawerArrow::kSize);
-			top += RackDrawerArrow::kSize + kRowGap;
+		else {
+			// LEFT TO RIGHT: the bar (or the pads panel) at the left, then a column of the mode and view rows, then the cards in front running
+			// right with the card's height as their cross extent, and the arrow after the last of them.
+			float x = bodyLeft();
+			const float h = static_cast<float>(height());
+			if (p.view == RackViewKind::Tabs) {
+				tabs_->setBounds(x, 0.0f, RackTabBar::kThickness, h);
+				x += RackTabBar::kThickness + kRowGap;
+			}
+			else {
+				const visage::Point n = pads_->naturalSize();
+				pads_->setBounds(x, 0.0f, n.x, std::min(n.y, h));
+				x += n.x + kRowGap;
+			}
+			left = x;
+			wide = kLeftColumnWidth;
+			const float frontLeft = x + kLeftColumnWidth + kRowGap;
+			front_->setBounds(frontLeft, kPad, static_cast<float>(p.frontExtent), std::max(0.0f, h - 2.0f * kPad));
+			chainArrow_->setBounds(frontLeft + static_cast<float>(p.frontExtent) + kRowGap, 0.0f, RackDrawerArrow::kSize, h);
+			y = kRowGap;
+			placeMacros(p, left, wide, y);
 		}
-		y = top;
 	}
 	// THE MODE ON ITS OWN ROW ABOVE THE CHAINS: it decides what the strips below mean.
 	const float modeWide = std::min(wide, kModeWidth);
@@ -1183,6 +1225,62 @@ bool ParallelRackCard::showForMode() {
 	return changed;
 }
 
+void ParallelRackCard::placeMacros(const Plan& p, float left, float wide, float& y) {
+	if (!p.macros) {
+		return;
+	}
+	macroArrow_->setBounds(left, y, wide, RackDrawerArrow::kSize);
+	y += RackDrawerArrow::kSize + kRowGap;
+	if (p.macrosOpen) {
+		const float cell = wide / 4.0f;
+		for (size_t i = 0; i < macroKnobs_.size(); ++i) {
+			macroKnobs_[i]->setBounds(left + static_cast<float>(i % 4) * cell, y + static_cast<float>(i / 4) * kMacroCell, cell, kMacroCell);
+		}
+		y += macroRowsHeight() + kRowGap;
+	}
+}
+
+bool ParallelRackCard::macrosPresent() const {
+	const device::Descriptor* desc = host_.descriptorOf(device_);
+	void* surface = host_.containerSurfaceOf(device_);
+	for (size_t i = 0; i < macroKnobs_.size(); ++i) {
+		if (!backplane::innerMacroLabelOf(desc, surface, i).empty()
+		    || std::fabs(control(static_cast<pr::Param>(static_cast<size_t>(pr::Param::Macro1) + i)).value()) > 1.0e-4) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool ParallelRackCard::refreshMacroNames() {
+	const device::Descriptor* desc = host_.descriptorOf(device_);
+	void* surface = host_.containerSurfaceOf(device_);
+	bool changed = false;
+	for (size_t i = 0; i < macroKnobs_.size(); ++i) {
+		std::string name = backplane::innerMacroLabelOf(desc, surface, i);
+		if (name.empty()) {
+			name = "M" + std::to_string(i + 1);
+		}
+		if (name != macroCaption_[i]) {
+			macroCaption_[i] = std::move(name);
+			macroKnobs_[i]->setLabel(macroCaption_[i].c_str());
+			macroKnobs_[i]->redraw();
+			changed = true;
+		}
+	}
+	return changed;
+}
+
+float ParallelRackCard::lanesCross() const {
+	// THE CROSS EXTENT OF A HORIZONTAL LANE IS THE CARD'S HEIGHT less the padding the cards in front keep clear of the edge.
+	const float h = height() > 0 ? static_cast<float>(height()) : kCardUnitHeight;
+	return std::max(0.0f, h - 2.0f * kPad);
+}
+
+float ParallelRackCard::frontExtentFor(float cross) const {
+	return front_->naturalExtent(cross);
+}
+
 uint32_t ParallelRackCard::frontTint() const {
 	const uint32_t tint = instanceTintFor(device_, nest());
 	return tint != 0 ? instanceEdgeColor(tint) : kAccent;
@@ -1194,9 +1292,15 @@ bool ParallelRackCard::followView() {
 	}
 	bool moved = false;
 	const size_t viewed = model_->viewedChain();
-	front_->setContent(model_->deviceNames(viewed), model_->expanded(viewed), frontTint());
+	// THE REAL CARDS OF THE VIEWED CHAIN: bound by the chain's id and bridge (a tab switch rebinds), advanced like any lane's.
+	front_->setHorizontal(horizontalLane());
+	front_->setNest(DeviceNest::under(nest(), device_));
+	moved = front_->follow(viewed, model_->expanded(viewed)) || moved;
+	moved = front_->updateCards() > 0 || moved;
 	tabs_->refresh();
 	chainArrow_->refresh();
+	macroArrow_->refresh();
+	moved = refreshMacroNames() || moved;
 	if (model_->view() == RackViewKind::Pads) {
 		pads_->refresh();
 		// THE STRIKE PULSE: one look a tick; no frame is told when nothing was struck (zero repaints at rest).
@@ -1206,9 +1310,10 @@ bool ParallelRackCard::followView() {
 }
 
 bool ParallelRackCard::updateContent() {
+	// THE VIEW FIRST: the cards in front are bound before the plan asks how tall they are.
+	bool moved = followView();
 	const bool shown = showForMode();
-	bool moved = follow() || shown;
-	moved = followView() || moved;
+	moved = follow() || shown || moved;
 	if (!(plan() == laidOut_)) {
 		layOut(); // a chain added or removed moves the phantoms
 		moved = true;
@@ -1231,6 +1336,35 @@ bool ParallelRackCard::updateContent() {
 }
 
 void ParallelRackCard::drawHeadExtras(visage::Canvas& canvas) { drawSlotMenu(canvas, kMuted); }
+
+void ParallelRackCard::setPresentedOn(SurfaceLayers* host) {
+	presenter_ = host;
+	front_->setPresentedOn(host);
+}
+
+void ParallelRackCard::drawContent(visage::Canvas& canvas) {
+	// THE GROUP HAIRLINE: ONE line in the RACK's colour down the edge of the cards in front, in the padding the card already has (the member
+	// cards are as wide as its content, so it adds no cross-flow space), and a thin END CAP after the last card shown.
+	if (folded() || !front_->isVisible() || model_->view() == RackViewKind::Strips) {
+		return;
+	}
+	canvas.setColor(frontTint());
+	if (!horizontalLane()) {
+		const float x = static_cast<float>(front_->x()) - kPad * 0.5f;
+		const float top = static_cast<float>(front_->y());
+		const float bottom = top + static_cast<float>(front_->height());
+		canvas.fill(x, top, 1.0f, bottom - top + 2.0f);
+		canvas.fill(x, bottom + 1.0f, static_cast<float>(front_->x() + front_->width()) - x, 2.0f);
+	}
+	else {
+		// ALONG THE TOP EDGE of the cards (in the padding above them), the cap standing after the last one.
+		const float y = static_cast<float>(front_->y()) - kPad * 0.5f;
+		const float left = static_cast<float>(front_->x());
+		const float right = left + static_cast<float>(front_->width());
+		canvas.fill(left, y, right - left + 2.0f, 1.0f);
+		canvas.fill(right + 1.0f, y, 2.0f, static_cast<float>(front_->y() + front_->height()) - y);
+	}
+}
 
 std::string ParallelRackCard::headCaption() const {
 	const size_t n = strips_.size();

@@ -435,6 +435,8 @@ public:
 
 	/// Hand every card the modulation panel's state, and keep handing it to cards built later.
 	void setModulation(ModState* mod, EditHistory* history);
+	/// Hand every card the layers a panel it holds cards for opens on, and keep handing them to cards built later (`FxCard::setPresentedOn`).
+	void setPresentedOn(SurfaceLayers* host);
 
 	void resized() override;
 
@@ -487,6 +489,7 @@ private:
 	WidgetRegistry& registry_;
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;
+	SurfaceLayers* presenter_ = nullptr;
 	Notifier* notifier_ = nullptr;
 	FrameWatchers* watchers_ = nullptr;
 	/// The editor's site verb (`setOnExpandSite`); empty in a lane nobody wired.

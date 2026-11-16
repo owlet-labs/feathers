@@ -695,6 +695,7 @@ TEST_CASE("view routing: view, viewed chain, pads page, playing chain, mode, key
 	set(P::Playing, 3.0f);
 	set(P::Mode, static_cast<float>(kKeyedMode));
 	set(P::Gain, 0.37f);
+	set(P::FollowPlayed, 1.0f);
 	rk->setChainKey(1, 42);
 	rk->setChainChoke(1, 3);
 	rk->setChainChoke(2, 8);
@@ -713,6 +714,8 @@ TEST_CASE("view routing: view, viewed chain, pads page, playing chain, mode, key
 	CHECK(field(P::Playing) == 3.0f);
 	CHECK(field(P::Mode) == static_cast<float>(kKeyedMode));
 	CHECK(field(P::Gain) == 0.37f);
+	CHECK(field(P::FollowPlayed) == 1.0f);
+	CHECK(loaded->fieldForTest(P::FollowPlayed) == 1.0f);
 	CHECK(loaded->fieldForTest(P::Mode) == static_cast<float>(kKeyedMode));
 	CHECK(loaded->chainKey(1) == 42);
 	CHECK(loaded->chainChoke(1) == 3);

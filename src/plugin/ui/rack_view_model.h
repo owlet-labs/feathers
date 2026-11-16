@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "plugin/ui/rack_strike_hub.h"
 #include "device/modulatable.h"
 #include "plugin/ui/frame_watchers.h"
 
@@ -119,6 +120,14 @@ public:
 	/// THE KEYS STRUCK SINCE THE LAST LOOK, cleared by the look (one consumer: `RackStrikePulse::poll`).
 	[[nodiscard]] virtual RackKeyMask takeStruck() = 0;
 
+	/// WHICH RACK THIS IS, for the strike hub: the host that holds it and its device id (null host: no hub, the pulse takes the mask itself).
+	[[nodiscard]] virtual RackStrikeKey strikeKey() const { return {}; }
+
+	/// FOLLOW PLAYED NOTE (Pads): whether a struck key that has a chain makes it the viewed one and turns to its page, and the control it
+	/// is set through (null where there is none). View state: it changes nothing you hear.
+	[[nodiscard]] virtual bool followPlayed() const { return false; }
+	[[nodiscard]] virtual device::Modulatable* followControl() { return nullptr; }
+
 	/// TRIGGERING A KEY FROM THE EDITOR (the preview road): true when it went. False where the host has no note road.
 	[[nodiscard]] virtual bool canTrigger() const { return false; }
 	virtual bool trigger(int /*key*/, bool /*on*/, float /*velocity*/) { return false; }
@@ -172,6 +181,9 @@ public:
 	/// LOOK AT THE MODEL AT `nowSeconds`; returns how many frames it told (0 when nothing drawn changed). The count is the evidence of a
 	/// repaint, which cannot be observed headlessly.
 	size_t poll(RackViewModel& model, double nowSeconds);
+	~RackStrikePulse();
+	/// Join the hub of the rack `key` names (the first call wins; an invalid key joins none). The surfaces that show the pulse do it when they are made.
+	void join(const RackStrikeKey& key);
 	/// The same at the pulse's own clock (`now`), which a case may replace.
 	size_t poll(RackViewModel& model) { return poll(model, now()); }
 	[[nodiscard]] double now() const { return clock_(); }
@@ -184,13 +196,27 @@ public:
 	void setReducedMotion(bool reduced) { reduced_ = reduced; }
 	[[nodiscard]] bool reducedMotion() const noexcept { return reduced_; }
 
+	/// WHETHER THIS PULSE IS ON A HUB (shares its rack's one look), TEST SEAM.
+	[[nodiscard]] bool onHubForTest() const noexcept { return hub_ != nullptr; }
+	/// How many frames the last look told (a repaint cannot be observed headlessly; this is its evidence), whoever's poll it was.
+	[[nodiscard]] size_t lastToldForTest() const noexcept { return lastTold_; }
+
 private:
+	friend class RackStrikeHub;
+	/// Take `mask` as this look: held (steady) or stamped, and the watchers told when anything is lit or just went out. `fresh` is a look that
+	/// took (or was handed) a mask; a poll that arrives in a round another pulse already took leaves what that look gave.
+	size_t look(const RackKeyMask& mask, double nowSeconds, bool fresh);
+	/// FOLLOW PLAYED NOTE: the last struck key with a chain is viewed, and its page shown.
+	static void follow(RackViewModel& model, const RackKeyMask& mask);
+	RackStrikeKey key_ {};
+	RackStrikeHub* hub_ = nullptr;
 	FrameWatchers watchers_;
 	std::function<double()> clock_;
 	std::array<double, 128> struckAt_ {};
 	RackKeyMask steady_ {};
 	bool reduced_ = false;
 	bool wasLive_ = false;
+	size_t lastTold_ = 0;
 };
 
 } // namespace feathers::ui

@@ -169,6 +169,15 @@ void RackViewAdapter::setExpanded(size_t slot, bool expanded) {
 	}
 }
 
+RackStrikeKey RackViewAdapter::strikeKey() const {
+	const pr::Rack* r = rack();
+	return { r != nullptr ? r->serial() : 0 };
+}
+
+bool RackViewAdapter::followPlayed() const {
+	return fieldInt(pr::Param::FollowPlayed) >= 1;
+}
+
 RackKeyMask RackViewAdapter::takeStruck() {
 	RackKeyMask out {};
 	if (pr::Rack* r = rack(); r != nullptr) {

@@ -115,17 +115,28 @@ public:
 	[[nodiscard]] bool raised(size_t k) const;
 	/// A press at `at`, as the hand makes it.
 	void pressForTest(visage::Point at) { press(at); }
+	/// The pointer over `at` (or off the bar: a point outside it), as a mouse move makes it.
+	void hoverForTest(visage::Point at) { hover(at); }
+	/// **THE SET-PLAYING TARGET APPEARS ON HOVER**: a lit dot on the playing tab only, and on the tab under the pointer (Select routing) a
+	/// faint one where a press sets it playing. Nothing is drawn on the other tabs, so eight tabs keep their room for their names.
+	[[nodiscard]] bool hoverDotShown(size_t k) const;
+	/// The name tab k draws: shrunk toward the floor size and then cut with an ellipsis ("..."), never clipped mid-glyph, and how wide it may be.
+	[[nodiscard]] std::string labelForTest(size_t k) const;
+	[[nodiscard]] float labelRoomForTest(size_t k) const;
 
 private:
 	[[nodiscard]] bool horizontal() const noexcept { return flow_ == RackFlow::TopDown; }
 	[[nodiscard]] int nativeLength() const;
 	[[nodiscard]] float scale() const;
 	[[nodiscard]] int tabAtNative(float along, size_t count) const;
+	void hover(visage::Point at);
+	[[nodiscard]] float labelRoom(size_t k) const;
 	[[nodiscard]] bool inDotArea(visage::Point at, size_t k) const;
 	void press(visage::Point at);
 
 	RackViewModel& model_;
 	RackFlow flow_;
+	int hover_ = -1;
 };
 
 class RackPadGrid final : public visage::Frame, public TooltipSource {
@@ -220,45 +231,6 @@ private:
 	RackStrikePulse& pulse_;
 	RackFlow flow_;
 	Watch watch_;
-};
-
-/// **WHAT IS IN FRONT OF A TABBED CHAIN** (or a selected pad's): the devices of the chain, one tile each, the first alone while the chain is
-/// closed and all of them once it is open. Tiles run along the flow (down a column top-down, across a row left-right). The GROUP HAIRLINE
-/// is one line in the rack's colour along the tiles' edge inside the padding the stack already has (so it adds no cross-flow space), and a
-/// thin END CAP follows the last tile.
-class RackFrontStack final : public visage::Frame {
-public:
-	explicit RackFrontStack(RackFlow flow) : flow_(flow) {}
-	void draw(visage::Canvas& canvas) override;
-	/// What to show: the devices' names in chain order (empty: one tile saying so), whether the chain is open, the rack's colour.
-	void setContent(std::vector<std::string> names, bool open, uint32_t tint);
-	void setFlow(RackFlow flow) {
-		if (flow != flow_) {
-			flow_ = flow;
-			redraw();
-		}
-	}
-	/// How many tiles are drawn, and the extent the stack needs ALONG the flow for them (a height top-down, a width left-right).
-	[[nodiscard]] size_t tilesShown() const;
-	[[nodiscard]] float extentAlongFlow() const;
-	[[nodiscard]] float extentFor(size_t tiles) const;
-	/// The names it holds (the devices in front), for the cases.
-	[[nodiscard]] const std::vector<std::string>& namesForTest() const noexcept { return names_; }
-	/// The same top-down, with no stack built (the card sizes itself with it).
-	[[nodiscard]] static float extentForTiles(size_t tiles) {
-		return static_cast<float>(tiles) * kTileHeight + static_cast<float>(tiles > 0 ? tiles - 1 : 0) * kGap + kGap;
-	}
-
-	static constexpr float kTileHeight = 28.0f; ///< top-down
-	static constexpr float kTileWidth = 88.0f;  ///< left-right
-	static constexpr float kGap = 6.0f;
-	static constexpr float kPadding = 8.0f;     ///< where the hairline sits, inside it
-
-private:
-	RackFlow flow_;
-	std::vector<std::string> names_;
-	bool open_ = false;
-	uint32_t tint_ = 0;
 };
 
 /// THE PAD VIEW AS ONE PIECE: the grid, the page strip across the flow and the kit level pill, laid out for either flow. The Rack card

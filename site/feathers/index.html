@@ -125,12 +125,13 @@
 
 	<div class="wrap sec sub">
 		<h3>An open standard for devices</h3>
-		<p>Every effect and modulator in Feathers is a device built on one shared design, and the aim is for it to become a standard other plugin makers can build on. The device SDK in the repository is MIT-licensed, so devices built on it can be open or closed source, while Feathers itself stays GPL-3.0-or-later. The design is still open, and plugin makers who would build on it are the people best placed to shape it.</p>
+		<p>Every effect and modulator in Feathers is a device built on one shared design. A device describes its controls, with their names, ranges, units and choices, and says what it does with audio, modulation and notes. It can draw its own card and window, or take the standard card for free. The same devices run in Feathers and in the separate Feathers Chain plugin, and the aim is for the design to become a standard other plugin makers can build on.</p>
+		<p>The device SDK in the repository is MIT-licensed, so devices built on it can be open or closed source, while Feathers itself stays GPL-3.0-or-later. The design is still open, and plugin makers who would build on it are the people best placed to shape it.</p>
 	</div>
 
 	<div class="wrap sec sub">
 		<h3>Hosting</h3>
-		<p><strong>Built today:</strong> You can automate any Feathers control from your DAW, however deep it sits in chains and racks, in both CLAP and VST3. The synth's own parameters are always available. Effect controls appear in your DAW automatically as you touch them, up to 256 at a time. When all 256 are in use, the one you touched longest ago is reused. To keep a control in place, right-click it and choose &quot;Expose to host&quot;. Turning a knob records automation, DAW automation moves the knob, and your assignments are saved with the project.</p>
+		<p><strong>Built today:</strong> You can automate any Feathers control from your DAW, however deep it sits in chains and racks, in both CLAP and VST3. The synth's own parameters are always available. Device controls, at any depth, share a pool of 256 host slots: touch a control and it is given a slot automatically, so your DAW can record and automate it. When all 256 are in use, the one you touched longest ago is reused. To keep a control in place, right-click it and choose &quot;Expose to host&quot;. Turning a knob records automation, DAW automation and modulation move the knob, and your slots are saved with the project.</p>
 		<p><strong>Planned, not built:</strong> running other CLAP plugins inside Feathers' chains and racks, and devices from other makers that look and modulate like Feathers' own.</p>
 	</div>
 </section>

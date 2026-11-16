@@ -209,6 +209,47 @@ int main(int argc, char** argv) {
 		}
 		return 0;
 	}
+	// `--device-table`: THE CAPABILITIES, for `scripts/site-device-table.sh` (the website's device table). One
+	// tab-separated line per device in `kDevices` order: `device`, category rank, category, tag, name, then one 0/1
+	// field per capability, each read from the declaration named beside it. Nothing here is typed by hand.
+	//   window     ui::hasExpandedView(d)                      (the editor's own question)
+	//   poly       traits.perVoiceControl >= 0                 (the device declares a Poly switch)
+	//   keytrack   a control whose key ends in `track`          (key_track, <device>_keytrack, eroder_track)
+	//   linear     a Choice control with a label "Linear"       (EQ's Phase: Minimum / Linear)
+	//   sidechain  audio->setSidechain != null                  (the plugin's sidechain input is handed to it)
+	//   modout     !outputs.empty()                             (it publishes modulation sources)
+	//   notein     notes != null                                (it sits in the note lane)
+	//   noteout    notes != null && !notes->listensOnly         (it may write notes, not only read them)
+	//   latency    audio->latencySamples != null                (it can report latency to the host)
+	//   modulator  mod != null                                  (it advances as a modulator)
+	//   container  container != null                           (it holds other devices)
+	if (argc == 2 && std::strcmp(argv[1], "--device-table") == 0) {
+		rack::registerChainExpandedView();
+		for (const device::Descriptor& d : kDevices) {
+			bool keytrack = false;
+			bool linear = false;
+			for (const auto& p : d.params) {
+				const std::string key = p.key;
+				if (key.size() >= 5 && key.compare(key.size() - 5, 5, "track") == 0) {
+					keytrack = true;
+				}
+				if (p.unit == device::Unit::Choice) {
+					for (const char* label : p.names) {
+						linear = linear || std::strcmp(label, "Linear") == 0;
+					}
+				}
+			}
+			std::printf("device\t%zu\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+			            device::categoryRank(d.category), device::categoryName(d.category), d.traits.tag,
+			            d.traits.name, ui::hasExpandedView(d) ? 1 : 0, d.traits.perVoiceControl >= 0 ? 1 : 0,
+			            keytrack ? 1 : 0, linear ? 1 : 0,
+			            d.audio != nullptr && d.audio->setSidechain != nullptr ? 1 : 0, d.outputs.empty() ? 0 : 1,
+			            d.notes != nullptr ? 1 : 0, d.notes != nullptr && !d.notes->listensOnly ? 1 : 0,
+			            d.audio != nullptr && d.audio->latencySamples != nullptr ? 1 : 0, d.mod != nullptr ? 1 : 0,
+			            d.container != nullptr ? 1 : 0);
+		}
+		return 0;
+	}
 	if (argc < 3) {
 		std::printf("usage: %s <device tag> <out.png> [\"<control name>=<value>\"]...\n"
 		            "       [--card]\n"

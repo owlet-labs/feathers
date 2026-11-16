@@ -785,6 +785,9 @@ void ParallelRackCard::setModulation(ModState* mod, EditHistory* history) {
 	mix_->setModulation(mod, history);
 	gain_->setModulation(mod, history);
 	position_->setModulation(mod, history);
+	for (auto& knob : macroKnobs_) {
+		knob->setModulation(mod, history); // the macro row's knobs are mod targets like every other knob on the card
+	}
 	for (size_t i = 0; i < static_cast<size_t>(pr::Param::kCount); ++i) {
 		control(static_cast<pr::Param>(i)).setModulation(mod, history);
 	}

@@ -201,3 +201,15 @@ h1 { font-weight: 400; letter-spacing: -.01em; }
 .sticker { display: inline-block; font: 800 .78rem/1 var(--disp); letter-spacing: .06em; text-transform: uppercase; padding: .45em .8em; border-radius: 999px; background: var(--value); color: var(--btn-ink); transform: rotate(-4deg); box-shadow: 0 2px 0 color-mix(in srgb, var(--value) 45%, var(--bg)); }
 .sticker.alt { background: var(--accent); transform: rotate(3deg); box-shadow: 0 2px 0 color-mix(in srgb, var(--accent) 45%, var(--bg)); }
 .card.soon { border-style: dashed; background: transparent; }
+
+/* the device and engine tables: a bordered scroller of its own, so a phone scrolls the table and not the page */
+.devtable { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 12px; margin: 1em 0 1.4em; }
+.devtable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.devtable table { border-collapse: collapse; width: 100%; min-width: 40rem; font-family: var(--disp); font-size: .92rem; line-height: 1.45; }
+.devtable caption { text-align: left; color: var(--mute); padding: 10px 14px; caption-side: top; }
+.devtable th, .devtable td { text-align: left; vertical-align: top; padding: 8px 14px; border-top: 1px solid var(--line); }
+.devtable thead th { color: var(--mute); font-weight: 600; white-space: nowrap; }
+.devtable tbody th[scope="row"] { font-weight: 600; white-space: nowrap; }
+.devtable tr.group th { background: var(--surface2); color: var(--value); font-weight: 600; letter-spacing: .02em; }
+.devtable td:last-child { color: var(--mute); }
+.devnote { max-width: 44rem; color: var(--mute); }

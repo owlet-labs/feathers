@@ -17,7 +17,7 @@
 	--btn-ink: #030103;
 	--shot-glow: rgba(199, 144, 205, .16);
 	--shot-bg: #030103;
-	--disp: 'Bricolage Grotesque', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+	--disp: 'Montserrat', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
 	--mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 	color-scheme: dark;
 }
@@ -46,7 +46,7 @@ body {
 	margin: 0;
 	background: var(--bg);
 	color: var(--ink);
-	font: 1.0625rem/1.65 var(--disp);
+	font: 400 1rem/1.75 var(--disp);
 	font-optical-sizing: auto;
 	overflow-x: hidden;
 }
@@ -60,7 +60,7 @@ h2 { font-size: clamp(2rem, 6vw, 3rem); letter-spacing: -.025em; font-variation-
 h3 { font-size: 1.2rem; letter-spacing: -.01em; color: var(--value); }
 p { margin: 0 0 1em; }
 code { font-family: var(--mono); font-size: .88em; background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
-strong { font-weight: 650; }
+strong { font-weight: 600; }
 
 /* header */
 header.top { position: sticky; top: 0; z-index: 5; padding: 12px 0; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
@@ -77,7 +77,7 @@ nav a:hover { color: var(--ink); }
 h1 { font-size: clamp(4rem, 17vw, 9.5rem); line-height: .9; letter-spacing: -.045em; font-weight: 800; margin: 0 0 .22em -.04em; font-variation-settings: 'wdth' 80; }
 .hero .tag { font-size: clamp(1.15rem, 3.4vw, 1.6rem); line-height: 1.4; max-width: 34rem; margin: 0 0 1.4em; }
 .hero .tag span { color: var(--mute); }
-.cta { display: inline-block; background: var(--accent); color: var(--btn-ink); font-weight: 650; padding: .7em 1.5em; border-radius: 999px; text-decoration: none; }
+.cta { display: inline-block; background: var(--accent); color: var(--btn-ink); font-weight: 600; padding: .7em 1.5em; border-radius: 999px; text-decoration: none; }
 .cta:hover { color: var(--btn-ink); filter: brightness(1.12); }
 .cta.alt { background: transparent; color: var(--accent); border: 1px solid var(--contour); }
 .cta.alt:hover { color: var(--ink); border-color: var(--accent); }
@@ -115,7 +115,7 @@ li::marker { color: var(--mod); }
 
 /* modes as a definition list */
 dl.modes { margin: 0 0 1em; }
-dl.modes dt { font-weight: 650; margin-top: 1em; padding-top: .8em; border-top: 1px solid var(--line); }
+dl.modes dt { font-weight: 600; margin-top: 1em; padding-top: .8em; border-top: 1px solid var(--line); }
 dl.modes dd { margin: .2em 0 0; color: var(--ink); }
 
 /* install */
@@ -124,9 +124,9 @@ dl.modes dd { margin: .2em 0 0; color: var(--ink); }
 .cmd pre::before { content: attr(data-prompt); color: var(--value); margin-right: .8em; user-select: none; -webkit-user-select: none; }
 .cmd code { background: none; padding: 0; font-size: inherit; }
 .cmd.js pre { padding-right: 84px; }
-.copy { position: absolute; top: 8px; right: 8px; font: 600 .82rem var(--disp); color: var(--accent); background: var(--surface2); border: 1px solid var(--line); border-radius: 999px; padding: .35em .9em; cursor: pointer; }
+.copy { position: absolute; top: 8px; right: 8px; font: 600 .8rem var(--disp); color: var(--accent); background: var(--surface2); border: 1px solid var(--line); border-radius: 999px; padding: .35em .9em; cursor: pointer; }
 .copy:hover { color: var(--ink); border-color: var(--accent); }
-.oslabel { font-size: .95rem; font-weight: 650; color: var(--mute); margin: 1.4em 0 .5em; }
+.oslabel { font-size: .95rem; font-weight: 600; color: var(--mute); margin: 1.4em 0 .5em; }
 .note { border-left: 3px solid var(--value); padding: .2em 0 .2em 16px; color: var(--mute); margin-top: 1.6em; }
 .note strong { color: var(--value); }
 

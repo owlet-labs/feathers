@@ -607,7 +607,13 @@ TEST_CASE("a default patch renders the golden bits the device rendered before th
 			combined ^= hash * (highpass ? 3u : 5u) + (stereo ? 7u : 11u);
 		}
 	}
+	// A BIT-EXACT GOLDEN, so it holds only where it was taken: Linux x86-64 (libm and codegen differ elsewhere), as the
+	// other bake-identity cases are pinned (vox-voice, flagship). The value tests above hold the behaviour on every platform.
+#if defined(__linux__) && defined(__x86_64__)
 	CHECK(combined == 2828392639871082162ull);
+#else
+	(void)combined;
+#endif
 }
 
 namespace {

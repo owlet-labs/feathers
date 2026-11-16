@@ -736,6 +736,7 @@ int main(int argc, char** argv) {
 
 	bool holdOnly = false;
 	double readBack = 0.0;
+	const char* roundTripName = "Path"; // the control the scripted round trip moves and reads back
 	// THE REQUESTED STATE, POSTED AND PHOTOGRAPHED, and then nothing else — see the note at --set.
 	if (!wanted.empty() || !seeds.empty()) {
 		EventList asked;
@@ -793,9 +794,28 @@ int main(int argc, char** argv) {
 	// ENGINE SIDE: move three parameters through params.flush, exactly as host automation or a preset
 	// load would while the plugin is inactive. No mouse input at all.
 	EventList list;
-	list.push(0x0030, 1.0); // Path    -> maximum
-	list.push(0x0040, 1.0); // Relief  -> maximum
-	list.push(0x0052, 0.0); // Level   -> minimum, so one row moves the other way
+	// THE FEATHERS RACK PLUGIN HAS NO SYNTH PARAMETERS: it moves its own Mix and Gain (found by name, as --set does), so the
+	// check sees a host write to a pinned Rack control reach the window. Mix to 20 percent, Gain to its minimum.
+	clap_id roundTripId = 0x0030;
+	if (std::strcmp(gPlugin->desc->id, "com.owlet.feathers.rack") == 0) {
+		clap_id mix = CLAP_INVALID_ID, gain = CLAP_INVALID_ID;
+		for (uint32_t i = 0; i < params->count(gPlugin); ++i) {
+			clap_param_info info {};
+			if (params->get_info(gPlugin, i, &info) && std::strcmp(info.module, "Rack") == 0) {
+				const std::string name = info.name;
+				mix = name.find("Mix") != std::string::npos ? info.id : mix;
+				gain = name.find("Gain") != std::string::npos ? info.id : gain;
+			}
+		}
+		roundTripId = mix;
+		roundTripName = "Rack Mix";
+		list.push(mix, 0.2);
+		list.push(gain, 0.0);
+	} else {
+		list.push(0x0030, 1.0); // Path    -> maximum
+		list.push(0x0040, 1.0); // Relief  -> maximum
+		list.push(0x0052, 0.0); // Level   -> minimum, so one row moves the other way
+	}
 	list.in.ctx = &list;
 	list.in.size = evSize;
 	list.in.get = evGet;
@@ -807,7 +827,7 @@ int main(int argc, char** argv) {
 	pump(1500);
 	capture(display, parent, afterPath);
 
-	params->get_value(gPlugin, 0x0030, &readBack);
+	params->get_value(gPlugin, roundTripId, &readBack);
 
 	// A resize is the one thing that dirties the whole editor, so it separates "the editor never
 	// looks at the engine" from "the editor looks but does not repaint".
@@ -1000,7 +1020,7 @@ int main(int argc, char** argv) {
 	const std::vector<unsigned char> after = readFile(afterPath);
 	const std::vector<unsigned char> resized = readFile(resizedPath);
 
-	std::printf("engine:   Path reads %.3f after the flush\n", readBack);
+	std::printf("engine:   %s reads %.3f after the flush\n", roundTripName, readBack);
 	std::printf("flushes:  host answered %ld request_flush call(s)\n", gRequestFlushCalls);
 
 	if (before.empty() || after.empty()) {

@@ -17,6 +17,9 @@
 
 #include "fixtures.h"
 
+#include <chrono>
+#include <thread>
+
 #include "fx/drum/drum_types.h"
 #include "plugin/ui/chain_column.h"
 #include "plugin/ui/drum_device_card.h"
@@ -96,9 +99,18 @@ public:
 	}
 	bool macrosOpen() const override { return macros; }
 	void setMacrosOpen(bool o) override { macros = o; }
+	/// THE ENGINE'S ONE MASK, when several models stand for one rack (the card's and the window's): a look takes it, whoever looks.
+	std::shared_ptr<ui::RackKeyMask> source;
+	ui::RackStrikeKey rackKey {};
+	bool follow = false;
+	OwnedControl followCtl;
+	ui::RackStrikeKey strikeKey() const override { return rackKey; }
+	bool followPlayed() const override { return follow; }
+	device::Modulatable* followControl() override { return &followCtl; }
 	ui::RackKeyMask takeStruck() override {
-		const ui::RackKeyMask out = struck;
-		struck = {};
+		ui::RackKeyMask& from = source ? *source : struck;
+		const ui::RackKeyMask out = from;
+		from = {};
 		return out;
 	}
 	bool canTrigger() const override { return noteRoad; }
@@ -1093,4 +1105,266 @@ TEST_CASE("rack views over a real rack: in Pads the selected pad's chain is in f
 	cards = shownCards(*r.card);
 	REQUIRE(cards.size() == 2);
 	CHECK(cards[1]->device() == chain1.deviceAtPosition(1));
+}
+
+namespace {
+
+/// A pulse whose clock a case sets, so two surfaces can poll "in one tick".
+struct TickClock {
+	double now = 10.0;
+};
+
+} // namespace
+
+TEST_CASE("rack strike pulse: two surfaces of one rack, one strike — both show it, whichever looks first, and the hub goes with its last pulse") {
+	const ui::RackStrikeKey key { 7 };
+	const size_t hubsBefore = ui::RackStrikeHub::hubCountForTest();
+	for (const bool windowFirst : { false, true }) {
+		CAPTURE(windowFirst);
+		auto engine = std::make_shared<ui::RackKeyMask>();
+		FakeRack cardModel;
+		FakeRack windowModel;
+		for (FakeRack* m : { &cardModel, &windowModel }) {
+			m->source = engine;
+			m->rackKey = key;
+			m->kind = ui::RackViewKind::Pads;
+			m->fill(0);
+		}
+		TickClock clock;
+		{
+			ui::RackStrikePulse cardPulse;
+			ui::RackStrikePulse windowPulse;
+			for (ui::RackStrikePulse* p : { &cardPulse, &windowPulse }) {
+				p->setReducedMotion(false);
+				p->setClock([&clock] { return clock.now; });
+			}
+			ui::RackPadGrid cardGrid(cardModel, cardPulse); // each surface has a frame the pulse repaints
+			ui::RackPadGrid windowGrid(windowModel, windowPulse);
+			// ONE STRIKE, one tick: whichever surface looks first takes the engine's mask once.
+			maskSet(*engine, 38);
+			ui::RackStrikePulse& first = windowFirst ? windowPulse : cardPulse;
+			ui::RackStrikePulse& second = windowFirst ? cardPulse : windowPulse;
+			FakeRack& firstModel = windowFirst ? windowModel : cardModel;
+			FakeRack& secondModel = windowFirst ? cardModel : windowModel;
+			CHECK(first.poll(firstModel) > 0);
+			CHECK(second.poll(secondModel) >= 0);
+			CHECK(first.onHubForTest());
+			CHECK(second.onHubForTest());
+			CHECK(ui::RackStrikeHub::subscribersForTest(key) == 2);
+			// BOTH REPORT THE PULSE, and both were told to repaint by it.
+			CHECK(cardPulse.level(38, clock.now) > 0.0f);
+			CHECK(windowPulse.level(38, clock.now) > 0.0f);
+			CHECK(cardPulse.level(39, clock.now) == 0.0f);
+			CHECK(windowPulse.level(39, clock.now) == 0.0f);
+			CHECK(cardPulse.lastToldForTest() > 0);
+			CHECK(windowPulse.lastToldForTest() > 0);
+			// THE NEXT TICK, nothing struck: the flash decays on both, and once it is out nothing is told (zero repaints at rest).
+			clock.now += 0.02;
+			(void)first.poll(firstModel);
+			(void)second.poll(secondModel);
+			CHECK(cardPulse.level(38, clock.now) < 1.0f);
+			clock.now += 1.0;
+			(void)first.poll(firstModel); // the repaint that clears the last frame
+			(void)second.poll(secondModel);
+			clock.now += 0.02;
+			CHECK(first.poll(firstModel) == 0);
+			CHECK(second.poll(secondModel) == 0);
+			CHECK(cardPulse.level(38, clock.now) == 0.0f);
+		}
+		// UNSUBSCRIBED ON DESTRUCTION: no hub is left standing for the rack.
+		CHECK(ui::RackStrikeHub::subscribersForTest(key) == 0);
+		CHECK(ui::RackStrikeHub::hubCountForTest() == hubsBefore);
+	}
+	// A PULSE WITH NO KEY (a model that names no rack) takes the mask itself, as it always did.
+	FakeRack plain;
+	plain.fill(0);
+	ui::RackStrikePulse alone;
+	maskSet(plain.struck, 5);
+	(void)alone.poll(plain);
+	CHECK_FALSE(alone.onHubForTest());
+	CHECK(alone.level(5, alone.now()) > 0.0f);
+}
+
+TEST_CASE("rack strike pulse: reduced motion keeps one steady highlight on every surface until the next look") {
+	auto engine = std::make_shared<ui::RackKeyMask>();
+	FakeRack a;
+	FakeRack b;
+	for (FakeRack* m : { &a, &b }) {
+		m->source = engine;
+		m->rackKey = { 9 };
+		m->fill(0);
+	}
+	TickClock clock;
+	ui::RackStrikePulse pa;
+	ui::RackStrikePulse pb;
+	for (ui::RackStrikePulse* p : { &pa, &pb }) {
+		p->setReducedMotion(true);
+		p->setClock([&clock] { return clock.now; });
+	}
+	pa.join(a.strikeKey()); // a surface joins when it is made
+	pb.join(b.strikeKey());
+	maskSet(*engine, 40);
+	(void)pa.poll(a);
+	(void)pb.poll(b); // the same tick: it must not wipe what the first look handed it
+	CHECK(pa.level(40, clock.now) == 1.0f);
+	CHECK(pb.level(40, clock.now) == 1.0f);
+	clock.now += 0.016; // the next tick (past the hub's round), nothing struck: both clear
+	(void)pb.poll(b);
+	(void)pa.poll(a);
+	CHECK(pa.level(40, clock.now) == 0.0f);
+	CHECK(pb.level(40, clock.now) == 0.0f);
+}
+
+TEST_CASE("rack pads: Follow played note — off moves nothing; on views the struck key's chain and turns to its page; a key with no chain moves nothing") {
+	const auto setup = [](FakeRack& rack) {
+		rack.kind = ui::RackViewKind::Pads;
+		// Chains on keys 36 (slot 0), 38 (slot 1) and 83 (slot 2: page 5).
+		rack.chains = { { true, "Kick", 36, 0 }, { true, "Snare", 38, 0 }, { true, "Far", 83, 0 } };
+		rack.viewed = 0;
+		rack.pageNow = 2;
+	};
+	for (const bool on : { false, true }) {
+		CAPTURE(on);
+		FakeRack rack;
+		setup(rack);
+		rack.follow = on;
+		ui::RackStrikePulse pulse;
+		// A STRUCK KEY WITH A CHAIN.
+		maskSet(rack.struck, 38);
+		(void)pulse.poll(rack);
+		if (on) {
+			CHECK(rack.viewed == 1);
+			CHECK(rack.pageNow == 2); // 38 is on page 2 already
+		}
+		else {
+			CHECK(rack.viewed == 0);
+			CHECK(rack.pageNow == 2);
+		}
+		// A KEY ON ANOTHER PAGE turns the page.
+		maskSet(rack.struck, 83);
+		(void)pulse.poll(rack);
+		CHECK(rack.viewed == (on ? 2u : 0u));
+		CHECK(rack.pageNow == (on ? 5 : 2));
+		// A KEY WITH NO CHAIN moves nothing, on or off.
+		const size_t viewedBefore = rack.viewed;
+		const int pageBefore = rack.pageNow;
+		maskSet(rack.struck, 100);
+		(void)pulse.poll(rack);
+		CHECK(rack.viewed == viewedBefore);
+		CHECK(rack.pageNow == pageBefore);
+		// A CHORD settles on the highest key that has a chain; keys without one are passed over.
+		FakeRack chord;
+		setup(chord);
+		chord.follow = on;
+		ui::RackStrikePulse chordPulse;
+		maskSet(chord.struck, 36);
+		maskSet(chord.struck, 38);
+		maskSet(chord.struck, 99);
+		(void)chordPulse.poll(chord);
+		CHECK(chord.viewed == (on ? 1u : 0u));
+	}
+}
+
+TEST_CASE("rack pads: Follow played note is a patch param like the view, with a switch in the window's pads panel — off by default") {
+	namespace pr = feathers::rack::parallel;
+	const device::ParamDesc& d = pr::kDescriptor.params[static_cast<size_t>(pr::Param::FollowPlayed)];
+	CHECK(std::string(d.key) == "rack_follow_played");
+	CHECK(d.def == 0.0);
+	CHECK(d.stepped);
+	CHECK_FALSE(d.modulatable);
+	CHECK_FALSE(d.hostSlot);
+}
+
+TEST_CASE("rack strike pulse over a real rack: the card and the window both show one strike, and Follow played note acts on it once") {
+	RealRack r;
+	r.chains(3, 3, true); // chains on keys 0, 1, 2
+	r.view_(2);
+	for (ui::RackStrikePulse* p : { &r.card->pulseForTest(), &r.panel->pulseForTest() }) {
+		p->setReducedMotion(false);
+	}
+	const auto strike = [&](int key) {
+		feathers::device::NoteEvent e;
+		e.kind = feathers::device::NoteEvent::Kind::On;
+		e.key = static_cast<int16_t>(key);
+		e.velocity = 0.8;
+		feathers::device::NoteEvent out[8];
+		(void)r.rack().processNotes(&e, 1, out, 8);
+	};
+	// ONE STRIKE, BOTH SURFACES OPEN: the engine's mask is taken once and both pulses show it.
+	strike(1);
+	(void)r.card->update();
+	(void)r.panel->update();
+	CHECK(r.card->pulseForTest().onHubForTest());
+	CHECK(r.panel->pulseForTest().onHubForTest());
+	CHECK(r.card->pulseForTest().level(1, r.card->pulseForTest().now()) > 0.0f);
+	CHECK(r.panel->pulseForTest().level(1, r.panel->pulseForTest().now()) > 0.0f);
+	CHECK(r.panel->pulseForTest().level(2, r.panel->pulseForTest().now()) == 0.0f);
+	// FOLLOW IS OFF BY DEFAULT: nothing moved.
+	CHECK(r.field(pr::Param::FollowPlayed) == 0.0f);
+	CHECK(r.field(pr::Param::ViewedChain) == 0.0f);
+	// ON: a struck key that has a chain makes it the viewed one — once, from whichever surface looked first.
+	r.set(pr::Param::FollowPlayed, 1.0f);
+	r.refresh();
+	std::this_thread::sleep_for(std::chrono::milliseconds(20)); // past the hub's round
+	strike(2);
+	(void)r.panel->update();
+	(void)r.card->update();
+	CHECK(r.field(pr::Param::ViewedChain) == 2.0f);
+	CHECK(r.field(pr::Param::PadsPage) == 0.0f);
+	// A KEY WITH NO CHAIN moves nothing.
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	strike(100);
+	(void)r.card->update();
+	(void)r.panel->update();
+	CHECK(r.field(pr::Param::ViewedChain) == 2.0f);
+	CHECK(r.field(pr::Param::PadsPage) == 0.0f);
+	// THE WINDOW'S SWITCH is in the pads panel's view and reads the param.
+	CHECK(r.panel->followChipForTest().isVisible());
+}
+
+TEST_CASE("rack window: the view selector gives every label its segment, and the mode, view, mix and gain block overlaps nothing, at 1x and 1.75x") {
+	RealRack r;
+	r.chains(2, 0);
+	for (const float scale : { 1.0f, 1.75f, 1.0f }) {
+		CAPTURE(scale);
+		r.panel->setDpiScale(scale);
+		r.panel->resized();
+		r.refresh();
+		for (const int mode : { 0, 1 }) { // Parallel, then Select (which adds the Playing box and the Position knob)
+			CAPTURE(mode);
+			r.set(pr::Param::Mode, static_cast<float>(mode));
+			r.refresh();
+			ui::SegmentedControl& seg = r.panel->viewSegForTest();
+			REQUIRE(seg.isVisible());
+			// EACH LABEL INSIDE ITS CELL, as the control measures it, at the native size it was given.
+			CHECK(seg.labelsFit());
+			// THE SELECTOR IS THE COLUMN'S WIDTH, a third of it to each of Strips, Tabs and Pads — never the 94 it was squeezed into.
+			const float nativeColumn = scale * ui::ParallelRackExpanded::kColumnWidth;
+			CHECK(static_cast<float>(seg.nativeWidth()) >= nativeColumn - 2.0f);
+			// NOTHING OVERLAPS: the block's frames, two by two (the boxes that are shown).
+			std::vector<std::pair<const char*, visage::Bounds>> block = {
+				{ "mode", r.panel->modeBoxForTest().bounds() },
+				{ "view", seg.bounds() },
+				{ "viewed", r.panel->viewedBoxForTest().bounds() },
+				{ "page", r.panel->pageBoxForTest().bounds() },
+				{ "mix", r.panel->knobBoundsForTest(0) },
+				{ "gain", r.panel->knobBoundsForTest(1) },
+			};
+			if (mode == 1) {
+				block.emplace_back("playing", r.panel->playingBoxForTest().bounds());
+				block.emplace_back("position", r.panel->positionKnobForTest().bounds());
+			}
+			for (size_t i = 0; i < block.size(); ++i) {
+				for (size_t j = i + 1; j < block.size(); ++j) {
+					const visage::Bounds& a = block[i].second;
+					const visage::Bounds& b = block[j].second;
+					const bool apart = a.right() <= b.x() + 0.01f || b.right() <= a.x() + 0.01f || a.bottom() <= b.y() + 0.01f
+					                   || b.bottom() <= a.y() + 0.01f;
+					CAPTURE(block[i].first);
+					CAPTURE(block[j].first);
+					CHECK(apart);
+				}
+			}
+		}
+	}
 }

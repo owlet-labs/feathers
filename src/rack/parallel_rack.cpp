@@ -203,7 +203,11 @@ struct Rack::Lineup {
 	std::vector<Branch*> branches;
 };
 
-Rack::Rack() = default;
+namespace {
+std::atomic<uint64_t> g_rackSerial { 0 };
+} // namespace
+
+Rack::Rack() : serial_(g_rackSerial.fetch_add(1, std::memory_order_relaxed) + 1) {}
 
 Rack::~Rack() {
 	// The audio thread is done with this instance (the host destroys a device only after it stops running it).
@@ -1178,6 +1182,7 @@ void Rack::setFields(const float* fields, size_t present) {
 	view_ = whole(Param::View);
 	viewedChain_ = whole(Param::ViewedChain);
 	padsPage_ = whole(Param::PadsPage);
+	followPlayed_ = whole(Param::FollowPlayed);
 	const float playing = at(Param::Playing);
 	playing_ = std::isfinite(playing) ? static_cast<int>(std::lround(std::clamp(playing, 0.0f, 64.0f))) : 0;
 	position_ = std::isfinite(position) ? std::clamp(position, 0.0f, 1.0f) : 0.0f;
@@ -2433,6 +2438,7 @@ float Rack::fieldForTest(Param p) const noexcept {
 	case Param::View: return static_cast<float>(view_);
 	case Param::ViewedChain: return static_cast<float>(viewedChain_);
 	case Param::PadsPage: return static_cast<float>(padsPage_);
+	case Param::FollowPlayed: return static_cast<float>(followPlayed_);
 	case Param::Unused: return unusedStop_ ? 1.0f : 0.0f;
 	case Param::BandCount: return static_cast<float>(bandsWanted_ == 2 ? 0 : (bandsWanted_ == 3 ? 1 : 2));
 	case Param::Cut1:

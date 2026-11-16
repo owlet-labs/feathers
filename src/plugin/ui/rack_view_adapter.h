@@ -69,6 +69,8 @@ public:
 		DeviceControl* mode = nullptr;
 		DeviceControl* position = nullptr;
 		DeviceControl* gain = nullptr;
+		/// Follow Played Note (the window's chip); null where the surface has none.
+		DeviceControl* follow = nullptr;
 	};
 	RackViewAdapter(backplane::DeviceHost& host, DeviceInstanceId rack, Controls controls);
 
@@ -88,6 +90,9 @@ public:
 	bool macrosOpen() const override { return macrosOpen_; }
 	void setMacrosOpen(bool open) override { macrosOpen_ = open; }
 	RackKeyMask takeStruck() override;
+	RackStrikeKey strikeKey() const override;
+	bool followPlayed() const override;
+	device::Modulatable* followControl() override { return controls_.follow; }
 	bool canTrigger() const override { return host_.canPostNote(); }
 	bool trigger(int key, bool on, float velocity) override { return host_.postNote(key, on, velocity); }
 	device::Modulatable* kitLevel() override { return controls_.gain; }

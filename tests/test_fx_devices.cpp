@@ -2541,6 +2541,10 @@ std::vector<std::string> honestyExpected() {
 		// default on (round 3, 2026-09-27): the varied row lifts Chirp's pill too. `test_gui_widgets_devices`'
 		// "DISPERSER's pills" asserts both move the blend the engine reads.
 		"Disperser :: Disperser 2f On",
+		// THE ERODER'S IN LOOP moves the emphasis to after the feedback joins, so it changes the sound only with an emphasis AND a loop
+		// (Emphasis off zero, and Resonance, Loop or the Comb's own loop running); this sweep moves one control per arrangement and never
+		// has both. `test_fx_eroder`'s "In Loop" case asserts it differs exactly then, in all three engines.
+		"Eroder :: Eroder In Loop",
 		// RESONATE'S NOTE RELEASE decides what a NOTE-OFF does to its note's head (Gate stops it, Ring lets it ring on), so it
 		// is heard only with a note held and then let go while the string rings — and this fixture plays no notes.
 		// `test_fx_resonate`'s "Note Release Ring makes key length not matter" asserts both states on the output.

@@ -29,7 +29,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <numbers>
 #include <string_view>
 #include <utility>
@@ -1423,7 +1426,8 @@ TEST_CASE("the codec and the declarations") {
 	// THE FACE: three across (photographed at four — "CHARACTER" clipped and Gamma's label ran into
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1);
+	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -1558,10 +1562,10 @@ TEST_CASE("Dust is the declared engine, and its controls are gated to it as the 
 	};
 	const uint32_t dust = 1u << static_cast<uint32_t>(Mode::Dust);
 	const uint32_t rust = 1u << static_cast<uint32_t>(Mode::Rust);
-	// THE HEAD'S OWN: only Dust has a line to move and feed back round.
-	for (const Param p : { Param::Amount, Param::Resonance }) {
-		CHECK(gatedTo(p, dust));
-	}
+	// THE HEAD'S OWN: only Dust has a line to move.
+	CHECK(gatedTo(Param::Amount, dust));
+	// RESONANCE IS THE INNER LOOP, and Rust has one too (a delay of one period of Freq, `loops.h`).
+	CHECK(gatedTo(Param::Resonance, dust | rust));
 	// THE SHAKER'S: Dust moves a head with it, Rust multiplies by it.
 	for (const Param p : { Param::Freq, Param::Width, Param::Source, Param::Grit, Param::Stereo, Param::Track,
 	                       Param::Step, Param::Detune, Param::ModFold }) {
@@ -2579,55 +2583,65 @@ TEST_CASE("Drive: the stage's own Mix — 0 is the bits that went in, 1 is the s
 	}
 }
 
-TEST_CASE("Drive: Wreck's and Jag's feedback runs through the shaper, with the shaper's gain taken back out of the loop") {
-	for (const DriveMode type : { DriveMode::Wreck, DriveMode::Jag }) {
+TEST_CASE("Tap: Clean feeds back what the head read, Driven what the shaper made — for every Type — with the shaper's gain taken back out of the loop") {
+	for (const DriveMode type : kAllDrives) {
 		CAPTURE(static_cast<int>(type));
 		Settings s = declared();
 		s.resonance = 1.0f;
 		s.driveMode = type;
 		s.driveShape = 1.0f;
 		s.drive = 1.0f;
-		const DustDerived wreck = deriveDust(s, 60.0, kRate);
-		const double gain = driveSmallSignalGain(type, 16.0, 1.0f);
-		REQUIRE(gain > 1.0);
-		CHECK(std::abs(wreck.feedback - 0.9 / gain) < 1.0e-9);
-		// ANY OTHER TYPE LEAVES THE LINE'S FEEDBACK ALONE, as does the Type at no Drive.
-		s.driveMode = DriveMode::Fold;
+		const double gain = std::max(1.0, driveSmallSignalGain(type, 16.0, 1.0f));
+		// CLEAN IS THE LINE'S OWN FEEDBACK, whatever the Type; DRIVEN IS DIVIDED BY THE SHAPER'S SMALL-SIGNAL GAIN, never under one.
 		CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
-		s.driveMode = type;
+		s.tapDriven = true;
+		CHECK(std::abs(deriveDust(s, 60.0, kRate).feedback - 0.9 / gain) < 1.0e-7); // the stage's make-up is a float
+		if (type == DriveMode::Wreck || type == DriveMode::Jag) {
+			REQUIRE(gain > 1.0);
+		}
+		// AT NO DRIVE THE SHAPER IS NOT RUN, so there is nothing to divide by.
 		s.drive = 0.0f;
 		CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
 	}
 
-	// AND THE TAP IS ON THE FAR SIDE OF THE SHAPER IN WRECK, the near side in any other Type: frame by frame, what is
-	// fed back is what the shaper made, or what the head read.
-	for (const DriveMode mode : { DriveMode::Wreck, DriveMode::Jag, DriveMode::Fold, DriveMode::Crush }) {
-		CAPTURE(static_cast<int>(mode));
-		Eroder e;
-		e.prepare(kRate);
-		Settings t = dustStill();
-		t.resonance = 1.0f;
-		t.drive = 0.6f;
-		t.driveMode = mode;
-		e.setTarget(t);
-		int shaped = 0;
-		int raw = 0;
-		int differ = 0;
-		for (int i = 0; i < 2000; ++i) {
-			float l = 0.4f * static_cast<float>(std::sin(0.13 * i));
-			float r = l;
-			e.processStereo(&l, &r, 1);
-			const Dust& d = e.dustForTest();
-			shaped += d.lastTapForTest() == d.lastShapedForTest() ? 1 : 0;
-			raw += d.lastTapForTest() == d.lastReadForTest() ? 1 : 0;
-			differ += d.lastShapedForTest() != d.lastReadForTest() ? 1 : 0;
-		}
-		REQUIRE(differ > 1900); // the shaper is doing something, so the two sides are told apart
-		if (mode == DriveMode::Wreck || mode == DriveMode::Jag) {
-			CHECK(shaped == 2000);
-		}
-		else {
-			CHECK(raw == 2000);
+	// AND THE TAP IS ON THE FAR SIDE OF THE SHAPER WHEN DRIVEN, the near side when Clean: frame by frame, what is fed back
+	// is what the shaper made or what the head read, flushed.
+	for (const DriveMode mode : { DriveMode::Wreck, DriveMode::Jag, DriveMode::Fold, DriveMode::Soft, DriveMode::Crush,
+	                              DriveMode::Slew }) {
+		for (const bool driven : { false, true }) {
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(driven);
+			Eroder e;
+			e.prepare(kRate);
+			Settings t = dustStill();
+			t.resonance = 1.0f;
+			t.drive = 0.6f;
+			t.driveMode = mode;
+			t.tapDriven = driven;
+			e.setTarget(t);
+			int tapped = 0;
+			int differ = 0;
+			int fedBack = 0;
+			int counted = 0;
+			float previous = 0.0f;
+			for (int i = 0; i < 2000; ++i) {
+				float l = 0.4f * static_cast<float>(std::sin(0.13 * i));
+				float r = l;
+				e.processStereo(&l, &r, 1);
+				const Dust& d = e.dustForTest();
+				tapped += d.lastTapForTest() == (driven ? d.lastShapedForTest() : d.lastReadForTest()) ? 1 : 0;
+				differ += d.lastShapedForTest() != d.lastReadForTest() ? 1 : 0;
+				// THE NEXT FRAME'S SUM SAW THIS FRAME'S TAP (flushed; the limiter is clear of it under one).
+				if (i > 0 && std::abs(previous) <= 0.99f) {
+					++counted;
+					fedBack += d.lastFedBackForTest() == (std::abs(previous) < 1.0e-9f ? 0.0f : previous) ? 1 : 0;
+				}
+				previous = d.lastTapForTest();
+			}
+			REQUIRE(differ > 1000); // the shaper is doing something, so the two sides are told apart
+			CHECK(tapped == 2000);
+			REQUIRE(counted > 500);
+			CHECK(fedBack == counted);
 		}
 	}
 }
@@ -3461,7 +3475,7 @@ TEST_CASE("Detune runs the right side's sine above the left's; Mod Fold turns th
 TEST_CASE("Rust multiplies the signal by the shake: Rectify folds the carrier to one side, Bias lets the signal past, and there is no line") {
 	Settings s = declared();
 	s.mode = Mode::Rust;
-	s.resonance = 0.8f; // Dust's; Rust has nothing to feed back round
+	s.resonance = 0.0f; // at none of it Rust has no loop at all (its inner loop is `loops.h`'s)
 	const DustDerived d = deriveDust(s, 60.0, kRate);
 	CHECK(d.ring);
 	CHECK(d.feedback == 0.0);
@@ -3736,4 +3750,667 @@ TEST_CASE("Comb: Blend crossfades to the comb alone; HP Wet filters the wet afte
 	};
 	const bool inert = render(true) == render(false);
 	CHECK(inert);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE SHARED SECTION: EMPHASIS, SMEAR, TAP AND TWO LOOPS (`loops.h`), in every engine.                //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A NUMBER THE SUITE MEASURED, printed when FEATHERS_MEASURE is set (the bound beside it is set from it).
+void measured(const char* what, double value) {
+	if (std::getenv("FEATHERS_MEASURE") != nullptr) {
+		std::fprintf(stderr, "MEASURED %s = %.9g\n", what, value);
+	}
+}
+
+/// A RATE AT WHICH THE FIVE HUNDRED AND TWELVE HERTZ OF 2^9 IS A WHOLE NUMBER OF FRAMES: a period of 2^k hertz is exact.
+constexpr double kLoopRate = 32768.0;
+
+std::vector<float> renderAt(double rate, const Settings& s, const std::vector<float>& in, int block = 256,
+                            const device::NoteContext* note = nullptr) {
+	Eroder e;
+	e.prepare(rate);
+	if (note != nullptr) {
+		e.setNoteContext(*note);
+	}
+	e.setTarget(s);
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	for (size_t done = 0; done < l.size();) {
+		const size_t take = std::min<size_t>(l.size() - done, static_cast<size_t>(block));
+		e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+		done += take;
+	}
+	return l;
+}
+
+std::vector<float> impulseOf(size_t frames, float amplitude = 0.5f) {
+	std::vector<float> v(frames, 0.0f);
+	v[0] = amplitude;
+	return v;
+}
+
+/// ROOT-MEAN-SQUARE OF THE DIFFERENCE, over the root-mean-square of the reference.
+double relativeError(const std::vector<float>& a, const std::vector<float>& reference) {
+	double err = 0.0;
+	double ref = 0.0;
+	for (size_t i = 0; i < a.size(); ++i) {
+		const double d = static_cast<double>(a[i]) - static_cast<double>(reference[i]);
+		err += d * d;
+		ref += static_cast<double>(reference[i]) * static_cast<double>(reference[i]);
+	}
+	return std::sqrt(err / std::max(ref, 1.0e-30));
+}
+
+float peakOf(const std::vector<float>& v) {
+	float peak = 0.0f;
+	for (const float x : v) {
+		peak = std::max(peak, std::abs(x));
+	}
+	return peak;
+}
+
+/// RUST WITH THE MULTIPLIER OPEN (Bias at the top is a gain of exactly one), so it is the loops and nothing else.
+Settings rustPure() {
+	Settings s = declared();
+	s.mode = Mode::Rust;
+	s.rustBias = 1.0f;
+	s.mix = 1.0f;
+	s.freq = 10.0f; // 1024 Hz: 32 frames at kLoopRate
+	return s;
+}
+
+/// A TONE'S AMPLITUDE THROUGH A SETTING, after `settle` frames, at any rate.
+double toneThrough(const Settings& s, double hz, double rate, size_t frames, size_t settle) {
+	std::vector<float> in(frames + settle);
+	for (size_t i = 0; i < in.size(); ++i) {
+		in[i] = 0.3f * static_cast<float>(std::sin(2.0 * std::numbers::pi * hz * static_cast<double>(i) / rate));
+	}
+	const std::vector<float> out = renderAt(rate, s, in);
+	const std::vector<float> tail(out.begin() + static_cast<std::ptrdiff_t>(settle), out.end());
+	double re = 0.0;
+	double im = 0.0;
+	for (size_t i = 0; i < tail.size(); ++i) {
+		const double w = 2.0 * std::numbers::pi * hz * static_cast<double>(i + settle) / rate;
+		re += static_cast<double>(tail[i]) * std::cos(w);
+		im += static_cast<double>(tail[i]) * std::sin(w);
+	}
+	return 2.0 * std::sqrt(re * re + im * im) / static_cast<double>(tail.size());
+}
+
+/// EVERYTHING ON, for one engine and one Type (the cases that must be bounded, partition-proof and end in silence).
+Settings everythingOn(Mode mode, DriveMode type) {
+	Settings s = declared();
+	s.mode = mode;
+	s.mix = 0.7f;
+	s.freq = hertzToLog2(800.0);
+	s.emphAmount = 9.0f;
+	s.emphInLoop = true;
+	s.smear = 1.0f;
+	s.tapDriven = true;
+	s.resonance = 0.8f;
+	s.loop = 1.0f;
+	s.loopInterval = 7.0f;
+	s.drive = 1.0f;
+	s.driveMode = type;
+	s.driveShape = 0.7f;
+	return s;
+}
+
+} // namespace
+
+TEST_CASE("Shared section: eight declared controls, stored by their keys, and at the defaults no stage runs in any engine") {
+	struct Row {
+		Param param;
+		const char* key;
+		double min;
+		double max;
+		double def;
+	};
+	const Row rows[] = {
+		{ Param::EmphAmount, "eroder_emph_amount", -18.0, 18.0, 0.0 }, { Param::EmphShape, "eroder_emph_shape", 0.0, 1.0, 0.0 },
+		{ Param::EmphRestore, "eroder_emph_restore", 0.0, 1.0, 1.0 },  { Param::EmphInLoop, "eroder_emph_in_loop", 0.0, 1.0, 0.0 },
+		{ Param::Smear, "eroder_smear", 0.0, 1.0, 0.0 },               { Param::FbTap, "eroder_fb_tap", 0.0, 1.0, 0.0 },
+		{ Param::Loop, "eroder_loop", 0.0, 1.0, 0.0 },                 { Param::LoopInterval, "eroder_loop_interval", -24.0, 24.0, 0.0 },
+	};
+	REQUIRE(std::size(rows) == kSharedParamCount);
+	for (const Row& r : rows) {
+		const auto& d = kParamDescs[static_cast<size_t>(r.param)];
+		CAPTURE(r.key);
+		CHECK(std::string_view(d.key) == r.key);
+		CHECK(d.min == r.min);
+		CHECK(d.max == r.max);
+		CHECK(d.def == r.def);
+		CHECK(d.gateControl == -1); // every engine's
+	}
+	// THE AMOUNT, THE SMEAR, THE LOOP AND THE INTERVAL ARE MODULATABLE; the amount and the interval are centred.
+	for (const Param p : { Param::EmphAmount, Param::Smear, Param::Loop, Param::LoopInterval }) {
+		CHECK(kParamDescs[static_cast<size_t>(p)].modulatable);
+	}
+	CHECK(kParamDescs[static_cast<size_t>(Param::EmphAmount)].centred);
+	CHECK(kParamDescs[static_cast<size_t>(Param::LoopInterval)].centred);
+	CHECK(kParamDescs[static_cast<size_t>(Param::EmphShape)].names.size() == 2);
+	CHECK(kParamDescs[static_cast<size_t>(Param::FbTap)].names.size() == 2);
+
+	// THE CODEC CARRIES ALL EIGHT, and a short row from before them reads their defaults.
+	State st;
+	st.settings.emphAmount = -7.5f;
+	st.settings.emphBell = true;
+	st.settings.emphRestore = false;
+	st.settings.emphInLoop = true;
+	st.settings.smear = 0.4f;
+	st.settings.tapDriven = true;
+	st.settings.loop = 0.65f;
+	st.settings.loopInterval = -9.0f;
+	CHECK(stateOf(rowOf(st), static_cast<size_t>(Param::kCount)) == st);
+	const State old = stateOf(rowOf(st), static_cast<size_t>(Param::EmphAmount));
+	CHECK(old.settings.emphAmount == 0.0f);
+	CHECK(old.settings.emphRestore);
+	CHECK(old.settings.loop == 0.0f);
+	CHECK(Settings {} == declared());
+
+	// AT THE DEFAULTS NO STAGE OF THE SHARED SECTION IS RUN, in Dust, Rust or the Comb: the stages report not-run.
+	const std::vector<float> in = whiteInput(4800, 0.4f);
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb }) {
+		CAPTURE(static_cast<int>(mode));
+		Settings s = declared();
+		s.mode = mode;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l = in;
+		std::vector<float> r = in;
+		e.processStereo(l.data(), r.data(), static_cast<int>(l.size()));
+		const SharedSection& sh = mode == Mode::Comb ? e.combSharedForTest() : e.dustForTest().sharedForTest();
+		const LoopDerived& loops = mode == Mode::Comb ? e.combLoopsForTest() : e.dustForTest().derivedForTest().loops;
+		CHECK_FALSE(sh.emphOn());
+		CHECK_FALSE(sh.emphInLoop());
+		CHECK_FALSE(sh.smearOn());
+		CHECK_FALSE(sh.outerWanted());
+		CHECK_FALSE(sh.limitInner());
+		CHECK(sh.outerGainForTest() == 0.0f);
+		CHECK(loops.loopGain == 0.0);
+		CHECK(loops.tapDivisor == 1.0);
+		CHECK(loops.emphDivisor == 1.0);
+		CHECK_FALSE(sh.holdsSound());
+	}
+	// AND THE COMB'S INNER GAIN IS THE BANK'S, to the bit.
+	Settings c = defaults();
+	Eroder comb;
+	comb.prepare(kRate);
+	comb.setTarget(c);
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	comb.processStereo(l.data(), r.data(), static_cast<int>(l.size()));
+	CHECK(comb.combFeedbackGainForTest() == static_cast<float>(comb.derivedForTest().feedback));
+	CHECK(comb.combLoopsForTest().innerFeedback == comb.derivedForTest().feedback);
+}
+
+TEST_CASE("Emphasis: with no Drive and Restore on the pair cancels — Dust still to 1e-5; the Comb to what its moving head allows; Rust is bounded and differs") {
+	const std::vector<float> in = whiteInput(24000, 0.5f);
+	for (const bool bell : { false, true }) {
+		for (const float db : { 12.0f, -12.0f }) {
+			CAPTURE(bell);
+			CAPTURE(db);
+			Settings base = dustStill();
+			base.freq = hertzToLog2(1000.0);
+			base.emphBell = bell;
+			Settings with = base;
+			with.emphAmount = db;
+			const std::vector<float> a = renderAt(kRate, base, in);
+			const std::vector<float> b = renderAt(kRate, with, in);
+			const double err = relativeError(b, a);
+			measured("dust still emphasis cancel relative error", err);
+			CHECK(err < 1.0e-5);
+			// NON-VACUITY: with Restore off the emphasis is in the sound.
+			with.emphRestore = false;
+			CHECK(relativeError(renderAt(kRate, with, in), a) > 0.1);
+		}
+	}
+
+	// THE COMB: the head is shaken by noise, and a moving delay does not commute with a filter, so the pair cancels only to the
+	// shake's own size.
+	// WITH FOLLOW AT THE TOP AND A QUIET INPUT THE SHAKE IS NEARLY NONE (it rides the input's level), which is where the pair can be read.
+	std::vector<float> quiet = in;
+	for (float& v : quiet) {
+		v *= 0.002f;
+	}
+	Settings combBase = defaults();
+	combBase.follow = 1.0f;
+	Settings combWith = combBase;
+	combWith.emphAmount = 12.0f;
+	const std::vector<float> ca = renderAt(kRate, combBase, quiet);
+	const std::vector<float> cb = renderAt(kRate, combWith, quiet);
+	const double combErr = relativeError(cb, ca);
+	measured("comb emphasis cancel relative error", combErr);
+	CHECK(combErr < 0.01); // measured 0.0019
+	combWith.emphRestore = false;
+	const double combOff = relativeError(renderAt(kRate, combWith, quiet), ca);
+	measured("comb emphasis restore-off relative difference", combOff);
+	CHECK(combOff > 100.0 * combErr); // measured 1.17 against 0.0019
+
+	// RUST MOVES FREQUENCIES (a ring modulator), so a filter before it and its inverse after it are not a pair.
+	Settings rb = declared();
+	rb.mode = Mode::Rust;
+	Settings rw = rb;
+	rw.emphAmount = 12.0f;
+	const std::vector<float> ra = renderAt(kRate, rb, in);
+	const std::vector<float> rr = renderAt(kRate, rw, in);
+	CHECK(peakOf(rr) < 4.0f);
+	CHECK(relativeError(rr, ra) > 0.05);
+}
+
+TEST_CASE("Emphasis: with Drive up a tilt moves a tone's distortion the way it predicts — a low tone driven less under +12, more under -12") {
+	// A LOW TONE AND A HIGH ONE through Soft at Drive 0.8, the pivot between them. +12 dB cuts the low tone going in (by
+	// the tilt's response there) and Restore puts it back, so its third harmonic is what a quieter tone made: LOWER than
+	// at no emphasis; -12 lifts the low tone going in, and the harmonic comes up.
+	const double lo = 187.5; // whole cycles in a second at 48 kHz
+	const double hi = 3000.0;
+	const size_t frames = 48000;
+	std::vector<float> in(frames + 9600);
+	for (size_t i = 0; i < in.size(); ++i) {
+		const double t = static_cast<double>(i) / kRate;
+		in[i] = static_cast<float>(0.25 * std::sin(2.0 * std::numbers::pi * lo * t) + 0.25 * std::sin(2.0 * std::numbers::pi * hi * t));
+	}
+	const auto third = [&](float db) {
+		Settings s = dustStill();
+		s.freq = hertzToLog2(1000.0);
+		s.drive = 0.8f;
+		s.driveMode = DriveMode::Soft;
+		s.emphAmount = db;
+		const std::vector<float> out = renderAt(kRate, s, in);
+		const std::vector<float> tail(out.begin() + 9600, out.end());
+		return dbOf(toneAt(tail, 3.0 * lo) / toneAt(tail, lo));
+	};
+	const double flat = third(0.0f);
+	const double up = third(12.0f);
+	const double down = third(-12.0f);
+	measured("third harmonic of the low tone, no emphasis, dB re fundamental", flat);
+	measured("third harmonic of the low tone, +12 dB tilt", up);
+	measured("third harmonic of the low tone, -12 dB tilt", down);
+	// THE SIGN, AND A SIZE: half of what was measured (the numbers are in the report).
+	// MEASURED: -39.0 flat, -64.8 at +12 (25.8 dB down), -5.3 at -12 (33.7 dB up). The bounds are half of each.
+	CHECK(up < flat - 12.9);
+	CHECK(down > flat + 16.8);
+}
+
+TEST_CASE("Emphasis: with Restore off the response is the emphasis' own, restated — the tilt's shelf and the bell's peak") {
+	const double rate = kRate;
+	Settings s = dustStill();
+	s.freq = hertzToLog2(1000.0);
+	s.emphRestore = false;
+	const auto gainDb = [&](const Settings& t, double hz) {
+		return dbOf(toneThrough(t, hz, rate, 48000, 9600) / 0.3);
+	};
+	// THE TILT: H(s) = (g s + 1) / (s + g), g = 10^(dB / 20), s = j tan(pi f / rate) / tan(pi pivot / rate): unity at the pivot.
+	const auto tiltDb = [&](double db, double hz) {
+		const double g = std::pow(10.0, db / 20.0);
+		const std::complex<double> sn(0.0, std::tan(std::numbers::pi * hz / rate) / std::tan(std::numbers::pi * 1000.0 / rate));
+		return 20.0 * std::log10(std::abs((g * sn + 1.0) / (sn + g)));
+	};
+	for (const float db : { 12.0f, -9.0f }) {
+		s.emphAmount = db;
+		s.emphBell = false;
+		for (const double hz : { 125.0, 500.0, 1000.0, 2000.0, 6000.0 }) {
+			CAPTURE(db);
+			CAPTURE(hz);
+			CHECK(std::abs(gainDb(s, hz) - tiltDb(static_cast<double>(db), hz)) < 0.05);
+		}
+		CHECK(std::abs(gainDb(s, 1000.0)) < 0.05); // unity at the pivot
+	}
+	// THE BELL: its gain at the centre is exactly the amount, and a band far away is left alone; its width is Width's, in octaves.
+	s.emphBell = true;
+	s.emphAmount = 12.0f;
+	for (const float width : { 0.0f, 0.5f, 1.0f }) {
+		s.width = width;
+		CAPTURE(width);
+		CHECK(std::abs(gainDb(s, 1000.0) - 12.0) < 0.1);
+		CHECK(std::abs(gainDb(s, 60.0)) < 0.5);
+		// BETWEEN THE HALF-GAIN POINTS: the octaves the control maps to, at one end of the response.
+		const double octaves = SharedSection::emphasisWidthOctaves(width);
+		CHECK(octaves >= kEmphasisWidthOctavesMin - 1.0e-12);
+		CHECK(octaves <= kEmphasisWidthOctavesMax + 1.0e-12);
+		const double edge = 1000.0 * std::pow(2.0, octaves * 0.5);
+		if (edge < 20000.0) {
+			CHECK(std::abs(gainDb(s, edge) - 6.0) < 1.0); // half the gain in dB, near the half-gain point
+		}
+	}
+	CHECK(SharedSection::emphasisWidthOctaves(0.0f) == doctest::Approx(0.25));
+	CHECK(SharedSection::emphasisWidthOctaves(1.0f) == doctest::Approx(3.0));
+}
+
+TEST_CASE("Smear: not run at none of it; at all of it the level is unchanged to 0.05 dB and a square's corners come apart; its centre follows Freq") {
+	Settings s = dustStill();
+	s.freq = hertzToLog2(1000.0);
+	s.smear = 0.0f;
+	{
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l = whiteInput(512, 0.3f);
+		std::vector<float> r = l;
+		e.processStereo(l.data(), r.data(), 512);
+		CHECK_FALSE(e.dustForTest().sharedForTest().smearOn());
+	}
+	Settings smeared = s;
+	smeared.smear = 1.0f;
+	for (const double hz : { 200.0, 1000.0, 3000.0, 8000.0 }) {
+		CAPTURE(hz);
+		const double flat = toneThrough(s, hz, kRate, 48000, 48000);
+		const double with = toneThrough(smeared, hz, kRate, 48000, 48000);
+		CHECK(std::abs(dbOf(with / flat)) < 0.05);
+	}
+
+	// A SQUARE WAVE'S CREST FACTOR RISES.
+	std::vector<float> square(96000);
+	for (size_t i = 0; i < square.size(); ++i) {
+		square[i] = (static_cast<double>(i % 480) < 240.0) ? 0.4f : -0.4f; // 100 Hz
+	}
+	const auto crest = [&](const Settings& t) {
+		const std::vector<float> out = renderAt(kRate, t, square);
+		const std::vector<float> tail(out.begin() + 48000, out.end());
+		return static_cast<double>(peakOf(tail)) / rmsOf(tail);
+	};
+	const double crestFlat = crest(s);
+	const double crestSmeared = crest(smeared);
+	measured("square crest factor, no smear", crestFlat);
+	measured("square crest factor, smear 1", crestSmeared);
+	CHECK(crestSmeared > crestFlat * 1.05);
+
+	// THE CENTRE FOLLOWS FREQ: the chain's group delay at its centre is 1 / Freq, so an octave up halves it — by the knob, and by Track.
+	const auto delayAt = [&](float freqLog2, bool track, float note) {
+		Settings t = smeared;
+		t.freq = freqLog2;
+		t.track = track;
+		Eroder e;
+		e.prepare(kRate);
+		e.setNoteContext({ note, true });
+		e.setTarget(t);
+		std::vector<float> l(64, 0.0f);
+		std::vector<float> r = l;
+		e.processStereo(l.data(), r.data(), 64);
+		return e.dustForTest().sharedForTest().smearForTest().delayAtCentre();
+	};
+	const double d500 = delayAt(hertzToLog2(500.0), false, 60.0f);
+	const double d1000 = delayAt(hertzToLog2(1000.0), false, 60.0f);
+	const double d2000 = delayAt(hertzToLog2(2000.0), false, 60.0f);
+	measured("smear delay at centre, 500 Hz, frames", d500);
+	CHECK(d500 / d1000 == doctest::Approx(2.0).epsilon(0.02));
+	CHECK(d1000 / d2000 == doctest::Approx(2.0).epsilon(0.02));
+	const double tracked = delayAt(hertzToLog2(1000.0), true, 72.0f); // an octave up the keyboard
+	CHECK(tracked / d1000 == doctest::Approx(0.5).epsilon(0.02));
+
+	// THE TUNED DELAYS GIVE UP THE SMEAR'S DELAY, never going under two frames — and the chain's delay at its centre is over a period
+	// at the gentlest smear, so they all go to the floor: stated, not hoped.
+	Settings rust = rustPure();
+	rust.resonance = 0.5f;
+	rust.loop = 0.5f;
+	rust.smear = 0.3f;
+	Eroder e;
+	e.prepare(kLoopRate);
+	e.setTarget(rust);
+	std::vector<float> l(64, 0.0f);
+	std::vector<float> r = l;
+	e.processStereo(l.data(), r.data(), 64);
+	const SharedSection& sh = e.dustForTest().sharedForTest();
+	const double smearDelay = sh.smearForTest().delayAtCentre();
+	CHECK(smearDelay > 0.0);
+	CHECK(sh.innerFramesForTest() == std::max(2.0, 32.0 - smearDelay));
+	CHECK(sh.outerFramesForTest() == std::max(2.0, 32.0 - smearDelay));
+	rust.smear = 0.0f;
+	Eroder e2;
+	e2.prepare(kLoopRate);
+	e2.setTarget(rust);
+	e2.processStereo(l.data(), r.data(), 64);
+	CHECK(e2.dustForTest().sharedForTest().innerFramesForTest() == doctest::Approx(32.0));
+	CHECK(e2.dustForTest().sharedForTest().outerFramesForTest() == doctest::Approx(32.0));
+}
+
+TEST_CASE("Rust's inner loop: a comb at Freq — an impulse returns after the period at the gain, tracked or not") {
+	for (const bool track : { false, true }) {
+		CAPTURE(track);
+		Settings s = rustPure();
+		s.resonance = 0.6f;
+		s.track = track;
+		const double fb = 0.6 * kDustFeedbackCeiling;
+		const double wetGain = std::sqrt(1.0 - fb * fb);
+		const size_t period = track ? 16u : 32u; // an octave up the keyboard halves the period
+		const device::NoteContext note { track ? 72.0f : 60.0f, true };
+		const std::vector<float> out = renderAt(kLoopRate, s, impulseOf(1024), 256, &note);
+		for (size_t n = 0; n < 12 * period; ++n) {
+			const bool on = n % period == 0;
+			const double want = on ? 0.5 * wetGain * std::pow(fb, static_cast<double>(n / period)) : 0.0;
+			CAPTURE(n);
+			CHECK(std::abs(static_cast<double>(out[n]) - want) < 1.0e-6);
+		}
+	}
+	// A NEGATIVE RESONANCE INVERTS EACH RETURN.
+	Settings s = rustPure();
+	s.resonance = -0.5f;
+	const std::vector<float> out = renderAt(kLoopRate, s, impulseOf(256));
+	const double fb = 0.5 * kDustFeedbackCeiling;
+	CHECK(std::abs(static_cast<double>(out[32]) + 0.5 * std::sqrt(1.0 - fb * fb) * fb) < 1.0e-6);
+	// AND AT NO RESONANCE THERE IS NO LOOP: the delay is not written, and the output is the input.
+	s.resonance = 0.0f;
+	const std::vector<float> plain = renderAt(kLoopRate, s, impulseOf(256));
+	for (size_t n = 1; n < 256; ++n) {
+		CHECK(plain[n] == 0.0f);
+	}
+	CHECK(plain[0] == 0.5f);
+}
+
+TEST_CASE("Outer loop: an impulse returns after the period times 2^(-interval / 12) at the restated gain, at every Interval, tracked or not") {
+	for (const bool track : { false, true }) {
+		for (const float interval : { 0.0f, 7.0f, -12.0f }) {
+			CAPTURE(track);
+			CAPTURE(interval);
+			Settings s = rustPure();
+			s.loop = 0.8f;
+			s.loopInterval = interval;
+			s.track = track;
+			const device::NoteContext note { track ? 72.0f : 60.0f, true };
+			const double period = track ? 16.0 : 32.0;
+			const double delay = period * std::pow(2.0, -static_cast<double>(interval) / 12.0);
+			const double gain = 0.8 * kLoopMaxGain; // no inner loop, no Drive: nothing to divide by
+			const std::vector<float> out = renderAt(kLoopRate, s, impulseOf(2048), 256, &note);
+			// THE RETURN LANDS BETWEEN TWO FRAMES BY THE FRACTION; each time round it comes back again.
+			std::vector<double> want(out.size(), 0.0);
+			want[0] = 0.5;
+			for (size_t n = 0; n + 1 < want.size(); ++n) {
+				if (want[n] == 0.0) {
+					continue;
+				}
+				// A RETURN IS (1 - f) AT floor(delay) AND f AT THE FRAME AFTER
+				const double whole = std::floor(delay);
+				const double frac = delay - whole;
+				if (n + static_cast<size_t>(whole) + 1 < want.size()) {
+					want[n + static_cast<size_t>(whole)] += want[n] * gain * (1.0 - frac);
+					want[n + static_cast<size_t>(whole) + 1] += want[n] * gain * frac;
+				}
+			}
+			// ONLY THE FIRST RETURN IS A CLEAN STATEMENT (the second is the first's own spread): check up to it.
+			const auto first = static_cast<size_t>(std::floor(delay));
+			CHECK(std::abs(static_cast<double>(out[first]) - 0.5 * gain * (1.0 - (delay - std::floor(delay)))) < 1.0e-6);
+			CHECK(std::abs(static_cast<double>(out[first + 1]) - 0.5 * gain * (delay - std::floor(delay))) < 1.0e-6);
+			for (size_t n = 1; n < first; ++n) {
+				CHECK(out[n] == 0.0f);
+			}
+			// AND THE WHOLE RUN FOLLOWS THE RESTATED RECURRENCE.
+			double worst = 0.0;
+			for (size_t n = 0; n < 600; ++n) {
+				worst = std::max(worst, std::abs(static_cast<double>(out[n]) - want[n]));
+			}
+			CHECK(worst < 1.0e-5);
+		}
+	}
+	// A DUST WITH THE HEAD AT REST ADDS ITS OWN TWO FRAMES: the impulse is read at the head's margin, taken after the shaper,
+	// returned a period later, and read at the margin again — returns at 2, 2 + (32 + 2), …, each at the gain.
+	Settings d = dustStill();
+	d.freq = 10.0f;
+	d.mix = 1.0f;
+	d.loop = 0.7f;
+	const std::vector<float> dout = renderAt(kLoopRate, d, impulseOf(1024));
+	for (size_t k = 0; k < 6; ++k) {
+		CAPTURE(k);
+		CHECK(std::abs(static_cast<double>(dout[2 + 34 * k]) - 0.5 * std::pow(0.7 * kLoopMaxGain, static_cast<double>(k))) < 1.0e-6);
+	}
+}
+
+TEST_CASE("Outer loop: the limiter holds what is fed back at or under full scale with Drive hard and Loop at the top") {
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb }) {
+		CAPTURE(static_cast<int>(mode));
+		Settings s = declared();
+		s.mode = mode;
+		s.mix = 1.0f;
+		s.freq = hertzToLog2(800.0);
+		s.drive = 0.3f;
+		s.driveMode = DriveMode::Decimate; // a gain of one: nothing divides the loop, so the limiter is what holds it
+		s.loop = 1.0f;
+		const std::vector<float> in = whiteInput(24000, 0.9f);
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l = in;
+		std::vector<float> r = in;
+		float worst = 0.0f;
+		uint64_t limited = 0;
+		for (size_t done = 0; done < l.size(); done += 64) {
+			e.processStereo(l.data() + done, r.data() + done, 64);
+			const SharedSection& sh = mode == Mode::Comb ? e.combSharedForTest() : e.dustForTest().sharedForTest();
+			worst = std::max(worst, sh.lastOuterPeakForTest());
+			limited = sh.limitedFramesForTest();
+		}
+		const float threshold = mode == Mode::Comb ? 1.0f / static_cast<float>(kHeadroom) : 1.0f;
+		measured("outer limiter frames acted on", static_cast<double>(limited));
+		CHECK(worst <= threshold * 1.000001f);
+		CHECK(limited > 100); // NON-VACUITY: the limiter acted
+		CHECK(peakOf(l) < 16.0f);
+	}
+}
+
+TEST_CASE("In Loop: it differs from off only with an emphasis and a loop; on, a +12 dB tilt and Loop at the top stay bounded and the loop gain is the restated divided value") {
+	const std::vector<float> in = whiteInput(24000, 0.6f);
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb }) {
+		CAPTURE(static_cast<int>(mode));
+		Settings s = declared();
+		s.mode = mode;
+		s.mix = 0.7f;
+		s.freq = hertzToLog2(800.0);
+		s.resonance = 0.5f;
+		s.drive = 0.5f;
+		const auto same = [&](Settings a) {
+			Settings b = a;
+			b.emphInLoop = true;
+			return renderAt(kRate, a, in) == renderAt(kRate, b, in);
+		};
+		// NO EMPHASIS, OR NO LOOP: In Loop has nothing to move.
+		Settings noEmph = s;
+		noEmph.loop = 1.0f;
+		CHECK(same(noEmph));
+		Settings noLoop = s;
+		noLoop.emphAmount = 6.0f;
+		noLoop.resonance = 0.0f;
+		if (mode != Mode::Comb) {
+			CHECK(same(noLoop)); // the Comb's own loop is always there, so for it an emphasis alone is a loop
+		}
+		// BOTH: it differs (for the Comb its own loop is the inner one, so an emphasis alone is enough).
+		Settings both = s;
+		both.emphAmount = 6.0f;
+		both.loop = 0.6f;
+		CHECK_FALSE(same(both));
+
+		// +12 dB, LOOP AT THE TOP, 2 s of noise: bounded.
+		Settings hot = s;
+		hot.emphAmount = 12.0f;
+		hot.emphInLoop = true;
+		hot.loop = 1.0f;
+		hot.tapDriven = true;
+		const std::vector<float> noise = whiteInput(96000, 0.8f);
+		const std::vector<float> out = renderAt(kRate, hot, noise);
+		measured("in loop +12 dB, loop 1, peak over 2 s", peakOf(out));
+		CHECK(peakOf(out) < 6.0f);
+		CHECK(peakOf(out) > 0.05f);
+
+		// THE LOOP GAIN IS THE RESTATED DIVIDED VALUE: loop * 0.98 * (1 - |inner|) / max(1, drive gain) / emphasis peak.
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(hot);
+		std::vector<float> l = in;
+		std::vector<float> r = in;
+		e.processStereo(l.data(), r.data(), 4800);
+		const LoopDerived& loops = mode == Mode::Comb ? e.combLoopsForTest() : e.dustForTest().derivedForTest().loops;
+		const SharedSection& sh = mode == Mode::Comb ? e.combSharedForTest() : e.dustForTest().sharedForTest();
+		const double driveGain = std::max(1.0, driveSmallSignalGain(DriveMode::Soft, std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * 0.5), 0.0f));
+		const double peak = std::pow(10.0, 12.0 / 20.0);
+		const double rawInner = mode == Mode::Comb ? e.derivedForTest().feedback : 0.5 * kDustFeedbackCeiling;
+		const double inner = rawInner / driveGain / peak; // Driven tap, and the emphasis in the loop
+		CHECK(std::abs(loops.innerFeedback - inner) < 1.0e-6);
+		const double want = 1.0 * kLoopMaxGain * (1.0 - std::abs(rawInner)) / driveGain / peak;
+		CHECK(std::abs(loops.loopGain - want) < 1.0e-6);
+		CHECK(std::abs(static_cast<double>(sh.outerGainForTest()) - want) < 1.0e-6);
+		CHECK(loops.emphDivisor == doctest::Approx(peak));
+		// A BELL THAT CUTS DOES NOT DIVIDE.
+		Settings cut = hot;
+		cut.emphBell = true;
+		cut.emphAmount = -12.0f;
+		CHECK(emphasisPeakGain(cut) == 1.0);
+		cut.emphBell = false;
+		CHECK(emphasisPeakGain(cut) == doctest::Approx(peak));
+	}
+}
+
+TEST_CASE("Everything on, in every engine and four Types: bounded, the same at any partition while a control travels, and the tail ends in exact silence") {
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb }) {
+		for (const DriveMode type : { DriveMode::Soft, DriveMode::Fold, DriveMode::Wreck, DriveMode::Slew }) {
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(static_cast<int>(type));
+			const Settings on = everythingOn(mode, type);
+			Settings quieter = on;
+			quieter.loop = 0.4f;
+			quieter.smear = 0.3f;
+			quieter.emphAmount = -8.0f;
+			const std::vector<float> noise = whiteInput(24000, 0.9f);
+			const size_t total = 24000 + 3 * 48000;
+			const auto render = [&](int block) {
+				Eroder e;
+				e.prepare(kRate);
+				e.setTarget(on);
+				std::vector<float> l = noise;
+				l.resize(total, 0.0f);
+				std::vector<float> r = l;
+				// THE CONTROLS MOVE AT FIXED FRAMES, so the render is the same whatever the blocks.
+				const size_t switchAt = 8000;
+				size_t done = 0;
+				while (done < total) {
+					size_t take = std::min<size_t>(total - done, static_cast<size_t>(block));
+					if (done < switchAt) {
+						take = std::min(take, switchAt - done);
+					}
+					if (done == switchAt) {
+						e.setTarget(quieter);
+					}
+					e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+					done += take;
+				}
+				return l;
+			};
+			const std::vector<float> whole = render(4096);
+			CHECK(render(1) == whole);
+			CHECK(render(37) == whole);
+			float peak = 0.0f;
+			for (const float v : whole) {
+				REQUIRE(std::isfinite(v));
+				peak = std::max(peak, std::abs(v));
+			}
+			CHECK(peak < 8.0f);
+			CHECK(peak > 0.05f);
+			bool silent = true;
+			for (size_t i = whole.size() - 24000; i < whole.size(); ++i) {
+				silent = silent && whole[i] == 0.0f;
+			}
+			CHECK(silent);
+		}
+	}
 }

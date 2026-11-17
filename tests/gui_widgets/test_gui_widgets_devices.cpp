@@ -24987,14 +24987,20 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 	// THE TABLE, RESTATED BY HAND FROM THE PLAN (Task 7) — which mode reads which control. Checked
 	// against the card AND against the descriptor's gates, so a card and a descriptor that drifted
 	// together would still be caught by the first.
-	const std::array<cl::Param, 6> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback,
-		                                   cl::Param::Grit, cl::Param::Depth, cl::Param::Bits };
-	const std::array<std::set<cl::Param>, 5> expected {
+	const std::array<cl::Param, 7> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
+		                                   cl::Param::Depth, cl::Param::Bits, cl::Param::Shape };
+	const std::array<std::set<cl::Param>, 11> expected {
 		std::set<cl::Param> { cl::Param::Knee },                                         // Soft
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback },   // Texture
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Grit },                        // Grit
 		std::set<cl::Param> { cl::Param::Depth },                                        // Fold
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Bits },                        // Bits
+		std::set<cl::Param> { cl::Param::Shape },                                        // Tube
+		std::set<cl::Param> { cl::Param::Shape },                                        // Jag
+		std::set<cl::Param> { cl::Param::Shape },                                        // Lean
+		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch
+		std::set<cl::Param> { cl::Param::Shape },                                        // Slew
+		std::set<cl::Param> { cl::Param::Shape },                                        // Lopside
 	};
 	REQUIRE(expected.size() == static_cast<size_t>(cl::Mode::kCount));
 
@@ -25107,6 +25113,14 @@ TEST_CASE("CLIP's mode controls close up: Fold's Depth takes the first cell, Bit
 	CHECK(knee->x() == doctest::Approx(cell0));
 	// THE NEXT CELL, LESS NOTHING: Freq, Foldback, Grit and Depth are all hidden and took no room.
 	CHECK(bits->x() == doctest::Approx(knee->x() + knee->width() + ui::ClipCard::kBitsInset));
+
+	// THE ERODER'S SIX: Shape is the row's one knob, in the first cell, in each of them.
+	for (const cl::Mode mode : { cl::Mode::Tube, cl::Mode::Lean, cl::Mode::Lopside }) {
+		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
+		(void)card->updateContent();
+		REQUIRE(card->widgetForTest(cl::Param::Shape)->isVisible());
+		CHECK(card->widgetForTest(cl::Param::Shape)->x() == doctest::Approx(cell0));
+	}
 }
 
 TEST_CASE("a dynamics card whose readings stop being published repaints to no signal") {

@@ -36,10 +36,10 @@ constexpr std::array<const char*, 3> kGlobalCaptions { "Drive", "Ceiling", "Outp
 
 /// ROW 3 — THE MODE KNOBS, IN FLOW ORDER. Each mode's live subset reads left to right with the hidden
 /// ones skipped; Bits' segmented control follows them (`layOut`).
-constexpr std::array<cl::Param, 5> kModeKnobs {
-	cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit, cl::Param::Depth,
+constexpr std::array<cl::Param, 6> kModeKnobs {
+	cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit, cl::Param::Depth, cl::Param::Shape,
 };
-constexpr std::array<const char*, 5> kModeCaptions { "Knee", "Freq", "Foldback", "Grit", "Depth" };
+constexpr std::array<const char*, 6> kModeCaptions { "Knee", "Freq", "Foldback", "Grit", "Depth", "Shape" };
 
 /// HOW MANY CELLS BITS' SEGMENTED CONTROL TAKES — "1 bit | 2 bit" does not fit one knob's width.
 constexpr size_t kBitsCells = 2;
@@ -62,7 +62,7 @@ ClipCard::ClipCard(backplane::DeviceHost& host, WidgetRegistry& registry, Device
 	for (size_t i = 0; i < kModeKnobs.size(); ++i) {
 		addKnob(kModeKnobs[i], kModeCaptions[i]);
 	}
-	// FIVE NAMED MODES: a box whose menu shows them all before one is applied.
+	// ELEVEN NAMED MODES: a box whose menu shows them all before one is applied (too many for a segmented control).
 	mode_ = std::make_unique<ValueBox>(control(cl::Param::Mode), "Mode");
 	addChild(mode_.get());
 	// TWO STATES, SO A CHIP. Its names are Off/4x rather than Off/On, so it prints the live one.

@@ -24,11 +24,15 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <functional>
 #include <limits>
 #include <numbers>
 #include <set>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -260,6 +264,14 @@ struct Noise {
 
 constexpr clip::Mode kModes[] = { clip::Mode::Soft, clip::Mode::Texture, clip::Mode::Grit, clip::Mode::Fold,
 	                              clip::Mode::Bits };
+
+/// THE ERODER'S SIX, appended after Bits, and all eleven.
+constexpr clip::Mode kNewModes[] = { clip::Mode::Tube,   clip::Mode::Jag,  clip::Mode::Lean,
+	                                 clip::Mode::Paunch, clip::Mode::Slew, clip::Mode::Lopside };
+constexpr clip::Mode kAllModes[] = { clip::Mode::Soft,  clip::Mode::Texture, clip::Mode::Grit,
+	                                 clip::Mode::Fold,  clip::Mode::Bits,    clip::Mode::Tube,
+	                                 clip::Mode::Jag,   clip::Mode::Lean,    clip::Mode::Paunch,
+	                                 clip::Mode::Slew,  clip::Mode::Lopside };
 
 /// THE WORST |y| OVER COMP'S CASE-3 SIGNALS (full-scale 50 Hz square, 1 kHz sine, bursts of random
 /// full-scale samples), a second each — one number per signal.
@@ -573,7 +585,7 @@ TEST_CASE("Texture's high-pass corner is where Freq says, at the rate it runs") 
 TEST_CASE("one NaN or inf sample does not latch in any mode") {
 	const float nan = std::numeric_limits<float>::quiet_NaN();
 	const float inf = std::numeric_limits<float>::infinity();
-	for (const clip::Mode mode : kModes) {
+	for (const clip::Mode mode : kAllModes) {
 		for (const float bad : { nan, inf, 1e30f }) {
 			CAPTURE(static_cast<int>(mode));
 			CAPTURE(bad);
@@ -604,7 +616,7 @@ TEST_CASE("one NaN or inf sample does not latch in any mode") {
 	}
 	// AND A FINITE SAMPLE THAT OVERFLOWS THE GAIN: 3e38 through +24 dB of drive over a -24 dB ceiling is
 	// inf in the multiply. Unclamped, that inf entered the upsampler and latched it at NaN for good.
-	for (const clip::Mode mode : kModes) {
+	for (const clip::Mode mode : kAllModes) {
 		CAPTURE(static_cast<int>(mode));
 		clip::Settings s;
 		s.mode = static_cast<int>(mode);
@@ -636,7 +648,7 @@ TEST_CASE("one NaN or inf sample does not latch in any mode") {
 }
 
 TEST_CASE("partition does not matter — every mode, oversampled, through a disable and re-enable") {
-	for (const clip::Mode mode : kModes) {
+	for (const clip::Mode mode : kAllModes) {
 		CAPTURE(static_cast<int>(mode));
 		clip::Settings on;
 		on.mode = static_cast<int>(mode);
@@ -685,11 +697,13 @@ TEST_CASE("partition does not matter — every mode, oversampled, through a disa
 TEST_CASE("after a burst the tail reaches exact silence, without a denormal guard") {
 	// THE HALFBAND TAILS PARK IN THE DENORMALS, so before `kRestLevel` this never reached zero. No
 	// DenormalGuard here, on purpose: this is the arithmetic a host that sets no FTZ gets.
-	for (const clip::Mode mode : kModes) {
+	for (const clip::Mode mode : kAllModes) {
 		CAPTURE(static_cast<int>(mode));
 		clip::Settings s;
 		s.mode = static_cast<int>(mode);
-		s.driveDb = 24.0f;
+		// THE SLEWS TAKE THEIR RATE FROM DRIVE: at +24 dB they are a 50 Hz limiter and would barely move a 440 Hz sine.
+		const bool slews = mode == clip::Mode::Slew || mode == clip::Mode::Lopside;
+		s.driveDb = slews ? -12.0f : 24.0f;
 		Instance dev;
 		dev.set(s);
 		auto l = sine(512, 440.0, 0.8), r = l;
@@ -709,7 +723,10 @@ TEST_CASE("after a burst the tail reaches exact silence, without a denormal guar
 		                << " after the silence began");
 		// EXACT SILENCE WITHIN 60 ms: the rest engages at 50 ms of zero input (the tail is far under
 		// -180 dBFS by then), and nothing after it is non-zero.
-		CHECK(lastNonZero < 2880);
+		// **TUBE AND LEAN ARE THE EXCEPTION**: they leave a standing offset that the Eroder's 10 Hz one-pole takes out, and
+		// that offset's discharge is the tail (16 ms per time constant, so -180 dBFS is reached by ~0.3 s, and then exactly 0).
+		const bool offsetModes = mode == clip::Mode::Tube || mode == clip::Mode::Lean;
+		CHECK(lastNonZero < (offsetModes ? 24000 : 2880));
 	}
 }
 
@@ -1026,4 +1043,288 @@ TEST_CASE("NR: the declared latency is the oversampler's measured delay — 6 sa
 		}
 		CHECK(latency(nullptr, nullptr, 0, rate) == clip::kOversampleLatency);
 	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE FIVE ORIGINAL MODES, PINNED BEFORE THE ERODER'S SIX WERE ADDED                              //
+//------------------------------------------------------------------------------------------------//
+
+TEST_CASE("the five original modes render the bits they rendered before the Eroder's six were added") {
+	// A hash of each mode's output (both channels, FNV-1a over the float bits), taken from the build BEFORE the
+	// engine was touched, at settings that exercise the knee, the oversampler and the per-mode controls.
+	constexpr std::array<uint64_t, 10> kPinned = {
+	    0x6782e28deccb3d98ull, 0x0d0a06f7b0cb7214ull, 0xeb78bb3329a14570ull, 0xe4c08bfd13865d54ull, 0x77d99434f75eff39ull, 0x12162a28e53eb1a8ull, 0xaea451dd5955dc5eull, 0x7490bfd6b4e3b421ull, 0x1346253a910caa15ull, 0x5c3ceb5c89eb2cf2ull };
+	size_t at = 0;
+	for (const bool os : { true, false }) {
+		for (const clip::Mode mode : kModes) {
+			clip::Settings s;
+			s.mode = static_cast<int>(mode);
+			s.driveDb = 12.0f;
+			s.ceilingDb = -3.0f;
+			s.outputDb = 1.5f;
+			s.oversample = os;
+			s.knee = 0.3f;
+			s.foldback = 0.7f;
+			s.grit = 0.6f;
+			s.depth = 0.8f;
+			s.bits = 1;
+			Instance dev;
+			dev.set(s);
+			Noise noise;
+			std::vector<float> l(4800), r(4800);
+			for (size_t i = 0; i < l.size(); ++i) {
+				l[i] = 0.6f * noise.next() + 0.4f * static_cast<float>(std::sin(0.05 * static_cast<double>(i)));
+				r[i] = 0.5f * noise.next();
+			}
+			for (size_t done = 0; done < l.size(); done += 480) {
+				dev.process(l.data() + done, r.data() + done, 480);
+			}
+			uint64_t h = 1469598103934665603ull;
+			for (const std::vector<float>* ch : { &l, &r }) {
+				for (const float v : *ch) {
+					uint32_t bits = 0;
+					std::memcpy(&bits, &v, sizeof(bits));
+					h = (h ^ bits) * 1099511628211ull;
+				}
+			}
+			CAPTURE(os);
+			CAPTURE(static_cast<int>(mode));
+			CHECK(h == kPinned[at]);
+			++at;
+		}
+	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE ERODER'S SIX                                                                                //
+//------------------------------------------------------------------------------------------------//
+
+TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the modes keep their order") {
+	const auto& d = clip::kParamDescs[static_cast<size_t>(clip::Param::Shape)];
+	CHECK(std::string(d.key) == "clip_shape");
+	CHECK(d.def == 0.0);
+	CHECK(d.max == 1.0);
+	for (const clip::Mode mode : kAllModes) {
+		const bool expected = mode >= clip::Mode::Tube;
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
+	}
+	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Paunch", "Slew", "Lopside" };
+	for (size_t i = 0; i < std::size(appended); ++i) {
+		CHECK(std::string(clip::kModeNames[i]) == appended[i]);
+	}
+	CHECK(clip::kParamDescs[static_cast<size_t>(clip::Param::Mode)].max == 10.0);
+}
+
+TEST_CASE("the Eroder's six never exceed the ceiling: strict with Oversample off, the measured bound with 4x") {
+	const float ceiling = dbToLin(-6.0);
+	for (const clip::Mode mode : kNewModes) {
+		for (const float shape : { 0.0f, 0.5f, 1.0f }) {
+			for (const float drive : { 24.0f, 0.0f, -24.0f }) {
+				clip::Settings s;
+				s.mode = static_cast<int>(mode);
+				s.driveDb = drive;
+				s.ceilingDb = -6.0f;
+				s.shape = shape;
+				s.oversample = false;
+				CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+				CAPTURE(shape);
+				CAPTURE(drive);
+				// SQUARE, 1 kHz SINE, NOISE BURSTS at full scale: the hot sine and the noise are among them.
+				const std::array<float, 3> off = worstOver(s);
+				const float worst = *std::max_element(off.begin(), off.end());
+				CHECK(worst <= ceiling * (1.0f + 1e-6f));
+				if (drive == 24.0f && mode != clip::Mode::Slew && mode != clip::Mode::Lopside) {
+					CHECK(worst > ceiling * 0.9f); // not vacuous: +24 dB reaches the top
+				}
+				s.oversample = true;
+				const std::array<float, 3> on = worstOver(s);
+				MESSAGE(clip::kModeNames[static_cast<size_t>(mode)] << " shape " << shape << " drive " << drive
+				                                                    << ": 4x square " << on[0] / ceiling << "x, sine "
+				                                                    << on[1] / ceiling << "x, bursts " << on[2] / ceiling << "x");
+				CHECK(on[0] <= ceiling * 1.55f);
+				CHECK(on[1] <= ceiling * 1.52f);
+				CHECK(on[2] <= ceiling * 2.85f);
+			}
+		}
+	}
+}
+
+/// THE COMPLEX AMPLITUDE of `hz` over the whole-cycle window [from, end), by a direct sum (the window holds whole periods).
+[[nodiscard]] std::complex<double> project(const std::vector<float>& x, size_t from, double hz) {
+	std::complex<double> sum = 0.0;
+	for (size_t i = from; i < x.size(); ++i) {
+		const double w = -2.0 * std::numbers::pi * hz * static_cast<double>(i) / kSampleRate;
+		sum += static_cast<double>(x[i]) * std::complex<double>(std::cos(w), std::sin(w));
+	}
+	return sum * (2.0 / static_cast<double>(x.size() - from));
+}
+
+/// THE SAME PROJECTION of a function of the phase, in double: the expected harmonic, restated from the Eroder's formulas.
+[[nodiscard]] std::complex<double> expectedHarmonic(const std::function<double(double)>& f, int harmonic) {
+	constexpr int kPoints = 1 << 14;
+	std::complex<double> sum = 0.0;
+	for (int i = 0; i < kPoints; ++i) {
+		const double theta = 2.0 * std::numbers::pi * i / kPoints;
+		const double w = -static_cast<double>(harmonic) * theta;
+		sum += f(theta) * std::complex<double>(std::cos(w), std::sin(w));
+	}
+	return sum * (2.0 / kPoints);
+}
+
+/// ONE CHANNEL'S OUTPUT for a 1 kHz sine of `amp`, Oversample off, after the DC blocker has settled.
+[[nodiscard]] std::pair<std::vector<float>, std::vector<float>> renderSine(const clip::Settings& s, double amp) {
+	Instance dev;
+	dev.set(s);
+	std::vector<float> l = sine(48000, 1000.0, amp), r = l;
+	for (int done = 0; done < 48000; done += 480) {
+		dev.process(l.data() + done, r.data() + done, 480);
+	}
+	return { l, r };
+}
+
+TEST_CASE("Shape moves the harmonics of Tube, Jag and Lean to the values the Eroder's formulas give") {
+	constexpr double kAmp = 0.7;
+	constexpr double kHalfPi = std::numbers::pi * 0.5;
+	// THE FORMULAS, restated in double from `eroder_types.h`'s own description (Tube's ratio, Jag's triangle, Lean's bias),
+	// then the stage's own steps: Tube's and Lean's standing offset taken out (steady state: the mean over a cycle, which a
+	// 10 Hz one-pole removes from a 1 kHz tone), and the hard clip at +-1 the ceiling puts after them.
+	const auto tube = [](double shape) {
+		return [shape](double u) {
+			const double ratio = 1.5 * std::pow(8.0 / 1.5, shape);
+			return u >= 0.0 ? std::tanh(u) : std::tanh(ratio * u) / ratio;
+		};
+	};
+	const auto jag = [kHalfPi](double shape) {
+		return [shape, kHalfPi](double u) {
+			const double x = std::tanh(u) * (1.0 + 4.0 * shape);
+			return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
+		};
+	};
+	const auto lean = [](double shape) {
+		return [shape](double u) {
+			const double b = 1.2 * shape;
+			const double rest = std::tanh(b);
+			return (std::tanh(u + b) - rest) / (1.0 - rest * rest);
+		};
+	};
+	struct Row {
+		clip::Mode mode;
+		std::function<std::function<double(double)>(double)> curve;
+		int harmonic;
+		bool removesOffset;
+	};
+	const Row rows[] = { { clip::Mode::Tube, tube, 2, true }, { clip::Mode::Jag, jag, 3, false }, { clip::Mode::Lean, lean, 2, true } };
+	for (const Row& row : rows) {
+		std::vector<double> amplitudes;
+		for (const float shape : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f }) {
+			clip::Settings s;
+			s.mode = static_cast<int>(row.mode);
+			s.shape = shape;
+			s.oversample = false;
+			CAPTURE(clip::kModeNames[static_cast<size_t>(row.mode)]);
+			CAPTURE(shape);
+			const auto [l, r] = renderSine(s, kAmp);
+			const auto raw = row.curve(static_cast<double>(shape));
+			double mean = 0.0;
+			for (int i = 0; row.removesOffset && i < 4096; ++i) {
+				mean += raw(kAmp * std::sin(2.0 * std::numbers::pi * i / 4096.0)) / 4096.0;
+			}
+			const auto curve = [&](double u) { return std::clamp(raw(u) - mean, -1.0, 1.0); };
+			const auto expected = expectedHarmonic([&](double th) { return curve(kAmp * std::sin(th)); }, row.harmonic);
+			const auto fundamental = expectedHarmonic([&](double th) { return curve(kAmp * std::sin(th)); }, 1);
+			const auto got = project(l, 24000, 1000.0 * row.harmonic);
+			// THE EXPECTED PHASE is the projection of the same curve; the 10 Hz offset blocker is a hair of phase
+			// at 1 kHz and up, and Jag's fold, in float, is a few tenths of a percent off the double one: the
+			// tolerance is 1.5% of the larger of the harmonic and the fundamental (the harmonics are 0.02 to 0.6).
+			CHECK(std::abs(got - expected) < 0.015 * std::max(std::abs(expected), std::abs(fundamental)));
+			amplitudes.push_back(std::abs(got));
+			if (row.mode == clip::Mode::Lean && shape == 0.0f) {
+				CHECK(std::abs(got) < 1e-4); // a tanh at no bias: no even harmonic
+			}
+		}
+		// THE SECOND ASSERTION: the harmonic really moves with Shape (the first is not vacuous).
+		CHECK(std::abs(amplitudes.front() - amplitudes.back()) > 0.01);
+		if (row.mode == clip::Mode::Lean || row.mode == clip::Mode::Tube) {
+			CHECK(amplitudes[0] < amplitudes[2]);
+			CHECK(amplitudes[2] < amplitudes[4]);
+		}
+	}
+}
+
+TEST_CASE("Paunch: left is the tanh, the right is turned toward the clean signal, so the odd harmonics of the two are in antiphase at the top of Shape") {
+	for (const float shape : { 0.0f, 0.25f, 0.5f, 1.0f }) {
+		clip::Settings s;
+		s.mode = static_cast<int>(clip::Mode::Paunch);
+		s.shape = shape;
+		s.driveDb = 12.0f;
+		s.oversample = false;
+		CAPTURE(shape);
+		constexpr double kAmp = 0.4;
+		const auto [l, r] = renderSine(s, kAmp);
+		// RESTATED: L = tanh(g x); R = L + 2 shape (x - L); so R's third is (1 - 2 shape) times L's.
+		const double gain = std::pow(10.0, 12.0 / 20.0);
+		const auto tanhH3 = expectedHarmonic([&](double th) { return std::tanh(gain * kAmp * std::sin(th)); }, 3);
+		const auto l3 = project(l, 24000, 3000.0);
+		const auto r3 = project(r, 24000, 3000.0);
+		CHECK(std::abs(l3 - tanhH3) < 1e-3);
+		CHECK(std::abs(r3 - (1.0 - 2.0 * static_cast<double>(shape)) * tanhH3) < 1e-3);
+		// THE DIFFERENCE is 2 shape (tanh - clean): the two channels differ whenever Shape is up.
+		double diff = 0.0;
+		for (size_t i = 24000; i < l.size(); ++i) {
+			diff = std::max(diff, static_cast<double>(std::fabs(l[i] - r[i])));
+		}
+		if (shape == 0.0f) {
+			CHECK(diff == 0.0);
+		}
+		else {
+			CHECK(diff > 0.05);
+		}
+		if (shape == 1.0f) {
+			CHECK((l3 * std::conj(r3)).real() < 0.0); // antiphase
+			CHECK(std::abs(r3 + l3) < 1e-3);
+		}
+	}
+}
+
+/// THE PER-SAMPLE STEP of a rising and then a falling ramp, through Slew or Lopside fed a slow +-0.8 square.
+[[nodiscard]] std::pair<double, double> slewSteps(clip::Mode mode, float shape, float driveDb, size_t probe = 200) {
+	clip::Settings s;
+	s.mode = static_cast<int>(mode);
+	s.shape = shape;
+	s.driveDb = driveDb;
+	s.oversample = false;
+	Instance dev;
+	dev.set(s);
+	std::vector<float> l(96000), r;
+	for (size_t i = 0; i < l.size(); ++i) {
+		l[i] = ((i / 24000) % 2) == 0 ? -0.8f : 0.8f;
+	}
+	r = l;
+	for (size_t done = 0; done < l.size(); done += 480) {
+		dev.process(l.data() + done, r.data() + done, 480);
+	}
+	// 24000 samples is a rising half then a falling one; read a step in the middle of each ramp.
+	return { static_cast<double>(l[24000 + probe] - l[24000 + probe - 1]),
+		     static_cast<double>(l[48000 + probe] - l[48000 + probe - 1]) };
+}
+
+TEST_CASE("Lopside's rising and falling rates are 2^(+-balance) of the limit, Drive sets the rate as the Eroder's knob does") {
+	// DRIVE +24 dB is the top of the knob: 50 Hz, a limit of 2 * 50 / 48000 per sample at no balance.
+	for (const float shape : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f }) {
+		const auto [rise, fall] = slewSteps(clip::Mode::Lopside, shape, 24.0f);
+		const double balance = 2.0 * static_cast<double>(shape) - 1.0;
+		const double limit = 2.0 * 50.0 / 48000.0;
+		CAPTURE(shape);
+		CHECK(rise == doctest::Approx(limit * std::exp2(balance)).epsilon(1e-4));
+		CHECK(-fall == doctest::Approx(limit * std::exp2(-balance)).epsilon(1e-4));
+		CHECK(rise / -fall == doctest::Approx(std::exp2(2.0 * balance)).epsilon(1e-4));
+	}
+	// SLEW at shape 0 is the hard limit, and Drive moves the rate: 0 dB is the middle of the knob, sqrt(20000 * 50) = 1 kHz.
+	const auto [rise, fall] = slewSteps(clip::Mode::Slew, 0.0f, 0.0f, 10);
+	CHECK(rise == doctest::Approx(2.0 * 1000.0 / 48000.0).epsilon(1e-4));
+	CHECK(-fall == doctest::Approx(2.0 * 1000.0 / 48000.0).epsilon(1e-4));
+	const auto [rise2, fall2] = slewSteps(clip::Mode::Slew, 0.0f, 12.0f, 20); // a quarter of the way up: 20000 * (0.0025)^0.75
+	CHECK(rise2 == doctest::Approx(2.0 * 20000.0 * std::pow(0.0025, 0.75) / 48000.0).epsilon(1e-4));
+	CHECK(rise2 < rise);
 }

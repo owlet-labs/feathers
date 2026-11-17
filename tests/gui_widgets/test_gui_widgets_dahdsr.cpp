@@ -62,7 +62,6 @@
 #include "mod/samplehold/samplehold_types.h"
 #include "mod/stepseq/stepseq_types.h"
 #include "plugin/ui/expanded_canvas.h"
-#include "plugin/ui/drum_panel.h"
 #include "plugin/ui/spectrum_panel.h"
 #include "rack/rack_axes.h"
 #include "rack/rack_engine.h"
@@ -3340,17 +3339,6 @@ TEST_CASE("every declared parameter a hand should be able to reach has a control
 	for (size_t i = 0; i < paramDescs().size(); ++i) {
 		reached[i] = !f.gui.widgets()->watchers(static_cast<clap_id>(paramDescs()[i].id)).empty();
 	}
-	// THE DRUM KIT PANEL IS ONE PRESS AWAY TOO (drum proposal §6): its tab on Explore, on Drum, opened as a hand opens it.
-	ParamSet drum;
-	drum.setBase(static_cast<clap_id>(ParamId::OscType), static_cast<double>(OscType::Drum));
-	f.bridge.publish(drum);
-	f.bridge.refresh();
-	(void)f.gui.tickForTest();
-	if (auto* explore = findInTree<ui::ExploreStage>(f.root); explore != nullptr) {
-		explore->drumTabForTest().clickForTest();
-	}
-	REQUIRE(f.gui.drumPanelForTest() != nullptr);
-
 	std::vector<std::string> unreachable;
 	size_t declared = 0;
 	for (size_t i = 0; i < paramDescs().size(); ++i) {
@@ -14961,14 +14949,13 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 	// Model are the one string's; the bow mode is Resonate's and the warp mode V5's and Basic Shapes'.
 	enum Ctl : size_t {
 		Width, FmDepth, Warp, Smoothness, Quantize, Sync, Feedback, Points, Grit, ModeBox, ModelBox,
-		Radius, Theta, ResonateSurround, ShapesMix, ShapeAmount, Bias, StringScalers, PluckSurround, DrumScalers, DrumMetal,
+		Radius, Theta, ResonateSurround, ShapesMix, ShapeAmount, Bias, StringScalers, PluckSurround,
 		kCtlCount
 	};
 	const char* const kNames[kCtlCount] = { "Width", "FM Depth", "Warp", "Smoothness", "Quantize", "Sync",
 		                                    "Feedback", "Points", "Grit", "mode box", "Model box", "Radius",
 		                                    "Theta", "Resonate surround", "Shapes mix", "Shape Amount",
-		                                    "Additive bias", "Pluck string scalers", "Pluck surround",
-		                                    "Drum scalers (a Kick's six)", "Drum Metal" };
+		                                    "Additive bias", "Pluck string scalers", "Pluck surround" };
 	struct Row {
 		OscType engine;
 		const char* face; // one char per Ctl: 'L' drawn and live, '-' not drawn
@@ -14983,23 +14970,21 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 	// DRUM, in Kit mode with pad A (a Kick) selected: the surround holds the seven kit trims and nothing else, so none of this
 	// table's controls is drawn (a pad's own scalers are per layer on the pad editor, and a kit reads no drift or orbit, so no
 	// Radius or Theta).
-	//                                    W  F  Wp S  Q  Sy Fb P  G  Mb Mo R  T  Rs Sh SA Bi St Pk Ds Dm
+	//                                    W  F  Wp S  Q  Sy Fb P  G  Mb Mo R  T  Rs Sh SA Bi St Pk
 	const Row kTable[] = {
-		{ OscType::Morph,       "--------L--LL--------" },
-		{ OscType::Stair,       "-----------LL--------" },
-		{ OscType::V5,          "LLLLLLLLLL-LL--------" },
-		{ OscType::Resonate,    "---------LLLLL-------" },
-		{ OscType::BasicShapes, "LLLL----LL-LL-L------" }, // Q/Sy/Fb/P on its Operators page (backlog KV)
-		{ OscType::Additive,    "L--L-----L-LL--LL----" },
-		{ OscType::Pluck,       "---L-----L-LL----LL--" },
-		{ OscType::Drum,        "---------------------" }, // a Kit: the seven kit trims alone (no page box, no pad scalers, no Radius or Theta)
+		{ OscType::Morph,       "--------L--LL------" },
+		{ OscType::Stair,       "-----------LL------" },
+		{ OscType::V5,          "LLLLLLLLLL-LL------" },
+		{ OscType::Resonate,    "---------LLLLL-----" },
+		{ OscType::BasicShapes, "LLLL----LL-LL-L----" }, // Q/Sy/Fb/P on its Operators page (backlog KV)
+		{ OscType::Additive,    "L--L-----L-LL--LL--" },
+		{ OscType::Pluck,       "---L-----L-LL----LL" },
 	};
 	REQUIRE(std::size(kTable) == static_cast<size_t>(OscType::kCount));
 	// PER-SOUND controls grey when the selected sound is parked (its switch is on this face); the engine-wide
 	// ones (the boxes, Resonate's surround, the shapes mix) and the polar pair do not.
 	const bool kPerSoundGreys[kCtlCount] = { true, true, true, true, true, true, true, true, true,
-		                                     false, false, false, false, false, false, true, true, true, false,
-		                                     false, false };
+		                                     false, false, false, false, false, false, true, true, true, false };
 
 	using FieldKind = ExploreStage::FieldKind;
 	using FlagshipKind = ExploreStage::FlagshipKind;
@@ -15067,15 +15052,6 @@ TEST_CASE("explore: on every engine a control only another engine could wake is 
 					return { &f.stage.pluckKnobForTest(PK::Width), &f.stage.pluckKnobForTest(PK::Decay),
 						     &f.stage.pluckKnobForTest(PK::Release) };
 				}
-				case DrumScalers: {
-					using DF = ExploreStage::DrumField;
-					std::vector<Knob*> all;
-					for (const DF d : { DF::Pitch, DF::Length, DF::Sweep, DF::Tone, DF::Noise, DF::Snap }) {
-						all.push_back(&f.stage.drumFieldKnobForTest(d, slot));
-					}
-					return all;
-				}
-				case DrumMetal: return { &f.stage.drumFieldKnobForTest(ExploreStage::DrumField::Metal, slot) };
 				default: return {};
 				}
 			};

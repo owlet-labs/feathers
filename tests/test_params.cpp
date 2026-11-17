@@ -352,7 +352,7 @@ TEST_CASE("the param table is what it was") {
 		// AND 2026-11-07 (stage (c), the layer slot): seven more per pad at the end of the second block, 45 -> 52.
 		// AND THE KIT STANCE REDESIGN (2026-11-14): the Walk and Kit Gamma, Zone, Offset gone (-5), each pad's Lock, Offset X/Y and
 		// Terrain Pitch added and its second layer's copies of every control a hit reads in a third block at 0x0800 + slot*0x40.
-		constexpr uint64_t kRecordedIds =  0xb3798b2bd893e937ull;
+		constexpr uint64_t kRecordedIds =  0x6b1b4be0f7f902a8ull;
 		CHECK(paramIdFingerprint() == kRecordedIds);
 	}
 
@@ -483,7 +483,7 @@ TEST_CASE("the param table is what it was") {
 		// And each pad's Bend 0..1 default 1 (the whole Bend range).
 		// And the layer: Kind 0..5 default Off, Level -60..6 dB default 0, Delay 0..10 ms default 0, High Pass log2 20 Hz..2048 Hz
 		// default 20 Hz, Lock 0..1 default 1, Offset X and Y -1..1 default 0.
-		constexpr uint64_t kRecordedRanges =  0xa362d7dfd80c23feull; // (the drum layers' Offset X and Y widened to +-kDrumVectorReach: an unbounded coordinate)
+		constexpr uint64_t kRecordedRanges =  0x81aa6d5c0fd14321ull; // (the synth's Drum engine retired: every drum pad and kit-trim row left the table; no other id or range moved)
 		CHECK(paramRangeFingerprint() == kRecordedRanges);
 	}
 }
@@ -1333,11 +1333,6 @@ TEST_CASE("a knob's range stops modulation, and it is the range rather than the 
 	for (const feathers::ParamDesc& d : feathers::paramDescs()) {
 		CAPTURE(std::string(d.name));
 		if (d.id == ParamId::OscPhase) {
-			CHECK(d.offsetsMayLeaveRange);
-			continue;
-		}
-		// AND A DRUM LAYER'S VECTOR, an unbounded coordinate (its declared range is only a host's fader).
-		if (d.max == feathers::kDrumVectorReach && d.min == -feathers::kDrumVectorReach) {
 			CHECK(d.offsetsMayLeaveRange);
 			continue;
 		}
@@ -2704,23 +2699,8 @@ TEST_CASE("a sound's knob list is pinned: perSoundKnobParam's order is the stanc
 		for (const SpectralControl c : feathers::kSpectralContinuousControls) {
 			want.push_back(feathers::spectralParam(slot, c));
 		}
-		// THE DRUM PAD'S AMOUNTS (2026-11-05), in each slot's destination run after the spectral drawer's: mid-list, the same waiver.
-		for (const feathers::DrumControl c : feathers::kDrumContinuousControls) {
-			want.push_back(feathers::drumParam(slot, c));
-		}
 		for (const SpectralControl c : feathers::kSpectralSteppedControls) {
 			want.push_back(feathers::spectralParam(slot, c));
-		}
-		// AND ITS STEPPED CONTROLS, appended after the spectral drawer's.
-		for (const feathers::DrumControl c : feathers::kDrumSteppedControls) {
-			want.push_back(feathers::drumParam(slot, c));
-		}
-		// AND THE DRUM PAD'S SECOND LAYER (kit stance redesign), APPENDED: its continuous copies, then its stepped ones.
-		for (const feathers::DrumControl c : feathers::kDrumLayer2Continuous) {
-			want.push_back(feathers::drumLayer2Param(slot, c));
-		}
-		for (const feathers::DrumControl c : feathers::kDrumLayer2Stepped) {
-			want.push_back(feathers::drumLayer2Param(slot, c));
 		}
 		REQUIRE(want.size() == feathers::kPerSoundKnobCount);
 		for (size_t k = 0; k < want.size(); ++k) {
@@ -2761,17 +2741,3 @@ TEST_CASE("a sound's knob list is pinned: perSoundKnobParam's order is the stanc
 	                                           SpectralControl::VocodeOn });
 }
 
-TEST_CASE("a drum layer's vector is an unbounded coordinate: a huge declared range that offsets may leave, and a route worth one unit") {
-	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
-		for (size_t layer = 0; layer < 2; ++layer) {
-			for (const feathers::DrumControl c : { feathers::DrumControl::OffsetX, feathers::DrumControl::OffsetY }) {
-				const feathers::ParamDesc* d = feathers::findParam(static_cast<clap_id>(feathers::drumLayerParam(slot, layer, c)));
-				REQUIRE(d != nullptr);
-				CHECK(d->min == -feathers::kDrumVectorReach);
-				CHECK(d->max == feathers::kDrumVectorReach);
-				CHECK(d->offsetsMayLeaveRange);
-				CHECK(feathers::modSpanOf(*d) == 1.0); // a full-depth route is one unit, not sixteen million
-			}
-		}
-	}
-}

@@ -395,22 +395,7 @@ enum class ParamId : uint32_t {
 	KsSeed = 0x00C6,      ///< 0..999: which plucks the noise draws
 	KsVelocity = 0x00C7,  ///< 0..1: how far a note's velocity moves its pluck's Hardness
 
-	/// **THE DRUM ENGINE'S ENGINE-WIDE CONTROLS** (2026-11-05), after
-	/// Pluck's in the same unused block. Each pad's own controls are the per-sound block at kDrumBlockBase (drumParam).
-	DrumMode = 0x00C8,        ///< Pitched | Kit
-	DrumPitchedKind = 0x00C9, ///< the kind every voice plays in Pitched mode
-	// 0x00CA, 0x00CB: the Kit Walk, retired (the kit stands where the ordinary Pos X/Y and Weather put it). Never reused.
-	DrumSeed = 0x00CC,        ///< 0..999: which hits the noise draws
-	/// **THE KIT-WIDE TRIMS** (2026-11-06): neutral by default, so a kit is bit-identical until it moves. The seven trims apply
-	/// the per-pad scaler's own law (`fieldWithOverride`) on top of each layer's scaler. Kit mode only.
-	// 0x00CD..0x00CF: the Kit Gamma, Zone and Offset, retired (the standard Global Gamma is the kit's). Never reused.
-	DrumKitPitch = 0x00D0,
-	DrumKitLength = 0x00D1,
-	DrumKitSweep = 0x00D2,
-	DrumKitTone = 0x00D3,
-	DrumKitNoise = 0x00D4,
-	DrumKitSnap = 0x00D5,
-	DrumKitMetal = 0x00D6,
+	// 0x00C8..0x00D6: the synth's retired Drum engine's engine-wide controls (Mode, Kind, Seed, the Kit trims). Never reused.
 
 	/// **VOICE LEVEL — EACH NOTE'S GAIN, AND WHAT KEEPS IT SOUNDING**. The id the old Level wore, because this IS what that Level did: per voice, per note id, the default
 	/// envelope's destination, the stack's "osc volume" — and a released voice is held while a per-voice source
@@ -564,10 +549,7 @@ enum class ParamId : uint32_t {
 /// pluck's tone the Additive spectrum at the same place and the string's material five fields beside it
 /// (OscEngine::String; dsp/ks_string.h). A working name.
 ///
-/// DRUM (2026-11-05) is the eighth: a drum synthesiser of six kinds (Kick, Membrane, Snare, Metal, Clap, String), played
-/// chromatically in Pitched mode or as a KIT, each of sounds A-H a pad with its own note, kind and terrain place
-/// (OscEngine::Drum; dsp/drum_voice.h). A working name.
-enum class OscType : uint8_t { Morph, Stair, V5, Resonate, BasicShapes, Additive, Pluck, Drum, kCount };
+enum class OscType : uint8_t { Morph, Stair, V5, Resonate, BasicShapes, Additive, Pluck, kCount };
 /// A stepped param value as an index into a list of `count` entries.
 ///
 /// Rounds and then clamps, in that order and both unconditionally. setBase already rounds and clamps
@@ -580,8 +562,11 @@ enum class OscType : uint8_t { Morph, Stair, V5, Resonate, BasicShapes, Additive
 /// three copies of this arithmetic before it was hoisted.
 size_t steppedIndex(double value, size_t count);
 
-inline constexpr std::array<const char* const, 8> kOscTypeNames{"Morph", "Stair", "Forge", "Resonate", "Basic Shapes",
-                                                                "Additive", "Pluck", "Drum"};
+inline constexpr std::array<const char* const, 7> kOscTypeNames{"Morph", "Stair", "Forge", "Resonate", "Basic Shapes",
+                                                                "Additive", "Pluck"};
+/// THE RETIRED DRUM ENGINE'S STORED VALUE: a patch saved while the synth had a Drum engine holds this in `OscType`. It is read as
+/// the default engine (`ParamSet::read`), never as an index into the names above. Never reused for another engine.
+inline constexpr double kRetiredOscTypeDrum = 7.0;
 
 /// THE ADDITIVE SHAPE's choices, in `partials::ShapeKind`'s order: character_params.h static_asserts the count where the
 /// index is cast to a ShapeKind, and test_params pins each label.
@@ -739,6 +724,752 @@ inline constexpr device::RetiredKey kCoreRetiredKeys[] = {
 	{ "h.drum.bell_level", "2026-11-07", "absorbed into the Bells zone (drum proposal §14 lever 2): h.drum.bells" },
 	{ "h.drum.bell2_level", "2026-11-07", "absorbed into the Bells zone (drum proposal §14 lever 2): h.drum.bells" },
 	{ "h.drum.bell2_link", "2026-11-07", "absorbed into the Bells zone (drum proposal §14 lever 2): h.drum.bells" },
+	{ "drum.mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.pitched_kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.seed", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.kit.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.kit.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.kit.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.kit.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.kit.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.kit.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "drum.kit.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "a.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "b.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "c.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "d.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "e.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "f.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "g.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.note", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.choke", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.voices", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.trigger", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.pan", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.release", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.mute", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.bend", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.layer.kind", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.layer.level", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.layer.delay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.layer.hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.tune", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.drive", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.count", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.spread", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.f.pitch", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.f.length", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.f.sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.f.tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.f.noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.f.snap", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.f.metal", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.wire_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.click_decay", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.bell_start", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.bell_end", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.bell_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.kick_hold", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.kick_dip", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.kick_dip_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.click_sweep", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.click_sweep_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.start_phase", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.drive_curve", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.drive_tone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.clap_q", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.clap_hp", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.bell2_hz", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.bell2_time", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.velocity_noise", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.width", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.velocity_zone", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.wires", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.bells", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.lock", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.dx", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.dy", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
+	{ "h.drum.l2.pitch_mode", "2026-11-17", "the synth's Drum engine is retired: the Drum device (and the Feathers Drum plugin) are the drum now, and a patch that named this control keeps no value for it" },
 };
 /// A-PH's three ways with the phases, in `partials::PhaseMode`'s order (test_params pins it).
 inline constexpr std::array<const char* const, 3> kAdditivePhaseNames{"Natural", "Headroom", "Sub priority"};
@@ -858,204 +1589,6 @@ constexpr SpectralAddress spectralAddressOf(ParamId id) {
 	return { (raw - kSpectralBlockBase) / kSpectralSlotStride, static_cast<SpectralControl>(within) };
 }
 
-/// **THE DRUM ENGINE'S PER-PAD CONTROLS** (2026-11-05): one block of 0x20
-/// per sound at 0x0600 + slot·0x20, in this order. In Kit mode sound N is pad N; in Pitched mode the per-pad structure
-/// (Kind, Note, Choke, Voices) is not read and the rest of pad A's block is the engine's. Each key names one meaning across
-/// the six kinds (Decay is always the body's T60), so a kind that does not read a control hides it (drum::kindReads).
-enum class DrumControl : uint8_t {
-	Kind, Note, Choke, Voices, Trigger, Level, Pan, Tune, Decay, Release, SweepTime, Drive, Count, Spread,
-	// THE VELOCITY ZONE (drum proposal §14, 2026-11-07): Level → Tone → Tension, absorbing Velocity and Vel Tension.
-	VelocityZone,
-	FieldPitch, FieldLength, FieldSweep, FieldTone, FieldNoise, FieldSnap, FieldMetal,
-	// THE SNARE'S ENVELOPES (2026-11-06, drum proposal §12) and its two zone controls (§14): Wires (Tight → Loose → Buzzy →
-	// Gated: the Shapes, the Contour, the Buzz and its Threshold) and Bells (Off → Body → Shell → Ring → Knock: the bells'
-	// levels, their Q's scale and the Link). The bells' glide stays on handles.
-	WireDecay, ClickDecay, Wires, Bells, BellStart, BellEnd, BellTime,
-	// THE KICK'S SHAPE (2026-11-06, drum proposal §12 items 1-3), read only on a Kick.
-	KickHold, KickDip, KickDipTime, ClickSweep, ClickSweepTime, StartPhase,
-	// THE DRIVE CURVE AND ITS TONE (every kind) AND THE CLAP'S FILTER (2026-11-06).
-	DriveCurve, DriveTone, ClapQ, ClapHighPass,
-	// THE SECOND BELL'S FREE HZ AND ITS RING (2026-11-06, doc §13.2), on its handle.
-	Bell2Hz, Bell2Time,
-	// VELOCITY TO NOISE (2026-11-06, doc §13 item 4;).
-	VelocityNoise,
-	// WIDTH (a Snare's wires, a Clap's band; doc §13 item 7).
-	Width,
-	// MUTE: the pad's own, so a kit's pads all sound by default whatever their sounds' switches.
-	// In Kit mode the sound card's switch is this.
-	Mute,
-	// BEND: how far whatever moves the voice past its key (the wheel,
-	// an expression, a pitch route) moves this pad, held at the strike or moved while it rings. 0 ignores it.
-	Bend,
-	// THE LAYER SLOT (drum proposal §12, built 2026-11-07 stage (c)): a second hit of its own Kind struck with the pad, at its
-	// own place (the pad's plus an offset vector), Level, Delay (ms) and High Pass; Lock keeps the offset when the pad is dragged.
-	LayerKind, LayerLevel, LayerDelay, LayerHighPass,
-	// LAYER ONE'S OWN LOCK, TERRAIN VECTOR AND PITCH MODE (kit stance redesign): the pad's own controls above are layer one's
-	// (Kind, Tune .. Width); layer two's copies of everything a hit reads live in the third block (drumLayerParam).
-	Lock, OffsetX, OffsetY, PitchMode,
-	kCount
-};
-/// **A LAYER'S VECTOR IS UNBOUNDED** (kit stance redesign): the declared range is only what a host draws a fader over (SKLITTER's `kCoordMax`:
-/// a coordinate is one infinite line, and `offsetsMayLeaveRange` says so). Nothing in the engine or the editor holds it to this.
-inline constexpr double kDrumVectorReach = 8388608.0;
-inline constexpr size_t kDrumControlCount = static_cast<size_t>(DrumControl::kCount);
-inline constexpr uint32_t kDrumBlockBase = 0x0600;
-inline constexpr uint32_t kDrumSlotStride = 0x20;
-/// THE SECOND PAD BLOCK (2026-11-06): the first's 32 slots filled with the snare's controls, so DrumControl from index 32 is
-/// 0x0700 + slot·0x20. One enum, two blocks, the split here alone.
-inline constexpr uint32_t kDrumBlock2Base = 0x0700;
-inline constexpr uint32_t kDrumSlot2Stride = 0x20; // 32 a slot (2026-11-06, S11): room for the second bell and the T stages
-static_assert(kDrumControlCount <= kDrumSlotStride + kDrumSlot2Stride);
-constexpr ParamId drumParam(size_t slot, DrumControl control) {
-	const auto c = static_cast<uint32_t>(control);
-	if (c >= kDrumSlotStride) {
-		return static_cast<ParamId>(kDrumBlock2Base + static_cast<uint32_t>(slot) * kDrumSlot2Stride + (c - kDrumSlotStride));
-	}
-	return static_cast<ParamId>(kDrumBlockBase + static_cast<uint32_t>(slot) * kDrumSlotStride + c);
-}
-
-/// **A PAD IS TWO LAYERS, each a full hit of its own kind.** Layer one is the pad's own block above (its Kind, Tune .. Width,
-/// Lock, OffsetX/Y and PitchMode). Layer two's Kind is LayerKind (Off, then a kind), its Level, Delay and High Pass are the
-/// layer-only rows above, and everything else a hit reads is a COPY of layer one's, in the third block: these are the controls
-/// that exist once per layer. Pad-level things (Note, Choke, Voices, Trigger, Level, Pan, Release, Mute, Bend) stay the pad's.
-inline constexpr std::array<DrumControl, 39> kDrumLayerControls {
-	DrumControl::Tune, DrumControl::Decay, DrumControl::SweepTime, DrumControl::Drive, DrumControl::Count, DrumControl::Spread,
-	DrumControl::VelocityZone,
-	DrumControl::FieldPitch, DrumControl::FieldLength, DrumControl::FieldSweep, DrumControl::FieldTone, DrumControl::FieldNoise,
-	DrumControl::FieldSnap, DrumControl::FieldMetal,
-	DrumControl::WireDecay, DrumControl::ClickDecay, DrumControl::Wires, DrumControl::Bells, DrumControl::BellStart,
-	DrumControl::BellEnd, DrumControl::BellTime,
-	DrumControl::KickHold, DrumControl::KickDip, DrumControl::KickDipTime, DrumControl::ClickSweep, DrumControl::ClickSweepTime,
-	DrumControl::StartPhase,
-	DrumControl::DriveCurve, DrumControl::DriveTone, DrumControl::ClapQ, DrumControl::ClapHighPass,
-	DrumControl::Bell2Hz, DrumControl::Bell2Time, DrumControl::VelocityNoise, DrumControl::Width,
-	DrumControl::Lock, DrumControl::OffsetX, DrumControl::OffsetY, DrumControl::PitchMode
-};
-/// The third block: layer two's copies, kDrumLayerControls' order, 0x0800 + slot·0x40.
-inline constexpr uint32_t kDrumBlock3Base = 0x0800;
-inline constexpr uint32_t kDrumSlot3Stride = 0x40;
-static_assert(kDrumLayerControls.size() <= kDrumSlot3Stride);
-/// Where `control` sits in kDrumLayerControls, or -1 when a layer does not have its own copy (a pad-level control).
-inline constexpr std::array<int8_t, kDrumControlCount> kDrumLayerIndexOf = [] {
-	std::array<int8_t, kDrumControlCount> t {};
-	t.fill(-1);
-	for (size_t i = 0; i < kDrumLayerControls.size(); ++i) {
-		t[static_cast<size_t>(kDrumLayerControls[i])] = static_cast<int8_t>(i);
-	}
-	return t;
-}();
-constexpr bool drumHasLayerCopy(DrumControl control) { return kDrumLayerIndexOf[static_cast<size_t>(control)] >= 0; }
-/// Layer two's copy of `control` (which must be in kDrumLayerControls).
-constexpr ParamId drumLayer2Param(size_t slot, DrumControl control) {
-	return static_cast<ParamId>(kDrumBlock3Base + static_cast<uint32_t>(slot) * kDrumSlot3Stride
-	                            + static_cast<uint32_t>(kDrumLayerIndexOf[static_cast<size_t>(control)]));
-}
-/// A LAYER'S OWN PARAMETER: layer 0 is the pad's block, layer 1 the third block. `control` must be one a layer has (kDrumLayerControls).
-constexpr ParamId drumLayerParam(size_t slot, size_t layer, DrumControl control) {
-	return layer == 0 ? drumParam(slot, control) : drumLayer2Param(slot, control);
-}
-/// A layer's KIND parameter: the pad's Kind for layer one, LayerKind (Off, then a kind) for layer two.
-constexpr ParamId drumLayerKindParam(size_t slot, size_t layer) {
-	return layer == 0 ? drumParam(slot, DrumControl::Kind) : drumParam(slot, DrumControl::LayerKind);
-}
-
-/// The drum controls that are amounts (each slot's destination run carries them, in this order) and the ones that are
-/// switches or counts (not destinations: a stepped control under a modulator chatters rather than plays).
-inline constexpr std::array<DrumControl, 42> kDrumContinuousControls {
-	DrumControl::Level,      DrumControl::Pan,        DrumControl::Tune,        DrumControl::Decay,
-	DrumControl::Release,    DrumControl::SweepTime,  DrumControl::Drive,       DrumControl::Spread,
-	DrumControl::VelocityZone, DrumControl::FieldPitch, DrumControl::FieldLength, DrumControl::FieldSweep,
-	DrumControl::FieldTone,  DrumControl::FieldNoise, DrumControl::FieldSnap,   DrumControl::FieldMetal,
-	// THE SNARE'S: its envelopes, its two zones and the first bell's glide.
-	DrumControl::WireDecay, DrumControl::ClickDecay, DrumControl::Wires, DrumControl::Bells,
-	DrumControl::BellStart, DrumControl::BellEnd, DrumControl::BellTime,
-	// THE KICK'S.
-	DrumControl::KickHold, DrumControl::KickDip, DrumControl::KickDipTime, DrumControl::ClickSweep,
-	DrumControl::ClickSweepTime, DrumControl::StartPhase,
-	// THE DRIVE'S TONE AND THE CLAP'S FILTER.
-	DrumControl::DriveTone, DrumControl::ClapQ, DrumControl::ClapHighPass,
-	// THE SECOND BELL'S FREE HZ AND RING.
-	DrumControl::Bell2Hz, DrumControl::Bell2Time,
-	// VELOCITY TO NOISE, AND WIDTH.
-	DrumControl::VelocityNoise, DrumControl::Width,
-	// THE BEND.
-	DrumControl::Bend,
-	// THE LAYER SLOT.
-	DrumControl::LayerLevel, DrumControl::LayerDelay, DrumControl::LayerHighPass, DrumControl::OffsetX,
-	DrumControl::OffsetY
-};
-inline constexpr std::array<DrumControl, 11> kDrumSteppedControls { DrumControl::Kind,    DrumControl::Note,
-	                                                              DrumControl::Choke,   DrumControl::Voices,
-	                                                              DrumControl::Trigger, DrumControl::Count,
-	                                                              DrumControl::DriveCurve, DrumControl::Mute,
-	                                                              DrumControl::LayerKind, DrumControl::Lock,
-	                                                              DrumControl::PitchMode };
-static_assert(kDrumContinuousControls.size() + kDrumSteppedControls.size() == kDrumControlCount);
-/// AND LAYER TWO'S COPIES, the continuous ones then the stepped ones: appended after every earlier destination and knob (a stance
-/// saved before them keeps every earlier member where it was).
-inline constexpr std::array<DrumControl, 35> kDrumLayer2Continuous {
-	DrumControl::Tune, DrumControl::Decay, DrumControl::SweepTime, DrumControl::Drive, DrumControl::Spread,
-	DrumControl::VelocityZone,
-	DrumControl::FieldPitch, DrumControl::FieldLength, DrumControl::FieldSweep, DrumControl::FieldTone, DrumControl::FieldNoise,
-	DrumControl::FieldSnap, DrumControl::FieldMetal,
-	DrumControl::WireDecay, DrumControl::ClickDecay, DrumControl::Wires, DrumControl::Bells, DrumControl::BellStart,
-	DrumControl::BellEnd, DrumControl::BellTime,
-	DrumControl::KickHold, DrumControl::KickDip, DrumControl::KickDipTime, DrumControl::ClickSweep, DrumControl::ClickSweepTime,
-	DrumControl::StartPhase,
-	DrumControl::DriveTone, DrumControl::ClapQ, DrumControl::ClapHighPass,
-	DrumControl::Bell2Hz, DrumControl::Bell2Time, DrumControl::VelocityNoise, DrumControl::Width,
-	DrumControl::OffsetX, DrumControl::OffsetY
-};
-inline constexpr std::array<DrumControl, 4> kDrumLayer2Stepped { DrumControl::Count, DrumControl::DriveCurve, DrumControl::Lock,
-	                                                           DrumControl::PitchMode };
-static_assert(kDrumLayer2Continuous.size() + kDrumLayer2Stepped.size() == kDrumLayerControls.size());
-/// The choices. Voices' labels are the counts they stand for (kDrumVoicesCounts).
-inline constexpr std::array<const char* const, 2> kDrumModeNames { "Pitched", "Kit" };
-inline constexpr std::array<const char* const, 6> kDrumKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap", "String" };
-inline constexpr std::array<const char* const, 5> kDrumChokeNames { "Off", "1", "2", "3", "4" };
-inline constexpr std::array<const char* const, 3> kDrumVoicesNames { "1", "2", "4" };
-inline constexpr std::array<int, 3> kDrumVoicesCounts { 1, 2, 4 };
-inline constexpr std::array<const char* const, 2> kDrumTriggerNames { "One-shot", "Gate" };
-/// THE LAYER'S KINDS: Off, then every kind but String (a String plucks the voice's one string, which its pad may be using).
-inline constexpr std::array<const char* const, 6> kDrumLayerKindNames { "Off", "Kick", "Membrane", "Snare", "Metal", "Clap" };
-/// The drive's curves (drum proposal §12 item 4): Tanh is the round one; Tube leans, so it adds even harmonics; Soft Clip is
-/// a cubic, flat-topped past its knee.
-inline constexpr std::array<const char* const, 3> kDrumDriveCurveNames { "Tanh", "Tube", "Soft Clip" };
-/// The second bell: Free at its own Hz, or Linked at Ratio × the first bell, riding its glide (a SwitchChip: two states).
-inline constexpr std::array<const char* const, 2> kDrumBell2LinkNames { "Free", "Linked" };
-/// The wires' contour (all three on the face): an exponential fall, a straight one, or chopped by a falling sawtooth.
-inline constexpr std::array<const char* const, 3> kDrumWireContourNames { "Exp", "Linear", "Mod" };
-/// THE TERRAIN'S PITCH, per layer: Free is the terrain's pitch contribution as it comes; Semitones rounds it to whole semitones
-/// before it is applied (Tune stays continuous); Off applies none of it.
-inline constexpr std::array<const char* const, 3> kDrumPitchModeNames { "Free", "Semitones", "Off" };
-enum class DrumPitchMode : uint8_t { Free, Semitones, Off };
-enum class DrumMode : uint8_t { Pitched, Kit };
-
-/// **THE DEFAULT KIT** (proposal §5): Pattern Drum's eight lanes, note for note and in its order (test_drum_engine pins the
-/// notes against terrain-arp's lanes), each pad a kind and a voicing that sounds like its name at the terrain's middle.
-struct DrumPadDefaults {
-	uint8_t kind;  ///< index into kDrumKindNames
-	uint8_t note;
-	uint8_t choke; ///< index into kDrumChokeNames
-	uint8_t voices;///< index into kDrumVoicesNames
-	double tune;   ///< semitones from the kind's resting pitch
-	double logDecay;     ///< log2 seconds (the param's own unit: a constant table cannot call log2 on every compiler)
-	double logSweepTime; ///< log2 seconds
-	double drive;
-	uint8_t count;
-	double fieldSweep, fieldNoise;
-};
-inline constexpr std::array<DrumPadDefaults, 8> kDrumPadDefaults { {
-		// kind note choke voices tune  log2(decay s)        log2(sweep s)    drive count sweep noise
-	{ 0, 36, 0, 0, 0.0,  -1.1520030934450500, -4.6438561897747247, 0.2, 3, 0.8, 0.3 },  // A Kick: 0.45 s, 40 ms
-	{ 2, 38, 0, 1, 0.0,  -2.1844245711374275, -5.0588936890535687, 0.0, 3, 0.5, 0.75 }, // B Snare: 0.22 s, 30 ms
-	{ 3, 42, 1, 0, 0.0,  -3.8365012677171206, -4.0588936890535687, 0.0, 3, 0.5, 0.5 },  // C Closed hat: 0.07 s
-	{ 3, 46, 1, 1, 0.0,  -0.7369655941662062, -4.0588936890535687, 0.0, 3, 0.5, 0.5 },  // D Open hat: 0.6 s
-	{ 4, 39, 0, 1, 0.0,  -1.5145731728297582, -4.0588936890535687, 0.0, 4, 0.5, 0.5 },  // E Clap: 0.35 s
-	{ 1, 45, 0, 1, -5.0, -0.7369655941662062, -4.0588936890535687, 0.0, 3, 0.6, 0.5 },  // F Low tom: 0.6 s
-	{ 1, 50, 0, 1, 3.0,  -1.0,                -4.0588936890535687, 0.0, 3, 0.6, 0.5 },  // G High tom: 0.5 s
-	{ 3, 51, 0, 2, -3.0, 1.0,                 -4.0588936890535687, 0.0, 3, 0.5, 0.3 },  // H Ride: 2 s
-} };
 /// The switch of the operator a control belongs to (itself for a switch).
 constexpr SpectralControl spectralOperatorOf(SpectralControl c) {
 	switch (c) {
@@ -1769,10 +2302,7 @@ inline constexpr auto kCoreModDestinations = std::to_array<ParamId>(
      ParamId::KsDecay, ParamId::KsDecayTrack, ParamId::KsRelease, ParamId::KsHardness, ParamId::KsPickup,
      ParamId::KsWidth,
      // AND VELOCITY'S DEPTH ON HARDNESS (2026-10-31), continuous, appended.
-     ParamId::KsVelocity,
-     // THE KIT-WIDE TRIMS (2026-11-06), appended: the seven trims, every one modulatable.
-     ParamId::DrumKitPitch, ParamId::DrumKitLength,
-     ParamId::DrumKitSweep, ParamId::DrumKitTone, ParamId::DrumKitNoise, ParamId::DrumKitSnap, ParamId::DrumKitMetal});
+     ParamId::KsVelocity});
 
 /// HOW MANY DESTINATIONS A TENANT'S DECLARATIONS CONTRIBUTE — its own `modulatable` flags, counted.
 constexpr size_t modDestinationsIn(std::span<const fx::ParamDesc> descs) {
@@ -1841,8 +2371,7 @@ constexpr size_t appendModDestinations(std::span<ParamId> out, size_t at,
 /// AND TWENTY-EIGHT SINCE THE SPECTRAL DRAWER WENT PER SOUND (2026-10-10): its twelve continuous controls follow the bias
 /// knobs in each slot's run, in kSpectralContinuousControls' order.
 /// AND TWENTY-ONE BEFORE IT (2026-10-31): the string's five field scalers follow the bias knobs.
-/// AND THE DRUM PAD'S SIXTEEN AMOUNTS (2026-11-05), after the spectral drawer's, in kDrumContinuousControls' order.
-inline constexpr size_t kPerSoundDestinationsPerSlot = 21 + kSpectralContinuousControls.size() + kDrumContinuousControls.size();
+inline constexpr size_t kPerSoundDestinationsPerSlot = 21 + kSpectralContinuousControls.size();
 inline constexpr size_t kPerSoundDestinationCount = kMaxSounds * kPerSoundDestinationsPerSlot;
 
 /// HOW MANY DESTINATIONS HAVE A PARAMETER BEHIND THEM — the core six (now eight) and the per-sound
@@ -1862,16 +2391,11 @@ inline constexpr size_t kPerSoundDestinationCount = kMaxSounds * kPerSoundDestin
 inline constexpr std::array<SoundField, 3> kEditOnlyFields { SoundField::Zone, SoundField::Offset, SoundField::Gamma };
 inline constexpr size_t kEditOnlyDestinationCount = kMaxSounds * kEditOnlyFields.size();
 inline constexpr size_t kFirstEditOnlyDestination = kCoreModDestinations.size() + kPerSoundDestinationCount;
-/// **AND THE DRUM PAD'S SECOND LAYER** (kit stance redesign): its copies of every continuous control, slot-major in
-/// `kDrumLayer2Continuous`' order, after the edit-only identity so every earlier destination keeps its place.
-inline constexpr size_t kFirstLayer2Destination = kFirstEditOnlyDestination + kEditOnlyDestinationCount;
-inline constexpr size_t kLayer2DestinationCount = kMaxSounds * kDrumLayer2Continuous.size();
-
-inline constexpr size_t kParamDestinationCount = kFirstLayer2Destination + kLayer2DestinationCount;
+inline constexpr size_t kParamDestinationCount = kFirstEditOnlyDestination + kEditOnlyDestinationCount;
 
 /// A core destination index that only a Relative macro may reach and the engine never resolves (see above).
 constexpr bool isEditOnlyDestination(size_t coreIndex) noexcept {
-	return coreIndex >= kFirstEditOnlyDestination && coreIndex < kFirstLayer2Destination;
+	return coreIndex >= kFirstEditOnlyDestination && coreIndex < kParamDestinationCount;
 }
 
 constexpr std::array<ParamId, kParamDestinationCount> buildModDestinations() {
@@ -1931,21 +2455,11 @@ constexpr std::array<ParamId, kParamDestinationCount> buildModDestinations() {
 		for (const SpectralControl c : kSpectralContinuousControls) {
 			out[at++] = spectralParam(slot, c);
 		}
-		// AND THE DRUM PAD'S AMOUNTS (2026-11-05): per sound, so per slot here.
-		for (const DrumControl c : kDrumContinuousControls) {
-			out[at++] = drumParam(slot, c);
-		}
 	}
 	// AND THE IDENTITY, EDIT-ONLY (backlog PQ), slot-major in `kEditOnlyFields` order.
 	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
 		for (const SoundField field : kEditOnlyFields) {
 			out[at++] = soundParam(slot, field);
-		}
-	}
-	// AND THE DRUM PAD'S SECOND LAYER, slot-major.
-	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-		for (const DrumControl c : kDrumLayer2Continuous) {
-			out[at++] = drumLayer2Param(slot, c);
 		}
 	}
 	// A COUNT THAT DID NOT FILL THE LIST HANDS BACK AN EMPTY ONE, which the static_assert under this
@@ -1963,22 +2477,11 @@ inline constexpr std::array<ParamId, kParamDestinationCount> kModDestinations =
 /// What a clone copies, a reorder carries and a delete resets with the sound. Derived from the run, so a per-sound knob added to it joins by construction.
 /// AND THE SPECTRAL DRAWER'S STEPPED CONTROLS (its switches, Mode, Link) after the run: settings of the sound that are
 /// not destinations, so the run alone does not hold them.
-/// AND THE DRUM PAD'S STEPPED CONTROLS (Kind, Note, Choke, Voices, Trigger, Count) after those, for the same reason.
-/// AND THE DRUM PAD'S SECOND LAYER AFTER THAT (its continuous copies, then its stepped ones): appended, so every earlier knob
-/// keeps its position in a stance saved before them.
-inline constexpr size_t kPerSoundKnobCount = kPerSoundDestinationsPerSlot - 1 + kSpectralSteppedControls.size()
-                                             + kDrumSteppedControls.size() + kDrumLayer2Continuous.size()
-                                             + kDrumLayer2Stepped.size();
+inline constexpr size_t kPerSoundKnobCount = kPerSoundDestinationsPerSlot - 1 + kSpectralSteppedControls.size();
 constexpr ParamId perSoundKnobParam(size_t slot, size_t k) {
 	constexpr size_t run = kPerSoundDestinationsPerSlot - 1;
-	constexpr size_t spectral = run + kSpectralSteppedControls.size();
-	constexpr size_t drum = spectral + kDrumSteppedControls.size();
-	constexpr size_t layer2 = drum + kDrumLayer2Continuous.size();
 	return k < run        ? kModDestinations[kCoreModDestinations.size() + slot * kPerSoundDestinationsPerSlot + 1 + k]
-	       : k < spectral ? spectralParam(slot, kSpectralSteppedControls[k - run])
-	       : k < drum     ? drumParam(slot, kDrumSteppedControls[k - spectral])
-	       : k < layer2   ? drumLayer2Param(slot, kDrumLayer2Continuous[k - drum])
-	                      : drumLayer2Param(slot, kDrumLayer2Stepped[k - layer2]);
+	       : spectralParam(slot, kSpectralSteppedControls[k - run]);
 }
 static_assert(kModDestinations[kCoreModDestinations.size()] == soundParam(0, SoundField::Width),
               "each slot's destination run leads with its Width, which perSoundKnobParam skips");
@@ -2163,7 +2666,7 @@ constexpr ParamId destinationParamId(size_t destination) {
 /// EVERY PARAMETER ID IS BELOW THIS — the size of the id-to-index tables, so a lookup is one load rather than a scan
 /// (backlog FI: `resolved()` scanned the parameter list on every read, dozens of times a control tick). A table built
 /// from an id past it does not compile.
-inline constexpr size_t kParamIdSpan = 0x0A00; // 0x0400..0x05FF: the per-sound spectral drawer; 0x0600..0x07FF: the drum pads' two blocks; 0x0800..0x09FF: layer two's
+inline constexpr size_t kParamIdSpan = 0x0A00; // 0x0400..0x05FF: the per-sound spectral drawer; 0x0600..0x09FF: the retired Drum engine's pad blocks (never reused)
 
 /// Where each id sits in the destination list, -1 where it is not one.
 inline constexpr std::array<int16_t, kParamIdSpan> kModDestinationIndexOfId = [] {
@@ -2356,13 +2859,8 @@ constexpr bool maySourceRouteToIgnoringDevice(backplane::Source source, backplan
 // AND OE, 2026-10-26: the engine vocoder's analysis, Resolution .. Key Track (+6).
 // AND OE2, 2026-10-27: Spacing, Widths, Stereo, Sibilance (+4).
 // AND THE KARPLUS-STRONG ENGINE, 2026-10-31: eight engine-wide controls (+8) and five field scalers per sound (19 -> 24).
-// AND THE DRUM ENGINE, 2026-11-05: five engine-wide controls (+5) and a pad block per sound (kDrumControlCount).
-// AND THE KIT-WIDE LAYER, 2026-11-06: Kit Gamma, Zone, Offset and seven field trims (+10).
-// AND THE KIT STANCE REDESIGN: the Walk and Kit Gamma, Zone, Offset are gone (-5), each pad's second layer has its own
-// copies (kDrumLayerControls) beside the pad's block.
-inline constexpr size_t kParamCount = 49 + 4 + 1 + 1 + 3 + 6 + 4 + 8 + 3 + 7 + 6 * 3 + kMaxSounds * 24 + kMacroCount
-                                      + kMaxSounds * kSpectralControlCount + kMaxSounds * kDrumControlCount
-                                      + kMaxSounds * kDrumLayerControls.size();
+inline constexpr size_t kParamCount = 49 + 4 + 1 + 1 + 3 + 6 + 4 + 8 + 6 * 3 + kMaxSounds * 24 + kMacroCount
+                                      + kMaxSounds * kSpectralControlCount;
 
 /// Every declared param, in table order. Host param indices are positions in this span.
 std::span<const ParamDesc> paramDescs();
@@ -2787,10 +3285,6 @@ public:
 	/// **THE RIGHT EAR'S READING OF A `stereo` PARAMETER** — `resolved(id)` plus every pair input's (R − L), from the
 	/// cells; `resolved(id)` itself when nothing stereo reaches it. For the editor's split ring (`ParamBridge::publish`).
 	[[nodiscard]] double resolvedRight(ParamId id) const;
-	/// **A COUNT OF EVERY WRITE TO A DRUM PAD'S ROW** (host event, editor, state load, modulation offset). `ParamBridge::publish`
-	/// leaves the pads' 736 rows out while the engine is not Drum and publishes them again whenever this has moved, so a write
-	/// made under another engine is never lost and reaches the editor in the next call.
-	[[nodiscard]] uint32_t drumGeneration() const noexcept { return drumGeneration_.load(std::memory_order_relaxed); }
 	/// **EVERY WRITE TO WHAT `resolved` READS** (a base, a host modulation offset, a whole patch, a reset, and the route
 	/// list being adopted) moves this, and `serial` names this instance for good (a monotonic stamp, never an address),
 	/// so `ParamBridge::publish` can leave the walk when neither moved and no route is live (a live route reads sources
@@ -2841,8 +3335,6 @@ public:
 
 	/// How many oscillators each note stacks, 1..kMaxStack (backlog KE).
 	int stackCount() const;
-	/// THE DRUM ENGINE IN KIT MODE: every sound a pad, a note playing the pads mapped to it (drum proposal §5).
-	bool drumKit() const;
 
 	/// Voice Count as the guard allows it under the current stack — what the voice manager is handed.
 	int voiceLimit() const { return stackVoiceLimit(voiceCount(), stackCount()); }
@@ -2881,6 +3373,10 @@ public:
 	/// caller parses the rest of its stream, so a refusal anywhere in it leaves the parameters untouched too.
 	struct Staged {
 		std::array<double, kParamCount> base {};
+		/// WHAT THE STREAM CARRIED THAT THIS BUILD NO LONGER HAS, for the event log: values whose id names no parameter (the retired
+		/// Drum engine's pads and trims among them), and whether Osc Type named the retired Drum engine (read as the default).
+		uint32_t droppedIds = 0;
+		bool retiredEngine = false;
 	};
 	/// Why a `read` refused — the event log names it.
 	enum class ReadFailure : uint8_t { None, NoStream, Empty, Version, ShortRead };
@@ -2910,15 +3406,9 @@ private:
 
 
 	std::array<std::atomic<double>, kParamCount> base_;
-	std::atomic<uint32_t> drumGeneration_ { 0 };
 	std::atomic<uint32_t> writeGeneration_ { 0 };
 	uint64_t serial_ { 0 };
-	void noteDrumWrite(clap_id id) noexcept {
-		writeGeneration_.fetch_add(1, std::memory_order_release);
-		if (id >= kDrumBlockBase && id < kDrumBlock3Base + kMaxSounds * kDrumSlot3Stride) {
-			drumGeneration_.fetch_add(1, std::memory_order_relaxed);
-		}
-	}
+	void noteWrite(clap_id) noexcept { writeGeneration_.fetch_add(1, std::memory_order_release); }
 	std::array<double, kParamCount> mod_;
 	/// **THIS NODE'S INPUTS, IN ONE ARRAY THE PER-PARAMETER RANGES INDEX INTO** (kill-lanes §2.4b) — the
 	/// compiled plan for the synth's own parameters, which are the host node's controls. `value` is the

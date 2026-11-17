@@ -67,10 +67,6 @@ constexpr uint16_t kPort = 0;
 /// separately; feathers has one layer, so it has one group, and group 0 is the one the manager
 /// guarantees for free.
 constexpr uint64_t kGroup = 0;
-/// THE DRUM PADS' POLYPHONY GROUPS (drum proposal §4.2): pad N's voices are group kDrumPadGroup + N, a ROOT group of its own
-/// (bounded by the pool alone, not by Voice Count), POLY, its limit the pad's Voices. The manager then steals a pad's own oldest
-/// hit, through the house steal fade, when one more arrives.
-constexpr uint64_t kDrumPadGroup = 0x100;
 
 /// A voice's noise seed, from its slot and nothing else.
 ///
@@ -157,7 +153,6 @@ Synth::Synth(ParamSet& params)
 			partOsc(v, part).setNoiseSeed(seedForPart(i, part));
 			partOsc(v, part).setPhaseProfiles(&phases_->profiles()); // A-PH: read at a note-on, never after
 			partOsc(v, part).setVocodeEnvelope(&vocodeEnv_); // OE: the one sidechain envelope, read at each voice's partials
-			partOsc(v, part).setDrumKit(&drum_->kit); // the drum engine's kit, read every control block
 			// AND EVERY PART BUT THE FIRST READS THE FIRST PART'S VOWEL BAKE (backlog KE step 4, §3.10): the parts stand on
 			// one stand, so their vowel is one vowel, and a stack of eight bakes as often as a stack of one.
 			if (part > 0) {
@@ -171,11 +166,6 @@ Synth::Synth(ParamSet& params)
 	voiceManager_ = std::make_unique<VoiceManager>(responder_, monoResponder_);
 	voiceManager_->guaranteePort(static_cast<int16_t>(kPort));
 	voiceManager_->guaranteeGroup(kGroup);
-	// THE DRUM PADS' GROUPS, made here because making one allocates (never on the audio thread); POLY for good.
-	for (uint64_t pad = 0; pad < kMaxSounds; ++pad) {
-		voiceManager_->guaranteeGroup(kDrumPadGroup + pad);
-		voiceManager_->setPlaymode(kDrumPadGroup + pad, VoiceManager::PlayMode::POLY_VOICES);
-	}
 
 	// THE LANE RESOLVES THROUGH FEATHERS' OWN PUBLISHED ROUTES — one list, read by both resolves.
 }
@@ -245,20 +235,6 @@ void Synth::activate(double sampleRate, int maxFrames) {
 	// engine re-prepares what it holds in place.
 	if (prepareLane) { // grow-only at the same rate: see the top of this function
 		lane_.prepare(sampleRate, static_cast<size_t>(kVoiceSlots), maxFrames);
-		// AND EVERY KIT PAD'S LANE that exists (drum proposal §17); one made later is prepared by ensurePadLane at this rate.
-		padLaneRate_ = sampleRate;
-		padLaneFrames_ = maxFrames;
-		if (padBusL_.empty()) { // the buses, once: a pad's chunk is at most kRenderChunk
-			padBusL_.assign(kMaxSounds * static_cast<size_t>(kRenderChunk), 0.0f);
-			padBusR_.assign(kMaxSounds * static_cast<size_t>(kRenderChunk), 0.0f);
-		}
-		for (PadLane& p : padLanes_) {
-			if (p.owned != nullptr) {
-				p.owned->prepare(sampleRate, maxFrames);
-				padAlign_[static_cast<size_t>(&p - padLanes_.data())].prepare(sampleRate);
-				directAlign_.prepare(sampleRate);
-			}
-		}
 	}
 	if (!sameRate) {
 		masterMeter_.prepare(sampleRate);
@@ -340,7 +316,6 @@ void Synth::reset() {
 	lane_.reset();
 	envRetrigger_ = false;
 	ks_->strikes.fill(0); // a reset or a load starts every key's plucks from the first (KS design §6)
-	drum_->strikes.fill(0); // and every pad's hits from the first (drum proposal §7)
 	envGate_ = false;
 	publishEnvelopes();
 }
@@ -621,11 +596,9 @@ void Synth::deliverNotes(const device::NoteEvent* events, size_t count) {
 				heldNote(e.channel, e.key) = HeldNote { e.noteId, e.velocity, true };
 			}
 			pendingNoteOn_ = PendingNoteOn { e.noteId, e.channel, e.key, true };
-			drum_->startedCount = 0;
 			voiceManager_->processNoteOnEvent(static_cast<int16_t>(kPort), e.channel, e.key, e.noteId,
 			                                  static_cast<float>(e.velocity), 0.0f);
 			pendingNoteOn_.valid = false;
-			applyDrumChokes(); // D6: once the manager has returned, never inside its transaction
 			break;
 
 		case device::NoteEvent::Kind::Off: {
@@ -1601,12 +1574,6 @@ bool Synth::requestChainCapacity(size_t fxCapacity, size_t stripCapacity, size_t
 		return true; // already there, or on its way: a capacity never shrinks
 	}
 	(void)reapChainGrowth();
-	// AND EVERY KIT PAD'S LANE'S PARKED DEVICES (drum proposal §17): an InnerChain is reaped by its holder's service.
-	for (PadLane& p : padLanes_) {
-		if (p.owned != nullptr) {
-			(void)p.owned->service();
-		}
-	}
 	if (growthState_.load(std::memory_order_acquire) != kGrowthIdle) {
 		return false; // the last one has not met its drain yet
 	}
@@ -1761,12 +1728,6 @@ void Synth::drainRetiredDevices() {
 	lane_.reap();
 	// AND THE OLD CHAIN BUFFERS A GROWTH LEFT BEHIND (unbounded devices step 3).
 	(void)reapChainGrowth();
-	// AND EVERY KIT PAD'S LANE'S PARKED DEVICES (drum proposal §17): an InnerChain is reaped by its holder's service.
-	for (PadLane& p : padLanes_) {
-		if (p.owned != nullptr) {
-			(void)p.owned->service();
-		}
-	}
 }
 
 bool Synth::noteStackHeld() const {
@@ -2074,279 +2035,6 @@ void Synth::pluckStrings(Voice& voice) {
 		OscVoice& osc = partOsc(voice, part);
 		osc.pluckString(z, velocity);
 		osc.releaseString(false);
-	}
-}
-
-void Synth::strikeDrums(Voice& voice, uint8_t pad) {
-	// ON DRUM ALONE: an engine switch strikes nothing (as for Pluck, K12). Each part's seed is its own.
-	if (params_.oscType() != OscType::Drum) {
-		return;
-	}
-	const bool kit = params_.drumKit();
-	const auto seed = static_cast<uint64_t>(std::lround(params_.base(ParamId::DrumSeed)));
-	const int64_t tick = songTickNow();
-	// THE HIT'S IDENTITY: in Kit mode the PAD (two keys mapped to one pad are one drum), in Pitched mode the key.
-	const auto who = static_cast<uint64_t>(kit ? pad : static_cast<uint16_t>(voice.key & 127));
-	const double held = heldNote(voice.channel, voice.key).velocity;
-	const double velocity = held > 0.0 ? std::clamp(held, 0.0, 1.0) : 1.0;
-	uint64_t when = 0;
-	if (tick >= 0) {
-		when = (static_cast<uint64_t>(tick) << 1) | 1u; // the song's place, never colliding with a count
-	}
-	else {
-		uint32_t& strikes = drum_->strikes[static_cast<size_t>(who & 127)];
-		when = static_cast<uint64_t>(strikes) << 1;
-		++strikes;
-	}
-	for (int part = 0; part < kMaxStack; ++part) {
-		uint64_t z = (seed + 0xD5A1u) * 0x9E3779B97F4A7C15ull ^ (who << 40) ^ (when * 0xC2B2AE3D27D4EB4Full)
-		             ^ (static_cast<uint64_t>(part) << 56) ^ (kit ? 0x4B17ull : 0ull);
-		z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-		z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-		z ^= z >> 31;
-		// THE KEY'S OWN PITCH (key and retune): a kit pad is moved by its Bend share of whatever the voice adds past it and the
-		// kit's transpose, from the strike on (2026-11-07: a bend held into a hit is the 808 glide).
-		partOsc(voice, part).strikeDrum(pad, z, velocity, static_cast<double>(voice.key) + voice.retuneSemitones);
-	}
-	// THE HIT, PUBLISHED FOR THE PADS' AND CARDS' PULSE: a count and the velocity it came at,
-	// per pad, read by the editor through the bridge. Plain members on the audio thread; nothing allocates. A muted pad is
-	// never struck (beginVoiceCreationTransaction), so it never counts; a choked pad's count is its own last hit's.
-	if (kit && pad < kMaxSounds) {
-		++padHits_.count[pad];
-		padHits_.velocity[pad] = static_cast<float>(velocity);
-	}
-}
-
-bool Synth::padAudible(size_t slot) const {
-	if (slot >= kMaxSounds) {
-		return false;
-	}
-	const bool on = std::lround(params_.resolved(drumParam(slot, DrumControl::Mute))) == 0;
-	return on && (!preview_.active() || preview_.slot == slot);
-}
-
-void Synth::fillDrumKit() {
-	drum::KitSetup& kit = drum_->kit;
-	kit.kit = params_.drumKit();
-	kit.panned = false;
-	// THE KIT-WIDE TRANSPOSE (2026-11-07): the Engine rail's Oct, St, Coarse and Fine move every pad, in full.
-	kit.transposeSemitones = 12.0 * params_.resolved(ParamId::TransposeOct) + params_.resolved(ParamId::TransposeSemi)
-	                         + params_.resolved(ParamId::Coarse) + params_.resolved(ParamId::FineTune) / 100.0;
-	const auto kindOf = [](double v) { return static_cast<drum::Kind>(steppedIndex(v, kDrumKindNames.size())); };
-	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-		drum::PadSetup& p = kit.pads[slot];
-		const auto r = [&](DrumControl c) { return params_.resolved(drumParam(slot, c)); };
-		// PITCHED MODE IS PAD A'S BLOCK UNDER THE ENGINE'S KIND (proposal §7, as built §11): Kind, Note, Choke and Voices are
-		// the kit's, everything else the one drum's.
-		p.kind = kit.kit || slot != 0 ? kindOf(r(DrumControl::Kind)) : kindOf(params_.resolved(ParamId::DrumPitchedKind));
-		// A LAYER'S CONTROLS: everything a hit reads, from that layer's own copy (R2). Layer one is the pad's block, layer two the third.
-		const auto fillControls = [&](drum::Controls& ctl, size_t layer) {
-			const auto rl = [&](DrumControl c) { return params_.resolved(drumLayerParam(slot, layer, c)); };
-			ctl.decaySeconds = std::exp2(rl(DrumControl::Decay));
-			ctl.sweepSeconds = std::exp2(rl(DrumControl::SweepTime));
-			ctl.drive = rl(DrumControl::Drive);
-			ctl.count = static_cast<int>(std::lround(rl(DrumControl::Count)));
-			ctl.spreadSeconds = std::exp2(rl(DrumControl::Spread));
-			ctl.pitchRangeSemitones = kit.kit ? 3.0 : 0.5;
-			// THE THREE ZONE COORDINATES (drum proposal §14): what velocity reaches, the wires, the bells (lawsFor reads them).
-			ctl.velocityZone = rl(DrumControl::VelocityZone);
-			ctl.wires = rl(DrumControl::Wires);
-			ctl.bells = rl(DrumControl::Bells);
-			// THE SNARE'S ENVELOPES AND BELL (read by a Snare alone).
-			ctl.wireDecaySeconds = std::exp2(rl(DrumControl::WireDecay));
-			ctl.clickDecaySeconds = std::exp2(rl(DrumControl::ClickDecay));
-			ctl.bellStartHz = std::exp2(rl(DrumControl::BellStart));
-			ctl.bellEndHz = std::exp2(rl(DrumControl::BellEnd));
-			ctl.bellSeconds = std::exp2(rl(DrumControl::BellTime));
-			// THE KICK'S SHAPE (read by a Kick alone): Hold and the dip's time in ms, the click sweep, the start phase in degrees.
-			ctl.kickHoldSeconds = rl(DrumControl::KickHold) / 1000.0;
-			ctl.kickDip = rl(DrumControl::KickDip);
-			ctl.kickDipSeconds = rl(DrumControl::KickDipTime) / 1000.0;
-			ctl.clickSweepOctaves = rl(DrumControl::ClickSweep);
-			ctl.clickSweepSeconds = std::exp2(rl(DrumControl::ClickSweepTime));
-			ctl.startPhaseDegrees = rl(DrumControl::StartPhase);
-			// THE DRIVE'S CURVE AND TONE (every kind) AND THE CLAP'S FILTER (a Clap alone): the high-pass in Hz.
-			ctl.driveCurve = static_cast<int>(steppedIndex(rl(DrumControl::DriveCurve), kDrumDriveCurveNames.size()));
-			ctl.driveTone = rl(DrumControl::DriveTone);
-			ctl.clapQ = rl(DrumControl::ClapQ);
-			ctl.clapHighPassHz = std::exp2(rl(DrumControl::ClapHighPass));
-			// THE SECOND BELL (a Snare alone): Hz and Time from their logs.
-			ctl.bell2Hz = std::exp2(rl(DrumControl::Bell2Hz));
-			ctl.bell2Seconds = std::exp2(rl(DrumControl::Bell2Time));
-			ctl.velocityNoise = rl(DrumControl::VelocityNoise);
-			// THE WIRES' CONTOUR, BUZZ AND THRESHOLD (a Snare), WIDTH (a Snare, a Clap).
-			ctl.width = rl(DrumControl::Width);
-			// THE TERRAIN'S PITCH MODE (R5): Kit mode alone (Pitched mode keeps the +-0.5 semitone fine pitch as it always was).
-			ctl.pitchMode = kit.kit ? static_cast<int>(steppedIndex(rl(DrumControl::PitchMode), kDrumPitchModeNames.size())) : 0;
-		};
-		fillControls(p.controls, 0);
-		p.tuneSemitones = r(DrumControl::Tune);
-		p.gain = static_cast<float>(std::pow(10.0, r(DrumControl::Level) / 20.0));
-		p.pan = static_cast<float>(r(DrumControl::Pan));
-		p.gate = steppedIndex(r(DrumControl::Trigger), kDrumTriggerNames.size()) == 1;
-		p.releaseSeconds = std::exp2(r(DrumControl::Release));
-		p.bendAmount = r(DrumControl::Bend);
-		// THE LAYER (stage (c)): Kit mode alone. Its kinds are Off then Kick..Clap in Kind's own order, so index − 1 is the Kind.
-		const size_t layerKind = steppedIndex(r(DrumControl::LayerKind), kDrumLayerKindNames.size());
-		p.layer.on = kit.kit && layerKind > 0;
-		p.layer.kind = static_cast<drum::Kind>(layerKind > 0 ? layerKind - 1 : 0);
-		const double layerDb = r(DrumControl::LayerLevel);
-		p.layer.gain = layerDb <= -60.0 ? 0.0f : static_cast<float>(std::pow(10.0, layerDb / 20.0));
-		p.layer.delaySeconds = r(DrumControl::LayerDelay) / 1000.0;
-		p.layer.highPassHz = std::exp2(r(DrumControl::LayerHighPass));
-		// AND ITS OWN COPY OF EVERYTHING A HIT READS (R2): a full hit of its own kind, not the pad's controls read through it.
-		if (p.layer.on) {
-			fillControls(p.layer.controls, 1);
-			p.layer.tuneSemitones = params_.resolved(drumLayerParam(slot, 1, DrumControl::Tune));
-		}
-		// A PAD WITH WIDTH TAKES THE STEREO ROAD too: its two ears differ by its own decorrelated noise.
-		if ((kit.kit || slot == 0) && (p.pan != 0.0f || (p.controls.width > 0.0 && drum::kindControls(p.kind).width)
-		                                   || (p.layer.on && p.layer.controls.width > 0.0 && drum::kindControls(p.layer.kind).width))) {
-			kit.panned = true;
-		}
-	}
-}
-
-
-// ---- THE PER-PAD FX LANES (drum proposal §17, stage (d)) ---------------------------------------------------------------------
-
-namespace {
-/// A PAD LANE'S AXES: Delay's feedback lane's (no core sources or destinations yet; the holder road is §17's P4), sixteen slots.
-constexpr backplane::Axes kPadLaneAxes {
-	.coreSources = 0,
-	.coreDestinations = 0,
-	.deviceSlots = 16,
-	.outputStride = device::kMaxDeviceOutputs,
-};
-} // namespace
-
-rack::InnerChain* Synth::ensurePadLane(size_t pad) {
-	if (pad >= padLanes_.size()) {
-		return nullptr;
-	}
-	PadLane& p = padLanes_[pad];
-	if (p.owned == nullptr) {
-		auto lane = std::make_unique<rack::InnerChain>(kPadLaneAxes);
-		if (havePadCatalogue_) {
-			lane->adopt(padCatalogue_);
-		}
-		lane->setVoices(1); // BUS ONLY: a pad lane runs once, on its pad's bus
-		if (padLaneRate_ > 0.0) {
-			lane->prepare(padLaneRate_, padLaneFrames_);
-			padAlign_[pad].prepare(padLaneRate_); // its latency's alignment, and the plain mix's (drum proposal §17 P4)
-			// THE PLAIN MIX'S RING ONCE ONLY: a lane already live may be delaying through it on the audio thread right now, and the
-			// lane being made here is not published yet, so its own ring above is safe.
-			if (directAlign_.capacity() == 0) {
-				directAlign_.prepare(padLaneRate_);
-			}
-		}
-		p.owned = std::move(lane);
-		p.published.store(p.owned.get(), std::memory_order_release);
-	}
-	return p.owned.get();
-}
-
-bool Synth::padLanesHoldTail() const noexcept {
-	for (const PadLane& p : padLanes_) {
-		const rack::InnerChain* lane = p.published.load(std::memory_order_acquire);
-		if (lane != nullptr && lane->holdsTail()) {
-			return true;
-		}
-	}
-	return false;
-}
-
-void Synth::beginPadLanes() {
-	// EVERY PUBLISHED LANE IS DRAINED AT THE BLOCK'S START (beginHostBlock), live or not, so an edit lands; a lane is LIVE
-	// while it holds a device that is on (Delay's rule: one whose every device is off and parked is no lane), and only in a
-	// kit. Its pad's voices then sum into its bus.
-	padLanesLive_ = false;
-	padLatency_ = 0;
-	const bool kit = params_.drumKit();
-	for (PadLane& p : padLanes_) {
-		p.running = p.published.load(std::memory_order_acquire);
-		p.live = false;
-		if (p.running == nullptr) {
-			continue;
-		}
-		p.running->setTransportClock(rackClock());
-		p.running->beginHostBlock();
-		p.live = kit && p.running->engine().chainLength(0) > 0 && !p.running->engine().allParked();
-		p.latency = p.live ? p.running->hostBlockLatency() : 0u;
-		padLatency_ = std::max(padLatency_, p.latency);
-		padLanesLive_ = padLanesLive_ || p.live;
-	}
-}
-
-void Synth::endPadLanes() {
-	for (PadLane& p : padLanes_) {
-		if (p.running != nullptr) {
-			p.running->endHostBlock();
-		}
-	}
-}
-
-void Synth::runPadLanes(float* left, float* right, int n) {
-	// EACH LIVE PAD'S BUS THROUGH ITS LANE, then into the mix. Run every chunk while live, voices or not, so a tail rings out.
-	// LATENCY ALIGNED (P4): while a live lane is latent, the plain mix waits for the latest one, and each bus for the rest of it.
-	if (padLatency_ > 0) {
-		directAlign_.process(left, right, n, padLatency_);
-	}
-	for (size_t pad = 0; pad < padLanes_.size(); ++pad) {
-		PadLane& p = padLanes_[pad];
-		if (!p.live) {
-			continue;
-		}
-		float* busL = padBusL_.data() + pad * static_cast<size_t>(kRenderChunk);
-		float* busR = padBusR_.data() + pad * static_cast<size_t>(kRenderChunk);
-		p.running->process(busL, busR, n);
-		if (padLatency_ > p.latency) {
-			padAlign_[pad].process(busL, busR, n, padLatency_ - p.latency);
-		}
-		for (int i = 0; i < n; ++i) {
-			left[i] += busL[i];
-			right[i] += busR[i];
-		}
-	}
-}
-void Synth::endDrumVoice(Voice& v) {
-	if (v.stage != Voice::Stage::Attack && v.stage != Voice::Stage::Sustain) {
-		return;
-	}
-	chokeLaneNote(v);
-	beginFade(v, Voice::Stage::Release, releaseEdgeSeconds_, sampleRate_, 0);
-	++drum_->ended;
-}
-
-void Synth::applyDrumChokes() {
-	const int n = drum_->startedCount;
-	drum_->startedCount = 0;
-	if (n == 0 || !params_.drumKit()) {
-		return;
-	}
-	for (int i = 0; i < n; ++i) {
-		const uint8_t pad = drum_->startedPads[static_cast<size_t>(i)];
-		const size_t group = steppedIndex(params_.resolved(drumParam(pad, DrumControl::Choke)), kDrumChokeNames.size());
-		if (group == 0) {
-			continue;
-		}
-		for (Voice& v : voices_) {
-			if (v.stage == Voice::Stage::Idle || v.stage == Voice::Stage::Stealing) {
-				continue;
-			}
-			// NOT A VOICE THIS NOTE STARTED (a layered note's two pads do not choke each other), AND NOT THE SAME PAD (its
-			// own repeats are its Voices' business, proposal §4.2).
-			const bool startedNow = std::find(drum_->started.begin(), drum_->started.begin() + n, &v)
-			                        != drum_->started.begin() + n;
-			const uint8_t other = v.osc.drumPad();
-			if (startedNow || other == pad) {
-				continue;
-			}
-			if (steppedIndex(params_.resolved(drumParam(other, DrumControl::Choke)), kDrumChokeNames.size()) == group) {
-				responder_.terminateVoice(&v);
-				++drum_->chokes;
-			}
-		}
 	}
 }
 
@@ -2799,15 +2487,6 @@ void Synth::applyParamsRoad(bool converge) {
 void Synth::syncVoiceManagerSettings() {
 	// VOICE COUNT UNDER THE STACK'S GUARD (backlog KE; by design, voices steal sooner): a stack of N sounds at most
 	// ⌊B / N⌋ notes, so a deep stack steals through this very line — the manager's own road, with its fade.
-	// EACH DRUM PAD'S VOICES, its own group's limit: one more hit steals the pad's own oldest.
-	for (size_t pad = 0; pad < kMaxSounds; ++pad) {
-		const int limit = kDrumVoicesCounts[steppedIndex(params_.resolved(drumParam(pad, DrumControl::Voices)),
-		                                                 kDrumVoicesCounts.size())];
-		if (limit != drum_->appliedLimit[pad]) {
-			voiceManager_->setPolyphonyGroupVoiceLimit(kDrumPadGroup + pad, limit);
-			drum_->appliedLimit[pad] = limit;
-		}
-	}
 	const int count = params_.voiceLimit();
 	if (count != appliedVoiceCount_) {
 		// Lowering it steals the excess immediately rather than waiting for the next note-on, which
@@ -4325,14 +4004,7 @@ void Synth::renderChunk(float* mix, int n) {
 		// was exact silence too (a per-voice device may still be ringing it) and off the late road (whose gain runs ahead).
 		const bool stringDone = ring == nullptr && v.stage == Voice::Stage::Release && stringsSilent(v)
 		                        && std::all_of(scratch_, scratch_ + n, [](float x) { return x == 0.0f; });
-		// A DRUM HIT THAT HAS RUN OUT TO EXACT SILENCE ENDS ITS VOICE (drum proposal §4.4): a One-shot voice is never released
-		// by its key, so this is the road it ends by — through a release of silence, which the roads below finish and report.
-		const bool drumDone = drumsSilent(v) && std::all_of(scratch_, scratch_ + n, [](float x) { return x == 0.0f; });
-		// AND A ONE-SHOT LET GO ON DRUM AND CARRIED ONTO ANOTHER ENGINE ENDS NOW (`Voice::oneShotLetGo`): no drum road will.
-		if (drumDone || letGoOffDrum(v)) {
-			endDrumVoice(v);
-		}
-		if ((stringDone || faded || (drumDone && ring == nullptr && v.stage == Voice::Stage::Release))
+		if ((stringDone || faded)
 		    && (v.stage == Voice::Stage::Release || v.stage == Voice::Stage::Stealing)
 		    && drained) {
 			const bool wasReleasing = v.stage == Voice::Stage::Release;
@@ -4367,15 +4039,6 @@ void Synth::renderChunkStereo(float* left, float* right, int n, bool earsLive) {
 	// the Width-0 bit-exactness guarantee and stays untouched.
 	std::fill_n(left, n, 0.0f);
 	std::fill_n(right, n, 0.0f);
-	// A LIVE PAD LANE'S BUS starts each chunk empty (drum proposal §17).
-	if (padLanesLive_) {
-		for (size_t pad = 0; pad < padLanes_.size(); ++pad) {
-			if (padLanes_[pad].live) {
-				std::fill_n(padBusL_.data() + pad * static_cast<size_t>(kRenderChunk), n, 0.0f);
-				std::fill_n(padBusR_.data() + pad * static_cast<size_t>(kRenderChunk), n, 0.0f);
-			}
-		}
-	}
 	const bool levelVaries = params_.variesPerVoice(ParamId::VoiceLevel);
 	const double levelOnce = params_.resolved(ParamId::VoiceLevel);
 	phaseVaries_ = params_.variesPerVoice(ParamId::OscPhase);
@@ -4440,16 +4103,8 @@ void Synth::renderChunkStereo(float* left, float* right, int n, bool earsLive) {
 		}
 
 		// THE PER-VOICE ROAD'S GAIN DELAY (`gainDelay_`): null at 0, and the loop below is today's to the bit.
-		// A KIT PAD WITH A LIVE LANE SUMS INTO ITS BUS (drum proposal §17); every other voice into the mix, as ever.
 		float* outL = left;
 		float* outR = right;
-		if (padLanesLive_) {
-			const size_t pad = v.osc.drumPad();
-			if (pad < padLanes_.size() && padLanes_[pad].live) {
-				outL = padBusL_.data() + pad * static_cast<size_t>(kRenderChunk);
-				outR = padBusR_.data() + pad * static_cast<size_t>(kRenderChunk);
-			}
-		}
 		float* ring = gainDelay_ == 0 ? nullptr : gainRing_.data() + static_cast<size_t>(v.slot) * gainRingCap_;
 		for (int i = 0; i < n; i++) {
 			switch (v.stage) {
@@ -4503,12 +4158,7 @@ void Synth::renderChunkStereo(float* left, float* right, int n, bool earsLive) {
 		const bool stringDone = ring == nullptr && v.stage == Voice::Stage::Release && stringsSilent(v)
 		                        && std::all_of(scratch_, scratch_ + n, [](float x) { return x == 0.0f; })
 		                        && std::all_of(scratchR_, scratchR_ + n, [](float x) { return x == 0.0f; });
-		const bool drumDone = drumsSilent(v) && std::all_of(scratch_, scratch_ + n, [](float x) { return x == 0.0f; })
-		                      && std::all_of(scratchR_, scratchR_ + n, [](float x) { return x == 0.0f; });
-		if (drumDone || letGoOffDrum(v)) { // the mono loop's two roads
-			endDrumVoice(v);
-		}
-		if ((stringDone || faded || (drumDone && ring == nullptr && v.stage == Voice::Stage::Release))
+		if ((stringDone || faded)
 		    && (v.stage == Voice::Stage::Release || v.stage == Voice::Stage::Stealing)
 		    && drained) {
 			const bool wasReleasing = v.stage == Voice::Stage::Release;
@@ -4526,10 +4176,6 @@ void Synth::renderChunkStereo(float* left, float* right, int n, bool earsLive) {
 		}
 	}
 
-	// THE KIT PADS' FX LANES (drum proposal §17): each live pad's bus through its lane, into the voices' mix.
-	if (padLanesLive_) {
-		runPadLanes(left, right, n);
-	}
 	// The master gain moved to render() here too, for the reason the mono loop states.
 }
 
@@ -4544,7 +4190,6 @@ void Synth::setTransport(double songPositionSeconds, double songPositionBeats, b
 	// from the count since it last changed state, so a take started from silence draws the same plucks every time.
 	if (playing != transportPlaying_) {
 		ks_->strikes.fill(0);
-		drum_->strikes.fill(0);
 	}
 	songBlockStartSeconds_ = songPositionSeconds;
 	songBlockStartBeats_ = songPositionBeats;
@@ -4663,8 +4308,6 @@ std::optional<double> Synth::lockedPhaseFor(double semitones) const {
 
 void Synth::render(float* left, float* right, int n) {
 	applyParams();
-	drumKitStale_ = true; // a parameter or a source may have moved since the last call
-	beginPadLanes(); // the kit pads' fx lanes, taken and drained for this render call (drum proposal §17)
 	// IS THE ONE STRING LIVE? Only on Resonate. Params cannot move inside a render call (the binding cuts
 	// the call at every event), so this is one answer for the whole call.
 	const bool stringLive = params_.oscType() == OscType::Resonate;
@@ -4762,21 +4405,6 @@ void Synth::render(float* left, float* right, int n) {
 				}
 			}
 		}
-		// THE DRUM KIT for this chunk, once for every voice (each reads it through one pointer); a panned pad takes the stereo
-		// road, its voice writing both ears. Centred and on any other engine, the road it was.
-		bool drumStereo = false;
-		if (params_.oscType() == OscType::Drum) {
-			// REBUILT ONLY WHEN ITS INPUTS CAN HAVE MOVED: they are the parameters' bases and host offsets (which change
-			// between render calls, the binding cutting the call at every event) and the routed sources' cells (published at the
-			// top of a call and at each control tick). So once per render call and once after each tick; the chunks between
-			// read the kit as it stands.
-			if (drumKitStale_) {
-				fillDrumKit();
-				drumKitStale_ = false;
-				++drumKitBuilds_;
-			}
-			drumStereo = drum_->kit.panned;
-		}
 		// WHERE THIS CHUNK STARTS inside the control tick, so a device reading windows — in the voices and on the bus — reads
 		// its own samples.
 		lane_.setTickPhase(PuckMotion::kTickSamples - motion_.samplesUntilTick());
@@ -4828,14 +4456,12 @@ void Synth::render(float* left, float* right, int n) {
 		// when first read, so asking over silence would make every build a moved character records. With nothing
 		// sounding both roads write the same silence, so the answer cannot change a sample.
 		const bool bankStereo = soundingVoiceCount() > 0 ? bank_.stereoActive() : bank_.stereoWindow();
-		const bool stereoChunk = bankStereo || anyStackPanned() || resonateStereo || phaseSpreadLive_ || ks_->stereo || drumStereo
-		                         || padLanesLive_ // a pad lane's output may be stereo, so its chunk is
+		const bool stereoChunk = bankStereo || anyStackPanned() || resonateStereo || phaseSpreadLive_ || ks_->stereo
 		                         || lane_.anyPerVoiceStereo() || drawerStereoLive_ || vocodeStereoLive_;
 		lastChunkStereo_ = stereoChunk; // TEST ONLY reader: `lastChunkStereoForTest`
 		if (stereoChunk) {
 			renderChunkStereo(left + done, right + done, m,
-			                  bankStereo || resonateStereo || phaseSpreadLive_ || drawerStereoLive_ || vocodeStereoLive_ || ks_->stereo
-			                      || drumStereo);
+			                  bankStereo || resonateStereo || phaseSpreadLive_ || drawerStereoLive_ || vocodeStereoLive_ || ks_->stereo);
 		}
 		else {
 			renderChunk(left + done, m);
@@ -4918,7 +4544,6 @@ void Synth::render(float* left, float* right, int n) {
 		const bool ticked = m >= motion_.samplesUntilTick();
 		motion_.advance(m);
 		if (ticked) {
-			drumKitStale_ = true; // the tick moves the sources the kit reads (see where it is rebuilt)
 			// THE MODULATORS MOVE FIRST, THEN WHAT THEY REACH IS RE-DECIDED. The order matters: an
 			// envelope published after the character was rebuilt would land a tick late on the puck,
 			// and one tick of a 1 ms attack is most of the attack.
@@ -4950,7 +4575,6 @@ void Synth::render(float* left, float* right, int n) {
 		}
 		done += m;
 	}
-	endPadLanes(); // and every pad lane's block ends with the render too
 	// THE LANE'S LAST SEGMENT ENDS WITH THE RENDER, so a device the drain parked during it is reapable
 	// by the message thread's next visit rather than held until the next render begins.
 	lane_.finish();
@@ -5257,8 +4881,6 @@ void Synth::beginFade(Voice& voice, Voice::Stage stage, double seconds, double s
 	}
 	// A NEW STAGE ENDS A DRAIN: a retrigger or a steal mid-drain must not carry it into the next release (review, Important 3).
 	voice.draining = false;
-	// AND ENDS A ONE-SHOT'S LET-GO: a new note's Attack is a key down, and a Release or a steal is the end it was waiting for.
-	voice.oneShotLetGo = false;
 	voice.drainLeft = 0;
 	if (stage == Voice::Stage::Stealing) {
 		// THE STEAL FADE ON THE DELAYED OUTPUT RUNS FROM 1, ON ITS OWN MULTIPLIER (delayedGain). With the per-voice road late the
@@ -5283,30 +4905,7 @@ void Synth::Responder::setVoiceEndCallback(std::function<void(Voice*)> callback)
 
 int32_t Synth::Responder::beginVoiceCreationTransaction(
     typename sst::voicemanager::VoiceBeginBufferEntry<VoiceManagerConfig>::buffer_t& buffer,
-    uint16_t, uint16_t, uint16_t key, int32_t, float) {
-	// A DRUM KIT'S NOTE PLAYS THE PADS MAPPED TO IT (drum proposal §5): none (an unmapped note is silent), one, or several (a
-	// layer), each in its pad's own group, in slot order. Remembered for initializeMultipleVoices, which is handed the voices
-	// in this order.
-	synth.drum_->notePadCount = 0;
-	if (synth.params_.drumKit()) {
-		int n = 0;
-		for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-			const auto note = std::lround(synth.params_.resolved(drumParam(slot, DrumControl::Note)));
-			// MUTE AND SOLO: a pad whose sound card is switched off is muted, and while a card
-			// is soloed (its S, the preview) only that pad is struck. Every sound is still a PAD (its fields, its place); a
-			// muted one simply takes no hit.
-			if (!synth.padAudible(slot)) {
-				continue;
-			}
-			if (note == static_cast<long>(key)) {
-				buffer[static_cast<size_t>(n)].polyphonyGroup = kDrumPadGroup + slot;
-				synth.drum_->notePads[static_cast<size_t>(n)] = static_cast<uint8_t>(slot);
-				++n;
-			}
-		}
-		synth.drum_->notePadCount = n;
-		return n;
-	}
+    uint16_t, uint16_t, uint16_t, int32_t, float) {
 	// One voice per note: v1 has no unison, so a note is never more than one oscillator.
 	buffer[0].polyphonyGroup = kGroup;
 	return 1;
@@ -5484,14 +5083,6 @@ int32_t Synth::Responder::initializeMultipleVoices(
 		          synth.nextNoteSerial_++);
 		voice->level = 0.0f; // beginFade sets the rate; an attack starts from silence.
 		synth.pluckStrings(*voice); // KS: a note that starts or re-strikes plucks its strings (a legato move never comes here)
-		// DRUM: the pad this voice is (Kit: the transaction's, in order; Pitched: pad 0), struck, and its chokes owed.
-		const uint8_t pad = index < static_cast<size_t>(synth.drum_->notePadCount) ? synth.drum_->notePads[index] : 0;
-		synth.strikeDrums(*voice, pad);
-		if (synth.drum_->startedCount < static_cast<int>(kMaxSounds)) {
-			synth.drum_->started[static_cast<size_t>(synth.drum_->startedCount)] = voice;
-			synth.drum_->startedPads[static_cast<size_t>(synth.drum_->startedCount)] = pad;
-			++synth.drum_->startedCount;
-		}
 		synth.startVoiceSources(*voice); // backlog FF: the new note's routed values from its first sample
 
 		working[index].voice = voice;
@@ -5548,16 +5139,6 @@ void Synth::Responder::releaseVoice(Voice* voice, float velocity) {
 	}
 	// THE FINGER (KS K9): a released string is damped toward Release's T60; a re-strike lifts it (pluckStrings).
 	synth.forEachLivePart(*voice, [](OscVoice& osc) { osc.releaseString(true); });
-	// THE DRUM'S TRIGGER (drum proposal D4): a One-shot pad plays its whole hit whatever the key does, so its voice is not
-	// released at all (the drum road ends it at exact silence); a Gate pad damps its hit to Release and releases as ever.
-	if (synth.params_.oscType() == OscType::Drum) {
-		synth.forEachLivePart(*voice, [](OscVoice& osc) { osc.releaseDrum(); });
-		const size_t pad = synth.params_.drumKit() ? voice->osc.drumPad() : 0;
-		if (steppedIndex(synth.params_.resolved(drumParam(pad, DrumControl::Trigger)), kDrumTriggerNames.size()) == 0) {
-			voice->oneShotLetGo = true; // ended by the drum road at silence, or off Drum by `letGoOffDrum`
-			return;
-		}
-	}
 	beginFade(*voice, Voice::Stage::Release, synth.releaseEdgeSeconds_, synth.sampleRate_,
 	          0);
 }
@@ -5602,7 +5183,6 @@ void Synth::Responder::retriggerVoiceWithNewNoteID(Voice* voice, int32_t noteId,
 	beginFade(*voice, Voice::Stage::Attack, synth.attackEdgeSeconds_, synth.sampleRate_,
 		          synth.nextNoteSerial_++);
 	synth.pluckStrings(*voice); // KS: a note that starts or re-strikes plucks its strings (a legato move never comes here)
-	synth.strikeDrums(*voice, voice->osc.drumPad()); // DRUM: a re-strike strikes the same pad again
 	synth.startVoiceSources(*voice); // backlog FF
 }
 
@@ -5617,7 +5197,6 @@ void Synth::Responder::moveVoice(Voice* voice, uint16_t, uint16_t channel, uint1
 	voice->channel = static_cast<int16_t>(channel);
 	voice->key = static_cast<int16_t>(key);
 	voice->haveTarget = false; // The next slice retargets the oscillator.
-	voice->oneShotLetGo = false; // moved to a key that is down (a new note, or a legato return to a held one)
 	// **AND THE VOICE ANSWERS TO THE NOTE IT MOVED TO** (backlog FG). A legato move carries no note id, so the
 	// voice kept the old note's — and read that note's per-note envelope, following its release to the end
 	// while the new note's own envelope ran unread (the envelope seemed to hold on until the entire env
@@ -5679,7 +5258,6 @@ void Synth::Responder::moveAndRetriggerVoice(Voice* voice, uint16_t port, uint16
 		beginFade(*voice, Voice::Stage::Attack, synth.attackEdgeSeconds_, synth.sampleRate_,
 		          synth.nextNoteSerial_++);
 		synth.pluckStrings(*voice); // KS: a note that starts or re-strikes plucks its strings (a legato move never comes here)
-		synth.strikeDrums(*voice, voice->osc.drumPad()); // DRUM: a re-strike strikes the same pad again
 		synth.startVoiceSources(*voice); // backlog FF
 	}
 }

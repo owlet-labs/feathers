@@ -23,7 +23,6 @@
 
 #include "dsp/character_bank.h"
 #include "dsp/halfband.h"
-#include "dsp/drum_voice.h"
 #include "dsp/ks_string.h"
 #include "dsp/modifiers.h"
 #include "dsp/partial_bank.h"
@@ -372,7 +371,6 @@ public:
 	/// The synth's pluck builder, shared by every voice (null: plucks are noise alone).
 	void setPluckBuilder(ks::PluckBuilder* builder) {
 		ks_->pluckBuilder = builder;
-		drum_->hit.setString(&ks_->string, builder); // the drum's String kind plucks with it too
 	}
 	/// The engine-wide string controls, for every block from the next.
 	void setStringControls(const ks::StringControls& c) { ks_->controls = c; }
@@ -399,38 +397,6 @@ public:
 	/// Whether the string is silent (nothing ringing, nothing to inject): a released voice whose string is idle sounds
 	/// of nothing, and the synth may end it (design §1.7).
 	bool stringIdle() const { return ks_->string.idle() && !ks_->pluckPending; }
-
-	// ---- THE DRUM HIT -----------------------------------------------------------------------------------------------------
-	/// The synth's kit, read every control block (one pointer for every voice; null: a Drum side is silent).
-	void setDrumKit(const drum::KitSetup* kit) { drum_->kit = kit; }
-	/// STRIKE pad `pad` at the next Drum block, its noise from `seed` (derived by the synth, never incidental), at `velocity`
-	/// (0..1). `keySemitones` is the key's own pitch (key and retune; no transpose, bend or expression): in Kit mode a pad's
-	/// pitch is its Tune and the kit's transpose, moved by its Bend share of what
-	/// the voice's pitch adds past that (the wheel, an expression, a pitch route). Ignored by every other engine.
-	void strikeDrum(uint8_t pad, uint64_t seed, double velocity, double keySemitones) {
-		drum_->pad = pad < 8 ? pad : 0;
-		drum_->seed = seed;
-		drum_->velocity = velocity;
-		drum_->keySemitones = keySemitones;
-		drum_->strikePending = true;
-		drum_->released = false;
-	}
-	/// THE KEY WAS LET GO: a Gate pad damps its hit to Release; a One-shot pad ignores it.
-	void releaseDrum() { drum_->released = true; }
-	/// Whether the hit is silent and nothing is waiting to strike: the synth may end the voice.
-	bool drumIdle() const {
-		return drum_->hit.idle() && drum_->layer.idle() && !drum_->strikePending && !drum_->layerPending;
-	}
-	/// The pad this voice is playing.
-	uint8_t drumPad() const { return drum_->pad; }
-	/// TEST ONLY.
-	const drum::Hit& drumHitForTest() const { return drum_->hit; }
-	const drum::Hit& drumLayerForTest() const { return drum_->layer; }
-	bool drumLayerPendingForTest() const { return drum_->layerPending; }
-	uint32_t drumLayerStrikesForTest() const { return drum_->layerStrikes; }
-	float drumLayerHighPassForTest() const { return drum_->layerHpA; }
-	uint32_t drumStrikesForTest() const { return drum_->strikes; }
-	uint32_t drumChunksForTest() const { return drum_->chunks; }
 
 	/// Play `hz` from the next generated sample, ending any glide in flight.
 	void setFrequency(double hz);
@@ -845,22 +811,6 @@ private:
 	/// The string's control block, in host samples: pitch and laws move at most this often.
 	static constexpr int kStringControlBlock = 16;
 
-	/// THE DRUM ROAD, the String road's three cases for a Drum side.
-	enum class DrumRoad : uint8_t { None, Pure, Mixed };
-	DrumRoad drumRoad() const {
-		const bool freshD = fresh_->engine == OscEngine::Drum;
-		if (fadeLeft_ <= 0) {
-			return freshD ? DrumRoad::Pure : DrumRoad::None;
-		}
-		const bool staleD = stale_->engine == OscEngine::Drum;
-		return freshD && staleD ? DrumRoad::Pure : (freshD || staleD) ? DrumRoad::Mixed : DrumRoad::None;
-	}
-	/// One control block of the hit: its pad's laws from the Drum side's fields and the kit, a pending strike, the Gate.
-	void controlDrum(const PreparedCharacter& side);
-	/// Render `span` samples of the hit into `l` (and `r`), panned and at the pad's Level.
-	void renderDrumSpan(float* l, float* r, int span);
-	void renderDrumPure(int chunk, bool stereoRender);
-	void addDrumMixed(int chunk, int fadeLeft0, bool stereoRender);
 	/// One chunk of the carry by whichever road partialsRoad picks — render() and renderStereo() share it, so the two
 	/// cannot disagree about the roads (the 4x loop inside is still the mono or the pair loop, untouched).
 	void generateChunk(int chunk, bool stereo);
@@ -1361,43 +1311,6 @@ private:
 		float mixWeight[Halfband4x::kMaxBlock] {};
 	};
 	std::unique_ptr<StringRoadState> ks_ = std::make_unique<StringRoadState>();
-
-	// ---- THE DRUM ROAD (drum proposal §1) ----------------------------------------------------------------------------------
-	/// Behind one pointer for the string road's reason: a Synth on a test's stack has kilobytes to spare.
-	struct DrumRoadState {
-		drum::Hit hit;
-		const drum::KitSetup* kit{nullptr};
-		uint8_t pad{0};
-		uint64_t seed{1};
-		double velocity{1.0};
-		double keySemitones{69.0};
-		bool strikePending{false};
-		bool released{false};
-		bool releaseApplied{false};
-		bool prepared{false};
-		int controlLeft{0};
-		float gainL{1.0f};
-		float gainR{1.0f};
-		uint32_t chunks{0};
-		uint32_t strikes{0};
-		// THE LAYER SLOT (drum proposal §12, stage (c)): a second hit, struck its Delay after the pad's, at its own place's laws
-		// (taken each control block like the pad's), through a one-pole high-pass, mixed into the pad's span before its Level
-		// and pan. Its scratch is a control block long, the longest span renderDrumSpan is handed.
-		drum::Hit layer;
-		drum::Laws layerLaws{};
-		drum::Kind layerKind{drum::Kind::Kick};
-		bool layerPending{false};
-		bool layerReleaseApplied{false};
-		uint32_t layerStrikes{0};
-		int layerDelayLeft{0};
-		float layerGain{1.0f};
-		float layerHpA{1.0f}; ///< the one-pole high-pass's coefficient; 1 bypasses it
-		float layerHpX[2] {}; ///< the last input and output, per ear: x then y for L, then R
-		float layerHpY[2] {};
-		alignas(16) float layerL[kStringControlBlock] {};
-		alignas(16) float layerR[kStringControlBlock] {};
-	};
-	std::unique_ptr<DrumRoadState> drum_ = std::make_unique<DrumRoadState>();
 };
 
 } // namespace feathers

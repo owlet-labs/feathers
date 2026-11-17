@@ -910,149 +910,6 @@ TEST_CASE("pluck: process allocates nothing — notes, a stolen voice, a moving 
 	CHECK(host.allocationsInLastProcess() == 0);
 }
 
-TEST_CASE("drum: a ringing ride keeps the plugin awake, and once it is exactly silent SLEEP is promised over exact silence") {
-	// THE SLEEP RULE (CLAUDE.md, decided by the output) for the drum engine: every mode and envelope of a hit is
-	// snapped to exact zero below −160 dB, and a One-shot voice then ends itself.
-	// The ride is a One-shot pad, so no note-off is sent at all: the hit alone decides.
-	HostedPlugin host;
-	EventList events;
-	constexpr uint32_t kFrames = 256;
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
-	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(7, feathers::DrumControl::Decay)), std::log2(0.4));
-	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 51, 1, 1.0);
-	CHECK(host.run(kFrames, events) == CLAP_PROCESS_CONTINUE);
-	events.clear();
-	float held = 0.0f;
-	for (int block = 0; block < 8; block++) {
-		CHECK(host.run(kFrames, events) == CLAP_PROCESS_CONTINUE);
-		CHECK(allFinite(host.left(), kFrames));
-		held = std::max(held, peakOf(host.left(), kFrames));
-	}
-	CAPTURE(held);
-	CHECK(held > 1.0e-3f);
-	clap_process_status status = CLAP_PROCESS_CONTINUE;
-	int blocks = 0;
-	int sleptWhileSounding = 0;
-	constexpr int kBlockBound = 30 * 48000 / static_cast<int>(kFrames);
-	while (status != CLAP_PROCESS_SLEEP && blocks < kBlockBound) {
-		status = host.run(kFrames, events);
-		sleptWhileSounding += status == CLAP_PROCESS_SLEEP && peakOf(host.left(), kFrames) > 0.0f ? 1 : 0;
-		blocks++;
-	}
-	CAPTURE(blocks);
-	CHECK(status == CLAP_PROCESS_SLEEP);
-	CHECK(sleptWhileSounding == 0);
-	CHECK(peakOf(host.left(), kFrames) == 0.0f);
-	CHECK(peakOf(host.right(), kFrames) == 0.0f);
-	CHECK(host.run(kFrames, events) == CLAP_PROCESS_SLEEP);
-	CHECK(peakOf(host.left(), kFrames) == 0.0f);
-}
-
-TEST_CASE("drum: process allocates nothing — kit notes, two layers, a choke, a pad's steal, a modulated stance and an engine switch") {
-	HostedPlugin host;
-	EventList events;
-	constexpr uint32_t kFrames = 128;
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
-	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(2, feathers::DrumControl::Pan)), -0.4);
-	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(4, feathers::DrumControl::Note)), 36.0);
-	// TWO FULL LAYERS on the kick and the clap pads: a second hit with its own controls, its own place, a locked one among them.
-	for (const size_t pad : { size_t { 0 }, size_t { 3 } }) {
-		events.pushParam(0, static_cast<clap_id>(feathers::drumParam(pad, feathers::DrumControl::LayerKind)), 3.0);
-		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::Decay)), -1.0);
-		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::Lock)), pad == 0 ? 1.0 : 0.0);
-		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::OffsetX)), 0.3);
-		events.pushParam(0, static_cast<clap_id>(feathers::drumLayerParam(pad, 1, feathers::DrumControl::PitchMode)), 1.0);
-	}
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::Weather), 1.0);
-	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 46, 1, 1.0);
-	host.run(kFrames, events);
-	CHECK(host.allocationsInLastProcess() == 0);
-	events.clear();
-	// Every pad, the layered kick-and-clap, the closed hat choking the open, a second kick stealing the first.
-	const int16_t keys[] { 36, 38, 42, 39, 45, 50, 51, 36, 60 };
-	int id = 2;
-	for (const int16_t k : keys) {
-		events.pushNote(CLAP_EVENT_NOTE_ON, static_cast<uint32_t>(id * 4), k, id, 0.8);
-		++id;
-	}
-	host.run(kFrames, events);
-	CHECK(host.allocationsInLastProcess() == 0);
-	for (int block = 0; block < 8; block++) {
-		events.clear();
-		events.pushParam(0, static_cast<clap_id>(feathers::ParamId::PosX), 0.1 * static_cast<double>(block));
-		events.pushParam(0, static_cast<clap_id>(feathers::drumParam(1, feathers::DrumControl::FieldTone)),
-		                 0.125 * static_cast<double>(block));
-		host.run(kFrames, events);
-		CAPTURE(block);
-		CHECK(host.allocationsInLastProcess() == 0);
-	}
-	events.clear();
-	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(5, feathers::DrumControl::Kind)), 5.0); // a String tom
-	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 45, 40, 1.0);
-	host.run(kFrames, events);
-	CHECK(host.allocationsInLastProcess() == 0);
-	events.clear();
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::V5));
-	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 64, 41, 1.0);
-	host.run(kFrames, events);
-	CHECK(host.allocationsInLastProcess() == 0);
-	events.clear();
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::DrumMode), 0.0); // Pitched
-	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 64, 42, 1.0);
-	host.run(kFrames, events);
-	CHECK(host.allocationsInLastProcess() == 0);
-}
-
-TEST_CASE("drum: a preview key the editor posts, with no host event at all, sounds the pad and the plugin does not sleep over it; it allocates nothing") {
-	// THE EDITOR'S NOTE RING (ui_note_ring.h): a pad's preview button posts a key the audio thread drains at the start of a block, into the
-	// synth's own note road. The host sends nothing here, so a sound that comes out came from the ring alone.
-	HostedPlugin host;
-	const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(
-	    host.plugin()->get_extension(host.plugin(), CLAP_EXT_FEATHERS_TEST_CHAIN));
-	REQUIRE(chain != nullptr);
-	REQUIRE(chain->post_note != nullptr);
-	EventList events;
-	constexpr uint32_t kFrames = 256;
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
-	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(0, feathers::DrumControl::Decay)), std::log2(0.05));
-	host.run(kFrames, events);
-	events.clear();
-	// THE PLUGIN IS ASLEEP FIRST (nothing sounding, so SLEEP is promised over exact silence).
-	clap_process_status status = CLAP_PROCESS_CONTINUE;
-	for (int block = 0; block < 400 && status != CLAP_PROCESS_SLEEP; ++block) {
-		status = host.run(kFrames, events);
-	}
-	REQUIRE(status == CLAP_PROCESS_SLEEP);
-	CHECK(peakOf(host.left(), kFrames) == 0.0f);
-	// A PREVIEW: the kick pad's key (36), 100/127, on. No host event.
-	REQUIRE(chain->post_note(host.plugin(), 36, true, 100.0f / 127.0f));
-	status = host.run(kFrames, events);
-	CHECK(status == CLAP_PROCESS_CONTINUE);
-	CHECK(host.allocationsInLastProcess() == 0);
-	float peak = peakOf(host.left(), kFrames);
-	for (int block = 0; block < 4; ++block) {
-		CHECK(host.run(kFrames, events) == CLAP_PROCESS_CONTINUE); // the hit rings: never SLEEP over it
-		CHECK(host.allocationsInLastProcess() == 0);
-		peak = std::max(peak, peakOf(host.left(), kFrames));
-	}
-	CAPTURE(peak);
-	CHECK(peak > 1.0e-3f);
-	// THE RELEASE (a One-shot pad ignores it, a Gate pad ends on it) and a burst of presses and releases: still no allocation, still finite.
-	REQUIRE(chain->post_note(host.plugin(), 36, false, 0.0f));
-	for (int i = 0; i < 20; ++i) {
-		(void)chain->post_note(host.plugin(), 36 + (i % 4), (i % 2) == 0, 0.8f);
-	}
-	for (int block = 0; block < 4; ++block) {
-		host.run(kFrames, events);
-		CHECK(host.allocationsInLastProcess() == 0);
-		CHECK(allFinite(host.left(), kFrames));
-	}
-	// A KEY OUTSIDE 0..127 IS REFUSED.
-	CHECK_FALSE(chain->post_note(host.plugin(), 128, true, 0.8f));
-	CHECK_FALSE(chain->post_note(host.plugin(), -1, true, 0.8f));
-}
-
 TEST_CASE("a reverb's tail keeps the plugin awake: SLEEP is never promised while the output is still sounding") {
 	// A crackle in the LATE, QUIET tail of every reverb that decays (Owl, which sustains, was clean),
 	// at any buffer size and either Oversample. The plugin returned SLEEP the moment the last VOICE died — "release
@@ -5292,173 +5149,6 @@ TEST_CASE("pluck: every Pluck factory preset loads into a fresh instance on Pluc
 	CHECK(tried == 5);
 }
 
-TEST_CASE("drum: every Drum factory kit loads into a fresh instance on Drum and sounds, and saved again reloads value for value") {
-	// THE STARTER KITS (tests/bench_patch_plans/save-drum-presets.plan), read back through the browser's load road into a fresh
-	// instance: the engine is Drum, a kick (Kit) or a C3 (Pitched) sounds and stays finite, and the patch saved from it and
-	// loaded into ANOTHER fresh one carries the engine-wide drum controls and every pad's every control, value for value.
-	using feathers::ParamId;
-	std::vector<clap_id> ids;
-	for (const ParamId id : { ParamId::OscType, ParamId::DrumMode, ParamId::DrumPitchedKind, ParamId::PosX, ParamId::PosY,
-	                          ParamId::Weather, ParamId::DrumSeed }) {
-		ids.push_back(static_cast<clap_id>(id));
-	}
-	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
-		for (size_t c = 0; c < feathers::kDrumControlCount; ++c) {
-			ids.push_back(static_cast<clap_id>(feathers::drumParam(slot, static_cast<feathers::DrumControl>(c))));
-		}
-		// AND LAYER TWO'S OWN COPIES of everything a hit reads.
-		for (const feathers::DrumControl c : feathers::kDrumLayerControls) {
-			ids.push_back(static_cast<clap_id>(feathers::drumLayer2Param(slot, c)));
-		}
-	}
-	const auto valuesOf = [&](const clap_plugin* p) {
-		const auto* params = static_cast<const clap_plugin_params*>(p->get_extension(p, CLAP_EXT_PARAMS));
-		std::vector<double> out;
-		for (const clap_id id : ids) {
-			double v = 0.0;
-			REQUIRE(params->get_value(p, id, &v));
-			out.push_back(v);
-		}
-		return out;
-	};
-	size_t tried = 0;
-	for (const feathers::FactoryPresetFile& file : feathers::factoryPresetFiles()) {
-		if (!file.path.starts_with("Feathers/Drums/")) {
-			continue;
-		}
-		CAPTURE(std::string(file.path));
-		feathers::PresetMeta meta;
-		std::vector<uint8_t> payload;
-		REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(file.bytes.begin(), file.bytes.end()), &meta, &payload));
-		CHECK(std::find(meta.tags.begin(), meta.tags.end(), "factory") != meta.tags.end());
-		HostedPlugin host;
-		const auto* chain = testChainOf(host.plugin());
-		StateBytes bytes;
-		bytes.bytes = payload;
-		clap_istream in = bytes.in();
-		REQUIRE(chain->load_preset(host.plugin(), &in));
-		const std::vector<double> loaded = valuesOf(host.plugin());
-		CHECK(loaded[0] == static_cast<double>(feathers::OscType::Drum));
-		// THE WALKING KIT stands off home by the ordinary stance (Pos X/Y through Weather), not a drum-only Walk.
-		if (file.path.find("Walking") != std::string_view::npos) {
-			CHECK(loaded[3] == 0.35);
-			CHECK(loaded[4] == -0.2);
-			CHECK(loaded[5] == 1.0);
-		}
-		// A KIT FOLLOWS THE KIT'S STANCE: no pad's first layer may come out of a factory kit locked (the old layer lock's
-		// default stood at this id, so a kit authored before the stance redesign would load stuck at home).
-		if (loaded[1] == 1.0) {
-			const auto* params = static_cast<const clap_plugin_params*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_PARAMS));
-			for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
-				double lock = 1.0;
-				REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumParam(slot, feathers::DrumControl::Lock)), &lock));
-				CHECK(lock == 0.0);
-			}
-		}
-		EventList events;
-		events.pushNote(CLAP_EVENT_NOTE_ON, 0, loaded[1] == 1.0 ? 36 : 48, 1, 0.8);
-		float peak = 0.0f;
-		for (int block = 0; block < 16; ++block) {
-			CHECK(host.run(256, events) != CLAP_PROCESS_ERROR);
-			events.clear();
-			CHECK(allFinite(host.left(), 256));
-			peak = std::max(peak, peakOf(host.left(), 256));
-		}
-		CAPTURE(peak);
-		CHECK(peak > 0.02f);
-		CHECK(peak < 1.5f);
-		StateBytes saved;
-		REQUIRE(saveState(host.plugin(), &saved));
-		HostedPlugin fresh;
-		REQUIRE(loadState(fresh.plugin(), &saved));
-		CHECK(valuesOf(fresh.plugin()) == loaded);
-		++tried;
-	}
-	CHECK(tried == 6);
-}
-
-#include "fixtures/old_drum_kit_preset.inc"
-
-TEST_CASE("drum: a kit saved before the stance redesign (its Walk, Kit Gamma/Zone/Offset and old layer ids) loads without a crash, "
-          "plays, and allocates nothing") {
-	feathers::PresetMeta meta;
-	std::vector<uint8_t> payload;
-	REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(std::begin(kOldDrumKitPreset), std::end(kOldDrumKitPreset)), &meta,
-	                                      &payload));
-	HostedPlugin host;
-	const auto* chain = testChainOf(host.plugin());
-	StateBytes bytes;
-	bytes.bytes = payload;
-	clap_istream in = bytes.in();
-	REQUIRE(chain->load_preset(host.plugin(), &in));
-	const auto* params = static_cast<const clap_plugin_params*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_PARAMS));
-	double engine = -1.0;
-	REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::ParamId::OscType), &engine));
-	CHECK(engine == static_cast<double>(feathers::OscType::Drum));
-	// THE RETIRED IDS ARE GONE, NOT REINTERPRETED: nothing at the stance, and every layer's lock and vector within its range.
-	double posX = 1.0;
-	REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::ParamId::PosX), &posX));
-	CHECK(posX == 0.0);
-	for (size_t slot = 0; slot < feathers::kMaxSounds; ++slot) {
-		for (const size_t layer : { size_t { 0 }, size_t { 1 } }) {
-			double x = 9.0;
-			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::OffsetX)), &x));
-			CHECK(std::abs(x) <= feathers::kDrumVectorReach);
-			// AND NO LAYER COMES UP LOCKED: the old layer lock's default was ON, and a kit saved then must not load stuck at home.
-			double lock = 1.0;
-			REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::drumLayerParam(slot, layer, feathers::DrumControl::Lock)), &lock));
-			CHECK(lock == 0.0);
-		}
-	}
-	EventList events;
-	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 36, 1, 0.8);
-	float peak = 0.0f;
-	for (int block = 0; block < 16; ++block) {
-		CHECK(host.run(256, events) != CLAP_PROCESS_ERROR);
-		events.clear();
-		CHECK(host.allocationsInLastProcess() == 0);
-		CHECK(allFinite(host.left(), 256));
-		peak = std::max(peak, peakOf(host.left(), 256));
-	}
-	CHECK(peak > 0.02f);
-	CHECK(peak < 1.5f);
-}
-
-TEST_CASE("drum: a layer's vector is unbounded: a value of 50 and one of -1234.5 survive save and load, and the kit still sounds finite far out") {
-	HostedPlugin host;
-	EventList events;
-	constexpr uint32_t kFrames = 256;
-	const auto idx = static_cast<clap_id>(feathers::drumLayerParam(0, 0, feathers::DrumControl::OffsetX));
-	const auto idy = static_cast<clap_id>(feathers::drumLayerParam(0, 1, feathers::DrumControl::OffsetY));
-	events.pushParam(0, static_cast<clap_id>(feathers::ParamId::OscType), static_cast<double>(feathers::OscType::Drum));
-	events.pushParam(0, static_cast<clap_id>(feathers::drumParam(0, feathers::DrumControl::LayerKind)), 3.0);
-	events.pushParam(0, idx, 50.0);
-	events.pushParam(0, idy, -1234.5);
-	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 36, 1, 0.8);
-	float peak = 0.0f;
-	for (int block = 0; block < 8; ++block) {
-		CHECK(host.run(kFrames, events) != CLAP_PROCESS_ERROR);
-		events.clear();
-		CHECK(host.allocationsInLastProcess() == 0);
-		CHECK(allFinite(host.left(), kFrames));
-		peak = std::max(peak, peakOf(host.left(), kFrames));
-	}
-	CHECK(peak > 1.0e-3f);
-	const auto* params = static_cast<const clap_plugin_params*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_PARAMS));
-	double v = 0.0;
-	REQUIRE(params->get_value(host.plugin(), idx, &v));
-	CHECK(v == 50.0);
-	StateBytes saved;
-	REQUIRE(saveState(host.plugin(), &saved));
-	HostedPlugin fresh;
-	REQUIRE(loadState(fresh.plugin(), &saved));
-	const auto* freshParams = static_cast<const clap_plugin_params*>(fresh.plugin()->get_extension(fresh.plugin(), CLAP_EXT_PARAMS));
-	REQUIRE(freshParams->get_value(fresh.plugin(), idx, &v));
-	CHECK(v == 50.0);
-	REQUIRE(freshParams->get_value(fresh.plugin(), idy, &v));
-	CHECK(v == -1234.5);
-}
-
 TEST_CASE("every test-tagged factory preset loads into a fresh instance and renders a block") {
 	// THE SURVEY'S STRESS PATCHES (presets/factory/README.md, "The `test` tag"), written by bench_patch through the
 	// browser's save road (`capture_preset`), so each is read back through the browser's load road, into an instance
@@ -5665,6 +5355,93 @@ struct ScratchEventLog {
 
 } // namespace
 
+#include "fixtures/old_drum_kit_preset.inc"
+
+TEST_CASE("a patch saved while the synth had a Drum engine loads without a crash: the engine falls back to the default, its drum-only values are dropped, it plays, and it round-trips") {
+	// THE FIXTURE IS A REAL DRUM-ENGINE PATCH (an old kit, Osc Type 7, its pads' ids, its kit trims, even its retired Walk ids), kept
+	// byte for byte so this is the road a user's saved patch takes. The engine is gone: the load reads it as the DEFAULT engine, the
+	// ids no param has are skipped, and nothing else about the patch is touched.
+	const ScratchEventLog log;
+	feathers::PresetMeta meta;
+	std::vector<uint8_t> payload;
+	REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(std::begin(kOldDrumKitPreset), std::end(kOldDrumKitPreset)), &meta,
+	                                      &payload));
+	// NON-VACUITY: the saved patch really names the retired engine, by its stored value (7), so the fallback is what moved it.
+	const auto storedEngine = [&] {
+		StateBytes probe;
+		probe.bytes = payload;
+		clap_istream in = probe.in();
+		uint8_t version = 0;
+		(void)in.read(&in, &version, 1);
+		uint8_t countBytes[4] {};
+		(void)in.read(&in, countBytes, 4);
+		const uint32_t count = countBytes[0] | (countBytes[1] << 8) | (countBytes[2] << 16) | (static_cast<uint32_t>(countBytes[3]) << 24);
+		for (uint32_t i = 0; i < count; ++i) {
+			uint8_t rec[12] {};
+			(void)in.read(&in, rec, 12);
+			const uint32_t id = rec[0] | (rec[1] << 8) | (rec[2] << 16) | (static_cast<uint32_t>(rec[3]) << 24);
+			if (id == static_cast<uint32_t>(feathers::ParamId::OscType)) {
+				uint64_t bits = 0;
+				for (int b = 0; b < 8; ++b) {
+					bits |= static_cast<uint64_t>(rec[4 + b]) << (8 * b);
+				}
+				double value = 0.0;
+				std::memcpy(&value, &bits, sizeof(value));
+				return value;
+			}
+		}
+		return -1.0;
+	}();
+	CHECK(storedEngine == feathers::kRetiredOscTypeDrum);
+	HostedPlugin host;
+	const auto* chain = testChainOf(host.plugin());
+	StateBytes bytes;
+	bytes.bytes = payload;
+	clap_istream in = bytes.in();
+	REQUIRE(chain->load_preset(host.plugin(), &in));
+	// THE LOAD SAYS WHAT IT DROPPED, in the event log: the retired engine and how many values had no parameter left.
+	const std::string logged = log.text();
+	CHECK(logged.find("retired Drum engine") != std::string::npos);
+	CHECK(logged.find("dropped ") != std::string::npos);
+	const auto* params = static_cast<const clap_plugin_params*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_PARAMS));
+	double engine = -1.0;
+	REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(feathers::ParamId::OscType), &engine));
+	CHECK(engine == feathers::findParam(static_cast<clap_id>(feathers::ParamId::OscType))->def); // the default engine, never the last one
+	// THE RETIRED IDS ARE GONE: no parameter answers to one of the old drum pad's.
+	CHECK(feathers::findParam(0x0608) == nullptr);
+	CHECK(feathers::findParam(0x00C8) == nullptr);
+	EventList events;
+	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 36, 1, 0.8);
+	float peak = 0.0f;
+	for (int block = 0; block < 16; ++block) {
+		CHECK(host.run(256, events) != CLAP_PROCESS_ERROR);
+		events.clear();
+		CHECK(host.allocationsInLastProcess() == 0);
+		CHECK(allFinite(host.left(), 256));
+		peak = std::max(peak, peakOf(host.left(), 256));
+	}
+	CHECK(peak > 0.02f);
+	CHECK(peak < 1.5f);
+	// ROUND TRIP: saved again it names the default engine (nothing of the retired one survives), and a fresh instance that loads it
+	// agrees value for value.
+	StateBytes saved;
+	clap_ostream out = saved.out();
+	const auto* state = static_cast<const clap_plugin_state*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_STATE));
+	REQUIRE(state->save(host.plugin(), &out));
+	HostedPlugin again;
+	clap_istream back = saved.in();
+	const auto* state2 = static_cast<const clap_plugin_state*>(again.plugin()->get_extension(again.plugin(), CLAP_EXT_STATE));
+	REQUIRE(state2->load(again.plugin(), &back));
+	const auto* params2 = static_cast<const clap_plugin_params*>(again.plugin()->get_extension(again.plugin(), CLAP_EXT_PARAMS));
+	for (const feathers::ParamDesc& d : feathers::paramDescs()) {
+		CAPTURE(std::string(d.name));
+		double a = 0.0;
+		double b = 1.0e9;
+		REQUIRE(params->get_value(host.plugin(), static_cast<clap_id>(d.id), &a));
+		REQUIRE(params2->get_value(again.plugin(), static_cast<clap_id>(d.id), &b));
+		CHECK(a == b);
+	}
+}
 TEST_CASE("a state load refused inside a later block changes NOTHING — every parameter and every block is the patch it had") {
 	// THE PARTIAL-LOAD HAZARD (the plugin appeared to forget its state spontaneously). The
 	// walk used to COMMIT the parameters and then apply each block as it read it, so a stream refused in the
@@ -8396,73 +8173,6 @@ TEST_CASE("SR [measure]: where an IDLE 1024-frame block's time goes outside the 
 	MESSAGE(report);
 }
 #endif
-
-TEST_CASE("drum pad lanes (§17 P4): a pad's fx lane rides the real save and load into a FRESH instance as the last block, "
-          "body for body; a fresh instance saves none") {
-	HostedPlugin host;
-	const auto* state =
-	    static_cast<const clap_plugin_state*>(host.plugin()->get_extension(host.plugin(), CLAP_EXT_STATE));
-	REQUIRE(state != nullptr);
-	StateBytes saved;
-	clap_ostream out = saved.out();
-	REQUIRE(state->save(host.plugin(), &out));
-	const size_t tail = blockAt(saved.bytes, "FDL1");
-	REQUIRE(tail < saved.bytes.size());
-	{
-		StateBytes slice = from(saved.bytes, "FDL1");
-		clap_istream in = slice.in();
-		feathers::DrumLanes read;
-		bool present = false;
-		REQUIRE(feathers::loadDrumLanes(&in, &read, &present));
-		CHECK(present);
-		for (const auto& body : read) {
-			CHECK(body.empty());
-		}
-	}
-	// A REAL LANE'S BODY, made the way the kit window makes one: pad F's lane, a Bus Utility at 0.3.
-	feathers::ParamSet synthParams;
-	auto synth = std::make_unique<feathers::Synth>(synthParams);
-	synth->setCatalogue(feathers::hostCatalogue());
-	synth->activate(48000.0, 512);
-	feathers::rack::InnerChain* lane = synth->ensurePadLane(5);
-	REQUIRE(lane != nullptr);
-	const auto id = lane->bridge()->addDevice("busu");
-	REQUIRE(id != 0u);
-	lane->bridge()->setField(id, 1, 0.3f);
-	std::vector<uint8_t> body;
-	const feathers::device::ByteSink sink { &body, [](void* ctx, const uint8_t* data, size_t bytes) {
-		                                       auto* v = static_cast<std::vector<uint8_t>*>(ctx);
-		                                       v->insert(v->end(), data, data + bytes);
-	                                       } };
-	REQUIRE(lane->saveState(sink));
-	REQUIRE_FALSE(body.empty());
-	feathers::DrumLanes lanes;
-	lanes[5] = body;
-	StateBytes with;
-	with.bytes.assign(saved.bytes.begin(), saved.bytes.begin() + static_cast<std::ptrdiff_t>(tail));
-	clap_ostream withOut = with.out();
-	REQUIRE(feathers::saveDrumLanes(&withOut, lanes));
-	seal(with);
-
-	HostedPlugin fresh;
-	const auto* freshState =
-	    static_cast<const clap_plugin_state*>(fresh.plugin()->get_extension(fresh.plugin(), CLAP_EXT_STATE));
-	clap_istream withIn = with.in();
-	REQUIRE(freshState->load(fresh.plugin(), &withIn));
-	StateBytes resaved;
-	clap_ostream resavedOut = resaved.out();
-	REQUIRE(freshState->save(fresh.plugin(), &resavedOut));
-	StateBytes slice = from(resaved.bytes, "FDL1");
-	clap_istream in = slice.in();
-	feathers::DrumLanes read;
-	bool present = false;
-	REQUIRE(feathers::loadDrumLanes(&in, &read, &present));
-	REQUIRE(present);
-	for (size_t pad = 0; pad < read.size(); ++pad) {
-		CAPTURE(pad);
-		CHECK(read[pad] == (pad == 5 ? body : std::vector<uint8_t> {}));
-	}
-}
 
 TEST_CASE("Pattern's Go pressed and released between two blocks in Feathers' modulator lane: the engine reads the rise for a block, then the fall lands at the next main-thread visit (lead, 2026-11-07: the press was LOST)") {
 	// THE FEATHERS ROAD (`ParamBridge::setDeviceControl` → the chains publish → `Synth::adoptChains`), the rack's twin

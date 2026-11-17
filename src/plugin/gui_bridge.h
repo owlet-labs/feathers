@@ -36,7 +36,6 @@
 #include "backplane/container_bodies.h"
 #include "backplane/device_host.h"
 #include "plugin/master_meter.h"
-#include "plugin/pad_hits.h"
 #include "plugin/feathers_chains.h"
 #include "rack/inner_chain.h"
 #include "rack/chain_record.h"
@@ -203,7 +202,7 @@ public:
 	/// The first call reports every parameter, so a freshly opened editor draws itself from one code
 	/// path rather than needing a separate initial pass.
 	std::span<const uint32_t> refresh() noexcept;
-	/// Rows the last `publish` visited: every row while Drum (or just after a drum write), the rest alone otherwise.
+	/// Rows the last `publish` visited.
 	[[nodiscard]] size_t publishedRowsForTest() const noexcept { return publishedWork_; }
 
 	/// TEST ONLY. How many value gestures the editor has opened and not closed. Zero is the only
@@ -1371,19 +1370,6 @@ public:
 	/// since each is a fact on its own. Non-finite is dropped before it crosses, for the peaks' reason.
 	void publishMasterMeter(const MasterMeterReadings& readings) noexcept;
 	[[nodiscard]] MasterMeterReadings masterMeter() const noexcept;
-	/// **THE KIT PADS' HITS** (pad_hits.h), published beside the master meter on every process and read by the kit panel's
-	/// pads and the sound cards on the editor's tick, which turn a count that moved into a pulse.
-	void publishPadHits(const PadHits& hits) noexcept;
-	[[nodiscard]] PadHits padHits() const noexcept;
-	/// **THE KIT PADS' FX LANES** (drum proposal §17 P3): the Synth's, through a function the plugin installs once (the bridge
-	/// owns no synth). `make` builds the pad's lane when it has none (MESSAGE THREAD: it allocates). Null without a source, or
-	/// for a pad with no lane and `make` false. The pointer is the Synth's for its whole life (never freed), so it is not an
-	/// ABA handle; a panel still re-asks every tick, the house habit.
-	using PadLaneSource = std::function<rack::InnerChain*(size_t pad, bool make)>;
-	void setPadLaneSource(PadLaneSource source) { padLaneSource_ = std::move(source); }
-	[[nodiscard]] rack::InnerChain* drumPadLane(size_t pad, bool make = false) const {
-		return padLaneSource_ ? padLaneSource_(pad, make) : nullptr;
-	}
 
 	//---------------------------------------------//
 	// Which sound is being listened to on its own //
@@ -1738,7 +1724,6 @@ public:
 	uint32_t routesGeneration() const noexcept { return routeList_.sequence(); }
 
 private:
-	PadLaneSource padLaneSource_; ///< drumPadLane's: the plugin's Synth, or empty (a test's bridge)
 	/// `restoreChains` without the host slots: the record, bodies, routes, views and labels.
 	rack::LoadReport restoreChainRecord(const rack::RackPatch& patch);
 
@@ -2061,9 +2046,6 @@ private:
 	std::atomic<double> rackSecondsPerBeat_ { 0.0 };
 	/// THE MASTER METER — see `publishMasterMeter`. At rest: silence, no peak, no clip for as long as it counts.
 	std::atomic<float> masterMomentary_ { fx::busutil::kSilenceLufs };
-	/// The kit pads' hits (pad_hits.h): a count and a velocity per pad, each its own relaxed atomic.
-	std::array<std::atomic<uint32_t>, kMaxSounds> padHitCount_ {};
-	std::array<std::atomic<float>, kMaxSounds> padHitVelocity_ {};
 	std::atomic<float> masterRawPeak_ { 0.0f };
 	std::atomic<float> masterClipAge_ { fx::busutil::kClipAgeMax };
 
@@ -2104,17 +2086,11 @@ private:
 	/// is REPORTED like any other change; what it must not do is drag seenBase_ back to the value the
 	/// engine has not yet been told about, which is the bug this pair of arrays exists to separate.
 	std::array<bool, kParamCount> editorTouched_ {};
-	/// THE DRUM PADS' ROWS in the param table, contiguous (each slot's block, slots in order): publish() leaves them out while
-	/// the engine is not Drum, so the 736 rows a kit carries cost every other engine nothing per block.
-	uint32_t drumPublishedGeneration_ {0};
 	uint64_t publishedSerial_ {0};
 	uint32_t publishedWriteGeneration_ {0};
 	bool publishedEver_ {false};
-	bool drumEverPublished_ {false};
 	/// How many rows the last publish() visited (the count the per-call work is proportional to), for the cost case.
 	size_t publishedWork_ {0};
-	size_t drumRowsFirst_ {0};
-	size_t drumRowsEnd_ {0};
 	/// HOW MANY VALUE GESTURES ARE OPEN, and it exists because an unmatched one is HOST-FACING and
 	/// invisible to everything else we have.
 	///

@@ -132,8 +132,6 @@ struct Options {
 	int width = 0;      ///< 1: two wide sounds and Width 1 — terrain stereo, and with a stack, a stand per part
 	int vowel = 0;      ///< 1: stand in vowel country (zone 640, offset 1.3563, the vox tests' stand), so notes bake vowels
 	int additive = 0;   ///< 1: Osc Type Additive (`--engine additive`); 0: V5, the default patch's engine
-	int drumKind = 1;   ///< with `--engine drum`: the kind Pitched mode plays (drum::Kind's order; `--drum-kind`)
-	double drumBell = 0.0; ///< with `--engine drum`: any value above 0 puts pad A's Bells zone at Knock, both moving bells sounding (`--drum-bell`; since the §14 consolidation the levels are the zone's)
 	int earphase = 0;   ///< 1: an LFO at Stereo Phase π/2 onto Phase (stereo-live); 2: the same at Stereo Phase 0 (mono)
 	int drawer = 0;     ///< 1: every oscillator gets a representative drawer through the voice's test-only seam; 2: and its cutoff moves every block;
 	                    ///< 3, 4: as 1, 2 with the filter a highpass at 40 Hz, which culls no partial
@@ -212,12 +210,6 @@ Options parse(int argc, char** argv) {
 		else if (std::strcmp(argv[i], "--earphase") == 0) {
 			o.earphase = value;
 		}
-		else if (std::strcmp(argv[i], "--drum-kind") == 0) {
-			o.drumKind = static_cast<int>(value);
-		}
-		else if (std::strcmp(argv[i], "--drum-bell") == 0) {
-			o.drumBell = value;
-		}
 		else if (std::strcmp(argv[i], "--engine") == 0) {
 			if (std::strcmp(argv[i + 1], "additive") == 0) {
 				o.additive = 1;
@@ -225,11 +217,8 @@ Options parse(int argc, char** argv) {
 			else if (std::strcmp(argv[i + 1], "pluck") == 0) {
 				o.additive = 2; // the Karplus-Strong engine (KS design §5)
 			}
-			else if (std::strcmp(argv[i + 1], "drum") == 0) {
-				o.additive = 3; // the drum engine (drum proposal §8), in Pitched mode at --drum-kind
-			}
 			else if (std::strcmp(argv[i + 1], "v5") != 0) {
-				std::fprintf(stderr, "bench_render: --engine takes v5, additive, pluck or drum, not '%s'\n", argv[i + 1]);
+				std::fprintf(stderr, "bench_render: --engine takes v5, additive or pluck, not '%s'\n", argv[i + 1]);
 				std::exit(2);
 			}
 		}
@@ -683,25 +672,13 @@ int main(int argc, char** argv) {
 	}
 	// THE ENGINE (`--engine`, additive plan Task 10): V5 is the default patch's, so `v5` sets what was already there.
 	params.setBase(static_cast<clap_id>(feathers::ParamId::OscType),
-	               static_cast<double>(o.additive == 3   ? feathers::OscType::Drum
-	                                   : o.additive == 2 ? feathers::OscType::Pluck
+	               static_cast<double>(o.additive == 2 ? feathers::OscType::Pluck
 	                                   : o.additive != 0 ? feathers::OscType::Additive
 	                                                     : feathers::OscType::V5));
 	// ON PLUCK THE STRINGS RING (Decay at its top): a held note's string otherwise decays to exact silence and goes idle within
 	// seconds, and 4000 blocks of idle strings would price nothing (KS design §5). The ringing string is the cost to measure.
 	if (o.additive == 2) {
 		params.setBase(static_cast<clap_id>(feathers::ParamId::KsDecay), feathers::findParam(static_cast<clap_id>(feathers::ParamId::KsDecay))->max);
-	}
-	// ON DRUM THE HITS RING TOO (drum proposal §8): Pitched mode at --drum-kind, every key a hit of that kind, Decay at its top and
-	// Length lifted to full (×4: 40 s), so a held hit is still sounding at the end of the run rather than exactly silent.
-	if (o.additive == 3) {
-		params.setBase(static_cast<clap_id>(feathers::ParamId::DrumMode), 0.0);
-		params.setBase(static_cast<clap_id>(feathers::ParamId::DrumPitchedKind), static_cast<double>(o.drumKind));
-		const auto decay = feathers::drumParam(0, feathers::DrumControl::Decay);
-		params.setBase(static_cast<clap_id>(decay), feathers::findParam(static_cast<clap_id>(decay))->max);
-		params.setBase(static_cast<clap_id>(feathers::drumParam(0, feathers::DrumControl::FieldLength)), 1.0);
-		// THE BELLS ZONE (§14): Knock (coordinate 0.8, the fifth of five stops), where both bells sound, or Off.
-		params.setBase(static_cast<clap_id>(feathers::drumParam(0, feathers::DrumControl::Bells)), o.drumBell > 0.0 ? 0.8 : 0.0);
 	}
 	// THE DRAWER IS PER SOUND (2026-10-10): the same settings on every sound, so the blend is the D1 drawer exactly (every
 	// operator on in every sound: mix 1) and the price is the assembly's over the sounds plus the operators'.

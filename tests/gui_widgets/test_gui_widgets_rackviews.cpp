@@ -18,6 +18,7 @@
 #include "fixtures.h"
 
 #include <chrono>
+#include <set>
 #include <thread>
 
 #include "fx/drum/drum_types.h"
@@ -526,6 +527,7 @@ struct RealRack {
 	ui::WidgetRegistry registry;
 	std::unique_ptr<ui::ExpandedView> view;
 	ui::ParallelRackExpanded* panel = nullptr;
+	bool initialClosed_ = false;
 
 	RealRack() {
 		bodies.prepare(48000.0, 4096);
@@ -566,8 +568,15 @@ struct RealRack {
 	}
 	/// Chains up to `count`, the first `withDevices` holding a Drum then a Delay, each keyed to its own index when `keyed`.
 	void chains(size_t count, size_t withDevices, bool keyed = false) {
+		if (!initialClosed_ && rack().chainCount() >= 1) {
+			rack().setOpen(0, false); // the rack's own first chain, closed as the cases were written (see below)
+			initialClosed_ = true;
+		}
 		while (rack().chainCount() < count) {
-			REQUIRE(rack().addChain() != SIZE_MAX);
+			const size_t made = rack().addChain();
+			REQUIRE(made != SIZE_MAX);
+			// THESE CASES WERE WRITTEN WITH A CLOSED CHAIN (the front shows its first card): a new chain starts open now, so the helper closes it.
+			rack().setOpen(made, false);
 		}
 		for (size_t i = 0; i < count; ++i) {
 			if (keyed) {
@@ -737,19 +746,32 @@ TEST_CASE("rack views over a real rack: Pads lights the keys that have a chain, 
 	CHECK(pages.cellUsedForTest(0, 1));
 	CHECK_FALSE(pages.cellUsedForTest(0, 5));
 	CHECK_FALSE(pages.cellUsedForTest(5, 1));
-	// A PRESS ON PAD 2 (key 2): the note is posted (on, then off at the release) and chain 2 is viewed.
+	// A PRESS ON PAD 2 (key 2): the key enters AT THIS RACK (its own pad ring, drained by the rack's emit stage), on then off at the release,
+	// and chain 2 is viewed. NOTHING IS POSTED TO THE PLUGIN'S FRONT: the host's note road stays empty.
 	feathers::UiNoteEvent e;
 	while (r.f.bridge.popNote(e)) {
 	}
+	const auto drainRack = [&](size_t& ons, size_t& offs, int key) {
+		feathers::device::TransportClock clock {};
+		feathers::device::NoteEvent got[32];
+		uint32_t until = 0;
+		const size_t n = r.rack().emitNotes(clock, 0, got, 32, &until);
+		ons = offs = 0;
+		for (size_t i = 0; i < n; ++i) {
+			if (got[i].key == key && got[i].noteId == feathers::kPadNoteId) {
+				ons += got[i].kind == feathers::device::NoteEvent::Kind::On ? 1 : 0;
+				offs += got[i].kind == feathers::device::NoteEvent::Kind::Off ? 1 : 0;
+			}
+		}
+	};
 	REQUIRE(r.card->viewModelForTest().canTrigger());
 	grid.pressForTest(grid.padCentre(2));
 	grid.releaseForTest();
-	REQUIRE(r.f.bridge.popNote(e));
-	CHECK(e.key == 2);
-	CHECK(e.on);
-	REQUIRE(r.f.bridge.popNote(e));
-	CHECK(e.key == 2);
-	CHECK_FALSE(e.on);
+	CHECK_FALSE(r.f.bridge.popNote(e));
+	size_t ons = 0, offs = 0;
+	drainRack(ons, offs, 2);
+	CHECK(ons == 1);
+	CHECK(offs == 1);
 	CHECK(r.field(pr::Param::ViewedChain) == 2.0f);
 	// PAGES: a press on page 5 changes the rack's own PadsPage, and it is that page's keys the grid maps (80..95).
 	pages.pressForTest(pages.pageCentre(5));
@@ -757,9 +779,32 @@ TEST_CASE("rack views over a real rack: Pads lights the keys that have a chain, 
 	CHECK(r.field(pr::Param::PadsPage) == 5.0f);
 	grid.pressForTest(grid.padCentre(0));
 	grid.releaseForTest();
-	REQUIRE(r.f.bridge.popNote(e));
-	CHECK(e.key == 80);
-	while (r.f.bridge.popNote(e)) {
+	CHECK_FALSE(r.f.bridge.popNote(e));
+	drainRack(ons, offs, 80);
+	CHECK(ons == 1);
+	CHECK(offs == 1);
+	// A PAD HELD WHEN THE EDITOR GOES is released by the grid itself: no note is left sounding.
+	{
+		RealRack held;
+		held.chains(3, 3, true);
+		held.view_(2);
+		ui::RackPadGrid& g = held.panel->padsForTest().gridForTest();
+		g.pressForTest(g.padCentre(1));
+		held.panel = nullptr;
+		held.view.reset(); // the window torn down with the pad still down
+		size_t o = 0, f2 = 0;
+		feathers::device::TransportClock clock {};
+		feathers::device::NoteEvent got[32];
+		uint32_t until = 0;
+		const size_t n = held.rack().emitNotes(clock, 0, got, 32, &until);
+		for (size_t i = 0; i < n; ++i) {
+			if (got[i].key == 1 && got[i].noteId == feathers::kPadNoteId) {
+				o += got[i].kind == feathers::device::NoteEvent::Kind::On ? 1 : 0;
+				f2 += got[i].kind == feathers::device::NoteEvent::Kind::Off ? 1 : 0;
+			}
+		}
+		CHECK(o == 1);
+		CHECK(f2 == 1);
 	}
 	// THE PULSE FROM THE REAL STRIKE MASK: a note entering the rack flashes its pad (reduced motion: one steady highlight), and at rest
 	// nothing is told.
@@ -798,9 +843,18 @@ TEST_CASE("rack views over a real rack: the window in Tabs shows only the chain 
 	CHECK_FALSE(r.panel->tabBarForTest().isVisible());
 	ui::RackPadGrid& grid = r.panel->padsForTest().gridForTest();
 	CHECK_FALSE(grid.usedForTest(7));
-	// "+" ON EMPTY PAD 7 (key 7): a chain keyed to it, with a Drum on Any Key, and it becomes the viewed chain.
+	// "+" ON EMPTY PAD 7 (key 7) ASKS WHICH DEVICE (a press makes nothing); the Drum's row then makes a chain keyed to it with a Drum on Any
+	// Key, and it becomes the viewed chain.
 	const size_t before = r.rack().chainCount();
 	grid.pressForTest(grid.plusCentre(7));
+	r.refresh();
+	REQUIRE(r.rack().chainCount() == before);
+	const std::vector<const device::Descriptor*> offered = r.panel->padAddForTest().offeredForTest();
+	for (size_t i = 0; i < offered.size(); ++i) {
+		if (std::string(offered[i]->traits.tag) == "DRUM") {
+			REQUIRE(r.panel->padAddForTest().pickForTest(7, static_cast<int>(i)) == before);
+		}
+	}
 	r.refresh();
 	REQUIRE(r.rack().chainCount() == before + 1);
 	CHECK(r.rack().chainKey(before) == 7);
@@ -1513,9 +1567,21 @@ namespace {
 /// A REAL PRESS ON THE CARD at `inCard` (the card's own coordinates): found by the frame tree as the window finds it, delivered as it
 /// delivers (to the frame under the point, then up through its parents), and the note keys it posted, on then off.
 std::vector<std::pair<int, bool>> pressOnCard(RealRack& r, visage::Point inCard) {
-	feathers::UiNoteEvent drain;
-	while (r.f.bridge.popNote(drain)) {
-	}
+	// (THE KEYS ENTER AT THE RACK: they are read back as the rack's emit stage hands them on, and the plugin's own note road must stay empty.)
+	const auto takePads = [&] {
+		feathers::device::TransportClock clock {};
+		feathers::device::NoteEvent got[64];
+		uint32_t until = 0;
+		const size_t n = r.rack().emitNotes(clock, 0, got, 64, &until);
+		std::vector<std::pair<int, bool>> keys;
+		for (size_t i = 0; i < n; ++i) {
+			if (got[i].noteId == feathers::kPadNoteId) {
+				keys.emplace_back(got[i].key, got[i].kind == feathers::device::NoteEvent::Kind::On);
+			}
+		}
+		return keys;
+	};
+	(void)takePads();
 	visage::Frame* target = r.card->frameAtPoint(inCard);
 	if (target != nullptr) {
 		visage::MouseEvent down {};
@@ -1527,11 +1593,9 @@ std::vector<std::pair<int, bool>> pressOnCard(RealRack& r, visage::Point inCard)
 		visage::MouseEvent up = down;
 		target->processMouseUp(up);
 	}
-	std::vector<std::pair<int, bool>> out;
-	feathers::UiNoteEvent e;
-	while (r.f.bridge.popNote(e)) {
-		out.emplace_back(e.key, e.on);
-	}
+	std::vector<std::pair<int, bool>> out = takePads();
+	feathers::UiNoteEvent front;
+	CHECK_FALSE(r.f.bridge.popNote(front));
 	return out;
 }
 
@@ -1769,7 +1833,7 @@ struct PaneRack {
 
 } // namespace
 
-TEST_CASE("rack pane: rack_front is a view-state choice (Cards by default, not modulatable, no host slot), and the window offers it only in Tabs") {
+TEST_CASE("rack pane: rack_front is a view-state choice (Cards by default, not modulatable, no host slot), and the window offers it in Tabs and Pads, not Strips") {
 	const device::ParamDesc& d = pr::kDescriptor.params[static_cast<size_t>(pr::Param::Front)];
 	CHECK(std::string(d.key) == "rack_front");
 	CHECK(d.def == 0.0);
@@ -1784,7 +1848,7 @@ TEST_CASE("rack pane: rack_front is a view-state choice (Cards by default, not m
 	CHECK(r.field(pr::Param::Front) == 0.0f);
 	CHECK_FALSE(r.panel->frontSegForTest().isVisible()); // Strips
 	r.view_(2);
-	CHECK_FALSE(r.panel->frontSegForTest().isVisible()); // Pads
+	CHECK(r.panel->frontSegForTest().isVisible()); // Pads (the same stored choice as Tabs)
 	r.view_(1);
 	CHECK(r.panel->frontSegForTest().isVisible()); // Tabs
 	// CARDS IS THE VIEW AS IT WAS: no pane, the first card shown in the rail.
@@ -2146,6 +2210,50 @@ size_t checkMarks(visage::Frame* frame, const char* where) {
 
 } // namespace
 
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// THE PADS VIEW'S FOUR FIXES: the viewed chain has one source of truth, a new chain starts open, both pad readers see a new chain on the
+// tick it exists, and "+" asks which device.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// The viewed chain as each reader sees it: the stored parameter, the window's Viewing box, the pad grid's selected cell on each surface, the
+/// chain the front column shows (card) and the rail in front (window).
+struct ViewedReaders {
+	int field = -1;
+	double box = -1.0;
+	int gridWindow = -1;
+	int gridCard = -1;
+	int railWindow = -1;
+	int front = -1;
+};
+
+ViewedReaders readViewed(RealRack& r) {
+	ViewedReaders v;
+	v.field = static_cast<int>(r.field(pr::Param::ViewedChain));
+	v.box = r.panel->viewedBoxForTest().control().value();
+	// THE GRID'S SELECTED CELL AS A CHAIN SLOT: the chain whose key that cell stands for.
+	const auto slotOfSelected = [&](ui::RackPadGrid& grid, ui::RackViewModel& model) {
+		for (int i = 0; i < ui::kPadsPerPage; ++i) {
+			if (grid.selectedForTest(i)) {
+				return static_cast<int>(ui::chainForKey(model, ui::padKey(model.page(), i)));
+			}
+		}
+		return -1;
+	};
+	v.gridWindow = slotOfSelected(r.panel->padsForTest().gridForTest(), r.panel->viewModelForTest());
+	v.gridCard = slotOfSelected(r.card->padsForTest().gridForTest(), r.card->viewModelForTest());
+	for (size_t i = 0; i < r.rack().chainCount(); ++i) {
+		if (r.panel->railShownForTest(i)) {
+			v.railWindow = static_cast<int>(i);
+		}
+	}
+	v.front = r.card->frontForTest().chainIdForTest() == 0xFFFF ? -1 : static_cast<int>(r.rack().indexOfChain(r.card->frontForTest().chainIdForTest()));
+	return v;
+}
+
+} // namespace
+
 TEST_CASE("rack views over a real rack: every card with a window keeps a non-empty expand mark inside its own bounds on every surface (card front, window rail, pane), through the window opening, Cards|Window, view and pad changes, a nested rack and a chain removal, at 1x and 1.75x") {
 	for (const float dpi : { 1.0f, 1.75f }) {
 		CAPTURE(dpi);
@@ -2197,5 +2305,487 @@ TEST_CASE("rack views over a real rack: every card with a window keeps a non-emp
 		CHECK(checkMarks(r.card, "window closed") > 0);
 		CAPTURE(gBadMarks);
 		CHECK(gBadMarks.empty());
+	}
+}
+
+TEST_CASE("rack pads fix E: every kind of selection writes rack_viewed_chain, and the field, the Viewing box, both grids, the front column and the rail agree") {
+	RealRack r;
+	r.chains(3, 3, true); // chains on keys 0, 1, 2
+	r.view_(2);
+	r.set(pr::Param::PadsPage, 0.0f);
+	r.refresh();
+	const auto allAgree = [&](int want, const char* how) {
+		CAPTURE(how);
+		const ViewedReaders v = readViewed(r);
+		CHECK(v.field == want);
+		CHECK(v.box == doctest::Approx(static_cast<double>(want)));
+		// THE BOX READS THE CHAIN'S NUMBER (from 1), as the tabs and the pads count: a hand reads "2" for the second chain.
+		CHECK(r.panel->viewedBoxForTest().control().text() == std::to_string(want + 1));
+		CHECK(v.gridWindow == want);
+		CHECK(v.gridCard == want);
+		CHECK(v.front == want);
+	};
+	// A PAD PRESSED IN THE WINDOW'S GRID.
+	{
+		auto& grid = r.panel->padsForTest().gridForTest();
+		grid.pressForTest(grid.padCentre(2));
+		grid.releaseForTest();
+		r.refresh();
+		allAgree(2, "pad in the window");
+	}
+	// A PAD PRESSED IN THE CARD'S GRID.
+	{
+		auto& grid = r.card->padsForTest().gridForTest();
+		grid.pressForTest(grid.padCentre(1));
+		grid.releaseForTest();
+		r.refresh();
+		allAgree(1, "pad on the card");
+	}
+	// TYPING IN THE VIEWING BOX moves the selection: "3" is the third chain, and words are refused.
+	{
+		auto& control = r.panel->viewedBoxForTest().control();
+		const std::optional<double> three = control.parseText("3", 0.0);
+		REQUIRE(three.has_value());
+		CHECK(*three == 2.0);
+		CHECK(control.parseText("0", 0.0).value_or(-1.0) == 0.0); // below the first is the first
+		CHECK_FALSE(control.parseText("two", 0.0).has_value());
+		control.setValue(*three);
+		r.refresh();
+		allAgree(2, "typed 3 in the Viewing box");
+		control.setValue(0.0);
+		r.refresh();
+		allAgree(0, "typed in the Viewing box");
+	}
+	// A TAB, in Tabs, on the window's bar and on the card's.
+	r.view_(1);
+	{
+		auto& bar = r.panel->tabBarForTest();
+		bar.pressForTest(bar.tabCentre(2));
+		r.refresh();
+		CHECK(readViewed(r).field == 2);
+		CHECK(readViewed(r).box == doctest::Approx(2.0));
+		CHECK(readViewed(r).railWindow == 2);
+		CHECK(readViewed(r).front == 2);
+		auto& cardBar = r.card->tabBarForTest();
+		cardBar.pressForTest(cardBar.tabCentre(1));
+		r.refresh();
+		CHECK(readViewed(r).field == 1);
+		CHECK(readViewed(r).box == doctest::Approx(1.0));
+		CHECK(readViewed(r).railWindow == 1);
+		CHECK(readViewed(r).front == 1);
+	}
+}
+
+namespace {
+
+/// The menu row id of the device with tag `tag` in a pad menu's offer.
+int rowOf(const std::vector<const device::Descriptor*>& offered, const char* tag) {
+	for (size_t i = 0; i < offered.size(); ++i) {
+		if (std::string(offered[i]->traits.tag) == tag) {
+			return static_cast<int>(i);
+		}
+	}
+	return -1;
+}
+
+/// The keys of the chains, as the rack holds them, and the pads each reader draws used on `page`: they must be the same set.
+std::set<int> keysOf(RealRack& r) {
+	std::set<int> keys;
+	for (size_t i = 0; i < r.rack().chainCount(); ++i) {
+		if (r.rack().chainKey(i) != pr::kAnyKey) {
+			keys.insert(r.rack().chainKey(i));
+		}
+	}
+	return keys;
+}
+
+std::set<int> usedOn(ui::RackPadGrid& grid, int page) {
+	std::set<int> used;
+	for (int i = 0; i < ui::kPadsPerPage; ++i) {
+		if (grid.usedForTest(i)) {
+			used.insert(ui::padKey(page, i));
+		}
+	}
+	return used;
+}
+
+std::set<int> usedInStrip(ui::RackPadPages& pages, int page) {
+	std::set<int> used;
+	for (int i = 0; i < ui::kPadsPerPage; ++i) {
+		if (pages.cellUsedForTest(page, i)) {
+			used.insert(ui::padKey(page, i));
+		}
+	}
+	return used;
+}
+
+} // namespace
+
+TEST_CASE("rack pads fix A: a pad's + asks which device (the lanes' menu, oscillators first), the pick makes the keyed chain holding it, closing makes nothing, on the card and the window") {
+	for (const bool onCard : { false, true }) {
+		CAPTURE(onCard);
+		RealRack r;
+		r.chains(2, 2, true); // keys 0 and 1
+		r.view_(2);
+		ui::RackPadAdd& add = onCard ? r.card->padAddForTest() : r.panel->padAddForTest();
+		ui::RackPadGrid& grid = onCard ? r.card->padsForTest().gridForTest() : r.panel->padsForTest().gridForTest();
+		const std::vector<const device::Descriptor*> offered = add.offeredForTest();
+		REQUIRE(offered.size() > 10); // any device a chain can hold, not a Drum alone
+		// THE MENU: the Oscillators heading first, a Drum under it, and the other categories after.
+		visage::PopupMenu menu = add.menuForTest(5);
+		REQUIRE_FALSE(menu.options().empty());
+		CHECK(menu.options().front().name().toUtf8() == "Oscillators");
+		std::vector<std::string> first;
+		for (const visage::PopupMenu& row : menu.options().front().options()) {
+			first.push_back(row.name().toUtf8());
+		}
+		CHECK(std::find(first.begin(), first.end(), "Drum") != first.end());
+		CHECK(menu.options().size() > 3);
+		// A PRESS ON THE "+" OPENS A MENU AND MAKES NOTHING; closing it (no row picked) leaves the rack as it was.
+		const size_t before = r.rack().chainCount();
+		grid.pressForTest(grid.plusCentre(5));
+		grid.releaseForTest();
+		r.refresh();
+		CHECK(r.rack().chainCount() == before);
+		CHECK(add.pickForTest(5, -1) == ui::kNoChain);
+		CHECK(r.rack().chainCount() == before);
+		// A PICK: a Delay (not a Drum) makes the chain on key 5 holding a Delay, and views it.
+		const int delay = rowOf(offered, "DELAY");
+		REQUIRE(delay >= 0);
+		const size_t at = add.pickForTest(5, delay);
+		REQUIRE(at == before);
+		REQUIRE(r.rack().chainCount() == before + 1);
+		CHECK(r.rack().chainKey(at) == 5);
+		feathers::rack::RackBridge& bridge = *r.rack().chainAt(at)->bridge();
+		REQUIRE(bridge.chainLength() == 1);
+		CHECK(std::string(bridge.descriptorOf(bridge.deviceAtPosition(0))->traits.tag) == "DELAY");
+		CHECK(r.field(pr::Param::ViewedChain) == static_cast<float>(at));
+		// AND A DRUM FROM THE SAME MENU, on the next pad: held, set to Any Key.
+		const size_t drumAt = add.pickForTest(6, rowOf(offered, "DRUM"));
+		REQUIRE(drumAt == before + 1);
+		feathers::rack::RackBridge& drumBridge = *r.rack().chainAt(drumAt)->bridge();
+		CHECK(std::string(drumBridge.descriptorOf(drumBridge.deviceAtPosition(0))->traits.tag) == "DRUM");
+		CHECK(r.rack().chainKey(drumAt) == 6);
+		// A ROW THAT IS NOT A DEVICE (a heading's id) makes nothing.
+		CHECK(add.pickForTest(7, 9999) == ui::kNoChain);
+		CHECK(r.rack().chainCount() == before + 2);
+	}
+}
+
+TEST_CASE("rack pads fix B: a chain made by a pad's + starts open, with its first card unfolded, in the window and on the card") {
+	for (const int view : { 2, 1, 0 }) {
+		CAPTURE(view);
+		RealRack r;
+		r.chains(2, 2, true); // keys 0 and 1
+		r.view_(view);
+		r.set(pr::Param::PadsPage, 0.0f);
+		r.refresh();
+		const size_t before = r.rack().chainCount();
+		const int drum = rowOf(r.panel->padAddForTest().offeredForTest(), "DRUM");
+		REQUIRE(drum >= 0);
+		REQUIRE(r.panel->padAddForTest().pickForTest(5, drum) == before);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		const size_t at = before;
+		// THE CHAIN'S OWN OPEN FLAG (what the card's arrow and the window's rail are brought to), and the rail and its first card as drawn.
+		CHECK(r.rack().open(at));
+		CHECK_FALSE(r.panel->railForTest(at).collapsed());
+		ui::ChainColumn* column = r.panel->railForTest(at).column();
+		REQUIRE(column != nullptr);
+		REQUIRE(column->cardsForTest().size() >= 1);
+		CHECK_FALSE(column->cardsForTest()[0]->folded());
+		CHECK_FALSE(r.rack().chainAt(at)->bridge()->deviceFolded(r.rack().chainAt(at)->bridge()->deviceAtPosition(0)));
+	}
+}
+
+TEST_CASE("rack pads fix D: both pad readers (the 4x4 grid and the page strip) show a new chain's key on the tick it exists, on the card and the window, whichever surface made it") {
+	RealRack r;
+	r.chains(2, 2, true); // keys 0 and 1
+	r.view_(2);
+	r.set(pr::Param::PadsPage, 0.0f);
+	r.refresh();
+	const auto check = [&](const char* how) {
+		CAPTURE(how);
+		const std::set<int> keys = keysOf(r);
+		CHECK(usedOn(r.panel->padsForTest().gridForTest(), 0) == keys);
+		CHECK(usedOn(r.card->padsForTest().gridForTest(), 0) == keys);
+		CHECK(usedInStrip(r.panel->padsForTest().pagesForTest(), 0) == keys);
+		CHECK(usedInStrip(r.card->padsForTest().pagesForTest(), 0) == keys);
+	};
+	check("start");
+	const std::vector<const device::Descriptor*> offered = r.panel->padAddForTest().offeredForTest();
+	// MADE ON THE WINDOW: every reader, on both surfaces, shows it BEFORE any tick and after exactly one.
+	REQUIRE(r.panel->padAddForTest().pickForTest(5, rowOf(offered, "DRUM")) != ui::kNoChain);
+	check("window add, before a tick");
+	(void)r.panel->update();
+	(void)r.card->update();
+	check("window add, one tick");
+	// MADE ON THE CARD, read on the window.
+	REQUIRE(r.card->padAddForTest().pickForTest(9, rowOf(offered, "DELAY")) != ui::kNoChain);
+	check("card add, before a tick");
+	(void)r.card->update();
+	(void)r.panel->update();
+	check("card add, one tick");
+	// MADE BY THE RACK ITSELF (a load, an undo, another surface): the model's own add.
+	REQUIRE(r.panel->viewModelForTest().addKeyedChain(12, nullptr) != ui::kNoChain);
+	(void)r.card->update();
+	(void)r.panel->update();
+	check("model add, one tick");
+	CHECK(keysOf(r) == std::set<int> { 0, 1, 5, 9, 12 });
+	// THE STRIP'S PAGE FOR ANOTHER PAGE follows too: a chain on key 40 lights page 2's cell 8, in both surfaces' strips.
+	REQUIRE(r.panel->viewModelForTest().addKeyedChain(40, nullptr) != ui::kNoChain);
+	(void)r.card->update();
+	(void)r.panel->update();
+	CHECK(usedInStrip(r.panel->padsForTest().pagesForTest(), 2) == std::set<int> { 40 });
+	CHECK(usedInStrip(r.card->padsForTest().pagesForTest(), 2) == std::set<int> { 40 });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// THE PANE IN PADS (rack_front is the one stored choice, shared with Tabs): the selected pad's chain's first device's window.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+TEST_CASE("rack pane in Pads: the pane follows the pad selected, the grid, strip and kit level stay beside it, Strips ignores the choice, and the choice is one value for Tabs and Pads") {
+	PaneRack p(3, 3);
+	p.r.chains(3, 3, true); // keys 0, 1, 2
+	p.r.set(pr::Param::Front, 1.0f);
+	p.r.view_(2);
+	p.r.set(pr::Param::PadsPage, 0.0f);
+	p.settle();
+	REQUIRE(p.r.panel->paneOnForTest());
+	CHECK(p.r.panel->frontSegForTest().isVisible());
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	const feathers::DeviceInstanceId first0 = p.chain(0).deviceAtPosition(0);
+	CHECK(p.pane().device() == first0);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(0));
+	CHECK(p.column(0)->hiddenLead() == 1);
+	// THE PADS' PIECES ARE STILL THERE, and the pane stands clear of them.
+	ui::RackPadsPanel& pads = p.r.panel->padsForTest();
+	CHECK(pads.isVisible());
+	CHECK(pads.gridForTest().isVisible());
+	CHECK(pads.pagesForTest().isVisible());
+	REQUIRE(pads.levelForTest() != nullptr);
+	CHECK(pads.levelForTest()->isVisible());
+	CHECK(p.pane().isVisible());
+	CHECK(static_cast<float>(p.pane().x()) >= static_cast<float>(pads.x() + pads.width()));
+	// A PAD SELECTED REBINDS THE PANE to that chain's first device, once.
+	const size_t builds = p.pane().buildsForTest();
+	auto& grid = pads.gridForTest();
+	grid.pressForTest(grid.padCentre(2));
+	grid.releaseForTest();
+	p.settle();
+	const feathers::DeviceInstanceId first2 = p.chain(2).deviceAtPosition(0);
+	CHECK(p.pane().device() == first2);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(2));
+	CHECK(p.pane().contentForTest()->watchedDevice() == first2);
+	CHECK(p.pane().buildsForTest() == builds + 1);
+	CHECK(p.column(0)->hiddenLead() == 0);
+	CHECK(p.column(2)->hiddenLead() == 1);
+	// THE CHAIN UNDER THE SELECTED PAD DELETED: the pane follows to the chain now selected.
+	REQUIRE(p.r.rack().removeChain(2));
+	p.settle();
+	CHECK(p.r.rack().chainCount() == 2);
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(p.r.panel->viewModelForTest().viewedChain()));
+	// STRIPS IGNORES IT: no pane, no choice.
+	p.r.view_(0);
+	p.settle();
+	CHECK_FALSE(p.r.panel->paneOnForTest());
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK_FALSE(p.r.panel->frontSegForTest().isVisible());
+	// ONE STORED VALUE: back in Tabs the choice is still Window, and the pane is there.
+	p.r.view_(1);
+	p.settle();
+	CHECK(p.r.field(pr::Param::Front) == 1.0f);
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	p.r.view_(2);
+	p.settle();
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+}
+
+TEST_CASE("rack pane in Pads: an empty rack or chain shows no pane and keeps the (+); a first device with no window shows its card; a rack in the pane has no pane of its own") {
+	// NO CHAIN AT ALL: nothing to host.
+	{
+		RealRack r;
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		CHECK(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		CHECK_FALSE(r.panel->paneForTest().isVisible());
+		CHECK(r.panel->padsForTest().isVisible());
+	}
+	// AN EMPTY SELECTED CHAIN: no pane, the column is the empty chain's with its (+).
+	{
+		RealRack r;
+		r.chains(2, 0, true);
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		CHECK(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		REQUIRE(r.panel->railForTest(0).column() != nullptr);
+		CHECK(r.panel->railForTest(0).column()->addShown());
+		CHECK(r.panel->railForTest(0).column()->hiddenLead() == 0);
+	}
+	// NO WINDOW OF ITS OWN: the card, centred.
+	{
+		RealRack r;
+		r.chains(1, 0, true);
+		const device::Descriptor* plain = nullptr;
+		for (const device::Descriptor& d : feathers::kDevices) {
+			if (!ui::hasExpandedView(d) && d.traits.hasCard && r.rack().chainAt(0)->bridge()->descriptorFor(d.traits.tag) != nullptr && d.container == nullptr) {
+				plain = &d;
+				break;
+			}
+		}
+		REQUIRE(plain != nullptr);
+		const feathers::DeviceInstanceId id = r.rack().chainAt(0)->bridge()->addDevice(plain->traits.tag);
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		CHECK(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Card);
+		CHECK(r.panel->paneForTest().device() == id);
+	}
+	// A RACK AS THE FIRST DEVICE: its window, laid out with no pane of its own.
+	{
+		RealRack r;
+		r.chains(1, 0, true);
+		const feathers::DeviceInstanceId inner = nestedRack(*r.rack().chainAt(0)->bridge(), 2, false);
+		r.rack().chainAt(0)->bridge()->setField(inner, static_cast<size_t>(pr::Param::View), 2.0f);
+		r.rack().chainAt(0)->bridge()->setField(inner, static_cast<size_t>(pr::Param::Front), 1.0f);
+		REQUIRE(pr::rackOf(r.rack().chainAt(0)->bridge()->containerSurfaceOf(inner))->chainAt(0)->bridge()->addDevice("DELAY") != feathers::kNoInstance);
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		REQUIRE(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Window);
+		auto* innerPanel = dynamic_cast<ui::ParallelRackExpanded*>(r.panel->paneForTest().contentForTest());
+		REQUIRE(innerPanel != nullptr);
+		for (int i = 0; i < 3; ++i) {
+			(void)innerPanel->update();
+		}
+		CHECK(innerPanel->hostedInPaneForTest());
+		CHECK_FALSE(innerPanel->paneOnForTest());
+		CHECK(innerPanel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		CHECK_FALSE(innerPanel->frontSegForTest().isVisible());
+	}
+}
+
+TEST_CASE("a new chain starts open from the window's + Chain and from a Tabs or Pads shortcut's own chains too") {
+	RealRack r;
+	r.chains(1, 1, true);
+	r.view_(0);
+	r.panel->addChainForTest();
+	r.refresh();
+	CHECK(r.rack().open(r.rack().chainCount() - 1));
+	CHECK_FALSE(r.panel->railForTest(r.rack().chainCount() - 1).collapsed());
+	// THE SHORTCUTS (Tabs, Pads) make a Rack in a chain: its own chains start open.
+	ui::ChainColumn* column = r.panel->railForTest(0).column();
+	REQUIRE(column != nullptr);
+	const size_t offered = column->addable().size();
+	visage::PopupMenu menu = column->addMenuForTest();
+	for (const visage::PopupMenu& entry : menu.options()) {
+		if (entry.name().toUtf8() != "Containers") {
+			continue;
+		}
+		for (const visage::PopupMenu& row : entry.options()) {
+			if (row.name().toUtf8() == "Tabs" || row.name().toUtf8() == "Pads") {
+				REQUIRE(row.id() >= static_cast<int>(offered));
+				feathers::rack::RackBridge& chain = *r.rack().chainAt(0)->bridge();
+				const size_t before = chain.chainLength();
+				menu.onSelection().callback(row.id());
+				REQUIRE(chain.chainLength() == before + 1);
+				pr::Rack* inner = pr::rackOf(chain.containerSurfaceOf(chain.deviceAtPosition(before)));
+				REQUIRE(inner != nullptr);
+				REQUIRE(inner->chainCount() >= 1);
+				for (size_t i = 0; i < inner->chainCount(); ++i) {
+					CHECK(inner->open(i));
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE("rack pads fix D, repaint delivery: every pad grid and page strip showing the rack is asked to redraw within the tick a chain is added, keyed or given a device, on both surfaces; a pad is populated by a chain with its key, not by a device in it") {
+	RealRack r;
+	r.chains(2, 2, true); // keys 0 and 1
+	r.view_(2);
+	r.set(pr::Param::PadsPage, 0.0f);
+	r.refresh();
+	struct Counts {
+		size_t gridWindow, gridCard, stripWindow, stripCard;
+	};
+	const auto counts = [&] {
+		return Counts { r.panel->padsForTest().gridForTest().refreshesForTest(), r.card->padsForTest().gridForTest().refreshesForTest(),
+		                r.panel->padsForTest().pagesForTest().refreshesForTest(), r.card->padsForTest().pagesForTest().refreshesForTest() };
+	};
+	// ONE TICK OF BOTH SURFACES, then every reader on both must have been asked to redraw since `before`.
+	const auto tickAndCheck = [&](const Counts& before, const char* how) {
+		CAPTURE(how);
+		(void)r.panel->update();
+		(void)r.card->update();
+		const Counts after = counts();
+		CHECK(after.gridWindow > before.gridWindow);
+		CHECK(after.gridCard > before.gridCard);
+		CHECK(after.stripWindow > before.stripWindow);
+		CHECK(after.stripCard > before.stripCard);
+	};
+	const std::vector<const device::Descriptor*> offered = r.panel->padAddForTest().offeredForTest();
+	// A CHAIN ADDED FROM THE WINDOW'S MENU PICK, THE CARD'S, AND THE MODEL'S OWN ADD.
+	{
+		const Counts before = counts();
+		REQUIRE(r.panel->padAddForTest().pickForTest(5, rowOf(offered, "DRUM")) != ui::kNoChain);
+		tickAndCheck(before, "window pick");
+	}
+	{
+		const Counts before = counts();
+		REQUIRE(r.card->padAddForTest().pickForTest(6, rowOf(offered, "DELAY")) != ui::kNoChain);
+		tickAndCheck(before, "card pick");
+	}
+	{
+		const Counts before = counts();
+		REQUIRE(r.panel->viewModelForTest().addKeyedChain(7, nullptr) != ui::kNoChain);
+		tickAndCheck(before, "model add");
+	}
+	// A CHAIN KEYED AFTER IT EXISTS (the strip's key control, by the rack's own setter): the pad shows on the next tick.
+	{
+		const size_t any = r.rack().addChain();
+		REQUIRE(any != SIZE_MAX);
+		r.refresh();
+		CHECK_FALSE(usedOn(r.panel->padsForTest().gridForTest(), 0).count(9) > 0);
+		const Counts before = counts();
+		r.rack().setChainKey(any, 9);
+		tickAndCheck(before, "chain keyed");
+		CHECK(usedOn(r.panel->padsForTest().gridForTest(), 0).count(9) == 1);
+		CHECK(usedOn(r.card->padsForTest().gridForTest(), 0).count(9) == 1);
+	}
+	// A DEVICE ADDED TO A CHAIN THAT HAS A KEY AND NO DEVICE: populated already (the key is what populates), and every reader is still told.
+	{
+		const size_t empty = r.rack().addChain();
+		REQUIRE(empty != SIZE_MAX);
+		r.rack().setChainKey(empty, 10);
+		r.refresh();
+		CHECK(usedOn(r.panel->padsForTest().gridForTest(), 0).count(10) == 1); // before any device: the key alone populates it
+		const Counts before = counts();
+		(void)r.rack().chainAt(empty)->bridge()->addDevice("DELAY");
+		tickAndCheck(before, "device added to a keyed chain");
+		CHECK(usedOn(r.panel->padsForTest().gridForTest(), 0).count(10) == 1);
+	}
+	// A DEVICE ADDED TO A CHAIN WITH NO KEY (an Any chain made by "+ Chain"): the pad stays EMPTY, because populated means a chain on that key.
+	{
+		const std::set<int> usedBefore = usedOn(r.panel->padsForTest().gridForTest(), 0);
+		const size_t anyChain = r.rack().addChain();
+		REQUIRE(anyChain != SIZE_MAX);
+		(void)r.rack().chainAt(anyChain)->bridge()->addDevice("DRUM");
+		r.refresh();
+		CHECK(r.rack().chainKey(anyChain) == pr::kAnyKey);
+		CHECK(usedOn(r.panel->padsForTest().gridForTest(), 0) == usedBefore);
+		CHECK(usedOn(r.card->padsForTest().gridForTest(), 0) == usedBefore);
 	}
 }

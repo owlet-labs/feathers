@@ -24,6 +24,7 @@
 #include "device/device_groups.h"
 #include "plugin/ui/device_shortcuts.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include <visage/ui.h>
@@ -49,10 +50,15 @@
 
 namespace feathers::ui {
 
+/// `first`, when given, is the category listed at the top of the menu (the others keep their order): a surface that mostly wants one kind of
+/// device (the pads' "+" wants an oscillator) puts it a click away, without a second taxonomy.
 template <typename Enabled>
 void addCategorisedDevices(visage::PopupMenu& menu, const std::vector<const device::Descriptor*>& offered,
-                           Enabled&& enabled) {
-	const std::vector<device::CategoryGroup> groups = device::groupByCategory(offered);
+                           Enabled&& enabled, device::Category first = device::Category::None) {
+	std::vector<device::CategoryGroup> groups = device::groupByCategory(offered);
+	if (first != device::Category::None) {
+		std::stable_partition(groups.begin(), groups.end(), [first](const device::CategoryGroup& g) { return g.category == first; });
+	}
 	const auto row = [&](visage::PopupMenu& into, size_t i) {
 		into.addOption(static_cast<int>(i), offered[i]->traits.name).enable(enabled(i));
 	};

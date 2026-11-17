@@ -716,6 +716,19 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// until the View asks for them (Strips draws exactly as it always did).
 	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
+	padAdd_ = std::make_unique<RackPadAdd>(*model_, notifier_);
+	// THE SAME "+" AS THE WINDOW'S: asks which device; the pick makes the chain on that pad and the card follows it on the spot.
+	padAdd_->onAdded([this](size_t) {
+		(void)updateContent();
+		redraw();
+	});
+	pads_->gridForTest().setAddHandler([this](int key) {
+		const int index = key - padKey(model_->page(), 0);
+		RackPadGrid& grid = pads_->gridForTest();
+		const visage::Point c = grid.plusCentre(index);
+		const float a = RackPadGrid::kPlusArea;
+		padAdd_->open(key, grid, visage::Bounds { c.x - a * 0.5f, c.y - a * 0.5f, a, a });
+	});
 	front_ = std::make_unique<RackFrontColumn>(host_, device_, registry, notifier_);
 	chainArrow_ = std::make_unique<RackDrawerArrow>(
 	    RackFlow::TopDown, "Open the whole chain here, or close it again", [this] { return model_->expanded(model_->viewedChain()); },
@@ -792,6 +805,9 @@ void ParallelRackCard::setModulation(ModState* mod, EditHistory* history) {
 	}
 	history_ = history;
 	mod_ = mod;
+	if (padAdd_ != nullptr) {
+		padAdd_->setHistory(history);
+	}
 	for (auto& strip : strips_) {
 		strip->setModulation(mod, history);
 	}

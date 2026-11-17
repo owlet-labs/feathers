@@ -194,10 +194,17 @@ private:
 class RackPadGrid final : public visage::Frame, public TooltipSource {
 public:
 	RackPadGrid(RackViewModel& model, RackStrikePulse& pulse);
+	/// A pad held when the editor goes is released (its note-off sent), so a closed window never leaves a note sounding.
+	~RackPadGrid() { release(); }
 
 	void draw(visage::Canvas& canvas) override;
 	const char* tooltipAt(visage::Point at) const override;
-	void refresh() { redraw(); }
+	/// A REDRAW REQUESTED, AND COUNTED: a repaint cannot be observed headlessly, so the owner's per-tick call reports itself (`refreshesForTest`).
+	void refresh() {
+		++refreshes_;
+		redraw();
+	}
+	[[nodiscard]] size_t refreshesForTest() const noexcept { return refreshes_; }
 
 	/// It declares NOTHING, and the reason is checked here: a pad press plays a key through the note road and views a chain (editor state),
 	/// so it writes no device control.
@@ -241,6 +248,7 @@ private:
 	RackStrikePulse& pulse_;
 	Watch watch_;
 	int held_ = -1;
+	size_t refreshes_ = 0;
 	std::function<void(int)> onAdd_;
 };
 
@@ -252,7 +260,11 @@ public:
 	const char* tooltipAt(visage::Point at) const override;
 	/// It declares nothing: choosing a page is editor state, not a control.
 	void offeredControls(std::vector<Offered>&) const override {}
-	void refresh() { redraw(); }
+	void refresh() {
+		++refreshes_;
+		redraw();
+	}
+	[[nodiscard]] size_t refreshesForTest() const noexcept { return refreshes_; }
 	void setFlow(RackFlow flow) {
 		if (flow != flow_) {
 			flow_ = flow;
@@ -282,6 +294,7 @@ private:
 	RackViewModel& model_;
 	RackStrikePulse& pulse_;
 	RackFlow flow_;
+	size_t refreshes_ = 0;
 	Watch watch_;
 };
 

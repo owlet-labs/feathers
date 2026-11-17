@@ -23,6 +23,7 @@
 #include "device/registry.h"
 #include "rack/export_table.h"
 #include "rack/inner_chain.h"
+#include "plugin/ui_note_ring.h"
 #include "rack/inner_chain_bundle.h"
 #include "fx/owltt/crossover.h"
 #include "dsp/analyser_bins.h"
@@ -648,6 +649,9 @@ public:
 
 	/// How many chains the rack holds.
 	[[nodiscard]] size_t chainCount() const noexcept { return chains_.size(); }
+	/// The catalogue its chains adopt: what a chain made now could hold (a menu offers from it before the chain exists).
+	[[nodiscard]] const device::Catalogue& catalogue() const noexcept { return catalogue_; }
+	[[nodiscard]] bool adopted() const noexcept { return adopted_; }
 	/// The chain at `index` (display order), or null.
 	[[nodiscard]] InnerChain* chainAt(size_t index) noexcept;
 	[[nodiscard]] const InnerChain* chainAt(size_t index) const noexcept;
@@ -799,10 +803,19 @@ public:
 	/// no note device is exactly transparent, as it always was. Two sources' different notes on one key are two notes, each
 	/// ended by its own off. AUDIO THREAD; allocates nothing.
 	size_t processNotes(const device::NoteEvent* in, size_t count, device::NoteEvent* out, size_t capacity) noexcept;
+	/// **A PAD STRIKE ENTERS AT THIS RACK** (editor thread): a key pressed or released on the Pads view, queued here and routed by this rack
+	/// as a note arriving at its input (key filter, mode, chokes, the chain's devices), then passed downstream. Nothing before the rack hears it.
+	/// Drained by the audio thread in `emitNotes` (called every block, whether or not a host note came). False when the ring is full.
+	bool postPadNote(int key, bool on, float velocity) noexcept {
+		return key >= 0 && key <= 127 && padNotes_.push({ static_cast<int16_t>(key), velocity, on });
+	}
 	/// What the chains' self-clocked devices (an Arp, a Pattern) emit now, through the same mix; `*until` the soonest any
 	/// wants its next call. A chain whose last emitter leaves has the notes it invented ended.
 	size_t emitNotes(const device::TransportClock& clock, uint64_t sampleNow, device::NoteEvent* out, size_t capacity,
 	                 uint32_t* until) noexcept;
+	/// What the chains' own emitters made (`emitNotes` is this, after the pads' keys).
+	size_t emitChainNotes(const device::TransportClock& clock, uint64_t sampleNow, device::NoteEvent* out, size_t capacity,
+	                      uint32_t* until) noexcept;
 	/// TEST SEAM: how many notes the rack is tracking as sounding (or swallowed) now.
 	[[nodiscard]] size_t noteRecordsForTest() const noexcept { return recordCount_; }
 
@@ -1001,6 +1014,9 @@ private:
 	std::vector<device::NoteEvent> skippedIn_;
 	/// The editor's keys (a play button's) drained from one chain's bridge for that chain alone.
 	std::vector<device::NoteEvent> auditionIn_;
+	/// The pads' keys waiting for the audio thread, and what they were drained into.
+	UiNoteRing padNotes_;
+	std::vector<device::NoteEvent> padIn_;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call
 	size_t owedCount_ = 0;
 	bool releaseAll_ = false;

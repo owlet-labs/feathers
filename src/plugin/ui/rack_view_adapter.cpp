@@ -18,6 +18,7 @@
 #include "plugin/ui/rack_view_adapter.h"
 
 #include "fx/drum/drum_types.h"
+#include "plugin/device_registry.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/parallel_rack_card.h"
 #include "rack/inner_chain.h"
@@ -25,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace feathers::ui {
 
@@ -189,8 +191,35 @@ RackKeyMask RackViewAdapter::takeStruck() {
 }
 
 size_t RackViewAdapter::addKeyedChain(int key, EditHistory* history) {
+	return addKeyedChain(key, fx::drumdevice::kTraits.tag, history);
+}
+
+std::vector<const device::Descriptor*> RackViewAdapter::addableDevices() const {
+	std::vector<const device::Descriptor*> out;
+	const pr::Rack* r = rack();
+	if (r == nullptr || !r->adopted()) {
+		return out;
+	}
+	for (const device::Descriptor& d : kDevices) {
+		if (r->catalogue()(d.traits.tag) != nullptr) {
+			out.push_back(&d);
+		}
+	}
+	return out;
+}
+
+void RackViewAdapter::setFirstDeviceField(size_t slot, size_t control, float value) {
 	pr::Rack* r = rack();
-	if (r == nullptr || key < 0 || key > 127) {
+	rack::InnerChain* chain = r != nullptr && slot < r->chainCount() ? r->chainAt(slot) : nullptr;
+	rack::RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
+	if (bridge != nullptr && bridge->chainLength() > 0) {
+		bridge->setField(bridge->deviceAtPosition(0), control, value);
+	}
+}
+
+size_t RackViewAdapter::addKeyedChain(int key, const char* tag, EditHistory* history) {
+	pr::Rack* r = rack();
+	if (r == nullptr || key < 0 || key > 127 || tag == nullptr) {
 		return kNoChain;
 	}
 	const size_t at = r->addChain();
@@ -198,13 +227,20 @@ size_t RackViewAdapter::addKeyedChain(int key, EditHistory* history) {
 		return kNoChain;
 	}
 	r->setChainKey(at, key);
-	// A DRUM IN IT, set to Any Key (so the chain's own key filter does the answering), where the chain's bridge takes one.
-	if (rack::InnerChain* chain = r->chainAt(at); chain != nullptr && chain->bridge() != nullptr) {
-		rack::RackBridge& bridge = *chain->bridge();
-		const DeviceInstanceId drum = bridge.addDevice(fx::drumdevice::kTraits.tag);
-		if (drum != kNoInstance) {
-			bridge.setField(drum, static_cast<size_t>(fx::drumdevice::Param::Keys), 1.0f);
-		}
+	// A CHAIN MADE FROM A PAD STARTS OPEN (its rail whole in the window, its cards whole in front of the card): the hand that made it is about to
+	// use it, and a fold hides the device it just chose. (A chain added by "+ Chain" keeps the rack's own default, folded.)
+	r->setOpen(at, true);
+	rack::InnerChain* chain = r->chainAt(at);
+	rack::RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
+	const DeviceInstanceId made = bridge != nullptr ? bridge->addDevice(tag) : kNoInstance;
+	if (made == kNoInstance) {
+		// THE CHAIN REFUSED THE DEVICE: nothing was asked for but the pair, so neither stays.
+		(void)r->removeChain(at);
+		return kNoChain;
+	}
+	// A DRUM IS SET TO ANY KEY (so the chain's own key filter does the answering).
+	if (std::strcmp(tag, fx::drumdevice::kTraits.tag) == 0) {
+		bridge->setField(made, static_cast<size_t>(fx::drumdevice::Param::Keys), 1.0f);
 	}
 	if (history != nullptr) {
 		history->record(std::make_unique<ChainPresenceEdit>(host_, id_, at, r->snapshotChain(at), true));

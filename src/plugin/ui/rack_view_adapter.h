@@ -98,8 +98,12 @@ public:
 	RackStrikeKey strikeKey() const override;
 	bool followPlayed() const override;
 	device::Modulatable* followControl() override { return controls_.follow; }
-	bool canTrigger() const override { return host_.canPostNote(); }
-	bool trigger(int key, bool on, float velocity) override { return host_.postNote(key, on, velocity); }
+	/// A PAD'S KEY ENTERS AT THIS RACK (`Rack::postPadNote`), not at the plugin's front: only what follows the rack hears it.
+	bool canTrigger() const override { return rack() != nullptr; }
+	bool trigger(int key, bool on, float velocity) override {
+		rack::parallel::Rack* r = rack();
+		return r != nullptr && r->postPadNote(key, on, velocity);
+	}
 	device::Modulatable* kitLevel() override { return controls_.gain; }
 
 	/// How many chains the rack holds (the Tabs choice is offered only up to `kMaxRackTabs`).
@@ -107,6 +111,13 @@ public:
 	/// ADD A CHAIN ANSWERING `key` (one undo step through `history`, which may be null): an empty keyed chain with a Drum device in it set to
 	/// Any Key where the chain's bridge takes one. Returns its index, or `kNoChain`.
 	size_t addKeyedChain(int key, EditHistory* history);
+	/// **THE SAME WITH A DEVICE OF THE HAND'S CHOOSING** (a pad's "+" menu): the chain on `key` holds `tag`, or is not made at all when the chain
+	/// refuses the device (the nesting bound) — a refused pick leaves the rack as it was. A Drum is set to Any Key, as above.
+	size_t addKeyedChain(int key, const char* tag, EditHistory* history);
+	/// A field of the first device of chain `slot` (a shortcut's two settings), written through the chain's own bridge.
+	void setFirstDeviceField(size_t slot, size_t control, float value);
+	/// What a chain made now could hold, in the table's order (the rack's own catalogue, so a menu can offer before the chain exists).
+	[[nodiscard]] std::vector<const device::Descriptor*> addableDevices() const;
 	/// The name a chain shows: its first device's, or empty.
 	[[nodiscard]] std::string chainTitle(size_t slot) const;
 	/// The names of the devices a chain holds, in chain order.

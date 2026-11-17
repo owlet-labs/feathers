@@ -156,8 +156,10 @@ struct Rack::Branch {
 	/// thread before the lineup that holds it is published, so the audio thread reads it plainly.
 	uint8_t slot = kNoChainSlot;
 	/// **WHETHER THE WINDOW SHOWS THIS CHAIN OPEN** (backlog OC) — view state, kept with the patch under a stable chain id so it
-	/// survives closing the editor and a save/load. Message thread only; the audio thread never reads it. A chain starts closed.
-	bool open = false;
+	/// survives closing the editor and a save/load. Message thread only; the audio thread never reads it. A NEW chain starts OPEN (a fold
+	/// hides the device a hand is about to add); a chain loaded keeps what its body stored, and a body written before the field existed reads
+	/// closed, as it always did (`loadState`'s own default).
+	bool open = true;
 
 	// AUDIO THREAD.
 	/// **THIS CHAIN WAITS FOR THE SLOWEST** — delayed by (the rack's latency − this chain's).
@@ -683,6 +685,7 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	chokes_.assign(RackEngine::kMaxNotes, ChokeFor {});
 	skippedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	auditionIn_.assign(UiNoteRing::kCapacity, device::NoteEvent {});
+	padIn_.assign(UiNoteRing::kCapacity, device::NoteEvent {});
 	owedOffs_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	recordCount_ = 0;
 	stagedCount_ = 0;
@@ -1815,6 +1818,29 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 
 size_t Rack::emitNotes(const device::TransportClock& clock, uint64_t sampleNow, device::NoteEvent* out,
                        size_t capacity, uint32_t* until) noexcept {
+	// THE PADS' KEYS FIRST: routed as notes arriving at this rack's input, at offset 0, whether or not a host note came this block (a rack
+	// that emits is asked every block; `processNotes` is asked only when notes reach it). They leave ahead of what the chains emit.
+	size_t padMade = 0;
+	if (!padNotes_.empty() && !padIn_.empty()) {
+		size_t n = 0;
+		for (UiNoteEvent u; n < padIn_.size() && padNotes_.pop(u);) {
+			device::NoteEvent& e = padIn_[n++];
+			e = device::NoteEvent {};
+			e.kind = u.on ? device::NoteEvent::Kind::On : device::NoteEvent::Kind::Off;
+			e.noteId = kPadNoteId;
+			e.key = u.key;
+			e.velocity = u.on ? static_cast<double>(u.velocity) : 0.0;
+		}
+		if (n > 0) {
+			padMade = processNotes(padIn_.data(), n, out, capacity);
+		}
+	}
+	const size_t own = emitChainNotes(clock, sampleNow, out != nullptr ? out + padMade : nullptr, capacity - padMade, until);
+	return padMade + own;
+}
+
+size_t Rack::emitChainNotes(const device::TransportClock& clock, uint64_t sampleNow, device::NoteEvent* out,
+                            size_t capacity, uint32_t* until) noexcept {
 	uint32_t soonest = std::numeric_limits<uint32_t>::max();
 	const Lineup* live = live_.load(std::memory_order_acquire);
 	stagedCount_ = 0;
@@ -2780,11 +2806,27 @@ const device::TextOps kTextOps {
 			// WHILE A NOTE IS TRACKED, A CUT READS AS ITS OFFSET FROM IT, in semitones.
 			return viewTracking(view) && formatCutOffset(value, out, size);
 		}
+		if (control == static_cast<size_t>(Param::ViewedChain)) {
+			// THE CHAIN IN FRONT READS AS A CHAIN NUMBER, from 1 — the tabs, the pads and the strips count that way, and the stored
+			// index (from 0) is not what a hand types or expects to read.
+			std::snprintf(out, size, "%ld", std::lround(value) + 1);
+			return true;
+		}
 		return control == static_cast<size_t>(Param::Position) && formatPosition(modeOf(view), chainsOf(view), value, out, size);
 	},
 	.parse = [](size_t control, const char* text, const device::TextView& view, double* value) {
 		if (isCut(control)) {
 			return viewTracking(view) && parseCutOffset(text, value);
+		}
+		if (control == static_cast<size_t>(Param::ViewedChain)) {
+			const char* start = skipSpaces(text);
+			char* end = nullptr;
+			const double n = std::strtod(start, &end);
+			if (end == start || !std::isfinite(n)) {
+				return false;
+			}
+			*value = std::max(0.0, n - 1.0);
+			return true;
 		}
 		return control == static_cast<size_t>(Param::Position) && parsePosition(modeOf(view), chainsOf(view), text, value);
 	},

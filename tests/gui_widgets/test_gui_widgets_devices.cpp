@@ -34905,6 +34905,9 @@ TEST_CASE("OC: a chain's header works while the chain is collapsed — level, mu
 	ModFixture f;
 	RackOnLane r(f);
 	REQUIRE(r.rack().addChain() == 1);
+	// THIS CASE IS ABOUT A COLLAPSED CHAIN, and a new chain starts open: both are folded here, as a hand would.
+	r.rack().setOpen(0, false);
+	r.rack().setOpen(1, false);
 	REQUIRE(r.rack().chainAt(1)->bridge()->addDevice(feathers::fx::filter::kTraits.tag) != feathers::kNoInstance);
 	r.rack().setLevel(1, 0.75f);
 	ui::WidgetRegistry registry;
@@ -35158,9 +35161,13 @@ TEST_CASE("OC: a chain's fold survives closing and reopening the Rack window and
 		panel->setBounds(0.0f, 0.0f, 900.0f, panel->minimumSize().y + 40.0f);
 		(void)panel->update();
 		REQUIRE(panel->railCountForTest() == 2);
-		// A FRESH RACK'S CHAINS ARE FOLDED (a rail starts closed, and the rack says so).
-		CHECK(panel->railForTest(0).collapsed());
-		CHECK(panel->railForTest(1).collapsed());
+		// A FRESH RACK'S CHAINS ARE OPEN (a new chain starts open, and the rack says so); a hand folds both.
+		CHECK_FALSE(panel->railForTest(0).collapsed());
+		CHECK_FALSE(panel->railForTest(1).collapsed());
+		CHECK(r.rack().open(0));
+		CHECK(r.rack().open(1));
+		REQUIRE(panel->railForTest(0).setCollapsed(true));
+		REQUIRE(panel->railForTest(1).setCollapsed(true));
 		CHECK_FALSE(r.rack().open(0));
 		// A HAND OPENS CHAIN 1 (the rail's own toggle) — the rack hears it, by value.
 		REQUIRE(panel->railForTest(0).setCollapsed(false));
@@ -35926,6 +35933,9 @@ TEST_CASE("Rack stage 2, step 4 / §2a: a role no chain fills is drawn as an EMP
 	CHECK(v.panel->phantomForTest(0).passesForTest() == "empty, passes the side");
 	// AND IT IS THE RAIL A REAL EMPTY CHAIN GETS: chain 1 is a real empty chain here, and its rail and the phantom's
 	// have the same width, closed and open, and the same strip — the vertical fader of the closed column.
+	// (A NEW CHAIN STARTS OPEN, so the real chain is folded here to compare it with the phantom's closed rail.)
+	v.r.rack().setOpen(0, false);
+	v.refresh();
 	ui::FxLaneRail& realRail = v.panel->railForTest(0);
 	ui::FxLaneRail& phantomRail = v.panel->phantomForTest(0).railForTest();
 	REQUIRE(realRail.collapsed());

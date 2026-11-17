@@ -32,6 +32,7 @@
 
 #include "plugin/rotate_sound.h"
 #include "plugin/synth.h"
+#include "plugin/ui_note_ring.h"
 #include "plugin/master_meter.h"
 #include "mod/dahdsr/dahdsr_types.h"
 #include "mod/lfo/lfo_types.h"
@@ -10471,4 +10472,31 @@ TEST_CASE("SR: an idle synth builds no character after settling, and a moved Pos
 	const uint32_t moved = rig.synth.mainBankForTest().generation();
 	blocks(200);
 	CHECK(rig.synth.mainBankForTest().generation() == moved);
+}
+
+TEST_CASE("a rack pad's note (the reserved pad id) that reaches the synth's own voices ends with no NOTE_END; an ordinary host note still does") {
+	// The pad's id is the editor's, not the host's: the host never issued it, so telling the host it ended would be telling it about a note it never sent.
+	const auto run = [](int32_t id) {
+		Rig rig;
+		rig.synth.noteOn(0, 60, id, 1.0);
+		std::vector<float> left(1024, 0.0f), right(1024, 0.0f);
+		for (int b = 0; b < 4; ++b) {
+			rig.synth.render(left.data(), right.data(), 1024);
+		}
+		rig.synth.noteOff(0, 60, id, 0.0);
+		for (int b = 0; b < 600; ++b) {
+			rig.synth.render(left.data(), right.data(), 1024);
+		}
+		std::vector<int32_t> ends;
+		while (const Synth::NoteEnd* end = rig.synth.frontNoteEnd()) {
+			ends.push_back(end->noteId);
+			rig.synth.dropNoteEnd();
+		}
+		return ends;
+	};
+	CHECK(run(feathers::kPadNoteId).empty());
+	CHECK(run(feathers::kUiNoteId).empty());
+	const std::vector<int32_t> host = run(9);
+	REQUIRE(host.size() == 1); // not blind: the same road ends an ordinary note
+	CHECK(host[0] == 9);
 }

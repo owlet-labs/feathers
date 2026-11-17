@@ -227,6 +227,9 @@ size_t RackViewAdapter::addKeyedChain(int key, const char* tag, EditHistory* his
 		return kNoChain;
 	}
 	r->setChainKey(at, key);
+	// A CHAIN MADE FROM A PAD STARTS OPEN (its rail whole in the window, its cards whole in front of the card): the hand that made it is about to
+	// use it, and a fold hides the device it just chose. (A chain added by "+ Chain" keeps the rack's own default, folded.)
+	r->setOpen(at, true);
 	rack::InnerChain* chain = r->chainAt(at);
 	rack::RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
 	const DeviceInstanceId made = bridge != nullptr ? bridge->addDevice(tag) : kNoInstance;

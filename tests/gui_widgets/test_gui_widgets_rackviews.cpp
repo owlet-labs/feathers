@@ -799,9 +799,18 @@ TEST_CASE("rack views over a real rack: the window in Tabs shows only the chain 
 	CHECK_FALSE(r.panel->tabBarForTest().isVisible());
 	ui::RackPadGrid& grid = r.panel->padsForTest().gridForTest();
 	CHECK_FALSE(grid.usedForTest(7));
-	// "+" ON EMPTY PAD 7 (key 7): a chain keyed to it, with a Drum on Any Key, and it becomes the viewed chain.
+	// "+" ON EMPTY PAD 7 (key 7) ASKS WHICH DEVICE (a press makes nothing); the Drum's row then makes a chain keyed to it with a Drum on Any
+	// Key, and it becomes the viewed chain.
 	const size_t before = r.rack().chainCount();
 	grid.pressForTest(grid.plusCentre(7));
+	r.refresh();
+	REQUIRE(r.rack().chainCount() == before);
+	const std::vector<const device::Descriptor*> offered = r.panel->padAddForTest().offeredForTest();
+	for (size_t i = 0; i < offered.size(); ++i) {
+		if (std::string(offered[i]->traits.tag) == "DRUM") {
+			REQUIRE(r.panel->padAddForTest().pickForTest(7, static_cast<int>(i)) == before);
+		}
+	}
 	r.refresh();
 	REQUIRE(r.rack().chainCount() == before + 1);
 	CHECK(r.rack().chainKey(before) == 7);
@@ -2292,10 +2301,6 @@ TEST_CASE("rack pads fix B: a chain made by a pad's + starts open, with its firs
 		REQUIRE(column->cardsForTest().size() >= 1);
 		CHECK_FALSE(column->cardsForTest()[0]->folded());
 		CHECK_FALSE(r.rack().chainAt(at)->bridge()->deviceFolded(r.rack().chainAt(at)->bridge()->deviceAtPosition(0)));
-		// "+ Chain" makes an open one too.
-		r.panel->addChainForTest();
-		r.refresh();
-		CHECK(r.rack().open(r.rack().chainCount() - 1));
 	}
 }
 

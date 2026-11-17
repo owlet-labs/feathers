@@ -492,9 +492,6 @@ size_t Rack::addChain() {
 		return SIZE_MAX;
 	}
 	auto branch = makeBranch(nextChainId_++);
-	// A NEW CHAIN STARTS OPEN: its rail in the window and its cards in front of the card are shown whole, so the first thing a hand does with
-	// it (add a device) is not behind a fold. A chain loaded or put back by an undo keeps the state it was saved with.
-	branch->open = true;
 	branch->slot = freeSlot(kNoChainSlot);
 	mirror(*branch); // a reused slot's params put back to a fresh chain's values
 	// **A NEW CHAIN IS A CHAIN OF THIS RACK**: its macros are named, typed and signed as the rack's are (the first chain's).

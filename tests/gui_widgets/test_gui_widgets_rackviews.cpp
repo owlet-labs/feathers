@@ -1856,6 +1856,8 @@ TEST_CASE("rack pane: a first device with no window of its own shows its card ce
 		PaneRack p(1, 0);
 		const feathers::DeviceInstanceId inner = nestedRack(p.chain(0), 2, true);
 		p.chain(0).setField(inner, static_cast<size_t>(pr::Param::Front), 1.0f);
+		// THE INNER RACK'S FRONT CHAIN HOLDS A DEVICE, so a pane of its own would have something to show.
+		REQUIRE(pr::rackOf(p.chain(0).containerSurfaceOf(inner))->chainAt(0)->bridge()->addDevice("DELAY") != feathers::kNoInstance);
 		p.settle();
 		REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
 		auto* innerPanel = dynamic_cast<ui::ParallelRackExpanded*>(p.pane().contentForTest());

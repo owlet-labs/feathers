@@ -324,6 +324,14 @@ void Synth::reset() {
 // Note events   //
 //---------------//
 
+namespace {
+/// **THE EDITOR'S OWN NOTES, NEVER THE HOST'S**: the preview key and a rack pad's note carry reserved ids the host never issued, so neither records an
+/// id to be told of nor ends under one (a NOTE_END for a note the host never sent).
+bool isEditorNoteId(int32_t noteId) noexcept {
+	return noteId == kUiNoteId || noteId == kPadNoteId;
+}
+} // namespace
+
 void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity) {
 	// The steal handoff lives within ONE note-on: anything left from an earlier terminate that
 	// created nothing is a dead phase no new note should inherit.
@@ -346,7 +354,7 @@ void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity
 	envRetrigger_ = true;
 	// **THE EDITOR'S PREVIEW KEY IS NOT THE HOST'S**: it neither records an id the host is to be told of nor marks the key host-held, so a
 	// host note on the same key keeps its own record, and the preview's end is never sent to the host under the reserved id.
-	if (noteId != kUiNoteId) {
+	if (!isEditorNoteId(noteId)) {
 		hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = noteId;
 		hostDown_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)] = true;
 	}
@@ -369,7 +377,7 @@ void Synth::noteOff(int16_t channel, int16_t key, int32_t noteId, double velocit
 	                                channel,                     key, velocity };
 	captureNote(event);
 	runLaneFor(&event, 1);
-	if (noteId == kUiNoteId) {
+	if (isEditorNoteId(noteId)) {
 		return; // the editor's key lifts no host key and ends no host note (see `noteOn`)
 	}
 	for (size_t i = 0; i < hostDown_.size(); ++i) {
@@ -401,7 +409,7 @@ void Synth::hostNoteEnded(int16_t channel, int16_t key, int32_t noteId, const Vo
 	if (!isPlayableChannel(channel) || !isPlayableKey(key)) {
 		return;
 	}
-	if (noteId == kUiNoteId) {
+	if (isEditorNoteId(noteId)) {
 		return; // an editor preview voice ending: the host never issued it
 	}
 	int32_t& record = hostIssued_[static_cast<size_t>(channel) * 128u + static_cast<size_t>(key)];

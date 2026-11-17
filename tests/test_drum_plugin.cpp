@@ -409,11 +409,11 @@ TEST_CASE("the factory lists the Drum beside the two existing plugins, whose ids
 	CHECK(std::string(rack::drumDescriptor()->id) == ids[2]);
 }
 
-TEST_CASE("the host-parameter list is append-only: the first 54 places are what shipped to this point, and Keys follows them") {
-	// A FINGERPRINT OF THE FIRST 54 KEYS IN ORDER (FNV-1a over each key and its NUL): moving, removing or inserting before any of them
+TEST_CASE("the host-parameter list is append-only: the first 51 places are what shipped to this point, and the velocity row follows them") {
+	// A FINGERPRINT OF THE FIRST 51 KEYS IN ORDER (FNV-1a over each key and its NUL): moving, removing or inserting before any of them
 	// changes it, and a host's lanes live on those ids. New controls are appended after, and this number stays.
 	uint64_t h = 0xcbf29ce484222325ull;
-	for (size_t i = 0; i < 54; ++i) {
+	for (size_t i = 0; i < 51; ++i) {
 		for (const char* c = dp::kHostKeys[i];; ++c) {
 			h ^= static_cast<unsigned char>(*c);
 			h *= 0x100000001b3ull;
@@ -422,15 +422,15 @@ TEST_CASE("the host-parameter list is append-only: the first 54 places are what 
 			}
 		}
 	}
-	CHECK(h == 0x4015774dbc430875ull);
-	REQUIRE(dp::kHostParamCount >= 55);
-	CHECK(std::string(dp::kHostKeys[54]) == "drum_keys");
+	CHECK(h == 0xafb5d7bec03659aeull);
+	REQUIRE(dp::kHostParamCount >= 52);
+	CHECK(std::string(dp::kHostKeys[51]) == "drum_keys");
 }
 
 TEST_CASE("a new drum answers Any Key, and Keys is a host parameter that reaches Pitched") {
 	Venue v;
 	const clap_id keys = v.idOf("Keys");
-	CHECK(keys == 0x1000 + 54);
+	CHECK(keys == 0x1000 + 51);
 	double value = -1.0;
 	REQUIRE(v.params()->get_value(v.plugin, keys, &value));
 	CHECK(value == 0.5); // Any Key of One Key | Any Key | Pitched

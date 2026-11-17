@@ -240,9 +240,19 @@ drum::Controls refControls(const dd::Row& r) {
 	c.count = static_cast<int>(std::lround(v(Param::Claps)));
 	c.spreadSeconds = std::exp2(v(Param::Spread));
 	c.pitchRangeSemitones = 3.0;
-	c.velocityZone = v(Param::VelocityZone);
-	c.wires = v(Param::Wires);
-	c.bells = v(Param::Bells);
+	c.direct = true;
+	c.velTone = v(Param::VelTone);
+	c.velSnap = v(Param::VelSnap);
+	c.velTension = v(Param::VelTension);
+	c.wireContour = static_cast<int>(std::lround(v(Param::WireContour)));
+	c.wireShape = v(Param::WireGate);
+	c.bodyShape = v(Param::BodyGate);
+	c.wireBuzz = v(Param::WireBuzz);
+	c.buzzThreshold = v(Param::WireThreshold);
+	c.bell1Level = v(Param::Bell1Level);
+	c.bell2Level = v(Param::Bell2Level);
+	c.bellQScale = v(Param::BellQ);
+	c.bellLinked = r[at(Param::BellLink)] >= 0.5f;
 	c.wireDecaySeconds = std::exp2(v(Param::WireDecay));
 	c.clickDecaySeconds = std::exp2(v(Param::ClickDecay));
 	c.bellStartHz = std::exp2(v(Param::BellStart));
@@ -287,7 +297,9 @@ uint64_t refSeed(const dd::Row& r, int key, uint32_t count) {
 /// A HIT STRUCK AND RENDERED `frames` samples, left and right, with the ear that the kind does not write copied (the device's own rule).
 Out refRender(const dd::Row& r, double velocity, int frames, uint32_t count = 0, int key = 36, double rate = kSr) {
 	RefHit h(rate);
-	h.hit.strike(kindOf(r), refLaws(r, velocity), refSeed(r, key, count), static_cast<float>(velocity));
+	// THE STRIKE LEVEL, restated: 1 - depth x (1 - velocity).
+	const double level = 1.0 - static_cast<double>(r[at(Param::VelLevel)]) * (1.0 - velocity);
+	h.hit.strike(kindOf(r), refLaws(r, velocity), refSeed(r, key, count), static_cast<float>(level));
 	Out o(frames);
 	for (int s = 0; s < frames; s += 64) {
 		const int n = std::min(64, frames - s);
@@ -344,7 +356,10 @@ dd::Row variedRow(drum::Kind kind) {
 	put(Param::SweepTime, -4.1);
 	put(Param::DriveCurve, 1);
 	put(Param::DriveTone, 0.4);
-	put(Param::VelocityZone, 1.0);
+	put(Param::VelLevel, 0.8);
+	put(Param::VelTone, 0.6);
+	put(Param::VelSnap, -0.3);
+	put(Param::VelTension, 0.7);
 	put(Param::VelocityNoise, 0.3);
 	put(Param::Width, 0.6);
 	put(Param::Claps, 4);
@@ -353,8 +368,15 @@ dd::Row variedRow(drum::Kind kind) {
 	put(Param::ClapHighPass, 7.0);
 	put(Param::WireDecay, -2.0);
 	put(Param::ClickDecay, -7.0);
-	put(Param::Wires, 1.4);
-	put(Param::Bells, 2.2);
+	put(Param::WireContour, 1);
+	put(Param::WireBuzz, 0.4);
+	put(Param::WireThreshold, 0.3);
+	put(Param::WireGate, 0.25);
+	put(Param::BodyGate, 0.2);
+	put(Param::Bell1Level, 0.6);
+	put(Param::Bell2Level, 0.5);
+	put(Param::BellQ, 1.6);
+	put(Param::BellLink, 0);
 	put(Param::BellStart, 11.0);
 	put(Param::BellEnd, 9.7);
 	put(Param::BellTime, -4.3);
@@ -397,7 +419,11 @@ TEST_CASE("drum: each control is gated on the kinds the engine says read it") {
 			{ Param::Spread, c.spread },      { Param::ClapQ, c.clapFilter },   { Param::ClapHighPass, c.clapFilter },
 			{ Param::WireDecay, c.snareEnvelopes }, { Param::ClickDecay, c.snareEnvelopes }, { Param::BellStart, c.bell },
 			{ Param::BellEnd, c.bell },       { Param::BellTime, c.bell },      { Param::Bell2Hz, c.bell },
-			{ Param::Bell2Time, c.bell },     { Param::Bells, c.bell },         { Param::Wires, c.wireContour },
+			{ Param::Bell2Time, c.bell },     { Param::Bell1Level, c.bell },    { Param::Bell2Level, c.bell },
+			{ Param::BellQ, c.bell },         { Param::BellLink, c.bell },      { Param::WireContour, c.wireContour },
+			{ Param::WireBuzz, c.wireContour }, { Param::WireThreshold, c.wireContour }, { Param::WireGate, c.wireContour },
+			{ Param::BodyGate, c.wireContour }, { Param::VelLevel, true },      { Param::VelTone, true },
+			{ Param::VelSnap, true },         { Param::VelTension, kind == drum::Kind::Kick || kind == drum::Kind::Membrane || kind == drum::Kind::Snare },
 			{ Param::KickHold, c.kickShape }, { Param::KickDip, c.kickShape },  { Param::KickDipTime, c.kickShape },
 			{ Param::ClickSweep, c.kickShape }, { Param::ClickSweepTime, c.kickShape }, { Param::StartPhase, c.kickShape },
 			{ Param::VelocityNoise, c.velNoise }, { Param::Width, c.width },
@@ -587,7 +613,6 @@ TEST_CASE("drum: Level, Pan and the pan law") {
 TEST_CASE("drum: velocity reaches the laws and the level, as the engine's hit takes it") {
 	Dev lo;
 	lo.row = variedRow(drum::Kind::Membrane);
-	lo.set(Param::VelocityZone, 1.0 / 3.0); // Tone: velocity moves the brightness and the snap (a lap of the three zones per 1.0)
 	Dev hi;
 	hi.row = lo.row;
 	const Out a = run(lo, { on(36, 0, 0.3) }, 2048);
@@ -1085,8 +1110,12 @@ TEST_CASE("drum: every control changes the sound in SOME arrangement, with notes
 					dd::Row r = variedRow(static_cast<drum::Kind>(k));
 					r[at(Param::Trigger)] = static_cast<float>(trig);
 					r[at(Param::Release)] = static_cast<float>(std::log2(0.05));
-					r[at(Param::Bells)] = static_cast<float>(bells);
-					r[at(Param::Wires)] = static_cast<float>(wires);
+					r[at(Param::Bell1Level)] = static_cast<float>(bells);
+					r[at(Param::WireGate)] = static_cast<float>(wires);
+					if (wires > 0.0) { // a short head and wires, so a gate at a share of their decay falls inside the script
+						r[at(Param::Decay)] = -6.6f;
+						r[at(Param::WireDecay)] = -6.6f;
+					}
 					bases.push_back(r);
 				}
 			}
@@ -1789,4 +1818,134 @@ TEST_CASE("drum Any Key: a patch saved and loaded into a fresh rack keeps it") {
 	CHECK(b.as<dd::DrumDsp>().settingsForTest().index(Param::Keys) == 1);
 	CHECK_FALSE(b.as<dd::DrumDsp>().settingsForTest().pitched());
 	CHECK(b.as<dd::DrumDsp>().settingsForTest() == a.as<dd::DrumDsp>().settingsForTest());
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE VELOCITY ROW: depths, not a mode                                                              //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("drum: the velocity row's defaults are the old default zones' sound, at every velocity and kind") {
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		for (const double vel : { 0.01, 0.5, 1.0 }) {
+			CAPTURE(k);
+			CAPTURE(vel);
+			dd::Row r = defaultRow();
+			r[at(Param::Kind)] = static_cast<float>(k);
+			drum::Controls direct = refControls(r);
+			drum::Controls zones = direct;
+			zones.direct = false; // the zone road at its own defaults (velocity Tension, wires Tight, bells Off)
+			zones.velocityZone = 2.0 / 3.0;
+			zones.wires = 0.0;
+			zones.bells = 0.0;
+			const drum::Laws a = drum::lawsFor(kindOf(r), refFields(r), direct, refBaseHz(r), vel);
+			const drum::Laws b = drum::lawsFor(kindOf(r), refFields(r), zones, refBaseHz(r), vel);
+			CHECK(a.tone == b.tone);
+			CHECK(a.snap == b.snap);
+			CHECK(a.sweepOctaves == b.sweepOctaves);
+			CHECK(a.noise == b.noise);
+		}
+	}
+}
+
+TEST_CASE("drum: each velocity depth reaches its destination by the stated law at depth 0, 50 and 100 percent, velocity 1, 64 and 127") {
+	const double vels[] = { 1.0 / 127.0, 64.0 / 127.0, 1.0 };
+	for (const double depth : { 0.0, 0.5, 1.0 }) {
+		for (const double vel : vels) {
+			CAPTURE(depth);
+			CAPTURE(vel);
+			dd::Row r = variedRow(drum::Kind::Membrane);
+			r[at(Param::VelTone)] = static_cast<float>(depth);
+			r[at(Param::VelSnap)] = static_cast<float>(-depth); // its own sign, so a swap with Tone's depth is seen
+			r[at(Param::VelTension)] = static_cast<float>(depth);
+			dd::Row flat = r;
+			flat[at(Param::VelTone)] = 0.0f;
+			flat[at(Param::VelSnap)] = 0.0f;
+			flat[at(Param::VelTension)] = 0.0f;
+			const drum::Fields f = refFields(r);
+			const drum::Laws got = refLaws(r, vel);
+			const drum::Laws base = refLaws(flat, vel);
+			// RESTATED: tone and snap move by depth x (velocity - 0.5), clamped to 0..1, from the field's own value.
+			const double shift = depth * (vel - 0.5);
+			CHECK(got.tone == doctest::Approx(std::clamp(static_cast<double>(f.tone) + shift, 0.0, 1.0)).epsilon(1e-6));
+			CHECK(got.snap == doctest::Approx(std::clamp(static_cast<double>(f.snap) - shift, 0.0, 1.0)).epsilon(1e-6));
+			// TENSION: the glide's depth is scaled by 1 + depth x (v^2 - 1); at depth 0 it is the flat glide.
+			CHECK(got.sweepOctaves == doctest::Approx(base.sweepOctaves * (1.0 + depth * (vel * vel - 1.0))).epsilon(1e-9));
+			// THE DEVICE PLAYS THE RESTATED LAWS: its render is the restated hit's, to the bit.
+			Dev d;
+			d.row = r;
+			CHECK(run(d, { on(36, 0, vel) }, 512).l == refRender(r, vel, 512).l);
+		}
+	}
+}
+
+TEST_CASE("drum: the Level depth scales the strike by 1 - depth x (1 - velocity), and the device renders it") {
+	for (const double depth : { 0.0, 0.5, 1.0 }) {
+		for (const double vel : { 1.0 / 127.0, 64.0 / 127.0, 1.0 }) {
+			CAPTURE(depth);
+			CAPTURE(vel);
+			Dev d;
+			d.row = variedRow(drum::Kind::Snare);
+			d.set(Param::VelLevel, depth);
+			const Out got = run(d, { on(36, 0, vel) }, 1024);
+			CHECK(got.l == refRender(d.row, vel, 1024).l);
+			if (depth == 0.0) { // every hit full: velocity moves nothing but the laws, and the level is unity
+				Dev u;
+				u.row = d.row;
+				const Out full = run(u, { on(36, 0, 1.0) }, 1024);
+				Dev w;
+				w.row = d.row;
+				w.set(Param::VelTone, 0.0);
+				w.set(Param::VelSnap, 0.0);
+				w.set(Param::VelTension, 0.0);
+				w.set(Param::VelocityNoise, 0.0);
+				Dev x;
+				x.row = w.row;
+				CHECK(run(w, { on(36, 0, vel) }, 1024).l == run(x, { on(36, 0, 1.0) }, 1024).l);
+				(void)full;
+			}
+		}
+	}
+	// NON-VACUITY: a soft hit at full depth is quieter than at none.
+	Dev a, b;
+	a.row = variedRow(drum::Kind::Snare);
+	b.row = a.row;
+	a.set(Param::VelLevel, 1.0);
+	b.set(Param::VelLevel, 0.0);
+	const Out qa = run(a, { on(36, 0, 0.3) }, 1024);
+	const Out qb = run(b, { on(36, 0, 0.3) }, 1024);
+	double ea = 0.0, eb = 0.0;
+	for (size_t i = 0; i < qa.l.size(); ++i) {
+		ea += static_cast<double>(qa.l[i]) * qa.l[i];
+		eb += static_cast<double>(qb.l[i]) * qb.l[i];
+	}
+	CHECK(ea < eb);
+}
+
+TEST_CASE("drum: a scaler stops at the top of its range instead of wrapping into another mode") {
+	// Past the last zone the coordinate used to take its fractional part and land back on the first. The zone road now holds at the ends.
+	for (const double top : { 1.0, 1.5, 3.0, 8.0 }) {
+		CAPTURE(top);
+		const drum::WiresMix last = drum::wiresAt(3.0 / 4.0);
+		const drum::WiresMix over = drum::wiresAt(top);
+		CHECK(over.contour == last.contour);
+		CHECK(over.wireShape == last.wireShape);
+		CHECK(over.buzz == last.buzz);
+		const drum::BellsMix lastB = drum::bellsAt(4.0 / 5.0);
+		const drum::BellsMix overB = drum::bellsAt(top);
+		CHECK(overB.level1 == lastB.level1);
+		CHECK(overB.level2 == lastB.level2);
+		const drum::VelocityMix lastV = drum::velocityAt(2.0 / 3.0);
+		const drum::VelocityMix overV = drum::velocityAt(top);
+		CHECK(overV.tone == lastV.tone);
+		CHECK(overV.tension == lastV.tension);
+	}
+	// AND THE DEVICE'S OWN SCALERS ARE CLAMPED: a value past the top reads as the top.
+	Dev a, b;
+	a.row = variedRow(drum::Kind::Snare);
+	b.row = a.row;
+	a.set(Param::WireBuzz, 1.0);
+	b.row[at(Param::WireBuzz)] = 1.0f;
+	CHECK(run(a, { on(36, 0) }, 512).l == run(b, { on(36, 0) }, 512).l);
+	// NON-VACUITY: the first and the last zone differ.
+	CHECK(drum::wiresAt(0.0).buzz != drum::wiresAt(3.0 / 4.0).buzz);
 }

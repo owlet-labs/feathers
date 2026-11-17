@@ -33,7 +33,10 @@ param DRUM drum_f_metal unit=percent min=0 max=1 stepped=0
 param DRUM drum_sweep_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
 param DRUM drum_drive_curve unit=choice choice=Tanh|Tube|Soft Clip
 param DRUM drum_drive_tone unit=percent min=0 max=1 stepped=0
-param DRUM drum_velocity_zone unit=number min=-8 max=8 stepped=0
+param DRUM drum_vel_level unit=percent min=0 max=1 stepped=0
+param DRUM drum_vel_tone unit=percent min=-1 max=1 stepped=0
+param DRUM drum_vel_snap unit=percent min=-1 max=1 stepped=0
+param DRUM drum_vel_tension unit=percent min=0 max=1 stepped=0
 param DRUM drum_velocity_noise unit=percent min=-1 max=1 stepped=0
 param DRUM drum_width unit=percent min=0 max=1 stepped=0
 param DRUM drum_claps unit=number min=1 max=8 stepped=1
@@ -42,8 +45,15 @@ param DRUM drum_clap_q unit=number min=0.5 max=8 stepped=0
 param DRUM drum_clap_hp unit=log_hertz min=4.321928094887363 max=11 stepped=0
 param DRUM drum_wire_decay unit=log_seconds min=-6.643856189774724 max=1 stepped=0
 param DRUM drum_click_decay unit=log_seconds min=-9.965784284662087 max=-4.321928094887363 stepped=0
-param DRUM drum_wires unit=number min=-8 max=8 stepped=0
-param DRUM drum_bells unit=number min=-8 max=8 stepped=0
+param DRUM drum_wire_contour unit=choice choice=Exp|Linear|Mod
+param DRUM drum_wire_buzz unit=percent min=0 max=1 stepped=0
+param DRUM drum_wire_threshold unit=percent min=0 max=1 stepped=0
+param DRUM drum_wire_gate unit=percent min=0 max=1 stepped=0
+param DRUM drum_body_gate unit=percent min=0 max=1 stepped=0
+param DRUM drum_bell1_level unit=percent min=0 max=1 stepped=0
+param DRUM drum_bell2_level unit=percent min=0 max=1 stepped=0
+param DRUM drum_bell_q unit=number min=0.25 max=4 stepped=0
+param DRUM drum_bell_link unit=choice choice=Free|Linked
 param DRUM drum_bell_start unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
 param DRUM drum_bell_end unit=log_hertz min=6.643856189774724 max=13.550746785383243 stepped=0
 param DRUM drum_bell_time unit=log_seconds min=-7.643856189774724 max=-1 stepped=0
@@ -56,3 +66,6 @@ param DRUM drum_click_sweep unit=number min=0 max=6 stepped=0
 param DRUM drum_click_sweep_time unit=log_seconds min=-10.965784284662087 max=-5.643856189774724 stepped=0
 param DRUM drum_start_phase unit=number min=0 max=90 stepped=0
 param DRUM drum_keys unit=choice choice=One Key|Any Key|Pitched
+retired DRUM drum_velocity_zone 2026-11-17 the velocity mode, a coordinate that wrapped through Level, Tone and Tension, became a row of depths (drum_vel_level, drum_vel_tone, drum_vel_snap, drum_vel_tension, drum_velocity_noise); the old default is the new default
+retired DRUM drum_wires 2026-11-17 the wires' mode, a coordinate that wrapped through four named mixes, became one amount each (drum_wire_contour, drum_wire_buzz, drum_wire_threshold, drum_wire_gate, drum_body_gate); the old default is the new default
+retired DRUM drum_bells 2026-11-17 the bells' mode, a coordinate that wrapped through five named mixes, became one amount each (drum_bell1_level, drum_bell2_level, drum_bell_q, drum_bell_link); the old default is the new default

@@ -618,7 +618,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	// THE COMB'S LOOPS (`loops.h`), for the pitch of its own line. The level law's make-up assumes a clean loop, so a Driven tap goes without.
 	const DriveSettings driveBefore = combShaper_.settings();
 	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, s.driveShape, sampleRate_, &driveBefore);
-	combLoops_ = deriveLoops(s, 1.0 / derived_.baseDelaySeconds, driveLoopGain(drive), derived_.feedback);
+	combLoops_ = deriveLoops(s, 1.0 / derived_.baseDelaySeconds, derived_.feedback);
 	shared_.setThreshold(heatGain_ / static_cast<float>(kHeadroom));
 	shared_.set(s, combLoops_, 1.0 / derived_.baseDelaySeconds);
 	outGainTarget_ = static_cast<float>(derived_.wetGain * (combLoops_.tapDriven ? 1.0 : derived_.levelMakeUp)) *
@@ -704,7 +704,9 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		const float inL = left[i];
 		const float inR = right[i];
 		shared_.inputFrame(inL == 0.0f && inR == 0.0f);
-		// THE COMB'S OWN FEEDBACK IS THE BANK'S and is under one by itself, so only the outer loop is faded and gated.
+		// THE COMB'S OWN FEEDBACK IS THE BANK'S and is under one by itself, until a Driven tap or an emphasis in the loop puts gain
+		// in it: then it runs through the limiter and is faded and gated with the outer loop, as the other engines' loops are.
+		const float feedbackNow = limitInner ? feedback * shared_.loopScale() : feedback;
 
 		// "Write input + feedback to delay (IIR comb filter topology)."
 		// INTO THE FIRMWARE'S UNITS: a full-scale input is 1/128 of the ceiling every clamp below sits at.
@@ -720,8 +722,8 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 			shared_.limitInner(fbL, fbR);
 		}
 		lastFedBack_ = fbL;
-		float xL = aL * kFromFullScale + fbL * feedback;
-		float xR = aR * kFromFullScale + fbR * feedback;
+		float xL = aL * kFromFullScale + fbL * feedbackNow;
+		float xR = aR * kFromFullScale + fbR * feedbackNow;
 		const bool outer = shared_.outerBegin();
 		if (outer) {
 			shared_.outerReturn(xL, xR);

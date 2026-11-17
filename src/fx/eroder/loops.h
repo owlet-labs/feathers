@@ -114,8 +114,8 @@ private:
 /// THE SILENT-INPUT RULES (`SharedSection::inputFrame`): how long the input is zero before the gate may close, before the fade
 /// starts, the fade's time constant, and the gate's level under the limiter's threshold (-120 dB).
 inline constexpr double kLoopGateSeconds = 0.02;
-inline constexpr double kLoopFadeStartSeconds = 1.0;
-inline constexpr double kLoopFadeSeconds = 0.25;
+inline constexpr double kLoopFadeStartSeconds = 0.5;
+inline constexpr double kLoopFadeSeconds = 0.08;
 inline constexpr float kLoopGateRelative = 1.0e-6f;
 
 class SharedSection {

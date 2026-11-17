@@ -300,36 +300,18 @@ HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept {
 	return h;
 }
 
-double driveLoopGain(const DriveSettings& d) noexcept {
-	if (!d.driven || d.mix <= 0.0f || driveIsNotCurve(d.mode)) {
-		return 1.0;
-	}
-	return std::max(1.0, driveSlope(d.mode, d.shape) * static_cast<double>(d.gain) * static_cast<double>(d.norm));
-}
-
-double emphasisPeakGain(const Settings& s) noexcept {
-	const double db = std::clamp(static_cast<double>(s.emphAmount), -kEmphasisMaxDb, kEmphasisMaxDb);
-	if (db == 0.0 || (s.emphBell && db < 0.0)) {
-		return 1.0;
-	}
-	return std::pow(10.0, std::abs(db) / 20.0);
-}
-
-LoopDerived deriveLoops(const Settings& s, double centreHz, double driveGain, double innerFeedbackRaw) noexcept {
+LoopDerived deriveLoops(const Settings& s, double centreHz, double innerFeedbackRaw) noexcept {
 	LoopDerived l;
 	l.emphOn = std::isfinite(s.emphAmount) && s.emphAmount != 0.0f;
 	l.inLoop = s.emphInLoop && l.emphOn;
 	l.tapDriven = s.tapDriven;
 	l.limitInner = l.tapDriven || l.inLoop;
-	l.driveDivisor = std::max(1.0, driveGain);
-	l.tapDivisor = l.tapDriven ? l.driveDivisor : 1.0;
-	l.emphDivisor = l.inLoop ? emphasisPeakGain(s) : 1.0;
-	l.innerFeedback = innerFeedbackRaw / (l.tapDivisor * l.emphDivisor);
+	// NOTHING IS DIVIDED OUT: the inner loop is Resonance as set, the outer is Loop times `kLoopMaxGain`, whatever the Drive, the
+	// slots and an emphasis in the loop make of the level. The loops may total more than one and sit on their limiters, which
+	// hold the level; and a silent input ends any tail (`SharedSection::inputFrame`).
+	l.innerFeedback = innerFeedbackRaw;
 	const double loop = std::clamp(static_cast<double>(s.loop), 0.0, 1.0);
-	// THE OUTER LOOP IS ITS OWN GAIN, with no share of the inner loop's taken off: at Loop 100% it is `kLoopMaxGain`, divided by
-	// the Drive's small-signal gain and the emphasis's peak as the inner loop is. The two together may come to more than one
-	// (small-signal), and the limiters hold what that makes of the level; a silent input ends it (`SharedSection::inputFrame`).
-	l.loopGain = loop == 0.0 ? 0.0 : loop * kLoopMaxGain / l.driveDivisor / l.emphDivisor;
+	l.loopGain = loop * kLoopMaxGain;
 	const double hz = std::max(centreHz, 1.0e-3);
 	l.periodSeconds = 1.0 / hz;
 	const double interval = std::clamp(static_cast<double>(s.loopInterval), -kLoopIntervalSemitones, kLoopIntervalSemitones);
@@ -435,34 +417,16 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 
 	// RUST'S INNER LOOP IS A DELAY OF ITS OWN (`loops.h`), so it has Resonance too.
 	d.feedback = std::clamp(static_cast<double>(s.resonance), -1.0, 1.0) * kDustFeedbackCeiling;
-	// THE TAP DECIDES, FOR EVERY TYPE: Driven takes the feedback after the shaper, and its small-signal gain is taken back out of the
-	// loop, so no curve of it is steeper than the line's own feedback and a tail always dies. The emphasis in the loop
-	// divides it by its peak. Clean, with no emphasis in the loop, leaves it as it was.
-	d.loops = deriveLoops(s, d.freqHz, driveLoopGain(driveOf(d)), d.feedback);
-	if (d.etch) {
-		// EACH SLOT'S SMALL-SIGNAL GAIN, at the control's mix (Follow's gain only ever lowers the mix, and it is glided a frame
-		// at a time, not latched here, so the control's is the safe side). Types that are not curves count as one. The steepest
-		// slope away from the origin is not taken out: the limiters hold what a curve's steeper parts make of the loop.
-		const auto slotGain = [&](const DriveSettings& slot) {
-			if (!slot.driven || driveIsNotCurve(slot.mode) || slot.mix <= 0.0f) {
-				return 1.0;
-			}
-			const double g = driveSmallSignalGain(slot.mode, static_cast<double>(slot.gain), slot.shape);
-			return std::max(1.0, 1.0 + static_cast<double>(slot.mix) * (g - 1.0));
-		};
-		const double gA = slotGain(d.slotA);
-		const double gB = slotGain(d.slotB);
-		d.loops.slotDivisor = d.slotParallel ? std::max(1.0, 1.0 + (gA - 1.0) + (gB - 1.0)) : gA * gB;
-		d.loops.innerFeedback /= d.loops.slotDivisor;
-		d.loops.loopGain /= d.loops.slotDivisor;
-	}
+	// THE TAP DECIDES, FOR EVERY TYPE: Driven takes the feedback after the shaper, Clean before it. Nothing is divided out of
+	// the loop either way (`deriveLoops`).
+	d.loops = deriveLoops(s, d.freqHz, d.feedback);
 	d.feedback = d.loops.innerFeedback;
 	// BOTH LOOPS RUN THROUGH THEIR LIMITER WHENEVER THEIR OWN GAIN IS NOT ZERO (the outer one always does, when it is on): the
 	// loops may now sit on it at high settings, and it is what holds them there. (The Comb's inner loop is the bank's own.)
 	if (d.feedback != 0.0) {
 		d.loops.limitInner = true;
 	}
-	// A SLOT CAN ADD GAIN THE LOOP DOES NOT DIVIDE OUT, so Etch's inner loop is limited whenever any stage of it runs.
+	// A SLOT ADDS GAIN, so Etch's inner loop is limited whenever any stage of it runs.
 	if (d.etch && (d.driven || (d.slotA.driven && d.slotA.mix > 0.0f) || (d.slotB.driven && d.slotB.mix > 0.0f))) {
 		d.loops.limitInner = true;
 	}

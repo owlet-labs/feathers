@@ -365,7 +365,6 @@ public:
 	/// The controls the card seats: Mode, Position, Mix and Gain (the enable is the head's).
 	[[nodiscard]] std::vector<rack::parallel::Param> addressedParamsForTest() const;
 	/// THE MODE'S DROPDOWN and THE POSITION'S KNOB (stage 2) — the knob shown only where the mode reads it.
-	[[nodiscard]] ValueBox& modeBoxForTest() const { return *modeBox_; }
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
 	[[nodiscard]] SegmentedControl& unusedChipForTest() const { return *unused_; }
 	[[nodiscard]] SegmentedControl& slopeForTest() const { return *slope_; }
@@ -391,14 +390,14 @@ public:
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackFrontColumn& frontForTest() const { return *front_; }
 	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
+	[[nodiscard]] int padsFrontForTest() const { return model_->padsFront(); }
+	[[nodiscard]] RackPadsStep& padsStepForTest() const { return *padsStep_; }
 	[[nodiscard]] RackDrawerArrow& macroArrowForTest() const { return *macroArrow_; }
 	[[nodiscard]] Knob& macroKnobForTest(size_t i) const { return *macroKnobs_[i]; }
 	[[nodiscard]] bool macroArrowShownForTest() const { return macroArrow_->isVisible(); }
 	[[nodiscard]] bool macroRowShownForTest() const { return macroKnobs_[0]->isVisible(); }
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
 	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
-	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
-	[[nodiscard]] SegmentedControl& viewPairForTest() const { return *viewPair_; }
 	/// What the card lays out for the view now (for the cases): whether the bar, the pads panel and the front stack are shown.
 	[[nodiscard]] bool tabsShownForTest() const { return tabs_->isVisible(); }
 	[[nodiscard]] bool padsShownForTest() const { return pads_->isVisible(); }
@@ -430,8 +429,11 @@ private:
 		/// How tall the cards in front are at this width (whole pixels: it is part of what the layout was made for).
 		int frontExtent = 0;
 		bool arrow = false;
+		/// The Pads' less / more pair (above the cards, present at every step while the chain holds a card).
+		bool step = false;
 		/// Tabs and Pads put Select's playing chain on a row of its own under the view (the three words need the width).
 		bool playingRow = false;
+		bool unusedRow = false; ///< a role mode's Unused choice, on a row of its own
 		/// THE MACRO ROW: offered (the rack has macros: some are named or off zero) and open (its arrow, collapsed by default).
 		bool macros = false;
 		bool macrosOpen = false;
@@ -442,6 +444,7 @@ private:
 	/// THE TABS OR PADS VIEW'S HEIGHT (a vertical lane): the bar or the panel, what is in front, its arrow, and the mode and view rows.
 	[[nodiscard]] float viewHeight(const Plan& p) const;
 	[[nodiscard]] bool horizontalLane() const { return headEdge() == CardHeadEdge::Left; }
+	[[nodiscard]] bool padsView() const { return model_->view() == RackViewKind::Pads; }
 	/// Re-read what is in front (the viewed chain's devices) and the pulse; true when anything drawn changed.
 	bool followView();
 	/// The rack's colour for the group hairline: its instance's edge, or the accent.
@@ -471,12 +474,6 @@ private:
 	RackStrikePulse pulse_;
 	std::unique_ptr<Knob> mix_;
 	std::unique_ptr<Knob> gain_;
-	std::unique_ptr<ValueBox> modeBox_;
-	/// THE VIEW (no audio effect) and the playing chain Select sounds: the same controls the window offers.
-	std::unique_ptr<SegmentedControl> viewSeg_;
-	/// Strips | Pads, shown instead of the three-way where Tabs is not offered (more than eight chains).
-	std::unique_ptr<RackViewPairControl> viewPairControl_;
-	std::unique_ptr<SegmentedControl> viewPair_;
 	std::unique_ptr<ValueBox> playingBox_;
 	std::unique_ptr<Knob> position_;
 	std::unique_ptr<SegmentedControl> unused_;
@@ -496,6 +493,7 @@ private:
 	std::unique_ptr<RackDrawerArrow> macroArrow_;
 	SurfaceLayers* presenter_ = nullptr;
 	std::unique_ptr<RackDrawerArrow> chainArrow_;
+	std::unique_ptr<RackPadsStep> padsStep_;
 	Plan laidOut_ {};
 	/// **THE EXTENT THE HOST LAST PLACED THIS CARD AT** (recorded in `resized`), so a change of chains — which arrives
 	/// through the running body and is no layout of the host's — tells the host once (`FxCard::extentChanged`).

@@ -164,6 +164,11 @@ struct Rack::Branch {
 	device::CompensationDelay align;
 	/// What `chain.setEnabled` was last told, so a block that changes nothing re-aims nothing.
 	bool chainEnabled = true;
+	/// SERIES: how far this chain is bypassed (0 processes, 1 passes the signal through), ramped like the gain.
+	float bypNow = 0.0f;
+	float bypTarget = 0.0f;
+	float bypStep = 0.0f;
+	int bypRemaining = 0;
 	float gainNow = 1.0f;
 	float gainTarget = 1.0f;
 	float gainStep = 0.0f;
@@ -677,6 +682,7 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	mergedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	chokes_.assign(RackEngine::kMaxNotes, ChokeFor {});
 	skippedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
+	auditionIn_.assign(UiNoteRing::kCapacity, device::NoteEvent {});
 	owedOffs_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	recordCount_ = 0;
 	stagedCount_ = 0;
@@ -685,7 +691,7 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	maxFrames_ = maxFrames;
 	reap();
 	const auto scratch = static_cast<size_t>(device::scratchFrames(maxFrames));
-	for (std::vector<float>* v : { &inL_, &inR_, &workL_, &workR_, &sumL_, &sumR_ }) {
+	for (std::vector<float>* v : { &inL_, &inR_, &workL_, &workR_, &sumL_, &sumR_, &serL_, &serR_, &bypL_, &bypR_ }) {
 		v->assign(scratch, 0.0f);
 	}
 	dryDelay_.prepare(sampleRate);
@@ -1109,6 +1115,7 @@ float modeWeight(Mode mode, double position, size_t k, size_t chains, int bands,
 	case Mode::LeftRight:
 	case Mode::Bands: return k < roleCount(mode, chains, bands) ? 1.0f : 0.0f; // the roles at unity, the rest unrouted
 	case Mode::Parallel:
+	case Mode::Series: // every chain at unity: the chain's own level and bypass are its gain stage
 	case Mode::Keyed: // (never the engine's mode: `setFields` maps it onto Parallel)
 	case Mode::kCount: break;
 	}
@@ -1321,6 +1328,11 @@ void Rack::roleInput(size_t role, int n) noexcept {
 			return;
 		}
 		break;
+	case Mode::Series:
+		// THE SIGNAL AS IT STANDS: the input for the first chain, the previous chain's output for the next.
+		std::memcpy(workL_.data(), serL_.data(), count * sizeof(float));
+		std::memcpy(workR_.data(), serR_.data(), count * sizeof(float));
+		return;
 	case Mode::Parallel:
 	case Mode::Select:
 	case Mode::Blend:
@@ -1492,6 +1504,13 @@ uint32_t Rack::routedLatency(const Lineup* live, double sampleRate) const noexce
 	// the reported latency and restart the host, §3), the role-holders in Mid/Side and Left/Right. A chain the mode
 	// gives no role is not heard, so it sets nothing.
 	uint32_t latest = 0;
+	if (mode_ == Mode::Series) {
+		// IN SERIES THEY ADD: every chain's output waits in the next one's input.
+		for (const Branch* b : live->branches) {
+			latest += b->chain.latencySamples(sampleRate);
+		}
+		return latest;
+	}
 	const size_t roles = roleCount(mode_, live->branches.size(), bands_);
 	for (size_t k = 0; k < live->branches.size() && k < roles; ++k) {
 		latest = std::max(latest, live->branches[k]->chain.latencySamples(sampleRate));
@@ -1657,7 +1676,17 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 	for (size_t i = 0; i < count; ++i) {
 		stageNote(in[i], kDrySource, dry, false);
 	}
-	if (live != nullptr && count > 0) {
+	// THE EDITOR'S KEYS INSIDE THE CHAINS (a Drum's play button): a chain's own bridge holds its ring, and nothing above it drains that, so this
+	// rack does, into that chain alone — past the key filter, the mode and the chokes, which are about what a PLAYER sent, not about an
+	// audition of this device. Whether any is waiting is a few relaxed loads.
+	bool auditionWaiting = false;
+	if (live != nullptr) {
+		for (Branch* b : live->branches) {
+			const RackBridge* bridge = b->chain.bridge();
+			auditionWaiting = auditionWaiting || (bridge != nullptr && bridge->hasPendingNotes());
+		}
+	}
+	if (live != nullptr && (count > 0 || auditionWaiting)) {
 		bool anySolo = false;
 		for (const Branch* b : live->branches) {
 			anySolo = anySolo || chainSoloed(b);
@@ -1707,6 +1736,28 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 					chainIn = keyedIn_.data();
 				}
 			}
+			// THE AUDITION KEYS WAITING IN THIS CHAIN'S BRIDGE go in first, at offset 0, carrying the editor's reserved id.
+			if (RackBridge* bridge = b->chain.bridge(); bridge != nullptr && bridge->hasPendingNotes()) {
+				size_t aud = 0;
+				for (UiNoteEvent u; aud < auditionIn_.size() && bridge->popNote(u);) {
+					device::NoteEvent& e = auditionIn_[aud++];
+					e = device::NoteEvent {};
+					e.kind = u.on ? device::NoteEvent::Kind::On : device::NoteEvent::Kind::Off;
+					e.noteId = kUiNoteId;
+					e.key = u.key;
+					e.velocity = u.on ? static_cast<double>(u.velocity) : 0.0;
+				}
+				if (aud > 0 && aud + chainCount <= mergedIn_.size()) {
+					for (size_t i = chainCount; i > 0; --i) {
+						mergedIn_[aud + i - 1] = chainIn[i - 1]; // (back to front: `chainIn` may be this buffer already)
+					}
+					for (size_t i = 0; i < aud; ++i) {
+						mergedIn_[i] = auditionIn_[i];
+					}
+					chainIn = mergedIn_.data();
+					chainCount += aud;
+				}
+			}
 			// THE CHOKES MADE FOR THIS CHAIN, merged in by time (before a note at the same sample: choke the old, strike the new).
 			if (chokeCount > 0) {
 				size_t merged = 0;
@@ -1735,6 +1786,14 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 			size_t kept = 0;
 			for (size_t i = 0; i < made; ++i) {
 				if (!(chainNotes_[i].kind == device::NoteEvent::Kind::Choke && chainNotes_[i].port == kRackChokePort)) {
+					chainNotes_[kept++] = chainNotes_[i];
+				}
+			}
+			made = kept;
+			// AND AN AUDITION IS NOT A NOTE THE RACK PLAYED: it sounded the device and goes no further.
+			kept = 0;
+			for (size_t i = 0; i < made; ++i) {
+				if (chainNotes_[i].noteId != kUiNoteId) {
 					chainNotes_[kept++] = chainNotes_[i];
 				}
 			}
@@ -1970,6 +2029,47 @@ size_t Rack::deliverNotes(const Lineup* live, device::NoteEvent* out, size_t cap
 	return made;
 }
 
+void Rack::aimGains(const Lineup* live, bool snap) noexcept {
+	// EACH CHAIN'S GAIN: its fader, or nothing when muted or when another chain is soloed and this one is not. A chain
+	// with a slot is heard through its slot params (backlog NO): the hand's values mirrored, plus whatever is routed there.
+	// IN SERIES a chain left out is not silenced but BYPASSED: its gain is its fader alone and `bypTarget` is 1.
+	const auto levelOf = [&](const Branch* b) {
+		return slotFieldsLive_ && b->slot < kChainSlots
+		           ? std::clamp(slotFields_[b->slot * kSlotControls + static_cast<size_t>(SlotControl::Level)], 0.0f, 1.0f)
+		           : b->level.load(std::memory_order_relaxed);
+	};
+	bool anySolo = false;
+	for (Branch* b : live->branches) {
+		anySolo = anySolo || chainSoloed(b);
+	}
+	const bool series = mode_ == Mode::Series;
+	for (Branch* b : live->branches) {
+		const bool silent = chainMuted(b) || (anySolo && !chainSoloed(b));
+		const float target = silent && !series ? 0.0f : faderGain(levelOf(b));
+		const float bypass = series && silent ? 1.0f : 0.0f;
+		if (!b->primed || snap) {
+			b->gainNow = target;
+			b->gainTarget = target;
+			b->remaining = 0;
+			b->bypNow = b->bypTarget = bypass;
+			b->bypRemaining = 0;
+			b->primed = true;
+		}
+		else {
+			if (target != b->gainTarget) {
+				b->gainTarget = target;
+				b->gainStep = (target - b->gainNow) / static_cast<float>(rampSamples_);
+				b->remaining = rampSamples_;
+			}
+			if (bypass != b->bypTarget) {
+				b->bypTarget = bypass;
+				b->bypStep = (bypass - b->bypNow) / static_cast<float>(rampSamples_);
+				b->bypRemaining = rampSamples_;
+			}
+		}
+	}
+}
+
 void Rack::processStereo(float* left, float* right, int frames) {
 	// NOT HOSTED, THE BUS IS THE WHOLE BLOCK and the rack drains here.
 	if (!hosted_) {
@@ -1979,34 +2079,11 @@ void Rack::processStereo(float* left, float* right, int frames) {
 	if (live == nullptr || frames <= 0 || left == nullptr || right == nullptr || inL_.empty()) {
 		return;
 	}
-	// EACH CHAIN'S GAIN: its fader, or nothing when muted or when another chain is soloed and this one is not. A chain
-	// with a slot is heard through its slot params (backlog NO): the hand's values mirrored, plus whatever is routed there.
-	const auto levelOf = [&](const Branch* b) {
-		return slotFieldsLive_ && b->slot < kChainSlots
-		           ? std::clamp(slotFields_[b->slot * kSlotControls + static_cast<size_t>(SlotControl::Level)], 0.0f, 1.0f)
-		           : b->level.load(std::memory_order_relaxed);
-	};
-	const auto muteOf = [&](const Branch* b) { return chainMuted(b); };
-	const auto soloOf = [&](const Branch* b) { return chainSoloed(b); };
 	bool anySolo = false;
 	for (Branch* b : live->branches) {
-		anySolo = anySolo || soloOf(b);
+		anySolo = anySolo || chainSoloed(b);
 	}
-	for (Branch* b : live->branches) {
-		const bool silent = muteOf(b) || (anySolo && !soloOf(b));
-		const float target = silent ? 0.0f : faderGain(levelOf(b));
-		if (!b->primed || !primed_) {
-			b->gainNow = target;
-			b->gainTarget = target;
-			b->remaining = 0;
-			b->primed = true;
-		}
-		else if (target != b->gainTarget) {
-			b->gainTarget = target;
-			b->gainStep = (target - b->gainNow) / static_cast<float>(rampSamples_);
-			b->remaining = rampSamples_;
-		}
-	}
+	aimGains(live, !primed_);
 	// A PHANTOM ROLE IS AN EMPTY CHAIN AT UNITY: another chain's solo silences it, as it would an empty chain.
 	for (Phantom& p : phantoms_) {
 		const float target = anySolo ? 0.0f : 1.0f;
@@ -2029,6 +2106,7 @@ void Rack::processStereo(float* left, float* right, int frames) {
 	if (!primed_ || bypassed || (remaining_ == 0 && wetNow_ == 0.0f && !dryChanges)) {
 		if (!structureIsWanted()) {
 			takeWantedStructure();
+			aimGains(live, true); // the new mode's reading of mute and solo, at once (nothing is heard here)
 		}
 		dryFade_ = false;
 		modeGain_ = 1.0f;
@@ -2071,6 +2149,11 @@ void Rack::processStereo(float* left, float* right, int frames) {
 		std::memcpy(tapR_.data(), r, bytes);
 		std::fill_n(sumL_.begin(), n, 0.0f);
 		std::fill_n(sumR_.begin(), n, 0.0f);
+		const bool series = mode_ == Mode::Series;
+		if (series) {
+			std::memcpy(serL_.data(), inL_.data(), bytes); // the signal the first chain is handed
+			std::memcpy(serR_.data(), inR_.data(), bytes);
+		}
 		const size_t roles = roleCount(mode_, count, bands_);
 		// THE LATENCY THIS CHUNK ALIGNS TO, after the drain: the slowest routed chain's.
 		const uint32_t latest = routedLatency(live, sampleRate_);
@@ -2134,6 +2217,44 @@ void Rack::processStereo(float* left, float* right, int frames) {
 				const auto s = static_cast<size_t>(i);
 				b->quiet = workL_[s] == 0.0f && workR_[s] == 0.0f ? (b->quiet < UINT32_MAX ? b->quiet + 1 : b->quiet) : 0;
 			}
+			if (series) {
+				// NO ALIGNMENT IN SERIES: each chain's latency is the next chain's input's, so the rack's is their sum. What a bypassed
+				// chain passes is its input held back by its own latency, so the signal arrives when it would have.
+				std::memcpy(bypL_.data(), serL_.data(), bytes);
+				std::memcpy(bypR_.data(), serR_.data(), bytes);
+				b->align.process(bypL_.data(), bypR_.data(), n, own);
+				for (int i = 0; i < n; ++i) {
+					if (b->remaining > 0) {
+						b->gainNow += b->gainStep;
+						if (--b->remaining == 0) {
+							b->gainNow = b->gainTarget;
+						}
+					}
+					if (b->bypRemaining > 0) {
+						b->bypNow += b->bypStep;
+						if (--b->bypRemaining == 0) {
+							b->bypNow = b->bypTarget;
+						}
+					}
+					const auto s = static_cast<size_t>(i);
+					const float g = b->gainNow;
+					float yL = g * workL_[s];
+					float yR = g * workR_[s];
+					if (b->bypNow != 0.0f) {
+						yL = (1.0f - b->bypNow) * yL + b->bypNow * bypL_[s];
+						yR = (1.0f - b->bypNow) * yR + b->bypNow * bypR_[s];
+					}
+					serL_[s] = yL;
+					serR_[s] = yR;
+					if (const float a = std::fabs(yL); a > b->chunkPeak) {
+						b->chunkPeak = a;
+					}
+					if (const float a = std::fabs(yR); a > b->chunkPeak) {
+						b->chunkPeak = a;
+					}
+				}
+				continue;
+			}
 			b->align.process(workL_.data(), workR_.data(), n, latest - std::min(latest, own));
 			if (mode_ == Mode::Bands) {
 				bandOfOutput(k, n); // After and Both: the chain's output kept to its band
@@ -2168,6 +2289,10 @@ void Rack::processStereo(float* left, float* right, int frames) {
 					b->chunkPeak = a;
 				}
 			}
+		}
+		if (series) {
+			std::memcpy(sumL_.data(), serL_.data(), bytes); // the last chain's output is the rack's wet
+			std::memcpy(sumR_.data(), serR_.data(), bytes);
 		}
 		// **THE ROLES NO CHAIN FILLS** (§2a): each an empty chain — its share of the split, aligned, at unity.
 		for (size_t role = count; role < roles && role < kMaxRoles; ++role) {
@@ -2228,6 +2353,7 @@ void Rack::processStereo(float* left, float* right, int frames) {
 							// SILENCE, on this chunk's last sample: the wanted mode takes over from the next chunk and fades in.
 							modeGain_ = 0.0f;
 							takeWantedStructure();
+							aimGains(live, true); // silence: the new mode's gains and bypass land without a step
 							modeStep_ = 1.0f / static_cast<float>(rampSamples_);
 							modeRemaining_ = rampSamples_;
 						}
@@ -2399,7 +2525,9 @@ bool Rack::holdsTail() const noexcept {
 		// AND THE MODE'S WEIGHT (stage 2, §3): an unselected chain still runs and may still ring, but nothing of it
 		// reaches the sum, so it does not keep the plugin awake. One still fading out does. A chain the mode gives no
 		// role (§2a) is not in this loop at all, ringing out or not.
-		const bool heard = wetHeard && (b->gainTarget > 0.0f || b->remaining > 0)
+		// (A SERIES CHAIN THAT IS BYPASSED, and settled so, is not heard either: the signal goes round it.)
+		const bool bypassedHard = mode_ == Mode::Series && b->bypTarget >= 1.0f && b->bypRemaining == 0 && b->bypNow >= 1.0f;
+		const bool heard = wetHeard && !bypassedHard && (b->gainTarget > 0.0f || b->remaining > 0)
 		                   && (b->weightTarget > 0.0f || b->weightRemaining > 0);
 		if (!heard) {
 			continue;
@@ -2408,7 +2536,7 @@ bool Rack::holdsTail() const noexcept {
 			return true;
 		}
 		const uint32_t own = b->chain.latencySamples(sampleRate_);
-		if (latest > own && b->quiet < latest - own) {
+		if (mode_ != Mode::Series && latest > own && b->quiet < latest - own) {
 			return true; // its alignment delay still holds some of its output
 		}
 	}

@@ -21,6 +21,8 @@
 #include "fx/dyn/clip_curve.h"
 #include "fx/dyn/meter_ramp.h"
 #include "fx/dyn/oversampler.h"
+#include "fx/eroder/eroder_types.h"
+#include "fx/eroder/shell.h"
 
 #include <algorithm>
 #include <cmath>
@@ -28,7 +30,7 @@
 #include <new>
 #include <numbers>
 
-// CLIP'S RENDER PATH — gain into the normalised domain, one of five curves (at 4x when asked), gain
+// CLIP'S RENDER PATH — gain into the normalised domain, one of eleven curves (at 4x when asked), gain
 // back out.
 //
 // **ONE HOST SAMPLE AT A TIME, THROUGH THE OVERSAMPLER TOO.** The ramps, the enable's pass-through
@@ -112,8 +114,20 @@ struct OpsClip {
 	/// zipper, and Depth is effectively a gain on the folded part (`foldCurve` mixes clamp and fold by it).
 	/// Advanced once per HOST sample (so the four oversampled frames of one sample share a value, and the
 	/// cut of a block changes nothing) and read by `shape` through `kneeNow` and its siblings.
-	dyn::LinearRamp knee, foldback, grit, depth;
-	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f;
+	dyn::LinearRamp knee, foldback, grit, depth, shapeRamp;
+	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f, shapeNow = 0.0f;
+
+	/// **THE ERODER'S SIX** (`fx/eroder/eroder_types.h`): Tube, Lean and the slews leave state behind.
+	/// THE STANDING OFFSET Tube and Lean make, taken out by the Eroder's own one-pole (`kDriveDcHz`), per channel, at the
+	/// processing rate.
+	float dcL = 0.0f, dcR = 0.0f, dcCoefficient = 0.0f;
+	/// THE SLEW (Slew and Lopside), at the processing rate, set from the Drive position and Shape through the Eroder's
+	/// own `deriveDrive` whenever either moves (a settled ramp repeats the key, so it is not redone per sample).
+	eroder::Slew slew {};
+	bool slewKeyValid = false;
+	float slewDriveKey = 0.0f, slewShapeKey = 0.0f;
+	/// 1 / the gain into the curve, this sample: the clean signal Paunch's right side is turned toward.
+	float cleanScale = 1.0f;
 	/// THE MODE THE LAST BLOCK RAN IN — what "the mode changed into Texture" is detected against.
 	int modeApplied = 0;
 	dyn::HeldPeak inPeak, outPeak, over;
@@ -148,6 +162,11 @@ struct OpsClip {
 		if (hz != hpHz || rate != hpRate) {
 			hpL.designHighpass(hz, rate);
 			hpR.designHighpass(hz, rate);
+			dcCoefficient = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * eroder::kDriveDcHz / rate));
+			if (rate != hpRate) {
+				slew.prepare(rate);
+				slewKeyValid = false;
+			}
 			hpHz = hz;
 			hpRate = rate;
 		}
@@ -162,6 +181,7 @@ struct OpsClip {
 		foldback.set(state.foldback);
 		grit.set(state.grit);
 		depth.set(state.depth);
+		shapeRamp.set(state.shape);
 	}
 
 	/// EVERYTHING WITH MEMORY FORGETS IT: "as if just switched on".
@@ -169,6 +189,8 @@ struct OpsClip {
 		os.reset();
 		hpL.clear();
 		hpR.clear();
+		dcL = dcR = 0.0f;
+		slew.reset();
 		rng = kSeed;
 		silentRun = 0;
 		rested = false;
@@ -222,9 +244,76 @@ struct OpsClip {
 			l = bitsCurve(l, knee, state.bits + 1);
 			r = bitsCurve(r, knee, state.bits + 1);
 			break;
+		case Mode::Tube:
+		case Mode::Jag:
+		case Mode::Lean: {
+			// THE ERODER'S CURVE, at gain 1 (only Soft reads it): the normalised signal is already the driven one.
+			const auto dm = erodeMode(state.mode);
+			l = eroder::shapeDrive(dm, l, shapeNow, 1.0f);
+			r = eroder::shapeDriveRight(dm, r, shapeNow, 1.0f);
+			if (dm != eroder::DriveMode::Jag) {
+				dcL += (l - dcL) * dcCoefficient;
+				dcR += (r - dcR) * dcCoefficient;
+				l -= dcL;
+				r -= dcR;
+			}
+			// **THE CEILING HOLDS**: Lean's lower half reaches several times -1, and the offset's removal moves the rest.
+			l = std::clamp(l, -1.0f, 1.0f);
+			r = std::clamp(r, -1.0f, 1.0f);
+			break;
+		}
+		case Mode::Paunch: {
+			// THE ERODER'S: the left a tanh; the right's residue (the tanh less the CLEAN signal) turned over by Shape.
+			const float yl = std::tanh(l);
+			const float yr = std::tanh(r);
+			const float cleanR = r * cleanScale;
+			l = yl;
+			r = yr + 2.0f * shapeNow * (cleanR - yr);
+			// **THE CLEAN SIGNAL IS ADDED BACK, SO THIS IS NOT BOUNDED BY THE CURVE**: the ceiling is a hard clip here.
+			r = std::clamp(r, -1.0f, 1.0f);
+			break;
+		}
+		case Mode::Slew:
+		case Mode::Lopside:
+			l = std::clamp(slew.process(0, l), -1.0f, 1.0f);
+			r = std::clamp(slew.process(1, r), -1.0f, 1.0f);
+			break;
 		case Mode::kCount:
 			break;
 		}
+	}
+
+	[[nodiscard]] static eroder::DriveMode erodeMode(int mode) {
+		switch (static_cast<Mode>(mode)) {
+		case Mode::Tube: return eroder::DriveMode::Tube;
+		case Mode::Jag: return eroder::DriveMode::Jag;
+		case Mode::Lean: return eroder::DriveMode::Lean;
+		case Mode::Paunch: return eroder::DriveMode::Paunch;
+		case Mode::Slew: return eroder::DriveMode::Slew;
+		default: return eroder::DriveMode::Lopside;
+		}
+	}
+	[[nodiscard]] static bool isSlewMode(int mode) {
+		return mode == static_cast<int>(Mode::Slew) || mode == static_cast<int>(Mode::Lopside);
+	}
+
+	/// THE SLEW'S RATE FROM THE DRIVE KNOB'S POSITION (-24..+24 dB as 0..1), exactly the Eroder's mapping of its Drive.
+	void aimSlew(float driveDb) {
+		if (slewKeyValid && driveDb == slewDriveKey && shapeNow == slewShapeKey) {
+			return;
+		}
+		const float position = std::clamp((driveDb + 24.0f) * (1.0f / 48.0f), 0.0f, 1.0f);
+		const eroder::DriveSettings d =
+		    eroder::deriveDrive(position, erodeMode(state.mode), shapeNow, processingRate());
+		eroder::SlewSettings sw;
+		sw.on = true;
+		sw.hz = d.slewHz;
+		sw.curve = d.slewCurve;
+		sw.balance = d.slewBalance;
+		slew.set(sw);
+		slewKeyValid = true;
+		slewDriveKey = driveDb;
+		slewShapeKey = shapeNow;
 	}
 
 	void publish() {
@@ -257,6 +346,10 @@ struct OpsClip {
 				hpL.clear();
 				hpR.clear();
 			}
+			// THE ERODER'S SIX START EMPTY TOO: the offset and the slew belong to the mode that left them.
+			dcL = dcR = 0.0f;
+			slew.reset();
+			slewKeyValid = false;
 			modeApplied = state.mode;
 		}
 		const size_t delay = osApplied ? kOversampleLatency : 0;
@@ -309,8 +402,16 @@ struct OpsClip {
 			foldbackNow = foldback.next();
 			gritNow = grit.next();
 			depthNow = depth.next();
+			shapeNow = shapeRamp.next();
 			const float onsetU = onset(state.mode, kneeNow);
-			const float gain = driveLin / ceilingLin;
+			// THE SLEWS TAKE THEIR RATE FROM DRIVE, NOT A GAIN (as the Eroder's Drive knob does): the signal reaches the
+			// limiter as it came, over the ceiling.
+			const bool slewing = isSlewMode(state.mode);
+			if (slewing) {
+				aimSlew(dDb);
+			}
+			const float gain = slewing ? 1.0f / ceilingLin : driveLin / ceilingLin;
+			cleanScale = 1.0f / gain;
 			float uL = std::clamp(xL * gain, -kNormalisedClamp, kNormalisedClamp);
 			float uR = std::clamp(xR * gain, -kNormalisedClamp, kNormalisedClamp);
 			// THE IN METER READS THE INCOMING SIGNAL, BEFORE DRIVE — the same quantity the disabled branch pushes,
@@ -363,6 +464,8 @@ struct OpsClip {
 					os.reset();
 					hpL.clear();
 					hpR.clear();
+					dcL = dcR = 0.0f;
+					slew.reset();
 					rested = true;
 				}
 				yL = 0.0f;
@@ -410,7 +513,7 @@ const device::AudioOps kAudioOps {
 	        ops.sampleRate = std::max(sampleRate, 1.0);
 	        ops.restSamples = std::max(1, static_cast<int>(std::lround(kRestSilentSeconds * ops.sampleRate)));
 	        for (dyn::LinearRamp* r : { &ops.driveDb, &ops.ceilingDb, &ops.outputDb, &ops.bypass, &ops.knee,
-		                                     &ops.foldback, &ops.grit, &ops.depth }) {
+		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp }) {
 		        r->prepare(ops.sampleRate);
 	        }
 	        ops.inPeak.prepare(ops.sampleRate);
@@ -427,7 +530,7 @@ const device::AudioOps kAudioOps {
 	        ops.idle = false;
 	        ops.clearDry();
 	        for (dyn::LinearRamp* r : { &ops.driveDb, &ops.ceilingDb, &ops.outputDb, &ops.bypass, &ops.knee,
-		                                     &ops.foldback, &ops.grit, &ops.depth }) {
+		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp }) {
 		        r->reset();
 	        }
 	        ops.inPeak.reset();
@@ -459,7 +562,7 @@ const device::AudioOps kAudioOps {
     .beginPerVoiceBlock = nullptr,
     .processVoice = nullptr,
     // NO WINDOWED CONTROLS: the plain `setFields` road, with every continuous control ramped — the three
-    // gains, the enable, and the four shape controls (`knee`, `foldback`, `grit`, `depth`).
+    // gains, the enable, and the shape controls (`knee`, `foldback`, `grit`, `depth`, `shape`).
     .windowedControls = {},
     .setFieldWindows = nullptr,
     // **4x IS A LATENCY (backlog NR)**: a pure function of the STORED Oversample (L1: it is not modulatable) and nothing

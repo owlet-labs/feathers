@@ -23,6 +23,8 @@
 #include "plugin/ui/fx_card.h"
 #include "backplane/device_host.h"
 #include "plugin/ui/device_control.h"
+#include "plugin/ui/fader_pill.h"
+#include "plugin/ui/harmonic_row.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/switch_chip.h"
 
@@ -32,18 +34,21 @@
 #include <string>
 #include <vector>
 
+
 // HARM'S CARD — the fx lane's second tenant on the glass.
 //
-// THE CARD HAS TWO HALVES, AND THE TABS ARE THE LINE BETWEEN THEM. The four partial tabs (each its number, its ratio and On/Off)
-// select the partial the window shows, and that selection is one shared state. Below them, under a GLOBAL caption, are the two
-// master controls, the envelope's six values and Poly and Env Depth: none of those is inside a tab's scope. Porta lives in the
-// window only. A partial's own controls (its harmonic, Mode, Level, Active switch) are in the window, where the partial is shaped.
+// THE CARD IS A TABBED PANEL OVER A ROW OF MASTERS. The four partial tabs sit on top; the FRAME directly under them belongs to
+// the selected tab and is drawn as its continuation (the tab's fill runs down through the frame's top edge). In the frame are the
+// selected partial's own three controls: its Active chip, its harmonic box and its Level. Each partial has its own set of three,
+// bound to that partial's parameters, and a tab press shows that partial's set, so no control is ever re-pointed. Below the frame,
+// outside it, under a GLOBAL caption, are the master controls: Master, Depth, Attack, Release. The rest of the envelope (Delay,
+// Hold, Decay, Sustain), Poly, Env Depth, Porta and the partial's Mode, Fine, Width, Depth, Phase, Spread live in the window.
 //
 // THREE THINGS THIS CARD MUST NOT DO:
 //
 //   - IT MUST NOT SAY "HPF". The firmware calls the notch's width knob `hpf`; it is WIDTH, and it is not on this card.
-//   - IT MUST NOT IMPLY POLY WORKS when HARM declares no per-voice road. The switch is drawn disabled and captioned by the
-//     device's own declaration (`perVoiceControl`), never by a hard-coded opinion.
+//   - IT MUST NOT DRAW A CONTROL IT CANNOT ACT THROUGH. Each partial's Level and harmonic grey with the partial's own Active
+//     switch (a partial that is off sounds nothing), and everything greys with the device.
 //   - IT MUST NOT CUT A CAPTION. Every label is whole at the card's cell width; the tooltips suite measures it.
 
 namespace feathers::ui {
@@ -79,18 +84,26 @@ public:
 	//--------//
 
 	static constexpr float kHeadHeight = 24.0f;
-	static constexpr float kRowGap = 8.0f;
+	static constexpr float kRowGap = 10.0f;
 	static constexpr float kPad = 10.0f;
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
-	/// The gap between the knob rows and the switch row.
-	static constexpr float kActiveRowGap = 6.0f;
-	/// THE PARTIAL TABS: a caption band over them, then a row of four tabs, each two lines tall (its number and ratio, then On/Off).
-	static constexpr float kCaptionBand = 12.0f;
-	static constexpr float kTabRowHeight = 30.0f;
+	/// THE PARTIAL TABS: one row of four, each two lines tall (its number and ratio, then On/Off).
+	static constexpr float kTabRowHeight = 36.0f;
 	static constexpr float kTabGap = 4.0f;
+	/// THE GLOBAL CAPTION over the masters.
+	static constexpr float kCaptionBand = 12.0f;
+	/// THE FRAME under the tabs: its padding, and the two rows inside it (Active chip + harmonic box, then Level).
+	static constexpr float kFramePad = 14.0f;
+	static constexpr float kFrameRowGap = 12.0f;
+	static constexpr float kFrameLevelHeight = 28.0f;
+	static constexpr float kChipWidth = 52.0f;
+	static constexpr float kFrameHeight =
+	    kFramePad + HarmonicRow::kHeight + kFrameRowGap + kFrameLevelHeight + kFramePad;
 	/// The tab a point is over, or -1. The partial it selects is `HarmView::partial`.
 	int tabAt(visage::Point position) const;
 	visage::Bounds tabBounds(int partial) const;
+	/// THE SELECTED TAB'S FRAME, in the card's coordinates: its top edge is the tab row's bottom edge.
+	visage::Bounds frameBounds() const;
 	int selectedPartial() const { return view_->partial; }
 	void selectPartial(int partial);
 	std::string tabTextForTest(int partial) const;
@@ -101,27 +114,17 @@ public:
 		const char* label;
 	};
 
-	/// THE GLOBAL KNOBS, in reading order. Two rows of four. The masters come first: they are what a hand reaches for on a
-	/// device that has many partials.
+	/// THE MASTER KNOBS, in reading order, one row under the frame: the two masters, then the envelope's ends.
 	static constexpr CardKnob kCardKnobs[] = {
 	    { fx::harm::Param::MasterLevel, "Master" },
 	    { fx::harm::Param::MasterDepth, "Depth" },
 	    { fx::harm::Param::Attack, "Attack" },
 	    { fx::harm::Param::Release, "Release" },
-	    { fx::harm::Param::Delay, "Delay" },
-	    { fx::harm::Param::Hold, "Hold" },
-	    { fx::harm::Param::Decay, "Decay" },
-	    { fx::harm::Param::Sustain, "Sustain" },
 	};
 	static constexpr size_t kCardKnobCount = std::size(kCardKnobs);
 
-	/// FOUR CELLS A ROW, and the knobs wrap onto a second row. Five cells cut "Attack" and "Release" at this card's width
-	/// (tests/gui_widgets/test_gui_widgets_tooltips), so the reduction is the fix rather than a choice to trade away.
+	/// FOUR CELLS A ROW. Five cells cut "Attack" and "Release" at this card's width (tests/gui_widgets/test_gui_widgets_tooltips).
 	static constexpr int kRowCells = 4;
-
-	/// THE TWO DEVICE SWITCHES, under the knobs: Poly, then Env Depth.
-	static constexpr fx::harm::Param kCardChips[] = { fx::harm::Param::Poly, fx::harm::Param::DepthFollowsEnv };
-	static constexpr size_t kCardChipCount = std::size(kCardChips);
 
 	static float openHeight();
 	static constexpr float foldedHeight() { return kHeadHeight; }
@@ -133,10 +136,14 @@ public:
 
 	/// Geometry asked rather than photographed.
 	visage::Bounds headBounds() const;
-	visage::Bounds chipBounds(size_t index) const;
 
 	const std::vector<std::unique_ptr<Knob>>& knobsForTest() const { return knobs_; }
-	SwitchChip* chipForTest(fx::harm::Param param) const;
+	/// THE FRAME'S THREE CONTROLS FOR A PARTIAL, whether or not it is the one shown.
+	SwitchChip* activeChipForTest(int partial) const { return sets_[static_cast<size_t>(partial)].active.get(); }
+	HarmonicRow* harmonicRowForTest(int partial) const { return sets_[static_cast<size_t>(partial)].row.get(); }
+	FaderPill* levelPillForTest(int partial) const { return sets_[static_cast<size_t>(partial)].level.get(); }
+	/// Where the masters start, in the card's coordinates.
+	float knobsTopForTest() const { return knobsTop(); }
 
 	/// EVERY CONTROL THIS CARD PUTS A HAND ON, the card's own answer. The window must offer each of these too.
 	std::vector<fx::harm::Param> addressedParamsForTest() const;
@@ -146,12 +153,22 @@ public:
 
 private:
 	void layOut();
-	/// Where the knob rows start: under the partial tabs and the GLOBAL caption.
+	/// Where the master row starts: under the frame and the GLOBAL caption.
 	float knobsTop() const;
 	void drawPartialTabs(visage::Canvas& canvas, bool deviceOn);
+	/// Show the selected partial's set and hide the other three (and all of them while folded).
+	void applySelection();
+	bool partialActive(int partial) const;
 	device::Modulatable* enableModulatable() override;
 	void toggleEnabled();
 	DeviceControl& control(fx::harm::Param param) const;
+
+	/// ONE PARTIAL'S FRAME CONTROLS, bound to that partial's own parameters.
+	struct PartialSet {
+		std::unique_ptr<SwitchChip> active;
+		std::unique_ptr<HarmonicRow> row;
+		std::unique_ptr<FaderPill> level;
+	};
 
 	backplane::DeviceHost& host_;
 	Notifier* notifier_ = nullptr;
@@ -160,12 +177,13 @@ private:
 	bool haveDrawnEnabled_ = false;
 	std::shared_ptr<HarmView> view_;
 	int drawnPartial_ = -1;
+	std::array<int, fx::harm::kPartialCount> drawnActive_ { -1, -1, -1, -1 };
 
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(fx::harm::Param::kCount)>
 	    controls_ {};
 	std::vector<std::unique_ptr<Knob>> knobs_;
 	std::vector<fx::harm::Param> knobParams_;
-	std::vector<std::unique_ptr<SwitchChip>> chips_;
+	std::array<PartialSet, fx::harm::kPartialCount> sets_;
 };
 
 } // namespace feathers::ui

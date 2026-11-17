@@ -24,6 +24,7 @@
 // calls and nothing else changed: every expression that touches the travel, the basis or the map is the shaper's
 // own, in the shaper's association, which is what keeps the shaper bit-identical.
 
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/explore_pad.h"
 
 #include "plugin/ui/celestial.h" // reducedMotionRequested — the release glide lands at once under it
@@ -286,7 +287,7 @@ bool ExplorePad<Policy>::mouseWheel(const visage::MouseEvent& e) {
 	// arrives because libinput emulates the legacy buttons for it. Handling the notch is the whole of
 	// what this platform offers, and the same is true one surface over.
 	const float delta = e.wheel_delta_y;
-	if (delta == 0.0f) {
+	if (delta == 0.0f || !cardTakesWheel(*this, e)) {
 		return false;
 	}
 	setZoom(delta > 0.0f ? zoom_ * kZoomStep : zoom_ / kZoomStep);

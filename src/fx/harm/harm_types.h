@@ -267,7 +267,7 @@ enum class Param : int {
 	Fine,
 	/// Where the oscillator's cycle starts, 0..1 of a turn.
 	Phase,
-	/// Stereo spread, 0..1 of a half turn. SEPARATE FROM PHASE, unlike the firmware — see the header.
+	/// Stereo phase spread, 0..1 of a half turn: the L/R phase DIFFERENCE is value x 180 degrees (shown so). SEPARATE FROM PHASE, unlike the firmware — see the header.
 	Spread,
 	Attack,
 	Release,
@@ -409,8 +409,10 @@ inline constexpr double kTimeLog2Max = 3.3219280948873626; // 10 s
      "Fine pitch adjustment of the " ORDINAL " partial in semitones — tunes its notch target precisely"}, \
     {KEY "phase", NAME "Phase", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, true, false, \
      "Where in its cycle the " ORDINAL " partial's sine starts"}, \
-    {KEY "spread", NAME "Spread", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, true, false, \
-     "Stereo spread of the " ORDINAL " partial's sine"}, \
+    {.key = KEY "spread", .name = NAME "Spread", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, \
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false, \
+     .tooltip = "L/R phase offset of the " ORDINAL " partial's sine, in degrees; 90\xc2\xb0 keeps mono compatibility", \
+     .readoutDegrees = 180.0}, \
     {KEY "width", NAME "Width", 0.0, 1.0, 0.3, false, device::Unit::Percent, {}, true, false, \
      "How wide the " ORDINAL " partial's notch is — 0 is a wire, higher is a broader cut. Notch mode only"}, \
     {KEY "depth", NAME "Depth", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false, \
@@ -452,8 +454,10 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      "Fine pitch adjustment in semitones — tunes the notch target precisely"},
     {"harm_phase", "Harm Phase", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, true, false,
      "Where in its cycle the oscillator starts — shifts the notch's phase"},
-    {"harm_spread", "Harm Spread", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, true, false,
-     "Offsets a second notch by ±octaves — widens the image"},
+    {.key = "harm_spread", .name = "Harm Spread", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
+     .unit = device::Unit::Percent, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "L/R phase offset of the oscillator's sine, in degrees; 90\xc2\xb0 keeps mono compatibility",
+     .readoutDegrees = 180.0},
     {"harm_attack", "Harm Attack", kTimeLog2Min, kTimeLog2Max, kTimeLog2Min, false, device::Unit::LogSeconds, {},
      true, false, "How long the notch takes to engage after a note"},
     // THE FIRMWARE'S DEFAULT OF 64/127 ON ITS RELEASE CURVE IS A SECOND, NOT A QUARTER: `1 + 64 *

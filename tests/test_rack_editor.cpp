@@ -59,6 +59,7 @@
 #include "rack/chain_state.h"
 #include "rack/converger.h"
 #include "rack/rack_device.h"
+#include "plugin/ui/device_shortcuts.h"
 #include "rack/rack_editor.h"
 #include "rack/rack_bridge.h"
 #include "rack/rack_engine.h"
@@ -851,7 +852,8 @@ TEST_CASE("backlog KP: pressing the + opens Feathers' add menu, one submenu per 
 		devices += heading.options().size();
 	}
 	// AND EVERY DEVICE THE RACK CAN RUN IS IN IT, once.
-	CHECK(devices == offered.size());
+	// (the add shortcuts, `Tabs` and `Pads`, ride after the devices in the category of the Rack they add)
+	CHECK(devices == offered.size() + ui::kAddShortcuts.size());
 }
 
 TEST_CASE("backlog KP: picking in the add menu adds the device") {

@@ -805,7 +805,15 @@ void RackEditor::showAddMenu(visage::Frame& source, const visage::Bounds& anchor
 	// Every row is live: the rack grows (unbounded devices step 6), so its menu is never greyed for room.
 	ui::addCategorisedDevices(menu, offered, [](size_t) { return true; });
 	menu.onSelection() = [this, offered](int id) {
-		if (id >= 0 && static_cast<size_t>(id) < offered.size()) {
+		const ui::AddShortcut* shortcut = ui::shortcutOfId(offered.size(), id);
+		if (shortcut != nullptr) {
+			// A SHORTCUT IS THE DEVICE, SET UP ON THE WAY IN (`device_shortcuts.h`).
+			if (const DeviceInstanceId made = addDeviceByTag(shortcut->tag); made != kNoInstance) {
+				laneOf(made).setField(made, shortcut->view, shortcut->viewValue);
+				laneOf(made).setField(made, shortcut->mode, shortcut->modeValue);
+			}
+		}
+		else if (id >= 0 && static_cast<size_t>(id) < offered.size()) {
 			addDeviceByTag(offered[static_cast<size_t>(id)]->traits.tag);
 		}
 	};

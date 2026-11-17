@@ -14,6 +14,7 @@
  * You should have received a copy of the GNU General Public License along with Feathers. If not, see
  * <https://www.gnu.org/licenses/>.
  */
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/automod_pad.h"
 
 #include "plugin/ui/theme.h"
@@ -122,7 +123,7 @@ bool AutomodPad::mouseWheel(const visage::MouseEvent& e) {
 	// core buttons 4-7 and converts them to exactly +/-1. Handling the notch is the whole of what this
 	// platform offers, and the same is true one surface over on the shaper.
 	const float delta = e.wheel_delta_y;
-	if (delta == 0.0f) {
+	if (delta == 0.0f || !cardTakesWheel(*this, e)) {
 		return false;
 	}
 	setZoom(delta > 0.0f ? zoom_ * kZoomStep : zoom_ / kZoomStep);

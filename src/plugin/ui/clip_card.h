@@ -33,7 +33,7 @@
 // CLIP'S CARD — the mode, the three globals, the mode's own controls, and IN/OUT bars with an OVER
 // LED. `CompCard` is its sibling and `BusUtilCard` the template both follow.
 //
-// **THE MODE IS A BOX WITH A MENU, NOT A SEGMENTED ROW**: five named tops, and every one is visible in
+// **THE MODE IS A BOX WITH A MENU, NOT A SEGMENTED ROW**: eleven named tops, and every one is visible in
 // the menu before it is applied (CLAUDE.md's toggle rule). Oversample is two states, so a chip.
 //
 // **A MODE'S CONTROLS ARE HIDDEN OUTSIDE IT** — each is declared live exactly where the curve reads it
@@ -41,7 +41,7 @@
 //
 // WHAT REACHES WHAT, because the reachability guard takes this card's word:
 //   - Mode — a value box. Oversample — a chip. Bits — a segmented control.
-//   - Drive, Ceiling, Output, Knee, Freq, Foldback, Grit, Depth — a knob each, the last five by mode.
+//   - Drive, Ceiling, Output, Knee, Freq, Foldback, Grit, Depth, Shape — a knob each, the last six by mode.
 //   - Enabled — the square in the head, drawn by `FxCard` and answered here.
 // The meter and the LED reach nothing: they are readings.
 

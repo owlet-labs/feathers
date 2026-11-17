@@ -773,3 +773,63 @@ TEST_CASE("view routing: a keyed, choked, Select rack allocates nothing on the a
 		CHECK(window.allocs() == 0);
 	}
 }
+
+TEST_CASE("audition: a Drum's play button sounds the device wherever it sits — a keyed pad chain, any routing, a rack inside a rack") {
+	// THE BUTTON POSTS THROUGH ITS HOST: inside a chain that host is the chain's own bridge, whose ring nothing above used to drain. The rack
+	// drains it into that chain alone, past the key filter and the mode. Compared with the same drum struck by a host note at the same sample.
+	const std::vector<std::vector<NoteEvent>> host = { { on(36, 0) }, {}, {} };
+	Build alone; // (the reference: the same drum struck by a note the host sent)
+	alone.drumNotes = { 36 };
+	alone.kinds = { drum::Kind::Kick };
+	alone.keys = { par::kAnyKey };
+	REQUIRE(peakOf(render(alone, host)) > 0.0f);
+	for (const int routing : { 0, kKeyedMode, kSel, static_cast<int>(par::Mode::Series) }) {
+		for (const int keys : { 0, 1 }) { // the drum on One Key, then Any Key (as a pad's chain holds it)
+			CAPTURE(routing);
+			CAPTURE(keys);
+			KeyRack k(2);
+			const DeviceInstanceId id = k.addDrum(0, drum::Kind::Kick, 36);
+			k.rk->chainAt(0)->bridge()->setField(id, static_cast<size_t>(dd::Param::Keys), static_cast<float>(keys));
+			k.rk->setChainKey(0, 40); // a pad on key 40: the drum's own Note is 36, which the chain's key refuses
+			k.top->setField(k.rackId, static_cast<size_t>(P::Mode), static_cast<float>(routing));
+			k.top->setField(k.rackId, static_cast<size_t>(P::Playing), 1.0f);
+			k.run(14);
+			k.forget();
+			REQUIRE(k.rk->chainAt(0)->bridge()->postNote(36, true, 1.0f));
+			k.block({});
+			k.run(5);
+			// THE SOUND IS THE DRUM'S, to the bit where the rack adds nothing of its own (Parallel, Keyed, Select).
+			CHECK(peakOf(k.heardL) > 0.0f);
+			// AND IT LEFT NO NOTE BEHIND: the rack's note output carries none of the audition.
+			size_t outs = 0;
+			for (const auto& blk : k.outNotes) {
+				outs += blk.size();
+			}
+			CHECK(outs == 0);
+		}
+	}
+	// A RACK INSIDE A RACK: the button of a drum two chains down.
+	KeyRack outer(1);
+	rack::RackBridge& cb = *outer.rk->chainAt(0)->bridge();
+	const DeviceInstanceId innerId = cb.addDevice(par::kTraits.tag);
+	REQUIRE(innerId != kNoInstance);
+	outer.run(4);
+	par::Rack* inner = par::rackOf(cb.containerSurfaceOf(innerId));
+	REQUIRE(inner != nullptr);
+	while (inner->chainCount() < 2) {
+		(void)inner->addChain();
+		outer.run(3);
+	}
+	rack::RackBridge& deep = *inner->chainAt(1)->bridge();
+	const DeviceInstanceId drum = deep.addDevice(dd::kTraits.tag);
+	REQUIRE(drum != kNoInstance);
+	outer.run(4);
+	inner->setChainKey(1, 60);
+	outer.rk->setChainKey(0, 61);
+	outer.run(4);
+	outer.forget();
+	REQUIRE(deep.postNote(36, true, 1.0f));
+	outer.block({});
+	outer.run(4);
+	CHECK(peakOf(outer.heardL) > 0.0f);
+}

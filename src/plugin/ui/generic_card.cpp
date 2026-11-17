@@ -15,6 +15,7 @@
  * <https://www.gnu.org/licenses/>.
  */
 
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/generic_card.h"
 
 #include "plugin/ui/gamma_box.h"
@@ -48,7 +49,7 @@ GenericCard::GenericCard(backplane::DeviceHost& host, DeviceInstanceId id,
 	// BOTH AXES, SUMMED, as the rack's own lane does: most wheels only go up and down, and a diagonal
 	// gesture should do something continuous rather than snap to whichever axis was larger this frame.
 	onMouseWheel() = [this](const visage::MouseEvent& e) {
-		if (!scrollable()) {
+		if (!scrollable() || !cardTakesWheel(*this, e)) {
 			return false; // NOT CONSUMED, so the lane behind gets the gesture instead.
 		}
 		// SIGNS AS THE RACK'S LANE USES THEM — see `RackEditor`'s wheel handler for why the two axes

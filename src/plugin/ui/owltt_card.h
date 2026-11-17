@@ -49,6 +49,10 @@
 
 namespace feathers::ui {
 
+/// THE OUTPUT GAIN'S READOUT, shared by the card's Output fader and the window's: the knob's 0.5 is unity (0 dB), 1.0 is
+/// +16 dB, and the DSP's own mapping says what gain each knob value is, so the two surfaces cannot print different dB.
+std::string outputGainReadout(double knob);
+
 class OwlttCard final : public FxCard {
 public:
 	/// Build a OWLTT card for the device `id`.
@@ -187,12 +191,16 @@ public:
 	[[nodiscard]] ValueBox* widthForTest() const { return width_.get(); }
 	/// The Drive bar left of the picture (backlog NB).
 	[[nodiscard]] VerticalFader* driveForTest() const { return drive_.get(); }
+	/// The Output fader right of the picture: `output_gain`, read in dB.
+	[[nodiscard]] VerticalFader* outputForTest() const { return output_.get(); }
 
 	/// Geometry asked rather than photographed.
 	visage::Bounds headBounds() const;
 	visage::Bounds crossoverBounds() const;
 	/// THE DRIVE BAR'S RECTANGLE (backlog NB): left of the picture, as tall as it.
 	visage::Bounds driveBounds() const;
+	/// THE OUTPUT FADER'S RECTANGLE: the mirror of the Drive, right of the picture, as tall as it.
+	visage::Bounds outputBounds() const;
 
 private:
 	void layOut();
@@ -251,6 +259,8 @@ private:
 	std::unique_ptr<ValueBox> width_;
 	/// BACKLOG NB: the Drive, a bar left of the picture.
 	std::unique_ptr<VerticalFader> drive_;
+	/// THE OUTPUT (`output_gain`), the mirror of the Drive on the picture's right: the same fader the window draws.
+	std::unique_ptr<VerticalFader> output_;
 };
 
 } // namespace feathers::ui

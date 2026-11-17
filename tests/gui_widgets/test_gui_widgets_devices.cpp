@@ -32224,6 +32224,65 @@ TEST_CASE("NB: OWLTT's Drive is a vertical bar LEFT of the graph on the card and
 	CHECK(outBar->readout() == "-6.0");
 }
 
+TEST_CASE("OWLTT's card carries Output: a fader right of the picture, mirroring the Drive, bound to output_gain, declared through ControlFace") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::OwlttCard* card = d.card;
+	ui::VerticalFader* out = card->outputForTest();
+	REQUIRE(out != nullptr);
+	const auto gain = static_cast<size_t>(ow::Param::OutputGain);
+	const auto valueOf = [&] {
+		const FxChain chain = d.f.bridge.fxChain();
+		return fxDeviceAtPosition(chain, d.slot).row.field[gain];
+	};
+	// BOUND TO THE DEVICE'S OUTPUT GAIN, by its key, and labelled as the window labels it.
+	CHECK(std::string_view(out->control().desc().key) == "output_gain");
+	CHECK(out->caption() == "Output");
+	// THE READOUT IS THE DSP'S GAIN IN dB, the same mapping the window uses: 0.5 unity, 1.0 +16 dB, 0.25 -6 dB.
+	d.set(gain, 1.0f);
+	CHECK(out->control().value() == doctest::Approx(1.0));
+	CHECK(out->readout() == "+16");
+	d.set(gain, 0.25f);
+	CHECK(out->readout() == "-6.0");
+	d.set(gain, 0.5f);
+	CHECK(out->readout() == "0");
+
+	// BESIDE THE PICTURE, THE MIRROR OF THE DRIVE, inside the card and over nothing.
+	const visage::Bounds plot = card->crossoverBounds();
+	const visage::Bounds drive = card->driveBounds();
+	const visage::Bounds bar = out->bounds();
+	CHECK(bar.width() == doctest::Approx(drive.width()));
+	CHECK(bar.height() == doctest::Approx(plot.height()));
+	CHECK(bar.y() == doctest::Approx(plot.y()));
+	CHECK(bar.x() >= plot.right());
+	CHECK(bar.x() - plot.right() == doctest::Approx(plot.x() - drive.right()));
+	CHECK(bar.right() <= static_cast<float>(card->width()) + 0.5f);
+	for (const auto& knob : card->knobsForTest()) {
+		CHECK_FALSE(lqOverlap(bar, knob->bounds()));
+	}
+	CHECK_FALSE(lqOverlap(bar, card->stereoForTest()->bounds()));
+	CHECK_FALSE(lqOverlap(bar, card->linkForTest()->bounds()));
+	CHECK_FALSE(lqOverlap(bar, card->widthForTest()->bounds()));
+
+	// IT DECLARES THE OUTPUT AS ITS FACE, which is what the window-superset guard reads.
+	std::vector<ui::ControlFace::Offered> offered;
+	out->offeredControls(offered);
+	REQUIRE(offered.size() == 1u);
+	CHECK(std::string_view(offered[0].control->desc().key) == "output_gain");
+	CHECK(offered[0].road == ui::ControlFace::Road::Face);
+
+	// AN UPWARD DRAG RAISES IT, and the value it writes is the device's: a quarter of the span is a quarter of the
+	// 0..1 knob, so 0.5 + 0.25 = 0.75.
+	d.set(gain, 0.5f);
+	const float cx = out->width() * 0.5f;
+	const float cy = out->height() * 0.5f;
+	const float quarter = 0.25f * ui::VerticalFader::kSpan;
+	out->onMouseDown().callback(at(cx, cy));
+	out->onMouseDrag().callback(at(cx, cy - quarter));
+	out->onMouseUp().callback(at(cx, cy - quarter));
+	CHECK(valueOf() == doctest::Approx(0.75f));
+}
+
 TEST_CASE("NB: OWLTT's crossover labels never touch a channel letter or each other — on the card and in the window, at the defaults and with the crossovers crowded") {
 	// the card read "2.0 kHzR" once the Drive bar narrowed the graph, and the mid band's "L" had been under "200 Hz"
 	// since the letters arrived. Asked of the RECTANGLES the graph draws its glyphs in (`OwlttGraph::bottomText`).

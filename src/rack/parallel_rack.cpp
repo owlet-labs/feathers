@@ -1190,6 +1190,7 @@ void Rack::setFields(const float* fields, size_t present) {
 	viewedChain_ = whole(Param::ViewedChain);
 	padsPage_ = whole(Param::PadsPage);
 	followPlayed_ = whole(Param::FollowPlayed);
+	front_ = whole(Param::Front);
 	const float playing = at(Param::Playing);
 	playing_ = std::isfinite(playing) ? static_cast<int>(std::lround(std::clamp(playing, 0.0f, 64.0f))) : 0;
 	position_ = std::isfinite(position) ? std::clamp(position, 0.0f, 1.0f) : 0.0f;
@@ -2567,6 +2568,7 @@ float Rack::fieldForTest(Param p) const noexcept {
 	case Param::ViewedChain: return static_cast<float>(viewedChain_);
 	case Param::PadsPage: return static_cast<float>(padsPage_);
 	case Param::FollowPlayed: return static_cast<float>(followPlayed_);
+	case Param::Front: return static_cast<float>(front_);
 	case Param::Unused: return unusedStop_ ? 1.0f : 0.0f;
 	case Param::BandCount: return static_cast<float>(bandsWanted_ == 2 ? 0 : (bandsWanted_ == 3 ? 1 : 2));
 	case Param::Cut1:

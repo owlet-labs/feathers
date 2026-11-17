@@ -655,6 +655,9 @@ int main(int argc, char** argv) {
 	bool rackChainsDevices = false;
 	/// `:nested` puts a Tabs rack as the FIRST device of chain 2 (three chains of Drums), and a Tabs rack of two chains in ITS first chain: three bars stacked.
 	bool rackChainsNested = false;
+	/// `--rack-pane <chain>` with `--rack-chains`: the Rack window in Tabs with the first device's own window in a pane (`rack_front` = Window),
+	/// the chain at that index (0-based) in front.
+	int rackPane = -1;
 	/// `--rack-arm-macro N` (1..8): press the Rack window's arrow for macro N, as a hand does, so the chains' controls light. 0 is not asked.
 	int rackArmMacro = 0;
 	/// `--chain-window` (backlog OC): the CHAIN device's window over a running body with a filter and a delay in it.
@@ -1280,6 +1283,10 @@ int main(int argc, char** argv) {
 			rackChainsKeyed = spec.find(":keyed") != std::string::npos;
 			rackChainsDevices = spec.find(":devices") != std::string::npos;
 			rackChainsNested = spec.find(":nested") != std::string::npos;
+			continue;
+		}
+		if (arg == "--rack-pane" && i + 1 < argc) {
+			rackPane = std::atoi(argv[++i]);
 			continue;
 		}
 		if (arg == "--rack-preset" && i + 1 < argc) {
@@ -2658,6 +2665,20 @@ int main(int argc, char** argv) {
 			std::printf("rack:     %zu chain(s), card only\n", rack.chainCount());
 		}
 		else {
+			if (rackPane >= 0) {
+				const DeviceInstanceId rackId = bridge.fxDeviceAt(slot);
+				BridgeDeviceHost paneHost(bridge);
+				paneHost.setField(rackId, static_cast<size_t>(pr::Param::View), 1.0f);
+				paneHost.setField(rackId, static_cast<size_t>(pr::Param::Front), 1.0f);
+				paneHost.setField(rackId, static_cast<size_t>(pr::Param::ViewedChain), static_cast<float>(rackPane));
+				for (int i = 0; i < 3; ++i) {
+					(void)panel->updateContent();
+				}
+				std::printf("rack-pane: chain %d in front, the pane holds %s\n", rackPane,
+				            panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Window ? "the first device's window"
+				            : panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Card ? "the first device's card"
+				                                                                                  : "nothing");
+			}
 			(void)panel->updateContent();
 			if (!rackPreset.empty()) {
 				// THE FACE NAMES THE PRESET, as the browser's own pick leaves it (onCurrentChanged -> the device's stored identity).

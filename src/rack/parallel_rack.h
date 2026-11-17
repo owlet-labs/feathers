@@ -120,6 +120,9 @@ enum class Param : size_t {
 	/// **FOLLOW PLAYED NOTE** (Pads, no audio effect): a struck key that has a chain makes it the viewed chain and turns the page to it.
 	/// View state like the view itself: kept with the patch, not modulatable, never on a DAW lane.
 	FollowPlayed,
+	/// **WHAT THE WINDOW'S TABS VIEW PUTS IN FRONT** (no audio effect): the front chain as its cards, or its first device's own window.
+	/// View state like the view itself: kept with the patch, not modulatable, never on a DAW lane.
+	Front,
 	kCount,
 };
 
@@ -172,6 +175,8 @@ inline constexpr size_t kMaxRoles = 5;
 }
 inline constexpr const char* kUnusedNames[] = { "Ring out", "Stop" };
 inline constexpr const char* kViewNames[] = { "Strips", "Tabs", "Pads" };
+/// What the Tabs view shows in front in the rack's window: the chain's cards, or the first device's window.
+inline constexpr const char* kFrontNames[] = { "Cards", "Window" };
 inline constexpr int kPadsPages = 8;
 /// THE PLAYING CHAIN'S CHOICE: "Position", then the chains 1..64 (a Choice is stored by label, so the list may grow).
 inline constexpr const char* kPlayingNames[] = {
@@ -298,6 +303,11 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .tooltip = "Pads: a key struck in the rack that has a chain makes that chain the one the window looks at and turns the pads to its page. "
                 "Off moves nothing. It changes nothing you hear",
      .shortName = "Follow", .hostSlot = false},
+    {.key = "rack_front", .name = "Rack Front", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Choice, .names = kFrontNames, .modulatable = false,
+     .tooltip = "Tabs, in the window: the front chain as its cards, or its first device's own window in the middle with the rest of "
+                "the chain beside it. It changes nothing you hear",
+     .shortName = "Front", .hostSlot = false},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 static_assert(static_cast<size_t>(Param::Macro1) == static_cast<size_t>(composite::Param::Macro1));
@@ -985,6 +995,7 @@ private:
 	int viewedChain_ = 0;
 	int padsPage_ = 0;
 	int followPlayed_ = 0;
+	int front_ = 0;
 	uint64_t serial_ = 0;
 	/// And what its key held back, which the rack passes on itself.
 	std::vector<device::NoteEvent> skippedIn_;

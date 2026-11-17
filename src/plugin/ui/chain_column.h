@@ -390,6 +390,19 @@ public:
 	void setPadding(float cross, float flow, float slotGap);
 	void setShownLimit(size_t n);
 	void setAddShown(bool shown);
+	/// **THE FIRST `n` DEVICES ARE HELD BACK FROM THIS COLUMN** (a host that shows them another way: the rack window's Tabs pane shows the
+	/// first device's own window). Their cards are built and kept (identity by device, as ever) but take no room and are not shown; positions,
+	/// drops and the (+) keep meaning chain positions, and a card is never dropped before the held-back ones.
+	void setHiddenLead(size_t n);
+	[[nodiscard]] size_t hiddenLead() const noexcept { return hiddenLead_; }
+	/// **THE WINDOW A DEVICE OPENS, BUILT FOR A HOST TO PLACE ITSELF** — the same factory, modulation, history and nest `expandDevice` stamps,
+	/// without presenting it. Null when the device has no window of its own (the caller shows its card instead). The caller owns the frame and
+	/// must take it off this column's modulation watchers (`forgetFrameTree` over `modulationWatchers()`) before it dies.
+	[[nodiscard]] std::unique_ptr<ExpandedView> buildWindowContent(DeviceInstanceId device);
+	/// A SECOND CARD FOR A DEVICE, selected as the column's own are (the device's own card, else the generic grid), on this column's modulation.
+	[[nodiscard]] std::unique_ptr<FxCard> buildCard(DeviceInstanceId device);
+	/// The state a frame built here is put on, so a host that places one can take it off again.
+	[[nodiscard]] FrameWatchers& modulationWatchers() noexcept;
 	/// **THE COLUMN RUNS LEFT TO RIGHT** (a host whose flow is horizontal): the cards are laid out along x with the column's height as their
 	/// cross extent (`FxCard::setLaneAxis`), it scrolls and drags along x, and the (+) follows the last card. Vertical is the column's own.
 	void setHorizontal(bool horizontal);
@@ -559,6 +572,7 @@ private:
 	float padY_ = kPadY; ///< along it, at the start and the end
 	float slotGap_ = kSlotGap;
 	size_t shownLimit_ = static_cast<size_t>(-1);
+	size_t hiddenLead_ = 0;
 	bool addShown_ = true;
 };
 

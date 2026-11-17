@@ -229,13 +229,20 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 	}
 	// **THE PANE: THE WINDOW SIZES TO WHAT IS IN FRONT** — the front device's window at its natural size, the rest of the chain's rail beside
 	// it, under the tab bar. Not the sum of every chain's rail, and not the largest tab: a tab switch reflows (the rack tells us, `follow`).
-	const bool paneFront = model_ != nullptr && model_->view() == RackViewKind::Tabs && paneOn() && pane_->hosting() != RackWindowPane::Hosting::Nothing;
+	const bool paneFront = model_ != nullptr && paneOn() && pane_->hosting() != RackWindowPane::Hosting::Nothing;
 	if (paneFront) {
 		const visage::Point n = pane_->naturalSize();
 		const ChainRail* front = viewedRail();
-		const float top = railsTop() + RackTabBar::kThickness + kPad * 0.5f;
-		p.x = railsLeft() + n.x + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
+		const bool pads = model_->view() == RackViewKind::Pads;
+		// TABS: under the bar. PADS: beside the pads panel (and its Follow chip), which stands before the pane and the rail.
+		const float top = railsTop() + (pads ? 0.0f : RackTabBar::kThickness + kPad * 0.5f);
+		const visage::Point padsN = pads ? pads_->naturalSize() : visage::Point { 0.0f, 0.0f };
+		const float padsAcross = pads ? padsN.x + kPad : 0.0f;
+		p.x = railsLeft() + padsAcross + n.x + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
 		p.y = std::max(std::max(addSlotBounds().bottom(), bandsBottom()) + kPad, top + n.y + kPad);
+		if (pads) {
+			p.y = std::max(p.y, top + padsN.y + kPad * 0.5f + SwitchChip::kHeight + kPad);
+		}
 		if (front != nullptr) {
 			p.y = std::max(p.y, top + (front->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
 			                                                     : front->rail->openMinimumHeight()));
@@ -251,7 +258,8 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 }
 
 bool ParallelRackExpanded::paneOn() const {
-	return model_ != nullptr && !hostedInPane_ && model_->view() == RackViewKind::Tabs && std::lround(frontControl_->value()) >= 1;
+	return model_ != nullptr && !hostedInPane_ && (model_->view() == RackViewKind::Tabs || model_->view() == RackViewKind::Pads)
+	       && std::lround(frontControl_->value()) >= 1;
 }
 
 ParallelRackExpanded::ChainRail* ParallelRackExpanded::viewedRail() const {
@@ -409,7 +417,7 @@ void ParallelRackExpanded::layOut() {
 	// selected pad's chain. STRIPS: every rail, as before.
 	const RackViewKind view = model_->view();
 	tabs_->setVisible(view == RackViewKind::Tabs);
-	frontSeg_->setVisible(view == RackViewKind::Tabs && !hostedInPane_);
+	frontSeg_->setVisible((view == RackViewKind::Tabs || view == RackViewKind::Pads) && !hostedInPane_);
 	pads_->setVisible(view == RackViewKind::Pads);
 	followChip_->setVisible(view == RackViewKind::Pads);
 	if (view == RackViewKind::Tabs) {
@@ -427,12 +435,14 @@ void ParallelRackExpanded::layOut() {
 	laidOutViewed_ = viewed;
 	// THE PANE: the front device's own window at its natural size, the rest of the chain's rail beside it (the rail's column holds the first
 	// card back while the pane shows it). Re-set unconditionally, as every bound here is: a scale change moves no logical rectangle.
-	const bool paneShown = view == RackViewKind::Tabs && pane_->hosting() != RackWindowPane::Hosting::Nothing && paneOn();
+	const bool paneShown = pane_->hosting() != RackWindowPane::Hosting::Nothing && paneOn();
 	pane_->setVisible(paneShown);
 	if (paneShown) {
 		const visage::Point n = pane_->naturalSize();
-		pane_->setBounds(x0, top, n.x, n.y);
-		railX0 = x0 + n.x + kPad * 0.5f;
+		// TABS: under the bar. PADS: after the pads panel (`railX0` is already past it), the grid, strip and kit level staying where they are.
+		const float paneX = view == RackViewKind::Pads ? railX0 : x0;
+		pane_->setBounds(paneX, top, n.x, n.y);
+		railX0 = paneX + n.x + kPad * 0.5f;
 		laidOutPane_ = n;
 	}
 	else {

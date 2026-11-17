@@ -1779,7 +1779,7 @@ struct PaneRack {
 
 } // namespace
 
-TEST_CASE("rack pane: rack_front is a view-state choice (Cards by default, not modulatable, no host slot), and the window offers it only in Tabs") {
+TEST_CASE("rack pane: rack_front is a view-state choice (Cards by default, not modulatable, no host slot), and the window offers it in Tabs and Pads, not Strips") {
 	const device::ParamDesc& d = pr::kDescriptor.params[static_cast<size_t>(pr::Param::Front)];
 	CHECK(std::string(d.key) == "rack_front");
 	CHECK(d.def == 0.0);
@@ -1794,7 +1794,7 @@ TEST_CASE("rack pane: rack_front is a view-state choice (Cards by default, not m
 	CHECK(r.field(pr::Param::Front) == 0.0f);
 	CHECK_FALSE(r.panel->frontSegForTest().isVisible()); // Strips
 	r.view_(2);
-	CHECK_FALSE(r.panel->frontSegForTest().isVisible()); // Pads
+	CHECK(r.panel->frontSegForTest().isVisible()); // Pads (the same stored choice as Tabs)
 	r.view_(1);
 	CHECK(r.panel->frontSegForTest().isVisible()); // Tabs
 	// CARDS IS THE VIEW AS IT WAS: no pane, the first card shown in the rail.
@@ -2344,4 +2344,140 @@ TEST_CASE("rack pads fix D: both pad readers (the 4x4 grid and the page strip) s
 	(void)r.panel->update();
 	CHECK(usedInStrip(r.panel->padsForTest().pagesForTest(), 2) == std::set<int> { 40 });
 	CHECK(usedInStrip(r.card->padsForTest().pagesForTest(), 2) == std::set<int> { 40 });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// THE PANE IN PADS (rack_front is the one stored choice, shared with Tabs): the selected pad's chain's first device's window.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+TEST_CASE("rack pane in Pads: the pane follows the pad selected, the grid, strip and kit level stay beside it, Strips ignores the choice, and the choice is one value for Tabs and Pads") {
+	PaneRack p(3, 3);
+	p.r.chains(3, 3, true); // keys 0, 1, 2
+	p.r.set(pr::Param::Front, 1.0f);
+	p.r.view_(2);
+	p.r.set(pr::Param::PadsPage, 0.0f);
+	p.settle();
+	REQUIRE(p.r.panel->paneOnForTest());
+	CHECK(p.r.panel->frontSegForTest().isVisible());
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	const feathers::DeviceInstanceId first0 = p.chain(0).deviceAtPosition(0);
+	CHECK(p.pane().device() == first0);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(0));
+	CHECK(p.column(0)->hiddenLead() == 1);
+	// THE PADS' PIECES ARE STILL THERE, and the pane stands clear of them.
+	ui::RackPadsPanel& pads = p.r.panel->padsForTest();
+	CHECK(pads.isVisible());
+	CHECK(pads.gridForTest().isVisible());
+	CHECK(pads.pagesForTest().isVisible());
+	REQUIRE(pads.levelForTest() != nullptr);
+	CHECK(pads.levelForTest()->isVisible());
+	CHECK(p.pane().isVisible());
+	CHECK(static_cast<float>(p.pane().x()) >= static_cast<float>(pads.x() + pads.width()));
+	// A PAD SELECTED REBINDS THE PANE to that chain's first device, once.
+	const size_t builds = p.pane().buildsForTest();
+	auto& grid = pads.gridForTest();
+	grid.pressForTest(grid.padCentre(2));
+	grid.releaseForTest();
+	p.settle();
+	const feathers::DeviceInstanceId first2 = p.chain(2).deviceAtPosition(0);
+	CHECK(p.pane().device() == first2);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(2));
+	CHECK(p.pane().contentForTest()->watchedDevice() == first2);
+	CHECK(p.pane().buildsForTest() == builds + 1);
+	CHECK(p.column(0)->hiddenLead() == 0);
+	CHECK(p.column(2)->hiddenLead() == 1);
+	// THE CHAIN UNDER THE SELECTED PAD DELETED: the pane follows to the chain now selected.
+	REQUIRE(p.r.rack().removeChain(2));
+	p.settle();
+	CHECK(p.r.rack().chainCount() == 2);
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(p.r.panel->viewModelForTest().viewedChain()));
+	// STRIPS IGNORES IT: no pane, no choice.
+	p.r.view_(0);
+	p.settle();
+	CHECK_FALSE(p.r.panel->paneOnForTest());
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK_FALSE(p.r.panel->frontSegForTest().isVisible());
+	// ONE STORED VALUE: back in Tabs the choice is still Window, and the pane is there.
+	p.r.view_(1);
+	p.settle();
+	CHECK(p.r.field(pr::Param::Front) == 1.0f);
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	p.r.view_(2);
+	p.settle();
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+}
+
+TEST_CASE("rack pane in Pads: an empty rack or chain shows no pane and keeps the (+); a first device with no window shows its card; a rack in the pane has no pane of its own") {
+	// NO CHAIN AT ALL: nothing to host.
+	{
+		RealRack r;
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		CHECK(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		CHECK_FALSE(r.panel->paneForTest().isVisible());
+		CHECK(r.panel->padsForTest().isVisible());
+	}
+	// AN EMPTY SELECTED CHAIN: no pane, the column is the empty chain's with its (+).
+	{
+		RealRack r;
+		r.chains(2, 0, true);
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		CHECK(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		REQUIRE(r.panel->railForTest(0).column() != nullptr);
+		CHECK(r.panel->railForTest(0).column()->addShown());
+		CHECK(r.panel->railForTest(0).column()->hiddenLead() == 0);
+	}
+	// NO WINDOW OF ITS OWN: the card, centred.
+	{
+		RealRack r;
+		r.chains(1, 0, true);
+		const device::Descriptor* plain = nullptr;
+		for (const device::Descriptor& d : feathers::kDevices) {
+			if (!ui::hasExpandedView(d) && d.traits.hasCard && r.rack().chainAt(0)->bridge()->descriptorFor(d.traits.tag) != nullptr && d.container == nullptr) {
+				plain = &d;
+				break;
+			}
+		}
+		REQUIRE(plain != nullptr);
+		const feathers::DeviceInstanceId id = r.rack().chainAt(0)->bridge()->addDevice(plain->traits.tag);
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		CHECK(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Card);
+		CHECK(r.panel->paneForTest().device() == id);
+	}
+	// A RACK AS THE FIRST DEVICE: its window, laid out with no pane of its own.
+	{
+		RealRack r;
+		r.chains(1, 0, true);
+		const feathers::DeviceInstanceId inner = nestedRack(*r.rack().chainAt(0)->bridge(), 2, false);
+		r.rack().chainAt(0)->bridge()->setField(inner, static_cast<size_t>(pr::Param::View), 2.0f);
+		r.rack().chainAt(0)->bridge()->setField(inner, static_cast<size_t>(pr::Param::Front), 1.0f);
+		REQUIRE(pr::rackOf(r.rack().chainAt(0)->bridge()->containerSurfaceOf(inner))->chainAt(0)->bridge()->addDevice("DELAY") != feathers::kNoInstance);
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(2);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		REQUIRE(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Window);
+		auto* innerPanel = dynamic_cast<ui::ParallelRackExpanded*>(r.panel->paneForTest().contentForTest());
+		REQUIRE(innerPanel != nullptr);
+		for (int i = 0; i < 3; ++i) {
+			(void)innerPanel->update();
+		}
+		CHECK(innerPanel->hostedInPaneForTest());
+		CHECK_FALSE(innerPanel->paneOnForTest());
+		CHECK(innerPanel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		CHECK_FALSE(innerPanel->frontSegForTest().isVisible());
+	}
 }

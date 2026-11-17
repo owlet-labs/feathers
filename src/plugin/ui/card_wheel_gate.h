@@ -32,8 +32,8 @@ namespace feathers::ui {
 // on false, answers false so visage hands the event up to the lane.
 //   - A frame with NO card above it (an expanded window, a stage) is its own focused surface: true.
 //   - Otherwise true when ANY card above it (itself, or the parent rack card of a card inside a rack) is the
-//     selected one (`FxCard::headFocused`), or when the main modifier (Ctrl, Cmd on macOS) is held.
-[[nodiscard]] inline bool cardTakesWheel(const visage::Frame& frame, const visage::MouseEvent& e) {
+//     selected one (`FxCard::headFocused`). FOCUS ALONE DECIDES: no modifier road, a plain wheel is what acts.
+[[nodiscard]] inline bool cardTakesWheel(const visage::Frame& frame, const visage::MouseEvent&) {
 	bool onCard = false;
 	for (const visage::Frame* at = &frame; at != nullptr; at = at->parent()) {
 		if (const auto* card = dynamic_cast<const FxCard*>(at); card != nullptr) {
@@ -43,7 +43,7 @@ namespace feathers::ui {
 			}
 		}
 	}
-	return !onCard || e.isMainModifier();
+	return !onCard;
 }
 
 } // namespace feathers::ui

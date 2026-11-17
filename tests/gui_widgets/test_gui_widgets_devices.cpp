@@ -40486,9 +40486,10 @@ TEST_CASE("Twin Field's card in the fx lane: with the orbit Off, Phase takes Rat
 	CHECK_FALSE(card.orbitPhase(0).isVisible());
 }
 
-TEST_CASE("Twin Field's card: a plain wheel over the terrain scrolls the lane and leaves Zoom; Ctrl/Cmd+wheel zooms and does not scroll") {
+TEST_CASE("Twin Field's card: the wheel over the terrain scrolls the lane and leaves Zoom until the card is focused; then a plain wheel zooms") {
 	// Scrolling across the lane, the Twin Field card's terrain took over the wheel as it passed under the
-	// pointer. On a card the plain wheel is the LANE's; the main modifier zooms.
+	// pointer. FOCUS ALONE DECIDES (`ui::cardTakesWheel`): an unfocused card hands every wheel to the lane, Ctrl/Cmd
+	// included; a focused card's terrain zooms on a plain wheel.
 	namespace tf = feathers::mod::twinfield;
 	TwinFieldLaneFixture t;
 	ui::FxLane& lane = *t.f.lane;
@@ -40499,20 +40500,26 @@ TEST_CASE("Twin Field's card: a plain wheel over the terrain scrolls the lane an
 	REQUIRE(pad.width() > 1.0f);
 	const visage::Point middle { pad.width() * 0.5f, pad.height() * 0.5f };
 	const double zoom0 = t.field(tf::LayerParam::Zoom);
+	t.card->setFocused(false);
 
-	// PLAIN: the lane answers, it scrolled, and Zoom is unchanged by value.
+	// UNFOCUSED: the lane answers, it scrolled, and Zoom is unchanged by value.
 	CHECK(wheelThrough(&pad, middle, -1.0f, 0) == &lane);
 	CHECK(lane.scroll() > 0.0f);
 	CHECK(t.field(tf::LayerParam::Zoom) == zoom0);
+	// AND NO MODIFIER ROAD: Ctrl and Cmd are declined too.
+	lane.setScroll(0.0f);
+	CHECK(wheelThrough(&pad, middle, 1.0f, visage::kModifierRegCtrl) == &lane);
+	CHECK(wheelThrough(&pad, middle, 1.0f, visage::kModifierCmd) == &lane);
+	CHECK(t.field(tf::LayerParam::Zoom) == zoom0);
 
-	// MODIFIED: the pad answers, Zoom moved by exactly one notch, and the lane did not move.
-	const float scrolled = lane.scroll();
-	CHECK(wheelThrough(&pad, middle, 1.0f, visage::kModifierRegCtrl) == &pad);
+	// FOCUSED: a PLAIN wheel zooms by exactly one notch each way, and the lane does not move.
+	lane.setScroll(0.0f);
+	t.card->setFocused(true);
+	CHECK(wheelThrough(&pad, middle, 1.0f, 0) == &pad);
 	CHECK(std::abs(t.field(tf::LayerParam::Zoom) - (zoom0 + ui::TwinFieldPad::kZoomStepOct)) <= 1e-6);
-	CHECK(lane.scroll() == scrolled);
-	// AND Cmd, the macOS main modifier, the same.
-	CHECK(wheelThrough(&pad, middle, -1.0f, visage::kModifierCmd) == &pad);
+	CHECK(wheelThrough(&pad, middle, -1.0f, 0) == &pad);
 	CHECK(std::abs(t.field(tf::LayerParam::Zoom) - zoom0) <= 1e-6);
+	CHECK(lane.scroll() == 0.0f);
 }
 
 TEST_CASE("Twin Field's pad pans in AutoMod's and Explore's direction: the puck follows the hand, right is +X, up is +Y") {
@@ -40581,9 +40588,7 @@ visage::Frame* pressWithFocus(visage::Frame* root, visage::Frame* focus, visage:
 
 } // namespace
 
-TEST_CASE("Twin Field's pad: a press focuses it and a plain wheel then zooms; a click elsewhere, Esc or a hidden card ends it; a wheel never focuses") {
-	// Zoom does not take focus; the pad zooms only when focused. Read by value: the lane's scroll and the
-	// layer's Zoom after each gesture.
+TEST_CASE("Twin Field's pad: a press on it selects its CARD (visage's focus goes up to the card), and that is what lets a plain wheel zoom") {
 	namespace tf = feathers::mod::twinfield;
 	TwinFieldLaneFixture t;
 	ui::FxLane& lane = *t.f.lane;
@@ -40592,57 +40597,93 @@ TEST_CASE("Twin Field's pad: a press focuses it and a plain wheel then zooms; a 
 	ui::TwinFieldPad& pad = t.card->pad();
 	REQUIRE(pad.isVisible());
 	const visage::Point middle { pad.width() * 0.5f, pad.height() * 0.5f };
-	const visage::Point padInWindow = pad.positionInWindow() + middle;
 	const double zoom0 = t.field(tf::LayerParam::Zoom);
-	visage::Frame* root = t.f.root;
+	t.card->setFocused(false);
 
-	// UNFOCUSED: the wheel scrolls the lane, Zoom unchanged — and the wheel did not focus the pad.
-	REQUIRE_FALSE(pad.focused());
+	// UNSELECTED: the wheel scrolls the lane, Zoom unchanged — and the wheel did not select the card.
 	CHECK(wheelThrough(&pad, middle, -1.0f, 0) == &lane);
-	CHECK(lane.scroll() > 0.0f);
 	CHECK(t.field(tf::LayerParam::Zoom) == zoom0);
-	CHECK_FALSE(pad.focused());
+	CHECK_FALSE(t.card->headFocused());
 	lane.setScroll(0.0f);
-	REQUIRE(pad.isVisible());
 
-	// A PRESS FOCUSES (and visage's keyboard focus lands on the pad, so a click elsewhere can end it).
-	visage::Frame* focus = pressWithFocus(root, nullptr, pad.positionInWindow() + middle);
-	CHECK(focus == &pad);
-	CHECK(pad.focused());
-	// FOCUSED: a PLAIN wheel zooms by one notch, and the lane does not move.
+	// A PRESS ON THE PAD: the keyboard focus lands on the card (the pad takes no keystrokes) and selects it.
+	(void)pressWithFocus(t.f.root, nullptr, pad.positionInWindow() + middle);
+	CHECK(t.card->headFocused());
 	CHECK(wheelThrough(&pad, middle, 1.0f, 0) == &pad);
 	CHECK(std::abs(t.field(tf::LayerParam::Zoom) - (zoom0 + ui::TwinFieldPad::kZoomStepOct)) <= 1e-6);
 	CHECK(lane.scroll() == 0.0f);
 
-	// A CLICK ELSEWHERE (the header, far from the lane) ends it: the wheel scrolls again, Zoom unchanged.
-	const visage::Point elsewhere { 5.0f, 5.0f };
-	REQUIRE(keyboardFocusAfterPress(root, elsewhere) != &pad);
-	focus = pressWithFocus(root, focus, elsewhere);
-	CHECK_FALSE(pad.focused());
+	// DESELECTED again: the lane's.
+	t.card->setFocused(false);
 	const double zoom1 = t.field(tf::LayerParam::Zoom);
 	CHECK(wheelThrough(&pad, middle, -1.0f, 0) == &lane);
 	CHECK(t.field(tf::LayerParam::Zoom) == zoom1);
+}
+
+TEST_CASE("Card wheel rule: a press anywhere on a card selects it for the gate; a neighbour's press or a click on the bare lane ends it, and the bare lane wakes no card") {
+	namespace tf = feathers::mod::twinfield;
+	TwinFieldLaneFixture t;
+	ui::FxLane& lane = *t.f.lane;
+	REQUIRE(lane.maxScroll() > 0.0f);
+	lane.setScroll(0.0f);
+	ui::TwinFieldPad& pad = t.card->pad();
+	const visage::Point middle { pad.width() * 0.5f, pad.height() * 0.5f };
+	auto* other = dynamic_cast<ui::TwinFieldCard*>(lane.cardAt(t.slot + 1));
+	REQUIRE(other != nullptr);
+	ui::TwinFieldPad& otherPad = other->pad();
+	const visage::Point otherMiddle { otherPad.width() * 0.5f, otherPad.height() * 0.5f };
+	const auto zoomOf = [&](ui::TwinFieldCard& c) { return c.control(tf::layerParam(0, tf::LayerParam::Zoom)).value(); };
+	const double zoom0 = zoomOf(*t.card);
+	const double otherZoom0 = zoomOf(*other);
+	// A POINT OF THE BARE LANE: one the lane itself answers to (no card, no child under it).
+	const auto findBare = [&] {
+		for (float y = 0.0f; y < lane.height(); y += 3.0f) {
+			for (float x = 0.0f; x < lane.width(); x += 3.0f) {
+				const visage::Point w = lane.positionInWindow() + visage::Point { x, y };
+				if (t.f.root->frameAtPoint(w) == &lane) {
+					return w;
+				}
+			}
+		}
+		FAIL("the lane has no bare point");
+		return visage::Point {};
+	};
+	const visage::Point bare = findBare();
+
+	// A PRESS ON THE BARE LANE FIRST (it takes visage's focus): NO CARD IS WOKEN by the lane's own focus.
+	visage::Frame* focus = pressWithFocus(t.f.root, nullptr, bare);
+	CHECK(wheelThrough(&pad, middle, 1.0f, 0) == &lane);
+	CHECK(wheelThrough(&otherPad, otherMiddle, 1.0f, 0) != &otherPad);
+	CHECK(zoomOf(*t.card) == zoom0);
+	CHECK(zoomOf(*other) == otherZoom0);
 	lane.setScroll(0.0f);
 
-	// ESC ends it; any other key is the DAW's (declined by the pad).
-	focus = pressWithFocus(root, focus, padInWindow);
-	REQUIRE(pad.focused());
-	CHECK_FALSE(pad.keyPress(visage::KeyEvent { visage::KeyCode::Space, 0, true }));
-	CHECK(pad.focused());
-	CHECK(keyFromFocus(&pad, visage::KeyEvent { visage::KeyCode::Escape, 0, true }));
-	CHECK_FALSE(pad.focused());
+	// A PRESS ON THE CARD'S HEAD (not its pad) makes it the focused card: its pad zooms by a notch, the neighbour's does not.
+	focus = pressWithFocus(t.f.root, focus, t.card->positionInWindow() + visage::Point { 4.0f, 4.0f });
+	REQUIRE(t.card->headFocused());
+	CHECK(wheelThrough(&pad, middle, 1.0f, 0) == &pad);
+	CHECK(std::abs(zoomOf(*t.card) - (zoom0 + ui::TwinFieldPad::kZoomStepOct)) <= 1e-6);
+	CHECK(lane.scroll() == 0.0f);
+	CHECK(wheelThrough(&otherPad, otherMiddle, 1.0f, 0) != &otherPad);
+	CHECK(zoomOf(*other) == otherZoom0);
 
-	// A HIDDEN CARD (scrolled out of the lane) ends it.
-	focus = pressWithFocus(root, focus, padInWindow);
-	REQUIRE(pad.focused());
-	t.card->setVisible(false);
-	CHECK_FALSE(pad.focused());
-	t.card->setVisible(true);
+	// A PRESS ON A NEIGHBOUR CARD moves it: the first card declines again.
+	lane.scrollCardIntoView(t.slot + 1);
+	lane.resized();
+	const visage::Point onOther = other->positionInWindow() + visage::Point { 4.0f, 4.0f };
+	REQUIRE(t.f.root->frameAtPoint(onOther) != nullptr);
+	focus = pressWithFocus(t.f.root, focus, onOther);
+	CHECK(other->headFocused());
+	CHECK_FALSE(t.card->headFocused());
+	const double zoom1 = zoomOf(*t.card);
+	CHECK(wheelThrough(&pad, middle, -1.0f, 0) != &pad);
+	CHECK(zoomOf(*t.card) == zoom1);
 
-	// AND Ctrl/Cmd+wheel STILL ZOOMS an unfocused pad (the always-works chord).
-	const double zoom2 = t.field(tf::LayerParam::Zoom);
-	CHECK(wheelThrough(&pad, middle, 1.0f, visage::kModifierRegCtrl) == &pad);
-	CHECK(std::abs(t.field(tf::LayerParam::Zoom) - (zoom2 + ui::TwinFieldPad::kZoomStepOct)) <= 1e-6);
+	// A CLICK ON THE BARE LANE clears the selection: the second card declines too.
+	focus = pressWithFocus(t.f.root, focus, findBare());
+	CHECK_FALSE(other->headFocused());
+	CHECK(wheelThrough(&otherPad, otherMiddle, -1.0f, 0) != &otherPad);
+	CHECK(zoomOf(*other) == otherZoom0);
 }
 
 TEST_CASE("Wobble on the card (by design): a small box at Humanize's right on Pattern and at the Feel cell's right on the classic Arp — its own control, beside the cell and never on it, inside the card; in a chain's unit Pattern leaves it to the window and the Arp keeps it in its Feel row, and nothing overflows") {
@@ -42518,6 +42559,42 @@ TEST_CASE("ERODER's plot handle writes Freq across and Amount up, the wheel Widt
 	CHECK(eroField(d, ero::Param::Freq) == freqBefore);
 	CHECK(eroField(d, ero::Param::Amount) == amountBefore);
 	CHECK(eroField(d, ero::Param::Width) == widthBefore);
+}
+
+TEST_CASE("Card wheel rule, Eroder: the card's plot takes the wheel only while its card is focused; the same plot in the window needs no focus") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	d.set(eroAt(ero::Param::Freq), 10.0f);
+	d.set(eroAt(ero::Param::Amount), -13.0f);
+	d.set(eroAt(ero::Param::Width), 0.5f);
+	(void)d.card->updateContent();
+	ui::EroderPlot* plot = d.card->plotForTest();
+	const auto wheel = [&](ui::EroderPlot& p, float dy) {
+		visage::MouseEvent e;
+		e.position = { p.width() * 0.5f, p.height() * 0.5f };
+		e.wheel_delta_y = dy;
+		e.precise_wheel_delta_y = dy;
+		return p.processMouseWheel(e);
+	};
+	d.card->setFocused(false);
+	CHECK_FALSE(wheel(*plot, 1.0f));
+	CHECK(eroField(d, ero::Param::Width) == 0.5f);
+	d.card->setFocused(true);
+	CHECK(wheel(*plot, 1.0f));
+	CHECK(eroField(d, ero::Param::Width) == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
+	d.card->setFocused(false);
+	const float held = eroField(d, ero::Param::Width);
+	CHECK_FALSE(wheel(*plot, -1.0f));
+	CHECK(eroField(d, ero::Param::Width) == held);
+	// THE WINDOW'S PLOT: no card above it, so it takes the wheel with nothing focused.
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	(void)panel->updateContent();
+	ui::EroderPlot& windowPlot = *panel->plotForTest();
+	CHECK(wheel(windowPlot, -1.0f));
+	CHECK(eroField(d, ero::Param::Width) == doctest::Approx(held - ui::EroderPlot::kWidthPerNotch));
 }
 
 TEST_CASE("ERODER's plot takes a spectrum frame only whole and only when it is new, and rests when nothing is published") {

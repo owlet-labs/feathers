@@ -63,8 +63,6 @@ public:
 	void setModulation(ModState* mod, EditHistory* history) override;
 	void foldedChanged() override;
 	bool updateContent() override;
-	/// A CARD SCROLLED OUT OF THE LANE (or otherwise hidden) ENDS ITS PAD'S FOCUS — a hidden pad must not keep the wheel.
-	void visibilityChanged() override;
 	bool headSourceFocused() const override;
 	bool headArmed() const override;
 

@@ -110,6 +110,9 @@ private:
 	float feedback_ = 0.0f;
 	float wetGain_ = 0.0f;
 	float dryGain_ = 1.0f;
+	/// THE INPUT DRIVE: the gain the wet chain's input glides to, latched on the grid (`tick`).
+	float inGain_ = 1.0f;
+	float inGainTarget_ = 1.0f;
 
 	/// THE NOISE BAND: two state-variable bandpasses in series a channel (left's pair, then right's), trapezoidal,
 	/// so they are stable to the top of the range.

@@ -161,6 +161,7 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Loop)] = s.loop;
 	row[static_cast<size_t>(Param::LoopInterval)] = s.loopInterval;
 	row[static_cast<size_t>(Param::EmphOffset)] = s.emphOffset;
+	row[static_cast<size_t>(Param::Input)] = s.inputDb;
 	row[static_cast<size_t>(Param::SlotAAmount)] = s.slotA.amount;
 	row[static_cast<size_t>(Param::SlotAType)] = static_cast<float>(s.slotA.type);
 	row[static_cast<size_t>(Param::SlotAShape)] = s.slotA.shape;
@@ -223,6 +224,7 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.loop = read(Param::Loop);
 	s.loopInterval = read(Param::LoopInterval);
 	s.emphOffset = read(Param::EmphOffset);
+	s.inputDb = read(Param::Input);
 	s.slotA.amount = read(Param::SlotAAmount);
 	s.slotA.type = static_cast<DriveMode>(
 	    std::clamp(static_cast<int>(std::lround(read(Param::SlotAType))), 0, static_cast<int>(DriveMode::kCount) - 1));
@@ -410,6 +412,7 @@ void Eroder::reset() noexcept {
 	gainsPlaced_ = false;
 	outGain_ = outGainTarget_ = 0.0f;
 	dryGain_ = dryGainTarget_ = 1.0f;
+	inGain_ = inGainTarget_ = 1.0f;
 	heatGain_ = 1.0f;
 	smoothedCutoff_ = 0.0;
 	smoothedGamma_ = 0.0;
@@ -624,11 +627,13 @@ void Eroder::tick(const Settings& s) noexcept {
 	outGainTarget_ = static_cast<float>(derived_.wetGain * (combLoops_.tapDriven ? 1.0 : derived_.levelMakeUp)) *
 	                 static_cast<float>(kHeadroom) / heatGain_;
 	dryGainTarget_ = s.blend ? 1.0f - std::clamp(s.mix, 0.0f, 1.0f) : 1.0f;
+	inGainTarget_ = inputGainOf(s.inputDb);
 	subThru_ = s.subThru;
 	combHighpass_.set(deriveHighpass(s.hpWet, sampleRate_));
 	if (!gainsPlaced_) {
 		outGain_ = outGainTarget_;
 		dryGain_ = dryGainTarget_;
+		inGain_ = inGainTarget_;
 		gainsPlaced_ = true;
 	}
 	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
@@ -711,8 +716,10 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		// "Write input + feedback to delay (IIR comb filter topology)."
 		// INTO THE FIRMWARE'S UNITS: a full-scale input is 1/128 of the ceiling every clamp below sits at.
 		// THE SUM: the input (through the emphasis unless that is in the loop), the inner loop and the outer's return; then Smear.
-		float aL = inL;
-		float aR = inR;
+		// THE INPUT DRIVE: a gain on what the wet chain hears. The dry, Sub Thru and Follow take the signal before it.
+		inGain_ = glideTo(inGain_, inGainTarget_, gainSmoothing_);
+		float aL = inL * inGain_;
+		float aR = inR * inGain_;
 		if (emph && !emphInLoop) {
 			shared_.emphIn(aL, aR);
 		}

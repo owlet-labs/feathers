@@ -462,6 +462,7 @@ void Dust::reset() noexcept {
 	feedback_ = 0.0f;
 	wetGain_ = 0.0f;
 	dryGain_ = 1.0f;
+	inGain_ = inGainTarget_ = 1.0f;
 	for (Band& band : bands_) {
 		band = Band {};
 	}
@@ -512,6 +513,7 @@ void Dust::process(const Settings& settings, float* left, float* right, int fram
 
 void Dust::tick(const Settings& settings) noexcept {
 	derived_ = deriveDust(settings, pitchSemitones_, sampleRate_, &derived_);
+	inGainTarget_ = inputGainOf(settings.inputDb);
 	shaper_.set(driveOf(derived_));
 	slotA_.set(derived_.slotA);
 	slotB_.set(derived_.slotB);
@@ -524,6 +526,7 @@ void Dust::tick(const Settings& settings) noexcept {
 		feedback_ = static_cast<float>(derived_.feedback);
 		wetGain_ = static_cast<float>(derived_.wetGain);
 		dryGain_ = static_cast<float>(derived_.dryGain);
+		inGain_ = inGainTarget_;
 		placed_ = true;
 	}
 }
@@ -615,11 +618,13 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		feedback_ = glide(feedback_, feedbackTarget, smoothing_);
 		wetGain_ = glide(wetGain_, wetTarget, smoothing_);
 		dryGain_ = glide(dryGain_, dryTarget, smoothing_);
+		inGain_ = glide(inGain_, inGainTarget_, smoothing_);
 		followGain_ = glide(followGain_, followTarget, followSmoothing_);
 
 		// THE SUM: the input (through the emphasis unless that is in the loop), the inner loop's return and the outer's.
-		float aL = inL;
-		float aR = inR;
+		// THE INPUT DRIVE: a gain on what the wet chain hears. The dry, Sub Thru and Follow take the signal before it.
+		float aL = inL * inGain_;
+		float aR = inR * inGain_;
 		if (emph && !emphInLoop) {
 			shared_.emphIn(aL, aR);
 		}
@@ -797,7 +802,7 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		// ETCH AT REST IS A TRUE BYPASS, at any Mix: nothing in the wet path runs, so the wet is the input and the input
 		// goes through as it is, rather than as two equal signals cross-faded.
 		if (d.etch && !slotA_.active() && !slotB_.active() && !shaper_.active() && !emph && !smearOn &&
-		    !highpass_.on() && feedback_ == 0.0f && feedbackTarget == 0.0f && !outer) {
+		    !highpass_.on() && feedback_ == 0.0f && feedbackTarget == 0.0f && !outer && inGain_ == 1.0f && inGainTarget_ == 1.0f) {
 			right[i] = inR;
 			left[i] = inL;
 			continue;

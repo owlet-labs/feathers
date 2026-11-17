@@ -1427,7 +1427,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount);
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -5637,4 +5637,163 @@ TEST_CASE("Hotter loops: the silent-input rules are partition-proof, the fade co
 	// AND OPENS WITH THE INPUT.
 	sh.inputFrame(false);
 	CHECK_FALSE(sh.gatedForTest());
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE INPUT DRIVE: a plain gain on the signal entering the wet chain.                                //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE RATIO OF THE `harmonic`-TH PARTIAL TO THE FUNDAMENTAL, by correlation over whole cycles (a restatement, not the device's).
+double harmonicLevel(const std::vector<float>& v, size_t from, size_t period, size_t harmonic) {
+	double re = 0.0;
+	double im = 0.0;
+	for (size_t i = from; i < v.size(); ++i) {
+		const double phase = 2.0 * 3.14159265358979323846 * static_cast<double>(harmonic) * static_cast<double>(i - from) /
+		                     static_cast<double>(period);
+		re += static_cast<double>(v[i]) * std::cos(phase);
+		im += static_cast<double>(v[i]) * std::sin(phase);
+	}
+	return std::sqrt(re * re + im * im);
+}
+
+double thdOf(const std::vector<float>& v, size_t from, size_t period) {
+	const double fundamental = harmonicLevel(v, from, period, 1);
+	double rest = 0.0;
+	for (size_t k = 2; k <= 9; ++k) {
+		const double h = harmonicLevel(v, from, period, k);
+		rest += h * h;
+	}
+	return std::sqrt(rest) / std::max(fundamental, 1.0e-30);
+}
+
+std::vector<float> sineInput(size_t frames, size_t period, float amp) {
+	std::vector<float> v(frames);
+	for (size_t i = 0; i < frames; ++i) {
+		v[i] = amp * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * static_cast<double>(i) / static_cast<double>(period)));
+	}
+	return v;
+}
+
+} // namespace
+
+TEST_CASE("Input drive: declared, carried by the codec, and at 0 dB a gain of exactly one") {
+	const auto& d = kParamDescs[static_cast<size_t>(Param::Input)];
+	CHECK(std::string_view(d.key) == "eroder_input");
+	CHECK(std::string_view(d.name) == "Eroder Input");
+	CHECK(d.min == -24.0);
+	CHECK(d.max == 24.0);
+	CHECK(d.def == 0.0);
+	CHECK(d.unit == fx::ParamUnit::Decibel);
+	CHECK(d.modulatable);
+	CHECK(d.gateControl == -1);
+	State st;
+	st.settings.inputDb = -7.5f;
+	CHECK(stateOf(rowOf(st), static_cast<size_t>(Param::kCount)) == st);
+	CHECK(Settings {}.inputDb == 0.0f);
+	CHECK(inputGainOf(0.0f) == 1.0f); // to the bit: the chain is untouched at rest
+	CHECK(inputGainOf(12.0f) == doctest::Approx(3.98107f).epsilon(1e-5));
+	CHECK(inputGainOf(-12.0f) == doctest::Approx(0.251189f).epsilon(1e-5));
+	// AN OLD PATCH WITHOUT THE FIELD READS ZERO.
+	CHECK(stateOf(rowOf(State {}), static_cast<size_t>(Param::Input)).settings.inputDb == 0.0f);
+}
+
+TEST_CASE("Input drive: at a fully linear setting the wet scales by exactly the gain, in the engines that have a linear setting") {
+	const std::vector<float> in = whiteInput(9600, 0.1f);
+	for (const Mode mode : { Mode::Dust, Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		Settings s = dustStill();
+		s.mode = mode;
+		s.mix = 1.0f; // the dry is turned right down, so what comes out is the wet alone
+		const std::vector<float> base = renderAt(kRate, s, in);
+		REQUIRE(peakOf(base) > 0.01f); // non-vacuous: there is a wet to scale
+		for (const float db : { 12.0f, -12.0f }) {
+			CAPTURE(db);
+			Settings g = s;
+			g.inputDb = db;
+			const std::vector<float> out = renderAt(kRate, g, in);
+			std::vector<float> scaled = base;
+			const float gain = inputGainOf(db);
+			for (float& v : scaled) {
+				v *= gain;
+			}
+			const double err = relativeError(out, scaled);
+			measured("input drive linear wet relative error", err);
+			CHECK(err < 1.0e-4);
+			CHECK(relativeError(out, base) > 0.5); // and the gain is not nothing
+		}
+	}
+}
+
+TEST_CASE("Input drive: into a saturating Drive type, +12 dB makes more harmonic distortion than 0 dB") {
+	constexpr size_t period = 48;
+	const std::vector<float> in = sineInput(9600, period, 0.1f);
+	Settings s = declared();
+	s.mode = Mode::Etch;
+	s.mix = 1.0f;
+	s.slotA.amount = 0.8f;
+	s.slotA.type = DriveMode::Soft;
+	s.slotA.shape = 0.5f;
+	s.slotA.mix = 1.0f;
+	double thd[2] = {};
+	for (int k = 0; k < 2; ++k) {
+		Settings g = s;
+		g.inputDb = k == 0 ? 0.0f : 12.0f;
+		thd[k] = thdOf(renderAt(kRate, g, in), 4800, period);
+	}
+	measured("input drive thd at 0 dB", thd[0]);
+	measured("input drive thd at +12 dB", thd[1]);
+	CHECK(thd[1] > 1.5 * thd[0]);
+	CHECK(thd[1] > 0.01); // the saturation is audible at all
+}
+
+TEST_CASE("Input drive: Follow's envelope takes the signal before the gain, and the dry is not driven") {
+	const std::vector<float> in = whiteInput(4800, 0.3f);
+	float envelope[2] = {};
+	std::vector<float> dryOnly[2];
+	for (int k = 0; k < 2; ++k) {
+		Settings s = declared();
+		s.follow = 1.0f;
+		s.mix = 0.0f; // no wet: what comes out is the dry
+		s.inputDb = k == 0 ? 0.0f : 18.0f;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		dryOnly[k] = in;
+		std::vector<float> r = in;
+		e.processStereo(dryOnly[k].data(), r.data(), static_cast<int>(in.size()));
+		envelope[k] = e.envelopeForTest();
+	}
+	REQUIRE(envelope[0] > 0.01f);
+	CHECK(envelope[1] == envelope[0]);
+	CHECK(dryOnly[1] == dryOnly[0]);
+}
+
+TEST_CASE("Input drive: the Comb takes the gain too, and its tail still reaches exact zero") {
+	const std::vector<float> in = whiteInput(4800, 0.1f);
+	Settings s = defaults();
+	s.mix = 1.0f;
+	const std::vector<float> a = renderAt(kRate, s, in);
+	s.inputDb = 12.0f;
+	const std::vector<float> b = renderAt(kRate, s, in);
+	CHECK(relativeError(b, a) > 0.5);
+	CHECK(peakOf(b) > peakOf(a));
+	// A TAIL: input, then silence, at +24 dB; it must come to exactly zero.
+	Eroder e;
+	e.prepare(kRate);
+	Settings t = defaults();
+	t.inputDb = 24.0f;
+	e.setTarget(t);
+	std::vector<float> l = whiteInput(2400, 0.3f);
+	std::vector<float> r = l;
+	e.processStereo(l.data(), r.data(), static_cast<int>(l.size()));
+	bool silent = false;
+	for (int block = 0; block < 4000 && !silent; ++block) {
+		std::vector<float> z(480, 0.0f);
+		std::vector<float> zr = z;
+		e.processStereo(z.data(), zr.data(), 480);
+		silent = peakOf(z) == 0.0f && peakOf(zr) == 0.0f;
+	}
+	CHECK(silent);
 }

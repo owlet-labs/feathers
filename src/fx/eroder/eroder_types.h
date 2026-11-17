@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cmath>
 #include <cstdint>
 
 //--------------------------------------------------------------------------------------------------//
@@ -428,6 +429,7 @@ enum class Param : int {
 	SlotBMix,
 	SlotRoute, ///< Etch: B after A (Series) or both on the same input, their changes added (Parallel)
 	EmphOffset, ///< every engine: semitones from Freq to where the emphasis is tuned (Smear and the loops stay at Freq)
+	Input,      ///< every engine: decibels of gain on the signal entering the wet chain, ahead of everything in it
 
 	kCount,
 };
@@ -437,6 +439,14 @@ inline constexpr size_t kSharedParamCount = 8;
 inline constexpr size_t kEtchParamCount = 9;
 /// And the emphasis offset after those.
 inline constexpr size_t kEmphOffsetParamCount = 1;
+/// And the input drive after that.
+inline constexpr size_t kInputParamCount = 1;
+/// The input drive's range, decibels either way.
+inline constexpr double kInputMaxDb = 24.0;
+/// The linear gain of an input drive in decibels: exactly one at zero, so the chain is untouched there.
+[[nodiscard]] inline float inputGainOf(float db) noexcept {
+	return db == 0.0f ? 1.0f : static_cast<float>(std::pow(10.0, static_cast<double>(db) / 20.0));
+}
 /// The emphasis offset's range, in semitones either way.
 inline constexpr double kEmphOffsetSemitones = 48.0;
 
@@ -1315,6 +1325,24 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .centred = true,
      .shortName = "Offset",
      .suffix = "st"},
+    {.key = "eroder_input", .name = "Eroder Input",
+     .min = -kInputMaxDb,
+     .max = kInputMaxDb,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Decibel,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "A gain into the effect: it raises the level of what the wet chain hears, and how hard everything after it "
+                "is driven. The dry, Sub Thru and Follow take the signal before it",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = true,
+     .shortName = "Input"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1371,6 +1399,7 @@ struct Settings {
 	float loop = 0.0f;
 	float loopInterval = 0.0f; ///< semitones
 	float emphOffset = 0.0f;   ///< semitones from Freq to the emphasis's tuning
+	float inputDb = 0.0f;      ///< gain on the signal entering the wet chain
 	// ETCH'S SLOTS.
 	SlotSettings slotA { 0.0f, DriveMode::Slew, 0.0f, 1.0f };
 	SlotSettings slotB { 0.0f, DriveMode::Decimate, 0.0f, 1.0f };

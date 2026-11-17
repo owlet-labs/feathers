@@ -156,6 +156,9 @@ private:
 	float outGain_ = 0.0f;
 	float outGainTarget_ = 0.0f;
 	float dryGain_ = 1.0f;
+	/// THE INPUT DRIVE, glided as the other two gains are.
+	float inGain_ = 1.0f;
+	float inGainTarget_ = 1.0f;
 	float dryGainTarget_ = 1.0f;
 	float gainSmoothing_ = 1.0f;
 	bool gainsPlaced_ = false;

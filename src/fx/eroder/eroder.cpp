@@ -703,6 +703,8 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		right[i] = std::isfinite(right[i]) ? right[i] : 0.0f;
 		const float inL = left[i];
 		const float inR = right[i];
+		shared_.inputFrame(inL == 0.0f && inR == 0.0f);
+		// THE COMB'S OWN FEEDBACK IS THE BANK'S and is under one by itself, so only the outer loop is faded and gated.
 
 		// "Write input + feedback to delay (IIR comb filter topology)."
 		// INTO THE FIRMWARE'S UNITS: a full-scale input is 1/128 of the ceiling every clamp below sits at.

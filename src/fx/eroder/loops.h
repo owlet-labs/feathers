@@ -111,6 +111,13 @@ private:
 	size_t sinceSound_ = 0;
 };
 
+/// THE SILENT-INPUT RULES (`SharedSection::inputFrame`): how long the input is zero before the gate may close, before the fade
+/// starts, the fade's time constant, and the gate's level under the limiter's threshold (-120 dB).
+inline constexpr double kLoopGateSeconds = 0.02;
+inline constexpr double kLoopFadeStartSeconds = 1.0;
+inline constexpr double kLoopFadeSeconds = 0.25;
+inline constexpr float kLoopGateRelative = 1.0e-6f;
+
 class SharedSection {
 public:
 	/// ALLOCATE. Activate-time only. `withInner` gives the section the inner loop's own delay (Rust has no line of its own).
@@ -124,6 +131,9 @@ public:
 		}
 		innerLimiter_.prepare(rate_);
 		outerLimiter_.prepare(rate_);
+		gateFrames_ = static_cast<uint32_t>(kLoopGateSeconds * rate_);
+		fadeStartFrames_ = static_cast<uint32_t>(kLoopFadeStartSeconds * rate_);
+		fadeStep_ = static_cast<float>(std::exp(-1.0 / (kLoopFadeSeconds * rate_)));
 		smoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDustSmoothingSeconds * rate_)));
 		reset();
 	}
@@ -137,10 +147,14 @@ public:
 		outerLimiter_.reset();
 		outerGain_ = 0.0f;
 		placed_ = false;
+		quietFrames_ = 0;
+		loopScale_ = 1.0f;
+		gated_ = false;
 	}
 
 	/// THE FULL SCALE OF THE DOMAIN THE ENGINE WORKS IN: both limiters hold the fed-back level at or under it.
 	void setThreshold(float threshold) noexcept {
+		threshold_ = std::max(threshold, 1.0e-6f);
 		innerLimiter_.setThreshold(threshold);
 		outerLimiter_.setThreshold(threshold);
 	}
@@ -176,6 +190,43 @@ public:
 	//----------------------------------------------------------------------------------------------//
 	// PER FRAME                                                                                      //
 	//----------------------------------------------------------------------------------------------//
+
+	/// **WHAT A SILENT INPUT DOES TO THE LOOPS. Call once a frame, with whether the device's input is exactly zero.** Two things,
+	/// both counted in frames, so any host block length gives the same bits.
+	///  - THE GATE: the input has been zero for `kLoopGateSeconds` and both loops' limiter envelopes are under -120 dB of the
+	///    threshold, so what circulates is nothing: both returns are forced to zero until the input comes back. (Without it a
+	///    loop whose gain sits at one, through a curve that is steeper away from zero than at it, can hover just over the
+	///    flush floor for ever.)
+	///  - THE FADE: with the loops now allowed to total more than one, a limiter-held self-oscillation has no gain to die by.
+	///    So once the input has been zero for `kLoopFadeStartSeconds`, both loops' gains are scaled by a factor that falls
+	///    exponentially (`kLoopFadeSeconds` per e-fold) and comes back, in a few milliseconds, with the input. Their product
+	///    is under one after a fraction of a second, whatever the settings, the loop dies, and the gate then ends it exactly.
+	void inputFrame(bool inputIsZero) noexcept {
+		if (!inputIsZero) {
+			quietFrames_ = 0;
+			gated_ = false;
+			loopScale_ = std::min(1.0f, loopScale_ + (1.0f - loopScale_) * smoothing_ + 1.0e-6f);
+			return;
+		}
+		if (quietFrames_ < UINT32_MAX) {
+			++quietFrames_;
+		}
+		if (quietFrames_ >= fadeStartFrames_ && loopScale_ > 0.0f) {
+			loopScale_ *= fadeStep_;
+			if (loopScale_ < 1.0e-9f) {
+				loopScale_ = 0.0f;
+			}
+		}
+		else if (quietFrames_ < fadeStartFrames_ && loopScale_ < 1.0f) {
+			loopScale_ = std::min(1.0f, loopScale_ + (1.0f - loopScale_) * smoothing_ + 1.0e-6f);
+		}
+		if (quietFrames_ >= gateFrames_) {
+			const float floor = threshold_ * kLoopGateRelative;
+			gated_ = innerLimiter_.envelope() <= floor && outerLimiter_.envelope() <= floor;
+		}
+	}
+	/// THE FACTOR BOTH LOOPS' GAINS ARE MULTIPLIED BY (exactly 1.0f unless the input has been silent a while).
+	[[nodiscard]] float loopScale() const noexcept { return gated_ ? 0.0f : loopScale_; }
 
 	[[nodiscard]] bool emphOn() const noexcept { return !emphasis_.neutral(); }
 	/// WITH THE EMPHASIS ON AND IN THE LOOP: the filter is after the sum.
@@ -225,8 +276,9 @@ public:
 		if (outerLimiter_.gain() < 1.0f) {
 			++limitedFrames_;
 		}
-		left += l * outerGain_;
-		right += r * outerGain_;
+		const float gain = outerGain_ * loopScale();
+		left += l * gain;
+		right += r * gain;
 	}
 	void outerWrite(float left, float right) noexcept { outer_.write(flush(left), flush(right)); }
 
@@ -276,6 +328,9 @@ public:
 	[[nodiscard]] double innerFramesForTest() const noexcept { return innerFrames_; }
 	[[nodiscard]] double outerFramesForTest() const noexcept { return outerFrames_; }
 	[[nodiscard]] float outerGainForTest() const noexcept { return outerGain_; }
+	[[nodiscard]] float loopScaleForTest() const noexcept { return loopScale_; }
+	[[nodiscard]] bool gatedForTest() const noexcept { return gated_; }
+	[[nodiscard]] const LoopLimiter& innerLimiterForTest() const noexcept { return innerLimiter_; }
 	[[nodiscard]] float outerLimiterGainForTest() const noexcept { return outerLimiter_.gain(); }
 	/// THE LARGEST SAMPLE THE LAST OUTER RETURN CARRIED, after the limiter and before the gain.
 	[[nodiscard]] float lastOuterPeakForTest() const noexcept { return lastOuterPeak_; }
@@ -303,6 +358,13 @@ private:
 	float lastOuterPeak_ = 0.0f;
 	uint64_t limitedFrames_ = 0;
 	bool placed_ = false;
+	float threshold_ = 1.0f;
+	uint32_t quietFrames_ = 0;
+	uint32_t gateFrames_ = 0;
+	uint32_t fadeStartFrames_ = 0;
+	float fadeStep_ = 1.0f;
+	float loopScale_ = 1.0f;
+	bool gated_ = false;
 };
 
 } // namespace feathers::fx::eroder

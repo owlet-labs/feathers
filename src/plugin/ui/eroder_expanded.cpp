@@ -56,26 +56,6 @@ constexpr KnobSpec kKnobs[] = {
 	{ ero::Param::LoopInterval, "Interval" },
 };
 
-/// A FRAME THAT KEEPS ITS ONE CHILD THE CHILD'S OWN HEIGHT AND CENTRES IT: the Tilt | Bell strip is a chip tall, a pair's
-/// half is a knob tall.
-class CentredCell final : public visage::Frame {
-public:
-	explicit CentredCell(visage::Frame& child, float childHeight) : child_(child), childHeight_(childHeight) {
-		addChild(&child);
-		// THE CELL IS NOT A CONTROL: presses pass through to its child (the default would answer for the child).
-		setIgnoresMouseEvents(true, true);
-	}
-	void resized() override {
-		const float h = std::min(childHeight_, static_cast<float>(height()));
-		const float inset = 3.0f;
-		child_.setBounds(inset, (static_cast<float>(height()) - h) * 0.5f, std::max(0.0f, static_cast<float>(width()) - 2.0f * inset), h);
-	}
-
-private:
-	visage::Frame& child_;
-	float childHeight_;
-};
-
 using P = ero::Param;
 /// THE SHAKE'S EXTRAS, after the engine's own cells: Dust's and Rust's.
 constexpr P kShakeRow[] = { P::Step, P::Detune, P::ModFold };
@@ -122,9 +102,25 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 
 	// EMPHASIS, A PAIR: the amount and its shape (a strip of two, both shown before one is chosen). LOOP, A PAIR: the
 	// outer loop's amount and the interval it rings at.
-	shape_ = std::make_unique<SegmentedControl>(control(ero::Param::EmphShape), registry, ero::kEmphShapeNames, notifier_);
-	shapeCell_ = std::make_unique<CentredCell>(*shape_, SwitchChip::kHeight);
-	emphasisPair_ = std::make_unique<PairCell>("Emphasis", *knob(ero::Param::EmphAmount), *shapeCell_);
+	// THE EMPHASIS'S CELL, stacked as Etch's slot is: the shape's selector (Tilt, Bell), then the Offset (semitones from Freq)
+	// and, for a Bell, its Width. The same Width as the Engine group's knob, which is the Bell's alone in the Comb and Etch.
+	std::vector<ZoneSelect::ZoneName> shapes;
+	for (const char* name : ero::kEmphShapeNames) {
+		shapes.push_back({ name, {} });
+	}
+	emphasisCell_ = std::make_unique<ModeValueCell>(control(ero::Param::EmphShape), "Shape", std::move(shapes),
+	                                                [this](size_t param) {
+		                                                return param != static_cast<size_t>(ero::Param::Width)
+		                                                       || dhost_.fieldAt(device_, static_cast<size_t>(ero::Param::EmphShape)) >= 0.5f;
+	                                                });
+	emphasisCell_->setFaceDiameter(kFace);
+	(void)emphasisCell_->addFollower(static_cast<size_t>(ero::Param::EmphOffset),
+	                                 std::make_unique<ValueBox>(control(ero::Param::EmphOffset), ""), "O");
+	(void)emphasisCell_->addFollower(static_cast<size_t>(ero::Param::Width),
+	                                 std::make_unique<ValueBox>(control(ero::Param::Width), ""), "W");
+	emphasisCell_->setStacked(true);
+	(void)emphasisCell_->refresh();
+	emphasisPair_ = std::make_unique<PairCell>("Emphasis", *knob(ero::Param::EmphAmount), *emphasisCell_);
 	addChild(emphasisPair_.get());
 	loopPair_ = std::make_unique<PairCell>("Loop", *knob(ero::Param::Loop), *knob(ero::Param::LoopInterval));
 	addChild(loopPair_.get());
@@ -344,8 +340,9 @@ void EroderExpanded::refreshHonesty() {
 	const bool filtering = static_cast<double>(row[static_cast<size_t>(ero::Param::HpWet)]) > ero::kHpWetLog2Min;
 	const bool crossfades = engine() != ero::Mode::Comb || row[static_cast<size_t>(ero::Param::Blend)] >= 0.5f;
 	subThru_->setEnabled(filtering && crossfades);
-	// THE EMPHASIS'S OWN: the shape and the restore are nothing at zero.
-	shape_->setActive(emphasised);
+	// THE EMPHASIS'S OWN: the shape, the offset and the restore are nothing at zero.
+	emphasisCell_->setEnabled(emphasised);
+	(void)emphasisCell_->refresh();
 	restore_->setEnabled(emphasised);
 	// THE INTERVAL IS THE OUTER LOOP'S: at Loop 0 there is no outer delay.
 	const bool outer = row[static_cast<size_t>(ero::Param::Loop)] > 0.0f;

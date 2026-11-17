@@ -100,6 +100,22 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		if (!dust_ || e.position.y > plotFoot() + kFootHeight) {
 			return;
 		}
+		// THE EMPHASIS'S HANDLE (the window's plot only) takes a press nearer it than the band's own: the pointer's pitch moves the
+		// offset, its height the amount, both relative to where the press landed.
+		if (large_ && std::abs(e.position.x - emphasisHandleX()) <= kEdgeReach
+		    && std::abs(e.position.y - emphasisHandleY()) <= kEdgeReach) {
+			const float dEmph = std::hypot(e.position.x - emphasisHandleX(), e.position.y - emphasisHandleY());
+			const float dBand = etch_ ? 1.0e9f : std::hypot(e.position.x - hzToX(band_.freqHz), e.position.y - handleY());
+			if (dEmph < dBand) {
+				drag_.active = true;
+				drag_.emph = true;
+				drag_.startX = e.position.x;
+				drag_.startY = e.position.y;
+				drag_.startOffset = static_cast<double>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::EmphOffset)));
+				drag_.startAmount = static_cast<double>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::EmphAmount)));
+				return;
+			}
+		}
 		// (Etch has no band, so no edge handle: only Freq answers the press.)
 		DeviceControl& freq = control(ero::Param::Freq);
 		drag_.active = true;
@@ -132,6 +148,10 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 	};
 	onMouseDrag() = [this](const visage::MouseEvent& e) {
 		if (!drag_.active) {
+			return;
+		}
+		if (drag_.emph) {
+			dragEmphasis(e.position);
 			return;
 		}
 		DeviceControl& freq = control(ero::Param::Freq);
@@ -169,6 +189,17 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 	};
 	onMouseUp() = [this](const visage::MouseEvent&) {
 		if (!drag_.active) {
+			return;
+		}
+		if (drag_.emph) {
+			if (drag_.offsetGesture) {
+				control(ero::Param::EmphOffset).endGesture();
+			}
+			if (drag_.emphAmountGesture) {
+				control(ero::Param::EmphAmount).endGesture();
+			}
+			drag_ = {};
+			update();
 			return;
 		}
 		DeviceControl& freq = control(ero::Param::Freq);
@@ -225,12 +256,17 @@ void EroderPlot::offeredControls(std::vector<Offered>& out) const {
 	out.push_back({ &control(ero::Param::Freq), Road::Gesture });
 	out.push_back({ &control(ero::Param::Amount), Road::Gesture });
 	out.push_back({ &control(ero::Param::Width), Road::Gesture });
+	// THE EMPHASIS'S HANDLE, the window's plot only: x is the offset, y the amount.
+	if (large_) {
+		out.push_back({ &control(ero::Param::EmphOffset), Road::Gesture });
+		out.push_back({ &control(ero::Param::EmphAmount), Road::Gesture });
+	}
 }
 
 void EroderPlot::setModulation(ModState* mod, EditHistory* history) {
 	mod_ = mod;
 	history_ = history;
-	for (const ero::Param p : { ero::Param::Freq, ero::Param::Amount, ero::Param::Width }) {
+	for (const ero::Param p : { ero::Param::Freq, ero::Param::Amount, ero::Param::Width, ero::Param::EmphOffset, ero::Param::EmphAmount }) {
 		control(p).setModulation(mod, history);
 	}
 }
@@ -318,7 +354,7 @@ std::optional<double> EroderPlot::emphasisDb(double hz) const noexcept {
 	}
 	// THE ENGINE'S OWN CLAMPS (`EmphasisPair::set`), then its own sections.
 	const double db = std::clamp(static_cast<double>(settings_.emphAmount), -ero::kEmphasisMaxDb, ero::kEmphasisMaxDb);
-	const double centre = std::clamp(band_.freqHz, 5.0, rate_ * 0.45);
+	const double centre = std::clamp(emphasisHz(), 5.0, rate_ * 0.45);
 	const double w = 2.0 * std::numbers::pi * std::clamp(hz, 1.0, 0.499 * rate_) / rate_;
 	if (settings_.emphBell) {
 		const double octaves =
@@ -331,6 +367,48 @@ std::optional<double> EroderPlot::emphasisDb(double hz) const noexcept {
 	const std::complex<double> h = (static_cast<double>(t.b0) + static_cast<double>(t.b1) * z1)
 	                               / (1.0 + static_cast<double>(t.a1) * z1);
 	return 20.0 * std::log10(std::max(std::abs(h), 1e-12));
+}
+
+double EroderPlot::emphasisHz() const noexcept {
+	// THE ENGINE'S OWN: Freq moved by the offset (`SharedSection::emphasisHz`), not restated here.
+	return ero::SharedSection::emphasisHz(band_.freqHz, static_cast<double>(settings_.emphOffset), rate_);
+}
+
+float EroderPlot::emphasisHandleX() const noexcept { return hzToX(emphasisHz()); }
+
+float EroderPlot::emphasisHandleY() const noexcept {
+	// ON THE CENTRE LINE AT 0 dB, so it can be picked up; otherwise ON THE CURVE, at the emphasis's own tuning.
+	const double db = emphasisDb(emphasisHz()).value_or(0.0);
+	return std::clamp(emphasisY(db), plotTop(), plotFoot());
+}
+
+void EroderPlot::dragEmphasis(visage::Point at) {
+	const float dx = at.x - drag_.startX;
+	const float rise = drag_.startY - at.y;
+	// ACROSS: the offset, in semitones by the plot's own pitch axis, relative to the press and past the dead zone.
+	if (drag_.offsetGesture || std::abs(dx) > kAmountDeadZone) {
+		DeviceControl& offset = control(ero::Param::EmphOffset);
+		if (!drag_.offsetGesture) {
+			drag_.offsetGesture = true;
+			offset.beginGesture();
+		}
+		const float past = std::max(std::abs(dx) - kAmountDeadZone, 0.0f) * (dx < 0.0f ? -1.0f : 1.0f);
+		const double semitones = 12.0 * std::log2(xToHz(drag_.startX + past) / xToHz(drag_.startX));
+		offset.setValue(std::clamp(drag_.startOffset + semitones, -ero::kEmphOffsetSemitones, ero::kEmphOffsetSemitones));
+	}
+	// UP AND DOWN: the amount, the plot's quarter-height being `kEmphasisDbPerQuarter`, relative and past the dead zone.
+	if (drag_.emphAmountGesture || std::abs(rise) > kAmountDeadZone) {
+		DeviceControl& amount = control(ero::Param::EmphAmount);
+		if (!drag_.emphAmountGesture) {
+			drag_.emphAmountGesture = true;
+			amount.beginGesture();
+		}
+		const float past = std::max(std::abs(rise) - kAmountDeadZone, 0.0f) * (rise < 0.0f ? -1.0f : 1.0f);
+		const double dbPerPixel = kEmphasisDbPerQuarter / (0.25 * static_cast<double>(std::max(1.0f, plotFoot() - plotTop())));
+		amount.setValue(std::clamp(drag_.startAmount + static_cast<double>(past) * dbPerPixel, -ero::kEmphasisMaxDb,
+		                           ero::kEmphasisMaxDb));
+	}
+	update();
 }
 
 float EroderPlot::emphasisY(double db) const noexcept {
@@ -441,6 +519,9 @@ const char* EroderPlot::tooltipAt(visage::Point p) const {
 	if (!dust_) {
 		return kCombTip;
 	}
+	if (large_ && std::abs(p.x - emphasisHandleX()) < kHandleReach && std::abs(p.y - emphasisHandleY()) < kHandleReach) {
+		return tooltipOf(&control(ero::Param::EmphOffset));
+	}
 	// THE HANDLE SPEAKS FOR THE AMOUNT, the rest of the axis for Freq.
 	if (!etch_ && std::abs(p.x - hzToX(band_.freqHz)) < kHandleReach
 	    && std::abs(p.y - handleY()) < kHandleReach) {
@@ -504,6 +585,8 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 		}
 	}
 
+	// THE EMPHASIS'S HANDLE (window only), whenever the plot is a spectrum: on the centre line at 0 dB, a hollow ring; on the curve's
+	// own height when there is an emphasis, a filled one. It is drawn after the curve, below.
 	// THE EMPHASIS, where there is one: a thin curve across the axis (the filter in front of the engine), on its own colour.
 	if (emphasisDb(1000.0).has_value()) {
 		canvas.setColor(withAlpha(tokens::kGammaAxis, 0.35f));
@@ -527,6 +610,21 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 			std::snprintf(label, sizeof(label), "emphasis %+.1f dB", static_cast<double>(settings_.emphAmount));
 			canvas.setColor(tokens::kGammaAxis);
 			canvas.text(label, font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, in + 11.0f, 120.0f, 11.0f);
+		}
+	}
+	if (large_) {
+		const float hx = emphasisHandleX();
+		const float hy = emphasisHandleY();
+		const bool on = emphasisDb(1000.0).has_value();
+		canvas.setColor(on ? tokens::kGammaAxis : withAlpha(tokens::kGammaAxis, 0.6f));
+		canvas.circle(hx - 4.0f, hy - 4.0f, 8.0f);
+		canvas.setColor(kSurface);
+		canvas.circle(hx - (on ? 2.0f : 2.5f), hy - (on ? 2.0f : 2.5f), on ? 4.0f : 5.0f);
+		if (settings_.emphOffset != 0.0f) {
+			char label[24];
+			std::snprintf(label, sizeof(label), "%+.1f st", static_cast<double>(settings_.emphOffset));
+			canvas.setColor(tokens::kGammaAxis);
+			canvas.text(label, font(kKnobReadoutSize), visage::Font::kCenter, hx - 30.0f, hy - 17.0f, 60.0f, 11.0f);
 		}
 	}
 

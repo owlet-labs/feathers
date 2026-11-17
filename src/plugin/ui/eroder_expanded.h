@@ -119,7 +119,8 @@ public:
 	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
 	[[nodiscard]] SwitchChip* inLoopForTest() const { return inLoop_.get(); }
 	[[nodiscard]] SwitchChip* tapForTest() const { return tap_.get(); }
-	[[nodiscard]] SegmentedControl* shapeForTest() const { return shape_.get(); }
+	[[nodiscard]] ZoneSelect* shapeForTest() const { return &emphasisCell_->select(); }
+	[[nodiscard]] ModeValueCell* emphasisCellForTest() const { return emphasisCell_.get(); }
 	[[nodiscard]] PairCell* emphasisPairForTest() const { return emphasisPair_.get(); }
 	[[nodiscard]] PairCell* loopPairForTest() const { return loopPair_.get(); }
 	[[nodiscard]] EtchSlots& etchSlotsForTest() { return etch_; }
@@ -157,9 +158,8 @@ private:
 	std::unique_ptr<SwitchChip> restore_;
 	std::unique_ptr<SwitchChip> inLoop_;
 	std::unique_ptr<SwitchChip> tap_;
-	/// THE EMPHASIS SHAPE'S CELL: a frame that centres the Tilt | Bell strip in the pair's half.
-	std::unique_ptr<visage::Frame> shapeCell_;
-	std::unique_ptr<SegmentedControl> shape_;
+	/// THE EMPHASIS'S CELL: the shape's selector with the Offset and the Bell's Width stacked under it.
+	std::unique_ptr<ModeValueCell> emphasisCell_;
 	std::unique_ptr<PairCell> emphasisPair_;
 	std::unique_ptr<PairCell> loopPair_;
 	std::unique_ptr<ZoneCoordCell> tone_;

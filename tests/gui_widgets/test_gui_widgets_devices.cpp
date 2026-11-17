@@ -43285,7 +43285,8 @@ TEST_CASE("ERODER's window offers every shared-section control in every engine, 
 		}
 		CHECK(panel.emphasisPairForTest()->caption() == "Emphasis");
 		CHECK(panel.loopPairForTest()->caption() == "Loop");
-		CHECK(panel.shapeForTest()->parent() == &panel.emphasisPairForTest()->second());
+		CHECK(panel.shapeForTest()->parent() == panel.emphasisCellForTest());
+		CHECK(panel.emphasisCellForTest() == &panel.emphasisPairForTest()->second());
 		// NOTHING OVERLAPS AT THE WINDOW'S OWN WIDTH, counting what is inside the pairs.
 		std::vector<visage::Frame*> flat;
 		for (visage::Frame* child : eroVisible(&panel, { panel.plotForTest(), panel.modeForTest() })) {
@@ -43336,11 +43337,11 @@ TEST_CASE("ERODER's shared controls say what they do not change: Width, Restore,
 	// ---- RESTORE and SHAPE: nothing at Emphasis 0 ----
 	CHECK_FALSE(card.restoreForTest()->enabled());
 	CHECK_FALSE(panel.restoreForTest()->enabled());
-	CHECK_FALSE(panel.shapeForTest()->active());
+	CHECK_FALSE(panel.emphasisCellForTest()->enabled());
 	e.set(Param::EmphAmount, -6.0f); // either sign is an emphasis
 	CHECK(card.restoreForTest()->enabled());
 	CHECK(panel.restoreForTest()->enabled());
-	CHECK(panel.shapeForTest()->active());
+	CHECK(panel.emphasisCellForTest()->enabled());
 
 	// ---- TAP: the Comb's inner loop never stops; Dust's and Rust's is Resonance, of either sign ----
 	CHECK(card.tapForTest()->enabled());
@@ -43425,11 +43426,11 @@ TEST_CASE("ERODER's new controls write their parameter from a gesture and carry 
 	chipWrites(e.panel->restoreForTest(), Param::EmphRestore);
 	chipWrites(e.panel->inLoopForTest(), Param::EmphInLoop);
 	chipWrites(e.panel->tapForTest(), Param::FbTap);
-	// THE SHAPE: a press on the Bell's half.
+	// THE SHAPE: a press on the selector's next arrow, which is the Bell.
 	REQUIRE(eroField(e.d, Param::EmphShape) == 0.0f);
 	CHECK(std::string(e.panel->shapeForTest()->tooltipAt({ 2.0f, 2.0f })) == desc(Param::EmphShape).tooltip);
 	e.panel->shapeForTest()->onMouseDown().callback(
-	    at(e.panel->shapeForTest()->width() * 0.8f, e.panel->shapeForTest()->height() * 0.5f));
+	    at(e.panel->shapeForTest()->width() - 2.0f, e.panel->shapeForTest()->height() * 0.5f));
 	e.refresh();
 	CHECK(eroField(e.d, Param::EmphShape) == 1.0f);
 	// THE CARD'S.
@@ -44539,4 +44540,135 @@ TEST_CASE("Choice boxes: pressing the box that opened a menu closes it, in the r
 		CHECK(popup() != shown);
 		CHECK(eroField(e.d, type) == before);
 	}
+}
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// THE EMPHASIS OFFSET ON THE WINDOW: the stacked cell beside the knob, and the plot's handle.                                    //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+TEST_CASE("ERODER's emphasis offset: the cell's Offset and Width followers, and the plot's handle writes the offset across and the amount up and down") {
+	EroFaces e;
+	using P = ero::Param;
+	auto& panel = *e.panel;
+	e.mode(ero::Mode::Dust);
+	e.set(P::EmphAmount, 6.0f);
+
+	// ---- THE CELL: Offset always, Width only for a Bell ----
+	ui::ModeValueCell* cell = panel.emphasisCellForTest();
+	REQUIRE(cell != nullptr);
+	ui::ValueBox* offsetBox = cell->boxFor(static_cast<size_t>(P::EmphOffset));
+	ui::ValueBox* widthBox = cell->boxFor(static_cast<size_t>(P::Width));
+	REQUIRE(offsetBox != nullptr);
+	REQUIRE(widthBox != nullptr);
+	CHECK(std::string(offsetBox->control().desc().key) == "eroder_emph_offset");
+	CHECK(std::string(widthBox->control().desc().key) == "eroder_width");
+	CHECK(offsetBox->isVisible());
+	CHECK_FALSE(widthBox->isVisible()); // a Tilt has no width
+	e.set(P::EmphShape, 1.0f);
+	CHECK(widthBox->isVisible());
+	CHECK(offsetBox->isVisible());
+	// THE OFFSET BOX'S OWN DRAG WRITES THE PARAMETER.
+	REQUIRE(eroField(e.d, P::EmphOffset) == 0.0f);
+	const float cx = static_cast<float>(offsetBox->width()) * 0.5f;
+	const float cy = static_cast<float>(offsetBox->height()) * 0.5f;
+	offsetBox->onMouseDown().callback(at(cx, cy));
+	offsetBox->onMouseDrag().callback(at(cx, cy - 30.0f));
+	offsetBox->onMouseUp().callback(at(cx, cy - 30.0f));
+	e.refresh();
+	CHECK(eroField(e.d, P::EmphOffset) > 0.0f);
+	e.set(P::EmphOffset, 0.0f);
+	e.set(P::EmphShape, 0.0f);
+
+	// ---- THE PLOT'S HANDLE ----
+	ui::EroderPlot& plot = *panel.plotForTest();
+	const auto press = [&](float x, float y) { plot.onMouseDown().callback(at(x, y)); };
+	const auto drag = [&](float x, float y) { plot.onMouseDrag().callback(at(x, y)); };
+	const auto release = [&](float x, float y) { plot.onMouseUp().callback(at(x, y)); };
+	const float top = plot.plotTopForTest();
+	const float foot = plot.plotFootForTest();
+	const double dbPerPixel = ui::EroderPlot::kEmphasisDbPerQuarter / (0.25 * static_cast<double>(foot - top));
+
+	// AT THE CENTRE LINE: the handle sits on the 0 dB line at Freq with no emphasis, so it can be picked up.
+	e.set(P::EmphAmount, 0.0f);
+	plot.update();
+	CHECK(plot.emphasisHandleYForTest() == doctest::Approx(plot.emphasisYForTest(0.0)));
+	CHECK(plot.emphasisHandleXForTest() == doctest::Approx(plot.hzToXForTest(plot.bandForTest().freqHz)));
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		press(hx, hy);
+		drag(hx, hy - 3.0f - 20.0f); // up, past the dead zone
+		release(hx, hy - 23.0f);
+		e.refresh();
+		CHECK(eroField(e.d, P::EmphAmount) == doctest::Approx(static_cast<float>(20.0 * dbPerPixel)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphOffset) == 0.0f);
+	}
+
+	// A PRESS AND RELEASE WITH NO MOVEMENT WRITES NOTHING.
+	e.set(P::EmphAmount, 6.0f);
+	plot.update();
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		press(hx, hy);
+		release(hx, hy);
+		e.refresh();
+		CHECK(eroField(e.d, P::EmphAmount) == 6.0f);
+		CHECK(eroField(e.d, P::EmphOffset) == 0.0f);
+	}
+
+	// ACROSS: the offset the plot's own pitch axis predicts, and the amount is untouched.
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		const float dx = 60.0f;
+		press(hx, hy);
+		drag(hx + dx, hy);
+		release(hx + dx, hy);
+		e.refresh();
+		const double expected = 12.0 * std::log2(plot.xToHzForTest(hx + dx - ui::EroderPlot::kAmountDeadZone) / plot.xToHzForTest(hx));
+		CAPTURE(expected);
+		CHECK(expected > 1.0);
+		CHECK(eroField(e.d, P::EmphOffset) == doctest::Approx(static_cast<float>(expected)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphAmount) == 6.0f);
+		// THE OVERLAY MOVED WITH IT: tuned at Freq times two to the offset over twelve, and the handle follows.
+		plot.update();
+		const double want = plot.bandForTest().freqHz * std::exp2(static_cast<double>(eroField(e.d, P::EmphOffset)) / 12.0);
+		CHECK(plot.emphasisHzForTest() == doctest::Approx(want).epsilon(1e-6));
+		CHECK(plot.emphasisHandleXForTest() == doctest::Approx(plot.hzToXForTest(want)));
+		CHECK(plot.emphasisHandleXForTest() > hx);
+	}
+	// A TILT'S CURVE IS CENTRED ON THE OFFSET FREQUENCY: at its tuning the response is 3 dB under its full lift, as at Freq before.
+	{
+		const double tuned = plot.emphasisHzForTest();
+		const double atTuned = *plot.emphasisDbForTest(tuned);
+		const double atFreq = *plot.emphasisDbForTest(plot.bandForTest().freqHz);
+		CHECK(atTuned != doctest::Approx(atFreq).epsilon(1e-3));
+	}
+
+	// UP AND DOWN: the amount, and the offset is untouched.
+	{
+		const double offsetBefore = eroField(e.d, P::EmphOffset);
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		press(hx, hy);
+		drag(hx, hy + 3.0f + 18.0f); // down
+		release(hx, hy + 21.0f);
+		e.refresh();
+		CHECK(eroField(e.d, P::EmphAmount) == doctest::Approx(static_cast<float>(6.0 - 18.0 * dbPerPixel)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphOffset) == doctest::Approx(static_cast<float>(offsetBefore)));
+	}
+
+	// THE HANDLE IS THE WINDOW PLOT'S ALONE, and the plot declares its two controls for the guards.
+	std::vector<ui::ControlFace::Offered> offered;
+	plot.offeredControls(offered);
+	const auto offers = [&](P p) {
+		return std::any_of(offered.begin(), offered.end(), [&](const ui::ControlFace::Offered& o) {
+			return o.control != nullptr && std::string(o.control->desc().key) == ero::kParamDescs[eroAt(p)].key;
+		});
+	};
+	CHECK(offers(P::EmphOffset));
+	CHECK(offers(P::EmphAmount));
+	CHECK(std::find(panel.addressedParamsForTest().begin(), panel.addressedParamsForTest().end(), P::EmphOffset)
+	      != panel.addressedParamsForTest().end());
 }

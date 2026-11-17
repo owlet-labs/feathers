@@ -193,7 +193,7 @@ float OwlttExpanded::modalBottom() const {
 
 visage::Bounds OwlttExpanded::graphBounds() const {
 	const float left = inputMeterBounds().right() + kDriveGap;
-	const float right = outputMeterBounds().x() - kDriveGap;
+	const float right = outputBounds().x() - kDriveGap;
 	return { left, modalBottom() + kGroupGap, std::max(0.0f, right - left), kGraphHeight };
 }
 
@@ -202,8 +202,8 @@ visage::Bounds OwlttExpanded::driveBounds() const {
 }
 
 visage::Bounds OwlttExpanded::outputBounds() const {
-	// THE MIRROR OF THE DRIVE: the same size, the same distance from the plot and from the window's edge.
-	return { std::max(kPad, width() - kPad - kDriveWidth), modalBottom() + kGroupGap, kDriveWidth, kGraphHeight };
+	// THE MIRROR OF THE DRIVE, with the output meter to its right.
+	return { std::max(kPad, width() - kPad - OwlttLevelMeter::kWidth - kLevelGap - kDriveWidth), modalBottom() + kGroupGap, kDriveWidth, kGraphHeight };
 }
 
 visage::Bounds OwlttExpanded::inputMeterBounds() const {
@@ -211,7 +211,7 @@ visage::Bounds OwlttExpanded::inputMeterBounds() const {
 }
 
 visage::Bounds OwlttExpanded::outputMeterBounds() const {
-	return { outputBounds().x() - kLevelGap - OwlttLevelMeter::kWidth, modalBottom() + kGroupGap, OwlttLevelMeter::kWidth,
+	return { outputBounds().right() + kLevelGap, modalBottom() + kGroupGap, OwlttLevelMeter::kWidth,
 	         kGraphHeight };
 }
 

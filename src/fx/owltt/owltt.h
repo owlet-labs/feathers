@@ -190,8 +190,10 @@ public:
 		std::array<float, 3> secondChannelGr { 0.0f, 0.0f, 0.0f };
 		/// KEY TRACK: the note's Hz while it places the crossovers, 0 while it does not (reading 17).
 		float noteHz = 0.0f;
-		/// THE DEVICE'S INPUT PEAK, linear, held and falling (reading 18): the loudest sample the device was handed, before Drive and the split.
+		/// THE DEVICE'S INPUT PEAK, linear, held and falling (reading 18): the peak AFTER the Drive, which is what the bands hear.
 		float inputPeak = 0.0f;
+		/// THE OUTPUT METER'S PEAK (reading 19): after Output Gain and before the master clip, linear, held and falling.
+		float outputPeak = 0.0f;
 	};
 	using MeterCallback = std::function<void(size_t slot, const std::array<float, 3>& grDB,
 	                                        const std::array<float, 3>& inputLevelDB,
@@ -253,13 +255,14 @@ public:
 	}
 	[[nodiscard]] float outputPeakForTest() const noexcept { return outputPeak_; }
 	[[nodiscard]] float inputPeakForTest() const noexcept { return inputPeak_; }
+	[[nodiscard]] float preClipPeakForTest() const noexcept { return preClipPeak_; }
 	/// The meter extras of backlog EL, as the readings pack them: whether band `b`'s light is on, and
 	/// the combined gain reduction in dB.
 	[[nodiscard]] bool bandSaturatingForTest(size_t band) const noexcept { return bandSaturating_[band]; }
 	[[nodiscard]] float combinedGainReductionDbForTest() const noexcept { return combinedGainReductionDb_; }
 	/// How many readings this device publishes: 3 GR, 3 input, 3 output, clip, 3 saturating, combined GR, and
 	/// since backlog LQ the second channel's GR per band (14..16; 0..2 are the first channel's).
-	static constexpr size_t kReadingCount = 19;
+	static constexpr size_t kReadingCount = 20;
 	//-- OWLTT parity sweep seams (2026-09-16); each a value the audio cannot give back. ----------//
 	/// A band's stereo width after the zone table, vibe and feel have written it.
 	[[nodiscard]] float bandWidthForTest(size_t band) const noexcept { return bandWidth_[band]; }
@@ -423,8 +426,12 @@ private:
 	// Output peak with decay (firmware: outputPeak_ = max(peakThisBuffer, outputPeak_ * 0.95)).
 	float outputPeak_ = 0.0f;
 	float outputPeakThisBuffer_ = 0.0f;
-	/// THE INPUT'S, measured once per call before the slices overwrite the buffer, held and falling at the output's rate.
+	/// THE INPUT METER'S: the peak after the Drive, held and falling at the output's rate.
 	float inputPeak_ = 0.0f;
+	float inputPeakThisBuffer_ = 0.0f;
+	/// THE OUTPUT METER'S: the sum after Output Gain, before the master clip.
+	float preClipPeak_ = 0.0f;
+	float preClipPeakThisBuffer_ = 0.0f;
 
 	// Clipping detection with hold timer (firmware: clippingHoldCounter_, kIndicatorHoldBuffers=170).
 	//

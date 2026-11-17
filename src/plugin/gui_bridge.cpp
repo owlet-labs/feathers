@@ -2304,7 +2304,7 @@ void ParamBridge::publishOwlttMeters(size_t slot, const std::array<float, 3>& gr
                                     const std::array<float, 3>& inputLevelDB,
                                     const std::array<float, 3>& outputLevelDB, bool clipping,
                                     const std::array<bool, 3>& bandSaturating, float combinedGrDb,
-                                    const std::array<float, 3>* secondChannelGr, float noteHz, float inputPeak) noexcept {
+                                    const std::array<float, 3>* secondChannelGr, float noteHz, float inputPeak, float outputPeak) noexcept {
 	auto* t = fxTelemetry_.at(slot);
 	if (t == nullptr) {
 		return;
@@ -2322,6 +2322,7 @@ void ParamBridge::publishOwlttMeters(size_t slot, const std::array<float, 3>& gr
 	}
 	t->owlttNoteHz.store(std::isfinite(noteHz) ? noteHz : 0.0f, std::memory_order_relaxed);
 	t->owlttInputPeak.store(std::isfinite(inputPeak) && inputPeak > 0.0f ? inputPeak : 0.0f, std::memory_order_relaxed);
+	t->owlttOutputPeak.store(std::isfinite(outputPeak) && outputPeak > 0.0f ? outputPeak : 0.0f, std::memory_order_relaxed);
 
 	// NOT `repaintDirty_`, AND THE SIBLING TWENTY LINES UP ALREADY SAID WHY.
 	//
@@ -2363,6 +2364,7 @@ ParamBridge::OwlttMeterReading ParamBridge::owlttMeters(size_t slot) const noexc
 	}
 	reading.noteHz = t->owlttNoteHz.load(std::memory_order_relaxed);
 	reading.inputPeak = t->owlttInputPeak.load(std::memory_order_relaxed);
+	reading.outputPeak = t->owlttOutputPeak.load(std::memory_order_relaxed);
 	return reading;
 }
 

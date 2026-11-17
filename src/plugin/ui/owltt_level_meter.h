@@ -30,14 +30,13 @@
 
 #include <algorithm>
 #include <cstddef>
-
+// OWLTT'S INPUT AND OUTPUT LEVEL METERS — the small bar of the dynamics cards (`dyn_meter.h`), each to the RIGHT of its fader (Drive, Output).
 // OWLTT'S INPUT AND OUTPUT LEVEL METERS — the small bar of the dynamics cards (`dyn_meter.h`), one at each side of the
-// plot, beside the Drive and the Output faders.
 //
-// THE INPUT is the device's own peak of what it was handed (reading 18, linear, held and falling); THE OUTPUT is the
-// engine's measure of what came out (`DeviceHost::outputPeakAt`, the courtesy meter's), so it is the number the next
-// device receives. The OUTPUT METER CARRIES THE MASTER CLIP: a small LED at its top, lit in the clip colour when the
-// device's held clip flag (reading 9) or the peak at full scale says so, and in the near colour within 2 dB of it
+// THE INPUT reads the signal after the Drive (reading 18, linear, held and falling); THE OUTPUT reads the sum after Output
+// Gain and BEFORE the master clip (reading 19), so it shows an over the clipper then removes. THE OUTPUT METER CARRIES THE
+// MASTER CLIP: a small LED at its top, lit in the clip colour when the device's held clip flag (reading 9) or the peak at
+// full scale says so, and in the near colour within 2 dB of it
 // (`clip_led.h`). The per-band LEDs stay on the plot.
 //
 // NO DATA DRAWS A BARE TRACK, never a bar at zero: a host that meters nothing and a silent signal must not look alike.
@@ -47,10 +46,11 @@ namespace feathers::ui {
 class OwlttLevelMeter final : public visage::Frame {
 public:
 	enum class Side { Input, Output };
-	/// The device's reading indices this meter reads (`Owltt::kReadingCount` is 19).
+	/// The device's reading indices this meter reads (`Owltt::kReadingCount` is 20).
 	static constexpr size_t kClipReading = 9;
 	static constexpr size_t kInputPeakReading = 18;
-	static constexpr size_t kReadingsNeeded = 19;
+	static constexpr size_t kOutputPeakReading = 19;
+	static constexpr size_t kReadingsNeeded = 20;
 
 	static constexpr float kWidth = 11.0f;
 	static constexpr float kLedSize = 6.0f;
@@ -80,10 +80,9 @@ public:
 			}
 			return r;
 		}
-		float peak = 0.0f;
-		if (host_.outputPeakAt(device_, peak)) {
+		if (host_.readingCountAt(device_) >= kReadingsNeeded) {
 			r.have = true;
-			r.peak = std::max(0.0f, peak);
+			r.peak = std::max(0.0f, host_.readingAt(device_, kOutputPeakReading));
 		}
 		const bool held = host_.readingCountAt(device_) > kClipReading && host_.readingAt(device_, kClipReading) != 0.0f;
 		r.state = clipLedStateFor(r.have ? r.peak : 0.0f, held);

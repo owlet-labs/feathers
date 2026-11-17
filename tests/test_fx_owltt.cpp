@@ -3454,17 +3454,21 @@ TEST_CASE("OY: a host-moved Blend through the fade does not click — a tone at 
 	CHECK(swept < 1.1f * std::max(atZero, atTop));
 }
 
-TEST_CASE("input meter: the device's input peak is the loudest sample it was handed, read before the slices overwrite the buffer, and it falls when the input stops") {
-	// A 0.5-PEAK SINE, the peak computed from the buffer as it was handed in, independently of the device.
+TEST_CASE("input meter: the input peak is the loudest sample AFTER the Drive, held and falling when the input stops") {
+	// A 0.5-PEAK SINE at +6 dB of Drive; the expectation is restated from the buffer handed in and the dB formula, not from the device.
 	Settings s = defaultSettings();
 	s.mode = 1.0f;
 	s.enabled = true;
+	s.driveDb = 6.0f;
 	Owltt o;
 	o.prepare(48000.0f);
 	o.setTarget(s);
 	std::array<float, Owltt::kReadingCount> published {};
 	o.setMeterCallback([&](size_t, const std::array<float, 3>&, const std::array<float, 3>&, const std::array<float, 3>&,
-	                       bool, const Owltt::MeterExtras& extras) { published[18] = extras.inputPeak; });
+	                       bool, const Owltt::MeterExtras& extras) {
+		published[18] = extras.inputPeak;
+		published[19] = extras.outputPeak;
+	});
 	std::vector<float> L(512), R(512);
 	fillSine(L, R, 1000.0f, 48000.0f, 0.5f, L.size());
 	float handedIn = 0.0f;
@@ -3472,14 +3476,53 @@ TEST_CASE("input meter: the device's input peak is the loudest sample it was han
 		handedIn = std::max(handedIn, std::max(std::fabs(L[i]), std::fabs(R[i])));
 	}
 	REQUIRE(handedIn > 0.45f);
+	const float expected = handedIn * std::pow(10.0f, 6.0f / 20.0f);
 	o.processStereo(L.data(), R.data(), 512);
-	CHECK(o.inputPeakForTest() == doctest::Approx(handedIn).epsilon(1e-6));
-	CHECK(published[18] == doctest::Approx(handedIn).epsilon(1e-6));
-	// AND IT FALLS: silence for several blocks takes it well under the peak it held.
+	CHECK(o.inputPeakForTest() == doctest::Approx(expected).epsilon(1e-4));
+	CHECK(published[18] == doctest::Approx(expected).epsilon(1e-4));
+	CHECK(o.inputPeakForTest() > handedIn * 1.5f); // not the raw input
 	for (int block = 0; block < 60; ++block) {
 		std::fill(L.begin(), L.end(), 0.0f);
 		std::fill(R.begin(), R.end(), 0.0f);
 		o.processStereo(L.data(), R.data(), 512);
 	}
-	CHECK(o.inputPeakForTest() < handedIn * 0.1f);
+	CHECK(o.inputPeakForTest() < expected * 0.1f);
+}
+
+TEST_CASE("output meter: the output peak is the sum after Output Gain and BEFORE the master clip, so it shows the over the clipper removes") {
+	const auto run = [](bool clip, float outputGain, float& bufferPeak) {
+		Settings s = defaultSettings();
+		s.mode = 1.0f;
+		s.blend = 1.0f;
+		s.enabled = true;
+		s.softClip = clip;
+		s.clipOnly = 2; // Master: the output sum only
+		s.outputGain = outputGain;
+		Owltt o;
+		o.prepare(48000.0f);
+		o.setTarget(s);
+		std::vector<float> L(512), R(512);
+		fillSine(L, R, 1000.0f, 48000.0f, 3.0f, L.size());
+		o.processStereo(L.data(), R.data(), 512);
+		bufferPeak = 0.0f;
+		for (size_t i = 0; i < L.size(); ++i) {
+			bufferPeak = std::max(bufferPeak, std::max(std::fabs(L[i]), std::fabs(R[i])));
+		}
+		return o.preClipPeakForTest();
+	};
+	// THE REFERENCE: the same render with the clip OFF, whose buffer peak IS the pre-clip sum after Output Gain.
+	float unclipped = 0.0f;
+	float clipped = 0.0f;
+	const float referencePeak = run(false, 0.5f, unclipped);
+	const float meterPeak = run(true, 0.5f, clipped);
+	REQUIRE(unclipped > 1.5f);
+	CHECK(referencePeak == doctest::Approx(unclipped).epsilon(1e-5));
+	CHECK(meterPeak == doctest::Approx(unclipped).epsilon(1e-5)); // the tap does not move with the clip switch
+	CHECK(clipped < unclipped * 0.95f);                          // the clipper removed some of it
+	CHECK(meterPeak > clipped * 1.05f);                          // and the meter still reads the over
+	// AFTER Output Gain: a different gain moves the meter by the same ratio as it moves the unclipped buffer.
+	float unclippedLoud = 0.0f;
+	const float loudMeter = run(true, 0.75f, unclippedLoud);
+	CHECK(loudMeter == doctest::Approx(run(false, 0.75f, unclippedLoud)).epsilon(1e-5));
+	CHECK(loudMeter != doctest::Approx(meterPeak).epsilon(1e-3));
 }

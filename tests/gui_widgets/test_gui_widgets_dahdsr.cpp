@@ -16280,7 +16280,7 @@ TEST_CASE("the panel asks for no more canvas than it fills") {
 	// so the three (and the two level meters between them and the picture) together span the body.
 	CHECK(panel.graphBounds().width()
 	      >= want.x - 2.0f * ui::OwlttExpanded::kPad - 2.0f * (ui::OwlttExpanded::kDriveWidth + ui::OwlttExpanded::kDriveGap) - 2.0f * (ui::OwlttLevelMeter::kWidth + ui::OwlttExpanded::kLevelGap) - 0.5f);
-	CHECK(panel.outputBounds().right() - panel.driveBounds().x() >= want.x - 2.0f * ui::OwlttExpanded::kPad - 0.5f);
+	CHECK(panel.outputMeterBounds().right() - panel.driveBounds().x() >= want.x - 2.0f * ui::OwlttExpanded::kPad - 0.5f);
 }
 
 TEST_CASE("a bar and its handle move together when the global moves") {
@@ -21173,7 +21173,7 @@ TEST_CASE("backlog EL: the OWLTT graph reads the band lights and the combined ga
 	FilterFixture f;
 	REQUIRE(f.bridge.addFxDevice(fx::owltt::kTraits.tag) == 1);
 	ui::OwlttGraph graph { f.deviceHost, f.bridge.fxDeviceAt(1) };
-	REQUIRE(f.deviceHost.readingCountAt(f.bridge.fxDeviceAt(1)) == 19); // + input peak (18), second-channel GR, backlog LQ
+	REQUIRE(f.deviceHost.readingCountAt(f.bridge.fxDeviceAt(1)) == 20); // + input peak (18), pre-clip output peak (19), second-channel GR, backlog LQ
 
 	// THE OLD FIVE ARGUMENTS ONLY: the extras default dark and zero, as a device publishing ten does.
 	f.bridge.publishOwlttMeters(1, { -0.5f, 0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false);
@@ -21197,17 +21197,16 @@ TEST_CASE("backlog EL: the OWLTT graph reads the band lights and the combined ga
 	CHECK_FALSE(graph.update()); // nothing moved since
 }
 
-TEST_CASE("backlog ML: OWLTT's master clip light, on the output level meter, has three states — near from the device's courtesy output peak (-2 dBFS to just under 0), clip from its own held flag or at full scale, and only two when nothing meters it") {
-	// OWLTT publishes its clip as a flag, not a peak, so the near state reads the engine's output peak (backlog MK).
+TEST_CASE("backlog ML: OWLTT's master clip light, on the output level meter, has three states — near from the pre-clip output peak (-2 dBFS to just under 0), clip from its own held flag or at full scale") {
 	FilterFixture f;
 	REQUIRE(f.bridge.addFxDevice(fx::owltt::kTraits.tag) == 1);
 	ui::OwlttLevelMeter meter { f.deviceHost, f.bridge.fxDeviceAt(1), ui::OwlttLevelMeter::Side::Output };
 	const auto stateAt = [&](double dbfs, bool flag) {
-		f.bridge.publishOwlttMeters(1, { 0.0f, 0.0f, 0.0f }, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, flag);
-		f.bridge.publishFxOutputPeak(1, static_cast<float>(std::pow(10.0, dbfs / 20.0)));
+		f.bridge.publishOwlttMeters(1, { 0.0f, 0.0f, 0.0f }, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, flag, { false, false, false },
+		                            0.0f, nullptr, 0.0f, 0.0f, static_cast<float>(std::pow(10.0, dbfs / 20.0)));
 		return meter.read().state;
 	};
-	// UNMETERED (nothing published on the output channel): the old two states, from the flag alone.
+	// NO PEAK PUBLISHED: the flag alone decides.
 	f.bridge.publishOwlttMeters(1, { 0.0f, 0.0f, 0.0f }, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false);
 	CHECK(meter.read().state == ui::ClipLedState::Normal);
 	f.bridge.publishOwlttMeters(1, { 0.0f, 0.0f, 0.0f }, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, true);

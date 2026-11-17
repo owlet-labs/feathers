@@ -333,7 +333,7 @@ visage::Bounds OwlttCard::crossoverBounds() const {
 	// RIGHT OF THE DRIVE BAR (backlog NB), which takes its width out of the picture's, and LEFT OF THE OUTPUT FADER, which
 	// takes the same width from the right. Both sides, so the picture stays centred between its two bars.
 	const float left = inputMeterBounds().right() + kDriveGap;
-	const float right = outputMeterBounds().x() - kDriveGap;
+	const float right = outputBounds().x() - kDriveGap;
 	return {left, bodyTopEdge() + kRowGap, std::max(0.0f, right - left), kCrossoverHeight};
 }
 
@@ -342,8 +342,9 @@ visage::Bounds OwlttCard::driveBounds() const {
 }
 
 visage::Bounds OwlttCard::outputBounds() const {
-	// THE MIRROR OF THE DRIVE: the same width, the same height, the same distance from the card's edge.
-	return {bodyLeft() + bodyWidth() - kPad - kDriveWidth, bodyTopEdge() + kRowGap, kDriveWidth, kCrossoverHeight};
+	// THE MIRROR OF THE DRIVE, with the output meter to its right: the fader stands a meter's width in from the card's edge.
+	return {bodyLeft() + bodyWidth() - kPad - OwlttLevelMeter::kWidth - kLevelGap - kDriveWidth, bodyTopEdge() + kRowGap, kDriveWidth,
+	        kCrossoverHeight};
 }
 
 visage::Bounds OwlttCard::inputMeterBounds() const {
@@ -351,7 +352,7 @@ visage::Bounds OwlttCard::inputMeterBounds() const {
 }
 
 visage::Bounds OwlttCard::outputMeterBounds() const {
-	return {outputBounds().x() - kLevelGap - OwlttLevelMeter::kWidth, bodyTopEdge() + kRowGap, OwlttLevelMeter::kWidth,
+	return {outputBounds().right() + kLevelGap, bodyTopEdge() + kRowGap, OwlttLevelMeter::kWidth,
 	        kCrossoverHeight};
 }
 

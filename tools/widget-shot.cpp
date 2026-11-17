@@ -1770,7 +1770,7 @@ int main(int argc, char** argv) {
 			const std::array<float, 3> second = three(14);
 			bridge.publishOwlttMeters(slot, three(0), three(3), three(6), meterArg[9] >= 0.5f,
 			                          { meterArg[10] >= 0.5f, meterArg[11] >= 0.5f, meterArg[12] >= 0.5f }, meterArg[13], &second,
-			                          meterArg[17], meterArg.size() > 18 ? meterArg[18] : 0.0f);
+			                          meterArg[17], meterArg.size() > 18 ? meterArg[18] : 0.0f, meterArg.size() > 19 ? meterArg[19] : 0.0f);
 		}
 		std::printf("meter:   ");
 		for (const float v : meterArg) {
@@ -4016,7 +4016,8 @@ int main(int argc, char** argv) {
 			audio.setReadingsSink(held, device::ReadingsSink { &hop, [](void* context, const float* v, size_t n) {
 				                                                  auto* h = static_cast<Hop*>(context);
 				                                                  if (h->road == 1 && n >= 18) {
-														const float inputPeak = n >= 19 ? v[18] : 0.0f;
+														const float inputPeak = n >= 20 ? v[18] : 0.0f;
+														const float outputPeak = n >= 20 ? v[19] : 0.0f;
 					                                                  const auto three = [&](size_t at) {
 						                                                  return std::array<float, 3> { v[at], v[at + 1], v[at + 2] };
 					                                                  };
@@ -4024,7 +4025,7 @@ int main(int argc, char** argv) {
 					                                                  h->bridge->publishOwlttMeters(
 					                                                      h->slot, three(0), three(3), three(6), v[9] >= 0.5f,
 					                                                      { v[10] >= 0.5f, v[11] >= 0.5f, v[12] >= 0.5f }, v[13],
-					                                                      &second, v[17], inputPeak);
+					                                                      &second, v[17], inputPeak, outputPeak);
 				                                                  }
 				                                                  else if (h->road == 2 && n >= 2) {
 					                                                  h->bridge->publishAutomodReadings(h->slot, v[0], v[1]);
@@ -4090,14 +4091,6 @@ int main(int argc, char** argv) {
 				audio.setSidechain(held, sideL.data(), sideR.data(), kBlock, gate);
 			}
 			audio.processStereo(held, l.data(), r.data(), kBlock);
-			// THE ENGINE'S COURTESY OUTPUT METER, which this tool has no engine to measure: the peak of what the device put out.
-			{
-				float out = 0.0f;
-				for (int i = 0; i < kBlock; ++i) {
-					out = std::max(out, std::max(std::fabs(l[static_cast<size_t>(i)]), std::fabs(r[static_cast<size_t>(i)])));
-				}
-				bridge.publishFxOutputPeak(slot, out);
-			}
 			frame += kBlock;
 			if (b % 4 == 3) {
 				bridge.refresh();

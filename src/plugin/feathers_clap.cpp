@@ -174,7 +174,7 @@ public:
 				                                     const feathers::fx::owltt::Owltt::MeterExtras& extras) {
 					bridge_.publishOwlttMeters(slot, grDB, inputLevelDB, outputLevelDB, clipping,
 					                           extras.bandSaturating, extras.combinedGrDb, &extras.secondChannelGr,
-					                           extras.noteHz);
+					                           extras.noteHz, extras.inputPeak, extras.outputPeak);
 				};
 				// THIS CLOSURE IS CONSTRUCTED INTO A `std::function` ON THE AUDIO THREAD — the connector
 				// runs from `FxRunner::sync`, once per OWLTT slot, every block. libstdc++ gives

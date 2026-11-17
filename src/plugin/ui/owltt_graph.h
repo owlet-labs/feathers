@@ -19,7 +19,6 @@
 
 #include "backplane/device_host.h"
 #include "fx/owltt/owltt_types.h"
-#include "plugin/ui/clip_led.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/frame_watchers.h"
 #include "plugin/ui/control_face.h"
@@ -99,7 +98,6 @@ public:
 		std::array<float, 3> grDB { 0.0f, 0.0f, 0.0f };
 		std::array<float, 3> inputLevelDB { 0.0f, 0.0f, 0.0f };
 		std::array<float, 3> outputLevelDB { 0.0f, 0.0f, 0.0f };
-		bool clipping = false;
 		/// BACKLOG EL: a light per band while its clipper is working (readings 10..12), and the mean
 		/// |gain change| across the bands in dB (reading 13). Absent from a publisher that sends the
 		/// old ten, in which case they read off and zero.
@@ -108,10 +106,7 @@ public:
 		/// BACKLOG LQ: each band's SECOND channel's gain reduction (readings 14..16 — R, or S in M/S); `grDB`
 		/// is the first channel's. A publisher that sends fewer has one linked gain, so this copies `grDB`.
 		std::array<float, 3> grSecond { 0.0f, 0.0f, 0.0f };
-		/// BACKLOG ML: THE CLIP SQUARE'S THREE STATES — `clip_led.h` over the device's courtesy output peak (backlog MK,
-		/// `DeviceHost::outputPeakAt`) and OWLTT's own held `clipping`, which alone still makes it a clip. Normal when the
-		/// host meters nothing, so the square is then exactly the old two-state one.
-		ClipLedState clipState = ClipLedState::Normal;
+		// THE MASTER CLIP LIGHT IS NOT THE PLOT'S: it lives on the output level meter (`owltt_level_meter.h`).
 		friend bool operator==(const Meters&, const Meters&) = default;
 	};
 	Meters meters() const;
@@ -247,9 +242,8 @@ public:
 	/// bars are confined below the lane rather than merely losing to it.
 	static constexpr float kRailHeight = 16.0f;
 	visage::Bounds rail() const;
-	/// The combined-reduction readout's rectangle and the clip square beside it, and a strip header's (`which` 0 RATIO, 1 LEVEL).
+	/// The combined-reduction readout's rectangle beside the plot's top right corner, and a strip header's (`which` 0 RATIO, 1 LEVEL).
 	visage::Bounds readoutBounds() const;
-	visage::Bounds clipSquare() const;
 	visage::Bounds stripHeader(size_t band, size_t which) const;
 
 	/// WHERE THE BARS, STRIPS AND METERS LIVE — the plot minus the lane. Everything that was written

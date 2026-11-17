@@ -36,6 +36,7 @@
 #include "plugin/ui/likes_log.h"
 #include "plugin/ui/pattern_likes_log.h"
 #include "plugin/ui/inject_card.h"
+#include "plugin/ui/owltt_level_meter.h"
 #include "plugin/ui/dyn_meter.h"
 #include "plugin/ui/expanded_canvas.h"
 #include "plugin/ui/stage_rail.h"
@@ -9449,7 +9450,7 @@ TEST_CASE("DG: after a reorder, a device's card reads ITS OWN readings through t
 	const auto owlttReadsItsOwn = [&] {
 		const size_t position = bridge.fxSlotOf(owlttId);
 		const float p = static_cast<float>(position);
-		REQUIRE(host.readingCountAt(owlttId) == 18); // ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
+		REQUIRE(host.readingCountAt(owlttId) == 20); // ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
 		CHECK(host.readingAt(owlttId, 0) == -1.0f - p);
 		CHECK(host.readingAt(owlttId, 3) == -10.0f - p);
 		CHECK(host.readingAt(owlttId, 6) == -4.0f - p);
@@ -32180,7 +32181,8 @@ TEST_CASE("NB: OWLTT's Drive is a vertical bar LEFT of the graph on the card and
 	const auto checkBeside = [](const visage::Bounds& b, const visage::Bounds& plot) {
 		CHECK(b.width() >= 20.0f);
 		CHECK(b.right() <= plot.x());
-		CHECK(plot.x() - b.right() < 12.0f);
+		// NEAR IT: only the level meter (and its gap) stands between the fader and the picture.
+		CHECK(plot.x() - b.right() < 12.0f + ui::OwlttLevelMeter::kWidth + 4.0f);
 		CHECK(b.y() == doctest::Approx(plot.y()));
 		CHECK(b.height() == doctest::Approx(plot.height()));
 		CHECK(b.x() >= 0.0f);
@@ -32255,8 +32257,9 @@ TEST_CASE("NB: OWLTT's Drive is a vertical bar LEFT of the graph on the card and
 	CHECK(outBar->bounds().height() == doctest::Approx(windowBar->bounds().height()));
 	CHECK(outBar->bounds().y() == doctest::Approx(windowBar->bounds().y()));
 	const visage::Bounds plotB = panel.graphBounds();
-	CHECK(plotB.x() - windowBar->bounds().right() == doctest::Approx(outBar->bounds().x() - plotB.right()));
-	CHECK(windowBar->bounds().x() == doctest::Approx(want.x - outBar->bounds().right()));
+	// THE LEFT GAP HOLDS THE INPUT METER; the right gap holds none (the output meter is beyond the fader).
+	CHECK(plotB.x() - windowBar->bounds().right() == doctest::Approx(outBar->bounds().x() - plotB.right() + ui::OwlttLevelMeter::kWidth + ui::OwlttExpanded::kLevelGap));
+	CHECK(windowBar->bounds().x() == doctest::Approx(want.x - panel.outputMeterBounds().right()));
 	CHECK(outBar->bounds().x() >= plotB.right());
 	CHECK(std::string_view(outBar->control().desc().key) == "output_gain");
 	CHECK(outBar->caption() == "Output");
@@ -32305,7 +32308,7 @@ TEST_CASE("OWLTT's card carries Output: a fader right of the picture, mirroring 
 	CHECK(bar.height() == doctest::Approx(plot.height()));
 	CHECK(bar.y() == doctest::Approx(plot.y()));
 	CHECK(bar.x() >= plot.right());
-	CHECK(bar.x() - plot.right() == doctest::Approx(plot.x() - drive.right()));
+	CHECK(bar.x() - plot.right() + ui::OwlttLevelMeter::kWidth + ui::OwlttCard::kLevelGap == doctest::Approx(plot.x() - drive.right()));
 	CHECK(bar.right() <= static_cast<float>(card->width()) + 0.5f);
 	for (const auto& knob : card->knobsForTest()) {
 		CHECK_FALSE(lqOverlap(bar, knob->bounds()));
@@ -32421,7 +32424,7 @@ TEST_CASE("LQ: OWLTT's band meters read each channel's own gain reduction off th
 	const std::array<float, 3> second { 0.0f, -0.125f, -0.75f };
 	d.f.bridge.publishOwlttMeters(d.slot, first, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false,
 	                              { false, false, false }, 3.0f, &second);
-	REQUIRE(host.readingCountAt(d.device) == 18); // `Owltt::kReadingCount` since Key Track (17 since LQ)
+	REQUIRE(host.readingCountAt(d.device) == 20); // `Owltt::kReadingCount` since Key Track (17 since LQ)
 	for (size_t b = 0; b < 3; ++b) {
 		CAPTURE(b);
 		CHECK(host.readingAt(d.device, b) == first[b]);
@@ -41669,7 +41672,6 @@ TEST_CASE("OWLTT: the combined-reduction readout has a place of its own — no s
 			REQUIRE(readout.width() > 0.0f);
 			CHECK(readout.x() >= 0.0f);
 			CHECK(readout.right() <= graph->width());
-			CHECK_FALSE(overlap(readout, graph->clipSquare()));
 			const ui::OwlttGraph::BottomText t = graph->bottomText();
 			for (const visage::Bounds& label : t.frequency) {
 				CHECK_FALSE(overlap(readout, label));
@@ -41680,7 +41682,6 @@ TEST_CASE("OWLTT: the combined-reduction readout has a place of its own — no s
 						CAPTURE(band);
 						CAPTURE(which);
 						CHECK_FALSE(overlap(readout, graph->stripHeader(band, which)));
-						CHECK_FALSE(overlap(graph->clipSquare(), graph->stripHeader(band, which)));
 						++headersChecked;
 					}
 				}
@@ -45540,4 +45541,147 @@ TEST_CASE("ERODER's emphasis offset: the cell's Offset and Width followers, and 
 	CHECK(offers(P::EmphAmount));
 	CHECK(std::find(panel.addressedParamsForTest().begin(), panel.addressedParamsForTest().end(), P::EmphOffset)
 	      != panel.addressedParamsForTest().end());
+}
+
+TEST_CASE("OWLTT level meters: each sits to the right of its fader — the input reads the signal after Drive, the output the sum after Output Gain and before the master clip — and the master clip light is the output meter's") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::OwlttCard* card = d.card;
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+
+	constexpr float kDriveDb = 6.0f;
+	const auto settings = [&](bool clip) {
+		ow::Settings s;
+		s.mode = 1.0f;
+		s.threshold = 0.5f;
+		s.ratio = 0.0f;
+		s.bandwidth = 0.5f;
+		s.upDownSkew = 0.5f;
+		s.attack = 0.25f;
+		s.release = 0.25f;
+		s.lowCrossover = 200.0f;
+		s.highCrossover = 2000.0f;
+		s.outputGain = 0.5f;
+		s.blend = 1.0f;
+		s.enabled = true;
+		s.driveDb = kDriveDb;
+		s.softClip = clip;
+		s.clipOnly = 2; // the master clip only
+		return s;
+	};
+	const auto sine = [](std::vector<float>& l, std::vector<float>& r, float amplitude, int block) {
+		for (size_t i = 0; i < l.size(); ++i) {
+			l[i] = r[i] = amplitude * static_cast<float>(std::sin(2.0 * 3.14159265358979 * 1000.0 *
+			                                                      static_cast<double>(block * 512 + static_cast<int>(i)) / 48000.0));
+		}
+	};
+	// THE DEVICE UNDER TEST publishes through the bridge as the plugin does; THE REFERENCE is the same device with the master clip
+	// OFF, whose rendered buffer peak is the pre-clip sum after Output Gain, computed from the buffer and not from the meter's tap.
+	ow::Owltt dsp;
+	dsp.prepare(48000.0f);
+	dsp.setTarget(settings(true));
+	dsp.setMeterCallback([&](size_t, const std::array<float, 3>& gr, const std::array<float, 3>& in,
+	                         const std::array<float, 3>& out, bool clipping, const ow::Owltt::MeterExtras& extras) {
+		d.f.bridge.publishOwlttMeters(d.slot, gr, in, out, clipping, extras.bandSaturating, extras.combinedGrDb,
+		                              &extras.secondChannelGr, extras.noteHz, extras.inputPeak, extras.outputPeak);
+	});
+	ow::Owltt reference;
+	reference.prepare(48000.0f);
+	reference.setTarget(settings(false));
+	struct Render {
+		float handedIn = 0.0f;
+		float clippedPeak = 0.0f;
+		float preClipPeak = 0.0f;
+	};
+	const auto render = [&](float amplitude, int blocks) {
+		Render r;
+		std::vector<float> L(512), R(512), rl(512), rr(512);
+		for (int b = 0; b < blocks; ++b) {
+			sine(L, R, amplitude, b);
+			rl = L;
+			rr = R;
+			r.handedIn = 0.0f;
+			for (const float v : L) {
+				r.handedIn = std::max(r.handedIn, std::fabs(v));
+			}
+			dsp.processStereo(L.data(), R.data(), 512);
+			reference.processStereo(rl.data(), rr.data(), 512);
+			r.clippedPeak = 0.0f;
+			r.preClipPeak = 0.0f;
+			for (size_t i = 0; i < L.size(); ++i) {
+				r.clippedPeak = std::max(r.clippedPeak, std::max(std::fabs(L[i]), std::fabs(R[i])));
+				r.preClipPeak = std::max(r.preClipPeak, std::max(std::fabs(rl[i]), std::fabs(rr[i])));
+			}
+		}
+		return r;
+	};
+
+	for (ui::OwlttLevelMeter* in : { card->inputMeterForTest(), panel.inputMeterForTest() }) {
+		REQUIRE(in != nullptr);
+		CHECK_FALSE(in->hasLed()); // the input has no clip light
+	}
+	for (ui::OwlttLevelMeter* out : { card->outputMeterForTest(), panel.outputMeterForTest() }) {
+		REQUIRE(out != nullptr);
+		CHECK(out->hasLed());
+	}
+	const float driveGain = std::pow(10.0f, kDriveDb / 20.0f);
+
+	// A QUIET SINE: the input meter reads input x Drive, the output the pre-clip sum, and nothing is near the clip.
+	const Render quiet = render(0.1f, 6);
+	REQUIRE(quiet.handedIn > 0.09f);
+	for (auto [in, out] : { std::pair { card->inputMeterForTest(), card->outputMeterForTest() },
+	                        std::pair { panel.inputMeterForTest(), panel.outputMeterForTest() } }) {
+		CAPTURE(in == card->inputMeterForTest());
+		(void)in->update();
+		(void)out->update();
+		CHECK(in->read().have);
+		CHECK(in->read().peak == doctest::Approx(quiet.handedIn * driveGain).epsilon(1e-4));
+		CHECK(out->read().peak == doctest::Approx(quiet.preClipPeak).epsilon(1e-4));
+		CHECK(in->barFraction() == doctest::Approx(ui::dyn_meter::levelFraction(quiet.handedIn * driveGain)).epsilon(1e-4));
+		CHECK(out->barFraction() == doctest::Approx(ui::dyn_meter::levelFraction(quiet.preClipPeak)).epsilon(1e-4));
+		CHECK(out->ledState() == ui::ClipLedState::Normal);
+	}
+	CHECK(card->graph()->meters().bandSaturating == std::array<bool, 3> { false, false, false });
+
+	// DRIVEN PAST 0 dBFS: the output meter reads ABOVE full scale while the rendered output is clipped below it, and its light is the
+	// clip; the input's light is not. The bands' lights are the graph's.
+	const Render hot = render(1.5f, 40);
+	REQUIRE(hot.preClipPeak > 1.0f);
+	CHECK(hot.clippedPeak < hot.preClipPeak * 0.95f); // the clipper removed some of what the meter reads
+	for (auto [in, out] : { std::pair { card->inputMeterForTest(), card->outputMeterForTest() },
+	                        std::pair { panel.inputMeterForTest(), panel.outputMeterForTest() } }) {
+		CHECK(in->update());
+		CHECK(out->update());
+		CHECK(out->ledState() == ui::ClipLedState::Clip);
+		CHECK(in->ledState() == ui::ClipLedState::Normal);
+		CHECK(out->read().peak == doctest::Approx(hot.preClipPeak).epsilon(1e-4));
+		CHECK(out->read().peak > 1.0f);
+		CHECK(in->read().peak == doctest::Approx(hot.handedIn * driveGain).epsilon(1e-4));
+	}
+	const auto bands = card->graph()->meters().bandSaturating;
+	CHECK((bands[0] || bands[1] || bands[2])); // the per-band lights still say which band drives it
+
+	// WHERE THEY SIT: each to the RIGHT of its fader — Drive, input meter, plot, Output, output meter — as tall as the picture.
+	const auto beside = [](const visage::Bounds& drive, const visage::Bounds& inMeter, const visage::Bounds& plot,
+	                       const visage::Bounds& output, const visage::Bounds& outMeter) {
+		CHECK(drive.right() <= inMeter.x());
+		CHECK(inMeter.x() - drive.right() < 8.0f);
+		CHECK(inMeter.right() <= plot.x());
+		CHECK(plot.right() <= output.x());
+		CHECK(output.right() <= outMeter.x());
+		CHECK(outMeter.x() - output.right() < 8.0f);
+		CHECK(inMeter.y() == doctest::Approx(plot.y()));
+		CHECK(inMeter.height() == doctest::Approx(plot.height()));
+		CHECK(outMeter.y() == doctest::Approx(plot.y()));
+		CHECK(outMeter.height() == doctest::Approx(plot.height()));
+	};
+	beside(card->driveBounds(), card->inputMeterBounds(), card->crossoverBounds(), card->outputBounds(),
+	       card->outputMeterBounds());
+	beside(panel.driveBounds(), panel.inputMeterBounds(), panel.graphBounds(), panel.outputBounds(),
+	       panel.outputMeterBounds());
+	CHECK(card->outputMeterBounds().right() <= card->width());
 }

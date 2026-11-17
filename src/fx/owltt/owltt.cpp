@@ -1071,6 +1071,8 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		}
 		const float inL = left[i] * drive;
 		const float inR = right[i] * drive;
+		// THE INPUT METER (reading 18) reads the signal AFTER the Drive, which is what the bands hear.
+		inputPeakThisBuffer_ = std::max(inputPeakThisBuffer_, std::max(std::abs(inL), std::abs(inR)));
 		CrossoverBands bandsL {}, bandsR {};
 		switch (crossoverType) {
 		case 1: // AP 6dB
@@ -1334,6 +1336,9 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		sumL *= smoothedOutputGain_;
 		sumR *= smoothedOutputGain_;
 
+		// THE OUTPUT METER (reading 19) reads HERE: after Output Gain, BEFORE the master clip, so it shows an over the clipper removes.
+		preClipPeakThisBuffer_ = std::max(preClipPeakThisBuffer_, std::max(std::abs(sumL), std::abs(sumR)));
+
 		// Soft clip at output — under the same switch as the bands.
 		if (target_.softClip && target_.clipOnly != 1) { // the sum stage: Master and Both, not Bands
 			sumL = softClip(sumL, kOutputClipKnee);
@@ -1392,6 +1397,13 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		outputPeak_ = std::max(outputPeakThisBuffer_, outputPeak_ * static_cast<float>(keep));
 	}
 	outputPeakThisBuffer_ = 0.0f;
+	{
+		const float keep = static_cast<float>(std::pow(0.95, static_cast<double>(frames) / 256.0));
+		inputPeak_ = std::max(inputPeakThisBuffer_, inputPeak_ * keep);
+		preClipPeak_ = std::max(preClipPeakThisBuffer_, preClipPeak_ * keep);
+	}
+	inputPeakThisBuffer_ = 0.0f;
+	preClipPeakThisBuffer_ = 0.0f;
 
 	updateMeters(frames);
 }
@@ -1511,7 +1523,7 @@ void Owltt::updateMeters(int frames) {
 		}
 		combinedGainReductionDb_ = total / 3.0f;
 	}
-	const MeterExtras extras { bandSaturating_, combinedGainReductionDb_, grSecond, static_cast<float>(noteHzReading()) };
+	const MeterExtras extras { bandSaturating_, combinedGainReductionDb_, grSecond, static_cast<float>(noteHzReading()), inputPeak_, preClipPeak_ };
 	meterCallback_(slot_, grDB, inputLevelDB, outputLevelDB, clipping_, extras);
 }
 
@@ -1591,6 +1603,8 @@ const device::AudioOps kAudioOps {
 			values[9] = clipping ? 1.0f : 0.0f;
 			values[13] = extras.combinedGrDb;
 			values[17] = extras.noteHz;
+			values[18] = extras.inputPeak;
+			values[19] = extras.outputPeak;
 			if (publish != nullptr) {
 				publish(context, values, Owltt::kReadingCount);
 			}

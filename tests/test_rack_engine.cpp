@@ -4385,13 +4385,17 @@ TEST_CASE("a metered device's readings reach the engine by the one road, and a b
 	SUBCASE("OWLTT: ten readings, and the input level moves under signal") {
 		const auto [slot, loud] = metered(owltt::kTraits.tag, true);
 		const auto [slotQuiet, quiet] = metered(owltt::kTraits.tag, false);
-		REQUIRE(loud.size() == 18); // ten meters + three band lights + combined GR (backlog EL) + the second channel's GR per band (LQ) + Key Track's note
-		REQUIRE(quiet.size() == 18); // backlog EL, LQ, Key Track's note
+		REQUIRE(loud.size() == 20); // ten meters + three band lights + combined GR (backlog EL) + the second channel's GR per band (LQ) + Key Track's note + the input peak (18)
+		REQUIRE(quiet.size() == 20); // backlog EL, LQ, Key Track's note, the input peak
 		bool moved = false;
 		for (size_t band = 0; band < 3; ++band) {
 			moved = moved || loud[3 + band] > quiet[3 + band];
 		}
 		CHECK(moved);
+		CHECK(loud[18] > 0.0f); // THE INPUT PEAK (18) is the signal the device was handed
+		CHECK(quiet[18] == 0.0f);
+		CHECK(loud[19] > 0.0f); // THE OUTPUT PEAK (19), before the master clip
+		CHECK(quiet[19] == 0.0f);
 	}
 	SUBCASE("bus utility: its declared count") {
 		const auto [slot, loud] = metered(fx::busutil::kTraits.tag, true);
@@ -4426,7 +4430,7 @@ TEST_CASE("a metered device's readings reach the engine by the one road, and a b
 			bridge.publish(rack);
 		}
 		// SEVENTEEN since backlog LQ (`Owltt::kReadingCount`): ten meters, three band lights, combined GR, second-channel GR.
-		REQUIRE(bridge.readingCountAt(id) == 18); // + Key Track's note (17)
+		REQUIRE(bridge.readingCountAt(id) == 20); // + the input peak (18), the pre-clip output peak (19); Key Track's note (17)
 		for (size_t i = 0; i < 17; ++i) {
 			CAPTURE(i);
 			CHECK(bridge.readingAt(id, i) == doctest::Approx(rack.readingAt(slot, i)));

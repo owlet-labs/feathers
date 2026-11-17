@@ -152,6 +152,11 @@ OwlttCard::OwlttCard(backplane::DeviceHost& host, WidgetRegistry& registry, Devi
 		output_->setAnnouncer([this](const std::string& line) { notifier_->say(line); });
 	}
 	addChild(output_.get());
+	// THE LEVEL METERS, one each side of the picture: the input beside the Drive, the output (and the master clip LED) beside the Output.
+	inMeter_ = std::make_unique<OwlttLevelMeter>(host_, device_, OwlttLevelMeter::Side::Input);
+	outMeter_ = std::make_unique<OwlttLevelMeter>(host_, device_, OwlttLevelMeter::Side::Output);
+	addChild(inMeter_.get());
+	addChild(outMeter_.get());
 
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		// UNGATED NOW. This used to run only when `hitTestThreshold` said kNone, because one press
@@ -275,6 +280,12 @@ void OwlttCard::foldedChanged() {
 	if (output_ != nullptr) {
 		output_->setVisible(!folded_);
 	}
+	if (inMeter_ != nullptr) {
+		inMeter_->setVisible(!folded_);
+	}
+	if (outMeter_ != nullptr) {
+		outMeter_->setVisible(!folded_);
+	}
 }
 
 void OwlttCard::setModulation(ModState* state, EditHistory* history) {
@@ -321,8 +332,8 @@ visage::Bounds OwlttCard::headBounds() const {
 visage::Bounds OwlttCard::crossoverBounds() const {
 	// RIGHT OF THE DRIVE BAR (backlog NB), which takes its width out of the picture's, and LEFT OF THE OUTPUT FADER, which
 	// takes the same width from the right. Both sides, so the picture stays centred between its two bars.
-	const float left = bodyLeft() + kPad + kDriveWidth + kDriveGap;
-	const float right = bodyLeft() + bodyWidth() - kPad - kDriveWidth - kDriveGap;
+	const float left = inputMeterBounds().right() + kDriveGap;
+	const float right = outputBounds().x() - kDriveGap;
 	return {left, bodyTopEdge() + kRowGap, std::max(0.0f, right - left), kCrossoverHeight};
 }
 
@@ -331,14 +342,27 @@ visage::Bounds OwlttCard::driveBounds() const {
 }
 
 visage::Bounds OwlttCard::outputBounds() const {
-	// THE MIRROR OF THE DRIVE: the same width, the same height, the same distance from the card's edge.
-	return {bodyLeft() + bodyWidth() - kPad - kDriveWidth, bodyTopEdge() + kRowGap, kDriveWidth, kCrossoverHeight};
+	// THE MIRROR OF THE DRIVE, with the output meter to its right: the fader stands a meter's width in from the card's edge.
+	return {bodyLeft() + bodyWidth() - kPad - OwlttLevelMeter::kWidth - kLevelGap - kDriveWidth, bodyTopEdge() + kRowGap, kDriveWidth,
+	        kCrossoverHeight};
+}
+
+visage::Bounds OwlttCard::inputMeterBounds() const {
+	return {bodyLeft() + kPad + kDriveWidth + kLevelGap, bodyTopEdge() + kRowGap, OwlttLevelMeter::kWidth, kCrossoverHeight};
+}
+
+visage::Bounds OwlttCard::outputMeterBounds() const {
+	return {outputBounds().right() + kLevelGap, bodyTopEdge() + kRowGap, OwlttLevelMeter::kWidth,
+	        kCrossoverHeight};
 }
 
 bool OwlttCard::updateContent() {
 	// THE GRAPH, NOT THIS CARD. Nothing on the card's own surface draws a meter, so redrawing the
 	// card would repaint a head and a set of knobs to move three bars inside a child.
-	return graph_ != nullptr && graph_->update();
+	bool changed = graph_ != nullptr && graph_->update();
+	changed = (inMeter_ != nullptr && inMeter_->update()) || changed;
+	changed = (outMeter_ != nullptr && outMeter_->update()) || changed;
+	return changed;
 }
 
 bool OwlttCard::headEnabled() const {
@@ -396,6 +420,14 @@ void OwlttCard::layOut() {
 	if (output_ != nullptr) {
 		const visage::Bounds bar = outputBounds();
 		output_->setBounds(bar.x(), bar.y(), bar.width(), bar.height());
+	}
+	if (inMeter_ != nullptr) {
+		const visage::Bounds m = inputMeterBounds();
+		inMeter_->setBounds(m.x(), m.y(), m.width(), m.height());
+	}
+	if (outMeter_ != nullptr) {
+		const visage::Bounds m = outputMeterBounds();
+		outMeter_->setBounds(m.x(), m.y(), m.width(), m.height());
 	}
 
 	const float column = Knob::columnHeight(kKnobDiameter);

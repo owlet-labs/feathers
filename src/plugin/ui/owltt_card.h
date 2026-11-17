@@ -21,6 +21,7 @@
 #include "fx/owltt/owltt_types.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/owltt_graph.h"
+#include "plugin/ui/owltt_level_meter.h"
 #include "backplane/device_host.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/fx_card.h"
@@ -140,6 +141,8 @@ public:
 	/// is a vertical bar left of the graph. The picture gives up the width.
 	static constexpr float kDriveWidth = 24.0f;
 	static constexpr float kDriveGap = 6.0f;
+	/// THE LEVEL METERS: the input beside the Drive, the output beside the Output fader, each between its fader and the picture.
+	static constexpr float kLevelGap = 3.0f;
 
 	/// THREE cells per row — six knobs for the global controls.
 	static constexpr int kRowCells = 3;
@@ -193,6 +196,8 @@ public:
 	[[nodiscard]] VerticalFader* driveForTest() const { return drive_.get(); }
 	/// The Output fader right of the picture: `output_gain`, read in dB.
 	[[nodiscard]] VerticalFader* outputForTest() const { return output_.get(); }
+	[[nodiscard]] OwlttLevelMeter* inputMeterForTest() const { return inMeter_.get(); }
+	[[nodiscard]] OwlttLevelMeter* outputMeterForTest() const { return outMeter_.get(); }
 
 	/// Geometry asked rather than photographed.
 	visage::Bounds headBounds() const;
@@ -201,6 +206,9 @@ public:
 	visage::Bounds driveBounds() const;
 	/// THE OUTPUT FADER'S RECTANGLE: the mirror of the Drive, right of the picture, as tall as it.
 	visage::Bounds outputBounds() const;
+	/// THE INPUT METER'S RECTANGLE (right of the Drive) and THE OUTPUT METER'S (left of the Output fader), as tall as the picture.
+	visage::Bounds inputMeterBounds() const;
+	visage::Bounds outputMeterBounds() const;
 
 private:
 	void layOut();
@@ -261,6 +269,9 @@ private:
 	std::unique_ptr<VerticalFader> drive_;
 	/// THE OUTPUT (`output_gain`), the mirror of the Drive on the picture's right: the same fader the window draws.
 	std::unique_ptr<VerticalFader> output_;
+	/// THE LEVEL METERS (`owltt_level_meter.h`).
+	std::unique_ptr<OwlttLevelMeter> inMeter_;
+	std::unique_ptr<OwlttLevelMeter> outMeter_;
 };
 
 } // namespace feathers::ui

@@ -552,7 +552,7 @@ TEST_CASE("a metered device INSIDE a chain meters through the chain's own bridge
 		outer.processStereo(l.data(), r.data(), 256, backplane::unknownBlock());
 	}
 	rack::RackBridge& bridge = bridgeIn(outer, lane);
-	REQUIRE(bridge.readingCountAt(owlttId) == 18); // ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
+	REQUIRE(bridge.readingCountAt(owlttId) == 20); // ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
 	bool moved = false;
 	for (size_t band = 0; band < 3; ++band) {
 		moved = moved || bridge.readingAt(owlttId, 3 + band) > 0.0f;

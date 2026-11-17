@@ -94,6 +94,10 @@ OwlttExpanded::OwlttExpanded(backplane::DeviceHost& host, WidgetRegistry& regist
 	}
 	addChild(drive_.get());
 	addChild(output_.get());
+	inMeter_ = std::make_unique<OwlttLevelMeter>(host_, device_, OwlttLevelMeter::Side::Input);
+	outMeter_ = std::make_unique<OwlttLevelMeter>(host_, device_, OwlttLevelMeter::Side::Output);
+	addChild(inMeter_.get());
+	addChild(outMeter_.get());
 
 	// THE LOOKAHEAD (backlog ND) — a choice of latencies, so a box with its menu (every choice seen before it applies).
 	lookahead_ = std::make_unique<ValueBox>(control(dtt::Param::Lookahead), "Lookahead");
@@ -157,6 +161,8 @@ DeviceControl& OwlttExpanded::control(dtt::Param param) const {
 
 bool OwlttExpanded::updateContent() {
 	bool changed = graph_ != nullptr && graph_->update();
+	changed = (inMeter_ != nullptr && inMeter_->update()) || changed;
+	changed = (outMeter_ != nullptr && outMeter_->update()) || changed;
 	for (const auto& cell : modeCells_) {
 		changed = cell->refresh() || changed;
 	}
@@ -186,8 +192,9 @@ float OwlttExpanded::modalBottom() const {
 }
 
 visage::Bounds OwlttExpanded::graphBounds() const {
-	const float side = kPad + kDriveWidth + kDriveGap;
-	return { side, modalBottom() + kGroupGap, std::max(0.0f, width() - 2.0f * side), kGraphHeight };
+	const float left = inputMeterBounds().right() + kDriveGap;
+	const float right = outputBounds().x() - kDriveGap;
+	return { left, modalBottom() + kGroupGap, std::max(0.0f, right - left), kGraphHeight };
 }
 
 visage::Bounds OwlttExpanded::driveBounds() const {
@@ -195,8 +202,17 @@ visage::Bounds OwlttExpanded::driveBounds() const {
 }
 
 visage::Bounds OwlttExpanded::outputBounds() const {
-	// THE MIRROR OF THE DRIVE: the same size, the same distance from the plot and from the window's edge.
-	return { std::max(kPad, width() - kPad - kDriveWidth), modalBottom() + kGroupGap, kDriveWidth, kGraphHeight };
+	// THE MIRROR OF THE DRIVE, with the output meter to its right.
+	return { std::max(kPad, width() - kPad - OwlttLevelMeter::kWidth - kLevelGap - kDriveWidth), modalBottom() + kGroupGap, kDriveWidth, kGraphHeight };
+}
+
+visage::Bounds OwlttExpanded::inputMeterBounds() const {
+	return { kPad + kDriveWidth + kLevelGap, modalBottom() + kGroupGap, OwlttLevelMeter::kWidth, kGraphHeight };
+}
+
+visage::Bounds OwlttExpanded::outputMeterBounds() const {
+	return { outputBounds().right() + kLevelGap, modalBottom() + kGroupGap, OwlttLevelMeter::kWidth,
+	         kGraphHeight };
 }
 
 visage::Bounds OwlttExpanded::globalRow() const {
@@ -296,6 +312,8 @@ void OwlttExpanded::resized() {
 	place(clip_.get(), clipBounds());
 	place(drive_.get(), driveBounds());
 	place(output_.get(), outputBounds());
+	place(inMeter_.get(), inputMeterBounds());
+	place(outMeter_.get(), outputMeterBounds());
 	const visage::Bounds plot = graphBounds();
 	if (graph_ != nullptr) {
 		graph_->setBounds(plot.x(), plot.y(), plot.width(), plot.height());

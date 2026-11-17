@@ -34,6 +34,7 @@
 #include "plugin/ui/rack_mode_views.h"
 #include "plugin/ui/rack_view_adapter.h"
 #include "plugin/ui/rack_views.h"
+#include "plugin/ui/rack_window_pane.h"
 #include "plugin/ui/widget_registry.h"
 
 #include <array>
@@ -133,6 +134,22 @@ public:
 	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
 	[[nodiscard]] SwitchChip& followChipForTest() const { return *followChip_; }
 	[[nodiscard]] SegmentedControl& viewPairForTest() const { return *viewPair_; }
+	/// **WHAT THE TABS VIEW PUTS IN FRONT** (`rack_front`): the control, the pane that holds the first device's window, and whether the window
+	/// is showing it now (Tabs, Window chosen, and not itself held in a pane).
+	[[nodiscard]] SegmentedControl& frontSegForTest() const { return *frontSeg_; }
+	[[nodiscard]] RackWindowPane& paneForTest() const { return *pane_; }
+	[[nodiscard]] bool paneOnForTest() const { return paneOn(); }
+	/// **A PANE NEVER NESTS**: the pane that holds this window sets it, and the window then lays out as with Cards in front (and offers no choice).
+	void setHostedInPane(bool hosted) {
+		if (hosted != hostedInPane_) {
+			hostedInPane_ = hosted;
+			minimumSizeChanged();
+			layOut();
+		}
+	}
+	[[nodiscard]] bool hostedInPaneForTest() const noexcept { return hostedInPane_; }
+	/// Runs the pane's follow as the tick does.
+	bool syncPaneForTest() { return syncPane(); }
 	[[nodiscard]] bool railShownForTest(size_t i) const { return rails_[i]->rail->isVisible(); }
 	[[nodiscard]] ValueBox& modeBoxForTest() const { return *modeBox_; }
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
@@ -235,6 +252,8 @@ private:
 	std::unique_ptr<SegmentedControl> viewSeg_;
 	std::unique_ptr<RackViewPairControl> viewPairControl_;
 	std::unique_ptr<SegmentedControl> viewPair_;
+	std::unique_ptr<DeviceControl> frontControl_;
+	std::unique_ptr<SegmentedControl> frontSeg_;
 	std::unique_ptr<ValueBox> playingBox_;
 	std::unique_ptr<DeviceControl> viewedControl_;
 	std::unique_ptr<DeviceControl> pageControl_;
@@ -269,6 +288,18 @@ private:
 	std::unique_ptr<SwitchChip> keyTrack_;
 	std::vector<std::pair<visage::Frame*, rack::parallel::Param>> gated_;
 	std::vector<std::unique_ptr<ChainRail>> rails_;
+	/// **DECLARED AFTER THE RAILS, SO IT IS DESTROYED BEFORE THEM**: the device window it holds is on a rail's modulation list.
+	std::unique_ptr<RackWindowPane> pane_;
+	bool hostedInPane_ = false;
+	visage::Point laidOutPane_ { -1.0f, -1.0f };
+	/// Whether the Tabs view is showing the front device's window: Tabs, the control says Window, and this window is not itself in a pane.
+	[[nodiscard]] bool paneOn() const;
+	/// Follow the front chain's first device (and take the first card off the rail's column while the pane shows it). True when anything moved.
+	bool syncPane();
+	/// BEFORE THE RAILS FOLLOW THEIR CHAINS: drop pane content whose chain went or changed.
+	bool validatePane();
+	/// The rail of the viewed chain, or null.
+	[[nodiscard]] ChainRail* viewedRail() const;
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;
 	SurfaceLayers* presenter_ = nullptr;

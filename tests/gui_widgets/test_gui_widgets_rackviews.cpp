@@ -1655,3 +1655,324 @@ TEST_CASE("rack window: in Tabs the chain in front is always open and has no col
 		CHECK(r.panel->railForTest(i).collapsible());
 	}
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// THE RACK WINDOW'S TABS PANE (`rack_front` = Window): the front chain's first device's own window, held in the window.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// A rack window in Tabs with the pane chosen, over `chains` chains each holding a Drum then a Delay.
+struct PaneRack {
+	RealRack r;
+	explicit PaneRack(size_t chains = 3, size_t withDevices = 3) {
+		r.chains(chains, withDevices);
+		r.set(pr::Param::Front, 1.0f);
+		r.view_(1);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+	}
+	ui::RackWindowPane& pane() { return r.panel->paneForTest(); }
+	feathers::rack::RackBridge& chain(size_t i) { return *r.rack().chainAt(i)->bridge(); }
+	ui::ChainColumn* column(size_t i) { return r.panel->railForTest(i).column(); }
+	void settle() {
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+	}
+	void view(size_t chainIndex) {
+		r.set(pr::Param::ViewedChain, static_cast<float>(chainIndex));
+		settle();
+	}
+};
+
+} // namespace
+
+TEST_CASE("rack pane: rack_front is a view-state choice (Cards by default, not modulatable, no host slot), and the window offers it only in Tabs") {
+	const device::ParamDesc& d = pr::kDescriptor.params[static_cast<size_t>(pr::Param::Front)];
+	CHECK(std::string(d.key) == "rack_front");
+	CHECK(d.def == 0.0);
+	CHECK(d.stepped);
+	CHECK_FALSE(d.modulatable);
+	CHECK_FALSE(d.hostSlot);
+	REQUIRE(d.names.size() == 2);
+	CHECK(std::string(d.names[0]) == "Cards");
+	CHECK(std::string(d.names[1]) == "Window");
+	RealRack r;
+	r.chains(2, 2);
+	CHECK(r.field(pr::Param::Front) == 0.0f);
+	CHECK_FALSE(r.panel->frontSegForTest().isVisible()); // Strips
+	r.view_(2);
+	CHECK_FALSE(r.panel->frontSegForTest().isVisible()); // Pads
+	r.view_(1);
+	CHECK(r.panel->frontSegForTest().isVisible()); // Tabs
+	// CARDS IS THE VIEW AS IT WAS: no pane, the first card shown in the rail.
+	CHECK_FALSE(r.panel->paneOnForTest());
+	CHECK(r.panel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK_FALSE(r.panel->paneForTest().isVisible());
+	REQUIRE(r.panel->railForTest(0).column() != nullptr);
+	CHECK(r.panel->railForTest(0).column()->hiddenLead() == 0);
+}
+
+TEST_CASE("rack pane: the pane holds the front chain's FIRST device (by id), follows a tab switch, and is not rebuilt while nothing changes") {
+	PaneRack p;
+	REQUIRE(p.r.panel->paneOnForTest());
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	const feathers::DeviceInstanceId first0 = p.chain(0).deviceAtPosition(0);
+	REQUIRE(first0 != feathers::kNoInstance);
+	CHECK(p.pane().device() == first0);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(0));
+	REQUIRE(p.pane().contentForTest() != nullptr);
+	CHECK(p.pane().contentForTest()->watchedDevice() == first0);
+	CHECK(p.pane().isVisible());
+	// THE FIRST CARD IS HELD BACK FROM THE RAIL (the pane shows it) and the rest of the chain is its cards, in the lane's flow.
+	ui::ChainColumn* col0 = p.column(0);
+	REQUIRE(col0 != nullptr);
+	CHECK(col0->hiddenLead() == 1);
+	const std::vector<ui::FxCard*> cards = col0->cardsForTest();
+	REQUIRE(cards.size() == 2);
+	CHECK_FALSE(cards[0]->isVisible());
+	CHECK(cards[1]->isVisible());
+	CHECK(col0->addShown());
+	// NOT REBUILT WHILE NOTHING CHANGES.
+	const size_t builds = p.pane().buildsForTest();
+	for (int i = 0; i < 5; ++i) {
+		p.r.refresh();
+	}
+	CHECK(p.pane().buildsForTest() == builds);
+	// A TAB SWITCH REBINDS to the other chain's first device, exactly once.
+	const feathers::DeviceInstanceId first1 = p.chain(1).deviceAtPosition(0);
+	REQUIRE(first1 != first0);
+	p.view(1);
+	CHECK(p.pane().device() == first1);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(1));
+	CHECK(p.pane().contentForTest()->watchedDevice() == first1);
+	CHECK(p.pane().buildsForTest() == builds + 1);
+	// AND NOTHING IS HELD BACK ON THE CHAIN NO LONGER IN FRONT.
+	CHECK(p.column(0)->hiddenLead() == 0);
+	CHECK(p.column(1)->hiddenLead() == 1);
+	// CHOOSING CARDS PUTS THE VIEW BACK: the pane gone, the first card shown again.
+	p.r.set(pr::Param::Front, 0.0f);
+	p.settle();
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK(p.column(1)->hiddenLead() == 0);
+	CHECK(p.column(1)->cardsForTest()[0]->isVisible());
+}
+
+TEST_CASE("rack pane: a reorder, a replace and a delete under the pane rebind it to the device now first, or empty it") {
+	PaneRack p(2, 2);
+	feathers::rack::RackBridge& b = p.chain(0);
+	const feathers::DeviceInstanceId drum = b.deviceAtPosition(0);
+	const feathers::DeviceInstanceId delay = b.deviceAtPosition(1);
+	REQUIRE(p.pane().device() == drum);
+	// REORDER: the Delay goes first.
+	REQUIRE(b.moveDeviceTo(delay, 0));
+	p.settle();
+	CHECK(p.pane().device() == delay);
+	CHECK(p.pane().contentForTest()->watchedDevice() == delay);
+	CHECK(p.column(0)->hiddenLead() == 1);
+	// REPLACE: remove the first, add another in its place at the front.
+	b.removeDevice(delay);
+	const feathers::DeviceInstanceId fresh = b.addDeviceBefore(drum, "DELAY");
+	REQUIRE(fresh != feathers::kNoInstance);
+	p.settle();
+	CHECK(p.pane().device() == fresh);
+	CHECK(p.pane().contentForTest()->watchedDevice() == fresh);
+	// DELETE THE FIRST: the next is first.
+	b.removeDevice(fresh);
+	p.settle();
+	CHECK(p.pane().device() == drum);
+	// DELETE THE LAST DEVICE: the pane is empty, nothing is held back, and the rail's (+) is the empty chain's.
+	b.removeDevice(drum);
+	p.settle();
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK(p.pane().device() == feathers::kNoInstance);
+	CHECK_FALSE(p.pane().isVisible());
+	CHECK(p.column(0)->hiddenLead() == 0);
+	CHECK(p.column(0)->deviceCount() == 0);
+	CHECK(p.column(0)->addShown());
+	// A DEVICE ADDED TO THE EMPTY CHAIN FILLS THE PANE.
+	const feathers::DeviceInstanceId again = b.addDevice("DRUM");
+	p.settle();
+	CHECK(p.pane().device() == again);
+	// DELETE THE CHAIN UNDER THE VIEW: the pane follows to the chain that is now in front (the second), by its own id.
+	const feathers::DeviceInstanceId other = p.chain(1).deviceAtPosition(0);
+	REQUIRE(p.r.rack().removeChain(0));
+	p.settle();
+	CHECK(p.r.rack().chainCount() == 1);
+	CHECK(p.pane().device() == other);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(0));
+	// AND THE LAST CHAIN GOING EMPTIES IT.
+	REQUIRE(p.r.rack().removeChain(0));
+	p.settle();
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK_FALSE(p.pane().isVisible());
+}
+
+TEST_CASE("rack pane: a first device with no window of its own shows its card centred in the pane; an empty chain keeps the empty chain's (+); a first device that is a rack shows its window without a pane of its own") {
+	// (a) NO WINDOW: the first device whose build has none that a chain can hold.
+	const device::Descriptor* plain = nullptr;
+	{
+		PaneRack probe(1, 0);
+		for (const device::Descriptor& d : feathers::kDevices) {
+			if (!ui::hasExpandedView(d) && d.traits.hasCard && probe.chain(0).descriptorFor(d.traits.tag) != nullptr && d.container == nullptr) {
+				plain = &d;
+				break;
+			}
+		}
+	}
+	REQUIRE(plain != nullptr);
+	{
+		PaneRack p(1, 0);
+		const feathers::DeviceInstanceId id = p.chain(0).addDevice(plain->traits.tag);
+		REQUIRE(id != feathers::kNoInstance);
+		p.chain(0).addDevice("DELAY");
+		p.settle();
+		REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Card);
+		CHECK(p.pane().device() == id);
+		REQUIRE(p.pane().cardForTest() != nullptr);
+		CHECK(std::string(p.pane().cardForTest()->descriptor()->traits.tag) == plain->traits.tag);
+		CHECK(p.pane().contentForTest() == nullptr);
+		const visage::Bounds c = p.pane().cardForTest()->bounds();
+		// CENTRED: equal margins left and right (within a pixel), and the pane is no wider than the card and its margins.
+		CHECK(std::abs(c.x() - (static_cast<float>(p.pane().width()) - c.right())) <= 1.0f);
+		CHECK(std::abs(c.y() - (static_cast<float>(p.pane().height()) - c.bottom())) <= 1.0f);
+		CHECK(p.column(0)->hiddenLead() == 1);
+	}
+	// (b) EMPTY CHAIN: no pane, the column is the empty chain's with its (+).
+	{
+		PaneRack p(2, 1);
+		p.view(1);
+		CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		CHECK_FALSE(p.pane().isVisible());
+		REQUIRE(p.column(1) != nullptr);
+		CHECK(p.column(1)->deviceCount() == 0);
+		CHECK(p.column(1)->addShown());
+		CHECK(p.column(1)->hiddenLead() == 0);
+	}
+	// (c) THE FIRST DEVICE IS A RACK: its window is held without a pane of its own, however it is set.
+	{
+		PaneRack p(1, 0);
+		const feathers::DeviceInstanceId inner = nestedRack(p.chain(0), 2, true);
+		p.chain(0).setField(inner, static_cast<size_t>(pr::Param::Front), 1.0f);
+		p.settle();
+		REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+		auto* innerPanel = dynamic_cast<ui::ParallelRackExpanded*>(p.pane().contentForTest());
+		REQUIRE(innerPanel != nullptr);
+		CHECK(innerPanel->watchedDevice() == inner);
+		CHECK(innerPanel->hostedInPaneForTest());
+		for (int i = 0; i < 3; ++i) {
+			(void)innerPanel->update();
+		}
+		// IT IS IN TABS WITH THE WINDOW CHOSEN, AND HAS NO PANE: it lays out as with Cards, and offers no choice that would do nothing.
+		CHECK(innerPanel->viewModelForTest().view() == ui::RackViewKind::Tabs);
+		CHECK_FALSE(innerPanel->paneOnForTest());
+		CHECK(innerPanel->paneForTest().hosting() == ui::RackWindowPane::Hosting::Nothing);
+		CHECK_FALSE(innerPanel->paneForTest().isVisible());
+		CHECK_FALSE(innerPanel->frontSegForTest().isVisible());
+	}
+}
+
+TEST_CASE("rack pane: a control turned in the pane is the parameter the device's card shows") {
+	PaneRack p(1, 0);
+	const feathers::DeviceInstanceId id = p.chain(0).addDevice("DELAY");
+	p.chain(0).addDevice("DRUM");
+	p.settle();
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	REQUIRE(p.pane().device() == id);
+	// A CONTROL OFFERED IN THE PANE (asked of every face in it), and the same-keyed one offered by the card the rail holds back.
+	const auto offered = [](visage::Frame* root) {
+		std::vector<device::Modulatable*> out;
+		std::function<void(visage::Frame*)> walk = [&](visage::Frame* f) {
+			if (const auto* face = dynamic_cast<const ui::ControlFace*>(f); face != nullptr) {
+				std::vector<ui::ControlFace::Offered> got;
+				face->offeredControls(got);
+				for (const auto& o : got) {
+					if (o.control != nullptr) {
+						out.push_back(const_cast<device::Modulatable*>(o.control));
+					}
+				}
+			}
+			for (visage::Frame* c : f->children()) {
+				walk(c);
+			}
+		};
+		walk(root);
+		return out;
+	};
+	device::Modulatable* inPane = nullptr;
+	for (device::Modulatable* c : offered(p.pane().contentForTest())) {
+		if (!c->desc().stepped && c->desc().max > c->desc().min) {
+			inPane = c;
+			break;
+		}
+	}
+	REQUIRE(inPane != nullptr);
+	const device::ParamDesc& desc = inPane->desc();
+	ui::FxCard* held = p.column(0)->cardsForTest()[0];
+	REQUIRE(held != nullptr);
+	device::Modulatable* onCard = nullptr;
+	for (device::Modulatable* c : offered(held)) {
+		if (std::string(c->desc().key) == desc.key) {
+			onCard = c;
+		}
+	}
+	REQUIRE(onCard != nullptr);
+	const double target = desc.min + (desc.max - desc.min) * 0.75;
+	inPane->beginGesture();
+	inPane->setValue(target);
+	inPane->endGesture();
+	// THE HOST'S FIELD (what the engine reads and every view shows), and the card's own control, hold it.
+	size_t control = SIZE_MAX;
+	const device::Descriptor* owner = p.pane().contentForTest()->watchedDescriptor();
+	for (size_t i = 0; i < owner->params.size(); ++i) {
+		if (std::string(owner->params[i].key) == desc.key) {
+			control = i;
+		}
+	}
+	REQUIRE(control != SIZE_MAX);
+	CHECK(p.chain(0).fieldAt(id, control) == doctest::Approx(static_cast<float>(target)).epsilon(1e-4));
+	CHECK(onCard->value() == doctest::Approx(inPane->value()));
+	// AND IT IS ONE UNDO STEP in the rail's history, which an undo takes back on both.
+	CHECK(p.r.panel->railForTest(0).column()->historyForTest().canUndo());
+}
+
+TEST_CASE("rack pane: the content's extent is the device window's natural extent, at 1x and 1.75x, and the bounds follow a scale change") {
+	PaneRack p(2, 2);
+	visage::Frame root;
+	root.setBounds(0.0f, 0.0f, 1400.0f, 900.0f);
+	root.addChild(p.r.panel);
+	struct Detach {
+		visage::Frame& root;
+		visage::Frame* child;
+		~Detach() { root.removeChild(child); }
+	} detach { root, p.r.panel };
+	for (const float scale : { 1.0f, 1.75f, 1.0f }) {
+		CAPTURE(scale);
+		root.setDpiScale(scale);
+		p.r.panel->setBounds(0.0f, 0.0f, 1400.0f, 900.0f);
+		p.r.panel->resized();
+		p.settle();
+		REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+		// THE DEVICE'S OWN WINDOW, built the way its card opens it, is what the pane holds.
+		const feathers::DeviceInstanceId id = p.pane().device();
+		const device::Descriptor* desc = p.chain(0).descriptorOf(id);
+		REQUIRE(desc != nullptr);
+		auto own = ui::makeExpandedView(p.chain(0), nullptr, p.r.registry, id, *desc);
+		REQUIRE(own != nullptr);
+		const visage::Point want = own->minimumSize();
+		const visage::Bounds got = p.pane().contentBounds();
+		CHECK(got.width() == doctest::Approx(want.x));
+		CHECK(got.height() == doctest::Approx(want.y));
+		// NATIVE WIDTHS: the content's and the pane's follow the scale (a scale change moves no logical rectangle).
+		ui::ExpandedView* content = p.pane().contentForTest();
+		CHECK(std::abs(static_cast<float>(content->nativeWidth()) - scale * want.x) <= 1.0f);
+		CHECK(std::abs(static_cast<float>(content->nativeHeight()) - scale * want.y) <= 1.0f);
+		CHECK(std::abs(static_cast<float>(p.pane().nativeWidth()) - scale * p.pane().naturalSize().x) <= 1.0f);
+		// THE WINDOW SIZES TO WHAT IS IN FRONT: its minimum holds the pane and the rail beside it, not the sum of every tab.
+		const visage::Point minimum = p.r.panel->minimumSize();
+		CHECK(minimum.x >= p.pane().naturalSize().x);
+		CHECK(minimum.y >= p.pane().naturalSize().y);
+	}
+}

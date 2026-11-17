@@ -1020,7 +1020,8 @@ std::optional<size_t> ChainColumn::dropGapAt(visage::Point position) const {
 		const visage::Bounds box = cardBounds(p);
 		spans.push_back({ flowStart(box), flowEnd(box) });
 	}
-	return gapAlong(along(position), spans);
+	// NEVER BEFORE A HELD-BACK CARD: the gap above the first shown card is the one after the held-back ones.
+	return std::max(gapAlong(along(position), spans), hiddenLead_);
 }
 
 visage::Bounds ChainColumn::gapBounds(size_t gap) const {
@@ -1202,12 +1203,13 @@ visage::Bounds ChainColumn::cardBounds(size_t position) const {
 	const float cross = std::max(0.0f, crossSize() - 2.0f * padX_);
 	float top = padY_;
 	const size_t devices = deviceCount();
-	for (size_t above = 0; above < position && above < devices; ++above) {
+	for (size_t above = hiddenLead_; above < position && above < devices; ++above) {
 		if (const FxCard* card = cardOf(deviceAt(above)); card != nullptr) {
 			top += card->laneExtent(cross) + slotGap_;
 		}
 	}
-	const FxCard* here = position < devices ? cardOf(deviceAt(position)) : nullptr;
+	// A HELD-BACK CARD TAKES NO ROOM (`setHiddenLead`).
+	const FxCard* here = position < devices && position >= hiddenLead_ ? cardOf(deviceAt(position)) : nullptr;
 	const float tall = here != nullptr ? here->laneExtent(cross) : 0.0f;
 	// THE SCROLL IS IN THE GEOMETRY, so the hit test, the placement and the drawing all follow it from
 	// one place rather than three that must agree.
@@ -1224,7 +1226,7 @@ float ChainColumn::contentHeightFor(float columnCross) const {
 	// leave the column able to scroll past its own end.
 	float total = padY_;
 	const float cross = std::max(0.0f, columnCross - 2.0f * padX_);
-	for (size_t position = 0; position < shownCount(); ++position) {
+	for (size_t position = hiddenLead_; position < shownCount(); ++position) {
 		if (const FxCard* card = cardOf(deviceAt(position)); card != nullptr) {
 			total += card->laneExtent(cross) + slotGap_;
 		}
@@ -1257,6 +1259,48 @@ void ChainColumn::setShownLimit(size_t n) {
 	shownLimit_ = n;
 	resized();
 	redraw();
+}
+
+void ChainColumn::setHiddenLead(size_t n) {
+	if (n == hiddenLead_) {
+		return;
+	}
+	hiddenLead_ = n;
+	scroll_ = 0.0f;
+	resized();
+	redraw();
+}
+
+FrameWatchers& ChainColumn::modulationWatchers() noexcept {
+	return mod_.watchers();
+}
+
+std::unique_ptr<ExpandedView> ChainColumn::buildWindowContent(DeviceInstanceId device) {
+	// THE DESCRIPTOR IS RE-READ HERE, not captured (`expandDevice`'s note).
+	const device::Descriptor* desc = bridge_.descriptorOf(device);
+	if (desc == nullptr) {
+		return nullptr;
+	}
+	std::unique_ptr<ExpandedView> view = makeExpandedView(bridge_, nullptr, registry_, device, *desc, notifier_);
+	if (view != nullptr) {
+		view->setModulation(&mod_, &history_);
+		view->setNest(nest_);
+	}
+	return view;
+}
+
+std::unique_ptr<FxCard> ChainColumn::buildCard(DeviceInstanceId device) {
+	const device::Descriptor* desc = bridge_.descriptorOf(device);
+	if (desc == nullptr) {
+		return nullptr;
+	}
+	std::unique_ptr<FxCard> card = makeCustomCard(bridge_, registry_, device, *desc, notifier_, &mod_, &history_);
+	if (card == nullptr) {
+		card = std::make_unique<GenericCard>(bridge_, device, *desc, notifier_);
+	}
+	card->setModulation(&mod_, &history_);
+	card->setNest(nest_);
+	return card;
 }
 
 void ChainColumn::setHorizontal(bool horizontal) {
@@ -1331,8 +1375,9 @@ visage::Bounds ChainColumn::addBounds() const {
 		return {};
 	}
 	const size_t devices = shownCount();
-	const visage::Bounds last = devices > 0 ? cardBounds(devices - 1) : visage::Bounds {};
-	const float top = devices > 0 ? flowEnd(last) + slotGap_ : padY_ - scroll_;
+	const bool any = devices > hiddenLead_;
+	const visage::Bounds last = any ? cardBounds(devices - 1) : visage::Bounds {};
+	const float top = any ? flowEnd(last) + slotGap_ : padY_ - scroll_;
 	return placed(top, kAddHeight, padX_, std::max(0.0f, crossSize() - 2.0f * padX_));
 }
 
@@ -1375,7 +1420,7 @@ void ChainColumn::resized() {
 		// `FrameWatchers::notify()` redraws every VISIBLE frame under every watcher, so cards left
 		// visible off the top of the lane cost a repaint each on every state notify (measured there at
 		// 56% of a block-rate workload with seven devices seated).
-		const bool onScreen = position < shownCount() && flowEnd(box) > 0.0f && flowStart(box) < flowSize();
+		const bool onScreen = position >= hiddenLead_ && position < shownCount() && flowEnd(box) > 0.0f && flowStart(box) < flowSize();
 		card->setVisible(onScreen);
 	}
 	// A CARD WHOSE DEVICE HAS LEFT is hidden rather than left where it was — `syncCards` retires it on

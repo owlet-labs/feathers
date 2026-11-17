@@ -4908,6 +4908,9 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		(void)rackPanel->followChipForTest();
 		e.reached.insert(static_cast<size_t>(pr::Param::FollowPlayed));
 		e.reached.insert(static_cast<size_t>(pr::Param::PadsPage));
+		// WHAT TABS PUTS IN FRONT (Cards or the first device's window): the window's own two-state control, in Tabs.
+		(void)rackPanel->frontSegForTest();
+		e.reached.insert(static_cast<size_t>(pr::Param::Front));
 		for (size_t k = 0; k < 4; ++k) {
 			REQUIRE(rackPanel->cutKnobForTest(k).control() != nullptr);
 			e.reached.insert(static_cast<size_t>(pr::Param::Cut1) + k);

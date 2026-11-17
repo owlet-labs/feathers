@@ -44,7 +44,8 @@ constexpr float kMacroRows = 4.0f;
 constexpr float kCellHeight = Knob::columnHeight(Knob::kEngineRailDiameter);
 /// THE MODE ROW above Mix and Gain (stage 2): one knob cell and its gap.
 /// THE VIEW'S ROW sits under the mode row, over the macros.
-constexpr float kViewRow = (SwitchChip::kHeight + ParallelRackExpanded::kPad * 0.5f) + (ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f);
+constexpr float kViewRow = (SwitchChip::kHeight + ParallelRackExpanded::kPad * 0.5f) + (ValueBox::kHeight + ParallelRackExpanded::kPad * 0.5f)
+                           + (SwitchChip::kHeight + ParallelRackExpanded::kPad * 0.5f); // and the Tabs view's Front choice under them
 constexpr float kModeRow = kCellHeight + ParallelRackExpanded::kPad + kViewRow;
 
 /// EACH RAIL IS HANDED ITS OWN CHAIN as the handle, so its cast is the identity.
@@ -95,6 +96,11 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	playingControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Playing));
 	viewSeg_ = std::make_unique<SegmentedControl>(*viewControl_, registry, pr::kViewNames, notifier);
 	playingBox_ = std::make_unique<ValueBox>(*playingControl_, "Playing");
+	// WHAT TABS PUTS IN FRONT: the chain's cards, or the first device's window — two states on the face, in a row of their own, Tabs only.
+	frontControl_ = std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(pr::Param::Front));
+	frontSeg_ = std::make_unique<SegmentedControl>(*frontControl_, registry, pr::kFrontNames, notifier);
+	addChild(frontSeg_.get());
+	frontSeg_->setVisible(false);
 	viewPairControl_ = std::make_unique<RackViewPairControl>(*viewControl_);
 	viewPair_ = std::make_unique<SegmentedControl>(*viewPairControl_, registry, RackViewPairControl::kNames, notifier);
 	addChild(viewSeg_.get());
@@ -156,6 +162,8 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	                                           RackViewAdapter::Controls { playingControl_.get(), modeControl_.get(), positionControl_.get(),
 	                                                                       controls_[1].get(), followControl_.get() });
 	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
+	pane_ = std::make_unique<RackWindowPane>();
+	addChild(pane_.get());
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
 	pads_->gridForTest().setAddHandler([this](int key) {
 		if (const size_t at = model_->addKeyedChain(key, history_); at != kNoChain) {
@@ -185,6 +193,10 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 
 ParallelRackExpanded::~ParallelRackExpanded() {
 	(void)relay_.release(); // the host's cards must not stay lit for a modulator nobody can see
+	// THE PANE'S DEVICE WINDOW IS ON A RAIL'S MODULATION LIST: it goes first.
+	if (pane_ != nullptr) {
+		pane_->release();
+	}
 	for (auto& r : rails_) {
 		removeChild(r->rail.get());
 	}
@@ -212,12 +224,72 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 		p.x = std::max(p.x, railsLeft() + n.x + kPad + 34.0f); // and a collapsed rail (34 px) beside it
 		p.y = std::max(p.y, railsTop() + n.y + kPad);
 	}
+	// **THE PANE: THE WINDOW SIZES TO WHAT IS IN FRONT** — the front device's window at its natural size, the rest of the chain's rail beside
+	// it, under the tab bar. Not the sum of every chain's rail, and not the largest tab: a tab switch reflows (the rack tells us, `follow`).
+	const bool paneFront = model_ != nullptr && model_->view() == RackViewKind::Tabs && paneOn() && pane_->hosting() != RackWindowPane::Hosting::Nothing;
+	if (paneFront) {
+		const visage::Point n = pane_->naturalSize();
+		const ChainRail* front = viewedRail();
+		const float top = railsTop() + RackTabBar::kThickness + kPad * 0.5f;
+		p.x = railsLeft() + n.x + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
+		p.y = std::max(std::max(addSlotBounds().bottom(), bandsBottom()) + kPad, top + n.y + kPad);
+		if (front != nullptr) {
+			p.y = std::max(p.y, top + (front->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
+			                                                     : front->rail->openMinimumHeight()));
+		}
+		return p;
+	}
 	for (const auto& r : rails_) {
 		// A CLOSED RAIL IS A CHANNEL STRIP NOW (backlog OC), and needs its column's height; an open one its floor.
 		p.y = std::max(p.y, r->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
 		                                         : r->rail->openMinimumHeight());
 	}
 	return p;
+}
+
+bool ParallelRackExpanded::paneOn() const {
+	return model_ != nullptr && !hostedInPane_ && model_->view() == RackViewKind::Tabs && std::lround(frontControl_->value()) >= 1;
+}
+
+ParallelRackExpanded::ChainRail* ParallelRackExpanded::viewedRail() const {
+	const size_t viewed = model_ != nullptr ? model_->viewedChain() : kNoChain;
+	return viewed < rails_.size() ? rails_[viewed].get() : nullptr;
+}
+
+bool ParallelRackExpanded::validatePane() {
+	if (pane_ == nullptr || pane_->hosting() == RackWindowPane::Hosting::Nothing) {
+		return false;
+	}
+	// ASKED OF THE RACK AFRESH, before the rails follow: the chain in front and its bridge's life token, compared and never dereferenced.
+	const pr::Rack* rack = rackNow();
+	const size_t viewed = model_ != nullptr ? model_->viewedChain() : kNoChain;
+	const rack::InnerChain* chain = rack != nullptr && viewed < rack->chainCount() ? rack->chainAt(viewed) : nullptr;
+	const rack::RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
+	if (!paneOn() || bridge == nullptr) {
+		pane_->release();
+		return true;
+	}
+	return pane_->validate(rack->chainIdAt(viewed), bridge->fragmentLife());
+}
+
+bool ParallelRackExpanded::syncPane() {
+	bool changed = false;
+	ChainRail* front = viewedRail();
+	if (!paneOn() || front == nullptr || front->rail->column() == nullptr) {
+		changed = pane_->hosting() != RackWindowPane::Hosting::Nothing;
+		pane_->release();
+	}
+	else {
+		changed = pane_->follow(front->rail->column(), front->id);
+	}
+	// THE FIRST CARD IS HELD BACK FROM THE FRONT RAIL'S COLUMN WHILE THE PANE SHOWS IT, and from no other (a rebuilt column starts with none held).
+	const bool hosting = pane_->hosting() != RackWindowPane::Hosting::Nothing;
+	for (auto& r : rails_) {
+		if (ChainColumn* column = r->rail->column(); column != nullptr) {
+			column->setHiddenLead(hosting && r.get() == front ? 1 : 0);
+		}
+	}
+	return changed;
 }
 
 float ParallelRackExpanded::dividerY() const { return kPad + kModeRow + kCellHeight + kPad * 0.5f; }
@@ -296,6 +368,8 @@ void ParallelRackExpanded::layOut() {
 		playingBox_->setBounds(kPad, vy2, third, ValueBox::kHeight);
 		viewedBox_->setBounds(kPad + third + gap, vy2, third, ValueBox::kHeight);
 		pageBox_->setBounds(kPad + 2.0f * (third + gap), vy2, kColumnWidth - 2.0f * (third + gap), ValueBox::kHeight);
+		// WHAT TABS PUTS IN FRONT, in a row of its own under them (Tabs only, and not in a pane, where it would choose nothing).
+		frontSeg_->setBounds(kPad, vy2 + ValueBox::kHeight + gap, kColumnWidth, SwitchChip::kHeight);
 	}
 	// THE BANDS COLUMN, beside the macros: count and filtering stacked, the slope, then the corners A VERTICAL STACK, one per
 	// row, lowest first — the order they stand in on the spectrum.
@@ -332,6 +406,7 @@ void ParallelRackExpanded::layOut() {
 	// selected pad's chain. STRIPS: every rail, as before.
 	const RackViewKind view = model_->view();
 	tabs_->setVisible(view == RackViewKind::Tabs);
+	frontSeg_->setVisible(view == RackViewKind::Tabs && !hostedInPane_);
 	pads_->setVisible(view == RackViewKind::Pads);
 	followChip_->setVisible(view == RackViewKind::Pads);
 	if (view == RackViewKind::Tabs) {
@@ -347,6 +422,19 @@ void ParallelRackExpanded::layOut() {
 	const size_t viewed = model_->viewedChain();
 	laidOutView_ = static_cast<int>(view);
 	laidOutViewed_ = viewed;
+	// THE PANE: the front device's own window at its natural size, the rest of the chain's rail beside it (the rail's column holds the first
+	// card back while the pane shows it). Re-set unconditionally, as every bound here is: a scale change moves no logical rectangle.
+	const bool paneShown = view == RackViewKind::Tabs && pane_->hosting() != RackWindowPane::Hosting::Nothing && paneOn();
+	pane_->setVisible(paneShown);
+	if (paneShown) {
+		const visage::Point n = pane_->naturalSize();
+		pane_->setBounds(x0, top, n.x, n.y);
+		railX0 = x0 + n.x + kPad * 0.5f;
+		laidOutPane_ = n;
+	}
+	else {
+		laidOutPane_ = { 0.0f, 0.0f };
+	}
 	float x = railX0;
 	for (size_t i = 0; i < rails_.size(); ++i) {
 		auto& r = rails_[i];
@@ -477,6 +565,8 @@ bool ParallelRackExpanded::follow() {
 		rebuilt = ids[i] != rails_[i]->id;
 	}
 	if (rebuilt) {
+		// THE PANE'S WINDOW IS ON A RAIL'S MODULATION LIST AND OVER A CHAIN'S BRIDGE: it goes before any rail is dropped, and is built again after.
+		pane_->release();
 		// KEEP THE RAILS WHOSE CHAIN STAYED, by id; build the rest.
 		std::vector<std::unique_ptr<ChainRail>> next;
 		for (size_t i = 0; i < ids.size(); ++i) {
@@ -678,7 +768,19 @@ bool ParallelRackExpanded::updateContent() {
 	const size_t before = rails_.size();
 	const size_t missingBefore = missingRoles();
 	const bool shown = showForMode();
-	bool moved = follow() || shown;
+	// THE PANE'S CONTENT FIRST DROPPED IF ITS CHAIN WENT, then the rails follow, then the pane is bound again to what is in front.
+	bool moved = validatePane();
+	moved = follow() || shown || moved;
+	const bool paneMoved = syncPane();
+	const visage::Point paneNow = pane_->hosting() != RackWindowPane::Hosting::Nothing ? pane_->naturalSize() : visage::Point { 0.0f, 0.0f };
+	if (paneMoved || paneNow.x != laidOutPane_.x || paneNow.y != laidOutPane_.y) {
+		moved = true;
+		minimumSizeChanged();
+		layOut();
+	}
+	if (pane_->hosting() != RackWindowPane::Hosting::Nothing) {
+		moved = pane_->update() > 0 || moved;
+	}
 	if (rails_.size() != before || missingRoles() != missingBefore || shown) {
 		minimumSizeChanged();
 		layOut();
@@ -871,12 +973,19 @@ void ParallelRackExpanded::setPresentedOn(SurfaceLayers* host) {
 	for (auto& r : rails_) {
 		r->rail->setPresentedOn(host);
 	}
+	if (pane_ != nullptr) {
+		pane_->setPresentedOn(host);
+	}
 }
 
 void ParallelRackExpanded::onInnerNestChanged() {
 	// ONE NEST FOR EVERY RAIL: the nest is the holder's, and the chains share one instance counter (gap G3).
 	for (auto& r : rails_) {
 		r->rail->setNest(innerNest());
+	}
+	// WHAT THE PANE HOLDS WAS STAMPED WITH THE OLD NEST: it is built again under the new one.
+	if (pane_ != nullptr) {
+		pane_->release();
 	}
 }
 

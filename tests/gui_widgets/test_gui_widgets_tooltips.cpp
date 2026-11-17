@@ -4078,7 +4078,7 @@ TEST_CASE("a card takes the wheel only when it is focused: every device's card, 
 	// the card is NOT focused, and a wheel is delivered at the centre of EVERY visible frame of its tree (a frame's
 	// handler is not introspectable, so every frame is asked). The frame that answers must lie outside the card
 	// (the lane, or nobody), and no field of the device may have moved. Then the Eroder's card is focused and its plot
-	// takes the wheel by value; Ctrl/Cmd takes it on an unfocused card.
+	// takes the wheel by value; Ctrl/Cmd does not take it on an unfocused card.
 	namespace ero = feathers::fx::eroder;
 	size_t cards = 0;
 	size_t framesAsked = 0;
@@ -4161,13 +4161,66 @@ TEST_CASE("a card takes the wheel only when it is focused: every device's card, 
 	card->setFocused(false);
 	CHECK_FALSE(plot->onMouseWheel().callback(wheel));
 	CHECK(width() == 0.5f);
-	wheel.modifiers = visage::kModifierRegCtrl;
-	CHECK(plot->onMouseWheel().callback(wheel));
-	CHECK(width() == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
+	// FOCUS ALONE DECIDES: Ctrl and Cmd on an unfocused card are declined too.
+	for (const int modifier : { visage::kModifierRegCtrl, visage::kModifierCmd }) {
+		wheel.modifiers = modifier;
+		CHECK_FALSE(plot->onMouseWheel().callback(wheel));
+		CHECK(width() == 0.5f);
+	}
 	wheel.modifiers = 0;
-	f.bridge.setDeviceControl(placed.device, static_cast<size_t>(ero::Param::Width), 0.5f);
-	f.bridge.refresh();
 	card->setFocused(true);
 	CHECK(plot->onMouseWheel().callback(wheel));
 	CHECK(width() == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
+}
+
+TEST_CASE("a card inside a card: the wheel is taken when the parent card OR the inner card is focused, and handed on when neither is") {
+	// THE NEAREST NESTING THE FIXTURES CAN BUILD: an Eroder card (with its plot) hung under another device's card in the
+	// lane, which is what a card inside a rack card is to the gate (`cardTakesWheel` walks every card above the widget).
+	namespace ero = feathers::fx::eroder;
+	ModFixture f;
+	const device::Descriptor* outerDesc = nullptr;
+	for (const device::Descriptor& d : kDevices) {
+		if (std::string(d.traits.tag) == "flt1") {
+			outerDesc = &d;
+		}
+	}
+	REQUIRE(outerDesc != nullptr);
+	const Placed outer = place(f, *outerDesc);
+	REQUIRE(outer.card != nullptr);
+	const size_t slot = f.bridge.addFxDevice(ero::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	ui::WidgetRegistry registry;
+	auto inner = std::make_unique<ui::EroderCard>(f.deviceHost, registry, id);
+	outer.card->addChild(inner.get());
+	f.bridge.setDeviceControl(id, static_cast<size_t>(ero::Param::Width), 0.5f);
+	f.bridge.refresh();
+	(void)inner->updateContent();
+	ui::EroderPlot* plot = inner->plotForTest();
+	REQUIRE(plot != nullptr);
+	REQUIRE(plot->parent() == inner.get());
+	REQUIRE(inner->parent() == outer.card);
+	const auto width = [&] { return f.deviceHost.fieldAt(id, static_cast<size_t>(ero::Param::Width)); };
+	const auto turn = [&] {
+		f.bridge.setDeviceControl(id, static_cast<size_t>(ero::Param::Width), 0.5f);
+		f.bridge.refresh();
+		visage::MouseEvent wheel;
+		wheel.wheel_delta_y = 1.0f;
+		return plot->onMouseWheel().callback(wheel);
+	};
+	// NEITHER FOCUSED: declined, Width untouched.
+	outer.card->setFocused(false);
+	inner->setFocused(false);
+	CHECK_FALSE(turn());
+	CHECK(width() == 0.5f);
+	// THE PARENT FOCUSED, the inner card not: taken, by exactly one notch.
+	outer.card->setFocused(true);
+	CHECK(turn());
+	CHECK(width() == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
+	// THE INNER ALONE: taken.
+	outer.card->setFocused(false);
+	inner->setFocused(true);
+	CHECK(turn());
+	CHECK(width() == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
+	outer.card->removeChild(inner.get());
 }

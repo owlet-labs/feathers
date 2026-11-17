@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/chain_column.h"
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/menu_anchor.h"
 
 #include "plugin/device_registry.h"
@@ -1317,7 +1318,8 @@ void ChainColumn::scrollCardIntoView(size_t position) {
 }
 
 bool ChainColumn::mouseWheel(const visage::MouseEvent& e) {
-	if (maxScroll() <= 0.0f) {
+	// A COLUMN INSIDE AN UNFOCUSED CARD IS NOT A SCROLLER YET: the wheel goes on to the lane (`cardTakesWheel`).
+	if (!cardTakesWheel(*this, e) || maxScroll() <= 0.0f) {
 		// NOT CONSUMED when there is nothing to scroll, so the event goes on to whatever else wants it.
 		return false;
 	}

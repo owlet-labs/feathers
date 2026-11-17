@@ -15,6 +15,7 @@
  * <https://www.gnu.org/licenses/>.
  */
 
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/twinfield_pad.h"
 
 #include "plugin/ui/theme.h"
@@ -38,10 +39,6 @@ TwinFieldPad::TwinFieldPad(std::array<LayerControls, tf::kLayers> layers) : laye
 	// panned the puck the opposite way from every other surface in the plugin.
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		held_ = true;
-		if (!focused_) {
-			focused_ = true; // A PRESS FOCUSES; the wheel never does
-			redraw();
-		}
 		pressAt_ = e.position;
 		pressPanX_ = field(LP::PanX);
 		pressPanY_ = field(LP::PanY);
@@ -71,8 +68,8 @@ TwinFieldPad::TwinFieldPad(std::array<LayerControls, tf::kLayers> layers) : laye
 	};
 	// THE HOVER ROAD, LAST (`tooltip.h` says why it must come last).
 	installTooltipHover(*this, *this);
-	// VISAGE'S FOCUS, so a click elsewhere tells us (`focusChanged`) and Esc reaches us. Every other key is declined.
-	setAcceptsKeystrokes(true);
+	// NO KEYSTROKES OF ITS OWN: a press here moves visage's focus up to the CARD, which selects it, and the card's
+	// selection is what lets the wheel zoom (`cardTakesWheel`).
 }
 
 void TwinFieldPad::setLayer(size_t layer) {
@@ -91,42 +88,11 @@ const char* TwinFieldPad::tooltipAt(visage::Point) const {
 	return tooltipOf(layers_[layer_][static_cast<size_t>(LP::PanX)]);
 }
 
-void TwinFieldPad::blur() {
-	if (focused_) {
-		focused_ = false;
-		redraw();
-	}
-}
-
-void TwinFieldPad::focusChanged(bool isFocused, bool) {
-	// GAINING visage's focus does not focus the pad (a window regaining focus restores it without a press); only a
-	// press does. LOSING it — a click on anything else — always ends it.
-	if (!isFocused) {
-		blur();
-	}
-}
-
-bool TwinFieldPad::keyPress(const visage::KeyEvent& e) {
-	if (focused_ && e.keyCode() == visage::KeyCode::Escape) {
-		blur();
-		return true;
-	}
-	return false;
-}
-
-void TwinFieldPad::visibilityChanged() {
-	if (!isVisible()) {
-		blur();
-	}
-}
-
 bool TwinFieldPad::mouseWheel(const visage::MouseEvent& e) {
-	// **ON A CARD, A PLAIN WHEEL IS THE LANE'S** (otherwise the terrain takes over a scroll across the lane
-	// as it passes under the pointer). No in-lane surface claims a plain wheel — AutoMod's and
-	// Pattern's terrains zoom on it only in their WINDOWS, Explore on its own stage — so the card zooms on the main
-	// modifier (Ctrl, Cmd on macOS) and hands every other wheel up to the lane by answering false.
-	// AND ZOOM FOLLOWS FOCUS: a FOCUSED pad zooms on a plain wheel too. Ctrl/Cmd+wheel always works.
-	if (!focused_ && !e.isMainModifier()) {
+	// **ON A CARD, THE WHEEL IS THE LANE'S UNLESS THE CARD (OR A PARENT CARD) IS SELECTED** (`cardTakesWheel`);
+	// otherwise the terrain takes over a scroll across the lane as it passes under the pointer. A plain wheel then
+	// zooms; there is no modifier road.
+	if (!cardTakesWheel(*this, e)) {
 		return false;
 	}
 	const float delta = e.wheel_delta_y;
@@ -265,12 +231,6 @@ void TwinFieldPad::draw(visage::Canvas& canvas) {
 	canvas.circle(puck.x - kPuckRadius, puck.y - kPuckRadius, kPuckRadius * 2.0f);
 	canvas.setColor(kVoid);
 	canvas.circle(puck.x - kPuckRadius + 2.0f, puck.y - kPuckRadius + 2.0f, (kPuckRadius - 2.0f) * 2.0f);
-	// FOCUSED: a subtle accent outline says the plain wheel zooms here now.
-	if (focused_) {
-		canvas.setColor(withAlpha(kAccent, 0.65f));
-		canvas.rectangleBorder(0.0f, 0.0f, w, h, 1.5f);
-		return;
-	}
 	canvas.setColor(withAlpha(kLine, 0.5f));
 	canvas.rectangleBorder(0.0f, 0.0f, w, h, 1.0f);
 }

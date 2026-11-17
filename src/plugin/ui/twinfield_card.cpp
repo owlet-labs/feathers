@@ -454,13 +454,6 @@ void TwinFieldCard::drawHeadExtras(visage::Canvas& canvas) {
 	}
 }
 
-void TwinFieldCard::visibilityChanged() {
-	FxCard::visibilityChanged();
-	if (!isVisible() && pad_ != nullptr) {
-		pad_->blur();
-	}
-}
-
 bool TwinFieldCard::headSourceFocused() const {
 	return mod_ != nullptr && mod_->source() == backplane::Source::output(device_, 0);
 }

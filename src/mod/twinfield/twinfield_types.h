@@ -124,17 +124,17 @@ inline constexpr double kGammaMax = 8.0;
 #define FEATHERS_TWINFIELD_LAYER(L, INDEX, LETTER, GAMMA_DEF)                                                              \
 	{ .key = L ".pan_x", .name = "Pan X " LETTER, .min = -kPanMax, .max = kPanMax, .def = 0.0, .stepped = false,     \
 	  .unit = device::Unit::Number, .names = {}, .modulatable = true,                                                 \
-	  .tooltip = "Where layer " LETTER "'s puck sits across the terrain — drag the pad to move it. Click the pad and the wheel zooms there (Ctrl/Cmd+wheel always does)", \
+	  .tooltip = "Where layer " LETTER "'s puck sits across the terrain — drag the pad to move it. Click the card and the wheel zooms there", \
 	  .modSpan = 0.25, .centred = true, .shortName = "Pan X" },                                                         \
 	{ .key = L ".pan_y", .name = "Pan Y " LETTER, .min = -kPanMax, .max = kPanMax, .def = 0.0, .stepped = false,     \
 	  .unit = device::Unit::Number, .names = {}, .modulatable = true,                                                 \
-	  .tooltip = "Where layer " LETTER "'s puck sits up the terrain — drag the pad to move it. Click the pad and the wheel zooms there (Ctrl/Cmd+wheel always does)",  \
+	  .tooltip = "Where layer " LETTER "'s puck sits up the terrain — drag the pad to move it. Click the card and the wheel zooms there",  \
 	  .modSpan = 0.25,                                                                                                \
 	  .centred = true, .shortName = "Pan Y" },                                                                          \
 	{ .key = L ".zoom", .name = "Zoom " LETTER, .min = kZoomMinOct, .max = kZoomMaxOct, .def = 0.0, .stepped = false, \
 	  .unit = device::Unit::Number, .names = {}, .modulatable = false,                                                \
 	  .tooltip = "How close layer " LETTER "'s terrain is viewed, in octaves — the picture only; Spread sizes the ring. "  \
-	             "A clicked pad zooms on the wheel too, and Ctrl/Cmd+wheel always does",                             \
+	             "On a clicked card the wheel zooms it too",                             \
 	  .shortName = "Zoom" },                                                                                            \
 	{ .key = L ".spread", .name = "Spread " LETTER, .min = 0.0, .max = kSpreadMaxZones, .def = kSpreadDefaultZones,     \
 	  .stepped = false, .unit = device::Unit::Number, .names = {}, .modulatable = true,                               \

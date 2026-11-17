@@ -51,16 +51,6 @@ public:
 
 	void draw(visage::Canvas& canvas) override;
 	bool mouseWheel(const visage::MouseEvent& e) override;
-	/// **THE PAD'S FOCUS — zoom does not take focus; it only zooms when focused.** A press on the pad focuses it (a
-	/// subtle outline); while focused a PLAIN wheel zooms, and while not, every wheel but Ctrl/Cmd+wheel goes to the lane.
-	/// The wheel never focuses. Focus ends on a click elsewhere (visage moves its keyboard focus: `focusChanged`), on
-	/// Esc, or when the pad or its card is hidden (folded, or scrolled out of the lane). It is VISAGE's focus only,
-	/// never the X focus (`keyboard_claim.h`): every key but Esc goes on up and out to the DAW.
-	[[nodiscard]] bool focused() const noexcept { return focused_; }
-	void blur();
-	void focusChanged(bool isFocused, bool wasClicked) override;
-	bool keyPress(const visage::KeyEvent& e) override;
-	void visibilityChanged() override;
 	void offeredControls(std::vector<Offered>& out) const override;
 	/// THE PAN CONTROL'S OWN LINE ("... drag the pad to move it"): the drag is the pad's main gesture.
 	const char* tooltipAt(visage::Point) const override;
@@ -106,7 +96,6 @@ private:
 	size_t rebuilds_ = 0;
 
 	bool held_ = false;
-	bool focused_ = false;
 	visage::Point pressAt_ {};
 	double pressPanX_ = 0.0;
 	double pressPanY_ = 0.0;

@@ -836,3 +836,44 @@ TEST_CASE("audition: a Drum's play button sounds the device wherever it sits —
 	outer.run(4);
 	CHECK(peakOf(outer.heardL) > 0.0f);
 }
+
+TEST_CASE("a new chain starts open, by every road that makes one; a chain loaded keeps what it stored, and a put-back keeps its source's state") {
+	persist::Rig a;
+	a.seat(par::kTraits.tag);
+	a.block(3);
+	par::Rack* rk = par::rackOf(a.bridge->containerSurfaceOf(a.id));
+	REQUIRE(rk != nullptr);
+	// A FRESH RACK'S INITIAL CHAIN(S) are open, and so is every chain added after.
+	REQUIRE(rk->chainCount() >= 1);
+	for (size_t i = 0; i < rk->chainCount(); ++i) {
+		CHECK(rk->open(i));
+	}
+	const size_t second = rk->addChain();
+	REQUIRE(second != SIZE_MAX);
+	CHECK(rk->open(second));
+	const size_t third = rk->addChain();
+	REQUIRE(third != SIZE_MAX);
+	CHECK(rk->open(third));
+	// A SNAPSHOT PUT BACK KEEPS THE SOURCE'S STATE: a closed chain comes back closed, an open one open.
+	rk->setOpen(second, false);
+	const par::Rack::ChainSnapshot closedSnap = rk->snapshotChain(second);
+	const par::Rack::ChainSnapshot openSnap = rk->snapshotChain(third);
+	CHECK_FALSE(closedSnap.open);
+	CHECK(openSnap.open);
+	REQUIRE(rk->removeChain(third));
+	REQUIRE(rk->insertChain(rk->chainCount(), openSnap) != SIZE_MAX);
+	CHECK(rk->open(rk->chainCount() - 1));
+	// A LOAD KEEPS WHAT WAS STORED: chain `second` closed stays closed, the others open stay open.
+	a.block(3);
+	const std::string text = a.save();
+	persist::Rig b;
+	b.load(text);
+	b.block(4);
+	par::Rack* loaded = par::rackOf(b.bridge->containerSurfaceOf(b.id));
+	REQUIRE(loaded != nullptr);
+	REQUIRE(loaded->chainCount() == rk->chainCount());
+	for (size_t i = 0; i < loaded->chainCount(); ++i) {
+		CAPTURE(i);
+		CHECK(loaded->open(i) == (i != second));
+	}
+}

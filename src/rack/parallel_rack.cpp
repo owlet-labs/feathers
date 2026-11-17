@@ -156,8 +156,10 @@ struct Rack::Branch {
 	/// thread before the lineup that holds it is published, so the audio thread reads it plainly.
 	uint8_t slot = kNoChainSlot;
 	/// **WHETHER THE WINDOW SHOWS THIS CHAIN OPEN** (backlog OC) — view state, kept with the patch under a stable chain id so it
-	/// survives closing the editor and a save/load. Message thread only; the audio thread never reads it. A chain starts closed.
-	bool open = false;
+	/// survives closing the editor and a save/load. Message thread only; the audio thread never reads it. A NEW chain starts OPEN (a fold
+	/// hides the device a hand is about to add); a chain loaded keeps what its body stored, and a body written before the field existed reads
+	/// closed, as it always did (`loadState`'s own default).
+	bool open = true;
 
 	// AUDIO THREAD.
 	/// **THIS CHAIN WAITS FOR THE SLOWEST** — delayed by (the rack's latency − this chain's).

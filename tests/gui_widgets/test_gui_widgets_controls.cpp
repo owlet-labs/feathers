@@ -6322,8 +6322,10 @@ TEST_CASE("hardening: a choice menu's pick runs only if its box is still in the 
 	REQUIRE(slot < feathers::kMaxFxSlots);
 	ui::DeviceControl mode { f.deviceHost, f.bridge.fxDeviceAt(slot), dtt::kDescriptor,
 		                      static_cast<size_t>(dtt::Param::Mode), nullptr, nullptr };
-	const int row = 6; // "LR2 Full", as the readout case above names it
-	const std::string label = ui::markedChoiceLabel("LR2 Full", false);
+	const int row = 6; // the default, LR2 Full
+	// the name comes from the device's own choice table, so a rename cannot break this case
+	const auto& modeDesc = dtt::kDescriptor.params[static_cast<size_t>(dtt::Param::Mode)];
+	const std::string label = ui::markedChoiceLabel(modeDesc.names[static_cast<size_t>(row - static_cast<int>(modeDesc.min))], false);
 
 	visage::Frame root;
 	root.setBounds(0.0f, 0.0f, 400.0f, 300.0f);
@@ -6412,10 +6414,12 @@ TEST_CASE("digit dragging declines where the readout is not the value") {
 		box.setCompact(true);
 		box.setBounds(0, 0, 120, 20);
 		mode.setValue(6.0);
-		REQUIRE(box.readout() == "LR2 Full");
+		const std::string modeName = dtt::kDescriptor.params[static_cast<size_t>(dtt::Param::Mode)].names[5]; // value 6 (the choice table starts at 1)
+		const std::u32string modeName32(modeName.begin(), modeName.end());
+		REQUIRE(box.readout() == modeName);
 		// No digit under any x, so this is the hit test refusing rather than the gate — assert the
 		// gate separately, since a readout that parsed nothing must not read as the number zero.
-		CHECK(box.placeAt(centreOf(box, U"LR2 Full", 4)) == 0.0);
+		CHECK(box.placeAt(centreOf(box, modeName32.c_str(), 4)) == 0.0);
 		CHECK_FALSE(box.readoutTracksValue(1.0, 1.0));
 	}
 

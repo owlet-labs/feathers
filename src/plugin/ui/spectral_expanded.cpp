@@ -179,7 +179,7 @@ SpectralExpanded::SpectralExpanded(backplane::DeviceHost& host, WidgetRegistry& 
 	// RANGE in the head, a compact box (the vocoder's Carrier and Stereo sit so): the section's two stacks stay the face and the Envelope.
 	auto range = box(deviceSource.deviceControl(sp::Param::MatchRange), "Range", true);
 	matchRange_ = range.get();
-	mhead.push_back(item(std::move(range), kBoxWidth));
+	mhead.push_back(item(std::move(range), kRangeBoxWidth));
 	std::vector<std::unique_ptr<PillStack>> mstacks;
 	mstacks.push_back(makeStack({ sp::Param::MatchDownRatio, sp::Param::MatchUpRatio, sp::Param::MatchBandwidth }, { "Down", "Up", "Bandwidth" }, "Match"));
 	mstacks.push_back(makeStack({ sp::Param::MatchAttack, sp::Param::MatchRelease, sp::Param::MatchGate }, { "Attack", "Release", "Gate" }, "Envelope"));

@@ -527,6 +527,7 @@ struct RealRack {
 	ui::WidgetRegistry registry;
 	std::unique_ptr<ui::ExpandedView> view;
 	ui::ParallelRackExpanded* panel = nullptr;
+	bool initialClosed_ = false;
 
 	RealRack() {
 		bodies.prepare(48000.0, 4096);
@@ -567,6 +568,10 @@ struct RealRack {
 	}
 	/// Chains up to `count`, the first `withDevices` holding a Drum then a Delay, each keyed to its own index when `keyed`.
 	void chains(size_t count, size_t withDevices, bool keyed = false) {
+		if (!initialClosed_ && rack().chainCount() >= 1) {
+			rack().setOpen(0, false); // the rack's own first chain, closed as the cases were written (see below)
+			initialClosed_ = true;
+		}
 		while (rack().chainCount() < count) {
 			const size_t made = rack().addChain();
 			REQUIRE(made != SIZE_MAX);

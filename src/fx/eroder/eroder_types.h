@@ -356,9 +356,11 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 ///   Lean     a tanh read from a bias, but the two channels lean OPPOSITE ways: the even harmonics come
 ///            out in opposite polarity left and right, so they are width, and summed to mono they cancel and leave
 ///            the tanh's odd ones. Shape is the lean, so the width; at its bottom there is none and both are a tanh
-///   Paunch   a plain tanh on the left; on the right the tanh's residue is turned over by Shape, so the ODD harmonics
-///            come out in opposite polarity left and right: at full Shape the mono sum is the clean signal and the
-///            distortion is all side; at half the right is clean; at the bottom both are Soft's tanh
+///   Paunch   a plain tanh on the left; on the right only the tanh's distortion (the tanh less its own linear part) is
+///            turned over by Shape, so the ODD harmonics come out in opposite polarity left and right while the
+///            fundamental stays in phase and level-balanced: at full Shape the mono sum is the linear signal at the
+///            stage's gain with the distortion all side; at half the right carries no distortion; at the bottom both
+///            are Soft's tanh. The right is held under the left's ceiling
 ///   Crush    no shaper: Drive holds each sample longer, Shape rounds it coarser (10 bits down to a bit and a half)
 ///   Decimate no shaper: Drive holds each sample longer, as Crush does, and nothing is rounded. Shape goes from the
 ///            held steps (a plain sample-and-hold) to a straight line from the previous held value to the current one
@@ -1619,6 +1621,31 @@ struct HighpassSettings {
 /// THE RIGHT CHANNEL'S CURVE: the left's, except in Lean, where it is the left's turned over (`-f(-u)`) — the same
 /// odd harmonics, the even ones in the other polarity.
 [[nodiscard]] float shapeDriveRight(DriveMode mode, float driven, float shape, float gain) noexcept;
+/// **A CEILING THAT IS TRANSPARENT BELOW ITS KNEE**: the identity up to 0.9 of `limit`, then a tanh that reaches `limit`
+/// and no further (continuous in value and slope). A plain `limit * tanh(v / limit)` would put its own odd harmonics on
+/// a signal that only touches the ceiling, so it would undo the very turn-over it follows.
+[[nodiscard]] inline float paunchCeiling(float v, float limit) noexcept {
+	const float knee = 0.9f * limit;
+	const float a = std::abs(v);
+	if (a <= knee) {
+		return v;
+	}
+	const float room = limit - knee;
+	return std::copysign(knee + room * std::tanh((a - knee) / room), v);
+}
+/// **PAUNCH'S RIGHT CHANNEL**, for one input sample `x` (not yet driven): only the curve's NONLINEAR part is turned
+/// over. With `k = gain * norm` (the curve's small-signal gain as applied), `c = k x` is the linear part, `y` the
+/// saturated signal (`tanh(gain x) * norm`, the left's own) and `d = y - c` the pure distortion; the right is
+/// `c + (1 - 2 shape) d`, so the fundamental has the left's gain and polarity at every Drive and only the odd harmonics
+/// are turned over. At Shape 0 it is `y` exactly. Above 0 it is then held under the left's ceiling `norm` by `paunchCeiling`.
+[[nodiscard]] inline float paunchRight(float x, float gain, float norm, float shape) noexcept {
+	const float y = std::tanh(gain * x) * norm;
+	if (shape <= 0.0f) {
+		return y;
+	}
+	const float c = gain * norm * x;
+	return paunchCeiling(y - 2.0f * shape * (y - c), norm);
+}
 /// The make-up that follows it: `kDriveReferencePeak`'s sine out at the RMS it went in with.
 [[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape) noexcept;
 /// THE SHAPER'S GAIN FOR A VANISHING SIGNAL, make-up included: what a feedback through it is divided by, so a tail

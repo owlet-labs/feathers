@@ -126,8 +126,6 @@ struct OpsClip {
 	eroder::Slew slew {};
 	bool slewKeyValid = false;
 	float slewDriveKey = 0.0f, slewShapeKey = 0.0f;
-	/// 1 / the gain into the curve, this sample: the clean signal Paunch's right side is turned toward.
-	float cleanScale = 1.0f;
 	/// THE MODE THE LAST BLOCK RAN IN — what "the mode changed into Texture" is detected against.
 	int modeApplied = 0;
 	dyn::HeldPeak inPeak, outPeak, over;
@@ -263,14 +261,10 @@ struct OpsClip {
 			break;
 		}
 		case Mode::Paunch: {
-			// THE ERODER'S: the left a tanh; the right's residue (the tanh less the CLEAN signal) turned over by Shape.
-			const float yl = std::tanh(l);
-			const float yr = std::tanh(r);
-			const float cleanR = r * cleanScale;
-			l = yl;
-			r = yr + 2.0f * shapeNow * (cleanR - yr);
-			// **THE CLEAN SIGNAL IS ADDED BACK, SO THIS IS NOT BOUNDED BY THE CURVE**: the ceiling is a hard clip here.
-			r = std::clamp(r, -1.0f, 1.0f);
+			// THE ERODER'S LAW (`paunchRight`): the left a tanh, the right with only its distortion turned over by Shape
+			// and held under the left's ceiling (here 1: the signal is already normalised, linear gain 1).
+			l = std::tanh(l);
+			r = eroder::paunchRight(r, 1.0f, 1.0f, shapeNow);
 			break;
 		}
 		case Mode::Slew:
@@ -411,7 +405,6 @@ struct OpsClip {
 				aimSlew(dDb);
 			}
 			const float gain = slewing ? 1.0f / ceilingLin : driveLin / ceilingLin;
-			cleanScale = 1.0f / gain;
 			float uL = std::clamp(xL * gain, -kNormalisedClamp, kNormalisedClamp);
 			float uR = std::clamp(xR * gain, -kNormalisedClamp, kNormalisedClamp);
 			// THE IN METER READS THE INCOMING SIGNAL, BEFORE DRIVE — the same quantity the disabled branch pushes,

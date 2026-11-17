@@ -172,13 +172,11 @@ private:
 		const float shape = s.shape;
 		const float norm = s.norm;
 		if (mode == DriveMode::Paunch) {
-			// THE RIGHT'S RESIDUE (the tanh less the clean signal) IS TURNED OVER BY SHAPE: r + (1 - 2 shape)(yr - r),
-			// written as yr + 2 shape (r - yr) so that at the bottom it is exactly yr. Norm is applied here.
+			// ONLY THE DISTORTION IS TURNED OVER (`paunchRight`): the left is the tanh, the right has the same
+			// fundamental and the odd harmonics in the other polarity, held under the left's ceiling. Norm is applied here.
 			over_.process(&left, &right, 1, [gain, shape, norm](float& l, float& r) {
-				const float yl = std::tanh(gain * l) * norm;
-				const float yr = std::tanh(gain * r) * norm;
-				l = yl;
-				r = yr + 2.0f * shape * (r - yr);
+				l = std::tanh(gain * l) * norm;
+				r = paunchRight(r, gain, norm, shape);
 			});
 		}
 		else {

@@ -224,7 +224,7 @@ bool drawnUnder(const visage::Frame* f, const visage::Frame* host) {
 }
 
 /// THE FIRST DRAWN FACE OF THE ROUTE'S DESTINATION under `frame`, depth first, skipping `skip` (this layer).
-RouteReadoutSubject* walk(visage::Frame* frame, const visage::Frame* host, const visage::Frame* skip,
+RouteReadoutSubject* walk(visage::Frame* frame, const visage::Frame* host, const visage::Frame* skip, bool gesture,
                           const LiveRoute& live, visage::Frame** at, std::vector<ControlFace::Offered>& scratch) {
 	if (frame == skip || !frame->isVisible()) {
 		return nullptr;
@@ -233,7 +233,7 @@ RouteReadoutSubject* walk(visage::Frame* frame, const visage::Frame* host, const
 		scratch.clear();
 		face->offeredControls(scratch);
 		for (const ControlFace::Offered& o : scratch) {
-			if (o.road != ControlFace::Road::Face || o.control == nullptr) {
+			if ((o.road != ControlFace::Road::Face && !gesture) || o.control == nullptr) {
 				continue;
 			}
 			// A CONTROL FOUND IN THE LIVE TREE, so the pointer is good for this pass.
@@ -246,7 +246,7 @@ RouteReadoutSubject* walk(visage::Frame* frame, const visage::Frame* host, const
 		}
 	}
 	for (visage::Frame* child : frame->children()) {
-		if (RouteReadoutSubject* found = walk(child, host, skip, live, at, scratch); found != nullptr) {
+		if (RouteReadoutSubject* found = walk(child, host, skip, gesture, live, at, scratch); found != nullptr) {
 			return found;
 		}
 	}
@@ -264,7 +264,13 @@ RouteReadoutSubject* ModReadoutLayer::findFace(const LiveRoute& route, visage::B
 	}
 	std::vector<ControlFace::Offered> scratch;
 	visage::Frame* at = nullptr;
-	RouteReadoutSubject* subject = walk(host, host, this, route, &at, scratch);
+	// A FACE FIRST; FAILING THAT, A PLOT THAT WRITES THE CONTROL BY GESTURE (`Road::Gesture`: OWLTT's band handles, the
+	// EQ's nodes), anchored on the plot as a whole. A depth set on a handle used to show no box at all, because only
+	// a face was asked.
+	RouteReadoutSubject* subject = walk(host, host, this, false, route, &at, scratch);
+	if (subject == nullptr) {
+		subject = walk(host, host, this, true, route, &at, scratch);
+	}
 	if (subject != nullptr) {
 		where = host->relativeBounds(at);
 	}

@@ -380,6 +380,23 @@ public:
 	};
 	Span amountSpan() const;
 
+	/// **WHERE THE VALUE IS NOW, AFTER MODULATION, ON THE SAME SCALE `amountSpan` DRAWS ON** — the moving
+	/// half of a bar or a strip, whose printed number stays at the base. `base` is the base on that
+	/// scale and `at` the modulated value; `moved` says they differ by more than a thousandth of it.
+	///
+	/// **THE SCALE IS THE DECLARED RANGE, EXCEPT FOR A DRAG WINDOW** (`isDragWindow`): a coordinate that
+	/// spans 2^24 units has no face to normalise against, so a full range would draw every route as a
+	/// hair. A window's scale is the route's own span either side of the base — base at 0.5, a full
+	/// amount reaching an end — and it is only ever read relative to the base.
+	struct Mark {
+		float base = 0.0f;
+		float at = 0.0f;
+		bool moved = false;
+	};
+	Mark liveMark() const;
+	/// A value's position on that scale, given the base it is measured from.
+	[[nodiscard]] double scalePosition(double value, double base) const;
+
 	/// THE TWO GESTURES A DOUBLE-CLICK MAKES, expressed once in terms of the interface above.
 	///
 	/// Both were `Knob` members, and `Knob` is a dial. Everything else a hand can drag in this editor

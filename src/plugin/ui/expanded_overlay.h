@@ -189,6 +189,8 @@ public:
 	/// three accessors below. A panel that answers them is watched by construction; one that does not
 	/// keeps exactly the behaviour it had. That is a weaker guarantee than the card's and it is the
 	/// honest one — inventing a device for a panel that has none would be worse than not watching it.
+	/// The as-modulated box this window carries, for the cases that read what it says.
+	ModReadoutLayer& modReadoutLayer() { return modReadout_; }
 	bool update() {
 		bool told = modulationMoved();
 		told = updateContent() || told;

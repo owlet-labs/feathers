@@ -2096,3 +2096,82 @@ TEST_CASE("QK: a greyed knob glows DIMMER for an armed source and takes the rout
 	}
 }
 
+
+namespace {
+
+/// A control with a declared descriptor and a dictated display, for the value box's modulated-value mark.
+class DescribedModulatable final : public device::Modulatable {
+public:
+	device::ParamDesc declared;
+	device::ModDisplay shown {};
+	explicit DescribedModulatable(device::ParamDesc d) : declared(std::move(d)) {}
+	const device::ParamDesc& desc() const override { return declared; }
+	double value() const override { return shown.base; }
+	void setValue(double v) override { shown.base = v; }
+	device::ModDisplay display() const override { return shown; }
+	void setAmount(float) override {}
+	void beginGesture() override {}
+	void endGesture() override {}
+	std::string text() const override { return "x"; }
+};
+
+} // namespace
+
+TEST_CASE("a value box draws where modulation has put the value, on a drag window and on an ordinary range") {
+	// THE DEFECT: OWLTT's Character and Vibe are drag windows (2^24 wide) seated as value boxes. The box drew only the
+	// armed source's reach as a fraction of the range - 6e-8 of the box - and never the live value, so a modulated
+	// coordinate showed nothing. The expected positions are restated here from the contract, not read from the code.
+	constexpr float kH = 34.0f;
+	constexpr float kW = 60.0f;
+	constexpr float kThick = 2.0f;
+
+	device::ParamDesc window { "coord", "Coord", -8388608.0, 8388608.0, 0.0, false, device::Unit::Number, {} };
+	window.modSpan = 1.0;
+	DescribedModulatable coord(window);
+	coord.shown.isDestination = true;
+	coord.shown.base = 100.0;
+	coord.shown.modulated = 100.0;
+	coord.shown.amount = 1.0f;
+	ui::ValueBox box { coord, "" };
+	box.setBounds(0, 0, kW, kH);
+
+	SUBCASE("at its base there is no mark") {
+		CHECK(box.liveMarkBounds().height() <= 0.0f);
+	}
+	SUBCASE("a window's scale is its route span either side of the base: +0.5 of a span sits at 3/4 of the height") {
+		coord.shown.modulated = 100.5;
+		const visage::Bounds mark = box.liveMarkBounds();
+		REQUIRE(mark.height() > 0.0f);
+		CHECK(mark.y() == doctest::Approx((1.0f - 0.75f) * kH - kThick * 0.5f).epsilon(0.001));
+		CHECK(mark.width() == doctest::Approx(kW));
+		coord.shown.modulated = 99.5; // and below the base, a quarter
+		CHECK(box.liveMarkBounds().y() == doctest::Approx((1.0f - 0.25f) * kH - kThick * 0.5f).epsilon(0.001));
+	}
+	SUBCASE("a full amount on a window fills the half of the box above the base, not a hair") {
+		coord.shown.armed = true;
+		const visage::Bounds bar = box.barBounds();
+		CHECK(bar.y() == doctest::Approx(0.0f));
+		CHECK(bar.height() == doctest::Approx(0.5f * kH));
+	}
+	SUBCASE("an ordinary range keeps its own scale: 0.2 base, 0.6 live is 0.6 of the height") {
+		DescribedModulatable plain(device::ParamDesc { "p", "P", 0.0, 1.0, 0.0, false, device::Unit::Number, {} });
+		plain.shown.isDestination = true;
+		plain.shown.base = 0.2;
+		plain.shown.modulated = 0.6;
+		ui::ValueBox plainBox { plain, "" };
+		plainBox.setBounds(0, 0, kW, kH);
+		CHECK(plainBox.liveMarkBounds().y() == doctest::Approx((1.0f - 0.6f) * kH - kThick * 0.5f).epsilon(0.001));
+	}
+	SUBCASE("a declared modSpan scales the amount: 10 of 100, full amount, reaches a tenth") {
+		device::ParamDesc spanned { "s", "S", 0.0, 100.0, 50.0, false, device::Unit::Number, {} };
+		spanned.modSpan = 10.0;
+		DescribedModulatable c(spanned);
+		c.shown.isDestination = true;
+		c.shown.base = 50.0;
+		c.shown.modulated = 50.0;
+		c.shown.amount = 1.0f;
+		const device::Modulatable::Span span = c.amountSpan();
+		CHECK(span.lo == doctest::Approx(0.5f));
+		CHECK(span.hi == doctest::Approx(0.6f).epsilon(0.001));
+	}
+}

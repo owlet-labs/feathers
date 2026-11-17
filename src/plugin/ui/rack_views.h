@@ -194,6 +194,8 @@ private:
 class RackPadGrid final : public visage::Frame, public TooltipSource {
 public:
 	RackPadGrid(RackViewModel& model, RackStrikePulse& pulse);
+	/// A pad held when the editor goes is released (its note-off sent), so a closed window never leaves a note sounding.
+	~RackPadGrid() { release(); }
 
 	void draw(visage::Canvas& canvas) override;
 	const char* tooltipAt(visage::Point at) const override;

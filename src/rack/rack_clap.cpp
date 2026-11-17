@@ -339,7 +339,7 @@ public:
 		}
 		for (const device::NoteEvent& n : engine_.blockNotesOut()) {
 			// A PREVIEW NEVER LEAVES THE PLUGIN: a key the editor posted is for this rack's own devices to hear, not a note played to the host.
-			if (n.noteId == kUiNoteId) {
+			if (n.noteId == kUiNoteId || n.noteId == kPadNoteId) {
 				continue;
 			}
 			// **AN EXPRESSION LEAVES AS AN EXPRESSION.** Every kind that was not On or Off went out as a

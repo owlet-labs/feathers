@@ -836,3 +836,280 @@ TEST_CASE("audition: a Drum's play button sounds the device wherever it sits —
 	outer.run(4);
 	CHECK(peakOf(outer.heardL) > 0.0f);
 }
+
+//--------------------------------------------------------------------------------------------------//
+// A PAD'S KEY ENTERS AT ITS RACK                                                                    //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A LANE: a recorder BEFORE the rack, the rack, a recorder AFTER it, in one engine, with `chains` chains in the rack.
+struct PadLane {
+	Seat seat;
+	rack::RackEngine engine { rack::kRackAxes, hostCatalogue() };
+	std::unique_ptr<rack::RackBridge> top;
+	DeviceInstanceId rackId = kNoInstance;
+	par::Rack* rk = nullptr;
+	Rec* before = nullptr;
+	Rec* after = nullptr;
+	std::vector<float> l = std::vector<float>(kBlock, 0.0f);
+	std::vector<float> r = std::vector<float>(kBlock, 0.0f);
+	std::vector<float> heardL;
+
+	explicit PadLane(size_t chains) {
+		engine.prepare(kRate, 4096);
+		top = std::make_unique<rack::RackBridge>(engine, nullptr, rack::RackBridge::HostSlots::OwnPool);
+		REQUIRE(top->addDevice("KREC") != kNoInstance);
+		run(2);
+		before = recs().back();
+		rackId = top->addDevice(par::kTraits.tag);
+		REQUIRE(rackId != kNoInstance);
+		run(2);
+		REQUIRE(top->addDevice("KREC") != kNoInstance);
+		run(2);
+		after = recs().back();
+		rk = par::rackOf(top->containerSurfaceOf(rackId));
+		REQUIRE(rk != nullptr);
+		while (rk->chainCount() < chains) {
+			(void)rk->addChain();
+			run(2);
+		}
+	}
+	DeviceInstanceId addDrum(size_t chain, int keysMode) {
+		rack::RackBridge& b = *rk->chainAt(chain)->bridge();
+		const DeviceInstanceId id = b.addDevice(dd::kTraits.tag);
+		REQUIRE(id != kNoInstance);
+		run(2);
+		b.setField(id, static_cast<size_t>(dd::Param::Keys), static_cast<float>(keysMode));
+		run(2);
+		return id;
+	}
+	void block(const std::vector<NoteEvent>& notes = {}) {
+		top->drain();
+		std::fill(l.begin(), l.end(), 0.0f);
+		std::fill(r.begin(), r.end(), 0.0f);
+		engine.setBlockNotes(notes.data(), notes.size());
+		engine.processStereo(l.data(), r.data(), kBlock, backplane::unknownBlock());
+		top->publish(engine);
+		top->reapRetired();
+		heardL.insert(heardL.end(), l.begin(), l.end());
+	}
+	void run(int blocks) {
+		for (int i = 0; i < blocks; ++i) {
+			block();
+		}
+	}
+	void forget() {
+		heardL.clear();
+		before->seen.clear();
+		after->seen.clear();
+	}
+};
+
+size_t countOf(const Rec& rec, NoteEvent::Kind kind, int key) {
+	size_t n = 0;
+	for (const NoteEvent& e : rec.seen) {
+		n += e.kind == kind && e.key == key ? 1 : 0;
+	}
+	return n;
+}
+
+} // namespace
+
+TEST_CASE("pad strike: it sounds the keyed chain, downstream hears it, upstream hears nothing, and the sound is the host note's, to the bit") {
+	PadLane pad(2);
+	(void)pad.addDrum(0, 1);
+	pad.rk->setChainKey(0, 40); // a pad on key 40
+	pad.run(8);
+	pad.forget();
+	REQUIRE(pad.rk->postPadNote(40, true, 0.5f));
+	pad.block();
+	pad.run(6);
+	CHECK(peakOf(pad.heardL) > 0.0f);
+	// THE DEVICE BEFORE THE RACK RECEIVES NOTHING; the device after it receives the note (as a note the rack passed).
+	CHECK(pad.before->seen.empty());
+	CHECK(countOf(*pad.after, NoteEvent::Kind::On, 40) == 1);
+	// THE SAME HIT FROM A HOST NOTE AT THE SAME SAMPLE, in the same arrangement: the same samples, bit for bit.
+	PadLane host(2);
+	(void)host.addDrum(0, 1);
+	host.rk->setChainKey(0, 40);
+	host.run(8);
+	host.forget();
+	host.block({ on(40, 0, 0.5) });
+	host.run(6);
+	CHECK(pad.heardL == host.heardL);
+	// NON-VACUITY: the host note does reach the device before the rack (so "nothing" above is a claim about the road, not the recorder).
+	CHECK(countOf(*host.before, NoteEvent::Kind::On, 40) == 1);
+}
+
+TEST_CASE("pad strike: the key filter holds, a held pad's release ends the note, and the rack keeps no note afterwards") {
+	PadLane pad(2);
+	(void)pad.addDrum(0, 1);
+	(void)pad.addDrum(1, 1);
+	pad.rk->setChainKey(0, 40);
+	pad.rk->setChainKey(1, 41);
+	pad.top->setField(pad.rackId, static_cast<size_t>(P::Mode), static_cast<float>(kKeyedMode));
+	pad.run(8);
+	pad.forget();
+	REQUIRE(pad.rk->postPadNote(41, true, 1.0f));
+	pad.block();
+	pad.run(2);
+	CHECK(countOf(*pad.after, NoteEvent::Kind::On, 41) == 1);
+	CHECK(countOf(*pad.after, NoteEvent::Kind::Off, 41) == 0);
+	CHECK(pad.rk->noteRecordsForTest() > 0);
+	REQUIRE(pad.rk->postPadNote(41, false, 0.0f));
+	pad.block();
+	pad.run(2);
+	CHECK(countOf(*pad.after, NoteEvent::Kind::Off, 41) == 1); // THE RELEASE REACHES DOWNSTREAM
+	CHECK(pad.rk->noteRecordsForTest() == 0);
+	CHECK(pad.before->seen.empty());
+	// AND THE KEY FILTER: chain 0 (key 40) never took 41, so it is silent while chain 1 sounds; the same split as a host note's.
+	PadLane both(2);
+	(void)both.addDrum(0, 1);
+	(void)both.addDrum(1, 1);
+	both.rk->setChainKey(0, 40);
+	both.rk->setChainKey(1, 41);
+	both.top->setField(both.rackId, static_cast<size_t>(P::Mode), static_cast<float>(kKeyedMode));
+	both.run(8);
+	both.forget();
+	both.rk->postPadNote(41, true, 1.0f);
+	both.block();
+	both.run(4);
+	PadLane ref(2);
+	(void)ref.addDrum(0, 1);
+	(void)ref.addDrum(1, 1);
+	ref.rk->setChainKey(0, 40);
+	ref.rk->setChainKey(1, 41);
+	ref.top->setField(ref.rackId, static_cast<size_t>(P::Mode), static_cast<float>(kKeyedMode));
+	ref.run(8);
+	ref.forget();
+	ref.block({ on(41, 0, 1.0) });
+	ref.run(4);
+	CHECK(both.heardL == ref.heardL);
+	CHECK(peakOf(both.heardL) > 0.0f);
+}
+
+TEST_CASE("pad strike: choke groups are honoured as for a host note") {
+	const auto script = [](PadLane& k, bool pad) {
+		k.rk->setChainChoke(0, 1);
+		k.rk->setChainChoke(1, 1);
+		k.top->setField(k.rackId, static_cast<size_t>(P::Mode), static_cast<float>(kKeyedMode));
+		k.run(8);
+		k.forget();
+		if (pad) {
+			k.rk->postPadNote(40, true, 1.0f);
+			k.block();
+			k.run(2);
+			k.rk->postPadNote(41, true, 1.0f);
+			k.block();
+		}
+		else {
+			k.block({ on(40, 0, 1.0) });
+			k.run(2);
+			k.block({ on(41, 0, 1.0) });
+		}
+		k.run(4);
+	};
+	PadLane a(2);
+	PadLane b(2);
+	for (PadLane* k : { &a, &b }) {
+		(void)k->addDrum(0, 1);
+		(void)k->addDrum(1, 1);
+		k->rk->setChainKey(0, 40);
+		k->rk->setChainKey(1, 41);
+	}
+	script(a, true);
+	script(b, false);
+	CHECK(a.heardL == b.heardL);
+	// NON-VACUITY: without the group the second strike leaves the first ringing, so the sound differs.
+	PadLane c(2);
+	(void)c.addDrum(0, 1);
+	(void)c.addDrum(1, 1);
+	c.rk->setChainKey(0, 40);
+	c.rk->setChainKey(1, 41);
+	c.top->setField(c.rackId, static_cast<size_t>(P::Mode), static_cast<float>(kKeyedMode));
+	c.run(8);
+	c.forget();
+	c.rk->postPadNote(40, true, 1.0f);
+	c.block();
+	c.run(2);
+	c.rk->postPadNote(41, true, 1.0f);
+	c.block();
+	c.run(4);
+	CHECK(c.heardL != a.heardL);
+}
+
+TEST_CASE("pad strike: a pad of a rack inside a rack enters at the inner rack, so what is before it in the chain hears nothing") {
+	PadLane lane(1);
+	rack::RackBridge& cb = *lane.rk->chainAt(0)->bridge();
+	REQUIRE(cb.addDevice("KREC") != kNoInstance); // before the inner rack, in the outer chain
+	lane.run(3);
+	Rec* innerBefore = recs().back();
+	const DeviceInstanceId innerId = cb.addDevice(par::kTraits.tag);
+	REQUIRE(innerId != kNoInstance);
+	lane.run(4);
+	REQUIRE(cb.addDevice("KREC") != kNoInstance); // after it
+	lane.run(3);
+	Rec* innerAfter = recs().back();
+	par::Rack* inner = par::rackOf(cb.containerSurfaceOf(innerId));
+	REQUIRE(inner != nullptr);
+	while (inner->chainCount() < 1) {
+		(void)inner->addChain();
+		lane.run(3);
+	}
+	rack::RackBridge& deep = *inner->chainAt(0)->bridge();
+	const DeviceInstanceId drum = deep.addDevice(dd::kTraits.tag);
+	REQUIRE(drum != kNoInstance);
+	lane.run(3);
+	deep.setField(drum, static_cast<size_t>(dd::Param::Keys), 1.0f);
+	inner->setChainKey(0, 60);
+	lane.rk->setChainKey(0, 61); // the OUTER chain's key would refuse a 60 that entered at the outer rack
+	lane.run(6);
+	lane.forget();
+	innerBefore->seen.clear();
+	innerAfter->seen.clear();
+	REQUIRE(inner->postPadNote(60, true, 1.0f));
+	lane.block();
+	lane.run(5);
+	CHECK(peakOf(lane.heardL) > 0.0f);
+	CHECK(innerBefore->seen.empty());
+	CHECK(lane.before->seen.empty());
+	CHECK(countOf(*innerAfter, NoteEvent::Kind::On, 60) == 1);
+	// THE OUTER RACK'S OWN DOWNSTREAM never heard a 60 from the outer rack's key filter: the note stayed inside its chain.
+	CHECK(lane.before->seen.empty());
+}
+
+TEST_CASE("pad strike: nothing is allocated on the audio thread by a strike") {
+	PadLane pad(1);
+	(void)pad.addDrum(0, 1);
+	pad.rk->setChainKey(0, 40);
+	pad.run(8);
+	for (int i = 0; i < 4; ++i) { // WARM: every road once, so a lazily built table is built here
+		REQUIRE(pad.rk->postPadNote(40, true, 1.0f));
+		pad.block();
+		(void)pad.rk->postPadNote(40, false, 0.0f);
+		pad.block();
+	}
+	REQUIRE(pad.rk->postPadNote(40, true, 1.0f));
+	pad.heardL.reserve(1 << 16); // (the test's own recording grows outside the window)
+	pad.before->seen.reserve(1 << 12);
+	pad.after->seen.reserve(1 << 12);
+	{
+		pad.top->drain();
+		AllocWindow w;
+		const auto quiet = [&] {
+			pad.engine.setBlockNotes(nullptr, 0);
+			pad.engine.processStereo(pad.l.data(), pad.r.data(), kBlock, backplane::unknownBlock());
+		};
+		quiet();
+		const uint64_t a1 = w.allocs();
+		quiet();
+		const uint64_t a2 = w.allocs();
+		(void)pad.rk->postPadNote(40, false, 0.0f);
+		quiet();
+		(void)a1;
+		(void)a2;
+		CHECK(w.allocs() == 0);
+	}
+
+}

@@ -37,6 +37,10 @@ struct UiNoteEvent {
 /// a host's note.
 inline constexpr int32_t kUiNoteId = INT32_MIN + 1;
 
+/// The note id a PAD STRIKE carries into a rack: INT32_MIN + 2, none of the above. Unlike a preview it is a note the rack routes and passes
+/// downstream (so it is a rack's own, not a device's audition), and like a preview it never leaves the plugin for the host.
+inline constexpr int32_t kPadNoteId = INT32_MIN + 2;
+
 /// **A FIXED-CAPACITY LOCK-FREE SINGLE-PRODUCER SINGLE-CONSUMER RING** of editor notes: the editor's thread pushes, the audio thread
 /// pops at the start of a block. Two plain indices and no allocation, lock or syscall on either side; a full ring DROPS the event and
 /// counts it. (`UiParamQueue` has the same discipline for parameter moves; it is not generic, so this is its twin for notes.)

@@ -98,8 +98,12 @@ public:
 	RackStrikeKey strikeKey() const override;
 	bool followPlayed() const override;
 	device::Modulatable* followControl() override { return controls_.follow; }
-	bool canTrigger() const override { return host_.canPostNote(); }
-	bool trigger(int key, bool on, float velocity) override { return host_.postNote(key, on, velocity); }
+	/// A PAD'S KEY ENTERS AT THIS RACK (`Rack::postPadNote`), not at the plugin's front: only what follows the rack hears it.
+	bool canTrigger() const override { return rack() != nullptr; }
+	bool trigger(int key, bool on, float velocity) override {
+		rack::parallel::Rack* r = rack();
+		return r != nullptr && r->postPadNote(key, on, velocity);
+	}
 	device::Modulatable* kitLevel() override { return controls_.gain; }
 
 	/// How many chains the rack holds (the Tabs choice is offered only up to `kMaxRackTabs`).

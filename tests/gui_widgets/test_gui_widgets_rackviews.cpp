@@ -737,19 +737,32 @@ TEST_CASE("rack views over a real rack: Pads lights the keys that have a chain, 
 	CHECK(pages.cellUsedForTest(0, 1));
 	CHECK_FALSE(pages.cellUsedForTest(0, 5));
 	CHECK_FALSE(pages.cellUsedForTest(5, 1));
-	// A PRESS ON PAD 2 (key 2): the note is posted (on, then off at the release) and chain 2 is viewed.
+	// A PRESS ON PAD 2 (key 2): the key enters AT THIS RACK (its own pad ring, drained by the rack's emit stage), on then off at the release,
+	// and chain 2 is viewed. NOTHING IS POSTED TO THE PLUGIN'S FRONT: the host's note road stays empty.
 	feathers::UiNoteEvent e;
 	while (r.f.bridge.popNote(e)) {
 	}
+	const auto drainRack = [&](size_t& ons, size_t& offs, int key) {
+		feathers::device::TransportClock clock {};
+		feathers::device::NoteEvent got[32];
+		uint32_t until = 0;
+		const size_t n = r.rack().emitNotes(clock, 0, got, 32, &until);
+		ons = offs = 0;
+		for (size_t i = 0; i < n; ++i) {
+			if (got[i].key == key && got[i].noteId == feathers::kPadNoteId) {
+				ons += got[i].kind == feathers::device::NoteEvent::Kind::On ? 1 : 0;
+				offs += got[i].kind == feathers::device::NoteEvent::Kind::Off ? 1 : 0;
+			}
+		}
+	};
 	REQUIRE(r.card->viewModelForTest().canTrigger());
 	grid.pressForTest(grid.padCentre(2));
 	grid.releaseForTest();
-	REQUIRE(r.f.bridge.popNote(e));
-	CHECK(e.key == 2);
-	CHECK(e.on);
-	REQUIRE(r.f.bridge.popNote(e));
-	CHECK(e.key == 2);
-	CHECK_FALSE(e.on);
+	CHECK_FALSE(r.f.bridge.popNote(e));
+	size_t ons = 0, offs = 0;
+	drainRack(ons, offs, 2);
+	CHECK(ons == 1);
+	CHECK(offs == 1);
 	CHECK(r.field(pr::Param::ViewedChain) == 2.0f);
 	// PAGES: a press on page 5 changes the rack's own PadsPage, and it is that page's keys the grid maps (80..95).
 	pages.pressForTest(pages.pageCentre(5));
@@ -757,9 +770,32 @@ TEST_CASE("rack views over a real rack: Pads lights the keys that have a chain, 
 	CHECK(r.field(pr::Param::PadsPage) == 5.0f);
 	grid.pressForTest(grid.padCentre(0));
 	grid.releaseForTest();
-	REQUIRE(r.f.bridge.popNote(e));
-	CHECK(e.key == 80);
-	while (r.f.bridge.popNote(e)) {
+	CHECK_FALSE(r.f.bridge.popNote(e));
+	drainRack(ons, offs, 80);
+	CHECK(ons == 1);
+	CHECK(offs == 1);
+	// A PAD HELD WHEN THE EDITOR GOES is released by the grid itself: no note is left sounding.
+	{
+		RealRack held;
+		held.chains(3, 3, true);
+		held.view_(2);
+		ui::RackPadGrid& g = held.panel->padsForTest().gridForTest();
+		g.pressForTest(g.padCentre(1));
+		held.panel = nullptr;
+		held.view.reset(); // the window torn down with the pad still down
+		size_t o = 0, f2 = 0;
+		feathers::device::TransportClock clock {};
+		feathers::device::NoteEvent got[32];
+		uint32_t until = 0;
+		const size_t n = held.rack().emitNotes(clock, 0, got, 32, &until);
+		for (size_t i = 0; i < n; ++i) {
+			if (got[i].key == 1 && got[i].noteId == feathers::kPadNoteId) {
+				o += got[i].kind == feathers::device::NoteEvent::Kind::On ? 1 : 0;
+				f2 += got[i].kind == feathers::device::NoteEvent::Kind::Off ? 1 : 0;
+			}
+		}
+		CHECK(o == 1);
+		CHECK(f2 == 1);
 	}
 	// THE PULSE FROM THE REAL STRIKE MASK: a note entering the rack flashes its pad (reduced motion: one steady highlight), and at rest
 	// nothing is told.
@@ -1513,9 +1549,21 @@ namespace {
 /// A REAL PRESS ON THE CARD at `inCard` (the card's own coordinates): found by the frame tree as the window finds it, delivered as it
 /// delivers (to the frame under the point, then up through its parents), and the note keys it posted, on then off.
 std::vector<std::pair<int, bool>> pressOnCard(RealRack& r, visage::Point inCard) {
-	feathers::UiNoteEvent drain;
-	while (r.f.bridge.popNote(drain)) {
-	}
+	// (THE KEYS ENTER AT THE RACK: they are read back as the rack's emit stage hands them on, and the plugin's own note road must stay empty.)
+	const auto takePads = [&] {
+		feathers::device::TransportClock clock {};
+		feathers::device::NoteEvent got[64];
+		uint32_t until = 0;
+		const size_t n = r.rack().emitNotes(clock, 0, got, 64, &until);
+		std::vector<std::pair<int, bool>> keys;
+		for (size_t i = 0; i < n; ++i) {
+			if (got[i].noteId == feathers::kPadNoteId) {
+				keys.emplace_back(got[i].key, got[i].kind == feathers::device::NoteEvent::Kind::On);
+			}
+		}
+		return keys;
+	};
+	(void)takePads();
 	visage::Frame* target = r.card->frameAtPoint(inCard);
 	if (target != nullptr) {
 		visage::MouseEvent down {};
@@ -1527,11 +1575,9 @@ std::vector<std::pair<int, bool>> pressOnCard(RealRack& r, visage::Point inCard)
 		visage::MouseEvent up = down;
 		target->processMouseUp(up);
 	}
-	std::vector<std::pair<int, bool>> out;
-	feathers::UiNoteEvent e;
-	while (r.f.bridge.popNote(e)) {
-		out.emplace_back(e.key, e.on);
-	}
+	std::vector<std::pair<int, bool>> out = takePads();
+	feathers::UiNoteEvent front;
+	CHECK_FALSE(r.f.bridge.popNote(front));
 	return out;
 }
 

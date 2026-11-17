@@ -44222,3 +44222,250 @@ TEST_CASE("HARM's window: the harmonic box's popup is placed, centred and hangs 
 	checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*row, row->boxBounds()));
 	ui::dismissMenuOf(*row);
 }
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// THE ERODER'S WINDOW IN SIGNAL ORDER: five captioned groups, and the topology picture with its switches in it.                  //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+namespace {
+
+struct EroRect {
+	float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+};
+
+/// A FRAME'S BOUNDS IN THE WINDOW'S OWN COORDINATES, summed up its parents.
+EroRect eroAbsolute(const visage::Frame* f, const visage::Frame* window) {
+	EroRect r { 0.0f, 0.0f, static_cast<float>(f->width()), static_cast<float>(f->height()) };
+	for (const visage::Frame* p = f; p != window && p != nullptr; p = p->parent()) {
+		r.x += static_cast<float>(p->x());
+		r.y += static_cast<float>(p->y());
+	}
+	return r;
+}
+
+bool eroInside(const EroRect& inner, const EroRect& outer) {
+	const float eps = 0.01f;
+	return inner.x >= outer.x - eps && inner.y >= outer.y - eps && inner.x + inner.w <= outer.x + outer.w + eps
+	       && inner.y + inner.h <= outer.y + outer.h + eps;
+}
+
+} // namespace
+
+TEST_CASE("ERODER's window groups its controls in signal order: Tone, Engine, Drive, Feedback, Output, each control inside its own group, in every engine") {
+	EroFaces e;
+	auto& panel = *e.panel;
+	using P = ero::Param;
+	const char* const captions[] = { "Tone", "Engine", "Drive", "Feedback", "Output" };
+	for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb, ero::Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		e.mode(mode);
+		const bool comb = mode == ero::Mode::Comb;
+		const bool etch = mode == ero::Mode::Etch;
+		const auto& groups = panel.groupsForTest();
+		REQUIRE(groups.size() == 5);
+		for (size_t g = 0; g < 5; ++g) {
+			CHECK(groups[g].caption == captions[g]);
+			if (g > 0) {
+				// IN ORDER DOWN THE COLUMN, none over another.
+				CHECK(groups[g].y >= groups[g - 1].y + groups[g - 1].h);
+			}
+		}
+		const auto k = [&](P p) -> visage::Frame* { return panel.knobForTest(p); };
+		std::vector<std::vector<visage::Frame*>> want(5);
+		want[0] = { panel.emphasisPairForTest(), k(P::Smear) };
+		if (comb) {
+			want[1] = { panel.toneForTest(), panel.characterForTest(), k(P::Cutoff), k(P::Heat), k(P::Width), panel.blendForTest(),
+				        panel.gammaForTest() };
+		}
+		else if (etch) {
+			want[1] = { panel.etchSlotsForTest().outer.get(), k(P::Freq), k(P::Width), panel.trackForTest() };
+		}
+		else {
+			want[1] = { k(P::Freq), k(P::Width), k(P::Source), k(P::Grit), k(P::Stereo), k(P::Step), k(P::Detune), k(P::ModFold),
+				        panel.trackForTest() };
+			if (mode == ero::Mode::Dust) {
+				want[1].push_back(k(P::Amount));
+			}
+			else {
+				want[1].push_back(k(P::RustBias));
+				want[1].push_back(k(P::RustRectify));
+			}
+		}
+		want[2] = { panel.drivePairForTest() };
+		want[3] = { panel.loopPairForTest() };
+		if (!comb) {
+			want[3].push_back(k(P::Resonance));
+		}
+		want[4] = { k(P::HpWet), k(P::Follow), k(P::Mix) };
+		std::vector<visage::Frame*> listed;
+		for (size_t g = 0; g < 5; ++g) {
+			const EroRect box { groups[g].x, groups[g].y, groups[g].w, groups[g].h };
+			for (visage::Frame* f : want[g]) {
+				REQUIRE(f != nullptr);
+				CAPTURE(g);
+				CAPTURE(typeid(*f).name());
+				CHECK(f->isVisible());
+				CHECK(eroInside(eroAbsolute(f, &panel), box));
+				// AND IN NO OTHER GROUP.
+				for (size_t other = 0; other < 5; ++other) {
+					if (other != g) {
+						const EroRect o { groups[other].x, groups[other].y, groups[other].w, groups[other].h };
+						CHECK_FALSE(eroInside(eroAbsolute(f, &panel), o));
+					}
+				}
+				listed.push_back(f);
+			}
+		}
+		// EVERY VISIBLE CHILD OF THE WINDOW IS IN THE TABLE, but the plot, the engine strip and the picture.
+		const auto shown = eroVisible(&panel, { panel.plotForTest(), panel.modeForTest(), panel.flowForTest() });
+		CHECK(eroSameSet(shown, listed));
+		// THE PICTURE IS BELOW THEM ALL, and the window is tall enough for it.
+		CHECK(panel.flowForTest()->y() >= groups[4].y + groups[4].h);
+		CHECK(panel.flowForTest()->y() + panel.flowForTest()->height() <= panel.height());
+	}
+}
+
+TEST_CASE("ERODER's topology picture: the path in order with In Loop off and on, what is lit, where the returns leave, the Sub Thru road, Etch's slots") {
+	EroFaces e;
+	auto& panel = *e.panel;
+	using P = ero::Param;
+	ui::EroderFlow& flow = *panel.flowForTest();
+	const auto labels = [&] { return flow.labelsForTest(); };
+	const std::string sum = "\xE2\x8A\x95";
+	const auto indexOf = [&](const std::string& label) {
+		const auto l = labels();
+		return static_cast<size_t>(std::find(l.begin(), l.end(), label) - l.begin());
+	};
+	const auto lit = [&](const std::string& label) { return flow.pathForTest().stages[indexOf(label)].lit; };
+	e.mode(ero::Mode::Dust);
+	// THE ORDER: the emphasis before the sum, and after it with In Loop.
+	CHECK(labels() == std::vector<std::string>({ "in", "emph", sum, "smear", "dust", "drive", "restore", "hp", "mix" }));
+	e.set(P::EmphInLoop, 1.0f);
+	CHECK(labels() == std::vector<std::string>({ "in", sum, "emph", "smear", "dust", "drive", "restore", "hp", "mix" }));
+	e.set(P::EmphInLoop, 0.0f);
+	// WHAT IS LIT: the emphasis and its undoing at 0 dB are dim; a Smear, a Drive and an HP Wet are dim at their bottoms.
+	CHECK_FALSE(lit("emph"));
+	CHECK_FALSE(lit("restore"));
+	CHECK_FALSE(lit("smear"));
+	CHECK_FALSE(lit("drive"));
+	CHECK_FALSE(lit("hp"));
+	CHECK(lit("in"));
+	CHECK(lit("dust"));
+	CHECK(lit("mix"));
+	e.set(P::EmphRestore, 0.0f);
+	e.set(P::EmphAmount, 6.0f);
+	CHECK(lit("emph"));
+	CHECK_FALSE(lit("restore")); // the emphasis is not undone while Restore is off
+	e.set(P::EmphRestore, 1.0f);
+	CHECK(lit("restore"));
+	e.set(P::Smear, 0.5f);
+	e.set(P::Drive, 0.5f);
+	e.set(P::HpWet, 8.0f);
+	CHECK(lit("smear"));
+	CHECK(lit("drive"));
+	CHECK(lit("hp"));
+	// THE RETURNS: both dim at rest; the inner leaves the engine (Clean) or the Drive (Driven); the outer the Drive.
+	const auto& returns = flow.pathForTest().returns;
+	REQUIRE(returns.size() == 2);
+	CHECK_FALSE(returns[0].lit);
+	CHECK_FALSE(returns[1].lit);
+	CHECK(returns[0].to == indexOf(sum));
+	CHECK(returns[1].to == indexOf(sum));
+	e.set(P::Resonance, 0.4f);
+	e.set(P::Loop, 0.4f);
+	CHECK(flow.pathForTest().returns[0].lit);
+	CHECK(flow.pathForTest().returns[1].lit);
+	CHECK(lit(sum));
+	CHECK(flow.pathForTest().returns[0].from == indexOf("dust")); // Tap Clean
+	CHECK(flow.pathForTest().returns[1].from == indexOf("drive"));
+	e.set(P::FbTap, 1.0f);
+	CHECK(flow.pathForTest().returns[0].from == indexOf("drive")); // Tap Driven
+	CHECK(flow.pathForTest().returns[1].from == indexOf("drive"));
+	e.set(P::Loop, 0.0f);
+	CHECK_FALSE(flow.pathForTest().returns[1].lit);
+	CHECK(flow.pathForTest().returns[0].lit);
+	// THE SUB THRU ROAD runs from the input to HP Wet, and is lit only while it gives something back.
+	CHECK_FALSE(flow.pathForTest().bypass.lit);
+	CHECK(flow.pathForTest().bypass.from == indexOf("in"));
+	CHECK(flow.pathForTest().bypass.to == indexOf("hp"));
+	e.set(P::SubThru, 1.0f);
+	CHECK(flow.pathForTest().bypass.lit);
+	e.set(P::HpWet, static_cast<float>(ero::kHpWetLog2Min));
+	CHECK_FALSE(flow.pathForTest().bypass.lit);
+	e.set(P::HpWet, 8.0f);
+	// IN THE COMB it needs Blend, the window's own rule for the chip.
+	e.mode(ero::Mode::Comb);
+	CHECK(labels()[labels().size() - 5] == "comb");
+	CHECK_FALSE(flow.pathForTest().bypass.lit);
+	CHECK_FALSE(panel.subThruForTest()->enabled());
+	e.set(P::Blend, 1.0f);
+	CHECK(flow.pathForTest().bypass.lit);
+	CHECK(panel.subThruForTest()->enabled());
+	// ETCH: its two slots, side by side in Series and one over the other in Parallel.
+	e.set(P::FbTap, 0.0f);
+	e.mode(ero::Mode::Etch);
+	CHECK(labels() == std::vector<std::string>({ "in", "emph", sum, "smear", "A", "B", "drive", "restore", "hp", "mix" }));
+	CHECK_FALSE(flow.pathForTest().stages[indexOf("B")].beneath);
+	CHECK(flow.stageXForTest(indexOf("B")) > flow.stageXForTest(indexOf("A")));
+	CHECK_FALSE(lit("A"));
+	e.set(P::SlotAAmount, 0.5f);
+	CHECK(lit("A"));
+	e.set(P::SlotRoute, 1.0f);
+	CHECK(flow.pathForTest().stages[indexOf("B")].beneath);
+	CHECK(flow.stageXForTest(indexOf("B")) == flow.stageXForTest(indexOf("A")));
+	CHECK(flow.pathForTest().returns[0].from == indexOf("B"));
+
+	// THE FOUR SWITCHES ARE IN THE PICTURE'S FRAME, and a press goes through the frame to them.
+	CHECK(flow.ignoresMouseEvents());
+	for (ui::SwitchChip* chip : { panel.inLoopForTest(), panel.tapForTest(), panel.restoreForTest(), panel.subThruForTest() }) {
+		REQUIRE(chip != nullptr);
+		CHECK(chip->parent() == &flow);
+		CHECK(chip->isVisible());
+		CHECK(eroInside(eroAbsolute(chip, &flow), { 0.0f, 0.0f, static_cast<float>(flow.width()), static_cast<float>(flow.height()) }));
+	}
+	CHECK(eroField(e.d, P::EmphInLoop) == 0.0f);
+	panel.inLoopForTest()->onMouseDown().callback(at(4.0f, 4.0f));
+	e.refresh();
+	CHECK(eroField(e.d, P::EmphInLoop) == 1.0f);
+	// AND THE PICTURE FOLLOWED: it repainted from the new row.
+	CHECK(flow.labelsForTest()[1] == sum);
+}
+
+TEST_CASE("ERODER's greyable controls say in their tooltip when they are inactive and why, on the card and in the window") {
+	EroFaces e;
+	using P = ero::Param;
+	struct Case {
+		P param;
+		const char* keyword;
+	};
+	// THE CONDITION EACH ONE NAMES: the control the greying turns on.
+	const Case cases[] = { { P::EmphRestore, "Emphasis" }, { P::EmphInLoop, "Emphasis" }, { P::FbTap, "Reso" },
+		                   { P::SubThru, "HP Wet" },       { P::LoopInterval, "Loop" },    { P::Width, "Source" },
+		                   { P::EmphShape, "Emphasis" },   { P::Detune, "Source" },        { P::ModFold, "Source" } };
+	for (const Case& c : cases) {
+		const std::string declared = ero::kParamDescs[eroAt(c.param)].tooltip;
+		CAPTURE(ero::kParamDescs[eroAt(c.param)].key);
+		CHECK(declared.find("nactive") != std::string::npos);
+		CHECK(declared.find(c.keyword) != std::string::npos);
+		// THE BRIEF TOOLTIP (the first sentence) KEEPS THE CONDITION.
+		CHECK(ui::briefTooltip(declared).find("nactive") != std::string::npos);
+	}
+	// THE WIDGETS ANSWER WITH THEIR CONTROL'S TEXT, on both faces.
+	const auto chipSays = [&](ui::SwitchChip* chip, P p) {
+		REQUIRE(chip != nullptr);
+		CHECK(std::string(chip->tooltipAt({ 2.0f, 2.0f })).find("nactive") != std::string::npos);
+		CHECK(std::string(chip->tooltipAt({ 2.0f, 2.0f })) == ero::kParamDescs[eroAt(p)].tooltip);
+	};
+	chipSays(e.panel->restoreForTest(), P::EmphRestore);
+	chipSays(e.panel->inLoopForTest(), P::EmphInLoop);
+	chipSays(e.panel->tapForTest(), P::FbTap);
+	chipSays(e.panel->subThruForTest(), P::SubThru);
+	chipSays(e.d.card->restoreForTest(), P::EmphRestore);
+	chipSays(e.d.card->tapForTest(), P::FbTap);
+	for (ui::Knob* knob : { e.panel->knobForTest(P::LoopInterval), e.panel->knobForTest(P::Width), e.panel->knobForTest(P::Detune),
+	                        e.panel->knobForTest(P::ModFold), e.d.card->widthForTest() }) {
+		REQUIRE(knob != nullptr);
+		CHECK(std::string(knob->tooltipAt({ 2.0f, 2.0f })).find("nactive") != std::string::npos);
+	}
+	CHECK(std::string(e.panel->shapeForTest()->tooltipAt({ 2.0f, 2.0f })).find("nactive") != std::string::npos);
+}

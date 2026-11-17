@@ -27,6 +27,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/eroder_plot.h"
+#include "plugin/ui/eroder_flow.h"
 #include "plugin/ui/etch_slots.h"
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/gamma_box.h"
@@ -78,6 +79,27 @@ public:
 	static constexpr float kFace = 44.0f;
 	static constexpr float kSwitchHeight = 18.0f;
 	static constexpr size_t kPerRow = 4;
+	/// THE GROUPS: a box round each, its caption band, the room inside its edge, the gap between them and between rows.
+	static constexpr float kGroupCaption = 14.0f;
+	static constexpr float kGroupPad = 6.0f;
+	static constexpr float kGroupGap = 6.0f;
+	static constexpr float kRowGap = 6.0f;
+	[[nodiscard]] static constexpr float groupHeight(float content) { return kGroupCaption + content + kGroupPad; }
+
+	/// A CAPTIONED GROUP, in the window's x and y.
+	struct Group {
+		std::string caption;
+		float x = 0.0f;
+		float y = 0.0f;
+		float w = 0.0f;
+		float h = 0.0f;
+	};
+	[[nodiscard]] const std::vector<Group>& groupsForTest() const noexcept { return groups_; }
+	[[nodiscard]] EroderFlow* flowForTest() const noexcept { return flow_.get(); }
+	[[nodiscard]] SwitchChip* trackForTest() const { return track_.get(); }
+	[[nodiscard]] ZoneCoordCell* toneForTest() const { return tone_.get(); }
+	[[nodiscard]] ZoneCoordCell* characterForTest() const { return character_.get(); }
+	[[nodiscard]] GammaBox* gammaForTest() const { return gamma_.get(); }
 
 	[[nodiscard]] EroderPlot* plotForTest() const { return plot_.get(); }
 	[[nodiscard]] SegmentedControl* modeForTest() const { return mode_.get(); }
@@ -120,6 +142,8 @@ private:
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<EroderPlot> plot_;
+	std::unique_ptr<EroderFlow> flow_;
+	std::vector<Group> groups_;
 	std::unique_ptr<SegmentedControl> mode_;
 	/// EVERY PLAIN KNOB, by the control it drives; which are shown is the engine's (`layOut`).
 	std::vector<std::pair<fx::eroder::Param, std::unique_ptr<Knob>>> knobs_;

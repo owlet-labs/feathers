@@ -17,10 +17,12 @@
 
 #pragma once
 
+#include "dsp/linear_crossover.h"
 #include "fx/owltt/owltt_types.h"
 
 #include <array>
 #include <functional>
+#include <memory>
 #include <vector>
 
 
@@ -312,6 +314,9 @@ public:
 	void clearLookahead();
 	/// HOW MANY SAMPLES THE LAST CALL DELAYED THE AUDIO BY — the delay as applied, for a case to set beside the latency.
 	[[nodiscard]] uint32_t lookaheadAppliedForTest() const noexcept { return lookLen_; }
+	/// The linear crossover's latency in force (0 outside Mode 11): the delay as applied, to set beside the reported one.
+	[[nodiscard]] uint32_t linearLatencyForTest() const noexcept { return rawLen_; }
+	[[nodiscard]] const dsp::LinearFirBank& linearForTest() const noexcept { return *linear_; }
 
 private:
 	/// **THE SHARED DELAY, ONE SAMPLE OF IT (backlog ND)**: every band's two channels and the dry's two go in, and what
@@ -480,6 +485,20 @@ private:
 	uint32_t lookPos_ = 0;
 	/// The delay now in force, from `lookaheadSamplesFor(target_.lookahead, rate)`; a change takes effect at once.
 	uint32_t lookLen_ = 0;
+
+	/// **THE LINEAR CROSSOVER (Mode 11)**: the shared FIR split (`dsp/linear_crossover.h`), two outputs, the low and the high lowpass. The bands
+	/// are LP_low, LP_high - LP_low and the delayed input - LP_high, so they sum to the input `linearLatency` late, and the Blend's dry
+	/// is the raw input held back by the same amount in `rawDelay_`. The latency is fixed by the kernel length (never by the corners) and
+	/// is reported through `latencySamples`; a bypassed device in Linear still delays by it.
+	std::unique_ptr<dsp::LinearFirBank> linear_; ///< made at `prepare` (the bank owns its buffers and cannot be moved)
+	std::array<std::vector<float>, 2> rawDelay_;
+	uint32_t rawPos_ = 0;
+	uint32_t rawLen_ = 0;
+	bool rawLive_ = false;   ///< the raw delay has been fed without a gap, so it holds the input's recent past
+	bool linearBuild_ = false; ///< Linear just came in: its kernels are built whole, not crossfaded from nothing
+	/// Delay `left`/`right` in place by the linear latency (the bypassed road), feeding the raw delay.
+	void rawDelayStep(float* left, float* right, int frames) noexcept;
+	void ensureRawDelay() noexcept;
 };
 
 /// HOW THE HOST RUNS THIS DEVICE'S AUDIO — defined in owltt.cpp.

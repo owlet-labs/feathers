@@ -46,8 +46,8 @@ namespace feathers::fx::owltt {
 /// OWLTT's 25 controls, in hardware menu order.
 enum class Param : uint8_t {
 	// Global
-	Mode = 0,            // Stepped 1-10: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
-	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3
+	Mode = 0,            // Stepped 1-11: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
+	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11=Linear (linear-phase FIR)
 	Enabled = 1,         // Bypass switch
 	Threshold = 2,       // Linked global threshold
 	Ratio = 3,           // Linked global ratio
@@ -186,7 +186,7 @@ struct BandParams {
 
 /// The full OWLTT state: globals + per-band absolutes.
 struct Settings {
-	float mode = 6.0f;           // 1-10 = crossover type (6 = LR2 Full default)
+	float mode = 6.0f;           // 1-11 = crossover type (6 = LR2 Full default, 11 = Linear)
 	bool enabled = true;         // Bypass switch
 	float threshold = 0.5f;      // Linked global threshold
 	// THE STRUCT DEFAULT IS NOT THE PARAMETER DEFAULT, HERE AND ONLY HERE, and it is deliberate: a
@@ -330,7 +330,7 @@ inline constexpr device::Traits kTraits {
 };
 
 inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast",
-                                             "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3"};
+                                             "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3", "Linear"};
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
 /// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
@@ -524,8 +524,8 @@ inline constexpr double kOnePhaseUnit = 1.0;
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // Global
-    {"mode", "Mode", 1.0, 10.0, 6.0, true, device::Unit::Choice, kModeNames, false, false,
-     "Crossover filter type — how the spectrum is split into bands"},
+    {"mode", "Mode", 1.0, 11.0, 6.0, true, device::Unit::Choice, kModeNames, false, false,
+     "Crossover filter type — how the spectrum is split into bands. Linear splits with linear-phase FIRs: the bands sum to the input delayed by 24 ms, which the device reports as latency"},
     // ON BY DEFAULT — all effects should default to on when they are added.
     // See `fx::filter::kParamDescs` for the decision and what it replaced. This device is also the one
     // whose two declarations had already drifted: `Settings::enabled` said true while this said 0,

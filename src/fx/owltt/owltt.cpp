@@ -248,9 +248,23 @@ void Owltt::prepare(double sampleRate) {
 			channel.prepare(sampleRate);
 		}
 	}
+	// THE LINEAR CROSSOVER (Mode 11), allocated here with everything else: the FIR engine and the raw dry's delay.
+	linear_ = std::make_unique<dsp::LinearFirBank>();
+	linear_->prepare(sampleRate_, 2);
+	rawLen_ = linear_->latency();
+	for (auto& line : rawDelay_) {
+		line.assign(rawLen_, 0.0f);
+	}
+	rawPos_ = 0;
+	rawLive_ = false;
+	linearBuild_ = true;
 }
 
 void Owltt::resetCrossovers() {
+	if (linear_) {
+		linear_->clearAudio();
+	}
+	// The FIR's own audio is cleared; the raw dry delay is the latency the host was told and is NOT emptied (as the lookahead)
 	for (auto& x : ap1_) {
 		x.reset();
 	}
@@ -297,6 +311,33 @@ void Owltt::reset() {
 	smoothedOutputGain_ = 1.0f;
 	inputGain_.fill(1.0f);
 	frameCount_ = 0;
+}
+
+void Owltt::ensureRawDelay() noexcept {
+	// THE RAW DELAY HOLDS THE INPUT'S RECENT PAST only if it was fed without a gap: after any call that ran another mode it holds stale audio.
+	if (!rawLive_) {
+		for (auto& line : rawDelay_) {
+			std::fill(line.begin(), line.end(), 0.0f);
+		}
+		rawPos_ = 0;
+		rawLive_ = true;
+	}
+}
+
+void Owltt::rawDelayStep(float* left, float* right, int frames) noexcept {
+	if (rawLen_ == 0) {
+		return;
+	}
+	for (int i = 0; i < frames; ++i) {
+		const uint32_t at = rawPos_;
+		const float l = left[i];
+		const float r = right[i];
+		left[i] = rawDelay_[0][at];
+		right[i] = rawDelay_[1][at];
+		rawDelay_[0][at] = l;
+		rawDelay_[1][at] = r;
+		rawPos_ = at + 1 == rawLen_ ? 0 : at + 1;
+	}
 }
 
 void Owltt::clearLookahead() {
@@ -397,6 +438,20 @@ void Owltt::updateCrossoverFrequencies() {
 		x.setLowCrossover(low, sr);
 		x.setHighCrossover(high, sr);
 		x.setTwist(vibeTwist_);
+	}
+	// THE LINEAR CROSSOVER'S CORNERS: the same clamped low and high every other type is given, as the two lowpasses of its split. A
+	// corner that moved is rebuilt across the next control steps and crossfaded in (`LinearFirBank::setTargets`); one that came in
+	// with the mode is built whole. Called at control rate, once a slice; nothing here allocates.
+	if (std::lround(target_.mode) == 11 && linear_) {
+		const std::array<dsp::LinearBand, 2> corners { dsp::LinearBand { 0.0, static_cast<double>(low) },
+			                                           dsp::LinearBand { 0.0, static_cast<double>(high) } };
+		if (linearBuild_) {
+			linear_->buildNow(corners.data());
+			linearBuild_ = false;
+		}
+		else {
+			linear_->setTargets(corners.data());
+		}
 	}
 }
 
@@ -583,6 +638,7 @@ void Owltt::computeCharacterAndVibe() {
 	if (crossoverType != lastCrossoverType_) {
 		resetCrossovers();
 		lastCrossoverType_ = crossoverType;
+		linearBuild_ = crossoverType == 11;
 	}
 	// THE FOUR "WEIRD" CROSSOVERS ARE QUIRKY, TWISTED, WEIRD AND TWIST3 — the allpass creative set,
 	// whose bass the Width/Air/OTT zones let run wider because those splitters collapse it less. The
@@ -875,13 +931,22 @@ void Owltt::processStereo(float* left, float* right, int frames) {
 	// THE LOOKAHEAD IN FORCE (backlog ND), from the stored choice — the same function `latencySamples` answers from, so
 	// the delay applied is the latency reported. A change applies at once; the host restarts after it (assumption L6).
 	lookLen_ = lookCap_ > 0 ? std::min(lookaheadSamplesFor(target_.lookahead, sampleRate_), lookCap_ - 1) : 0;
-	// A MODE OUTSIDE 1-10 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
+	// A MODE OUTSIDE 1-11 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
 	// this it reported the lookahead's latency and delayed nothing. The descriptor cannot reach it; a raw row can.
 	const long crossoverType = std::lround(target_.mode);
-	if (!target_.enabled || crossoverType < 1 || crossoverType > 10) {
+	if (!target_.enabled || crossoverType < 1 || crossoverType > 11) {
 		if (running_) {
 			running_ = false;
 			reset();
+		}
+		// **AND BY THE LINEAR CROSSOVER'S LATENCY while Mode is Linear**: the host was told it too, so the bypass holds the input back by the
+		// same raw delay the Blend's dry uses (kept filled, so a re-enable finds the input's recent past in it).
+		if (crossoverType == 11) {
+			ensureRawDelay();
+			rawDelayStep(left, right, frames);
+		}
+		else {
+			rawLive_ = false;
 		}
 		// **A BYPASSED OWLTT IS STILL LATE BY ITS LOOKAHEAD** — COMP's rule (backlog LE): the host was told a latency and
 		// pads everything else by it, so a bypass that stopped delaying would arrive early. The dry lanes carry the input
@@ -969,15 +1034,24 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	sliceFrames_ = frames;
 
 	const uint8_t crossoverType = static_cast<uint8_t>(std::round(target_.mode));
-	// Mode is 1-10 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
-	if (crossoverType < 1 || crossoverType > 10) {
+	// Mode is 1-11 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
+	if (crossoverType < 1 || crossoverType > 11) {
 		return;
+	}
+	if (crossoverType == 11 && !linear_) {
+		return; // never prepared
 	}
 
 	// Character/vibe state FIRST, then the crossovers — `updateCrossoverFrequencies` hands the Twisted
 	// and Twist3 splitters `vibeTwist_`, which `computeCharacterAndVibe` is what sets. The other way
 	// round (as it stood until the OWLTT parity sweep, 2026-09-16) ran both on the PREVIOUS slice's
 	// twist; the firmware sets the twist inside render after its vibe pass, and this is that order.
+	if (crossoverType == 11) {
+		ensureRawDelay();
+	}
+	else {
+		rawLive_ = false;
+	}
 	computeCharacterAndVibe();
 	updateCrossoverFrequencies();
 	// BACKLOG LR: THE WIDTH EACH BAND SENDS ON — the zone's, scaled by the global Width and the band's own. At
@@ -1130,6 +1204,26 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			twist3_[0].process(inL, bandsL);
 			twist3_[1].process(inR, bandsR);
 			break;
+		// LINEAR (backlog: linear-phase crossover): two FIR lowpasses of the DRIVEN input and that input held back by the same latency.
+		// Low = LP_low, mid = LP_high - LP_low, high = delayed - LP_high, so low + mid + high IS the delayed input, to the float. The
+		// Blend's dry is the RAW input held back by the same number of samples, so a 50% Blend of unprocessed bands is flat and in time.
+		case 11: {
+			dsp::LinearFirBank::Frame fr;
+			linear_->process(inL, inR, fr);
+			bandsL.low = fr.out[0][0];
+			bandsL.mid = fr.out[1][0] - fr.out[0][0];
+			bandsL.high = fr.delayed[0] - fr.out[1][0];
+			bandsR.low = fr.out[0][1];
+			bandsR.mid = fr.out[1][1] - fr.out[0][1];
+			bandsR.high = fr.delayed[1] - fr.out[1][1];
+			const uint32_t at = rawPos_;
+			dryL[i] = rawDelay_[0][at];
+			dryR[i] = rawDelay_[1][at];
+			rawDelay_[0][at] = left[i];
+			rawDelay_[1][at] = right[i];
+			rawPos_ = at + 1 == rawLen_ ? 0 : at + 1;
+			break;
+		}
 		default:
 			// Unknown type — treat as bypass.
 			bandsL.low = bandsR.low = inL;
@@ -1623,13 +1717,23 @@ const device::AudioOps kAudioOps {
 	    },
 	// **THE LOOKAHEAD IS THE LATENCY (backlog ND)**, from the STORED choice (L1) through the function the render delays by,
 	// enabled or not (a bypass still delays). Off, or a row from before ND, is 0 — the device before ND.
+	// **AND THE LINEAR CROSSOVER'S (Mode 11)**: the kernel's centre plus the convolution block, fixed by the rate alone (never by the
+	// corners), added to the lookahead's. Read from the stored Mode, enabled or not, as the lookahead is: a bypassed Linear still delays.
 	.latencySamples = [](const void*, const float* fields, size_t fieldsPresent, double sampleRate) -> uint32_t {
-		const auto at = static_cast<size_t>(Param::Lookahead);
-		if (fields == nullptr || at >= fieldsPresent) {
+		if (fields == nullptr) {
 			return 0;
 		}
+		uint32_t latency = 0;
+		const auto mode = static_cast<size_t>(Param::Mode);
+		if (mode < fieldsPresent && std::isfinite(fields[mode]) && std::lround(fields[mode]) == 11) {
+			latency += dsp::linearCrossoverLatency(sampleRate);
+		}
+		const auto at = static_cast<size_t>(Param::Lookahead);
+		if (at >= fieldsPresent) {
+			return latency;
+		}
 		const long choice = std::clamp(std::lround(fields[at]), 0L, static_cast<long>(kLookaheadChoices - 1));
-		return lookaheadSamplesFor(static_cast<uint32_t>(choice), sampleRate);
+		return latency + lookaheadSamplesFor(static_cast<uint32_t>(choice), sampleRate);
 	},
 };
 

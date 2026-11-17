@@ -496,3 +496,40 @@ TEST_CASE("PU: OWLTT's window shows the as-modulated box for its global Ratio an
 	}
 	ui::LiveAmount::setClockForTest(nullptr);
 }
+
+TEST_CASE("a routed source moves OWLTT Character's live mark to the value the engine resolves, end to end") {
+	// THE REAL BRIDGE: a macro at a known reading routed at a known depth into Character. The cell's value box draws its
+	// live mark at the engine's modulated value, on the drag window's scale (the route span either side of the base).
+	namespace dtt = fx::owltt;
+	Rig rig;
+	const DeviceInstanceId id = rig.add(dtt::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel(rig.bridge, registry, id);
+	panel.setModulation(&rig.mod, &rig.history);
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0, 0, want.x, want.y);
+	panel.resized();
+	const size_t control = static_cast<size_t>(dtt::Param::Character);
+	const backplane::Source src = backplane::Source::core(1);
+	rig.bridge.setMacro(1, 0.8f);
+	rig.bridge.setRouteAmount(src, backplane::Destination::control(id, control), 0.3f);
+	rig.bridge.drain();
+	rig.block();
+	rig.block();
+	ui::ValueBox* box = nullptr;
+	for (const auto& cell : panel.modeCellsForTest()) {
+		if (ui::ValueBox* b = cell->boxFor(control)) {
+			box = b;
+		}
+	}
+	REQUIRE(box != nullptr);
+	REQUIRE(box->height() > 0.0f);
+	const double modulated = rig.bridge.modulatedFieldAt(id, control);
+	const double base = dtt::kParamDescs[control].def;
+	// THE ENGINE MOVED IT: 0.8 of the source at depth 0.3 over a span of one unit (an independent restatement).
+	CHECK(modulated - base == doctest::Approx(0.8 * 0.3 * 1.0).epsilon(0.01));
+	const double position = 0.5 + (modulated - base) / 2.0; // the window's scale: base at the middle, a span reaches an end
+	const visage::Bounds mark = box->liveMarkBounds();
+	REQUIRE(mark.height() > 0.0f);
+	CHECK(mark.y() == doctest::Approx((1.0 - position) * box->height() - mark.height() * 0.5).epsilon(0.002));
+}

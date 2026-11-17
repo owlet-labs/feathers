@@ -36,6 +36,13 @@ double positionIn(const ParamDesc& desc, double value) {
 	return toNormal(desc, value);
 }
 
+
+/// A RANGE TOO WIDE TO DRAW ON: a coordinate that spans 2^20 units or more (OWLTT's Character is a zoned one, 2^24
+/// wide). Unlike `isDragWindow` this does not ask for `zones == 0`, because a zoned coordinate is as unreadable
+/// against its whole range as an unzoned one.
+bool hasWindowScale(const ParamDesc& d) {
+	return d.unit == Unit::Number && (d.max - d.min) >= 1048576.0;
+}
 } // namespace
 
 double Modulatable::normalized() const {
@@ -57,7 +64,7 @@ double Modulatable::restNormalized() const {
 
 double Modulatable::scalePosition(double value, double base) const {
 	const ParamDesc& d = desc();
-	if (isDragWindow(d)) {
+	if (hasWindowScale(d)) {
 		const double span = routeSpanOf(d);
 		return span > 0.0 ? 0.5 + (value - base) / (2.0 * span) : 0.5;
 	}
@@ -89,7 +96,7 @@ Modulatable::Span Modulatable::amountSpan() const {
 	const ParamDesc& d = desc();
 	const double range = d.max - d.min;
 	const double span = routeSpanOf(d);
-	const double unit = isDragWindow(d) ? 0.5 : (range > 0.0 ? span / range : 1.0);
+	const double unit = hasWindowScale(d) ? 0.5 : (range > 0.0 ? span / range : 1.0);
 	// THE CURVE'S REACH (`reachLo`/`reachHi`), as the ring draws it: a bipolar source goes both ways from the base.
 	const auto reachLo = static_cast<float>(base + state.reachLo() * state.amount * unit);
 	const auto reachHi = static_cast<float>(base + state.reachHi() * state.amount * unit);

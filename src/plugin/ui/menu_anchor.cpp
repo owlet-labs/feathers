@@ -35,6 +35,9 @@ struct Open {
 	visage::Bounds anchor;
 	const visage::Frame* popup = nullptr;
 	std::shared_ptr<bool> closed;
+	/// **SET WHEN visage CANCELLED THE MENU BECAUSE IT LOST THE KEYBOARD FOCUS** — which `handleMouseDown` makes it do
+	/// BEFORE it delivers the press that did it. A pick or Esc leaves this false.
+	std::shared_ptr<bool> cancelled;
 };
 
 Open& openMenu() {
@@ -95,7 +98,15 @@ bool sameBounds(const visage::Bounds& a, const visage::Bounds& b) {
 /// faded by a paint since it lost the focus.
 visage::PopupMenuFrame* openPopupOf(const visage::Frame& source) {
 	const Open& o = openMenu();
-	if (o.source != &source || o.closed == nullptr || *o.closed) {
+	if (o.source != &source || o.closed == nullptr) {
+		return nullptr;
+	}
+	// **A CANCEL BY FOCUS LOSS IS NOT A CLOSE THE HAND MEANT YET.** visage takes the focus off the popup — which cancels
+	// it, and marks it closed — and only THEN delivers the press to the box under the pointer. So a press on the box that
+	// owns the open menu finds it "closed by a cancel", still on screen and opaque (it fades on its next paint): that
+	// is the re-click, and must close it, not open it again. A pick (`closed` alone) is not: it is a replacement.
+	const bool lostFocus = o.cancelled != nullptr && *o.cancelled;
+	if (*o.closed && !lostFocus) {
 		return nullptr;
 	}
 	visage::PopupMenuFrame* popup = livePopup(const_cast<visage::Frame&>(source).topParentFrame(), o.popup);
@@ -116,6 +127,7 @@ bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bou
 	visage::PopupMenuFrame* popup = openPopupOf(source);
 	if (popup != nullptr && sameBounds(openMenu().anchor, anchor)) {
 		*openMenu().closed = true;
+		*openMenu().cancelled = false;
 		popup->exit();
 		lastPlacement().shown = false;
 		return false;
@@ -129,6 +141,7 @@ bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bou
 	const auto picked = menu.onSelection();
 	const auto cancelled = menu.onCancel();
 	auto closed = std::make_shared<bool>(false);
+	auto lostFocus = std::make_shared<bool>(false);
 	visage::Frame* const top = source.topParentFrame();
 	// **THE SITE'S CALLBACKS RUN ONLY IF THE BOX IS STILL A LIVE FRAME UNDER THE WINDOW**, found again by identity
 	// (`liveUnder`) and never followed: the sites capture `this`, and a card rebuilt by a state or preset load
@@ -141,8 +154,9 @@ bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bou
 			picked.callback(id);
 		}
 	};
-	menu.onCancel() = [closed, cancelled, top, box]() {
+	menu.onCancel() = [closed, lostFocus, cancelled, top, box]() {
 		*closed = true;
+		*lostFocus = true;
 		if (liveUnder(top, box) != nullptr) {
 			cancelled.callback();
 		}
@@ -227,7 +241,7 @@ bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bou
 		}
 	}
 
-	openMenu() = { &source, anchor, shown, closed };
+	openMenu() = { &source, anchor, shown, closed, lostFocus };
 	lastPlacement() = { a, { x, y, w, h }, windowW, windowH, true, current, scroll };
 
 	// **ESC CLOSES IT** (backlog NN) — it had no keyboard exit at all: visage's popup takes the keyboard

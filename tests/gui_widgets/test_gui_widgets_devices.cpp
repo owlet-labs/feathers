@@ -44469,3 +44469,73 @@ TEST_CASE("ERODER's greyable controls say in their tooltip when they are inactiv
 	}
 	CHECK(std::string(e.panel->shapeForTest()->tooltipAt({ 2.0f, 2.0f })).find("nactive") != std::string::npos);
 }
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// A CHOICE BOX'S SECOND PRESS CLOSES THE MENU THE FIRST OPENED.                                                                  //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+namespace {
+
+ui::ModeValueCell* eroModeCell(visage::Frame* root, const char* key) {
+	ui::ModeValueCell* found = nullptr;
+	const std::function<void(visage::Frame*)> walk = [&](visage::Frame* frame) {
+		if (auto* cell = dynamic_cast<ui::ModeValueCell*>(frame);
+		    cell != nullptr && std::string_view(cell->select().control().desc().key) == key) {
+			found = cell;
+		}
+		for (visage::Frame* child : frame->children()) {
+			walk(child);
+		}
+	};
+	walk(root);
+	return found;
+}
+
+} // namespace
+
+TEST_CASE("Choice boxes: pressing the box that opened a menu closes it, in the real event order, for the Drive Type and an Etch slot Type") {
+	EroFaces e;
+	using P = ero::Param;
+	for (const bool etch : { false, true }) {
+		CAPTURE(etch);
+		e.mode(etch ? ero::Mode::Etch : ero::Mode::Dust);
+		ui::ModeValueCell* cell = eroModeCell(e.d.card, etch ? "eroder_slot_a_type" : "eroder_drive_mode");
+		REQUIRE(cell != nullptr);
+		ui::ZoneSelect& box = cell->select();
+		visage::Frame* root = e.d.f.root;
+		visage::Frame* top = box.topParentFrame();
+		const visage::Point centre = box.positionInWindow() + visage::Point { box.width() * 0.5f, box.height() * 0.5f };
+		REQUIRE(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&box));
+		const auto popup = [&]() -> visage::PopupMenuFrame* {
+			visage::PopupMenuFrame* last = nullptr;
+			for (visage::Frame* child : top->children()) {
+				if (auto* p = dynamic_cast<visage::PopupMenuFrame*>(child); p != nullptr) {
+					last = p;
+				}
+			}
+			return last;
+		};
+		const P type = etch ? P::SlotAType : P::DriveMode;
+		const float before = eroField(e.d, type);
+
+		dragThroughRoot(root, centre, centre);
+		CHECK(ui::menuOpenFor(box));
+		visage::PopupMenuFrame* shown = popup();
+		REQUIRE(shown != nullptr);
+
+		// THE REAL ORDER: visage takes the focus off the popup (which cancels it) and THEN delivers the press.
+		shown->processFocusChanged(false, true);
+		dragThroughRoot(root, centre, centre);
+		CHECK_FALSE(ui::menuOpenFor(box));
+		CHECK_FALSE(ui::lastMenuPlacementForTest().shown);
+		CHECK(popup() == shown); // no second menu
+		CHECK(eroField(e.d, type) == before);
+
+		// AND A THIRD PRESS OPENS IT AGAIN.
+		dragThroughRoot(root, centre, centre);
+		CHECK(ui::menuOpenFor(box));
+		CHECK(ui::lastMenuPlacementForTest().shown);
+		CHECK(popup() != shown);
+		CHECK(eroField(e.d, type) == before);
+	}
+}

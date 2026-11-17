@@ -43008,7 +43008,8 @@ TEST_CASE("ERODER's Drive is one pair in the card and the window: the knob, and 
 
 	const auto check = [&](ui::PairCell* pair, ui::Knob* knob, ui::ModeValueCell* cell, float surfaceWidth) {
 		REQUIRE(pair != nullptr);
-		CHECK(pair->caption() == "Drive");
+		// THE CARD'S PAIR IS CAPTIONED; THE WINDOW'S GROUP SAYS IT (the pair there is bare).
+		CHECK((pair->caption() == "Drive") == !pair->bare());
 		CHECK(knob->parent() == pair);
 		CHECK(cell->parent() == pair);
 		CHECK(pair->isVisible());
@@ -43283,8 +43284,9 @@ TEST_CASE("ERODER's window offers every shared-section control in every engine, 
 			CHECK(pair->first().right() <= pair->second().x());
 			CHECK(pair->first().y() == pair->second().y());
 		}
-		CHECK(panel.emphasisPairForTest()->caption() == "Emphasis");
-		CHECK(panel.loopPairForTest()->caption() == "Loop");
+		// BARE PAIRS: the group they sit in names them.
+		CHECK(panel.emphasisPairForTest()->bare());
+		CHECK(panel.loopPairForTest()->bare());
 		CHECK(panel.shapeForTest()->parent() == panel.emphasisCellForTest());
 		CHECK(panel.emphasisCellForTest() == &panel.emphasisPairForTest()->second());
 		// NOTHING OVERLAPS AT THE WINDOW'S OWN WIDTH, counting what is inside the pairs.
@@ -44139,8 +44141,8 @@ TEST_CASE("ETCH's window offers the slot row and every control Etch uses, nothin
 	const auto visible = [](visage::Frame* f) { return f != nullptr && f->isVisible(); };
 	ui::EtchSlots& slots = panel.etchSlotsForTest();
 	CHECK(visible(slots.outer.get()));
-	CHECK(slots.outer->caption() == "Slots");
-	CHECK(slots.outer->width() == doctest::Approx(ui::EroderExpanded::kSideWidth));
+	CHECK(slots.outer->bare());
+	CHECK(slots.outer->width() == doctest::Approx(4.0f * ui::EroderExpanded::kSideWidth / static_cast<float>(ui::EroderExpanded::kPerRow)));
 	CHECK(slots.innerA->right() <= slots.route->x());
 	CHECK(slots.route->right() <= slots.innerB->x());
 	for (const ero::Param p : { ero::Param::Freq, ero::Param::Width, ero::Param::Resonance, ero::Param::Follow, ero::Param::Mix,
@@ -44257,7 +44259,9 @@ TEST_CASE("ERODER's window groups its controls in signal order: Tone, Engine, Dr
 	EroFaces e;
 	auto& panel = *e.panel;
 	using P = ero::Param;
+	// THE TABLE IS IN SIGNAL ORDER; THE WINDOW PACKS TWO TO A ROW, so reading order is Tone, Drive, Engine, Feedback, Output.
 	const char* const captions[] = { "Tone", "Engine", "Drive", "Feedback", "Output" };
+	const char* const reading[] = { "Tone", "Drive", "Engine", "Feedback", "Output" };
 	for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb, ero::Mode::Etch }) {
 		CAPTURE(static_cast<int>(mode));
 		e.mode(mode);
@@ -44266,12 +44270,21 @@ TEST_CASE("ERODER's window groups its controls in signal order: Tone, Engine, Dr
 		const auto& groups = panel.groupsForTest();
 		REQUIRE(groups.size() == 5);
 		for (size_t g = 0; g < 5; ++g) {
-			CHECK(groups[g].caption == captions[g]);
+			CHECK(groups[g].caption == reading[g]);
 			if (g > 0) {
-				// IN ORDER DOWN THE COLUMN, none over another.
-				CHECK(groups[g].y >= groups[g - 1].y + groups[g - 1].h);
+				// ROW BY ROW DOWN THE COLUMN, left to right, none over another.
+				CHECK(groups[g].y >= groups[g - 1].y);
+				for (size_t other = 0; other < g; ++other) {
+					const bool apart = groups[g].x >= groups[other].x + groups[other].w - 0.01f
+					                   || groups[g].y >= groups[other].y + groups[other].h - 0.01f;
+					CHECK(apart);
+				}
 			}
 		}
+		// TWO TO A ROW WHERE THEY FIT: Tone beside Drive, Feedback beside Output, the Engine alone between them.
+		CHECK(groups[0].y == groups[1].y);
+		CHECK(groups[3].y == groups[4].y);
+		CHECK(groups[2].w > groups[0].w);
 		const auto k = [&](P p) -> visage::Frame* { return panel.knobForTest(p); };
 		std::vector<std::vector<visage::Frame*>> want(5);
 		want[0] = { panel.emphasisPairForTest(), k(P::Smear) };
@@ -44302,7 +44315,11 @@ TEST_CASE("ERODER's window groups its controls in signal order: Tone, Engine, Dr
 		std::vector<visage::Frame*> listed;
 		for (size_t g = 0; g < 5; ++g) {
 			const EroRect box { groups[g].x, groups[g].y, groups[g].w, groups[g].h };
-			for (visage::Frame* f : want[g]) {
+			size_t k = 0;
+			while (std::string(captions[k]) != groups[g].caption) {
+				++k;
+			}
+			for (visage::Frame* f : want[k]) {
 				REQUIRE(f != nullptr);
 				CAPTURE(g);
 				CAPTURE(typeid(*f).name());
@@ -44323,6 +44340,8 @@ TEST_CASE("ERODER's window groups its controls in signal order: Tone, Engine, Dr
 		CHECK(eroSameSet(shown, listed));
 		// THE PICTURE IS BELOW THEM ALL, and the window is tall enough for it.
 		CHECK(panel.flowForTest()->y() >= groups[4].y + groups[4].h);
+		// AND NO DEAD GAP ABOVE IT at the window's own size.
+		CHECK(panel.flowForTest()->y() - (groups[4].y + groups[4].h) < 12.0f);
 		CHECK(panel.flowForTest()->y() + panel.flowForTest()->height() <= panel.height());
 	}
 }
@@ -44424,6 +44443,59 @@ TEST_CASE("ERODER's topology picture: the path in order with In Loop off and on,
 		CHECK(chip->parent() == &flow);
 		CHECK(chip->isVisible());
 		CHECK(eroInside(eroAbsolute(chip, &flow), { 0.0f, 0.0f, static_cast<float>(flow.width()), static_cast<float>(flow.height()) }));
+	}
+	// EACH SWITCH SITS BESIDE WHAT IT CHANGES, and nothing overlaps: not a stage's box, not another switch. Over every engine, the
+	// Etch's two routes, both taps and both places for the emphasis.
+	{
+		using Chip = ui::EroderFlow::Chip;
+		const auto overlap = [](const ui::EroderFlow::Rect& a, const ui::EroderFlow::Rect& b) {
+			return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+		};
+		const std::pair<Chip, ui::SwitchChip*> chips[] = { { Chip::InLoop, panel.inLoopForTest() }, { Chip::Tap, panel.tapForTest() },
+			                                               { Chip::Restore, panel.restoreForTest() }, { Chip::SubThru, panel.subThruForTest() } };
+		for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb, ero::Mode::Etch }) {
+			for (const int variant : { 0, 1, 2, 3 }) {
+				CAPTURE(static_cast<int>(mode));
+				CAPTURE(variant);
+				e.mode(mode);
+				e.set(P::SlotRoute, (variant & 1) != 0 ? 1.0f : 0.0f);
+				e.set(P::FbTap, (variant & 2) != 0 ? 1.0f : 0.0f);
+				e.set(P::EmphInLoop, ((variant + 1) & 2) != 0 ? 1.0f : 0.0f);
+				const float fw = static_cast<float>(flow.width());
+				const float fh = static_cast<float>(flow.height());
+				for (const auto& [chip, frame] : chips) {
+					const ui::EroderFlow::Rect r = flow.chipRectForTest(chip);
+					CHECK(frame->x() == doctest::Approx(r.x));
+					CHECK(frame->y() == doctest::Approx(r.y));
+					CHECK(r.x >= 0.0f);
+					CHECK(r.y >= 0.0f);
+					CHECK(r.x + r.w <= fw);
+					CHECK(r.y + r.h <= fh);
+					for (size_t i = 0; i < flow.pathForTest().stages.size(); ++i) {
+						CAPTURE(flow.pathForTest().stages[i].label);
+						CHECK_FALSE(overlap(r, flow.boxForTest(i)));
+					}
+					for (const auto& [other, otherFrame] : chips) {
+						if (other != chip) {
+							CHECK_FALSE(overlap(r, flow.chipRectForTest(other)));
+						}
+					}
+					const ui::EroderFlow::Anchor a = flow.anchorForTest(chip);
+					CHECK(std::hypot(r.x + r.w * 0.5f - a.x, r.y + r.h * 0.5f - a.y) <= ui::EroderFlow::kChipReach);
+					// THE ANCHOR'S STAGE IS A REAL ONE, and the right kind.
+					REQUIRE(a.stage < flow.pathForTest().stages.size());
+				}
+				const auto& stages = flow.pathForTest().stages;
+				CHECK(stages[flow.anchorForTest(Chip::Restore).stage].label == "restore");
+				CHECK(stages[flow.anchorForTest(Chip::InLoop).stage].label == "emph");
+				CHECK(stages[flow.anchorForTest(Chip::SubThru).stage].label == "in");
+				CHECK(flow.anchorForTest(Chip::Tap).stage == flow.pathForTest().returns[0].from);
+			}
+		}
+		e.mode(ero::Mode::Etch);
+		e.set(P::SlotRoute, 0.0f);
+		e.set(P::FbTap, 0.0f);
+		e.set(P::EmphInLoop, 0.0f);
 	}
 	CHECK(eroField(e.d, P::EmphInLoop) == 0.0f);
 	panel.inLoopForTest()->onMouseDown().callback(at(4.0f, 4.0f));

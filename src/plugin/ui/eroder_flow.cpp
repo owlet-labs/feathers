@@ -36,8 +36,13 @@ namespace ero = fx::eroder;
 namespace {
 
 constexpr float kLabelTracking = 0.0f;
-constexpr float kArrow = 11.0f;
 constexpr float kLabelSize = 9.0f;
+constexpr float kMargin = 12.0f;
+constexpr float kBoxHeight = 20.0f;
+constexpr float kStackedHeight = 18.0f;
+constexpr float kStackedOffset = 11.0f;
+constexpr float kSumDiameter = 16.0f;
+constexpr float kPadding = 14.0f;
 
 std::string lower(const char* s) {
 	std::string out = s;
@@ -122,8 +127,20 @@ std::vector<std::string> EroderFlow::labelsForTest() const {
 	return out;
 }
 
+EroderFlow::Anchor EroderFlow::anchorForTest(Chip chip) const { return anchors_[static_cast<size_t>(chip)]; }
+EroderFlow::Rect EroderFlow::chipRectForTest(Chip chip) const { return chipRects_[static_cast<size_t>(chip)]; }
+
 float EroderFlow::labelWidth(const std::string& text) const {
 	return trackedWidth(font(kLabelSize), text, kLabelTracking);
+}
+
+size_t EroderFlow::indexOf(const char* label) const {
+	for (size_t i = 0; i < path_.stages.size(); ++i) {
+		if (path_.stages[i].label == label) {
+			return i;
+		}
+	}
+	return 0;
 }
 
 bool EroderFlow::update() {
@@ -136,74 +153,108 @@ bool EroderFlow::update() {
 	path_ = std::move(next);
 	computed_ = true;
 	++recomputes_;
-	measure();
 	resized();
 	redraw();
 	return true;
 }
 
+float EroderFlow::returnFromX(const Return& r) const {
+	const Rect& b = boxes_[r.from];
+	return b.x + b.w * 0.5f + (r.outer ? 5.0f : -5.0f);
+}
+
+float EroderFlow::returnToX(const Return& r) const {
+	const Rect& b = boxes_[r.to];
+	return b.x + b.w * 0.5f + (r.outer ? -4.0f : 4.0f);
+}
+
+float EroderFlow::bypassToX() const {
+	// WHERE THE LOWS ARE GIVEN BACK: the arrow between HP Wet and what follows it.
+	const size_t hp = path_.bypass.to;
+	const Rect& b = boxes_[hp];
+	const float next = hp + 1 < boxes_.size() ? boxes_[hp + 1].x : b.x + b.w + 20.0f;
+	return (b.x + b.w + next) * 0.5f;
+}
+
 void EroderFlow::measure() {
-	// COLUMNS LEFT TO RIGHT: a stage beneath shares the column before it. The arrows take `kArrow` between columns, and the
-	// whole run is centred in the frame.
-	columns_.assign(path_.stages.size(), 0.0f);
-	halves_.assign(path_.stages.size(), 0.0f);
-	float total = 0.0f;
+	// COLUMNS: a stage beneath shares the column of the one before it.
+	columns_.clear();
 	std::vector<float> widths(path_.stages.size(), 0.0f);
 	for (size_t i = 0; i < path_.stages.size(); ++i) {
-		widths[i] = labelWidth(path_.stages[i].label);
-		if (path_.stages[i].beneath && i > 0) {
-			widths[i] = std::max(widths[i], widths[i - 1]);
-			widths[i - 1] = widths[i];
+		const bool sum = path_.stages[i].label == "\xE2\x8A\x95";
+		widths[i] = sum ? kSumDiameter : std::max(24.0f, labelWidth(path_.stages[i].label) + kPadding);
+		if (path_.stages[i].beneath && !columns_.empty()) {
+			columns_.back().push_back(i);
+		}
+		else {
+			columns_.push_back({ i });
 		}
 	}
-	size_t columnsCount = 0;
-	for (size_t i = 0; i < path_.stages.size(); ++i) {
-		if (!path_.stages[i].beneath) {
-			total += widths[i];
-			++columnsCount;
+	std::vector<float> colWidth;
+	float total = 0.0f;
+	for (const auto& col : columns_) {
+		float w = 0.0f;
+		for (const size_t i : col) {
+			w = std::max(w, widths[i]);
 		}
+		colWidth.push_back(w);
+		total += w;
 	}
-	total += kArrow * static_cast<float>(columnsCount > 0 ? columnsCount - 1 : 0);
-	float x = (static_cast<float>(width()) - total) * 0.5f;
-	for (size_t i = 0; i < path_.stages.size(); ++i) {
-		if (path_.stages[i].beneath && i > 0) {
-			columns_[i] = columns_[i - 1];
-			halves_[i] = halves_[i - 1];
-			continue;
+	const float n = static_cast<float>(columns_.size());
+	const float spare = static_cast<float>(width()) - 2.0f * kMargin - total;
+	const float arrow = std::clamp(n > 1.0f ? spare / (n - 1.0f) : 0.0f, 14.0f, 40.0f);
+	float x = (static_cast<float>(width()) - total - arrow * (n - 1.0f)) * 0.5f;
+	boxes_.assign(path_.stages.size(), {});
+	for (size_t c = 0; c < columns_.size(); ++c) {
+		const auto& col = columns_[c];
+		for (size_t k = 0; k < col.size(); ++k) {
+			const size_t i = col[k];
+			const bool stacked = col.size() > 1;
+			const bool sum = path_.stages[i].label == "\xE2\x8A\x95";
+			const float h = sum ? kSumDiameter : stacked ? kStackedHeight : kBoxHeight;
+			const float cy = kMainY + (stacked ? (k == 0 ? -kStackedOffset : kStackedOffset) : 0.0f);
+			const float w = sum ? kSumDiameter : colWidth[c];
+			boxes_[i] = { x + (colWidth[c] - w) * 0.5f, cy - h * 0.5f, w, h };
 		}
-		columns_[i] = x + widths[i] * 0.5f;
-		halves_[i] = widths[i] * 0.5f;
-		x += widths[i] + kArrow;
+		x += colWidth[c] + arrow;
 	}
 }
 
 void EroderFlow::resized() {
 	measure();
-	// THE CHIPS, a row along the foot of the frame, each as near the part of the drawing it moves as the row allows: In Loop
-	// under the sum, Driven under the Drive, Restore under its own stage. Kept apart and inside the frame.
+	const size_t sum = indexOf("\xE2\x8A\x95");
+	const size_t emph = indexOf("emph");
+	const size_t restore = indexOf("restore");
+	const auto centreX = [&](size_t i) { return boxes_[i].x + boxes_[i].w * 0.5f; };
+	const float w = static_cast<float>(width());
+	const auto put = [&](Chip chip, float cx, float cy) {
+		const float x = std::clamp(cx - kChipWidth * 0.5f, 4.0f, std::max(4.0f, w - 4.0f - kChipWidth));
+		chipRects_[static_cast<size_t>(chip)] = { x, cy - kChipHeight * 0.5f, kChipWidth, kChipHeight };
+	};
+	// IN LOOP: above the emphasis and the sum, between the Sub Thru road and the line.
+	const float inLoopX = (centreX(emph) + centreX(sum)) * 0.5f;
+	put(Chip::InLoop, inLoopX, 30.0f);
+	anchors_[static_cast<size_t>(Chip::InLoop)] = { emph, inLoopX, 30.0f };
+	// TAP: on the inner return, left of where it leaves, and clear of the arrow into the sum.
+	const Return& inner = path_.returns[0];
+	const float leaveX = returnFromX(inner);
+	const float tapX = std::max(leaveX - 48.0f, boxes_[sum].x + boxes_[sum].w * 0.5f + 4.0f + 6.0f + kChipWidth * 0.5f);
+	put(Chip::Tap, tapX, kInnerY);
+	anchors_[static_cast<size_t>(Chip::Tap)] = { inner.from, tapX, kInnerY };
+	// RESTORE: under its own stage.
+	put(Chip::Restore, centreX(restore), 78.0f);
+	anchors_[static_cast<size_t>(Chip::Restore)] = { restore, centreX(restore), boxes_[restore].y + boxes_[restore].h };
+	// SUB THRU: on the road, half way along it.
+	const float subX = (centreX(path_.bypass.from) + bypassToX()) * 0.5f;
+	put(Chip::SubThru, subX, kBypassY);
+	anchors_[static_cast<size_t>(Chip::SubThru)] = { path_.bypass.from, subX, kBypassY };
 	if (inLoop_ == nullptr) {
 		return;
 	}
-	const float w = static_cast<float>(width());
-	const float chipW = 72.0f;
-	const auto centreOf = [&](const char* label, size_t fallback) {
-		for (size_t i = 0; i < path_.stages.size(); ++i) {
-			if (path_.stages[i].label == label) {
-				return columns_[i];
-			}
-		}
-		return columns_.empty() ? static_cast<float>(fallback) : columns_[fallback % columns_.size()];
-	};
-	const float want[4] = { centreOf("\xE2\x8A\x95", 2), centreOf("drive", 6), centreOf("restore", 7), centreOf("hp", 8) };
-	constexpr size_t kChips = 4;
-	float left = kPad;
-	visage::Frame* chips[kChips] = { inLoop_, tap_, restore_, subThru_ };
-	for (size_t i = 0; i < kChips; ++i) {
-		const float room = chipW * static_cast<float>(kChips - i) + 4.0f * static_cast<float>(kChips - 1 - i);
-		float x = std::min(std::max(left, want[i] - chipW * 0.5f), w - kPad - room);
-		x = std::max(x, left);
-		chips[i]->setBounds(x, kChipTop, chipW, 16.0f);
-		left = x + chipW + 4.0f;
+	visage::Frame* frames[4] = { inLoop_, tap_, restore_, subThru_ };
+	for (size_t i = 0; i < 4; ++i) {
+		const Rect& r = chipRects_[i];
+		frames[i]->setBounds(r.x, r.y, r.w, r.h);
 	}
 }
 
@@ -214,57 +265,113 @@ void EroderFlow::draw(visage::Canvas& canvas) {
 	canvas.roundedRectangle(0.0f, 0.0f, w, h, 5.0f);
 	canvas.setColor(withAlpha(kLine, 0.7f));
 	canvas.roundedRectangleBorder(0.5f, 0.5f, w - 1.0f, h - 1.0f, 5.0f, 1.0f);
-
-	const float cy = 33.0f;
-	const float rowGap = 5.5f;
+	if (boxes_.size() != path_.stages.size()) {
+		return;
+	}
 	const visage::Font& face = font(kLabelSize);
-	const auto yOf = [&](size_t i) { return path_.stages[i].beneath ? cy + rowGap : (i + 1 < path_.stages.size() && path_.stages[i + 1].beneath ? cy - rowGap : cy); };
+	const float cy = kMainY;
+	const auto line = [&](float x0, float y0, float x1, float y1, float t = 1.2f) { canvas.segment(x0, y0, x1, y1, t, true); };
+	const auto head = [&](float x, float y, float dx, float dy) {
+		// AN ARROWHEAD AT (x, y) POINTING ALONG (dx, dy), a unit axis.
+		line(x - 4.0f * dx - 2.5f * dy, y - 4.0f * dy + 2.5f * dx, x, y);
+		line(x - 4.0f * dx + 2.5f * dy, y - 4.0f * dy - 2.5f * dx, x, y);
+	};
+	const auto roadColour = [&](bool lit, uint32_t on) { return lit ? withAlpha(on, 0.95f) : withAlpha(kMuted, 0.3f); };
 
-	// LABELS AND THE ARROWS BETWEEN COLUMNS.
-	for (size_t i = 0; i < path_.stages.size(); ++i) {
-		const Stage& s = path_.stages[i];
-		canvas.setColor(s.lit ? kInk : withAlpha(kMuted, 0.4f));
-		canvas.text(s.label, face, visage::Font::kCenter, columns_[i] - halves_[i] - 4.0f, yOf(i) - 5.5f, 2.0f * halves_[i] + 8.0f, 11.0f);
-		if (s.beneath || i + 1 >= path_.stages.size()) {
-			continue;
+	// THE MAIN LINE: an arrow from each column to the next, split and joined where a column holds two.
+	for (size_t c = 0; c + 1 < columns_.size(); ++c) {
+		const auto& from = columns_[c];
+		const auto& to = columns_[c + 1];
+		const Rect& a = boxes_[from.front()];
+		const Rect& b = boxes_[to.front()];
+		const float x0 = a.x + a.w;
+		const float x1 = b.x;
+		bool lit = true;
+		for (const size_t i : from) {
+			lit = lit && path_.stages[i].lit;
 		}
-		// THE ARROW LEAVES THE LAST OF THIS COLUMN AND ENTERS THE FIRST OF THE NEXT.
-		const float x0 = columns_[i] + halves_[i] + 2.0f;
-		const float x1 = columns_[i + 1 < path_.stages.size() ? i + 1 : i] - halves_[i + 1] - 2.0f;
-		const bool lit = s.lit && path_.stages[i + 1].lit;
-		canvas.setColor(lit ? withAlpha(kInk, 0.7f) : withAlpha(kMuted, 0.35f));
-		canvas.segment(x0, cy, x1, cy, 1.0f, true);
-		canvas.segment(x1 - 2.5f, cy - 2.0f, x1, cy, 1.0f, true);
-		canvas.segment(x1 - 2.5f, cy + 2.0f, x1, cy, 1.0f, true);
+		for (const size_t i : to) {
+			lit = lit && path_.stages[i].lit;
+		}
+		canvas.setColor(lit ? withAlpha(kInk, 0.75f) : withAlpha(kMuted, 0.35f));
+		if (from.size() == 1 && to.size() == 1) {
+			line(x0, cy, x1, cy);
+			head(x1, cy, 1.0f, 0.0f);
+		}
+		else {
+			const float mid = (x0 + x1) * 0.5f;
+			if (to.size() > 1) {
+				line(x0, cy, mid, cy);
+				line(mid, boxes_[to.front()].y + boxes_[to.front()].h * 0.5f, mid, boxes_[to.back()].y + boxes_[to.back()].h * 0.5f);
+				for (const size_t i : to) {
+					const float y = boxes_[i].y + boxes_[i].h * 0.5f;
+					line(mid, y, x1, y);
+					head(x1, y, 1.0f, 0.0f);
+				}
+			}
+			else {
+				line(mid, cy, x1, cy);
+				head(x1, cy, 1.0f, 0.0f);
+				line(mid, boxes_[from.front()].y + boxes_[from.front()].h * 0.5f, mid, boxes_[from.back()].y + boxes_[from.back()].h * 0.5f);
+				for (const size_t i : from) {
+					const float y = boxes_[i].y + boxes_[i].h * 0.5f;
+					line(x0, y, mid, y);
+				}
+			}
+		}
 	}
 
-	// THE SUB THRU ROAD UNDER THE LINE: off the input, below the labels, and up into the arrow after HP Wet.
+	// THE SUB THRU ROAD OVER THE LINE: off the input, along the top, and down into the arrow after HP Wet.
 	{
 		const Bypass& b = path_.bypass;
-		const float xFrom = columns_[b.from];
-		const float xTo = columns_[b.to] + halves_[b.to] + kArrow * 0.5f;
-		const float yTo = cy + 8.0f;
-		canvas.setColor(b.lit ? withAlpha(kValue, 0.95f) : withAlpha(kMuted, 0.3f));
-		canvas.segment(xFrom, yTo - 1.0f, xFrom, kBypassY, 1.2f, true);
-		canvas.segment(xFrom, kBypassY, xTo, kBypassY, 1.2f, true);
-		canvas.segment(xTo, kBypassY, xTo, yTo, 1.2f, true);
-		canvas.segment(xTo - 2.5f, yTo + 3.0f, xTo, yTo, 1.2f, true);
-		canvas.segment(xTo + 2.5f, yTo + 3.0f, xTo, yTo, 1.2f, true);
+		const Rect& from = boxes_[b.from];
+		const float xFrom = from.x + from.w * 0.5f;
+		const float xTo = bypassToX();
+		canvas.setColor(roadColour(b.lit, kValue));
+		line(xFrom, from.y, xFrom, kBypassY);
+		line(xFrom, kBypassY, xTo, kBypassY);
+		line(xTo, kBypassY, xTo, cy - 1.0f);
+		head(xTo, cy - 1.0f, 0.0f, 1.0f);
 	}
 
-	// THE RETURNS OVER THE LINE: up from the stage they leave, across, and down into the sum, the outer one over the inner.
+	// THE RETURNS UNDER THE LINE: down from the stage they leave, back along, and up into the sum.
 	for (const Return& r : path_.returns) {
-		const float top = r.outer ? 5.0f : 11.0f;
-		const float xFrom = columns_[r.from] + halves_[r.from] + (r.outer ? -1.0f : -4.0f);
-		const float xTo = columns_[r.to] + (r.outer ? 2.5f : -2.5f);
-		const float yFrom = cy - 8.0f;
-		const float yTo = cy - 8.0f;
-		canvas.setColor(r.lit ? withAlpha(r.outer ? tokens::kGammaAxis : kValue, 0.95f) : withAlpha(kMuted, 0.3f));
-		canvas.segment(xFrom, yFrom, xFrom, top, 1.2f, true);
-		canvas.segment(xFrom, top, xTo, top, 1.2f, true);
-		canvas.segment(xTo, top, xTo, yTo, 1.2f, true);
-		canvas.segment(xTo - 2.5f, yTo - 3.0f, xTo, yTo, 1.2f, true);
-		canvas.segment(xTo + 2.5f, yTo - 3.0f, xTo, yTo, 1.2f, true);
+		const Rect& from = boxes_[r.from];
+		const float y = r.outer ? kOuterY : kInnerY;
+		const float xFrom = returnFromX(r);
+		const float xTo = returnToX(r);
+		const Rect& sum = boxes_[r.to];
+		const float yTo = sum.y + sum.h - 1.0f;
+		canvas.setColor(roadColour(r.lit, kAccent));
+		line(xFrom, from.y + from.h, xFrom, y);
+		line(xFrom, y, xTo, y);
+		line(xTo, y, xTo, yTo);
+		head(xTo, yTo, 0.0f, -1.0f);
+		canvas.setColor(r.lit ? kAccent : withAlpha(kMuted, 0.5f));
+		canvas.text(r.outer ? "loop" : "reso", face, visage::Font::kLeft, xTo + 8.0f, y + (r.outer ? 1.0f : 2.0f), 36.0f, 11.0f);
+	}
+
+	// THE STAGES: a rounded box and its label; the sum a circle with a plus.
+	for (size_t i = 0; i < path_.stages.size(); ++i) {
+		const Stage& s = path_.stages[i];
+		const Rect& r = boxes_[i];
+		const bool sum = s.label == "\xE2\x8A\x95";
+		const uint32_t edge = s.lit ? withAlpha(kInk, 0.8f) : withAlpha(kMuted, 0.35f);
+		if (sum) {
+			canvas.setColor(kSurfaceRaised);
+			canvas.circle(r.x, r.y, r.w);
+			canvas.setColor(edge);
+			canvas.ring(r.x, r.y, r.w, 1.2f);
+			line(r.x + 4.0f, r.y + r.h * 0.5f, r.x + r.w - 4.0f, r.y + r.h * 0.5f, 1.2f);
+			line(r.x + r.w * 0.5f, r.y + 4.0f, r.x + r.w * 0.5f, r.y + r.h - 4.0f, 1.2f);
+			continue;
+		}
+		canvas.setColor(s.lit ? kSurfaceRaised : kSurface);
+		canvas.roundedRectangle(r.x, r.y, r.w, r.h, 4.0f);
+		canvas.setColor(edge);
+		canvas.roundedRectangleBorder(r.x + 0.5f, r.y + 0.5f, r.w - 1.0f, r.h - 1.0f, 4.0f, 1.0f);
+		canvas.setColor(s.lit ? kInk : withAlpha(kMuted, 0.55f));
+		canvas.text(s.label, face, visage::Font::kCenter, r.x, r.y + (r.h - 11.0f) * 0.5f, r.w, 11.0f);
 	}
 }
 

@@ -120,14 +120,14 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	                                 std::make_unique<ValueBox>(control(ero::Param::Width), ""), "W");
 	emphasisCell_->setStacked(true);
 	(void)emphasisCell_->refresh();
-	emphasisPair_ = std::make_unique<PairCell>("Emphasis", *knob(ero::Param::EmphAmount), *emphasisCell_);
+	emphasisPair_ = std::make_unique<PairCell>("", *knob(ero::Param::EmphAmount), *emphasisCell_);
 	addChild(emphasisPair_.get());
-	loopPair_ = std::make_unique<PairCell>("Loop", *knob(ero::Param::Loop), *knob(ero::Param::LoopInterval));
+	loopPair_ = std::make_unique<PairCell>("", *knob(ero::Param::Loop), *knob(ero::Param::LoopInterval));
 	addChild(loopPair_.get());
 
 	// DRIVE, A PAIR (`EroderCard`'s constructor).
 	// ETCH'S SLOT ROW, captioned (the window has the room).
-	etch_.build([this](ero::Param p) -> DeviceControl& { return control(p); }, kFace, notifier_, "Slots");
+	etch_.build([this](ero::Param p) -> DeviceControl& { return control(p); }, kFace, notifier_, "");
 	addChild(etch_.outer.get());
 
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
@@ -142,7 +142,7 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::DriveShape),
 	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""));
 	(void)driveCell_->refresh();
-	drivePair_ = std::make_unique<PairCell>("Drive", *drive_, *driveCell_);
+	drivePair_ = std::make_unique<PairCell>("", *drive_, *driveCell_);
 	addChild(drivePair_.get());
 
 	const auto coordinate = [this](ero::Param p, const char* caption) {
@@ -192,15 +192,13 @@ void EroderExpanded::modulationBound(ModState* mod, EditHistory* history) {
 std::string EroderExpanded::title() const { return ero::kTraits.name; }
 
 visage::Point EroderExpanded::minimumSize() const {
-	// THE TALLEST ENGINE'S COLUMN, group by group: the Dust's and Rust's three rows of cells, or Etch's slot row and a row.
+	// THE TALLEST ENGINE'S COLUMN, row by row: Tone beside Drive, the Engine's two lines of cells (Etch's slot row and a
+	// line), Feedback beside Output, and the diagram.
 	const float knobH = Knob::columnHeight(kFace);
-	const float pairH = PairCell::heightFor(knobH);
-	const float rows3 = 3.0f * knobH + 2.0f * kRowGap;
-	const float etchH = etch_.heightFor(knobH) + kRowGap + knobH;
-	const float groups = groupHeight(pairH) + groupHeight(std::max(rows3, etchH)) + groupHeight(pairH) + groupHeight(pairH)
-	                     + groupHeight(knobH) + 4.0f * kGroupGap;
-	const float side = kSwitchHeight + kGroupGap + groups + kGroupGap + EroderFlow::kHeight + 2.0f * kPad;
-	return { 792.0f, std::max(380.0f, side) };
+	const float engine = std::max(2.0f * knobH + kRowGap, etch_.heightFor(knobH) + kRowGap + knobH);
+	const float side = kSwitchHeight + kGroupGap + groupHeight(knobH) + kGroupGap + groupHeight(engine) + kGroupGap
+	                   + groupHeight(knobH) + kGroupGap + EroderFlow::kHeight + 2.0f * kPad;
+	return { 2.0f * kPad + kGap + 330.0f + kSideWidth + 4.0f * kGroupPad + kGroupGap, std::max(380.0f, side) };
 }
 
 ero::Mode EroderExpanded::engine() const {
@@ -227,19 +225,20 @@ void EroderExpanded::layOut() {
 	laidOutEngine_ = static_cast<int>(mode);
 	const bool comb = mode == ero::Mode::Comb;
 	const bool etch = mode == ero::Mode::Etch;
-	const float sideW = kSideWidth + 2.0f * kGroupPad;
+	const float cell = kSideWidth / static_cast<float>(kPerRow);
+	const float half = kSideWidth * 0.5f;
+	// THE SIDE COLUMN: six cells across, and a group's box has its own edge room round them. Two groups share a row at
+	// three cells each; one takes the row alone.
+	const float sideW = kSideWidth + 4.0f * kGroupPad + kGroupGap;
 	const float plotW = std::max(0.0f, width() - 2.0f * kPad - sideW - kGap);
 	plot_->setBounds(kPad, kPad, plotW, std::max(0.0f, height() - 2.0f * kPad));
 
 	const float x0 = width() - kPad - sideW;
-	const float x = x0 + kGroupPad;
 	float y = kPad;
 	mode_->setBounds(x0, y, sideW, kSwitchHeight);
 	y += kSwitchHeight + kGroupGap;
 
-	const float cell = kSideWidth / static_cast<float>(kPerRow);
 	const float knobH = Knob::columnHeight(kFace);
-	const float pairH = PairCell::heightFor(knobH);
 	groups_.clear();
 	// EVERYTHING IS HIDDEN, THEN THE ENGINE'S OWN ARE FLOWED: a hidden item takes no room, and a pair wraps whole
 	// (`flowCells`).
@@ -251,30 +250,47 @@ void EroderExpanded::layOut() {
 		}
 	}
 	etch_.setShown(etch);
-	// A GROUP: its caption band, its items flowed four across, and its outline round them.
-	const auto group = [&](const char* caption, const std::vector<FlowItem>& items) {
-		const float top = y;
-		const float under = flowCells(items, static_cast<int>(kPerRow), x, y + kGroupCaption, cell, kRowGap);
-		const float bottom = under + kGroupPad;
-		groups_.push_back({ caption, x0, top, sideW, bottom - top });
-		y = bottom + kGroupGap;
+	// A GROUP: its caption band, its items flowed `columns` across from `cellsX`, and its box (`boxX`, `boxW`) round them.
+	// Returns the content's foot; the row's groups are made as tall as the tallest (`closeRow`).
+	const auto group = [&](const char* caption, float boxX, float boxW, float cellsX, int columns,
+	                       const std::vector<FlowItem>& items) {
+		const float under = flowCells(items, columns, cellsX, y + kGroupCaption, cell, kRowGap);
+		groups_.push_back({ caption, boxX, y, boxW, under + kGroupPad - y });
+		return under;
 	};
-	// A KNOB BESIDE A PAIR sits level with the cells inside it; a chip is centred in its cell's height.
-	const auto level = [&](visage::Frame* f, const visage::Frame& pair) {
-		f->setBounds(f->x(), pair.y() + PairCell::kCaptionHeight, f->width(), knobH);
+	const auto closeRow = [&](size_t first) {
+		float tallest = 0.0f;
+		for (size_t i = first; i < groups_.size(); ++i) {
+			tallest = std::max(tallest, groups_[i].h);
+		}
+		for (size_t i = first; i < groups_.size(); ++i) {
+			groups_[i].h = tallest;
+		}
+		y += tallest + kGroupGap;
 	};
-	const auto centre = [&](SwitchChip& chip, float top) {
-		chip.setBounds(chip.x() + 3.0f, top + (knobH - SwitchChip::kHeight) * 0.5f, cell - 6.0f, SwitchChip::kHeight);
+	const float halfBox = half + 2.0f * kGroupPad;
+	const float leftCells = x0 + kGroupPad;
+	const float rightX = x0 + halfBox + kGroupGap;
+	const float rightCells = rightX + kGroupPad;
+	// A KNOB BESIDE A TALLER CELL is centred on its height.
+	const auto centred = [&](visage::Frame* f, float height) {
+		f->setBounds(f->x() + 3.0f, f->y() + (knobH - height) * 0.5f, f->width() - 6.0f, height);
 	};
 
-	// TONE: the emphasis (amount and shape), then Smear.
-	group("Tone", { { emphasisPair_.get(), 2, true, pairH }, { knob(P::Smear), 1, true, knobH } });
-	level(knob(P::Smear), *emphasisPair_);
-
-	// ENGINE: Etch's slots lead its group; the Comb's coordinates lead its; then the engine's own cells.
+	// ROW ONE: TONE (the emphasis, then Smear) beside DRIVE (the amount and what it pushes into).
 	{
+		const size_t first = groups_.size();
+		group("Tone", x0, halfBox, leftCells, 3, { { emphasisPair_.get(), 2, true, knobH }, { knob(P::Smear), 1, true, knobH } });
+		group("Drive", rightX, halfBox, rightCells, 3, { { drivePair_.get(), 2, true, knobH } });
+		closeRow(first);
+	}
+
+	// ROW TWO: ENGINE across the whole width. Etch's slots lead it (four cells), the Comb's coordinates lead its; then the
+	// engine's own cells, and its chips centred in theirs.
+	{
+		const size_t first = groups_.size();
 		std::vector<FlowItem> items;
-		items.push_back({ etch_.outer.get(), static_cast<int>(kPerRow), etch, etch_.heightFor(knobH) });
+		items.push_back({ etch_.outer.get(), 4, etch, etch_.heightFor(knobH) });
 		items.push_back({ tone_.get(), 1, comb, knobH });
 		items.push_back({ character_.get(), 1, comb, knobH });
 		const auto add = [&](std::span<const P> grid) {
@@ -284,37 +300,44 @@ void EroderExpanded::layOut() {
 		};
 		add(mode == ero::Mode::Dust ? std::span<const P>(kDustEngine)
 		                            : comb ? std::span<const P>(kCombEngine)
-                                           : etch ? std::span<const P>(kEtchEngine) : std::span<const P>(kRustEngine));
+		                                   : etch ? std::span<const P>(kEtchEngine) : std::span<const P>(kRustEngine));
 		if (!comb && !etch) {
 			add(kShakeRow);
 		}
 		items.push_back({ track_.get(), 1, !comb, knobH });
 		items.push_back({ blend_.get(), 1, comb, knobH });
 		items.push_back({ gamma_.get(), 2, comb, knobH });
-		group("Engine", items);
-		// THE CHIPS AND GAMMA ARE CENTRED IN THEIR CELLS' HEIGHT.
+		group("Engine", x0, sideW, x0 + (sideW - kSideWidth) * 0.5f, static_cast<int>(kPerRow), items);
 		for (SwitchChip* chip : { track_.get(), blend_.get() }) {
 			if (chip->isVisible()) {
-				centre(*chip, chip->y());
+				centred(chip, SwitchChip::kHeight);
 			}
 		}
 		if (gamma_->isVisible()) {
-			gamma_->setBounds(gamma_->x() + 3.0f, gamma_->y() + (knobH - ValueBox::kCompactHeight) * 0.5f,
-			                  2.0f * cell - 6.0f, ValueBox::kCompactHeight);
+			centred(gamma_.get(), ValueBox::kCompactHeight);
 		}
+		// ETCH'S SLOT ROW IS A CAPTIONED PAIR, a caption band taller than a knob: Freq and Width beside it are level with it.
+		if (etch) {
+			const float lift = etch_.heightFor(knobH) - knobH;
+			for (const P p : kEtchEngine) {
+				if (knob(p)->y() == etch_.outer->y()) {
+					knob(p)->setBounds(knob(p)->x(), knob(p)->y() + lift, knob(p)->width(), knobH);
+				}
+			}
+		}
+		closeRow(first);
 	}
 
-	// DRIVE: the amount and what it pushes into.
-	group("Drive", { { drivePair_.get(), 2, true, pairH } });
+	// ROW THREE: FEEDBACK (Resonance, the outer loop and its interval) beside OUTPUT (HP Wet, Follow, Mix).
+	{
+		const size_t first = groups_.size();
+		group("Feedback", x0, halfBox, leftCells, 3, { { knob(P::Resonance), 1, !comb, knobH }, { loopPair_.get(), 2, true, knobH } });
+		group("Output", rightX, halfBox, rightCells, 3,
+		      { { knob(P::HpWet), 1, true, knobH }, { knob(P::Follow), 1, true, knobH }, { knob(P::Mix), 1, true, knobH } });
+		closeRow(first);
+	}
 
-	// FEEDBACK: Resonance (Dust, Rust, Etch), the outer loop and its interval.
-	group("Feedback", { { knob(P::Resonance), 1, !comb, knobH }, { loopPair_.get(), 2, true, pairH } });
-	level(knob(P::Resonance), *loopPair_);
-
-	// OUTPUT: HP Wet, Follow, Mix. (Sub Thru, which gives back what HP Wet takes, is seated in the picture.)
-	group("Output", { { knob(P::HpWet), 1, true, knobH }, { knob(P::Follow), 1, true, knobH }, { knob(P::Mix), 1, true, knobH } });
-
-	// THE TOPOLOGY PICTURE, at the foot of the column, with its three switches in it.
+	// THE BLOCK DIAGRAM, at the foot of the column, with its four switches in it.
 	flow_->setBounds(x0, std::max(y, static_cast<float>(height()) - kPad - EroderFlow::kHeight), sideW, EroderFlow::kHeight);
 	flow_->setVisible(true);
 	(void)flow_->update();

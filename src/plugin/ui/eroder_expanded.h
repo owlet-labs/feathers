@@ -75,10 +75,10 @@ public:
 
 	static constexpr float kPad = 14.0f;
 	static constexpr float kGap = 10.0f;
-	static constexpr float kSideWidth = 336.0f;
+	static constexpr float kSideWidth = 504.0f;
 	static constexpr float kFace = 44.0f;
 	static constexpr float kSwitchHeight = 18.0f;
-	static constexpr size_t kPerRow = 4;
+	static constexpr size_t kPerRow = 6;
 	/// THE GROUPS: a box round each, its caption band, the room inside its edge, the gap between them and between rows.
 	static constexpr float kGroupCaption = 14.0f;
 	static constexpr float kGroupPad = 6.0f;

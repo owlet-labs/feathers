@@ -796,7 +796,17 @@ void SpectrumPlot::drawOverlay(visage::Canvas& canvas) {
 	if (count < 2) {
 		return;
 	}
-	const float peak = *std::max_element(db.begin(), db.begin() + count);
+	float peak = *std::max_element(db.begin(), db.begin() + count);
+	if (source_.overlayIsDbfs()) {
+		// ABSOLUTE (Match's target): against the bars' own reference, the loudest partial's level, so the line sits where the sound does.
+		float loudest = 0.0f;
+		for (int i = 0; i < std::clamp(frame_.count, 0, SpectralPlotFrame::kPartials); ++i) {
+			loudest = std::max(loudest, frame_.terrain[static_cast<size_t>(i)]);
+		}
+		if (loudest > 0.0f) {
+			peak = 20.0f * std::log10(loudest);
+		}
+	}
 	canvas.setColor(withAlpha(kInk, 0.8f));
 	for (int i = 1; i < count; ++i) {
 		const auto y = [&](int j) {

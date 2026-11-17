@@ -118,6 +118,7 @@ void Stft::prepare(double sampleRate) {
 	analysisWindow_.assign(static_cast<size_t>(nMax), 0.0f);
 	synthesisWindow_.assign(static_cast<size_t>(nMax), 0.0f);
 	gains_.assign(static_cast<size_t>(nMax / 2 + 1), 1.0f);
+	matchBin_.assign(static_cast<size_t>(nMax / 2 + 1), 1.0f);
 	size_t capacity = 1;
 	while (capacity < static_cast<size_t>(lMax) + 1) {
 		capacity <<= 1;
@@ -195,6 +196,9 @@ void Stft::reset() noexcept {
 	mix_ = mixTarget_;
 	mixLeft_ = 0;
 	mixFresh_ = true;
+	matchRelax(0);
+	matchRelax(1);
+	matchTargetSerial_ = 0;
 	bands_.fill(kBandFloorDb);
 }
 
@@ -273,6 +277,16 @@ void Stft::computeFrame(int channels) noexcept {
 		}
 		const bool carrierAny = loadFrame(c, carrier);
 		const bool any = carrierAny || dryAny;
+		if (match_.on != matchLive_ && c == channels - 1) {
+			matchLive_ = match_.on;
+			if (!matchLive_) {
+				matchRelax(0);
+				matchRelax(1);
+			}
+		}
+		if (!any && match_.on) {
+			matchRelax(c);
+		}
 		// A FRAME OF ZEROS IS WRITTEN AS ZEROS, without a transform: the tail ends at exact zero by construction.
 		if (!any && c == 0 && analyse_) {
 			bands_.fill(kBandFloorDb);
@@ -303,14 +317,20 @@ void Stft::computeFrame(int channels) noexcept {
 			else if (fshiftOn_) {
 				shiftSpectrum();
 			}
-			// pffft's ordered real layout: [DC, Nyquist, re1, im1, re2, im2, ...].
-			spectrum_.p[0] *= gains_[0];
-			spectrum_.p[1] *= gains_[static_cast<size_t>(n / 2)];
-			for (int i = 1; i < n / 2; ++i) {
-				const float g = gains_[static_cast<size_t>(i)];
-				spectrum_.p[2 * i] *= g;
-				spectrum_.p[2 * i + 1] *= g;
+			// MATCH: the shape is a TARGET, and the gain per bin is Match's own: the static gains are not applied.
+			if (match_.on) {
+				matchSpectrum(c);
 			}
+			else {
+				spectrum_.p[0] *= gains_[0];
+				spectrum_.p[1] *= gains_[static_cast<size_t>(n / 2)];
+				for (int i = 1; i < n / 2; ++i) {
+					const float g = gains_[static_cast<size_t>(i)];
+					spectrum_.p[2 * i] *= g;
+					spectrum_.p[2 * i + 1] *= g;
+				}
+			}
+			// pffft's ordered real layout: [DC, Nyquist, re1, im1, re2, im2, ...] (read above).
 			pffft_transform_ordered(setup, spectrum_.p, frame_.p, work_.p, PFFFT_BACKWARD);
 			for (int j = 0; j < n; ++j) {
 				ch.ola[static_cast<size_t>(j)] += frame_.p[j] * synthesisWindow_[static_cast<size_t>(j)];
@@ -325,6 +345,88 @@ void Stft::computeFrame(int channels) noexcept {
 	// THE VOCODER'S CROSSFADE, a step a frame: one window from off to on, or back.
 	const float step = 1.0f / static_cast<float>(kOverlap);
 	vocodeMix_ = vocodeActive() ? std::min(1.0f, vocodeMix_ + step) : std::max(0.0f, vocodeMix_ - step);
+}
+
+
+// **MATCH** (see `Stft::Match`). Channel `c`'s spectrum (spectrum_, after Partials, Formant Shift and the vocoder) is measured, smoothed and
+// pulled towards the target; the gain per bin is applied here INSTEAD of gains_.
+void Stft::matchRelax(int c) noexcept {
+	// NOTHING TO MEASURE (a frame of zeros): the level is forgotten, so the next sound is taken as it comes and not released from.
+	matchLevel_[static_cast<size_t>(c)].fill(kEnvelopeFloorDb);
+	matchGain_[static_cast<size_t>(c)].fill(0.0f);
+	matchHaveRef_[static_cast<size_t>(c)] = false;
+	matchRef_[static_cast<size_t>(c)] = 0.0;
+}
+
+void Stft::matchSpectrum(int c) noexcept {
+	const auto u = static_cast<size_t>(c);
+	const int n = n_;
+	const int bins = n / 2 + 1;
+	const double binHz = sampleRate_ / static_cast<double>(n);
+	mag_[0] = std::fabs(spectrum_.p[0]);
+	mag_[static_cast<size_t>(n / 2)] = std::fabs(spectrum_.p[1]);
+	for (int i = 1; i < n / 2; ++i) {
+		mag_[static_cast<size_t>(i)] = std::sqrt(spectrum_.p[2 * i] * spectrum_.p[2 * i] + spectrum_.p[2 * i + 1] * spectrum_.p[2 * i + 1]);
+	}
+	std::array<float, kEnvelopePoints> now {};
+	estimator_.estimate(mag_.data(), bins, binHz, match_.bands, now);
+	// THE TARGET, measured as the input is (the same kernel), again only when the gains, the size or the width moved.
+	if (matchTargetSerial_ != gainsSerial_ || matchTargetN_ != n || matchTargetBands_ != match_.bands) {
+		estimator_.estimate(gains_.data(), bins, binHz, match_.bands, matchTarget_);
+		matchTargetSerial_ = gainsSerial_;
+		matchTargetN_ = n;
+		matchTargetBands_ = match_.bands;
+	}
+	// ATTACK AND RELEASE on the level, per grid point, in dB: a one-pole each way at the hop's rate (as the vocoder's envelope).
+	const double hopSeconds = static_cast<double>(n / kOverlap) / sampleRate_;
+	const auto attack = static_cast<float>(std::exp(-hopSeconds / std::max(match_.attackMs * 1e-3, 1e-6)));
+	const auto release = static_cast<float>(std::exp(-hopSeconds / std::max(match_.releaseMs * 1e-3, 1e-6)));
+	auto& level = matchLevel_[u];
+	for (size_t g = 0; g < static_cast<size_t>(kEnvelopePoints); ++g) {
+		const float in = now[g];
+		if (level[g] <= kEnvelopeFloorDb + 1.0f) {
+			level[g] = in; // nothing held: take the first reading whole
+			continue;
+		}
+		const float k = in > level[g] ? attack : release;
+		level[g] = in + (level[g] - in) * k;
+	}
+	// THE LEVEL REFERENCE: the mean deviation over the points above the Gate where the target itself is not (nearly) closed (its gain above -60 dB).
+	const double toFs = envelopeToFs();
+	const bool gated = match_.gateDb > -96.0 + 1e-9;
+	double sum = 0.0;
+	int count = 0;
+	for (size_t g = 0; g < static_cast<size_t>(kEnvelopePoints); ++g) {
+		const bool loud = level[g] + toFs > (gated ? match_.gateDb : -96.0) && level[g] > kEnvelopeFloorDb + 1.0f;
+		if (loud && matchTarget_[g] > -60.0f) {
+			sum += static_cast<double>(level[g]) - static_cast<double>(matchTarget_[g]);
+			++count;
+		}
+	}
+	matchHaveRef_[u] = count > 0;
+	const double ref = count > 0 ? sum / count : 0.0;
+	matchRef_[u] = ref;
+	// THE GAIN, dB, from the deviation (`matchGainFor`); a boost fades out over the 6 dB above the Gate.
+	auto& gain = matchGain_[u];
+	for (size_t g = 0; g < static_cast<size_t>(kEnvelopePoints); ++g) {
+		double gdb = 0.0;
+		if (count > 0) {
+			const double d = static_cast<double>(level[g]) - static_cast<double>(matchTarget_[g]) - ref;
+			gdb = matchGainFor(d, match_);
+			if (gdb > 0.0 && gated) {
+				gdb *= std::clamp((static_cast<double>(level[g]) + toFs - match_.gateDb) / 6.0, 0.0, 1.0);
+			}
+		}
+		gain[g] = static_cast<float>(gdb);
+	}
+	estimator_.toBinsFast(gain, bins, binHz, matchBin_.data());
+	spectrum_.p[0] *= matchBin_[0];
+	spectrum_.p[1] *= matchBin_[static_cast<size_t>(n / 2)];
+	for (int i = 1; i < n / 2; ++i) {
+		const float g = matchBin_[static_cast<size_t>(i)];
+		spectrum_.p[2 * i] *= g;
+		spectrum_.p[2 * i + 1] *= g;
+	}
 }
 
 void Stft::process(float* left, float* right, int frames) noexcept {
@@ -972,6 +1074,18 @@ namespace feathers::fx::spectral {
 std::array<double, 2> Stft::widthAxesForTest(double x) noexcept {
 	const feathers::spectral::WidthAxes w = feathers::spectral::widthAxes(x);
 	return { w.tilt, w.harmonic };
+}
+
+} // namespace feathers::fx::spectral
+
+namespace feathers::fx::spectral {
+
+void Stft::setMatch(const Match& m) noexcept {
+	if (match_.on && !m.on) {
+		matchRelax(0);
+		matchRelax(1);
+	}
+	match_ = m;
 }
 
 } // namespace feathers::fx::spectral

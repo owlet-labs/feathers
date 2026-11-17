@@ -110,6 +110,9 @@ private:
 	SwitchChip* partials_ = nullptr;
 	ModeValueCell* partialsMode_ = nullptr; ///< the scheme (Peaks / Harmonics …) and its box, the count (OH)
 	Knob* partialsDepth_ = nullptr;          ///< Depth, its own knob beside the cell
+	SwitchChip* match_ = nullptr;           ///< Match: the operators' shape as a target
+	ValueBox* matchRange_ = nullptr;        ///< Match's Range, compact in its head
+	std::vector<PillStack*> matchStacks_;   ///< Envelope, Resolution
 	/// Every pill the window's own panels hold, by its param.
 	std::vector<std::pair<fx::spectral::Param, FaderPill*>> pills_;
 };

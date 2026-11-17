@@ -110,6 +110,14 @@ Settings stateOf(const Row& row, size_t n) {
 	s.partialsSet = rangedOr(row, n, Param::PartialsSet);
 	s.partialsDepth = rangedOr(row, n, Param::PartialsDepth);
 	s.curveOn = switchOr(row, n, Param::CurveOn);
+	s.matchOn = switchOr(row, n, Param::MatchOn);
+	s.matchDownRatio = rangedOr(row, n, Param::MatchDownRatio);
+	s.matchUpRatio = rangedOr(row, n, Param::MatchUpRatio);
+	s.matchBandwidthDb = rangedOr(row, n, Param::MatchBandwidth);
+	s.matchAttackMs = rangedOr(row, n, Param::MatchAttack);
+	s.matchReleaseMs = rangedOr(row, n, Param::MatchRelease);
+	s.matchRangeDb = rangedOr(row, n, Param::MatchRange);
+	s.matchGateDb = rangedOr(row, n, Param::MatchGate);
 	// THE CURVE IS NOT IN THE ROW: it is the hand's block (`spectral_curve_db`), which the device takes by `pullHandBlocks`
 	// and the editor reads from the host, so a row decodes to a FLAT curve here and whoever has the block fills it in.
 	return s;
@@ -180,6 +188,14 @@ Row rowOf(const Settings& s) {
 	put(Param::PartialsSet, s.partialsSet);
 	put(Param::PartialsDepth, s.partialsDepth);
 	put(Param::CurveOn, flag(s.curveOn));
+	put(Param::MatchOn, flag(s.matchOn));
+	put(Param::MatchDownRatio, s.matchDownRatio);
+	put(Param::MatchUpRatio, s.matchUpRatio);
+	put(Param::MatchBandwidth, s.matchBandwidthDb);
+	put(Param::MatchAttack, s.matchAttackMs);
+	put(Param::MatchRelease, s.matchReleaseMs);
+	put(Param::MatchRange, s.matchRangeDb);
+	put(Param::MatchGate, s.matchGateDb);
 	return row;
 }
 
@@ -269,8 +285,23 @@ void noteName(int midi, char* out, size_t size) {
 namespace {
 bool formatControl(size_t control, double value, const device::TextView& view, char* out, size_t size) {
 	// THE GATE AT ITS BOTTOM IS OFF (it gates nothing there), so it says so rather than "-96.0dB".
-	if (control == static_cast<size_t>(Param::VocodeGate) && value <= kVocodeGateOffDb + 1e-6) {
+	if ((control == static_cast<size_t>(Param::VocodeGate) || control == static_cast<size_t>(Param::MatchGate)) && value <= kVocodeGateOffDb + 1e-6) {
 		std::snprintf(out, size, "Off");
+		return true;
+	}
+	// A MATCH RATIO READS AS ONE ("4:1", "1:1", "1:2"); at the top it is infinity (the band lands on the zone's edge).
+	if (control == static_cast<size_t>(Param::MatchDownRatio) || control == static_cast<size_t>(Param::MatchUpRatio)) {
+		if (value >= 0.995) {
+			std::snprintf(out, size, "Inf:1");
+		}
+		else if (value >= -0.005) {
+			const double ratio = 1.0 / (1.0 - std::max(value, 0.0));
+			std::snprintf(out, size, std::fabs(ratio - std::round(ratio)) < 0.05 || ratio >= 9.95 ? "%.0f:1" : "%.1f:1", ratio);
+		}
+		else {
+			const double against = std::exp2(-2.0 * value);
+			std::snprintf(out, size, std::fabs(against - std::round(against)) < 0.05 ? "1:%.0f" : "1:%.1f", against);
+		}
 		return true;
 	}
 	if (control != static_cast<size_t>(Param::KeyOffset)) {

@@ -105,6 +105,14 @@ enum class Param : int {
 	PartialsSet,
 	PartialsDepth,
 	CurveOn,
+	MatchOn,
+	MatchDownRatio,
+	MatchUpRatio,
+	MatchBandwidth,
+	MatchAttack,
+	MatchRelease,
+	MatchRange,
+	MatchGate,
 	kCount,
 };
 inline constexpr size_t kParamCount = static_cast<size_t>(Param::kCount);
@@ -259,8 +267,23 @@ struct Settings {
 	float partialsCount = 8.0f; ///< continuous: the top partial is the fraction
 	float partialsSet = 0.0f;   ///< Centers' set: an unbounded coordinate (partials::sparseKeep)
 	float partialsDepth = 1.0f;
+	// MATCH (compress/expand towards the operators' shape): the shape is a TARGET, not a filter. Per band the input's level is
+	// measured and moved towards the target by its two ratios and the dead zone Bandwidth; see `Stft::Match`.
+	bool matchOn = false;
+	float matchDownRatio = 0.75f;  ///< -1..1 on `matchRatioOf`: 0 is 1:1, up to 1 (infinity:1), down to -1 (1:4); acts on bands LOUDER than the zone
+	float matchUpRatio = 0.75f;    ///< the same, for bands QUIETER than the zone
+	float matchBandwidthDb = 6.0f; ///< the dead zone around the target, dB: within half of it either side, nothing happens
+	float matchAttackMs = 50.0f;
+	float matchReleaseMs = 250.0f;
+	float matchRangeDb = 18.0f;    ///< the most a band is boosted or cut
+	float matchGateDb = -60.0f;    ///< dBFS; a band quieter than this is not boosted; at the bottom, off
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
+
+
+/// MATCH READS THE ENVELOPE AT THE VOCODER'S BAND LAYOUT, 32 bands (about a third of an octave): a control for it did not earn its place (the
+/// Gate and the Bandwidth do the work a coarser or finer reading would be asked for), so it is a constant.
+inline constexpr double kMatchBands = 32.0;
 
 /// THE DRAWN CURVE'S RANGE in dB: up to +12 (the drawer's kSpectralCurveGainMax is 4, +12.04 dB), and at or below the floor
 /// EXACT SILENCE, so a band can be drawn out entirely (-36 dB is not silence: the drawer's rule).
@@ -291,7 +314,12 @@ inline constexpr size_t kReadingPlaying = kReadingF0 + 1;
 /// THE VOCODER'S (design §10.5): 1 while a sidechain is connected, then its envelope at the input bands' centres, in dBFS.
 inline constexpr size_t kReadingSideSounding = kReadingPlaying + 1;
 inline constexpr size_t kReadingSideEnvelope = kReadingSideSounding + 1;
-inline constexpr size_t kReadingCount = kReadingSideEnvelope + static_cast<size_t>(kSpectrumBands);
+/// MATCH'S (the window's plot): 1 while Match acts with a level reference; then the gain it applies and the target it pulls to (the
+/// shape plus the level reference, in dBFS), each at the input bands' centres.
+inline constexpr size_t kReadingMatchOn = kReadingSideEnvelope + static_cast<size_t>(kSpectrumBands);
+inline constexpr size_t kReadingMatchGain = kReadingMatchOn + 1;
+inline constexpr size_t kReadingMatchTarget = kReadingMatchGain + static_cast<size_t>(kSpectrumBands);
+inline constexpr size_t kReadingCount = kReadingMatchTarget + static_cast<size_t>(kSpectrumBands);
 /// Input band b's centre, Hz: even in log frequency from kBandLowHz to kBandHighHz (spectral_stft.h).
 [[nodiscard]] inline double bandCentreHz(int b) {
 	return kBandLowHz * std::exp2(std::log2(kBandHighHz / kBandLowHz) * (static_cast<double>(b) + 0.5) / kSpectrumBands);
@@ -591,6 +619,42 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "spectral_curve_on", .name = "Spectral Curve", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kOffOnNames,
      .tooltip = "Switches the drawn curve in: a gain drawn across the spectrum, from 20 Hz to 20 kHz"},
+    // MATCH (appended, so every key above keeps its place): the operators' shape becomes a target the sound is pulled towards.
+    {.key = "spectral_match_on", .name = "Spectral Match", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Choice, .names = kOffOnNames,
+     .tooltip = "Switches Match in: the shape the operators draw stops filtering and becomes a target. Each band of the sound is "
+                "measured and moved towards it, like a multiband compressor whose thresholds are the shape. The shape's overall "
+                "level follows the sound's, so Match reshapes the tone and not the loudness"},
+    // THE TWO RATIOS AND THE BANDWIDTH (OWLTT's Up/Down Ratio and Bandwidth, read the same way): per band, around the target
+    // (plus the level reference), a dead zone Bandwidth dB wide; a band louder than the zone is acted on by Down Ratio, one quieter
+    // by Up Ratio, each on the part of the deviation outside the zone. The control reads as a ratio (`matchFractionOf`).
+    {.key = "spectral_match_down_ratio", .name = "Spectral Match Down Ratio", .min = -1.0, .max = 1.0, .def = 0.75, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true,
+     .tooltip = "How hard a band louder than the target's zone is pulled down to it: 1:1 leaves it, 4:1 keeps a quarter of the excess, "
+                "infinity:1 puts it on the zone's edge. Below 1:1 it is pushed further up instead",
+     .centred = true},
+    {.key = "spectral_match_up_ratio", .name = "Spectral Match Up Ratio", .min = -1.0, .max = 1.0, .def = 0.75, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true,
+     .tooltip = "How hard a band quieter than the target's zone is brought up to it: 1:1 leaves it, 4:1 keeps a quarter of the shortfall, "
+                "infinity:1 puts it on the zone's edge. Below 1:1 it is pushed further down instead",
+     .centred = true},
+    {.key = "spectral_match_bandwidth", .name = "Spectral Match Bandwidth", .min = 0.0, .max = 48.0, .def = 6.0, .stepped = false,
+     .unit = device::Unit::Decibel, .names = {}, .modulatable = true,
+     .tooltip = "The dead zone around the target, in dB: a band within half of it either side of the target is left alone. At 0 "
+                "every band is pulled straight to the target"},
+    {.key = "spectral_match_attack", .name = "Spectral Match Attack", .min = 1.0, .max = 500.0, .def = 50.0, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true,
+     .tooltip = "How quickly a band's measured level rises, in milliseconds"},
+    {.key = "spectral_match_release", .name = "Spectral Match Release", .min = 5.0, .max = 2000.0, .def = 250.0, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true,
+     .tooltip = "How slowly a band's measured level falls, in milliseconds"},
+    {.key = "spectral_match_range", .name = "Spectral Match Range", .min = 0.0, .max = 48.0, .def = 18.0, .stepped = false,
+     .unit = device::Unit::Decibel, .names = {}, .modulatable = true,
+     .tooltip = "The most any band is boosted or cut towards (or away from) the target"},
+    {.key = "spectral_match_gate", .name = "Spectral Match Gate", .min = kVocodeGateOffDb, .max = 0.0, .def = -60.0, .stepped = false,
+     .unit = device::Unit::Decibel, .names = {}, .modulatable = true,
+     .tooltip = "Where a band is quieter than this it is not boosted, so the noise floor stays down; it can still be cut. At the "
+                "bottom, off"},
 };
 static_assert(std::size(kParamDescs) == kParamCount);
 

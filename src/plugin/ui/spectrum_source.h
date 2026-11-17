@@ -115,6 +115,8 @@ public:
 
 	/// **A LINE THE PLOT DRAWS OVER THE BARS** (the Spectral vocoder's sidechain envelope, design §10.5): up to `max` points of
 	/// (Hz, dB) in `hz`/`db`, the line's shape referred to its own peak. Answers how many; 0 (the default, and the drawer's) draws none.
+	/// WHETHER THE OVERLAY'S dB ARE ABSOLUTE (dBFS), to be drawn against the same reference the bars are, and not referred to the line's own peak.
+	virtual bool overlayIsDbfs() const { return false; }
 	virtual int overlay(float* hz, float* db, int max) const {
 		(void)hz;
 		(void)db;

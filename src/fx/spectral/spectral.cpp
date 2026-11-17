@@ -90,6 +90,17 @@ void SpectralDevice::setTarget(const Settings& given) noexcept {
 	partials.depth = s.partialsDepth;
 	partials.centersSet = s.partialsSet;
 	stft_.setPartials(partials);
+	Stft::Match match;
+	match.on = s.matchOn && s.enabled;
+	match.downRatio = s.matchDownRatio;
+	match.upRatio = s.matchUpRatio;
+	match.bandwidthDb = s.matchBandwidthDb;
+	match.attackMs = s.matchAttackMs;
+	match.releaseMs = s.matchReleaseMs;
+	match.bands = kMatchBands;
+	match.rangeDb = s.matchRangeDb;
+	match.gateDb = s.matchGateDb;
+	stft_.setMatch(match);
 	dirty_ = true;
 }
 
@@ -258,7 +269,7 @@ void SpectralDevice::publish() noexcept {
 	const bool sounding = stft_.sidechainSounding();
 	const bool vocoding = stft_.vocodeBusy();
 	if (stft_.analysedForTest() != published_ || f0 != publishedF0_ || playing != publishedPlaying_
-	    || sounding != publishedSounding_ || vocoding) {
+	    || sounding != publishedSounding_ || vocoding || stft_.matchOn()) {
 		publishedSounding_ = sounding;
 		published_ = stft_.analysedForTest();
 		publishedF0_ = f0;
@@ -283,6 +294,18 @@ void SpectralDevice::publish() noexcept {
 			}
 			values[kReadingSideEnvelope + static_cast<size_t>(b)] = db;
 		}
+		// MATCH'S GAIN AND TARGET at the bands' centres (target in dBFS: the shape plus the level reference).
+		const bool matching = stft_.matchOn() && stft_.matchHasReference();
+		values[kReadingMatchOn] = matching ? 1.0f : 0.0f;
+		if (matching) {
+			const double toFs2 = stft_.envelopeToFs();
+			for (int b = 0; b < kSpectrumBands; ++b) {
+				const double hz = bandCentreHz(b);
+				values[kReadingMatchGain + static_cast<size_t>(b)] = static_cast<float>(EnvelopeEstimator::sampleDb(stft_.matchGainDb(), hz));
+				values[kReadingMatchTarget + static_cast<size_t>(b)] =
+				    static_cast<float>(EnvelopeEstimator::sampleDb(stft_.matchTargetDb(), hz) + stft_.matchReferenceDb() + toFs2);
+			}
+		}
 		sink_.publish(sink_.context, values.data(), values.size());
 	}
 }
@@ -295,6 +318,7 @@ void SpectralDevice::refresh() noexcept {
 	const bool identity = binGains(target_, target_.keyTrack, noteHz_, stft_.sampleRate(), stft_.fftSize(),
 	                               BinScratch { k_.data(), hz_.data(), base_.data() }, stft_.gains());
 	gainsIdentity_ = identity;
+	stft_.gainsChanged(); // Match's target is these gains
 	// FORMANT SHIFT'S RATIO PER BIN, from the shared function (shaper::formantRatios), the drawer's controls read as the device's.
 	const bool fshift = target_.enabled && target_.fshiftOn;
 	stft_.setFormantShift(fshift);
@@ -324,7 +348,7 @@ void SpectralDevice::processStereo(float* left, float* right, int frames) noexce
 	stft_.setCarrierHz(target_.keyTrack ? noteHz_ : kFixedF0Hz);
 	takePendingFreeze();
 	trackFreeze();
-	stft_.setIdentity(gainsIdentity_ && !stft_.vocodeBusy() && !stft_.formantShiftOn() && !stft_.partialsOn());
+	stft_.setIdentity(gainsIdentity_ && !stft_.vocodeBusy() && !stft_.formantShiftOn() && !stft_.partialsOn() && !stft_.matchOn());
 	if (target_.enabled) {
 		fx::scrubNonFinite(left, right, frames);
 	}
@@ -339,7 +363,7 @@ void SpectralDevice::processMono(float* mono, int frames) noexcept {
 	stft_.setCarrierHz(target_.keyTrack ? noteHz_ : kFixedF0Hz);
 	takePendingFreeze();
 	trackFreeze();
-	stft_.setIdentity(gainsIdentity_ && !stft_.vocodeBusy() && !stft_.formantShiftOn() && !stft_.partialsOn());
+	stft_.setIdentity(gainsIdentity_ && !stft_.vocodeBusy() && !stft_.formantShiftOn() && !stft_.partialsOn() && !stft_.matchOn());
 	if (target_.enabled) {
 		fx::scrubNonFinite(mono, nullptr, frames);
 	}

@@ -75,6 +75,9 @@ public:
 	uint32_t frameSerial() const override;
 	bool readFrame(SpectralPlotFrame& out, uint32_t& serial) const override;
 	int overlay(float* hz, float* db, int max) const override;
+	bool overlayIsDbfs() const override { return matchActing(); }
+	/// Whether Match acts, as its readings say: its switch on, the device on, and a level reference found.
+	[[nodiscard]] bool matchActing() const;
 	/// Whether the device is vocoding as its readings say: Vocode on and a sidechain connected.
 	[[nodiscard]] bool vocoding() const;
 	/// Whether its readings say a sidechain is connected.

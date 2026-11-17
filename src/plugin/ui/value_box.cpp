@@ -296,6 +296,17 @@ visage::Bounds ValueBox::barBounds() const {
 	return { 0.0f, top, width(), (span.hi - span.lo) * height() };
 }
 
+visage::Bounds ValueBox::liveMarkBounds() const {
+	const device::Modulatable::Mark mark = control_.liveMark();
+	if (!mark.moved) {
+		return {};
+	}
+	constexpr float kThickness = 2.0f;
+	const float at = std::clamp(mark.at, 0.0f, 1.0f);
+	const float top = std::clamp((1.0f - at) * height() - kThickness * 0.5f, 0.0f, std::max(0.0f, height() - kThickness));
+	return { 0.0f, top, width(), kThickness };
+}
+
 ValueBox::ReadoutBox ValueBox::readoutBox() const {
 	// **THE THREE PLACES THE NUMBER CAN BE, IN ONE FUNCTION** — see the header. `draw` reads this too,
 	// so the picture and the hit test cannot drift apart.
@@ -819,6 +830,14 @@ void ValueBox::draw(visage::Canvas& canvas) {
 		const float inset = 2.0f;
 		canvas.setColor(withAlpha(kModulation, 0.5f));
 		canvas.circle(inset, height() - kBarHeight - inset, kBarHeight);
+	}
+
+	// THE LIVE MARK: where the value IS after modulation, a thin line across the box at the height the bar's scale puts
+	// it. The printed number stays the base (text churn); this is the moving half, as the knob's dot is. A drag window's
+	// scale is its route span either side of the base (`Modulatable::liveMark`).
+	if (const visage::Bounds mark = liveMarkBounds(); mark.height() > 0.0f) {
+		canvas.setColor(withAlpha(kModulatedDot, 0.9f));
+		canvas.rectangle(mark.x(), mark.y(), mark.width(), mark.height());
 	}
 
 	// THE BORDER IS THE MAPPING SIGNAL — periwinkle while a source is armed and this control could

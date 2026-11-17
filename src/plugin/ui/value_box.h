@@ -151,6 +151,9 @@ public:
 	/// be able to check against geometry rather than against a screenshot — the project's rule that
 	/// rendered geometry is verified rather than believed.
 	visage::Bounds barBounds() const;
+	/// WHERE THE LIVE MARK (the value after modulation) IS DRAWN, in this box's coordinates; empty when the value is at its
+	/// base or the box is no destination. The same scale as `barBounds`.
+	visage::Bounds liveMarkBounds() const;
 
 	/// Told when the value changes, so a card can redraw its curve in the same frame rather than one
 	/// behind. The box knows what happened; the card knows what else depends on it.

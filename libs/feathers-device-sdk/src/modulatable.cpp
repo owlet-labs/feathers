@@ -12,6 +12,7 @@
 #include "device/format_value.h"
 
 #include <algorithm>
+#include <cmath>
 
 // THE ARITHMETIC EVERY MODULATED WIDGET DOES, WRITTEN ONCE.
 //
@@ -54,19 +55,46 @@ double Modulatable::restNormalized() const {
 	return d.centred ? positionIn(d, 0.5 * (d.min + d.max)) : 0.0;
 }
 
+double Modulatable::scalePosition(double value, double base) const {
+	const ParamDesc& d = desc();
+	if (isDragWindow(d)) {
+		const double span = routeSpanOf(d);
+		return span > 0.0 ? 0.5 + (value - base) / (2.0 * span) : 0.5;
+	}
+	return positionIn(d, value);
+}
+
+Modulatable::Mark Modulatable::liveMark() const {
+	const ModDisplay state = display();
+	Mark out;
+	out.base = static_cast<float>(scalePosition(state.base, state.base));
+	out.at = out.base;
+	if (!state.isDestination) {
+		return out;
+	}
+	out.at = static_cast<float>(scalePosition(state.modulated, state.base));
+	out.moved = std::abs(out.at - out.base) > 0.001f;
+	return out;
+}
+
 Modulatable::Span Modulatable::amountSpan() const {
 	const ModDisplay state = display();
-	const auto base = static_cast<float>(positionIn(desc(), state.base));
+	const auto base = static_cast<float>(scalePosition(state.base, state.base));
 	if (!state.isDestination || state.amount == 0.0f) {
 		return { base, base };
 	}
-	// AN AMOUNT IS IN UNITS OF THE CONTROL'S OWN RANGE, which is what makes one amount mean the same
-	// distance on a control that runs 0..1 and one that runs -100..100 — and so what lets this be
-	// computed without asking what the control is. The reach is therefore the amount itself, on the
-	// 0..1 sweep.
-	const float reach = base + state.amount;
-	const float lo = std::clamp(std::min(base, reach), 0.0f, 1.0f);
-	const float hi = std::clamp(std::max(base, reach), 0.0f, 1.0f);
+	// AN AMOUNT IS IN UNITS OF THE ROUTE'S SPAN (`routeSpanOf`: a declared `modSpan`, a zone's width, or the whole
+	// range), the same unit the engine applies it in and `Knob`'s ring draws it in. Reading it as a fraction of
+	// the range drew a zoned or `modSpan` control's reach many times too long, and a drag window's as nothing.
+	const ParamDesc& d = desc();
+	const double range = d.max - d.min;
+	const double span = routeSpanOf(d);
+	const double unit = isDragWindow(d) ? 0.5 : (range > 0.0 ? span / range : 1.0);
+	// THE CURVE'S REACH (`reachLo`/`reachHi`), as the ring draws it: a bipolar source goes both ways from the base.
+	const auto reachLo = static_cast<float>(base + state.reachLo() * state.amount * unit);
+	const auto reachHi = static_cast<float>(base + state.reachHi() * state.amount * unit);
+	const float lo = std::clamp(std::min(reachLo, reachHi), 0.0f, 1.0f);
+	const float hi = std::clamp(std::max(reachLo, reachHi), 0.0f, 1.0f);
 	return { lo, hi };
 }
 

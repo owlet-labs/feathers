@@ -42524,7 +42524,7 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 	// ETCH'S SLOT SHAPES AND MIXES (four) are boxes inside the slots' Type cells; its two Amounts are knobs.
 	// THE EMPHASIS OFFSET is a field of the Emphasis stack, and so are Freq, Width and the Emphasis amount (the Filter and Emphasis
 	// boxes): four more continuous controls that are not knobs. The Input drive is a knob and a continuous control both.
-	REQUIRE(knobs.size() == continuous - 4 - 4 - 1 - 3);
+	REQUIRE(knobs.size() == continuous - 4 - 4 - 1 - 3 - 1); // and the Comb's Cutoff, the Filter box's top row there
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -44319,7 +44319,7 @@ TEST_CASE("ERODER's window groups its controls: Input, Tone, Drive over a fixed-
 		want[1] = { panel.filterForTest(), panel.emphasisStackForTest(), k(P::Smear) };
 		want[2] = { panel.drivePairForTest() };
 		if (comb) {
-			want[3] = { panel.toneForTest(), panel.characterForTest(), k(P::Cutoff), k(P::Heat), panel.blendForTest(), panel.gammaForTest() };
+			want[3] = { panel.toneForTest(), panel.characterForTest(), k(P::Heat), panel.blendForTest(), panel.gammaForTest() };
 		}
 		else if (etch) {
 			want[3] = { panel.etchSlotsForTest().stack.get() };
@@ -44646,10 +44646,12 @@ TEST_CASE("ERODER's Tone group: the Filter box holds Freq then Width, the Emphas
 			CHECK(key != std::string_view("eroder_freq"));
 			CHECK(key != std::string_view("eroder_width"));
 			CHECK(key != std::string_view("eroder_emph_amount"));
+			CHECK(key != std::string_view("eroder_cutoff")); // the Comb's Filter field now
 		}
 		CHECK(panel.knobForTest(P::Freq) == nullptr);
 		CHECK(panel.knobForTest(P::Width) == nullptr);
 		CHECK(panel.knobForTest(P::EmphAmount) == nullptr);
+		CHECK(panel.knobForTest(P::Cutoff) == nullptr);
 	}
 	e.mode(ero::Mode::Dust);
 	const auto absolute = [&](const visage::Frame* f) { return eroAbsolute(f, &panel); };
@@ -44718,8 +44720,26 @@ TEST_CASE("ERODER's Tone group: the Filter box holds Freq then Width, the Emphas
 	CHECK_FALSE(panel.freqBoxForTest()->isVisible());
 	CHECK(panel.widthBoxForTest()->isVisible());
 	CHECK_FALSE(panel.widthBoxForTest()->enabled());
-	// THE ROW UNDER THE HIDDEN ONE MOVED UP, to the first row's place.
-	CHECK(panel.widthBoxForTest()->y() == panel.emphasisAmountForTest()->y());
+	// THE COMB'S FILTER BOX: Cutoff takes Freq's top row, over Width.
+	CHECK(panel.cutoffBoxForTest()->isVisible());
+	CHECK(std::string(panel.cutoffBoxForTest()->control().desc().key) == "eroder_cutoff");
+	CHECK(panel.cutoffBoxForTest()->enabled());
+	CHECK(panel.cutoffBoxForTest()->y() == panel.emphasisAmountForTest()->y());
+	CHECK(panel.widthBoxForTest()->y() > panel.cutoffBoxForTest()->y());
+	{
+		// THE FIELD WRITES CUTOFF AND NOTHING ELSE.
+		const float cutoffBefore = eroField(e.d, P::Cutoff);
+		const float widthBefore = eroField(e.d, P::Width);
+		dragUp(panel.cutoffBoxForTest(), 30.0f);
+		CHECK(eroField(e.d, P::Cutoff) > cutoffBefore);
+		CHECK(eroField(e.d, P::Width) == widthBefore);
+		dragUp(panel.cutoffBoxForTest(), -30.0f);
+		CHECK(std::string(panel.cutoffBoxForTest()->tooltipAt({ 2.0f, 2.0f })) == ero::kParamDescs[eroAt(P::Cutoff)].tooltip);
+	}
+	// AND IN THE OTHER ENGINES IT IS NOT DRAWN.
+	e.mode(ero::Mode::Dust);
+	CHECK_FALSE(panel.cutoffBoxForTest()->isVisible());
+	e.mode(ero::Mode::Comb);
 	e.mode(ero::Mode::Etch);
 	CHECK(panel.freqBoxForTest()->isVisible());
 	CHECK_FALSE(panel.widthBoxForTest()->enabled());
@@ -45043,6 +45063,36 @@ TEST_CASE("ERODER's Comb window draws the spectrum with the comb's own pitch, wr
 		e.refresh();
 		CHECK(eroField(e.d, P::EmphAmount) == doctest::Approx(static_cast<float>(6.0 + 15.0 * dbPerPixel)).epsilon(1e-3));
 		CHECK(eroField(e.d, P::EmphOffset) == 0.0f);
+	}
+	// THE CUTOFF HANDLE: on the shake filter's centre, and a drag across writes the Cutoff the engine's own mapping gives for that
+	// frequency (the SVF's coefficient is the reference one times the note's ratio times two to the Cutoff).
+	{
+		e.set(P::Cutoff, 0.0f);
+		plot.update();
+		const ero::Derived now = ero::derive(phases, 0.0, static_cast<double>(eroField(e.d, P::Mix)), ero::kReferenceNote, 48000.0);
+		CHECK(plot.cutoffHandleXForTest() == doctest::Approx(plot.hzToXForTest(now.svfHz)));
+		const float hx = plot.cutoffHandleXForTest();
+		const float hy = plot.cutoffHandleYForTest();
+		const float dx = 50.0f;
+		press(hx, hy);
+		drag(hx + dx, hy);
+		release(hx + dx, hy);
+		e.refresh();
+		const double expected = plot.cutoffForXForTest(hx + dx);
+		CHECK(expected != 0.0);
+		CHECK(eroField(e.d, P::Cutoff) == doctest::Approx(static_cast<float>(expected)).epsilon(1e-4));
+		// THE ROUND TRIP THROUGH THE ENGINE: with that Cutoff the filter's centre is where the pointer was.
+		const ero::Derived after = ero::derive(phases, static_cast<double>(eroField(e.d, P::Cutoff)),
+		                                       static_cast<double>(eroField(e.d, P::Mix)), ero::kReferenceNote, 48000.0);
+		CHECK(after.svfHz == doctest::Approx(plot.xToHzForTest(hx + dx)).epsilon(1e-3));
+		// THE PLOT DECLARES IT, for the guards.
+		std::vector<ui::ControlFace::Offered> offered;
+		plot.offeredControls(offered);
+		CHECK(std::any_of(offered.begin(), offered.end(), [](const ui::ControlFace::Offered& o) {
+			return o.control != nullptr && std::string(o.control->desc().key) == "eroder_cutoff";
+		}));
+		e.set(P::Cutoff, 0.0f);
+		plot.update();
 	}
 	// NOTHING ELSE ON THE PICTURE IS A CONTROL IN THE COMB: a press elsewhere writes neither Freq, Amount nor Width.
 	const float freq = eroField(e.d, P::Freq);

@@ -131,7 +131,8 @@ public:
 	[[nodiscard]] FieldStack* filterForTest() const { return filter_.get(); }
 	[[nodiscard]] FieldStack* emphasisStackForTest() const { return emphasis_.get(); }
 	[[nodiscard]] ValueBox* freqBoxForTest() const { return &filter_->box(0); }
-	[[nodiscard]] ValueBox* widthBoxForTest() const { return &filter_->box(1); }
+	[[nodiscard]] ValueBox* cutoffBoxForTest() const { return &filter_->box(1); }
+	[[nodiscard]] ValueBox* widthBoxForTest() const { return &filter_->box(2); }
 	[[nodiscard]] ValueBox* emphasisAmountForTest() const { return &emphasis_->box(0); }
 	[[nodiscard]] ValueBox* emphasisOffsetForTest() const { return &emphasis_->box(1); }
 	[[nodiscard]] Knob* inputKnobForTest() const { return knob(fx::eroder::Param::Input); }

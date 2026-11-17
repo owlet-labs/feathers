@@ -127,6 +127,12 @@ public:
 	[[nodiscard]] bool showsSpectrumForTest() const noexcept { return spectrum_; }
 	/// **WHERE THE COMB'S ENGINE STANDS ON THE AXIS**: its delay is a period, so it rings at 1/delay (the emphasis pivots there too).
 	[[nodiscard]] double centreHzForTest() const noexcept { return centreHz(); }
+	/// **THE COMB'S CUTOFF HANDLE** (the window's Comb plot): on the shake filter's centre (`Derived::svfHz`). `cutoffForX` inverts the engine's own
+	/// mapping exactly where it is not clamped: the SVF's coefficient is `2 sin(pi hz / 44100)`, which is the reference coefficient times the
+	/// note's ratio times 2^cutoff.
+	[[nodiscard]] float cutoffHandleXForTest() const noexcept { return cutoffHandleX(); }
+	[[nodiscard]] float cutoffHandleYForTest() const noexcept { return cutoffHandleY(); }
+	[[nodiscard]] double cutoffForXForTest(float x) const noexcept { return cutoffForX(x); }
 	[[nodiscard]] bool hasSpectrumForTest() const noexcept { return haveSpectrum_; }
 	[[nodiscard]] float preDbForTest(size_t bin) const noexcept { return pre_[bin]; }
 	[[nodiscard]] float postDbForTest(size_t bin) const noexcept { return post_[bin]; }
@@ -175,6 +181,9 @@ private:
 	void drawDust(visage::Canvas& canvas);
 	void drawComb(visage::Canvas& canvas);
 	void drawCombMarks(visage::Canvas& canvas, float top, float foot);
+	[[nodiscard]] float cutoffHandleX() const noexcept;
+	[[nodiscard]] float cutoffHandleY() const noexcept;
+	[[nodiscard]] double cutoffForX(float x) const noexcept;
 	/// THE ENGINE'S OWN FREQUENCY: Freq (after tracking) in Dust, Rust and Etch, the comb's pitch in the Comb.
 	[[nodiscard]] double centreHz() const noexcept;
 
@@ -218,6 +227,8 @@ private:
 		bool width = false;
 		/// THE EMPHASIS'S HANDLE: its two gestures are begun by the first movement past the dead zone on their own axis.
 		bool emph = false;
+		/// THE COMB'S CUTOFF HANDLE: a drag across places the shake filter's centre under the pointer.
+		bool cutoff = false;
 		bool offsetGesture = false;
 		bool emphAmountGesture = false;
 		double startOffset = 0.0;

@@ -51,7 +51,7 @@ constexpr KnobSpec kKnobs[] = {
 	{ ero::Param::Resonance, "Reso" },  { ero::Param::Follow, "Follow" },     { ero::Param::Mix, "Mix" },
 	{ ero::Param::HpWet, "HP Wet" },    { ero::Param::Step, "Step" },         { ero::Param::Detune, "Detune" },
 	{ ero::Param::ModFold, "Mod Fold" }, { ero::Param::RustBias, "Bias" },    { ero::Param::RustRectify, "Rectify" },
-	{ ero::Param::Cutoff, "Cutoff" },   { ero::Param::Heat, "Heat" },
+	{ ero::Param::Heat, "Heat" },
 	{ ero::Param::Smear, "Smear" },     { ero::Param::Loop, "Loop" },
 	{ ero::Param::LoopInterval, "Interval" }, { ero::Param::Input, "Input" },
 };
@@ -62,7 +62,7 @@ constexpr P kShakeRow[] = { P::Step, P::Detune, P::ModFold };
 /// THE ENGINE GROUP'S CELLS: the grids above without what the Feedback and Output groups hold.
 constexpr P kDustEngine[] = { P::Amount, P::Source, P::Grit, P::Stereo };
 constexpr P kRustEngine[] = { P::RustBias, P::RustRectify, P::Source, P::Grit, P::Stereo };
-constexpr P kCombEngine[] = { P::Cutoff, P::Heat };
+constexpr P kCombEngine[] = { P::Heat };
 
 } // namespace
 
@@ -126,6 +126,8 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	filter_ = std::make_unique<FieldStack>("Filter");
 	filter_->setFaceDiameter(kFace);
 	(void)filter_->addBox(std::make_unique<ValueBox>(control(ero::Param::Freq), ""), "Freq");
+	// THE COMB'S CUTOFF TAKES FREQ'S PLACE (the top row): the shake filter's centre, in octaves.
+	(void)filter_->addBox(std::make_unique<ValueBox>(control(ero::Param::Cutoff), ""), "Cutoff");
 	(void)filter_->addBox(std::make_unique<ValueBox>(control(ero::Param::Width), ""), "Width");
 	addChild(filter_.get());
 	emphasis_ = std::make_unique<FieldStack>("Emphasis");
@@ -227,7 +229,7 @@ std::vector<visage::Frame*> EroderExpanded::dustWidgetsForTest() const {
 }
 
 std::vector<visage::Frame*> EroderExpanded::combWidgetsForTest() const {
-	return { tone_.get(), character_.get(), knob(P::Cutoff), knob(P::Heat), gamma_.get(), blend_.get() };
+	return { tone_.get(), character_.get(), knob(P::Heat), gamma_.get(), blend_.get() };
 }
 
 std::vector<visage::Frame*> EroderExpanded::rustWidgetsForTest() const {
@@ -394,7 +396,8 @@ void EroderExpanded::refreshHonesty() {
 	// THE FILTER'S ROWS: Freq is the running engine's own (the Comb has none, so there it is not drawn); Width is the noise band's
 	// in Dust and Rust, the Bell's alone in the Comb and Etch.
 	filter_->setBoxShown(0, !comb);
-	filter_->setBoxEnabled(1, (!comb && !etch && source > 0.0f) || (bell && emphasised));
+	filter_->setBoxShown(1, comb);
+	filter_->setBoxEnabled(2, (!comb && !etch && source > 0.0f) || (bell && emphasised));
 	knob(P::Detune)->setActive(source < 1.0f);
 	knob(P::ModFold)->setActive(source < 1.0f);
 	// SUB THRU GIVES BACK WHAT HP WET TOOK OF A DRY THAT WAS TURNED DOWN: with no filter there is nothing to give

@@ -118,8 +118,16 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 				return;
 			}
 		}
-		// THE COMB'S PICTURE HAS NO OTHER HANDLE: its coordinates are the cells beside it, and Freq is not its control.
+		// THE COMB'S OTHER HANDLE (the window's): the shake filter's centre, dragged across for Cutoff. Its coordinates are the cells beside
+		// it, and Freq is not its control.
 		if (!dust_) {
+			if (large_ && std::abs(e.position.x - cutoffHandleX()) <= kEdgeReach && std::abs(e.position.y - cutoffHandleY()) <= kEdgeReach) {
+				drag_.active = true;
+				drag_.cutoff = true;
+				control(ero::Param::Cutoff).beginGesture();
+				control(ero::Param::Cutoff).setValue(cutoffForX(e.position.x));
+				update();
+			}
 			return;
 		}
 		// (Etch has no band, so no edge handle: only Freq answers the press.)
@@ -158,6 +166,11 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		}
 		if (drag_.emph) {
 			dragEmphasis(e.position);
+			return;
+		}
+		if (drag_.cutoff) {
+			control(ero::Param::Cutoff).setValue(cutoffForX(e.position.x));
+			update();
 			return;
 		}
 		DeviceControl& freq = control(ero::Param::Freq);
@@ -204,6 +217,12 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 			if (drag_.emphAmountGesture) {
 				control(ero::Param::EmphAmount).endGesture();
 			}
+			drag_ = {};
+			update();
+			return;
+		}
+		if (drag_.cutoff) {
+			control(ero::Param::Cutoff).endGesture();
 			drag_ = {};
 			update();
 			return;
@@ -266,6 +285,8 @@ void EroderPlot::offeredControls(std::vector<Offered>& out) const {
 	if (large_) {
 		out.push_back({ &control(ero::Param::EmphOffset), Road::Gesture });
 		out.push_back({ &control(ero::Param::EmphAmount), Road::Gesture });
+		// THE COMB'S SHAKE-FILTER HANDLE: x is Cutoff.
+		out.push_back({ &control(ero::Param::Cutoff), Road::Gesture });
 	}
 }
 
@@ -373,6 +394,18 @@ std::optional<double> EroderPlot::emphasisDb(double hz) const noexcept {
 	const std::complex<double> h = (static_cast<double>(t.b0) + static_cast<double>(t.b1) * z1)
 	                               / (1.0 + static_cast<double>(t.a1) * z1);
 	return 20.0 * std::log10(std::max(std::abs(h), 1e-12));
+}
+
+float EroderPlot::cutoffHandleX() const noexcept { return hzToX(comb_.svfHz); }
+
+float EroderPlot::cutoffHandleY() const noexcept { return plotTop() + 0.15f * (plotFoot() - plotTop()); }
+
+double EroderPlot::cutoffForX(float x) const noexcept {
+	// THE ENGINE'S MAPPING, INVERTED: coefficient = 2 sin(pi hz / reference rate) = kSvfReferenceCoefficient * note ratio * 2^cutoff.
+	const double hz = std::min(xToHz(x), 0.49 * ero::kReferenceRate);
+	const double coefficient = 2.0 * std::sin(std::numbers::pi * hz / ero::kReferenceRate);
+	const double noteRatio = std::exp2((pitch_ - ero::kReferenceNote) / 12.0);
+	return std::clamp(std::log2(coefficient / (ero::kSvfReferenceCoefficient * noteRatio)), -ero::kCutoffOctaves, ero::kCutoffOctaves);
 }
 
 double EroderPlot::centreHz() const noexcept {
@@ -519,6 +552,9 @@ const char* EroderPlot::tooltipAt(visage::Point p) const {
 		return tooltipOf(&control(ero::Param::EmphOffset));
 	}
 	if (!dust_) {
+		if (std::abs(p.x - cutoffHandleX()) < kHandleReach && std::abs(p.y - cutoffHandleY()) < kHandleReach) {
+			return tooltipOf(&control(ero::Param::Cutoff));
+		}
 		return kCombPlotTip;
 	}
 	// THE HANDLE SPEAKS FOR THE AMOUNT, the rest of the axis for Freq.
@@ -788,6 +824,11 @@ void EroderPlot::drawCombMarks(visage::Canvas& canvas, float top, float foot) {
 		}
 		if (large_) {
 			canvas.text("shake", face, visage::Font::kCenter, x - 24.0f, foot - 24.0f, 48.0f, 11.0f);
+			// ITS HANDLE: a ring on the line, dragged across for Cutoff.
+			canvas.setColor(kAccent);
+			canvas.circle(x - 4.0f, cutoffHandleY() - 4.0f, 8.0f);
+			canvas.setColor(kSurface);
+			canvas.circle(x - 2.0f, cutoffHandleY() - 2.0f, 4.0f);
 		}
 	}
 	// THE HIGHPASS ON THE WET: a corner at its frequency.

@@ -937,15 +937,16 @@ TEST_CASE("OC: each chain publishes its own output peak — after its fader, mut
 	CHECK_FALSE(rig.rack().chainPeak(0, peak));
 }
 
-TEST_CASE("OC: a chain's open state is kept with the patch by chain id — closed by default, saved and loaded by value, dirty on change, and put back with the chain") {
+TEST_CASE("OC: a chain's open state is kept with the patch by chain id — a new chain starts open, saved and loaded by value (a body without the field reads closed), dirty on change, and put back with the chain") {
 	RackRig rig;
 	DirtyCount dirty;
 	pr::kContainerOps.setOuterGate(rig.mem, countingGate(dirty));
 	pr::Rack& rack = rig.rack();
 	REQUIRE(rack.addChain() == 1);
 	REQUIRE(rack.addChain() == 2);
-	CHECK_FALSE(rack.open(0)); // closed by default, every chain
-	CHECK_FALSE(rack.open(1));
+	CHECK(rack.open(0)); // a new chain starts open, every chain
+	CHECK(rack.open(1));
+	CHECK(rack.open(2));
 	CHECK_FALSE(rack.open(7)); // no such chain
 	const auto marked = [&](auto&& edit) {
 		const int before = dirty.marks;
@@ -953,47 +954,65 @@ TEST_CASE("OC: a chain's open state is kept with the patch by chain id — close
 		return dirty.marks - before;
 	};
 	// VIEW STATE LIKE A CARD'S FOLD: a change marks the holder dirty, the same value does not.
-	CHECK(marked([&] { rack.setOpen(1, true); }) == 1);
-	CHECK(marked([&] { rack.setOpen(1, true); }) == 0);
-	CHECK(rack.open(1));
-	CHECK_FALSE(rack.open(0));
-	CHECK_FALSE(rack.open(2));
-	// IT FOLLOWS THE CHAIN, NOT THE POSITION: take chain 0 out, and the open chain is now at 0.
-	const uint16_t openId = rack.chainIdAt(1);
+	CHECK(marked([&] { rack.setOpen(1, false); }) == 1);
+	CHECK(marked([&] { rack.setOpen(1, false); }) == 0);
+	CHECK_FALSE(rack.open(1));
+	CHECK(rack.open(0));
+	CHECK(rack.open(2));
+	// IT FOLLOWS THE CHAIN, NOT THE POSITION: take chain 0 out, and the closed chain is now at 0.
+	const uint16_t closedId = rack.chainIdAt(1);
 	const pr::Rack::ChainSnapshot first = rack.snapshotChain(0);
 	REQUIRE(rack.removeChain(0));
-	CHECK(rack.chainIdAt(0) == openId);
-	CHECK(rack.open(0));
-	// A CHAIN PUT BACK COMES BACK AS IT WENT — open stays with the snapshot of an open chain.
+	CHECK(rack.chainIdAt(0) == closedId);
+	CHECK_FALSE(rack.open(0));
+	// A CHAIN PUT BACK COMES BACK AS IT WENT — closed stays with the snapshot of a closed chain.
 	const pr::Rack::ChainSnapshot taken = rack.snapshotChain(0);
-	CHECK(taken.open);
+	CHECK_FALSE(taken.open);
 	REQUIRE(rack.removeChain(0));
 	REQUIRE(rack.insertChain(0, taken) == 0);
-	CHECK(rack.open(0));
-	CHECK_FALSE(first.open);
-	REQUIRE(rack.insertChain(0, first) == 0);
 	CHECK_FALSE(rack.open(0));
-	CHECK(rack.open(1));
+	CHECK(first.open);
+	REQUIRE(rack.insertChain(0, first) == 0);
+	CHECK(rack.open(0));
+	CHECK_FALSE(rack.open(1));
 	// SAVED AND LOADED INTO A FRESH RACK, BY VALUE, and the load is not an edit.
-	rack.setOpen(2, true);
+	rack.setOpen(2, false);
 	const std::vector<uint8_t> body = rig.save();
 	RackRig fresh;
 	DirtyCount freshDirty;
 	pr::kContainerOps.setOuterGate(fresh.mem, countingGate(freshDirty));
 	REQUIRE(pr::kContainerOps.loadState(fresh.mem, body.data(), body.size()));
 	REQUIRE(fresh.rack().chainCount() == 3);
-	CHECK_FALSE(fresh.rack().open(0));
-	CHECK(fresh.rack().open(1));
-	CHECK(fresh.rack().open(2));
+	CHECK(fresh.rack().open(0));
+	CHECK_FALSE(fresh.rack().open(1));
+	CHECK_FALSE(fresh.rack().open(2));
 	CHECK(freshDirty.marks == 0);
+	// A BODY WRITTEN BEFORE THE FIELD EXISTED READS CLOSED, as it always did (the key is renamed in place, so the loader meets none): the loader's
+	// own default, not the new chain's.
+	std::vector<uint8_t> old = body;
+	size_t renamed = 0;
+	for (size_t i = 0; i + 5 <= old.size(); ++i) {
+		if (old[i] == 4 && old[i + 1] == 'o' && old[i + 2] == 'p' && old[i + 3] == 'e' && old[i + 4] == 'n') {
+			old[i + 4] = 'x';
+			++renamed;
+		}
+	}
+	REQUIRE(renamed >= 3);
+	RackRig legacy;
+	REQUIRE(pr::kContainerOps.loadState(legacy.mem, old.data(), old.size()));
+	REQUIRE(legacy.rack().chainCount() == 3);
+	for (size_t i = 0; i < 3; ++i) {
+		CAPTURE(i);
+		CHECK_FALSE(legacy.rack().open(i));
+	}
 	// AND IT IS NOT AN UNDO STEP, NOR SOUND: the sum is the same with every chain open or closed.
 	rig.settle();
 	const std::vector<float> in = ramp();
 	const std::vector<float> a = rig.run(in);
-	rack.setOpen(1, false);
-	const std::vector<float> b = rig.run(in);
+	rack.setOpen(1, true);
+	const std::vector<float> b2 = rig.run(in);
 	for (size_t i = 0; i < in.size(); ++i) {
-		REQUIRE(a[i] == b[i]);
+		REQUIRE(a[i] == b2[i]);
 	}
 }
 

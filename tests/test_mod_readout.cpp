@@ -25,7 +25,11 @@
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/mod_readout.h"
+#include "fx/owltt/owltt_types.h"
 #include "plugin/ui/mod_readout_layer.h"
+#include "plugin/ui/owltt_card.h"
+#include "plugin/ui/owltt_expanded.h"
+#include "plugin/ui/widget_registry.h"
 #include "rack/rack_bridge.h"
 #include "rack/rack_engine.h"
 
@@ -405,4 +409,90 @@ TEST_CASE("PY: a route's φ curve is in the readout as the engine applies it, at
 		rig.bridge.setRouteAmount(src, c.destination(), 0.0f);
 		rig.bridge.drain();
 	}
+}
+
+TEST_CASE("PU: OWLTT's global Ratio and Threshold show the as-modulated box on the card while a depth is set, in the "
+          "device's own text") {
+	// THE REPORT: dragging a route's depth onto OWLTT's Ratio or Threshold showed no box, so the resulting setting
+	// (compress or expand, which is the whole point) could not be read. Asked by value: the layer's line equals the
+	// destination's own print of the value the engine resolves.
+	namespace dtt = fx::owltt;
+	Rig rig;
+	double clock = 1000.0;
+	ui::LiveAmount::setClockForTest([&clock] { return clock; });
+	const DeviceInstanceId id = rig.add(dtt::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttCard card(rig.bridge, registry, id);
+	card.setModulation(&rig.mod, &rig.history);
+	card.setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+	card.setBounds(0, 0, 520, 360);
+	rig.bridge.setMacro(1, 0.8f);
+	const backplane::Source src = backplane::Source::core(1);
+	for (const dtt::Param p : { dtt::Param::Ratio, dtt::Param::Threshold }) {
+		CAPTURE(static_cast<int>(p));
+		const size_t control = static_cast<size_t>(p);
+		const backplane::Destination dest = backplane::Destination::control(id, control);
+		rig.bridge.setRouteAmount(src, dest, 0.3f);
+		rig.bridge.drain();
+		ui::LiveAmount::begin(rig.bridge.routeIdentity(), src, dest);
+		(void)card.update();
+		rig.block();
+		(void)card.update();
+		ui::ModReadoutLayer& layer = card.modReadoutLayer();
+		REQUIRE(layer.shown());
+		ui::DeviceControl c(rig.bridge, id, dtt::kDescriptor, control, &rig.mod, &rig.history);
+		const std::optional<ui::ModReadout> want = c.routeReadout(src);
+		REQUIRE(want.has_value());
+		CHECK(layer.valueLine() == want->text);
+		// THE TEXT IS THE VALUE THE ENGINE RESOLVES, printed by the destination.
+		CHECK(layer.valueLine() == c.textAt(static_cast<double>(rig.engineAfterDrain(id, control))));
+		ui::LiveAmount::end(rig.bridge.routeIdentity(), src, dest);
+		clock += ui::LiveAmount::kLingerMs * 2.0;
+		(void)card.update();
+		CHECK_FALSE(layer.shown());
+	}
+	ui::LiveAmount::setClockForTest(nullptr);
+}
+
+TEST_CASE("PU: OWLTT's window shows the as-modulated box for its global Ratio and Threshold, per-band strips and bars, "
+          "in the device's own text") {
+	namespace dtt = fx::owltt;
+	Rig rig;
+	double clock = 1000.0;
+	ui::LiveAmount::setClockForTest([&clock] { return clock; });
+	const DeviceInstanceId id = rig.add(dtt::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel(rig.bridge, registry, id);
+	panel.setModulation(&rig.mod, &rig.history);
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0, 0, want.x, want.y);
+	panel.resized();
+	rig.bridge.setMacro(1, 0.8f);
+	const backplane::Source src = backplane::Source::core(1);
+	const dtt::Param params[] = { dtt::Param::Ratio, dtt::Param::Threshold, dtt::Param::LowRatio, dtt::Param::MidRatio,
+		                          dtt::Param::HighRatio, dtt::Param::LowThreshold, dtt::Param::MidThreshold,
+		                          dtt::Param::HighThreshold };
+	for (const dtt::Param p : params) {
+		CAPTURE(std::string(dtt::kParamDescs[static_cast<size_t>(p)].key));
+		const size_t control = static_cast<size_t>(p);
+		const backplane::Destination dest = backplane::Destination::control(id, control);
+		rig.bridge.setRouteAmount(src, dest, 0.3f);
+		rig.bridge.drain();
+		ui::LiveAmount::begin(rig.bridge.routeIdentity(), src, dest);
+		(void)panel.update();
+		rig.block();
+		(void)panel.update();
+		ui::ModReadoutLayer& layer = panel.modReadoutLayer();
+		CHECK(layer.shown());
+		if (layer.shown()) {
+			ui::DeviceControl c(rig.bridge, id, dtt::kDescriptor, control, &rig.mod, &rig.history);
+			CHECK(layer.valueLine() == c.textAt(static_cast<double>(rig.engineAfterDrain(id, control))));
+		}
+		ui::LiveAmount::end(rig.bridge.routeIdentity(), src, dest);
+		clock += ui::LiveAmount::kLingerMs * 2.0;
+		(void)panel.update();
+		rig.bridge.setRouteAmount(src, dest, 0.0f);
+		rig.bridge.drain();
+	}
+	ui::LiveAmount::setClockForTest(nullptr);
 }

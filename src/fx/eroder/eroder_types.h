@@ -1059,8 +1059,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = false,
      .offsetsMayLeaveRange = false,
      .tooltip = "Moves the emphasis to after the feedback joins the signal, so every trip round a loop goes through it again; "
-                "inactive while Emphasis is at 0 dB, or while Reso and Loop are both at 0. The loops are turned down to stay "
-                "under one",
+                "inactive while Emphasis is at 0 dB, or while Reso and Loop are both at 0. The loops' limiters hold what "
+                "circulates, so a loop set high howls at a level and does not run away",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1097,8 +1097,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = false,
      .offsetsMayLeaveRange = false,
      .tooltip = "Where the feedback is taken, inactive while Reso is at 0 (the Comb's feedback always runs): Clean, before the "
-                "Drive, so the Drive colours only what you hear; Driven, after it, so the loop rings through the Drive. The "
-                "loop is turned down by the Drive's own gain",
+                "Drive, so the Drive colours only what you hear; Driven, after it, so the loop rings through the Drive, and "
+                "a hot Drive makes it ring harder",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},

@@ -92,8 +92,6 @@ public:
 	static constexpr double kWidthPerNotch = 0.04;
 	static constexpr size_t kBars = 11;
 	static constexpr size_t kToneBars = 6;
-	static constexpr size_t kHeadHistory = 180;
-	static constexpr float kHeadStripHeight = 46.0f;
 
 	//----------------------------------------------------------------------------------------------//
 	// TEST SEAMS — the plotted VALUES, so a case asserts the picture's numbers.                      //
@@ -122,10 +120,16 @@ public:
 	[[nodiscard]] float plotTopForTest() const noexcept { return plotTop(); }
 	[[nodiscard]] float amountToYForTest(double log2Seconds) const noexcept { return amountToY(log2Seconds); }
 	[[nodiscard]] const std::array<float, kBars>& barsForTest() const noexcept { return bars_; }
+	/// THE COMB'S ELEVEN BARS AND ITS DERIVED QUANTITIES, for the window's sub-plot, which draws them (`EroderSubplot`).
+	[[nodiscard]] const std::array<float, kBars>& barValues() const noexcept { return bars_; }
+	[[nodiscard]] const fx::eroder::Derived& combDerived() const noexcept { return comb_; }
+	/// WHETHER THE PICTURE IS A SPECTRUM: every engine's in the window, all but the Comb's on the card.
+	[[nodiscard]] bool showsSpectrumForTest() const noexcept { return spectrum_; }
+	/// **WHERE THE COMB'S ENGINE STANDS ON THE AXIS**: its delay is a period, so it rings at 1/delay (the emphasis pivots there too).
+	[[nodiscard]] double centreHzForTest() const noexcept { return centreHz(); }
 	[[nodiscard]] bool hasSpectrumForTest() const noexcept { return haveSpectrum_; }
 	[[nodiscard]] float preDbForTest(size_t bin) const noexcept { return pre_[bin]; }
 	[[nodiscard]] float postDbForTest(size_t bin) const noexcept { return post_[bin]; }
-	[[nodiscard]] size_t headSamplesForTest() const noexcept { return headCount_; }
 	[[nodiscard]] int recomputesForTest() const noexcept { return recomputes_; }
 	/// **THE EMPHASIS CURVE'S dB AT `hz`** as drawn, or nothing where none is drawn (Emphasis at 0, or the Comb's bars,
 	/// which have no frequency axis).
@@ -141,13 +145,6 @@ public:
 
 private:
 	using Bins = std::array<float, feathers::dsp::kAnalyserBins>;
-	struct Head {
-		float nearL = 0.0f;
-		float farL = 0.0f;
-		float nearR = 0.0f;
-		float farR = 0.0f;
-		bool operator==(const Head&) const = default;
-	};
 
 	[[nodiscard]] DeviceControl& control(fx::eroder::Param p) const;
 	[[nodiscard]] float inset() const noexcept;
@@ -177,7 +174,9 @@ private:
 	[[nodiscard]] double freqValueForX(float x) const noexcept;
 	void drawDust(visage::Canvas& canvas);
 	void drawComb(visage::Canvas& canvas);
-	void drawHead(visage::Canvas& canvas);
+	void drawCombMarks(visage::Canvas& canvas, float top, float foot);
+	/// THE ENGINE'S OWN FREQUENCY: Freq (after tracking) in Dust, Rust and Etch, the comb's pitch in the Comb.
+	[[nodiscard]] double centreHz() const noexcept;
 
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_ = kNoInstance;
@@ -191,6 +190,8 @@ private:
 	fx::eroder::Row row_ {};
 	fx::eroder::Settings settings_ {};
 	bool dust_ = true;
+	/// THE PICTURE IS THE SPECTRUM: not the Comb's bars. The window's Comb draws it too, with the comb's own marks.
+	bool spectrum_ = true;
 	bool rust_ = false;
 	bool etch_ = false;
 	double pitch_ = fx::eroder::kReferenceNote;
@@ -205,10 +206,6 @@ private:
 	bool armed_ = false;
 	float routeAmount_ = 0.0f;
 	bool routeBipolar_ = false;
-	std::array<Head, kHeadHistory> head_ {};
-	size_t headNext_ = 0;
-	size_t headCount_ = 0;
-	Head lastHead_ {};
 	int recomputes_ = 0;
 
 	struct Drag {

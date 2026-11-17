@@ -42181,6 +42181,9 @@ std::array<float, ero::kReadingCount> eroFrame(float frameA, float frameB, float
 	}
 	v[static_cast<size_t>(ero::Reading::FrameB)] = frameB;
 	v[static_cast<size_t>(ero::Reading::PitchSemitones)] = 60.0f;
+	// THE LIMITERS LET EVERYTHING BY unless a case says otherwise.
+	v[static_cast<size_t>(ero::Reading::LimiterInnerGain)] = 1.0f;
+	v[static_cast<size_t>(ero::Reading::LimiterOuterGain)] = 1.0f;
 	return v;
 }
 
@@ -42440,7 +42443,7 @@ TEST_CASE("ERODER's plot takes a spectrum frame only whole and only when it is n
 	CHECK(plot->preDbForTest(0) == -50.0f);
 }
 
-TEST_CASE("ERODER's window keeps the read head's history, one column for each new reading; the card keeps none") {
+TEST_CASE("ERODER's window sub-plot keeps the read head's history, one column for each new reading") {
 	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
 	ui::WidgetRegistry registry;
 	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
@@ -42448,7 +42451,7 @@ TEST_CASE("ERODER's window keeps the read head's history, one column for each ne
 	REQUIRE(panel != nullptr);
 	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
 	(void)panel->updateContent();
-	CHECK(panel->plotForTest()->headSamplesForTest() == 0);
+	CHECK(panel->subplotForTest()->headSamplesForTest() == 0);
 	auto frame = eroFrame(1.0f, 1.0f, -60.0f, -60.0f);
 	for (int n = 1; n <= 5; ++n) {
 		frame[static_cast<size_t>(ero::Reading::HeadNearL)] = 0.0001f;
@@ -42456,12 +42459,10 @@ TEST_CASE("ERODER's window keeps the read head's history, one column for each ne
 		d.publish(frame);
 		d.f.bridge.refresh();
 		CHECK(panel->updateContent());
-		CHECK(panel->plotForTest()->headSamplesForTest() == static_cast<size_t>(n));
+		CHECK(panel->subplotForTest()->headSamplesForTest() == static_cast<size_t>(n));
 		// THE SAME READING AGAIN adds nothing and repaints nothing.
 		CHECK_FALSE(panel->updateContent());
 	}
-	(void)d.card->updateContent();
-	CHECK(d.card->plotForTest()->headSamplesForTest() == 0);
 }
 
 TEST_CASE("ERODER's Comb picture is the eleven quantities Tone and Character turn, with the floors the engine applies") {
@@ -43547,10 +43548,10 @@ TEST_CASE("ERODER's plot draws the emphasis the engine's sections make: a tilt a
 	CHECK(std::abs(*plot.emphasisDbForTest(8192.0) - tiltDb(12.0, 8192.0)) < 0.2);
 	CHECK(std::abs(*plot.emphasisDbForTest(8192.0) - tiltDb(3.0, 8192.0)) > 3.0);
 
-	// THE COMB'S PICTURE IS BARS, with no frequency axis: nothing is drawn there.
+	// THE WINDOW'S COMB PICTURE IS THE SPECTRUM TOO, with the comb's pitch where Freq is elsewhere: the curve is drawn about it.
 	put(ero::Param::Mode, static_cast<float>(ero::Mode::Comb));
 	REQUIRE(plot.update());
-	CHECK_FALSE(plot.emphasisDbForTest(centre).has_value());
+	CHECK(plot.emphasisDbForTest(centre).has_value());
 }
 
 TEST_CASE("ERODER's plot has a handle on the band's edge that drags Width across; with no noise there is no edge and the wheel turns nothing") {
@@ -44358,7 +44359,7 @@ TEST_CASE("ERODER's window groups its controls: Input, Tone, Drive over a fixed-
 			}
 		}
 		// EVERY VISIBLE CHILD OF THE WINDOW IS IN THE TABLE, but the plot, the engine strip, the picture, and Track.
-		const auto shown = eroVisible(&panel, { panel.plotForTest(), panel.modeForTest(), panel.flowForTest(), panel.trackForTest() });
+		const auto shown = eroVisible(&panel, { panel.plotForTest(), panel.subplotForTest(), panel.modeForTest(), panel.flowForTest(), panel.trackForTest() });
 		CHECK(eroSameSet(shown, listed));
 		// THE PICTURE IS BELOW THEM ALL, and the window is tall enough for it, with Track under the picture and outside its frame.
 		CHECK(panel.flowForTest()->y() >= groups[5].y + groups[5].h);
@@ -44778,6 +44779,281 @@ TEST_CASE("ERODER's Engine group is the same height in every engine, Etch's slot
 	e.refresh();
 	CHECK(eroField(e.d, P::Input) == doctest::Approx(9.0f));
 	CHECK(std::string(input->tooltipAt({ 2.0f, 2.0f })) == ero::kParamDescs[eroAt(P::Input)].tooltip);
+}
+
+TEST_CASE("ERODER's picture is one split in every engine: the spectrum over a sub-plot of two panels, neither moving when the engine does") {
+	EroFaces e;
+	auto& panel = *e.panel;
+	ui::EroderPlot& plot = *panel.plotForTest();
+	ui::EroderSubplot& sub = *panel.subplotForTest();
+	struct Box {
+		float x, y, w, h;
+	};
+	const auto boxOf = [](const visage::Frame& f) { return Box { static_cast<float>(f.x()), static_cast<float>(f.y()), static_cast<float>(f.width()), static_cast<float>(f.height()) }; };
+	Box plotBox {};
+	Box subBox {};
+	ui::EroderSubplot::Rect left {};
+	ui::EroderSubplot::Rect right {};
+	bool first = true;
+	for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Comb, ero::Mode::Rust, ero::Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		e.mode(mode);
+		const Box p = boxOf(plot);
+		const Box b = boxOf(sub);
+		CHECK(sub.isVisible());
+		CHECK(plot.isVisible());
+		// THE PLOT ABOVE THE SUB-PLOT, the split the window's own share says, and neither wider than the picture's column.
+		CHECK(p.y + p.h <= b.y);
+		CHECK(p.x == b.x);
+		CHECK(p.w == b.w);
+		const float total = p.h + ui::EroderExpanded::kPlotGap + b.h;
+		CHECK(std::abs(p.h - (total - ui::EroderExpanded::kPlotGap) * ui::EroderExpanded::kPlotShare) <= 1.0f);
+		CHECK(b.h / total > 0.40f);
+		CHECK(b.h / total < 0.50f);
+		if (first) {
+			plotBox = p;
+			subBox = b;
+			left = sub.leftPanelForTest();
+			right = sub.rightPanelForTest();
+			first = false;
+		}
+		// IDENTICAL ACROSS THE FOUR ENGINES: the plot's bounds, the sub-plot's.
+		CHECK(p.x == plotBox.x);
+		CHECK(p.y == plotBox.y);
+		CHECK(p.w == plotBox.w);
+		CHECK(p.h == plotBox.h);
+		CHECK(b.x == subBox.x);
+		CHECK(b.y == subBox.y);
+		CHECK(b.w == subBox.w);
+		CHECK(b.h == subBox.h);
+		// THE TWO PANELS, equal and side by side — except the Comb's bars, which take the whole width under the strip.
+		const auto l = sub.leftPanelForTest();
+		const auto r = sub.rightPanelForTest();
+		if (mode == ero::Mode::Comb) {
+			CHECK(l.w == doctest::Approx(b.w - 2.0f * ui::EroderSubplot::kInset));
+			CHECK(r.y + r.h <= l.y);
+			CHECK(sub.barsForTest().w == l.w);
+			CHECK(sub.barsForTest().h <= 0.45f * (total));
+			CHECK(plot.y() + plot.height() <= sub.y() + sub.barsForTest().y);
+		}
+		else {
+			CHECK(l.w == doctest::Approx(r.w));
+			CHECK(l.x + l.w < r.x);
+			CHECK(l.y == r.y);
+			CHECK(l.h == r.h);
+			CHECK(l.x == doctest::Approx(left.x));
+			CHECK(l.w == doctest::Approx(left.w));
+			CHECK(r.x == doctest::Approx(right.x));
+		}
+		CHECK(l.x >= 0.0f);
+		CHECK(r.x + r.w <= b.w);
+		CHECK(r.y + r.h <= b.h);
+		CHECK(l.y + l.h <= b.h);
+	}
+}
+
+TEST_CASE("ERODER's feedback meters read the limiters' readings: the drawn fraction is the restated mapping, dim while the loop is off, and nothing repaints at rest") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	ui::EroderSubplot& sub = *panel->subplotForTest();
+	using Which = ui::EroderSubplot::Which;
+	(void)panel->updateContent();
+	// AT REST (limiters at 1): no reduction, no level, and the meters are dim (no loop runs at the defaults).
+	auto frame = eroFrame(1.0f, 1.0f, -60.0f, -60.0f);
+	d.publish(frame);
+	d.f.bridge.refresh();
+	(void)panel->updateContent();
+	CHECK(sub.meterForTest(Which::Inner).reductionDb == 0.0f);
+	CHECK(sub.meterForTest(Which::Outer).reductionDb == 0.0f);
+	CHECK(sub.meterForTest(Which::Inner).dim);
+	CHECK(sub.meterForTest(Which::Outer).dim);
+	CHECK(sub.meterFillWidthForTest(Which::Inner) == 0.0f);
+	// A REDUCTION OF HALF A GAIN: 20 log10 0.5 decibels, the bar filled by that over the floor.
+	frame[static_cast<size_t>(ero::Reading::LimiterInnerGain)] = 0.5f;
+	frame[static_cast<size_t>(ero::Reading::LimiterOuterGain)] = 0.25f;
+	frame[static_cast<size_t>(ero::Reading::LimiterInnerLevel)] = 0.7f;
+	frame[static_cast<size_t>(ero::Reading::LimiterOuterLevel)] = 0.2f;
+	d.set(eroAt(ero::Param::Resonance), 0.4f);
+	d.set(eroAt(ero::Param::Loop), 0.5f);
+	d.publish(frame);
+	d.f.bridge.refresh();
+	CHECK(panel->updateContent());
+	const double innerDb = 20.0 * std::log10(0.5);
+	const double outerDb = 20.0 * std::log10(0.25);
+	CHECK(sub.meterForTest(Which::Inner).reductionDb == doctest::Approx(static_cast<float>(innerDb)).epsilon(1e-4));
+	CHECK(sub.meterForTest(Which::Outer).reductionDb == doctest::Approx(static_cast<float>(outerDb)).epsilon(1e-4));
+	CHECK(sub.meterForTest(Which::Inner).level == doctest::Approx(0.7f));
+	CHECK(sub.meterForTest(Which::Outer).level == doctest::Approx(0.2f));
+	CHECK_FALSE(sub.meterForTest(Which::Inner).dim);
+	CHECK_FALSE(sub.meterForTest(Which::Outer).dim);
+	const double floorDb = ui::EroderSubplot::kFloorDb;
+	CHECK(sub.meterFillWidthForTest(Which::Inner) == doctest::Approx(sub.meterBarForTest(Which::Inner).w * (innerDb / floorDb)).epsilon(1e-4));
+	CHECK(sub.meterFillWidthForTest(Which::Outer) == doctest::Approx(sub.meterBarForTest(Which::Outer).w * (outerDb / floorDb)).epsilon(1e-4));
+	CHECK(sub.meterFillWidthForTest(Which::Outer) > sub.meterFillWidthForTest(Which::Inner));
+	// THE SAME READINGS AGAIN ARE NOT NEWS, and the floor holds the bar to its track.
+	CHECK_FALSE(panel->updateContent());
+	CHECK(ui::EroderSubplot::fillFor(-60.0f) == 1.0f);
+	CHECK(ui::EroderSubplot::fillFor(0.0f) == 0.0f);
+	// A LOOP GONE QUIET DIMS ITS METER.
+	d.set(eroAt(ero::Param::Loop), 0.0f);
+	(void)panel->updateContent();
+	CHECK(sub.meterForTest(Which::Outer).dim);
+	CHECK_FALSE(sub.meterForTest(Which::Inner).dim);
+}
+
+TEST_CASE("ERODER's Etch sub-plot draws slot A's, slot B's and the Drive's transfer curves from the shaper's own function") {
+	EroFaces e;
+	using P = ero::Param;
+	ui::EroderSubplot& sub = *e.panel->subplotForTest();
+	using Curve = ui::EroderSubplot::Curve;
+	e.mode(ero::Mode::Etch);
+	e.set(P::SlotAAmount, 0.5f);
+	e.set(P::SlotAType, static_cast<float>(ero::DriveMode::Tube));
+	e.set(P::SlotAShape, 0.3f);
+	e.set(P::SlotAMix, 1.0f);
+	e.set(P::SlotBAmount, 0.0f);
+	e.set(P::Drive, 0.0f);
+	// THE RESTATEMENT: the gain the Amount sets, the make-up, and the curve itself.
+	const double amount = 0.5;
+	const double gain = std::exp2(ero::kDriveLog2Min + (ero::kDriveLog2Max - ero::kDriveLog2Min) * amount);
+	const double norm = ero::driveMakeUp(ero::DriveMode::Tube, gain, 0.3f);
+	for (const float x : { -0.5f, 0.1f, 0.8f }) {
+		CAPTURE(x);
+		const double want = norm * static_cast<double>(ero::shapeDrive(ero::DriveMode::Tube, x * static_cast<float>(gain), 0.3f, static_cast<float>(gain)));
+		CHECK(sub.curveForTest(Curve::A, x) == doctest::Approx(static_cast<float>(want)).epsilon(1e-5));
+	}
+	CHECK_FALSE(sub.curveIsIdentityForTest(Curve::A));
+	// NON-VACUITY: the curve is not the straight line there.
+	CHECK(std::abs(sub.curveForTest(Curve::A, 0.8f) - 0.8f) > 0.01f);
+	// A SLOT AT AMOUNT 0 AND A DRIVE AT ITS BOTTOM ARE THE IDENTITY LINE, drawn dim.
+	CHECK(sub.curveIsIdentityForTest(Curve::B));
+	CHECK(sub.curveIsIdentityForTest(Curve::Drive));
+	for (const float x : { -0.5f, 0.1f, 0.8f }) {
+		CHECK(sub.curveForTest(Curve::B, x) == x);
+		CHECK(sub.curveForTest(Curve::Drive, x) == x);
+	}
+	// A TYPE THAT IS NOT A CURVE (Crush works in time) is the straight line too; the stage's Mix blends the rest.
+	e.set(P::SlotBAmount, 0.6f);
+	e.set(P::SlotBType, static_cast<float>(ero::DriveMode::Crush));
+	CHECK(sub.curveIsIdentityForTest(Curve::B));
+	e.set(P::SlotAMix, 0.5f);
+	const float full = static_cast<float>(norm * static_cast<double>(ero::shapeDrive(ero::DriveMode::Tube, 0.8f * static_cast<float>(gain), 0.3f, static_cast<float>(gain))));
+	CHECK(sub.curveForTest(Curve::A, 0.8f) == doctest::Approx(0.8f + 0.5f * (full - 0.8f)).epsilon(1e-5));
+}
+
+TEST_CASE("ERODER's Rust sub-plot draws the carrier the ring multiplies by: the sine, folded to one side by Rectify, Bias of the signal whole, Mod Fold through the engine's own fold") {
+	EroFaces e;
+	using P = ero::Param;
+	ui::EroderSubplot& sub = *e.panel->subplotForTest();
+	e.mode(ero::Mode::Rust);
+	const auto sine = [](float phase) {
+		return std::sin(2.0f * 3.14159265358979f * ui::EroderSubplot::kCarrierCycles * phase);
+	};
+	const float phases[] = { 0.0625f, 0.2f, 0.4375f, 0.7f };
+	// SOURCE ALL SINE, BIAS 0, RECTIFY 0: the sine itself.
+	e.set(P::Source, 0.0f);
+	e.set(P::RustBias, 0.0f);
+	e.set(P::RustRectify, 0.0f);
+	e.set(P::ModFold, 0.0f);
+	for (const float phase : phases) {
+		CAPTURE(phase);
+		CHECK(sub.carrierForTest(phase) == doctest::Approx(sine(phase)).epsilon(1e-5));
+	}
+	// NON-VACUITY: it is not flat.
+	CHECK(std::abs(sub.carrierForTest(0.0625f) - sub.carrierForTest(0.2f)) > 0.1f);
+	// RECTIFY 1: the sine folded to one side, |sine|.
+	e.set(P::RustRectify, 1.0f);
+	for (const float phase : phases) {
+		CAPTURE(phase);
+		CHECK(sub.carrierForTest(phase) == doctest::Approx(std::abs(sine(phase))).epsilon(1e-5));
+	}
+	// BIAS 0.5: half the signal let through whole, the multiplier moves to Bias + (1 - Bias) of the carrier.
+	e.set(P::RustBias, 0.5f);
+	for (const float phase : phases) {
+		CHECK(sub.carrierForTest(phase) == doctest::Approx(0.5f + 0.5f * std::abs(sine(phase))).epsilon(1e-5));
+	}
+	// MOD FOLD: the engine's own triangle fold of the sine.
+	e.set(P::RustBias, 0.0f);
+	e.set(P::RustRectify, 0.0f);
+	e.set(P::ModFold, 0.5f);
+	for (const float phase : phases) {
+		CHECK(sub.carrierForTest(phase) == doctest::Approx(ero::triFold(sine(phase), 1.0f + ero::kModFoldSpan * 0.5f)).epsilon(1e-5));
+	}
+	// A SOURCE ABOVE NOTHING MIXES IN THE FIXED NOISE TRACE: the same trace each time, and not the sine.
+	e.set(P::ModFold, 0.0f);
+	e.set(P::Source, 1.0f);
+	const float a = sub.carrierForTest(0.3f);
+	CHECK(a == sub.carrierForTest(0.3f));
+	CHECK(std::abs(a - sine(0.3f)) > 1.0e-3f);
+	CHECK(std::abs(a) <= 1.0f);
+}
+
+TEST_CASE("ERODER's Comb window draws the spectrum with the comb's own pitch, writes the emphasis from its handle, and keeps its bars' values") {
+	EroFaces e;
+	using P = ero::Param;
+	auto& panel = *e.panel;
+	e.mode(ero::Mode::Comb);
+	ui::EroderPlot& plot = *panel.plotForTest();
+	CHECK(plot.showsSpectrumForTest());
+	CHECK_FALSE(plot.showsDustForTest()); // the band is not the comb's
+	// THE COMB'S PITCH IS ITS DELAY'S RECIPROCAL, the engine's own `derive` restated.
+	const ero::Phases phases = ero::phasesOf(eroField(e.d, P::Tone), eroField(e.d, P::Character), eroField(e.d, P::Gamma));
+	const ero::Derived derived = ero::derive(phases, static_cast<double>(eroField(e.d, P::Cutoff)), static_cast<double>(eroField(e.d, P::Mix)),
+	                                         ero::kReferenceNote, 48000.0);
+	CHECK(plot.centreHzForTest() == doctest::Approx(1.0 / derived.baseDelaySeconds).epsilon(1e-6));
+	CHECK(plot.emphasisHzForTest() == doctest::Approx(plot.centreHzForTest()).epsilon(1e-6));
+	CHECK(plot.emphasisHandleXForTest() == doctest::Approx(plot.hzToXForTest(plot.centreHzForTest())));
+	// THE BARS' VALUES ARE THE BANKS', two of them by value.
+	const ero::ToneBank t = ero::evalToneBank(phases.tone);
+	const ero::CharacterBank c = ero::evalCharacterBank(phases.character);
+	CHECK(plot.barValues()[0] == std::max(static_cast<float>(ero::kBankFloor), t[0]));
+	CHECK(plot.barValues()[6] == std::max(static_cast<float>(ero::kDepthFloor), c[0]));
+	// THE EMPHASIS HANDLE WORKS HERE AS IN THE OTHER ENGINES: across writes the offset by the pitch axis, up and down the amount.
+	e.set(P::EmphAmount, 6.0f);
+	plot.update();
+	const auto press = [&](float x, float y) { plot.onMouseDown().callback(at(x, y)); };
+	const auto drag = [&](float x, float y) { plot.onMouseDrag().callback(at(x, y)); };
+	const auto release = [&](float x, float y) { plot.onMouseUp().callback(at(x, y)); };
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		const float dx = 40.0f;
+		press(hx, hy);
+		drag(hx + dx, hy);
+		release(hx + dx, hy);
+		e.refresh();
+		const double expected = 12.0 * std::log2(plot.xToHzForTest(hx + dx - ui::EroderPlot::kAmountDeadZone) / plot.xToHzForTest(hx));
+		CHECK(expected > 1.0);
+		CHECK(eroField(e.d, P::EmphOffset) == doctest::Approx(static_cast<float>(expected)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphAmount) == 6.0f);
+	}
+	e.set(P::EmphOffset, 0.0f);
+	plot.update();
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		const double dbPerPixel = ui::EroderPlot::kEmphasisDbPerQuarter / (0.25 * static_cast<double>(plot.plotFootForTest() - plot.plotTopForTest()));
+		press(hx, hy);
+		drag(hx, hy - 3.0f - 15.0f);
+		release(hx, hy - 18.0f);
+		e.refresh();
+		CHECK(eroField(e.d, P::EmphAmount) == doctest::Approx(static_cast<float>(6.0 + 15.0 * dbPerPixel)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphOffset) == 0.0f);
+	}
+	// NOTHING ELSE ON THE PICTURE IS A CONTROL IN THE COMB: a press elsewhere writes neither Freq, Amount nor Width.
+	const float freq = eroField(e.d, P::Freq);
+	const float amount = eroField(e.d, P::Amount);
+	const float width = eroField(e.d, P::Width);
+	press(10.0f, plot.plotTopForTest() + 5.0f);
+	drag(50.0f, plot.plotTopForTest() - 20.0f);
+	release(50.0f, plot.plotTopForTest() - 20.0f);
+	CHECK(eroField(e.d, P::Freq) == freq);
+	CHECK(eroField(e.d, P::Amount) == amount);
+	CHECK(eroField(e.d, P::Width) == width);
 }
 
 TEST_CASE("ERODER's greyable controls say in their tooltip when they are inactive and why, on the card and in the window") {

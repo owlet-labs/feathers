@@ -27,6 +27,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/eroder_plot.h"
+#include "plugin/ui/eroder_subplot.h"
 #include "plugin/ui/eroder_flow.h"
 #include "plugin/ui/etch_slots.h"
 #include "plugin/ui/field_stack.h"
@@ -105,6 +106,10 @@ public:
 	[[nodiscard]] GammaBox* gammaForTest() const { return gamma_.get(); }
 
 	[[nodiscard]] EroderPlot* plotForTest() const { return plot_.get(); }
+	[[nodiscard]] EroderSubplot* subplotForTest() const { return sub_.get(); }
+	/// THE PICTURE'S SPLIT: the plot's share of the height it and the sub-plot share, the same in every engine.
+	static constexpr float kPlotShare = 0.55f;
+	static constexpr float kPlotGap = 6.0f;
 	[[nodiscard]] SegmentedControl* modeForTest() const { return mode_.get(); }
 	/// WHAT ONE ENGINE SHOWS AND THE OTHERS DO NOT ALL SHOW: Dust's, the Comb's, Rust's.
 	[[nodiscard]] std::vector<visage::Frame*> dustWidgetsForTest() const;
@@ -151,6 +156,7 @@ private:
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<EroderPlot> plot_;
+	std::unique_ptr<EroderSubplot> sub_;
 	std::unique_ptr<EroderFlow> flow_;
 	std::vector<Group> groups_;
 	std::unique_ptr<SegmentedControl> mode_;

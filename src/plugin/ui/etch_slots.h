@@ -65,21 +65,8 @@ public:
 	/// THE BLOCK'S SIZE for rows of `rowWidth` by `rowHeight`.
 	static float widthFor(float rowWidth) { return rowWidth + kRouteColumn; }
 	static float heightFor(float rowHeight) { return 2.0f * rowHeight + kRowGap; }
-	void resized() override {
-		const float rowW = std::max(0.0f, static_cast<float>(width()) - kRouteColumn);
-		const float rowH = (static_cast<float>(height()) - kRowGap) * 0.5f;
-		a_.setBounds(0.0f, 0.0f, rowW, rowH);
-		b_.setBounds(0.0f, rowH + kRowGap, rowW, rowH);
-		const float switchH = std::min(RouteSwitch::heightFor(44.0f), rowH);
-		route_.setBounds(rowW + (kRouteColumn - RouteSwitch::kWidth) * 0.5f,
-		                 (static_cast<float>(height()) - switchH) * 0.5f + kCaptionHeight * 0.5f, RouteSwitch::kWidth, switchH);
-	}
-	void draw(visage::Canvas& canvas) override {
-		const float rowW = std::max(0.0f, static_cast<float>(width()) - kRouteColumn);
-		canvas.setColor(kMuted);
-		canvas.text("ROUTE", font(kKnobLabelSize), visage::Font::kCenter, rowW, route_.y() - kCaptionHeight - 1.0f, kRouteColumn,
-		            kCaptionHeight);
-	}
+	void resized() override;
+	void draw(visage::Canvas& canvas) override;
 	[[nodiscard]] visage::Frame& routeFrame() const noexcept { return route_; }
 
 private:

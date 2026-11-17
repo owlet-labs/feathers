@@ -49,7 +49,9 @@ constexpr float kHandleReach = 10.0f;
 constexpr const char* kCombTip =
     "What Tone and Character are turning right now: six quantities ride Tone and five ride Character, each "
     "swept at its own rate";
-constexpr const char* kHeadTip = "Where each side's read head has been behind the write, the last few seconds";
+constexpr const char* kCombPlotTip =
+    "The spectrum, with the comb's pitch (where its delay rings, and its multiples), the filter that shakes the head and the highpass "
+    "on the wet";
 
 struct BarName {
 	const char* brief;
@@ -97,7 +99,7 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		drag_ = {};
-		if (!dust_ || e.position.y > plotFoot() + kFootHeight) {
+		if (!spectrum_ || e.position.y > plotFoot() + kFootHeight) {
 			return;
 		}
 		// THE EMPHASIS'S HANDLE (the window's plot only) takes a press nearer it than the band's own: the pointer's pitch moves the
@@ -105,7 +107,7 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		if (large_ && std::abs(e.position.x - emphasisHandleX()) <= kEdgeReach
 		    && std::abs(e.position.y - emphasisHandleY()) <= kEdgeReach) {
 			const float dEmph = std::hypot(e.position.x - emphasisHandleX(), e.position.y - emphasisHandleY());
-			const float dBand = etch_ ? 1.0e9f : std::hypot(e.position.x - hzToX(band_.freqHz), e.position.y - handleY());
+			const float dBand = etch_ || !dust_ ? 1.0e9f : std::hypot(e.position.x - hzToX(band_.freqHz), e.position.y - handleY());
 			if (dEmph < dBand) {
 				drag_.active = true;
 				drag_.emph = true;
@@ -115,6 +117,10 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 				drag_.startAmount = static_cast<double>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::EmphAmount)));
 				return;
 			}
+		}
+		// THE COMB'S PICTURE HAS NO OTHER HANDLE: its coordinates are the cells beside it, and Freq is not its control.
+		if (!dust_) {
+			return;
 		}
 		// (Etch has no band, so no edge handle: only Freq answers the press.)
 		DeviceControl& freq = control(ero::Param::Freq);
@@ -276,7 +282,7 @@ float EroderPlot::inset() const noexcept { return large_ ? kInsetLarge : kInsetC
 float EroderPlot::plotTop() const noexcept { return inset() + (large_ ? 12.0f : 10.0f); }
 
 float EroderPlot::plotFoot() const noexcept {
-	return height() - inset() - kFootHeight - (large_ ? kHeadStripHeight + 6.0f : 0.0f);
+	return height() - inset() - kFootHeight;
 }
 
 float EroderPlot::hzToX(double hz) const noexcept {
@@ -349,7 +355,7 @@ double EroderPlot::bandDb(double hz) const noexcept {
 }
 
 std::optional<double> EroderPlot::emphasisDb(double hz) const noexcept {
-	if (!dust_ || !(settings_.emphAmount != 0.0f) || !std::isfinite(settings_.emphAmount)) {
+	if (!spectrum_ || !(settings_.emphAmount != 0.0f) || !std::isfinite(settings_.emphAmount)) {
 		return std::nullopt;
 	}
 	// THE ENGINE'S OWN CLAMPS (`EmphasisPair::set`), then its own sections.
@@ -369,9 +375,13 @@ std::optional<double> EroderPlot::emphasisDb(double hz) const noexcept {
 	return 20.0 * std::log10(std::max(std::abs(h), 1e-12));
 }
 
+double EroderPlot::centreHz() const noexcept {
+	return dust_ ? band_.freqHz : 1.0 / std::max(comb_.baseDelaySeconds, 1.0e-9);
+}
+
 double EroderPlot::emphasisHz() const noexcept {
 	// THE ENGINE'S OWN: Freq moved by the offset (`SharedSection::emphasisHz`), not restated here.
-	return ero::SharedSection::emphasisHz(band_.freqHz, static_cast<double>(settings_.emphOffset), rate_);
+	return ero::SharedSection::emphasisHz(centreHz(), static_cast<double>(settings_.emphOffset), rate_);
 }
 
 float EroderPlot::emphasisHandleX() const noexcept { return hzToX(emphasisHz()); }
@@ -440,6 +450,7 @@ bool EroderPlot::update() {
 		settings_ = ero::stateOf(row, present).settings;
 		// DUST AND RUST DRAW THE BAND (one moves a head by it, the other multiplies by it); the Comb its bars.
 		dust_ = settings_.mode != ero::Mode::Comb;
+		spectrum_ = dust_ || large_;
 		rust_ = settings_.mode == ero::Mode::Rust;
 		// ETCH DRAWS NO BAND: the spectra, the emphasis, and a marker at Freq.
 		etch_ = settings_.mode == ero::Mode::Etch;
@@ -461,7 +472,7 @@ bool EroderPlot::update() {
 		changed = true;
 	}
 	// THE DEVICE COMPUTES THE SPECTRUM ONLY WHILE A VIEW ASKS (`ReadingsSink::wanted`), and only Dust's picture draws it.
-	if (dust_ && isVisible()) {
+	if (spectrum_ && isVisible()) {
 		host_.wantReadings(device_);
 	}
 
@@ -483,18 +494,6 @@ bool EroderPlot::update() {
 				changed = true;
 			}
 		}
-		// THE HEAD: one column each time the device says something new.
-		if (large_) {
-			const Head now { at(ero::Reading::HeadNearL), at(ero::Reading::HeadFarL), at(ero::Reading::HeadNearR),
-				             at(ero::Reading::HeadFarR) };
-			if (!(now == lastHead_)) {
-				lastHead_ = now;
-				head_[headNext_] = now;
-				headNext_ = (headNext_ + 1) % head_.size();
-				headCount_ = std::min(headCount_ + 1, head_.size());
-				changed = true;
-			}
-		}
 	}
 
 	const device::ModDisplay shown = control(ero::Param::Freq).display();
@@ -513,14 +512,14 @@ bool EroderPlot::update() {
 }
 
 const char* EroderPlot::tooltipAt(visage::Point p) const {
-	if (large_ && p.y > plotFoot() + kFootHeight) {
-		return kHeadTip;
-	}
-	if (!dust_) {
+	if (!spectrum_) {
 		return kCombTip;
 	}
 	if (large_ && std::abs(p.x - emphasisHandleX()) < kHandleReach && std::abs(p.y - emphasisHandleY()) < kHandleReach) {
 		return tooltipOf(&control(ero::Param::EmphOffset));
+	}
+	if (!dust_) {
+		return kCombPlotTip;
 	}
 	// THE HANDLE SPEAKS FOR THE AMOUNT, the rest of the axis for Freq.
 	if (!etch_ && std::abs(p.x - hzToX(band_.freqHz)) < kHandleReach
@@ -535,14 +534,11 @@ void EroderPlot::draw(visage::Canvas& canvas) {
 	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 5.0f);
 	canvas.setColor(kLine);
 	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 5.0f, 1.0f);
-	if (dust_) {
+	if (spectrum_) {
 		drawDust(canvas);
 	}
 	else {
 		drawComb(canvas);
-	}
-	if (large_) {
-		drawHead(canvas);
 	}
 }
 
@@ -629,11 +625,11 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 	}
 
 	// THE BAND: the noise half as its filter's curve, the sine half as a stem, each as strong as Source makes it.
-	const float handleX = hzToX(band_.freqHz);
+	const float handleX = hzToX(centreHz());
 	const float handleY = this->handleY();
 	const float rise = foot - handleY;
 	// (Etch has no noise to show, whatever the hidden Source holds.)
-	const float noise = etch_ ? 0.0f : std::clamp(settings_.source, 0.0f, 1.0f);
+	const float noise = etch_ || !dust_ ? 0.0f : std::clamp(settings_.source, 0.0f, 1.0f);
 	if (noise > 0.0f && rise > 0.0f) {
 		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * noise));
 		const int points = large_ ? 220 : 96;
@@ -656,6 +652,9 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 		canvas.setColor(withAlpha(settings_.track ? kValue : kInk, 0.6f));
 		canvas.fill(handleX - 0.5f, top, 1.0f, std::max(0.0f, foot - top));
 	}
+	else if (!dust_) {
+		drawCombMarks(canvas, top, foot);
+	}
 	else if (noise < 1.0f) {
 		canvas.setColor(withAlpha(kValue, 0.35f + 0.65f * (1.0f - noise)));
 		canvas.fill(handleX - 0.75f, handleY, 1.5f, std::max(0.0f, rise));
@@ -668,7 +667,7 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 	}
 
 	// THE MODULATION REACH on Freq, along the foot, in octaves.
-	if (armed_ && routeAmount_ != 0.0f) {
+	if (dust_ && armed_ && routeAmount_ != 0.0f) {
 		const auto& desc = ero::kParamDescs[static_cast<size_t>(ero::Param::Freq)];
 		const double octaves = static_cast<double>(routeAmount_) * (desc.max - desc.min);
 		const float xUp = hzToX(band_.freqHz * std::exp2(octaves));
@@ -680,17 +679,18 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 	// THE HANDLE: a tick on the foot and the dot at the Amount's height — the note's colour while it is tracked.
 	canvas.setColor(settings_.track ? kValue : kInk);
 	canvas.fill(handleX - 3.0f, foot - 1.0f, 6.0f, 2.0f);
-	if (!etch_) {
+	if (!etch_ && dust_) {
 		canvas.circle(handleX - 3.5f, handleY - 3.5f, 7.0f);
 	}
 
 	char text[40];
 	canvas.setColor(kMuted);
-	canvas.text(etch_ ? large_ ? "in (grey), out (line), the emphasis, and Freq" : "spectrum + Freq"
+	canvas.text(!dust_ ? "in (grey), out (line), the emphasis, and the comb"
+	            : etch_ ? large_ ? "in (grey), out (line), the emphasis, and Freq" : "spectrum + Freq"
 	            : large_ ? rust_ ? "in (grey), out (line), and the band that multiplies it"
 	                   : "in (grey), out (line), and the band that shakes the head" : "spectrum + band",
 	            font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, in - 1.0f, w * 0.75f, 11.0f);
-	if (!rust_ && !etch_) {
+	if (!rust_ && !etch_ && dust_) {
 		formatSeconds(text, sizeof(text), band_.amountSeconds);
 		canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, w - in - 70.0f, in - 1.0f, 68.0f, 11.0f);
 	}
@@ -700,10 +700,10 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 			canvas.text(text, font(kKnobReadoutSize), visage::Font::kCenter, hzToX(hz) - 30.0f, foot - 12.0f, 60.0f,
 			            11.0f);
 		}
-		formatHz(text, sizeof(text), band_.freqHz);
+		formatHz(text, sizeof(text), centreHz());
 		const bool left = handleX > w * 0.75f;
 		canvas.setColor(withAlpha(kSurface, 0.9f));
-		const float labelY = etch_ ? top + 2.0f : handleY - 6.0f;
+		const float labelY = etch_ || !dust_ ? top + 2.0f : handleY - 6.0f;
 		canvas.roundedRectangle(left ? handleX - 62.0f : handleX + 6.0f, labelY, 56.0f, 12.0f, 3.0f);
 		canvas.setColor(settings_.track ? kValue : kInk);
 		canvas.text(text, font(kKnobReadoutSize), visage::Font::kCenter, left ? handleX - 62.0f : handleX + 6.0f,
@@ -760,41 +760,45 @@ void EroderPlot::drawComb(visage::Canvas& canvas) {
 	}
 }
 
-void EroderPlot::drawHead(visage::Canvas& canvas) {
-	const float in = inset();
-	const float stripTop = height() - in - kHeadStripHeight;
-	const float w = width() - 2.0f * in;
-	canvas.setColor(withAlpha(kLine, 0.8f));
-	canvas.fill(in, stripTop - 3.0f, w, 1.0f);
-	canvas.setColor(kMuted);
-	canvas.text("READ HEAD", font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, stripTop, 80.0f, 11.0f);
-	if (headCount_ == 0) {
-		canvas.text("no signal yet", font(kKnobReadoutSize), visage::Font::kLeft, in + 2.0f, stripTop + 16.0f, 120.0f,
-		            11.0f);
-		return;
+void EroderPlot::drawCombMarks(visage::Canvas& canvas, float top, float foot) {
+	const visage::Font& face = font(kKnobReadoutSize);
+	// THE COMB'S TEETH: its delay is a period, so the loop rings at 1/delay and at every multiple of it. The pitch is drawn whole, the
+	// multiples faint, as many as stand apart on the axis.
+	const double f0 = centreHz();
+	float lastX = -100.0f;
+	for (int k = 1; k <= 64; ++k) {
+		const double hz = f0 * k;
+		if (hz > kMaxHz) {
+			break;
+		}
+		const float x = hzToX(hz);
+		if (k > 1 && x - lastX < 5.0f) {
+			continue;
+		}
+		lastX = x;
+		canvas.setColor(withAlpha(kValue, k == 1 ? 0.9f : 0.22f));
+		canvas.fill(x - 0.5f, top, 1.0f, std::max(0.0f, foot - top));
 	}
-	float farthest = 1.0e-6f;
-	for (size_t i = 0; i < headCount_; ++i) {
-		farthest = std::max({ farthest, head_[i].farL, head_[i].farR });
+	// THE FILTER ON THE SHAKE: the state-variable filter's centre (`Derived::svfHz`), which is what Cutoff turns, drawn as a dashed line.
+	if (comb_.svfHz > 0.0) {
+		const float x = hzToX(comb_.svfHz);
+		canvas.setColor(withAlpha(kAccent, 0.85f));
+		for (float y = top; y < foot; y += 8.0f) {
+			canvas.fill(x - 0.5f, y, 1.0f, std::min(4.0f, foot - y));
+		}
+		if (large_) {
+			canvas.text("shake", face, visage::Font::kCenter, x - 24.0f, foot - 24.0f, 48.0f, 11.0f);
+		}
 	}
-	char text[32];
-	formatSeconds(text, sizeof(text), static_cast<double>(farthest));
-	canvas.text(text, font(kKnobReadoutSize), visage::Font::kRight, in + w - 72.0f, stripTop, 70.0f, 11.0f);
-	// TWO LANES, left over right; the newest column at the right edge.
-	const float laneTop = stripTop + 12.0f;
-	const float laneH = (kHeadStripHeight - 14.0f) * 0.5f;
-	const float column = w / static_cast<float>(head_.size());
-	for (size_t n = 0; n < headCount_; ++n) {
-		const Head& h = head_[(headNext_ + head_.size() - 1 - n) % head_.size()];
-		const float x = in + w - column * static_cast<float>(n + 1);
-		const auto lane = [&](float nearAt, float farAt, float y, uint32_t colour) {
-			const float lo = y + laneH * (1.0f - std::clamp(farAt / farthest, 0.0f, 1.0f));
-			const float hi = y + laneH * (1.0f - std::clamp(nearAt / farthest, 0.0f, 1.0f));
-			canvas.setColor(colour);
-			canvas.fill(x, lo, std::max(1.0f, column), std::max(1.0f, hi - lo));
-		};
-		lane(h.nearL, h.farL, laneTop, kModulationL);
-		lane(h.nearR, h.farR, laneTop + laneH + 1.0f, kModulationR);
+	// THE HIGHPASS ON THE WET: a corner at its frequency.
+	if (comb_.hpfHz > 0.0) {
+		const float x = hzToX(comb_.hpfHz);
+		canvas.setColor(withAlpha(kInk, 0.8f));
+		canvas.fill(x - 0.75f, foot - 16.0f, 1.5f, 16.0f);
+		canvas.fill(x, foot - 16.0f, 8.0f, 1.5f);
+		if (large_) {
+			canvas.text("HP", face, visage::Font::kLeft, x + 10.0f, foot - 21.0f, 24.0f, 11.0f);
+		}
 	}
 }
 

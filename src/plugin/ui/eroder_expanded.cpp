@@ -66,12 +66,33 @@ constexpr P kCombEngine[] = { P::Cutoff, P::Heat };
 
 } // namespace
 
+// THE WINDOW'S SLOT BLOCK: slot A's row over slot B's (the top-down order the route switch's glyphs and the topology picture draw),
+// the route switch to the right of both, centred on them under its caption.
+void SlotStack::resized() {
+	const float rowW = std::max(0.0f, static_cast<float>(width()) - kRouteColumn);
+	const float rowH = (static_cast<float>(height()) - kRowGap) * 0.5f;
+	a_.setBounds(0.0f, 0.0f, rowW, rowH);
+	b_.setBounds(0.0f, rowH + kRowGap, rowW, rowH);
+	const float switchH = std::min(RouteSwitch::heightFor(44.0f), rowH);
+	route_.setBounds(rowW + (kRouteColumn - RouteSwitch::kWidth) * 0.5f,
+	                 (static_cast<float>(height()) - switchH) * 0.5f + kCaptionHeight * 0.5f, RouteSwitch::kWidth, switchH);
+}
+
+void SlotStack::draw(visage::Canvas& canvas) {
+	const float rowW = std::max(0.0f, static_cast<float>(width()) - kRouteColumn);
+	canvas.setColor(kMuted);
+	canvas.text("ROUTE", font(kKnobLabelSize), visage::Font::kCenter, rowW, route_.y() - kCaptionHeight - 1.0f, kRouteColumn,
+	            kCaptionHeight);
+}
+
 EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id,
                                Notifier* notifier)
     : dhost_(host), device_(id), notifier_(notifier) {
 	controls_.resize(static_cast<size_t>(ero::Param::kCount));
 	plot_ = std::make_unique<EroderPlot>(host, id, true);
 	addChild(plot_.get());
+	sub_ = std::make_unique<EroderSubplot>(host, id, *plot_);
+	addChild(sub_.get());
 	mode_ = std::make_unique<SegmentedControl>(control(ero::Param::Mode), registry, ero::kModeNames, notifier_);
 	addChild(mode_.get());
 
@@ -225,7 +246,12 @@ void EroderExpanded::layOut() {
 	// its own edge room; the rows under it share the same width.
 	const float sideW = kSideColumn;
 	const float plotW = std::max(0.0f, width() - 2.0f * kPad - sideW - kGap);
-	plot_->setBounds(kPad, kPad, plotW, std::max(0.0f, height() - 2.0f * kPad));
+	// THE PICTURE IS SPLIT THE SAME IN EVERY ENGINE: the spectrum over the sub-plot, so neither moves when the engine does.
+	const float pictureH = std::max(0.0f, height() - 2.0f * kPad);
+	const float plotH = std::floor((pictureH - kPlotGap) * kPlotShare);
+	plot_->setBounds(kPad, kPad, plotW, plotH);
+	sub_->setBounds(kPad, kPad + plotH + kPlotGap, plotW, std::max(0.0f, pictureH - plotH - kPlotGap));
+	sub_->resized();
 
 	const float x0 = width() - kPad - sideW;
 	float y = kPad;
@@ -397,6 +423,9 @@ bool EroderExpanded::updateContent() {
 		changed = true;
 	}
 	if (plot_->update()) {
+		changed = true;
+	}
+	if (sub_->update()) {
 		changed = true;
 	}
 	// THE PICTURE REDRAWS ITSELF (`EroderFlow::update`); its change is not the window's.

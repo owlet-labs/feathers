@@ -7,12 +7,25 @@
 # the GUI suites under the private display, the named suites and cases, and the install only on green.
 # It builds and tests the tree the script lives in, so run the copy in the tree you mean.
 #
-# Usage: scripts/integrator-round.sh [--each test_a,test_b] [--cases "binary::case name"]... [--install]
+# TIERS. Two lanes, by what the round is for:
+#   fast  (--fast, a local install): build, ledger, install-on build, ctest on the TOUCHED binaries only
+#         (those named in --each, matched by ctest's own test names), the GUI ctest steps only for the
+#         touched GUI binaries, then --each over the listed binaries with --jobs ${ROUND_EACH_JOBS:-3}.
+#         No ASan, no windowed run, no preflight.
+#   full  (the default, a release): the whole ctest, both GUI steps, and --each over the listed
+#         binaries, also with --jobs. Preflight and the windowed run stay with the release procedure.
+# ASAN IS NOT IN THIS SCRIPT (it is scripts/sanitize-gate.sh, run separately). Policy: ASan at a
+# release; and before a local install only when the change touches object lifetimes (widget
+# ownership, rack views, voice pools and stealing, plugin teardown), and then only on those suites.
+#
+# Usage: scripts/integrator-round.sh [--fast] [--each test_a,test_b] [--cases "binary::case name"]... [--install]
+#   --fast   the fast lane above (touched binaries only; implies nothing about --install)
 #   --each   comma-separated binaries under build/tests, each run through run-cases.sh --each
 #   --cases  "binary::case name", run through run-cases.sh by name (repeatable)
 #   --install  install both .claude files from build-install-on, only if every step was green
 # Env: ROUND_LOG (log dir, default <repo>/worktrees/_briefs/logs/round-<timestamp>),
 #      ROUND_JOBS (build/test -j, default 6), ROUND_JOBS_ON (install-on build -j, default 4).
+#      ROUND_EACH_JOBS (case processes at once under --each, default 3).
 # Exit status is non-zero on any red. Logs: one file per step in $ROUND_LOG.
 
 set -u
@@ -23,12 +36,14 @@ cd "$here" || exit 2
 each_list=""
 cases=()
 install=0
+fast=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--each) each_list=${2:-}; shift 2 ;;
 		--cases) cases+=("${2:-}"); shift 2 ;;
 		--install) install=1; shift ;;
-		*) echo "usage: $0 [--each a,b] [--cases \"binary::case name\"]... [--install]" >&2; exit 2 ;;
+		--fast) fast=1; shift ;;
+		*) echo "usage: $0 [--fast] [--each a,b] [--cases \"binary::case name\"]... [--install]" >&2; exit 2 ;;
 	esac
 done
 
@@ -36,6 +51,7 @@ log=${ROUND_LOG:-$here/worktrees/_briefs/logs/round-$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$log" || exit 2
 jobs_n=${ROUND_JOBS:-6}
 jobs_on=${ROUND_JOBS_ON:-4}
+each_jobs=${ROUND_EACH_JOBS:-3}
 
 # shellcheck disable=SC1091
 . scripts/env.sh
@@ -90,26 +106,81 @@ else
 	if [[ $install -eq 1 ]]; then red=1; reds+=(build-install-on); fi
 fi
 
-# 4. full ctest
-ctest_s="ctest skipped (build red)"
-if [[ $rc -eq 0 ]]; then
-	step ctest ctest --test-dir build -j"$jobs_n" --timeout 2400 --label-exclude headless-incompatible --output-on-failure
-	crc=$?
-	tally=$(grep -a 'tests passed' "$log/ctest.log" | tail -1)
-	ctest_s="ctest ${tally:-no tally} in ${STEP_SECS}s"
-	[[ $crc -ne 0 ]] && ctest_s="ctest RED: $tally in ${STEP_SECS}s"
+# Fast lane: the ctest names that run the touched binaries (those named in --each and --cases), read from
+# ctest's own command lines, split into plain and windowed (headless-incompatible) tests.
+fast_plain=""
+fast_gui_a=""
+fast_gui_b=""
+fast_note=""
+if [[ $fast -eq 1 && $rc -eq 0 ]]; then
+	touched=()
+	IFS=',' read -r -a _eb <<<"$each_list"
+	for b in "${_eb[@]}"; do [[ -n $b ]] && touched+=("$b"); done
+	for spec in "${cases[@]+"${cases[@]}"}"; do touched+=("${spec%%::*}"); done
+	all_names=$(ctest --test-dir build -N -V 2>/dev/null | awk -v bins="${touched[*]}" '
+		BEGIN { n = split(bins, b, " ") }
+		/^[0-9]+: Test command:/ { hit = 0; for (i = 1; i <= n; i++) if (index($0, "/" b[i] " ") || index($0, "/" b[i] "\"") || $0 ~ ("/" b[i] "$")) hit = 1 }
+		/^ +Test +#[0-9]+:/ { if (hit) { name = $0; sub(/^ +Test +#[0-9]+: */, "", name); print name } hit = 0 }')
+	gui_names=$(ctest --test-dir build -N -L headless-incompatible 2>/dev/null | sed -n 's/^ *Test *#[0-9]*: *//p')
+	while IFS= read -r nm; do
+		[[ -z $nm ]] && continue
+		if grep -qxF -- "$nm" <<<"$gui_names"; then
+			if [[ $nm == gui-widgets-controls* ]]; then fast_gui_b+="${fast_gui_b:+|}$nm"; else fast_gui_a+="${fast_gui_a:+|}$nm"; fi
+		else
+			fast_plain+="${fast_plain:+|}$nm"
+		fi
+	done <<<"$all_names"
+	fast_note=" [fast: touched ${touched[*]:-none}]"
 fi
 
-# 5. GUI suites under the private display
+# 4. ctest (full: everything; fast: the touched binaries only)
+ctest_s="ctest skipped (build red)"
+if [[ $rc -eq 0 ]]; then
+	if [[ $fast -eq 1 ]]; then
+		if [[ -n $fast_plain ]]; then
+			step ctest ctest --test-dir build -j"$jobs_n" --timeout 2400 -R "^(${fast_plain})\$" --output-on-failure
+			crc=$?
+			tally=$(grep -a 'tests passed' "$log/ctest.log" | tail -1)
+			ctest_s="ctest${fast_note} ${tally:-no tally} in ${STEP_SECS}s"
+			[[ $crc -ne 0 ]] && ctest_s="ctest RED${fast_note}: $tally in ${STEP_SECS}s"
+		else
+			ctest_s="ctest${fast_note}: no plain ctest tests for the touched binaries"
+		fi
+	else
+		step ctest ctest --test-dir build -j"$jobs_n" --timeout 2400 --label-exclude headless-incompatible --output-on-failure
+		crc=$?
+		tally=$(grep -a 'tests passed' "$log/ctest.log" | tail -1)
+		ctest_s="ctest ${tally:-no tally} in ${STEP_SECS}s"
+		[[ $crc -ne 0 ]] && ctest_s="ctest RED: $tally in ${STEP_SECS}s"
+	fi
+fi
+
+# 5. GUI suites under the private display (fast: only the touched GUI binaries' tests)
 gui_s="gui skipped (build red)"
 if [[ $rc -eq 0 ]]; then
-	FEATHERS_REDUCED_MOTION=1 step gui-a scripts/venue-xvfb.sh run -- \
-		ctest --test-dir build -j"$jobs_n" --timeout 1500 -L headless-incompatible -E gui-widgets-controls
-	ga=$(grep -a 'tests passed' "$log/gui-a.log" | tail -1)
-	step gui-b scripts/venue-xvfb.sh run -- \
-		ctest --test-dir build -j"$jobs_n" --timeout 1500 -R gui-widgets-controls
-	gb=$(grep -a 'tests passed' "$log/gui-b.log" | tail -1)
-	gui_s="gui: ${ga:-no tally} | controls: ${gb:-no tally}"
+	if [[ $fast -eq 1 ]]; then
+		ga="no touched gui tests"
+		gb="no touched gui tests"
+		if [[ -n $fast_gui_a ]]; then
+			FEATHERS_REDUCED_MOTION=1 step gui-a scripts/venue-xvfb.sh run -- \
+				ctest --test-dir build -j"$jobs_n" --timeout 1500 -R "^(${fast_gui_a})\$"
+			ga=$(grep -a 'tests passed' "$log/gui-a.log" | tail -1)
+		fi
+		if [[ -n $fast_gui_b ]]; then
+			step gui-b scripts/venue-xvfb.sh run -- \
+				ctest --test-dir build -j"$jobs_n" --timeout 1500 -R "^(${fast_gui_b})\$"
+			gb=$(grep -a 'tests passed' "$log/gui-b.log" | tail -1)
+		fi
+		gui_s="gui: ${ga:-no tally} | controls: ${gb:-no tally}"
+	else
+		FEATHERS_REDUCED_MOTION=1 step gui-a scripts/venue-xvfb.sh run -- \
+			ctest --test-dir build -j"$jobs_n" --timeout 1500 -L headless-incompatible -E gui-widgets-controls
+		ga=$(grep -a 'tests passed' "$log/gui-a.log" | tail -1)
+		step gui-b scripts/venue-xvfb.sh run -- \
+			ctest --test-dir build -j"$jobs_n" --timeout 1500 -R gui-widgets-controls
+		gb=$(grep -a 'tests passed' "$log/gui-b.log" | tail -1)
+		gui_s="gui: ${ga:-no tally} | controls: ${gb:-no tally}"
+	fi
 fi
 
 # 6. named suites and cases
@@ -123,9 +194,9 @@ if [[ $rc -eq 0 ]]; then
 			[[ -z $b ]] && continue
 			# the controls binary holds the animation cases, which need motion (as the gui-b ctest step runs it)
 			if [[ $b == test_gui_widgets_controls ]]; then
-				step "each-$b" scripts/venue-xvfb.sh run -- scripts/run-cases.sh --each "build/tests/$b"
+				step "each-$b" scripts/venue-xvfb.sh run -- scripts/run-cases.sh --each --jobs "$each_jobs" "build/tests/$b"
 			else
-				step "each-$b" "${xv[@]}" scripts/run-cases.sh --each "build/tests/$b"
+				step "each-$b" "${xv[@]}" scripts/run-cases.sh --each --jobs "$each_jobs" "build/tests/$b"
 			fi
 			each_lines+=("each $b: $(doctest_tally "$log/each-$b.log")")
 		done

@@ -790,6 +790,10 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 			}
 		}
 
+		// THE SAFETY CEILING ON THE WET, before Mix (`kWetCeiling`): for a self-oscillating loop, not a tone stage.
+		wetL = std::clamp(wetL, -kWetCeiling, kWetCeiling);
+		wetR = std::clamp(wetR, -kWetCeiling, kWetCeiling);
+
 		// ETCH AT REST IS A TRUE BYPASS, at any Mix: nothing in the wet path runs, so the wet is the input and the input
 		// goes through as it is, rather than as two equal signals cross-faded.
 		if (d.etch && !slotA_.active() && !slotB_.active() && !shaper_.active() && !emph && !smearOn &&

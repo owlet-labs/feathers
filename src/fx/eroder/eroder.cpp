@@ -873,6 +873,9 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 				outR += (1.0f - dryGain_) * combHighpass_.taken(1, inR);
 			}
 		}
+		// THE SAFETY CEILING ON THE WET, before the dry joins (`kWetCeiling`): for a self-oscillating loop, not a tone stage.
+		outL = std::clamp(outL, -kWetCeiling, kWetCeiling);
+		outR = std::clamp(outR, -kWetCeiling, kWetCeiling);
 		right[i] = inR * dryGain_ + outR;
 		left[i] = inL * dryGain_ + outL;
 	}

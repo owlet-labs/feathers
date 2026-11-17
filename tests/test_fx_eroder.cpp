@@ -3587,7 +3587,7 @@ TEST_CASE("Comb: Heat is the same comb on a hotter signal — the device at no H
 	cold.prepare(kRate);
 	cold.setTarget(s);
 	Settings hotSettings = s;
-	hotSettings.heat = 3.0f / 7.0f; // three octaves: eight times
+	hotSettings.heat = 2.0f / 7.0f; // two octaves: four times (eight would carry the cold side's wet over the wet ceiling)
 	Eroder hot;
 	hot.prepare(kRate);
 	hot.setTarget(hotSettings);
@@ -3598,16 +3598,16 @@ TEST_CASE("Comb: Heat is the same comb on a hotter signal — the device at no H
 		float a = in[i];
 		float b = in[i];
 		hot.processStereo(&a, &b, 1);
-		float c = in[i] * 8.0f;
+		float c = in[i] * 4.0f;
 		float d = c;
 		cold.processStereo(&c, &d, 1);
-		// THE WET ALONE, each side: the hot device's, and the cold one's turned down by the same eight.
+		// THE WET ALONE, each side: the hot device's, and the cold one's turned down by the same four.
 		const double wetHot = static_cast<double>(a) - static_cast<double>(in[i]);
-		const double wetCold = (static_cast<double>(c) - static_cast<double>(in[i]) * 8.0) / 8.0;
+		const double wetCold = (static_cast<double>(c) - static_cast<double>(in[i]) * 4.0) / 4.0;
 		worst = std::max(worst, std::abs(wetHot - wetCold));
 		moved = std::max(moved, std::abs(wetHot));
 	}
-	CHECK(hot.combHeatForTest() == 8.0f);
+	CHECK(hot.combHeatForTest() == doctest::Approx(4.0f).epsilon(1.0e-6));
 	CHECK(cold.combHeatForTest() == 1.0f);
 	CHECK(moved > 0.01);
 	CHECK(worst < 1.0e-5);
@@ -5259,6 +5259,7 @@ Settings worstLoops(Mode mode, DriveMode type, bool tapDriven, bool bell) {
 	s.emphBell = bell;
 	s.emphInLoop = true;
 	s.mix = 1.0f;
+	s.blend = true; // the Comb's dry is whole unless Blend: at Mix 1 with Blend the output is the wet alone
 	s.rustBias = 1.0f;
 	if (mode == Mode::Etch) {
 		s.slotA = { 1.0f, type, 0.6f, 1.0f };
@@ -5315,6 +5316,89 @@ TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as t
 	measured("worst-settings tail, the longest over every combination, seconds", worst);
 }
 
+TEST_CASE("Hotter loops: a howling loop comes out at about the same level whatever the emphasis, and 0 dB leaves the limiters' thresholds as they were") {
+	// THE FOUR COMBINATIONS OF In Loop AND Restore, by the sign and shape of the amount (restated from the topology).
+	const double a18 = std::pow(10.0, 18.0 / 20.0);
+	const auto gain = [&](float db, bool bell, bool inLoop, bool restore) {
+		Settings s = declared();
+		s.emphAmount = db;
+		s.emphBell = bell;
+		s.emphRestore = restore;
+		return SharedSection::pathGainAfterReturn(s, inLoop && db != 0.0f);
+	};
+	CHECK(gain(-18.0f, false, false, true) == doctest::Approx(a18));  // out of the loop, Restore on: the inverse's boost
+	CHECK(gain(18.0f, false, false, true) == doctest::Approx(a18));   // a tilt boosts either way
+	CHECK(gain(18.0f, true, false, true) == 1.0);                     // a bell boost is cut by its inverse
+	CHECK(gain(-18.0f, true, false, true) == doctest::Approx(a18));   // a bell cut is boosted by its inverse
+	CHECK(gain(-18.0f, false, false, false) == 1.0);                  // no Restore, out of the loop: nothing after the return
+	CHECK(gain(18.0f, false, true, false) == doctest::Approx(a18));   // in the loop, no Restore: the emphasis's boost stays
+	CHECK(gain(-18.0f, true, true, false) == 1.0);                    // a bell cut in the loop does not boost
+	CHECK(gain(18.0f, false, true, true) == doctest::Approx(a18));    // in the loop with Restore: the tap is before the inverse
+	CHECK(gain(0.0f, false, false, true) == 1.0);
+	CHECK(gain(0.0f, true, true, false) == 1.0);
+
+	// AT 0 dB the thresholds are as they were, whatever In Loop, Restore and the shape say.
+	for (const bool inLoop : { false, true }) {
+		for (const bool restore : { false, true }) {
+			Settings s = declared();
+			s.resonance = 0.9f;
+			s.loop = 1.0f;
+			s.emphAmount = 0.0f;
+			s.emphInLoop = inLoop;
+			s.emphRestore = restore;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			std::vector<float> l = whiteInput(960, 0.5f);
+			std::vector<float> r = l;
+			e.processStereo(l.data(), r.data(), 960);
+			CHECK(e.dustForTest().sharedForTest().outerLimiterForTest().thresholdForTest() == 1.0f);
+			CHECK(e.dustForTest().sharedForTest().innerLimiterForTest().thresholdForTest() == 1.0f);
+		}
+	}
+
+	// THE HOWLING LOOP: Dust, Reso 0.9, Loop 1, Drive 0 (the limiter was at -7 dB there). Steady peak on a 0.5 sine.
+	const std::vector<float> in = sine(220.0, 96000, 0.5f);
+	struct Case {
+		const char* what;
+		float db;
+		bool inLoop;
+		bool restore;
+	};
+	const Case cases[] = {
+		{ "0 dB", 0.0f, false, true },
+		{ "-18 dB Tilt + Restore", -18.0f, false, true },
+		{ "+18 dB Tilt + Restore", 18.0f, false, true },
+		{ "+18 dB Tilt In Loop", 18.0f, true, true },
+		{ "+18 dB Tilt In Loop, no Restore", 18.0f, true, false },
+	};
+	double lowest = 1.0e9;
+	double highest = 0.0;
+	for (const Case& c : cases) {
+		Settings s = declared();
+		s.mix = 1.0f;
+		s.resonance = 0.9f;
+		s.loop = 1.0f;
+		s.emphAmount = c.db;
+		s.emphInLoop = c.inLoop;
+		s.emphRestore = c.restore;
+		const std::vector<float> out = renderAt(kRate, s, in);
+		const std::vector<float> steady(out.begin() + 48000, out.end());
+		const double peak = static_cast<double>(peakOf(steady));
+		measured(c.what, peak);
+		CAPTURE(c.what);
+		CHECK(peak > 0.1);
+		// (NO RESTORE IS NOT IN THE SPREAD: a +18 dB tilt left in the sound is a tone change, its lows 18 dB down, not a level.)
+		if (c.restore) {
+			lowest = std::min(lowest, peak);
+			highest = std::max(highest, peak);
+		}
+	}
+	const double spreadDb = 20.0 * std::log10(highest / lowest);
+	measured("howling loop, spread between the emphasis settings, dB", spreadDb);
+	CHECK(spreadDb <= 3.0); // asked for within 6 dB; measured 1.9 dB with the scaling and 5.3 dB without, so 3 is what tells them apart
+}
+
 TEST_CASE("Hotter loops: the output stays under its bound while a 0.5 sine or noise plays at the worst settings, in every engine") {
 	// THE BOUND, FROM THE PARTS. Each loop's return is held by its limiter to the threshold (1.0 in Dust, Rust and Etch), so what
 	// reaches the engine is at most the input (0.5) plus 0.9 of one return and 0.98 of the other: R = 2.38. The slots and the
@@ -5338,6 +5422,7 @@ TEST_CASE("Hotter loops: the output stays under its bound while a 0.5 sine or no
 	double highest = 0.0;
 	double tightest = 1.0e9;
 	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		double modeHighest = 0.0;
 		for (const DriveMode type : kEveryType) {
 			for (const bool driven : { false, true }) {
 				for (const bool bell : { false, true }) {
@@ -5375,12 +5460,18 @@ TEST_CASE("Hotter loops: the output stays under its bound while a 0.5 sine or no
 						// THE INNER LIMITER HOLDS WHAT THE INNER LOOP RETURNS to its threshold, at any gain the loop is given.
 						CHECK(fedBack <= 1.000001f);
 						highest = std::max(highest, static_cast<double>(peak));
+						modeHighest = std::max(modeHighest, static_cast<double>(peak));
 						tightest = std::min(tightest, bound - static_cast<double>(peak));
 						CHECK(static_cast<double>(peak) <= bound);
+						// AND THE CEILING: at Mix 1 the output is the wet alone, which the safety holds to +-4 whatever the loops do.
+						CHECK(static_cast<double>(peak) <= 4.0);
 					}
 				}
 			}
 		}
+		char what[80];
+		std::snprintf(what, sizeof what, "worst-settings output peak, engine %d", static_cast<int>(mode));
+		measured(what, modeHighest);
 	}
 	measured("worst-settings output peak, the highest over every combination", highest);
 	measured("worst-settings output peak, the least headroom under the derived bound", tightest);

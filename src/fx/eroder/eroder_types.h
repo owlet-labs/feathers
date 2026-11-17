@@ -234,6 +234,9 @@ inline constexpr double kDustMarginFrames = 2.0;
 inline constexpr double kDustFeedbackCeiling = 0.9;
 /// What the line may hold, in full scales: far above any signal, and a ceiling should the feedback ever run away.
 inline constexpr float kDustCeiling = 8.0f;
+/// A HARD CEILING ON THE WET, just before Mix (about +12 dBFS), in every engine. It is a safety for a self-oscillating loop, not
+/// a tone stage: anything smaller passes to the bit.
+inline constexpr float kWetCeiling = 4.0f;
 
 /// **DRIVE IS A GAIN INTO A SHAPER, FROM UNDER ITS KNEE TO FAR OVER IT**: 2^-3 at the bottom of the knob, where a
 /// full-scale signal sits in the shaper's straight part and comes out as it went in, to 2^4 at the top. So the

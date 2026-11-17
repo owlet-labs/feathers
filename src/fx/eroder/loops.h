@@ -155,8 +155,7 @@ public:
 	/// THE FULL SCALE OF THE DOMAIN THE ENGINE WORKS IN: both limiters hold the fed-back level at or under it.
 	void setThreshold(float threshold) noexcept {
 		threshold_ = std::max(threshold, 1.0e-6f);
-		innerLimiter_.setThreshold(threshold);
-		outerLimiter_.setThreshold(threshold);
+		applyThreshold();
 	}
 
 	/// ON THE CONTROL GRID. `centreHz` is the engine's Freq: the emphasis's pivot or centre, Smear's centre, and the period
@@ -174,6 +173,8 @@ public:
 		m.hz = static_cast<float>(centreHz);
 		smear_.set(m);
 		loops_ = loops;
+		limitDivisor_ = pathGainAfterReturn(s, loops.inLoop);
+		applyThreshold();
 		// THE TUNED DELAYS ARE AS SET: a period of Freq, and that moved by Interval. The Smear's own delay (it is longer than
 		// a period at its centre) simply adds inside the loop, so the first return is not earlier than the tuned delay.
 		const double limit = static_cast<double>(outer_.capacity()) - 3.0;
@@ -302,6 +303,32 @@ public:
 
 	[[nodiscard]] bool holdsSound() const noexcept { return outer_.holdsSound() || inner_.holdsSound(); }
 
+	/// **THE GAIN THE PATH AFTER A LOOP'S RETURN APPLIES, at the emphasis's peak** (1 when it applies none): a loop sitting on its
+	/// limiter holds the RETURN at the threshold, so the level that reaches the output is that times this. From the topology:
+	///  - NOT in the loop, Restore on: the return joins the sum after the emphasis in and meets only the inverse on its way out,
+	///    which is the boost of a cut (a tilt either way, a bell below zero): `gi`.
+	///  - In the loop, Restore off: the return meets the emphasis in and nothing takes it back: the boost, `gf` (a tilt either
+	///    way, a bell above zero).
+	///  - In the loop, Restore on: the tap is taken before the inverse, so the loop circulates through the emphasis in and the
+	///    engine meets the boost while the inverse only undoes it on the way out: also the boost, `gf`. (Measured: with 1 here a
+	///    howling loop under a +18 dB tilt in the loop came out 5 dB over the same loop with no emphasis; with `gf` it is within 2.)
+	///  - NOT in the loop, Restore off: the return meets neither: 1.
+	/// The limiters' thresholds are divided by it, so a howling loop comes out at about the same level whatever the emphasis.
+	[[nodiscard]] static double pathGainAfterReturn(const Settings& s, bool inLoop) noexcept {
+		const double db = std::clamp(static_cast<double>(s.emphAmount), -kEmphasisMaxDb, kEmphasisMaxDb);
+		if (!std::isfinite(db) || db == 0.0) {
+			return 1.0;
+		}
+		const double a = std::pow(10.0, std::abs(db) / 20.0);
+		const bool tilt = !s.emphBell;
+		const double forward = (tilt || db > 0.0) ? a : 1.0;
+		const double inverse = (tilt || db < 0.0) ? a : 1.0;
+		if (inLoop) {
+			return forward;
+		}
+		return s.emphRestore ? inverse : 1.0;
+	}
+
 	/// WHERE THE EMPHASIS IS TUNED: Freq moved by `offsetSemitones`, held to 20 Hz .. min(20 kHz, 0.45 of the rate). An
 	/// offset of exactly zero is Freq as it was, untouched, so the emphasis is the bits it was.
 	[[nodiscard]] static double emphasisHz(double centreHz, double offsetSemitones, double rate) noexcept {
@@ -339,6 +366,12 @@ public:
 	[[nodiscard]] const LoopLimiter& outerLimiterForTest() const noexcept { return outerLimiter_; }
 
 private:
+	void applyThreshold() noexcept {
+		const auto t = static_cast<float>(static_cast<double>(threshold_) / limitDivisor_);
+		innerLimiter_.setThreshold(t);
+		outerLimiter_.setThreshold(t);
+	}
+
 	/// A tap below this is flushed, so a float loop reaches exact zero instead of circling in the denormals.
 	[[nodiscard]] static float flush(float x) noexcept { return std::abs(x) < 1.0e-9f ? 0.0f : x; }
 
@@ -359,6 +392,7 @@ private:
 	uint64_t limitedFrames_ = 0;
 	bool placed_ = false;
 	float threshold_ = 1.0f;
+	double limitDivisor_ = 1.0;
 	uint32_t quietFrames_ = 0;
 	uint32_t gateFrames_ = 0;
 	uint32_t fadeStartFrames_ = 0;

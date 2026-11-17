@@ -15383,6 +15383,53 @@ const char* firstExpandableTag(feathers::ui::ChainColumn& column) {
 
 } // namespace
 
+TEST_CASE("two columns over one chain: the expand mark is each column's own answer, and one column losing, releasing or being destroyed never takes it from a sibling that presents") {
+	HeldChain held;
+	ui::WidgetRegistry registry;
+	ui::ModState mod;
+	ui::EditHistory history;
+	ui::SurfaceLayers outer;
+	outer.setBounds(0, 0, 1200, 700);
+	ui::ChainColumn a(held.bridge(), registry, mod, history, nullptr);
+	a.setBounds(0, 0, static_cast<int>(ui::FxLaneRail::kWidth), 600);
+	const char* tag = firstExpandableTag(a);
+	REQUIRE(tag != nullptr);
+	const DeviceInstanceId inner = a.addDevice(tag);
+	REQUIRE(inner != feathers::kNoInstance);
+	const auto markOf = [&](ui::ChainColumn& c) {
+		ui::FxCard* card = c.cardOf(inner);
+		REQUIRE(card != nullptr);
+		return card->expandBounds().width();
+	};
+	a.setPresentedOn(&outer);
+	CHECK(markOf(a) > 0.0f);
+	// B IS BUILT WITHOUT A PRESENTER: its card has NO mark although A presents over the same chain (a mark that opens nothing is dead),
+	// and A's mark is untouched by B's being built.
+	{
+		ui::ChainColumn b(held.bridge(), registry, mod, history, nullptr);
+		b.setBounds(0, 0, static_cast<int>(ui::FxLaneRail::kWidth), 600);
+		b.syncCards();
+		CHECK(markOf(b) == 0.0f);
+		CHECK(markOf(a) > 0.0f);
+		// B GETS A PRESENTER, then loses it (nullptr): A keeps its mark through both.
+		b.setPresentedOn(&outer);
+		CHECK(markOf(b) > 0.0f);
+		CHECK(markOf(a) > 0.0f);
+		b.setPresentedOn(nullptr);
+		CHECK(markOf(b) == 0.0f);
+		CHECK(markOf(a) > 0.0f);
+		// ...and B destroyed WHILE presenting: A keeps it.
+		b.setPresentedOn(&outer);
+		CHECK(markOf(b) > 0.0f);
+	}
+	CHECK(markOf(a) > 0.0f);
+	CHECK(held.bridge().expandedPresentersForTest() == 1);
+	// THE LAST PRESENTER GOING CLEARS THE ANSWER, so a column given one later still starts from nothing.
+	a.setPresentedOn(nullptr);
+	CHECK(markOf(a) == 0.0f);
+	CHECK(held.bridge().expandedPresentersForTest() == 0);
+}
+
 TEST_CASE("a device in a held chain has a real way into a panel, and no mark at all when it has nowhere to go") {
 	// **There was no expand button for a SKLITTER inside a SKLITTER.** The column's own comment defended that as the honesty rule — a mark
 	// that opened nothing would be a control that does not work — and the defence was sound while the

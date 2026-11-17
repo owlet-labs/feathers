@@ -992,6 +992,7 @@ protected:
 	/// PROTECTED, because cards READ it while laying out — `folded()` is the public question and this
 	/// is the same answer for a subclass that already has it in scope.
 	bool folded_ = false;
+	bool expandPresenter_ = true;
 
 public:
 
@@ -1441,8 +1442,18 @@ public:
 	bool offersExpand() const {
 		const device::Descriptor* d = descriptor();
 		const backplane::DeviceHost* h = deviceHost();
-		return d != nullptr && h != nullptr && h->hasExpandedViewFor(*d);
+		return expandPresenter_ && d != nullptr && h != nullptr && h->hasExpandedViewFor(*d);
 	}
+	/// WHETHER THE COLUMN THIS CARD STANDS IN CAN PRESENT A PANEL (its own outer layers): the host's answer is per chain and a sibling
+	/// column over the same chain may present while this one cannot, and a mark that opens nothing is a dead control. True by default
+	/// (a lane's own cards and the standalone editor present).
+	void setExpandPresenter(bool has) {
+		if (has != expandPresenter_) {
+			expandPresenter_ = has;
+			redraw();
+		}
+	}
+	[[nodiscard]] bool expandPresenter() const noexcept { return expandPresenter_; }
 
 	/// Did this press land on the slot menu? Cards call it FIRST, before the head's own fold, for the
 	/// reason FilterCard's enable square already documents: a button inside the head's rectangle is

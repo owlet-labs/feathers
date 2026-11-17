@@ -2058,3 +2058,44 @@ TEST_CASE("rack pane: the content's extent is the device window's natural extent
 		CHECK(minimum.y >= p.pane().naturalSize().y);
 	}
 }
+
+TEST_CASE("rack views over a real rack: the cards' expand marks survive a tab switch, a view toggle and the window's panel being destroyed, on the card's front") {
+	RealRack r;
+	r.chains(2, 2, true); // Drum then Delay on each chain
+	r.view_(1);
+	for (int i = 0; i < 4; ++i) {
+		r.refresh();
+	}
+	const auto frontMarks = [&] {
+		float widest = 0.0f;
+		for (ui::FxCard* c : shownCards(*r.card)) {
+			widest = std::max(widest, c->expandBounds().width());
+		}
+		return widest;
+	};
+	CHECK(frontMarks() > 0.0f);
+	// A TAB SWITCH rebuilds the front column over another chain's bridge, then back.
+	ui::RackTabBar& bar = r.card->tabBarForTest();
+	bar.pressForTest(bar.tabCentre(1));
+	r.refresh();
+	CHECK(frontMarks() > 0.0f);
+	bar.pressForTest(bar.tabCentre(0));
+	r.refresh();
+	CHECK(frontMarks() > 0.0f);
+	// THE VIEW TOGGLED Tabs -> Strips -> Pads -> Tabs.
+	for (const int v : { 0, 2, 1 }) {
+		r.view_(v);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+	}
+	CHECK(frontMarks() > 0.0f);
+	// THE WINDOW'S OWN COLUMN CLOSED (its panel destroyed) and the card's marks stay; reopened, both show.
+	r.view.reset();
+	r.panel = nullptr;
+	for (int i = 0; i < 3; ++i) {
+		(void)r.card->update();
+		r.card->resized();
+	}
+	CHECK(frontMarks() > 0.0f);
+}

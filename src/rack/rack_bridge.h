@@ -677,6 +677,20 @@ public:
 	void setExpandedViewQuery(std::function<bool(const device::Descriptor&)> q) {
 		engine_.setExpandedViewQuery(std::move(q));
 	}
+	/// **PRESENTERS ARE COUNTED, NOT LAST-WRITER-WINS.** Several columns (a Rack window's rail, the Rack card's front column, the window
+	/// pane) stand over this one chain; the query stays installed while ANY of them presents, and goes with the last. A column that
+	/// is built without a presenter, loses it or is destroyed never clears the answer a sibling still needs.
+	void retainExpandedViewQuery(std::function<bool(const device::Descriptor&)> q) {
+		if (expandedPresenters_++ == 0 || q != nullptr) {
+			engine_.setExpandedViewQuery(std::move(q));
+		}
+	}
+	void releaseExpandedViewQuery() {
+		if (expandedPresenters_ > 0 && --expandedPresenters_ == 0) {
+			engine_.setExpandedViewQuery(nullptr);
+		}
+	}
+	[[nodiscard]] uint32_t expandedPresentersForTest() const noexcept { return expandedPresenters_; }
 
 	//---------------------------------------------------------------------------------------------//
 	// THE AUDIO SIDE                                                                               //
@@ -928,6 +942,7 @@ private:
 
 	UiNoteRing notes_;
 	RackEngine& engine_;
+	uint32_t expandedPresenters_ = 0; ///< columns presenting over this chain (`retainExpandedViewQuery`)
 	/// See `secondsPerBeat`: written by `publish` (audio thread), read by the cards.
 	std::atomic<double> secondsPerBeat_ { 0.0 };
 	/// THE AS-MODULATED READOUT'S CHANNEL (backlog PU): asked by the editor, answered by `publish`.

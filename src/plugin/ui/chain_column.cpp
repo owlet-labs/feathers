@@ -160,6 +160,10 @@ ChainColumn::ChainColumn(rack::RackBridge& bridge, WidgetRegistry& registry, Mod
 }
 
 ChainColumn::~ChainColumn() {
+	if (presenting_) {
+		bridge_.releaseExpandedViewQuery(); // the last presenting column's going is what clears the answer
+		presenting_ = false;
+	}
 	// NO RELABEL IS HEARD INTO A COLUMN THAT IS GOING — the bridge outlives it.
 	labelSubscription_.reset();
 	// **A PANEL THIS COLUMN PRESENTED OUTLIVES THE COLUMN UNLESS IT IS TAKEN DOWN HERE**, and it reads
@@ -573,6 +577,7 @@ void ChainColumn::wireCard(FxCard& card, DeviceInstanceId device) {
 	// declines to have a panel, so `expandBounds` is empty and the press that would call this cannot be
 	// made. Binding it on a condition read at BUILD time would be the stale kind of guard — a column
 	// given a presenter after its cards were built would have live marks and dead arms.
+	card.setExpandPresenter(surfaces_->outerLayers() != nullptr); // this column's own answer, whatever a sibling column over the chain presents
 	card.onExpand = [this, device] { expandDevice(device); };
 	// AND THE SITE CHIP (backlog NR), bound the same way for the same reason.
 	card.onSite = [this, device] { expandSite(device); };
@@ -604,11 +609,20 @@ void ChainColumn::setPresentedOn(SurfaceLayers* host) {
 	// THE TABLE IS THE SAME ONE `expandDevice` BUILDS FROM (`ui::hasExpandedView` against
 	// `ui::makeExpandedView`), which is `RackEditor`'s own rule: the button and the panel cannot
 	// disagree about which devices have one.
-	if (host != nullptr) {
-		bridge_.setExpandedViewQuery(&hasExpandedView);
+	// COUNTED ON THE BRIDGE, per column: a sibling column over this chain that still presents keeps the answer, and this column's own
+	// cards decline by their own flag when it has no presenter (a mark that opens nothing is a dead control).
+	if (host != nullptr && !presenting_) {
+		bridge_.retainExpandedViewQuery(&hasExpandedView);
+		presenting_ = true;
 	}
-	else {
-		bridge_.setExpandedViewQuery(nullptr);
+	else if (host == nullptr && presenting_) {
+		bridge_.releaseExpandedViewQuery();
+		presenting_ = false;
+	}
+	for (CardEntry& entry : cards_) {
+		if (entry.card != nullptr) {
+			entry.card->setExpandPresenter(host != nullptr);
+		}
 	}
 	redraw();
 }

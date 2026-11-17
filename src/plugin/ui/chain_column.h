@@ -572,6 +572,8 @@ private:
 	float padY_ = kPadY; ///< along it, at the start and the end
 	float slotGap_ = kSlotGap;
 	size_t shownLimit_ = static_cast<size_t>(-1);
+	/// Whether this column holds a count on the bridge's expanded-view query (`setPresentedOn`).
+	bool presenting_ = false;
 	size_t hiddenLead_ = 0;
 	bool addShown_ = true;
 };

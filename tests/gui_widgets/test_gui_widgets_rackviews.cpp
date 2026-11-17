@@ -986,12 +986,14 @@ TEST_CASE("rack views over a real rack: a Tabs rack as the first device shows it
 	const int content = r.card->frontForTest().nativeWidth();
 	CHECK(content > 0);
 	CHECK(card1->nativeWidth() == content);
+	// A MEMBER RACK TAKES NO PADDING OF ITS OWN across the flow (its host gave it that), so its bar, its front and the card inside it are all
+	// as wide as it is, at every depth: the outermost rack's content.
 	CHECK(card1->tabBarForTest().nativeWidth() == content);
-	CHECK(card2->nativeWidth() == card1->frontForTest().nativeWidth());
-	CHECK(card2->tabBarForTest().nativeWidth() == card2->nativeWidth());
-	// A MEMBER CARD KEEPS NO PADDING OF ITS OWN across the flow: each rack's front is its content (its width less the card's two margins), and the
-	// card inside it is exactly that wide.
-	CHECK(card1->frontForTest().nativeWidth() == card1->nativeWidth() - static_cast<int>(2.0f * ui::ParallelRackCard::kPad * card1->dpiScale() + 0.5f));
+	CHECK(card1->frontForTest().nativeWidth() == content);
+	CHECK(card2->nativeWidth() == content);
+	CHECK(card2->tabBarForTest().nativeWidth() == content);
+	// THE OUTERMOST RACK'S BAR is inside its outline: the card's padding either side.
+	CHECK(r.card->tabBarForTest().nativeWidth() == content);
 	// THREE BARS STACKED, top to bottom, none over another.
 	const float y0 = r.card->tabBarForTest().positionInWindow().y;
 	const float y1 = card1->tabBarForTest().positionInWindow().y;
@@ -1105,8 +1107,8 @@ TEST_CASE("rack views over a real rack: the cards in front are as wide as the ca
 	const int margins = static_cast<int>(std::lround(2.0f * ui::ParallelRackCard::kPad * r.card->dpiScale()));
 	CHECK(cards[0]->nativeHeight() == r.card->nativeHeight() - margins);
 	CHECK(r.card->frontForTest().columnForTest()->horizontal());
-	// THE BAR RUNS DOWN THE SIDE, THE FULL HEIGHT OF THE CARD, and the cards run right of it: opening the chain makes the card wider by a card.
-	CHECK(r.card->tabBarForTest().nativeHeight() == r.card->nativeHeight());
+	// THE BAR RUNS DOWN THE SIDE, as tall as the cards beside it, and the cards run right of it: opening the chain makes the card wider by a card.
+	CHECK(r.card->tabBarForTest().nativeHeight() == r.card->nativeHeight() - margins); // inside the outline, the cards' own cross extent
 	CHECK(r.card->tabBarForTest().nativeWidth() < r.card->nativeHeight());
 	const float closed = r.card->laneExtent(ui::kCardUnitHeight);
 	r.card->chainArrowForTest().toggleForTest();
@@ -1653,5 +1655,83 @@ TEST_CASE("rack window: in Tabs the chain in front is always open and has no col
 	for (size_t i = 0; i < 3; ++i) {
 		CHECK(r.panel->railForTest(i).collapsed());
 		CHECK(r.panel->railForTest(i).collapsible());
+	}
+}
+
+TEST_CASE("rack views over a real rack: the tab bar sits inside the card's outline, a member rack's cross extent is the outermost rack's content at every depth, and the group is bracketed along the flow with no cross-flow cost") {
+	for (const bool horizontal : { false, true }) {
+		CAPTURE(horizontal);
+		RealRack r;
+		r.chains(2, 0);
+		feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+		const feathers::DeviceInstanceId n1 = nestedRack(chain0, 2, true);
+		feathers::rack::RackBridge& c1 = *pr::rackOf(chain0.containerSurfaceOf(n1))->chainAt(0)->bridge();
+		const feathers::DeviceInstanceId n2 = nestedRack(c1, 2, true);
+		feathers::rack::RackBridge& c2 = *pr::rackOf(c1.containerSurfaceOf(n2))->chainAt(0)->bridge();
+		(void)nestedRack(c2, 2, true);
+		r.view_(1);
+		if (horizontal) {
+			r.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+		}
+		for (int i = 0; i < 6; ++i) {
+			r.refresh();
+			if (horizontal) {
+				r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+			}
+		}
+		std::vector<ui::ParallelRackCard*> racks { r.card };
+		for (int depth = 0; depth < 3; ++depth) {
+			std::vector<ui::FxCard*> in = shownCards(*racks.back());
+			REQUIRE(in.size() == 1);
+			auto* next = dynamic_cast<ui::ParallelRackCard*>(in[0]);
+			REQUIRE(next != nullptr);
+			racks.push_back(next);
+		}
+		const auto cross = [&](const visage::Frame& c) { return horizontal ? c.nativeHeight() : c.nativeWidth(); };
+		const int content = cross(r.card->frontForTest());
+		REQUIRE(content > 0);
+		for (size_t d = 0; d < racks.size(); ++d) {
+			CAPTURE(d);
+			ui::ParallelRackCard& card = *racks[d];
+			ui::RackTabBar& bar = card.tabBarForTest();
+			// THE BAR IS INSIDE THE CARD'S OUTLINE, in logical coordinates, at every depth.
+			CHECK(bar.x() >= 0.0f);
+			CHECK(bar.y() >= 0.0f);
+			CHECK(bar.x() + bar.width() <= card.width() + 0.01f);
+			CHECK(bar.y() + bar.height() <= card.height() + 0.01f);
+			if (d == 0) {
+				// THE OUTERMOST CARD KEEPS ITS OWN PADDING across the flow: a clear margin between the bar and the outline.
+				if (!horizontal) {
+					CHECK(bar.x() >= ui::ParallelRackCard::kPad);
+					CHECK(bar.x() + bar.width() <= card.width() - ui::ParallelRackCard::kPad + 0.01f);
+				}
+				else {
+					CHECK(bar.y() >= ui::ParallelRackCard::kPad);
+					CHECK(bar.y() + bar.height() <= card.height() - ui::ParallelRackCard::kPad + 0.01f);
+				}
+			}
+			else {
+				// A MEMBER'S CROSS EXTENT IS THE OUTERMOST RACK'S CONTENT, whatever the depth.
+				CHECK(cross(card) == content);
+				CHECK(cross(card.tabBarForTest()) == content);
+			}
+			// THE OPENING RULE is on the bar, in this rack's own colour; the closing rule is one pixel across the cards' full cross extent.
+			CHECK(bar.ruleForTest() != 0u);
+			const visage::Bounds rule = card.closingRuleForTest();
+			REQUIRE(rule.width() > 0.0f);
+			if (!horizontal) {
+				CHECK(rule.height() == doctest::Approx(1.0f));
+				CHECK(rule.width() == doctest::Approx(card.frontForTest().width()));
+				CHECK(rule.x() == doctest::Approx(card.frontForTest().x()));
+			}
+			else {
+				CHECK(rule.width() == doctest::Approx(1.0f));
+				CHECK(rule.height() == doctest::Approx(card.frontForTest().height()));
+				CHECK(rule.y() == doctest::Approx(card.frontForTest().y()));
+			}
+			// NO CROSS-FLOW PIXEL IS SPENT ON GROUPING: the cards in front are exactly as wide across the flow as the rack's content.
+			const int pad = d == 0 ? static_cast<int>(std::lround(2.0f * ui::ParallelRackCard::kPad * card.dpiScale())) : 0;
+			CHECK(cross(card.frontForTest()) == cross(card) - pad);
+		}
 	}
 }

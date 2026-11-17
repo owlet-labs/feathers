@@ -830,7 +830,7 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 		p.bands = p.spectrum = p.bar = false;
 		p.missing = p.rows = p.overflow = 0;
 		// WHAT IS IN FRONT is the viewed chain's REAL cards (`RackFrontColumn`): as tall as they are at the card's content width.
-		p.frontExtent = static_cast<int>(std::lround(frontExtentFor(horizontalLane() ? lanesCross() : bodyWidth() - 2.0f * kPad)));
+		p.frontExtent = static_cast<int>(std::lround(frontExtentFor(horizontalLane() ? lanesCross() : bodyWidth() - 2.0f * crossPad())));
 		// TABS' ARROW is there when there is more to open than the card in front; PADS' pair is there whenever the chain holds a card (it
 		// steps closed, first, whole, and is still there closed).
 		p.arrow = p.view == RackViewKind::Tabs && front_->deviceCount() > 1;
@@ -908,8 +908,8 @@ float ParallelRackCard::laneExtent(float cross) const {
 	if (horizontalLane() && model_->view() != RackViewKind::Strips) {
 		// LEFT TO RIGHT the card is as wide as what is in front: the spine, the bar or the pads panel, the mode and view column, the cards
 		// (the first alone while the chain is closed, all of it open), their arrow and the padding. Never sized to the largest chain.
-		const float lead = model_->view() == RackViewKind::Tabs ? RackTabBar::kThickness : pads_->naturalSize().x;
-		const float front = frontExtentFor(std::max(0.0f, cross - 2.0f * kPad));
+		const float lead = model_->view() == RackViewKind::Tabs ? kPad + RackTabBar::kThickness : pads_->naturalSize().x;
+		const float front = frontExtentFor(std::max(0.0f, cross - 2.0f * crossPad()));
 		const float arrow = model_->view() == RackViewKind::Tabs && front_->deviceCount() > 1 ? RackDrawerArrow::kSize + kRowGap : 0.0f;
 		return kCardHeadHeight + lead + kRowGap + kLeftColumnWidth + kRowGap + front + arrow + kPad;
 	}
@@ -919,14 +919,18 @@ float ParallelRackCard::laneExtent(float cross) const {
 void ParallelRackCard::layOut() {
 	const Plan p = plan();
 	laidOut_ = p;
-	float left = bodyLeft() + kPad;
-	float wide = std::max(0.0f, bodyWidth() - 2.0f * kPad);
+	// THE CARD'S PADDING ACROSS THE FLOW holds where this rack stands on its own; a rack that is a MEMBER of another's front takes none (its host
+	// gave it the padding already), so the member card's cross extent is the outermost rack's content at every depth.
+	const float cp = p.view == RackViewKind::Strips ? kPad : crossPad();
+	float left = bodyLeft() + cp;
+	float wide = std::max(0.0f, bodyWidth() - 2.0f * cp);
 	float y = kSlotHeadHeight + kRowGap;
 	// THE VIEW'S OWN PIECES: the bar (across the top, or down the side in a horizontal lane) or the pads panel, then what is in front of the
 	// viewed chain and its arrow, all ABOVE the mode and view rows. Strips places none of them.
 	const bool strips = p.view == RackViewKind::Strips;
 	const RackFlow flow = horizontalLane() ? RackFlow::LeftRight : RackFlow::TopDown;
 	tabs_->setFlow(flow);
+	tabs_->setRule(p.view == RackViewKind::Tabs && !folded() ? frontTint() : 0u);
 	pads_->setFlow(flow);
 	chainArrow_->setFlow(flow);
 	padsStep_->setFlow(flow);
@@ -948,7 +952,8 @@ void ParallelRackCard::layOut() {
 		if (!horizontalLane()) {
 			float top = y;
 			if (p.view == RackViewKind::Tabs) {
-				tabs_->setBounds(bodyLeft(), kSlotHeadHeight, bodyWidth(), RackTabBar::kThickness);
+				// INSIDE THE CARD'S OUTLINE, with the card's own padding either side (as wide as the cards beneath it).
+				tabs_->setBounds(bodyLeft() + cp, kSlotHeadHeight, std::max(0.0f, bodyWidth() - 2.0f * cp), RackTabBar::kThickness);
 				top = kSlotHeadHeight + RackTabBar::kThickness + kRowGap;
 			}
 			else {
@@ -978,7 +983,9 @@ void ParallelRackCard::layOut() {
 			float x = bodyLeft();
 			const float h = static_cast<float>(height());
 			if (p.view == RackViewKind::Tabs) {
-				tabs_->setBounds(x, 0.0f, RackTabBar::kThickness, h);
+				// INSIDE THE OUTLINE: the padding before it and across it, the cross extent the cards beside it have.
+				x += kPad;
+				tabs_->setBounds(x, cp, RackTabBar::kThickness, std::max(0.0f, h - 2.0f * cp));
 				x += RackTabBar::kThickness + kRowGap;
 			}
 			else {
@@ -989,7 +996,7 @@ void ParallelRackCard::layOut() {
 			left = x;
 			wide = kLeftColumnWidth;
 			const float frontLeft = x + kLeftColumnWidth + kRowGap;
-			front_->setBounds(frontLeft, kPad, static_cast<float>(p.frontExtent), std::max(0.0f, h - 2.0f * kPad));
+			front_->setBounds(frontLeft, cp, static_cast<float>(p.frontExtent), std::max(0.0f, h - 2.0f * cp));
 			chainArrow_->setBounds(frontLeft + static_cast<float>(p.frontExtent) + kRowGap, 0.0f, RackDrawerArrow::kSize, h);
 			y = kRowGap;
 			if (p.step) {
@@ -1266,7 +1273,7 @@ bool ParallelRackCard::refreshMacroNames() {
 float ParallelRackCard::lanesCross() const {
 	// THE CROSS EXTENT OF A HORIZONTAL LANE IS THE CARD'S HEIGHT less the padding the cards in front keep clear of the edge.
 	const float h = height() > 0 ? static_cast<float>(height()) : kCardUnitHeight;
-	return std::max(0.0f, h - 2.0f * kPad);
+	return std::max(0.0f, h - 2.0f * crossPad());
 }
 
 float ParallelRackCard::frontExtentFor(float cross) const {
@@ -1335,27 +1342,25 @@ void ParallelRackCard::setPresentedOn(SurfaceLayers* host) {
 	front_->setPresentedOn(host);
 }
 
-void ParallelRackCard::drawContent(visage::Canvas& canvas) {
-	// THE GROUP HAIRLINE: ONE line in the RACK's colour down the edge of the cards in front, in the padding the card already has (the member
-	// cards are as wide as its content, so it adds no cross-flow space), and a thin END CAP after the last card shown.
-	if (folded() || !front_->isVisible() || model_->view() == RackViewKind::Strips) {
-		return;
+visage::Bounds ParallelRackCard::closingRule() const {
+	if (folded() || !front_->isVisible() || model_->view() == RackViewKind::Strips || front_->height() <= 0) {
+		return {};
 	}
-	canvas.setColor(frontTint());
+	// ONE PIXEL right after the last card shown, across the cards' full cross extent.
 	if (!horizontalLane()) {
-		const float x = static_cast<float>(front_->x()) - kPad * 0.5f;
-		const float top = static_cast<float>(front_->y());
-		const float bottom = top + static_cast<float>(front_->height());
-		canvas.fill(x, top, 1.0f, bottom - top + 2.0f);
-		canvas.fill(x, bottom + 1.0f, static_cast<float>(front_->x() + front_->width()) - x, 2.0f);
+		return { static_cast<float>(front_->x()), static_cast<float>(front_->y() + front_->height()), static_cast<float>(front_->width()), 1.0f };
 	}
-	else {
-		// ALONG THE TOP EDGE of the cards (in the padding above them), the cap standing after the last one.
-		const float y = static_cast<float>(front_->y()) - kPad * 0.5f;
-		const float left = static_cast<float>(front_->x());
-		const float right = left + static_cast<float>(front_->width());
-		canvas.fill(left, y, right - left + 2.0f, 1.0f);
-		canvas.fill(right + 1.0f, y, 2.0f, static_cast<float>(front_->y() + front_->height()) - y);
+	return { static_cast<float>(front_->x() + front_->width()), static_cast<float>(front_->y()), 1.0f, static_cast<float>(front_->height()) };
+}
+
+void ParallelRackCard::drawContent(visage::Canvas& canvas) {
+	// THE GROUP IS BRACKETED ALONG THE FLOW, NEVER ACROSS IT: the tab bar carries the opening rule (`RackTabBar::setRule`) and this draws
+	// the closing one in the rack's colour. No side line: a nested rack's own bracket sits inside its own card, so every level stays visible
+	// at zero cross-flow cost.
+	const visage::Bounds rule = closingRule();
+	if (rule.width() > 0.0f && rule.height() > 0.0f) {
+		canvas.setColor(frontTint());
+		canvas.fill(rule.x(), rule.y(), rule.width(), rule.height());
 	}
 }
 

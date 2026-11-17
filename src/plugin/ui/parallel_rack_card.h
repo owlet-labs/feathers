@@ -390,6 +390,7 @@ public:
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackFrontColumn& frontForTest() const { return *front_; }
 	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
+	[[nodiscard]] visage::Bounds closingRuleForTest() const { return closingRule(); }
 	[[nodiscard]] int padsFrontForTest() const { return model_->padsFront(); }
 	[[nodiscard]] RackPadsStep& padsStepForTest() const { return *padsStep_; }
 	[[nodiscard]] RackDrawerArrow& macroArrowForTest() const { return *macroArrow_; }
@@ -444,6 +445,10 @@ private:
 	/// THE TABS OR PADS VIEW'S HEIGHT (a vertical lane): the bar or the panel, what is in front, its arrow, and the mode and view rows.
 	[[nodiscard]] float viewHeight(const Plan& p) const;
 	[[nodiscard]] bool horizontalLane() const { return headEdge() == CardHeadEdge::Left; }
+	/// The closing rule's rectangle in this card's coordinates (empty when none is drawn).
+	[[nodiscard]] visage::Bounds closingRule() const;
+	/// The padding across the flow in Tabs and Pads: the card's own when it stands alone, none as a member of another rack's front.
+	[[nodiscard]] float crossPad() const noexcept { return nest().depth > 0 ? 0.0f : kPad; }
 	[[nodiscard]] bool padsView() const { return model_->view() == RackViewKind::Pads; }
 	/// Re-read what is in front (the viewed chain's devices) and the pulse; true when anything drawn changed.
 	bool followView();

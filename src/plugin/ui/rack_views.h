@@ -132,6 +132,15 @@ public:
 	/// Re-read the model and repaint.
 	void refresh() { redraw(); }
 	/// The flow changed (the card was turned): the bar runs the other way; the owner sets the bounds.
+	/// THE RACK'S OPENING RULE: one pixel in the rack's colour along the bar's START edge across its full cross extent (0: none). The group
+	/// is bracketed along the flow only, so grouping costs no cross-flow space at any nesting depth.
+	void setRule(uint32_t color) {
+		if (color != rule_) {
+			rule_ = color;
+			redraw();
+		}
+	}
+	[[nodiscard]] uint32_t ruleForTest() const noexcept { return rule_; }
 	void setFlow(RackFlow flow) {
 		if (flow != flow_) {
 			flow_ = flow;
@@ -177,6 +186,7 @@ private:
 	void press(visage::Point at);
 
 	RackViewModel& model_;
+	uint32_t rule_ = 0;
 	RackFlow flow_;
 	int hover_ = -1;
 };

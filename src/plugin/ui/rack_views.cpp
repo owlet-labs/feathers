@@ -495,6 +495,15 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 			}
 		}
 	}
+	if (rule_ != 0) {
+		canvas.setColor(rule_);
+		if (horizontal()) {
+			canvas.fill(0.0f, 0.0f, w, 1.0f);
+		}
+		else {
+			canvas.fill(0.0f, 0.0f, 1.0f, h);
+		}
+	}
 }
 
 //--------------------------------------------------------------------------------------------------//

@@ -685,6 +685,7 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	chokes_.assign(RackEngine::kMaxNotes, ChokeFor {});
 	skippedIn_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	auditionIn_.assign(UiNoteRing::kCapacity, device::NoteEvent {});
+	padIn_.assign(UiNoteRing::kCapacity, device::NoteEvent {});
 	owedOffs_.assign(RackEngine::kMaxNotes, device::NoteEvent {});
 	recordCount_ = 0;
 	stagedCount_ = 0;
@@ -1817,6 +1818,29 @@ size_t Rack::processNotes(const device::NoteEvent* in, size_t count, device::Not
 
 size_t Rack::emitNotes(const device::TransportClock& clock, uint64_t sampleNow, device::NoteEvent* out,
                        size_t capacity, uint32_t* until) noexcept {
+	// THE PADS' KEYS FIRST: routed as notes arriving at this rack's input, at offset 0, whether or not a host note came this block (a rack
+	// that emits is asked every block; `processNotes` is asked only when notes reach it). They leave ahead of what the chains emit.
+	size_t padMade = 0;
+	if (!padNotes_.empty() && !padIn_.empty()) {
+		size_t n = 0;
+		for (UiNoteEvent u; n < padIn_.size() && padNotes_.pop(u);) {
+			device::NoteEvent& e = padIn_[n++];
+			e = device::NoteEvent {};
+			e.kind = u.on ? device::NoteEvent::Kind::On : device::NoteEvent::Kind::Off;
+			e.noteId = kPadNoteId;
+			e.key = u.key;
+			e.velocity = u.on ? static_cast<double>(u.velocity) : 0.0;
+		}
+		if (n > 0) {
+			padMade = processNotes(padIn_.data(), n, out, capacity);
+		}
+	}
+	const size_t own = emitChainNotes(clock, sampleNow, out != nullptr ? out + padMade : nullptr, capacity - padMade, until);
+	return padMade + own;
+}
+
+size_t Rack::emitChainNotes(const device::TransportClock& clock, uint64_t sampleNow, device::NoteEvent* out,
+                            size_t capacity, uint32_t* until) noexcept {
 	uint32_t soonest = std::numeric_limits<uint32_t>::max();
 	const Lineup* live = live_.load(std::memory_order_acquire);
 	stagedCount_ = 0;

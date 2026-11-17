@@ -149,7 +149,12 @@ inline constexpr const char* kBandCountNames[] = { "2", "3", "5" };
 inline constexpr int kBandCounts[] = { 2, 3, 5 };
 inline constexpr int kMaxBands = 5;
 /// The slopes (decided, Q5: the two Linkwitz-Riley pairs, and later a linear-phase FIR split appended as a third) and where the filtering sits.
-inline constexpr const char* kSlopeNames[] = { "LR4 24 dB", "LR2 12 dB", "Linear", "Linear Mild", "Linear Gentle", "LR8 48 dB" };
+/// EACH WITH ITS SLOPE (per octave for the Linkwitz-Riley pairs, the transition's width for the linear-phase ones, as OWLTT's Mode). The labels
+/// before the units were added are `kSlopeAliases`: a stored label still loads.
+inline constexpr const char* kSlopeNames[] = { "LR4 24 dB/oct", "LR2 12 dB/oct", "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 48 dB/oct" };
+inline constexpr device::ChoiceAlias kSlopeAliases[] = { { "LR4 24 dB", "LR4 24 dB/oct" }, { "LR2 12 dB", "LR2 12 dB/oct" },
+	                                                      { "Linear", "Linear (94 Hz)" }, { "Linear Mild", "Linear Mild (186 Hz)" },
+	                                                      { "Linear Gentle", "Linear Gentle (368 Hz)" }, { "LR8 48 dB", "LR8 48 dB/oct" } };
 enum class Slope : uint8_t { Lr4 = 0, Lr2, Linear, LinearMild, LinearGentle, Lr8 };
 /// THE LINEAR SLOPES: Linear, Mild and Gentle share the FIR split and its latency; each is twice as wide in its transition as the one before.
 [[nodiscard]] inline constexpr bool isLinearSlope(Slope s) noexcept { return s >= Slope::Linear && s <= Slope::LinearGentle; }
@@ -157,7 +162,6 @@ enum class Slope : uint8_t { Lr4 = 0, Lr2, Linear, LinearMild, LinearGentle, Lr8
 inline constexpr const char* kFilteringNames[] = { "Before", "After", "Both" };
 /// WHAT A SEGMENTED CONTROL'S FACE SAYS, where the stored label is too long for a segment (display only; the Choice
 /// still stores `kSlopeNames` / `kUnusedNames`, and the tooltip says the rest).
-inline constexpr const char* kSlopeFaceNames[] = { "24 dB", "12 dB", "Linear", "Mild", "Gentle", "48 dB" };
 inline constexpr const char* kUnusedFaceNames[] = { "Ring", "Stop" };
 /// The corners' captions on a face ("Cut 1"…), static so a widget may keep the pointer.
 inline constexpr const char* kCutCaptions[] = { "Cut 1", "Cut 2", "Cut 3", "Cut 4" };
@@ -273,8 +277,8 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly},
     {.key = "rack_slope", .name = "Rack Slope", .min = 0.0, .max = 5.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kSlopeNames, .modulatable = false,
-     .tooltip = "The crossover: Linkwitz-Riley 24 or 12 dB per octave, or Linear, a linear-phase FIR split whose bands sum to the input delayed by about 24 ms (48 ms with Filtering Both), which the rack reports as latency. All sum flat",
-     .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .hostSlot = false},
+     .tooltip = "The crossover: Linkwitz-Riley at 12, 24 or 48 dB per octave, or Linear (Mild, Gentle: a wider transition, the width from -0.1 dB to -60 dB), a linear-phase FIR split whose bands sum to the input delayed by about 24 ms (48 ms with Filtering Both), which the rack reports as latency. All sum flat",
+     .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .choiceAliases = kSlopeAliases, .hostSlot = false},
     {.key = "rack_filtering", .name = "Rack Filtering", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kFilteringNames, .modulatable = false,
      .tooltip = "Before splits the input so each chain hears its band. After filters each chain's output to its band. "

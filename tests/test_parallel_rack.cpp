@@ -35,6 +35,8 @@
 #include "rack/parallel_rack.h"
 #include "rack/rack_bridge.h"
 #include "rack/rack_device.h"
+#include "rack/rack_state.h"
+#include "fx/owltt/owltt_types.h"
 #include "rack/rack_engine.h"
 
 #include <array>
@@ -2731,13 +2733,12 @@ TEST_CASE("Linear slope: Slope offers it third, the others keep their numbers, a
 	CHECK(d.max == 5.0);
 	CHECK(d.def == 0.0);
 	REQUIRE(std::size(pr::kSlopeNames) == 6);
-	CHECK(std::string(pr::kSlopeNames[5]) == "LR8 48 dB");
-	CHECK(std::string(pr::kSlopeNames[3]) == "Linear Mild");
-	CHECK(std::string(pr::kSlopeNames[4]) == "Linear Gentle");
-	CHECK(std::string(pr::kSlopeNames[0]) == "LR4 24 dB");
-	CHECK(std::string(pr::kSlopeNames[1]) == "LR2 12 dB");
-	CHECK(std::string(pr::kSlopeNames[2]) == "Linear");
-	CHECK(std::string(pr::kSlopeFaceNames[2]) == "Linear");
+	CHECK(std::string(pr::kSlopeNames[5]) == "LR8 48 dB/oct");
+	CHECK(std::string(pr::kSlopeNames[3]) == "Linear Mild (186 Hz)");
+	CHECK(std::string(pr::kSlopeNames[4]) == "Linear Gentle (368 Hz)");
+	CHECK(std::string(pr::kSlopeNames[0]) == "LR4 24 dB/oct");
+	CHECK(std::string(pr::kSlopeNames[1]) == "LR2 12 dB/oct");
+	CHECK(std::string(pr::kSlopeNames[2]) == "Linear (94 Hz)");
 	CHECK(static_cast<int>(pr::Slope::Linear) == 2);
 }
 
@@ -2993,4 +2994,66 @@ TEST_CASE("LR8 slope: the rack's 48 dB choice sums flat within 0.1 dB in every f
 	const double b = 20.0 * std::log10(gainAt(rig, 4.0 * fc));
 	CHECK(std::fabs(a - expected(2.0 * fc)) < 0.5);
 	CHECK(std::fabs((a - b) - 48.0) < 2.0);
+}
+
+TEST_CASE("Slope labels: the dB/oct a label states is the slope a band alone measures, and the labels stored before the units still load") {
+	struct Case { pr::Slope slope; double octaveStart; double stated; };
+	// 4 fc to 8 fc for the 12 and 24 dB pairs, 2 fc to 4 fc for 48 dB (past it the stopband is under float's floor).
+	for (const Case c : { Case { pr::Slope::Lr2, 4.0, 12.0 }, Case { pr::Slope::Lr4, 4.0, 24.0 }, Case { pr::Slope::Lr8, 2.0, 48.0 } }) {
+		CAPTURE(static_cast<int>(c.slope));
+		const std::string label = pr::kSlopeNames[static_cast<size_t>(c.slope)];
+		CHECK(label.find(std::to_string(static_cast<int>(c.stated)) + " dB/oct") != std::string::npos);
+		RackRig rig;
+		bandsRig(rig, 5, 2, c.slope, pr::Filtering::Before);
+		for (size_t k = 1; k < 5; ++k) {
+			(void)rig.seat(k, kGainDesc, 0.0f);
+		}
+		rig.settle();
+		const double fc = rig.rack().cornerHzForTest(0);
+		const double a = 20.0 * std::log10(gainAt(rig, c.octaveStart * fc));
+		const double b = 20.0 * std::log10(gainAt(rig, 2.0 * c.octaveStart * fc));
+		CHECK(std::fabs((a - b) - c.stated) < 2.0);
+	}
+	const auto& d = pr::kParamDescs[static_cast<size_t>(pr::Param::Slope)];
+	const std::pair<const char*, size_t> old[] = { { "LR4 24 dB", 0 }, { "LR2 12 dB", 1 }, { "Linear", 2 }, { "Linear Mild", 3 }, { "Linear Gentle", 4 }, { "LR8 48 dB", 5 } };
+	for (const auto& [label, index] : old) {
+		CAPTURE(label);
+		bool found = false;
+		for (const auto& a : d.choiceAliases) {
+			if (std::string(a.from) == label) {
+				found = true;
+				CHECK(std::string(a.to) == pr::kSlopeNames[index]);
+			}
+		}
+		CHECK(found);
+	}
+}
+
+TEST_CASE("Slope labels: a patch that names a control's old label loads it as the same choice - the rack's Slope and OWLTT's Mode, by the one translation every road takes") {
+	// THE LABELS THE FACTORY PRESETS CARRY ("LR4 24 dB" on the rack, "LR2 Full" on OWLTT) and the others renamed alongside them.
+	const auto load = [](const device::Descriptor& d, const char* key, const char* label) {
+		rack::RackPatch::Device in;
+		in.values.push_back(rack::RackPatch::Value::label(key, label));
+		std::vector<float> fields(d.params.size() + d.traits.extraState, 0.0f);
+		rack::LoadReport report;
+		(void)rack::rowOfValues(d, in, fields, &report, "test", nullptr);
+		for (size_t i = 0; i < d.params.size(); ++i) {
+			if (std::string(d.params[i].key) == key) {
+				return fields[i];
+			}
+		}
+		return -1.0f;
+	};
+	const std::pair<const char*, float> rackOld[] = { { "LR4 24 dB", 0.0f }, { "LR2 12 dB", 1.0f }, { "Linear", 2.0f }, { "LR8 48 dB", 5.0f },
+		                                              { "LR4 24 dB/oct", 0.0f }, { "Linear Gentle (368 Hz)", 4.0f } };
+	for (const auto& [label, value] : rackOld) {
+		CAPTURE(label);
+		CHECK(load(pr::kDescriptor, "rack_slope", label) == value);
+	}
+	const std::pair<const char*, float> owlttOld[] = { { "LR2 Full", 6.0f }, { "LR4 Full", 8.0f }, { "LR2 Fast", 5.0f }, { "LR4 Fast", 7.0f },
+		                                               { "LR8 Full", 14.0f }, { "Twist3", 10.0f }, { "LR2 Full (12 dB/oct)", 6.0f } };
+	for (const auto& [label, value] : owlttOld) {
+		CAPTURE(label);
+		CHECK(load(fx::owltt::kDescriptor, "mode", label) == value);
+	}
 }

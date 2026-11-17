@@ -135,7 +135,7 @@ TEST_CASE("Linear: Mode offers it as the 11th choice, after the ten that keep th
 	CHECK(d.max == 14.0);
 	CHECK(d.min == 1.0);
 	REQUIRE(std::size(kModeNames) == 14);
-	CHECK(std::string(kModeNames[10]) == "Linear");
+	CHECK(std::string(kModeNames[10]) == "Linear (94 Hz)");
 	CHECK(std::string(kModeNames[9]) == "Twist3"); // the ten before it keep their numbers
 	CHECK(d.def == 6.0);
 }
@@ -306,8 +306,8 @@ TEST_CASE("Linear: after the input stops the output reaches exact zero within th
 
 TEST_CASE("Linear steepness: Linear, Linear Mild and Linear Gentle report one latency, land the impulse on it, and sum flat") {
 	REQUIRE(std::size(kModeNames) == 14);
-	CHECK(std::string(kModeNames[11]) == "Linear Mild");
-	CHECK(std::string(kModeNames[12]) == "Linear Gentle");
+	CHECK(std::string(kModeNames[11]) == "Linear Mild (186 Hz)");
+	CHECK(std::string(kModeNames[12]) == "Linear Gentle (368 Hz)");
 	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].max == 14.0);
 	for (const float mode : { 11.0f, 12.0f, 13.0f }) {
 		CAPTURE(mode);
@@ -371,7 +371,7 @@ double lr8LowGain(double lo, double hi, double hz) {
 
 TEST_CASE("LR8 Full: Mode 14 is the last choice, the ten before keep their numbers, and it adds no latency") {
 	REQUIRE(std::size(kModeNames) == 14);
-	CHECK(std::string(kModeNames[13]) == "LR8 Full");
+	CHECK(std::string(kModeNames[13]) == "LR8 Full (48 dB/oct)");
 	Settings s = linearAtRest();
 	s.mode = 14.0f;
 	const Row row = rowOf(s);
@@ -410,5 +410,87 @@ TEST_CASE("LR8 Full: the bands sum flat (an allpass) within 0.1 dB through the d
 			run(s, a, b);
 			CHECK(std::fabs(20.0 * std::log10(rmsOf(a, 24000) / want)) < 0.1);
 		}
+	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE SLOPES IN THE LABELS                                                                        //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// The slope a label states, "(N dB/oct)": N, or 0 when it states none.
+double statedSlope(const char* label) {
+	const std::string s = label;
+	const auto open = s.find('(');
+	if (open == std::string::npos || s.find(" dB/oct)") == std::string::npos) {
+		return 0.0;
+	}
+	return std::stod(s.substr(open + 1));
+}
+
+/// The low band's measured slope, dB/oct, from `hz` and `2 hz` (both in the stopband, above float's noise floor).
+template <class Crossover>
+double measuredSlope(double fc, double hz) {
+	const auto gain = [&](double f) {
+		Crossover x;
+		x.setLowCrossover(static_cast<float>(fc), 48000.0f);
+		x.setHighCrossover(15000.0f, 48000.0f);
+		double sq = 0.0, in = 0.0;
+		for (int i = 0; i < 48000; ++i) {
+			const auto v = static_cast<float>(std::sin(2.0 * std::numbers::pi * f * i / 48000.0));
+			feathers::fx::owltt::CrossoverBands b {};
+			x.process(v, b);
+			if (i >= 24000) {
+				sq += static_cast<double>(b.low) * b.low;
+				in += static_cast<double>(v) * v;
+			}
+		}
+		return 20.0 * std::log10(std::sqrt(sq / in));
+	};
+	return gain(hz) - gain(2.0 * hz);
+}
+
+} // namespace
+
+TEST_CASE("Mode labels: every slope a label states is the slope measured an octave past the corner, within 2 dB/oct") {
+	using namespace feathers::fx::owltt;
+	// The five Linkwitz-Riley modes, by index (value - 1), each measured where the stopband is above the noise floor: 4 fc to 8 fc for the
+	// 12 and 24 dB pairs, 2 fc to 4 fc for the 48 dB pair (past that it is under -96 dB, near float's own floor).
+	struct Row { size_t index; double (*measure)(); };
+	const auto lr2fast = [] { return measuredSlope<LR2CrossoverFast>(500.0, 2000.0); };
+	const auto lr2full = [] { return measuredSlope<LR2CrossoverFull>(500.0, 2000.0); };
+	const auto lr4fast = [] { return measuredSlope<LR4CrossoverFast>(500.0, 2000.0); };
+	const auto lr4full = [] { return measuredSlope<LR4CrossoverFull>(500.0, 2000.0); };
+	const auto lr8full = [] { return measuredSlope<LR8CrossoverFull>(500.0, 1000.0); };
+	const std::array<std::pair<size_t, double>, 5> measured {{ { 4, lr2fast() }, { 5, lr2full() }, { 6, lr4fast() }, { 7, lr4full() }, { 13, lr8full() } }};
+	for (const auto& [index, slope] : measured) {
+		CAPTURE(index);
+		CAPTURE(kModeNames[index]);
+		CHECK(statedSlope(kModeNames[index]) > 0.0);
+		CHECK(std::fabs(slope - statedSlope(kModeNames[index])) < 2.0);
+	}
+	// AND NO OTHER LABEL STATES A dB/oct (the linear ones state a width in Hz, the creative allpass splits nothing).
+	for (size_t i = 0; i < std::size(kModeNames); ++i) {
+		const bool lr = i == 4 || i == 5 || i == 6 || i == 7 || i == 13;
+		CHECK((statedSlope(kModeNames[i]) > 0.0) == lr);
+	}
+}
+
+TEST_CASE("Mode labels: a label stored before the slopes were added still names its mode") {
+	using namespace feathers::fx::owltt;
+	const auto& d = kParamDescs[static_cast<size_t>(Param::Mode)];
+	const std::pair<const char*, size_t> old[] = { { "LR2 Fast", 4 }, { "LR2 Full", 5 }, { "LR4 Fast", 6 }, { "LR4 Full", 7 },
+		                                           { "Linear", 10 }, { "Linear Mild", 11 }, { "Linear Gentle", 12 }, { "LR8 Full", 13 } };
+	for (const auto& [label, index] : old) {
+		CAPTURE(label);
+		bool found = false;
+		for (const auto& a : d.choiceAliases) {
+			if (std::string(a.from) == label) {
+				found = true;
+				CHECK(std::string(a.to) == kModeNames[index]); // lands on the same index, so the same value
+			}
+		}
+		CHECK(found);
 	}
 }

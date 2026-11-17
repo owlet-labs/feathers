@@ -92,7 +92,16 @@ public:
 	/// The toggle's rectangle in the rail's own coordinates — REAL IN BOTH STATES, because the way
 	/// back from a closed rail is the same button that closed it.
 	visage::Bounds toggleBounds() const;
-	bool toggleHit(visage::Point pixels) const { return toggleBounds().contains(pixels); }
+	bool toggleHit(visage::Point pixels) const { return collapsible_ && toggleBounds().contains(pixels); }
+	/// **A RAIL THAT CANNOT BE COLLAPSED** draws no toggle and takes no press on its place (the Rack window's chain in front in Tabs: it is always
+	/// shown open). Its stored state is the owner's to keep; this is only whether the hand may change it.
+	void setCollapsible(bool collapsible) {
+		if (collapsible != collapsible_) {
+			collapsible_ = collapsible;
+			redraw();
+		}
+	}
+	[[nodiscard]] bool collapsible() const noexcept { return collapsible_; }
 
 	/// TOLD, NOT ASSUMED. A rail cannot resize itself — its width is one term in an arithmetic that
 	/// belongs to the editor — so it announces the change and the editor re-derives the columns. This
@@ -214,6 +223,7 @@ private:
 	std::string label_;
 	Side side_;
 	bool collapsed_ = false;
+	bool collapsible_ = true;
 	bool uprightLabel_ = true;
 	std::function<void()> widthChanged_;
 };

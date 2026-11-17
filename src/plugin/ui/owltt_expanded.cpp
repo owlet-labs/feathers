@@ -18,6 +18,7 @@
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/owltt_expanded.h"
+#include "plugin/ui/owltt_card.h"
 
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/diagnostic.h"
@@ -85,20 +86,8 @@ OwlttExpanded::OwlttExpanded(backplane::DeviceHost& host, WidgetRegistry& regist
 	// DRIVE LEFT OF THE PLOT, OUTPUT RIGHT OF IT: the same fader, the same size, one on each side.
 	drive_ = std::make_unique<VerticalFader>(control(dtt::Param::Drive), "Drive");
 	output_ = std::make_unique<VerticalFader>(control(dtt::Param::OutputGain), "Output");
-	// THE OUTPUT'S READOUT IS IN dB: its value is a 0..1 knob (0.5 unity), and the DSP's own mapping says what gain that is.
-	output_->setReadoutFormatter([](double knob) {
-		const float gain = dtt::outputGainFromKnob(static_cast<float>(knob));
-		if (gain < 1.0e-4f) {
-			return std::string("-inf");
-		}
-		const double db = 20.0 * std::log10(static_cast<double>(gain));
-		if (std::fabs(db) < 0.05) {
-			return std::string("0");
-		}
-		char text[16];
-		std::snprintf(text, sizeof(text), std::fabs(db) < 9.95 ? "%+.1f" : "%+.0f", db);
-		return std::string(text);
-	});
+	// THE OUTPUT'S READOUT IS IN dB, shared with the card's Output fader (`outputGainReadout`), so the two cannot disagree.
+	output_->setReadoutFormatter([](double knob) { return outputGainReadout(knob); });
 	if (notifier != nullptr) {
 		drive_->setAnnouncer([notifier](const std::string& line) { notifier->say(line); });
 		output_->setAnnouncer([notifier](const std::string& line) { notifier->say(line); });

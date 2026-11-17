@@ -52,7 +52,7 @@ public:
 
 	/// BIND TO THE CHAIN AT `viewed`, ALL OF IT WHEN `open` (else its first card). True when anything changed (a column built or dropped, the
 	/// shown count moved).
-	bool follow(size_t viewed, bool open);
+	bool follow(size_t viewed, bool open, bool shown = true);
 	/// Advance the cards (the column syncs to the chain first); how many frames said the screen is out of date.
 	size_t updateCards();
 	/// The rack card's modulation state and history (the column's own state is a child of it), who holds the chain, where panels go, which nest.
@@ -92,6 +92,7 @@ private:
 	rack::RackBridge* bridge_ = nullptr;
 	uint16_t chainId_ = 0xFFFF;
 	bool open_ = false;
+	bool shown_ = true;
 	bool horizontal_ = false;
 	std::unique_ptr<ChainColumn> column_;
 };

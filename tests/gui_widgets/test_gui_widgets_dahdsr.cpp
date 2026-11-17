@@ -6729,10 +6729,10 @@ TEST_CASE("every control HARM declares is reachable from at least one of its sur
 		// SIX with the Notch / High-pass chip (backlog NL, 2026-10-26): on the card beside the harmonic row it acts on,
 		// and in the window because the window is the card's superset — a duplicate by rule, not by accident.
 		//
-		// THE CARD NOW HOLDS THE GLOBAL CONTROLS, and the window holds each of them too: the two masters, the envelope's six,
+		// THE CARD HOLDS FOUR MASTER KNOBS (Master, Depth, Attack, Release), the head square, and the selected tab's frame: each partial's Active, harmonic and Level (twelve). The window holds every one: seventeen, all by rule. Before the frame: the two masters, the envelope's six,
 		// Poly, Env Depth, and the head square. Eleven, all by rule (the card is the window's subset). The per-partial controls
 		// are on the window alone, so none of them is counted. (The harmonic row and the partial switches left the card.)
-		constexpr size_t kExpectedDuplicates = 11;
+		constexpr size_t kExpectedDuplicates = 17;
 		size_t duplicated = 0;
 		for (size_t i = 0; i < static_cast<size_t>(fx::harm::Param::kCount); ++i) {
 			if (surfaces.offering(static_cast<fx::harm::Param>(i)) > 1) {
@@ -10058,9 +10058,9 @@ TEST_CASE("a harmonic reads as an interval a musician would say, beside the rati
 	}
 }
 
-TEST_CASE("HARM's card holds the global controls, two rows of four, with Poly and Env Depth under them") {
-	// THE CARD IS THE DEVICE'S GLOBAL CONTROLS. Anything addressing one partial lives in the window, where the partials are
-	// shaped. Counted from the declared list, never a literal, so adding a global control moves the count with it.
+TEST_CASE("HARM's card holds the selected tab's frame over the master row") {
+	// THE CARD IS A TABBED PANEL OVER THE DEVICE'S MASTERS. The frame under the tabs holds the selected partial's Active chip,
+	// harmonic box and Level; below it, outside it, the masters. Counted from the declared list, never a literal.
 	HarmFixture f;
 	const auto& knobs = f.card->knobsForTest();
 
@@ -10074,25 +10074,39 @@ TEST_CASE("HARM's card holds the global controls, two rows of four, with Poly an
 	CHECK(onCard.count(static_cast<int>(fx::harm::Param::Attack)) == 1);
 	CHECK(onCard.count(static_cast<int>(fx::harm::Param::Release)) == 1);
 	CHECK(onCard.size() == ui::HarmCard::kCardKnobCount);
-	// NO PER-PARTIAL CONTROL IS ON THE CARD. A card that drew one would be a second home for a partial's controls.
-	for (const fx::harm::Param p : f.card->addressedParamsForTest()) {
-		CAPTURE(std::string(fx::harm::kParamDescs[static_cast<size_t>(p)].name));
-		CHECK(p != fx::harm::Param::Level);
-		CHECK(p != fx::harm::Param::Harmonic);
-		CHECK(p != fx::harm::Param::Mode);
-		CHECK(p != fx::harm::Param::Width);
-		CHECK(p != fx::harm::Param::Depth);
-		CHECK(p != fx::harm::Param::Porta);
+
+	SUBCASE("the second row of knobs and the two switch chips are gone from the card") {
+		// THE REMOVED CONTROLS: the envelope's other four, Poly and Env Depth. Absent from the card, present in the window.
+		const fx::harm::Param removed[] = { fx::harm::Param::Delay, fx::harm::Param::Hold, fx::harm::Param::Decay,
+			                                fx::harm::Param::Sustain, fx::harm::Param::Poly,
+			                                fx::harm::Param::DepthFollowsEnv };
+		const std::vector<fx::harm::Param> onTheCard = f.card->addressedParamsForTest();
+		const std::vector<fx::harm::Param> inTheWindow = f.expanded().addressedParamsForTest();
+		for (const fx::harm::Param p : removed) {
+			CAPTURE(std::string(fx::harm::kParamDescs[static_cast<size_t>(p)].name));
+			CHECK(std::find(onTheCard.begin(), onTheCard.end(), p) == onTheCard.end());
+			CHECK(std::find(inTheWindow.begin(), inTheWindow.end(), p) != inTheWindow.end());
+		}
+		// And no widget of the card's tree carries one: a knob or chip left behind would be a control the list does not admit.
+		for (const auto& k : knobs) {
+			CAPTURE(std::string(k->label()));
+			CHECK(k->label() != std::string("Delay"));
+			CHECK(k->label() != std::string("Hold"));
+			CHECK(k->label() != std::string("Decay"));
+			CHECK(k->label() != std::string("Sustain"));
+		}
 	}
 
-	SUBCASE("two rows of four, one grid, and every knob inside the card") {
+	SUBCASE("one row of four masters, below the frame and outside it, every knob inside the card") {
 		std::set<int> rows;
+		const visage::Bounds frame = f.card->frameBounds();
 		for (const auto& k : knobs) {
 			rows.insert(static_cast<int>(std::lround(k->y())));
 		}
-		CHECK(rows.size() == 2);
+		CHECK(rows.size() == 1);
 		for (const auto& k : knobs) {
 			CAPTURE(std::string(k->label()));
+			CHECK(k->y() >= frame.bottom());
 			CHECK(k->x() >= 0.0f);
 			CHECK(k->x() + k->width() <= f.card->width() + 1.0f);
 			CHECK(k->y() + k->height() <= f.card->height() + 1.0f);
@@ -10100,21 +10114,39 @@ TEST_CASE("HARM's card holds the global controls, two rows of four, with Poly an
 		}
 	}
 
+	SUBCASE("the frame is attached to the tab row and holds the selected partial's three controls") {
+		const visage::Bounds frame = f.card->frameBounds();
+		for (int k = 0; k < fx::harm::kPartialCount; ++k) {
+			CHECK(f.card->tabBounds(k).bottom() == doctest::Approx(frame.y()));
+		}
+		for (int k = 0; k < fx::harm::kPartialCount; ++k) {
+			const bool shown = k == f.card->selectedPartial();
+			CAPTURE(k);
+			CHECK(f.card->activeChipForTest(k)->isVisible() == shown);
+			CHECK(f.card->harmonicRowForTest(k)->isVisible() == shown);
+			CHECK(f.card->levelPillForTest(k)->isVisible() == shown);
+			const visage::Bounds b[] = {
+				{ f.card->activeChipForTest(k)->x(), f.card->activeChipForTest(k)->y(), f.card->activeChipForTest(k)->width(),
+				  f.card->activeChipForTest(k)->height() },
+				{ f.card->harmonicRowForTest(k)->x(), f.card->harmonicRowForTest(k)->y(), f.card->harmonicRowForTest(k)->width(),
+				  f.card->harmonicRowForTest(k)->height() },
+				{ f.card->levelPillForTest(k)->x(), f.card->levelPillForTest(k)->y(), f.card->levelPillForTest(k)->width(),
+				  f.card->levelPillForTest(k)->height() },
+			};
+			for (const visage::Bounds& c : b) {
+				CHECK(c.x() >= frame.x());
+				CHECK(c.right() <= frame.right() + 0.5f);
+				CHECK(c.y() >= frame.y());
+				CHECK(c.bottom() <= frame.bottom() + 0.5f);
+			}
+		}
+	}
+
 	SUBCASE("every caption is whole: the cell is wider than the knob by the margin the grid was chosen for") {
 		REQUIRE_FALSE(knobs.empty());
 		const float cell = knobs.front()->width();
 		CAPTURE(cell);
-		// FOUR CELLS: 54px for a 38px knob. The caption fit itself is the tooltips suite's to assert, not this.
 		CHECK(cell > ui::HarmCard::kKnobDiameter * 1.4f);
-	}
-
-	SUBCASE("Poly and Env Depth sit in the switch row under the knobs") {
-		REQUIRE(f.card->chipForTest(fx::harm::Param::Poly) != nullptr);
-		REQUIRE(f.card->chipForTest(fx::harm::Param::DepthFollowsEnv) != nullptr);
-		const float knobBottom = knobs.back()->y() + knobs.back()->height();
-		CHECK(f.card->chipForTest(fx::harm::Param::Poly)->y() >= knobBottom);
-		CHECK(f.card->chipForTest(fx::harm::Param::Poly)->y() == doctest::Approx(
-		          f.card->chipForTest(fx::harm::Param::DepthFollowsEnv)->y()));
 	}
 
 	SUBCASE("the card's height is the layout's, and the layout is the lane's") {
@@ -10133,6 +10165,75 @@ TEST_CASE("HARM's card holds the global controls, two rows of four, with Poly an
 			}
 			CAPTURE(std::string(fx::harm::kParamDescs[static_cast<size_t>(p)].name));
 			CHECK(reachable.count(static_cast<int>(p)) == 1);
+		}
+	}
+}
+
+TEST_CASE("HARM's card frame follows the tab: its chip, harmonic and level are the selected partial's own") {
+	// VALUE-LEVEL. On each tab the ONE visible set is driven through its own widget and the device's parameter for THAT partial is
+	// read back, with the other three partials' parameters asserted unmoved. Bound to partial 0 whatever the tab, the first
+	// assertion would fail on tab 2 (partial 2 never moves).
+	HarmFixture f;
+	const auto visible = [&](auto get) {
+		int found = -1;
+		int count = 0;
+		for (int k = 0; k < fx::harm::kPartialCount; ++k) {
+			if (get(k)->isVisible()) {
+				found = k;
+				++count;
+			}
+		}
+		REQUIRE(count == 1);
+		return found;
+	};
+	const auto pressTab = [&](int tab) {
+		const visage::Bounds b = f.card->tabBounds(tab);
+		f.card->onMouseDown().callback(at(b.x() + b.width() * 0.5f, b.y() + b.height() * 0.5f));
+	};
+	using fx::harm::PartialField;
+	using fx::harm::partialParam;
+
+	for (const int tab : { 2, 1, 3, 0 }) {
+		CAPTURE(tab);
+		pressTab(tab);
+		REQUIRE(f.card->selectedPartial() == tab);
+
+		double before[fx::harm::kPartialCount][3];
+		for (int k = 0; k < fx::harm::kPartialCount; ++k) {
+			before[k][0] = f.param(partialParam(k, PartialField::Level));
+			before[k][1] = f.param(partialParam(k, PartialField::Harmonic));
+			before[k][2] = f.param(partialParam(k, PartialField::Active));
+		}
+
+		// LEVEL: the visible pill's own amount, moved to a value that differs from the default.
+		const int levelAt = visible([&](int k) { return f.card->levelPillForTest(k); });
+		CHECK(levelAt == tab);
+		device::Modulatable& level = f.card->levelPillForTest(levelAt)->amountForTest();
+		const double target = before[tab][0] > 0.5 ? 0.25 : 0.75;
+		level.setValue(target);
+		CHECK(f.param(partialParam(tab, PartialField::Level)) == doctest::Approx(target).epsilon(0.02));
+
+		// HARMONIC: one step up on the visible row.
+		const int rowAt = visible([&](int k) { return f.card->harmonicRowForTest(k); });
+		CHECK(rowAt == tab);
+		f.card->harmonicRowForTest(rowAt)->step(1);
+		CHECK(f.param(partialParam(tab, PartialField::Harmonic)) == doctest::Approx(before[tab][1] + 1.0));
+
+		// ACTIVE: the visible chip flips that partial's switch.
+		const int chipAt = visible([&](int k) { return f.card->activeChipForTest(k); });
+		CHECK(chipAt == tab);
+		f.card->activeChipForTest(chipAt)->toggleForTest();
+		CHECK(f.param(partialParam(tab, PartialField::Active)) == doctest::Approx(before[tab][2] > 0.5 ? 0.0 : 1.0));
+
+		// AND NOBODY ELSE MOVED.
+		for (int k = 0; k < fx::harm::kPartialCount; ++k) {
+			if (k == tab) {
+				continue;
+			}
+			CAPTURE(k);
+			CHECK(f.param(partialParam(k, PartialField::Level)) == doctest::Approx(before[k][0]));
+			CHECK(f.param(partialParam(k, PartialField::Harmonic)) == doctest::Approx(before[k][1]));
+			CHECK(f.param(partialParam(k, PartialField::Active)) == doctest::Approx(before[k][2]));
 		}
 	}
 }
@@ -13568,7 +13669,7 @@ TEST_CASE("HARM's envelope window: the curve is the envelope's shape, and the si
 	}
 }
 
-TEST_CASE("HARM's card carries no partial switch: the four Active chips are the window's, and each is the partial's own") {
+TEST_CASE("HARM's card offers each partial's Active chip in its frame, and each is the partial's own") {
 	HarmFixture f;
 	namespace hrm = feathers::fx::harm;
 	std::set<int> onCard;
@@ -13576,9 +13677,9 @@ TEST_CASE("HARM's card carries no partial switch: the four Active chips are the 
 		onCard.insert(static_cast<int>(p));
 	}
 	for (int k = 0; k < hrm::kPartialCount; ++k) {
-		CHECK(onCard.count(static_cast<int>(hrm::partialParam(k, hrm::PartialField::Active))) == 0);
+		CHECK(onCard.count(static_cast<int>(hrm::partialParam(k, hrm::PartialField::Active))) == 1);
 	}
-	// AND THE WINDOW'S STRIP OFFERS EACH ONE, bound to the partial's own control.
+	// AND THE WINDOW'S STRIP OFFERS EACH ONE TOO, bound to the partial's own control.
 	std::set<int> inWindow;
 	for (const hrm::Param p : f.expanded().addressedParamsForTest()) {
 		inWindow.insert(static_cast<int>(p));

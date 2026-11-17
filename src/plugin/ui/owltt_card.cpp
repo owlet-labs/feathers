@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,20 @@ const char* modeName(int32_t mode) {
 /// Parameter indices for each band's threshold and bandwidth.
 
 } // namespace
+
+std::string outputGainReadout(double knob) {
+	const float gain = owltt::outputGainFromKnob(static_cast<float>(knob));
+	if (gain < 1.0e-4f) {
+		return std::string("-inf");
+	}
+	const double db = 20.0 * std::log10(static_cast<double>(gain));
+	if (std::fabs(db) < 0.05) {
+		return std::string("0");
+	}
+	char text[16];
+	std::snprintf(text, sizeof(text), std::fabs(db) < 9.95 ? "%+.1f" : "%+.0f", db);
+	return std::string(text);
+}
 
 OwlttCard::OwlttCard(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id, Notifier* notifier)
     : host_(host), notifier_(notifier), device_(id) {
@@ -130,6 +145,13 @@ OwlttCard::OwlttCard(backplane::DeviceHost& host, WidgetRegistry& registry, Devi
 		drive_->setAnnouncer([this](const std::string& line) { notifier_->say(line); });
 	}
 	addChild(drive_.get());
+	// THE OUTPUT, the mirror of the Drive on the picture's right: `output_gain`, read in dB exactly as the window reads it.
+	output_ = std::make_unique<VerticalFader>(control(static_cast<size_t>(owltt::Param::OutputGain)), "Output");
+	output_->setReadoutFormatter([](double knob) { return outputGainReadout(knob); });
+	if (notifier_ != nullptr) {
+		output_->setAnnouncer([this](const std::string& line) { notifier_->say(line); });
+	}
+	addChild(output_.get());
 
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		// UNGATED NOW. This used to run only when `hitTestThreshold` said kNone, because one press
@@ -250,6 +272,9 @@ void OwlttCard::foldedChanged() {
 	if (drive_ != nullptr) {
 		drive_->setVisible(!folded_);
 	}
+	if (output_ != nullptr) {
+		output_->setVisible(!folded_);
+	}
 }
 
 void OwlttCard::setModulation(ModState* state, EditHistory* history) {
@@ -294,13 +319,20 @@ visage::Bounds OwlttCard::headBounds() const {
 }
 
 visage::Bounds OwlttCard::crossoverBounds() const {
-	// RIGHT OF THE DRIVE BAR (backlog NB), which takes its width out of the picture's.
+	// RIGHT OF THE DRIVE BAR (backlog NB), which takes its width out of the picture's, and LEFT OF THE OUTPUT FADER, which
+	// takes the same width from the right. Both sides, so the picture stays centred between its two bars.
 	const float left = bodyLeft() + kPad + kDriveWidth + kDriveGap;
-	return {left, bodyTopEdge() + kRowGap, std::max(0.0f, bodyLeft() + bodyWidth() - kPad - left), kCrossoverHeight};
+	const float right = bodyLeft() + bodyWidth() - kPad - kDriveWidth - kDriveGap;
+	return {left, bodyTopEdge() + kRowGap, std::max(0.0f, right - left), kCrossoverHeight};
 }
 
 visage::Bounds OwlttCard::driveBounds() const {
 	return {bodyLeft() + kPad, bodyTopEdge() + kRowGap, kDriveWidth, kCrossoverHeight};
+}
+
+visage::Bounds OwlttCard::outputBounds() const {
+	// THE MIRROR OF THE DRIVE: the same width, the same height, the same distance from the card's edge.
+	return {bodyLeft() + bodyWidth() - kPad - kDriveWidth, bodyTopEdge() + kRowGap, kDriveWidth, kCrossoverHeight};
 }
 
 bool OwlttCard::updateContent() {
@@ -360,6 +392,10 @@ void OwlttCard::layOut() {
 	if (drive_ != nullptr) {
 		const visage::Bounds bar = driveBounds();
 		drive_->setBounds(bar.x(), bar.y(), bar.width(), bar.height());
+	}
+	if (output_ != nullptr) {
+		const visage::Bounds bar = outputBounds();
+		output_->setBounds(bar.x(), bar.y(), bar.width(), bar.height());
 	}
 
 	const float column = Knob::columnHeight(kKnobDiameter);

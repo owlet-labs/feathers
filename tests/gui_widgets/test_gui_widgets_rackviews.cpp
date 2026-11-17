@@ -2099,3 +2099,103 @@ TEST_CASE("rack views over a real rack: the cards' expand marks survive a tab sw
 	}
 	CHECK(frontMarks() > 0.0f);
 }
+
+namespace {
+
+/// Every FxCard under `frame` (a card inside a card too), depth first.
+void collectCards(visage::Frame* frame, std::vector<ui::FxCard*>& out) {
+	if (auto* card = dynamic_cast<ui::FxCard*>(frame)) {
+		out.push_back(card);
+	}
+	for (visage::Frame* child : frame->children()) {
+		collectCards(child, out);
+	}
+}
+
+std::string gBadMarks;
+
+/// Every card under `frame` whose device has a window must draw its expand mark: a rectangle that is not empty and lies inside the card's own
+/// bounds (a chip that is present but clipped or placed outside the card is as missing as one not drawn). Returns the cards checked.
+size_t checkMarks(visage::Frame* frame, const char* where) {
+	std::vector<ui::FxCard*> cards;
+	collectCards(frame, cards);
+	size_t checked = 0;
+	for (ui::FxCard* card : cards) {
+		const device::Descriptor* d = card->descriptor();
+		if (d == nullptr || !ui::hasExpandedView(*d) || !card->isVisible() || card->width() <= 0 || card->height() <= 0) {
+			continue;
+		}
+		// A card held back by its column (the pane's lead) or beyond the fold of its parent draws nothing and has no mark to lose.
+		if (card->x() < 0 && card->x() + card->width() <= 0) {
+			continue;
+		}
+		const visage::Bounds m = card->expandBounds();
+		const bool inside = m.width() > 0.0f && m.height() > 0.0f && m.x() >= -0.01f && m.y() >= -0.01f
+		                    && m.x() + m.width() <= static_cast<float>(card->width()) + 0.01f
+		                    && m.y() + m.height() <= static_cast<float>(card->height()) + 0.01f;
+		if (!inside) {
+			gBadMarks += std::string("[") + where + "] " + d->traits.name + " card " + std::to_string(card->width()) + "x"
+			             + std::to_string(card->height()) + " mark " + std::to_string(m.x()) + "," + std::to_string(m.y()) + " "
+			             + std::to_string(m.width()) + "x" + std::to_string(m.height()) + " folded=" + (card->folded() ? "1" : "0")
+			             + " nest=" + std::to_string(card->nest().depth) + "\n";
+		}
+		++checked;
+	}
+	return checked;
+}
+
+} // namespace
+
+TEST_CASE("rack views over a real rack: every card with a window keeps a non-empty expand mark inside its own bounds on every surface (card front, window rail, pane), through the window opening, Cards|Window, view and pad changes, a nested rack and a chain removal, at 1x and 1.75x") {
+	for (const float dpi : { 1.0f, 1.75f }) {
+		CAPTURE(dpi);
+		gBadMarks.clear();
+		ui::SurfaceLayers outer; // what the real window is presented on (declared first: it outlives the surfaces over it)
+		outer.setBounds(0, 0, 1400, 900);
+		RealRack r;
+		r.f.root->setDpiScale(dpi);
+		r.panel->setPresentedOn(&outer);
+		r.chains(3, 2, true); // Drum then Delay on each of three chains
+		(void)nestedRack(*r.rack().chainAt(0)->bridge(), 2, true);
+		for (size_t c = 0; c < r.rack().chainCount(); ++c) {
+			r.rack().setOpen(c, true); // the window's rails open, so their cards are on screen
+		}
+		r.view_(1);
+		const auto sweep = [&](const char* step) {
+			for (int i = 0; i < 4; ++i) {
+				r.refresh();
+			}
+			if (r.card != nullptr) {
+				CHECK(checkMarks(r.card, (std::string("card: ") + step).c_str()) > 0);
+			}
+			if (r.panel != nullptr) {
+				CHECK(checkMarks(r.panel, (std::string("window: ") + step).c_str()) > 0);
+			}
+		};
+		sweep("window open, Tabs");
+		r.set(pr::Param::Front, 1.0f); // the window's pane holds the first device's own window; the first card is held back
+		sweep("Front = Window");
+		r.set(pr::Param::Front, 0.0f);
+		sweep("Front = Cards again");
+		r.view_(2);
+		ui::RackPadGrid& grid = r.card->padsForTest().gridForTest();
+		grid.pressForTest(grid.padCentre(1));
+		grid.releaseForTest();
+		sweep("Pads, pad 2");
+		r.view_(0);
+		sweep("Strips");
+		r.view_(1);
+		sweep("Tabs again");
+		REQUIRE(r.rack().removeChain(2));
+		sweep("a chain removed while both surfaces show the rack");
+		r.view.reset(); // the window closed: the card's marks stay
+		r.panel = nullptr;
+		for (int i = 0; i < 3; ++i) {
+			(void)r.card->update();
+			r.card->resized();
+		}
+		CHECK(checkMarks(r.card, "window closed") > 0);
+		CAPTURE(gBadMarks);
+		CHECK(gBadMarks.empty());
+	}
+}

@@ -252,13 +252,18 @@ struct ZoneSpot {
 	double frac;
 };
 
-/// Where a coordinate stands among `n` zones: its lap's fractional part, the zone it is in, the next, and how far across.
+/// Where a coordinate stands among `n` zones: the zone it is in, the next, and how far across. **IT STOPS AT BOTH ENDS**: the zones sit at
+/// k/n, so the last is at (n-1)/n and the coordinate is held to 0..(n-1)/n — past the last zone is the last zone, never the first again
+/// (it used to take the coordinate's fractional part, so one lap on wrapped a Snare's Gated into Tight).
 ZoneSpot zoneSpot(double coordinate, size_t n) {
-	const double u = coordinate - std::floor(coordinate);
+	const double top = static_cast<double>(n - 1) / static_cast<double>(n);
+	const double u = std::isfinite(coordinate) ? std::clamp(coordinate, 0.0, top) : 0.0;
 	const double z = u * static_cast<double>(n);
 	const size_t at = std::min(static_cast<size_t>(std::max(0.0, std::floor(z))), n - 1);
-	return { at, (at + 1) % n, z - static_cast<double>(at) };
+	const size_t next = std::min(at + 1, n - 1);
+	return { at, next, next == at ? 0.0 : z - static_cast<double>(at) };
 }
+
 
 double lerp(double a, double b, double t) { return a + (b - a) * t; }
 
@@ -284,6 +289,11 @@ constexpr std::array<VelocityMix, 3> kVelocityAnchors { {
 } };
 
 } // namespace
+
+double levelFor(double velocity, double depth) {
+	const double d = std::isfinite(depth) ? std::clamp(depth, 0.0, 1.0) : 1.0;
+	return std::clamp(1.0 - d * (1.0 - std::clamp(velocity, 0.0, 1.0)), 0.0, 1.0);
+}
 
 WiresMix wiresAt(double coordinate) {
 	const ZoneSpot s = zoneSpot(coordinate, kWiresAnchors.size());
@@ -329,12 +339,15 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.hz = baseHz * std::pow(2.0, terrainPitchSemitones(f.pitch, c) / 12.0);
 	l.t60 = c.decaySeconds * std::pow(4.0, 2.0 * static_cast<double>(f.length) - 1.0);
 	// THE THREE ZONES, read once (drum proposal §14): what velocity reaches, the wires' character, the bells.
-	const VelocityMix vel = velocityAt(c.velocityZone);
-	const WiresMix wire = wiresAt(c.wires);
-	const BellsMix bell = bellsAt(c.bells);
-	const double vt = vel.tone * (velocity - 0.5);
-	l.tone = clamp01(static_cast<double>(f.tone) + vt);
-	l.snap = clamp01(static_cast<double>(f.snap) + vt);
+	// (THE DIRECT ROAD: each of these is a number of its own; the zones are the synth engine's, until it goes.)
+	const VelocityMix vel = c.direct ? VelocityMix { c.velTone, c.velTension } : velocityAt(c.velocityZone);
+	const WiresMix wire = c.direct ? WiresMix { std::clamp(c.wireContour, 0, 2), c.wireShape, c.bodyShape, c.wireBuzz, c.buzzThreshold }
+	                               : wiresAt(c.wires);
+	const BellsMix bell = c.direct ? BellsMix { c.bell1Level, c.bell2Level, c.bellQScale, c.bellQScale, c.bellLinked } : bellsAt(c.bells);
+	const double vtTone = std::clamp(vel.tone, -1.0, 1.0) * (velocity - 0.5);
+	const double vtSnap = c.direct ? std::clamp(c.velSnap, -1.0, 1.0) * (velocity - 0.5) : vtTone;
+	l.tone = clamp01(static_cast<double>(f.tone) + vtTone);
+	l.snap = clamp01(static_cast<double>(f.snap) + vtSnap);
 	l.sweepOctaves = static_cast<double>(f.sweep) * kindSweepOctaves(k);
 	l.sweepTau = std::max(1.0e-4, c.sweepSeconds / 3.0);
 	if (k == Kind::Kick || k == Kind::Membrane || k == Kind::Snare) {

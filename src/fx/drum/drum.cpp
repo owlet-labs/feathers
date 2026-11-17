@@ -68,9 +68,20 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	// THE KIT'S REACH: the terrain's Pitch field moves a hit up to 3 semitones either side (the engine's kit stance).
 	// In Pitched the engine's reach is half a semitone (the key sets the pitch; the terrain only fine-tunes it).
 	c.pitchRangeSemitones = s.pitched() ? 0.5 : 3.0;
-	c.velocityZone = static_cast<double>(s.at(Param::VelocityZone));
-	c.wires = static_cast<double>(s.at(Param::Wires));
-	c.bells = static_cast<double>(s.at(Param::Bells));
+	// THE DIRECT ROAD: every quantity the old zones derived is its own control now.
+	c.direct = true;
+	c.velTone = static_cast<double>(s.at(Param::VelTone));
+	c.velSnap = static_cast<double>(s.at(Param::VelSnap));
+	c.velTension = static_cast<double>(s.at(Param::VelTension));
+	c.wireContour = s.index(Param::WireContour);
+	c.wireShape = static_cast<double>(s.at(Param::WireGate));
+	c.bodyShape = static_cast<double>(s.at(Param::BodyGate));
+	c.wireBuzz = static_cast<double>(s.at(Param::WireBuzz));
+	c.buzzThreshold = static_cast<double>(s.at(Param::WireThreshold));
+	c.bell1Level = static_cast<double>(s.at(Param::Bell1Level));
+	c.bell2Level = static_cast<double>(s.at(Param::Bell2Level));
+	c.bellQScale = static_cast<double>(s.at(Param::BellQ));
+	c.bellLinked = s.index(Param::BellLink) >= 1;
 	c.wireDecaySeconds = exp2Of(s, Param::WireDecay);
 	c.clickDecaySeconds = exp2Of(s, Param::ClickDecay);
 	c.bellStartHz = exp2Of(s, Param::BellStart);
@@ -387,7 +398,8 @@ DrumDsp::Slot* DrumDsp::claimSlot() {
 void DrumDsp::strikeNow(Slot& s) {
 	const double moved = static_cast<double>(keyTuning_[static_cast<size_t>(s.key & 127)]);
 	const feathers::drum::Laws laws = feathers::drum::lawsFor(s.kind, fields_, controls_, baseHzOf(s.kind, s_, s.key, moved), s.velocity);
-	s.hit.strike(s.kind, laws, s.seed, static_cast<float>(std::clamp(s.velocity, 0.0, 1.0)));
+	// THE STRIKE'S LEVEL is velocity through the Level depth (`levelFor`): 100% the velocity itself, 0 every hit full.
+	s.hit.strike(s.kind, laws, s.seed, static_cast<float>(feathers::drum::levelFor(s.velocity, static_cast<double>(s_.at(Param::VelLevel)))));
 	s.struck = true;
 	++strikes_;
 	if (s.released && s_.index(Param::Trigger) == 1) {

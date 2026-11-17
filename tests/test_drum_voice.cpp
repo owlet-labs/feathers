@@ -1249,7 +1249,7 @@ TEST_CASE("a Snare's head takes the Membrane's strike-position Tone: its modes s
 	}
 }
 
-TEST_CASE("the zone controls (drum proposal §14): each zone's anchor at its stop, a straight line between two, a choice switching at the midpoint, a lap per 1.0") {
+TEST_CASE("the zone controls (drum proposal §14): each zone's anchor at its stop, a straight line between two, a choice switching at the midpoint, held at both ends") {
 	// THE ANCHORS, written out from the proposal's tables (not read back from the code under test).
 	struct Wire {
 		int contour;
@@ -1264,9 +1264,9 @@ TEST_CASE("the zone controls (drum proposal §14): each zone's anchor at its sto
 		CHECK(m.bodyShape == doctest::Approx(wires[z].bodyShape));
 		CHECK(m.buzz == doctest::Approx(wires[z].buzz));
 		CHECK(m.threshold == doctest::Approx(wires[z].threshold));
-		// A LAP LATER, AND A LAP EARLIER, the same zone.
-		CHECK(wiresAt(static_cast<double>(z) / 4.0 + 1.0) == m);
-		CHECK(wiresAt(static_cast<double>(z) / 4.0 - 2.0) == m);
+		// A COORDINATE PAST EITHER END HOLDS AT THE END (it never wraps into the other side).
+		CHECK(wiresAt(static_cast<double>(z) / 4.0 - 2.0) == wiresAt(0.0));
+		CHECK(wiresAt(static_cast<double>(z) / 4.0 + 1.0) == wiresAt(3.0 / 4.0));
 	}
 	// BETWEEN Buzzy and Gated, a quarter across: a quarter of the way on every continuous param; the Contour still Buzzy's.
 	const WiresMix q = wiresAt(0.5 + 0.25 / 4.0);

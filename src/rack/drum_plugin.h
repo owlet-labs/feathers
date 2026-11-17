@@ -47,12 +47,17 @@ inline constexpr const char* kHostKeys[] = {
 	"drum_rotate", "drum_travel_x", "drum_travel_y", "drum_pitch_mode",
 	"drum_f_pitch", "drum_f_length", "drum_f_sweep", "drum_f_snap",
 	"drum_f_metal", "drum_sweep_time", "drum_drive_curve", "drum_drive_tone",
-	"drum_velocity_zone", "drum_velocity_noise", "drum_width", "drum_claps",
+	"drum_velocity_noise", "drum_width", "drum_claps",
 	"drum_spread", "drum_clap_q", "drum_clap_hp", "drum_wire_decay",
-	"drum_click_decay", "drum_wires", "drum_bells", "drum_bell_start",
+	"drum_click_decay", "drum_bell_start",
 	"drum_bell_end", "drum_bell_time", "drum_bell2_hz", "drum_bell2_time",
 	"drum_kick_hold", "drum_kick_dip", "drum_kick_dip_time", "drum_click_sweep",
 	"drum_click_sweep_time", "drum_start_phase", "drum_keys",
+	// THE VELOCITY ROW AND THE SNARE'S AMOUNTS, appended. (The velocity, wires and bells coordinates left the device before any host held
+	// a lane on them, so their places were closed up rather than kept; from here a removed control keeps its place, inert.)
+	"drum_vel_level", "drum_vel_tone", "drum_vel_snap", "drum_vel_tension",
+	"drum_wire_buzz", "drum_wire_gate", "drum_body_gate", "drum_bell1_level",
+	"drum_bell2_level",
 };
 inline constexpr size_t kHostParamCount = sizeof(kHostKeys) / sizeof(kHostKeys[0]);
 

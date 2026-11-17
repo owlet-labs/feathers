@@ -115,6 +115,25 @@ struct Controls {
 	double wires{0.0};
 	double bells{0.0};
 	double velocityZone{2.0 / 3.0};
+	/// **THE DIRECT ROAD (the Drum device's)**: when set, the zone coordinates above and the two below (`wires`, `bells`) are not read, and
+	/// every quantity they derived is its own number — the velocity row's four depths and the wire and bell amounts. The zone road stays for
+	/// the synth's engine until that goes; the defaults here are the zones' own defaults (Tension, Tight, Off), so `direct` alone changes nothing.
+	bool direct{false};
+	/// THE VELOCITY ROW: how far velocity reaches each destination. `tone` and `snap` are bipolar depths (shift = depth x (velocity - 0.5)),
+	/// `tension` is 0..1 (how much of the glide's velocity-squared law applies). Level is the strike's (`levelFor`), Noise is `velocityNoise`.
+	double velTone{0.5};
+	double velSnap{0.5};
+	double velTension{1.0};
+	/// THE WIRES' AND BELLS' OWN AMOUNTS (a snare's): what the zones' anchors mixed, one number each. Defaults are Tight and Off.
+	int wireContour{0};
+	double wireShape{0.0};  ///< 0..1: the wires gated at this share of their T60 (0 none)
+	double bodyShape{0.0};  ///< 0..1: the head gated at this share of its T60 (0 none)
+	double wireBuzz{0.0};   ///< 0..1: how much the wires rattle in the head's teeth
+	double buzzThreshold{0.5};
+	double bell1Level{0.0}; ///< 0..1
+	double bell2Level{0.0}; ///< 0..1
+	double bellQScale{1.0}; ///< scales both bells' Q, which follows Snap
+	bool bellLinked{true};  ///< the second bell at Metal's ratio of the first, else free at its own Hz
 	double pitchRangeSemitones{3.0}; ///< the Pitch field's reach either side (proposal §3.1: 3 in Kit, 0.5 in Pitched)
 	// THE SNARE'S ENVELOPES AND ITS BELL (drum proposal §12), read only on a Snare.
 	double wireDecaySeconds{0.18}; ///< the wires' T60, Length applied as to the body's
@@ -171,6 +190,8 @@ struct VelocityMix {
 	double tension{1.0};     ///< how much of the tension law (glide depth ∝ velocity²) applies
 	friend bool operator==(const VelocityMix&, const VelocityMix&) = default;
 };
+/// THE STRIKE'S AMPLITUDE under a velocity-to-level depth: 1 - depth x (1 - velocity), depth 1 the velocity itself, 0 every hit full. Clamped, never past 1.
+double levelFor(double velocity, double depth);
 WiresMix wiresAt(double coordinate);
 BellsMix bellsAt(double coordinate);
 VelocityMix velocityAt(double coordinate);

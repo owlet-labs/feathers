@@ -27,6 +27,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/eroder_plot.h"
+#include "plugin/ui/eroder_flow.h"
 #include "plugin/ui/etch_slots.h"
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/gamma_box.h"
@@ -74,10 +75,31 @@ public:
 
 	static constexpr float kPad = 14.0f;
 	static constexpr float kGap = 10.0f;
-	static constexpr float kSideWidth = 336.0f;
+	static constexpr float kSideWidth = 504.0f;
 	static constexpr float kFace = 44.0f;
 	static constexpr float kSwitchHeight = 18.0f;
-	static constexpr size_t kPerRow = 4;
+	static constexpr size_t kPerRow = 6;
+	/// THE GROUPS: a box round each, its caption band, the room inside its edge, the gap between them and between rows.
+	static constexpr float kGroupCaption = 14.0f;
+	static constexpr float kGroupPad = 6.0f;
+	static constexpr float kGroupGap = 6.0f;
+	static constexpr float kRowGap = 6.0f;
+	[[nodiscard]] static constexpr float groupHeight(float content) { return kGroupCaption + content + kGroupPad; }
+
+	/// A CAPTIONED GROUP, in the window's x and y.
+	struct Group {
+		std::string caption;
+		float x = 0.0f;
+		float y = 0.0f;
+		float w = 0.0f;
+		float h = 0.0f;
+	};
+	[[nodiscard]] const std::vector<Group>& groupsForTest() const noexcept { return groups_; }
+	[[nodiscard]] EroderFlow* flowForTest() const noexcept { return flow_.get(); }
+	[[nodiscard]] SwitchChip* trackForTest() const { return track_.get(); }
+	[[nodiscard]] ZoneCoordCell* toneForTest() const { return tone_.get(); }
+	[[nodiscard]] ZoneCoordCell* characterForTest() const { return character_.get(); }
+	[[nodiscard]] GammaBox* gammaForTest() const { return gamma_.get(); }
 
 	[[nodiscard]] EroderPlot* plotForTest() const { return plot_.get(); }
 	[[nodiscard]] SegmentedControl* modeForTest() const { return mode_.get(); }
@@ -97,7 +119,8 @@ public:
 	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
 	[[nodiscard]] SwitchChip* inLoopForTest() const { return inLoop_.get(); }
 	[[nodiscard]] SwitchChip* tapForTest() const { return tap_.get(); }
-	[[nodiscard]] SegmentedControl* shapeForTest() const { return shape_.get(); }
+	[[nodiscard]] ZoneSelect* shapeForTest() const { return &emphasisCell_->select(); }
+	[[nodiscard]] ModeValueCell* emphasisCellForTest() const { return emphasisCell_.get(); }
 	[[nodiscard]] PairCell* emphasisPairForTest() const { return emphasisPair_.get(); }
 	[[nodiscard]] PairCell* loopPairForTest() const { return loopPair_.get(); }
 	[[nodiscard]] EtchSlots& etchSlotsForTest() { return etch_; }
@@ -120,6 +143,8 @@ private:
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<EroderPlot> plot_;
+	std::unique_ptr<EroderFlow> flow_;
+	std::vector<Group> groups_;
 	std::unique_ptr<SegmentedControl> mode_;
 	/// EVERY PLAIN KNOB, by the control it drives; which are shown is the engine's (`layOut`).
 	std::vector<std::pair<fx::eroder::Param, std::unique_ptr<Knob>>> knobs_;
@@ -133,9 +158,8 @@ private:
 	std::unique_ptr<SwitchChip> restore_;
 	std::unique_ptr<SwitchChip> inLoop_;
 	std::unique_ptr<SwitchChip> tap_;
-	/// THE EMPHASIS SHAPE'S CELL: a frame that centres the Tilt | Bell strip in the pair's half.
-	std::unique_ptr<visage::Frame> shapeCell_;
-	std::unique_ptr<SegmentedControl> shape_;
+	/// THE EMPHASIS'S CELL: the shape's selector with the Offset and the Bell's Width stacked under it.
+	std::unique_ptr<ModeValueCell> emphasisCell_;
 	std::unique_ptr<PairCell> emphasisPair_;
 	std::unique_ptr<PairCell> loopPair_;
 	std::unique_ptr<ZoneCoordCell> tone_;

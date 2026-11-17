@@ -661,8 +661,9 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "How wide the noise band is: narrow is a wavering tone around Freq, wide is plain hiss. "
-                "It does nothing to the sine",
+     .tooltip = "How wide the noise band is, and how wide the Bell is: narrow is a wavering tone around Freq, wide is plain "
+                "hiss; inactive while Source is all sine and the Emphasis is not a Bell above or below 0 dB. It does nothing to "
+                "the sine",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -840,7 +841,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kOffOnNames,
      .modulatable = false,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Gives back from the dry signal what HP Wet took away, so the low end stays whole at any Mix",
+     .tooltip = "Gives back from the dry signal what HP Wet took away, so the low end stays whole at any Mix; inactive while HP "
+                "Wet is at its bottom, where there is no filter, and in the Comb while Blend is off",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -928,8 +930,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Runs the right side's sine above the left's, up to an octave, so the two sides beat against "
-                "each other. It is the sine's: with Source all noise there is nothing to detune",
+     .tooltip = "Runs the right side's sine above the left's, up to an octave, so the two sides beat against each other; "
+                "inactive while Source is all noise, which has no sine to detune",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -946,8 +948,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Pushes the sine past its peaks and folds it back, which adds overtones to the shake. It is "
-                "the sine's: with Source all noise there is nothing to fold",
+     .tooltip = "Pushes the sine past its peaks and folds it back, which adds overtones to the shake; inactive while Source is "
+                "all noise, which has no sine to fold",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1019,8 +1021,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kEmphShapeNames,
      .modulatable = false,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Tilt lifts one side of Freq and lowers the other. Bell lifts or lowers a band centred on Freq, as wide "
-                "as Width says: a quarter of an octave at the bottom, three at the top",
+     .tooltip = "Tilt lifts one side of Freq and lowers the other; Bell lifts or lowers a band centred on Freq, as wide as "
+                "Width says (a quarter of an octave at the bottom, three at the top); inactive while Emphasis is at 0 dB",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1037,8 +1039,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kOffOnNames,
      .modulatable = false,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Puts the opposite filter after the Drive, so the effect's tone comes back and only what the Drive made "
-                "of the emphasised signal is left. Off, the emphasis stays in the sound",
+     .tooltip = "Puts the opposite filter after the Drive, so the effect's tone comes back; inactive while Emphasis is at 0 dB. "
+                "Off, the emphasis stays in the sound, and only what the Drive made of the emphasised signal is left",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1056,8 +1058,9 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kOffOnNames,
      .modulatable = false,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Moves the emphasis to after the feedback joins the signal, so every trip round a loop goes through it "
-                "again. Only matters with an emphasis and a loop; the loops are turned down to stay under one",
+     .tooltip = "Moves the emphasis to after the feedback joins the signal, so every trip round a loop goes through it again; "
+                "inactive while Emphasis is at 0 dB, or while Reso and Loop are both at 0. The loops are turned down to stay "
+                "under one",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1093,8 +1096,9 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kFbTapNames,
      .modulatable = false,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Where the feedback is taken: Clean, before the Drive, so the Drive colours only what you hear; Driven, "
-                "after it, so the loop rings through the Drive. The loop is turned down by the Drive's own gain",
+     .tooltip = "Where the feedback is taken, inactive while Reso is at 0 (the Comb's feedback always runs): Clean, before the "
+                "Drive, so the Drive colours only what you hear; Driven, after it, so the loop rings through the Drive. The "
+                "loop is turned down by the Drive's own gain",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1129,8 +1133,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "How far above (or, below zero, under) the pitch of Freq the outer loop rings: its delay is one period "
-                "of Freq divided by two for every twelve semitones",
+     .tooltip = "How far above (or, below zero, under) the pitch of Freq the outer loop rings: its delay is one period of Freq "
+                "divided by two for every twelve semitones; inactive while Loop is at 0",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},

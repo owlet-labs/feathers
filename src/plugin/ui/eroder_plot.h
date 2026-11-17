@@ -133,6 +133,11 @@ public:
 	/// How far up and down the plot the curve reaches: this many dB is a quarter of the plot's height from its middle.
 	static constexpr double kEmphasisDbPerQuarter = 9.0;
 	[[nodiscard]] float emphasisYForTest(double db) const noexcept { return emphasisY(db); }
+	/// **THE EMPHASIS'S HANDLE** (the window's plot): its x is the emphasis's tuning on the plot's pitch axis, its y the
+	/// curve's height there (the centre line at 0 dB). A drag moves it: across writes the offset, up and down the amount.
+	[[nodiscard]] float emphasisHandleXForTest() const noexcept { return emphasisHandleX(); }
+	[[nodiscard]] float emphasisHandleYForTest() const noexcept { return emphasisHandleY(); }
+	[[nodiscard]] double emphasisHzForTest() const noexcept { return emphasisHz(); }
 
 private:
 	using Bins = std::array<float, feathers::dsp::kAnalyserBins>;
@@ -157,6 +162,11 @@ private:
 	/// centred on the engine's Freq; the Bell's width is Width's octaves.
 	[[nodiscard]] std::optional<double> emphasisDb(double hz) const noexcept;
 	[[nodiscard]] float emphasisY(double db) const noexcept;
+	/// WHERE THE EMPHASIS IS TUNED: Freq and the offset (`SharedSection::emphasisHz`).
+	[[nodiscard]] double emphasisHz() const noexcept;
+	[[nodiscard]] float emphasisHandleX() const noexcept;
+	[[nodiscard]] float emphasisHandleY() const noexcept;
+	void dragEmphasis(visage::Point at);
 	/// WHERE THE BAND IS `kEdgeDb` DOWN ABOVE ITS CENTRE, and the handle drawn there.
 	[[nodiscard]] float handleY() const noexcept;
 	[[nodiscard]] double edgeHz() const noexcept;
@@ -209,6 +219,11 @@ private:
 		double startAmount = 0.0;
 		float anchor = 0.0f;
 		bool width = false;
+		/// THE EMPHASIS'S HANDLE: its two gestures are begun by the first movement past the dead zone on their own axis.
+		bool emph = false;
+		bool offsetGesture = false;
+		bool emphAmountGesture = false;
+		double startOffset = 0.0;
 		float startX = 0.0f;
 		double startWidth = 0.0;
 	} drag_ {};

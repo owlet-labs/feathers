@@ -43008,7 +43008,8 @@ TEST_CASE("ERODER's Drive is one pair in the card and the window: the knob, and 
 
 	const auto check = [&](ui::PairCell* pair, ui::Knob* knob, ui::ModeValueCell* cell, float surfaceWidth) {
 		REQUIRE(pair != nullptr);
-		CHECK(pair->caption() == "Drive");
+		// THE CARD'S PAIR IS CAPTIONED; THE WINDOW'S GROUP SAYS IT (the pair there is bare).
+		CHECK((pair->caption() == "Drive") == !pair->bare());
 		CHECK(knob->parent() == pair);
 		CHECK(cell->parent() == pair);
 		CHECK(pair->isVisible());
@@ -43283,9 +43284,11 @@ TEST_CASE("ERODER's window offers every shared-section control in every engine, 
 			CHECK(pair->first().right() <= pair->second().x());
 			CHECK(pair->first().y() == pair->second().y());
 		}
-		CHECK(panel.emphasisPairForTest()->caption() == "Emphasis");
-		CHECK(panel.loopPairForTest()->caption() == "Loop");
-		CHECK(panel.shapeForTest()->parent() == &panel.emphasisPairForTest()->second());
+		// BARE PAIRS: the group they sit in names them.
+		CHECK(panel.emphasisPairForTest()->bare());
+		CHECK(panel.loopPairForTest()->bare());
+		CHECK(panel.shapeForTest()->parent() == panel.emphasisCellForTest());
+		CHECK(panel.emphasisCellForTest() == &panel.emphasisPairForTest()->second());
 		// NOTHING OVERLAPS AT THE WINDOW'S OWN WIDTH, counting what is inside the pairs.
 		std::vector<visage::Frame*> flat;
 		for (visage::Frame* child : eroVisible(&panel, { panel.plotForTest(), panel.modeForTest() })) {
@@ -43336,11 +43339,11 @@ TEST_CASE("ERODER's shared controls say what they do not change: Width, Restore,
 	// ---- RESTORE and SHAPE: nothing at Emphasis 0 ----
 	CHECK_FALSE(card.restoreForTest()->enabled());
 	CHECK_FALSE(panel.restoreForTest()->enabled());
-	CHECK_FALSE(panel.shapeForTest()->active());
+	CHECK_FALSE(panel.emphasisCellForTest()->enabled());
 	e.set(Param::EmphAmount, -6.0f); // either sign is an emphasis
 	CHECK(card.restoreForTest()->enabled());
 	CHECK(panel.restoreForTest()->enabled());
-	CHECK(panel.shapeForTest()->active());
+	CHECK(panel.emphasisCellForTest()->enabled());
 
 	// ---- TAP: the Comb's inner loop never stops; Dust's and Rust's is Resonance, of either sign ----
 	CHECK(card.tapForTest()->enabled());
@@ -43425,11 +43428,11 @@ TEST_CASE("ERODER's new controls write their parameter from a gesture and carry 
 	chipWrites(e.panel->restoreForTest(), Param::EmphRestore);
 	chipWrites(e.panel->inLoopForTest(), Param::EmphInLoop);
 	chipWrites(e.panel->tapForTest(), Param::FbTap);
-	// THE SHAPE: a press on the Bell's half.
+	// THE SHAPE: a press on the selector's next arrow, which is the Bell.
 	REQUIRE(eroField(e.d, Param::EmphShape) == 0.0f);
 	CHECK(std::string(e.panel->shapeForTest()->tooltipAt({ 2.0f, 2.0f })) == desc(Param::EmphShape).tooltip);
 	e.panel->shapeForTest()->onMouseDown().callback(
-	    at(e.panel->shapeForTest()->width() * 0.8f, e.panel->shapeForTest()->height() * 0.5f));
+	    at(e.panel->shapeForTest()->width() - 2.0f, e.panel->shapeForTest()->height() * 0.5f));
 	e.refresh();
 	CHECK(eroField(e.d, Param::EmphShape) == 1.0f);
 	// THE CARD'S.
@@ -44138,8 +44141,8 @@ TEST_CASE("ETCH's window offers the slot row and every control Etch uses, nothin
 	const auto visible = [](visage::Frame* f) { return f != nullptr && f->isVisible(); };
 	ui::EtchSlots& slots = panel.etchSlotsForTest();
 	CHECK(visible(slots.outer.get()));
-	CHECK(slots.outer->caption() == "Slots");
-	CHECK(slots.outer->width() == doctest::Approx(ui::EroderExpanded::kSideWidth));
+	CHECK(slots.outer->bare());
+	CHECK(slots.outer->width() == doctest::Approx(4.0f * ui::EroderExpanded::kSideWidth / static_cast<float>(ui::EroderExpanded::kPerRow)));
 	CHECK(slots.innerA->right() <= slots.route->x());
 	CHECK(slots.route->right() <= slots.innerB->x());
 	for (const ero::Param p : { ero::Param::Freq, ero::Param::Width, ero::Param::Resonance, ero::Param::Follow, ero::Param::Mix,
@@ -44222,4 +44225,522 @@ TEST_CASE("HARM's window: the harmonic box's popup is placed, centred and hangs 
 	row->showMenu();
 	checkHangsOff(ui::lastMenuPlacementForTest(), inTop(*row, row->boxBounds()));
 	ui::dismissMenuOf(*row);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// THE ERODER'S WINDOW IN SIGNAL ORDER: five captioned groups, and the topology picture with its switches in it.                  //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+namespace {
+
+struct EroRect {
+	float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+};
+
+/// A FRAME'S BOUNDS IN THE WINDOW'S OWN COORDINATES, summed up its parents.
+EroRect eroAbsolute(const visage::Frame* f, const visage::Frame* window) {
+	EroRect r { 0.0f, 0.0f, static_cast<float>(f->width()), static_cast<float>(f->height()) };
+	for (const visage::Frame* p = f; p != window && p != nullptr; p = p->parent()) {
+		r.x += static_cast<float>(p->x());
+		r.y += static_cast<float>(p->y());
+	}
+	return r;
+}
+
+bool eroInside(const EroRect& inner, const EroRect& outer) {
+	const float eps = 0.01f;
+	return inner.x >= outer.x - eps && inner.y >= outer.y - eps && inner.x + inner.w <= outer.x + outer.w + eps
+	       && inner.y + inner.h <= outer.y + outer.h + eps;
+}
+
+} // namespace
+
+TEST_CASE("ERODER's window groups its controls in signal order: Tone, Engine, Drive, Feedback, Output, each control inside its own group, in every engine") {
+	EroFaces e;
+	auto& panel = *e.panel;
+	using P = ero::Param;
+	// THE TABLE IS IN SIGNAL ORDER; THE WINDOW PACKS TWO TO A ROW, so reading order is Tone, Drive, Engine, Feedback, Output.
+	const char* const captions[] = { "Tone", "Engine", "Drive", "Feedback", "Output" };
+	const char* const reading[] = { "Tone", "Drive", "Engine", "Feedback", "Output" };
+	for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb, ero::Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		e.mode(mode);
+		const bool comb = mode == ero::Mode::Comb;
+		const bool etch = mode == ero::Mode::Etch;
+		const auto& groups = panel.groupsForTest();
+		REQUIRE(groups.size() == 5);
+		for (size_t g = 0; g < 5; ++g) {
+			CHECK(groups[g].caption == reading[g]);
+			if (g > 0) {
+				// ROW BY ROW DOWN THE COLUMN, left to right, none over another.
+				CHECK(groups[g].y >= groups[g - 1].y);
+				for (size_t other = 0; other < g; ++other) {
+					const bool apart = groups[g].x >= groups[other].x + groups[other].w - 0.01f
+					                   || groups[g].y >= groups[other].y + groups[other].h - 0.01f;
+					CHECK(apart);
+				}
+			}
+		}
+		// TWO TO A ROW WHERE THEY FIT: Tone beside Drive, Feedback beside Output, the Engine alone between them.
+		CHECK(groups[0].y == groups[1].y);
+		CHECK(groups[3].y == groups[4].y);
+		CHECK(groups[2].w > groups[0].w);
+		const auto k = [&](P p) -> visage::Frame* { return panel.knobForTest(p); };
+		std::vector<std::vector<visage::Frame*>> want(5);
+		want[0] = { panel.emphasisPairForTest(), k(P::Smear) };
+		if (comb) {
+			want[1] = { panel.toneForTest(), panel.characterForTest(), k(P::Cutoff), k(P::Heat), k(P::Width), panel.blendForTest(),
+				        panel.gammaForTest() };
+		}
+		else if (etch) {
+			want[1] = { panel.etchSlotsForTest().outer.get(), k(P::Freq), k(P::Width), panel.trackForTest() };
+		}
+		else {
+			want[1] = { k(P::Freq), k(P::Width), k(P::Source), k(P::Grit), k(P::Stereo), k(P::Step), k(P::Detune), k(P::ModFold),
+				        panel.trackForTest() };
+			if (mode == ero::Mode::Dust) {
+				want[1].push_back(k(P::Amount));
+			}
+			else {
+				want[1].push_back(k(P::RustBias));
+				want[1].push_back(k(P::RustRectify));
+			}
+		}
+		want[2] = { panel.drivePairForTest() };
+		want[3] = { panel.loopPairForTest() };
+		if (!comb) {
+			want[3].push_back(k(P::Resonance));
+		}
+		want[4] = { k(P::HpWet), k(P::Follow), k(P::Mix) };
+		std::vector<visage::Frame*> listed;
+		for (size_t g = 0; g < 5; ++g) {
+			const EroRect box { groups[g].x, groups[g].y, groups[g].w, groups[g].h };
+			size_t k = 0;
+			while (std::string(captions[k]) != groups[g].caption) {
+				++k;
+			}
+			for (visage::Frame* f : want[k]) {
+				REQUIRE(f != nullptr);
+				CAPTURE(g);
+				CAPTURE(typeid(*f).name());
+				CHECK(f->isVisible());
+				CHECK(eroInside(eroAbsolute(f, &panel), box));
+				// AND IN NO OTHER GROUP.
+				for (size_t other = 0; other < 5; ++other) {
+					if (other != g) {
+						const EroRect o { groups[other].x, groups[other].y, groups[other].w, groups[other].h };
+						CHECK_FALSE(eroInside(eroAbsolute(f, &panel), o));
+					}
+				}
+				listed.push_back(f);
+			}
+		}
+		// EVERY VISIBLE CHILD OF THE WINDOW IS IN THE TABLE, but the plot, the engine strip and the picture.
+		const auto shown = eroVisible(&panel, { panel.plotForTest(), panel.modeForTest(), panel.flowForTest() });
+		CHECK(eroSameSet(shown, listed));
+		// THE PICTURE IS BELOW THEM ALL, and the window is tall enough for it.
+		CHECK(panel.flowForTest()->y() >= groups[4].y + groups[4].h);
+		// AND NO DEAD GAP ABOVE IT at the window's own size.
+		CHECK(panel.flowForTest()->y() - (groups[4].y + groups[4].h) < 12.0f);
+		CHECK(panel.flowForTest()->y() + panel.flowForTest()->height() <= panel.height());
+	}
+}
+
+TEST_CASE("ERODER's topology picture: the path in order with In Loop off and on, what is lit, where the returns leave, the Sub Thru road, Etch's slots") {
+	EroFaces e;
+	auto& panel = *e.panel;
+	using P = ero::Param;
+	ui::EroderFlow& flow = *panel.flowForTest();
+	const auto labels = [&] { return flow.labelsForTest(); };
+	const std::string sum = "\xE2\x8A\x95";
+	const auto indexOf = [&](const std::string& label) {
+		const auto l = labels();
+		return static_cast<size_t>(std::find(l.begin(), l.end(), label) - l.begin());
+	};
+	const auto lit = [&](const std::string& label) { return flow.pathForTest().stages[indexOf(label)].lit; };
+	e.mode(ero::Mode::Dust);
+	// THE ORDER: the emphasis before the sum, and after it with In Loop.
+	CHECK(labels() == std::vector<std::string>({ "in", "emph", sum, "smear", "dust", "drive", "restore", "hp", "mix" }));
+	e.set(P::EmphInLoop, 1.0f);
+	CHECK(labels() == std::vector<std::string>({ "in", sum, "emph", "smear", "dust", "drive", "restore", "hp", "mix" }));
+	e.set(P::EmphInLoop, 0.0f);
+	// WHAT IS LIT: the emphasis and its undoing at 0 dB are dim; a Smear, a Drive and an HP Wet are dim at their bottoms.
+	CHECK_FALSE(lit("emph"));
+	CHECK_FALSE(lit("restore"));
+	CHECK_FALSE(lit("smear"));
+	CHECK_FALSE(lit("drive"));
+	CHECK_FALSE(lit("hp"));
+	CHECK(lit("in"));
+	CHECK(lit("dust"));
+	CHECK(lit("mix"));
+	e.set(P::EmphRestore, 0.0f);
+	e.set(P::EmphAmount, 6.0f);
+	CHECK(lit("emph"));
+	CHECK_FALSE(lit("restore")); // the emphasis is not undone while Restore is off
+	e.set(P::EmphRestore, 1.0f);
+	CHECK(lit("restore"));
+	e.set(P::Smear, 0.5f);
+	e.set(P::Drive, 0.5f);
+	e.set(P::HpWet, 8.0f);
+	CHECK(lit("smear"));
+	CHECK(lit("drive"));
+	CHECK(lit("hp"));
+	// THE RETURNS: both dim at rest; the inner leaves the engine (Clean) or the Drive (Driven); the outer the Drive.
+	const auto& returns = flow.pathForTest().returns;
+	REQUIRE(returns.size() == 2);
+	CHECK_FALSE(returns[0].lit);
+	CHECK_FALSE(returns[1].lit);
+	CHECK(returns[0].to == indexOf(sum));
+	CHECK(returns[1].to == indexOf(sum));
+	e.set(P::Resonance, 0.4f);
+	e.set(P::Loop, 0.4f);
+	CHECK(flow.pathForTest().returns[0].lit);
+	CHECK(flow.pathForTest().returns[1].lit);
+	CHECK(lit(sum));
+	CHECK(flow.pathForTest().returns[0].from == indexOf("dust")); // Tap Clean
+	CHECK(flow.pathForTest().returns[1].from == indexOf("drive"));
+	e.set(P::FbTap, 1.0f);
+	CHECK(flow.pathForTest().returns[0].from == indexOf("drive")); // Tap Driven
+	CHECK(flow.pathForTest().returns[1].from == indexOf("drive"));
+	e.set(P::Loop, 0.0f);
+	CHECK_FALSE(flow.pathForTest().returns[1].lit);
+	CHECK(flow.pathForTest().returns[0].lit);
+	// THE SUB THRU ROAD runs from the input to HP Wet, and is lit only while it gives something back.
+	CHECK_FALSE(flow.pathForTest().bypass.lit);
+	CHECK(flow.pathForTest().bypass.from == indexOf("in"));
+	CHECK(flow.pathForTest().bypass.to == indexOf("hp"));
+	e.set(P::SubThru, 1.0f);
+	CHECK(flow.pathForTest().bypass.lit);
+	e.set(P::HpWet, static_cast<float>(ero::kHpWetLog2Min));
+	CHECK_FALSE(flow.pathForTest().bypass.lit);
+	e.set(P::HpWet, 8.0f);
+	// IN THE COMB it needs Blend, the window's own rule for the chip.
+	e.mode(ero::Mode::Comb);
+	CHECK(labels()[labels().size() - 5] == "comb");
+	CHECK_FALSE(flow.pathForTest().bypass.lit);
+	CHECK_FALSE(panel.subThruForTest()->enabled());
+	e.set(P::Blend, 1.0f);
+	CHECK(flow.pathForTest().bypass.lit);
+	CHECK(panel.subThruForTest()->enabled());
+	// ETCH: its two slots, side by side in Series and one over the other in Parallel.
+	e.set(P::FbTap, 0.0f);
+	e.mode(ero::Mode::Etch);
+	CHECK(labels() == std::vector<std::string>({ "in", "emph", sum, "smear", "A", "B", "drive", "restore", "hp", "mix" }));
+	CHECK_FALSE(flow.pathForTest().stages[indexOf("B")].beneath);
+	CHECK(flow.stageXForTest(indexOf("B")) > flow.stageXForTest(indexOf("A")));
+	CHECK_FALSE(lit("A"));
+	e.set(P::SlotAAmount, 0.5f);
+	CHECK(lit("A"));
+	e.set(P::SlotRoute, 1.0f);
+	CHECK(flow.pathForTest().stages[indexOf("B")].beneath);
+	CHECK(flow.stageXForTest(indexOf("B")) == flow.stageXForTest(indexOf("A")));
+	CHECK(flow.pathForTest().returns[0].from == indexOf("B"));
+
+	// THE FOUR SWITCHES ARE IN THE PICTURE'S FRAME, and a press goes through the frame to them.
+	CHECK(flow.ignoresMouseEvents());
+	for (ui::SwitchChip* chip : { panel.inLoopForTest(), panel.tapForTest(), panel.restoreForTest(), panel.subThruForTest() }) {
+		REQUIRE(chip != nullptr);
+		CHECK(chip->parent() == &flow);
+		CHECK(chip->isVisible());
+		CHECK(eroInside(eroAbsolute(chip, &flow), { 0.0f, 0.0f, static_cast<float>(flow.width()), static_cast<float>(flow.height()) }));
+	}
+	// EACH SWITCH SITS BESIDE WHAT IT CHANGES, and nothing overlaps: not a stage's box, not another switch. Over every engine, the
+	// Etch's two routes, both taps and both places for the emphasis.
+	{
+		using Chip = ui::EroderFlow::Chip;
+		const auto overlap = [](const ui::EroderFlow::Rect& a, const ui::EroderFlow::Rect& b) {
+			return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+		};
+		const std::pair<Chip, ui::SwitchChip*> chips[] = { { Chip::InLoop, panel.inLoopForTest() }, { Chip::Tap, panel.tapForTest() },
+			                                               { Chip::Restore, panel.restoreForTest() }, { Chip::SubThru, panel.subThruForTest() } };
+		for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb, ero::Mode::Etch }) {
+			for (const int variant : { 0, 1, 2, 3 }) {
+				CAPTURE(static_cast<int>(mode));
+				CAPTURE(variant);
+				e.mode(mode);
+				e.set(P::SlotRoute, (variant & 1) != 0 ? 1.0f : 0.0f);
+				e.set(P::FbTap, (variant & 2) != 0 ? 1.0f : 0.0f);
+				e.set(P::EmphInLoop, ((variant + 1) & 2) != 0 ? 1.0f : 0.0f);
+				const float fw = static_cast<float>(flow.width());
+				const float fh = static_cast<float>(flow.height());
+				for (const auto& [chip, frame] : chips) {
+					const ui::EroderFlow::Rect r = flow.chipRectForTest(chip);
+					CHECK(frame->x() == doctest::Approx(r.x));
+					CHECK(frame->y() == doctest::Approx(r.y));
+					CHECK(r.x >= 0.0f);
+					CHECK(r.y >= 0.0f);
+					CHECK(r.x + r.w <= fw);
+					CHECK(r.y + r.h <= fh);
+					for (size_t i = 0; i < flow.pathForTest().stages.size(); ++i) {
+						CAPTURE(flow.pathForTest().stages[i].label);
+						CHECK_FALSE(overlap(r, flow.boxForTest(i)));
+					}
+					for (const auto& [other, otherFrame] : chips) {
+						if (other != chip) {
+							CHECK_FALSE(overlap(r, flow.chipRectForTest(other)));
+						}
+					}
+					const ui::EroderFlow::Anchor a = flow.anchorForTest(chip);
+					CHECK(std::hypot(r.x + r.w * 0.5f - a.x, r.y + r.h * 0.5f - a.y) <= ui::EroderFlow::kChipReach);
+					// THE ANCHOR'S STAGE IS A REAL ONE, and the right kind.
+					REQUIRE(a.stage < flow.pathForTest().stages.size());
+				}
+				const auto& stages = flow.pathForTest().stages;
+				CHECK(stages[flow.anchorForTest(Chip::Restore).stage].label == "restore");
+				CHECK(stages[flow.anchorForTest(Chip::InLoop).stage].label == "emph");
+				CHECK(stages[flow.anchorForTest(Chip::SubThru).stage].label == "in");
+				CHECK(flow.anchorForTest(Chip::Tap).stage == flow.pathForTest().returns[0].from);
+			}
+		}
+		e.mode(ero::Mode::Etch);
+		e.set(P::SlotRoute, 0.0f);
+		e.set(P::FbTap, 0.0f);
+		e.set(P::EmphInLoop, 0.0f);
+	}
+	CHECK(eroField(e.d, P::EmphInLoop) == 0.0f);
+	panel.inLoopForTest()->onMouseDown().callback(at(4.0f, 4.0f));
+	e.refresh();
+	CHECK(eroField(e.d, P::EmphInLoop) == 1.0f);
+	// AND THE PICTURE FOLLOWED: it repainted from the new row.
+	CHECK(flow.labelsForTest()[1] == sum);
+}
+
+TEST_CASE("ERODER's greyable controls say in their tooltip when they are inactive and why, on the card and in the window") {
+	EroFaces e;
+	using P = ero::Param;
+	struct Case {
+		P param;
+		const char* keyword;
+	};
+	// THE CONDITION EACH ONE NAMES: the control the greying turns on.
+	const Case cases[] = { { P::EmphRestore, "Emphasis" }, { P::EmphInLoop, "Emphasis" }, { P::FbTap, "Reso" },
+		                   { P::SubThru, "HP Wet" },       { P::LoopInterval, "Loop" },    { P::Width, "Source" },
+		                   { P::EmphShape, "Emphasis" },   { P::Detune, "Source" },        { P::ModFold, "Source" } };
+	for (const Case& c : cases) {
+		const std::string declared = ero::kParamDescs[eroAt(c.param)].tooltip;
+		CAPTURE(ero::kParamDescs[eroAt(c.param)].key);
+		CHECK(declared.find("nactive") != std::string::npos);
+		CHECK(declared.find(c.keyword) != std::string::npos);
+		// THE BRIEF TOOLTIP (the first sentence) KEEPS THE CONDITION.
+		CHECK(ui::briefTooltip(declared).find("nactive") != std::string::npos);
+	}
+	// THE WIDGETS ANSWER WITH THEIR CONTROL'S TEXT, on both faces.
+	const auto chipSays = [&](ui::SwitchChip* chip, P p) {
+		REQUIRE(chip != nullptr);
+		CHECK(std::string(chip->tooltipAt({ 2.0f, 2.0f })).find("nactive") != std::string::npos);
+		CHECK(std::string(chip->tooltipAt({ 2.0f, 2.0f })) == ero::kParamDescs[eroAt(p)].tooltip);
+	};
+	chipSays(e.panel->restoreForTest(), P::EmphRestore);
+	chipSays(e.panel->inLoopForTest(), P::EmphInLoop);
+	chipSays(e.panel->tapForTest(), P::FbTap);
+	chipSays(e.panel->subThruForTest(), P::SubThru);
+	chipSays(e.d.card->restoreForTest(), P::EmphRestore);
+	chipSays(e.d.card->tapForTest(), P::FbTap);
+	for (ui::Knob* knob : { e.panel->knobForTest(P::LoopInterval), e.panel->knobForTest(P::Width), e.panel->knobForTest(P::Detune),
+	                        e.panel->knobForTest(P::ModFold), e.d.card->widthForTest() }) {
+		REQUIRE(knob != nullptr);
+		CHECK(std::string(knob->tooltipAt({ 2.0f, 2.0f })).find("nactive") != std::string::npos);
+	}
+	CHECK(std::string(e.panel->shapeForTest()->tooltipAt({ 2.0f, 2.0f })).find("nactive") != std::string::npos);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// A CHOICE BOX'S SECOND PRESS CLOSES THE MENU THE FIRST OPENED.                                                                  //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+namespace {
+
+ui::ModeValueCell* eroModeCell(visage::Frame* root, const char* key) {
+	ui::ModeValueCell* found = nullptr;
+	const std::function<void(visage::Frame*)> walk = [&](visage::Frame* frame) {
+		if (auto* cell = dynamic_cast<ui::ModeValueCell*>(frame);
+		    cell != nullptr && std::string_view(cell->select().control().desc().key) == key) {
+			found = cell;
+		}
+		for (visage::Frame* child : frame->children()) {
+			walk(child);
+		}
+	};
+	walk(root);
+	return found;
+}
+
+} // namespace
+
+TEST_CASE("Choice boxes: pressing the box that opened a menu closes it, in the real event order, for the Drive Type and an Etch slot Type") {
+	EroFaces e;
+	using P = ero::Param;
+	for (const bool etch : { false, true }) {
+		CAPTURE(etch);
+		e.mode(etch ? ero::Mode::Etch : ero::Mode::Dust);
+		ui::ModeValueCell* cell = eroModeCell(e.d.card, etch ? "eroder_slot_a_type" : "eroder_drive_mode");
+		REQUIRE(cell != nullptr);
+		ui::ZoneSelect& box = cell->select();
+		visage::Frame* root = e.d.f.root;
+		visage::Frame* top = box.topParentFrame();
+		const visage::Point centre = box.positionInWindow() + visage::Point { box.width() * 0.5f, box.height() * 0.5f };
+		REQUIRE(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&box));
+		const auto popup = [&]() -> visage::PopupMenuFrame* {
+			visage::PopupMenuFrame* last = nullptr;
+			for (visage::Frame* child : top->children()) {
+				if (auto* p = dynamic_cast<visage::PopupMenuFrame*>(child); p != nullptr) {
+					last = p;
+				}
+			}
+			return last;
+		};
+		const P type = etch ? P::SlotAType : P::DriveMode;
+		const float before = eroField(e.d, type);
+
+		dragThroughRoot(root, centre, centre);
+		CHECK(ui::menuOpenFor(box));
+		visage::PopupMenuFrame* shown = popup();
+		REQUIRE(shown != nullptr);
+
+		// THE REAL ORDER: visage takes the focus off the popup (which cancels it) and THEN delivers the press.
+		shown->processFocusChanged(false, true);
+		dragThroughRoot(root, centre, centre);
+		CHECK_FALSE(ui::menuOpenFor(box));
+		CHECK_FALSE(ui::lastMenuPlacementForTest().shown);
+		CHECK(popup() == shown); // no second menu
+		CHECK(eroField(e.d, type) == before);
+
+		// AND A THIRD PRESS OPENS IT AGAIN.
+		dragThroughRoot(root, centre, centre);
+		CHECK(ui::menuOpenFor(box));
+		CHECK(ui::lastMenuPlacementForTest().shown);
+		CHECK(popup() != shown);
+		CHECK(eroField(e.d, type) == before);
+	}
+}
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// THE EMPHASIS OFFSET ON THE WINDOW: the stacked cell beside the knob, and the plot's handle.                                    //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+TEST_CASE("ERODER's emphasis offset: the cell's Offset and Width followers, and the plot's handle writes the offset across and the amount up and down") {
+	EroFaces e;
+	using P = ero::Param;
+	auto& panel = *e.panel;
+	e.mode(ero::Mode::Dust);
+	e.set(P::EmphAmount, 6.0f);
+
+	// ---- THE CELL: Offset always, Width only for a Bell ----
+	ui::ModeValueCell* cell = panel.emphasisCellForTest();
+	REQUIRE(cell != nullptr);
+	ui::ValueBox* offsetBox = cell->boxFor(static_cast<size_t>(P::EmphOffset));
+	ui::ValueBox* widthBox = cell->boxFor(static_cast<size_t>(P::Width));
+	REQUIRE(offsetBox != nullptr);
+	REQUIRE(widthBox != nullptr);
+	CHECK(std::string(offsetBox->control().desc().key) == "eroder_emph_offset");
+	CHECK(std::string(widthBox->control().desc().key) == "eroder_width");
+	CHECK(offsetBox->isVisible());
+	CHECK_FALSE(widthBox->isVisible()); // a Tilt has no width
+	e.set(P::EmphShape, 1.0f);
+	CHECK(widthBox->isVisible());
+	CHECK(offsetBox->isVisible());
+	// THE OFFSET BOX'S OWN DRAG WRITES THE PARAMETER.
+	REQUIRE(eroField(e.d, P::EmphOffset) == 0.0f);
+	const float cx = static_cast<float>(offsetBox->width()) * 0.5f;
+	const float cy = static_cast<float>(offsetBox->height()) * 0.5f;
+	offsetBox->onMouseDown().callback(at(cx, cy));
+	offsetBox->onMouseDrag().callback(at(cx, cy - 30.0f));
+	offsetBox->onMouseUp().callback(at(cx, cy - 30.0f));
+	e.refresh();
+	CHECK(eroField(e.d, P::EmphOffset) > 0.0f);
+	e.set(P::EmphOffset, 0.0f);
+	e.set(P::EmphShape, 0.0f);
+
+	// ---- THE PLOT'S HANDLE ----
+	ui::EroderPlot& plot = *panel.plotForTest();
+	const auto press = [&](float x, float y) { plot.onMouseDown().callback(at(x, y)); };
+	const auto drag = [&](float x, float y) { plot.onMouseDrag().callback(at(x, y)); };
+	const auto release = [&](float x, float y) { plot.onMouseUp().callback(at(x, y)); };
+	const float top = plot.plotTopForTest();
+	const float foot = plot.plotFootForTest();
+	const double dbPerPixel = ui::EroderPlot::kEmphasisDbPerQuarter / (0.25 * static_cast<double>(foot - top));
+
+	// AT THE CENTRE LINE: the handle sits on the 0 dB line at Freq with no emphasis, so it can be picked up.
+	e.set(P::EmphAmount, 0.0f);
+	plot.update();
+	CHECK(plot.emphasisHandleYForTest() == doctest::Approx(plot.emphasisYForTest(0.0)));
+	CHECK(plot.emphasisHandleXForTest() == doctest::Approx(plot.hzToXForTest(plot.bandForTest().freqHz)));
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		press(hx, hy);
+		drag(hx, hy - 3.0f - 20.0f); // up, past the dead zone
+		release(hx, hy - 23.0f);
+		e.refresh();
+		CHECK(eroField(e.d, P::EmphAmount) == doctest::Approx(static_cast<float>(20.0 * dbPerPixel)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphOffset) == 0.0f);
+	}
+
+	// A PRESS AND RELEASE WITH NO MOVEMENT WRITES NOTHING.
+	e.set(P::EmphAmount, 6.0f);
+	plot.update();
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		press(hx, hy);
+		release(hx, hy);
+		e.refresh();
+		CHECK(eroField(e.d, P::EmphAmount) == 6.0f);
+		CHECK(eroField(e.d, P::EmphOffset) == 0.0f);
+	}
+
+	// ACROSS: the offset the plot's own pitch axis predicts, and the amount is untouched.
+	{
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		const float dx = 60.0f;
+		press(hx, hy);
+		drag(hx + dx, hy);
+		release(hx + dx, hy);
+		e.refresh();
+		const double expected = 12.0 * std::log2(plot.xToHzForTest(hx + dx - ui::EroderPlot::kAmountDeadZone) / plot.xToHzForTest(hx));
+		CAPTURE(expected);
+		CHECK(expected > 1.0);
+		CHECK(eroField(e.d, P::EmphOffset) == doctest::Approx(static_cast<float>(expected)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphAmount) == 6.0f);
+		// THE OVERLAY MOVED WITH IT: tuned at Freq times two to the offset over twelve, and the handle follows.
+		plot.update();
+		const double want = plot.bandForTest().freqHz * std::exp2(static_cast<double>(eroField(e.d, P::EmphOffset)) / 12.0);
+		CHECK(plot.emphasisHzForTest() == doctest::Approx(want).epsilon(1e-6));
+		CHECK(plot.emphasisHandleXForTest() == doctest::Approx(plot.hzToXForTest(want)));
+		CHECK(plot.emphasisHandleXForTest() > hx);
+	}
+	// A TILT'S CURVE IS CENTRED ON THE OFFSET FREQUENCY: at its tuning the response is 3 dB under its full lift, as at Freq before.
+	{
+		const double tuned = plot.emphasisHzForTest();
+		const double atTuned = *plot.emphasisDbForTest(tuned);
+		const double atFreq = *plot.emphasisDbForTest(plot.bandForTest().freqHz);
+		CHECK(atTuned != doctest::Approx(atFreq).epsilon(1e-3));
+	}
+
+	// UP AND DOWN: the amount, and the offset is untouched.
+	{
+		const double offsetBefore = eroField(e.d, P::EmphOffset);
+		const float hx = plot.emphasisHandleXForTest();
+		const float hy = plot.emphasisHandleYForTest();
+		press(hx, hy);
+		drag(hx, hy + 3.0f + 18.0f); // down
+		release(hx, hy + 21.0f);
+		e.refresh();
+		CHECK(eroField(e.d, P::EmphAmount) == doctest::Approx(static_cast<float>(6.0 - 18.0 * dbPerPixel)).epsilon(1e-3));
+		CHECK(eroField(e.d, P::EmphOffset) == doctest::Approx(static_cast<float>(offsetBefore)));
+	}
+
+	// THE HANDLE IS THE WINDOW PLOT'S ALONE, and the plot declares its two controls for the guards.
+	std::vector<ui::ControlFace::Offered> offered;
+	plot.offeredControls(offered);
+	const auto offers = [&](P p) {
+		return std::any_of(offered.begin(), offered.end(), [&](const ui::ControlFace::Offered& o) {
+			return o.control != nullptr && std::string(o.control->desc().key) == ero::kParamDescs[eroAt(p)].key;
+		});
+	};
+	CHECK(offers(P::EmphOffset));
+	CHECK(offers(P::EmphAmount));
+	CHECK(std::find(panel.addressedParamsForTest().begin(), panel.addressedParamsForTest().end(), P::EmphOffset)
+	      != panel.addressedParamsForTest().end());
 }

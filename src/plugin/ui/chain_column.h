@@ -572,8 +572,8 @@ private:
 	float padY_ = kPadY; ///< along it, at the start and the end
 	float slotGap_ = kSlotGap;
 	size_t shownLimit_ = static_cast<size_t>(-1);
-	/// Whether this column holds a count on the bridge's expanded-view query (`setPresentedOn`).
-	bool presenting_ = false;
+	/// This column's hold on the bridge's expanded-view presenter count (`setPresentedOn`); a shared block, so the column never touches a bridge that has gone.
+	std::shared_ptr<rack::RackBridge::ExpandedPresenters> presenterBlock_;
 	size_t hiddenLead_ = 0;
 	bool addShown_ = true;
 };

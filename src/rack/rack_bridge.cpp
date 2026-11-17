@@ -165,6 +165,8 @@ RackBridge::RackBridge(RackEngine& engine, backplane::InstanceCounter* shared, H
 }
 
 RackBridge::~RackBridge() {
+	// A COLUMN THAT OUTLIVES THIS BRIDGE still holds the presenter count: cut its way to the engine, so its late release only counts down.
+	expandedPresenters_->engine = nullptr;
 	// **FIRST, NOTHING INSIDE MAY ASK THIS RACK ANYTHING ON ITS WAY OUT** (backlog PM, ASan). Every container this rack
 	// provisioned holds a gate into `record_`, and lives in an engine that can outlive this bridge (a Chain device's
 	// `State` frees the bridge first). Their teardown runs their own services — a nested rack's converger reaps and

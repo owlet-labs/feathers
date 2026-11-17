@@ -680,17 +680,26 @@ public:
 	/// **PRESENTERS ARE COUNTED, NOT LAST-WRITER-WINS.** Several columns (a Rack window's rail, the Rack card's front column, the window
 	/// pane) stand over this one chain; the query stays installed while ANY of them presents, and goes with the last. A column that
 	/// is built without a presenter, loses it or is destroyed never clears the answer a sibling still needs.
-	void retainExpandedViewQuery(std::function<bool(const device::Descriptor&)> q) {
-		if (expandedPresenters_++ == 0 || q != nullptr) {
+	///
+	/// **THE COUNT LIVES IN A SHARED BLOCK, NOT IN THE BRIDGE**: a column can outlive its bridge (an inner chain's panel stands while its
+	/// device goes), and it must never touch a dead one. The column holds the block; the bridge's destructor cuts the block's engine
+	/// pointer, so a late release only counts down.
+	struct ExpandedPresenters {
+		uint32_t count = 0;
+		RackEngine* engine = nullptr; ///< null once the bridge is gone
+	};
+	[[nodiscard]] std::shared_ptr<ExpandedPresenters> retainExpandedViewQuery(std::function<bool(const device::Descriptor&)> q) {
+		if (expandedPresenters_->count++ == 0 || q != nullptr) {
 			engine_.setExpandedViewQuery(std::move(q));
 		}
+		return expandedPresenters_;
 	}
-	void releaseExpandedViewQuery() {
-		if (expandedPresenters_ > 0 && --expandedPresenters_ == 0) {
-			engine_.setExpandedViewQuery(nullptr);
+	static void releaseExpandedViewQuery(ExpandedPresenters& block) {
+		if (block.count > 0 && --block.count == 0 && block.engine != nullptr) {
+			block.engine->setExpandedViewQuery(nullptr);
 		}
 	}
-	[[nodiscard]] uint32_t expandedPresentersForTest() const noexcept { return expandedPresenters_; }
+	[[nodiscard]] uint32_t expandedPresentersForTest() const noexcept { return expandedPresenters_->count; }
 
 	//---------------------------------------------------------------------------------------------//
 	// THE AUDIO SIDE                                                                               //
@@ -942,7 +951,7 @@ private:
 
 	UiNoteRing notes_;
 	RackEngine& engine_;
-	uint32_t expandedPresenters_ = 0; ///< columns presenting over this chain (`retainExpandedViewQuery`)
+	std::shared_ptr<ExpandedPresenters> expandedPresenters_ = std::make_shared<ExpandedPresenters>(ExpandedPresenters { 0, &engine_ }); ///< columns presenting over this chain
 	/// See `secondsPerBeat`: written by `publish` (audio thread), read by the cards.
 	std::atomic<double> secondsPerBeat_ { 0.0 };
 	/// THE AS-MODULATED READOUT'S CHANNEL (backlog PU): asked by the editor, answered by `publish`.

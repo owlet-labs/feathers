@@ -15430,6 +15430,36 @@ TEST_CASE("two columns over one chain: the expand mark is each column's own answ
 	CHECK(held.bridge().expandedPresentersForTest() == 0);
 }
 
+TEST_CASE("a column outlives its bridge: with and without a presenter, destroying the bridge first and the column after touches nothing dead (clean under ASan)") {
+	for (const bool presenting : { false, true }) {
+		CAPTURE(presenting);
+		ui::WidgetRegistry registry;
+		ui::ModState mod;
+		ui::EditHistory history;
+		ui::SurfaceLayers outer;
+		outer.setBounds(0, 0, 1200, 700);
+		auto engine = std::make_unique<feathers::rack::RackEngine>(feathers::rack::kRackAxes, feathers::hostCatalogue());
+		engine->prepare(48000.0, 4096);
+		auto bridge = std::make_unique<feathers::rack::RackBridge>(*engine);
+		bridge->prepare(48000.0, 4096);
+		auto column = std::make_unique<ui::ChainColumn>(*bridge, registry, mod, history, nullptr);
+		column->setBounds(0, 0, static_cast<int>(ui::FxLaneRail::kWidth), 600);
+		if (presenting) {
+			column->setPresentedOn(&outer);
+			CHECK(bridge->expandedPresentersForTest() == 1);
+		}
+		// THE BRIDGE GOES FIRST (an inner chain's device freed while its panel still stands), then the column: its destructor releases the
+		// presenter count and must not touch the bridge, and a late setPresentedOn(nullptr) likewise.
+		bridge.reset();
+		engine.reset();
+		if (presenting) {
+			column->setPresentedOn(nullptr);
+		}
+		column.reset();
+		CHECK(true); // reaching here without a sanitizer report is the assertion
+	}
+}
+
 TEST_CASE("a device in a held chain has a real way into a panel, and no mark at all when it has nowhere to go") {
 	// **There was no expand button for a SKLITTER inside a SKLITTER.** The column's own comment defended that as the honesty rule — a mark
 	// that opened nothing would be a control that does not work — and the defence was sound while the

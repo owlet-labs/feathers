@@ -22,6 +22,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/pill_stack.h"
 #include "plugin/ui/spectral_source.h"
 #include "plugin/ui/spectrum_panel.h"
 #include "plugin/ui/spectrum_plot.h"
@@ -42,6 +43,8 @@
 //   - THE PLOT, its handles carrying what they carry (the filter's corner, the comb's spacing, the tilt).
 //   - UNDER THE PLOT: the knobs the handles do not carry — Mix always; the filter's Slope, the comb's Phase, Odd/Even's Balance
 //     and Partials' count and Depth while their operator is on.
+//
+//   - MATCH'S SECTION at the row's right end: its chip and a 3-stack cell (Down Ratio, Up Ratio, Bandwidth), greyed while it is off.
 //
 // The operators' switches, the curve's, the Draw tool, the filter's Mode, the Carrier, and Resolution/Key/Poly/Offset are the
 // window's alone (spectral_expanded.h), so the window ⊇ card guard holds trivially. THE CARD HIDES what an operator that is off
@@ -90,6 +93,10 @@ public:
 	static constexpr float kMinPlotHeight = 60.0f;
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
 	static constexpr float kCellHeight = Knob::columnHeight(kKnobDiameter);
+	/// Match's section at the row's right end: its chip, a gap, and the 3-stack cell.
+	static constexpr float kMatchChipWidth = 48.0f;
+	static constexpr float kMatchGap = 6.0f;
+	static constexpr float kMatchStackWidth = 84.0f;
 	[[nodiscard]] static float openHeight();
 	/// The badge's line ("sidechain silent"), while Vocode shows: the plot gives it up.
 	[[nodiscard]] static constexpr float vocodeLineHeight() { return SwitchChip::kHeight + kRowGap; }
@@ -119,6 +126,10 @@ private:
 	std::unique_ptr<SidechainBadge> badge_;
 	std::unique_ptr<SpectrumPlot> plot_;
 	std::vector<std::unique_ptr<Knob>> knobs_;
+	/// MATCH'S SECTION, always on the card (its chip is how it is reached): the chip and the 3-stack cell of its face, Down Ratio, Up Ratio and
+	/// Bandwidth; the cell greys while Match is off (the honesty rule), as the operators' controls do.
+	std::unique_ptr<SwitchChip> matchChip_;
+	std::unique_ptr<PillStack> matchStack_;
 	uint32_t laidOutKey_ = ~0u;
 	EditHistory* history_ = nullptr;
 };

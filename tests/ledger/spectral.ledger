@@ -62,6 +62,14 @@ param spectral spectral_partials_count unit=number min=1 max=320 stepped=0
 param spectral spectral_partials_set unit=number min=-8388608 max=8388608 stepped=0
 param spectral spectral_partials_depth unit=percent min=0 max=1 stepped=0
 param spectral spectral_curve_on unit=choice choice=Off|On
+param spectral spectral_match_on unit=choice choice=Off|On
+param spectral spectral_match_down_ratio unit=number min=-1 max=1 stepped=0
+param spectral spectral_match_up_ratio unit=number min=-1 max=1 stepped=0
+param spectral spectral_match_bandwidth unit=decibel min=0 max=48 stepped=0
+param spectral spectral_match_attack unit=number min=1 max=500 stepped=0
+param spectral spectral_match_release unit=number min=5 max=2000 stepped=0
+param spectral spectral_match_range unit=decibel min=0 max=48 stepped=0
+param spectral spectral_match_gate unit=decibel min=-96 max=0 stepped=0
 block spectral spectral_freeze floats=523
 block spectral spectral_curve_db floats=64
 retired spectral spectral_curve 2026-10-27 the drawn curve left the row's extra state (128-float cap) for the hand's block spectral_curve_db, which saves it whole

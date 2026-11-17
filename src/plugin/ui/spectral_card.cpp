@@ -56,6 +56,18 @@ SpectralCard::SpectralCard(backplane::DeviceHost& host, WidgetRegistry& registry
 		knobs_.push_back(std::move(knob));
 	}
 
+	// MATCH'S SECTION: its enable chip and its face, the Down/Up Ratio and Bandwidth stack (the window carries the same three).
+	matchChip_ = std::make_unique<SwitchChip>(source_.deviceControl(sp::Param::MatchOn), "Match");
+	addChild(matchChip_.get());
+	std::array<PillStack::Spec, PillStack::kCount> matchSpecs {};
+	const std::array<sp::Param, 3> matchParams { sp::Param::MatchDownRatio, sp::Param::MatchUpRatio, sp::Param::MatchBandwidth };
+	const std::array<const char*, 3> matchCaptions { "Down", "Up", "Bandwidth" };
+	for (size_t k = 0; k < matchSpecs.size(); ++k) {
+		matchSpecs[k] = { &source_.deviceControl(matchParams[k]), nullptr, matchCaptions[k] };
+	}
+	matchStack_ = std::make_unique<PillStack>(std::move(matchSpecs), "Match");
+	addChild(matchStack_.get());
+
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		noteCardPress(e);
 		if (slotMenuAt(e.position)) {
@@ -112,6 +124,10 @@ void SpectralCard::setModulation(ModState* mod, EditHistory* history) {
 	for (auto& knob : knobs_) {
 		knob->setModulation(mod, history);
 	}
+	matchChip_->modulationChanged();
+	for (size_t k = 0; k < matchStack_->count(); ++k) {
+		matchStack_->pill(k).modulationChanged();
+	}
 }
 
 float SpectralCard::openHeight() {
@@ -155,7 +171,16 @@ void SpectralCard::layOut() {
 	for (const sp::Param p : kKnobs) {
 		liveKnobs += shown(p) ? 1 : 0;
 	}
-	const float cell = width / static_cast<float>(std::max<size_t>(4, liveKnobs));
+	// MATCH'S SECTION takes the row's right end, always (the chip is how it is switched on): the chip, then the 3-stack cell at the knob
+	// column's height; the knobs share what is left.
+	const float matchWidth = kMatchChipWidth + kMatchGap + kMatchStackWidth;
+	const float matchLeft = std::max(left, left + width - matchWidth);
+	matchChip_->setBounds(matchLeft, y, kMatchChipWidth, SwitchChip::kHeight);
+	matchChip_->setVisible(open);
+	matchStack_->setBounds(matchLeft + kMatchChipWidth + kMatchGap, y, kMatchStackWidth, kCellHeight);
+	matchStack_->setVisible(open);
+	const float knobsWidth = std::max(0.0f, matchLeft - kMatchGap - left);
+	const float cell = knobsWidth / static_cast<float>(std::max<size_t>(3, liveKnobs));
 	size_t at = 0;
 	for (size_t i = 0; i < knobs_.size(); ++i) {
 		const bool live = shown(kKnobs[i]);
@@ -180,6 +205,11 @@ bool SpectralCard::updateContent() {
 			changed = true;
 		}
 		changed = plot_->sync(0, true, false) || changed; // no Draw tool on the card: it is the window's
+		// MATCH'S FACE GREYS WITH ITS SWITCH and with the device (the honesty rule), and its readout follows a value moved under it.
+		const bool matchLive = on(sp::Param::Enabled) && on(sp::Param::MatchOn);
+		matchChip_->setEnabled(on(sp::Param::Enabled));
+		matchStack_->setActive(matchLive);
+		changed = matchStack_->refresh() || changed;
 		// SLOPE GREYS AT ITS FILTER'S OPEN END (Z7d; a Bell's is 0 dB): the filter is off there, so it changes nothing — the honesty rule.
 		const bool open[2] = { source_.filterOpen(0, 0), source_.filterOpen(0, 1) };
 		for (size_t i = 0; i < kKnobs.size(); ++i) {
@@ -202,6 +232,10 @@ std::vector<sp::Param> SpectralCard::addressedParamsForTest() const {
 	std::vector<sp::Param> out { sp::Param::Enabled };
 	out.insert(out.end(), kKnobs.begin(), kKnobs.end());
 	// THE PLOT'S HANDLES (the drawer's): the filter's corner, the comb's notch, the vowel, Tilt's grip.
+	// MATCH'S SECTION: its chip and the three controls of the stack.
+	for (const sp::Param p : { sp::Param::MatchOn, sp::Param::MatchDownRatio, sp::Param::MatchUpRatio, sp::Param::MatchBandwidth }) {
+		out.push_back(p);
+	}
 	for (const sp::Param p : { sp::Param::FilterCutoff, sp::Param::FilterResonance, sp::Param::FilterGain, sp::Param::Filter2Cutoff,
 	                           sp::Param::Filter2Resonance, sp::Param::Filter2Gain, sp::Param::CombSpacing, sp::Param::CombDepth,
 	                           sp::Param::Vowel, sp::Param::VowelDepth, sp::Param::TiltAmount }) {
@@ -211,6 +245,13 @@ std::vector<sp::Param> SpectralCard::addressedParamsForTest() const {
 }
 
 visage::Frame* SpectralCard::widgetForTest(sp::Param p) const {
+	switch (p) {
+	case sp::Param::MatchOn: return matchChip_.get();
+	case sp::Param::MatchDownRatio: return &matchStack_->pill(0);
+	case sp::Param::MatchUpRatio: return &matchStack_->pill(1);
+	case sp::Param::MatchBandwidth: return &matchStack_->pill(2);
+	default: break;
+	}
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		if (kKnobs[i] == p) {
 			return knobs_[i].get();
@@ -220,7 +261,7 @@ visage::Frame* SpectralCard::widgetForTest(sp::Param p) const {
 }
 
 std::vector<visage::Frame*> SpectralCard::widgetsForTest() const {
-	std::vector<visage::Frame*> out { plot_.get(), badge_.get() };
+	std::vector<visage::Frame*> out { plot_.get(), badge_.get(), matchChip_.get(), matchStack_.get() };
 	for (const auto& k : knobs_) {
 		out.push_back(k.get());
 	}

@@ -45732,3 +45732,44 @@ TEST_CASE("OWLTT level meters: each sits to the right of its fader — the input
 	       panel.outputMeterBounds());
 	CHECK(card->outputMeterBounds().right() <= card->width());
 }
+
+TEST_CASE("Spectral's Match: the card holds the chip and the 3-stack cell, the window the same controls, and the stack greys with the chip; ratios read as ratios") {
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, spx::kDescriptor);
+	auto* window = dynamic_cast<ui::SpectralExpanded*>(view.get());
+	REQUIRE(window != nullptr);
+	const spx::Param face[] = { spx::Param::MatchDownRatio, spx::Param::MatchUpRatio, spx::Param::MatchBandwidth };
+	(void)d.card->updateContent();
+	(void)window->updateContent();
+	// WINDOW ⊇ CARD: every control of the card's Match section is in the window too, each its own widget.
+	for (const spx::Param p : { spx::Param::MatchOn, spx::Param::MatchDownRatio, spx::Param::MatchUpRatio, spx::Param::MatchBandwidth }) {
+		CAPTURE(static_cast<int>(p));
+		CHECK(d.card->widgetForTest(p) != nullptr);
+		CHECK(window->boxWidgetForTest(p) != nullptr);
+	}
+	// OFF: the stack's three pills are greyed on the card and in the window. ON: all live.
+	const auto pillsActive = [&](bool on) {
+		for (const spx::Param p : face) {
+			auto* cardPill = dynamic_cast<ui::FaderPill*>(d.card->widgetForTest(p));
+			auto* windowPill = dynamic_cast<ui::FaderPill*>(window->boxWidgetForTest(p));
+			REQUIRE(cardPill != nullptr);
+			REQUIRE(windowPill != nullptr);
+			CHECK(cardPill->active() == on);
+			CHECK(windowPill->active() == on);
+		}
+	};
+	CHECK(d.f.deviceHost.fieldAt(d.device, static_cast<size_t>(spx::Param::MatchOn)) < 0.5f);
+	pillsActive(false);
+	d.set(static_cast<size_t>(spx::Param::MatchOn), 1.0f);
+	(void)d.card->updateContent();
+	(void)window->updateContent();
+	pillsActive(true);
+	// THE RATIO TEXT, centred on 1:1 (the control's own text).
+	const auto text = [&](double v) { return window->sourceForTest().deviceControl(spx::Param::MatchDownRatio).textAt(v); };
+	CHECK(text(0.0) == "1:1");
+	CHECK(text(0.75) == "4:1");
+	CHECK(text(1.0) == "Inf:1");
+	CHECK(text(-0.5) == "1:2");
+	CHECK(text(0.9) == "10:1");
+}

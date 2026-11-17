@@ -169,6 +169,25 @@ SpectralExpanded::SpectralExpanded(backplane::DeviceHost& host, WidgetRegistry& 
 	const float schemeWidth = std::max(partialsMode->minimumWidth(), kModeCellWidth);
 	pcells.push_back(item(std::move(partialsMode), schemeWidth));
 	addLeadingPanel("Partials", std::move(phead), std::move(pknobs), {}, std::move(pcells));
+
+	// MATCH (compress/expand towards the operators' shape), third: its switch in the head, then three stacks - the section's face (Down
+	// Ratio, Up Ratio, Bandwidth: the card's cell too), Envelope (Attack, Release, Gate), with Range in the head. The operators draw the TARGET.
+	auto match = std::make_unique<SwitchChip>(deviceSource.deviceControl(sp::Param::MatchOn), "Match");
+	match_ = match.get();
+	std::vector<LeadItem> mhead;
+	mhead.push_back(item(std::move(match), kVocodeChipWidth));
+	// RANGE in the head, a compact box (the vocoder's Carrier and Stereo sit so): the section's two stacks stay the face and the Envelope.
+	auto range = box(deviceSource.deviceControl(sp::Param::MatchRange), "Range", true);
+	matchRange_ = range.get();
+	mhead.push_back(item(std::move(range), kBoxWidth));
+	std::vector<std::unique_ptr<PillStack>> mstacks;
+	mstacks.push_back(makeStack({ sp::Param::MatchDownRatio, sp::Param::MatchUpRatio, sp::Param::MatchBandwidth }, { "Down", "Up", "Bandwidth" }, "Match"));
+	mstacks.push_back(makeStack({ sp::Param::MatchAttack, sp::Param::MatchRelease, sp::Param::MatchGate }, { "Attack", "Release", "Gate" }, "Envelope"));
+	for (auto& s : mstacks) {
+		matchStacks_.push_back(s.get());
+	}
+	std::vector<std::unique_ptr<Knob>> mknobs;
+	addLeadingPanel("Match", std::move(mhead), std::move(mknobs), std::move(mstacks), {});
 }
 
 std::unique_ptr<PillStack> SpectralExpanded::makeStack(const std::vector<sp::Param>& params, const std::vector<const char*>& captions,
@@ -218,6 +237,11 @@ bool SpectralExpanded::updateContent() {
 	partialsMode_->setEnabled(on && s.partialsOn);
 	modes = partialsMode_->refresh() || modes;
 	partialsDepth_->setActive(on && s.partialsOn);
+	match_->setEnabled(on);
+	matchRange_->setEnabled(on && s.matchOn);
+	for (PillStack* stack : matchStacks_) {
+		stack->setActive(on && s.matchOn);
+	}
 	return sync(0, true) || modes;
 }
 
@@ -249,6 +273,8 @@ visage::Frame* SpectralExpanded::boxWidgetForTest(sp::Param p) const {
 	case sp::Param::PartialsCount:
 	case sp::Param::PartialsSet: return partialsMode_->boxFor(static_cast<size_t>(p));
 	case sp::Param::PartialsDepth: return partialsDepth_;
+	case sp::Param::MatchOn: return match_;
+	case sp::Param::MatchRange: return matchRange_;
 	default: break;
 	}
 	for (const auto& [param, pill] : pills_) {

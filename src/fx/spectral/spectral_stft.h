@@ -62,6 +62,14 @@ inline constexpr double kBandLowHz = 20.0;
 inline constexpr double kBandHighHz = 20000.0;
 inline constexpr float kBandFloorDb = -96.0f;
 
+/// **A MATCH RATIO CONTROL p (-1..1) AS A FRACTION OF THE DEVIATION REMOVED**, f = 1 - 1/ratio, so the gain is -f times the part of the
+/// deviation outside the zone. p = 0 is 1:1 (f = 0); p > 0 compresses, ratio = 1/(1 - p): 0.5 is 2:1, 0.75 is 4:1, 1 is infinity:1 (f = 1);
+/// p < 0 expands, ratio = 2^(2p): -0.5 is 1:2, -1 is 1:4 (f = -3).
+[[nodiscard]] inline double matchFractionOf(double p) {
+	p = std::clamp(p, -1.0, 1.0);
+	return p >= 0.0 ? p : 1.0 - std::exp2(-2.0 * p);
+}
+
 /// Whether `n` is a real transform size: a multiple of 32 whose quotient has no prime factor above 5. Stricter than
 /// pffft's rule on a scalar build, so N is the same on every platform.
 [[nodiscard]] bool isRealFftSize(int n) noexcept;
@@ -161,6 +169,45 @@ public:
 		double widthFree = 0.5;
 	};
 	void setVocode(const Vocode& v) noexcept { vocode_ = v; }
+	/// **MATCH** (compress/expand towards the operators' shape): the gains_ stop filtering and become the TARGET. Once a frame, per
+	/// channel, the spectrum's envelope on the grid (`bands` wide, dB mean) is smoothed by Attack and Release into a level; against
+	/// the target's envelope on the same grid, the deviation d = level - target is taken relative to a LEVEL REFERENCE L (the mean of d
+	/// over the grid points above the Gate where the target is not nearly closed, its gain above -60 dB), so the target's overall level follows the sound's
+	/// and Match reshapes tone, not loudness. Around the target (plus L) is a DEAD ZONE `bandwidthDb` wide (as OWLTT's Bandwidth between
+	/// its compress and expand): with e the part of d - L outside the zone, a band LOUDER than it gets gain -fDown * e and one QUIETER
+	/// -fUp * e, f = 1 - 1/ratio (`matchFractionOf`: 4:1 is 0.75, infinity:1 is 1, 1:2 is -1, and a negative f pushes away), held within
+	/// +-range; a BOOST is faded out over the 6 dB above the Gate. Inside the zone nothing happens (gain exactly 1).
+	/// While on it REPLACES the static shaping (the operators still draw the target); off, the stage is skipped entirely.
+	struct Match {
+		bool on = false;
+		double downRatio = 0.75; ///< the ratio controls (-1..1, `matchFractionOf`)
+		double upRatio = 0.75;
+		double bandwidthDb = 6.0; ///< the dead zone around the target
+		double attackMs = 50.0;
+		double releaseMs = 250.0;
+		double bands = 32.0;
+		double rangeDb = 18.0;
+		double gateDb = -60.0;
+	};
+	void setMatch(const Match& m) noexcept;
+	[[nodiscard]] bool matchOn() const noexcept { return match_.on; }
+	/// **THE GAIN (dB) FOR A DEVIATION d** (dB from the target plus the level reference), before the Gate: nothing inside the zone of
+	/// `bandwidthDb` around it; outside, -f times the part beyond the zone's edge (f of Down above it, of Up below it), within +-range.
+	[[nodiscard]] static double matchGainFor(double d, const Match& m) noexcept {
+		const double half = 0.5 * m.bandwidthDb;
+		const double excess = d > half ? d - half : d < -half ? d + half : 0.0;
+		const double f = matchFractionOf(d > half ? m.downRatio : m.upRatio);
+		return std::clamp(-f * excess, -m.rangeDb, m.rangeDb);
+	}
+	/// THE CALLER WROTE `gains()`: the target is measured again at the next frame.
+	void gainsChanged() noexcept { ++gainsSerial_; }
+	/// What the card draws, channel 0: the gain applied now (dB) and the target (+ reference) in dBFS, on the envelope grid; whether a reference exists.
+	[[nodiscard]] const std::array<float, kEnvelopePoints>& matchGainDb() const noexcept { return matchGain_[0]; }
+	[[nodiscard]] const std::array<float, kEnvelopePoints>& matchLevelDb(int c = 0) const noexcept { return matchLevel_[static_cast<size_t>(c)]; }
+	[[nodiscard]] const std::array<float, kEnvelopePoints>& matchTargetDb() const noexcept { return matchTarget_; }
+	[[nodiscard]] double matchReferenceDb(int c = 0) const noexcept { return matchRef_[static_cast<size_t>(c)]; }
+	[[nodiscard]] bool matchHasReference() const noexcept { return matchHaveRef_[0]; }
+
 	/// THE OPERATORS' f0, Hz (the caller's, per block): Partials' Harmonics and the harmonic layouts — the note raised by Offset.
 	void setF0Hz(double hz) noexcept { f0Hz_ = hz; }
 	/// **THE SQUARE CARRIER'S PITCH, Hz (Z9; Requirement: it follows the NOTE only)** — Key Track's note, or C3 untracked; never Offset,
@@ -408,6 +455,22 @@ private:
 	bool analyse_ = false;
 	uint64_t analysed_ = 0;
 	std::array<float, kSpectrumBands> bands_ {};
+	// MATCH'S STATE (allocated in prepare): per channel the smoothed level and the applied gain on the grid, the level reference, and
+	// the target's envelope with the key it was measured under (the gains' serial, the size, the bands).
+	void matchSpectrum(int c) noexcept;
+	void matchRelax(int c) noexcept;
+	Match match_ {};
+	std::array<std::array<float, kEnvelopePoints>, 2> matchLevel_ {};
+	std::array<std::array<float, kEnvelopePoints>, 2> matchGain_ {};
+	std::array<double, 2> matchRef_ {};
+	std::array<bool, 2> matchHaveRef_ {};
+	std::array<float, kEnvelopePoints> matchTarget_ {};
+	std::vector<float> matchBin_;
+	uint64_t gainsSerial_ = 1;
+	uint64_t matchTargetSerial_ = 0;
+	int matchTargetN_ = 0;
+	double matchTargetBands_ = 0.0;
+	bool matchLive_ = false;
 };
 
 } // namespace feathers::fx::spectral

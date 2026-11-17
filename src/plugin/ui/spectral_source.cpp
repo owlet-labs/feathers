@@ -344,10 +344,18 @@ void DeviceSpectrumSource::makeFrame(SpectralPlotFrame& out) const {
 			cull[u] = (1.0f - depth) + keep[u] * depth;
 		}
 	}
+	// MATCH ACTING (its readings say so): the result is the input's level at each partial moved by the gain Match applies there, as the
+	// device does; the operators' own gains are the TARGET (drawn as the overlay line), not applied.
+	const bool matching = any && matchActing();
 	for (int i = 0; i < count; ++i) {
 		const auto u = static_cast<size_t>(i);
-		out.left[u] *= out.terrain[u] * cull[u];
-		if (voc && out.terrain[u] > 0.0f) {
+		if (matching) {
+			out.left[u] = out.terrain[u] * cull[u] * static_cast<float>(std::pow(10.0, bandDbAt(kReadingMatchGain, hz[u]) / 20.0));
+		}
+		else {
+			out.left[u] *= out.terrain[u] * cull[u];
+		}
+		if (voc && !matching && out.terrain[u] > 0.0f) {
 			const double ex = any ? std::pow(10.0, bandDbAt(0, hz[u]) / 20.0) : static_cast<double>(out.terrain[u]);
 			const double es = std::pow(10.0, bandDbAt(kReadingSideEnvelope, hz[u]) / 20.0);
 			out.left[u] *= static_cast<float>(ex > 0.0 ? std::pow(ex, -static_cast<double>(flatten)) * es : 0.0);
@@ -397,7 +405,21 @@ bool DeviceSpectrumSource::vocoding() const {
 	return field(static_cast<size_t>(Param::VocodeOn)) >= 0.5f && master() && sidechainSounding();
 }
 
+bool DeviceSpectrumSource::matchActing() const {
+	return field(static_cast<size_t>(Param::MatchOn)) >= 0.5f && master() && host_.readingCountAt(device_) >= kReadingCount
+	       && host_.readingAt(device_, kReadingMatchOn) >= 0.5f;
+}
+
 int DeviceSpectrumSource::overlay(float* hz, float* db, int max) const {
+	// MATCH'S TARGET (the operators' shape plus the level reference, dBFS) while it acts, as the line the sound is being pulled to.
+	if (matchActing()) {
+		const int n = std::min(max, kSpectrumBands);
+		for (int b = 0; b < n; ++b) {
+			hz[b] = static_cast<float>(bandCentreHz(b));
+			db[b] = host_.readingAt(device_, kReadingMatchTarget + static_cast<size_t>(b));
+		}
+		return n;
+	}
 	if (!vocoding()) {
 		return 0;
 	}

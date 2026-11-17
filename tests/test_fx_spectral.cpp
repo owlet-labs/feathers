@@ -3877,3 +3877,553 @@ TEST_CASE("OI partials, Centers: the harmonics at the centre set stay — the ge
 	const double change = sineLevelDb(out2, 48000.0, halfK * f0) - sineLevelDb(in2, 48000.0, halfK * f0);
 	CHECK(change == doctest::Approx(20.0 * std::log10(feathers::partials::sparseKeep(halfK, half))).epsilon(0.1));
 }
+
+// ================================================================================================================
+// MATCH: the operators' shape as a TARGET the sound is pulled towards (Stft::Match).
+// ================================================================================================================
+#include <complex>
+
+namespace {
+
+/// Paul Kellet's pink filter over a xorshift white source: about -3 dB/oct to 0.5 dB. The test measures the input's own slope, so
+/// nothing leans on how pink it is.
+std::vector<float> pinkNoise(size_t n, float rms, uint32_t seed = 0x2468aceu) {
+	const std::vector<float> w = noise(n, seed);
+	std::vector<float> out(n);
+	double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+	double sum2 = 0;
+	for (size_t i = 0; i < n; ++i) {
+		const double x = w[i];
+		b0 = 0.99886 * b0 + x * 0.0555179;
+		b1 = 0.99332 * b1 + x * 0.0750759;
+		b2 = 0.96900 * b2 + x * 0.1538520;
+		b3 = 0.86650 * b3 + x * 0.3104856;
+		b4 = 0.55000 * b4 + x * 0.5329522;
+		b5 = -0.7616 * b5 - x * 0.0168980;
+		const double y = b0 + b1 + b2 + b3 + b4 + b5 + b6 + x * 0.5362;
+		b6 = x * 0.115926;
+		out[i] = static_cast<float>(y);
+		sum2 += y * y;
+	}
+	const double g = static_cast<double>(rms) / std::sqrt(sum2 / static_cast<double>(n));
+	for (float& v : out) {
+		v = static_cast<float>(v * g);
+	}
+	return out;
+}
+
+void fftInPlace(std::vector<std::complex<double>>& a) {
+	const size_t n = a.size();
+	for (size_t i = 1, j = 0; i < n; ++i) {
+		size_t bit = n >> 1;
+		for (; j & bit; bit >>= 1) {
+			j ^= bit;
+		}
+		j ^= bit;
+		if (i < j) {
+			std::swap(a[i], a[j]);
+		}
+	}
+	for (size_t len = 2; len <= n; len <<= 1) {
+		const std::complex<double> wl = std::polar(1.0, -2.0 * std::numbers::pi / static_cast<double>(len));
+		for (size_t i = 0; i < n; i += len) {
+			std::complex<double> w = 1.0;
+			for (size_t k = 0; k < len / 2; ++k) {
+				const std::complex<double> u = a[i + k];
+				const std::complex<double> v = a[i + k + len / 2] * w;
+				a[i + k] = u + v;
+				a[i + k + len / 2] = u - v;
+				w *= wl;
+			}
+		}
+	}
+}
+
+/// THE BAND ANALYSIS, independent of the device: the mean Hann-windowed power spectrum of `x[from..]` (4096-point frames, half
+/// overlap), then the energy in each third-octave band centred at 400 · 2^(k/3), k = 0..12 (400 Hz to 6.3 kHz), in dB.
+std::vector<double> thirdOctaveDb(const std::vector<float>& x, size_t from, double sr, std::vector<double>& centres) {
+	constexpr size_t kN = 4096;
+	std::vector<double> power(kN / 2 + 1, 0.0);
+	size_t frames = 0;
+	for (size_t s = from; s + kN <= x.size(); s += kN / 2) {
+		std::vector<std::complex<double>> a(kN);
+		for (size_t i = 0; i < kN; ++i) {
+			const double w = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(kN));
+			a[i] = static_cast<double>(x[s + i]) * w;
+		}
+		fftInPlace(a);
+		for (size_t i = 0; i <= kN / 2; ++i) {
+			power[i] += std::norm(a[i]);
+		}
+		++frames;
+	}
+	std::vector<double> db;
+	centres.clear();
+	for (int k = 0; k <= 12; ++k) {
+		const double fc = 400.0 * std::exp2(k / 3.0);
+		double e = 0;
+		int count = 0;
+		for (size_t i = 0; i <= kN / 2; ++i) {
+			const double hz = static_cast<double>(i) * sr / static_cast<double>(kN);
+			if (hz >= fc * std::exp2(-1.0 / 6.0) && hz < fc * std::exp2(1.0 / 6.0)) {
+				e += power[i];
+				++count;
+			}
+		}
+		centres.push_back(fc);
+		db.push_back(10.0 * std::log10(e / std::max(count, 1) / static_cast<double>(std::max<size_t>(frames, 1)) + 1e-30));
+	}
+	return db;
+}
+
+/// Least-squares slope of `db` against log2(centre), dB per octave.
+double slopeOf(const std::vector<double>& centresAll, const std::vector<double>& dbAll, size_t from = 0) {
+	const std::vector<double> centres(centresAll.begin() + static_cast<std::ptrdiff_t>(from), centresAll.end());
+	const std::vector<double> db(dbAll.begin() + static_cast<std::ptrdiff_t>(from), dbAll.end());
+	double sx = 0, sy = 0, sxx = 0, sxy = 0;
+	const auto n = static_cast<double>(db.size());
+	for (size_t i = 0; i < db.size(); ++i) {
+		const double x = std::log2(centres[i]);
+		sx += x;
+		sy += db[i];
+		sxx += x * x;
+		sxy += x * db[i];
+	}
+	return (n * sxy - sx * sy) / (n * sxx - sx * sx);
+}
+
+/// A tilt of `dbPerOct` about 1 kHz written as the gains, as the Tilt operator draws one: amplitude = (hz / 1000)^(dbPerOct / 6.02).
+void writeTilt(Stft& s, double dbPerOct) {
+	const int bins = s.binCount();
+	for (int i = 0; i < bins; ++i) {
+		const double hz = std::max(i * s.sampleRate() / s.fftSize(), 20.0);
+		s.gains()[i] = static_cast<float>(std::pow(hz / 1000.0, dbPerOct / 6.020599913279624));
+	}
+}
+
+struct MatchRun {
+	std::vector<float> in, out;
+};
+
+MatchRun matchRun(const std::vector<float>& input, const Stft::Match& m, double tiltDbPerOct, Resolution r = Resolution::Balanced,
+                  Stft* keep = nullptr) {
+	Stft local;
+	Stft& s = keep != nullptr ? *keep : local;
+	prepared(s, 48000.0, r);
+	writeTilt(s, tiltDbPerOct);
+	s.gainsChanged();
+	s.setMatch(m);
+	s.setIdentity(false);
+	MatchRun run;
+	run.in = input;
+	run.out = input;
+	std::vector<float> right = input;
+	::run(s, run.out, right);
+	return run;
+}
+
+Stft::Match openMatch(double ratio) {
+	Stft::Match m;
+	m.on = true;
+	m.downRatio = ratio; // the control: 1 is infinity:1, 0.75 is 4:1, 0 is 1:1, -0.5 is 1:2
+	m.upRatio = ratio;
+	m.bandwidthDb = 0.0;
+	m.rangeDb = 48.0;
+	m.gateDb = -96.0; // off
+	m.bands = 32.0;
+	return m;
+}
+
+} // namespace
+
+TEST_CASE("match: pink noise at Amount 100% takes a -6 dB/oct target's shape within 1 dB per band") {
+	const auto pink = pinkNoise(48000 * 24, 0.1f);
+	Stft keep;
+	// BALANCED (the default) resolves 100 Hz bins, a third of an octave wide at 300 Hz: its two lowest bands (400, 504 Hz) are smeared
+	// by the bin spacing, so it is held to 1 dB from 635 Hz up; Fine (25 Hz bins) is held across all thirteen.
+	for (const Resolution res : { Resolution::Balanced, Resolution::Fine }) {
+		const size_t first = res == Resolution::Balanced ? 2 : 0;
+		const MatchRun r = matchRun(pink, openMatch(1.0), -6.0, res, &keep);
+		std::vector<double> fc;
+		const std::vector<double> outDb = thirdOctaveDb(r.out, 48000 * 6, 48000.0, fc);
+		std::vector<double> offset;
+		for (size_t i = first; i < fc.size(); ++i) {
+			offset.push_back(outDb[i] - (-6.020599913279624 * std::log2(fc[i] / 1000.0)));
+		}
+		double mean = 0;
+		for (const double o : offset) {
+			mean += o / static_cast<double>(offset.size());
+		}
+		for (size_t i = 0; i < offset.size(); ++i) {
+			CAPTURE(static_cast<int>(res));
+			CAPTURE(fc[first + i]);
+			MESSAGE("res " << static_cast<int>(res) << " band " << fc[first + i] << " Hz off by " << offset[i] - mean);
+			CHECK(std::fabs(offset[i] - mean) < 1.0);
+		}
+	}
+	const MatchRun r = matchRun(pink, openMatch(1.0), -6.0, Resolution::Balanced, &keep);
+	// THE LEVEL REFERENCE: gain-neutral in the mean, over the grid points the reference reads (no clamp, no gate here).
+	REQUIRE(keep.matchHasReference());
+	double sum = 0;
+	for (const float g : keep.matchGainDb()) {
+		sum += g;
+	}
+	CHECK(std::fabs(sum / kEnvelopePoints) < 1.5); // the points under the target's own floor (above ~15 kHz) are not in the mean
+	// NOT VACUOUS: the input's own slope is about -3 dB/oct, so matching moved it by 3 dB/oct.
+	std::vector<double> fcIn;
+	const double inSlope = slopeOf(fcIn, thirdOctaveDb(r.in, 48000 * 6, 48000.0, fcIn));
+	CHECK(inSlope == doctest::Approx(-3.0).epsilon(0.25));
+}
+
+TEST_CASE("match: 4:1 leaves a quarter of the deviation and 1:2 doubles it (output slope = (1-f)·input + f·target, f = 1 - 1/ratio)") {
+	const auto pink = pinkNoise(48000 * 24, 0.1f);
+	std::vector<double> fc;
+	const double inSlope = slopeOf(fc, thirdOctaveDb(pink, 48000 * 6, 48000.0, fc), 2); // from 635 Hz: Balanced smears the two lowest bands
+	struct Case {
+		double control, ratio;
+	};
+	for (const Case c : { Case { 0.75, 4.0 }, Case { -0.5, 0.5 } }) {
+		// SYMMETRIC TIMES: a fast attack with a slow release is a peak-biased detector on noise (the per-frame level jitters more where a band
+		// holds few bins), which rounds the shape a little (about 0.5 dB/oct at default times); this case isolates the ratio law.
+		Stft::Match m = openMatch(c.control);
+		m.attackMs = 100.0;
+		m.releaseMs = 100.0;
+		const MatchRun r = matchRun(pink, m, -6.0);
+		const double outSlope = slopeOf(fc, thirdOctaveDb(r.out, 48000 * 6, 48000.0, fc), 2);
+		const double f = 1.0 - 1.0 / c.ratio;
+		const double want = (1.0 - f) * inSlope + f * -6.0;
+		CAPTURE(c.ratio);
+		CAPTURE(inSlope);
+		MESSAGE("ratio " << c.ratio << ": output slope " << outSlope << ", expected " << want);
+		CHECK(std::fabs(outSlope - want) < 0.3);
+	}
+}
+
+TEST_CASE("match: Range clamps the applied gain, and the clamped bands land on it") {
+	const auto pink = pinkNoise(48000 * 16, 0.1f);
+	Stft keep;
+	const MatchRun r = matchRun(pink, openMatch(1.0), 0.0, Resolution::Balanced, &keep); // a flat target: the pink's slope is the deviation
+	(void)r;
+	Stft::Match m = openMatch(1.0);
+	m.rangeDb = 3.0;
+	Stft clamped;
+	const MatchRun rc = matchRun(pink, m, 0.0, Resolution::Balanced, &clamped);
+	float hi = -1e9f, lo = 1e9f;
+	for (const float g : clamped.matchGainDb()) {
+		hi = std::max(hi, g);
+		lo = std::min(lo, g);
+	}
+	CHECK(hi == doctest::Approx(3.0f).epsilon(1e-4));
+	CHECK(lo == doctest::Approx(-3.0f).epsilon(1e-4));
+	// The unclamped run needs more than 3 dB at the same ends, so the clamp bit.
+	float wide = 0.0f;
+	for (const float g : keep.matchGainDb()) {
+		wide = std::max(wide, std::fabs(g));
+	}
+	CHECK(wide > 6.0f);
+	// And in the OUTPUT: the highs sit far below the mean (pink falls 3 dB/oct), so 3.2 kHz and 6.3 kHz both ask for more than the Range (about +7 and +10 dB).
+	std::vector<double> fc;
+	const std::vector<double> inDb = thirdOctaveDb(rc.in, 48000 * 4, 48000.0, fc);
+	const std::vector<double> outDb = thirdOctaveDb(rc.out, 48000 * 4, 48000.0, fc);
+	CHECK(outDb[9] - inDb[9] == doctest::Approx(3.0).epsilon(0.1));
+	CHECK(outDb[12] - inDb[12] == doctest::Approx(3.0).epsilon(0.1));
+}
+
+namespace {
+/// A noise burst of level `a`, then `b`, switching at `at` samples; white, so every band steps by the same ratio.
+double crossingMs(float first, float second, double attackMs, double releaseMs, bool wantRise) {
+	const size_t at = 48000 * 3;
+	std::vector<float> x(at + 48000 * 4);
+	const std::vector<float> w = noise(x.size(), 77u);
+	for (size_t i = 0; i < x.size(); ++i) {
+		x[i] = w[i] * (i < at ? first : second);
+	}
+	Stft s;
+	prepared(s, 48000.0, Resolution::Balanced);
+	Stft::Match m = openMatch(1.0);
+	m.attackMs = attackMs;
+	m.releaseMs = releaseMs;
+	s.setMatch(m);
+	s.setIdentity(false);
+	const int hop = s.hop();
+	std::vector<float> right = x;
+	constexpr size_t g = 80; // a grid point near 1.4 kHz, well inside the noise
+	std::vector<float> trace;
+	for (size_t i = 0; i + static_cast<size_t>(hop) <= x.size(); i += static_cast<size_t>(hop)) {
+		s.process(x.data() + i, right.data() + i, hop);
+		trace.push_back(s.matchLevelDb(0)[g]);
+	}
+	const size_t atBlock = at / static_cast<size_t>(hop);
+	const double before = static_cast<double>(trace[atBlock - 2]);
+	const double after = static_cast<double>(trace.back());
+	const double target = before + 0.6321205588 * (after - before);
+	for (size_t k = atBlock; k < trace.size(); ++k) {
+		if (wantRise ? static_cast<double>(trace[k]) >= target : static_cast<double>(trace[k]) <= target) {
+			return static_cast<double>((k + 1) * static_cast<size_t>(hop) - at) / 48.0;
+		}
+	}
+	return -1.0;
+}
+} // namespace
+
+TEST_CASE("match: Attack and Release time the level's rise and fall (63% of a 20 dB step at the time constant)") {
+	// The frame is centred N/2 = 5 ms behind the newest sample and the hop is 2.5 ms: tolerance 15% + 8 ms.
+	const double rise = crossingMs(0.01f, 0.1f, 100.0, 400.0, true);
+	const double fall = crossingMs(0.1f, 0.01f, 100.0, 400.0, false);
+	MESSAGE("rise 63% at " << rise << " ms (attack 100), fall 63% at " << fall << " ms (release 400)");
+	CHECK(std::fabs(rise - 100.0) < 15.0 + 8.0);
+	CHECK(std::fabs(fall - 400.0) < 60.0 + 8.0);
+	// Swapped, the other way round: the times follow the controls, not the direction.
+	const double rise2 = crossingMs(0.01f, 0.1f, 300.0, 400.0, true);
+	CHECK(std::fabs(rise2 - 300.0) < 45.0 + 8.0);
+}
+
+TEST_CASE("match: the Gate keeps a quiet floor from being boosted, and with it off the same floor is boosted by the Range") {
+	// A tone at 200 Hz (-34 dBFS) over a white floor at about -75 dBFS a bin (the tone leaks into the STFT output at -90 or so, so the floor must stay above that). The floor sits far below the tone, so against a flat target the reference is
+	// set by the tone and the floor's bands ask for the full boost; the Gate (-60 dBFS) is above the floor's per-bin level.
+	const size_t n = 48000 * 12;
+	std::vector<float> x = noise(n, 5u);
+	for (size_t i = 0; i < n; ++i) {
+		x[i] = x[i] * 3.5e-3f + 0.02f * static_cast<float>(std::sin(2.0 * std::numbers::pi * 200.0 * static_cast<double>(i) / 48000.0));
+	}
+	std::vector<double> fc;
+	const std::vector<double> inDb = thirdOctaveDb(x, 48000 * 4, 48000.0, fc);
+	Stft::Match gated = openMatch(1.0);
+	gated.rangeDb = 24.0;
+	gated.gateDb = -60.0;
+	Stft::Match open = gated;
+	open.gateDb = -96.0;
+	Stft keepG, keepO;
+	const MatchRun withGate = matchRun(x, gated, 0.0, Resolution::Balanced, &keepG);
+	const MatchRun noGate = matchRun(x, open, 0.0, Resolution::Balanced, &keepO);
+	const std::vector<double> gDb = thirdOctaveDb(withGate.out, 48000 * 4, 48000.0, fc);
+	const std::vector<double> oDb = thirdOctaveDb(noGate.out, 48000 * 4, 48000.0, fc);
+	// The floor's bands (1.6 kHz up): not boosted with the gate, boosted by 14 dB or so without (the flat target asks for more than the Range at the very floor, less once the tone's own bands are in the reference).
+	for (size_t b = 6; b < fc.size(); ++b) {
+		CAPTURE(fc[b]);
+		CHECK(gDb[b] - inDb[b] < 0.5);
+		CHECK(oDb[b] - inDb[b] > 10.0);
+	}
+	// And in the gain itself, at the grid points above 1.6 kHz.
+	for (size_t g = 90; g < static_cast<size_t>(kEnvelopePoints) - 20; ++g) {
+		CHECK(keepG.matchGainDb()[g] <= 1e-4f);
+	}
+}
+
+TEST_CASE("match: the output reaches exact zero after the input stops, and silence in is silence out") {
+	for (const Resolution r : kStops) {
+		const size_t on = 48000 * 2;
+		std::vector<float> x(on + 48000);
+		const std::vector<float> p = pinkNoise(on, 0.1f);
+		std::copy(p.begin(), p.end(), x.begin());
+		Stft s;
+		prepared(s, 48000.0, r);
+		writeTilt(s, -6.0);
+		s.gainsChanged();
+		s.setMatch(openMatch(1.0));
+		s.setIdentity(false);
+		std::vector<float> right = x;
+		run(s, x, right);
+		// The last windowed frame holding input ends N samples after it, and its output leaves L after that.
+		const size_t clear = on + static_cast<size_t>(s.latency()) + 2 * static_cast<size_t>(s.fftSize());
+		size_t nonzero = 0;
+		for (size_t i = clear; i < x.size(); ++i) {
+			nonzero += x[i] != 0.0f || right[i] != 0.0f;
+		}
+		CAPTURE(static_cast<int>(r));
+		CHECK(nonzero == 0);
+		float peakBefore = 0;
+		for (size_t i = on / 2; i < on; ++i) {
+			peakBefore = std::max(peakBefore, std::fabs(x[i]));
+		}
+		CHECK(peakBefore > 0.01f); // the run was live
+	}
+}
+
+TEST_CASE("match: Amount 0 applies no gain at all, so the operators' shape is not also applied as a filter") {
+	const auto pink = pinkNoise(48000 * 6, 0.1f);
+	Stft s;
+	const MatchRun r = matchRun(pink, openMatch(0.0), -12.0, Resolution::Balanced, &s);
+	const auto lat = static_cast<size_t>(s.latency());
+	double worst = 0;
+	for (size_t t = 48000 * 2; t < pink.size(); ++t) {
+		worst = std::max(worst, static_cast<double>(std::fabs(r.out[t] - pink[t - lat])));
+	}
+	MESSAGE("worst |out - delayed input| = " << worst);
+	CHECK(worst < 1e-4); // a -12 dB/oct filter would be off by ~0.1
+}
+
+TEST_CASE("match: the device with Match off is bit-identical whatever Match's other controls say") {
+	const std::vector<float> in = pinkNoise(48000 * 3, 0.1f);
+	const auto render = [&](bool setOthers) {
+		SpectralDevice d;
+		d.prepare(48000.0);
+		Settings st;
+		st.tiltOn = true;
+		st.tiltAmount = -6.0f;
+		st.vowelOn = true;
+		if (setOthers) {
+			st.matchDownRatio = -1.0f;
+			st.matchBandwidthDb = 20.0f;
+			st.matchAttackMs = 3.0f;
+			st.matchRangeDb = 48.0f;
+			st.matchGateDb = -10.0f;
+		}
+		d.setTarget(st);
+		std::vector<float> l = in, r = in;
+		for (size_t i = 0; i < l.size(); i += 64) {
+			d.processStereo(l.data() + i, r.data() + i, static_cast<int>(std::min<size_t>(64, l.size() - i)));
+		}
+		return l;
+	};
+	CHECK(render(false) == render(true));
+}
+
+TEST_CASE("match: the device's Match target follows the operators (a tilt control moves the output's slope)") {
+	const std::vector<float> in = pinkNoise(48000 * 20, 0.1f);
+	std::vector<double> fc;
+	std::vector<double> slopes;
+	for (const float tilt : { -6.0f, 0.0f }) {
+		SpectralDevice d;
+		d.prepare(48000.0);
+		Settings st;
+		st.tiltOn = true;
+		st.tiltAmount = tilt;
+		st.matchOn = true;
+		st.matchDownRatio = 1.0f;
+		st.matchUpRatio = 1.0f;
+		st.matchBandwidthDb = 0.0f;
+		st.matchRangeDb = 48.0f;
+		st.matchGateDb = -96.0f;
+		d.setTarget(st);
+		std::vector<float> l = in, r = in;
+		for (size_t i = 0; i < l.size(); i += 64) {
+			d.processStereo(l.data() + i, r.data() + i, static_cast<int>(std::min<size_t>(64, l.size() - i)));
+		}
+		slopes.push_back(slopeOf(fc, thirdOctaveDb(l, 48000 * 6, 48000.0, fc)));
+	}
+	MESSAGE("slopes " << slopes[0] << " and " << slopes[1]);
+	CHECK(slopes[0] == doctest::Approx(-6.0).epsilon(0.1));
+	CHECK(std::fabs(slopes[1]) < 0.6);
+}
+
+TEST_CASE("match: the zone, the two ratios and the Range, as values (deviation in, gain out)") {
+	Stft::Match m = openMatch(0.75); // 4:1 both ways
+	m.bandwidthDb = 6.0;
+	// A BAND 12 dB ABOVE THE TARGET with a 6 dB zone: 3 dB of it is inside, 9 dB outside, 4:1 leaves 9/4, so it lands at target + 3 + 9/4.
+	CHECK(12.0 + Stft::matchGainFor(12.0, m) == doctest::Approx(3.0 + 9.0 / 4.0).epsilon(1e-9));
+	// The same BELOW (upward): it comes up to target - 3 - 9/4.
+	CHECK(-12.0 + Stft::matchGainFor(-12.0, m) == doctest::Approx(-3.0 - 9.0 / 4.0).epsilon(1e-9));
+	// INSIDE THE ZONE, exactly nothing (a gain of exactly 0 dB, so exactly 1 as a factor).
+	for (const double d : { 0.0, 2.9, -2.9, 3.0, -3.0 }) {
+		CHECK(Stft::matchGainFor(d, m) == 0.0);
+	}
+	// BANDWIDTH 0 is the plain pull: -f d.
+	m.bandwidthDb = 0.0;
+	CHECK(Stft::matchGainFor(12.0, m) == doctest::Approx(-0.75 * 12.0).epsilon(1e-9));
+	CHECK(Stft::matchGainFor(-8.0, m) == doctest::Approx(0.75 * 8.0).epsilon(1e-9));
+	// infinity:1 lands on the zone's edge; 1:1 does nothing; 1:2 doubles the excess (pushes away).
+	m.bandwidthDb = 6.0;
+	m.downRatio = 1.0;
+	CHECK(12.0 + Stft::matchGainFor(12.0, m) == doctest::Approx(3.0).epsilon(1e-9));
+	m.downRatio = 0.0;
+	CHECK(Stft::matchGainFor(12.0, m) == 0.0);
+	m.downRatio = -0.5; // 1:2
+	CHECK(12.0 + Stft::matchGainFor(12.0, m) == doctest::Approx(3.0 + 2.0 * 9.0).epsilon(1e-9));
+	// DOWN ACTS ABOVE THE ZONE ONLY AND UP BELOW IT ONLY.
+	m.downRatio = 0.75;
+	m.upRatio = 0.0;
+	CHECK(Stft::matchGainFor(-12.0, m) == 0.0);
+	CHECK(Stft::matchGainFor(12.0, m) < -6.0);
+	m.downRatio = 0.0;
+	m.upRatio = 0.75;
+	CHECK(Stft::matchGainFor(12.0, m) == 0.0);
+	CHECK(Stft::matchGainFor(-12.0, m) > 6.0);
+	// RANGE clamps either way.
+	m.downRatio = 1.0;
+	m.upRatio = 1.0;
+	m.rangeDb = 4.0;
+	CHECK(Stft::matchGainFor(30.0, m) == -4.0);
+	CHECK(Stft::matchGainFor(-30.0, m) == 4.0);
+	// THE CONTROL READS AS A RATIO: 0 is 1:1, 0.5 is 2:1, 0.75 is 4:1, 1 is infinity:1, -0.5 is 1:2, -1 is 1:4.
+	CHECK(matchFractionOf(0.0) == 0.0);
+	CHECK(matchFractionOf(0.5) == doctest::Approx(1.0 - 1.0 / 2.0));
+	CHECK(matchFractionOf(0.75) == doctest::Approx(1.0 - 1.0 / 4.0));
+	CHECK(matchFractionOf(1.0) == 1.0);
+	CHECK(matchFractionOf(-0.5) == doctest::Approx(1.0 - 1.0 / 0.5));
+	CHECK(matchFractionOf(-1.0) == doctest::Approx(1.0 - 1.0 / 0.25));
+}
+
+TEST_CASE("match: a band inside the zone is untouched, and each ratio acts on its own side only (end to end)") {
+	const auto pink = pinkNoise(48000 * 16, 0.1f);
+	// A -3 dB/oct TARGET is the pink's own shape: every band sits within a few dB of it, inside a 16 dB zone: the gain is exactly 1.
+	Stft::Match zone = openMatch(1.0);
+	zone.bandwidthDb = 16.0;
+	Stft inZone;
+	const MatchRun r = matchRun(pink, zone, -3.0, Resolution::Balanced, &inZone);
+	float widest = 0.0f;
+	for (const float g : inZone.matchGainDb()) {
+		widest = std::max(widest, std::fabs(g));
+	}
+	CHECK(widest == 0.0f);
+	const auto lat = static_cast<size_t>(inZone.latency());
+	double worst = 0;
+	for (size_t t = 48000 * 4; t < pink.size(); ++t) {
+		worst = std::max(worst, static_cast<double>(std::fabs(r.out[t] - pink[t - lat])));
+	}
+	CHECK(worst < 1e-4); // gain 1 everywhere: the delayed input (a unity active path)
+	// A -6 dB/oct target puts the lows and the highs of the same pink on opposite sides of the zone.
+	Stft::Match downOnly = openMatch(0.75);
+	downOnly.bandwidthDb = 2.0;
+	downOnly.upRatio = 0.0;
+	Stft::Match upOnly = downOnly;
+	upOnly.downRatio = 0.0;
+	upOnly.upRatio = 0.75;
+	Stft kd, ku;
+	(void)matchRun(pink, downOnly, -6.0, Resolution::Balanced, &kd);
+	(void)matchRun(pink, upOnly, -6.0, Resolution::Balanced, &ku);
+	float dHi = -1e9f, dLo = 1e9f, uHi = -1e9f, uLo = 1e9f;
+	for (size_t g = 0; g < static_cast<size_t>(kEnvelopePoints); ++g) {
+		dHi = std::max(dHi, kd.matchGainDb()[g]);
+		dLo = std::min(dLo, kd.matchGainDb()[g]);
+		uHi = std::max(uHi, ku.matchGainDb()[g]);
+		uLo = std::min(uLo, ku.matchGainDb()[g]);
+	}
+	CHECK(dHi <= 0.0f);
+	CHECK(dLo < -3.0f);
+	CHECK(uLo >= 0.0f);
+	CHECK(uHi > 3.0f);
+}
+
+TEST_CASE("match: Bands sets how finely the target is read, so a narrow notch is followed at many bands and averaged away at few") {
+	const auto setup = [](double bands, Stft& s) {
+		prepared(s, 48000.0, Resolution::Fine);
+		const int bins = s.binCount();
+		for (int i = 0; i < bins; ++i) {
+			const double hz = i * 48000.0 / s.fftSize();
+			// A 20 dB notch about 0.2 octave wide at 3 kHz.
+			const double oct = std::fabs(std::log2(std::max(hz, 20.0) / 3000.0));
+			s.gains()[i] = oct < 0.1 ? 0.1f : 1.0f;
+		}
+		s.gainsChanged();
+		Stft::Match m = openMatch(1.0);
+		m.bands = bands;
+		s.setMatch(m);
+		s.setIdentity(false);
+		std::vector<float> l = pinkNoise(48000 * 3, 0.1f), r = l;
+		run(s, l, r);
+	};
+	Stft many, few;
+	setup(128.0, many);
+	setup(8.0, few);
+	const auto depth = [](const Stft& s) {
+		float lo = 1e9f;
+		for (const float t : s.matchTargetDb()) {
+			lo = std::min(lo, t);
+		}
+		return lo;
+	};
+	MESSAGE("target depth at 128 bands " << depth(many) << " dB, at 8 bands " << depth(few) << " dB");
+	CHECK(depth(many) < -15.0f);
+	CHECK(depth(few) > -5.0f);
+}

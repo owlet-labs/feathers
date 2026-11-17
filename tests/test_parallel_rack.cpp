@@ -48,6 +48,41 @@
 #include <new>
 #include <vector>
 
+#include "portable_aligned_alloc.h"
+#include "test_heap.h"
+
+// THE ALLOCATION PROBE, counting only while armed (see test_linear_crossover.cpp for what it can and cannot see).
+namespace {
+struct LinearAllocs {
+	bool armed = false;
+	size_t allocations = 0;
+};
+LinearAllocs linearAllocs;
+void* linearCountedAlloc(size_t bytes, size_t align) {
+	if (linearAllocs.armed) {
+		++linearAllocs.allocations;
+	}
+	void* p = feathers::test::portableAlignedAlloc(bytes, align);
+	if (p == nullptr) {
+		throw std::bad_alloc {};
+	}
+	return p;
+}
+} // namespace
+void* operator new(size_t bytes) { return linearCountedAlloc(bytes, alignof(std::max_align_t)); }
+void* operator new[](size_t bytes) { return linearCountedAlloc(bytes, alignof(std::max_align_t)); }
+void* operator new(size_t bytes, std::align_val_t align) { return linearCountedAlloc(bytes, static_cast<size_t>(align)); }
+void* operator new[](size_t bytes, std::align_val_t align) { return linearCountedAlloc(bytes, static_cast<size_t>(align)); }
+void operator delete(void* p) noexcept { feathers::test::heapFree(p); }
+void operator delete[](void* p) noexcept { feathers::test::heapFree(p); }
+void operator delete(void* p, size_t) noexcept { feathers::test::heapFree(p); }
+void operator delete[](void* p, size_t) noexcept { feathers::test::heapFree(p); }
+void operator delete(void* p, std::align_val_t) noexcept { feathers::test::heapFree(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { feathers::test::heapFree(p); }
+void operator delete(void* p, size_t, std::align_val_t) noexcept { feathers::test::heapFree(p); }
+void operator delete[](void* p, size_t, std::align_val_t) noexcept { feathers::test::heapFree(p); }
+#include "nothrow_new_forwarding.h"
+
 using namespace feathers;
 namespace pr = feathers::rack::parallel;
 
@@ -2660,4 +2695,246 @@ TEST_CASE("Rack macros are sources inside its chains: a route from macro 1 to a 
 	rig.set(pr::Param::Macro2, 1.0f);
 	rig.settle();
 	CHECK(engine.resolvedFieldForTest(lane, cutoff) == doctest::Approx(base));
+}
+
+//------------------------------------------------------------------------------------------------//
+// BANDS, THE LINEAR SLOPE: a linear-phase FIR split, one more Slope choice                          //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+constexpr uint32_t kLinearLatency = 1152; // 1024 + 128 at 48 kHz, restated from the stated sizes (2048 taps, blocks of a sixteenth)
+
+/// A linear-slope Bands rack of `bands` bands (a Choice index) with every chain empty.
+void linearRig(RackRig& rig, int bandChoice, pr::Filtering filtering) {
+	bandsRig(rig, static_cast<size_t>(bandsOfChoice(bandChoice)), bandChoice, pr::Slope::Linear, filtering);
+}
+
+/// The rack's response to an impulse of 0.5 at sample 0: `blocks` blocks of the left channel.
+std::vector<float> impulseOf(RackRig& rig, int blocks) {
+	std::vector<float> all;
+	for (int b = 0; b < blocks; ++b) {
+		std::vector<float> x(kBlock, 0.0f);
+		if (b == 0) {
+			x[0] = 0.5f;
+		}
+		const std::vector<float> y = rig.run(x);
+		all.insert(all.end(), y.begin(), y.end());
+	}
+	return all;
+}
+
+} // namespace
+
+TEST_CASE("Linear slope: Slope offers it third, the others keep their numbers, and the default stays LR4") {
+	const auto& d = pr::kParamDescs[static_cast<size_t>(pr::Param::Slope)];
+	CHECK(d.max == 2.0);
+	CHECK(d.def == 0.0);
+	REQUIRE(std::size(pr::kSlopeNames) == 3);
+	CHECK(std::string(pr::kSlopeNames[0]) == "LR4 24 dB");
+	CHECK(std::string(pr::kSlopeNames[1]) == "LR2 12 dB");
+	CHECK(std::string(pr::kSlopeNames[2]) == "Linear");
+	CHECK(std::string(pr::kSlopeFaceNames[2]) == "Linear");
+	CHECK(static_cast<int>(pr::Slope::Linear) == 2);
+}
+
+TEST_CASE("Linear slope: the rack reports the crossover's latency and the impulse arrives exactly then — every filtering, 3 and 5 bands, Mix 1 and 50%") {
+	for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After, pr::Filtering::Both }) {
+		for (const int bandChoice : { 1, 2 }) {
+			for (const float mix : { 1.0f, 0.5f }) {
+				CAPTURE(static_cast<int>(filtering));
+				CAPTURE(bandChoice);
+				CAPTURE(mix);
+				RackRig rig;
+				linearRig(rig, bandChoice, filtering);
+				rig.set(pr::Param::Mix, mix);
+				rig.settle();
+				const uint32_t want = filtering == pr::Filtering::Both ? 2 * kLinearLatency : kLinearLatency; // Both: a half before the chain, a half after
+				CHECK(pr::kAudioOps.latencySamples(rig.mem, rig.fields.data(), rig.fields.size(), kRate) == want);
+				const std::vector<float> y = impulseOf(rig, 10);
+				size_t peakAt = 0;
+				for (size_t i = 0; i < y.size(); ++i) {
+					if (std::fabs(y[i]) > std::fabs(y[peakAt])) {
+						peakAt = i;
+					}
+				}
+				CHECK(peakAt == want);
+				CHECK(std::fabs(y[peakAt] - 0.5f) < (filtering == pr::Filtering::Both ? 0.02f : 1.0e-3f));
+			}
+		}
+	}
+	// THE OTHER SLOPES REPORT NOTHING, and a chain's own latency adds to it: 100 samples of chain, then the crossover's.
+	RackRig lr;
+	bandsRig(lr, 3, 1, pr::Slope::Lr4, pr::Filtering::Before);
+	CHECK(pr::kAudioOps.latencySamples(lr.mem, lr.fields.data(), lr.fields.size(), kRate) == 0u);
+	RackRig late;
+	linearRig(late, 1, pr::Filtering::Before);
+	(void)late.seat(0, kLateDesc, 100.0f);
+	late.settle();
+	CHECK(pr::kAudioOps.latencySamples(late.mem, late.fields.data(), late.fields.size(), kRate) == kLinearLatency + 100u);
+	const std::vector<float> y = impulseOf(late, 10);
+	size_t peakAt = 0;
+	for (size_t i = 0; i < y.size(); ++i) {
+		if (std::fabs(y[i]) > std::fabs(y[peakAt])) {
+			peakAt = i;
+		}
+	}
+	CHECK(peakAt == kLinearLatency + 100u);
+}
+
+TEST_CASE("Linear slope: empty chains sum flat from 20 Hz to 20 kHz - 0.05 dB Before and After, 0.1 dB Both") {
+	for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After, pr::Filtering::Both }) {
+		RackRig rig;
+		linearRig(rig, 2, filtering); // five bands, default corners
+		rig.settle();
+		double worst = 0.0;
+		// The default corners and a tone each side of each, so the crossings are measured.
+		std::vector<double> tones { 20.0, 45.0, 100.0, 300.0, 1000.0, 3000.0, 8000.0, 14000.0, 20000.0 };
+		for (size_t k = 0; k < 4; ++k) {
+			const double c = rig.rack().cornerHzForTest(k);
+			tones.push_back(c);
+			tones.push_back(c * 1.07);
+			tones.push_back(c / 1.07);
+		}
+		for (const double hz : tones) {
+			CAPTURE(hz);
+			CAPTURE(static_cast<int>(filtering));
+			const double db = 20.0 * std::log10(gainAt(rig, hz));
+			worst = std::max(worst, std::fabs(db));
+			CHECK(std::fabs(db) < (filtering == pr::Filtering::Both ? 0.1 : 0.05));
+		}
+		CAPTURE(worst);
+	}
+}
+
+TEST_CASE("Linear slope: a band alone is isolated an octave from its edges - at least 70 dB Before and After (measured 74)") {
+	for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After }) {
+		for (size_t keep = 0; keep < 3; ++keep) {
+			CAPTURE(static_cast<int>(filtering));
+			CAPTURE(keep);
+			RackRig rig;
+			bandsRig(rig, 3, 1, pr::Slope::Linear, filtering);
+			for (size_t k = 0; k < 3; ++k) {
+				if (k != keep) {
+					(void)rig.seat(k, kGainDesc, 0.0f); // silence every other chain: what is left is band `keep` alone
+				}
+			}
+			rig.settle();
+			const double lo = keep == 0 ? 0.0 : rig.rack().cornerHzForTest(keep - 1);
+			const double hi = keep == 2 ? 0.0 : rig.rack().cornerHzForTest(keep);
+			if (lo > 0.0) {
+				CHECK(20.0 * std::log10(gainAt(rig, lo * 0.5)) < -70.0);
+				CHECK(std::fabs(20.0 * std::log10(gainAt(rig, lo * 1.5))) < 0.5); // inside, a fifth of an octave... passes
+			}
+			if (hi > 0.0) {
+				CHECK(20.0 * std::log10(gainAt(rig, hi * 2.0)) < -70.0);
+			}
+		}
+	}
+}
+
+TEST_CASE("Linear slope: corners that move (Cut 1 and 2 swept, Key Track) allocate nothing, rebuild and swap, and Before's sum stays the delayed input") {
+	for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After, pr::Filtering::Both }) {
+		CAPTURE(static_cast<int>(filtering));
+		RackRig rig;
+		linearRig(rig, 1, filtering);
+		rig.settle();
+		const size_t blocks = 400;
+		std::vector<float> in(blocks * kBlock), out;
+		out.reserve(in.size());
+		for (size_t i = 0; i < in.size(); ++i) {
+			in[i] = 0.3f * static_cast<float>(std::sin(2.0 * kPi * 3000.0 * static_cast<double>(i) / kRate))
+			        + 0.1f * static_cast<float>(std::sin(2.0 * kPi * 190.0 * static_cast<double>(i) / kRate));
+		}
+		const int swapsBefore = rig.rack().linearSwapsForTest();
+		std::vector<float> l(kBlock), r(kBlock);
+		size_t counted = 0;
+		for (size_t b = 0; b < blocks; ++b) {
+			// Cut 1 glides 100 -> 600 Hz and Cut 2 1000 -> 1600 Hz, both back and forth.
+			const double t = 0.5 - 0.5 * std::cos(static_cast<double>(b) * 0.04);
+			rig.set(pr::Param::Cut1, static_cast<float>(std::log2(100.0 + 500.0 * t)));
+			rig.set(pr::Param::Cut2, static_cast<float>(std::log2(1000.0 + 600.0 * t)));
+			std::copy(in.begin() + static_cast<long>(b * kBlock), in.begin() + static_cast<long>((b + 1) * kBlock), l.begin());
+			r = l;
+			// ARMED AROUND THE HOST'S CALLS ONLY: the rig's own vectors are not the audio thread.
+			linearAllocs.allocations = 0;
+			linearAllocs.armed = true;
+			pr::kAudioOps.setFields(rig.mem, rig.fields.data(), rig.fields.size());
+			pr::kAudioOps.processStereo(rig.mem, l.data(), r.data(), kBlock);
+			linearAllocs.armed = false;
+			counted += linearAllocs.allocations;
+			out.insert(out.end(), l.begin(), l.end());
+		}
+		CHECK(counted == 0u);
+		CHECK(rig.rack().linearSwapsForTest() - swapsBefore > 10); // not vacuous: kernels really were rebuilt and swapped
+		double worst = 0.0;
+		const size_t lat = filtering == pr::Filtering::Both ? 2 * kLinearLatency : kLinearLatency;
+		for (size_t i = 4 * lat; i < out.size(); ++i) {
+			worst = std::max(worst, static_cast<double>(std::fabs(out[i] - in[i - lat])));
+		}
+		CAPTURE(worst);
+		// No click. Before's bands share one split whose kernels sum to the delay set by set, so the sum stays exact through
+		// every swap; After's role banks swap at their own blocks (measured 5e-7 here), and Both's halves are within 0.1 dB, so Both is bounded, not exact.
+		CHECK(worst < (filtering == pr::Filtering::Both ? 3.0e-2 : 1.0e-4));
+	}
+}
+
+TEST_CASE("Linear slope: the rack's tail reaches exact zero and holdsTail says so, in every filtering") {
+	for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After, pr::Filtering::Both }) {
+		CAPTURE(static_cast<int>(filtering));
+		RackRig rig;
+		linearRig(rig, 1, filtering);
+		rig.settle();
+		std::vector<float> noise(kBlock);
+		uint32_t seed = 9;
+		for (int b = 0; b < 40; ++b) {
+			for (float& v : noise) {
+				seed = seed * 1664525u + 1013904223u;
+				v = 0.5f * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+			}
+			(void)rig.run(noise);
+		}
+		CHECK(pr::kAudioOps.holdsTail(rig.mem)); // not vacuous: while it rings, the rack is awake
+		size_t nonzero = 0;
+		bool awakeEarly = false;
+		const int passes = filtering == pr::Filtering::Both ? 2 : 1;
+		const int tailBlocks = static_cast<int>(static_cast<size_t>(passes) * (kLinearLatency + 2048 + 5 * 128) / kBlock) + 3;
+		for (int b = 0; b < tailBlocks + 4; ++b) {
+			const std::vector<float> y = rig.run(std::vector<float>(kBlock, 0.0f));
+			if (b >= tailBlocks) {
+				for (const float v : y) {
+					nonzero += v != 0.0f;
+				}
+			}
+			else if (b == 0) {
+				awakeEarly = pr::kAudioOps.holdsTail(rig.mem);
+			}
+		}
+		CHECK(nonzero == 0u);
+		CHECK(awakeEarly);
+		CHECK_FALSE(pr::kAudioOps.holdsTail(rig.mem));
+	}
+}
+
+TEST_CASE("Linear slope: the dry of a partial Mix is in time with the bands - a 50% Mix of empty chains is the delayed input to the float") {
+	for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After }) {
+		RackRig rig;
+		linearRig(rig, 2, filtering);
+		rig.set(pr::Param::Mix, 0.5f);
+		rig.settle();
+		std::vector<float> in(kBlock * 30), out;
+		for (size_t i = 0; i < in.size(); ++i) {
+			in[i] = 0.4f * static_cast<float>(std::sin(2.0 * kPi * 440.0 * static_cast<double>(i) / kRate))
+			        + 0.2f * static_cast<float>(std::sin(2.0 * kPi * 7919.0 * static_cast<double>(i) / kRate));
+		}
+		for (size_t b = 0; b < 30; ++b) {
+			const std::vector<float> y = rig.run(std::vector<float>(in.begin() + static_cast<long>(b * kBlock), in.begin() + static_cast<long>((b + 1) * kBlock)));
+			out.insert(out.end(), y.begin(), y.end());
+		}
+		double worst = 0.0;
+		for (size_t i = 3 * kLinearLatency; i < out.size(); ++i) {
+			worst = std::max(worst, static_cast<double>(std::fabs(out[i] - in[i - kLinearLatency])));
+		}
+		CHECK(worst < 1.0e-4);
+	}
 }

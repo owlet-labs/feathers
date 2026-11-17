@@ -318,3 +318,40 @@ TEST_CASE("linear crossover: a corner that jumps crossfades its kernels, it does
 	CHECK(worstOfAll < 0.2);
 	CHECK(worstOfAll > 0.05); // the sine's own slope is in it: the measurement could have shown a step
 }
+
+TEST_CASE("linear crossover: the half bands are the square roots of the bands - two in series sum flat, each is linear phase and isolated") {
+	LinearFirBank bank;
+	bank.prepare(kRate, 3);
+	const std::array<LinearBand, 3> bands { LinearBand { 0.0, 200.0, true }, LinearBand { 200.0, 2000.0, true },
+		                                     LinearBand { 2000.0, kLinearOpenTopHz, true } };
+	bank.buildNow(bands.data());
+	std::array<std::vector<double>, 3> g;
+	for (size_t i = 0; i < kIr; ++i) {
+		LinearFirBank::Frame f;
+		bank.process(i == 0 ? 1.0f : 0.0f, 0.0f, f);
+		for (size_t k = 0; k < 3; ++k) {
+			g[k].push_back(f.out[k][0]);
+		}
+	}
+	const double latency = bank.latency();
+	for (double hz : { 20.0, 60.0, 150.0, 200.0, 260.0, 500.0, 1500.0, 2000.0, 2600.0, 6000.0, 12000.0, 20000.0 }) {
+		CAPTURE(hz);
+		// TWO IN SERIES: |G_k|^2 per band, summed over the bands, is the band sum: flat.
+		double total = 0.0;
+		for (size_t k = 0; k < 3; ++k) {
+			const auto h = dtft(g[k], hz);
+			total += std::norm(h);
+			// LINEAR PHASE: each half is real after the delay is taken out.
+			const double w = 2.0 * kPi * hz / kRate;
+			const auto residual = h * std::polar(1.0, w * latency);
+			CHECK(std::fabs(residual.imag()) < 0.003 * std::max(std::abs(h), 0.05));
+		}
+		CHECK(std::fabs(db(total)) < 0.1); // the sum of the squares of the halves is the cascade's amplitude
+	}
+	const auto at = [&](size_t k, double hz) { return db(std::abs(dtft(g[k], hz))); };
+	// A half is 3 dB down at the corner (its square is 6 dB), and isolated an octave off.
+	CHECK(std::fabs(at(0, 50.0)) < 0.1);
+	CHECK(at(0, 400.0) < -40.0);
+	CHECK(at(1, 100.0) < -25.0); // the 188 Hz ramp reaches an octave below 200 Hz: 27 dB here, 54 dB through the pair
+	CHECK(at(2, 1000.0) < -40.0);
+}

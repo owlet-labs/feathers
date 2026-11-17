@@ -76,7 +76,7 @@ void LinearFirBank::release() noexcept {
 			freeFloats(p);
 		}
 	}
-	for (float** p : { &window2B_, &work2B_, &fir_ }) {
+	for (float** p : { &window2B_, &work2B_, &fir_, &spec_, &specWork_, &windowN_ }) {
 		freeFloats(*p);
 	}
 	delete[] half_;
@@ -86,6 +86,10 @@ void LinearFirBank::release() noexcept {
 	if (small_ != nullptr) {
 		pffft_destroy_setup(small_);
 		small_ = nullptr;
+	}
+	if (big_ != nullptr) {
+		pffft_destroy_setup(big_);
+		big_ = nullptr;
 	}
 }
 
@@ -118,6 +122,10 @@ void LinearFirBank::prepare(double sampleRate, size_t outputs) {
 	window2B_ = allocFloats(twoB);
 	work2B_ = allocFloats(twoB);
 	fir_ = allocFloats(n_);
+	spec_ = allocFloats(n_);
+	specWork_ = allocFloats(n_);
+	windowN_ = allocFloats(n_);
+	big_ = pffft_new_setup(static_cast<int>(n_), PFFFT_REAL);
 	half_ = new double[n_ / 2 + 1]();
 	halfLo_ = new double[n_ / 2 + 1]();
 	kaiser_ = new double[n_ / 2 + 1]();
@@ -125,6 +133,12 @@ void LinearFirBank::prepare(double sampleRate, size_t outputs) {
 	for (size_t m = 0; m <= n_ / 2; ++m) {
 		const double r = 2.0 * static_cast<double>(m) / static_cast<double>(n_);
 		kaiser_[m] = besselI0(kLinearKaiserBeta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0;
+	}
+	const double i0Half = besselI0(kLinearHalfKaiserBeta);
+	for (size_t i = 0; i < n_; ++i) {
+		const size_t m = i >= n_ / 2 ? i - n_ / 2 : n_ / 2 - i;
+		const double r = 2.0 * static_cast<double>(m) / static_cast<double>(n_);
+		windowN_[i] = static_cast<float>(besselI0(kLinearHalfKaiserBeta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0Half);
 	}
 	live_ = 0;
 	builds_ = swaps_ = 0;
@@ -180,8 +194,51 @@ void LinearFirBank::lowpassHalf(double hz, double* half) const noexcept {
 	}
 }
 
+void LinearFirBank::designHalf(const LinearBand& band) noexcept {
+	// A RAISED-COSINE CROSSOVER IN THE FREQUENCY DOMAIN. Each corner is a cos^2 / sin^2 ramp `kHalfTransitionBins` bins wide, so the
+	// bands' amplitudes telescope to exactly 1 and the half is the square root of the band's: smooth where a windowed sinc's
+	// square root is not (it has an infinite slope where the band reaches 0). Zero phase, centred at N/2, windowed.
+	const size_t half = n_ / 2;
+	const double binHz = sampleRate_ / static_cast<double>(n_);
+	const double width = kLinearHalfTransitionBins * binHz;
+	const auto ramp = [width](double f, double corner) { // cos^2 down through `corner`: 1 below, 0 above
+		const double t = std::clamp((f - (corner - 0.5 * width)) / width, 0.0, 1.0);
+		const double c = std::cos(0.5 * std::numbers::pi * t);
+		return c * c;
+	};
+	const bool fromDc = band.loHz <= 0.0;
+	const bool toTop = band.hiHz >= kLinearOpenTopHz;
+	for (size_t k = 0; k <= half; ++k) {
+		const double f = static_cast<double>(k) * binHz;
+		const double upper = toTop ? 1.0 : ramp(f, band.hiHz);
+		const double lower = fromDc ? 0.0 : ramp(f, band.loHz);
+		const auto g = static_cast<float>(std::sqrt(std::max(upper - lower, 0.0)));
+		if (k == 0) {
+			spec_[0] = g;
+		}
+		else if (k == half) {
+			spec_[1] = g;
+		}
+		else {
+			spec_[2 * k] = g;
+			spec_[2 * k + 1] = 0.0f;
+		}
+	}
+	pffft_transform_ordered(big_, spec_, spec_, specWork_, PFFFT_BACKWARD);
+	const float scale = 1.0f / static_cast<float>(n_);
+	for (size_t i = 0; i < n_; ++i) {
+		fir_[i] = spec_[(i + half) % n_] * windowN_[i] * scale;
+	}
+	fir_[0] = 0.0f; // the tap at -N/2 has no partner: dropped, so the kernel is exactly symmetric
+}
+
+
 void LinearFirBank::design(size_t o, const LinearBand& band, size_t set) noexcept {
 	const size_t last = n_ / 2;
+	if (band.half) {
+		designHalf(band);
+	}
+	else {
 	if (band.hiHz >= kLinearOpenTopHz) {
 		std::fill(half_, half_ + last + 1, 0.0);
 		half_[0] = 1.0;
@@ -202,6 +259,7 @@ void LinearFirBank::design(size_t o, const LinearBand& band, size_t set) noexcep
 		const auto v = static_cast<float>(half_[m] - halfLo_[m]);
 		fir_[last + m] = v;
 		fir_[last - m] = v;
+	}
 	}
 	const size_t twoB = 2 * block_;
 	float* kernel = kernel_[set][o];
@@ -236,7 +294,8 @@ void LinearFirBank::setTargets(const LinearBand* bands) noexcept {
 	};
 	bool any = false;
 	for (size_t o = 0; o < outputs_; ++o) {
-		changed_[o] = moved(bands[o].loHz, live_band_[o].loHz) || moved(bands[o].hiHz, live_band_[o].hiHz);
+		changed_[o] = moved(bands[o].loHz, live_band_[o].loHz) || moved(bands[o].hiHz, live_band_[o].hiHz)
+		              || bands[o].half != live_band_[o].half;
 		any = any || changed_[o];
 	}
 	if (!any) {

@@ -704,6 +704,14 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 		bandL_[k].assign(scratch, 0.0f);
 		bandR_[k].assign(scratch, 0.0f);
 	}
+	// THE LINEAR SLOPE'S BANKS, allocated here with everything else (the audio thread never allocates).
+	linSplit_ = std::make_unique<dsp::LinearFirBank>();
+	linSplit_->prepare(sampleRate, static_cast<size_t>(kMaxBands));
+	for (auto& bank : linRole_) {
+		bank = std::make_unique<dsp::LinearFirBank>();
+		bank->prepare(sampleRate, 1);
+	}
+	linearBuild_ = true;
 	lr4Engine_.reset();
 	lr2Engine_.reset();
 	coeffsValid_ = false;
@@ -743,6 +751,7 @@ void Rack::reset() {
 	takeWantedStructure();
 	lr4Engine_.reset();
 	lr2Engine_.reset();
+	resetLinear();
 	modeGain_ = 1.0f;
 	modeStep_ = 0.0f;
 	modeRemaining_ = 0;
@@ -1200,7 +1209,7 @@ void Rack::setFields(const float* fields, size_t present) {
 		return std::isfinite(v) ? static_cast<int>(std::lround(std::clamp(v, 0.0f, static_cast<float>(last)))) : 0;
 	};
 	bandsWanted_ = kBandCounts[choice(Param::BandCount, 2)];
-	slopeWanted_ = static_cast<Slope>(choice(Param::Slope, 1));
+	slopeWanted_ = static_cast<Slope>(choice(Param::Slope, 2));
 	filteringWanted_ = static_cast<Filtering>(choice(Param::Filtering, 2));
 	keyTrack_ = at(Param::KeyTrack) >= 0.5f;
 	for (size_t k = 0; k < 4; ++k) {
@@ -1367,8 +1376,11 @@ void Rack::takeWantedStructure() noexcept {
 		if (slope_ == Slope::Lr4) {
 			lr4Engine_.reset();
 		}
-		else {
+		else if (slope_ == Slope::Lr2) {
 			lr2Engine_.reset();
+		}
+		else {
+			resetLinear();
 		}
 		coeffsValid_ = false;
 	}
@@ -1401,6 +1413,10 @@ void Rack::aimCorners(int frames) noexcept {
 		coeffsValid_ = false;
 		coeffSlope_ = slope_;
 	}
+	if (slope_ == Slope::Linear) {
+		aimLinear(); // the FIR banks follow the corners at control rate; the IIR coefficients are not used
+		return;
+	}
 	const auto rate = static_cast<float>(std::max(sampleRate_, 1.0));
 	for (int k = 0; k + 1 < bands_; ++k) {
 		if (coeffsValid_ && coeffHz_[k] == cornerHz_[k]) {
@@ -1424,6 +1440,19 @@ void Rack::aimCorners(int frames) noexcept {
 }
 
 void Rack::splitBands(int n) noexcept {
+	if (slope_ == Slope::Linear) {
+		// LINEAR: each band is its own kernel over the input (the half-band kernels in Both), `latency` samples late.
+		for (int i = 0; i < n; ++i) {
+			const auto s = static_cast<size_t>(i);
+			dsp::LinearFirBank::Frame frame;
+			linSplit_->process(inL_[s], inR_[s], frame);
+			for (int k = 0; k < bands_; ++k) {
+				bandL_[k][s] = frame.out[static_cast<size_t>(k)][0];
+				bandR_[k][s] = frame.out[static_cast<size_t>(k)][1];
+			}
+		}
+		return;
+	}
 	const auto run = [&](auto& engine, const auto* corners) {
 		float out[kMaxBands] = {};
 		for (int i = 0; i < n; ++i) {
@@ -1461,6 +1490,17 @@ void Rack::bandOfOutput(size_t role, int n) noexcept {
 	if (filtering_ == Filtering::Before || role >= static_cast<size_t>(bands_)) {
 		return;
 	}
+	if (slope_ == Slope::Linear) {
+		// LINEAR: this role's own bank filters its chain's output to the band (the half band in Both).
+		for (int i = 0; i < n; ++i) {
+			const auto s = static_cast<size_t>(i);
+			dsp::LinearFirBank::Frame frame;
+			linRole_[role]->process(workL_[s], workR_[s], frame);
+			workL_[s] = frame.out[0][0];
+			workR_[s] = frame.out[0][1];
+		}
+		return;
+	}
 	const auto band = static_cast<int>(role);
 	const auto run = [&](auto& engine, const auto* corners) {
 		for (int i = 0; i < n; ++i) {
@@ -1484,6 +1524,9 @@ void Rack::bandOfOutput(size_t role, int n) noexcept {
 }
 
 void Rack::alignDryToBands(int n) noexcept {
+	if (slope_ == Slope::Linear) {
+		return; // the dry is held back by the crossover's latency alone (`linearDelayNow`, added to the dry delay), not allpassed
+	}
 	// ONE Π AP FOR EVERY FILTERING: Both's halves multiply to the LR bands, which sum to it as Before's do (backlog OS).
 	const auto run = [&](auto& engine, const auto* corners) {
 		for (int i = 0; i < n; ++i) {
@@ -2103,7 +2146,7 @@ void Rack::processStereo(float* left, float* right, int frames) {
 	// **THE MODE** (stage 2, §2). A change fades the chains' sum to silence over 5 ms, switches what each chain is
 	// handed and summed at, and fades back over 5 ms; the chains run on throughout, their state untouched. Where none
 	// of the sum is heard — the first block, bypassed, Mix at 0 — there is nothing to fade and the mode lands at once.
-	const bool dryChanges = dryKind(mode_, filtering_) != dryKind(modeWanted_, filteringWanted_);
+	const bool dryChanges = dryKind(mode_, filtering_, slope_) != dryKind(modeWanted_, filteringWanted_, slopeWanted_);
 	if (!primed_ || bypassed || (remaining_ == 0 && wetNow_ == 0.0f && !dryChanges)) {
 		if (!structureIsWanted()) {
 			takeWantedStructure();
@@ -2201,6 +2244,9 @@ void Rack::processStereo(float* left, float* right, int frames) {
 				// is silent already. Either way its alignment held the last routed audio, which is stale now.
 				if (b->stoppedHard) {
 					b->chain.reset();
+				}
+				if (slope_ == Slope::Linear && k < linRole_.size() && linRole_[k] != nullptr) {
+					linRole_[k]->clearAudio(); // its band filter held the last routed audio
 				}
 				b->align.reset();
 				b->dormant = false;
@@ -2322,7 +2368,7 @@ void Rack::processStereo(float* left, float* right, int frames) {
 				sumR_[s] += p.gainNow * workR_[s];
 			}
 		}
-		dryDelay_.process(inL_.data(), inR_.data(), n, latest);
+		dryDelay_.process(inL_.data(), inR_.data(), n, latest + linearDelayNow());
 		if (mode_ == Mode::Bands && !bypassed) {
 			alignDryToBands(n); // §4d: the dry in the bands' phase, so a Mix does not cancel at the corners
 		}
@@ -2384,7 +2430,7 @@ void Rack::processStereo(float* left, float* right, int frames) {
 		if (slope_ == Slope::Lr4) {
 			lr4Engine_.flush();
 		}
-		else {
+		else if (slope_ == Slope::Lr2) {
 			lr2Engine_.flush();
 		}
 	}
@@ -2504,7 +2550,8 @@ uint32_t Rack::latencySamples(double sampleRate) const noexcept {
 	// THE SLOWEST ROUTED CHAIN'S — every routed chain, every phantom role and the dry wait for it. Asked of the live
 	// lineup, which is what runs.
 	const Lineup* live = live_.load(std::memory_order_acquire);
-	return live != nullptr ? routedLatency(live, sampleRate) : 0u;
+	// PLUS THE LINEAR SLOPE'S, once, where Bands is asked for with it: the bands and the dry both wait for it, after the chains' alignment.
+	return (live != nullptr ? routedLatency(live, sampleRate) : 0u) + linearDelayWanted(sampleRate);
 }
 
 bool Rack::holdsTail() const noexcept {
@@ -2542,8 +2589,12 @@ bool Rack::holdsTail() const noexcept {
 		}
 	}
 	// BANDS: A FILTER STILL RINGING is sound to come, in the wet or the dry — until `flush` has put it at exact zero.
-	if (mode_ == Mode::Bands && (wetHeard || dryTarget_ > 0.0f)
+	if (mode_ == Mode::Bands && (wetHeard || dryTarget_ > 0.0f) && slope_ != Slope::Linear
 	    && !(slope_ == Slope::Lr4 ? lr4Engine_.settled() : lr2Engine_.settled())) {
+		return true;
+	}
+	// THE LINEAR SLOPE'S FIRs hold sound to come until their delay lines have shifted the last non-zero block out (`quiet`).
+	if (mode_ == Mode::Bands && slope_ == Slope::Linear && (wetHeard || dryTarget_ > 0.0f) && !linearQuiet()) {
 		return true;
 	}
 	// A PHANTOM ROLE'S ALIGNMENT holds its share of the input for the latency.
@@ -3017,6 +3068,81 @@ bool mapRackBody(std::span<const uint8_t> bytes, LaneMap map, void* ctx, std::ve
 		return false;
 	}
 	*out = std::move(next);
+	return true;
+}
+
+
+//--------------------------------------------------------------------------------------------------//
+// THE LINEAR SLOPE                                                                                  //
+//--------------------------------------------------------------------------------------------------//
+
+void Rack::aimLinear() noexcept {
+	if (linSplit_ == nullptr) {
+		return;
+	}
+	// EACH BAND AS A KERNEL between its two corners (0 below the first, open above the last): the half band in Both, whose pair
+	// (one before the chain, one after) makes the band. Outputs past the band count keep a fixed lowpass so they never rebuild.
+	const bool half = filtering_ == Filtering::Both;
+	std::array<dsp::LinearBand, static_cast<size_t>(kMaxBands)> bands;
+	for (int k = 0; k < kMaxBands; ++k) {
+		if (k >= bands_) {
+			bands[static_cast<size_t>(k)] = dsp::LinearBand { 0.0, 1000.0, false };
+			continue;
+		}
+		const double lo = k == 0 ? 0.0 : cornerHz_[k - 1];
+		const double hi = k == bands_ - 1 ? dsp::kLinearOpenTopHz : cornerHz_[k];
+		bands[static_cast<size_t>(k)] = dsp::LinearBand { lo, hi, half };
+	}
+	const bool build = linearBuild_;
+	linearBuild_ = false;
+	if (filtering_ != Filtering::After) {
+		if (build) {
+			linSplit_->buildNow(bands.data());
+		}
+		else {
+			linSplit_->setTargets(bands.data());
+		}
+	}
+	if (filtering_ != Filtering::Before) {
+		for (int k = 0; k < bands_; ++k) {
+			dsp::LinearFirBank& bank = *linRole_[static_cast<size_t>(k)];
+			if (build) {
+				bank.buildNow(&bands[static_cast<size_t>(k)]);
+			}
+			else {
+				bank.setTargets(&bands[static_cast<size_t>(k)]);
+			}
+		}
+	}
+}
+
+void Rack::resetLinear() noexcept {
+	if (linSplit_ == nullptr) {
+		return;
+	}
+	linSplit_->clearAudio();
+	for (auto& bank : linRole_) {
+		if (bank != nullptr) {
+			bank->clearAudio();
+		}
+	}
+	linearBuild_ = true; // the next `aimLinear` builds the kernels whole: there is no old kernel to crossfade from
+}
+
+bool Rack::linearQuiet() const noexcept {
+	if (linSplit_ == nullptr) {
+		return true;
+	}
+	if (filtering_ != Filtering::After && !linSplit_->quiet()) {
+		return false;
+	}
+	if (filtering_ != Filtering::Before) {
+		for (int k = 0; k < bands_; ++k) {
+			if (!linRole_[static_cast<size_t>(k)]->quiet()) {
+				return false;
+			}
+		}
+	}
 	return true;
 }
 

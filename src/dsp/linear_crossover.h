@@ -81,16 +81,26 @@ namespace feathers::dsp {
 
 /// THE KAISER WINDOW'S SHAPE, and what it buys: a stopband about 70 dB down, a transition about 3 bins' width.
 inline constexpr double kLinearKaiserBeta = 7.0;
+/// THE HALF BANDS' WINDOW is much lighter: their spectrum is smooth, so truncation leaves nothing to suppress, and a heavy window
+/// would round the crossing of two halves (a 0.22 dB dip at beta 7, 0.04 dB at 2).
+inline constexpr double kLinearHalfKaiserBeta = 2.0;
 /// A CORNER REBUILDS WHEN IT MOVES BY MORE THAN THIS, RELATIVELY (1.7 cents): below it a kernel is not worth a build.
 inline constexpr double kLinearRebuildTolerance = 0.001;
 /// "TO NYQUIST": a band's `hiHz` at or above this is the open top (the delta tap minus the lowpass below).
 inline constexpr double kLinearOpenTopHz = 1.0e9;
+/// THE HALF BANDS' RAISED-COSINE TRANSITION, in kernel bins (8 bins is 188 Hz at 48 kHz): wide enough that the kernel's window barely smooths it. The window still rounds the crossing, so
+/// two halves in series sum to within 0.1 dB of flat (about -0.05 dB at a corner, measured), not exactly flat as the full bands do.
+inline constexpr double kLinearHalfTransitionBins = 8.0;
 
 /// WHAT ONE OUTPUT'S KERNEL IS: the band between two corners, `loHz` at or below 0 meaning "from DC" and `hiHz` at or
 /// above `kLinearOpenTopHz` meaning "to Nyquist". {0, f} is a lowpass, {f, open} a highpass, {a, b} a bandpass.
 struct LinearBand {
 	double loHz = 0.0;
 	double hiHz = kLinearOpenTopHz;
+	/// THE SQUARE ROOT OF THE BAND: a zero-phase kernel whose magnitude is the square root of this band's, so two of them in
+	/// series (one before a chain, one after it) make the band, and the squares of every half of a split sum to the band sum.
+	/// Built in the frequency domain from the band's own kernel, windowed again, so the pair is the band to a fraction of a dB.
+	bool half = false;
 	friend bool operator==(const LinearBand&, const LinearBand&) = default;
 };
 
@@ -167,12 +177,15 @@ private:
 	void blockEdge() noexcept;
 	/// Output `o`'s taps from `band`, into `fir_`, then partitioned into kernel set `set`.
 	void design(size_t o, const LinearBand& band, size_t set) noexcept;
+	/// The raised-cosine half-band kernel of `band`, into `fir_` (see `LinearBand::half`).
+	void designHalf(const LinearBand& band) noexcept;
 	/// The half-kernel of a lowpass at `hz` (centre first), unit DC gain, into `half`.
 	void lowpassHalf(double hz, double* half) const noexcept;
 
 	double sampleRate_ = 48000.0;
 	size_t outputs_ = 0, n_ = 0, block_ = 1, parts_ = 0, delayLen_ = 1;
 	PFFFT_Setup* small_ = nullptr; // 2B
+	PFFFT_Setup* big_ = nullptr;   // N: the half-band design's transforms
 	// Kernels: [set][output] of `parts_` spectra of 2B, pffft's internal order.
 	std::array<std::array<float*, kMaxOutputs>, 2> kernel_ {};
 	size_t live_ = 0;
@@ -187,6 +200,9 @@ private:
 	double* halfLo_ = nullptr; // and the second
 	double* kaiser_ = nullptr; // N/2 + 1: the window, centre first
 	float* fir_ = nullptr;     // N: the taps being partitioned
+	float* spec_ = nullptr;    // N: the half-band design's spectrum
+	float* specWork_ = nullptr;
+	float* windowN_ = nullptr; // N: the half bands' (lighter) Kaiser window over all N taps, centre N/2
 	size_t pos_ = 0, head_ = 0, delayPos_ = 0, grid_ = 0;
 	Stage stage_ = Stage::Idle;
 	size_t next_ = 0;

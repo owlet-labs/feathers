@@ -71,9 +71,24 @@ endif()
 option(FEATHERS_USE_CCACHE "Front the compiler with ccache when one is on PATH (a launcher, not a flag)" ON)
 find_program(FEATHERS_CCACHE ccache)
 if(FEATHERS_USE_CCACHE AND FEATHERS_CCACHE)
-	set(CMAKE_C_COMPILER_LAUNCHER ${FEATHERS_CCACHE})
-	set(CMAKE_CXX_COMPILER_LAUNCHER ${FEATHERS_CCACHE})
-	message(STATUS "feathers: compiler launcher ${FEATHERS_CCACHE}")
+	# THE LAUNCHER CARRIES ITS OWN SETTINGS. A build run without sourcing scripts/env.sh used ccache's
+	# 5 GiB default and trimmed the shared cache (MEASURED: `ccache -s` read 8.4 / 5.0 GiB, 21,832
+	# cleanups, 54% hit rate), and ~/.config is read-only so no config file can fix it. `env` sets the
+	# same three variables for every compile whatever the shell; keep them equal to scripts/env.sh.
+	# Windows has no `env`, so the wrapper is UNIX-only and elsewhere the launcher is ccache alone.
+	set(_feathers_ccache_launcher ${FEATHERS_CCACHE})
+	find_program(FEATHERS_ENV_PROGRAM env)
+	if(UNIX AND FEATHERS_ENV_PROGRAM AND DEFINED ENV{HOME})
+		set(_feathers_ccache_launcher
+			${FEATHERS_ENV_PROGRAM}
+			CCACHE_MAXSIZE=25G
+			CCACHE_BASEDIR=$ENV{HOME}
+			CCACHE_COMPILERCHECK=content
+			${FEATHERS_CCACHE})
+	endif()
+	set(CMAKE_C_COMPILER_LAUNCHER ${_feathers_ccache_launcher})
+	set(CMAKE_CXX_COMPILER_LAUNCHER ${_feathers_ccache_launcher})
+	message(STATUS "feathers: compiler launcher ${_feathers_ccache_launcher}")
 endif()
 
 # SHARED FETCHED SOURCES. The other half of the fresh-worktree tax: ccache above makes the COMPILE of

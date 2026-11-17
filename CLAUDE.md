@@ -34,6 +34,14 @@ because breaking them once produced a real defect.
   It sanitises the tree the script lives in, so run the copy in your own worktree.
 - On a shared machine, build and run only the binaries you touched while iterating, and run the full
   `ctest` once per milestone.
+- `scripts/run-cases.sh --each --jobs N <binary>` runs up to N case processes at once (default 1); each case
+  keeps its own process, timeout and verdict, and the tally is still checked against the binary's count.
+- `scripts/integrator-round.sh` has two lanes. `--fast` (a local install): build, ledger, install-on build,
+  `ctest` and the GUI steps on the binaries named in `--each`/`--cases` only, then `--each --jobs
+  ${ROUND_EACH_JOBS:-3}` over them; no ASan, no windowed run, no preflight. The default is the full round
+  (whole `ctest`, both GUI steps, `--each --jobs`), for a release. ASan is `scripts/sanitize-gate.sh`, run
+  separately: at a release, and before a local install only when the change touches object lifetimes
+  (widget ownership, rack views, voice pools and stealing, plugin teardown), then only on those suites.
 
 ## Tests
 - `ctest --test-dir build --output-on-failure`. The widget suite is six binaries under `tests/gui_widgets/`

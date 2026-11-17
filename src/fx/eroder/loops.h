@@ -111,6 +111,13 @@ private:
 	size_t sinceSound_ = 0;
 };
 
+/// THE SILENT-INPUT RULES (`SharedSection::inputFrame`): how long the input is zero before the gate may close, before the fade
+/// starts, the fade's time constant, and the gate's level under the limiter's threshold (-120 dB).
+inline constexpr double kLoopGateSeconds = 0.02;
+inline constexpr double kLoopFadeStartSeconds = 0.5;
+inline constexpr double kLoopFadeSeconds = 0.08;
+inline constexpr float kLoopGateRelative = 1.0e-6f;
+
 class SharedSection {
 public:
 	/// ALLOCATE. Activate-time only. `withInner` gives the section the inner loop's own delay (Rust has no line of its own).
@@ -124,6 +131,9 @@ public:
 		}
 		innerLimiter_.prepare(rate_);
 		outerLimiter_.prepare(rate_);
+		gateFrames_ = static_cast<uint32_t>(kLoopGateSeconds * rate_);
+		fadeStartFrames_ = static_cast<uint32_t>(kLoopFadeStartSeconds * rate_);
+		fadeStep_ = static_cast<float>(std::exp(-1.0 / (kLoopFadeSeconds * rate_)));
 		smoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDustSmoothingSeconds * rate_)));
 		reset();
 	}
@@ -137,12 +147,15 @@ public:
 		outerLimiter_.reset();
 		outerGain_ = 0.0f;
 		placed_ = false;
+		quietFrames_ = 0;
+		loopScale_ = 1.0f;
+		gated_ = false;
 	}
 
 	/// THE FULL SCALE OF THE DOMAIN THE ENGINE WORKS IN: both limiters hold the fed-back level at or under it.
 	void setThreshold(float threshold) noexcept {
-		innerLimiter_.setThreshold(threshold);
-		outerLimiter_.setThreshold(threshold);
+		threshold_ = std::max(threshold, 1.0e-6f);
+		applyThreshold();
 	}
 
 	/// ON THE CONTROL GRID. `centreHz` is the engine's Freq: the emphasis's pivot or centre, Smear's centre, and the period
@@ -160,6 +173,8 @@ public:
 		m.hz = static_cast<float>(centreHz);
 		smear_.set(m);
 		loops_ = loops;
+		limitDivisor_ = pathGainAfterReturn(s, loops.inLoop);
+		applyThreshold();
 		// THE TUNED DELAYS ARE AS SET: a period of Freq, and that moved by Interval. The Smear's own delay (it is longer than
 		// a period at its centre) simply adds inside the loop, so the first return is not earlier than the tuned delay.
 		const double limit = static_cast<double>(outer_.capacity()) - 3.0;
@@ -176,6 +191,43 @@ public:
 	//----------------------------------------------------------------------------------------------//
 	// PER FRAME                                                                                      //
 	//----------------------------------------------------------------------------------------------//
+
+	/// **WHAT A SILENT INPUT DOES TO THE LOOPS. Call once a frame, with whether the device's input is exactly zero.** Two things,
+	/// both counted in frames, so any host block length gives the same bits.
+	///  - THE GATE: the input has been zero for `kLoopGateSeconds` and both loops' limiter envelopes are under -120 dB of the
+	///    threshold, so what circulates is nothing: both returns are forced to zero until the input comes back. (Without it a
+	///    loop whose gain sits at one, through a curve that is steeper away from zero than at it, can hover just over the
+	///    flush floor for ever.)
+	///  - THE FADE: with the loops now allowed to total more than one, a limiter-held self-oscillation has no gain to die by.
+	///    So once the input has been zero for `kLoopFadeStartSeconds`, both loops' gains are scaled by a factor that falls
+	///    exponentially (`kLoopFadeSeconds` per e-fold) and comes back, in a few milliseconds, with the input. Their product
+	///    is under one after a fraction of a second, whatever the settings, the loop dies, and the gate then ends it exactly.
+	void inputFrame(bool inputIsZero) noexcept {
+		if (!inputIsZero) {
+			quietFrames_ = 0;
+			gated_ = false;
+			loopScale_ = std::min(1.0f, loopScale_ + (1.0f - loopScale_) * smoothing_ + 1.0e-6f);
+			return;
+		}
+		if (quietFrames_ < UINT32_MAX) {
+			++quietFrames_;
+		}
+		if (quietFrames_ >= fadeStartFrames_ && loopScale_ > 0.0f) {
+			loopScale_ *= fadeStep_;
+			if (loopScale_ < 1.0e-9f) {
+				loopScale_ = 0.0f;
+			}
+		}
+		else if (quietFrames_ < fadeStartFrames_ && loopScale_ < 1.0f) {
+			loopScale_ = std::min(1.0f, loopScale_ + (1.0f - loopScale_) * smoothing_ + 1.0e-6f);
+		}
+		if (quietFrames_ >= gateFrames_) {
+			const float floor = threshold_ * kLoopGateRelative;
+			gated_ = innerLimiter_.envelope() <= floor && outerLimiter_.envelope() <= floor;
+		}
+	}
+	/// THE FACTOR BOTH LOOPS' GAINS ARE MULTIPLIED BY (exactly 1.0f unless the input has been silent a while).
+	[[nodiscard]] float loopScale() const noexcept { return gated_ ? 0.0f : loopScale_; }
 
 	[[nodiscard]] bool emphOn() const noexcept { return !emphasis_.neutral(); }
 	/// WITH THE EMPHASIS ON AND IN THE LOOP: the filter is after the sum.
@@ -225,8 +277,9 @@ public:
 		if (outerLimiter_.gain() < 1.0f) {
 			++limitedFrames_;
 		}
-		left += l * outerGain_;
-		right += r * outerGain_;
+		const float gain = outerGain_ * loopScale();
+		left += l * gain;
+		right += r * gain;
 	}
 	void outerWrite(float left, float right) noexcept { outer_.write(flush(left), flush(right)); }
 
@@ -249,6 +302,32 @@ public:
 	void limitInner(float& left, float& right) noexcept { innerLimiter_.process(left, right); }
 
 	[[nodiscard]] bool holdsSound() const noexcept { return outer_.holdsSound() || inner_.holdsSound(); }
+
+	/// **THE GAIN THE PATH AFTER A LOOP'S RETURN APPLIES, at the emphasis's peak** (1 when it applies none): a loop sitting on its
+	/// limiter holds the RETURN at the threshold, so the level that reaches the output is that times this. From the topology:
+	///  - NOT in the loop, Restore on: the return joins the sum after the emphasis in and meets only the inverse on its way out,
+	///    which is the boost of a cut (a tilt either way, a bell below zero): `gi`.
+	///  - In the loop, Restore off: the return meets the emphasis in and nothing takes it back: the boost, `gf` (a tilt either
+	///    way, a bell above zero).
+	///  - In the loop, Restore on: the tap is taken before the inverse, so the loop circulates through the emphasis in and the
+	///    engine meets the boost while the inverse only undoes it on the way out: also the boost, `gf`. (Measured: with 1 here a
+	///    howling loop under a +18 dB tilt in the loop came out 5 dB over the same loop with no emphasis; with `gf` it is within 2.)
+	///  - NOT in the loop, Restore off: the return meets neither: 1.
+	/// The limiters' thresholds are divided by it, so a howling loop comes out at about the same level whatever the emphasis.
+	[[nodiscard]] static double pathGainAfterReturn(const Settings& s, bool inLoop) noexcept {
+		const double db = std::clamp(static_cast<double>(s.emphAmount), -kEmphasisMaxDb, kEmphasisMaxDb);
+		if (!std::isfinite(db) || db == 0.0) {
+			return 1.0;
+		}
+		const double a = std::pow(10.0, std::abs(db) / 20.0);
+		const bool tilt = !s.emphBell;
+		const double forward = (tilt || db > 0.0) ? a : 1.0;
+		const double inverse = (tilt || db < 0.0) ? a : 1.0;
+		if (inLoop) {
+			return forward;
+		}
+		return s.emphRestore ? inverse : 1.0;
+	}
 
 	/// WHERE THE EMPHASIS IS TUNED: Freq moved by `offsetSemitones`, held to 20 Hz .. min(20 kHz, 0.45 of the rate). An
 	/// offset of exactly zero is Freq as it was, untouched, so the emphasis is the bits it was.
@@ -276,6 +355,9 @@ public:
 	[[nodiscard]] double innerFramesForTest() const noexcept { return innerFrames_; }
 	[[nodiscard]] double outerFramesForTest() const noexcept { return outerFrames_; }
 	[[nodiscard]] float outerGainForTest() const noexcept { return outerGain_; }
+	[[nodiscard]] float loopScaleForTest() const noexcept { return loopScale_; }
+	[[nodiscard]] bool gatedForTest() const noexcept { return gated_; }
+	[[nodiscard]] const LoopLimiter& innerLimiterForTest() const noexcept { return innerLimiter_; }
 	[[nodiscard]] float outerLimiterGainForTest() const noexcept { return outerLimiter_.gain(); }
 	/// THE LARGEST SAMPLE THE LAST OUTER RETURN CARRIED, after the limiter and before the gain.
 	[[nodiscard]] float lastOuterPeakForTest() const noexcept { return lastOuterPeak_; }
@@ -284,6 +366,12 @@ public:
 	[[nodiscard]] const LoopLimiter& outerLimiterForTest() const noexcept { return outerLimiter_; }
 
 private:
+	void applyThreshold() noexcept {
+		const auto t = static_cast<float>(static_cast<double>(threshold_) / limitDivisor_);
+		innerLimiter_.setThreshold(t);
+		outerLimiter_.setThreshold(t);
+	}
+
 	/// A tap below this is flushed, so a float loop reaches exact zero instead of circling in the denormals.
 	[[nodiscard]] static float flush(float x) noexcept { return std::abs(x) < 1.0e-9f ? 0.0f : x; }
 
@@ -303,6 +391,14 @@ private:
 	float lastOuterPeak_ = 0.0f;
 	uint64_t limitedFrames_ = 0;
 	bool placed_ = false;
+	float threshold_ = 1.0f;
+	double limitDivisor_ = 1.0;
+	uint32_t quietFrames_ = 0;
+	uint32_t gateFrames_ = 0;
+	uint32_t fadeStartFrames_ = 0;
+	float fadeStep_ = 1.0f;
+	float loopScale_ = 1.0f;
+	bool gated_ = false;
 };
 
 } // namespace feathers::fx::eroder

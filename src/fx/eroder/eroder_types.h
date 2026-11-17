@@ -234,6 +234,9 @@ inline constexpr double kDustMarginFrames = 2.0;
 inline constexpr double kDustFeedbackCeiling = 0.9;
 /// What the line may hold, in full scales: far above any signal, and a ceiling should the feedback ever run away.
 inline constexpr float kDustCeiling = 8.0f;
+/// A HARD CEILING ON THE WET, just before Mix (about +12 dBFS), in every engine. It is a safety for a self-oscillating loop, not
+/// a tone stage: anything smaller passes to the bit.
+inline constexpr float kWetCeiling = 4.0f;
 
 /// **DRIVE IS A GAIN INTO A SHAPER, FROM UNDER ITS KNEE TO FAR OVER IT**: 2^-3 at the bottom of the knob, where a
 /// full-scale signal sits in the shaper's straight part and comes out as it went in, to 2^4 at the top. So the
@@ -1463,23 +1466,10 @@ struct LoopDerived {
 	bool emphOn = false;
 	/// The inner feedback runs through the limiter: Driven, or the emphasis in the loop.
 	bool limitInner = false;
-	/// What the Driven tap's gain is divided by (the Drive's small-signal gain, never under one) and what the emphasis in the
-	/// loop divides both loops by (its peak gain).
-	double tapDivisor = 1.0;
-	double emphDivisor = 1.0;
-	/// The Drive's small-signal gain, never under one: what the OUTER loop (always a Driven tap) is divided by.
-	double driveDivisor = 1.0;
-	/// The inner loop's effective gain, signed, after both divisions.
+	/// The inner loop's gain, signed, as set: nothing is divided out of it.
 	double innerFeedback = 0.0;
-	/// `loop * kLoopMaxGain * (1 - |inner loop's gain as set|) / driveDivisor / emphDivisor`; exactly 0 at Loop 0. The inner loop's
-	/// gain as set is what it comes to through the Drive and the emphasis's peak, with both divisions put back.
+	/// `loop * kLoopMaxGain`; exactly 0 at Loop 0.
 	double loopGain = 0.0;
-	/// ETCH: the slots' small-signal gain (Series the product, Parallel one plus each one's excess), never under one, at the
-	/// controls' mixes. Both loops are divided by it, in addition to the Drive's and the emphasis's.
-	double slotDivisor = 1.0;
-	/// The steepest slope of each slot's curve as last scanned, 0 when not scanned: kept so an unmoved curve is not rescanned.
-	double slotSlopeA = 0.0;
-	double slotSlopeB = 0.0;
 	/// One period of Freq, and the outer delay: that times `2^(-interval / 12)`. Seconds, as set: the Smear's own delay adds inside the loop.
 	double periodSeconds = 0.0;
 	double outerSeconds = 0.0;
@@ -1572,19 +1562,9 @@ struct DustDerived {
 /// @param mix    the stage's own mix, for a caller that sets one; the Drive control itself is always at 1
 [[nodiscard]] DriveSettings deriveDrive(float drive, DriveMode mode, float shape, double sampleRate,
                                         const DriveSettings* reuse = nullptr, float mix = 1.0f) noexcept;
-/// THE STAGE'S GAIN FOR A VANISHING SIGNAL, make-up included; 1 when it is not run or not a curve.
-[[nodiscard]] double driveLoopGain(const DriveSettings& drive) noexcept;
-/// THE STEEPEST SLOPE A CURVE STAGE HAS AT ANY LEVEL up to twice full scale, make-up included (1 when it is not run or not a
-/// curve): a folder with a bias is steeper away from zero than at it, so the loop gain that matters is this, not the slope at
-/// rest. A scan of the curve; the stage's own mix is not in it.
-[[nodiscard]] double driveMaxSlope(const DriveSettings& drive) noexcept;
-/// THE EMPHASIS'S PEAK LINEAR GAIN: `10^(|dB| / 20)` where the shape boosts (a tilt always does, a bell only above zero), else 1.
-[[nodiscard]] double emphasisPeakGain(const Settings& settings) noexcept;
 /// @param centreHz   the engine's Freq (the Comb's own pitch)
-/// @param driveGain  `driveLoopGain` of the stage the Driven tap passes
-/// @param innerFeedbackRaw  the engine's inner loop gain before the Driven tap's and the emphasis's divisions, signed
-[[nodiscard]] LoopDerived deriveLoops(const Settings& settings, double centreHz, double driveGain,
-                                      double innerFeedbackRaw) noexcept;
+/// @param innerFeedbackRaw  the engine's inner loop gain, signed
+[[nodiscard]] LoopDerived deriveLoops(const Settings& settings, double centreHz, double innerFeedbackRaw) noexcept;
 
 /// **WHAT A `WetHighpass` RUNS ON**: off at the bottom of HP Wet, else the trapezoidal coefficients of a two-pole
 /// highpass at `hz`.

@@ -300,63 +300,18 @@ HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept {
 	return h;
 }
 
-double driveLoopGain(const DriveSettings& d) noexcept {
-	if (!d.driven || d.mix <= 0.0f || driveIsNotCurve(d.mode)) {
-		return 1.0;
-	}
-	return std::max(1.0, driveSlope(d.mode, d.shape) * static_cast<double>(d.gain) * static_cast<double>(d.norm));
-}
-
-double driveMaxSlope(const DriveSettings& d) noexcept {
-	if (!d.driven || driveIsNotCurve(d.mode)) {
-		return 1.0;
-	}
-	const double gain = static_cast<double>(d.gain);
-	const double norm = static_cast<double>(d.norm);
-	const double sh = static_cast<double>(d.shape);
-	const double h = std::min(0.01, 0.05 / std::max(gain, 1.0));
-	const auto value = [&](double x, bool right) {
-		if (d.mode == DriveMode::Paunch) {
-			const double y = std::tanh(gain * x) * norm;
-			return right ? y + 2.0 * sh * (x - y) : y;
-		}
-		const auto u = static_cast<float>(x * gain);
-		const float y = right ? shapeDriveRight(d.mode, u, d.shape, d.gain) : shapeDrive(d.mode, u, d.shape, d.gain);
-		return static_cast<double>(y) * norm;
-	};
-	double best = 1.0;
-	for (double x = -2.0; x < 2.0; x += h) {
-		for (const bool right : { false, true }) {
-			best = std::max(best, std::abs(value(x + h, right) - value(x, right)) / h);
-		}
-	}
-	return best;
-}
-
-double emphasisPeakGain(const Settings& s) noexcept {
-	const double db = std::clamp(static_cast<double>(s.emphAmount), -kEmphasisMaxDb, kEmphasisMaxDb);
-	if (db == 0.0 || (s.emphBell && db < 0.0)) {
-		return 1.0;
-	}
-	return std::pow(10.0, std::abs(db) / 20.0);
-}
-
-LoopDerived deriveLoops(const Settings& s, double centreHz, double driveGain, double innerFeedbackRaw) noexcept {
+LoopDerived deriveLoops(const Settings& s, double centreHz, double innerFeedbackRaw) noexcept {
 	LoopDerived l;
 	l.emphOn = std::isfinite(s.emphAmount) && s.emphAmount != 0.0f;
 	l.inLoop = s.emphInLoop && l.emphOn;
 	l.tapDriven = s.tapDriven;
 	l.limitInner = l.tapDriven || l.inLoop;
-	l.driveDivisor = std::max(1.0, driveGain);
-	l.tapDivisor = l.tapDriven ? l.driveDivisor : 1.0;
-	l.emphDivisor = l.inLoop ? emphasisPeakGain(s) : 1.0;
-	l.innerFeedback = innerFeedbackRaw / (l.tapDivisor * l.emphDivisor);
+	// NOTHING IS DIVIDED OUT: the inner loop is Resonance as set, the outer is Loop times `kLoopMaxGain`, whatever the Drive, the
+	// slots and an emphasis in the loop make of the level. The loops may total more than one and sit on their limiters, which
+	// hold the level; and a silent input ends any tail (`SharedSection::inputFrame`).
+	l.innerFeedback = innerFeedbackRaw;
 	const double loop = std::clamp(static_cast<double>(s.loop), 0.0, 1.0);
-	// THE INNER LOOP'S SHARE OF THE EDGE IS ITS GAIN AS IT WAS ASKED FOR: through the Drive (Driven) or round it (Clean) and
-	// at the emphasis's peak, the divisions put back, it is the raw gain (or less, under a Drive gain of under one). So the two
-	// loops together, loudest, stay under one.
-	const double innerAtPeak = std::min(std::abs(innerFeedbackRaw), 1.0);
-	l.loopGain = loop == 0.0 ? 0.0 : loop * kLoopMaxGain * (1.0 - innerAtPeak) / l.driveDivisor / l.emphDivisor;
+	l.loopGain = loop * kLoopMaxGain;
 	const double hz = std::max(centreHz, 1.0e-3);
 	l.periodSeconds = 1.0 / hz;
 	const double interval = std::clamp(static_cast<double>(s.loopInterval), -kLoopIntervalSemitones, kLoopIntervalSemitones);
@@ -450,10 +405,6 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	d.ring = s.mode == Mode::Rust;
 	// ETCH: two slots, each a stage of its own; the mix is the control's, and Follow scales it a frame at a time.
 	d.etch = s.mode == Mode::Etch;
-	const DriveSettings slotBeforeA = reuse != nullptr ? reuse->slotA : DriveSettings {};
-	const DriveSettings slotBeforeB = reuse != nullptr ? reuse->slotB : DriveSettings {};
-	const double slopeBeforeA = reuse != nullptr ? reuse->loops.slotSlopeA : 0.0;
-	const double slopeBeforeB = reuse != nullptr ? reuse->loops.slotSlopeB : 0.0;
 	if (d.etch) {
 		const DriveSettings beforeA = reuse != nullptr ? reuse->slotA : DriveSettings {};
 		const DriveSettings beforeB = reuse != nullptr ? reuse->slotB : DriveSettings {};
@@ -466,37 +417,16 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 
 	// RUST'S INNER LOOP IS A DELAY OF ITS OWN (`loops.h`), so it has Resonance too.
 	d.feedback = std::clamp(static_cast<double>(s.resonance), -1.0, 1.0) * kDustFeedbackCeiling;
-	// THE TAP DECIDES, FOR EVERY TYPE: Driven takes the feedback after the shaper, and its small-signal gain is taken back out of the
-	// loop, so no curve of it is steeper than the line's own feedback and a tail always dies. The emphasis in the loop
-	// divides it by its peak. Clean, with no emphasis in the loop, leaves it as it was.
-	d.loops = deriveLoops(s, d.freqHz, driveLoopGain(driveOf(d)), d.feedback);
-	if (d.etch) {
-		// EACH SLOT'S SMALL-SIGNAL GAIN, at the control's mix (Follow's gain only ever lowers the mix, and it is glided a frame
-		// at a time, not latched here, so the control's is the safe side). Types that are not curves count as one.
-		// THE SCAN IS COSTLY, so a slot whose curve has not moved since the last tick keeps the slope it had.
-		const auto sameCurve = [](const DriveSettings& x, const DriveSettings& y) {
-			return x.driven == y.driven && x.mode == y.mode && x.shape == y.shape && x.gain == y.gain && x.norm == y.norm;
-		};
-		const auto slotGain = [&](const DriveSettings& slot, const DriveSettings& before, double slopeBefore, double& slope) {
-			if (!slot.driven || driveIsNotCurve(slot.mode)) {
-				slope = 0.0;
-				return 1.0;
-			}
-			slope = (slopeBefore > 0.0 && sameCurve(slot, before)) ? slopeBefore : driveMaxSlope(slot);
-			if (slot.mix <= 0.0f) {
-				return 1.0;
-			}
-			const double g = std::max(driveSmallSignalGain(slot.mode, static_cast<double>(slot.gain), slot.shape), slope);
-			return std::max(1.0, 1.0 + static_cast<double>(slot.mix) * (g - 1.0));
-		};
-		const double gA = slotGain(d.slotA, slotBeforeA, slopeBeforeA, d.loops.slotSlopeA);
-		const double gB = slotGain(d.slotB, slotBeforeB, slopeBeforeB, d.loops.slotSlopeB);
-		d.loops.slotDivisor = d.slotParallel ? std::max(1.0, 1.0 + (gA - 1.0) + (gB - 1.0)) : gA * gB;
-		d.loops.innerFeedback /= d.loops.slotDivisor;
-		d.loops.loopGain /= d.loops.slotDivisor;
-	}
+	// THE TAP DECIDES, FOR EVERY TYPE: Driven takes the feedback after the shaper, Clean before it. Nothing is divided out of
+	// the loop either way (`deriveLoops`).
+	d.loops = deriveLoops(s, d.freqHz, d.feedback);
 	d.feedback = d.loops.innerFeedback;
-	// A SLOT CAN ADD GAIN THE LOOP DOES NOT DIVIDE OUT, so Etch's inner loop is limited whenever any stage of it runs.
+	// BOTH LOOPS RUN THROUGH THEIR LIMITER WHENEVER THEIR OWN GAIN IS NOT ZERO (the outer one always does, when it is on): the
+	// loops may now sit on it at high settings, and it is what holds them there. (The Comb's inner loop is the bank's own.)
+	if (d.feedback != 0.0) {
+		d.loops.limitInner = true;
+	}
+	// A SLOT ADDS GAIN, so Etch's inner loop is limited whenever any stage of it runs.
 	if (d.etch && (d.driven || (d.slotA.driven && d.slotA.mix > 0.0f) || (d.slotB.driven && d.slotB.mix > 0.0f))) {
 		d.loops.limitInner = true;
 	}
@@ -678,6 +608,8 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		// A NON-FINITE INPUT SAMPLE IS TREATED AS 0: the feedback would keep one for ever.
 		const float inL = std::isfinite(left[i]) ? left[i] : 0.0f;
 		const float inR = std::isfinite(right[i]) ? right[i] : 0.0f;
+		shared_.inputFrame(inL == 0.0f && inR == 0.0f);
+		const float loopScale = shared_.loopScale();
 
 		amountFrames_ = glide(amountFrames_, amountTarget, smoothing_);
 		feedback_ = glide(feedback_, feedbackTarget, smoothing_);
@@ -705,8 +637,8 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		float vL = aL;
 		float vR = aR;
 		if (!ownLoop || innerRuns) {
-			vL += fbL * feedback_;
-			vR += fbR * feedback_;
+			vL += fbL * (feedback_ * loopScale);
+			vR += fbR * (feedback_ * loopScale);
 		}
 		const bool outer = shared_.outerBegin();
 		if (outer) {
@@ -857,6 +789,10 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 				wetR += highpass_.taken(1, inR);
 			}
 		}
+
+		// THE SAFETY CEILING ON THE WET, before Mix (`kWetCeiling`): for a self-oscillating loop, not a tone stage.
+		wetL = std::clamp(wetL, -kWetCeiling, kWetCeiling);
+		wetR = std::clamp(wetR, -kWetCeiling, kWetCeiling);
 
 		// ETCH AT REST IS A TRUE BYPASS, at any Mix: nothing in the wet path runs, so the wet is the input and the input
 		// goes through as it is, rather than as two equal signals cross-faded.

@@ -359,6 +359,7 @@ public:
 	/// The gain of the last frame.
 	[[nodiscard]] float gain() const noexcept { return gain_; }
 	[[nodiscard]] float envelope() const noexcept { return env_; }
+	[[nodiscard]] float thresholdForTest() const noexcept { return threshold_; }
 
 private:
 	double rate_ = 48000.0;

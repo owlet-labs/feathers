@@ -2586,7 +2586,7 @@ TEST_CASE("Drive: the stage's own Mix — 0 is the bits that went in, 1 is the s
 	}
 }
 
-TEST_CASE("Tap: Clean feeds back what the head read, Driven what the shaper made — for every Type — with the shaper's gain taken back out of the loop") {
+TEST_CASE("Tap: Clean feeds back what the head read, Driven what the shaper made — for every Type — and neither divides the loop") {
 	for (const DriveMode type : kAllDrives) {
 		CAPTURE(static_cast<int>(type));
 		Settings s = declared();
@@ -2594,15 +2594,11 @@ TEST_CASE("Tap: Clean feeds back what the head read, Driven what the shaper made
 		s.driveMode = type;
 		s.driveShape = 1.0f;
 		s.drive = 1.0f;
-		const double gain = std::max(1.0, driveSmallSignalGain(type, 16.0, 1.0f));
-		// CLEAN IS THE LINE'S OWN FEEDBACK, whatever the Type; DRIVEN IS DIVIDED BY THE SHAPER'S SMALL-SIGNAL GAIN, never under one.
+		// THE TAP DECIDES WHAT IS FED BACK, NOT HOW MUCH: Clean and Driven both carry the line's own feedback as set, and at no
+		// Drive too. (Nothing is divided out.)
 		CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
 		s.tapDriven = true;
-		CHECK(std::abs(deriveDust(s, 60.0, kRate).feedback - 0.9 / gain) < 1.0e-7); // the stage's make-up is a float
-		if (type == DriveMode::Wreck || type == DriveMode::Jag) {
-			REQUIRE(gain > 1.0);
-		}
-		// AT NO DRIVE THE SHAPER IS NOT RUN, so there is nothing to divide by.
+		CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
 		s.drive = 0.0f;
 		CHECK(deriveDust(s, 60.0, kRate).feedback == 0.9);
 	}
@@ -2617,7 +2613,7 @@ TEST_CASE("Tap: Clean feeds back what the head read, Driven what the shaper made
 			Eroder e;
 			e.prepare(kRate);
 			Settings t = dustStill();
-			t.resonance = 1.0f;
+			t.resonance = 0.5f;
 			t.drive = 0.6f;
 			t.driveMode = mode;
 			t.tapDriven = driven;
@@ -2634,8 +2630,8 @@ TEST_CASE("Tap: Clean feeds back what the head read, Driven what the shaper made
 				const Dust& d = e.dustForTest();
 				tapped += d.lastTapForTest() == (driven ? d.lastShapedForTest() : d.lastReadForTest()) ? 1 : 0;
 				differ += d.lastShapedForTest() != d.lastReadForTest() ? 1 : 0;
-				// THE NEXT FRAME'S SUM SAW THIS FRAME'S TAP (flushed; the limiter is clear of it under one).
-				if (i > 0 && std::abs(previous) <= 0.99f) {
+				// THE NEXT FRAME'S SUM SAW THIS FRAME'S TAP (flushed), where the inner limiter was not acting (its gain is exactly 1).
+				if (i > 0 && std::abs(previous) <= 0.99f && d.sharedForTest().innerLimiterForTest().gain() == 1.0f) {
 					++counted;
 					fedBack += d.lastFedBackForTest() == (std::abs(previous) < 1.0e-9f ? 0.0f : previous) ? 1 : 0;
 				}
@@ -3591,7 +3587,7 @@ TEST_CASE("Comb: Heat is the same comb on a hotter signal — the device at no H
 	cold.prepare(kRate);
 	cold.setTarget(s);
 	Settings hotSettings = s;
-	hotSettings.heat = 3.0f / 7.0f; // three octaves: eight times
+	hotSettings.heat = 2.0f / 7.0f; // two octaves: four times (eight would carry the cold side's wet over the wet ceiling)
 	Eroder hot;
 	hot.prepare(kRate);
 	hot.setTarget(hotSettings);
@@ -3602,16 +3598,16 @@ TEST_CASE("Comb: Heat is the same comb on a hotter signal — the device at no H
 		float a = in[i];
 		float b = in[i];
 		hot.processStereo(&a, &b, 1);
-		float c = in[i] * 8.0f;
+		float c = in[i] * 4.0f;
 		float d = c;
 		cold.processStereo(&c, &d, 1);
-		// THE WET ALONE, each side: the hot device's, and the cold one's turned down by the same eight.
+		// THE WET ALONE, each side: the hot device's, and the cold one's turned down by the same four.
 		const double wetHot = static_cast<double>(a) - static_cast<double>(in[i]);
-		const double wetCold = (static_cast<double>(c) - static_cast<double>(in[i]) * 8.0) / 8.0;
+		const double wetCold = (static_cast<double>(c) - static_cast<double>(in[i]) * 4.0) / 4.0;
 		worst = std::max(worst, std::abs(wetHot - wetCold));
 		moved = std::max(moved, std::abs(wetHot));
 	}
-	CHECK(hot.combHeatForTest() == 8.0f);
+	CHECK(hot.combHeatForTest() == doctest::Approx(4.0f).epsilon(1.0e-6));
 	CHECK(cold.combHeatForTest() == 1.0f);
 	CHECK(moved > 0.01);
 	CHECK(worst < 1.0e-5);
@@ -3935,8 +3931,6 @@ TEST_CASE("Shared section: eight declared controls, stored by their keys, and at
 		CHECK_FALSE(sh.limitInner());
 		CHECK(sh.outerGainForTest() == 0.0f);
 		CHECK(loops.loopGain == 0.0);
-		CHECK(loops.tapDivisor == 1.0);
-		CHECK(loops.emphDivisor == 1.0);
 		CHECK_FALSE(sh.holdsSound());
 	}
 	// AND THE COMB'S INNER GAIN IS THE BANK'S, to the bit.
@@ -4467,7 +4461,7 @@ TEST_CASE("Outer loop: the limiter holds what is fed back at or under full scale
 	}
 }
 
-TEST_CASE("In Loop: it differs from off only with an emphasis and a loop; on, a +12 dB tilt and Loop at the top stay bounded and the loop gain is the restated divided value") {
+TEST_CASE("In Loop: it differs from off only with an emphasis and a loop; on, a +12 dB tilt and Loop at the top stay bounded and the loop gain is as set, nothing divided out") {
 	const std::vector<float> in = whiteInput(24000, 0.6f);
 	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
 		CAPTURE(static_cast<int>(mode));
@@ -4510,7 +4504,7 @@ TEST_CASE("In Loop: it differs from off only with an emphasis and a loop; on, a 
 		CHECK(peakOf(out) < 6.0f);
 		CHECK(peakOf(out) > 0.05f);
 
-		// THE LOOP GAIN IS THE RESTATED DIVIDED VALUE: loop * 0.98 * (1 - |inner|) / max(1, drive gain) / emphasis peak.
+		// NOTHING IS DIVIDED OUT: the inner gain is as set, the outer is Loop times 0.98, with a Driven tap and +12 dB in the loop.
 		Eroder e;
 		e.prepare(kRate);
 		e.setTarget(hot);
@@ -4519,22 +4513,10 @@ TEST_CASE("In Loop: it differs from off only with an emphasis and a loop; on, a 
 		e.processStereo(l.data(), r.data(), 4800);
 		const LoopDerived& loops = mode == Mode::Comb ? e.combLoopsForTest() : e.dustForTest().derivedForTest().loops;
 		const SharedSection& sh = mode == Mode::Comb ? e.combSharedForTest() : e.dustForTest().sharedForTest();
-		const double driveGain = std::max(1.0, driveSmallSignalGain(DriveMode::Soft, std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * 0.5), 0.0f));
-		const double peak = std::pow(10.0, 12.0 / 20.0);
 		const double rawInner = mode == Mode::Comb ? e.derivedForTest().feedback : 0.5 * kDustFeedbackCeiling;
-		const double inner = rawInner / driveGain / peak; // Driven tap, and the emphasis in the loop
-		CHECK(std::abs(loops.innerFeedback - inner) < 1.0e-6);
-		const double want = 1.0 * kLoopMaxGain * (1.0 - std::abs(rawInner)) / driveGain / peak;
-		CHECK(std::abs(loops.loopGain - want) < 1.0e-6);
-		CHECK(std::abs(static_cast<double>(sh.outerGainForTest()) - want) < 1.0e-6);
-		CHECK(loops.emphDivisor == doctest::Approx(peak));
-		// A BELL THAT CUTS DOES NOT DIVIDE.
-		Settings cut = hot;
-		cut.emphBell = true;
-		cut.emphAmount = -12.0f;
-		CHECK(emphasisPeakGain(cut) == 1.0);
-		cut.emphBell = false;
-		CHECK(emphasisPeakGain(cut) == doctest::Approx(peak));
+		CHECK(std::abs(loops.innerFeedback - rawInner) < 1.0e-9);
+		CHECK(std::abs(loops.loopGain - kLoopMaxGain) < 1.0e-9);
+		CHECK(std::abs(static_cast<double>(sh.outerGainForTest()) - kLoopMaxGain) < 1.0e-6);
 	}
 }
 
@@ -4969,7 +4951,7 @@ TEST_CASE("Etch's loops: the inner loop (Clean after the slots, Driven after the
 		s.drive = 0.3f;
 		s.driveMode = DriveMode::Decimate; // a gain of one: nothing to divide, so the restatement is the plain recurrence
 		// THE SLOTS' SMALL-SIGNAL GAIN IS DIVIDED OUT OF THE LOOP: the seam's divisor, checked on its own in the case below.
-		const double fb = 0.6 * kDustFeedbackCeiling / deriveDust(s, 60.0, kLoopRate).loops.slotDivisor;
+		const double fb = 0.6 * kDustFeedbackCeiling;
 		const std::vector<float> in = impulseOf(2048);
 		const std::vector<float> out = renderAt(kLoopRate, s, in);
 		const std::vector<float> want = restatedInner(s, fb, 32, driven, in);
@@ -5114,18 +5096,21 @@ TEST_CASE("Etch: the inner loop is limited whenever a slot or the Drive runs, an
 		SlotSettings slot;
 		float drive;
 		bool limited;
+		float resonance = 0.9f;
 	};
+	// THE INNER LIMITER IS ON WHENEVER THE INNER LOOP HAS A GAIN (Resonance not zero), and, at Resonance zero, when a stage runs.
 	const Case cases[] = {
-		{ "nothing runs", { 0.0f, DriveMode::Wreck, 0.6f, 1.0f }, 0.0f, false },
+		{ "nothing runs, at Resonance 0", { 0.0f, DriveMode::Wreck, 0.6f, 1.0f }, 0.0f, false, 0.0f },
+		{ "nothing runs but Resonance does", { 0.0f, DriveMode::Wreck, 0.6f, 1.0f }, 0.0f, true },
 		{ "a slot runs", { 0.9f, DriveMode::Wreck, 0.6f, 1.0f }, 0.0f, true },
-		{ "a slot at no Mix does not", { 0.9f, DriveMode::Wreck, 0.6f, 0.0f }, 0.0f, false },
+		{ "a slot at no Mix, at Resonance 0", { 0.9f, DriveMode::Wreck, 0.6f, 0.0f }, 0.0f, false, 0.0f },
 		{ "the Drive runs", { 0.0f, DriveMode::Wreck, 0.6f, 1.0f }, 0.8f, true },
 	};
 	for (const Case& c : cases) {
 		CAPTURE(c.what);
 		Settings s = etchBase();
-		s.resonance = 0.9f;
-		s.tapDriven = false; // Clean: no Drive division, and nothing else would put the limiter in
+		s.resonance = c.resonance;
+		s.tapDriven = false; // Clean: no Drive division
 		s.slotA = c.slot;
 		s.drive = c.drive;
 		s.driveMode = DriveMode::Fold;
@@ -5148,75 +5133,508 @@ TEST_CASE("Etch: the inner loop is limited whenever a slot or the Drive runs, an
 	}
 }
 
-TEST_CASE("Etch: both loops are divided by the slots' small-signal gain — Series the product, Parallel one plus each excess — and the loop's own gain is under one") {
+TEST_CASE("Etch: the slots' gain is not divided out of either loop — Resonance as set, Loop times 0.98 — in Series and in Parallel") {
 	for (const bool parallel : { false, true }) {
 		CAPTURE(parallel);
 		Settings s = everythingOn(Mode::Etch, DriveMode::Wreck);
 		s.resonance = 0.9f;
-		s.tapDriven = false; // Clean: the Drive does not divide, so the slots' divisor is the whole of it
+		s.tapDriven = false;
 		s.drive = 0.0f;
 		s.emphAmount = 0.0f;
 		s.slotA = { 0.9f, DriveMode::Fold, 0.6f, 1.0f };
 		s.slotB = { 0.9f, DriveMode::Wreck, 0.6f, 0.7f };
 		s.slotParallel = parallel;
-		// RESTATED: the steepest slope of the slot's curve at any level up to twice full scale, by a fine scan of the public
-		// curve (a folder with a bias is steeper away from zero than at it), the make-up in.
-		const auto gain = [&](const SlotSettings& x) {
-			const DriveSettings d = deriveDrive(x.amount, x.type, x.shape, kRate, nullptr, x.mix);
-			double steepest = 1.0;
-			const double h = 0.0002;
-			const auto at = [&](double v) {
-				return static_cast<double>(shapeDrive(d.mode, static_cast<float>(v * d.gain), d.shape, d.gain)) * d.norm;
-			};
-			for (double v = -2.0; v < 2.0; v += h) {
-				steepest = std::max(steepest, std::abs(at(v + h) - at(v)) / h);
-			}
-			return std::max(1.0, 1.0 + static_cast<double>(x.mix) * (std::max(steepest, driveSmallSignalGain(d.mode, d.gain, d.shape)) - 1.0));
-		};
-		const double gA = gain(s.slotA);
-		const double gB = gain(s.slotB);
-		const double want = parallel ? std::max(1.0, 1.0 + (gA - 1.0) + (gB - 1.0)) : gA * gB;
-		CHECK(want > 3.0);
-		const DustDerived d = deriveDust(s, 60.0, kRate);
-		CHECK(d.loops.slotDivisor == doctest::Approx(want).epsilon(0.03));
 		const double raw = static_cast<double>(0.9f) * kDustFeedbackCeiling;
-		CHECK(d.loops.innerFeedback == doctest::Approx(raw / d.loops.slotDivisor).epsilon(1.0e-9));
+		const DustDerived d = deriveDust(s, 60.0, kRate);
+		CHECK(d.loops.innerFeedback == doctest::Approx(raw).epsilon(1.0e-9));
 		CHECK(d.feedback == d.loops.innerFeedback);
-		// THE LOOP'S OWN SMALL-SIGNAL GAIN: the divided feedback times the slots' gain, under one.
-		const double loopGain = std::abs(d.loops.innerFeedback) * want;
-		measured("etch inner loop small-signal gain, resonance 0.9", loopGain);
-		CHECK(loopGain < 1.0);
-		// AND THE OUTER LOOP, at the restated value.
-		s.loop = 1.0f;
-		const DustDerived o = deriveDust(s, 60.0, kRate);
-		CHECK(o.loops.loopGain == doctest::Approx(kLoopMaxGain * (1.0 - raw) / o.loops.slotDivisor).epsilon(1.0e-9));
-		// A SLOT AT NO AMOUNT, AND ONE THAT IS NOT A CURVE, DIVIDE BY ONE.
-		s.slotA.amount = 0.0f;
-		s.slotB.type = DriveMode::Slew;
-		CHECK(deriveDust(s, 60.0, kRate).loops.slotDivisor == 1.0);
+		CHECK(d.loops.loopGain == doctest::Approx(kLoopMaxGain).epsilon(1.0e-9));
+		CHECK(d.loops.limitInner);
+		// NON-VACUITY: the slots really do have gain at rest, so the old law would have divided by something.
+		const DriveSettings a = deriveDrive(s.slotA.amount, s.slotA.type, s.slotA.shape, kRate, nullptr, s.slotA.mix);
+		CHECK(driveSmallSignalGain(a.mode, a.gain, a.shape) > 2.0);
 	}
 }
 
-TEST_CASE("Etch: a slot's scanned slope is kept while its curve is unchanged, and rescanned when its shape moves") {
-	Settings s = everythingOn(Mode::Etch, DriveMode::Wreck);
-	s.tapDriven = false;
-	s.drive = 0.0f;
-	s.emphAmount = 0.0f;
-	s.slotA = { 0.9f, DriveMode::Fold, 0.6f, 1.0f };
-	s.slotB = { 0.0f, DriveMode::Fold, 0.0f, 0.0f };
-	const DustDerived fresh = deriveDust(s, 60.0, kRate, nullptr);
-	REQUIRE(fresh.loops.slotSlopeA > 1.0);
-	// UNCHANGED: reusing the last tick's result gives the very same slope and divisor.
-	const DustDerived again = deriveDust(s, 60.0, kRate, &fresh);
-	REQUIRE(again.loops.slotSlopeA == fresh.loops.slotSlopeA);
-	REQUIRE(again.loops.slotDivisor == fresh.loops.slotDivisor);
-	// CHANGED SHAPE: the cache must not go stale; the slope is what a fresh derive of the new settings gives.
-	Settings moved = s;
-	moved.slotA.shape = 0.1f;
-	const DustDerived want = deriveDust(moved, 60.0, kRate, nullptr);
-	const DustDerived got = deriveDust(moved, 60.0, kRate, &again);
-	CHECK(got.loops.slotSlopeA == want.loops.slotSlopeA);
-	CHECK(got.loops.slotDivisor == want.loops.slotDivisor);
-	// NOT VACUOUS: the shape did move the slope.
-	CHECK(want.loops.slotSlopeA != fresh.loops.slotSlopeA);
+
+//--------------------------------------------------------------------------------------------------//
+// HOTTER LOOPS: THE REST GAIN DIVIDED OUT, THE LIMITERS HOLD THE REST, A SILENT INPUT ENDS THE TAIL.    //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// RESO 100%, LOOP 100%, TAP DRIVEN, DRIVE HIGH, for one engine and Type: the loops' small-signal gains total over one.
+Settings hotLoops(Mode mode, DriveMode type, float drive = 1.0f) {
+	Settings s = everythingOn(mode, type);
+	s.resonance = 1.0f;
+	s.loop = 1.0f;
+	s.tapDriven = true;
+	s.drive = drive;
+	s.smear = 0.0f;
+	if (mode == Mode::Etch) {
+		s.slotA = { 0.9f, DriveMode::Fold, 0.6f, 1.0f };
+		s.slotB = { 0.9f, DriveMode::Wreck, 0.6f, 1.0f };
+	}
+	return s;
+}
+
+} // namespace
+
+TEST_CASE("Hotter loops: the outer gain is Loop times 0.98 and the inner is Resonance as set, whatever the Drive, the emphasis in the loop and the slots") {
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		Settings s = declared();
+		s.mode = mode;
+		s.resonance = 0.4f;
+		s.loop = 1.0f;
+		s.tapDriven = true;
+		s.drive = 0.8f;
+		s.driveMode = DriveMode::Soft;
+		s.emphAmount = 6.0f;
+		s.emphInLoop = true;
+		if (mode == Mode::Etch) {
+			s.slotA = { 0.9f, DriveMode::Fold, 0.6f, 1.0f };
+		}
+		const DustDerived d = deriveDust(s, 60.0, kRate);
+		// RESTATED: 0.98 at Loop 1 and Resonance 0.4 of the ceiling, with a Drive that has gain, +6 dB in the loop and a slot.
+		const DriveSettings drive = deriveDrive(0.8f, DriveMode::Soft, 0.0f, kRate, nullptr);
+		REQUIRE(driveSmallSignalGain(drive.mode, drive.gain, drive.shape) > 1.5); // NON-VACUOUS: there was something to divide by
+		CHECK(d.loops.loopGain == 0.98);
+		CHECK(d.loops.innerFeedback == static_cast<double>(0.4f) * kDustFeedbackCeiling);
+		CHECK(d.feedback == static_cast<double>(0.4f) * kDustFeedbackCeiling);
+		s.loop = 0.5f;
+		CHECK(deriveDust(s, 60.0, kRate).loops.loopGain == 0.5 * kLoopMaxGain);
+		s.loop = 0.0f;
+		CHECK(deriveDust(s, 60.0, kRate).loops.loopGain == 0.0);
+	}
+}
+
+TEST_CASE("Hotter loops: both limiters are on whenever their loop has a gain, and at high settings they act and the output stays bounded") {
+	// THE FLAGS: Resonance alone puts the inner limiter on (Clean tap, no emphasis); the outer one runs with the loop.
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Etch }) {
+		Settings s = declared();
+		s.mode = mode;
+		CHECK_FALSE(deriveDust(s, 60.0, kRate).loops.limitInner);
+		s.resonance = 0.2f;
+		CHECK(deriveDust(s, 60.0, kRate).loops.limitInner);
+	}
+	const std::vector<float> in = sine(220.0, 48000, 0.5f);
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		// DRIVE OFF: nothing is divided out, so the loops total 0.9 + 0.98 and sit on the limiter (Etch's slots divide theirs).
+		Settings s = hotLoops(mode, DriveMode::Soft, 0.0f);
+		s.rustBias = 1.0f; // Rust's multiplier lets the signal through whole, so its loops are as hot as Dust's
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l = in;
+		std::vector<float> r = in;
+		float peak = 0.0f;
+		const SharedSection& sh = mode == Mode::Comb ? e.combSharedForTest() : e.dustForTest().sharedForTest();
+		for (size_t done = 0; done < l.size(); done += 32) {
+			e.processStereo(l.data() + done, r.data() + done, 32);
+		}
+		for (const float v : l) {
+			REQUIRE(std::isfinite(v));
+			peak = std::max(peak, std::abs(v));
+		}
+		measured("hot loops, steady output peak on a 0.5 sine", peak);
+		measured("hot loops, frames the outer limiter acted on", static_cast<double>(sh.limitedFramesForTest()));
+		if (mode == Mode::Dust || mode == Mode::Rust) { // (the Comb's gain is the bank's, Etch's slots divide theirs)
+			CHECK(sh.limitedFramesForTest() > 1000); // the limiter engaged: the loop sits on it
+		}
+		CHECK(peak < 8.0f);
+		CHECK(peak > 0.05f);
+	}
+}
+
+namespace {
+
+/// THE WORST SETTINGS the loops can be given: Reso 100%, Loop 100%, Drive at maximum, an emphasis of +18 dB in the loop, either
+/// Tap, a Type as the Drive and (in Etch) as both slots.
+Settings worstLoops(Mode mode, DriveMode type, bool tapDriven, bool bell) {
+	Settings s = hotLoops(mode, type, 1.0f);
+	s.tapDriven = tapDriven;
+	s.emphAmount = 18.0f;
+	s.emphBell = bell;
+	s.emphInLoop = true;
+	s.mix = 1.0f;
+	s.blend = true; // the Comb's dry is whole unless Blend: at Mix 1 with Blend the output is the wet alone
+	s.rustBias = 1.0f;
+	if (mode == Mode::Etch) {
+		s.slotA = { 1.0f, type, 0.6f, 1.0f };
+		s.slotB = { 1.0f, type, 0.6f, 1.0f };
+	}
+	return s;
+}
+
+constexpr DriveMode kEveryType[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
+	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Paunch,   DriveMode::Crush,
+	                                 DriveMode::Decimate, DriveMode::Slew, DriveMode::Lopside };
+
+} // namespace
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound") {
+	constexpr double kBoundSeconds = 8.0;
+	double worst = 0.0;
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		for (const DriveMode type : kEveryType) {
+			for (const bool driven : { false, true }) {
+				for (const bool bell : { false, true }) {
+					CAPTURE(static_cast<int>(mode));
+					CAPTURE(static_cast<int>(type));
+					CAPTURE(driven);
+					CAPTURE(bell);
+					const Settings s = worstLoops(mode, type, driven, bell);
+					const size_t inFrames = 24000;
+					const size_t total = inFrames + static_cast<size_t>((kBoundSeconds + 1.0) * kRate);
+					std::vector<float> l = whiteInput(inFrames, 0.9f);
+					l.resize(total, 0.0f);
+					std::vector<float> r = l;
+					Eroder e;
+					e.prepare(kRate);
+					e.setTarget(s);
+					for (size_t done = 0; done < total; done += 480) {
+						e.processStereo(l.data() + done, r.data() + done, 480);
+					}
+					size_t last = 0;
+					for (size_t i = 0; i < total; ++i) {
+						REQUIRE(std::isfinite(l[i]));
+						REQUIRE(std::isfinite(r[i]));
+						if (l[i] != 0.0f || r[i] != 0.0f) {
+							last = i;
+						}
+					}
+					const double tail = static_cast<double>(last > inFrames ? last - inFrames : 0) / kRate;
+					worst = std::max(worst, tail);
+					CHECK(tail < kBoundSeconds);
+					CHECK(last < total - static_cast<size_t>(kRate));
+				}
+			}
+		}
+	}
+	measured("worst-settings tail, the longest over every combination, seconds", worst);
+}
+
+TEST_CASE("Hotter loops: a howling loop comes out at about the same level whatever the emphasis, and 0 dB leaves the limiters' thresholds as they were") {
+	// THE FOUR COMBINATIONS OF In Loop AND Restore, by the sign and shape of the amount (restated from the topology).
+	const double a18 = std::pow(10.0, 18.0 / 20.0);
+	const auto gain = [&](float db, bool bell, bool inLoop, bool restore) {
+		Settings s = declared();
+		s.emphAmount = db;
+		s.emphBell = bell;
+		s.emphRestore = restore;
+		return SharedSection::pathGainAfterReturn(s, inLoop && db != 0.0f);
+	};
+	CHECK(gain(-18.0f, false, false, true) == doctest::Approx(a18));  // out of the loop, Restore on: the inverse's boost
+	CHECK(gain(18.0f, false, false, true) == doctest::Approx(a18));   // a tilt boosts either way
+	CHECK(gain(18.0f, true, false, true) == 1.0);                     // a bell boost is cut by its inverse
+	CHECK(gain(-18.0f, true, false, true) == doctest::Approx(a18));   // a bell cut is boosted by its inverse
+	CHECK(gain(-18.0f, false, false, false) == 1.0);                  // no Restore, out of the loop: nothing after the return
+	CHECK(gain(18.0f, false, true, false) == doctest::Approx(a18));   // in the loop, no Restore: the emphasis's boost stays
+	CHECK(gain(-18.0f, true, true, false) == 1.0);                    // a bell cut in the loop does not boost
+	CHECK(gain(18.0f, false, true, true) == doctest::Approx(a18));    // in the loop with Restore: the tap is before the inverse
+	CHECK(gain(0.0f, false, false, true) == 1.0);
+	CHECK(gain(0.0f, true, true, false) == 1.0);
+
+	// AT 0 dB the thresholds are as they were, whatever In Loop, Restore and the shape say.
+	for (const bool inLoop : { false, true }) {
+		for (const bool restore : { false, true }) {
+			Settings s = declared();
+			s.resonance = 0.9f;
+			s.loop = 1.0f;
+			s.emphAmount = 0.0f;
+			s.emphInLoop = inLoop;
+			s.emphRestore = restore;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			std::vector<float> l = whiteInput(960, 0.5f);
+			std::vector<float> r = l;
+			e.processStereo(l.data(), r.data(), 960);
+			CHECK(e.dustForTest().sharedForTest().outerLimiterForTest().thresholdForTest() == 1.0f);
+			CHECK(e.dustForTest().sharedForTest().innerLimiterForTest().thresholdForTest() == 1.0f);
+		}
+	}
+
+	// THE HOWLING LOOP: Dust, Reso 0.9, Loop 1, Drive 0 (the limiter was at -7 dB there). Steady peak on a 0.5 sine.
+	const std::vector<float> in = sine(220.0, 96000, 0.5f);
+	struct Case {
+		const char* what;
+		float db;
+		bool inLoop;
+		bool restore;
+	};
+	const Case cases[] = {
+		{ "0 dB", 0.0f, false, true },
+		{ "-18 dB Tilt + Restore", -18.0f, false, true },
+		{ "+18 dB Tilt + Restore", 18.0f, false, true },
+		{ "+18 dB Tilt In Loop", 18.0f, true, true },
+		{ "+18 dB Tilt In Loop, no Restore", 18.0f, true, false },
+	};
+	double lowest = 1.0e9;
+	double highest = 0.0;
+	for (const Case& c : cases) {
+		Settings s = declared();
+		s.mix = 1.0f;
+		s.resonance = 0.9f;
+		s.loop = 1.0f;
+		s.emphAmount = c.db;
+		s.emphInLoop = c.inLoop;
+		s.emphRestore = c.restore;
+		const std::vector<float> out = renderAt(kRate, s, in);
+		const std::vector<float> steady(out.begin() + 48000, out.end());
+		const double peak = static_cast<double>(peakOf(steady));
+		measured(c.what, peak);
+		CAPTURE(c.what);
+		CHECK(peak > 0.1);
+		// (NO RESTORE IS NOT IN THE SPREAD: a +18 dB tilt left in the sound is a tone change, its lows 18 dB down, not a level.)
+		if (c.restore) {
+			lowest = std::min(lowest, peak);
+			highest = std::max(highest, peak);
+		}
+	}
+	const double spreadDb = 20.0 * std::log10(highest / lowest);
+	measured("howling loop, spread between the emphasis settings, dB", spreadDb);
+	CHECK(spreadDb <= 3.0); // asked for within 6 dB; measured 1.9 dB with the scaling and 5.3 dB without, so 3 is what tells them apart
+}
+
+TEST_CASE("Hotter loops: the output stays under its bound while a 0.5 sine or noise plays at the worst settings, in every engine") {
+	// THE BOUND, FROM THE PARTS. Each loop's return is held by its limiter to the threshold (1.0 in Dust, Rust and Etch), so what
+	// reaches the engine is at most the input (0.5) plus 0.9 of one return and 0.98 of the other: R = 2.38. The slots and the
+	// Drive then take that through their curves: a curve's output is the largest `|curve(x * gain)| * make-up` over |x| <= R (a
+	// scan), and a stage that is not a curve gives back at most R (plus a step's rounding). The emphasis's inverse then gives
+	// the lows up to its +18 dB back (x 7.94), and Mix 1 puts the wet out whole. The emphasis is in the loop, so the sum meets it
+	// (x 7.94 at most) before the slots and the Drive: a stage that is not a curve does not hold that down.
+	const double inverse = std::pow(10.0, 18.0 / 20.0);
+	const double R = (0.5 + 0.9 + kLoopMaxGain) * inverse;
+	const auto stage = [](const DriveSettings& d, double reach) {
+		if (!d.driven || driveIsNotCurve(d.mode)) {
+			return reach * 1.05;
+		}
+		double best = 0.0;
+		for (double x = -reach; x <= reach; x += reach / 4000.0) {
+			best = std::max(best, std::abs(static_cast<double>(shapeDrive(d.mode, static_cast<float>(x * d.gain), d.shape, d.gain)) * d.norm));
+			best = std::max(best, std::abs(static_cast<double>(shapeDriveRight(d.mode, static_cast<float>(x * d.gain), d.shape, d.gain)) * d.norm));
+		}
+		return best;
+	};
+	double highest = 0.0;
+	double tightest = 1.0e9;
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		double modeHighest = 0.0;
+		for (const DriveMode type : kEveryType) {
+			for (const bool driven : { false, true }) {
+				for (const bool bell : { false, true }) {
+					CAPTURE(static_cast<int>(mode));
+					CAPTURE(static_cast<int>(type));
+					CAPTURE(driven);
+					CAPTURE(bell);
+					const Settings s = worstLoops(mode, type, driven, bell);
+					double reach = R;
+					if (mode == Mode::Etch) {
+						const DriveSettings a = deriveDrive(s.slotA.amount, s.slotA.type, s.slotA.shape, kRate, nullptr, s.slotA.mix);
+						const DriveSettings b = deriveDrive(s.slotB.amount, s.slotB.type, s.slotB.shape, kRate, nullptr, s.slotB.mix);
+						reach = stage(b, stage(a, reach));
+					}
+					const double bound = inverse * stage(deriveDrive(s.drive, s.driveMode, s.driveShape, kRate, nullptr), reach);
+					for (const bool noise : { false, true }) {
+						const std::vector<float> in = noise ? whiteInput(48000, 0.5f) : sine(220.0, 48000, 0.5f);
+						Eroder e;
+						e.prepare(kRate);
+						e.setTarget(s);
+						std::vector<float> out = in;
+						std::vector<float> outR = in;
+						float fedBack = 0.0f;
+						for (size_t done = 0; done < out.size(); done += 32) {
+							e.processStereo(out.data() + done, outR.data() + done, 32);
+							if (mode != Mode::Comb) {
+								fedBack = std::max(fedBack, std::abs(e.dustForTest().lastFedBackForTest()));
+							}
+						}
+						float peak = 0.0f;
+						for (const float v : out) {
+							REQUIRE(std::isfinite(v));
+							peak = std::max(peak, std::abs(v));
+						}
+						// THE INNER LIMITER HOLDS WHAT THE INNER LOOP RETURNS to its threshold, at any gain the loop is given.
+						CHECK(fedBack <= 1.000001f);
+						highest = std::max(highest, static_cast<double>(peak));
+						modeHighest = std::max(modeHighest, static_cast<double>(peak));
+						tightest = std::min(tightest, bound - static_cast<double>(peak));
+						CHECK(static_cast<double>(peak) <= bound);
+						// AND THE CEILING: at Mix 1 the output is the wet alone, which the safety holds to +-4 whatever the loops do.
+						CHECK(static_cast<double>(peak) <= 4.0);
+					}
+				}
+			}
+		}
+		char what[80];
+		std::snprintf(what, sizeof what, "worst-settings output peak, engine %d", static_cast<int>(mode));
+		measured(what, modeHighest);
+	}
+	measured("worst-settings output peak, the highest over every combination", highest);
+	measured("worst-settings output peak, the least headroom under the derived bound", tightest);
+}
+
+TEST_CASE("Hotter loops: measured — steady output peak and limiter gain reduction on a 0.5 sine, over Reso, Loop, Drive and Tap, in Dust and Etch") {
+	// A TABLE FOR READING (FEATHERS_MEASURE=1): how much of the knob range sits on the limiters. The assertion is that every row is finite and bounded.
+	const std::vector<float> in = sine(220.0, 96000, 0.5f);
+	const auto driveFor12Db = static_cast<float>((2.0 - kDriveLog2Min) / (kDriveLog2Max - kDriveLog2Min));
+	for (const Mode mode : { Mode::Dust, Mode::Etch }) {
+		for (const float reso : { 0.5f, 0.9f }) {
+			for (const float loop : { 0.0f, 1.0f }) {
+				for (const float drive : { 0.0f, driveFor12Db }) {
+					for (const bool driven : { false, true }) {
+						Settings s = declared();
+						s.mode = mode;
+						s.mix = 1.0f;
+						s.resonance = reso;
+						s.loop = loop;
+						s.tapDriven = driven;
+						s.drive = drive;
+						s.driveMode = DriveMode::Soft;
+						if (mode == Mode::Etch) {
+							s.slotA = { 0.5f, DriveMode::Wreck, 0.3f, 1.0f };
+						}
+						Eroder e;
+						e.prepare(kRate);
+						e.setTarget(s);
+						std::vector<float> l = in;
+						std::vector<float> r = in;
+						float peak = 0.0f;
+						float lowestGain = 1.0f;
+						const SharedSection& sh = e.dustForTest().sharedForTest();
+						for (size_t i = 0; i < l.size(); ++i) {
+							e.processStereo(l.data() + i, r.data() + i, 1);
+							if (i >= 48000) {
+								peak = std::max(peak, std::abs(l[i]));
+								lowestGain = std::min({ lowestGain, sh.outerLimiterGainForTest(), sh.innerLimiterForTest().gain() });
+							}
+						}
+						char what[160];
+						std::snprintf(what, sizeof what, "%s reso %.1f loop %.0f drive %s tap %s: peak / limiter dB", mode == Mode::Dust ? "Dust" : "Etch",
+						              static_cast<double>(reso), static_cast<double>(loop), drive == 0.0f ? "0" : "+12", driven ? "Driven" : "Clean");
+						measured(what, static_cast<double>(peak));
+						std::snprintf(what, sizeof what, "%s reso %.1f loop %.0f drive %s tap %s: limiter gain reduction dB", mode == Mode::Dust ? "Dust" : "Etch",
+						              static_cast<double>(reso), static_cast<double>(loop), drive == 0.0f ? "0" : "+12", driven ? "Driven" : "Clean");
+						measured(what, 20.0 * std::log10(static_cast<double>(lowestGain)));
+						CHECK(std::isfinite(peak));
+						CHECK(peak < 8.0f);
+					}
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE("Hotter loops: with the input silent the limiter-held loop dies — Reso 100%, Loop 100%, Tap Driven, Drive high, every engine — to exact zero within a bound") {
+	// THE BOUND: the fade starts after kLoopFadeStartSeconds, falls by e every kLoopFadeSeconds, and the delay lines then play out.
+	constexpr double kBoundSeconds = 8.0;
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		for (const DriveMode type : { DriveMode::Soft, DriveMode::Fold, DriveMode::Wreck, DriveMode::Slew }) {
+		for (const float drive : { 0.0f, 1.0f }) {
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(static_cast<int>(type));
+			CAPTURE(drive);
+			const Settings s = hotLoops(mode, type, drive);
+			const size_t inFrames = 24000;
+			const size_t total = inFrames + static_cast<size_t>((kBoundSeconds + 2.0) * kRate);
+			std::vector<float> l = whiteInput(inFrames, 0.9f);
+			l.resize(total, 0.0f);
+			std::vector<float> r = l;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			size_t last = 0;
+			float heldPeak = 0.0f;
+			for (size_t done = 0; done < total; done += 480) {
+				e.processStereo(l.data() + done, r.data() + done, 480);
+			}
+			for (size_t i = 0; i < total; ++i) {
+				if (l[i] != 0.0f || r[i] != 0.0f) {
+					last = i;
+				}
+				if (i > inFrames && i < inFrames + static_cast<size_t>(0.5 * kRate)) {
+					heldPeak = std::max(heldPeak, std::abs(l[i]));
+				}
+			}
+			const double tailSeconds = static_cast<double>(last > inFrames ? last - inFrames : 0) / kRate;
+			measured("hot loops tail, seconds after the input stopped", tailSeconds);
+			CHECK(heldPeak > 0.002f); // NON-VACUITY: the loop was ringing when the input stopped
+			CHECK(tailSeconds < kBoundSeconds);
+			CHECK(last < total - static_cast<size_t>(kRate)); // and the last second is exactly zero
+		}
+		}
+	}
+}
+
+TEST_CASE("Hotter loops: the silent-input rules are partition-proof, the fade comes back with the input, and the gate closes only on a quiet loop") {
+	Settings s = hotLoops(Mode::Dust, DriveMode::Fold);
+	const size_t total = static_cast<size_t>(6.0 * kRate);
+	std::vector<float> in = whiteInput(12000, 0.8f);
+	in.resize(total, 0.0f);
+	// A SECOND BURST after the fade has run down, so the scale must come back for the loop to ring again.
+	const std::vector<float> burst = whiteInput(6000, 0.8f);
+	std::copy(burst.begin(), burst.end(), in.begin() + static_cast<std::ptrdiff_t>(4.5 * kRate));
+	const auto run = [&](int block, float* scaleAtEnd) {
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l = in;
+		std::vector<float> r = in;
+		for (size_t done = 0; done < total;) {
+			const size_t take = std::min<size_t>(static_cast<size_t>(block), total - done);
+			e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+			done += take;
+		}
+		if (scaleAtEnd != nullptr) {
+			*scaleAtEnd = e.dustForTest().sharedForTest().loopScaleForTest();
+		}
+		return l;
+	};
+	float scale = 0.0f;
+	const std::vector<float> whole = run(480, &scale);
+	CHECK(run(1, nullptr) == whole);
+	CHECK(run(37, nullptr) == whole);
+	// THE SECOND BURST RANG: the loop was open again.
+	float second = 0.0f;
+	for (size_t i = static_cast<size_t>(4.5 * kRate) + 6000; i < static_cast<size_t>(4.5 * kRate) + 24000; ++i) {
+		second = std::max(second, std::abs(whole[i]));
+	}
+	measured("after the second burst, ring peak", second);
+	CHECK(second > 0.01f);
+	// AT THE END (1.5 s of silence after the burst, more than the fade's start) the scale is below one.
+	CHECK(scale < 1.0f);
+
+	// THE GATE DOES NOT CLOSE ON A LOUD LOOP: a section whose limiter envelope is high stays open with the input silent.
+	SharedSection sh;
+	sh.prepare(kRate, true);
+	sh.setThreshold(1.0f);
+	const Settings on = hotLoops(Mode::Dust, DriveMode::Soft);
+	sh.set(on, deriveLoops(on, 800.0, 0.5), 800.0);
+	// A LOUD LOOP: the return is written loud every frame and read back, the input silent throughout.
+	for (int i = 0; i < 2000; ++i) {
+		(void)sh.outerBegin();
+		float a = 0.0f;
+		float b = 0.0f;
+		sh.outerReturn(a, b);
+		sh.outerWrite(0.9f, 0.9f);
+		sh.inputFrame(true);
+	}
+	CHECK_FALSE(sh.gatedForTest());
+	CHECK(sh.loopScale() == 1.0f);
+	// AND IT CLOSES ONCE THE ENVELOPE HAS RELEASED: 50 ms per e-fold, 14 e-folds to -120 dB.
+	for (int i = 0; i < static_cast<int>(0.9 * kRate); ++i) {
+		float a = 0.0f;
+		float b = 0.0f;
+		sh.outerReturn(a, b);
+		sh.outerWrite(0.0f, 0.0f);
+		sh.inputFrame(true);
+	}
+	CHECK(sh.gatedForTest());
+	CHECK(sh.loopScale() == 0.0f);
+	// AND OPENS WITH THE INPUT.
+	sh.inputFrame(false);
+	CHECK_FALSE(sh.gatedForTest());
 }

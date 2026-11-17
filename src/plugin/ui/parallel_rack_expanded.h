@@ -33,6 +33,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/rack_mode_views.h"
 #include "plugin/ui/rack_view_adapter.h"
+#include "plugin/ui/rack_pad_add.h"
 #include "plugin/ui/rack_views.h"
 #include "plugin/ui/rack_window_pane.h"
 #include "plugin/ui/widget_registry.h"
@@ -130,6 +131,7 @@ public:
 	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
+	[[nodiscard]] RackPadAdd& padAddForTest() const { return *padAdd_; }
 	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
 	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
 	[[nodiscard]] SwitchChip& followChipForTest() const { return *followChip_; }
@@ -274,6 +276,7 @@ private:
 	/// THE TABS AND PADS VIEWS: the model and the strike pulse are declared BEFORE the widgets that read them, so they outlive them.
 	std::unique_ptr<RackViewAdapter> model_;
 	RackStrikePulse pulse_;
+	std::unique_ptr<RackPadAdd> padAdd_;
 	std::unique_ptr<RackTabBar> tabs_;
 	std::unique_ptr<RackPadsPanel> pads_;
 	int laidOutView_ = -1;

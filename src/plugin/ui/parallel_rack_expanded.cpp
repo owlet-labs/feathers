@@ -165,17 +165,20 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	pane_ = std::make_unique<RackWindowPane>();
 	addChild(pane_.get());
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
-	pads_->gridForTest().setAddHandler([this](int key) {
-		if (const size_t at = model_->addKeyedChain(key, history_); at != kNoChain) {
-			model_->viewChain(at);
-			if (follow()) {
-				minimumSizeChanged();
-				redraw();
-			}
-			if (notifier_ != nullptr) {
-				notifier_->say("Chain added");
-			}
+	// "+" ON AN EMPTY PAD ASKS WHICH DEVICE (the lanes' own add menu, oscillators first); the pick makes the chain on that pad's key.
+	padAdd_ = std::make_unique<RackPadAdd>(*model_, notifier_);
+	padAdd_->onAdded([this](size_t) {
+		if (follow()) {
+			minimumSizeChanged();
+			redraw();
 		}
+	});
+	pads_->gridForTest().setAddHandler([this](int key) {
+		const int index = key - padKey(model_->page(), 0);
+		RackPadGrid& grid = pads_->gridForTest();
+		const visage::Point c = grid.plusCentre(index);
+		const float a = RackPadGrid::kPlusArea;
+		padAdd_->open(key, grid, visage::Bounds { c.x - a * 0.5f, c.y - a * 0.5f, a, a });
 	});
 	addChild(tabs_.get());
 	addChild(pads_.get());
@@ -939,6 +942,9 @@ bool ParallelRackExpanded::relayArm() {
 void ParallelRackExpanded::modulationBound(ModState* mod, EditHistory* history) {
 	mod_ = mod;
 	history_ = history;
+	if (padAdd_ != nullptr) {
+		padAdd_->setHistory(history);
+	}
 	relay_.setTarget(mod);
 	for (auto& c : controls_) {
 		c->setModulation(mod, history);

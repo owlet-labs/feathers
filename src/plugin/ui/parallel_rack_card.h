@@ -31,6 +31,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/rack_mode_views.h"
 #include "plugin/ui/rack_front.h"
+#include "plugin/ui/rack_pad_add.h"
 #include "plugin/ui/rack_view_adapter.h"
 #include "plugin/ui/rack_views.h"
 #include "rack/parallel_rack.h"
@@ -388,6 +389,7 @@ public:
 	/// THE TABS AND PADS VIEWS (`View`): the bar, the pads panel, what is in front of the chain, its arrow, the model and the strike pulse.
 	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
+	[[nodiscard]] RackPadAdd& padAddForTest() const { return *padAdd_; }
 	[[nodiscard]] RackFrontColumn& frontForTest() const { return *front_; }
 	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
 	[[nodiscard]] visage::Bounds closingRuleForTest() const { return closingRule(); }
@@ -491,6 +493,8 @@ private:
 	std::unique_ptr<RackPositionBar> positionBar_;
 	std::unique_ptr<RackTabBar> tabs_;
 	std::unique_ptr<RackPadsPanel> pads_;
+	/// "+" ON AN EMPTY PAD asks which device, as the window's does (declared after the model it reads).
+	std::unique_ptr<RackPadAdd> padAdd_;
 	std::unique_ptr<RackFrontColumn> front_;
 	/// THE MACRO ROW'S CAPTIONS (the knobs point into them: declared first) and its knobs, behind `macroArrow_`.
 	std::array<std::string, 8> macroCaption_;

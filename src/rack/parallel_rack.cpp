@@ -492,6 +492,9 @@ size_t Rack::addChain() {
 		return SIZE_MAX;
 	}
 	auto branch = makeBranch(nextChainId_++);
+	// A NEW CHAIN STARTS OPEN: its rail in the window and its cards in front of the card are shown whole, so the first thing a hand does with
+	// it (add a device) is not behind a fold. A chain loaded or put back by an undo keeps the state it was saved with.
+	branch->open = true;
 	branch->slot = freeSlot(kNoChainSlot);
 	mirror(*branch); // a reused slot's params put back to a fresh chain's values
 	// **A NEW CHAIN IS A CHAIN OF THIS RACK**: its macros are named, typed and signed as the rack's are (the first chain's).
@@ -2780,11 +2783,27 @@ const device::TextOps kTextOps {
 			// WHILE A NOTE IS TRACKED, A CUT READS AS ITS OFFSET FROM IT, in semitones.
 			return viewTracking(view) && formatCutOffset(value, out, size);
 		}
+		if (control == static_cast<size_t>(Param::ViewedChain)) {
+			// THE CHAIN IN FRONT READS AS A CHAIN NUMBER, from 1 — the tabs, the pads and the strips count that way, and the stored
+			// index (from 0) is not what a hand types or expects to read.
+			std::snprintf(out, size, "%ld", std::lround(value) + 1);
+			return true;
+		}
 		return control == static_cast<size_t>(Param::Position) && formatPosition(modeOf(view), chainsOf(view), value, out, size);
 	},
 	.parse = [](size_t control, const char* text, const device::TextView& view, double* value) {
 		if (isCut(control)) {
 			return viewTracking(view) && parseCutOffset(text, value);
+		}
+		if (control == static_cast<size_t>(Param::ViewedChain)) {
+			const char* start = skipSpaces(text);
+			char* end = nullptr;
+			const double n = std::strtod(start, &end);
+			if (end == start || !std::isfinite(n)) {
+				return false;
+			}
+			*value = std::max(0.0, n - 1.0);
+			return true;
 		}
 		return control == static_cast<size_t>(Param::Position) && parsePosition(modeOf(view), chainsOf(view), text, value);
 	},

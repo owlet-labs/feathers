@@ -648,6 +648,9 @@ public:
 
 	/// How many chains the rack holds.
 	[[nodiscard]] size_t chainCount() const noexcept { return chains_.size(); }
+	/// The catalogue its chains adopt: what a chain made now could hold (a menu offers from it before the chain exists).
+	[[nodiscard]] const device::Catalogue& catalogue() const noexcept { return catalogue_; }
+	[[nodiscard]] bool adopted() const noexcept { return adopted_; }
 	/// The chain at `index` (display order), or null.
 	[[nodiscard]] InnerChain* chainAt(size_t index) noexcept;
 	[[nodiscard]] const InnerChain* chainAt(size_t index) const noexcept;

@@ -88,6 +88,8 @@ inline constexpr double kLinearHalfKaiserBeta = 2.0;
 inline constexpr double kLinearRebuildTolerance = 0.001;
 /// "TO NYQUIST": a band's `hiHz` at or above this is the open top (the delta tap minus the lowpass below).
 inline constexpr double kLinearOpenTopHz = 1.0e9;
+/// How many steepnesses the kernels are windowed for.
+inline constexpr size_t kLinearSteepSteps = 3;
 /// THE HALF BANDS' RAISED-COSINE TRANSITION, in kernel bins (8 bins is 188 Hz at 48 kHz): wide enough that the kernel's window barely smooths it. The window still rounds the crossing, so
 /// two halves in series sum to within 0.1 dB of flat (about -0.05 dB at a corner, measured), not exactly flat as the full bands do.
 inline constexpr double kLinearHalfTransitionBins = 8.0;
@@ -101,6 +103,9 @@ struct LinearBand {
 	/// series (one before a chain, one after it) make the band, and the squares of every half of a split sum to the band sum.
 	/// Built in the frequency domain from the band's own kernel, windowed again, so the pair is the band to a fraction of a dB.
 	bool half = false;
+	/// THE STEEPNESS: 0 is the full kernel, 1 and 2 are a half and a quarter of its reach (zero-padded, same centre, same delay), so the
+	/// transition is two and four times wider (-0.1 dB to -60 dB in about 94, 186 and 368 Hz at 48 kHz) and the latency is the same for all three.
+	uint8_t steep = 0;
 	friend bool operator==(const LinearBand&, const LinearBand&) = default;
 };
 
@@ -180,7 +185,7 @@ private:
 	/// The raised-cosine half-band kernel of `band`, into `fir_` (see `LinearBand::half`).
 	void designHalf(const LinearBand& band) noexcept;
 	/// The half-kernel of a lowpass at `hz` (centre first), unit DC gain, into `half`.
-	void lowpassHalf(double hz, double* half) const noexcept;
+	void lowpassHalf(double hz, double* half, size_t steep) const noexcept;
 
 	double sampleRate_ = 48000.0;
 	size_t outputs_ = 0, n_ = 0, block_ = 1, parts_ = 0, delayLen_ = 1;

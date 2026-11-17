@@ -130,11 +130,11 @@ double rmsOf(const std::vector<float>& v, size_t from) {
 
 } // namespace
 
-TEST_CASE("Linear: Mode offers it as the 11th choice, last, and the descriptor spans 1..11") {
+TEST_CASE("Linear: Mode offers it as the 11th choice, after the ten that keep their numbers") {
 	const auto& d = kParamDescs[static_cast<size_t>(Param::Mode)];
-	CHECK(d.max == 11.0);
+	CHECK(d.max == 13.0);
 	CHECK(d.min == 1.0);
-	REQUIRE(std::size(kModeNames) == 11);
+	REQUIRE(std::size(kModeNames) == 13);
 	CHECK(std::string(kModeNames[10]) == "Linear");
 	CHECK(std::string(kModeNames[9]) == "Twist3"); // the ten before it keep their numbers
 	CHECK(d.def == 6.0);
@@ -301,5 +301,44 @@ TEST_CASE("Linear: after the input stops the output reaches exact zero within th
 			}
 			CHECK(ringing > 100u);
 		}
+	}
+}
+
+TEST_CASE("Linear steepness: Linear, Linear Mild and Linear Gentle report one latency, land the impulse on it, and sum flat") {
+	REQUIRE(std::size(kModeNames) == 13);
+	CHECK(std::string(kModeNames[11]) == "Linear Mild");
+	CHECK(std::string(kModeNames[12]) == "Linear Gentle");
+	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].max == 13.0);
+	for (const float mode : { 11.0f, 12.0f, 13.0f }) {
+		CAPTURE(mode);
+		Settings s = linearAtRest();
+		s.mode = mode;
+		const Row row = rowOf(s);
+		CHECK(kAudioOps.latencySamples(nullptr, row.data(), row.size(), kRate) == statedLatency(kRate)); // THE SAME FOR ALL THREE
+		std::vector<float> l(4096, 0.0f), r(4096, 0.0f);
+		l[0] = r[0] = 0.5f;
+		run(s, l, r);
+		size_t peakAt = 0;
+		for (size_t i = 0; i < l.size(); ++i) {
+			if (std::fabs(l[i]) > std::fabs(l[peakAt])) {
+				peakAt = i;
+			}
+		}
+		CHECK(peakAt == statedLatency(kRate));
+		// FLAT: noise through the unprocessed bands is the input, late by the latency, to the float.
+		std::vector<float> in(12000), a, b;
+		Noise n { 31u };
+		for (float& v : in) {
+			v = 0.4f * n.next();
+		}
+		a = in;
+		b = in;
+		run(s, a, b);
+		double worst = 0.0;
+		const size_t lat = statedLatency(kRate);
+		for (size_t i = 2 * lat; i < in.size(); ++i) {
+			worst = std::max(worst, static_cast<double>(std::fabs(a[i] - in[i - lat])));
+		}
+		CHECK(worst < 1.0e-4);
 	}
 }

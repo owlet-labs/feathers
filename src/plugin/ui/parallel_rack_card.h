@@ -367,7 +367,7 @@ public:
 	/// THE MODE'S DROPDOWN and THE POSITION'S KNOB (stage 2) — the knob shown only where the mode reads it.
 	[[nodiscard]] Knob& positionKnobForTest() const { return *position_; }
 	[[nodiscard]] SegmentedControl& unusedChipForTest() const { return *unused_; }
-	[[nodiscard]] SegmentedControl& slopeForTest() const { return *slope_; }
+	[[nodiscard]] ValueBox& slopeForTest() const { return *slope_; }
 	[[nodiscard]] RackSpectrumStrip& spectrumForTest() const { return *spectrum_; }
 	[[nodiscard]] RackPositionBar& positionBarForTest() const { return *positionBar_; }
 	/// THE PHANTOM STRIPS for roles no chain fills (§2a): an empty chain's face, made real by its first edit.
@@ -484,7 +484,7 @@ private:
 	std::unique_ptr<SegmentedControl> unused_;
 	std::unique_ptr<ValueBox> bandsBox_;
 	std::unique_ptr<ValueBox> filteringBox_;
-	std::unique_ptr<SegmentedControl> slope_;
+	std::unique_ptr<ValueBox> slope_;
 	/// "+3 more chains in the window" — drawn in the row after the last one shown, when any are not.
 	std::unique_ptr<visage::Frame> overflow_;
 	std::unique_ptr<RackSpectrumStrip> spectrum_;

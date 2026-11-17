@@ -686,7 +686,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// corners knobs — each drawn only in Bands, a corner only below the band count.
 	bandsBox_ = std::make_unique<ValueBox>(control(pr::Param::BandCount), "Bands");
 	filteringBox_ = std::make_unique<ValueBox>(control(pr::Param::Filtering), "Filtering");
-	slope_ = std::make_unique<SegmentedControl>(control(pr::Param::Slope), registry, pr::kSlopeFaceNames, notifier_);
+	slope_ = std::make_unique<ValueBox>(control(pr::Param::Slope), "Slope"); // MORE CHOICES THAN A SEGMENTED FACE HOLDS: a list
 	for (visage::Frame* f : { static_cast<visage::Frame*>(bandsBox_.get()), static_cast<visage::Frame*>(filteringBox_.get()),
 	                          static_cast<visage::Frame*>(slope_.get()) }) {
 		addChild(f);
@@ -1018,8 +1018,7 @@ void ParallelRackCard::layOut() {
 		const float filterW = std::round(wide * 0.27f);
 		bandsBox_->setBounds(left, y, countW - kRowGap, ValueBox::kHeight);
 		filteringBox_->setBounds(left + countW, y, filterW - kRowGap, ValueBox::kHeight);
-		slope_->setBounds(left + countW + filterW, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, wide - countW - filterW,
-		                  kSegmentHeight);
+		slope_->setBounds(left + countW + filterW, y, wide - countW - filterW, ValueBox::kHeight);
 		y += ValueBox::kHeight + kRowGap;
 	}
 	if (p.spectrum) {

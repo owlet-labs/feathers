@@ -20,7 +20,7 @@ param RACK rack_cut_1 unit=log_hertz min=4.321928094887363 max=14.28771237954944
 param RACK rack_cut_2 unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
 param RACK rack_cut_3 unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
 param RACK rack_cut_4 unit=log_hertz min=4.321928094887363 max=14.287712379549449 stepped=0
-param RACK rack_slope unit=choice choice=LR4 24 dB|LR2 12 dB|Linear
+param RACK rack_slope unit=choice choice=LR4 24 dB|LR2 12 dB|Linear|Linear Mild|Linear Gentle
 param RACK rack_filtering unit=choice choice=Before|After|Both
 param RACK rack_key_track unit=choice choice=Off|On
 param RACK rack_view unit=choice choice=Strips|Tabs|Pads

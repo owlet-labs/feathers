@@ -1209,7 +1209,7 @@ void Rack::setFields(const float* fields, size_t present) {
 		return std::isfinite(v) ? static_cast<int>(std::lround(std::clamp(v, 0.0f, static_cast<float>(last)))) : 0;
 	};
 	bandsWanted_ = kBandCounts[choice(Param::BandCount, 2)];
-	slopeWanted_ = static_cast<Slope>(choice(Param::Slope, 2));
+	slopeWanted_ = static_cast<Slope>(choice(Param::Slope, 4));
 	filteringWanted_ = static_cast<Filtering>(choice(Param::Filtering, 2));
 	keyTrack_ = at(Param::KeyTrack) >= 0.5f;
 	for (size_t k = 0; k < 4; ++k) {
@@ -1413,7 +1413,7 @@ void Rack::aimCorners(int frames) noexcept {
 		coeffsValid_ = false;
 		coeffSlope_ = slope_;
 	}
-	if (slope_ == Slope::Linear) {
+	if (isLinearSlope(slope_)) {
 		aimLinear(); // the FIR banks follow the corners at control rate; the IIR coefficients are not used
 		return;
 	}
@@ -1440,7 +1440,7 @@ void Rack::aimCorners(int frames) noexcept {
 }
 
 void Rack::splitBands(int n) noexcept {
-	if (slope_ == Slope::Linear) {
+	if (isLinearSlope(slope_)) {
 		// LINEAR: each band is its own kernel over the input (the half-band kernels in Both), `latency` samples late.
 		for (int i = 0; i < n; ++i) {
 			const auto s = static_cast<size_t>(i);
@@ -1490,7 +1490,7 @@ void Rack::bandOfOutput(size_t role, int n) noexcept {
 	if (filtering_ == Filtering::Before || role >= static_cast<size_t>(bands_)) {
 		return;
 	}
-	if (slope_ == Slope::Linear) {
+	if (isLinearSlope(slope_)) {
 		// LINEAR: this role's own bank filters its chain's output to the band (the half band in Both).
 		for (int i = 0; i < n; ++i) {
 			const auto s = static_cast<size_t>(i);
@@ -1524,7 +1524,7 @@ void Rack::bandOfOutput(size_t role, int n) noexcept {
 }
 
 void Rack::alignDryToBands(int n) noexcept {
-	if (slope_ == Slope::Linear) {
+	if (isLinearSlope(slope_)) {
 		return; // the dry is held back by the crossover's latency alone (`linearDelayNow`, added to the dry delay), not allpassed
 	}
 	// ONE Π AP FOR EVERY FILTERING: Both's halves multiply to the LR bands, which sum to it as Before's do (backlog OS).
@@ -2245,7 +2245,7 @@ void Rack::processStereo(float* left, float* right, int frames) {
 				if (b->stoppedHard) {
 					b->chain.reset();
 				}
-				if (slope_ == Slope::Linear && k < linRole_.size() && linRole_[k] != nullptr) {
+				if (isLinearSlope(slope_) && k < linRole_.size() && linRole_[k] != nullptr) {
 					linRole_[k]->clearAudio(); // its band filter held the last routed audio
 				}
 				b->align.reset();
@@ -2589,12 +2589,12 @@ bool Rack::holdsTail() const noexcept {
 		}
 	}
 	// BANDS: A FILTER STILL RINGING is sound to come, in the wet or the dry — until `flush` has put it at exact zero.
-	if (mode_ == Mode::Bands && (wetHeard || dryTarget_ > 0.0f) && slope_ != Slope::Linear
+	if (mode_ == Mode::Bands && (wetHeard || dryTarget_ > 0.0f) && !isLinearSlope(slope_)
 	    && !(slope_ == Slope::Lr4 ? lr4Engine_.settled() : lr2Engine_.settled())) {
 		return true;
 	}
 	// THE LINEAR SLOPE'S FIRs hold sound to come until their delay lines have shifted the last non-zero block out (`quiet`).
-	if (mode_ == Mode::Bands && slope_ == Slope::Linear && (wetHeard || dryTarget_ > 0.0f) && !linearQuiet()) {
+	if (mode_ == Mode::Bands && isLinearSlope(slope_) && (wetHeard || dryTarget_ > 0.0f) && !linearQuiet()) {
 		return true;
 	}
 	// A PHANTOM ROLE'S ALIGNMENT holds its share of the input for the latency.
@@ -3091,7 +3091,7 @@ void Rack::aimLinear() noexcept {
 		}
 		const double lo = k == 0 ? 0.0 : cornerHz_[k - 1];
 		const double hi = k == bands_ - 1 ? dsp::kLinearOpenTopHz : cornerHz_[k];
-		bands[static_cast<size_t>(k)] = dsp::LinearBand { lo, hi, half };
+		bands[static_cast<size_t>(k)] = dsp::LinearBand { lo, hi, half, linearSteepOf(slope_) };
 	}
 	const bool build = linearBuild_;
 	linearBuild_ = false;

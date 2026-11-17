@@ -124,21 +124,26 @@ void LinearFirBank::prepare(double sampleRate, size_t outputs) {
 	fir_ = allocFloats(n_);
 	spec_ = allocFloats(n_);
 	specWork_ = allocFloats(n_);
-	windowN_ = allocFloats(n_);
+	windowN_ = allocFloats(kLinearSteepSteps * n_);
 	big_ = pffft_new_setup(static_cast<int>(n_), PFFFT_REAL);
 	half_ = new double[n_ / 2 + 1]();
 	halfLo_ = new double[n_ / 2 + 1]();
-	kaiser_ = new double[n_ / 2 + 1]();
+	kaiser_ = new double[kLinearSteepSteps * (n_ / 2 + 1)]();
 	const double i0 = besselI0(kLinearKaiserBeta);
-	for (size_t m = 0; m <= n_ / 2; ++m) {
-		const double r = 2.0 * static_cast<double>(m) / static_cast<double>(n_);
-		kaiser_[m] = besselI0(kLinearKaiserBeta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0;
-	}
 	const double i0Half = besselI0(kLinearHalfKaiserBeta);
-	for (size_t i = 0; i < n_; ++i) {
-		const size_t m = i >= n_ / 2 ? i - n_ / 2 : n_ / 2 - i;
-		const double r = 2.0 * static_cast<double>(m) / static_cast<double>(n_);
-		windowN_[i] = static_cast<float>(besselI0(kLinearHalfKaiserBeta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0Half);
+	// ONE WINDOW A STEEPNESS: the same Kaiser shape over a half-length of N/2, N/4, N/8 about the centre, zero outside. The kernel stays N
+	// taps centred at N/2, so a gentler kernel is a zero-padded short one and the delay does not move.
+	for (size_t st = 0; st < kLinearSteepSteps; ++st) {
+		const size_t reach = (n_ / 2) >> st;
+		for (size_t m = 0; m <= n_ / 2; ++m) {
+			const double r = static_cast<double>(m) / static_cast<double>(reach);
+			kaiser_[st * (n_ / 2 + 1) + m] = m < reach ? besselI0(kLinearKaiserBeta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0 : 0.0;
+		}
+		for (size_t i = 0; i < n_; ++i) {
+			const size_t m = i >= n_ / 2 ? i - n_ / 2 : n_ / 2 - i;
+			const double r = static_cast<double>(m) / static_cast<double>(reach);
+			windowN_[st * n_ + i] = m < reach ? static_cast<float>(besselI0(kLinearHalfKaiserBeta * std::sqrt(std::max(0.0, 1.0 - r * r))) / i0Half) : 0.0f;
+		}
 	}
 	live_ = 0;
 	builds_ = swaps_ = 0;
@@ -170,24 +175,25 @@ void LinearFirBank::clearAudio() noexcept {
 	zeroBlocks_ = static_cast<uint32_t>(parts_) + 3;
 }
 
-void LinearFirBank::lowpassHalf(double hz, double* half) const noexcept {
+void LinearFirBank::lowpassHalf(double hz, double* half, size_t steep) const noexcept {
 	const double nyquist = 0.5 * sampleRate_;
 	const double f = std::clamp(hz, 0.5, 0.499 * sampleRate_ * 1.0);
 	(void)nyquist;
 	const double wc = 2.0 * std::numbers::pi * f / sampleRate_;
 	const double twoCos = 2.0 * std::cos(wc);
-	const size_t last = n_ / 2; // the tap at +/- N/2 is dropped, so the kernel is exactly symmetric
-	half[0] = wc / std::numbers::pi * kaiser_[0];
+	const size_t last = (n_ / 2) >> steep; // the tap at +/- the reach is dropped, so the kernel is exactly symmetric
+	const double* kaiser = kaiser_ + steep * (n_ / 2 + 1);
+	half[0] = wc / std::numbers::pi * kaiser[0];
 	double sum = half[0];
 	double sPrev = 0.0, s = std::sin(wc);
 	for (size_t m = 1; m < last; ++m) {
-		half[m] = s / (std::numbers::pi * static_cast<double>(m)) * kaiser_[m];
+		half[m] = s / (std::numbers::pi * static_cast<double>(m)) * kaiser[m];
 		sum += 2.0 * half[m];
 		const double next = twoCos * s - sPrev;
 		sPrev = s;
 		s = next;
 	}
-	half[last] = 0.0;
+	std::fill(half + last, half + n_ / 2 + 1, 0.0);
 	const double norm = 1.0 / sum; // DC gain exactly 1
 	for (size_t m = 0; m < last; ++m) {
 		half[m] *= norm;
@@ -200,7 +206,7 @@ void LinearFirBank::designHalf(const LinearBand& band) noexcept {
 	// square root is not (it has an infinite slope where the band reaches 0). Zero phase, centred at N/2, windowed.
 	const size_t half = n_ / 2;
 	const double binHz = sampleRate_ / static_cast<double>(n_);
-	const double width = kLinearHalfTransitionBins * binHz;
+	const double width = kLinearHalfTransitionBins * static_cast<double>(size_t { 1 } << band.steep) * binHz;
 	const auto ramp = [width](double f, double corner) { // cos^2 down through `corner`: 1 below, 0 above
 		const double t = std::clamp((f - (corner - 0.5 * width)) / width, 0.0, 1.0);
 		const double c = std::cos(0.5 * std::numbers::pi * t);
@@ -227,7 +233,7 @@ void LinearFirBank::designHalf(const LinearBand& band) noexcept {
 	pffft_transform_ordered(big_, spec_, spec_, specWork_, PFFFT_BACKWARD);
 	const float scale = 1.0f / static_cast<float>(n_);
 	for (size_t i = 0; i < n_; ++i) {
-		fir_[i] = spec_[(i + half) % n_] * windowN_[i] * scale;
+		fir_[i] = spec_[(i + half) % n_] * windowN_[band.steep * n_ + i] * scale;
 	}
 	fir_[0] = 0.0f; // the tap at -N/2 has no partner: dropped, so the kernel is exactly symmetric
 }
@@ -244,13 +250,13 @@ void LinearFirBank::design(size_t o, const LinearBand& band, size_t set) noexcep
 		half_[0] = 1.0;
 	}
 	else {
-		lowpassHalf(band.hiHz, half_);
+		lowpassHalf(band.hiHz, half_, band.steep);
 	}
 	if (band.loHz <= 0.0) {
 		std::fill(halfLo_, halfLo_ + last + 1, 0.0);
 	}
 	else {
-		lowpassHalf(band.loHz, halfLo_);
+		lowpassHalf(band.loHz, halfLo_, band.steep);
 	}
 	// fir[N/2 + m] = fir[N/2 - m] = hi[m] - lo[m]; fir[0] (m = -N/2) stays 0.
 	fir_[0] = 0.0f;

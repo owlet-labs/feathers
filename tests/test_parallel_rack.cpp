@@ -2728,9 +2728,11 @@ std::vector<float> impulseOf(RackRig& rig, int blocks) {
 
 TEST_CASE("Linear slope: Slope offers it third, the others keep their numbers, and the default stays LR4") {
 	const auto& d = pr::kParamDescs[static_cast<size_t>(pr::Param::Slope)];
-	CHECK(d.max == 2.0);
+	CHECK(d.max == 4.0);
 	CHECK(d.def == 0.0);
-	REQUIRE(std::size(pr::kSlopeNames) == 3);
+	REQUIRE(std::size(pr::kSlopeNames) == 5);
+	CHECK(std::string(pr::kSlopeNames[3]) == "Linear Mild");
+	CHECK(std::string(pr::kSlopeNames[4]) == "Linear Gentle");
 	CHECK(std::string(pr::kSlopeNames[0]) == "LR4 24 dB");
 	CHECK(std::string(pr::kSlopeNames[1]) == "LR2 12 dB");
 	CHECK(std::string(pr::kSlopeNames[2]) == "Linear");
@@ -2936,5 +2938,30 @@ TEST_CASE("Linear slope: the dry of a partial Mix is in time with the bands - a 
 			worst = std::max(worst, static_cast<double>(std::fabs(out[i] - in[i - kLinearLatency])));
 		}
 		CHECK(worst < 1.0e-4);
+	}
+}
+
+TEST_CASE("Linear steepness: the rack's Linear, Mild and Gentle slopes report one latency, land the impulse on it, and sum flat") {
+	for (const pr::Slope slope : { pr::Slope::Linear, pr::Slope::LinearMild, pr::Slope::LinearGentle }) {
+		for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After }) {
+			CAPTURE(static_cast<int>(slope));
+			CAPTURE(static_cast<int>(filtering));
+			RackRig rig;
+			bandsRig(rig, 3, 1, slope, filtering);
+			rig.settle();
+			CHECK(pr::kAudioOps.latencySamples(rig.mem, rig.fields.data(), rig.fields.size(), kRate) == kLinearLatency);
+			const std::vector<float> y = impulseOf(rig, 10);
+			size_t peakAt = 0;
+			for (size_t i = 0; i < y.size(); ++i) {
+				if (std::fabs(y[i]) > std::fabs(y[peakAt])) {
+					peakAt = i;
+				}
+			}
+			CHECK(peakAt == kLinearLatency);
+			CHECK(std::fabs(y[peakAt] - 0.5f) < 1.0e-3f);
+			for (const double hz : { 60.0, 300.0, 1000.0, 5000.0, 15000.0 }) {
+				CHECK(std::fabs(20.0 * std::log10(gainAt(rig, hz))) < 0.05);
+			}
+		}
 	}
 }

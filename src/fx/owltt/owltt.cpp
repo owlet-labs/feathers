@@ -442,9 +442,9 @@ void Owltt::updateCrossoverFrequencies() {
 	// THE LINEAR CROSSOVER'S CORNERS: the same clamped low and high every other type is given, as the two lowpasses of its split. A
 	// corner that moved is rebuilt across the next control steps and crossfaded in (`LinearFirBank::setTargets`); one that came in
 	// with the mode is built whole. Called at control rate, once a slice; nothing here allocates.
-	if (std::lround(target_.mode) == 11 && linear_) {
-		const std::array<dsp::LinearBand, 2> corners { dsp::LinearBand { 0.0, static_cast<double>(low) },
-			                                           dsp::LinearBand { 0.0, static_cast<double>(high) } };
+	if (isLinearMode(std::lround(target_.mode)) && linear_) {
+		const std::array<dsp::LinearBand, 2> corners { dsp::LinearBand { 0.0, static_cast<double>(low), false, linearSteepOf(std::lround(target_.mode)) },
+			                                           dsp::LinearBand { 0.0, static_cast<double>(high), false, linearSteepOf(std::lround(target_.mode)) } };
 		if (linearBuild_) {
 			linear_->buildNow(corners.data());
 			linearBuild_ = false;
@@ -638,7 +638,7 @@ void Owltt::computeCharacterAndVibe() {
 	if (crossoverType != lastCrossoverType_) {
 		resetCrossovers();
 		lastCrossoverType_ = crossoverType;
-		linearBuild_ = crossoverType == 11;
+		linearBuild_ = isLinearMode(crossoverType);
 	}
 	// THE FOUR "WEIRD" CROSSOVERS ARE QUIRKY, TWISTED, WEIRD AND TWIST3 — the allpass creative set,
 	// whose bass the Width/Air/OTT zones let run wider because those splitters collapse it less. The
@@ -931,17 +931,17 @@ void Owltt::processStereo(float* left, float* right, int frames) {
 	// THE LOOKAHEAD IN FORCE (backlog ND), from the stored choice — the same function `latencySamples` answers from, so
 	// the delay applied is the latency reported. A change applies at once; the host restarts after it (assumption L6).
 	lookLen_ = lookCap_ > 0 ? std::min(lookaheadSamplesFor(target_.lookahead, sampleRate_), lookCap_ - 1) : 0;
-	// A MODE OUTSIDE 1-11 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
+	// A MODE OUTSIDE 1-13 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
 	// this it reported the lookahead's latency and delayed nothing. The descriptor cannot reach it; a raw row can.
 	const long crossoverType = std::lround(target_.mode);
-	if (!target_.enabled || crossoverType < 1 || crossoverType > 11) {
+	if (!target_.enabled || crossoverType < 1 || crossoverType > kLastMode) {
 		if (running_) {
 			running_ = false;
 			reset();
 		}
 		// **AND BY THE LINEAR CROSSOVER'S LATENCY while Mode is Linear**: the host was told it too, so the bypass holds the input back by the
 		// same raw delay the Blend's dry uses (kept filled, so a re-enable finds the input's recent past in it).
-		if (crossoverType == 11) {
+		if (isLinearMode(crossoverType)) {
 			ensureRawDelay();
 			rawDelayStep(left, right, frames);
 		}
@@ -1034,11 +1034,11 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	sliceFrames_ = frames;
 
 	const uint8_t crossoverType = static_cast<uint8_t>(std::round(target_.mode));
-	// Mode is 1-11 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
-	if (crossoverType < 1 || crossoverType > 11) {
+	// Mode is 1-13 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
+	if (crossoverType < 1 || crossoverType > kLastMode) {
 		return;
 	}
-	if (crossoverType == 11 && !linear_) {
+	if (isLinearMode(crossoverType) && !linear_) {
 		return; // never prepared
 	}
 
@@ -1046,7 +1046,7 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	// and Twist3 splitters `vibeTwist_`, which `computeCharacterAndVibe` is what sets. The other way
 	// round (as it stood until the OWLTT parity sweep, 2026-09-16) ran both on the PREVIOUS slice's
 	// twist; the firmware sets the twist inside render after its vibe pass, and this is that order.
-	if (crossoverType == 11) {
+	if (isLinearMode(crossoverType)) {
 		ensureRawDelay();
 	}
 	else {
@@ -1207,7 +1207,9 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		// LINEAR (backlog: linear-phase crossover): two FIR lowpasses of the DRIVEN input and that input held back by the same latency.
 		// Low = LP_low, mid = LP_high - LP_low, high = delayed - LP_high, so low + mid + high IS the delayed input, to the float. The
 		// Blend's dry is the RAW input held back by the same number of samples, so a 50% Blend of unprocessed bands is flat and in time.
-		case 11: {
+		case 11:
+		case 12:
+		case 13: {
 			dsp::LinearFirBank::Frame fr;
 			linear_->process(inL, inR, fr);
 			bandsL.low = fr.out[0][0];
@@ -1725,7 +1727,7 @@ const device::AudioOps kAudioOps {
 		}
 		uint32_t latency = 0;
 		const auto mode = static_cast<size_t>(Param::Mode);
-		if (mode < fieldsPresent && std::isfinite(fields[mode]) && std::lround(fields[mode]) == 11) {
+		if (mode < fieldsPresent && std::isfinite(fields[mode]) && isLinearMode(std::lround(fields[mode]))) {
 			latency += dsp::linearCrossoverLatency(sampleRate);
 		}
 		const auto at = static_cast<size_t>(Param::Lookahead);

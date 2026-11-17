@@ -355,3 +355,105 @@ TEST_CASE("linear crossover: the half bands are the square roots of the bands - 
 	CHECK(at(1, 100.0) < -25.0); // the 188 Hz ramp reaches an octave below 200 Hz: 27 dB here, 54 dB through the pair
 	CHECK(at(2, 1000.0) < -40.0);
 }
+
+namespace {
+
+/// A lowpass at `fc`, steepness `steep`, its impulse response.
+std::vector<double> lowpassIr(double fc, uint8_t steep, bool half = false) {
+	LinearFirBank bank;
+	bank.prepare(kRate, 1);
+	const LinearBand band { 0.0, fc, half, steep };
+	bank.buildNow(&band);
+	std::vector<double> ir;
+	for (size_t i = 0; i < kIr; ++i) {
+		LinearFirBank::Frame f;
+		bank.process(i == 0 ? 1.0f : 0.0f, 0.0f, f);
+		ir.push_back(f.out[0][0]);
+	}
+	return ir;
+}
+
+/// THE TRANSITION WIDTH, measured: from the highest frequency under the corner still within 0.1 dB of the passband to the lowest above it
+/// that is 60 dB down, scanned at 2 Hz by direct summation.
+double transitionHz(const std::vector<double>& ir, double fc) {
+	double lo = fc, hi = fc;
+	for (double f = fc; f > 20.0; f -= 2.0) {
+		if (std::fabs(db(std::abs(dtft(ir, f)))) < 0.1) {
+			lo = f;
+			break;
+		}
+	}
+	for (double f = fc; f < 20000.0; f += 2.0) {
+		if (db(std::abs(dtft(ir, f))) < -60.0) {
+			hi = f;
+			break;
+		}
+	}
+	return hi - lo;
+}
+
+} // namespace
+
+TEST_CASE("linear crossover: each steepness has the transition it states, sums flat, and keeps the same latency") {
+	// STATED: about 94 Hz, 186 Hz and 368 Hz (a doubling a step; measured 94, 186, 368) from the -0.1 dB point to the -60 dB point, at 48 kHz.
+	const double stated[3] = { 94.0, 186.0, 368.0 };
+	double measured[3] = {};
+	for (uint8_t steep = 0; steep < 3; ++steep) {
+		CAPTURE(static_cast<int>(steep));
+		const auto ir = lowpassIr(4000.0, steep);
+		measured[steep] = transitionHz(ir, 4000.0);
+		CHECK(measured[steep] > 0.75 * stated[steep]);
+		CHECK(measured[steep] < 1.25 * stated[steep]);
+		// THE SAME DELAY: the kernel's centre, so the impulse's main lobe sits at N/2 + B whatever its width.
+		size_t peakAt = 0;
+		for (size_t i = 0; i < ir.size(); ++i) {
+			if (std::fabs(ir[i]) > std::fabs(ir[peakAt])) {
+				peakAt = i;
+			}
+		}
+		CHECK(peakAt == 1152);
+		// THE SUM IS FLAT: a 3-band split at this steepness sums to the delayed input (the telescoping holds for any kernel).
+		LinearFirBank bank;
+		bank.prepare(kRate, 2);
+		const std::array<LinearBand, 2> bands { LinearBand { 0.0, 1000.0, false, steep }, LinearBand { 0.0, 5000.0, false, steep } };
+		bank.buildNow(bands.data());
+		double worst = 0.0;
+		for (size_t i = 0; i < kIr; ++i) {
+			LinearFirBank::Frame f;
+			bank.process(i == 0 ? 1.0f : 0.0f, 0.0f, f);
+			const double sum = f.out[0][0] + (f.out[1][0] - f.out[0][0]) + (f.delayed[0] - f.out[1][0]);
+			worst = std::max(worst, std::fabs(sum - (i == 1152 ? 1.0 : 0.0)));
+		}
+		CHECK(worst < 1.0e-6);
+	}
+	CHECK(measured[1] > 1.7 * measured[0]); // each step really is wider
+	CHECK(measured[2] > 1.7 * measured[1]);
+}
+
+TEST_CASE("linear crossover: each steepness's half bands sum within 0.1 dB and share the latency") {
+	for (uint8_t steep = 0; steep < 3; ++steep) {
+		CAPTURE(static_cast<int>(steep));
+		LinearFirBank bank;
+		bank.prepare(kRate, 2);
+		const std::array<LinearBand, 2> bands { LinearBand { 0.0, 3000.0, true, steep }, LinearBand { 3000.0, kLinearOpenTopHz, true, steep } };
+		bank.buildNow(bands.data());
+		std::array<std::vector<double>, 2> g;
+		for (size_t i = 0; i < kIr; ++i) {
+			LinearFirBank::Frame f;
+			bank.process(i == 0 ? 1.0f : 0.0f, 0.0f, f);
+			g[0].push_back(f.out[0][0]);
+			g[1].push_back(f.out[1][0]);
+		}
+		for (double hz : { 500.0, 2500.0, 3000.0, 3500.0, 9000.0 }) {
+			CAPTURE(hz);
+			CHECK(std::fabs(db(std::norm(dtft(g[0], hz)) + std::norm(dtft(g[1], hz)))) < 0.15);
+		}
+		size_t peakAt = 0;
+		for (size_t i = 0; i < kIr; ++i) {
+			if (std::fabs(g[0][i]) > std::fabs(g[0][peakAt])) {
+				peakAt = i;
+			}
+		}
+		CHECK(peakAt == 1152);
+	}
+}

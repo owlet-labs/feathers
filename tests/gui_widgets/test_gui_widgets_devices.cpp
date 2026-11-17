@@ -35777,9 +35777,9 @@ TEST_CASE("Rack stage 2, step 4: every multi-choice control shows its choices be
 	CHECK(v.card->unusedChipForTest().isVisible());
 	const float slopeW = v.card->slopeForTest().width();
 	REQUIRE(slopeW > 0.0f);
-	CHECK(v.card->slopeForTest().segmentAt({ 2.0f, 4.0f }) == 0);
-	CHECK(v.card->slopeForTest().segmentAt({ slopeW * 0.5f, 4.0f }) == 1); // THREE SEGMENTS since the Linear slope: 24 dB, 12 dB, Linear
-	CHECK(v.card->slopeForTest().segmentAt({ slopeW - 2.0f, 4.0f }) == 2);
+	// THE SLOPE HAS MORE CHOICES THAN A FACE HOLDS (the LR pairs and the linear steepnesses): a list that opens before anything moves.
+	CHECK(v.card->slopeForTest().choiceMenuAvailable());
+	CHECK(v.card->slopeForTest().opensMenu());
 	CHECK(v.panel->unusedChipForTest().isVisible());
 }
 

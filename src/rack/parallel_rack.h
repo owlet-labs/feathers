@@ -149,12 +149,15 @@ inline constexpr const char* kBandCountNames[] = { "2", "3", "5" };
 inline constexpr int kBandCounts[] = { 2, 3, 5 };
 inline constexpr int kMaxBands = 5;
 /// The slopes (decided, Q5: the two Linkwitz-Riley pairs, and later a linear-phase FIR split appended as a third) and where the filtering sits.
-inline constexpr const char* kSlopeNames[] = { "LR4 24 dB", "LR2 12 dB", "Linear" };
-enum class Slope : uint8_t { Lr4 = 0, Lr2, Linear };
+inline constexpr const char* kSlopeNames[] = { "LR4 24 dB", "LR2 12 dB", "Linear", "Linear Mild", "Linear Gentle" };
+enum class Slope : uint8_t { Lr4 = 0, Lr2, Linear, LinearMild, LinearGentle };
+/// THE LINEAR SLOPES: Linear, Mild and Gentle share the FIR split and its latency; each is twice as wide in its transition as the one before.
+[[nodiscard]] inline constexpr bool isLinearSlope(Slope s) noexcept { return s >= Slope::Linear; }
+[[nodiscard]] inline constexpr uint8_t linearSteepOf(Slope s) noexcept { return static_cast<uint8_t>(static_cast<int>(s) - static_cast<int>(Slope::Linear)); }
 inline constexpr const char* kFilteringNames[] = { "Before", "After", "Both" };
 /// WHAT A SEGMENTED CONTROL'S FACE SAYS, where the stored label is too long for a segment (display only; the Choice
 /// still stores `kSlopeNames` / `kUnusedNames`, and the tooltip says the rest).
-inline constexpr const char* kSlopeFaceNames[] = { "24 dB", "12 dB", "Linear" };
+inline constexpr const char* kSlopeFaceNames[] = { "24 dB", "12 dB", "Linear", "Mild", "Gentle" };
 inline constexpr const char* kUnusedFaceNames[] = { "Ring", "Stop" };
 /// The corners' captions on a face ("Cut 1"…), static so a widget may keep the pointer.
 inline constexpr const char* kCutCaptions[] = { "Cut 1", "Cut 2", "Cut 3", "Cut 4" };
@@ -268,7 +271,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .stepped = false, .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
      .tooltip = "The corner between bands 4 and 5, kept at least a third of an octave above cut 3",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly},
-    {.key = "rack_slope", .name = "Rack Slope", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
+    {.key = "rack_slope", .name = "Rack Slope", .min = 0.0, .max = 4.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kSlopeNames, .modulatable = false,
      .tooltip = "The crossover: Linkwitz-Riley 24 or 12 dB per octave, or Linear, a linear-phase FIR split whose bands sum to the input delayed by about 24 ms (48 ms with Filtering Both), which the rack reports as latency. All sum flat",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .hostSlot = false},
@@ -892,19 +895,19 @@ private:
 	/// crossover's latency alone (2).
 	[[nodiscard]] int dryKind(Mode mode, Filtering filtering, Slope slope) const noexcept {
 		(void)filtering; // Both's pair sums to the same Π AP as Before and After (backlog OS), so the dry's path is one
-		return mode != Mode::Bands ? 0 : (slope == Slope::Linear ? 2 : 1);
+		return mode != Mode::Bands ? 0 : (isLinearSlope(slope) ? 2 : 1);
 	}
 	/// HOW MANY TIMES THE SIGNAL GOES THROUGH A LINEAR FIR: once Before or After, twice in Both (a half band before the chain and another after).
 	[[nodiscard]] static constexpr uint32_t linearPasses(Filtering filtering) noexcept { return filtering == Filtering::Both ? 2u : 1u; }
 	/// THE LINEAR CROSSOVER'S DELAY IN FORCE: its latency while Bands runs the Linear slope, else 0. What the dry is held back by beyond
 	/// the chains' latency, and what the bands add on the wet path.
 	[[nodiscard]] uint32_t linearDelayNow() const noexcept {
-		return mode_ == Mode::Bands && slope_ == Slope::Linear ? linearPasses(filtering_) * dsp::linearCrossoverLatency(sampleRate_) : 0u;
+		return mode_ == Mode::Bands && isLinearSlope(slope_) ? linearPasses(filtering_) * dsp::linearCrossoverLatency(sampleRate_) : 0u;
 	}
 	/// THE LATENCY THE HOST IS TOLD, from the structure WANTED: it adds the linear crossover's while Bands is asked for with the Linear
 	/// slope, so the report is a function of the controls alone and never moves while the structure fades in.
 	[[nodiscard]] uint32_t linearDelayWanted(double sampleRate) const noexcept {
-		return modeWanted_ == Mode::Bands && slopeWanted_ == Slope::Linear ? linearPasses(filteringWanted_) * dsp::linearCrossoverLatency(sampleRate) : 0u;
+		return modeWanted_ == Mode::Bands && isLinearSlope(slopeWanted_) ? linearPasses(filteringWanted_) * dsp::linearCrossoverLatency(sampleRate) : 0u;
 	}
 	/// The Linear slope's banks: the corners to their kernels (control rate), and a whole restart.
 	void aimLinear() noexcept;

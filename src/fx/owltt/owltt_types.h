@@ -186,7 +186,7 @@ struct BandParams {
 
 /// The full OWLTT state: globals + per-band absolutes.
 struct Settings {
-	float mode = 6.0f;           // 1-11 = crossover type (6 = LR2 Full default, 11 = Linear)
+	float mode = 6.0f;           // 1-13 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle)
 	bool enabled = true;         // Bypass switch
 	float threshold = 0.5f;      // Linked global threshold
 	// THE STRUCT DEFAULT IS NOT THE PARAMETER DEFAULT, HERE AND ONLY HERE, and it is deliberate: a
@@ -329,8 +329,15 @@ inline constexpr device::Traits kTraits {
 	.mixInDevice = true,
 };
 
+/// THE LINEAR MODES: 11 is the steepest linear-phase split, 12 and 13 two and four times wider in their transition (`dsp::LinearBand::steep`), all
+/// with the same latency. `kLastMode` is the highest Mode.
+inline constexpr long kFirstLinearMode = 11;
+inline constexpr long kLastMode = 13;
+[[nodiscard]] inline constexpr bool isLinearMode(long mode) noexcept { return mode >= kFirstLinearMode && mode <= kLastMode; }
+[[nodiscard]] inline constexpr uint8_t linearSteepOf(long mode) noexcept { return static_cast<uint8_t>(mode - kFirstLinearMode); }
+
 inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast",
-                                             "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3", "Linear"};
+                                             "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3", "Linear", "Linear Mild", "Linear Gentle"};
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
 /// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
@@ -524,7 +531,7 @@ inline constexpr double kOnePhaseUnit = 1.0;
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // Global
-    {"mode", "Mode", 1.0, 11.0, 6.0, true, device::Unit::Choice, kModeNames, false, false,
+    {"mode", "Mode", 1.0, 13.0, 6.0, true, device::Unit::Choice, kModeNames, false, false,
      "Crossover filter type — how the spectrum is split into bands. Linear splits with linear-phase FIRs: the bands sum to the input delayed by 24 ms, which the device reports as latency"},
     // ON BY DEFAULT — all effects should default to on when they are added.
     // See `fx::filter::kParamDescs` for the decision and what it replaced. This device is also the one

@@ -71,6 +71,8 @@ EroderFlow::Path EroderFlow::pathFor(const ero::Row& row) {
 		return path.stages.size() - 1;
 	};
 	const size_t input = add("in", true);
+	// THE INPUT DRIVE, right after the input: the Sub Thru road and the dry leave the line before it.
+	add("gain", at(ero::Param::Input) != 0.0f);
 	if (!inLoop) {
 		add("emph", emphasised);
 	}
@@ -270,7 +272,13 @@ void EroderFlow::draw(visage::Canvas& canvas) {
 	}
 	const visage::Font& face = font(kLabelSize);
 	const float cy = kMainY;
-	const auto line = [&](float x0, float y0, float x1, float y1, float t = 1.2f) { canvas.segment(x0, y0, x1, y1, t, true); };
+	events_.clear();
+	const auto line = [&](float x0, float y0, float x1, float y1, float t = 1.2f) {
+		canvas.segment(x0, y0, x1, y1, t, true);
+		if (recording_) {
+			events_.push_back({ false, x0, y0, x1, y1 });
+		}
+	};
 	const auto head = [&](float x, float y, float dx, float dy) {
 		// AN ARROWHEAD AT (x, y) POINTING ALONG (dx, dy), a unit axis.
 		line(x - 4.0f * dx - 2.5f * dy, y - 4.0f * dy + 2.5f * dx, x, y);
@@ -351,7 +359,17 @@ void EroderFlow::draw(visage::Canvas& canvas) {
 		canvas.text(r.outer ? "loop" : "reso", face, visage::Font::kLeft, xTo + 8.0f, y + (r.outer ? 1.0f : 2.0f), 36.0f, 11.0f);
 	}
 
-	// THE STAGES: a rounded box and its label; the sum a circle with a plus.
+	// THE CHIPS' PLATES ARE BACKED WITH THE PICTURE'S OWN GROUND, after every line and before the chips themselves: a road that
+	// passes under a chip (Sub Thru's, the Tap's) must not show through it.
+	for (const Rect& r : chipRects_) {
+		canvas.setColor(kSurface);
+		canvas.roundedRectangle(r.x, r.y, r.w, r.h, 3.0f);
+		if (recording_) {
+			events_.push_back({ true, r.x, r.y, r.x + r.w, r.y + r.h });
+		}
+	}
+
+	// THE STAGES: a rounded box and its label; the sum a circle with a plus. EVERY BOX IS FILLED OPAQUE BEFORE IT IS STROKED.
 	for (size_t i = 0; i < path_.stages.size(); ++i) {
 		const Stage& s = path_.stages[i];
 		const Rect& r = boxes_[i];

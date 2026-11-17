@@ -690,6 +690,7 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/disperser_expanded.cpp
 	src/plugin/ui/eroder_card.cpp
 	src/plugin/ui/pair_cell.cpp
+	src/plugin/ui/field_stack.cpp
 	src/plugin/ui/route_switch.cpp
 	src/plugin/ui/eroder_plot.cpp
 	src/plugin/ui/eroder_flow.cpp

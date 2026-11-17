@@ -137,6 +137,17 @@ public:
 	[[nodiscard]] Anchor anchorForTest(Chip chip) const;
 	[[nodiscard]] Rect chipRectForTest(Chip chip) const;
 	[[nodiscard]] int recomputesForTest() const noexcept { return recomputes_; }
+	/// **WHAT THE LAST DRAW PUT DOWN, IN ORDER** (recorded only while `setRecordingForTest(true)`): each line segment, and each
+	/// chip's backing plate (`backing`, its rectangle in x0..y1). A test reads draw order from the sequence.
+	struct DrawEvent {
+		bool backing = false;
+		float x0 = 0.0f;
+		float y0 = 0.0f;
+		float x1 = 0.0f;
+		float y1 = 0.0f;
+	};
+	void setRecordingForTest(bool on) noexcept { recording_ = on; }
+	[[nodiscard]] const std::vector<DrawEvent>& drawnForTest() const noexcept { return events_; }
 
 private:
 	void measure();
@@ -154,6 +165,8 @@ private:
 	/// Each stage's box, and the columns they stand in (a column is one stage, or two for Parallel).
 	std::vector<Rect> boxes_;
 	std::vector<std::vector<size_t>> columns_;
+	bool recording_ = false;
+	std::vector<DrawEvent> events_;
 	std::array<Rect, 4> chipRects_ {};
 	std::array<Anchor, 4> anchors_ {};
 	visage::Frame* inLoop_ = nullptr;

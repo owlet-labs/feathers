@@ -26,8 +26,10 @@
 #include "plugin/ui/mode_value_cell.h"
 #include "plugin/ui/pair_cell.h"
 #include "plugin/ui/route_switch.h"
+#include "plugin/ui/theme.h"
 #include "plugin/ui/value_box.h"
 
+#include <algorithm>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -47,16 +49,71 @@
 
 namespace feathers::ui {
 
+/// THE WINDOW'S SLOT BLOCK: slot A's row over slot B's, and the route switch to the right of both, centred on them under a
+/// small "ROUTE" caption. It draws nothing else: the Engine group's box is the outline.
+class SlotStack final : public visage::Frame {
+public:
+	static constexpr float kRowGap = 6.0f;
+	/// THE ROUTE COLUMN'S WIDTH, right of the rows: the switch and its caption are centred in it.
+	static constexpr float kRouteColumn = 40.0f;
+	static constexpr float kCaptionHeight = 11.0f;
+	SlotStack(PairCell& a, PairCell& b, RouteSwitch& route) : a_(a), b_(b), route_(route) {
+		addChild(&a);
+		addChild(&b);
+		addChild(&route);
+	}
+	/// THE BLOCK'S SIZE for rows of `rowWidth` by `rowHeight`.
+	static float widthFor(float rowWidth) { return rowWidth + kRouteColumn; }
+	static float heightFor(float rowHeight) { return 2.0f * rowHeight + kRowGap; }
+	void resized() override {
+		const float rowW = std::max(0.0f, static_cast<float>(width()) - kRouteColumn);
+		const float rowH = (static_cast<float>(height()) - kRowGap) * 0.5f;
+		a_.setBounds(0.0f, 0.0f, rowW, rowH);
+		b_.setBounds(0.0f, rowH + kRowGap, rowW, rowH);
+		const float switchH = std::min(RouteSwitch::heightFor(44.0f), rowH);
+		route_.setBounds(rowW + (kRouteColumn - RouteSwitch::kWidth) * 0.5f,
+		                 (static_cast<float>(height()) - switchH) * 0.5f + kCaptionHeight * 0.5f, RouteSwitch::kWidth, switchH);
+	}
+	void draw(visage::Canvas& canvas) override {
+		const float rowW = std::max(0.0f, static_cast<float>(width()) - kRouteColumn);
+		canvas.setColor(kMuted);
+		canvas.text("ROUTE", font(kKnobLabelSize), visage::Font::kCenter, rowW, route_.y() - kCaptionHeight - 1.0f, kRouteColumn,
+		            kCaptionHeight);
+	}
+	[[nodiscard]] visage::Frame& routeFrame() const noexcept { return route_; }
+
+private:
+	PairCell& a_;
+	PairCell& b_;
+	RouteSwitch& route_;
+};
+
 struct EtchSlots {
 	std::unique_ptr<Knob> knobA, knobB;
 	std::unique_ptr<ModeValueCell> cellA, cellB;
 	std::unique_ptr<PairCell> innerA, innerB, outer;
 	std::unique_ptr<RouteSwitch> route;
+	/// THE WINDOW'S ARRANGEMENT (`buildStacked`); null on the card, where `outer` is made instead.
+	std::unique_ptr<SlotStack> stack;
 
 	/// @param control   the face's own accessor for a parameter's control
 	/// @param caption   the outer pair's caption; empty for a bare row (no caption band, no outline)
 	template <class ControlOf>
 	void build(ControlOf&& control, float faceDiameter, Notifier* notifier, const std::string& caption) {
+		makeParts(control, faceDiameter, notifier);
+		outer = std::make_unique<PairCell>(caption, *innerA, *innerB);
+		outer->setMiddle(*route, RouteSwitch::kWidth);
+	}
+	/// **THE WINDOW'S ARRANGEMENT: SLOT A OVER SLOT B, THE ROUTE SWITCH TO THE RIGHT OF BOTH**, centred on them, so the top-down
+	/// order of the two slots is the order the switch's glyphs and the topology picture draw. The same parts as `build`; the
+	/// card's `outer` is not made.
+	template <class ControlOf>
+	void buildStacked(ControlOf&& control, float faceDiameter, Notifier* notifier) {
+		makeParts(control, faceDiameter, notifier);
+		stack = std::make_unique<SlotStack>(*innerA, *innerB, *route);
+	}
+	template <class ControlOf>
+	void makeParts(ControlOf&& control, float faceDiameter, Notifier* notifier) {
 		namespace ero = fx::eroder;
 		using P = ero::Param;
 		const auto slot = [&](std::unique_ptr<Knob>& knob, std::unique_ptr<ModeValueCell>& mode, std::unique_ptr<PairCell>& pair,
@@ -79,10 +136,7 @@ struct EtchSlots {
 		slot(knobA, cellA, innerA, P::SlotAAmount, P::SlotAType, P::SlotAShape, P::SlotAMix, "A");
 		slot(knobB, cellB, innerB, P::SlotBAmount, P::SlotBType, P::SlotBShape, P::SlotBMix, "B");
 		route = std::make_unique<RouteSwitch>(control(P::SlotRoute), notifier);
-		outer = std::make_unique<PairCell>(caption, *innerA, *innerB);
-		outer->setMiddle(*route, RouteSwitch::kWidth);
 	}
-
 	void setModulation(ModState* mod, EditHistory* history) {
 		knobA->setModulation(mod, history);
 		knobB->setModulation(mod, history);
@@ -92,14 +146,17 @@ struct EtchSlots {
 	/// (a hidden parent does not clear its children's), so a row that is merely a hidden parent would still offer its knobs
 	/// to a hand-turning sweep at their stale places.
 	void setShown(bool shown) {
-		for (visage::Frame* f : std::initializer_list<visage::Frame*> { outer.get(), innerA.get(), innerB.get(), knobA.get(),
-		                                                                 knobB.get(), cellA.get(), cellB.get(), route.get() }) {
-			f->setVisible(shown);
+		for (visage::Frame* f : std::initializer_list<visage::Frame*> { outer.get(), stack.get(), innerA.get(), innerB.get(),
+		                                                                 knobA.get(), knobB.get(), cellA.get(), cellB.get(),
+		                                                                 route.get() }) {
+			if (f != nullptr) {
+				f->setVisible(shown);
+			}
 		}
 	}
 
 	/// The row's height at a knob column of `knobHeight`: the bare row is the knob's, a captioned one has the band above.
-	[[nodiscard]] float heightFor(float knobHeight) const { return outer->bare() ? knobHeight : PairCell::heightFor(knobHeight); }
+	[[nodiscard]] float heightFor(float knobHeight) const { return outer == nullptr ? knobHeight : outer->bare() ? knobHeight : PairCell::heightFor(knobHeight); }
 };
 
 } // namespace feathers::ui

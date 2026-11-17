@@ -29,6 +29,7 @@
 #include "plugin/ui/eroder_plot.h"
 #include "plugin/ui/eroder_flow.h"
 #include "plugin/ui/etch_slots.h"
+#include "plugin/ui/field_stack.h"
 #include "plugin/ui/expanded_overlay.h"
 #include "plugin/ui/gamma_box.h"
 #include "plugin/ui/knob.h"
@@ -46,17 +47,17 @@
 
 // THE ERODER'S WINDOW — laid out for its room:
 //
-//   ┌───────────────────────────────────────────────┬──────────────────────────┐
-//   │ the picture, large (`EroderPlot`): the spectra │ [   Dust   |   Comb   ]  │
-//   │ and the band with its hertz, or the eleven     │  Amount   Freq    Width  │  DUST: every control
-//   │ bars with their numbers                        │  Source   Grit    Stereo │
-//   ├───────────────────────────────────────────────┤  Reso     Drive   Mix    │
-//   │ READ HEAD: left over right, the last seconds   │ (Track)                  │
-//   └───────────────────────────────────────────────┴──────────────────────────┘
-//                                                      COMB: Tone  Character  Cutoff / Mix, [Gamma]
+//   ┌───────────────────────────────────────────────┬───────────────────────────────────────────┐
+//   │ the picture, large (`EroderPlot`): the spectra │ [    Dust  |  Comb  |  Rust  |  Etch    ]  │
+//   │ and the band with its hertz, or the eleven     │ INPUT │ TONE: filter, emphasis, smear │ DRIVE │
+//   │ bars with their numbers                        │ ENGINE: two knob rows, six cells wide     │
+//   ├───────────────────────────────────────────────┤ FEEDBACK (reso, loop, interval) │ OUTPUT  │
+//   │ READ HEAD: left over right, the last seconds   │ the topology picture, then Track          │
+//   └───────────────────────────────────────────────┴───────────────────────────────────────────┘
 //
-// EVERY CONTROL OF THE RUNNING ENGINE, which is every control the card offers and the three it leaves out
-// (Stereo, Resonance, Drive). The other engine's are hidden, as on the card.
+// THE FILTER (Freq and Width) AND THE EMPHASIS (Amount, Offset, Tilt/Bell) ARE STACKED BOXES, not knobs: the plot's handles
+// and these fields are their controls. EVERY CONTROL OF THE RUNNING ENGINE is here, which is every control the card offers and
+// the ones it leaves out. The other engine's are hidden, as on the card. The Engine group is two cells tall in every engine.
 
 namespace feathers::ui {
 
@@ -83,6 +84,8 @@ public:
 	static constexpr float kGroupCaption = 14.0f;
 	static constexpr float kGroupPad = 6.0f;
 	static constexpr float kGroupGap = 6.0f;
+	/// THE SIDE COLUMN: six cells, and the edge room of the three group boxes of the first row with the gaps between them.
+	static constexpr float kSideColumn = kSideWidth + 6.0f * kGroupPad + 2.0f * kGroupGap;
 	static constexpr float kRowGap = 6.0f;
 	[[nodiscard]] static constexpr float groupHeight(float content) { return kGroupCaption + content + kGroupPad; }
 
@@ -109,7 +112,6 @@ public:
 	[[nodiscard]] std::vector<visage::Frame*> rustWidgetsForTest() const;
 	/// A plain knob by the control it drives, or null.
 	[[nodiscard]] Knob* knobForTest(fx::eroder::Param p) const { return knob(p); }
-	[[nodiscard]] Knob* widthForTest() const { return knob(fx::eroder::Param::Width); }
 	[[nodiscard]] Knob* driveForTest() const { return drive_.get(); }
 	[[nodiscard]] ModeValueCell* driveCellForTest() const { return driveCell_.get(); }
 	[[nodiscard]] PairCell* drivePairForTest() const { return drivePair_.get(); }
@@ -119,9 +121,15 @@ public:
 	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
 	[[nodiscard]] SwitchChip* inLoopForTest() const { return inLoop_.get(); }
 	[[nodiscard]] SwitchChip* tapForTest() const { return tap_.get(); }
-	[[nodiscard]] ZoneSelect* shapeForTest() const { return &emphasisCell_->select(); }
-	[[nodiscard]] ModeValueCell* emphasisCellForTest() const { return emphasisCell_.get(); }
-	[[nodiscard]] PairCell* emphasisPairForTest() const { return emphasisPair_.get(); }
+	[[nodiscard]] ZoneSelect* shapeForTest() const { return emphasis_->selector(); }
+	/// THE TWO STACKED BOXES: the filter's rows are Freq then Width; the emphasis's are Amount, Offset, and the Tilt/Bell selector last.
+	[[nodiscard]] FieldStack* filterForTest() const { return filter_.get(); }
+	[[nodiscard]] FieldStack* emphasisStackForTest() const { return emphasis_.get(); }
+	[[nodiscard]] ValueBox* freqBoxForTest() const { return &filter_->box(0); }
+	[[nodiscard]] ValueBox* widthBoxForTest() const { return &filter_->box(1); }
+	[[nodiscard]] ValueBox* emphasisAmountForTest() const { return &emphasis_->box(0); }
+	[[nodiscard]] ValueBox* emphasisOffsetForTest() const { return &emphasis_->box(1); }
+	[[nodiscard]] Knob* inputKnobForTest() const { return knob(fx::eroder::Param::Input); }
 	[[nodiscard]] PairCell* loopPairForTest() const { return loopPair_.get(); }
 	[[nodiscard]] EtchSlots& etchSlotsForTest() { return etch_; }
 	[[nodiscard]] Knob* followForTest() const { return knob(fx::eroder::Param::Follow); }
@@ -158,9 +166,8 @@ private:
 	std::unique_ptr<SwitchChip> restore_;
 	std::unique_ptr<SwitchChip> inLoop_;
 	std::unique_ptr<SwitchChip> tap_;
-	/// THE EMPHASIS'S CELL: the shape's selector with the Offset and the Bell's Width stacked under it.
-	std::unique_ptr<ModeValueCell> emphasisCell_;
-	std::unique_ptr<PairCell> emphasisPair_;
+	std::unique_ptr<FieldStack> filter_;
+	std::unique_ptr<FieldStack> emphasis_;
 	std::unique_ptr<PairCell> loopPair_;
 	std::unique_ptr<ZoneCoordCell> tone_;
 	std::unique_ptr<ZoneCoordCell> character_;

@@ -5797,3 +5797,91 @@ TEST_CASE("Input drive: the Comb takes the gain too, and its tail still reaches 
 	}
 	CHECK(silent);
 }
+
+//--------------------------------------------------------------------------------------------------//
+// THE LOOPS' LIMITER READINGS, for the window's feedback meters.                                      //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("Limiter readings: a howling loop publishes a gain below one and a level at its threshold, a quiet one publishes one and nothing") {
+	const auto at = [](const auto& readings, Reading r) { return readings[static_cast<size_t>(r)]; };
+	const std::vector<float> sineIn = sine(220.0, 48000, 0.5f);
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb }) {
+		CAPTURE(static_cast<int>(mode));
+		// DRIVE OFF, BOTH LOOPS WIDE OPEN: nothing is divided out, so the loops sit on their limiters (`hotLoops`).
+		Settings howl = hotLoops(mode, DriveMode::Soft, 0.0f);
+		howl.rustBias = 1.0f;
+		Eroder loud;
+		loud.prepare(kRate);
+		loud.setTarget(howl);
+		std::vector<float> l = sineIn;
+		std::vector<float> r = sineIn;
+		float lowestInner = 1.0f;
+		float lowestOuter = 1.0f;
+		float highestLevel = 0.0f;
+		for (size_t done = 0; done < l.size(); done += 480) {
+			loud.processStereo(l.data() + done, r.data() + done, 480);
+			const auto& readings = loud.readingsForTest();
+			lowestInner = std::min(lowestInner, at(readings, Reading::LimiterInnerGain));
+			lowestOuter = std::min(lowestOuter, at(readings, Reading::LimiterOuterGain));
+			highestLevel = std::max({ highestLevel, at(readings, Reading::LimiterInnerLevel), at(readings, Reading::LimiterOuterLevel) });
+		}
+		measured("limiter inner gain, howling", static_cast<double>(lowestInner));
+		measured("limiter outer gain, howling", static_cast<double>(lowestOuter));
+		if (mode != Mode::Comb) { // (the Comb's inner gain is the bank's)
+			CHECK(lowestInner < 1.0f);
+			CHECK(lowestOuter < 1.0f);
+			CHECK(lowestInner > 0.0f);
+			CHECK(highestLevel > 0.9f); // the return runs at the threshold
+		}
+		CHECK(highestLevel <= 4.0f);
+		// A QUIET SETTING: no loop at all, so the limiters let everything by and nothing returns.
+		Settings quiet = declared();
+		quiet.mode = mode == Mode::Comb ? Mode::Dust : mode;
+		quiet.resonance = 0.0f;
+		quiet.loop = 0.0f;
+		std::vector<float> ql = whiteInput(4800, 0.001f);
+		std::vector<float> qr = ql;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(quiet);
+		e.processStereo(ql.data(), qr.data(), 4800);
+		const auto& calm = e.readingsForTest();
+		CHECK(at(calm, Reading::LimiterOuterGain) == 1.0f);
+		CHECK(at(calm, Reading::LimiterOuterLevel) == 0.0f);
+		CHECK(at(calm, Reading::LimiterInnerGain) == 1.0f);
+		CHECK(at(calm, Reading::LimiterInnerLevel) == 0.0f);
+	}
+	// EACH LOOP ON ITS OWN, so the two readings cannot be read for one another: Resonance alone limits the inner and not the outer, and
+	// the Loop alone does not touch the inner.
+	for (const bool innerOnly : { true, false }) {
+		CAPTURE(innerOnly);
+		Settings one = hotLoops(Mode::Dust, DriveMode::Soft, 0.0f);
+		one.tapDriven = false; // a Driven tap would put the inner limiter on whatever Resonance says
+		one.emphAmount = 0.0f; // and so would an emphasis in the loop
+		one.emphInLoop = false;
+		one.resonance = innerOnly ? 1.0f : 0.0f;
+		one.loop = innerOnly ? 0.0f : 1.0f;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(one);
+		std::vector<float> l = sineIn;
+		std::vector<float> r = sineIn;
+		float lowest[2] = { 1.0f, 1.0f };
+		for (size_t done = 0; done < l.size(); done += 480) {
+			e.processStereo(l.data() + done, r.data() + done, 480);
+			lowest[0] = std::min(lowest[0], at(e.readingsForTest(), Reading::LimiterInnerGain));
+			lowest[1] = std::min(lowest[1], at(e.readingsForTest(), Reading::LimiterOuterGain));
+		}
+		// (The Loop alone totals under one, so its limiter rests; the inner one is what must not move for it.)
+		if (innerOnly) {
+			CHECK(lowest[0] < 1.0f);
+			CHECK(lowest[1] == 1.0f);
+		}
+		else {
+			CHECK(lowest[0] == 1.0f);
+		}
+	}
+	// THE READINGS ARE AFTER THE SPECTRUM'S AND THE HEAD'S: the older layout is where it was.
+	CHECK(static_cast<size_t>(Reading::LimiterInnerGain) == static_cast<size_t>(Reading::HeadFarR) + 1);
+	CHECK(kReadingCount == static_cast<size_t>(Reading::LimiterOuterLevel) + 1);
+}

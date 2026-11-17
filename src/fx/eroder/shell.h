@@ -359,6 +359,8 @@ public:
 	/// The gain of the last frame.
 	[[nodiscard]] float gain() const noexcept { return gain_; }
 	[[nodiscard]] float envelope() const noexcept { return env_; }
+	/// The envelope against the threshold: 1 is a return at the limit.
+	[[nodiscard]] float level() const noexcept { return env_ / threshold_; }
 	[[nodiscard]] float thresholdForTest() const noexcept { return threshold_; }
 
 private:

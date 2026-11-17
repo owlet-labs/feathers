@@ -1642,7 +1642,9 @@ struct HighpassSettings {
 ///     two counters different has read a frame half-written and drops it;
 ///   - THE NOTE the bus last played, in semitones: what Track and the Comb's tuning follow;
 ///   - WHERE THE READ HEAD HAS BEEN during the call, each side: the nearest and the farthest it sat behind the write,
-///     in seconds, sampled once a control block. Both engines publish it.
+///     in seconds, sampled once a control block. Both engines publish it;
+///   - EACH LOOP'S LIMITER, as it stood over the call: the lowest gain it held (1 when it let everything by) and the highest
+///     level of its return against its threshold (`LoopLimiter`), sampled once a control block. Readings only.
 /// Everything else either surface draws (the band, the Comb's eleven quantities) is a pure function of the controls
 /// and the note: `deriveDust` and `derive`, run where they are drawn.
 enum class Reading : size_t {
@@ -1655,6 +1657,10 @@ enum class Reading : size_t {
 	HeadFarL,
 	HeadNearR,
 	HeadFarR,
+	LimiterInnerGain, ///< the inner loop's limiter: the lowest gain it held over the call, 1 at rest
+	LimiterOuterGain, ///< the outer loop's
+	LimiterInnerLevel, ///< the inner loop's return, as the limiter's envelope against its threshold, the highest over the call
+	LimiterOuterLevel,
 	kCount,
 };
 inline constexpr size_t kReadingCount = static_cast<size_t>(Reading::kCount);

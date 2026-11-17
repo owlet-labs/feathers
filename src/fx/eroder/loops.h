@@ -359,6 +359,11 @@ public:
 	[[nodiscard]] bool gatedForTest() const noexcept { return gated_; }
 	[[nodiscard]] const LoopLimiter& innerLimiterForTest() const noexcept { return innerLimiter_; }
 	[[nodiscard]] float outerLimiterGainForTest() const noexcept { return outerLimiter_.gain(); }
+	/// WHAT THE WINDOW'S FEEDBACK METERS READ: each limiter's last gain and its level against its threshold.
+	[[nodiscard]] float innerLimiterGain() const noexcept { return innerLimiter_.gain(); }
+	[[nodiscard]] float outerLimiterGain() const noexcept { return outerLimiter_.gain(); }
+	[[nodiscard]] float innerLimiterLevel() const noexcept { return innerLimiter_.level(); }
+	[[nodiscard]] float outerLimiterLevel() const noexcept { return outerLimiter_.level(); }
 	/// THE LARGEST SAMPLE THE LAST OUTER RETURN CARRIED, after the limiter and before the gain.
 	[[nodiscard]] float lastOuterPeakForTest() const noexcept { return lastOuterPeak_; }
 	/// HOW MANY FRAMES THE OUTER LIMITER HAS ACTED ON, since the section was built.

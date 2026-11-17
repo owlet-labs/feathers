@@ -485,6 +485,9 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 	analyserLive_ = analysing;
 	float nearFrames[2] = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
 	float farFrames[2] = { 0.0f, 0.0f };
+	// EACH LOOP'S LIMITER over the call: the lowest gain and the highest level, taken once a control block (readings only).
+	float limiterGain[2] = { 1.0f, 1.0f };
+	float limiterLevel[2] = { 0.0f, 0.0f };
 	int done = 0;
 	while (done < frames) {
 		if (untilAnalyserStep_ <= 0) {
@@ -528,6 +531,13 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 			nearFrames[c] = std::min(nearFrames[c], at);
 			farFrames[c] = std::max(farFrames[c], at);
 		}
+		{
+			const SharedSection& sh = s.mode == Mode::Comb ? shared_ : dust_.shared();
+			limiterGain[0] = std::min(limiterGain[0], sh.innerLimiterGain());
+			limiterGain[1] = std::min(limiterGain[1], sh.outerLimiterGain());
+			limiterLevel[0] = std::max(limiterLevel[0], sh.innerLimiterLevel());
+			limiterLevel[1] = std::max(limiterLevel[1], sh.outerLimiterLevel());
+		}
 		untilAnalyserStep_ -= take;
 		done += take;
 	}
@@ -536,6 +546,10 @@ void Eroder::processStereo(float* left, float* right, int frames) noexcept {
 	readings_[static_cast<size_t>(Reading::HeadFarL)] = farFrames[0] * perFrame;
 	readings_[static_cast<size_t>(Reading::HeadNearR)] = nearFrames[1] * perFrame;
 	readings_[static_cast<size_t>(Reading::HeadFarR)] = farFrames[1] * perFrame;
+	readings_[static_cast<size_t>(Reading::LimiterInnerGain)] = limiterGain[0];
+	readings_[static_cast<size_t>(Reading::LimiterOuterGain)] = limiterGain[1];
+	readings_[static_cast<size_t>(Reading::LimiterInnerLevel)] = std::min(limiterLevel[0], 4.0f);
+	readings_[static_cast<size_t>(Reading::LimiterOuterLevel)] = std::min(limiterLevel[1], 4.0f);
 	publishReadings();
 }
 

@@ -83,6 +83,8 @@ public:
 	[[nodiscard]] float lastTapForTest() const noexcept { return lastTap_; }
 	/// THE SHARED SECTION (`loops.h`) as the last control block left it, and the fed-back sample as the loop's write saw it.
 	[[nodiscard]] const SharedSection& sharedForTest() const noexcept { return shared_; }
+	/// THE SHARED SECTION, for the readings the device publishes (the loops' limiters).
+	[[nodiscard]] const SharedSection& shared() const noexcept { return shared_; }
 	[[nodiscard]] float lastFedBackForTest() const noexcept { return lastFedBack_; }
 	[[nodiscard]] float lastLimiterGainForTest() const noexcept { return lastLimiterGain_; }
 

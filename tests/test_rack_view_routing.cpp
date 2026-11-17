@@ -876,6 +876,7 @@ TEST_CASE("a new chain starts open, by every road that makes one; a chain loaded
 		CAPTURE(i);
 		CHECK(loaded->open(i) == (i != second));
 	}
+}
 
 //--------------------------------------------------------------------------------------------------//
 // A PAD'S KEY ENTERS AT ITS RACK                                                                    //

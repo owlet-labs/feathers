@@ -229,12 +229,6 @@ struct AdditivePicture {
 	feathers::PartialBias bias {};
 	/// THE SELECTED SOUND'S STRING SCALERS (Pluck): the picture reads the place's material through them, as the bank does.
 	feathers::StringBias string {};
-	/// AND THE SELECTED SOUND'S DRUM (2026-11-05, drum proposal §3.4): its kind (the selected PAD's in Kit mode, the engine's in
-	/// Pitched) and its seven scalers; the map draws that kind as heard at each place (drum::heardSpectrum).
-	feathers::DrumBias drum {};
-	/// AND THE KIT-WIDE TRIMS on top (2026-11-06), the same law again; neutral except on a Drum Kit.
-	feathers::DrumBias drumKit {};
-	feathers::drum::Kind drumKind = feathers::drum::Kind::Membrane;
 	friend bool operator==(const AdditivePicture&, const AdditivePicture&) = default;
 };
 

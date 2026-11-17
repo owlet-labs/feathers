@@ -67,10 +67,7 @@ namespace feathers {
 /// plucked string (dsp/ks_string.h). The bank builds the PLUCK'S TONE as Additive's spectrum at the same place
 /// (PreparedCharacter::partials, by buildPartialsFor, the one reading of it) and the string's MATERIAL beside it
 /// (PreparedCharacter::string). No grid and no morph table.
-/// THE DRUM ENGINE is `Drum` (2026-11-05): each voice is one drum hit
-/// (dsp/drum_voice.h). The bank builds each PAD'S seven fields (PreparedCharacter::drum): in Kit mode every sound at its own
-/// place, unblended; in Pitched mode the live sounds' fields blended into pad 0. No grid and no table.
-enum class OscEngine : uint8_t { Morph, Stair, Weave, Shapes, Partials, String, Drum };
+enum class OscEngine : uint8_t { Morph, Stair, Weave, Shapes, Partials, String };
 
 /// One sound of the constellation, as the character layer sees it.
 ///
@@ -176,19 +173,6 @@ struct SoundCoord {
 	/// fieldWithOverride over its field on a String build. Neutral by default and read from the params only on the
 	/// Karplus-Strong engine, so every other engine's SoundCoord compares equal to before.
 	StringBias stringBias{};
-	/// THE DRUM'S SEVEN FIELD SCALERS for this sound (drum proposal §3.2), read from the params only on the Drum engine, so
-	/// every other engine's SoundCoord compares equal to before.
-	DrumBias drumBias{};
-	/// AND THE KIT-WIDE TRIMS (2026-11-06), the same law applied again on top of the pad's own: neutral except on a Drum Kit.
-	DrumBias drumKitBias{};
-	/// **A PAD IS TWO LAYERS** (kit stance redesign), each at its own place: (the kit's stance) plus that layer's own vector.
-	/// `drumBias` and `drumVectorX/Y[0]` are layer one's, `drumBias2` and index 1 layer two's; the kit's trims apply to both. Read only on a Drum Kit (zero everywhere else, so every other SoundCoord
-	/// compares equal to before). `drumLayer` is whether layer two is on (its kind is not Off).
-	DrumBias drumBias2{};
-	std::array<double, 2> drumVectorX {};
-	std::array<double, 2> drumVectorY {};
-	bool drumLayer{false};
-
 	/// THE BLUE SHIFT, and both of these are exactly zero unless the puck is moving AND the audition
 	/// has turned a scale up. See §2b: the excitation gets a direction again, because a constellation
 	/// has no target but it does have a velocity.
@@ -294,12 +278,6 @@ struct Character {
 	/// How many entries of `sounds` mean anything. Entries past it are value-initialised, so two
 	/// characters with the same live sounds compare equal whatever was switched off to get there.
 	uint8_t count{0};
-	/// THE DRUM ENGINE'S KIT MODE (drum proposal §3.3): every one of `sounds` is a PAD, built at its own place and never
-	/// blended. False everywhere else, so every other Character compares equal to before.
-	bool drumKit{false};
-	/// THE KIT'S STANCE as the engine sees it (kit stance redesign): the standard puck's Pos X/Y through Weather, the one
-	/// place every unlocked layer of every pad is moved by. Zero off a Drum Kit.
-	AnchorPoint drumStance{};
 	float xf{0.0f};
 	/// Where the puck is, carried so that the thing which has to DIFFERENTIATE it does not have to
 	/// re-read forty-eight parameters to find out. Nothing downstream of the blend reads it.
@@ -422,26 +400,6 @@ void buildPartialsFor(const Character& c, partials::PartialSpectrum& out, Partia
 /// buildPartialsFor's shares. No sounds is the default material.
 StringFields buildStringFieldsFor(const Character& c);
 
-/// **A DRUM LAYER'S PLACE** (kit stance redesign R3): the kit's stance (the Perform puck, Pos X/Y through Weather) plus the
-/// layer's own vector, for EVERY layer: the engine does not read a layer's Lock (a stored flag only the editor's bulk edits read,
-/// so engaging or releasing it changes nothing audible). The whole rule; evaluated once per rebuild, per layer.
-inline AnchorPoint drumLayerPlace(const AnchorPoint& stance, const AnchorPoint& vector) {
-	return { stance.x + vector.x, stance.y + vector.y };
-}
-// (A layer's vector has no bound: its parameter's declared range, params.h's kDrumVectorReach, is only a host's fader.)
-
-/// THE DRUM PADS' FIELDS (drum proposal §3): in Kit mode each live sound's seven at its own coordinate, scalers applied, at its
-/// slot; in Pitched mode the live sounds' blended (buildStringFieldsFor's shares) into pad 0.
-struct DrumCharacter {
-	std::array<drum::Fields, kMaxSounds> pads{};
-	/// EACH PAD'S SECOND LAYER'S FIELDS: at that layer's own place, through its own scalers; default where a pad has no
-	/// second layer. (`pads` is layer one's.)
-	std::array<drum::Fields, kMaxSounds> layers{};
-	bool kit{false};
-	friend bool operator==(const DrumCharacter&, const DrumCharacter&) = default;
-};
-DrumCharacter buildDrumFor(const Character& c);
-
 /// WHAT A PARKED, UNBOWED STRING OF MODEL `model` READS UNDER THESE LAWS: its rest pose along the scan
 /// path (WeaveString::restScanPath — the solve of k(x - home) = elastic force, NOT the raw home shape,
 /// which coupling pulls away from), at the loudness the string's AGC settles to on it. WeaveString::kNodes
@@ -523,8 +481,6 @@ struct PreparedCharacter {
 	partials::Phasing phasing{};
 	/// THE STRING'S MATERIAL, blended — live exactly when `engine` is String, whose pluck's tone is `partials` above.
 	StringFields string{};
-	/// THE DRUM PADS' FIELDS — live exactly when `engine` is Drum.
-	DrumCharacter drum{};
 
 	/// WHICH BUILD THIS IS — a serial the bank stamps on every prepared table, never reused.
 	///

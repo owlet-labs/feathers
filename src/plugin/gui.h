@@ -68,7 +68,6 @@ class FrameWatchers;
 namespace feathers::ui {
 class ModState;
 class SpectrumPanel;
-class DrumPanel;
 class SoundSelection;
 class ExpandedCanvas;
 class HeaderBar;
@@ -270,8 +269,6 @@ public:
 	/// THE SPECTRUM PANEL WHILE IT IS OPEN, or null — the handle the editor keeps (it is owned by its host), so a case can
 	/// open it by the tab, find it, and see it gone after Esc, ✕, the tab again or an engine change.
 	ui::SpectrumPanel* spectrumPanelForTest() noexcept;
-	/// TEST ONLY: the drum kit panel while it is open (the Drum tab on Explore opens it).
-	ui::DrumPanel* drumPanelForTest() noexcept;
 	/// THE SELECTED SOUND, which the panel follows — a case moves it as a hand on the sound stack would.
 	ui::SoundSelection* selectionForTest() noexcept;
 

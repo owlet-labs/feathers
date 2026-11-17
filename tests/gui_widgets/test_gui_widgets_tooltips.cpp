@@ -48,7 +48,6 @@
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/macros_card.h"
 #include "mod/macros/macros_types.h"
-#include "plugin/ui/drum_panel.h"
 #include "plugin/ui/sound_stack.h"
 #include "plugin/ui/parallel_rack_card.h"
 #include "rack/parallel_rack.h"
@@ -3236,39 +3235,8 @@ TEST_CASE("an amount-only h fader (FaderPill) resets to its default on a double-
 	CHECK(tally.broken.empty());
 }
 
-TEST_CASE("the h-fader double-click, on the three hosts the device sweep does not reach: the sound stack's Level pills, the "
-          "Drum panel's pills and a parallel Rack card's chain pill") {
-	// 1. THE SOUND STACK, as the editor builds it — each sound's Level, amount-only.
-	{
-		ModFixture f;
-		// THE LEVEL PILLS ARE A KIT'S: the Drum engine in Kit mode.
-		ParamSet params;
-		params.setBase(static_cast<clap_id>(ParamId::OscType), static_cast<double>(OscType::Drum));
-		params.setBase(static_cast<clap_id>(ParamId::DrumMode), 1.0);
-		f.bridge.publish(params);
-		f.bridge.refresh();
-		f.gui.tickForTest();
-		auto* stack = findInTree<ui::SoundStack>(f.root);
-		REQUIRE(stack != nullptr);
-		stack->resized();
-		PillTally tally;
-		sweepPills(stack, tally, "sound stack");
-		CHECK(tally.amountOnly > 0);
-		CHECK(tally.broken.empty());
-	}
-	// 2. THE DRUM PANEL, over the Drum engine — the selected pad's pills.
-	{
-		ExploreFixture f;
-		f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
-		ui::DrumPanel panel(f.bridge, f.registry, f.selection, &f.tray);
-		panel.setBounds(0.0f, 0.0f, ui::DrumPanel::kMinimumWidth, ui::DrumPanel::kMinimumHeight);
-		(void)panel.update();
-		PillTally tally;
-		sweepPills(&panel, tally, "drum panel");
-		CHECK(tally.amountOnly + tally.powered > 0);
-		CHECK(tally.broken.empty());
-	}
-	// 3. A PARALLEL RACK ON THE LANE WITH A CHAIN — each chain strip's Level pill, amount-only.
+TEST_CASE("the h-fader double-click, on the host the device sweep does not reach: a parallel Rack card's chain pill") {
+	// A PARALLEL RACK ON THE LANE WITH A CHAIN — each chain strip's Level pill, amount-only.
 	{
 		namespace pr = feathers::rack::parallel;
 		ModFixture f;

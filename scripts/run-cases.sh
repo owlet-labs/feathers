@@ -33,7 +33,7 @@
 #
 # Usage:  scripts/run-cases.sh <test-binary> "case name" ["case name" ...]
 #         scripts/run-cases.sh --each <test-binary>
-#         RUN_CASES_JOBS=4 scripts/run-cases.sh --each <test-binary>   # up to 4 cases at once
+#         scripts/run-cases.sh --each --jobs 4 <test-binary>   # up to 4 cases at once (or RUN_CASES_JOBS=4)
 # Commas in a name are turned into wildcards, so paste the name as written in
 # the source. Exits non-zero if any name matched zero cases or any case failed.
 #
@@ -124,14 +124,25 @@
 set -uo pipefail
 
 each=0
-if [[ ${1:-} == --each ]]; then
-	each=1
-	shift
-fi
+# Flags, in any order before the binary: --each, and --jobs N (up to N case processes at once under
+# --each; the same as RUN_CASES_JOBS=N, and the flag wins; default 1 is the sequential run).
+while [[ ${1:-} == --each || ${1:-} == --jobs ]]; do
+	if [[ $1 == --each ]]; then
+		each=1
+		shift
+	else
+		if [[ -z ${2:-} ]]; then
+			echo "run-cases: --jobs needs a number" >&2
+			exit 2
+		fi
+		RUN_CASES_JOBS=$2
+		shift 2
+	fi
+done
 
 if [[ $each -eq 1 && $# -ne 1 ]] || [[ $each -eq 0 && $# -lt 2 ]]; then
 	echo "usage: $0 <test-binary> \"case name\" [\"case name\" ...]" >&2
-	echo "       $0 --each <test-binary>" >&2
+	echo "       $0 --each [--jobs N] <test-binary>" >&2
 	exit 2
 fi
 

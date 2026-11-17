@@ -38,10 +38,13 @@ export CCACHE_BASEDIR="$HOME"
 export CCACHE_COMPILERCHECK=content
 # THE CACHE CAP. The default 5 GiB was 100% full with a 49% hit rate on 2026-09-25: every worktree
 # carries its own build, build-asan and install configs, which together far exceed 5 GiB, so a fresh
-# worktree recompiled almost everything, so the limit is 15 GiB. Set here rather than
+# worktree recompiled almost everything, so the limit is 25 GiB. Set here rather than
 # with `ccache -M` because ~/.config is read-only in the sandbox; the variable governs cleanup on
 # every compile made through this file.
-export CCACHE_MAXSIZE=15G
+# A build run WITHOUT this file fell back to 5 GiB and trimmed the shared cache (8.4 / 5.0 GiB,
+# 21,832 cleanups, 54% hit rate), so CMakeLists.txt now carries these same three settings in the
+# compiler launcher; the two must agree (25G here and there).
+export CCACHE_MAXSIZE=25G
 # BUILDS AND TESTS GIVE WAY TO THE AUDIO THREAD. Bitwig runs on this host, and on
 # 2026-11-05 our builds at load ~60 inflated Feathers' real CPU per block ~4x (p50 2.2 ms quiet, 8.2 ms
 # under load) and caused the live dropouts. Everything built or tested after sourcing this file runs at a

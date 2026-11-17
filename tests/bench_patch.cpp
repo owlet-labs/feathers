@@ -395,7 +395,6 @@ bool parseConfig(const std::vector<std::string>& tok, Config* c) {
 			c->engine = v == "additive"   ? static_cast<int>(feathers::OscType::Additive)
 			            : v == "resonate" ? static_cast<int>(feathers::OscType::Resonate)
 			            : v == "pluck"    ? static_cast<int>(feathers::OscType::Pluck)
-			            : v == "drum"     ? static_cast<int>(feathers::OscType::Drum)
 			                              : static_cast<int>(feathers::OscType::V5);
 		}
 		else if (k == "--voice-count") {

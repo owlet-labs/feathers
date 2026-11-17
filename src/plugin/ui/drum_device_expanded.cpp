@@ -51,14 +51,13 @@ struct Flow {
 bool isBox(dd::Param p) {
 	switch (p) {
 	case dd::Param::Kind: case dd::Param::Note: case dd::Param::Seed: case dd::Param::Zone: case dd::Param::ZoneOffset:
-	case dd::Param::Gamma: case dd::Param::Rotate: case dd::Param::TravelX: case dd::Param::TravelY: case dd::Param::Claps:
-	// THE THREE ZONE COORDINATES (Velocity, Wires, Bells) are boxes: the device declares no zone count for them, so a zone cell is not theirs.
-	case dd::Param::VelocityZone: case dd::Param::Wires: case dd::Param::Bells: return true;
+	case dd::Param::Gamma: case dd::Param::Rotate: case dd::Param::TravelX: case dd::Param::TravelY: case dd::Param::Claps: return true;
 	default: return false;
 	}
 }
 bool isSegmented(dd::Param p) {
-	return p == dd::Param::Trigger || p == dd::Param::Keys || p == dd::Param::Voices || p == dd::Param::PitchMode || p == dd::Param::DriveCurve;
+	return p == dd::Param::Trigger || p == dd::Param::Keys || p == dd::Param::Voices || p == dd::Param::PitchMode || p == dd::Param::DriveCurve
+	       || p == dd::Param::WireContour || p == dd::Param::BellLink;
 }
 
 } // namespace
@@ -183,8 +182,14 @@ void DrumDeviceExpanded::layOut() {
 		seat(strike, p, kPillW, kPillH);
 	}
 	seat(strike, dd::Param::Seed, 80.0f, ValueBox::kHeight);
+	// VELOCITY: ONE ROW OF DEPTHS, velocity to each destination the hit has (Level, Tone, Snap, Tension where the kind has a glide, Noise).
+	// Each stops at its end: nothing wraps into another mode.
+	Flow velocity { kPad, xMax, kPad, strike.bottom() + 4.0f };
+	for (const dd::Param p : { dd::Param::VelLevel, dd::Param::VelTone, dd::Param::VelSnap, dd::Param::VelTension, dd::Param::VelocityNoise }) {
+		seat(velocity, p, kPillW, kPillH);
+	}
 	// TERRAIN: the pad at the left; Zone, Offset, Gamma, Rotate and the travel beside it, then the pitch mode, the readout and the scalers.
-	const float terrainY = strike.bottom() + 12.0f;
+	const float terrainY = velocity.bottom() + 12.0f;
 	pad_->setBounds(kPad, terrainY, kTerrainSize, kTerrainSize);
 	Flow terrain { kPad + kTerrainSize + 12.0f, xMax, kPad + kTerrainSize + 12.0f, terrainY };
 	for (const dd::Param p : { dd::Param::Zone, dd::Param::ZoneOffset, dd::Param::Gamma, dd::Param::Rotate, dd::Param::TravelX, dd::Param::TravelY }) {
@@ -199,22 +204,26 @@ void DrumDeviceExpanded::layOut() {
 	                           dd::Param::FieldSnap, dd::Param::FieldMetal }) {
 		seat(terrain, p, kPillW, kPillH);
 	}
-	// BODY: the kind's own controls, then the three zone coordinates as boxes.
+	// BODY: the kind's own controls, then the snare's wire and bell amounts.
 	const float bodyY = std::max(terrain.bottom(), terrainY + kTerrainSize) + 12.0f;
 	Flow body { kPad, xMax, kPad, bodyY };
 	seat(body, dd::Param::Drive, kPillW, kPillH);
 	seat(body, dd::Param::DriveCurve, 184.0f, 22.0f);
 	seat(body, dd::Param::DriveTone, kPillW, kPillH);
-	for (const dd::Param p : { dd::Param::SweepTime, dd::Param::VelocityNoise, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
+	for (const dd::Param p : { dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
 	                           dd::Param::WireDecay, dd::Param::ClickDecay, dd::Param::BellStart, dd::Param::BellEnd, dd::Param::BellTime,
 	                           dd::Param::Bell2Hz, dd::Param::Bell2Time, dd::Param::KickHold, dd::Param::KickDip, dd::Param::KickDipTime,
 	                           dd::Param::ClickSweep, dd::Param::ClickSweepTime, dd::Param::StartPhase }) {
 		seat(body, p, kPillW, kPillH);
 	}
 	seat(body, dd::Param::Claps, 56.0f, ValueBox::kHeight);
-	for (const dd::Param p : { dd::Param::VelocityZone, dd::Param::Wires, dd::Param::Bells }) {
-		seat(body, p, 92.0f, ValueBox::kHeight);
+	// THE SNARE'S WIRES AND BELLS: one amount each, where the named zones were.
+	seat(body, dd::Param::WireContour, 150.0f, 22.0f);
+	for (const dd::Param p : { dd::Param::WireBuzz, dd::Param::WireThreshold, dd::Param::WireGate, dd::Param::BodyGate, dd::Param::Bell1Level,
+	                           dd::Param::Bell2Level, dd::Param::BellQ }) {
+		seat(body, p, kPillW, kPillH);
 	}
+	seat(body, dd::Param::BellLink, 110.0f, 22.0f);
 	const float zy = body.bottom();
 	contentBottom_ = zy;
 	for (size_t i = 0; i < placed.size(); ++i) {

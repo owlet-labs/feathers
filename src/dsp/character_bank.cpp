@@ -150,16 +150,6 @@ StringFields oneString(const SliceOrientationPin& fallback, const SoundCoord& s,
 	                                 s.stringBias);
 }
 
-/// One sound's drum fields at its own coordinate, through its Additive frame (the guests' host rows), scalers applied.
-drum::Fields oneDrum(const SliceOrientationPin& fallback, const SoundCoord& s, const PhaseWarp* warp,
-                     const DrumBias& bias) {
-	const double home = sliceHome(s.zone, s.phaseOffset, s.gammaBase);
-	return drumFieldsWithOverrides(drumFieldsWithOverrides(readDrumFields(partialFrameOf(fallback, s, home), home, s.travelX,
-	                                                                     s.travelY, warp),
-	                                                       bias),
-	                               s.drumKitBias);
-}
-
 } // namespace
 
 float PreparedCharacter::eval(const float* grid, double phase01) const {
@@ -182,8 +172,7 @@ float PreparedCharacter::eval(const float* grid, double phase01) const {
 	}
 	// A Weave side reads the synth's string and a Partials side sums its partials (the voice's own road, plan Task 9):
 	// neither is a table, and the voice never asks. Silence if anything does.
-	if (engine == OscEngine::Weave || engine == OscEngine::Partials || engine == OscEngine::String
-	    || engine == OscEngine::Drum) {
+	if (engine == OscEngine::Weave || engine == OscEngine::Partials || engine == OscEngine::String) {
 		return 0.0f;
 	}
 	// A Shapes side reads its ladders at a mip only the voice knows; the voice calls evalShapesAt and never
@@ -202,7 +191,7 @@ const float* PreparedCharacter::gridFor(int stairMip) const {
 	}
 	// Neither the string, the shape ladders nor the partials is a grid the bank can hand out.
 	if (engine == OscEngine::Weave || engine == OscEngine::Shapes || engine == OscEngine::Partials
-	    || engine == OscEngine::String || engine == OscEngine::Drum) {
+	    || engine == OscEngine::String) {
 		return nullptr;
 	}
 	if (engine == OscEngine::Morph) {
@@ -717,66 +706,6 @@ StringFields buildStringFieldsFor(const Character& c) {
 	return out;
 }
 
-DrumCharacter buildDrumFor(const Character& c) {
-	DrumCharacter out;
-	out.kit = c.drumKit;
-	const size_t n = std::min<size_t>(c.count, kMaxSounds);
-	if (c.drumKit) {
-		// EVERY PAD AT ITS OWN PLACE, NEVER BLENDED (drum proposal §3.3): pad N is sound N, addressed by its slot. A slot
-		// with no live sound keeps the default fields.
-		for (size_t i = 0; i < n; ++i) {
-			const SoundCoord& s = c.sounds[i];
-			// LAYER ONE at its place (the stance plus its vector: already the sound's travel).
-			out.pads[s.slot] = oneDrum(c.orientation, s, c.likes.of(s.slot), s.drumBias);
-			// LAYER TWO at its own, through its own scalers (the kit's trims apply to both).
-			if (s.drumLayer) {
-				SoundCoord at = s;
-				const AnchorPoint place = drumLayerPlace(c.drumStance, { s.drumVectorX[1], s.drumVectorY[1] });
-				at.travelX = place.x;
-				at.travelY = place.y;
-				out.layers[s.slot] = oneDrum(c.orientation, at, c.likes.of(s.slot), s.drumBias2);
-			}
-		}
-		return out;
-	}
-	if (n == 0) {
-		return out;
-	}
-	// PITCHED: the live sounds blended field by field, buildPartialsFor's shares exactly (the house rule: blend the fields,
-	// never the coordinates), into pad 0.
-	const auto clean = [](double w) { return w > 0.0 ? w : 0.0; };
-	double sum = 0.0;
-	for (size_t i = 0; i < n; ++i) {
-		sum += clean(c.sounds[i].weight);
-	}
-	const bool shared = std::isfinite(sum) && sum > 0.0;
-	double acc[7] {};
-	for (size_t i = 0; i < n; ++i) {
-		const SoundCoord& s = c.sounds[i];
-		const double w = shared ? clean(s.weight) / sum : (i == 0 ? 1.0 : 0.0);
-		if (w == 0.0) {
-			continue;
-		}
-		const drum::Fields f = oneDrum(c.orientation, s, c.likes.of(s.slot), s.drumBias);
-		acc[0] += w * f.pitch;
-		acc[1] += w * f.length;
-		acc[2] += w * f.sweep;
-		acc[3] += w * f.tone;
-		acc[4] += w * f.noise;
-		acc[5] += w * f.snap;
-		acc[6] += w * f.metal;
-	}
-	drum::Fields& p = out.pads[0];
-	p.pitch = static_cast<float>(acc[0]);
-	p.length = static_cast<float>(acc[1]);
-	p.sweep = static_cast<float>(acc[2]);
-	p.tone = static_cast<float>(acc[3]);
-	p.noise = static_cast<float>(acc[4]);
-	p.snap = static_cast<float>(acc[5]);
-	p.metal = static_cast<float>(acc[6]);
-	return out;
-}
-
 void CharacterBank::buildOne(const Character& c, PreparedCharacter& next, PartialsScratch& scratch) {
 	next.engine = c.engine;
 	next.phasing = {}; // a slot rebuilt into another engine keeps no stale phasing (the Partials branch below sets it)
@@ -865,14 +794,6 @@ void CharacterBank::buildOne(const Character& c, PreparedCharacter& next, Partia
 		// string's material beside it. A voice reads both at note-on and the material on every block.
 		buildPartialsFor(c, next.partials, scratch);
 		next.string = buildStringFieldsFor(c);
-		next.flagship.operated = false;
-		next.vox = {};
-		next.recipe = {};
-	}
-	else if (c.engine == OscEngine::Drum) {
-		// THE PADS' SEVEN FIELDS (drum proposal §3): seven triangle reads a pad, nothing baked. A voice reads its pad's on every
-		// control block, so a moving place or Walk moves a ringing hit.
-		next.drum = buildDrumFor(c);
 		next.flagship.operated = false;
 		next.vox = {};
 		next.recipe = {};

@@ -13,8 +13,8 @@ if the fit were not there.
 ## What it is, and is not
 
 - The fit is a picture of the sound at default controls. It reads the selected sound's six Additive bias knobs and
-  Smoothness (the decode applies them as the bank does). Shape Amount, the likes' phase warp and the Pluck and Drum
-  pictures are not modelled.
+  Smoothness (the decode applies them as the bank does). Shape Amount, the likes' phase warp and the Pluck
+  picture are not modelled.
 - It is a statistical model, not a measurement. The held-out error is in `terrain-fit-report.txt` (R2 from 0.78 for
   parity to 0.94 for the fundamental share on Additive).
 - Where the view varies less than the fit's error, the picture is the error, not the sound. That is the case at

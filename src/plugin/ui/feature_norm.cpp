@@ -103,14 +103,12 @@ TerrainFeatures channelFeaturesFor(OscType engine, const TerrainFeatures& featur
 	// their brightest ground glows as brightly and their roughest carries as much grain as the shared world's do.
 	// AND PLUCK (2026-10-31), from its own table, every channel from its own feature: the string as heard is dimmed by how long
 	// it rings (ks::heardSpectrum), so its energy is not degenerate the way a normalised partial sum is.
-	// AND THE DRUM (2026-11-05), from its own table pooled over its six kinds.
-	if (engine != OscType::Resonate && engine != OscType::Additive && engine != OscType::Pluck && engine != OscType::Drum) {
+	if (engine != OscType::Resonate && engine != OscType::Additive && engine != OscType::Pluck) {
 		return features;
 	}
 	TerrainFeatures matched = features;
 	const FeatureNorm& own = engine == OscType::Resonate ? kBakedResonateFeatureNorm
 	                         : engine == OscType::Pluck  ? kBakedPluckFeatureNorm
-	                         : engine == OscType::Drum   ? kBakedDrumFeatureNorm
 	                                                     : kBakedAdditiveFeatureNorm;
 	const FeatureNorm& shared = kBakedFeatureNorm;
 	// ADDITIVE'S ENERGY IS DEGENERATE (a normalised partial sum: about 0.25 for 40% of the world, measured), so no table can spread it; its
@@ -169,30 +167,6 @@ void forEachAdditiveFrameSample(const std::function<void(const TerrainFeatures&)
 
 void forEachPluckFrameSample(const std::function<void(const TerrainFeatures&)>& visit) {
 	walkFrame({ OscType::Pluck }, { WeaveModel::Ring }, visit);
-}
-
-void forEachDrumFrameSample(const std::function<void(const TerrainFeatures&)>& visit) {
-	// walkFrame's nesting exactly (home, rotation, travel), once per kind, each at neutral scalers.
-	for (size_t k = 0; k < drum::kKindCount; ++k) {
-		AdditivePicture picture;
-		picture.drumKind = static_cast<drum::Kind>(k);
-		for (int h = 0; h < kHomes; ++h) {
-			const double home = kHomeSpan * (static_cast<double>(h) + 0.5) / static_cast<double>(kHomes);
-			const auto zone = static_cast<uint16_t>(std::clamp(std::llround(home * 1023.0) % 1024, 0LL, 1023LL));
-			const double base = home - static_cast<double>(zone) / 1023.0;
-			for (int r = 0; r < kRotations; ++r) {
-				SliceOrientationPin pin;
-				pin.pinned = true;
-				pin.generator.rotate = static_cast<float>(6.283185307 * static_cast<double>(r) / static_cast<double>(kRotations));
-				for (int t = 0; t < kTravels; ++t) {
-					const double travel =
-					    kTravelReach * (2.0 * (static_cast<double>(t) + 0.5) / static_cast<double>(kTravels) - 1.0);
-					visit(terrainFeaturesAt(OscType::Drum, pin, zone, 0.0f, travel, 0.0, kNoPlaneResidue, base, {},
-					                        WarpMode::Off, WeaveModel::Ring, {}, {}, picture));
-				}
-			}
-		}
-	}
 }
 
 void forEachResonateFrameSample(const std::function<void(const TerrainFeatures&)>& visit) {
@@ -290,16 +264,11 @@ FeatureNorm measurePluckFeatureNorm() {
 	return measureFrom(forEachPluckFrameSample);
 }
 
-FeatureNorm measureDrumFeatureNorm() {
-	return measureFrom(forEachDrumFrameSample);
-}
-
 const FeatureNorm& featureNormFor(OscType engine) {
 	// Resonate and Additive (backlog LY) read their own knots; every other engine reads the shared ones.
 	return engine == OscType::Resonate ? kBakedResonateFeatureNorm
 	       : engine == OscType::Additive ? kBakedAdditiveFeatureNorm
 	       : engine == OscType::Pluck    ? kBakedPluckFeatureNorm
-	       : engine == OscType::Drum     ? kBakedDrumFeatureNorm
 	                                     : kBakedFeatureNorm;
 }
 

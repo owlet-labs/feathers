@@ -319,192 +319,6 @@ constexpr double lastIndexOf(std::span<const char* const> names) {
      "Where you are among the mixes of the widths — keep turning; 0 is even. Free only.",                                \
      l ".spectral.vocode.widths.free"},
 
-/// **ONE DRUM PAD'S ROWS** (2026-11-05, drum proposal §7): kDrumControlCount controls in DrumControl's order at
-/// `drumParam(slot, c)`, the defaults from kDrumPadDefaults[slot]. Times are log2 seconds (LogSeconds), so a route's amount
-/// is in doublings. The seven field scalers are fieldWithOverride knobs: the middle is the terrain as found.
-/// **A LAYER'S ROWS** (kit stance redesign): every control a hit reads, once per layer: layer one at `drumParam`, layer two at
-/// `drumLayer2Param`, the names and keys distinguished by NM and KEY.
-#define FEATHERS_DRUM_LAYER_ROWS(L, l, slot, DP, NM, KEY)  \
-    {DP(slot, DrumControl::Tune), L NM " Tune", "Sound " L, -48.0, 48.0, kDrumPadDefaults[slot].tune, \
-     kContinuous, ParamUnit::Semitones, {}, false, "The drum's pitch, in semitones from its kind's resting pitch.", \
-     l KEY ".tune"}, \
-    {DP(slot, DrumControl::Decay), L NM " Decay", "Sound " L, -6.643856189774724, 3.321928094887362, \
-     kDrumPadDefaults[slot].logDecay, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "How long the body rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it.", \
-     l KEY ".decay"}, \
-    {DP(slot, DrumControl::SweepTime), L NM " Sweep Time", "Sound " L, -7.643856189774724, -1.0, \
-     kDrumPadDefaults[slot].logSweepTime, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "How quickly the pitch falls from the top of the sweep to rest.", l KEY ".sweep_time"}, \
-    {DP(slot, DrumControl::Drive), L NM " Drive", "Sound " L, 0.0, 1.0, kDrumPadDefaults[slot].drive, \
-     kContinuous, ParamUnit::Percent, {}, false, "How hard the hit is pushed into its Drive Curve: rounder and louder.", \
-     l KEY ".drive"}, \
-    {DP(slot, DrumControl::Count), L NM " Claps", "Sound " L, 1.0, 8.0, \
-     static_cast<double>(kDrumPadDefaults[slot].count), kStepped, ParamUnit::Integer, {}, false, \
-     "How many hands a Clap is: the bursts before its tail.", l KEY ".count"}, \
-    {DP(slot, DrumControl::Spread), L NM " Spread", "Sound " L, -7.643856189774724, -3.321928094887362, \
-     -5.058893689053568, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "How far apart a Clap's hands land: tight is one big clap, wide a ragged crowd.", l KEY ".spread"}, \
-    {DP(slot, DrumControl::FieldPitch), L NM " Pitch", "Sound " L, 0.0, 1.0, 0.5, kContinuous, \
-     ParamUnit::Percent, {}, false, "The terrain's fine pitch: the middle is the terrain as found.", l KEY ".f.pitch"}, \
-    {DP(slot, DrumControl::FieldLength), L NM " Length", "Sound " L, 0.0, 1.0, 0.5, kContinuous, \
-     ParamUnit::Percent, {}, false, "The terrain's Length, which stretches Decay: the middle is the terrain as found.", \
-     l KEY ".f.length"}, \
-    {DP(slot, DrumControl::FieldSweep), L NM " Sweep", "Sound " L, 0.0, 1.0, kDrumPadDefaults[slot].fieldSweep, \
-     kContinuous, ParamUnit::Percent, {}, false, \
-     "How far the pitch drops from the strike: the middle is the terrain as found, up asks for more.", \
-     l KEY ".f.sweep"}, \
-    {DP(slot, DrumControl::FieldTone), L NM " Tone", "Sound " L, 0.0, 1.0, 0.5, kContinuous, \
-     ParamUnit::Percent, {}, false, "Brightness: where it is struck and how high its band sits.", l KEY ".f.tone"}, \
-    {DP(slot, DrumControl::FieldNoise), L NM " Noise", "Sound " L, 0.0, 1.0, kDrumPadDefaults[slot].fieldNoise, \
-     kContinuous, ParamUnit::Percent, {}, false, "How much of the hit is noise: a snare's wires, a hat's hiss.", \
-     l KEY ".f.noise"}, \
-    {DP(slot, DrumControl::FieldSnap), L NM " Snap", "Sound " L, 0.0, 1.0, 0.5, kContinuous, \
-     ParamUnit::Percent, {}, false, "How hard the attack is: a soft mallet to a hard stick.", l KEY ".f.snap"}, \
-    {DP(slot, DrumControl::FieldMetal), L NM " Metal", "Sound " L, 0.0, 1.0, 0.5, kContinuous, \
-     ParamUnit::Percent, {}, false, "How inharmonic it rings: a skin toward a bar or a bell.", l KEY ".f.metal"}, \
-    /* THE SNARE'S ENVELOPES AND MOVING BELL (2026-11-06, drum proposal §12): read only on a Snare. */ \
-    {DP(slot, DrumControl::WireDecay), L NM " Wire Decay", "Sound " L, -6.643856189774724, 1.0, \
-     -2.473931188332412, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "How long a snare's wires buzz, on their own: the time they take to fall 60 dB.", l KEY ".wire_decay"}, \
-    {DP(slot, DrumControl::ClickDecay), L NM " Click", "Sound " L, -9.965784284662087, -4.321928094887363, \
-     -7.380821783940931, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "How long a snare's stick click lasts.", l KEY ".click_decay"}, \
-    {DP(slot, DrumControl::BellStart), L NM " Bell Start", "Sound " L, 6.643856189774724, 13.550746785383243, \
-     11.287712379549449, kContinuous, ParamUnit::LogHertz, {}, false, \
-     "Where a snare's moving bell starts: a resonant peak that glides to Bell End.", l KEY ".bell_start"}, \
-    {DP(slot, DrumControl::BellEnd), L NM " Bell End", "Sound " L, 6.643856189774724, 13.550746785383243, \
-     9.451211111832329, kContinuous, ParamUnit::LogHertz, {}, false, "Where the moving bell comes to rest.", \
-     l KEY ".bell_end"}, \
-    {DP(slot, DrumControl::BellTime), L NM " Bell Time", "Sound " L, -7.643856189774724, -1.0, \
-     -4.643856189774724, kContinuous, ParamUnit::LogSeconds, {}, false, "How long the bell takes to glide to its end.", \
-     l KEY ".bell_time"}, \
-    /* THE KICK'S SHAPE (2026-11-06, drum proposal §12 items 1-3): read only on a Kick. */ \
-    {DP(slot, DrumControl::KickHold), L NM " Hold", "Sound " L, 0.0, 200.0, 0.0, kContinuous, ParamUnit::Number, \
-     {}, false, "How long, in ms, a Kick's body stays at full before it decays.", l KEY ".kick_hold"}, \
-    {DP(slot, DrumControl::KickDip), L NM " Dip", "Sound " L, 0.0, 1.0, 0.0, kContinuous, ParamUnit::Percent, \
-     {}, false, "The fishtail: how deep a Kick's level dips between its snap and its boom.", l KEY ".kick_dip"}, \
-    {DP(slot, DrumControl::KickDipTime), L NM " Dip Time", "Sound " L, 2.0, 80.0, 14.0, kContinuous, \
-     ParamUnit::Number, {}, false, "Where, in ms, the fishtail's dip is deepest.", l KEY ".kick_dip_time"}, \
-    {DP(slot, DrumControl::ClickSweep), L NM " Click Sweep", "Sound " L, 0.0, 6.0, 0.0, kContinuous, \
-     ParamUnit::Number, {}, false, \
-     "A second, very short pitch drop on a Kick, in octaves: the click of the beater on top of the boom.", \
-     l KEY ".click_sweep"}, \
-    {DP(slot, DrumControl::ClickSweepTime), L NM " Click Sweep Time", "Sound " L, -10.965784284662087, \
-     -5.643856189774724, -8.380821783940931, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "How quickly the click's pitch drop lands.", l KEY ".click_sweep_time"}, \
-    {DP(slot, DrumControl::StartPhase), L NM " Start Phase", "Sound " L, 0.0, 90.0, 0.0, kContinuous, \
-     ParamUnit::Number, {}, false, \
-     "Where, in degrees, a Kick's sine starts: 0 is smooth; toward 90 the first cycle hits harder.", \
-     l KEY ".start_phase"}, \
-    {DP(slot, DrumControl::DriveCurve), L NM " Drive Curve", "Sound " L, 0.0, lastIndexOf(kDrumDriveCurveNames), \
-     0.0, kStepped, ParamUnit::Choice, kDrumDriveCurveNames, false, \
-     "The shape Drive pushes the hit into: Tanh is round, Tube leans to one side and adds even harmonics, Soft Clip " \
-     "flattens its tops.", \
-     l KEY ".drive_curve"}, \
-    {DP(slot, DrumControl::DriveTone), L NM " Drive Tone", "Sound " L, 0.0, 1.0, 0.5, kContinuous, \
-     ParamUnit::Percent, {}, false, \
-     "A tilt before the drive: down feeds it the lows, so they saturate; up feeds it the highs. The middle is flat.", \
-     l KEY ".drive_tone"}, \
-    {DP(slot, DrumControl::ClapQ), L NM " Clap Q", "Sound " L, 0.5, 8.0, 1.6, kContinuous, ParamUnit::Number, \
-     {}, false, "How narrow a Clap's band is: low is a wide, papery slap; high a ringing, hollow one.", \
-     l KEY ".clap_q"}, \
-    {DP(slot, DrumControl::ClapHighPass), L NM " Clap High Pass", "Sound " L, 4.321928094887363, \
-     11.0, 4.321928094887363, kContinuous, ParamUnit::LogHertz, {}, false, \
-     "Takes the lows out of a Clap below this: at its bottom, nothing is taken.", l KEY ".clap_hp"}, \
-    /* THE SNARE'S SECOND BELL (2026-11-06): read only on a Snare. */ \
-    {DP(slot, DrumControl::Bell2Hz), L NM " Bell 2 Hz", "Sound " L, 7.965784284662087, 11.287712379549449, \
-     8.965784284662087, kContinuous, ParamUnit::LogHertz, {}, false, "Free: where the second bell sits.", \
-     l KEY ".bell2_hz"}, \
-    {DP(slot, DrumControl::Bell2Time), L NM " Bell 2 Time", "Sound " L, -8.380821783940931, -3.643856189774724, \
-     -5.058893689053568, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "How long the second bell rings: its level falls 60 dB in this time.", l KEY ".bell2_time"}, \
-    /* VELOCITY'S OTHER TARGETS (2026-11-06, doc §13 item 4). */ \
-    {DP(slot, DrumControl::VelocityNoise), L NM " Velocity Noise", "Sound " L, -1.0, 1.0, 0.0, kContinuous, \
-     ParamUnit::Percent, {}, false, \
-     "How far a hit's velocity moves its noise share: up, a harder hit is noisier; down, cleaner.", \
-     l KEY ".velocity_noise"}, \
-    /* THE WIRES (2026-11-06, doc §13 items 7 and 9). */ \
-    {DP(slot, DrumControl::Width), L NM " Width", "Sound " L, 0.0, 1.0, 0.0, kContinuous, ParamUnit::Percent, \
-     {}, false, "How far a Snare's wires or a Clap's noise differ between the ears: at 0 they are the same.", \
-     l KEY ".width"}, \
-    /* THE ZONE CONTROLS (drum proposal §14): one coordinate each, a lap of the named zones per 1.0. */ \
-    {DP(slot, DrumControl::VelocityZone), L NM " Velocity", "Sound " L, -8.0, 8.0, 2.0 / 3.0, kContinuous, \
-     ParamUnit::Number, {}, false, \
-     "What a hit's velocity reaches, through named zones: only Level; and Tone (brightness and snap); and Tension (the " \
-     "glide deepens with velocity squared). Between two zones it moves from one to the next.", \
-     l KEY ".velocity_zone"}, \
-    {DP(slot, DrumControl::Wires), L NM " Wires", "Sound " L, -8.0, 8.0, 0.0, kContinuous, ParamUnit::Number, \
-     {}, false, \
-     "A Snare's wires through named zones: Tight, Loose, Buzzy (rattling, following the head) and Gated (cut short, the " \
-     "80s snare). Between two zones it moves from one to the next.", \
-     l KEY ".wires"}, \
-    {DP(slot, DrumControl::Bells), L NM " Bells", "Sound " L, -8.0, 8.0, 0.0, kContinuous, ParamUnit::Number, \
-     {}, false, \
-     "A Snare's two moving bells through named zones: Off, Body (one peak), Shell (two, linked), Ring (narrow and " \
-     "ringing) and Knock (wide, the second free). How narrow follows the place's Snap; the glide is on the picture.", \
-     l KEY ".bells"}, \
-    {DP(slot, DrumControl::Lock), L NM " Lock", "Sound " L, 0.0, 1.0, 0.0, kStepped, ParamUnit::Integer, {}, false, \
-     "Locked, a kit-wide edit on the Explore terrain leaves this layer where it stands; unlocked, the edit moves it with the rest. Perform's moves reach every layer either way.", \
-     l KEY ".lock"}, \
-    {DP(slot, DrumControl::OffsetX), L NM " Offset X", "Sound " L, -kDrumVectorReach, kDrumVectorReach, 0.0, kContinuous, ParamUnit::Percent, {}, true, \
-     "Where this layer stands across on the terrain: its own place, added to the kit's stance. It has no end.", l KEY ".dx", false, 1.0}, \
-    {DP(slot, DrumControl::OffsetY), L NM " Offset Y", "Sound " L, -kDrumVectorReach, kDrumVectorReach, 0.0, kContinuous, ParamUnit::Percent, {}, true, \
-     "Where this layer stands up or down on the terrain: its own place, added to the kit's stance. It has no end.", l KEY ".dy", false, 1.0}, \
-    {DP(slot, DrumControl::PitchMode), L NM " Terrain Pitch", "Sound " L, 0.0, lastIndexOf(kDrumPitchModeNames), 0.0, kStepped, \
-     ParamUnit::Choice, kDrumPitchModeNames, false, \
-     "How the terrain's pitch reaches this layer: Free follows it, Semitones rounds it to whole semitones, Off ignores it.", \
-     l KEY ".pitch_mode"},
-
-#define FEATHERS_DRUM_ROWS(L, l, slot)  \
-    {drumParam(slot, DrumControl::Kind), L " Drum Kind", "Sound " L, 0.0, lastIndexOf(kDrumKindNames), \
-     static_cast<double>(kDrumPadDefaults[slot].kind), kStepped, ParamUnit::Choice, kDrumKindNames, false, \
-     "Which drum this pad is: a pitch-swept Kick, a ringing Membrane, a Snare, a Metal cymbal or hat, a Clap, or a " \
-     "struck String.", \
-     l ".drum.kind"}, \
-    {drumParam(slot, DrumControl::Note), L " Drum Note", "Sound " L, 0.0, 127.0, \
-     static_cast<double>(kDrumPadDefaults[slot].note), kStepped, ParamUnit::Integer, {}, false, \
-     "The note that plays this pad in Kit mode. Two pads on one note sound together.", l ".drum.note"}, \
-    {drumParam(slot, DrumControl::Choke), L " Drum Choke", "Sound " L, 0.0, lastIndexOf(kDrumChokeNames), \
-     static_cast<double>(kDrumPadDefaults[slot].choke), kStepped, ParamUnit::Choice, kDrumChokeNames, false, \
-     "A hit on this pad silences every other pad in the same group, as a closed hat stops an open one.", \
-     l ".drum.choke"}, \
-    {drumParam(slot, DrumControl::Voices), L " Drum Voices", "Sound " L, 0.0, lastIndexOf(kDrumVoicesNames), \
-     static_cast<double>(kDrumPadDefaults[slot].voices), kStepped, ParamUnit::Choice, kDrumVoicesNames, false, \
-     "How many hits of this pad may ring at once; one more fades the oldest out.", l ".drum.voices"}, \
-    {drumParam(slot, DrumControl::Trigger), L " Drum Trigger", "Sound " L, 0.0, lastIndexOf(kDrumTriggerNames), 0.0, \
-     kStepped, ParamUnit::Choice, kDrumTriggerNames, false, \
-     "One-shot plays the whole hit whatever the key does. Gate damps it to Release when the key is let go.", \
-     l ".drum.trigger"}, \
-    {drumParam(slot, DrumControl::Level), L " Drum Level", "Sound " L, -60.0, 6.0, 0.0, kContinuous, \
-     ParamUnit::Decibels, {}, false, "This pad's loudness.", l ".drum.level"}, \
-    {drumParam(slot, DrumControl::Pan), L " Drum Pan", "Sound " L, -1.0, 1.0, 0.0, kContinuous, ParamUnit::Percent, {}, \
-     false, "Where this pad sits between the speakers.", l ".drum.pan"}, \
-    {drumParam(slot, DrumControl::Release), L " Drum Release", "Sound " L, -6.643856189774724, 1.0, \
-     -3.321928094887362, kContinuous, ParamUnit::LogSeconds, {}, false, \
-     "With Trigger on Gate, how quickly the hit is damped once the key is let go.", l ".drum.release"}, \
-    {drumParam(slot, DrumControl::Mute), L " Drum Mute", "Sound " L, 0.0, 1.0, 0.0, kStepped, ParamUnit::Integer, {}, \
-     false, "Silences this pad's hits. In Kit mode the sound card's switch is this.", l ".drum.mute"}, \
-    /* THE BEND: Kit mode alone; in Pitched mode the voice follows the key and the wheel. */ \
-    {drumParam(slot, DrumControl::Bend), L " Drum Bend", "Sound " L, 0.0, 1.0, 1.0, kContinuous, ParamUnit::Percent, {}, \
-     false, \
-     "How far the pitch bend moves this pad in a kit, held when it is struck or moved while it rings: at 100% the whole " \
-     "Bend range, at 0 the pad ignores the wheel.", \
-     l ".drum.bend"}, \
-    /* THE LAYER SLOT (drum proposal §12; stage (c), 2026-11-07): Kit mode alone. */ \
-    {drumParam(slot, DrumControl::LayerKind), L " Drum Layer", "Sound " L, 0.0, lastIndexOf(kDrumLayerKindNames), 0.0, \
-     kStepped, ParamUnit::Choice, kDrumLayerKindNames, false, \
-     "A second hit struck with this pad, of its own kind, at its own place on the terrain. Off strikes nothing.", \
-     l ".drum.layer.kind"}, \
-    {drumParam(slot, DrumControl::LayerLevel), L " Drum Layer Level", "Sound " L, -60.0, 6.0, 0.0, kContinuous, \
-     ParamUnit::Decibels, {}, false, "The layer's loudness, on top of the pad's.", l ".drum.layer.level"}, \
-    {drumParam(slot, DrumControl::LayerDelay), L " Drum Layer Delay", "Sound " L, 0.0, 10.0, 0.0, kContinuous, \
-     ParamUnit::Number, {}, false, "How long, in ms, after the pad's hit the layer strikes.", l ".drum.layer.delay"}, \
-    {drumParam(slot, DrumControl::LayerHighPass), L " Drum Layer High Pass", "Sound " L, 4.321928094887363, \
-     11.0, 4.321928094887363, kContinuous, ParamUnit::LogHertz, {}, false, \
-     "Takes the layer's lows out below this: at its bottom, nothing is taken.", l ".drum.layer.hp"}, \
-    FEATHERS_DRUM_LAYER_ROWS(L, l, slot, drumParam, " Drum", ".drum") \
-    FEATHERS_DRUM_LAYER_ROWS(L, l, slot, drumLayer2Param, " Drum L2", ".drum.l2")
-
 constexpr ParamDesc kParams[] = {
     // DEFAULT = V5, the flagship (decided 2026-08-18): a fresh instance gets the
     // flagship; a loaded patch carries its stored index and is untouched. The range widens with
@@ -714,37 +528,6 @@ constexpr ParamDesc kParams[] = {
      "At 0 every note plucks at Hardness alone.",
      "ks.velocity_hardness"},
 
-    // THE DRUM ENGINE'S ENGINE-WIDE CONTROLS (2026-11-05). Live only on
-    // Drum; Pitched Kind only in Pitched mode, the Walk only in Kit mode.
-    {ParamId::DrumMode, "Drum Mode", "Drum", 0.0, lastIndexOf(kDrumModeNames), 1.0, kStepped, ParamUnit::Choice,
-     kDrumModeNames, false,
-     "Pitched plays one drum chromatically across the keyboard. Kit plays a different drum for each note: each of sounds "
-     "A to H is a pad with its own note, kind and place on the terrain.",
-     "drum.mode"},
-    {ParamId::DrumPitchedKind, "Drum Kind", "Drum", 0.0, lastIndexOf(kDrumKindNames), 1.0, kStepped, ParamUnit::Choice,
-     kDrumKindNames, false, "Which drum Pitched mode plays: every note is this kind, at the note's pitch.",
-     "drum.pitched_kind"},
-    {ParamId::DrumSeed, "Drum Seed", "Drum", 0.0, 999.0, 0.0, kStepped, ParamUnit::Integer, {}, false,
-     "Which hits the noise draws. Every hit is drawn from the Seed, the pad and where in the song it lands, so a song "
-     "plays the same hits on every pass.",
-     "drum.seed"},
-    // THE KIT-WIDE LAYER (2026-11-06): neutral by default (a kit is bit-identical until it moves); Kit mode only.
-    {ParamId::DrumKitPitch, "Drum Kit Pitch", "Drum", 0.0, 1.0, 0.5, kContinuous, ParamUnit::Percent, {}, false,
-     "Every pad's terrain Pitch, scaled on top of its own: the middle leaves each as it is.", "drum.kit.pitch"},
-    {ParamId::DrumKitLength, "Drum Kit Length", "Drum", 0.0, 1.0, 0.5, kContinuous, ParamUnit::Percent, {}, false,
-     "Every pad's terrain Length, scaled on top of its own: the middle leaves each as it is.", "drum.kit.length"},
-    {ParamId::DrumKitSweep, "Drum Kit Sweep", "Drum", 0.0, 1.0, 0.5, kContinuous, ParamUnit::Percent, {}, false,
-     "Every pad's terrain Sweep (its Tension), scaled on top of its own: the middle leaves each as it is.",
-     "drum.kit.sweep"},
-    {ParamId::DrumKitTone, "Drum Kit Tone", "Drum", 0.0, 1.0, 0.5, kContinuous, ParamUnit::Percent, {}, false,
-     "Every pad's terrain Tone, scaled on top of its own: the middle leaves each as it is.", "drum.kit.tone"},
-    {ParamId::DrumKitNoise, "Drum Kit Noise", "Drum", 0.0, 1.0, 0.5, kContinuous, ParamUnit::Percent, {}, false,
-     "Every pad's terrain Noise, scaled on top of its own: the middle leaves each as it is.", "drum.kit.noise"},
-    {ParamId::DrumKitSnap, "Drum Kit Snap", "Drum", 0.0, 1.0, 0.5, kContinuous, ParamUnit::Percent, {}, false,
-     "Every pad's terrain Snap, scaled on top of its own: the middle leaves each as it is.", "drum.kit.snap"},
-    {ParamId::DrumKitMetal, "Drum Kit Metal", "Drum", 0.0, 1.0, 0.5, kContinuous, ParamUnit::Percent, {}, false,
-     "Every pad's terrain Metal, scaled on top of its own: the middle leaves each as it is.", "drum.kit.metal"},
-
     // THE SPECTRAL DRAWER, PER SOUND (2026-10-10, additive design §3.2; each sound has its own drawer, and the voice
     // runs the sounds' drawers blended by weight). kSpectralControlCount rows per sound (FEATHERS_SPECTRAL_ROWS, above),
     // unkeyed like every per-sound row until JF step 2 keys them — all but F2's, which declare theirs (`a.spectral.filter2.on` …).
@@ -756,17 +539,6 @@ constexpr ParamDesc kParams[] = {
     FEATHERS_SPECTRAL_ROWS("F", "f", 5)
     FEATHERS_SPECTRAL_ROWS("G", "g", 6)
     FEATHERS_SPECTRAL_ROWS("H", "h", 7)
-
-    // THE DRUM PADS, PER SOUND (2026-11-05, drum proposal §7): kDrumControlCount rows per sound (FEATHERS_DRUM_ROWS), keyed
-    // `a.drum.kind` …, each pad's defaults from kDrumPadDefaults (Pattern Drum's lanes).
-    FEATHERS_DRUM_ROWS("A", "a", 0)
-    FEATHERS_DRUM_ROWS("B", "b", 1)
-    FEATHERS_DRUM_ROWS("C", "c", 2)
-    FEATHERS_DRUM_ROWS("D", "d", 3)
-    FEATHERS_DRUM_ROWS("E", "e", 4)
-    FEATHERS_DRUM_ROWS("F", "f", 5)
-    FEATHERS_DRUM_ROWS("G", "g", 6)
-    FEATHERS_DRUM_ROWS("H", "h", 7)
 
     // A sound's identity: where on the zone axis it sits, how far the phase offset walks it, and its
     // γ coordinate. Zone is declared continuous over the uint16 domain the character builders take —
@@ -1206,8 +978,6 @@ constexpr ParamDesc kParams[] = {
 };
 
 #undef FEATHERS_SPECTRAL_ROWS
-#undef FEATHERS_DRUM_ROWS
-#undef FEATHERS_DRUM_LAYER_ROWS
 static_assert(std::size(kParams) == kParamCount);
 
 /// EVERY CORE KEY IS ONE A PATCH MAY STORE A VALUE UNDER, AND NO TWO ROWS SHARE ONE — the device registry's
@@ -2155,7 +1925,7 @@ void ParamSet::setBase(clap_id id, double value) {
 		return;
 	}
 	base_[static_cast<size_t>(index)].store(sanitized, std::memory_order_relaxed);
-	noteDrumWrite(id);
+	noteWrite(id);
 }
 
 void ParamSet::setModOffset(clap_id id, double offset) {
@@ -2181,7 +1951,7 @@ void ParamSet::setModOffset(clap_id id, double offset) {
 		return;
 	}
 	mod_[static_cast<size_t>(index)] = offset;
-	noteDrumWrite(id);
+	noteWrite(id);
 }
 
 void ParamSet::clearModulation() {
@@ -2237,17 +2007,7 @@ int ParamSet::voiceCount() const {
 	                                   static_cast<long>(kMaxVoices)));
 }
 
-bool ParamSet::drumKit() const {
-	return oscType() == OscType::Drum
-	       && steppedIndex(resolved(ParamId::DrumMode), kDrumModeNames.size()) == static_cast<size_t>(DrumMode::Kit);
-}
-
 int ParamSet::stackCount() const {
-	// A DRUM KIT STACKS NOTHING (drum proposal §4.5): a pad's pitch is its Tune, so unison hits would only phase. Stack is not
-	// drawn in Kit mode, and a Stack left up before the switch is not obeyed.
-	if (drumKit()) {
-		return 1;
-	}
 	// voiceCount()'s rule for the same reason: the declared maximum is the part array's size.
 	return static_cast<int>(std::clamp(std::lround(resolved(ParamId::StackCount)), 1L,
 	                                   static_cast<long>(kMaxStack)));
@@ -2728,7 +2488,14 @@ bool ParamSet::read(const clap_istream* stream, Staged* staged, ReadFailure* why
 		}
 		const int index = paramIndexOf(static_cast<clap_id>(id));
 		if (index < 0) {
-			continue; // a param from some later version
+			++staged->droppedIds; // a param from some later version, or one retired since
+			continue;
+		}
+		// A PATCH SAVED WHILE THE SYNTH HAD A DRUM ENGINE names it by value (the engine is gone): it plays the default engine,
+		// never the last one the names clamp it to. Its drum-only ids are skipped above (no param has them any more).
+		if (kParams[static_cast<size_t>(index)].id == ParamId::OscType && std::llround(value) == std::llround(kRetiredOscTypeDrum)) {
+			staged->retiredEngine = true;
+			continue; // the staged value is already the default
 		}
 		double sanitized = 0.0;
 		if (sanitizeValue(kParams[static_cast<size_t>(index)], value, &sanitized)) {
@@ -2748,7 +2515,6 @@ void ParamSet::commit(const Staged& staged) {
 	for (size_t i = 0; i < kParamCount; ++i) {
 		base_[i].store(staged.base[i], std::memory_order_relaxed);
 	}
-	drumGeneration_.fetch_add(1, std::memory_order_relaxed); // a whole patch: the drum rows moved with the rest
 	// The modulation lane is deliberately left alone, and not only because clearing it from the main
 	// thread would race the audio thread that owns it. base_ is the plugin's state and mod_ is the
 	// host's: the host re-sends modulation continuously from its own modulators, so wiping it on a

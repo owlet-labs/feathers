@@ -186,7 +186,6 @@ private:
 	Watch stackWatch_;
 	/// AND THE ENGINE, because Phase greys on Resonate.
 	Watch oscTypeWatch_;
-	Watch drumModeWatch_;
 	/// THE STACK PAGE'S PARAMETERS, each watched by the control that shows it (step 3).
 	std::vector<Watch> stackIndexWatches_;
 	/// AND THE MODULATION STATE, because Phase Width greys while no route reaches Phase.

@@ -161,8 +161,6 @@ TEST_CASE("P-MÖBIUS: each builder reads exactly its kind's sites — V5 57 (tab
 		{ OscType::Resonate, { AngleKind::Weave } },
 		// PLUCK (2026-10-31): its pluck's tone is the Additive spectrum (the Partials sites) and its material five String sites.
 		{ OscType::Pluck, { AngleKind::Partials, AngleKind::String } },
-		// DRUM (2026-11-05): its seven guest fields, one set of sites for every kind.
-		{ OscType::Drum, { AngleKind::Drum } },
 	};
 	for (const Expect& e : engines) {
 		CAPTURE(static_cast<int>(e.engine));
@@ -308,8 +306,7 @@ TEST_CASE("P-MÖBIUS: Pluck's material and its pluck's tone are built through th
 
 TEST_CASE("P-MÖBIUS: the newest like's pin is exact — each site maps the like's own angle to what it was heard as, to the float, on every engine") {
 	for (const OscType engine :
-	     { OscType::V5, OscType::Additive, OscType::Stair, OscType::Resonate, OscType::BasicShapes, OscType::Pluck,
-	       OscType::Drum }) {
+	     { OscType::V5, OscType::Additive, OscType::Stair, OscType::Resonate, OscType::BasicShapes, OscType::Pluck }) {
 		CAPTURE(static_cast<int>(engine));
 		const ui::TerrainWindow window = withLikes(engine, 4);
 		const LikeWarp warp = ui::deriveLikeWarp(window);
@@ -410,33 +407,3 @@ TEST_CASE("P-MÖBIUS: no likes is plain by construction — a sound with no warp
 	CHECK(owlet::dsp::phi::angleHook == nullptr);
 }
 
-TEST_CASE("P-MÖBIUS: a drum pad's seven fields are built through its sound's warp, by value, in Kit and in Pitched") {
-	// THE BANK'S ROAD (buildDrumFor) against a restatement: the same sound's seven fields read under that sound's warp, with its
-	// scalers; and the warp moves them, or the restatement proves nothing.
-	std::array<LikeWarp, kMaxSounds> table {};
-	table[3] = ui::deriveLikeWarp(withLikes(OscType::Drum, 4));
-	REQUIRE(table[3].warp != nullptr);
-	for (const bool kit : { true, false }) {
-		CAPTURE(kit);
-		Character c;
-		c.engine = OscEngine::Drum;
-		c.drumKit = kit;
-		c.count = 1;
-		SoundCoord& s = c.sounds[0];
-		s.slot = 3;
-		s.weight = 1.0;
-		s.zone = 300;
-		s.travelX = 0.031;
-		s.travelY = -0.017;
-		Character plain = c;
-		c.likes = { &table, 7 };
-		const double home = sliceHome(s.zone, s.phaseOffset, s.gammaBase);
-		const auto frame = sliceFrameFor<kPartialTriangles>(rotateFor(c.orientation), home, s.residue.partials);
-		const drum::Fields expected = drumFieldsWithOverrides(readDrumFields(frame, home, s.travelX, s.travelY, table[3].warp), {});
-		const drum::Fields unwarped = drumFieldsWithOverrides(readDrumFields(frame, home, s.travelX, s.travelY), {});
-		REQUIRE(!(expected == unwarped));
-		const size_t pad = kit ? 3 : 0;
-		CHECK(buildDrumFor(c).pads[pad] == expected);
-		CHECK(buildDrumFor(plain).pads[pad] == unwarped);
-	}
-}

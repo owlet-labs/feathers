@@ -76,7 +76,6 @@ EngineRail::EngineRail(ParamBridge& bridge, WidgetRegistry& registry, Notifier* 
 	watch_ = registry.watchToken(static_cast<clap_id>(ParamId::VoiceMode), this);
 	stackWatch_ = registry.watchToken(static_cast<clap_id>(ParamId::StackCount), this);
 	oscTypeWatch_ = registry.watchToken(static_cast<clap_id>(ParamId::OscType), this);
-	drumModeWatch_ = registry.watchToken(static_cast<clap_id>(ParamId::DrumMode), this); // a Kit hides the voice controls
 	// THE TOOLTIP LAYER, over the whole rail (step 5) — `FxCard`'s arrangement.
 	addChild(&tips_);
 	tips_.watch(*this);
@@ -233,8 +232,7 @@ void EngineRail::refreshEnablement() {
 	// on a Weave side), so it greys there — the honesty rule, read from the engine's own skip.
 	// AND PLUCK READS NONE EITHER: its string has no cycle to read at an offset (the String road never reads the phase).
 	const OscType engine = oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType)));
-	// AND NOR DOES DRUM: a hit is struck, not read from a cycle (dsp/drum_voice.h).
-	const bool phaseReads = engine != OscType::Resonate && engine != OscType::Pluck && engine != OscType::Drum;
+	const bool phaseReads = engine != OscType::Resonate && engine != OscType::Pluck;
 	phase_->setEnabled(phaseReads);
 	// PHASE WIDTH MIRRORS WHAT THE ROUTES ADD (Synth's `phaseSpreadLive_`): with nothing routed into Phase there is
 	// nothing to mirror, and it changes nothing.
@@ -322,10 +320,10 @@ std::string EngineRail::engineDisplayName(int index) {
 		return "\xe2\x80\x94";
 	}
 	// THE PHI ENGINES WEAR THE PREFIX; the others are not phi tables (Basic Shapes' are Fourier series, Additive is a
-	// partial bank, Pluck a Karplus-Strong string, Drum a kit), so they keep the bare name.
+	// partial bank, Pluck a Karplus-Strong string), so they keep the bare name.
 	const char* name = kOscTypeNames[static_cast<size_t>(index)];
 	const bool bare = index == static_cast<int>(OscType::BasicShapes) || index == static_cast<int>(OscType::Additive)
-	                  || index == static_cast<int>(OscType::Pluck) || index == static_cast<int>(OscType::Drum);
+	                  || index == static_cast<int>(OscType::Pluck);
 	return bare ? std::string(name) : std::string("Phi") + name;
 }
 
@@ -351,25 +349,17 @@ void EngineRail::applyEngineVisibility() {
 	};
 	// PLUCK DRAWS NEITHER OSC MODE NOR PHASE NOR PHASE WIDTH (KS design §3): a string has no phase for a mode to reset or an
 	// offset to move, so only an engine switch could wake them (hidden, not greyed).
-	// NOR DOES DRUM: a hit has no read phase and no oscillator a mode could reset (drum proposal §4.5).
 	const OscType engineNow = oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType)));
-	const bool pluck = engineNow == OscType::Pluck || engineNow == OscType::Drum;
+	const bool pluck = engineNow == OscType::Pluck;
 	show(phaseWidth_.get(), page_ == Page::Pitch && !pluck);
 	show(phase_.get(), page_ == Page::Pitch && !pluck);
 	// OSC MODE IS DRAWN ON ADDITIVE AGAIN (backlog LY: phase drift in detune): the bank now starts each
 	// note at the accumulator's phase and follows its Catchup bend, Digi restart and Analog re-lock (OscVoice::controlPartials).
 	show(oscMode_.get(), !pluck);
-	// A DRUM KIT'S VOICES ARE ITS PADS' (what the rail's voice controls do in the Drum engine was unclear). A kit note is a voice in its PAD'S own polyphony group, played Poly with the pad's own
-	// Voices limit (Synth::syncVoiceManagerSettings), so the voice mode, the voice count and the note priority, which all
-	// set the ordinary group, never reach a kit's hit; nor does Glide, which a Poly group hands 0. Hidden, not greyed: only
-	// leaving Kit mode would wake them. Pitched mode plays the ordinary group, so they all reach it there.
-	const bool kit = engineNow == OscType::Drum
-	                 && steppedIndex(bridge_.value(static_cast<clap_id>(ParamId::DrumMode)), kDrumModeNames.size())
-	                        == static_cast<size_t>(DrumMode::Kit);
-	show(voiceMode_.get(), !kit);
-	show(voiceCount_.get(), !kit);
-	show(notePriority_.get(), !kit);
-	show(glide_.get(), page_ == Page::Pitch && !kit);
+	show(voiceMode_.get(), true);
+	show(voiceCount_.get(), true);
+	show(notePriority_.get(), true);
+	show(glide_.get(), page_ == Page::Pitch);
 }
 
 void EngineRail::applyPageVisibility() {

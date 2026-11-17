@@ -88,22 +88,6 @@ public:
 	/// outright rather than leaving to its contents.
 	static constexpr float kWidth = 206.0f;
 
-	/// **A DRUM KIT'S CARDS ARE ITS PADS**: all eight present, no add, clone or delete (hidden),
-	/// the switch is the pad's Mute, the S its solo, the second line its kind and note, a Level fader its pad's Level, and
-	/// the card pulses when its pad is struck.
-	[[nodiscard]] bool kitMode() const;
-	[[nodiscard]] bool padMuted(size_t slot) const;
-	void togglePadMute(size_t slot);
-	/// Read the published hits, start a pulse on each pad whose count moved, and answer whether anything is lit.
-	bool updatePulses(int64_t nowMs);
-	/// Seat each kit card's Level fader on its card (and hide them all off a kit).
-	void layoutLevelFaders();
-	/// How lit card `slot` is now, 0..1 (its last hit's velocity, falling over kPulseMs; held flat under reduced motion).
-	[[nodiscard]] float pulseOf(size_t slot) const;
-	static constexpr float kPulseMs = 150.0f;
-	/// The pad Level fader on card `slot` (Kit mode), for a case to drive.
-	[[nodiscard]] FaderPill* levelFaderForTest(size_t slot) const { return levelFaders_[slot].get(); }
-
 	//----------//
 	// Geometry //
 	//----------//
@@ -462,12 +446,6 @@ private:
 	SoundSelection& selection_;
 	EditHistory& history_;
 	FrameWatchers& previewWatchers_;
-	std::array<uint32_t, kMaxSounds> pulseSeen_ {};
-	std::array<float, kMaxSounds> pulseLevel_ {};
-	std::array<int64_t, kMaxSounds> pulseAt_ {};
-	int64_t pulseNow_ = 0;
-	std::array<std::unique_ptr<ParamControl>, kMaxSounds> levelControls_;
-	std::array<std::unique_ptr<FaderPill>, kMaxSounds> levelFaders_;
 	Notifier* notifier_ = nullptr;
 	float scroll_ = 0.0f;
 

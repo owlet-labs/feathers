@@ -58,6 +58,8 @@ inline constexpr const char* kPitchModeNames[] = { "Free", "Semitones", "Off" };
 /// KEYS: the drum answers one key (Note); or every key, each struck as if it were Note (the key is not a pitch); or every key, played as a
 /// pitch (the engine's Pitched mode). Stored by label.
 inline constexpr const char* kKeysNames[] = { "One Key", "Any Key", "Pitched" };
+inline constexpr const char* kWireContourNames[] = { "Exp", "Linear", "Mod" };
+inline constexpr const char* kBellLinkNames[] = { "Free", "Linked" };
 
 /// WHICH KINDS READ A CONTROL, as a bit per `feathers::drum::Kind` (Kick 0 .. String 5). `kindReads` and `kindControls`
 /// (dsp/drum_voice.h) are the engine's own statement of the same; test_drum_device holds these equal to them.
@@ -69,6 +71,7 @@ inline constexpr uint32_t kSweepTimeKinds = (1u << 0) | (1u << 5);              
 inline constexpr uint32_t kNoiseKinds = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4); ///< Noise, Velocity Noise
 inline constexpr uint32_t kMetalKinds = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);   ///< the Metal field
 inline constexpr uint32_t kWidthKinds = (1u << 2) | (1u << 4);                           ///< Width
+inline constexpr uint32_t kTensionKinds = (1u << 0) | (1u << 1) | (1u << 2);             ///< Vel Tension (Kick, Membrane, Snare)
 
 /// THE ORDER IS THE FACE'S: the first ten are the card, the rest the window. A patch stores each by its key, so
 /// reordering is free.
@@ -105,7 +108,10 @@ enum class Param : uint8_t {
 	SweepTime,
 	DriveCurve,
 	DriveTone,
-	VelocityZone,
+	VelLevel,
+	VelTone,
+	VelSnap,
+	VelTension,
 	VelocityNoise,
 	Width,
 	Claps,
@@ -114,8 +120,15 @@ enum class Param : uint8_t {
 	ClapHighPass,
 	WireDecay,
 	ClickDecay,
-	Wires,
-	Bells,
+	WireContour,
+	WireBuzz,
+	WireThreshold,
+	WireGate,
+	BodyGate,
+	Bell1Level,
+	Bell2Level,
+	BellQ,
+	BellLink,
 	BellStart,
 	BellEnd,
 	BellTime,
@@ -130,7 +143,7 @@ enum class Param : uint8_t {
 	Keys, ///< appended last so the order stays stable: One Key | Any Key | Pitched
 	kCount
 };
-static_assert(static_cast<size_t>(Param::kCount) == 55);
+static_assert(static_cast<size_t>(Param::kCount) == 65);
 
 inline constexpr int16_t kKindControl = static_cast<int16_t>(Param::Kind);
 inline constexpr int16_t kTriggerControl = static_cast<int16_t>(Param::Trigger);
@@ -148,6 +161,16 @@ inline constexpr device::FaceSection kFaceSections[] = {
 	{ "BODY", static_cast<uint8_t>(Param::Decay) },
 };
 
+/// **KEYS THIS DEVICE NO LONGER HAS**: a patch holding one drops it with the reason said, and the key can never name a control again.
+inline constexpr device::RetiredKey kRetiredKeys[] = {
+	{ "drum_velocity_zone", "2026-11-17",
+	  "the velocity mode, a coordinate that wrapped through Level, Tone and Tension, became a row of depths (drum_vel_level, drum_vel_tone, drum_vel_snap, drum_vel_tension, drum_velocity_noise); the old default is the new default" },
+	{ "drum_wires", "2026-11-17",
+	  "the wires' mode, a coordinate that wrapped through four named mixes, became one amount each (drum_wire_contour, drum_wire_buzz, drum_wire_threshold, drum_wire_gate, drum_body_gate); the old default is the new default" },
+	{ "drum_bells", "2026-11-17",
+	  "the bells' mode, a coordinate that wrapped through five named mixes, became one amount each (drum_bell1_level, drum_bell2_level, drum_bell_q, drum_bell_link); the old default is the new default" },
+};
+
 inline constexpr device::Traits kTraits {
 	.tag = "DRUM",
 	.name = "Drum",
@@ -160,6 +183,7 @@ inline constexpr device::Traits kTraits {
 	.faceColumns = 4,
 	.tags = kTags,
 	.faceSections = kFaceSections,
+	.retiredKeys = kRetiredKeys,
 };
 
 /// A DRUM'S KIND NAMES, in the engine's own order (`feathers::drum::kKindNames`).
@@ -293,10 +317,23 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	{.key = "drum_drive_tone", .name = "Drive Tone", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
 	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
 	 .tooltip = "A tilt before the drive: down feeds it the lows, so they saturate; up feeds it the highs. The middle is flat"},
-	{.key = "drum_velocity_zone", .name = "Velocity", .min = -8.0, .max = 8.0, .def = 0.6666666666666666, .stepped = false,
-	 .unit = device::Unit::Number, .names = {}, .modulatable = true,
-	 .tooltip = "What a hit's velocity reaches, through named zones: only Level; and Tone (brightness and snap); and Tension (the glide deepens with velocity squared). Between two zones it moves from one to the next",
-	 .modSpan = 1.0},
+	// THE VELOCITY ROW (one row of depths: velocity -> each destination the hit has). Every cell stops at its end: nothing wraps.
+	{.key = "drum_vel_level", .name = "Vel Level", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How far velocity sets the hit's loudness: at 100% the hit is as loud as the key was hard, at 0 every hit is full"},
+	{.key = "drum_vel_tone", .name = "Vel Tone", .min = -1.0, .max = 1.0, .def = 0.5, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How far velocity moves the brightness: up, a harder hit is brighter; down, darker. At 100% velocity sweeps Tone across its whole range",
+	 .centred = true},
+	{.key = "drum_vel_snap", .name = "Vel Snap", .min = -1.0, .max = 1.0, .def = 0.5, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How far velocity moves the attack's hardness: up, a harder hit is snappier; down, softer. At 100% velocity sweeps Snap across its whole range",
+	 .centred = true},
+	{.key = "drum_vel_tension", .name = "Vel Tension", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How much of a struck head's tension law velocity brings: the glide's depth goes as velocity squared, so a hard hit drops further by itself. At 0 the glide is the same at every velocity",
+	 .gateControl = kKindControl,
+	 .gateMask = kTensionKinds},
 	{.key = "drum_velocity_noise", .name = "Velocity Noise", .min = -1.0, .max = 1.0, .def = 0.0, .stepped = false,
 	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
 	 .tooltip = "How far a hit's velocity moves its noise share: up, a harder hit is noisier; down, cleaner",
@@ -338,18 +375,57 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "How long a snare's stick click lasts",
 	 .gateControl = kKindControl,
 	 .gateMask = kSnareKinds},
-	{.key = "drum_wires", .name = "Wires", .min = -8.0, .max = 8.0, .def = 0.0, .stepped = false,
-	 .unit = device::Unit::Number, .names = {}, .modulatable = true,
-	 .tooltip = "A Snare's wires through named zones: Tight, Loose, Buzzy (rattling, following the head) and Gated (cut short). Between two zones it moves from one to the next",
-	 .modSpan = 1.0,
+	// THE SNARE'S WIRES, one amount each (what the named zones used to mix): a scaler stops at its end.
+	{.key = "drum_wire_contour", .name = "Wire Contour", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
+	 .unit = device::Unit::Choice, .names = kWireContourNames, .modulatable = false,
+	 .tooltip = "The shape of the wires' fall: Exp is exponential, Linear a straight fall, Mod chopped by a falling sawtooth",
+	 .gateControl = kKindControl,
+	 .gateMask = kSnareKinds,
+	 .hostSlot = false},
+	{.key = "drum_wire_buzz", .name = "Wire Buzz", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How much the wires rattle in the head's teeth, following it: 0 is clean wires, 100% a rattle from a light touch",
 	 .gateControl = kKindControl,
 	 .gateMask = kSnareKinds},
-	{.key = "drum_bells", .name = "Bells", .min = -8.0, .max = 8.0, .def = 0.0, .stepped = false,
-	 .unit = device::Unit::Number, .names = {}, .modulatable = true,
-	 .tooltip = "A Snare's two moving bells through named zones: Off, Body (one peak), Shell (two, linked), Ring (narrow and ringing) and Knock (wide, the second free). How narrow follows Snap",
-	 .modSpan = 1.0,
+	{.key = "drum_wire_threshold", .name = "Buzz Threshold", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How hard the head must ring before the wires rattle: low rattles at once, high only on the hardest hits",
+	 .gateControl = kKindControl,
+	 .gateMask = kSnareKinds,
+	 .hostSlot = false},
+	{.key = "drum_wire_gate", .name = "Wire Gate", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "Cuts the wires short: at this share of their decay they are shut off, the gated snare. 0 lets them ring out",
 	 .gateControl = kKindControl,
 	 .gateMask = kSnareKinds},
+	{.key = "drum_body_gate", .name = "Body Gate", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "Cuts the head short: at this share of its decay it is shut off. 0 lets it ring out",
+	 .gateControl = kKindControl,
+	 .gateMask = kSnareKinds},
+	// THE SNARE'S TWO MOVING BELLS, one amount each.
+	{.key = "drum_bell1_level", .name = "Bell 1 Level", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How much of the first moving bell, the head's resonant peak, is in the hit. 0 is none",
+	 .gateControl = kKindControl,
+	 .gateMask = kSnareKinds},
+	{.key = "drum_bell2_level", .name = "Bell 2 Level", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How much of the second bell, the shell's, is in the hit. 0 is none",
+	 .gateControl = kKindControl,
+	 .gateMask = kSnareKinds},
+	{.key = "drum_bell_q", .name = "Bell Q", .min = 0.25, .max = 4.0, .def = 1.0, .stepped = false,
+	 .unit = device::Unit::Number, .names = {}, .modulatable = true,
+	 .tooltip = "How narrow both bells are, as a multiple of what Snap gives them: below 1 wide and knocking, above 1 narrow and ringing",
+	 .gateControl = kKindControl,
+	 .gateMask = kSnareKinds,
+	 .hostSlot = false},
+	{.key = "drum_bell_link", .name = "Bell Link", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = true,
+	 .unit = device::Unit::Choice, .names = kBellLinkNames, .modulatable = false,
+	 .tooltip = "Linked: the second bell sits above the first at a ratio the terrain's Metal gives. Free: the second sits at its own Hz",
+	 .gateControl = kKindControl,
+	 .gateMask = kSnareKinds,
+	 .hostSlot = false},
 	{.key = "drum_bell_start", .name = "Bell Start", .min = 6.643856189774724, .max = 13.550746785383243, .def = 11.287712379549449, .stepped = false,
 	 .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
 	 .tooltip = "Where a snare's moving bell starts: a resonant peak that glides to Bell End",

@@ -26,7 +26,6 @@
 
 #include "plugin/ui/feature_norm.h"
 
-#include "dsp/drum_picture.h"
 #include "dsp/ks_picture.h"
 #include "dsp/flagship.h"
 #include "dsp/phase_warp.h"
@@ -578,19 +577,6 @@ void terrainCycleOn(OscType engine, const TerrainFrames& frames, uint16_t zone, 
 		const int lensPartials = n == kTerrainCycleSamples ? kAdditiveLensPartials : std::min(n / 2 - 1, partials::kMaxPartials);
 		partials::cycleOf(spectrum, lensPartials, lensPartials, nullptr, n, static_cast<double>(n), cycle.data());
 	}
-	else if (engine == OscType::Drum) {
-		// THE DRUM AS HEARD AT THIS PLACE (drum proposal §3.4): the selected sound's kind with this place's seven fields through
-		// its scalers, the bank's road (readDrumFields, drumFieldsWithOverrides), each component weighted by how long it rings
-		// (drum::heardSpectrum), summed as Additive's lens sums.
-		const double home = sliceHome(zone, offset, gammaBase);
-		const drum::Fields fields =
-		    drumFieldsWithOverrides(drumFieldsWithOverrides(readDrumFields(frames.partials, home, travelX, travelY, warp), additive.drum),
-		                            additive.drumKit);
-		const int lensPartials = n == kTerrainCycleSamples ? kAdditiveLensPartials : std::min(n / 2 - 1, partials::kMaxPartials);
-		partials::PartialSpectrum heard;
-		drum::heardSpectrum(additive.drumKind, fields, lensPartials, heard, static_cast<double>(n) / 2.0 - 0.75);
-		partials::cycleOf(heard, lensPartials, lensPartials, nullptr, n, static_cast<double>(n), cycle.data());
-	}
 	else if (engine == OscType::Pluck) {
 		// THE STRING AS HEARD AT THIS PLACE (KS design §2.3): the pluck's tone is this place's Additive spectrum (the bank's
 		// road, at the selected sound's Smoothness and neutral bias, as a Pluck sound reads it) and the material its five
@@ -739,7 +725,6 @@ ColourMap colourMapFor(OscType engine) {
 	case OscType::BasicShapes: return ColourMap::Spectrum;
 	case OscType::Additive: return kAdditiveMap;
 	case OscType::Pluck: return kPluckMap;
-	case OscType::Drum: return ColourMap::Ember; // the drum's own (drum proposal §3.4; to be confirmed the colours)
 	case OscType::kCount: break;
 	}
 	return kShippedMap;
@@ -1402,7 +1387,6 @@ void forEachPlaneFrame(OscType engine, const TerrainFrames& frames, Each&& each)
 	case OscType::Resonate: each(frames.weave); break;
 	case OscType::Additive: each(frames.partials); break;
 	case OscType::Pluck: each(frames.partials); break; // the pluck's tone and the string's material read one frame
-	case OscType::Drum: each(frames.partials); break; // the drum's seven fields are guests of the Additive rows
 	case OscType::kCount: break;
 	}
 }
@@ -1558,14 +1542,6 @@ constexpr LikeNudge kLikeNudges[] = {
 	{ "pick", [](TerrainWindow& w) { w.additive.string.pick = nudgedUnit(w.additive.string.pick); } },
 	{ "noise", [](TerrainWindow& w) { w.additive.string.noise = nudgedUnit(w.additive.string.noise); } },
 	{ "stretch", [](TerrainWindow& w) { w.additive.string.stretch = nudgedUnit(w.additive.string.stretch); } },
-	// THE DRUM'S SEVEN SCALERS (2026-11-05), the same.
-	{ "drum pitch", [](TerrainWindow& w) { w.additive.drum.pitch = nudgedUnit(w.additive.drum.pitch); } },
-	{ "drum length", [](TerrainWindow& w) { w.additive.drum.length = nudgedUnit(w.additive.drum.length); } },
-	{ "drum sweep", [](TerrainWindow& w) { w.additive.drum.sweep = nudgedUnit(w.additive.drum.sweep); } },
-	{ "drum tone", [](TerrainWindow& w) { w.additive.drum.tone = nudgedUnit(w.additive.drum.tone); } },
-	{ "drum noise", [](TerrainWindow& w) { w.additive.drum.noise = nudgedUnit(w.additive.drum.noise); } },
-	{ "drum snap", [](TerrainWindow& w) { w.additive.drum.snap = nudgedUnit(w.additive.drum.snap); } },
-	{ "drum metal", [](TerrainWindow& w) { w.additive.drum.metal = nudgedUnit(w.additive.drum.metal); } },
 };
 constexpr auto kLikeControlNames = [] {
 	std::array<const char*, std::size(kLikeNudges)> names {};
@@ -2226,10 +2202,6 @@ void terrainLikeAngles(const TerrainWindow& window, double x, double y, std::arr
 		buildPartialSound(frames.partials, home, x, y, spectrum, window.smoothnessScale, {});
 		(void)readStringFields(frames.partials, home, x, y);
 	}
-	if (e == OscType::Drum) {
-		// The drum's seven fields, its one set of sites.
-		(void)readDrumFields(frames.partials, home, x, y);
-	}
 	if (e == OscType::Stair) {
 		(void)buildStairSliced(zone, offset, x, y, frames.stair, window.gammaBase);
 	}
@@ -2262,7 +2234,6 @@ std::array<bool, kAngleSites> likeLiveSites(OscType engine) {
 		open(AngleKind::Partials); // the pluck's tone
 		open(AngleKind::String);   // and the string's material
 		break;
-	case OscType::Drum: open(AngleKind::Drum); break;
 	case OscType::Stair: open(AngleKind::Stair); break;
 	case OscType::Resonate: open(AngleKind::Weave); break;
 	default: break;

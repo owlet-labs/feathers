@@ -88,10 +88,6 @@ void OscVoice::setSampleRate(double hostSampleRate) {
 	}
 	ks_->hz = -1.0;
 	ks_->lawsSet = false;
-	// THE DRUM HIT borrows the voice's string for its String kind (and the synth's pluck builder, handed with setPluckBuilder).
-	drum_->hit.prepare(hostSampleRate);
-	drum_->hit.setString(&ks_->string, ks_->pluckBuilder);
-	drum_->layer.prepare(hostSampleRate); // never a String: a layer's kinds leave the voice's one string to its pad
 }
 
 void OscVoice::setFrequency(double hz) {
@@ -200,18 +196,6 @@ void OscVoice::reset() {
 	ks_->hz = -1.0;
 	ks_->pickL = -1.0;
 	ks_->pickR = -1.0;
-	// THE DRUM HIT: a note-on is a strike, so nothing of the last one carries over.
-	if (!drum_->hit.idle()) {
-		drum_->hit.reset();
-	}
-	if (!drum_->layer.idle()) {
-		drum_->layer.reset();
-	}
-	drum_->layerPending = false;
-	drum_->strikePending = false;
-	drum_->released = false;
-	drum_->releaseApplied = false;
-	drum_->controlLeft = 0;
 }
 
 void OscVoice::invalidateVoxBakes() {
@@ -2109,217 +2093,7 @@ void OscVoice::addPartialsMixed(int chunk, int fadeLeft0, int readIndex0, bool s
 	}
 }
 
-[[gnu::noinline]] void OscVoice::controlDrum(const PreparedCharacter& side) {
-	DrumRoadState& d = *drum_;
-	if (d.kit == nullptr) {
-		return;
-	}
-	const bool kit = d.kit->kit;
-	const drum::PadSetup& pad = d.kit->pads[kit ? d.pad : 0];
-	const drum::Fields& fields = side.drum.pads[side.drum.kit ? d.pad : 0];
-	// THE PITCH (decision 8, 2026-11-07): in Pitched mode the voice's own, Tune on top. In Kit mode the
-	// kind's resting pitch at the pad's Tune and the kit's transpose, moved by the pad's Bend share of what the voice adds past
-	// its key and that transpose (the wheel, an expression, a pitch route), held at the strike as much as moved while it
-	// rings: an 808's bend into a hit. Never by the key itself.
-	double baseHz = frequencyHz_ * std::exp2(pad.tuneSemitones / 12.0);
-	if (kit) {
-		const double moved = pitch_ - d.keySemitones - d.kit->transposeSemitones;
-		baseHz = drum::kindBaseHz(pad.kind)
-		         * std::exp2((pad.tuneSemitones + d.kit->transposeSemitones + pad.bendAmount * moved) / 12.0);
-	}
-	const drum::Laws laws = drum::lawsFor(pad.kind, fields, pad.controls, baseHz, d.velocity);
-	// THE LAYER (stage (c)): its own kind at its own place's fields, the pad's controls, the pad's pitch movement on its kind's
-	// resting pitch. Struck its Delay after the pad's strike (renderDrumSpan counts it down to the sample); gated with the pad.
-	const drum::PadSetup::Layer& layer = pad.layer;
-	if (kit && layer.on && d.strikePending) {
-		d.layerKind = layer.kind;
-		d.layerPending = true;
-		d.layerDelayLeft = static_cast<int>(std::lround(std::max(0.0, layer.delaySeconds) * hostSampleRate_));
-		d.layerHpX[0] = d.layerHpX[1] = d.layerHpY[0] = d.layerHpY[1] = 0.0f;
-	}
-	if (kit && (d.layerPending || !d.layer.idle())) {
-		// ITS OWN PITCH, as the pad's is made: its kind's resting pitch at its own Tune and the kit's transpose, moved by the
-		// pad's Bend share of what the voice adds past its key (a bend moves the whole pad, both layers).
-		const double layerHz = drum::kindBaseHz(d.layerKind)
-		                       * std::exp2((layer.tuneSemitones + d.kit->transposeSemitones
-		                                    + pad.bendAmount * (pitch_ - d.keySemitones - d.kit->transposeSemitones))
-		                                   / 12.0);
-		d.layerLaws = drum::lawsFor(d.layerKind, side.drum.layers[d.pad], layer.controls, layerHz, d.velocity);
-		if (!d.layer.idle()) {
-			d.layer.setLaws(d.layerLaws);
-		}
-		d.layerGain = layer.gain;
-		// THE ONE-POLE HIGH-PASS, y = a·(y' + x − x'); at its bottom (20 Hz) bypassed, so the layer is its hit exactly.
-		d.layerHpA = layer.highPassHz <= 20.0 + 1.0e-6
-		                 ? 1.0f
-		                 : static_cast<float>(1.0 / (1.0 + 2.0 * std::numbers::pi * layer.highPassHz / hostSampleRate_));
-	}
-	if (d.strikePending) {
-		d.strikePending = false;
-		d.hit.strike(pad.kind, laws, d.seed, static_cast<float>(std::clamp(d.velocity, 0.0, 1.0)));
-		d.releaseApplied = false;
-		++d.strikes;
-	}
-	else if (!d.hit.idle()) {
-		d.hit.setLaws(laws);
-	}
-	// THE GATE (D4): a Gate pad's released key damps the hit to Release; a One-shot pad's never does.
-	if (d.released && pad.gate && !d.releaseApplied && !d.hit.idle()) {
-		d.hit.release(pad.releaseSeconds);
-		d.releaseApplied = true;
-	}
-	// AND ITS LAYER, once that has struck (a layer still waiting out its Delay is damped at the first block after it strikes).
-	if (d.released && pad.gate && !d.layerReleaseApplied && !d.layer.idle()) {
-		d.layer.release(pad.releaseSeconds);
-		d.layerReleaseApplied = true;
-	}
-	// LEVEL AND PAN, equal power with the centre at unity in each ear (so a centred pad is the mono road's level exactly).
-	const double theta = (static_cast<double>(std::clamp(pad.pan, -1.0f, 1.0f)) + 1.0) * std::numbers::pi / 4.0;
-	d.gainL = pad.gain * static_cast<float>(std::numbers::sqrt2 * std::cos(theta));
-	d.gainR = pad.gain * static_cast<float>(std::numbers::sqrt2 * std::sin(theta));
-	if (pad.pan == 0.0f) {
-		d.gainL = pad.gain;
-		d.gainR = pad.gain;
-	}
-}
-
-void OscVoice::renderDrumSpan(float* l, float* r, int span) {
-	DrumRoadState& d = *drum_;
-	if (r != nullptr) {
-		// THE STEREO ROAD: the hit's own right ear (Width's decorrelated wires or clap band), then the pad's pan.
-		d.hit.render(l, span, r);
-		for (int i = 0; i < span; ++i) {
-			r[i] *= d.gainR;
-			l[i] *= d.gainL;
-		}
-	}
-	else {
-		d.hit.render(l, span);
-		for (int i = 0; i < span; ++i) {
-			l[i] *= d.gainL;
-		}
-	}
-	// THE LAYER (stage (c)): struck at the sample its Delay ends, through its high-pass, at its Level on the pad's Level and pan.
-	if (!d.layerPending && d.layer.idle()) {
-		return;
-	}
-	int from = 0;
-	if (d.layerPending) {
-		if (d.layerDelayLeft >= span) {
-			d.layerDelayLeft -= span;
-			return;
-		}
-		from = d.layerDelayLeft;
-		d.layerDelayLeft = 0;
-		d.layerPending = false;
-		d.layer.strike(d.layerKind, d.layerLaws, d.seed ^ 0x1A7E2C0FFEEull, static_cast<float>(std::clamp(d.velocity, 0.0, 1.0)));
-		d.layerReleaseApplied = false;
-		++d.layerStrikes;
-	}
-	const int n = span - from;
-	d.layer.render(d.layerL, n, r != nullptr ? d.layerR : nullptr);
-	const auto pass = [&](float* x, int ear) {
-		if (d.layerHpA >= 1.0f) {
-			return;
-		}
-		float px = d.layerHpX[ear];
-		float py = d.layerHpY[ear];
-		for (int i = 0; i < n; ++i) {
-			const float y = d.layerHpA * (py + x[i] - px);
-			px = x[i];
-			py = y;
-			x[i] = y;
-		}
-		d.layerHpX[ear] = px;
-		d.layerHpY[ear] = py;
-	};
-	pass(d.layerL, 0);
-	const float gl = d.layerGain * d.gainL;
-	for (int i = 0; i < n; ++i) {
-		l[from + i] += gl * d.layerL[i];
-	}
-	if (r != nullptr) {
-		pass(d.layerR, 1);
-		const float gr = d.layerGain * d.gainR;
-		for (int i = 0; i < n; ++i) {
-			r[from + i] += gr * d.layerR[i];
-		}
-	}
-}
-
-[[gnu::noinline]] void OscVoice::renderDrumPure(int chunk, bool stereoRender) {
-	++drum_->chunks;
-	settlePartialsOwed();
-	decimatorsIdle_ = true; // nothing feeds the 4x decimators on this road (renderPartialsPure's reason)
-	int s = 0;
-	while (s < chunk) {
-		if (drum_->controlLeft <= 0) {
-			if (gliding_) {
-				advanceGlideBy(kStringControlBlock);
-			}
-			advancePhaseBy(frequencyHz_ / hostSampleRate_, kStringControlBlock);
-			controlDrum(*fresh_);
-			drum_->controlLeft = kStringControlBlock;
-		}
-		const int span = std::min(drum_->controlLeft, chunk - s);
-		renderDrumSpan(carry_ + s, stereoRender ? carryR_ + s : nullptr, span);
-		if (fadeLeft_ > 0) {
-			fadeLeft_ = std::max(0, fadeLeft_ - 4 * span);
-		}
-		readIndex_ += span;
-		drum_->controlLeft -= span;
-		s += span;
-	}
-}
-
-[[gnu::noinline]] void OscVoice::addDrumMixed(int chunk, int fadeLeft0, bool stereoRender) {
-	++drum_->chunks;
-	const bool freshD = fresh_->engine == OscEngine::Drum;
-	const PreparedCharacter& side = freshD ? *fresh_ : *stale_;
-	alignas(16) float l[Halfband4x::kMaxBlock] {};
-	alignas(16) float r[Halfband4x::kMaxBlock] {};
-	int s = 0;
-	while (s < chunk) {
-		if (drum_->controlLeft <= 0) {
-			controlDrum(side);
-			drum_->controlLeft = kStringControlBlock;
-		}
-		const int span = std::min(drum_->controlLeft, chunk - s);
-		renderDrumSpan(l + s, stereoRender ? r + s : nullptr, span);
-		drum_->controlLeft -= span;
-		s += span;
-	}
-	// addStringMixed's weights from the one t.
-	const double total = static_cast<double>(fadeTotal_);
-	for (int h = 0; h < chunk; ++h) {
-		double sum = 0.0;
-		for (int j = 4 * h; j < 4 * h + 4; ++j) {
-			sum += j < fadeLeft0 ? static_cast<double>(fadeTotal_ - fadeLeft0 + j + 1) / total : 1.0;
-		}
-		const double t = 0.25 * sum;
-		const auto weight = static_cast<float>(freshD ? t : 1.0 - t);
-		carry_[h] += weight * l[h];
-		if (stereoRender) {
-			carryR_[h] += weight * r[h];
-		}
-	}
-}
-
 void OscVoice::generateChunk(int chunk, bool stereo) {
-	// THE DRUM ROAD FIRST (drum proposal §1): ahead of the string's, because the drum's String kind plays the voice's string
-	// and the string road would reset a string it is not driving.
-	const DrumRoad droad = drumRoad();
-	if (droad == DrumRoad::Pure) {
-		renderDrumPure(chunk, stereo);
-		return;
-	}
-	if (droad == DrumRoad::None && !drum_->hit.idle()) {
-		drum_->hit.reset(); // left the road: nothing will read it
-	}
-	if (droad == DrumRoad::None && (!drum_->layer.idle() || drum_->layerPending)) {
-		drum_->layer.reset();
-		drum_->layerPending = false;
-	}
 	// THE STRING ROAD FIRST (KS design §8 S4). AN ENGINE SWITCH PLUCKS NOTHING (by design, K12): a
 	// held note switched into Pluck crossfades into its silent string, and the next note plucks.
 	const StringRoad sroad = stringRoad();
@@ -2369,9 +2143,6 @@ void OscVoice::generateChunk(int chunk, bool stereo) {
 	}
 	if (sroad == StringRoad::Mixed) {
 		addStringMixed(chunk, fadeLeft0, stereo);
-	}
-	if (droad == DrumRoad::Mixed) {
-		addDrumMixed(chunk, fadeLeft0, stereo);
 	}
 }
 

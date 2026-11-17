@@ -68,7 +68,6 @@
 #include "plugin/ui/wave_display.h"
 #include "plugin/ui/text_field.h"
 #include "plugin/ui/undo_chord.h"
-#include "plugin/ui/drum_panel.h"
 #include "plugin/ui/spectrum_panel.h"
 #include "plugin/ui/widget_registry.h"
 
@@ -421,54 +420,6 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 			surfaces->dismiss(spectrumSurface);
 		}
 		spectrumClosed(); // in case the host had already let it go
-	}
-	/// **THE DRUM KIT PANEL, WHILE OPEN** (drum proposal §6): the spectrum panel's arrangement exactly — presented through
-	/// `surfaces` or the popout, OWNED BY ITS HOST, this a handle nulled by the host's dismissal road. Drum's alone.
-	ui::DrumPanel* drumPanel = nullptr;
-	SurfaceId drumSurface = kNoSurface;
-	bool drumInWindow = false;
-	void drumClosed() {
-		drumPanel = nullptr;
-		drumSurface = kNoSurface;
-		drumInWindow = false;
-	}
-	void toggleDrumPanel() {
-		if (drumPanel != nullptr) {
-			closeDrumPanel();
-			return;
-		}
-		if (surfaces == nullptr
-		    || oscTypeFromValue(bridge.value(static_cast<clap_id>(ParamId::OscType))) != OscType::Drum) {
-			return;
-		}
-		auto panel = std::make_unique<ui::DrumPanel>(bridge, registry, selection, notify.get(), &previewWatchers);
-		panel->setModulation(&mod, &history);
-		ui::DrumPanel* raw = panel.get();
-		if (expandedWindow != nullptr && prefs.flag(kPopoutWindowKey, false)) {
-			surfaces->dismissPresented();
-			expandedWindow->show(std::move(panel));
-			popoutOpened();
-			drumPanel = raw;
-			drumInWindow = true;
-			return;
-		}
-		if (expandedWindow != nullptr) {
-			expandedWindow->dismiss();
-		}
-		const SurfaceId id = surfaces->present(std::move(panel), SurfaceNeed::SpansGesture, "Drum Kit", [this] { drumClosed(); });
-		if (id != kNoSurface) {
-			drumPanel = raw;
-			drumSurface = id;
-		}
-	}
-	void closeDrumPanel() {
-		if (drumInWindow && expandedWindow != nullptr) {
-			expandedWindow->dismiss();
-		}
-		else if (surfaces != nullptr && drumSurface != kNoSurface) {
-			surfaces->dismiss(drumSurface);
-		}
-		drumClosed();
 	}
 	/// THE SURFACE HOST — the overlay and the takeover behind one seam, THE SAME ONE THE RACK HOLDS.
 	/// Above every surface and below the notify tray, so a device's panel covers the editor and a
@@ -1424,10 +1375,6 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 		if (meter != nullptr) {
 			(void)meter->update();
 		}
-		// A DRUM KIT'S CARDS PULSE WHEN THEIR PADS ARE STRUCK, from the published hits.
-		if (soundStack != nullptr) {
-			(void)soundStack->updatePulses(static_cast<int64_t>(visage::time::milliseconds()));
-		}
 		// Reconciled here rather than through a callback out of the header: the switch is shared state
 		// with watchers, so the one thing that has to happen when it moves is a check, not a signal.
 		if (surfaceStale()) {
@@ -1444,14 +1391,6 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 		if (spectrumPanel != nullptr
 		    && oscTypeFromValue(bridge.value(static_cast<clap_id>(ParamId::OscType))) != OscType::Additive) {
 			closeSpectrumPanel();
-		}
-		// THE DRUM KIT PANEL IS DRUM'S ALONE: leaving the engine closes it by its host's road, and the tab follows.
-		if (drumPanel != nullptr
-		    && oscTypeFromValue(bridge.value(static_cast<clap_id>(ParamId::OscType))) != OscType::Drum) {
-			closeDrumPanel();
-		}
-		if (explore != nullptr) {
-			explore->setDrumOpen(drumPanel != nullptr);
 		}
 		if (explore != nullptr) {
 			explore->setSpectrumOpen(spectrumPanel != nullptr);
@@ -1998,7 +1937,6 @@ bool Gui::create(const char* api, bool isFloating) noexcept {
 	impl_->explore->setModulation(&impl_->mod, &impl_->history);
 	// THE SPECTRUM TAB ASKS THIS EDITOR FOR THE PANEL — Explore holds none (Impl::toggleSpectrumPanel).
 	impl_->explore->onSpectrumTab = [this] { impl_->toggleSpectrumPanel(); };
-	impl_->explore->onDrumTab = [this] { impl_->toggleDrumPanel(); };
 	// THE STAGE'S COLLAPSE (backlog NF), AFTER BOTH SURFACES so its corner paints over them and takes the press.
 	// Wired exactly like the other rails — the desk remembers it, the editor re-derives the columns — plus the
 	// surfaces, which it does not parent (see StageRail's header).
@@ -2650,10 +2588,6 @@ ui::SettingsScreen* Gui::settingsForTest() noexcept {
 
 ui::SurfaceLayers* Gui::surfacesForTest() noexcept {
 	return impl_ == nullptr ? nullptr : impl_->surfaces.get();
-}
-
-ui::DrumPanel* Gui::drumPanelForTest() noexcept {
-	return impl_ != nullptr ? impl_->drumPanel : nullptr;
 }
 
 ui::SpectrumPanel* Gui::spectrumPanelForTest() noexcept {

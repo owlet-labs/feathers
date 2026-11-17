@@ -452,16 +452,14 @@ TEST_CASE("Engine rail: the engine menu offers Resonate and choosing it sets Osc
 	bridge.refresh();
 
 	// The fourth engine is a real choice now, the menu's last entry, and it is written as one edit.
-	REQUIRE(feathers::kOscTypeNames.size() == 8);
+	REQUIRE(feathers::kOscTypeNames.size() == 7);
 	CHECK(std::string(feathers::kOscTypeNames[4]) == "Basic Shapes");
 	CHECK(std::string(feathers::kOscTypeNames[5]) == "Additive");
 	CHECK(std::string(feathers::kOscTypeNames[6]) == "Pluck");
-	CHECK(std::string(feathers::kOscTypeNames[7]) == "Drum");
 	// The φ engines wear the prefix on the selector; Basic Shapes, Additive and Pluck do not.
 	CHECK(EngineRail::engineDisplayName(2) == "PhiForge");
 	CHECK(EngineRail::engineDisplayName(4) == "Basic Shapes");
 	CHECK(EngineRail::engineDisplayName(5) == "Additive");
-	CHECK(EngineRail::engineDisplayName(7) == "Drum"); // nor Drum (2026-11-05)
 	CHECK(EngineRail::engineDisplayName(6) == "Pluck");
 	CHECK(std::string(feathers::kOscTypeNames[3]) == "Resonate");
 	rail.selectEngine(3);
@@ -1752,91 +1750,6 @@ TEST_CASE("the puck stops at the sounds rather than running past them") {
 	const std::vector<UiParamEvent> posted = drain(f.bridge);
 	REQUIRE(posted.size() >= 2);
 	CHECK(posted[1].value == doctest::Approx(1.0));
-}
-
-TEST_CASE("on a Drum Kit the Perform puck IS (Pos X, Pos Y): a press writes those two and never Path, which a kit does not read") {
-	StageFixture f;
-	f.set(ParamId::OscType, static_cast<double>(OscType::Drum));
-	f.set(ParamId::DrumMode, 1.0);
-	f.set(ParamId::Weather, 1.0);
-	// A POINT WELL OFF BOTH STARS AND THE TOUR, so the old decomposition (nearest Path + residual) would have written a small residual.
-	const BlendPoint want { 0.42f, -0.31f };
-	const visage::Point pixels = f.stage.toPixels(want);
-	(void)drain(f.bridge);
-	f.stage.processMouseDown(at(pixels.x, pixels.y));
-	f.stage.processMouseUp(at(pixels.x, pixels.y));
-	bool path = false;
-	double posX = 99.0;
-	double posY = 99.0;
-	for (const UiParamEvent& e : drain(f.bridge)) {
-		if (e.kind != UiParamEvent::Kind::Value) {
-			continue;
-		}
-		path = path || e.id == static_cast<clap_id>(ParamId::Path);
-		if (e.id == static_cast<clap_id>(ParamId::PosX)) {
-			posX = e.value;
-		}
-		if (e.id == static_cast<clap_id>(ParamId::PosY)) {
-			posY = e.value;
-		}
-	}
-	CHECK_FALSE(path);
-	CHECK(posX == doctest::Approx(want.x).epsilon(0.01));
-	CHECK(posY == doctest::Approx(want.y).epsilon(0.01));
-	// THE PUCK IS DRAWN WHERE THE KIT STANDS: (Pos X, Pos Y), whatever Path says.
-	f.set(ParamId::Path, 0.8);
-	f.set(ParamId::PosX, 0.25);
-	f.set(ParamId::PosY, -0.5);
-	CHECK(f.stage.puck().x == doctest::Approx(0.25f));
-	CHECK(f.stage.puck().y == doctest::Approx(-0.5f));
-	// AND OFF A KIT IT IS STILL THE TOUR PLUS THE RESIDUAL.
-	f.set(ParamId::DrumMode, 0.0);
-	f.set(ParamId::OscType, static_cast<double>(OscType::Stair));
-	const BlendPoint on = f.stage.pathPos(0.8);
-	CHECK(f.stage.puck().x == doctest::Approx(on.x + 0.25f));
-	CHECK(f.stage.puck().y == doctest::Approx(on.y - 0.5f));
-}
-
-TEST_CASE("the tray's Path knob is not drawn on a Drum Kit, and the row closes up over its place") {
-	ParamBridge bridge;
-	feathers::BridgeDeviceHost deviceHost { bridge };
-	WidgetRegistry registry;
-	ParamSet params;
-	params.setBase(static_cast<clap_id>(ParamId::OscType), static_cast<double>(OscType::Stair));
-	bridge.publish(params);
-	bridge.refresh();
-	KnobTray tray(bridge, registry, nullptr);
-	tray.setBounds(0.0f, 0.0f, 700.0f, KnobTray::kHeight);
-	tray.update();
-	const auto knobOf = [&](ParamId id) {
-		const auto watchers = registry.watchers(static_cast<clap_id>(id));
-		REQUIRE_FALSE(watchers.empty());
-		return watchers.front();
-	};
-	visage::Frame* path = knobOf(ParamId::Path);
-	visage::Frame* posX = knobOf(ParamId::PosX);
-	CHECK(tray.pathShownForTest());
-	CHECK(path->isVisible());
-	const float offKit = posX->x();
-	CHECK(offKit > path->x());
-	// A DRUM KIT: Path is not drawn (hidden, and a hidden knob is a dead one), and Pos X takes the first place.
-	params.setBase(static_cast<clap_id>(ParamId::OscType), static_cast<double>(OscType::Drum));
-	params.setBase(static_cast<clap_id>(ParamId::DrumMode), 1.0);
-	bridge.publish(params);
-	bridge.refresh();
-	tray.update();
-	CHECK_FALSE(tray.pathShownForTest());
-	CHECK_FALSE(path->isVisible());
-	CHECK(posX->x() == doctest::Approx(KnobTray::kPadX));
-	CHECK(posX->x() < offKit);
-	// A DRUM IN PITCHED MODE reads Path again.
-	params.setBase(static_cast<clap_id>(ParamId::DrumMode), 0.0);
-	bridge.publish(params);
-	bridge.refresh();
-	tray.update();
-	CHECK(tray.pathShownForTest());
-	CHECK(path->isVisible());
-	CHECK(posX->x() == doctest::Approx(offKit));
 }
 
 TEST_CASE("a drag along the tour tracks it, and a press that moves nothing posts nothing") {
@@ -10230,51 +10143,6 @@ TEST_CASE("visage v1: every glyph our font carries measures its settled width on
 	CHECK(sum > 100.0f * 37.0f * 0.3f);
 }
 
-TEST_CASE("voice Engine rail on drums (drum proposal §15): a Kit hides the voice mode, count, priority and glide; Pitched draws them; stack, pitch and bend stay") {
-	ParamBridge bridge;
-	feathers::BridgeDeviceHost deviceHost { bridge };
-	WidgetRegistry registry;
-	EngineRail engineRail(bridge, registry);
-	engineRail.setBounds(0.0f, 0.0f, EngineRail::kWidth, 700.0f);
-	ParamSet params;
-	const auto set = [&](ParamId id, double v) {
-		params.setBase(static_cast<clap_id>(id), v);
-		bridge.publish(params);
-		bridge.refresh();
-		engineRail.refreshEnablement();
-	};
-	set(ParamId::VoiceMode, static_cast<double>(VoiceMode::Mono)); // so Glide would be live off a kit
-	set(ParamId::OscType, static_cast<double>(OscType::Drum));
-	struct Row {
-		const char* name;
-		visage::Frame* frame;
-		bool kit;
-		bool pitched;
-	};
-	const Row rows[] = {
-		{ "voice mode", engineRail.voiceModeForTest(), false, true },
-		{ "voice count", engineRail.voiceCountForTest(), false, true },
-		{ "note priority", engineRail.notePriorityForTest(), false, true },
-		{ "glide", engineRail.glideForTest(), false, true },
-		{ "transpose (pitch page)", engineRail.transposeOctForTest(), true, true },
-		{ "bend range", engineRail.bendRangeForTest(), true, true },
-		{ "stack", engineRail.stackCountForTest(), true, true },
-		{ "phase", engineRail.phaseForTest(), false, false },
-		{ "osc mode", engineRail.oscModeForTest(), false, false },
-	};
-	for (const double mode : { 1.0, 0.0 }) {
-		set(ParamId::DrumMode, mode);
-		for (const Row& r : rows) {
-			CAPTURE(r.name);
-			CAPTURE(mode);
-			CHECK(r.frame->isVisible() == (mode == 1.0 ? r.kit : r.pitched));
-		}
-	}
-	// AND OFF DRUM, everything a Mono V5 draws comes back.
-	set(ParamId::OscType, static_cast<double>(OscType::V5));
-	CHECK(engineRail.voiceModeForTest()->isVisible());
-	CHECK(engineRail.glideForTest()->isVisible());
-}
 
 // ============================================================================================== //
 // ZONE DRAG FEEL — backlog QB                                                                     //

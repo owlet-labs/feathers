@@ -143,25 +143,6 @@ ParamBridge::ParamBridge() {
 	// (THE DRIVE METERS START AT THE SENTINEL, NOT AT ZERO — `FxTelemetry::drivePeak`'s own initialiser
 	// says so now, which is what makes a position the pool grows later say it too.)
 	const std::span<const ParamDesc> descs = paramDescs();
-	{
-		// THE DRUM ROWS' EXTENT, found by id (the table keeps them together; the params test asserts it).
-		size_t first = kParamCount;
-		size_t end = 0;
-		for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-			for (size_t c = 0; c < kDrumControlCount; ++c) {
-				const auto at = static_cast<size_t>(paramIndexOf(static_cast<clap_id>(drumParam(slot, static_cast<DrumControl>(c)))));
-				first = std::min(first, at);
-				end = std::max(end, at + 1);
-			}
-			for (const DrumControl c : kDrumLayerControls) {
-				const auto at = static_cast<size_t>(paramIndexOf(static_cast<clap_id>(drumLayer2Param(slot, c))));
-				first = std::min(first, at);
-				end = std::max(end, at + 1);
-			}
-		}
-		drumRowsFirst_ = first;
-		drumRowsEnd_ = end;
-	}
 	for (size_t i = 0; i < kParamCount; ++i) {
 		// Defaults rather than zero, so an editor that draws before the engine has published anything
 		// draws the patch a fresh plugin actually has.
@@ -1046,21 +1027,8 @@ void ParamBridge::publish(const ParamSet& params) noexcept {
 	publishedSerial_ = params.serial();
 	publishedWriteGeneration_ = written;
 	publishedEver_ = true;
-	// THE DRUM PADS' ROWS are published only while the engine is Drum (no other engine's editor shows or reads them): at 736
-	// rows they would otherwise cost every engine a quarter more than the whole of the rest, every block.
-	// ...AND WHENEVER A DRUM ROW HAS BEEN WRITTEN since they last were (a host or editor write under another engine is never lost,
-	// and the first call after the engine becomes Drum has every row to publish), counted by `ParamSet::drumGeneration`.
-	const uint32_t generation = params.drumGeneration();
-	const bool drum = params.oscType() == OscType::Drum || generation != drumPublishedGeneration_ || !drumEverPublished_;
-	if (drum) {
-		drumPublishedGeneration_ = generation;
-		drumEverPublished_ = true;
-	}
 	publishedWork_ = 0;
 	for (size_t i = 0; i < kParamCount; ++i) {
-		if (!drum && i >= drumRowsFirst_ && i < drumRowsEnd_) {
-			continue;
-		}
 		++publishedWork_;
 		const clap_id id = static_cast<clap_id>(descs[i].id);
 		publishedBase_[i].store(params.base(id), std::memory_order_relaxed);
@@ -2789,24 +2757,6 @@ const ParamBridge::LikeWarpSet& ParamBridge::takeLikeWarps() noexcept {
 } // namespace feathers
 
 namespace feathers {
-
-void ParamBridge::publishPadHits(const PadHits& hits) noexcept {
-	for (size_t pad = 0; pad < kMaxSounds; ++pad) {
-		padHitCount_[pad].store(hits.count[pad], std::memory_order_relaxed);
-		if (std::isfinite(hits.velocity[pad])) {
-			padHitVelocity_[pad].store(hits.velocity[pad], std::memory_order_relaxed);
-		}
-	}
-}
-
-PadHits ParamBridge::padHits() const noexcept {
-	PadHits out;
-	for (size_t pad = 0; pad < kMaxSounds; ++pad) {
-		out.count[pad] = padHitCount_[pad].load(std::memory_order_relaxed);
-		out.velocity[pad] = padHitVelocity_[pad].load(std::memory_order_relaxed);
-	}
-	return out;
-}
 
 } // namespace feathers
 

@@ -136,8 +136,6 @@ public:
 		// **THE LIST OF DEVICES A RACK IN THE LANE MAY BUILD** — this build's, because Feathers is the
 		// host. A rack in the lane is handed it and builds from it exactly as the standalone rack does.
 		synth_.setCatalogue(hostCatalogue());
-		// THE KIT PADS' FX LANES, for the kit window's rail (drum proposal §17 P3): the Synth's, built on the first ask to make one.
-		bridge_.setPadLaneSource([this](size_t pad, bool make) { return make ? synth_.ensurePadLane(pad) : synth_.padLane(pad); });
 		// **THE HOST SLOTS' BUS, FOR THE LANE'S WHOLE LIFE** (T6b): the bridge's, whose address is fixed for
 		// the plugin's life. The engine applies it over every bound control before it resolves.
 		synth_.setHostSlotBus(&bridge_.slotBus());
@@ -654,7 +652,6 @@ protected:
 		// arithmetic rather than repeating it. See Synth::modulatedRack.
 		publishEngineReadings(bridge_, synth_);
 		bridge_.publishMasterMeter(masterMeterReadingsOf(synth_.masterMeter())); // backlog DN
-		bridge_.publishPadHits(synth_.padHits()); // the kit pads' pulse (pad_hits.h)
 	}
 
 	//-------//
@@ -1004,57 +1001,19 @@ protected:
 			      *commit = [this] { bridge_.restorePresetIdentity(PresetIdentity {}); };
 		      } },
 		    { kStateBlockOrder[12], // drumlanes (after the preset: kStateVersion 54)
-		      // THE KIT PADS' FX LANES (drum proposal §17 P4), keyed by pad: each lane's own body (`InnerChain::saveState`).
-		      // A pad with no lane, or an empty one, is not written. `restore`: a lane the patch names takes its body live
-		      // (`applyState`, landing at the lane's next drain); a lane it does not name is emptied.
-		      [this](const clap_ostream* out) { return saveDrumLanes(out, drumLanesNow()); },
-		      [this](const clap_istream* in, Commit* commit, bool* present) {
+		      // THE SYNTH'S RETIRED KIT PADS' FX LANES: the block stays in the stream so its order and `kStateVersion` do not move,
+		      // always written empty and, on a load, read and dropped (a patch that carried lanes loses them with the Drum engine).
+		      [](const clap_ostream* out) { return saveDrumLanes(out, DrumLanes {}); },
+		      [](const clap_istream* in, Commit* commit, bool* present) {
 			      DrumLanes lanes;
 			      if (!loadDrumLanes(in, &lanes, present)) {
 				      return false;
 			      }
-			      *commit = [this, lanes = *present ? std::move(lanes) : DrumLanes {}] { restoreDrumLanes(lanes); };
+			      *commit = [] {};
 			      return true;
 		      },
-		      // A STREAM FROM BEFORE THE PAD LANES holds none: every pad's lane empty.
-		      [this](Commit* commit) { *commit = [this] { restoreDrumLanes(DrumLanes {}); }; } },
+		      [](Commit* commit) { *commit = [] {}; } },
 		} };
-	}
-
-	/// THE KIT PADS' FX LANES AS BODIES (drum proposal §17 P4), MAIN THREAD: each lane that holds anything, saved through its
-	/// own record (`InnerChain::saveState`); a pad with no lane or an empty one, nothing.
-	DrumLanes drumLanesNow() const {
-		DrumLanes lanes;
-		for (size_t pad = 0; pad < lanes.size(); ++pad) {
-			const rack::InnerChain* lane = synth_.padLane(pad);
-			if (lane == nullptr || lane->bridge() == nullptr || lane->bridge()->chainLength(0) == 0) {
-				continue;
-			}
-			std::vector<uint8_t>& body = lanes[pad];
-			const device::ByteSink sink { &body, [](void* ctx, const uint8_t* data, size_t bytes) {
-				                             auto* out = static_cast<std::vector<uint8_t>*>(ctx);
-				                             out->insert(out->end(), data, data + bytes);
-			                             } };
-			if (!lane->saveState(sink)) {
-				body.clear(); // a lane that will not serialise is left out rather than written in part
-			}
-		}
-		return lanes;
-	}
-	/// AND BACK, MAIN THREAD: a body the patch carries is applied live to its pad's lane (built if it has none); a pad it does
-	/// not name has its lane emptied, so a load never leaves a previous patch's pad fx behind.
-	void restoreDrumLanes(const DrumLanes& lanes) {
-		for (size_t pad = 0; pad < lanes.size(); ++pad) {
-			const std::vector<uint8_t>& body = lanes[pad];
-			if (!body.empty()) {
-				if (rack::InnerChain* lane = synth_.ensurePadLane(pad); lane != nullptr && !lane->applyState(body.data(), body.size())) {
-					log_.say("drumlanes pad " + std::string(1, static_cast<char>('A' + pad)) + " REFUSED its body");
-				}
-			}
-			else if (rack::InnerChain* lane = synth_.padLane(pad); lane != nullptr) {
-				(void)lane->applyState(nullptr, 0);
-			}
-		}
 	}
 
 	bool stateSave(const clap_ostream* stream) noexcept override {
@@ -1167,6 +1126,12 @@ protected:
 			}
 		}
 
+		// WHAT THIS BUILD NO LONGER HAS, said once: ids of parameters it dropped (a patch saved while the synth had a Drum engine
+		// carries hundreds), and the engine choice that named the retired Drum engine, which plays the default.
+		if (staged->droppedIds > 0 || staged->retiredEngine) {
+			log_.say(std::string(road) + " dropped " + std::to_string(staged->droppedIds) + " value(s) of parameters this build does not have"
+			         + (staged->retiredEngine ? "; Osc Type named the retired Drum engine and plays the default engine" : ""));
+		}
 		chainsParseReport_ = {};
 		chainsRestoreReport_ = {};
 		std::array<Commit, kStateBlockOrder.size()> commits;
@@ -1803,7 +1768,6 @@ protected:
 			bridge_.publish(params_);
 			publishEngineReadings(bridge_, synth_);
 		bridge_.publishMasterMeter(masterMeterReadingsOf(synth_.masterMeter())); // backlog DN
-		bridge_.publishPadHits(synth_.padHits()); // the kit pads' pulse (pad_hits.h)
 			return CLAP_PROCESS_CONTINUE;
 		}
 
@@ -1873,8 +1837,7 @@ protected:
 			bridge_.publish(params_);
 			publishEngineReadings(bridge_, synth_);
 			bridge_.publishMasterMeter(masterMeterReadingsOf(synth_.masterMeter())); // backlog DN
-			bridge_.publishPadHits(synth_.padHits()); // the kit pads' pulse (pad_hits.h)
-		}
+			}
 		askRestartIfLatencyMoved(); // what the lane RAN this block, against what the host was told (backlog JM)
 		sendNoteEnds(process->out_events, frames);
 

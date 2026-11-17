@@ -38,12 +38,12 @@ Then restart your DAW or rescan its plugins. Options, the manual download and pe
 
 ## Sound engines
 
-Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include Forge, Additive, Pluck, Drum, Resonate, Basic Shapes, Morph and Stair.
+Each sound is a position on a terrain. The Explore surface shows the terrain under the puck, and lets you mutate it, like a result, and undo or redo. Engines include Forge, Additive, Pluck, Resonate, Basic Shapes, Morph and Stair.
 
-| | |
-|---|---|
-| ![Explore terrain](docs/readme/05-explore-terrain.png) | ![Drum kit](docs/readme/06-drum-kit.png) |
-| *Explore: the terrain under sound A, with Rotate, Theta and Radius on its rim, Mutate / Undo / Redo and the like heart. A macro route into Radius is drawn along the knob's face.* | *The Drum engine's kit window: eight pads, each with its own kind, note and choke group, and the hit picture with draggable handles for click, sweep, tune, dip, drive and decay. The PAD FX rail is folded at the right.* |
+| |
+|---|
+| ![Explore terrain](docs/readme/05-explore-terrain.png) |
+| *Explore: the terrain under sound A, with Rotate, Theta and Radius on its rim, Mutate / Undo / Redo and the like heart. A macro route into Radius is drawn along the knob's face.* |
 
 ![The Explore terrain turning under Rotate](docs/readme/explore-rotate.gif)
 *The terrain turning under Rotate (Additive engine): every point of the field is a waveform, and Rotate turns the whole field under the sound.*
@@ -126,7 +126,6 @@ Racks nest inside racks and chains to any depth.
 - **Basic Shapes**: Classic oscillator shapes.
 - **Additive**: Additive synthesis, with a spectrum panel of partial operators and a vocoder.
 - **Pluck**: Plucked-string engine.
-- **Drum**: Eight-pad drum kit, with a hit picture per pad and a PAD FX rail.
 
 #### Filter & EQ
 

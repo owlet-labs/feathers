@@ -46,8 +46,8 @@ namespace feathers::fx::owltt {
 /// OWLTT's 25 controls, in hardware menu order.
 enum class Param : uint8_t {
 	// Global
-	Mode = 0,            // Stepped 1-11: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
-	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11=Linear (linear-phase FIR)
+	Mode = 0,            // Stepped 1-14: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
+	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full
 	Enabled = 1,         // Bypass switch
 	Threshold = 2,       // Linked global threshold
 	Ratio = 3,           // Linked global ratio
@@ -186,7 +186,7 @@ struct BandParams {
 
 /// The full OWLTT state: globals + per-band absolutes.
 struct Settings {
-	float mode = 6.0f;           // 1-13 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle)
+	float mode = 6.0f;           // 1-14 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full)
 	bool enabled = true;         // Bypass switch
 	float threshold = 0.5f;      // Linked global threshold
 	// THE STRUCT DEFAULT IS NOT THE PARAMETER DEFAULT, HERE AND ONLY HERE, and it is deliberate: a
@@ -332,12 +332,13 @@ inline constexpr device::Traits kTraits {
 /// THE LINEAR MODES: 11 is the steepest linear-phase split, 12 and 13 two and four times wider in their transition (`dsp::LinearBand::steep`), all
 /// with the same latency. `kLastMode` is the highest Mode.
 inline constexpr long kFirstLinearMode = 11;
-inline constexpr long kLastMode = 13;
-[[nodiscard]] inline constexpr bool isLinearMode(long mode) noexcept { return mode >= kFirstLinearMode && mode <= kLastMode; }
+inline constexpr long kLastLinearMode = 13;
+inline constexpr long kLastMode = 14; // 14 is LR8 Full, an IIR (48 dB/oct, no latency)
+[[nodiscard]] inline constexpr bool isLinearMode(long mode) noexcept { return mode >= kFirstLinearMode && mode <= kLastLinearMode; }
 [[nodiscard]] inline constexpr uint8_t linearSteepOf(long mode) noexcept { return static_cast<uint8_t>(mode - kFirstLinearMode); }
 
 inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast",
-                                             "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3", "Linear", "Linear Mild", "Linear Gentle"};
+                                             "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3", "Linear", "Linear Mild", "Linear Gentle", "LR8 Full"};
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
 /// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
@@ -531,7 +532,7 @@ inline constexpr double kOnePhaseUnit = 1.0;
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // Global
-    {"mode", "Mode", 1.0, 13.0, 6.0, true, device::Unit::Choice, kModeNames, false, false,
+    {"mode", "Mode", 1.0, 14.0, 6.0, true, device::Unit::Choice, kModeNames, false, false,
      "Crossover filter type — how the spectrum is split into bands. Linear splits with linear-phase FIRs: the bands sum to the input delayed by 24 ms, which the device reports as latency"},
     // ON BY DEFAULT — all effects should default to on when they are added.
     // See `fx::filter::kParamDescs` for the decision and what it replaced. This device is also the one

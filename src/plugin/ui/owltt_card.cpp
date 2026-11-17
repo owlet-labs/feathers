@@ -52,6 +52,7 @@ const char* modeName(int32_t mode) {
 	case 11: return "Linear";
 	case 12: return "Linear Mild";
 	case 13: return "Linear Gentle";
+	case 14: return "LR8";
 	default: return "?";
 	}
 }

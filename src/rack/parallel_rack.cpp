@@ -714,6 +714,7 @@ void Rack::prepare(double sampleRate, int maxFrames) {
 	linearBuild_ = true;
 	lr4Engine_.reset();
 	lr2Engine_.reset();
+	lr8Engine_.reset();
 	coeffsValid_ = false;
 	// THE ANALYSER ALLOCATES HERE, never on the audio thread; it runs only while a view holds the lease.
 	if (spectrum_ == nullptr) {
@@ -751,6 +752,7 @@ void Rack::reset() {
 	takeWantedStructure();
 	lr4Engine_.reset();
 	lr2Engine_.reset();
+	lr8Engine_.reset();
 	resetLinear();
 	modeGain_ = 1.0f;
 	modeStep_ = 0.0f;
@@ -1209,7 +1211,7 @@ void Rack::setFields(const float* fields, size_t present) {
 		return std::isfinite(v) ? static_cast<int>(std::lround(std::clamp(v, 0.0f, static_cast<float>(last)))) : 0;
 	};
 	bandsWanted_ = kBandCounts[choice(Param::BandCount, 2)];
-	slopeWanted_ = static_cast<Slope>(choice(Param::Slope, 4));
+	slopeWanted_ = static_cast<Slope>(choice(Param::Slope, 5));
 	filteringWanted_ = static_cast<Filtering>(choice(Param::Filtering, 2));
 	keyTrack_ = at(Param::KeyTrack) >= 0.5f;
 	for (size_t k = 0; k < 4; ++k) {
@@ -1379,6 +1381,9 @@ void Rack::takeWantedStructure() noexcept {
 		else if (slope_ == Slope::Lr2) {
 			lr2Engine_.reset();
 		}
+		else if (slope_ == Slope::Lr8) {
+			lr8Engine_.reset();
+		}
 		else {
 			resetLinear();
 		}
@@ -1426,8 +1431,11 @@ void Rack::aimCorners(int frames) noexcept {
 		if (slope_ == Slope::Lr4) {
 			lr4_[k] = fx::owltt::Lr4Split::coeffsFor(hz, rate);
 		}
-		else {
+		else if (slope_ == Slope::Lr2) {
 			lr2_[k] = fx::owltt::Lr2Split::coeffsFor(hz, rate);
+		}
+		else {
+			lr8_[k] = fx::owltt::Lr8Split::coeffsFor(hz, rate);
 		}
 		coeffHz_[k] = cornerHz_[k];
 		++coefficientUpdates_;
@@ -1481,8 +1489,11 @@ void Rack::splitBands(int n) noexcept {
 	if (slope_ == Slope::Lr4) {
 		run(lr4Engine_, lr4_);
 	}
-	else {
+	else if (slope_ == Slope::Lr2) {
 		run(lr2Engine_, lr2_);
+	}
+	else {
+		run(lr8Engine_, lr8_);
 	}
 }
 
@@ -1518,8 +1529,11 @@ void Rack::bandOfOutput(size_t role, int n) noexcept {
 	if (slope_ == Slope::Lr4) {
 		run(lr4Engine_, lr4_);
 	}
-	else {
+	else if (slope_ == Slope::Lr2) {
 		run(lr2Engine_, lr2_);
+	}
+	else {
+		run(lr8Engine_, lr8_);
 	}
 }
 
@@ -1538,8 +1552,11 @@ void Rack::alignDryToBands(int n) noexcept {
 	if (slope_ == Slope::Lr4) {
 		run(lr4Engine_, lr4_);
 	}
-	else {
+	else if (slope_ == Slope::Lr2) {
 		run(lr2Engine_, lr2_);
+	}
+	else {
+		run(lr8Engine_, lr8_);
 	}
 }
 
@@ -2433,6 +2450,9 @@ void Rack::processStereo(float* left, float* right, int frames) {
 		else if (slope_ == Slope::Lr2) {
 			lr2Engine_.flush();
 		}
+		else if (slope_ == Slope::Lr8) {
+			lr8Engine_.flush();
+		}
 	}
 	readings_[static_cast<size_t>(Reading::NoteHz)] =
 	    mode_ == Mode::Bands && keyTrack_ && heardNote_ ? static_cast<float>(keyHzOf(noteSemitones_)) : 0.0f;
@@ -2590,7 +2610,7 @@ bool Rack::holdsTail() const noexcept {
 	}
 	// BANDS: A FILTER STILL RINGING is sound to come, in the wet or the dry — until `flush` has put it at exact zero.
 	if (mode_ == Mode::Bands && (wetHeard || dryTarget_ > 0.0f) && !isLinearSlope(slope_)
-	    && !(slope_ == Slope::Lr4 ? lr4Engine_.settled() : lr2Engine_.settled())) {
+	    && !(slope_ == Slope::Lr4 ? lr4Engine_.settled() : slope_ == Slope::Lr2 ? lr2Engine_.settled() : lr8Engine_.settled())) {
 		return true;
 	}
 	// THE LINEAR SLOPE'S FIRs hold sound to come until their delay lines have shifted the last non-zero block out (`quiet`).

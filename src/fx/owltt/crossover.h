@@ -533,6 +533,66 @@ struct Lr4Split {
 	}
 };
 
+/// A two-way LR8 split (48 dB/oct): fourth-order Butterworth SQUARED on each side, each side four biquads (the order-4 pair, Q = 0.5412 and
+/// 1.3066, twice). Like LR4, `low + high` is an allpass with the order-4 Butterworth denominator (B4(s) B4(-s) = 1 + s^8, so
+/// (1 + s^8) / B4(s)^2 = B4(-s) / B4(s)): two biquad allpasses, no inversion. No latency: an IIR, minimum phase.
+struct Lr8Split {
+	struct Coeffs {
+		BiquadCoeffs lp[2] {};
+		BiquadCoeffs hp[2] {};
+		BiquadCoeffs ap[2] {};
+	};
+
+	[[nodiscard]] static Coeffs coeffsFor(float freqHz, float sampleRate) {
+		const float k = bilinearK(freqHz, sampleRate);
+		const float k2 = k * k;
+		// The order-4 Butterworth's two poles pairs: Q = 1 / (2 sin(pi/8)) and 1 / (2 sin(3 pi/8)).
+		constexpr float kQ[2] = { 0.5411961f, 1.3065630f };
+		Coeffs c;
+		for (int i = 0; i < 2; ++i) {
+			const float kOverQ = k / kQ[i];
+			const float norm = 1.0f / (1.0f + kOverQ + k2);
+			const float a1 = 2.0f * (k2 - 1.0f) * norm;
+			const float a2 = (1.0f - kOverQ + k2) * norm;
+			c.lp[i] = { k2 * norm, 2.0f * k2 * norm, k2 * norm, a1, a2 };
+			c.hp[i] = { norm, -2.0f * norm, norm, a1, a2 };
+			c.ap[i] = { a2, a1, 1.0f, a1, a2 };
+		}
+		return c;
+	}
+
+	struct Allpass {
+		Biquad b[2] {};
+		void reset() {
+			b[0].reset();
+			b[1].reset();
+		}
+		[[nodiscard]] float process(float x, const Coeffs& c) { return b[1].process(b[0].process(x, c.ap[0]), c.ap[1]); }
+	};
+
+	Biquad lp[4] {}, hp[4] {};
+
+	void reset() {
+		for (Biquad& b : lp) {
+			b.reset();
+		}
+		for (Biquad& b : hp) {
+			b.reset();
+		}
+	}
+
+	void split(float x, const Coeffs& c, float& low, float& high) {
+		float l = x;
+		float h = x;
+		for (int i = 0; i < 4; ++i) {
+			l = lp[i].process(l, c.lp[i & 1]);
+			h = hp[i].process(h, c.hp[i & 1]);
+		}
+		low = l;
+		high = h;
+	}
+};
+
 //-- THE K-BAND CASCADE (the Rack's Bands mode).
 //
 // The three-band form above, longer: rest_0 = x; band_k = LP_{f_k}(rest_{k-1}) · Π_{j>k} AP_{f_j};
@@ -579,6 +639,32 @@ inline void flushTiny(Lr4Split& s) {
 }
 [[nodiscard]] inline bool atRest(const Lr2Split& s) { return atRest(s.lp1) && atRest(s.lp2) && atRest(s.hp1) && atRest(s.hp2); }
 [[nodiscard]] inline bool atRest(const Lr4Split& s) { return atRest(s.lp1) && atRest(s.lp2) && atRest(s.hp1) && atRest(s.hp2); }
+inline void flushTiny(Lr8Split& s) {
+	for (Biquad& b : s.lp) {
+		flushTiny(b);
+	}
+	for (Biquad& b : s.hp) {
+		flushTiny(b);
+	}
+}
+[[nodiscard]] inline bool atRest(const Lr8Split& s) {
+	for (const Biquad& b : s.lp) {
+		if (!atRest(b)) {
+			return false;
+		}
+	}
+	for (const Biquad& b : s.hp) {
+		if (!atRest(b)) {
+			return false;
+		}
+	}
+	return true;
+}
+inline void flushTiny(Lr8Split::Allpass& a) {
+	flushTiny(a.b[0]);
+	flushTiny(a.b[1]);
+}
+[[nodiscard]] inline bool atRest(const Lr8Split::Allpass& a) { return atRest(a.b[0]) && atRest(a.b[1]); }
 inline void flushTiny(Lr2Split::Allpass& a) { flushTiny(a.ap); }
 inline void flushTiny(Lr4Split::Allpass& a) { flushTiny(a.b); }
 [[nodiscard]] inline bool atRest(const Lr2Split::Allpass& a) { return atRest(a.ap); }
@@ -620,6 +706,34 @@ struct Lr4Half {
 	}
 };
 
+/// HALF AN LR8 SPLIT: one fourth-order Butterworth each side (two biquads).
+struct Lr8Half {
+	using Coeffs = Lr8Split::Coeffs;
+	using Allpass = Lr8Split::Allpass;
+	Biquad lp[2] {}, hp[2] {};
+	void reset() {
+		for (Biquad& b : lp) {
+			b.reset();
+		}
+		for (Biquad& b : hp) {
+			b.reset();
+		}
+	}
+	void split(float x, const Coeffs& c, float& low, float& high) {
+		low = lp[1].process(lp[0].process(x, c.lp[0]), c.lp[1]);
+		high = hp[1].process(hp[0].process(x, c.hp[0]), c.hp[1]);
+	}
+};
+inline void flushTiny(Lr8Half& s) {
+	for (Biquad& b : s.lp) {
+		flushTiny(b);
+	}
+	for (Biquad& b : s.hp) {
+		flushTiny(b);
+	}
+}
+[[nodiscard]] inline bool atRest(const Lr8Half& s) { return atRest(s.lp[0]) && atRest(s.lp[1]) && atRest(s.hp[0]) && atRest(s.hp[1]); }
+
 template <bool I> inline void flushTiny(Lr2Half<I>& s) {
 	flushTiny(s.lp);
 	flushTiny(s.hp);
@@ -640,6 +754,10 @@ template <> struct Halves<Lr2Split> {
 template <> struct Halves<Lr4Split> {
 	using Before = Lr4Half;
 	using After = Lr4Half;
+};
+template <> struct Halves<Lr8Split> {
+	using Before = Lr8Half;
+	using After = Lr8Half;
 };
 
 template <class Split, int K, bool PHASE_COMPENSATED = true>
@@ -860,9 +978,9 @@ private:
 	float highCrossoverHz_ = 2000.0f;
 };
 
-/// The spelling the mode table and the device use: SECTIONS is the LR order, 2 or 4.
+/// The spelling the mode table and the device use: SECTIONS is the LR order, 2, 4 or 8.
 template <int SECTIONS, bool PHASE_COMPENSATED = true>
-using LRCrossover = LinkwitzRileyCrossover<std::conditional_t<SECTIONS >= 4, Lr4Split, Lr2Split>, PHASE_COMPENSATED>;
+using LRCrossover = LinkwitzRileyCrossover<std::conditional_t<SECTIONS >= 8, Lr8Split, std::conditional_t<SECTIONS >= 4, Lr4Split, Lr2Split>>, PHASE_COMPENSATED>;
 
 using APCrossover1 = AllpassCrossover<1>; // AP 6dB — crossover type 0
 using APCrossover2 = AllpassCrossover<2>; // Quirky — crossover type 1
@@ -871,5 +989,6 @@ using LR2CrossoverFull = LRCrossover<2, true>;
 using LR2CrossoverFast = LRCrossover<2, false>;
 using LR4CrossoverFull = LRCrossover<4, true>;
 using LR4CrossoverFast = LRCrossover<4, false>;
+using LR8CrossoverFull = LRCrossover<8, true>; // LR8 Full: 48 dB/oct, phase-compensated like the other Fulls
 
 } // namespace feathers::fx::owltt

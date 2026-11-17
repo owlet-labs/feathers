@@ -1783,12 +1783,14 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 			CHECK_MESSAGE(bbdLast < silentBlocks / 2, "the Delay in BBD still sounding halfway through the silence");
 			CHECK_FALSE(bbd.ops->holdsTail(bbd.mem));
 		}
-		// **THE LINEAR CROSSOVER'S FIR TAILS** (OWLTT's Mode 11, the Rack's Linear slope in each Filtering): a convolution of a
+		// **THE LINEAR CROSSOVER'S FIR TAILS AND THE LR8 IIR'S** (OWLTT's Modes 11 and 14, the Rack's Linear slope in each Filtering): a convolution of a
 		// burst rings for its kernel's length and must then be EXACT zero, with the device saying it holds nothing.
 		std::vector<DeviceRow> linearRows;
 		if (device::sameTag(desc->traits.tag, fx::owltt::kTraits.tag)) {
 			DeviceRow linearRow = row;
 			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = 11.0f;
+			linearRows.push_back(linearRow);
+			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = 14.0f; // LR8 Full: an IIR whose eight biquads a side must flush to exact zero
 			linearRows.push_back(linearRow);
 		}
 		if (device::sameTag(desc->traits.tag, rack::parallel::kTraits.tag)) {
@@ -1796,6 +1798,8 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 				DeviceRow linearRow = row;
 				linearRow.field[static_cast<size_t>(rack::parallel::Param::Slope)] = 2.0f;
 				linearRow.field[static_cast<size_t>(rack::parallel::Param::Filtering)] = filtering;
+				linearRows.push_back(linearRow);
+				linearRow.field[static_cast<size_t>(rack::parallel::Param::Slope)] = 5.0f; // LR8
 				linearRows.push_back(linearRow);
 			}
 		}

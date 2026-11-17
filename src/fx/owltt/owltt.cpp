@@ -289,6 +289,9 @@ void Owltt::resetCrossovers() {
 	for (auto& x : lr4full_) {
 		x.reset();
 	}
+	for (auto& x : lr8full_) {
+		x.reset();
+	}
 	for (auto& x : twist3_) {
 		x.reset();
 	}
@@ -431,6 +434,10 @@ void Owltt::updateCrossoverFrequencies() {
 		x.setHighCrossover(high, sr);
 	}
 	for (auto& x : lr4full_) {
+		x.setLowCrossover(low, sr);
+		x.setHighCrossover(high, sr);
+	}
+	for (auto& x : lr8full_) {
 		x.setLowCrossover(low, sr);
 		x.setHighCrossover(high, sr);
 	}
@@ -1193,6 +1200,14 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			lr4full_[1].process(inR, bandsR);
 			dryL[i] = alignedDryAt(left[i], lr4full_[0].alignDry(left[i]), i);
 			dryR[i] = alignedDryAt(right[i], lr4full_[1].alignDry(right[i]), i);
+			break;
+		// LR8 FULL: the 48 dB/oct pair, phase-compensated like the other Fulls, so its bands sum to one allpass per corner; the Blend's dry is that
+		// allpass (`alignDry`), faded to the raw input at Blend 0 as in the other LR modes.
+		case 14:
+			lr8full_[0].process(inL, bandsL);
+			lr8full_[1].process(inR, bandsR);
+			dryL[i] = alignedDryAt(left[i], lr8full_[0].alignDry(left[i]), i);
+			dryR[i] = alignedDryAt(right[i], lr8full_[1].alignDry(right[i]), i);
 			break;
 		case 9: // Inverted (AP1 with swapped low/high)
 			ap1_[0].process(inL, bandsL);

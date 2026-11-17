@@ -149,15 +149,15 @@ inline constexpr const char* kBandCountNames[] = { "2", "3", "5" };
 inline constexpr int kBandCounts[] = { 2, 3, 5 };
 inline constexpr int kMaxBands = 5;
 /// The slopes (decided, Q5: the two Linkwitz-Riley pairs, and later a linear-phase FIR split appended as a third) and where the filtering sits.
-inline constexpr const char* kSlopeNames[] = { "LR4 24 dB", "LR2 12 dB", "Linear", "Linear Mild", "Linear Gentle" };
-enum class Slope : uint8_t { Lr4 = 0, Lr2, Linear, LinearMild, LinearGentle };
+inline constexpr const char* kSlopeNames[] = { "LR4 24 dB", "LR2 12 dB", "Linear", "Linear Mild", "Linear Gentle", "LR8 48 dB" };
+enum class Slope : uint8_t { Lr4 = 0, Lr2, Linear, LinearMild, LinearGentle, Lr8 };
 /// THE LINEAR SLOPES: Linear, Mild and Gentle share the FIR split and its latency; each is twice as wide in its transition as the one before.
-[[nodiscard]] inline constexpr bool isLinearSlope(Slope s) noexcept { return s >= Slope::Linear; }
+[[nodiscard]] inline constexpr bool isLinearSlope(Slope s) noexcept { return s >= Slope::Linear && s <= Slope::LinearGentle; }
 [[nodiscard]] inline constexpr uint8_t linearSteepOf(Slope s) noexcept { return static_cast<uint8_t>(static_cast<int>(s) - static_cast<int>(Slope::Linear)); }
 inline constexpr const char* kFilteringNames[] = { "Before", "After", "Both" };
 /// WHAT A SEGMENTED CONTROL'S FACE SAYS, where the stored label is too long for a segment (display only; the Choice
 /// still stores `kSlopeNames` / `kUnusedNames`, and the tooltip says the rest).
-inline constexpr const char* kSlopeFaceNames[] = { "24 dB", "12 dB", "Linear", "Mild", "Gentle" };
+inline constexpr const char* kSlopeFaceNames[] = { "24 dB", "12 dB", "Linear", "Mild", "Gentle", "48 dB" };
 inline constexpr const char* kUnusedFaceNames[] = { "Ring", "Stop" };
 /// The corners' captions on a face ("Cut 1"…), static so a widget may keep the pointer.
 inline constexpr const char* kCutCaptions[] = { "Cut 1", "Cut 2", "Cut 3", "Cut 4" };
@@ -271,7 +271,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .stepped = false, .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
      .tooltip = "The corner between bands 4 and 5, kept at least a third of an octave above cut 3",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly},
-    {.key = "rack_slope", .name = "Rack Slope", .min = 0.0, .max = 4.0, .def = 0.0, .stepped = true,
+    {.key = "rack_slope", .name = "Rack Slope", .min = 0.0, .max = 5.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kSlopeNames, .modulatable = false,
      .tooltip = "The crossover: Linkwitz-Riley 24 or 12 dB per octave, or Linear, a linear-phase FIR split whose bands sum to the input delayed by about 24 ms (48 ms with Filtering Both), which the rack reports as latency. All sum flat",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .hostSlot = false},
@@ -1087,6 +1087,7 @@ private:
 	uint64_t coefficientUpdates_ = 0;
 	fx::owltt::Lr4Split::Coeffs lr4_[4] {};
 	fx::owltt::Lr2Split::Coeffs lr2_[4] {};
+	fx::owltt::Lr8Split::Coeffs lr8_[4] {};
 	/// ONE SLOPE'S FILTERS, per channel: the split (Before), each role's band path (After), the HALF split and HALF band
 	/// paths (Both: one Butterworth section each side, so the pair multiplies to the LR band and empty chains sum flat,
 	/// backlog OS), and the dry's allpass chain.
@@ -1145,6 +1146,7 @@ private:
 	};
 	BandsEngine<fx::owltt::Lr4Split> lr4Engine_;
 	BandsEngine<fx::owltt::Lr2Split> lr2Engine_;
+	BandsEngine<fx::owltt::Lr8Split> lr8Engine_;
 	std::vector<float> bandL_[kMaxBands], bandR_[kMaxBands];
 	/// **THE LINEAR SLOPE'S BANKS (`dsp/linear_crossover.h`)**: Before splits the input into `bands_` band kernels at once (`linSplit_`); After filters each
 	/// chain's output by its own band, one bank a role (`linRole_`); Both uses the half-band kernels in both places. Allocated at `prepare`

@@ -132,9 +132,9 @@ double rmsOf(const std::vector<float>& v, size_t from) {
 
 TEST_CASE("Linear: Mode offers it as the 11th choice, after the ten that keep their numbers") {
 	const auto& d = kParamDescs[static_cast<size_t>(Param::Mode)];
-	CHECK(d.max == 13.0);
+	CHECK(d.max == 14.0);
 	CHECK(d.min == 1.0);
-	REQUIRE(std::size(kModeNames) == 13);
+	REQUIRE(std::size(kModeNames) == 14);
 	CHECK(std::string(kModeNames[10]) == "Linear");
 	CHECK(std::string(kModeNames[9]) == "Twist3"); // the ten before it keep their numbers
 	CHECK(d.def == 6.0);
@@ -305,10 +305,10 @@ TEST_CASE("Linear: after the input stops the output reaches exact zero within th
 }
 
 TEST_CASE("Linear steepness: Linear, Linear Mild and Linear Gentle report one latency, land the impulse on it, and sum flat") {
-	REQUIRE(std::size(kModeNames) == 13);
+	REQUIRE(std::size(kModeNames) == 14);
 	CHECK(std::string(kModeNames[11]) == "Linear Mild");
 	CHECK(std::string(kModeNames[12]) == "Linear Gentle");
-	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].max == 13.0);
+	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].max == 14.0);
 	for (const float mode : { 11.0f, 12.0f, 13.0f }) {
 		CAPTURE(mode);
 		Settings s = linearAtRest();
@@ -340,5 +340,75 @@ TEST_CASE("Linear steepness: Linear, Linear Mild and Linear Gentle report one la
 			worst = std::max(worst, static_cast<double>(std::fabs(a[i] - in[i - lat])));
 		}
 		CHECK(worst < 1.0e-4);
+	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// LR8 FULL (Mode 14): 48 dB/oct, an IIR, no latency                                              //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// The RMS gain of the low band of an LR8 Full crossover (corners `lo`, `hi`) for a unit sine at `hz`.
+double lr8LowGain(double lo, double hi, double hz) {
+	feathers::fx::owltt::LR8CrossoverFull x;
+	x.setLowCrossover(static_cast<float>(lo), 48000.0f);
+	x.setHighCrossover(static_cast<float>(hi), 48000.0f);
+	double sq = 0.0, in = 0.0;
+	for (int i = 0; i < 48000; ++i) {
+		const auto v = static_cast<float>(std::sin(2.0 * std::numbers::pi * hz * i / 48000.0));
+		feathers::fx::owltt::CrossoverBands b {};
+		x.process(v, b);
+		if (i >= 24000) {
+			sq += static_cast<double>(b.low) * b.low;
+			in += static_cast<double>(v) * v;
+		}
+	}
+	return std::sqrt(sq / in);
+}
+
+} // namespace
+
+TEST_CASE("LR8 Full: Mode 14 is the last choice, the ten before keep their numbers, and it adds no latency") {
+	REQUIRE(std::size(kModeNames) == 14);
+	CHECK(std::string(kModeNames[13]) == "LR8 Full");
+	Settings s = linearAtRest();
+	s.mode = 14.0f;
+	const Row row = rowOf(s);
+	CHECK(kAudioOps.latencySamples(nullptr, row.data(), row.size(), kRate) == 0u);
+}
+
+TEST_CASE("LR8 Full: the low band falls 48 dB an octave past the corner, as the Butterworth-4 squared says") {
+	// RESTATED from the prototype: |LP| = 1 / (1 + w^8), w = tan(pi f / fs) / tan(pi fc / fs) (the bilinear warp).
+	const auto expected = [](double hz, double fc) {
+		const double w = std::tan(std::numbers::pi * hz / kRate) / std::tan(std::numbers::pi * fc / kRate);
+		return 20.0 * std::log10(1.0 / (1.0 + std::pow(w, 8.0)));
+	};
+	const double a = 20.0 * std::log10(lr8LowGain(1000.0, 8000.0, 2000.0));
+	const double b = 20.0 * std::log10(lr8LowGain(1000.0, 8000.0, 4000.0));
+	CHECK(std::fabs(a - expected(2000.0, 1000.0)) < 0.3);
+	CHECK(std::fabs(b - expected(4000.0, 1000.0)) < 0.5);
+	CHECK(std::fabs((a - b) - 48.0) < 2.0); // the slope an octave out
+	// And the corner is -6 dB, as every LR is.
+	CHECK(std::fabs(20.0 * std::log10(lr8LowGain(1000.0, 8000.0, 1000.0)) + 6.02) < 0.2);
+}
+
+TEST_CASE("LR8 Full: the bands sum flat (an allpass) within 0.1 dB through the device, Blend 1 and 50%, 20 Hz to 20 kHz") {
+	for (const double hz : { 20.0, 100.0, 200.0, 440.0, 1000.0, 2000.0, 5000.0, 12000.0, 20000.0 }) {
+		CAPTURE(hz);
+		std::vector<float> in(48000), a, b;
+		for (size_t i = 0; i < in.size(); ++i) {
+			in[i] = 0.3f * static_cast<float>(std::sin(2.0 * std::numbers::pi * hz * static_cast<double>(i) / kRate));
+		}
+		const double want = rmsOf(in, 24000);
+		for (const float blend : { 1.0f, 0.5f }) {
+			Settings s = linearAtRest();
+			s.mode = 14.0f;
+			s.blend = blend;
+			a = in;
+			b = in;
+			run(s, a, b);
+			CHECK(std::fabs(20.0 * std::log10(rmsOf(a, 24000) / want)) < 0.1);
+		}
 	}
 }

@@ -2728,9 +2728,10 @@ std::vector<float> impulseOf(RackRig& rig, int blocks) {
 
 TEST_CASE("Linear slope: Slope offers it third, the others keep their numbers, and the default stays LR4") {
 	const auto& d = pr::kParamDescs[static_cast<size_t>(pr::Param::Slope)];
-	CHECK(d.max == 4.0);
+	CHECK(d.max == 5.0);
 	CHECK(d.def == 0.0);
-	REQUIRE(std::size(pr::kSlopeNames) == 5);
+	REQUIRE(std::size(pr::kSlopeNames) == 6);
+	CHECK(std::string(pr::kSlopeNames[5]) == "LR8 48 dB");
 	CHECK(std::string(pr::kSlopeNames[3]) == "Linear Mild");
 	CHECK(std::string(pr::kSlopeNames[4]) == "Linear Gentle");
 	CHECK(std::string(pr::kSlopeNames[0]) == "LR4 24 dB");
@@ -2964,4 +2965,32 @@ TEST_CASE("Linear steepness: the rack's Linear, Mild and Gentle slopes report on
 			}
 		}
 	}
+}
+
+TEST_CASE("LR8 slope: the rack's 48 dB choice sums flat within 0.1 dB in every filtering, and a band alone falls 48 dB an octave past its corner") {
+	CHECK(static_cast<int>(pr::Slope::Lr8) == 5);
+	for (const pr::Filtering filtering : { pr::Filtering::Before, pr::Filtering::After, pr::Filtering::Both }) {
+		CAPTURE(static_cast<int>(filtering));
+		RackRig rig;
+		bandsRig(rig, 5, 2, pr::Slope::Lr8, filtering);
+		rig.settle();
+		CHECK(pr::kAudioOps.latencySamples(rig.mem, rig.fields.data(), rig.fields.size(), kRate) == 0u); // an IIR: no latency
+		for (const double hz : { 30.0, 90.0, 120.0, 400.0, 500.0, 1500.0, 2000.0, 5000.0, 6000.0, 15000.0 }) {
+			CAPTURE(hz);
+			CHECK(std::fabs(20.0 * std::log10(gainAt(rig, hz))) < 0.1);
+		}
+	}
+	// THE SLOPE: band 0 alone (the other chains silenced), restated from 1 / (1 + w^8) with the bilinear warp.
+	RackRig rig;
+	bandsRig(rig, 5, 2, pr::Slope::Lr8, pr::Filtering::Before);
+	for (size_t k = 1; k < 5; ++k) {
+		(void)rig.seat(k, kGainDesc, 0.0f);
+	}
+	rig.settle();
+	const double fc = rig.rack().cornerHzForTest(0);
+	const auto expected = [fc](double hz) { return 20.0 * std::log10(1.0 / (1.0 + std::pow(warped(hz, fc), 8.0))); };
+	const double a = 20.0 * std::log10(gainAt(rig, 2.0 * fc));
+	const double b = 20.0 * std::log10(gainAt(rig, 4.0 * fc));
+	CHECK(std::fabs(a - expected(2.0 * fc)) < 0.5);
+	CHECK(std::fabs((a - b) - 48.0) < 2.0);
 }

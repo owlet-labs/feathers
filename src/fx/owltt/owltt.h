@@ -351,6 +351,7 @@ private:
 	std::array<LR2CrossoverFull, 2> lr2full_; // Type 5 — LR2 Full
 	std::array<LR4CrossoverFast, 2> lr4fast_; // Type 6 — LR4 Fast
 	std::array<LR4CrossoverFull, 2> lr4full_; // Type 7 — LR4 Full
+	std::array<LR8CrossoverFull, 2> lr8full_; // Type 14 — LR8 Full (48 dB/oct)
 	std::array<AllpassCrossoverTwist3, 2> twist3_; // Type 9 — Twist3
 	// Type 8 (Inverted) reuses ap1_ with swapped low/high bands in the render loop.
 

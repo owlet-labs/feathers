@@ -1,3 +1,4 @@
+
 /*
  * Copyright © 2026 Owlet Records
  *
@@ -505,7 +506,6 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 			fixed.push_back({ c.x - 8.0f, c.y - 8.0f, 16.0f, 16.0f });
 		}
 		fixed.push_back(readoutBounds());
-		fixed.push_back(clipSquare());
 		// A ROUTED HANDLE'S AMOUNT EXTENT AND ITS LIVE DOT ARE DRAWN IN THE LANE TOO, so the label keeps off them: it takes the other side
 		// of the handle than the stroke runs to.
 		for (size_t h = 0; h < 2; ++h) {
@@ -524,7 +524,6 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 	}
 	else {
 		fixed.push_back(readoutBounds()); // the combined reduction beside the clip square
-		fixed.push_back(clipSquare());
 		for (const float left : { whole.x(), xLow, xHigh }) {
 			fixed.push_back({ left + 3.0f, xover.y() + 3.0f, 8.0f, 8.0f }); // a band's saturation light
 		}
@@ -913,23 +912,14 @@ visage::Bounds OwlttGraph::rail() const {
 	return { box.x(), box.y(), box.width(), kRailHeight };
 }
 
-/// THE CLIP SQUARE AND THE COMBINED-REDUCTION READOUT BESIDE IT: in the window they share the lane's right end, which nothing
-/// else uses at that height (the strip headers are in the bars' area below it); on the card, which has no lane, they are the bars' area's
-/// top right.
-visage::Bounds OwlttGraph::clipSquare() const {
-	const visage::Bounds lane = rail();
-	if (lane.width() > 0.0f) {
-		return { lane.right() - 10.0f, lane.y() + (lane.height() - 6.0f) * 0.5f, 6.0f, 6.0f };
-	}
-	const visage::Bounds xover = barArea();
-	return { xover.right() - 10.0f, xover.y() + 4.0f, 6.0f, 6.0f };
-}
-
+/// THE COMBINED-REDUCTION READOUT: in the window it takes the lane's right end, which nothing else uses at that height (the strip
+/// headers are in the bars' area below it); on the card, which has no lane, the bars' area's top right. (The master clip light that
+/// used to sit beside it is on the output level meter now.)
 visage::Bounds OwlttGraph::readoutBounds() const {
 	const visage::Bounds lane = rail();
-	const visage::Bounds square = clipSquare();
 	const float y = lane.width() > 0.0f ? lane.y() + (lane.height() - 12.0f) * 0.5f : barArea().y() + 2.0f;
-	return { square.x() - 4.0f - 52.0f, y, 52.0f, 12.0f };
+	const float right = lane.width() > 0.0f ? lane.right() : barArea().right();
+	return { right - 6.0f - 52.0f, y, 52.0f, 12.0f };
 }
 
 visage::Bounds OwlttGraph::stripHeader(size_t band, size_t which) const {
@@ -1180,11 +1170,6 @@ OwlttGraph::Meters OwlttGraph::meters() const {
 		m.inputLevelDB[i] = host_.readingAt(device_, 3 + i);
 		m.outputLevelDB[i] = host_.readingAt(device_, 6 + i);
 	}
-	m.clipping = host_.readingAt(device_, 9) != 0.0f;
-	// THE SQUARE'S NEAR STATE (backlog ML) needs a peak, and OWLTT publishes only its flag: the courtesy output meter's
-	// (backlog MK) is the device's output peak, measured by the engine. Declined, the square keeps its two states.
-	float outputPeak = 0.0f;
-	m.clipState = clipLedStateFor(host_.outputPeakAt(device_, outputPeak) ? outputPeak : 0.0f, m.clipping);
 	// THE EXTRAS (backlog EL), only when the publisher sent them — a device that publishes the old ten
 	// leaves the lights off and the readout at zero rather than reading past its count.
 	if (host_.readingCountAt(device_) >= 14) {
@@ -1213,11 +1198,10 @@ bool OwlttGraph::update() {
 	// routed reads the same numbers every tick and repaints nothing.
 	const bool modulationMovedNow = modulationMoved();
 	const Meters now = meters();
-	// FIELD BY FIELD, and the clip bit with them. A memcmp would be tempting and wrong: the struct
+	// FIELD BY FIELD. A memcmp would be tempting and wrong: the struct
 	// has padding after the bool, and padding is not required to hold any particular value.
 	const bool moved = now.grDB != drawnMeters_.grDB || now.inputLevelDB != drawnMeters_.inputLevelDB
 	                   || now.outputLevelDB != drawnMeters_.outputLevelDB
-	                   || now.clipping != drawnMeters_.clipping || now.clipState != drawnMeters_.clipState
 	                   || now.bandSaturating != drawnMeters_.bandSaturating
 	                   || now.combinedGrDb != drawnMeters_.combinedGrDb || now.grSecond != drawnMeters_.grSecond;
 	if (!moved && !modulationMovedNow) {
@@ -1523,18 +1507,10 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			canvas.segment(grX0, centerY, grX1, centerY, 1.0f, true);
 		}
 
-		// Clip indicator — filled square in the corner when clipping, and in the near colour within 2 dB of full scale
-		// (backlog ML; `clip_led.h`).
-		const float dotSize = 6.0f;
-		if (meters.clipState != ClipLedState::Normal) {
-			canvas.setColor(meters.clipState == ClipLedState::Clip ? kAccent : kMeterNear);
-			const visage::Bounds square = clipSquare();
-			canvas.rectangle(square.x(), square.y(), square.width(), square.height());
-		}
-		// EACH BAND'S OWN LIGHT (backlog EL): the same square, at the top-left of the band's region,
-		// while that band's clipper is working. The output square above says the SUM clipped; these
-		// say which band is driving it — the picture the three band meters were always short of.
+		// EACH BAND'S OWN LIGHT (backlog EL): a square at the top-left of the band's region, while that band's clipper is working.
+		// The SUM clipping is the output level meter's light, beside the plot; these say which band is driving it.
 		{
+			const float dotSize = 6.0f;
 			const std::array<float, 3> lefts = { xover.x(), xLow, xHigh };
 			for (size_t b = 0; b < 3; ++b) {
 				if (meters.bandSaturating[b]) {

@@ -26,6 +26,7 @@
 #include "plugin/ui/fx_control.h"
 #include "plugin/ui/mode_value_cell.h"
 #include "plugin/ui/owltt_graph.h"
+#include "plugin/ui/owltt_level_meter.h"
 #include "plugin/ui/switch_chip.h"
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/vertical_fader.h"
@@ -114,6 +115,10 @@ public:
 	visage::Bounds outputBounds() const;
 	static constexpr float kDriveWidth = 28.0f;
 	static constexpr float kDriveGap = 8.0f;
+	/// THE LEVEL METERS, between each fader and the plot (`owltt_level_meter.h`).
+	visage::Bounds inputMeterBounds() const;
+	visage::Bounds outputMeterBounds() const;
+	static constexpr float kLevelGap = 4.0f;
 	float modalBottom() const;
 
 	/// THE TWO CAPTIONED ROWS UNDER THE PLOT.
@@ -139,6 +144,8 @@ public:
 	[[nodiscard]] SwitchChip* stereoForTest() const { return stereo_.get(); }
 	[[nodiscard]] VerticalFader* driveForTest() const { return drive_.get(); }
 	[[nodiscard]] VerticalFader* outputForTest() const { return output_.get(); }
+	[[nodiscard]] OwlttLevelMeter* inputMeterForTest() const { return inMeter_.get(); }
+	[[nodiscard]] OwlttLevelMeter* outputMeterForTest() const { return outMeter_.get(); }
 	[[nodiscard]] ValueBox* lookaheadForTest() const { return lookahead_.get(); }
 	[[nodiscard]] SwitchChip* keyTrackForTest() const { return keyTrack_.get(); }
 	[[nodiscard]] ValueBox* clipForTest() const { return clip_.get(); }
@@ -163,6 +170,8 @@ private:
 	/// DRIVE LEFT OF THE PLOT AND OUTPUT RIGHT OF IT, the same widget at the same size.
 	std::unique_ptr<VerticalFader> drive_;
 	std::unique_ptr<VerticalFader> output_;
+	std::unique_ptr<OwlttLevelMeter> inMeter_;
+	std::unique_ptr<OwlttLevelMeter> outMeter_;
 	std::unique_ptr<ValueBox> lookahead_;
 	std::unique_ptr<SwitchChip> keyTrack_;
 	/// THE CLIP CHOICE, three of them, so a box that opens its menu (every choice seen before it applies).

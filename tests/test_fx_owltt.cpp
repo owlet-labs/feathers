@@ -3453,3 +3453,33 @@ TEST_CASE("OY: a host-moved Blend through the fade does not click — a tone at 
 	CHECK(atZero > 0.02f); // the tone is there
 	CHECK(swept < 1.1f * std::max(atZero, atTop));
 }
+
+TEST_CASE("input meter: the device's input peak is the loudest sample it was handed, read before the slices overwrite the buffer, and it falls when the input stops") {
+	// A 0.5-PEAK SINE, the peak computed from the buffer as it was handed in, independently of the device.
+	Settings s = defaultSettings();
+	s.mode = 1.0f;
+	s.enabled = true;
+	Owltt o;
+	o.prepare(48000.0f);
+	o.setTarget(s);
+	std::array<float, Owltt::kReadingCount> published {};
+	o.setMeterCallback([&](size_t, const std::array<float, 3>&, const std::array<float, 3>&, const std::array<float, 3>&,
+	                       bool, const Owltt::MeterExtras& extras) { published[18] = extras.inputPeak; });
+	std::vector<float> L(512), R(512);
+	fillSine(L, R, 1000.0f, 48000.0f, 0.5f, L.size());
+	float handedIn = 0.0f;
+	for (size_t i = 0; i < L.size(); ++i) {
+		handedIn = std::max(handedIn, std::max(std::fabs(L[i]), std::fabs(R[i])));
+	}
+	REQUIRE(handedIn > 0.45f);
+	o.processStereo(L.data(), R.data(), 512);
+	CHECK(o.inputPeakForTest() == doctest::Approx(handedIn).epsilon(1e-6));
+	CHECK(published[18] == doctest::Approx(handedIn).epsilon(1e-6));
+	// AND IT FALLS: silence for several blocks takes it well under the peak it held.
+	for (int block = 0; block < 60; ++block) {
+		std::fill(L.begin(), L.end(), 0.0f);
+		std::fill(R.begin(), R.end(), 0.0f);
+		o.processStereo(L.data(), R.data(), 512);
+	}
+	CHECK(o.inputPeakForTest() < handedIn * 0.1f);
+}

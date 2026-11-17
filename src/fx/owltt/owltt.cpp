@@ -917,6 +917,15 @@ void Owltt::processStereo(float* left, float* right, int frames) {
 		right[i] = std::isfinite(right[i]) ? right[i] : 0.0f;
 		silentInput = silentInput && left[i] == 0.0f && right[i] == 0.0f;
 	}
+	// THE INPUT METER (reading 18): the call's peak, held then falling at the output peak's rate (per 256 frames), so the two read alike.
+	{
+		float peak = 0.0f;
+		for (int i = 0; i < frames; ++i) {
+			peak = std::max(peak, std::max(std::fabs(left[i]), std::fabs(right[i])));
+		}
+		const float keep = static_cast<float>(std::pow(0.95, static_cast<double>(frames) / 256.0));
+		inputPeak_ = std::max(peak, inputPeak_ * keep);
+	}
 
 	int done = 0;
 	while (done < frames) {
@@ -1511,7 +1520,7 @@ void Owltt::updateMeters(int frames) {
 		}
 		combinedGainReductionDb_ = total / 3.0f;
 	}
-	const MeterExtras extras { bandSaturating_, combinedGainReductionDb_, grSecond, static_cast<float>(noteHzReading()) };
+	const MeterExtras extras { bandSaturating_, combinedGainReductionDb_, grSecond, static_cast<float>(noteHzReading()), inputPeak_ };
 	meterCallback_(slot_, grDB, inputLevelDB, outputLevelDB, clipping_, extras);
 }
 
@@ -1591,6 +1600,7 @@ const device::AudioOps kAudioOps {
 			values[9] = clipping ? 1.0f : 0.0f;
 			values[13] = extras.combinedGrDb;
 			values[17] = extras.noteHz;
+			values[18] = extras.inputPeak;
 			if (publish != nullptr) {
 				publish(context, values, Owltt::kReadingCount);
 			}

@@ -63,6 +63,7 @@ public:
 	static constexpr float kResolutionWidth = 96.0f;
 	static constexpr float kBoxWidth = 64.0f;     ///< Offset and Mix in the header strip
 	static constexpr float kHeadBoxWidth = 104.0f; ///< Carrier and Stereo, compact, in the Vocode head
+	static constexpr float kRangeBoxWidth = 72.0f; ///< Match's Range in its head: 64 cut its caption, 104 wrapped the panel to a third row
 	static constexpr float kModeCellWidth = 64.0f; ///< Zone and Widths' floor; each is at least as wide as its widest mode name
 	/// OFFSET'S DRAG: 12 semitones a full drag (0.086 st/px), a fifth of that fine (Z7c: the Offset knob was too twitchy).
 	static constexpr double kOffsetDragSpan = 12.0;

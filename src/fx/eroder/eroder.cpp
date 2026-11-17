@@ -160,6 +160,7 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::FbTap)] = s.tapDriven ? 1.0f : 0.0f;
 	row[static_cast<size_t>(Param::Loop)] = s.loop;
 	row[static_cast<size_t>(Param::LoopInterval)] = s.loopInterval;
+	row[static_cast<size_t>(Param::EmphOffset)] = s.emphOffset;
 	row[static_cast<size_t>(Param::SlotAAmount)] = s.slotA.amount;
 	row[static_cast<size_t>(Param::SlotAType)] = static_cast<float>(s.slotA.type);
 	row[static_cast<size_t>(Param::SlotAShape)] = s.slotA.shape;
@@ -221,6 +222,7 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.tapDriven = read(Param::FbTap) >= 0.5f;
 	s.loop = read(Param::Loop);
 	s.loopInterval = read(Param::LoopInterval);
+	s.emphOffset = read(Param::EmphOffset);
 	s.slotA.amount = read(Param::SlotAAmount);
 	s.slotA.type = static_cast<DriveMode>(
 	    std::clamp(static_cast<int>(std::lround(read(Param::SlotAType))), 0, static_cast<int>(DriveMode::kCount) - 1));

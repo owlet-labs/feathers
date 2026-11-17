@@ -42521,7 +42521,8 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 	}
 	// THE SHARED SECTION'S FOUR CONTINUOUS CONTROLS (Emphasis, Smear, Loop, Interval) are knobs in the window now.
 	// ETCH'S SLOT SHAPES AND MIXES (four) are boxes inside the slots' Type cells; its two Amounts are knobs.
-	REQUIRE(knobs.size() == continuous - 4 - 4);
+	// THE EMPHASIS OFFSET has no control in the window yet (one more continuous control that is not a knob).
+	REQUIRE(knobs.size() == continuous - 4 - 4 - 1);
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}

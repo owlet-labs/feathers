@@ -150,6 +150,9 @@ public:
 		}
 	}
 
+	/// The tuning the filters were last built for (after the clamp), for tests.
+	[[nodiscard]] float hzForTest() const noexcept { return coefficientsFor_.hz; }
+
 	[[nodiscard]] bool neutral() const noexcept { return !haveCoefficients_ || coefficientsFor_.amountDb == 0.0f; }
 
 	/// THE FILTER BEFORE THE SHAPER.

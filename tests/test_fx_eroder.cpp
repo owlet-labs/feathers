@@ -1427,7 +1427,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount);
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -3949,6 +3949,88 @@ TEST_CASE("Shared section: eight declared controls, stored by their keys, and at
 	comb.processStereo(l.data(), r.data(), static_cast<int>(l.size()));
 	CHECK(comb.combFeedbackGainForTest() == static_cast<float>(comb.derivedForTest().feedback));
 	CHECK(comb.combLoopsForTest().innerFeedback == comb.derivedForTest().feedback);
+}
+
+TEST_CASE("Emphasis Offset: the emphasis is tuned to Freq times two to the offset over twelve, clamped; zero is Freq itself; Smear stays at Freq") {
+	const auto& d = kParamDescs[static_cast<size_t>(Param::EmphOffset)];
+	CHECK(std::string_view(d.key) == "eroder_emph_offset");
+	CHECK(std::string_view(d.name) == "Eroder Emphasis Offset");
+	CHECK(d.min == -48.0);
+	CHECK(d.max == 48.0);
+	CHECK(d.def == 0.0);
+	CHECK_FALSE(d.offsetsMayLeaveRange);
+	CHECK(d.modulatable);
+	CHECK(d.gateControl == -1);
+	// THE CODEC CARRIES IT.
+	State st;
+	st.settings.emphOffset = -17.5f;
+	CHECK(stateOf(rowOf(st), static_cast<size_t>(Param::kCount)) == st);
+	CHECK(Settings {}.emphOffset == 0.0f);
+
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		for (const bool bell : { false, true }) {
+			for (const float offset : { 0.0f, 7.0f, -12.0f, 24.5f, 48.0f, -48.0f }) {
+				CAPTURE(static_cast<int>(mode));
+				CAPTURE(bell);
+				CAPTURE(offset);
+				Settings s = declared();
+				s.mode = mode;
+				s.freq = std::log2(440.0f);
+				s.emphAmount = 9.0f;
+				s.emphBell = bell;
+				s.emphOffset = offset;
+				s.smear = 0.5f;
+				Eroder e;
+				e.prepare(kRate);
+				e.setTarget(s);
+				std::vector<float> l = whiteInput(512, 0.3f);
+				std::vector<float> r = l;
+				e.processStereo(l.data(), r.data(), static_cast<int>(l.size()));
+				const SharedSection& sh = mode == Mode::Comb ? e.combSharedForTest() : e.dustForTest().sharedForTest();
+				const double centre = mode == Mode::Comb ? 1.0 / e.derivedForTest().baseDelaySeconds
+				                                         : e.dustForTest().derivedForTest().freqHz;
+				// AN INDEPENDENT RESTATEMENT of the tuning.
+				double expected = centre;
+				if (offset != 0.0f) {
+					expected = std::min(std::max(centre * std::pow(2.0, static_cast<double>(offset) / 12.0), 20.0),
+					                    std::min(20000.0, 0.45 * kRate));
+				}
+				CHECK(sh.emphasisForTest().hzForTest() == static_cast<float>(expected));
+				if (offset == 0.0f) {
+					CHECK(sh.emphasisForTest().hzForTest() == static_cast<float>(centre)); // Freq, to the bit
+				}
+			}
+		}
+	}
+	// THE CLAMPS, from the static: the floor, the ceiling, and the rate's 0.45.
+	CHECK(SharedSection::emphasisHz(30.0, -48.0, 48000.0) == 20.0);
+	CHECK(SharedSection::emphasisHz(10000.0, 48.0, 48000.0) == 20000.0);
+	CHECK(SharedSection::emphasisHz(10000.0, 48.0, 22050.0) == doctest::Approx(0.45 * 22050.0));
+	CHECK(SharedSection::emphasisHz(1000.0, 12.0, 48000.0) == doctest::Approx(2000.0));
+	CHECK(SharedSection::emphasisHz(1000.0, 0.0, 48000.0) == 1000.0);
+	CHECK(SharedSection::emphasisHz(3.0, 0.0, 48000.0) == 3.0); // zero is untouched even under the floor
+
+	// THE OFFSET MOVES THE SOUND (so the check above is not of a dead control), in every engine, and the Smear's centre is Freq's.
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		const std::vector<float> in = whiteInput(4800, 0.4f);
+		std::vector<float> out[2];
+		for (int k = 0; k < 2; ++k) {
+			Settings s = declared();
+			s.mode = mode;
+			s.emphAmount = 12.0f;
+			s.emphBell = true;
+			s.drive = 0.6f;
+			s.emphOffset = k == 0 ? 0.0f : 19.0f;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			out[k] = in;
+			std::vector<float> r = in;
+			e.processStereo(out[k].data(), r.data(), static_cast<int>(in.size()));
+		}
+		CHECK(out[0] != out[1]);
+	}
 }
 
 TEST_CASE("Emphasis: with no Drive and Restore on the pair cancels — Dust still to 1e-5; the Comb to what its moving head allows; Rust is bounded and differs") {

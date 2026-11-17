@@ -2416,13 +2416,12 @@ constexpr std::array<ParamId, kParamDestinationCount> buildModDestinations() {
 	// Slot-major, so a sound's eight sit together and a slot added later appends rather than
 	// interleaves.
 	//
-	// THE FIVE FIELD MODIFIER KNOBS JOIN AT THE END OF EACH SLOT'S RUN, 2026-08-25 — which moves
-	// every per-sound destination index above slot 0, and that is FINE HERE for a reason that has to
-	// be said out loud rather than assumed: a destination's INDEX is what a saved patch stores, which
-	// is exactly why the block comment above refuses to touch the ordering ahead of the fx lane. What
-	// makes this safe is not the position, it is CLAUDE.md's 2026-08-22 relaxation — there are no
-	// saved patches or projects, so there is no stored routing to re-point. The day that stops being
-	// true, this loop is append-only like the one above it.
+	// A SAVED ROUTE NAMES ITS PARAMETER DESTINATION BY ParamId, NOT BY THIS TABLE'S INDEX (feathers_chains.h:
+	// `nameFeathersDestination` / `placeFeathersDestination`; test_params pins it), so a per-sound knob joining or leaving a
+	// slot's run moves indices and re-points no stored route. The synth's Drum engine left these runs (its pad amounts and each
+	// pad's second layer) as a plain deletion: a route naming one of its ids finds no destination at load and is dropped; every
+	// other route lands on the same ParamId at its new index. The fx lane's internal destinations are named by their own stable
+	// ids in the same way.
 	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
 		out[at++] = soundParam(slot, SoundField::Width);
 		out[at++] = fmDepthParam(slot);

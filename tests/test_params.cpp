@@ -34,6 +34,7 @@
 #include "dsp/partial_spectrum.h"
 #include "dsp/spectral_shaper.h"
 #include "fx/spectral/spectral_types.h"
+#include "plugin/feathers_chains.h"
 #include "plugin/params.h"
 #include "param_routes.h"
 #include "plugin/state_block_order.h"
@@ -2741,3 +2742,35 @@ TEST_CASE("a sound's knob list is pinned: perSoundKnobParam's order is the stanc
 	                                           SpectralControl::VocodeOn });
 }
 
+
+TEST_CASE("a saved route names its parameter destination by ParamId, not by table index: routes to per-sound knobs on later slots and an identity route land on the same ids, and a route to a retired drum id is dropped") {
+	namespace d = feathers::detail;
+	using feathers::ParamId;
+	using feathers::SoundField;
+	// SOUNDS ABOVE THE FIRST, where deleting the drum run from each slot's run moved the table index: a per-sound knob, a Relative
+	// macro's edit-only identity destination, and a late-added control, on either side of where the drum run was.
+	const ParamId ids[] = { feathers::smoothnessParam(2), feathers::ksStretchParam(5), feathers::additiveOffGridParam(7),
+		                    feathers::soundParam(3, SoundField::Zone), feathers::soundParam(7, SoundField::Gamma) };
+	for (const ParamId id : ids) {
+		CAPTURE(static_cast<uint32_t>(id));
+		const int index = feathers::modDestinationIndexOf(id);
+		REQUIRE(index >= 0);
+		uint32_t kind = 0;
+		uint32_t a = 0;
+		REQUIRE(d::nameFeathersDestination(nullptr, static_cast<size_t>(index), &kind, &a));
+		CHECK(a == static_cast<uint32_t>(id)); // the id is what is stored, whatever the index is
+		size_t placed = SIZE_MAX;
+		REQUIRE(d::placeFeathersDestination(nullptr, kind, a, &placed));
+		CHECK(placed == static_cast<size_t>(index));
+		CHECK(feathers::kModDestinations[placed] == id);
+	}
+	// A ROUTE A DRUM-ERA PATCH SAVED to a drum destination (the retired pad blocks' ids, a kit trim, the retired layer-two block)
+	// names an id no parameter has now: it is dropped at load, as any destination this build does not have.
+	const uint32_t kindParam = static_cast<uint32_t>(feathers::rack::DestKind::Param);
+	for (const uint32_t retired : { 0x0608u, 0x0640u, 0x0700u, 0x0800u, 0x00D0u, 0x00C8u }) {
+		CAPTURE(retired);
+		size_t placed = SIZE_MAX;
+		CHECK_FALSE(d::placeFeathersDestination(nullptr, kindParam, retired, &placed));
+		CHECK(placed == SIZE_MAX);
+	}
+}

@@ -149,18 +149,6 @@ void KnobTray::update() {
 	// (Synth's stereo predicate).
 	const OscType osc = oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType)));
 	masterWidth_->setEnabled(osc == OscType::V5 || osc == OscType::Additive || osc == OscType::BasicShapes);
-	// A DRUM KIT READS NO PATH (its place is Pos X/Y through Weather, character_params.h), so the knob is not drawn there: hidden,
-	// not greyed, since only the engine's mode could wake it. The rest of the row closes up over its place.
-	const bool kit = osc == OscType::Drum
-	                 && steppedIndex(bridge_.value(static_cast<clap_id>(ParamId::DrumMode)), kDrumModeNames.size())
-	                        == static_cast<size_t>(DrumMode::Kit);
-	if (path_ != nullptr && pathShown_ == kit) {
-		pathShown_ = !kit;
-		path_->setVisible(pathShown_);
-		path_->setEnabled(pathShown_);
-		resized();
-		redraw();
-	}
 }
 
 void KnobTray::setModulation(ModState* state, EditHistory* history) {
@@ -180,12 +168,9 @@ void KnobTray::resized() {
 	}
 	// The mock's `justify-content:space-evenly`: equal gaps either side of every cell (a hidden Path takes no place).
 	const float usable = width() - 2.0f * kPadX;
-	const float each = usable / static_cast<float>(cells_.size() - (pathShown_ ? 0 : 1));
+	const float each = usable / static_cast<float>(cells_.size());
 	size_t seat = 0;
 	for (size_t i = 0; i < cells_.size(); ++i) {
-		if (cells_[i] == path_ && !pathShown_) {
-			continue;
-		}
 		const float x = kPadX + static_cast<float>(seat++) * each;
 		if (cells_[i] == gamma_.get()) {
 			// REMEMBERED FOR `draw`, which needs the cell rather than the box to put the caption on

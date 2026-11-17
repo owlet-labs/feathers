@@ -2123,13 +2123,6 @@ target_link_libraries(test_delay_presets PRIVATE feathers-ui feathers-gui-bridge
 target_include_directories(test_delay_presets PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME delay-presets COMMAND test_delay_presets)
 
-# THE DRUM ENGINE IN THE BANK AND THE SYNTH: pads, the kit map,
-# chokes, per-pad voices, the Trigger, derived seeds, each by value.
-add_executable(test_drum_engine test_drum_engine.cpp)
-target_link_libraries(test_drum_engine PRIVATE feathers-synth feathers-gui-bridge feathers-warnings)
-target_include_directories(test_drum_engine PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
-target_compile_options(test_drum_engine PRIVATE ${FEATHERS_FP_EXACT})
-add_test(NAME drum-engine COMMAND test_drum_engine)
 
 # TWIN FIELD: eight outputs read off AutoMod's terrain in two crossfaded layers —
 # each output by value against an independent restatement through AutoMod's full derive, the solos, per-layer isolation,

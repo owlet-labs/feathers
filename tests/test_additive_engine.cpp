@@ -2132,10 +2132,7 @@ TEST_CASE("additive terrain stereo: each ear reads the fields at its own stand, 
 			CAPTURE(t);
 			Patch patch;
 			patch.sets = { { ParamId::Width, 1.0 }, { ParamId::AWidth, 1.0 }, { ParamId::BWidth, 0.5 },
-			               { ParamId::Weather, weatherKnob },
-			               // THE DRUM ENGINE IN PITCHED MODE: its Kit mode is the one exception to "every engine" here by design (every
-			               // sound a pad at its home plus the Walk; test_drum_engine pins that), so the claim is made of Pitched.
-			               { ParamId::DrumMode, 0.0 } };
+			               { ParamId::Weather, weatherKnob } };
 			const Character head = patch.character(type);
 			REQUIRE(head.count == 2);
 			const double width[2] = { 1.0, 0.5 };

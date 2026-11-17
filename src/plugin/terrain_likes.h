@@ -81,6 +81,9 @@ struct TerrainLike {
 	friend bool operator==(const TerrainLike&, const TerrainLike&) = default;
 };
 
+/// The `OscType` index the synth's retired Drum engine had; a like that names it is dropped on load.
+inline constexpr uint16_t kRetiredDrumLikeEngine = 7;
+
 /// PER PATCH, never global: every like the patch holds, in the order they were made.
 /// 64 since likes are kept per engine and sound, every engine's together.
 inline constexpr size_t kMaxTerrainLikes = 64;
@@ -175,6 +178,11 @@ inline bool readTerrainLikes(const float* in, size_t n, TerrainLikes* out) {
 		if (i < count) {
 			if (!finite) {
 				return false;
+			}
+			// A LIKE MADE ON THE RETIRED DRUM ENGINE (OscType 7) has no terrain left to be drawn on: dropped on load (the
+			// block's layout is unchanged, so every other like reads as it did).
+			if (like.engine == kRetiredDrumLikeEngine) {
+				continue;
 			}
 			read.likes.push_back(like);
 		}

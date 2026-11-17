@@ -152,7 +152,7 @@ TEST_CASE("the generated table is the shape the evaluator reads, and only Additi
 			CHECK(channel.coef != nullptr);
 		}
 	}
-	for (const OscType engine : { OscType::Morph, OscType::Stair, OscType::V5, OscType::Resonate, OscType::BasicShapes, OscType::Pluck, OscType::Drum }) {
+	for (const OscType engine : { OscType::Morph, OscType::Stair, OscType::V5, OscType::Resonate, OscType::BasicShapes, OscType::Pluck }) {
 		CHECK_FALSE(terrainFitAvailable(engine));
 		CHECK(terrainFitTableFor(engine) == nullptr);
 		CHECK(terrainFitInputs(engine) == 0);

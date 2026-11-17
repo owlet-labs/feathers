@@ -574,7 +574,6 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/expanded_overlay.cpp
 	src/plugin/ui/expanded_views.cpp
 	src/plugin/ui/explore_stage.cpp
-	src/plugin/ui/drum_panel.cpp
 	src/plugin/ui/spectrum_panel.cpp
 	src/plugin/ui/spectrum_plot.cpp
 	src/plugin/ui/feature_norm.cpp
@@ -652,7 +651,6 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/twinfield_card.cpp
 	src/plugin/ui/shaper_pad.cpp
 	src/plugin/ui/phaser_pad.cpp
-	src/plugin/ui/drum_vector_pad.cpp
 	src/plugin/ui/drum_hit_picture.cpp
 	src/plugin/ui/drum_pitch_readout.cpp
 	src/plugin/ui/drum_device_ui.cpp

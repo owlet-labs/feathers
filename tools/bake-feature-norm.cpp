@@ -159,8 +159,6 @@ int main(int argc, char** argv) {
 	emitTable("kBakedAdditiveFeatureNorm", measureAdditiveFeatureNorm());
 	// AND PLUCK'S OWN (2026-10-31), over its own frame; the tables above are printed exactly as before.
 	emitTable("kBakedPluckFeatureNorm", measurePluckFeatureNorm());
-	// AND THE DRUM'S OWN (2026-11-05), every kind pooled; the tables above are printed exactly as before.
-	emitTable("kBakedDrumFeatureNorm", measureDrumFeatureNorm());
 	std::printf("} // namespace feathers::ui\n");
 	return 0;
 }

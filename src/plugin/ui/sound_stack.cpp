@@ -88,22 +88,6 @@ SoundStack::SoundStack(ParamBridge& bridge, WidgetRegistry& registry, SoundSelec
 		}
 	}
 	watches_.push_back(selection_.watch(this));
-	// A KIT'S CARDS: each its pad's Level fader (shown in Kit mode only, laid out with the cards), and the mode, every pad's
-	// Mute, Kind and Note watched, because a kit card draws them.
-	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-		const ParamDesc* level = findParam(static_cast<clap_id>(drumParam(slot, DrumControl::Level)));
-		levelControls_[slot] = std::make_unique<ParamControl>(bridge, level);
-		levelFaders_[slot] = std::make_unique<FaderPill>(*levelControls_[slot], "Level");
-		// A REAL RECTANGLE FROM THE START (a zero-size child is what the create()-positions guard hunts), hidden until a kit.
-		levelFaders_[slot]->setBounds(0.0f, 0.0f, kWidth * 0.5f, kCardSubSize + 4.0f);
-		levelFaders_[slot]->setVisible(false);
-		addChild(levelFaders_[slot].get());
-		watches_.push_back(registry.watchToken(static_cast<clap_id>(level->id), levelFaders_[slot].get()));
-		for (const DrumControl c : { DrumControl::Mute, DrumControl::Kind, DrumControl::Note }) {
-			watches_.push_back(registry.watchToken(static_cast<clap_id>(drumParam(slot, c)), this));
-		}
-	}
-	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::DrumMode), this));
 	watches_.push_back(registry.watchToken(static_cast<clap_id>(ParamId::OscType), this));
 
 	onMouseDown() = [this](const visage::MouseEvent& e) {
@@ -112,12 +96,7 @@ SoundStack::SoundStack(ParamBridge& bridge, WidgetRegistry& registry, SoundSelec
 		const Hit hit = hitAt(e.position);
 		switch (hit.part) {
 		case Part::Enable:
-			if (kitMode()) {
-				togglePadMute(hit.slot);
-			}
-			else {
-				toggleEnable(hit.slot);
-			}
+			toggleEnable(hit.slot);
 			break;
 		case Part::Clone:
 			clone(hit.slot);
@@ -432,9 +411,7 @@ SoundStack::Hit SoundStack::hitAt(visage::Point position) const {
 		visage::Bounds copy = cloneBounds(slot);
 		copy = { copy.x() - kCardPadX * 0.5f, copy.y() - kCardPadY, copy.width() + kCloneGap * 0.5f,
 			     copy.height() + 2.0f * kCardPadY };
-		// A KIT HAS NO CLONE AND NO DELETE (hidden, not greyed): its eight pads are always present.
-		const bool kit = kitMode();
-		if (!kit && copy.contains(position)) {
+		if (copy.contains(position)) {
 			return { Part::Clone, slot };
 		}
 		// THE DELETE ✕ BEFORE THE SWITCH — it owns the card's right edge, and a press between the two
@@ -443,7 +420,7 @@ SoundStack::Hit SoundStack::hitAt(visage::Point position) const {
 		visage::Bounds gone = deleteBounds(slot);
 		gone = { gone.x() - kDeleteGap * 0.5f, gone.y() - kCardPadY,
 			     gone.width() + kDeleteGap * 0.5f + kCardPadX * 0.5f, gone.height() + 2.0f * kCardPadY };
-		if (!kit && gone.contains(position)) {
+		if (gone.contains(position)) {
 			return { Part::Delete, slot };
 		}
 		// THE SWITCH, and generously: it is 18x10 inside a card that answers every other pixel,
@@ -579,87 +556,6 @@ bool SoundStack::enabled(size_t slot) const {
 }
 
 
-bool SoundStack::kitMode() const {
-	return oscTypeFromValue(bridge_.value(static_cast<clap_id>(ParamId::OscType))) == OscType::Drum
-	       && steppedIndex(bridge_.value(static_cast<clap_id>(ParamId::DrumMode)), kDrumModeNames.size())
-	              == static_cast<size_t>(DrumMode::Kit);
-}
-
-bool SoundStack::padMuted(size_t slot) const {
-	return std::lround(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::Mute)))) != 0;
-}
-
-void SoundStack::togglePadMute(size_t slot) {
-	// IN A KIT THE CARD'S SWITCH IS ITS PAD'S MUTE: every pad is present, so the switch no
-	// longer says whether the sound exists; it says whether its pad sounds.
-	const bool muted = padMuted(slot);
-	(void)writeParamAsEdit(bridge_, static_cast<clap_id>(drumParam(slot, DrumControl::Mute)), muted ? 0.0 : 1.0,
-	                       muted ? "Pad on" : "Pad muted");
-	if (notifier_ != nullptr) {
-		notifier_->say(std::string("Pad ") + static_cast<char>('A' + slot) + (muted ? " on" : " muted"));
-	}
-	redraw();
-}
-
-void SoundStack::layoutLevelFaders() {
-	// THE KIT CARDS' LEVEL FADERS: the right half of each card's second line, on a Drum Kit only (hidden otherwise, and dead).
-	const bool kit = kitMode();
-	for (size_t slot = 0; slot < kMaxSounds; ++slot) {
-		FaderPill& fader = *levelFaders_[slot];
-		const bool shown = kit && slotOnScreen(slot);
-		if (shown) {
-			const visage::Bounds card = cardBounds(slot);
-			const float top = card.y() + kCardPadY + kCardReadoutSize + 1.0f;
-			fader.setBounds(card.x() + card.width() * 0.5f, top, card.width() * 0.5f - kCardPadX, kCardSubSize + 4.0f);
-		}
-		if (fader.isVisible() != shown) {
-			fader.setVisible(shown);
-		}
-	}
-}
-
-bool SoundStack::updatePulses(int64_t nowMs) {
-	// THE HIT PULSE: a pad's count moved since the last frame, so its card lights at the hit's velocity
-	// and falls over kPulseMs; under reduced motion it holds lit for that long, then goes out, with no fade between.
-	layoutLevelFaders();
-	if (!kitMode()) {
-		return false;
-	}
-	const PadHits hits = bridge_.padHits();
-	bool moved = false;
-	for (size_t pad = 0; pad < kMaxSounds; ++pad) {
-		if (hits.count[pad] != pulseSeen_[pad]) {
-			pulseSeen_[pad] = hits.count[pad];
-			pulseLevel_[pad] = std::clamp(hits.velocity[pad], 0.0f, 1.0f);
-			pulseAt_[pad] = nowMs;
-			moved = true;
-		}
-		if (pulseLevel_[pad] > 0.0f) {
-			moved = true;
-		}
-	}
-	if (moved) {
-		redraw();
-	}
-	pulseNow_ = nowMs;
-	for (size_t pad = 0; pad < kMaxSounds; ++pad) {
-		if (static_cast<float>(nowMs - pulseAt_[pad]) >= kPulseMs) {
-			pulseLevel_[pad] = 0.0f; // spent: no more frames owed for it
-		}
-	}
-	return moved;
-}
-
-float SoundStack::pulseOf(size_t slot) const {
-	const float age = static_cast<float>(pulseNow_ - pulseAt_[slot]);
-	if (pulseLevel_[slot] <= 0.0f || age >= kPulseMs) {
-		return 0.0f;
-	}
-	if (reducedMotionRequested()) {
-		return pulseLevel_[slot]; // lit, still, then out
-	}
-	return pulseLevel_[slot] * std::exp(-3.0f * age / kPulseMs);
-}
 void SoundStack::toggleEnable(size_t slot) {
 	const auto id = static_cast<clap_id>(soundParam(slot, SoundField::Enable));
 	const bool on = enabled(slot);
@@ -924,11 +820,6 @@ SoundIdentity untouchedIdentity(size_t slot) {
 
 bool SoundStack::isEmpty(size_t slot) const {
 	if (slot >= kMaxSounds) {
-		return false;
-	}
-	// A DRUM KIT'S EIGHT ARE ALWAYS PRESENT: every sound is a pad, so none is an empty slot, which is what
-	// hides the new-sound row and gives a clone nowhere to land.
-	if (kitMode()) {
 		return false;
 	}
 	if (enabled(slot)) {
@@ -1628,9 +1519,7 @@ void SoundStack::reorder(size_t from, size_t to) {
 
 void SoundStack::drawCard(visage::Canvas& canvas, size_t slot) const {
 	const visage::Bounds card = cardBounds(slot);
-	// IN A KIT THE SWITCH IS THE PAD'S MUTE: "on" is a pad that sounds.
-	const bool kit = kitMode();
-	const bool on = kit ? !padMuted(slot) : enabled(slot);
+	const bool on = enabled(slot);
 	const bool selected = selection_.slot() == slot;
 	const bool listening = previewing(slot);
 	// WHILE A PREVIEW IS LATCHED, EVERY OTHER CARD IS SOMETHING YOU CANNOT HEAR, and the rail says so
@@ -1665,15 +1554,6 @@ void SoundStack::drawCard(visage::Canvas& canvas, size_t slot) const {
 		canvas.roundedRectangleBorder(card.x() - 2.0f, card.y() - 2.0f, card.width() + 4.0f,
 		                              card.height() + 4.0f, kCardRounding + 2.0f, kBorder);
 	}
-	// THE HIT PULSE (a kit pad struck): the card's own hue washed over it, as bright as the hit, falling over kPulseMs.
-	if (const float lit = kit ? pulseOf(slot) : 0.0f; lit > 0.0f) {
-		canvas.setColor(withAlpha(seedHue(slot), 0.35f * lit));
-		canvas.roundedRectangle(card.x(), card.y(), card.width(), card.height(), kCardRounding);
-		canvas.setColor(withAlpha(seedHue(slot), 0.9f * lit));
-		canvas.roundedRectangleBorder(card.x() - 1.0f, card.y() - 1.0f, card.width() + 2.0f, card.height() + 2.0f,
-		                              kCardRounding + 1.0f, kBorder);
-	}
-
 	const float lineTop = card.y() + kCardPadY;
 	const float dotX = card.x() + kCardPadX;
 	const float dotY = lineTop + (kCardReadoutSize - kDotSize) * 0.5f;
@@ -1719,15 +1599,7 @@ void SoundStack::drawCard(visage::Canvas& canvas, size_t slot) const {
 	const double gamma = bridge_.value(static_cast<clap_id>(soundParam(slot, SoundField::Gamma)));
 	char identity[48] = {};
 	std::snprintf(identity, sizeof(identity), "off %.2f   gam %+.2f", offset, gamma);
-	float identityWidth = card.width() - 2.0f * kCardPadX;
-	if (kit) {
-		// A KIT CARD READS AS ITS PAD: its kind and its note, the Level fader beside them.
-		const size_t kind = steppedIndex(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::Kind))),
-		                                 kDrumKindNames.size());
-		const long note = std::lround(bridge_.value(static_cast<clap_id>(drumParam(slot, DrumControl::Note))));
-		std::snprintf(identity, sizeof(identity), "%s  \xc2\xb7  note %ld", kDrumKindNames[kind], note);
-		identityWidth = card.width() * 0.5f - kCardPadX;
-	}
+	const float identityWidth = card.width() - 2.0f * kCardPadX;
 	canvas.setColor(withAlpha(kMuted, fade));
 	canvas.text(identity, sub, visage::Font::kLeft, dotX, lineTop + kCardReadoutSize + 3.0f, identityWidth, kCardSubSize);
 
@@ -1738,8 +1610,7 @@ void SoundStack::drawCard(visage::Canvas& canvas, size_t slot) const {
 	// It DIMS WHEN THERE IS NOWHERE TO CLONE TO — all eight sounds switched on — for the same reason
 	// undo and redo dim on Explore: a control that looks live and does nothing teaches the hand to
 	// distrust the surface. The press still answers, and says why.
-	// NOT IN A KIT (hidden, not greyed): a kit's eight pads are always present, so there is nothing to make or remove.
-	if (!kit) {
+	{
 		const visage::Bounds copy = cloneBounds(slot);
 		const bool canClone = cloneTarget().has_value();
 		canvas.setColor(canClone ? withAlpha(kMuted, fade) : withAlpha(kDisabled, fade));
@@ -1782,7 +1653,7 @@ void SoundStack::drawCard(visage::Canvas& canvas, size_t slot) const {
 	// slot, so there is no state in which this verb has nothing to do.
 	const visage::Bounds gone = deleteBounds(slot);
 	canvas.setColor(withAlpha(kMuted, fade));
-	if (!kit) {
+	{
 		const float inset = 1.5f;
 		canvas.segment(gone.x() + inset, gone.y() + inset, gone.right() - inset,
 		               gone.bottom() - inset, kBorder, true);

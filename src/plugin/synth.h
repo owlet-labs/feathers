@@ -43,7 +43,6 @@
 #include "plugin/mod_rack.h"
 #include "plugin/params.h"
 #include "plugin/preview.h"
-#include "plugin/pad_hits.h"
 #include "plugin/sound_orientation.h"
 #include "plugin/sound_residue.h"
 #include "plugin/sound_gamma.h"
@@ -186,12 +185,6 @@ struct Voice {
 	/// RELEASING, AND ITS KEY STRUCK AGAIN ON ANOTHER VOICE — computed at the tick; such a voice is not held by its
 	/// Voice Level, which now reads the new note's (see `heldByRoute`).
 	bool superseded{false};
-	/// **A DRUM ONE-SHOT WHOSE KEY HAS BEEN LET GO** (drum proposal D4): `releaseVoice` leaves such a voice in Sustain for
-	/// the drum road to end at exact silence, and that road asks only while the engine is Drum. Switched to any other
-	/// engine first, nothing would ever end it — it sustained the new engine's sound at its key for good, one more voice
-	/// rendering per hit, until a steal took it (the soak, 2026-11-08: "CPU crept up ... switching engines"). So the let-go
-	/// is remembered, and a voice carrying it off Drum is released (`endLetGoOneShots`). Cleared by any new stage.
-	bool oneShotLetGo{false};
 
 	/// THE GAIN THE LAST RENDER APPLIED TO THIS VOICE — Level resolved FOR THIS VOICE plus `levelMod`, clamped.
 	/// Kept on the voice so a test can assert the value the render used (CLAUDE.md: a claim about a value
@@ -356,33 +349,17 @@ public:
 	/// **HOW LATE THE LANE LEAVES THE OUTPUT, IN SAMPLES** (backlog JM) — the serial sum of what its devices
 	/// declare, at the rate `activate` was handed. The voices add none (a latent device never runs per
 	/// voice), so this is the plugin's whole latency. AUDIO THREAD, or while nothing renders.
-	/// AND THE KIT PADS' FX LANES' (drum proposal §17 P4): the latest live pad lane delays the whole kit to meet it.
-	[[nodiscard]] uint32_t latencySamples() const noexcept { return lane_.latencySamples(sampleRate_) + padLatency_; }
+	[[nodiscard]] uint32_t latencySamples() const noexcept { return lane_.latencySamples(sampleRate_); }
 	/// TEST ONLY: the per-voice road's gain delay the last block used (0 without a latent per-voice device).
 	[[nodiscard]] uint32_t perVoiceGainDelayForTest() const noexcept { return gainDelay_; }
 
 	/// **WHETHER A LANE DEVICE STILL HOLDS SOUND THAT WILL COME OUT WITH NO NEW EVENT** (backlog MC) — a delay between
 	/// repeats, whose output is exactly silent while its line is not. SLEEP waits for it. AUDIO THREAD, after a block.
-	/// AND EVERY KIT PAD'S FX LANE (drum proposal §17): a pad's reverb rings on after its voices end, and SLEEP waits for it too.
-	[[nodiscard]] bool holdsTail() const noexcept { return lane_.holdsTail() || padLanesHoldTail(); }
+	[[nodiscard]] bool holdsTail() const noexcept { return lane_.holdsTail(); }
 	/// **WHETHER THE NOTE LANE MAY PLAY AGAIN WITH NO NEW EVENT** — an arp on a held or latched chord, a pattern running
 	/// on the transport, between two steps whose gap is exactly silent; or one armed to start with the transport. SLEEP
 	/// waits for it. AUDIO THREAD, after a block.
 	[[nodiscard]] bool notesScheduled() const noexcept { return lane_.notesScheduled(); }
-
-	/// **A KIT PAD'S OWN FX LANE** (drum proposal §17, stage (d); 2026-11-07: per-pad fx lanes, the kit window's right side).
-	/// Each pad's voices sum into its own bus, the bus runs its lane, and the lane's output joins the voices' mix before the
-	/// engine's fx lane. A pad with no lane, or an empty one, or one whose every device is off, sums straight into the mix as
-	/// it always did. Kit mode alone (Pitched mode is one drum, and the engine's lane is its lane). Delay's feedback-lane
-	/// pattern exactly: built lazily on the MESSAGE THREAD, published by an atomic, taken by the audio thread at a block's start.
-	/// MESSAGE THREAD (it allocates). Never freed while the synth lives, so a published pointer is never dangling.
-	rack::InnerChain* ensurePadLane(size_t pad);
-	/// The pad's lane, or null until one is made. Any thread: the published pointer.
-	[[nodiscard]] rack::InnerChain* padLane(size_t pad) const noexcept {
-		return pad < padLanes_.size() ? padLanes_[pad].published.load(std::memory_order_acquire) : nullptr;
-	}
-	/// TEST ONLY: whether pad `pad`'s voices went through its lane in the last render call.
-	[[nodiscard]] bool padLaneLiveForTest(size_t pad) const noexcept { return pad < padLanes_.size() && padLanes_[pad].live; }
 
 	/// Every voice silent and every note forgotten, without the release tails a note-off would give.
 	void reset();
@@ -600,10 +577,6 @@ public:
 	/// tuning, and for the same reason: it is not an event and carries no timestamp. None is the engine
 	/// exactly as it is without the feature, which is what every patch plays.
 	void setPreview(const Preview& preview) { preview_ = preview; }
-	/// EVERY KIT PAD'S HITS so far (pad_hits.h), for the editor's pulse; read after a block on the thread that rendered it.
-	[[nodiscard]] const PadHits& padHits() const noexcept { return padHits_; }
-	/// WHETHER A KIT PAD TAKES HITS: its sound card switched on (not muted), and no other card soloed.
-	[[nodiscard]] bool padAudible(size_t slot) const;
 
 	/// Gamma's unbounded half, per sound. Zero is the engine as it was, to the bit.
 	void setSoundGamma(const SoundGamma& gamma) { gamma_ = gamma; }
@@ -763,8 +736,6 @@ public:
 	/// wires it anyway, because the list is the host's. MESSAGE THREAD, once, before provisioning.
 	void setCatalogue(const device::Catalogue& catalogue) noexcept {
 		lane_.setCatalogue(catalogue);
-		padCatalogue_ = catalogue; // a COPY for every kit pad's lane, made later (ensurePadLane): a caller may hand a temporary
-		havePadCatalogue_ = true;
 	}
 	/// **WHERE THE LANE READS ITS HOST SLOTS' VALUES FROM** (host slots, T6b): the plugin's bus, whose
 	/// bindings ride the record. Before activate, like the catalogue.
@@ -797,7 +768,6 @@ public:
 	[[nodiscard]] uint64_t drawerScansForTest() const noexcept { return drawerScans_; }
 	[[nodiscard]] uint64_t modulatedCopiesForTest() const noexcept { return modulatedCopies_; }
 	[[nodiscard]] uint64_t modulatedFxCopiesForTest() const noexcept { return modulatedFxCopies_; }
-	[[nodiscard]] uint64_t drumKitBuildsForTest() const noexcept { return drumKitBuilds_; }
 	[[nodiscard]] uint64_t stringControlSetsForTest() const noexcept { return stringControlSets_; }
 	/// The drawer's two patch-wide answers as the last block decided them (`applyParamsRoad`).
 	[[nodiscard]] bool drawerVariesForTest() const noexcept { return drawerVaries_; }
@@ -1036,20 +1006,9 @@ public:
 	/// a legato move does not. A restart is a claim about this value, read rather than inferred from a buffer.
 	float voiceEdgeLevelForTest(int slot) const;
 
-	/// **TEST ONLY. THE DRUM ENGINE'S VALUES** (drum proposal §9): which pad a voice plays and its hit (its kind, laws, seed,
-	/// modes), the kit as last resolved, its stage, and how many chokes and drum-ended voices there have been.
-	uint8_t voiceDrumPadForTest(int slot) const { return voices_[static_cast<size_t>(slot)].osc.drumPad(); }
-	const drum::Hit& voiceDrumHitForTest(int slot) const { return voices_[static_cast<size_t>(slot)].osc.drumHitForTest(); }
-	uint32_t voiceDrumStrikesForTest(int slot) const { return voices_[static_cast<size_t>(slot)].osc.drumStrikesForTest(); }
-	const drum::Hit& voiceDrumLayerForTest(int slot) const { return voices_[static_cast<size_t>(slot)].osc.drumLayerForTest(); }
-	uint32_t voiceDrumLayerStrikesForTest(int slot) const { return voices_[static_cast<size_t>(slot)].osc.drumLayerStrikesForTest(); }
-	float voiceDrumLayerHighPassForTest(int slot) const { return voices_[static_cast<size_t>(slot)].osc.drumLayerHighPassForTest(); }
 	Voice::Stage voiceStageForTest(int slot) const { return voices_[static_cast<size_t>(slot)].stage; }
 	int voiceKeyForTest(int slot) const { return voices_[static_cast<size_t>(slot)].key; }
 	int voiceNoteIdForTest(int slot) const { return voices_[static_cast<size_t>(slot)].noteId; }
-	const drum::KitSetup& drumKitForTest() const { return drum_->kit; }
-	uint32_t drumChokesForTest() const { return drum_->chokes; }
-	uint32_t drumEndedForTest() const { return drum_->ended; }
 
 	/// **TEST ONLY. One stacked part's pitch, fan position, gain and liveness** (backlog KE) — the stack's claims
 	/// are all about values (where each part stands in the fan, how loud it is mid-fade), and CLAUDE.md's rule
@@ -1298,42 +1257,6 @@ private:
 	/// THE KARPLUS-STRONG PLUCK for `voice`: every live part plucked with its own seed, hash(Seed, key, channel, part, and the
 	/// note-on's song tick — or, on a stopped transport, the key's strike count), never anything incidental (KS design §6).
 	void pluckStrings(Voice& voice);
-	/// THE DRUM STRIKE for `voice` on pad `pad` (drum proposal §7): every live part struck with its own seed, hash(Seed, pad or
-	/// key, part, and the note-on's song tick — or, on a stopped transport, the pad's strike count), never anything incidental.
-	void strikeDrums(Voice& voice, uint8_t pad);
-	PadHits padHits_ {};
-	// THE PER-PAD FX LANES (drum proposal §17): owned on the message thread, published, taken per block on the audio thread.
-	struct PadLane {
-		std::unique_ptr<rack::InnerChain> owned;
-		std::atomic<rack::InnerChain*> published { nullptr };
-		rack::InnerChain* running = nullptr; ///< AUDIO THREAD: the lane taken at this block's start
-		bool live = false;                   ///< AUDIO THREAD: it holds a device that is on, so its pad's voices go through it
-		uint32_t latency = 0;                ///< AUDIO THREAD: what its devices declare this render call (live lanes)
-	};
-	std::array<PadLane, kMaxSounds> padLanes_ {};
-	bool padLanesLive_ = false; ///< AUDIO THREAD: any pad lane live this render call
-	// THE PADS' LATENCY ALIGNED (drum proposal §17 P4; the lead: "a late pad is a real defect"): while any live pad lane is
-	// latent, every live pad's bus is delayed to the latest one, and the voices that sum straight into the mix by all of it;
-	// the plugin reports it (`latencySamples`). Rings prepared on the MESSAGE THREAD (activate, ensurePadLane).
-	std::array<device::CompensationDelay, kMaxSounds> padAlign_ {};
-	device::CompensationDelay directAlign_ {};
-	uint32_t padLatency_ = 0; ///< AUDIO THREAD: the latest live pad lane's latency this render call
-	std::vector<float> padBusL_, padBusR_; ///< kMaxSounds × kRenderChunk each, sized at activate
-	device::Catalogue padCatalogue_ {};
-	bool havePadCatalogue_ = false;
-	double padLaneRate_ = 0.0;
-	int padLaneFrames_ = 0;
-	[[nodiscard]] bool padLanesHoldTail() const noexcept;
-	void beginPadLanes();
-	void endPadLanes();
-	void runPadLanes(float* left, float* right, int n);
-	/// The kit as the params resolve now, into `drum_->kit` (every voice reads it through one pointer).
-	void fillDrumKit();
-	/// THE CHOKES this note-on asked for (D6), applied once the voice manager has returned (never inside its transaction).
-	void applyDrumChokes();
-	/// A ONE-SHOT HIT THAT HAS RUN OUT (Attack or Sustain, its output exactly silent): the lane is told the note is over and the
-	/// voice releases into silence, which the ordinary release road then finishes and reports to the manager.
-	void endDrumVoice(Voice& v);
 	/// The engine-wide string controls, as the params resolve now.
 	ks::StringControls stringControls() const;
 
@@ -1433,27 +1356,6 @@ private:
 	};
 	std::unique_ptr<KsState> ks_ = std::make_unique<KsState>();
 
-	/// THE DRUM ENGINE'S SYNTH-WIDE STATE (drum proposal §4, §5, §7), behind one pointer for KsState's reason.
-	struct DrumState {
-		/// The kit every voice reads (OscVoice::setDrumKit), filled once a chunk.
-		drum::KitSetup kit {};
-		/// Each pad's (Kit) or key's (Pitched) strikes since the transport last changed state or the patch loaded. NOT
-		/// PERSISTED, for the Pluck strike count's reason: a playing transport draws from the song position instead.
-		std::array<uint32_t, 128> strikes {};
-		/// THE NOTE BEING STARTED: which pads its voices play, in the order the manager asks for them.
-		std::array<uint8_t, kMaxSounds> notePads {};
-		int notePadCount{0};
-		/// The voices this note-on started, and their pads: whose chokes to apply once the manager returns.
-		std::array<Voice*, kMaxSounds> started {};
-		std::array<uint8_t, kMaxSounds> startedPads {};
-		int startedCount{0};
-		/// What each pad group's voice limit was last set to (-1: never).
-		std::array<int, kMaxSounds> appliedLimit { -1, -1, -1, -1, -1, -1, -1, -1 };
-		/// TEST ONLY: chokes applied, voices the drum road ended.
-		uint32_t chokes{0};
-		uint32_t ended{0};
-	};
-	std::unique_ptr<DrumState> drum_ = std::make_unique<DrumState>();
 	/// EACH SOUND'S STRING LAWS AS LAST BUILT, with what they were built from (backlog LZ): pushWeaveLaws runs on every
 	/// character update on every engine, and a sound whose inputs have not moved is handed its laws back rather than
 	/// rebuilt — the same laws, to the bit (WeaveLawMemo).
@@ -1668,21 +1570,6 @@ private:
 
 	/// WHETHER EVERY LIVE PART'S STRING IS EXACTLY SILENT, nothing ringing and nothing waiting to be plucked — and the engine is
 	/// Pluck, so a voice of any other engine never answers yes (its idle string means nothing about its sound).
-	/// WHETHER EVERY LIVE PART'S DRUM HIT IS EXACTLY SILENT and nothing waits to strike — and the engine is Drum, so a voice of
-	/// any other engine never answers yes.
-	bool drumsSilent(Voice& voice) {
-		if (params_.oscType() != OscType::Drum) {
-			return false;
-		}
-		bool silent = true;
-		forEachLivePart(voice, [&silent](OscVoice& osc) { silent = silent && osc.drumIdle(); });
-		return silent;
-	}
-	/// A ONE-SHOT LET GO ON DRUM, STILL HELD, AND THE ENGINE NO LONGER DRUM (`Voice::oneShotLetGo`): nothing else ends it.
-	bool letGoOffDrum(const Voice& voice) const {
-		return voice.oneShotLetGo && params_.oscType() != OscType::Drum
-		       && (voice.stage == Voice::Stage::Attack || voice.stage == Voice::Stage::Sustain);
-	}
 	bool stringsSilent(Voice& voice) {
 		if (params_.oscType() != OscType::Pluck) {
 			return false;
@@ -2167,10 +2054,6 @@ private:
 	uint32_t modulatedFxStructureAt_ = 0;
 	size_t modulatedFxLengthAt_ = SIZE_MAX;
 	uint64_t modulatedFxCopies_ = 0;
-	/// `drum_->kit` IS REBUILT ONCE PER RENDER CALL AND ONCE AFTER EACH CONTROL TICK, not per chunk: `drumKitStale_` says it
-	/// is owed, `drumKitBuilds_` counts the builds.
-	bool drumKitStale_ = true;
-	uint64_t drumKitBuilds_ = 0;
 	/// The Pluck engine's per-chunk hand-outs of its string controls (`render`): one per rendering part.
 	uint64_t stringControlSets_ = 0;
 	/// THE WEIGHTS EACH DRAWER IS BLENDED BY: the character each ear plays (the head's twice when the terrain is mono) and

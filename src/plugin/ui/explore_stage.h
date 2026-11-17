@@ -89,7 +89,6 @@ namespace feathers::ui {
 
 class ExploreStage;
 class SpectrumTab;
-class DrumTab;
 
 /// THE GROUND, AND THE ONLY REASON IT IS A FRAME OF ITS OWN: a post effect belongs to a frame and
 /// applies to everything that frame paints. The bubble must bend the terrain and NOTHING else — not
@@ -294,17 +293,6 @@ public:
 	Knob& stringKnobForTest(StringKind kind, size_t slot) {
 		return *stringKnobs_[static_cast<size_t>(kind)][std::min(slot, kMaxSounds - 1)];
 	}
-	/// **THE DRUM'S SURROUND** (2026-11-05): the seven field scalers of the selected sound (in Kit mode the
-	/// selected PAD), each drawn only where its kind reads it (drum::kindReads), and the Kit Walk, drawn in Kit mode alone.
-	enum class DrumField : uint8_t { Pitch, Length, Sweep, Tone, Noise, Snap, Metal };
-	static constexpr size_t kDrumFieldCount = 7;
-	Knob& drumFieldKnobForTest(DrumField f, size_t slot) {
-		return *drumFieldKnobs_[static_cast<size_t>(f)][std::min(slot, kMaxSounds - 1)];
-	}
-	/// THE KIT-WIDE TRIMS' SEVEN KNOBS, in SurroundControl's order from DrumKitPitch. In Kit mode they are the whole of the Drum
-	/// surround (a pad's own seven scalers are per layer, on the pad editor); Pitched mode keeps the selected sound's seven.
-	static constexpr size_t kDrumKitKnobCount = 7;
-	Knob& drumKitKnobForTest(size_t i) { return *drumKitKnobs_[std::min(i, kDrumKitKnobCount - 1)]; }
 	enum class PluckKnob : uint8_t { Width, Decay, Release, Seed, DecayTrack, Hardness, Pickup, Velocity };
 	static constexpr size_t kPluckKnobCount = 8;
 	Knob& pluckKnobForTest(PluckKnob which) { return *pluckKnobs_[static_cast<size_t>(which)]; }
@@ -322,10 +310,6 @@ public:
 	std::function<void()> onSpectrumTab;
 	[[nodiscard]] bool spectrumOpen() const noexcept { return spectrumOpen_; }
 	void setSpectrumOpen(bool open);
-	/// THE DRUM TAB (drum proposal §6), Drum's alone, in the spectrum tab's place: a press asks the editor for the kit panel.
-	std::function<void()> onDrumTab;
-	void setDrumOpen(bool open);
-	[[nodiscard]] DrumTab& drumTabForTest() { return *drumTab_; }
 	[[nodiscard]] SpectrumTab& spectrumTabForTest() { return *spectrumTab_; }
 	[[nodiscard]] visage::Bounds spectrumTabBounds() const;
 
@@ -485,12 +469,9 @@ public:
 		Width, FmDepth, Warp, Smoothness, Quantize, Sync, Feedback, Points, Grit, ShapeAmount,
 		Rolloff, Formant, OddEven, Comb, Detail, OffGrid,
 		KsBrightness, KsSustain, KsPick, KsNoise, KsStretch,
-		DrumPitch, DrumLength, DrumSweep, DrumTone, DrumNoise, DrumSnap, DrumMetal,
 		ResonateWidth, Bow, Shimmer, Stiffness, Coupling, Decay, Pluck, Travel, Speed,
 		Sine, Triangle, Saw, Square,
 		KsWidth, KsDecay, KsRelease, KsSeed, KsDecayTrack, KsHardness, KsPickup, KsVelocity,
-		DrumKitPitch, DrumKitLength, DrumKitSweep, DrumKitTone, DrumKitNoise,
-		DrumKitSnap, DrumKitMetal,
 		WarpMode, BowMode, AdditiveShape, Model, ShapesPage, KsPage,
 		kCount
 	};
@@ -742,27 +723,8 @@ public:
 	double selectedDriftY() const;
 	/// Where the selected sound is PLAYED: authored place plus the engine's live polar pull. Drawing only.
 	[[nodiscard]] AnchorPoint playedPlace() const;
-	/// The kit's stance as the engine sees it (the ordinary puck through Weather), for the pad marks and the played mark.
-	[[nodiscard]] AnchorPoint kitStanceNow() const;
-	/// WHERE THE SELECTED KIND OF SOUND IS PUT, by what the engine reads: the sound's drift off a kit; in a Drum Kit its layer one's
-	/// vector (OffsetX/Y), and `layerPlaceOf` either layer's. Every read of a pad's place on this surface goes through them.
+	/// WHERE THE SELECTED SOUND IS PUT: its drift off the home. Every read of a sound's place on this surface goes through it.
 	[[nodiscard]] AnchorPoint placeOf(size_t slot) const;
-	[[nodiscard]] AnchorPoint layerPlaceOf(size_t slot, size_t layer) const;
-	/// **THE KIT-WIDE BULK EDIT**: adds (dx, dy) to the vector of every layer whose Lock is off (both layers of all eight pads),
-	/// through `commit` (one gesture, one undo group with the drag it belongs to); locked vectors are not written. Answers how
-	/// many parameter writes it made (up to 32).
-	size_t moveKitUnlocked(double dx, double dy);
-	/// Each vector parameter the open drag has written, with the value it held before its first write (one undo step at the end).
-	std::vector<std::pair<clap_id, double>> bulkTouched_;
-	/// A kit drag whose star's own layer is locked: where the drag has taken its (undrawn) star, so the bulk edit goes by the pointer's step.
-	std::optional<AnchorPoint> kitVirtual_;
-	struct BulkEntry {
-		clap_id id;
-		double before;
-		double after;
-	};
-	std::vector<BulkEntry> bulkEntries_; ///< what the closed drag moved, until `recordBulk` makes its undo step
-	void recordBulk();
 	/// Where the rotate encoder reads, in radians: the selected sound's own turn, else the global
 	/// audition pin's, else 0 — the turn every unturned sound genuinely plays at.
 	double selectedRotation() const;
@@ -977,20 +939,11 @@ public:
 	[[nodiscard]] visage::Point playedMarkAt() const noexcept { return playedMarkAt_; }
 	[[nodiscard]] bool playedMarkDrawn() const noexcept { return playedMarkDrawn_; }
 	[[nodiscard]] bool vectorDrawn() const noexcept { return vectorDrawn_; }
-	/// Whether the last draw put the selected sound's star on the chart (a Drum Kit draws none).
+	/// Whether the last draw put the selected sound's star on the chart.
 	[[nodiscard]] bool starDrawnForTest() const noexcept { return starDrawn_; }
 	[[nodiscard]] visage::Point vectorFrom() const noexcept { return vectorFrom_; }
 	[[nodiscard]] visage::Point vectorTip() const noexcept { return vectorTip_; }
 	[[nodiscard]] bool starDrawnOnChart() const noexcept { return starDrawnOnChart_; }
-	/// ONE OTHER PAD AS THE LAST PAINT DREW IT: where, hollow or filled, and its Walk arrow's tip if it drew one.
-	struct PadMark {
-		size_t slot = 0;
-		visage::Point at {};
-		bool hollow = false;
-		bool arrow = false;
-		visage::Point tip {};
-	};
-	[[nodiscard]] std::span<const PadMark> padMarksForTest() const { return std::span(padMarks_).first(padMarkCount_); }
 	/// The view's two centres as stored, whatever the selection now (the jump's cases read them before and after).
 	[[nodiscard]] double storedViewCentreForTest() const noexcept { return viewCentre_; }
 	[[nodiscard]] double storedTravelCentreForTest() const noexcept { return travelCentre_; }
@@ -1245,15 +1198,6 @@ private:
 	void drawStar(visage::Canvas& canvas);
 	/// The likes on the plane being drawn, as small hearts at their places. Not const: it counts them (`likeMarksDrawn`).
 	void drawLikes(visage::Canvas& canvas);
-	/// THE KIT'S OTHER PADS (drum proposal §3.4): each at its place projected onto the selected pad's plane, a filled mark
-	/// if it is the selected pad's kind and a HOLLOW one labelled with its kind if not (the map's colours mean nothing for it),
-	/// and a faint arrow to where the Walk plays it.
-	void drawPadMarks(visage::Canvas& canvas);
-	/// Whether a Drum Kit is what the chart shows.
-	[[nodiscard]] bool drumKitShown() const;
-	/// THE SELECTION JUMP: whether `slot's star stands inside the view as it is now, clear of its edge, in
-	/// which case selecting it moves nothing.
-	[[nodiscard]] bool padInView(size_t slot) const;
 	/// The one road a selection change takes: in a Kit, a pad already in view leaves the view where it is; otherwise (and on
 	/// every other engine) the view JUMPS onto the selected sound.
 	void followSelection();
@@ -1455,9 +1399,6 @@ private:
 	visage::Point vectorTip_ {};
 	bool vectorDrawn_ = false;
 	bool starDrawnOnChart_ = false;
-	/// THE KIT'S OTHER PADS on the selected pad's chart (drum proposal §3.4), as the last paint drew them.
-	std::array<PadMark, kMaxSounds> padMarks_ {};
-	size_t padMarkCount_ = 0;
 
 	/// The width knobs, one per slot — see widthKnobForTest above for why there are eight of them
 	/// behind one visible control.
@@ -1507,19 +1448,12 @@ private:
 	/// PLUCK'S STRINGS AND ENGINE-WIDE KNOBS, and its second page's row (the table's Pluck row, its left flank swapped).
 	std::array<std::array<std::unique_ptr<Knob>, kMaxSounds>, kStringKindCount> stringKnobs_;
 	std::array<std::unique_ptr<Knob>, kPluckKnobCount> pluckKnobs_;
-	std::array<std::array<std::unique_ptr<Knob>, kMaxSounds>, kDrumFieldCount> drumFieldKnobs_;
-	std::array<std::unique_ptr<Knob>, kDrumKitKnobCount> drumKitKnobs_;
-	SlotRow drumKitFieldsRow_ {};
-	/// The Drum row as the mode and the selected kind leave it (currentSlotRow): the table's, less what they do not read.
-	mutable SlotRow drumRow_ {};
 	PluckPage pluckPage_ = PluckPage::String;
 	SlotRow pluckPageTwoRow_ {};
 	SlotRow pluckPageThreeRow_ {};
 	/// THE SPECTRUM TAB, a child added LAST so it paints over (and takes the mouse before) every knob; whether the editor's
 	/// panel is open (the caret).
 	std::unique_ptr<SpectrumTab> spectrumTab_;
-	std::unique_ptr<DrumTab> drumTab_;
-	bool drumOpen_ = false;
 	bool spectrumOpen_ = false;
 };
 

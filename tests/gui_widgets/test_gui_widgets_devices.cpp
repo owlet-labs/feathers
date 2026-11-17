@@ -35809,13 +35809,14 @@ TEST_CASE("Rack stage 2, step 4: every multi-choice control shows its choices be
 		CHECK(box->choiceMenuAvailable());
 		CHECK(box->opensMenu());
 	}
-	// SLOPE AND UNUSED: both choices on the face, one segment each.
+	// SLOPE AND UNUSED: every choice on the face, one segment each.
 	CHECK(v.card->slopeForTest().isVisible());
 	CHECK(v.card->unusedChipForTest().isVisible());
 	const float slopeW = v.card->slopeForTest().width();
 	REQUIRE(slopeW > 0.0f);
-	CHECK(v.card->slopeForTest().segmentAt({ 2.0f, 4.0f }) == 0);
-	CHECK(v.card->slopeForTest().segmentAt({ slopeW - 2.0f, 4.0f }) == 1);
+	// THE SLOPE HAS MORE CHOICES THAN A FACE HOLDS (the LR pairs and the linear steepnesses): a list that opens before anything moves.
+	CHECK(v.card->slopeForTest().choiceMenuAvailable());
+	CHECK(v.card->slopeForTest().opensMenu());
 	CHECK(v.panel->unusedChipForTest().isVisible());
 }
 

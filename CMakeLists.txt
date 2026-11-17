@@ -283,6 +283,7 @@ add_library(feathers-dsp STATIC
 	src/dsp/constellation.cpp
 	src/dsp/flagship.cpp
 	src/dsp/halfband.cpp
+	src/dsp/linear_crossover.cpp
 	src/dsp/ks_picture.cpp
 	src/dsp/drum_picture.cpp
 	src/dsp/drum_voice.cpp
@@ -308,7 +309,7 @@ target_include_directories(feathers-dsp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # voice's decimator) was replaced by our own halfband in src/dsp/halfband.h during the licence
 # migration (2026-09-24). Keep it that way — a GPL header reached from here would be reached from
 # every voice.
-target_link_libraries(feathers-dsp PUBLIC feathers-character feathers-simd PRIVATE feathers-warnings)
+target_link_libraries(feathers-dsp PUBLIC feathers-character feathers-simd PRIVATE feathers-pffft feathers-warnings)
 # Same reason as feathers-character: an FMA-contracted host must not disagree with one without.
 target_compile_options(feathers-dsp PRIVATE ${FEATHERS_FP_EXACT})
 

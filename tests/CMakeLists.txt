@@ -2142,3 +2142,21 @@ if(WIN32 AND TARGET visage)
 	add_test(NAME win32-embed COMMAND test_win32_embed)
 	set_tests_properties(win32-embed PROPERTIES TIMEOUT 300)
 endif()
+
+# THE LINEAR-PHASE CROSSOVER ENGINE (src/dsp/linear_crossover.*): the shared FIR split OWLTT's Linear mode and the Rack's
+# Bands Linear slope are built on.
+add_executable(test_linear_crossover test_linear_crossover.cpp)
+target_link_libraries(test_linear_crossover PRIVATE feathers-dsp feathers-warnings)
+target_include_directories(test_linear_crossover PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME linear-crossover COMMAND test_linear_crossover)
+
+# OWLTT's Linear crossover (Mode 11): the reported latency against the measured delay, flatness, bypass, moving corners, the tail.
+add_executable(test_fx_owltt_linear test_fx_owltt_linear.cpp)
+target_link_libraries(test_fx_owltt_linear PRIVATE feathers-fx feathers-warnings)
+target_include_directories(test_fx_owltt_linear PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME fx-owltt-linear COMMAND test_fx_owltt_linear)
+
+# THE LINEAR CROSSOVER'S COST (OWLTT Mode 11 and the Rack's Linear slope against LR4) - NOT A TEST: bench_phaser's posture.
+add_executable(bench_linear_crossover bench_linear_crossover.cpp)
+target_link_libraries(bench_linear_crossover PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(bench_linear_crossover PRIVATE ${CMAKE_SOURCE_DIR}/src)

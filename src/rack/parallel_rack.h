@@ -27,6 +27,7 @@
 #include "rack/inner_chain_bundle.h"
 #include "fx/owltt/crossover.h"
 #include "dsp/analyser_bins.h"
+#include "dsp/linear_crossover.h"
 
 #include <array>
 #include <atomic>
@@ -148,13 +149,20 @@ inline constexpr uint32_t kBandsOnly = kModeBit(Mode::Bands);
 inline constexpr const char* kBandCountNames[] = { "2", "3", "5" };
 inline constexpr int kBandCounts[] = { 2, 3, 5 };
 inline constexpr int kMaxBands = 5;
-/// The slopes (decided, Q5: the two Linkwitz-Riley pairs only) and where the filtering sits.
-inline constexpr const char* kSlopeNames[] = { "LR4 24 dB", "LR2 12 dB" };
-enum class Slope : uint8_t { Lr4 = 0, Lr2 };
+/// The slopes (decided, Q5: the two Linkwitz-Riley pairs, and later a linear-phase FIR split appended as a third) and where the filtering sits.
+/// EACH WITH ITS SLOPE (per octave for the Linkwitz-Riley pairs, the transition's width for the linear-phase ones, as OWLTT's Mode). The labels
+/// before the units were added are `kSlopeAliases`: a stored label still loads.
+inline constexpr const char* kSlopeNames[] = { "LR4 24 dB/oct", "LR2 12 dB/oct", "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 48 dB/oct" };
+inline constexpr device::ChoiceAlias kSlopeAliases[] = { { "LR4 24 dB", "LR4 24 dB/oct" }, { "LR2 12 dB", "LR2 12 dB/oct" },
+	                                                      { "Linear", "Linear (94 Hz)" }, { "Linear Mild", "Linear Mild (186 Hz)" },
+	                                                      { "Linear Gentle", "Linear Gentle (368 Hz)" }, { "LR8 48 dB", "LR8 48 dB/oct" } };
+enum class Slope : uint8_t { Lr4 = 0, Lr2, Linear, LinearMild, LinearGentle, Lr8 };
+/// THE LINEAR SLOPES: Linear, Mild and Gentle share the FIR split and its latency; each is twice as wide in its transition as the one before.
+[[nodiscard]] inline constexpr bool isLinearSlope(Slope s) noexcept { return s >= Slope::Linear && s <= Slope::LinearGentle; }
+[[nodiscard]] inline constexpr uint8_t linearSteepOf(Slope s) noexcept { return static_cast<uint8_t>(static_cast<int>(s) - static_cast<int>(Slope::Linear)); }
 inline constexpr const char* kFilteringNames[] = { "Before", "After", "Both" };
 /// WHAT A SEGMENTED CONTROL'S FACE SAYS, where the stored label is too long for a segment (display only; the Choice
 /// still stores `kSlopeNames` / `kUnusedNames`, and the tooltip says the rest).
-inline constexpr const char* kSlopeFaceNames[] = { "24 dB", "12 dB" };
 inline constexpr const char* kUnusedFaceNames[] = { "Ring", "Stop" };
 /// The corners' captions on a face ("Cut 1"…), static so a widget may keep the pointer.
 inline constexpr const char* kCutCaptions[] = { "Cut 1", "Cut 2", "Cut 3", "Cut 4" };
@@ -268,10 +276,10 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .stepped = false, .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
      .tooltip = "The corner between bands 4 and 5, kept at least a third of an octave above cut 3",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly},
-    {.key = "rack_slope", .name = "Rack Slope", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+    {.key = "rack_slope", .name = "Rack Slope", .min = 0.0, .max = 5.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kSlopeNames, .modulatable = false,
-     .tooltip = "The crossover's steepness: Linkwitz-Riley 24 or 12 dB per octave. Either sums flat",
-     .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .hostSlot = false},
+     .tooltip = "The crossover: Linkwitz-Riley at 12, 24 or 48 dB per octave, or Linear (Mild, Gentle: a wider transition, the width from -0.1 dB to -60 dB), a linear-phase FIR split whose bands sum to the input delayed by about 24 ms (48 ms with Filtering Both), which the rack reports as latency. All sum flat",
+     .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .choiceAliases = kSlopeAliases, .hostSlot = false},
     {.key = "rack_filtering", .name = "Rack Filtering", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kFilteringNames, .modulatable = false,
      .tooltip = "Before splits the input so each chain hears its band. After filters each chain's output to its band. "
@@ -849,6 +857,14 @@ public:
 	[[nodiscard]] double noteSemitonesForTest() const noexcept { return noteSemitones_; }
 	/// The band count, slope and filtering the audio thread runs now.
 	[[nodiscard]] int bandsForTest() const noexcept { return bands_; }
+	/// HOW MANY KERNEL SWAPS the Linear slope's banks have made (the split's and every role's): a sweep that rebuilt nothing proves nothing.
+	[[nodiscard]] int linearSwapsForTest() const noexcept {
+		int n = linSplit_ != nullptr ? linSplit_->swapsForTest() : 0;
+		for (const auto& bank : linRole_) {
+			n += bank != nullptr ? bank->swapsForTest() : 0;
+		}
+		return n;
+	}
 	[[nodiscard]] Filtering filteringForTest() const noexcept { return filtering_; }
 	/// How many corners' coefficients were recomputed since construction (once per sub-block, only those that moved).
 	[[nodiscard]] uint64_t coefficientUpdatesForTest() const noexcept { return coefficientUpdates_; }
@@ -892,11 +908,28 @@ private:
 	void splitBands(int n) noexcept;
 	void bandOfOutput(size_t role, int n) noexcept;
 	void alignDryToBands(int n) noexcept;
-	/// WHAT THE DRY PATH IS in a structure: the raw input (0), through Π AP (1), through Π AP² (2).
-	[[nodiscard]] int dryKind(Mode mode, Filtering filtering) const noexcept {
+	/// WHAT THE DRY PATH IS in a structure: the raw input (0), through the LR bands' allpass (1), or held back by the linear
+	/// crossover's latency alone (2).
+	[[nodiscard]] int dryKind(Mode mode, Filtering filtering, Slope slope) const noexcept {
 		(void)filtering; // Both's pair sums to the same Π AP as Before and After (backlog OS), so the dry's path is one
-		return mode != Mode::Bands ? 0 : 1;
+		return mode != Mode::Bands ? 0 : (isLinearSlope(slope) ? 2 : 1);
 	}
+	/// HOW MANY TIMES THE SIGNAL GOES THROUGH A LINEAR FIR: once Before or After, twice in Both (a half band before the chain and another after).
+	[[nodiscard]] static constexpr uint32_t linearPasses(Filtering filtering) noexcept { return filtering == Filtering::Both ? 2u : 1u; }
+	/// THE LINEAR CROSSOVER'S DELAY IN FORCE: its latency while Bands runs the Linear slope, else 0. What the dry is held back by beyond
+	/// the chains' latency, and what the bands add on the wet path.
+	[[nodiscard]] uint32_t linearDelayNow() const noexcept {
+		return mode_ == Mode::Bands && isLinearSlope(slope_) ? linearPasses(filtering_) * dsp::linearCrossoverLatency(sampleRate_) : 0u;
+	}
+	/// THE LATENCY THE HOST IS TOLD, from the structure WANTED: it adds the linear crossover's while Bands is asked for with the Linear
+	/// slope, so the report is a function of the controls alone and never moves while the structure fades in.
+	[[nodiscard]] uint32_t linearDelayWanted(double sampleRate) const noexcept {
+		return modeWanted_ == Mode::Bands && isLinearSlope(slopeWanted_) ? linearPasses(filteringWanted_) * dsp::linearCrossoverLatency(sampleRate) : 0u;
+	}
+	/// The Linear slope's banks: the corners to their kernels (control rate), and a whole restart.
+	void aimLinear() noexcept;
+	void resetLinear() noexcept;
+	[[nodiscard]] bool linearQuiet() const noexcept;
 	/// WHETHER THE WANTED STRUCTURE IS THE RUNNING ONE — the mode, and in Bands its count, slope and filtering.
 	[[nodiscard]] bool structureIsWanted() const noexcept;
 	/// The wanted structure becomes the running one (at a fade's silence, or at once where nothing is heard).
@@ -1074,6 +1107,7 @@ private:
 	uint64_t coefficientUpdates_ = 0;
 	fx::owltt::Lr4Split::Coeffs lr4_[4] {};
 	fx::owltt::Lr2Split::Coeffs lr2_[4] {};
+	fx::owltt::Lr8Split::Coeffs lr8_[4] {};
 	/// ONE SLOPE'S FILTERS, per channel: the split (Before), each role's band path (After), the HALF split and HALF band
 	/// paths (Both: one Butterworth section each side, so the pair multiplies to the LR band and empty chains sum flat,
 	/// backlog OS), and the dry's allpass chain.
@@ -1132,7 +1166,14 @@ private:
 	};
 	BandsEngine<fx::owltt::Lr4Split> lr4Engine_;
 	BandsEngine<fx::owltt::Lr2Split> lr2Engine_;
+	BandsEngine<fx::owltt::Lr8Split> lr8Engine_;
 	std::vector<float> bandL_[kMaxBands], bandR_[kMaxBands];
+	/// **THE LINEAR SLOPE'S BANKS (`dsp/linear_crossover.h`)**: Before splits the input into `bands_` band kernels at once (`linSplit_`); After filters each
+	/// chain's output by its own band, one bank a role (`linRole_`); Both uses the half-band kernels in both places. Allocated at `prepare`
+	/// (about half a megabyte a rack), idle while another slope runs.
+	std::unique_ptr<dsp::LinearFirBank> linSplit_;
+	std::array<std::unique_ptr<dsp::LinearFirBank>, kMaxBands> linRole_;
+	bool linearBuild_ = true; ///< the next `aimLinear` builds the kernels whole (a start, a reset, the slope coming in)
 
 	// THE SPECTRUM (§7a): the EQ's analyser, lifted (`dsp/analyser.h`), at the EQ's 32-sample grid — behind a pointer
 	// so this header does not carry pffft to every includer. Built in `prepare`, never on the audio thread.

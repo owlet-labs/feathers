@@ -257,7 +257,7 @@ visage::Bounds OwlttExpanded::clipBounds() const {
 std::string OwlttExpanded::modeText() const {
 	// THE CARD'S OWN WORDS, from the same `kModeNames` its folded head prints.
 	const auto at = static_cast<int32_t>(std::lround(control(dtt::Param::Mode).value()));
-	const int32_t index = at - 1; // the parameter runs 1..10; the names run 0..9
+	const int32_t index = at - 1; // the parameter runs 1..14; the names run 0..13
 	if (index < 0 || static_cast<size_t>(index) >= std::size(dtt::kModeNames)) {
 		return {};
 	}

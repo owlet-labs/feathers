@@ -46,8 +46,8 @@ namespace feathers::fx::owltt {
 /// OWLTT's 25 controls, in hardware menu order.
 enum class Param : uint8_t {
 	// Global
-	Mode = 0,            // Stepped 1-10: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
-	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3
+	Mode = 0,            // Stepped 1-14: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
+	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full
 	Enabled = 1,         // Bypass switch
 	Threshold = 2,       // Linked global threshold
 	Ratio = 3,           // Linked global ratio
@@ -186,7 +186,7 @@ struct BandParams {
 
 /// The full OWLTT state: globals + per-band absolutes.
 struct Settings {
-	float mode = 6.0f;           // 1-10 = crossover type (6 = LR2 Full default)
+	float mode = 6.0f;           // 1-14 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full)
 	bool enabled = true;         // Bypass switch
 	float threshold = 0.5f;      // Linked global threshold
 	// THE STRUCT DEFAULT IS NOT THE PARAMETER DEFAULT, HERE AND ONLY HERE, and it is deliberate: a
@@ -329,8 +329,29 @@ inline constexpr device::Traits kTraits {
 	.mixInDevice = true,
 };
 
-inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast",
-                                             "LR2 Full", "LR4 Fast", "LR4 Full", "Inverted", "Twist3"};
+/// THE LINEAR MODES: 11 is the steepest linear-phase split, 12 and 13 two and four times wider in their transition (`dsp::LinearBand::steep`), all
+/// with the same latency. `kLastMode` is the highest Mode.
+inline constexpr long kFirstLinearMode = 11;
+inline constexpr long kLastLinearMode = 13;
+inline constexpr long kLastMode = 14; // 14 is LR8 Full, an IIR (48 dB/oct, no latency)
+[[nodiscard]] inline constexpr bool isLinearMode(long mode) noexcept { return mode >= kFirstLinearMode && mode <= kLastLinearMode; }
+[[nodiscard]] inline constexpr uint8_t linearSteepOf(long mode) noexcept { return static_cast<uint8_t>(mode - kFirstLinearMode); }
+
+/// **EACH MODE'S SLOPE IN ITS LABEL, where it is one thing and can be said truthfully**: the Linkwitz-Riley pairs by order (12, 24, 48 dB/oct),
+/// the linear-phase ones by the width of their transition (-0.1 dB to -60 dB at 48 kHz: 94, 186 and 368 Hz; a dB/oct would depend on the corner).
+/// AP 6dB already says it. Quirky, Twisted, Weird, Inverted and Twist3 are creative allpass splits with no single slope, so they stay bare.
+/// The labels the first ten went by before the slopes were added are `kModeAliases`: a stored label still loads.
+inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast (12 dB/oct)",
+                                             "LR2 Full (12 dB/oct)", "LR4 Fast (24 dB/oct)", "LR4 Full (24 dB/oct)", "Inverted", "Twist3",
+                                             "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 Full (48 dB/oct)"};
+inline constexpr device::ChoiceAlias kModeAliases[] = { { "LR2 Fast", "LR2 Fast (12 dB/oct)" },
+	                                                    { "LR2 Full", "LR2 Full (12 dB/oct)" },
+	                                                    { "LR4 Fast", "LR4 Fast (24 dB/oct)" },
+	                                                    { "LR4 Full", "LR4 Full (24 dB/oct)" },
+	                                                    { "Linear", "Linear (94 Hz)" },
+	                                                    { "Linear Mild", "Linear Mild (186 Hz)" },
+	                                                    { "Linear Gentle", "Linear Gentle (368 Hz)" },
+	                                                    { "LR8 Full", "LR8 Full (48 dB/oct)" } };
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
 /// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
@@ -524,8 +545,12 @@ inline constexpr double kOnePhaseUnit = 1.0;
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // Global
-    {"mode", "Mode", 1.0, 10.0, 6.0, true, device::Unit::Choice, kModeNames, false, false,
-     "Crossover filter type — how the spectrum is split into bands"},
+    {.key = "mode", .name = "Mode", .min = 1.0, .max = 14.0, .def = 6.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
+     .modulatable = false, .offsetsMayLeaveRange = false,
+     .tooltip = "Crossover filter type — how the spectrum is split into bands. LR2, LR4 and LR8 are Linkwitz-Riley pairs at 12, 24 and 48 dB per octave; "
+                "Linear splits with linear-phase FIRs (the width is how far the transition runs from -0.1 dB to -60 dB): the bands sum to the input "
+                "delayed by 24 ms, which the device reports as latency",
+     .choiceAliases = kModeAliases},
     // ON BY DEFAULT — all effects should default to on when they are added.
     // See `fx::filter::kParamDescs` for the decision and what it replaced. This device is also the one
     // whose two declarations had already drifted: `Settings::enabled` said true while this said 0,

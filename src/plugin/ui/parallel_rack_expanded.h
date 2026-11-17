@@ -171,7 +171,7 @@ public:
 	[[nodiscard]] SwitchChip& keyTrackForTest() const { return *keyTrack_; }
 	[[nodiscard]] ValueBox& bandsBoxForTest() const { return *bandsBox_; }
 	[[nodiscard]] ValueBox& filteringBoxForTest() const { return *filteringBox_; }
-	[[nodiscard]] SegmentedControl& slopeForTest() const { return *slope_; }
+	[[nodiscard]] ValueBox& slopeForTest() const { return *slope_; }
 	/// Press "+ Chain", as a hand does.
 	void addChainForTest() { addChain(); }
 	/// Press a chain's ×, as a hand does.
@@ -270,7 +270,7 @@ private:
 	std::vector<std::unique_ptr<DeviceControl>> bandControls_;
 	std::unique_ptr<ValueBox> bandsBox_;
 	std::unique_ptr<ValueBox> filteringBox_;
-	std::unique_ptr<SegmentedControl> slope_;
+	std::unique_ptr<ValueBox> slope_;
 	std::unique_ptr<RackSpectrumStrip> spectrum_;
 	std::unique_ptr<RackPositionBar> positionBar_;
 	/// THE TABS AND PADS VIEWS: the model and the strike pulse are declared BEFORE the widgets that read them, so they outlive them.

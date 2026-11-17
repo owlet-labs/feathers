@@ -36,7 +36,7 @@ namespace {
 
 namespace owltt = feathers::fx::owltt;
 
-/// The crossover type names, indexed by mode (1-10, no "Off" - Enabled handles bypass).
+/// The crossover type names, indexed by mode (1-13, no "Off" - Enabled handles bypass).
 const char* modeName(int32_t mode) {
 	switch (mode) {
 	case 1: return "AP 6dB";
@@ -49,6 +49,10 @@ const char* modeName(int32_t mode) {
 	case 8: return "LR4";
 	case 9: return "Inverted";
 	case 10: return "Twist3";
+	case 11: return "Linear";
+	case 12: return "Linear Mild";
+	case 13: return "Linear Gentle";
+	case 14: return "LR8";
 	default: return "?";
 	}
 }

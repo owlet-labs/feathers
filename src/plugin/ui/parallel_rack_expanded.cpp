@@ -123,7 +123,7 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	};
 	bandsBox_ = std::make_unique<ValueBox>(*own(pr::Param::BandCount), "Bands");
 	filteringBox_ = std::make_unique<ValueBox>(*own(pr::Param::Filtering), "Filtering");
-	slope_ = std::make_unique<SegmentedControl>(*own(pr::Param::Slope), registry, pr::kSlopeFaceNames, notifier);
+	slope_ = std::make_unique<ValueBox>(*own(pr::Param::Slope), "Slope");
 	addChild(bandsBox_.get());
 	addChild(filteringBox_.get());
 	addChild(slope_.get());
@@ -390,8 +390,8 @@ void ParallelRackExpanded::layOut() {
 	y += ValueBox::kHeight + kPad * 0.5f;
 	filteringBox_->setBounds(bx, y, kColumnWidth, ValueBox::kHeight);
 	y += ValueBox::kHeight + kPad * 0.5f;
-	slope_->setBounds(bx, y, kColumnWidth, SwitchChip::kHeight);
-	y += kSegmentRow;
+	slope_->setBounds(bx, y, kColumnWidth, ValueBox::kHeight);
+	y += ValueBox::kHeight + kPad * 0.5f;
 	keyTrack_->setBounds(bx, y, kColumnWidth, SwitchChip::kHeight);
 	y += kSegmentRow;
 	for (size_t k = 0; k < 4; ++k) {

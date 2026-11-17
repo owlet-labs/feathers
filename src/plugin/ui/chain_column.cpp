@@ -856,13 +856,14 @@ visage::PopupMenu ChainColumn::addMenuForTest(DeviceInstanceId before, bool afte
 	// **THE ANCHOR IS THE CARD'S DEVICE, CAPTURED NOW** (backlog CR) — its identity, not the position the
 	// menu was drawn at. A card that moves between this open and the pick is still the card the hand meant.
 	menu.onSelection() = [this, offered, before, after](int id) {
-		if (id >= 0 && static_cast<size_t>(id) < offered.size()) {
-			const char* tag = offered[static_cast<size_t>(id)]->traits.tag;
-			if (after && before != kNoInstance) {
-				addDeviceAfter(before, tag);
-			}
-			else {
-				addDevice(tag, before);
+		const AddShortcut* shortcut = shortcutOfId(offered.size(), id);
+		if (shortcut != nullptr || (id >= 0 && static_cast<size_t>(id) < offered.size())) {
+			const char* tag = shortcut != nullptr ? shortcut->tag : offered[static_cast<size_t>(id)]->traits.tag;
+			const DeviceInstanceId made = after && before != kNoInstance ? addDeviceAfter(before, tag) : addDevice(tag, before);
+			// A SHORTCUT IS THE DEVICE, SET UP ON THE WAY IN (`device_shortcuts.h`).
+			if (shortcut != nullptr && made != kNoInstance) {
+				bridge_.setField(made, shortcut->view, shortcut->viewValue);
+				bridge_.setField(made, shortcut->mode, shortcut->modeValue);
 			}
 		}
 	};

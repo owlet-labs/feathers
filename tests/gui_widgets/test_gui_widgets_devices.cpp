@@ -22,6 +22,7 @@
 // THE DEVICE CARDS — the table shaper's two surfaces, the automodulator's strip and panel, the shaper's two plots, and the structural sweeps. Lines 30294–36148 of the one file, moved verbatim 2026-09-03; three mod-ring cases went to test_gui_widgets_mod_ring.cpp.
 
 #include "fixtures.h"
+#include "plugin/ui/device_shortcuts.h"
 #include "../card_head_check.h"
 #include "plugin/ui/edge_pan.h"
 #include "plugin/ui/mode_value_cell.h"
@@ -23739,6 +23740,14 @@ void checkFiledByCategory(const visage::PopupMenu& menu, const std::vector<const
 		}
 		std::stable_sort(names.begin(), names.end(),
 		                 [&](const std::string& a, const std::string& b) { return lowered(a) < lowered(b); });
+		// THE SHORTCUTS (`device_shortcuts.h`) follow the devices, in the category of the device they add.
+		for (const ui::AddShortcut& shortcut : ui::kAddShortcuts) {
+			for (const device::Descriptor* d : offered) {
+				if (d->category == cat && std::string(d->traits.tag) == shortcut.tag) {
+					names.emplace_back(shortcut.name);
+				}
+			}
+		}
 		if (!names.empty()) {
 			expected.push_back({ device::categoryName(cat), names });
 		}
@@ -23758,6 +23767,11 @@ void checkFiledByCategory(const visage::PopupMenu& menu, const std::vector<const
 		CHECK_FALSE(item.hasOptions());
 		CHECK(item.name().toUtf8() == name);
 		REQUIRE(item.id() >= 0);
+		if (const ui::AddShortcut* shortcut = ui::shortcutOfId(offered.size(), item.id()); shortcut != nullptr) {
+			CHECK(std::string(shortcut->name) == name); // a shortcut: a device set up on the way in
+			CHECK(item.enabled() == enabled);
+			return;
+		}
 		REQUIRE(static_cast<size_t>(item.id()) < offered.size());
 		CHECK(std::string(offered[static_cast<size_t>(item.id())]->traits.name) == name);
 		CHECK(item.enabled() == enabled);
@@ -23824,6 +23838,11 @@ void menuNames(const visage::PopupMenu& menu, std::vector<std::string>& out) {
 
 /// The registry's tag for a device NAME — independent of any menu id.
 const char* tagOfName(const std::string& name) {
+	for (const ui::AddShortcut& shortcut : ui::kAddShortcuts) {
+		if (name == shortcut.name) {
+			return shortcut.tag; // a shortcut adds the device it is a way in for
+		}
+	}
 	for (const device::Descriptor& d : feathers::kDevices) {
 		if (name == d.traits.name) {
 			return d.traits.tag;
@@ -23876,6 +23895,14 @@ TEST_CASE("the fx lane's add menu is filed by category, and picking a row adds e
 		menu.onSelection().callback(id);
 		CHECK(f.lane->deviceCount() == before + 1);
 		CHECK(fxHolds(f.bridge.fxChain(), before, tagOfName(name)));
+		// A SHORTCUT'S DEVICE ARRIVES SET UP: the Rack in the view and routing the row names.
+		for (const ui::AddShortcut& shortcut : ui::kAddShortcuts) {
+			if (name == shortcut.name) {
+				const feathers::DeviceInstanceId made = f.bridge.fxDeviceAt(before);
+				CHECK(f.deviceHost.fieldAt(made, shortcut.view) == shortcut.viewValue);
+				CHECK(f.deviceHost.fieldAt(made, shortcut.mode) == shortcut.modeValue);
+			}
+		}
 	}
 	// AN INSERT FROM THE CARD'S MENU LANDS BEFORE THAT CARD.
 	{
@@ -23959,7 +23986,16 @@ TEST_CASE("a chain column's add menu is filed by category — effects AND modula
 		REQUIRE(held.bridge().chainLength(0) == 1);
 		const device::Descriptor* got = held.bridge().descriptorOf(held.bridge().deviceAtPosition(0));
 		REQUIRE(got != nullptr);
-		CHECK(std::string(got->traits.name) == name);
+		// A SHORTCUT ADDS THE DEVICE IT IS A WAY IN FOR (the Rack), set up on the way in.
+		const char* expectedTag = tagOfName(name);
+		CHECK(std::string(got->traits.tag) == expectedTag);
+		for (const ui::AddShortcut& shortcut : ui::kAddShortcuts) {
+			if (name == shortcut.name) {
+				const feathers::DeviceInstanceId made = held.bridge().deviceAtPosition(0);
+				CHECK(held.bridge().fieldAt(made, shortcut.view) == shortcut.viewValue);
+				CHECK(held.bridge().fieldAt(made, shortcut.mode) == shortcut.modeValue);
+			}
+		}
 	}
 }
 
@@ -35494,8 +35530,8 @@ TEST_CASE("Rack stage 2: the card and the window offer the Mode as a dropdown an
 	refresh();
 
 	// THE MODE IS A LIST SHOWN BEFORE ANYTHING MOVES (CLAUDE.md: a multivalue toggle is an antipattern): every mode,
-	// the menu the box opens itself, on the card and in the window.
-	for (ui::ValueBox* box : { &card->modeBoxForTest(), &panel->modeBoxForTest() }) {
+	// the menu the box opens itself, in the window (the card carries no mode selector).
+	for (ui::ValueBox* box : { &panel->modeBoxForTest() }) {
 		CHECK(box->choiceMenuAvailable());
 		CHECK(box->opensMenu());
 		CHECK(box->entryCount() == static_cast<size_t>(pr::Mode::kCount));
@@ -35512,7 +35548,7 @@ TEST_CASE("Rack stage 2: the card and the window offer the Mode as a dropdown an
 		refresh();
 		CHECK(card->positionKnobForTest().isVisible());
 		CHECK(panel->positionKnobForTest().isVisible());
-		CHECK(card->modeBoxForTest().readout() == pr::kModeNames[static_cast<size_t>(mode)]);
+		CHECK(panel->modeBoxForTest().readout() == pr::kModeNames[static_cast<size_t>(mode)]);
 	}
 	// THE READOUT IS THE RACK'S OWN WORDS, through the device's hook and the rack's live chain count.
 	f.deviceHost.setField(r.id, static_cast<size_t>(pr::Param::Mode), static_cast<float>(pr::Mode::Select));
@@ -35668,7 +35704,7 @@ TEST_CASE("Rack stage 2, step 4: every multi-choice control shows its choices be
 	RackViews v;
 	v.set(pr::Param::Mode, static_cast<float>(pr::Mode::Bands));
 	v.refresh();
-	for (ui::ValueBox* box : { &v.card->modeBoxForTest(), &v.card->bandsBoxForTest() }) {
+	for (ui::ValueBox* box : { &v.panel->modeBoxForTest(), &v.card->bandsBoxForTest() }) {
 		CHECK(box->choiceMenuAvailable());
 		CHECK(box->opensMenu());
 	}

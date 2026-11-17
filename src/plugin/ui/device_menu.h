@@ -22,6 +22,9 @@
 #pragma once
 
 #include "device/device_groups.h"
+#include "plugin/ui/device_shortcuts.h"
+
+#include <cstring>
 
 #include <visage/ui.h>
 
@@ -53,10 +56,21 @@ void addCategorisedDevices(visage::PopupMenu& menu, const std::vector<const devi
 	const auto row = [&](visage::PopupMenu& into, size_t i) {
 		into.addOption(static_cast<int>(i), offered[i]->traits.name).enable(enabled(i));
 	};
+	// THE SHORTCUTS (`device_shortcuts.h`): a device that arrives set up, offered wherever the Rack is, in its category and after the devices.
+	const auto shortcuts = [&](visage::PopupMenu& into, device::Category category) {
+		for (size_t k = 0; k < kAddShortcuts.size(); ++k) {
+			for (size_t i = 0; i < offered.size(); ++i) {
+				if (offered[i]->category == category && std::strcmp(offered[i]->traits.tag, kAddShortcuts[k].tag) == 0) {
+					into.addOption(static_cast<int>(offered.size() + k), kAddShortcuts[k].name).enable(enabled(i));
+				}
+			}
+		}
+	};
 	if (groups.size() == 1) {
 		for (const size_t i : groups.front().members) {
 			row(menu, i);
 		}
+		shortcuts(menu, groups.front().category);
 		return;
 	}
 	for (const device::CategoryGroup& g : groups) {
@@ -64,6 +78,7 @@ void addCategorisedDevices(visage::PopupMenu& menu, const std::vector<const devi
 		for (const size_t i : g.members) {
 			row(sub, i);
 		}
+		shortcuts(sub, g.category);
 		menu.addSubMenu(std::move(sub));
 	}
 }

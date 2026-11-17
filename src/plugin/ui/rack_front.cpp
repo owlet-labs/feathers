@@ -48,7 +48,7 @@ void RackFrontColumn::dropColumn() {
 	bindHistory();
 }
 
-bool RackFrontColumn::follow(size_t viewed, bool open) {
+bool RackFrontColumn::follow(size_t viewed, bool open, bool shown) {
 	// THE RACK ASKED AFRESH (its handle is contemporaneous, never remembered), and the chain's identity compared, never dereferenced.
 	pr::Rack* rack = pr::rackOf(host_.containerSurfaceOf(rack_));
 	rack::InnerChain* chain = rack != nullptr && viewed < rack->chainCount() ? rack->chainAt(viewed) : nullptr;
@@ -74,10 +74,12 @@ bool RackFrontColumn::follow(size_t viewed, bool open) {
 	if (column_ != nullptr) {
 		column_->syncCards();
 		// THE CLOSED CHAIN IS ITS FIRST CARD; an EMPTY chain keeps the (+) so its first device can be added from here.
-		column_->setShownLimit(open ? static_cast<size_t>(-1) : 1);
-		column_->setAddShown(open || column_->deviceCount() == 0);
-		changed = changed || open_ != open;
+		// NOT SHOWN: no card at all (the Pads view's put-away chain); else the first alone (closed) or all of it (open).
+		column_->setShownLimit(!shown ? 0 : (open ? static_cast<size_t>(-1) : 1));
+		column_->setAddShown(shown && (open || column_->deviceCount() == 0));
+		changed = changed || open_ != open || shown_ != shown;
 		open_ = open;
+		shown_ = shown;
 		column_->setBounds(0.0f, 0.0f, static_cast<float>(width()), static_cast<float>(height()));
 	}
 	return changed;

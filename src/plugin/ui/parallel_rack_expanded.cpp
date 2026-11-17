@@ -533,9 +533,14 @@ bool ParallelRackExpanded::follow() {
 	// hook from writing a half-applied picture back over the rack.
 	if (rack != nullptr) {
 		applying_ = true;
+		// IN TABS THE CHAIN IN FRONT IS ALWAYS OPEN and no rail has a collapse control (the chain's stored flag is the card's arrow's, and is
+		// left as it is): a collapsed chain was a chain nobody could see how to add an effect to. Strips is as it always was.
+		const bool tabs = model_ != nullptr && model_->view() == RackViewKind::Tabs;
 		for (size_t i = 0; i < rails_.size(); ++i) {
-			if (rails_[i]->rail->collapsed() == rack->open(i)) {
-				(void)rails_[i]->rail->setCollapsed(!rack->open(i));
+			const bool wantOpen = tabs || rack->open(i);
+			rails_[i]->rail->setCollapsible(!tabs);
+			if (rails_[i]->rail->collapsed() == wantOpen) {
+				(void)rails_[i]->rail->setCollapsed(!wantOpen);
 				rebuilt = true;
 			}
 		}

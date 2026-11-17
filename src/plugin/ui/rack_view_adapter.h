@@ -87,6 +87,11 @@ public:
 	void setPage(int page) override;
 	bool expanded(size_t slot) const override;
 	void setExpanded(size_t slot, bool expanded) override;
+	/// THE PADS' CHAIN IN FRONT in three steps: 0 closed (the pads alone), 1 first (the first card), 2 whole (the chain). Editor-only (it
+	/// folds a view and writes nothing the sound or a patch holds, so it carries no key; the rack's own open flag is Tabs' and keeps its
+	/// meaning), per rack, and First by default. Tabs never reads it.
+	[[nodiscard]] int padsFront() const noexcept { return padsFront_; }
+	void setPadsFront(int state) noexcept { padsFront_ = state < 0 ? 0 : (state > 2 ? 2 : state); }
 	bool macrosOpen() const override { return macrosOpen_; }
 	void setMacrosOpen(bool open) override { macrosOpen_ = open; }
 	RackKeyMask takeStruck() override;
@@ -116,6 +121,7 @@ private:
 	DeviceInstanceId id_;
 	Controls controls_;
 	bool macrosOpen_ = false;
+	int padsFront_ = 1;
 };
 
 } // namespace feathers::ui

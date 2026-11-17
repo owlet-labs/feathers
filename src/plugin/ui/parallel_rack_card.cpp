@@ -1013,9 +1013,9 @@ void ParallelRackCard::layOut() {
 	playingBox_->setBounds(left, y, wide, ValueBox::kHeight);
 	y += p.playingRow ? ValueBox::kHeight + kRowGap : 0.0f;
 	if (p.bands) {
-		// THE SLOPE'S TWO LABELS NEED THE ROOM: the count narrow, the filtering middling, the slope the rest.
-		const float countW = std::round(wide * 0.22f);
-		const float filterW = std::round(wide * 0.30f);
+		// THE SLOPE'S THREE LABELS NEED THE ROOM (24 dB, 12 dB, Linear): the count narrow, the filtering middling, the slope the rest.
+		const float countW = std::round(wide * 0.20f);
+		const float filterW = std::round(wide * 0.27f);
 		bandsBox_->setBounds(left, y, countW - kRowGap, ValueBox::kHeight);
 		filteringBox_->setBounds(left + countW, y, filterW - kRowGap, ValueBox::kHeight);
 		slope_->setBounds(left + countW + filterW, y + (ValueBox::kHeight - kSegmentHeight) * 0.5f, wide - countW - filterW,

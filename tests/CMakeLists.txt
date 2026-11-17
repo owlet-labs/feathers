@@ -2155,3 +2155,8 @@ add_executable(test_fx_owltt_linear test_fx_owltt_linear.cpp)
 target_link_libraries(test_fx_owltt_linear PRIVATE feathers-fx feathers-warnings)
 target_include_directories(test_fx_owltt_linear PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME fx-owltt-linear COMMAND test_fx_owltt_linear)
+
+# THE LINEAR CROSSOVER'S COST (OWLTT Mode 11 and the Rack's Linear slope against LR4) - NOT A TEST: bench_phaser's posture.
+add_executable(bench_linear_crossover bench_linear_crossover.cpp)
+target_link_libraries(bench_linear_crossover PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(bench_linear_crossover PRIVATE ${CMAKE_SOURCE_DIR}/src)

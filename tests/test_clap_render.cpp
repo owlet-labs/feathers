@@ -966,6 +966,69 @@ TEST_CASE("a reverb's tail keeps the plugin awake: SLEEP is never promised while
 	CHECK(slept); // it does sleep in the end: a decaying reverb reaches exact silence
 }
 
+TEST_CASE("a Linear crossover's FIR tail keeps the plugin awake, then reaches exact silence: SLEEP is never promised while it sounds") {
+	// The reverb case's road for the linear-phase crossover (OWLTT's Mode 11, the Rack's Linear slope): after the last voice dies
+	// the FIR still rings for its kernel's length and the bands are 24 ms late, so a plugin that slept on "no voices" would cut it.
+	// SLEEP waits for an exactly silent block, which the FIR reaches (partitions of zero spectra accumulate exactly 0.0f).
+	struct Setup {
+		const char* tag;
+		std::vector<std::pair<const char*, double>> controls;
+	};
+	const std::vector<Setup> setups {
+		{ feathers::fx::owltt::kTraits.tag, { { "Mode", 11.0 } } },
+		{ feathers::rack::parallel::kTraits.tag, { { "Rack Mode", 5.0 }, { "Rack Slope", 2.0 }, { "Rack Filtering", 2.0 } } },
+	};
+	for (const Setup& setup : setups) {
+		CAPTURE(setup.tag);
+		HostedPlugin host;
+		const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(
+		    host.plugin()->get_extension(host.plugin(), CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(chain != nullptr);
+		const uint32_t slot = chain->add_device(host.plugin(), setup.tag);
+		REQUIRE(slot != UINT32_MAX);
+		for (const auto& [name, value] : setup.controls) {
+			CAPTURE(name);
+			REQUIRE(chain->set_control(host.plugin(), slot, name, value));
+		}
+		const clap_plugin* p = host.plugin();
+		p->stop_processing(p);
+		p->deactivate(p);
+		REQUIRE(p->activate(p, 48000.0, 1, 4096));
+		REQUIRE(p->start_processing(p));
+
+		constexpr uint32_t kFrames = 256;
+		EventList events;
+		events.pushNote(CLAP_EVENT_NOTE_ON, 0, 60, 1, 1.0);
+		host.run(kFrames, events);
+		events.clear();
+		for (int b = 0; b < 20; ++b) {
+			host.run(kFrames, events);
+		}
+		events.pushNote(CLAP_EVENT_NOTE_OFF, 0, 60, 1, 0.0);
+		host.run(kFrames, events);
+		events.clear();
+		int blocks = 0;
+		int soundingAfterSleep = 0;
+		bool slept = false;
+		float peakWhenSlept = 0.0f;
+		while (blocks < 30 * 48000 / static_cast<int>(kFrames)) {
+			const clap_process_status status = host.run(kFrames, events);
+			++blocks;
+			if (status == CLAP_PROCESS_SLEEP) {
+				slept = true;
+				host.run(kFrames, events);
+				peakWhenSlept = peakOf(host.left(), kFrames);
+				soundingAfterSleep += peakWhenSlept > 0.0f ? 1 : 0;
+				break;
+			}
+		}
+		CAPTURE(blocks);
+		CAPTURE(peakWhenSlept);
+		CHECK(soundingAfterSleep == 0);
+		CHECK(slept); // it does sleep in the end: the FIR's tail reaches exact silence
+	}
+}
+
 TEST_CASE("an EQ in the plugin's chain computes its spectrum only while a view renews the lease, on the plugin's own sink road") {
 	// THE WHOLE ROAD BUT THE GRAPH'S OWN ASK (which the widget case "EQ's graph asks the device ..." covers): the EQ is
 	// built into the plugin's lane, feathers_clap installs ITS sink and its `wanted` lambda on it, the lease is renewed on the

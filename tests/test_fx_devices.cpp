@@ -1783,6 +1783,47 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 			CHECK_MESSAGE(bbdLast < silentBlocks / 2, "the Delay in BBD still sounding halfway through the silence");
 			CHECK_FALSE(bbd.ops->holdsTail(bbd.mem));
 		}
+		// **THE LINEAR CROSSOVER'S FIR TAILS** (OWLTT's Mode 11, the Rack's Linear slope in each Filtering): a convolution of a
+		// burst rings for its kernel's length and must then be EXACT zero, with the device saying it holds nothing.
+		std::vector<DeviceRow> linearRows;
+		if (device::sameTag(desc->traits.tag, fx::owltt::kTraits.tag)) {
+			DeviceRow linearRow = row;
+			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = 11.0f;
+			linearRows.push_back(linearRow);
+		}
+		if (device::sameTag(desc->traits.tag, rack::parallel::kTraits.tag)) {
+			for (const float filtering : { 0.0f, 1.0f, 2.0f }) {
+				DeviceRow linearRow = row;
+				linearRow.field[static_cast<size_t>(rack::parallel::Param::Slope)] = 2.0f;
+				linearRow.field[static_cast<size_t>(rack::parallel::Param::Filtering)] = filtering;
+				linearRows.push_back(linearRow);
+			}
+		}
+		for (const DeviceRow& linearRow : linearRows) {
+			Raw lin(*desc, 48000.0, linearRow);
+			for (int done = 0; done < burstFrames; done += kFrames) {
+				std::copy(burst.begin(), burst.end(), l.begin());
+				std::copy(burst.begin(), burst.end(), r.begin());
+				lin.process(l.data(), r.data(), kFrames);
+			}
+			int linearLast = -1;
+			for (int b = 0; b < silentBlocks; ++b) {
+				std::fill(l.begin(), l.end(), 0.0f);
+				std::fill(r.begin(), r.end(), 0.0f);
+				lin.process(l.data(), r.data(), kFrames);
+				for (int i = 0; i < kFrames; ++i) {
+					if (l[i] != 0.0f || r[i] != 0.0f) {
+						linearLast = b;
+						break;
+					}
+				}
+			}
+			MESSAGE(who << " on the Linear crossover: last non-zero block " << linearLast << " of " << silentBlocks);
+			CHECK_MESSAGE(linearLast >= 0, "the Linear crossover made no tail on ", who, " - the claim below is vacuous");
+			CHECK_MESSAGE(linearLast < silentBlocks / 2, "the Linear crossover is still sounding halfway through the silence on ", who);
+			const bool linearHolds = lin.ops->holdsTail != nullptr && lin.ops->holdsTail(lin.mem);
+			CHECK_FALSE(linearHolds);
+		}
 		if (device::sameTag(desc->traits.tag, fx::noise::kTraits.tag)) {
 			// **NOISE GENERATES: WITH LEVEL UP IT SOUNDS FOR EVER, BY DESIGN, AND SAYS SO** (backlog MZ). The rule's third
 			// clause: a device that sustains by design stays awake, and no timeout. So the varied row (Level up) sounds to

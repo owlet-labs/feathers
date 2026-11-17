@@ -20,6 +20,7 @@
  */
 
 
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/eroder_plot.h"
 #include "fx/eroder/loops.h"
 #include "fx/eroder/shell.h"
@@ -227,6 +228,9 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		update();
 	};
 	onMouseWheel() = [this](const visage::MouseEvent& e) {
+		if (!cardTakesWheel(*this, e)) {
+			return false;
+		}
 		// WIDTH IS THE NOISE BAND'S: with the shake all sine the wheel has nothing to turn.
 		if (!dust_ || etch_ || e.wheel_delta_y == 0.0f || !(settings_.source > 0.0f)) {
 			return false;

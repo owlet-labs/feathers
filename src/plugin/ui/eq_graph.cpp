@@ -19,6 +19,7 @@
  * in all copies or substantial portions of this file.
  */
 
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/eq_graph.h"
 
 #include "fx/eq/eq_readout.h"
@@ -151,6 +152,9 @@ EqGraph::EqGraph(backplane::DeviceHost& host, DeviceInstanceId id, ControlFn con
 	};
 	// THE WHEEL OVER A HANDLE IS ITS Q — a tenth of an octave a notch, a fiftieth with Shift.
 	onMouseWheel() = [this](const visage::MouseEvent& e) -> bool {
+		if (!cardTakesWheel(*this, e)) {
+			return false;
+		}
 		const View v = baseView();
 		const int b = bandAt(e.position, v);
 		if (b < 0 || e.wheel_delta_y == 0.0f) {

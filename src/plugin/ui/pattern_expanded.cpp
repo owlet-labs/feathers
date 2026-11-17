@@ -19,6 +19,7 @@
  * in all copies or substantial portions of this file.
  */
 
+#include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/pattern_expanded.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/mod_route_menu.h"
@@ -291,7 +292,7 @@ void PatternTerrain::setZoom(double zoom) {
 }
 
 bool PatternTerrain::mouseWheel(const visage::MouseEvent& e) {
-	if (e.wheel_delta_y == 0.0f) {
+	if (e.wheel_delta_y == 0.0f || !cardTakesWheel(*this, e)) {
 		return false;
 	}
 	setZoom(e.wheel_delta_y > 0.0f ? zoom_ * 1.25 : zoom_ / 1.25);

@@ -42457,6 +42457,7 @@ TEST_CASE("ERODER's plot draws Dust's band from the device's own mapping: the ha
 
 TEST_CASE("ERODER's plot handle writes Freq across and Amount up, the wheel Width; the Comb's picture writes nothing") {
 	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	d.card->setFocused(true); // ON A CARD THE WHEEL ACTS ONLY WHEN IT IS FOCUSED
 	d.set(eroAt(ero::Param::Freq), 10.0f);
 	d.set(eroAt(ero::Param::Amount), -13.0f);
 	d.set(eroAt(ero::Param::Width), 0.5f);

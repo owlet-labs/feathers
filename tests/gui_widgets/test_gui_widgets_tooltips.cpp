@@ -37,6 +37,8 @@
 #include "fx/sklitter/sklitter_types.h"
 #include "plugin/device_registry.h"
 #include "plugin/ui/delay_card.h"
+#include "plugin/ui/eroder_card.h"
+#include "fx/eroder/eroder_types.h"
 #include "plugin/ui/paged_controls.h"
 #include "plugin/ui/chain_column.h"
 #include "plugin/ui/controls.h"
@@ -4036,4 +4038,136 @@ TEST_CASE("a gate's relayout is a resize's: every card and window, every gate va
 	CHECK_MESSAGE(failures.empty(), failures.size() << " gate move(s) whose relayout is not a resize's (above)");
 	MESSAGE("gate moves: " << moves);
 	CHECK(moves > 40);
+}
+
+namespace {
+
+/// A WHEEL DELIVERED AT `frame`'s CENTRE and walked the way visage's window handler walks it: the frame first, then up
+/// the parents until one answers. Returns the frame that took it, or null.
+visage::Frame* cardWheelFrom(visage::Frame* frame, float dy, int modifiers) {
+	visage::MouseEvent e;
+	e.wheel_delta_y = dy;
+	e.precise_wheel_delta_y = dy;
+	e.modifiers = modifiers;
+	const visage::Point window = frame->positionInWindow() + visage::Point { frame->width() * 0.5f, frame->height() * 0.5f };
+	e.window_position = window;
+	for (visage::Frame* at = frame; at != nullptr; at = at->parent()) {
+		if (at->ignoresMouseEvents()) {
+			continue;
+		}
+		e.position = window - at->positionInWindow();
+		e.event_frame = at;
+		if (at->processMouseWheel(e)) {
+			return at;
+		}
+	}
+	return nullptr;
+}
+
+void collectFrames(visage::Frame* root, std::vector<visage::Frame*>& out) {
+	out.push_back(root);
+	for (visage::Frame* child : root->children()) {
+		collectFrames(child, out);
+	}
+}
+
+} // namespace
+
+TEST_CASE("a card takes the wheel only when it is focused: every device's card, unfocused, hands every wheel to the lane") {
+	// **ON A CARD THE WHEEL IS THE LANE'S** (`ui::cardTakesWheel`). Every device is placed where a hand would put it,
+	// the card is NOT focused, and a wheel is delivered at the centre of EVERY visible frame of its tree (a frame's
+	// handler is not introspectable, so every frame is asked). The frame that answers must lie outside the card
+	// (the lane, or nobody), and no field of the device may have moved. Then the Eroder's card is focused and its plot
+	// takes the wheel by value; Ctrl/Cmd takes it on an unfocused card.
+	namespace ero = feathers::fx::eroder;
+	size_t cards = 0;
+	size_t framesAsked = 0;
+	std::vector<std::string> failures;
+	for (const device::Descriptor& desc : kDevices) {
+		const std::string tag = desc.traits.tag;
+		ModFixture f;
+		const Placed placed = place(f, desc);
+		if (placed.device == kNoInstance || placed.card == nullptr) {
+			continue;
+		}
+		f.gui.tickForTest();
+		placed.card->resized();
+		(void)placed.card->update();
+		placed.card->setFocused(false);
+		++cards;
+		const auto snapshot = [&] {
+			std::vector<float> v;
+			for (size_t i = 0; i < desc.params.size(); ++i) {
+				v.push_back(f.deviceHost.fieldAt(placed.device, i));
+			}
+			return v;
+		};
+		const std::vector<float> before = snapshot();
+		std::vector<visage::Frame*> frames;
+		collectFrames(placed.card, frames);
+		for (visage::Frame* frame : frames) {
+			if (!frame->isVisible() || frame->width() <= 0.0f || frame->height() <= 0.0f) {
+				continue;
+			}
+			for (const float dy : { 1.0f, -1.0f }) {
+				++framesAsked;
+				visage::Frame* took = cardWheelFrom(frame, dy, 0);
+				if (took != nullptr && [&] {
+					for (const visage::Frame* up = took; up != nullptr; up = up->parent()) {
+						if (up == placed.card) {
+							return true;
+						}
+					}
+					return false;
+				}()) {
+					failures.push_back(tag + ": " + typeid(*took).name() + " took an unfocused card's wheel");
+				}
+			}
+		}
+		if (snapshot() != before) {
+			failures.push_back(tag + ": an unfocused card's wheel changed a parameter");
+		}
+	}
+	for (const std::string& line : failures) {
+		MESSAGE(line);
+	}
+	CHECK(failures.empty());
+	CHECK(cards > 20);        // NON-VACUITY: the sweep reached the devices
+	CHECK(framesAsked > 200); // and a wheel was delivered to many frames
+
+	// THE ERODER'S PLOT: unfocused it declines, focused it turns Width by one notch, Ctrl turns it unfocused.
+	const device::Descriptor* eroder = nullptr;
+	for (const device::Descriptor& d : kDevices) {
+		if (std::string(d.traits.tag) == ero::kTraits.tag) {
+			eroder = &d;
+		}
+	}
+	REQUIRE(eroder != nullptr);
+	ModFixture f;
+	const Placed placed = place(f, *eroder);
+	REQUIRE(placed.card != nullptr);
+	auto* card = dynamic_cast<ui::EroderCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	f.bridge.setDeviceControl(placed.device, static_cast<size_t>(ero::Param::Width), 0.5f);
+	f.bridge.refresh();
+	(void)card->updateContent();
+	ui::EroderPlot* plot = card->plotForTest();
+	REQUIRE(plot != nullptr);
+	const auto width = [&] { return f.deviceHost.fieldAt(placed.device, static_cast<size_t>(ero::Param::Width)); };
+	const float y = 0.5f * (plot->plotTopForTest() + plot->plotFootForTest());
+	visage::MouseEvent wheel;
+	wheel.position = { plot->handleXForTest(), y };
+	wheel.wheel_delta_y = 1.0f;
+	card->setFocused(false);
+	CHECK_FALSE(plot->onMouseWheel().callback(wheel));
+	CHECK(width() == 0.5f);
+	wheel.modifiers = visage::kModifierRegCtrl;
+	CHECK(plot->onMouseWheel().callback(wheel));
+	CHECK(width() == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
+	wheel.modifiers = 0;
+	f.bridge.setDeviceControl(placed.device, static_cast<size_t>(ero::Param::Width), 0.5f);
+	f.bridge.refresh();
+	card->setFocused(true);
+	CHECK(plot->onMouseWheel().callback(wheel));
+	CHECK(width() == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
 }

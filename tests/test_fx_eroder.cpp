@@ -6869,7 +6869,7 @@ TEST_CASE("Paunch-OH: a sine switched on from silence — the imbalance is measu
 namespace {
 
 /// A 64-BIT FNV-1a HASH of every output bit of the engine over a burst, a pause and a tail of silence, both channels, in blocks of 480.
-uint64_t engineHash(Mode mode, DriveMode type, float shape) {
+[[maybe_unused]] uint64_t engineHash(Mode mode, DriveMode type, float shape) { // its one caller is Linux-only (the pin)
 	Settings s = declared();
 	s.mode = mode;
 	s.mix = 1.0f;

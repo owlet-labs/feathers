@@ -1107,6 +1107,7 @@ TEST_CASE("the five original modes render the bits they rendered before the Erod
 #else
 			(void)h;
 			(void)kPinned;
+			(void)at;
 #endif
 			++at;
 		}

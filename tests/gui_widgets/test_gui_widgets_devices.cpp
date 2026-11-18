@@ -25103,7 +25103,7 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 	// together would still be caught by the first.
 	const std::array<cl::Param, 7> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
 		                                   cl::Param::Depth, cl::Param::Bits, cl::Param::Shape };
-	const std::array<std::set<cl::Param>, 14> expected {
+	const std::array<std::set<cl::Param>, 15> expected {
 		std::set<cl::Param> { cl::Param::Knee },                                         // Soft
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback },   // Texture
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Grit },                        // Grit
@@ -25116,6 +25116,7 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-S
 		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-H
 		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-OS
+		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-OH
 		std::set<cl::Param> { cl::Param::Shape },                                        // Slew
 		std::set<cl::Param> { cl::Param::Shape },                                        // Lopside
 	};
@@ -25232,7 +25233,7 @@ TEST_CASE("CLIP's mode controls close up: Fold's Depth takes the first cell, Bit
 	CHECK(bits->x() == doctest::Approx(knee->x() + knee->width() + ui::ClipCard::kBitsInset));
 
 	// THE ERODER'S SIX: Shape is the row's one knob, in the first cell, in each of them.
-	for (const cl::Mode mode : { cl::Mode::Tube, cl::Mode::Lean, cl::Mode::PaunchS, cl::Mode::PaunchH, cl::Mode::PaunchOS, cl::Mode::Lopside }) {
+	for (const cl::Mode mode : { cl::Mode::Tube, cl::Mode::Lean, cl::Mode::PaunchS, cl::Mode::PaunchH, cl::Mode::PaunchOS, cl::Mode::PaunchOH, cl::Mode::Lopside }) {
 		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
 		(void)card->updateContent();
 		REQUIRE(card->widgetForTest(cl::Param::Shape)->isVisible());
@@ -44198,7 +44199,7 @@ TEST_CASE("A stacked mode cell carries a selector and two value boxes in the hei
 		CHECK(m.select().verbAt({ x, 3.0f }) == ui::ZoneSelect::Verb::Menu);
 	}
 	// "Paunch-S" AND "Paunch-H" ARE AS LONG AS "Lopside": selected, each is drawn at a size that fits, not under the floor.
-	for (const ero::DriveMode type : { ero::DriveMode::PaunchS, ero::DriveMode::PaunchH, ero::DriveMode::PaunchOS }) {
+	for (const ero::DriveMode type : { ero::DriveMode::PaunchS, ero::DriveMode::PaunchH, ero::DriveMode::PaunchOS, ero::DriveMode::PaunchOH }) {
 		m.select().selectZone(static_cast<size_t>(type));
 		CAPTURE(static_cast<int>(type));
 		CHECK(m.select().nameSize() >= ui::kNameFitFloorSize);

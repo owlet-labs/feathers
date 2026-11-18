@@ -371,6 +371,9 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 ///   Paunch-OS the ODD counterpart of Paunch-S: a pure third harmonic of the mid, sized to the signal's own tracked level
 ///            (`paunchOdd`), added to the left and taken from the right, so odd harmonics that are stereo width and vanish in
 ///            mono. Level-independent: the 3rd sits at a/4 of the fundamental at any level. It makes no offset
+///   Paunch-OH the same with the plain cube: LEVEL-DEPENDENT, its 3rd grows with the cube of the level and of `a`
+///            (`kappa3 a^3 (m^3 - 1.5 P m)`, the fundamental leak cancelled from the same tracked level), so quiet passages
+///            stay clean and loud ones spread
 ///   Crush    no shaper: Drive holds each sample longer, Shape rounds it coarser (10 bits down to a bit and a half)
 ///   Decimate no shaper: Drive holds each sample longer, as Crush does, and nothing is rounded. Shape goes from the
 ///            held steps (a plain sample-and-hold) to a straight line from the previous held value to the current one
@@ -382,9 +385,9 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 /// Crush, Decimate, Slew and Lopside are not oversampled and not level-matched (their make-up is 1).
 /// BOTH ENGINES HAVE THE STAGE (`drive_stage.h`), last on their wet: Dust's before its HP Wet, the Comb's on the wet
 /// it is about to add to the dry.
-enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Chonk, PaunchS, PaunchH, PaunchOS, Crush, Decimate, Slew, Lopside, kCount };
+enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Chonk, PaunchS, PaunchH, PaunchOS, PaunchOH, Crush, Decimate, Slew, Lopside, kCount };
 inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean", "Chonk",
-	                                               "Paunch-S", "Paunch-H", "Paunch-OS", "Crush", "Decimate", "Slew", "Lopside" };
+	                                               "Paunch-S", "Paunch-H", "Paunch-OS", "Paunch-OH", "Crush", "Decimate", "Slew", "Lopside" };
 /// THE TYPE FORMERLY CALLED "Paunch" IS "Chonk": a patch stores a Choice by its label, so the old label reads as the new one.
 inline constexpr device::ChoiceAlias kDriveTypeAliases[] = { { "Paunch", "Chonk" } };
 static_assert(sizeof(kDriveModeNames) / sizeof(kDriveModeNames[0]) == static_cast<size_t>(DriveMode::kCount));
@@ -395,7 +398,7 @@ inline constexpr bool driveIsPaunchLaw(DriveMode mode) {
 }
 /// THE LEVEL-TRACKED ODD LAWS (Paunch-OS): they make no offset and keep a one-pole follower of the mid's power.
 inline constexpr bool driveIsPaunchOdd(DriveMode mode) {
-	return mode == DriveMode::PaunchOS;
+	return mode == DriveMode::PaunchOS || mode == DriveMode::PaunchOH;
 }
 /// EITHER FAMILY OF MID LAW: the Amount is linear 0..4, no make-up, no saturation, not a curve of one channel.
 inline constexpr bool driveIsMidLaw(DriveMode mode) {
@@ -832,7 +835,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
 	                "leans left and right opposite ways, so its even harmonics are stereo width, Chonk puts "
 	                "its odd harmonics in opposite polarity left and right and thins, then flips, its right side as Drive rises, Paunch-S adds the rectified mid to the "
 	                "left and takes it from the right: even harmonics that are stereo width and vanish in mono; "
-	                "Paunch-H does it with the square, a pure octave above, Paunch-OS adds a third harmonic sized to the signal's own level to one side and takes it from the other, Crush holds and rounds each sample, "
+	                "Paunch-H does it with the square, a pure octave above, Paunch-OS adds a third harmonic sized to the signal's own level to one side and takes it from the other, Paunch-OH does the same with the plain cube, so it grows quickly with level: quiet passages stay clean and loud ones spread, Crush holds and rounds each sample, "
 	                "Decimate holds each sample, as steps or as lines, Slew limits how fast the signal may move, "
 	                "Lopside lets it rise and fall at different speeds",
 	     .zones = 0,
@@ -1749,6 +1752,10 @@ inline constexpr float kPaunchFollowFlush = 1.0e-20f;
 [[nodiscard]] inline float paunchFollowCoefficient(double rate) noexcept {
 	return static_cast<float>(1.0 - std::exp(-1.0 / (kPaunchFollowSeconds * (rate > 0.0 ? rate : 48000.0))));
 }
+/// **PAUNCH-OH'S COEFFICIENT** `kappa3`: its 3rd harmonic is `kappa3 a^3 A^3 / 4` (`m^3 - 1.5 P m = -(A^3 / 4) sin 3t` for `P = A^2 / 2`)
+/// against Paunch-OS's `a A / 4`; equal at full Amount (`a = 4`) and the reference peak `A = P_ref` when
+/// `kappa3 (4 A)^2 = 1`, so `kappa3 = 1 / (a_max^2 A_ref^2) = 1 / (16 * 0.25) = 0.25`.
+inline constexpr double kPaunchCubeK = 1.0 / (kPaunchAmountMax * kPaunchAmountMax * kDriveReferencePeak * kDriveReferencePeak);
 /// **THE ODD LAWS, ONE FRAME, in place**, with the follower's state `power` (the mean square of the mid) advanced by one sample.
 /// Paunch-OS: `s = a m (q - 0.75)`, `q = min(m^2 / (2 P), 2)`. For `m = A sin t`, `P = A^2 / 2`: `m^3 / A^2 - 0.75 m` is
 /// `-(A / 4) sin 3t`, so `s` is a pure 3rd at `a / 4` of the fundamental at any level, with no fundamental in it and no offset
@@ -1766,6 +1773,9 @@ inline void paunchOdd(DriveMode mode, float& l, float& r, float a, float shape, 
 	float s = 0.0f;
 	if (mode == DriveMode::PaunchOS) {
 		s = a * m * (q - 0.75f);
+	}
+	else if (mode == DriveMode::PaunchOH) {
+		s = static_cast<float>(kPaunchCubeK) * (a * a * a) * (m * m2 - 1.5f * power * m);
 	}
 	paunchSpread(l, r, s, shape);
 }

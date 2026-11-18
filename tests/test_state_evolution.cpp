@@ -786,7 +786,9 @@ TEST_CASE("Eroder: a patch saved with the Drive Type or either Etch slot's Type 
 		CHECK(report.countOf(Kind::LabelUnknown) == 0);
 		// EXACT-LABEL MATCH: the new Types keep their own places.
 		for (const auto& [label, mode] : { std::pair<const char*, er::DriveMode> { "Paunch-S", er::DriveMode::PaunchS },
-		                                   std::pair<const char*, er::DriveMode> { "Paunch-H", er::DriveMode::PaunchH } }) {
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-H", er::DriveMode::PaunchH },
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-OS", er::DriveMode::PaunchOS },
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-OH", er::DriveMode::PaunchOH } }) {
 			rack::LoadReport other;
 			CHECK(loadedLabel(d, key, label, &other) == static_cast<float>(static_cast<int>(mode)));
 			CHECK(other.countOf(Kind::LabelUnknown) == 0);
@@ -802,7 +804,9 @@ TEST_CASE("Clip: a patch saved with the mode Paunch loads as Chonk, and Paunch-S
 	CHECK(loadedLabel(d, "clip_mode", "Paunch", &report) == static_cast<float>(static_cast<int>(cl::Mode::Chonk)));
 	CHECK(report.countOf(Kind::LabelUnknown) == 0);
 	for (const auto& [label, mode] : { std::pair<const char*, cl::Mode> { "Paunch-S", cl::Mode::PaunchS },
-	                                   std::pair<const char*, cl::Mode> { "Paunch-H", cl::Mode::PaunchH } }) {
+	                                   std::pair<const char*, cl::Mode> { "Paunch-H", cl::Mode::PaunchH },
+	                                   std::pair<const char*, cl::Mode> { "Paunch-OS", cl::Mode::PaunchOS },
+	                                   std::pair<const char*, cl::Mode> { "Paunch-OH", cl::Mode::PaunchOH } }) {
 		rack::LoadReport other;
 		CHECK(loadedLabel(d, "clip_mode", label, &other) == static_cast<float>(static_cast<int>(mode)));
 		CHECK(other.countOf(Kind::LabelUnknown) == 0);

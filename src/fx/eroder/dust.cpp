@@ -199,6 +199,7 @@ float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept
 	case DriveMode::PaunchS:
 	case DriveMode::PaunchH:
 	case DriveMode::PaunchOS:
+	case DriveMode::PaunchOH:
 	case DriveMode::Crush:
 	case DriveMode::Decimate:
 	case DriveMode::Slew:
@@ -251,6 +252,10 @@ double driveSlope(DriveMode mode, float shape) noexcept {
 }
 
 double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept {
+	if (mode == DriveMode::PaunchOH) {
+		// A cube has no slope at zero, and the cancelling term shrinks with the tracked level too: the dry alone.
+		return 1.0;
+	}
 	if (mode == DriveMode::PaunchOS) {
 		// The law's term is bounded by `1.25 a |m|` (the follower's cap), so the worst channel is `1 + 1.25 a |w|`.
 		return 1.0 + 1.25 * gain * std::abs(1.0 - 2.0 * static_cast<double>(shape));

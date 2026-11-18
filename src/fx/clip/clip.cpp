@@ -294,7 +294,8 @@ struct OpsClip {
 			r = std::clamp(r - dcR, -1.0f, 1.0f);
 			break;
 		}
-		case Mode::PaunchOS: {
+		case Mode::PaunchOS:
+		case Mode::PaunchOH: {
 			// THE ERODER'S ODD LAW (`paunchOdd`) at Clip's own amount; it makes no offset, so no blocker, and the ceiling holds.
 			eroder::paunchOdd(erodeMode(state.mode), l, r, paunchA, shapeNow, followPower, followCoefficient);
 			l = std::clamp(l, -1.0f, 1.0f);
@@ -320,6 +321,7 @@ struct OpsClip {
 		case Mode::PaunchS: return eroder::DriveMode::PaunchS;
 		case Mode::PaunchH: return eroder::DriveMode::PaunchH;
 		case Mode::PaunchOS: return eroder::DriveMode::PaunchOS;
+		case Mode::PaunchOH: return eroder::DriveMode::PaunchOH;
 		case Mode::Slew: return eroder::DriveMode::Slew;
 		default: return eroder::DriveMode::Lopside;
 		}
@@ -444,7 +446,7 @@ struct OpsClip {
 			}
 			// THE PAUNCH LAWS TAKE AN AMOUNT FROM DRIVE, NOT A GAIN: linear, 0..4 across its range.
 			const bool lawing = state.mode == static_cast<int>(Mode::PaunchS) || state.mode == static_cast<int>(Mode::PaunchH) ||
-			                    state.mode == static_cast<int>(Mode::PaunchOS);
+			                    state.mode == static_cast<int>(Mode::PaunchOS) || state.mode == static_cast<int>(Mode::PaunchOH);
 			if (lawing) {
 				paunchA = static_cast<float>(eroder::kPaunchAmountMax) * std::clamp((dDb + 24.0f) * (1.0f / 48.0f), 0.0f, 1.0f);
 			}

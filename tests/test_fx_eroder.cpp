@@ -2007,7 +2007,7 @@ double curveOf(DriveMode mode, double u, double shape, double gain = 1.0) {
 
 constexpr DriveMode kAllDrives[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
 	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Chonk,   DriveMode::PaunchS,
-	                                 DriveMode::PaunchH,  DriveMode::PaunchOS, DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
+	                                 DriveMode::PaunchH,  DriveMode::PaunchOS, DriveMode::PaunchOH, DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
 	                                 DriveMode::Lopside };
 constexpr DriveMode kCurves[] = { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Wreck,
 	                                  DriveMode::Jag, DriveMode::Lean, DriveMode::Chonk };
@@ -5385,7 +5385,7 @@ Settings worstLoops(Mode mode, DriveMode type, bool tapDriven, bool bell) {
 
 constexpr DriveMode kEveryType[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
 	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Chonk,   DriveMode::PaunchS,
-	                                 DriveMode::PaunchH,  DriveMode::PaunchOS, DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
+	                                 DriveMode::PaunchH,  DriveMode::PaunchOS, DriveMode::PaunchOH, DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
 	                                 DriveMode::Lopside };
 
 } // namespace
@@ -6731,4 +6731,131 @@ TEST_CASE("Paunch-OS: any block size gives the same output, silence gives exact 
 	CHECK(stageOf(deriveDrive(0.0f, DriveMode::PaunchOS, 0.0f, kRate, nullptr), in) == in);
 	CHECK(driveSmallSignalGain(DriveMode::PaunchOS, 4.0, 0.0f) == doctest::Approx(6.0));
 	CHECK(driveMakeUp(DriveMode::PaunchOS, 4.0, 0.0f) == 1.0);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// PAUNCH-OH: the cubed mid, its fundamental taken out by the tracked level, one side's gain and the other's loss. //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("Paunch-OH: the side's 3rd is kappa3 a^3 A^3 / 4, no fundamental in the side, the mid is the dry, the sides stay level-balanced") {
+	const double kappa3 = 1.0 / (4.0 * 4.0 * kDriveReferencePeak * kDriveReferencePeak);
+	CHECK(kPaunchCubeK == doctest::Approx(kappa3).epsilon(1.0e-12));
+	for (const auto& [knob, A] : { std::pair<float, double> { 1.0f, 0.5 }, std::pair<float, double> { 1.0f, 0.3 },
+	                               std::pair<float, double> { 0.5f, 0.5 } }) {
+		const double a = 4.0 * static_cast<double>(knob);
+		CAPTURE(a);
+		CAPTURE(A);
+		const Pair p = oddRun(DriveMode::PaunchOH, knob, 0.0f, A);
+		const std::vector<float> side = sideOf(p);
+		const std::vector<float> mid = midOf(p);
+		const double h3 = partialAt(side, 220.0, 3);
+		const double expected = kappa3 * a * a * a * A * A * A / 4.0;
+		measured("Paunch-OH side 3rd / restated", h3 / expected);
+		measured("Paunch-OH side fundamental re the mid's, dB", dbOf(partialAt(side, 220.0, 1) / partialAt(mid, 220.0, 1)));
+		CHECK(std::abs(h3 / expected - 1.0) < 0.03);
+		CHECK(dbOf(partialAt(side, 220.0, 1) / partialAt(mid, 220.0, 1)) < -40.0);
+		for (int k = 2; k <= 10; ++k) {
+			CHECK(dbOf(partialAt(mid, 220.0, k) / partialAt(mid, 220.0, 1)) < -80.0);
+		}
+		const std::complex<double> fl = binOf(p.l, 220.0);
+		const std::complex<double> fr = binOf(p.r, 220.0);
+		CHECK(std::abs(dbOf(std::abs(fl) / std::abs(fr))) < 0.1);
+		CHECK(degreesApart(fl, fr) < 3.0); // (the follower's ripple leaks a fundamental of -41 dB into the side at a=4)
+		CHECK(std::abs(degreesApart(binOf(p.l, 660.0), binOf(p.r, 660.0)) - 180.0) < 5.0);
+		for (const int k : { 5, 7 }) {
+			CHECK(dbOf(partialAt(side, 220.0, k) / h3) < -40.0);
+		}
+	}
+}
+
+TEST_CASE("Paunch-OH: +6 dB of input raises the 3rd by 18 dB, doubling a does too, and at full Amount and the reference peak it equals Paunch-OS's") {
+	const auto third = [](DriveMode type, float knob, double peak) {
+		return partialAt(sideOf(oddRun(type, knob, 0.0f, peak)), 220.0, 3);
+	};
+	const double level = dbOf(third(DriveMode::PaunchOH, 0.5f, 0.4) / third(DriveMode::PaunchOH, 0.5f, 0.2));
+	const double amount = dbOf(third(DriveMode::PaunchOH, 0.5f, 0.3) / third(DriveMode::PaunchOH, 0.25f, 0.3));
+	const double calibration = dbOf(third(DriveMode::PaunchOH, 1.0f, kDriveReferencePeak) / third(DriveMode::PaunchOS, 1.0f, kDriveReferencePeak));
+	measured("Paunch-OH +6 dB of level, change of the 3rd, dB", level);
+	measured("Paunch-OH doubling a, change of the 3rd, dB", amount);
+	measured("Paunch-OH against Paunch-OS at a=4, A=0.5, dB", calibration);
+	CHECK(std::abs(level - 18.06) < 0.5);
+	CHECK(std::abs(amount - 18.06) < 0.5);
+	CHECK(std::abs(calibration) < 0.3);
+}
+
+TEST_CASE("Paunch-OH: for a stereo input the mono sum is the input's at Shape 0, the products cancel") {
+	const DriveSettings d = deriveDrive(0.9f, DriveMode::PaunchOH, 0.0f, kRate, nullptr);
+	const Pair p = lawRun(d, [](size_t i, float& l, float& r) {
+		l = static_cast<float>(sineAt(i, 220.0, 0.4));
+		r = static_cast<float>(sineAt(i, 330.0, 0.3));
+	}, 24000, 4800);
+	const std::vector<float> mid = midOf(p);
+	double worst = 0.0;
+	for (int k = 1; k <= 18; ++k) {
+		if (k != 2 && k != 3) {
+			worst = std::max(worst, std::abs(binOf(mid, 110.0 * k)));
+		}
+	}
+	CHECK(dbOf(worst / 0.2) < -80.0);
+	CHECK(std::abs(binOf(mid, 220.0)) == doctest::Approx(0.2).epsilon(0.001));
+	CHECK(partialAt(sideOf(p), 220.0, 3) > 0.01);
+}
+
+TEST_CASE("Paunch-OH: a sine switched on from silence — the imbalance is measured, any block size is the same, silence is exact zero, Amount 0 is not run") {
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.set(deriveDrive(1.0f, DriveMode::PaunchOH, 0.0f, kRate, nullptr));
+	const size_t period = 218;
+	std::vector<float> l;
+	std::vector<float> r;
+	for (size_t i = 0; i < 24000; ++i) {
+		float a = static_cast<float>(sineAt(i, 220.0, 0.5));
+		float b = a;
+		stage.process(a, b);
+		l.push_back(a);
+		r.push_back(b);
+	}
+	double worstImbalance = 0.0;
+	for (size_t end = period; end < 4800; ++end) {
+		double el = 0.0;
+		double er = 0.0;
+		for (size_t i = end - period; i < end; ++i) {
+			el += static_cast<double>(l[i]) * l[i];
+			er += static_cast<double>(r[i]) * r[i];
+		}
+		worstImbalance = std::max(worstImbalance, std::abs(dbOf(std::sqrt(el / er))));
+	}
+	measured("Paunch-OH onset: worst L/R level imbalance in the first 100 ms, dB", worstImbalance);
+	const auto run = [](size_t block) {
+		Settings s = etchBase();
+		s.slotA = { 0.7f, DriveMode::PaunchOH, 0.2f, 1.0f };
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> a(24000);
+		for (size_t i = 0; i < a.size(); ++i) {
+			a[i] = i < 12000 ? static_cast<float>(sineAt(i, 220.0, 0.4) + sineAt(i, 1700.0, 0.1)) : 0.0f;
+		}
+		std::vector<float> b = a;
+		for (size_t done = 0; done < a.size(); done += block) {
+			const int n = static_cast<int>(std::min(block, a.size() - done));
+			e.processStereo(a.data() + done, b.data() + done, n);
+		}
+		a.insert(a.end(), b.begin(), b.end());
+		return a;
+	};
+	const std::vector<float> reference = run(256);
+	CHECK(run(32) == reference);
+	CHECK(run(37) == reference);
+	size_t last = 0;
+	for (size_t i = 0; i < 24000; ++i) {
+		if (reference[i] != 0.0f || reference[24000 + i] != 0.0f) {
+			last = i;
+		}
+	}
+	CHECK(last < 23000);
+	const std::vector<float> in = wanderOf(4000);
+	CHECK(stageOf(deriveDrive(0.0f, DriveMode::PaunchOH, 0.0f, kRate, nullptr), in) == in);
+	CHECK(driveSmallSignalGain(DriveMode::PaunchOH, 4.0, 0.0f) == 1.0);
+	CHECK(driveMakeUp(DriveMode::PaunchOH, 4.0, 0.0f) == 1.0);
 }

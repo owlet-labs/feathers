@@ -268,11 +268,11 @@ constexpr clip::Mode kModes[] = { clip::Mode::Soft, clip::Mode::Texture, clip::M
 /// THE ERODER'S SIX, appended after Bits, and all eleven.
 constexpr clip::Mode kNewModes[] = { clip::Mode::Tube,   clip::Mode::Jag,  clip::Mode::Lean,
 	                                 clip::Mode::Chonk, clip::Mode::PaunchS, clip::Mode::PaunchH,
-	                                 clip::Mode::PaunchOS, clip::Mode::Slew,   clip::Mode::Lopside };
+	                                 clip::Mode::PaunchOS, clip::Mode::PaunchOH, clip::Mode::Slew,   clip::Mode::Lopside };
 constexpr clip::Mode kAllModes[] = { clip::Mode::Soft,  clip::Mode::Texture, clip::Mode::Grit,
 	                                 clip::Mode::Fold,  clip::Mode::Bits,    clip::Mode::Tube,
 	                                 clip::Mode::Jag,   clip::Mode::Lean,    clip::Mode::Chonk,
-	                                 clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS, clip::Mode::Slew,
+	                                 clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS, clip::Mode::PaunchOH, clip::Mode::Slew,
 	                                 clip::Mode::Lopside };
 
 /// THE WORST |y| OVER COMP'S CASE-3 SIGNALS (full-scale 50 Hz square, 1 kHz sine, bursts of random
@@ -643,8 +643,8 @@ TEST_CASE("one NaN or inf sample does not latch in any mode") {
 			if (k >= 2400) {
 				// (a Paunch law's offset blocker keeps the one clamped sample's worth of offset a while: 5e-3)
 				const bool law = mode == clip::Mode::PaunchS || mode == clip::Mode::PaunchH;
-				// (Paunch-OS's follower keeps a trace of the one huge sample for several time constants: finiteness only)
-				if (mode != clip::Mode::PaunchOS) {
+				// (Paunch-OS's and -OH's follower keeps a trace of the one huge sample for several time constants: finiteness only)
+				if (mode != clip::Mode::PaunchOS && mode != clip::Mode::PaunchOH) {
 					offTrack += std::fabs(l - tl) > (law ? 5e-3f : 1e-3f);
 				}
 			}
@@ -1121,11 +1121,11 @@ TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the
 		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
 	}
-	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Chonk", "Paunch-S", "Paunch-H", "Paunch-OS", "Slew", "Lopside" };
+	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Chonk", "Paunch-S", "Paunch-H", "Paunch-OS", "Paunch-OH", "Slew", "Lopside" };
 	for (size_t i = 0; i < std::size(appended); ++i) {
 		CHECK(std::string(clip::kModeNames[i]) == appended[i]);
 	}
-	CHECK(clip::kParamDescs[static_cast<size_t>(clip::Param::Mode)].max == 13.0);
+	CHECK(clip::kParamDescs[static_cast<size_t>(clip::Param::Mode)].max == 14.0);
 }
 
 TEST_CASE("the Eroder's six never exceed the ceiling: strict with Oversample off, the measured bound with 4x") {
@@ -1369,7 +1369,7 @@ TEST_CASE("Lopside's rising and falling rates are 2^(+-balance) of the limit, Dr
 
 TEST_CASE("Paunch-S and Paunch-H in Clip: both sides stay under the ceiling on a hot sine and on noise, at every Shape") {
 	const float ceiling = dbToLin(-6.0);
-	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS }) {
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS, clip::Mode::PaunchOH }) {
 		for (const float shape : { 0.0f, 0.5f, 1.0f }) {
 			for (const bool noise : { false, true }) {
 				CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);

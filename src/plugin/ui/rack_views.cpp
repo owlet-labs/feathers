@@ -806,21 +806,35 @@ RackPadsPanel::RackPadsPanel(RackViewModel& model, RackStrikePulse& pulse, RackF
 }
 
 visage::Point RackPadsPanel::naturalSize() const {
+	return naturalSizeFor(2.0f * kMargin + gridSide());
+}
+
+float RackPadsPanel::sideFor(float panelWidth) const {
+	if (flow_ != RackFlow::TopDown) {
+		return gridSide();
+	}
+	return std::clamp(panelWidth - 2.0f * kMargin, gridSide(), kMaxSide);
+}
+
+visage::Point RackPadsPanel::naturalSizeFor(float width) const {
+	const float side = sideFor(width);
 	const float level = level_ != nullptr ? kGap * 2.0f + kLevelHeight : 0.0f;
 	if (flow_ == RackFlow::TopDown) {
-		return { 2.0f * kMargin + gridSide(), 2.0f * kMargin + gridSide() + kGap * 2.0f + RackPadPages::kThickness + level };
+		return { 2.0f * kMargin + side, 2.0f * kMargin + side + kGap * 2.0f + RackPadPages::kThickness + level };
 	}
-	return { 2.0f * kMargin + gridSide() + kGap * 2.0f + RackPadPages::kThickness, 2.0f * kMargin + gridSide() + level };
+	return { 2.0f * kMargin + side + kGap * 2.0f + RackPadPages::kThickness, 2.0f * kMargin + side + level };
 }
 
 void RackPadsPanel::resized() {
 	// UNCONDITIONAL, so a scale change (which moves nothing logical) still cuts the native cells again.
-	const float side = gridSide();
-	grid_.setBounds(kMargin, kMargin, side, side);
+	const float side = sideFor(static_cast<float>(width()));
+	// CENTRED when the panel is wider than the cap lets the grid be.
+	const float off = flow_ == RackFlow::TopDown ? std::max(0.0f, (static_cast<float>(width()) - (side + 2.0f * kMargin)) * 0.5f) : 0.0f;
+	grid_.setBounds(off + kMargin, kMargin, side, side);
 	if (flow_ == RackFlow::TopDown) {
-		pages_.setBounds(kMargin, kMargin + side + 2.0f * kGap, side, RackPadPages::kThickness);
+		pages_.setBounds(off + kMargin, kMargin + side + 2.0f * kGap, side, RackPadPages::kThickness);
 		if (level_ != nullptr) {
-			level_->setBounds(kMargin, kMargin + side + 4.0f * kGap + RackPadPages::kThickness, side, kLevelHeight);
+			level_->setBounds(off + kMargin, kMargin + side + 4.0f * kGap + RackPadPages::kThickness, side, kLevelHeight);
 		}
 	}
 	else {

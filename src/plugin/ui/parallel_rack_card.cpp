@@ -890,7 +890,7 @@ float ParallelRackCard::viewHeight(const Plan& p) const {
 		h += RackTabBar::kThickness;
 	}
 	else {
-		h += pads_->naturalSize().y;
+		h += pads_->naturalSizeFor(bodyWidth()).y;
 	}
 	h += kRowGap;
 	if (p.macros) {
@@ -975,7 +975,7 @@ void ParallelRackCard::layOut() {
 				top = kSlotHeadHeight + RackTabBar::kThickness + kRowGap;
 			}
 			else {
-				const visage::Point n = pads_->naturalSize();
+				const visage::Point n = pads_->naturalSizeFor(bodyWidth());
 				pads_->setBounds(bodyLeft(), y, bodyWidth(), n.y);
 				top = y + n.y + kRowGap;
 			}
@@ -985,14 +985,15 @@ void ParallelRackCard::layOut() {
 				padsStep_->setBounds(left, top, RackPadsStep::kWidth, RackPadsStep::kButton);
 				top += RackPadsStep::kButton + kRowGap;
 			}
-			// THE CARDS IN FRONT run down a column as wide as the card's content (the hairline and the cap sit in the padding beside it).
-			const auto stack = static_cast<float>(p.frontExtent);
-			front_->setBounds(left, top, wide, stack);
-			top += stack + kRowGap;
+			// TABS' ARROW AT A FIXED PLACE, between the bar and the first card: the cards' expansion cannot move it.
 			if (p.arrow) {
 				chainArrow_->setBounds(left, top, wide, RackDrawerArrow::kSize);
 				top += RackDrawerArrow::kSize + kRowGap;
 			}
+			// THE CARDS IN FRONT run down a column as wide as the card's content (the hairline and the cap sit in the padding beside it).
+			const auto stack = static_cast<float>(p.frontExtent);
+			front_->setBounds(left, top, wide, stack);
+			top += stack + kRowGap;
 			y = top;
 		}
 		else {
@@ -1005,6 +1006,11 @@ void ParallelRackCard::layOut() {
 				x += kPad;
 				tabs_->setBounds(x, cp, RackTabBar::kThickness, std::max(0.0f, h - 2.0f * cp));
 				x += RackTabBar::kThickness + kRowGap;
+				// TABS' ARROW AT A FIXED PLACE, between the bar and the first card, at the top of its own column.
+				if (p.arrow) {
+					chainArrow_->setBounds(x, cp, RackDrawerArrow::kSize, RackDrawerArrow::kSize);
+					x += RackDrawerArrow::kSize + kRowGap;
+				}
 			}
 			else {
 				const visage::Point n = pads_->naturalSize();
@@ -1020,7 +1026,6 @@ void ParallelRackCard::layOut() {
 			wide = leftColumnWidthFor(p.macros, p.macrosOpen, p.unusedRow || p.playingRow);
 			const float frontLeft = x + (wide > 0.0f ? wide + kRowGap : 0.0f);
 			front_->setBounds(frontLeft, cp, static_cast<float>(p.frontExtent), std::max(0.0f, h - 2.0f * cp));
-			chainArrow_->setBounds(frontLeft + static_cast<float>(p.frontExtent) + kRowGap, 0.0f, RackDrawerArrow::kSize, h);
 			y = kRowGap;
 			placeMacros(p, left, wide, y);
 		}

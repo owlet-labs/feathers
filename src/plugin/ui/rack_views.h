@@ -327,6 +327,11 @@ public:
 	static constexpr float kLevelHeight = 22.0f;
 	[[nodiscard]] static float gridSide() { return 4.0f * kPad + 3.0f * kGap; }
 	[[nodiscard]] visage::Point naturalSize() const;
+	/// THE SIZE AT A PANEL `width` WIDE: top-down, the grid and the page strip take the whole width less the margins (cells stay square), up to
+	/// `kMaxSide`, and are centred past it; left-right keeps the fixed side.
+	[[nodiscard]] visage::Point naturalSizeFor(float width) const;
+	[[nodiscard]] float sideFor(float panelWidth) const;
+	static constexpr float kMaxSide = 4.0f * 64.0f + 3.0f * kGap;
 
 private:
 	[[maybe_unused]] RackViewModel& model_; // held for the view's lifetime; this class reads it through its children

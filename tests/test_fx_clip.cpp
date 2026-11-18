@@ -1195,8 +1195,8 @@ TEST_CASE("Shape moves the harmonics of Tube, Jag and Lean to the values the Ero
 			return u >= 0.0 ? std::tanh(u) : std::tanh(ratio * u) / ratio;
 		};
 	};
-	const auto jag = [kHalfPi](double shape) {
-		return [shape, kHalfPi](double u) {
+	const auto jag = [](double shape) {
+		return [shape](double u) {
 			const double x = std::tanh(u) * (1.0 + 4.0 * shape);
 			return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
 		};

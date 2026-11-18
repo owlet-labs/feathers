@@ -491,7 +491,7 @@ void Dust::prepare(double sampleRate) {
 	shaper_.prepare(sampleRate_);
 	slotA_.prepare(sampleRate_);
 	slotB_.prepare(sampleRate_);
-	finalBias_.prepare(sampleRate_);
+	postBias_.prepare(sampleRate_);
 	cleanBias_.prepare(sampleRate_);
 	shared_.prepare(sampleRate_, true);
 	shared_.setThreshold(1.0f);
@@ -519,9 +519,9 @@ void Dust::reset() noexcept {
 	shaper_.reset();
 	slotA_.reset();
 	slotB_.reset();
-	finalBias_.reset();
+	postBias_.reset();
 	cleanBias_.reset();
-	biasFinal_ = biasClean_ = false;
+	postOn_ = cleanOn_ = driveBlocks_ = false;
 	highpass_.reset();
 	shared_.reset();
 	sinePhaseRight_ = 0.0;
@@ -562,24 +562,27 @@ void Dust::process(const Settings& settings, float* left, float* right, int fram
 void Dust::tick(const Settings& settings) noexcept {
 	derived_ = deriveDust(settings, pitchSemitones_, sampleRate_, &derived_);
 	inGainTarget_ = inputGainOf(settings.inputDb);
-	// THE PAUNCH LAWS' BIAS IS LEFT IN BY THEIR STAGES and taken out once after the last shaper (`BiasBlocker`): the FINAL
-	// blocker runs while a slot (Etch) or the Drive runs one, and the Clean tap's own while a slot does. Latched here, on the
-	// grid; a blocker that switches off is emptied.
-	const auto keep = [this](const DriveSettings& d) { return blockInStages_ ? d : keepingBias(d); };
-	const DriveSettings drive = keep(driveOf(derived_));
-	const DriveSettings slotA = keep(derived_.slotA);
-	const DriveSettings slotB = keep(derived_.slotB);
-	// (the seam changes what the stages do, not whether the blockers are in)
-	const bool slotBias = derived_.etch && (biasMade(keepingBias(slotA)) || biasMade(keepingBias(slotB)));
-	const bool finalNow = slotBias || biasMade(keepingBias(drive));
-	if (!finalNow && biasFinal_) {
-		finalBias_.reset();
+	// THE ONE DC STAGE (`dust.h`): no stage removes its own offset in a slot; the Drive's does, by the DC amount, and where the Drive does
+	// not run a Type that makes one a post blocker does for what a slot made. Latched here, on the grid.
+	const float dcAmount = std::clamp(settings.dc, 0.0f, 1.0f);
+	DriveSettings drive = driveOf(derived_);
+	drive.dcAmount = dcAmount;
+	DriveSettings slotA = derived_.slotA;
+	DriveSettings slotB = derived_.slotB;
+	slotA.leaveDc = slotB.leaveDc = !blockInStages_; // (the seam makes the slots remove their own, as a stage used alone does)
+	const bool slotOffset = derived_.etch && (makesOffset(slotA) || makesOffset(slotB));
+	const bool driveOffset = makesOffset(drive);
+	const bool postNow = slotOffset && !driveOffset;
+	if (!postNow && postOn_) {
+		postBias_.reset();
 	}
-	if (!slotBias && biasClean_) {
+	if (!slotOffset && cleanOn_) {
 		cleanBias_.reset();
 	}
-	biasFinal_ = finalNow;
-	biasClean_ = slotBias;
+	postBias_.setAmount(dcAmount, !postOn_);
+	postOn_ = postNow;
+	cleanOn_ = slotOffset;
+	driveBlocks_ = driveOffset;
 	shaper_.set(drive);
 	slotA_.set(slotA);
 	slotB_.set(slotB);
@@ -828,19 +831,26 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		lastRead_ = wetL;
 		// THE CLEAN TAP (before the Drive, after the slots) TAKES THE SLOTS' BIAS OUT on its way back round the loop; the forward
 		// signal into the Drive keeps it.
-		if (biasClean_) {
+		if (cleanOn_) {
 			cleanBias_.process(tapL, tapR);
 		}
 		shaper_.process(wetL, wetR);
-		// THE FINAL BLOCKER: right after the Drive's place (it runs when the Drive is not run, if a slot made the bias), before
-		// the Driven tap, the outer loop, the emphasis's inverse, HP Wet and the wet ceiling.
-		if (biasFinal_) {
-			finalBias_.process(wetL, wetR);
+		// THE DC STAGE: the Drive's own stage has taken its share out; where it makes no offset, the post blocker takes out a slot's. The
+		// Driven tap and the outer loop take the FULLY blocked signal, at any amount.
+		float driveTapL = wetL;
+		float driveTapR = wetR;
+		if (postOn_) {
+			postBias_.process(wetL, wetR);
+			driveTapL = postBias_.fullL();
+			driveTapR = postBias_.fullR();
+		}
+		else if (driveBlocks_) {
+			shaper_.fullyBlocked(driveTapL, driveTapR);
 		}
 		// TAP C IS BEFORE THE DRIVE, TAP D AFTER IT — for every Type.
 		if (tapDriven) {
-			tapL = wetL;
-			tapR = wetR;
+			tapL = driveTapL;
+			tapR = driveTapR;
 		}
 
 		lastShaped_ = wetL;
@@ -853,7 +863,7 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		}
 		// THE OUTER LOOP IS ALWAYS TAKEN AFTER THE DRIVE.
 		if (outer) {
-			shared_.outerWrite(wetL, wetR);
+			shared_.outerWrite(driveTapL, driveTapR);
 			lastLimiterGain_ = shared_.outerLimiterGainForTest();
 		}
 		// EMPHASIS OUT: after both taps.

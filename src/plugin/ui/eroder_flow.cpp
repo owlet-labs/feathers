@@ -91,6 +91,8 @@ EroderFlow::Path EroderFlow::pathFor(const ero::Row& row) {
 		engineEnd = add(lower(ero::kModeNames[modeAt]), true);
 	}
 	const size_t drive = add("drive", at(ero::Param::Drive) > 0.0f);
+	// THE DC STAGE, right after the Drive: lit while it runs (an amount above 0 and some stage that makes an offset is running).
+	add("dc", ero::dcStageRuns(ero::stateOf(row, row.size()).settings));
 	add("restore", emphasised && at(ero::Param::EmphRestore) >= 0.5f);
 	// THE LIVE FILTER: semitones from the note while Track is on in an engine that has it, else HP Wet's hertz.
 	const bool filtering = at(ero::Param::Track) >= 0.5f && !comb ? at(ero::Param::HpWetSemis) > ero::kHpWetSemisMin + 1.0e-3f

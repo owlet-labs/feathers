@@ -114,8 +114,10 @@ struct OpsClip {
 	/// zipper, and Depth is effectively a gain on the folded part (`foldCurve` mixes clamp and fold by it).
 	/// Advanced once per HOST sample (so the four oversampled frames of one sample share a value, and the
 	/// cut of a block changes nothing) and read by `shape` through `kneeNow` and its siblings.
-	dyn::LinearRamp knee, foldback, grit, depth, shapeRamp;
-	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f, shapeNow = 0.0f;
+	dyn::LinearRamp knee, foldback, grit, depth, shapeRamp, dcRamp;
+	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f, shapeNow = 0.0f, dcNow = 1.0f;
+	/// THE PAUNCH RECTIFIER MODES' LAST CLAMP: how often it acted, and over how many processed frames (a seam).
+	size_t dcClampActs = 0, dcFramesRun = 0;
 
 	/// **THE ERODER'S SIX** (`fx/eroder/eroder_types.h`): Tube, Lean and the slews leave state behind.
 	/// THE STANDING OFFSET Tube and Lean make, taken out by the Eroder's own one-pole (`kDriveDcHz`), per channel, at the
@@ -187,6 +189,7 @@ struct OpsClip {
 		grit.set(state.grit);
 		depth.set(state.depth);
 		shapeRamp.set(state.shape);
+		dcRamp.set(state.dc);
 	}
 
 	/// EVERYTHING WITH MEMORY FORGETS IT: "as if just switched on".
@@ -196,6 +199,7 @@ struct OpsClip {
 		hpR.clear();
 		dcL = dcR = 0.0f;
 		followPower = 0.0f;
+		dcClampActs = dcFramesRun = 0;
 		slew.reset();
 		rng = kSeed;
 		silentRun = 0;
@@ -260,8 +264,8 @@ struct OpsClip {
 			if (dm != eroder::DriveMode::Jag) {
 				dcL += (l - dcL) * dcCoefficient;
 				dcR += (r - dcR) * dcCoefficient;
-				l -= dcL;
-				r -= dcR;
+				l -= dcL * dcNow; // (all of it at 100%, as this always did; the clamp below follows the removal for these two)
+				r -= dcR * dcNow;
 			}
 			// **THE CEILING HOLDS**: Lean's lower half reaches several times -1, and the offset's removal moves the rest.
 			l = std::clamp(l, -1.0f, 1.0f);
@@ -285,13 +289,18 @@ struct OpsClip {
 			// Its offset is taken out as the Eroder's stage does, and the ceiling holds: the law is not bounded (up to five times
 			// the input), so both sides are clamped to it as the slews' and Lean's are.
 			eroder::paunchLaw(erodeMode(state.mode), l, r, paunchA, shapeNow);
-			// CLAMPED BEFORE THE BLOCKER TOO: the law is unbounded, and a huge sample must not wind the blocker up.
+			// THE ORDER: the law, THEN THE CEILING CLIP ACTING ON THE SIGNAL WITH ITS OFFSET (so it clips one side of each channel), THEN
+			// the offset taken out by the amount, then a last clamp at the ceiling (the removal can swing a sample past it).
 			l = std::clamp(l, -1.0f, 1.0f);
 			r = std::clamp(r, -1.0f, 1.0f);
 			dcL += (l - dcL) * dcCoefficient;
 			dcR += (r - dcR) * dcCoefficient;
-			l = std::clamp(l - dcL, -1.0f, 1.0f);
-			r = std::clamp(r - dcR, -1.0f, 1.0f);
+			const float outL = l - dcL * dcNow;
+			const float outR = r - dcR * dcNow;
+			++dcFramesRun;
+			dcClampActs += (std::fabs(outL) > 1.0f) + (std::fabs(outR) > 1.0f);
+			l = std::clamp(outL, -1.0f, 1.0f);
+			r = std::clamp(outR, -1.0f, 1.0f);
 			break;
 		}
 		case Mode::PaunchOS:
@@ -437,6 +446,7 @@ struct OpsClip {
 			gritNow = grit.next();
 			depthNow = depth.next();
 			shapeNow = shapeRamp.next();
+			dcNow = dcRamp.next();
 			const float onsetU = onset(state.mode, kneeNow);
 			// THE SLEWS TAKE THEIR RATE FROM DRIVE, NOT A GAIN (as the Eroder's Drive knob does): the signal reaches the
 			// limiter as it came, over the ceiling.
@@ -524,6 +534,13 @@ OpsClip& asClip(void* storage) { return *static_cast<OpsClip*>(storage); }
 
 } // namespace
 
+size_t dcLastClampCountForTest(const void* storage) {
+	return static_cast<const OpsClip*>(storage)->dcClampActs;
+}
+size_t dcFramesForTest(const void* storage) {
+	return static_cast<const OpsClip*>(storage)->dcFramesRun;
+}
+
 double textureHighpassGainForTest(const void* storage, double hz) {
 	const OpsClip& ops = *static_cast<const OpsClip*>(storage);
 	// |H(e^jw)| OF THE COEFFICIENTS INSTALLED, at the rate the device is RUNNING — computed here from
@@ -554,7 +571,7 @@ const device::AudioOps kAudioOps {
 	        ops.sampleRate = std::max(sampleRate, 1.0);
 	        ops.restSamples = std::max(1, static_cast<int>(std::lround(kRestSilentSeconds * ops.sampleRate)));
 	        for (dyn::LinearRamp* r : { &ops.driveDb, &ops.ceilingDb, &ops.outputDb, &ops.bypass, &ops.knee,
-		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp }) {
+		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp, &ops.dcRamp }) {
 		        r->prepare(ops.sampleRate);
 	        }
 	        ops.inPeak.prepare(ops.sampleRate);
@@ -571,7 +588,7 @@ const device::AudioOps kAudioOps {
 	        ops.idle = false;
 	        ops.clearDry();
 	        for (dyn::LinearRamp* r : { &ops.driveDb, &ops.ceilingDb, &ops.outputDb, &ops.bypass, &ops.knee,
-		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp }) {
+		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp, &ops.dcRamp }) {
 		        r->reset();
 	        }
 	        ops.inPeak.reset();

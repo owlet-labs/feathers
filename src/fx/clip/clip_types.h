@@ -75,6 +75,8 @@ enum class Param : int {
 	/// Jag's fold span, Lean's bias, Chonk's turn-over of the right channel, Slew's curve, and Lopside's balance
 	/// (`2 shape - 1`). APPENDED, so no earlier control's place moves.
 	Shape,
+	/// THE OFFSET'S AMOUNT, for the four modes that make one (`kDcModes`), 0..1: how much of it is removed after the ceiling clip.
+	Dc,
 
 	kCount,
 };
@@ -104,6 +106,9 @@ inline constexpr uint32_t kShapeModes = kModeBit(Mode::Tube) | kModeBit(Mode::Ja
 
 /// THE MODE FORMERLY CALLED "Paunch" IS "Chonk" (a patch stores a Choice by its label).
 inline constexpr device::ChoiceAlias kModeAliases[] = { { "Paunch", "Chonk" } };
+/// THE MODES THAT MAKE AN OFFSET: Tube and Lean (the Eroder's own, as Clip has always removed it) and the two Paunch rectifier Types.
+inline constexpr uint32_t kDcModes = kModeBit(Mode::Tube) | kModeBit(Mode::Lean) | kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH);
+
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
 inline constexpr const char* kOversampleNames[] = { "Off", "4x" };
 inline constexpr const char* kBitsNames[] = { "1 bit", "2 bit" };
@@ -136,6 +141,7 @@ struct Settings {
 	/// INDEX INTO `kBitsNames`: 0 is 1 bit, 1 is 2 bits.
 	int bits = 0;
 	float shape = 0.0f;
+	float dc = 1.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -306,6 +312,12 @@ inline constexpr device::ParamDesc kParamDescs[] = {
                 "opposite at the bottom, the same at the top. Slew: from a hard rate limit to a one-pole. Lopside: "
                 "from slow rises to slow falls, even in the middle. Drive sets the rate in Slew and Lopside, and the amount in Paunch-S, Paunch-H, Paunch-OS and Paunch-OH",
      .gateControl = kModeControl, .gateMask = kShapeModes},
+    {.key = "clip_dc", .name = "Clip DC", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "How much of the offset that Tube, Lean, Paunch-S and Paunch-H make is removed. At 100% none is left; lower it to let the "
+                "bias out to whatever follows the device. The ceiling clips the signal with its offset in it first, so the clip is lopsided, "
+                "and the offset is taken out after",
+     .gateControl = kModeControl, .gateMask = kDcModes},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
@@ -337,6 +349,10 @@ extern const device::AudioOps kAudioOps;
 /// RUNNING (4 fs with oversampling on). A corner is not recoverable from a clipped buffer that carries
 /// every harmonic at once; the coefficients are.
 [[nodiscard]] double textureHighpassGainForTest(const void* storage, double hz);
+/// HOW MANY SAMPLES (host rate, either channel) the last clamp after a Paunch rectifier mode's offset removal acted on, since the last reset.
+[[nodiscard]] size_t dcLastClampCountForTest(const void* storage);
+/// HOW MANY FRAMES THE CEILING CLIP ACTED ON in the same modes, since the last reset (the denominator).
+[[nodiscard]] size_t dcFramesForTest(const void* storage);
 
 inline constexpr device::Descriptor kDescriptor {
 	.traits = kTraits,

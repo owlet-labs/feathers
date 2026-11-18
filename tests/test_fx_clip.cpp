@@ -20,6 +20,7 @@
 
 #include "fx/clip/clip_types.h"
 #include "fx/dyn/clip_curve.h"
+#include "fx/eroder/eroder_types.h"
 
 #include <algorithm>
 #include <array>
@@ -1455,5 +1456,142 @@ TEST_CASE("Paunch-OS in Clip: the side carries a 3rd harmonic of a / 4 of the si
 			peak = std::max({ peak, std::fabs(l[i]), std::fabs(r[i]) });
 		}
 		CHECK(peak <= static_cast<float>(ceiling) * (1.0f + 1e-6f));
+	}
+}
+
+/// THE PAUNCH-S MODE THROUGH CLIP at a hot level: Drive 0 dB is a = 2, Ceiling -6 dB, a 1 kHz sine of 0.5 (the law's input peaks at about 1).
+[[nodiscard]] std::tuple<std::vector<float>, std::vector<float>, size_t, size_t> renderDc(clip::Mode mode, float dc, double amp, bool negate = false) {
+	clip::Settings s;
+	s.mode = static_cast<int>(mode);
+	s.driveDb = 0.0f;
+	s.ceilingDb = -6.0f;
+	s.oversample = false;
+	s.dc = dc;
+	Instance dev;
+	dev.set(s);
+	std::vector<float> l = sine(48000, 1000.0, negate ? -amp : amp), r = l;
+	for (int done = 0; done < 48000; done += 480) {
+		dev.process(l.data() + done, r.data() + done, 480);
+	}
+	return { l, r, clip::dcLastClampCountForTest(dev.storageForTest()), clip::dcFramesForTest(dev.storageForTest()) };
+}
+
+TEST_CASE("Clip DC: the ceiling clips the law's signal WITH its offset (one side of each channel), then the offset is removed by the amount; the ceiling holds") {
+	const double ceiling = static_cast<double>(dbToLin(-6.0));
+	const double amp = 0.5;
+	const double u = amp / ceiling;
+	// THE CLIPPED SIGNAL, restated: left = clamp(u sin + 2 |u sin|, -1, 1); its mean over a cycle.
+	double mean = 0.0;
+	const int n = 4800;
+	for (int i = 0; i < n; ++i) {
+		const double x = u * std::sin(2.0 * std::numbers::pi * (i + 0.5) / n);
+		mean += std::clamp(x + 2.0 * std::fabs(x), -1.0, 1.0);
+	}
+	mean /= n;
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH }) {
+		const bool rectifier = mode == clip::Mode::PaunchS;
+		double want = mean;
+		if (!rectifier) {
+			want = 0.0;
+			for (int i = 0; i < n; ++i) {
+				const double x = u * std::sin(2.0 * std::numbers::pi * (i + 0.5) / n);
+				want += std::clamp(x + (4.0 / (3.0 * std::numbers::pi)) * 4.0 * x * x, -1.0, 1.0);
+			}
+			want /= n;
+		}
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		// KEEP (0%): the output is the clipped signal itself, one-sided, its mean the restated one.
+		const auto [kl, kr, kc, kf] = renderDc(mode, 0.0f, amp);
+		double kept = 0.0;
+		float kmin = 1.0f;
+		float kmax = -1.0f;
+		for (size_t i = 24000; i < kl.size(); ++i) {
+			kept += static_cast<double>(kl[i]);
+			kmin = std::min(kmin, kl[i]);
+			kmax = std::max(kmax, kl[i]);
+		}
+		kept /= 24000.0;
+		MESSAGE(clip::kModeNames[static_cast<size_t>(mode)] << ": kept mean " << kept << " restated " << want * ceiling << ", left range " << kmin << " .. " << kmax);
+		CHECK(std::abs(kept - want * ceiling) < 0.02 * std::fabs(want * ceiling));
+		if (rectifier) {
+			CHECK(kmin >= -1.0e-4f); // the rectifier's signal is never below 0: one side of the left
+		}
+		CHECK(kmax <= static_cast<float>(ceiling) * (1.0f + 1e-6f));
+		CHECK(std::fabs(kmax - static_cast<float>(ceiling)) < 1e-4f); // the ceiling clip acts on the top
+		// BLOCK (100%): the offset is out, and the order shows: the left's top is the ceiling less the mean (clip first, remove after).
+		const auto [bl, br, bc, bf] = renderDc(mode, 1.0f, amp);
+		double blockedMean = 0.0;
+		float top = -1.0f;
+		for (size_t i = 24000; i < bl.size(); ++i) {
+			blockedMean += static_cast<double>(bl[i]);
+			top = std::max(top, bl[i]);
+		}
+		blockedMean /= 24000.0;
+		MESSAGE("blocked mean " << blockedMean << ", left top " << top << " restated " << ceiling * (1.0 - want) << "; last clamp acted on " << bc << " of " << bf << " frames");
+		CHECK(std::fabs(blockedMean) < 0.001 * ceiling);
+		CHECK(std::abs(top - static_cast<float>(ceiling * (1.0 - want))) < 0.03 * ceiling);
+		for (size_t i = 0; i < bl.size(); ++i) {
+			REQUIRE(std::fabs(bl[i]) <= static_cast<float>(ceiling) * (1.0f + 1e-6f));
+			REQUIRE(std::fabs(br[i]) <= static_cast<float>(ceiling) * (1.0f + 1e-6f));
+		}
+		// MIRROR: the right at +x is the left's at -x.
+		const auto [nl, nr, nc, nf] = renderDc(mode, 1.0f, amp, true);
+		double worst = 0.0;
+		for (size_t i = 0; i < br.size(); ++i) {
+			worst = std::max(worst, static_cast<double>(std::fabs(br[i] + nl[i])));
+		}
+		CHECK(worst < 1.0e-4);
+		// THE AMOUNT IN BETWEEN removes that share of it.
+		const auto [hl, hr, hc, hf] = renderDc(mode, 0.5f, amp);
+		double halfMean = 0.0;
+		for (size_t i = 24000; i < hl.size(); ++i) {
+			halfMean += static_cast<double>(hl[i]);
+		}
+		halfMean /= 24000.0;
+		CHECK(std::abs(halfMean - 0.5 * kept) < 0.05 * std::fabs(kept));
+	}
+}
+
+TEST_CASE("Clip DC: Tube and Lean at 100% are the curve, the offset removed, then the clamp — the order they always used — and 0% leaves the offset in") {
+	namespace er = feathers::fx::eroder;
+	for (const clip::Mode mode : { clip::Mode::Tube, clip::Mode::Lean }) {
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		clip::Settings s;
+		s.mode = static_cast<int>(mode);
+		s.shape = 1.0f;
+		s.driveDb = 12.0f;
+		s.oversample = false;
+		const er::DriveMode dm = mode == clip::Mode::Tube ? er::DriveMode::Tube : er::DriveMode::Lean;
+		const std::vector<float> x = sine(48000, 1000.0, 0.5);
+		std::vector<float> out[2];
+		int at = 0;
+		for (const float dc : { 1.0f, 0.0f }) {
+			s.dc = dc;
+			Instance dev;
+			dev.set(s);
+			std::vector<float> l = x, r = x;
+			for (int done = 0; done < 48000; done += 480) {
+				dev.process(l.data() + done, r.data() + done, 480);
+			}
+			out[at++] = l;
+		}
+		// THE RESTATEMENT of today's order (no oversampling): curve, a 10 Hz one-pole's estimate subtracted, the clamp at the ceiling.
+		const double gain = std::pow(10.0, 12.0 / 20.0);
+		const float coefficient = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * er::kDriveDcHz / 48000.0));
+		float dcEstimate = 0.0f;
+		double worst = 0.0;
+		double meanOff = 0.0;
+		for (size_t i = 0; i < x.size(); ++i) {
+			float y = er::shapeDrive(dm, static_cast<float>(gain) * x[i], 1.0f, 1.0f);
+			dcEstimate += (y - dcEstimate) * coefficient;
+			const float removed = std::clamp(y - dcEstimate, -1.0f, 1.0f);
+			worst = std::max(worst, static_cast<double>(std::fabs(removed - out[0][i])));
+			if (i >= 24000) {
+				meanOff += static_cast<double>(out[1][i]) / 24000.0;
+			}
+		}
+		MESSAGE(clip::kModeNames[static_cast<size_t>(mode)] << ": worst difference from the restated order " << worst << ", mean at 0% " << meanOff);
+		CHECK(worst < 1.0e-4);
+		CHECK(std::fabs(meanOff) > 0.01);
 	}
 }

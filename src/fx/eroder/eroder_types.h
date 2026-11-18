@@ -464,6 +464,7 @@ enum class Param : int {
 	EmphOffset, ///< every engine: semitones from Freq to where the emphasis is tuned (Smear and the loops stay at Freq)
 	Input,      ///< every engine: decibels of gain on the signal entering the wet chain, ahead of everything in it
 	HpWetSemis, ///< Dust, Rust, Etch with Track on: HP Wet in semitones from the played note, in HP Wet's cell; the bottom is no filter
+	Dc,         ///< every engine: how much of the offset the shapers make is removed after the Drive; 100% is all of it
 
 	kCount,
 };
@@ -477,6 +478,8 @@ inline constexpr size_t kEmphOffsetParamCount = 1;
 inline constexpr size_t kInputParamCount = 1;
 /// And HP Wet's semitone face after that.
 inline constexpr size_t kHpWetSemisParamCount = 1;
+/// And the DC amount after that.
+inline constexpr size_t kDcParamCount = 1;
 /// **HP WET'S SEMITONE FACE'S RANGE**: from the played note, -24 to +128 semitones, and the minimum is no filter (as HP Wet's own).
 inline constexpr double kHpWetSemisMin = -24.0;
 inline constexpr double kHpWetSemisMax = 128.0;
@@ -1405,6 +1408,25 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .shortName = "HP Wet",
      .offAtEnd = -1,
      .suffix = "st"},
+    {.key = "eroder_dc", .name = "Eroder DC",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How much of the offset left by Tube, Fold, Lean and the two Paunch rectifier Types is removed after the Drive. "
+                "At 100% none is left; lower it to let that bias out to whatever follows the device. The loops never carry it. "
+                "Inactive unless a slot or the Drive is on one of those Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "DC"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1467,6 +1489,8 @@ struct Settings {
 	SlotSettings slotA { 0.0f, DriveMode::Slew, 0.0f, 1.0f };
 	SlotSettings slotB { 0.0f, DriveMode::Decimate, 0.0f, 1.0f };
 	bool slotParallel = false;
+	/// THE DC STAGE'S AMOUNT, 0..1 (`eroder_dc`): how much of the offset the shapers make is removed after the Drive.
+	float dc = 1.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -1583,19 +1607,30 @@ struct DriveSettings {
 	/// THE STAGE'S OWN MIX, 0..1: the output is `dry + mix * (processed - dry)`. At 0 the stage is not run and the
 	/// signal is the bits it was; at 1 nothing is blended (the stage is exactly what it is without a mix).
 	float mix = 1.0f;
-	/// LEAVE THE OFFSET IN: the stage does not run its own DC blocker (`DriveStage`). Set by the engines for Paunch-S and
-	/// Paunch-H, whose offset is a signal-following bias that is carried on to the later shapers and taken out once after the
-	/// last one (`BiasBlocker`). False by default: Tube, Fold and Lean block their own, as they always did.
+	/// THE OFFSET IS LEFT IN: the stage does not run its own DC removal (`DriveStage`). The Etch slots always pass their offset
+	/// forward; the one DC stage sits after the Drive (`dcAmount`). False by default, so a stage used alone removes its own.
 	bool leaveDc = false;
+	/// HOW MUCH OF THE STAGE'S OWN OFFSET IT REMOVES, 0..1 (the Drive's `eroder_dc`; it glides). The estimate of the offset runs at
+	/// any amount, so the loops' taps can take the fully blocked signal (`DriveStage::fullyBlocked`).
+	float dcAmount = 1.0f;
 };
-/// WHETHER THE STAGE'S OFFSET IS LEFT IN FOR THE ENGINE TO TAKE OUT (a Paunch law that is run).
-[[nodiscard]] inline bool biasMade(const DriveSettings& s) noexcept {
-	return s.leaveDc && s.driven && s.mix > 0.0f && driveIsPaunchLaw(s.mode);
+/// **THE TYPES THAT MAKE AN OFFSET**: Tube, Fold, Lean (its halves are unequal) and Paunch-S and Paunch-H (a rectified or squared mid is
+/// never negative). The one DC stage after the Drive takes it out, whichever stage made it.
+inline constexpr bool driveMakesOffset(DriveMode mode) {
+	return mode == DriveMode::Tube || mode == DriveMode::Fold || mode == DriveMode::Lean || driveIsPaunchLaw(mode);
 }
-/// The settings with the offset left in for a Paunch law (the engines' stages); every other Type is as it was.
-[[nodiscard]] inline DriveSettings keepingBias(DriveSettings d) noexcept {
-	d.leaveDc = driveIsPaunchLaw(d.mode);
-	return d;
+/// WHETHER A STAGE THAT IS RUN MAKES AN OFFSET.
+[[nodiscard]] inline bool makesOffset(const DriveSettings& s) noexcept {
+	return s.driven && s.mix > 0.0f && driveMakesOffset(s.mode);
+}
+/// WHETHER ANY STAGE THE CONTROLS RUN MAKES AN OFFSET: the Drive, or in Etch a slot with an Amount and a Mix.
+[[nodiscard]] inline bool chainMakesOffset(const Settings& s) noexcept {
+	const auto slot = [](const SlotSettings& t) { return t.amount > 0.0f && t.mix > 0.0f && driveMakesOffset(t.type); };
+	return (s.drive > 0.0f && driveMakesOffset(s.driveMode)) || (s.mode == Mode::Etch && (slot(s.slotA) || slot(s.slotB)));
+}
+/// WHETHER THE DC STAGE IS RUNNING for these controls: some stage makes an offset and the amount is above 0.
+[[nodiscard]] inline bool dcStageRuns(const Settings& s) noexcept {
+	return s.dc > 0.0f && chainMakesOffset(s);
 }
 /// **EVERYTHING DUST'S SAMPLE LOOP RUNS ON.** A pure function of the settings, the note and the rate.
 struct DustDerived {

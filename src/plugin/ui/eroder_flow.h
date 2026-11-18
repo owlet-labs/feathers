@@ -43,7 +43,7 @@
 //                     └──── loop ◀─────────────────────┘      [Restore]
 //
 // **WHAT IT SHOWS.** In order: the input, the emphasis (before the sum, or after it with In Loop), the sum, Smear, the
-// engine (Etch: slot A and slot B, in line for Series, split and joined for Parallel), the Drive, the emphasis undone, HP
+// engine (Etch: slot A and slot B, in line for Series, split and joined for Parallel), the Drive, the DC stage (an indicator: lit while it runs), the emphasis undone, HP
 // Wet and Mix. Two returns arch back under the line to the sum: the inner (Reso) from after the engine (Tap Clean) or
 // after the Drive (Tap Driven), the outer (Loop) from after the Drive. The Sub Thru road arches over the line from the
 // input to after HP Wet, which is where the engine gives the lows back. **A STAGE THAT IS OFF IS DIM.**

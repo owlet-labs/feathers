@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <numbers>
 #include <string_view>
 #include <utility>
@@ -1428,7 +1429,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount);
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount - kDcParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -4838,7 +4839,7 @@ TEST_CASE("Etch at rest is a true bypass: bit for bit the input at Mix 0, 0.37 a
 
 TEST_CASE("Etch: a single slot is a DriveStage run alone, sample for sample — a curve, Slew, Decimate and Crush, in either slot") {
 	const StereoBuffer in = noiseStereo(9600, 0.6f);
-	for (const DriveMode type : { DriveMode::Fold, DriveMode::Slew, DriveMode::Decimate, DriveMode::Crush }) {
+	for (const DriveMode type : { DriveMode::Wreck, DriveMode::Slew, DriveMode::Decimate, DriveMode::Crush }) {
 		for (const bool second : { false, true }) {
 			CAPTURE(static_cast<int>(type));
 			CAPTURE(second);
@@ -4888,7 +4889,7 @@ TEST_CASE("Etch: a single slot is a DriveStage run alone, sample for sample — 
 TEST_CASE("Etch: Series is B of A of the input, Parallel is the input plus what each slot changed; Slot Mix is the restated blend") {
 	const StereoBuffer in = noiseStereo(9600, 0.6f);
 	Settings s = etchBase();
-	s.slotA = { 0.7f, DriveMode::Fold, 0.3f, 1.0f };
+	s.slotA = { 0.7f, DriveMode::Wreck, 0.3f, 1.0f };
 	s.slotB = { 0.5f, DriveMode::Slew, 0.4f, 1.0f };
 
 	// SERIES: A, then B on what A made — two stages chained by hand.
@@ -4931,7 +4932,7 @@ TEST_CASE("Etch: Series is B of A of the input, Parallel is the input plus what 
 	// SLOT MIX 0.5: the dry and the stage's output half and half.
 	{
 		Settings m = etchBase();
-		m.slotA = { 0.7f, DriveMode::Fold, 0.3f, 0.5f };
+		m.slotA = { 0.7f, DriveMode::Wreck, 0.3f, 0.5f };
 		DriveStage full = stageOf(m.slotA, kRate, 1.0f);
 		const StereoBuffer processed = throughStage(full, in);
 		const StereoBuffer got = renderStereo(kRate, m, in);
@@ -5062,7 +5063,7 @@ TEST_CASE("Etch's loops: the inner loop (Clean after the slots, Driven after the
 		Settings s = etchBase();
 		s.resonance = 0.6f;
 		s.tapDriven = driven;
-		s.slotA = { 0.3f, DriveMode::Fold, 0.2f, 1.0f };
+		s.slotA = { 0.3f, DriveMode::Wreck, 0.2f, 1.0f };
 		s.drive = 0.3f;
 		s.driveMode = DriveMode::Decimate; // a gain of one: nothing to divide, so the restatement is the plain recurrence
 		// THE SLOTS' SMALL-SIGNAL GAIN IS DIVIDED OUT OF THE LOOP: the seam's divisor, checked on its own in the case below.
@@ -5082,7 +5083,7 @@ TEST_CASE("Etch's loops: the inner loop (Clean after the slots, Driven after the
 	{
 		Settings a = etchBase();
 		a.resonance = 0.6f;
-		a.slotA = { 0.3f, DriveMode::Fold, 0.2f, 1.0f };
+		a.slotA = { 0.3f, DriveMode::Wreck, 0.2f, 1.0f };
 		a.drive = 0.3f;
 		a.driveMode = DriveMode::Decimate;
 		a.driveShape = 0.0f;
@@ -6475,7 +6476,7 @@ TEST_CASE("Paunch bias: the engine's output has no offset with a Paunch law in a
 			std::vector<float> l(480, 0.1f);
 			std::vector<float> r = l;
 			e.processStereo(l.data(), r.data(), 480);
-			CHECK(e.dustForTest().biasFinalForTest());
+			CHECK(e.dustForTest().dcStageForTest());
 		}
 	}
 	// THE COMB: its Drive.
@@ -6489,9 +6490,10 @@ TEST_CASE("Paunch bias: the engine's output has no offset with a Paunch law in a
 	const Pair base = engineRun(c, false, 0.4);
 	measured("Comb, mean with Paunch-S / with Soft, dB", meanDb(p.l) - meanDb(base.l));
 	CHECK(meanDb(p.l) < std::max(meanDb(base.l), -80.0) + 12.0); // (its wet moves, so a 100 ms mean is not exactly zero for either)
-	// A SETTING WITH NO PAUNCH LAW has no blocker in at all.
+	// A SETTING WITH NO TYPE THAT MAKES AN OFFSET has no DC stage in at all.
 	Settings plain = etchBase();
-	plain.slotA = { 0.6f, DriveMode::Tube, 0.5f, 1.0f };
+	plain.slotA = { 0.6f, DriveMode::Chonk, 0.5f, 1.0f };
+	plain.slotB = { 0.6f, DriveMode::Soft, 0.5f, 1.0f };
 	plain.drive = 0.7f;
 	Eroder e;
 	e.prepare(kRate);
@@ -6499,8 +6501,8 @@ TEST_CASE("Paunch bias: the engine's output has no offset with a Paunch law in a
 	std::vector<float> l(480, 0.1f);
 	std::vector<float> r = l;
 	e.processStereo(l.data(), r.data(), 480);
-	CHECK_FALSE(e.dustForTest().biasFinalForTest());
-	CHECK_FALSE(e.dustForTest().biasCleanForTest());
+	CHECK_FALSE(e.dustForTest().dcStageForTest());
+	CHECK_FALSE(e.dustForTest().cleanTapBlockedForTest());
 }
 
 TEST_CASE("Paunch bias: the Clean tap is taken after a blocker of its own, so the loop does not recirculate the bias, and the output stays bounded") {
@@ -6858,4 +6860,190 @@ TEST_CASE("Paunch-OH: a sine switched on from silence — the imbalance is measu
 	CHECK(stageOf(deriveDrive(0.0f, DriveMode::PaunchOH, 0.0f, kRate, nullptr), in) == in);
 	CHECK(driveSmallSignalGain(DriveMode::PaunchOH, 4.0, 0.0f) == 1.0);
 	CHECK(driveMakeUp(DriveMode::PaunchOH, 4.0, 0.0f) == 1.0);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE DC STAGE'S IDENTITY PIN: Tube, Fold and Lean in the Drive come out as they did when the stage blocked its own offset. //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A 64-BIT FNV-1a HASH of every output bit of the engine over a burst, a pause and a tail of silence, both channels, in blocks of 480.
+uint64_t engineHash(Mode mode, DriveMode type, float shape) {
+	Settings s = declared();
+	s.mode = mode;
+	s.mix = 1.0f;
+	s.drive = 0.8f;
+	s.driveMode = type;
+	s.driveShape = shape;
+	s.freq = 10.0f;
+	if (mode == Mode::Dust) {
+		s.amount = static_cast<float>(kDustAmountLog2Default);
+	}
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	const std::vector<float> wander = wanderOf(24000);
+	uint64_t hash = 1469598103934665603ull;
+	const auto feed = [&hash](float v) {
+		uint32_t bits = 0;
+		static_assert(sizeof bits == sizeof v);
+		std::memcpy(&bits, &v, sizeof bits);
+		for (int b = 0; b < 4; ++b) {
+			hash ^= (bits >> (8 * b)) & 0xffu;
+			hash *= 1099511628211ull;
+		}
+	};
+	std::vector<float> l(480);
+	std::vector<float> r(480);
+	for (size_t at = 0; at < 48000; at += 480) {
+		for (size_t i = 0; i < 480; ++i) {
+			const size_t k = at + i;
+			l[i] = k < 24000 ? 0.4f * wander[k] + static_cast<float>(sineAt(k, 300.0, 0.3)) : 0.0f;
+			r[i] = k < 24000 ? 0.4f * wander[(k * 7) % 24000] + static_cast<float>(sineAt(k, 450.0, 0.2)) : 0.0f;
+		}
+		e.processStereo(l.data(), r.data(), 480);
+		for (size_t i = 0; i < 480; ++i) {
+			feed(l[i]);
+			feed(r[i]);
+		}
+	}
+	return hash;
+}
+
+} // namespace
+
+TEST_CASE("DC stage: Tube, Fold and Lean in the Drive of Dust, Rust and the Comb are bit-for-bit what they were when the stage blocked its own offset") {
+	struct Pin {
+		Mode mode;
+		DriveMode type;
+		float shape;
+		uint64_t hash;
+	};
+	// RECORDED FROM THE ENGINE AS IT WAS BEFORE THE DC STAGE: the stage blocked its own offset, in the stage.
+	const Pin pins[] = {
+		{ Mode::Dust, DriveMode::Tube, 0.5f, 0xe79d43ae40dcf533ull },
+		{ Mode::Dust, DriveMode::Fold, 0.5f, 0x136c9aaade6782efull },
+		{ Mode::Dust, DriveMode::Lean, 0.5f, 0x46b01b3dcc879de3ull },
+		{ Mode::Rust, DriveMode::Tube, 0.5f, 0x00e20637b9618ae8ull },
+		{ Mode::Rust, DriveMode::Fold, 0.5f, 0x541e819dd5fc1d04ull },
+		{ Mode::Rust, DriveMode::Lean, 0.5f, 0x397720df64b10e17ull },
+		{ Mode::Comb, DriveMode::Tube, 0.5f, 0x8b66f4a1a5387f06ull },
+		{ Mode::Comb, DriveMode::Fold, 0.5f, 0xbdbecb60a233a39aull },
+		{ Mode::Comb, DriveMode::Lean, 0.5f, 0x9be30f0872e6e582ull },
+	};
+	for (const Pin& pin : pins) {
+		CAPTURE(static_cast<int>(pin.mode));
+		CAPTURE(static_cast<int>(pin.type));
+		CHECK(engineHash(pin.mode, pin.type, pin.shape) == pin.hash);
+	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE DC AMOUNT: one stage after the Drive removes the offset any stage makes, by an amount; the loops never carry it. //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("DC amount: with Paunch-S in the Drive the output's offset is (1 - amount) of the restated one, and the fed-back mean stays under -80 dB at every amount") {
+	const double a = 2.0; // Amount 0.5
+	const double A = 0.4;
+	const double offset = a * A * 2.0 / std::numbers::pi; // the mean of a |x| for a sine of peak A, in the left (the right has its negative)
+	double previous = -1.0e9;
+	for (const float amount : { 1.0f, 0.5f, 0.0f }) {
+		CAPTURE(amount);
+		Settings s = etchBase();
+		s.drive = 0.5f;
+		s.driveMode = DriveMode::PaunchS;
+		s.dc = amount;
+		s.resonance = 0.9f;
+		s.tapDriven = true;
+		std::vector<float> tap;
+		const Pair p = engineRun(s, false, A, &tap);
+		double mean = 0.0;
+		for (const float v : p.l) {
+			mean += static_cast<double>(v);
+		}
+		mean /= static_cast<double>(p.l.size());
+		measured("DC amount: output mean over the restated offset", mean / offset);
+		CHECK(std::abs(mean - (1.0 - static_cast<double>(amount)) * offset) <= 0.05 * offset);
+		CHECK(mean > previous); // (the offset grows as the amount falls)
+		previous = mean;
+		measured("DC amount: fed-back mean re its peak, dB", meanDb(tap));
+		CHECK(meanDb(tap) < -80.0);
+		CHECK(peakOf(tap) > 0.05f);
+	}
+}
+
+TEST_CASE("DC amount: the offset a slot makes passes on to the next stage — slot A into slot B differs from the blocked-between reference, for Paunch-S and Tube") {
+	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::Tube }) {
+		CAPTURE(static_cast<int>(type));
+		Settings s = etchBase();
+		s.slotA = { 0.5f, type, type == DriveMode::Tube ? 1.0f : 0.0f, 1.0f };
+		s.slotB = { 0.9f, DriveMode::Soft, 0.0f, 1.0f };
+		const Pair kept = engineRun(s, false, 0.3);
+		const Pair blocked = engineRun(s, true, 0.3);
+		// THE EVEN CONTENT of the side (L - R) / 2 after slot B, and the left's: whichever the Type makes, summed.
+		double keptEven = 0.0;
+		double blockedEven = 0.0;
+		for (const int k : { 2, 4 }) {
+			keptEven += partial(sideOf(kept), k) + partial(kept.l, k);
+			blockedEven += partial(sideOf(blocked), k) + partial(blocked.l, k);
+		}
+		measured("slot A into slot B, kept over blocked even content, dB", dbOf(keptEven / blockedEven));
+		CHECK(std::abs(dbOf(keptEven / blockedEven)) >= 3.0);
+		CHECK(meanDb(kept.l) < -80.0); // the one DC stage after the Drive takes it out in the end
+	}
+}
+
+TEST_CASE("DC amount: the amount moving gives the same output at any block size, and the stage at 0 ends a tail in exact zero") {
+	const auto run = [](size_t block) {
+		Settings s = etchBase();
+		s.slotA = { 0.6f, DriveMode::PaunchS, 0.0f, 1.0f };
+		Eroder e;
+		e.prepare(kRate);
+		std::vector<float> out;
+		const float amounts[] = { 1.0f, 0.3f, 0.0f, 0.7f };
+		for (int segment = 0; segment < 4; ++segment) {
+			s.dc = amounts[segment];
+			e.setTarget(s);
+			std::vector<float> l(9600);
+			for (size_t i = 0; i < l.size(); ++i) {
+				l[i] = segment == 3 && i > 4800 ? 0.0f : static_cast<float>(sineAt(i + 9600 * static_cast<size_t>(segment), 300.0, 0.4));
+			}
+			std::vector<float> r = l;
+			for (size_t done = 0; done < l.size(); done += block) {
+				const int n = static_cast<int>(std::min(block, l.size() - done));
+				e.processStereo(l.data() + done, r.data() + done, n);
+			}
+			out.insert(out.end(), l.begin(), l.end());
+			out.insert(out.end(), r.begin(), r.end());
+		}
+		return out;
+	};
+	const std::vector<float> reference = run(256);
+	CHECK(run(32) == reference);
+	CHECK(run(37) == reference);
+	// A TAIL AT 0: the law makes nothing from silence and nothing removes anything, so the output ends in exact zero.
+	Settings s = etchBase();
+	s.drive = 0.8f;
+	s.driveMode = DriveMode::PaunchS;
+	s.dc = 0.0f;
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	size_t last = 0;
+	std::vector<float> l(480);
+	std::vector<float> r(480);
+	for (size_t at = 0; at < 96000; at += 480) {
+		for (size_t i = 0; i < 480; ++i) {
+			l[i] = r[i] = at + i < 4800 ? static_cast<float>(sineAt(at + i, 300.0, 0.5)) : 0.0f;
+		}
+		e.processStereo(l.data(), r.data(), 480);
+		for (size_t i = 0; i < 480; ++i) {
+			if (l[i] != 0.0f || r[i] != 0.0f) {
+				last = at + i;
+			}
+		}
+	}
+	measured("DC 0%: last non-zero frame", static_cast<double>(last));
+	CHECK(last < 90000);
 }

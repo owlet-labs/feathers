@@ -37,11 +37,14 @@ namespace feathers::fx::eroder {
 /// blend is not computed, so the output is exactly what it is without one.
 ///
 /// No allocation; a frame at a time, so a host that cuts its blocks anywhere gets the same bits.
+inline constexpr double kDcGlideSeconds = 0.010;
+
 class DriveStage {
 public:
 	void prepare(double sampleRate) noexcept {
 		const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
 		dcCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * kDriveDcHz / rate));
+		dcGlide_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDcGlideSeconds * rate)));
 		followCoefficient_ = paunchFollowCoefficient(4.0 * rate); // the follower runs on the oversampled frames
 		slew_.prepare(rate);
 		slewSet_ = false; // the slew was just turned off: the next settings turn it on
@@ -56,16 +59,29 @@ public:
 		prevL_ = prevR_ = 0.0f;
 		slew_.reset();
 		dcL_ = dcR_ = 0.0f;
+		fullL_ = fullR_ = 0.0f;
+		dcNow_ = settings_.dcAmount;
 		followPower_ = 0.0f;
+	}
+
+	/// THE STAGE'S OUTPUT AS IT WOULD BE WITH ALL OF ITS OWN OFFSET REMOVED (the last frame): what the loops' Driven and outer taps
+	/// take, whatever the Drive's DC amount. Equal to the output at an amount of 1, and to it for a Type that makes no offset.
+	void fullyBlocked(float& left, float& right) const noexcept {
+		left = fullL_;
+		right = fullR_;
 	}
 
 	/// THE SETTINGS FOR THE FRAMES THAT FOLLOW. A shaper that was resting, or another Type, starts from nothing rather
 	/// than from what it last held.
 	void set(const DriveSettings& settings) noexcept {
-		if (running(settings) && (!running(settings_) || settings_.mode != settings.mode)) {
+		const bool fresh = running(settings) && (!running(settings_) || settings_.mode != settings.mode);
+		if (fresh) {
 			reset();
 		}
 		settings_ = settings;
+		if (fresh || !running(settings)) {
+			dcNow_ = settings.dcAmount; // a stage that starts from nothing starts at its amount; a running one glides to it
+		}
 		if (running(settings)) {
 			if (settings.slewHz != slewHz_ || settings.slewCurve != slewCurve_ || settings.slewBalance != slewBalance_ ||
 			    !slewSet_) {
@@ -202,11 +218,22 @@ private:
 			left *= norm;
 			right *= norm;
 		}
-		if (mode == DriveMode::Tube || mode == DriveMode::Fold || mode == DriveMode::Lean || (driveIsPaunchLaw(mode) && !s.leaveDc)) {
+		if (driveMakesOffset(mode) && !s.leaveDc) {
+			// THE OFFSET (the stage's own one-pole estimate) TAKEN OUT BY THE AMOUNT: all of it at 1, as this always did.
 			dcL_ += (left - dcL_) * dcCoefficient_;
 			dcR_ += (right - dcR_) * dcCoefficient_;
-			left -= dcL_;
-			right -= dcR_;
+			fullL_ = left - dcL_;
+			fullR_ = right - dcR_;
+			dcNow_ += (s.dcAmount - dcNow_) * dcGlide_;
+			if (std::abs(s.dcAmount - dcNow_) < 1.0e-6f) {
+				dcNow_ = s.dcAmount;
+			}
+			left -= dcL_ * dcNow_;
+			right -= dcR_ * dcNow_;
+		}
+		else {
+			fullL_ = left;
+			fullR_ = right;
 		}
 		// THE OVERSAMPLER'S FILTERS RING DOWN FOR EVER IN A FLOAT: once nothing has gone in and next to nothing has
 		// come out for a while, they are emptied and the stage puts out nothing until something goes in.
@@ -221,6 +248,7 @@ private:
 			}
 			if (quiet_ >= kQuietFrames) {
 				left = right = 0.0f;
+				fullL_ = fullR_ = 0.0f;
 			}
 		}
 		else {
@@ -243,6 +271,11 @@ private:
 	float dcL_ = 0.0f;
 	float dcR_ = 0.0f;
 	float dcCoefficient_ = 0.0f;
+	/// The DC amount as it glides (`kDcGlideSeconds`) to the setting's, and the fully blocked frame.
+	float dcGlide_ = 0.0f;
+	float dcNow_ = 1.0f;
+	float fullL_ = 0.0f;
+	float fullR_ = 0.0f;
 	/// THE ODD LAWS' FOLLOWER: the mean square of the mid, and its one-pole's coefficient at the oversampled rate.
 	float followPower_ = 0.0f;
 	float followCoefficient_ = 0.0f;
@@ -252,37 +285,59 @@ private:
 	bool slewSet_ = false;
 };
 
-/// **THE BIAS BLOCKER: THE ONE DC BLOCKER AFTER THE LAST SHAPER** (the same one-pole as the stage's, `kDriveDcHz`), per channel.
-/// Paunch-S and Paunch-H make a bias that follows the signal; their stages leave it in (`DriveSettings::leaveDc`) so it can push
-/// the shapers after them off centre, and the engine takes it out here. A blocker that has nothing in it, and an input that is
-/// exactly zero, give exact zero (a tail ends).
+/// **THE POST-DRIVE DC STAGE** (the same one-pole as the stage's, `kDriveDcHz`), per channel, for an offset that arrives from a slot when
+/// the Drive does not run a Type that blocks its own: the output is `x - amount * dc` (the amount glides) and `full` is `x - dc`, what
+/// the loops' taps take. A blocker with nothing in it, and an input that is exactly zero, give exact zero (a tail ends).
 class BiasBlocker {
 public:
 	void prepare(double sampleRate) noexcept {
 		const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
 		coefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * kDriveDcHz / rate));
+		glide_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDcGlideSeconds * rate)));
 		reset();
 	}
-	void reset() noexcept { dc_[0] = dc_[1] = 0.0f; }
-	[[nodiscard]] float process(int channel, float x) noexcept {
-		float& dc = dc_[channel & 1];
-		dc += (x - dc) * coefficient_;
-		if (x == 0.0f && std::abs(dc) < kFloor) {
-			dc = 0.0f;
-			return 0.0f;
+	void reset() noexcept {
+		dc_[0] = dc_[1] = 0.0f;
+		full_[0] = full_[1] = 0.0f;
+	}
+	/// The amount the output glides to; it starts from here when the blocker has just been emptied (`snap`).
+	void setAmount(float target, bool snap) noexcept {
+		target_ = target;
+		if (snap) {
+			now_ = target;
 		}
-		return x - dc;
 	}
 	void process(float& left, float& right) noexcept {
-		left = process(0, left);
-		right = process(1, right);
+		now_ += (target_ - now_) * glide_;
+		if (std::abs(target_ - now_) < 1.0e-6f) {
+			now_ = target_;
+		}
+		left = one(0, left);
+		right = one(1, right);
 	}
+	[[nodiscard]] float fullL() const noexcept { return full_[0]; }
+	[[nodiscard]] float fullR() const noexcept { return full_[1]; }
 	[[nodiscard]] float dcForTest(int channel) const noexcept { return dc_[channel & 1]; }
 
 private:
+	[[nodiscard]] float one(int c, float x) noexcept {
+		float& dc = dc_[c];
+		dc += (x - dc) * coefficient_;
+		if (x == 0.0f && std::abs(dc) < kFloor) {
+			dc = 0.0f;
+			full_[c] = 0.0f;
+			return 0.0f;
+		}
+		full_[c] = x - dc;
+		return x - dc * now_;
+	}
 	static constexpr float kFloor = 1.0e-9f;
 	float dc_[2] = {};
+	float full_[2] = {};
 	float coefficient_ = 0.0f;
+	float glide_ = 0.0f;
+	float now_ = 1.0f;
+	float target_ = 1.0f;
 };
 
 /// **HP WET: A TWO-POLE HIGHPASS ON THE WET, AFTER THE SHAPER, and the same filter on the dry for Sub Thru** — what it

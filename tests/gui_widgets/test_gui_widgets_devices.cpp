@@ -25101,20 +25101,20 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 	// THE TABLE, RESTATED BY HAND FROM THE PLAN (Task 7) — which mode reads which control. Checked
 	// against the card AND against the descriptor's gates, so a card and a descriptor that drifted
 	// together would still be caught by the first.
-	const std::array<cl::Param, 7> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
-		                                   cl::Param::Depth, cl::Param::Bits, cl::Param::Shape };
+	const std::array<cl::Param, 8> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
+		                                   cl::Param::Depth, cl::Param::Bits, cl::Param::Shape, cl::Param::Dc };
 	const std::array<std::set<cl::Param>, 15> expected {
 		std::set<cl::Param> { cl::Param::Knee },                                         // Soft
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback },   // Texture
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Grit },                        // Grit
 		std::set<cl::Param> { cl::Param::Depth },                                        // Fold
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Bits },                        // Bits
-		std::set<cl::Param> { cl::Param::Shape },                                        // Tube
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Tube
 		std::set<cl::Param> { cl::Param::Shape },                                        // Jag
-		std::set<cl::Param> { cl::Param::Shape },                                        // Lean
-		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch
-		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-S
-		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-H
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Lean
+		std::set<cl::Param> { cl::Param::Shape },                                        // Chonk
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Paunch-S
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Paunch-H
 		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-OS
 		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-OH
 		std::set<cl::Param> { cl::Param::Shape },                                        // Slew
@@ -42804,7 +42804,8 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 	// ETCH'S SLOT SHAPES AND MIXES (four) are boxes inside the slots' Type cells; its two Amounts are knobs.
 	// THE EMPHASIS OFFSET is a field of the Emphasis stack, and so are Freq, Width and the Emphasis amount (the Filter and Emphasis
 	// boxes): four more continuous controls that are not knobs. The Input drive is a knob and a continuous control both.
-	REQUIRE(knobs.size() == continuous - 4 - 4 - 1 - 3 - 1); // and the Comb's Cutoff, the Filter box's top row there
+	// AND THE DC AMOUNT, the third row of the Drive's mode cell, a box like its Shape.
+	REQUIRE(knobs.size() == continuous - 4 - 4 - 1 - 3 - 1 - 1); // and the Comb's Cutoff, the Filter box's top row there
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -43522,6 +43523,85 @@ struct EroFaces {
 };
 
 } // namespace
+
+TEST_CASE("ERODER's Drive cell has a DC row, the third under Type and Shape on the card and in the window, that writes eroder_dc and greys unless a stage that makes an offset runs") {
+	EroFaces e;
+	REQUIRE(ui::EroderCard::openHeight() <= ui::kCardUnitHeight);
+	const auto cells = [&] { return std::vector<ui::ModeValueCell*> { e.d.card->driveCellForTest(), e.panel->driveCellForTest() }; };
+	const auto live = [&](bool want) {
+		for (ui::ModeValueCell* cell : cells()) {
+			CHECK(cell->boxFor(eroAt(ero::Param::Dc))->enabled() == want);
+		}
+	};
+	for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb, ero::Mode::Etch }) {
+		CAPTURE(static_cast<int>(mode));
+		e.mode(mode);
+		for (ui::ModeValueCell* cell : cells()) {
+			ui::ValueBox* dc = cell->boxFor(eroAt(ero::Param::Dc));
+			ui::ValueBox* shape = cell->boxFor(eroAt(ero::Param::DriveShape));
+			REQUIRE(dc != nullptr);
+			REQUIRE(shape != nullptr);
+			CHECK(cell->stacked());
+			CHECK(dc->isVisible());
+			CHECK(dc->control().desc().key == std::string_view("eroder_dc"));
+			CHECK(dc->label() == "DC");
+			CHECK(dc->y() > shape->y());
+			CHECK(dc->bottom() <= static_cast<float>(cell->height()));
+		}
+		CHECK(ui::EroderCard::openHeight() <= ui::kCardUnitHeight);
+	}
+	// IT WRITES eroder_dc, on either surface.
+	for (ui::ModeValueCell* cell : cells()) {
+		ui::ValueBox* dc = cell->boxFor(eroAt(ero::Param::Dc));
+		dc->control().beginGesture();
+		dc->control().setValue(0.4);
+		dc->control().endGesture();
+		CHECK(eroField(e.d, ero::Param::Dc) == doctest::Approx(0.4f));
+		e.set(ero::Param::Dc, 1.0f);
+	}
+	// GREYED UNLESS A STAGE THAT IS RUN MAKES AN OFFSET.
+	e.mode(ero::Mode::Dust);
+	e.set(ero::Param::Drive, 0.5f);
+	e.set(ero::Param::DriveMode, static_cast<float>(ero::DriveMode::Soft));
+	live(false);
+	for (const ero::DriveMode type : { ero::DriveMode::Tube, ero::DriveMode::Fold, ero::DriveMode::Lean, ero::DriveMode::PaunchS, ero::DriveMode::PaunchH }) {
+		CAPTURE(static_cast<int>(type));
+		e.set(ero::Param::DriveMode, static_cast<float>(type));
+		live(true);
+	}
+	e.set(ero::Param::Drive, 0.0f); // the Drive is not run
+	live(false);
+	e.set(ero::Param::Drive, 0.5f);
+	e.set(ero::Param::DriveMode, static_cast<float>(ero::DriveMode::Chonk));
+	live(false);
+	// AN ETCH SLOT THAT IS RUN MAKES ONE TOO, and in Dust a slot is not run at all.
+	e.set(ero::Param::SlotAAmount, 0.6f);
+	e.set(ero::Param::SlotAType, static_cast<float>(ero::DriveMode::PaunchS));
+	live(false);
+	e.mode(ero::Mode::Etch);
+	live(true);
+	e.set(ero::Param::SlotAMix, 0.0f);
+	live(false);
+	// THE PICTURE'S dc BOX IS LIT EXACTLY WHEN THE STAGE RUNS (the same rule, and an amount of 0 switches it off).
+	const auto lit = [](const ero::Settings& st) {
+		const ui::EroderFlow::Path path = ui::EroderFlow::pathFor(ero::rowOf(ero::State { st }));
+		for (const auto& stage : path.stages) {
+			if (stage.label == "dc") {
+				return stage.lit;
+			}
+		}
+		return false;
+	};
+	ero::Settings st;
+	st.drive = 0.5f;
+	st.driveMode = ero::DriveMode::Tube;
+	CHECK(lit(st));
+	st.dc = 0.0f;
+	CHECK_FALSE(lit(st));
+	st.dc = 1.0f;
+	st.driveMode = ero::DriveMode::Soft;
+	CHECK_FALSE(lit(st));
+}
 
 TEST_CASE("ERODER's card offers the shared section in every engine, HP Wet and Follow are the window's, and the card stays inside its height") {
 	EroFaces e;
@@ -44733,9 +44813,9 @@ TEST_CASE("ERODER's topology picture: the path in order with In Loop off and on,
 	const auto lit = [&](const std::string& label) { return flow.pathForTest().stages[indexOf(label)].lit; };
 	e.mode(ero::Mode::Dust);
 	// THE ORDER: the emphasis before the sum, and after it with In Loop.
-	CHECK(labels() == std::vector<std::string>({ "in", "gain", "emph", sum, "smear", "dust", "drive", "restore", "hp", "mix" }));
+	CHECK(labels() == std::vector<std::string>({ "in", "gain", "emph", sum, "smear", "dust", "drive", "dc", "restore", "hp", "mix" }));
 	e.set(P::EmphInLoop, 1.0f);
-	CHECK(labels() == std::vector<std::string>({ "in", "gain", sum, "emph", "smear", "dust", "drive", "restore", "hp", "mix" }));
+	CHECK(labels() == std::vector<std::string>({ "in", "gain", sum, "emph", "smear", "dust", "drive", "dc", "restore", "hp", "mix" }));
 	e.set(P::EmphInLoop, 0.0f);
 	// WHAT IS LIT: the emphasis and its undoing at 0 dB are dim; a Smear, a Drive and an HP Wet are dim at their bottoms.
 	CHECK_FALSE(lit("emph"));
@@ -44789,7 +44869,7 @@ TEST_CASE("ERODER's topology picture: the path in order with In Loop off and on,
 	e.set(P::HpWet, 8.0f);
 	// IN THE COMB it needs Blend, the window's own rule for the chip.
 	e.mode(ero::Mode::Comb);
-	CHECK(labels()[labels().size() - 5] == "comb");
+	CHECK(labels()[labels().size() - 6] == "comb"); // (the dc stage follows the drive)
 	CHECK_FALSE(flow.pathForTest().bypass.lit);
 	CHECK_FALSE(panel.subThruForTest()->enabled());
 	e.set(P::Blend, 1.0f);
@@ -44798,7 +44878,7 @@ TEST_CASE("ERODER's topology picture: the path in order with In Loop off and on,
 	// ETCH: its two slots, side by side in Series and one over the other in Parallel.
 	e.set(P::FbTap, 0.0f);
 	e.mode(ero::Mode::Etch);
-	CHECK(labels() == std::vector<std::string>({ "in", "gain", "emph", sum, "smear", "A", "B", "drive", "restore", "hp", "mix" }));
+	CHECK(labels() == std::vector<std::string>({ "in", "gain", "emph", sum, "smear", "A", "B", "drive", "dc", "restore", "hp", "mix" }));
 	CHECK_FALSE(flow.pathForTest().stages[indexOf("B")].beneath);
 	CHECK(flow.stageXForTest(indexOf("B")) > flow.stageXForTest(indexOf("A")));
 	CHECK_FALSE(lit("A"));

@@ -172,6 +172,7 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::SlotBShape)] = s.slotB.shape;
 	row[static_cast<size_t>(Param::SlotBMix)] = s.slotB.mix;
 	row[static_cast<size_t>(Param::SlotRoute)] = s.slotParallel ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::Dc)] = s.dc;
 	return row;
 }
 
@@ -238,6 +239,7 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.slotB.shape = read(Param::SlotBShape);
 	s.slotB.mix = read(Param::SlotBMix);
 	s.slotParallel = read(Param::SlotRoute) >= 0.5f;
+	s.dc = read(Param::Dc);
 	return out;
 }
 
@@ -392,7 +394,6 @@ void Eroder::prepare(double sampleRate) {
 	analyser_.prepare(sampleRate_);
 	combShaper_.prepare(sampleRate_);
 	combTapShaper_.prepare(sampleRate_);
-	combBias_.prepare(sampleRate_);
 	shared_.prepare(sampleRate_, false);
 	gainSmoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kSmoothingSeconds * sampleRate_)));
 	followAttack_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
@@ -409,8 +410,6 @@ void Eroder::reset() noexcept {
 	combFollow_ = 1.0f;
 	combShaper_.reset();
 	combTapShaper_.reset();
-	combBias_.reset();
-	combBiasOn_ = false;
 	tapStageRan_ = false;
 	shared_.reset();
 	combHighpass_.reset();
@@ -656,11 +655,9 @@ void Eroder::tick(const Settings& s) noexcept {
 		gainsPlaced_ = true;
 	}
 	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
-	const DriveSettings kept = keepingBias(drive);
-	if (!biasMade(kept) && combBiasOn_) {
-		combBias_.reset();
-	}
-	combBiasOn_ = biasMade(kept);
+	// THE COMB'S DRIVE removes its own offset by the DC amount; the tap's stage always removes all of its own (the loops never carry one).
+	DriveSettings kept = drive;
+	kept.dcAmount = std::clamp(s.dc, 0.0f, 1.0f);
 	combShaper_.set(kept);
 	combTapShaper_.set(drive);
 }
@@ -889,9 +886,6 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		float outR = wetR * outGain_;
 		lastCombWet_ = outL;
 		combShaper_.process(outL, outR);
-		if (combBiasOn_) {
-			combBias_.process(outL, outR);
-		}
 		lastCombShaped_ = outL;
 		// EMPHASIS OUT: after both taps and the Drive.
 		if (emph) {

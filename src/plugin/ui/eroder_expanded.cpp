@@ -157,8 +157,12 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 	                                             [](size_t) { return true; });
 	driveCell_->setFaceDiameter(kFace);
+	// THREE ROWS, as the slots': the Type, its Shape, and the DC amount (the offset the shapers make, taken out after the Drive).
 	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::DriveShape),
-	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""));
+	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""), "S");
+	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::Dc), std::make_unique<ValueBox>(control(ero::Param::Dc), ""),
+	                              "DC");
+	driveCell_->setStacked(true);
 	(void)driveCell_->refresh();
 	drivePair_ = std::make_unique<PairCell>("", *drive_, *driveCell_);
 	addChild(drivePair_.get());
@@ -427,6 +431,8 @@ void EroderExpanded::refreshHonesty() {
 	const bool inner = comb || row[static_cast<size_t>(ero::Param::Resonance)] != 0.0f;
 	tap_->setEnabled(inner);
 	inLoop_->setEnabled(emphasised && (inner || outer));
+	// THE DC ROW IS LIVE WHILE SOME STAGE THAT IS RUN MAKES AN OFFSET (a parameter condition, so greyed, not hidden).
+	driveCell_->boxFor(static_cast<size_t>(ero::Param::Dc))->setEnabled(ero::chainMakesOffset(ero::stateOf(row, row.size()).settings));
 	(void)driveCell_->refresh();
 }
 

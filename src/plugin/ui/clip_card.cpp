@@ -36,10 +36,10 @@ constexpr std::array<const char*, 3> kGlobalCaptions { "Drive", "Ceiling", "Outp
 
 /// ROW 3 — THE MODE KNOBS, IN FLOW ORDER. Each mode's live subset reads left to right with the hidden
 /// ones skipped; Bits' segmented control follows them (`layOut`).
-constexpr std::array<cl::Param, 6> kModeKnobs {
-	cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit, cl::Param::Depth, cl::Param::Shape,
+constexpr std::array<cl::Param, 7> kModeKnobs {
+	cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit, cl::Param::Depth, cl::Param::Shape, cl::Param::Dc,
 };
-constexpr std::array<const char*, 6> kModeCaptions { "Knee", "Freq", "Foldback", "Grit", "Depth", "Shape" };
+constexpr std::array<const char*, 7> kModeCaptions { "Knee", "Freq", "Foldback", "Grit", "Depth", "Shape", "DC" };
 
 /// HOW MANY CELLS BITS' SEGMENTED CONTROL TAKES — "1 bit | 2 bit" does not fit one knob's width.
 constexpr size_t kBitsCells = 2;

@@ -61,6 +61,7 @@ Settings stateOf(const Row& row, size_t fieldsPresent) {
 	s.depth = rangedOr(row, fieldsPresent, Param::Depth);
 	s.bits = choiceOr(row, fieldsPresent, Param::Bits);
 	s.shape = rangedOr(row, fieldsPresent, Param::Shape);
+	s.dc = rangedOr(row, fieldsPresent, Param::Dc);
 	return s;
 }
 
@@ -79,6 +80,7 @@ Row rowOf(const Settings& s) {
 	row[static_cast<size_t>(Param::Depth)] = s.depth;
 	row[static_cast<size_t>(Param::Bits)] = static_cast<float>(s.bits);
 	row[static_cast<size_t>(Param::Shape)] = s.shape;
+	row[static_cast<size_t>(Param::Dc)] = s.dc;
 	// THE FURNITURE'S DEFAULTS: the slot reads these, the device never does, and a zero Mix would be silence.
 	row[static_cast<size_t>(Param::Mix)] = 1.0f;
 	row[static_cast<size_t>(Param::WetGain)] = 0.5f;

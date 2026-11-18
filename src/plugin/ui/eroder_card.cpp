@@ -72,8 +72,12 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 	                                             [](size_t) { return true; });
 	driveCell_->setFaceDiameter(kKnobDiameter);
+	// THREE ROWS, as the Etch slots': the Type, its Shape, and the DC amount.
 	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::DriveShape),
-	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""));
+	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""), "S");
+	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::Dc), std::make_unique<ValueBox>(control(ero::Param::Dc), ""),
+	                              "DC");
+	driveCell_->setStacked(true);
 	(void)driveCell_->refresh();
 	drivePair_ = std::make_unique<PairCell>("Drive", *drive_, *driveCell_);
 	addChild(drivePair_.get());
@@ -296,6 +300,8 @@ void EroderCard::refreshHonesty() {
 	// RESTORE PUTS BACK WHAT THE EMPHASIS TOOK: with none there is nothing to put back. (The Tap is always live in the
 	// Comb: its inner loop never stops, `kBankFloor`.)
 	restore_->setEnabled(emphasised);
+	// THE DC ROW IS LIVE WHILE SOME STAGE THAT IS RUN MAKES AN OFFSET (a parameter condition, so greyed, not hidden).
+	driveCell_->boxFor(static_cast<size_t>(ero::Param::Dc))->setEnabled(ero::chainMakesOffset(ero::stateOf(row, row.size()).settings));
 	(void)driveCell_->refresh();
 }
 

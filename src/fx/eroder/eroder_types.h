@@ -386,10 +386,12 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 /// BOTH ENGINES HAVE THE STAGE (`drive_stage.h`), last on their wet: Dust's before its HP Wet, the Comb's on the wet
 /// it is about to add to the dry.
 enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Chonk, PaunchS, PaunchH, PaunchOS, PaunchOH, Crush, Decimate, Slew, Lopside, kCount };
-inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean", "Chonk",
-	                                               "Paunch-S", "Paunch-H", "Paunch-OS", "Paunch-OH", "Crush", "Decimate", "Slew", "Lopside" };
-/// THE TYPE FORMERLY CALLED "Paunch" IS "Chonk": a patch stores a Choice by its label, so the old label reads as the new one.
-inline constexpr device::ChoiceAlias kDriveTypeAliases[] = { { "Paunch", "Chonk" } };
+inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean (w)", "Chonk (w)",
+	                                               "Paunch-S (w)", "Paunch-H (w)", "Paunch-OS (w)", "Paunch-OH (w)", "Crush", "Decimate", "Slew", "Lopside" };
+/// **(w) MARKS THE TYPES THAT ADD STEREO WIDTH** (the two sides differ): Lean, Chonk and the four Paunch Types. A patch stores a Choice
+/// by its label, so the labels they were saved under read as the new ones: Lean shipped as "Lean", and Chonk as "Paunch". The match is
+/// of the whole label; the other new labels never shipped bare.
+inline constexpr device::ChoiceAlias kDriveTypeAliases[] = { { "Paunch", "Chonk (w)" }, { "Lean", "Lean (w)" } };
 static_assert(sizeof(kDriveModeNames) / sizeof(kDriveModeNames[0]) == static_cast<size_t>(DriveMode::kCount));
 /// THE TWO PAUNCH LAWS (Paunch-S and Paunch-H): a function of the mid added to one side and taken from the other, not a curve
 /// of one channel.
@@ -832,13 +834,13 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kDriveModeNames,
      .modulatable = false,
      .offsetsMayLeaveRange = false,
-     .tooltip = "What Drive pushes into: Soft starves the quiet parts and rounds the rest, Tube's two halves "
+     .tooltip = "What Drive pushes into. (w) marks the Types that add stereo width. Soft starves the quiet parts and rounds the rest, Tube's two halves "
 	                "differ, Fold is a sine folder that can lean to one side, Wreck is a distortion into a folder "
-	                "(in Dust the feedback runs through both), Jag is a distortion into a sharp folder, Lean "
-	                "leans left and right opposite ways, so its even harmonics are stereo width, Chonk puts "
-	                "its odd harmonics in opposite polarity left and right and thins, then flips, its right side as Drive rises, Paunch-S adds the rectified mid to the "
+	                "(in Dust the feedback runs through both), Jag is a distortion into a sharp folder, Lean (w) "
+	                "leans left and right opposite ways, so its even harmonics are stereo width, Chonk (w) puts "
+	                "its odd harmonics in opposite polarity left and right and thins, then flips, its right side as Drive rises, Paunch-S (w) adds the rectified mid to the "
 	                "left and takes it from the right: even harmonics that are stereo width and vanish in mono; "
-	                "Paunch-H does it with the square, a pure octave above, Paunch-OS adds a third harmonic sized to the signal's own level to one side and takes it from the other, Paunch-OH does the same with the plain cube, so it grows quickly with level: quiet passages stay clean and loud ones spread, Crush holds and rounds each sample, "
+	                "Paunch-H (w) does it with the square, a pure octave above, Paunch-OS (w) adds a third harmonic sized to the signal's own level to one side and takes it from the other, Paunch-OH (w) does the same with the plain cube, so it grows quickly with level: quiet passages stay clean and loud ones spread, Crush holds and rounds each sample, "
 	                "Decimate holds each sample, as steps or as lines, Slew limits how fast the signal may move, "
 	                "Lopside lets it rise and fall at different speeds",
 	     .zones = 0,
@@ -858,8 +860,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "The Type's own colour: Soft starves quiet parts, Tube's two halves differ, Fold's symmetry, "
-	                "how far Wreck and Jag fold, how wide Lean leans, how much of Chonk's right side is turned over, "
-	                "which way the two sides get it in Paunch-S and Paunch-H: opposite at the bottom, the same at the top, "
+	                "how far Wreck and Jag fold, how wide Lean leans, how much of Chonk (w)'s right side is turned over, "
+	                "which way the two sides get it in the Paunch Types: opposite at the bottom, the same at the top, "
 	                "Crush's bit depth, Decimate from steps to lines, Slew from hard to soft, which way "
 	                "Lopside drags",
 	     .zones = 0,

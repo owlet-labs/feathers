@@ -2602,6 +2602,10 @@ std::vector<std::string> honestyExpected() {
 		// (Emphasis off zero, and Resonance, Loop or the Comb's own loop running); this sweep moves one control per arrangement and never
 		// has both. `test_fx_eroder`'s "In Loop" case asserts it differs exactly then, in all three engines.
 		"Eroder :: Eroder In Loop",
+		// THE ERODER'S DC takes out the offset that Tube, Fold, Lean, Paunch-S and Paunch-H make, and the fixture's Drive sits on Soft (which
+		// makes none) while it moves one control per arrangement, so there is nothing for it to take. `test_fx_eroder`'s "DC amount" cases
+		// assert it by value (the output's mean is `1 - amount` of the offset) with Paunch-S in the Drive, and the card greys it otherwise.
+		"Eroder :: Eroder DC",
 		// RESONATE'S NOTE RELEASE decides what a NOTE-OFF does to its note's head (Gate stops it, Ring lets it ring on), so it
 		// is heard only with a note held and then let go while the string rings — and this fixture plays no notes.
 		// `test_fx_resonate`'s "Note Release Ring makes key length not matter" asserts both states on the output.

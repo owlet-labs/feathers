@@ -49,6 +49,7 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // **THE PROPERTY THE STATE FORMAT EXISTS FOR** (backlog JF): a patch saved by one build and loaded by a build whose DEVICE HAS CHANGED gives
@@ -773,42 +774,62 @@ float loadedLabel(const device::Descriptor& d, std::string_view key, const char*
 }
 } // namespace
 
-TEST_CASE("Eroder: a patch saved with the Drive Type or either Etch slot's Type Paunch loads as Chonk, and Paunch-S, Paunch-H are not caught") {
+TEST_CASE("Eroder: a patch saved with the Drive Type or either Etch slot's Type as Paunch loads as Chonk (w), Lean as Lean (w), and no other label is caught") {
 	namespace er = fx::eroder;
 	using Kind = rack::LoadReport::Kind;
 	const device::Descriptor& d = er::kDescriptor;
 	for (const char* key : { "eroder_drive_mode", "eroder_slot_a_type", "eroder_slot_b_type" }) {
 		CAPTURE(key);
-		rack::LoadReport report;
-		const float row = loadedLabel(d, key, "Paunch", &report);
-		CHECK(row == static_cast<float>(static_cast<int>(er::DriveMode::Chonk)));
-		CHECK(std::string_view(d.params[indexOfKey(d.params, key)].names[labelIndex(d.params[indexOfKey(d.params, key)], row)]) == "Chonk");
-		CHECK(report.countOf(Kind::LabelUnknown) == 0);
-		// EXACT-LABEL MATCH: the new Types keep their own places.
-		for (const auto& [label, mode] : { std::pair<const char*, er::DriveMode> { "Paunch-S", er::DriveMode::PaunchS },
-		                                   std::pair<const char*, er::DriveMode> { "Paunch-H", er::DriveMode::PaunchH },
-		                                   std::pair<const char*, er::DriveMode> { "Paunch-OS", er::DriveMode::PaunchOS },
-		                                   std::pair<const char*, er::DriveMode> { "Paunch-OH", er::DriveMode::PaunchOH } }) {
+		const device::ParamDesc& p = d.params[indexOfKey(d.params, key)];
+		const auto labelOf = [&](float row) { return std::string_view(p.names[labelIndex(p, row)]); };
+		for (const auto& [saved, mode, label] : { std::tuple<const char*, er::DriveMode, const char*> { "Paunch", er::DriveMode::Chonk, "Chonk (w)" },
+		                                          std::tuple<const char*, er::DriveMode, const char*> { "Lean", er::DriveMode::Lean, "Lean (w)" } }) {
+			rack::LoadReport report;
+			const float row = loadedLabel(d, key, saved, &report);
+			CHECK(row == static_cast<float>(static_cast<int>(mode)));
+			CHECK(labelOf(row) == label);
+			CHECK(report.countOf(Kind::LabelUnknown) == 0);
+		}
+		// EXACT-LABEL MATCH: each new label loads as itself, and a label that never shipped is unknown, not caught.
+		for (const auto& [label, mode] : { std::pair<const char*, er::DriveMode> { "Lean (w)", er::DriveMode::Lean },
+		                                   std::pair<const char*, er::DriveMode> { "Chonk (w)", er::DriveMode::Chonk },
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-S (w)", er::DriveMode::PaunchS },
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-H (w)", er::DriveMode::PaunchH },
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-OS (w)", er::DriveMode::PaunchOS },
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-OH (w)", er::DriveMode::PaunchOH } }) {
 			rack::LoadReport other;
 			CHECK(loadedLabel(d, key, label, &other) == static_cast<float>(static_cast<int>(mode)));
 			CHECK(other.countOf(Kind::LabelUnknown) == 0);
 		}
+		for (const char* never : { "Chonk", "Paunch-S", "Paunch-H", "Paunch-OS", "Paunch-OH" }) {
+			rack::LoadReport other;
+			(void)loadedLabel(d, key, never, &other);
+			CHECK(other.countOf(Kind::LabelUnknown) == 1);
+		}
 	}
 }
 
-TEST_CASE("Clip: a patch saved with the mode Paunch loads as Chonk, and Paunch-S, Paunch-H are not caught") {
+TEST_CASE("Clip: a patch saved with the mode Paunch loads as Chonk (w), Lean as Lean (w), and no other label is caught") {
 	namespace cl = fx::clip;
 	using Kind = rack::LoadReport::Kind;
 	const device::Descriptor& d = cl::kDescriptor;
 	rack::LoadReport report;
 	CHECK(loadedLabel(d, "clip_mode", "Paunch", &report) == static_cast<float>(static_cast<int>(cl::Mode::Chonk)));
+	CHECK(loadedLabel(d, "clip_mode", "Lean", &report) == static_cast<float>(static_cast<int>(cl::Mode::Lean)));
 	CHECK(report.countOf(Kind::LabelUnknown) == 0);
-	for (const auto& [label, mode] : { std::pair<const char*, cl::Mode> { "Paunch-S", cl::Mode::PaunchS },
-	                                   std::pair<const char*, cl::Mode> { "Paunch-H", cl::Mode::PaunchH },
-	                                   std::pair<const char*, cl::Mode> { "Paunch-OS", cl::Mode::PaunchOS },
-	                                   std::pair<const char*, cl::Mode> { "Paunch-OH", cl::Mode::PaunchOH } }) {
+	for (const auto& [label, mode] : { std::pair<const char*, cl::Mode> { "Lean (w)", cl::Mode::Lean },
+	                                   std::pair<const char*, cl::Mode> { "Chonk (w)", cl::Mode::Chonk },
+	                                   std::pair<const char*, cl::Mode> { "Paunch-S (w)", cl::Mode::PaunchS },
+	                                   std::pair<const char*, cl::Mode> { "Paunch-H (w)", cl::Mode::PaunchH },
+	                                   std::pair<const char*, cl::Mode> { "Paunch-OS (w)", cl::Mode::PaunchOS },
+	                                   std::pair<const char*, cl::Mode> { "Paunch-OH (w)", cl::Mode::PaunchOH } }) {
 		rack::LoadReport other;
 		CHECK(loadedLabel(d, "clip_mode", label, &other) == static_cast<float>(static_cast<int>(mode)));
 		CHECK(other.countOf(Kind::LabelUnknown) == 0);
+	}
+	for (const char* never : { "Chonk", "Paunch-S", "Paunch-H", "Paunch-OS", "Paunch-OH" }) {
+		rack::LoadReport other;
+		(void)loadedLabel(d, "clip_mode", never, &other);
+		CHECK(other.countOf(Kind::LabelUnknown) == 1);
 	}
 }

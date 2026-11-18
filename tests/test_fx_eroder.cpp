@@ -6171,8 +6171,8 @@ double partial(const std::vector<float>& v, int k) {
 } // namespace
 
 TEST_CASE("Paunch laws: the Type names, and the Amount is linear 0..4 with no make-up") {
-	CHECK(std::string(kDriveModeNames[static_cast<size_t>(DriveMode::PaunchS)]) == "Paunch-S");
-	CHECK(std::string(kDriveModeNames[static_cast<size_t>(DriveMode::PaunchH)]) == "Paunch-H");
+	CHECK(std::string(kDriveModeNames[static_cast<size_t>(DriveMode::PaunchS)]) == "Paunch-S (w)");
+	CHECK(std::string(kDriveModeNames[static_cast<size_t>(DriveMode::PaunchH)]) == "Paunch-H (w)");
 	CHECK(static_cast<int>(DriveMode::PaunchS) == static_cast<int>(DriveMode::Chonk) + 1);
 	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::PaunchH }) {
 		for (const float knob : { 0.1f, 0.25f, 0.5f, 1.0f }) {

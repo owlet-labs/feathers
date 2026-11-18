@@ -85,7 +85,7 @@ enum class Param : int {
 /// Chonk are its curves, Slew and Lopside its slew limiter. Their curve is the Eroder's own function; Clip's Drive is
 /// the gain into it (and, for the two slews, the rate, as the Eroder's Drive knob is) and its Ceiling the top.
 enum class Mode : int { Soft, Texture, Grit, Fold, Bits, Tube, Jag, Lean, Chonk, PaunchS, PaunchH, PaunchOS, PaunchOH, Slew, Lopside, kCount };
-inline constexpr const char* kModeNames[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Chonk", "Paunch-S", "Paunch-H", "Paunch-OS", "Paunch-OH", "Slew", "Lopside" };
+inline constexpr const char* kModeNames[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean (w)", "Chonk (w)", "Paunch-S (w)", "Paunch-H (w)", "Paunch-OS (w)", "Paunch-OH (w)", "Slew", "Lopside" };
 static_assert(std::size(kModeNames) == static_cast<size_t>(Mode::kCount));
 
 /// WHICH MODES A GATED CONTROL BELONGS TO, as a mask over `Mode` — the delay's shape.
@@ -104,8 +104,8 @@ inline constexpr uint32_t kShapeModes = kModeBit(Mode::Tube) | kModeBit(Mode::Ja
                                         kModeBit(Mode::Chonk) | kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH) | kModeBit(Mode::PaunchOS) | kModeBit(Mode::PaunchOH) |
                                         kModeBit(Mode::Slew) | kModeBit(Mode::Lopside);
 
-/// THE MODE FORMERLY CALLED "Paunch" IS "Chonk" (a patch stores a Choice by its label).
-inline constexpr device::ChoiceAlias kModeAliases[] = { { "Paunch", "Chonk" } };
+/// (w) MARKS THE MODES THAT ADD STEREO WIDTH; the labels they shipped under read as the new ones (Lean as "Lean", Chonk as "Paunch").
+inline constexpr device::ChoiceAlias kModeAliases[] = { { "Paunch", "Chonk (w)" }, { "Lean", "Lean (w)" } };
 /// THE MODES THAT MAKE AN OFFSET: Tube and Lean (the Eroder's own, as Clip has always removed it) and the two Paunch rectifier Types.
 inline constexpr uint32_t kDcModes = kModeBit(Mode::Tube) | kModeBit(Mode::Lean) | kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH);
 
@@ -257,9 +257,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
      .tooltip = "What the top of the wave becomes — a soft shoulder, carved-back detail, grit, a fold, or "
                 "steps; or one of the Eroder's drive shapers: Tube (a harder lower half), Jag (a triangle fold), "
-                "Lean (a leaning tanh), Chonk (a soft saturator whose right side is turned toward the dry), Paunch-S, Paunch-H, Paunch-OS and Paunch-OH (the "
+                "Lean (w) (a leaning tanh), Chonk (w) (a soft saturator whose right side is turned toward the dry), Paunch-S (w), Paunch-H (w), Paunch-OS (w) and Paunch-OH (w) (the "
                 "rectified or squared mid, or a third harmonic of it, added to the left and taken from the right), Slew (a rate limit) or "
-                "Lopside (rising and falling at different rates)",
+                "Lopside (rising and falling at different rates). (w) marks the modes that add stereo width",
      .choiceAliases = kModeAliases},
     {.key = "clip_drive", .name = "Clip Drive", .min = -24.0, .max = 24.0, .def = 0.0, .stepped = false, .unit = device::Unit::Decibel,
      .names = {}, .modulatable = true, .tooltip = "Gain into the clipper — below 0 dB it reaches the curve quieter, so it clips less"},
@@ -307,7 +307,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "clip_shape", .name = "Clip Shape", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
      .names = {}, .modulatable = true,
      .tooltip = "The mode's own coordinate. Tube: how much steeper the lower half is. Jag: how far the triangle "
-                "folds. Lean: how far the curve leans, which adds even harmonics. Chonk: how far the right "
+                "folds. Lean (w): how far the curve leans, which adds even harmonics. Chonk (w): how far the right "
                 "side is turned toward the clean signal (it thins, then flips, as Drive rises). Paunch-S, Paunch-H, Paunch-OS and Paunch-OH: which way the two sides get it, "
                 "opposite at the bottom, the same at the top. Slew: from a hard rate limit to a one-pole. Lopside: "
                 "from slow rises to slow falls, even in the middle. Drive sets the rate in Slew and Lopside, and the amount in Paunch-S, Paunch-H, Paunch-OS and Paunch-OH",

@@ -1122,7 +1122,7 @@ TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the
 		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
 	}
-	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Chonk", "Paunch-S", "Paunch-H", "Paunch-OS", "Paunch-OH", "Slew", "Lopside" };
+	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean (w)", "Chonk (w)", "Paunch-S (w)", "Paunch-H (w)", "Paunch-OS (w)", "Paunch-OH (w)", "Slew", "Lopside" };
 	for (size_t i = 0; i < std::size(appended); ++i) {
 		CHECK(std::string(clip::kModeNames[i]) == appended[i]);
 	}

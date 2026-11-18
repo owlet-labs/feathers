@@ -39,6 +39,7 @@
 #include "plugin/ui/source_arm.h"
 #include "plugin/ui/surface_layers.h"
 #include "plugin/ui/tooltip.h"
+#include "rack/rack_bridge.h"
 #include "rack/add_device.h"
 #include "plugin/ui/widget_registry.h"
 
@@ -744,6 +745,8 @@ private:
 	RackBridge& laneOf(DeviceInstanceId device) noexcept;
 	/// ONE LANE'S CARDS AND ARMS BROUGHT INTO LINE WITH ITS BRIDGE — this editor's own chain, or a site's POST. Returns
 	/// whether anything was built or retired. Both are reordered by drag (`commitSiteDrop` for POST).
+	/// A device's own window on `lane` (a press while it is up closes it). The lane's cards and a site panel's centre card share it.
+	void toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId device, ui::ModState& mod, ui::EditHistory& history);
 	bool syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::vector<OutputArm>& arms, ui::ModState& mod,
 	              ui::EditHistory& history, bool own);
 	/// One lane's cards placed from `x` along the lane, their arms on their feet; returns where the lane ended.
@@ -753,6 +756,8 @@ private:
 	/// THE SITE'S FURNITURE: the centre device's declared Mix and wet Gain as knobs after the macros.
 	void syncFurniture();
 
+	std::shared_ptr<RackBridge::ExpandedPresenters> engineQuery_;
+	std::shared_ptr<RackBridge::ExpandedPresenters> postQuery_;
 	SiteTail tail_ {};
 	std::unique_ptr<ui::FxCard> centreCard_;
 	const void* centreDesc_ = nullptr;

@@ -1392,7 +1392,7 @@ public:
 	/// pressing it opens one.
 	bool offersSite() const {
 		const device::Descriptor* d = descriptor();
-		return onSite && d != nullptr && d->audio != nullptr
+		return expandPresenter_ && onSite && d != nullptr && d->audio != nullptr
 		       && d->traits.siteLanes != device::Traits::SiteLanes::None && deviceHost() != nullptr;
 	}
 	/// **THE HOST'S VERB FOR THE CHIP** — give the device its site if it has none, and open the panel.

@@ -215,7 +215,7 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	// draw its way in by asking `engine_.hasExpandedViewFor`, and the engine — UI-free by rule — has
 	// no table of its own; the one it answers from is the same `makeExpandedView` reads at press time
 	// (the `onExpand` arm in `syncCards`), so the button and the panel cannot disagree.
-	engine_.setExpandedViewQuery(&ui::hasExpandedView);
+	engineQuery_ = engine_.retainExpandedViewQuery(&ui::hasExpandedView);
 	// **DELETE AND BACKSPACE REMOVE THE FOCUSED DEVICE.** Both,
 	// because which one a keyboard calls "delete" is a platform argument nobody should have to
 	// win. `KPDelete` is the numpad's and costs nothing to accept alongside them.
@@ -541,6 +541,13 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 }
 
 RackEditor::~RackEditor() {
+	// THE PRESENTER COUNTS THIS EDITOR HELD on its own bridge and on its site's POST bridge (either may already be gone: the blocks never touch them).
+	if (engineQuery_ != nullptr) {
+		RackBridge::releaseExpandedViewQuery(*engineQuery_);
+	}
+	if (postQuery_ != nullptr) {
+		RackBridge::releaseExpandedViewQuery(*postQuery_);
+	}
 	// THE MACRO MENU'S HOOKS GO QUIET BEFORE ANYTHING THEY READ DOES (see `alive_`).
 	alive_.reset();
 	// AND NO NAME IS HEARD INTO A ROW THAT IS GOING: the bridge outlives this editor.
@@ -1456,6 +1463,62 @@ bool RackEditor::slotVerbForTest(DeviceInstanceId device, ui::FragmentVerb verb)
 	return true;
 }
 
+void RackEditor::toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId device, ui::ModState& mod, ui::EditHistory& history) {
+	// A PRESS WHILE THIS DEVICE'S PANEL IS UP CLOSES IT, matched on the
+	// device and this editor's nest — the key `setNest` below files the panel under.
+	if (surfaces_->dismissPanelFor(device, nest_)) {
+		return;
+	}
+	// THE DESCRIPTOR IS RE-READ AT PRESS TIME, not captured: a lambda holding one would be
+	// one `removeDevice` away from opening a panel for a device that has gone.
+	const device::Descriptor* desc = lane.descriptorOf(device);
+	if (desc == nullptr) {
+		return;
+	}
+
+	// THE DEVICE'S OWN PANEL IF THIS HOST CAN BUILD ONE. the rack opened a vertical `GenericCard` for everything, because every
+	// custom panel took a `ParamBridge` the rack does not have.
+	//
+	// **NULLPTR HERE MEANS "NOT ON THIS HOST YET", NOT "NO PANEL".** `makeExpandedView`
+	// takes the bridge as a pointer and the rack passes none, so a panel that still needs
+	// the parameter road declines rather than crashing — and the generic fallback below is
+	// what the player gets meanwhile.
+	std::unique_ptr<visage::Frame> content =
+	    ui::makeExpandedView(lane, nullptr, registry_, device, *desc, nullptr);
+	// HOW THE PANEL WILL BE ADVANCED IS THE MOUNT'S BUSINESS NOW (`SurfaceLayers::mount`
+	// decides where the type is still known); what is decided here is only the modulation
+	// state, which the seam cannot carry.
+	if (content != nullptr) {
+		if (auto* view = dynamic_cast<ui::ExpandedView*>(content.get())) {
+			view->setModulation(&mod, &history);
+			// AND WHICH CHAIN IT IS ABOUT, which is half of the key the overlay files it
+			// under — see `setNest`. Without it a nested editor's panel and an outer one's
+			// share a key whenever the ids coincide, and the second retires the first.
+			view->setNest(nest_);
+		}
+		// NOT SIZED HERE. The panel knows how big it needs to be and `MountedFrame` asks
+		// it; a number chosen at the call site is the fixed minimum that made every popout
+		// the same size and scrolled the real one inside it.
+	}
+	else {
+		// THE GENERIC PANEL: the same card turned VERTICAL, which is the uncapped axis, so
+		// it shows the device's whole control set rather than the three columns the
+		// horizontal lane allows.
+		auto panel = std::make_unique<ui::GenericCard>(lane, device, *desc, nullptr);
+		panel->setLaneAxis(ui::FxCard::LaneAxis::Vertical);
+		panel->setModulation(&mod, &history);
+		panel->setNest(nest_);
+		panel->setBounds(0, 0, 480, static_cast<int>(panel->laneExtent(480.0f)));
+		content = std::move(panel);
+	}
+
+	const ui::SurfaceId presented = surfaces_->present(
+	    std::move(content), ui::SurfaceNeed::SpansGesture, desc->traits.name, [this] { pruneExpanded(); });
+	if (presented != ui::kNoSurface) {
+		expanded_.push_back(presented);
+	}
+}
+
 bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::vector<OutputArm>& arms, ui::ModState& mod,
                           ui::EditHistory& history, bool own) {
 	// COMPARE BEFORE BUILDING. A card is a frame in a tree and rebuilding one under a live press is
@@ -1538,6 +1601,9 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 			// WHICH CHAIN THIS CARD'S DEVICE IS IN — its own tint, and the key of any panel it opens.
 			// The rack's own is the default; a nested editor's is one level deeper (`setNest`).
 			card->setNest(nest_);
+			// THE CARD'S OWN PRESENTER: a card that holds columns of its own (a Rack's front) presents their windows and site panels on THIS editor's
+			// layers, which escalate to the outermost — so a member of such a card can open what it offers, at any depth.
+			card->setPresentedOn(surfaces_.get());
 			// **THE SLOT MENU, BOUND AT LAST.** Every card draws three dots; nothing in the rack ever
 			// bound `onSlotMenu`, so the mark was painted and pressed and did nothing — which is what
 			// was being seen. `removeDevice` is the one slot verb this engine has (there is no
@@ -1632,61 +1698,7 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 					expanded_.push_back(presented);
 				}
 			};
-			card->onExpand = [this, &lane, &mod, &history, device = i] {
-				// A PRESS WHILE THIS DEVICE'S PANEL IS UP CLOSES IT, matched on the
-				// device and this editor's nest — the key `setNest` below files the panel under.
-				if (surfaces_->dismissPanelFor(device, nest_)) {
-					return;
-				}
-				// THE DESCRIPTOR IS RE-READ AT PRESS TIME, not captured: a lambda holding one would be
-				// one `removeDevice` away from opening a panel for a device that has gone.
-				const device::Descriptor* desc = lane.descriptorOf(device);
-				if (desc == nullptr) {
-					return;
-				}
-
-				// THE DEVICE'S OWN PANEL IF THIS HOST CAN BUILD ONE. the rack opened a vertical `GenericCard` for everything, because every
-				// custom panel took a `ParamBridge` the rack does not have.
-				//
-				// **NULLPTR HERE MEANS "NOT ON THIS HOST YET", NOT "NO PANEL".** `makeExpandedView`
-				// takes the bridge as a pointer and the rack passes none, so a panel that still needs
-				// the parameter road declines rather than crashing — and the generic fallback below is
-				// what the player gets meanwhile.
-				std::unique_ptr<visage::Frame> content =
-				    ui::makeExpandedView(lane, nullptr, registry_, device, *desc, nullptr);
-				// HOW THE PANEL WILL BE ADVANCED IS THE MOUNT'S BUSINESS NOW (`SurfaceLayers::mount`
-				// decides where the type is still known); what is decided here is only the modulation
-				// state, which the seam cannot carry.
-				if (content != nullptr) {
-					if (auto* view = dynamic_cast<ui::ExpandedView*>(content.get())) {
-						view->setModulation(&mod, &history);
-						// AND WHICH CHAIN IT IS ABOUT, which is half of the key the overlay files it
-						// under — see `setNest`. Without it a nested editor's panel and an outer one's
-						// share a key whenever the ids coincide, and the second retires the first.
-						view->setNest(nest_);
-					}
-					// NOT SIZED HERE. The panel knows how big it needs to be and `MountedFrame` asks
-					// it; a number chosen at the call site is the fixed minimum that made every popout
-					// the same size and scrolled the real one inside it.
-				}
-				else {
-					// THE GENERIC PANEL: the same card turned VERTICAL, which is the uncapped axis, so
-					// it shows the device's whole control set rather than the three columns the
-					// horizontal lane allows.
-					auto panel = std::make_unique<ui::GenericCard>(lane, device, *desc, nullptr);
-					panel->setLaneAxis(ui::FxCard::LaneAxis::Vertical);
-					panel->setModulation(&mod, &history);
-					panel->setNest(nest_);
-					panel->setBounds(0, 0, 480, static_cast<int>(panel->laneExtent(480.0f)));
-					content = std::move(panel);
-				}
-
-				const ui::SurfaceId presented = surfaces_->present(
-				    std::move(content), ui::SurfaceNeed::SpansGesture, desc->traits.name, [this] { pruneExpanded(); });
-				if (presented != ui::kNoSurface) {
-					expanded_.push_back(presented);
-				}
-			};
+			card->onExpand = [this, &lane, &mod, &history, device = i] { toggleDevicePanel(lane, device, mod, history); };
 			addChild(card.get());
 			columnDirty_ = true;
 		}
@@ -1796,6 +1808,15 @@ bool RackEditor::syncTail() {
 			}
 			centreCard_->setModulation(tail_.centreMod, tail_.centreHistory);
 			// NO HEAD MARKS, NO DRAG, NO SITE CHIP: the centre is where the site sits, not a device of this chain.
+			// ITS WINDOW CHIP WORKS, THOUGH: the host it runs in answers for it, so the verb is bound (a mark that opens nothing is a dead control).
+			centreCard_->setNest(nest_);
+			centreCard_->setPresentedOn(surfaces_.get());
+			centreCard_->onHeadPressed = [this] { (void)surfaces_->focusPanelFor(tail_.centre, nest_); };
+			centreCard_->onExpand = [this] {
+				if (tail_.outer != nullptr && tail_.centreMod != nullptr && tail_.centreHistory != nullptr) {
+					toggleDevicePanel(*tail_.outer, tail_.centre, *tail_.centreMod, *tail_.centreHistory);
+				}
+			};
 			centreCard_->setHeadMarks({ false, centreCard_->folded() });
 			centreCard_->onFoldChanged = [this] {
 				resized();
@@ -1838,6 +1859,14 @@ void RackEditor::setSiteTail(const SiteTail& tail) {
 	}
 	postArms_.clear();
 	tail_ = tail;
+	// THE POST LANE'S CARDS ASK THEIR OWN BRIDGE whether a window exists, and only this editor's own bridge was told: count a presenter there too.
+	if (postQuery_ != nullptr) {
+		RackBridge::releaseExpandedViewQuery(*postQuery_);
+		postQuery_.reset();
+	}
+	if (tail_.post != nullptr) {
+		postQuery_ = tail_.post->retainExpandedViewQuery(&ui::hasExpandedView);
+	}
 	// POST'S SELECTION AND VERBS, over its own bridge and recording in this editor's history (where POST's other edits
 	// go). The overlay lets go of the old one first: it draws POST's lasso and pill (backlog OA).
 	if (selectionOverlay_ != nullptr) {

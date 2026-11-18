@@ -43484,8 +43484,11 @@ void eroApart(const std::vector<visage::Frame*>& shown, float width, float heigh
 			CAPTURE(j);
 			const bool apart = shown[i]->right() <= shown[j]->x() || shown[j]->right() <= shown[i]->x()
 			                   || shown[i]->bottom() <= shown[j]->y() || shown[j]->bottom() <= shown[i]->y();
-			CAPTURE(typeid(*shown[i]).name());
-			CAPTURE(typeid(*shown[j]).name());
+			// HOISTED: typeid of an expression with a call in it is evaluated, which Apple clang refuses under -Werror.
+			const auto& frameI = *shown[i];
+			const auto& frameJ = *shown[j];
+			CAPTURE(typeid(frameI).name());
+			CAPTURE(typeid(frameJ).name());
 			CAPTURE(shown[i]->x());
 			CAPTURE(shown[i]->y());
 			CAPTURE(shown[i]->right());

@@ -497,6 +497,9 @@ target_include_directories(test_fx_devices PRIVATE ${CMAKE_SOURCE_DIR}/libs/doct
 # put two slow parts in one shard again, which a slower fx-devices-Nof4 in the ctest timings will show.
 feathers_add_sharded_test(NAME fx-devices TARGET test_fx_devices
 	SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test_fx_devices.cpp SHARDS 4)
+# PAST WINDOWS CI'S --timeout 300: its runner took longer than that for one shard (v0.2.1's first run). A test's own
+# TIMEOUT overrides ctest's default, so this raises the bound for these four only.
+set_tests_properties(fx-devices-1of4 fx-devices-2of4 fx-devices-3of4 fx-devices-4of4 PROPERTIES TIMEOUT 900)
 
 
 # Terrain stereo end to end: Width on a V5 patch is two full character evaluations, one per ear,

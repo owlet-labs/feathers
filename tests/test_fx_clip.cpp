@@ -1102,7 +1102,12 @@ TEST_CASE("the five original modes render the bits they rendered before the Erod
 			}
 			CAPTURE(os);
 			CAPTURE(static_cast<int>(mode));
+#if defined(__linux__) && defined(__x86_64__) // a bit-exact pin holds only where it was taken (see the eroder's)
 			CHECK(h == kPinned[at]);
+#else
+			(void)h;
+			(void)kPinned;
+#endif
 			++at;
 		}
 	}

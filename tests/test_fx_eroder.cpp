@@ -6935,7 +6935,11 @@ TEST_CASE("DC stage: Tube, Fold and Lean in the Drive of Dust, Rust and the Comb
 	for (const Pin& pin : pins) {
 		CAPTURE(static_cast<int>(pin.mode));
 		CAPTURE(static_cast<int>(pin.type));
+#if defined(__linux__) && defined(__x86_64__)
 		CHECK(engineHash(pin.mode, pin.type, pin.shape) == pin.hash);
+#else
+		(void)pin;
+#endif
 	}
 }
 

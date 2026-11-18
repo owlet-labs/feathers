@@ -285,11 +285,11 @@ DriveSettings deriveDrive(float driveKnob, DriveMode mode, float shape, double s
 	return d;
 }
 
-HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept {
-	const double rate = sampleRate > 0.0 ? sampleRate : kReferenceRate;
+namespace {
+HighpassSettings highpassAt(bool on, double hz, double rate) noexcept {
 	HighpassSettings h;
-	h.on = static_cast<double>(hpWetLog2Hz) > kHpWetLog2Min;
-	h.hz = std::min(std::exp2(static_cast<double>(hpWetLog2Hz)), kDustFreqNyquistFraction * rate);
+	h.on = on;
+	h.hz = std::min(hz, kDustFreqNyquistFraction * rate);
 	const double g = std::tan(std::numbers::pi * h.hz / rate);
 	const double k = 1.0 / kHpWetQ;
 	const double a1 = 1.0 / (1.0 + g * (g + k));
@@ -298,6 +298,30 @@ HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept {
 	h.a3 = static_cast<float>(g * g * a1);
 	h.k = static_cast<float>(k);
 	return h;
+}
+} // namespace
+
+HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept {
+	const double rate = sampleRate > 0.0 ? sampleRate : kReferenceRate;
+	return highpassAt(static_cast<double>(hpWetLog2Hz) > kHpWetLog2Min, std::exp2(static_cast<double>(hpWetLog2Hz)), rate);
+}
+
+HighpassSettings deriveWetHighpass(const Settings& s, bool tracks, double pitchSemitones, double sampleRate) noexcept {
+	if (!tracks) {
+		return deriveHighpass(s.hpWet, sampleRate);
+	}
+	const double rate = sampleRate > 0.0 ? sampleRate : kReferenceRate;
+	const bool on = wetHighpassOn(s, true);
+	const double noteHz = 440.0 * std::exp2((pitchSemitones - 69.0) / 12.0);
+	const double hz = std::clamp(noteHz * std::exp2(static_cast<double>(s.hpWetSemis) / 12.0), std::exp2(kHpWetLog2Min),
+	                             std::exp2(kHpWetLog2Max));
+	// OFF CARRIES THE SAME COEFFICIENTS HP WET'S OWN BOTTOM DOES (the filter is skipped; they are never read).
+	return highpassAt(on, on ? hz : std::exp2(kHpWetLog2Min), rate);
+}
+
+bool wetHighpassOn(const Settings& s, bool tracks) noexcept {
+	return tracks ? static_cast<double>(s.hpWetSemis) > kHpWetSemisMin + device::kOffEndSlack
+	              : static_cast<double>(s.hpWet) > kHpWetLog2Min;
 }
 
 LoopDerived deriveLoops(const Settings& s, double centreHz, double innerFeedbackRaw) noexcept {
@@ -384,7 +408,7 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	d.slewBalance = shaper.slewBalance;
 	d.driveMix = shaper.mix;
 
-	const HighpassSettings hp = deriveHighpass(s.hpWet, rate);
+	const HighpassSettings hp = deriveWetHighpass(s, s.track, pitchSemitones, rate);
 	d.hpOn = hp.on;
 	d.hpHz = hp.hz;
 	d.hpA1 = static_cast<double>(hp.a1);

@@ -24,6 +24,7 @@
 
 #include "character/fixedpoint.h"
 #include "fx/eroder/eroder.h"
+#include "device/format_value.h"
 #include "fx/eroder/eroder_types.h"
 
 #include <algorithm>
@@ -1427,7 +1428,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount);
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -6059,4 +6060,111 @@ TEST_CASE("Limiter readings: a howling loop publishes a gain below one and a lev
 	// THE READINGS ARE AFTER THE SPECTRUM'S AND THE HEAD'S: the older layout is where it was.
 	CHECK(static_cast<size_t>(Reading::LimiterInnerGain) == static_cast<size_t>(Reading::HeadFarR) + 1);
 	CHECK(kReadingCount == static_cast<size_t>(Reading::LimiterOuterLevel) + 1);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------//
+// HP WET IN SEMITONES FROM THE PLAYED NOTE (Track on).                                                                         //
+//------------------------------------------------------------------------------------------------------------------------------//
+
+namespace {
+/// A NOTE'S FREQUENCY, restated: A440 is MIDI note 69, an octave is twelve.
+double noteHzOf(double note) {
+	return 440.0 * std::pow(2.0, (note - 69.0) / 12.0);
+}
+std::vector<float> trackedRun(const Settings& s, double note, int block) {
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	e.setNoteContext({ static_cast<float>(note), true });
+	std::vector<float> l(9600);
+	for (size_t i = 0; i < l.size(); ++i) {
+		l[i] = static_cast<float>(0.5 * std::sin(2.0 * std::numbers::pi * 150.0 * static_cast<double>(i) / kRate));
+	}
+	std::vector<float> r = l;
+	for (size_t done = 0; done < l.size(); done += static_cast<size_t>(block)) {
+		const int n = static_cast<int>(std::min<size_t>(static_cast<size_t>(block), l.size() - done));
+		e.processStereo(l.data() + done, r.data() + done, n);
+	}
+	return l;
+}
+} // namespace
+
+TEST_CASE("HP Wet semitones: declared as its own key, continuous, -24 to +128 with the bottom off, default off") {
+	const auto& d = kParamDescs[static_cast<size_t>(Param::HpWetSemis)];
+	CHECK(std::string_view(d.key) == "eroder_hp_wet_semis");
+	CHECK_FALSE(d.stepped);
+	CHECK(d.min == -24.0);
+	CHECK(d.max == 128.0);
+	CHECK(d.def == d.min);
+	CHECK(device::formatValue(d, d.min) == "off");
+	CHECK(device::formatValue(d, 12.0).find("12") == 0);
+	CHECK(device::formatValue(d, 12.0).find("st") != std::string::npos);
+	// HP Wet's own key keeps its meaning.
+	CHECK(std::string_view(kParamDescs[static_cast<size_t>(Param::HpWet)].key) == "eroder_hp_wet");
+}
+
+TEST_CASE("HP Wet semitones: with Track on the corner is the note's frequency times 2^(st/12), and follows the note; Track off uses the Hz control") {
+	Settings s = declared();
+	s.hpWet = static_cast<float>(std::log2(300.0));
+	for (const double st : { -12.0, 0.0, 19.0 }) {
+		for (const double note : { 57.0, 69.0, 72.0 }) {
+			CAPTURE(st);
+			CAPTURE(note);
+			s.track = true;
+			s.hpWetSemis = static_cast<float>(st);
+			const DustDerived d = deriveDust(s, note, kRate);
+			REQUIRE(d.hpOn);
+			CHECK(std::abs(d.hpHz - noteHzOf(note) * std::pow(2.0, st / 12.0)) < 1.0e-6);
+			// THE HERTZ CONTROL IS IGNORED while tracking.
+			Settings other = s;
+			other.hpWet = static_cast<float>(std::log2(5000.0));
+			CHECK(deriveDust(other, note, kRate).hpHz == d.hpHz);
+			// AND THE SEMITONES ARE IGNORED with Track off: the hertz control is the corner, as before.
+			s.track = false;
+			const DustDerived off = deriveDust(s, note, kRate);
+			REQUIRE(off.hpOn);
+			CHECK(std::abs(off.hpHz - 300.0) < 1.0e-2);
+		}
+	}
+	// OFF at the bottom while tracking, whatever the Hz control says; the Hz control is not consulted.
+	s.track = true;
+	s.hpWetSemis = static_cast<float>(kHpWetSemisMin);
+	CHECK_FALSE(deriveDust(s, 69.0, kRate).hpOn);
+	CHECK_FALSE(wetHighpassOn(s, true));
+	CHECK(wetHighpassOn(s, false));
+	// THE LEGAL RANGE: a high note plus a high offset stops at 8 kHz, a low one at 20 Hz — and still filters.
+	s.hpWetSemis = 60.0f;
+	CHECK(std::abs(deriveDust(s, 100.0, kRate).hpHz - 8000.0) < 1.0e-6);
+	// A 30 HZ NOTE (restated: 69 + 12 log2(30 / 440)): +60 st is five octaves up, 960 Hz; +128 st is far past the top and clamps.
+	const double bass = 69.0 + 12.0 * std::log2(30.0 / 440.0);
+	CHECK(std::abs(deriveDust(s, bass, kRate).hpHz - 960.0) < 1.0e-6);
+	s.hpWetSemis = 128.0f;
+	const DustDerived top = deriveDust(s, bass, kRate);
+	CHECK(top.hpOn);
+	CHECK(std::abs(top.hpHz - std::exp2(kHpWetLog2Max)) < 1.0e-6);
+	s.hpWetSemis = -23.0f;
+	const DustDerived low = deriveDust(s, 24.0, kRate);
+	CHECK(low.hpOn);
+	CHECK(std::abs(low.hpHz - 20.0) < 1.0e-6);
+	// THE COMB HAS NO TRACK: its highpass is HP Wet's hertz whatever Track holds.
+	s.hpWet = static_cast<float>(std::log2(300.0));
+	s.hpWetSemis = 0.0f;
+	CHECK(deriveWetHighpass(s, false, 69.0, kRate).hz == deriveHighpass(s.hpWet, kRate).hz);
+}
+
+TEST_CASE("HP Wet semitones: off while tracking is today's no-filter bit for bit, and any partition gives the same samples") {
+	Settings s = dustStill();
+	s.track = true;
+	s.hpWet = static_cast<float>(kHpWetLog2Min);
+	const std::vector<float> today = trackedRun(s, 69.0, 256);
+	// THE HERTZ CONTROL IS NOT CONSULTED: raised, the same bits.
+	s.hpWet = 9.0f;
+	CHECK(trackedRun(s, 69.0, 256) == today);
+	// ON, it filters (the second assertion that the first is not vacuous), and the same at any partition.
+	s.hpWetSemis = 0.0f;
+	s.subThru = true;
+	const std::vector<float> on = trackedRun(s, 72.0, 256);
+	CHECK(on != today);
+	CHECK(trackedRun(s, 72.0, 64) == on);
+	CHECK(trackedRun(s, 72.0, 37) == on);
 }

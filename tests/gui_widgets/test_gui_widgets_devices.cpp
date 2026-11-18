@@ -43393,6 +43393,57 @@ TEST_CASE("ERODER draws out of the signal what another control makes inert: Widt
 	CHECK_FALSE(panel->subThruForTest()->enabled());
 }
 
+TEST_CASE("ERODER's HP Wet cell is the hertz knob with Track off and the semitone knob with Track on, each writing its own parameter") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	(void)panel->updateContent();
+	// TRACK OFF: the hertz knob, and only it.
+	CHECK(panel->hpWetForTest()->isVisible());
+	CHECK_FALSE(panel->hpWetSemisForTest()->isVisible());
+	// TRACK ON: the semitone knob takes the cell, the hertz knob is hidden (not greyed), in the same place.
+	const float knobX = panel->hpWetForTest()->x();
+	const float knobY = panel->hpWetForTest()->y();
+	d.set(eroAt(ero::Param::Track), 1.0f);
+	(void)panel->updateContent();
+	CHECK_FALSE(panel->hpWetForTest()->isVisible());
+	REQUIRE(panel->hpWetSemisForTest()->isVisible());
+	CHECK(panel->hpWetSemisForTest()->x() == knobX);
+	CHECK(panel->hpWetSemisForTest()->y() == knobY);
+	// IT WRITES ITS OWN PARAMETER and reads in semitones, "off" at the bottom.
+	CHECK(&panel->hpWetSemisForTest()->control()->desc() == &ero::kParamDescs[eroAt(ero::Param::HpWetSemis)]);
+	CHECK(panel->hpWetSemisForTest()->control()->text() == "off");
+	d.set(eroAt(ero::Param::HpWetSemis), 12.0f);
+	(void)panel->updateContent();
+	CHECK(panel->hpWetSemisForTest()->control()->text().find("12") == 0);
+	CHECK(panel->hpWetSemisForTest()->control()->text().find("st") != std::string::npos);
+	// SUB THRU FOLLOWS THE LIVE ONE: the semitones are on, so it is enabled; HP Wet's hertz (at the bottom) does not matter now.
+	CHECK(panel->subThruForTest()->enabled());
+	d.set(eroAt(ero::Param::HpWetSemis), static_cast<float>(ero::kHpWetSemisMin));
+	d.set(eroAt(ero::Param::HpWet), 9.0f);
+	(void)panel->updateContent();
+	CHECK_FALSE(panel->subThruForTest()->enabled());
+	// BOTH FACES ARE REACHABLE: the window offers each parameter, whatever Track holds.
+	const std::vector<ero::Param> addressed = panel->addressedParamsForTest();
+	CHECK(std::find(addressed.begin(), addressed.end(), ero::Param::HpWet) != addressed.end());
+	CHECK(std::find(addressed.begin(), addressed.end(), ero::Param::HpWetSemis) != addressed.end());
+	// TRACK BACK OFF: the hertz knob returns, and the hertz decides Sub Thru again.
+	d.set(eroAt(ero::Param::Track), 0.0f);
+	(void)panel->updateContent();
+	CHECK(panel->hpWetForTest()->isVisible());
+	CHECK_FALSE(panel->hpWetSemisForTest()->isVisible());
+	CHECK(panel->subThruForTest()->enabled());
+	// THE COMB HAS NO TRACK: whatever Track holds, its HP Wet is the hertz knob.
+	d.set(eroAt(ero::Param::Track), 1.0f);
+	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	(void)panel->updateContent();
+	CHECK(panel->hpWetForTest()->isVisible());
+	CHECK_FALSE(panel->hpWetSemisForTest()->isVisible());
+}
+
 //------------------------------------------------------------------------------------------------------------------------------//
 // THE ERODER'S SHARED SECTION ON ITS FACES: Emphasis, Smear, Tap, Restore, In Loop, Loop, Interval.                            //
 //------------------------------------------------------------------------------------------------------------------------------//

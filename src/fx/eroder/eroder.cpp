@@ -143,6 +143,7 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::DriveMode)] = static_cast<float>(s.driveMode);
 	row[static_cast<size_t>(Param::DriveShape)] = s.driveShape;
 	row[static_cast<size_t>(Param::HpWet)] = s.hpWet;
+	row[static_cast<size_t>(Param::HpWetSemis)] = s.hpWetSemis;
 	row[static_cast<size_t>(Param::SubThru)] = s.subThru ? 1.0f : 0.0f;
 	row[static_cast<size_t>(Param::Follow)] = s.follow;
 	row[static_cast<size_t>(Param::RustBias)] = s.rustBias;
@@ -206,6 +207,7 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	                                                static_cast<int>(DriveMode::kCount) - 1));
 	s.driveShape = read(Param::DriveShape);
 	s.hpWet = read(Param::HpWet);
+	s.hpWetSemis = read(Param::HpWetSemis);
 	s.subThru = read(Param::SubThru) >= 0.5f;
 	s.follow = read(Param::Follow);
 	s.rustBias = read(Param::RustBias);
@@ -643,7 +645,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	dryGainTarget_ = s.blend ? 1.0f - std::clamp(s.mix, 0.0f, 1.0f) : 1.0f;
 	inGainTarget_ = inputGainOf(s.inputDb);
 	subThru_ = s.subThru;
-	combHighpass_.set(deriveHighpass(s.hpWet, sampleRate_));
+	combHighpass_.set(deriveWetHighpass(s, false, pitchSemitones_, sampleRate_)); // the Comb has no Track
 	if (!gainsPlaced_) {
 		outGain_ = outGainTarget_;
 		dryGain_ = dryGainTarget_;

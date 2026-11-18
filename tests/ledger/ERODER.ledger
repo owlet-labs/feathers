@@ -48,4 +48,5 @@ param ERODER eroder_slot_b_mix unit=percent min=0 max=1 stepped=0
 param ERODER eroder_slot_route unit=choice choice=Series|Parallel
 param ERODER eroder_emph_offset unit=number min=-48 max=48 stepped=0
 param ERODER eroder_input unit=decibel min=-24 max=24 stepped=0
+param ERODER eroder_hp_wet_semis unit=number min=-24 max=128 stepped=0
 retired ERODER eroder_drive 2026-11-15 a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)

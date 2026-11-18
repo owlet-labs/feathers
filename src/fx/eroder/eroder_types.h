@@ -432,6 +432,7 @@ enum class Param : int {
 	SlotRoute, ///< Etch: B after A (Series) or both on the same input, their changes added (Parallel)
 	EmphOffset, ///< every engine: semitones from Freq to where the emphasis is tuned (Smear and the loops stay at Freq)
 	Input,      ///< every engine: decibels of gain on the signal entering the wet chain, ahead of everything in it
+	HpWetSemis, ///< Dust, Rust, Etch with Track on: HP Wet in semitones from the played note, in HP Wet's cell; the bottom is no filter
 
 	kCount,
 };
@@ -443,6 +444,11 @@ inline constexpr size_t kEtchParamCount = 9;
 inline constexpr size_t kEmphOffsetParamCount = 1;
 /// And the input drive after that.
 inline constexpr size_t kInputParamCount = 1;
+/// And HP Wet's semitone face after that.
+inline constexpr size_t kHpWetSemisParamCount = 1;
+/// **HP WET'S SEMITONE FACE'S RANGE**: from the played note, -24 to +128 semitones, and the minimum is no filter (as HP Wet's own).
+inline constexpr double kHpWetSemisMin = -24.0;
+inline constexpr double kHpWetSemisMax = 128.0;
 /// The input drive's range, decibels either way.
 inline constexpr double kInputMaxDb = 24.0;
 /// The linear gain of an input drive in decibels: exactly one at zero, so the chain is untouched there.
@@ -836,7 +842,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "Takes the low end out of the shaken signal, after the shaper. At the bottom there is no "
-                "filter",
+                "filter. With Track on, a distance in semitones from the played note takes this control's place",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1345,6 +1351,26 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateMask = 0,
      .centred = true,
      .shortName = "Input"},
+    {.key = "eroder_hp_wet_semis", .name = "Eroder HP Wet Semitones",
+     .min = kHpWetSemisMin,
+     .max = kHpWetSemisMax,
+     .def = kHpWetSemisMin,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "While Track is on, sets the wet highpass this many semitones above the played note (0 is the note itself, "
+                "12 an octave above). At the bottom there is no filter. With Track off, HP Wet's frequency applies instead",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kShakersAndEtch,
+     .centred = false,
+     .shortName = "HP Wet",
+     .offAtEnd = -1,
+     .suffix = "st"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1382,6 +1408,7 @@ struct Settings {
 	DriveMode driveMode = DriveMode::Soft;
 	float driveShape = 0.0f;
 	float hpWet = static_cast<float>(kHpWetLog2Min); ///< log2 hertz; the bottom is no filter
+	float hpWetSemis = static_cast<float>(kHpWetSemisMin); ///< with Track on, instead of hpWet: semitones from the note; the bottom is no filter
 	bool subThru = false;
 	float follow = 0.0f;
 	float rustBias = 0.0f;
@@ -1608,6 +1635,14 @@ struct HighpassSettings {
 	float k = 0.0f;
 };
 [[nodiscard]] HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept;
+/// **THE WET HIGHPASS THE CONTROLS ASK FOR**: with `tracks` (Track on in an engine that has it) the corner is the played note's
+/// frequency times 2^(semitones / 12), clamped to HP Wet's own range (20 Hz to 8 kHz), and HP Wet's hertz is ignored; off at
+/// the semitones' minimum. Without `tracks` HP Wet's hertz applies and the semitones are ignored. THE NOTE'S FREQUENCY is equal
+/// temperament with MIDI note 69 at 440 Hz (`pitchSemitones` is a MIDI note number; 60 is middle C).
+[[nodiscard]] HighpassSettings deriveWetHighpass(const Settings& settings, bool tracks, double pitchSemitones,
+                                                 double sampleRate) noexcept;
+/// Whether the wet highpass is in the signal for these controls: what Sub Thru and the picture read.
+[[nodiscard]] bool wetHighpassOn(const Settings& settings, bool tracks) noexcept;
 
 /// @param reuse  a result this one may take the shaper's make-up from when the Drive, Type and Shape are the same —
 ///               the make-up is a quadrature, and the control path asks for it every block.

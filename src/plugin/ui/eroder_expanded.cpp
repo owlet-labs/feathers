@@ -49,7 +49,7 @@ constexpr KnobSpec kKnobs[] = {
 	{ ero::Param::Amount, "Amount" },   { ero::Param::Source, "Source" },     { ero::Param::Grit, "Grit" },
 	{ ero::Param::Stereo, "Stereo" },
 	{ ero::Param::Resonance, "Reso" },  { ero::Param::Follow, "Follow" },     { ero::Param::Mix, "Mix" },
-	{ ero::Param::HpWet, "HP Wet" },    { ero::Param::Step, "Step" },         { ero::Param::Detune, "Detune" },
+	{ ero::Param::HpWet, "HP Wet" },    { ero::Param::HpWetSemis, "HP Wet" }, { ero::Param::Step, "Step" },         { ero::Param::Detune, "Detune" },
 	{ ero::Param::ModFold, "Mod Fold" }, { ero::Param::RustBias, "Bias" },    { ero::Param::RustRectify, "Rectify" },
 	{ ero::Param::Heat, "Heat" },
 	{ ero::Param::Smear, "Smear" },     { ero::Param::Loop, "Loop" },
@@ -219,6 +219,10 @@ visage::Point EroderExpanded::minimumSize() const {
 	return { 2.0f * kPad + kGap + 330.0f + kSideColumn, std::max(380.0f, side) };
 }
 
+bool EroderExpanded::trackOn() const {
+	return dhost_.fieldAt(device_, static_cast<size_t>(ero::Param::Track)) >= 0.5f;
+}
+
 ero::Mode EroderExpanded::engine() const {
 	const int at = static_cast<int>(dhost_.fieldAt(device_, static_cast<size_t>(ero::Param::Mode)) + 0.5f);
 	return static_cast<ero::Mode>(std::clamp(at, 0, static_cast<int>(ero::Mode::kCount) - 1));
@@ -241,6 +245,10 @@ void EroderExpanded::resized() { layOut(); }
 void EroderExpanded::layOut() {
 	const ero::Mode mode = engine();
 	laidOutEngine_ = static_cast<int>(mode);
+	laidOutTrack_ = trackOn() ? 1 : 0;
+	// HP WET IS ONE CELL WITH TWO FACES, hidden rather than greyed: semitones from the note while Track is on (an engine that has
+	// Track), else hertz.
+	const bool semisLive = engine() != ero::Mode::Comb && trackOn();
 	const bool comb = mode == ero::Mode::Comb;
 	const bool etch = mode == ero::Mode::Etch;
 	const float cell = kSideWidth / static_cast<float>(kPerRow);
@@ -366,7 +374,7 @@ void EroderExpanded::layOut() {
 		const float boxW = (sideW - kGroupGap) * 0.5f;
 		group("Feedback", x0, boxW, 3, { { knob(P::Resonance), 1, !comb, knobH }, { loopPair_.get(), 2, true, knobH } });
 		group("Output", x0 + boxW + kGroupGap, boxW, 3,
-		      { { knob(P::HpWet), 1, true, knobH }, { knob(P::Follow), 1, true, knobH }, { knob(P::Mix), 1, true, knobH } });
+		      { { knob(P::HpWet), 1, !semisLive, knobH }, { knob(P::HpWetSemis), 1, semisLive, knobH }, { knob(P::Follow), 1, true, knobH }, { knob(P::Mix), 1, true, knobH } });
 		closeRow(first);
 	}
 
@@ -402,7 +410,10 @@ void EroderExpanded::refreshHonesty() {
 	knob(P::ModFold)->setActive(source < 1.0f);
 	// SUB THRU GIVES BACK WHAT HP WET TOOK OF A DRY THAT WAS TURNED DOWN: with no filter there is nothing to give
 	// back, and in the Comb the dry is whole unless Blend crossfades it.
-	const bool filtering = static_cast<double>(row[static_cast<size_t>(ero::Param::HpWet)]) > ero::kHpWetLog2Min;
+	// THE LIVE ONE: semitones from the note while Track is on in an engine that has it, else HP Wet's hertz (`wetHighpassOn`).
+	const bool filtering = row[static_cast<size_t>(ero::Param::Track)] >= 0.5f && !comb
+	                           ? row[static_cast<size_t>(ero::Param::HpWetSemis)] > ero::kHpWetSemisMin + 1.0e-3f
+	                           : static_cast<double>(row[static_cast<size_t>(ero::Param::HpWet)]) > ero::kHpWetLog2Min;
 	const bool crossfades = engine() != ero::Mode::Comb || row[static_cast<size_t>(ero::Param::Blend)] >= 0.5f;
 	subThru_->setEnabled(filtering && crossfades);
 	// THE EMPHASIS'S OWN: the shape, the offset and the restore are nothing at zero.
@@ -421,7 +432,7 @@ void EroderExpanded::refreshHonesty() {
 
 bool EroderExpanded::updateContent() {
 	bool changed = false;
-	if (static_cast<int>(engine()) != laidOutEngine_) {
+	if (static_cast<int>(engine()) != laidOutEngine_ || (trackOn() ? 1 : 0) != laidOutTrack_) {
 		layOut();
 		changed = true;
 	}

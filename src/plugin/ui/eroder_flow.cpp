@@ -92,11 +92,13 @@ EroderFlow::Path EroderFlow::pathFor(const ero::Row& row) {
 	}
 	const size_t drive = add("drive", at(ero::Param::Drive) > 0.0f);
 	add("restore", emphasised && at(ero::Param::EmphRestore) >= 0.5f);
-	const size_t hp = add("hp", static_cast<double>(at(ero::Param::HpWet)) > ero::kHpWetLog2Min);
+	// THE LIVE FILTER: semitones from the note while Track is on in an engine that has it, else HP Wet's hertz.
+	const bool filtering = at(ero::Param::Track) >= 0.5f && !comb ? at(ero::Param::HpWetSemis) > ero::kHpWetSemisMin + 1.0e-3f
+	                                                              : static_cast<double>(at(ero::Param::HpWet)) > ero::kHpWetLog2Min;
+	const size_t hp = add("hp", filtering);
 	add("mix", true);
 	// SUB THRU GIVES BACK, AFTER HP WET, WHAT HP WET TOOK OF THE INPUT (`Eroder::processStereo`): nothing without a filter,
 	// and in the Comb nothing while the dry is whole (Blend off) — the window's enable rule.
-	const bool filtering = static_cast<double>(at(ero::Param::HpWet)) > ero::kHpWetLog2Min;
 	const bool crossfades = !comb || at(ero::Param::Blend) >= 0.5f;
 	path.bypass = { input, hp, at(ero::Param::SubThru) >= 0.5f && filtering && crossfades };
 	path.returns.push_back({ driven ? drive : engineEnd, sum, inner, false });

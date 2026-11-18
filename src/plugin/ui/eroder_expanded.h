@@ -121,6 +121,8 @@ public:
 	[[nodiscard]] ModeValueCell* driveCellForTest() const { return driveCell_.get(); }
 	[[nodiscard]] PairCell* drivePairForTest() const { return drivePair_.get(); }
 	[[nodiscard]] Knob* hpWetForTest() const { return knob(fx::eroder::Param::HpWet); }
+	/// HP WET'S SEMITONE FACE: shown instead of `hpWetForTest()` while Track is on in an engine that has it.
+	[[nodiscard]] Knob* hpWetSemisForTest() const { return knob(fx::eroder::Param::HpWetSemis); }
 	[[nodiscard]] SwitchChip* subThruForTest() const { return subThru_.get(); }
 	[[nodiscard]] SwitchChip* blendForTest() const { return blend_.get(); }
 	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
@@ -146,6 +148,7 @@ private:
 	[[nodiscard]] DeviceControl& control(fx::eroder::Param p) const;
 	[[nodiscard]] Knob* knob(fx::eroder::Param p) const;
 	[[nodiscard]] fx::eroder::Mode engine() const;
+	[[nodiscard]] bool trackOn() const;
 	void layOut();
 	void refreshHonesty();
 
@@ -154,6 +157,8 @@ private:
 	Notifier* notifier_ = nullptr;
 	/// THE ENGINE THE WIDGETS WERE LAST LAID OUT FOR.
 	int laidOutEngine_ = -1;
+	/// AND THE TRACK STATE (HP Wet's cell swaps on it).
+	int laidOutTrack_ = -1;
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<EroderPlot> plot_;

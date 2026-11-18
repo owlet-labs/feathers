@@ -927,7 +927,9 @@ float ParallelRackCard::laneExtent(float cross) const {
 		const float lead = model_->view() == RackViewKind::Tabs ? kPad + RackTabBar::kThickness : pads_->naturalSize().x;
 		const float front = frontExtentFor(std::max(0.0f, cross - 2.0f * crossPad()));
 		const float arrow = model_->view() == RackViewKind::Tabs && front_->deviceCount() > 1 ? RackDrawerArrow::kSize + kRowGap : 0.0f;
-		return kCardHeadHeight + lead + kRowGap + kLeftColumnWidth + kRowGap + front + arrow + kPad;
+		const Plan p = plan();
+		const float column = leftColumnWidthFor(p.macros, p.macrosOpen, p.unusedRow || p.playingRow);
+		return kCardHeadHeight + lead + kRowGap + (column > 0.0f ? column + kRowGap : 0.0f) + front + arrow + kPad;
 	}
 	return FxCard::laneExtent(cross);
 }
@@ -1007,18 +1009,19 @@ void ParallelRackCard::layOut() {
 			else {
 				const visage::Point n = pads_->naturalSize();
 				pads_->setBounds(x, 0.0f, n.x, std::min(n.y, h));
+				// THE LESS / MORE PAIR UNDER THE GRID, at a FIXED place: it does not move as the cards beside it expand or fold.
+				if (p.step) {
+					padsStep_->setBounds(x, std::min(n.y + kRowGap, std::max(0.0f, h - RackPadsStep::kButton)), RackPadsStep::kWidth, RackPadsStep::kButton);
+				}
 				x += n.x + kRowGap;
 			}
+			// THE COLUMN BESIDE THE BAR OR GRID holds only what is there (macros, mode rows): with none, the first card is one gap from it.
 			left = x;
-			wide = kLeftColumnWidth;
-			const float frontLeft = x + kLeftColumnWidth + kRowGap;
+			wide = leftColumnWidthFor(p.macros, p.macrosOpen, p.unusedRow || p.playingRow);
+			const float frontLeft = x + (wide > 0.0f ? wide + kRowGap : 0.0f);
 			front_->setBounds(frontLeft, cp, static_cast<float>(p.frontExtent), std::max(0.0f, h - 2.0f * cp));
 			chainArrow_->setBounds(frontLeft + static_cast<float>(p.frontExtent) + kRowGap, 0.0f, RackDrawerArrow::kSize, h);
 			y = kRowGap;
-			if (p.step) {
-				padsStep_->setBounds(left, y, RackPadsStep::kWidth, RackPadsStep::kButton);
-				y += RackPadsStep::kButton + kRowGap;
-			}
 			placeMacros(p, left, wide, y);
 		}
 	}

@@ -108,8 +108,9 @@ public:
 	[[nodiscard]] visage::Bounds lessBounds() const { return { 0.0f, 0.0f, kButton, kButton }; }
 	[[nodiscard]] visage::Bounds moreBounds() const { return { kButton, 0.0f, kButton, kButton }; }
 
-	/// Each target is as large as a card's header (`kCardHeadHeight`), a square.
-	static constexpr float kButton = 24.0f;
+	/// Each arrow is the Tabs arrow's own size (`RackDrawerArrow::kSize`) and drawn in its glyph, weight and ink; the two cells stand side by side
+	/// whatever the state, so neither moves when the other is not drawn.
+	static constexpr float kButton = RackDrawerArrow::kSize;
 	static constexpr float kWidth = 2.0f * kButton;
 
 private:

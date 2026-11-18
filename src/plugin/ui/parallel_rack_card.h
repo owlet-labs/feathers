@@ -357,6 +357,11 @@ public:
 	static constexpr float kRowGap = 6.0f;
 	/// A left-right card's column of the mode and view rows, between the bar (or the pads) and the cards in front.
 	static constexpr float kLeftColumnWidth = 150.0f;
+	/// WHAT THE LEFT-TO-RIGHT CARD RESERVES BESIDE ITS BAR OR PADS for the macros and the mode rows: nothing when it holds none of them, the macro
+	/// arrow's width when only the arrow is there, the whole column while the macros are open or a mode row is shown.
+	[[nodiscard]] static float leftColumnWidthFor(bool macros, bool macrosOpen, bool modeRows) noexcept {
+		return macrosOpen || modeRows ? kLeftColumnWidth : (macros ? RackDrawerArrow::kSize : 0.0f);
+	}
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
 	/// The Mode dropdown's width on its row (stage 2).
 	static constexpr float kModeWidth = 96.0f;

@@ -220,7 +220,11 @@ float ParallelRackExpanded::railsWidth() const {
 
 visage::Point ParallelRackExpanded::minimumSize() const {
 	visage::Point p { railsLeft() + railsWidth() + phantomsWidth(),
-		              std::max(addSlotBounds().bottom(), bandsBottom()) + kPad };
+		              std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad };
+	// STRIPS: THE ADD BUTTON STANDS AFTER THE LAST STRIP, so the window is as wide as it needs.
+	if (model_ != nullptr && model_->view() == RackViewKind::Strips && addShown()) {
+		p.x += kPad * 0.5f + kAddWidth + kPad;
+	}
 	// PADS: the panel stands before the rails, so the window is at least its width and height.
 	if (model_ != nullptr && model_->view() == RackViewKind::Pads) {
 		const visage::Point n = pads_->naturalSize();
@@ -239,7 +243,7 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 		const visage::Point padsN = pads ? pads_->naturalSize() : visage::Point { 0.0f, 0.0f };
 		const float padsAcross = pads ? padsN.x + kPad : 0.0f;
 		p.x = railsLeft() + padsAcross + n.x + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
-		p.y = std::max(std::max(addSlotBounds().bottom(), bandsBottom()) + kPad, top + n.y + kPad);
+		p.y = std::max(std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad, top + n.y + kPad);
 		if (pads) {
 			p.y = std::max(p.y, top + padsN.y + kPad * 0.5f + SwitchChip::kHeight + kPad);
 		}
@@ -339,9 +343,18 @@ float ParallelRackExpanded::bandsBottom() const {
 float ParallelRackExpanded::bandsTop() const { return kPad + kModeRow; }
 
 
-visage::Bounds ParallelRackExpanded::addSlotBounds() const {
-	// SMALL, UNDER THE MACROS: the column is as wide as four macros and no wider.
+visage::Bounds ParallelRackExpanded::leftColumnFoot() const {
+	// WHERE THE LEFT COLUMN ENDS: under the macros (the button used to stand here, and the column's height is still what it was).
 	return { kPad, dividerY() + kPad * 0.5f + kMacroRows * (kCellHeight + kPad), kAddWidth, kAddHeight };
+}
+
+visage::Bounds ParallelRackExpanded::addSlotBounds() const {
+	// STRIPS: AFTER THE LAST CHAIN'S STRIP (and the roles' placeholders), level with the strips' heads, so it moves as chains are added. The other
+	// views keep it under the macros: their rails are one chain's, and the button adds a chain whichever is in front.
+	if (model_ != nullptr && model_->view() == RackViewKind::Strips) {
+		return { railsLeft() + railsWidth() + phantomsWidth() + kPad * 0.5f, railsTop() + kPad, kAddWidth, kAddHeight };
+	}
+	return leftColumnFoot();
 }
 
 bool ParallelRackExpanded::addShown() const {

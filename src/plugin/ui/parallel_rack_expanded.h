@@ -207,6 +207,7 @@ private:
 	/// roles would only be unrouted. Its slot stays reserved, so nothing below it moves with the mode.
 	[[nodiscard]] visage::Bounds addBounds() const;
 	[[nodiscard]] visage::Bounds addSlotBounds() const;
+	[[nodiscard]] visage::Bounds leftColumnFoot() const;
 	[[nodiscard]] bool addShown() const;
 	/// THE BANDS COLUMN beside the macros (Bands only): whether it is drawn, where it starts and ends, and where the rails
 	/// start after the columns.

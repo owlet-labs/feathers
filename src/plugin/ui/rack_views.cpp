@@ -270,8 +270,9 @@ void RackPadsStep::step(int by) {
 }
 
 void RackPadsStep::draw(visage::Canvas& canvas) {
-	const float r = kButton * 0.26f;
-	canvas.setColor(kInk);
+	// THE TABS ARROW'S OWN GLYPH (`RackDrawerArrow::draw`): the same triangle, in the same size, weight and ink, one per cell.
+	const float r = kButton * 0.28f;
+	canvas.setColor(kMuted);
 	for (int slot = 0; slot < 2; ++slot) {
 		if (!(slot == 0 ? lessShown() : moreShown())) {
 			continue;

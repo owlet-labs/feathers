@@ -1213,17 +1213,23 @@ TEST_CASE("rack views over a real rack: in Pads the selected pad's chain steps c
 		CHECK(step.lessShown());
 		CHECK(step.moreShown());
 		CHECK_FALSE(r.card->chainArrowForTest().isVisible());
-		// THE TARGETS are at least a card header's height and as wide, and sit on the boundary: before the cards, after the pads.
-		CHECK(step.lessBounds().width() >= ui::kCardHeadHeight);
-		CHECK(step.lessBounds().height() >= ui::kCardHeadHeight);
-		CHECK(step.moreBounds().width() >= ui::kCardHeadHeight);
+		// THE ARROWS ARE THE TABS ARROW'S SIZE (one small glyph each, side by side), and their rects are the same in every state.
+		CHECK(step.lessBounds().width() == doctest::Approx(ui::RackDrawerArrow::kSize));
+		CHECK(step.lessBounds().height() == doctest::Approx(ui::RackDrawerArrow::kSize));
+		CHECK(step.moreBounds().width() == doctest::Approx(ui::RackDrawerArrow::kSize));
+		CHECK(step.moreBounds().height() == doctest::Approx(ui::RackDrawerArrow::kSize));
+		const visage::Bounds fixedBounds = step.bounds();
+		const visage::Bounds fixedLess = step.lessBounds();
+		const visage::Bounds fixedMore = step.moreBounds();
 		const float first = extent();
 		if (!horizontal) {
 			CHECK(step.bounds().y() >= r.card->padsForTest().bounds().y() + r.card->padsForTest().height());
 			CHECK(step.bounds().y() + step.height() <= r.card->frontForTest().bounds().y());
 		}
 		else {
-			CHECK(step.bounds().x() >= r.card->padsForTest().bounds().x() + r.card->padsForTest().width());
+			// LEFT TO RIGHT: UNDER THE GRID, in its column, before the cards: a place the cards' expansion cannot move.
+			CHECK(step.bounds().x() == doctest::Approx(r.card->padsForTest().bounds().x()));
+			CHECK(step.bounds().y() >= r.card->padsForTest().bounds().y() + r.card->padsForTest().height() - 0.01f);
 			CHECK(step.bounds().x() + step.width() <= r.card->frontForTest().bounds().x());
 		}
 		// MORE brings the whole chain (all three, in order); the arrow that cannot step further is gone, and the card is bigger.
@@ -1238,6 +1244,10 @@ TEST_CASE("rack views over a real rack: in Pads the selected pad's chain steps c
 		CHECK(step.lessShown());
 		CHECK_FALSE(step.moreShown());
 		CHECK(extent() > first);
+		// FIXED: the pair did not move as the cards expanded.
+		CHECK(step.bounds() == fixedBounds);
+		CHECK(step.lessBounds() == fixedLess);
+		CHECK(step.moreBounds() == fixedMore);
 		step.pressMoreForTest(); // not drawn: does nothing
 		settle();
 		CHECK(shownCards(*r.card).size() == 3);
@@ -1251,6 +1261,7 @@ TEST_CASE("rack views over a real rack: in Pads the selected pad's chain steps c
 		CHECK_FALSE(step.lessShown());
 		CHECK(step.moreShown());
 		CHECK(extent() < first);
+		CHECK(step.bounds() == fixedBounds); // and not as they folded away either
 		step.pressLessForTest(); // not drawn: does nothing
 		CHECK(r.card->padsFrontForTest() == 0);
 		// THE GRID and its kit level are still there closed.
@@ -2788,4 +2799,142 @@ TEST_CASE("rack pads fix D, repaint delivery: every pad grid and page strip show
 		CHECK(usedOn(r.panel->padsForTest().gridForTest(), 0) == usedBefore);
 		CHECK(usedOn(r.card->padsForTest().gridForTest(), 0) == usedBefore);
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// LAYOUT POLISH: no bumper before the first card, the Pads arrows in the Tabs arrow's language at a fixed place, a thin tab column in a
+// left-right lane (nested racks stacking left to right), and the Strips window's add button after the last strip.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+void settleLeftRight(RealRack& r) {
+	r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+		r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+	}
+}
+
+} // namespace
+
+TEST_CASE("rack layout: the first card is one card gap after the grid or the tab bar, in both flows, with nothing reserved between") {
+	for (const int view : { 1, 2 }) {
+		for (const bool horizontal : { false, true }) {
+			CAPTURE(view);
+			CAPTURE(horizontal);
+			RealRack r;
+			r.chains(2, 2, true);
+			r.view_(view);
+			if (horizontal) {
+				r.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+				settleLeftRight(r);
+			}
+			else {
+				for (int i = 0; i < 3; ++i) {
+					r.refresh();
+				}
+			}
+			constexpr float kGap = ui::RackFrontColumn::kGap;
+			static_assert(ui::ParallelRackCard::kRowGap == ui::RackFrontColumn::kGap, "the card's row gap is the lane's card gap");
+			const visage::Bounds front = r.card->frontForTest().bounds();
+			if (view == 1) {
+				const visage::Bounds bar = r.card->tabBarForTest().bounds();
+				if (horizontal) {
+					CHECK(front.x() - bar.right() == doctest::Approx(kGap));
+				}
+				else {
+					CHECK(front.y() - bar.bottom() == doctest::Approx(kGap));
+				}
+			}
+			else if (horizontal) {
+				const visage::Bounds pads = r.card->padsForTest().bounds();
+				CHECK(front.x() - pads.right() == doctest::Approx(kGap));
+			}
+			else {
+				// TOP-DOWN PADS: the pair stands between the grid and the cards, one gap either side.
+				const visage::Bounds pads = r.card->padsForTest().bounds();
+				const visage::Bounds step = r.card->padsStepForTest().bounds();
+				CHECK(step.y() - pads.bottom() == doctest::Approx(kGap));
+				CHECK(front.y() - step.bottom() == doctest::Approx(kGap));
+			}
+		}
+	}
+}
+
+TEST_CASE("rack layout: in a left-right lane the tabs are a thin full-height column, subdivided evenly, with the first card one gap right of it, and a nested rack's tab column stands right of its parent's") {
+	RealRack r;
+	r.chains(3, 2, true);
+	r.view_(1);
+	r.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+	settleLeftRight(r);
+	ui::RackTabBar& bar = r.card->tabBarForTest();
+	// SMALL AND FIXED WIDTH; its height is the cards' cross extent (the content height), level with them.
+	CHECK(bar.width() == doctest::Approx(ui::RackTabBar::kThickness));
+	CHECK(bar.height() == doctest::Approx(r.card->frontForTest().bounds().height()));
+	CHECK(bar.bounds().y() == doctest::Approx(r.card->frontForTest().bounds().y()));
+	CHECK(bar.width() < static_cast<float>(r.card->width()) * 0.25f);
+	// EVENLY: three tabs along the height differ by at most a native pixel and sum to it exactly.
+	const std::vector<size_t> tabs = bar.tabsForTest();
+	REQUIRE(tabs.size() == 3);
+	int sum = 0;
+	int lo = 1 << 20;
+	int hi = 0;
+	for (size_t k = 0; k < tabs.size(); ++k) {
+		const auto [a, b] = bar.tabNativeExtent(k);
+		sum += b - a;
+		lo = std::min(lo, b - a);
+		hi = std::max(hi, b - a);
+	}
+	CHECK(sum == bar.nativeHeight());
+	CHECK(hi - lo <= 1);
+	// A TAB'S NAME IS ELIDED RATHER THAN CLIPPED.
+	CHECK_FALSE(bar.labelForTest(0).empty());
+	// NESTED RACKS: a Tabs rack as the first device stacks its tab column to the RIGHT of the parent's.
+	RealRack n;
+	n.chains(1, 0, true);
+	const feathers::DeviceInstanceId inner = nestedRack(*n.rack().chainAt(0)->bridge(), 2, true);
+	(void)inner;
+	n.view_(1);
+	n.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+	settleLeftRight(n);
+	std::vector<ui::FxCard*> level1 = shownCards(*n.card);
+	REQUIRE(level1.size() == 1);
+	auto* child = dynamic_cast<ui::ParallelRackCard*>(level1[0]);
+	REQUIRE(child != nullptr);
+	CHECK(child->tabBarForTest().isVisible());
+	CHECK(child->tabBarForTest().positionInWindow().x > n.card->tabBarForTest().positionInWindow().x + n.card->tabBarForTest().width());
+	CHECK(child->tabBarForTest().width() == doctest::Approx(ui::RackTabBar::kThickness));
+}
+
+TEST_CASE("rack layout: the Strips window's add-chain button stands after the last chain's strip and moves as chains are added") {
+	RealRack r;
+	r.chains(2, 0);
+	r.view_(0);
+	const visage::Bounds before = r.panel->addBoundsForTest();
+	REQUIRE(before.width() > 0.0f);
+	// AFTER THE LAST STRIP, not in the left controls column (which is kPad + kColumnWidth wide).
+	const visage::Bounds lastRail = r.panel->railForTest(r.panel->railCountForTest() - 1).bounds();
+	CHECK(before.x() >= lastRail.right());
+	CHECK(before.x() > ui::ParallelRackExpanded::kPad + ui::ParallelRackExpanded::kColumnWidth);
+	r.panel->addChainForTest();
+	r.refresh();
+	r.panel->setBounds(0.0f, 0.0f, std::max(static_cast<float>(r.panel->width()), r.panel->minimumSize().x), static_cast<float>(r.panel->height()));
+	r.refresh();
+	const visage::Bounds after = r.panel->addBoundsForTest();
+	CHECK(after.x() > before.x());
+	CHECK(after.width() == doctest::Approx(before.width()));
+	const visage::Bounds newLast = r.panel->railForTest(r.panel->railCountForTest() - 1).bounds();
+	CHECK(after.x() >= newLast.right());
+	// THE WINDOW IS WIDE ENOUGH FOR IT.
+	CHECK(r.panel->minimumSize().x >= after.right());
+	// A hit on the button adds a chain (the press the hand makes), as it did where it stood before.
+	const size_t chains = r.rack().chainCount();
+	visage::MouseEvent press {};
+	press.position = { after.x() + 1.0f, after.y() + 1.0f };
+	r.panel->onMouseDown().callback(press);
+	CHECK(r.rack().chainCount() == chains + 1);
+	// OTHER VIEWS KEEP IT UNDER THE MACROS.
+	r.view_(1);
+	CHECK(r.panel->addBoundsForTest().x() == doctest::Approx(ui::ParallelRackExpanded::kPad));
 }

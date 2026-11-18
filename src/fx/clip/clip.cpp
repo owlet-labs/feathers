@@ -132,6 +132,8 @@ struct OpsClip {
 	int modeApplied = 0;
 	/// THE PAUNCH LAWS' AMOUNT `a`: Drive's position (-24..+24 dB as 0..1) times 4, set per host sample.
 	float paunchA = 0.0f;
+	/// THE ODD LAW'S FOLLOWER (`paunchOdd`): the mid's mean square, and its coefficient at the processing rate.
+	float followPower = 0.0f, followCoefficient = 0.0f;
 	dyn::HeldPeak inPeak, outPeak, over;
 
 	/// dB2lin of the last drive, ceiling and output, keyed on the dB value (a settled ramp repeats it).
@@ -165,6 +167,7 @@ struct OpsClip {
 			hpL.designHighpass(hz, rate);
 			hpR.designHighpass(hz, rate);
 			dcCoefficient = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * eroder::kDriveDcHz / rate));
+			followCoefficient = eroder::paunchFollowCoefficient(rate);
 			if (rate != hpRate) {
 				slew.prepare(rate);
 				slewKeyValid = false;
@@ -192,6 +195,7 @@ struct OpsClip {
 		hpL.clear();
 		hpR.clear();
 		dcL = dcR = 0.0f;
+		followPower = 0.0f;
 		slew.reset();
 		rng = kSeed;
 		silentRun = 0;
@@ -290,6 +294,13 @@ struct OpsClip {
 			r = std::clamp(r - dcR, -1.0f, 1.0f);
 			break;
 		}
+		case Mode::PaunchOS: {
+			// THE ERODER'S ODD LAW (`paunchOdd`) at Clip's own amount; it makes no offset, so no blocker, and the ceiling holds.
+			eroder::paunchOdd(erodeMode(state.mode), l, r, paunchA, shapeNow, followPower, followCoefficient);
+			l = std::clamp(l, -1.0f, 1.0f);
+			r = std::clamp(r, -1.0f, 1.0f);
+			break;
+		}
 		case Mode::Slew:
 		case Mode::Lopside:
 			l = std::clamp(slew.process(0, l), -1.0f, 1.0f);
@@ -308,6 +319,7 @@ struct OpsClip {
 		case Mode::Chonk: return eroder::DriveMode::Chonk;
 		case Mode::PaunchS: return eroder::DriveMode::PaunchS;
 		case Mode::PaunchH: return eroder::DriveMode::PaunchH;
+		case Mode::PaunchOS: return eroder::DriveMode::PaunchOS;
 		case Mode::Slew: return eroder::DriveMode::Slew;
 		default: return eroder::DriveMode::Lopside;
 		}
@@ -367,6 +379,7 @@ struct OpsClip {
 			}
 			// THE ERODER'S SIX START EMPTY TOO: the offset and the slew belong to the mode that left them.
 			dcL = dcR = 0.0f;
+			followPower = 0.0f;
 			slew.reset();
 			slewKeyValid = false;
 			modeApplied = state.mode;
@@ -430,7 +443,8 @@ struct OpsClip {
 				aimSlew(dDb);
 			}
 			// THE PAUNCH LAWS TAKE AN AMOUNT FROM DRIVE, NOT A GAIN: linear, 0..4 across its range.
-			const bool lawing = state.mode == static_cast<int>(Mode::PaunchS) || state.mode == static_cast<int>(Mode::PaunchH);
+			const bool lawing = state.mode == static_cast<int>(Mode::PaunchS) || state.mode == static_cast<int>(Mode::PaunchH) ||
+			                    state.mode == static_cast<int>(Mode::PaunchOS);
 			if (lawing) {
 				paunchA = static_cast<float>(eroder::kPaunchAmountMax) * std::clamp((dDb + 24.0f) * (1.0f / 48.0f), 0.0f, 1.0f);
 			}
@@ -489,6 +503,7 @@ struct OpsClip {
 					hpL.clear();
 					hpR.clear();
 					dcL = dcR = 0.0f;
+					followPower = 0.0f;
 					slew.reset();
 					rested = true;
 				}

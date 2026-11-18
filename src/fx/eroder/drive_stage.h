@@ -42,6 +42,7 @@ public:
 	void prepare(double sampleRate) noexcept {
 		const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
 		dcCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * kDriveDcHz / rate));
+		followCoefficient_ = paunchFollowCoefficient(4.0 * rate); // the follower runs on the oversampled frames
 		slew_.prepare(rate);
 		slewSet_ = false; // the slew was just turned off: the next settings turn it on
 		reset();
@@ -55,6 +56,7 @@ public:
 		prevL_ = prevR_ = 0.0f;
 		slew_.reset();
 		dcL_ = dcR_ = 0.0f;
+		followPower_ = 0.0f;
 	}
 
 	/// THE SETTINGS FOR THE FRAMES THAT FOLLOW. A shaper that was resting, or another Type, starts from nothing rather
@@ -171,7 +173,13 @@ private:
 		const float gain = s.gain;
 		const float shape = s.shape;
 		const float norm = s.norm;
-		if (driveIsPaunchLaw(mode)) {
+		if (driveIsPaunchOdd(mode)) {
+			// THE LEVEL-TRACKED ODD LAW (`paunchOdd`): the follower's state is the stage's, advanced a sample at a time.
+			over_.process(&left, &right, 1, [this, mode, gain, shape](float& l, float& r) {
+				paunchOdd(mode, l, r, gain, shape, followPower_, followCoefficient_);
+			});
+		}
+		else if (driveIsPaunchLaw(mode)) {
 			// THE LAW (`paunchLaw`) inside the oversampled region, where both channels are at hand: the rectified or squared
 			// mid added to the left and taken from the right. No make-up and no saturation; `gain` is the linear Amount `a`.
 			over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) { paunchLaw(mode, l, r, gain, shape); });
@@ -208,6 +216,7 @@ private:
 				if (quiet_ == kQuietFrames) {
 					over_.reset();
 					dcL_ = dcR_ = 0.0f;
+					followPower_ = 0.0f;
 				}
 			}
 			if (quiet_ >= kQuietFrames) {
@@ -234,6 +243,9 @@ private:
 	float dcL_ = 0.0f;
 	float dcR_ = 0.0f;
 	float dcCoefficient_ = 0.0f;
+	/// THE ODD LAWS' FOLLOWER: the mean square of the mid, and its one-pole's coefficient at the oversampled rate.
+	float followPower_ = 0.0f;
+	float followCoefficient_ = 0.0f;
 	float slewHz_ = 0.0f;
 	float slewCurve_ = 0.0f;
 	float slewBalance_ = 0.0f;

@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstddef>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <numbers>
@@ -367,6 +368,9 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 ///            Shape is the direction: opposite polarity at the bottom (all in the side), none in the middle, the same on both
 ///            sides at the top (all in the mid)
 ///   Paunch-H the same with the square, `kappa (a m)^2`: a pure octave above (see `paunchSide`)
+///   Paunch-OS the ODD counterpart of Paunch-S: a pure third harmonic of the mid, sized to the signal's own tracked level
+///            (`paunchOdd`), added to the left and taken from the right, so odd harmonics that are stereo width and vanish in
+///            mono. Level-independent: the 3rd sits at a/4 of the fundamental at any level. It makes no offset
 ///   Crush    no shaper: Drive holds each sample longer, Shape rounds it coarser (10 bits down to a bit and a half)
 ///   Decimate no shaper: Drive holds each sample longer, as Crush does, and nothing is rounded. Shape goes from the
 ///            held steps (a plain sample-and-hold) to a straight line from the previous held value to the current one
@@ -378,9 +382,9 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 /// Crush, Decimate, Slew and Lopside are not oversampled and not level-matched (their make-up is 1).
 /// BOTH ENGINES HAVE THE STAGE (`drive_stage.h`), last on their wet: Dust's before its HP Wet, the Comb's on the wet
 /// it is about to add to the dry.
-enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Chonk, PaunchS, PaunchH, Crush, Decimate, Slew, Lopside, kCount };
+enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Chonk, PaunchS, PaunchH, PaunchOS, Crush, Decimate, Slew, Lopside, kCount };
 inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean", "Chonk",
-	                                               "Paunch-S", "Paunch-H", "Crush", "Decimate", "Slew", "Lopside" };
+	                                               "Paunch-S", "Paunch-H", "Paunch-OS", "Crush", "Decimate", "Slew", "Lopside" };
 /// THE TYPE FORMERLY CALLED "Paunch" IS "Chonk": a patch stores a Choice by its label, so the old label reads as the new one.
 inline constexpr device::ChoiceAlias kDriveTypeAliases[] = { { "Paunch", "Chonk" } };
 static_assert(sizeof(kDriveModeNames) / sizeof(kDriveModeNames[0]) == static_cast<size_t>(DriveMode::kCount));
@@ -389,12 +393,20 @@ static_assert(sizeof(kDriveModeNames) / sizeof(kDriveModeNames[0]) == static_cas
 inline constexpr bool driveIsPaunchLaw(DriveMode mode) {
 	return mode == DriveMode::PaunchS || mode == DriveMode::PaunchH;
 }
+/// THE LEVEL-TRACKED ODD LAWS (Paunch-OS): they make no offset and keep a one-pole follower of the mid's power.
+inline constexpr bool driveIsPaunchOdd(DriveMode mode) {
+	return mode == DriveMode::PaunchOS;
+}
+/// EITHER FAMILY OF MID LAW: the Amount is linear 0..4, no make-up, no saturation, not a curve of one channel.
+inline constexpr bool driveIsMidLaw(DriveMode mode) {
+	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode);
+}
 /// A Type that is not a curve: the stage does something else with it. Crush, Decimate, Slew and Lopside never oversample; the
 /// two Paunch laws do (they are in the oversampled region), but have no make-up and no saturation, so the curve's helpers
 /// (`shapeDrive`, `driveMakeUp`) treat them as the identity.
 inline constexpr bool driveIsNotCurve(DriveMode mode) {
 	return mode == DriveMode::Crush || mode == DriveMode::Decimate || mode == DriveMode::Slew || mode == DriveMode::Lopside ||
-	       driveIsPaunchLaw(mode);
+	       driveIsMidLaw(mode);
 }
 
 enum class Param : int {
@@ -820,7 +832,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
 	                "leans left and right opposite ways, so its even harmonics are stereo width, Chonk puts "
 	                "its odd harmonics in opposite polarity left and right and thins, then flips, its right side as Drive rises, Paunch-S adds the rectified mid to the "
 	                "left and takes it from the right: even harmonics that are stereo width and vanish in mono; "
-	                "Paunch-H does it with the square, a pure octave above, Crush holds and rounds each sample, "
+	                "Paunch-H does it with the square, a pure octave above, Paunch-OS adds a third harmonic sized to the signal's own level to one side and takes it from the other, Crush holds and rounds each sample, "
 	                "Decimate holds each sample, as steps or as lines, Slew limits how fast the signal may move, "
 	                "Lopside lets it rise and fall at different speeds",
 	     .zones = 0,
@@ -1712,13 +1724,50 @@ inline constexpr double kPaunchSquareK = 8.0 / (3.0 * std::numbers::pi * kPaunch
 /// the mid `max(-w, 0) s`: at Shape 0 the products cancel in mono and the mono sum is the dry's; at 0.5 the output is the dry; at
 /// Shape 1 the side is empty. The dry is untouched in every case. `a` is the Amount's linear 0..4. The caller removes the offset
 /// `s` carries.
-inline void paunchLaw(DriveMode mode, float& l, float& r, float a, float shape) noexcept {
+inline void paunchSpread(float& l, float& r, float s, float shape) noexcept {
 	const float w = 1.0f - 2.0f * shape;
-	const float s = paunchSide(mode, 0.5f * (l + r), a);
 	const float side = w > 0.0f ? w : 0.0f;
 	const float mid = w < 0.0f ? -w : 0.0f;
 	l += (side + mid) * s;
 	r += (mid - side) * s;
+}
+inline void paunchLaw(DriveMode mode, float& l, float& r, float a, float shape) noexcept {
+	paunchSpread(l, r, paunchSide(mode, 0.5f * (l + r), a), shape);
+}
+/// **THE LEVEL-TRACKED ODD LAW'S FOLLOWER**: a one-pole on the power of the mid, `kPaunchFollowSeconds` long at the rate the stage
+/// runs at (`paunchFollowCoefficient`), per-sample state. The divisor is floored at `kPaunchFollowFloor` so silence divides by
+/// nothing, the state is flushed to exact zero under `kPaunchFollowFlush` (a decay cannot park in the denormals), and the ratio
+/// `q = m^2 / (2 P)` is capped at `kPaunchFollowCap`: for a steady sine (`P = A^2 / 2`) `q` is at most 1, so the cap never touches
+/// it; it bounds peaks and onsets (a signal that starts from silence meets `P` near 0, so `q` is the cap and `|s| <= 1.25 a |m|`).
+/// The time constant is 60 ms, not 30: the follower of a sine's power ripples at twice its frequency (`1 / (2 w tau)` of the mean
+/// at 220 Hz: 1.2 % at 30 ms), which leaks a fundamental into the side at about `-38 dB` of the mid's at `a = 4`; at 60 ms that
+/// is `-44 dB` and the two sides' fundamentals agree to 0.1 dB.
+inline constexpr double kPaunchFollowSeconds = 0.060;
+inline constexpr float kPaunchFollowCap = 2.0f;
+inline constexpr float kPaunchFollowFloor = 1.0e-12f;
+inline constexpr float kPaunchFollowFlush = 1.0e-20f;
+[[nodiscard]] inline float paunchFollowCoefficient(double rate) noexcept {
+	return static_cast<float>(1.0 - std::exp(-1.0 / (kPaunchFollowSeconds * (rate > 0.0 ? rate : 48000.0))));
+}
+/// **THE ODD LAWS, ONE FRAME, in place**, with the follower's state `power` (the mean square of the mid) advanced by one sample.
+/// Paunch-OS: `s = a m (q - 0.75)`, `q = min(m^2 / (2 P), 2)`. For `m = A sin t`, `P = A^2 / 2`: `m^3 / A^2 - 0.75 m` is
+/// `-(A / 4) sin 3t`, so `s` is a pure 3rd at `a / 4` of the fundamental at any level, with no fundamental in it and no offset
+/// (`s` is odd). Spread to the two sides as the even laws are (`paunchSpread`). Everything is a function of the mid, so the
+/// two channels share one follower.
+inline void paunchOdd(DriveMode mode, float& l, float& r, float a, float shape, float& power, float coefficient) noexcept {
+	const float m = 0.5f * (l + r);
+	const float m2 = m * m;
+	power += (m2 - power) * coefficient;
+	if (power < kPaunchFollowFlush) {
+		power = 0.0f;
+	}
+	const float p = power > kPaunchFollowFloor ? power : kPaunchFollowFloor;
+	const float q = std::min(m2 / (2.0f * p), kPaunchFollowCap);
+	float s = 0.0f;
+	if (mode == DriveMode::PaunchOS) {
+		s = a * m * (q - 0.75f);
+	}
+	paunchSpread(l, r, s, shape);
 }
 /// The make-up that follows it: `kDriveReferencePeak`'s sine out at the RMS it went in with.
 [[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape) noexcept;

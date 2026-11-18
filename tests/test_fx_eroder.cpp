@@ -2007,7 +2007,7 @@ double curveOf(DriveMode mode, double u, double shape, double gain = 1.0) {
 
 constexpr DriveMode kAllDrives[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
 	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Chonk,   DriveMode::PaunchS,
-	                                 DriveMode::PaunchH,  DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
+	                                 DriveMode::PaunchH,  DriveMode::PaunchOS, DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
 	                                 DriveMode::Lopside };
 constexpr DriveMode kCurves[] = { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Wreck,
 	                                  DriveMode::Jag, DriveMode::Lean, DriveMode::Chonk };
@@ -4758,9 +4758,9 @@ TEST_CASE("Etch: nine declared controls, gated to it, with Freq, Width, Resonanc
 		bool modulatable;
 	};
 	const Row rows[] = {
-		{ Param::SlotAAmount, "eroder_slot_a_amount", 0.0, true }, { Param::SlotAType, "eroder_slot_a_type", 11.0, false },
+		{ Param::SlotAAmount, "eroder_slot_a_amount", 0.0, true }, { Param::SlotAType, "eroder_slot_a_type", static_cast<double>(DriveMode::Slew), false },
 		{ Param::SlotAShape, "eroder_slot_a_shape", 0.0, true },   { Param::SlotAMix, "eroder_slot_a_mix", 1.0, true },
-		{ Param::SlotBAmount, "eroder_slot_b_amount", 0.0, true }, { Param::SlotBType, "eroder_slot_b_type", 10.0, false },
+		{ Param::SlotBAmount, "eroder_slot_b_amount", 0.0, true }, { Param::SlotBType, "eroder_slot_b_type", static_cast<double>(DriveMode::Decimate), false },
 		{ Param::SlotBShape, "eroder_slot_b_shape", 0.0, true },   { Param::SlotBMix, "eroder_slot_b_mix", 1.0, true },
 		{ Param::SlotRoute, "eroder_slot_route", 0.0, false },
 	};
@@ -4773,8 +4773,8 @@ TEST_CASE("Etch: nine declared controls, gated to it, with Freq, Width, Resonanc
 		CHECK(d.gateControl == static_cast<int16_t>(Param::Mode));
 		CHECK(d.gateMask == (1u << static_cast<uint32_t>(Mode::Etch)));
 	}
-	CHECK(std::string_view(kParamDescs[static_cast<size_t>(Param::SlotAType)].names[11]) == "Slew");
-	CHECK(std::string_view(kParamDescs[static_cast<size_t>(Param::SlotBType)].names[10]) == "Decimate");
+	CHECK(std::string_view(kParamDescs[static_cast<size_t>(Param::SlotAType)].names[static_cast<size_t>(DriveMode::Slew)]) == "Slew");
+	CHECK(std::string_view(kParamDescs[static_cast<size_t>(Param::SlotBType)].names[static_cast<size_t>(DriveMode::Decimate)]) == "Decimate");
 	CHECK(kParamDescs[static_cast<size_t>(Param::SlotAType)].names.size() == static_cast<size_t>(DriveMode::kCount));
 	CHECK(kParamDescs[static_cast<size_t>(Param::SlotRoute)].names.size() == 2);
 	CHECK(std::string_view(kParamDescs[static_cast<size_t>(Param::SlotRoute)].names[1]) == "Parallel");
@@ -5385,7 +5385,7 @@ Settings worstLoops(Mode mode, DriveMode type, bool tapDriven, bool bell) {
 
 constexpr DriveMode kEveryType[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
 	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Chonk,   DriveMode::PaunchS,
-	                                 DriveMode::PaunchH,  DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
+	                                 DriveMode::PaunchH,  DriveMode::PaunchOS, DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
 	                                 DriveMode::Lopside };
 
 } // namespace
@@ -6551,4 +6551,184 @@ TEST_CASE("Paunch bias: a slot switched to Paunch-S in mid-render gives the same
 	CHECK(run(37) == reference);
 	// NOT VACUOUS: the middle segment differs from what Soft alone makes of it.
 	CHECK(peakOf(reference) > 0.1f);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// PAUNCH-OS: a level-tracked third harmonic of the mid, added to one side and taken from the other.    //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A SINE OF `hz` IN BOTH CHANNELS through the stage, `settle` frames to settle, then `frames` kept (4800 frames is 22 cycles of 220 Hz).
+Pair oddRun(DriveMode type, float knob, float shape, double peak, double hz = 220.0, size_t settle = 24000, size_t frames = 4800) {
+	return lawRun(deriveDrive(knob, type, shape, kRate, nullptr),
+	              [peak, hz](size_t i, float& l, float& r) { l = r = static_cast<float>(sineAt(i, hz, peak)); }, settle, frames);
+}
+double partialAt(const std::vector<float>& v, double hz, int k) {
+	return std::abs(binOf(v, hz * k));
+}
+
+} // namespace
+
+TEST_CASE("Paunch-OS: the side is a pure 3rd of amplitude a A / 4, no fundamental, the mid is the dry, the sides stay level-balanced") {
+	for (const float knob : { 0.25f, 1.0f }) { // a = 1 and a = 4
+		const double a = 4.0 * static_cast<double>(knob);
+		const double A = 0.5;
+		CAPTURE(a);
+		const Pair p = oddRun(DriveMode::PaunchOS, knob, 0.0f, A);
+		const std::vector<float> side = sideOf(p);
+		const std::vector<float> mid = midOf(p);
+		const double h3 = partialAt(side, 220.0, 3);
+		const double fundamental = partialAt(mid, 220.0, 1);
+		measured("Paunch-OS side 3rd / (a A / 4)", h3 / (a * A / 4.0));
+		measured("Paunch-OS side fundamental re the mid's, dB", dbOf(partialAt(side, 220.0, 1) / fundamental));
+		CHECK(std::abs(h3 / (a * A / 4.0) - 1.0) < 0.03);
+		CHECK(dbOf(partialAt(side, 220.0, 1) / fundamental) < -40.0);
+		for (const int k : { 5, 7, 9 }) {
+			CAPTURE(k);
+			measured("Paunch-OS side partial re the 3rd, dB", dbOf(partialAt(side, 220.0, k) / h3));
+			CHECK(dbOf(partialAt(side, 220.0, k) / h3) < -40.0);
+		}
+		for (int k = 2; k <= 10; ++k) {
+			CAPTURE(k);
+			CHECK(dbOf(partialAt(mid, 220.0, k) / fundamental) < -80.0);
+		}
+		const std::complex<double> fl = binOf(p.l, 220.0);
+		const std::complex<double> fr = binOf(p.r, 220.0);
+		CHECK(std::abs(dbOf(std::abs(fl) / std::abs(fr))) < 0.1);
+		CHECK(degreesApart(fl, fr) < 1.0);
+		CHECK(std::abs(degreesApart(binOf(p.l, 660.0), binOf(p.r, 660.0)) - 180.0) < 5.0);
+		CHECK(dbOf(std::abs(meanOf(p.l)) / peakOf(p.l) + 1.0e-30) < -80.0); // no offset: odd
+	}
+}
+
+TEST_CASE("Paunch-OS: level independent — the 3rd over the fundamental is the same at -30, -12 and 0 dBFS") {
+	double lo = 1.0e9;
+	double hi = -1.0e9;
+	for (const double dbfs : { -30.0, -12.0, 0.0 }) {
+		const double peak = std::pow(10.0, dbfs / 20.0);
+		const Pair p = oddRun(DriveMode::PaunchOS, 0.5f, 0.0f, peak);
+		const double ratio = dbOf(partialAt(sideOf(p), 220.0, 3) / partialAt(midOf(p), 220.0, 1));
+		measured("Paunch-OS 3rd over fundamental, dB", ratio);
+		lo = std::min(lo, ratio);
+		hi = std::max(hi, ratio);
+		CHECK(std::abs(ratio - dbOf(2.0 / 4.0)) < 0.3); // a / 4 with a = 2
+	}
+	CHECK(hi - lo < 0.3);
+}
+
+TEST_CASE("Paunch-OS: for a stereo input the mono sum is the input's at Shape 0, the products cancel") {
+	const DriveSettings d = deriveDrive(0.9f, DriveMode::PaunchOS, 0.0f, kRate, nullptr);
+	const Pair p = lawRun(d, [](size_t i, float& l, float& r) {
+		l = static_cast<float>(sineAt(i, 220.0, 0.4));
+		r = static_cast<float>(sineAt(i, 330.0, 0.3));
+	}, 24000, 4800);
+	const std::vector<float> mid = midOf(p);
+	// THE MID HAS THE TWO INPUT SINES (220 and 330 Hz, halved) AND NOTHING ELSE: every other partial of 110 Hz up to 2 kHz is far under.
+	double worst = 0.0;
+	for (int k = 1; k <= 18; ++k) {
+		if (k != 2 && k != 3) {
+			worst = std::max(worst, std::abs(binOf(mid, 110.0 * k)));
+		}
+	}
+	measured("stereo input, largest other mid partial re 0.2, dB", dbOf(worst / 0.2));
+	CHECK(dbOf(worst / 0.2) < -80.0);
+	CHECK(std::abs(binOf(mid, 220.0)) == doctest::Approx(0.2).epsilon(0.001));
+	CHECK(partialAt(sideOf(p), 220.0, 3) > 0.05); // not vacuous: the side holds the 3rd
+}
+
+TEST_CASE("Paunch-OS: a sine switched on from silence — the follower's onset is bounded by its cap, and the imbalance and the settling are measured") {
+	// THE BOUND, from the law: |s| <= 1.25 a |m| (q is capped at 2, so |q - 0.75| <= 1.25), on any signal, from any state.
+	for (const float a : { 1.0f, 4.0f }) {
+		float power = 0.0f;
+		const float coefficient = paunchFollowCoefficient(4.0 * kRate);
+		uint32_t seed = 7u;
+		for (size_t i = 0; i < 200000; ++i) {
+			seed = seed * 1664525u + 1013904223u;
+			const float x = (i % 20000 < 10000 ? 0.0f : 0.6f) * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f) +
+			                static_cast<float>(sineAt(i, 220.0, i % 30000 < 15000 ? 0.5 : 0.01));
+			float l = x;
+			float r = x;
+			paunchOdd(DriveMode::PaunchOS, l, r, a, 0.0f, power, coefficient);
+			REQUIRE(std::abs(l - x) <= 1.25f * a * std::abs(x) * (1.0f + 1.0e-5f) + 1.0e-9f);
+			REQUIRE(std::isfinite(l));
+		}
+	}
+	// THE MEASUREMENT, through the stage: 220 Hz at 0.5 from silence, a = 4. A one-cycle sliding window on L, R and the side.
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.set(deriveDrive(1.0f, DriveMode::PaunchOS, 0.0f, kRate, nullptr));
+	const size_t period = 218;
+	std::vector<float> l;
+	std::vector<float> r;
+	for (size_t i = 0; i < 24000; ++i) {
+		float a = static_cast<float>(sineAt(i, 220.0, 0.5));
+		float b = a;
+		stage.process(a, b);
+		l.push_back(a);
+		r.push_back(b);
+	}
+	double worstImbalance = 0.0;
+	double settledAt = -1.0;
+	for (size_t end = period; end < l.size(); ++end) {
+		double el = 0.0;
+		double er = 0.0;
+		std::complex<double> side = 0.0;
+		std::complex<double> mid = 0.0;
+		for (size_t i = end - period; i < end; ++i) {
+			el += static_cast<double>(l[i]) * l[i];
+			er += static_cast<double>(r[i]) * r[i];
+			const double w = -2.0 * std::numbers::pi * 220.0 * static_cast<double>(i) / kRate;
+			const std::complex<double> z(std::cos(w), std::sin(w));
+			side += 0.5 * static_cast<double>(l[i] - r[i]) * z;
+			mid += 0.5 * static_cast<double>(l[i] + r[i]) * z;
+		}
+		if (end <= 4800) {
+			worstImbalance = std::max(worstImbalance, std::abs(dbOf(std::sqrt(el / er))));
+		}
+		if (settledAt < 0.0 && end > 2 * period && dbOf(std::abs(side) / std::abs(mid)) < -30.0) {
+			settledAt = static_cast<double>(end) / kRate;
+		}
+	}
+	measured("Paunch-OS onset: worst L/R level imbalance in the first 100 ms, dB", worstImbalance);
+	measured("Paunch-OS onset: seconds until the side's fundamental is 30 dB under the mid's", settledAt);
+	CHECK(settledAt > 0.0);
+}
+
+TEST_CASE("Paunch-OS: any block size gives the same output, silence gives exact zero, Amount 0 is not run") {
+	const auto run = [](size_t block) {
+		Settings s = etchBase();
+		s.slotA = { 0.7f, DriveMode::PaunchOS, 0.2f, 1.0f };
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l(24000);
+		for (size_t i = 0; i < l.size(); ++i) {
+			l[i] = i < 12000 ? static_cast<float>(sineAt(i, 220.0, 0.4) + sineAt(i, 1700.0, 0.1)) : 0.0f;
+		}
+		std::vector<float> r = l;
+		for (size_t done = 0; done < l.size(); done += block) {
+			const int n = static_cast<int>(std::min(block, l.size() - done));
+			e.processStereo(l.data() + done, r.data() + done, n);
+		}
+		l.insert(l.end(), r.begin(), r.end());
+		return l;
+	};
+	const std::vector<float> reference = run(256);
+	CHECK(run(32) == reference);
+	CHECK(run(37) == reference);
+	CHECK(peakOf(reference) > 0.1f);
+	// THE TAIL: input stops at 12000; the stage's output is exactly zero well before the end.
+	size_t last = 0;
+	for (size_t i = 0; i < 24000; ++i) {
+		if (reference[i] != 0.0f || reference[24000 + i] != 0.0f) {
+			last = i;
+		}
+	}
+	measured("Paunch-OS tail, last non-zero frame after the input stopped", static_cast<double>(last) - 12000.0);
+	CHECK(last < 23000);
+	const std::vector<float> in = wanderOf(4000);
+	CHECK(stageOf(deriveDrive(0.0f, DriveMode::PaunchOS, 0.0f, kRate, nullptr), in) == in);
+	CHECK(driveSmallSignalGain(DriveMode::PaunchOS, 4.0, 0.0f) == doctest::Approx(6.0));
+	CHECK(driveMakeUp(DriveMode::PaunchOS, 4.0, 0.0f) == 1.0);
 }

@@ -198,6 +198,7 @@ float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept
 	}
 	case DriveMode::PaunchS:
 	case DriveMode::PaunchH:
+	case DriveMode::PaunchOS:
 	case DriveMode::Crush:
 	case DriveMode::Decimate:
 	case DriveMode::Slew:
@@ -250,6 +251,10 @@ double driveSlope(DriveMode mode, float shape) noexcept {
 }
 
 double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept {
+	if (mode == DriveMode::PaunchOS) {
+		// The law's term is bounded by `1.25 a |m|` (the follower's cap), so the worst channel is `1 + 1.25 a |w|`.
+		return 1.0 + 1.25 * gain * std::abs(1.0 - 2.0 * static_cast<double>(shape));
+	}
 	if (mode == DriveMode::PaunchS) {
 		// The dry at unity plus the rectified mid's slope of either sign: the worst channel is 1 + a |w|.
 		return 1.0 + gain * std::abs(1.0 - 2.0 * static_cast<double>(shape));
@@ -276,7 +281,7 @@ DriveSettings deriveDrive(float driveKnob, DriveMode mode, float shape, double s
 	d.mode = mode;
 	d.shape = std::clamp(shape, 0.0f, 1.0f);
 	// THE PAUNCH LAWS' AMOUNT IS LINEAR, `a` = 0..4; the curve Types' is an exponential gain.
-	d.gain = driveIsPaunchLaw(mode)
+	d.gain = driveIsMidLaw(mode)
 	             ? static_cast<float>(kPaunchAmountMax * drive)
 	             : static_cast<float>(std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * drive));
 	const bool same = reuse != nullptr && reuse->mode == d.mode && reuse->shape == d.shape && reuse->gain == d.gain;

@@ -268,11 +268,11 @@ constexpr clip::Mode kModes[] = { clip::Mode::Soft, clip::Mode::Texture, clip::M
 /// THE ERODER'S SIX, appended after Bits, and all eleven.
 constexpr clip::Mode kNewModes[] = { clip::Mode::Tube,   clip::Mode::Jag,  clip::Mode::Lean,
 	                                 clip::Mode::Chonk, clip::Mode::PaunchS, clip::Mode::PaunchH,
-	                                 clip::Mode::Slew,   clip::Mode::Lopside };
+	                                 clip::Mode::PaunchOS, clip::Mode::Slew,   clip::Mode::Lopside };
 constexpr clip::Mode kAllModes[] = { clip::Mode::Soft,  clip::Mode::Texture, clip::Mode::Grit,
 	                                 clip::Mode::Fold,  clip::Mode::Bits,    clip::Mode::Tube,
 	                                 clip::Mode::Jag,   clip::Mode::Lean,    clip::Mode::Chonk,
-	                                 clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::Slew,
+	                                 clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS, clip::Mode::Slew,
 	                                 clip::Mode::Lopside };
 
 /// THE WORST |y| OVER COMP'S CASE-3 SIGNALS (full-scale 50 Hz square, 1 kHz sine, bursts of random
@@ -643,7 +643,10 @@ TEST_CASE("one NaN or inf sample does not latch in any mode") {
 			if (k >= 2400) {
 				// (a Paunch law's offset blocker keeps the one clamped sample's worth of offset a while: 5e-3)
 				const bool law = mode == clip::Mode::PaunchS || mode == clip::Mode::PaunchH;
-				offTrack += std::fabs(l - tl) > (law ? 5e-3f : 1e-3f);
+				// (Paunch-OS's follower keeps a trace of the one huge sample for several time constants: finiteness only)
+				if (mode != clip::Mode::PaunchOS) {
+					offTrack += std::fabs(l - tl) > (law ? 5e-3f : 1e-3f);
+				}
 			}
 		}
 		CHECK(nonFinite == 0u);
@@ -1118,11 +1121,11 @@ TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the
 		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
 	}
-	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Chonk", "Paunch-S", "Paunch-H", "Slew", "Lopside" };
+	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Chonk", "Paunch-S", "Paunch-H", "Paunch-OS", "Slew", "Lopside" };
 	for (size_t i = 0; i < std::size(appended); ++i) {
 		CHECK(std::string(clip::kModeNames[i]) == appended[i]);
 	}
-	CHECK(clip::kParamDescs[static_cast<size_t>(clip::Param::Mode)].max == 12.0);
+	CHECK(clip::kParamDescs[static_cast<size_t>(clip::Param::Mode)].max == 13.0);
 }
 
 TEST_CASE("the Eroder's six never exceed the ceiling: strict with Oversample off, the measured bound with 4x") {
@@ -1366,7 +1369,7 @@ TEST_CASE("Lopside's rising and falling rates are 2^(+-balance) of the limit, Dr
 
 TEST_CASE("Paunch-S and Paunch-H in Clip: both sides stay under the ceiling on a hot sine and on noise, at every Shape") {
 	const float ceiling = dbToLin(-6.0);
-	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH }) {
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS }) {
 		for (const float shape : { 0.0f, 0.5f, 1.0f }) {
 			for (const bool noise : { false, true }) {
 				CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
@@ -1419,5 +1422,38 @@ TEST_CASE("Paunch-S and Paunch-H in Clip: at Shape 0 the side carries the 2nd ha
 		for (const double hz : { 2000.0, 3000.0, 4000.0, 6000.0 }) {
 			CHECK(std::abs(project(mid, 24000, hz)) < 1.0e-4 * fundamental);
 		}
+	}
+}
+
+TEST_CASE("Paunch-OS in Clip: the side carries a 3rd harmonic of a / 4 of the signal at any level, the mid is the dry, and the ceiling holds") {
+	// Drive at 0 dB is the middle of its range: a = 2. A 220 Hz sine, 1 s, the last half measured (110 whole cycles).
+	const double ceiling = dbToLin(-6.0);
+	for (const double amp : { 0.03, 0.1, 0.25 }) {
+		clip::Settings s;
+		s.mode = static_cast<int>(clip::Mode::PaunchOS);
+		s.driveDb = 0.0f;
+		s.ceilingDb = -6.0f;
+		s.oversample = false;
+		Instance dev;
+		dev.set(s);
+		std::vector<float> l = sine(48000, 220.0, amp), r = l;
+		for (int done = 0; done < 48000; done += 480) {
+			dev.process(l.data() + done, r.data() + done, 480);
+		}
+		std::vector<float> side(l.size()), mid(l.size());
+		for (size_t i = 0; i < l.size(); ++i) {
+			side[i] = 0.5f * (l[i] - r[i]);
+			mid[i] = 0.5f * (l[i] + r[i]);
+		}
+		const double h3 = std::abs(project(side, 24000, 660.0));
+		const double fundamental = std::abs(project(mid, 24000, 220.0));
+		MESSAGE("amp " << amp << ": side 3rd " << h3 << " restated " << 2.0 * amp / 4.0 << ", side fundamental " << 20.0 * std::log10(std::abs(project(side, 24000, 220.0)) / fundamental) << " dB of the mid's");
+		CHECK(std::abs(h3 / (2.0 * amp / 4.0) - 1.0) < 0.05);
+		CHECK(std::abs(fundamental / amp - 1.0) < 0.01);
+		float peak = 0.0f;
+		for (size_t i = 0; i < l.size(); ++i) {
+			peak = std::max({ peak, std::fabs(l[i]), std::fabs(r[i]) });
+		}
+		CHECK(peak <= static_cast<float>(ceiling) * (1.0f + 1e-6f));
 	}
 }

@@ -23,7 +23,9 @@
 #include "doctest.h"
 
 #include "backplane/container_bodies.h"
+#include "fx/clip/clip_types.h"
 #include "fx/delay/delay_types.h"
+#include "fx/eroder/eroder_types.h"
 #include "fx/featherverb/featherverb_types.h"
 #include "fx/filter/filter_types.h"
 #include "fx/phaser/phaser.h"
@@ -750,4 +752,59 @@ TEST_CASE("Delay: a patch saved with Mode BBD loads as Buckets — the rename's 
 	CHECK(row[mode] == static_cast<float>(static_cast<int>(dl::Mode::Bbd)));
 	CHECK(std::string_view(d.params[mode].names[labelIndex(d.params[mode], row[mode])]) == "Buckets");
 	CHECK(report.countOf(Kind::LabelUnknown) == 0);
+}
+
+namespace {
+/// THE ROW A PATCH WRITTEN WITH `label` FOR `key` LOADS TO, and what the load reported.
+float loadedLabel(const device::Descriptor& d, std::string_view key, const char* label, rack::LoadReport* report) {
+	rack::RackPatch::Device saved;
+	rack::valuesOfRow(d, std::vector<float>(d.params.size(), 0.0f), 0, &saved);
+	bool replaced = false;
+	for (rack::RackPatch::Value& v : saved.values) {
+		if (v.key == key) {
+			v = rack::RackPatch::Value::label(std::string(key), label);
+			replaced = true;
+		}
+	}
+	REQUIRE(replaced);
+	std::vector<float> row(d.params.size() + d.traits.extraState);
+	(void)rack::rowOfValues(d, saved, row, report, "Device", nullptr);
+	return row[indexOfKey(d.params, key)];
+}
+} // namespace
+
+TEST_CASE("Eroder: a patch saved with the Drive Type or either Etch slot's Type Paunch loads as Chonk, and Paunch-S, Paunch-H are not caught") {
+	namespace er = fx::eroder;
+	using Kind = rack::LoadReport::Kind;
+	const device::Descriptor& d = er::kDescriptor;
+	for (const char* key : { "eroder_drive_mode", "eroder_slot_a_type", "eroder_slot_b_type" }) {
+		CAPTURE(key);
+		rack::LoadReport report;
+		const float row = loadedLabel(d, key, "Paunch", &report);
+		CHECK(row == static_cast<float>(static_cast<int>(er::DriveMode::Chonk)));
+		CHECK(std::string_view(d.params[indexOfKey(d.params, key)].names[labelIndex(d.params[indexOfKey(d.params, key)], row)]) == "Chonk");
+		CHECK(report.countOf(Kind::LabelUnknown) == 0);
+		// EXACT-LABEL MATCH: the new Types keep their own places.
+		for (const auto& [label, mode] : { std::pair<const char*, er::DriveMode> { "Paunch-S", er::DriveMode::PaunchS },
+		                                   std::pair<const char*, er::DriveMode> { "Paunch-H", er::DriveMode::PaunchH } }) {
+			rack::LoadReport other;
+			CHECK(loadedLabel(d, key, label, &other) == static_cast<float>(static_cast<int>(mode)));
+			CHECK(other.countOf(Kind::LabelUnknown) == 0);
+		}
+	}
+}
+
+TEST_CASE("Clip: a patch saved with the mode Paunch loads as Chonk, and Paunch-S, Paunch-H are not caught") {
+	namespace cl = fx::clip;
+	using Kind = rack::LoadReport::Kind;
+	const device::Descriptor& d = cl::kDescriptor;
+	rack::LoadReport report;
+	CHECK(loadedLabel(d, "clip_mode", "Paunch", &report) == static_cast<float>(static_cast<int>(cl::Mode::Chonk)));
+	CHECK(report.countOf(Kind::LabelUnknown) == 0);
+	for (const auto& [label, mode] : { std::pair<const char*, cl::Mode> { "Paunch-S", cl::Mode::PaunchS },
+	                                   std::pair<const char*, cl::Mode> { "Paunch-H", cl::Mode::PaunchH } }) {
+		rack::LoadReport other;
+		CHECK(loadedLabel(d, "clip_mode", label, &other) == static_cast<float>(static_cast<int>(mode)));
+		CHECK(other.countOf(Kind::LabelUnknown) == 0);
+	}
 }

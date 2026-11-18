@@ -126,6 +126,8 @@ struct OpsClip {
 	eroder::Slew slew {};
 	bool slewKeyValid = false;
 	float slewDriveKey = 0.0f, slewShapeKey = 0.0f;
+	/// 1 / the gain into the curve, this sample: the clean signal Chonk's right side is turned toward.
+	float cleanScale = 1.0f;
 	/// THE MODE THE LAST BLOCK RAN IN — what "the mode changed into Texture" is detected against.
 	int modeApplied = 0;
 	/// THE PAUNCH LAWS' AMOUNT `a`: Drive's position (-24..+24 dB as 0..1) times 4, set per host sample.
@@ -262,11 +264,15 @@ struct OpsClip {
 			r = std::clamp(r, -1.0f, 1.0f);
 			break;
 		}
-		case Mode::Paunch: {
-			// THE ERODER'S LAW (`paunchRight`): the left a tanh, the right with only its distortion turned over by Shape
-			// and held under the left's ceiling (here 1: the signal is already normalised, linear gain 1).
-			l = std::tanh(l);
-			r = eroder::paunchRight(r, 1.0f, 1.0f, shapeNow);
+		case Mode::Chonk: {
+			// THE ERODER'S: the left a tanh; the right's residue (the tanh less the CLEAN signal) turned over by Shape.
+			const float yl = std::tanh(l);
+			const float yr = std::tanh(r);
+			const float cleanR = r * cleanScale;
+			l = yl;
+			r = yr + 2.0f * shapeNow * (cleanR - yr);
+			// **THE CLEAN SIGNAL IS ADDED BACK, SO THIS IS NOT BOUNDED BY THE CURVE**: the ceiling is a hard clip here.
+			r = std::clamp(r, -1.0f, 1.0f);
 			break;
 		}
 		case Mode::PaunchS:
@@ -299,7 +305,7 @@ struct OpsClip {
 		case Mode::Tube: return eroder::DriveMode::Tube;
 		case Mode::Jag: return eroder::DriveMode::Jag;
 		case Mode::Lean: return eroder::DriveMode::Lean;
-		case Mode::Paunch: return eroder::DriveMode::Paunch;
+		case Mode::Chonk: return eroder::DriveMode::Chonk;
 		case Mode::PaunchS: return eroder::DriveMode::PaunchS;
 		case Mode::PaunchH: return eroder::DriveMode::PaunchH;
 		case Mode::Slew: return eroder::DriveMode::Slew;
@@ -429,6 +435,7 @@ struct OpsClip {
 				paunchA = static_cast<float>(eroder::kPaunchAmountMax) * std::clamp((dDb + 24.0f) * (1.0f / 48.0f), 0.0f, 1.0f);
 			}
 			const float gain = (slewing || lawing) ? 1.0f / ceilingLin : driveLin / ceilingLin;
+			cleanScale = 1.0f / gain;
 			float uL = std::clamp(xL * gain, -kNormalisedClamp, kNormalisedClamp);
 			float uR = std::clamp(xR * gain, -kNormalisedClamp, kNormalisedClamp);
 			// THE IN METER READS THE INCOMING SIGNAL, BEFORE DRIVE — the same quantity the disabled branch pushes,

@@ -188,7 +188,7 @@ float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept
 		const float x = std::tanh(u) * (1.0f + kWreckFoldSpan * shape);
 		return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
 	}
-	case DriveMode::Paunch:
+	case DriveMode::Chonk:
 		// THE PLAIN TANH: the stage's right channel does its own turning-over (`drive_stage.h`).
 		return std::tanh(u);
 	case DriveMode::Lean: {

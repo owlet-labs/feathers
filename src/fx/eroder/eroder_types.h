@@ -357,11 +357,11 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 ///   Lean     a tanh read from a bias, but the two channels lean OPPOSITE ways: the even harmonics come
 ///            out in opposite polarity left and right, so they are width, and summed to mono they cancel and leave
 ///            the tanh's odd ones. Shape is the lean, so the width; at its bottom there is none and both are a tanh
-///   Paunch   a plain tanh on the left; on the right only the tanh's distortion (the tanh less its own linear part) is
-///            turned over by Shape, so the ODD harmonics come out in opposite polarity left and right while the
-///            fundamental stays in phase and level-balanced: at full Shape the mono sum is the linear signal at the
-///            stage's gain with the distortion all side; at half the right carries no distortion; at the bottom both
-///            are Soft's tanh. The right is held under the left's ceiling
+///   Chonk    a soft saturator (a tanh) on the left; on the right the saturator's difference from the clean signal is turned
+///            over by Shape (`r_out = tanh(g r) + 2 shape (r - tanh(g r))`), so the ODD harmonics come out in opposite
+///            polarity left and right and the mono sum at full Shape is the clean signal. As Drive rises the right thins out
+///            and then flips (its small-signal gain is `2 - gain * norm` at full Shape). At the bottom of Shape both are
+///            Soft's tanh. The right is not held to the left's ceiling here (the wet ceiling follows)
 ///   Paunch-S the MID (`(l + r) / 2`) rectified, `a |m|`, added to the left and taken from the right: even harmonics that are
 ///            stereo width and cancel in mono. The dry passes at unity (no make-up, no saturation). Amount is `a`, linear, 0..4.
 ///            Shape is the direction: opposite polarity at the bottom (all in the side), none in the middle, the same on both
@@ -378,9 +378,11 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 /// Crush, Decimate, Slew and Lopside are not oversampled and not level-matched (their make-up is 1).
 /// BOTH ENGINES HAVE THE STAGE (`drive_stage.h`), last on their wet: Dust's before its HP Wet, the Comb's on the wet
 /// it is about to add to the dry.
-enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Paunch, PaunchS, PaunchH, Crush, Decimate, Slew, Lopside, kCount };
-inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean", "Paunch",
+enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Chonk, PaunchS, PaunchH, Crush, Decimate, Slew, Lopside, kCount };
+inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean", "Chonk",
 	                                               "Paunch-S", "Paunch-H", "Crush", "Decimate", "Slew", "Lopside" };
+/// THE TYPE FORMERLY CALLED "Paunch" IS "Chonk": a patch stores a Choice by its label, so the old label reads as the new one.
+inline constexpr device::ChoiceAlias kDriveTypeAliases[] = { { "Paunch", "Chonk" } };
 static_assert(sizeof(kDriveModeNames) / sizeof(kDriveModeNames[0]) == static_cast<size_t>(DriveMode::kCount));
 /// THE TWO PAUNCH LAWS (Paunch-S and Paunch-H): a function of the mid added to one side and taken from the other, not a curve
 /// of one channel.
@@ -815,8 +817,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .tooltip = "What Drive pushes into: Soft starves the quiet parts and rounds the rest, Tube's two halves "
 	                "differ, Fold is a sine folder that can lean to one side, Wreck is a distortion into a folder "
 	                "(in Dust the feedback runs through both), Jag is a distortion into a sharp folder, Lean "
-	                "leans left and right opposite ways, so its even harmonics are stereo width, Paunch puts "
-	                "its odd harmonics in opposite polarity left and right, Paunch-S adds the rectified mid to the "
+	                "leans left and right opposite ways, so its even harmonics are stereo width, Chonk puts "
+	                "its odd harmonics in opposite polarity left and right and thins, then flips, its right side as Drive rises, Paunch-S adds the rectified mid to the "
 	                "left and takes it from the right: even harmonics that are stereo width and vanish in mono; "
 	                "Paunch-H does it with the square, a pure octave above, Crush holds and rounds each sample, "
 	                "Decimate holds each sample, as steps or as lines, Slew limits how fast the signal may move, "
@@ -827,7 +829,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateControl = -1,
      .gateMask = 0,
      .centred = false,
-     .shortName = "Type"},
+     .shortName = "Type", .choiceAliases = kDriveTypeAliases},
     {.key = "eroder_drive_shape", .name = "Eroder Drive Shape",
      .min = 0.0,
      .max = 1.0,
@@ -838,7 +840,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "The Type's own colour: Soft starves quiet parts, Tube's two halves differ, Fold's symmetry, "
-	                "how far Wreck and Jag fold, how wide Lean leans, how much of Paunch is turned over, "
+	                "how far Wreck and Jag fold, how wide Lean leans, how much of Chonk's right side is turned over, "
 	                "which way the two sides get it in Paunch-S and Paunch-H: opposite at the bottom, the same at the top, "
 	                "Crush's bit depth, Decimate from steps to lines, Slew from hard to soft, which way "
 	                "Lopside drags",
@@ -1211,7 +1213,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateControl = static_cast<int16_t>(Param::Mode),
      .gateMask = kEtchOnly,
      .centred = false,
-     .shortName = "Type"},
+     .shortName = "Type", .choiceAliases = kDriveTypeAliases},
     {.key = "eroder_slot_a_shape", .name = "Eroder Slot A Shape",
      .min = 0.0,
      .max = 1.0,
@@ -1279,7 +1281,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateControl = static_cast<int16_t>(Param::Mode),
      .gateMask = kEtchOnly,
      .centred = false,
-     .shortName = "Type"},
+     .shortName = "Type", .choiceAliases = kDriveTypeAliases},
     {.key = "eroder_slot_b_shape", .name = "Eroder Slot B Shape",
      .min = 0.0,
      .max = 1.0,
@@ -1679,7 +1681,7 @@ struct HighpassSettings {
 [[nodiscard]] DustDerived deriveDust(const Settings& settings, double pitchSemitones, double sampleRate,
                                      const DustDerived* reuse = nullptr) noexcept;
 
-/// **THE SHAPER'S CURVE**, of a signal already multiplied by the Drive's gain `gain`: Soft, Tube, Fold, Wreck, Jag, Lean and Paunch (its left).
+/// **THE SHAPER'S CURVE**, of a signal already multiplied by the Drive's gain `gain`: Soft, Tube, Fold, Wreck, Jag, Lean and Chonk (its left).
 /// The two Paunch laws are not curves of one channel (`paunchLaw`) and are the identity here.
 /// Every one is 0 at 0; all but Soft at Shape above 0 (whose dead zone is a share of the reference level, so it needs
 /// the gain) go straight through it. The Types that are not curves are the identity here.
@@ -1687,31 +1689,6 @@ struct HighpassSettings {
 /// THE RIGHT CHANNEL'S CURVE: the left's, except in Lean, where it is the left's turned over (`-f(-u)`) — the same
 /// odd harmonics, the even ones in the other polarity.
 [[nodiscard]] float shapeDriveRight(DriveMode mode, float driven, float shape, float gain) noexcept;
-/// **A CEILING THAT IS TRANSPARENT BELOW ITS KNEE**: the identity up to 0.9 of `limit`, then a tanh that reaches `limit`
-/// and no further (continuous in value and slope). A plain `limit * tanh(v / limit)` would put its own odd harmonics on
-/// a signal that only touches the ceiling, so it would undo the very turn-over it follows.
-[[nodiscard]] inline float paunchCeiling(float v, float limit) noexcept {
-	const float knee = 0.9f * limit;
-	const float a = std::abs(v);
-	if (a <= knee) {
-		return v;
-	}
-	const float room = limit - knee;
-	return std::copysign(knee + room * std::tanh((a - knee) / room), v);
-}
-/// **PAUNCH'S RIGHT CHANNEL**, for one input sample `x` (not yet driven): only the curve's NONLINEAR part is turned
-/// over. With `k = gain * norm` (the curve's small-signal gain as applied), `c = k x` is the linear part, `y` the
-/// saturated signal (`tanh(gain x) * norm`, the left's own) and `d = y - c` the pure distortion; the right is
-/// `c + (1 - 2 shape) d`, so the fundamental has the left's gain and polarity at every Drive and only the odd harmonics
-/// are turned over. At Shape 0 it is `y` exactly. Above 0 it is then held under the left's ceiling `norm` by `paunchCeiling`.
-[[nodiscard]] inline float paunchRight(float x, float gain, float norm, float shape) noexcept {
-	const float y = std::tanh(gain * x) * norm;
-	if (shape <= 0.0f) {
-		return y;
-	}
-	const float c = gain * norm * x;
-	return paunchCeiling(y - 2.0f * shape * (y - c), norm);
-}
 /// **THE PAUNCH LAWS' SQUARE'S FIXED COEFFICIENT.** With the mid `m = P sin`, Paunch-S's `a |m|` has a 2nd harmonic of amplitude
 /// `a P 4 / (3 pi)` (the rectified sine's 2nd term) and Paunch-H's `kappa (a m)^2` one of `kappa (a P)^2 / 2` (the square is
 /// `(1 - cos 2wt) / 2`). Equal at full Amount (`a = 4`) at `P = kDriveReferencePeak`: `kappa (4 P)^2 / 2 = 4 P 4 / (3 pi)`, so

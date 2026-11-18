@@ -2,7 +2,7 @@
 # difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
 device clip - schema=1
 param clip clip_enabled unit=choice choice=Off|On
-param clip clip_mode unit=choice choice=Soft|Texture|Grit|Fold|Bits|Tube|Jag|Lean|Paunch|Paunch-S|Paunch-H|Slew|Lopside
+param clip clip_mode unit=choice choice=Soft|Texture|Grit|Fold|Bits|Tube|Jag|Lean|Chonk|Paunch-S|Paunch-H|Slew|Lopside
 param clip clip_drive unit=decibel min=-24 max=24 stepped=0
 param clip clip_ceiling unit=decibel min=-24 max=0 stepped=0
 param clip clip_output unit=decibel min=-24 max=12 stepped=0

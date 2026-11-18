@@ -267,11 +267,11 @@ constexpr clip::Mode kModes[] = { clip::Mode::Soft, clip::Mode::Texture, clip::M
 
 /// THE ERODER'S SIX, appended after Bits, and all eleven.
 constexpr clip::Mode kNewModes[] = { clip::Mode::Tube,   clip::Mode::Jag,  clip::Mode::Lean,
-	                                 clip::Mode::Paunch, clip::Mode::PaunchS, clip::Mode::PaunchH,
+	                                 clip::Mode::Chonk, clip::Mode::PaunchS, clip::Mode::PaunchH,
 	                                 clip::Mode::Slew,   clip::Mode::Lopside };
 constexpr clip::Mode kAllModes[] = { clip::Mode::Soft,  clip::Mode::Texture, clip::Mode::Grit,
 	                                 clip::Mode::Fold,  clip::Mode::Bits,    clip::Mode::Tube,
-	                                 clip::Mode::Jag,   clip::Mode::Lean,    clip::Mode::Paunch,
+	                                 clip::Mode::Jag,   clip::Mode::Lean,    clip::Mode::Chonk,
 	                                 clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::Slew,
 	                                 clip::Mode::Lopside };
 
@@ -1118,7 +1118,7 @@ TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the
 		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
 	}
-	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Paunch", "Paunch-S", "Paunch-H", "Slew", "Lopside" };
+	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Chonk", "Paunch-S", "Paunch-H", "Slew", "Lopside" };
 	for (size_t i = 0; i < std::size(appended); ++i) {
 		CHECK(std::string(clip::kModeNames[i]) == appended[i]);
 	}
@@ -1261,92 +1261,38 @@ TEST_CASE("Shape moves the harmonics of Tube, Jag and Lean to the values the Ero
 	}
 }
 
-/// PAUNCH THROUGH CLIP, Oversample off, ceiling 0 dB: the curve's input is the signal times the Drive gain.
-/// The Drive control tops out at +24 dB, so its "gain 16" is 15.85.
-[[nodiscard]] clip::Settings paunchSettings(double gain, float shape) {
-	clip::Settings s;
-	s.mode = static_cast<int>(clip::Mode::Paunch);
-	s.shape = shape;
-	s.driveDb = std::min(24.0f, static_cast<float>(20.0 * std::log10(gain)));
-	s.ceilingDb = 0.0f;
-	s.oversample = false;
-	return s;
-}
-
-TEST_CASE("Paunch: the fundamental has the same gain and polarity left and right at every Drive gain, Shape 1") {
-	for (const double gain : { 1.0, 4.0, 8.0, 15.8489319 }) {
-		CAPTURE(gain);
-		const auto [l, r] = renderSine(paunchSettings(gain, 1.0f), 0.001); // -60 dBFS
-		const auto fl = project(l, 24000, 1000.0);
-		const auto fr = project(r, 24000, 1000.0);
-		MESSAGE("gain " << gain << ": left " << std::abs(fl) / 0.001 << " right " << std::abs(fr) / 0.001);
-		CHECK(std::abs(std::abs(fl) - gain * 0.001) < 0.001 * gain * 0.001); // RESTATED: linear gain 1 into the tanh
-		CHECK(std::abs(20.0 * std::log10(std::abs(fl) / std::abs(fr))) < 0.1);
-		CHECK((fl * std::conj(fr)).real() > 0.99 * std::abs(fl) * std::abs(fr));
-	}
-}
-
-TEST_CASE("Paunch: the odd harmonics of the two sides are in antiphase, the fundamental in phase, and Shape 0.5 leaves the right without them") {
-	// -24 dBFS at gain 4: the curve's input peaks at 0.25. (At -12 dBFS the right's peak, c - d, is 1.24 of the ceiling
-	// and the ceiling itself puts a 3rd on it in the left's polarity: that is the bound's price, measured in the Eroder's case.)
-	constexpr double kAmp = 0.0625;
-	const double gain = 4.0;
-	const auto [l, r] = renderSine(paunchSettings(gain, 1.0f), kAmp);
-	const auto h3l = project(l, 24000, 3000.0);
-	const auto h3r = project(r, 24000, 3000.0);
-	const double apart = std::abs(std::arg(h3l * std::conj(h3r))) * 180.0 / std::numbers::pi;
-	const double fundamentalApart = std::abs(std::arg(project(l, 24000, 1000.0) * std::conj(project(r, 24000, 1000.0)))) * 180.0 / std::numbers::pi;
-	MESSAGE("3rd: left " << std::abs(h3l) << " right " << std::abs(h3r) << ", apart " << apart << " deg, fundamental apart " << fundamentalApart);
-	// RESTATED: the left's 3rd is the tanh's; the right's is its negative (the ceiling does not touch it at this level).
-	const auto tanhH3 = expectedHarmonic([&](double th) { return std::tanh(gain * kAmp * std::sin(th)); }, 3);
-	CHECK(std::abs(h3l - tanhH3) < 1e-3);
-	CHECK(std::abs(apart - 180.0) < 20.0);
-	CHECK(std::abs(20.0 * std::log10(std::abs(h3r) / std::abs(h3l))) < 6.0);
-	CHECK(fundamentalApart < 5.0);
-	const auto [lh, rh] = renderSine(paunchSettings(gain, 0.5f), kAmp);
-	CHECK(20.0 * std::log10(std::abs(project(rh, 24000, 3000.0)) / std::abs(project(lh, 24000, 3000.0))) < -20.0);
-	const auto [l0, r0] = renderSine(paunchSettings(gain, 0.0f), kAmp);
-	for (size_t i = 0; i < l0.size(); ++i) {
-		REQUIRE(l0[i] == r0[i]);
-	}
-	// THE DIFFERENCE CHECK, the second assertion: the two sides do differ at Shape 1.
-	double diff = 0.0;
-	for (size_t i = 24000; i < l.size(); ++i) {
-		diff = std::max(diff, static_cast<double>(std::fabs(l[i] - r[i])));
-	}
-	CHECK(diff > 0.003);
-}
-
-TEST_CASE("Paunch: the right stays under the ceiling at every Drive gain and Shape, and the mono sum is the linear signal") {
-	for (const double gain : { 1.0, 4.0, 15.8489319 }) {
-		for (const float shape : { 0.0f, 0.5f, 1.0f }) {
-			CAPTURE(gain);
-			CAPTURE(shape);
-			const std::array<float, 3> off = worstOver(paunchSettings(gain, shape)); // strict: square, sine, noise
-			CHECK(*std::max_element(off.begin(), off.end()) <= 1.0f);
-			for (const double amp : { 1.0, 4.0 }) { // full scale, +12 dB
-				const auto [l, r] = renderSine(paunchSettings(gain, shape), amp);
-				float peak = 0.0f;
-				for (const float v : r) {
-					peak = std::max(peak, std::fabs(v));
-				}
-				CHECK(peak <= 1.0f);
-			}
-			clip::Settings on = paunchSettings(gain, shape);
-			on.oversample = true;
-			const std::array<float, 3> os = worstOver(on); // the oversampler's measured overshoot, as the ceiling case allows
-			CHECK(*std::max_element(os.begin(), os.end()) <= 2.85f);
-		}
-	}
-	for (const double gain : { 4.0, 15.8489319 }) {
-		const auto [l, r] = renderSine(paunchSettings(gain, 1.0f), 0.01); // -40 dBFS
-		double worst = 0.0;
-		const auto x = sine(48000, 1000.0, 0.01);
+TEST_CASE("Chonk: left is the tanh, the right is turned toward the clean signal, so the odd harmonics of the two are in antiphase at the top of Shape") {
+	for (const float shape : { 0.0f, 0.25f, 0.5f, 1.0f }) {
+		clip::Settings s;
+		s.mode = static_cast<int>(clip::Mode::Chonk);
+		s.shape = shape;
+		s.driveDb = 12.0f;
+		s.oversample = false;
+		CAPTURE(shape);
+		constexpr double kAmp = 0.4;
+		const auto [l, r] = renderSine(s, kAmp);
+		// RESTATED: L = tanh(g x); R = L + 2 shape (x - L); so R's third is (1 - 2 shape) times L's.
+		const double gain = std::pow(10.0, 12.0 / 20.0);
+		const auto tanhH3 = expectedHarmonic([&](double th) { return std::tanh(gain * kAmp * std::sin(th)); }, 3);
+		const auto l3 = project(l, 24000, 3000.0);
+		const auto r3 = project(r, 24000, 3000.0);
+		CHECK(std::abs(l3 - tanhH3) < 1e-3);
+		CHECK(std::abs(r3 - (1.0 - 2.0 * static_cast<double>(shape)) * tanhH3) < 1e-3);
+		// THE DIFFERENCE is 2 shape (tanh - clean): the two channels differ whenever Shape is up.
+		double diff = 0.0;
 		for (size_t i = 24000; i < l.size(); ++i) {
-			worst = std::max(worst, std::fabs(0.5 * (static_cast<double>(l[i]) + static_cast<double>(r[i])) - gain * static_cast<double>(x[i])));
+			diff = std::max(diff, static_cast<double>(std::fabs(l[i] - r[i])));
 		}
-		CAPTURE(gain);
-		CHECK(worst < 0.01 * gain * 0.01);
+		if (shape == 0.0f) {
+			CHECK(diff == 0.0);
+		}
+		else {
+			CHECK(diff > 0.05);
+		}
+		if (shape == 1.0f) {
+			CHECK((l3 * std::conj(r3)).real() < 0.0); // antiphase
+			CHECK(std::abs(r3 + l3) < 1e-3);
+		}
 	}
 }
 

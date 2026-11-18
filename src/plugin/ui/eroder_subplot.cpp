@@ -77,7 +77,7 @@ float curveOutput(const ero::DriveSettings& s, float x) noexcept {
 		ero::paunchLaw(s.mode, l, r, s.gain, s.shape);
 		return x + s.mix * (l - x);
 	}
-	if (!s.driven || static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Paunch)) {
+	if (!s.driven || static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Chonk)) {
 		return x;
 	}
 	const float y = s.norm * ero::shapeDrive(s.mode, x * s.gain, s.shape, s.gain);
@@ -86,7 +86,7 @@ float curveOutput(const ero::DriveSettings& s, float x) noexcept {
 
 bool curveIsStraight(const ero::DriveSettings& s) noexcept {
 	return !s.driven || s.mix <= 0.0f ||
-	       (static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Paunch) && !ero::driveIsPaunchLaw(s.mode));
+	       (static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Chonk) && !ero::driveIsPaunchLaw(s.mode));
 }
 
 } // namespace

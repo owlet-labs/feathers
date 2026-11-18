@@ -1993,7 +1993,7 @@ double curveOf(DriveMode mode, double u, double shape, double gain = 1.0) {
 		const double phase = x - 4.0 * std::floor((x + 1.0) / 4.0);
 		return phase <= 1.0 ? phase : 2.0 - phase;
 	}
-	case DriveMode::Paunch:
+	case DriveMode::Chonk:
 		return std::tanh(u);
 	case DriveMode::Lean: {
 		// A TANH READ FROM A BIAS, its bias from nothing, back through zero at a slope of one.
@@ -2006,11 +2006,11 @@ double curveOf(DriveMode mode, double u, double shape, double gain = 1.0) {
 }
 
 constexpr DriveMode kAllDrives[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
-	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Paunch,   DriveMode::PaunchS,
+	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Chonk,   DriveMode::PaunchS,
 	                                 DriveMode::PaunchH,  DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
 	                                 DriveMode::Lopside };
 constexpr DriveMode kCurves[] = { DriveMode::Soft, DriveMode::Tube, DriveMode::Fold, DriveMode::Wreck,
-	                                  DriveMode::Jag, DriveMode::Lean, DriveMode::Paunch };
+	                                  DriveMode::Jag, DriveMode::Lean, DriveMode::Chonk };
 } // namespace
 
 TEST_CASE("Drive: each Type's curve is the one it is described as, through zero at zero") {
@@ -2283,7 +2283,7 @@ TEST_CASE("Drive: Lean leans the two sides opposite ways — the even harmonics 
 	CHECK(toneAt(flatMid, 1000.0) > 0.1);
 }
 
-TEST_CASE("Drive: Paunch at Shape 0 is Soft's tanh, the same in both channels") {
+TEST_CASE("Drive: Chonk puts the odd harmonics in opposite polarity — Shape 0 is Soft's tanh, 0.5 leaves the right clean, 1 makes the mono sum the clean signal") {
 	const auto run = [](DriveMode type, float shape, std::vector<float>& left, std::vector<float>& right) {
 		DriveStage stage;
 		stage.prepare(kRate);
@@ -2303,7 +2303,7 @@ TEST_CASE("Drive: Paunch at Shape 0 is Soft's tanh, the same in both channels") 
 	};
 	std::vector<float> l0;
 	std::vector<float> r0;
-	run(DriveMode::Paunch, 0.0f, l0, r0);
+	run(DriveMode::Chonk, 0.0f, l0, r0);
 	std::vector<float> softL;
 	std::vector<float> softR;
 	run(DriveMode::Soft, 0.0f, softL, softR);
@@ -2312,18 +2312,43 @@ TEST_CASE("Drive: Paunch at Shape 0 is Soft's tanh, the same in both channels") 
 		REQUIRE(l0[i] == r0[i]); // the side is exactly nothing
 		worst = std::max(worst, std::abs(l0[i] - softL[i]));
 	}
-	MESSAGE("Paunch Shape 0 against Soft Shape 0, worst difference: " << worst);
+	MESSAGE("Chonk Shape 0 against Soft Shape 0, worst difference: " << worst);
 	CHECK(worst < 1.0e-6f);
 	CHECK(toneAt(l0, 1000.0) > 0.1);
+
+	std::vector<float> l1;
+	std::vector<float> r1;
+	run(DriveMode::Chonk, 1.0f, l1, r1);
+	std::vector<float> mid(l1.size());
+	std::vector<float> side(l1.size());
+	for (size_t i = 0; i < l1.size(); ++i) {
+		mid[i] = 0.5f * (l1[i] + r1[i]);
+		side[i] = 0.5f * (l1[i] - r1[i]);
+	}
+	const double fundamental = toneAt(mid, 1000.0);
+	MESSAGE("mid 1 kHz " << fundamental << ", mid 3 kHz " << dbOf(toneAt(mid, 3000.0) / fundamental) << " dB, 5 kHz "
+	                     << dbOf(toneAt(mid, 5000.0) / fundamental) << " dB, side 3 kHz vs left "
+	                     << dbOf(toneAt(side, 3000.0) / toneAt(l1, 3000.0)) << " dB, side 2 kHz "
+	                     << dbOf(toneAt(side, 2000.0) / fundamental) << " dB");
+	CHECK(std::abs(dbOf(fundamental / 0.5)) < 0.05);
+	CHECK(dbOf(toneAt(mid, 3000.0) / fundamental) < -80.0);
+	CHECK(dbOf(toneAt(mid, 5000.0) / fundamental) < -80.0);
+	CHECK(std::abs(dbOf(toneAt(side, 3000.0) / toneAt(l1, 3000.0))) < 0.1);
+	CHECK(dbOf(toneAt(side, 2000.0) / fundamental) < -80.0);
+
+	std::vector<float> lh;
+	std::vector<float> rh;
+	run(DriveMode::Chonk, 0.5f, lh, rh);
+	CHECK(dbOf(toneAt(rh, 3000.0) / toneAt(rh, 1000.0)) < -80.0);
 }
 
 namespace {
 
-/// A PAUNCH STAGE at an exact Drive gain and Shape (the knob's mapping is not what is under test).
-[[nodiscard]] DriveSettings paunchAt(double gain, float shape) {
-	DriveSettings d = deriveDrive(0.8f, DriveMode::Paunch, shape, kRate, nullptr);
+/// A CHONK STAGE at an exact Drive gain and Shape (the knob's mapping is not what is under test).
+[[nodiscard]] DriveSettings chonkAt(double gain, float shape) {
+	DriveSettings d = deriveDrive(0.8f, DriveMode::Chonk, shape, kRate, nullptr);
 	d.gain = static_cast<float>(gain);
-	d.norm = static_cast<float>(driveMakeUp(DriveMode::Paunch, gain, shape));
+	d.norm = static_cast<float>(driveMakeUp(DriveMode::Chonk, gain, shape));
 	return d;
 }
 
@@ -2369,117 +2394,30 @@ void paunchRun(const DriveSettings& d, double amp, std::vector<float>& left, std
 
 } // namespace
 
-TEST_CASE("Drive: Paunch's fundamental has the same gain and polarity left and right at every Drive gain and Shape 1") {
+TEST_CASE("Drive: Chonk's known behaviour, stated: at Shape 1 the mono sum is the raw input at every Drive gain, and the right thins and then flips") {
+	// RESTATED: left tanh(g x) k, right yr + 2 (x - yr) = 2 x - yr, so (l + r) / 2 = x at any gain; the right's small-signal gain is
+	// 2 - g k (k the make-up), +0.94, +0.24, -1.09, -3.90 at Drive gain 1, 4, 8, 16.
+	const double wanted[] = { 0.94, 0.24, -1.09, -3.90 };
+	size_t at = 0;
 	for (const double gain : { 1.0, 4.0, 8.0, 16.0 }) {
 		CAPTURE(gain);
 		std::vector<float> l;
 		std::vector<float> r;
-		paunchRun(paunchAt(gain, 1.0f), 0.001, l, r); // -60 dBFS
-		const auto fl = binOf(l, 1000.0);
-		const auto fr = binOf(r, 1000.0);
-		// RESTATED: a vanishing signal sees gain * norm on both sides.
-		const double expected = gain * driveMakeUp(DriveMode::Paunch, gain, 1.0f) * 0.001;
-		MESSAGE("gain " << gain << ": left " << std::abs(fl) / 0.001 << " right " << std::abs(fr) / 0.001
-		                << " (small-signal gain), phase apart " << degreesApart(fl, fr));
-		CHECK(std::abs(dbOf(std::abs(fl) / std::abs(fr))) < 0.1);
-		CHECK(std::abs(dbOf(std::abs(fl) / expected)) < 0.1);
-		CHECK(fl.real() * fr.real() + fl.imag() * fr.imag() > 0.99 * std::abs(fl) * std::abs(fr)); // correlation
-	}
-}
-
-TEST_CASE("Drive: Paunch turns only the odd harmonics over: the 3rd is in antiphase, the fundamental in phase") {
-	std::vector<float> l;
-	std::vector<float> r;
-	// -24 dBFS at gain 4: the curve's input peaks at 0.25. (At -12 dBFS the right's peak, c - d, is 1.24 of the
-	// ceiling, which then puts a 3rd of its own on it in the left's polarity: the bound's price.)
-	paunchRun(paunchAt(4.0, 1.0f), 0.0625, l, r);
-	std::vector<float> lt;
-	std::vector<float> rt;
-	paunchRun(paunchAt(4.0, 1.0f), 0.25, lt, rt);
-	MESSAGE("at -12 dBFS: 3rd phase apart " << degreesApart(binOf(lt, 3000.0), binOf(rt, 3000.0)) << " deg, right "
-	        << dbOf(std::abs(binOf(rt, 3000.0)) / std::abs(binOf(lt, 3000.0))) << " dB of left");
-	const auto f1l = binOf(l, 1000.0);
-	const auto f1r = binOf(r, 1000.0);
-	const auto h3l = binOf(l, 3000.0);
-	const auto h3r = binOf(r, 3000.0);
-	const double apart = degreesApart(h3l, h3r);
-	MESSAGE("3rd harmonic: left " << std::abs(h3l) << " right " << std::abs(h3r) << " (" << dbOf(std::abs(h3r) / std::abs(h3l))
-	                              << " dB), phase apart " << apart << " deg; fundamental phase apart "
-	                              << degreesApart(f1l, f1r) << " deg");
-	REQUIRE(std::abs(h3l) > 1.0e-4); // the distortion is there
-	CHECK(std::abs(apart - 180.0) < 20.0);
-	CHECK(std::abs(dbOf(std::abs(h3r) / std::abs(h3l))) < 6.0);
-	CHECK(degreesApart(f1l, f1r) < 5.0);
-	// HALF SHAPE: the right carries no distortion of its own, so its 3rd is far under the left's.
-	std::vector<float> lh;
-	std::vector<float> rh;
-	paunchRun(paunchAt(4.0, 0.5f), 0.0625, lh, rh);
-	MESSAGE("Shape 0.5, 3rd right vs left " << dbOf(std::abs(binOf(rh, 3000.0)) / std::abs(binOf(lh, 3000.0))) << " dB");
-	CHECK(dbOf(std::abs(binOf(rh, 3000.0)) / std::abs(binOf(lh, 3000.0))) < -20.0);
-	// SHAPE 0: the channels are the same.
-	std::vector<float> l0;
-	std::vector<float> r0;
-	paunchRun(paunchAt(4.0, 0.0f), 0.0625, l0, r0);
-	for (size_t i = 0; i < l0.size(); ++i) {
-		REQUIRE(l0[i] == r0[i]);
-	}
-}
-
-TEST_CASE("Drive: Paunch's right stays under the left's ceiling at every Drive gain and Shape") {
-	for (const double gain : { 1.0, 4.0, 16.0 }) {
-		for (const float shape : { 0.0f, 0.5f, 1.0f }) {
-			const DriveSettings d = paunchAt(gain, shape);
-			CAPTURE(gain);
-			CAPTURE(shape);
-			// THE LAW ITSELF, strict: whatever goes in, |right| < norm (and the left's tanh is under it too).
-			for (int i = -4000; i <= 4000; ++i) {
-				const float x = static_cast<float>(i) * 0.005f;
-				REQUIRE(std::abs(paunchRight(x, d.gain, d.norm, shape)) <= d.norm);
-			}
-			// THROUGH THE STAGE (4x oversampled): the same allowance for the oversampler's overshoot for left and right.
-			float peakL = 0.0f;
-			float peakR = 0.0f;
-			for (const double amp : { 1.0, 4.0 }) { // full scale and +12 dB
-				std::vector<float> l;
-				std::vector<float> r;
-				paunchRun(d, amp, l, r);
-				for (size_t i = 0; i < l.size(); ++i) {
-					peakL = std::max(peakL, std::abs(l[i]));
-					peakR = std::max(peakR, std::abs(r[i]));
-				}
-			}
-			std::vector<float> nl;
-			std::vector<float> nr;
-			paunchRun(d, 1.0, nl, nr, true);
-			for (size_t i = 0; i < nl.size(); ++i) {
-				peakL = std::max(peakL, std::abs(nl[i]));
-				peakR = std::max(peakR, std::abs(nr[i]));
-			}
-			MESSAGE("gain " << gain << " shape " << shape << ": norm " << d.norm << " peak left " << peakL << " right " << peakR);
-			// 4x's reconstruction rings past a near-square top (the left does too, 1.6x of norm here); the bound
-			// is Clip's measured burst allowance of 2.85x (the left reads 2.8x of norm at gain 16), and the strict law above is what holds it exactly.
-			CHECK(peakR <= d.norm * 2.85f);
-			CHECK(peakL <= d.norm * 2.85f);
-		}
-	}
-}
-
-TEST_CASE("Drive: Paunch's mono sum at Shape 1 is the linear signal at the stage's gain") {
-	for (const double gain : { 4.0, 16.0 }) {
-		CAPTURE(gain);
-		const DriveSettings d = paunchAt(gain, 1.0f);
-		std::vector<float> l;
-		std::vector<float> r;
-		paunchRun(d, 0.01, l, r); // -40 dBFS
-		// c = gain * norm * x, restated: the sum's fundamental is that, and nothing else is in it.
-		const double c = static_cast<double>(d.gain) * static_cast<double>(d.norm) * 0.01;
+		paunchRun(chonkAt(gain, 1.0f), 0.001, l, r); // -60 dBFS
 		std::vector<float> mid(l.size());
 		for (size_t i = 0; i < l.size(); ++i) {
 			mid[i] = 0.5f * (l[i] + r[i]);
 		}
-		MESSAGE("gain " << gain << ": mid " << std::abs(binOf(mid, 1000.0)) << " against c " << c);
-		CHECK(std::abs(std::abs(binOf(mid, 1000.0)) - c) < 0.01 * c);
-		CHECK(std::abs(binOf(mid, 3000.0)) < 0.01 * c);
+		const double k = gain * driveMakeUp(DriveMode::Chonk, gain, 1.0f);
+		const auto fr = binOf(r, 1000.0);
+		const auto fl = binOf(l, 1000.0); // (the left has the saturator's own positive gain: the sign is read against it)
+		const double rightGain = std::abs(fr) / 0.001 * ((fr * std::conj(fl)).real() < 0.0 ? -1.0 : 1.0);
+		MESSAGE("gain " << gain << ": mid " << std::abs(binOf(mid, 1000.0)) / 0.001 << " of the input, right " << rightGain
+		                << " (restated " << 2.0 - k << ")");
+		CHECK(std::abs(std::abs(binOf(mid, 1000.0)) - 0.001) < 0.01 * 0.001);
+		CHECK(std::abs(rightGain - (2.0 - k)) < 0.02 * std::max(1.0, std::abs(2.0 - k)));
+		CHECK(std::abs(rightGain - wanted[at]) < 0.1);
+		++at;
 	}
 }
 
@@ -5446,7 +5384,7 @@ Settings worstLoops(Mode mode, DriveMode type, bool tapDriven, bool bell) {
 }
 
 constexpr DriveMode kEveryType[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMode::Fold,     DriveMode::Wreck,
-	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Paunch,   DriveMode::PaunchS,
+	                                 DriveMode::Jag,   DriveMode::Lean,  DriveMode::Chonk,   DriveMode::PaunchS,
 	                                 DriveMode::PaunchH,  DriveMode::Crush,   DriveMode::Decimate, DriveMode::Slew,
 	                                 DriveMode::Lopside };
 
@@ -6234,7 +6172,7 @@ double partial(const std::vector<float>& v, int k) {
 TEST_CASE("Paunch laws: the Type names, and the Amount is linear 0..4 with no make-up") {
 	CHECK(std::string(kDriveModeNames[static_cast<size_t>(DriveMode::PaunchS)]) == "Paunch-S");
 	CHECK(std::string(kDriveModeNames[static_cast<size_t>(DriveMode::PaunchH)]) == "Paunch-H");
-	CHECK(static_cast<int>(DriveMode::PaunchS) == static_cast<int>(DriveMode::Paunch) + 1);
+	CHECK(static_cast<int>(DriveMode::PaunchS) == static_cast<int>(DriveMode::Chonk) + 1);
 	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::PaunchH }) {
 		for (const float knob : { 0.1f, 0.25f, 0.5f, 1.0f }) {
 			const DriveSettings d = deriveDrive(knob, type, 0.0f, kRate, nullptr);

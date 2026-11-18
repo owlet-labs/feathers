@@ -81,6 +81,12 @@ public:
 	[[nodiscard]] float lastReadForTest() const noexcept { return lastRead_; }
 	[[nodiscard]] float lastShapedForTest() const noexcept { return lastShaped_; }
 	[[nodiscard]] float lastTapForTest() const noexcept { return lastTap_; }
+	/// WHETHER THE BIAS BLOCKERS ARE IN (latched on the grid): after the last shaper, and on the Clean tap.
+	[[nodiscard]] bool biasFinalForTest() const noexcept { return biasFinal_; }
+	/// TEST SEAM: the slots and the Drive block their own offset (as Tube's does) instead of leaving it in. Takes effect at the
+	/// next control tick.
+	void blockBiasInStagesForTest(bool on) noexcept { blockInStages_ = on; }
+	[[nodiscard]] bool biasCleanForTest() const noexcept { return biasClean_; }
 	/// THE SHARED SECTION (`loops.h`) as the last control block left it, and the fed-back sample as the loop's write saw it.
 	[[nodiscard]] const SharedSection& sharedForTest() const noexcept { return shared_; }
 	/// THE SHARED SECTION, for the readings the device publishes (the loops' limiters).
@@ -139,6 +145,14 @@ private:
 	/// ETCH'S SLOTS (`drive_stage.h`).
 	DriveStage slotA_ {};
 	DriveStage slotB_ {};
+	/// THE BIAS OF PAUNCH-S AND PAUNCH-H (`BiasBlocker`): the FINAL blocker sits right after the Drive's place and runs while a
+	/// slot or the Drive runs one of them (latched on the control grid); the CLEAN blocker takes the bias out of the Clean tap
+	/// (before the Drive) while a slot runs one. Each is cleared when it switches off.
+	BiasBlocker finalBias_ {};
+	BiasBlocker cleanBias_ {};
+	bool biasFinal_ = false;
+	bool biasClean_ = false;
+	bool blockInStages_ = false;
 	/// HP WET, and the same filter on the dry for Sub Thru (`drive_stage.h`).
 	WetHighpass highpass_ {};
 	/// THE SHAKE'S EXTRAS: the right sine's own phase while it is detuned, and Step's hold.

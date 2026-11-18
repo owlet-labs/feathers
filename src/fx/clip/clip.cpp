@@ -128,6 +128,8 @@ struct OpsClip {
 	float slewDriveKey = 0.0f, slewShapeKey = 0.0f;
 	/// THE MODE THE LAST BLOCK RAN IN — what "the mode changed into Texture" is detected against.
 	int modeApplied = 0;
+	/// THE PAUNCH LAWS' AMOUNT `a`: Drive's position (-24..+24 dB as 0..1) times 4, set per host sample.
+	float paunchA = 0.0f;
 	dyn::HeldPeak inPeak, outPeak, over;
 
 	/// dB2lin of the last drive, ceiling and output, keyed on the dB value (a settled ramp repeats it).
@@ -267,6 +269,21 @@ struct OpsClip {
 			r = eroder::paunchRight(r, 1.0f, 1.0f, shapeNow);
 			break;
 		}
+		case Mode::PaunchS:
+		case Mode::PaunchH: {
+			// THE ERODER'S LAW (`paunchLaw`) at Clip's own amount (Drive's position, 0..4), on the signal scaled by 1 / ceiling.
+			// Its offset is taken out as the Eroder's stage does, and the ceiling holds: the law is not bounded (up to five times
+			// the input), so both sides are clamped to it as the slews' and Lean's are.
+			eroder::paunchLaw(erodeMode(state.mode), l, r, paunchA, shapeNow);
+			// CLAMPED BEFORE THE BLOCKER TOO: the law is unbounded, and a huge sample must not wind the blocker up.
+			l = std::clamp(l, -1.0f, 1.0f);
+			r = std::clamp(r, -1.0f, 1.0f);
+			dcL += (l - dcL) * dcCoefficient;
+			dcR += (r - dcR) * dcCoefficient;
+			l = std::clamp(l - dcL, -1.0f, 1.0f);
+			r = std::clamp(r - dcR, -1.0f, 1.0f);
+			break;
+		}
 		case Mode::Slew:
 		case Mode::Lopside:
 			l = std::clamp(slew.process(0, l), -1.0f, 1.0f);
@@ -283,6 +300,8 @@ struct OpsClip {
 		case Mode::Jag: return eroder::DriveMode::Jag;
 		case Mode::Lean: return eroder::DriveMode::Lean;
 		case Mode::Paunch: return eroder::DriveMode::Paunch;
+		case Mode::PaunchS: return eroder::DriveMode::PaunchS;
+		case Mode::PaunchH: return eroder::DriveMode::PaunchH;
 		case Mode::Slew: return eroder::DriveMode::Slew;
 		default: return eroder::DriveMode::Lopside;
 		}
@@ -404,7 +423,12 @@ struct OpsClip {
 			if (slewing) {
 				aimSlew(dDb);
 			}
-			const float gain = slewing ? 1.0f / ceilingLin : driveLin / ceilingLin;
+			// THE PAUNCH LAWS TAKE AN AMOUNT FROM DRIVE, NOT A GAIN: linear, 0..4 across its range.
+			const bool lawing = state.mode == static_cast<int>(Mode::PaunchS) || state.mode == static_cast<int>(Mode::PaunchH);
+			if (lawing) {
+				paunchA = static_cast<float>(eroder::kPaunchAmountMax) * std::clamp((dDb + 24.0f) * (1.0f / 48.0f), 0.0f, 1.0f);
+			}
+			const float gain = (slewing || lawing) ? 1.0f / ceilingLin : driveLin / ceilingLin;
 			float uL = std::clamp(xL * gain, -kNormalisedClamp, kNormalisedClamp);
 			float uR = std::clamp(xR * gain, -kNormalisedClamp, kNormalisedClamp);
 			// THE IN METER READS THE INCOMING SIGNAL, BEFORE DRIVE — the same quantity the disabled branch pushes,

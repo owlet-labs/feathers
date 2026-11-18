@@ -108,6 +108,8 @@ public:
 	[[nodiscard]] float combFeedbackGainForTest() const noexcept { return lastFeedbackGain_; }
 	/// THE SECOND ENGINE, for its own seams.
 	[[nodiscard]] const Dust& dustForTest() const noexcept { return dust_; }
+	/// TEST SEAM (Etch's slots and the Drive block their own Paunch offset): see `Dust::blockBiasInStagesForTest`.
+	void blockBiasInStagesForTest(bool on) noexcept { dust_.blockBiasInStagesForTest(on); }
 	[[nodiscard]] float triangleForTest() const noexcept { return triValue_; }
 	[[nodiscard]] double pitchSemitonesForTest() const noexcept { return pitchSemitones_; }
 	[[nodiscard]] double sampleRateForTest() const noexcept { return sampleRate_; }
@@ -144,6 +146,10 @@ private:
 	/// THE SAME STAGE ON THE TAP: the Driven tap (and the outer loop's) is taken after a Drive stage of its own, run on the
 	/// wet in the full-scale domain the stage is made for, since the output's stage sits behind the Mix and the level law.
 	DriveStage combTapShaper_ {};
+	/// THE COMB'S BIAS BLOCKER (`BiasBlocker`): right after its Drive, while the Drive runs Paunch-S or Paunch-H, which leave
+	/// their offset in. The tap's own stage blocks its own, so the loops never carry it. Latched on the control grid.
+	BiasBlocker combBias_ {};
+	bool combBiasOn_ = false;
 	bool tapStageRan_ = false;
 	SharedSection shared_ {};
 	LoopDerived combLoops_ {};

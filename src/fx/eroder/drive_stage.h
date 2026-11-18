@@ -30,7 +30,7 @@ namespace feathers::fx::eroder {
 /// wet: Dust on what its head reads, the Comb on its wet as it is about to be added to the dry. The curves
 /// (`shapeDrive`) run four times oversampled, so what they add above the band is filtered off rather than folded back
 /// into it; Crush, Decimate, Slew and Lopside are not curves and are not oversampled (their steps and edges are the
-/// sound) and are not level-matched. Tube's, Fold's and Lean's standing offsets are taken back out (Lean's opposite on
+/// sound) and are not level-matched. Paunch-S and Paunch-H run oversampled, with no make-up. Tube's, Fold's, Lean's and the two Paunch laws' standing offsets are taken back out (Lean's opposite on
 /// the two sides). Not run at all at the bottom of Drive, so there the signal is the bits it was.
 ///
 /// **THE STAGE'S OWN MIX** (`DriveSettings::mix`): `dry + mix * (processed - dry)`. At 0 the stage is not run; at 1 the
@@ -171,7 +171,12 @@ private:
 		const float gain = s.gain;
 		const float shape = s.shape;
 		const float norm = s.norm;
-		if (mode == DriveMode::Paunch) {
+		if (driveIsPaunchLaw(mode)) {
+			// THE LAW (`paunchLaw`) inside the oversampled region, where both channels are at hand: the rectified or squared
+			// mid added to the left and taken from the right. No make-up and no saturation; `gain` is the linear Amount `a`.
+			over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) { paunchLaw(mode, l, r, gain, shape); });
+		}
+		else if (mode == DriveMode::Paunch) {
 			// ONLY THE DISTORTION IS TURNED OVER (`paunchRight`): the left is the tanh, the right has the same
 			// fundamental and the odd harmonics in the other polarity, held under the left's ceiling. Norm is applied here.
 			over_.process(&left, &right, 1, [gain, shape, norm](float& l, float& r) {
@@ -187,7 +192,7 @@ private:
 			left *= norm;
 			right *= norm;
 		}
-		if (mode == DriveMode::Tube || mode == DriveMode::Fold || mode == DriveMode::Lean) {
+		if (mode == DriveMode::Tube || mode == DriveMode::Fold || mode == DriveMode::Lean || (driveIsPaunchLaw(mode) && !s.leaveDc)) {
 			dcL_ += (left - dcL_) * dcCoefficient_;
 			dcR_ += (right - dcR_) * dcCoefficient_;
 			left -= dcL_;
@@ -231,6 +236,39 @@ private:
 	float slewCurve_ = 0.0f;
 	float slewBalance_ = 0.0f;
 	bool slewSet_ = false;
+};
+
+/// **THE BIAS BLOCKER: THE ONE DC BLOCKER AFTER THE LAST SHAPER** (the same one-pole as the stage's, `kDriveDcHz`), per channel.
+/// Paunch-S and Paunch-H make a bias that follows the signal; their stages leave it in (`DriveSettings::leaveDc`) so it can push
+/// the shapers after them off centre, and the engine takes it out here. A blocker that has nothing in it, and an input that is
+/// exactly zero, give exact zero (a tail ends).
+class BiasBlocker {
+public:
+	void prepare(double sampleRate) noexcept {
+		const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
+		coefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * kDriveDcHz / rate));
+		reset();
+	}
+	void reset() noexcept { dc_[0] = dc_[1] = 0.0f; }
+	[[nodiscard]] float process(int channel, float x) noexcept {
+		float& dc = dc_[channel & 1];
+		dc += (x - dc) * coefficient_;
+		if (x == 0.0f && std::abs(dc) < kFloor) {
+			dc = 0.0f;
+			return 0.0f;
+		}
+		return x - dc;
+	}
+	void process(float& left, float& right) noexcept {
+		left = process(0, left);
+		right = process(1, right);
+	}
+	[[nodiscard]] float dcForTest(int channel) const noexcept { return dc_[channel & 1]; }
+
+private:
+	static constexpr float kFloor = 1.0e-9f;
+	float dc_[2] = {};
+	float coefficient_ = 0.0f;
 };
 
 /// **HP WET: A TWO-POLE HIGHPASS ON THE WET, AFTER THE SHAPER, and the same filter on the dry for Sub Thru** — what it

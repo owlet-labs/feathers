@@ -196,6 +196,8 @@ float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept
 		const float rest = std::tanh(kLeanBiasSpan * shape);
 		return (std::tanh(u + kLeanBiasSpan * shape) - rest) / (1.0f - rest * rest);
 	}
+	case DriveMode::PaunchS:
+	case DriveMode::PaunchH:
 	case DriveMode::Crush:
 	case DriveMode::Decimate:
 	case DriveMode::Slew:
@@ -248,6 +250,10 @@ double driveSlope(DriveMode mode, float shape) noexcept {
 }
 
 double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept {
+	if (mode == DriveMode::PaunchS) {
+		// The dry at unity plus the rectified mid's slope of either sign: the worst channel is 1 + a |w|.
+		return 1.0 + gain * std::abs(1.0 - 2.0 * static_cast<double>(shape));
+	}
 	if (driveIsNotCurve(mode)) {
 		return 1.0;
 	}
@@ -269,7 +275,10 @@ DriveSettings deriveDrive(float driveKnob, DriveMode mode, float shape, double s
 	d.driven = drive > 0.0;
 	d.mode = mode;
 	d.shape = std::clamp(shape, 0.0f, 1.0f);
-	d.gain = static_cast<float>(std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * drive));
+	// THE PAUNCH LAWS' AMOUNT IS LINEAR, `a` = 0..4; the curve Types' is an exponential gain.
+	d.gain = driveIsPaunchLaw(mode)
+	             ? static_cast<float>(kPaunchAmountMax * drive)
+	             : static_cast<float>(std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * drive));
 	const bool same = reuse != nullptr && reuse->mode == d.mode && reuse->shape == d.shape && reuse->gain == d.gain;
 	d.norm = same ? reuse->norm : static_cast<float>(driveMakeUp(d.mode, static_cast<double>(d.gain), d.shape));
 	d.crushHoldFrames = 1.0 + rate * (std::exp2(kCrushOctaves * drive) - 1.0) / kCrushTopHz;
@@ -472,6 +481,8 @@ void Dust::prepare(double sampleRate) {
 	shaper_.prepare(sampleRate_);
 	slotA_.prepare(sampleRate_);
 	slotB_.prepare(sampleRate_);
+	finalBias_.prepare(sampleRate_);
+	cleanBias_.prepare(sampleRate_);
 	shared_.prepare(sampleRate_, true);
 	shared_.setThreshold(1.0f);
 	reset();
@@ -498,6 +509,9 @@ void Dust::reset() noexcept {
 	shaper_.reset();
 	slotA_.reset();
 	slotB_.reset();
+	finalBias_.reset();
+	cleanBias_.reset();
+	biasFinal_ = biasClean_ = false;
 	highpass_.reset();
 	shared_.reset();
 	sinePhaseRight_ = 0.0;
@@ -538,9 +552,27 @@ void Dust::process(const Settings& settings, float* left, float* right, int fram
 void Dust::tick(const Settings& settings) noexcept {
 	derived_ = deriveDust(settings, pitchSemitones_, sampleRate_, &derived_);
 	inGainTarget_ = inputGainOf(settings.inputDb);
-	shaper_.set(driveOf(derived_));
-	slotA_.set(derived_.slotA);
-	slotB_.set(derived_.slotB);
+	// THE PAUNCH LAWS' BIAS IS LEFT IN BY THEIR STAGES and taken out once after the last shaper (`BiasBlocker`): the FINAL
+	// blocker runs while a slot (Etch) or the Drive runs one, and the Clean tap's own while a slot does. Latched here, on the
+	// grid; a blocker that switches off is emptied.
+	const auto keep = [this](const DriveSettings& d) { return blockInStages_ ? d : keepingBias(d); };
+	const DriveSettings drive = keep(driveOf(derived_));
+	const DriveSettings slotA = keep(derived_.slotA);
+	const DriveSettings slotB = keep(derived_.slotB);
+	// (the seam changes what the stages do, not whether the blockers are in)
+	const bool slotBias = derived_.etch && (biasMade(keepingBias(slotA)) || biasMade(keepingBias(slotB)));
+	const bool finalNow = slotBias || biasMade(keepingBias(drive));
+	if (!finalNow && biasFinal_) {
+		finalBias_.reset();
+	}
+	if (!slotBias && biasClean_) {
+		cleanBias_.reset();
+	}
+	biasFinal_ = finalNow;
+	biasClean_ = slotBias;
+	shaper_.set(drive);
+	slotA_.set(slotA);
+	slotB_.set(slotB);
 	highpass_.set(highpassOf(derived_));
 	// THE SHARED SECTION IS LATCHED HERE, ON THE GRID, and nowhere a host's block length can reach.
 	shared_.set(settings, derived_.loops, derived_.freqHz);
@@ -784,7 +816,17 @@ void Dust::renderChunk(float* left, float* right, int frames) noexcept {
 		float tapL = wetL;
 		float tapR = wetR;
 		lastRead_ = wetL;
+		// THE CLEAN TAP (before the Drive, after the slots) TAKES THE SLOTS' BIAS OUT on its way back round the loop; the forward
+		// signal into the Drive keeps it.
+		if (biasClean_) {
+			cleanBias_.process(tapL, tapR);
+		}
 		shaper_.process(wetL, wetR);
+		// THE FINAL BLOCKER: right after the Drive's place (it runs when the Drive is not run, if a slot made the bias), before
+		// the Driven tap, the outer loop, the emphasis's inverse, HP Wet and the wet ceiling.
+		if (biasFinal_) {
+			finalBias_.process(wetL, wetR);
+		}
 		// TAP C IS BEFORE THE DRIVE, TAP D AFTER IT — for every Type.
 		if (tapDriven) {
 			tapL = wetL;

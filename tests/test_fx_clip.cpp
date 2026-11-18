@@ -267,11 +267,13 @@ constexpr clip::Mode kModes[] = { clip::Mode::Soft, clip::Mode::Texture, clip::M
 
 /// THE ERODER'S SIX, appended after Bits, and all eleven.
 constexpr clip::Mode kNewModes[] = { clip::Mode::Tube,   clip::Mode::Jag,  clip::Mode::Lean,
-	                                 clip::Mode::Paunch, clip::Mode::Slew, clip::Mode::Lopside };
+	                                 clip::Mode::Paunch, clip::Mode::PaunchS, clip::Mode::PaunchH,
+	                                 clip::Mode::Slew,   clip::Mode::Lopside };
 constexpr clip::Mode kAllModes[] = { clip::Mode::Soft,  clip::Mode::Texture, clip::Mode::Grit,
 	                                 clip::Mode::Fold,  clip::Mode::Bits,    clip::Mode::Tube,
 	                                 clip::Mode::Jag,   clip::Mode::Lean,    clip::Mode::Paunch,
-	                                 clip::Mode::Slew,  clip::Mode::Lopside };
+	                                 clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::Slew,
+	                                 clip::Mode::Lopside };
 
 /// THE WORST |y| OVER COMP'S CASE-3 SIGNALS (full-scale 50 Hz square, 1 kHz sine, bursts of random
 /// full-scale samples), a second each — one number per signal.
@@ -639,7 +641,9 @@ TEST_CASE("one NaN or inf sample does not latch in any mode") {
 			// A NaN-LATCHED UPSAMPLER WOULD STILL LEAVE FINITE OUTPUT — the output guard turns it into 0 —
 			// so "finite" alone is blind to it. Back with the twin (fed 0 there) in the second half.
 			if (k >= 2400) {
-				offTrack += std::fabs(l - tl) > 1e-3f;
+				// (a Paunch law's offset blocker keeps the one clamped sample's worth of offset a while: 5e-3)
+				const bool law = mode == clip::Mode::PaunchS || mode == clip::Mode::PaunchH;
+				offTrack += std::fabs(l - tl) > (law ? 5e-3f : 1e-3f);
 			}
 		}
 		CHECK(nonFinite == 0u);
@@ -708,7 +712,11 @@ TEST_CASE("after a burst the tail reaches exact silence, without a denormal guar
 		dev.set(s);
 		auto l = sine(512, 440.0, 0.8), r = l;
 		dev.process(l.data(), r.data(), 512);
-		REQUIRE(std::fabs(l[500]) > 0.1f); // not vacuous: the burst reached the output
+		float reached = 0.0f;
+		for (int k = 300; k < 512; ++k) {
+			reached = std::max(reached, std::fabs(l[static_cast<size_t>(k)]));
+		}
+		REQUIRE(reached > 0.1f); // not vacuous: the burst reached the output
 		int lastNonZero = -1;
 		for (int k = 0; k < kSecond; k += 512) {
 			std::vector<float> zl(512, 0.0f), zr(512, 0.0f);
@@ -725,7 +733,8 @@ TEST_CASE("after a burst the tail reaches exact silence, without a denormal guar
 		// -180 dBFS by then), and nothing after it is non-zero.
 		// **TUBE AND LEAN ARE THE EXCEPTION**: they leave a standing offset that the Eroder's 10 Hz one-pole takes out, and
 		// that offset's discharge is the tail (16 ms per time constant, so -180 dBFS is reached by ~0.3 s, and then exactly 0).
-		const bool offsetModes = mode == clip::Mode::Tube || mode == clip::Mode::Lean;
+		const bool offsetModes = mode == clip::Mode::Tube || mode == clip::Mode::Lean || mode == clip::Mode::PaunchS ||
+		                         mode == clip::Mode::PaunchH;
 		CHECK(lastNonZero < (offsetModes ? 24000 : 2880));
 	}
 }
@@ -1109,11 +1118,11 @@ TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the
 		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
 	}
-	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Paunch", "Slew", "Lopside" };
+	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean", "Paunch", "Paunch-S", "Paunch-H", "Slew", "Lopside" };
 	for (size_t i = 0; i < std::size(appended); ++i) {
 		CHECK(std::string(clip::kModeNames[i]) == appended[i]);
 	}
-	CHECK(clip::kParamDescs[static_cast<size_t>(clip::Param::Mode)].max == 10.0);
+	CHECK(clip::kParamDescs[static_cast<size_t>(clip::Param::Mode)].max == 12.0);
 }
 
 TEST_CASE("the Eroder's six never exceed the ceiling: strict with Oversample off, the measured bound with 4x") {
@@ -1381,4 +1390,88 @@ TEST_CASE("Lopside's rising and falling rates are 2^(+-balance) of the limit, Dr
 	const auto [rise2, fall2] = slewSteps(clip::Mode::Slew, 0.0f, 12.0f, 20); // a quarter of the way up: 20000 * (0.0025)^0.75
 	CHECK(rise2 == doctest::Approx(2.0 * 20000.0 * std::pow(0.0025, 0.75) / 48000.0).epsilon(1e-4));
 	CHECK(rise2 < rise);
+}
+
+/// THE PAUNCH LAWS THROUGH CLIP, Oversample off: the same signal in both channels, a 1 kHz sine or noise.
+[[nodiscard]] std::pair<std::vector<float>, std::vector<float>> renderLaw(clip::Mode mode, float driveDb, float ceilingDb,
+                                                                           float shape, double amp, bool noise,
+                                                                           bool oversample = false) {
+	clip::Settings s;
+	s.mode = static_cast<int>(mode);
+	s.driveDb = driveDb;
+	s.ceilingDb = ceilingDb;
+	s.shape = shape;
+	s.oversample = oversample;
+	Instance dev;
+	dev.set(s);
+	std::vector<float> l = sine(48000, 1000.0, amp);
+	if (noise) {
+		Noise n;
+		for (float& v : l) {
+			v = static_cast<float>(amp) * n.next();
+		}
+	}
+	std::vector<float> r = l;
+	for (int done = 0; done < 48000; done += 480) {
+		dev.process(l.data() + done, r.data() + done, 480);
+	}
+	return { l, r };
+}
+
+TEST_CASE("Paunch-S and Paunch-H in Clip: both sides stay under the ceiling on a hot sine and on noise, at every Shape") {
+	const float ceiling = dbToLin(-6.0);
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH }) {
+		for (const float shape : { 0.0f, 0.5f, 1.0f }) {
+			for (const bool noise : { false, true }) {
+				CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+				CAPTURE(shape);
+				CAPTURE(noise);
+				const auto [l, r] = renderLaw(mode, 24.0f, -6.0f, shape, 1.0, noise);
+				float peak = 0.0f;
+				for (size_t i = 0; i < l.size(); ++i) {
+					peak = std::max({ peak, std::fabs(l[i]), std::fabs(r[i]) });
+				}
+				CHECK(peak <= ceiling * (1.0f + 1e-6f));
+				CHECK(peak > ceiling * 0.9f); // not vacuous: the law pushed it up to the ceiling
+				const auto [lo, ro] = renderLaw(mode, 24.0f, -6.0f, shape, 1.0, noise, true);
+				float over = 0.0f;
+				for (size_t i = 0; i < lo.size(); ++i) {
+					over = std::max({ over, std::fabs(lo[i]), std::fabs(ro[i]) });
+				}
+				CHECK(over <= ceiling * 2.85f); // the oversampler's measured overshoot, as the other modes' bound
+			}
+		}
+	}
+}
+
+TEST_CASE("Paunch-S and Paunch-H in Clip: at Shape 0 the side carries the 2nd harmonic below the ceiling, the mono sum is the dry") {
+	// Drive at 0 dB is the middle of its range: a = 2. Input 0.1 into a -6 dB ceiling: the law's input peaks at 0.2, the output
+	// at 0.2 + 2 * 0.2 = 0.6 of the ceiling, so nothing is clamped.
+	constexpr double kAmp = 0.1;
+	const double ceiling = dbToLin(-6.0);
+	const double a = 2.0;
+	const double peakIn = kAmp / ceiling;
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH }) {
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		const auto [l, r] = renderLaw(mode, 0.0f, -6.0f, 0.0f, kAmp, false);
+		std::vector<float> side(l.size());
+		std::vector<float> mid(l.size());
+		for (size_t i = 0; i < l.size(); ++i) {
+			side[i] = 0.5f * (l[i] - r[i]);
+			mid[i] = 0.5f * (l[i] + r[i]);
+		}
+		const double h2 = std::abs(project(side, 24000, 2000.0));
+		const double expected =
+		    ceiling * (mode == clip::Mode::PaunchS ? a * peakIn * 4.0 / (3.0 * std::numbers::pi)
+		                                           : (4.0 / (3.0 * std::numbers::pi)) * a * a * peakIn * peakIn / 2.0);
+		MESSAGE(clip::kModeNames[static_cast<size_t>(mode)] << ": side 2nd " << h2 << ", restated " << expected);
+		CHECK(std::abs(h2 / expected - 1.0) < 0.03);
+		CHECK(h2 < ceiling);
+		// THE MID IS THE DRY: its fundamental, and nothing at the harmonics (the offset blocker is a hair of phase, not level).
+		const double fundamental = std::abs(project(mid, 24000, 1000.0));
+		CHECK(std::abs(fundamental / kAmp - 1.0) < 0.002);
+		for (const double hz : { 2000.0, 3000.0, 4000.0, 6000.0 }) {
+			CHECK(std::abs(project(mid, 24000, hz)) < 1.0e-4 * fundamental);
+		}
+	}
 }

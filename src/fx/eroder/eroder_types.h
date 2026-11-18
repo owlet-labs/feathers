@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 
 //--------------------------------------------------------------------------------------------------//
 // THE ERODER — the reference's, ported.                                                                 //
@@ -361,6 +362,11 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 ///            fundamental stays in phase and level-balanced: at full Shape the mono sum is the linear signal at the
 ///            stage's gain with the distortion all side; at half the right carries no distortion; at the bottom both
 ///            are Soft's tanh. The right is held under the left's ceiling
+///   Paunch-S the MID (`(l + r) / 2`) rectified, `a |m|`, added to the left and taken from the right: even harmonics that are
+///            stereo width and cancel in mono. The dry passes at unity (no make-up, no saturation). Amount is `a`, linear, 0..4.
+///            Shape is the direction: opposite polarity at the bottom (all in the side), none in the middle, the same on both
+///            sides at the top (all in the mid)
+///   Paunch-H the same with the square, `kappa (a m)^2`: a pure octave above (see `paunchSide`)
 ///   Crush    no shaper: Drive holds each sample longer, Shape rounds it coarser (10 bits down to a bit and a half)
 ///   Decimate no shaper: Drive holds each sample longer, as Crush does, and nothing is rounded. Shape goes from the
 ///            held steps (a plain sample-and-hold) to a straight line from the previous held value to the current one
@@ -372,13 +378,21 @@ inline constexpr uint32_t kShakers = kDustOnly | kRustOnly;
 /// Crush, Decimate, Slew and Lopside are not oversampled and not level-matched (their make-up is 1).
 /// BOTH ENGINES HAVE THE STAGE (`drive_stage.h`), last on their wet: Dust's before its HP Wet, the Comb's on the wet
 /// it is about to add to the dry.
-enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Paunch, Crush, Decimate, Slew, Lopside, kCount };
-inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean",
-	                                               "Paunch", "Crush", "Decimate", "Slew", "Lopside" };
+enum class DriveMode : int { Soft, Tube, Fold, Wreck, Jag, Lean, Paunch, PaunchS, PaunchH, Crush, Decimate, Slew, Lopside, kCount };
+inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wreck", "Jag", "Lean", "Paunch",
+	                                               "Paunch-S", "Paunch-H", "Crush", "Decimate", "Slew", "Lopside" };
 static_assert(sizeof(kDriveModeNames) / sizeof(kDriveModeNames[0]) == static_cast<size_t>(DriveMode::kCount));
-/// A Type that is not a curve: the stage does something else with it (and never oversamples).
+/// THE TWO PAUNCH LAWS (Paunch-S and Paunch-H): a function of the mid added to one side and taken from the other, not a curve
+/// of one channel.
+inline constexpr bool driveIsPaunchLaw(DriveMode mode) {
+	return mode == DriveMode::PaunchS || mode == DriveMode::PaunchH;
+}
+/// A Type that is not a curve: the stage does something else with it. Crush, Decimate, Slew and Lopside never oversample; the
+/// two Paunch laws do (they are in the oversampled region), but have no make-up and no saturation, so the curve's helpers
+/// (`shapeDrive`, `driveMakeUp`) treat them as the identity.
 inline constexpr bool driveIsNotCurve(DriveMode mode) {
-	return mode == DriveMode::Crush || mode == DriveMode::Decimate || mode == DriveMode::Slew || mode == DriveMode::Lopside;
+	return mode == DriveMode::Crush || mode == DriveMode::Decimate || mode == DriveMode::Slew || mode == DriveMode::Lopside ||
+	       driveIsPaunchLaw(mode);
 }
 
 enum class Param : int {
@@ -802,7 +816,9 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
 	                "differ, Fold is a sine folder that can lean to one side, Wreck is a distortion into a folder "
 	                "(in Dust the feedback runs through both), Jag is a distortion into a sharp folder, Lean "
 	                "leans left and right opposite ways, so its even harmonics are stereo width, Paunch puts "
-	                "its odd harmonics in opposite polarity left and right, Crush holds and rounds each sample, "
+	                "its odd harmonics in opposite polarity left and right, Paunch-S adds the rectified mid to the "
+	                "left and takes it from the right: even harmonics that are stereo width and vanish in mono; "
+	                "Paunch-H does it with the square, a pure octave above, Crush holds and rounds each sample, "
 	                "Decimate holds each sample, as steps or as lines, Slew limits how fast the signal may move, "
 	                "Lopside lets it rise and fall at different speeds",
 	     .zones = 0,
@@ -823,6 +839,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .offsetsMayLeaveRange = false,
      .tooltip = "The Type's own colour: Soft starves quiet parts, Tube's two halves differ, Fold's symmetry, "
 	                "how far Wreck and Jag fold, how wide Lean leans, how much of Paunch is turned over, "
+	                "which way the two sides get it in Paunch-S and Paunch-H: opposite at the bottom, the same at the top, "
 	                "Crush's bit depth, Decimate from steps to lines, Slew from hard to soft, which way "
 	                "Lopside drags",
 	     .zones = 0,
@@ -1549,7 +1566,20 @@ struct DriveSettings {
 	/// THE STAGE'S OWN MIX, 0..1: the output is `dry + mix * (processed - dry)`. At 0 the stage is not run and the
 	/// signal is the bits it was; at 1 nothing is blended (the stage is exactly what it is without a mix).
 	float mix = 1.0f;
+	/// LEAVE THE OFFSET IN: the stage does not run its own DC blocker (`DriveStage`). Set by the engines for Paunch-S and
+	/// Paunch-H, whose offset is a signal-following bias that is carried on to the later shapers and taken out once after the
+	/// last one (`BiasBlocker`). False by default: Tube, Fold and Lean block their own, as they always did.
+	bool leaveDc = false;
 };
+/// WHETHER THE STAGE'S OFFSET IS LEFT IN FOR THE ENGINE TO TAKE OUT (a Paunch law that is run).
+[[nodiscard]] inline bool biasMade(const DriveSettings& s) noexcept {
+	return s.leaveDc && s.driven && s.mix > 0.0f && driveIsPaunchLaw(s.mode);
+}
+/// The settings with the offset left in for a Paunch law (the engines' stages); every other Type is as it was.
+[[nodiscard]] inline DriveSettings keepingBias(DriveSettings d) noexcept {
+	d.leaveDc = driveIsPaunchLaw(d.mode);
+	return d;
+}
 /// **EVERYTHING DUST'S SAMPLE LOOP RUNS ON.** A pure function of the settings, the note and the rate.
 struct DustDerived {
 	double amountSeconds = 0.0; ///< the head's travel either side of its centre; 0 at the bottom of the range
@@ -1650,6 +1680,7 @@ struct HighpassSettings {
                                      const DustDerived* reuse = nullptr) noexcept;
 
 /// **THE SHAPER'S CURVE**, of a signal already multiplied by the Drive's gain `gain`: Soft, Tube, Fold, Wreck, Jag, Lean and Paunch (its left).
+/// The two Paunch laws are not curves of one channel (`paunchLaw`) and are the identity here.
 /// Every one is 0 at 0; all but Soft at Shape above 0 (whose dead zone is a share of the reference level, so it needs
 /// the gain) go straight through it. The Types that are not curves are the identity here.
 [[nodiscard]] float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept;
@@ -1681,10 +1712,43 @@ struct HighpassSettings {
 	const float c = gain * norm * x;
 	return paunchCeiling(y - 2.0f * shape * (y - c), norm);
 }
+/// **THE PAUNCH LAWS' SQUARE'S FIXED COEFFICIENT.** With the mid `m = P sin`, Paunch-S's `a |m|` has a 2nd harmonic of amplitude
+/// `a P 4 / (3 pi)` (the rectified sine's 2nd term) and Paunch-H's `kappa (a m)^2` one of `kappa (a P)^2 / 2` (the square is
+/// `(1 - cos 2wt) / 2`). Equal at full Amount (`a = 4`) at `P = kDriveReferencePeak`: `kappa (4 P)^2 / 2 = 4 P 4 / (3 pi)`, so
+/// `kappa = 8 / (3 pi 4 P) = 4 / (3 pi)` for `P = 0.5` (0.4244).
+inline constexpr double kPaunchAmountMax = 4.0;
+inline constexpr double kPaunchSquareK = 8.0 / (3.0 * std::numbers::pi * kPaunchAmountMax * kDriveReferencePeak);
+/// THE LAW'S SIGNAL `s` for a mid `m` and amount `a` (Paunch-S: `a |m|`; Paunch-H: `kappa (a m)^2`; else 0). Even in `m`, never negative.
+[[nodiscard]] inline float paunchSide(DriveMode mode, float m, float a) noexcept {
+	if (mode == DriveMode::PaunchS) {
+		return a * std::abs(m);
+	}
+	if (mode == DriveMode::PaunchH) {
+		const float am = a * m;
+		return static_cast<float>(kPaunchSquareK) * am * am;
+	}
+	return 0.0f;
+}
+/// **THE LAW, ONE FRAME, in place**: `m = (l + r) / 2`, and with `w = 1 - 2 shape` the signal `s` goes to the left as `+w s` and to
+/// the right as `-w s` from the bottom of Shape to its middle (opposite polarity: all in the side, none at the middle), then
+/// from the middle up both sides get `+(-w) s` (the same polarity: all in the mid at the top). So the side is `max(w, 0) s` and
+/// the mid `max(-w, 0) s`: at Shape 0 the products cancel in mono and the mono sum is the dry's; at 0.5 the output is the dry; at
+/// Shape 1 the side is empty. The dry is untouched in every case. `a` is the Amount's linear 0..4. The caller removes the offset
+/// `s` carries.
+inline void paunchLaw(DriveMode mode, float& l, float& r, float a, float shape) noexcept {
+	const float w = 1.0f - 2.0f * shape;
+	const float s = paunchSide(mode, 0.5f * (l + r), a);
+	const float side = w > 0.0f ? w : 0.0f;
+	const float mid = w < 0.0f ? -w : 0.0f;
+	l += (side + mid) * s;
+	r += (mid - side) * s;
+}
 /// The make-up that follows it: `kDriveReferencePeak`'s sine out at the RMS it went in with.
 [[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape) noexcept;
 /// THE SHAPER'S GAIN FOR A VANISHING SIGNAL, make-up included: what a feedback through it is divided by, so a tail
-/// always dies.
+/// always dies. For the Paunch laws, which have no make-up: Paunch-H is 1 (the square has no slope at zero); Paunch-S is the
+/// worst case of a channel's gain, `1 + a |w|` (a mono input, where the rectifier's slope has either sign: `1 +- a w`), with
+/// `gain` the Amount's `a` and `w = 1 - 2 shape`.
 [[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept;
 [[nodiscard]] HighpassSettings highpassOf(const DustDerived& derived) noexcept;
 /// The stage's settings as `deriveDust` found them.

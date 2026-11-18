@@ -64,9 +64,19 @@ void formatSeconds(char* out, size_t size, double seconds) {
 	}
 }
 
-/// A DRIVE STAGE'S TRANSFER CURVE at `x`: the shaper's own function at the stage's gain and make-up, blended by the stage's mix. A
+/// A DRIVE STAGE'S TRANSFER CURVE at `x`: the shaper's own function (Paunch-S and Paunch-H: the left channel for a mono input) at the stage's gain and make-up, blended by the stage's mix. A
 /// stage that is not run, or a Type that is not a curve (Crush, Decimate, Slew, Lopside work in time), is the straight line.
 float curveOutput(const ero::DriveSettings& s, float x) noexcept {
+	if (ero::driveIsPaunchLaw(s.mode)) {
+		// THE LEFT CHANNEL FOR A MONO INPUT (`l = r = x`, so the mid is `x`): `x + w s(x)`. The right is its mirror (`-f(-x)`).
+		if (!s.driven) {
+			return x;
+		}
+		float l = x;
+		float r = x;
+		ero::paunchLaw(s.mode, l, r, s.gain, s.shape);
+		return x + s.mix * (l - x);
+	}
 	if (!s.driven || static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Paunch)) {
 		return x;
 	}
@@ -75,7 +85,8 @@ float curveOutput(const ero::DriveSettings& s, float x) noexcept {
 }
 
 bool curveIsStraight(const ero::DriveSettings& s) noexcept {
-	return !s.driven || s.mix <= 0.0f || static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Paunch);
+	return !s.driven || s.mix <= 0.0f ||
+	       (static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Paunch) && !ero::driveIsPaunchLaw(s.mode));
 }
 
 } // namespace

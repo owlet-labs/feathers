@@ -392,6 +392,7 @@ void Eroder::prepare(double sampleRate) {
 	analyser_.prepare(sampleRate_);
 	combShaper_.prepare(sampleRate_);
 	combTapShaper_.prepare(sampleRate_);
+	combBias_.prepare(sampleRate_);
 	shared_.prepare(sampleRate_, false);
 	gainSmoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (kSmoothingSeconds * sampleRate_)));
 	followAttack_ = static_cast<float>(1.0 - std::exp(-1.0 / (kFollowAttackSeconds * sampleRate_)));
@@ -408,6 +409,8 @@ void Eroder::reset() noexcept {
 	combFollow_ = 1.0f;
 	combShaper_.reset();
 	combTapShaper_.reset();
+	combBias_.reset();
+	combBiasOn_ = false;
 	tapStageRan_ = false;
 	shared_.reset();
 	combHighpass_.reset();
@@ -653,7 +656,12 @@ void Eroder::tick(const Settings& s) noexcept {
 		gainsPlaced_ = true;
 	}
 	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
-	combShaper_.set(drive);
+	const DriveSettings kept = keepingBias(drive);
+	if (!biasMade(kept) && combBiasOn_) {
+		combBias_.reset();
+	}
+	combBiasOn_ = biasMade(kept);
+	combShaper_.set(kept);
 	combTapShaper_.set(drive);
 }
 
@@ -881,6 +889,9 @@ void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
 		float outR = wetR * outGain_;
 		lastCombWet_ = outL;
 		combShaper_.process(outL, outR);
+		if (combBiasOn_) {
+			combBias_.process(outL, outR);
+		}
 		lastCombShaped_ = outL;
 		// EMPHASIS OUT: after both taps and the Drive.
 		if (emph) {

@@ -1463,10 +1463,10 @@ bool RackEditor::slotVerbForTest(DeviceInstanceId device, ui::FragmentVerb verb)
 	return true;
 }
 
-void RackEditor::toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId device, ui::ModState& mod, ui::EditHistory& history) {
+void RackEditor::toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId device, ui::ModState& mod, ui::EditHistory& history, ui::DeviceNest nest) {
 	// A PRESS WHILE THIS DEVICE'S PANEL IS UP CLOSES IT, matched on the
 	// device and this editor's nest — the key `setNest` below files the panel under.
-	if (surfaces_->dismissPanelFor(device, nest_)) {
+	if (surfaces_->dismissPanelFor(device, nest)) {
 		return;
 	}
 	// THE DESCRIPTOR IS RE-READ AT PRESS TIME, not captured: a lambda holding one would be
@@ -1494,7 +1494,7 @@ void RackEditor::toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId
 			// AND WHICH CHAIN IT IS ABOUT, which is half of the key the overlay files it
 			// under — see `setNest`. Without it a nested editor's panel and an outer one's
 			// share a key whenever the ids coincide, and the second retires the first.
-			view->setNest(nest_);
+			view->setNest(nest);
 		}
 		// NOT SIZED HERE. The panel knows how big it needs to be and `MountedFrame` asks
 		// it; a number chosen at the call site is the fixed minimum that made every popout
@@ -1507,7 +1507,7 @@ void RackEditor::toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId
 		auto panel = std::make_unique<ui::GenericCard>(lane, device, *desc, nullptr);
 		panel->setLaneAxis(ui::FxCard::LaneAxis::Vertical);
 		panel->setModulation(&mod, &history);
-		panel->setNest(nest_);
+		panel->setNest(nest);
 		panel->setBounds(0, 0, 480, static_cast<int>(panel->laneExtent(480.0f)));
 		content = std::move(panel);
 	}
@@ -1698,7 +1698,7 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 					expanded_.push_back(presented);
 				}
 			};
-			card->onExpand = [this, &lane, &mod, &history, device = i] { toggleDevicePanel(lane, device, mod, history); };
+			card->onExpand = [this, &lane, &mod, &history, device = i] { toggleDevicePanel(lane, device, mod, history, nest_); };
 			addChild(card.get());
 			columnDirty_ = true;
 		}
@@ -1809,12 +1809,13 @@ bool RackEditor::syncTail() {
 			centreCard_->setModulation(tail_.centreMod, tail_.centreHistory);
 			// NO HEAD MARKS, NO DRAG, NO SITE CHIP: the centre is where the site sits, not a device of this chain.
 			// ITS WINDOW CHIP WORKS, THOUGH: the host it runs in answers for it, so the verb is bound (a mark that opens nothing is a dead control).
-			centreCard_->setNest(nest_);
+			// THE CENTRE BELONGS TO THE CHAIN ONE LEVEL UP, so its panel is filed under a nest of its own: its id and a PRE card's can coincide.
+			centreCard_->setNest(centreNest());
 			centreCard_->setPresentedOn(surfaces_.get());
-			centreCard_->onHeadPressed = [this] { (void)surfaces_->focusPanelFor(tail_.centre, nest_); };
+			centreCard_->onHeadPressed = [this] { (void)surfaces_->focusPanelFor(tail_.centre, centreNest()); };
 			centreCard_->onExpand = [this] {
 				if (tail_.outer != nullptr && tail_.centreMod != nullptr && tail_.centreHistory != nullptr) {
-					toggleDevicePanel(*tail_.outer, tail_.centre, *tail_.centreMod, *tail_.centreHistory);
+					toggleDevicePanel(*tail_.outer, tail_.centre, *tail_.centreMod, *tail_.centreHistory, centreNest());
 				}
 			};
 			centreCard_->setHeadMarks({ false, centreCard_->folded() });

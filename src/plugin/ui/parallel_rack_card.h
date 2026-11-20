@@ -166,6 +166,24 @@ private:
 	mutable std::vector<SlotRoute> routes_;
 };
 
+/// **A CHAIN'S RENAME, AS ONE UNDO STEP**: by the chain's stable id (it may have moved), the rack re-asked through the host at every replay.
+class ChainNameEdit final : public EditRecord {
+public:
+	ChainNameEdit(backplane::DeviceHost& host, DeviceInstanceId rack, uint16_t chain, std::string before, std::string after)
+	    : host_(host), rack_(rack), chain_(chain), before_(std::move(before)), after_(std::move(after)) {}
+	void undo() const override { apply(before_); }
+	void redo() const override { apply(after_); }
+	const char* verb() const override { return "Rename chain"; }
+
+private:
+	void apply(const std::string& name) const;
+	backplane::DeviceHost& host_;
+	DeviceInstanceId rack_;
+	uint16_t chain_;
+	std::string before_;
+	std::string after_;
+};
+
 /// **A VERTICAL LEVEL FADER** (backlog OC: the level fader is VERTICAL and sits side by side with the meter) —
 /// the collapsed chain strip's fader. A track filled from its foot to the level, unity ticked; a vertical drag sets the
 /// level (`kSpan` pixels for the whole range, up raises it), a double-click returns it to unity, and one gesture is one
@@ -395,6 +413,7 @@ public:
 	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackPadAdd& padAddForTest() const { return *padAdd_; }
+	[[nodiscard]] RackChainRename& chainRenameForTest() const { return *chainRename_; }
 	[[nodiscard]] RackFrontColumn& frontForTest() const { return *front_; }
 	[[nodiscard]] RackDrawerArrow& chainArrowForTest() const { return *chainArrow_; }
 	[[nodiscard]] visage::Bounds closingRuleForTest() const { return closingRule(); }
@@ -500,6 +519,7 @@ private:
 	std::unique_ptr<RackPadsPanel> pads_;
 	/// "+" ON AN EMPTY PAD asks which device, as the window's does (declared after the model it reads).
 	std::unique_ptr<RackPadAdd> padAdd_;
+	std::unique_ptr<RackChainRename> chainRename_;
 	std::unique_ptr<RackFrontColumn> front_;
 	/// THE MACRO ROW'S CAPTIONS (the knobs point into them: declared first) and its knobs, behind `macroArrow_`.
 	std::array<std::string, 8> macroCaption_;

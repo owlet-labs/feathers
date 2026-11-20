@@ -127,6 +127,38 @@ bool getExports(Reader& in, std::vector<RackPatch::Export>* out, uint16_t versio
 	}
 	return true;
 }
+
+/// THE CHAINS' NAMES (version 4): count u16, then chain id u16 · length u8 · bytes each. Read strictly: a bound on the count and the length.
+struct NamedChain {
+	uint16_t id = 0;
+	std::string name;
+};
+void putNames(const device::ByteSink& sink, const std::vector<NamedChain>& names) {
+	put(sink, static_cast<uint16_t>(names.size()));
+	for (const NamedChain& n : names) {
+		put(sink, n.id);
+		const std::string clamped = device::clampMacroName(n.name);
+		put(sink, static_cast<uint8_t>(clamped.size()));
+		sink(reinterpret_cast<const uint8_t*>(clamped.data()), clamped.size());
+	}
+}
+bool getNames(Reader& in, std::vector<NamedChain>* out) {
+	uint16_t count = 0;
+	if (!in.get(count) || count > 1024) {
+		return false;
+	}
+	for (uint16_t i = 0; i < count; ++i) {
+		NamedChain n;
+		uint8_t len = 0;
+		if (!in.get(n.id) || !in.get(len) || in.size - in.at < len) {
+			return false;
+		}
+		n.name.assign(reinterpret_cast<const char*>(in.data + in.at), len);
+		(void)in.skip(len);
+		out->push_back(std::move(n));
+	}
+	return true;
+}
 } // namespace
 
 //------------------------------------------------------------------------------------------------//
@@ -160,6 +192,8 @@ struct Rack::Branch {
 	/// hides the device a hand is about to add); a chain loaded keeps what its body stored, and a body written before the field existed reads
 	/// closed, as it always did (`loadState`'s own default).
 	bool open = true;
+	/// THE USER'S NAME FOR THIS CHAIN (empty: none). Message thread only, like `open`; saved in the body's trailing names block.
+	std::string name;
 
 	// AUDIO THREAD.
 	/// **THIS CHAIN WAITS FOR THE SLOWEST** — delayed by (the rack's latency − this chain's).
@@ -542,6 +576,7 @@ Rack::ChainSnapshot Rack::snapshotChain(size_t index) const {
 	out.slot = b.slot;
 	out.key = b.key.load(std::memory_order_relaxed);
 	out.choke = b.choke.load(std::memory_order_relaxed);
+	out.name = b.name;
 	(void)b.chain.saveState(vectorSink(&out.body));
 	return out;
 }
@@ -559,6 +594,7 @@ size_t Rack::insertChain(size_t index, const ChainSnapshot& snap) {
 	branch->mute.store(snap.mute, std::memory_order_relaxed);
 	branch->solo.store(snap.solo, std::memory_order_relaxed);
 	branch->open = snap.open;
+	branch->name = device::clampMacroName(snap.name);
 	branch->key.store(snap.key, std::memory_order_relaxed);
 	branch->choke.store(snap.choke, std::memory_order_relaxed);
 	branch->slot = freeSlot(snap.slot);
@@ -624,6 +660,63 @@ void Rack::setChainChoke(size_t index, int group) noexcept {
 		++revision_;
 		markDirty();
 	}
+}
+
+std::string_view Rack::chainName(size_t index) const noexcept {
+	return index < chains_.size() ? std::string_view(chains_[index]->name) : std::string_view {};
+}
+
+bool Rack::setChainName(size_t index, std::string_view name) {
+	if (index >= chains_.size()) {
+		return false;
+	}
+	const std::string clamped = device::clampMacroName(name);
+	if (chains_[index]->name == clamped) {
+		return false;
+	}
+	chains_[index]->name = clamped;
+	++revision_;
+	markDirty();
+	return true;
+}
+
+namespace {
+/// The name of the first device a chain holds, or empty.
+std::string firstDeviceName(const InnerChain* chain) {
+	const RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
+	for (size_t p = 0; bridge != nullptr && p < bridge->chainLength(); ++p) {
+		if (const device::Descriptor* d = bridge->descriptorOf(bridge->deviceAtPosition(p)); d != nullptr && d->traits.name != nullptr) {
+			return d->traits.name;
+		}
+	}
+	return {};
+}
+} // namespace
+
+std::string Rack::chainDerivedName(size_t index) const {
+	if (index >= chains_.size()) {
+		return {};
+	}
+	std::string name = firstDeviceName(&chains_[index]->chain);
+	if (name.empty()) {
+		return name;
+	}
+	size_t same = 1;
+	for (size_t i = 0; i < index; ++i) {
+		same += firstDeviceName(&chains_[i]->chain) == name ? 1 : 0;
+	}
+	return same > 1 ? name + " " + std::to_string(same) : name;
+}
+
+std::string Rack::chainLabel(size_t index) const {
+	if (index >= chains_.size()) {
+		return {};
+	}
+	if (!chains_[index]->name.empty()) {
+		return chains_[index]->name;
+	}
+	std::string derived = chainDerivedName(index);
+	return derived.empty() ? "Chain " + std::to_string(index + 1) : derived;
 }
 
 void Rack::takeStrikeMask(uint64_t out[2]) noexcept {
@@ -857,8 +950,14 @@ InnerChain* Rack::holding(DeviceInstanceId id) const noexcept {
 //------------------------------------------------------------------------------------------------//
 
 bool Rack::saveState(const device::ByteSink& sink) const {
+	std::vector<NamedChain> names;
+	for (const auto& branch : chains_) {
+		if (!branch->name.empty()) {
+			names.push_back({ branch->id, branch->name });
+		}
+	}
 	put(sink, kBodyMagic);
-	put(sink, kBodyVersion);
+	put(sink, names.empty() ? kBodyVersion : kBodyVersionNamed);
 	put(sink, static_cast<uint32_t>(chains_.size()));
 	for (const auto& branch : chains_) {
 		put(sink, branch->id);
@@ -902,6 +1001,10 @@ bool Rack::saveState(const device::ByteSink& sink) const {
 	std::vector<RackPatch::Export> exports;
 	exports_.save(&exports);
 	putExports(sink, exports);
+	// THE NAMES, only when a chain has one (version 4): see `kBodyVersionNamed`.
+	if (!names.empty()) {
+		putNames(sink, names);
+	}
 	return true;
 }
 
@@ -949,7 +1052,7 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 	uint32_t magic = 0;
 	uint16_t version = 0;
 	uint32_t count = 0;
-	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2) || !in.get(count)) {
+	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2 && version != kBodyVersionNamed) || !in.get(count)) {
 		return false;
 	}
 	if (count > kMaxChains) {
@@ -1030,8 +1133,17 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 		next.push_back(std::move(branch));
 	}
 	std::vector<RackPatch::Export> exports;
-	if (!getExports(in, &exports, version) || in.at != bytes) {
+	std::vector<NamedChain> names;
+	if (!getExports(in, &exports, version) || (version == kBodyVersionNamed && !getNames(in, &names)) || in.at != bytes) {
 		return false;
+	}
+	// THE NAMES BY CHAIN ID: one for an id this body holds, else ignored (a stale row names nothing).
+	for (const NamedChain& n : names) {
+		for (auto& b : next) {
+			if (b->id == n.id) {
+				b->name = device::clampMacroName(n.name);
+			}
+		}
 	}
 	// THE OLD CHAINS' SLOTS: a project load (`provision`) brings its routes with it, so they are the body's to keep; a
 	// body applied into a running rack (a preset) leaves routes into the old chains, which the host prunes first. And a
@@ -2877,10 +2989,23 @@ const device::TextOps kTextOps {
 			// WHILE A NOTE IS TRACKED, A CUT READS AS ITS OFFSET FROM IT, in semitones.
 			return viewTracking(view) && formatCutOffset(value, out, size);
 		}
-		if (control == static_cast<size_t>(Param::ViewedChain)) {
-			// THE CHAIN IN FRONT READS AS A CHAIN NUMBER, from 1 — the tabs, the pads and the strips count that way, and the stored
-			// index (from 0) is not what a hand types or expects to read.
-			std::snprintf(out, size, "%ld", std::lround(value) + 1);
+		if (control == static_cast<size_t>(Param::ViewedChain) || control == static_cast<size_t>(Param::Playing)) {
+			// A CHAIN IS READ BY ITS ONE LABEL (`Rack::chainLabel`), never by its number: the chain in front, and Select's playing chain (0 is
+			// the Position's). A value past the chains (a stale index) reads "Chain N".
+			const auto* rack = static_cast<const Rack*>(view.surface);
+			const bool playing = control == static_cast<size_t>(Param::Playing);
+			const long n = std::lround(value);
+			if (playing && n == 0) {
+				std::snprintf(out, size, "Position");
+				return true;
+			}
+			const size_t index = static_cast<size_t>(std::max(0L, playing ? n - 1 : n));
+			if (rack != nullptr && index < rack->chainCount()) {
+				std::snprintf(out, size, "%.*s", static_cast<int>(size) - 1, rack->chainLabel(index).c_str());
+			}
+			else {
+				std::snprintf(out, size, "Chain %zu", index + 1);
+			}
 			return true;
 		}
 		return control == static_cast<size_t>(Param::Position) && formatPosition(modeOf(view), chainsOf(view), value, out, size);
@@ -2889,14 +3014,38 @@ const device::TextOps kTextOps {
 		if (isCut(control)) {
 			return viewTracking(view) && parseCutOffset(text, value);
 		}
-		if (control == static_cast<size_t>(Param::ViewedChain)) {
+		if (control == static_cast<size_t>(Param::ViewedChain) || control == static_cast<size_t>(Param::Playing)) {
+			// BY NAME (case-insensitively), else "Chain N" or a bare N (the first is 1): what the readout prints reads back.
+			const auto* rack = static_cast<const Rack*>(view.surface);
+			const bool playing = control == static_cast<size_t>(Param::Playing);
 			const char* start = skipSpaces(text);
+			const auto lower = [](std::string v) {
+				for (char& c : v) {
+					c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+				}
+				return v;
+			};
+			if (playing && lower(start) == "position") {
+				*value = 0.0;
+				return true;
+			}
+			if (rack != nullptr) {
+				for (size_t i = 0; i < rack->chainCount(); ++i) {
+					if (lower(rack->chainLabel(i)) == lower(start)) {
+						*value = static_cast<double>(playing ? i + 1 : i);
+						return true;
+					}
+				}
+			}
+			if (std::strncmp(start, "Chain", 5) == 0 || std::strncmp(start, "chain", 5) == 0) {
+				start = skipSpaces(start + 5);
+			}
 			char* end = nullptr;
 			const double n = std::strtod(start, &end);
 			if (end == start || !std::isfinite(n)) {
 				return false;
 			}
-			*value = std::max(0.0, n - 1.0);
+			*value = std::max(0.0, playing ? n : n - 1.0);
 			return true;
 		}
 		return control == static_cast<size_t>(Param::Position) && parsePosition(modeOf(view), chainsOf(view), text, value);
@@ -3080,13 +3229,13 @@ bool mapRackBody(std::span<const uint8_t> bytes, LaneMap map, void* ctx, std::ve
 	uint32_t magic = 0;
 	uint16_t version = 0;
 	uint32_t count = 0;
-	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2) || !in.get(count)) {
+	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2 && version != kBodyVersionNamed) || !in.get(count)) {
 		return false;
 	}
 	std::vector<uint8_t> next;
 	const device::ByteSink sink = vectorSink(&next);
 	put(sink, magic);
-	put(sink, kBodyVersion); // rewritten in today's format, whichever it was read in
+	put(sink, kBodyVersion); // rewritten in today's format, whichever it was read in (4 when a name rides along, patched below)
 	put(sink, count);
 	for (uint32_t c = 0; c < count; ++c) {
 		// THE CHAIN'S HEAD — its id and its own controls — copied as it stands: nothing in it names a device.
@@ -3126,6 +3275,18 @@ bool mapRackBody(std::span<const uint8_t> bytes, LaneMap map, void* ctx, std::ve
 		exports.clear();
 	}
 	putExports(sink, exports);
+	// THE NAMES RIDE ALONG UNCHANGED (they name chains, not devices), and the version says so.
+	std::vector<NamedChain> names;
+	if (version == kBodyVersionNamed) {
+		if (!getNames(in, &names)) {
+			return false;
+		}
+		if (!names.empty()) {
+			putNames(sink, names);
+			next[4] = static_cast<uint8_t>(kBodyVersionNamed & 0xFF);
+			next[5] = static_cast<uint8_t>(kBodyVersionNamed >> 8);
+		}
+	}
 	if (in.at != bytes.size()) {
 		return false;
 	}

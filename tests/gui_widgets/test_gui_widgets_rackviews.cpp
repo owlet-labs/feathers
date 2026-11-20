@@ -2330,8 +2330,8 @@ TEST_CASE("rack pads fix E: every kind of selection writes rack_viewed_chain, an
 		const ViewedReaders v = readViewed(r);
 		CHECK(v.field == want);
 		CHECK(v.box == doctest::Approx(static_cast<double>(want)));
-		// THE BOX READS THE CHAIN'S NUMBER (from 1), as the tabs and the pads count: a hand reads "2" for the second chain.
-		CHECK(r.panel->viewedBoxForTest().control().text() == std::to_string(want + 1));
+		// THE BOX READS THE CHAIN'S ONE LABEL (never its number).
+		CHECK(r.panel->viewedBoxForTest().control().text() == r.panel->viewModelForTest().chainLabel(static_cast<size_t>(want)));
 		CHECK(v.gridWindow == want);
 		CHECK(v.gridCard == want);
 		CHECK(v.front == want);
@@ -2839,12 +2839,17 @@ TEST_CASE("rack layout: the first card is one card gap after the grid or the tab
 			static_assert(ui::ParallelRackCard::kRowGap == ui::RackFrontColumn::kGap, "the card's row gap is the lane's card gap");
 			const visage::Bounds front = r.card->frontForTest().bounds();
 			if (view == 1) {
+				// TABS: THE ARROW STANDS BETWEEN THE BAR AND THE FIRST CARD (the chain holds two devices), one gap either side.
 				const visage::Bounds bar = r.card->tabBarForTest().bounds();
+				const visage::Bounds arrow = r.card->chainArrowForTest().bounds();
+				REQUIRE(r.card->chainArrowForTest().isVisible());
 				if (horizontal) {
-					CHECK(front.x() - bar.right() == doctest::Approx(kGap));
+					CHECK(arrow.x() - bar.right() == doctest::Approx(kGap));
+					CHECK(front.x() - arrow.right() == doctest::Approx(kGap));
 				}
 				else {
-					CHECK(front.y() - bar.bottom() == doctest::Approx(kGap));
+					CHECK(arrow.y() - bar.bottom() == doctest::Approx(kGap));
+					CHECK(front.y() - arrow.bottom() == doctest::Approx(kGap));
 				}
 			}
 			else if (horizontal) {
@@ -2937,4 +2942,163 @@ TEST_CASE("rack layout: the Strips window's add-chain button stands after the la
 	// OTHER VIEWS KEEP IT UNDER THE MACROS.
 	r.view_(1);
 	CHECK(r.panel->addBoundsForTest().x() == doctest::Approx(ui::ParallelRackExpanded::kPad));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// CHAIN NAMES: one label per chain, read the same on every surface; "Rename…" writes it, one undo step.
+// ---------------------------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// EVERY STRING THAT NAMES CHAIN `slot`, from every surface that shows one, tagged by where it came from.
+std::vector<std::pair<std::string, std::string>> labelsOf(RealRack& r, size_t slot) {
+	std::vector<std::pair<std::string, std::string>> out;
+	out.emplace_back("rack", r.rack().chainLabel(slot));
+	out.emplace_back("adapter chain()", r.panel->viewModelForTest().chain(slot).name);
+	out.emplace_back("adapter label", r.panel->viewModelForTest().chainLabel(slot));
+	out.emplace_back("card adapter", r.card->viewModelForTest().chain(slot).name);
+	// THE TABS, on the window's bar and the card's.
+	for (const auto& [where, bar] : { std::pair<const char*, ui::RackTabBar*> { "window tab", &r.panel->tabBarForTest() },
+	                                   std::pair<const char*, ui::RackTabBar*> { "card tab", &r.card->tabBarForTest() } }) {
+		const std::vector<size_t> tabs = bar->tabsForTest();
+		for (size_t k = 0; k < tabs.size(); ++k) {
+			if (tabs[k] == slot) {
+				out.emplace_back(where, bar->labelForTest(k));
+			}
+		}
+	}
+	// THE PAD CELL, on both grids (the chain's key's cell).
+	const int key = r.rack().chainKey(slot);
+	if (key != pr::kAnyKey) {
+		for (const auto& [where, grid] : { std::pair<const char*, ui::RackPadGrid*> { "window pad", &r.panel->padsForTest().gridForTest() },
+		                                    std::pair<const char*, ui::RackPadGrid*> { "card pad", &r.card->padsForTest().gridForTest() } }) {
+			const int page = key / ui::kPadsPerPage;
+			r.set(pr::Param::PadsPage, static_cast<float>(page));
+			r.refresh();
+			out.emplace_back(where, grid->labelForTest(key % ui::kPadsPerPage));
+		}
+	}
+	// THE WINDOW'S RAIL AND STRIP CAPTIONS.
+	out.emplace_back("window rail", r.panel->railForTest(slot).labelForTest());
+	return out;
+}
+
+} // namespace
+
+TEST_CASE("chain names: every surface shows one and the same label for a chain — renamed, unnamed with a device, unnamed and empty") {
+	RealRack r;
+	r.chains(3, 0, true); // keys 0, 1, 2; every chain empty
+	(void)r.rack().chainAt(1)->bridge()->addDevice("DRUM");
+	r.set(pr::Param::View, 1.0f);
+	r.refresh();
+	// THE THREE KINDS: chain 0 unnamed and empty, chain 1 unnamed with a Drum, chain 2 renamed.
+	REQUIRE(r.rack().setChainName(2, "Hats"));
+	r.refresh();
+	const std::vector<std::string> wanted = { "Chain 1", "Drum", "Hats" };
+	for (size_t slot = 0; slot < 3; ++slot) {
+		CAPTURE(slot);
+		const auto labels = labelsOf(r, slot);
+		REQUIRE(labels.size() >= 6);
+		for (const auto& [where, text] : labels) {
+			CAPTURE(where);
+			CHECK(text == wanted[slot]);
+		}
+	}
+	// THE READOUTS: the Viewing and Playing values print the label too (never a number).
+	r.set(pr::Param::ViewedChain, 2.0f);
+	r.set(pr::Param::Playing, 3.0f);
+	r.refresh();
+	CHECK(r.panel->viewedBoxForTest().control().text() == "Hats");
+	CHECK(r.panel->playingBoxForTest().control().text() == "Hats");
+	r.set(pr::Param::Playing, 0.0f);
+	CHECK(r.panel->playingBoxForTest().control().text() == "Position");
+	// AND THEIR MENUS NAME THE CHAINS, in chain order (Playing has Position first).
+	visage::PopupMenu viewing = r.panel->chainPickerMenuForTest(false);
+	REQUIRE(viewing.options().size() == 3);
+	CHECK(viewing.options()[0].name().toUtf8().find("Chain 1") != std::string::npos);
+	CHECK(viewing.options()[1].name().toUtf8().find("Drum") != std::string::npos);
+	CHECK(viewing.options()[2].name().toUtf8().find("Hats") != std::string::npos);
+	visage::PopupMenu playing = r.panel->chainPickerMenuForTest(true);
+	REQUIRE(playing.options().size() == 4);
+	CHECK(playing.options()[0].name().toUtf8().find("Position") != std::string::npos);
+	viewing.onSelection().callback(1);
+	CHECK(r.field(pr::Param::ViewedChain) == 1.0f);
+	// TYPING A NAME INTO THE BOX FINDS THE CHAIN.
+	const std::optional<double> typed = r.panel->viewedBoxForTest().control().parseText("hats", 0.0);
+	REQUIRE(typed.has_value());
+	CHECK(*typed == 2.0);
+	// NOT BLIND: a reader still printing the number would differ — the sweep's own comparison catches one (chain 1's "Chain 2" is not "Drum").
+	CHECK(std::string("Chain 2") != labelsOf(r, 1).front().second);
+}
+
+TEST_CASE("chain names: Rename... from a tab, a pad and the menu renames one chain by id, as one undo step, and clearing reverts to the derived name") {
+	RealRack r;
+	r.chains(3, 2, true);
+	r.view_(1);
+	ui::EditHistory history;
+	r.panel->modulationBound(nullptr, &history);
+	r.card->setModulation(nullptr, &history);
+	ui::RackChainRename& rename = r.panel->chainRenameForTest();
+	// THE MENU: "Rename..." always, "Clear name" only while the chain has a name.
+	{
+		visage::PopupMenu menu = rename.menuForTest(1);
+		REQUIRE(menu.options().size() == 2);
+		CHECK(menu.options()[0].name().toUtf8() == "Rename...");
+	}
+	// A RIGHT PRESS ON A TAB asks for the menu (the handler is called with that tab's chain).
+	size_t asked = 99;
+	r.panel->tabBarForTest().setContextHandler([&](size_t slot, const visage::Bounds&) { asked = slot; });
+	r.panel->tabBarForTest().pressContextForTest(r.panel->tabBarForTest().tabCentre(2));
+	CHECK(asked == 2);
+	r.panel->tabBarForTest().setContextHandler([&](size_t slot, const visage::Bounds& b) {
+		rename.showMenu(slot, r.panel->tabBarForTest(), b);
+	});
+	// THE FIELD: opened on chain 1, committed as the field's Enter commits it.
+	rename.begin(1, r.panel->tabBarForTest(), visage::Bounds { 0.0f, 0.0f, 80.0f, 20.0f });
+	REQUIRE(rename.renaming());
+	CHECK(rename.field().text() == "Drum 2"); // opens on the label it shows (the second chain led by a Drum)
+	const size_t undoable = history.length();
+	// A REORDER UNDER THE OPEN FIELD renames the SAME chain: the id is kept, not the place.
+	const uint16_t id = r.rack().chainIdAt(1);
+	REQUIRE(rename.commitForTest("  Kick  "));
+	CHECK(r.rack().chainName(r.rack().indexOfChain(id)) == "Kick");
+	CHECK(history.length() == undoable + 1);
+	for (size_t slot = 0; slot < 3; ++slot) {
+		if (r.rack().chainIdAt(slot) == id) {
+			for (const auto& [where, text] : labelsOf(r, slot)) {
+				CAPTURE(where);
+				CHECK(text == "Kick");
+			}
+		}
+	}
+	// UNDO PUTS THE DERIVED NAME BACK, REDO THE NAME.
+	history.undo();
+	r.refresh();
+	CHECK(r.rack().chainName(1).empty());
+	CHECK(r.panel->viewModelForTest().chain(1).name == "Drum 2");
+	history.redo();
+	r.refresh();
+	CHECK(r.rack().chainName(1) == "Kick");
+	// CAPPED like a macro name (24 bytes), and a name past it is cut, never refused.
+	rename.begin(1, r.panel->tabBarForTest(), visage::Bounds { 0.0f, 0.0f, 80.0f, 20.0f });
+	REQUIRE(rename.commitForTest(std::string(60, 'x')));
+	CHECK(r.rack().chainName(1).size() <= 24);
+	// CLEAR NAME goes through the menu's own row and is an undo step too.
+	{
+		visage::PopupMenu menu = rename.menuForTest(1);
+		const size_t before = history.length();
+		menu.onSelection().callback(2);
+		CHECK(r.rack().chainName(1).empty());
+		CHECK(history.length() == before + 1);
+	}
+	// A PAD'S RIGHT PRESS asks the same, for a used pad only.
+	r.view_(2);
+	size_t padAsked = 99;
+	auto& grid = r.panel->padsForTest().gridForTest();
+	grid.setContextHandler([&](size_t slot, const visage::Bounds&) { padAsked = slot; });
+	grid.pressContextForTest(grid.padCentre(1));
+	CHECK(padAsked == 1);
+	padAsked = 99;
+	grid.pressContextForTest(grid.padCentre(9)); // an empty pad
+	CHECK(padAsked == 99);
 }

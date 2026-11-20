@@ -21,6 +21,7 @@
 #include "plugin/ui/device_shortcuts.h"
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/notify_tray.h"
+#include "plugin/ui/text_field.h"
 
 namespace feathers::ui {
 
@@ -79,6 +80,101 @@ visage::PopupMenu RackPadAdd::menuForTest(int key) {
 
 size_t RackPadAdd::pickForTest(int key, int id) {
 	return pick(key, model_.addableDevices(), id);
+}
+
+RackChainRename::RackChainRename(RackViewAdapter& model, visage::Frame& surface, Notifier* notifier)
+    : model_(model), surface_(surface), notifier_(notifier) {
+	field_ = std::make_unique<TextField>();
+	field_->onCommit([this](std::string text) {
+		(void)commit(text);
+		field_->setVisible(false);
+	});
+	field_->onCancel([this] { field_->setVisible(false); });
+	field_->setVisible(false);
+	surface_.addChild(field_.get());
+}
+
+RackChainRename::~RackChainRename() {
+	field_->onCommit(nullptr);
+	field_->onCancel(nullptr);
+	if (field_->isVisible()) {
+		field_->setVisible(false);
+	}
+	surface_.removeChild(field_.get());
+}
+
+bool RackChainRename::renaming() const {
+	return field_->editing();
+}
+
+bool RackChainRename::commit(const std::string& text) {
+	const size_t slot = model_.slotOfChainId(chain_);
+	if (slot == kNoChain) {
+		return false; // the chain went while the field was open
+	}
+	// THE NAME AS TYPED, trimmed; a name equal to the derived one is the same as none to a reader, but is kept as the user's (it is theirs).
+	size_t a = 0;
+	size_t b = text.size();
+	while (a < b && static_cast<unsigned char>(text[a]) <= ' ') {
+		++a;
+	}
+	while (b > a && static_cast<unsigned char>(text[b - 1]) <= ' ') {
+		--b;
+	}
+	const bool changed = model_.renameChain(slot, std::string_view(text).substr(a, b - a), history_);
+	if (changed && notifier_ != nullptr) {
+		notifier_->say("Chain renamed");
+	}
+	return changed;
+}
+
+visage::PopupMenu RackChainRename::build(size_t slot, visage::Frame* source, visage::Bounds anchor) {
+	visage::PopupMenu menu;
+	menu.addOption(1, "Rename...");
+	menu.addOption(2, "Clear name").enable(!model_.chainUserName(slot).empty());
+	const uint16_t id = model_.chainIdAt(slot);
+	const std::weak_ptr<void> alive = alive_;
+	menu.onSelection() = [this, alive, id, source, anchor](int row) {
+		if (alive.expired()) {
+			return;
+		}
+		const size_t at = model_.slotOfChainId(id);
+		if (at == kNoChain) {
+			return;
+		}
+		if (row == 1 && source != nullptr) {
+			begin(at, *source, anchor);
+		}
+		else if (row == 2) {
+			chain_ = id;
+			(void)commit(std::string {});
+		}
+	};
+	return menu;
+}
+
+void RackChainRename::showMenu(size_t slot, visage::Frame& source, const visage::Bounds& anchor) {
+	if (slot >= model_.chainSlots()) {
+		return;
+	}
+	showMenuAt(build(slot, &source, anchor), source, anchor);
+}
+
+visage::PopupMenu RackChainRename::menuForTest(size_t slot) {
+	return build(slot, nullptr, {});
+}
+
+void RackChainRename::begin(size_t slot, visage::Frame& source, const visage::Bounds& anchor) {
+	if (slot >= model_.chainSlots()) {
+		return;
+	}
+	chain_ = model_.chainIdAt(slot);
+	const visage::Point from = source.positionInWindow();
+	const visage::Point to = surface_.positionInWindow();
+	const float h = std::max(anchor.height(), 18.0f);
+	field_->setBounds(from.x - to.x + anchor.x(), from.y - to.y + anchor.y() + (anchor.height() - h) * 0.5f, std::max(anchor.width(), 90.0f), h);
+	field_->setVisible(true);
+	field_->begin(model_.chainUserName(slot).empty() ? model_.chainLabel(slot) : model_.chainUserName(slot));
 }
 
 } // namespace feathers::ui

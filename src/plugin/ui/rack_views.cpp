@@ -302,7 +302,13 @@ void RackPadsStep::draw(visage::Canvas& canvas) {
 //--------------------------------------------------------------------------------------------------//
 
 RackTabBar::RackTabBar(RackViewModel& model, RackFlow flow) : model_(model), flow_(flow) {
-	onMouseDown() = [this](const visage::MouseEvent& e) { press(e.position); };
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		if (e.isRightButton()) {
+			pressContext(e.position);
+			return;
+		}
+		press(e.position);
+	};
 	onMouseMove() += [this](const visage::MouseEvent& e) { hover(e.position); };
 	onMouseExit() += [this](const visage::MouseEvent&) { hover({ -1.0f, -1.0f }); };
 	// A SCALE CHANGE MOVES NOTHING LOGICAL: re-set the bounds, so the native extents are cut again.
@@ -402,6 +408,19 @@ bool RackTabBar::dotShown(size_t k) const {
 bool RackTabBar::raised(size_t k) const {
 	const std::vector<size_t> tabs = tabbedChains(model_);
 	return k < tabs.size() && model_.viewedChain() == tabs[k];
+}
+
+void RackTabBar::pressContext(visage::Point at) {
+	const std::vector<size_t> tabs = tabbedChains(model_);
+	const int k = tabAtNative((horizontal() ? at.x : at.y) * scale(), tabs.size());
+	if (k < 0 || !context_) {
+		return;
+	}
+	const auto [a, b] = tabNativeExtent(static_cast<size_t>(k));
+	const float from = static_cast<float>(a) / scale();
+	const float length = static_cast<float>(b - a) / scale();
+	context_(tabs[static_cast<size_t>(k)],
+	         horizontal() ? visage::Bounds { from, 0.0f, length, static_cast<float>(height()) } : visage::Bounds { 0.0f, from, static_cast<float>(width()), length });
 }
 
 void RackTabBar::press(visage::Point at) {
@@ -514,7 +533,13 @@ void RackTabBar::draw(visage::Canvas& canvas) {
 RackPadGrid::RackPadGrid(RackViewModel& model, RackStrikePulse& pulse) : model_(model), pulse_(pulse) {
 	pulse_.join(model_.strikeKey()); // on the rack's one look from the start, so the first strike reaches every surface
 	watch_ = pulse_.watchers().watch(this);
-	onMouseDown() = [this](const visage::MouseEvent& e) { press(e.position); };
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		if (e.isRightButton()) {
+			pressContext(e.position);
+			return;
+		}
+		press(e.position);
+	};
 	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
 	onDpiChange() += [this] {
 		setBounds(bounds());
@@ -601,6 +626,21 @@ float RackPadGrid::flashForTest(int index) const {
 bool RackPadGrid::selectedForTest(int index) const {
 	const size_t slot = chainForKey(model_, padKey(model_.page(), index));
 	return slot != kNoChain && model_.viewedChain() == slot;
+}
+
+void RackPadGrid::pressContext(visage::Point at) {
+	const int index = padAt(at);
+	if (index < 0 || !context_) {
+		return;
+	}
+	const size_t slot = chainForKey(model_, padKey(model_.page(), index));
+	if (slot == kNoChain) {
+		return; // an empty pad has no chain to name
+	}
+	const auto [xa, xb] = columnNativeExtent(padColumn(index));
+	const auto [ya, yb] = rowNativeExtent(3 - padRowFromBottom(index));
+	const float s = scale();
+	context_(slot, visage::Bounds { static_cast<float>(xa) / s, static_cast<float>(ya) / s, static_cast<float>(xb - xa) / s, static_cast<float>(yb - ya) / s });
 }
 
 void RackPadGrid::press(visage::Point at) {

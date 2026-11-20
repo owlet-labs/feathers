@@ -118,7 +118,15 @@ public:
 	void setFirstDeviceField(size_t slot, size_t control, float value);
 	/// What a chain made now could hold, in the table's order (the rack's own catalogue, so a menu can offer before the chain exists).
 	[[nodiscard]] std::vector<const device::Descriptor*> addableDevices() const;
-	/// The name a chain shows: its first device's, or empty.
+	/// **THE ONE LABEL OF CHAIN `slot`** (`Rack::chainLabel`), and the rename: one undo step through `history` (may be null); false when nothing changed.
+	[[nodiscard]] std::string chainLabel(size_t slot) const;
+	bool renameChain(size_t slot, std::string_view name, EditHistory* history);
+	/// A chain's stable id and where that id stands now (`kNoChain` if it has gone): an open rename keeps the id, never the place.
+	[[nodiscard]] uint16_t chainIdAt(size_t slot) const;
+	[[nodiscard]] size_t slotOfChainId(uint16_t id) const;
+	/// The user's own name for chain `slot` (empty: none).
+	[[nodiscard]] std::string chainUserName(size_t slot) const;
+	/// The name a chain's first device gives it, or empty (kept for the cases that read it).
 	[[nodiscard]] std::string chainTitle(size_t slot) const;
 	/// The names of the devices a chain holds, in chain order.
 	[[nodiscard]] std::vector<std::string> deviceNames(size_t slot) const;

@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/parallel_rack_expanded.h"
+#include "plugin/ui/menu_anchor.h"
 
 #include "plugin/ui/stored_edit.h"
 #include "plugin/ui/theme.h"
@@ -166,6 +167,17 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	addChild(pane_.get());
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
 	// "+" ON AN EMPTY PAD ASKS WHICH DEVICE (the lanes' own add menu, oscillators first); the pick makes the chain on that pad's key.
+	// THE VIEWING AND PLAYING BOXES PICK A CHAIN BY NAME (a menu of the chains' one label each), not by a typed number.
+	viewedBox_->onPicker([this] {
+		showMenuAt(chainPickerMenu(false), *viewedBox_, visage::Bounds { 0.0f, 0.0f, static_cast<float>(viewedBox_->width()), static_cast<float>(viewedBox_->height()) });
+	});
+	playingBox_->onPicker([this] {
+		showMenuAt(chainPickerMenu(true), *playingBox_, visage::Bounds { 0.0f, 0.0f, static_cast<float>(playingBox_->width()), static_cast<float>(playingBox_->height()) });
+	});
+	// "RENAME…" FROM A TAB OR A USED PAD'S RIGHT PRESS: the one chain label everywhere reads it back.
+	chainRename_ = std::make_unique<RackChainRename>(*model_, *this, notifier_);
+	tabs_->setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, *tabs_, anchor); });
+	pads_->gridForTest().setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, pads_->gridForTest(), anchor); });
 	padAdd_ = std::make_unique<RackPadAdd>(*model_, notifier_);
 	padAdd_->onAdded([this](size_t) {
 		if (follow()) {
@@ -369,6 +381,31 @@ bool ParallelRackExpanded::addShown() const {
 visage::Bounds ParallelRackExpanded::addBounds() const { return addShown() ? addSlotBounds() : visage::Bounds {}; }
 
 visage::Bounds ParallelRackExpanded::dividerBounds() const { return { kPad, dividerY(), kColumnWidth, 1.0f }; }
+
+visage::PopupMenu ParallelRackExpanded::chainPickerMenu(bool playing) {
+	DeviceControl& control = playing ? *playingControl_ : *viewedControl_;
+	visage::PopupMenu menu;
+	const long current = std::lround(control.value());
+	if (playing) {
+		menu.addOption(0, "Position").select(current == 0);
+	}
+	for (size_t i = 0; i < model_->chainCount(); ++i) {
+		const int id = static_cast<int>(playing ? i + 1 : i);
+		menu.addOption(id, model_->chainLabel(i)).select(current == id);
+	}
+	const std::weak_ptr<void> alive = alive_;
+	DeviceControl* target = &control;
+	menu.onSelection() = [alive, target](int id) {
+		if (alive.expired() || id < 0) {
+			return;
+		}
+		// ONE EDIT, bracketed as a hand's pick of any choice is.
+		target->beginGesture();
+		target->setValue(static_cast<double>(id));
+		target->endGesture();
+	};
+	return menu;
+}
 
 void ParallelRackExpanded::layOut() {
 	const float cell = kColumnWidth / static_cast<float>(kPerRow);
@@ -662,13 +699,14 @@ bool ParallelRackExpanded::follow() {
 		}
 		applying_ = false;
 	}
-	// THE LABELS FOLLOW THE POSITION: "2" is the second chain now — and the ROLE the mode gives it (§2a), or none.
+	// THE LABELS FOLLOW THE CHAIN — and the ROLE the mode gives it (§2a), or none.
 	const auto mode = static_cast<pr::Mode>(std::lround(modeControl_->value()));
 	const size_t roles = pr::roleCount(mode, rails_.size(), pr::bandCountOf(bandControls_[0]->value()));
 	for (size_t i = 0; i < rails_.size(); ++i) {
-		std::string label = std::to_string(i + 1);
+		// THE CHAIN'S ONE LABEL (its name, else its first device's, else "Chain N"), then the ROLE the mode gives it (§2a), or none.
+		std::string label = rack != nullptr ? rack->chainLabel(i) : std::to_string(i + 1);
 		if ((pr::kRoleModes & pr::kModeBit(mode)) != 0) {
-			label += i < roles ? " " + ParallelRackCard::roleName(mode, i) : " (not used)";
+			label += i < roles ? " · " + ParallelRackCard::roleName(mode, i) : " (not used)";
 		}
 		rails_[i]->rail->setRailLabel(label);
 		rails_[i]->strip->setLabel(label);
@@ -967,6 +1005,9 @@ void ParallelRackExpanded::modulationBound(ModState* mod, EditHistory* history) 
 	history_ = history;
 	if (padAdd_ != nullptr) {
 		padAdd_->setHistory(history);
+	}
+	if (chainRename_ != nullptr) {
+		chainRename_->setHistory(history);
 	}
 	relay_.setTarget(mod);
 	for (auto& c : controls_) {

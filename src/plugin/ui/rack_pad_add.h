@@ -35,6 +35,7 @@ namespace feathers::ui {
 
 class EditHistory;
 class Notifier;
+class TextField;
 
 class RackPadAdd {
 public:
@@ -62,6 +63,41 @@ private:
 	EditHistory* history_ = nullptr;
 	std::function<void(size_t)> added_;
 	/// The menu outlives a press and is parented on the root, so its pick holds this weakly.
+	std::shared_ptr<void> alive_ = std::make_shared<char>(0);
+};
+
+/// **THE CHAIN'S RENAME, from its tab, its pad or its strip**: a context menu ("Rename…", and "Clear name" while it has one) and the inline field the
+/// macro rename uses, opened over the thing that was pressed. The name goes to the rack (`RackViewAdapter::renameChain`: clamped, one undo step), is
+/// kept with the chain's id while the field is open (a reorder under it renames the same chain), and every surface then reads it back through the
+/// chain's one label. The field is the surface's child, kept for its whole life and only hidden (`text_field.h`'s rule).
+class RackChainRename {
+public:
+	RackChainRename(RackViewAdapter& model, visage::Frame& surface, Notifier* notifier);
+	~RackChainRename();
+
+	void setHistory(EditHistory* history) noexcept { history_ = history; }
+	/// THE MENU for chain `slot`, hung off `anchor` in `source`'s coordinates.
+	void showMenu(size_t slot, visage::Frame& source, const visage::Bounds& anchor);
+	/// THE FIELD over `anchor` (in `source`'s coordinates), holding the chain's current label.
+	void begin(size_t slot, visage::Frame& source, const visage::Bounds& anchor);
+	[[nodiscard]] bool renaming() const;
+	[[nodiscard]] TextField& field() const noexcept { return *field_; }
+	[[nodiscard]] visage::PopupMenu menuForTest(size_t slot);
+	/// A commit as the field's Enter makes it, for the chain the field was opened on.
+	bool commitForTest(const std::string& text) { return commit(text); }
+	/// The chain id the open field belongs to (0xFFFF: none).
+	[[nodiscard]] uint16_t chainForTest() const noexcept { return chain_; }
+
+private:
+	[[nodiscard]] visage::PopupMenu build(size_t slot, visage::Frame* source, visage::Bounds anchor);
+	bool commit(const std::string& text);
+
+	RackViewAdapter& model_;
+	visage::Frame& surface_;
+	Notifier* notifier_ = nullptr;
+	EditHistory* history_ = nullptr;
+	std::unique_ptr<TextField> field_;
+	uint16_t chain_ = 0xFFFF;
 	std::shared_ptr<void> alive_ = std::make_shared<char>(0);
 };
 

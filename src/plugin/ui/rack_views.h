@@ -167,6 +167,9 @@ public:
 	[[nodiscard]] bool raised(size_t k) const;
 	/// A press at `at`, as the hand makes it.
 	void pressForTest(visage::Point at) { press(at); }
+	/// **A RIGHT PRESS ON A TAB** asks the owner for that chain's menu (the rename): its slot and the tab's rectangle in this frame.
+	void setContextHandler(std::function<void(size_t slot, const visage::Bounds& anchor)> handler) { context_ = std::move(handler); }
+	void pressContextForTest(visage::Point at) { pressContext(at); }
 	/// The pointer over `at` (or off the bar: a point outside it), as a mouse move makes it.
 	void hoverForTest(visage::Point at) { hover(at); }
 	/// **THE SET-PLAYING TARGET APPEARS ON HOVER**: a lit dot on the playing tab only, and on the tab under the pointer (Select routing) a
@@ -186,10 +189,13 @@ private:
 	[[nodiscard]] bool inDotArea(visage::Point at, size_t k) const;
 	void press(visage::Point at);
 
+	void pressContext(visage::Point at);
+
 	RackViewModel& model_;
 	uint32_t rule_ = 0;
 	RackFlow flow_;
 	int hover_ = -1;
+	std::function<void(size_t, const visage::Bounds&)> context_;
 };
 
 class RackPadGrid final : public visage::Frame, public TooltipSource {
@@ -237,6 +243,9 @@ public:
 	/// A press and a release at `at`, as the hand makes them.
 	void pressForTest(visage::Point at) { press(at); }
 	void releaseForTest() { release(); }
+	/// **A RIGHT PRESS ON A USED PAD** asks the owner for that chain's menu (the rename): its slot and the pad's rectangle in this frame.
+	void setContextHandler(std::function<void(size_t slot, const visage::Bounds& anchor)> handler) { context_ = std::move(handler); }
+	void pressContextForTest(visage::Point at) { pressContext(at); }
 
 	static constexpr float kInset = 1.5f;
 
@@ -248,6 +257,8 @@ private:
 	RackViewModel& model_;
 	RackStrikePulse& pulse_;
 	Watch watch_;
+	void pressContext(visage::Point at);
+	std::function<void(size_t, const visage::Bounds&)> context_;
 	int held_ = -1;
 	size_t refreshes_ = 0;
 	std::function<void(int)> onAdd_;

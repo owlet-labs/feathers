@@ -116,16 +116,45 @@ RackChainView RackViewAdapter::chain(size_t slot) const {
 	if (r == nullptr || slot >= r->chainCount()) {
 		return {};
 	}
-	// A NAME IS THE FIRST DEVICE'S; two chains alike are told apart by their order ("Drum", "Drum 2"), so no two tabs read the same.
-	std::string name = chainTitle(slot);
-	size_t same = 1;
-	for (size_t i = 0; i < slot && !name.empty(); ++i) {
-		same += chainTitle(i) == name ? 1 : 0;
+	// ONE LABEL, the rack's (`Rack::chainLabel`): the user's name, else the first device's, else "Chain N" — what every reader of a chain shows.
+	return { true, r->chainLabel(slot), r->chainKey(slot) == pr::kAnyKey ? kChainAnyKey : r->chainKey(slot), r->chainChoke(slot) };
+}
+
+std::string RackViewAdapter::chainLabel(size_t slot) const {
+	const pr::Rack* r = rack();
+	return r != nullptr ? r->chainLabel(slot) : std::string {};
+}
+
+uint16_t RackViewAdapter::chainIdAt(size_t slot) const {
+	const pr::Rack* r = rack();
+	return r != nullptr ? r->chainIdAt(slot) : uint16_t { 0xFFFF };
+}
+
+size_t RackViewAdapter::slotOfChainId(uint16_t id) const {
+	const pr::Rack* r = rack();
+	const size_t at = r != nullptr ? r->indexOfChain(id) : SIZE_MAX;
+	return at == SIZE_MAX ? kNoChain : at;
+}
+
+std::string RackViewAdapter::chainUserName(size_t slot) const {
+	const pr::Rack* r = rack();
+	return r != nullptr ? std::string(r->chainName(slot)) : std::string {};
+}
+
+bool RackViewAdapter::renameChain(size_t slot, std::string_view name, EditHistory* history) {
+	pr::Rack* r = rack();
+	if (r == nullptr || slot >= r->chainCount()) {
+		return false;
 	}
-	if (same > 1) {
-		name += " " + std::to_string(same);
+	const std::string before(r->chainName(slot));
+	const uint16_t id = r->chainIdAt(slot);
+	if (!r->setChainName(slot, name)) {
+		return false;
 	}
-	return { true, name, r->chainKey(slot) == pr::kAnyKey ? kChainAnyKey : r->chainKey(slot), r->chainChoke(slot) };
+	if (history != nullptr) {
+		history->record(std::make_unique<ChainNameEdit>(host_, id_, id, before, std::string(r->chainName(slot))));
+	}
+	return true;
 }
 
 size_t RackViewAdapter::viewedChain() const {

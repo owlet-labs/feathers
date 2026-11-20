@@ -132,6 +132,9 @@ public:
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
 	[[nodiscard]] RackPadAdd& padAddForTest() const { return *padAdd_; }
+	[[nodiscard]] RackChainRename& chainRenameForTest() const { return *chainRename_; }
+	/// **THE VIEWING AND PLAYING BOXES OPEN A MENU OF CHAIN NAMES, not a typed number**: the menu as built (rows in chain order; Playing has Position first).
+	[[nodiscard]] visage::PopupMenu chainPickerMenuForTest(bool playing) { return chainPickerMenu(playing); }
 	[[nodiscard]] RackStrikePulse& pulseForTest() { return pulse_; }
 	[[nodiscard]] SegmentedControl& viewSegForTest() const { return *viewSeg_; }
 	[[nodiscard]] SwitchChip& followChipForTest() const { return *followChip_; }
@@ -193,6 +196,7 @@ private:
 	};
 
 	void layOut();
+	[[nodiscard]] visage::PopupMenu chainPickerMenu(bool playing);
 	/// **A CARD DROPPED ON ANOTHER CHAIN** (backlog NQ): `ids`, dragged out of chain `from`, released at `inWindow` over
 	/// another chain's open column, move into it at the gap under the hand. False when no chain is under the hand.
 	bool moveAcrossChains(uint16_t from, std::span<const DeviceInstanceId> ids, visage::Point inWindow);
@@ -278,6 +282,7 @@ private:
 	std::unique_ptr<RackViewAdapter> model_;
 	RackStrikePulse pulse_;
 	std::unique_ptr<RackPadAdd> padAdd_;
+	std::unique_ptr<RackChainRename> chainRename_;
 	std::unique_ptr<RackTabBar> tabs_;
 	std::unique_ptr<RackPadsPanel> pads_;
 	int laidOutView_ = -1;

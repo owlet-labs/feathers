@@ -394,6 +394,14 @@ void ChainPresenceEdit::take() const {
 	}
 }
 
+void ChainNameEdit::apply(const std::string& name) const {
+	if (pr::Rack* r = pr::rackOf(host_.containerSurfaceOf(rack_)); r != nullptr) {
+		if (const size_t at = r->indexOfChain(chain_); at != SIZE_MAX) {
+			(void)r->setChainName(at, name);
+		}
+	}
+}
+
 std::string ChainControl::text() const {
 	const double v = value();
 	if (kind_ == Kind::Choke) {
@@ -716,6 +724,10 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// until the View asks for them (Strips draws exactly as it always did).
 	tabs_ = std::make_unique<RackTabBar>(*model_, RackFlow::TopDown);
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
+	// "RENAME…" FROM A TAB OR A USED PAD'S RIGHT PRESS: the one chain label everywhere reads it back.
+	chainRename_ = std::make_unique<RackChainRename>(*model_, *this, notifier_);
+	tabs_->setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, *tabs_, anchor); });
+	pads_->gridForTest().setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, pads_->gridForTest(), anchor); });
 	padAdd_ = std::make_unique<RackPadAdd>(*model_, notifier_);
 	// THE SAME "+" AS THE WINDOW'S: asks which device; the pick makes the chain on that pad and the card follows it on the spot.
 	padAdd_->onAdded([this](size_t) {
@@ -807,6 +819,9 @@ void ParallelRackCard::setModulation(ModState* mod, EditHistory* history) {
 	mod_ = mod;
 	if (padAdd_ != nullptr) {
 		padAdd_->setHistory(history);
+	}
+	if (chainRename_ != nullptr) {
+		chainRename_->setHistory(history);
 	}
 	for (auto& strip : strips_) {
 		strip->setModulation(mod, history);
@@ -1181,7 +1196,8 @@ bool ParallelRackCard::follow() {
 		if ((pr::kRoleModes & pr::kModeBit(pl.mode)) != 0 && i >= roles) {
 			role = std::string("not used by ") + pr::kModeNames[static_cast<size_t>(pl.mode)];
 		}
-		std::string summary = std::to_string(i + 1) + "  " + (role.empty() ? "" : role + " · ")
+		// THE CHAIN'S ONE LABEL first (never its number), then its role, then what it holds.
+		std::string summary = (r != nullptr ? r->chainLabel(i) : std::to_string(i + 1)) + " · " + (role.empty() ? "" : role + " · ")
 		                      + chainSummary(r != nullptr ? r->chainAt(i) : nullptr);
 		if (summary != strips_[i]->summaryForTest()) {
 			strips_[i]->setSummary(std::move(summary));

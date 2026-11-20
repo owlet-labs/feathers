@@ -116,6 +116,16 @@ std::optional<ModReadout> DeviceControl::routeReadout(device::Source source) {
 	if (amount == 0.0f) {
 		return std::nullopt;
 	}
+	// **A TRIGGER SAYS WHAT IT DOES, NOT A NUMBER.** A route into a Trig fires it on each rise of the source, so a
+	// value and a swept range ("0 % … 100 %", the pad's own base landing) describe nothing a player can hear. The
+	// box names the act, and has no range line (`sweeps()` is false when both ends read alike).
+	if (trigger_) {
+		ModReadout r;
+		r.amount = amount;
+		r.value = 1.0;
+		r.text = std::string("Fires ") + desc().name + " on each rise";
+		return r;
+	}
 	// WHAT THE ENGINE READS AROUND IT — or nothing, from a host that cannot say (`DeviceHost::probeRoute`).
 	backplane::RouteProbe probe;
 	if (!host_.probeRoute(source, d, probe)) {

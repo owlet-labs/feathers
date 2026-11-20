@@ -17,6 +17,7 @@
 
 #include "plugin/ui/trig_pad.h"
 
+#include "plugin/ui/device_control.h"
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/mod_route_menu.h"
 
@@ -26,6 +27,10 @@
 namespace feathers::ui {
 
 TrigPad::TrigPad(device::Modulatable& control, FireCount fires) : control_(control), fires_(std::move(fires)) {
+	// A ROUTE INTO A TRIGGER IS A FIRE, NOT A VALUE: its assign readout says so (`DeviceControl::routeReadout`).
+	if (auto* dc = dynamic_cast<DeviceControl*>(&control)) {
+		dc->setTriggerDestination(true);
+	}
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		// THE RIGHT-CLICK IS THE ROUTE MENU every other destination offers (`mod_route_menu.h`), and the normal's row;
 		// with nothing routed in and no normal (backlog NU) there is no menu and the press does nothing, as before — a

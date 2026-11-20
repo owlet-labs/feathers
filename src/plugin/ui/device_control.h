@@ -189,6 +189,10 @@ public:
 	[[nodiscard]] device::Destination readoutDestination() const noexcept override { return destination(); }
 	[[nodiscard]] std::optional<ModReadout> routeReadout(device::Source source) override;
 	void readoutEnded() override { host_.unwatchRoute(); }
+	/// **THIS CONTROL IS A TRIGGER DESTINATION** (a `TrigPad` sits on it): a route into it is a fire on each rise, not a
+	/// value, so its readout says that instead of an as-modulated number and a range (set by the pad).
+	void setTriggerDestination(bool trigger) noexcept { trigger_ = trigger; }
+	[[nodiscard]] bool triggerDestination() const noexcept { return trigger_; }
 
 private:
 	/// THE THREE READS A DEVICE'S TEXT HOOK IS ALLOWED — see `device::TextView`. `host` is this control.
@@ -203,6 +207,7 @@ private:
 	std::string tooltipOverride_;
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;
+	bool trigger_ = false;
 	double valueBefore_ = 0.0;
 	float amountBefore_ = 0.0f;
 	/// A host Begin has gone out and its End has not (`beginHostGesture`).

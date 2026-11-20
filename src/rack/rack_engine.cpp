@@ -1340,6 +1340,15 @@ void RackEngine::setMacro(size_t index, float value) {
 	}
 }
 
+void RackEngine::setCoreSource(size_t index, float reading) noexcept {
+	if (!std::isfinite(reading) || index >= macros_.size()) {
+		return;
+	}
+	reading = std::clamp(reading, -1.0f, 1.0f);
+	macros_[index] = reading;
+	macroRaw_[index] = std::clamp(reading, 0.0f, 1.0f); // what `macro()` reports: the 0..1 value, never a negative
+}
+
 float RackEngine::macro(size_t index) const {
 	return index < macroRaw_.size() ? macroRaw_[index] : 0.0f;
 }

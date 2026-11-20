@@ -827,6 +827,9 @@ public:
 	/// the stored value — the DAW's parameter — never changes shape. Message thread, at the drain.
 	void setMacroBipolar(size_t index, bool bipolar);
 	[[nodiscard]] bool macroBipolar(size_t index) const;
+	/// **THE CELL A ROUTE FROM MACRO `index` READS** — the value through its polarity, -1..+1 for a bipolar macro
+	/// (`2v - 1`) and 0..1 otherwise; for a core source, the reading its host handed over (`setCoreSource`).
+	[[nodiscard]] float macroReading(size_t index) const { return index < macros_.size() ? macros_[index] : 0.0f; }
 	/// **EACH MACRO'S TYPE AND NAME, HELD FOR THE PATCH AND NOTHING ELSE** — for an engine loaded and
 	/// saved with no bridge over it (`loadRack`/`saveRack`, a rack in a rack before its catalogue is
 	/// adopted), and handed to the bridge that is built over it later. No block reads either: a type is how

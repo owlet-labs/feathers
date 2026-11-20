@@ -1196,9 +1196,16 @@ bool ParallelRackCard::follow() {
 		if ((pr::kRoleModes & pr::kModeBit(pl.mode)) != 0 && i >= roles) {
 			role = std::string("not used by ") + pr::kModeNames[static_cast<size_t>(pl.mode)];
 		}
-		// THE CHAIN'S ONE LABEL first (never its number), then its role, then what it holds.
-		std::string summary = (r != nullptr ? r->chainLabel(i) : std::to_string(i + 1)) + " · " + (role.empty() ? "" : role + " · ")
-		                      + chainSummary(r != nullptr ? r->chainAt(i) : nullptr);
+		// THE CHAIN'S ONE LABEL first (never its number), then its role, then what it holds — unless that is the label already.
+		const std::string label = r != nullptr ? r->chainLabel(i) : std::to_string(i + 1);
+		const std::string contents = chainSummary(r != nullptr ? r->chainAt(i) : nullptr);
+		std::string summary = label;
+		if (!role.empty()) {
+			summary += " · " + role;
+		}
+		if (contents != label) {
+			summary += " · " + contents;
+		}
 		if (summary != strips_[i]->summaryForTest()) {
 			strips_[i]->setSummary(std::move(summary));
 			moved = true;

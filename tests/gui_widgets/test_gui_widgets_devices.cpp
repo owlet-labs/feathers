@@ -34621,7 +34621,7 @@ TEST_CASE("NO: the Rack's card has a strip per chain that follows the chains by 
 	REQUIRE(card != nullptr);
 	(void)card->update();
 	REQUIRE(card->stripsForTest().size() == 1);
-	CHECK(card->stripsForTest()[0]->summaryForTest() == "1  empty");
+	CHECK(card->stripsForTest()[0]->summaryForTest() == "Chain 1 · empty"); // the chain's one label, never its number
 	CHECK(card->headCaption() == "1 chain");
 
 	// A SECOND CHAIN, AND A FILTER IN THE FIRST: two strips, each saying what its chain holds.
@@ -34630,8 +34630,8 @@ TEST_CASE("NO: the Rack's card has a strip per chain that follows the chains by 
 	REQUIRE(first->addDevice(feathers::fx::filter::kTraits.tag) != feathers::kNoInstance);
 	(void)card->update();
 	REQUIRE(card->stripsForTest().size() == 2);
-	CHECK(card->stripsForTest()[0]->summaryForTest() == std::string("1  ") + feathers::fx::filter::kTraits.name);
-	CHECK(card->stripsForTest()[1]->summaryForTest() == "2  empty");
+	CHECK(card->stripsForTest()[0]->summaryForTest() == std::string(feathers::fx::filter::kTraits.name)); // the label IS what it holds
+	CHECK(card->stripsForTest()[1]->summaryForTest() == "Chain 2 · empty");
 	CHECK(card->headCaption() == "2 chains");
 
 	// THE STRIP'S CONTROLS ARE THAT CHAIN'S, by value: mute the second through its chip's own control.
@@ -34655,11 +34655,11 @@ TEST_CASE("NO: the Rack's card has a strip per chain that follows the chains by 
 	auto* panel = dynamic_cast<ui::ParallelRackExpanded*>(view.get());
 	REQUIRE(panel != nullptr);
 	CHECK(panel->railCountForTest() == 1);
-	CHECK(panel->railForTest(0).labelForTest() == "1");
+	CHECK(panel->railForTest(0).labelForTest() == "Chain 1");
 	panel->addChainForTest();
 	CHECK(rack.chainCount() == 2);
 	CHECK(panel->railCountForTest() == 2);
-	CHECK(panel->railForTest(1).labelForTest() == "2");
+	CHECK(panel->railForTest(1).labelForTest() == "Chain 2");
 	CHECK(panel->railForTest(1).liveForTest()); // its column is over that chain
 	view.reset();
 	f.bridge.fxBodies().detach(id, body);
@@ -34893,7 +34893,8 @@ TEST_CASE("OC: the Rack window seats Mix and Gain on top, an H-line, then the ei
 	// THE LAST ROW ENDS INSIDE THE PANEL, and "+ Chain" is small and below it, inside the panel too: nothing is clipped.
 	const visage::Bounds last = panel->knobBoundsForTest(9);
 	CHECK(last.bottom() <= minimumHeight);
-	CHECK(add.y() >= last.bottom());
+	// STRIPS: "+ Chain" stands after the last chain's rail, level with the strips' heads (not below the macros any more).
+	CHECK(add.x() >= panel->railForTest(panel->railCountForTest() - 1).bounds().right());
 	CHECK(add.bottom() <= minimumHeight);
 	CHECK(add.width() < ui::ParallelRackExpanded::kColumnWidth);
 	CHECK(ui::ParallelRackExpanded::kColumnWidth < 240.0f);
@@ -35025,7 +35026,7 @@ TEST_CASE("OC: a chain's header works while the chain is collapsed — level, mu
 	CHECK(drawnUnder(&open, panel));
 	CHECK(open.height() == ui::ChainStrip::kHeight);
 	// "CHAIN N" IS A SHORT LABEL NOW, and the long sentence is the level's tooltip instead of a line of text.
-	CHECK(panel->railForTest(0).labelForTest() == "1");
+	CHECK(panel->railForTest(0).labelForTest() == "Chain 1");
 	CHECK(panel->railForTest(0).captionForTest()[0] == '\0');
 	CHECK(std::string(open.levelPill().tooltipAt(visage::Point { 2.0f, 2.0f })).find("parallel") != std::string::npos);
 	view.reset();
@@ -36522,7 +36523,9 @@ TEST_CASE("NO, + Chain: the Rack window offers '+ Chain' in Parallel, Select and
 		// A PRESS WHERE IT STANDS (or stood): a chain more exactly where it is offered, none where it is not.
 		const size_t before = v.r.rack().chainCount();
 		visage::MouseEvent e;
-		e.position = { slot.x() + slot.width() * 0.5f, slot.y() + slot.height() * 0.5f };
+		// WHERE IT STANDS NOW (after the last strip: it moves with the rails), or where it stood in the first mode.
+		const visage::Bounds at = v.panel->addBoundsForTest().width() > 0.0f ? v.panel->addBoundsForTest() : slot;
+		e.position = { at.x() + at.width() * 0.5f, at.y() + at.height() * 0.5f };
 		v.panel->onMouseDown().callback(e);
 		CHECK(v.r.rack().chainCount() == before + (roleMode ? 0 : 1));
 	}

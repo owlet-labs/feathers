@@ -29,6 +29,7 @@
 // tally, which is how a drop RATE is measured rather than one green run believed.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "test_heap.h"
 #include "doctest.h"
 
 #include "clap/clap.h"
@@ -46,6 +47,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <new>
 #include <random>
 #include <set>
 #include <string>
@@ -54,6 +56,91 @@
 #include <vector>
 
 extern "C" const clap_plugin_entry clap_entry;
+
+//------------------------------------------------------------------------------------------------//
+// ALLOCATIONS AND FREES INSIDE process(): counted by replacing the global operator new and delete for this binary  //
+// (test_soak's guard, with the frees counted too — a state traded on the audio thread must not destroy anything).  //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+thread_local bool tInProcess = false;
+std::atomic<uint64_t> gProcessAllocations { 0 };
+std::atomic<uint64_t> gProcessFrees { 0 };
+void countedFree(void* p) noexcept {
+	if (tInProcess && p != nullptr) {
+		gProcessFrees.fetch_add(1, std::memory_order_relaxed);
+	}
+	feathers::test::heapFree(p);
+}
+} // namespace
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+void* operator new(std::size_t size) {
+	if (tInProcess) {
+		gProcessAllocations.fetch_add(1, std::memory_order_relaxed);
+	}
+	if (void* p = feathers::test::heapAlloc(size == 0 ? 1 : size)) {
+		return p;
+	}
+	throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) {
+	return ::operator new(size);
+}
+void* operator new(std::size_t size, std::align_val_t al) {
+	if (tInProcess) {
+		gProcessAllocations.fetch_add(1, std::memory_order_relaxed);
+	}
+	const std::size_t a = static_cast<std::size_t>(al);
+	const std::size_t rounded = (size + a - 1) / a * a;
+	if (void* p = feathers::test::heapAlignedAlloc(a, rounded == 0 ? a : rounded)) {
+		return p;
+	}
+	throw std::bad_alloc();
+}
+void* operator new[](std::size_t size, std::align_val_t al) {
+	return ::operator new(size, al);
+}
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+	try {
+		return ::operator new(size);
+	} catch (...) {
+		return nullptr;
+	}
+}
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+	try {
+		return ::operator new(size);
+	} catch (...) {
+		return nullptr;
+	}
+}
+void operator delete(void* p) noexcept {
+	countedFree(p);
+}
+void operator delete[](void* p) noexcept {
+	countedFree(p);
+}
+void operator delete(void* p, std::size_t) noexcept {
+	countedFree(p);
+}
+void operator delete[](void* p, std::size_t) noexcept {
+	countedFree(p);
+}
+void operator delete(void* p, std::align_val_t) noexcept {
+	countedFree(p);
+}
+void operator delete[](void* p, std::align_val_t) noexcept {
+	countedFree(p);
+}
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept {
+	countedFree(p);
+}
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept {
+	countedFree(p);
+}
+#pragma GCC diagnostic pop
 
 namespace {
 
@@ -176,7 +263,9 @@ public:
 		process.out_events = &out;
 		process.transport = transport;
 		steady_ += frames;
+		tInProcess = true;
 		(void)plugin_->process(plugin_, &process);
+		tInProcess = false;
 		uint32_t kind = 0;
 		int32_t key = 0;
 		uint64_t sample = 0;
@@ -475,6 +564,9 @@ struct PatternRun {
 	double refusedAll = 0.0;
 	double adoptMaxNs = 0.0; ///< the longest the audio thread's adopt path took
 	double takeMaxNs = 0.0;   ///< and the take alone
+	std::vector<std::pair<int64_t, double>> takes; ///< every take: (the block it came in, its nanoseconds)
+	uint64_t allocations = 0; ///< operator new inside process() over the run
+	uint64_t frees = 0;       ///< and delete
 };
 
 /// MORE OF THE PATTERN'S CONTROLS for the next runs, by name (a case sets them and clears them).
@@ -610,6 +702,10 @@ PatternRun patternRun(uint32_t fixedBlock, uint32_t blockSeed, double bpm, doubl
 		std::stable_sort(played.begin(), played.end(), [](const Played& a, const Played& b) { return a.at < b.at; });
 	}
 	size_t nextPlayed = 0;
+	const uint64_t allocationsBefore = gProcessAllocations.load();
+	const uint64_t freesBefore = gProcessFrees.load();
+	double takesSeen = 0.0;
+	int64_t blockIndex = 0;
 	int64_t rendered = 0;
 	int64_t nextWrap = 1;
 	bool first = true;
@@ -647,6 +743,11 @@ PatternRun patternRun(uint32_t fixedBlock, uint32_t blockSeed, double bpm, doubl
 		block.build();
 		const clap_event_transport transport = transportAt(beatsAt(rendered), bpm, true);
 		inst.run(frames, block, &transport, &handed);
+		if (const double t = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_TAKES); t != takesSeen) {
+			takesSeen = t;
+			r.takes.emplace_back(blockIndex, inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_LAST_TAKE_NS));
+		}
+		++blockIndex;
 		if (rendered == 0) {
 			r.refusedFirstBlock = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED);
 		}
@@ -685,6 +786,8 @@ PatternRun patternRun(uint32_t fixedBlock, uint32_t blockSeed, double bpm, doubl
 	r.refusedAll = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED);
 	r.adoptMaxNs = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_MAX_NS);
 	r.takeMaxNs = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_TAKE_MAX_NS);
+	r.allocations = gProcessAllocations.load() - allocationsBefore;
+	r.frees = gProcessFrees.load() - freesBefore;
 	return r;
 }
 
@@ -904,6 +1007,9 @@ TEST_CASE("note drops (d): a chord struck on the first block a just-added Patter
 	double adoptMaxNs = 0.0;
 	double takeMaxNs = 0.0;
 	std::vector<double> takes;
+	uint64_t allocations = 0, frees = 0, takeCount = 0;
+	std::vector<std::tuple<int, int64_t, double>> slow; // (run, block, us) for every take over 100 us
+	std::map<int64_t, uint64_t> takesAtBlock; // how many takes landed on each block index, over all runs
 	for (int s = 0; s < runs; ++s) {
 		const PatternRun run = patternRun(64, 1, bpm, 0.0, 1, mode, chord, kLength, 2);
 		const auto [missing, extra] = onsMissing(reference.ons, run.ons);
@@ -912,6 +1018,17 @@ TEST_CASE("note drops (d): a chord struck on the first block a just-added Patter
 		adoptMaxNs = std::max(adoptMaxNs, run.adoptMaxNs);
 		takeMaxNs = std::max(takeMaxNs, run.takeMaxNs);
 		takes.push_back(run.takeMaxNs);
+		allocations += run.allocations;
+		frees += run.frees;
+		for (const auto& [block, ns] : run.takes) {
+			++takeCount;
+			++takesAtBlock[block];
+			if (ns > 100000.0) {
+				slow.emplace_back(s, block, ns / 1000.0);
+			}
+		}
+		CHECK(run.allocations == 0); // NOTHING ALLOCATED OR FREED ON THE AUDIO THREAD, the takes included
+		CHECK(run.frees == 0);
 		const bool dropped = missing + extra > 0;
 		refusedFirst += refused ? 1 : 0;
 		dropRuns += dropped ? 1 : 0;
@@ -920,6 +1037,13 @@ TEST_CASE("note drops (d): a chord struck on the first block a just-added Patter
 		CHECK(run.refusedAll == 0.0); // NO BLOCK RUNS ON A STALE STATE: the adopt is never refused
 		CHECK(missing == 0);
 		CHECK(extra == 0);
+	}
+	std::printf("audio thread: %llu allocations, %llu frees in process() over the runs; %llu takes, %zu over 100 us\n",
+	            static_cast<unsigned long long>(allocations), static_cast<unsigned long long>(frees),
+	            static_cast<unsigned long long>(takeCount), slow.size());
+	for (const auto& [run, block, us] : slow) {
+		std::printf("  slow take: run %d block %lld %.1f us (takes on that block over all runs: %llu)\n", run, static_cast<long long>(block), us,
+		            static_cast<unsigned long long>(takesAtBlock[block]));
 	}
 	std::printf("startup race: runs %d, first block refused a publish %d, runs that lost or added steps %d, both %d; blocks run on a "
 	            "stale chain state %g; longest adopt path %.1f us, longest take %.1f us (median of the runs' longest %.2f us)\n",

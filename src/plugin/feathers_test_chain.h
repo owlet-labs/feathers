@@ -126,6 +126,9 @@ enum clap_feathers_synth_reading : uint32_t {
 	CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_MAX_NS = 20,
 	/// The take alone (`PublishedChainState::adopt`: the exchange and the trade of buffers), in nanoseconds.
 	CLAP_FEATHERS_SYNTH_CHAIN_TAKE_MAX_NS = 21,
+	/// How many takes there have been, and how long the last one took, in nanoseconds (a case reads them between blocks).
+	CLAP_FEATHERS_SYNTH_CHAIN_TAKES = 22,
+	CLAP_FEATHERS_SYNTH_CHAIN_LAST_TAKE_NS = 23,
 	CLAP_FEATHERS_SYNTH_READING_COUNT
 };
 

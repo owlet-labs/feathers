@@ -1672,8 +1672,9 @@ bool Synth::adoptChains(const rack::PublishedChainState& published) noexcept {
 		++chainAdoptRefused_;
 		return false; // keep what we have, ask again next block
 	}
-	chainTakeMaxNs_ = std::max<uint64_t>(
-	    chainTakeMaxNs_, static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count()));
+	chainLastTakeNs_ = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count());
+	chainTakeMaxNs_ = std::max(chainTakeMaxNs_, chainLastTakeNs_);
+	++chainTakes_;
 	chainsAdoptedMirror_.store(chainsSequence_, std::memory_order_release);
 	++structureRevision_;
 	chainsOfState(chainState_, &adoptedFx_, &adoptedRack_);
@@ -4644,6 +4645,8 @@ bool Synth::soakReadingForTest(uint32_t what, double* out) const {
 	case CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED: *out = static_cast<double>(chainAdoptRefused_); return true;
 	case CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_MAX_NS: *out = static_cast<double>(chainAdoptMaxNs_); return true;
 	case CLAP_FEATHERS_SYNTH_CHAIN_TAKE_MAX_NS: *out = static_cast<double>(chainTakeMaxNs_); return true;
+	case CLAP_FEATHERS_SYNTH_CHAIN_TAKES: *out = static_cast<double>(chainTakes_); return true;
+	case CLAP_FEATHERS_SYNTH_CHAIN_LAST_TAKE_NS: *out = static_cast<double>(chainLastTakeNs_); return true;
 	case CLAP_FEATHERS_SYNTH_PATTERN_HELD:
 	case CLAP_FEATHERS_SYNTH_PATTERN_SOUNDING:
 	case CLAP_FEATHERS_SYNTH_PATTERN_LOWEST:

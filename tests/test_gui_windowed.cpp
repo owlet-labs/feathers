@@ -4318,7 +4318,7 @@ TEST_CASE("rack rename: real X presses, twice at the centre of a chain strip's v
 		pointer.send(ButtonPress, nx, ny, button, 0);
 		pointer.send(ButtonRelease, nx, ny, button, mask);
 		if (!rightButton) {
-			pumpEditor(f.gui, 20); // a hand's two clicks are tens of milliseconds apart; the backend counts a repeat only when the clock moved
+			pumpEditor(f.gui, 100); // a hand's two clicks are about 200 ms apart (100 rounds of 2 ms); the backend counts a repeat only when the clock moved
 			pointer.send(ButtonPress, nx, ny, button, 0);
 			pointer.send(ButtonRelease, nx, ny, button, mask);
 		}

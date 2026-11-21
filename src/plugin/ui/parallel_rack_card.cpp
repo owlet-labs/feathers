@@ -434,7 +434,7 @@ std::string chainSummary(const rack::InnerChain* chain) {
 			if (!out.empty()) {
 				out += " \xE2\x80\xBA "; // ›
 			}
-			out += d->traits.name;
+			out += backplane::instanceBaseName(*bridge, bridge->deviceAtPosition(p), d->traits.name);
 		}
 	}
 	return out.empty() ? std::string("empty") : out;

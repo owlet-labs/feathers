@@ -84,7 +84,7 @@ std::string routeWords(const backplane::DeviceHost& host, const backplane::Route
 	std::string from = "a host source";
 	if (r.source.isDevice() && !r.source.isOuter()) {
 		const device::Descriptor* d = host.descriptorOf(r.source.device);
-		from = std::string(d != nullptr ? d->traits.name : "Device") + ' '
+		from = backplane::instanceBaseName(host, r.source.device, d != nullptr ? d->traits.name : "Device") + ' '
 		       + host.outputLabel(r.source.device, r.source.index);
 	}
 	return from + " \xE2\x86\x92 " + host.destinationName(r.destination);

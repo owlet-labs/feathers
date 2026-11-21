@@ -210,8 +210,9 @@ bool ChainCard::refreshSummary() {
 				// CANNOT RESOLVE, so the tag is all there is to show — and truncating it to four
 				// showed "SCAT" for SCATTER (now SKLITTER) once `device::kTagBytes` widened. The patch's tag is
 				// NUL-terminated (`rack::patchTagOf`), so the plain constructor is the right one.
-				next += desc != nullptr && desc->traits.name != nullptr ? desc->traits.name
-				                                                       : std::string(d.tag.data());
+				next += !d.name.empty() ? d.name // the instance's own name, as the patch says it
+				        : desc != nullptr && desc->traits.name != nullptr ? std::string(desc->traits.name)
+				                                                          : std::string(d.tag.data());
 				++held;
 			}
 		}

@@ -89,7 +89,7 @@ std::string RackViewAdapter::chainTitle(size_t slot) const {
 	}
 	for (size_t p = 0; p < bridge->chainLength(); ++p) {
 		if (const device::Descriptor* d = bridge->descriptorOf(bridge->deviceAtPosition(p)); d != nullptr && d->traits.name != nullptr) {
-			return d->traits.name;
+			return backplane::instanceBaseName(*bridge, bridge->deviceAtPosition(p), d->traits.name);
 		}
 	}
 	return {};
@@ -105,7 +105,7 @@ std::vector<std::string> RackViewAdapter::deviceNames(size_t slot) const {
 	const rack::RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
 	for (size_t p = 0; bridge != nullptr && p < bridge->chainLength(); ++p) {
 		if (const device::Descriptor* d = bridge->descriptorOf(bridge->deviceAtPosition(p)); d != nullptr && d->traits.name != nullptr) {
-			out.emplace_back(d->traits.name);
+			out.push_back(backplane::instanceBaseName(*bridge, bridge->deviceAtPosition(p), d->traits.name));
 		}
 	}
 	return out;

@@ -1658,7 +1658,9 @@ public:
 	/// THE NAME THE HEAD WEARS — the descriptor's. A card with no descriptor overrides it.
 	virtual std::string headName() const {
 		const device::Descriptor* desc = descriptor();
-		return desc != nullptr && desc->traits.name != nullptr ? desc->traits.name : "";
+		const backplane::DeviceHost* host = deviceHost();
+		const char* declared = desc != nullptr ? desc->traits.name : nullptr;
+		return host != nullptr ? backplane::instanceBaseName(*host, device(), declared) : std::string(declared != nullptr ? declared : "");
 	}
 
 	/// **A SHORT LINE THE HEAD MAY CARRY AFTER THE NAME** — the chain's summary is the one there is.

@@ -1243,9 +1243,12 @@ std::string RackBridge::innerDestinationName(DeviceInstanceId chain, backplane::
 		const DeviceInstanceId holder = chain & ~kSiteKeyBit;
 		const device::Descriptor* d = descriptorOf(holder);
 		const size_t at = positionOf(holder);
-		std::string name = d != nullptr ? std::string(d->traits.name) : std::string("Device");
-		if (at != kNoSlot) {
-			name += " " + std::to_string(at + 1);
+		std::string name = userNameOf(holder);
+		if (name.empty()) {
+			name = d != nullptr ? std::string(d->traits.name) : std::string("Device");
+			if (at != kNoSlot) {
+				name += " " + std::to_string(at + 1);
+			}
 		}
 		void* surface = bodies_.surfaceOf(chain);
 		return backplane::innerNameOf(&siteDescriptor(), surface, inner, siteRoutePrefix(surface, std::move(name), inner));

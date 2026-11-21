@@ -847,4 +847,12 @@ private:
 	std::vector<size_t> begun_;
 };
 
+/// **WHAT AN INSTANCE IS CALLED — THE ONE ANSWER.** The user's name for it when it has one, else `declared` (the device's own name).
+/// Every surface that names an instance asks this and then adds whatever it adds to the declared name (a place number): a NAMED
+/// instance wears its name alone, since the name is the player's choice and a number beside it would say something else.
+[[nodiscard]] inline std::string instanceBaseName(const DeviceHost& host, DeviceInstanceId id, const char* declared) {
+	std::string named = host.userNameOf(id);
+	return named.empty() ? std::string(declared != nullptr ? declared : "") : named;
+}
+
 } // namespace feathers::backplane

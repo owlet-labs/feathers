@@ -334,10 +334,13 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 		if (d == nullptr) {
 			return "Source"; // an id nothing holds names nothing
 		}
-		std::string name = d->traits.name;
-		if (const size_t position = engine_.positionOf(source.device); position != RackBridge::kNoSlot) {
-			name += " ";
-			name += std::to_string(position + 1);
+		std::string name = engine_.userNameOf(source.device); // a NAMED instance wears its name alone
+		if (name.empty()) {
+			name = d->traits.name;
+			if (const size_t position = engine_.positionOf(source.device); position != RackBridge::kNoSlot) {
+				name += " ";
+				name += std::to_string(position + 1);
+			}
 		}
 		if (d->outputCount() > 1 && source.index < d->outputCount()) {
 			name += " · ";
@@ -485,6 +488,9 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	notify_ = std::make_unique<ui::NotifyTray>();
 	notify_->setIgnoresMouseEvents(true, false);
 	addChild(notify_.get());
+	// THE DEVICE RENAME FIELD, over a card's header (the slot menu's "Rename..."); one undo step in this editor's history.
+	rename_ = std::make_unique<ui::DeviceRename>(*this, notify_.get());
+	rename_->setHistory(&history_);
 
 	// THE CANVAS, BESIDE THE LANE — a region of this layout, so it is a child here and not of the
 	// surface host, and it sits UNDER the notifier and the surfaces like everything else in the editor.
@@ -1422,6 +1428,7 @@ void RackEditor::showSlotMenu(DeviceInstanceId device) {
 	// **AND THE SELECTION'S VERBS** (backlog OA): Group into Chain / Rack, Copy, Cut, Paste after, Duplicate, and
 	// Remove N — over the selection when it holds this card, else this card alone. A POST card's are POST's (backlog OA).
 	selectionOf(device).addVerbs(menu, kVerbIds, device);
+	rename_->addRows(menu, laneOf(device), device);
 	// **THROUGH `removeSlot`, WHICH IS THE POINT OF `removeSlot` EXISTING.** This inlined the same
 	// four lines and was missing one of them — the focus reset — so a device removed from the MENU
 	// left `focusedSlot_` naming a slot that no longer holds anything. The commit that introduced
@@ -1429,7 +1436,13 @@ void RackEditor::showSlotMenu(DeviceInstanceId device) {
 	// not: the edit that was supposed to redirect this call site silently did not apply, and the
 	// claim went into a commit message unchecked.
 	menu.onSelection() = [this, device](int id) {
-		if (id >= kVerbIds) {
+		if (id == ui::DeviceRename::kRenameRow || id == ui::DeviceRename::kClearRow) {
+			if (const CardEntry* at = entryOf(device); at != nullptr && at->card != nullptr) {
+				ui::FxCard& card = *at->card;
+				(void)rename_->pick(id, laneOf(device), device, card, ui::renameAnchorOn(card, card.bodyLeft(), card.bodyTopEdge()));
+			}
+		}
+		else if (id >= kVerbIds) {
 			(void)slotVerbForTest(device, static_cast<ui::FragmentVerb>(id - kVerbIds));
 		}
 		else if (id == 0) {
@@ -1513,7 +1526,8 @@ void RackEditor::toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId
 	}
 
 	const ui::SurfaceId presented = surfaces_->present(
-	    std::move(content), ui::SurfaceNeed::SpansGesture, desc->traits.name, [this] { pruneExpanded(); });
+	    std::move(content), ui::SurfaceNeed::SpansGesture, backplane::instanceBaseName(lane, device, desc->traits.name),
+	    [this] { pruneExpanded(); });
 	if (presented != ui::kNoSurface) {
 		expanded_.push_back(presented);
 	}

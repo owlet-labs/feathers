@@ -19,6 +19,7 @@
 
 #include "device/format_value.h"
 #include "device/registry.h"
+#include "rack/rack_state.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -187,7 +188,23 @@ bool SlotOwner::textSite(const hostslots::Target& target, DeviceInstanceId* devi
 	return false;
 }
 
+uint32_t SlotOwner::renamedDevice(DeviceInstanceId device) {
+	if (device == kNoInstance) {
+		return 0;
+	}
+	// EVERY SLOT UNDER THE DEVICE RELABELLED: a rebase onto the same path renames each and moves nothing, so the host hears it as one
+	// rescan at the next visit. A device with no slot costs the host nothing.
+	const DeviceInstanceId prefix[1] = { device };
+	const std::optional<uint32_t> moved = pool_.rebase(prefix, prefix, [this](const hostslots::Target& t) { return labelForTarget(t); });
+	return moved.value_or(0);
+}
+
 std::string SlotOwner::ownDeviceName(DeviceInstanceId device) const {
+	if (names_ != nullptr) {
+		if (const std::string_view named = names_->nameOf(device); !named.empty()) {
+			return std::string(named); // the player's own name, with no twin number
+		}
+	}
 	const device::Descriptor* desc = record_.holds(device) ? record_.descriptorOf(device) : nullptr;
 	if (desc == nullptr || desc->traits.name == nullptr) {
 		return {};

@@ -2294,7 +2294,7 @@ bool Gui::create(const char* api, bool isFloating) noexcept {
 			impl_->expandedWindow->dismiss();
 		}
 		// THROUGH THE SEAM THE RACK USES — canvas or overlay is the layers' call, not this editor's.
-		const std::string title = desc->traits.name;
+		const std::string title = impl_->bridge.userNameOf(device).empty() ? std::string(desc->traits.name) : impl_->bridge.userNameOf(device);
 		(void)impl_->surfaces->present(std::move(view), SurfaceNeed::SpansGesture, title, [this] {
 			// THE LANE REDRAWS BECAUSE ITS EXPAND BUTTON MAY DRAW DIFFERENTLY once nothing is open.
 			// It does not today; the road exists so that the day it does, the button is not a

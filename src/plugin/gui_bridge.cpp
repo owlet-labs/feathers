@@ -107,6 +107,7 @@ uint32_t UiParamQueue::droppedCount() const noexcept {
 //-------------//
 
 ParamBridge::ParamBridge() {
+	slots_.setNames(&outputLabels_); // a named instance wears its name in the host's slot captions
 	// THE ENGINE'S ROUTE STORES GROW WITH THE LIST, BEFORE IT PUBLISHES A COUNT THAT NEEDS THEM (backlog OJ).
 	routeList_.setGrowthHook(
 	    [](void* host, size_t capacity) {
@@ -372,9 +373,12 @@ std::string ParamBridge::innerDestinationName(DeviceInstanceId chain, backplane:
 		const DeviceInstanceId holder = chain & ~kSiteKeyBit;
 		const device::Descriptor* d = descriptorOf(holder);
 		const size_t at = fxSlotOf(holder);
-		std::string name = d != nullptr ? std::string(d->traits.name) : std::string("Device");
-		if (at != kNoPosition) {
-			name += " " + std::to_string(at + 1);
+		std::string name = userNameOf(holder);
+		if (name.empty()) {
+			name = d != nullptr ? std::string(d->traits.name) : std::string("Device");
+			if (at != kNoPosition) {
+				name += " " + std::to_string(at + 1);
+			}
 		}
 		void* surface = fxBodies_.surfaceOf(chain);
 		return backplane::innerNameOf(&rack::siteDescriptor(), surface, inner,
@@ -2107,6 +2111,8 @@ bool ParamBridge::setUserName(DeviceInstanceId device, std::string_view name) {
 	if (!outputLabels_.setName(device, name)) {
 		return false; // the name it has already; not an edit
 	}
+	// THE HOST'S SLOT CAPTIONS NAME THE INSTANCE: every slot under it takes the new name, one rescan owed at the next visit.
+	(void)slots_.renamedDevice(device);
 	// A NAME IS PATCH STATE (the project is modified) and the editor repaints every surface that draws the instance's name.
 	stateDirty_.store(true, std::memory_order_relaxed);
 	repaintDirty_.store(true, std::memory_order_relaxed);

@@ -287,7 +287,21 @@ public:
 		/// **"Clear variants 2–8…"** — on every chip's menu while any of 2..8 is saved. ASKS first
 		/// (`showClearVariantsMenu`, Delete's pattern); the root, variant 1, is kept, and a factory file is never removed.
 		ClearOthers,
+		/// **"Save as a new preset first…"** — on an UNUSED chip's menu while the shown preset is Init or a factory one:
+		/// the Save-as prompt, so the variant can belong to a preset of the user's own. The chip's plain Save still
+		/// writes the variant of the factory preset directly.
+		SaveAsNewFirst,
 	};
+	/// The preset the shown entry is a variant of (or is) is Init or a factory one — a user preset it is not.
+	[[nodiscard]] bool parentIsFactory() const;
+	/// **THE SOUND LEFT LOADED BY A DELETE**: deleting the shown entry deletes its file, not the sound, so the face keeps
+	/// naming it as UNSAVED (`itemPlaceholder`) and the chips stay hung off its base: pressing one saves that sound
+	/// again. Empty while an entry is shown.
+	[[nodiscard]] bool showingDeleted() const noexcept { return index_ < 0 && !deletedName_.empty(); }
+	[[nodiscard]] const std::string& deletedName() const noexcept { return deletedName_; }
+	/// "Glass" + variant 3 → "Glass \xc2\xb7 variant 3": how the face names a variant file, so a saved variant reads as
+	/// "variant of Glass" instead of a file name. A name that is no variant is returned as it is.
+	[[nodiscard]] static std::string variantFaceName(const std::string& name);
 	/// The entries "Clear variants 2–8" would remove for the shown preset: its saved variants 2..8 that are not factory files.
 	[[nodiscard]] std::vector<int> clearableVariants() const;
 	/// The answer to "Clear N variants of X?": true removes `clearableVariants()` as they are NOW; false changes nothing.
@@ -503,6 +517,11 @@ private:
 	// ItemSource
 	size_t itemCount() const override { return entries_.size(); }
 	std::string itemLabel(size_t index) const override;
+	std::string itemPlaceholder() const override;
+	/// The shown entry's name and folder, or the deleted one's (`showingDeleted`); false when neither.
+	bool shownIdentity(std::string& name, std::string& category) const;
+	std::string deletedName_;
+	std::string deletedCategory_;
 	int currentItem() const override { return index_; }
 	bool selectItem(size_t index) override { return selectIndex(static_cast<int>(index)); }
 	bool itemReadOnly(size_t index) const override { return isReadOnly(static_cast<int>(index)); }

@@ -393,6 +393,8 @@ void PresetBrowser::loadBankFromDisk() {
 	// The selection follows its entry; nothing is applied — opening an editor must not change the sound.
 	const int found = indexOf(wasName, wasCategory);
 	index_ = found >= 0 ? found : (entries_.empty() ? -1 : 0);
+	deletedName_.clear();
+	deletedCategory_.clear();
 	redraw();
 }
 
@@ -629,11 +631,12 @@ bool PresetBrowser::itemListed(size_t index) const {
 }
 
 int PresetBrowser::variantIndex(int n) const {
-	if (n < 1 || n > kVariants || index_ < 0 || index_ >= static_cast<int>(entries_.size())) {
+	std::string name;
+	std::string category;
+	if (n < 1 || n > kVariants || !shownIdentity(name, category)) {
 		return -1;
 	}
-	const Entry& shown = entries_[static_cast<size_t>(index_)];
-	return indexOf(variantFileName(variantBase(shown.name), n), shown.category);
+	return indexOf(variantFileName(variantBase(name), n), category);
 }
 
 PresetBrowser::ChipState PresetBrowser::chipState(int n) const {
@@ -645,7 +648,8 @@ PresetBrowser::ChipState PresetBrowser::chipState(int n) const {
 }
 
 bool PresetBrowser::pressVariant(int n) {
-	if (n < 1 || n > kVariants || index_ < 0 || index_ >= static_cast<int>(entries_.size())) {
+	std::string sn, sc;
+	if (n < 1 || n > kVariants || !shownIdentity(sn, sc)) {
 		return false;
 	}
 	return actVariant(n, variantIndex(n) >= 0 ? VariantVerb::Load : VariantVerb::Save);
@@ -663,13 +667,17 @@ std::vector<int> PresetBrowser::clearableVariants() const {
 }
 
 std::vector<PresetBrowser::VariantVerb> PresetBrowser::variantVerbs(int n) const {
-	if (n < 1 || n > kVariants || index_ < 0) {
+	std::string sn, sc;
+	if (n < 1 || n > kVariants || !shownIdentity(sn, sc)) {
 		return {};
 	}
 	std::vector<VariantVerb> out;
 	const int at = variantIndex(n);
 	if (at < 0) {
 		out = { VariantVerb::Save };
+		if (parentIsFactory()) {
+			out.push_back(VariantVerb::SaveAsNewFirst);
+		}
 	}
 	else if (n == 1) {
 		// THE ROOT: loaded and overwritten like any variant — never over a factory file — but not deleted or renamed
@@ -697,13 +705,15 @@ std::string PresetBrowser::variantVerbLabel(VariantVerb verb, int n) {
 	case VariantVerb::Overwrite: return "Overwrite variant " + number;
 	case VariantVerb::Delete: return "Delete variant " + number;
 	case VariantVerb::Promote: return "Rename to a full preset\xe2\x80\xa6";
+	case VariantVerb::SaveAsNewFirst: return "Save as a new preset first\xe2\x80\xa6";
 	case VariantVerb::ClearOthers: return "Clear variants 2\xe2\x80\x93" + std::to_string(kVariants) + "\xe2\x80\xa6";
 	}
 	return {};
 }
 
 bool PresetBrowser::actVariant(int n, VariantVerb verb) {
-	if (n < 1 || n > kVariants || index_ < 0 || index_ >= static_cast<int>(entries_.size())) {
+	std::string sn, sc;
+	if (n < 1 || n > kVariants || !shownIdentity(sn, sc)) {
 		return false;
 	}
 	const int at = variantIndex(n);
@@ -712,16 +722,22 @@ bool PresetBrowser::actVariant(int n, VariantVerb verb) {
 		if (at >= 0) {
 			return false; // a saved chip is overwritten only by its menu's Overwrite, never by a click
 		}
-		const Entry& shown = entries_[static_cast<size_t>(index_)];
-		const std::string base = variantBase(shown.name);
-		const std::string category = shown.category;
+		const std::string base = variantBase(sn);
+		const std::string category = sc;
 		// THE BASE'S TAGS when the base is in the bank; the shown entry's otherwise (a variant whose base was removed).
 		const int baseAt = indexOf(base, category);
+		const int tagsAt = baseAt >= 0 ? baseAt : index_;
 		const std::vector<std::string> tags =
-		    entries_[static_cast<size_t>(baseAt >= 0 ? baseAt : index_)].meta.tags; // a copy: the save inserts
+		    tagsAt >= 0 ? entries_[static_cast<size_t>(tagsAt)].meta.tags : std::vector<std::string> {}; // a copy: the save inserts
 		const std::string name = variantFileName(base, n);
 		return saveAs(category.empty() ? name : category + "/" + name, tags);
 	}
+	case VariantVerb::SaveAsNewFirst:
+		if (at >= 0 || !parentIsFactory() || provider_ == nullptr) {
+			return false;
+		}
+		beginSave();
+		return true;
 	case VariantVerb::Load: return at >= 0 && selectIndex(at);
 	case VariantVerb::Overwrite:
 		// THE FACTORY GUARD: chip 1 over a shipped root writes nothing (Save as… still does).
@@ -922,11 +938,16 @@ bool PresetBrowser::deleteEntry(int index) {
 	if (index == lastTouched()) {
 		setTouched(false, touchedName_, touchedCategory_); // gone: the prompt has nothing to pre-fill, and `Save "X"` nothing to save over
 	}
+	const std::string goneName = entries_[static_cast<size_t>(index)].name;
+	const std::string goneCategory = entries_[static_cast<size_t>(index)].category;
 	entries_.erase(entries_.begin() + index);
 	// THE CURRENT PRESET WENT, OR ONE BEFORE IT DID: the face says nothing is current, or follows its
 	// entry down one. Nothing is applied either way — deleting a file does not change the sound.
 	if (index_ == index) {
 		index_ = -1;
+		// THE SOUND STAYS LOADED: the face keeps naming it, unsaved, and the chips stay hung off its base.
+		deletedName_ = goneName;
+		deletedCategory_ = goneCategory;
 	}
 	else if (index_ > index) {
 		--index_;
@@ -1236,7 +1257,7 @@ bool PresetBrowser::exportTo(std::filesystem::path file) {
 //------------------------------------------------------------------------------------------------//
 
 std::string PresetBrowser::itemLabel(size_t index) const {
-	return entries_[index].name;
+	return variantFaceName(entries_[index].name);
 }
 
 void PresetBrowser::itemsWillList() const {
@@ -1819,6 +1840,51 @@ void bindPresetIdentity(PresetBrowser& browser, const std::function<PresetIdenti
 			write(PresetIdentity { name, category });
 		}
 	};
+}
+
+} // namespace feathers::ui
+
+namespace feathers::ui {
+
+bool PresetBrowser::shownIdentity(std::string& name, std::string& category) const {
+	if (index_ >= 0 && index_ < static_cast<int>(entries_.size())) {
+		name = entries_[static_cast<size_t>(index_)].name;
+		category = entries_[static_cast<size_t>(index_)].category;
+		return true;
+	}
+	if (showingDeleted()) {
+		name = deletedName_;
+		category = deletedCategory_;
+		return true;
+	}
+	return false;
+}
+
+bool PresetBrowser::parentIsFactory() const {
+	std::string name, category;
+	if (!shownIdentity(name, category)) {
+		return false;
+	}
+	const int base = indexOf(variantBase(name), category);
+	if (base >= 0) {
+		return isFactory(base);
+	}
+	return index_ >= 0 && isFactory(index_);
+}
+
+std::string PresetBrowser::variantFaceName(const std::string& name) {
+	const std::string base = variantBase(name);
+	if (base == name) {
+		return name;
+	}
+	return base + " \xc2\xb7 variant " + name.substr(base.size() + kVariantInfix.size());
+}
+
+std::string PresetBrowser::itemPlaceholder() const {
+	if (showingDeleted()) {
+		return variantFaceName(deletedName_) + " (unsaved)";
+	}
+	return ItemSource::itemPlaceholder();
 }
 
 } // namespace feathers::ui

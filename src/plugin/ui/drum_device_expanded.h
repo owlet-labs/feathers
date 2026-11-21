@@ -21,6 +21,7 @@
 #include "fx/drum/drum_types.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
+#include "plugin/ui/drum_device_likes.h"
 #include "plugin/ui/drum_device_pad.h"
 #include "plugin/ui/drum_device_ui.h"
 #include "plugin/ui/drum_hit_picture.h"
@@ -56,7 +57,7 @@ public:
 	void modulationBound(ModState* mod, EditHistory* history) override;
 
 	static constexpr float kWidth = 640.0f;
-	static constexpr float kMinimumHeight = 690.0f;
+	static constexpr float kMinimumHeight = 718.0f;
 	static constexpr float kPad = 12.0f;
 	static constexpr float kPictureHeight = 210.0f;
 	static constexpr float kTerrainSize = 148.0f;
@@ -67,6 +68,7 @@ public:
 	/// The widget bound to control `p`, null where the control has none of its own (the picture's handles apart).
 	[[nodiscard]] visage::Frame* widgetForTest(dd::Param p) const { return widgets_[static_cast<size_t>(p)].get(); }
 	[[nodiscard]] DrumDevicePad& padForTest() const { return *pad_; }
+	[[nodiscard]] DrumLikeBar& likesForTest() const { return *likes_; }
 	[[nodiscard]] PitchReadout& readoutForTest() const { return *readout_; }
 	[[nodiscard]] DrumPlayButton* playForTest() const { return play_.get(); }
 
@@ -79,10 +81,11 @@ private:
 	HitPicture picture_;
 	std::array<std::unique_ptr<visage::Frame>, static_cast<size_t>(dd::Param::kCount)> widgets_ {};
 	std::unique_ptr<DrumDevicePad> pad_;
+	std::unique_ptr<DrumLikeBar> likes_;
 	std::unique_ptr<SettledPitchControl> settledControl_;
 	std::unique_ptr<PitchReadout> readout_;
 	std::unique_ptr<DrumPlayButton> play_;
-	dd::Settings padContext_ {};
+	DrumPadContext padContext_ {};
 	EditHistory* padGroup_ = nullptr;
 	feathers::drum::Kind shownKind_ = feathers::drum::Kind::kCount;
 	bool shownGate_ = false;

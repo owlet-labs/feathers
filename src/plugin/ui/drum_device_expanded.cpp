@@ -95,7 +95,7 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 	    [this](size_t index, float value) { model_.control(index == 0 ? dd::Param::TravelX : dd::Param::TravelY).setValue(static_cast<double>(value)); },
 	    [this](size_t field) { return static_cast<float>(model_.control(field == 0 ? dd::Param::TravelX : dd::Param::TravelY).value()); },
 	    model_.control(dd::Param::Rotate));
-	pad_->context = [this]() -> const dd::Settings& { return padContext_; };
+	pad_->context = [this]() -> const DrumPadContext& { return padContext_; };
 	pad_->onHoldBegan = [this] {
 		padGroup_ = historyOf(model_.control(dd::Param::TravelX));
 		if (padGroup_ != nullptr) {
@@ -115,6 +115,10 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 	pad_->setTravelControls(&model_.control(dd::Param::TravelX), &model_.control(dd::Param::TravelY));
 	installTooltipHover(*pad_, *pad_); // after the pad's own press handlers
 	addChild(pad_.get());
+	// THE HEART AND MUTATE under it: the likes' verbs, the warp the pad is drawn through.
+	likes_ = std::make_unique<DrumLikeBar>(model_, *pad_, notifier);
+	installTooltipHover(*likes_, *likes_);
+	addChild(likes_.get());
 	// THE SETTLED PITCH over Tune: typed note or Hz sets Tune, refused where there is no one pitch.
 	settledControl_ = std::make_unique<SettledPitchControl>(model_.control(dd::Param::Tune), [this] { return model_.settled(); });
 	readout_ = std::make_unique<PitchReadout>(*settledControl_);
@@ -123,7 +127,9 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 		play_ = std::make_unique<DrumPlayButton>(host, [this] { return model_.noteKey(); });
 		addChild(play_.get());
 	}
-	padContext_ = model_.settings();
+	(void)likes_->refresh();
+	padContext_.settings = model_.settings();
+	padContext_.likes = likes_->state();
 	layOut();
 }
 
@@ -191,6 +197,7 @@ void DrumDeviceExpanded::layOut() {
 	// TERRAIN: the pad at the left; Zone, Offset, Gamma, Rotate and the travel beside it, then the pitch mode, the readout and the scalers.
 	const float terrainY = velocity.bottom() + 12.0f;
 	pad_->setBounds(kPad, terrainY, kTerrainSize, kTerrainSize);
+	likes_->setBounds(kPad, terrainY + kTerrainSize + 4.0f, kTerrainSize, DrumLikeBar::kHeight);
 	Flow terrain { kPad + kTerrainSize + 12.0f, xMax, kPad + kTerrainSize + 12.0f, terrainY };
 	for (const dd::Param p : { dd::Param::Zone, dd::Param::ZoneOffset, dd::Param::Gamma, dd::Param::Rotate, dd::Param::TravelX, dd::Param::TravelY }) {
 		seat(terrain, p, 84.0f, ValueBox::kHeight);
@@ -205,7 +212,7 @@ void DrumDeviceExpanded::layOut() {
 		seat(terrain, p, kPillW, kPillH);
 	}
 	// BODY: the kind's own controls, then the snare's wire and bell amounts.
-	const float bodyY = std::max(terrain.bottom(), terrainY + kTerrainSize) + 12.0f;
+	const float bodyY = std::max(terrain.bottom(), terrainY + kTerrainSize + 4.0f + DrumLikeBar::kHeight) + 12.0f;
 	Flow body { kPad, xMax, kPad, bodyY };
 	seat(body, dd::Param::Drive, kPillW, kPillH);
 	seat(body, dd::Param::DriveCurve, 184.0f, 22.0f);
@@ -249,7 +256,9 @@ bool DrumDeviceExpanded::updateContent() {
 
 void DrumDeviceExpanded::follow() {
 	picture_.show(model_.kind(), model_.laws(), model_.decaySeconds(), model_.levelDb(), model_.handles());
-	padContext_ = model_.settings();
+	(void)likes_->refresh();
+	padContext_.settings = model_.settings();
+	padContext_.likes = likes_->state();
 	readout_->refresh(drum_pitch::readoutText(model_.settled()));
 }
 

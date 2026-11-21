@@ -507,7 +507,11 @@ public:
 	/// WHAT THE HEAD SAYS — the tag — and what the body says, for a case.
 	[[nodiscard]] const std::string& name() const noexcept { return name_; }
 	/// THE TAG IS THE NAME — there is no descriptor to ask — laid out like every other card's.
-	std::string headName() const override { return name_; }
+	std::string headName() const override {
+		const backplane::DeviceHost* host = deviceHost();
+		const std::string named = host != nullptr ? host->userNameOf(device()) : std::string {};
+		return named.empty() ? name_ : named;
+	}
 	static constexpr const char* kMessage = "device missing";
 	static constexpr float kBodyHeight = 28.0f;
 

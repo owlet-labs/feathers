@@ -855,6 +855,9 @@ public:
 	void setDevicePreset(DeviceInstanceId device, const PresetIdentity& identity) {
 		(void)outputLabels_.setPreset(device, identity);
 	}
+	/// WHAT THE USER CALLS A DEVICE INSTANCE (`rack::DeviceLabels::nameOf`), saved with the device in the chains block.
+	[[nodiscard]] std::string userNameOf(DeviceInstanceId device) const { return std::string(outputLabels_.nameOf(device)); }
+	bool setUserName(DeviceInstanceId device, std::string_view name);
 	/// **TOLD WHEN AN OUTPUT'S LABEL MOVES** — by `setOutputLabel` on a real change and by a patch load
 	/// (`restoreChains`) once per (device, output) whose label differs from before, after the bridge holds
 	/// the new one. A list, `subscribeMacroRename`'s shape and reason.

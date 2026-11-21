@@ -649,7 +649,7 @@ std::string firstDeviceName(const InnerChain* chain) {
 	const RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
 	for (size_t p = 0; bridge != nullptr && p < bridge->chainLength(); ++p) {
 		if (const device::Descriptor* d = bridge->descriptorOf(bridge->deviceAtPosition(p)); d != nullptr && d->traits.name != nullptr) {
-			return d->traits.name;
+			return backplane::instanceBaseName(*bridge, bridge->deviceAtPosition(p), d->traits.name);
 		}
 	}
 	return {};

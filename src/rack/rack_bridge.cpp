@@ -87,6 +87,7 @@ RackBridge::RackBridge(RackEngine& engine, backplane::InstanceCounter* shared, H
 	// this bridge's whole life — handed before any block runs, as Feathers hands its lane the bridge's.
 	if (slots == HostSlots::OwnPool) {
 		slots_ = std::make_unique<SlotOwner>(record_);
+		slots_->setNames(&outputLabels_);
 		macroOutbox_ = std::make_unique<MacroOutbox>(); // its macros are the plugin's host parameters (NG)
 		engine_.setHostSlotBus(&slots_->bus());
 		// A NESTED VERB THAT CHANGED THE POOL (T11) MARKS THIS PATCH, where the pool is saved.
@@ -1243,9 +1244,12 @@ std::string RackBridge::innerDestinationName(DeviceInstanceId chain, backplane::
 		const DeviceInstanceId holder = chain & ~kSiteKeyBit;
 		const device::Descriptor* d = descriptorOf(holder);
 		const size_t at = positionOf(holder);
-		std::string name = d != nullptr ? std::string(d->traits.name) : std::string("Device");
-		if (at != kNoSlot) {
-			name += " " + std::to_string(at + 1);
+		std::string name = userNameOf(holder);
+		if (name.empty()) {
+			name = d != nullptr ? std::string(d->traits.name) : std::string("Device");
+			if (at != kNoSlot) {
+				name += " " + std::to_string(at + 1);
+			}
 		}
 		void* surface = bodies_.surfaceOf(chain);
 		return backplane::innerNameOf(&siteDescriptor(), surface, inner, siteRoutePrefix(surface, std::move(name), inner));

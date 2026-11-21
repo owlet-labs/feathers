@@ -731,6 +731,18 @@ public:
 		(void)device;
 		(void)identity;
 	}
+	/// **WHAT THE USER CALLS A DEVICE INSTANCE** — empty for none (the declared name stands). Patch state beside the labels
+	/// (`rack::DeviceLabels::nameOf`); a host that keeps none answers empty and declines a set.
+	[[nodiscard]] virtual std::string userNameOf(DeviceInstanceId device) const {
+		(void)device;
+		return {};
+	}
+	/// Name it (clamped; empty clears). True when the name changed, so a caller owing a rescan owes it once. Naming changes no sound.
+	virtual bool setUserName(DeviceInstanceId device, std::string_view name) {
+		(void)device;
+		(void)name;
+		return false;
+	}
 	/// **A DEVICE'S BODY WAS EDITED THROUGH ITS SURFACE** (backlog JV) — an IR loaded or reshaped, a preset's
 	/// body applied — which no verb here carried, so the host could not see it. Said by the editor that made
 	/// the edit, on the message thread, after it took; a host with a dirty flag raises it. Not for a load.
@@ -834,5 +846,13 @@ private:
 	DeviceInstanceId device_;
 	std::vector<size_t> begun_;
 };
+
+/// **WHAT AN INSTANCE IS CALLED — THE ONE ANSWER.** The user's name for it when it has one, else `declared` (the device's own name).
+/// Every surface that names an instance asks this and then adds whatever it adds to the declared name (a place number): a NAMED
+/// instance wears its name alone, since the name is the player's choice and a number beside it would say something else.
+[[nodiscard]] inline std::string instanceBaseName(const DeviceHost& host, DeviceInstanceId id, const char* declared) {
+	std::string named = host.userNameOf(id);
+	return named.empty() ? std::string(declared != nullptr ? declared : "") : named;
+}
 
 } // namespace feathers::backplane

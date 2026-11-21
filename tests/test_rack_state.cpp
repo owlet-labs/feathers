@@ -31,6 +31,7 @@
 #include "rack/rack_engine.h"
 #include "rack_endpoints.h"
 #include "rack/rack_bridge.h"
+#include "rack/fragment.h"
 #include "plugin/device_registry.h"
 #include "rack/rack_state.h"
 #include "device/macro_type.h"
@@ -2156,4 +2157,79 @@ TEST_CASE("the bridge publishes a modulated value for a control INDEX past 32, e
 	}
 	CHECK(bridge.modulatedFieldAt(id, 40) == doctest::Approx(0.75f)); // base 0.25 + 0.5 x span 1
 	CHECK(bridge.modulatedFieldAt(id, 63) == doctest::Approx(0.25f));
+}
+
+TEST_CASE("device names: an instance's user name saves with it, follows it through a reorder, a paste and a load; none writes nothing; a reader without the member keeps the rest") {
+	rack::RackEngine engine(kAxes, hostCatalogue());
+	engine.prepare(48000.0, 4096);
+	rack::RackBridge bridge(engine);
+	const DeviceInstanceId a = bridge.addDevice(fx::filter::kTraits.tag);
+	const DeviceInstanceId b = bridge.addDevice(fx::filter::kTraits.tag);
+	const DeviceInstanceId c = bridge.addDevice(fx::eq::kTraits.tag);
+	REQUIRE(a != kNoInstance);
+	REQUIRE(b != kNoInstance);
+	REQUIRE(c != kNoInstance);
+	const auto write = [](rack::RackBridge& from) {
+		auto s = std::make_unique<MemStream>();
+		REQUIRE(rack::writeRack(&s->out, from.patch()));
+		return s;
+	};
+	// NO NAME WRITES NOTHING: the member is absent, so a patch with none is byte for byte what it was.
+	{
+		auto s = write(bridge);
+		const std::string text(s->bytes.begin(), s->bytes.end());
+		CHECK(text.find("\"name\":") == std::string::npos);
+	}
+	CHECK(bridge.userNameOf(a).empty());
+	// NAMING: a change says so once, the same name again is nothing, empty clears.
+	CHECK(bridge.setUserName(a, "Lead filter"));
+	CHECK_FALSE(bridge.setUserName(a, "Lead filter"));
+	CHECK(bridge.setUserName(c, std::string(device::kMacroNameMax + 20, 'x')));
+	CHECK(bridge.userNameOf(c).size() == device::kMacroNameMax); // clamped at the cap
+	CHECK(bridge.setUserName(b, "Tmp"));
+	CHECK(bridge.setUserName(b, ""));
+	CHECK(bridge.userNameOf(b).empty());
+	CHECK_FALSE(bridge.setUserName(b, ""));
+	// THE NAME IS THE INSTANCE'S, NOT ITS PLACE: a reorder carries it.
+	REQUIRE(bridge.moveDevice(2, 0));
+	auto saved = write(bridge);
+	rack::RackPatch parsed;
+	REQUIRE(rack::parseRack(&saved->in, &parsed));
+	rack::RackEngine other(kAxes, hostCatalogue());
+	other.prepare(48000.0, 4096);
+	rack::RackBridge loaded(other);
+	REQUIRE(loaded.loadPatch(parsed).routes.count == 0);
+	REQUIRE(loaded.chainLength() == 3);
+	CHECK(loaded.userNameOf(loaded.deviceAtPosition(0)) == std::string(device::kMacroNameMax, 'x')); // the EQ, now first
+	CHECK(loaded.userNameOf(loaded.deviceAtPosition(1)) == "Lead filter");
+	CHECK(loaded.userNameOf(loaded.deviceAtPosition(2)).empty());
+	// A PASTE AND A DUPLICATE CARRY IT (a fragment lifts the device with its name and places it under a fresh id).
+	{
+		const DeviceInstanceId ids[] = { loaded.deviceAtPosition(1) };
+		const rack::Fragment fragment = rack::liftFragment(loaded, ids);
+		const rack::PlaceResult placed = rack::placeFragment(loaded, fragment, 3, rack::PlaceIds::Fresh, false);
+		REQUIRE(placed.placed.size() == 1);
+		CHECK(loaded.userNameOf(placed.placed[0]) == "Lead filter");
+		CHECK(placed.placed[0] != ids[0]);
+	}
+	// A READER THAT DOES NOT KNOW THE MEMBER reads every other member and drops only the name: every member is read by key, so a
+	// document whose "name" member is spelled another way (one the reader has never heard of) parses to the same patch less the names.
+	{
+		std::string text(saved->bytes.begin(), saved->bytes.end());
+		REQUIRE(text.find("\"name\":") != std::string::npos);
+		for (size_t at = text.find("\"name\":"); at != std::string::npos; at = text.find("\"name\":")) {
+			text.replace(at, 7, "\"nmx_\":");
+		}
+		MemStream blind;
+		blind.bytes.assign(text.begin(), text.end());
+		rack::RackPatch blindParsed;
+		REQUIRE(rack::parseRack(&blind.in, &blindParsed));
+		REQUIRE(blindParsed.device.size() == parsed.device.size());
+		for (size_t i = 0; i < parsed.device.size(); ++i) {
+			CHECK(blindParsed.device[i].name.empty());
+			rack::RackPatch::Device expect = parsed.device[i];
+			expect.name.clear();
+			CHECK(blindParsed.device[i] == expect);
+		}
+	}
 }

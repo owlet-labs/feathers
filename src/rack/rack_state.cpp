@@ -1504,6 +1504,11 @@ bool rackToText(const RackPatch& patch, std::string* out, bool indented) {
 				w.key("labels");
 				writeValues(w, device.labels);
 			}
+			// AND WHAT THE USER CALLS THE INSTANCE — only when it is named.
+			if (!device.name.empty()) {
+				w.key("name");
+				w.string(device.name);
+			}
 			// AND WHICH PRESET ITS PANEL LAST LOADED OR SAVED (backlog QC) — only when it names one.
 			if (!device.preset.empty()) {
 				w.key("preset");
@@ -1717,6 +1722,7 @@ bool parseRackText(std::string_view text, RackPatch* out, LoadReport* report) {
 				return notLoaded(report, "a device's values are not an object");
 			}
 			(void)readPresetIdentity(node.find("preset"), &device.preset); // backlog QC; absent or odd: none
+			(void)readString(node, "name", &device.name); // the user's name for the instance; absent or odd: none
 			// THE BODY, bounded before a byte of it is allocated for. One ceiling, the rack's: the parse knows
 			// no devices, and the device that receives the body validates it (`loadState`).
 			if (const json::Value* body = node.find("body"); body != nullptr && !body->isNull()) {
@@ -1911,6 +1917,10 @@ RackPatch::Device patchDeviceOfRow(const ChainRecord& record, const ContainerBod
 				device.labels.push_back(RackPatch::Value::label(desc->outputs[output].key, std::string(named)));
 			}
 		}
+	}
+	// AND WHAT THE USER CALLS IT, under the same id.
+	if (labels != nullptr) {
+		device.name = std::string(labels->nameOf(row.instanceId));
 	}
 	// AND WHICH PRESET ITS PANEL CAME FROM (backlog QC), under the same id.
 	if (labels != nullptr) {
@@ -2116,6 +2126,7 @@ size_t placePatchInRecord(const RackPatch& patch, ChainRecord* record, Container
 		// WHICH PRESET ITS PANEL CAME FROM (backlog QC), under the id it ended up wearing.
 		if (labels != nullptr) {
 			(void)labels->setPreset(row.instanceId, device.preset);
+			(void)labels->setName(row.instanceId, device.name);
 		}
 		if (bodies != nullptr && !device.body.empty()) {
 			(void)bodies->store(row.instanceId, device.body.data(), device.body.size());

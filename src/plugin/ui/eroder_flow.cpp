@@ -25,6 +25,7 @@
 
 #include "plugin/ui/modulated_row.h"
 #include "plugin/ui/theme.h"
+#include "plugin/ui/wet_highpass_control.h"
 
 #include <algorithm>
 #include <cctype>
@@ -95,8 +96,8 @@ EroderFlow::Path EroderFlow::pathFor(const ero::Row& row) {
 	add("dc", ero::dcStageRuns(ero::stateOf(row, row.size()).settings));
 	add("restore", emphasised && at(ero::Param::EmphRestore) >= 0.5f);
 	// THE LIVE FILTER: semitones from the note while Track is on in an engine that has it, else HP Wet's hertz.
-	const bool filtering = at(ero::Param::Track) >= 0.5f && !comb ? at(ero::Param::HpWetSemis) > ero::kHpWetSemisMin + 1.0e-3f
-	                                                              : static_cast<double>(at(ero::Param::HpWet)) > ero::kHpWetLog2Min;
+	const bool filtering = wetHighpassFiltering(at(ero::Param::HpWet), ero::kHpWetLog2Min, at(ero::Param::Track) >= 0.5f && !comb,
+	                                            at(ero::Param::HpWetSemis), ero::kHpWetSemisMin);
 	const size_t hp = add("hp", filtering);
 	add("mix", true);
 	// SUB THRU GIVES BACK, AFTER HP WET, WHAT HP WET TOOK OF THE INPUT (`Eroder::processStereo`): nothing without a filter,

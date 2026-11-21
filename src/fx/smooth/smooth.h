@@ -25,6 +25,7 @@
 #include "device/transport_lock.h"
 #include "fx/dyn/meter_ramp.h"
 #include "fx/smooth/smooth_types.h"
+#include "fx/wet_highpass.h"
 
 #include <array>
 #include <cstdint>
@@ -59,6 +60,8 @@ public:
 	/// sets the stack trim (`stackTrimOf`), applied while Poly is on and never on the bus, which sums whole chords.
 	void setNoteContext(const device::NoteContext& note) noexcept { note_ = note; }
 	/// THE TRIM THE CURRENT BLOCK APPLIED — 1 at a stack of one and on the bus.
+	/// THE WET HIGHPASS AS THE CURRENT BLOCK LATCHED IT.
+	[[nodiscard]] const fx::HighpassSettings& highpassForTest() const noexcept { return hpLatched_; }
 	[[nodiscard]] float stackTrimForTest() const noexcept { return block_.stackTrim; }
 
 	/// WHERE THE READINGS GO (`AudioOps::setReadingsSink`). Installed on the BUS instance only; a voice has none.
@@ -120,6 +123,10 @@ private:
 	int restFrames_ = 2205;
 
 	Settings target_ {};
+	/// HP WET and Sub Thru (`fx/wet_highpass.h`): its coefficients are latched in `beginBlock`, on this device's 128-frame grid.
+	fx::WetHighpass hp_ {};
+	fx::HighpassSettings hpLatched_ {};
+	bool subThru_ = false;
 
 	/// THE BLOCK THE GRID IS IN — everything the firmware hoists out of its sample loop.
 	struct Block {

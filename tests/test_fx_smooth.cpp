@@ -31,6 +31,8 @@
 #include <complex>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <vector>
@@ -620,7 +622,8 @@ TEST_CASE("a full-scale voice at Drive centre enters the Chebyshevs at x = 2 and
 namespace {
 
 /// A passage with automation at fixed frames, rendered with the host cutting its calls by `cuts`.
-std::vector<float> renderPassage(double rate, bool stereo, const std::vector<int>& cuts, int frames) {
+std::vector<float> renderPassage(double rate, bool stereo, const std::vector<int>& cuts, int frames,
+                                 const std::function<void(smooth::Settings&)>& tweak = nullptr) {
 	smooth::SmoothShaper sh;
 	sh.prepare(rate);
 	std::vector<float> l(static_cast<size_t>(frames)), r(static_cast<size_t>(frames));
@@ -630,12 +633,15 @@ std::vector<float> renderPassage(double rate, bool stereo, const std::vector<int
 		r[static_cast<size_t>(i)] = static_cast<float>(0.7 * std::sin(2.0 * M_PI * 250.0 * t));
 	}
 	// Automation every 300 frames, crossing zones — the smoother is travelling for most of it.
-	const auto settingsAt = [](int segment) {
+	const auto settingsAt = [&tweak](int segment) {
 		smooth::Settings s;
 		s.harmonicMode = (segment / 2) % 8;
 		s.harmonic = std::fmod(0.21f * static_cast<float>(segment), 1.0f);
 		s.drive = faderOf(std::sin(0.9f * static_cast<float>(segment)));
 		applyTwist(s, std::fmod(0.117f * static_cast<float>(segment), 1.0f));
+		if (tweak) {
+			tweak(s);
+		}
 		return s;
 	};
 	int at = 0;
@@ -667,6 +673,240 @@ TEST_CASE("the output does not depend on how the host cuts its blocks") {
 		for (const std::vector<int>& cuts : std::vector<std::vector<int>> { { 1 }, { 7, 64, 3, 500 }, { 4096 }, { 33 } }) {
 			INFO("stereo " << stereo << ", first cut " << cuts.front());
 			CHECK(renderPassage(48000.0, stereo, cuts, 9600) == reference);
+		}
+	}
+}
+
+namespace {
+/// FNV-1a over the bit patterns of a rendered passage.
+uint64_t bitHash(const std::vector<float>& v) {
+	uint64_t h = 1469598103934665603ull;
+	for (const float f : v) {
+		uint32_t bits = 0;
+		std::memcpy(&bits, &f, sizeof bits);
+		for (int b = 0; b < 4; ++b) {
+			h ^= (bits >> (8 * b)) & 0xFFu;
+			h *= 1099511628211ull;
+		}
+	}
+	return h;
+}
+} // namespace
+
+#if defined(__linux__) && defined(__x86_64__)
+TEST_CASE("HP Wet and Sub Thru at their defaults leave the shaper's render to the bit (hash pinned from before they existed)") {
+	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 12829206850035549236ull);
+	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 17693863569930900104ull);
+}
+#endif
+
+
+//--------------------------------------------------------------------------------------------------//
+// HP WET AND SUB THRU.                                                                               //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+constexpr double kHpRate = 48000.0;
+constexpr int kHpFrames = 9600; // ten cycles of 50 Hz at 48 kHz
+
+struct Stereo {
+	std::vector<float> in[2];
+	std::vector<float> out[2];
+};
+
+/// A tone per side (`hz[0]` left, `hz[1]` right, amplitude 0.3) through a fresh shaper in 128-frame calls.
+Stereo renderTones(const smooth::Settings& s, double hzLeft, double hzRight) {
+	Stereo r;
+	for (int ch = 0; ch < 2; ++ch) {
+		r.in[ch].resize(kHpFrames);
+		for (int i = 0; i < kHpFrames; ++i) {
+			r.in[ch][static_cast<size_t>(i)] = static_cast<float>(
+			    0.3 * std::sin(2.0 * M_PI * (ch == 0 ? hzLeft : hzRight) * static_cast<double>(i) / kHpRate));
+		}
+		r.out[ch] = r.in[ch];
+	}
+	smooth::SmoothShaper sh;
+	sh.prepare(kHpRate);
+	sh.setTarget(s);
+	for (int at = 0; at < kHpFrames; at += 128) {
+		sh.processStereo(r.out[0].data() + at, r.out[1].data() + at, 128);
+	}
+	return r;
+}
+
+/// THE FILTER RESTATED, independent of the engine: a two-pole Butterworth highpass as the textbook biquad (bilinear
+/// transform, corner prewarped), in double, from rest.
+std::vector<double> restatedHighpass(const std::vector<double>& x, double fc) {
+	const double w0 = 2.0 * M_PI * fc / kHpRate;
+	const double alpha = std::sin(w0) / (2.0 * std::sqrt(0.5));
+	const double c = std::cos(w0);
+	const double a0 = 1.0 + alpha;
+	const double b0 = (1.0 + c) / 2.0 / a0, b1 = -(1.0 + c) / a0, b2 = b0;
+	const double a1 = -2.0 * c / a0, a2 = (1.0 - alpha) / a0;
+	std::vector<double> y(x.size());
+	double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+	for (size_t i = 0; i < x.size(); ++i) {
+		y[i] = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+		x2 = x1;
+		x1 = x[i];
+		y2 = y1;
+		y1 = y[i];
+	}
+	return y;
+}
+
+/// THE FILTER'S MAGNITUDE at `hz`, restated from the analogue prototype with the corner prewarped.
+double restatedMagnitude(double hz, double fc) {
+	const double r = std::tan(M_PI * hz / kHpRate) / std::tan(M_PI * fc / kHpRate);
+	return r * r / std::sqrt(1.0 + r * r * r * r);
+}
+
+/// The amplitude of the `hz` component, by correlation over whole cycles.
+double amplitudeAt(const std::vector<double>& x, double hz) {
+	double re = 0.0, im = 0.0;
+	for (size_t i = 0; i < x.size(); ++i) {
+		const double ph = 2.0 * M_PI * hz * static_cast<double>(i) / kHpRate;
+		re += x[i] * std::cos(ph);
+		im += x[i] * std::sin(ph);
+	}
+	return 2.0 * std::hypot(re, im) / static_cast<double>(x.size());
+}
+
+std::vector<double> asDouble(const std::vector<float>& v) {
+	return { v.begin(), v.end() };
+}
+
+struct MixWeights {
+	double dry;
+	double wet;
+};
+MixWeights mixWeightsOf(const smooth::Settings& s) {
+	const double mix = static_cast<double>(smooth::firmwareControlsOf(s).mix);
+	return { (2147483647.0 - mix) / 2147483648.0, mix / 2147483648.0 };
+}
+
+smooth::Settings hpSettings(float hz, bool subThru) {
+	smooth::Settings s = settingsWith(5, 0.0f, 0.5f, 0.0f);
+	s.hpWet = hz > 0.0f ? static_cast<float>(std::log2(static_cast<double>(hz))) : static_cast<float>(feathers::fx::kWetHighpassLog2Min);
+	s.subThru = subThru;
+	return s;
+}
+
+} // namespace
+
+TEST_CASE("HP Wet and Sub Thru: new keys, off by default, appended after every existing control") {
+	CHECK(std::string_view(smooth::kParamDescs[static_cast<size_t>(Param::HpWet)].key) == "smooth_hp_wet");
+	CHECK(std::string_view(smooth::kParamDescs[static_cast<size_t>(Param::SubThru)].key) == "smooth_sub_thru");
+	CHECK(static_cast<size_t>(Param::HpWet) == static_cast<size_t>(Param::FdbkOn) + 1);
+	const smooth::Settings d;
+	CHECK(d.hpWet == static_cast<float>(feathers::fx::kWetHighpassLog2Min));
+	CHECK_FALSE(d.subThru);
+	// A patch saved before them has no such fields: it reads them off.
+	const smooth::Settings old = smooth::stateOf(smooth::rowOf(smooth::State {}), static_cast<size_t>(Param::HpWet)).settings;
+	CHECK(old == smooth::Settings {});
+	// And they round-trip.
+	smooth::State st;
+	st.settings.hpWet = 9.5f;
+	st.settings.subThru = true;
+	CHECK(smooth::stateOf(smooth::rowOf(st), smooth::rowOf(st).size()) == st);
+}
+
+TEST_CASE("HP Wet: the wet is the restated two-pole highpass of the unfiltered wet, and a tone far below the corner is down by its magnitude") {
+	const double fc = 1000.0;
+	const smooth::Settings off = hpSettings(0.0f, false);
+	const smooth::Settings on = hpSettings(static_cast<float>(fc), false);
+	const Stereo a = renderTones(off, 50.0, 2500.0);
+	const Stereo b = renderTones(on, 50.0, 2500.0);
+	const MixWeights w = mixWeightsOf(on);
+	double worst = 0.0;
+	for (int ch = 0; ch < 2; ++ch) {
+		const size_t n = a.in[ch].size();
+		std::vector<double> wet(n);
+		for (size_t i = 0; i < n; ++i) {
+			wet[i] = (static_cast<double>(a.out[ch][i]) - w.dry * static_cast<double>(a.in[ch][i])) / w.wet;
+		}
+		const std::vector<double> hp = restatedHighpass(wet, fc);
+		for (size_t i = 0; i < n; ++i) {
+			const double expected = w.dry * static_cast<double>(a.in[ch][i]) + w.wet * hp[i];
+			worst = std::max(worst, std::fabs(expected - static_cast<double>(b.out[ch][i])));
+		}
+		// NON-VACUITY: the filter changed the signal.
+		CHECK(a.out[ch] != b.out[ch]);
+	}
+	CHECK(worst < 2.0e-5);
+
+	// THE LOW TONE'S WET COMPONENT: down by the filter's magnitude at 50 Hz (about -52 dB at a 1 kHz corner).
+	std::vector<double> wetOff(a.in[0].size()), wetOn(a.in[0].size());
+	for (size_t i = 0; i < wetOff.size(); ++i) {
+		wetOff[i] = (static_cast<double>(a.out[0][i]) - w.dry * static_cast<double>(a.in[0][i])) / w.wet;
+		wetOn[i] = (static_cast<double>(b.out[0][i]) - w.dry * static_cast<double>(b.in[0][i])) / w.wet;
+	}
+	const double before = amplitudeAt(wetOff, 50.0);
+	REQUIRE(before > 0.05); // the shaper does put a 50 Hz component in the wet
+	const double ratio = amplitudeAt(wetOn, 50.0) / before;
+	const double want = restatedMagnitude(50.0, fc);
+	CHECK(want < 0.003);
+	CHECK(ratio == doctest::Approx(want).epsilon(0.05));
+}
+
+TEST_CASE("Sub Thru: with it on the dry low tone is back at the output at its restated level; without it, it is not") {
+	const double fc = 1000.0;
+	const Stereo thru = renderTones(hpSettings(static_cast<float>(fc), true), 50.0, 2500.0);
+	const Stereo plain = renderTones(hpSettings(static_cast<float>(fc), false), 50.0, 2500.0);
+	const Stereo bare = renderTones(hpSettings(0.0f, false), 50.0, 2500.0);
+	const MixWeights w = mixWeightsOf(hpSettings(1000.0f, true));
+	// THE SAMPLE-BY-SAMPLE RESTATEMENT: dry * invMix + mix * (highpass(wet) + (dry - highpass(dry))).
+	double worst = 0.0;
+	for (int ch = 0; ch < 2; ++ch) {
+		const size_t n = bare.in[ch].size();
+		std::vector<double> wet(n);
+		std::vector<double> dry = asDouble(bare.in[ch]);
+		for (size_t i = 0; i < n; ++i) {
+			wet[i] = (static_cast<double>(bare.out[ch][i]) - w.dry * dry[i]) / w.wet;
+		}
+		const std::vector<double> hpWet = restatedHighpass(wet, fc);
+		const std::vector<double> hpDry = restatedHighpass(dry, fc);
+		for (size_t i = 0; i < n; ++i) {
+			const double expected = w.dry * dry[i] + w.wet * (hpWet[i] + (dry[i] - hpDry[i]));
+			worst = std::max(worst, std::fabs(expected - static_cast<double>(thru.out[ch][i])));
+		}
+	}
+	CHECK(worst < 2.0e-5);
+	// THE LEVEL OF THE 50 Hz TONE at the output: the dry's, whole (invMix + mix * (1 - |H|)) of 0.3, give or take the filtered wet's
+	// own 50 Hz (itself only |H| of the wet).
+	const double mag = restatedMagnitude(50.0, fc);
+	const double wanted = 0.3 * (w.dry + w.wet * (1.0 - mag));
+	const double heard = amplitudeAt(asDouble(thru.out[0]), 50.0);
+	CHECK(heard == doctest::Approx(wanted).epsilon(0.02));
+	CHECK(heard > 0.29);
+	// AND WITHOUT IT THE LOW TONE IS NOT THERE: only the dry's sliver and the wet's attenuated 50 Hz.
+	CHECK(amplitudeAt(asDouble(plain.out[0]), 50.0) < 0.03);
+	// WHAT SUB THRU ADDS AT THE HIGH TONE is the restated complement of the filter on the dry, at the wet's weight.
+	{
+		const std::vector<double> dry = asDouble(bare.in[1]);
+		const std::vector<double> hpDry = restatedHighpass(dry, fc);
+		std::vector<double> given(dry.size()), added(dry.size());
+		for (size_t i = 0; i < dry.size(); ++i) {
+			given[i] = w.wet * (dry[i] - hpDry[i]);
+			added[i] = static_cast<double>(thru.out[1][i]) - static_cast<double>(plain.out[1][i]);
+		}
+		CHECK(amplitudeAt(given, 2500.0) > 0.05); // non-vacuity: the complement is audible there
+		CHECK(amplitudeAt(added, 2500.0) == doctest::Approx(amplitudeAt(given, 2500.0)).epsilon(0.01));
+	}
+}
+
+TEST_CASE("HP Wet and Sub Thru engaged: the output does not depend on how the host cuts its blocks") {
+	const auto engaged = [](smooth::Settings& s) {
+		s.hpWet = static_cast<float>(std::log2(700.0));
+		s.subThru = true;
+	};
+	for (bool stereo : { true, false }) {
+		const std::vector<float> reference = renderPassage(48000.0, stereo, { 128 }, 9600, engaged);
+		CHECK(reference != renderPassage(48000.0, stereo, { 128 }, 9600)); // non-vacuity: engaged is not the default
+		for (const std::vector<int>& cuts : std::vector<std::vector<int>> { { 1 }, { 7, 64, 3, 500 }, { 4096 }, { 33 } }) {
+			INFO("stereo " << stereo << ", first cut " << cuts.front());
+			CHECK(renderPassage(48000.0, stereo, cuts, 9600, engaged) == reference);
 		}
 	}
 }
@@ -975,6 +1215,25 @@ TEST_CASE("after a loud burst the output reaches EXACT zero within 50 ms, on bot
 	MESSAGE("slowest tail to exact zero: " << slowest * 1000.0 << " ms; drones: " << drones.size());
 	CHECK(slowest > 0.0);   // non-vacuity: tails exist and were timed
 	CHECK(drones.size() < 40);
+}
+
+TEST_CASE("HP Wet and Sub Thru engaged: a burst's tail still reaches exact zero within the rest") {
+	for (double rate : { 44100.0, 96000.0 }) {
+		for (bool mono : { false, true }) {
+			for (int mode = 0; mode < 8; ++mode) {
+				for (float hz : { 150.0f, 3000.0f }) {
+					smooth::Settings s = settingsWith(mode, 0.6f, 1.0f, 0.0f);
+					s.hpWet = static_cast<float>(std::log2(static_cast<double>(hz)));
+					s.subThru = true;
+					const Tail t = burstThenSilence(s, rate, mono);
+					INFO("rate " << rate << (mono ? " mono" : " stereo") << " mode " << mode << " corner " << hz << ": last sound "
+					             << t.lastSoundSeconds << " s, tail peak " << t.tailPeak);
+					CHECK(t.lastSoundSeconds < kRestSilentSecondsPlusAFrame);
+					CHECK(t.tailPeak == 0.0f);
+				}
+			}
+		}
+	}
 }
 
 TEST_CASE("the rest never cuts a real signal, however quiet: 1e-6 in still sounds") {

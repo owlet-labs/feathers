@@ -27633,6 +27633,42 @@ TEST_CASE("SMOOTH SHAPER: the panel draws the same picture from the same setting
 	CHECK(panel->maximumSize().y < ui::ExpandedView::kNoCap);
 }
 
+TEST_CASE("SMOOTH SHAPER: HP Wet is a knob over its control, Sub Thru a chip that is live only while the filter is in the signal") {
+	ModFixture f;
+	const size_t slot = f.bridge.addFxDevice(smth::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxFxSlots);
+	const DeviceInstanceId device = f.bridge.fxDeviceAt(slot);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, device, smth::kDescriptor);
+	auto* panel = dynamic_cast<ui::SmoothExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, panel->minimumSize().x, panel->minimumSize().y);
+	(void)panel->updateContent();
+	ui::WetHighpassControl* hp = panel->hpForTest();
+	REQUIRE(hp != nullptr);
+	// HERTZ ONLY: this device has no tracked note to give semitones from.
+	CHECK(hp->semitones() == nullptr);
+	CHECK(hp->hertz()->isVisible());
+	CHECK(&hp->hertz()->control()->desc() == &smth::kParamDescs[static_cast<size_t>(smth::Param::HpWet)]);
+	CHECK(&hp->subThru()->control().desc() == &smth::kParamDescs[static_cast<size_t>(smth::Param::SubThru)]);
+	// AT THE BOTTOM THERE IS NO FILTER: Sub Thru has nothing to give back and is greyed.
+	CHECK_FALSE(hp->subThru()->enabled());
+	f.bridge.setDeviceControl(device, static_cast<size_t>(smth::Param::HpWet), 9.0f);
+	f.bridge.refresh();
+	(void)panel->updateContent();
+	CHECK(hp->subThru()->enabled());
+	// AT MIX 0 THE DEVICE PASSES THE INPUT: nothing to give back there either.
+	f.bridge.setDeviceControl(device, static_cast<size_t>(smth::Param::Mix), 0.0f);
+	f.bridge.refresh();
+	(void)panel->updateContent();
+	CHECK_FALSE(hp->subThru()->enabled());
+	f.bridge.setDeviceControl(device, static_cast<size_t>(smth::Param::Mix), 1.0f);
+	f.bridge.setDeviceControl(device, static_cast<size_t>(smth::Param::HpWet), static_cast<float>(feathers::fx::kWetHighpassLog2Min));
+	f.bridge.refresh();
+	(void)panel->updateContent();
+	CHECK_FALSE(hp->subThru()->enabled());
+}
+
 namespace {
 /// EVERY PLACE A PRESS ON THIS BOX'S READOUT CAN GRAB, swept pixel by pixel across the whole box — so the case
 /// needs no knowledge of where the text sits.

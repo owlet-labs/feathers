@@ -19,6 +19,8 @@ param smth smooth_width_on unit=choice choice=Off|On
 param smth smooth_evens_on unit=choice choice=Off|On
 param smth smooth_rect_on unit=choice choice=Off|On
 param smth smooth_fdbk_on unit=choice choice=Off|On
+param smth smooth_hp_wet unit=log_hertz min=4.321928094887362 max=12.965784284662087 stepped=0
+param smth smooth_sub_thru unit=choice choice=Off|On
 retired smth smooth_harmonic 2026-09-26 a 0..1 position clamped to the mode became an unbounded coordinate (smooth_harmonic_coord)
 retired smth smooth_twist 2026-09-26 a 0..1 knob became an unbounded coordinate whose laps are the firmware's twistPhaseOffset (smooth_twist_coord)
 retired smth smooth_twist_phase 2026-09-26 folded into Twist: one click of 128 is 128 laps of smooth_twist_coord

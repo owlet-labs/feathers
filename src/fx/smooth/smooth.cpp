@@ -99,6 +99,9 @@ void SmoothShaper::reset() noexcept {
 	lfoLock_.release();
 	dcState_[0] = dcState_[1] = 0;
 	fbState_[0] = fbState_[1] = 0;
+	hp_.reset();
+	hpLatched_ = {};
+	subThru_ = false;
 	probe_[0] = probe_[1] = ShapeProbe {};
 	silentRun_ = 0;
 	inPeak_.reset();
@@ -135,6 +138,13 @@ void SmoothShaper::beginBlock() noexcept {
 	const TwistParams& twist = b.twist;
 	b.mix = fc.mix;
 	b.invMix = kOneQ31 - fc.mix;
+
+	// HP WET AND SUB THRU, latched on the grid like everything else here: off at the bottom of the control, where the
+	// filter is not run at all and the wet is the bits it was.
+	hpLatched_ = fx::highpassAt(static_cast<double>(target_.hpWet) > fx::kWetHighpassLog2Min,
+	                            std::exp2(static_cast<double>(target_.hpWet)), sampleRate_, kHpNyquistFraction);
+	hp_.set(hpLatched_);
+	subThru_ = target_.subThru;
 
 	// `prepareSmoothing(*smoothedDrive, drive)`, snapping on first use. Its `current` is read once, below.
 	const int32_t driveCurrentQ = smoothedDriveQ_ == INT32_MIN ? fc.drive : smoothedDriveQ_;
@@ -312,9 +322,19 @@ void SmoothShaper::renderFrames(float* left, float* right, int frames) noexcept 
 				const int64_t delta = static_cast<int64_t>(hpfWet) - fbState_[ch];
 				fbState_[ch] = static_cast<int32_t>(fbState_[ch] + ((delta * fbAlphaQ_) >> 31));
 			}
+			// HP WET, BEFORE MIX (and after the feedback tap, which hears the shaper as it was): float, so only while
+			// engaged. Sub Thru adds what the same filter takes from the dry, so the lows stay whole at any Mix.
+			int32_t wetQ = hpfWet;
+			if (hp_.on()) {
+				float wetF = hp_.wet(ch, fromQ31(hpfWet));
+				if (subThru_) {
+					wetF += hp_.taken(ch, fromQ31(dry[ch]));
+				}
+				wetQ = toQ31(wetF);
+			}
 			// WET AND DRY, IN q31 — the dry too, so a Mix short of full passes the dry through the same
 			// quantisation the hardware's does.
-			out[ch] = addSaturate(twice(mulhi(dry[ch], b.invMix)), twice(mulhi(hpfWet, b.mix)));
+			out[ch] = addSaturate(twice(mulhi(dry[ch], b.invMix)), twice(mulhi(wetQ, b.mix)));
 		}
 
 		// **THE REST — NOT THE FIRMWARE'S, AND NEEDED BECAUSE THE PLUGIN SLEEPS ONLY ON EXACT SILENCE.** The wet
@@ -350,6 +370,7 @@ void SmoothShaper::renderFrames(float* left, float* right, int frames) noexcept 
 			if (inBand) {
 				dcState_[0] = dcState_[1] = 0;
 				fbState_[0] = fbState_[1] = 0;
+				hp_.reset();
 				out[0] = out[1] = 0;
 			}
 		}

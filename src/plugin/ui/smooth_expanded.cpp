@@ -73,6 +73,10 @@ SmoothExpanded::SmoothExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 		pills_.push_back(std::move(widget));
 	}
 
+	// HP WET AND SUB THRU: the shared element. Hertz only — this device has no tracked note to take semitones from.
+	hp_ = std::make_unique<WetHighpassControl>(control(sm::Param::HpWet), nullptr, control(sm::Param::SubThru), notifier_,
+	                                           kKnobDiameter);
+	hp_->addTo(*this);
 	for (visage::Frame* f : std::initializer_list<visage::Frame*> {
 	         mode_.get(), poly_.get(), curve_.get(), bars_.get(), drive_.get(), mix_.get(),
 	         harmonic_.get(), harmonicPhase_.get(), gamma_.get(), twist_.get() }) {
@@ -103,6 +107,7 @@ void SmoothExpanded::modulationBound(ModState* mod, EditHistory* history) {
 	for (Knob* k : { drive_.get(), mix_.get() }) {
 		k->setModulation(mod, history);
 	}
+	hp_->setModulation(mod, history);
 	for (size_t i = 0; i < static_cast<size_t>(sm::Param::kCount); ++i) {
 		control(static_cast<sm::Param>(i)).setModulation(mod, history);
 	}
@@ -111,7 +116,7 @@ void SmoothExpanded::modulationBound(ModState* mod, EditHistory* history) {
 visage::Point SmoothExpanded::minimumSize() const {
 	const float w = kPad + kCurveWidth + kRowGap * 2.0f + kSideWidth + kPad;
 	const float h = kPad + ValueBox::kHeight + kRowGap + kCaptionHeight + kCurveHeight + kRowGap + kCellHeight + kRowGap + kPillHeight
-	                + kPad;
+	                + kRowGap + kCellHeight + kPad;
 	return { w, h };
 }
 
@@ -155,6 +160,17 @@ void SmoothExpanded::layOut() {
 		pills_[i]->setBounds(pillLeft + static_cast<float>(i) * (pill + kRowGap), pillRow, pill, kPillHeight);
 	}
 
+	// HP WET AND ITS SUB THRU, ONE ROW UNDER THE PILLS.
+	const float hpRow = pillRow + kPillHeight + kRowGap;
+	hp_->hertz()->setBounds(left, hpRow, cell, kCellHeight);
+	hp_->subThru()->setBounds(left + cell + kRowGap, hpRow + (kCellHeight - SwitchChip::kHeight) * 0.5f, kSweepChipWidth + 12.0f,
+	                          SwitchChip::kHeight);
+	hp_->showFaces(true, false);
+	{
+		const sm::Settings now = settings();
+		hp_->refresh(now.hpWet > static_cast<float>(fx::kWetHighpassLog2Min), now.mix > 0.0f);
+	}
+
 	// THE HARMONICS AS TALL AS THE CURVE, AND WHAT MOVES THEM ON THE SAME ROW AS DRIVE AND MIX — one bottom row
 	// across the panel, so neither column ends in air.
 	const float side = left + kCurveWidth + kRowGap * 2.0f;
@@ -171,6 +187,11 @@ bool SmoothExpanded::updateContent() {
 		return false;
 	}
 	bool changed = model_.refresh(settings(), settings(false));
+	// SUB THRU GIVES BACK WHAT HP WET TOOK, so it is nothing with no filter, or at Mix 0 (where the device passes the input).
+	{
+		const sm::Settings now = settings();
+		hp_->refresh(now.hpWet > static_cast<float>(fx::kWetHighpassLog2Min), now.mix > 0.0f);
+	}
 	const bool has = hasReadings();
 	const float peak = has ? host_.readingAt(device_, static_cast<size_t>(sm::Reading::InPeak)) : 0.0f;
 	if (has != drawnHadPeak_ || (has && peak != drawnPeak_)) {
@@ -221,7 +242,7 @@ std::vector<sm::Param> SmoothExpanded::addressedParamsForTest() const {
 		     sm::Param::Mix,          sm::Param::Harmonic,      sm::Param::HarmonicPhase, sm::Param::Gamma,
 		     sm::Param::Sweep,        sm::Param::SweepOn,       sm::Param::Width,   sm::Param::Evens,
 		     sm::Param::Rect,         sm::Param::Fdbk,          sm::Param::WidthOn, sm::Param::EvensOn,
-		     sm::Param::RectOn,       sm::Param::FdbkOn };
+		     sm::Param::RectOn,       sm::Param::FdbkOn,        sm::Param::HpWet, sm::Param::SubThru };
 }
 
 } // namespace feathers::ui

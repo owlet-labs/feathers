@@ -153,13 +153,43 @@ visage::Point ExplorePad<Policy>::toPixel(double x, double y) const {
 }
 
 template <class Policy>
+std::pair<double, double> ExplorePad<Policy>::worldOfView(double x, double y) const {
+	if constexpr (requires { Policy::worldFromView(std::declval<const Context&>(), origin_, x, y); }) {
+		static const Context none {};
+		return Policy::worldFromView(context ? context() : none, origin_, x, y);
+	}
+	else {
+		return { x, y };
+	}
+}
+
+template <class Policy>
+std::pair<double, double> ExplorePad<Policy>::viewOfWorld(double x, double y) const {
+	if constexpr (requires { Policy::viewFromWorld(std::declval<const Context&>(), origin_, x, y); }) {
+		static const Context none {};
+		return Policy::viewFromWorld(context ? context() : none, origin_, x, y);
+	}
+	else {
+		return { x, y };
+	}
+}
+
+template <class Policy>
+visage::Point ExplorePad<Policy>::pixelOfPlane(double x, double y) const {
+	const std::pair<double, double> v = viewOfWorld(x, y);
+	return toPixel(v.first, v.second);
+}
+
+template <class Policy>
 void ExplorePad<Policy>::placeStar() {
 	const double inset = kStarInsetPixels;
 	const double px = std::clamp(static_cast<double>(pointer_.x), inset, std::max(inset, width() - inset));
 	const double py = std::clamp(static_cast<double>(pointer_.y), inset, std::max(inset, height() - inset));
 	const double k = planePerPixel();
-	starX_ = viewX_ + (px - width() * 0.5) * k;
-	starY_ = viewY_ + (height() * 0.5 - py) * k; // UP IS MORE
+	// THE PRESS IS ON THE VIEW; the star is the WORLD's place it shows (the identity where the policy has no warp).
+	const std::pair<double, double> world = worldOfView(viewX_ + (px - width() * 0.5) * k, viewY_ + (height() * 0.5 - py) * k); // UP IS MORE
+	starX_ = world.first;
+	starY_ = world.second;
 }
 
 template <class Policy>
@@ -233,7 +263,7 @@ void ExplorePad<Policy>::finishGlide() {
 template <class Policy>
 visage::Point ExplorePad<Policy>::puck() const {
 	// THE STAR, WHERE THE VIEW SHOWS IT. At rest the frame is anchored on it, so it is the centre.
-	return toPixel(starX_, starY_);
+	return pixelOfPlane(starX_, starY_);
 }
 
 template <class Policy>
@@ -251,7 +281,11 @@ void ExplorePad<Policy>::reOrigin() {
 		basisX_[i] = static_cast<double>(basis.x[i]);
 		basisY_[i] = static_cast<double>(basis.y[i]);
 	}
-	viewX_ = viewY_ = starX_ = starY_ = 0.0;
+	starX_ = starY_ = 0.0;
+	// THE VIEW IS CENTRED ON WHERE THE STAR IS DRAWN (the origin itself, unless the policy warps the view).
+	const std::pair<double, double> home = viewOfWorld(0.0, 0.0);
+	viewX_ = home.first;
+	viewY_ = home.second;
 	buildMap();
 }
 
@@ -263,7 +297,15 @@ void ExplorePad<Policy>::buildMap() {
 	mapX_ = viewX_;
 	mapY_ = viewY_;
 	const auto [hx, hy] = viewHalf();
-	const Plane plane { origin_, basisX_, basisY_, mapX_, mapY_, hx * kMapMargin, hy * kMapMargin };
+	Plane plane { origin_, basisX_, basisY_, mapX_, mapY_, hx * kMapMargin, hy * kMapMargin };
+	if constexpr (requires { Policy::worldFromView(std::declval<const Context&>(), origin_, 0.0, 0.0); }) {
+		// THE MAP IS A PICTURE OF THE WORLD, SAMPLED THROUGH THE VIEW (the key names the warp, so a changed warp rebuilds).
+		const Context* ctx = context ? &context() : nullptr;
+		if (ctx != nullptr) {
+			const Phases origin = origin_;
+			plane.warp = [ctx, origin](double x, double y) { return Policy::worldFromView(*ctx, origin, x, y); };
+		}
+	}
 	// NOTHING TO PAINT AT 2 PX OR LESS — the constructor's `reOrigin` runs at width 0, and a full terrain for a 2x2 view
 	// is a build thrown away by the first `draw` at a real size (which `builtW_ == -1` makes immediate, see `draw`).
 	if (width() <= 2.0f || height() <= 2.0f) {
@@ -377,10 +419,11 @@ void ExplorePad<Policy>::draw(visage::Canvas& canvas) {
 		const double dt = std::chrono::duration<double>(now - glideSteppedAt_).count();
 		glideSteppedAt_ = now;
 		const double alpha = 1.0 - std::exp(-std::max(dt, 0.0) / kGlideSeconds);
-		viewX_ += (starX_ - viewX_) * alpha;
-		viewY_ += (starY_ - viewY_) * alpha;
+		const std::pair<double, double> target = viewOfWorld(starX_, starY_); // WHERE THE STAR IS DRAWN
+		viewX_ += (target.first - viewX_) * alpha;
+		viewY_ += (target.second - viewY_) * alpha;
 		const auto [hx, hy] = viewHalf();
-		if (std::fabs(starX_ - viewX_) < hx * 1e-3 && std::fabs(starY_ - viewY_) < hy * 1e-3) {
+		if (std::fabs(target.first - viewX_) < hx * 1e-3 && std::fabs(target.second - viewY_) < hy * 1e-3) {
 			finishGlide();
 		}
 		else {

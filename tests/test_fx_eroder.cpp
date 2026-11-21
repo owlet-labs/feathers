@@ -1429,7 +1429,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount - kDcParamCount - kDriveBalParamCount - kDriveRateParamCount - kSlotSecondParamCount - kRateMultParamCount - kAngleParamCount);
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount - kDcParamCount - kDriveBalParamCount - kDriveRateParamCount - kSlotSecondParamCount - kRateMultParamCount - kAngleParamCount - kSmearParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -8035,4 +8035,240 @@ TEST_CASE("The Paunch Types read their own Angle, not Shape — an old patch's S
 	};
 	CHECK(render(0.7f, 0.0f) == render(0.0f, 0.0f));
 	CHECK_FALSE(render(0.0f, 0.25f) == render(0.0f, 0.0f));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE SMEAR'S STAGES, RESO AND OFFSET                                                                //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("Smear controls: declared by their keys, defaults are what the Smear always was, stored and read back, and a short row reads the defaults") {
+	struct Row {
+		Param param;
+		const char* key;
+		double min;
+		double max;
+		double def;
+		bool stepped;
+		bool modulatable;
+		bool centred;
+	};
+	const Row rows[] = {
+		{ Param::SmearStages, "eroder_smear_stages", 1.0, 32.0, 8.0, true, false, false },
+		{ Param::SmearReso, "eroder_smear_reso", 1.0, 32.0, 8.0, false, true, false },
+		{ Param::SmearOffset, "eroder_smear_offset", -48.0, 48.0, 0.0, false, true, true },
+	};
+	REQUIRE(std::size(rows) == kSmearParamCount);
+	for (const Row& r : rows) {
+		const auto& d = kParamDescs[static_cast<size_t>(r.param)];
+		CAPTURE(r.key);
+		CHECK(std::string_view(d.key) == r.key);
+		CHECK(d.min == r.min);
+		CHECK(d.max == r.max);
+		CHECK(d.def == r.def);
+		CHECK(d.stepped == r.stepped);
+		CHECK(d.modulatable == r.modulatable);
+		CHECK(d.centred == r.centred);
+		CHECK(d.gateControl == -1);
+		// THE TOOLTIP SAYS WHEN IT IS INACTIVE.
+		CHECK(std::string_view(d.tooltip).find("Inactive while Smear is at 0") != std::string_view::npos);
+	}
+	// THE OLD SMEAR IS THE DEFAULTS: eight sections, Q reaching 8, centred on Freq.
+	CHECK(Settings {}.smearStages == 8.0f);
+	CHECK(Settings {}.smearReso == 8.0f);
+	CHECK(Settings {}.smearOffset == 0.0f);
+	CHECK(Smear::kSections == 8);
+	CHECK(declared().smearStages == 8.0f);
+	// THE CODEC CARRIES THEM, and a row from before them reads the defaults.
+	State st;
+	st.settings.smear = 0.5f;
+	st.settings.smearStages = 21.0f;
+	st.settings.smearReso = 3.5f;
+	st.settings.smearOffset = -14.0f;
+	CHECK(stateOf(rowOf(st), static_cast<size_t>(Param::kCount)) == st);
+	const State old = stateOf(rowOf(st), static_cast<size_t>(Param::SmearStages));
+	CHECK(old.settings.smear == 0.5f);
+	CHECK(old.settings.smearStages == 8.0f);
+	CHECK(old.settings.smearReso == 8.0f);
+	CHECK(old.settings.smearOffset == 0.0f);
+}
+
+TEST_CASE("Smear controls: the engine runs the Stages, Reso and Offset it is given, and with Smear at 0 they change nothing") {
+	const auto smearOf = [](Settings s) {
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l(64, 0.0f);
+		std::vector<float> r = l;
+		e.processStereo(l.data(), r.data(), 64);
+		return e.dustForTest().sharedForTest().smearForTest(); // a copy
+	};
+	Settings base = declared();
+	base.mode = Mode::Rust;
+	base.smear = 0.7f;
+	base.freq = hertzToLog2(1000.0);
+	// STAGES: the chain is that many sections (one section's delay times the count).
+	const double one = [&] { Settings s = base; s.smearStages = 1.0f; return smearOf(s).delayAtCentre(); }();
+	for (const int stages : { 1, 4, 8, 19, 32 }) {
+		Settings s = base;
+		s.smearStages = static_cast<float>(stages);
+		CAPTURE(stages);
+		CHECK(smearOf(s).delayAtCentre() == doctest::Approx(one * stages).epsilon(1e-9));
+		CHECK(smearOf(s).stagesForTest() == stages);
+	}
+	// RESO: the Q the sections reach at 70%, restated (0.5 * (reso / 0.5)^amount), through the analogue allpass's 4 Q / w0 per section.
+	for (const float reso : { 1.0f, 8.0f, 32.0f }) {
+		Settings s = base;
+		s.smearReso = reso;
+		const double q = 0.5 * std::pow(static_cast<double>(reso) / 0.5, 0.7);
+		const double analogue = 8.0 * 4.0 * q / (2.0 * std::numbers::pi * 1000.0 / kRate);
+		CAPTURE(reso);
+		CHECK(smearOf(s).delayAtCentre() == doctest::Approx(analogue).epsilon(0.05));
+	}
+	// OFFSET: the chain's phase passes through -pi at Freq moved by the offset's ratio 2^(st/12), and not at Freq.
+	for (const float st : { -19.0f, -5.0f, 7.0f, 12.0f, 30.0f }) {
+		Settings s = base;
+		s.smearOffset = st;
+		const double want = 1000.0 * std::exp2(static_cast<double>(st) / 12.0);
+		const Smear sm = smearOf(s);
+		CAPTURE(st);
+		CHECK(std::abs(std::abs(std::arg(sm.sectionForTest().response(2.0 * std::numbers::pi * want / kRate))) - std::numbers::pi) < 1.0e-3);
+		CHECK(std::abs(std::abs(std::arg(sm.sectionForTest().response(2.0 * std::numbers::pi * 1000.0 / kRate))) - std::numbers::pi) > 0.1);
+	}
+	// SMEAR AT 0: the three change nothing — the same bits, in every engine.
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		Settings off = everythingOn(mode, DriveMode::Soft);
+		off.smear = 0.0f;
+		const std::vector<float> in = whiteInput(4800, 0.4f);
+		const std::vector<float> reference = renderAt(kRate, off, in);
+		Settings moved = off;
+		moved.smearStages = 32.0f;
+		moved.smearReso = 32.0f;
+		moved.smearOffset = 17.0f;
+		CAPTURE(static_cast<int>(mode));
+		CHECK(renderAt(kRate, moved, in) == reference);
+		// AND NOT VACUOUS: with the Smear on, the same three do change the output.
+		Settings on = moved;
+		on.smear = 0.6f;
+		Settings onDefault = off;
+		onDefault.smear = 0.6f;
+		CHECK_FALSE(renderAt(kRate, on, in) == renderAt(kRate, onDefault, in));
+	}
+}
+
+TEST_CASE("Smear controls: Stages, Reso and Offset moving give the same output at any block size, in every engine") {
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		const auto run = [&](size_t block) {
+			Settings s = everythingOn(mode, DriveMode::Soft);
+			s.smear = 0.8f;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			std::vector<float> out;
+			const int stagesAt[] = { 8, 3, 20, 1, 32, 8 };
+			for (int segment = 0; segment < 6; ++segment) {
+				// A NEW COUNT, A NEW Q AND A NEW CENTRE AT EACH SEGMENT'S START (a grid boundary, as a host's block would put them).
+				s.smearStages = static_cast<float>(stagesAt[segment]);
+				s.smearReso = segment % 2 == 0 ? 8.0f : 20.0f;
+				s.smearOffset = static_cast<float>(segment * 3 - 6);
+				e.setTarget(s);
+				std::vector<float> l = whiteInput(1536, 0.4f, 0x77u + static_cast<uint32_t>(segment));
+				std::vector<float> r = l;
+				for (size_t done = 0; done < l.size(); done += block) {
+					const int n = static_cast<int>(std::min(block, l.size() - done));
+					e.processStereo(l.data() + done, r.data() + done, n);
+				}
+				out.insert(out.end(), l.begin(), l.end());
+				out.insert(out.end(), r.begin(), r.end());
+			}
+			return out;
+		};
+		const std::vector<float> reference = run(256);
+		CAPTURE(static_cast<int>(mode));
+		CHECK(run(32) == reference);
+		CHECK(run(37) == reference);
+		CHECK(run(1024) == reference);
+		CHECK(peakOf(reference) > 0.05f);
+	}
+}
+
+TEST_CASE("Smear controls: at 32 Stages and Reso 32 with the loops at their worst the output stays finite and under the ceiling, and the tail ends in exact zero") {
+	constexpr double kBoundSeconds = 8.0;
+	double worst = 0.0;
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		for (const bool driven : { false, true }) {
+			for (const float offset : { 0.0f, -24.0f }) {
+				Settings s = worstLoops(mode, DriveMode::Soft, driven, false);
+				s.smear = 1.0f;
+				s.smearStages = 32.0f;
+				s.smearReso = 32.0f;
+				s.smearOffset = offset;
+				CAPTURE(static_cast<int>(mode));
+				CAPTURE(driven);
+				CAPTURE(offset);
+				const size_t inFrames = 24000;
+				const size_t total = inFrames + static_cast<size_t>((kBoundSeconds + 1.0) * kRate);
+				std::vector<float> l = whiteInput(inFrames, 0.9f);
+				l.resize(total, 0.0f);
+				std::vector<float> r = l;
+				Eroder e;
+				e.prepare(kRate);
+				e.setTarget(s);
+				float peak = 0.0f;
+				float fedBack = 0.0f;
+				for (size_t done = 0; done < total; done += 480) {
+					e.processStereo(l.data() + done, r.data() + done, 480);
+					if (mode != Mode::Comb) {
+						fedBack = std::max(fedBack, std::abs(e.dustForTest().lastFedBackForTest()));
+					}
+				}
+				size_t last = 0;
+				for (size_t i = 0; i < total; ++i) {
+					REQUIRE(std::isfinite(l[i]));
+					REQUIRE(std::isfinite(r[i]));
+					peak = std::max(peak, std::max(std::abs(l[i]), std::abs(r[i])));
+					if (l[i] != 0.0f || r[i] != 0.0f) {
+						last = i;
+					}
+				}
+				const double tail = static_cast<double>(last > inFrames ? last - inFrames : 0) / kRate;
+				worst = std::max(worst, tail);
+				CHECK(fedBack <= 1.000001f);
+				CHECK(peak <= 4.0f);
+				CHECK(tail < kBoundSeconds);
+				CHECK(last < total - static_cast<size_t>(kRate));
+			}
+		}
+	}
+	measured("max-Stages, max-Reso worst-loop tail, the longest, seconds", worst);
+}
+
+TEST_CASE("Smear controls: with the Smear on, a burst's tail through 32 sections at Reso 32 ends in exact silence, in every engine") {
+	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
+		Settings s = everythingOn(mode, DriveMode::Soft);
+		s.resonance = 0.0f;
+		s.loop = 0.0f;
+		s.smear = 1.0f;
+		s.smearStages = 32.0f;
+		s.smearReso = 32.0f;
+		s.freq = hertzToLog2(200.0);
+		const size_t total = 12 * 48000;
+		std::vector<float> l = whiteInput(2400, 0.5f);
+		l.resize(total, 0.0f);
+		std::vector<float> r = l;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		for (size_t done = 0; done < total; done += 512) {
+			e.processStereo(l.data() + done, r.data() + done, static_cast<int>(std::min<size_t>(512, total - done)));
+		}
+		size_t last = 0;
+		for (size_t i = 0; i < total; ++i) {
+			if (l[i] != 0.0f || r[i] != 0.0f) {
+				last = i;
+			}
+		}
+		CAPTURE(static_cast<int>(mode));
+		CHECK(last > 2400);          // it rang on (not vacuous)
+		CHECK(last < total - 48000); // and it stopped, exactly
+	}
 }

@@ -148,6 +148,12 @@ public:
 	[[nodiscard]] float emphasisHandleXForTest() const noexcept { return emphasisHandleX(); }
 	[[nodiscard]] float emphasisHandleYForTest() const noexcept { return emphasisHandleY(); }
 	[[nodiscard]] double emphasisHzForTest() const noexcept { return emphasisHz(); }
+	/// **THE SMEAR'S HANDLE** (the window's plot): a square on a fixed line near the top (the Smear is flat in level, so there is no curve
+	/// to ride), its x the Smear's centre on the pitch axis. A drag across writes the Smear offset. It takes no press while Smear is at 0.
+	[[nodiscard]] float smearHandleXForTest() const noexcept { return smearHandleX(); }
+	[[nodiscard]] float smearHandleYForTest() const noexcept { return smearHandleY(); }
+	[[nodiscard]] double smearHzForTest() const noexcept { return smearHz(); }
+	[[nodiscard]] bool smearLiveForTest() const noexcept { return smearLive(); }
 
 private:
 	using Bins = std::array<float, feathers::dsp::kAnalyserBins>;
@@ -170,6 +176,13 @@ private:
 	[[nodiscard]] float emphasisHandleX() const noexcept;
 	[[nodiscard]] float emphasisHandleY() const noexcept;
 	void dragEmphasis(visage::Point at);
+	/// WHERE THE SMEAR IS CENTRED: Freq and its offset (`SharedSection::smearHz`).
+	[[nodiscard]] double smearHz() const noexcept;
+	[[nodiscard]] float smearHandleX() const noexcept;
+	[[nodiscard]] float smearHandleY() const noexcept;
+	/// WHETHER THE SMEAR RUNS (its Amount is above 0): its handle is live only then.
+	[[nodiscard]] bool smearLive() const noexcept;
+	void dragSmear(visage::Point at);
 	/// WHERE THE BAND IS `kEdgeDb` DOWN ABOVE ITS CENTRE, and the handle drawn there.
 	[[nodiscard]] float handleY() const noexcept;
 	[[nodiscard]] double edgeHz() const noexcept;
@@ -227,6 +240,8 @@ private:
 		bool width = false;
 		/// THE EMPHASIS'S HANDLE: its two gestures are begun by the first movement past the dead zone on their own axis.
 		bool emph = false;
+		/// THE SMEAR'S HANDLE: a drag across moves its offset.
+		bool smear = false;
 		/// THE COMB'S CUTOFF HANDLE: a drag across places the shake filter's centre under the pointer.
 		bool cutoff = false;
 		bool offsetGesture = false;

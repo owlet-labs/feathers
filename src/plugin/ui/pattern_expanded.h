@@ -326,9 +326,7 @@ public:
 	std::string startDragDropSource() override;
 	void cleanupDragDropSource() override {}
 	void draw(visage::Canvas& canvas) override;
-	const char* tooltipAt(visage::Point) const override {
-		return "Drag this pattern into your DAW as a MIDI clip (a bar-aligned loop at the song's tempo)";
-	}
+	const char* tooltipAt(visage::Point) const override;
 	void offeredControls(std::vector<Offered>&) const override {}
 	/// Where the files go: on macOS ~/Library/Caches/Feathers/MIDI (the platform's cache); elsewhere
 	/// $XDG_CACHE_HOME/feathers/midi, else ~/.cache/feathers/midi. The temp dir as a last resort on either.
@@ -343,6 +341,7 @@ private:
 	DeviceInstanceId device_;
 	size_t pattern_;
 	std::string lastPath_;
+	mutable std::string tip_;
 };
 
 class PatternExpanded final : public ExpandedView, public PagedControls {

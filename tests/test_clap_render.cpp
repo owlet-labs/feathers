@@ -10011,3 +10011,39 @@ TEST_CASE("a Chain in the fx lane runs its Poly device per voice, whichever road
 		check("(e) re-prepared after the Chain exists", twoNotes(host));
 	}
 }
+
+TEST_CASE("device names: naming a lane device renames its host slot's caption with ONE rescan at the next visit, the same name again owes none, and clearing restores the declared caption") {
+	RescanHost log;
+	HostedPlugin h(&log.host);
+	const clap_plugin* p = h.plugin();
+	const clap_plugin_feathers_test_chain* chain = testChainOf(p);
+	REQUIRE(chain->set_device_name != nullptr);
+	REQUIRE(chain->device_count(p) == 1);
+	REQUIRE(chain->pin_slot(p, 0, "Filter Cutoff") == 0u);
+	mainThreadVisit(p); // the pin's own announcement, taken
+	CHECK(std::string(slotInfo(p, 0).name) == "Filter " + kDot + " Cutoff");
+	const size_t before = log.rescans.size();
+
+	// A RENAME: the caption is the player's name, and the host is told exactly once, as the flags say what changed (the name).
+	REQUIRE(chain->set_device_name(p, 0, "Pump"));
+	CHECK(log.rescans.size() == before); // nothing reaches the host until the main thread's visit
+	mainThreadVisit(p);
+	REQUIRE(log.rescans.size() == before + 1);
+	CHECK((log.rescans.back() & CLAP_PARAM_RESCAN_INFO) != 0);
+	CHECK(std::string(slotInfo(p, 0).name) == "Pump " + kDot + " Cutoff");
+	mainThreadVisit(p); // and a second visit has nothing more to say
+	CHECK(log.rescans.size() == before + 1);
+
+	// THE SAME NAME AGAIN IS NOT AN EDIT: nothing is owed.
+	REQUIRE(chain->set_device_name(p, 0, "Pump"));
+	mainThreadVisit(p);
+	CHECK(log.rescans.size() == before + 1);
+
+	// CLEARED: the declared caption comes back, told once.
+	REQUIRE(chain->set_device_name(p, 0, ""));
+	mainThreadVisit(p);
+	REQUIRE(log.rescans.size() == before + 2);
+	CHECK(std::string(slotInfo(p, 0).name) == "Filter " + kDot + " Cutoff");
+	// A DEVICE THAT IS NOT THERE TAKES NO NAME.
+	CHECK_FALSE(chain->set_device_name(p, 5, "Ghost"));
+}

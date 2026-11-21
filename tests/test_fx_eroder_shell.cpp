@@ -21,6 +21,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
+#include "fx/eroder/loops.h"
 #include "fx/eroder/shell.h"
 
 #include <algorithm>
@@ -640,4 +641,249 @@ TEST_CASE("slew: a tail reaches exact zero at every curve") {
 		CAPTURE(curve);
 		CHECK(sameBits(last, 0.0f));
 	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE SMEAR'S STAGES, RESO AND OFFSET                                                                //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE ALLPASS CHAIN, RESTATED FROM ITS FORMULA (not from `Smear`): `n` sections of `(1 - a, -2 cos w0, 1 + a) / (1 + a,
+/// -2 cos w0, 1 - a)`, `a = sin(w0) / 2Q`, at the frequency `hz`.
+std::complex<double> restatedChain(int sections, double q, double centreHz, double hz, double rate) {
+	const double w0 = 2.0 * kPi * centreHz / rate;
+	const double a = std::sin(w0) / (2.0 * q);
+	const double c = -2.0 * std::cos(w0);
+	const std::complex<double> z1 = std::polar(1.0, -2.0 * kPi * hz / rate);
+	const std::complex<double> z2 = z1 * z1;
+	const std::complex<double> h = ((1.0 - a) + c * z1 + (1.0 + a) * z2) / ((1.0 + a) + c * z1 + (1.0 - a) * z2);
+	return std::pow(h, sections);
+}
+
+Smear smearWith(double rate, float amount, float hz, int stages, float reso) {
+	Smear s;
+	s.prepare(rate);
+	SmearSettings st;
+	st.amount = amount;
+	st.hz = hz;
+	st.stages = stages;
+	st.reso = reso;
+	s.set(st);
+	return s;
+}
+
+/// The Q the sections reach at `amount`, restated: 0.5 at the bottom, `reso` at the top, geometrically between.
+double restatedQ(double amount, double reso) { return 0.5 * std::pow(reso / 0.5, amount); }
+
+} // namespace
+
+TEST_CASE("smear: Stages is the count of sections — the response is the restated chain's, and the delay at the centre is that many sections'") {
+	const double rate = 48000.0;
+	for (const int stages : { 1, 2, 5, 8, 13, 32 }) {
+		Smear s = smearWith(rate, 0.6f, 1000.0f, stages, 8.0f);
+		const auto h = impulseResponse([&s](float x) { return s.process(0, x); }, 1 << 17);
+		const double q = restatedQ(0.6, 8.0);
+		for (const double f : { 300.0, 900.0, 1000.0, 1100.0, 3000.0 }) {
+			CAPTURE(stages);
+			CAPTURE(f);
+			const std::complex<double> want = restatedChain(stages, q, 1000.0, f, rate);
+			const std::complex<double> got = dftAt(h, f, rate);
+			CHECK(std::abs(got - want) < 2.0e-4);
+		}
+		// ONE SECTION'S DELAY TIMES THE COUNT: the chain's figure is the count times the single section's.
+		CHECK(s.delayAtCentre() == doctest::Approx(smearWith(rate, 0.6f, 1000.0f, 1, 8.0f).delayAtCentre() * stages).epsilon(1e-9));
+	}
+}
+
+TEST_CASE("smear: the defaults are the old chain's bits — eight sections, Q = 0.5 * 16^amount") {
+	const double rate = 48000.0;
+	Noise noise;
+	for (const float amount : { 0.2f, 0.7f, 1.0f }) {
+		Smear s = smearWith(rate, amount, 1234.0f, 8, 8.0f);
+		// THE OLD CHAIN, restated: the same biquad, eight times, in double, one state each.
+		const double q = 0.5 * std::pow(16.0, static_cast<double>(amount));
+		const double w0 = 2.0 * kPi * 1234.0 / rate;
+		const double alpha = std::sin(w0) / (2.0 * q);
+		const double c = -2.0 * std::cos(w0);
+		const double num[3] = { 1.0 - alpha, c, 1.0 + alpha };
+		const double den[3] = { 1.0 + alpha, c, 1.0 - alpha };
+		const shell_detail::Biquad section = shell_detail::Biquad::from(num, den);
+		shell_detail::Biquad::State state[8] = {};
+		for (int n = 0; n < 20000; ++n) {
+			const float x = noise.next();
+			double v = x;
+			for (auto& st : state) {
+				v = section.step(v, st);
+			}
+			CAPTURE(amount);
+			REQUIRE(sameBits(s.process(0, x), static_cast<float>(v)));
+		}
+	}
+}
+
+TEST_CASE("smear: Reso is the Q reached at Smear 100%, and Amount sweeps up to it from 0.5") {
+	const double rate = 48000.0;
+	for (const float reso : { 1.0f, 4.0f, 8.0f, 32.0f }) {
+		for (const float amount : { 0.5f, 1.0f }) {
+			const double q = restatedQ(amount, reso);
+			Smear s = smearWith(rate, amount, 2000.0f, 3, reso);
+			const auto h = impulseResponse([&s](float x) { return s.process(0, x); }, 1 << 18);
+			CAPTURE(reso);
+			CAPTURE(amount);
+			for (const double f : { 1500.0, 1990.0, 2010.0, 2600.0 }) {
+				CHECK(std::abs(dftAt(h, f, rate) - restatedChain(3, q, 2000.0, f, rate)) < 5.0e-4);
+			}
+			// THE ANALOGUE ALLPASS'S DELAY AT ITS CENTRE is 4 Q / w0 samples per section.
+			const double analogue = 3.0 * 4.0 * q / (2.0 * kPi * 2000.0 / rate);
+			CHECK(s.delayAtCentre() == doctest::Approx(analogue).epsilon(0.05));
+		}
+	}
+	// A HIGHER RESO RINGS LONGER at the same Amount: the delay rises with it.
+	CHECK(smearWith(rate, 1.0f, 1000.0f, 8, 32.0f).delayAtCentre() > smearWith(rate, 1.0f, 1000.0f, 8, 8.0f).delayAtCentre() * 3.9);
+}
+
+TEST_CASE("smear: the section's phase passes through -pi at the centre it was set to, and the offset ratio moves the centre") {
+	const double rate = 48000.0;
+	// A SECOND-ORDER ALLPASS HAS PHASE -PI AT ITS CENTRE: the centre is where the phase crosses it, so it shows where the chain is tuned.
+	const auto phaseAt = [&](const Smear& s, double hz) {
+		return std::arg(s.sectionForTest().response(2.0 * kPi * hz / rate));
+	};
+	for (const double semitones : { -24.0, -7.0, 0.0, 12.0, 19.0 }) {
+		const double centre = 1000.0 * std::exp2(semitones / 12.0);
+		// THE ENGINE'S OWN WAY OF MOVING THE CENTRE, then the restated ratio 2^(st/12) as the check.
+		const double hz = SharedSection::smearHz(1000.0, semitones, rate);
+		CHECK(hz == doctest::Approx(centre).epsilon(1e-12));
+		const Smear s = smearWith(rate, 0.5f, static_cast<float>(hz), 8, 8.0f);
+		CAPTURE(semitones);
+		CHECK(std::abs(std::abs(phaseAt(s, centre)) - kPi) < 1.0e-3);
+		// AND NOT AT THE OLD CENTRE once it has moved: a semitone-and-a-bit away the phase is well short of pi.
+		if (semitones != 0.0) {
+			CHECK(std::abs(std::abs(phaseAt(s, 1000.0)) - kPi) > 0.2);
+		}
+	}
+	// AN OFFSET OF EXACTLY ZERO IS FREQ UNTOUCHED, and a large one is held under the Nyquist side.
+	CHECK(SharedSection::smearHz(1234.5, 0.0, rate) == 1234.5);
+	CHECK(SharedSection::smearHz(10000.0, 48.0, rate) <= 0.45 * rate);
+}
+
+namespace {
+
+/// A FRAME THE WAY THE ENGINE RUNS IT: both channels (the crossfade's clock is each channel's own), the left's output.
+float stereoFrame(Smear& s, float x) {
+	const float left = s.process(0, x);
+	(void)s.process(1, x);
+	return left;
+}
+
+} // namespace
+
+TEST_CASE("smear: a change of Stages is a crossfade between the old and new tap, the restated blend, and the dropped sections are cleared") {
+	const double rate = 48000.0;
+	Noise noise;
+	std::vector<float> in(Smear::kFadeFrames * 6);
+	for (float& x : in) {
+		x = 0.5f * noise.next();
+	}
+	for (const auto [from, to] : { std::pair { 8, 5 }, std::pair { 8, 20 }, std::pair { 32, 1 }, std::pair { 1, 32 } }) {
+		Smear s = smearWith(rate, 0.8f, 800.0f, from, 8.0f);
+		Smear old = smearWith(rate, 0.8f, 800.0f, from, 8.0f);
+		// THE RESTATEMENT: the same biquad run in an independent chain of states, tapped after `from` and after `to` sections.
+		const double q = restatedQ(0.8, 8.0);
+		const double w0 = 2.0 * kPi * 800.0 / rate;
+		const double alpha = std::sin(w0) / (2.0 * q);
+		const double c = -2.0 * std::cos(w0);
+		const double num[3] = { 1.0 - alpha, c, 1.0 + alpha };
+		const double den[3] = { 1.0 + alpha, c, 1.0 - alpha };
+		const shell_detail::Biquad section = shell_detail::Biquad::from(num, den);
+		shell_detail::Biquad::State ref[Smear::kMaxStages] = {};
+		// SETTLE on the old count, then ask for the new one.
+		std::size_t n = 0;
+		for (; n < in.size() / 3; ++n) {
+			REQUIRE(sameBits(stereoFrame(s, in[n]), old.process(0, in[n])));
+			double v = in[n];
+			for (int i = 0; i < from; ++i) {
+				v = section.step(v, ref[i]);
+			}
+		}
+		SmearSettings st;
+		st.amount = 0.8f;
+		st.hz = 800.0f;
+		st.stages = to;
+		st.reso = 8.0f;
+		s.set(st);
+		CAPTURE(from);
+		CAPTURE(to);
+		CHECK(s.fadingForTest());
+		// DURING THE FADE each output is the restated blend of the two taps, the weight of the new rising by 1/256 a frame to 1.
+		double worstStep = 0.0;
+		double worstError = 0.0;
+		float previous = 0.0f;
+		for (int k = 0; k < Smear::kFadeFrames; ++k, ++n) {
+			const float y = stereoFrame(s, in[n]);
+			double v = in[n];
+			double tapFrom = v;
+			double tapTo = v;
+			for (int i = 0; i < std::max(from, to); ++i) {
+				v = section.step(v, ref[i]);
+				if (i + 1 == from) {
+					tapFrom = v;
+				}
+				if (i + 1 == to) {
+					tapTo = v;
+				}
+			}
+			const double weight = static_cast<double>(k + 1) / Smear::kFadeFrames;
+			worstError = std::max(worstError, std::abs(static_cast<double>(y) - (tapFrom + (tapTo - tapFrom) * weight)));
+			if (k > 0) {
+				worstStep = std::max(worstStep, std::abs(static_cast<double>(y) - static_cast<double>(previous)));
+			}
+			previous = y;
+		}
+		CHECK(worstError < 1.0e-6);
+		CHECK_FALSE(s.fadingForTest());
+		// A BARE CUT would step by about the difference between two taps (order of the signal); the crossfade's worst step is
+		// the signal's own.
+		CHECK(worstStep < 1.5);
+		CHECK(s.stagesForTest() == to);
+		// AFTER THE FADE, a silent input rings the chain down to exactly zero and it stays there (the dropped sections were cleared).
+		std::vector<float> silence(1 << 17, 0.0f);
+		float last = 1.0f;
+		for (float& x : silence) {
+			last = s.process(0, x);
+			x = last;
+		}
+		CHECK(last == 0.0f);
+	}
+}
+
+TEST_CASE("smear: a change of Stages while one is fading waits, and the second is then taken; the count never leaves 1..32") {
+	const double rate = 48000.0;
+	Smear s = smearWith(rate, 0.5f, 500.0f, 8, 8.0f);
+	SmearSettings st;
+	st.amount = 0.5f;
+	st.hz = 500.0f;
+	st.reso = 8.0f;
+	st.stages = 12;
+	s.set(st);
+	st.stages = 3;
+	s.set(st); // asked for during the fade: not taken yet
+	CHECK(s.stagesForTest() == 12);
+	for (int n = 0; n < Smear::kFadeFrames; ++n) {
+		(void)stereoFrame(s, 0.1f);
+	}
+	s.set(st); // the next grid retries
+	CHECK(s.stagesForTest() == 3);
+	st.stages = 99;
+	for (int n = 0; n < Smear::kFadeFrames; ++n) {
+		(void)stereoFrame(s, 0.1f);
+	}
+	s.set(st);
+	CHECK(s.stagesForTest() == Smear::kMaxStages);
+	for (int n = 0; n < Smear::kFadeFrames; ++n) {
+		(void)stereoFrame(s, 0.1f);
+	}
+	st.stages = -4;
+	s.set(st);
+	CHECK(s.stagesForTest() == 1);
 }

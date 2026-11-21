@@ -530,6 +530,8 @@ public:
 	void setDevicePreset(DeviceInstanceId device, const PresetIdentity& identity) override {
 		bridge_.setDevicePreset(device, identity);
 	}
+	std::string userNameOf(DeviceInstanceId device) const override { return bridge_.userNameOf(device); }
+	bool setUserName(DeviceInstanceId device, std::string_view name) override { return bridge_.setUserName(device, name); }
 
 	/// FEATHERS' OWN RULE ABOUT ITS OWN AXES — a weight source may not reach a puck destination. The
 	/// device half is the backplane's and is not repeated here, which is the entire content of the

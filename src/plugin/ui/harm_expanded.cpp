@@ -63,7 +63,7 @@ struct HarmExpanded::Layout {
 	visage::Bounds spectralCaption, harmonic, mode, scope, spatialCaption, knobRow;
 	visage::Bounds envelopeCaption, envelope;
 	std::array<visage::Bounds, 6> boxes {};
-	visage::Bounds masterCaption, master, porta, masterLevel, masterDepth, poly, depthEnv;
+	visage::Bounds masterCaption, master, porta, masterLevel, masterDepth, portaMode, poly, depthEnv;
 	float knobCell = 0.0f;
 	float bottom = 0.0f;
 };
@@ -111,7 +111,8 @@ HarmExpanded::Layout HarmExpanded::layoutFor(float totalWidth) const {
 	l.master = { kPad, y, inner, kSwitchHeight + 6.0f };
 	l.porta = { kPad, y, kPortaWidth, ValueBox::kHeight };
 	const float chipY = y + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f;
-	l.masterLevel = { l.porta.right() + kRowGap, y, kPortaWidth, ValueBox::kHeight };
+	l.portaMode = { l.porta.right() + kRowGap, chipY, kPortaModeChipWidth, SwitchChip::kHeight };
+	l.masterLevel = { l.portaMode.right() + kRowGap, y, kPortaWidth, ValueBox::kHeight };
 	l.masterDepth = { l.masterLevel.right() + kRowGap, y, kPortaWidth, ValueBox::kHeight };
 	l.poly = { l.masterDepth.right() + kRowGap + 6.0f, chipY, kPolyChipWidth, SwitchChip::kHeight };
 	l.depthEnv = { l.poly.right() + kRowGap, chipY, kEnvDepthChipWidth, SwitchChip::kHeight };
@@ -195,6 +196,9 @@ HarmExpanded::HarmExpanded(backplane::DeviceHost& host, WidgetRegistry& registry
 	// MASTER.
 	porta_ = std::make_unique<ValueBox>(control(hrm::Param::Porta), "Porta");
 	addChild(porta_.get());
+	// LEGATO OR ALWAYS: two states, so a chip that names the state it is in.
+	portaMode_ = std::make_unique<SwitchChip>(control(hrm::Param::PortaMode), "Porta");
+	addChild(portaMode_.get());
 	// THE TWO MASTERS, pills beside Porta: the same controls as the card's Master and Depth knobs, on the same road.
 	masterLevel_ = std::make_unique<ValueBox>(control(hrm::Param::MasterLevel), "Master Level");
 	addChild(masterLevel_.get());
@@ -317,6 +321,7 @@ visage::Bounds HarmExpanded::envelopeBoxBounds(size_t index) const {
 }
 visage::Bounds HarmExpanded::masterBounds() const { return layout().master; }
 visage::Bounds HarmExpanded::portaBounds() const { return layout().porta; }
+visage::Bounds HarmExpanded::portaModeBounds() const { return layout().portaMode; }
 visage::Bounds HarmExpanded::polyBounds() const { return layout().poly; }
 visage::Bounds HarmExpanded::depthEnvBounds() const { return layout().depthEnv; }
 
@@ -411,6 +416,7 @@ void HarmExpanded::resized() {
 		envelopeBoxes_[i]->setBounds(l.boxes[i].x(), l.boxes[i].y(), l.boxes[i].width(), l.boxes[i].height());
 	}
 	porta_->setBounds(l.porta.x(), l.porta.y(), l.porta.width(), l.porta.height());
+	portaMode_->setBounds(l.portaMode.x(), l.portaMode.y(), l.portaMode.width(), l.portaMode.height());
 	masterLevel_->setBounds(l.masterLevel.x(), l.masterLevel.y(), l.masterLevel.width(), l.masterLevel.height());
 	masterDepth_->setBounds(l.masterDepth.x(), l.masterDepth.y(), l.masterDepth.width(), l.masterDepth.height());
 	poly_->setBounds(l.poly.x(), l.poly.y(), l.poly.width(), l.poly.height());
@@ -443,6 +449,7 @@ std::vector<hrm::Param> HarmExpanded::addressedParamsForTest() const {
 		out.push_back(entry.param);
 	}
 	out.push_back(hrm::Param::Porta);
+	out.push_back(hrm::Param::PortaMode);
 	out.push_back(hrm::Param::MasterLevel);
 	out.push_back(hrm::Param::MasterDepth);
 	out.push_back(hrm::Param::Poly);

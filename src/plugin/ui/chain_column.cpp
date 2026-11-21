@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/chain_column.h"
+#include "plugin/ui/device_rename.h"
 #include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/menu_anchor.h"
 
@@ -92,7 +93,13 @@ ChainColumn::ChainColumn(rack::RackBridge& bridge, WidgetRegistry& registry, Mod
 	};
 	selection_ = std::make_unique<LaneSelection>(bridge_, history_, notifier_, std::move(selectionHooks));
 	selectionOverlay_ = std::make_unique<SelectionOverlay>(*selection_);
+	rename_ = std::make_unique<DeviceRename>(*this, notifier_);
+	rename_->setHistory(&history_);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more.
 		if (selection_->key(e)) {
 			afterVerb();
@@ -260,11 +267,13 @@ void ChainColumn::installSourceList() {
 		if (d == nullptr) {
 			return "Source"; // an id nothing holds names nothing
 		}
-		std::string name = d->traits.name;
-		if (const size_t position = bridge_.positionOf(source.device);
-		    position != rack::RackBridge::kNoSlot) {
-			name += " ";
-			name += std::to_string(position + 1);
+		std::string name = bridge_.userNameOf(source.device); // a NAMED instance wears its name alone
+		if (name.empty()) {
+			name = d->traits.name;
+			if (const size_t position = bridge_.positionOf(source.device); position != rack::RackBridge::kNoSlot) {
+				name += " ";
+				name += std::to_string(position + 1);
+			}
 		}
 		if (d->outputCount() > 1 && source.index < d->outputCount()) {
 			name += " \xc2\xb7 "; // " · "
@@ -697,7 +706,7 @@ void ChainColumn::expandDevice(DeviceInstanceId device) {
 	// armed from off-screen mid-gesture. The layers forward it to the outer, which is where a popup
 	// floating over the whole editor comes from.
 	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture,
-	                                               desc->traits.name, [this] { pruneExpanded(); });
+	                                               instanceBaseName(bridge_, device, desc->traits.name), [this] { pruneExpanded(); });
 	if (presented != kNoSurface) {
 		expanded_.push_back(presented);
 	}
@@ -726,8 +735,11 @@ void ChainColumn::expandSite(DeviceInstanceId device) {
 		view->setModulation(&mod_, &history_);
 		view->setNest(nest_);
 	}
-	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture,
-	                                               siteViewDescriptor().traits.name, [this] { pruneExpanded(); });
+	// A NAMED HOLDER LENDS THE PANEL ITS NAME: "Pump · Pre/Post"; an unnamed one keeps the site's own title.
+	const std::string holderName = bridge_.userNameOf(device);
+	const std::string siteTitle = holderName.empty() ? std::string(siteViewDescriptor().traits.name)
+	                                                 : holderName + " \xC2\xB7 " + siteViewDescriptor().traits.name;
+	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture, siteTitle, [this] { pruneExpanded(); });
 	if (presented != kNoSurface) {
 		expanded_.push_back(presented);
 	}
@@ -977,8 +989,14 @@ void ChainColumn::showSlotMenu(DeviceInstanceId device) {
 	}
 	// AND THE SELECTION'S VERBS (backlog OA): over the selection when it holds this card, else this card alone.
 	selection_->addVerbs(menu, kVerbIds, device);
+	rename_->addRows(menu, bridge_, device);
 	menu.onSelection() = [this, device, options](int id) {
-		if (id >= kVerbIds) {
+		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
+			if (FxCard* card = cardOf(device); card != nullptr) {
+				(void)rename_->pick(id, bridge_, device, *card, card->renameAnchor());
+			}
+		}
+		else if (id >= kVerbIds) {
 			(void)slotVerbForTest(device, static_cast<FragmentVerb>(id - kVerbIds));
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {

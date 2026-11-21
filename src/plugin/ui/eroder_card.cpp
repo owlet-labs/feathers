@@ -65,10 +65,7 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	// selector changes the Type (`mode_value_cell.h`).
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
 	drive_->setFaceDiameter(kKnobDiameter);
-	std::vector<ZoneSelect::ZoneName> types;
-	for (const char* name : ero::kDriveModeNames) {
-		types.push_back({ name, {} });
-	}
+	std::vector<ZoneSelect::ZoneName> types = driveTypeZoneNames();
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 	                                             stageRowGate(driveView_, driveStageParams()));
 	driveCell_->setFaceDiameter(kKnobDiameter);

@@ -380,11 +380,50 @@ public:
 	void erase(DeviceInstanceId device) {
 		std::erase_if(held_, [device](const auto& e) { return e.first == device; });
 		std::erase_if(presets_, [device](const auto& e) { return e.first == device; });
+		std::erase_if(names_, [device](const auto& e) { return e.first == device; });
 	}
 
 	void clear() noexcept {
 		held_.clear();
 		presets_.clear();
+		names_.clear();
+	}
+
+	// **AND WHAT THE USER CALLS THE INSTANCE** — an optional name per device, saved with it (a device's "name" member) on the same
+	// rules as a label: by instance id, message thread, clamped to `device::kMacroNameMax` bytes, an empty name ERASES.
+
+	/// The user's name for `device`, EMPTY for none (the declared name stands).
+	[[nodiscard]] std::string_view nameOf(DeviceInstanceId device) const noexcept {
+		for (const auto& [id, name] : names_) {
+			if (id == device) {
+				return name;
+			}
+		}
+		return {};
+	}
+	/// Name it (clamped; empty forgets it). True when that changed anything.
+	bool setName(DeviceInstanceId device, std::string_view name) {
+		if (device == kNoInstance) {
+			return false;
+		}
+		const std::string clamped = device::clampMacroName(name);
+		auto it = std::find_if(names_.begin(), names_.end(), [device](const auto& e) { return e.first == device; });
+		if (clamped.empty()) {
+			if (it == names_.end()) {
+				return false;
+			}
+			names_.erase(it);
+			return true;
+		}
+		if (it != names_.end()) {
+			if (it->second == clamped) {
+				return false;
+			}
+			it->second = clamped;
+			return true;
+		}
+		names_.emplace_back(device, clamped);
+		return true;
 	}
 
 	// **AND WHICH PRESET EACH DEVICE'S PANEL LAST LOADED OR SAVED** (backlog QC: an engine restart used to
@@ -455,6 +494,7 @@ public:
 private:
 	std::vector<std::pair<DeviceInstanceId, std::vector<std::string>>> held_;
 	std::vector<std::pair<DeviceInstanceId, PresetIdentity>> presets_;
+	std::vector<std::pair<DeviceInstanceId, std::string>> names_;
 };
 
 /// **WHAT A PATCH SAYS, AS A VALUE — the stream's content and nothing about any engine or record.**
@@ -539,6 +579,10 @@ struct RackPatch {
 		std::vector<Value> labels;
 		/// Which preset its panel last loaded or saved (backlog QC) — `DeviceLabels::presetOf`; empty: none.
 		PresetIdentity preset;
+		/// **WHAT THE USER CALLS THIS INSTANCE** (`DeviceLabels::nameOf`), at most `device::kMacroNameMax` bytes, EMPTY for none. Written
+		/// under "name" only when set, so a document with none is byte for byte what it was, and a reader that does not know the member
+		/// reads everything else and drops only this (every member is read by key).
+		std::string name;
 		/// A CONTAINER'S CONTENTS as bytes (`ContainerOps::saveState`) — a rack in a slot carries the rack
 		/// inside it here. Empty for every other device.
 		std::vector<uint8_t> body;

@@ -160,6 +160,27 @@ std::string ZoneSelect::captionOf(size_t index) const {
 	return name.empty() ? "zone " + std::to_string(index) : name;
 }
 
+std::string ZoneSelect::faceOf(size_t index) const {
+	if (index < names_.size() && !names_[index].shortName.empty()) {
+		return names_[index].shortName;
+	}
+	return captionOf(index);
+}
+
+std::string ZoneSelect::faceText() const {
+	return names_.empty() ? std::string {} : faceOf(zoneIndex());
+}
+
+const char* ZoneSelect::tooltipAt(visage::Point) const {
+	const char* base = tooltipOf(&control_);
+	if (names_.empty() || faceText() == captionText()) {
+		return base;
+	}
+	// THE FACE IS SHORT, SO THE TOOLTIP SAYS THE FULL NAME first.
+	tooltipText_ = captionText() + " - " + (base != nullptr ? base : "");
+	return tooltipText_.c_str();
+}
+
 std::string ZoneSelect::captionText() const {
 	if (names_.empty()) {
 		return {};
@@ -173,14 +194,14 @@ float ZoneSelect::minimumWidth() const {
 	// of the strings it has.
 	float widest = 0.0f;
 	for (size_t i = 0; i < names_.size(); ++i) {
-		const std::string text = captionOf(i);
+		const std::string text = faceOf(i);
 		widest = std::max(widest,
 		                  font(kKnobReadoutSize).stringWidth(std::u32string(text.begin(), text.end())));
 	}
 	// The two arrow cells keep their full width whenever the row is wide enough to want them —
 	// `prevBounds`/`nextBounds` cap at `kArrowWidth` and shrink only below 4·kArrowWidth, which is
 	// narrower than any answer this returns.
-	return 2.0f * kArrowWidth + widest;
+	return 2.0f * arrowWidth() + widest;
 }
 
 void ZoneSelect::commit(double coordinate) {
@@ -231,8 +252,14 @@ void ZoneSelect::selectZone(size_t index) {
 
 //-- geometry ---------------------------------------------------------------------------------//
 
+float ZoneSelect::arrowWidth() const {
+	return tight_ ? kTightArrowWidth : kArrowWidth;
+}
+
 bool ZoneSelect::arrowsShown() const {
-	return !tight_ || minimumWidth() <= static_cast<float>(width());
+	// A TIGHT FACE KEEPS ITS ARROWS (stepping the Type without the menu is the furniture), and shrinks or cuts the name to the room
+	// between them; only a face too narrow for two full arrow cells and a few pixels of name drops them.
+	return !tight_ || static_cast<float>(width()) >= 4.0f * arrowWidth();
 }
 
 void ZoneSelect::setTightFace(bool tight) {
@@ -248,14 +275,14 @@ float ZoneSelect::nameSize() const {
 	float widest = 0.0f;
 	std::string widestName;
 	for (size_t i = 0; i < names_.size(); ++i) {
-		const std::string text = captionOf(i);
+		const std::string text = faceOf(i);
 		const float w = font(kKnobReadoutSize).stringWidth(std::u32string(text.begin(), text.end()));
 		if (w >= widest) {
 			widest = w;
 			widestName = text;
 		}
 	}
-	const float room = std::max(0.0f, static_cast<float>(width()) - 2.0f * 2.0f - (arrowsShown() ? 2.0f * kArrowWidth : 0.0f));
+	const float room = std::max(0.0f, static_cast<float>(width()) - (tight_ ? 2.0f : 4.0f) - (arrowsShown() ? 2.0f * arrowWidth() : 0.0f));
 	return fitName(widestName, room, kKnobReadoutSize, kNameFitFloorSize, 0.0f).size;
 }
 
@@ -263,7 +290,7 @@ visage::Bounds ZoneSelect::prevBounds() const {
 	if (!arrowsShown()) {
 		return { 0.0f, 0.0f, 0.0f, static_cast<float>(height()) };
 	}
-	const float w = std::min(kArrowWidth, static_cast<float>(width()) * 0.25f);
+	const float w = std::min(arrowWidth(), static_cast<float>(width()) * 0.25f);
 	return { 0.0f, 0.0f, w, static_cast<float>(height()) };
 }
 
@@ -271,7 +298,7 @@ visage::Bounds ZoneSelect::nextBounds() const {
 	if (!arrowsShown()) {
 		return { static_cast<float>(width()), 0.0f, 0.0f, static_cast<float>(height()) };
 	}
-	const float w = std::min(kArrowWidth, static_cast<float>(width()) * 0.25f);
+	const float w = std::min(arrowWidth(), static_cast<float>(width()) * 0.25f);
 	return { static_cast<float>(width()) - w, 0.0f, w, static_cast<float>(height()) };
 }
 
@@ -400,7 +427,7 @@ void ZoneSelect::draw(visage::Canvas& canvas) {
 	// row carries the coordinate, and printing one here would be the coarse:fine pair again.
 	const visage::Bounds caption = captionBounds();
 	canvas.setColor(ink);
-	canvas.text(captionText(), font(nameSize()), visage::Font::kCenter, caption.x(), caption.y(),
+	canvas.text(faceText(), font(nameSize()), visage::Font::kCenter, caption.x(), caption.y(),
 	            caption.width(), caption.height());
 
 	// **MODULATION, AS A DROPDOWN SHOWS IT** (`modLookFor`): the border in the modulation colour while an armed source may
@@ -412,7 +439,7 @@ void ZoneSelect::draw(visage::Canvas& canvas) {
 	else if (look.routedMark) {
 		const float d = std::max(height() - 10.0f, 4.0f);
 		canvas.setColor(withAlpha(kModulation, 0.9f));
-		canvas.ring(width() - kArrowWidth - d - 1.0f, (height() - d) * 0.5f, d, 1.0f);
+		canvas.ring(width() - arrowWidth() - d - 1.0f, (height() - d) * 0.5f, d, 1.0f);
 	}
 }
 

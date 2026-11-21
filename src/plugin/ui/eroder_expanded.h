@@ -134,6 +134,11 @@ public:
 	/// THE TWO STACKED BOXES: the filter's rows are Freq then Width; the emphasis's are Amount, Offset, and the Tilt/Bell selector last.
 	[[nodiscard]] FieldStack* filterForTest() const { return filter_.get(); }
 	[[nodiscard]] FieldStack* emphasisStackForTest() const { return emphasis_.get(); }
+	/// THE SMEAR'S STACK: Amount, Stages, Reso (the Offset is the plot's handle alone).
+	[[nodiscard]] FieldStack* smearStackForTest() const { return smear_.get(); }
+	[[nodiscard]] ValueBox* smearAmountForTest() const { return &smear_->box(0); }
+	[[nodiscard]] ValueBox* smearStagesForTest() const { return &smear_->box(1); }
+	[[nodiscard]] ValueBox* smearResoForTest() const { return &smear_->box(2); }
 	[[nodiscard]] ValueBox* freqBoxForTest() const { return &filter_->box(0); }
 	[[nodiscard]] ValueBox* cutoffBoxForTest() const { return &filter_->box(1); }
 	[[nodiscard]] ValueBox* widthBoxForTest() const { return &filter_->box(2); }
@@ -186,6 +191,7 @@ private:
 	std::unique_ptr<SwitchChip> tap_;
 	std::unique_ptr<FieldStack> filter_;
 	std::unique_ptr<FieldStack> emphasis_;
+	std::unique_ptr<FieldStack> smear_;
 	std::unique_ptr<PairCell> loopPair_;
 	std::unique_ptr<ZoneCoordCell> tone_;
 	std::unique_ptr<ZoneCoordCell> character_;

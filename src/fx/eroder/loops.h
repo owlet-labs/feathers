@@ -170,7 +170,9 @@ public:
 		emphasis_.set(e);
 		SmearSettings m;
 		m.amount = s.smear;
-		m.hz = static_cast<float>(centreHz);
+		m.hz = static_cast<float>(smearHz(centreHz, s.smearOffset, rate_));
+		m.stages = static_cast<int>(std::lround(s.smearStages));
+		m.reso = s.smearReso;
 		smear_.set(m);
 		loops_ = loops;
 		limitDivisor_ = pathGainAfterReturn(s, loops.inLoop);
@@ -336,6 +338,16 @@ public:
 			return centreHz;
 		}
 		const double offset = std::clamp(offsetSemitones, -kEmphOffsetSemitones, kEmphOffsetSemitones);
+		return std::clamp(centreHz * std::exp2(offset / 12.0), 20.0, std::min(20000.0, 0.45 * rate));
+	}
+
+	/// WHERE THE SMEAR IS CENTRED: Freq moved by `offsetSemitones`, held as the emphasis's is. An offset of exactly zero is Freq
+	/// untouched, so the Smear is the bits it was.
+	[[nodiscard]] static double smearHz(double centreHz, double offsetSemitones, double rate) noexcept {
+		if (!(offsetSemitones != 0.0)) {
+			return centreHz;
+		}
+		const double offset = std::clamp(offsetSemitones, -kSmearOffsetSemitones, kSmearOffsetSemitones);
 		return std::clamp(centreHz * std::exp2(offset / 12.0), 20.0, std::min(20000.0, 0.45 * rate));
 	}
 

@@ -42851,7 +42851,7 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 	// AND THE DC AMOUNT, the third row of the Drive's mode cell, a box like its Shape.
 	// THE SLOTS' MIXES ARE KNOBS IN THE WINDOW NOW (two), so only their two Shapes are slot boxes; and the Type's second-parameter boxes (the Drive's
 	// Bal, Rate and Rate multiple, and each slot's three) are nine more, and the three Angles (the S row of a Paunch Type) three continuous controls that are boxes in the cells, not knobs.
-	REQUIRE(knobs.size() == continuous - 2 - 4 - 1 - 3 - 1 - 9 - 3); // and the Comb's Cutoff, the Filter box's top row there
+	REQUIRE(knobs.size() == continuous - 2 - 4 - 1 - 3 - 1 - 9 - 3 - 3); // and the Comb's Cutoff, the Filter box's top row there; and the Smear's Amount, Reso and Offset, rows of its own box
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -43847,9 +43847,9 @@ TEST_CASE("ERODER's window offers every shared-section control in every engine, 
 		e.mode(mode);
 		const bool comb = mode == ero::Mode::Comb;
 		const auto visible = [](visage::Frame* f) { return f != nullptr && f->isVisible(); };
-		for (const ero::Param p : { ero::Param::Smear }) {
-			CHECK(visible(panel.knobForTest(p)));
-		}
+		// THE SMEAR IS A STACK (Amount, Stages and Reso side by side, Offset), not a knob.
+		CHECK(visible(panel.smearStackForTest()));
+		CHECK(panel.knobForTest(ero::Param::Smear) == nullptr);
 		CHECK(visible(panel.emphasisStackForTest()));
 		CHECK(visible(panel.filterForTest()));
 		CHECK(visible(panel.loopPairForTest()));
@@ -44020,7 +44020,19 @@ TEST_CASE("ERODER's new controls write their parameter from a gesture and carry 
 		e.refresh();
 		CHECK(eroField(e.d, Param::EmphAmount) == doctest::Approx(12.0f));
 	}
-	knobWrites(e.panel->knobForTest(Param::Smear), Param::Smear, 0.7);
+	// THE SMEAR'S THREE FIELDS write their own parameter and carry their own tooltip, each with the condition it is inactive under.
+	for (const auto& [box, param, value] : { std::tuple { e.panel->smearAmountForTest(), Param::Smear, 0.7 },
+	                                          std::tuple { e.panel->smearStagesForTest(), Param::SmearStages, 13.0 },
+	                                          std::tuple { e.panel->smearResoForTest(), Param::SmearReso, 20.0 } }) {
+		CAPTURE(desc(param).key);
+		REQUIRE(box != nullptr);
+		CHECK(std::string(box->tooltipAt({ 2.0f, 2.0f })) == desc(param).tooltip);
+		box->control().beginGesture();
+		box->control().setValue(value);
+		box->control().endGesture();
+		e.refresh();
+		CHECK(eroField(e.d, param) == doctest::Approx(static_cast<float>(value)));
+	}
 	knobWrites(e.panel->knobForTest(Param::Loop), Param::Loop, 0.6);
 	knobWrites(e.panel->knobForTest(Param::LoopInterval), Param::LoopInterval, 7.0);
 	knobWrites(e.panel->knobForTest(Param::Resonance), Param::Resonance, -0.3);
@@ -44831,7 +44843,8 @@ TEST_CASE("ETCH's window offers the slot row and every control Etch uses, nothin
 	CHECK(visible(panel.freqBoxForTest()));
 	CHECK(visible(panel.widthBoxForTest()));
 	CHECK(visible(panel.emphasisAmountForTest()));
-	for (const ero::Param p : { ero::Param::Resonance, ero::Param::Follow, ero::Param::Mix, ero::Param::HpWet, ero::Param::Smear,
+	CHECK(visible(panel.smearStackForTest()));
+	for (const ero::Param p : { ero::Param::Resonance, ero::Param::Follow, ero::Param::Mix, ero::Param::HpWet,
 	                            ero::Param::Loop, ero::Param::LoopInterval, ero::Param::Input }) {
 		CAPTURE(static_cast<int>(p));
 		CHECK(visible(panel.knobForTest(p)));
@@ -44980,7 +44993,7 @@ TEST_CASE("ERODER's window groups its controls: Input, Tone, Drive over a fixed-
 		const auto k = [&](P p) -> visage::Frame* { return panel.knobForTest(p); };
 		std::vector<std::vector<visage::Frame*>> want(6);
 		want[0] = { k(P::Input) };
-		want[1] = { panel.filterForTest(), panel.emphasisStackForTest(), k(P::Smear) };
+		want[1] = { panel.filterForTest(), panel.emphasisStackForTest(), panel.smearStackForTest() };
 		want[2] = { panel.drivePairForTest() };
 		if (comb) {
 			want[3] = { panel.toneForTest(), panel.characterForTest(), k(P::Heat), panel.blendForTest(), panel.gammaForTest() };
@@ -45337,7 +45350,8 @@ TEST_CASE("ERODER's Tone group: the Filter box holds Freq then Width, the Emphas
 	CHECK(panel.emphasisAmountForTest()->y() < panel.emphasisOffsetForTest()->y());
 	CHECK(panel.emphasisOffsetForTest()->y() < panel.shapeForTest()->y());
 	CHECK(absolute(panel.filterForTest()).x < absolute(panel.emphasisStackForTest()).x);
-	CHECK(absolute(panel.emphasisStackForTest()).x < absolute(panel.knobForTest(P::Smear)).x);
+	CHECK(absolute(panel.emphasisStackForTest()).x < absolute(panel.smearStackForTest()).x);
+	CHECK(panel.smearStackForTest()->caption() == "Smear");
 
 	// EACH FIELD'S OWN DRAG WRITES ITS OWN PARAMETER, by the amount its mapping says: the box's own control gives the value a
 	// pixel-for-pixel restatement is compared with (the box's drag is the control's `setValue` of the dragged position).
@@ -45414,6 +45428,128 @@ TEST_CASE("ERODER's Tone group: the Filter box holds Freq then Width, the Emphas
 	e.set(P::EmphAmount, 0.0f);
 	CHECK(panel.emphasisAmountForTest()->enabled());
 	CHECK_FALSE(panel.emphasisOffsetForTest()->enabled());
+}
+
+TEST_CASE("ERODER's Smear box: Amount, Stages and Reso, three rows inside the plate; the last two grey at Smear 0; the plot's handle writes the offset") {
+	EroFaces e;
+	using P = ero::Param;
+	auto& panel = *e.panel;
+	e.mode(ero::Mode::Dust);
+	ui::FieldStack* stack = panel.smearStackForTest();
+	REQUIRE(stack != nullptr);
+	REQUIRE(stack->boxCount() == 3);
+	const char* keys[] = { "eroder_smear", "eroder_smear_stages", "eroder_smear_reso" };
+	for (size_t i = 0; i < 3; ++i) {
+		CHECK(std::string(stack->box(i).control().desc().key) == keys[i]);
+		CHECK(stack->box(i).isVisible());
+	}
+	ui::ValueBox& amount = stack->box(0);
+	ui::ValueBox& stages = stack->box(1);
+	ui::ValueBox& reso = stack->box(2);
+	CHECK(amount.y() < stages.y());
+	CHECK(stages.y() < reso.y());
+	const float captionTop = ui::ZoneCoordCell::columnRowsFor(ui::EroderExpanded::kFace).caption;
+	for (size_t i = 0; i < 3; ++i) {
+		const ui::ValueBox& b = stack->box(i);
+		CAPTURE(i);
+		CHECK(b.x() >= 0.0f);
+		CHECK(b.x() + b.width() <= stack->width());
+		CHECK(b.y() + b.height() <= captionTop);
+	}
+	CHECK(stack->height() == panel.emphasisStackForTest()->height());
+	CHECK(stack->caption() == "Smear");
+	// HONESTY: Stages and Reso are nothing while Smear is at 0 (Amount never is).
+	e.set(P::Smear, 0.0f);
+	CHECK(amount.enabled());
+	CHECK_FALSE(stages.enabled());
+	CHECK_FALSE(reso.enabled());
+	e.set(P::Smear, 0.3f);
+	CHECK(stages.enabled());
+	CHECK(reso.enabled());
+	const auto dragUp = [&](ui::ValueBox& box, float pixels) {
+		const float cx = static_cast<float>(box.width()) * 0.5f;
+		const float cy = static_cast<float>(box.height()) * 0.5f;
+		box.onMouseDown().callback(at(cx, cy));
+		box.onMouseDrag().callback(at(cx, cy - pixels));
+		box.onMouseUp().callback(at(cx, cy - pixels));
+		e.refresh();
+	};
+	for (const P p : { P::SmearStages, P::SmearReso }) {
+		ui::ValueBox& box = p == P::SmearStages ? stages : reso;
+		CAPTURE(ero::kParamDescs[eroAt(p)].key);
+		const float before = eroField(e.d, p);
+		dragUp(box, 30.0f);
+		CHECK(eroField(e.d, p) > before);
+	}
+	e.set(P::SmearStages, 8.0f);
+	e.set(P::SmearReso, 8.0f);
+	e.set(P::SmearOffset, 0.0f);
+
+	// ---- THE PLOT'S SMEAR HANDLE ----
+	ui::EroderPlot& plot = *panel.plotForTest();
+	const auto press = [&](float x, float y) { plot.onMouseDown().callback(at(x, y)); };
+	const auto drag = [&](float x, float y) { plot.onMouseDrag().callback(at(x, y)); };
+	const auto release = [&](float x, float y) { plot.onMouseUp().callback(at(x, y)); };
+	plot.update();
+	// ON ITS OWN LINE NEAR THE TOP, and apart from the emphasis's handle.
+	CHECK(plot.smearHandleYForTest() < plot.emphasisHandleYForTest());
+	CHECK(plot.smearHzForTest() == doctest::Approx(plot.bandForTest().freqHz));
+	// WHILE SMEAR IS AT 0 IT TAKES NO PRESS (greyed), and its tooltip says why.
+	e.set(P::Smear, 0.0f);
+	plot.update();
+	CHECK_FALSE(plot.smearLiveForTest());
+	{
+		const float hx = plot.smearHandleXForTest();
+		const float hy = plot.smearHandleYForTest();
+		CHECK(std::string(plot.tooltipAt({ hx, hy })) == ero::kParamDescs[eroAt(P::SmearOffset)].tooltip);
+		CHECK(std::string(plot.tooltipAt({ hx, hy })).find("Inactive while Smear is at 0") != std::string::npos);
+		press(hx, hy);
+		drag(hx + 60.0f, hy);
+		release(hx + 60.0f, hy);
+		e.refresh();
+		CHECK(eroField(e.d, P::SmearOffset) == 0.0f);
+	}
+	// LIVE: a press with no movement writes nothing; a drag across writes the offset the plot's own pitch axis predicts.
+	e.set(P::Smear, 0.5f);
+	plot.update();
+	CHECK(plot.smearLiveForTest());
+	{
+		const float hx = plot.smearHandleXForTest();
+		const float hy = plot.smearHandleYForTest();
+		press(hx, hy);
+		release(hx, hy);
+		e.refresh();
+		CHECK(eroField(e.d, P::SmearOffset) == 0.0f);
+		const float dx = 60.0f;
+		press(hx, hy);
+		drag(hx + dx, hy);
+		release(hx + dx, hy);
+		e.refresh();
+		const double expected = 12.0 * std::log2(plot.xToHzForTest(hx + dx - ui::EroderPlot::kAmountDeadZone) / plot.xToHzForTest(hx));
+		CAPTURE(expected);
+		CHECK(expected > 1.0);
+		CHECK(eroField(e.d, P::SmearOffset) == doctest::Approx(static_cast<float>(expected)).epsilon(1e-3));
+		// ACROSS ONLY: the emphasis's offset and the Smear's amount are untouched.
+		CHECK(eroField(e.d, P::EmphOffset) == 0.0f);
+		CHECK(eroField(e.d, P::Smear) == 0.5f);
+		// THE HANDLE FOLLOWS: centred at Freq times two to the offset over twelve.
+		plot.update();
+		const double want = plot.bandForTest().freqHz * std::exp2(static_cast<double>(eroField(e.d, P::SmearOffset)) / 12.0);
+		CHECK(plot.smearHzForTest() == doctest::Approx(want).epsilon(1e-6));
+		CHECK(plot.smearHandleXForTest() == doctest::Approx(plot.hzToXForTest(want)));
+		CHECK(plot.smearHandleXForTest() > hx);
+	}
+	// THE PLOT DECLARES THE HANDLE'S CONTROL FOR THE GUARDS, and the window's tree reaches it.
+	std::vector<ui::ControlFace::Offered> offered;
+	plot.offeredControls(offered);
+	CHECK(std::any_of(offered.begin(), offered.end(), [&](const ui::ControlFace::Offered& o) {
+		return o.control != nullptr && std::string(o.control->desc().key) == "eroder_smear_offset";
+	}));
+	const auto addressed = panel.addressedParamsForTest();
+	for (const P p : { P::Smear, P::SmearStages, P::SmearReso, P::SmearOffset }) {
+		CAPTURE(static_cast<int>(p));
+		CHECK(std::find(addressed.begin(), addressed.end(), p) != addressed.end());
+	}
 }
 
 TEST_CASE("ERODER's Engine group is the same height in every engine, Etch's slot A sits over slot B with the route switch to the right of both, and Input is a knob of its own") {

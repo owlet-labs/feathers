@@ -231,19 +231,33 @@ private:
 //--------------------------------------------------------------------------------------------//
 
 struct SmearSettings {
-	/// 0 is not run. Rising, it raises the sections' Q from 0.5 (amount just above 0) to 8 (amount 1), geometrically:
-	/// `Q = 0.5 * 16^amount`.
+	/// 0 is not run. Rising, it raises the sections' Q from 0.5 (amount just above 0) to `reso` (amount 1), geometrically:
+	/// `Q = 0.5 * (reso / 0.5)^amount`. At the default `reso` of 8 that is `0.5 * 16^amount`, as it always was.
 	float amount = 0.0f;
 	/// The frequency the sections are centred on.
 	float hz = 1000.0f;
+	/// How many sections run, 1 to `Smear::kMaxStages`.
+	int stages = 8;
+	/// The Q reached at amount 1, 1 to 32.
+	float reso = 8.0f;
 };
 
-/// **EIGHT SECOND-ORDER ALLPASS SECTIONS ON ONE FREQUENCY.** The magnitude stays flat; the phase turns about the centre,
-/// the faster the higher the Q, so a click is spread into a chirp and a square's corners are thrown out of step. Each
-/// section is the allpass biquad `(1 - a, -2 cos w0, 1 + a) / (1 + a, -2 cos w0, 1 - a)`, `a = sin(w0) / (2 Q)`.
+/// **A CHAIN OF SECOND-ORDER ALLPASS SECTIONS ON ONE FREQUENCY** (eight unless Stages says otherwise). The magnitude stays flat;
+/// the phase turns about the centre, the faster the higher the Q and the longer the chain, so a click is spread into a chirp
+/// and a square's corners are thrown out of step. Each section is the allpass biquad
+/// `(1 - a, -2 cos w0, 1 + a) / (1 + a, -2 cos w0, 1 - a)`, `a = sin(w0) / (2 Q)`.
+///
+/// **A CHANGE OF STAGES IS A CROSSFADE, NOT A CUT.** The chain is serial, so the output after `n` sections is a tap of the
+/// same run: on a change the output is the old count's tap faded into the new count's over `kFadeFrames` frames (counted
+/// per channel, so any host partition gives the same bits). A section that is added starts from zero state and is fed from
+/// its first frame, so it has settled by the time the fade ends; a section that is dropped keeps running until the fade
+/// ends and is then cleared, so a later increase starts it clean. A change asked for during a fade waits for it.
 class Smear {
 public:
+	/// The sections it runs by default (the count it always ran), and the most it can.
 	static constexpr int kSections = 8;
+	static constexpr int kMaxStages = 32;
+	static constexpr int kFadeFrames = 256;
 
 	void prepare(double sampleRate) noexcept {
 		rate_ = sampleRate > 0.0 ? sampleRate : 48000.0;
@@ -258,60 +272,114 @@ public:
 				s = shell_detail::Biquad::State {};
 			}
 		}
+		fadeLeft_[0] = fadeLeft_[1] = 0;
+		active_ = std::clamp(settings_.stages, 1, kMaxStages);
 	}
 
 	void set(const SmearSettings& settings) noexcept {
 		SmearSettings s = settings;
 		s.amount = std::clamp(s.amount, 0.0f, 1.0f);
 		s.hz = std::clamp(s.hz, 5.0f, static_cast<float>(rate_ * 0.45));
+		s.stages = std::clamp(s.stages, 1, kMaxStages);
+		s.reso = std::clamp(s.reso, static_cast<float>(kMinReso), static_cast<float>(kMaxReso));
 		if (s.amount == 0.0f) {
-			if (settings_.amount != 0.0f) {
-				reset();
-			}
+			const bool wasOn = settings_.amount != 0.0f;
 			settings_ = s;
 			delay_ = 0.0;
+			if (wasOn) {
+				reset();
+			}
+			active_ = s.stages;
 			return;
 		}
-		if (s.amount == settings_.amount && s.hz == settings_.hz) {
-			return;
-		}
+		const bool wasOff = settings_.amount == 0.0f;
+		const bool sameSection = s.amount == settings_.amount && s.hz == settings_.hz && s.reso == settings_.reso;
 		settings_ = s;
-		const double q = 0.5 * std::pow(16.0, static_cast<double>(s.amount));
-		const double w0 = 2.0 * std::numbers::pi * s.hz / rate_;
-		const double alpha = std::sin(w0) / (2.0 * q);
-		const double c = -2.0 * std::cos(w0);
-		const double num[3] = {1.0 - alpha, c, 1.0 + alpha};
-		const double den[3] = {1.0 + alpha, c, 1.0 - alpha};
-		section_ = shell_detail::Biquad::from(num, den);
-		// THE GROUP DELAY AT THE CENTRE, from the section's own response: -d(phase)/dw by a central difference.
-		const double dw = w0 * 1.0e-4;
-		const std::complex<double> ratio = section_.response(w0 + dw) / section_.response(w0 - dw);
-		delay_ = -std::arg(ratio) / (2.0 * dw) * kSections;
+		if (wasOff) {
+			// COMING ON: the chain starts clean at the count asked for.
+			reset();
+		}
+		if (!sameSection || wasOff) {
+			const double q = 0.5 * std::pow(static_cast<double>(s.reso) / 0.5, static_cast<double>(s.amount));
+			const double w0 = 2.0 * std::numbers::pi * s.hz / rate_;
+			const double alpha = std::sin(w0) / (2.0 * q);
+			const double c = -2.0 * std::cos(w0);
+			const double num[3] = {1.0 - alpha, c, 1.0 + alpha};
+			const double den[3] = {1.0 + alpha, c, 1.0 - alpha};
+			section_ = shell_detail::Biquad::from(num, den);
+			// THE GROUP DELAY AT THE CENTRE of one section, from its own response: -d(phase)/dw by a central difference.
+			const double dw = w0 * 1.0e-4;
+			const std::complex<double> ratio = section_.response(w0 + dw) / section_.response(w0 - dw);
+			perSectionDelay_ = -std::arg(ratio) / (2.0 * dw);
+		}
+		delay_ = perSectionDelay_ * s.stages;
+		// A NEW COUNT: crossfade from the one now running (unless a fade is still going; it waits, and the next call retries).
+		if (s.stages != active_ && fadeLeft_[0] == 0 && fadeLeft_[1] == 0) {
+			from_ = active_;
+			active_ = s.stages;
+			fadeLeft_[0] = fadeLeft_[1] = kFadeFrames;
+		}
 	}
 
 	[[nodiscard]] bool on() const noexcept { return settings_.amount != 0.0f; }
 
 	/// THE CHAIN'S GROUP DELAY IN SAMPLES AT THE CENTRE, for the settings now held (0 when not run).
 	[[nodiscard]] double delayAtCentre() const noexcept { return delay_; }
+	/// ONE SECTION'S, and the count the chain is heading for and the one it left, for tests.
+	[[nodiscard]] double sectionDelayForTest() const noexcept { return perSectionDelay_; }
+	[[nodiscard]] int stagesForTest() const noexcept { return active_; }
+	[[nodiscard]] bool fadingForTest() const noexcept { return fadeLeft_[0] != 0 || fadeLeft_[1] != 0; }
+	[[nodiscard]] const shell_detail::Biquad& sectionForTest() const noexcept { return section_; }
 
 	[[nodiscard]] float process(int channel, float x) noexcept {
 		if (settings_.amount == 0.0f) {
 			return x;
 		}
-		auto& states = state_[channel & 1];
+		const int c = channel & 1;
+		auto& states = state_[c];
 		double v = x;
-		for (int i = 0; i < kSections; ++i) {
-			v = section_.step(v, states[i]);
+		if (fadeLeft_[c] == 0) {
+			for (int i = 0; i < active_; ++i) {
+				v = section_.step(v, states[i]);
+			}
+			return static_cast<float>(v);
 		}
-		return static_cast<float>(v);
+		// FADING: one run of the longer chain, tapped after the old count and after the new.
+		const int longest = std::max(from_, active_);
+		double tapFrom = v;
+		double tapTo = v;
+		for (int i = 0; i < longest; ++i) {
+			v = section_.step(v, states[i]);
+			if (i + 1 == from_) {
+				tapFrom = v;
+			}
+			if (i + 1 == active_) {
+				tapTo = v;
+			}
+		}
+		const double w = static_cast<double>(kFadeFrames - fadeLeft_[c] + 1) / static_cast<double>(kFadeFrames);
+		if (--fadeLeft_[c] == 0) {
+			// A DROPPED SECTION IS CLEARED once nothing taps it.
+			for (int i = active_; i < kMaxStages; ++i) {
+				states[i] = shell_detail::Biquad::State {};
+			}
+		}
+		return static_cast<float>(tapFrom + (tapTo - tapFrom) * w);
 	}
 
 private:
+	static constexpr double kMinReso = 1.0;
+	static constexpr double kMaxReso = 32.0;
+
 	double rate_ = 48000.0;
 	SmearSettings settings_ {};
 	double delay_ = 0.0;
+	double perSectionDelay_ = 0.0;
+	int active_ = kSections;
+	int from_ = kSections;
+	int fadeLeft_[2] = {};
 	shell_detail::Biquad section_ {};
-	shell_detail::Biquad::State state_[2][kSections] = {};
+	shell_detail::Biquad::State state_[2][kMaxStages] = {};
 };
 
 //--------------------------------------------------------------------------------------------//

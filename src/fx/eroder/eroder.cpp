@@ -165,6 +165,9 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Loop)] = s.loop;
 	row[static_cast<size_t>(Param::LoopInterval)] = s.loopInterval;
 	row[static_cast<size_t>(Param::EmphOffset)] = s.emphOffset;
+	row[static_cast<size_t>(Param::SmearStages)] = s.smearStages;
+	row[static_cast<size_t>(Param::SmearReso)] = s.smearReso;
+	row[static_cast<size_t>(Param::SmearOffset)] = s.smearOffset;
 	row[static_cast<size_t>(Param::Input)] = s.inputDb;
 	row[static_cast<size_t>(Param::SlotAAmount)] = s.slotA.amount;
 	row[static_cast<size_t>(Param::SlotAType)] = static_cast<float>(s.slotA.type);
@@ -242,6 +245,9 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.loop = read(Param::Loop);
 	s.loopInterval = read(Param::LoopInterval);
 	s.emphOffset = read(Param::EmphOffset);
+	s.smearStages = read(Param::SmearStages);
+	s.smearReso = read(Param::SmearReso);
+	s.smearOffset = read(Param::SmearOffset);
 	s.inputDb = read(Param::Input);
 	s.slotA.amount = read(Param::SlotAAmount);
 	s.slotA.type = static_cast<DriveMode>(

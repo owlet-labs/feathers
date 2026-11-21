@@ -27,7 +27,7 @@
 // THE "+" OF AN EMPTY PAD: WHICH DEVICE, ASKED BEFORE ANYTHING IS MADE.
 //
 // A press on the "+" opens the add menu every lane uses (`addCategorisedDevices`, one submenu per category) over what a chain made now could
-// hold, with the Oscillators listed first so a Drum is one click away. A pick makes the chain on that pad's key holding the picked device
+// hold, in the lanes' category order. A pick makes the chain on that pad's key holding the picked device
 // (one undo step); closing the menu makes nothing. The Rack card and the Rack window each own one, over their own adapter, so the two
 // surfaces cannot disagree about what "+" does.
 

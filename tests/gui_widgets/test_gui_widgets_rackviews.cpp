@@ -24,6 +24,7 @@
 
 #include "fx/drum/drum_types.h"
 #include "plugin/ui/chain_column.h"
+#include "plugin/ui/device_menu.h"
 #include "plugin/ui/drum_device_card.h"
 #include "plugin/device_registry.h"
 #include "plugin/ui/fx_lane.h"
@@ -2434,7 +2435,7 @@ std::set<int> usedInStrip(ui::RackPadPages& pages, int page) {
 
 } // namespace
 
-TEST_CASE("rack pads fix A: a pad's + asks which device (the lanes' menu, oscillators first), the pick makes the keyed chain holding it, closing makes nothing, on the card and the window") {
+TEST_CASE("rack pads fix A: a pad's + asks which device (the lanes' menu, in their category order), the pick makes the keyed chain holding it, closing makes nothing, on the card and the window") {
 	for (const bool onCard : { false, true }) {
 		CAPTURE(onCard);
 		RealRack r;
@@ -2444,12 +2445,44 @@ TEST_CASE("rack pads fix A: a pad's + asks which device (the lanes' menu, oscill
 		ui::RackPadGrid& grid = onCard ? r.card->padsForTest().gridForTest() : r.panel->padsForTest().gridForTest();
 		const std::vector<const device::Descriptor*> offered = add.offeredForTest();
 		REQUIRE(offered.size() > 10); // any device a chain can hold, not a Drum alone
-		// THE MENU: the Oscillators heading first, a Drum under it, and the other categories after.
+		// THE MENU: the lanes' category order, with a Drum under Oscillators wherever that heading falls — and no heading promoted.
 		visage::PopupMenu menu = add.menuForTest(5);
 		REQUIRE_FALSE(menu.options().empty());
-		CHECK(menu.options().front().name().toUtf8() == "Oscillators");
+		std::vector<std::string> headings;
+		for (const visage::PopupMenu& h : menu.options()) {
+			headings.push_back(h.name().toUtf8());
+		}
+		std::vector<std::string> canonical; // the order the lanes' own builder files the same offer in, restated from the groups
+		for (const device::CategoryGroup& g : device::groupByCategory(offered)) {
+			canonical.push_back(device::categoryName(g.category));
+		}
+		CHECK(headings == canonical);
+		CHECK(headings.front() != "Oscillators");
+		// EVERY OTHER SITE OFFERS LESS (a strip: modulators only; a chain: what fits; the rack: all), and a heading it has no devices
+		// for is absent — the others keep their places, so each site's headings are a subsequence of the full order.
+		for (const std::string& dropped : canonical) {
+			std::vector<const device::Descriptor*> fewer;
+			for (const device::Descriptor* d : offered) {
+				if (std::string(device::categoryName(d->category)) != dropped) {
+					fewer.push_back(d);
+				}
+			}
+			visage::PopupMenu site;
+			ui::addCategorisedDevices(site, fewer, [](size_t) { return true; });
+			std::vector<std::string> want = canonical;
+			want.erase(std::find(want.begin(), want.end(), dropped));
+			std::vector<std::string> got;
+			for (const visage::PopupMenu& h : site.options()) {
+				got.push_back(h.name().toUtf8());
+			}
+			CAPTURE(dropped);
+			CHECK(got == want);
+		}
+		const auto osc = std::find_if(menu.options().begin(), menu.options().end(),
+		                              [](const visage::PopupMenu& h) { return h.name().toUtf8() == "Oscillators"; });
+		REQUIRE(osc != menu.options().end());
 		std::vector<std::string> first;
-		for (const visage::PopupMenu& row : menu.options().front().options()) {
+		for (const visage::PopupMenu& row : osc->options()) {
 			first.push_back(row.name().toUtf8());
 		}
 		CHECK(std::find(first.begin(), first.end(), "Drum") != first.end());

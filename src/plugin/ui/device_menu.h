@@ -50,15 +50,12 @@
 
 namespace feathers::ui {
 
-/// `first`, when given, is the category listed at the top of the menu (the others keep their order): a surface that mostly wants one kind of
-/// device (the pads' "+" wants an oscillator) puts it a click away, without a second taxonomy.
+/// THE CATEGORY ORDER IS FIXED: no call site promotes a category, so a heading sits in the same place relative to the others wherever the
+/// menu is opened (a category the site does not offer is absent, never a reason to move another).
 template <typename Enabled>
 void addCategorisedDevices(visage::PopupMenu& menu, const std::vector<const device::Descriptor*>& offered,
-                           Enabled&& enabled, device::Category first = device::Category::None) {
-	std::vector<device::CategoryGroup> groups = device::groupByCategory(offered);
-	if (first != device::Category::None) {
-		std::stable_partition(groups.begin(), groups.end(), [first](const device::CategoryGroup& g) { return g.category == first; });
-	}
+                           Enabled&& enabled) {
+	const std::vector<device::CategoryGroup> groups = device::groupByCategory(offered);
 	const auto row = [&](visage::PopupMenu& into, size_t i) {
 		into.addOption(static_cast<int>(i), offered[i]->traits.name).enable(enabled(i));
 	};

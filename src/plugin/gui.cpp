@@ -1454,9 +1454,14 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 
 	/// The keyboard to the editor's root when no frame in this window holds it (see `tickOnce`). A frame that
 	/// holds it already, however deep, is left alone: a type-in's focus is its own.
+	///
+	/// THE SEARCH STARTS AT THE WINDOW'S TOP FRAME, NOT THE EDITOR ROOT: a popup menu is a child of the top frame
+	/// (visage adds it there, above the root) and holds the keyboard itself, closing the moment it loses it.
+	/// Looked for under the root only, an open menu was never found, the repair took the focus for the root on the
+	/// next beat, and every dropdown flickered open and shut.
 	void restoreKeyboardToRoot() {
 		visage::Frame* top = window.app();
-		if (top != nullptr && top->acceptsKeystrokes() && !holdsKeyboard(*top)) {
+		if (top != nullptr && top->acceptsKeystrokes() && !holdsKeyboard(*top->topParentFrame())) {
 			top->requestKeyboardFocus();
 		}
 	}

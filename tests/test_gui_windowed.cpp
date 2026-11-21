@@ -58,6 +58,9 @@
 #include "plugin/ui/perform_stage.h"
 #include "plugin/ui/explore_stage.h"
 #include "plugin/ui/stage_rail.h"
+#include "plugin/ui/engine_rail.h"
+#include "plugin/ui/value_box.h"
+#include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/plugin_window.h"
 #include "rack/rack_state.h"
 #include "plugin/ui/mod_state.h"
@@ -3549,6 +3552,85 @@ TEST_CASE("an Explore stage held open with every rail open measures no text and 
 	// would still have to be explained.
 	CHECK(ui::trackedTextCacheSize() <= 256);
 	ui::setTrackedTextAudit(false);
+}
+
+namespace {
+void collectChoiceBoxes(visage::Frame* f, std::vector<ui::ValueBox*>& out) {
+	if (f == nullptr || !f->isVisible()) {
+		return;
+	}
+	if (auto* box = dynamic_cast<ui::ValueBox*>(f); box != nullptr && box->choiceMenuAvailable() && box->width() > 0.0f) {
+		out.push_back(box);
+	}
+	for (visage::Frame* child : f->children()) {
+		collectChoiceBoxes(child, out);
+	}
+}
+
+/// A REAL PRESS AND RELEASE on `box`, ten beats of the editor, then the menu must still be on screen and a real click on
+/// another row must write that choice.
+void checkMenuSurvivesAndPicks(ReopenRig& rig, ui::ValueBox& box, const char* what) {
+	CAPTURE(what);
+	const visage::Point c = box.positionInWindow() + visage::Point(box.width() / 2, box.height() / 2);
+	const double scale = rig.f.root->dpiScale();
+	const visage::IPoint at { static_cast<int>(c.x * scale), static_cast<int>(c.y * scale) };
+	EditorPointer p = rig.pointer();
+	p.send(MotionNotify, at.x, at.y, 0, 0);
+	p.send(ButtonPress, at.x, at.y, Button1, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, at.x, at.y, Button1, Button1Mask);
+	for (int i = 0; i < 10; ++i) {
+		(void)rig.f.gui.tickForTest();
+		pumpEditor(rig.f.gui, 3);
+	}
+	visage::PopupMenuFrame* popup = findIn<visage::PopupMenuFrame>(rig.f.root->topParentFrame());
+	REQUIRE(popup != nullptr);
+	CHECK(popup->isVisible());
+	CHECK(ui::lastMenuPlacementForTest().shown);
+	// A real click on a row that is not the current one.
+	const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+	const size_t count = box.entryCount();
+	REQUIRE(count >= 2);
+	const size_t current = static_cast<size_t>(std::max(0, placed.current));
+	const size_t want = current == 0 ? 1 : 0;
+	const float rowH = placed.list.height() / static_cast<float>(count);
+	const visage::Point rowAt { placed.list.x() + placed.list.width() * 0.5f,
+		                        placed.list.y() + (static_cast<float>(want) + 0.5f) * rowH };
+	const visage::IPoint pick { static_cast<int>(rowAt.x * scale), static_cast<int>(rowAt.y * scale) };
+	const double before = box.control().value();
+	p.send(MotionNotify, pick.x, pick.y, 0, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonPress, pick.x, pick.y, Button1, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, pick.x, pick.y, Button1, Button1Mask);
+	pumpEditor(rig.f.gui, 10);
+	CHECK(box.control().value() == doctest::Approx(box.control().desc().min + static_cast<double>(want)));
+	CHECK(box.control().value() != before);
+}
+} // namespace
+
+TEST_CASE("a dropdown opened by a real press and release stays open through the editor's beats and takes a click: "
+          "the Engine box and a device's choice box") {
+	ReopenRig rig;
+	std::vector<ui::ValueBox*> boxes;
+	collectChoiceBoxes(rig.f.root, boxes);
+	REQUIRE_FALSE(boxes.empty());
+	ui::EngineRail* rail = findIn<ui::EngineRail>(rig.f.root);
+	REQUIRE(rail != nullptr);
+	SUBCASE("the Engine box") {
+		checkMenuSurvivesAndPicks(rig, *rail->engineBoxForTest(), "engine");
+	}
+	SUBCASE("another choice box") {
+		ui::ValueBox* other = nullptr;
+		for (ui::ValueBox* b : boxes) {
+			if (b != rail->engineBoxForTest()) {
+				other = b;
+				break;
+			}
+		}
+		REQUIRE(other != nullptr);
+		checkMenuSurvivesAndPicks(rig, *other, "other");
+	}
 }
 #endif // defined(__linux__): ReopenRig is Linux-only
 

@@ -114,6 +114,7 @@ public:
 			return false;
 		}
 		std::vector<uint8_t> copy(bytes);
+		(void)unrefuse(id); // a new body is a new chance
 		if (bytes != 0) {
 			std::copy(data, data + bytes, copy.begin());
 		}
@@ -204,6 +205,7 @@ public:
 	/// GIVE ONE UP once its container has taken it. A body consumed twice would mean two containers
 	/// loaded one chain, so a provisioner that erases as it goes is one that cannot do that.
 	bool erase(DeviceInstanceId id) {
+		(void)unrefuse(id);
 		(void)uncarry(id);
 		std::erase_if(blocks_, [id](const BlockEntry& e) { return e.id == id; });
 		for (size_t i = 0; i < bodies_.size(); ++i) {
@@ -218,6 +220,7 @@ public:
 	void clear() {
 		bodies_.clear();
 		carried_.clear();
+		refused_.clear();
 		blocks_.clear();
 	}
 
@@ -340,6 +343,37 @@ public:
 			}
 		}
 		return false;
+	}
+
+	//--------------------------------------------------------------------------------------------//
+	// A BODY THE DEVICE WOULD NOT TAKE (backlog TM)                                                //
+	//--------------------------------------------------------------------------------------------//
+	//
+	// **THE BYTES STAY, AND THE DEVICE DOES NOT RUN.** A loader that refuses a body (a newer build's, a damaged
+	// one) leaves its instance fresh and empty, and a save that asked that instance for its body would write the
+	// empty one over the user's content. So a refusal is filed beside the stored bytes: the converger builds no
+	// instance for the device, files no handle, and a save finds the stored bytes exactly as it does for a device
+	// this build cannot run at all. A NEW body for the id (`store`), or its removal, ends the refusal.
+
+	/// File that the device under `id` would not take its stored body, and why. Replaces an earlier reason.
+	void refuse(DeviceInstanceId id, std::string reason) {
+		if (id == kNoInstance) {
+			return;
+		}
+		unrefuse(id);
+		refused_.emplace_back(id, std::move(reason));
+	}
+	/// Why the device would not take its body, or null when it did (or has none).
+	[[nodiscard]] const std::string* refusalOf(DeviceInstanceId id) const {
+		for (const auto& [held, reason] : refused_) {
+			if (held == id) {
+				return &reason;
+			}
+		}
+		return nullptr;
+	}
+	bool unrefuse(DeviceInstanceId id) {
+		return std::erase_if(refused_, [id](const auto& r) { return r.first == id; }) != 0;
 	}
 
 	/// HOW MANY BODIES ARE HELD — during a load, how many were read; after a provisioner has drained
@@ -476,6 +510,8 @@ private:
 
 	std::vector<Entry> bodies_;
 	std::vector<std::pair<DeviceInstanceId, std::string>> carried_;
+	/// The devices that would not take their stored body, with the reason (`refuse`).
+	std::vector<std::pair<DeviceInstanceId, std::string>> refused_;
 	/// One device's blocks (`storeBlocks`), the generation they were stored under, and the serial each block was last
 	/// refreshed from (`refreshBlock`).
 	struct BlockEntry {

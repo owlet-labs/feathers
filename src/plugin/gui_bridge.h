@@ -1443,6 +1443,10 @@ public:
 	/// `noteRefusedRoutes` always gave; `noteRefusedRoutes` ADDS a service's drops to it.
 	void noteRefusedRoutes(const RouteRefusals& refused);
 	void noteLoadReport(const rack::LoadReport& report);
+	/// **A BODY A DEVICE REFUSED** (backlog TM), found at provisioning, added to the latched report.
+	void noteBodyRefusal(const std::string& where, const std::string& name, const std::string& why) {
+		loadReport_.note(rack::LoadReport::Kind::BodyRefused, where, name, why);
+	}
 	rack::LoadReport takeLoadReport();
 
 	/// THE SMOOTHED PUCK VELOCITY, and this one travels the OTHER way — the engine measures it and the

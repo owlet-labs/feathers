@@ -2168,3 +2168,8 @@ add_test(NAME fx-owltt-linear COMMAND test_fx_owltt_linear)
 add_executable(bench_linear_crossover bench_linear_crossover.cpp)
 target_link_libraries(bench_linear_crossover PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
 target_include_directories(bench_linear_crossover PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+add_executable(test_body_refused test_body_refused.cpp)
+target_link_libraries(test_body_refused PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_body_refused PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME body-refused COMMAND test_body_refused)

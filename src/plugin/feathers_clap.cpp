@@ -1180,6 +1180,16 @@ protected:
 		return true;
 	}
 
+
+	/// **A BODY A DEVICE REFUSED IS REPORTED, NOT SWALLOWED** (backlog TM): into the load report the tray says, and the event log.
+	/// The device is kept as saved and plays as bypassed (`Converger::provision`).
+	void sayBodyRefusals() {
+		for (const rack::Converger::BodyRefusal& r : synth_.takeBodyRefusals()) {
+			bridge_.noteBodyRefusal(r.where, r.name, r.reason);
+			log_.say("body-refused device=" + r.name + " where=\"" + r.where + "\" why=\"" + r.reason
+			         + "\" (kept as saved, device bypassed)");
+		}
+	}
 	static std::string hex32(uint32_t v) {
 		char out[9];
 		std::snprintf(out, sizeof(out), "%08x", v);
@@ -1206,6 +1216,7 @@ protected:
 		readingsHops_.grow(bridge_.chainState().capacity()); // a hop for every position the lane can reach
 		synth_.provisionDevices(bridge_.chainState(), bridge_.publishedChains().sequence(), &bridge_.fxBodies());
 		bridge_.noteRefusedRoutes(synth_.takeOuterDrops()); // what a chain dropped inside, said by the tray
+		sayBodyRefusals();
 		synth_.drainRetiredDevices();
 
 		// THE HOST SLOTS THE PATCH RESTORED ARE RENAMED IN THE POOL; recorded here (the load scope is open)
@@ -1519,6 +1530,7 @@ protected:
 		readingsHops_.grow(bridge_.chainState().capacity()); // a hop for every position the lane can reach
 		synth_.provisionDevices(bridge_.chainState(), bridge_.publishedChains().sequence(), &bridge_.fxBodies());
 		bridge_.noteRefusedRoutes(synth_.takeOuterDrops()); // what a chain dropped inside, said by the tray
+		sayBodyRefusals();
 		synth_.drainRetiredDevices();
 
 		// THE PATCH STATE THE HOST CANNOT SEE. Drift offsets and the orientation pin are saved with the
@@ -1625,6 +1637,7 @@ protected:
 		readingsHops_.grow(bridge_.chainState().capacity()); // a hop for every position the lane can reach
 		synth_.provisionDevices(bridge_.chainState(), bridge_.publishedChains().sequence(), &bridge_.fxBodies());
 		bridge_.noteRefusedRoutes(synth_.takeOuterDrops()); // what a chain dropped inside, said by the tray
+		sayBodyRefusals();
 		synth_.drainRetiredDevices();
 		// AND THE EDITOR IS TOLD, because it draws something that depends on it: the filter card's
 		// curve. The Camp B models clamp their corner at 0.3 x samplerate, so a card drawing at a

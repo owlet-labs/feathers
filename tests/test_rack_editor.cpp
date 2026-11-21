@@ -26,6 +26,7 @@
 #include "device/device_groups.h"
 #include "rack/device_browser.h"
 
+#include "fx/featherverb/featherverb_types.h"
 #include "fx/owltt/owltt_types.h"
 #include "fx/filter/filter_types.h"
 #include "fx/shaper/shaper_types.h"
@@ -580,6 +581,37 @@ TEST_CASE("a device this build does not have gets a card that says \"device miss
 	f.editor.syncCards();
 	CHECK(f.editor.cardOfDeviceForTest(lane) == nullptr);
 	CHECK(liveCards(f.editor) == 2);
+}
+
+TEST_CASE("backlog TM: a device whose saved contents were refused is drawn as 'could not load', not as controls, and can be removed") {
+	// The converger found a body the device would not take: nothing runs, the bytes are kept, and the card must not
+	// show controls that would not reflect what is stored (the honesty rule).
+	Fixture f;
+	rack::RackPatch patch;
+	patch.present = true;
+	patch.macro.assign(kAxes.coreSources, 0.0f);
+	rack::RackPatch::Device d;
+	std::copy_n(fx::featherverb::kTraits.tag, std::min<size_t>(std::strlen(fx::featherverb::kTraits.tag), device::kTagBytes), d.tag.begin());
+	d.instanceId = 5;
+	d.body.assign(41, 0xC7);
+	patch.device.push_back(d);
+	f.engine.prepare(48000.0, 4096);
+	f.bridge.prepare(48000.0, 4096);
+	const rack::LoadReport lr = f.bridge.loadPatch(patch);
+	f.bridge.drain();
+	f.editor.syncCards();
+	const DeviceInstanceId id = f.bridge.deviceAtPosition(0);
+	REQUIRE(id != kNoInstance);
+	REQUIRE(f.bridge.bodyRefusalOf(id) != nullptr);
+	const auto* card = dynamic_cast<const ui::MissingDeviceCard*>(f.editor.cardOfDeviceForTest(id));
+	REQUIRE(card != nullptr);
+	CHECK(card->message() == ui::MissingDeviceCard::kRefusedMessage);
+	CHECK(card->name() == std::string(fx::featherverb::kTraits.name));
+	CHECK(card->refusal() == *f.bridge.bodyRefusalOf(id));
+
+	f.remove(id);
+	f.editor.syncCards();
+	CHECK(f.editor.cardOfDeviceForTest(id) == nullptr);
 }
 
 TEST_CASE("a modulator gets a card too, because a device is a device") {

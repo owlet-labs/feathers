@@ -205,6 +205,8 @@ public:
 	}
 	/// What the chains in this lane dropped at their service since last taken — see `Converger::takeOuterDrops`.
 	[[nodiscard]] rack::RouteRefusals takeOuterDrops() noexcept { return converger_.takeOuterDrops(); }
+	/// The bodies a device refused at provisioning since last taken — see `Converger::takeBodyRefusals`.
+	[[nodiscard]] std::vector<rack::Converger::BodyRefusal> takeBodyRefusals() noexcept { return converger_.takeBodyRefusals(); }
 	/// THE LANE ALONE — an empty strip. For a host (or a case) with no modulators.
 	size_t provision(const FxChain& chain, ContainerBodies* bodies = nullptr) {
 		return provision(chain, noStrip(), bodies);

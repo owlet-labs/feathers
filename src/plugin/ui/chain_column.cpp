@@ -332,7 +332,9 @@ void ChainColumn::syncCards() {
 	// where the device stands, so a reorder builds nothing and no card is rebuilt under a live press.
 	bool changed = false;
 	const auto missingTagOf = [this](DeviceInstanceId device, const device::Descriptor* desc) {
-		return desc == nullptr ? bridge_.heldTagOf(device) : device::Tag {};
+		// A DEVICE WHOSE SAVED CONTENTS WERE REFUSED (backlog TM) is keyed by its tag as a missing one is, so the card is rebuilt
+		// the moment the converger finds the refusal.
+		return desc == nullptr || bridge_.bodyRefusalOf(device) != nullptr ? bridge_.heldTagOf(device) : device::Tag {};
 	};
 	// FIRST, EVERY CARD WHOSE DEVICE HAS LEFT THE CHAIN OR BECOME ANOTHER, RETIRED.
 	for (auto it = cards_.begin(); it != cards_.end();) {
@@ -368,13 +370,17 @@ void ChainColumn::syncCards() {
 		const device::Descriptor* desc = bridge_.descriptorOf(i);
 		const device::Tag missing = missingTagOf(i, desc);
 		std::unique_ptr<FxCard> card;
-		if (desc != nullptr) {
+		const std::string* refusal = bridge_.bodyRefusalOf(i);
+		if (desc != nullptr && refusal == nullptr) {
 			// THE DEVICE'S OWN CARD IF IT HAS ONE ON THE SEAM, the generic grid otherwise — the SAME
 			// selection both other hosts use, so the three cannot disagree about which UI a device gets.
 			card = makeCustomCard(bridge_, registry_, i, *desc, notifier_, &mod_, &history_);
 			if (card == nullptr) {
 				card = std::make_unique<GenericCard>(bridge_, i, *desc, notifier_);
 			}
+		}
+		else if (desc != nullptr && refusal != nullptr) {
+			card = std::make_unique<MissingDeviceCard>(*desc, *refusal);
 		}
 		else if (missing[0] != '\0') {
 			card = std::make_unique<MissingDeviceCard>(std::string_view(missing.data(), missing.size()));

@@ -755,6 +755,8 @@ private:
 	/// compare unequal on every layout and rebuild its card every frame. The panel records what it built
 	/// with, which is a fact it already has in hand.
 	std::vector<DeviceInstanceId> cardDevice_ = std::vector<DeviceInstanceId>(kMaxRackSlots);
+	/// Whether the card was built for a device whose saved contents were refused (backlog TM) — part of the key.
+	std::vector<bool> cardRefused_ = std::vector<bool>(kMaxRackSlots);
 
 	/// Build the card `slot` needs if it has not got it. Called before anything asks a card its size
 	/// or draws it. True when it built one.

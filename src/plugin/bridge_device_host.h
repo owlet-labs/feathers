@@ -220,6 +220,9 @@ public:
 	std::span<const uint8_t> containerBodyOf(DeviceInstanceId device) const override {
 		return bridge_.fxBodies().bodyFor(device);
 	}
+	const std::string* bodyRefusalOf(DeviceInstanceId device) const override {
+		return bridge_.fxBodies().refusalOf(device);
+	}
 	uint64_t containerBodyGenerationOf(DeviceInstanceId device) const override {
 		return bridge_.fxBodies().generationOf(device);
 	}

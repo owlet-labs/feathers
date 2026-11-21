@@ -237,6 +237,15 @@ device::HostSlotLink RackBridge::slotLinkFor(DeviceInstanceId self) noexcept {
 // THE RECORD                                                                                      //
 //-------------------------------------------------------------------------------------------------//
 
+void RackBridge::collectBodyRefusals() {
+	for (const Converger::BodyRefusal& r : converger_.takeBodyRefusals()) {
+		loadReport_.note(LoadReport::Kind::BodyRefused, r.where, r.name, r.reason);
+		bodyRefusalNotes_.note(LoadReport::Kind::BodyRefused, r.where, r.name, r.reason);
+		refusalLog_.push_back("body-refused device=" + r.name + " where=\"" + r.where + "\" why=\"" + r.reason
+		                      + "\" (kept as saved, device bypassed)");
+	}
+}
+
 void RackBridge::commit() {
 	// PUBLISHED, THEN BUILT FOR THAT PUBLISH — each arrival names the publish it belongs to, so a drain
 	// still on the previous state keeps it for later instead of handing it back as unwanted. The other
@@ -254,6 +263,7 @@ void RackBridge::commit() {
 	(void)published_.publish(record_.state());
 	record_.publishRoutes(publishedRoutes_);
 	converger_.provision(record_.state(), &bodies_, published_.sequence());
+	collectBodyRefusals();
 }
 
 void RackBridge::harvestExtraState() {
@@ -280,6 +290,7 @@ void RackBridge::reapRetired() {
 	// THE SERVICE: parked devices destroyed, and any lane the engine could not take built again — the
 	// state has not changed, so this is `provision` finding the lane it was told to forget.
 	converger_.provision(record_.state(), &bodies_, published_.sequence());
+	collectBodyRefusals();
 	// WHAT THE CHAINS INSIDE DROPPED AT THEIR SERVICE, kept to be said by this rack's surface (§7 hygiene).
 	noteRefusedRoutes(converger_.takeOuterDrops());
 	(void)sweepExports(); // AND THE EXPORT ROWS NO ROUTE READS ANY MORE (backlog NZ), once the audio thread has caught up
@@ -910,6 +921,7 @@ void RackBridge::prepare(double sampleRate, int maxFrames) {
 	converger_.dropPending();
 	engine_.prepare(sampleRate, maxFrames);
 	converger_.provision(record_.state(), &bodies_, published_.sequence());
+	collectBodyRefusals();
 }
 
 void RackBridge::publish(const RackEngine& engine) noexcept {
@@ -1064,6 +1076,7 @@ LoadReport RackBridge::loadPatch(const RackPatch& patch) {
 	// a project must not report it modified. A mark an edit left before the load stays for the host.
 	heldFalls_.forget(); // a held fall belongs to the patch being replaced
 	loading_ = true;
+	bodyRefusalNotes_ = LoadReport {};
 	const DeviceLabels labelsBefore = outputLabels_;
 	LoadReport refused = applyPatchToRecord(patch, &record_, &bodies_, &ids_, rackCoreCodec(engine_.axes()),
 	                                              &cardViews_, &outputLabels_);
@@ -1111,6 +1124,8 @@ LoadReport RackBridge::loadPatch(const RackPatch& patch) {
 	loading_ = false;
 	// KEPT UNTIL A SURFACE TAKES THEM, as well as returned: a chain's load has no surface at the time.
 	noteLoadReport(refused);
+	// AND THE BODIES A DEVICE REFUSED WHILE THIS LOAD WAS BUILT (backlog TM): latched by `commit` already, returned with it.
+	refused.merge(bodyRefusalNotes_);
 	return refused;
 }
 

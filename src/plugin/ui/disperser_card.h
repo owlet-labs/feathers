@@ -108,6 +108,7 @@ public:
 	[[nodiscard]] ModeValueCell* topoForTest() const { return topo_.get(); }
 	[[nodiscard]] ModeValueCell* twistForTest() const { return twist_.get(); }
 	[[nodiscard]] GammaBox* gammaForTest() const { return gamma_.get(); }
+	[[nodiscard]] ValueBox* mixBoxForTest() const { return mix_.get(); }
 	[[nodiscard]] FaderPill* pillForTest(size_t i) const { return i < pills_.size() ? pills_[i].get() : nullptr; }
 
 private:
@@ -131,6 +132,7 @@ private:
 	std::unique_ptr<ValueBox> offset_;
 	std::unique_ptr<ValueBox> stages_;
 	std::unique_ptr<GammaBox> gamma_;
+	std::unique_ptr<ValueBox> mix_;
 	std::unique_ptr<ModeValueCell> topo_;
 	std::unique_ptr<ModeValueCell> twist_;
 	std::vector<std::unique_ptr<FaderPill>> pills_;

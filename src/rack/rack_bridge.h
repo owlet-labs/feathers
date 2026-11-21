@@ -531,6 +531,7 @@ public:
 	bool hasExpandedViewFor(const device::Descriptor& desc) const override {
 		return engine_.hasExpandedViewFor(desc);
 	}
+	bool containersEnabled() const noexcept override { return record_.containersEnabled(); }
 	backplane::CorePolicy corePolicy() const noexcept override { return engine_.corePolicy(); }
 
 	//---------------------------------------------------------------------------------------------//

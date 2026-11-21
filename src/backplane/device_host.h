@@ -687,6 +687,10 @@ public:
 		return false;
 	}
 
+	/// **WHETHER EVERY CONTAINER ABOVE THIS HOST'S CHAIN IS SWITCHED ON** — a Chain or Rack that is off processes nothing it holds, so a card
+	/// here draws dimmed (its own enable unchanged, its controls live). The default is the top level's: nothing above it.
+	virtual bool containersEnabled() const noexcept { return true; }
+
 	/// **WHAT A DEVICE'S OUTPUT IS CALLED ON THIS INSTANCE** — the player's label, else the name the
 	/// device declares, else "Source". Both hosts keep a label per (device, output) beside the card folds
 	/// and save it with the patch (`ParamBridge::outputLabel`, `RackBridge::outputLabel`); this is that

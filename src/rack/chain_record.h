@@ -241,6 +241,23 @@ public:
 	/// can be said; nothing changes when nothing went.
 	device::RouteDrop pruneOuterRoutes();
 	[[nodiscard]] bool hasOuterGate() const noexcept { return outer_.upstream != nullptr; }
+	/// **WHETHER THE CONTAINER THIS CHAIN SITS IN, AND EVERY ONE ABOVE IT, IS SWITCHED ON** — read from each holder's own enable field in
+	/// the record that holds it (the gate names that record and the holder). True with no gate: a top-level chain has no container.
+	[[nodiscard]] bool containersEnabled() const noexcept {
+		if (outer_.upstream == nullptr || outer_.host == nullptr) {
+			return true;
+		}
+		const auto* above = static_cast<const ChainRecord*>(outer_.host);
+		const device::Descriptor* desc = above->descriptorOf(outer_.self);
+		if (desc != nullptr && desc->traits.enableControl >= 0) {
+			const auto at = static_cast<size_t>(desc->traits.enableControl);
+			const DeviceState& row = above->rowOf(outer_.self);
+			if (at < row.field.size() && row.field[at] < 0.5f) {
+				return false;
+			}
+		}
+		return above->containersEnabled();
+	}
 	/// **THE GATE A HOST HANDS A CHAIN IT HOLDS**, over this record — the maker `Converger` wants, for
 	/// every host whose record this is (Feathers' bridge, the rack's, a rack in a rack).
 	static device::OuterGate gateOver(const void* record, DeviceInstanceId self) noexcept {

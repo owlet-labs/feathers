@@ -698,6 +698,18 @@ bool ParallelRackExpanded::follow() {
 						chainRename_->begin(slot, *strip, anchor);
 					}
 				});
+				// THE OPEN RAIL DRAWS THE CHAIN'S NAME AS ITS HEADING: a double-click there renames, a right press opens the menu.
+				kept->rail->setHeadingHandlers(
+				    [this, rail = kept->rail.get(), chainId = ids[i]](const visage::Bounds& anchor) {
+					    if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+						    chainRename_->showMenu(slot, *rail, anchor);
+					    }
+				    },
+				    [this, rail = kept->rail.get(), chainId = ids[i]](const visage::Bounds& anchor) {
+					    if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+						    chainRename_->begin(slot, *rail, anchor);
+					    }
+				    });
 				// AND A RIGHT PRESS THERE OPENS ITS MENU (Rename...), as a tab's and a pad's do.
 				kept->strip->setContextHandler([this, strip = kept->strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
 					if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {

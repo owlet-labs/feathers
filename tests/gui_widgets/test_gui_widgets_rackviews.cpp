@@ -3759,3 +3759,43 @@ TEST_CASE("rename field: a single left press on a strip's own surface renames no
 	r.refresh();
 	CHECK(r.rack().muted(1) == !muted); // the strip's own control is untouched by the new gesture
 }
+
+TEST_CASE("rename field: an open rail in the window draws the chain's name as its heading, and a double-click or right press there renames") {
+	for (const bool menu : { false, true }) {
+		RealRack r;
+		r.chains(3, 2, true);
+		for (size_t i = 0; i < 3; ++i) {
+			r.rack().setOpen(i, true);
+		}
+		r.view_(0);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		ui::FxLaneRail& rail = r.panel->railForTest(1);
+		REQUIRE_FALSE(rail.collapsed());
+		const visage::Bounds heading = rail.headingBounds();
+		const visage::Point centre { heading.x() + heading.width() * 0.5f, heading.y() + heading.height() * 0.5f };
+		ui::RackChainRename& rename = r.panel->chainRenameForTest();
+		// THE NAME IS WHAT A HAND PRESSES: nothing over it takes the press.
+		CHECK(r.panel->frameAtPoint({ rail.positionInWindow().x - r.panel->positionInWindow().x + centre.x,
+		                              rail.positionInWindow().y - r.panel->positionInWindow().y + centre.y })
+		      == static_cast<visage::Frame*>(&rail));
+		if (menu) {
+			rail.pressHeadingForTest(centre, true, 1);
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(rail);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+		}
+		else {
+			rail.pressHeadingForTest(centre, false, 1);
+			CHECK_FALSE(rename.renaming()); // one click is not a rename
+			rail.pressHeadingForTest(centre, false, 2);
+		}
+		r.refresh();
+		REQUIRE(rename.renaming());
+		rename.field().textInput("Kick");
+		CHECK(keyFromFocus(&rename.field(), visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		r.refresh();
+		CHECK(r.rack().chainLabel(1) == "Kick");
+	}
+}

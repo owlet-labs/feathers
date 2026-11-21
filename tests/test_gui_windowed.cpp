@@ -98,6 +98,7 @@
 #include <visage_app/window_event_handler.h> // backlog MF: the real hover road, driven
 
 #include <algorithm>
+#include <cxxabi.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -4219,6 +4220,130 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			XCloseDisplay(display);
 		}
 		}
+	}
+}
+
+TEST_CASE("rack rename: real X presses, twice at the centre of a chain strip's visible label, open the rename field - on the card, in Strips") {
+	namespace pr = feathers::rack::parallel;
+	for (const bool inWindow : { false, true }) {
+	for (const bool rightButton : { false, true }) {
+		CAPTURE(rightButton);
+		CAPTURE(inWindow);
+		EditorFixture f;
+		feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+		bodies.prepare(48000.0, 4096);
+		const size_t at = bodies.addDevice(pr::kTraits.tag);
+		REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+		void* body = bodies.slotAtLane(at).storage.get();
+		for (size_t s = 0; s < kMaxFxSlots; ++s) {
+			if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+				(void)f.bridge.removeFxDevice(s);
+			}
+		}
+		const size_t slot = f.addFx(pr::kTraits.tag);
+		const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+		f.bridge.fxBodies().attach(id, body);
+		pr::Rack& rack = *pr::rackOf(body);
+		while (rack.chainCount() < 3) {
+			REQUIRE(rack.addChain() != SIZE_MAX);
+		}
+		for (size_t i = 0; i < 3; ++i) {
+			rack.setChainKey(i, static_cast<int>(i));
+			rack.setOpen(i, true); // an OPEN rail draws the chain's name as its heading, which is what a hand sees in the window
+		}
+		BridgeDeviceHost host(f.bridge);
+		host.setField(id, static_cast<size_t>(pr::Param::View), 0.0f); // Strips
+		f.lane->resized();
+		Display* display = XOpenDisplay(nullptr);
+		REQUIRE(display != nullptr);
+		const int screen = DefaultScreen(display);
+		uint32_t w = 0, h = 0;
+		REQUIRE(f.gui.getSize(&w, &h));
+		const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+		                                            BlackPixel(display, screen));
+		XMapWindow(display, parent);
+		XSync(display, False);
+		clap_window window {};
+		window.api = CLAP_WINDOW_API_X11;
+		window.x11 = parent;
+		REQUIRE(f.gui.setParent(&window));
+		f.gui.setPopoutWindowForTest(false);
+		pumpEditor(f.gui);
+		visage::Frame* const top = f.gui.root()->topParentFrame();
+		ui::ParallelRackCard* card = treeFind<ui::ParallelRackCard>(top);
+		REQUIRE(card != nullptr);
+		ui::ParallelRackExpanded* panel = nullptr;
+		if (inWindow) {
+			f.lane->onExpandDevice(slot);
+			REQUIRE(f.gui.expandedForTest()->open());
+			panel = treeFind<ui::ParallelRackExpanded>(top);
+			REQUIRE(panel != nullptr);
+		}
+		for (int i = 0; i < 3; ++i) {
+			(void)f.gui.tickForTest();
+			(void)card->update();
+			if (panel != nullptr) {
+				(void)panel->update();
+			}
+		}
+		pumpEditor(f.gui);
+		ui::ChainStrip* strip = inWindow ? &panel->stripForTest(1) : card->stripsForTest()[1].get();
+		ui::RackChainRename& rename = inWindow ? panel->chainRenameForTest() : card->chainRenameForTest();
+		// THE VISIBLE NAME'S CENTRE: the card's strip draws it at its left over the row's middle; the window's open rail draws it as its heading.
+		const double scale = f.root->dpiScale();
+		visage::Frame* named = strip;
+		visage::Point label {};
+		if (inWindow) {
+			ui::FxLaneRail& rail = panel->railForTest(1);
+			named = &rail;
+			const visage::Bounds heading = rail.headingBounds();
+			const visage::Point origin = rail.positionInWindow();
+			label = { origin.x + heading.x() + std::min(40.0f, heading.width() * 0.5f), origin.y + heading.y() + heading.height() * 0.5f };
+		}
+		else {
+			const visage::Point origin = strip->positionInWindow();
+			label = { origin.x + std::min(40.0f, strip->summaryWidth() * 0.5f), origin.y + static_cast<float>(strip->height()) * 0.5f };
+		}
+		CAPTURE(label.x);
+		CAPTURE(label.y);
+		// WHAT THE WINDOW WOULD HIT THERE: the frame that draws the name, not one over it.
+		CHECK(top->frameAtPoint(label) == named);
+		const int nx = static_cast<int>(label.x * scale);
+		const int ny = static_cast<int>(label.y * scale);
+		EditorPointer pointer { display, reinterpret_cast<::Window>(static_cast<visage::ApplicationWindow*>(f.root)->window()->nativeHandle()) };
+		pointer.send(MotionNotify, nx, ny, 0, 0);
+		pumpEditor(f.gui, 3);
+		const unsigned int button = rightButton ? Button3 : Button1;
+		const unsigned int mask = rightButton ? Button3Mask : Button1Mask;
+		pointer.send(ButtonPress, nx, ny, button, 0);
+		pointer.send(ButtonRelease, nx, ny, button, mask);
+		if (!rightButton) {
+			pumpEditor(f.gui, 20); // a hand's two clicks are tens of milliseconds apart; the backend counts a repeat only when the clock moved
+			pointer.send(ButtonPress, nx, ny, button, 0);
+			pointer.send(ButtonRelease, nx, ny, button, mask);
+		}
+		pumpEditor(f.gui, 10);
+		if (rightButton) {
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*named);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			popup->timerCallback();
+			(void)f.gui.tickForTest();
+		}
+		REQUIRE(rename.renaming());
+		ui::TextField& field = rename.field();
+		CHECK(field.isVisible());
+		CHECK(field.hasKeyboardFocus());
+		CHECK(focusedUnder(top) == static_cast<visage::Frame*>(&field));
+		field.textInput("Snare");
+		CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		CHECK_FALSE(rename.renaming());
+		CHECK(rack.chainLabel(1) == "Snare");
+		f.bridge.fxBodies().detach(id, body);
+		f.gui.destroy();
+		XDestroyWindow(display, parent);
+		XCloseDisplay(display);
+	}
 	}
 }
 #endif // defined(__linux__)

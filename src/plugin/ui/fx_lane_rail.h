@@ -317,6 +317,22 @@ public:
 	                                            + kPadTop;
 
 	[[nodiscard]] visage::Bounds headingBounds() const;
+	/// **THE RAIL'S HEADING IS ITS NAME, and a holder that lets it be renamed hears the hand there**: a right press on the heading (while the rail
+	/// is open and draws it) calls `context`, a double-click calls `rename`, each with the heading's rectangle in this rail. Unset, the heading
+	/// does nothing, as it always did.
+	void setHeadingHandlers(std::function<void(const visage::Bounds&)> context, std::function<void(const visage::Bounds&)> rename) {
+		headingContext_ = std::move(context);
+		headingRename_ = std::move(rename);
+	}
+	void pressHeadingForTest(visage::Point at, bool right, int clicks) {
+		visage::MouseEvent e;
+		e.position = at;
+		e.repeat_click_count = clicks;
+		if (right) {
+			e.button_id = visage::kMouseButtonRight;
+		}
+		pressHeading(e);
+	}
 	/// Where this lane's caption is written, and where its column sits. Public for the reason
 	/// `headingBounds` is: a case that restates a rectangle is checking its own arithmetic.
 	[[nodiscard]] visage::Bounds captionBounds() const;
@@ -381,6 +397,9 @@ private:
 	[[nodiscard]] bool accessoryShown() const;
 	std::string phantomPasses_;
 	std::function<void()> onPhantomAdd_;
+	std::function<void(const visage::Bounds&)> headingContext_;
+	std::function<void(const visage::Bounds&)> headingRename_;
+	bool pressHeading(const visage::MouseEvent& e);
 	void dropColumn();
 };
 

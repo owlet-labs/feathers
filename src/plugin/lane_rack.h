@@ -107,7 +107,7 @@ public:
 	/// control tick, for one road instead of two to "where does a rack's macro come from".
 	void setCoreSources(std::span<const float> cells) noexcept {
 		for (size_t i = 0; i < cells.size(); ++i) {
-			engine_.setMacro(i, cells[i]);
+			engine_.setCoreSource(i, cells[i]);
 		}
 	}
 

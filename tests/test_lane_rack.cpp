@@ -36,6 +36,7 @@
 #include "plugin/fx_chain.h"
 #include "plugin/lane_rack.h"
 #include "plugin/mod_rack.h"
+#include "plugin/params.h"
 
 #include <algorithm>
 #include <array>
@@ -1429,6 +1430,62 @@ TEST_CASE("the lane resolves through its host's routes, each device reading its 
 	(void)second;
 	(void)ordinal;
 	lane.finish();
+}
+
+TEST_CASE("a bipolar Feathers macro reaches a lane device's control through both signs, by value") {
+	// THE CONTRACT: a macro switched bipolar reads `2v - 1` (-1..+1) on every route it feeds, so a route of
+	// amount `a` moves the destination by `a * (2v - 1) * span` — the negative half included. The host node's
+	// cells are pushed into the lane engine's macro cells (`LaneRack::setCoreSources`); that push used to hold
+	// them to 0..1, so every negative reading arrived as 0 and the bipolar macro only swung upward.
+	// The expected value is restated here from the stored 0..1 value, not read from the published cell.
+	const device::Descriptor* filter = deviceForTag(fx::filter::kTraits.tag);
+	REQUIRE(filter != nullptr);
+	const size_t cutoff = static_cast<size_t>(fx::filter::Param::Cutoff);
+	REQUIRE(filter->params[cutoff].modulatable);
+	const double span = device::routeSpanOf(filter->params[cutoff]);
+	constexpr float kAmount = 0.25f;
+
+	struct Pair {
+		double stored;
+		double reading;
+	};
+	const std::array<Pair, 5> pairs { { { 0.0, -1.0 }, { 0.25, -0.5 }, { 0.5, 0.0 }, { 0.75, 0.5 }, { 1.0, 1.0 } } };
+	std::array<double, 5> seenAt {};
+	for (size_t k = 0; k < pairs.size(); ++k) {
+		CAPTURE(pairs[k].stored);
+		ParamSet params;
+		params.setBase(static_cast<clap_id>(macroParam(0)), pairs[k].stored);
+		params.setMacroBipolarMask(1u);
+		params.publishCoreSources();
+
+		LaneRack lane;
+		lane.prepare(kSampleRate, kVoices, 4096);
+		FxChain chain;
+		chain.device[0].row = enabledRowFor(*filter, 1);
+		chain.count = 1;
+		chain.nextInstanceId = 2;
+		lane.provision(chain);
+		(void)lane.converge(chain, LaneRack::noStrip());
+		const size_t slot = lane.slotOfStatePosition(kLaneChain, 0);
+		REQUIRE(slot != rack::RackEngine::kNoSlot);
+		const std::array<backplane::Route, 1> routes {
+			backplane::Route { backplane::Source::core(0), backplane::Destination::control(chain.device[0].row.instanceId, cutoff), kAmount },
+		};
+		lane.setHostRoutes(routes);
+		lane.setCoreSources(params.coreSourceCells());
+		syncGuarded(lane, chain);
+
+		const float base = chain.device[0].row.field[cutoff];
+		const double expected = device::withRouteOffset(filter->params[cutoff], base, kAmount * pairs[k].reading * span);
+		const double got = lane.engineForTest().modulatedFieldAt(slot, cutoff);
+		CHECK(got == doctest::Approx(expected).epsilon(1e-6));
+		seenAt[k] = got;
+		lane.finish();
+	}
+	// NON-VACUITY: the two signs land on opposite sides of the notch's value, and symmetrically.
+	CHECK(seenAt[0] != doctest::Approx(seenAt[2]));
+	CHECK(seenAt[1] < seenAt[2]);
+	CHECK(seenAt[3] > seenAt[2]);
 }
 
 TEST_CASE("prepare drops a provision not yet adopted, and the next provision builds it again") {

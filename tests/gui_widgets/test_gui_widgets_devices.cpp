@@ -34408,6 +34408,26 @@ TEST_CASE("NT: STEPSEQ card — the randomise amount reads Rand Amt, and the out
 	CHECK(f.deviceHost.fieldAt(seat.device, ssq::at(ssq::Param::RandomAmount)) == 1.0f);
 }
 
+
+TEST_CASE("STEPSEQ card: the global Smoothing is the LFO's box (Sm), under the Amount, inside the body, and a hand on it writes the field") {
+	ModFixture f;
+	const StepSeqSeat seat = seatStepSeq(f);
+	ui::StepSeqCard& card = *seat.card;
+	CHECK(card.smoothingBox().label() == "Sm");
+	CHECK(dynamic_cast<const ui::DeviceControl&>(card.smoothingBox().control()).control()
+	      == ssq::at(ssq::Param::Smoothing));
+	CHECK(card.smoothingBox().isVisible());
+	const visage::Bounds s = card.smoothingBox().bounds();
+	const visage::Bounds a = card.amountBox().bounds();
+	CHECK(s.x() == a.x());
+	CHECK(s.y() >= a.bottom());
+	CHECK(s.bottom() <= ui::kCardHeadHeight + ui::StepSeqCard::bodyHeight());
+	CHECK(f.deviceHost.fieldAt(seat.device, ssq::at(ssq::Param::Smoothing)) == mod::kSmoothingLog2SecondsMin);
+	card.smoothingBox().control().beginGesture();
+	card.smoothingBox().control().setValue(-3.0);
+	card.smoothingBox().control().endGesture();
+	CHECK(f.deviceHost.fieldAt(seat.device, ssq::at(ssq::Param::Smoothing)) == -3.0f);
+}
 //------------------------------------------------------------------------------------------------//
 // THE FOLLOWER (backlog MY) — its plot, its threshold line, the line saying what it hears.
 //------------------------------------------------------------------------------------------------//

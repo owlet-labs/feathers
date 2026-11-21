@@ -170,3 +170,39 @@ TEST_CASE("backlog TM: a Rack holding a device whose body is refused keeps that 
 	REQUIRE(innerPatch.device.size() == 1);
 	CHECK(innerPatch.device[0].body == bad);
 }
+
+namespace {
+
+/// A RACK FILE AS TEXT, then a stream over it — what `loadRack` reads.
+struct TextStream {
+	std::string text;
+	size_t at = 0;
+	static int64_t CLAP_ABI readFn(const clap_istream* s, void* buffer, uint64_t size) {
+		auto* self = static_cast<TextStream*>(s->ctx);
+		const size_t n = std::min<size_t>(size, self->text.size() - self->at);
+		std::memcpy(buffer, self->text.data() + self->at, n);
+		self->at += n;
+		return static_cast<int64_t>(n);
+	}
+	clap_istream in() { return clap_istream { this, readFn }; }
+};
+
+} // namespace
+
+TEST_CASE("backlog TM: the engine-direct load refuses a body holding a refused device body whole, and builds no fresh device") {
+	// THE ROAD (`loadRack`): `InnerChain::loadState` and `rack_device.cpp`'s `loadState` when no record stands over the
+	// engine. An engine holds no opaque bytes, so a fresh empty device here would be what the next save wrote.
+	for (const bool refusedBody : { true, false }) {
+		CAPTURE(refusedBody);
+		TextStream file;
+		REQUIRE(rack::rackToText(patchOf({ deviceOf(kVerb, 3, refusedBody ? badBody() : std::vector<uint8_t> {}) }), &file.text, false));
+		RackEngine engine { rack::kRackAxes, hostCatalogue() };
+		engine.prepare(48000.0, 4096);
+		rack::LoadReport report;
+		clap_istream in = file.in();
+		const bool took = rack::loadRack(&in, &engine, &report);
+		CHECK(took == !refusedBody);
+		CHECK(report.countOf(rack::LoadReport::Kind::BodyRefused) == (refusedBody ? 1u : 0u));
+		CHECK(engine.chainLength(0) == (refusedBody ? 0u : 1u)); // nothing fresh stands where the refused one was
+	}
+}

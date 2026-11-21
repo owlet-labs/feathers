@@ -669,3 +669,44 @@ TEST_CASE("midi: a mode that does not follow the keys (Drum) exports bit-identic
 	CHECK(a == b);
 	CHECK(parse(b).trackName.empty());
 }
+
+TEST_CASE("midi: an unlatched patch saved after a chord was played loads with NO held notes (and sounds as a fresh one does), yet its export still follows that chord") {
+	const pat::MidiSource plain = melodySource();
+	const pat::MidiSource src = playedSource(plain, { 50 });
+	const auto heardFrom = [&](bool restore) {
+		pat::PatternDevice d;
+		d.prepare(48000.0);
+		d.setFields(plain.row.data(), plain.row.size());
+		if (restore) {
+			REQUIRE(pat::restoreBlock(&d, 0, src.play.data(), src.play.size()));
+		}
+		if (restore) {
+			CHECK_FALSE(d.chordHeld()); // nothing is held: the saved chord is only the one last played
+			REQUIRE(d.recentChord().size() == 1);
+			CHECK(d.recentChord()[0].key == 50);
+		}
+		std::vector<int> keys;
+		std::vector<device::NoteEvent> out(512);
+		for (int64_t now = 0; now < 48000; now += 64) {
+			device::TransportClock clock = device::TransportClock::fromSecondsPerBeat(0.5);
+			clock.songPositionBeats = static_cast<double>(now) / 24000.0;
+			clock.songPositionSeconds = static_cast<double>(now) / 48000.0;
+			clock.playing = true;
+			uint32_t next = 0;
+			const size_t n = d.emit(clock, static_cast<uint64_t>(now), out.data(), out.size(), &next);
+			for (size_t i = 0; i < n; ++i) {
+				if (out[i].kind == device::NoteEvent::Kind::On) {
+					keys.push_back(out[i].key);
+				}
+			}
+		}
+		return keys;
+	};
+	// No input after the load: what it plays is what an instance that was never played plays (no stuck D3).
+	CHECK(heardFrom(true) == heardFrom(false));
+	// THE EXPORT still follows the chord last played.
+	pat::MidiRoot root;
+	(void)pat::patternMidi(src, 0, 120.0, &root);
+	CHECK(root.from == pat::MidiRoot::From::LastPlayed);
+	CHECK(root.key == 50);
+}

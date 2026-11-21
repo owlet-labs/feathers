@@ -2103,6 +2103,16 @@ void ParamBridge::setOutputLabel(DeviceInstanceId device, size_t output, std::st
 	outputLabelSubscribers_.notify(device, output);
 }
 
+bool ParamBridge::setUserName(DeviceInstanceId device, std::string_view name) {
+	if (!outputLabels_.setName(device, name)) {
+		return false; // the name it has already; not an edit
+	}
+	// A NAME IS PATCH STATE (the project is modified) and the editor repaints every surface that draws the instance's name.
+	stateDirty_.store(true, std::memory_order_relaxed);
+	repaintDirty_.store(true, std::memory_order_relaxed);
+	return true;
+}
+
 void ParamBridge::setCanvasView(rack::CanvasView view) noexcept {
 	if (view == canvasView_) {
 		return; // a view that changes nothing is not an edit

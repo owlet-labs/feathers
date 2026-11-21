@@ -189,7 +189,7 @@ TEST_CASE("every registered device files under the category it was assigned") {
 		{ "Featherverb", device::Category::TimeSpace }, { "Pitch", device::Category::Pitch },
 		{ "SKLITTER", device::Category::RhythmGlitch }, { "Automod", device::Category::ModulationFx },
 		{ "Waypoint", device::Category::FilterEq }, { "Bus Utility", device::Category::Utility },
-		{ "Harm", device::Category::Utility },          { "Chain", device::Category::Containers },
+		{ "Harm", device::Category::Oscillators },       { "Chain", device::Category::Containers },
 		{ "Rack", device::Category::Containers },
 		// BACKLOG NW (2026-10-26): Sidechain Inject is a utility, it routes a signal into the chain and does not shape one.
 		{ "Sidechain Inject", device::Category::Utility },
@@ -300,8 +300,8 @@ TEST_CASE("groupByCategory files every offered device exactly once, headings in 
 	CHECK(namesOf(device::Category::Modulators)
 	      == std::vector<std::string> { "DAHDSR", "Follower", "LFO", "Macros", "Math", "MSEG", "Note Expressions", "Random Trigger", "Sample & Hold", "Step Seq", "Stereo Tool", "Tracker", "Twin Field" });
 	CHECK(namesOf(device::Category::Notes) == std::vector<std::string> { "Arp", "Pattern" });
-	CHECK(namesOf(device::Category::Oscillators) == std::vector<std::string> { "Drum" });
-	CHECK(namesOf(device::Category::Utility) == std::vector<std::string> { "Bus Utility", "Harm", "Noise", "Sidechain Inject" });
+	CHECK(namesOf(device::Category::Oscillators) == std::vector<std::string> { "Drum", "Harm" });
+	CHECK(namesOf(device::Category::Utility) == std::vector<std::string> { "Bus Utility", "Noise", "Sidechain Inject" });
 	CHECK(namesOf(device::Category::FilterEq) == std::vector<std::string> { "Drawn", "EQ", "Filter", "Resonate", "Spectral", "Waypoint" });
 }
 

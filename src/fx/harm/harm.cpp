@@ -152,6 +152,7 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Sustain)] = state.settings.sustain;
 	row[static_cast<size_t>(Param::MasterLevel)] = state.settings.masterLevel;
 	row[static_cast<size_t>(Param::MasterDepth)] = state.settings.masterDepth;
+	row[static_cast<size_t>(Param::PortaMode)] = state.settings.portaAlways ? 1.0f : 0.0f;
 	for (int k = 1; k < kPartialCount; ++k) {
 		const PartialSettings& p = state.settings.more[static_cast<size_t>(k - 1)];
 		const auto at = [k](PartialField f) { return static_cast<size_t>(partialParam(k, f)); };
@@ -203,6 +204,7 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	out.settings.sustain = read(Param::Sustain);
 	out.settings.masterLevel = read(Param::MasterLevel);
 	out.settings.masterDepth = read(Param::MasterDepth);
+	out.settings.portaAlways = read(Param::PortaMode) >= 0.5f;
 	for (int k = 1; k < kPartialCount; ++k) {
 		PartialSettings& p = out.settings.more[static_cast<size_t>(k - 1)];
 		const auto at = [k, &read](PartialField f) { return read(partialParam(k, f)); };
@@ -542,9 +544,12 @@ void Harm::advanceControl(Voice& v, const Settings& p, bool retriggered) {
 	// block-size dependence the moment the trigger also aimed the phase (HARM parity sweep,
 	// 2026-09-16; the block-size case caught it at 1e-6). One latch serves every partial.
 	const double coefficient = smoothingCoefficient(p.portaSeconds, sampleRate_);
-	if (!v.haveFrequency || retriggered || coefficient == 0.0) {
+	if (!v.haveFrequency || (retriggered && !p.portaAlways) || coefficient == 0.0) {
 		// SNAP ON RETRIGGER, so a new note starts AT its pitch. A porta that applied to the first note
 		// of a phrase would bend into every attack, which is not what a portamento control means.
+		// That is LEGATO, the default: the glide happens only while the gate holds, between overlapping notes.
+		// `PortaMode` Always skips the snap, so the glide runs from the last pitch heard across a gap too (the
+		// first note after a reset still has no last pitch and starts at its own).
 		v.currentHz = targetHz;
 		v.haveFrequency = true;
 	}

@@ -354,6 +354,10 @@ enum class Param : int {
 	/// Depth multiplying every partial's Depth. Both default to unity, so a patch that stores neither plays exactly as before.
 	MasterLevel = Partial2Harmonic + 3 * 9,
 	MasterDepth,
+	/// **HOW PORTA TREATS A NEW NOTE** (appended last, so no index moves): Legato glides only when the notes overlap (the gate stays up, so the
+	/// envelope is not retriggered either) and a note after a release starts at its own pitch; Always glides from the last pitch heard even across a
+	/// gap. Legato is today's behaviour and the default, so a patch that stores no such key renders the bits it did.
+	PortaMode,
 	kCount,
 };
 
@@ -391,6 +395,8 @@ constexpr Param partialParam(int partial, PartialField field) {
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
 /// The Mode switch's two states, in stored order — a Choice is stored by LABEL, so these words are the patch's.
 inline constexpr const char* kModeNames[] = {"Notch", "High-pass"};
+/// The porta mode's two states, in stored order (a Choice is stored by LABEL). Legato first: it is the default and today's behaviour.
+inline constexpr const char* kPortaModeNames[] = {"Legato", "Always"};
 
 /// log2(seconds) for the time controls, exactly as the DAHDSR's stages are declared — a time knob is
 /// even in octaves, and the minimum means "no time at all" because a logarithmic domain has no zero.
@@ -519,6 +525,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      "Master level of the whole HARM output, every partial summed. Scales the stripped signal too"},
     {"harm_master_depth", "Harm Master Depth", 0.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,
      "Scales the Depth of every partial at once — 1 keeps each partial's own depth, 0 takes every notch to a wire. Notch mode only"},
+    // LEGATO BY DEFAULT: the glide the device always had (snap on a fresh gate, glide while the gate holds), so an older patch is unchanged.
+    {"harm_porta_mode", "Harm Porta Mode", 0.0, 1.0, 0.0, true, device::Unit::Choice, kPortaModeNames, false, false,
+     "Legato glides only between overlapping notes; Always glides to every new note from the last pitch, even after a release"},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
@@ -682,6 +691,8 @@ struct Settings {
 	/// How much of the centre the notch removes: 1 all of it, 0 none. See Param::Depth.
 	float depth { 1.0f };
 	float portaSeconds { 0.0f };
+	/// Glide across a gap too (`Param::PortaMode` = Always). False is Legato: a fresh gate snaps to its pitch.
+	bool portaAlways { false };
 	/// SCALE THE NOTCH'S DEPTH BY THE NOTE ENVELOPE — see `Param::DepthFollowsEnv`. The sample loop reads it,
 	/// so it is a Setting, unlike `poly`.
 	bool depthFollowsEnv { false };
@@ -745,6 +756,7 @@ static_assert(Settings {}.enabled
 static_assert(Settings {}.depthFollowsEnv
               == (kParamDescs[static_cast<size_t>(Param::DepthFollowsEnv)].def >= 0.5));
 static_assert(Settings {}.highpass == (kParamDescs[static_cast<size_t>(Param::Mode)].def >= 0.5));
+static_assert(Settings {}.portaAlways == (kParamDescs[static_cast<size_t>(Param::PortaMode)].def >= 0.5));
 
 static_assert(Settings {}.active == (kParamDescs[static_cast<size_t>(Param::Partial1Active)].def >= 0.5));
 static_assert(Settings {}.sustain == static_cast<float>(kParamDescs[static_cast<size_t>(Param::Sustain)].def));
@@ -900,7 +912,7 @@ inline constexpr device::Descriptor kDescriptor {
     // the fx lane: it had controls, a harmonic table and its notch maths, and no way to render. The
     // null was the honest answer then and pointing at a real table is the honest answer now.
     .audio = &kAudioOps,
-    .category = device::Category::Utility,
+    .category = device::Category::Oscillators,
 };
 
 } // namespace feathers::fx::harm

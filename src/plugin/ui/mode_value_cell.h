@@ -54,7 +54,7 @@ class ModeValueCell final : public visage::Frame, public TooltipSource {
 public:
 	/// THE CELL'S OWN SURFACE — its caption — is the MODE's, which is what the caption names. The box and
 	/// the selector inside it answer for themselves. See `ui/tooltip.h`.
-	const char* tooltipAt(visage::Point) const override { return tooltipOf(&select_->control()); }
+	const char* tooltipAt(visage::Point p) const override { return select_->tooltipAt(p); }
 	void offeredControls(std::vector<Offered>& out) const override { out.push_back({ &select_->control(), Road::Face }); }
 	/// The selector's answer: it is the face over the mode.
 	[[nodiscard]] ModLook modLookFor(const device::Modulatable& c) const override { return select_->modLookFor(c); }

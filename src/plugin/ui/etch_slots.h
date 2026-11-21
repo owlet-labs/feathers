@@ -106,6 +106,20 @@ inline std::function<bool(size_t)> stageRowGate(std::shared_ptr<StageView> view,
 		return false;
 	};
 }
+/// THE TYPE BOX'S FACE NAMES: what the cell prints between its arrows, one per `DriveMode`. DISPLAY ONLY: the Choice labels
+/// (`kDriveModeNames`, what a patch stores) and the dropdown menu keep the full names, and the tooltip says the full name.
+inline constexpr const char* kDriveModeFaceNames[] = { "Soft", "Tube", "Fold", "Wrk", "Jag", "Lean", "Chnk", "P-S", "P-H", "P-OS", "P-OH",
+	                                                    "Crsh", "Dcm", "Slew", "Lops" };
+static_assert(sizeof kDriveModeFaceNames / sizeof kDriveModeFaceNames[0] == static_cast<size_t>(fx::eroder::DriveMode::kCount));
+/// THE TYPE BOX'S NAMES for a `ZoneSelect`: the full label, with the short face name beside it.
+inline std::vector<ZoneSelect::ZoneName> driveTypeZoneNames() {
+	std::vector<ZoneSelect::ZoneName> types;
+	size_t i = 0;
+	for (const char* name : fx::eroder::kDriveModeNames) {
+		types.push_back({ name, {}, kDriveModeFaceNames[i++] });
+	}
+	return types;
+}
 /// THE MULTIPLE'S TEXT: three significant digits without trailing zeros ("0.5", "0.25", "0.333", "0.0625", "1"), "off" at 0.
 inline std::string rateMultText(double v) {
 	if (v <= 1.0e-4) {
@@ -226,10 +240,7 @@ struct EtchSlots {
 			knob = std::make_unique<Knob>(control(amount), name, notifier);
 			knob->setFaceDiameter(faceDiameter);
 			const StageParams params = slotStageParams(index);
-			std::vector<ZoneSelect::ZoneName> types;
-			for (const char* typeName : ero::kDriveModeNames) {
-				types.push_back({ typeName, {} });
-			}
+			std::vector<ZoneSelect::ZoneName> types = driveTypeZoneNames();
 			mode = std::make_unique<ModeValueCell>(control(params.type), "Type", std::move(types), stageRowGate(view, params));
 			mode->setFaceDiameter(faceDiameter);
 			addStageRows(*mode, control, params, !windowRow);

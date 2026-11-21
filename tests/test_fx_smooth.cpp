@@ -679,7 +679,7 @@ TEST_CASE("the output does not depend on how the host cuts its blocks") {
 
 namespace {
 /// FNV-1a over the bit patterns of a rendered passage.
-uint64_t bitHash(const std::vector<float>& v) {
+[[maybe_unused]] uint64_t bitHash(const std::vector<float>& v) { // its callers are the Linux-only pins
 	uint64_t h = 1469598103934665603ull;
 	for (const float f : v) {
 		uint32_t bits = 0;

@@ -1540,6 +1540,11 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 			++it;
 			continue;
 		}
+		// A DEVICE THAT HAS GONE TAKES ITS PANELS WITH IT (its window and its pre/post view), whichever road removed it.
+		if (surfaces_ != nullptr) {
+			(void)surfaces_->dismissPanelFor(it->device, nest_);
+			(void)surfaces_->dismissPanelFor(siteKeyOf(it->device), nest_);
+		}
 		if (it->card != nullptr) {
 			// **FORGET IT BEFORE DESTROYING IT.** a crash.
 			//

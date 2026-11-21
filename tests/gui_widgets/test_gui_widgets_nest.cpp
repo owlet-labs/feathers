@@ -2994,3 +2994,78 @@ TEST_CASE("chips: in a site's pre/post panel every card — PRE's, the device in
 		CHECK(count() == before);
 	}
 }
+
+TEST_CASE("delete closes panels: removing a device closes its window and its pre/post view, by the column's menu verb, by the chain itself (what undo and redo do), in a column and in a rack editor; undo of the delete does not reopen them") {
+	rack::registerChainExpandedView();
+	const device::Descriptor* both = nullptr;
+	for (const device::Descriptor& d : feathers::kDevices) {
+		if (ui::hasExpandedView(d) && d.audio != nullptr && d.traits.siteLanes != device::Traits::SiteLanes::None) {
+			both = &d;
+			break;
+		}
+	}
+	REQUIRE(both != nullptr);
+	for (const bool inEditor : { false, true }) {
+		for (const int road : { 0, 1 }) { // 0: the host's own verb, 1: straight on the bridge (an undo of an add, a redo of a delete)
+			CAPTURE(inEditor);
+			CAPTURE(road);
+			SiteHost h;
+			ui::ModState mod;
+			ui::EditHistory history;
+			ui::WidgetRegistry registry;
+			ui::SurfaceLayers outer;
+			outer.setBounds(0, 0, 1400, 900);
+			const DeviceInstanceId id = h.bridge.addDevice(both->traits.tag);
+			REQUIRE(id != kNoInstance);
+			std::unique_ptr<ui::ChainColumn> column;
+			std::unique_ptr<rack::RackEditor> editor;
+			ui::FxCard* card = nullptr;
+			size_t panels = 0;
+			if (inEditor) {
+				editor = std::make_unique<rack::RackEditor>(h.bridge, mod, history);
+				editor->setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+				editor->syncCards();
+				card = editor->cardOfDeviceForTest(id);
+			}
+			else {
+				column = std::make_unique<ui::ChainColumn>(h.bridge, registry, mod, history, nullptr);
+				column->setBounds(0, 0, static_cast<int>(ui::FxLaneRail::kWidth), 600);
+				column->setPresentedOn(&outer);
+				column->syncCards();
+				card = column->cardOf(id);
+			}
+			REQUIRE(card != nullptr);
+			const auto count = [&] { return inEditor ? editor->expandedCountForTest() : column->expandedCountForTest(); };
+			const visage::Bounds e = card->expandBounds();
+			const visage::Bounds s = card->siteBounds();
+			REQUIRE(e.width() > 0.0f);
+			REQUIRE(s.width() > 0.0f);
+			card->noteCardPress(centreOf(e), 1);
+			card->noteCardPress(centreOf(s), 1);
+			panels = count();
+			REQUIRE(panels == 2); // the window and the pre/post view are both up
+			if (road == 0 && !inEditor) {
+				CHECK(column->removeDevice(id));
+			}
+			else {
+				h.bridge.removeDevice(id);
+			}
+			if (inEditor) {
+				editor->syncCards();
+			}
+			else {
+				column->syncCards();
+			}
+			CHECK(count() == 0);
+			// UNDO OF THE DELETE puts the device back; nothing reopens by itself.
+			history.undo();
+			if (inEditor) {
+				editor->syncCards();
+			}
+			else {
+				column->syncCards();
+			}
+			CHECK(count() == 0);
+		}
+	}
+}

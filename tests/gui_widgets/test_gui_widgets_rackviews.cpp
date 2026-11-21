@@ -32,6 +32,7 @@
 #include "plugin/ui/rack_view_model.h"
 #include "plugin/ui/rack_views.h"
 #include "plugin/ui_note_ring.h"
+#include "rack/fragment.h"
 #include "rack/rack_axes.h"
 #include "rack/rack_engine.h"
 
@@ -2787,5 +2788,77 @@ TEST_CASE("rack pads fix D, repaint delivery: every pad grid and page strip show
 		CHECK(r.rack().chainKey(anyChain) == pr::kAnyKey);
 		CHECK(usedOn(r.panel->padsForTest().gridForTest(), 0) == usedBefore);
 		CHECK(usedOn(r.card->padsForTest().gridForTest(), 0) == usedBefore);
+	}
+}
+
+TEST_CASE("rack keys: Ctrl+V pastes into an EMPTY chain from the pad or tab that selected it, on the card and in the window, and nothing happens with nothing focused") {
+	for (const int view : { 2, 1 }) { // Pads, Tabs
+		CAPTURE(view);
+		RealRack r;
+		r.chains(2, 0, true); // two EMPTY chains
+		// THE CLIPBOARD HOLDS ONE DEVICE, lifted from a donor chain.
+		feathers::rack::RackEngine donorEngine { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+		donorEngine.prepare(48000.0, 4096);
+		feathers::rack::RackBridge donor(donorEngine);
+		donor.prepare(48000.0, 4096);
+		const feathers::DeviceInstanceId made = donor.addDevice(feathers::fx::drumdevice::kTraits.tag);
+		REQUIRE(made != feathers::kNoInstance);
+		const feathers::DeviceInstanceId ids[] = { made };
+		feathers::rack::setPasteboard(feathers::rack::liftFragment(donor, ids));
+		r.view_(view);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		const visage::KeyEvent paste { visage::KeyCode::V, visage::kModifierRegCtrl, true };
+		const auto lengthOf = [&](size_t chain) { return r.rack().chainAt(chain)->bridge()->chainLength(0); };
+		// NOTHING FOCUSED: the key goes nowhere and nothing is pasted.
+		CHECK_FALSE(keyFromFocus(nullptr, paste));
+		CHECK(lengthOf(1) == 0);
+		// THE CARD: select chain 2 (a pad, or a tab), take the focus the framework gives that press, send Ctrl+V.
+		visage::Point where {};
+		if (view == 2) {
+			ui::RackPadGrid& grid = r.card->padsForTest().gridForTest();
+			grid.pressForTest(grid.padCentre(1));
+			grid.releaseForTest();
+			where = grid.positionInWindow();
+			where.x += static_cast<float>(grid.width()) * 0.5f; // the press focuses the nearest key-accepting frame under the pointer
+			where.y += static_cast<float>(grid.height()) * 0.5f;
+		}
+		else {
+			ui::RackTabBar& bar = r.card->tabBarForTest();
+			bar.pressForTest(bar.tabCentre(1));
+			where = bar.positionInWindow();
+			where.x += bar.tabCentre(1).x;
+			where.y += bar.tabCentre(1).y;
+		}
+		r.refresh();
+		CHECK(r.field(pr::Param::ViewedChain) == 1.0f);
+		visage::Frame* focus = keyboardFocusAfterPress(r.f.root, where);
+		REQUIRE(focus != nullptr);
+		CHECK(keyFromFocus(focus, paste));
+		CHECK(lengthOf(1) == 1);
+		CHECK(lengthOf(0) == 0);
+		// THE WINDOW: the same from its pad or tab, into the OTHER chain.
+		if (view == 2) {
+			ui::RackPadGrid& grid = r.panel->padsForTest().gridForTest();
+			grid.pressForTest(grid.padCentre(0));
+			grid.releaseForTest();
+			where = grid.positionInWindow();
+			where.x += static_cast<float>(grid.width()) * 0.5f;
+			where.y += static_cast<float>(grid.height()) * 0.5f;
+		}
+		else {
+			ui::RackTabBar& bar = r.panel->tabBarForTest();
+			bar.pressForTest(bar.tabCentre(0));
+			where = bar.positionInWindow();
+			where.x += bar.tabCentre(0).x;
+			where.y += bar.tabCentre(0).y;
+		}
+		r.refresh();
+		CHECK(r.field(pr::Param::ViewedChain) == 0.0f);
+		visage::Frame* windowFocus = keyboardFocusAfterPress(r.panel, where);
+		REQUIRE(windowFocus != nullptr);
+		CHECK(keyFromFocus(windowFocus, paste));
+		CHECK(lengthOf(0) == 1);
 	}
 }

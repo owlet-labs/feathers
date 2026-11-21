@@ -114,6 +114,9 @@ ChainColumn::ChainColumn(rack::RackBridge& bridge, WidgetRegistry& registry, Mod
 		return removeDevice(going);
 	};
 	onMouseDown() = [this](const visage::MouseEvent& e) {
+		// A PRESS ON THE BARE COLUMN OR ITS (+) FOCUSES THE COLUMN, so Ctrl+V / Ctrl+C / Ctrl+X reach its selection with no card to press (an
+		// empty chain has none).
+		requestKeyboardFocus();
 		if (partAt(e.position) == Part::Add) {
 			showAddMenu();
 		}
@@ -338,6 +341,12 @@ void ChainColumn::syncCards() {
 		if (held && it->desc == desc && it->missing == missingTagOf(it->device, desc)) {
 			++it;
 			continue;
+		}
+		// A DEVICE THAT HAS GONE TAKES ITS PANELS WITH IT: its own window and its pre/post view, whichever road removed it (the menu, a key, an
+		// undo or redo), found here because every road ends in this reconcile. Nothing is left presented for an id that names no device.
+		if (surfaces_ != nullptr) {
+			(void)surfaces_->dismissPanelFor(it->device, nest_);
+			(void)surfaces_->dismissPanelFor(siteKeyOf(it->device), nest_);
 		}
 		if (it->card != nullptr) {
 			// FORGET IT BEFORE DESTROYING IT — see the destructor.

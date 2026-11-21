@@ -57,6 +57,14 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
                                            Notifier* notifier)
     : host_(host), registry_(registry), id_(id), notifier_(notifier), pin_(host) {
 	presets_ = makeRackDevicePresets(host, id, notifier);
+	// THE WINDOW'S PADS AND TABS FOCUS THIS PANEL (a press walks up to a frame that accepts keys), and the keys go on to the viewed chain's
+	// column, whose selection takes Ctrl+C / X / V: pasting into a chain with no card to press works from the pad or tab.
+	setAcceptsKeystrokes(true);
+	onKeyPress() = [this](const visage::KeyEvent& e) {
+		ChainRail* rail = viewedRail();
+		return model_ != nullptr && model_->view() != RackViewKind::Strips && rail != nullptr && rail->rail != nullptr
+		       && rail->rail->column() != nullptr && rail->rail->column()->processKeyPress(e);
+	};
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		controls_.push_back(
 		    std::make_unique<DeviceControl>(host, id, pr::kDescriptor, static_cast<size_t>(kKnobs[i])));

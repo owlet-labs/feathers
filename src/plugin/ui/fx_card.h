@@ -553,7 +553,10 @@ public:
 		// when nothing moved and is the fix when only the scale did.
 		veilBody_ = body;
 		veil_.setBounds(body.x(), body.y(), body.width(), body.height());
-		const bool want = !headEnabled();
+		// DIMMED TOO WHILE A CONTAINER ABOVE THIS CARD IS SWITCHED OFF: what it holds is not processed, whatever its own switch says. Only the drawing
+		// dims (the veil ignores the mouse), so its chips and controls stay live.
+		const backplane::DeviceHost* host = deviceHost();
+		const bool want = !headEnabled() || (host != nullptr && !host->containersEnabled());
 		if (veil_.isVisible() != want) {
 			veil_.setVisible(want);
 		}

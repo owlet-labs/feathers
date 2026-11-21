@@ -3077,14 +3077,14 @@ TEST_CASE("Slope labels: a patch that names a control's old label loads it as th
 	}
 }
 
-TEST_CASE("chain names: kept by chain id, saved in a trailing block only when one exists, loaded back, put back with the chain, carried through a body remap; an unnamed rack's body is the version it always was") {
+TEST_CASE("chain names: kept in the chain's own document, saved and loaded back, put back with the chain, carried through a body remap; the Rack's body is the version it always was") {
 	RackRig rig;
 	DirtyCount dirty;
 	pr::kContainerOps.setOuterGate(rig.mem, countingGate(dirty));
 	pr::Rack& rack = rig.rack();
 	REQUIRE(rack.addChain() == 1);
 	REQUIRE(rack.addChain() == 2);
-	// UNNAMED: no names, the label is "Chain N", the body is today's version 3 (what a build before names wrote and read).
+	// UNNAMED: no names, the label is "Chain N".
 	CHECK(rack.chainName(0).empty());
 	CHECK(rack.chainLabel(0) == "Chain 1");
 	CHECK(rack.chainLabel(2) == "Chain 3");
@@ -3101,9 +3101,9 @@ TEST_CASE("chain names: kept by chain id, saved in a trailing block only when on
 	CHECK(rack.chainName(2).size() <= 24);
 	CHECK_FALSE(rack.setChainName(7, "none")); // no such chain
 	CHECK(rack.chainLabel(1) == "Kick");
-	// SAVED AS VERSION 4 (the names block), LOADED BY CHAIN ID INTO A FRESH RACK.
+	// THE RACK'S BODY IS STILL VERSION 3 (the names ride in the chains' documents), so a build that does not know them reads it whole.
 	const std::vector<uint8_t> body = rig.save();
-	CHECK(body[4] == pr::kBodyVersionNamed);
+	CHECK(body[4] == pr::kBodyVersion);
 	CHECK(body.size() > plain.size());
 	RackRig fresh;
 	REQUIRE(pr::kContainerOps.loadState(fresh.mem, body.data(), body.size()));
@@ -3111,19 +3111,18 @@ TEST_CASE("chain names: kept by chain id, saved in a trailing block only when on
 	CHECK(fresh.rack().chainName(0).empty());
 	CHECK(fresh.rack().chainName(1) == "Kick");
 	CHECK(fresh.rack().chainName(2) == rack.chainName(2));
-	// A BODY WRITTEN BEFORE NAMES (version 3, no block) LOADS UNNAMED.
+	// AN UNNAMED RACK'S BODY LOADS UNNAMED (a patch written before names).
 	RackRig old;
 	REQUIRE(pr::kContainerOps.loadState(old.mem, plain.data(), plain.size()));
 	for (size_t i = 0; i < old.rack().chainCount(); ++i) {
 		CHECK(old.rack().chainName(i).empty());
 	}
-	// A BODY WITH A TRUNCATED NAMES BLOCK IS REFUSED (never walked past).
+	// A TRUNCATED BODY IS REFUSED (never walked past).
 	std::vector<uint8_t> cut(body.begin(), body.end() - 1);
 	RackRig bad;
 	CHECK_FALSE(pr::kContainerOps.loadState(bad.mem, cut.data(), cut.size()));
 	// THE NAME FOLLOWS THE CHAIN: a put-back (an undone removal, a paste of the snapshot) comes back named, under the same id.
 	const pr::Rack::ChainSnapshot snap = rack.snapshotChain(1);
-	CHECK(snap.name == "Kick");
 	REQUIRE(rack.removeChain(1));
 	REQUIRE(rack.insertChain(1, snap) == 1);
 	CHECK(rack.chainName(1) == "Kick");
@@ -3135,7 +3134,7 @@ TEST_CASE("chain names: kept by chain id, saved in a trailing block only when on
 	CHECK(rack.chainName(0) == "Kick");
 	REQUIRE(rack.insertChain(2, first) != SIZE_MAX);
 	CHECK(rack.chainName(0) == "Kick");
-	// A BODY REMAP (an outer-source remap, a preset's) CARRIES THE NAMES THROUGH, and the version with them.
+	// A BODY REMAP (an outer-source remap, a preset's) CARRIES THE NAMES THROUGH untouched.
 	std::vector<uint8_t> mapped;
 	const auto identity = [](void*, std::span<const uint8_t> in, std::vector<uint8_t>* out) {
 		out->assign(in.begin(), in.end());

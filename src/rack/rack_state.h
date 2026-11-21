@@ -574,6 +574,10 @@ struct RackPatch {
 	/// AND WHAT EACH IS CALLED — at most `device::kMacroNameMax` bytes of UTF-8, EMPTY for the default
 	/// "Macro N". A shorter list leaves the rest unnamed.
 	std::vector<std::string> macroName;
+	/// **THE USER'S NAME FOR THIS CHAIN** when it is one of a Rack's (a Rack's pad or tab is named, `Rack::chainLabel`): at most
+	/// `device::kMacroNameMax` bytes, EMPTY for none. Written under "label" only when set, so a document with none is byte for byte what
+	/// it was, and a reader that does not know the key reads everything else and drops only this.
+	std::string label;
 	/// Chain by chain, each in its order.
 	std::vector<Device> device;
 	std::vector<Route> route;

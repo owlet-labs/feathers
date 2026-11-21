@@ -307,6 +307,10 @@ RackTabBar::RackTabBar(RackViewModel& model, RackFlow flow) : model_(model), flo
 			pressContext(e.position);
 			return;
 		}
+		if (e.repeatClickCount() == 2 && rename_) {
+			pressContext(e.position, true);
+			return;
+		}
 		press(e.position);
 	};
 	onMouseMove() += [this](const visage::MouseEvent& e) { hover(e.position); };
@@ -410,17 +414,18 @@ bool RackTabBar::raised(size_t k) const {
 	return k < tabs.size() && model_.viewedChain() == tabs[k];
 }
 
-void RackTabBar::pressContext(visage::Point at) {
+void RackTabBar::pressContext(visage::Point at, bool rename) {
 	const std::vector<size_t> tabs = tabbedChains(model_);
 	const int k = tabAtNative((horizontal() ? at.x : at.y) * scale(), tabs.size());
-	if (k < 0 || !context_) {
+	const auto& handler = rename ? rename_ : context_;
+	if (k < 0 || !handler) {
 		return;
 	}
 	const auto [a, b] = tabNativeExtent(static_cast<size_t>(k));
 	const float from = static_cast<float>(a) / scale();
 	const float length = static_cast<float>(b - a) / scale();
-	context_(tabs[static_cast<size_t>(k)],
-	         horizontal() ? visage::Bounds { from, 0.0f, length, static_cast<float>(height()) } : visage::Bounds { 0.0f, from, static_cast<float>(width()), length });
+	handler(tabs[static_cast<size_t>(k)],
+	        horizontal() ? visage::Bounds { from, 0.0f, length, static_cast<float>(height()) } : visage::Bounds { 0.0f, from, static_cast<float>(width()), length });
 }
 
 void RackTabBar::press(visage::Point at) {

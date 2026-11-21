@@ -538,11 +538,21 @@ ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint1
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		if (onRemove_ && removeBounds_.contains(e.position)) {
 			onRemove_(level_.chain());
+			return;
+		}
+		if (e.repeatClickCount() == 2) {
+			doubleClick(e.position);
 		}
 	};
 }
 
 ChainStrip::~ChainStrip() = default;
+
+void ChainStrip::doubleClick(visage::Point at) {
+	if (rename_ && level_.chain() != 0xFFFF && !removeBounds_.contains(at)) {
+		rename_(level_.chain(), visage::Bounds { 0.0f, 0.0f, static_cast<float>(width()), static_cast<float>(height()) });
+	}
+}
 
 float ChainStrip::summaryTextWidthForTest() const {
 	const visage::Font& face = font(kKnobLabelSize);
@@ -727,6 +737,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// "RENAME…" FROM A TAB OR A USED PAD'S RIGHT PRESS: the one chain label everywhere reads it back.
 	chainRename_ = std::make_unique<RackChainRename>(*model_, *this, notifier_);
 	tabs_->setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, *tabs_, anchor); });
+	tabs_->setRenameHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->begin(slot, *tabs_, anchor); });
 	pads_->gridForTest().setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, pads_->gridForTest(), anchor); });
 	padAdd_ = std::make_unique<RackPadAdd>(*model_, notifier_);
 	// THE SAME "+" AS THE WINDOW'S: asks which device; the pick makes the chain on that pad and the card follows it on the spot.
@@ -1180,6 +1191,11 @@ bool ParallelRackCard::follow() {
 		for (size_t i = 0; i < ids.size(); ++i) {
 			auto strip = std::make_unique<ChainStrip>(host_, device_, ids[i], "Level");
 			strip->setModulation(mod_, history_);
+			strip->setRenameHandler([this, raw = strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
+				if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+					chainRename_->begin(slot, *raw, anchor);
+				}
+			});
 			strip->setVisible(!folded());
 			addChild(strip.get());
 			strips_.push_back(std::move(strip));

@@ -1154,3 +1154,69 @@ TEST_CASE("pad strike: nothing is allocated on the audio thread by a strike") {
 	}
 
 }
+
+TEST_CASE("a build that does not know chain names loads a named rack whole and drops only the names: no refusal, nothing lost but the label") {
+	// THE OLD READER, SIMULATED: the name is one more key in the chain's own document ("label"), beside "macroNames", and a reader looks up the keys it
+	// knows with `find` — it has no check for an unknown one. A reader that does not know "label" is therefore one that never looks it up, which
+	// is a document whose key is spelled otherwise: that is the patch fed to today's reader here.
+	persist::Rig a;
+	a.seat(par::kTraits.tag);
+	a.block(3);
+	par::Rack* rk = par::rackOf(a.bridge->containerSurfaceOf(a.id));
+	REQUIRE(rk != nullptr);
+	while (rk->chainCount() < 2) {
+		(void)rk->addChain();
+		a.block(2);
+	}
+	(void)rk->chainAt(1)->bridge()->addDevice("DELAY"); // the named chain holds a device, to see it survive
+	REQUIRE(rk->setChainName(1, "Kick"));
+	(void)a.bridge->addDevice("DELAY"); // and a device AFTER the rack
+	a.block(2);
+	const std::string text = a.save();
+	rack::RackPatch named;
+	REQUIRE(rack::parseRackText(text, &named));
+	size_t rackAt = SIZE_MAX;
+	for (size_t i = 0; i < named.device.size(); ++i) {
+		if (std::string(named.device[i].tag.data()) == par::kTraits.tag) {
+			rackAt = i;
+		}
+	}
+	REQUIRE(rackAt != SIZE_MAX);
+	// (a) TODAY'S READER: the name comes back.
+	{
+		persist::Rig ok;
+		(void)ok.bridge->loadPatch(named);
+		ok.bridge->drain();
+		ok.block(3);
+		par::Rack* loaded = par::rackOf(ok.bridge->containerSurfaceOf(ok.bridge->deviceAtPosition(0)));
+		REQUIRE(loaded != nullptr);
+		CHECK(loaded->chainCount() == 2);
+		CHECK(loaded->chainName(1) == "Kick");
+	}
+	// (b) THE OLD READER: the same patch with the key unknown, in the rack's body (the chains' documents are text inside it). The rack loads whole,
+	// nothing is refused or said, only the name is gone.
+	rack::RackPatch patch = named;
+	std::vector<uint8_t>& body = patch.device[rackAt].body;
+	size_t renamed = 0;
+	const std::string key = "\"label\"";
+	for (size_t i = 0; i + key.size() <= body.size(); ++i) {
+		if (std::equal(key.begin(), key.end(), body.begin() + static_cast<std::ptrdiff_t>(i))) {
+			body[i + 4] = 'x';
+			++renamed;
+		}
+	}
+	REQUIRE(renamed == 1);
+	persist::Rig legacy;
+	const rack::LoadReport report = legacy.bridge->loadPatch(patch);
+	legacy.bridge->drain();
+	legacy.block(3);
+	CHECK(report.empty());
+	par::Rack* shell = par::rackOf(legacy.bridge->containerSurfaceOf(legacy.bridge->deviceAtPosition(0)));
+	REQUIRE(shell != nullptr);
+	CHECK(shell->chainCount() == 2);
+	CHECK(shell->chainName(1).empty());
+	REQUIRE(shell->chainAt(1)->bridge()->chainLength() == 1); // the chain's device is still there
+	CHECK(std::string(shell->chainAt(1)->bridge()->descriptorOf(shell->chainAt(1)->bridge()->deviceAtPosition(0))->traits.tag) == "DELAY");
+	REQUIRE(legacy.bridge->chainLength() == 2);
+	CHECK(std::string(legacy.bridge->descriptorOf(legacy.bridge->deviceAtPosition(1))->traits.tag) == "DELAY");
+}

@@ -1602,6 +1602,11 @@ bool rackToText(const RackPatch& patch, std::string* out, bool indented) {
 		w.string(device::clampMacroName(name)); // clamped here, so no name a caller hands in reads back longer
 	}
 	w.endArray();
+	// THE CHAIN'S OWN NAME, only when it has one (a Rack's chain; see `RackPatch::label`).
+	if (!patch.label.empty()) {
+		w.key("label");
+		w.string(device::clampMacroName(patch.label));
+	}
 	// WHICH PRESET THE RACK PLUGIN'S BROWSER CAME FROM (backlog QC) — only when it names one.
 	if (!patch.preset.empty()) {
 		w.key("preset");
@@ -1823,6 +1828,9 @@ bool parseRackText(std::string_view text, RackPatch* out, LoadReport* report) {
 		for (const json::Value& n : names->items) {
 			out->macroName.push_back(n.isString() ? device::clampMacroName(n.text) : std::string {});
 		}
+	}
+	if (const json::Value* label = doc.find("label"); label != nullptr && label->isString()) {
+		out->label = device::clampMacroName(label->text); // absent or odd: unnamed
 	}
 	(void)readPresetIdentity(doc.find("preset"), &out->preset); // backlog QC; absent or odd: none
 	if (const json::Value* column = doc.find("macrosColumn"); column != nullptr && column->isObject()) {

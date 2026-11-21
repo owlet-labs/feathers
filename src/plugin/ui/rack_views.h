@@ -172,6 +172,9 @@ public:
 	/// **A RIGHT PRESS ON A TAB** asks the owner for that chain's menu (the rename): its slot and the tab's rectangle in this frame.
 	void setContextHandler(std::function<void(size_t slot, const visage::Bounds& anchor)> handler) { context_ = std::move(handler); }
 	void pressContextForTest(visage::Point at) { pressContext(at); }
+	/// **A DOUBLE-CLICK ON A TAB** renames its chain (the owner opens the field over the tab): its slot and the tab's rectangle in this frame.
+	void setRenameHandler(std::function<void(size_t slot, const visage::Bounds& anchor)> handler) { rename_ = std::move(handler); }
+	void doubleClickForTest(visage::Point at) { pressContext(at, true); }
 	/// The pointer over `at` (or off the bar: a point outside it), as a mouse move makes it.
 	void hoverForTest(visage::Point at) { hover(at); }
 	/// **THE SET-PLAYING TARGET APPEARS ON HOVER**: a lit dot on the playing tab only, and on the tab under the pointer (Select routing) a
@@ -191,7 +194,8 @@ private:
 	[[nodiscard]] bool inDotArea(visage::Point at, size_t k) const;
 	void press(visage::Point at);
 
-	void pressContext(visage::Point at);
+	void pressContext(visage::Point at, bool rename = false);
+	std::function<void(size_t, const visage::Bounds&)> rename_;
 
 	RackViewModel& model_;
 	uint32_t rule_ = 0;

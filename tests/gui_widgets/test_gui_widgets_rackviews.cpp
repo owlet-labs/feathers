@@ -3264,3 +3264,84 @@ TEST_CASE("rack layout: the Pads grid, page strip and kit level take the card's 
 	panel.setBounds(0.0f, 0.0f, 120.0f, panel.naturalSizeFor(120.0f).y);
 	CHECK(panel.gridForTest().width() == doctest::Approx(ui::RackPadsPanel::gridSide()));
 }
+
+TEST_CASE("chain names: the Position readout, route and destination names, the host's slot captions, and a double-click rename all read the same label") {
+	RealRack r;
+	r.chains(3, 0, true);
+	(void)r.rack().chainAt(1)->bridge()->addDevice("DRUM");
+	(void)r.rack().chainAt(0)->bridge()->addDevice("DELAY");
+	REQUIRE(r.rack().setChainName(2, "Hats"));
+	r.set(pr::Param::Mode, static_cast<float>(pr::Mode::Select));
+	r.refresh();
+	const std::vector<std::string> wanted = { "Delay", "Drum", "Hats" };
+	// (1) THE POSITION KNOB'S READOUT NAMES THE CHAIN IT SELECTS (and the blend between two by their names), never "Chain N".
+	device::Modulatable& position = *r.panel->positionKnobForTest().control();
+	for (size_t i = 0; i < 3; ++i) {
+		position.setValue(static_cast<double>(i) / 2.0);
+		CHECK(position.text() == wanted[i]);
+	}
+	r.set(pr::Param::Mode, static_cast<float>(pr::Mode::Blend));
+	position.setValue(0.25);
+	CHECK(position.text().find("Delay") != std::string::npos);
+	CHECK(position.text().find("Drum") != std::string::npos);
+	CHECK(position.text().find("Chain") == std::string::npos);
+	// AND A NAME TYPED INTO IT FINDS THE CHAIN (the readout reads back).
+	const std::optional<double> typed = position.parseText("hats", 0.0);
+	REQUIRE(typed.has_value());
+	CHECK(*typed == doctest::Approx(1.0));
+	const std::optional<double> blend = position.parseText(position.text(), 0.0);
+	REQUIRE(blend.has_value());
+	CHECK(*blend == doctest::Approx(0.25).epsilon(0.01));
+	// (2) A ROUTE INTO A DEVICE IN A CHAIN NAMES THE CHAIN FIRST: "Hats · Delay · ...".
+	feathers::rack::RackBridge& hats = *r.rack().chainAt(2)->bridge();
+	const feathers::DeviceInstanceId inHats = hats.addDevice("DELAY");
+	REQUIRE(inHats != feathers::kNoInstance);
+	r.refresh();
+	char name[96] = {};
+	const size_t written = pr::kContainerOps.nameDestination(r.body, feathers::backplane::Destination::control(inHats, 0), name, sizeof name);
+	REQUIRE(written > 0);
+	CHECK(std::string(name).rfind("Hats \xC2\xB7 ", 0) == 0);
+	// (3) THE HOST'S NAMES FOR THE CHAIN SLOTS' CONTROLS use the label (the macro-rename road: captions sent with the macros').
+	r.rack().refreshSlotCaptions();
+	const auto& captions = r.rack().slotCaptionsForTest();
+	const auto captionFor = [&](size_t chain, pr::SlotControl c) {
+		const uint8_t slot = r.rack().slotOf(chain);
+		for (const auto& cap : captions) {
+			if (cap.control == pr::slotParam(slot, c)) {
+				return cap.name;
+			}
+		}
+		return std::string("<none>");
+	};
+	CHECK(captionFor(0, pr::SlotControl::Level) == "Delay Level");
+	CHECK(captionFor(1, pr::SlotControl::Mute) == "Drum Mute");
+	CHECK(captionFor(2, pr::SlotControl::Solo) == "Hats Solo");
+	r.rack().setChainName(0, "Open");
+	const auto& after = r.rack().slotCaptionsForTest();
+	bool renamed = false;
+	for (const auto& cap : after) {
+		renamed = renamed || cap.name == "Open Level";
+	}
+	CHECK(renamed);
+	// A REMOVED CHAIN HAS NO CAPTION (the declared static name stands for a slot nothing holds).
+	const uint8_t gone = r.rack().slotOf(1);
+	REQUIRE(r.rack().removeChain(1));
+	for (const auto& cap : r.rack().slotCaptionsForTest()) {
+		CHECK(cap.control != pr::slotParam(gone, pr::SlotControl::Level));
+	}
+	// (4) A DOUBLE-CLICK ON A TAB, AND ON A STRIP'S CAPTION, OPENS THE SAME FIELD over that chain.
+	r.set(pr::Param::Mode, static_cast<float>(pr::Mode::Parallel));
+	r.view_(1);
+	ui::RackChainRename& rename = r.panel->chainRenameForTest();
+	r.panel->tabBarForTest().doubleClickForTest(r.panel->tabBarForTest().tabCentre(1));
+	REQUIRE(rename.renaming());
+	CHECK(rename.chainForTest() == r.rack().chainIdAt(1));
+	CHECK(rename.commitForTest("Second"));
+	CHECK(r.rack().chainName(1) == "Second");
+	r.view_(0);
+	r.refresh();
+	ui::ChainStrip& strip = r.panel->stripForTest(0);
+	strip.doubleClickForTest(visage::Point { 2.0f, 2.0f });
+	REQUIRE(rename.renaming());
+	CHECK(rename.chainForTest() == r.rack().chainIdAt(0));
+}

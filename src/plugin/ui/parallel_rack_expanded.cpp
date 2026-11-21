@@ -177,6 +177,7 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	// "RENAME…" FROM A TAB OR A USED PAD'S RIGHT PRESS: the one chain label everywhere reads it back.
 	chainRename_ = std::make_unique<RackChainRename>(*model_, *this, notifier_);
 	tabs_->setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, *tabs_, anchor); });
+	tabs_->setRenameHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->begin(slot, *tabs_, anchor); });
 	pads_->gridForTest().setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, pads_->gridForTest(), anchor); });
 	padAdd_ = std::make_unique<RackPadAdd>(*model_, notifier_);
 	padAdd_->onAdded([this](size_t) {
@@ -677,6 +678,12 @@ bool ParallelRackExpanded::follow() {
 				kept->rail = std::make_unique<FxLaneRail>(FxLaneRail::Spec { "", kept->caption.c_str(), &chainItself },
 				                                          registry_, notifier_);
 				kept->strip->setModulation(mod_, history_);
+				// A DOUBLE-CLICK ON THE STRIP'S CAPTION RENAMES ITS CHAIN (by id: the field follows the chain, not the place).
+				kept->strip->setRenameHandler([this, strip = kept->strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
+					if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+						chainRename_->begin(slot, *strip, anchor);
+					}
+				});
 				kept->rail->setAccessory(kept->strip.get(), ChainStrip::kHeight);
 				kept->rail->setAccessoryWhenCollapsed(true); // the header works while the chain is collapsed
 				// BUILT AS THE RACK REMEMBERS IT (closed unless it was left open), BEFORE the hook is set so this write is

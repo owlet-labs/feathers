@@ -128,37 +128,6 @@ bool getExports(Reader& in, std::vector<RackPatch::Export>* out, uint16_t versio
 	return true;
 }
 
-/// THE CHAINS' NAMES (version 4): count u16, then chain id u16 · length u8 · bytes each. Read strictly: a bound on the count and the length.
-struct NamedChain {
-	uint16_t id = 0;
-	std::string name;
-};
-void putNames(const device::ByteSink& sink, const std::vector<NamedChain>& names) {
-	put(sink, static_cast<uint16_t>(names.size()));
-	for (const NamedChain& n : names) {
-		put(sink, n.id);
-		const std::string clamped = device::clampMacroName(n.name);
-		put(sink, static_cast<uint8_t>(clamped.size()));
-		sink(reinterpret_cast<const uint8_t*>(clamped.data()), clamped.size());
-	}
-}
-bool getNames(Reader& in, std::vector<NamedChain>* out) {
-	uint16_t count = 0;
-	if (!in.get(count) || count > 1024) {
-		return false;
-	}
-	for (uint16_t i = 0; i < count; ++i) {
-		NamedChain n;
-		uint8_t len = 0;
-		if (!in.get(n.id) || !in.get(len) || in.size - in.at < len) {
-			return false;
-		}
-		n.name.assign(reinterpret_cast<const char*>(in.data + in.at), len);
-		(void)in.skip(len);
-		out->push_back(std::move(n));
-	}
-	return true;
-}
 } // namespace
 
 //------------------------------------------------------------------------------------------------//
@@ -192,8 +161,6 @@ struct Rack::Branch {
 	/// hides the device a hand is about to add); a chain loaded keeps what its body stored, and a body written before the field existed reads
 	/// closed, as it always did (`loadState`'s own default).
 	bool open = true;
-	/// THE USER'S NAME FOR THIS CHAIN (empty: none). Message thread only, like `open`; saved in the body's trailing names block.
-	std::string name;
 
 	// AUDIO THREAD.
 	/// **THIS CHAIN WAITS FOR THE SLOWEST** — delayed by (the rack's latency − this chain's).
@@ -326,6 +293,7 @@ void Rack::publish() {
 	++revision_;
 	reap();
 	retextIfCountMoved();
+	refreshSlotCaptions();
 }
 
 void Rack::retextIfCountMoved() {
@@ -576,7 +544,6 @@ Rack::ChainSnapshot Rack::snapshotChain(size_t index) const {
 	out.slot = b.slot;
 	out.key = b.key.load(std::memory_order_relaxed);
 	out.choke = b.choke.load(std::memory_order_relaxed);
-	out.name = b.name;
 	(void)b.chain.saveState(vectorSink(&out.body));
 	return out;
 }
@@ -594,7 +561,6 @@ size_t Rack::insertChain(size_t index, const ChainSnapshot& snap) {
 	branch->mute.store(snap.mute, std::memory_order_relaxed);
 	branch->solo.store(snap.solo, std::memory_order_relaxed);
 	branch->open = snap.open;
-	branch->name = device::clampMacroName(snap.name);
 	branch->key.store(snap.key, std::memory_order_relaxed);
 	branch->choke.store(snap.choke, std::memory_order_relaxed);
 	branch->slot = freeSlot(snap.slot);
@@ -663,20 +629,17 @@ void Rack::setChainChoke(size_t index, int group) noexcept {
 }
 
 std::string_view Rack::chainName(size_t index) const noexcept {
-	return index < chains_.size() ? std::string_view(chains_[index]->name) : std::string_view {};
+	const RackBridge* bridge = index < chains_.size() ? chains_[index]->chain.bridge() : nullptr;
+	return bridge != nullptr ? bridge->label() : std::string_view {};
 }
 
 bool Rack::setChainName(size_t index, std::string_view name) {
-	if (index >= chains_.size()) {
+	RackBridge* bridge = index < chains_.size() ? chains_[index]->chain.bridge() : nullptr;
+	if (bridge == nullptr || !bridge->setLabel(name)) {
 		return false;
 	}
-	const std::string clamped = device::clampMacroName(name);
-	if (chains_[index]->name == clamped) {
-		return false;
-	}
-	chains_[index]->name = clamped;
-	++revision_;
-	markDirty();
+	++revision_; // the bridge's own gate marked the holder dirty (`setLabel`)
+	refreshSlotCaptions();
 	return true;
 }
 
@@ -708,12 +671,36 @@ std::string Rack::chainDerivedName(size_t index) const {
 	return same > 1 ? name + " " + std::to_string(same) : name;
 }
 
+void Rack::refreshSlotCaptions() {
+	static const char* const kTail[] = { " Level", " Mute", " Solo" };
+	std::vector<device::HostSlotCaption> next;
+	for (size_t i = 0; i < chains_.size(); ++i) {
+		const uint8_t slot = chains_[i]->slot;
+		if (slot >= kChainSlots) {
+			continue;
+		}
+		const std::string label = chainLabel(i);
+		for (size_t c = 0; c < kSlotControls; ++c) {
+			next.push_back(device::HostSlotCaption { .control = slotParam(slot, static_cast<SlotControl>(c)), .name = label + kTail[c] });
+		}
+	}
+	if (next == slotCaptions_) {
+		return;
+	}
+	slotCaptions_ = next;
+	for (auto& branch : chains_) {
+		if (RackBridge* bridge = branch->chain.bridge(); bridge != nullptr) {
+			bridge->setExtraCaptions(next);
+		}
+	}
+}
+
 std::string Rack::chainLabel(size_t index) const {
 	if (index >= chains_.size()) {
 		return {};
 	}
-	if (!chains_[index]->name.empty()) {
-		return chains_[index]->name;
+	if (const std::string_view own = chainName(index); !own.empty()) {
+		return std::string(own);
 	}
 	std::string derived = chainDerivedName(index);
 	return derived.empty() ? "Chain " + std::to_string(index + 1) : derived;
@@ -950,14 +937,8 @@ InnerChain* Rack::holding(DeviceInstanceId id) const noexcept {
 //------------------------------------------------------------------------------------------------//
 
 bool Rack::saveState(const device::ByteSink& sink) const {
-	std::vector<NamedChain> names;
-	for (const auto& branch : chains_) {
-		if (!branch->name.empty()) {
-			names.push_back({ branch->id, branch->name });
-		}
-	}
 	put(sink, kBodyMagic);
-	put(sink, names.empty() ? kBodyVersion : kBodyVersionNamed);
+	put(sink, kBodyVersion);
 	put(sink, static_cast<uint32_t>(chains_.size()));
 	for (const auto& branch : chains_) {
 		put(sink, branch->id);
@@ -1001,10 +982,6 @@ bool Rack::saveState(const device::ByteSink& sink) const {
 	std::vector<RackPatch::Export> exports;
 	exports_.save(&exports);
 	putExports(sink, exports);
-	// THE NAMES, only when a chain has one (version 4): see `kBodyVersionNamed`.
-	if (!names.empty()) {
-		putNames(sink, names);
-	}
 	return true;
 }
 
@@ -1052,7 +1029,7 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 	uint32_t magic = 0;
 	uint16_t version = 0;
 	uint32_t count = 0;
-	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2 && version != kBodyVersionNamed) || !in.get(count)) {
+	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2) || !in.get(count)) {
 		return false;
 	}
 	if (count > kMaxChains) {
@@ -1133,17 +1110,8 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 		next.push_back(std::move(branch));
 	}
 	std::vector<RackPatch::Export> exports;
-	std::vector<NamedChain> names;
-	if (!getExports(in, &exports, version) || (version == kBodyVersionNamed && !getNames(in, &names)) || in.at != bytes) {
+	if (!getExports(in, &exports, version) || in.at != bytes) {
 		return false;
-	}
-	// THE NAMES BY CHAIN ID: one for an id this body holds, else ignored (a stale row names nothing).
-	for (const NamedChain& n : names) {
-		for (auto& b : next) {
-			if (b->id == n.id) {
-				b->name = device::clampMacroName(n.name);
-			}
-		}
 	}
 	// THE OLD CHAINS' SLOTS: a project load (`provision`) brings its routes with it, so they are the body's to keep; a
 	// body applied into a running rack (a preset) leaves routes into the old chains, which the host prunes first. And a
@@ -2852,12 +2820,6 @@ long readChain(const char*& s) {
 	return k;
 }
 
-/// The chain count a view's surface holds, or 0 where there is none.
-size_t chainsOf(const device::TextView& view) noexcept {
-	const auto* rack = static_cast<const Rack*>(view.surface);
-	return rack != nullptr ? rack->chainCount() : 0;
-}
-
 Mode modeOf(const device::TextView& view) noexcept {
 	const float m = view.field != nullptr ? view.field(view.host, static_cast<size_t>(Param::Mode)) : 0.0f;
 	return std::isfinite(m) ? static_cast<Mode>(std::lround(std::clamp(m, 0.0f, static_cast<float>(Mode::kCount) - 1.0f)))
@@ -2941,6 +2903,118 @@ bool parsePosition(Mode mode, size_t chains, const char* text, double* position)
 }
 
 namespace {
+std::string lowered(std::string v) {
+	for (char& c : v) {
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	return v;
+}
+/// A label cut to `limit` bytes on a code-point boundary.
+std::string cutLabel(const std::string& label, size_t limit) {
+	if (label.size() <= limit) {
+		return label;
+	}
+	size_t cut = limit;
+	while (cut > 0 && (static_cast<uint8_t>(label[cut]) & 0xC0U) == 0x80U) {
+		--cut;
+	}
+	return label.substr(0, cut);
+}
+constexpr size_t kBlendNameBytes = 9;
+/// Which chain a typed token names: its label, or that label as the blend form cuts it (case-insensitively).
+bool chainOfToken(const Rack& rack, const std::string& token, size_t* index) {
+	const std::string want = lowered(token);
+	for (size_t i = 0; i < rack.chainCount(); ++i) {
+		const std::string label = rack.chainLabel(i);
+		if (lowered(label) == want || lowered(cutLabel(label, kBlendNameBytes)) == want) {
+			*index = i;
+			return true;
+		}
+	}
+	return false;
+}
+std::string trimmed(const std::string& v) {
+	size_t a = 0;
+	size_t b = v.size();
+	while (a < b && static_cast<unsigned char>(v[a]) <= ' ') {
+		++a;
+	}
+	while (b > a && static_cast<unsigned char>(v[b - 1]) <= ' ') {
+		--b;
+	}
+	return v.substr(a, b - a);
+}
+} // namespace
+
+bool formatPositionNamed(Mode mode, const Rack* names, double position, char* out, size_t size) noexcept {
+	const size_t chains = names != nullptr ? names->chainCount() : 0;
+	if (out == nullptr || size == 0 || chains == 0 || (mode != Mode::Select && mode != Mode::Blend)) {
+		return false;
+	}
+	const auto say = [&](size_t i, size_t limit) { return cutLabel(names->chainLabel(i), limit); };
+	if (mode == Mode::Select || chains == 1) {
+		std::snprintf(out, size, "%.*s", static_cast<int>(size) - 1, names->chainLabel(selectedChain(position, chains)).c_str());
+		return true;
+	}
+	const double x = std::clamp(position, 0.0, 1.0) * static_cast<double>(chains - 1);
+	const size_t lower = std::min(static_cast<size_t>(x), chains - 1);
+	const long percent = std::lround((x - static_cast<double>(lower)) * 100.0);
+	if (percent <= 0) {
+		std::snprintf(out, size, "%.*s", static_cast<int>(size) - 1, names->chainLabel(lower).c_str());
+	}
+	else if (percent >= 100) {
+		std::snprintf(out, size, "%.*s", static_cast<int>(size) - 1, names->chainLabel(lower + 1).c_str());
+	}
+	else {
+		std::snprintf(out, size, "%s %s %s, %ld%%", say(lower, kBlendNameBytes).c_str(), kArrow, say(lower + 1, kBlendNameBytes).c_str(), percent);
+	}
+	return true;
+}
+
+bool parsePositionNamed(Mode mode, const Rack* names, const char* text, double* position) noexcept {
+	const size_t chains = names != nullptr ? names->chainCount() : 0;
+	if (text == nullptr || position == nullptr || chains == 0 || (mode != Mode::Select && mode != Mode::Blend)) {
+		return false;
+	}
+	const std::string all = trimmed(text);
+	const double span = chains > 1 ? static_cast<double>(chains - 1) : 1.0;
+	size_t arrow = all.find(kArrow);
+	size_t arrowLen = std::strlen(kArrow);
+	if (arrow == std::string::npos) {
+		arrow = all.find("->");
+		arrowLen = 2;
+	}
+	size_t a = 0;
+	if (arrow == std::string::npos) {
+		if (chainOfToken(*names, all, &a)) {
+			*position = chains > 1 ? static_cast<double>(a) / span : 0.0;
+			return true;
+		}
+		return parsePosition(mode, chains, text, position); // "Chain 2" or a bare 2
+	}
+	size_t b = 0;
+	const size_t comma = all.find(',', arrow);
+	if (comma == std::string::npos || !chainOfToken(*names, trimmed(all.substr(0, arrow)), &a)
+	    || !chainOfToken(*names, trimmed(all.substr(arrow + arrowLen, comma - arrow - arrowLen)), &b) || b != a + 1) {
+		return parsePosition(mode, chains, text, position);
+	}
+	const std::string rest = trimmed(all.substr(comma + 1));
+	char* end = nullptr;
+	const double percent = std::strtod(rest.c_str(), &end);
+	if (end == rest.c_str() || !std::isfinite(percent) || percent < 0.0 || percent > 100.0) {
+		return false;
+	}
+	if (*end == '%') {
+		++end;
+	}
+	if (*end != '\0') {
+		return false;
+	}
+	*position = (static_cast<double>(a) + percent / 100.0) / span;
+	return true;
+}
+
+namespace {
 
 /// **WHETHER THE VIEW'S CORNERS ARE TRACKING A NOTE** — the published `NoteHz` reading, non-zero only then (the
 /// Phaser's `phaserNoteTracked`). A view with no readings (the DAW's) is never tracking: there a Cut prints in Hz, as
@@ -3008,7 +3082,8 @@ const device::TextOps kTextOps {
 			}
 			return true;
 		}
-		return control == static_cast<size_t>(Param::Position) && formatPosition(modeOf(view), chainsOf(view), value, out, size);
+		return control == static_cast<size_t>(Param::Position)
+		       && formatPositionNamed(modeOf(view), static_cast<const Rack*>(view.surface), value, out, size);
 	},
 	.parse = [](size_t control, const char* text, const device::TextView& view, double* value) {
 		if (isCut(control)) {
@@ -3048,7 +3123,8 @@ const device::TextOps kTextOps {
 			*value = std::max(0.0, playing ? n : n - 1.0);
 			return true;
 		}
-		return control == static_cast<size_t>(Param::Position) && parsePosition(modeOf(view), chainsOf(view), text, value);
+		return control == static_cast<size_t>(Param::Position)
+		       && parsePositionNamed(modeOf(view), static_cast<const Rack*>(view.surface), text, value);
 	},
 };
 
@@ -3156,8 +3232,24 @@ const device::ContainerOps kContainerOps {
 	    },
 	.nameDestination =
 	    [](const void* storage, device::Destination inner, char* out, size_t capacity) {
-		    const InnerChain* c = rackAt(storage).holding(inner.device);
-		    return c != nullptr ? c->nameDestination(inner, out, capacity) : size_t { 0 };
+		    const Rack& rack = rackAt(storage);
+		    const InnerChain* c = rack.holding(inner.device);
+		    if (c == nullptr || out == nullptr || capacity == 0) {
+			    return size_t { 0 };
+		    }
+		    // THE CHAIN'S ONE LABEL FIRST ("Kick · Filter · Cutoff"): a route into a rack names which chain it reaches, by the name the tab shows.
+		    char inside[96] = {};
+		    const size_t n = c->nameDestination(inner, inside, sizeof(inside));
+		    if (n == 0) {
+			    return size_t { 0 };
+		    }
+		    for (size_t i = 0; i < rack.chainCount(); ++i) {
+			    if (rack.chainAt(i) == c) {
+				    const int len = std::snprintf(out, capacity, "%s \xC2\xB7 %s", rack.chainLabel(i).c_str(), inside);
+				    return static_cast<size_t>(std::clamp(len, 0, static_cast<int>(capacity) - 1));
+			    }
+		    }
+		    return c->nameDestination(inner, out, capacity);
 	    },
 	.macroLabel =
 	    [](const void* storage, size_t macro, char* out, size_t capacity) {
@@ -3229,13 +3321,13 @@ bool mapRackBody(std::span<const uint8_t> bytes, LaneMap map, void* ctx, std::ve
 	uint32_t magic = 0;
 	uint16_t version = 0;
 	uint32_t count = 0;
-	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2 && version != kBodyVersionNamed) || !in.get(count)) {
+	if (!in.get(magic) || magic != kBodyMagic || !in.get(version) || (version != kBodyVersion && version != 2) || !in.get(count)) {
 		return false;
 	}
 	std::vector<uint8_t> next;
 	const device::ByteSink sink = vectorSink(&next);
 	put(sink, magic);
-	put(sink, kBodyVersion); // rewritten in today's format, whichever it was read in (4 when a name rides along, patched below)
+	put(sink, kBodyVersion); // rewritten in today's format, whichever it was read in
 	put(sink, count);
 	for (uint32_t c = 0; c < count; ++c) {
 		// THE CHAIN'S HEAD — its id and its own controls — copied as it stands: nothing in it names a device.
@@ -3275,18 +3367,6 @@ bool mapRackBody(std::span<const uint8_t> bytes, LaneMap map, void* ctx, std::ve
 		exports.clear();
 	}
 	putExports(sink, exports);
-	// THE NAMES RIDE ALONG UNCHANGED (they name chains, not devices), and the version says so.
-	std::vector<NamedChain> names;
-	if (version == kBodyVersionNamed) {
-		if (!getNames(in, &names)) {
-			return false;
-		}
-		if (!names.empty()) {
-			putNames(sink, names);
-			next[4] = static_cast<uint8_t>(kBodyVersionNamed & 0xFF);
-			next[5] = static_cast<uint8_t>(kBodyVersionNamed >> 8);
-		}
-	}
 	if (in.at != bytes.size()) {
 		return false;
 	}

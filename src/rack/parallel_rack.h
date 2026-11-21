@@ -574,6 +574,12 @@ extern const device::TextOps kTextOps;
 /// THE TEXT ITSELF, for a rack of `chains` chains in `mode` — `Chain 2`, or `Chain 2 → 3, 40%` in Blend. False where
 /// the unit should print (Parallel, or no chains). Pure; what `kTextOps` and the cases share.
 bool formatPosition(Mode mode, size_t chains, double position, char* out, size_t size) noexcept;
+class Rack;
+/// **THE SAME BY THE CHAINS' LABELS** (`Rack::chainLabel`), never their numbers: `Kick`, or `Kick → Snare, 40%` in Blend (each name cut to nine bytes
+/// there, so the two fit the readout). `names` null prints the numbered form above.
+bool formatPositionNamed(Mode mode, const Rack* names, double position, char* out, size_t size) noexcept;
+/// Its inverse: a chain's label (or the cut one) is that chain's centre, `A → B, 40%` the way between; the numbered forms still read.
+bool parsePositionNamed(Mode mode, const Rack* names, const char* text, double* position) noexcept;
 /// Its inverse: `Chain 2` (or a bare `2`) is that chain's centre; `Chain 2 → 3, 40%` is 40% of the way from 2 to 3.
 /// False for anything else, a chain the rack does not hold, or Parallel — the unit then reads it.
 bool parsePosition(Mode mode, size_t chains, const char* text, double* position) noexcept;
@@ -607,10 +613,6 @@ inline constexpr uint32_t kBodyMagic = 0x31504B52u;
 /// 2 since backlog NZ (b): the export table follows the chains (count u16, then row u16 · id u32 · index u16 each).
 /// 3 since NZ any depth (2026-10-31): the index is u32, whole, so a row may name an inner holder's export. 2 still reads.
 inline constexpr uint16_t kBodyVersion = 3;
-/// 4 is 3 WITH THE CHAINS' NAMES after the export table (count u16, then chain id u16 · length u8 · bytes each), written ONLY when a chain is
-/// named: a rack with no names writes version 3, byte for byte what it always did. A reader that knows 4 reads both; one that does not (an older
-/// build) refuses a named rack's body whole, since the extra block is not what it expects at the end, and reads every unnamed one as ever.
-inline constexpr uint16_t kBodyVersionNamed = 4;
 /// THE LARGEST BODY A READER WILL WALK — a bound on BYTES, not on chains: four times one chain's ceiling, which
 /// is already 32 MiB and far past anything a hand builds. A real chain's body is a few hundred bytes.
 inline constexpr size_t kMaxRackBodyBytes = 4 * kMaxBodyBytes;
@@ -701,8 +703,6 @@ public:
 		uint8_t slot = kNoChainSlot;
 		int key = kAnyKey;
 		int choke = 0;
-		/// The user's name for the chain (empty: unnamed), put back with it.
-		std::string name;
 	};
 	[[nodiscard]] ChainSnapshot snapshotChain(size_t index) const;
 	/// PUT A CHAIN BACK at `index`, under its own id — refused (`SIZE_MAX`) for an id the rack holds, a body the
@@ -724,7 +724,9 @@ public:
 	void setChainChoke(size_t index, int group) noexcept;
 	/// **THE CHAIN'S OWN NAME** (the user's; empty is unnamed, and every surface then shows the name its first device gives it): view and patch state
 	/// kept under the chain's stable id, so it follows the chain through reorder, re-key, a put-back and a copy. Clamped like a macro's name
-	/// (`device::clampMacroName`); a write that changes nothing is not an edit. Message thread only.
+	/// (`device::clampMacroName`); a write that changes nothing is not an edit. Message thread only. **IT LIVES IN THE CHAIN'S OWN DOCUMENT** (its
+	/// bridge's patch, under "label", beside the macros' names), so the Rack's body is the format it always was: a build that does not know the name
+	/// reads the rack whole and drops only the name, and a put-back, a copy or a preset of the chain carries it by construction.
 	[[nodiscard]] std::string_view chainName(size_t index) const noexcept;
 	bool setChainName(size_t index, std::string_view name);
 	/// **THE ONE LABEL A CHAIN IS SHOWN BY, ON EVERY SURFACE**: the user's name if it has one, else the name of its first device (numbered when an
@@ -732,6 +734,12 @@ public:
 	[[nodiscard]] std::string chainLabel(size_t index) const;
 	/// The derived half alone (the first device's name, numbered among twins), or empty for a chain with no device.
 	[[nodiscard]] std::string chainDerivedName(size_t index) const;
+	/// **THE HOST NAMES OF THE CHAINS' SLOT CONTROLS** ("Kick Level", "Kick Mute", "Kick Solo" for the chain holding slot s): the label, then the control.
+	/// Handed to the chains' bridges, which send them to the host beside the macros' captions and so relabel a slot at once (the macro rename's road);
+	/// a chain with no slot, or that does not exist, has none and the declared "Chain Slot N Level" stands. Call after anything that moves a label
+	/// (a rename, a chain made or removed, a device added to a chain); a set that did not change sends nothing.
+	void refreshSlotCaptions();
+	[[nodiscard]] const std::vector<device::HostSlotCaption>& slotCaptionsForTest() const noexcept { return slotCaptions_; }
 	/// **WHICH KEYS WERE STRUCK SINCE THE EDITOR LAST LOOKED**: a bit per key, 0..127, the audio thread's `fetch_or` and this call's
 	/// `exchange(0)` — lock-free, no allocation. Notes entering the rack count, whichever chain takes them.
 	void takeStrikeMask(uint64_t out[2]) noexcept;
@@ -1058,6 +1066,7 @@ private:
 	int padsPage_ = 0;
 	int followPlayed_ = 0;
 	int front_ = 0;
+	std::vector<device::HostSlotCaption> slotCaptions_;
 	uint64_t serial_ = 0;
 	/// And what its key held back, which the rack passes on itself.
 	std::vector<device::NoteEvent> skippedIn_;

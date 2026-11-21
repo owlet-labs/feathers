@@ -792,6 +792,16 @@ std::string RackBridge::macroName(size_t index) const {
 	return macroRenamed(index) ? macroName_[index] : device::defaultMacroName(index);
 }
 
+bool RackBridge::setLabel(std::string_view name) {
+	std::string next = device::clampMacroName(name);
+	if (next == label_) {
+		return false;
+	}
+	label_ = std::move(next);
+	markStateDirty();
+	return true;
+}
+
 void RackBridge::setMacroName(size_t index, std::string_view name) {
 	if (index >= macroName_.size()) {
 		return;
@@ -822,7 +832,16 @@ void RackBridge::pushMacroCaptions() {
 			captions.push_back(device::HostSlotCaption { .control = first + i, .name = macroName_[i] });
 		}
 	}
+	captions.insert(captions.end(), extraCaptions_.begin(), extraCaptions_.end());
 	nested_->setOwnCaptions(std::move(captions));
+}
+
+void RackBridge::setExtraCaptions(std::vector<device::HostSlotCaption> captions) {
+	if (captions == extraCaptions_) {
+		return;
+	}
+	extraCaptions_ = std::move(captions);
+	pushMacroCaptions();
 }
 
 //-------------------------------------------------------------------------------------------------//
@@ -1016,6 +1035,7 @@ RackPatch RackBridge::patch() const {
 		out.macroType.push_back(static_cast<uint8_t>(macroType_[i]));
 	}
 	out.macroName = macroName_; // held normalised: the default is saved as no name
+	out.label = label_;
 	out.canvas = canvasView_;
 	out.macrosCollapsed = macrosCollapsed_; // backlog QN
 	out.preset = topPreset_; // backlog QC
@@ -1064,6 +1084,10 @@ LoadReport RackBridge::loadPatch(const RackPatch& patch) {
 		setMacroType(i, i < patch.macroType.size() ? static_cast<device::MacroType>(patch.macroType[i])
 		                                           : device::MacroType::Knob);
 		setMacroName(i, i < patch.macroName.size() ? std::string_view(patch.macroName[i]) : std::string_view {});
+	}
+	// THE CHAIN'S OWN NAME: a patch that names one sets it; one that names none leaves what the chain has (a preset loaded into a named chain keeps its name).
+	if (!patch.label.empty()) {
+		(void)setLabel(patch.label);
 	}
 	// **THE HOST SLOTS AFTER THE RECORD, never before** (plan §0.7: the load may re-id a device): the owner
 	// puts the patch's pool in place — an absent member is an empty pool — and frees what no longer

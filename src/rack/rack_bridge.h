@@ -656,6 +656,13 @@ public:
 	/// THE RENAME. Clamped by `device::clampMacroName`; empty, or the default spelled out, clears the name
 	/// (`device::normalisedMacroName`), so "renamed" always means a name that differs from the default.
 	void setMacroName(size_t index, std::string_view name);
+	/// **THIS CHAIN'S OWN NAME** (a Rack's chain: `Rack::chainLabel`), saved in the chain's document under "label". Clamped by `device::clampMacroName`;
+	/// true when it changed (a write that changes nothing is not an edit). Message thread only.
+	[[nodiscard]] std::string_view label() const noexcept { return label_; }
+	bool setLabel(std::string_view name);
+	/// **CAPTIONS THE HOLDING RACK GIVES ITS OWN CONTROLS** (a chain's level, mute and solo slots, named by the chain's label), sent to the host with the
+	/// macros' (`pushMacroCaptions`): this chain's bridge is the Rack's link to the pool. Replaced whole; an unchanged set sends nothing.
+	void setExtraCaptions(std::vector<device::HostSlotCaption> captions);
 	/// **TOLD WHEN A MACRO'S NAME MOVES** — by setMacroName when it changes and by `loadPatch` for each
 	/// macro whose effective name changed, on the message thread, after the bridge holds the new name.
 	/// A LIST, as `ParamBridge::subscribeMacroRename` is and for its reason: the editor and the host (A9)
@@ -1067,6 +1074,8 @@ private:
 	/// held EMPTY when it is the default.
 	std::vector<device::MacroType> macroType_;
 	std::vector<std::string> macroName_;
+	std::string label_;
+	std::vector<device::HostSlotCaption> extraCaptions_;
 	device::Subscribers<size_t> macroRenameSubscribers_;
 	/// See `takeStateDirty`. Message thread on both sides; atomic for `ParamBridge::stateDirty_`'s shape.
 	std::atomic<bool> stateDirty_ { false };

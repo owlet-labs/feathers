@@ -320,3 +320,34 @@ TEST_CASE("drum likes window: Clear empties the device's like store, the warp an
 	const bool have = after.bridge->blockAt(after.id, dd::kLikesBlock, none);
 	CHECK((!have || (dd::readLikeBlock(none.data(), none.size(), &left) && left.empty())));
 }
+
+TEST_CASE("drum likes window: a like in the corner under Rotate's box is drawn beside it, never under it, by the mark's own rectangle") {
+	Window w;
+	w.stand(0.5, -0.25);
+	w.press(w.win->likesForTest(), { 5.0f, 5.0f });
+	w.frame();
+	ui::DrumDevicePad& pad = w.win->padForTest();
+	const dd::DrumLike like = w.stored()[0];
+	// THE WINDOW GAVE THE PAD ROTATE'S BOX: the inset is where the Rotate widget really is, in the pad's own coordinates.
+	const visage::Frame* rotate = w.win->widgetForTest(dd::Param::Rotate);
+	REQUIRE(rotate != nullptr);
+	const visage::Bounds inset = pad.insetForTest();
+	CHECK(inset.x() == doctest::Approx(rotate->x() - pad.x()));
+	CHECK(inset.y() == doctest::Approx(rotate->y() - pad.y()));
+	CHECK(inset.width() == doctest::Approx(rotate->width()));
+	CHECK(inset.height() == doctest::Approx(rotate->height()));
+	// A LIKE WHOSE PLACE IS UNDER THE BOX: the inset moved to cover the mark's own place.
+	const visage::Point place = pad.likePixel(like);
+	const auto overlaps = [](const visage::Bounds& a, const visage::Bounds& b) {
+		return a.x() < b.right() && a.right() > b.x() && a.y() < b.bottom() && a.bottom() > b.y();
+	};
+	pad.setInset({ place.x - 20.0f, place.y - 10.0f, 40.0f, 20.0f });
+	REQUIRE(overlaps(pad.markRect(place), pad.insetForTest()));
+	const visage::Point drawn = pad.markAt(place);
+	CHECK_FALSE(overlaps(pad.markRect(drawn), pad.insetForTest()));
+	CHECK(drawn.x == place.x); // moved straight down, not sideways
+	// A MARK CLEAR OF THE BOX STAYS PUT.
+	pad.setInset({ place.x + 60.0f, place.y - 10.0f, 40.0f, 20.0f });
+	CHECK(pad.markAt(place).x == place.x);
+	CHECK(pad.markAt(place).y == place.y);
+}

@@ -854,11 +854,12 @@ void RackBridge::setExtraCaptions(std::vector<device::HostSlotCaption> captions)
 
 void RackBridge::drain() {
 	adoptDrainGrowth(); // room first (unbounded devices step 6)
-	// **EACH PUBLISH, WHOLE.** A snapshot that saw a publish land is refused and leaves `drained_` as it was;
-	// the engine keeps converging to the state it had, and takes this one at the next drain. (This
-	// snapshotted INTO `drained_` and converged it either way — a torn state, and the churn's lost add.)
-	if (published_.sequence() != drainedSequence_) {
-		(void)published_.current().adopt(&drained_, &drainStaging_, &drainedSequence_);
+	// **EACH PUBLISH, WHOLE, AND NEVER LATE** — the newest one, taken at this drain by a trade of buffers
+	// (`PublishedChainState`, a triple buffer). A seqlock read used to be refused when a publish landed during it, and
+	// the drain converged to the state it had for that block. (Before that it snapshotted INTO `drained_` and converged
+	// it either way — a torn state, and the churn's lost add.)
+	if (const PublishedChainState& pub = published_.current(); pub.fresh()) {
+		(void)pub.adopt(&drained_, &drainStaging_, &drainedSequence_);
 		drainedMirror_.store(drainedSequence_, std::memory_order_release);
 	}
 	// EVERY DRAIN, not only a new one: an arrival the engine refused lands after its state did. **UNLESS THE LAST

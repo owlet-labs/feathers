@@ -114,6 +114,21 @@ enum clap_feathers_synth_reading : uint32_t {
 	CLAP_FEATHERS_SYNTH_PATTERN_SOUNDING = 12, ///< notes it is sounding downstream
 	CLAP_FEATHERS_SYNTH_PATTERN_LOWEST = 13,   ///< the lowest key it holds, -1 for none
 	CLAP_FEATHERS_SYNTH_PATTERN_NEWEST = 14,   ///< the key it holds that was pressed last, -1 for none
+	/// **THE VOICE ROAD'S RUNNING COUNTS** (a dropped-note hunt): every voice the manager was handed since the instance was made,
+	/// every one it asked for and got none, every retrigger of a sounding voice (a mono or legato move, a re-used id), every release.
+	CLAP_FEATHERS_SYNTH_VOICE_STARTS = 15,
+	CLAP_FEATHERS_SYNTH_VOICE_REFUSED = 16,
+	CLAP_FEATHERS_SYNTH_VOICE_RETRIGGERS = 17,
+	CLAP_FEATHERS_SYNTH_VOICE_RELEASES = 18,
+	/// AND HOW MANY TIMES THE AUDIO THREAD FOUND A NEW CHAIN PUBLISH AND DID NOT TAKE IT (it ran the block on the state it had),
+	/// and the longest its adopt path took, in nanoseconds.
+	CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED = 19,
+	CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_MAX_NS = 20,
+	/// The take alone (`PublishedChainState::adopt`: the exchange and the trade of buffers), in nanoseconds.
+	CLAP_FEATHERS_SYNTH_CHAIN_TAKE_MAX_NS = 21,
+	/// How many takes there have been, and how long the last one took, in nanoseconds (a case reads them between blocks).
+	CLAP_FEATHERS_SYNTH_CHAIN_TAKES = 22,
+	CLAP_FEATHERS_SYNTH_CHAIN_LAST_TAKE_NS = 23,
 	CLAP_FEATHERS_SYNTH_READING_COUNT
 };
 

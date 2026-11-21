@@ -23,28 +23,35 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <array>
 #include <memory>
 #include <vector>
 
 namespace feathers::rack {
-
-/// **A RECORD'S STATE, PUBLISHED ACROSS THE THREAD BOUNDARY — whole or not at all.** The message thread
-/// writes (`publish`); the audio thread's drain takes a `snapshot` into a `ChainState` of the same shape
-/// and converges to it. The same seqlock `backplane::RouteList` is (odd while a publish is written;
-/// Boehm's reader and writer fences), for the same reason: a torn copy of a chain is not a torn number
-/// but a device under another device's id, and the engine would build it.
+/// **A RECORD'S STATE, PUBLISHED ACROSS THE THREAD BOUNDARY — A TRIPLE BUFFER.** The message thread writes
+/// (`publish`); the audio thread's drain takes the newest whole publish (`adopt`) at a point it owns, the top of
+/// its block. Three `ChainState`s of the record's shape: the WRITER's (back), the one waiting to be taken
+/// (middle), and the READER's (front). A publish fills the back state, then exchanges it with the middle one in
+/// one atomic word that also says "new"; an adopt that sees "new" exchanges its front with the middle one and
+/// trades contents with the caller's state. So:
 ///
-/// A SNAPSHOT THAT SAW A PUBLISH LAND IS REFUSED, and the drain keeps converging to the state it had —
-/// one block late, never wrong. `sequence` lets the drain skip the copy on every block nothing changed.
+///   - THE READER NEVER REFUSES, NEVER WAITS AND NEVER COPIES. This was a seqlock until 2026-11-21, and a read
+///     that saw a publish land was refused, leaving the block on the old state. The editor republishes the whole
+///     record on every knob it moves, so on the block a Pattern was first installed a hand on ANY control could
+///     send that block's notes past it to the voices (test_note_drops "note drops (d)": 7 runs in 900 lost the
+///     Pattern's steps, each exactly a run whose first block was refused).
+///   - THE WRITER NEVER BLOCKS AND NEVER TOUCHES THE READER'S STATE. With two buffers it would have to wait for
+///     the reader to let go of one; the third is what lets it always have one of its own to fill.
+///   - TWO PUBLISHES BEFORE A TAKE: the newer one wins, the older is overwritten in place of a queue.
+///   - A STATE IS NEVER TORN: the writer fills only the back state, which no reader can reach until the
+///     exchange hands it over whole (release/acquire on the one word).
 ///
-/// **`adopt` IS THE ONLY WAY IN, AND THAT IS THE FIX FOR A LOST ADD (2026-09-11).** A snapshot writes as
-/// it reads, so a refused one has already overwritten part of its target. `snapshot` was public and said
-/// "`out` not to be used" on a false — and BOTH of its callers snapshotted into the very state they ran
-/// and ran it anyway: the rack's drain converged a torn state, and Feathers' lane synced from one. A torn
-/// state can say a running device is not wanted; the converger removes it, the message thread's mirror
-/// still says it was built, and nothing builds it again. MEASURED on the churn case under the sanitizer:
-/// one run in twenty ended with the engine a device short and nothing pending. Now a snapshot lands in
-/// STAGING and only a whole one is swapped in — `RouteList::snapshot`'s shape, which never had the bug.
+/// ONE READER. Its state (`front_`) is plain: the host calls the drain from one thread at a time (process,
+/// or flush when not processing — never both at once), as it did when the drain wrote a staging copy.
+///
+/// **`adopt` IS THE ONLY WAY IN, AND IT TRADES WITH THE SAME `current` EVERY CALL.** The newest publish is
+/// swapped INTO `current`, and the reader's front state then holds what `current` held, which is not read
+/// again. An adopt with nothing new leaves `current` as it is: it already holds the newest this reader took.
 class PublishedChainState {
 public:
 	/// ALLOCATES — construct where allocation is allowed, to the record's shape. `capacity` is the most
@@ -53,13 +60,10 @@ public:
 	/// `startSequence` CONTINUES ANOTHER'S COUNT — a published state replaced by a bigger one (unbounded devices
 	/// step 5) must not restart at a number a drain has already taken, or the drain would skip its first publish.
 	PublishedChainState(size_t capacity, size_t chains, uint32_t startSequence = 0)
-	    : capacity_(capacity), chains_(chains), device_(std::make_unique<Device[]>(capacity * chains)),
-	      length_(std::make_unique<std::atomic<uint32_t>[]>(chains)),
-	      order_(std::make_unique<std::atomic<DeviceInstanceId>[]>(capacity * chains + 1)) {
-		for (size_t c = 0; c < chains; ++c) {
-			length_[c].store(0, std::memory_order_relaxed);
-		}
-		sequence_.store(startSequence & ~1u, std::memory_order_relaxed); // even: no publish in progress
+	    : capacity_(capacity), chains_(chains),
+	      state_ { ChainState(capacity, chains), ChainState(capacity, chains), ChainState(capacity, chains) } {
+		sequence_.store(startSequence & ~1u, std::memory_order_relaxed); // even, as it always was
+		taken_ = startSequence & ~1u;
 	}
 
 	PublishedChainState(const PublishedChainState&) = delete;
@@ -68,158 +72,63 @@ public:
 	[[nodiscard]] size_t capacity() const noexcept { return capacity_; }
 	[[nodiscard]] size_t chainCount() const noexcept { return chains_; }
 
-	/// ONE WRITER. Refused (false, nothing written) for a state of another shape.
-	///
-	/// **EACH CHAIN'S DEVICES IN ORDER (kill-lanes step 3b)** — it published a lane-indexed array of rows
-	/// and a path of lane numbers beside it, two structures that had to be torn together to be read
-	/// together. One run per chain is one thing to tear, and the seqlock covers it as it always did.
+	/// ONE WRITER, the message thread. Refused (false, nothing written) for a state of another shape. No allocation:
+	/// the back state is this shape already.
 	bool publish(const ChainState& s) noexcept {
 		if (s.capacity() != capacity_ || s.chainCount() != chains_) {
 			return false;
 		}
-		sequence_.store(sequence_.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
-		std::atomic_thread_fence(std::memory_order_release);
-		for (size_t c = 0; c < chains_; ++c) {
-			const std::span<const DeviceState> path = s.chain(c);
-			for (size_t p = 0; p < path.size(); ++p) {
-				const DeviceState& from = path[p];
-				Device& to = device_[c * capacity_ + p];
-				uint64_t tag = 0;
-				static_assert(sizeof(tag) >= device::kTagBytes,
-				              "the packed tag must hold the WHOLE tag: a narrower word truncates it "
-				              "silently on the publish seam, and the device simply stops being found");
-				std::memcpy(&tag, from.tag.data(), device::kTagBytes);
-				to.tag.store(tag, std::memory_order_relaxed);
-				to.instanceId.store(from.instanceId, std::memory_order_relaxed);
-				to.fieldsPresent.store(static_cast<uint32_t>(from.fieldsPresent), std::memory_order_relaxed);
-				for (size_t f = 0; f < from.field.size(); ++f) {
-					to.field[f].store(from.field[f], std::memory_order_relaxed);
-				}
-			}
-			length_[c].store(static_cast<uint32_t>(path.size()), std::memory_order_relaxed);
-		}
-		// AND THE EVALUATION ORDER THE GRAPH GAVE (kill-lanes 4c) — one id per node, under the same sequence.
-		const std::span<const DeviceInstanceId> order = s.order();
-		for (size_t i = 0; i < order.size(); ++i) {
-			order_[i].store(order[i], std::memory_order_relaxed);
-		}
-		orderCount_.store(static_cast<uint32_t>(order.size()), std::memory_order_relaxed);
-		// AND THE HOST SLOTS' BINDINGS (T5) — every entry, live or not, under the same sequence.
-		const std::span<const SlotBinding> bindings = s.slotBindings();
-		for (size_t n = 0; n < bindings.size(); ++n) {
-			binding_[n].device.store(bindings[n].device, std::memory_order_relaxed);
-			binding_[n].packed.store(packBinding(bindings[n]), std::memory_order_relaxed);
-		}
-		sequence_.store(sequence_.load(std::memory_order_relaxed) + 1, std::memory_order_release);
+		const uint32_t next = sequence_.load(std::memory_order_relaxed) + 2u;
+		(void)state_[back_].assign(s);
+		stamp_[back_] = next;
+		// THE HAND-OVER: everything written above is visible to the reader that takes this index (release), and the
+		// state that was waiting — never the reader's — becomes the writer's to fill next.
+		const uint32_t was = middle_.exchange(back_ | kNew, std::memory_order_acq_rel);
+		back_ = was & kIndex;
+		sequence_.store(next, std::memory_order_release);
 		return true;
 	}
 
-	/// **BECOME THE PUBLISHED STATE, WHOLE OR NOT AT ALL.** A snapshot into `staging` (this shape), swapped
-	/// into `current` only if it was whole; a false leaves `current` exactly as it was, so the reader runs on
-	/// the state it had and asks again. `*sequence` is the publish adopted, written only on a true. No
-	/// allocation and no copy past the snapshot's own: safe on the audio thread.
-	[[nodiscard]] bool adopt(ChainState* current, ChainState* staging, uint32_t* sequence) const noexcept {
-		uint32_t seen = 0;
-		if (current == nullptr || !snapshot(staging, &seen)) {
+	/// **THE NEWEST PUBLISH, INTO `current`** — O(1): one atomic exchange and a trade of buffers. True with `*sequence`
+	/// the publish `current` holds; false (nothing touched) only for a `current` of another shape, which waits for its
+	/// own growth. Never refused for a publish in flight: that one is the back state, and is taken next time.
+	[[nodiscard]] bool adopt(ChainState* current, [[maybe_unused]] ChainState* staging, uint32_t* sequence) const noexcept {
+		if (current == nullptr || current->capacity() != capacity_ || current->chainCount() != chains_) {
 			return false;
 		}
-		swap(*current, *staging);
-		*sequence = seen;
+		if ((middle_.load(std::memory_order_relaxed) & kNew) != 0) {
+			const uint32_t was = middle_.exchange(front_, std::memory_order_acq_rel);
+			front_ = was & kIndex;
+			swap(*current, state_[front_]);
+			taken_ = stamp_[front_];
+		}
+		*sequence = taken_;
 		return true;
 	}
 
-	/// WHICH PUBLISH IS CURRENT — even when one is complete, odd while one is written, 0 before the first.
+	/// WHETHER A PUBLISH IS WAITING THAT THE READER HAS NOT TAKEN — the drain's "anything new?", one load.
+	[[nodiscard]] bool fresh() const noexcept { return (middle_.load(std::memory_order_acquire) & kNew) != 0; }
+
+	/// WHICH PUBLISH IS NEWEST — even, 0 before the first. For the message thread (what a provision builds for).
 	[[nodiscard]] uint32_t sequence() const noexcept { return sequence_.load(std::memory_order_acquire); }
 
 private:
-	/// THE COPY, INTO `out` — which it has written into even when it returns false. PRIVATE for that reason:
-	/// see the banner, and `adopt`.
-	[[nodiscard]] bool snapshot(ChainState* out, uint32_t* sequence) const noexcept {
-		if (out == nullptr || out->capacity() != capacity_ || out->chainCount() != chains_) {
-			return false;
-		}
-		const uint32_t before = sequence_.load(std::memory_order_acquire);
-		if ((before & 1u) != 0) {
-			return false;
-		}
-		out->clear();
-		bool placed = true;
-		for (size_t c = 0; c < chains_; ++c) {
-			const size_t length = std::min<size_t>(length_[c].load(std::memory_order_relaxed), capacity_);
-			for (size_t p = 0; p < length; ++p) {
-				const Device& from = device_[c * capacity_ + p];
-				DeviceState to;
-				const uint64_t tag = from.tag.load(std::memory_order_relaxed);
-				std::memcpy(to.tag.data(), &tag, device::kTagBytes);
-				to.instanceId = from.instanceId.load(std::memory_order_relaxed);
-				to.fieldsPresent = from.fieldsPresent.load(std::memory_order_relaxed);
-				for (size_t f = 0; f < to.field.size(); ++f) {
-					to.field[f] = from.field[f].load(std::memory_order_relaxed);
-				}
-				// A TORN READ CAN NAME ONE DEVICE TWICE, which `append` refuses — and that refusal is exactly
-				// the "not whole" this reports. The sequence check below catches it too; this catches it
-				// without waiting for a writer to be caught in the act.
-				placed = out->append(c, to) && placed;
-			}
-		}
-		// THE ORDER, INTO THE STATE'S OWN STORAGE — no allocation here, this runs at the audio thread's drain.
-		const size_t orderCount = std::min<size_t>(orderCount_.load(std::memory_order_relaxed), capacity_ * chains_ + 1);
-		const std::span<DeviceInstanceId> ids = out->resizeOrder(orderCount);
-		for (size_t i = 0; i < ids.size(); ++i) {
-			ids[i] = order_[i].load(std::memory_order_relaxed);
-		}
-		// THE BINDINGS, whole — `clear()` above does not touch them, so every entry is written here. One the
-		// state refuses (a torn read naming another slot) is written DEAD rather than left as it was.
-		for (size_t n = 0; n < kSlotBindingCapacity; ++n) {
-			const SlotBinding b = unpackBinding(binding_[n].device.load(std::memory_order_relaxed),
-			                                    binding_[n].packed.load(std::memory_order_relaxed));
-			if (!out->setSlotBinding(n, b)) {
-				(void)out->setSlotBinding(n, SlotBinding {});
-			}
-		}
-		std::atomic_thread_fence(std::memory_order_acquire);
-		if (sequence_.load(std::memory_order_relaxed) != before || !placed) {
-			return false;
-		}
-		*sequence = before;
-		return true;
-	}
-
-	struct Device {
-		/// **THE WHOLE TAG IN ONE ATOMIC WORD.** It was a uint32 while tags were four bytes, and widening
-		/// the field without widening this truncated every longer tag on the way across -- "OWLTT"
-		/// arrived as "OWLT", the catalogue missed it, and the device vanished from the chain with no
-		/// error anywhere. Sixty-four bits is also the ceiling: `device::kTagBytes` is chosen so this
-		/// stays one lock-free word.
-		std::atomic<uint64_t> tag { 0 };
-		std::atomic<DeviceInstanceId> instanceId { kNoInstance };
-		std::atomic<uint32_t> fieldsPresent { 0 };
-		std::array<std::atomic<float>, device::kMaxDeviceFields> field {};
-	};
-
-	/// ONE BINDING IN TWO LOCK-FREE WORDS: the device, and control | slot << 16 | live << 32.
-	struct Binding {
-		std::atomic<DeviceInstanceId> device { kNoInstance };
-		std::atomic<uint64_t> packed { 0 };
-	};
-	static uint64_t packBinding(const SlotBinding& b) noexcept {
-		return static_cast<uint64_t>(b.control) | static_cast<uint64_t>(b.slot) << 16
-		       | static_cast<uint64_t>(b.live ? 1u : 0u) << 32;
-	}
-	static SlotBinding unpackBinding(DeviceInstanceId device, uint64_t packed) noexcept {
-		return SlotBinding { .device = device,
-		                     .control = static_cast<uint16_t>(packed & 0xFFFFu),
-		                     .slot = static_cast<uint16_t>(packed >> 16 & 0xFFFFu),
-		                     .live = (packed >> 32 & 1u) != 0 };
-	}
+	static constexpr uint32_t kIndex = 3u;
+	static constexpr uint32_t kNew = 4u;
 
 	size_t capacity_;
 	size_t chains_;
-	std::array<Binding, kSlotBindingCapacity> binding_ {};
-	std::unique_ptr<Device[]> device_;
-	std::unique_ptr<std::atomic<uint32_t>[]> length_;
-	std::unique_ptr<std::atomic<DeviceInstanceId>[]> order_;
-	std::atomic<uint32_t> orderCount_ { 0 };
+	/// THE THREE STATES. A slot's buffers move between slots and the caller's state by `swap`, never by copy on the reader.
+	mutable std::array<ChainState, 3> state_;
+	/// The publish each slot holds (written with the slot, before its hand-over).
+	mutable std::array<uint32_t, 3> stamp_ {};
+	/// WRITER-OWNED: the slot the next publish fills.
+	uint32_t back_ = 2;
+	/// THE SHARED WORD: the waiting slot's index, and `kNew` while the reader has not taken it.
+	mutable std::atomic<uint32_t> middle_ { 1 };
+	/// READER-OWNED: the slot it took last, and that publish.
+	mutable uint32_t front_ = 0;
+	mutable uint32_t taken_ = 0;
 	std::atomic<uint32_t> sequence_ { 0 };
 };
 

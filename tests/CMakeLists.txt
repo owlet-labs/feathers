@@ -397,6 +397,11 @@ add_executable(test_soak test_soak.cpp ${CMAKE_SOURCE_DIR}/src/plugin/feathers_e
 target_link_libraries(test_soak PRIVATE feathers-impl feathers-warnings)
 target_include_directories(test_soak PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME soak COMMAND $<TARGET_FILE:test_soak>)
+# DROPPED NOTES, COUNTED (test_note_drops.cpp): a host stream and the Pattern through the whole plugin at many block sizes.
+add_executable(test_note_drops test_note_drops.cpp ${CMAKE_SOURCE_DIR}/src/plugin/feathers_entry.cpp)
+target_link_libraries(test_note_drops PRIVATE feathers-impl feathers-warnings)
+target_include_directories(test_note_drops PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME note-drops COMMAND $<TARGET_FILE:test_note_drops>)
 add_executable(test_rack_restart test_engine_restart.cpp ${CMAKE_SOURCE_DIR}/src/rack/rack_entry.cpp)
 target_compile_definitions(test_rack_restart PRIVATE FEATHERS_RESTART_RACK=1)
 target_link_libraries(test_rack_restart PRIVATE feathers-rack-ui feathers-warnings)

@@ -6816,3 +6816,50 @@ TEST_CASE("SHOT the Drum window's Libra strip") {
 	app.removeChild(view.get());
 	app.removeChild(&door);
 }
+
+TEST_CASE("note rack: Pattern on a running transport hands the host the same ons at every block size, in time order, and "
+          "ends every one") {
+	// THE DROPPED-NOTE HUNT (test_note_drops.cpp's Pattern case, on the note rack's road): a chord held from the first block,
+	// the transport at a tempo whose steps land between samples, and the ons that leave compared with one-sample blocks.
+	namespace pt = mod::arp::pat;
+	constexpr int64_t kLength = 48000 * 4;
+	const auto play = [&](int frames) {
+		Venue v(makeHost(), frames, true);
+		REQUIRE(v.test()->add_device(v.plugin, pt::kTraits.tag) != 0);
+		NoteHost h { v };
+		h.audio = false;
+		h.bpm = 123.0;
+		NoteStream chord;
+		chord.note(CLAP_EVENT_NOTE_ON, 60, 0, 1).note(CLAP_EVENT_NOTE_ON, 64, 0, 2).note(CLAP_EVENT_NOTE_ON, 67, 0, 3);
+		REQUIRE(h.block() == CLAP_PROCESS_CONTINUE); // the rack adopts its device at a block
+		h.block(&chord);
+		while (h.at < kLength) {
+			h.block();
+		}
+		CHECK(h.ordered);
+		std::vector<std::pair<int64_t, int>> ons;
+		for (const Left& e : h.ons()) {
+			if (e.noteId == -1 && e.sample < kLength - 1024) {
+				ons.emplace_back(e.sample, e.key);
+			}
+		}
+		return ons;
+	};
+	// THE CHORD GOES DOWN ON EACH VENUE'S SECOND BLOCK, and the steps sit on the song's grid: compared from sample 1024 on.
+	const auto reference = play(1);
+	REQUIRE(reference.size() >= 8);
+	for (const int frames : { 32, 64, 256, 512, 37, 113, 999 }) {
+		CAPTURE(frames);
+		const auto run = play(frames);
+		// THE SAME STEPS ON THE SAME SAMPLES.
+		REQUIRE(!run.empty());
+		size_t missing = 0;
+		for (const auto& [s, k] : reference) {
+			if (s < 1024 || s >= kLength - 1024) {
+				continue;
+			}
+			missing += std::find(run.begin(), run.end(), std::pair<int64_t, int> { s, k }) == run.end() ? 1 : 0;
+		}
+		CHECK(missing == 0);
+	}
+}

@@ -1549,6 +1549,17 @@ std::string MidiGrip::startDragDropSource() {
 	return lastPath_;
 }
 
+const char* MidiGrip::tooltipAt(visage::Point) const {
+	// SAYS THE KEY: where the notes follow the keys, the clip is made over the last note played (or the latched chord, else C4).
+	pt::MidiRoot root;
+	(void)pt::patternMidi(midiSourceOf(host_, device_), pattern_, midiTempoOf(host_), &root);
+	tip_ = "Drag this pattern into your DAW as a MIDI clip (a bar-aligned loop at the song's tempo)";
+	if (const std::string label = pt::midiRootLabel(root); !label.empty()) {
+		tip_ += ". Exported in " + label;
+	}
+	return tip_.c_str();
+}
+
 void MidiGrip::draw(visage::Canvas& canvas) {
 	// A GRIP: three short bars, the "drag me" mark, in the muted ink.
 	const auto w = static_cast<float>(width());

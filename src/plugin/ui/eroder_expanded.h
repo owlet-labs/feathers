@@ -126,6 +126,7 @@ public:
 	[[nodiscard]] SwitchChip* subThruForTest() const { return subThru_.get(); }
 	[[nodiscard]] SwitchChip* blendForTest() const { return blend_.get(); }
 	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
+	[[nodiscard]] SwitchChip* dcForTest() const { return dc_.get(); }
 	[[nodiscard]] SwitchChip* inLoopForTest() const { return inLoop_.get(); }
 	[[nodiscard]] SwitchChip* tapForTest() const { return tap_.get(); }
 	[[nodiscard]] ZoneSelect* shapeForTest() const { return emphasis_->selector(); }
@@ -171,11 +172,14 @@ private:
 	EtchSlots etch_;
 	std::unique_ptr<Knob> drive_;
 	std::unique_ptr<ModeValueCell> driveCell_;
+	std::shared_ptr<StageView> driveView_ = std::make_shared<StageView>();
 	std::unique_ptr<PairCell> drivePair_;
 	std::unique_ptr<SwitchChip> subThru_;
 	std::unique_ptr<SwitchChip> track_;
 	std::unique_ptr<SwitchChip> blend_;
 	std::unique_ptr<SwitchChip> restore_;
+	/// THE DC BLOCK'S SWITCH, seated in the topology picture beside the `dc` stage.
+	std::unique_ptr<SwitchChip> dc_;
 	std::unique_ptr<SwitchChip> inLoop_;
 	std::unique_ptr<SwitchChip> tap_;
 	std::unique_ptr<FieldStack> filter_;

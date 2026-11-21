@@ -36,10 +36,10 @@ constexpr std::array<const char*, 3> kGlobalCaptions { "Drive", "Ceiling", "Outp
 
 /// ROW 3 — THE MODE KNOBS, IN FLOW ORDER. Each mode's live subset reads left to right with the hidden
 /// ones skipped; Bits' segmented control follows them (`layOut`).
-constexpr std::array<cl::Param, 7> kModeKnobs {
-	cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit, cl::Param::Depth, cl::Param::Shape, cl::Param::Dc,
+constexpr std::array<cl::Param, 8> kModeKnobs {
+	cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit, cl::Param::Depth, cl::Param::Shape, cl::Param::Bal, cl::Param::Rate,
 };
-constexpr std::array<const char*, 7> kModeCaptions { "Knee", "Freq", "Foldback", "Grit", "Depth", "Shape", "DC" };
+constexpr std::array<const char*, 8> kModeCaptions { "Knee", "Freq", "Foldback", "Grit", "Depth", "Shape", "Bal", "Rate" };
 
 /// HOW MANY CELLS BITS' SEGMENTED CONTROL TAKES — "1 bit | 2 bit" does not fit one knob's width.
 constexpr size_t kBitsCells = 2;
@@ -68,6 +68,9 @@ ClipCard::ClipCard(backplane::DeviceHost& host, WidgetRegistry& registry, Device
 	// TWO STATES, SO A CHIP. Its names are Off/4x rather than Off/On, so it prints the live one.
 	oversample_ = std::make_unique<SwitchChip>(control(cl::Param::Oversample), "4x");
 	addChild(oversample_.get());
+	// THE DC BLOCK, a switch beside it, shown only in the modes that make an offset (Tube, Lean, Paunch-S, Paunch-H).
+	dcBlock_ = std::make_unique<SwitchChip>(control(cl::Param::DcBlock), "DC");
+	addChild(dcBlock_.get());
 	bits_ = std::make_unique<SegmentedControl>(control(cl::Param::Bits), registry, cl::kBitsNames, notifier_);
 	addChild(bits_.get());
 
@@ -164,8 +167,12 @@ void ClipCard::layOut() {
 
 	// ROW 1 — the mode box, and the oversampling chip at the row's right end, centred on the box.
 	float y = kSlotHeadHeight + 4.0f;
-	mode_->setBounds(left, y, std::max(0.0f, width - kChipWidth - kRowGap), ValueBox::kHeight);
+	const bool dcLive = isLive(cl::Param::DcBlock);
+	const float chips = kChipWidth + (dcLive ? kChipWidth + kRowGap : 0.0f);
+	mode_->setBounds(left, y, std::max(0.0f, width - chips - kRowGap), ValueBox::kHeight);
 	mode_->setVisible(open);
+	dcBlock_->setBounds(left + width - chips, y + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f, kChipWidth, SwitchChip::kHeight);
+	dcBlock_->setVisible(open && dcLive);
 	oversample_->setBounds(left + width - kChipWidth, y + (ValueBox::kHeight - SwitchChip::kHeight) * 0.5f,
 	                       kChipWidth, SwitchChip::kHeight);
 	oversample_->setVisible(open);
@@ -317,6 +324,7 @@ std::vector<cl::Param> ClipCard::addressedParamsForTest() const {
 	out.insert(out.end(), kModeKnobs.begin(), kModeKnobs.end());
 	out.push_back(cl::Param::Mode);
 	out.push_back(cl::Param::Oversample);
+	out.push_back(cl::Param::DcBlock);
 	out.push_back(cl::Param::Bits);
 	out.push_back(cl::Param::Enabled);
 	return out;
@@ -336,6 +344,7 @@ visage::Frame* ClipCard::widgetForTest(cl::Param p) const {
 	switch (p) {
 	case cl::Param::Mode: return mode_.get();
 	case cl::Param::Oversample: return oversample_.get();
+	case cl::Param::DcBlock: return dcBlock_.get();
 	case cl::Param::Bits: return bits_.get();
 	default: return nullptr;
 	}

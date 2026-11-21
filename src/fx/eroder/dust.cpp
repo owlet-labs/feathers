@@ -251,18 +251,21 @@ double driveSlope(DriveMode mode, float shape) noexcept {
 	return 1.0;
 }
 
-double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept {
+double driveSmallSignalGain(DriveMode mode, double gain, float shape, bool rotating) noexcept {
+	// THE ANGLE'S WORST CHANNEL: `|cos| + |sin|` of the angle (1 at Shape 0), and the square root of two at the most when the LFO turns it.
+	const double phi = 2.0 * std::numbers::pi * static_cast<double>(shape);
+	const double reach = rotating ? std::numbers::sqrt2 : std::abs(std::cos(phi)) + std::abs(std::sin(phi));
 	if (mode == DriveMode::PaunchOH) {
 		// A cube has no slope at zero, and the cancelling term shrinks with the tracked level too: the dry alone.
 		return 1.0;
 	}
 	if (mode == DriveMode::PaunchOS) {
-		// The law's term is bounded by `1.25 a |m|` (the follower's cap), so the worst channel is `1 + 1.25 a |w|`.
-		return 1.0 + 1.25 * gain * std::abs(1.0 - 2.0 * static_cast<double>(shape));
+		// The law's term is bounded by `1.25 a |m|` (the follower's cap), so the worst channel is `1 + 1.25 a reach`.
+		return 1.0 + 1.25 * gain * reach;
 	}
 	if (mode == DriveMode::PaunchS) {
-		// The dry at unity plus the rectified mid's slope of either sign: the worst channel is 1 + a |w|.
-		return 1.0 + gain * std::abs(1.0 - 2.0 * static_cast<double>(shape));
+		// The dry at unity plus the rectified mid's slope of either sign: the worst channel is 1 + a reach.
+		return 1.0 + gain * reach;
 	}
 	if (driveIsNotCurve(mode)) {
 		return 1.0;
@@ -331,7 +334,7 @@ HighpassSettings deriveWetHighpass(const Settings& s, bool tracks, double pitchS
 	}
 	const double rate = sampleRate > 0.0 ? sampleRate : kReferenceRate;
 	const bool on = wetHighpassOn(s, true);
-	const double noteHz = 440.0 * std::exp2((pitchSemitones - 69.0) / 12.0);
+	const double noteHz = trackedNoteHz(pitchSemitones);
 	const double hz = std::clamp(noteHz * std::exp2(static_cast<double>(s.hpWetSemis) / 12.0), std::exp2(kHpWetLog2Min),
 	                             std::exp2(kHpWetLog2Max));
 	// OFF CARRIES THE SAME COEFFICIENTS HP WET'S OWN BOTTOM DOES (the filter is skipped; they are never read).
@@ -453,6 +456,10 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 		const DriveSettings beforeB = reuse != nullptr ? reuse->slotB : DriveSettings {};
 		d.slotA = deriveDrive(s.slotA.amount, s.slotA.type, s.slotA.shape, rate, reuse != nullptr ? &beforeA : nullptr, s.slotA.mix);
 		d.slotB = deriveDrive(s.slotB.amount, s.slotB.type, s.slotB.shape, rate, reuse != nullptr ? &beforeB : nullptr, s.slotB.mix);
+		d.slotA.rateHz = rotationRateHz(s.track, pitchSemitones, s.slotA.rate, s.slotA.rateMult, rate);
+		d.slotB.rateHz = rotationRateHz(s.track, pitchSemitones, s.slotB.rate, s.slotB.rateMult, rate);
+		d.slotA.balance = std::clamp(s.slotA.bal, 0.0f, 1.0f);
+		d.slotB.balance = std::clamp(s.slotB.bal, 0.0f, 1.0f);
 		d.slotParallel = s.slotParallel;
 	}
 	d.rustBias = std::clamp(s.rustBias, 0.0f, 1.0f);
@@ -549,6 +556,7 @@ void Dust::process(const Settings& settings, float* left, float* right, int fram
 	int done = 0;
 	while (done < frames) {
 		if (untilTick_ <= 0) {
+			tickOffset_ = done;
 			tick(settings);
 			untilTick_ = kControlFrames;
 		}
@@ -567,6 +575,7 @@ void Dust::tick(const Settings& settings) noexcept {
 	const float dcAmount = std::clamp(settings.dc, 0.0f, 1.0f);
 	DriveSettings drive = driveOf(derived_);
 	drive.dcAmount = dcAmount;
+	drive.balance = std::clamp(settings.driveBal, 0.0f, 1.0f);
 	DriveSettings slotA = derived_.slotA;
 	DriveSettings slotB = derived_.slotB;
 	slotA.leaveDc = slotB.leaveDc = !blockInStages_; // (the seam makes the slots remove their own, as a stage used alone does)
@@ -583,9 +592,26 @@ void Dust::tick(const Settings& settings) noexcept {
 	postOn_ = postNow;
 	cleanOn_ = slotOffset;
 	driveBlocks_ = driveOffset;
+	drive.rateHz = rotationRateHz(settings.track, pitchSemitones_, settings.driveRate, settings.driveRateMult, sampleRate_);
 	shaper_.set(drive);
+	if (drive.rateHz > 0.0f && (driveIsPaunchLaw(drive.mode) || driveIsPaunchOdd(drive.mode))) {
+		const double placed = rotationClock_.place(static_cast<double>(drive.rateHz), tickOffset_, sampleRate_);
+		if (placed >= 0.0) {
+			shaper_.placeRotation(placed);
+		}
+	}
 	slotA_.set(slotA);
 	slotB_.set(slotB);
+	const auto placeSlot = [this](DriveStage& stage, RotationClock& clock, const DriveSettings& d) {
+		if (d.rateHz > 0.0f && (driveIsPaunchLaw(d.mode) || driveIsPaunchOdd(d.mode))) {
+			const double placed = clock.place(static_cast<double>(d.rateHz), tickOffset_, sampleRate_);
+			if (placed >= 0.0) {
+				stage.placeRotation(placed);
+			}
+		}
+	};
+	placeSlot(slotA_, slotRotationA_, slotA);
+	placeSlot(slotB_, slotRotationB_, slotB);
 	highpass_.set(highpassOf(derived_));
 	// THE SHARED SECTION IS LATCHED HERE, ON THE GRID, and nowhere a host's block length can reach.
 	shared_.set(settings, derived_.loops, derived_.freqHz);

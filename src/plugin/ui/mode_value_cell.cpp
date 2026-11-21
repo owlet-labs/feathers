@@ -83,6 +83,11 @@ bool ModeValueCell::refresh() {
 	}
 	const bool shownMoved = mask != shownMask_;
 	shownMask_ = mask;
+	// STACKED: THE SHOWN ROWS ARE PACKED UNDER THE SELECTOR in the order they were added, so two followers that never show together (a Type's
+	// Bal and its Rate) take the one row and the cell's size does not move with the Type.
+	if (shownMoved && stacked_) {
+		resized();
+	}
 	if (live == active_ && !shownMoved) {
 		return false;
 	}
@@ -132,8 +137,11 @@ void ModeValueCell::resized() {
 	const float usable = std::max(0.0f, static_cast<float>(width()) - inset * 2.0f);
 	if (stacked_) {
 		const StackedRows rows = stackedRowsFor(faceDiameter_);
+		size_t row = 0;
 		for (size_t i = 0; i < boxes_.size(); ++i) {
-			boxes_[i]->setBounds(inset, rows.box + rows.pitch * static_cast<float>(i), usable, ValueBox::kCompactHeight);
+			boxes_[i]->setBounds(inset, rows.box + rows.pitch * static_cast<float>(row), usable, ValueBox::kCompactHeight);
+			// (a hidden box keeps the place of the next shown one; it takes no row)
+			row += boxes_[i]->isVisible() ? 1u : 0u;
 		}
 		select_->setBounds(inset, rows.select, usable, Knob::kReadoutHeight);
 		return;

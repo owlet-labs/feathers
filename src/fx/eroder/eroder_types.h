@@ -466,7 +466,16 @@ enum class Param : int {
 	EmphOffset, ///< every engine: semitones from Freq to where the emphasis is tuned (Smear and the loops stay at Freq)
 	Input,      ///< every engine: decibels of gain on the signal entering the wet chain, ahead of everything in it
 	HpWetSemis, ///< Dust, Rust, Etch with Track on: HP Wet in semitones from the played note, in HP Wet's cell; the bottom is no filter
-	Dc,         ///< every engine: how much of the offset the shapers make is removed after the Drive; 100% is all of it
+	DcBlock,    ///< every engine: Off or On: the one post high-pass that takes the offset the shapers make out after the Drive (it replaced the DC amount)
+	DriveBal,   ///< every engine: Chonk's balance, the Drive cell's second parameter for that Type; 100% keeps the two sides at the balance they came in with
+	DriveRate,  ///< every engine: the Paunch Types' rotation LFO, the Drive cell's second parameter for those Types; the bottom is off (a static angle)
+	SlotARate,  ///< Etch: slot A's rotation LFO rate (Paunch Types), the cell's second parameter for them
+	SlotBRate,
+	SlotABal,   ///< Etch: slot A's Chonk balance, the cell's second parameter for that Type
+	SlotBBal,
+	DriveRateMult, ///< every engine with Track: the Paunch Types' rotation rate as a multiple of the played note's frequency (0 is off), in the Rate row's place while Track is on
+	SlotARateMult,
+	SlotBRateMult,
 
 	kCount,
 };
@@ -482,6 +491,21 @@ inline constexpr size_t kInputParamCount = 1;
 inline constexpr size_t kHpWetSemisParamCount = 1;
 /// And the DC amount after that.
 inline constexpr size_t kDcParamCount = 1;
+/// And Chonk's balance, and the Paunch Types' rotation rate, after that.
+inline constexpr size_t kDriveBalParamCount = 1;
+inline constexpr size_t kDriveRateParamCount = 1;
+/// And the four slot second parameters (Rate and Bal, A and B) after those.
+inline constexpr size_t kSlotSecondParamCount = 4;
+/// And the three subharmonic Choices (Drive, slot A, slot B) after those.
+inline constexpr size_t kRateMultParamCount = 3;
+/// THE TRACKED RATE: a multiple of the played note's frequency, 0..1, 0 is off (a static angle). Drag lands on the subharmonics below (the
+/// control stays continuous: a typed value is kept as typed, and a modulated one is not snapped).
+inline constexpr double kRateMultDefault = 0.5;
+inline constexpr double kRateMultDetents[] = { 0.0, 1.0 / 16.0, 1.0 / 12.0, 1.0 / 8.0, 1.0 / 6.0, 1.0 / 5.0, 1.0 / 4.0, 1.0 / 3.0, 1.0 / 2.0, 1.0 };
+/// THE ROTATION LFO'S RANGE: log2 hertz; the bottom is off, then 0.05 Hz to 20 Hz.
+inline constexpr double kDriveRateLog2Min = -4.321928094887362; // 0.05 Hz, which is OFF
+inline constexpr double kDriveRateLog2Max = 4.321928094887362;  // 20 Hz
+inline constexpr double kDriveRateLog2Default = -1.0;           // 0.5 Hz
 /// **HP WET'S SEMITONE FACE'S RANGE**: from the played note, -24 to +128 semitones, and the minimum is no filter (as HP Wet's own).
 inline constexpr double kHpWetSemisMin = -24.0;
 inline constexpr double kHpWetSemisMax = 128.0;
@@ -540,6 +564,7 @@ inline constexpr uint8_t kFaceOrder[] = {
 inline constexpr device::RetiredKey kRetiredKeys[] = {
 	{ "eroder_drive", "2026-11-15",
 	  "a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)" },
+	{ "eroder_dc", "2026-11-18", "replaced by an on/off DC block (eroder_dc_block)" },
 };
 
 inline constexpr fx::TenantTraits kTraits {
@@ -1410,7 +1435,25 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .shortName = "HP Wet",
      .offAtEnd = -1,
      .suffix = "st"},
-    {.key = "eroder_dc", .name = "Eroder DC",
+    {.key = "eroder_dc_block", .name = "Eroder DC Block",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Removes the offset the shaper leaves (below 10 Hz); inactive unless a running Drive or slot Type makes one (Tube, Fold, Lean, Paunch-S or Paunch-H). "
+                "Off lets it through to whatever follows. The loops never carry it",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "DC"},
+    {.key = "eroder_drive_bal", .name = "Eroder Drive Balance",
      .min = 0.0,
      .max = 1.0,
      .def = 1.0,
@@ -1419,16 +1462,171 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "How much of the offset left by Tube, Fold, Lean and the two Paunch rectifier Types is removed after the Drive. "
-                "At 100% none is left; lower it to let that bias out to whatever follows the device. The loops never carry it. "
-                "Inactive unless a slot or the Drive is on one of those Types",
+     .tooltip = "Chonk (w) only: how much of the level it adds to one side more than the other is taken out. At 100% the two sides "
+                "keep the same level whatever the material, with the width left in; at 0% Chonk is exactly as it was, and its right side "
+                "can sound quieter or louder than the left. Shown only while the Drive is on Chonk (w); an Etch slot's Chonk (w) is always at 100%",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
      .gateControl = -1,
      .gateMask = 0,
      .centred = false,
-     .shortName = "DC"},
+     .shortName = "Bal"},
+    {.key = "eroder_drive_rate", .name = "Eroder Drive Rate",
+     .min = kDriveRateLog2Min,
+     .max = kDriveRateLog2Max,
+     .def = kDriveRateLog2Default,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogHertz,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Paunch Types only: how fast the angle of the addition turns, so no side leans on average. At the bottom it is off and "
+                "Shape's angle holds still. Shown only while the Drive is on one of the four Paunch (w) Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Rate",
+     .offAtEnd = -1},
+    {.key = "eroder_slot_a_rate", .name = "Eroder Slot A Rate",
+     .min = kDriveRateLog2Min,
+     .max = kDriveRateLog2Max,
+     .def = kDriveRateLog2Default,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogHertz,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Paunch Types only: how fast the angle of the addition turns, so no side leans on average. At the bottom it is off and "
+                "Shape's angle holds still. Shown in a slot's cell only while its Type is one of the four Paunch (w) Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Rate",
+     .offAtEnd = -1},
+    {.key = "eroder_slot_b_rate", .name = "Eroder Slot B Rate",
+     .min = kDriveRateLog2Min,
+     .max = kDriveRateLog2Max,
+     .def = kDriveRateLog2Default,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogHertz,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Paunch Types only: how fast the angle of the addition turns, so no side leans on average. At the bottom it is off and "
+                "Shape's angle holds still. Shown in a slot's cell only while its Type is one of the four Paunch (w) Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Rate",
+     .offAtEnd = -1},
+    {.key = "eroder_slot_a_bal", .name = "Eroder Slot A Balance",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Chonk (w) only: how much of the level it adds to one side more than the other is taken out. At 100% the two sides "
+                "keep the same level whatever the material, with the width left in; at 0% Chonk is exactly as it was, and its right side "
+                "can sound quieter or louder than the left. Shown in a slot's cell only while its Type is Chonk (w)",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Bal"},
+    {.key = "eroder_slot_b_bal", .name = "Eroder Slot B Balance",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 1.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Chonk (w) only: how much of the level it adds to one side more than the other is taken out. At 100% the two sides "
+                "keep the same level whatever the material, with the width left in; at 0% Chonk is exactly as it was, and its right side "
+                "can sound quieter or louder than the left. Shown in a slot's cell only while its Type is Chonk (w)",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Bal"},
+    {.key = "eroder_drive_rate_mult", .name = "Eroder Drive Rate Multiple",
+     .min = 0.0,
+     .max = 1.0,
+     .def = kRateMultDefault,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "With Track on, how fast the angle turns as a multiple of the played note's frequency: 0.5 is an octave below it, 0.25 two. "
+                "The addition's partials then sit on the harmonics of that frequency. Drag lands on 1/16, 1/12, 1/8, 1/6, 1/5, 1/4, 1/3, 1/2 and 1; "
+                "type any value in. Off (0) holds the angle still. With Track off the rate in hertz applies instead. Shown only while the Drive is on one of the four Paunch (w) Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kShakersAndEtch,
+     .centred = false,
+     .shortName = "Rate",
+     .offAtEnd = -1},
+    {.key = "eroder_slot_a_rate_mult", .name = "Eroder Slot A Rate Multiple",
+     .min = 0.0,
+     .max = 1.0,
+     .def = kRateMultDefault,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "With Track on, how fast the angle turns as a multiple of the played note's frequency: 0.5 is an octave below it, 0.25 two. "
+                "The addition's partials then sit on the harmonics of that frequency. Drag lands on 1/16, 1/12, 1/8, 1/6, 1/5, 1/4, 1/3, 1/2 and 1; "
+                "type any value in. Off (0) holds the angle still. With Track off the rate in hertz applies instead. Shown in a slot's cell only while its Type is one of the four Paunch (w) Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kShakersAndEtch,
+     .centred = false,
+     .shortName = "Rate",
+     .offAtEnd = -1},
+    {.key = "eroder_slot_b_rate_mult", .name = "Eroder Slot B Rate Multiple",
+     .min = 0.0,
+     .max = 1.0,
+     .def = kRateMultDefault,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "With Track on, how fast the angle turns as a multiple of the played note's frequency: 0.5 is an octave below it, 0.25 two. "
+                "The addition's partials then sit on the harmonics of that frequency. Drag lands on 1/16, 1/12, 1/8, 1/6, 1/5, 1/4, 1/3, 1/2 and 1; "
+                "type any value in. Off (0) holds the angle still. With Track off the rate in hertz applies instead. Shown in a slot's cell only while its Type is one of the four Paunch (w) Types",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kShakersAndEtch,
+     .centred = false,
+     .shortName = "Rate",
+     .offAtEnd = -1},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1442,6 +1640,12 @@ struct SlotSettings {
 	DriveMode type = DriveMode::Slew;
 	float shape = 0.0f;
 	float mix = 1.0f;
+	/// THE TYPE'S SECOND PARAMETER, as the Drive's: the Paunch Types' rotation rate (log2 hertz, the bottom is off) and Chonk's balance (0..1).
+	/// THE STRUCT'S DEFAULT IS OFF (a hand-built `Settings` holds the angle still); the CONTROL's default, which a patch lacking the key and a
+	/// fresh instance read, is `kDriveRateLog2Default`.
+	float rate = static_cast<float>(kDriveRateLog2Min);
+	float bal = 1.0f;
+	float rateMult = 0.0f; ///< with Track on, the multiple of the played note's frequency in place of `rate` (the struct's default is off, the control's `kRateMultDefault`)
 	friend bool operator==(const SlotSettings&, const SlotSettings&) = default;
 };
 
@@ -1491,8 +1695,13 @@ struct Settings {
 	SlotSettings slotA { 0.0f, DriveMode::Slew, 0.0f, 1.0f };
 	SlotSettings slotB { 0.0f, DriveMode::Decimate, 0.0f, 1.0f };
 	bool slotParallel = false;
-	/// THE DC STAGE'S AMOUNT, 0..1 (`eroder_dc`): how much of the offset the shapers make is removed after the Drive.
+	/// THE DC BLOCK, 1 (On) or 0 (Off) (`eroder_dc_block`): whether the one post high-pass takes the offset the shapers make out after the Drive.
 	float dc = 1.0f;
+	/// CHONK'S BALANCE, 0..1 (`eroder_drive_bal`): read only when the Drive's Type is Chonk (`DriveSettings::balance`).
+	float driveBal = 1.0f;
+	/// THE PAUNCH TYPES' ROTATION LFO RATE, log2 hertz (`eroder_drive_rate`); the bottom is off.
+	float driveRate = static_cast<float>(kDriveRateLog2Min); ///< off in a hand-built `Settings`; the control's default is `kDriveRateLog2Default`
+	float driveRateMult = 0.0f; ///< with Track on, the multiple of the played note's frequency in place of `driveRate`
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -1615,6 +1824,11 @@ struct DriveSettings {
 	/// HOW MUCH OF THE STAGE'S OWN OFFSET IT REMOVES, 0..1 (the Drive's `eroder_dc`; it glides). The estimate of the offset runs at
 	/// any amount, so the loops' taps can take the fully blocked signal (`DriveStage::fullyBlocked`).
 	float dcAmount = 1.0f;
+	/// CHONK'S BALANCE, 0..1 (`eroder_drive_bal`): how much of the mid-correlated part of what Chonk adds to the side is taken out (`widthBalance`).
+	/// The other width Types always take all of it; an Etch slot's Chonk is fixed at 1.
+	float balance = 1.0f;
+	/// THE PAUNCH TYPES' ROTATION LFO, in hertz; 0 holds the angle `shape` names still (a slot's is always 0).
+	float rateHz = 0.0f;
 };
 /// **THE TYPES THAT MAKE AN OFFSET**: Tube, Fold, Lean (its halves are unequal) and Paunch-S and Paunch-H (a rectified or squared mid is
 /// never negative). The one DC stage after the Drive takes it out, whichever stage made it.
@@ -1758,21 +1972,65 @@ inline constexpr double kPaunchSquareK = 8.0 / (3.0 * std::numbers::pi * kPaunch
 	}
 	return 0.0f;
 }
-/// **THE LAW, ONE FRAME, in place**: `m = (l + r) / 2`, and with `w = 1 - 2 shape` the signal `s` goes to the left as `+w s` and to
-/// the right as `-w s` from the bottom of Shape to its middle (opposite polarity: all in the side, none at the middle), then
-/// from the middle up both sides get `+(-w) s` (the same polarity: all in the mid at the top). So the side is `max(w, 0) s` and
-/// the mid `max(-w, 0) s`: at Shape 0 the products cancel in mono and the mono sum is the dry's; at 0.5 the output is the dry; at
-/// Shape 1 the side is empty. The dry is untouched in every case. `a` is the Amount's linear 0..4. The caller removes the offset
-/// `s` carries.
-inline void paunchSpread(float& l, float& r, float s, float shape) noexcept {
-	const float w = 1.0f - 2.0f * shape;
-	const float side = w > 0.0f ? w : 0.0f;
-	const float mid = w < 0.0f ? -w : 0.0f;
-	l += (side + mid) * s;
-	r += (mid - side) * s;
+/// **THE ADDITION'S ANGLE** (the four Paunch Types): Shape is an angle `phi0 = 2 pi shape`, and the rotation LFO adds its own turns. With `s`
+/// the Type's addition,  `l += s (cos phi + sin phi)`,  `r += s (-cos phi + sin phi)`:
+///   shape 0     opposite sides (left +, right -): all in the side, none in the mid; the mono sum is the dry's,
+///   shape 0.25  both the same: all in the mid, none in the side,
+///   shape 0.5   opposite the other way (left -, right +),
+///   shape 0.75  both inverted.
+/// The two gains are a rotation of the pair (mid, side) of the addition, so the energy added, `(dl)^2 + (dr)^2 = 2 s^2`, does not depend on
+/// the angle. The dry is untouched in every case. Amount 0 is none. `a` is the Amount's linear 0..4. The caller removes the offset `s` carries.
+struct Rotation {
+	float left = 1.0f;  ///< cos + sin
+	float right = -1.0f; ///< -cos + sin
+};
+/// **THE TYPE'S SECOND PARAMETER** — the third row of the Drive's cell and of a slot's: Bal for Chonk, Rate for the four Paunch Types, none for
+/// every other Type (the row is then not drawn). The one small table the cells read; more Types are added here.
+enum class SecondParam { None, Bal, Rate };
+[[nodiscard]] inline constexpr SecondParam driveSecondParam(DriveMode mode) noexcept {
+	if (mode == DriveMode::Chonk) {
+		return SecondParam::Bal;
+	}
+	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode) ? SecondParam::Rate : SecondParam::None;
+}
+/// THE ROTATION LFO'S RATE in hertz from its control (log2 hertz, the bottom is off): 0 is off.
+[[nodiscard]] inline float driveRateHz(float log2Hz) noexcept {
+	return static_cast<double>(log2Hz) <= kDriveRateLog2Min + device::kOffEndSlack ? 0.0f : static_cast<float>(std::exp2(static_cast<double>(log2Hz)));
+}
+/// THE TRACKED NOTE'S FREQUENCY in hertz: the note as MIDI (semitones) at A440. HP Wet's semitone control and the rotation's subharmonic read it.
+[[nodiscard]] inline double trackedNoteHz(double pitchSemitones) noexcept {
+	return 440.0 * std::exp2((pitchSemitones - 69.0) / 12.0);
+}
+/// THE ROTATION LFO'S RATE for a stage, in hertz: with Track on the played note's frequency times the multiple (0 is off), with it off the
+/// Hz control's (`driveRateHz`). Held under a quarter of the rate it runs at.
+[[nodiscard]] inline float rotationRateHz(bool tracks, double pitchSemitones, float log2Hz, float mult, double sampleRate) noexcept {
+	float hz = 0.0f;
+	if (tracks) {
+		hz = mult > 0.0f ? static_cast<float>(trackedNoteHz(pitchSemitones) * static_cast<double>(std::min(mult, 1.0f))) : 0.0f;
+	}
+	else {
+		hz = driveRateHz(log2Hz);
+	}
+	const double ceiling = 0.25 * (sampleRate > 0.0 ? sampleRate : 48000.0);
+	return std::isfinite(hz) ? static_cast<float>(std::min(static_cast<double>(hz), ceiling)) : 0.0f;
+}
+/// THE ANGLE'S GAINS for `shape` (turns) and the LFO's `phase` (turns); exact at shape 0 (1, -1), so Shape 0 is what it always was.
+[[nodiscard]] inline Rotation rotationOf(float shape, double phase = 0.0) noexcept {
+	const double turns = static_cast<double>(shape) + phase;
+	const double phi = 2.0 * std::numbers::pi * (turns - std::floor(turns));
+	const double c = std::cos(phi);
+	const double sn = std::sin(phi);
+	return { static_cast<float>(c + sn), static_cast<float>(-c + sn) };
+}
+inline void paunchSpread(float& l, float& r, float s, const Rotation& rot) noexcept {
+	l += rot.left * s;
+	r += rot.right * s;
+}
+inline void paunchLaw(DriveMode mode, float& l, float& r, float a, const Rotation& rot) noexcept {
+	paunchSpread(l, r, paunchSide(mode, 0.5f * (l + r), a), rot);
 }
 inline void paunchLaw(DriveMode mode, float& l, float& r, float a, float shape) noexcept {
-	paunchSpread(l, r, paunchSide(mode, 0.5f * (l + r), a), shape);
+	paunchLaw(mode, l, r, a, rotationOf(shape));
 }
 /// **THE LEVEL-TRACKED ODD LAW'S FOLLOWER**: a one-pole on the power of the mid, `kPaunchFollowSeconds` long at the rate the stage
 /// runs at (`paunchFollowCoefficient`), per-sample state. The divisor is floored at `kPaunchFollowFloor` so silence divides by
@@ -1792,13 +2050,14 @@ inline constexpr float kPaunchFollowFlush = 1.0e-20f;
 /// **PAUNCH-OH'S COEFFICIENT** `kappa3`: its 3rd harmonic is `kappa3 a^3 A^3 / 4` (`m^3 - 1.5 P m = -(A^3 / 4) sin 3t` for `P = A^2 / 2`)
 /// against Paunch-OS's `a A / 4`; equal at full Amount (`a = 4`) and the reference peak `A = P_ref` when
 /// `kappa3 (4 A)^2 = 1`, so `kappa3 = 1 / (a_max^2 A_ref^2) = 1 / (16 * 0.25) = 0.25`.
+inline constexpr float kPaunchCubeCeiling = 4.0f;
 inline constexpr double kPaunchCubeK = 1.0 / (kPaunchAmountMax * kPaunchAmountMax * kDriveReferencePeak * kDriveReferencePeak);
 /// **THE ODD LAWS, ONE FRAME, in place**, with the follower's state `power` (the mean square of the mid) advanced by one sample.
 /// Paunch-OS: `s = a m (q - 0.75)`, `q = min(m^2 / (2 P), 2)`. For `m = A sin t`, `P = A^2 / 2`: `m^3 / A^2 - 0.75 m` is
 /// `-(A / 4) sin 3t`, so `s` is a pure 3rd at `a / 4` of the fundamental at any level, with no fundamental in it and no offset
 /// (`s` is odd). Spread to the two sides as the even laws are (`paunchSpread`). Everything is a function of the mid, so the
 /// two channels share one follower.
-inline void paunchOdd(DriveMode mode, float& l, float& r, float a, float shape, float& power, float coefficient) noexcept {
+inline void paunchOdd(DriveMode mode, float& l, float& r, float a, const Rotation& rot, float& power, float coefficient) noexcept {
 	const float m = 0.5f * (l + r);
 	const float m2 = m * m;
 	power += (m2 - power) * coefficient;
@@ -1812,9 +2071,97 @@ inline void paunchOdd(DriveMode mode, float& l, float& r, float a, float shape, 
 		s = a * m * (q - 0.75f);
 	}
 	else if (mode == DriveMode::PaunchOH) {
-		s = static_cast<float>(kPaunchCubeK) * (a * a * a) * (m * m2 - 1.5f * power * m);
+		// THE CUBE'S ARGUMENT IS HELD AT +-4 (+12 dBFS): a cube is unbounded, and with the angle turned toward the mid its product is fed to the next
+		// stage and round the loops, where three of them in a row overflow a float in a few thousand samples. Nothing below +12 dBFS meets it.
+		const float mc = std::clamp(m, -kPaunchCubeCeiling, kPaunchCubeCeiling);
+		s = static_cast<float>(kPaunchCubeK) * (a * a * a) * (mc * mc * mc - 1.5f * power * mc);
 	}
-	paunchSpread(l, r, s, shape);
+	paunchSpread(l, r, s, rot);
+}
+inline void paunchOdd(DriveMode mode, float& l, float& r, float a, float shape, float& power, float coefficient) noexcept {
+	paunchOdd(mode, l, r, a, rotationOf(shape), power, coefficient);
+}
+/// **THE WIDTH TYPES' LEVEL TRIM.** Lean and Chonk add something to the two sides that is not the same on both, so
+/// one side can come out louder than the other (the four Paunch Types have the rotation LFO for that). The stage must not change the balance of what came in: this keeps it, slowly.
+///   `Pin`, `Pout` are the running mean squares of the stage's input and of the law's output, each side (one-pole, `kTrimSeconds`);
+///   `k = sqrt((Pin_L / Pin_R) / (Pout_L / Pout_R))` is how much louder the left should be, as an amplitude ratio;
+///   `g_L = k^(amount / 2)`, `g_R = 1 / g_L` (split evenly, so the overall level is unchanged); `l' = g_L l`, `r' = g_R r`.
+/// It is a gain, so it never touches the spectrum. The mean squares are taken on DC-removed copies (the stage's own `kDriveDcHz` one-pole),
+/// so the offsets the Paunch laws make do not read as level; the gains are applied to the full signals. The one thing it gives up: with
+/// unequal gains the mono sum is `M (g_L + g_R) / 2 + S (g_L - g_R) / 2`, a little of the side in the mid.
+/// Where either input side is under `kTrimPanRatio` of the other (a hard-panned input) or any power is under the floor (silence), `k` is 1,
+/// and it is clamped to +-36 dB. The means start as true means (the weight of the n-th frame is `1 / n` until that falls to the one-pole's
+/// own), so an onset from silence is not left to a slow average. Per frame, so a host that cuts its blocks anywhere gets the same bits;
+/// `amount` is 1 for every Type but Chonk (its Bal); at 0 the law's output is returned untouched, to the bit.
+inline constexpr double kTrimSeconds = 0.100;
+inline constexpr float kTrimFloor = 1.0e-14f;
+inline constexpr float kTrimFlush = 1.0e-20f;
+inline constexpr float kTrimPanRatio = 1.0e-4f;
+inline constexpr float kTrimMax = 64.0f; // +-36 dB: Chonk's right side at full Drive can sit 25 dB and more under the left, which +-12 dB could not reach
+struct WidthTrim {
+	float pin[2] = {};
+	float pout[2] = {};
+	float dcIn[2] = {};
+	float dcOut[2] = {};
+	float count = 0.0f;
+	float k = 1.0f; ///< the last frame's k (a test seam)
+	float coefficient = 0.0f;
+	float dcCoefficient = 0.0f;
+	void prepare(double rate, double seconds = kTrimSeconds) noexcept {
+		const double r = rate > 0.0 ? rate : 48000.0;
+		coefficient = static_cast<float>(1.0 - std::exp(-1.0 / (seconds * r)));
+		dcCoefficient = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * kDriveDcHz / r));
+	}
+	void reset() noexcept {
+		for (int c = 0; c < 2; ++c) {
+			pin[c] = pout[c] = dcIn[c] = dcOut[c] = 0.0f;
+		}
+		count = 0.0f;
+		k = 1.0f;
+	}
+};
+/// WHICH TYPES RUN THE TRIM: Lean (always on) and Chonk (by its Bal). The four Paunch Types have the rotation LFO instead.
+[[nodiscard]] inline bool driveBalances(DriveMode mode, float) noexcept {
+	return mode == DriveMode::Lean || mode == DriveMode::Chonk;
+}
+/// `forceUnity`: a test seam that makes the target ratio 1 (it centres the output instead of keeping the input's balance).
+inline void widthTrim(WidthTrim& s, float lIn, float rIn, float& l, float& r, float amount, bool forceUnity = false) noexcept {
+	if (s.count == 0.0f && lIn == 0.0f && rIn == 0.0f && l == 0.0f && r == 0.0f) {
+		return; // nothing has been heard yet: nothing to learn from, and a zero stays zero
+	}
+	const float in[2] = { lIn, rIn };
+	const float out[2] = { l, r };
+	const float n = s.count + 1.0f;
+	const float w = std::max(s.coefficient, 1.0f / n);
+	if (w > s.coefficient) {
+		s.count = n;
+	}
+	for (int c = 0; c < 2; ++c) {
+		s.dcIn[c] += (in[c] - s.dcIn[c]) * s.dcCoefficient;
+		s.dcOut[c] += (out[c] - s.dcOut[c]) * s.dcCoefficient;
+		const float xi = in[c] - s.dcIn[c];
+		const float xo = out[c] - s.dcOut[c];
+		s.pin[c] += (xi * xi - s.pin[c]) * w;
+		s.pout[c] += (xo * xo - s.pout[c]) * w;
+	}
+	if (s.pin[0] < kTrimFlush && s.pin[1] < kTrimFlush && s.pout[0] < kTrimFlush && s.pout[1] < kTrimFlush) {
+		s.reset(); // a decay cannot park in the denormals, and the next onset starts from true means
+		return;
+	}
+	float k = 1.0f;
+	const bool live = s.pin[0] >= kTrimFloor && s.pin[1] >= kTrimFloor && s.pout[0] >= kTrimFloor && s.pout[1] >= kTrimFloor &&
+	                  s.pin[0] >= kTrimPanRatio * s.pin[1] && s.pin[1] >= kTrimPanRatio * s.pin[0];
+	if (live) {
+		const float ratioIn = forceUnity ? 1.0f : s.pin[0] / s.pin[1];
+		k = std::clamp(std::sqrt(ratioIn * s.pout[1] / s.pout[0]), 1.0f / kTrimMax, kTrimMax);
+	}
+	s.k = k;
+	if (amount <= 0.0f) {
+		return;
+	}
+	const float gl = amount == 1.0f ? std::sqrt(k) : std::pow(k, 0.5f * amount);
+	l *= gl;
+	r *= 1.0f / gl;
 }
 /// The make-up that follows it: `kDriveReferencePeak`'s sine out at the RMS it went in with.
 [[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape) noexcept;
@@ -1822,7 +2169,7 @@ inline void paunchOdd(DriveMode mode, float& l, float& r, float a, float shape, 
 /// always dies. For the Paunch laws, which have no make-up: Paunch-H is 1 (the square has no slope at zero); Paunch-S is the
 /// worst case of a channel's gain, `1 + a |w|` (a mono input, where the rectifier's slope has either sign: `1 +- a w`), with
 /// `gain` the Amount's `a` and `w = 1 - 2 shape`.
-[[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape) noexcept;
+[[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape, bool rotating = false) noexcept;
 [[nodiscard]] HighpassSettings highpassOf(const DustDerived& derived) noexcept;
 /// The stage's settings as `deriveDust` found them.
 [[nodiscard]] DriveSettings driveOf(const DustDerived& derived) noexcept;

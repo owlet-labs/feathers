@@ -116,6 +116,7 @@ public:
 	[[nodiscard]] visage::Frame* widgetForTest(fx::clip::Param p) const;
 	[[nodiscard]] ValueBox* modeForTest() const { return mode_.get(); }
 	[[nodiscard]] SwitchChip* oversampleForTest() const { return oversample_.get(); }
+	[[nodiscard]] SwitchChip* dcBlockForTest() const { return dcBlock_.get(); }
 
 private:
 	device::Modulatable* enableModulatable() override;
@@ -143,6 +144,8 @@ private:
 	std::vector<std::unique_ptr<Knob>> knobs_;
 	std::unique_ptr<ValueBox> mode_;
 	std::unique_ptr<SwitchChip> oversample_;
+	/// THE DC BLOCK'S SWITCH, shown only in the modes that make an offset.
+	std::unique_ptr<SwitchChip> dcBlock_;
 	std::unique_ptr<SegmentedControl> bits_;
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;

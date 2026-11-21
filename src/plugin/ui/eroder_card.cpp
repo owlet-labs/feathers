@@ -70,13 +70,11 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 		types.push_back({ name, {} });
 	}
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
-	                                             [](size_t) { return true; });
+	                                             stageRowGate(driveView_, driveStageParams()));
 	driveCell_->setFaceDiameter(kKnobDiameter);
-	// THREE ROWS, as the Etch slots': the Type, its Shape, and the DC amount.
-	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::DriveShape),
-	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""), "S");
-	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::Dc), std::make_unique<ValueBox>(control(ero::Param::Dc), ""),
-	                              "DC");
+	// THREE ROWS, as the Etch slots': the Type, its Shape, and the Type's own second parameter (Bal for Chonk, Rate for the Paunch Types), which
+	// is HIDDEN, not greyed, for a Type that has none (the cell's size does not move).
+	addStageRows(*driveCell_, [this](ero::Param p) -> DeviceControl& { return control(p); }, driveStageParams(), true);
 	driveCell_->setStacked(true);
 	(void)driveCell_->refresh();
 	drivePair_ = std::make_unique<PairCell>("Drive", *drive_, *driveCell_);
@@ -300,9 +298,10 @@ void EroderCard::refreshHonesty() {
 	// RESTORE PUTS BACK WHAT THE EMPHASIS TOOK: with none there is nothing to put back. (The Tap is always live in the
 	// Comb: its inner loop never stops, `kBankFloor`.)
 	restore_->setEnabled(emphasised);
-	// THE DC ROW IS LIVE WHILE SOME STAGE THAT IS RUN MAKES AN OFFSET (a parameter condition, so greyed, not hidden).
-	driveCell_->boxFor(static_cast<size_t>(ero::Param::Dc))->setEnabled(ero::chainMakesOffset(ero::stateOf(row, row.size()).settings));
+	// THE SECOND-PARAMETER ROWS FOLLOW EACH STAGE'S TYPE (and Track, for the Rate's two forms): hidden, not greyed.
+	*driveView_ = stageViewOf(row, driveStageParams());
 	(void)driveCell_->refresh();
+	(void)etch_.refreshRows(row);
 }
 
 bool EroderCard::updateContent() {

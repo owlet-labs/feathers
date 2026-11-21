@@ -54,6 +54,12 @@ public:
 	/// the comb stays tuned through a release tail instead of snapping to middle C on every note-off.
 	void setNoteContext(const device::NoteContext& note) noexcept;
 
+	/// THE HOST'S CLOCK (the rotation LFO follows the song, `RotationClock`), held and handed to both engines.
+	void setTransportClock(const device::TransportClock& clock) noexcept {
+		rotationClock_.setClock(clock);
+		dust_.setTransportClock(clock);
+	}
+
 	void processStereo(float* left, float* right, int frames) noexcept;
 
 	/// WHERE THE READINGS GO — see `Reading`. Installed once by the host that adopts the instance.
@@ -188,6 +194,9 @@ private:
 	/// FRAMES LEFT IN THE CURRENT CONTROL BLOCK — carried across calls, which is the whole point: the
 	/// grid is the device's and not the host's.
 	int untilTick_ = 0;
+	/// WHERE THE LAST CONTROL TICK FELL in the block being processed, and the Comb's own rotation clock.
+	int tickOffset_ = 0;
+	RotationClock rotationClock_ {};
 	double smoothedTone_ = 0.0;
 	double smoothedCharacter_ = 0.0;
 

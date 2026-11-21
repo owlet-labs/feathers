@@ -21,6 +21,7 @@
 #include "fx/dyn/clip_curve.h"
 #include "fx/dyn/meter_ramp.h"
 #include "fx/dyn/oversampler.h"
+#include "fx/eroder/drive_stage.h"
 #include "fx/eroder/eroder_types.h"
 #include "fx/eroder/shell.h"
 
@@ -114,8 +115,8 @@ struct OpsClip {
 	/// zipper, and Depth is effectively a gain on the folded part (`foldCurve` mixes clamp and fold by it).
 	/// Advanced once per HOST sample (so the four oversampled frames of one sample share a value, and the
 	/// cut of a block changes nothing) and read by `shape` through `kneeNow` and its siblings.
-	dyn::LinearRamp knee, foldback, grit, depth, shapeRamp, dcRamp;
-	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f, shapeNow = 0.0f, dcNow = 1.0f;
+	dyn::LinearRamp knee, foldback, grit, depth, shapeRamp, dcRamp, balRamp;
+	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f, shapeNow = 0.0f, dcNow = 1.0f, balNow = 1.0f;
 	/// THE PAUNCH RECTIFIER MODES' LAST CLAMP: how often it acted, and over how many processed frames (a seam).
 	size_t dcClampActs = 0, dcFramesRun = 0;
 
@@ -136,6 +137,13 @@ struct OpsClip {
 	float paunchA = 0.0f;
 	/// THE ODD LAW'S FOLLOWER (`paunchOdd`): the mid's mean square, and its coefficient at the processing rate.
 	float followPower = 0.0f, followCoefficient = 0.0f;
+	/// THE WIDTH TYPES' LEVEL TRIM (`eroder::widthTrim`): its running means, at the processing rate.
+	eroder::WidthTrim trim {};
+	/// THE PAUNCH MODES' ROTATION LFO: phase (turns), its step per host sample, this sample's gains, and the song's clock (`eroder::RotationClock`).
+	double rotPhase = 0.0;
+	double rotInc = 0.0;
+	eroder::Rotation rot {};
+	eroder::RotationClock rotationClock {};
 	dyn::HeldPeak inPeak, outPeak, over;
 
 	/// dB2lin of the last drive, ceiling and output, keyed on the dB value (a settled ramp repeats it).
@@ -170,6 +178,7 @@ struct OpsClip {
 			hpR.designHighpass(hz, rate);
 			dcCoefficient = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * eroder::kDriveDcHz / rate));
 			followCoefficient = eroder::paunchFollowCoefficient(rate);
+			trim.prepare(rate);
 			if (rate != hpRate) {
 				slew.prepare(rate);
 				slewKeyValid = false;
@@ -190,6 +199,7 @@ struct OpsClip {
 		depth.set(state.depth);
 		shapeRamp.set(state.shape);
 		dcRamp.set(state.dc);
+		balRamp.set(state.bal);
 	}
 
 	/// EVERYTHING WITH MEMORY FORGETS IT: "as if just switched on".
@@ -199,6 +209,8 @@ struct OpsClip {
 		hpR.clear();
 		dcL = dcR = 0.0f;
 		followPower = 0.0f;
+		trim.reset();
+		rotPhase = 0.0;
 		dcClampActs = dcFramesRun = 0;
 		slew.reset();
 		rng = kSeed;
@@ -259,8 +271,13 @@ struct OpsClip {
 		case Mode::Lean: {
 			// THE ERODER'S CURVE, at gain 1 (only Soft reads it): the normalised signal is already the driven one.
 			const auto dm = erodeMode(state.mode);
+			const float lIn = l;
+			const float rIn = r;
 			l = eroder::shapeDrive(dm, l, shapeNow, 1.0f);
 			r = eroder::shapeDriveRight(dm, r, shapeNow, 1.0f);
+			if (dm == eroder::DriveMode::Lean) {
+				eroder::widthTrim(trim, lIn, rIn, l, r, 1.0f); // law, then the trim, then the offset's removal
+			}
 			if (dm != eroder::DriveMode::Jag) {
 				dcL += (l - dcL) * dcCoefficient;
 				dcR += (r - dcR) * dcCoefficient;
@@ -274,11 +291,14 @@ struct OpsClip {
 		}
 		case Mode::Chonk: {
 			// THE ERODER'S: the left a tanh; the right's residue (the tanh less the CLEAN signal) turned over by Shape.
+			const float lIn = l;
+			const float rIn = r;
 			const float yl = std::tanh(l);
 			const float yr = std::tanh(r);
 			const float cleanR = r * cleanScale;
 			l = yl;
 			r = yr + 2.0f * shapeNow * (cleanR - yr);
+			eroder::widthTrim(trim, lIn, rIn, l, r, balNow); // 0 leaves the law as it was, to the bit
 			// **THE CLEAN SIGNAL IS ADDED BACK, SO THIS IS NOT BOUNDED BY THE CURVE**: the ceiling is a hard clip here.
 			r = std::clamp(r, -1.0f, 1.0f);
 			break;
@@ -288,7 +308,12 @@ struct OpsClip {
 			// THE ERODER'S LAW (`paunchLaw`) at Clip's own amount (Drive's position, 0..4), on the signal scaled by 1 / ceiling.
 			// Its offset is taken out as the Eroder's stage does, and the ceiling holds: the law is not bounded (up to five times
 			// the input), so both sides are clamped to it as the slews' and Lean's are.
-			eroder::paunchLaw(erodeMode(state.mode), l, r, paunchA, shapeNow);
+			const float lIn = l;
+			const float rIn = r;
+			eroder::paunchLaw(erodeMode(state.mode), l, r, paunchA, rot);
+			if (eroder::driveBalances(erodeMode(state.mode), shapeNow)) {
+				eroder::widthTrim(trim, lIn, rIn, l, r, 1.0f);
+			}
 			// THE ORDER: the law, THEN THE CEILING CLIP ACTING ON THE SIGNAL WITH ITS OFFSET (so it clips one side of each channel), THEN
 			// the offset taken out by the amount, then a last clamp at the ceiling (the removal can swing a sample past it).
 			l = std::clamp(l, -1.0f, 1.0f);
@@ -306,7 +331,12 @@ struct OpsClip {
 		case Mode::PaunchOS:
 		case Mode::PaunchOH: {
 			// THE ERODER'S ODD LAW (`paunchOdd`) at Clip's own amount; it makes no offset, so no blocker, and the ceiling holds.
-			eroder::paunchOdd(erodeMode(state.mode), l, r, paunchA, shapeNow, followPower, followCoefficient);
+			const float lIn = l;
+			const float rIn = r;
+			eroder::paunchOdd(erodeMode(state.mode), l, r, paunchA, rot, followPower, followCoefficient);
+			if (eroder::driveBalances(erodeMode(state.mode), shapeNow)) {
+				eroder::widthTrim(trim, lIn, rIn, l, r, 1.0f);
+			}
 			l = std::clamp(l, -1.0f, 1.0f);
 			r = std::clamp(r, -1.0f, 1.0f);
 			break;
@@ -391,9 +421,19 @@ struct OpsClip {
 			// THE ERODER'S SIX START EMPTY TOO: the offset and the slew belong to the mode that left them.
 			dcL = dcR = 0.0f;
 			followPower = 0.0f;
+			trim.reset();
 			slew.reset();
 			slewKeyValid = false;
 			modeApplied = state.mode;
+		}
+		// THE ROTATION LFO'S RATE, and where the song puts it at this block's first frame (the house rule, `eroder::RotationClock`).
+		const float rateHz = eroder::driveRateHz(state.rate);
+		rotInc = rateHz > 0.0f ? static_cast<double>(rateHz) / sampleRate : 0.0;
+		if (rateHz > 0.0f) {
+			const double placed = rotationClock.place(static_cast<double>(rateHz), 0, sampleRate);
+			if (placed >= 0.0) {
+				rotPhase = placed;
+			}
 		}
 		const size_t delay = osApplied ? kOversampleLatency : 0;
 		for (int i = 0; i < frames; ++i) {
@@ -447,6 +487,7 @@ struct OpsClip {
 			depthNow = depth.next();
 			shapeNow = shapeRamp.next();
 			dcNow = dcRamp.next();
+			balNow = balRamp.next();
 			const float onsetU = onset(state.mode, kneeNow);
 			// THE SLEWS TAKE THEIR RATE FROM DRIVE, NOT A GAIN (as the Eroder's Drive knob does): the signal reaches the
 			// limiter as it came, over the ceiling.
@@ -458,6 +499,12 @@ struct OpsClip {
 			const bool lawing = state.mode == static_cast<int>(Mode::PaunchS) || state.mode == static_cast<int>(Mode::PaunchH) ||
 			                    state.mode == static_cast<int>(Mode::PaunchOS) || state.mode == static_cast<int>(Mode::PaunchOH);
 			if (lawing) {
+				// THE ANGLE: Shape's, plus the rotation LFO's turns (none when its rate is off), advanced a host sample at a time.
+				rot = eroder::rotationOf(shapeNow, rotInc > 0.0 ? rotPhase : 0.0);
+				if (rotInc > 0.0) {
+					rotPhase += rotInc;
+					rotPhase -= std::floor(rotPhase);
+				}
 				paunchA = static_cast<float>(eroder::kPaunchAmountMax) * std::clamp((dDb + 24.0f) * (1.0f / 48.0f), 0.0f, 1.0f);
 			}
 			const float gain = (slewing || lawing) ? 1.0f / ceilingLin : driveLin / ceilingLin;
@@ -516,6 +563,7 @@ struct OpsClip {
 					hpR.clear();
 					dcL = dcR = 0.0f;
 					followPower = 0.0f;
+					trim.reset();
 					slew.reset();
 					rested = true;
 				}
@@ -571,7 +619,7 @@ const device::AudioOps kAudioOps {
 	        ops.sampleRate = std::max(sampleRate, 1.0);
 	        ops.restSamples = std::max(1, static_cast<int>(std::lround(kRestSilentSeconds * ops.sampleRate)));
 	        for (dyn::LinearRamp* r : { &ops.driveDb, &ops.ceilingDb, &ops.outputDb, &ops.bypass, &ops.knee,
-		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp, &ops.dcRamp }) {
+		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp, &ops.dcRamp, &ops.balRamp }) {
 		        r->prepare(ops.sampleRate);
 	        }
 	        ops.inPeak.prepare(ops.sampleRate);
@@ -588,7 +636,7 @@ const device::AudioOps kAudioOps {
 	        ops.idle = false;
 	        ops.clearDry();
 	        for (dyn::LinearRamp* r : { &ops.driveDb, &ops.ceilingDb, &ops.outputDb, &ops.bypass, &ops.knee,
-		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp, &ops.dcRamp }) {
+		                                     &ops.foldback, &ops.grit, &ops.depth, &ops.shapeRamp, &ops.dcRamp, &ops.balRamp }) {
 		        r->reset();
 	        }
 	        ops.inPeak.reset();
@@ -611,6 +659,7 @@ const device::AudioOps kAudioOps {
 		        ops.designHighpass();
 	        }
         },
+    .setTransportClock = [](void* storage, const device::TransportClock& clock) { asClip(storage).rotationClock.setClock(clock); },
     .processStereo = [](void* storage, float* left, float* right,
                         int frames) { asClip(storage).process(left, right, frames); },
     // NO MONO ROAD: stereo by nature on the bus; the host hands a mono buffer as two.

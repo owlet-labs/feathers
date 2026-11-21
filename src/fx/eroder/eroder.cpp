@@ -172,7 +172,16 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::SlotBShape)] = s.slotB.shape;
 	row[static_cast<size_t>(Param::SlotBMix)] = s.slotB.mix;
 	row[static_cast<size_t>(Param::SlotRoute)] = s.slotParallel ? 1.0f : 0.0f;
-	row[static_cast<size_t>(Param::Dc)] = s.dc;
+	row[static_cast<size_t>(Param::DcBlock)] = s.dc >= 0.5f ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::DriveBal)] = s.driveBal;
+	row[static_cast<size_t>(Param::DriveRate)] = s.driveRate;
+	row[static_cast<size_t>(Param::DriveRateMult)] = s.driveRateMult;
+	row[static_cast<size_t>(Param::SlotARateMult)] = s.slotA.rateMult;
+	row[static_cast<size_t>(Param::SlotBRateMult)] = s.slotB.rateMult;
+	row[static_cast<size_t>(Param::SlotARate)] = s.slotA.rate;
+	row[static_cast<size_t>(Param::SlotBRate)] = s.slotB.rate;
+	row[static_cast<size_t>(Param::SlotABal)] = s.slotA.bal;
+	row[static_cast<size_t>(Param::SlotBBal)] = s.slotB.bal;
 	return row;
 }
 
@@ -239,7 +248,16 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.slotB.shape = read(Param::SlotBShape);
 	s.slotB.mix = read(Param::SlotBMix);
 	s.slotParallel = read(Param::SlotRoute) >= 0.5f;
-	s.dc = read(Param::Dc);
+	s.dc = read(Param::DcBlock) >= 0.5f ? 1.0f : 0.0f;
+	s.driveBal = read(Param::DriveBal);
+	s.driveRate = read(Param::DriveRate);
+	s.driveRateMult = read(Param::DriveRateMult);
+	s.slotA.rateMult = read(Param::SlotARateMult);
+	s.slotB.rateMult = read(Param::SlotBRateMult);
+	s.slotA.rate = read(Param::SlotARate);
+	s.slotB.rate = read(Param::SlotBRate);
+	s.slotA.bal = read(Param::SlotABal);
+	s.slotB.bal = read(Param::SlotBBal);
 	return out;
 }
 
@@ -592,6 +610,7 @@ void Eroder::runEngine(const Settings& s, float* left, float* right, int frames)
 	int done = 0;
 	while (done < frames) {
 		if (untilTick_ <= 0) {
+			tickOffset_ = done;
 			tick(s);
 			untilTick_ = kControlFrames;
 		}
@@ -656,10 +675,22 @@ void Eroder::tick(const Settings& s) noexcept {
 	}
 	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
 	// THE COMB'S DRIVE removes its own offset by the DC amount; the tap's stage always removes all of its own (the loops never carry one).
-	DriveSettings kept = drive;
+	// CHONK'S BALANCE is the Drive's own (`eroder_drive_bal`), in both stages: the tap must sound as the output does.
+	DriveSettings tap = drive;
+	tap.balance = std::clamp(s.driveBal, 0.0f, 1.0f);
+	DriveSettings kept = tap;
 	kept.dcAmount = std::clamp(s.dc, 0.0f, 1.0f);
+	tap.rateHz = rotationRateHz(false, pitchSemitones_, s.driveRate, s.driveRateMult, sampleRate_); // the Comb has no Track
+	kept.rateHz = tap.rateHz;
 	combShaper_.set(kept);
-	combTapShaper_.set(drive);
+	combTapShaper_.set(tap);
+	if (tap.rateHz > 0.0f && (driveIsPaunchLaw(tap.mode) || driveIsPaunchOdd(tap.mode))) {
+		const double placed = rotationClock_.place(static_cast<double>(tap.rateHz), tickOffset_, sampleRate_);
+		if (placed >= 0.0) {
+			combShaper_.placeRotation(placed);
+			combTapShaper_.placeRotation(placed);
+		}
+	}
 }
 
 void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
@@ -942,6 +973,8 @@ const device::AudioOps kAudioOps {
         },
     .setNoteContext =
         [](void* storage, const device::NoteContext& note) { asEroder(storage).setNoteContext(note); },
+    .setTransportClock =
+        [](void* storage, const device::TransportClock& clock) { asEroder(storage).setTransportClock(clock); },
     .processStereo =
         [](void* storage, float* left, float* right, int frames) {
 	        asEroder(storage).processStereo(left, right, frames);

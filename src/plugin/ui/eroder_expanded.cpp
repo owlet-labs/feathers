@@ -117,7 +117,8 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	inLoop_ = chip(ero::Param::EmphInLoop, "In Loop", true);
 	tap_ = chip(ero::Param::FbTap, "Driven", true);
 	flow_ = std::make_unique<EroderFlow>(host, id);
-	flow_->seat(*inLoop_, *tap_, *restore_, *subThru_);
+	dc_ = chip(ero::Param::DcBlock, "DC", true);
+	flow_->seat(*inLoop_, *tap_, *restore_, *subThru_, *dc_);
 	addChild(flow_.get());
 
 	// THE FILTER, A STACK OF TWO: Freq and Width, which the plot's handles also write. THE EMPHASIS, A STACK OF THREE: its Amount,
@@ -155,13 +156,10 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 		types.push_back({ name, {} });
 	}
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
-	                                             [](size_t) { return true; });
+	                                             stageRowGate(driveView_, driveStageParams()));
 	driveCell_->setFaceDiameter(kFace);
-	// THREE ROWS, as the slots': the Type, its Shape, and the DC amount (the offset the shapers make, taken out after the Drive).
-	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::DriveShape),
-	                              std::make_unique<ValueBox>(control(ero::Param::DriveShape), ""), "S");
-	(void)driveCell_->addFollower(static_cast<size_t>(ero::Param::Dc), std::make_unique<ValueBox>(control(ero::Param::Dc), ""),
-	                              "DC");
+	// THREE ROWS, as the slots': the Type, its Shape, and the Type's own second parameter (hidden for a Type that has none).
+	addStageRows(*driveCell_, [this](ero::Param p) -> DeviceControl& { return control(p); }, driveStageParams());
 	driveCell_->setStacked(true);
 	(void)driveCell_->refresh();
 	drivePair_ = std::make_unique<PairCell>("", *drive_, *driveCell_);
@@ -327,7 +325,7 @@ void EroderExpanded::layOut() {
 		const size_t first = groups_.size();
 		const float contentH = 2.0f * knobH + kRowGap;
 		if (etch) {
-			const float w = SlotStack::widthFor(2.0f * cell);
+			const float w = SlotStack::widthFor(3.0f * cell); // Amount knob | Mix knob | the cell, a cell each
 			const float top = y + kGroupCaption;
 			etch_.stack->setBounds(x0 + (sideW - w) * 0.5f, top, w, contentH);
 			etch_.stack->resized();
@@ -431,9 +429,12 @@ void EroderExpanded::refreshHonesty() {
 	const bool inner = comb || row[static_cast<size_t>(ero::Param::Resonance)] != 0.0f;
 	tap_->setEnabled(inner);
 	inLoop_->setEnabled(emphasised && (inner || outer));
-	// THE DC ROW IS LIVE WHILE SOME STAGE THAT IS RUN MAKES AN OFFSET (a parameter condition, so greyed, not hidden).
-	driveCell_->boxFor(static_cast<size_t>(ero::Param::Dc))->setEnabled(ero::chainMakesOffset(ero::stateOf(row, row.size()).settings));
+	// THE DC BLOCK'S CHIP IS LIVE WHILE SOME STAGE THAT IS RUN MAKES AN OFFSET (a parameter condition, so greyed, not hidden).
+	dc_->setEnabled(ero::chainMakesOffset(ero::stateOf(row, row.size()).settings));
+	// THE SECOND-PARAMETER ROWS FOLLOW EACH STAGE'S TYPE (and Track, for the Rate's two forms): hidden, not greyed.
+	*driveView_ = stageViewOf(row, driveStageParams());
 	(void)driveCell_->refresh();
+	(void)etch_.refreshRows(row);
 }
 
 bool EroderExpanded::updateContent() {

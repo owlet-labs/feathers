@@ -25101,22 +25101,22 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 	// THE TABLE, RESTATED BY HAND FROM THE PLAN (Task 7) — which mode reads which control. Checked
 	// against the card AND against the descriptor's gates, so a card and a descriptor that drifted
 	// together would still be caught by the first.
-	const std::array<cl::Param, 8> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
-		                                   cl::Param::Depth, cl::Param::Bits, cl::Param::Shape, cl::Param::Dc };
+	const std::array<cl::Param, 10> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
+		                                    cl::Param::Depth, cl::Param::Bits, cl::Param::Shape, cl::Param::DcBlock, cl::Param::Bal, cl::Param::Rate };
 	const std::array<std::set<cl::Param>, 15> expected {
 		std::set<cl::Param> { cl::Param::Knee },                                         // Soft
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback },   // Texture
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Grit },                        // Grit
 		std::set<cl::Param> { cl::Param::Depth },                                        // Fold
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Bits },                        // Bits
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Tube
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock },                    // Tube
 		std::set<cl::Param> { cl::Param::Shape },                                        // Jag
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Lean
-		std::set<cl::Param> { cl::Param::Shape },                                        // Chonk
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Paunch-S
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::Dc },                                    // Paunch-H
-		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-OS
-		std::set<cl::Param> { cl::Param::Shape },                                        // Paunch-OH
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock },                    // Lean
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Bal },                        // Chonk
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-S
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-H
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Rate },                       // Paunch-OS
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Rate },                       // Paunch-OH
 		std::set<cl::Param> { cl::Param::Shape },                                        // Slew
 		std::set<cl::Param> { cl::Param::Shape },                                        // Lopside
 	};
@@ -42805,7 +42805,9 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 	// THE EMPHASIS OFFSET is a field of the Emphasis stack, and so are Freq, Width and the Emphasis amount (the Filter and Emphasis
 	// boxes): four more continuous controls that are not knobs. The Input drive is a knob and a continuous control both.
 	// AND THE DC AMOUNT, the third row of the Drive's mode cell, a box like its Shape.
-	REQUIRE(knobs.size() == continuous - 4 - 4 - 1 - 3 - 1 - 1); // and the Comb's Cutoff, the Filter box's top row there
+	// THE SLOTS' MIXES ARE KNOBS IN THE WINDOW NOW (two), so only their two Shapes are slot boxes; and the Type's second-parameter boxes (the Drive's
+	// Bal, Rate and Rate multiple, and each slot's three) are nine more continuous controls that are boxes in the cells, not knobs.
+	REQUIRE(knobs.size() == continuous - 2 - 4 - 1 - 3 - 1 - 9); // and the Comb's Cutoff, the Filter box's top row there
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -43527,68 +43529,190 @@ struct EroFaces {
 
 } // namespace
 
-TEST_CASE("ERODER's Drive cell has a DC row, the third under Type and Shape on the card and in the window, that writes eroder_dc and greys unless a stage that makes an offset runs") {
+TEST_CASE("ERODER's Drive cell's third row is the Type's own second parameter — Bal for Chonk, Rate for the four Paunch Types, no row for any other — on the card and in the window") {
 	EroFaces e;
 	REQUIRE(ui::EroderCard::openHeight() <= ui::kCardUnitHeight);
 	const auto cells = [&] { return std::vector<ui::ModeValueCell*> { e.d.card->driveCellForTest(), e.panel->driveCellForTest() }; };
-	const auto live = [&](bool want) {
-		for (ui::ModeValueCell* cell : cells()) {
-			CHECK(cell->boxFor(eroAt(ero::Param::Dc))->enabled() == want);
-		}
-	};
+	const ero::Param second[] = { ero::Param::DriveBal, ero::Param::DriveRate, ero::Param::DriveRateMult };
+	// THE CELL'S OWN SIZE AND ITS ROW PLACES DO NOT MOVE WITH THE TYPE: the shown second row sits where the third row sits.
+	std::vector<float> cardSize;
+	std::vector<float> shapeY;
+	std::vector<float> secondY;
 	for (const ero::Mode mode : { ero::Mode::Dust, ero::Mode::Rust, ero::Mode::Comb, ero::Mode::Etch }) {
-		CAPTURE(static_cast<int>(mode));
 		e.mode(mode);
-		for (ui::ModeValueCell* cell : cells()) {
-			ui::ValueBox* dc = cell->boxFor(eroAt(ero::Param::Dc));
-			ui::ValueBox* shape = cell->boxFor(eroAt(ero::Param::DriveShape));
-			REQUIRE(dc != nullptr);
-			REQUIRE(shape != nullptr);
-			CHECK(cell->stacked());
-			CHECK(dc->isVisible());
-			CHECK(dc->control().desc().key == std::string_view("eroder_dc"));
-			CHECK(dc->label() == "DC");
-			CHECK(dc->y() > shape->y());
-			CHECK(dc->bottom() <= static_cast<float>(cell->height()));
+		for (int type = 0; type < static_cast<int>(ero::DriveMode::kCount); ++type) {
+			const auto dm = static_cast<ero::DriveMode>(type);
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(std::string(ero::kDriveModeNames[type]));
+			e.set(ero::Param::Drive, 0.5f);
+			e.set(ero::Param::DriveMode, static_cast<float>(type));
+			for (ui::ModeValueCell* cell : cells()) {
+				int shown = 0;
+				for (const ero::Param p : second) {
+					ui::ValueBox* box = cell->boxFor(eroAt(p));
+					REQUIRE(box != nullptr);
+					shown += box->isVisible() ? 1 : 0;
+				}
+				const ero::SecondParam want = ero::driveSecondParam(dm);
+				// HIDDEN, NOT GREYED: a Type with none shows none, a Type with one shows exactly one.
+				CHECK(shown == (want == ero::SecondParam::None ? 0 : 1));
+				if (want == ero::SecondParam::Bal) {
+					CHECK(cell->boxFor(eroAt(ero::Param::DriveBal))->isVisible());
+					CHECK(cell->boxFor(eroAt(ero::Param::DriveBal))->label() == "Bal");
+				}
+				if (want == ero::SecondParam::Rate) {
+					CHECK(cell->boxFor(eroAt(ero::Param::DriveRate))->isVisible()); // Track is off
+					// (the card's narrow cell labels the row "Rt", the window's "Rate": the two would overlap their value in a fifth of a row)
+					const std::string label = cell->boxFor(eroAt(ero::Param::DriveRate))->label();
+					CHECK((label == "Rate" || label == "Rt"));
+				}
+				ui::ValueBox* sh = cell->boxFor(eroAt(ero::Param::DriveShape));
+				CHECK(sh->isVisible());
+				for (const ero::Param p : second) {
+					ui::ValueBox* box = cell->boxFor(eroAt(p));
+					if (box->isVisible()) {
+						CHECK(box->y() > sh->y());
+						CHECK(box->bottom() <= static_cast<float>(cell->height()));
+						if (cell == cells().front()) {
+							secondY.push_back(box->y());
+						}
+					}
+				}
+				if (cell == cells().front()) {
+					cardSize.push_back(static_cast<float>(cell->height()));
+					shapeY.push_back(sh->y());
+				}
+			}
+			CHECK(ui::EroderCard::openHeight() <= ui::kCardUnitHeight);
 		}
-		CHECK(ui::EroderCard::openHeight() <= ui::kCardUnitHeight);
 	}
-	// IT WRITES eroder_dc, on either surface.
+	// NOTHING SHIFTS BETWEEN TYPES: one cell height, one Shape row, one place for whichever second row is shown.
+	for (const float h : cardSize) {
+		CHECK(h == cardSize.front());
+	}
+	for (const float y : shapeY) {
+		CHECK(y == shapeY.front());
+	}
+	for (const float y : secondY) {
+		CHECK(y == secondY.front());
+	}
+	CHECK_FALSE(secondY.empty());
+	// EACH ROW WRITES ITS OWN PARAMETER, on either surface.
 	for (ui::ModeValueCell* cell : cells()) {
-		ui::ValueBox* dc = cell->boxFor(eroAt(ero::Param::Dc));
-		dc->control().beginGesture();
-		dc->control().setValue(0.4);
-		dc->control().endGesture();
-		CHECK(eroField(e.d, ero::Param::Dc) == doctest::Approx(0.4f));
-		e.set(ero::Param::Dc, 1.0f);
+		e.set(ero::Param::Mode, static_cast<float>(ero::Mode::Dust));
+		e.set(ero::Param::DriveMode, static_cast<float>(ero::DriveMode::Chonk));
+		ui::ValueBox* bal = cell->boxFor(eroAt(ero::Param::DriveBal));
+		bal->control().beginGesture();
+		bal->control().setValue(0.4);
+		bal->control().endGesture();
+		CHECK(eroField(e.d, ero::Param::DriveBal) == doctest::Approx(0.4f));
+		CHECK(bal->control().desc().key == std::string_view("eroder_drive_bal"));
+		e.set(ero::Param::DriveBal, 1.0f);
+		e.set(ero::Param::DriveMode, static_cast<float>(ero::DriveMode::PaunchS));
+		ui::ValueBox* rate = cell->boxFor(eroAt(ero::Param::DriveRate));
+		rate->control().beginGesture();
+		rate->control().setValue(1.0);
+		rate->control().endGesture();
+		CHECK(eroField(e.d, ero::Param::DriveRate) == doctest::Approx(1.0f));
+		CHECK(rate->control().desc().key == std::string_view("eroder_drive_rate"));
 	}
-	// GREYED UNLESS A STAGE THAT IS RUN MAKES AN OFFSET.
+}
+
+TEST_CASE("ERODER's Rate row follows Track: hertz with it off, the multiple of the note with it on, the other hidden; the multiple's drag lands on the detents and a typed value stays") {
+	EroFaces e;
 	e.mode(ero::Mode::Dust);
 	e.set(ero::Param::Drive, 0.5f);
+	e.set(ero::Param::DriveMode, static_cast<float>(ero::DriveMode::PaunchOS));
+	for (const bool track : { false, true }) {
+		e.set(ero::Param::Track, track ? 1.0f : 0.0f);
+		for (ui::ModeValueCell* cell : { e.d.card->driveCellForTest(), e.panel->driveCellForTest() }) {
+			CHECK(cell->boxFor(eroAt(ero::Param::DriveRate))->isVisible() == !track);
+			CHECK(cell->boxFor(eroAt(ero::Param::DriveRateMult))->isVisible() == track);
+		}
+	}
+	// THE MULTIPLE'S TEXT: off at 0, no trailing zeros, up to three decimals.
+	CHECK(ui::rateMultText(0.0) == "off");
+	CHECK(ui::rateMultText(0.5) == "0.5");
+	CHECK(ui::rateMultText(0.25) == "0.25");
+	CHECK(ui::rateMultText(1.0 / 3.0) == "0.333");
+	CHECK(ui::rateMultText(0.0625) == "0.0625");
+	CHECK(ui::rateMultText(1.0 / 12.0) == "0.0833");
+	CHECK(ui::rateMultText(1.0) == "1");
+	ui::ValueBox* mult = e.panel->driveCellForTest()->boxFor(eroAt(ero::Param::DriveRateMult));
+	REQUIRE(mult != nullptr);
+	CHECK(mult->readout() == "0.5"); // the default
+	// A TYPED VALUE IS KEPT AS TYPED (the control is continuous): 0.37 is stored as 0.37.
+	mult->control().beginGesture();
+	mult->control().setValue(0.37);
+	mult->control().endGesture();
+	CHECK(eroField(e.d, ero::Param::DriveRateMult) == doctest::Approx(0.37f));
+	CHECK(mult->readout() == "0.37");
+	// THE DRAG: every plain drag, from several starting values and distances, lands on a detent and nowhere between.
+	const std::vector<double>& detents = mult->detents();
+	REQUIRE(detents.size() == 10);
+	for (const double start : { 0.0, 0.2, 0.5, 0.9 }) {
+		for (const float travel : { 3.0f, 9.0f, 17.0f, 31.0f, 55.0f, -4.0f, -13.0f, -40.0f }) {
+			mult->control().beginGesture();
+			mult->control().setValue(start);
+			mult->control().endGesture();
+			const float x = 10.0f;
+			const float y0 = 40.0f;
+			mult->onMouseDown().callback(at(x, y0));
+			mult->onMouseDrag().callback(at(x, y0 - travel));
+			mult->onMouseUp().callback(at(x, y0 - travel));
+			const double v = mult->control().value();
+			bool onDetent = false;
+			for (const double d : detents) {
+				onDetent = onDetent || std::abs(d - v) < 1.0e-6; // (the control holds a float)
+			}
+			CAPTURE(start);
+			CAPTURE(travel);
+			CHECK(onDetent);
+		}
+	}
+}
+
+TEST_CASE("ERODER's DC block is a chip in the window's topology picture, beside the dc stage, greyed unless a running stage makes an offset, and not on the card") {
+	EroFaces e;
+	e.mode(ero::Mode::Dust);
+	ui::SwitchChip* dc = e.panel->dcForTest();
+	REQUIRE(dc != nullptr);
+	CHECK(dc->control().desc().key == std::string_view("eroder_dc_block"));
+	CHECK(dc->parent() == e.panel->flowForTest());
+	// SEATED IN THE PICTURE, over its own stage (the dc box).
+	const auto path = ui::EroderFlow::pathFor(ero::rowOf(ero::State {}));
+	(void)path;
+	// GREYED UNLESS A STAGE THAT IS RUN MAKES AN OFFSET.
+	e.set(ero::Param::Drive, 0.5f);
 	e.set(ero::Param::DriveMode, static_cast<float>(ero::DriveMode::Soft));
-	live(false);
+	CHECK_FALSE(dc->enabled());
 	for (const ero::DriveMode type : { ero::DriveMode::Tube, ero::DriveMode::Fold, ero::DriveMode::Lean, ero::DriveMode::PaunchS, ero::DriveMode::PaunchH }) {
 		CAPTURE(static_cast<int>(type));
 		e.set(ero::Param::DriveMode, static_cast<float>(type));
-		live(true);
+		CHECK(dc->enabled());
 	}
-	e.set(ero::Param::Drive, 0.0f); // the Drive is not run
-	live(false);
+	e.set(ero::Param::Drive, 0.0f);
+	CHECK_FALSE(dc->enabled());
 	e.set(ero::Param::Drive, 0.5f);
 	e.set(ero::Param::DriveMode, static_cast<float>(ero::DriveMode::Chonk));
-	live(false);
-	// AN ETCH SLOT THAT IS RUN MAKES ONE TOO, and in Dust a slot is not run at all.
+	CHECK_FALSE(dc->enabled());
+	// AN ETCH SLOT THAT IS RUN MAKES ONE TOO.
 	e.set(ero::Param::SlotAAmount, 0.6f);
 	e.set(ero::Param::SlotAType, static_cast<float>(ero::DriveMode::PaunchS));
-	live(false);
+	CHECK_FALSE(dc->enabled());
 	e.mode(ero::Mode::Etch);
-	live(true);
-	e.set(ero::Param::SlotAMix, 0.0f);
-	live(false);
-	// THE PICTURE'S dc BOX IS LIT EXACTLY WHEN THE STAGE RUNS (the same rule, and an amount of 0 switches it off).
+	CHECK(dc->enabled());
+	// IT WRITES eroder_dc_block.
+	e.set(ero::Param::DcBlock, 1.0f);
+	dc->control().beginGesture();
+	dc->control().setValue(0.0);
+	dc->control().endGesture();
+	CHECK(eroField(e.d, ero::Param::DcBlock) == 0.0f);
+	e.set(ero::Param::DcBlock, 1.0f);
+	// THE PICTURE'S dc BOX IS LIT EXACTLY WHEN THE BLOCK RUNS: On and a stage that makes an offset.
 	const auto lit = [](const ero::Settings& st) {
-		const ui::EroderFlow::Path path = ui::EroderFlow::pathFor(ero::rowOf(ero::State { st }));
-		for (const auto& stage : path.stages) {
+		const ui::EroderFlow::Path p = ui::EroderFlow::pathFor(ero::rowOf(ero::State { st }));
+		for (const auto& stage : p.stages) {
 			if (stage.label == "dc") {
 				return stage.lit;
 			}
@@ -43599,7 +43723,7 @@ TEST_CASE("ERODER's Drive cell has a DC row, the third under Type and Shape on t
 	st.drive = 0.5f;
 	st.driveMode = ero::DriveMode::Tube;
 	CHECK(lit(st));
-	st.dc = 0.0f;
+	st.dc = 0.0f; // Off
 	CHECK_FALSE(lit(st));
 	st.dc = 1.0f;
 	st.driveMode = ero::DriveMode::Soft;
@@ -44483,7 +44607,10 @@ TEST_CASE("ETCH's card draws its slot row on one line, both slots and the route 
 	CHECK(slots.route->control().desc().key == std::string_view("eroder_slot_route"));
 	for (ui::ModeValueCell* m : { slots.cellA.get(), slots.cellB.get() }) {
 		CHECK(m->stacked());
-		CHECK(m->followerParams().size() == 2);
+		// THE CARD'S SLOT CELL: Shape and the Type's second parameter (Bal, the Rate in hertz, the Rate as a multiple); the slot's Mix is the WINDOW's knob.
+		CHECK(m->followerParams().size() == 4);
+		CHECK(m->boxFor(eroAt(ero::Param::SlotAMix)) == nullptr);
+		CHECK(m->boxFor(eroAt(ero::Param::SlotBMix)) == nullptr);
 	}
 	// FREQ AND MIX ARE BOXES IN THE SMALL ROW, with Track at its end, none over another.
 	CHECK(card.freqBoxForTest()->control().desc().key == std::string_view("eroder_freq"));
@@ -44504,6 +44631,65 @@ TEST_CASE("ETCH's card draws its slot row on one line, both slots and the route 
 	// THE ENGINE SELECTOR OFFERS FOUR, and the plot draws the marker, not a band.
 	CHECK(card.plotForTest()->showsEtchForTest());
 	CHECK_FALSE(card.plotForTest()->showsRustForTest());
+}
+
+TEST_CASE("ETCH's slot cells carry the Type's second parameter on the card and in the window, and the window has the slot's Mix as a knob between the Amount knob and the cell") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	const auto slotCells = [&] { return std::vector<ui::ModeValueCell*> { card.cellA.get(), card.cellB.get(), panel.cellA.get(), panel.cellB.get() }; };
+	const std::array<ero::Param, 2> types { ero::Param::SlotAType, ero::Param::SlotBType };
+	const std::array<std::array<ero::Param, 3>, 2> second {
+		std::array<ero::Param, 3> { ero::Param::SlotABal, ero::Param::SlotARate, ero::Param::SlotARateMult },
+		std::array<ero::Param, 3> { ero::Param::SlotBBal, ero::Param::SlotBRate, ero::Param::SlotBRateMult },
+	};
+	for (int slot = 0; slot < 2; ++slot) {
+		for (const bool track : { false, true }) {
+			e.set(ero::Param::Track, track ? 1.0f : 0.0f);
+			for (int type = 0; type < static_cast<int>(ero::DriveMode::kCount); ++type) {
+				e.set(types[static_cast<size_t>(slot)], static_cast<float>(type));
+				const auto dm = static_cast<ero::DriveMode>(type);
+				const ero::SecondParam want = ero::driveSecondParam(dm);
+				CAPTURE(slot);
+				CAPTURE(track);
+				CAPTURE(std::string(ero::kDriveModeNames[type]));
+				for (ui::ModeValueCell* cell : { slot == 0 ? card.cellA.get() : card.cellB.get(), slot == 0 ? panel.cellA.get() : panel.cellB.get() }) {
+					const bool bal = cell->boxFor(eroAt(second[static_cast<size_t>(slot)][0]))->isVisible();
+					const bool hz = cell->boxFor(eroAt(second[static_cast<size_t>(slot)][1]))->isVisible();
+					const bool mult = cell->boxFor(eroAt(second[static_cast<size_t>(slot)][2]))->isVisible();
+					CHECK(bal == (want == ero::SecondParam::Bal));
+					CHECK(hz == (want == ero::SecondParam::Rate && !track));
+					CHECK(mult == (want == ero::SecondParam::Rate && track));
+				}
+			}
+		}
+	}
+	e.set(ero::Param::Track, 0.0f);
+	// ... AND THE CELL'S SIZE DOES NOT MOVE with the Type.
+	e.set(ero::Param::SlotAType, static_cast<float>(ero::DriveMode::Soft));
+	const float h = static_cast<float>(card.cellA->height());
+	e.set(ero::Param::SlotAType, static_cast<float>(ero::DriveMode::PaunchS));
+	CHECK(static_cast<float>(card.cellA->height()) == h);
+	e.set(ero::Param::SlotAType, static_cast<float>(ero::DriveMode::Chonk));
+	CHECK(static_cast<float>(card.cellA->height()) == h);
+	(void)slotCells;
+	// THE WINDOW: Amount knob, then the Mix knob, then the cell, left to right, for each slot; the Mix knob writes the slot's own Mix.
+	for (int slot = 0; slot < 2; ++slot) {
+		ui::SlotTriple* row = slot == 0 ? panel.rowA.get() : panel.rowB.get();
+		ui::Knob* amount = slot == 0 ? panel.knobA.get() : panel.knobB.get();
+		ui::Knob* mix = slot == 0 ? panel.mixKnobA.get() : panel.mixKnobB.get();
+		ui::ModeValueCell* cell = slot == 0 ? panel.cellA.get() : panel.cellB.get();
+		REQUIRE(row != nullptr);
+		REQUIRE(mix != nullptr);
+		CHECK(amount->right() <= mix->x());
+		CHECK(mix->right() <= cell->x());
+		CHECK(mix->control()->desc().key == std::string_view(slot == 0 ? "eroder_slot_a_mix" : "eroder_slot_b_mix"));
+		CHECK(mix->isVisible());
+	}
+	// THE CARD HAS NO MIX KNOB, and no cell box for it.
+	CHECK(card.mixKnobA == nullptr);
+	CHECK(card.mixKnobB == nullptr);
 }
 
 TEST_CASE("ETCH's slot row writes the slots' own parameters: the route glyph, and each Type selector its own slot's Type") {
@@ -44576,13 +44762,21 @@ TEST_CASE("ETCH's window offers the slot row and every control Etch uses, nothin
 	CHECK(visible(slots.stack.get()));
 	// SLOT A OVER SLOT B, THE ROUTE SWITCH TO THE RIGHT OF BOTH, centred on them (the top-down order the switch's glyphs and the
 	// topology picture's Parallel drawing show).
-	CHECK(slots.innerA->parent() == slots.stack.get());
-	CHECK(slots.innerB->parent() == slots.stack.get());
+	REQUIRE(slots.rowA != nullptr);
+	REQUIRE(slots.rowB != nullptr);
+	CHECK(slots.rowA->parent() == slots.stack.get());
+	CHECK(slots.rowB->parent() == slots.stack.get());
 	CHECK(slots.route->parent() == slots.stack.get());
-	CHECK(slots.innerA->bottom() <= slots.innerB->y());
-	CHECK(slots.innerA->x() == slots.innerB->x());
-	CHECK(slots.route->x() >= slots.innerA->right());
-	CHECK(slots.route->x() >= slots.innerB->right());
+	CHECK(slots.rowA->bottom() <= slots.rowB->y());
+	CHECK(slots.rowA->x() == slots.rowB->x());
+	CHECK(slots.route->x() >= slots.rowA->right());
+	CHECK(slots.route->x() >= slots.rowB->right());
+	// EACH ROW IS THE AMOUNT KNOB, THE MIX KNOB AND THE TYPE'S CELL, left to right, with the slot's Mix a knob here and not in the cell.
+	for (ui::SlotTriple* row : { slots.rowA.get(), slots.rowB.get() }) {
+		CHECK(row->amount().right() <= row->mix().x());
+		CHECK(row->mix().right() <= row->cell().x());
+		CHECK(row->cell().right() <= static_cast<float>(row->width()) + 0.5f);
+	}
 	CHECK(slots.route->y() + slots.route->height() * 0.5f == doctest::Approx(slots.stack->height() * 0.5f).epsilon(0.1));
 	CHECK(slots.stack->y() < slots.stack->bottom());
 	CHECK(visible(panel.freqBoxForTest()));
@@ -45193,8 +45387,8 @@ TEST_CASE("ERODER's Engine group is the same height in every engine, Etch's slot
 	}
 	e.mode(ero::Mode::Etch);
 	ui::EtchSlots& slots = panel.etchSlotsForTest();
-	const EroRect a = eroAbsolute(slots.innerA.get(), &panel);
-	const EroRect b = eroAbsolute(slots.innerB.get(), &panel);
+	const EroRect a = eroAbsolute(slots.rowA.get(), &panel);
+	const EroRect b = eroAbsolute(slots.rowB.get(), &panel);
 	const EroRect r = eroAbsolute(slots.route.get(), &panel);
 	CHECK(a.y + a.h <= b.y);
 	CHECK(a.x == doctest::Approx(b.x));
@@ -45204,8 +45398,8 @@ TEST_CASE("ERODER's Engine group is the same height in every engine, Etch's slot
 	for (const EroRect& box : { a, b, r }) {
 		CHECK(eroInside(box, { engine.x, engine.y, engine.w, engine.h }));
 	}
-	CHECK(slots.knobA->parent() == slots.innerA.get());
-	CHECK(slots.knobB->parent() == slots.innerB.get());
+	CHECK(slots.knobA->parent() == slots.rowA.get());
+	CHECK(slots.knobB->parent() == slots.rowB.get());
 	// A WRITES ITS PARAMETER FROM THE TOP ROW AND B FROM THE ONE BELOW.
 	CHECK(std::string(slots.knobA->control()->desc().key) == "eroder_slot_a_amount");
 	CHECK(std::string(slots.knobB->control()->desc().key) == "eroder_slot_b_amount");
@@ -45537,7 +45731,8 @@ TEST_CASE("ERODER's greyable controls say in their tooltip when they are inactiv
 	// THE CONDITION EACH ONE NAMES: the control the greying turns on.
 	const Case cases[] = { { P::EmphRestore, "Emphasis" }, { P::EmphInLoop, "Emphasis" }, { P::FbTap, "Reso" },
 		                   { P::SubThru, "HP Wet" },       { P::LoopInterval, "Loop" },    { P::Width, "Source" },
-		                   { P::EmphShape, "Emphasis" },   { P::Detune, "Source" },        { P::ModFold, "Source" } };
+		                   { P::EmphShape, "Emphasis" },   { P::Detune, "Source" },        { P::ModFold, "Source" },
+		                   { P::DcBlock, "offset" } };
 	for (const Case& c : cases) {
 		const std::string declared = ero::kParamDescs[eroAt(c.param)].tooltip;
 		CAPTURE(ero::kParamDescs[eroAt(c.param)].key);
@@ -45556,6 +45751,7 @@ TEST_CASE("ERODER's greyable controls say in their tooltip when they are inactiv
 	chipSays(e.panel->inLoopForTest(), P::EmphInLoop);
 	chipSays(e.panel->tapForTest(), P::FbTap);
 	chipSays(e.panel->subThruForTest(), P::SubThru);
+	chipSays(e.panel->dcForTest(), P::DcBlock);
 	chipSays(e.d.card->restoreForTest(), P::EmphRestore);
 	chipSays(e.d.card->tapForTest(), P::FbTap);
 	for (ui::Knob* knob : { e.panel->knobForTest(P::LoopInterval), e.panel->knobForTest(P::Detune), e.panel->knobForTest(P::ModFold) }) {

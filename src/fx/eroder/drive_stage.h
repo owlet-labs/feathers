@@ -22,6 +22,9 @@
 #include "fx/eroder/eroder_types.h"
 #include "fx/eroder/shell.h"
 
+#include "device/device.h"
+#include "device/transport_lock.h"
+
 #include <cmath>
 
 namespace feathers::fx::eroder {
@@ -39,6 +42,37 @@ namespace feathers::fx::eroder {
 /// No allocation; a frame at a time, so a host that cuts its blocks anywhere gets the same bits.
 inline constexpr double kDcGlideSeconds = 0.010;
 
+/// **WHERE THE SONG PUTS THE ROTATION LFO — THE HOUSE RULE FOR A FREE LFO** (Phaser's Free rate, automod's `songPeriod`): on a PLAYING
+/// transport that reports a position the phase FOLLOWS THE SONG, `position * rate` on the seconds timeline, by the song's own movement
+/// (`device::TransportLock`) and stepping to it only at a jump (play, seek, loop), so the same passage played twice sounds the same; a
+/// stopped transport is not a position (it would freeze the turn) and a host that says nothing leaves the phase running free from the stage's
+/// reset. Asked once a control tick, at the tick's own offset in the block.
+class RotationClock {
+public:
+	static constexpr int kSecondsRoad = 2;
+	void setClock(const device::TransportClock& clock) noexcept { clock_ = clock; }
+	/// THE PHASE (turns, 0..1) the song places the LFO at for a tick `offsetFrames` into the block, or -1 where the stage free-runs.
+	[[nodiscard]] double place(double rateHz, int offsetFrames, double sampleRate) noexcept {
+		if (!(rateHz > 0.0) || !std::isfinite(rateHz) || !clock_.playing || !clock_.havePositionSeconds()) {
+			lock_.release();
+			return -1.0;
+		}
+		const double rate = sampleRate > 0.0 ? sampleRate : 48000.0;
+		const double turns = lock_.follow(clock_.songPositionSeconds + static_cast<double>(offsetFrames) / rate, 1.0 / rateHz,
+		                                  static_cast<double>(kControlFrames) / rate, kSecondsRoad);
+		const double phase = turns - std::floor(turns);
+		if (!std::isfinite(phase) || phase >= 1.0) {
+			lock_.release();
+			return -1.0;
+		}
+		return phase;
+	}
+
+private:
+	device::TransportClock clock_ {};
+	device::TransportLock lock_ {};
+};
+
 class DriveStage {
 public:
 	void prepare(double sampleRate) noexcept {
@@ -46,6 +80,8 @@ public:
 		dcCoefficient_ = static_cast<float>(1.0 - std::exp(-2.0 * 3.141592653589793 * kDriveDcHz / rate));
 		dcGlide_ = static_cast<float>(1.0 - std::exp(-1.0 / (kDcGlideSeconds * rate)));
 		followCoefficient_ = paunchFollowCoefficient(4.0 * rate); // the follower runs on the oversampled frames
+		trim_.prepare(rate);                                       // the level trim runs on the host frames
+		hostRate_ = rate;
 		slew_.prepare(rate);
 		slewSet_ = false; // the slew was just turned off: the next settings turn it on
 		reset();
@@ -62,7 +98,22 @@ public:
 		fullL_ = fullR_ = 0.0f;
 		dcNow_ = settings_.dcAmount;
 		followPower_ = 0.0f;
+		trim_.reset();
+		rotPhase_ = 0.0;
 	}
+
+	/// WHERE THE SONG PLACES THE ROTATION LFO (turns), from the control tick; the stage advances it by its own rate a frame at a time.
+	void placeRotation(double phase) noexcept { rotPhase_ = phase; }
+	[[nodiscard]] double rotationPhaseForTest() const noexcept { return rotPhase_; }
+	/// THE ROTATION LFO'S RATE as the stage runs it, in hertz (0 when off).
+	[[nodiscard]] double rotationRateHzForTest() const noexcept { return rotInc_ * hostRate_; }
+
+	/// TEST SEAMS: the trim's time constant in seconds (the shipped one is `kTrimSeconds`), the trim off (the stage as it was before it), the
+	/// target ratio forced to 1, and the last k it found.
+	void setTrimSecondsForTest(double seconds, double rate) noexcept { trim_.prepare(rate, seconds); }
+	void setTrimOnForTest(bool on) noexcept { trimOn_ = on; }
+	void setTrimUnityForTest(bool on) noexcept { trimUnity_ = on; }
+	[[nodiscard]] float trimKForTest() const noexcept { return trim_.k; }
 
 	/// THE STAGE'S OUTPUT AS IT WOULD BE WITH ALL OF ITS OWN OFFSET REMOVED (the last frame): what the loops' Driven and outer taps
 	/// take, whatever the Drive's DC amount. Equal to the output at an amount of 1, and to it for a Type that makes no offset.
@@ -79,6 +130,7 @@ public:
 			reset();
 		}
 		settings_ = settings;
+		rotInc_ = settings.rateHz > 0.0f && hostRate_ > 0.0 ? static_cast<double>(settings.rateHz) / hostRate_ : 0.0;
 		if (fresh || !running(settings)) {
 			dcNow_ = settings.dcAmount; // a stage that starts from nothing starts at its amount; a running one glides to it
 		}
@@ -185,20 +237,31 @@ private:
 			return;
 		}
 		const bool silentIn = left == 0.0f && right == 0.0f;
+		const float lIn = left;
+		const float rIn = right;
 		const DriveMode mode = s.mode;
 		const float gain = s.gain;
 		const float shape = s.shape;
 		const float norm = s.norm;
+		// THE PAUNCH TYPES' ANGLE: Shape's, plus the rotation LFO's turns (none when its rate is off). The LFO advances a frame at a time.
+		Rotation rot;
+		if (driveIsPaunchOdd(mode) || driveIsPaunchLaw(mode)) {
+			rot = rotationOf(shape, rotInc_ > 0.0 ? rotPhase_ : 0.0);
+			if (rotInc_ > 0.0) {
+				rotPhase_ += rotInc_;
+				rotPhase_ -= std::floor(rotPhase_);
+			}
+		}
 		if (driveIsPaunchOdd(mode)) {
 			// THE LEVEL-TRACKED ODD LAW (`paunchOdd`): the follower's state is the stage's, advanced a sample at a time.
-			over_.process(&left, &right, 1, [this, mode, gain, shape](float& l, float& r) {
-				paunchOdd(mode, l, r, gain, shape, followPower_, followCoefficient_);
+			over_.process(&left, &right, 1, [this, mode, gain, rot](float& l, float& r) {
+				paunchOdd(mode, l, r, gain, rot, followPower_, followCoefficient_);
 			});
 		}
 		else if (driveIsPaunchLaw(mode)) {
 			// THE LAW (`paunchLaw`) inside the oversampled region, where both channels are at hand: the rectified or squared
-			// mid added to the left and taken from the right. No make-up and no saturation; `gain` is the linear Amount `a`.
-			over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) { paunchLaw(mode, l, r, gain, shape); });
+			// mid, turned to the angle, added to the two sides. No make-up and no saturation; `gain` is the linear Amount `a`.
+			over_.process(&left, &right, 1, [mode, gain, rot](float& l, float& r) { paunchLaw(mode, l, r, gain, rot); });
 		}
 		else if (mode == DriveMode::Chonk) {
 			// THE RIGHT'S RESIDUE (the tanh less the clean signal) IS TURNED OVER BY SHAPE: r + (1 - 2 shape)(yr - r),
@@ -217,6 +280,11 @@ private:
 			});
 			left *= norm;
 			right *= norm;
+		}
+		// THE WIDTH TYPES' LEVEL TRIM (`widthTrim`), on the host frames after the law and before the offset's removal: a slow gain pair that keeps
+		// the balance the input had. Chonk's is its Bal (0 leaves the law as it was, to the bit); the others' is always all of it.
+		if (trimOn_ && driveBalances(mode, shape)) {
+			widthTrim(trim_, lIn, rIn, left, right, mode == DriveMode::Chonk ? s.balance : 1.0f, trimUnity_);
 		}
 		if (driveMakesOffset(mode) && !s.leaveDc) {
 			// THE OFFSET (the stage's own one-pole estimate) TAKEN OUT BY THE AMOUNT: all of it at 1, as this always did.
@@ -244,6 +312,7 @@ private:
 					over_.reset();
 					dcL_ = dcR_ = 0.0f;
 					followPower_ = 0.0f;
+					trim_.reset();
 				}
 			}
 			if (quiet_ >= kQuietFrames) {
@@ -279,6 +348,14 @@ private:
 	/// THE ODD LAWS' FOLLOWER: the mean square of the mid, and its one-pole's coefficient at the oversampled rate.
 	float followPower_ = 0.0f;
 	float followCoefficient_ = 0.0f;
+	/// THE ROTATION LFO's phase (turns) and its step per host frame (0 when the rate is off); the host rate it was prepared at.
+	double rotPhase_ = 0.0;
+	double rotInc_ = 0.0;
+	double hostRate_ = 48000.0;
+	/// THE WIDTH TYPES' LEVEL TRIM state (`WidthTrim`), at the host rate.
+	WidthTrim trim_ {};
+	bool trimOn_ = true;
+	bool trimUnity_ = false;
 	float slewHz_ = 0.0f;
 	float slewCurve_ = 0.0f;
 	float slewBalance_ = 0.0f;

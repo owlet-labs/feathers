@@ -833,3 +833,45 @@ TEST_CASE("Clip: a patch saved with the mode Paunch loads as Chonk (w), Lean as 
 		CHECK(other.countOf(Kind::LabelUnknown) == 1);
 	}
 }
+
+TEST_CASE("The DC amount's keys, shipped as eroder_dc and clip_dc, are retired with a reason and a patch holding them loads without error; the DC block reads its default On") {
+	using Kind = rack::LoadReport::Kind;
+	struct Case {
+		const device::Descriptor* descriptor;
+		const char* retired;
+		const char* block;
+	};
+	const Case cases[] = { { &fx::eroder::kDescriptor, "eroder_dc", "eroder_dc_block" }, { &fx::clip::kDescriptor, "clip_dc", "clip_dc_block" } };
+	for (const Case& c : cases) {
+		CAPTURE(c.retired);
+		const device::Descriptor& d = *c.descriptor;
+		rack::RackPatch::Device dev;
+		rack::valuesOfRow(d, std::vector<float>(d.params.size(), 0.0f), 0, &dev);
+		// A PATCH FROM v0.2.1: it carries the amount, 40%, and none of the new keys.
+		for (auto it = dev.values.begin(); it != dev.values.end();) {
+			it = std::string_view(it->key) == c.block ? dev.values.erase(it) : it + 1;
+		}
+		dev.values.push_back(rack::RackPatch::Value::of(c.retired, 0.4f));
+		std::vector<float> row(d.params.size());
+		rack::LoadReport report;
+		rack::RackPatch::Device carried;
+		(void)rack::rowOfValues(d, dev, row, &report, "Device", &carried);
+		CHECK(report.countOf(Kind::KeyRetired) == 1);
+		CHECK(report.firstOf(Kind::KeyRetired).what == c.retired);
+		CHECK(report.firstOf(Kind::KeyRetired).why.find("DC block") != std::string::npos);
+		CHECK(report.countOf(Kind::KeyUnknown) == 0);
+		CHECK(carried.values.empty());
+		// THE KEY IS NOT REUSED: the new one is a different key, and a patch that lacks it takes its default, On.
+		size_t at = d.params.size();
+		for (size_t i = 0; i < d.params.size(); ++i) {
+			if (std::string_view(d.params[i].key) == c.block) {
+				at = i;
+			}
+		}
+		REQUIRE(at < d.params.size());
+		CHECK(row[at] == 1.0f);
+		for (const device::ParamDesc& p : d.params) {
+			CHECK(std::string_view(p.key) != c.retired);
+		}
+	}
+}

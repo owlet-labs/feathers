@@ -75,8 +75,12 @@ enum class Param : int {
 	/// Jag's fold span, Lean's bias, Chonk's turn-over of the right channel, Slew's curve, and Lopside's balance
 	/// (`2 shape - 1`). APPENDED, so no earlier control's place moves.
 	Shape,
-	/// THE OFFSET'S AMOUNT, for the four modes that make one (`kDcModes`), 0..1: how much of it is removed after the ceiling clip.
-	Dc,
+	/// THE DC BLOCK, Off or On, for the four modes that make an offset (`kDcModes`): whether the offset is taken out after the ceiling clip.
+	DcBlock,
+	/// CHONK ONLY: how much of the mid-correlated part of what it adds to the side is taken out, 0..1 (`eroder::widthBalance`); 0 is Chonk as it was.
+	Bal,
+	/// THE PAUNCH MODES' ROTATION LFO RATE, log2 hertz, the bottom is off (`kPaunchModes`).
+	Rate,
 
 	kCount,
 };
@@ -107,6 +111,13 @@ inline constexpr uint32_t kShapeModes = kModeBit(Mode::Tube) | kModeBit(Mode::Ja
 /// (w) MARKS THE MODES THAT ADD STEREO WIDTH; the labels they shipped under read as the new ones (Lean as "Lean", Chonk as "Paunch").
 inline constexpr device::ChoiceAlias kModeAliases[] = { { "Paunch", "Chonk (w)" }, { "Lean", "Lean (w)" } };
 /// THE MODES THAT MAKE AN OFFSET: Tube and Lean (the Eroder's own, as Clip has always removed it) and the two Paunch rectifier Types.
+inline constexpr uint32_t kBalModes = kModeBit(Mode::Chonk);
+/// THE FOUR PAUNCH MODES, which read the rotation LFO's Rate.
+inline constexpr uint32_t kPaunchModes = kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH) | kModeBit(Mode::PaunchOS) | kModeBit(Mode::PaunchOH);
+/// THE RATE'S RANGE (the Eroder Drive's): log2 hertz, the bottom is off, then 0.05 to 20 Hz.
+inline constexpr double kRateLog2Min = -4.321928094887362;
+inline constexpr double kRateLog2Max = 4.321928094887362;
+inline constexpr double kRateLog2Default = -1.0;
 inline constexpr uint32_t kDcModes = kModeBit(Mode::Tube) | kModeBit(Mode::Lean) | kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH);
 
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
@@ -141,7 +152,11 @@ struct Settings {
 	/// INDEX INTO `kBitsNames`: 0 is 1 bit, 1 is 2 bits.
 	int bits = 0;
 	float shape = 0.0f;
+	/// 1 (On) or 0 (Off).
 	float dc = 1.0f;
+	float bal = 1.0f;
+	/// OFF in a hand-built `Settings` (the angle holds still); the CONTROL's default, which a fresh instance and a patch lacking the key read, is `kRateLog2Default`.
+	float rate = static_cast<float>(kRateLog2Min);
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -231,6 +246,10 @@ enum class Reading : size_t {
 /// WHAT THIS DEVICE IS, for a browser to group it by. See device::Traits::tags.
 inline constexpr const char* kTags[] = { "dynamics", "fx" };
 
+inline constexpr device::RetiredKey kRetiredKeys[] = {
+	{ "clip_dc", "2026-11-18", "replaced by an on/off DC block (clip_dc_block)" },
+};
+
 inline constexpr device::Traits kTraits {
 	.tag = "clip",
 	.name = "Clipper",
@@ -241,6 +260,7 @@ inline constexpr device::Traits kTraits {
 	.perVoiceControl = -1,
 	.enableControl = static_cast<int>(Param::Enabled),
 	.tags = kTags,
+	.retiredKeys = kRetiredKeys,
 	// THE SLOT BLENDS THESE (backlog NR): a plain crossfade around the device, which hands back the wet.
 	// With Oversample on the device declares `kOversampleLatency`, so the slot delays the dry by it.
 	.mixControl = static_cast<int>(Param::Mix),
@@ -312,12 +332,22 @@ inline constexpr device::ParamDesc kParamDescs[] = {
                 "opposite at the bottom, the same at the top. Slew: from a hard rate limit to a one-pole. Lopside: "
                 "from slow rises to slow falls, even in the middle. Drive sets the rate in Slew and Lopside, and the amount in Paunch-S, Paunch-H, Paunch-OS and Paunch-OH",
      .gateControl = kModeControl, .gateMask = kShapeModes},
-    {.key = "clip_dc", .name = "Clip DC", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = false, .unit = device::Unit::Percent,
-     .names = {}, .modulatable = true,
-     .tooltip = "How much of the offset that Tube, Lean, Paunch-S and Paunch-H make is removed. At 100% none is left; lower it to let the "
-                "bias out to whatever follows the device. The ceiling clips the signal with its offset in it first, so the clip is lopsided, "
-                "and the offset is taken out after",
+    {.key = "clip_dc_block", .name = "Clip DC Block", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = true, .unit = device::Unit::Choice,
+     .names = kOffOnNames, .modulatable = false,
+     .tooltip = "Removes the offset the shaper leaves (below 10 Hz). Off lets it through to whatever follows. The ceiling clips the signal with "
+                "its offset in it first, so the clip is lopsided, and the offset is taken out after",
      .gateControl = kModeControl, .gateMask = kDcModes},
+    {.key = "clip_bal", .name = "Clip Balance", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "Chonk (w) only: how much of the level it adds to one side more than the other is taken out. At 100% the two sides keep "
+                "the same level whatever the material, with the width left in; at 0% Chonk is exactly as it was, and its right side can "
+                "sound quieter or louder than the left",
+     .gateControl = kModeControl, .gateMask = kBalModes},
+    {.key = "clip_rate", .name = "Clip Rate", .min = kRateLog2Min, .max = kRateLog2Max, .def = kRateLog2Default, .stepped = false,
+     .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
+     .tooltip = "Paunch Types only: how fast the angle of the addition turns, so no side leans on average. At the bottom it is off and "
+                "Shape's angle holds still",
+     .gateControl = kModeControl, .gateMask = kPaunchModes, .offAtEnd = -1},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));

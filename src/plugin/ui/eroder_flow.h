@@ -95,8 +95,8 @@ public:
 		float w = 0.0f;
 		float h = 0.0f;
 	};
-	/// THE FOUR SWITCHES, each seated next to what it changes.
-	enum class Chip { InLoop, Tap, Restore, SubThru };
+	/// THE FIVE SWITCHES, each seated next to what it changes (Dc: the DC block, above the `dc` stage).
+	enum class Chip { InLoop, Tap, Restore, SubThru, Dc };
 	/// What a chip sits beside: the stage it is about, and the point of the drawing it is placed on.
 	struct Anchor {
 		size_t stage = 0;
@@ -117,8 +117,8 @@ public:
 
 	EroderFlow(backplane::DeviceHost& host, DeviceInstanceId id);
 
-	/// THE FOUR SWITCHES THAT CHANGE THE DRAWING, seated in the frame (parented here, not owned).
-	void seat(visage::Frame& inLoop, visage::Frame& tap, visage::Frame& restore, visage::Frame& subThru);
+	/// THE FIVE SWITCHES THAT CHANGE OR ARE DRAWN IN THE PICTURE, seated in the frame (parented here, not owned).
+	void seat(visage::Frame& inLoop, visage::Frame& tap, visage::Frame& restore, visage::Frame& subThru, visage::Frame& dc);
 
 	void draw(visage::Canvas& canvas) override;
 	void resized() override;
@@ -167,12 +167,13 @@ private:
 	std::vector<std::vector<size_t>> columns_;
 	bool recording_ = false;
 	std::vector<DrawEvent> events_;
-	std::array<Rect, 4> chipRects_ {};
-	std::array<Anchor, 4> anchors_ {};
+	std::array<Rect, 5> chipRects_ {};
+	std::array<Anchor, 5> anchors_ {};
 	visage::Frame* inLoop_ = nullptr;
 	visage::Frame* tap_ = nullptr;
 	visage::Frame* restore_ = nullptr;
 	visage::Frame* subThru_ = nullptr;
+	visage::Frame* dc_ = nullptr;
 };
 
 } // namespace feathers::ui

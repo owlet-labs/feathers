@@ -74,6 +74,7 @@ public:
 	[[nodiscard]] float followGainForTest() const noexcept { return followGain_; }
 	/// ETCH'S SLOTS AS THE LAST FRAME RAN THEM: the stage's settings (its mix is the control's times Follow's gain) and
 	/// whether it ran.
+	[[nodiscard]] const DriveStage& shaperForTest() const noexcept { return shaper_; }
 	[[nodiscard]] const DriveStage& slotForTest(int slot) const noexcept { return slot == 0 ? slotA_ : slotB_; }
 	[[nodiscard]] float lastRingForTest(int channel) const noexcept { return lastRing_[channel & 1]; }
 	/// THE LEFT SIDE'S LAST FRAME AT THREE POINTS: what the head read, what the shaper made of it, and what was fed
@@ -95,8 +96,20 @@ public:
 	[[nodiscard]] float lastFedBackForTest() const noexcept { return lastFedBack_; }
 	[[nodiscard]] float lastLimiterGainForTest() const noexcept { return lastLimiterGain_; }
 
+	/// THE HOST'S CLOCK, held (the rotation LFO follows the song: `RotationClock`).
+	void setTransportClock(const device::TransportClock& clock) noexcept {
+		rotationClock_.setClock(clock);
+		slotRotationA_.setClock(clock);
+		slotRotationB_.setClock(clock);
+	}
+
 private:
 	void tick(const Settings& settings) noexcept;
+	/// WHERE THE LAST CONTROL TICK FELL in the block being processed (frames from its first): the song's position is the block's first frame's.
+	int tickOffset_ = 0;
+	RotationClock rotationClock_ {};
+	RotationClock slotRotationA_ {};
+	RotationClock slotRotationB_ {};
 	void renderChunk(float* left, float* right, int frames) noexcept;
 	/// ETCH'S TWO SLOTS over one frame, in place.
 	void runSlots(float& left, float& right) noexcept;

@@ -91,7 +91,7 @@ EroderFlow::Path EroderFlow::pathFor(const ero::Row& row) {
 		engineEnd = add(lower(ero::kModeNames[modeAt]), true);
 	}
 	const size_t drive = add("drive", at(ero::Param::Drive) > 0.0f);
-	// THE DC STAGE, right after the Drive: lit while it runs (an amount above 0 and some stage that makes an offset is running).
+	// THE DC STAGE, right after the Drive: lit while it runs (the block is On and some stage that makes an offset is running).
 	add("dc", ero::dcStageRuns(ero::stateOf(row, row.size()).settings));
 	add("restore", emphasised && at(ero::Param::EmphRestore) >= 0.5f);
 	// THE LIVE FILTER: semitones from the note while Track is on in an engine that has it, else HP Wet's hertz.
@@ -114,12 +114,13 @@ EroderFlow::EroderFlow(backplane::DeviceHost& host, DeviceInstanceId id) : host_
 	(void)update();
 }
 
-void EroderFlow::seat(visage::Frame& inLoop, visage::Frame& tap, visage::Frame& restore, visage::Frame& subThru) {
+void EroderFlow::seat(visage::Frame& inLoop, visage::Frame& tap, visage::Frame& restore, visage::Frame& subThru, visage::Frame& dc) {
 	inLoop_ = &inLoop;
 	tap_ = &tap;
 	restore_ = &restore;
 	subThru_ = &subThru;
-	for (visage::Frame* f : { inLoop_, tap_, restore_, subThru_ }) {
+	dc_ = &dc;
+	for (visage::Frame* f : { inLoop_, tap_, restore_, subThru_, dc_ }) {
 		addChild(f);
 	}
 	resized();
@@ -250,6 +251,10 @@ void EroderFlow::resized() {
 	// RESTORE: under its own stage.
 	put(Chip::Restore, centreX(restore), 78.0f);
 	anchors_[static_cast<size_t>(Chip::Restore)] = { restore, centreX(restore), boxes_[restore].y + boxes_[restore].h };
+	// DC: above its own stage (the one post high-pass the switch turns on and off), clear of the Sub Thru road along the top.
+	const size_t dcStage = indexOf("dc");
+	put(Chip::Dc, centreX(dcStage), 30.0f);
+	anchors_[static_cast<size_t>(Chip::Dc)] = { dcStage, centreX(dcStage), 30.0f };
 	// SUB THRU: on the road, half way along it.
 	const float subX = (centreX(path_.bypass.from) + bypassToX()) * 0.5f;
 	put(Chip::SubThru, subX, kBypassY);
@@ -257,8 +262,8 @@ void EroderFlow::resized() {
 	if (inLoop_ == nullptr) {
 		return;
 	}
-	visage::Frame* frames[4] = { inLoop_, tap_, restore_, subThru_ };
-	for (size_t i = 0; i < 4; ++i) {
+	visage::Frame* frames[5] = { inLoop_, tap_, restore_, subThru_, dc_ };
+	for (size_t i = 0; i < 5; ++i) {
 		const Rect& r = chipRects_[i];
 		frames[i]->setBounds(r.x, r.y, r.w, r.h);
 	}

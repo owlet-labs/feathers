@@ -142,6 +142,8 @@ private:
 	std::unique_ptr<SegmentedControl> mode_;
 	std::unique_ptr<Knob> drive_;
 	std::unique_ptr<ModeValueCell> driveCell_;
+	/// WHAT THE DRIVE CELL'S ROW GATE READS (`stageRowGate`): its Type and whether Track is on; set from the modulated row.
+	std::shared_ptr<StageView> driveView_ = std::make_shared<StageView>();
 	std::unique_ptr<PairCell> drivePair_;
 	std::unique_ptr<Knob> emphasis_;
 	std::unique_ptr<Knob> resonance_;

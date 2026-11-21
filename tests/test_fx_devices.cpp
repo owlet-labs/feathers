@@ -2602,10 +2602,19 @@ std::vector<std::string> honestyExpected() {
 		// (Emphasis off zero, and Resonance, Loop or the Comb's own loop running); this sweep moves one control per arrangement and never
 		// has both. `test_fx_eroder`'s "In Loop" case asserts it differs exactly then, in all three engines.
 		"Eroder :: Eroder In Loop",
-		// THE ERODER'S DC takes out the offset that Tube, Fold, Lean, Paunch-S and Paunch-H make, and the fixture's Drive sits on Soft (which
-		// makes none) while it moves one control per arrangement, so there is nothing for it to take. `test_fx_eroder`'s "DC amount" cases
-		// assert it by value (the output's mean is `1 - amount` of the offset) with Paunch-S in the Drive, and the card greys it otherwise.
-		"Eroder :: Eroder DC",
+		// THE ERODER'S DC BLOCK takes out the offset that Tube, Fold, Lean, Paunch-S and Paunch-H make, and the fixture's Drive sits on Soft (which
+		// makes none) while it moves one control per arrangement, so there is nothing for it to take. `test_fx_eroder`'s "DC block" cases
+		// assert it by value (the output's mean is 0 On and the restated offset Off) with Paunch-S, Tube, Fold and Lean in the Drive, and the
+		// window greys its chip otherwise.
+		"Eroder :: Eroder DC Block",
+		// THE TYPE'S SECOND PARAMETERS (the Drive's and each slot's) are heard only on their own Types — Bal on Chonk, Rate and Rate Multiple on
+		// the four Paunch Types — and the fixture's Drive sits on Soft, with the slots at Amount 0, so no one-control arrangement reaches them.
+		// `test_fx_eroder` asserts each by value: "Chonk's Bal at 0% in a slot is the original law to the bit" (Drive and slot), the "Rotation"
+		// cases (the averaged balance, the constant energy, the period, each slot's own LFO, the tracked multiple at A2), and the window hides each
+		// row unless its Type has it, so none is shown where it would be silent.
+		"Eroder :: Eroder Drive Balance",    "Eroder :: Eroder Drive Rate",   "Eroder :: Eroder Drive Rate Multiple",
+		"Eroder :: Eroder Slot A Balance",   "Eroder :: Eroder Slot A Rate",  "Eroder :: Eroder Slot A Rate Multiple",
+		"Eroder :: Eroder Slot B Balance",   "Eroder :: Eroder Slot B Rate",  "Eroder :: Eroder Slot B Rate Multiple",
 		// RESONATE'S NOTE RELEASE decides what a NOTE-OFF does to its note's head (Gate stops it, Ring lets it ring on), so it
 		// is heard only with a note held and then let go while the string rings — and this fixture plays no notes.
 		// `test_fx_resonate`'s "Note Release Ring makes key length not matter" asserts both states on the output.

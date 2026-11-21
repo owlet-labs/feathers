@@ -134,6 +134,8 @@ public:
 		float height;
 		float nameWidth;
 		float arrowWidth;
+		/// ROOM UNDER THE STEPPER (0: none). A preset browser that cannot fit its variant chips beside the stepper puts them in one row here.
+		float belowHeight = 0.0f;
 	};
 
 	ItemStepper(ItemSource& source, Style style);

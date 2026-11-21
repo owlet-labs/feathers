@@ -327,6 +327,10 @@ struct clap_plugin_feathers_test_chain {
 	bool (*want_readings)(const clap_plugin* plugin, uint32_t position);
 	/// **A PREVIEW KEY AS THE EDITOR POSTS IT** (/13): false for a key outside 0..127 or a full ring.
 	bool (*post_note)(const clap_plugin* plugin, int32_t key, bool on, float velocity);
+	/// **THE EDITOR'S BEAT, BY HAND** (appended): what an open editor's tick does on the main thread (`provisionAndDrain`: build what the
+	/// record now wants, free what the audio thread parked). The functions above edit the record and build nothing, so a case that models
+	/// an editor open while a device is added or switched calls this where the editor would. Null in the rack.
+	bool (*provision)(const clap_plugin* plugin);
 };
 
 } // extern "C"

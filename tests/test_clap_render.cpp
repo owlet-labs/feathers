@@ -9810,3 +9810,204 @@ TEST_CASE("preview: a full ring refuses the 65th press, an off after the editor 
 	CHECK(synthValue(host.plugin(), CLAP_FEATHERS_SYNTH_SOUNDING_VOICES) == 0.0);
 	CHECK(noteEndsIn(log).empty());
 }
+
+//--------------------------------------------------------------------------------------------------//
+// A CHAIN IN THE FX LANE PASSES THE VOICES THROUGH, however the Chain came to be there               //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+constexpr double kPolyCutoffLog2 = 8.64; // about 400 Hz: a keytracked cutoff moves with the note from there
+
+/// A CHAIN'S BODY HOLDING ONE FILTER (Keytrack on, a low cutoff), its Poly as asked, built through the Chain's own container ops.
+std::vector<uint8_t> chainBodyWithFilter(bool poly) {
+	namespace flt = feathers::fx::filter;
+	const feathers::device::Descriptor& chain = feathers::rack::kDeviceDescriptor;
+	const feathers::device::AudioOps& audio = *chain.audio;
+	void* mem = ::operator new(audio.stateBytes, std::align_val_t { audio.stateAlign });
+	audio.construct(mem);
+	chain.container->adopt(mem, feathers::hostCatalogue());
+	audio.prepare(mem, 48000.0, 4096);
+	feathers::rack::RackBridge* inner = feathers::rack::bridgeOf(mem);
+	REQUIRE(inner != nullptr);
+	const feathers::DeviceInstanceId id = inner->addDevice(flt::kTraits.tag);
+	REQUIRE(id != feathers::kNoInstance);
+	inner->setField(id, static_cast<size_t>(flt::Param::Keytrack), 1.0f);
+	inner->setField(id, static_cast<size_t>(flt::Param::Cutoff), static_cast<float>(kPolyCutoffLog2));
+	inner->setField(id, static_cast<size_t>(flt::Param::Poly), poly ? 1.0f : 0.0f);
+	std::vector<uint8_t> body;
+	const feathers::device::ByteSink sink { &body, [](void* ctx, const uint8_t* data, size_t bytes) {
+		                                       auto* out = static_cast<std::vector<uint8_t>*>(ctx);
+		                                       out->insert(out->end(), data, data + bytes);
+	                                       } };
+	REQUIRE(chain.container->saveState(mem, sink));
+	audio.destruct(mem);
+	::operator delete(mem, std::align_val_t { audio.stateAlign });
+	return body;
+}
+
+/// WHAT A HOST DOES BETWEEN EDITS: a main-thread visit (the plugin provisions what the record now wants on it), then blocks that adopt it.
+void settle(HostedPlugin& host) {
+	const auto* chain = testChainOf(host.plugin());
+	REQUIRE(chain->provision != nullptr);
+	for (int i = 0; i < 3; ++i) {
+		mainThreadVisit(host.plugin());
+		REQUIRE(chain->provision(host.plugin())); // the open editor's beat
+		host.run(256, EventList {});
+	}
+}
+
+/// TWO NOTES AN OCTAVE-AND-A-HALF APART, held; the left channel of eight blocks after the first two.
+std::vector<float> twoNotes(HostedPlugin& host) {
+	constexpr uint32_t kFrames = 256;
+	EventList events;
+	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 36, 1, 1.0);
+	events.pushNote(CLAP_EVENT_NOTE_ON, 0, 72, 2, 1.0);
+	std::vector<float> heard;
+	for (int b = 0; b < 10; ++b) {
+		host.run(kFrames, events);
+		events.clear();
+		if (b >= 2) {
+			heard.insert(heard.end(), host.left().begin(), host.left().begin() + kFrames);
+		}
+	}
+	return heard;
+}
+
+double maxDifference(const std::vector<float>& a, const std::vector<float>& b) {
+	REQUIRE(a.size() == b.size());
+	double worst = 0.0;
+	for (size_t i = 0; i < a.size(); ++i) {
+		worst = std::max(worst, static_cast<double>(std::fabs(a[i] - b[i])));
+	}
+	return worst;
+}
+
+/// THE LANE'S OWN FILTER with the same settings, Poly as asked: the per-voice sound a Chain must reproduce (and, Poly off, the summed one).
+std::vector<float> directFilterRender(bool poly) {
+	namespace flt = feathers::fx::filter;
+	HostedPlugin host;
+	const clap_plugin* p = host.plugin();
+	const auto* chain = testChainOf(p);
+	const uint32_t slot = chain->add_device(p, flt::kTraits.tag);
+	REQUIRE(slot != UINT32_MAX);
+	REQUIRE(chain->set_control(p, slot, "Filter Keytrack", 1.0));
+	REQUIRE(chain->set_control(p, slot, "Filter Cutoff", kPolyCutoffLog2));
+	REQUIRE(chain->set_control(p, slot, "Filter Poly", poly ? 1.0 : 0.0));
+	settle(host);
+	return twoNotes(host);
+}
+
+} // namespace
+
+TEST_CASE("a Chain in the fx lane runs its Poly device per voice, whichever road the Chain came by") {
+	namespace flt = feathers::fx::filter;
+	const std::vector<float> perVoice = directFilterRender(true);
+	const std::vector<float> summed = directFilterRender(false);
+	double peak = 0.0;
+	for (const float x : perVoice) {
+		peak = std::max(peak, static_cast<double>(std::fabs(x)));
+	}
+	REQUIRE(peak > 1.0e-3);
+	// NON-VACUITY: per voice and summed are different sounds, by far more than the tolerance below.
+	const double apart = maxDifference(perVoice, summed);
+	REQUIRE(apart > 1.0e-3);
+	constexpr double kTolerance = 2.0e-5; // the Chain's own wet blend (x + 1 * (y - x)) is not bit-exact
+	const auto check = [&](const char* road, const std::vector<float>& heard) {
+		CAPTURE(road);
+		const double fromPerVoice = maxDifference(heard, perVoice);
+		const double fromSummed = maxDifference(heard, summed);
+		CHECK(fromPerVoice < kTolerance);
+		CHECK(fromSummed > apart * 0.5);
+	};
+	const std::vector<uint8_t> polyBody = chainBodyWithFilter(true);
+	const std::vector<uint8_t> offBody = chainBodyWithFilter(false);
+
+	// (c) A CHAIN ADDED BY HAND AFTER ACTIVATE.
+	{
+		HostedPlugin host;
+		const clap_plugin* p = host.plugin();
+		const auto* chain = testChainOf(p);
+		const uint32_t slot = chain->add_device(p, feathers::rack::kDeviceDescriptor.traits.tag);
+		REQUIRE(slot != UINT32_MAX);
+		settle(host);
+		REQUIRE(chain->edit_device_body(p, slot, polyBody.data(), polyBody.size()));
+		settle(host);
+		check("(c) added by hand after activate", twoNotes(host));
+	}
+	// THE PATCH THE OTHER ROADS LOAD: a Chain holding the Poly filter, saved by a plugin that built it as (c) did.
+	StateBytes saved;
+	{
+		HostedPlugin host;
+		const clap_plugin* p = host.plugin();
+		const auto* chain = testChainOf(p);
+		const uint32_t slot = chain->add_device(p, feathers::rack::kDeviceDescriptor.traits.tag);
+		REQUIRE(slot != UINT32_MAX);
+		settle(host);
+		REQUIRE(chain->edit_device_body(p, slot, polyBody.data(), polyBody.size()));
+		const auto* state = static_cast<const clap_plugin_state*>(p->get_extension(p, CLAP_EXT_STATE));
+		REQUIRE(state != nullptr);
+		clap_ostream out = saved.out();
+		REQUIRE(state->save(p, &out));
+	}
+	// (a) STATE LOADED BEFORE THE FIRST ACTIVATE.
+	{
+		HostedPlugin host(&kHost, &loadBeforeActivate, &saved);
+		settle(host);
+		check("(a) loaded before activate", twoNotes(host));
+	}
+	// (b) STATE LOADED AFTER ACTIVATE.
+	{
+		HostedPlugin host;
+		const clap_plugin* p = host.plugin();
+		const auto* state = static_cast<const clap_plugin_state*>(p->get_extension(p, CLAP_EXT_STATE));
+		REQUIRE(state != nullptr);
+		StateBytes in;
+		in.bytes = saved.bytes;
+		clap_istream stream = in.in();
+		REQUIRE(state->load(p, &stream));
+		settle(host);
+		check("(b) loaded after activate", twoNotes(host));
+	}
+	// (d) POLY SWITCHED ON INSIDE AN EXISTING CHAIN: first Off (the summed sound), then On, in the same Chain.
+	{
+		HostedPlugin host;
+		const clap_plugin* p = host.plugin();
+		const auto* chain = testChainOf(p);
+		const uint32_t slot = chain->add_device(p, feathers::rack::kDeviceDescriptor.traits.tag);
+		REQUIRE(slot != UINT32_MAX);
+		settle(host);
+		REQUIRE(chain->edit_device_body(p, slot, offBody.data(), offBody.size()));
+		settle(host);
+		const std::vector<float> before = twoNotes(host);
+		CHECK(maxDifference(before, perVoice) > apart * 0.5); // Off is not the per-voice sound, so the switch below is a real flip
+		EventList off;
+		off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 36, 1, 0.0);
+		off.pushNote(CLAP_EVENT_NOTE_OFF, 0, 72, 2, 0.0);
+		host.run(256, off);
+		for (int b = 0; b < 400; ++b) { // let the tails go
+			host.run(256, EventList {});
+		}
+		REQUIRE(chain->edit_device_body(p, slot, polyBody.data(), polyBody.size()));
+		settle(host);
+		check("(d) Poly switched on in an existing Chain", twoNotes(host));
+	}
+	// (e) THE LANE RE-PREPARED AFTER THE CHAIN EXISTS: deactivated and activated again (a new maximum block), voices and all.
+	{
+		HostedPlugin host;
+		const clap_plugin* p = host.plugin();
+		const auto* chain = testChainOf(p);
+		const uint32_t slot = chain->add_device(p, feathers::rack::kDeviceDescriptor.traits.tag);
+		REQUIRE(slot != UINT32_MAX);
+		settle(host);
+		REQUIRE(chain->edit_device_body(p, slot, polyBody.data(), polyBody.size()));
+		settle(host);
+		p->stop_processing(p);
+		p->deactivate(p);
+		host.growBuffers(1024);
+		REQUIRE(p->activate(p, 48000.0, 1, 1024));
+		REQUIRE(p->start_processing(p));
+		settle(host);
+		check("(e) re-prepared after the Chain exists", twoNotes(host));
+	}
+}

@@ -280,6 +280,9 @@ public:
 		gate.upstream = [](const void* host, DeviceInstanceId self, backplane::Source s) {
 			return static_cast<const ChainRecord*>(host)->sourceUpstreamOf(s, self);
 		};
+		gate.holdersEnabled = [](const void* host, DeviceInstanceId self) {
+			return static_cast<const ChainRecord*>(host)->holderChainEnabled(self);
+		};
 		// AN EDIT IN THAT CHAIN MARKS THIS RACK'S PATCH — the chain's body is saved in it (backlog JV).
 		gate.dirtyHost = const_cast<RackBridge*>(this); // a bridge is never const-defined
 		gate.markDirty = [](void* host) { static_cast<RackBridge*>(host)->markStateDirty(); };
@@ -531,6 +534,7 @@ public:
 	bool hasExpandedViewFor(const device::Descriptor& desc) const override {
 		return engine_.hasExpandedViewFor(desc);
 	}
+	bool containersEnabled() const noexcept override { return record_.containersEnabled(); }
 	backplane::CorePolicy corePolicy() const noexcept override { return engine_.corePolicy(); }
 
 	//---------------------------------------------------------------------------------------------//

@@ -61,17 +61,17 @@ ItemStepper::ItemStepper(ItemSource& source, Style style) : source_(source), sty
 }
 
 visage::Bounds ItemStepper::prevBounds() const {
-	const float y = (height() - style_.height) * 0.5f;
+	const float y = (height() - style_.height - style_.belowHeight) * 0.5f;
 	return { 0.0f, y, style_.arrowWidth, style_.height };
 }
 
 visage::Bounds ItemStepper::nameBounds() const {
-	const float y = (height() - style_.height) * 0.5f;
+	const float y = (height() - style_.height - style_.belowHeight) * 0.5f;
 	return { style_.arrowWidth, y, style_.nameWidth, style_.height };
 }
 
 visage::Bounds ItemStepper::nextBounds() const {
-	const float y = (height() - style_.height) * 0.5f;
+	const float y = (height() - style_.height - style_.belowHeight) * 0.5f;
 	return { style_.arrowWidth + style_.nameWidth, y, style_.arrowWidth, style_.height };
 }
 

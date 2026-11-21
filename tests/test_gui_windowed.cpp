@@ -3639,6 +3639,123 @@ TEST_CASE("a dropdown opened by a real press and release stays open through the 
 		checkMenuSurvivesAndPicks(rig, *other, "other");
 	}
 }
+
+namespace {
+/// THE ROWS OF AN OPEN MENU, label and enabled state, top level — what a hand reads.
+std::vector<std::string> rowsOfMenu(visage::PopupMenuFrame& popup) {
+	std::vector<std::string> rows;
+	visage::PopupList* list = menu_check::rowsOf(popup);
+	if (list == nullptr) {
+		return rows;
+	}
+	for (int i = 0; i < list->numOptions(); ++i) {
+		const visage::PopupMenu& o = list->option(i);
+		rows.push_back(o.name().toUtf8() + (o.enabled() ? "" : " (off)"));
+	}
+	return rows;
+}
+
+void closePopup(visage::PopupMenuFrame* popup) {
+	if (popup != nullptr) {
+		popup->exit();
+		popup->timerCallback();
+	}
+}
+
+/// A REAL PRESS AND RELEASE of `button` at a point in the editor's logical window coordinates.
+void realClick(ReopenRig& rig, visage::Point at, unsigned int button) {
+	const double scale = rig.f.root->dpiScale();
+	const visage::IPoint n { static_cast<int>(at.x * scale), static_cast<int>(at.y * scale) };
+	EditorPointer p = rig.pointer();
+	const unsigned int mask = button == Button3 ? Button3Mask : Button1Mask;
+	p.send(MotionNotify, n.x, n.y, 0, 0);
+	p.send(ButtonPress, n.x, n.y, button, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, n.x, n.y, button, mask);
+	for (int i = 0; i < 6; ++i) {
+		(void)rig.f.gui.tickForTest();
+		pumpEditor(rig.f.gui, 3);
+	}
+}
+
+visage::Point centreOf(const visage::Frame& frame, const visage::Bounds& local) {
+	return frame.positionInWindow() + visage::Point(local.x() + local.width() / 2, local.y() + local.height() / 2);
+}
+} // namespace
+
+TEST_CASE("a device window's \"...\" and a right-press on its head open the card's own slot menu: the same rows in the same "
+          "states, stays open, and a pick lands") {
+	ReopenRig rig;
+	rig.f.gui.setPopoutWindowForTest(false);
+	const size_t first = rig.f.addFx(fx::harm::kTraits.tag);
+	const size_t second = rig.f.addFx(fx::harm::kTraits.tag);
+	REQUIRE(second == first + 1);
+	ui::ExpandedOverlay* overlay = rig.f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	const DeviceInstanceId device = rig.f.bridge.fxDeviceAt(first);
+	const DeviceInstanceId other = rig.f.bridge.fxDeviceAt(second);
+
+	// THE CARD'S MENU, the value to equal.
+	rig.f.lane->showSlotMenu(first);
+	visage::PopupMenuFrame* cardPopup = menu_check::newestPopup(*rig.f.lane);
+	REQUIRE(cardPopup != nullptr);
+	const std::vector<std::string> cardRows = rowsOfMenu(*cardPopup);
+	closePopup(cardPopup);
+	REQUIRE(cardRows.size() >= 5);
+
+	rig.f.lane->onExpandDevice(first);
+	pumpEditor(rig.f.gui, 5);
+	REQUIRE(overlay->open());
+	ui::ExpandedPanel* panel = overlay->panelForTest();
+	REQUIRE(panel != nullptr);
+	REQUIRE(panel->menuBounds().width() > 0.0f);
+
+	SUBCASE("the \"...\" mark: a real press opens it, it stays open, and a real click on a row lands") {
+		realClick(rig, centreOf(*panel, panel->menuBounds()), Button1);
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*panel);
+		REQUIRE(popup != nullptr);
+		CHECK(popup->isVisible());
+		CHECK(ui::lastMenuPlacementForTest().shown);
+		CHECK(rowsOfMenu(*popup) == cardRows);
+		// "Move later" by its row, as a hand clicks it.
+		size_t row = cardRows.size();
+		for (size_t i = 0; i < cardRows.size(); ++i) {
+			if (cardRows[i] == "Move later") {
+				row = i;
+			}
+		}
+		REQUIRE(row < cardRows.size());
+		const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+		const float rowH = placed.list.height() / static_cast<float>(cardRows.size());
+		realClick(rig, { placed.list.x() + placed.list.width() * 0.5f, placed.list.y() + (static_cast<float>(row) + 0.5f) * rowH },
+		          Button1);
+		CHECK(rig.f.bridge.fxDeviceAt(first) == other);
+		CHECK(rig.f.bridge.fxDeviceAt(second) == device);
+		CHECK(overlay->open()); // a move leaves the window up
+	}
+	SUBCASE("a right-press on the bare head opens the same rows") {
+		const visage::Point head = panel->positionInWindow() + visage::Point(4.0f, ui::ExpandedOverlay::kTitleHeight * 0.5f);
+		realClick(rig, head, Button3);
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*panel);
+		REQUIRE(popup != nullptr);
+		CHECK(popup->isVisible());
+		CHECK(rowsOfMenu(*popup) == cardRows);
+	}
+	SUBCASE("Remove from the window closes the window and takes the device out, leaving no frame behind") {
+		REQUIRE(panel->openMenu());
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*panel);
+		REQUIRE(popup != nullptr);
+		const size_t before = rig.f.bridge.fxChain().count;
+		REQUIRE(menu_check::pickRow(*popup, "Remove"));
+		popup->timerCallback();
+		(void)rig.f.gui.tickForTest();
+		pumpEditor(rig.f.gui, 5);
+		CHECK(rig.f.bridge.fxChain().count == before - 1);
+		CHECK(rig.f.bridge.fxDeviceAt(first) == other);
+		CHECK_FALSE(overlay->open());
+		CHECK(overlay->panelCount() == 0);
+	}
+}
 #endif // defined(__linux__): ReopenRig is Linux-only
 
 TEST_CASE("backlog NF: the Explore pane collapses like the fx lane — a 34px EXPLORE strip, the surface hidden, the "

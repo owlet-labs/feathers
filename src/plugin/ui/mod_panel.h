@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "plugin/ui/menu_anchor.h"
 #include "backplane/endpoint.h"
 #include "plugin/ui/widget_registry.h"
 #include "plugin/device_instance.h"
@@ -464,7 +465,9 @@ public:
 	visage::Bounds slotMenuBounds(backplane::Source source) const;
 
 	/// Open it for `slot`, as pressing the dots does.
-	void showSlotMenu(size_t slot);
+	void showSlotMenu(size_t slot, const SlotMenuOrigin* origin = nullptr);
+	/// The same menu for the card of `device`, asked by that device's window. False, opening nothing, when this host holds no card for it.
+	bool showSlotMenuFor(DeviceInstanceId device, const SlotMenuOrigin& origin);
 
 	/// **FREE THE CARDS A REBUILD RETIRED — CALLED ONLY WHERE NOTHING IS WALKING THE TREE.**
 	///

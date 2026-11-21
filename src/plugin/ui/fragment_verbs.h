@@ -103,4 +103,9 @@ private:
 /// THE MENU'S LABELS, in the order `addTo` adds them — for a case that picks one by name.
 enum class FragmentVerb : int { Copy = 0, Cut, Paste, Duplicate, GroupChain, GroupRack, Remove, Count };
 
+/// Does picking this verb take the card's device out of its place (cut, grouped away, removed)? A window asking for the menu is closed first for these.
+constexpr bool verbLeavesDevice(FragmentVerb verb) {
+	return verb == FragmentVerb::Cut || verb == FragmentVerb::GroupChain || verb == FragmentVerb::GroupRack || verb == FragmentVerb::Remove;
+}
+
 } // namespace feathers::ui

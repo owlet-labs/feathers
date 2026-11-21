@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "plugin/ui/menu_anchor.h"
 #include "device/subscribers.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/card_factory.h"
@@ -289,7 +290,7 @@ public:
 	///
 	/// **EVERY DEVICE VERB HERE NAMES THE DEVICE BY ITS ID (kill-lanes step 2)** — never a slot or a
 	/// lane. The bridge knows where it keeps a device; this editor knows which device a card is.
-	void showSlotMenu(DeviceInstanceId device);
+	void showSlotMenu(DeviceInstanceId device, const ui::SlotMenuOrigin* origin = nullptr);
 
 	/// **REMOVE A DEVICE — the menu's verb and the keyboard's, one implementation.** Two roads to a
 	/// destructive action is two chances for one of them to skip the panel teardown.

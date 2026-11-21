@@ -2270,6 +2270,16 @@ bool Gui::create(const char* api, bool isFloating) noexcept {
 		// add to, and this one had already been forgotten once while the comment warning about it
 		// was on screen.
 		view->setModulation(&impl_->mod, &impl_->history);
+		// THE WINDOW'S "..." AND HEAD RIGHT-PRESS OPEN THE CARD'S OWN SLOT MENU, asked of whichever host holds the card (the fx lane,
+		// else the modulator strip): one builder. A site view or a device no card holds opens none.
+		view->onDeviceMenu = [this, device](const SlotMenuOrigin& origin) {
+			if (impl_->fxLane != nullptr && impl_->fxLane->showSlotMenuFor(device, origin)) {
+				return;
+			}
+			if (impl_->modPanel != nullptr) {
+				(void)impl_->modPanel->showSlotMenuFor(device, origin);
+			}
+		};
 		// ONE PANEL, TWO POSSIBLE HOSTS, AND THE CONTENT KNOWS NEITHER. `kPopoutWindowKey` picks;
 		// everything above this line is identical either way, which is the whole point of the five
 		// properties expanded_overlay.h kept.

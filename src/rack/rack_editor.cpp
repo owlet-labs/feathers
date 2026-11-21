@@ -1405,7 +1405,7 @@ void RackEditor::commitSiteDrop(DeviceInstanceId from, bool fromPost, bool intoP
 	}
 }
 
-void RackEditor::showSlotMenu(DeviceInstanceId device) {
+void RackEditor::showSlotMenu(DeviceInstanceId device, const ui::SlotMenuOrigin* origin) {
 	const CardEntry* entry = entryOf(device);
 	if (entry == nullptr || entry->card == nullptr) {
 		return;
@@ -1428,11 +1428,18 @@ void RackEditor::showSlotMenu(DeviceInstanceId device) {
 	// `removeSlot` SAID it was "the menu's verb and the keyboard's, one implementation" and it was
 	// not: the edit that was supposed to redirect this call site silently did not apply, and the
 	// claim went into a commit message unchecked.
-	menu.onSelection() = [this, device](int id) {
+	const std::function<void()> closeWindow = origin != nullptr ? origin->closeWindow : std::function<void()> {};
+	menu.onSelection() = [this, device, closeWindow](int id) {
 		if (id >= kVerbIds) {
+			if (closeWindow && ui::verbLeavesDevice(static_cast<ui::FragmentVerb>(id - kVerbIds))) {
+				closeWindow();
+			}
 			(void)slotVerbForTest(device, static_cast<ui::FragmentVerb>(id - kVerbIds));
 		}
 		else if (id == 0) {
+			if (closeWindow) {
+				closeWindow();
+			}
 			removeDevice(device);
 		}
 		else if (id == 1) {
@@ -1446,6 +1453,10 @@ void RackEditor::showSlotMenu(DeviceInstanceId device) {
 	};
 	// AT THE DOTS, which is where the hand is — read off the card rather than recomputed, so the menu
 	// cannot open away from the mark that summoned it.
+	if (origin != nullptr && origin->source != nullptr) {
+		ui::showMenuAt(std::move(menu), *origin->source, origin->anchor);
+		return;
+	}
 	const ui::FxCard& card = *entry->card;
 	const visage::Bounds dots = card.slotMenuBounds();
 	// Through the one road every other menu takes, so it is placed — and kept inside the window — by the

@@ -24,6 +24,7 @@
 #include "device/registry.h"
 #include "plugin/ui/escape_stack.h"
 #include "plugin/ui/frame_watchers.h"
+#include "plugin/ui/menu_anchor.h"
 // FOR `DeviceNest` AND `instanceTintFor` — the panel's tint and the key it is filed under are both
 // derived from the same pair, and `theme.h` is where that derivation lives.
 #include "plugin/ui/theme.h"
@@ -322,6 +323,19 @@ public:
 	/// routed already (a gate has no depth worth a drag). Returns whether it did; false leaves the press to the toggle.
 	virtual bool routeDeviceEnable();
 
+	/// **THE DEVICE'S SLOT MENU, FROM THE WINDOW'S HEAD** — the card's "..." menu, asked of the host that owns the card
+	/// (its `showSlotMenu`: the one builder), by the window's own "..." mark and by a right-press on its head. Bound by
+	/// whoever opens the window, because only the host knows which slot the device is in; unbound, the head draws no mark
+	/// (a control that is drawn and does nothing is the honesty rule's other face). VIRTUAL so `MountedFrame` answers
+	/// for the view it wraps.
+	std::function<void(const SlotMenuOrigin&)> onDeviceMenu;
+	[[nodiscard]] virtual bool hasDeviceMenu() const { return static_cast<bool>(onDeviceMenu); }
+	virtual void openDeviceMenu(const SlotMenuOrigin& origin) {
+		if (onDeviceMenu) {
+			onDeviceMenu(origin);
+		}
+	}
+
 	/// WHICH SURFACE HOST THIS VIEW IS PRESENTED ON, told by `SurfaceLayers` as it mounts the view —
 	/// rack roadmap §5's escalation. A view that HOSTS A CHAIN of its own (`ChainExpanded`) hands
 	/// this to its inner editor, whose presents then go to the outermost host rather than into a panel
@@ -462,6 +476,16 @@ public:
 	/// overlay to fill its own rectangle with this panel, or to put it back exactly where it was. Maximized, the
 	/// panel has no grip and its head no longer drags: the overlay owns the rectangle until it is restored.
 	visage::Bounds maximizeBounds() const;
+	/// **THE "..." MARK, LEFT OF THE WINDOW'S OWN BUTTONS** (one gap inboard of the maximize square, as the card's dots
+	/// sit left of its own head marks): the device's slot menu, the one its card opens. EMPTY when the view has no
+	/// menu bound, so the press test refuses it and nothing is drawn.
+	visage::Bounds menuBounds() const;
+	/// Open that menu at the mark, as the mark and a right-press on the head both do. Returns whether one opened.
+	bool openMenu();
+private:
+	/// The innermost of the fixed marks: the "..." when there is one, else the maximize square. What the enable chip and the accessory sit inboard of.
+	visage::Bounds menuOrMaximizeBounds() const;
+public:
 	void setMaximized(bool maximized) { maximized_ = maximized; }
 	[[nodiscard]] bool maximized() const noexcept { return maximized_; }
 	visage::Bounds contentBounds() const;

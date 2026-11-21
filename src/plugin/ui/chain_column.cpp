@@ -680,6 +680,7 @@ void ChainColumn::expandDevice(DeviceInstanceId device) {
 			// key, and opening the second RETIRES the first. It is also what makes the panel's tint
 			// the card's tint, since both read `instanceTintFor(device, nest)`.
 			view->setNest(nest_);
+			view->onDeviceMenu = [this, device](const SlotMenuOrigin& origin) { showSlotMenu(device, &origin); };
 		}
 	}
 	else {
@@ -949,7 +950,7 @@ bool ChainColumn::slotChoiceForTest(DeviceInstanceId device, SlotVerb verb) {
 	return false;
 }
 
-void ChainColumn::showSlotMenu(DeviceInstanceId device) {
+void ChainColumn::showSlotMenu(DeviceInstanceId device, const SlotMenuOrigin* origin) {
 	if (bridge_.positionOf(device) == rack::RackBridge::kNoSlot) {
 		return;
 	}
@@ -977,14 +978,25 @@ void ChainColumn::showSlotMenu(DeviceInstanceId device) {
 	}
 	// AND THE SELECTION'S VERBS (backlog OA): over the selection when it holds this card, else this card alone.
 	selection_->addVerbs(menu, kVerbIds, device);
-	menu.onSelection() = [this, device, options](int id) {
+	const std::function<void()> closeWindow = origin != nullptr ? origin->closeWindow : std::function<void()> {};
+	menu.onSelection() = [this, device, options, closeWindow](int id) {
 		if (id >= kVerbIds) {
+			if (closeWindow && verbLeavesDevice(static_cast<FragmentVerb>(id - kVerbIds))) {
+				closeWindow();
+			}
 			(void)slotVerbForTest(device, static_cast<FragmentVerb>(id - kVerbIds));
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {
+			if (closeWindow && options[static_cast<size_t>(id)].verb == SlotVerb::Remove) {
+				closeWindow();
+			}
 			slotChoiceForTest(device, options[static_cast<size_t>(id)].verb);
 		}
 	};
+	if (origin != nullptr && origin->source != nullptr) {
+		showMenuAt(std::move(menu), *origin->source, origin->anchor);
+		return;
+	}
 	showMenuAt(std::move(menu), *this, menuAnchorFor(bridge_.positionOf(device)));
 }
 
@@ -1308,6 +1320,7 @@ std::unique_ptr<ExpandedView> ChainColumn::buildWindowContent(DeviceInstanceId d
 	if (view != nullptr) {
 		view->setModulation(&mod_, &history_);
 		view->setNest(nest_);
+		view->onDeviceMenu = [this, device](const SlotMenuOrigin& origin) { showSlotMenu(device, &origin); };
 	}
 	return view;
 }

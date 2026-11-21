@@ -3756,6 +3756,87 @@ TEST_CASE("a device window's \"...\" and a right-press on its head open the card
 		CHECK(overlay->panelCount() == 0);
 	}
 }
+
+namespace {
+void collectKnobsUnder(visage::Frame* at, std::vector<ui::Knob*>& out) {
+	if (at == nullptr || !at->isVisible()) {
+		return;
+	}
+	if (auto* knob = dynamic_cast<ui::Knob*>(at); knob != nullptr && knob->width() > 0.0f && knob->control() != nullptr) {
+		out.push_back(knob);
+	}
+	for (visage::Frame* child : at->children()) {
+		collectKnobsUnder(child, out);
+	}
+}
+} // namespace
+
+TEST_CASE("a press anywhere on a window that is behind another brings it to the front, and the control under the press still "
+          "takes it") {
+	ReopenRig rig;
+	rig.f.gui.setPopoutWindowForTest(false);
+	const size_t a = rig.f.addFx(fx::harm::kTraits.tag);
+	const size_t b = rig.f.addFx(fx::harm::kTraits.tag);
+	ui::ExpandedOverlay* overlay = rig.f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	rig.f.lane->onExpandDevice(a);
+	pumpEditor(rig.f.gui, 3);
+	ui::ExpandedPanel* back = overlay->panelForTest();
+	rig.f.lane->onExpandDevice(b);
+	pumpEditor(rig.f.gui, 3);
+	ui::ExpandedPanel* front = overlay->panelForTest();
+	REQUIRE(back != nullptr);
+	REQUIRE(front != nullptr);
+	REQUIRE(back != front);
+	REQUIRE(overlay->panelCount() == 2);
+	// THE FRONT ONE MOVED CLEAR OF MOST OF THE BACK ONE, so a knob of the back window can be pressed where nothing covers it.
+	overlay->beginPanelDrag();
+	overlay->dragPanelBy({ 3000.0f, 0.0f });
+	pumpEditor(rig.f.gui, 3);
+	REQUIRE(overlay->panelForTest() == front);
+
+	std::vector<ui::Knob*> knobs;
+	collectKnobsUnder(back, knobs);
+	ui::Knob* target = nullptr;
+	for (ui::Knob* k : knobs) {
+		const visage::Point c = k->positionInWindow() + visage::Point(k->width() / 2, k->height() / 2);
+		const visage::Point f0 = front->positionInWindow();
+		const bool covered = c.x >= f0.x && c.x <= f0.x + front->width() && c.y >= f0.y && c.y <= f0.y + front->height();
+		if (!covered && c.x > 0.0f && c.x < rig.f.root->width()) {
+			target = k;
+			break;
+		}
+	}
+	REQUIRE(target != nullptr);
+
+	SUBCASE("a press on a control in the back window raises it and the drag still moves the control") {
+		const double before = target->control()->value();
+		const visage::Point c = target->positionInWindow() + visage::Point(target->width() / 2, target->height() / 2);
+		const double scale = rig.f.root->dpiScale();
+		const visage::IPoint at { static_cast<int>(c.x * scale), static_cast<int>(c.y * scale) };
+		EditorPointer p = rig.pointer();
+		p.send(MotionNotify, at.x, at.y, 0, 0);
+		p.send(ButtonPress, at.x, at.y, Button1, 0);
+		pumpEditor(rig.f.gui, 3);
+		// RAISED ON THE PRESS, before any release.
+		CHECK(overlay->panelForTest() == back);
+		for (int i = 1; i <= 10; ++i) {
+			p.send(MotionNotify, at.x, at.y - 6 * i, 0, Button1Mask);
+			pumpEditor(rig.f.gui, 2);
+		}
+		p.send(ButtonRelease, at.x, at.y - 60, Button1, Button1Mask);
+		pumpEditor(rig.f.gui, 5);
+		CHECK(overlay->panelForTest() == back);
+		CHECK(target->control()->value() != before);
+	}
+	SUBCASE("a press on the front window changes no order") {
+		const visage::Point c = front->positionInWindow() + visage::Point(front->width() / 2, front->height() * 0.5f);
+		realClick(rig, c, Button1);
+		CHECK(overlay->panelForTest() == front);
+		realClick(rig, front->positionInWindow() + visage::Point(30.0f, 14.0f), Button1);
+		CHECK(overlay->panelForTest() == front);
+	}
+}
 #endif // defined(__linux__): ReopenRig is Linux-only
 
 TEST_CASE("backlog NF: the Explore pane collapses like the fx lane — a 34px EXPLORE strip, the surface hidden, the "

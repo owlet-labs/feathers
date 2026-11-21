@@ -173,6 +173,9 @@ void ExpandedPanel::wire() {
 	// press. Fifteen subcases passed over a panel nobody could touch, because every one of them
 	// addressed the widgets directly instead of asking where a press lands.
 	setIgnoresMouseEvents(false, true);
+	// SEE `onPressedInside`: accepting keystrokes is what makes a press in the body reach this window first. Keys it does not use
+	// still go up to the layer and the editor, as they did.
+	setAcceptsKeystrokes(true);
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		// THE ✕ CLOSES; THE REST OF THE HEAD DRAGS. Anything else arriving here missed every control
 		// and landed on the panel's own background, which is not a verb.
@@ -403,6 +406,7 @@ ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> con
 	    [this, raw] { setFolded(*raw, !raw->folded); },
 	    [this, raw] { setMaximized(*raw, !raw->maximized); });
 	slot->panel->wire();
+	slot->panel->onPressedInside = [this, raw] { raiseOnPress(*raw); };
 	slot->content = std::move(content);
 	// **WHEN THE CONTENT'S MINIMUM MOVES, EVERY PANEL IS FITTED AGAIN.** `panelSizeOf` reads
 	// `minimumSize()` live, so this is the ASK rather than the answer — see
@@ -464,6 +468,7 @@ ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> con
 	}
 	slots_.push_back(std::move(slot));
 	place(*raw);
+	settleFront();
 	setVisible(true);
 	requestKeyboardFocus();
 	resized();
@@ -606,10 +611,39 @@ void ExpandedOverlay::raise(Slot& slot) {
 			removeChild(taken->panel.get());
 			addChild(taken->panel.get());
 			slots_.push_back(std::move(taken));
+			settleFront();
 			redraw();
 			return;
 		}
 	}
+}
+
+void ExpandedOverlay::settleFront() {
+	for (const auto& s : slots_) {
+		s->panel->setOnTop(s.get() == slots_.back().get());
+	}
+}
+
+void ExpandedOverlay::raiseOnPress(Slot& slot) {
+	if (slots_.empty() || slots_.back().get() == &slot) {
+		return; // already the front: no order changes
+	}
+	Slot* old = slots_.back().get();
+	for (auto it = slots_.begin(); it != slots_.end(); ++it) {
+		if (it->get() == &slot) {
+			std::unique_ptr<Slot> taken = std::move(*it);
+			slots_.erase(it);
+			slots_.push_back(std::move(taken));
+			break;
+		}
+	}
+	slot.escape.raise();
+	// THE PREVIOUS FRONT goes to the end of the children (just under the new front, which draws last as `onTop`); the pressed
+	// panel is not re-parented.
+	removeChild(old->panel.get());
+	addChild(old->panel.get());
+	settleFront();
+	redraw();
 }
 
 bool ExpandedOverlay::focusPanelFor(DeviceInstanceId device, DeviceNest nest) {
@@ -691,6 +725,7 @@ void ExpandedOverlay::dismissBy(Slot& slot, Dismissal how) {
 	if (taken == nullptr) {
 		return;
 	}
+	settleFront();
 	// OFF EVERY REDRAW LIST FIRST, AND THE ORDER IS THE WHOLE OF IT. `notify()` calls `redraw()` on
 	// every entry, so a list still holding this frame after the reset is a use-after-free waiting for
 	// the next thing that moves.

@@ -462,6 +462,18 @@ public:
 
 	void draw(visage::Canvas& canvas) override;
 
+	/// **A PRESS ANYWHERE IN THIS WINDOW — ITS BODY, A CONTROL, A PLOT — TELLS THE LAYER, BEFORE THE CONTROL HEARS IT.** The window
+	/// accepts keystrokes, so `WindowEventHandler::handleMouseDown` makes it the focus frame for any press whose nearer
+	/// ancestors take none, and that arrives here as `focusChanged(true, clicked)` ahead of the pressed frame's own mouse-down:
+	/// the one pre-hook visage offers. A text field inside keeps its own focus (it is the nearer acceptor), so a press there
+	/// does not raise. Set by the layer.
+	std::function<void()> onPressedInside;
+	void focusChanged(bool focused, bool wasClicked) override {
+		if (focused && wasClicked && onPressedInside) {
+			onPressedInside();
+		}
+	}
+
 	visage::Bounds titleBounds() const;
 	visage::Bounds closeBounds() const;
 	/// THE FOLD — a chevron beside the ✕ (backlog EE, 2026-09-15: a card that folds to its title strip
@@ -850,6 +862,12 @@ private:
 	/// nearest its preferred spot; over another only when the layer is too full to avoid it.
 	void place(Slot& slot);
 	void raise(Slot& slot);
+	/// **THE FRONT PANEL ALONE IS `onTop`**, so a press-raise can bring a panel forward without re-parenting it (re-parenting a frame
+	/// takes the press in flight off it). Called wherever the order moves.
+	void settleFront();
+	/// A PRESS INSIDE A BACK PANEL BRINGS IT FORWARD NOW, from its own press: the order and `onTop` move, and only the PREVIOUS front is
+	/// re-parented (just under the new one) — it holds no press in flight. A press on the front changes nothing.
+	void raiseOnPress(Slot& slot);
 	void beginPanelDrag(Slot& slot);
 	void dragPanelBy(Slot& slot, visage::Point delta);
 	void beginPanelResize(Slot& slot);

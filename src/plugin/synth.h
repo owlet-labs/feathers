@@ -1817,6 +1817,12 @@ private:
 	void hostNoteEnded(int16_t channel, int16_t key, int32_t noteId, const Voice* except, bool keyStaysLive) noexcept;
 	[[nodiscard]] bool keyHasLiveVoice(int16_t channel, int16_t key, const Voice* except) const noexcept;
 	std::array<device::NoteEvent, 8> chokeScratch_ {};
+	/// TEST ONLY, read through `soakReadingForTest`: the voice road's running counts (`CLAP_FEATHERS_SYNTH_VOICE_STARTS` and on).
+	uint64_t voiceStarts_ = 0;
+	uint64_t voiceRefused_ = 0;
+	uint64_t voiceRetriggers_ = 0;
+	uint64_t voiceReleases_ = 0;
+	uint64_t chainAdoptRefused_ = 0;
 
 	/// **EVERY KEY THE VOICES HAVE BEEN TOLD IS DOWN, AND THE NOTE ID IT WENT DOWN WITH** (2026-10-07: the
 	/// env misbehaved after playing an interstitial note while holding a lower note). Mono and Legato RETURN to a

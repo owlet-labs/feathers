@@ -330,6 +330,10 @@ namespace {
 bool isEditorNoteId(int32_t noteId) noexcept {
 	return noteId == kUiNoteId || noteId == kPadNoteId;
 }
+/// HOW HARD THE AUDIO THREAD TRIES TO TAKE A CHAIN PUBLISH WHOLE BEFORE IT RUNS THE BLOCK ON THE STATE IT HAD (`adoptChains`):
+/// reads, and atomic loads of the sequence while a publish is half written between them.
+constexpr int kChainAdoptAttempts = 4;
+constexpr int kChainAdoptWaits = 1024;
 } // namespace
 
 void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity) {
@@ -1664,7 +1668,25 @@ bool Synth::adoptChains(const rack::PublishedChainState& published) noexcept {
 	// INTO STAGING, AND SWAPPED IN ONLY WHOLE: a publish landing while we read leaves `chainState_` as it
 	// was — which the lane syncs from every block. (This snapshotted straight into `chainState_`, so a
 	// refused read left the lane a torn state to sync from; see `PublishedChainState`.)
-	if (!published.adopt(&chainState_, &chainStaging_, &chainsSequence_)) {
+	//
+	// **AND A REFUSED READ IS TRIED AGAIN NOW, A FEW TIMES, NOT LEFT TO THE NEXT BLOCK.** The editor republishes the whole
+	// record on every knob it moves, so a read can be refused because a hand was on ANY control. Left to the next
+	// block, a device just added (a Pattern) was not yet installed when this block's notes arrived: they went past it
+	// straight to the voices, and it never took them as its chord. MEASURED (test_note_drops "note drops (d)"): a chord on
+	// the first block with a hand on the editor lost the Pattern's steps in 7 runs of 900, each one exactly a run whose
+	// first block was refused; with these retries, none in 1800, and the blocks run on a stale state fell from about
+	// 12,000 to about 200 in 900 runs. NARROWED, NOT CLOSED: a publish still in flight after every attempt leaves this
+	// block on the old state, as before. A publish is a few microseconds of the message thread's, so the wait for an odd
+	// sequence to settle is bounded, and nothing here allocates. (The rack's drain, `RackBridge::drain`, has the same
+	// shape and is not measured.)
+	bool adopted = false;
+	for (int attempt = 0; attempt < kChainAdoptAttempts && !adopted; ++attempt) {
+		for (int wait = 0; wait < kChainAdoptWaits && (published.sequence() & 1u) != 0; ++wait) {
+		}
+		adopted = published.adopt(&chainState_, &chainStaging_, &chainsSequence_);
+	}
+	if (!adopted) {
+		++chainAdoptRefused_;
 		return false; // keep what we have, ask again next block
 	}
 	chainsAdoptedMirror_.store(chainsSequence_, std::memory_order_release);
@@ -4628,6 +4650,11 @@ bool Synth::soakReadingForTest(uint32_t what, double* out) const {
 	case CLAP_FEATHERS_SYNTH_LANE_MOD_RINGS: *out = static_cast<double>(lane.modRingsInUseForTest()); return true;
 	case CLAP_FEATHERS_SYNTH_LANE_RETIRED: *out = static_cast<double>(lane.retiredCountForTest()); return true;
 	case CLAP_FEATHERS_SYNTH_LANE_PENDING: *out = static_cast<double>(lane.pendingFieldsForTest()); return true;
+	case CLAP_FEATHERS_SYNTH_VOICE_STARTS: *out = static_cast<double>(voiceStarts_); return true;
+	case CLAP_FEATHERS_SYNTH_VOICE_REFUSED: *out = static_cast<double>(voiceRefused_); return true;
+	case CLAP_FEATHERS_SYNTH_VOICE_RETRIGGERS: *out = static_cast<double>(voiceRetriggers_); return true;
+	case CLAP_FEATHERS_SYNTH_VOICE_RELEASES: *out = static_cast<double>(voiceReleases_); return true;
+	case CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED: *out = static_cast<double>(chainAdoptRefused_); return true;
 	case CLAP_FEATHERS_SYNTH_PATTERN_HELD:
 	case CLAP_FEATHERS_SYNTH_PATTERN_SOUNDING:
 	case CLAP_FEATHERS_SYNTH_PATTERN_LOWEST:
@@ -4938,6 +4965,7 @@ int32_t Synth::Responder::initializeMultipleVoices(
 
 		Voice* voice = synth.claimFreeVoice();
 		if (voice == nullptr) {
+			++synth.voiceRefused_;
 			// Every slot busy, including the spares held for steal fades. Reporting the shortfall is
 			// the honest answer: the manager takes it as the note not sounding rather than being handed
 			// a voice that is still finishing someone else's.
@@ -5095,6 +5123,7 @@ int32_t Synth::Responder::initializeMultipleVoices(
 
 		working[index].voice = voice;
 		created++;
+		++synth.voiceStarts_;
 	}
 	// **A VOICE STARTED OUTSIDE ANY NOTE-ON IS MONO RETURNING TO A HELD KEY**: the
 	// note above it was let go. Mono is the retrigger mode, so the held note's envelope restarts with the voice,
@@ -5145,6 +5174,7 @@ void Synth::Responder::releaseVoice(Voice* voice, float velocity) {
 	if (voice == nullptr || !voice->isSounding() || voice->stage == Voice::Stage::Stealing) {
 		return;
 	}
+	++synth.voiceReleases_;
 	// THE FINGER (KS K9): a released string is damped toward Release's T60; a re-strike lifts it (pluckStrings).
 	synth.forEachLivePart(*voice, [](OscVoice& osc) { osc.releaseString(true); });
 	beginFade(*voice, Voice::Stage::Release, synth.releaseEdgeSeconds_, synth.sampleRate_,
@@ -5155,6 +5185,7 @@ void Synth::Responder::retriggerVoiceWithNewNoteID(Voice* voice, int32_t noteId,
 	if (voice == nullptr) {
 		return;
 	}
+	++synth.voiceRetriggers_;
 	// THE OLD NOTE ENDS HERE WITHOUT AN OFF — the host retriggers under a new id and will not lift
 	// the old one — so the lane is told, as `terminateVoice` tells it. The new id's own note-on
 	// reaches the lane through the ordinary road and starts its own entry.
@@ -5234,6 +5265,7 @@ void Synth::Responder::moveAndRetriggerVoice(Voice* voice, uint16_t port, uint16
 	// stronger claim than the two-state one it replaces: legato is the road where Analog and a
 	// gated move must be indistinguishable, and they are, because neither touches the phase.
 	moveVoice(voice, port, channel, key, velocity);
+	++synth.voiceRetriggers_;
 	if (voice != nullptr) {
 		// **AT THE NEW NOTE AT ONCE: A RELEASED KEY WAS NOT OVERLAPPED, SO NOTHING GLIDES**. The manager takes this road exactly when the voice it moves is no longer
 		// gated — its key was let go (and no pedal holds it) before this note arrived, and the voice is only sounding

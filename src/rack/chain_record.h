@@ -244,19 +244,28 @@ public:
 	/// **WHETHER THE CONTAINER THIS CHAIN SITS IN, AND EVERY ONE ABOVE IT, IS SWITCHED ON** — read from each holder's own enable field in
 	/// the record that holds it (the gate names that record and the holder). True with no gate: a top-level chain has no container.
 	[[nodiscard]] bool containersEnabled() const noexcept {
-		if (outer_.upstream == nullptr || outer_.host == nullptr) {
+		// BOUNDED, because a site's lanes are gated by records that can point back at one another: past the deepest nest a chain may have
+		// (`kMaxDepth`) the walk stops and answers "on" (a dimming that errs toward drawing normally).
+		static thread_local int walking = 0;
+		if (outer_.holdersEnabled == nullptr || outer_.host == nullptr || walking >= 16) {
 			return true;
 		}
-		const auto* above = static_cast<const ChainRecord*>(outer_.host);
-		const device::Descriptor* desc = above->descriptorOf(outer_.self);
+		++walking;
+		const bool on = outer_.holdersEnabled(outer_.host, outer_.self);
+		--walking;
+		return on;
+	}
+	/// Whether `holder` here is switched on AND every container above this record is: the answer a gate from this record gives.
+	[[nodiscard]] bool holderChainEnabled(DeviceInstanceId holder) const noexcept {
+		const device::Descriptor* desc = descriptorOf(holder);
 		if (desc != nullptr && desc->traits.enableControl >= 0) {
 			const auto at = static_cast<size_t>(desc->traits.enableControl);
-			const DeviceState& row = above->rowOf(outer_.self);
+			const DeviceState& row = rowOf(holder);
 			if (at < row.field.size() && row.field[at] < 0.5f) {
 				return false;
 			}
 		}
-		return above->containersEnabled();
+		return containersEnabled();
 	}
 	/// **THE GATE A HOST HANDS A CHAIN IT HOLDS**, over this record — the maker `Converger` wants, for
 	/// every host whose record this is (Feathers' bridge, the rack's, a rack in a rack).
@@ -266,6 +275,9 @@ public:
 		gate.self = self;
 		gate.upstream = [](const void* host, DeviceInstanceId who, backplane::Source s) {
 			return static_cast<const ChainRecord*>(host)->sourceUpstreamOf(s, who);
+		};
+		gate.holdersEnabled = [](const void* host, DeviceInstanceId who) {
+			return static_cast<const ChainRecord*>(host)->holderChainEnabled(who);
 		};
 		return gate;
 	}

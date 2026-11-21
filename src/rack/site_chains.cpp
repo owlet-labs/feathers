@@ -176,6 +176,11 @@ void SiteChains::setOuterGate(const device::OuterGate& gate) {
 	device::OuterGate post = gate;
 	if (gate.upstream != nullptr) {
 		post.host = this;
+		post.holdersEnabled = [](const void* host, DeviceInstanceId) {
+			// THE LANE'S HOLDER IS THE SITE'S DEVICE: its gate outside answers (the lane's `host` is this site, whose gate it kept).
+			const device::OuterGate& g = static_cast<const SiteChains*>(host)->outerGate_;
+			return g.holdersEnabled == nullptr || g.host == nullptr || g.holdersEnabled(g.host, g.self);
+		};
 		post.upstream = [](const void* host, DeviceInstanceId self, backplane::Source s) {
 			const auto* site = static_cast<const SiteChains*>(host);
 			if (s.isExport() && s.device == site->owner_) {
@@ -188,6 +193,11 @@ void SiteChains::setOuterGate(const device::OuterGate& gate) {
 	device::OuterGate pre = gate;
 	if (gate.upstream != nullptr) {
 		pre.host = this;
+		pre.holdersEnabled = [](const void* host, DeviceInstanceId) {
+			// THE LANE'S HOLDER IS THE SITE'S DEVICE: its gate outside answers (the lane's `host` is this site, whose gate it kept).
+			const device::OuterGate& g = static_cast<const SiteChains*>(host)->outerGate_;
+			return g.holdersEnabled == nullptr || g.host == nullptr || g.holdersEnabled(g.host, g.self);
+		};
 		pre.upstream = [](const void* host, DeviceInstanceId self, backplane::Source s) {
 			const auto* site = static_cast<const SiteChains*>(host);
 			// Only this site's OWN exports are refused here; another holder's, placed before this one, reaches PRE as it

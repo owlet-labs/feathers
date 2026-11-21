@@ -537,6 +537,95 @@ TEST_CASE("a macro arrives as a parameter event and reads back through the host'
 	REQUIRE(value == doctest::Approx(0.75));
 }
 
+namespace {
+
+/// A GLOBAL PARAM_MOD for `id`, the road a DAW modulator mapped onto a macro takes.
+struct OneMod {
+	clap_event_param_mod mod {};
+	clap_input_events in {};
+
+	OneMod(clap_id id, double amount) {
+		mod.header.size = sizeof(mod);
+		mod.header.time = 0;
+		mod.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+		mod.header.type = CLAP_EVENT_PARAM_MOD;
+		mod.header.flags = 0;
+		mod.param_id = id;
+		mod.amount = amount;
+		mod.note_id = -1;
+		mod.port_index = -1;
+		mod.channel = -1;
+		mod.key = -1;
+		in.ctx = this;
+		in.size = [](const clap_input_events*) -> uint32_t { return 1; };
+		in.get = [](const clap_input_events* list, uint32_t) -> const clap_event_header* {
+			return &static_cast<const OneMod*>(list->ctx)->mod.header;
+		};
+	}
+};
+
+} // namespace
+
+TEST_CASE("the Chain plugin's bipolar macro reads -1..+1 from the host's value and from its modulation, by value") {
+	// THE CONTRACT: a macro is a stored 0..1 value read through its polarity (`2v - 1` bipolar). A host value
+	// `v` reads `2v - 1`; a host modulation offset `m` on a base `b` reads `2 x clamp(b + m, 0, 1) - 1`; a route of
+	// amount `a` from the macro moves its destination by `a x reading x span`. The macros are declared
+	// CLAP_PARAM_IS_MODULATABLE, so a DAW modulator reaches them by PARAM_MOD alone.
+	Venue v;
+	const auto* t = v.test();
+	const auto* params = static_cast<const clap_plugin_params*>(v.plugin->get_extension(v.plugin, CLAP_EXT_PARAMS));
+	clap_param_info info {};
+	REQUIRE(params->get_info(v.plugin, 0, &info));
+	CHECK((info.flags & CLAP_PARAM_IS_MODULATABLE) != 0);
+
+	const uint32_t id = t->add_device(v.plugin, fx::filter::kTraits.tag);
+	REQUIRE(id != 0);
+	const size_t cutoff = static_cast<size_t>(fx::filter::Param::Cutoff);
+	const device::ParamDesc& desc = fx::filter::kDescriptor.params[cutoff];
+	REQUIRE(desc.modulatable);
+	auto* bridge = static_cast<rack::RackBridge*>(t->bridge(v.plugin));
+	bridge->setMacroBipolar(0, true);
+	v.tone();
+	v.run();
+	const float base = t->resolved_field(v.plugin, id, cutoff);
+	constexpr float kAmount = 0.25f;
+	t->set_route(v.plugin, 0, 0, id, static_cast<uint32_t>(cutoff), kAmount);
+	const double span = device::routeSpanOf(desc);
+	const auto expectAt = [&](double reading) {
+		return static_cast<float>(device::withRouteOffset(desc, base, kAmount * reading * span));
+	};
+
+	// (a) THE VALUE ROAD: 0, .25, .5, .75, 1 read -1, -.5, 0, .5, 1.
+	const std::array<double, 5> stored { 0.0, 0.25, 0.5, 0.75, 1.0 };
+	std::array<float, 5> seen {};
+	for (size_t k = 0; k < stored.size(); ++k) {
+		CAPTURE(stored[k]);
+		OneEvent e(0, stored[k]);
+		v.run(&e.in);
+		seen[k] = t->resolved_field(v.plugin, id, cutoff);
+		CHECK(seen[k] == doctest::Approx(expectAt(2.0 * stored[k] - 1.0)).epsilon(1e-6));
+	}
+	CHECK(seen[0] < seen[2]);
+	CHECK(seen[4] > seen[2]); // non-vacuity: both halves moved the destination, in opposite directions
+
+	// (b) THE MODULATION ROAD, on a base of 0.5: offsets -0.5, -0.25, 0, +0.25, +0.5 read -1, -.5, 0, .5, 1.
+	{
+		OneEvent e(0, 0.5);
+		v.run(&e.in);
+	}
+	const std::array<double, 5> offsets { -0.5, -0.25, 0.0, 0.25, 0.5 };
+	for (size_t k = 0; k < offsets.size(); ++k) {
+		CAPTURE(offsets[k]);
+		OneMod m(0, offsets[k]);
+		v.run(&m.in);
+		CHECK(t->resolved_field(v.plugin, id, cutoff) == doctest::Approx(expectAt(2.0 * (0.5 + offsets[k]) - 1.0)).epsilon(1e-6));
+	}
+	// AND THE BASE THE HOST READS BACK IS THE HAND'S, not the modulated sum.
+	double value = -1.0;
+	REQUIRE(params->get_value(v.plugin, 0, &value));
+	CHECK(value == doctest::Approx(0.5));
+}
+
 TEST_CASE("a macro routed at a device control moves that control's RESOLVED VALUE") {
 	// END TO END, through the real API: a DAW's automation lane reaches a device control it has never
 	// heard of, by way of a route the user drew. Asserted as a VALUE.

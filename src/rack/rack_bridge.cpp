@@ -747,6 +747,10 @@ void RackBridge::setMacro(size_t index, float value) {
 	}
 }
 
+void RackBridge::setMacroMod(size_t index, float offset) {
+	(void)queue_.push(RackEdit { RackEdit::Kind::MacroMod, index, offset }); // an event; the mirror keeps the hand's value
+}
+
 void RackBridge::beginMacroGesture(size_t index) noexcept {
 	if (macroOutbox_ != nullptr) {
 		(void)macroOutbox_->begin(index);
@@ -894,6 +898,7 @@ void RackBridge::drain() {
 		switch (e.kind) {
 		case RackEdit::Kind::Macro: engine_.setMacro(e.a, e.value); break;
 		case RackEdit::Kind::MacroPolarity: engine_.setMacroBipolar(e.a, e.value != 0.0f); break;
+		case RackEdit::Kind::MacroMod: engine_.setMacroMod(e.a, e.value); break;
 		case RackEdit::Kind::Gate: engine_.setGate(e.value != 0.0f); break;
 		case RackEdit::Kind::Retrigger: engine_.retrigger(); break;
 		}

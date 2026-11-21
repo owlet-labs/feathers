@@ -18,6 +18,7 @@
 #pragma once
 
 #include "device/registry.h"
+#include "fx/drum/drum_likes.h"
 #include "dsp/drum_voice.h"
 
 #include <array>
@@ -512,6 +513,15 @@ Row rowOf(const Settings& settings);
 extern const device::AudioOps kAudioOps;
 extern const device::NoteOps kNoteOps;
 
+/// **THE LIKES, A HAND'S BLOCK** (`drum.likes.v1`, drum_likes.h): written by the window through `DeviceHost::setBlock`, kept and saved with the device.
+uint64_t readBlock(const void* storage, size_t index, float* out, size_t capacity);
+bool restoreBlock(void* storage, size_t index, const float* in, size_t n);
+bool applyBlock(void* storage, size_t index, const float* in, size_t n);
+inline constexpr device::StateBlockDesc kBlocks[] = {
+	{ .key = "drum.likes.v1", .floats = kLikesBlockWords, .handEdited = true },
+};
+inline constexpr device::StateOps kStateOps { .blocks = kBlocks, .read = &readBlock, .restore = &restoreBlock, .apply = &applyBlock };
+
 inline constexpr device::Descriptor kDescriptor {
 	.traits = kTraits,
 	.params = kParamDescs,
@@ -519,6 +529,7 @@ inline constexpr device::Descriptor kDescriptor {
 	.audio = &kAudioOps,
 	// **THE NOTE ROAD SHARES `.audio`'S STORAGE**, as RESONATE's does: `RackEngine` takes the first non-null ops and allocates once.
 	.notes = &kNoteOps,
+	.state = &kStateOps,
 	.category = device::Category::Oscillators,
 };
 

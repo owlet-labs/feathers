@@ -1427,38 +1427,7 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 				report.bypassFrames += mod.setBypass((modifiers & visage::kModifierAlt) != 0);
 			}
 		}
-		// **ESC MUST HAVE SOMEWHERE TO GO WHILE ANYTHING ON THE ESC STACK IS OPEN.** visage's `handleKeyDown`
-		// returns at once when no frame holds the keyboard, so a close that takes the focused frame with it
-		// (a device window's ✕, a card deleted) leaves the focus on nobody and the next Esc never reaches the
-		// root's handler: assign mode could then be left only by pressing some other arm, which moves the
-		// focus. The root accepts keys and every handler asks the one stack, so handing it the keyboard
-		// whenever the stack is non-empty and nobody holds it is the whole repair, from every road at once.
-		if (surfaces != nullptr && !surfaces->escapeStack().empty()) {
-			restoreKeyboardToRoot();
-		}
 		return report;
-	}
-
-	/// Whether `frame` or anything under it holds the keyboard (visage keeps the focused frame private to its window).
-	static bool holdsKeyboard(const visage::Frame& frame) {
-		if (frame.hasKeyboardFocus()) {
-			return true;
-		}
-		for (const visage::Frame* child : frame.children()) {
-			if (holdsKeyboard(*child)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/// The keyboard to the editor's root when no frame in this window holds it (see `tickOnce`). A frame that
-	/// holds it already, however deep, is left alone: a type-in's focus is its own.
-	void restoreKeyboardToRoot() {
-		visage::Frame* top = window.app();
-		if (top != nullptr && top->acceptsKeystrokes() && !holdsKeyboard(*top)) {
-			top->requestKeyboardFocus();
-		}
 	}
 
 	/// Show whichever surface the header's switch names, and only that one. A hidden surface costs

@@ -96,6 +96,10 @@ ChainColumn::ChainColumn(rack::RackBridge& bridge, WidgetRegistry& registry, Mod
 	rename_ = std::make_unique<DeviceRename>(*this, notifier_);
 	rename_->setHistory(&history_);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more.
 		if (selection_->key(e)) {
 			afterVerb();
@@ -731,8 +735,11 @@ void ChainColumn::expandSite(DeviceInstanceId device) {
 		view->setModulation(&mod_, &history_);
 		view->setNest(nest_);
 	}
-	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture,
-	                                               siteViewDescriptor().traits.name, [this] { pruneExpanded(); });
+	// A NAMED HOLDER LENDS THE PANEL ITS NAME: "Pump · Pre/Post"; an unnamed one keeps the site's own title.
+	const std::string holderName = bridge_.userNameOf(device);
+	const std::string siteTitle = holderName.empty() ? std::string(siteViewDescriptor().traits.name)
+	                                                 : holderName + " \xC2\xB7 " + siteViewDescriptor().traits.name;
+	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture, siteTitle, [this] { pruneExpanded(); });
 	if (presented != kNoSurface) {
 		expanded_.push_back(presented);
 	}
@@ -986,7 +993,7 @@ void ChainColumn::showSlotMenu(DeviceInstanceId device) {
 	menu.onSelection() = [this, device, options](int id) {
 		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
 			if (FxCard* card = cardOf(device); card != nullptr) {
-				(void)rename_->pick(id, bridge_, device, *card, renameAnchorOn(*card, card->bodyLeft(), card->bodyTopEdge()));
+				(void)rename_->pick(id, bridge_, device, *card, card->renameAnchor());
 			}
 		}
 		else if (id >= kVerbIds) {

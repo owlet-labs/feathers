@@ -85,6 +85,10 @@ FxLane::FxLane(ParamBridge& bridge, WidgetRegistry& registry, ModState* mod, Edi
 		rename_->setHistory(history_);
 	}
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more.
 		if (selection_->key(e)) {
 			afterVerb();
@@ -1097,7 +1101,7 @@ void FxLane::showSlotMenu(size_t slot) {
 			if (slot < deviceCount() && slot < cards_.size() && cards_[slot] != nullptr) {
 				FxCard& card = *cards_[slot];
 				(void)rename_->pick(id, deviceHost_, bridge_.fxDeviceAt(slot), card,
-				                    renameAnchorOn(card, card.bodyLeft(), card.bodyTopEdge()));
+				                    card.renameAnchor());
 			}
 		}
 		else if (id >= kVerbIds) {

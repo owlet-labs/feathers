@@ -4201,4 +4201,223 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 		}
 	}
 }
+
+namespace {
+
+/// A REAL PRESS THROUGH THE WINDOW ROOT, left or right: the frame under the point gets down and up, the way the window delivers them.
+void pressAtWindow(visage::Frame* top, visage::Point where, bool right) {
+	visage::Frame* const down = top->frameAtPoint(where);
+	REQUIRE(down != nullptr);
+	const auto eventAt = [&](bool isDown) {
+		visage::MouseEvent e;
+		e.window_position = where;
+		e.position = where - down->positionInWindow();
+		e.event_frame = down;
+		e.button_id = right ? visage::kMouseButtonRight : visage::kMouseButtonLeft;
+		e.button_state = isDown ? e.button_id : visage::kMouseButtonNone;
+		e.is_down = isDown;
+		e.repeat_click_count = 1;
+		return e;
+	};
+	down->processMouseDown(eventAt(true));
+	down->processMouseUp(eventAt(false));
+}
+
+struct DeviceRenameVenue {
+	visage::Frame* top = nullptr;
+	ui::FxCard* card = nullptr;
+	ui::DeviceRename* rename = nullptr;
+	feathers::backplane::DeviceHost* host = nullptr;
+	DeviceInstanceId device = kNoInstance;
+	std::function<size_t()> count; ///< devices in the card's chain, which a stray key must not change
+	std::function<void()> tick;
+};
+
+/// THE DEVICE RENAME FIELD, BY BOTH ROADS ("..." menu and right-click on the head), on a card in a real window: visible, one line, inside
+/// the window, topmost at its centre from the root, focused; the chain's keys stand down, Esc closes only the field, and typing plus Enter
+/// puts the name on the card's head.
+void proveDeviceRenameField(DeviceRenameVenue& v) {
+	for (int route = 0; route < 2; ++route) {
+		CAPTURE(route);
+		(void)v.host->setUserName(v.device, "");
+		v.tick();
+		const auto open = [&] {
+			const visage::Bounds part = route == 0 ? v.card->slotMenuBoundsForTest() : v.card->renameAnchor();
+			const visage::Point o = v.card->positionInWindow();
+			// THE HEAD'S RIGHT PRESS: a spine head has its name down the side, so aim there.
+			visage::Point at { o.x + part.x() + part.width() * 0.5f, o.y + part.y() + part.height() * 0.5f };
+			if (route == 1 && v.card->headEdge() == ui::CardHeadEdge::Left) {
+				at = { o.x + ui::kCardHeadHeight * 0.5f, o.y + static_cast<float>(v.card->height()) * 0.5f };
+			}
+			pressAtWindow(v.top, at, route == 1);
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*v.top);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			popup->timerCallback();
+			v.tick();
+		};
+		const size_t before = v.count();
+		open();
+		REQUIRE(v.rename->renaming());
+		ui::TextField& field = v.rename->field();
+		CHECK(field.isVisible());
+		CHECK(field.width() > 0);
+		CHECK(field.height() > 0);
+		CHECK(field.height() <= 26); // ONE LINE, whatever the card is
+		const visage::Point fieldAt = field.positionInWindow();
+		const visage::Point centre { fieldAt.x + static_cast<float>(field.width()) * 0.5f, fieldAt.y + static_cast<float>(field.height()) * 0.5f };
+		CHECK(fieldAt.x >= 0.0f);
+		CHECK(fieldAt.y >= 0.0f);
+		CHECK(fieldAt.x + static_cast<float>(field.width()) <= static_cast<float>(v.top->width()));
+		CHECK(fieldAt.y + static_cast<float>(field.height()) <= static_cast<float>(v.top->height()));
+		CHECK(v.top->frameAtPoint(centre) == static_cast<visage::Frame*>(&field)); // nothing drawn over it
+		CHECK(field.hasKeyboardFocus());
+		CHECK(focusedUnder(v.top) == static_cast<visage::Frame*>(&field));
+		// THE KEYS ARE THE FIELD'S: a chord it leaves to the host must not act on the chain, and Delete/Backspace only edit the text.
+		for (const visage::KeyCode c : { visage::KeyCode::V, visage::KeyCode::C, visage::KeyCode::X }) {
+			CHECK_FALSE(keyFromFocusUp(&field, visage::KeyEvent { c, visage::kModifierRegCtrl, true }));
+			CHECK(v.count() == before);
+			CHECK(v.rename->renaming());
+		}
+		for (const visage::KeyCode c : { visage::KeyCode::Backspace, visage::KeyCode::Delete }) {
+			CHECK(keyFromFocusUp(&field, visage::KeyEvent { c, 0, true }));
+			CHECK(v.count() == before);
+		}
+		// ESC CLOSES ONLY THE FIELD: the device and its (absent) name stay.
+		field.begin("");
+		field.textInput("zz");
+		CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Escape, 0, true }));
+		CHECK_FALSE(v.rename->renaming());
+		CHECK(v.host->userNameOf(v.device).empty());
+		CHECK(v.count() == before);
+		// TYPED CHARACTERS AND ENTER NAME THE INSTANCE, and the card's head says so.
+		open();
+		REQUIRE(v.rename->renaming());
+		field.begin("");
+		field.textInput("Pump");
+		CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		CHECK_FALSE(v.rename->renaming());
+		CHECK(v.host->userNameOf(v.device) == "Pump");
+		v.tick();
+		CHECK(v.card->titleForTest() == "Pump");
+		CHECK(v.count() == before);
+	}
+}
+
+} // namespace
+
+TEST_CASE("device rename: in a real window the slot menu's and the header's Rename leave the field visible, one line, on top, focused, with the chain's keys standing down - fx lane, Rack card in Tabs, Rack window") {
+	namespace pr = feathers::rack::parallel;
+	for (const int where : { 0, 1, 2 }) { // lane card, Rack card's front column, Rack window's rail column
+		CAPTURE(where);
+		EditorFixture f;
+		feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+		bodies.prepare(48000.0, 4096);
+		for (size_t s = 0; s < kMaxFxSlots; ++s) {
+			if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+				(void)f.bridge.removeFxDevice(s);
+			}
+		}
+		BridgeDeviceHost host(f.bridge);
+		void* body = nullptr;
+		DeviceInstanceId rackId = kNoInstance;
+		size_t rackSlot = 0;
+		if (where == 0) {
+			(void)f.addFx(fx::harm::kTraits.tag);
+			(void)f.addFx(fx::owltt::kTraits.tag);
+			(void)f.addFx(fx::harm::kTraits.tag);
+		}
+		else {
+			const size_t at = bodies.addDevice(pr::kTraits.tag);
+			REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+			body = bodies.slotAtLane(at).storage.get();
+			const size_t slot = f.addFx(pr::kTraits.tag);
+			rackSlot = slot;
+			rackId = f.bridge.fxDeviceAt(slot);
+			f.bridge.fxBodies().attach(rackId, body);
+			pr::Rack& rack = *pr::rackOf(body);
+			while (rack.chainCount() < 3) {
+				REQUIRE(rack.addChain() != SIZE_MAX);
+			}
+			for (size_t i = 0; i < 3; ++i) {
+				rack.setChainKey(i, static_cast<int>(i));
+				rack.setOpen(i, false);
+				REQUIRE(rack.chainAt(i)->bridge()->addDevice(fx::harm::kTraits.tag) != kNoInstance);
+				REQUIRE(rack.chainAt(i)->bridge()->addDevice(fx::owltt::kTraits.tag) != kNoInstance);
+			}
+			host.setField(rackId, static_cast<size_t>(pr::Param::View), 1.0f); // Tabs
+		}
+		f.lane->resized();
+		Display* display = XOpenDisplay(nullptr);
+		REQUIRE(display != nullptr);
+		const int screen = DefaultScreen(display);
+		uint32_t w = 0, h = 0;
+		REQUIRE(f.gui.getSize(&w, &h));
+		const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+		                                            BlackPixel(display, screen));
+		XSync(display, False);
+		clap_window window {};
+		window.api = CLAP_WINDOW_API_X11;
+		window.x11 = parent;
+		REQUIRE(f.gui.setParent(&window));
+		f.gui.setPopoutWindowForTest(false);
+		visage::Frame* const top = f.gui.root()->topParentFrame();
+		DeviceRenameVenue v;
+		v.top = top;
+		v.host = &host;
+		ui::ParallelRackCard* card = where == 0 ? nullptr : treeFind<ui::ParallelRackCard>(top);
+		ui::ParallelRackExpanded* panel = nullptr;
+		if (where == 2) {
+			f.lane->onExpandDevice(rackSlot);
+			REQUIRE(f.gui.expandedForTest()->open());
+			panel = treeFind<ui::ParallelRackExpanded>(top);
+			REQUIRE(panel != nullptr);
+		}
+		v.tick = [&] {
+			for (int i = 0; i < 3; ++i) {
+				(void)f.gui.tickForTest();
+				if (card != nullptr) {
+					(void)card->update();
+				}
+				if (panel != nullptr) {
+					(void)panel->update();
+				}
+			}
+		};
+		v.tick();
+		ui::ChainColumn* column = nullptr;
+		if (where == 0) {
+			v.card = f.lane->cardAt(1);
+			v.device = f.bridge.fxDeviceAt(1);
+			v.rename = &f.lane->renameForTest();
+			v.count = [&] {
+				size_t n = 0;
+				for (size_t s = 0; s < kMaxFxSlots; ++s) {
+					n += f.bridge.fxDeviceAt(s) != kNoInstance ? 1 : 0;
+				}
+				return n;
+			};
+		}
+		else {
+			REQUIRE((card != nullptr || panel != nullptr));
+			column = where == 1 ? card->frontForTest().columnForTest() : panel->railForTest(0).columnForTest();
+			REQUIRE(column != nullptr);
+			v.device = column->bridge().deviceAtPosition(0);
+			REQUIRE(v.device != kNoInstance);
+			v.card = column->cardOf(v.device);
+			v.rename = &column->renameForTest();
+			v.host = &column->bridge();
+			v.count = [column] { return column->bridge().chainLength(0); };
+		}
+		REQUIRE(v.card != nullptr);
+		proveDeviceRenameField(v);
+		if (body != nullptr) {
+			f.bridge.fxBodies().detach(rackId, body);
+		}
+		f.gui.destroy();
+		XDestroyWindow(display, parent);
+		XCloseDisplay(display);
+	}
+}
+
 #endif // defined(__linux__)

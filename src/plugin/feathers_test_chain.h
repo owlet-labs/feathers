@@ -331,6 +331,9 @@ struct clap_plugin_feathers_test_chain {
 	/// record now wants, free what the audio thread parked). The functions above edit the record and build nothing, so a case that models
 	/// an editor open while a device is added or switched calls this where the editor would. Null in the rack.
 	bool (*provision)(const clap_plugin* plugin);
+	/// **NAME THE LANE DEVICE AT `position`** (appended): the editor's Rename commit, through `DeviceHost::setUserName`, so a case can say by
+	/// value that the DAW's slot captions follow and the host is told once. An empty name clears it. False when no device is there. Null in the rack.
+	bool (*set_device_name)(const clap_plugin* plugin, uint32_t position, const char* name);
 };
 
 } // extern "C"

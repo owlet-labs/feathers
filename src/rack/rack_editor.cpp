@@ -225,6 +225,10 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	// only shows up when a second road wants it.
 	setAcceptsKeystrokes(true);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// UNDO AND REDO (backlog JB C10): main modifier + Z, + Shift + Z or + Y — Feathers' chord (`ui::undoChordOf`) — walk this
 		// editor's history, which in a nested window forwards to the outermost host's: one history per plugin. THE ONLY ROAD: the
 		// header has no buttons, so the keys must work, and `RackGui` hands the chord here when nothing inside the editor holds the keyboard.
@@ -1439,7 +1443,7 @@ void RackEditor::showSlotMenu(DeviceInstanceId device) {
 		if (id == ui::DeviceRename::kRenameRow || id == ui::DeviceRename::kClearRow) {
 			if (const CardEntry* at = entryOf(device); at != nullptr && at->card != nullptr) {
 				ui::FxCard& card = *at->card;
-				(void)rename_->pick(id, laneOf(device), device, card, ui::renameAnchorOn(card, card.bodyLeft(), card.bodyTopEdge()));
+				(void)rename_->pick(id, laneOf(device), device, card, card.renameAnchor());
 			}
 		}
 		else if (id >= kVerbIds) {
@@ -1710,9 +1714,11 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 					view->setModulation(&mod, &history);
 					view->setNest(nest_);
 				}
+				const std::string holderName = lane.userNameOf(device);
+				const std::string siteTitle = holderName.empty() ? std::string(ui::siteViewDescriptor().traits.name)
+				                                                 : holderName + " \xC2\xB7 " + ui::siteViewDescriptor().traits.name;
 				const ui::SurfaceId presented =
-				    surfaces_->present(std::move(content), ui::SurfaceNeed::SpansGesture,
-				                       ui::siteViewDescriptor().traits.name, [this] { pruneExpanded(); });
+				    surfaces_->present(std::move(content), ui::SurfaceNeed::SpansGesture, siteTitle, [this] { pruneExpanded(); });
 				if (presented != ui::kNoSurface) {
 					expanded_.push_back(presented);
 				}

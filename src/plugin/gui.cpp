@@ -2238,7 +2238,7 @@ bool Gui::create(const char* api, bool isFloating) noexcept {
 	// **ONE OPENER FOR EVERY DEVICE A HAND CAN EXPAND** — the fx lane's cards and the modulator strip's
 	// Addressed by id and
 	// descriptor, so neither caller can hand it a position.
-	const auto openDeviceWindow = [this](DeviceInstanceId device, const device::Descriptor* desc) {
+	const auto openDeviceWindow = [this](DeviceInstanceId device, const device::Descriptor* desc, DeviceInstanceId holder = kNoInstance) {
 		// **A PRESS WHILE THIS DEVICE'S WINDOW IS UP CLOSES IT**. Both hosts are
 		// asked whatever the preference says, because it can be flipped while a panel is open. This
 		// editor is the outermost host, so its devices are in the top chain: the default nest, which is
@@ -2294,7 +2294,10 @@ bool Gui::create(const char* api, bool isFloating) noexcept {
 			impl_->expandedWindow->dismiss();
 		}
 		// THROUGH THE SEAM THE RACK USES — canvas or overlay is the layers' call, not this editor's.
-		const std::string title = impl_->bridge.userNameOf(device).empty() ? std::string(desc->traits.name) : impl_->bridge.userNameOf(device);
+		// THE PLAYER'S NAME for the instance; a site panel is titled by its HOLDER's name ("Pump · Pre/Post") when it has one.
+		const std::string named = impl_->bridge.userNameOf(holder != kNoInstance ? holder : device);
+		const std::string title = named.empty() ? std::string(desc->traits.name)
+		                                        : (holder != kNoInstance ? named + " \xC2\xB7 " + desc->traits.name : named);
 		(void)impl_->surfaces->present(std::move(view), SurfaceNeed::SpansGesture, title, [this] {
 			// THE LANE REDRAWS BECAUSE ITS EXPAND BUTTON MAY DRAW DIFFERENTLY once nothing is open.
 			// It does not today; the road exists so that the day it does, the button is not a
@@ -2344,7 +2347,7 @@ bool Gui::create(const char* api, bool isFloating) noexcept {
 		if (!impl_->deviceHost.openSite(device)) {
 			return;
 		}
-		openDeviceWindow(siteKeyOf(device), &siteViewDescriptor());
+		openDeviceWindow(siteKeyOf(device), &siteViewDescriptor(), device);
 	});
 	if (impl_->modPanel != nullptr) {
 		// THE STRIP'S OWN TWO ROADS, the lane's twins: its cards are faces of devices by id already.

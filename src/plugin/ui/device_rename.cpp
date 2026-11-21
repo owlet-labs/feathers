@@ -117,8 +117,13 @@ void DeviceRename::begin(backplane::DeviceHost& host, DeviceInstanceId device, v
 	const visage::Point from = source.positionInWindow();
 	const visage::Point to = surface_.positionInWindow();
 	constexpr float kFieldHeight = 24.0f; // one line, whatever the header is
-	field_->setBounds(from.x - to.x + anchor.x(), from.y - to.y + anchor.y() + (anchor.height() - kFieldHeight) * 0.5f,
-	                  std::max(anchor.width(), 120.0f), kFieldHeight);
+	// INSIDE THE SURFACE WHATEVER THE ANCHOR: a card at an edge, or a wide head, must not put the field half outside the window.
+	const float sw = static_cast<float>(surface_.width());
+	const float sh = static_cast<float>(surface_.height());
+	const float fw = std::min(std::max(anchor.width(), 120.0f), sw);
+	const float fx = std::clamp(from.x - to.x + anchor.x(), 0.0f, std::max(0.0f, sw - fw));
+	const float fy = std::clamp(from.y - to.y + anchor.y() + (anchor.height() - kFieldHeight) * 0.5f, 0.0f, std::max(0.0f, sh - kFieldHeight));
+	field_->setBounds(fx, fy, fw, kFieldHeight);
 	field_->setVisible(true);
 	const device::Descriptor* desc = host.descriptorOf(device);
 	const std::string current = host.userNameOf(device);

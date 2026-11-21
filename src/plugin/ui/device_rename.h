@@ -68,9 +68,4 @@ private:
 	DeviceInstanceId device_ = kNoInstance;
 };
 
-/// WHERE THE FIELD OPENS ON A CARD: one line over the top of its body, clear of the head's marks (a spine head runs down the side).
-[[nodiscard]] inline visage::Bounds renameAnchorOn(const visage::Frame& card, float bodyLeft, float bodyTop) {
-	return { bodyLeft, bodyTop, static_cast<float>(card.width()) - bodyLeft, 24.0f };
-}
-
 } // namespace feathers::ui

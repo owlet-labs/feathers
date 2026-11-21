@@ -201,6 +201,10 @@ public:
 	[[nodiscard]] uint64_t builtWarpSerialForTest(size_t p) const noexcept { return built_[p].warpSerial; }
 	[[nodiscard]] size_t soundingForTest() const noexcept { return em_.soundingCount(); }
 	[[nodiscard]] const HeldChord& chordForTest() const noexcept { return em_.chord(); }
+	/// The chord last played into the device (`StepEmitter::recentChord`): what an export plays over.
+	[[nodiscard]] const HeldChord& recentChord() const noexcept { return em_.recentChord(); }
+	/// A chord is HELD (Latch's, or keys under the fingers), as against the idle one `chordForTest` falls back to.
+	[[nodiscard]] bool chordHeld() const noexcept { return em_.chordHeld(); }
 	/// THE RECIPE pattern `p` is built from now.
 	[[nodiscard]] pattern::Recipe recipeOf(size_t p) const noexcept;
 	[[nodiscard]] double stepSecondsForTest() const noexcept { return stepSecondsNow_; }

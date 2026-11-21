@@ -62,6 +62,7 @@ struct Parsed {
 	int ppq = 0;
 	uint32_t usPerBeat = 0;
 	uint32_t endTick = 0;
+	std::string trackName;
 	std::vector<FileNote> notes;
 	/// Per channel: the controller writes (cc, value) in order, and the bends (tick, value).
 	std::map<int, std::vector<std::pair<int, int>>> cc;
@@ -112,6 +113,9 @@ Parsed parse(const std::vector<uint8_t>& b) {
 		if (status == 0xFF) {
 			const uint8_t type = b[i++];
 			const uint32_t n = varLen();
+			if (type == 0x03) {
+				p.trackName.assign(b.begin() + static_cast<std::ptrdiff_t>(i), b.begin() + static_cast<std::ptrdiff_t>(i + n));
+			}
 			if (type == 0x51) {
 				p.usPerBeat = (uint32_t { b[i] } << 16) | (uint32_t { b[i + 1] } << 8) | b[i + 2];
 			}
@@ -571,4 +575,97 @@ TEST_CASE("midi: a locked row is exported as it plays — the file equals the li
 			CHECK(f.notes[i].off == r.notes[i].off);
 		}
 	}
+}
+
+namespace {
+
+/// THE PATCH AFTER THE KEYS WERE PLAYED: a device is handed the row, each key in `keys` is pressed and let go in turn, and the
+/// play block it publishes is what a save (and the editor) reads.
+pat::MidiSource playedSource(pat::MidiSource src, const std::vector<int>& keys) {
+	pat::PatternDevice d;
+	d.prepare(48000.0);
+	d.setFields(src.row.data(), src.row.size());
+	std::array<device::NoteEvent, 8> passed {};
+	int id = 1;
+	for (const int key : keys) {
+		size_t n = 0;
+		device::NoteEvent e {};
+		e.kind = device::NoteEvent::Kind::On;
+		e.noteId = id;
+		e.key = key;
+		e.velocity = 0.8;
+		d.processNotes(&e, 1, passed.data(), passed.size(), &n);
+		e.kind = device::NoteEvent::Kind::Off;
+		d.processNotes(&e, 1, passed.data(), passed.size(), &n);
+		++id;
+	}
+	d.tick();
+	src.play.assign(feathers::mod::arp::kPlayWords, 0.0f);
+	REQUIRE(d.readPlay(src.play.data(), src.play.size()) > 0);
+	return src;
+}
+
+/// **THE EXPECTED NOTES, RESTATED FROM THE STEP DATA**: the reference over C4, every key moved by `semitones` (a Melody over the
+/// default Transpose keys is its tonic plus fixed scale offsets, so a root moved is every note moved).
+void checkFollowsRoot(const std::vector<uint8_t>& bytes, const pat::MidiSource& src, int semitones) {
+	const Parsed f = parse(bytes);
+	REQUIRE(f.ok);
+	const Reference r = reference(src, 0, 120.0, static_cast<double>(f.endTick) / 960.0);
+	REQUIRE(f.notes.size() == r.notes.size());
+	REQUIRE(f.notes.size() > 4);
+	for (size_t i = 0; i < r.notes.size(); ++i) {
+		CAPTURE(i);
+		CHECK(f.notes[i].key == r.notes[i].key + semitones);
+		CHECK(f.notes[i].on == r.notes[i].on);
+		CHECK(f.notes[i].off == r.notes[i].off);
+	}
+}
+
+pat::MidiSource melodySource() {
+	return sourceOf([](pat::Settings& s) {
+		s.patterns[0].mode = genes::Mode::Melody;
+		s.patterns[0].zone = 333;
+	});
+}
+
+} // namespace
+
+TEST_CASE("midi: a Melody export follows the most recent note played in (D3), and its track says so") {
+	const pat::MidiSource plain = melodySource();
+	const pat::MidiSource src = playedSource(plain, { 50 });
+	pat::MidiRoot root;
+	const std::vector<uint8_t> bytes = pat::patternMidi(src, 0, 120.0, &root);
+	CHECK(root.from == pat::MidiRoot::From::LastPlayed);
+	CHECK(root.key == 50);
+	checkFollowsRoot(bytes, plain, 50 - 60);
+	const Parsed f = parse(bytes);
+	CHECK(f.trackName == "Pattern 1 in D3 (last played note)");
+	// NOT VACUOUS: the unplayed patch is another key.
+	CHECK_FALSE(bytes == pat::patternMidi(plain, 0, 120.0));
+}
+
+TEST_CASE("midi: the NEWEST of several played notes is the export's key") {
+	const pat::MidiSource plain = melodySource();
+	checkFollowsRoot(pat::patternMidi(playedSource(plain, { 50, 55, 52 }), 0, 120.0), plain, 52 - 60);
+}
+
+TEST_CASE("midi: a Melody export with no note played yet is over the default C4, and its track says so") {
+	const pat::MidiSource plain = melodySource();
+	pat::MidiRoot root;
+	const std::vector<uint8_t> bytes = pat::patternMidi(playedSource(plain, {}), 0, 120.0, &root);
+	CHECK(root.from == pat::MidiRoot::From::Default);
+	checkFollowsRoot(bytes, plain, 0);
+	CHECK(parse(bytes).trackName == "Pattern 1 in C4 (default: no note played yet)");
+}
+
+TEST_CASE("midi: a mode that does not follow the keys (Drum) exports bit-identically whatever was played, with no track name") {
+	const pat::MidiSource plain = sourceOf([](pat::Settings& s) {
+		s.patterns[0].mode = genes::Mode::Drum;
+		s.patterns[0].zone = 333;
+	});
+	const std::vector<uint8_t> a = pat::patternMidi(plain, 0, 120.0);
+	const std::vector<uint8_t> b = pat::patternMidi(playedSource(plain, { 50, 41 }), 0, 120.0);
+	REQUIRE(parse(a).notes.size() > 2);
+	CHECK(a == b);
+	CHECK(parse(b).trackName.empty());
 }

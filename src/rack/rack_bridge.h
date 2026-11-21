@@ -99,7 +99,7 @@ class ExportTable;
 /// **ONE EVENT ON ITS WAY TO THE ENGINE** — a macro, the note gate, a retrigger. Not chain state: that
 /// is the record's (see the contract above).
 struct RackEdit {
-	enum class Kind : uint8_t { Macro, Gate, Retrigger, MacroPolarity };
+	enum class Kind : uint8_t { Macro, Gate, Retrigger, MacroPolarity, MacroMod };
 	Kind kind = Kind::Macro;
 	size_t a = 0; ///< macro index
 	float value = 0.0f;
@@ -616,6 +616,8 @@ public:
 		return index < m_.macro.size() ? loadFloat(m_.macro[index]) : 0.0f;
 	}
 	void setMacro(size_t index, float value);
+	/// The host's modulation of a macro (a global PARAM_MOD): an offset in its 0..1 units, queued like a value.
+	void setMacroMod(size_t index, float offset);
 	/// **A HAND ON A MACRO'S KNOB, TOLD TO THE HOST** (backlog NG, 2026-10-17). The macros ARE the outermost rack's
 	/// first eight host parameters, so the editor's drag goes out as Feathers' does for its own: Begin, every
 	/// Value, End, on the macro's id. Without this the rack told the host nothing — Bitwig's recently-touched list

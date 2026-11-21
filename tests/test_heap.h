@@ -72,7 +72,12 @@ inline void* heapAlloc(std::size_t bytes) {
 }
 
 inline void* heapAlignedAlloc(std::size_t align, std::size_t bytes) {
-	return std::aligned_alloc(align, bytes);
+	// **THE SIZE IS ROUNDED UP TO A MULTIPLE OF THE ALIGNMENT**, which `aligned_alloc` requires: glibc is lenient about it,
+	// macOS is not and returns null (a replaced `operator new` then throws `bad_alloc` — test_rack_series on v0.2.1's
+	// macOS CI). An alignment under a pointer's size is raised to it, as `posix_memalign` would require.
+	const std::size_t a = align < sizeof(void*) ? sizeof(void*) : align;
+	const std::size_t n = bytes == 0 ? a : (bytes + a - 1) / a * a;
+	return std::aligned_alloc(a, n);
 }
 
 inline int heapPosixMemalign(void** out, std::size_t align, std::size_t bytes) {

@@ -29,6 +29,8 @@
 #include "plugin/ui/mod_readout_layer.h"
 #include "plugin/ui/owltt_card.h"
 #include "plugin/ui/owltt_expanded.h"
+#include "mod/lfo/lfo_types.h"
+#include "plugin/ui/trig_pad.h"
 #include "plugin/ui/widget_registry.h"
 #include "rack/rack_bridge.h"
 #include "rack/rack_engine.h"
@@ -532,4 +534,35 @@ TEST_CASE("a routed source moves OWLTT Character's live mark to the value the en
 	const visage::Bounds mark = box->liveMarkBounds();
 	REQUIRE(mark.height() > 0.0f);
 	CHECK(mark.y() == doctest::Approx((1.0 - position) * box->height() - mark.height() * 0.5).epsilon(0.002));
+}
+
+// A TRIGGER DESTINATION'S ASSIGN READOUT SAYS WHAT THE ROUTE DOES. A Trig is fired by a rise of the source, so the
+// as-modulated number and swept range (what a continuous destination prints) describe nothing a player can hear.
+TEST_CASE("assign readout: a route into a Trig says it fires on each rise, with no value range; a continuous destination keeps its depth readout") {
+	namespace lfo = mod::lfo;
+	Rig rig;
+	const DeviceInstanceId id = rig.add(lfo::kTraits.tag);
+	REQUIRE(id != kNoInstance);
+	rig.bridge.setMacro(1, 0.6f);
+	const backplane::Source knob = backplane::Source::core(1);
+
+	const size_t trig = static_cast<size_t>(lfo::Param::Trig);
+	ui::DeviceControl trigControl(rig.bridge, id, lfo::kDescriptor, trig, &rig.mod, &rig.history);
+	ui::TrigPad pad(trigControl, [](uint32_t&) { return false; });
+	REQUIRE(trigControl.triggerDestination());
+	const std::optional<ui::ModReadout> got = rig.readoutAt(trigControl, knob, 1.0f);
+	REQUIRE(got.has_value());
+	CHECK(got->text == "Fires Trig on each rise");
+	CHECK_FALSE(got->sweeps());
+	CHECK(got->amount == 1.0f);
+
+	// A CONTINUOUS DESTINATION ON THE SAME DEVICE STILL READS ITS DEPTH: the value, and a range it sweeps.
+	const size_t rate = findParam(lfo::kDescriptor, "Rate");
+	REQUIRE(rate < lfo::kDescriptor.params.size());
+	ui::DeviceControl rateControl(rig.bridge, id, lfo::kDescriptor, rate, &rig.mod, &rig.history);
+	REQUIRE_FALSE(rateControl.triggerDestination());
+	const std::optional<ui::ModReadout> depth = rig.readoutAt(rateControl, knob, 0.5f);
+	REQUIRE(depth.has_value());
+	CHECK(depth->text.find("Fires") == std::string::npos);
+	CHECK(depth->sweeps());
 }

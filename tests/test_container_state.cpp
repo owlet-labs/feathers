@@ -31,12 +31,14 @@
 #include "plugin/gui_bridge.h"
 #include "plugin/lane_rack.h"
 #include "plugin/mod_rack.h"
+#include "plugin/params.h"
 #include "rack/rack_axes.h"
 #include "rack/rack_device.h"
 #include "rack/rack_engine.h"
 #include "rack/rack_state.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -402,4 +404,43 @@ TEST_CASE("an internal destination is spelled on disk by its own stable id, and 
 	                                   0x0170u, &nowhere));
 	// PAST THE WHOLE TABLE NAMES NOTHING.
 	CHECK_FALSE(codec.nameDestination(codec.host, feathers::kCoreDestinationCount, &kind, &a));
+}
+
+TEST_CASE("a bipolar macro routed at 100% onto a bipolar RACK macro swings the rack's reading through both ends, by value") {
+	// THE CONTRACT. A macro is a stored 0..1 value read through its polarity (`2v - 1` when bipolar), in the
+	// synth and in a rack alike; a route onto it adds `amount x source x span` (span 1) to the STORED value
+	// and the result is held to 0..1. So a bipolar rack macro resting at its notch (stored 0.5, reading 0)
+	// reads, under a bipolar source at 100%, `clamp(2 x source, -1, 1)` — both ends reached, and the
+	// negative half no less than the positive. (A macro resting at stored 0 reads -1 and has no negative
+	// half to give: the notch is the hand's, as it is on Feathers' own macros.)
+	struct Pair {
+		double source;
+		double reading;
+	};
+	const std::array<Pair, 5> pairs { { { -1.0, -1.0 }, { -0.5, -1.0 }, { 0.0, 0.0 }, { 0.5, 1.0 }, { 1.0, 1.0 } } };
+	for (const Pair& p : pairs) {
+		CAPTURE(p.source);
+		OneRack one;
+		const size_t macro1 = static_cast<size_t>(composite::Param::Macro1);
+		one.chain.device[one.slot].row.field[macro1] = 0.5f; // the notch
+		Runner r;
+		REQUIRE(r.lane.provision(one.chain) == 1);
+		rack::RackEngine& inner = r.rackAt(one.chain, one.slot);
+		inner.setMacroBipolar(0, true);
+
+		ParamSet params;
+		params.setBase(static_cast<clap_id>(macroParam(0)), (p.source + 1.0) * 0.5);
+		params.setMacroBipolarMask(1u);
+		params.publishCoreSources();
+		const std::array<backplane::Route, 1> routes {
+			backplane::Route { backplane::Source::core(0), backplane::Destination::control(one.id, macro1), 1.0f },
+		};
+		r.lane.setHostRoutes(routes);
+		r.lane.setCoreSources(params.coreSourceCells());
+		r.lane.sync(one.chain, device::NoteContext {}, device::TransportClock::unknown());
+		std::array<float, 256> left {};
+		std::array<float, 256> right {};
+		r.lane.processBus(left.data(), right.data(), 256);
+		CHECK(inner.macroReading(0) == doctest::Approx(static_cast<float>(p.reading)).epsilon(1e-6));
+	}
 }

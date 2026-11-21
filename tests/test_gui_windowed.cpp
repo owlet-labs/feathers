@@ -3310,6 +3310,69 @@ TEST_CASE("backlog NN: Esc cancels the preset prompt over an arm, and hands the 
 	XDestroyWindow(display, parent);
 	XCloseDisplay(display);
 }
+
+TEST_CASE("mod-assign: closing a device window while assign mode is armed leaves the keyboard with the editor, so Esc "
+          "still cancels the arm") {
+	// handleKeyDown returns at once when no frame holds the keyboard, and the window held it: its close (the overlay
+	// hides) left the focus on nobody, so Esc never reached the root and the mode could be left only by arming
+	// another source. In a real X window, because the keyboard focus is the window event handler's.
+	EditorFixture f;
+	const size_t slot = f.addFx(fx::harm::kTraits.tag);
+	Display* display = XOpenDisplay(nullptr);
+	REQUIRE(display != nullptr);
+	const int screen = DefaultScreen(display);
+	uint32_t w = 0, h = 0;
+	REQUIRE(f.gui.getSize(&w, &h));
+	const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0,
+	                                            BlackPixel(display, screen), BlackPixel(display, screen));
+	XSync(display, False);
+	clap_window window {};
+	window.api = CLAP_WINDOW_API_X11;
+	window.x11 = parent;
+	REQUIRE(f.gui.setParent(&window));
+	f.gui.setPopoutWindowForTest(false);
+
+	ui::ModState* mod = f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	ui::ExpandedOverlay* overlay = f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	visage::Frame* const top = f.gui.root()->topParentFrame();
+	const visage::KeyEvent escape { visage::KeyCode::Escape, 0, true };
+
+	SUBCASE("armed first, then a window opened and closed by its close") {
+		mod->focus(backplane::Source::core(0));
+		mod->arm(true);
+		f.lane->onExpandDevice(slot);
+		REQUIRE(overlay->open());
+		overlay->dismiss();
+		REQUIRE_FALSE(overlay->open());
+		REQUIRE(mod->armed());
+		// THE WINDOW TOOK THE KEYBOARD WITH IT; one beat of the editor hands it back.
+		(void)f.gui.tickForTest();
+		visage::Frame* held = focusedUnder(top);
+		REQUIRE(held != nullptr);
+		CHECK(keyFromFocusUp(held, escape));
+		CHECK_FALSE(mod->armed());
+	}
+
+	SUBCASE("a window open first, armed inside it, the window closed: Esc still cancels the arm") {
+		f.lane->onExpandDevice(slot);
+		REQUIRE(overlay->open());
+		mod->focus(backplane::Source::core(0));
+		mod->arm(true);
+		overlay->dismiss();
+		REQUIRE(mod->armed());
+		(void)f.gui.tickForTest();
+		visage::Frame* held = focusedUnder(top);
+		REQUIRE(held != nullptr);
+		CHECK(keyFromFocusUp(held, escape));
+		CHECK_FALSE(mod->armed());
+	}
+
+	f.gui.destroy();
+	XDestroyWindow(display, parent);
+	XCloseDisplay(display);
+}
 #endif
 
 TEST_CASE("backlog JB: Ctrl+Z pressed in the popout walks the editor's one history, and is refused untaken at its end") {

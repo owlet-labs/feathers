@@ -2270,7 +2270,7 @@ float RackEditor::layOutColumn(float top) {
 			presets_->setBounds(left, y + std::max(0.0f, (row - h) * 0.5f),
 			                    std::max(0.0f, std::min(static_cast<float>(presets_->width()), right - left)), h);
 		}
-		y += row + kColumnGap;
+		y += std::max(row, presets_ != nullptr ? static_cast<float>(presets_->height()) : 0.0f) + kColumnGap;
 	}
 	columnRule_ = {};
 	if (columnBackdrop_ != nullptr) {

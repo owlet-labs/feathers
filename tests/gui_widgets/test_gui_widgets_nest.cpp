@@ -3136,3 +3136,94 @@ TEST_CASE("right-click on a card's bare header opens the slot menu the dots open
 	press(bare, true);
 	CHECK(menus == 2);
 }
+
+TEST_CASE("a disabled Rack dims every card it holds, at every depth, and re-enabling restores them; a child's own bypass is its own") {
+	rack::registerChainExpandedView();
+	SiteHost h;
+	ui::ModState mod;
+	ui::EditHistory history;
+	const DeviceInstanceId outerRack = h.bridge.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(outerRack != kNoInstance);
+	h.bridge.drain();
+	rack::RackBridge& chain = *rack::parallel::rackOf(h.bridge.containerSurfaceOf(outerRack))->chainAt(0)->bridge();
+	const DeviceInstanceId child = chain.addDevice(fx::filter::kTraits.tag);
+	const DeviceInstanceId innerRack = chain.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(child != kNoInstance);
+	REQUIRE(innerRack != kNoInstance);
+	chain.drain();
+	rack::RackBridge& innerChain = *rack::parallel::rackOf(chain.containerSurfaceOf(innerRack))->chainAt(0)->bridge();
+	const DeviceInstanceId grand = innerChain.addDevice(fx::filter::kTraits.tag);
+	REQUIRE(grand != kNoInstance);
+	for (rack::RackBridge* b : { &h.bridge, &chain }) {
+		(void)b;
+	}
+	const auto viewTabs = [&](rack::RackBridge& host, DeviceInstanceId rackId) {
+		host.setField(rackId, static_cast<size_t>(rack::parallel::Param::View), 1.0f);
+	};
+	viewTabs(h.bridge, outerRack);
+	viewTabs(chain, innerRack);
+	rack::RackEditor editor(h.bridge, mod, history);
+	editor.setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+	const auto settle = [&](ui::ParallelRackCard& c) {
+		for (int i = 0; i < 4; ++i) {
+			editor.syncCards();
+			(void)c.update();
+			c.resized();
+		}
+	};
+	auto* top = dynamic_cast<ui::ParallelRackCard*>(editor.cardOfDeviceForTest(outerRack));
+	REQUIRE(top != nullptr);
+	settle(*top);
+	top->chainArrowForTest().toggleForTest(); // the whole chain in front
+	settle(*top);
+	ui::ChainColumn* col = top->frontForTest().columnForTest();
+	REQUIRE(col != nullptr);
+	ui::FxCard* childCard = col->cardOf(child);
+	auto* innerCard = dynamic_cast<ui::ParallelRackCard*>(col->cardOf(innerRack));
+	REQUIRE(childCard != nullptr);
+	REQUIRE(innerCard != nullptr);
+	innerCard->chainArrowForTest().toggleForTest();
+	settle(*top);
+	settle(*innerCard);
+	ui::ChainColumn* innerCol = innerCard->frontForTest().columnForTest();
+	REQUIRE(innerCol != nullptr);
+	ui::FxCard* grandCard = innerCol->cardOf(grand);
+	REQUIRE(grandCard != nullptr);
+	const auto dim = [&](ui::FxCard& c) {
+		c.syncDisabledVeil();
+		return c.disabledVeilForTest().isVisible();
+	};
+	const auto setEnabled = [&](rack::RackBridge& host, DeviceInstanceId id, float v) {
+		const device::Descriptor* d = host.descriptorOf(id);
+		REQUIRE(d != nullptr);
+		REQUIRE(d->traits.enableControl >= 0);
+		host.setField(id, static_cast<size_t>(d->traits.enableControl), v);
+	};
+	// ALL ON: nothing dims.
+	CHECK_FALSE(dim(*childCard));
+	CHECK_FALSE(dim(*innerCard));
+	CHECK_FALSE(dim(*grandCard));
+	// THE OUTER RACK OFF: its child, the inner rack and the grandchild all dim; the outer rack's own card (its own switch) is as it was.
+	setEnabled(h.bridge, outerRack, 0.0f);
+	CHECK(dim(*childCard));
+	CHECK(dim(*innerCard));
+	CHECK(dim(*grandCard));
+	// THE CHIPS STAY LIVE: only the drawing dims (the veil takes no mouse).
+	CHECK(grandCard->disabledVeilForTest().ignoresMouseEvents());
+	// RE-ENABLED: all restored.
+	setEnabled(h.bridge, outerRack, 1.0f);
+	CHECK_FALSE(dim(*childCard));
+	CHECK_FALSE(dim(*innerCard));
+	CHECK_FALSE(dim(*grandCard));
+	// ONLY THE INNER RACK OFF: the grandchild dims, the outer rack's other child does not.
+	setEnabled(chain, innerRack, 0.0f);
+	CHECK_FALSE(dim(*childCard));
+	CHECK(dim(*innerCard)); // its own bypass, as it shows today
+	CHECK(dim(*grandCard));
+	setEnabled(chain, innerRack, 1.0f);
+	// A CHILD'S OWN BYPASS is its own: it dims, and nothing else does.
+	setEnabled(chain, child, 0.0f);
+	CHECK(dim(*childCard));
+	CHECK_FALSE(dim(*grandCard));
+	CHECK_FALSE(dim(*innerCard));
+}

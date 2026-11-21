@@ -7661,7 +7661,7 @@ TEST_CASE("ON: the likes block refuses a damaged like whole, ignores its key at 
 namespace {
 
 /// A RACK'S BODY HOLDING `chains` EMPTY CHAINS — built through the Rack's own container ops, as its window leaves it.
-std::vector<uint8_t> rackBodyOfEmptyChains(size_t chains) {
+std::vector<uint8_t> rackBodyOfEmptyChains(size_t chains, std::vector<std::string> names = {}) {
 	namespace pr = feathers::rack::parallel;
 	const feathers::device::AudioOps& audio = *pr::kDescriptor.audio;
 	void* mem = ::operator new(audio.stateBytes, std::align_val_t { audio.stateAlign });
@@ -7671,6 +7671,9 @@ std::vector<uint8_t> rackBodyOfEmptyChains(size_t chains) {
 	pr::Rack& rack = *pr::rackOf(mem);
 	for (size_t k = 1; k < chains; ++k) {
 		REQUIRE(rack.addChain() == k);
+	}
+	for (size_t k = 0; k < names.size(); ++k) {
+		REQUIRE(rack.setChainName(k, names[k]));
 	}
 	std::vector<uint8_t> body;
 	const feathers::device::ByteSink sink { &body, [](void* ctx, const uint8_t* data, size_t bytes) {
@@ -7792,8 +7795,8 @@ TEST_CASE("Rack stage 2: the DAW reads the rack's position as a chain — 'Chain
 	mainThreadVisit(p);
 	REQUIRE(log.rescans.size() == beforeMode + 1);
 	CHECK((log.rescans.back() & CLAP_PARAM_RESCAN_TEXT) != 0);
-	CHECK(slotText(p, n, 0.7) == "Chain 2 \xE2\x86\x92 3, 40%");
-	REQUIRE(paramsOf(p)->text_to_value(p, id, "Chain 2 \xE2\x86\x92 3, 40%", &v));
+	CHECK(slotText(p, n, 0.7) == "Chain 2 \xE2\x86\x92 Chain 3, 40%"); // both ends are labelled
+	REQUIRE(paramsOf(p)->text_to_value(p, id, "Chain 2 \xE2\x86\x92 Chain 3, 40%", &v));
 	CHECK(v == doctest::Approx(0.7).epsilon(1e-9));
 
 	// PARALLEL: the declared unit, exactly as every slot printed before.
@@ -7816,6 +7819,22 @@ TEST_CASE("Rack stage 2: the DAW reads the rack's position as a chain — 'Chain
 	REQUIRE(chain->edit_device_body(p, at, four.data(), four.size()));
 	mainThreadVisit(p);
 	CHECK(log.rescans.size() == before + 1);
+
+	// NAMED CHAINS: a pair reads by both names, and a name that really changed is owed one TEXT rescan, no more.
+	const size_t beforeNames = log.rescans.size();
+	const std::vector<uint8_t> named = rackBodyOfEmptyChains(4, { "Kick", "Snare" });
+	REQUIRE(chain->edit_device_body(p, at, named.data(), named.size()));
+	mainThreadVisit(p);
+	CHECK(log.rescans.size() <= beforeNames + 1);
+	REQUIRE(chain->set_control(p, at, "Rack Mode", static_cast<double>(pr::Mode::Blend)));
+	mainThreadVisit(p);
+	CHECK(slotText(p, n, 1.0 / 6.0) == "Kick \xE2\x86\x92 Snare, 50%");
+	CHECK(slotText(p, n, 0.5) == "Snare \xE2\x86\x92 Chain 3, 50%");
+	// THE SAME NAMES AGAIN OWE NOTHING.
+	const size_t settled = log.rescans.size();
+	REQUIRE(chain->edit_device_body(p, at, named.data(), named.size()));
+	mainThreadVisit(p);
+	CHECK(log.rescans.size() == settled);
 }
 
 //------------------------------------------------------------------------------------------------//

@@ -6636,6 +6636,47 @@ TEST_CASE("the rack editor's undo keys: Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y walk a d
 	CHECK(f.bridge.chainLength() == 1);
 }
 
+TEST_CASE("the Chain and Rack plugins' preset browser shows all 8 variant chips, whole and pressable, at 1x, 1.75x and 2x, clear of the door, the macros toggle and the macros below") {
+	for (const float scale : { 1.0f, 1.75f, 2.0f }) {
+		CAPTURE(scale);
+		Fixture f;
+		f.editor.setSettingsDoor([] {});
+		ui::ContainerPresets presets = ui::makeTopPresets(f.bridge, &f.editor.notifier(), [] {});
+		f.editor.setPresetBrowser(presets.browser.get());
+		f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+		f.editor.setDpiScale(scale);
+		f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+		ui::PresetBrowser& browser = *presets.browser;
+		// THE FRAME IS NOT CLIPPED: it keeps the bar's whole width and height, at the NATIVE size the scale gives it.
+		CHECK(browser.width() >= browser.barWidth() - 0.01f);
+		CHECK(browser.height() >= ui::PresetBrowser::barHeightFor(browser.style()) - 0.01f);
+		CHECK(std::abs(static_cast<float>(browser.nativeWidth()) - scale * browser.width()) <= 1.0f);
+		const visage::Point origin = browser.positionInWindow();
+		const float toggleLeft = rack::RackEditor::kLaneLeft - 6.0f - rack::RackEditor::kMacrosToggleRoom;
+		CHECK(browser.x() + browser.width() <= toggleLeft + 0.01f);
+		for (int n = 1; n <= ui::PresetBrowser::kVariants; ++n) {
+			CAPTURE(n);
+			const visage::Bounds b = browser.variantChipBounds(n);
+			// INSIDE THE FRAME, so nothing clips it, and inside the editor.
+			CHECK(b.x() >= 0.0f);
+			CHECK(b.y() >= 0.0f);
+			CHECK(b.right() <= static_cast<float>(browser.width()) + 0.01f);
+			CHECK(b.bottom() <= static_cast<float>(browser.height()) + 0.01f);
+			CHECK(b.height() >= 9.0f);
+			// A PRESS ON ITS CENTRE REACHES THE BROWSER AND NAMES THAT VARIANT.
+			const visage::Point centre { origin.x + b.x() + b.width() * 0.5f, origin.y + b.y() + b.height() * 0.5f };
+			CHECK(f.editor.frameAtPoint(centre) == static_cast<visage::Frame*>(&browser));
+			CHECK(browser.variantChipAt({ b.x() + b.width() * 0.5f, b.y() + b.height() * 0.5f }) == n);
+		}
+		// NOTHING ELSE IN THE ROW MOVED UNDER IT: the stepper keeps its whole face, and the macros stand below the browser.
+		const visage::Bounds first = browser.variantChipBounds(1);
+		CHECK(first.y() > static_cast<float>(ui::PresetBrowser::kPanelStyle.height) * 0.5f);
+		ui::MacroSlot* slot = f.editor.macrosForTest()[0].get();
+		REQUIRE(slot != nullptr);
+		CHECK(static_cast<float>(slot->y()) >= static_cast<float>(browser.y() + browser.height()));
+	}
+}
+
 TEST_CASE("the Chain plugin's header has no undo buttons, and the preset stepper is whole: both arrows and the name sit inside the room the row gives it") {
 	Fixture f;
 	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);

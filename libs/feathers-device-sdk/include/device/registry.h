@@ -307,6 +307,9 @@ struct OuterGate {
 	/// because no host voice reaches inside a rack (`rack::parallel::Rack::setVoices`); a chain hands it on to every
 	/// container it provisions, so a Chain inside a Rack says it too. Read by `DeviceHost::perVoiceUnavailable`.
 	const char* perVoiceUnavailable = nullptr;
+	/// **WHETHER THE HOLDER AND EVERY CONTAINER ABOVE IT IS SWITCHED ON, or null** (a gate whose host cannot say): read for the card dimming a
+	/// chain's devices while their container is off. Only a host whose `host` is a record that can answer sets it.
+	bool (*holdersEnabled)(const void* host, DeviceInstanceId self) = nullptr;
 };
 
 //------------------------------------------------------------------------------------//

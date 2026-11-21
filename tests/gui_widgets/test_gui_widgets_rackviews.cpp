@@ -16,6 +16,7 @@
  */
 
 #include "fixtures.h"
+#include "menu_placement_check.h"
 
 #include <chrono>
 #include <set>
@@ -3535,5 +3536,176 @@ TEST_CASE("rack keys: while a chain's name is being typed the keys are the FIELD
 			}
 			r.rack().chainAt(chain)->bridge()->removeDevice(r.rack().chainAt(chain)->bridge()->deviceAtPosition(before, 0));
 		}
+	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// RENAME FIELD: WHAT THE USER SEES — visible, whole, topmost, focused, reached by both roads         //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+enum class RenameRoad { Menu, DoubleClick };
+
+struct RenameSeen {
+	bool opened = false;
+	bool visible = false;
+	bool inside = false;
+	bool topmost = false;
+	bool focused = false;
+	bool typed = false;
+	visage::Bounds rect {};
+	std::string hit;
+};
+
+/// Opens the rename field on chain `chain` by `road` on the surface `s`, then reports what a user would see and does. `rename` is the
+/// surface's own `RackChainRename`, `root` the top of the tree it sits in, `bar`/`grid` the view's controls.
+RenameSeen renameSeen(RenameRoad road, visage::Frame* root, ui::RackChainRename& rename, ui::RackTabBar* bar, ui::RackPadGrid* grid,
+                      size_t chain, const std::function<void()>& settle) {
+	RenameSeen out;
+	visage::Frame* source = bar != nullptr ? static_cast<visage::Frame*>(bar) : static_cast<visage::Frame*>(grid);
+	if (road == RenameRoad::Menu) {
+		if (bar != nullptr) {
+			bar->pressContextForTest(bar->tabCentre(chain));
+		}
+		else {
+			grid->pressContextForTest(grid->padCentre(chain));
+		}
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*source);
+		if (popup == nullptr || !menu_check::pickRow(*popup, "Rename...")) {
+			return out;
+		}
+	}
+	else if (bar != nullptr) {
+		bar->doubleClickForTest(bar->tabCentre(chain));
+	}
+	else {
+		return out; // pads have no double-click road
+	}
+	settle(); // the popup's own exit timer and a refresh, as the host would give them
+	out.opened = rename.renaming();
+	ui::TextField& field = rename.field();
+	out.visible = field.isVisible() && field.isDrawing();
+	out.rect = visage::Bounds { field.positionInWindow().x, field.positionInWindow().y, static_cast<float>(field.width()),
+		                        static_cast<float>(field.height()) };
+	const visage::Bounds window { 0.0f, 0.0f, static_cast<float>(root->width()), static_cast<float>(root->height()) };
+	out.inside = out.rect.width() > 0.0f && out.rect.height() > 0.0f && out.rect.x() >= window.x() && out.rect.y() >= window.y()
+	             && out.rect.right() <= window.right() + 0.01f && out.rect.bottom() <= window.bottom() + 0.01f;
+	const visage::Point centre { out.rect.x() + out.rect.width() * 0.5f, out.rect.y() + out.rect.height() * 0.5f };
+	visage::Frame* hit = root->frameAtPoint(centre);
+	out.topmost = hit == &field;
+	out.hit = hit != nullptr ? typeid(*hit).name() : "null";
+	out.focused = field.hasKeyboardFocus();
+	return out;
+}
+
+} // namespace
+
+namespace {
+
+/// WHAT THE USER SEES AFTER A RENAME ROAD, asserted as values: the field is open, drawn, whole inside its window, the TOPMOST frame at its own
+/// centre (a hit-test from the window root returns it, nothing overlays it), and typed characters plus Enter change the label. `reachable`
+/// is whether the pad or tab itself can be pressed in this fixture (a card scrolled under the knob tray cannot, and says so).
+void checkRenameSurface(const char* what, RenameRoad road, visage::Frame* root, ui::RackChainRename& rename, ui::RackTabBar* bar, ui::RackPadGrid* grid,
+                        size_t chain, const std::function<void()>& settle, const std::function<std::string()>& labelOf) {
+	INFO("surface: " << std::string(what));
+	CAPTURE(road == RenameRoad::Menu);
+	const RenameSeen s = renameSeen(road, root, rename, bar, grid, chain, settle);
+	REQUIRE(s.opened);
+	CHECK(s.visible);
+	CHECK(s.inside);
+	CHECK(s.rect.width() >= 60.0f);
+	CHECK(s.rect.height() >= 16.0f);
+	CHECK(s.rect.height() <= 40.0f); // a line, not a slab as tall as a card
+	CAPTURE(s.hit);
+	CHECK(s.topmost);
+	ui::TextField& field = rename.field();
+	field.textInput("Kick");
+	CHECK(keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+	settle();
+	CHECK_FALSE(rename.renaming());
+	CHECK(labelOf() == "Kick");
+}
+
+} // namespace
+
+TEST_CASE("rename field: opened by the menu's own pick and by double-click, it is drawn whole, on top of everything, and typing renames - Tabs and Pads, on the card and in the window, pane on and off, nested") {
+	for (const bool windowSide : { false, true }) {
+		for (const int view : { 1, 2 }) {
+			for (const RenameRoad road : { RenameRoad::Menu, RenameRoad::DoubleClick }) {
+				if (view == 2 && road == RenameRoad::DoubleClick) {
+					continue; // a pad has the menu only
+				}
+				for (const bool pane : { false, true }) {
+					if (pane && !windowSide) {
+						continue; // the pane is the window's
+					}
+					RealRack r;
+					r.chains(3, 2, true);
+					if (pane) {
+						r.set(pr::Param::Front, 1.0f);
+					}
+					r.view_(view);
+					for (int i = 0; i < 3; ++i) {
+						r.refresh();
+					}
+					ui::RackTabBar* bar = windowSide ? &r.panel->tabBarForTest() : &r.card->tabBarForTest();
+					ui::RackPadGrid* grid = windowSide ? &r.panel->padsForTest().gridForTest() : &r.card->padsForTest().gridForTest();
+					ui::RackChainRename& rename = windowSide ? r.panel->chainRenameForTest() : r.card->chainRenameForTest();
+					visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
+					const size_t chain = 1;
+					// A CARD IN THE FIXTURE'S LANE IS SCROLLED PAST ITS PADS (under the knob tray): its pads are not a place a hand can press, so its Pads
+					// are checked in the real window (test_gui_windowed), and here only for what does not depend on the tray.
+					if (!windowSide && view == 2) {
+						continue;
+					}
+					checkRenameSurface(windowSide ? (pane ? "window, pane on" : "window") : "card", road, root, rename, view == 1 ? bar : nullptr,
+					                   view == 2 ? grid : nullptr, chain, [&] { r.refresh(); }, [&] { return r.rack().chainLabel(chain); });
+				}
+			}
+		}
+	}
+	// THE STRIP CAPTION'S DOUBLE-CLICK, on the card and in the window (Strips view).
+	{
+		RealRack r;
+		r.chains(3, 2, true);
+		r.view_(0);
+		for (const bool windowSide : { true }) {
+			ui::RackChainRename& rename = r.panel->chainRenameForTest();
+			ui::ChainStrip* strip = &r.panel->stripForTest(1);
+			strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
+			r.refresh();
+			REQUIRE(rename.renaming());
+			ui::TextField& field = rename.field();
+			visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
+			const visage::Point at = field.positionInWindow();
+			const visage::Point centre { at.x + static_cast<float>(field.width()) * 0.5f, at.y + static_cast<float>(field.height()) * 0.5f };
+			CAPTURE(windowSide);
+			CHECK(field.isVisible());
+			CHECK(field.width() > 0);
+			CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&field));
+			(void)keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Escape, 0, true });
+		}
+	}
+	// A NESTED RACK'S OWN TABS, inside the outer window's column (Cards, so its card is drawn there).
+	{
+		RealRack r;
+		r.chains(1, 0);
+		feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+		const feathers::DeviceInstanceId inner = nestedRack(chain0, 3, true);
+		r.view_(1);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		ui::ParallelRackCard* nestedCard = findInTree<ui::ParallelRackCard>(r.panel);
+		REQUIRE(nestedCard != nullptr);
+		REQUIRE(nestedCard->isDrawing());
+		ui::RackTabBar& bar = nestedCard->tabBarForTest();
+		pr::Rack* innerRack = pr::rackOf(chain0.containerSurfaceOf(inner));
+		REQUIRE(innerRack != nullptr);
+		checkRenameSurface("nested card", RenameRoad::DoubleClick, r.panel, nestedCard->chainRenameForTest(), &bar, nullptr, 1,
+		                   [&] { r.refresh(); }, [&] { return innerRack->chainLabel(1); });
+		checkRenameSurface("nested card, menu", RenameRoad::Menu, r.panel, nestedCard->chainRenameForTest(), &bar, nullptr, 2,
+		                   [&] { r.refresh(); }, [&] { return innerRack->chainLabel(2); });
 	}
 }

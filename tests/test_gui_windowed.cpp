@@ -63,6 +63,13 @@
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/plugin_window.h"
 #include "rack/rack_state.h"
+#include "rack/parallel_rack.h"
+#include "rack/rack_engine.h"
+#include "rack/rack_axes.h"
+#include "plugin/ui/parallel_rack_card.h"
+#include "plugin/ui/parallel_rack_expanded.h"
+#include "plugin/ui/rack_views.h"
+#include "menu_placement_check.h"
 #include "plugin/ui/mod_state.h"
 // BEFORE Xlib, like everything above: `ZoneCoordBox::NameStyle` has a member Xlib's `None` macro
 // would rewrite to `0L`.
@@ -4074,5 +4081,124 @@ TEST_CASE("backlog MF: a text field that leaves the pointer gives the cursor bac
 	CHECK(sets > 0);
 	XDestroyWindow(display, parent);
 	XCloseDisplay(display);
+}
+namespace {
+template <typename T>
+T* treeFind(visage::Frame* root) {
+	if (auto* found = dynamic_cast<T*>(root)) {
+		return found;
+	}
+	for (visage::Frame* child : root->children()) {
+		if (T* found = treeFind<T>(child)) {
+			return found;
+		}
+	}
+	return nullptr;
+}
+} // namespace
+
+TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visible, on top and holding the keyboard, on the card and in the Rack window, in Tabs and Pads") {
+	namespace pr = feathers::rack::parallel;
+	for (const int view : { 1, 2 }) {
+		for (const bool inWindow : { false, true }) {
+			CAPTURE(view);
+			CAPTURE(inWindow);
+			EditorFixture f;
+			feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+			bodies.prepare(48000.0, 4096);
+			const size_t at = bodies.addDevice(pr::kTraits.tag);
+			REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+			void* body = bodies.slotAtLane(at).storage.get();
+			// THE RACK ALONE IN THE POST-FX LANE, so its card stands at the lane's top and a pad of it is a place the user can press.
+			for (size_t s = 0; s < kMaxFxSlots; ++s) {
+				if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+					(void)f.bridge.removeFxDevice(s);
+				}
+			}
+			const size_t slot = f.addFx(pr::kTraits.tag);
+			const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+			f.bridge.fxBodies().attach(id, body);
+			pr::Rack& rack = *pr::rackOf(body);
+			while (rack.chainCount() < 3) {
+				REQUIRE(rack.addChain() != SIZE_MAX);
+			}
+			for (size_t i = 0; i < 3; ++i) {
+				rack.setChainKey(i, static_cast<int>(i));
+				rack.setOpen(i, false);
+			}
+			BridgeDeviceHost host(f.bridge);
+			host.setField(id, static_cast<size_t>(pr::Param::View), static_cast<float>(view));
+			f.lane->resized();
+			Display* display = XOpenDisplay(nullptr);
+			REQUIRE(display != nullptr);
+			const int screen = DefaultScreen(display);
+			uint32_t w = 0, h = 0;
+			REQUIRE(f.gui.getSize(&w, &h));
+			const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+			                                            BlackPixel(display, screen));
+			XSync(display, False);
+			clap_window window {};
+			window.api = CLAP_WINDOW_API_X11;
+			window.x11 = parent;
+			REQUIRE(f.gui.setParent(&window));
+			f.gui.setPopoutWindowForTest(false);
+			visage::Frame* const top = f.gui.root()->topParentFrame();
+			ui::ParallelRackCard* card = treeFind<ui::ParallelRackCard>(top);
+			REQUIRE(card != nullptr);
+			ui::ParallelRackExpanded* panel = nullptr;
+			if (inWindow) {
+				f.lane->onExpandDevice(slot);
+				REQUIRE(f.gui.expandedForTest()->open());
+				panel = treeFind<ui::ParallelRackExpanded>(top);
+				REQUIRE(panel != nullptr);
+			}
+			for (int i = 0; i < 3; ++i) {
+				(void)f.gui.tickForTest();
+				(void)card->update();
+				if (panel != nullptr) {
+					(void)panel->update();
+				}
+			}
+			ui::RackChainRename& rename = inWindow ? panel->chainRenameForTest() : card->chainRenameForTest();
+			ui::RackTabBar* bar = inWindow ? &panel->tabBarForTest() : &card->tabBarForTest();
+			ui::RackPadGrid* grid = inWindow ? &panel->padsForTest().gridForTest() : &card->padsForTest().gridForTest();
+			visage::Frame* source = view == 1 ? static_cast<visage::Frame*>(bar) : static_cast<visage::Frame*>(grid);
+			if (view == 1) {
+				bar->pressContextForTest(bar->tabCentre(1));
+			}
+			else {
+				grid->pressContextForTest(grid->padCentre(1));
+			}
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*source);
+			REQUIRE(popup != nullptr);
+			// THE REAL PICK, then the popup's own dismissal (its exit timer) as the event loop would run it.
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			popup->timerCallback();
+			(void)f.gui.tickForTest();
+			REQUIRE(rename.renaming());
+			ui::TextField& field = rename.field();
+			CHECK(field.isVisible());
+			CHECK(field.width() > 0);
+			CHECK(field.height() > 0);
+			const visage::Point fieldAt = field.positionInWindow();
+			const visage::Point centre { fieldAt.x + static_cast<float>(field.width()) * 0.5f, fieldAt.y + static_cast<float>(field.height()) * 0.5f };
+			CHECK(fieldAt.x >= 0.0f);
+			CHECK(fieldAt.y >= 0.0f);
+			CHECK(fieldAt.x + static_cast<float>(field.width()) <= static_cast<float>(top->width()));
+			CHECK(fieldAt.y + static_cast<float>(field.height()) <= static_cast<float>(top->height()));
+			CHECK(top->frameAtPoint(centre) == static_cast<visage::Frame*>(&field)); // nothing over it
+			CHECK(field.hasKeyboardFocus());
+			CHECK(focusedUnder(top) == static_cast<visage::Frame*>(&field));
+			// TYPED CHARACTERS AND ENTER CHANGE THE LABEL.
+			field.textInput("Kick");
+			CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+			CHECK_FALSE(rename.renaming());
+			CHECK(rack.chainLabel(1) == "Kick");
+			f.bridge.fxBodies().detach(id, body);
+			f.gui.destroy();
+			XDestroyWindow(display, parent);
+			XCloseDisplay(display);
+		}
+	}
 }
 #endif // defined(__linux__)

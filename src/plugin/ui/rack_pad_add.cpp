@@ -91,6 +91,9 @@ RackChainRename::RackChainRename(RackViewAdapter& model, visage::Frame& surface,
 	});
 	field_->onCancel([this] { field_->setVisible(false); });
 	field_->setVisible(false);
+	// **ABOVE EVERY SIBLING AND WHAT THEY HOLD.** The toolkit paints later siblings over earlier ones and a frame hits the same way, so a field
+	// added once at construction sat UNDER the tab bar, the window pane and the cards that were added after it: typing landed, the box was unseen.
+	field_->setOnTop(true);
 	surface_.addChild(field_.get());
 }
 
@@ -171,7 +174,9 @@ void RackChainRename::begin(size_t slot, visage::Frame& source, const visage::Bo
 	chain_ = model_.chainIdAt(slot);
 	const visage::Point from = source.positionInWindow();
 	const visage::Point to = surface_.positionInWindow();
-	const float h = std::max(anchor.height(), 18.0f);
+	// ONE LINE TALL whatever the anchor is: a tab in the window's column is a whole card's height, and a field that tall is a slab.
+	constexpr float kFieldHeight = 24.0f;
+	const float h = kFieldHeight;
 	field_->setBounds(from.x - to.x + anchor.x(), from.y - to.y + anchor.y() + (anchor.height() - h) * 0.5f, std::max(anchor.width(), 90.0f), h);
 	field_->setVisible(true);
 	field_->begin(model_.chainUserName(slot).empty() ? model_.chainLabel(slot) : model_.chainUserName(slot));

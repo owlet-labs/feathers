@@ -658,6 +658,8 @@ int main(int argc, char** argv) {
 	/// `--rack-pane <chain>` with `--rack-chains`: the Rack window in Tabs with the first device's own window in a pane (`rack_front` = Window),
 	/// the chain at that index (0-based) in front.
 	int rackPane = -1;
+	/// `--rack-rename <tabs|pads>:<chain>` with `--rack-chains`: the Rack window's Rename field opened by the context menu's own pick, "Kick" typed in.
+	std::string rackRename;
 	/// `--rack-arm-macro N` (1..8): press the Rack window's arrow for macro N, as a hand does, so the chains' controls light. 0 is not asked.
 	int rackArmMacro = 0;
 	/// `--chain-window` (backlog OC): the CHAIN device's window over a running body with a filter and a delay in it.
@@ -1283,6 +1285,10 @@ int main(int argc, char** argv) {
 			rackChainsKeyed = spec.find(":keyed") != std::string::npos;
 			rackChainsDevices = spec.find(":devices") != std::string::npos;
 			rackChainsNested = spec.find(":nested") != std::string::npos;
+			continue;
+		}
+		if (arg == "--rack-rename" && i + 1 < argc) {
+			rackRename = argv[++i];
 			continue;
 		}
 		if (arg == "--rack-pane" && i + 1 < argc) {
@@ -2680,6 +2686,46 @@ int main(int argc, char** argv) {
 				                                                                                  : "nothing");
 			}
 			(void)panel->updateContent();
+			if (!rackRename.empty()) {
+				const bool pads = rackRename.rfind("pads", 0) == 0;
+				const size_t chain = static_cast<size_t>(std::atoi(rackRename.substr(rackRename.find(':') + 1).c_str()));
+				BridgeDeviceHost renameHost(bridge);
+				renameHost.setField(bridge.fxDeviceAt(slot), static_cast<size_t>(pr::Param::View), pads ? 2.0f : 1.0f);
+				renameHost.setField(bridge.fxDeviceAt(slot), static_cast<size_t>(pr::Param::PadsPage), 2.0f); // keys 36.. live on page 2, from pad 4
+				for (int i = 0; i < 3; ++i) {
+					(void)panel->updateContent();
+				}
+				panel->setBounds(0.0f, 0.0f, std::max(static_cast<float>(panel->width()), panel->minimumSize().x),
+				                 std::max(static_cast<float>(panel->height()), panel->minimumSize().y));
+				pump(600);
+				if (pads) {
+					panel->padsForTest().gridForTest().pressContextForTest(panel->padsForTest().gridForTest().padCentre(4 + static_cast<int>(chain)));
+				}
+				else {
+					panel->tabBarForTest().pressContextForTest(panel->tabBarForTest().tabCentre(chain));
+				}
+				visage::PopupMenuFrame* popup = nullptr;
+				for (visage::Frame* child : panel->topParentFrame()->children()) {
+					if (auto* p = dynamic_cast<visage::PopupMenuFrame*>(child); p != nullptr) {
+						popup = p;
+					}
+				}
+				if (popup == nullptr || popup->children().empty()) {
+					std::printf("rack-rename: the context menu did not open\n");
+				}
+				else if (auto* rows = dynamic_cast<visage::PopupList*>(popup->children().front()); rows != nullptr) {
+					popup->optionSelected(rows->option(0), rows);
+				}
+				pump(600);
+				panel->chainRenameForTest().field().textInput("Kick");
+				(void)panel->updateContent();
+				pump(600);
+				pump(1200);
+				std::printf("rack-rename: field %s, %s, at %d,%d %dx%d\n", panel->chainRenameForTest().renaming() ? "editing" : "closed",
+				            panel->chainRenameForTest().field().isVisible() ? "visible" : "hidden",
+				            static_cast<int>(panel->chainRenameForTest().field().x()), static_cast<int>(panel->chainRenameForTest().field().y()),
+				            static_cast<int>(panel->chainRenameForTest().field().width()), static_cast<int>(panel->chainRenameForTest().field().height()));
+			}
 			if (!rackPreset.empty()) {
 				// THE FACE NAMES THE PRESET, as the browser's own pick leaves it (onCurrentChanged -> the device's stored identity).
 				const std::string stem = std::filesystem::path(rackPreset).stem().string();

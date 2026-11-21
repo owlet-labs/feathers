@@ -3476,3 +3476,107 @@ TEST_CASE("QC: a DEVICE PANEL's browser names its preset into the device's recor
 	CHECK_FALSE(f.bridge.devicePreset(sklitter).empty());
 	CHECK(f.bridge.devicePreset(sklitter).name == browser.currentName());
 }
+
+TEST_CASE("PP: deleting the shown variant leaves its sound loaded and the face naming it unsaved") {
+	Rig rig("pp-variant-delete-stays");
+	rig.payload = 11;
+	rig.save("Glass");
+	REQUIRE(rig.browser.selectIndex(rig.browser.indexOf("Glass")));
+	rig.payload = 33;
+	REQUIRE(rig.browser.pressVariant(3));
+	REQUIRE(rig.browser.currentName() == "Glass_variant_3");
+	const std::filesystem::path file = PresetStore::directory("Test") / "Glass_variant_3.fpreset";
+	REQUIRE(std::filesystem::exists(file));
+	const size_t applied = rig.applied.size();
+	const int captures = rig.captures;
+
+	REQUIRE(rig.browser.actVariant(3, PresetBrowser::VariantVerb::Delete));
+	CHECK_FALSE(std::filesystem::exists(file));
+	// NOTHING WAS LOADED OR REPLACED: the sound is variant 3's, and the live state is still what variant 3 held.
+	CHECK(rig.applied.size() == applied);
+	CHECK(rig.captures == captures);
+	rig.payload = 33; // the device state stays variant 3's; saving it again writes those bytes back
+	CHECK(rig.browser.showingDeleted());
+	CHECK(rig.browser.deletedName() == "Glass_variant_3");
+	// THE FACE SAYS SO: unsaved, naming the variant of Glass.
+	CHECK(rig.browser.unsavedChip() == 3);
+	for (int n = 1; n <= PresetBrowser::kVariants; ++n) {
+		CHECK(rig.browser.chipState(n) != PresetBrowser::ChipState::Active);
+	}
+	CHECK(rig.browser.chipState(1) == PresetBrowser::ChipState::Saved);
+	CHECK(rig.browser.chipState(3) == PresetBrowser::ChipState::Unused);
+	// "SAVE IT ELSEWHERE": chip 3 writes the same sound back, as the file's bytes show.
+	REQUIRE(rig.browser.pressVariant(3));
+	const std::vector<StoredPreset> disk = rig.disk();
+	const auto it = std::find_if(disk.begin(), disk.end(), [](const StoredPreset& p) { return p.name == "Glass_variant_3"; });
+	REQUIRE(it != disk.end());
+	CHECK(it->bytes == std::vector<uint8_t> { 33 });
+	CHECK_FALSE(rig.browser.showingDeleted());
+	CHECK(PresetBrowser::variantFaceName("Glass_variant_3") == "Glass \xc2\xb7 variant 3");
+	CHECK(PresetBrowser::variantFaceName("Glass") == "Glass");
+}
+
+TEST_CASE("PP: deleting a variant that is not shown changes nothing about the shown preset") {
+	Rig rig("pp-variant-delete-other");
+	rig.save("Glass");
+	REQUIRE(rig.browser.selectIndex(rig.browser.indexOf("Glass")));
+	REQUIRE(rig.browser.pressVariant(4));
+	REQUIRE(rig.browser.selectIndex(rig.browser.indexOf("Glass")));
+	const size_t applied = rig.applied.size();
+	REQUIRE(rig.browser.actVariant(4, PresetBrowser::VariantVerb::Delete));
+	CHECK(rig.browser.currentName() == "Glass");
+	CHECK_FALSE(rig.browser.showingDeleted());
+	CHECK(rig.applied.size() == applied);
+}
+
+TEST_CASE("PP: an unused chip offers 'Save as a new preset first' for Init and factory parents, not for a user preset") {
+	Rig rig("pp-variant-newfirst");
+	using Verb = PresetBrowser::VariantVerb;
+	REQUIRE(rig.browser.selectIndex(rig.browser.indexOf("Init")));
+	CHECK(rig.browser.parentIsFactory());
+	CHECK(rig.browser.variantVerbs(2) == std::vector<Verb> { Verb::Save, Verb::SaveAsNewFirst });
+	CHECK(PresetBrowser::variantVerbLabel(Verb::SaveAsNewFirst, 2) == "Save as a new preset first\xe2\x80\xa6");
+	// The plain save still writes the variant of Init directly.
+	REQUIRE(rig.browser.actVariant(2, Verb::Save));
+	CHECK(rig.browser.currentName() == "Init_variant_2");
+	CHECK(rig.browser.parentIsFactory()); // a variant of Init is still a variant of a factory preset
+	// The new-first verb opens the Save-as prompt.
+	REQUIRE(rig.browser.actVariant(3, Verb::SaveAsNewFirst));
+	CHECK(rig.browser.prompt() == PresetBrowser::Prompt::Naming);
+	rig.browser.cancelPrompt();
+
+	rig.save("Mine");
+	REQUIRE(rig.browser.selectIndex(rig.browser.indexOf("Mine")));
+	CHECK_FALSE(rig.browser.parentIsFactory());
+	CHECK(rig.browser.variantVerbs(2) == std::vector<Verb> { Verb::Save });
+	CHECK_FALSE(rig.browser.actVariant(2, Verb::SaveAsNewFirst));
+}
+
+TEST_CASE("PP: the face of a saved variant and of a deleted one, as drawn") {
+	Rig rig("pp-variant-face-capture");
+	rig.save("Glass");
+	REQUIRE(rig.browser.selectIndex(rig.browser.indexOf("Glass")));
+	REQUIRE(rig.browser.pressVariant(3));
+	const auto capture = [&](const char* file) {
+		const int kW = static_cast<int>(std::ceil(rig.browser.barWidth()));
+		const int kH = static_cast<int>(PresetBrowser::kHeight);
+		visage::Canvas canvas;
+		markedWindowless(canvas, kW, kH);
+		canvas.setColor(0xff000000);
+		canvas.fill(0.0f, 0.0f, static_cast<float>(kW), static_cast<float>(kH));
+		visage::Region region;
+		region.setBounds(0, 0, kW, kH);
+		canvas.addRegion(&region);
+		canvas.beginRegion(&region);
+		rig.browser.draw(canvas);
+		canvas.endRegion();
+		const visage::Screenshot shot = takeMarkedCapture(canvas, kW, kH);
+		REQUIRE(shot.width() == kW);
+		if (const char* dir = std::getenv("FEATHERS_CAPTURE_DIR"); dir != nullptr) {
+			shot.save((std::filesystem::path(dir) / file).string().c_str());
+		}
+	};
+	capture("variants-ui-saved.png");
+	REQUIRE(rig.browser.actVariant(3, PresetBrowser::VariantVerb::Delete));
+	capture("variants-ui-deleted.png");
+}

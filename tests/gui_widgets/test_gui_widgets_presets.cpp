@@ -3499,6 +3499,10 @@ TEST_CASE("PP: deleting the shown variant leaves its sound loaded and the face n
 	CHECK(rig.browser.showingDeleted());
 	CHECK(rig.browser.deletedName() == "Glass_variant_3");
 	// THE FACE SAYS SO: unsaved, naming the variant of Glass.
+	CHECK(rig.browser.unsavedChip() == 3);
+	for (int n = 1; n <= PresetBrowser::kVariants; ++n) {
+		CHECK(rig.browser.chipState(n) != PresetBrowser::ChipState::Active);
+	}
 	CHECK(rig.browser.chipState(1) == PresetBrowser::ChipState::Saved);
 	CHECK(rig.browser.chipState(3) == PresetBrowser::ChipState::Unused);
 	// "SAVE IT ELSEWHERE": chip 3 writes the same sound back, as the file's bytes show.

@@ -299,6 +299,8 @@ public:
 	/// again. Empty while an entry is shown.
 	[[nodiscard]] bool showingDeleted() const noexcept { return index_ < 0 && !deletedName_.empty(); }
 	[[nodiscard]] const std::string& deletedName() const noexcept { return deletedName_; }
+	/// The chip (1..8) that names the deleted sound — current, but with no file — or 0. No chip is ACTIVE while it is set.
+	[[nodiscard]] int unsavedChip() const;
 	/// "Glass" + variant 3 → "Glass \xc2\xb7 variant 3": how the face names a variant file, so a saved variant reads as
 	/// "variant of Glass" instead of a file name. A name that is no variant is returned as it is.
 	[[nodiscard]] static std::string variantFaceName(const std::string& name);

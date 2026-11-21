@@ -851,6 +851,7 @@ void PresetBrowser::drawVariantChips(visage::Canvas& canvas) {
 	const Style& s = style();
 	const visage::Font& f = font(std::min(kControlSize, chipHeightFor(s) - 1.0f));
 	const bool live = index_ >= 0;
+	const int unsaved = unsavedChip();
 	for (int n = 1; n <= kVariants; ++n) {
 		const visage::Bounds b = variantChipBounds(n);
 		const ChipState state = chipState(n);
@@ -870,6 +871,14 @@ void PresetBrowser::drawVariantChips(visage::Canvas& canvas) {
 		if (state == ChipState::Unused) {
 			canvas.setColor(ground);
 			canvas.roundedRectangle(b.x() + 1.0f, b.y() + 1.0f, b.width() - 2.0f, b.height() - 2.0f, 1.5f);
+		}
+		// THE CHIP OF A DELETED SOUND: current but with no file — an accent outline, no fill.
+		if (n == unsaved) {
+			canvas.setColor(kAccent);
+			canvas.roundedRectangle(b.x(), b.y(), b.width(), b.height(), 2.0f);
+			canvas.setColor(kSurface);
+			canvas.roundedRectangle(b.x() + 1.5f, b.y() + 1.5f, b.width() - 3.0f, b.height() - 3.0f, 1.5f);
+			ink = kAccent;
 		}
 		canvas.setColor(ink);
 		canvas.text(std::to_string(n), f, visage::Font::kCenter, b.x(), b.y(), b.width(), b.height());
@@ -1885,6 +1894,21 @@ std::string PresetBrowser::itemPlaceholder() const {
 		return variantFaceName(deletedName_) + " (unsaved)";
 	}
 	return ItemSource::itemPlaceholder();
+}
+
+} // namespace feathers::ui
+
+namespace feathers::ui {
+
+int PresetBrowser::unsavedChip() const {
+	if (!showingDeleted()) {
+		return 0;
+	}
+	const std::string base = variantBase(deletedName_);
+	if (base == deletedName_) {
+		return 1;
+	}
+	return deletedName_[deletedName_.size() - 1] - '0';
 }
 
 } // namespace feathers::ui

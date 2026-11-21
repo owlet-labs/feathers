@@ -65,6 +65,7 @@
 #include "mod/arp/arp.h" // `--arp-play`
 #include "plugin/ui/pattern_card.h"     // `--pattern-focus`
 #include "plugin/ui/pattern_expanded.h" // `--pattern-like`, `--pattern-focus`
+#include "plugin/ui/drum_device_expanded.h" // `--drum-likes`
 #include "plugin/ui/mod_panel.h"
 #include "plugin/ui/route_list.h"
 #include "plugin/ui/chain_column.h"
@@ -536,6 +537,9 @@ int main(int argc, char** argv) {
 	/// `--pattern-like`: in the Pattern device's window, record a like (the heart) for the focused pattern, so the terrain's
 	/// "more like this" highlight shows in the shot.
 	bool patternLike = false;
+	/// `--drum-likes`: in the Drum device's window, like the drum at three places of its terrain (the heart) and leave it standing near the
+	/// first, so the pad shows its marks and the warp they make.
+	bool drumLikes = false;
 	/// `--pattern-focus <1-4>`: the Pattern card's (and window's) tab, through their own verb (`PagedControls`).
 	int patternFocus = 0;
 	/// `--height <px>`: the editor's logical height asked of the host road (adjustSize), for a tall card.
@@ -1105,6 +1109,10 @@ int main(int argc, char** argv) {
 		}
 		if (arg == "--pattern-like") {
 			patternLike = true;
+			continue;
+		}
+		if (arg == "--drum-likes") {
+			drumLikes = true;
 			continue;
 		}
 		if (arg == "--mod-run" && i + 1 < argc) {
@@ -3808,6 +3816,28 @@ int main(int argc, char** argv) {
 		}
 		const bool liked = window->terrain().like();
 		std::printf("like:     %s\n", liked ? "recorded for the focused pattern" : "REFUSED");
+		pump(300);
+	}
+	if (drumLikes) {
+		ui::DrumDeviceExpanded* window = findInTree<ui::DrumDeviceExpanded>(gui.root());
+		if (window == nullptr) {
+			std::printf("--drum-likes: no Drum window is open (shoot DRUM with its panel)\n");
+			return 1;
+		}
+		namespace dd = fx::drumdevice;
+		const auto stand = [&](double x, double y) {
+			window->modelForTest().control(dd::Param::TravelX).setValue(x);
+			window->modelForTest().control(dd::Param::TravelY).setValue(y);
+			pump(300);
+		};
+		size_t liked = 0;
+		for (const std::array<double, 2> at : { std::array<double, 2> { 0.5, -0.25 }, { 3.0, 2.0 }, { -2.5, 1.5 } }) {
+			stand(at[0], at[1]);
+			liked += window->likesForTest().toggleLike() ? 1 : 0;
+		}
+		window->padForTest().setZoom(0.5);
+		stand(0.9, -0.1);
+		std::printf("drum:     %zu like(s) recorded, the drum left at (0.9, -0.1), the pad at 50%%\n", liked);
 		pump(300);
 	}
 	if (arpPlay) {

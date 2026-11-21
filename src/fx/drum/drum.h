@@ -20,6 +20,7 @@
 #include "device/registry.h"
 #include "dsp/drum_voice.h"
 #include "dsp/ks_string.h"
+#include "fx/drum/drum_likes.h"
 #include "fx/drum/drum_types.h"
 
 #include <array>
@@ -82,6 +83,10 @@ public:
 	void process(float* left, float* right, int frames);
 	/// WHETHER ANYTHING WILL STILL COME OUT: a hit sounding or waiting its Delay, a high-pass still ringing, a note not yet placed.
 	[[nodiscard]] bool holdsTail() const noexcept;
+	/// **THE LIKES BLOCK** (`drum.likes.v1`): a hand block kept here so it saves and restores with the device. The audio thread never
+	/// reads it (the window scores and paints with it). MESSAGE THREAD to write; any non-audio thread to read.
+	uint64_t readLikes(float* out, size_t capacity) const noexcept { return likes_.read(out, capacity); }
+	bool writeLikes(const float* in, size_t n) noexcept;
 
 	// ---- test seams ----
 	[[nodiscard]] int soundingForTest() const noexcept;
@@ -153,6 +158,7 @@ private:
 	uint32_t staleDropped_ = 0;
 	std::array<float, kSpan> tl_ {};
 	std::array<float, kSpan> tr_ {};
+	device::HandBlock<kLikesBlockWords> likes_;
 };
 
 } // namespace feathers::fx::drumdevice

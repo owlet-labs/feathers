@@ -1805,6 +1805,21 @@ public:
 	/// **THE PRESS, WITH WHAT THE HAND HELD** — every card's `onMouseDown` funnels here (it was `noteCardPress(e.position,
 	/// e.repeat_click_count)` at 31 sites, which dropped the modifiers on the floor).
 	void noteCardPress(const visage::MouseEvent& e) {
+		// **A RIGHT-PRESS ON THE BARE HEAD OPENS THE SLOT MENU, the one the dots open** — in every host, because this is the one funnel. It
+		// takes a head control's own gesture only where there is none (a press on a mark falls through to what that mark does), only where the host
+		// bound a menu (the site centre has none), and it never arms a drag or a fold: it is the "..." press, from the title.
+		if (e.shouldTriggerPopup() && onSlotMenu && !headControlAt(e.position) && pressOnHead(e.position)) {
+			pressConsumed_ = true;
+			pressClicks_ = e.repeat_click_count;
+			if (onCardPressed) {
+				onCardPressed();
+			}
+			anchor_.reset();
+			dragging_ = false;
+			armed_ = false;
+			pressSlotMenu();
+			return;
+		}
 		noteCardPress(e.position, e.repeat_click_count);
 		if (pressConsumed_ || !onCardSelectPress) {
 			return;

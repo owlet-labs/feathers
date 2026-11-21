@@ -3069,3 +3069,70 @@ TEST_CASE("delete closes panels: removing a device closes its window and its pre
 		}
 	}
 }
+
+TEST_CASE("right-click on a card's bare header opens the slot menu the dots open; on a head mark or the body it does not; the site centre has none") {
+	rack::registerChainExpandedView();
+	const device::Descriptor* both = nullptr;
+	for (const device::Descriptor& d : feathers::kDevices) {
+		if (ui::hasExpandedView(d) && d.audio != nullptr && d.traits.siteLanes != device::Traits::SiteLanes::None) {
+			both = &d;
+			break;
+		}
+	}
+	REQUIRE(both != nullptr);
+	SiteHost h;
+	ui::ModState mod;
+	ui::EditHistory history;
+	const DeviceInstanceId id = h.bridge.addDevice(both->traits.tag);
+	REQUIRE(id != kNoInstance);
+	rack::RackEditor editor(h.bridge, mod, history);
+	editor.setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+	editor.syncCards();
+	ui::FxCard* card = editor.cardOfDeviceForTest(id);
+	REQUIRE(card != nullptr);
+	int menus = 0;
+	int focuses = 0;
+	card->onSlotMenu = [&] { ++menus; };
+	card->onCardPressed = [&] { ++focuses; };
+	const auto press = [&](visage::Point at, bool right) {
+		visage::MouseEvent e;
+		e.position = at;
+		e.window_position = at;
+		e.event_frame = card;
+		e.button_id = right ? visage::kMouseButtonRight : visage::kMouseButtonLeft;
+		e.button_state = e.button_id;
+		e.is_down = true;
+		e.repeat_click_count = 1;
+		card->processMouseDown(e); // the card's own handler, as the framework delivers it
+	};
+	// A BARE HEAD POINT: on the head, clear of every head control.
+	visage::Point bare { -1.0f, -1.0f };
+	for (float x = 4.0f; x < static_cast<float>(card->width()) && bare.x < 0.0f; x += 3.0f) {
+		const visage::Point at { x, 4.0f };
+		if (!card->headControlAt(at) && card->pressOnHead(at)) {
+			bare = at;
+		}
+	}
+	REQUIRE(bare.x >= 0.0f);
+	// THE DOTS (a left press on the mark) are the reference: one menu, one focus.
+	press(centreOf(card->slotMenuBounds()), false);
+	CHECK(menus == 1);
+	CHECK(focuses == 1);
+	// A RIGHT-PRESS ON THE BARE HEAD: the same menu, the same focus, and no drag or fold armed.
+	press(bare, true);
+	CHECK(menus == 2);
+	CHECK(focuses == 2);
+	CHECK_FALSE(card->cardGestureArmed());
+	// A LEFT PRESS on the bare head opens nothing.
+	press(bare, false);
+	CHECK(menus == 2);
+	// A RIGHT-PRESS ON A HEAD MARK keeps that mark's own gesture (no slot menu from it), and on the BODY none either.
+	press(centreOf(card->expandBounds()), true);
+	CHECK(menus == 2);
+	press({ static_cast<float>(card->width()) * 0.5f, static_cast<float>(card->height()) * 0.5f }, true);
+	CHECK(menus == 2);
+	// A CARD THAT BOUND NO SLOT MENU (the site panel's centre) gets no header menu either.
+	card->onSlotMenu = nullptr;
+	press(bare, true);
+	CHECK(menus == 2);
+}

@@ -2908,6 +2908,14 @@ private:
 		return slot >= kMaxRackSlots ? UINT32_MAX : static_cast<uint32_t>(slot);
 	}
 
+	static bool testChainProvision(const clap_plugin* plugin) noexcept {
+		if (plugin == nullptr || plugin->plugin_data == nullptr) {
+			return false;
+		}
+		fromClap(plugin)->provisionAndDrain();
+		return true;
+	}
+
 	static uint32_t testChainMaxFrames(const clap_plugin* plugin) noexcept {
 		if (plugin == nullptr || plugin->plugin_data == nullptr) {
 			return 0;
@@ -3209,6 +3217,7 @@ private:
 			&FeathersPlugin::testChainParamInfoBuilds,
 			&FeathersPlugin::testChainWantReadings,
 			&FeathersPlugin::testChainPostNote,
+			&FeathersPlugin::testChainProvision,
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_TEST_CHAIN) == 0) {
 			return &kTestChain;

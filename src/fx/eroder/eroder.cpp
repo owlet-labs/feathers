@@ -142,6 +142,9 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Track)] = s.track ? 1.0f : 0.0f;
 	row[static_cast<size_t>(Param::DriveMode)] = static_cast<float>(s.driveMode);
 	row[static_cast<size_t>(Param::DriveShape)] = s.driveShape;
+	row[static_cast<size_t>(Param::DriveAngle)] = s.driveAngle;
+	row[static_cast<size_t>(Param::SlotAAngle)] = s.slotA.angle;
+	row[static_cast<size_t>(Param::SlotBAngle)] = s.slotB.angle;
 	row[static_cast<size_t>(Param::HpWet)] = s.hpWet;
 	row[static_cast<size_t>(Param::HpWetSemis)] = s.hpWetSemis;
 	row[static_cast<size_t>(Param::SubThru)] = s.subThru ? 1.0f : 0.0f;
@@ -216,6 +219,9 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.driveMode = static_cast<DriveMode>(std::clamp(static_cast<int>(std::lround(read(Param::DriveMode))), 0,
 	                                                static_cast<int>(DriveMode::kCount) - 1));
 	s.driveShape = read(Param::DriveShape);
+	s.driveAngle = read(Param::DriveAngle);
+	s.slotA.angle = read(Param::SlotAAngle);
+	s.slotB.angle = read(Param::SlotBAngle);
 	s.hpWet = read(Param::HpWet);
 	s.hpWetSemis = read(Param::HpWetSemis);
 	s.subThru = read(Param::SubThru) >= 0.5f;
@@ -657,7 +663,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	// THE TWO GAINS THE SAMPLE LOOP GLIDES TO: the wet's, with the level law's make-up; the dry's, whole unless Blend.
 	// THE COMB'S LOOPS (`loops.h`), for the pitch of its own line. The level law's make-up assumes a clean loop, so a Driven tap goes without.
 	const DriveSettings driveBefore = combShaper_.settings();
-	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, s.driveShape, sampleRate_, &driveBefore);
+	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), sampleRate_, &driveBefore);
 	combLoops_ = deriveLoops(s, 1.0 / derived_.baseDelaySeconds, derived_.feedback);
 	shared_.setThreshold(heatGain_ / static_cast<float>(kHeadroom));
 	shared_.set(s, combLoops_, 1.0 / derived_.baseDelaySeconds);

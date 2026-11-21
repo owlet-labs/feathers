@@ -1429,7 +1429,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount - kDcParamCount - kDriveBalParamCount - kDriveRateParamCount - kSlotSecondParamCount - kRateMultParamCount);
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount - kDcParamCount - kDriveBalParamCount - kDriveRateParamCount - kSlotSecondParamCount - kRateMultParamCount - kAngleParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -5400,6 +5400,7 @@ Settings worstLoops(Mode mode, DriveMode type, bool tapDriven, bool bell) {
 	// THE CONTROLS' OWN DEFAULTS FOR THE SECOND PARAMETERS: the rotation turns at its default rate, the balance is all on.
 	s.driveRate = static_cast<float>(kDriveRateLog2Default);
 	s.slotA.rate = s.slotB.rate = static_cast<float>(kDriveRateLog2Default);
+	s.driveAngle = s.slotA.angle = s.slotB.angle = 0.6f; // (the Paunch Types read the angle, as they read Shape 0.6 here before)
 	return s;
 }
 
@@ -7952,4 +7953,86 @@ TEST_CASE("Chonk's Bal at 0% in a slot is the original law to the bit, and at 10
 	const StereoBuffer zero = renderStereo(kRate, d, in);
 	d.driveBal = 1.0f;
 	CHECK_FALSE(renderStereo(kRate, d, in) == zero);
+}
+
+TEST_CASE("The Paunch Types read their own Angle, not Shape — an old patch's Shape on a Paunch Type loads with angle 0 — and every other Type still reads Shape as before") {
+	// WHY THE ANGLE HAS ITS OWN KEY: Shape is one control for every Type, and for the four Paunch Types v0.2.1 stored in it a weight (`1 - 2 shape`: the side below
+	// the middle, nothing at 0.5, the mid above). The angle is a different number with a different meaning, and a key names one meaning, so it is
+	// `eroder_drive_angle` / `eroder_slot_a_angle` / `eroder_slot_b_angle`, and Shape (not retired) means what it did for the other Types.
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::DriveAngle)].key) == "eroder_drive_angle");
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::SlotAAngle)].key) == "eroder_slot_a_angle");
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::SlotBAngle)].key) == "eroder_slot_b_angle");
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::DriveShape)].key) == "eroder_drive_shape");
+	// AN OLD PATCH: a row that stops before the angle fields, with Shape set to 0.7, on a Paunch Type.
+	State old;
+	old.settings.driveMode = DriveMode::PaunchS;
+	old.settings.driveShape = 0.7f;
+	old.settings.slotA = { 0.5f, DriveMode::PaunchOH, 0.7f, 1.0f };
+	const State loaded = stateOf(rowOf(old), static_cast<size_t>(Param::DriveRateMult));
+	CHECK(loaded.settings.driveShape == doctest::Approx(0.7f));
+	CHECK(loaded.settings.driveAngle == 0.0f);
+	CHECK(loaded.settings.slotA.angle == 0.0f);
+	// THE STAGES THE ENGINE BUILDS: a Paunch Type is given the angle, whatever Shape holds; every other Type is given Shape.
+	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::PaunchH, DriveMode::PaunchOS, DriveMode::PaunchOH }) {
+		CAPTURE(static_cast<int>(type));
+		Settings s = rotatingDust(type, false);
+		s.driveShape = 0.7f;
+		s.driveAngle = 0.25f;
+		Eroder e;
+		(void)driveRotationHz(s, 60.0f, &e);
+		CHECK(e.dustForTest().shaperForTest().settings().shape == doctest::Approx(0.25f));
+		s.driveAngle = 0.0f;
+		Eroder f;
+		(void)driveRotationHz(s, 60.0f, &f);
+		CHECK(f.dustForTest().shaperForTest().settings().shape == 0.0f); // Shape 0.7 is not read
+	}
+	for (const DriveMode type : { DriveMode::Lean, DriveMode::Chonk, DriveMode::Tube, DriveMode::Soft }) {
+		CAPTURE(static_cast<int>(type));
+		Settings s = rotatingDust(type, false);
+		s.driveShape = 0.7f;
+		s.driveAngle = 0.25f;
+		Eroder e;
+		(void)driveRotationHz(s, 60.0f, &e);
+		CHECK(e.dustForTest().shaperForTest().settings().shape == doctest::Approx(0.7f)); // Shape acts as before, the angle does not
+	}
+	// THE SAME IN A SLOT, and in the Comb.
+	Settings etch = etchBase();
+	etch.slotA = { 0.5f, DriveMode::PaunchS, 0.7f, 1.0f };
+	etch.slotA.angle = 0.5f;
+	etch.slotB = { 0.5f, DriveMode::Chonk, 0.7f, 1.0f };
+	etch.slotB.angle = 0.5f;
+	Eroder slots;
+	(void)driveRotationHz(etch, 60.0f, &slots);
+	CHECK(slots.dustForTest().slotForTest(0).settings().shape == doctest::Approx(0.5f));
+	CHECK(slots.dustForTest().slotForTest(1).settings().shape == doctest::Approx(0.7f));
+	Settings comb = rotatingDust(DriveMode::PaunchS, false);
+	comb.mode = Mode::Comb;
+	comb.driveShape = 0.7f;
+	comb.driveAngle = 0.25f;
+	Eroder c;
+	c.prepare(kRate);
+	c.setTarget(comb);
+	std::vector<float> l(256, 0.3f);
+	std::vector<float> r = l;
+	c.processStereo(l.data(), r.data(), 256);
+	CHECK(c.combDriveForTest().shape == doctest::Approx(0.25f));
+	// AND BY VALUE ON THE OUTPUT: the angle turns the addition, Shape on a Paunch Type changes nothing.
+	const std::vector<float> in = balanceSignal(Sig::Asym, 9600, 0.4);
+	const auto render = [&in](float shape, float angle) {
+		Settings s = etchBase();
+		s.drive = 0.8f;
+		s.driveMode = DriveMode::PaunchS;
+		s.driveShape = shape;
+		s.driveAngle = angle;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> a = in;
+		std::vector<float> b = in;
+		e.processStereo(a.data(), b.data(), static_cast<int>(a.size()));
+		a.insert(a.end(), b.begin(), b.end());
+		return a;
+	};
+	CHECK(render(0.7f, 0.0f) == render(0.0f, 0.0f));
+	CHECK_FALSE(render(0.0f, 0.25f) == render(0.0f, 0.0f));
 }

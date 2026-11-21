@@ -476,6 +476,10 @@ enum class Param : int {
 	DriveRateMult, ///< every engine with Track: the Paunch Types' rotation rate as a multiple of the played note's frequency (0 is off), in the Rate row's place while Track is on
 	SlotARateMult,
 	SlotBRateMult,
+	/// THE PAUNCH TYPES' ANGLE (Drive, slot A, slot B): its OWN key, because Shape keeps its old meaning for every other Type and a key names one meaning.
+	DriveAngle,
+	SlotAAngle,
+	SlotBAngle,
 
 	kCount,
 };
@@ -498,6 +502,8 @@ inline constexpr size_t kDriveRateParamCount = 1;
 inline constexpr size_t kSlotSecondParamCount = 4;
 /// And the three subharmonic Choices (Drive, slot A, slot B) after those.
 inline constexpr size_t kRateMultParamCount = 3;
+/// And the three Angle controls after those.
+inline constexpr size_t kAngleParamCount = 3;
 /// THE TRACKED RATE: a multiple of the played note's frequency, 0..1, 0 is off (a static angle). Drag lands on the subharmonics below (the
 /// control stays continuous: a typed value is kept as typed, and a modulated one is not snapped).
 inline constexpr double kRateMultDefault = 0.5;
@@ -886,7 +892,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .offsetsMayLeaveRange = false,
      .tooltip = "The Type's own colour: Soft starves quiet parts, Tube's two halves differ, Fold's symmetry, "
 	                "how far Wreck and Jag fold, how wide Lean leans, how much of Chonk (w)'s right side is turned over, "
-	                "which way the two sides get it in the Paunch Types: opposite at the bottom, the same at the top, "
+	                "(the Paunch Types read their own Angle instead), "
 	                "Crush's bit depth, Decimate from steps to lines, Slew from hard to soft, which way "
 	                "Lopside drags",
 	     .zones = 0,
@@ -1627,6 +1633,60 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .centred = false,
      .shortName = "Rate",
      .offAtEnd = -1},
+    {.key = "eroder_drive_angle", .name = "Eroder Drive Angle",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Paunch Types only: the angle of the addition. 0% puts it in opposite sides, 25% in both the same, 50% in opposite sides the other way, "
+                "75% in both inverted. A rotation rate turns it from there. It has a key of its own because Shape keeps its old meaning for every other Type. Shown only while the Drive is on one of the four Paunch (w) Types, in the place of Shape",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "S"},
+    {.key = "eroder_slot_a_angle", .name = "Eroder Slot A Angle",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Paunch Types only: the angle of the addition. 0% puts it in opposite sides, 25% in both the same, 50% in opposite sides the other way, "
+                "75% in both inverted. A rotation rate turns it from there. It has a key of its own because Shape keeps its old meaning for every other Type. Shown in a slot's cell only while its Type is one of the four Paunch (w) Types, in the place of Shape",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "S"},
+    {.key = "eroder_slot_b_angle", .name = "Eroder Slot B Angle",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Paunch Types only: the angle of the addition. 0% puts it in opposite sides, 25% in both the same, 50% in opposite sides the other way, "
+                "75% in both inverted. A rotation rate turns it from there. It has a key of its own because Shape keeps its old meaning for every other Type. Shown in a slot's cell only while its Type is one of the four Paunch (w) Types, in the place of Shape",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "S"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1640,6 +1700,8 @@ struct SlotSettings {
 	DriveMode type = DriveMode::Slew;
 	float shape = 0.0f;
 	float mix = 1.0f;
+	/// THE PAUNCH TYPES' ANGLE (turns, 0..1): read in place of `shape` by those four Types (`driveCoordinate`), whose old Shape key keeps its meaning for every other Type.
+	float angle = 0.0f;
 	/// THE TYPE'S SECOND PARAMETER, as the Drive's: the Paunch Types' rotation rate (log2 hertz, the bottom is off) and Chonk's balance (0..1).
 	/// THE STRUCT'S DEFAULT IS OFF (a hand-built `Settings` holds the angle still); the CONTROL's default, which a patch lacking the key and a
 	/// fresh instance read, is `kDriveRateLog2Default`.
@@ -1669,6 +1731,8 @@ struct Settings {
 	bool track = false;
 	DriveMode driveMode = DriveMode::Soft;
 	float driveShape = 0.0f;
+	/// THE PAUNCH TYPES' ANGLE, read in place of `driveShape` by those four Types (`driveCoordinate`).
+	float driveAngle = 0.0f;
 	float hpWet = static_cast<float>(kHpWetLog2Min); ///< log2 hertz; the bottom is no filter
 	float hpWetSemis = static_cast<float>(kHpWetSemisMin); ///< with Track on, instead of hpWet: semitones from the note; the bottom is no filter
 	bool subThru = false;
@@ -1984,6 +2048,11 @@ struct Rotation {
 	float left = 1.0f;  ///< cos + sin
 	float right = -1.0f; ///< -cos + sin
 };
+/// **THE COORDINATE A TYPE READS**: the four Paunch Types read their own Angle, every other Type reads Shape with the meaning it always had.
+/// (v0.2.1's Paunch Shape was a weight, `1 - 2 shape`: side below the middle, none at 0.5, mid above; a patch's Shape on a Paunch Type is not read now.)
+[[nodiscard]] inline float driveCoordinate(DriveMode mode, float shape, float angle) noexcept {
+	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode) ? angle : shape;
+}
 /// **THE TYPE'S SECOND PARAMETER** — the third row of the Drive's cell and of a slot's: Bal for Chonk, Rate for the four Paunch Types, none for
 /// every other Type (the row is then not drawn). The one small table the cells read; more Types are added here.
 enum class SecondParam { None, Bal, Rate };

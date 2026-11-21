@@ -2615,6 +2615,9 @@ std::vector<std::string> honestyExpected() {
 		"Eroder :: Eroder Drive Balance",    "Eroder :: Eroder Drive Rate",   "Eroder :: Eroder Drive Rate Multiple",
 		"Eroder :: Eroder Slot A Balance",   "Eroder :: Eroder Slot A Rate",  "Eroder :: Eroder Slot A Rate Multiple",
 		"Eroder :: Eroder Slot B Balance",   "Eroder :: Eroder Slot B Rate",  "Eroder :: Eroder Slot B Rate Multiple",
+		// THE PAUNCH TYPES' ANGLE (the Drive's and each slot's) is heard only on those four Types, so the one-control fixture on Soft cannot reach it;
+		// `test_fx_eroder`'s "The Paunch Types read their own Angle" and the rotation cases assert it by value.
+		"Eroder :: Eroder Drive Angle",      "Eroder :: Eroder Slot A Angle", "Eroder :: Eroder Slot B Angle",
 		// RESONATE'S NOTE RELEASE decides what a NOTE-OFF does to its note's head (Gate stops it, Ring lets it ring on), so it
 		// is heard only with a note held and then let go while the string rings — and this fixture plays no notes.
 		// `test_fx_resonate`'s "Note Release Ring makes key length not matter" asserts both states on the output.

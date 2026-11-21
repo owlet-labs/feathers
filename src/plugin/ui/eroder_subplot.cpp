@@ -124,11 +124,11 @@ float EroderSubplot::meterFillWidthForTest(Which which) const noexcept {
 static ero::DriveSettings slotSettings(const ero::Settings& s, EroderSubplot::Curve curve, double rate) {
 	switch (curve) {
 	case EroderSubplot::Curve::A:
-		return ero::deriveDrive(s.slotA.amount, s.slotA.type, s.slotA.shape, rate, nullptr, s.slotA.mix);
+		return ero::deriveDrive(s.slotA.amount, s.slotA.type, ero::driveCoordinate(s.slotA.type, s.slotA.shape, s.slotA.angle), rate, nullptr, s.slotA.mix);
 	case EroderSubplot::Curve::B:
-		return ero::deriveDrive(s.slotB.amount, s.slotB.type, s.slotB.shape, rate, nullptr, s.slotB.mix);
+		return ero::deriveDrive(s.slotB.amount, s.slotB.type, ero::driveCoordinate(s.slotB.type, s.slotB.shape, s.slotB.angle), rate, nullptr, s.slotB.mix);
 	default:
-		return ero::deriveDrive(s.drive, s.driveMode, s.driveShape, rate, nullptr, 1.0f);
+		return ero::deriveDrive(s.drive, s.driveMode, ero::driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), rate, nullptr, 1.0f);
 	}
 }
 

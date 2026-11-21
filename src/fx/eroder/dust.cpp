@@ -417,7 +417,7 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	if (reuse != nullptr) {
 		before = driveOf(*reuse);
 	}
-	const DriveSettings shaper = deriveDrive(s.drive, s.driveMode, s.driveShape, rate, reuse != nullptr ? &before : nullptr);
+	const DriveSettings shaper = deriveDrive(s.drive, s.driveMode, driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), rate, reuse != nullptr ? &before : nullptr);
 	d.driven = shaper.driven;
 	d.driveMode = shaper.mode;
 	d.driveShape = shaper.shape;
@@ -454,8 +454,8 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	if (d.etch) {
 		const DriveSettings beforeA = reuse != nullptr ? reuse->slotA : DriveSettings {};
 		const DriveSettings beforeB = reuse != nullptr ? reuse->slotB : DriveSettings {};
-		d.slotA = deriveDrive(s.slotA.amount, s.slotA.type, s.slotA.shape, rate, reuse != nullptr ? &beforeA : nullptr, s.slotA.mix);
-		d.slotB = deriveDrive(s.slotB.amount, s.slotB.type, s.slotB.shape, rate, reuse != nullptr ? &beforeB : nullptr, s.slotB.mix);
+		d.slotA = deriveDrive(s.slotA.amount, s.slotA.type, driveCoordinate(s.slotA.type, s.slotA.shape, s.slotA.angle), rate, reuse != nullptr ? &beforeA : nullptr, s.slotA.mix);
+		d.slotB = deriveDrive(s.slotB.amount, s.slotB.type, driveCoordinate(s.slotB.type, s.slotB.shape, s.slotB.angle), rate, reuse != nullptr ? &beforeB : nullptr, s.slotB.mix);
 		d.slotA.rateHz = rotationRateHz(s.track, pitchSemitones, s.slotA.rate, s.slotA.rateMult, rate);
 		d.slotB.rateHz = rotationRateHz(s.track, pitchSemitones, s.slotB.rate, s.slotB.rateMult, rate);
 		d.slotA.balance = std::clamp(s.slotA.bal, 0.0f, 1.0f);

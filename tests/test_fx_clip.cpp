@@ -1127,9 +1127,12 @@ TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the
 	CHECK(d.def == 0.0);
 	CHECK(d.max == 1.0);
 	for (const clip::Mode mode : kAllModes) {
-		const bool expected = mode >= clip::Mode::Tube;
+		// THE FOUR PAUNCH MODES READ ANGLE (a key of its own), the other six read Shape.
+		const bool paunch = mode >= clip::Mode::PaunchS && mode <= clip::Mode::PaunchOH;
+		const bool expected = mode >= clip::Mode::Tube && !paunch;
 		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
+		CHECK(feathers::device::relevantFor(clip::kParamDescs[static_cast<size_t>(clip::Param::Angle)], static_cast<double>(mode)) == paunch);
 	}
 	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean (w)", "Chonk (w)", "Paunch-S (w)", "Paunch-H (w)", "Paunch-OS (w)", "Paunch-OH (w)", "Slew", "Lopside" };
 	for (size_t i = 0; i < std::size(appended); ++i) {
@@ -1148,6 +1151,7 @@ TEST_CASE("the Eroder's six never exceed the ceiling: strict with Oversample off
 				s.driveDb = drive;
 				s.ceilingDb = -6.0f;
 				s.shape = shape;
+				s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 				s.oversample = false;
 				CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 				CAPTURE(shape);
@@ -1243,6 +1247,7 @@ TEST_CASE("Shape moves the harmonics of Tube, Jag and Lean to the values the Ero
 			clip::Settings s;
 			s.mode = static_cast<int>(row.mode);
 			s.shape = shape;
+			s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 			s.oversample = false;
 			CAPTURE(clip::kModeNames[static_cast<size_t>(row.mode)]);
 			CAPTURE(shape);
@@ -1280,6 +1285,7 @@ TEST_CASE("Chonk: left is the tanh, the right is turned toward the clean signal,
 		s.mode = static_cast<int>(clip::Mode::Chonk);
 		s.bal = 0.0f; // THE LAW'S OWN TEST: Bal at 0% is the law as it was (the trim is measured by its own cases)
 		s.shape = shape;
+		s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 		s.driveDb = 12.0f;
 		s.oversample = false;
 		CAPTURE(shape);
@@ -1315,6 +1321,7 @@ TEST_CASE("Chonk: left is the tanh, the right is turned toward the clean signal,
 	clip::Settings s;
 	s.mode = static_cast<int>(mode);
 	s.shape = shape;
+	s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 	s.driveDb = driveDb;
 	s.oversample = false;
 	Instance dev;
@@ -1361,6 +1368,7 @@ TEST_CASE("Lopside's rising and falling rates are 2^(+-balance) of the limit, Dr
 	s.driveDb = driveDb;
 	s.ceilingDb = ceilingDb;
 	s.shape = shape;
+	s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 	s.oversample = oversample;
 	Instance dev;
 	dev.set(s);
@@ -1692,4 +1700,33 @@ TEST_CASE("Chonk's Bal in Clip: 0% is the law as it was (the tanh and the turned
 	}
 	CHECK(e0 != e1); // not vacuous: the trim acts on the right
 	CHECK(e1 > e0);  // Chonk thins the right at full Drive; the trim brings it back to the input's balance
+}
+
+TEST_CASE("The Paunch modes read Angle, not Shape: Shape moves nothing there and still acts as before in Tube, Lean, Chonk (the angle has its own key because Shape keeps its meaning)") {
+	const auto render = [](clip::Mode mode, float shape, float angle) {
+		clip::Settings s;
+		s.mode = static_cast<int>(mode);
+		s.shape = shape;
+		s.angle = angle;
+		s.driveDb = 6.0f;
+		s.oversample = false;
+		Instance dev;
+		dev.set(s);
+		std::vector<float> l = sine(24000, 1000.0, 0.3), r = l;
+		for (int done = 0; done < 24000; done += 480) {
+			dev.process(l.data() + done, r.data() + done, 480);
+		}
+		l.insert(l.end(), r.begin(), r.end());
+		return l;
+	};
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS, clip::Mode::PaunchOH }) {
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		CHECK(render(mode, 0.7f, 0.0f) == render(mode, 0.0f, 0.0f)); // an old patch's Shape on a Paunch mode is not read: the angle is 0
+		CHECK_FALSE(render(mode, 0.0f, 0.25f) == render(mode, 0.0f, 0.0f)); // and the angle is
+	}
+	for (const clip::Mode mode : { clip::Mode::Tube, clip::Mode::Lean, clip::Mode::Chonk }) {
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		CHECK_FALSE(render(mode, 0.9f, 0.0f) == render(mode, 0.0f, 0.0f)); // Shape acts
+		CHECK(render(mode, 0.9f, 0.0f) == render(mode, 0.9f, 0.6f));       // and Angle does not
+	}
 }

@@ -197,7 +197,8 @@ struct OpsClip {
 		foldback.set(state.foldback);
 		grit.set(state.grit);
 		depth.set(state.depth);
-		shapeRamp.set(state.shape);
+		// THE SHAPE RAMP CARRIES THE MODE'S COORDINATE: the four Paunch modes read their own Angle, the rest Shape.
+		shapeRamp.set((state.mode >= static_cast<int>(Mode::PaunchS) && state.mode <= static_cast<int>(Mode::PaunchOH)) ? state.angle : state.shape);
 		dcRamp.set(state.dc);
 		balRamp.set(state.bal);
 	}

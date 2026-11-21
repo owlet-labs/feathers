@@ -60,16 +60,16 @@ struct StageView {
 	bool track = false;
 };
 struct StageParams {
-	fx::eroder::Param type, shape, bal, rate, rateMult;
+	fx::eroder::Param type, shape, angle, bal, rate, rateMult;
 };
 inline StageParams driveStageParams() {
 	using P = fx::eroder::Param;
-	return { P::DriveMode, P::DriveShape, P::DriveBal, P::DriveRate, P::DriveRateMult };
+	return { P::DriveMode, P::DriveShape, P::DriveAngle, P::DriveBal, P::DriveRate, P::DriveRateMult };
 }
 inline StageParams slotStageParams(int slot) {
 	using P = fx::eroder::Param;
-	return slot == 0 ? StageParams { P::SlotAType, P::SlotAShape, P::SlotABal, P::SlotARate, P::SlotARateMult }
-	                 : StageParams { P::SlotBType, P::SlotBShape, P::SlotBBal, P::SlotBRate, P::SlotBRateMult };
+	return slot == 0 ? StageParams { P::SlotAType, P::SlotAShape, P::SlotAAngle, P::SlotABal, P::SlotARate, P::SlotARateMult }
+	                 : StageParams { P::SlotBType, P::SlotBShape, P::SlotBAngle, P::SlotBBal, P::SlotBRate, P::SlotBRateMult };
 }
 /// THE STAGE VIEW from a row: its Type, and whether Track is on in an engine that has it (the Comb has none).
 inline StageView stageViewOf(const fx::eroder::Row& row, const StageParams& p) {
@@ -87,8 +87,12 @@ inline std::function<bool(size_t)> stageRowGate(std::shared_ptr<StageView> view,
 	namespace ero = fx::eroder;
 	return [view, p](size_t param) {
 		const ero::SecondParam second = ero::driveSecondParam(view->type);
+		// THE S ROW IS ONE PLACE WITH TWO CONTROLS: Shape for every Type but the four Paunch Types, whose Angle (a key of its own) takes the place.
 		if (param == static_cast<size_t>(p.shape)) {
-			return true;
+			return !ero::driveIsPaunchLaw(view->type) && !ero::driveIsPaunchOdd(view->type);
+		}
+		if (param == static_cast<size_t>(p.angle)) {
+			return ero::driveIsPaunchLaw(view->type) || ero::driveIsPaunchOdd(view->type);
 		}
 		if (param == static_cast<size_t>(p.bal)) {
 			return second == ero::SecondParam::Bal;
@@ -118,6 +122,7 @@ void addStageRows(ModeValueCell& cell, ControlOf&& control, const StageParams& p
 	// A NARROW CELL (the card's, a fifth of a row) cannot print "Rate" beside "0.5Hz" without the two overlapping: its Rate row is labelled "Rt".
 	const char* rateLabel = narrow ? "Rt" : "Rate";
 	(void)cell.addFollower(static_cast<size_t>(p.shape), std::make_unique<ValueBox>(control(p.shape), ""), "S");
+	(void)cell.addFollower(static_cast<size_t>(p.angle), std::make_unique<ValueBox>(control(p.angle), ""), "S");
 	(void)cell.addFollower(static_cast<size_t>(p.bal), std::make_unique<ValueBox>(control(p.bal), ""), "Bal");
 	(void)cell.addFollower(static_cast<size_t>(p.rate), std::make_unique<ValueBox>(control(p.rate), ""), rateLabel);
 	auto mult = std::make_unique<ValueBox>(control(p.rateMult), "");

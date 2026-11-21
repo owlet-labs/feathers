@@ -25101,8 +25101,9 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 	// THE TABLE, RESTATED BY HAND FROM THE PLAN (Task 7) â€” which mode reads which control. Checked
 	// against the card AND against the descriptor's gates, so a card and a descriptor that drifted
 	// together would still be caught by the first.
-	const std::array<cl::Param, 10> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
-		                                    cl::Param::Depth, cl::Param::Bits, cl::Param::Shape, cl::Param::DcBlock, cl::Param::Bal, cl::Param::Rate };
+	const std::array<cl::Param, 11> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
+		                                    cl::Param::Depth, cl::Param::Bits, cl::Param::Shape, cl::Param::DcBlock, cl::Param::Bal, cl::Param::Rate,
+		                                    cl::Param::Angle };
 	const std::array<std::set<cl::Param>, 15> expected {
 		std::set<cl::Param> { cl::Param::Knee },                                         // Soft
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback },   // Texture
@@ -25113,10 +25114,10 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 		std::set<cl::Param> { cl::Param::Shape },                                        // Jag
 		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock },                    // Lean
 		std::set<cl::Param> { cl::Param::Shape, cl::Param::Bal },                        // Chonk
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-S
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-H
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::Rate },                       // Paunch-OS
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::Rate },                       // Paunch-OH
+		std::set<cl::Param> { cl::Param::Angle, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-S
+		std::set<cl::Param> { cl::Param::Angle, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-H
+		std::set<cl::Param> { cl::Param::Angle, cl::Param::Rate },                       // Paunch-OS
+		std::set<cl::Param> { cl::Param::Angle, cl::Param::Rate },                       // Paunch-OH
 		std::set<cl::Param> { cl::Param::Shape },                                        // Slew
 		std::set<cl::Param> { cl::Param::Shape },                                        // Lopside
 	};
@@ -25236,8 +25237,12 @@ TEST_CASE("CLIP's mode controls close up: Fold's Depth takes the first cell, Bit
 	for (const cl::Mode mode : { cl::Mode::Tube, cl::Mode::Lean, cl::Mode::PaunchS, cl::Mode::PaunchH, cl::Mode::PaunchOS, cl::Mode::PaunchOH, cl::Mode::Lopside }) {
 		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
 		(void)card->updateContent();
-		REQUIRE(card->widgetForTest(cl::Param::Shape)->isVisible());
-		CHECK(card->widgetForTest(cl::Param::Shape)->x() == doctest::Approx(cell0));
+		// (the four Paunch modes read Angle, a key of its own, in the same first cell; Shape is hidden there)
+		const bool paunch = mode >= cl::Mode::PaunchS && mode <= cl::Mode::PaunchOH;
+		visage::Frame* first = card->widgetForTest(paunch ? cl::Param::Angle : cl::Param::Shape);
+		REQUIRE(first->isVisible());
+		CHECK(first->x() == doctest::Approx(cell0));
+		CHECK_FALSE(card->widgetForTest(paunch ? cl::Param::Shape : cl::Param::Angle)->isVisible());
 	}
 }
 
@@ -42806,8 +42811,8 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 	// boxes): four more continuous controls that are not knobs. The Input drive is a knob and a continuous control both.
 	// AND THE DC AMOUNT, the third row of the Drive's mode cell, a box like its Shape.
 	// THE SLOTS' MIXES ARE KNOBS IN THE WINDOW NOW (two), so only their two Shapes are slot boxes; and the Type's second-parameter boxes (the Drive's
-	// Bal, Rate and Rate multiple, and each slot's three) are nine more continuous controls that are boxes in the cells, not knobs.
-	REQUIRE(knobs.size() == continuous - 2 - 4 - 1 - 3 - 1 - 9); // and the Comb's Cutoff, the Filter box's top row there
+	// Bal, Rate and Rate multiple, and each slot's three) are nine more, and the three Angles (the S row of a Paunch Type) three continuous controls that are boxes in the cells, not knobs.
+	REQUIRE(knobs.size() == continuous - 2 - 4 - 1 - 3 - 1 - 9 - 3); // and the Comb's Cutoff, the Filter box's top row there
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -43566,8 +43571,13 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own second parameter â€
 					const std::string label = cell->boxFor(eroAt(ero::Param::DriveRate))->label();
 					CHECK((label == "Rate" || label == "Rt"));
 				}
-				ui::ValueBox* sh = cell->boxFor(eroAt(ero::Param::DriveShape));
+				// THE S ROW IS ONE PLACE: Shape for every Type but the four Paunch Types, whose Angle (a key of its own) takes it.
+				const bool angled = ero::driveIsPaunchLaw(dm) || ero::driveIsPaunchOdd(dm);
+				ui::ValueBox* sh = cell->boxFor(eroAt(angled ? ero::Param::DriveAngle : ero::Param::DriveShape));
+				ui::ValueBox* other = cell->boxFor(eroAt(angled ? ero::Param::DriveShape : ero::Param::DriveAngle));
 				CHECK(sh->isVisible());
+				CHECK_FALSE(other->isVisible());
+				CHECK(sh->label() == "S");
 				for (const ero::Param p : second) {
 					ui::ValueBox* box = cell->boxFor(eroAt(p));
 					if (box->isVisible()) {
@@ -44608,7 +44618,7 @@ TEST_CASE("ETCH's card draws its slot row on one line, both slots and the route 
 	for (ui::ModeValueCell* m : { slots.cellA.get(), slots.cellB.get() }) {
 		CHECK(m->stacked());
 		// THE CARD'S SLOT CELL: Shape and the Type's second parameter (Bal, the Rate in hertz, the Rate as a multiple); the slot's Mix is the WINDOW's knob.
-		CHECK(m->followerParams().size() == 4);
+		CHECK(m->followerParams().size() == 5);
 		CHECK(m->boxFor(eroAt(ero::Param::SlotAMix)) == nullptr);
 		CHECK(m->boxFor(eroAt(ero::Param::SlotBMix)) == nullptr);
 	}

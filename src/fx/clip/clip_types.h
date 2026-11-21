@@ -81,6 +81,8 @@ enum class Param : int {
 	Bal,
 	/// THE PAUNCH MODES' ROTATION LFO RATE, log2 hertz, the bottom is off (`kPaunchModes`).
 	Rate,
+	/// THE PAUNCH MODES' ANGLE, 0..1, read in place of Shape by those four modes (Shape keeps its meaning for the others, so the angle has a key of its own).
+	Angle,
 
 	kCount,
 };
@@ -112,6 +114,8 @@ inline constexpr uint32_t kShapeModes = kModeBit(Mode::Tube) | kModeBit(Mode::Ja
 inline constexpr device::ChoiceAlias kModeAliases[] = { { "Paunch", "Chonk (w)" }, { "Lean", "Lean (w)" } };
 /// THE MODES THAT MAKE AN OFFSET: Tube and Lean (the Eroder's own, as Clip has always removed it) and the two Paunch rectifier Types.
 inline constexpr uint32_t kBalModes = kModeBit(Mode::Chonk);
+/// THE MODES THAT READ Shape (the four Paunch modes read Angle instead), for the gate.
+inline constexpr uint32_t kShapeKnobModes = kShapeModes & ~(kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH) | kModeBit(Mode::PaunchOS) | kModeBit(Mode::PaunchOH));
 /// THE FOUR PAUNCH MODES, which read the rotation LFO's Rate.
 inline constexpr uint32_t kPaunchModes = kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH) | kModeBit(Mode::PaunchOS) | kModeBit(Mode::PaunchOH);
 /// THE RATE'S RANGE (the Eroder Drive's): log2 hertz, the bottom is off, then 0.05 to 20 Hz.
@@ -157,6 +161,7 @@ struct Settings {
 	float bal = 1.0f;
 	/// OFF in a hand-built `Settings` (the angle holds still); the CONTROL's default, which a fresh instance and a patch lacking the key read, is `kRateLog2Default`.
 	float rate = static_cast<float>(kRateLog2Min);
+	float angle = 0.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -328,10 +333,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .names = {}, .modulatable = true,
      .tooltip = "The mode's own coordinate. Tube: how much steeper the lower half is. Jag: how far the triangle "
                 "folds. Lean (w): how far the curve leans, which adds even harmonics. Chonk (w): how far the right "
-                "side is turned toward the clean signal (it thins, then flips, as Drive rises). Paunch-S, Paunch-H, Paunch-OS and Paunch-OH: which way the two sides get it, "
-                "opposite at the bottom, the same at the top. Slew: from a hard rate limit to a one-pole. Lopside: "
+                "side is turned toward the clean signal (it thins, then flips, as Drive rises). Slew: from a hard rate limit to a one-pole. Lopside: "
                 "from slow rises to slow falls, even in the middle. Drive sets the rate in Slew and Lopside, and the amount in Paunch-S, Paunch-H, Paunch-OS and Paunch-OH",
-     .gateControl = kModeControl, .gateMask = kShapeModes},
+     .gateControl = kModeControl, .gateMask = kShapeKnobModes},
     {.key = "clip_dc_block", .name = "Clip DC Block", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = true, .unit = device::Unit::Choice,
      .names = kOffOnNames, .modulatable = false,
      .tooltip = "Removes the offset the shaper leaves (below 10 Hz). Off lets it through to whatever follows. The ceiling clips the signal with "
@@ -348,6 +352,11 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .tooltip = "Paunch Types only: how fast the angle of the addition turns, so no side leans on average. At the bottom it is off and "
                 "Shape's angle holds still",
      .gateControl = kModeControl, .gateMask = kPaunchModes, .offAtEnd = -1},
+    {.key = "clip_angle", .name = "Clip Angle", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "Paunch Types only: the angle of the addition. 0% puts it in opposite sides, 25% in both the same, 50% in opposite sides the other way, 75% in both "
+                "inverted. A rotation rate turns it from there. It has a key of its own because Shape keeps its old meaning for every other mode",
+     .gateControl = kModeControl, .gateMask = kPaunchModes},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));

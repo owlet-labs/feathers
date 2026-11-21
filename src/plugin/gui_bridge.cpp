@@ -2108,6 +2108,9 @@ void ParamBridge::setOutputLabel(DeviceInstanceId device, size_t output, std::st
 }
 
 bool ParamBridge::setUserName(DeviceInstanceId device, std::string_view name) {
+	if (!name.empty() && !chains_.holds(device)) {
+		return false; // a device that is gone takes no name
+	}
 	if (!outputLabels_.setName(device, name)) {
 		return false; // the name it has already; not an edit
 	}

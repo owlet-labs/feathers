@@ -87,6 +87,7 @@ RackBridge::RackBridge(RackEngine& engine, backplane::InstanceCounter* shared, H
 	// this bridge's whole life — handed before any block runs, as Feathers hands its lane the bridge's.
 	if (slots == HostSlots::OwnPool) {
 		slots_ = std::make_unique<SlotOwner>(record_);
+		slots_->setNames(&outputLabels_);
 		macroOutbox_ = std::make_unique<MacroOutbox>(); // its macros are the plugin's host parameters (NG)
 		engine_.setHostSlotBus(&slots_->bus());
 		// A NESTED VERB THAT CHANGED THE POOL (T11) MARKS THIS PATCH, where the pool is saved.

@@ -789,6 +789,11 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	(void)showForMode();
 	(void)follow();
 
+	// THE CARD IS WHAT A PAD OR TAB PRESS FOCUSES (a card accepts keystrokes), so the keys for the chain in front are handed down from here: Ctrl+C /
+	// X / V act on the viewed chain's selection, an empty chain's included. A text field with focus takes its own keys first (the walk starts there).
+	onKeyPress() = [this](const visage::KeyEvent& e) {
+		return !folded() && model_->view() != RackViewKind::Strips && front_->processKeyForChain(e);
+	};
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		noteCardPress(e);
 		if (slotMenuAt(e.position)) {

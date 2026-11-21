@@ -31,6 +31,7 @@
 #include "fx/sklitter/sklitter.h"
 #include "fx/sklitter/sklitter_types.h"
 #include "plugin/ui/chain_column.h"
+#include "plugin/ui/parallel_rack_card.h"
 #include "plugin/ui/expanded_views.h"
 #include "plugin/ui/sklitter_expanded.h"
 #include "plugin/ui/surface_layers.h"
@@ -2771,4 +2772,367 @@ TEST_CASE("Rack macros are the synth's macro slots: the same right-click menu, a
 	(void)panel2->updateContent();
 	CHECK(panel2->macroSlotForTest(2).caption() == "Sweep");
 	CHECK(panel2->macroSlotForTest(2).type() == device::MacroType::Momentary);
+}
+
+//--------------------------------------------------------------------------------------------------
+// A CHIP IS DRAWN IFF PRESSING IT OPENS SOMETHING — in the standalone editor, a Chain's window, a Rack card's front and a site's panel
+//--------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// A card's window chip and site chip, and whether PRESSING each presents a panel (counted on `count`, which reads the host's panels).
+struct ChipReport {
+	bool expand = false;
+	bool site = false;
+	bool expandOpens = false;
+	bool siteOpens = false;
+};
+
+ChipReport pressChips(ui::FxCard& card, const std::function<size_t()>& count) {
+	ChipReport r;
+	const visage::Bounds e = card.expandBounds();
+	const visage::Bounds s = card.siteBounds();
+	r.expand = e.width() > 0.0f && e.height() > 0.0f && e.x() >= 0.0f && e.right() <= static_cast<float>(card.width()) + 0.01f;
+	r.site = s.width() > 0.0f && s.height() > 0.0f && s.x() >= 0.0f && s.right() <= static_cast<float>(card.width()) + 0.01f;
+	if (r.expand) {
+		const size_t before = count();
+		card.noteCardPress(centreOf(e), 1);
+		r.expandOpens = count() == before + 1;
+		card.noteCardPress(centreOf(e), 1); // a second press closes it again
+		CHECK(count() == before);
+	}
+	if (r.site) {
+		const size_t before = count();
+		card.noteCardPress(centreOf(s), 1);
+		r.siteOpens = count() == before + 1;
+		card.noteCardPress(centreOf(s), 1);
+		CHECK(count() == before);
+	}
+	return r;
+}
+
+} // namespace
+
+TEST_CASE("chips: a standalone rack editor keeps its cards' window and site chips, and each press opens its panel, through a second view of the chain coming and going and the editor being closed and reopened") {
+	rack::registerChainExpandedView();
+	SiteHost h;
+	ui::ModState mod;
+	ui::EditHistory history;
+	const DeviceInstanceId window = h.bridge.addDevice(sc::kTraits.tag);   // has a window
+	const DeviceInstanceId site = h.bridge.addDevice(fx::filter::kTraits.tag); // has a site
+	REQUIRE(window != kNoInstance);
+	REQUIRE(site != kNoInstance);
+	const auto check = [&](rack::RackEditor& editor, const char* step) {
+		INFO(step);
+		editor.setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+		editor.syncCards();
+		const auto count = [&] { return editor.expandedCountForTest(); };
+		ui::FxCard* w = editor.cardOfDeviceForTest(window);
+		ui::FxCard* s = editor.cardOfDeviceForTest(site);
+		REQUIRE(w != nullptr);
+		REQUIRE(s != nullptr);
+		const ChipReport rw = pressChips(*w, count);
+		CHECK(rw.expand);
+		CHECK(rw.expandOpens);
+		const ChipReport rs = pressChips(*s, count);
+		CHECK(rs.site);
+		CHECK(rs.siteOpens);
+		CHECK_FALSE(rs.expand); // no window, so no chip
+	};
+	ui::WidgetRegistry registry;
+	{
+		auto a = std::make_unique<rack::RackEditor>(h.bridge, mod, history);
+		check(*a, "first editor");
+		// A SECOND VIEW OF THE SAME CHAIN comes and goes (a column over the bridge, presented then released).
+		{
+			ui::SurfaceLayers layers;
+			layers.setBounds(0, 0, 1200, 700);
+			ui::ChainColumn column(h.bridge, registry, mod, history, nullptr);
+			column.setPresentedOn(&layers);
+		}
+		check(*a, "after a second view over the chain went away");
+		// A SECOND EDITOR over the chain, closed, then the first checked again; then the first closed and a third opened (reopen).
+		{
+			rack::RackEditor b(h.bridge, mod, history);
+			check(b, "second editor");
+		}
+		check(*a, "after a second editor closed");
+		a.reset();
+		rack::RackEditor c(h.bridge, mod, history);
+		check(c, "reopened editor");
+	}
+}
+
+TEST_CASE("chips: a Rack card inside a chain's editor shows its front cards' window and site chips in Tabs and Pads, and each press presents a panel") {
+	rack::registerChainExpandedView();
+	SiteHost h;
+	ui::ModState mod;
+	ui::EditHistory history;
+	const DeviceInstanceId first = h.bridge.addDevice(fx::filter::kTraits.tag);
+	const DeviceInstanceId rackId = h.bridge.addDevice(rack::parallel::kTraits.tag);
+	REQUIRE(first != kNoInstance);
+	REQUIRE(rackId != kNoInstance);
+	h.bridge.drain();
+	auto* rk = rack::parallel::rackOf(h.bridge.containerSurfaceOf(rackId));
+	REQUIRE(rk != nullptr);
+	REQUIRE(rk->chainCount() >= 1);
+	rack::RackBridge& inner = *rk->chainAt(0)->bridge();
+	const DeviceInstanceId withWindow = inner.addDevice(sc::kTraits.tag);
+	const DeviceInstanceId withSite = inner.addDevice(fx::filter::kTraits.tag);
+	REQUIRE(withWindow != kNoInstance);
+	REQUIRE(withSite != kNoInstance);
+	for (const float view : { 1.0f, 2.0f }) { // Tabs, Pads
+		INFO("view " << view);
+		h.bridge.setField(rackId, static_cast<size_t>(rack::parallel::Param::View), view);
+		h.bridge.setField(rackId, static_cast<size_t>(rack::parallel::Param::Mode), 0.0f);
+		rack::RackEditor editor(h.bridge, mod, history);
+		editor.setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+		editor.syncCards();
+		auto* card = dynamic_cast<ui::ParallelRackCard*>(editor.cardOfDeviceForTest(rackId));
+		REQUIRE(card != nullptr);
+		const auto settle = [&] {
+			for (int i = 0; i < 4; ++i) {
+				editor.syncCards();
+				(void)card->update();
+				card->resized();
+			}
+		};
+		settle();
+		ui::ChainColumn* column = card->frontForTest().columnForTest();
+		REQUIRE(column != nullptr);
+		const auto count = [&] { return column->expandedCountForTest(); };
+		// IN PADS THE FIRST CARD ALONE IS SHOWN; open the chain so both are on screen.
+		if (view == 2.0f) {
+			card->padsStepForTest().pressMoreForTest();
+		}
+		else {
+			card->chainArrowForTest().toggleForTest();
+		}
+		settle();
+		ui::FxCard* w = column->cardOf(withWindow);
+		ui::FxCard* s = column->cardOf(withSite);
+		REQUIRE(w != nullptr);
+		REQUIRE(s != nullptr);
+		const ChipReport rw = pressChips(*w, count);
+		CHECK(rw.expand);
+		CHECK(rw.expandOpens);
+		const ChipReport rs = pressChips(*s, count);
+		CHECK(rs.site);
+		CHECK(rs.siteOpens);
+	}
+}
+
+TEST_CASE("chips: in a site's pre/post panel every card — PRE's, the device in the centre, POST's — has a working window chip, and the cards with a site have a working site chip") {
+	rack::registerChainExpandedView();
+	SiteHost h;
+	// A DEVICE THAT HAS BOTH A WINDOW AND A SITE, found from the registry (so the case follows the table, not a name).
+	const device::Descriptor* both = nullptr;
+	for (const device::Descriptor& d : feathers::kDevices) {
+		if (ui::hasExpandedView(d) && d.audio != nullptr && d.traits.siteLanes != device::Traits::SiteLanes::None) {
+			both = &d;
+			break;
+		}
+	}
+	REQUIRE(both != nullptr);
+	const DeviceInstanceId id = h.bridge.addDevice(both->traits.tag); // the centre: has a window and a site
+	// THE OUTER CHAIN'S OWN COLUMN IS PRESENTING (it is what opened this panel), so the host the centre runs in answers for its window.
+	const auto outerPresenting = h.bridge.retainExpandedViewQuery(&ui::hasExpandedView);
+	REQUIRE(id != kNoInstance);
+	REQUIRE(h.bridge.openSite(id));
+	auto* site = static_cast<rack::SiteChains*>(h.bridge.containerSurfaceOf(siteKeyOf(id)));
+	REQUIRE(site != nullptr);
+	const DeviceInstanceId preWin = site->pre().bridge()->addDevice(both->traits.tag);
+	const DeviceInstanceId preSite = preWin;
+	const DeviceInstanceId postWin = site->post().bridge()->addDevice(both->traits.tag);
+	ui::WidgetRegistry registry;
+	std::unique_ptr<ui::ExpandedView> view =
+	    ui::makeExpandedView(h.bridge, nullptr, registry, siteKeyOf(id), ui::siteViewDescriptor());
+	auto* panel = dynamic_cast<rack::SiteExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	const visage::Point size = panel->minimumSize();
+	panel->setBounds(0, 0, size.x, size.y);
+	(void)panel->updateContent();
+	rack::RackEditor* editor = panel->editorForTest();
+	REQUIRE(editor != nullptr);
+	const auto count = [&] { return editor->expandedCountForTest(); };
+	const auto expectWindow = [&](ui::FxCard* card, const char* who) {
+		INFO(std::string(who));
+		REQUIRE(card != nullptr);
+		const ChipReport r = pressChips(*card, count);
+		CHECK(r.expand);
+		CHECK(r.expandOpens);
+	};
+	const auto expectSite = [&](ui::FxCard* card, const char* who) {
+		INFO(std::string(who));
+		REQUIRE(card != nullptr);
+		const ChipReport r = pressChips(*card, count);
+		CHECK(r.site);
+		CHECK(r.siteOpens);
+	};
+	expectWindow(editor->cardOfDeviceForTest(preWin), "PRE window card");
+	expectWindow(editor->centreCardForTest(), "centre");
+	const std::vector<ui::FxCard*> post = editor->postCardsForTest();
+	REQUIRE(post.size() == 1u);
+	REQUIRE(post[0]->device() == postWin);
+	expectWindow(post[0], "POST window card");
+	expectSite(post[0], "POST site card");
+	expectSite(editor->cardOfDeviceForTest(preSite), "PRE site card");
+	// THE CENTRE'S PANEL AND A PRE CARD'S ARE KEYED BY DEVICE ID AND NEST, and the two ids belong to different chains: with both windows open at
+	// once neither retires the other, even where the ids coincide.
+	{
+		ui::FxCard* centre = editor->centreCardForTest();
+		ui::FxCard* pre = editor->cardOfDeviceForTest(preWin);
+		REQUIRE(centre != nullptr);
+		REQUIRE(pre != nullptr);
+		const size_t before = count();
+		centre->noteCardPress(centreOf(centre->expandBounds()), 1);
+		pre->noteCardPress(centreOf(pre->expandBounds()), 1);
+		CHECK(count() == before + 2);
+		CAPTURE(id == preWin);
+		pre->noteCardPress(centreOf(pre->expandBounds()), 1);
+		centre->noteCardPress(centreOf(centre->expandBounds()), 1);
+		CHECK(count() == before);
+	}
+}
+
+TEST_CASE("delete closes panels: removing a device closes its window and its pre/post view, by the column's menu verb, by the chain itself (what undo and redo do), in a column and in a rack editor; undo of the delete does not reopen them") {
+	rack::registerChainExpandedView();
+	const device::Descriptor* both = nullptr;
+	for (const device::Descriptor& d : feathers::kDevices) {
+		if (ui::hasExpandedView(d) && d.audio != nullptr && d.traits.siteLanes != device::Traits::SiteLanes::None) {
+			both = &d;
+			break;
+		}
+	}
+	REQUIRE(both != nullptr);
+	for (const bool inEditor : { false, true }) {
+		for (const int road : { 0, 1 }) { // 0: the host's own verb, 1: straight on the bridge (an undo of an add, a redo of a delete)
+			CAPTURE(inEditor);
+			CAPTURE(road);
+			SiteHost h;
+			ui::ModState mod;
+			ui::EditHistory history;
+			ui::WidgetRegistry registry;
+			ui::SurfaceLayers outer;
+			outer.setBounds(0, 0, 1400, 900);
+			const DeviceInstanceId id = h.bridge.addDevice(both->traits.tag);
+			REQUIRE(id != kNoInstance);
+			std::unique_ptr<ui::ChainColumn> column;
+			std::unique_ptr<rack::RackEditor> editor;
+			ui::FxCard* card = nullptr;
+			size_t panels = 0;
+			if (inEditor) {
+				editor = std::make_unique<rack::RackEditor>(h.bridge, mod, history);
+				editor->setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+				editor->syncCards();
+				card = editor->cardOfDeviceForTest(id);
+			}
+			else {
+				column = std::make_unique<ui::ChainColumn>(h.bridge, registry, mod, history, nullptr);
+				column->setBounds(0, 0, static_cast<int>(ui::FxLaneRail::kWidth), 600);
+				column->setPresentedOn(&outer);
+				column->syncCards();
+				card = column->cardOf(id);
+			}
+			REQUIRE(card != nullptr);
+			const auto count = [&] { return inEditor ? editor->expandedCountForTest() : column->expandedCountForTest(); };
+			const visage::Bounds e = card->expandBounds();
+			const visage::Bounds s = card->siteBounds();
+			REQUIRE(e.width() > 0.0f);
+			REQUIRE(s.width() > 0.0f);
+			card->noteCardPress(centreOf(e), 1);
+			card->noteCardPress(centreOf(s), 1);
+			panels = count();
+			REQUIRE(panels == 2); // the window and the pre/post view are both up
+			if (road == 0 && !inEditor) {
+				CHECK(column->removeDevice(id));
+			}
+			else {
+				h.bridge.removeDevice(id);
+			}
+			if (inEditor) {
+				editor->syncCards();
+			}
+			else {
+				column->syncCards();
+			}
+			CHECK(count() == 0);
+			// UNDO OF THE DELETE puts the device back; nothing reopens by itself.
+			history.undo();
+			if (inEditor) {
+				editor->syncCards();
+			}
+			else {
+				column->syncCards();
+			}
+			CHECK(count() == 0);
+		}
+	}
+}
+
+TEST_CASE("right-click on a card's bare header opens the slot menu the dots open; on a head mark or the body it does not; the site centre has none") {
+	rack::registerChainExpandedView();
+	const device::Descriptor* both = nullptr;
+	for (const device::Descriptor& d : feathers::kDevices) {
+		if (ui::hasExpandedView(d) && d.audio != nullptr && d.traits.siteLanes != device::Traits::SiteLanes::None) {
+			both = &d;
+			break;
+		}
+	}
+	REQUIRE(both != nullptr);
+	SiteHost h;
+	ui::ModState mod;
+	ui::EditHistory history;
+	const DeviceInstanceId id = h.bridge.addDevice(both->traits.tag);
+	REQUIRE(id != kNoInstance);
+	rack::RackEditor editor(h.bridge, mod, history);
+	editor.setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+	editor.syncCards();
+	ui::FxCard* card = editor.cardOfDeviceForTest(id);
+	REQUIRE(card != nullptr);
+	int menus = 0;
+	int focuses = 0;
+	card->onSlotMenu = [&] { ++menus; };
+	card->onCardPressed = [&] { ++focuses; };
+	const auto press = [&](visage::Point at, bool right) {
+		visage::MouseEvent e;
+		e.position = at;
+		e.window_position = at;
+		e.event_frame = card;
+		e.button_id = right ? visage::kMouseButtonRight : visage::kMouseButtonLeft;
+		e.button_state = e.button_id;
+		e.is_down = true;
+		e.repeat_click_count = 1;
+		card->processMouseDown(e); // the card's own handler, as the framework delivers it
+	};
+	// A BARE HEAD POINT: on the head, clear of every head control.
+	visage::Point bare { -1.0f, -1.0f };
+	for (float x = 4.0f; x < static_cast<float>(card->width()) && bare.x < 0.0f; x += 3.0f) {
+		const visage::Point at { x, 4.0f };
+		if (!card->headControlAt(at) && card->pressOnHead(at)) {
+			bare = at;
+		}
+	}
+	REQUIRE(bare.x >= 0.0f);
+	// THE DOTS (a left press on the mark) are the reference: one menu, one focus.
+	press(centreOf(card->slotMenuBounds()), false);
+	CHECK(menus == 1);
+	CHECK(focuses == 1);
+	// A RIGHT-PRESS ON THE BARE HEAD: the same menu, the same focus, and no drag or fold armed.
+	press(bare, true);
+	CHECK(menus == 2);
+	CHECK(focuses == 2);
+	CHECK_FALSE(card->cardGestureArmed());
+	// A LEFT PRESS on the bare head opens nothing.
+	press(bare, false);
+	CHECK(menus == 2);
+	// A RIGHT-PRESS ON A HEAD MARK keeps that mark's own gesture (no slot menu from it), and on the BODY none either.
+	press(centreOf(card->expandBounds()), true);
+	CHECK(menus == 2);
+	press({ static_cast<float>(card->width()) * 0.5f, static_cast<float>(card->height()) * 0.5f }, true);
+	CHECK(menus == 2);
+	// A CARD THAT BOUND NO SLOT MENU (the site panel's centre) gets no header menu either.
+	card->onSlotMenu = nullptr;
+	press(bare, true);
+	CHECK(menus == 2);
 }

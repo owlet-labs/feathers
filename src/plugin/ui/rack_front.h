@@ -72,6 +72,8 @@ public:
 	/// The stable id of the chain it is bound to (0xFFFF: none) and its column, for the cases.
 	[[nodiscard]] uint16_t chainIdForTest() const noexcept { return chainId_; }
 	[[nodiscard]] ChainColumn* columnForTest() noexcept { return column_.get(); }
+	/// A key meant for the viewed chain (Ctrl+C / X / V ...): handed to its column, whose selection acts on the chain. False when there is none.
+	bool processKeyForChain(const visage::KeyEvent& e) { return column_ != nullptr && column_->processKeyPress(e); }
 	/// The padding between the cards (and none around them: a member card is as wide as the rack card's content).
 	static constexpr float kGap = 6.0f;
 

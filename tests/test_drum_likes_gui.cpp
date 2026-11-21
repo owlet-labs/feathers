@@ -280,3 +280,43 @@ TEST_CASE("drum likes window: the terrain controls are the Drum's own and none t
 		CHECK(width->isVisible() == reads);
 	}
 }
+
+TEST_CASE("drum likes window: Clear empties the device's like store, the warp and the marks, and the empty store survives save and load") {
+	Window w;
+	w.stand(0.5, -0.25);
+	w.press(w.win->likesForTest(), { 5.0f, 5.0f });
+	w.stand(3.0, 2.0);
+	w.press(w.win->likesForTest(), { 5.0f, 5.0f });
+	w.stand(0.5, -0.25);
+	REQUIRE(w.stored().size() == 2);
+	REQUIRE(w.win->likesForTest().state() != nullptr);
+	// NOT VACUOUS: a patch saved now carries them.
+	persist::Rig withLikes;
+	withLikes.load(w.rig.save());
+	withLikes.block();
+	std::vector<float> got(dd::kLikesBlockWords);
+	std::vector<dd::DrumLike> back;
+	REQUIRE(withLikes.bridge->blockAt(withLikes.id, dd::kLikesBlock, got));
+	REQUIRE(dd::readLikeBlock(got.data(), got.size(), &back));
+	CHECK(back.size() == 2);
+	// THE MENU'S CLEAR.
+	visage::PopupMenu menu = w.win->likesForTest().menu();
+	menu.onSelection().callback(ui::DrumLikeBar::kClearLikes);
+	CHECK(w.stored().empty());
+	CHECK(w.win->likesForTest().state() == nullptr);
+	CHECK(w.win->likesForTest().applied().empty());
+	w.frame();
+	CHECK(w.win->padForTest().likeMarksDrawn() == 0);
+	// THE WARP IS GONE FROM THE PAD'S MAP: a place of the view is the place of the world.
+	const auto at = ui::DrumDevicePadPolicy::worldFromView(ui::DrumPadContext { w.settings(), w.win->likesForTest().state() }, { 0.0, 0.0 }, 0.7, -0.3);
+	CHECK(at.first == 0.7);
+	CHECK(at.second == -0.3);
+	// AND THE EMPTY STORE IS WHAT A SAVE CARRIES.
+	persist::Rig after;
+	after.load(w.rig.save());
+	after.block();
+	std::vector<float> none(dd::kLikesBlockWords);
+	std::vector<dd::DrumLike> left;
+	const bool have = after.bridge->blockAt(after.id, dd::kLikesBlock, none);
+	CHECK((!have || (dd::readLikeBlock(none.data(), none.size(), &left) && left.empty())));
+}

@@ -57,10 +57,11 @@ public:
 	void modulationBound(ModState* mod, EditHistory* history) override;
 
 	static constexpr float kWidth = 640.0f;
-	static constexpr float kMinimumHeight = 718.0f;
+	static constexpr float kMinimumHeight = 740.0f;
 	static constexpr float kPad = 12.0f;
 	static constexpr float kPictureHeight = 210.0f;
-	static constexpr float kTerrainSize = 148.0f;
+	static constexpr float kTerrainWidth = 260.0f; ///< wide enough for the zoom box (left) and Rotate (right) inside it
+	static constexpr float kTerrainHeight = 170.0f;
 
 	/// For the cases.
 	[[nodiscard]] DrumDeviceModel& modelForTest() { return model_; }

@@ -2939,9 +2939,13 @@ TEST_CASE("rack layout: the Strips window's add-chain button stands after the la
 	press.position = { after.x() + 1.0f, after.y() + 1.0f };
 	r.panel->onMouseDown().callback(press);
 	CHECK(r.rack().chainCount() == chains + 1);
-	// OTHER VIEWS KEEP IT UNDER THE MACROS.
+	// TABS: A "+" AT THE END OF THE TAB COLUMN, under the last tab (one tab's width).
 	r.view_(1);
-	CHECK(r.panel->addBoundsForTest().x() == doctest::Approx(ui::ParallelRackExpanded::kPad));
+	const visage::Bounds tabsAdd = r.panel->addBoundsForTest();
+	const visage::Bounds column = r.panel->tabBarForTest().bounds();
+	CHECK(tabsAdd.x() == doctest::Approx(column.x()));
+	CHECK(tabsAdd.y() >= column.bottom());
+	CHECK(tabsAdd.width() == doctest::Approx(ui::RackTabBar::kThickness));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
@@ -3101,4 +3105,162 @@ TEST_CASE("chain names: Rename... from a tab, a pad and the menu renames one cha
 	padAsked = 99;
 	grid.pressContextForTest(grid.padCentre(9)); // an empty pad
 	CHECK(padAsked == 99);
+}
+
+TEST_CASE("rack layout: in the Rack window's Tabs view the tabs are a thin column down the left, each at most a cap long, a + at its end, and the window is no wider for eight tabs than for two") {
+	const auto measure = [](size_t chains, bool pane) {
+		RealRack r;
+		r.chains(chains, 0, true);
+		for (size_t i = 0; i < chains; ++i) {
+			(void)r.rack().chainAt(i)->bridge()->addDevice("DRUM"); // the same front content in every tab
+		}
+		r.set(pr::Param::Front, pane ? 1.0f : 0.0f);
+		r.view_(1);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		r.panel->setBounds(0.0f, 0.0f, std::max(1400.0f, r.panel->minimumSize().x), std::max(900.0f, r.panel->minimumSize().y));
+		r.refresh();
+		struct Out {
+			float minWidth;
+			visage::Bounds column;
+			visage::Bounds add;
+			size_t tabs;
+			float railX;
+			float firstTab;
+			float tabLength;
+		} out {};
+		out.minWidth = r.panel->minimumSize().x;
+		out.column = r.panel->tabBarForTest().bounds();
+		out.add = r.panel->addBoundsForTest();
+		out.tabs = r.panel->tabBarForTest().tabsForTest().size();
+		out.railX = r.panel->railForTest(r.panel->viewModelForTest().viewedChain()).bounds().x();
+		out.firstTab = r.panel->tabBarForTest().x();
+		out.tabLength = out.tabs > 0 ? static_cast<float>(r.panel->tabBarForTest().height()) / static_cast<float>(out.tabs) : 0.0f;
+		return out;
+	};
+	for (const bool pane : { false, true }) {
+		CAPTURE(pane);
+		const auto two = measure(2, pane);
+		const auto eight = measure(8, pane);
+		REQUIRE(two.tabs == 2);
+		REQUIRE(eight.tabs == 8);
+		// A THIN COLUMN down the left, after the controls column, before the content.
+		CHECK(two.column.width() == doctest::Approx(ui::RackTabBar::kThickness));
+		CHECK(eight.column.width() == doctest::Approx(ui::RackTabBar::kThickness));
+		CHECK(two.column.height() > two.column.width());
+		CHECK(two.column.x() == doctest::Approx(ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad));
+		CHECK(two.railX >= two.column.right());
+		// EACH TAB AT MOST THE CAP LONG: two tabs are a short column, not the window's whole height.
+		CHECK(two.tabLength <= ui::RackTabBar::kMaxLength + 0.5f);
+		CHECK(eight.tabLength <= ui::RackTabBar::kMaxLength + 0.5f);
+		// THE WINDOW IS DEFINED BY THE CONTENT: eight tabs, the same width as two.
+		CHECK(eight.minWidth == doctest::Approx(two.minWidth));
+		// A "+" AT THE END, level with the column and one tab's width — except at eight chains, where the add is gone (hidden, not greyed).
+		CHECK(two.add.x() == doctest::Approx(two.column.x()));
+		CHECK(two.add.y() >= two.column.bottom());
+		CHECK(eight.add.width() == 0.0f);
+	}
+}
+
+TEST_CASE("rack layout: the Tabs arrow stands at a fixed place between the bar and the first card — the same rect folded and open, in both flows — and the Pads pair does too") {
+	for (const bool horizontal : { false, true }) {
+		CAPTURE(horizontal);
+		RealRack r;
+		r.chains(2, 2, true);
+		r.view_(1);
+		if (horizontal) {
+			r.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+			settleLeftRight(r);
+		}
+		else {
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+			}
+		}
+		ui::RackDrawerArrow& arrow = r.card->chainArrowForTest();
+		REQUIRE(arrow.isVisible());
+		const visage::Bounds closed = arrow.bounds();
+		CHECK(closed.width() == doctest::Approx(horizontal ? ui::RackDrawerArrow::kSize : closed.width()));
+		CHECK(closed.height() == doctest::Approx(ui::RackDrawerArrow::kSize));
+		const size_t shownClosed = shownCards(*r.card).size();
+		arrow.toggleForTest(); // OPEN the chain: more cards, a bigger card
+		if (horizontal) {
+			settleLeftRight(r);
+		}
+		else {
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+			}
+		}
+		REQUIRE(shownCards(*r.card).size() > shownClosed);
+		CHECK(arrow.bounds() == closed); // did not move as the cards expanded
+		arrow.toggleForTest(); // and shut again
+		if (horizontal) {
+			settleLeftRight(r);
+		}
+		else {
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+			}
+		}
+		CHECK(shownCards(*r.card).size() == shownClosed);
+		CHECK(arrow.bounds() == closed);
+		// THE ARROW IS BEFORE THE CARDS (between the bar and the first card), not after them.
+		const visage::Bounds front = r.card->frontForTest().bounds();
+		if (horizontal) {
+			CHECK(arrow.bounds().right() <= front.x());
+		}
+		else {
+			CHECK(arrow.bounds().bottom() <= front.y());
+		}
+	}
+}
+
+TEST_CASE("rack layout: the Pads grid, page strip and kit level take the card's content width in a top-down lane (up to a cap, centred past it), cells staying square") {
+	RealRack r;
+	r.chains(2, 2, true);
+	r.view_(2);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	ui::RackPadsPanel& pads = r.card->padsForTest();
+	// WHERE THE CARDS BELOW IT ARE AS WIDE: the grid is exactly the card's content width.
+	const float content = static_cast<float>(r.card->frontForTest().width());
+	CHECK(pads.gridForTest().width() == doctest::Approx(content));
+	CHECK(pads.pagesForTest().width() == doctest::Approx(pads.gridForTest().width()));
+	REQUIRE(pads.levelForTest() != nullptr);
+	CHECK(pads.levelForTest()->width() == doctest::Approx(pads.gridForTest().width()));
+	CHECK(pads.gridForTest().width() == doctest::Approx(pads.gridForTest().height())); // square cells: a square grid
+	CHECK(pads.gridForTest().width() >= ui::RackPadsPanel::gridSide());
+	// THE CAP: a panel far wider than a sensible cell allows keeps the cap and centres the grid.
+	struct Fake final : ui::RackViewModel {
+		ui::RackViewKind view() const override { return ui::RackViewKind::Pads; }
+		ui::RackRoutingKind routing() const override { return ui::RackRoutingKind::Parallel; }
+		size_t chainSlots() const override { return 0; }
+		ui::RackChainView chain(size_t) const override { return {}; }
+		size_t viewedChain() const override { return 0; }
+		void viewChain(size_t) override {}
+		size_t playingChain() const override { return 0; }
+		void setPlayingChain(size_t) override {}
+		device::Modulatable* playingControl() override { return nullptr; }
+		int page() const override { return 0; }
+		void setPage(int) override {}
+		bool expanded(size_t) const override { return false; }
+		void setExpanded(size_t, bool) override {}
+		bool macrosOpen() const override { return false; }
+		void setMacrosOpen(bool) override {}
+		ui::RackKeyMask takeStruck() override { return {}; }
+		device::Modulatable* kitLevel() override { return nullptr; }
+	} fake;
+	ui::RackStrikePulse pulse;
+	ui::RackPadsPanel panel(fake, pulse, ui::RackFlow::TopDown);
+	const float wide = 1000.0f;
+	panel.setBounds(0.0f, 0.0f, wide, panel.naturalSizeFor(wide).y);
+	CHECK(panel.gridForTest().width() == doctest::Approx(ui::RackPadsPanel::kMaxSide));
+	CHECK(panel.gridForTest().x() == doctest::Approx((wide - ui::RackPadsPanel::kMaxSide) * 0.5f));
+	CHECK(panel.pagesForTest().width() == doctest::Approx(ui::RackPadsPanel::kMaxSide));
+	// AND NEVER BELOW THE NATURAL SIDE.
+	panel.setBounds(0.0f, 0.0f, 120.0f, panel.naturalSizeFor(120.0f).y);
+	CHECK(panel.gridForTest().width() == doctest::Approx(ui::RackPadsPanel::gridSide()));
 }

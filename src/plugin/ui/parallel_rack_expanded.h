@@ -212,6 +212,8 @@ private:
 	[[nodiscard]] visage::Bounds addBounds() const;
 	[[nodiscard]] visage::Bounds addSlotBounds() const;
 	[[nodiscard]] visage::Bounds leftColumnFoot() const;
+	/// How long the Tabs view's column wants to be: every chain's tab at its cap (`RackTabBar::kMaxLength`), then limited to the window's height.
+	[[nodiscard]] float tabsColumnLength() const;
 	[[nodiscard]] bool addShown() const;
 	/// THE BANDS COLUMN beside the macros (Bands only): whether it is drawn, where it starts and ends, and where the rails
 	/// start after the columns.

@@ -151,6 +151,8 @@ public:
 
 	/// The bar's thickness across its flow: a row of this height (top-down) or a column of this width (left-right).
 	static constexpr float kThickness = 26.0f;
+	/// THE LONGEST A TAB IS in the Rack window's column (it subdivides the column evenly up to this): a name elides inside it.
+	static constexpr float kMaxLength = 96.0f;
 	/// The corner a press on which sets the playing chain (Select routing), logical pixels.
 	static constexpr float kDotArea = 12.0f;
 

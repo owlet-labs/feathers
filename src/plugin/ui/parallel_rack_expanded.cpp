@@ -250,10 +250,10 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 		const visage::Point n = pane_->naturalSize();
 		const ChainRail* front = viewedRail();
 		const bool pads = model_->view() == RackViewKind::Pads;
-		// TABS: under the bar. PADS: beside the pads panel (and its Follow chip), which stands before the pane and the rail.
-		const float top = railsTop() + (pads ? 0.0f : RackTabBar::kThickness + kPad * 0.5f);
+		// TABS: after the tab column. PADS: beside the pads panel (and its Follow chip), which stands before the pane and the rail.
+		const float top = railsTop();
 		const visage::Point padsN = pads ? pads_->naturalSize() : visage::Point { 0.0f, 0.0f };
-		const float padsAcross = pads ? padsN.x + kPad : 0.0f;
+		const float padsAcross = pads ? padsN.x + kPad : RackTabBar::kThickness + kPad * 0.5f;
 		p.x = railsLeft() + padsAcross + n.x + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
 		p.y = std::max(std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad, top + n.y + kPad);
 		if (pads) {
@@ -262,6 +262,19 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 		if (front != nullptr) {
 			p.y = std::max(p.y, top + (front->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
 			                                                     : front->rail->openMinimumHeight()));
+		}
+		return p;
+	}
+	// **TABS, NO PANE: THE WINDOW IS THE TAB COLUMN, THE FRONT CHAIN'S RAIL AND NOTHING ELSE** — never the sum of every chain's rail, so eight tabs
+	// make the window no wider than two over the same front content.
+	if (model_ != nullptr && model_->view() == RackViewKind::Tabs) {
+		const ChainRail* front = viewedRail();
+		p.x = railsLeft() + RackTabBar::kThickness + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
+		p.y = std::max(std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad,
+		               railsTop() + tabsColumnLength() + kPad * 0.5f + RackTabBar::kThickness + kPad);
+		if (front != nullptr) {
+			p.y = std::max(p.y, railsTop() + (front->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
+			                                                           : front->rail->openMinimumHeight()));
 		}
 		return p;
 	}
@@ -355,6 +368,11 @@ float ParallelRackExpanded::bandsBottom() const {
 float ParallelRackExpanded::bandsTop() const { return kPad + kModeRow; }
 
 
+float ParallelRackExpanded::tabsColumnLength() const {
+	const size_t n = model_ != nullptr ? tabbedChains(*model_).size() : 0;
+	return static_cast<float>(n) * RackTabBar::kMaxLength;
+}
+
 visage::Bounds ParallelRackExpanded::leftColumnFoot() const {
 	// WHERE THE LEFT COLUMN ENDS: under the macros (the button used to stand here, and the column's height is still what it was).
 	return { kPad, dividerY() + kPad * 0.5f + kMacroRows * (kCellHeight + kPad), kAddWidth, kAddHeight };
@@ -365,6 +383,11 @@ visage::Bounds ParallelRackExpanded::addSlotBounds() const {
 	// views keep it under the macros: their rails are one chain's, and the button adds a chain whichever is in front.
 	if (model_ != nullptr && model_->view() == RackViewKind::Strips) {
 		return { railsLeft() + railsWidth() + phantomsWidth() + kPad * 0.5f, railsTop() + kPad, kAddWidth, kAddHeight };
+	}
+	// TABS: A "+" AT THE END OF THE TAB COLUMN, one tab's width, under the last tab.
+	if (model_ != nullptr && model_->view() == RackViewKind::Tabs) {
+		return { railsLeft(), railsTop() + std::min(tabsColumnLength(), std::max(0.0f, static_cast<float>(height()) - railsTop() - kPad - RackTabBar::kThickness)) + kPad * 0.5f,
+		         RackTabBar::kThickness, RackTabBar::kThickness };
 	}
 	return leftColumnFoot();
 }
@@ -471,8 +494,13 @@ void ParallelRackExpanded::layOut() {
 	pads_->setVisible(view == RackViewKind::Pads);
 	followChip_->setVisible(view == RackViewKind::Pads);
 	if (view == RackViewKind::Tabs) {
-		tabs_->setBounds(x0, top, std::max(0.0f, static_cast<float>(width()) - x0 - kPad), RackTabBar::kThickness);
-		top += RackTabBar::kThickness + kPad * 0.5f;
+		// **THE TABS RUN DOWN THE LEFT SIDE, AFTER THE CONTROLS COLUMN** (a thin column, as the card's is in a left-right lane): the bar no longer
+		// stretches across the window, so it sets no width — the content (the rail's cards, or the pane) does. Each tab is at most `kMaxLength` long,
+		// so a few chains are a short column, not tabs spread over the window's height.
+		tabs_->setFlow(RackFlow::LeftRight);
+		const float room = std::max(0.0f, static_cast<float>(height()) - top - kPad);
+		tabs_->setBounds(x0, top, RackTabBar::kThickness, std::min(room, tabsColumnLength()));
+		railX0 = x0 + RackTabBar::kThickness + kPad * 0.5f;
 	}
 	else if (view == RackViewKind::Pads) {
 		const visage::Point n = pads_->naturalSize();
@@ -489,8 +517,8 @@ void ParallelRackExpanded::layOut() {
 	pane_->setVisible(paneShown);
 	if (paneShown) {
 		const visage::Point n = pane_->naturalSize();
-		// TABS: under the bar. PADS: after the pads panel (`railX0` is already past it), the grid, strip and kit level staying where they are.
-		const float paneX = view == RackViewKind::Pads ? railX0 : x0;
+		// TABS: after the tab column. PADS: after the pads panel (`railX0` is already past it), the grid, strip and kit level staying where they are.
+		const float paneX = railX0;
 		pane_->setBounds(paneX, top, n.x, n.y);
 		railX0 = paneX + n.x + kPad * 0.5f;
 		laidOutPane_ = n;
@@ -1072,7 +1100,7 @@ void ParallelRackExpanded::draw(visage::Canvas& canvas) {
 	canvas.setColor(withAlpha(kLine, 0.6f));
 	canvas.roundedRectangle(add.x(), add.y(), add.width(), add.height(), 4.0f);
 	canvas.setColor(kMuted);
-	canvas.text("+ Chain", font(kKnobLabelSize), visage::Font::kCenter, add.x(), add.y(), add.width(), add.height());
+	canvas.text(add.width() < kAddWidth ? "+" : "+ Chain", font(kKnobLabelSize), visage::Font::kCenter, add.x(), add.y(), add.width(), add.height());
 }
 
 } // namespace feathers::ui

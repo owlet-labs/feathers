@@ -698,6 +698,12 @@ bool ParallelRackExpanded::follow() {
 						chainRename_->begin(slot, *strip, anchor);
 					}
 				});
+				// AND A RIGHT PRESS THERE OPENS ITS MENU (Rename...), as a tab's and a pad's do.
+				kept->strip->setContextHandler([this, strip = kept->strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
+					if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+						chainRename_->showMenu(slot, *strip, anchor);
+					}
+				});
 				kept->rail->setAccessory(kept->strip.get(), ChainStrip::kHeight);
 				kept->rail->setAccessoryWhenCollapsed(true); // the header works while the chain is collapsed
 				// BUILT AS THE RACK REMEMBERS IT (closed unless it was left open), BEFORE the hook is set so this write is

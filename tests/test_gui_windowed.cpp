@@ -4097,12 +4097,17 @@ T* treeFind(visage::Frame* root) {
 }
 } // namespace
 
-TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visible, on top and holding the keyboard, on the card and in the Rack window, in Tabs and Pads") {
+TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visible, on top and holding the keyboard, on the card and in the Rack window, in Strips, Tabs and Pads") {
 	namespace pr = feathers::rack::parallel;
-	for (const int view : { 1, 2 }) {
+	for (const int view : { 0, 1, 2 }) {
 		for (const bool inWindow : { false, true }) {
+		for (const bool doubleClick : { false, true }) {
+			if (doubleClick && view != 0) {
+				continue; // a pad has the menu only, and a tab's double-click is checked in the widget suite: the strip's is checked here
+			}
 			CAPTURE(view);
 			CAPTURE(inWindow);
+			CAPTURE(doubleClick);
 			EditorFixture f;
 			feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
 			bodies.prepare(48000.0, 4096);
@@ -4162,18 +4167,32 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			ui::RackChainRename& rename = inWindow ? panel->chainRenameForTest() : card->chainRenameForTest();
 			ui::RackTabBar* bar = inWindow ? &panel->tabBarForTest() : &card->tabBarForTest();
 			ui::RackPadGrid* grid = inWindow ? &panel->padsForTest().gridForTest() : &card->padsForTest().gridForTest();
-			visage::Frame* source = view == 1 ? static_cast<visage::Frame*>(bar) : static_cast<visage::Frame*>(grid);
-			if (view == 1) {
-				bar->pressContextForTest(bar->tabCentre(1));
+			ui::ChainStrip* strip = nullptr;
+			if (view == 0) {
+				strip = inWindow ? &panel->stripForTest(1) : card->stripsForTest()[1].get();
+				REQUIRE(strip != nullptr);
+			}
+			visage::Frame* source = view == 0 ? static_cast<visage::Frame*>(strip)
+			                                  : view == 1 ? static_cast<visage::Frame*>(bar) : static_cast<visage::Frame*>(grid);
+			if (view == 0 && doubleClick) {
+				strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
 			}
 			else {
-				grid->pressContextForTest(grid->padCentre(1));
+				if (view == 0) {
+					strip->pressContextForTest(visage::Point { 2.0f, 2.0f });
+				}
+				else if (view == 1) {
+					bar->pressContextForTest(bar->tabCentre(1));
+				}
+				else {
+					grid->pressContextForTest(grid->padCentre(1));
+				}
+				visage::PopupMenuFrame* popup = menu_check::newestPopup(*source);
+				REQUIRE(popup != nullptr);
+				// THE REAL PICK, then the popup's own dismissal (its exit timer) as the event loop would run it.
+				REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+				popup->timerCallback();
 			}
-			visage::PopupMenuFrame* popup = menu_check::newestPopup(*source);
-			REQUIRE(popup != nullptr);
-			// THE REAL PICK, then the popup's own dismissal (its exit timer) as the event loop would run it.
-			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
-			popup->timerCallback();
 			(void)f.gui.tickForTest();
 			REQUIRE(rename.renaming());
 			ui::TextField& field = rename.field();
@@ -4198,6 +4217,7 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			f.gui.destroy();
 			XDestroyWindow(display, parent);
 			XCloseDisplay(display);
+		}
 		}
 	}
 }

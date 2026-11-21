@@ -3665,28 +3665,6 @@ TEST_CASE("rename field: opened by the menu's own pick and by double-click, it i
 			}
 		}
 	}
-	// THE STRIP CAPTION'S DOUBLE-CLICK, on the card and in the window (Strips view).
-	{
-		RealRack r;
-		r.chains(3, 2, true);
-		r.view_(0);
-		for (const bool windowSide : { true }) {
-			ui::RackChainRename& rename = r.panel->chainRenameForTest();
-			ui::ChainStrip* strip = &r.panel->stripForTest(1);
-			strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
-			r.refresh();
-			REQUIRE(rename.renaming());
-			ui::TextField& field = rename.field();
-			visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
-			const visage::Point at = field.positionInWindow();
-			const visage::Point centre { at.x + static_cast<float>(field.width()) * 0.5f, at.y + static_cast<float>(field.height()) * 0.5f };
-			CAPTURE(windowSide);
-			CHECK(field.isVisible());
-			CHECK(field.width() > 0);
-			CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&field));
-			(void)keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Escape, 0, true });
-		}
-	}
 	// A NESTED RACK'S OWN TABS, inside the outer window's column (Cards, so its card is drawn there).
 	{
 		RealRack r;
@@ -3708,4 +3686,76 @@ TEST_CASE("rename field: opened by the menu's own pick and by double-click, it i
 		checkRenameSurface("nested card, menu", RenameRoad::Menu, r.panel, nestedCard->chainRenameForTest(), &bar, nullptr, 2,
 		                   [&] { r.refresh(); }, [&] { return innerRack->chainLabel(2); });
 	}
+}
+
+TEST_CASE("rename field: a chain strip opens it by a right press's Rename... and by a double-click - on the card and in the window, in Strips") {
+	for (const bool windowSide : { false, true }) {
+		for (const RenameRoad road : { RenameRoad::Menu, RenameRoad::DoubleClick }) {
+			CAPTURE(windowSide);
+			CAPTURE(road == RenameRoad::Menu);
+			RealRack r;
+			r.chains(3, 2, true);
+			r.view_(0);
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+			}
+			const size_t chain = 1;
+			ui::ChainStrip* strip = windowSide ? &r.panel->stripForTest(chain) : r.card->stripsForTest()[chain].get();
+			REQUIRE(strip != nullptr);
+			ui::RackChainRename& rename = windowSide ? r.panel->chainRenameForTest() : r.card->chainRenameForTest();
+			visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
+			const visage::Point at { 2.0f, 2.0f };
+			if (road == RenameRoad::Menu) {
+				strip->pressContextForTest(at);
+				visage::PopupMenuFrame* popup = menu_check::newestPopup(*strip);
+				REQUIRE(popup != nullptr);
+				REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			}
+			else {
+				strip->doubleClickForTest(at);
+			}
+			r.refresh();
+			REQUIRE(rename.renaming());
+			ui::TextField& field = rename.field();
+			CHECK(field.isVisible());
+			CHECK(field.isDrawing());
+			const visage::Point pos = field.positionInWindow();
+			const visage::Point centre { pos.x + static_cast<float>(field.width()) * 0.5f, pos.y + static_cast<float>(field.height()) * 0.5f };
+			CHECK(field.width() >= 60.0f);
+			CHECK(field.height() >= 16.0f);
+			CHECK(field.height() <= 40.0f);
+			CHECK(pos.x >= 0.0f);
+			CHECK(pos.y >= 0.0f);
+			CHECK(pos.x + static_cast<float>(field.width()) <= static_cast<float>(root->width()) + 0.01f);
+			CHECK(pos.y + static_cast<float>(field.height()) <= static_cast<float>(root->height()) + 0.01f);
+			CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&field));
+			field.textInput("Snare");
+			CHECK(keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+			r.refresh();
+			CHECK_FALSE(rename.renaming());
+			CHECK(r.rack().chainLabel(chain) == "Snare");
+		}
+	}
+}
+
+TEST_CASE("rename field: a single left press on a strip's own surface renames nothing and moves no control; mute still toggles") {
+	RealRack r;
+	r.chains(3, 2, true);
+	r.view_(0);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	ui::ChainStrip& strip = r.panel->stripForTest(1);
+	ui::RackChainRename& rename = r.panel->chainRenameForTest();
+	const bool muted = r.rack().muted(1);
+	visage::MouseEvent down {};
+	down.event_frame = &strip;
+	down.position = { 2.0f, 2.0f };
+	strip.processMouseDown(down);
+	strip.processMouseUp(down);
+	CHECK_FALSE(rename.renaming());
+	CHECK(r.rack().muted(1) == muted);
+	strip.muteControlForTest().setValue(muted ? 0.0 : 1.0);
+	r.refresh();
+	CHECK(r.rack().muted(1) == !muted); // the strip's own control is untouched by the new gesture
 }

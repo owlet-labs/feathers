@@ -20,6 +20,7 @@
 #include "device/macro_type.h"
 #include "plugin/ui/theme.h"
 
+#include <atomic>
 #include <algorithm>
 #include <string_view>
 
@@ -144,6 +145,19 @@ constexpr float kCaretWidth = 1.0f;
 
 } // namespace
 
+namespace {
+std::atomic<int> gEditing { 0 };
+}
+
+bool TextField::anyEditing() noexcept { return gEditing.load() > 0; }
+
+void TextField::setEditing(bool on) noexcept {
+	if (on != editing_) {
+		gEditing += on ? 1 : -1;
+	}
+	editing_ = on;
+}
+
 TextField::TextField() {
 	// So the window hands the focus here on a click, and so a key travelling up from a child stops.
 	setAcceptsKeystrokes(true);
@@ -153,7 +167,7 @@ TextField::~TextField() {
 	// Nothing is called from here: see the header. Dropping the callbacks first means that nothing
 	// visage does to this frame on the way out — a focus or visibility notice from `~Frame` — can
 	// reach one either.
-	editing_ = false;
+	setEditing(false);
 	commit_ = nullptr;
 	cancel_ = nullptr;
 	// **DESTROYED MID-EDIT, THE KEYBOARD STILL GOES BACK** — the one exit no callback marks, and the one
@@ -165,7 +179,7 @@ void TextField::begin(std::string initial) {
 	// **THE FOCUS FIRST, THEN THE EDIT.** When this frame already holds the focus, visage's
 	// `setKeyboardFocus` tells it "lost" and then "gained" — and a loss is a cancel. Asked for while
 	// `editing_` is still false, that loss finds nothing to cancel.
-	editing_ = false;
+	setEditing(false);
 	requestKeyboardFocus();
 	// THE NEW CLAIM BEFORE THE OLD ONE GOES, so a begin during an edit never hands the keyboard to the
 	// host for the instant between them.
@@ -174,7 +188,7 @@ void TextField::begin(std::string initial) {
 	anchor_ = 0;
 	caret_ = text_.size();
 	scroll_ = 0.0f;
-	editing_ = true;
+	setEditing(true);
 	redraw();
 }
 
@@ -307,7 +321,7 @@ void TextField::visibilityChanged() {
 }
 
 void TextField::finish(bool commit) {
-	editing_ = false;
+	setEditing(false);
 	anchor_ = caret_;
 	// THE KEYBOARD GOES BACK BEFORE ANYBODY IS TOLD, so an owner acting on the result acts in a world
 	// where the host already has its keys.

@@ -3449,3 +3449,90 @@ TEST_CASE("rack keys: Ctrl+V pastes into an EMPTY chain from the pad or tab that
 		CHECK(lengthOf(0) == 1);
 	}
 }
+
+TEST_CASE("rack keys: while a chain's name is being typed the keys are the FIELD's (nothing is pasted, cut, copied or deleted on the chain), and with the field closed Ctrl+V pastes again") {
+	for (const int view : { 1, 2 }) { // Tabs, Pads
+		CAPTURE(view);
+		RealRack r;
+		r.chains(2, 0, true);
+		feathers::rack::RackEngine donorEngine { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+		donorEngine.prepare(48000.0, 4096);
+		feathers::rack::RackBridge donor(donorEngine);
+		donor.prepare(48000.0, 4096);
+		const feathers::DeviceInstanceId made = donor.addDevice(feathers::fx::drumdevice::kTraits.tag);
+		REQUIRE(made != feathers::kNoInstance);
+		const feathers::DeviceInstanceId ids[] = { made };
+		feathers::rack::setPasteboard(feathers::rack::liftFragment(donor, ids));
+		r.view_(view);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		const auto lengthOf = [&](size_t chain) { return r.rack().chainAt(chain)->bridge()->chainLength(0); };
+		const auto key = [](visage::KeyCode c, int mods = 0) { return visage::KeyEvent { c, mods, true }; };
+		struct Venue {
+			visage::Frame* root;
+			ui::RackChainRename* rename;
+			ui::RackTabBar* bar;
+			ui::RackPadGrid* grid;
+		};
+		const Venue venues[] = {
+			{ r.f.root, &r.card->chainRenameForTest(), &r.card->tabBarForTest(), &r.card->padsForTest().gridForTest() },
+			{ r.panel, &r.panel->chainRenameForTest(), &r.panel->tabBarForTest(), &r.panel->padsForTest().gridForTest() },
+		};
+		for (const Venue& v : venues) {
+			const size_t chain = &v == &venues[0] ? 1 : 0; // a different chain in each venue
+			INFO("venue chain " << chain);
+			visage::Point where {};
+			if (view == 1) {
+				v.bar->pressForTest(v.bar->tabCentre(chain));
+				where = v.bar->positionInWindow();
+				where.x += v.bar->tabCentre(chain).x;
+				where.y += v.bar->tabCentre(chain).y;
+			}
+			else {
+				v.grid->pressForTest(v.grid->padCentre(chain));
+				v.grid->releaseForTest();
+				where = v.grid->positionInWindow();
+				where.x += static_cast<float>(v.grid->width()) * 0.5f;
+				where.y += static_cast<float>(v.grid->height()) * 0.5f;
+			}
+			r.refresh();
+			const size_t before = lengthOf(chain);
+			v.rename->begin(chain, *v.bar, visage::Bounds { 0.0f, 0.0f, 80.0f, 20.0f });
+			REQUIRE(v.rename->renaming());
+			ui::TextField& field = v.rename->field();
+			field.textInput("v");
+			CHECK(field.text() == "v"); // a plain "v" types a v
+			for (const visage::KeyCode c : { visage::KeyCode::Backspace, visage::KeyCode::Delete }) {
+				CHECK(keyFromFocus(&field, key(c))); // the field's, and nothing travels on
+				CHECK(lengthOf(chain) == before);
+			}
+			// A CHORD is the host's, so the field leaves it: it must STILL not reach the chain.
+			for (const visage::KeyCode c : { visage::KeyCode::V, visage::KeyCode::C, visage::KeyCode::X }) {
+				CHECK_FALSE(keyFromFocus(&field, key(c, visage::kModifierRegCtrl)));
+				CHECK(lengthOf(chain) == before);
+				CHECK(lengthOf(1 - chain) == 0);
+				CHECK(v.rename->renaming());
+			}
+			CHECK(keyFromFocus(&field, key(visage::KeyCode::Escape))); // Esc closes only the field
+			CHECK_FALSE(v.rename->renaming());
+			CHECK(lengthOf(chain) == before);
+			// THE FIELD CLOSED: Ctrl+V pastes from the focus a press gives.
+			visage::Frame* focus = &v == &venues[0] ? static_cast<visage::Frame*>(r.card) : static_cast<visage::Frame*>(r.panel); // the frame a press on its pad or tab focuses
+			(void)where;
+			CHECK(keyFromFocus(focus, key(visage::KeyCode::V, visage::kModifierRegCtrl)));
+			CHECK(lengthOf(chain) == before + 1);
+			if (view == 1) {
+				size_t asked = 99;
+				v.bar->setContextHandler([&](size_t slot, const visage::Bounds&) { asked = slot; });
+				v.bar->pressContextForTest(v.bar->tabCentre(chain));
+				CHECK(asked == chain); // a right press asks for the rename menu
+				v.bar->setContextHandler([&](size_t slot, const visage::Bounds& b) { v.rename->showMenu(slot, *v.bar, b); });
+				v.bar->doubleClickForTest(v.bar->tabCentre(chain));
+				CHECK(v.rename->renaming()); // a double click renames
+				CHECK(keyFromFocus(&v.rename->field(), key(visage::KeyCode::Escape)));
+			}
+			r.rack().chainAt(chain)->bridge()->removeDevice(r.rack().chainAt(chain)->bridge()->deviceAtPosition(before, 0));
+		}
+	}
+}

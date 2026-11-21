@@ -86,6 +86,9 @@ public:
 	void onCancel(std::function<void()> callback) { cancel_ = std::move(callback); }
 
 	[[nodiscard]] bool editing() const noexcept { return editing_; }
+	/// WHETHER ANY FIELD IS BEING TYPED INTO: a lane's selection keys (paste, cut, delete) stand down while one is, since a chord the
+	/// field leaves to the host would otherwise travel up to the lane that holds it.
+	[[nodiscard]] static bool anyEditing() noexcept;
 	/// The text as it stands, UTF-8, never longer than `device::kMacroNameMax` bytes.
 	[[nodiscard]] const std::string& text() const noexcept { return text_; }
 
@@ -114,6 +117,7 @@ private:
 	/// them; with no mouse selection and no shift-arrows, the only one that ever exists is begin's.
 	size_t caret_ = 0;
 	size_t anchor_ = 0;
+	void setEditing(bool on) noexcept;
 	bool editing_ = false;
 	/// How far the text is slid left so the caret stays in view once the name outgrows the field.
 	/// Set in `draw`, which is where the caret's position in pixels becomes known.

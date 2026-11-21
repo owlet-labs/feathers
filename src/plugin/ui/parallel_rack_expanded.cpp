@@ -63,7 +63,8 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	setAcceptsKeystrokes(true);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
 		ChainRail* rail = viewedRail();
-		return model_ != nullptr && model_->view() != RackViewKind::Strips && rail != nullptr && rail->rail != nullptr
+		// A NAME BEING TYPED OWNS THE KEYBOARD (see the card): a chord the field leaves to the host must not act on the chain.
+		return !(chainRename_ != nullptr && chainRename_->renaming()) && model_ != nullptr && model_->view() != RackViewKind::Strips && rail != nullptr && rail->rail != nullptr
 		       && rail->rail->column() != nullptr && rail->rail->column()->processKeyPress(e);
 	};
 	for (size_t i = 0; i < kKnobs.size(); ++i) {

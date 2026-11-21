@@ -22,6 +22,7 @@
 #include "plugin/ui/lane_selection.h"
 
 #include "plugin/ui/theme.h"
+#include "plugin/ui/text_field.h"
 
 #include <algorithm>
 #include <string>
@@ -147,6 +148,10 @@ std::optional<visage::Bounds> LaneSelection::lassoRect() const {
 }
 
 bool LaneSelection::key(const visage::KeyEvent& e) {
+	// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host must not paste, cut or delete in the lane above it.
+	if (TextField::anyEditing()) {
+		return false;
+	}
 	const visage::KeyCode code = e.keyCode();
 	if ((code == visage::KeyCode::Delete || code == visage::KeyCode::Backspace || code == visage::KeyCode::KPBackspace)
 	    && selection_.size() > 1) {

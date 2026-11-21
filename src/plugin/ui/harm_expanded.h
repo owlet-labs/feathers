@@ -105,6 +105,7 @@ public:
 	static constexpr float kPolyChipWidth = 64.0f;
 	static constexpr float kEnvDepthChipWidth = 84.0f;
 	static constexpr float kPortaWidth = 100.0f;
+	static constexpr float kPortaModeChipWidth = 70.0f;
 
 	/// WHICH PARTIAL THE DETAIL IS ABOUT, 0..3 — view state. Setting it shows that partial's controls and tells the scope.
 	int selectedPartial() const noexcept { return selected_; }
@@ -133,6 +134,7 @@ public:
 	visage::Bounds envelopeBoxBounds(size_t index) const;
 	visage::Bounds masterBounds() const;
 	visage::Bounds portaBounds() const;
+	visage::Bounds portaModeBounds() const;
 	visage::Bounds polyBounds() const;
 	visage::Bounds depthEnvBounds() const;
 	/// The bottom of the strip's caption and the strip itself, which is where the tabs begin.
@@ -164,6 +166,7 @@ public:
 	const HarmEnvelopeView* envelopeViewForTest() const { return envelopeView_.get(); }
 	const std::vector<std::unique_ptr<ValueBox>>& envelopeBoxesForTest() const { return envelopeBoxes_; }
 	ValueBox* portaForTest() const { return porta_.get(); }
+	SwitchChip* portaModeForTest() const { return portaMode_.get(); }
 	ValueBox* masterLevelForTest() const { return masterLevel_.get(); }
 	ValueBox* masterDepthForTest() const { return masterDepth_.get(); }
 
@@ -210,6 +213,7 @@ private:
 	std::vector<std::unique_ptr<ValueBox>> envelopeBoxes_;
 	std::unique_ptr<HarmEnvelopeView> envelopeView_;
 	std::unique_ptr<ValueBox> porta_;
+	std::unique_ptr<SwitchChip> portaMode_;
 	std::unique_ptr<ValueBox> masterLevel_;
 	std::unique_ptr<ValueBox> masterDepth_;
 	std::unique_ptr<SwitchChip> poly_;

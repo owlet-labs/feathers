@@ -1248,7 +1248,7 @@ TEST_CASE("every declared default agrees with the struct's, not just the five wi
 		MESSAGE("DEFAULT DISAGREES: " << s);
 	}
 	CHECK(disagreed.empty());
-	CHECK(checked == 50); // sixteen as they were, partial 1's switch, the envelope's D/H/D/S, three more partials of nine, and the two masters
+	CHECK(checked == 51); // sixteen as they were, partial 1's switch, the envelope's D/H/D/S, three more partials of nine, the two masters and the porta mode
 
 	// AND THE ROUND TRIP, which is the claim as a caller meets it: a patch that omits every field
 	// decodes to the same device as `State {}`.
@@ -1794,4 +1794,110 @@ TEST_CASE("Spread text round trip: 90 degrees, in the oscillator's control and e
 		// Phase is untouched: still a percent.
 	}
 	CHECK(feathers::device::formatValue(kParamDescs[static_cast<size_t>(Param::Phase)], 0.5) == "50%");
+}
+
+namespace {
+/// A porta of `tau` seconds on A4, one block played, ready for the next note. Returns the instance by reference-less value use.
+Settings portaSettings(bool always) {
+	Settings s;
+	s.enabled = true;
+	s.level = 0.5f;
+	s.noteSemitones = 69.0f; // 440 Hz
+	s.portaSeconds = 0.25f;
+	s.portaAlways = always;
+	s.attackSeconds = 0.001f;
+	s.gate = true;
+	return s;
+}
+void runFrames(Harm& harm, int frames) {
+	std::vector<float> block(64, 0.0f);
+	for (int at = 0; at < frames; at += 64) {
+		harm.processStereo(block.data(), nullptr, std::min(64, frames - at));
+	}
+}
+} // namespace
+
+TEST_CASE("legato porta glides overlapping notes by the porta time and does not retrigger the envelope") {
+	Settings s = portaSettings(false);
+	Harm harm;
+	harm.prepare(kRate);
+	harm.setTarget(s);
+	runFrames(harm, 4096); // A sounds, envelope at sustain
+	REQUIRE(harm.currentHzForTest() == doctest::Approx(440.0).epsilon(1e-6));
+	const double level = harm.envelopeForTest();
+	REQUIRE(level > 0.99);
+
+	// B arrives while A is still held (the gate never falls): one time constant closes all but 1/e of the distance.
+	s.noteSemitones = 81.0f; // 880 Hz
+	harm.setTarget(s);
+	runFrames(harm, static_cast<int>(0.25 * kRate));
+	const double expected = 880.0 + (440.0 - 880.0) * std::exp(-1.0);
+	CHECK(harm.currentHzForTest() == doctest::Approx(expected).epsilon(0.01));
+	// THE ENVELOPE STAYED AT ITS SUSTAIN: a retrigger would have restarted the attack from the level it had.
+	CHECK(harm.envelopeStageForTest() == Envelope::Stage::Sustain);
+	CHECK(harm.envelopeForTest() == doctest::Approx(level).epsilon(1e-9));
+}
+
+TEST_CASE("legato porta starts a note after a release at its own pitch, always porta glides to it") {
+	for (const bool always : {false, true}) {
+		CAPTURE(always);
+		Settings s = portaSettings(always);
+		Harm harm;
+		harm.prepare(kRate);
+		harm.setTarget(s);
+		runFrames(harm, 4096);
+		s.gate = false;
+		harm.setTarget(s);
+		runFrames(harm, 256); // released, the pitch is held
+		s.noteSemitones = 81.0f;
+		s.gate = true;
+		harm.setTarget(s);
+		runFrames(harm, 16); // one grid point past the new gate
+		if (!always) {
+			CHECK(harm.currentHzForTest() == doctest::Approx(880.0).epsilon(1e-6));
+		}
+		else {
+			const double hz = harm.currentHzForTest();
+			CHECK(hz > 440.0);
+			CHECK(hz < 500.0); // barely moved after 16 samples of a 250 ms glide
+			runFrames(harm, static_cast<int>(0.25 * kRate));
+			const double expected = 880.0 + (440.0 - 880.0) * std::exp(-1.0);
+			CHECK(harm.currentHzForTest() == doctest::Approx(expected).epsilon(0.02));
+		}
+	}
+}
+
+TEST_CASE("the porta mode is stored by its own key, defaults to legato and an older patch renders the same bits") {
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::PortaMode)].key) == "harm_porta_mode");
+	CHECK(Settings {}.portaAlways == false);
+	// A row that stops before the new field (a patch from before it existed) reads the default: identical state.
+	const State fresh = stateOf(rowOf(State {}), static_cast<size_t>(Param::PortaMode));
+	CHECK(fresh.settings.portaAlways == false);
+	State always {};
+	always.settings.portaAlways = true;
+	CHECK(stateOf(rowOf(always), static_cast<size_t>(Param::kCount)).settings.portaAlways == true);
+
+	// Bit-identical render: the default against an explicit Legato, over a phrase with a glide and a retrigger.
+	const auto phrase = [](bool explicitFalse) {
+		Settings s = portaSettings(false);
+		if (explicitFalse) {
+			s.portaAlways = false;
+		}
+		Harm harm;
+		harm.prepare(kRate);
+		harm.setTarget(s);
+		std::vector<float> out;
+		std::vector<float> block(64, 0.1f);
+		for (int i = 0; i < 200; ++i) {
+			if (i == 60) { s.noteSemitones = 76.0f; harm.setTarget(s); }
+			if (i == 120) { s.gate = false; harm.setTarget(s); }
+			if (i == 140) { s.gate = true; s.noteSemitones = 64.0f; harm.setTarget(s); }
+			std::vector<float> l(block), r(block);
+			harm.processStereo(l.data(), r.data(), 64);
+			out.insert(out.end(), l.begin(), l.end());
+			out.insert(out.end(), r.begin(), r.end());
+		}
+		return out;
+	};
+	CHECK(phrase(false) == phrase(true));
 }

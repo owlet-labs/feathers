@@ -44263,10 +44263,7 @@ struct SlotRow {
 			// THE KNOB IS CAPTIONED WITH ITS SLOT'S NAME, one letter: a word does not fit half a quarter-row.
 			knob = std::make_unique<ui::Knob>(control(amount), name, &notes);
 			knob->setFaceDiameter(ui::EroderCard::kKnobDiameter);
-			std::vector<ui::ZoneSelect::ZoneName> types;
-			for (const char* name : ero::kDriveModeNames) {
-				types.push_back({ name, {} });
-			}
+			std::vector<ui::ZoneSelect::ZoneName> types = ui::driveTypeZoneNames();
 			mode = std::make_unique<ui::ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 			                                           [](size_t) { return true; });
 			mode->setFaceDiameter(ui::EroderCard::kKnobDiameter);
@@ -44457,15 +44454,14 @@ TEST_CASE("A stacked mode cell carries a selector and two value boxes in the hei
 	// shows a name that fits — see the slot-row case, which prints both.)
 	CHECK(b1.width() > 0.0f);
 	CHECK(m.select().width() > 0.0f);
-	// THE LONGEST TYPE NAMES ("Decimate", "Lopside") DO NOT FIT BETWEEN TWO ARROWS IN THIS WIDTH, so the selector drops its
-	// arrows, draws the name at a size that fits the whole face, and a press anywhere on it opens the choice menu.
+	// THE TYPE BOX KEEPS ITS ARROWS IN THIS WIDTH: a tight face's arrow cells are narrow, the face prints each Type's short name at the
+	// normal size between them, and a press in the middle (not on an arrow) opens the choice menu.
 	CHECK(m.select().tightFace());
-	CHECK_FALSE(m.select().arrowsShown());
-	CHECK(m.select().nameSize() < ui::kKnobReadoutSize);
-	CHECK(m.select().nameSize() >= ui::kNameFitFloorSize);
-	for (const float x : { 1.0f, m.select().width() * 0.5f, m.select().width() - 1.0f }) {
-		CHECK(m.select().verbAt({ x, 3.0f }) == ui::ZoneSelect::Verb::Menu);
-	}
+	CHECK(m.select().arrowsShown());
+	CHECK(m.select().nameSize() == ui::kKnobReadoutSize);
+	CHECK(m.select().verbAt({ 1.0f, 3.0f }) == ui::ZoneSelect::Verb::Prev);
+	CHECK(m.select().verbAt({ m.select().width() - 1.0f, 3.0f }) == ui::ZoneSelect::Verb::Next);
+	CHECK(m.select().verbAt({ m.select().width() * 0.5f, 3.0f }) == ui::ZoneSelect::Verb::Menu);
 	// "Paunch-S" AND "Paunch-H" ARE AS LONG AS "Lopside": selected, each is drawn at a size that fits, not under the floor.
 	for (const ero::DriveMode type : { ero::DriveMode::PaunchS, ero::DriveMode::PaunchH, ero::DriveMode::PaunchOS, ero::DriveMode::PaunchOH }) {
 		m.select().selectZone(static_cast<size_t>(type));
@@ -46015,6 +46011,109 @@ TEST_CASE("Choice boxes: pressing the box that opened a menu closes it, in the r
 		CHECK(ui::lastMenuPlacementForTest().shown);
 		CHECK(popup() != shown);
 		CHECK(eroField(e.d, type) == before);
+	}
+}
+
+namespace {
+/// THE SIX TYPE CELLS an Eroder shows in Etch: the Drive's, and slot A's and slot B's, each on the card and in the window.
+struct TypeCell {
+	std::string where;
+	ui::ModeValueCell* cell;
+	ero::Param type;
+};
+std::vector<TypeCell> typeCells(EroFaces& e) {
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	return { { "card drive", e.d.card->driveCellForTest(), ero::Param::DriveMode },
+		     { "window drive", e.panel->driveCellForTest(), ero::Param::DriveMode },
+		     { "card slot A", card.cellA.get(), ero::Param::SlotAType },
+		     { "card slot B", card.cellB.get(), ero::Param::SlotBType },
+		     { "window slot A", panel.cellA.get(), ero::Param::SlotAType },
+		     { "window slot B", panel.cellB.get(), ero::Param::SlotBType } };
+}
+} // namespace
+
+TEST_CASE("The Type boxes of the Drive and both Etch slots keep their prev/next arrows: next and prev move the Type by one, stop at the ends, and the box still opens the menu") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	const int last = static_cast<int>(ero::DriveMode::kCount) - 1;
+	// A TYPE WITHOUT A SECOND ROW (Soft, 0), ONE WITH (Chonk, Paunch-S...), AND THE ENDS.
+	for (const TypeCell& tc : typeCells(e)) {
+		ui::ZoneSelect& sel = tc.cell->select();
+		for (const int at : { 0, 1, static_cast<int>(ero::DriveMode::Chonk), static_cast<int>(ero::DriveMode::PaunchOS), last - 1, last }) {
+			CAPTURE(tc.where);
+			CAPTURE(at);
+			e.set(tc.type, static_cast<float>(at));
+			REQUIRE(sel.arrowsShown());
+			const visage::Bounds prev = sel.prevBounds();
+			const visage::Bounds next = sel.nextBounds();
+			const visage::Point prevAt { prev.x() + prev.width() * 0.5f, prev.y() + prev.height() * 0.5f };
+			const visage::Point nextAt { next.x() + next.width() * 0.5f, next.y() + next.height() * 0.5f };
+			const visage::Point midAt { sel.width() * 0.5f, sel.height() * 0.5f };
+			CHECK(sel.verbAt(prevAt) == ui::ZoneSelect::Verb::Prev);
+			CHECK(sel.verbAt(nextAt) == ui::ZoneSelect::Verb::Next);
+			CHECK(sel.verbAt(midAt) == ui::ZoneSelect::Verb::Menu);
+			// NEXT: ONE UP, AND STOPPED AT THE LAST (a Choice has no laps).
+			CHECK(sel.pressAt(nextAt));
+			e.refresh();
+			CHECK(eroField(e.d, tc.type) == static_cast<float>(std::min(at + 1, last)));
+			// PREV FROM WHERE THAT LEFT IT: back to `at`, or one down from the last.
+			e.set(tc.type, static_cast<float>(at));
+			CHECK(sel.pressAt(prevAt));
+			e.refresh();
+			CHECK(eroField(e.d, tc.type) == static_cast<float>(std::max(at - 1, 0)));
+		}
+	}
+	// EVERY TYPE'S SECOND ROW IS DECIDED BY THE STEPPED-TO TYPE: stepping from Soft to Tube to ... reaches Chonk with its Bal row shown.
+	e.set(ero::Param::DriveMode, 5.0f);
+	ui::ZoneSelect& sel = e.d.card->driveCellForTest()->select();
+	const visage::Bounds next = sel.nextBounds();
+	CHECK(sel.pressAt({ next.x() + next.width() * 0.5f, next.height() * 0.5f }));
+	e.refresh();
+	CHECK(eroField(e.d, ero::Param::DriveMode) == 6.0f);
+	CHECK(e.d.card->driveCellForTest()->boxFor(eroAt(ero::Param::DriveBal))->isVisible());
+}
+
+TEST_CASE("The Type boxes print a short face name at the cell's normal font; the menu, the stored label and the tooltip carry the full name") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	const int count = static_cast<int>(ero::DriveMode::kCount);
+	// THE SHORT NAMES ARE UNIQUE, NON-EMPTY, AND NEVER LONGER THAN THE FULL NAME.
+	std::set<std::string> seen;
+	for (int i = 0; i < count; ++i) {
+		const std::string face = ui::kDriveModeFaceNames[i];
+		CAPTURE(face);
+		CHECK_FALSE(face.empty());
+		CHECK(face.size() <= std::string(ero::kDriveModeNames[i]).size());
+		CHECK(seen.insert(face).second);
+	}
+	CHECK(static_cast<int>(seen.size()) == count);
+	// THE STORED LABEL IS UNTOUCHED: the Choice declares the full names.
+	const auto& desc = ero::kParamDescs[eroAt(ero::Param::DriveMode)];
+	REQUIRE(desc.names.size() == static_cast<size_t>(count));
+	for (int i = 0; i < count; ++i) {
+		CHECK(std::string(desc.names[static_cast<size_t>(i)]) == ero::kDriveModeNames[i]);
+	}
+	for (const TypeCell& tc : typeCells(e)) {
+		ui::ZoneSelect& sel = tc.cell->select();
+		for (int i = 0; i < count; ++i) {
+			CAPTURE(tc.where);
+			CAPTURE(i);
+			// THE MENU'S ITEM IS `captionOf`: the full name, with the "(w)" suffix.
+			CHECK(sel.captionOf(static_cast<size_t>(i)) == ero::kDriveModeNames[i]);
+			CHECK(sel.faceOf(static_cast<size_t>(i)) == ui::kDriveModeFaceNames[i]);
+			e.set(tc.type, static_cast<float>(i));
+			CHECK(sel.faceText() == ui::kDriveModeFaceNames[i]);
+			CHECK(sel.captionText() == ero::kDriveModeNames[i]);
+			// THE FACE DRAWS AT THE CELL'S NORMAL FONT, between the arrows, whole.
+			CHECK(sel.arrowsShown());
+			CHECK(sel.nameSize() >= ui::kKnobReadoutSize - 0.01f);
+			// THE TOOLTIP SAYS THE FULL NAME WHERE THE FACE SAYS A SHORT ONE.
+			const std::string tip = tc.cell->tooltipAt({ 2.0f, 2.0f });
+			if (std::string(ui::kDriveModeFaceNames[i]) != ero::kDriveModeNames[i]) {
+				CHECK(tip.find(ero::kDriveModeNames[i]) != std::string::npos);
+			}
+		}
 	}
 }
 

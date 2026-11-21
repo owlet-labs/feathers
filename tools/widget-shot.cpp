@@ -630,6 +630,7 @@ int main(int argc, char** argv) {
 	bool hoverSequence = false;
 	/// OPEN OWLTT'S MODE MENU once its panel is up — see the block that does it.
 	bool owlttModeMenu = false;
+	std::string typeMenu; ///< `--type-menu <control key>`: open that Type selector's choice menu
 	/// **OPEN THE PANEL IN ITS OWN WINDOW — the default a player gets**, and photograph the whole screen
 	/// as well, since that window is not the editor's. `-popout.png` beside the requested file.
 	bool popout = false;
@@ -1264,6 +1265,10 @@ int main(int argc, char** argv) {
 		}
 		if (arg == "--popout") {
 			popout = true;
+			continue;
+		}
+		if (arg == "--type-menu" && i + 1 < argc) {
+			typeMenu = argv[++i];
 			continue;
 		}
 		if (arg == "--owltt-mode-menu") {
@@ -3151,6 +3156,27 @@ int main(int argc, char** argv) {
 			std::printf("list:     hovered \"%s\"\n", list->option(row).name().toUtf8().c_str());
 			pump(1200);
 		}
+	}
+
+	if (!typeMenu.empty()) {
+		// A TYPE SELECTOR'S MENU (a stacked mode cell's face), by the press the middle of its face takes, in whichever tree holds it.
+		visage::Frame* host = gui.root();
+		ui::ZoneSelect* found = nullptr;
+		std::function<void(visage::Frame*)> walk = [&](visage::Frame* f) {
+			if (auto* sel = dynamic_cast<ui::ZoneSelect*>(f); sel != nullptr && sel->isVisible() && sel->control().desc().key != nullptr && typeMenu == sel->control().desc().key) {
+				found = sel;
+			}
+			for (visage::Frame* child : f->children()) {
+				walk(child);
+			}
+		};
+		walk(host);
+		if (found == nullptr || !found->pressAt({ found->width() * 0.5f, found->height() * 0.5f })) {
+			std::printf("--type-menu \"%s\": no visible Type selector with that key\n", typeMenu.c_str());
+			return 1;
+		}
+		pump(600);
+		std::printf("menu:     %s opened\n", typeMenu.c_str());
 	}
 
 	if (owlttModeMenu) {

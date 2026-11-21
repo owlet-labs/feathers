@@ -52,7 +52,7 @@ class ModState;
 class ZoneSelect final : public visage::Frame, public TooltipSource {
 public:
 	/// The coordinate's declared tooltip, anywhere on the strip — see `ui/tooltip.h`.
-	const char* tooltipAt(visage::Point) const override { return tooltipOf(&control_); }
+	const char* tooltipAt(visage::Point) const override;
 	void offeredControls(std::vector<Offered>& out) const override { out.push_back({ &control_, Road::Face }); }
 	/// **A DESTINATION, AS A DROPDOWN IS** (Pattern's controls did not glow): armed and routable, the
 	/// selector glows and a press-drag (up) sets the armed source's amount instead of picking — a double-click unroutes;
@@ -66,6 +66,7 @@ public:
 	struct ZoneName {
 		std::string name;        ///< e.g. "Width", "Punch", "Air"
 		std::string description; ///< what this region does, for tooltips
+		std::string shortName {}; ///< what the FACE prints where the name is long; empty: the name. The menu and the tooltip keep `name`.
 	};
 
 	/// **WHAT ONE FULL LAP OF THE NAMED SET IS WORTH, IN THE COORDINATE'S OWN UNITS.**
@@ -147,6 +148,9 @@ public:
 	/// over it, where inventing region numbers would claim a structure the quantity does not have.
 	[[nodiscard]] std::string captionText() const;
 	[[nodiscard]] std::string captionOf(size_t index) const;
+	/// What the face DRAWS for a region: its `shortName` where it has one, else `captionOf`. The menu lists `captionOf`.
+	[[nodiscard]] std::string faceOf(size_t index) const;
+	[[nodiscard]] std::string faceText() const;
 
 	//-- the verbs, which are public because a case cannot click -----------------------------------//
 	//
@@ -209,6 +213,8 @@ public:
 	/// THE ARROW CELLS ARE SQUARE AND CAPPED, so the caption keeps the middle on a wide row and the
 	/// arrows do not grow into it.
 	static constexpr float kArrowWidth = 14.0f;
+	/// A TIGHT FACE'S ARROW CELLS are narrower, so a short name fits a quarter of a card between them.
+	static constexpr float kTightArrowWidth = 8.0f;
 	static constexpr float kChevronHalf = 3.0f;
 	static constexpr float kCornerRadius = 4.0f;
 
@@ -218,18 +224,21 @@ public:
 	void setEnabled(bool on);
 	[[nodiscard]] bool enabled() const noexcept { return enabled_; }
 
-	/// **A TIGHT FACE (a stacked mode cell's selector, a narrow quarter of a card):** where the widest name would not fit
-	/// between the two arrows, DROP THE ARROWS, give the name the whole width (shrunk a pixel at a time to fit, `fitName`),
-	/// and leave the choice menu to a press on the name — which now covers the whole face. Off by default, so every
+	/// **A TIGHT FACE (a stacked mode cell's selector, a narrow quarter of a card):** the name is shrunk a pixel at a time to fit
+	/// between the two arrows (`fitName`, then cut). Only a face narrower than four arrow cells DROPS THE ARROWS, gives the name
+	/// the whole width and leaves the choice menu to a press on the name. Off by default, so every
 	/// other selector is as it was.
 	void setTightFace(bool tight);
 	[[nodiscard]] bool tightFace() const noexcept { return tight_; }
 	/// Whether the arrows are drawn and answer a press now: false in a tight face too narrow for the widest name.
 	[[nodiscard]] bool arrowsShown() const;
+	/// The width of each arrow cell now: `kTightArrowWidth` in a tight face, else `kArrowWidth`.
+	[[nodiscard]] float arrowWidth() const;
 	/// The size the name is drawn at — the readout size, or smaller where a tight face fits it.
 	[[nodiscard]] float nameSize() const;
 
 private:
+	mutable std::string tooltipText_;
 	bool tight_ = false;
 	/// HOW MANY ZONES FROM THE ORIGIN, signed and unwrapped — the one derivation `zoneIndex`, `lap`
 	/// and `positionInZone` all read, so the three cannot disagree about where the boundaries are.

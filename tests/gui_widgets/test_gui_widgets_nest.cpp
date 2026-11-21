@@ -49,6 +49,7 @@
 #include "fx/noise/noise_types.h"
 #include "fx/eq/eq_types.h"
 #include "fx/disperser/disperser_types.h"
+#include "plugin/ui/disperser_card.h"
 #include "fx/waypoint/waypoint_types.h"
 #include "fx/busutil/busutil_types.h"
 #include "mod/lfo/lfo_types.h"
@@ -3226,4 +3227,22 @@ TEST_CASE("a disabled Rack dims every card it holds, at every depth, and re-enab
 	CHECK(dim(*childCard));
 	CHECK_FALSE(dim(*grandCard));
 	CHECK_FALSE(dim(*innerCard));
+}
+
+TEST_CASE("NR: the Disperser's own card draws the site chip in its head once the host binds the verb, and the press is "
+          "the verb — the road to the panel that carries its Mix and wet Gain") {
+	SiteHost h;
+	ui::WidgetRegistry registry;
+	const DeviceInstanceId id = h.bridge.addDevice(fx::disperser::kTraits.tag);
+	REQUIRE(id != kNoInstance);
+	ui::DisperserCard card { h.bridge, registry, id, nullptr };
+	card.setBounds(0, 0, 320, ui::DisperserCard::openHeight());
+	CHECK(card.siteBounds().width() == 0.0f); // no verb bound: no chip
+	int pressed = 0;
+	card.onSite = [&] { ++pressed; };
+	const visage::Bounds chip = card.siteBounds();
+	REQUIRE(chip.width() > 0.0f);
+	CHECK(chip.bottom() <= ui::kCardHeadHeight);
+	card.noteCardPress(centreOf(chip), 1);
+	CHECK(pressed == 1);
 }

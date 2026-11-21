@@ -3014,6 +3014,10 @@ TEST_CASE("chain names: every surface shows one and the same label for a chain â
 	r.refresh();
 	CHECK(r.panel->viewedBoxForTest().control().text() == "Hats");
 	CHECK(r.panel->playingBoxForTest().control().text() == "Hats");
+	// AND THE TEXT THE BOXES DRAW (not only the control's): the label, never the unit's bare number.
+	CHECK(r.panel->viewedBoxForTest().drawnReadoutForTest() == "Hats");
+	CHECK(r.panel->playingBoxForTest().drawnReadoutForTest() == "Hats");
+	CHECK(r.panel->viewedBoxForTest().readout() == "Hats");
 	r.set(pr::Param::Playing, 0.0f);
 	CHECK(r.panel->playingBoxForTest().control().text() == "Position");
 	// AND THEIR MENUS NAME THE CHAINS, in chain order (Playing has Position first).
@@ -3344,4 +3348,31 @@ TEST_CASE("chain names: the Position readout, route and destination names, the h
 	strip.doubleClickForTest(visage::Point { 2.0f, 2.0f });
 	REQUIRE(rename.renaming());
 	CHECK(rename.chainForTest() == r.rack().chainIdAt(0));
+}
+
+TEST_CASE("chain names: the Viewing and Playing boxes DRAW the label, and a label too long for them is cut with an ellipsis from the end, never to its tail or a number") {
+	RealRack r;
+	r.chains(3, 0, true);
+	(void)r.rack().chainAt(2)->bridge()->addDevice("DRUM");
+	(void)r.rack().chainAt(1)->bridge()->addDevice("DRUM");
+	(void)r.rack().chainAt(0)->bridge()->addDevice("DRUM"); // "Drum", "Drum 2", "Drum 3"
+	r.set(pr::Param::ViewedChain, 2.0f);
+	r.set(pr::Param::Playing, 3.0f);
+	r.refresh();
+	// THE BOXES ARE NARROW (a third of the controls column): "Drum 3" is drawn whole or shrunk to fit, never reduced to its last character.
+	const std::string drawn = r.panel->viewedBoxForTest().drawnReadoutForTest();
+	CHECK(drawn.find("Drum") != std::string::npos);
+	CHECK(drawn != "3");
+	CHECK(r.panel->playingBoxForTest().drawnReadoutForTest().find("Drum") != std::string::npos);
+	// A NAME LONGER THAN THE ROOM: cut from the END with "...", still starting with its own first letters.
+	const std::string longName = "Very long chain name indeed";
+	REQUIRE(r.rack().setChainName(2, longName));
+	r.refresh();
+	for (ui::ValueBox* box : { &r.panel->viewedBoxForTest(), &r.panel->playingBoxForTest() }) {
+		const std::string shown = box->drawnReadoutForTest();
+		CAPTURE(shown);
+		REQUIRE(shown.size() >= 4);
+		CHECK(shown.substr(shown.size() - 3) == "...");
+		CHECK(longName.rfind(shown.substr(0, 3), 0) == 0); // its own beginning, not its tail
+	}
 }

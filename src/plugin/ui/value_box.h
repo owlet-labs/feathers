@@ -26,6 +26,7 @@
 #include "plugin/ui/drag_acceleration.h"
 #include "plugin/ui/fine_adjust.h"
 #include "plugin/ui/frame_watchers.h"
+#include "plugin/ui/theme.h"
 #include "plugin/ui/tooltip.h"
 #include "plugin/ui/type_in.h"
 
@@ -105,6 +106,15 @@ public:
 	/// What the box prints for its current value — the declared unit, applied. Public so a case can
 	/// read the text rather than the pixels, which is the only way to assert a readout at all.
 	std::string readout() const;
+	/// **A TEXT READOUT THAT MUST FIT ITS ROOM** (a chain's name in the Viewing and Playing boxes): drawn shrunk a pixel at a time, then cut with "..." from the
+	/// END (`fitName`) — never clipped to its tail. Off by default: numbers keep the plain draw.
+	void setElideReadout(bool elide) {
+		elide_ = elide;
+		redraw();
+	}
+	/// THE READOUT AS DRAWN (fitted when `setElideReadout`), and the size it is drawn at.
+	[[nodiscard]] std::string drawnReadoutForTest() const { return fittedReadout().text; }
+	[[nodiscard]] FittedName fittedReadout() const;
 
 	/// The caption. Rename is allowed for the same reason Knob::setLabel is: a control's meaning can
 	/// follow a mode while its identity does not.
@@ -521,6 +531,7 @@ private:
 	device::Modulatable& control_;
 	std::string label_;
 	std::function<std::string(double)> formatter_;
+	bool elide_ = false;
 	/// See `setReadoutFormatter`.
 	bool formatterIsSameNumber_ = false;
 	bool compact_ = false;

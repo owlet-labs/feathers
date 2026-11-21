@@ -168,6 +168,11 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
 	// "+" ON AN EMPTY PAD ASKS WHICH DEVICE (the lanes' own add menu, oscillators first); the pick makes the chain on that pad's key.
 	// THE VIEWING AND PLAYING BOXES PICK A CHAIN BY NAME (a menu of the chains' one label each), not by a typed number.
+	// THEIR READOUT IS THE CHAIN'S LABEL (the control's own text, not the unit's number), cut with "..." from the end when it does not fit.
+	for (auto* box : { viewedBox_.get(), playingBox_.get() }) {
+		box->setReadoutFormatter([box](double) { return box->control().text(); }, false);
+		box->setElideReadout(true);
+	}
 	viewedBox_->onPicker([this] {
 		showMenuAt(chainPickerMenu(false), *viewedBox_, visage::Bounds { 0.0f, 0.0f, static_cast<float>(viewedBox_->width()), static_cast<float>(viewedBox_->height()) });
 	});

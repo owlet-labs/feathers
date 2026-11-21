@@ -227,6 +227,14 @@ std::string ValueBox::readout() const {
 	return formatValue(control_.desc(), control_.value());
 }
 
+FittedName ValueBox::fittedReadout() const {
+	const std::string text = readout();
+	if (!elide_) {
+		return { text, kKnobReadoutSize, false };
+	}
+	return fitName(text, std::max(0.0f, readoutBox().width - 2.0f), kKnobReadoutSize, kNameFitFloorSize, 0.0f);
+}
+
 void ValueBox::setEnabled(bool enabled) {
 	if (enabled_ != enabled) {
 		enabled_ = enabled;
@@ -880,7 +888,8 @@ void ValueBox::draw(visage::Canvas& canvas) {
 		// drift away from; the hit test would then agree with a third of the picture.
 		const ReadoutBox rb = readoutBox();
 		canvas.setColor(ink);
-		canvas.text(readout(), font(kKnobReadoutSize),
+		const FittedName shown = fittedReadout();
+		canvas.text(shown.text, font(shown.size),
 		            rb.centred ? visage::Font::kCenter : visage::Font::kRight, rb.x, textTop,
 		            rb.width, kValueHeight);
 		drawCaret(canvas);
@@ -898,7 +907,8 @@ void ValueBox::draw(visage::Canvas& canvas) {
 	// header: the mock's rule, and this project's atlas-corruption reason for keeping it.
 	const ReadoutBox stacked = readoutBox();
 	canvas.setColor(ink);
-	canvas.text(readout(), font(kKnobReadoutSize),
+	const FittedName shown = fittedReadout();
+	canvas.text(shown.text, font(shown.size),
 	            stacked.centred ? visage::Font::kCenter : visage::Font::kRight, stacked.x, valueRow().top,
 	            stacked.width, kValueHeight);
 	drawCaret(canvas);

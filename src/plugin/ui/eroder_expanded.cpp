@@ -49,7 +49,7 @@ constexpr KnobSpec kKnobs[] = {
 	{ ero::Param::Amount, "Amount" },   { ero::Param::Source, "Source" },     { ero::Param::Grit, "Grit" },
 	{ ero::Param::Stereo, "Stereo" },
 	{ ero::Param::Resonance, "Reso" },  { ero::Param::Follow, "Follow" },     { ero::Param::Mix, "Mix" },
-	{ ero::Param::HpWet, "HP Wet" },    { ero::Param::HpWetSemis, "HP Wet" }, { ero::Param::Step, "Step" },         { ero::Param::Detune, "Detune" },
+	{ ero::Param::Step, "Step" },         { ero::Param::Detune, "Detune" },
 	{ ero::Param::ModFold, "Mod Fold" }, { ero::Param::RustBias, "Bias" },    { ero::Param::RustRectify, "Rectify" },
 	{ ero::Param::Heat, "Heat" },
 	{ ero::Param::Smear, "Smear" },     { ero::Param::Loop, "Loop" },
@@ -111,14 +111,17 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 		return c;
 	};
 	track_ = chip(ero::Param::Track, "Track");
-	subThru_ = chip(ero::Param::SubThru, "Sub Thru", true);
+	// HP WET (hertz, and semitones under Track) AND SUB THRU: the shared element; the chip is seated in the picture below.
+	hp_ = std::make_unique<WetHighpassControl>(control(ero::Param::HpWet), &control(ero::Param::HpWetSemis),
+	                                           control(ero::Param::SubThru), notifier_, kFace);
+	hp_->addTo(*this, true);
 	blend_ = chip(ero::Param::Blend, "Blend");
 	restore_ = chip(ero::Param::EmphRestore, "Restore", true);
 	inLoop_ = chip(ero::Param::EmphInLoop, "In Loop", true);
 	tap_ = chip(ero::Param::FbTap, "Driven", true);
 	flow_ = std::make_unique<EroderFlow>(host, id);
 	dc_ = chip(ero::Param::DcBlock, "DC", true);
-	flow_->seat(*inLoop_, *tap_, *restore_, *subThru_, *dc_);
+	flow_->seat(*inLoop_, *tap_, *restore_, *hp_->subThru(), *dc_);
 	addChild(flow_.get());
 
 	// THE FILTER, A STACK OF TWO: Freq and Width, which the plot's handles also write. THE EMPHASIS, A STACK OF THREE: its Amount,
@@ -188,6 +191,12 @@ DeviceControl& EroderExpanded::control(ero::Param p) const {
 }
 
 Knob* EroderExpanded::knob(ero::Param p) const {
+	if (p == ero::Param::HpWet) {
+		return hp_->hertz();
+	}
+	if (p == ero::Param::HpWetSemis) {
+		return hp_->semitones();
+	}
 	for (const auto& [param, k] : knobs_) {
 		if (param == p) {
 			return k.get();
@@ -205,6 +214,7 @@ void EroderExpanded::modulationBound(ModState* mod, EditHistory* history) {
 	for (const auto& entry : knobs_) {
 		entry.second->setModulation(mod, history);
 	}
+	hp_->setModulation(mod, history);
 	drive_->setModulation(mod, history);
 	etch_.setModulation(mod, history);
 }
@@ -281,6 +291,7 @@ void EroderExpanded::layOut() {
 			entry.second->setVisible(false);
 		}
 	}
+	hp_->showFaces(false, semisLive);
 	etch_.setShown(etch);
 	// A GROUP: its caption band, its items flowed `columns` across and centred in its box. Returns the content's foot; the
 	// row's groups are made as tall as the tallest (`closeRow`).
@@ -413,11 +424,11 @@ void EroderExpanded::refreshHonesty() {
 	// SUB THRU GIVES BACK WHAT HP WET TOOK OF A DRY THAT WAS TURNED DOWN: with no filter there is nothing to give
 	// back, and in the Comb the dry is whole unless Blend crossfades it.
 	// THE LIVE ONE: semitones from the note while Track is on in an engine that has it, else HP Wet's hertz (`wetHighpassOn`).
-	const bool filtering = row[static_cast<size_t>(ero::Param::Track)] >= 0.5f && !comb
-	                           ? row[static_cast<size_t>(ero::Param::HpWetSemis)] > ero::kHpWetSemisMin + 1.0e-3f
-	                           : static_cast<double>(row[static_cast<size_t>(ero::Param::HpWet)]) > ero::kHpWetLog2Min;
+	const bool filtering = wetHighpassFiltering(row[static_cast<size_t>(ero::Param::HpWet)], ero::kHpWetLog2Min,
+	                                            row[static_cast<size_t>(ero::Param::Track)] >= 0.5f && !comb,
+	                                            row[static_cast<size_t>(ero::Param::HpWetSemis)], ero::kHpWetSemisMin);
 	const bool crossfades = engine() != ero::Mode::Comb || row[static_cast<size_t>(ero::Param::Blend)] >= 0.5f;
-	subThru_->setEnabled(filtering && crossfades);
+	hp_->refresh(filtering, crossfades);
 	// THE EMPHASIS'S OWN: the shape, the offset and the restore are nothing at zero.
 	emphasis_->setBoxEnabled(1, emphasised);
 	emphasis_->setSelectorEnabled(emphasised);

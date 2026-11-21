@@ -38,6 +38,7 @@
 #include "plugin/ui/pair_cell.h"
 #include "plugin/ui/notify_tray.h"
 #include "plugin/ui/switch_chip.h"
+#include "plugin/ui/wet_highpass_control.h"
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/zone_coord_cell.h"
 
@@ -120,10 +121,10 @@ public:
 	[[nodiscard]] Knob* driveForTest() const { return drive_.get(); }
 	[[nodiscard]] ModeValueCell* driveCellForTest() const { return driveCell_.get(); }
 	[[nodiscard]] PairCell* drivePairForTest() const { return drivePair_.get(); }
-	[[nodiscard]] Knob* hpWetForTest() const { return knob(fx::eroder::Param::HpWet); }
+	[[nodiscard]] Knob* hpWetForTest() const { return hp_->hertz(); }
 	/// HP WET'S SEMITONE FACE: shown instead of `hpWetForTest()` while Track is on in an engine that has it.
-	[[nodiscard]] Knob* hpWetSemisForTest() const { return knob(fx::eroder::Param::HpWetSemis); }
-	[[nodiscard]] SwitchChip* subThruForTest() const { return subThru_.get(); }
+	[[nodiscard]] Knob* hpWetSemisForTest() const { return hp_->semitones(); }
+	[[nodiscard]] SwitchChip* subThruForTest() const { return hp_->subThru(); }
 	[[nodiscard]] SwitchChip* blendForTest() const { return blend_.get(); }
 	[[nodiscard]] SwitchChip* restoreForTest() const { return restore_.get(); }
 	[[nodiscard]] SwitchChip* dcForTest() const { return dc_.get(); }
@@ -174,7 +175,8 @@ private:
 	std::unique_ptr<ModeValueCell> driveCell_;
 	std::shared_ptr<StageView> driveView_ = std::make_shared<StageView>();
 	std::unique_ptr<PairCell> drivePair_;
-	std::unique_ptr<SwitchChip> subThru_;
+	/// HP Wet (hertz, and semitones under Track) and Sub Thru: the shared element (`wet_highpass_control.h`).
+	std::unique_ptr<WetHighpassControl> hp_;
 	std::unique_ptr<SwitchChip> track_;
 	std::unique_ptr<SwitchChip> blend_;
 	std::unique_ptr<SwitchChip> restore_;

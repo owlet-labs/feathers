@@ -309,17 +309,7 @@ DriveSettings deriveDrive(float driveKnob, DriveMode mode, float shape, double s
 
 namespace {
 HighpassSettings highpassAt(bool on, double hz, double rate) noexcept {
-	HighpassSettings h;
-	h.on = on;
-	h.hz = std::min(hz, kDustFreqNyquistFraction * rate);
-	const double g = std::tan(std::numbers::pi * h.hz / rate);
-	const double k = 1.0 / kHpWetQ;
-	const double a1 = 1.0 / (1.0 + g * (g + k));
-	h.a1 = static_cast<float>(a1);
-	h.a2 = static_cast<float>(g * a1);
-	h.a3 = static_cast<float>(g * g * a1);
-	h.k = static_cast<float>(k);
-	return h;
+	return fx::highpassAt(on, hz, rate, kDustFreqNyquistFraction);
 }
 } // namespace
 

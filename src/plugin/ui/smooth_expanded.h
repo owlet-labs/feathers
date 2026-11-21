@@ -31,6 +31,7 @@
 #include "plugin/ui/smooth_picture.h"
 #include "plugin/ui/switch_chip.h"
 #include "plugin/ui/value_box.h"
+#include "plugin/ui/wet_highpass_control.h"
 #include "plugin/ui/widget_registry.h"
 #include "plugin/ui/zone_coord_cell.h"
 
@@ -49,6 +50,7 @@
 //   │                                                   │ │[0.42]HARMONIC      │
 //   └───────────────────────────────────────────────────┘ │        H PHASE     │
 //   (◯) DRIVE   (◯) MIX   │ [0.30] TWIST ‹ Fdbk ›  GAMMA  └────────────────────┘
+//   (◯) HP WET  [Sub Thru]                                      the wet's highpass, before Mix
 //
 // Drive is here as a KNOB as well as the ceiling handle: the knob carries the modulation ring and the route
 // drag in the form every other surface uses. Harmonic sits with H Phase because both move the harmonic blend;
@@ -88,6 +90,7 @@ public:
 	[[nodiscard]] SmoothCurveView* curveForTest() const { return curve_.get(); }
 	[[nodiscard]] SmoothHarmonicsView* barsForTest() const { return bars_.get(); }
 	[[nodiscard]] FaderPill* pillForTest(size_t i) const { return i < pills_.size() ? pills_[i].get() : nullptr; }
+	[[nodiscard]] WetHighpassControl* hpForTest() const { return hp_.get(); }
 	[[nodiscard]] const SmoothPictureModel& modelForTest() const { return model_; }
 
 	/// WHAT THE PLOT DRAWS FROM, for a case that asks by value.
@@ -123,6 +126,8 @@ private:
 	std::unique_ptr<ZoneCoordCell> twist_;
 	std::unique_ptr<SwitchChip> sweepOn_;
 	std::vector<std::unique_ptr<FaderPill>> pills_;
+	/// HP Wet and Sub Thru: the shared element (`wet_highpass_control.h`), in a row of its own under the pills.
+	std::unique_ptr<WetHighpassControl> hp_;
 };
 
 } // namespace feathers::ui

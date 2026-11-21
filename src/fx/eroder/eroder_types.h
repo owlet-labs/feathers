@@ -24,6 +24,7 @@
 #include "dsp/analyser_bins.h"
 #include "device/registry.h"
 #include "fx/fx_tenant.h"
+#include "fx/wet_highpass.h"
 
 #include <array>
 #include <cstddef>
@@ -276,9 +277,9 @@ inline constexpr double kSlewMaxRateFraction = 0.45;
 inline constexpr double kDriveDcHz = 10.0;
 
 /// **HP WET**, log2 hertz: the bottom of the range is "no filter at all", the top 8 kHz.
-inline constexpr double kHpWetLog2Min = 4.321928094887362;  // 20 Hz
-inline constexpr double kHpWetLog2Max = 12.965784284662087; // 8 kHz
-inline constexpr double kHpWetQ = 0.7071067811865476;
+inline constexpr double kHpWetLog2Min = fx::kWetHighpassLog2Min;  // 20 Hz
+inline constexpr double kHpWetLog2Max = fx::kWetHighpassLog2Max; // 8 kHz
+inline constexpr double kHpWetQ = fx::kWetHighpassQ;
 
 /// **STEP** holds the shake for a time, log2 seconds: none at the bottom of the range, 1/32 s at the top.
 inline constexpr double kStepLog2Min = -15.0;
@@ -1986,16 +1987,8 @@ struct DustDerived {
 /// @param innerFeedbackRaw  the engine's inner loop gain, signed
 [[nodiscard]] LoopDerived deriveLoops(const Settings& settings, double centreHz, double innerFeedbackRaw) noexcept;
 
-/// **WHAT A `WetHighpass` RUNS ON**: off at the bottom of HP Wet, else the trapezoidal coefficients of a two-pole
-/// highpass at `hz`.
-struct HighpassSettings {
-	bool on = false;
-	double hz = 0.0;
-	float a1 = 1.0f;
-	float a2 = 0.0f;
-	float a3 = 0.0f;
-	float k = 0.0f;
-};
+/// The shared wet highpass's settings (`fx/wet_highpass.h`).
+using HighpassSettings = fx::HighpassSettings;
 [[nodiscard]] HighpassSettings deriveHighpass(float hpWetLog2Hz, double sampleRate) noexcept;
 /// **THE WET HIGHPASS THE CONTROLS ASK FOR**: with `tracks` (Track on in an engine that has it) the corner is the played note's
 /// frequency times 2^(semitones / 12), clamped to HP Wet's own range (20 Hz to 8 kHz), and HP Wet's hertz is ignored; off at

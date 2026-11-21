@@ -23,6 +23,7 @@
 
 #include "device/registry.h"
 #include "fx/fx_tenant.h"
+#include "fx/wet_highpass.h"
 
 #include <array>
 #include <cstddef>
@@ -163,6 +164,9 @@ inline constexpr double kOutputHpfAlphaAtReference = 0.01425;
 /// `fbState = (fbState + hpfWet) >> 1` — a one-pole whose pole is 0.5 at 44.1 kHz (~4.9 kHz).
 inline constexpr double kFeedbackPoleAtReference = 0.5;
 
+/// HP Wet's corner is held under this fraction of the sample rate.
+inline constexpr double kHpNyquistFraction = 0.45;
+
 /// THE GRID THE PER-BUFFER SETUP RUNS ON — the reference's buffer, as a fixed length. See the header.
 inline constexpr int kBlockFrames = 128;
 
@@ -237,6 +241,9 @@ enum class Param : int {
 	EvensOn,
 	RectOn,
 	FdbkOn,
+	// THE WET HIGHPASS (`fx/wet_highpass.h`), appended: a patch saved before them reads them at their defaults, which are off.
+	HpWet,  ///< a highpass on the wet, before Mix; log2 hertz, the bottom is none
+	SubThru, ///< what HP Wet took from the wet is given back from the dry
 
 	kCount,
 };
@@ -557,6 +564,41 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "Fdbk's power: on, the pill's amount is heard"},
+    {.key = "smooth_hp_wet", .name = "Smooth Shaper HP Wet",
+     .min = fx::kWetHighpassLog2Min,
+     .max = fx::kWetHighpassLog2Max,
+     .def = fx::kWetHighpassLog2Min,
+     .stepped = false,
+     .unit = fx::ParamUnit::LogHertz,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Takes the low end out of the shaped signal, before Mix. At the bottom there is no filter",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "HP Wet"},
+    {.key = "smooth_sub_thru", .name = "Smooth Shaper Sub Thru",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Gives back from the dry signal what HP Wet took away, so the low end stays whole at any Mix; inactive while HP "
+                "Wet is at its bottom, where there is no filter, and at Mix 0",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Sub Thru"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -577,6 +619,8 @@ struct Settings {
 	float mix = 1.0f;
 	float harmonicPhase = 0.0f;
 	float gamma = 0.0f;
+	float hpWet = static_cast<float>(fx::kWetHighpassLog2Min); ///< log2 hertz; the bottom is no filter
+	bool subThru = false;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };

@@ -355,11 +355,16 @@ std::optional<uint32_t> SlotPool::rebase(std::span<const DeviceInstanceId> oldPr
 	uint32_t moved = 0;
 	for (Slot& s : slots_) {
 		if (s.rec.state != SlotState::Empty && isUnder(s.rec.target.path, oldPrefix)) {
+			const std::vector<DeviceInstanceId> was = s.rec.target.path;
+			const std::string wasLabel = s.rec.target.label;
 			replacePrefix(s.rec.target.path, oldPrefix.size(), newPrefix);
 			if (labelFor)
 				s.rec.target.label = labelFor(s.rec.target);
-			markRenamed(s.rec.index);
-			++moved;
+			// A SLOT THAT READS THE SAME AFTER THE REBASE IS NOT RENAMED: a relabel that changes no slot's name owes the host nothing.
+			if (was != s.rec.target.path || wasLabel != s.rec.target.label) {
+				markRenamed(s.rec.index);
+				++moved;
+			}
 		}
 		// A note that would collide is not refused: `restoreUnder` already gives up a note whose control
 		// has a slot, so it can never produce a second one.

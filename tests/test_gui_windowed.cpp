@@ -3837,6 +3837,65 @@ TEST_CASE("a press anywhere on a window that is behind another brings it to the 
 		CHECK(overlay->panelForTest() == front);
 	}
 }
+
+TEST_CASE("after a real click in a device window's body the editor's own keys still work: Ctrl+Z and Ctrl+Shift+Z walk the "
+          "history, and Esc cancels the mod-assign arm and then closes the window") {
+	// THE WINDOW ACCEPTS KEYSTROKES (so a press anywhere in it can raise it), which makes it the keyboard focus after a
+	// click. `handleKeyDown` walks from the focus up through every ancestor that accepts keys, so a key the window does not
+	// use must arrive at the layer and the editor's root. The walk is made here from whatever frame really holds the
+	// keyboard after the click.
+	ReopenRig rig;
+	rig.f.gui.setPopoutWindowForTest(false);
+	const size_t slot = rig.f.addFx(fx::harm::kTraits.tag);
+	ui::ExpandedOverlay* overlay = rig.f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	rig.f.lane->onExpandDevice(slot);
+	pumpEditor(rig.f.gui, 3);
+	REQUIRE(overlay->open());
+	ui::ExpandedPanel* panel = overlay->panelForTest();
+	REQUIRE(panel != nullptr);
+	std::vector<ui::Knob*> knobs;
+	collectKnobsUnder(panel, knobs);
+	REQUIRE_FALSE(knobs.empty());
+	// A REAL PRESS AND RELEASE on a control in the body.
+	realClick(rig, knobs.front()->positionInWindow() + visage::Point(knobs.front()->width() / 2, knobs.front()->height() / 2),
+	          Button1);
+	visage::Frame* const top = rig.f.root->topParentFrame();
+	visage::Frame* held = focusedUnder(top);
+	REQUIRE(held != nullptr);
+	// THE WINDOW REALLY IS WHAT HOLDS THE KEYBOARD NOW (not the root), or this case would prove nothing.
+	bool inPanel = false;
+	for (visage::Frame* at = held; at != nullptr; at = at->parent()) {
+		inPanel = inPanel || at == panel;
+	}
+	REQUIRE(inPanel);
+
+	SUBCASE("Ctrl+Z and Ctrl+Shift+Z") {
+		ui::EditHistory& history = *rig.f.gui.history();
+		const clap_id id = static_cast<clap_id>(ParamId::VoiceLevel);
+		const double before = rig.f.bridge.value(id);
+		const double after = before > 0.5 ? before - 0.25 : before + 0.25;
+		REQUIRE(ui::writeParamAsEdit(rig.f.bridge, id, after));
+		REQUIRE(history.canUndo());
+		CHECK(keyFromFocusUp(held, visage::KeyEvent { visage::KeyCode::Z, visage::kModifierRegCtrl, true }));
+		CHECK(rig.f.bridge.value(id) == before);
+		CHECK(keyFromFocusUp(held, visage::KeyEvent { visage::KeyCode::Z, visage::kModifierRegCtrl | visage::kModifierShift, true }));
+		CHECK(rig.f.bridge.value(id) == after);
+	}
+	SUBCASE("Esc cancels the arm first, then closes the window") {
+		ui::ModState* mod = rig.f.gui.modForTest();
+		REQUIRE(mod != nullptr);
+		mod->focus(backplane::Source::core(0));
+		mod->arm(true);
+		REQUIRE(mod->armed());
+		const visage::KeyEvent escape { visage::KeyCode::Escape, 0, true };
+		CHECK(keyFromFocusUp(held, escape));
+		CHECK_FALSE(mod->armed());
+		CHECK(overlay->open());
+		CHECK(keyFromFocusUp(held, escape));
+		CHECK_FALSE(overlay->open());
+	}
+}
 #endif // defined(__linux__): ReopenRig is Linux-only
 
 TEST_CASE("backlog NF: the Explore pane collapses like the fx lane — a 34px EXPLORE strip, the surface hidden, the "

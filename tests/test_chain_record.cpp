@@ -975,7 +975,12 @@ TEST_CASE("what a record publishes is what an adopt hands back, and a shape mism
 	CHECK_FALSE(pub.publish(wrong));
 }
 
-TEST_CASE("an adopt racing a publisher always leaves one whole state — the refused ones included") {
+TEST_CASE("an adopt racing a publisher always leaves one whole state, and is never refused") {
+	// **NEVER REFUSED, SINCE THE TRIPLE BUFFER (2026-11-21).** This case required refusals: a seqlock read that saw a
+	// publish land was refused, and the block ran on the state it had. A refused read on the block a Pattern was first
+	// installed sent that block's notes past it (test_note_drops "note drops (d)"). Now the publish in flight is the
+	// writer's own buffer, and an adopt takes the newest whole one: refusals must be ZERO, and the state whole after
+	// every call, as before.
 	// A WRITER ALTERNATES TWO STATES THAT DIFFER AT EVERY POSITION — different tags, ids, fields and order;
 	// the reader must only ever hold one or the other. A torn copy here is a device under another
 	// device's id, which the converger would build — or a running device the state seems not to want,
@@ -985,7 +990,7 @@ TEST_CASE("an adopt racing a publisher always leaves one whole state — the ref
 	// one whole state" and it inspected only the snapshots that SUCCEEDED — `continue` on a false. But a
 	// snapshot writes as it reads, and both of its callers ran the state after a false: the rack's drain
 	// and Feathers' lane. The churn case caught it one run in twenty under the sanitizer. So the state is
-	// checked after EVERY call, and the case requires that refusals happened, or it did not test them.
+	// checked after EVERY call.
 	constexpr size_t kDevices = 8;
 	ChainState a(kDevices, 1);
 	ChainState b(kDevices, 1);
@@ -1013,16 +1018,20 @@ TEST_CASE("an adopt racing a publisher always leaves one whole state — the ref
 	size_t taken = 0;
 	size_t refused = 0;
 	size_t torn = 0;
-	for (size_t attempt = 0; attempt < 20000000 && (taken < 5000 || refused < 100); ++attempt) {
+	size_t changes = 0;
+	for (size_t attempt = 0; attempt < 20000000 && (taken < 5000 || changes < 200); ++attempt) {
+		const bool wasA = got == a;
 		const bool whole = pub.adopt(&got, &staging, &sequence);
 		++(whole ? taken : refused);
+		changes += (got == a) != wasA ? 1 : 0;
 		torn += (got == a || got == b) ? 0 : 1; // AFTER EVERY CALL, the refused ones too
 	}
 	stop.store(true, std::memory_order_relaxed);
 	writer.join();
 	CHECK(torn == 0);
 	CHECK(taken > 0);
-	REQUIRE(refused > 0); // THE HALF UNDER TEST RAN
+	CHECK(refused == 0);
+	CHECK(changes > 100); // non-vacuity: the reader saw the writer's states change under it
 }
 
 TEST_CASE("record, publish, snapshot, converge: the engine runs what the record says") {

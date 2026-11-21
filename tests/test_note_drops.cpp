@@ -473,6 +473,8 @@ struct PatternRun {
 	std::vector<int64_t> wraps; ///< the samples the loop wrapped at
 	double refusedFirstBlock = 0.0; ///< chain publishes the first block could not take whole
 	double refusedAll = 0.0;
+	double adoptMaxNs = 0.0; ///< the longest the audio thread's adopt path took
+	double takeMaxNs = 0.0;   ///< and the take alone
 };
 
 /// MORE OF THE PATTERN'S CONTROLS for the next runs, by name (a case sets them and clears them).
@@ -681,6 +683,8 @@ PatternRun patternRun(uint32_t fixedBlock, uint32_t blockSeed, double bpm, doubl
 	                                 + inst.reading(CLAP_FEATHERS_SYNTH_VOICE_RETRIGGERS));
 	r.refused = static_cast<uint64_t>(inst.reading(CLAP_FEATHERS_SYNTH_VOICE_REFUSED));
 	r.refusedAll = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED);
+	r.adoptMaxNs = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_MAX_NS);
+	r.takeMaxNs = inst.reading(CLAP_FEATHERS_SYNTH_CHAIN_TAKE_MAX_NS);
 	return r;
 }
 
@@ -897,22 +901,30 @@ TEST_CASE("note drops (d): a chord struck on the first block a just-added Patter
 	REQUIRE(reference.ons.size() >= 4);
 	int refusedFirst = 0, dropRuns = 0, both = 0;
 	double refusedBlocks = 0.0;
+	double adoptMaxNs = 0.0;
+	double takeMaxNs = 0.0;
+	std::vector<double> takes;
 	for (int s = 0; s < runs; ++s) {
 		const PatternRun run = patternRun(64, 1, bpm, 0.0, 1, mode, chord, kLength, 2);
 		const auto [missing, extra] = onsMissing(reference.ons, run.ons);
 		const bool refused = run.refusedFirstBlock > 0.0;
 		refusedBlocks += run.refusedAll;
+		adoptMaxNs = std::max(adoptMaxNs, run.adoptMaxNs);
+		takeMaxNs = std::max(takeMaxNs, run.takeMaxNs);
+		takes.push_back(run.takeMaxNs);
 		const bool dropped = missing + extra > 0;
 		refusedFirst += refused ? 1 : 0;
 		dropRuns += dropped ? 1 : 0;
 		both += refused && dropped ? 1 : 0;
 		CAPTURE(s);
+		CHECK(run.refusedAll == 0.0); // NO BLOCK RUNS ON A STALE STATE: the adopt is never refused
 		CHECK(missing == 0);
 		CHECK(extra == 0);
 	}
 	std::printf("startup race: runs %d, first block refused a publish %d, runs that lost or added steps %d, both %d; blocks run on a "
-	            "stale chain state %g\n",
-	            runs, refusedFirst, dropRuns, both, refusedBlocks);
+	            "stale chain state %g; longest adopt path %.1f us, longest take %.1f us (median of the runs' longest %.2f us)\n",
+	            runs, refusedFirst, dropRuns, both, refusedBlocks, adoptMaxNs / 1000.0, takeMaxNs / 1000.0,
+	            takes.empty() ? 0.0 : (std::nth_element(takes.begin(), takes.begin() + static_cast<std::ptrdiff_t>(takes.size() / 2), takes.end()), takes[takes.size() / 2] / 1000.0));
 }
 
 TEST_CASE("note drops (e): the Pattern's feel — Humanize at full amount in every mode, Nudge either way — hands the voices the "

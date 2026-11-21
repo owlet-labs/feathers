@@ -35,6 +35,7 @@
 #include <clap/events.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -330,10 +331,6 @@ namespace {
 bool isEditorNoteId(int32_t noteId) noexcept {
 	return noteId == kUiNoteId || noteId == kPadNoteId;
 }
-/// HOW HARD THE AUDIO THREAD TRIES TO TAKE A CHAIN PUBLISH WHOLE BEFORE IT RUNS THE BLOCK ON THE STATE IT HAD (`adoptChains`):
-/// reads, and atomic loads of the sequence while a publish is half written between them.
-constexpr int kChainAdoptAttempts = 4;
-constexpr int kChainAdoptWaits = 1024;
 } // namespace
 
 void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity) {
@@ -1662,33 +1659,21 @@ bool Synth::reapChainGrowth() noexcept {
 bool Synth::adoptChains(const rack::PublishedChainState& published) noexcept {
 	// A GROWTH FIRST, so a publish that needed the room lands in it on this same block.
 	adoptChainGrowth();
-	if (published.sequence() == chainsSequence_) {
+	if (!published.fresh()) {
 		return false; // every block on which nobody touched a chain
 	}
-	// INTO STAGING, AND SWAPPED IN ONLY WHOLE: a publish landing while we read leaves `chainState_` as it
-	// was — which the lane syncs from every block. (This snapshotted straight into `chainState_`, so a
-	// refused read left the lane a torn state to sync from; see `PublishedChainState`.)
-	//
-	// **AND A REFUSED READ IS TRIED AGAIN NOW, A FEW TIMES, NOT LEFT TO THE NEXT BLOCK.** The editor republishes the whole
-	// record on every knob it moves, so a read can be refused because a hand was on ANY control. Left to the next
-	// block, a device just added (a Pattern) was not yet installed when this block's notes arrived: they went past it
-	// straight to the voices, and it never took them as its chord. MEASURED (test_note_drops "note drops (d)"): a chord on
-	// the first block with a hand on the editor lost the Pattern's steps in 7 runs of 900, each one exactly a run whose
-	// first block was refused; with these retries, none in 1800, and the blocks run on a stale state fell from about
-	// 12,000 to about 200 in 900 runs. NARROWED, NOT CLOSED: a publish still in flight after every attempt leaves this
-	// block on the old state, as before. A publish is a few microseconds of the message thread's, so the wait for an odd
-	// sequence to settle is bounded, and nothing here allocates. (The rack's drain, `RackBridge::drain`, has the same
-	// shape and is not measured.)
-	bool adopted = false;
-	for (int attempt = 0; attempt < kChainAdoptAttempts && !adopted; ++attempt) {
-		for (int wait = 0; wait < kChainAdoptWaits && (published.sequence() & 1u) != 0; ++wait) {
-		}
-		adopted = published.adopt(&chainState_, &chainStaging_, &chainsSequence_);
-	}
-	if (!adopted) {
+	// THE NEWEST WHOLE PUBLISH, TAKEN HERE AT THE TOP OF THE BLOCK — one exchange and a trade of buffers
+	// (`PublishedChainState`, a triple buffer). It is never refused for a publish in flight, so a device the editor has
+	// just added is installed before this block's notes, whatever else a hand is doing in the editor. (A seqlock read
+	// was refused then, and the block's notes went past a just-added Pattern: test_note_drops "note drops (d)".) The
+	// one refusal left is a state of another shape, which waits for `adoptChainGrowth`.
+	const auto began = std::chrono::steady_clock::now(); // TEST ONLY: the adopt path's longest, read by `soakReadingForTest`
+	if (!published.adopt(&chainState_, &chainStaging_, &chainsSequence_)) {
 		++chainAdoptRefused_;
 		return false; // keep what we have, ask again next block
 	}
+	chainTakeMaxNs_ = std::max<uint64_t>(
+	    chainTakeMaxNs_, static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count()));
 	chainsAdoptedMirror_.store(chainsSequence_, std::memory_order_release);
 	++structureRevision_;
 	chainsOfState(chainState_, &adoptedFx_, &adoptedRack_);
@@ -1697,6 +1682,8 @@ bool Synth::adoptChains(const rack::PublishedChainState& published) noexcept {
 	// AND THE LANE SYNCS FROM THIS SNAPSHOT, NAMING ITS PUBLISH — so a device the editor's visit built for
 	// a later publish than this one is kept for the sync that has it, not handed back (5b C5b).
 	chainsFromPublish_ = true;
+	chainAdoptMaxNs_ = std::max<uint64_t>(
+	    chainAdoptMaxNs_, static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - began).count()));
 	return true;
 }
 
@@ -4655,6 +4642,8 @@ bool Synth::soakReadingForTest(uint32_t what, double* out) const {
 	case CLAP_FEATHERS_SYNTH_VOICE_RETRIGGERS: *out = static_cast<double>(voiceRetriggers_); return true;
 	case CLAP_FEATHERS_SYNTH_VOICE_RELEASES: *out = static_cast<double>(voiceReleases_); return true;
 	case CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED: *out = static_cast<double>(chainAdoptRefused_); return true;
+	case CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_MAX_NS: *out = static_cast<double>(chainAdoptMaxNs_); return true;
+	case CLAP_FEATHERS_SYNTH_CHAIN_TAKE_MAX_NS: *out = static_cast<double>(chainTakeMaxNs_); return true;
 	case CLAP_FEATHERS_SYNTH_PATTERN_HELD:
 	case CLAP_FEATHERS_SYNTH_PATTERN_SOUNDING:
 	case CLAP_FEATHERS_SYNTH_PATTERN_LOWEST:

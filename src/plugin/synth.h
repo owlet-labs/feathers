@@ -1823,6 +1823,8 @@ private:
 	uint64_t voiceRetriggers_ = 0;
 	uint64_t voiceReleases_ = 0;
 	uint64_t chainAdoptRefused_ = 0;
+	uint64_t chainAdoptMaxNs_ = 0;
+	uint64_t chainTakeMaxNs_ = 0;
 
 	/// **EVERY KEY THE VOICES HAVE BEEN TOLD IS DOWN, AND THE NOTE ID IT WENT DOWN WITH** (2026-10-07: the
 	/// env misbehaved after playing an interstitial note while holding a lower note). Mono and Legato RETURN to a

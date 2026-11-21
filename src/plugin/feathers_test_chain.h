@@ -120,8 +120,12 @@ enum clap_feathers_synth_reading : uint32_t {
 	CLAP_FEATHERS_SYNTH_VOICE_REFUSED = 16,
 	CLAP_FEATHERS_SYNTH_VOICE_RETRIGGERS = 17,
 	CLAP_FEATHERS_SYNTH_VOICE_RELEASES = 18,
-	/// AND HOW MANY TIMES THE AUDIO THREAD FOUND A NEW CHAIN PUBLISH AND COULD NOT TAKE IT WHOLE (the editor was writing the next).
+	/// AND HOW MANY TIMES THE AUDIO THREAD FOUND A NEW CHAIN PUBLISH AND DID NOT TAKE IT (it ran the block on the state it had),
+	/// and the longest its adopt path took, in nanoseconds.
 	CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_REFUSED = 19,
+	CLAP_FEATHERS_SYNTH_CHAIN_ADOPT_MAX_NS = 20,
+	/// The take alone (`PublishedChainState::adopt`: the exchange and the trade of buffers), in nanoseconds.
+	CLAP_FEATHERS_SYNTH_CHAIN_TAKE_MAX_NS = 21,
 	CLAP_FEATHERS_SYNTH_READING_COUNT
 };
 

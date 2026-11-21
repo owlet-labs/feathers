@@ -23,6 +23,9 @@
 #include "plugin/ui/pattern_expanded.h"
 #include "plugin/ui/controls.h"
 #include "plugin/ui/mod_route_menu.h"
+#include "plugin/ui/edit_history.h"
+#include "plugin/ui/menu_anchor.h"
+#include "plugin/ui/notify_tray.h"
 #include "plugin/ui/mod_state.h"
 
 #include "device/format_value.h"
@@ -264,6 +267,137 @@ void PatternTerrain::setModulation(ModState* mod, EditHistory* history) {
 	redraw();
 }
 
+namespace {
+/// **A LIKES' EDIT AS ONE UNDO STEP**: the whole block either side, written back through the host (as the Drum's and the synth's are).
+class LikesBlockEdit final : public EditRecord {
+public:
+	LikesBlockEdit(backplane::DeviceHost& host, DeviceInstanceId id, std::vector<float> before, std::vector<float> after, const char* verb)
+	    : host_(host), id_(id), before_(std::move(before)), after_(std::move(after)), verb_(verb) {}
+	void undo() const override { (void)host_.setBlock(id_, pt::kLikesBlock, before_); }
+	void redo() const override { (void)host_.setBlock(id_, pt::kLikesBlock, after_); }
+	const char* verb() const override { return verb_; }
+
+private:
+	backplane::DeviceHost& host_;
+	DeviceInstanceId id_;
+	std::vector<float> before_;
+	std::vector<float> after_;
+	const char* verb_;
+};
+} // namespace
+
+visage::Point PatternTerrain::pixelOfPlace(double x, double y) const {
+	const auto w = static_cast<float>(width());
+	const auto h = static_cast<float>(height());
+	const double half = kHalfSpan / zoom_;
+	return { static_cast<float>((x - centreX_) / (2.0 * half) + 0.5) * w, h - static_cast<float>((y - centreY_) / (2.0 * half) + 0.5) * h };
+}
+
+visage::Bounds PatternTerrain::markRect(visage::Point at) const {
+	const float r = kLikeMarkSize * 0.5f + 1.0f;
+	return { at.x - r, at.y - r, 2.0f * r, 2.0f * r };
+}
+
+visage::Point PatternTerrain::markAt(visage::Point place) const {
+	// A MARK UNDER A BOX LYING IN THE MAP (the heart, Rotate, the foot's Zone, Offset and Gamma) IS MOVED OUT FROM UNDER IT: straight up
+	// to just above a box at the foot, straight down to just below one at the top, so a like in a corner stays visible.
+	visage::Point at = place;
+	for (const visage::Bounds& box : insets_) {
+		const visage::Bounds mark = markRect(at);
+		if (mark.x() < box.right() && mark.right() > box.x() && mark.y() < box.bottom() && mark.bottom() > box.y()) {
+			const bool lower = box.y() > static_cast<float>(height()) * 0.5f;
+			at.y = lower ? box.y() - mark.height() * 0.5f : box.bottom() + mark.height() * 0.5f;
+		}
+	}
+	return at;
+}
+
+std::optional<size_t> PatternTerrain::likeUnderStar() const {
+	const std::vector<pt::PlaneMark> marks = likeMarks();
+	const visage::Point puck = puckPosition();
+	std::optional<size_t> best;
+	float bestD = kLikeTouchPixels;
+	for (size_t i = 0; i < marks.size(); ++i) {
+		if (!marks[i].solved) {
+			continue;
+		}
+		const visage::Point m = pixelOfPlace(marks[i].x, marks[i].y);
+		const float d = std::hypot(m.x - puck.x, m.y - puck.y);
+		if (d <= bestD) {
+			bestD = d;
+			best = i;
+		}
+	}
+	return best;
+}
+
+bool PatternTerrain::commitLikes(const likes::AllLikes& all, const likes::SlotLikes& before, const likes::SlotLikes& after, const char* verb) {
+	std::vector<float> was(likes::kBlockWords);
+	if (!host_.blockAt(device_, pt::kLikesBlock, was)) {
+		likes::write(likes::AllLikes {}, was.data());
+	}
+	std::vector<float> now(likes::kBlockWords);
+	likes::write(all, now.data());
+	if (!host_.setBlock(device_, pt::kLikesBlock, now)) {
+		return false;
+	}
+	if (history_ != nullptr) {
+		history_->record(std::make_unique<LikesBlockEdit>(host_, device_, std::move(was), std::move(now), verb));
+	}
+	(void)before;
+	(void)after;
+	redraw();
+	return true;
+}
+
+bool PatternTerrain::toggleLike() {
+	const std::optional<size_t> under = likeUnderStar();
+	if (!under) {
+		return like();
+	}
+	// THE HEART ON A LIKE REMOVES IT (the synth's and the Drum's): one undo step.
+	std::vector<float> block(likes::kBlockWords);
+	likes::AllLikes all {};
+	if (!(host_.blockAt(device_, pt::kLikesBlock, block) && likes::read(block.data(), block.size(), &all))) {
+		return false;
+	}
+	likes::SlotLikes& slot = all[focus_];
+	const likes::SlotLikes before = slot;
+	if (*under >= slot.count) {
+		return false;
+	}
+	for (size_t i = *under; i + 1 < slot.count; ++i) {
+		slot.like[i] = slot.like[i + 1];
+	}
+	slot.like[--slot.count] = likes::Like {};
+	return commitLikes(all, before, slot, "unlike");
+}
+
+bool PatternTerrain::clearLikes() {
+	std::vector<float> block(likes::kBlockWords);
+	likes::AllLikes all {};
+	if (!(host_.blockAt(device_, pt::kLikesBlock, block) && likes::read(block.data(), block.size(), &all)) || all[focus_].count == 0) {
+		return false; // nothing of this pattern's to clear; not an edit
+	}
+	const likes::SlotLikes before = all[focus_];
+	all[focus_] = likes::SlotLikes {};
+	return commitLikes(all, before, all[focus_], "clear likes");
+}
+
+visage::PopupMenu PatternTerrain::likesMenu() {
+	// SAYS WHOSE LIKES IT CLEARS: this pattern's (each of the four keeps its own).
+	char caption[64] = {};
+	std::snprintf(caption, sizeof(caption), "Clear all likes on pattern %zu", focus_ + 1);
+	visage::PopupMenu menu;
+	menu.addOption(kClearLikes, caption).enable(likesNow().count > 0);
+	menu.onSelection() = [this](int id) {
+		if (id == kClearLikes) {
+			(void)clearLikes();
+		}
+	};
+	return menu;
+}
+
 visage::Point PatternTerrain::puckPosition() const {
 	const auto w = static_cast<float>(width());
 	const auto h = static_cast<float>(height());
@@ -449,8 +583,7 @@ bool PatternTerrain::like() {
 	// THE FULL POINT, decoded where the fingerprint was heard (the place, on the hand's banked turns).
 	pt::PatternSettings heardAt = q;
 	l.point = pt::pointOf(pt::PatternDevice::placeOf(heardAt, handNow().residue));
-	likes::write(all, block.data());
-	const bool ok = host_.setBlock(device_, pt::kLikesBlock, block);
+	const bool ok = commitLikes(all, before, slot, "like");
 	// AND THE LOG (pattern_likes_log.h): a like that reached the block is a line; one that did not is not.
 	if (ok) {
 		(void)patternlog::logLike(static_cast<uint64_t>(device_), focus_, before, slot);
@@ -533,7 +666,8 @@ void PatternTerrain::draw(visage::Canvas& canvas) {
 		if (!mark.solved || !std::isfinite(mx) || !std::isfinite(my) || mx < 0.0f || mx > w || my < 0.0f || my > h) {
 			continue;
 		}
-		drawHeart(canvas, mx, my, kLikeMarkSize);
+		const visage::Point drawn = markAt({ mx, my });
+		drawHeart(canvas, drawn.x, drawn.y, kLikeMarkSize);
 		++likeMarksDrawn_;
 	}
 	// THE PUCK'S MODULATION: armed and routable, a glow and a ring in the modulation colour; routed and not
@@ -603,8 +737,12 @@ void PinSwitch::setValue(double value) {
 }
 
 LikeButton::LikeButton() {
-	onMouseDown() = [this](const visage::MouseEvent&) {
-		if (onLike) {
+	onMouseDown() = [this](const visage::MouseEvent& e) {
+		// A POPUP TRIGGER (a right press, or ctrl-left on a Mac) opens the heart's menu; any other press is the like.
+		if (e.shouldTriggerPopup() && onMenu) {
+			onMenu();
+		}
+		else if (onLike) {
 			onLike();
 		}
 	};
@@ -916,7 +1054,8 @@ PatternExpanded::PatternExpanded(backplane::DeviceHost& host, WidgetRegistry& re
 	addChild(inspector_.get());
 	lane_->onSelect = [this] { inspector_->refresh(); };
 	heart_ = std::make_unique<LikeButton>();
-	heart_->onLike = [this] { (void)terrain_->like(); };
+	heart_->onLike = [this] { (void)terrain_->toggleLike(); };
+	heart_->onMenu = [this] { showMenuAt(terrain_->likesMenu(), *heart_, { 0.0f, 0.0f, heart_->width(), heart_->height() }); };
 	addChild(heart_.get());
 
 	// THE DEVICE'S OWN. The selector stays a knob (it reads better as one); Humanize is SKLITTER's zone cell — the feel's
@@ -1291,6 +1430,16 @@ void PatternExpanded::layOut() {
 			f->setBounds(bx, by, bw, bh);
 			bx += bw + kPillGap;
 		}
+	}
+	{
+		// THE BOXES LYING IN THE MAP, in its own coordinates: no like mark is drawn under one (`PatternTerrain::markAt`).
+		std::vector<visage::Bounds> boxes;
+		for (const visage::Frame* f : std::initializer_list<const visage::Frame*> { heart_.get(), rotate_.get(), zone_.get(), zoneOffset_.get(), gamma_.get() }) {
+			if (f != nullptr) {
+				boxes.push_back({ f->x() - terrain_->x(), f->y() - terrain_->y(), f->width(), f->height() });
+			}
+		}
+		terrain_->setInsets(std::move(boxes));
 	}
 	// BESIDE IT: the lane, then the pattern's choices, its chip, and its slider bank.
 	const float rx = x0 + tw + kGap;

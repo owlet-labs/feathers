@@ -2181,3 +2181,10 @@ target_link_libraries(test_drum_likes_gui PRIVATE feathers-impl feathers-warning
 target_include_directories(test_drum_likes_gui PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME drum-likes-gui COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_drum_likes_gui>)
 set_tests_properties(drum-likes-gui PROPERTIES LABELS "headless-incompatible")
+
+# THE PATTERN WINDOW'S LIKES held to the Drum's standard: unlike on the heart, Clear, undo, marks clear of the boxes in the map.
+add_executable(test_pattern_likes_gui test_pattern_likes_gui.cpp)
+target_link_libraries(test_pattern_likes_gui PRIVATE feathers-impl feathers-warnings)
+target_include_directories(test_pattern_likes_gui PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME pattern-likes-gui COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_pattern_likes_gui>)
+set_tests_properties(pattern-likes-gui PROPERTIES LABELS "headless-incompatible")

@@ -125,6 +125,22 @@ public:
 	/// **LIKE WHAT PLAYS HERE** (design §14-bis): the focused pattern's place and the fingerprint of its cycle there,
 	/// appended to its slot's likes (the oldest gives way past `likes::kMaxLikes`), one block write.
 	bool like();
+	/// **THE HEART**: likes where the pattern stands, or — standing on a like — removes it. One undo step either way.
+	bool toggleLike();
+	/// Every like of the focused pattern gone, in one undo step; false (and no edit) with none.
+	bool clearLikes();
+	/// **THE HEART'S MENU**: "Clear all likes on pattern N", greyed with none.
+	[[nodiscard]] visage::PopupMenu likesMenu();
+	static constexpr int kClearLikes = 1;
+	/// Which of the focused pattern's marks the puck stands on (within `kLikeTouchPixels`), if any.
+	[[nodiscard]] std::optional<size_t> likeUnderStar() const;
+	static constexpr float kLikeTouchPixels = 6.0f;
+	/// The boxes lying in the map (pad-local), which no like mark may hide under; and where a mark for a like at `place` is drawn.
+	void setInsets(std::vector<visage::Bounds> boxes) { insets_ = std::move(boxes); }
+	[[nodiscard]] const std::vector<visage::Bounds>& insetsForTest() const noexcept { return insets_; }
+	[[nodiscard]] visage::Bounds markRect(visage::Point at) const;
+	[[nodiscard]] visage::Point markAt(visage::Point place) const;
+	[[nodiscard]] visage::Point pixelOfPlace(double x, double y) const;
 	/// The focused slot's likes as the block holds them.
 	[[nodiscard]] mod::arp::likes::SlotLikes likesNow() const;
 	/// The focused pattern's slice of the hand's block (its banked turns, its pin switches).
@@ -193,6 +209,8 @@ private:
 	void moveToPointer();
 	std::array<double, 2> puckKey_ {};
 	size_t likeMarksDrawn_ = 0;
+	std::vector<visage::Bounds> insets_;
+	bool commitLikes(const mod::arp::likes::AllLikes& all, const mod::arp::likes::SlotLikes& before, const mod::arp::likes::SlotLikes& after, const char* verb);
 };
 
 /// **THE HEART** — likes what the focused pattern plays at its place (design §14-bis). A press, not a control.
@@ -200,6 +218,7 @@ class LikeButton final : public visage::Frame, public TooltipSource {
 public:
 	LikeButton();
 	std::function<void()> onLike;
+	std::function<void()> onMenu;
 	void draw(visage::Canvas& canvas) override;
 	const char* tooltipAt(visage::Point) const override {
 		return "Like this pattern: remember its place and how it sounds, so the terrain shows more like it";
@@ -358,6 +377,7 @@ public:
 	void setFocus(size_t pattern);
 	[[nodiscard]] size_t focus() const { return focus_; }
 	[[nodiscard]] PatternTerrain& terrain() const { return *terrain_; }
+	[[nodiscard]] const visage::Frame& heartForTest() const { return *heart_; }
 	[[nodiscard]] PatternLane& lane() const { return *lane_; }
 	[[nodiscard]] StepInspector& inspector() const { return *inspector_; }
 	//-- PagedControls: the tabs ------------------------------------------------------------------------------------//

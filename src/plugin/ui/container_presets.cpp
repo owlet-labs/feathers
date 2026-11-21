@@ -74,7 +74,7 @@ ContainerPresets browserOver(const device::Descriptor& kind, const char* bank, s
 	                                              std::vector<PresetData> { PresetData { initDevicePreset(kind) } },
 	                                              bank, style);
 	out.browser->accepts = [&kind](std::span<const uint8_t> bytes) { return isPresetOf(kind, bytes); };
-	out.browser->setBounds(0.0f, 0.0f, out.browser->barWidth(), style.height);
+	out.browser->setBounds(0.0f, 0.0f, out.browser->barWidth(), PresetBrowser::barHeightFor(style));
 	out.browser->loadBankFromDisk();
 	out.browser->setProvider(out.provider.get());
 	out.browser->setNotifier(notifier);
@@ -121,8 +121,9 @@ ContainerPresets makeTopPresets(rack::RackBridge& bridge, Notifier* notifier, st
 		    return true;
 	    });
 	// THE STEPPER MUST FIT THE HEADER ROW: the door, this, and the macros toggle share one 200 px column, so the name panel is narrower than a
-	// device panel's (124) and both arrows stay on the face.
-	constexpr PresetBrowser::Style kHeaderStyle { PresetBrowser::kPanelStyle.height, 106.0f, PresetBrowser::kPanelStyle.arrowWidth };
+	// device panel's (124) and both arrows stay on the face. THE EIGHT VARIANT CHIPS STAND IN ONE ROW UNDER IT (`belowHeight`): beside it they would
+	// need 206 px and the row offers under 170, which clipped them away.
+	constexpr PresetBrowser::Style kHeaderStyle { PresetBrowser::kPanelStyle.height, 106.0f, PresetBrowser::kPanelStyle.arrowWidth, 11.0f };
 	ContainerPresets out = browserOver(chainPresetDescriptor(), kChainPresetBank, std::move(provider), notifier, kHeaderStyle);
 	// THE RACK PLUGIN'S BROWSER OPENS ON THE PRESET ITS PATCH CAME FROM (backlog QC): the bridge's `topPreset`, saved at the
 	// patch's root.

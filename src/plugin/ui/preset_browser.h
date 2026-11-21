@@ -304,11 +304,18 @@ public:
 	static constexpr float kChipsGap = 4.0f;  ///< between ▶ and the first column
 	static constexpr float kChipGap = 2.0f;   ///< between chips, both ways
 	static constexpr float kChipAspect = 1.5f;
-	[[nodiscard]] static constexpr float chipHeightFor(const Style& s) { return (s.height - kChipGap) * 0.5f; }
-	[[nodiscard]] static constexpr float chipWidthFor(const Style& s) { return chipHeightFor(s) * kChipAspect; }
-	[[nodiscard]] static constexpr float chipsWidthFor(const Style& s) {
-		return kChipsGap + 4.0f * chipWidthFor(s) + 3.0f * kChipGap;
+	/// A style with `belowHeight` puts the eight chips in ONE ROW under the stepper, across its width (a header that has no room beside it).
+	[[nodiscard]] static constexpr float chipHeightFor(const Style& s) {
+		return s.belowHeight > 0.0f ? s.belowHeight - kChipGap : (s.height - kChipGap) * 0.5f;
 	}
+	[[nodiscard]] static constexpr float chipWidthFor(const Style& s) {
+		return s.belowHeight > 0.0f ? (s.arrowWidth * 2.0f + s.nameWidth - 7.0f * kChipGap) / 8.0f : chipHeightFor(s) * kChipAspect;
+	}
+	[[nodiscard]] static constexpr float chipsWidthFor(const Style& s) {
+		return s.belowHeight > 0.0f ? 0.0f : kChipsGap + 4.0f * chipWidthFor(s) + 3.0f * kChipGap;
+	}
+	/// The browser's whole height: the stepper and the row under it, when it has one.
+	[[nodiscard]] static constexpr float barHeightFor(const Style& s) { return s.height + s.belowHeight; }
 	/// **THE WHOLE BAR**: ◀ name ▶ and the chips. What every owner sizes the browser to.
 	[[nodiscard]] static constexpr float barWidthFor(const Style& s) {
 		return s.arrowWidth * 2.0f + s.nameWidth + chipsWidthFor(s);

@@ -812,9 +812,12 @@ visage::Bounds PresetBrowser::variantChipBounds(int n) const {
 	const Style& s = style();
 	const float w = chipWidthFor(s);
 	const float h = chipHeightFor(s);
+	const float top = (static_cast<float>(height()) - s.height - s.belowHeight) * 0.5f;
+	if (s.belowHeight > 0.0f) {
+		return { static_cast<float>(n - 1) * (w + kChipGap), top + s.height + kChipGap, w, h };
+	}
 	const int column = (n - 1) % 4;
 	const int row = (n - 1) / 4;
-	const float top = (static_cast<float>(height()) - s.height) * 0.5f;
 	return { totalWidth() + kChipsGap + static_cast<float>(column) * (w + kChipGap),
 		     top + static_cast<float>(row) * (h + kChipGap), w, h };
 }

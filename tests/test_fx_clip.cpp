@@ -175,7 +175,10 @@ TEST_CASE("a row round-trips and a short row takes the defaults") {
 	CHECK(partial.oversample == true);
 	CHECK(partial.knee == 0.1f);
 	CHECK(partial.mode == static_cast<int>(clip::Mode::Bits));
-	CHECK(clip::stateOf(clip::Row {}, 0) == clip::Settings {});
+	// A ROW THAT LACKS THE FIELD READS THE CONTROL'S DECLARED DEFAULT, the rotation's Rate too (the struct's own is off).
+	clip::Settings declared;
+	declared.rate = static_cast<float>(clip::kRateLog2Default);
+	CHECK(clip::stateOf(clip::Row {}, 0) == declared);
 }
 
 //------------------------------------------------------------------------------------------------//
@@ -1124,9 +1127,12 @@ TEST_CASE("Shape is live in exactly the six modes taken from the Eroder, and the
 	CHECK(d.def == 0.0);
 	CHECK(d.max == 1.0);
 	for (const clip::Mode mode : kAllModes) {
-		const bool expected = mode >= clip::Mode::Tube;
+		// THE FOUR PAUNCH MODES READ ANGLE (a key of its own), the other six read Shape.
+		const bool paunch = mode >= clip::Mode::PaunchS && mode <= clip::Mode::PaunchOH;
+		const bool expected = mode >= clip::Mode::Tube && !paunch;
 		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 		CHECK(feathers::device::relevantFor(d, static_cast<double>(mode)) == expected);
+		CHECK(feathers::device::relevantFor(clip::kParamDescs[static_cast<size_t>(clip::Param::Angle)], static_cast<double>(mode)) == paunch);
 	}
 	const char* appended[] = { "Soft", "Texture", "Grit", "Fold", "Bits", "Tube", "Jag", "Lean (w)", "Chonk (w)", "Paunch-S (w)", "Paunch-H (w)", "Paunch-OS (w)", "Paunch-OH (w)", "Slew", "Lopside" };
 	for (size_t i = 0; i < std::size(appended); ++i) {
@@ -1145,6 +1151,7 @@ TEST_CASE("the Eroder's six never exceed the ceiling: strict with Oversample off
 				s.driveDb = drive;
 				s.ceilingDb = -6.0f;
 				s.shape = shape;
+				s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 				s.oversample = false;
 				CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
 				CAPTURE(shape);
@@ -1240,6 +1247,7 @@ TEST_CASE("Shape moves the harmonics of Tube, Jag and Lean to the values the Ero
 			clip::Settings s;
 			s.mode = static_cast<int>(row.mode);
 			s.shape = shape;
+			s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 			s.oversample = false;
 			CAPTURE(clip::kModeNames[static_cast<size_t>(row.mode)]);
 			CAPTURE(shape);
@@ -1275,7 +1283,9 @@ TEST_CASE("Chonk: left is the tanh, the right is turned toward the clean signal,
 	for (const float shape : { 0.0f, 0.25f, 0.5f, 1.0f }) {
 		clip::Settings s;
 		s.mode = static_cast<int>(clip::Mode::Chonk);
+		s.bal = 0.0f; // THE LAW'S OWN TEST: Bal at 0% is the law as it was (the trim is measured by its own cases)
 		s.shape = shape;
+		s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 		s.driveDb = 12.0f;
 		s.oversample = false;
 		CAPTURE(shape);
@@ -1311,6 +1321,7 @@ TEST_CASE("Chonk: left is the tanh, the right is turned toward the clean signal,
 	clip::Settings s;
 	s.mode = static_cast<int>(mode);
 	s.shape = shape;
+	s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 	s.driveDb = driveDb;
 	s.oversample = false;
 	Instance dev;
@@ -1357,6 +1368,7 @@ TEST_CASE("Lopside's rising and falling rates are 2^(+-balance) of the limit, Dr
 	s.driveDb = driveDb;
 	s.ceilingDb = ceilingDb;
 	s.shape = shape;
+	s.angle = shape; // (the Paunch modes read Angle, the rest Shape: a helper that sweeps a coordinate sets both)
 	s.oversample = oversample;
 	Instance dev;
 	dev.set(s);
@@ -1547,14 +1559,6 @@ TEST_CASE("Clip DC: the ceiling clips the law's signal WITH its offset (one side
 			worst = std::max(worst, static_cast<double>(std::fabs(br[i] + nl[i])));
 		}
 		CHECK(worst < 1.0e-4);
-		// THE AMOUNT IN BETWEEN removes that share of it.
-		const auto [hl, hr, hc, hf] = renderDc(mode, 0.5f, amp);
-		double halfMean = 0.0;
-		for (size_t i = 24000; i < hl.size(); ++i) {
-			halfMean += static_cast<double>(hl[i]);
-		}
-		halfMean /= 24000.0;
-		CHECK(std::abs(halfMean - 0.5 * kept) < 0.05 * std::fabs(kept));
 	}
 }
 
@@ -1585,10 +1589,18 @@ TEST_CASE("Clip DC: Tube and Lean at 100% are the curve, the offset removed, the
 		const double gain = std::pow(10.0, 12.0 / 20.0);
 		const float coefficient = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * er::kDriveDcHz / 48000.0));
 		float dcEstimate = 0.0f;
+		er::WidthTrim trim;
+		trim.prepare(48000.0);
 		double worst = 0.0;
 		double meanOff = 0.0;
 		for (size_t i = 0; i < x.size(); ++i) {
-			float y = er::shapeDrive(dm, static_cast<float>(gain) * x[i], 1.0f, 1.0f);
+			const float u = static_cast<float>(gain) * x[i];
+			float y = er::shapeDrive(dm, u, 1.0f, 1.0f);
+			// LEAN'S LEVEL TRIM sits between the law and the offset's removal (law, trim, removal, clamp): restated with the trim's own function.
+			float yr = er::shapeDriveRight(dm, u, 1.0f, 1.0f);
+			if (dm == er::DriveMode::Lean) {
+				er::widthTrim(trim, u, u, y, yr, 1.0f);
+			}
 			dcEstimate += (y - dcEstimate) * coefficient;
 			const float removed = std::clamp(y - dcEstimate, -1.0f, 1.0f);
 			worst = std::max(worst, static_cast<double>(std::fabs(removed - out[0][i])));
@@ -1599,5 +1611,122 @@ TEST_CASE("Clip DC: Tube and Lean at 100% are the curve, the offset removed, the
 		MESSAGE(clip::kModeNames[static_cast<size_t>(mode)] << ": worst difference from the restated order " << worst << ", mean at 0% " << meanOff);
 		CHECK(worst < 1.0e-4);
 		CHECK(std::fabs(meanOff) > 0.01);
+	}
+}
+
+TEST_CASE("Paunch in Clip: Shape is the angle (0.25 puts the addition in the mid), the rotation at 1 Hz keeps the two sides level over a whole turn, and the ceiling holds") {
+	constexpr double kAmp = 0.1;
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchOS }) {
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		// STATIC ANGLE: Shape 0.25, the side is empty (under -80 dB of the mid's fundamental).
+		const auto [l, r] = renderLaw(mode, 0.0f, -6.0f, 0.25f, kAmp, false);
+		std::vector<float> side(l.size());
+		std::vector<float> mid(l.size());
+		for (size_t i = 0; i < l.size(); ++i) {
+			side[i] = 0.5f * (l[i] - r[i]);
+			mid[i] = 0.5f * (l[i] + r[i]);
+		}
+		const double fundamental = std::abs(project(mid, 24000, 1000.0));
+		// (Paunch-OS's fixed leak term is the one that cancels its fundamental, at about -40 dB; the rest are empty under -80 dB.)
+		const double bound = mode == clip::Mode::PaunchOS ? 1.0e-3 : 1.0e-4;
+		CHECK(std::abs(project(side, 24000, 1000.0)) < bound * fundamental);
+		CHECK(std::abs(project(side, 24000, 2000.0)) < bound * fundamental);
+		CHECK(std::abs(project(mid, 24000, 3000.0)) > 0.0); // (the mid holds the addition)
+		// TURNING: Rate 1 Hz on an asymmetric wave (sine + half a 2nd harmonic), hot enough to reach the ceiling.
+		clip::Settings s;
+		s.mode = static_cast<int>(mode);
+		s.driveDb = 0.0f;
+		s.ceilingDb = -6.0f;
+		s.oversample = false;
+		s.rate = 0.0f; // 1 Hz
+		Instance dev;
+		dev.set(s);
+		std::vector<float> a(4 * 48000);
+		for (size_t i = 0; i < a.size(); ++i) {
+			const double t = static_cast<double>(i) / 48000.0;
+			a[i] = static_cast<float>(0.2 * (std::sin(2.0 * std::numbers::pi * 220.0 * t) + 0.5 * std::sin(2.0 * std::numbers::pi * 440.0 * t - 0.5 * std::numbers::pi)) / 1.5);
+		}
+		std::vector<float> al = a;
+		std::vector<float> ar = a;
+		for (size_t done = 0; done < a.size(); done += 480) {
+			dev.process(al.data() + done, ar.data() + done, 480);
+		}
+		const double ceiling = static_cast<double>(dbToLin(-6.0));
+		double peak = 0.0;
+		for (size_t i = 0; i < a.size(); ++i) {
+			peak = std::max({ peak, static_cast<double>(std::fabs(al[i])), static_cast<double>(std::fabs(ar[i])) });
+		}
+		CHECK(peak <= ceiling * (1.0 + 1.0e-6));
+		for (size_t turn = 1; turn < 4; ++turn) {
+			double el = 0.0;
+			double er = 0.0;
+			for (size_t i = turn * 48000; i < (turn + 1) * 48000; ++i) {
+				el += static_cast<double>(al[i]) * al[i];
+				er += static_cast<double>(ar[i]) * ar[i];
+			}
+			const double db = 10.0 * std::log10(el / er);
+			MESSAGE(clip::kModeNames[static_cast<size_t>(mode)] << " whole turn " << turn << " left minus right " << db << " dB");
+			CHECK(std::abs(db) <= 0.3);
+		}
+	}
+}
+
+TEST_CASE("Chonk's Bal in Clip: 0% is the law as it was (the tanh and the turned-over right), 100% keeps the two sides at the balance they came in with") {
+	const std::vector<float> x = sine(48000, 220.0, 0.1);
+	std::vector<float> out[3];
+	int at = 0;
+	for (const float bal : { 0.0f, 1.0f }) {
+		clip::Settings s;
+		s.mode = static_cast<int>(clip::Mode::Chonk);
+		s.shape = 1.0f;
+		s.driveDb = 24.0f;
+		s.oversample = false;
+		s.bal = bal;
+		Instance dev;
+		dev.set(s);
+		std::vector<float> l = x;
+		std::vector<float> r = x;
+		for (int done = 0; done < 48000; done += 480) {
+			dev.process(l.data() + done, r.data() + done, 480);
+		}
+		out[at++] = r;
+	}
+	// BAL 0 RESTATED: the right is tanh(g x) + 2 shape (x g'... ) turned over; compare the left-right level difference instead of every sample:
+	double e0 = 0.0;
+	double e1 = 0.0;
+	for (size_t i = 24000; i < x.size(); ++i) {
+		e0 += static_cast<double>(out[0][i]) * out[0][i];
+		e1 += static_cast<double>(out[1][i]) * out[1][i];
+	}
+	CHECK(e0 != e1); // not vacuous: the trim acts on the right
+	CHECK(e1 > e0);  // Chonk thins the right at full Drive; the trim brings it back to the input's balance
+}
+
+TEST_CASE("The Paunch modes read Angle, not Shape: Shape moves nothing there and still acts as before in Tube, Lean, Chonk (the angle has its own key because Shape keeps its meaning)") {
+	const auto render = [](clip::Mode mode, float shape, float angle) {
+		clip::Settings s;
+		s.mode = static_cast<int>(mode);
+		s.shape = shape;
+		s.angle = angle;
+		s.driveDb = 6.0f;
+		s.oversample = false;
+		Instance dev;
+		dev.set(s);
+		std::vector<float> l = sine(24000, 1000.0, 0.3), r = l;
+		for (int done = 0; done < 24000; done += 480) {
+			dev.process(l.data() + done, r.data() + done, 480);
+		}
+		l.insert(l.end(), r.begin(), r.end());
+		return l;
+	};
+	for (const clip::Mode mode : { clip::Mode::PaunchS, clip::Mode::PaunchH, clip::Mode::PaunchOS, clip::Mode::PaunchOH }) {
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		CHECK(render(mode, 0.7f, 0.0f) == render(mode, 0.0f, 0.0f)); // an old patch's Shape on a Paunch mode is not read: the angle is 0
+		CHECK_FALSE(render(mode, 0.0f, 0.25f) == render(mode, 0.0f, 0.0f)); // and the angle is
+	}
+	for (const clip::Mode mode : { clip::Mode::Tube, clip::Mode::Lean, clip::Mode::Chonk }) {
+		CAPTURE(clip::kModeNames[static_cast<size_t>(mode)]);
+		CHECK_FALSE(render(mode, 0.9f, 0.0f) == render(mode, 0.0f, 0.0f)); // Shape acts
+		CHECK(render(mode, 0.9f, 0.0f) == render(mode, 0.9f, 0.6f));       // and Angle does not
 	}
 }

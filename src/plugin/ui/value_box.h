@@ -32,6 +32,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 #include <visage/ui.h>
 
 // A DRAGGABLE VALUE BOX — a label, a number, and a modulation bar, in a third of a card's width.
@@ -386,6 +387,11 @@ public:
 	/// AND THE FACE'S OWN UNIT NAME TYPES BACK: on such a box "2hz" or "2 Hz" is read as 2 while the face prints Hz,
 	/// case-insensitive (`faceUnitStripped`); the declared unit's spellings ("2x") still read as they always did.
 	void setReadoutFormatter(std::function<std::string(double)> formatter, bool sameNumber = false);
+	/// **A DRAG LANDS ON THESE VALUES, AND NOTHING ELSE DOES.** A continuous control that wants a few musical places (the rotation's multiple of a
+	/// note: off, 1/16 ... 1) keeps its range and its typed entry; only the plain drag snaps, to the nearest of the list. Shift-fine drag, a typed
+	/// number, a menu pick and a modulated value are not snapped. Empty (the default): no snap.
+	void setDetents(std::vector<double> detents) { detents_ = std::move(detents); }
+	[[nodiscard]] const std::vector<double>& detents() const noexcept { return detents_; }
 	/// `typed` with the unit the face prints right now taken off its end, or as typed when it ends in another.
 	[[nodiscard]] std::string faceUnitStripped(const std::string& typed) const;
 
@@ -547,6 +553,7 @@ private:
 	const char* disabledReason_ = nullptr;
 	bool draggingAmount_ = false;
 	bool fine_ = false;
+	std::vector<double> detents_;
 	float anchorY_ = 0.0f;
 	double anchorValue_ = 0.0;
 	float anchorAmount_ = 0.0f;

@@ -665,6 +665,17 @@ void ValueBox::dragTo(const visage::MouseEvent& e) {
 	// The bounded form is gone — by design none of these is bounded — so a coordinate simply
 	// continues, and the devices that needed a lap count derive it from the coordinate's own whole
 	// part. The last caller went with OWLTT's carry; nothing has wrapped since.
+	// A PLAIN DRAG ON A BOX WITH DETENTS LANDS ON THE NEAREST (`setDetents`); the fine drag is the unsnapped one.
+	if (!detents_.empty() && !fine_) {
+		double best = detents_.front();
+		for (const double d : detents_) {
+			if (std::abs(d - raw) < std::abs(best - raw)) {
+				best = d;
+			}
+		}
+		commit(best);
+		return;
+	}
 	commit(raw);
 }
 

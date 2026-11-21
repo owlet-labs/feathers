@@ -142,6 +142,9 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::Track)] = s.track ? 1.0f : 0.0f;
 	row[static_cast<size_t>(Param::DriveMode)] = static_cast<float>(s.driveMode);
 	row[static_cast<size_t>(Param::DriveShape)] = s.driveShape;
+	row[static_cast<size_t>(Param::DriveAngle)] = s.driveAngle;
+	row[static_cast<size_t>(Param::SlotAAngle)] = s.slotA.angle;
+	row[static_cast<size_t>(Param::SlotBAngle)] = s.slotB.angle;
 	row[static_cast<size_t>(Param::HpWet)] = s.hpWet;
 	row[static_cast<size_t>(Param::HpWetSemis)] = s.hpWetSemis;
 	row[static_cast<size_t>(Param::SubThru)] = s.subThru ? 1.0f : 0.0f;
@@ -172,7 +175,16 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::SlotBShape)] = s.slotB.shape;
 	row[static_cast<size_t>(Param::SlotBMix)] = s.slotB.mix;
 	row[static_cast<size_t>(Param::SlotRoute)] = s.slotParallel ? 1.0f : 0.0f;
-	row[static_cast<size_t>(Param::Dc)] = s.dc;
+	row[static_cast<size_t>(Param::DcBlock)] = s.dc >= 0.5f ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::DriveBal)] = s.driveBal;
+	row[static_cast<size_t>(Param::DriveRate)] = s.driveRate;
+	row[static_cast<size_t>(Param::DriveRateMult)] = s.driveRateMult;
+	row[static_cast<size_t>(Param::SlotARateMult)] = s.slotA.rateMult;
+	row[static_cast<size_t>(Param::SlotBRateMult)] = s.slotB.rateMult;
+	row[static_cast<size_t>(Param::SlotARate)] = s.slotA.rate;
+	row[static_cast<size_t>(Param::SlotBRate)] = s.slotB.rate;
+	row[static_cast<size_t>(Param::SlotABal)] = s.slotA.bal;
+	row[static_cast<size_t>(Param::SlotBBal)] = s.slotB.bal;
 	return row;
 }
 
@@ -207,6 +219,9 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.driveMode = static_cast<DriveMode>(std::clamp(static_cast<int>(std::lround(read(Param::DriveMode))), 0,
 	                                                static_cast<int>(DriveMode::kCount) - 1));
 	s.driveShape = read(Param::DriveShape);
+	s.driveAngle = read(Param::DriveAngle);
+	s.slotA.angle = read(Param::SlotAAngle);
+	s.slotB.angle = read(Param::SlotBAngle);
 	s.hpWet = read(Param::HpWet);
 	s.hpWetSemis = read(Param::HpWetSemis);
 	s.subThru = read(Param::SubThru) >= 0.5f;
@@ -239,7 +254,16 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.slotB.shape = read(Param::SlotBShape);
 	s.slotB.mix = read(Param::SlotBMix);
 	s.slotParallel = read(Param::SlotRoute) >= 0.5f;
-	s.dc = read(Param::Dc);
+	s.dc = read(Param::DcBlock) >= 0.5f ? 1.0f : 0.0f;
+	s.driveBal = read(Param::DriveBal);
+	s.driveRate = read(Param::DriveRate);
+	s.driveRateMult = read(Param::DriveRateMult);
+	s.slotA.rateMult = read(Param::SlotARateMult);
+	s.slotB.rateMult = read(Param::SlotBRateMult);
+	s.slotA.rate = read(Param::SlotARate);
+	s.slotB.rate = read(Param::SlotBRate);
+	s.slotA.bal = read(Param::SlotABal);
+	s.slotB.bal = read(Param::SlotBBal);
 	return out;
 }
 
@@ -592,6 +616,7 @@ void Eroder::runEngine(const Settings& s, float* left, float* right, int frames)
 	int done = 0;
 	while (done < frames) {
 		if (untilTick_ <= 0) {
+			tickOffset_ = done;
 			tick(s);
 			untilTick_ = kControlFrames;
 		}
@@ -638,7 +663,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	// THE TWO GAINS THE SAMPLE LOOP GLIDES TO: the wet's, with the level law's make-up; the dry's, whole unless Blend.
 	// THE COMB'S LOOPS (`loops.h`), for the pitch of its own line. The level law's make-up assumes a clean loop, so a Driven tap goes without.
 	const DriveSettings driveBefore = combShaper_.settings();
-	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, s.driveShape, sampleRate_, &driveBefore);
+	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), sampleRate_, &driveBefore);
 	combLoops_ = deriveLoops(s, 1.0 / derived_.baseDelaySeconds, derived_.feedback);
 	shared_.setThreshold(heatGain_ / static_cast<float>(kHeadroom));
 	shared_.set(s, combLoops_, 1.0 / derived_.baseDelaySeconds);
@@ -656,10 +681,22 @@ void Eroder::tick(const Settings& s) noexcept {
 	}
 	// THE DRIVE STAGE, on the wet as it is about to be added to the dry.
 	// THE COMB'S DRIVE removes its own offset by the DC amount; the tap's stage always removes all of its own (the loops never carry one).
-	DriveSettings kept = drive;
+	// CHONK'S BALANCE is the Drive's own (`eroder_drive_bal`), in both stages: the tap must sound as the output does.
+	DriveSettings tap = drive;
+	tap.balance = std::clamp(s.driveBal, 0.0f, 1.0f);
+	DriveSettings kept = tap;
 	kept.dcAmount = std::clamp(s.dc, 0.0f, 1.0f);
+	tap.rateHz = rotationRateHz(false, pitchSemitones_, s.driveRate, s.driveRateMult, sampleRate_); // the Comb has no Track
+	kept.rateHz = tap.rateHz;
 	combShaper_.set(kept);
-	combTapShaper_.set(drive);
+	combTapShaper_.set(tap);
+	if (tap.rateHz > 0.0f && (driveIsPaunchLaw(tap.mode) || driveIsPaunchOdd(tap.mode))) {
+		const double placed = rotationClock_.place(static_cast<double>(tap.rateHz), tickOffset_, sampleRate_);
+		if (placed >= 0.0) {
+			combShaper_.placeRotation(placed);
+			combTapShaper_.placeRotation(placed);
+		}
+	}
 }
 
 void Eroder::renderChunk(float* left, float* right, int frames) noexcept {
@@ -942,6 +979,8 @@ const device::AudioOps kAudioOps {
         },
     .setNoteContext =
         [](void* storage, const device::NoteContext& note) { asEroder(storage).setNoteContext(note); },
+    .setTransportClock =
+        [](void* storage, const device::TransportClock& clock) { asEroder(storage).setTransportClock(clock); },
     .processStereo =
         [](void* storage, float* left, float* right, int frames) {
 	        asEroder(storage).processStereo(left, right, frames);

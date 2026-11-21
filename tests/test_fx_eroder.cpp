@@ -1429,7 +1429,7 @@ TEST_CASE("the codec and the declarations") {
 	// its number), the firmware's four in menu order, Gamma last, every control but Enabled once.
 	CHECK(kTraits.faceColumns == 3);
 	// THE SHARED SECTION'S EIGHT (`kSharedParamCount`) ARE NOT ON THE FACE YET: a later change draws them.
-	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount - kDcParamCount);
+	REQUIRE(std::size(kFaceOrder) == static_cast<size_t>(Param::kCount) - 1 - kSharedParamCount - kEtchParamCount - kEmphOffsetParamCount - kInputParamCount - kHpWetSemisParamCount - kDcParamCount - kDriveBalParamCount - kDriveRateParamCount - kSlotSecondParamCount - kRateMultParamCount - kAngleParamCount);
 	// THE COMB'S SEVEN, in that order, among whatever else the face holds: the other engine's are not drawn with them.
 	std::vector<uint8_t> comb;
 	for (const uint8_t c : kFaceOrder) {
@@ -2203,6 +2203,7 @@ TEST_CASE("Drive: Soft at full Shape is exactly silent under its dead zone and s
 	const auto run = [](float peak, std::vector<float>& out) {
 		DriveStage stage;
 		stage.prepare(kRate);
+		stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 		stage.set(deriveDrive(0.8f, DriveMode::Soft, 1.0f, kRate, nullptr));
 		for (size_t i = 0; i < 96000; ++i) {
 			const auto x = static_cast<float>(peak * std::sin(2.0 * std::numbers::pi * 1000.0 * static_cast<double>(i) / kRate));
@@ -2239,6 +2240,7 @@ TEST_CASE("Drive: Lean leans the two sides opposite ways — the even harmonics 
 	const auto run = [](float shape, std::vector<float>& mid, std::vector<float>& side, std::vector<float>& left) {
 		DriveStage stage;
 		stage.prepare(kRate);
+		stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 		stage.set(deriveDrive(0.8f, DriveMode::Lean, shape, kRate, nullptr));
 		const size_t settle = 48000;
 		const size_t frames = 4800;
@@ -2288,6 +2290,7 @@ TEST_CASE("Drive: Chonk puts the odd harmonics in opposite polarity — Shape 0 
 	const auto run = [](DriveMode type, float shape, std::vector<float>& left, std::vector<float>& right) {
 		DriveStage stage;
 		stage.prepare(kRate);
+		stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 		stage.set(deriveDrive(0.8f, type, shape, kRate, nullptr));
 		const size_t settle = 48000;
 		const size_t frames = 4800;
@@ -2359,6 +2362,7 @@ void paunchRun(const DriveSettings& d, double amp, std::vector<float>& left, std
                bool noise = false) {
 	DriveStage stage;
 	stage.prepare(kRate);
+	stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 	stage.set(d);
 	constexpr size_t kSettle = 48000;
 	constexpr size_t kFrames = 4800;
@@ -2507,6 +2511,7 @@ namespace {
 std::vector<float> stageOf(const DriveSettings& settings, const std::vector<float>& in) {
 	DriveStage stage;
 	stage.prepare(kRate);
+	stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 	stage.set(settings);
 	std::vector<float> out(in.size());
 	for (size_t i = 0; i < in.size(); ++i) {
@@ -2593,6 +2598,7 @@ TEST_CASE("Drive: Slew and Lopside run the stage's Slew at the rate the knob set
 		for (const float knob : { 0.25f, 0.5f, 1.0f }) {
 			DriveStage stage;
 			stage.prepare(kRate);
+			stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 			stage.set(deriveDrive(knob, mode, 0.3f, kRate));
 			CAPTURE(static_cast<int>(mode));
 			CAPTURE(knob);
@@ -4736,7 +4742,10 @@ StereoBuffer noiseStereo(size_t frames, float amp) {
 DriveStage stageOf(const SlotSettings& x, double rate, float mix) {
 	DriveStage st;
 	st.prepare(rate);
-	st.set(deriveDrive(x.amount, x.type, x.shape, rate, nullptr, mix));
+	DriveSettings d = deriveDrive(x.amount, x.type, x.shape, rate, nullptr, mix);
+	d.rateHz = driveRateHz(x.rate);
+	d.balance = x.bal;
+	st.set(d);
 	return st;
 }
 
@@ -4794,8 +4803,15 @@ TEST_CASE("Etch: nine declared controls, gated to it, with Freq, Width, Resonanc
 	st.settings.slotParallel = true;
 	CHECK(stateOf(rowOf(st), static_cast<size_t>(Param::kCount)) == st);
 	const State old = stateOf(rowOf(st), static_cast<size_t>(Param::SlotAAmount));
-	CHECK(old.settings.slotA == SlotSettings {});
-	CHECK(old.settings.slotB == SlotSettings { 0.0f, DriveMode::Decimate, 0.0f, 1.0f });
+	// A PATCH THAT LACKS THE SLOT'S FIELDS READS THEIR DECLARED DEFAULTS, the second parameters' too (Rate 0.5 Hz, the multiple 0.5, Bal all on).
+	SlotSettings declaredA {};
+	declaredA.rate = static_cast<float>(kDriveRateLog2Default);
+	declaredA.rateMult = static_cast<float>(kRateMultDefault);
+	SlotSettings declaredB { 0.0f, DriveMode::Decimate, 0.0f, 1.0f };
+	declaredB.rate = declaredA.rate;
+	declaredB.rateMult = declaredA.rateMult;
+	CHECK(old.settings.slotA == declaredA);
+	CHECK(old.settings.slotB == declaredB);
 	CHECK_FALSE(old.settings.slotParallel);
 	CHECK(old.settings.mode == Mode::Etch);
 }
@@ -5381,6 +5397,10 @@ Settings worstLoops(Mode mode, DriveMode type, bool tapDriven, bool bell) {
 		s.slotA = { 1.0f, type, 0.6f, 1.0f };
 		s.slotB = { 1.0f, type, 0.6f, 1.0f };
 	}
+	// THE CONTROLS' OWN DEFAULTS FOR THE SECOND PARAMETERS: the rotation turns at its default rate, the balance is all on.
+	s.driveRate = static_cast<float>(kDriveRateLog2Default);
+	s.slotA.rate = s.slotB.rate = static_cast<float>(kDriveRateLog2Default);
+	s.driveAngle = s.slotA.angle = s.slotB.angle = 0.6f; // (the Paunch Types read the angle, as they read Shape 0.6 here before)
 	return s;
 }
 
@@ -6126,6 +6146,7 @@ template <class Input>
 Pair lawRun(const DriveSettings& d, Input&& input, size_t settle = 48000, size_t frames = 4800) {
 	DriveStage stage;
 	stage.prepare(kRate);
+	stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 	stage.set(d);
 	Pair out;
 	for (size_t i = 0; i < settle + frames; ++i) {
@@ -6186,7 +6207,10 @@ TEST_CASE("Paunch laws: the Type names, and the Amount is linear 0..4 with no ma
 	}
 	CHECK(driveSmallSignalGain(DriveMode::PaunchH, 4.0, 0.0f) == 1.0);
 	CHECK(driveSmallSignalGain(DriveMode::PaunchS, 4.0, 0.0f) == doctest::Approx(5.0));
-	CHECK(driveSmallSignalGain(DriveMode::PaunchS, 4.0, 0.5f) == doctest::Approx(1.0));
+	// THE ANGLE'S WORST CHANNEL is |cos| + |sin|: 1 at the four right angles, the square root of two at 1/8, and the root of two whenever the LFO turns it.
+	CHECK(driveSmallSignalGain(DriveMode::PaunchS, 4.0, 0.5f) == doctest::Approx(5.0));
+	CHECK(driveSmallSignalGain(DriveMode::PaunchS, 4.0, 0.125f) == doctest::Approx(1.0 + 4.0 * std::numbers::sqrt2));
+	CHECK(driveSmallSignalGain(DriveMode::PaunchS, 4.0, 0.0f, true) == doctest::Approx(1.0 + 4.0 * std::numbers::sqrt2));
 	// KAPPA, restated: equal 2nd harmonics at a = 4 and the reference peak.
 	const double kappa = 4.0 / (3.0 * std::numbers::pi);
 	CHECK(kPaunchSquareK == doctest::Approx(kappa).epsilon(1.0e-12));
@@ -6286,23 +6310,37 @@ TEST_CASE("Paunch laws: at full Amount and the reference peak the two Types' 2nd
 	CHECK(std::abs(dbOf(s2 / h2)) < 0.2);
 }
 
-TEST_CASE("Paunch laws: Shape 0.5 is the dry, Shape 1 puts the products in the mid and leaves the side empty") {
+TEST_CASE("Paunch rotation: Shape is the angle of the addition — 0 opposite sides, 0.25 both the same, 0.5 opposite the other way, 0.75 both inverted") {
 	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::PaunchH }) {
 		CAPTURE(static_cast<int>(type));
-		const Pair half = lawSine(type, 0.6f, 0.5f, 0.5);
-		const std::vector<float> halfMid = midOf(half);
+		const Pair p0 = lawSine(type, 0.6f, 0.0f, 0.5);
+		const Pair p25 = lawSine(type, 0.6f, 0.25f, 0.5);
+		const Pair p50 = lawSine(type, 0.6f, 0.5f, 0.5);
+		const Pair p75 = lawSine(type, 0.6f, 0.75f, 0.5);
+		const std::vector<float> m0 = midOf(p0);
+		const std::vector<float> m25 = midOf(p25);
+		const std::vector<float> m75 = midOf(p75);
+		// SHAPE 0: all in the side, the mid is the dry (clean), as it always was.
 		for (int k = 2; k <= 10; ++k) {
-			CHECK(dbOf(partial(halfMid, k) / partial(halfMid, 1)) < -80.0);
-			CHECK(dbOf(partial(sideOf(half), k) / partial(halfMid, 1) + 1.0e-12) < -80.0);
+			CHECK(dbOf(partial(m0, k) / partial(m0, 1)) < -80.0);
 		}
-		CHECK(partial(halfMid, 1) == doctest::Approx(0.5).epsilon(0.001));
-		const Pair top = lawSine(type, 0.6f, 1.0f, 0.5);
-		const double fund = partial(midOf(top), 1);
-		CHECK(dbOf(partial(sideOf(top), 2) / fund + 1.0e-12) < -80.0);
-		CHECK(dbOf(partial(midOf(top), 2) / fund) > -40.0); // the products are there, in the mid (not vacuous)
-		for (size_t i = 0; i < top.l.size(); ++i) {
-			REQUIRE(std::abs(top.l[i] - top.r[i]) < 1.0e-5f);
+		CHECK(dbOf(partial(sideOf(p0), 2) / partial(m0, 1)) > -20.0); // (not vacuous: the 2nd is there)
+		// SHAPE 0.25: all in the mid, the side is empty (under -80 dB of the fundamental).
+		for (int k = 1; k <= 10; ++k) {
+			CHECK(dbOf(partial(sideOf(p25), k) / partial(m0, 1) + 1.0e-12) < -80.0);
 		}
+		CHECK(dbOf(partial(m25, 2) / partial(m0, 1)) > -20.0);
+		// SHAPE 0.5: Shape 0 with the sides swapped, by value.
+		for (size_t i = 0; i < p0.l.size(); ++i) {
+			REQUIRE(std::abs(p50.l[i] - p0.r[i]) < 1.0e-5f);
+			REQUIRE(std::abs(p50.r[i] - p0.l[i]) < 1.0e-5f);
+		}
+		// SHAPE 0.75: the mid takes the addition inverted, so the shape 0.25 and 0.75 mids add up to twice the dry, and the side is empty.
+		for (size_t i = 0; i < m0.size(); ++i) {
+			REQUIRE(std::abs(m25[i] + m75[i] - 2.0f * m0[i]) < 1.0e-5f);
+		}
+		CHECK(dbOf(partial(sideOf(p75), 2) / partial(m0, 1) + 1.0e-12) < -80.0);
+		CHECK(peakOf(m25) > peakOf(m0) + 0.01f); // not vacuous: the addition is in it, positive at 0.25 and negative at 0.75
 	}
 }
 
@@ -6366,6 +6404,7 @@ TEST_CASE("Paunch laws: a burst's tail reaches exact zero, and the stage's mix b
 		const DriveSettings d = deriveDrive(1.0f, type, 0.0f, kRate, nullptr);
 		DriveStage stage;
 		stage.prepare(kRate);
+		stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 		stage.set(d);
 		size_t last = 0;
 		const size_t total = 48000 * 4;
@@ -6659,6 +6698,7 @@ TEST_CASE("Paunch-OS: a sine switched on from silence — the follower's onset i
 	// THE MEASUREMENT, through the stage: 220 Hz at 0.5 from silence, a = 4. A one-cycle sliding window on L, R and the side.
 	DriveStage stage;
 	stage.prepare(kRate);
+	stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 	stage.set(deriveDrive(1.0f, DriveMode::PaunchOS, 0.0f, kRate, nullptr));
 	const size_t period = 218;
 	std::vector<float> l;
@@ -6806,6 +6846,7 @@ TEST_CASE("Paunch-OH: for a stereo input the mono sum is the input's at Shape 0,
 TEST_CASE("Paunch-OH: a sine switched on from silence — the imbalance is measured, any block size is the same, silence is exact zero, Amount 0 is not run") {
 	DriveStage stage;
 	stage.prepare(kRate);
+	stage.setTrimOnForTest(false); // THE LAW'S OWN TEST: the level trim is measured by its own cases
 	stage.set(deriveDrive(1.0f, DriveMode::PaunchOH, 0.0f, kRate, nullptr));
 	const size_t period = 218;
 	std::vector<float> l;
@@ -6924,13 +6965,13 @@ TEST_CASE("DC stage: Tube, Fold and Lean in the Drive of Dust, Rust and the Comb
 	const Pin pins[] = {
 		{ Mode::Dust, DriveMode::Tube, 0.5f, 0xe79d43ae40dcf533ull },
 		{ Mode::Dust, DriveMode::Fold, 0.5f, 0x136c9aaade6782efull },
-		{ Mode::Dust, DriveMode::Lean, 0.5f, 0x46b01b3dcc879de3ull },
+		{ Mode::Dust, DriveMode::Lean, 0.5f, 12975285822501384303ull } /* RE-RECORDED with Lean's level trim in the stage */,
 		{ Mode::Rust, DriveMode::Tube, 0.5f, 0x00e20637b9618ae8ull },
 		{ Mode::Rust, DriveMode::Fold, 0.5f, 0x541e819dd5fc1d04ull },
-		{ Mode::Rust, DriveMode::Lean, 0.5f, 0x397720df64b10e17ull },
+		{ Mode::Rust, DriveMode::Lean, 0.5f, 9778799817239778981ull } /* RE-RECORDED with Lean's level trim in the stage */,
 		{ Mode::Comb, DriveMode::Tube, 0.5f, 0x8b66f4a1a5387f06ull },
 		{ Mode::Comb, DriveMode::Fold, 0.5f, 0xbdbecb60a233a39aull },
-		{ Mode::Comb, DriveMode::Lean, 0.5f, 0x9be30f0872e6e582ull },
+		{ Mode::Comb, DriveMode::Lean, 0.5f, 8672560209989228111ull } /* RE-RECORDED with Lean's level trim in the stage */,
 	};
 	for (const Pin& pin : pins) {
 		CAPTURE(static_cast<int>(pin.mode));
@@ -6944,15 +6985,15 @@ TEST_CASE("DC stage: Tube, Fold and Lean in the Drive of Dust, Rust and the Comb
 }
 
 //--------------------------------------------------------------------------------------------------//
-// THE DC AMOUNT: one stage after the Drive removes the offset any stage makes, by an amount; the loops never carry it. //
+// THE DC BLOCK: one stage after the Drive removes the offset any stage makes, On or Off; the loops never carry it.       //
 //--------------------------------------------------------------------------------------------------//
 
-TEST_CASE("DC amount: with Paunch-S in the Drive the output's offset is (1 - amount) of the restated one, and the fed-back mean stays under -80 dB at every amount") {
+TEST_CASE("DC block: with Paunch-S in the Drive the output's mean is 0 On and the restated offset Off, and the fed-back mean stays under -80 dB in both positions") {
 	const double a = 2.0; // Amount 0.5
 	const double A = 0.4;
 	const double offset = a * A * 2.0 / std::numbers::pi; // the mean of a |x| for a sine of peak A, in the left (the right has its negative)
 	double previous = -1.0e9;
-	for (const float amount : { 1.0f, 0.5f, 0.0f }) {
+	for (const float amount : { 1.0f, 0.0f }) { // On, Off
 		CAPTURE(amount);
 		Settings s = etchBase();
 		s.drive = 0.5f;
@@ -6977,7 +7018,7 @@ TEST_CASE("DC amount: with Paunch-S in the Drive the output's offset is (1 - amo
 	}
 }
 
-TEST_CASE("DC amount: the offset a slot makes passes on to the next stage — slot A into slot B differs from the blocked-between reference, for Paunch-S and Tube") {
+TEST_CASE("DC block: the offset a slot makes passes on to the next stage — slot A into slot B differs from the blocked-between reference, for Paunch-S and Tube") {
 	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::Tube }) {
 		CAPTURE(static_cast<int>(type));
 		Settings s = etchBase();
@@ -6998,14 +7039,14 @@ TEST_CASE("DC amount: the offset a slot makes passes on to the next stage — sl
 	}
 }
 
-TEST_CASE("DC amount: the amount moving gives the same output at any block size, and the stage at 0 ends a tail in exact zero") {
+TEST_CASE("DC block: the switch moving gives the same output at any block size, and the stage Off ends a tail in exact zero") {
 	const auto run = [](size_t block) {
 		Settings s = etchBase();
 		s.slotA = { 0.6f, DriveMode::PaunchS, 0.0f, 1.0f };
 		Eroder e;
 		e.prepare(kRate);
 		std::vector<float> out;
-		const float amounts[] = { 1.0f, 0.3f, 0.0f, 0.7f };
+		const float amounts[] = { 1.0f, 0.0f, 0.0f, 1.0f };
 		for (int segment = 0; segment < 4; ++segment) {
 			s.dc = amounts[segment];
 			e.setTarget(s);
@@ -7050,4 +7091,948 @@ TEST_CASE("DC amount: the amount moving gives the same output at any block size,
 	}
 	measured("DC 0%: last non-zero frame", static_cast<double>(last));
 	CHECK(last < 90000);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE WIDTH TYPES' LEVEL TRIM (`widthTrim`): the two sides keep the balance the input had.             //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+enum class Sig { Sine, Asym, TwoTone, Bursts };
+constexpr const char* kSigNames[] = { "sine", "asym", "two-tone", "bursts" };
+constexpr size_t kBurstPeriod = 12000; // 250 ms
+constexpr size_t kBurstLength = 7200;  // 150 ms, 5 ms attack and release
+constexpr size_t kWindowFrames = 2400; // 50 ms
+constexpr size_t kBalanceFrames = 96000; // two seconds
+
+/// THE FOUR SIGNALS, mono. A sine; a sine with half a second harmonic at a phase that makes the positive peaks larger (+1.5 against -0.8
+/// of the fundamental's 1); two tones; band-limited noise (two one-poles at 3 kHz) in bursts with 5 ms attacks every 250 ms.
+std::vector<float> balanceSignal(Sig kind, size_t frames, double level) {
+	std::vector<float> x(frames);
+	const double w = 2.0 * std::numbers::pi / kRate;
+	uint32_t seed = 12345u;
+	double p1 = 0.0;
+	double p2 = 0.0;
+	const double a = 1.0 - std::exp(-2.0 * std::numbers::pi * 3000.0 / kRate);
+	for (size_t i = 0; i < frames; ++i) {
+		const double t = static_cast<double>(i);
+		switch (kind) {
+		case Sig::Sine:
+			x[i] = static_cast<float>(level * std::sin(w * 220.0 * t));
+			break;
+		case Sig::Asym:
+			x[i] = static_cast<float>(level * (std::sin(w * 220.0 * t) + 0.5 * std::sin(w * 440.0 * t - 0.5 * std::numbers::pi)) / 1.5);
+			break;
+		case Sig::TwoTone:
+			x[i] = static_cast<float>(level * 0.5 * (std::sin(w * 300.0 * t) + std::sin(w * 470.0 * t)));
+			break;
+		case Sig::Bursts: {
+			seed = seed * 1664525u + 1013904223u;
+			const double n = static_cast<double>(seed >> 8) / 8388608.0 - 1.0;
+			p1 += (n - p1) * a;
+			p2 += (p1 - p2) * a;
+			const size_t k = i % kBurstPeriod;
+			double env = 0.0;
+			if (k < kBurstLength) {
+				env = std::min({ 1.0, static_cast<double>(k) / 240.0, static_cast<double>(kBurstLength - k) / 240.0 });
+			}
+			x[i] = static_cast<float>(level * env * p2 * 5.4);
+			break;
+		}
+		}
+	}
+	return x;
+}
+std::vector<float> balanceInput(Sig kind) {
+	return balanceSignal(kind, kBalanceFrames, kind == Sig::Bursts ? 3.0 : 0.5);
+}
+
+struct BalanceRun {
+	std::vector<float> l;
+	std::vector<float> r;
+};
+struct TrimMode {
+	bool on = true;
+	bool unity = false;
+	double seconds = kTrimSeconds;
+	float bal = 1.0f;
+};
+BalanceRun balanceRun(DriveMode type, float knob, float shape, const std::vector<float>& inL, const std::vector<float>& inR, const TrimMode& mode = {},
+                      size_t block = 0) {
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.setTrimOnForTest(mode.on);
+	stage.setTrimUnityForTest(mode.unity);
+	stage.setTrimSecondsForTest(mode.seconds, kRate);
+	DriveSettings s = deriveDrive(knob, type, shape, kRate, nullptr);
+	s.balance = mode.bal;
+	stage.set(s);
+	(void)block;
+	BalanceRun out;
+	out.l.resize(inL.size());
+	out.r.resize(inL.size());
+	for (size_t i = 0; i < inL.size(); ++i) {
+		float l = inL[i];
+		float r = inR[i];
+		stage.process(l, r);
+		out.l[i] = l;
+		out.r[i] = r;
+	}
+	return out;
+}
+BalanceRun balanceRun(DriveMode type, float knob, float shape, const std::vector<float>& in, const TrimMode& mode = {}) {
+	return balanceRun(type, knob, shape, in, in, mode);
+}
+double rmsDb(const std::vector<float>& l, const std::vector<float>& r, size_t from, size_t to) {
+	double el = 0.0;
+	double er = 0.0;
+	for (size_t i = from; i < to && i < l.size(); ++i) {
+		el += static_cast<double>(l[i]) * l[i];
+		er += static_cast<double>(r[i]) * r[i];
+	}
+	return 10.0 * std::log10((el + 1.0e-30) / (er + 1.0e-30));
+}
+/// THE LEVEL DIFFERENCE OF THE ALTERNATING PARTS (each window's mean taken out), which is what the trim keeps: it reads the signals through the
+/// stage's own 10 Hz DC removal, since the offset the DC block takes out is not level.
+double acRmsDb(const std::vector<float>& l, const std::vector<float>& r, size_t from, size_t to) {
+	double ml = 0.0;
+	double mr = 0.0;
+	const size_t n = std::min(to, l.size()) - from;
+	for (size_t i = from; i < from + n; ++i) {
+		ml += l[i];
+		mr += r[i];
+	}
+	ml /= static_cast<double>(n);
+	mr /= static_cast<double>(n);
+	double el = 0.0;
+	double er = 0.0;
+	for (size_t i = from; i < from + n; ++i) {
+		el += (l[i] - ml) * (l[i] - ml);
+		er += (r[i] - mr) * (r[i] - mr);
+	}
+	return 10.0 * std::log10((el + 1.0e-30) / (er + 1.0e-30));
+}
+struct Imbalance {
+	double settled = 0.0; // worst |L - R| in dB over the 50 ms windows after 3 tau (and after 30 ms into a burst)
+	double early = 0.0;   // worst |L - R| over the two 50 ms windows of the first 100 ms of the signal
+};
+Imbalance imbalanceOf(Sig kind, const BalanceRun& run, double seconds) {
+	Imbalance out;
+	const size_t settle = static_cast<size_t>(3.0 * seconds * kRate);
+	if (kind == Sig::Bursts) {
+		out.early = std::max(std::abs(rmsDb(run.l, run.r, 0, kWindowFrames)), std::abs(rmsDb(run.l, run.r, kWindowFrames, 2 * kWindowFrames)));
+		for (size_t start = 0; start + kBurstLength <= run.l.size(); start += kBurstPeriod) {
+			if (start < settle) {
+				continue;
+			}
+			for (size_t at = start + 1440; at + kWindowFrames <= start + kBurstLength; at += kWindowFrames) {
+				out.settled = std::max(out.settled, std::abs(rmsDb(run.l, run.r, at, at + kWindowFrames)));
+			}
+		}
+		return out;
+	}
+	out.early = std::max(std::abs(rmsDb(run.l, run.r, 0, kWindowFrames)), std::abs(rmsDb(run.l, run.r, kWindowFrames, 2 * kWindowFrames)));
+	for (size_t at = std::max(settle, size_t { 1440 }); at + kWindowFrames <= run.l.size(); at += kWindowFrames) {
+		out.settled = std::max(out.settled, std::abs(rmsDb(run.l, run.r, at, at + kWindowFrames)));
+	}
+	return out;
+}
+struct WidthCase {
+	DriveMode type;
+	const char* name;
+	float shape;
+};
+constexpr WidthCase kWidthCases[] = {
+	{ DriveMode::Lean, "Lean", 0.0f },   { DriveMode::Lean, "Lean", 1.0f },
+	{ DriveMode::Chonk, "Chonk", 0.0f }, { DriveMode::Chonk, "Chonk", 1.0f },
+};
+
+} // namespace
+
+TEST_CASE("Width trim: the measurement table (printed under FEATHERS_MEASURE; the assertions are in the cases that follow)") {
+	if (std::getenv("FEATHERS_MEASURE") == nullptr) {
+		return;
+	}
+	const char* tauText = std::getenv("FEATHERS_TRIM_TAU");
+	const double tau = tauText != nullptr ? std::atof(tauText) : kTrimSeconds;
+	for (const WidthCase& wc : kWidthCases) {
+		for (const float knob : { 0.5f, 1.0f }) {
+			for (const Sig kind : { Sig::Sine, Sig::Asym, Sig::TwoTone, Sig::Bursts }) {
+				const std::vector<float> in = balanceInput(kind);
+				TrimMode off;
+				off.on = false;
+				off.seconds = tau;
+				TrimMode on;
+				on.seconds = tau;
+				const Imbalance before = imbalanceOf(kind, balanceRun(wc.type, knob, wc.shape, in, off), tau);
+				const Imbalance after = imbalanceOf(kind, balanceRun(wc.type, knob, wc.shape, in, on), tau);
+				std::fprintf(stderr, "TABLE tau=%.3f %-10s shape=%.0f amt=%.1f %-8s  before settled %5.2f early %5.2f | after settled %5.2f early %5.2f\n", tau,
+				             wc.name, wc.shape, knob, kSigNames[static_cast<int>(kind)], before.settled, before.early, after.settled, after.early);
+			}
+		}
+	}
+}
+
+namespace {
+constexpr size_t kTenTau = 48000; // 10 tau at the shipped 100 ms: the onset's memory is under 0.005 of the means by then
+/// THE WORST |L - R| (dB) over 50 ms windows from `from` on, and a burst-aware variant is `imbalanceOf`'s.
+double worstFrom(const BalanceRun& run, size_t from) {
+	double worst = 0.0;
+	for (size_t at = from; at + kWindowFrames <= run.l.size(); at += kWindowFrames) {
+		worst = std::max(worst, std::abs(rmsDb(run.l, run.r, at, at + kWindowFrames)));
+	}
+	return worst;
+}
+} // namespace
+
+TEST_CASE("Width trim: for Lean and Chonk and every signal the two sides stay level once the trim has settled, and the first 100 ms is reported") {
+	// THE BOUNDS ARE THE MEASURED ONES, said plainly. Tonal and noisy signals: within 0.5 dB once the onset has left the means (10 tau).
+	// Noise bursts, whose imbalance differs burst to burst (a slow trim cannot follow a burst), settle to the bounds below at 3 tau.
+	for (const WidthCase& wc : kWidthCases) {
+		for (const float knob : { 0.5f, 1.0f }) {
+			for (const Sig kind : { Sig::Sine, Sig::Asym, Sig::TwoTone, Sig::Bursts }) {
+				CAPTURE(std::string(wc.name));
+				CAPTURE(wc.shape);
+				CAPTURE(knob);
+				CAPTURE(std::string(kSigNames[static_cast<int>(kind)]));
+				const std::vector<float> in = balanceInput(kind);
+				TrimMode off;
+				off.on = false;
+				const BalanceRun before = balanceRun(wc.type, knob, wc.shape, in, off);
+				const BalanceRun after = balanceRun(wc.type, knob, wc.shape, in);
+				const Imbalance b = imbalanceOf(kind, before, kTrimSeconds);
+				const Imbalance a = imbalanceOf(kind, after, kTrimSeconds);
+				measured("width trim: settled before", b.settled);
+				measured("width trim: settled after", a.settled);
+				measured("width trim: first 100 ms before", b.early);
+				measured("width trim: first 100 ms after", a.early);
+				if (kind != Sig::Bursts) {
+					CHECK(worstFrom(after, kTenTau) <= 0.5);
+				}
+				else {
+					const double bound = wc.type == DriveMode::Chonk ? 1.3 : 0.7;
+					CHECK(a.settled <= bound);
+				}
+				// NOT VACUOUS, and the known-bads: the Types the law leaves lopsided are better for the trim by a wide margin.
+				if (b.settled > 2.5) {
+					CHECK(a.settled < 0.5 * b.settled);
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE("Width trim: a known lopsided case is lopsided without the trim and level with it (Lean on the asymmetric wave, Chonk on the bursts)") {
+	TrimMode off;
+	off.on = false;
+	const std::vector<float> asym = balanceInput(Sig::Asym);
+	CHECK(worstFrom(balanceRun(DriveMode::Lean, 0.5f, 1.0f, asym, off), kTenTau) > 3.0);
+	CHECK(worstFrom(balanceRun(DriveMode::Lean, 0.5f, 1.0f, asym), kTenTau) < 0.5);
+	const std::vector<float> bursts = balanceInput(Sig::Bursts);
+	CHECK(imbalanceOf(Sig::Bursts, balanceRun(DriveMode::Chonk, 0.5f, 1.0f, bursts, off), kTrimSeconds).settled > 5.0);
+	CHECK(imbalanceOf(Sig::Bursts, balanceRun(DriveMode::Chonk, 0.5f, 1.0f, bursts), kTrimSeconds).settled < 1.3);
+}
+
+TEST_CASE("Width trim: an input 6 dB louder on the left keeps its 6 dB through every width Type (it restores the input's balance, it does not centre it)") {
+	for (const WidthCase& wc : kWidthCases) {
+		for (const Sig kind : { Sig::Asym, Sig::TwoTone }) {
+			CAPTURE(std::string(wc.name));
+			CAPTURE(wc.shape);
+			const std::vector<float> l = balanceInput(kind);
+			std::vector<float> r = l;
+			for (float& x : r) {
+				x *= 0.5f;
+			}
+			const BalanceRun run = balanceRun(wc.type, 1.0f, wc.shape, l, r);
+			TrimMode unity;
+			unity.unity = true;
+			const BalanceRun centred = balanceRun(wc.type, 1.0f, wc.shape, l, r, unity);
+			double worst = 0.0;
+			double worstCentred = 1.0e9;
+			for (size_t at = kTenTau; at + kWindowFrames <= run.l.size(); at += kWindowFrames) {
+				worst = std::max(worst, std::abs(acRmsDb(run.l, run.r, at, at + kWindowFrames) - 6.0206));
+				worstCentred = std::min(worstCentred, std::abs(acRmsDb(centred.l, centred.r, at, at + kWindowFrames) - 6.0206));
+			}
+			measured("width trim: 6 dB input, worst error dB", worst);
+			CHECK(worst <= 0.5);
+			// THE KNOWN-BAD (target ratio forced to 1): it centres the signal, 6 dB away from where it should be.
+			CHECK(worstCentred > 3.0);
+		}
+	}
+}
+
+TEST_CASE("Width trim: a hard-panned input is left alone (k is 1, the output is finite and is the law's), and so is silence on one side at the start") {
+	for (const WidthCase& wc : kWidthCases) {
+		CAPTURE(std::string(wc.name));
+		const std::vector<float> l = balanceInput(Sig::Asym);
+		const std::vector<float> zero(l.size(), 0.0f);
+		TrimMode off;
+		off.on = false;
+		const BalanceRun on = balanceRun(wc.type, 1.0f, wc.shape, l, zero);
+		const BalanceRun reference = balanceRun(wc.type, 1.0f, wc.shape, l, zero, off);
+		bool finite = true;
+		for (size_t i = 0; i < l.size(); ++i) {
+			finite = finite && std::isfinite(on.l[i]) && std::isfinite(on.r[i]);
+		}
+		CHECK(finite);
+		CHECK(on.l == reference.l);
+		CHECK(on.r == reference.r);
+	}
+}
+
+TEST_CASE("Width trim: the width survives — the side's 2nd (Lean) or 3rd (Chonk) harmonic is within 1 dB of its value without the trim") {
+	for (const WidthCase& wc : kWidthCases) {
+		if (wc.shape != 1.0f && (wc.type == DriveMode::Lean || wc.type == DriveMode::Chonk)) {
+			continue; // Shape 0 of those is Soft's tanh on both sides: no side
+		}
+		for (const Sig kind : { Sig::Sine, Sig::Asym }) {
+			CAPTURE(std::string(wc.name));
+			const int harmonic = wc.type == DriveMode::Chonk ? 3 : 2;
+			const std::vector<float> in = balanceSignal(kind, 96000, 0.5);
+			TrimMode off;
+			off.on = false;
+			const BalanceRun a = balanceRun(wc.type, 1.0f, wc.shape, in);
+			const BalanceRun b = balanceRun(wc.type, 1.0f, wc.shape, in, off);
+			std::vector<float> sa;
+			std::vector<float> sb;
+			for (size_t i = 48000; i < 96000; ++i) {
+				sa.push_back(0.5f * (a.l[i] - a.r[i]));
+				sb.push_back(0.5f * (b.l[i] - b.r[i]));
+			}
+			const double ha = std::abs(binOf(sa, 220.0 * harmonic));
+			const double hb = std::abs(binOf(sb, 220.0 * harmonic));
+			measured("width trim: side harmonic with / without, dB", 20.0 * std::log10(ha / hb));
+			CHECK(hb > 0.001);
+			CHECK(std::abs(20.0 * std::log10(ha / hb)) <= 1.0);
+		}
+	}
+}
+
+TEST_CASE("Width trim: the mono sum is M (gL + gR) / 2 + S (gL - gR) / 2 — a little of the side leaks into the mid, and its size is measured") {
+	// THE IDENTITY, restated by hand on frames, with the gain the step found.
+	WidthTrim t;
+	t.prepare(kRate);
+	uint32_t seed = 3u;
+	const auto rnd = [&seed] {
+		seed = seed * 1664525u + 1013904223u;
+		return static_cast<float>(seed >> 8) / 8388608.0f - 1.0f;
+	};
+	for (int i = 0; i < 4000; ++i) {
+		const float x = rnd();
+		float l = x;
+		float r = x;
+		// A LAW THAT LEAVES THE LEFT LOUDER: the left kept, the right at half, so the step finds a k above 1.
+		l = 1.0f * x + 0.1f * rnd();
+		r = 0.5f * x + 0.1f * rnd();
+		const float m = 0.5f * (l + r);
+		const float sd = 0.5f * (l - r);
+		float lo = l;
+		float ro = r;
+		widthTrim(t, x, x, lo, ro, 1.0f);
+		const float g = std::sqrt(t.k);
+		const float expected = m * (g + 1.0f / g) * 0.5f + sd * (g - 1.0f / g) * 0.5f;
+		REQUIRE(std::abs(0.5f * (lo + ro) - expected) <= 1.0e-5f * (1.0f + std::abs(expected)));
+	}
+	CHECK(t.k < 0.7f); // the step really acted (the law left the left 6 dB over the right: k < 1 turns it down)
+	// THE LEAK, measured on the asymmetric wave through each Type: what the trim added to the mono sum (the sum with it less the sum without),
+	// per harmonic against the mono fundamental. (For the Paunch Types the mono sum without the trim is exactly the dry.)
+	for (const WidthCase& wc : kWidthCases) {
+		const std::vector<float> in = balanceSignal(Sig::Asym, 96000, 0.5);
+		TrimMode off;
+		off.on = false;
+		const BalanceRun with = balanceRun(wc.type, 1.0f, wc.shape, in);
+		const BalanceRun without = balanceRun(wc.type, 1.0f, wc.shape, in, off);
+		std::vector<float> added;
+		std::vector<float> base;
+		for (size_t i = 48000; i < 96000; ++i) {
+			added.push_back(0.5f * (with.l[i] + with.r[i]) - 0.5f * (without.l[i] + without.r[i]));
+			base.push_back(0.5f * (without.l[i] + without.r[i]));
+		}
+		const double f = std::abs(binOf(base, 220.0));
+		double worst = -300.0;
+		for (int k = 1; k <= 6; ++k) {
+			worst = std::max(worst, 20.0 * std::log10(std::abs(binOf(added, 220.0 * k)) / f + 1.0e-12));
+		}
+		std::fprintf(stderr, "MONOLEAK %-10s shape=%.0f worst harmonic the trim added to the mono sum, re its fundamental: %7.1f dB\n", wc.name, wc.shape, worst);
+		CAPTURE(std::string(wc.name));
+		CHECK(worst <= -12.0); // THE STATED BOUND (the sum was exact before for the Paunch Types)
+	}
+}
+
+TEST_CASE("Width trim: Chonk's Bal at 0% is the original law to the bit, and 100% is not") {
+	for (const float shape : { 0.0f, 0.5f, 1.0f }) {
+		for (const Sig kind : { Sig::Asym, Sig::Bursts }) {
+			const std::vector<float> in = balanceInput(kind);
+			TrimMode zero;
+			zero.bal = 0.0f;
+			TrimMode off;
+			off.on = false;
+			const BalanceRun a = balanceRun(DriveMode::Chonk, 1.0f, shape, in, zero);
+			const BalanceRun b = balanceRun(DriveMode::Chonk, 1.0f, shape, in, off);
+			CHECK(a.l == b.l);
+			CHECK(a.r == b.r);
+			// THE ORIGINAL LAW, RESTATED: left tanh, right the residue turned over, with the stage's own make-up (a different road to the same numbers is
+			// the oversampled one, so the restatement is the comparison above plus this: the result is not the trim's).
+			if (shape == 1.0f && kind == Sig::Bursts) {
+				const BalanceRun c = balanceRun(DriveMode::Chonk, 1.0f, shape, in);
+				CHECK(c.r != b.r);
+			}
+		}
+	}
+}
+
+TEST_CASE("Width trim: any block size gives the same output in every width Type, and silence gives exact zero") {
+	for (const DriveMode type : { DriveMode::Lean, DriveMode::Chonk }) {
+		CAPTURE(static_cast<int>(type));
+		const auto run = [type](size_t block) {
+			Settings s = etchBase();
+			s.drive = 0.8f;
+			s.driveMode = type;
+			s.driveShape = 1.0f;
+			s.dc = 0.0f;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			std::vector<float> l(24000);
+			const std::vector<float> in = balanceSignal(Sig::Bursts, l.size(), 3.0);
+			for (size_t i = 0; i < l.size(); ++i) {
+				l[i] = in[i];
+			}
+			std::vector<float> r = l;
+			for (size_t done = 0; done < l.size(); done += block) {
+				const int n = static_cast<int>(std::min(block, l.size() - done));
+				e.processStereo(l.data() + done, r.data() + done, n);
+			}
+			l.insert(l.end(), r.begin(), r.end());
+			return l;
+		};
+		const std::vector<float> reference = run(256);
+		CHECK(run(32) == reference);
+		CHECK(run(37) == reference);
+		CHECK(peakOf(reference) > 0.05f);
+		// A TAIL AT 0.
+		Settings s = etchBase();
+		s.drive = 0.8f;
+		s.driveMode = type;
+		s.dc = 0.0f;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		size_t last = 0;
+		std::vector<float> l(480);
+		std::vector<float> r(480);
+		for (size_t at = 0; at < 192000; at += 480) {
+			for (size_t i = 0; i < 480; ++i) {
+				l[i] = r[i] = at + i < 4800 ? static_cast<float>(sineAt(at + i, 300.0, 0.5)) : 0.0f;
+			}
+			e.processStereo(l.data(), r.data(), 480);
+			for (size_t i = 0; i < 480; ++i) {
+				if (l[i] != 0.0f || r[i] != 0.0f) {
+					last = at + i;
+				}
+			}
+		}
+		CHECK(last < 180000);
+	}
+	// THE STAGE ALONE: silence from the start is exact zero, and a zero on both sides never meets a division.
+	for (const WidthCase& wc : kWidthCases) {
+		const std::vector<float> zero(4800, 0.0f);
+		const BalanceRun run = balanceRun(wc.type, 1.0f, wc.shape, zero);
+		for (size_t i = 0; i < zero.size(); ++i) {
+			REQUIRE(run.l[i] == 0.0f);
+			REQUIRE(run.r[i] == 0.0f);
+		}
+	}
+}
+
+namespace {
+/// THE STAGE'S OWN LINEAR PART: what the oversampler passes of the input with nothing added (its delay and its filters), frame by frame.
+std::vector<std::pair<float, float>> oversampledDry(const std::vector<float>& in) {
+	fx::dyn::Oversampler4x os;
+	os.reset();
+	std::vector<std::pair<float, float>> out;
+	for (const float x : in) {
+		float l = x;
+		float r = x;
+		os.process(&l, &r, 1, [](float&, float&) {});
+		out.emplace_back(l, r);
+	}
+	return out;
+}
+} // namespace
+
+TEST_CASE("Paunch rotation: at 1 Hz the left-minus-right level averages out over whole turns and swings within one, the period is 1/Rate, and the added energy never changes") {
+	const std::vector<float> in = balanceSignal(Sig::Asym, 4 * 48000, 0.5);
+	const auto dry = oversampledDry(in);
+	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::PaunchH, DriveMode::PaunchOS, DriveMode::PaunchOH }) {
+		CAPTURE(static_cast<int>(type));
+		DriveSettings d = deriveDrive(1.0f, type, 0.0f, kRate, nullptr);
+		d.rateHz = 1.0f;
+		DriveStage stage;
+		stage.prepare(kRate);
+		stage.set(d);
+		std::vector<float> l(in.size());
+		std::vector<float> r(in.size());
+		std::vector<size_t> wraps;
+		double previous = 0.0;
+		for (size_t i = 0; i < in.size(); ++i) {
+			l[i] = r[i] = in[i];
+			stage.process(l[i], r[i]);
+			const double phase = stage.rotationPhaseForTest();
+			if (phase < previous) {
+				wraps.push_back(i);
+			}
+			previous = phase;
+		}
+		// THE PERIOD, from the LFO's own phase: one turn is 48000 frames (1 / Rate) within 0.1 %.
+		REQUIRE(wraps.size() >= 3);
+		for (size_t k = 1; k < wraps.size(); ++k) {
+			CHECK(std::abs(static_cast<double>(wraps[k] - wraps[k - 1]) - 48000.0) <= 48.0);
+		}
+		// THE AVERAGED BALANCE: whole turns after the first (the follower's own onset is in the first).
+		for (size_t turn = 1; turn < 4; ++turn) {
+			const double db = rmsDb(l, r, turn * 48000, (turn + 1) * 48000);
+			measured("rotation: whole-turn left minus right, dB", db);
+			CHECK(std::abs(db) <= 0.2);
+		}
+		// THE SWING WITHIN A TURN: 100 ms windows over turn 2 (four cycles of the 220 Hz wave each, so a window holds whole periods).
+		double lo = 1.0e9;
+		double hi = -1.0e9;
+		for (size_t at = 2 * 48000; at + 4800 <= 3 * 48000; at += 4800) {
+			const double db = rmsDb(l, r, at, at + 4800);
+			lo = std::min(lo, db);
+			hi = std::max(hi, db);
+		}
+		std::fprintf(stderr, "ROTSWING type %d swing within a turn %.2f dB\n", static_cast<int>(type), hi - lo);
+		CHECK(hi - lo > 1.0);
+		// THE ENERGY OF THE ADDITION is the same at every angle: (l' - dry)^2 + (r' - dry)^2, over 100 ms windows after the follower has settled.
+		double minE = 1.0e30;
+		double maxE = 0.0;
+		for (size_t at = 2 * 48000; at + 4800 <= 4 * 48000; at += 4800) {
+			double e = 0.0;
+			for (size_t i = at; i < at + 4800; ++i) {
+				const double dl = static_cast<double>(l[i]) - dry[i].first;
+				const double dr = static_cast<double>(r[i]) - dry[i].second;
+				e += dl * dl + dr * dr;
+			}
+			minE = std::min(minE, e);
+			maxE = std::max(maxE, e);
+		}
+		std::fprintf(stderr, "ROTENERGY type %d energy spread over a turn %.3f %%\n", static_cast<int>(type), 100.0 * (maxE - minE) / maxE);
+		CHECK(minE > 0.0);
+		CHECK((maxE - minE) <= 0.01 * maxE);
+	}
+}
+
+
+TEST_CASE("DC block: Tube, Fold and Lean in the Drive leave no mean On and keep their offset Off (every platform)") {
+	for (const DriveMode type : { DriveMode::Tube, DriveMode::Fold, DriveMode::Lean }) {
+		CAPTURE(static_cast<int>(type));
+		Settings s = etchBase();
+		s.drive = 0.6f;
+		s.driveMode = type;
+		s.driveShape = 1.0f;
+		s.dc = 1.0f;
+		const Pair on = engineRun(s, false, 0.4);
+		s.dc = 0.0f;
+		const Pair off = engineRun(s, false, 0.4);
+		measured("DC block On, mean dB", meanDb(on.l));
+		measured("DC block Off, mean dB", meanDb(off.l));
+		CHECK(meanDb(on.l) < -80.0);
+		CHECK(meanDb(off.l) > -60.0); // not vacuous: the shaper leaves an offset and Off lets it through
+	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE ROTATION LFO IN THE ENGINES: the Drive's and each slot's own rate, free or tracked, and the song. //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+Settings rotatingDust(DriveMode type, bool track) {
+	Settings s = declared();
+	s.mode = Mode::Dust;
+	s.amount = static_cast<float>(kDustAmountLog2Min);
+	s.drive = 0.5f;
+	s.driveMode = type;
+	s.driveShape = 0.0f;
+	s.mix = 1.0f;
+	s.track = track;
+	return s;
+}
+/// THE ROTATION'S RATE THE DRIVE'S STAGE RUNS AT after one block with the note at `note` semitones.
+double driveRotationHz(const Settings& s, float note, Eroder* keep = nullptr) {
+	Eroder local;
+	Eroder& e = keep != nullptr ? *keep : local;
+	e.prepare(kRate);
+	e.setTarget(s);
+	device::NoteContext n;
+	n.pitchSemitones = note;
+	e.setNoteContext(n);
+	std::vector<float> l(256, 0.3f);
+	std::vector<float> r = l;
+	e.processStereo(l.data(), r.data(), 256);
+	return e.dustForTest().shaperForTest().rotationRateHzForTest();
+}
+} // namespace
+
+TEST_CASE("Rotation rate: free in hertz with Track off, a multiple of the played note with Track on, each ignoring the other's control") {
+	// TRACK OFF: the hertz control, the multiple ignored. 1 Hz is exact; the bottom of the range is off.
+	Settings s = rotatingDust(DriveMode::PaunchS, false);
+	s.driveRate = 0.0f; // 1 Hz
+	s.driveRateMult = 0.5f;
+	CHECK(driveRotationHz(s, 45.0f) == doctest::Approx(1.0).epsilon(0.001));
+	s.driveRate = static_cast<float>(kDriveRateLog2Min);
+	CHECK(driveRotationHz(s, 45.0f) == 0.0);
+	// TRACK ON: the note's frequency times the multiple, the hertz control ignored. A2 = 110 Hz.
+	s = rotatingDust(DriveMode::PaunchS, true);
+	s.driveRate = 3.0f; // 8 Hz, ignored
+	s.driveRateMult = 0.5f;
+	CHECK(driveRotationHz(s, 45.0f) == doctest::Approx(55.0).epsilon(0.001));
+	s.driveRateMult = 0.25f;
+	CHECK(driveRotationHz(s, 45.0f) == doctest::Approx(27.5).epsilon(0.001));
+	s.driveRateMult = 0.5f;
+	CHECK(driveRotationHz(s, 57.0f) == doctest::Approx(110.0).epsilon(0.001)); // A3: an octave up doubles it
+	s.driveRateMult = 0.37f; // any value, as typed
+	CHECK(driveRotationHz(s, 45.0f) == doctest::Approx(110.0 * 0.37).epsilon(0.001));
+	s.driveRateMult = 0.0f;
+	CHECK(driveRotationHz(s, 45.0f) == 0.0);
+	// THE KNOWN-BAD, SPELT: using the hertz control while tracking would read 8 Hz here.
+	s.driveRate = 3.0f;
+	CHECK(driveRotationHz(s, 45.0f) != doctest::Approx(8.0).epsilon(0.001));
+	// THE COMB HAS NO TRACK: its Drive's rate is the hertz control's.
+	Settings c = rotatingDust(DriveMode::PaunchS, true);
+	c.mode = Mode::Comb;
+	c.driveRate = 0.0f;
+	c.driveRateMult = 0.5f;
+	Eroder comb;
+	comb.prepare(kRate);
+	comb.setTarget(c);
+	std::vector<float> l(256, 0.3f);
+	std::vector<float> r = l;
+	comb.processStereo(l.data(), r.data(), 256);
+	CHECK(comb.combDriveForTest().rateHz == doctest::Approx(1.0f).epsilon(0.001));
+}
+
+TEST_CASE("Rotation rate: a slot's rate is its own, independent of the Drive's, free or tracked") {
+	Settings s = etchBase();
+	s.drive = 0.5f;
+	s.driveMode = DriveMode::PaunchS;
+	s.driveRate = 0.0f; // 1 Hz
+	s.slotA = { 0.5f, DriveMode::PaunchH, 0.0f, 1.0f };
+	s.slotA.rate = 2.0f; // 4 Hz
+	s.slotB = { 0.5f, DriveMode::PaunchOS, 0.0f, 1.0f };
+	s.slotB.rate = static_cast<float>(kDriveRateLog2Min); // off
+	Eroder e;
+	CHECK(driveRotationHz(s, 45.0f, &e) == doctest::Approx(1.0).epsilon(0.001));
+	CHECK(e.dustForTest().slotForTest(0).rotationRateHzForTest() == doctest::Approx(4.0).epsilon(0.001));
+	CHECK(e.dustForTest().slotForTest(1).rotationRateHzForTest() == 0.0);
+	// TRACKED: each from its own multiple of the same note.
+	s.track = true;
+	s.driveRateMult = 0.25f;
+	s.slotA.rateMult = 0.5f;
+	s.slotB.rateMult = 1.0f;
+	Eroder t;
+	CHECK(driveRotationHz(s, 45.0f, &t) == doctest::Approx(27.5).epsilon(0.001));
+	CHECK(t.dustForTest().slotForTest(0).rotationRateHzForTest() == doctest::Approx(55.0).epsilon(0.001));
+	CHECK(t.dustForTest().slotForTest(1).rotationRateHzForTest() == doctest::Approx(110.0).epsilon(0.001));
+}
+
+TEST_CASE("Rotation rate: the song places the phase where a free LFO is placed — playing, at the position times the rate; stopped, from the stage's reset") {
+	const auto phaseAfterOneChunk = [](bool playing, double position, bool twice) {
+		Settings s = rotatingDust(DriveMode::PaunchS, false);
+		s.driveRate = 0.0f; // 1 Hz
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		device::TransportClock clock;
+		clock.playing = playing;
+		clock.songPositionSeconds = position;
+		e.setTransportClock(clock);
+		std::vector<float> l(32, 0.3f);
+		std::vector<float> r = l;
+		e.processStereo(l.data(), r.data(), 32);
+		if (twice) {
+			clock.songPositionSeconds = position + 32.0 / kRate;
+			e.setTransportClock(clock);
+			e.processStereo(l.data(), r.data(), 32);
+		}
+		return e.dustForTest().shaperForTest().rotationPhaseForTest();
+	};
+	// PLAYING AT 0.25 s: one chunk of 32 frames places 0.25 at its first frame and advances 32 frames.
+	CHECK(phaseAfterOneChunk(true, 0.25, false) == doctest::Approx(0.25 + 32.0 / kRate).epsilon(1.0e-9));
+	// AND THE SAME PASSAGE PLAYED TWICE (or from another start) IS THE SAME: the phase depends on the song position alone.
+	CHECK(phaseAfterOneChunk(true, 3.25, false) == doctest::Approx(0.25 + 32.0 / kRate).epsilon(1.0e-9));
+	CHECK(phaseAfterOneChunk(true, 0.25, true) == doctest::Approx(0.25 + 64.0 / kRate).epsilon(1.0e-9));
+	// STOPPED: the transport is not a position, the phase runs free from the reset.
+	CHECK(phaseAfterOneChunk(false, 0.25, false) == doctest::Approx(32.0 / kRate).epsilon(1.0e-9));
+	// TWO RENDERS FROM THE SAME START ARE IDENTICAL.
+	const auto render = [] {
+		Settings s = rotatingDust(DriveMode::PaunchS, false);
+		s.driveRate = 0.0f;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> l(4800);
+		for (size_t i = 0; i < l.size(); ++i) {
+			l[i] = static_cast<float>(sineAt(i, 220.0, 0.4));
+		}
+		std::vector<float> r = l;
+		e.processStereo(l.data(), r.data(), 4800);
+		l.insert(l.end(), r.begin(), r.end());
+		return l;
+	};
+	CHECK(render() == render());
+}
+
+TEST_CASE("Rotation: any block size gives the same output with the LFO on, in the Drive and in a slot, in every width Type") {
+	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::PaunchH, DriveMode::PaunchOS, DriveMode::PaunchOH }) {
+		CAPTURE(static_cast<int>(type));
+		const auto run = [type](size_t block) {
+			Settings s = etchBase();
+			s.drive = 0.8f;
+			s.driveMode = type;
+			s.driveRate = 1.0f;
+			s.slotA = { 0.7f, type, 0.1f, 1.0f };
+			s.slotA.rate = 2.0f;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			std::vector<float> l(24000);
+			const std::vector<float> in = balanceSignal(Sig::Asym, l.size(), 0.4);
+			for (size_t i = 0; i < l.size(); ++i) {
+				l[i] = in[i];
+			}
+			std::vector<float> r = l;
+			for (size_t done = 0; done < l.size(); done += block) {
+				const int n = static_cast<int>(std::min(block, l.size() - done));
+				e.processStereo(l.data() + done, r.data() + done, n);
+			}
+			l.insert(l.end(), r.begin(), r.end());
+			return l;
+		};
+		const std::vector<float> reference = run(256);
+		CHECK(run(32) == reference);
+		CHECK(run(37) == reference);
+		CHECK(peakOf(reference) > 0.05f);
+	}
+}
+
+TEST_CASE("Rotation: the tracked rate at A2 and 1/2 puts the added partials on k * 110 +- 55 Hz, and the averaged balance holds at audio rate") {
+	const double rate = 55.0; // A2 (110 Hz) times 0.5
+	std::vector<float> in(2 * 48000);
+	for (size_t i = 0; i < in.size(); ++i) {
+		in[i] = static_cast<float>(sineAt(i, 110.0, 0.5));
+	}
+	DriveSettings d = deriveDrive(1.0f, DriveMode::PaunchS, 0.0f, kRate, nullptr);
+	d.rateHz = static_cast<float>(rate);
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.set(d);
+	std::vector<float> l(in.size());
+	std::vector<float> r(in.size());
+	for (size_t i = 0; i < in.size(); ++i) {
+		l[i] = r[i] = in[i];
+		stage.process(l[i], r[i]);
+	}
+	// ONE SECOND of the left, whole cycles of every frequency asked about.
+	const std::vector<float> left(l.begin() + 48000, l.end());
+	const double at165 = std::abs(binOf(left, 165.0));
+	const double at275 = std::abs(binOf(left, 275.0));
+	const double at200 = std::abs(binOf(left, 200.0));
+	measured("tracked rotation: 165 Hz over 200 Hz, dB", dbOf(at165 / at200));
+	measured("tracked rotation: 275 Hz over 200 Hz, dB", dbOf(at275 / at200));
+	CHECK(dbOf(at165 / at200) >= 30.0);
+	CHECK(dbOf(at275 / at200) >= 30.0);
+	// THE BALANCE POINT HOLDS AT AUDIO RATE on the asymmetric wave: 100 ms windows (22 cycles of 220 Hz, 5.5 of 55), averaged.
+	const std::vector<float> asym = balanceSignal(Sig::Asym, 2 * 48000, 0.5);
+	DriveStage s2;
+	s2.prepare(kRate);
+	s2.set(d);
+	std::vector<float> al(asym.size());
+	std::vector<float> ar(asym.size());
+	for (size_t i = 0; i < asym.size(); ++i) {
+		al[i] = ar[i] = asym[i];
+		s2.process(al[i], ar[i]);
+	}
+	const double db = rmsDb(al, ar, 48000, 96000);
+	measured("tracked rotation: asymmetric wave, one second left minus right, dB", db);
+	CHECK(std::abs(db) <= 0.2);
+}
+
+TEST_CASE("Rotation in a slot: the averaged balance and the constant energy hold through Etch's slot A, as in the Drive") {
+	const std::vector<float> in = balanceSignal(Sig::Asym, 4 * 48000, 0.5);
+	const auto dry = oversampledDry(in);
+	Settings s = etchBase();
+	s.slotA = { 1.0f, DriveMode::PaunchS, 0.0f, 1.0f };
+	s.slotA.rate = 0.0f; // 1 Hz
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	std::vector<float> l = in;
+	std::vector<float> r = in;
+	e.processStereo(l.data(), r.data(), static_cast<int>(l.size()));
+	for (size_t turn = 1; turn < 4; ++turn) {
+		const double db = rmsDb(l, r, turn * 48000, (turn + 1) * 48000);
+		measured("slot rotation: whole-turn left minus right, dB", db);
+		CHECK(std::abs(db) <= 0.2);
+	}
+	// THE ENERGY OF THE ADDITION (against the engine's own delayed dry, taken from a slot at Amount 0, which is the input untouched) is constant.
+	double minE = 1.0e30;
+	double maxE = 0.0;
+	for (size_t at = 2 * 48000; at + 4800 <= 4 * 48000; at += 4800) {
+		double energy = 0.0;
+		for (size_t i = at; i < at + 4800; ++i) {
+			const double dl = static_cast<double>(l[i]) - dry[i].first;
+			const double dr = static_cast<double>(r[i]) - dry[i].second;
+			energy += dl * dl + dr * dr;
+		}
+		minE = std::min(minE, energy);
+		maxE = std::max(maxE, energy);
+	}
+	CHECK(minE > 0.0);
+	CHECK((maxE - minE) <= 0.01 * maxE);
+}
+
+TEST_CASE("Rotation: with slot A and the Drive on Paunch Types at different Rates the two LFOs are independent — two measured periods") {
+	Settings s = etchBase();
+	s.drive = 0.5f;
+	s.driveMode = DriveMode::PaunchS;
+	s.driveRate = 0.0f;         // 1 Hz
+	s.slotA = { 0.5f, DriveMode::PaunchS, 0.0f, 1.0f };
+	s.slotA.rate = std::log2(3.0f); // 3 Hz
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	std::vector<size_t> driveWraps;
+	std::vector<size_t> slotWraps;
+	double pd = 0.0;
+	double ps = 0.0;
+	std::vector<float> l(32, 0.3f);
+	std::vector<float> r(32, 0.3f);
+	for (size_t at = 0; at < 3 * 48000; at += 32) {
+		e.processStereo(l.data(), r.data(), 32);
+		const double d = e.dustForTest().shaperForTest().rotationPhaseForTest();
+		const double sl = e.dustForTest().slotForTest(0).rotationPhaseForTest();
+		if (d < pd) {
+			driveWraps.push_back(at);
+		}
+		if (sl < ps) {
+			slotWraps.push_back(at);
+		}
+		pd = d;
+		ps = sl;
+	}
+	REQUIRE(driveWraps.size() >= 2);
+	REQUIRE(slotWraps.size() >= 6);
+	const double driveMeasured = static_cast<double>(driveWraps[1] - driveWraps[0]);
+	const double slotMeasured = static_cast<double>(slotWraps[3] - slotWraps[0]) / 3.0;
+	measured("independent LFOs: drive period frames", driveMeasured);
+	measured("independent LFOs: slot period frames", slotMeasured);
+	CHECK(std::abs(driveMeasured - 48000.0) <= 64.0);
+	CHECK(std::abs(slotMeasured - 16000.0) <= 64.0);
+}
+
+TEST_CASE("Chonk's Bal at 0% in a slot is the original law to the bit, and at 100% (the default) it is not") {
+	const StereoBuffer in = noiseStereo(19200, 0.6f);
+	Settings s = etchBase();
+	s.slotA = { 0.9f, DriveMode::Chonk, 1.0f, 1.0f };
+	s.slotA.bal = 0.0f;
+	DriveStage alone = stageOf(s.slotA, kRate, 1.0f);
+	alone.setTrimOnForTest(false);
+	const StereoBuffer original = throughStage(alone, in);
+	CHECK(renderStereo(kRate, s, in) == original);
+	s.slotA.bal = 1.0f;
+	CHECK_FALSE(renderStereo(kRate, s, in) == original);
+	// THE DRIVE'S BAL, THE SAME.
+	Settings d = etchBase();
+	d.drive = 0.9f;
+	d.driveMode = DriveMode::Chonk;
+	d.driveShape = 1.0f;
+	d.driveBal = 0.0f;
+	const StereoBuffer zero = renderStereo(kRate, d, in);
+	d.driveBal = 1.0f;
+	CHECK_FALSE(renderStereo(kRate, d, in) == zero);
+}
+
+TEST_CASE("The Paunch Types read their own Angle, not Shape — an old patch's Shape on a Paunch Type loads with angle 0 — and every other Type still reads Shape as before") {
+	// WHY THE ANGLE HAS ITS OWN KEY: Shape is one control for every Type, and for the four Paunch Types v0.2.1 stored in it a weight (`1 - 2 shape`: the side below
+	// the middle, nothing at 0.5, the mid above). The angle is a different number with a different meaning, and a key names one meaning, so it is
+	// `eroder_drive_angle` / `eroder_slot_a_angle` / `eroder_slot_b_angle`, and Shape (not retired) means what it did for the other Types.
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::DriveAngle)].key) == "eroder_drive_angle");
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::SlotAAngle)].key) == "eroder_slot_a_angle");
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::SlotBAngle)].key) == "eroder_slot_b_angle");
+	CHECK(std::string(kParamDescs[static_cast<size_t>(Param::DriveShape)].key) == "eroder_drive_shape");
+	// AN OLD PATCH: a row that stops before the angle fields, with Shape set to 0.7, on a Paunch Type.
+	State old;
+	old.settings.driveMode = DriveMode::PaunchS;
+	old.settings.driveShape = 0.7f;
+	old.settings.slotA = { 0.5f, DriveMode::PaunchOH, 0.7f, 1.0f };
+	const State loaded = stateOf(rowOf(old), static_cast<size_t>(Param::DriveRateMult));
+	CHECK(loaded.settings.driveShape == doctest::Approx(0.7f));
+	CHECK(loaded.settings.driveAngle == 0.0f);
+	CHECK(loaded.settings.slotA.angle == 0.0f);
+	// THE STAGES THE ENGINE BUILDS: a Paunch Type is given the angle, whatever Shape holds; every other Type is given Shape.
+	for (const DriveMode type : { DriveMode::PaunchS, DriveMode::PaunchH, DriveMode::PaunchOS, DriveMode::PaunchOH }) {
+		CAPTURE(static_cast<int>(type));
+		Settings s = rotatingDust(type, false);
+		s.driveShape = 0.7f;
+		s.driveAngle = 0.25f;
+		Eroder e;
+		(void)driveRotationHz(s, 60.0f, &e);
+		CHECK(e.dustForTest().shaperForTest().settings().shape == doctest::Approx(0.25f));
+		s.driveAngle = 0.0f;
+		Eroder f;
+		(void)driveRotationHz(s, 60.0f, &f);
+		CHECK(f.dustForTest().shaperForTest().settings().shape == 0.0f); // Shape 0.7 is not read
+	}
+	for (const DriveMode type : { DriveMode::Lean, DriveMode::Chonk, DriveMode::Tube, DriveMode::Soft }) {
+		CAPTURE(static_cast<int>(type));
+		Settings s = rotatingDust(type, false);
+		s.driveShape = 0.7f;
+		s.driveAngle = 0.25f;
+		Eroder e;
+		(void)driveRotationHz(s, 60.0f, &e);
+		CHECK(e.dustForTest().shaperForTest().settings().shape == doctest::Approx(0.7f)); // Shape acts as before, the angle does not
+	}
+	// THE SAME IN A SLOT, and in the Comb.
+	Settings etch = etchBase();
+	etch.slotA = { 0.5f, DriveMode::PaunchS, 0.7f, 1.0f };
+	etch.slotA.angle = 0.5f;
+	etch.slotB = { 0.5f, DriveMode::Chonk, 0.7f, 1.0f };
+	etch.slotB.angle = 0.5f;
+	Eroder slots;
+	(void)driveRotationHz(etch, 60.0f, &slots);
+	CHECK(slots.dustForTest().slotForTest(0).settings().shape == doctest::Approx(0.5f));
+	CHECK(slots.dustForTest().slotForTest(1).settings().shape == doctest::Approx(0.7f));
+	Settings comb = rotatingDust(DriveMode::PaunchS, false);
+	comb.mode = Mode::Comb;
+	comb.driveShape = 0.7f;
+	comb.driveAngle = 0.25f;
+	Eroder c;
+	c.prepare(kRate);
+	c.setTarget(comb);
+	std::vector<float> l(256, 0.3f);
+	std::vector<float> r = l;
+	c.processStereo(l.data(), r.data(), 256);
+	CHECK(c.combDriveForTest().shape == doctest::Approx(0.25f));
+	// AND BY VALUE ON THE OUTPUT: the angle turns the addition, Shape on a Paunch Type changes nothing.
+	const std::vector<float> in = balanceSignal(Sig::Asym, 9600, 0.4);
+	const auto render = [&in](float shape, float angle) {
+		Settings s = etchBase();
+		s.drive = 0.8f;
+		s.driveMode = DriveMode::PaunchS;
+		s.driveShape = shape;
+		s.driveAngle = angle;
+		Eroder e;
+		e.prepare(kRate);
+		e.setTarget(s);
+		std::vector<float> a = in;
+		std::vector<float> b = in;
+		e.processStereo(a.data(), b.data(), static_cast<int>(a.size()));
+		a.insert(a.end(), b.begin(), b.end());
+		return a;
+	};
+	CHECK(render(0.7f, 0.0f) == render(0.0f, 0.0f));
+	CHECK_FALSE(render(0.0f, 0.25f) == render(0.0f, 0.0f));
 }

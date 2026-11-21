@@ -4101,8 +4101,13 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 	namespace pr = feathers::rack::parallel;
 	for (const int view : { 1, 2 }) {
 		for (const bool inWindow : { false, true }) {
+		for (const bool neighbours : { false, true }) {
+			if (inWindow && neighbours) {
+				continue;
+			}
 			CAPTURE(view);
 			CAPTURE(inWindow);
+			CAPTURE(neighbours);
 			EditorFixture f;
 			feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
 			bodies.prepare(48000.0, 4096);
@@ -4115,7 +4120,14 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 					(void)f.bridge.removeFxDevice(s);
 				}
 			}
+			// IN A REAL NESTED POSITION: a card before it and a card after it in the lane, the lane scrolled so the rack's pad or tab is in reach.
+			if (neighbours) {
+				(void)f.addFx(fx::filter::kTraits.tag);
+			}
 			const size_t slot = f.addFx(pr::kTraits.tag);
+			if (neighbours) {
+				(void)f.addFx(fx::filter::kTraits.tag);
+			}
 			const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
 			f.bridge.fxBodies().attach(id, body);
 			pr::Rack& rack = *pr::rackOf(body);
@@ -4159,6 +4171,18 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 					(void)panel->update();
 				}
 			}
+			if (neighbours) {
+				// SCROLL THE LANE until the rack card's pad (or tab) is above the knob tray, as a hand would.
+				for (int step = 0; step < 40; ++step) {
+					const visage::Point padAt = view == 2 ? card->padsForTest().gridForTest().positionInWindow() : card->tabBarForTest().positionInWindow();
+					const float want = f.lane->positionInWindow().y + 40.0f;
+					if (padAt.y <= want + 1.0f || f.lane->scroll() >= f.lane->maxScroll()) {
+						break;
+					}
+					f.lane->setScroll(std::min(f.lane->maxScroll(), f.lane->scroll() + std::max(1.0f, padAt.y - want)));
+					(void)f.gui.tickForTest();
+				}
+			}
 			ui::RackChainRename& rename = inWindow ? panel->chainRenameForTest() : card->chainRenameForTest();
 			ui::RackTabBar* bar = inWindow ? &panel->tabBarForTest() : &card->tabBarForTest();
 			ui::RackPadGrid* grid = inWindow ? &panel->padsForTest().gridForTest() : &card->padsForTest().gridForTest();
@@ -4189,8 +4213,24 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			CHECK(top->frameAtPoint(centre) == static_cast<visage::Frame*>(&field)); // nothing over it
 			CHECK(field.hasKeyboardFocus());
 			CHECK(focusedUnder(top) == static_cast<visage::Frame*>(&field));
-			// TYPED CHARACTERS AND ENTER CHANGE THE LABEL.
-			field.textInput("Kick");
+			// WITH FEATHERS_RENAME_SHOTS=<dir>, A PHOTOGRAPH OF WHAT THE USER SEES (the card in its lane, the field open and typed into).
+			if (const char* keep = std::getenv("FEATHERS_RENAME_SHOTS"); keep != nullptr && *keep != '\0') {
+				field.textInput("Ki");
+				XMapWindow(display, parent);
+				XRaiseWindow(display, parent);
+				XFlush(display);
+				for (int slice = 0; slice < 300; ++slice) {
+					f.gui.processEvents();
+					::usleep(4000);
+				}
+				const Shot shot = capturePpm(parent, std::string(keep) + "/rename-" + (view == 1 ? "tabs" : "pads") + (inWindow ? "-window" : "-card")
+				                                         + (neighbours ? "-lane" : "-alone") + ".ppm");
+				CHECK(shot.valid());
+				field.textInput("ck");
+			}
+			else {
+				field.textInput("Kick"); // TYPED CHARACTERS AND ENTER CHANGE THE LABEL
+			}
 			CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
 			CHECK_FALSE(rename.renaming());
 			CHECK(rack.chainLabel(1) == "Kick");
@@ -4198,6 +4238,7 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			f.gui.destroy();
 			XDestroyWindow(display, parent);
 			XCloseDisplay(display);
+		}
 		}
 	}
 }

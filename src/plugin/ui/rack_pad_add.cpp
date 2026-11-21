@@ -27,8 +27,8 @@ namespace feathers::ui {
 
 visage::PopupMenu RackPadAdd::build(int key, std::vector<const device::Descriptor*> offered) {
 	visage::PopupMenu menu;
-	// THE LANES' OWN BUILDER, with the oscillators first.
-	addCategorisedDevices(menu, offered, [](size_t) { return true; }, device::Category::Oscillators);
+	// THE LANES' OWN BUILDER, in the lanes' own category order (a heading never moves between menus).
+	addCategorisedDevices(menu, offered, [](size_t) { return true; });
 	const std::weak_ptr<void> alive = alive_;
 	menu.onSelection() = [this, alive, key, offered = std::move(offered)](int id) {
 		if (!alive.expired()) {

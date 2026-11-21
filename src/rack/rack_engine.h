@@ -814,6 +814,8 @@ public:
 	/// a LOADER through a queue is a different design question from re-routing an editor — it is
 	/// filed as its own item rather than smuggled in here.
 	void setMacro(size_t index, float value);
+	/// **THE HOST'S MODULATION OF MACRO `index`** — an offset on the hand's value (see `setMacro`'s thread rule).
+	void setMacroMod(size_t index, float offset);
 	/// **A HOST'S CORE SOURCE, IN ITS OWN READING — written to the cell as it is** (-1..+1 for a source that
 	/// reads bipolar, 0..1 otherwise), not through `setMacro`: a host's source has already been through its own
 	/// polarity (`ParamSet::publishCoreSources`), so holding it to 0..1 here dropped every negative reading and
@@ -2141,6 +2143,7 @@ private:
 	/// cell is derived from it (backlog EG). Sized once, never moved: the pointers depend on it.
 	std::vector<float> macros_;
 	std::vector<float> macroRaw_;
+	std::vector<float> macroMod_; ///< the host's modulation offset per macro, 0 at rest
 	std::vector<uint8_t> macroBipolar_;
 	/// Each macro's type and name — the patch's, message thread only (see `setMacroType`). Sized like the rest.
 	std::vector<device::MacroType> macroType_;

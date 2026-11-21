@@ -1519,9 +1519,16 @@ private:
 			case CLAP_EVENT_PARAM_MOD: {
 				// **GLOBAL MODULATION ON A SLOT IS AN OFFSET ON TOP OF ITS VALUE** (design §4), in the slot's 0..1
 				// units, which the engine scales by the control's span. A PER-NOTE mod on a slot is ignored, as
-				// Feathers ignores it: the rack has no voices to address. (A macro's modulation is not taken
-				// here and never was: the macros are values only on this surface.)
+				// Feathers ignores it: the rack has no voices to address.
 				const auto* e = reinterpret_cast<const clap_event_param_mod*>(header);
+				// **A MACRO'S GLOBAL MODULATION IS AN OFFSET ON THE HAND'S VALUE** — the macros are declared
+				// CLAP_PARAM_IS_MODULATABLE, so a DAW modulator mapped onto one speaks PARAM_MOD and nothing else;
+				// dropping it left the mapping doing nothing at all. Offset in the macro's 0..1 units, the sum held
+				// to 0..1 and read through the macro's polarity as any value is. Per-note is ignored (no voices).
+				if (!drum_ && !rack_ && e->param_id < kMacroCount && e->note_id == -1 && e->key == -1 && e->channel == -1) {
+					bridge_.setMacroMod(e->param_id, static_cast<float>(e->amount));
+					break;
+				}
 				rack::SlotOwner* slots = bridge_.hostSlots();
 				if (hostslots::isSlotId(e->param_id) && slots != nullptr && e->note_id == -1 && e->key == -1
 				    && e->channel == -1 && (!drum_ || drumIndexOf(e->param_id) >= 0)) {

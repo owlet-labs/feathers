@@ -303,7 +303,7 @@ RackEngine::RackEngine(const backplane::Axes& axes, const device::Catalogue& cat
       // past it is dropped AND COUNTED (`RouteList::overflow`), never silently.
       graphOwned_(std::make_unique<backplane::Graph>(axes, 1, edgeCapacityFor(axes), ids_)),
       graphPtr_(graphOwned_.get()), slots_(axes.deviceSlots),
-      macros_(axes.coreSources, 0.0f), macroRaw_(axes.coreSources, 0.0f), macroBipolar_(axes.coreSources, 0),
+      macros_(axes.coreSources, 0.0f), macroRaw_(axes.coreSources, 0.0f), macroMod_(axes.coreSources, 0.0f), macroBipolar_(axes.coreSources, 0),
       macroType_(axes.coreSources, device::MacroType::Knob), macroName_(axes.coreSources),
       readings_(axes.deviceSlots), readingHops_(axes.deviceSlots) {
 	for (size_t slot = 0; slot < readingHops_.size(); ++slot) {
@@ -1336,8 +1336,20 @@ void RackEngine::setMacro(size_t index, float value) {
 		macroRaw_[index] = value;
 		// THE CELL IS THE VALUE READ THROUGH ITS POLARITY (backlog EG) — derived here, at the write, so
 		// every reader of the cell is one pointer load with nothing to decide.
-		macros_[index] = macroBipolar_[index] != 0 ? 2.0f * value - 1.0f : value;
+		const float effective = std::clamp(value + macroMod_[index], 0.0f, 1.0f);
+		macros_[index] = macroBipolar_[index] != 0 ? 2.0f * effective - 1.0f : effective;
 	}
+}
+
+void RackEngine::setMacroMod(size_t index, float offset) {
+	// A HOST'S MODULATION OF A MACRO (CLAP_EVENT_PARAM_MOD, global): an offset in the macro's own 0..1 units on top
+	// of the value the hand holds, held to 0..1 as the sum. `macro()` stays the hand's value, so a patch saves
+	// and the host reads back the base and not the modulated figure.
+	if (!std::isfinite(offset) || index >= macroMod_.size()) {
+		return;
+	}
+	macroMod_[index] = std::clamp(offset, -1.0f, 1.0f);
+	setMacro(index, macroRaw_[index]);
 }
 
 void RackEngine::setCoreSource(size_t index, float reading) noexcept {

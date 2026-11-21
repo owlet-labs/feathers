@@ -3420,7 +3420,8 @@ TEST_CASE("rack keys: Ctrl+V pastes into an EMPTY chain from the pad or tab that
 		}
 		r.refresh();
 		CHECK(r.field(pr::Param::ViewedChain) == 1.0f);
-		visage::Frame* focus = keyboardFocusAfterPress(r.f.root, where);
+		const visage::Point cardOrigin = r.card->positionInWindow(); // the card alone: the window panel is a sibling over the same room
+		visage::Frame* focus = keyboardFocusAfterPress(r.card, visage::Point { where.x - cardOrigin.x, where.y - cardOrigin.y });
 		REQUIRE(focus != nullptr);
 		CHECK(keyFromFocus(focus, paste));
 		CHECK(lengthOf(1) == 1);

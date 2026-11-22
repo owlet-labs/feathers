@@ -988,3 +988,74 @@ TEST_CASE("The third row at its extremes in three chained stages with the loops 
 		}
 	}
 }
+
+TEST_CASE("Every third-row control is wired in all three places: it changes the sound on its own Types, in the Drive and in each slot, and is read on no other") {
+	enum class Place { Drive, SlotA, SlotB };
+	const auto field = [](Settings& s, Place place, float SlotSettings::*slotField, float Settings::*driveField) -> float& {
+		return place == Place::Drive ? s.*driveField : (place == Place::SlotA ? s.slotA : s.slotB).*slotField;
+	};
+	struct Case {
+		const char* name;
+		DriveMode type;
+		DriveMode elsewhere;
+		float SlotSettings::*slotField;
+		float Settings::*driveField;
+	};
+	const Case cases[] = {
+		{ "Hard on Soft", DriveMode::Soft, DriveMode::Chonk, &SlotSettings::hard, &Settings::driveHard },
+		{ "Hard on Tube", DriveMode::Tube, DriveMode::Chonk, &SlotSettings::hard, &Settings::driveHard },
+		{ "Sharp on Fold", DriveMode::Fold, DriveMode::Chonk, &SlotSettings::sharp, &Settings::driveSharp },
+		{ "Bias on Wreck", DriveMode::Wreck, DriveMode::Chonk, &SlotSettings::bias, &Settings::driveBias },
+		{ "Bias on Jag", DriveMode::Jag, DriveMode::Chonk, &SlotSettings::bias, &Settings::driveBias },
+		{ "Spread on Crush", DriveMode::Crush, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
+		{ "Spread on Decimate", DriveMode::Decimate, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
+		{ "Spread on Slew", DriveMode::Slew, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
+		{ "Spread on Lopside", DriveMode::Lopside, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
+	};
+	for (const Case& c : cases) {
+		for (const Place place : { Place::Drive, Place::SlotA, Place::SlotB }) {
+			CAPTURE(c.name);
+			CAPTURE(static_cast<int>(place));
+			const auto render = [&](DriveMode type, float value) {
+				Settings s = etchWith();
+				if (place == Place::Drive) {
+					s.drive = 0.8f;
+					s.driveMode = type;
+				}
+				else {
+					SlotSettings& slot = place == Place::SlotA ? s.slotA : s.slotB;
+					slot.amount = 0.8f;
+					slot.type = type;
+				}
+				field(s, place, c.slotField, c.driveField) = value;
+				return renderEtch(s, 24000, 4800, 480, true);
+			};
+			CHECK_FALSE(render(c.type, 0.0f) == render(c.type, 1.0f)); // it is heard on its own Type
+			CHECK(render(c.elsewhere, 0.0f) == render(c.elsewhere, 1.0f)); // and read on no other
+		}
+	}
+	// KEY: the switch, in each place, on the four Types that have one (the note moves in this render, so the rate it makes is heard).
+	for (const DriveMode type : { DriveMode::Crush, DriveMode::Decimate, DriveMode::Slew, DriveMode::Lopside }) {
+		for (const Place place : { Place::Drive, Place::SlotA, Place::SlotB }) {
+			CAPTURE(static_cast<int>(type));
+			CAPTURE(static_cast<int>(place));
+			const auto render = [&](DriveMode t, bool key) {
+				Settings s = etchWith();
+				if (place == Place::Drive) {
+					s.drive = 0.8f;
+					s.driveMode = t;
+					s.driveKey = key;
+				}
+				else {
+					SlotSettings& slot = place == Place::SlotA ? s.slotA : s.slotB;
+					slot.amount = 0.8f;
+					slot.type = t;
+					slot.key = key;
+				}
+				return renderEtch(s, 24000, 4800, 480, true);
+			};
+			CHECK_FALSE(render(type, false) == render(type, true));
+			CHECK(render(DriveMode::Chonk, false) == render(DriveMode::Chonk, true));
+		}
+	}
+}

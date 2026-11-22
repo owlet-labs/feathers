@@ -4034,3 +4034,53 @@ TEST_CASE("list view: a row is inside the card and its column is laid out at 1x,
 		}
 	}
 }
+
+TEST_CASE("PHOTO: the Rack's List view on the card and in the window, with a few chains and with many (writes only under FEATHERS_LIST_VIEW_SHOTS)") {
+	const char* keep = std::getenv("FEATHERS_LIST_VIEW_SHOTS");
+	if (keep == nullptr) {
+		return;
+	}
+	for (const size_t chains : { size_t { 3 }, size_t { 12 } }) {
+		for (const bool window : { false, true }) {
+			CAPTURE(chains);
+			CAPTURE(window);
+			RealRack r;
+			r.chains(chains, chains);
+			(void)r.rack().setChainName(0, "Kick");
+			r.set(pr::Param::ViewedChain, 1.0f);
+			r.view_(3);
+			auto* editor = dynamic_cast<visage::ApplicationEditor*>(r.f.root);
+			REQUIRE(editor != nullptr);
+			const int w = static_cast<int>(r.f.root->width());
+			const int h = static_cast<int>(r.f.root->height());
+			visage::Frame backdrop; // the panel is drawn over an opaque ground, not over the editor behind it
+			backdrop.onDraw() = [](visage::Canvas& canvas) {
+				canvas.setColor(0xff101014);
+				canvas.fill(0.0f, 0.0f, 4000.0f, 4000.0f);
+			};
+			if (window) {
+				backdrop.setBounds(0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h));
+				r.f.root->addChild(&backdrop);
+				r.panel->setBounds(0.0f, 0.0f, 1000.0f, std::max(r.panel->minimumSize().y, 560.0f));
+				r.f.root->addChild(r.panel);
+				r.panel->resized();
+				r.refresh();
+			}
+			editor->setWindowless(w, h);
+			if (!visage::Renderer::instance().supported()) {
+				MESSAGE("SKIP no renderer: " << visage::Renderer::instance().errorMessage());
+				return;
+			}
+			r.f.root->redrawAll();
+			editor->drawWindow();
+			editor->drawWindow();
+			const visage::Screenshot& shot = editor->takeScreenshot();
+			REQUIRE(shot.width() > 0);
+			shot.save((std::string(keep) + "/list-" + std::to_string(chains) + (window ? "-window" : "-card") + ".png").c_str());
+			if (window) {
+				r.f.root->removeChild(r.panel);
+				r.f.root->removeChild(&backdrop);
+			}
+		}
+	}
+}

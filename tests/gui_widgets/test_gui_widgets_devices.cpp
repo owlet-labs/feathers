@@ -9450,7 +9450,7 @@ TEST_CASE("DG: after a reorder, a device's card reads ITS OWN readings through t
 	const auto owlttReadsItsOwn = [&] {
 		const size_t position = bridge.fxSlotOf(owlttId);
 		const float p = static_cast<float>(position);
-		REQUIRE(host.readingCountAt(owlttId) == 20); // ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
+		REQUIRE(host.readingCountAt(owlttId) == 26); // the effective ratios (20..25), then ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
 		CHECK(host.readingAt(owlttId, 0) == -1.0f - p);
 		CHECK(host.readingAt(owlttId, 3) == -10.0f - p);
 		CHECK(host.readingAt(owlttId, 6) == -4.0f - p);
@@ -32196,9 +32196,9 @@ TEST_CASE("LR: OWLTT's card carries the global Width in the stereo strip, and th
 			}
 		}
 		for (size_t band = 0; band < 3; ++band) {
-			const ui::ValueBox* cell = panel.graph()->tableBoxForTest(1, band);
+			const ui::ValueBox* cell = panel.graph()->tableBoxForTest(3, band);
 			REQUIRE(cell != nullptr);
-			if (static_cast<size_t>(ui::OwlttGraph::tableParam(1, band)) == static_cast<size_t>(param)) {
+			if (static_cast<size_t>(ui::OwlttGraph::tableParam(3, band)) == static_cast<size_t>(param)) {
 				++found;
 				CHECK(cell->control().value() == doctest::Approx(value));
 				CHECK(cell->isVisible());
@@ -32222,7 +32222,7 @@ TEST_CASE("NK: OWLTT's window carries the three band Widths in the plot's table 
 	REQUIRE(panel.graph() != nullptr);
 	const ow::Param order[] = { ow::Param::LowWidth, ow::Param::MidWidth, ow::Param::HighWidth };
 	const double values[] = { 0.21, 0.62, 1.83 };
-	constexpr size_t kWidthRow = 1;
+	constexpr size_t kWidthRow = 3;
 	float previousRight = -1.0f;
 	for (size_t band = 0; band < 3; ++band) {
 		CAPTURE(band);
@@ -32546,7 +32546,7 @@ TEST_CASE("LQ: OWLTT's band meters read each channel's own gain reduction off th
 	const std::array<float, 3> second { 0.0f, -0.125f, -0.75f };
 	d.f.bridge.publishOwlttMeters(d.slot, first, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false,
 	                              { false, false, false }, 3.0f, &second);
-	REQUIRE(host.readingCountAt(d.device) == 20); // `Owltt::kReadingCount` since Key Track (17 since LQ)
+	REQUIRE(host.readingCountAt(d.device) == 26); // `Owltt::kReadingCount` since the ratio readout (20 since Key Track (17 since LQ)
 	for (size_t b = 0; b < 3; ++b) {
 		CAPTURE(b);
 		CHECK(host.readingAt(d.device, b) == first[b]);
@@ -41566,8 +41566,9 @@ TEST_CASE("OWLTT's window: the table under the bars is IN, WIDTH, ATK and REL, o
 	REQUIRE(graph != nullptr);
 
 	// THE ROWS AND THEIR CAPTIONS, once at the left.
-	const char* captions[] = { "IN", "WIDTH", "ATK", "REL" };
-	const char* suffixes[] = { "input", "width", "attack", "release" };
+	const char* captions[] = { "IN", "OUT", "RATIO", "WIDTH", "ATK", "REL" };
+	const char* suffixes[] = { "input", "level", "", "width", "attack", "release" };
+	const char* tips[] = { "input level", "output level", "", "stereo width", "attack", "release" };
 	for (size_t row = 0; row < ui::OwlttGraph::kTableRows; ++row) {
 		CHECK(std::string(ui::OwlttGraph::tableCaption(row)) == captions[row]);
 	}
@@ -41580,6 +41581,10 @@ TEST_CASE("OWLTT's window: the table under the bars is IN, WIDTH, ATK and REL, o
 		for (size_t band = 0; band < 3; ++band) {
 			CAPTURE(row);
 			CAPTURE(band);
+			if (row == ui::OwlttGraph::kRatioRow) {
+				CHECK(graph->tableBoxForTest(row, band) == nullptr); // the read-out row holds no box
+				continue;
+			}
 			ui::ValueBox* box = graph->tableBoxForTest(row, band);
 			REQUIRE(box != nullptr);
 			// BOUND TO THE PARAMETER ITS POSITION SAYS (restated by key), through ControlFace.
@@ -41591,8 +41596,7 @@ TEST_CASE("OWLTT's window: the table under the bars is IN, WIDTH, ATK and REL, o
 			// A TOOLTIP THAT NAMES IT, from its parameter.
 			const char* tip = box->tooltipAt({ 3.0f, 3.0f });
 			REQUIRE(tip != nullptr);
-			CHECK(std::string(tip).find(row == 0 ? "input level" : (row == 1 ? "stereo width" : (row == 2 ? "attack" : "release")))
-			      != std::string::npos);
+			CHECK(std::string(tip).find(tips[row]) != std::string::npos);
 			// IT SITS IN THE TABLE, and in ITS band's column: the centre of the cell is between the crossover lines that
 			// bound the band (the plot's own edges at the two ends).
 			const visage::Bounds b = box->bounds();
@@ -41605,7 +41609,8 @@ TEST_CASE("OWLTT's window: the table under the bars is IN, WIDTH, ATK and REL, o
 			CHECK(centre < hi);
 			// ROWS DESCEND, COLUMNS ASCEND, nothing overlaps its neighbour.
 			if (row > 0) {
-				CHECK(b.y() >= graph->tableBoxForTest(row - 1, band)->bounds().bottom());
+				const size_t above = row - 1 == ui::OwlttGraph::kRatioRow ? row - 2 : row - 1;
+				CHECK(b.y() >= graph->tableBoxForTest(above, band)->bounds().bottom());
 			}
 			if (band > 0) {
 				CHECK(b.x() >= graph->tableBoxForTest(row, band - 1)->bounds().right());
@@ -41619,7 +41624,7 @@ TEST_CASE("OWLTT's window: the table under the bars is IN, WIDTH, ATK and REL, o
 		return fxDeviceAtPosition(chain, d.slot).row.field;
 	};
 	const auto before = fields();
-	ui::ValueBox* attack = graph->tableBoxForTest(2, 1);
+	ui::ValueBox* attack = graph->tableBoxForTest(4, 1);
 	attack->control().beginGesture();
 	attack->control().setValue(0.9);
 	attack->control().endGesture();
@@ -41643,6 +41648,9 @@ TEST_CASE("OWLTT's window: the table under the bars is IN, WIDTH, ATK and REL, o
 	CHECK(midAfter != doctest::Approx(midBefore));
 	for (size_t row = 0; row < ui::OwlttGraph::kTableRows; ++row) {
 		for (size_t band = 1; band < 3; ++band) {
+			if (row == ui::OwlttGraph::kRatioRow) {
+				continue;
+			}
 			CHECK(graph->tableBoxForTest(row, band)->bounds().x() >= graph->tableBoxForTest(row, band - 1)->bounds().right());
 		}
 	}
@@ -41766,7 +41774,7 @@ TEST_CASE("OWLTT's window: offsets and ratio trims read and type as signed perce
 	panel.resized();
 	ui::OwlttGraph* graph = panel.graph();
 	REQUIRE(graph != nullptr);
-	ui::ValueBox* attack = graph->tableBoxForTest(2, 0);
+	ui::ValueBox* attack = graph->tableBoxForTest(4, 0);
 	REQUIRE(attack != nullptr);
 	CHECK(attack->control().text() == "0"); // the default centre
 	d.set(static_cast<size_t>(ow::Param::LowAttack), 0.75f);
@@ -41892,6 +41900,9 @@ TEST_CASE("OWLTT: arming and disarming a source repaints the plot and every assi
 	}
 	for (size_t row = 0; row < ui::OwlttGraph::kTableRows; ++row) {
 		for (size_t band = 0; band < 3; ++band) {
+			if (row == ui::OwlttGraph::kRatioRow) {
+				continue;
+			}
 			frames.push_back(windowGraph->tableBoxForTest(row, band));
 		}
 	}
@@ -46498,3 +46509,108 @@ TEST_CASE("DISPERSER's face carries the slot's Mix: a box on the card and one in
 	view.reset();
 }
 
+
+TEST_CASE("OWLTT's window: each band's OUT is a value box in the table beside IN, bound to that band's Level, and moves it alone") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	const ow::Param levels[] = { ow::Param::LowLevel, ow::Param::MidLevel, ow::Param::HighLevel };
+	const ow::Param inputs[] = { ow::Param::LowInput, ow::Param::MidInput, ow::Param::HighInput };
+	CHECK(std::string(ui::OwlttGraph::tableCaption(0)) == "IN");
+	CHECK(std::string(ui::OwlttGraph::tableCaption(1)) == "OUT");
+	for (size_t band = 0; band < 3; ++band) {
+		CAPTURE(band);
+		ui::ValueBox* in = graph->tableBoxForTest(0, band);
+		ui::ValueBox* out = graph->tableBoxForTest(1, band);
+		REQUIRE(in != nullptr);
+		REQUIRE(out != nullptr);
+		CHECK(ui::OwlttGraph::tableParam(0, band) == inputs[band]);
+		CHECK(ui::OwlttGraph::tableParam(1, band) == levels[band]);
+		// THE SAME CONTROL TYPE, side by side, under the same band.
+		CHECK(typeid(*in) == typeid(*out));
+		CHECK(out->bounds().y() >= in->bounds().bottom());
+		CHECK(out->bounds().x() == doctest::Approx(in->bounds().x()));
+
+		const auto fields = [&] {
+			const FxChain chain = d.f.bridge.fxChain();
+			return fxDeviceAtPosition(chain, d.slot).row.field;
+		};
+		const auto before = fields();
+		out->control().beginGesture();
+		out->control().setValue(0.8);
+		out->control().endGesture();
+		const auto after = fields();
+		size_t changed = 0;
+		for (size_t i = 0; i < before.size(); ++i) {
+			if (after[i] != before[i]) {
+				++changed;
+				CHECK(i == static_cast<size_t>(levels[band]));
+			}
+		}
+		CHECK(changed == 1u);
+		CHECK(after[static_cast<size_t>(levels[band])] == doctest::Approx(0.8f));
+	}
+}
+
+TEST_CASE("OWLTT's window: the RATIO row reads each band's effective downward and upward ratio as N:1, live with the ratio") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	CHECK(std::string(ui::OwlttGraph::tableCaption(ui::OwlttGraph::kRatioRow)) == "RATIO");
+	CHECK(graph->tableBoxForTest(ui::OwlttGraph::kRatioRow, 0) == nullptr);
+
+	ow::Owltt dsp;
+	dsp.prepare(48000.0f);
+	dsp.setMeterCallback([&](size_t, const std::array<float, 3>& gr, const std::array<float, 3>& in,
+	                         const std::array<float, 3>& out, bool clipping, const ow::Owltt::MeterExtras& extras) {
+		d.f.bridge.publishOwlttMeters(d.slot, gr, in, out, clipping, extras.bandSaturating, extras.combinedGrDb,
+		                              &extras.secondChannelGr, extras.noteHz, extras.inputPeak, extras.outputPeak, &extras.ratios);
+	});
+	const auto run = [&](float lowRatio) {
+		ow::Settings s = ow::Settings {};
+		s.ratio = 0.5f; // neutral: displaces no band
+		s.low.ratio = lowRatio;
+		s.mid.ratio = 0.5f;
+		s.high.ratio = 0.9f;
+		dsp.setTarget(s);
+		std::vector<float> l(512, 0.1f), r(512, 0.1f);
+		for (int i = 0; i < 4; ++i) {
+			dsp.processStereo(l.data(), r.data(), 512);
+		}
+		(void)graph->update();
+	};
+	// THE LAW RESTATED: down is 1/(1-k); up is 1/(1-k^3); N printed whole when whole, one decimal below ten.
+	const auto text = [](double n) {
+		char buf[16];
+		if (std::fabs(n - std::round(n)) < 0.05 || n >= 9.95) {
+			std::snprintf(buf, sizeof buf, "%.0f:1", n);
+		}
+		else {
+			std::snprintf(buf, sizeof buf, "%.1f:1", n);
+		}
+		return std::string(buf);
+	};
+	const auto expect = [&](double k) { return std::string("\xE2\x86\x93") + text(1.0 / (1.0 - k)) + " \xE2\x86\x91" + text(1.0 / (1.0 - k * k * k)); };
+	run(0.75f);
+	CHECK(graph->ratioReadoutText(0) == expect(0.75)); // down 4:1, up 1.7:1
+	CHECK(graph->ratioReadoutText(0) == "\xE2\x86\x93" "4:1 \xE2\x86\x91" "1.7:1");
+	CHECK(graph->ratioReadoutText(1) == expect(0.5));  // down 2:1, up 1.1:1
+	CHECK(graph->ratioReadoutText(2) == expect(0.9));  // down 10:1, up 3.7:1
+	// A RATIO THAT MOVES (a routed source's effective value) MOVES THE TEXT, and only its band's.
+	run(0.5f);
+	CHECK(graph->ratioReadoutText(0) == expect(0.5));
+	CHECK(graph->ratioReadoutText(0) != "\xE2\x86\x93" "4:1 \xE2\x86\x91" "1.7:1");
+	CHECK(graph->ratioReadoutText(2) == expect(0.9));
+}

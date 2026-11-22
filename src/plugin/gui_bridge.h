@@ -1501,7 +1501,8 @@ public:
 	                       const std::array<float, 3>& outputLevelDB, bool clipping,
 	                       const std::array<bool, 3>& bandSaturating = { false, false, false },
 	                       float combinedGrDb = 0.0f,
-	                       const std::array<float, 3>* secondChannelGr = nullptr, float noteHz = 0.0f, float inputPeak = 0.0f, float outputPeak = 0.0f) noexcept;
+	                       const std::array<float, 3>* secondChannelGr = nullptr, float noteHz = 0.0f, float inputPeak = 0.0f, float outputPeak = 0.0f,
+	                       const std::array<float, 6>* ratios = nullptr) noexcept;
 	struct OwlttMeterReading {
 		std::array<float, 3> grDB {0.0f, 0.0f, 0.0f};
 		std::array<float, 3> inputLevelDB {0.0f, 0.0f, 0.0f};
@@ -1517,6 +1518,8 @@ public:
 		float inputPeak = 0.0f;
 		/// THE OUTPUT METER'S PEAK: after Output Gain, before the master clip (reading 19).
 		float outputPeak = 0.0f;
+		/// EACH BAND'S EFFECTIVE RATIOS (readings 20..25: down for bands 0..2, then up), 1 when none was published.
+		std::array<float, 6> ratios { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	};
 	[[nodiscard]] OwlttMeterReading owlttMeters(size_t slot) const noexcept;
 
@@ -1989,6 +1992,7 @@ private:
 		std::atomic<float> owlttNoteHz { 0.0f }; ///< Key Track's note, Hz (reading 17)
 		std::atomic<float> owlttInputPeak { 0.0f }; ///< the device's input peak, linear (reading 18)
 		std::atomic<float> owlttOutputPeak { 0.0f }; ///< the pre-clip output peak, linear (reading 19)
+		std::array<std::atomic<float>, 6> owlttRatios {}; ///< the effective ratios, down then up (readings 20..25); 0 reads as 1
 		/// Each band's SECOND channel's gain reduction (backlog LQ; R, or S in M/S) — `owlttGrDB` is the first's.
 		std::array<std::atomic<float>, 3> owlttGrSecond {};
 		/// The automodulator's LFO phase, 0..1, and its envelope.

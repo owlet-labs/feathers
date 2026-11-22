@@ -1332,6 +1332,8 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		bands_[b].updateLevel(bandL[b], bandR[b], static_cast<size_t>(frames), levelAlpha,
 		                      1.0f - levelAlpha, useAvgEnvelope && !midSide, kPeakStride[b]);
 		const float bandSkew = std::clamp(upDownSkew_ + skewOffset_[b], -1.0f, 1.0f);
+		bandRatios_[b] = bands_[b].getEffectiveRatioDown(bandSkew);
+		bandRatios_[3 + b] = bands_[b].getEffectiveRatioUp(bandSkew);
 		// Apply per-band timing offset as a multiplier on the envelope time (numSamples): −0.7 is about
 		// 3x faster, +0.7 is 1.7x slower. THE FIRMWARE DOES NOT HAVE THIS LINE — it fills the same table
 		// and leaves it unread (see the zone switch in `updateCharacter`). Kept live deliberately.
@@ -1634,7 +1636,7 @@ void Owltt::updateMeters(int frames) {
 		}
 		combinedGainReductionDb_ = total / 3.0f;
 	}
-	const MeterExtras extras { bandSaturating_, combinedGainReductionDb_, grSecond, static_cast<float>(noteHzReading()), inputPeak_, preClipPeak_ };
+	const MeterExtras extras { bandSaturating_, combinedGainReductionDb_, grSecond, static_cast<float>(noteHzReading()), inputPeak_, preClipPeak_, bandRatios_ };
 	meterCallback_(slot_, grDB, inputLevelDB, outputLevelDB, clipping_, extras);
 }
 
@@ -1716,6 +1718,9 @@ const device::AudioOps kAudioOps {
 			values[17] = extras.noteHz;
 			values[18] = extras.inputPeak;
 			values[19] = extras.outputPeak;
+			for (size_t i = 0; i < 6; ++i) {
+				values[20 + i] = extras.ratios[i];
+			}
 			if (publish != nullptr) {
 				publish(context, values, Owltt::kReadingCount);
 			}

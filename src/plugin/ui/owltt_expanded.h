@@ -85,7 +85,7 @@ public:
 	/// THE BODY'S WIDTH, between the pads. The plot takes what the two faders leave.
 	static constexpr float kBodyWidth = 672.0f;
 	/// The plot's height: the crossover lane, the bars and strips, and the table of per-band boxes.
-	static constexpr float kGraphHeight = 322.0f;
+	static constexpr float kGraphHeight = 356.0f;
 	/// The row captions' margin, as the Delay window's.
 	static constexpr float kBandLabelWidth = 52.0f;
 	static constexpr float kBoxGap = 4.0f;

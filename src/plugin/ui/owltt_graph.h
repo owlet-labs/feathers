@@ -103,6 +103,8 @@ public:
 		/// old ten, in which case they read off and zero.
 		std::array<bool, 3> bandSaturating { false, false, false };
 		float combinedGrDb = 0.0f;
+		/// EACH BAND'S EFFECTIVE RATIOS, `N` of `N:1` (readings 20..25: down for bands 0..2, then up); 1 from a publisher that sends fewer.
+		std::array<float, 6> ratios { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 		/// BACKLOG LQ: each band's SECOND channel's gain reduction (readings 14..16 — R, or S in M/S); `grDB`
 		/// is the first channel's. A publisher that sends fewer has one linked gain, so this copies `grDB`.
 		std::array<float, 3> grSecond { 0.0f, 0.0f, 0.0f };
@@ -201,7 +203,10 @@ public:
 	/// press on one never reaches the plot's own handlers, and the table is excluded from `barArea()`.
 	void setEditor(bool on);
 	bool editor() const noexcept { return editor_; }
-	static constexpr size_t kTableRows = 4;
+	static constexpr size_t kTableRows = 6;
+	/// THE TABLE'S ROWS: IN, OUT, RATIO, WIDTH, ATK, REL. Every row is a column of value boxes but RATIO, which is a read-out (the effective
+	/// downward and upward ratios, `ratioReadoutText`) and holds no box.
+	static constexpr size_t kRatioRow = 2;
 	static constexpr float kTableRowHeight = 17.0f;
 	static constexpr float kTablePad = 5.0f;
 	static constexpr float kTableHeight = kTableRows * kTableRowHeight + 2.0f * kTablePad;
@@ -213,6 +218,8 @@ public:
 	visage::Bounds tableArea() const;
 	/// A table cell's rectangle in this frame's coordinates, under its band.
 	visage::Bounds tableCell(size_t row, size_t band) const;
+	/// THE RATIO ROW'S TEXT for a band, `↓4:1 ↑2:1` style (down first): what the engine applies this block, live with modulation.
+	[[nodiscard]] std::string ratioReadoutText(size_t band) const;
 	[[nodiscard]] ValueBox* tableBoxForTest(size_t row, size_t band) const { return cells_[row][band].get(); }
 
 	/// THE RATIO TRACK a band's thumbs slide along, left to right, ratio 0 to 1.

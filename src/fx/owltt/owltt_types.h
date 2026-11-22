@@ -28,6 +28,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <span>
 
 // OWLTT (the reference's OTT) — 3-band upward/downward compressor with tonal shaping via CHARACTER and VIBE zones.
@@ -421,6 +423,25 @@ inline float ratioShiftOf(const Settings& s) {
 }
 inline float bandwidthShiftOf(const Settings& s) {
 	return s.bandwidth - 0.5f;
+}
+
+/// A RATIO AS A PLAYER READS IT, `N` of `N:1`: whole numbers from 10 up, one decimal below, `1:1` at rest (and for anything under 1.05, which is
+/// the ratio of a fraction of 5% or less). The ceiling (`BandCompressor::kRatioCeiling`, 100) reads `100:1`.
+inline std::string ratioText(float ratio) {
+	char buf[24];
+	if (!(ratio >= 1.05f)) {
+		return "1:1";
+	}
+	if (ratio >= 9.95f) {
+		std::snprintf(buf, sizeof buf, "%.0f:1", static_cast<double>(ratio));
+	}
+	else if (std::abs(ratio - std::round(ratio)) < 0.05f) {
+		std::snprintf(buf, sizeof buf, "%.0f:1", static_cast<double>(std::round(ratio)));
+	}
+	else {
+		std::snprintf(buf, sizeof buf, "%.1f:1", static_cast<double>(ratio));
+	}
+	return buf;
 }
 
 inline EffectiveBand effectiveBandOf(const BandParams& band, const Settings& s) {

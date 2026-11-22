@@ -953,6 +953,8 @@ fx::owltt::Param OwlttGraph::tableParam(size_t row, size_t band) {
 	using P = owltt::Param;
 	static constexpr P kTable[kTableRows][3] = {
 		{ P::LowInput, P::MidInput, P::HighInput },
+		{ P::LowLevel, P::MidLevel, P::HighLevel },
+		{ P::LowRatio, P::MidRatio, P::HighRatio }, // the read-out row: never bound to a box
 		{ P::LowWidth, P::MidWidth, P::HighWidth },
 		{ P::LowAttack, P::MidAttack, P::HighAttack },
 		{ P::LowRelease, P::MidRelease, P::HighRelease },
@@ -961,8 +963,15 @@ fx::owltt::Param OwlttGraph::tableParam(size_t row, size_t band) {
 }
 
 const char* OwlttGraph::tableCaption(size_t row) {
-	static constexpr const char* kCaptions[kTableRows] = { "IN", "WIDTH", "ATK", "REL" };
+	static constexpr const char* kCaptions[kTableRows] = { "IN", "OUT", "RATIO", "WIDTH", "ATK", "REL" };
 	return kCaptions[std::min(row, kTableRows - 1)];
+}
+
+std::string OwlttGraph::ratioReadoutText(size_t band) const {
+	const Meters m = meters();
+	const size_t b = std::min<size_t>(band, 2);
+	// DOWN FIRST, THEN UP: a down arrow for the downward compressor (acts above the threshold), an up arrow for the upward one (acts below the bandwidth bar).
+	return "\xE2\x86\x93" + owltt::ratioText(m.ratios[b]) + " \xE2\x86\x91" + owltt::ratioText(m.ratios[3 + b]);
 }
 
 visage::Bounds OwlttGraph::tableCell(size_t row, size_t band) const {
@@ -1015,11 +1024,14 @@ void OwlttGraph::setEditor(bool on) {
 	rail_ = on || rail_;
 	if (on) {
 		for (size_t row = 0; row < kTableRows; ++row) {
+			if (row == kRatioRow) {
+				continue; // a read-out, drawn in `draw`
+			}
 			for (size_t band = 0; band < 3; ++band) {
 				DeviceControl* ctrl = &control(static_cast<size_t>(tableParam(row, band)));
 				auto box = std::make_unique<ValueBox>(*ctrl, "");
 				box->setCompact(true);
-				if (row >= 2) {
+				if (row >= 4) {
 					// THE OFFSETS READ SIGNED FROM THEIR CENTRE through the device's own words (`kTextOps`): the box prints the
 					// declared unit unless it is told otherwise.
 					box->setReadoutFormatter([ctrl](double v) { return ctrl->textAt(v); });
@@ -1178,6 +1190,13 @@ OwlttGraph::Meters OwlttGraph::meters() const {
 		}
 		m.combinedGrDb = host_.readingAt(device_, 13);
 	}
+	// THE EFFECTIVE RATIOS (readings 20..25), when the publisher sends them; 1:1 otherwise.
+	if (host_.readingCountAt(device_) >= 26) {
+		for (size_t i = 0; i < 6; ++i) {
+			const float r = host_.readingAt(device_, 20 + i);
+			m.ratios[i] = r >= 1.0f ? r : 1.0f;
+		}
+	}
 	// EACH BAND'S SECOND CHANNEL (backlog LQ), or the first again from a publisher with one linked gain.
 	m.grSecond = m.grDB;
 	if (host_.readingCountAt(device_) >= 17) {
@@ -1203,7 +1222,8 @@ bool OwlttGraph::update() {
 	const bool moved = now.grDB != drawnMeters_.grDB || now.inputLevelDB != drawnMeters_.inputLevelDB
 	                   || now.outputLevelDB != drawnMeters_.outputLevelDB
 	                   || now.bandSaturating != drawnMeters_.bandSaturating
-	                   || now.combinedGrDb != drawnMeters_.combinedGrDb || now.grSecond != drawnMeters_.grSecond;
+	                   || now.combinedGrDb != drawnMeters_.combinedGrDb || now.grSecond != drawnMeters_.grSecond
+	                   || now.ratios != drawnMeters_.ratios;
 	if (!moved && !modulationMovedNow) {
 		return false;
 	}
@@ -1245,6 +1265,13 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			canvas.text(tableCaption(row), font(kKnobLabelSize), visage::Font::kLeft, t.x() + 7.0f,
 			            t.y() + kTablePad + static_cast<float>(row) * kTableRowHeight, kTableGutter - 7.0f,
 			            kTableRowHeight - 2.0f);
+		}
+		// THE RATIO ROW'S READ-OUT, centred in each band's column: the ratios the engine applies this block.
+		canvas.setColor(withAlpha(kMuted, 0.95f));
+		for (size_t band = 0; band < 3; ++band) {
+			const visage::Bounds c = tableCell(kRatioRow, band);
+			canvas.text(ratioReadoutText(band), font(kKnobReadoutSize), visage::Font::kCenter, c.x() - 8.0f, c.y(), c.width() + 16.0f,
+			            c.height());
 		}
 	}
 

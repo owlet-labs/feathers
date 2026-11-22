@@ -72,6 +72,7 @@
 #include "rack/rack_axes.h"
 #include "plugin/ui/parallel_rack_card.h"
 #include "plugin/ui/parallel_rack_expanded.h"
+#include "plugin/ui/rack_list_view.h"
 #include "plugin/ui/rack_views.h"
 #include "menu_placement_check.h"
 #include "plugin/ui/mod_state.h"
@@ -86,6 +87,8 @@
 // call the road it should reach. Last, because Xlib's macros collide with anything that names True,
 // False, Status or Bool.
 #include <X11/Xatom.h>
+#include <chrono>
+#include <thread>
 #include <X11/Xlib.h>
 #endif
 #include "plugin/ui/windowed_expanded.h"
@@ -4787,6 +4790,141 @@ TEST_CASE("device rename: in a real window the slot menu's and the header's Rena
 TEST_CASE("device presets: in a real window the header menu's Save preset opens a field that is visible, one line, on top and focused, and the saved name is in the Presets list - fx lane, Rack card in Tabs, Rack window") {
 	for (const int where : { 0, 1, 2 }) {
 		withDeviceVenue(where, [](DeviceRenameVenue& v) { proveSavePresetField(v); });
+	}
+}
+
+
+TEST_CASE("list view rename: in a real window a right press on a row's menu and a real double-click open the field - visible, one line, on top, focused - and typing names the chain, on the card and in the Rack window") {
+	namespace pr = feathers::rack::parallel;
+	for (const bool inWindow : { false, true }) {
+		CAPTURE(inWindow);
+		EditorFixture f;
+		feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+		bodies.prepare(48000.0, 4096);
+		const size_t at = bodies.addDevice(pr::kTraits.tag);
+		REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+		void* body = bodies.slotAtLane(at).storage.get();
+		for (size_t s = 0; s < kMaxFxSlots; ++s) {
+			if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+				(void)f.bridge.removeFxDevice(s);
+			}
+		}
+		const size_t slot = f.addFx(pr::kTraits.tag);
+		const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+		f.bridge.fxBodies().attach(id, body);
+		pr::Rack& rack = *pr::rackOf(body);
+		while (rack.chainCount() < 3) {
+			REQUIRE(rack.addChain() != SIZE_MAX);
+		}
+		BridgeDeviceHost host(f.bridge);
+		host.setField(id, static_cast<size_t>(pr::Param::View), 3.0f); // List
+		f.lane->resized();
+		Display* display = XOpenDisplay(nullptr);
+		REQUIRE(display != nullptr);
+		const int screen = DefaultScreen(display);
+		uint32_t w = 0, h = 0;
+		REQUIRE(f.gui.getSize(&w, &h));
+		const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+		                                            BlackPixel(display, screen));
+		XSync(display, False);
+		clap_window window {};
+		window.api = CLAP_WINDOW_API_X11;
+		window.x11 = parent;
+		REQUIRE(f.gui.setParent(&window));
+		f.gui.setPopoutWindowForTest(false);
+		visage::Frame* const top = f.gui.root()->topParentFrame();
+		ui::ParallelRackCard* card = treeFind<ui::ParallelRackCard>(top);
+		REQUIRE(card != nullptr);
+		ui::ParallelRackExpanded* panel = nullptr;
+		if (inWindow) {
+			f.lane->onExpandDevice(slot);
+			REQUIRE(f.gui.expandedForTest()->open());
+			panel = treeFind<ui::ParallelRackExpanded>(top);
+			REQUIRE(panel != nullptr);
+		}
+		const auto tick = [&] {
+			for (int i = 0; i < 3; ++i) {
+				(void)f.gui.tickForTest();
+				(void)card->update();
+				if (panel != nullptr) {
+					(void)panel->update();
+				}
+			}
+		};
+		tick();
+		ui::RackListView& list = inWindow ? panel->listForTest() : card->listForTest();
+		ui::RackChainRename& rename = inWindow ? panel->chainRenameForTest() : card->chainRenameForTest();
+		REQUIRE(list.isVisible());
+		REQUIRE(list.rowCountForTest() == 3);
+		const auto surfaceOf = [&](size_t row) {
+			const visage::Bounds b = list.rowBoundsForTest(row);
+			const visage::Point o = list.positionInWindow();
+			return visage::Point { o.x + b.x() + 8.0f, o.y + b.y() + b.height() * 0.5f };
+		};
+		const auto checkField = [&] {
+			REQUIRE(rename.renaming());
+			ui::TextField& field = rename.field();
+			CHECK(field.isVisible());
+			CHECK(field.height() > 0);
+			CHECK(field.height() <= 26); // ONE LINE
+			const visage::Point fieldAt = field.positionInWindow();
+			const visage::Point centre { fieldAt.x + static_cast<float>(field.width()) * 0.5f, fieldAt.y + static_cast<float>(field.height()) * 0.5f };
+			CHECK(fieldAt.x >= 0.0f);
+			CHECK(fieldAt.y >= 0.0f);
+			CHECK(fieldAt.x + static_cast<float>(field.width()) <= static_cast<float>(top->width()));
+			CHECK(fieldAt.y + static_cast<float>(field.height()) <= static_cast<float>(top->height()));
+			CHECK(top->frameAtPoint(centre) == static_cast<visage::Frame*>(&field)); // nothing drawn over it
+			CHECK(field.hasKeyboardFocus());
+			CHECK(focusedUnder(top) == static_cast<visage::Frame*>(&field));
+		};
+		// RIGHT PRESS ON ROW 1: the menu, its real pick, the popup's own dismissal.
+		pressAtWindow(top, surfaceOf(1), true);
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*top);
+		REQUIRE(popup != nullptr);
+		REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+		popup->timerCallback();
+		(void)f.gui.tickForTest();
+		checkField();
+		rename.field().begin("");
+		rename.field().textInput("Kick");
+		CHECK(keyFromFocusUp(&rename.field(), visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		CHECK_FALSE(rename.renaming());
+		CHECK(rack.chainLabel(1) == "Kick");
+		tick();
+		CHECK(list.rowForTest(1)->summaryForTest().find("Kick") == 0);
+		// A REAL DOUBLE-CLICK ON ROW 2: two presses of one gesture, the second counted as the second, a real interval apart.
+		{
+			const visage::Point at = surfaceOf(2);
+			visage::Frame* const down = top->frameAtPoint(at);
+			REQUIRE(down == static_cast<visage::Frame*>(list.rowForTest(2)));
+			const auto event = [&](bool isDown, int count) {
+				visage::MouseEvent e;
+				e.window_position = at;
+				e.position = at - down->positionInWindow();
+				e.event_frame = down;
+				e.button_id = visage::kMouseButtonLeft;
+				e.button_state = isDown ? visage::kMouseButtonLeft : visage::kMouseButtonNone;
+				e.is_down = isDown;
+				e.repeat_click_count = count;
+				return e;
+			};
+			down->processMouseDown(event(true, 1));
+			down->processMouseUp(event(false, 1));
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+			down->processMouseDown(event(true, 2));
+			down->processMouseUp(event(false, 2));
+			(void)f.gui.tickForTest();
+		}
+		checkField();
+		rename.field().begin("");
+		rename.field().textInput("Snare");
+		CHECK(keyFromFocusUp(&rename.field(), visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		CHECK(rack.chainLabel(2) == "Snare");
+		CHECK(rack.chainLabel(1) == "Kick");
+		f.bridge.fxBodies().detach(id, body);
+		f.gui.destroy();
+		XDestroyWindow(display, parent);
+		XCloseDisplay(display);
 	}
 }
 

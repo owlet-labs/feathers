@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/parallel_rack_expanded.h"
+#include "plugin/ui/rack_list_view.h"
 #include "plugin/ui/menu_anchor.h"
 
 #include "plugin/ui/stored_edit.h"
@@ -192,6 +193,10 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	chainRename_ = std::make_unique<RackChainRename>(*model_, *this, notifier_);
 	tabs_->setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, *tabs_, anchor); });
 	tabs_->setRenameHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->begin(slot, *tabs_, anchor); });
+	list_ = std::make_unique<RackListView>(*model_, host_, id_, *chainRename_);
+	list_->setSummaryFn([this](size_t slot) { return model_->chainLabel(slot); });
+	addChild(list_.get());
+	list_->setVisible(false);
 	pads_->gridForTest().setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, pads_->gridForTest(), anchor); });
 	padAdd_ = std::make_unique<RackPadAdd>(*model_, notifier_);
 	padAdd_->onAdded([this](size_t) {
@@ -268,7 +273,7 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 		// TABS: after the tab column. PADS: beside the pads panel (and its Follow chip), which stands before the pane and the rail.
 		const float top = railsTop();
 		const visage::Point padsN = pads ? pads_->naturalSize() : visage::Point { 0.0f, 0.0f };
-		const float padsAcross = pads ? padsN.x + kPad : RackTabBar::kThickness + kPad * 0.5f;
+		const float padsAcross = pads ? padsN.x + kPad : selectorWidth() + kPad * 0.5f;
 		p.x = railsLeft() + padsAcross + n.x + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
 		p.y = std::max(std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad, top + n.y + kPad);
 		if (pads) {
@@ -282,9 +287,9 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 	}
 	// **TABS, NO PANE: THE WINDOW IS THE TAB COLUMN, THE FRONT CHAIN'S RAIL AND NOTHING ELSE** — never the sum of every chain's rail, so eight tabs
 	// make the window no wider than two over the same front content.
-	if (model_ != nullptr && model_->view() == RackViewKind::Tabs) {
+	if (model_ != nullptr && tabbedView(model_->view())) {
 		const ChainRail* front = viewedRail();
-		p.x = railsLeft() + RackTabBar::kThickness + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
+		p.x = railsLeft() + selectorWidth() + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
 		p.y = std::max(std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad,
 		               railsTop() + tabsColumnLength() + kPad * 0.5f + RackTabBar::kThickness + kPad);
 		if (front != nullptr) {
@@ -302,7 +307,7 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 }
 
 bool ParallelRackExpanded::paneOn() const {
-	return model_ != nullptr && !hostedInPane_ && (model_->view() == RackViewKind::Tabs || model_->view() == RackViewKind::Pads)
+	return model_ != nullptr && !hostedInPane_ && (tabbedView(model_->view()) || model_->view() == RackViewKind::Pads)
 	       && std::lround(frontControl_->value()) >= 1;
 }
 
@@ -384,8 +389,15 @@ float ParallelRackExpanded::bandsTop() const { return kPad + kModeRow; }
 
 
 float ParallelRackExpanded::tabsColumnLength() const {
+	if (model_ != nullptr && model_->view() == RackViewKind::List) {
+		return RackListView::heightFor(model_->chainCount()); // every row; the layout cuts it to the room and the list scrolls
+	}
 	const size_t n = model_ != nullptr ? tabbedChains(*model_).size() : 0;
 	return static_cast<float>(n) * RackTabBar::kMaxLength;
+}
+
+float ParallelRackExpanded::selectorWidth() const {
+	return model_ != nullptr && model_->view() == RackViewKind::List ? RackListView::kColumnWidth : RackTabBar::kThickness;
 }
 
 visage::Bounds ParallelRackExpanded::leftColumnFoot() const {
@@ -400,7 +412,7 @@ visage::Bounds ParallelRackExpanded::addSlotBounds() const {
 		return { railsLeft() + railsWidth() + phantomsWidth() + kPad * 0.5f, railsTop() + kPad, kAddWidth, kAddHeight };
 	}
 	// TABS: A "+" AT THE END OF THE TAB COLUMN, one tab's width, under the last tab.
-	if (model_ != nullptr && model_->view() == RackViewKind::Tabs) {
+	if (model_ != nullptr && tabbedView(model_->view())) {
 		return { railsLeft(), railsTop() + std::min(tabsColumnLength(), std::max(0.0f, static_cast<float>(height()) - railsTop() - kPad - RackTabBar::kThickness)) + kPad * 0.5f,
 		         RackTabBar::kThickness, RackTabBar::kThickness };
 	}
@@ -410,7 +422,7 @@ visage::Bounds ParallelRackExpanded::addSlotBounds() const {
 bool ParallelRackExpanded::addShown() const {
 	const auto mode = static_cast<pr::Mode>(std::lround(modeControl_->value()));
 	// TABS HOLD AT MOST EIGHT CHAINS: past them the add control is gone (not greyed).
-	if (model_ != nullptr && model_->view() == RackViewKind::Tabs && model_->chainCount() >= kMaxRackTabs) {
+	if (model_ != nullptr && model_->view() == RackViewKind::Tabs && model_->chainCount() >= kMaxRackTabs) { // the list has no such cap
 		return false;
 	}
 	return (pr::kRoleModes & pr::kModeBit(mode)) == 0;
@@ -505,10 +517,18 @@ void ParallelRackExpanded::layOut() {
 	// selected pad's chain. STRIPS: every rail, as before.
 	const RackViewKind view = model_->view();
 	tabs_->setVisible(view == RackViewKind::Tabs);
-	frontSeg_->setVisible((view == RackViewKind::Tabs || view == RackViewKind::Pads) && !hostedInPane_);
+	list_->setVisible(view == RackViewKind::List);
+	frontSeg_->setVisible((tabbedView(view) || view == RackViewKind::Pads) && !hostedInPane_);
 	pads_->setVisible(view == RackViewKind::Pads);
 	followChip_->setVisible(view == RackViewKind::Pads);
-	if (view == RackViewKind::Tabs) {
+	if (view == RackViewKind::List) {
+		// **THE LIST IS THE TABS' COLUMN, WIDER**: the same place (after the controls column), `kColumnWidth` across, as tall as the rows need or the
+		// window has room for, and scrolling past that. The cards or the pane follow it as they follow the tabs.
+		const float room = std::max(0.0f, static_cast<float>(height()) - top - kPad);
+		list_->setBounds(x0, top, RackListView::kColumnWidth, std::min(room, tabsColumnLength()));
+		railX0 = x0 + RackListView::kColumnWidth + kPad * 0.5f;
+	}
+	else if (view == RackViewKind::Tabs) {
 		// **THE TABS RUN DOWN THE LEFT SIDE, AFTER THE CONTROLS COLUMN** (a thin column, as the card's is in a left-right lane): the bar no longer
 		// stretches across the window, so it sets no width — the content (the rail's cards, or the pane) does. Each tab is at most `kMaxLength` long,
 		// so a few chains are a short column, not tabs spread over the window's height.
@@ -755,7 +775,7 @@ bool ParallelRackExpanded::follow() {
 		applying_ = true;
 		// IN TABS THE CHAIN IN FRONT IS ALWAYS OPEN and no rail has a collapse control (the chain's stored flag is the card's arrow's, and is
 		// left as it is): a collapsed chain was a chain nobody could see how to add an effect to. Strips is as it always was.
-		const bool tabs = model_ != nullptr && model_->view() == RackViewKind::Tabs;
+		const bool tabs = model_ != nullptr && tabbedView(model_->view());
 		for (size_t i = 0; i < rails_.size(); ++i) {
 			const bool wantOpen = tabs || rack->open(i);
 			rails_[i]->rail->setCollapsible(!tabs);
@@ -874,7 +894,7 @@ bool ParallelRackExpanded::showForMode() {
 		changed = true;
 	}
 	// TABS IS OFFERED ONLY TO A RACK OF EIGHT CHAINS OR FEWER (hidden, not greyed); see the card's.
-	const bool tabsOffered = model_->chainCount() <= kMaxRackTabs || model_->view() == RackViewKind::Tabs;
+	const bool tabsOffered = model_->chainCount() <= kMaxRackTabs || model_->view() == RackViewKind::Tabs; // the pair offers List at any count
 	if (viewSeg_->isVisible() != tabsOffered || viewPair_->isVisible() == tabsOffered) {
 		viewSeg_->setVisible(tabsOffered);
 		viewPair_->setVisible(!tabsOffered);
@@ -927,6 +947,9 @@ bool ParallelRackExpanded::updateContent() {
 	}
 	if (model_->view() != RackViewKind::Strips) {
 		tabs_->refresh();
+		if (model_->view() == RackViewKind::List) {
+			moved = list_->refresh() || moved;
+		}
 		if (model_->view() == RackViewKind::Pads) {
 			pads_->refresh();
 			// THE STRIKE PULSE: one look a tick; no frame is told when nothing was struck.
@@ -1072,6 +1095,9 @@ void ParallelRackExpanded::modulationBound(ModState* mod, EditHistory* history) 
 	history_ = history;
 	if (padAdd_ != nullptr) {
 		padAdd_->setHistory(history);
+	}
+	if (list_ != nullptr) {
+		list_->setModulation(mod, history);
 	}
 	if (chainRename_ != nullptr) {
 		chainRename_->setHistory(history);

@@ -2672,6 +2672,12 @@ bool Rack::chainPeak(size_t index, float& peak) const noexcept {
 	return true;
 }
 
+void Rack::publishChainPeakForTest(size_t index, float peak) noexcept {
+	if (index < chains_.size()) {
+		chains_[index]->peak.store(peak, std::memory_order_relaxed);
+	}
+}
+
 uint32_t Rack::latencySamples(double sampleRate) const noexcept {
 	// THE SLOWEST ROUTED CHAIN'S — every routed chain, every phantom role and the dry wait for it. Asked of the live
 	// lineup, which is what runs.

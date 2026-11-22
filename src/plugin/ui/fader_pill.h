@@ -98,6 +98,7 @@ public:
 	}
 	[[nodiscard]] const std::string& caption() const noexcept { return caption_; }
 	[[nodiscard]] const std::string& readout() const noexcept { return readout_; }
+	[[nodiscard]] const std::string& captionForTest() const noexcept { return caption_; }
 	/// **THE CAPTION FITS THE PILL** at rest (no readout), as `draw` centres it — a caption wider than the pill is
 	/// drawn off both ends and reads as a fragment ("eedbac").
 	[[nodiscard]] bool captionFits() const;

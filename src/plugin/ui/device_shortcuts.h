@@ -40,11 +40,13 @@ struct AddShortcut {
 	float modeValue;
 };
 
-inline constexpr std::array<AddShortcut, 2> kAddShortcuts { {
+inline constexpr std::array<AddShortcut, 3> kAddShortcuts { {
 	{ "Tabs", "RACK", static_cast<size_t>(rack::parallel::Param::View), 1.0f, static_cast<size_t>(rack::parallel::Param::Mode),
 	  static_cast<float>(rack::parallel::Mode::Parallel) },
 	{ "Pads", "RACK", static_cast<size_t>(rack::parallel::Param::View), 2.0f, static_cast<size_t>(rack::parallel::Param::Mode),
 	  static_cast<float>(rack::parallel::Mode::Keyed) },
+	{ "List", "RACK", static_cast<size_t>(rack::parallel::Param::View), 3.0f, static_cast<size_t>(rack::parallel::Param::Mode),
+	  static_cast<float>(rack::parallel::Mode::Parallel) },
 } };
 
 /// The shortcut a menu id names in a menu that offered `offered` devices, or null.

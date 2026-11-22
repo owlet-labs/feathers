@@ -30,6 +30,7 @@
 #include "fx/filter/filter_types.h"
 #include "fx/phaser/phaser.h"
 #include "fx/sklitter/sklitter_types.h"
+#include "rack/parallel_rack.h"
 #include "plugin/audition.h"
 #include "plugin/bridge_device_host.h"
 #include "plugin/device_preset.h"
@@ -453,6 +454,47 @@ TEST_CASE("JF: the Delay's Ping-Pong saved as On loads as Stereo, through its al
 		REQUIRE(readDevicePreset(oldBytes, &contents, &dly::kDescriptor, &report));
 		CHECK(report.countOf(rack::LoadReport::Kind::LabelUnknown) == 0);
 		CHECK(contents.field[pp] == saved); // On -> 1 (Stereo), Off -> 0
+	}
+}
+
+TEST_CASE("Rack List view: the View is stored by label, a patch saved with any label loads as that view, and List is the fourth") {
+	namespace pr = feathers::rack::parallel;
+	const size_t view = static_cast<size_t>(pr::Param::View);
+	CHECK(std::string(pr::kViewNames[0]) == "Strips");
+	CHECK(std::string(pr::kViewNames[1]) == "Tabs");
+	CHECK(std::string(pr::kViewNames[2]) == "Pads"); // the older three keep their places: a patch saved before List loads as it was
+	CHECK(std::string(pr::kViewNames[3]) == "List");
+	for (const float saved : { 0.0f, 1.0f, 2.0f, 3.0f }) {
+		CAPTURE(saved);
+		rack::RackEngine engine { rack::kRackAxes, hostCatalogue() };
+		engine.prepare(48000.0, 4096);
+		rack::RackBridge bridge(engine);
+		bridge.prepare(48000.0, 4096);
+		const DeviceInstanceId id = bridge.addDevice(pr::kTraits.tag);
+		REQUIRE(id != kNoInstance);
+		bridge.setField(id, view, saved);
+		std::vector<uint8_t> bytes;
+		REQUIRE(captureDevicePreset(bridge, pr::kDescriptor, id, &bytes));
+		const std::string text(bytes.begin(), bytes.end());
+		const std::string key = std::string("\"") + pr::kParamDescs[view].key + "\": \"";
+		const std::string label = pr::kViewNames[static_cast<size_t>(saved)];
+		REQUIRE(text.find(key + label + "\"") != std::string::npos); // the document stores the word, not the number
+		DevicePresetContents contents;
+		rack::LoadReport report;
+		REQUIRE(readDevicePreset(bytes, &contents, &pr::kDescriptor, &report));
+		CHECK(report.countOf(rack::LoadReport::Kind::LabelUnknown) == 0);
+		CHECK(contents.field[view] == saved);
+		// A PATCH SAVED BEFORE LIST (the word is one of the older three) is the same bytes: put each old word in and read it.
+		for (size_t old = 0; old < 3; ++old) {
+			std::string was = text;
+			was.replace(was.find(key + label + "\""), (key + label + "\"").size(), key + pr::kViewNames[old] + "\"");
+			const std::vector<uint8_t> wasBytes(was.begin(), was.end());
+			DevicePresetContents loaded;
+			rack::LoadReport r2;
+			REQUIRE(readDevicePreset(wasBytes, &loaded, &pr::kDescriptor, &r2));
+			CHECK(r2.countOf(rack::LoadReport::Kind::LabelUnknown) == 0);
+			CHECK(loaded.field[view] == static_cast<float>(old));
+		}
 	}
 }
 

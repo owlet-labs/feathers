@@ -4798,6 +4798,9 @@ struct DeviceRenameVenue {
 	std::function<size_t()> count; ///< devices in the card's chain, which a stray key must not change
 	std::function<void()> tick;
 	ui::LaneSelection* selection = nullptr;
+	::Window window = 0;
+	Display* display = nullptr;
+	std::function<void()> pump; ///< one pass of the window's own events
 };
 
 /// THE DEVICE RENAME FIELD, BY BOTH ROADS ("..." menu and right-click on the head), on a card in a real window: visible, one line, inside
@@ -5009,6 +5012,9 @@ void withDeviceVenue(int where, Prove prove) {
 	visage::Frame* const top = f.gui.root()->topParentFrame();
 	DeviceRenameVenue v;
 	v.top = top;
+	v.window = parent;
+	v.display = display;
+	v.pump = [&f] { f.gui.processEvents(); };
 	v.host = &host;
 	ui::ParallelRackCard* card = where == 0 ? nullptr : treeFind<ui::ParallelRackCard>(top);
 	ui::ParallelRackExpanded* panel = nullptr;
@@ -5324,7 +5330,7 @@ TEST_CASE("column folds: in a real window, a real press on the macros header fol
 	XCloseDisplay(display);
 }
 
-TEST_CASE("column folds: in a real window, real presses on the Rack window's two headers fold each half alone, and the other half's controls stay put") {
+TEST_CASE("column folds: in a real window the Rack window's two headers take real presses and fold each half alone with the other half's controls staying put") {
 	withDeviceVenue(2, [](DeviceRenameVenue& v) {
 		ui::ParallelRackExpanded* panel = treeFind<ui::ParallelRackExpanded>(v.top);
 		REQUIRE(panel != nullptr);
@@ -5333,6 +5339,24 @@ TEST_CASE("column folds: in a real window, real presses on the Rack window's two
 			pressAtWindow(v.top, { o.x + static_cast<float>(header.width()) * 0.5f, o.y + static_cast<float>(header.height()) * 0.5f }, false);
 			v.tick();
 		};
+		// WITH FEATHERS_FOLD_SHOTS=<dir>, A PHOTOGRAPH OF THE WINDOW IN EACH STATE (cropped by the caller at the printed origin).
+		const auto shot = [&](const char* state) {
+			const char* keep = std::getenv("FEATHERS_FOLD_SHOTS");
+			if (keep == nullptr || *keep == '\0') {
+				return;
+			}
+			XMapWindow(v.display, v.window);
+			XRaiseWindow(v.display, v.window);
+			XFlush(v.display);
+			for (int slice = 0; slice < 300; ++slice) {
+				v.pump();
+				::usleep(4000);
+			}
+			const visage::Point o = panel->positionInWindow();
+			std::fprintf(stderr, "RACKSHOT %s %d %d\n", state, static_cast<int>(o.x), static_cast<int>(o.y));
+			(void)capturePpm(v.window, std::string(keep) + "/rackwin-" + state + ".ppm");
+		};
+		shot("open");
 		const visage::Bounds mode0 = panel->modeBoxBoundsForTest();
 		const visage::Bounds macro0 = panel->macroBoundsForTest(0);
 		REQUIRE(panel->macroShownForTest(0));
@@ -5344,6 +5368,7 @@ TEST_CASE("column folds: in a real window, real presses on the Rack window's two
 		CHECK_FALSE(panel->macroShownForTest(0));
 		CHECK(panel->inspectorShownForTest());
 		CHECK(panel->modeBoxBoundsForTest() == mode0);
+		shot("macros-folded");
 		press(panel->macrosHeaderForTest());
 		CHECK_FALSE(panel->macrosFolded());
 		CHECK(panel->macroShownForTest(0));
@@ -5355,6 +5380,7 @@ TEST_CASE("column folds: in a real window, real presses on the Rack window's two
 		CHECK_FALSE(panel->inspectorShownForTest());
 		CHECK(panel->macroShownForTest(0));
 		CHECK(panel->macroBoundsForTest(0).y() < macro0.y());
+		shot("inspector-folded");
 		press(panel->inspectorHeaderForTest());
 		CHECK_FALSE(panel->inspectorFolded());
 		CHECK(panel->inspectorShownForTest());

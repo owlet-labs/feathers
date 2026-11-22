@@ -545,7 +545,7 @@ visage::PopupMenu ParallelRackExpanded::chainPickerMenu(bool playing) {
 void ParallelRackExpanded::layOut() {
 	const float cell = kColumnWidth / static_cast<float>(kPerRow);
 	// THE FOLD HEADERS, in the column's top pad: the inspector's, then the macros'. Re-set unconditionally, as every bound here is.
-	constexpr float kInspectorHeaderWidth = 92.0f;
+	constexpr float kInspectorHeaderWidth = 84.0f;
 	inspectorHeader_->setBounds(kPad, 0.0f, kInspectorHeaderWidth, kPad);
 	macrosHeader_->setBounds(kPad + kInspectorHeaderWidth, 0.0f, kColumnWidth - kInspectorHeaderWidth, kPad);
 	// THE MODE ROW: the dropdown at the top of the left cell, the position's knob in the right one.

@@ -689,7 +689,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	// audible, and 18 dB of margin before it could reach cancellation. It is a starting point to be
 	// set by ear, not a derived quantity.
 	{ "env", "Env", -48.0, 0.0, -18.0, false, device::Unit::Decibel, {}, false, false,
-	  "Input trim on the envelope follower, in dB. -42 is the hardware-reference level; 0 is full sensitivity" },
+	  "Input trim on the envelope follower, in dB. -42 is the reference level; 0 is full sensitivity" },
 
 	// **AFTER `Env`, BECAUSE THE ENUM PUTS `Rotate` AFTER `EnvTrim` AND THIS ARRAY IS INDEXED BY IT.**
 	// The first draft put this block before `Env` and the two went out of step: `kParamDescs[EnvTrim]`

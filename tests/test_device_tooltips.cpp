@@ -55,7 +55,20 @@ bool mentionsHardwareName(const char* text) {
 	// The name is assembled rather than spelled so the source itself does not carry it: a repository-wide
 	// search for the name then finds only licence notices, and this guard still finds it in any string.
 	static const std::string kName = std::string("del") + "uge";
-	return lower.find(kName) != std::string::npos;
+	if (lower.find(kName) != std::string::npos) {
+		return true;
+	}
+	// The hardware and firmware words the ported devices came from. Plain musician language only: a tooltip
+	// says what the control does, not which box it was copied from. (The words are matched lower-cased, so a
+	// product number such as 303 is caught wherever it appears in a string.)
+	static const char* const kWords[] = { "firmware", "mpc", "303", "808", "909", "elektron", "moog", "roland",
+		                                  "akai", "korg" };
+	for (const char* word : kWords) {
+		if (lower.find(word) != std::string::npos) {
+			return true;
+		}
+	}
+	return false;
 }
 
 } // namespace

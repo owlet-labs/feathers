@@ -695,7 +695,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kOffOnNames,
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "On: the pill's amount scales the zones' own Q, and 50% is exactly theirs. Off: the firmware's default Q (2)"},
+     .tooltip = "On: the pill's amount scales the zones' own Q, and 50% is exactly theirs. Off: the default Q (2)"},
     {.key = "disperser_detune_power", .name = "Disperser Detune On",
      .min = 0.0,
      .max = 1.0,

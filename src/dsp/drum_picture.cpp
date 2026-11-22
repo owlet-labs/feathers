@@ -93,6 +93,12 @@ void heardSpectrum(Kind kind, const Fields& f, int count, partials::PartialSpect
 		band(metalCentreHz(l.tone) / base, std::max(0.05, noise));
 		break;
 	case Kind::Clap: band(clapCentreHz(l.tone) / base * p, 1.0); break;
+	case Kind::Water:
+		// THE DROPS' PITCH over the bed's band.
+		put(p, 1.0);
+		put(p * std::exp2(static_cast<double>(l.rise) * 1.1), 0.5);
+		band((0.5 + 1.5 * static_cast<double>(l.tone)) * p, std::max(0.05, static_cast<double>(l.flow)));
+		break;
 	case Kind::Friction:
 		put(p, 1.0);
 		put(p * (2.1 + 1.3 * static_cast<double>(l.metal)), 0.4);

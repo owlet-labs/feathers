@@ -275,6 +275,10 @@ drum::Controls refControls(const dd::Row& r) {
 	c.grainSeconds = std::exp2(v(Param::Grain));
 	c.pressure = v(Param::Pressure);
 	c.speed = v(Param::Speed);
+	c.waterRate = std::exp2(v(Param::Rate));
+	c.rise = v(Param::Rise);
+	c.flow = v(Param::Flow);
+	c.splash = v(Param::Splash);
 	c.play = static_cast<int>(std::lround(v(Param::Trigger)));
 	c.width = v(Param::Width);
 	c.pitchMode = static_cast<int>(std::lround(v(Param::PitchMode)));
@@ -311,7 +315,7 @@ Out refRender(const dd::Row& r, double velocity, int frames, uint32_t count = 0,
 		h.hit.render(o.l.data() + s, n, o.r.data() + s);
 	}
 	const drum::Kind k = kindOf(r);
-	if (!(k == drum::Kind::Membrane || k == drum::Kind::Snare || k == drum::Kind::Clap)) {
+	if (!(k == drum::Kind::Membrane || k == drum::Kind::Snare || k == drum::Kind::Clap || k == drum::Kind::Water)) {
 		o.r = o.l;
 	}
 	return o;
@@ -2129,7 +2133,7 @@ TEST_CASE("drone: every kind that can hold a hit sustains in Drone, stays awake,
 			sounding += peakOfOut(o) > 0.0f ? 1 : 0;
 			CHECK(d.holds());
 		}
-		CHECK(sounding > 250); // a drone is not a hit: nearly every block carries sound
+		CHECK(sounding >= 10); // it sounds on its own (a sparse one, a few drops a second, has silent blocks between)
 		d.set(Param::Trigger, 0.0);
 		(void)run(d, {}, 4096);
 		CHECK(d.dsp().droneForTest() == nullptr);

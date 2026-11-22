@@ -255,7 +255,7 @@ void DrumDeviceExpanded::layOut() {
 	seat(body, dd::Param::Drive, kPillW, kPillH);
 	seat(body, dd::Param::DriveCurve, 184.0f, 22.0f);
 	seat(body, dd::Param::DriveTone, kPillW, kPillH);
-	for (const dd::Param p : { dd::Param::Density, dd::Param::Grain, dd::Param::Pressure, dd::Param::Speed, dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
+	for (const dd::Param p : { dd::Param::Density, dd::Param::Grain, dd::Param::Pressure, dd::Param::Speed, dd::Param::Rate, dd::Param::Rise, dd::Param::Flow, dd::Param::Splash, dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
 	                           dd::Param::WireDecay, dd::Param::ClickDecay, dd::Param::BellStart, dd::Param::BellEnd, dd::Param::BellTime,
 	                           dd::Param::Bell2Hz, dd::Param::Bell2Time, dd::Param::KickHold, dd::Param::KickDip, dd::Param::KickDipTime,
 	                           dd::Param::ClickSweep, dd::Param::ClickSweepTime, dd::Param::StartPhase }) {

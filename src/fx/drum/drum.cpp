@@ -43,7 +43,7 @@ constexpr float kHpFloor = 1.0e-9f;
 
 [[nodiscard]] bool stereoWritten(Kind k) noexcept {
 	// Membrane, Snare and Clap write the right ear themselves (Width); the others are one signal.
-	return k == Kind::Membrane || k == Kind::Snare || k == Kind::Clap;
+	return k == Kind::Membrane || k == Kind::Snare || k == Kind::Clap || k == Kind::Water;
 }
 
 } // namespace
@@ -104,6 +104,10 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	c.grainSeconds = exp2Of(s, Param::Grain);
 	c.pressure = static_cast<double>(s.at(Param::Pressure));
 	c.speed = static_cast<double>(s.at(Param::Speed));
+	c.waterRate = exp2Of(s, Param::Rate);
+	c.rise = static_cast<double>(s.at(Param::Rise));
+	c.flow = static_cast<double>(s.at(Param::Flow));
+	c.splash = static_cast<double>(s.at(Param::Splash));
 	c.play = s.index(Param::Trigger);
 	c.width = static_cast<double>(s.at(Param::Width));
 	// THE TERRAIN'S PITCH MODE is the kit's alone (the engine's Pitched mode keeps the half-semitone fine pitch as it always was).

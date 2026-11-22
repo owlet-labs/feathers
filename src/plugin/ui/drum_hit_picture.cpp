@@ -696,6 +696,34 @@ void HitPicture::draw(visage::Canvas& canvas) {
 			     k == 1 ? 4.0f : 2.0f);
 		}
 		break;
+	case drum::Kind::Water: {
+		// THE DROPS: a rising chirp from the size's pitch, one trace per few sizes within Metal's spread, over the bed's band; ticks at the rate.
+		const double life = std::clamp((0.012 + 0.08 * (1.0 - static_cast<double>(laws_.snap))) * std::sqrt(900.0 / laws_.hz), 0.004, 0.4);
+		for (int i = -1; i <= 1; ++i) {
+			const double start = laws_.hz * std::exp2(1.2 * static_cast<double>(laws_.metal) * i * 0.8);
+			for (int step = 0; step < kSteps; ++step) {
+				const double t = secondsAt(plotLeft() + w * static_cast<float>(step) / kSteps);
+				if (t > life * 3.0) {
+					break;
+				}
+				const double hz = start * std::exp2(2.2 * laws_.rise * std::min(1.0, t / life));
+				canvas.setColor(alphaOf(kValue, seen(std::pow(10.0, -3.0 * t / life)) * (i == 0 ? 1.0f : 0.5f)));
+				canvas.fill(plotLeft() + w * static_cast<float>(step) / kSteps, yOfHz(hz) - 1.5f, w / kSteps + 0.5f, 3.0f);
+			}
+		}
+		band((0.5 + 1.5 * static_cast<double>(laws_.tone)) * laws_.hz, laws_.t60, laws_.flow);
+		for (int k = 0; k < 120; ++k) {
+			const double t = (static_cast<double>(k) + 0.5) / std::max(0.0625, laws_.waterRate);
+			const float x = xOf(t);
+			if (x > plotRight()) {
+				break;
+			}
+			const double a = laws_.play == drum::kPlayOneShot ? std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60)) : 1.0;
+			canvas.setColor(alphaOf(kInk, 0.5f * seen(a)));
+			canvas.fill(x, specTop(), 1.0f, specBottom() - specTop());
+		}
+		break;
+	}
 	case drum::Kind::Friction: {
 		// THE RESONANCES the bow drives, over the slips' band; the envelope below is the bow's strength (held flat while it is held).
 		const double ring = std::clamp(0.1 * laws_.t60, 0.01, 1.5);

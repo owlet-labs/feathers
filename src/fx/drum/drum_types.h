@@ -71,10 +71,11 @@ inline constexpr uint32_t kSnareKinds = 1u << 2;
 inline constexpr uint32_t kClapKinds = 1u << 4;
 inline constexpr uint32_t kSweepKinds = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 5); ///< the Sweep field
 inline constexpr uint32_t kSweepTimeKinds = (1u << 0) | (1u << 5);                       ///< Sweep Time
-inline constexpr uint32_t kNoiseKinds = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 6) | (1u << 7); ///< Noise, Velocity Noise
-inline constexpr uint32_t kMetalKinds = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5) | (1u << 6) | (1u << 7);   ///< the Metal field
+inline constexpr uint32_t kNoiseKinds = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 6) | (1u << 7); ///< Noise, Velocity Noise (not Water: its Flow is the bed's level)
+inline constexpr uint32_t kMetalKinds = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8);   ///< the Metal field
 inline constexpr uint32_t kParticleKinds = 1u << 6;                                      ///< Density, Grain
 inline constexpr uint32_t kFrictionKinds = 1u << 7;                                      ///< Pressure, Speed
+inline constexpr uint32_t kWaterKinds = 1u << 8;                                         ///< Rate, Rise, Flow, Splash
 inline constexpr uint32_t kWidthKinds = (1u << 2) | (1u << 4);                           ///< Width
 inline constexpr uint32_t kTensionKinds = (1u << 0) | (1u << 1) | (1u << 2);             ///< Vel Tension (Kick, Membrane, Snare)
 
@@ -150,9 +151,13 @@ enum class Param : uint8_t {
 	Grain,
 	Pressure,
 	Speed,
+	Rate,
+	Rise,
+	Flow,
+	Splash,
 	kCount
 };
-static_assert(static_cast<size_t>(Param::kCount) == 69);
+static_assert(static_cast<size_t>(Param::kCount) == 73);
 
 inline constexpr int16_t kKindControl = static_cast<int16_t>(Param::Kind);
 inline constexpr int16_t kTriggerControl = static_cast<int16_t>(Param::Trigger);
@@ -196,7 +201,7 @@ inline constexpr device::Traits kTraits {
 };
 
 /// A DRUM'S KIND NAMES, in the engine's own order (`feathers::drum::kKindNames`).
-inline constexpr const char* kKindLabels[] = { "Kick", "Membrane", "Snare", "Metal", "Clap", "String", "Particle", "Friction" };
+inline constexpr const char* kKindLabels[] = { "Kick", "Membrane", "Snare", "Metal", "Clap", "String", "Particle", "Friction", "Water" };
 static_assert(std::size(kKindLabels) == feathers::drum::kKindCount);
 
 inline constexpr device::ParamDesc kParamDescs[] = {
@@ -205,7 +210,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "Whether the drum is in the chain"},
 	{.key = "drum_kind", .name = "Kind", .min = 0.0, .max = static_cast<double>(feathers::drum::kKindCount - 1), .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kKindLabels, .modulatable = false,
-	 .tooltip = "Which drum this is: a pitch-swept Kick, a ringing Membrane, a Snare, a Metal cymbal or hat, a Clap, a struck String, a Particle shower of grains, or a Friction bow rubbed on a resonator"},
+	 .tooltip = "Which drum this is: a pitch-swept Kick, a ringing Membrane, a Snare, a Metal cymbal or hat, a Clap, a struck String, a Particle shower of grains, or a Friction bow rubbed on a resonator, or Water, drips to rain"},
 	{.key = "drum_note", .name = "Note", .min = 0.0, .max = 127.0, .def = 36.0, .stepped = true,
 	 .unit = device::Unit::Note, .names = {}, .modulatable = false,
 	 .tooltip = "The key this drum answers. Every note passes through whatever it does, so several drums on one key sound together",
@@ -238,7 +243,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "How hard the hit is pushed into its Drive Curve: rounder and louder"},
 	{.key = "drum_trigger", .name = "Trigger", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kTriggerNames, .modulatable = false,
-	 .tooltip = "One-shot plays the whole hit whatever the key does. Gate holds it while the key is down and damps it to Release when it is let go. Drone sounds all the time, with no key (a kind that can be held: Particle, Friction)"},
+	 .tooltip = "One-shot plays the whole hit whatever the key does. Gate holds it while the key is down and damps it to Release when it is let go. Drone sounds all the time, with no key (a kind that can be held: Particle, Friction, Water)"},
 	{.key = "drum_voices", .name = "Voices", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kVoicesNames, .modulatable = false,
 	 .tooltip = "How many hits of this drum may ring at once; one more fades the oldest out"},
@@ -513,6 +518,26 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "How fast the bow moves (a Friction): slow is a creak, one tick a slip, and fast locks to the resonance and holds a tone",
 	 .gateControl = kKindControl,
 	 .gateMask = kFrictionKinds},
+	{.key = "drum_rate", .name = "Rate", .min = -4.0, .max = 9.965784284662087, .def = 2.0, .stepped = false,
+	 .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
+	 .tooltip = "How many drops or bubbles a second at the full strength of the shower (Water): a single drip every few seconds, a brook, hundreds a second fuse into rain or a river",
+	 .gateControl = kKindControl,
+	 .gateMask = kWaterKinds},
+	{.key = "drum_rise", .name = "Rise", .min = 0.0, .max = 1.0, .def = 0.6, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "How far each drop's pitch climbs as it rings (Water): none is a plain ping or a hit on a surface, a lot is a bubble rising",
+	 .gateControl = kKindControl,
+	 .gateMask = kWaterKinds},
+	{.key = "drum_flow", .name = "Flow", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "A bed of band-limited noise under the drops (Water): the wash of moving water, its colour following the drops' size and Tone",
+	 .gateControl = kKindControl,
+	 .gateMask = kWaterKinds},
+	{.key = "drum_splash", .name = "Splash", .min = 0.0, .max = 1.0, .def = 0.3, .stepped = false,
+	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
+	 .tooltip = "A short burst of noise as each drop lands (Water): with Rise at none it is rain on a surface, with Rise up and Splash down, bubbles",
+	 .gateControl = kKindControl,
+	 .gateMask = kWaterKinds},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 

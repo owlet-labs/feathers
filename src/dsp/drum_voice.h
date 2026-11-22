@@ -60,12 +60,12 @@
 
 namespace feathers::drum {
 
-enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, kCount };
+enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, Water, kCount };
 inline constexpr size_t kKindCount = static_cast<size_t>(Kind::kCount);
 /// The labels a Choice stores (the schema ledger stores a Choice by label, so this order may change; a label may not
 /// without a ChoiceAlias).
 inline constexpr std::array<const char* const, kKindCount> kKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap",
-	                                                                    "String", "Particle", "Friction" };
+	                                                                    "String", "Particle", "Friction", "Water" };
 
 /// **PLAY MODES**: how a hit is held. One-shot rings the whole hit out; Gate holds it while the key is down and damps it to Release when it is let go;
 /// Drone sounds from the moment the device runs, no key needed, until it is switched off. A mode is offered on a kind only where the engine has an
@@ -74,7 +74,7 @@ inline constexpr int kPlayOneShot = 0;
 inline constexpr int kPlayGate = 1;
 inline constexpr int kPlayDrone = 2;
 /// Whether a kind has an excitation that goes on (a random process), so that Gate holds it and Drone runs it for ever.
-[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle || k == Kind::Friction; }
+[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle || k == Kind::Friction || k == Kind::Water; }
 
 /// THE SEVEN DRUM FIELDS (proposal §3.1), each in [0, 1]: the terrain's, or a scaler's override of it.
 struct Fields {
@@ -174,6 +174,11 @@ struct Controls {
 	/// THE FRICTION'S (a bow rubbed on a resonator): how hard it presses, and how fast it moves.
 	double pressure{0.5};
 	double speed{0.6};
+	/// THE WATER'S: events a second at full strength (drips to rain), how far each chirp rises, the noise bed's level, and each event's splash.
+	double waterRate{4.0};
+	double rise{0.6};
+	double flow{0.0};
+	double splash{0.3};
 	int play{0};
 	friend bool operator==(const Controls&, const Controls&) = default;
 };
@@ -346,6 +351,10 @@ struct Laws {
 	double grainT60{0.004};
 	double pressure{0.5};
 	double speed{0.6};
+	double waterRate{4.0};
+	double rise{0.6};
+	double flow{0.0};
+	double splash{0.3};
 	int play{0};
 	friend bool operator==(const Laws&, const Laws&) = default;
 };
@@ -498,6 +507,8 @@ private:
 	float renderMetal();
 	float renderParticle();
 	float renderFriction();
+	/// One sample of both ears (a drop lands anywhere in the stereo field).
+	void renderWater(float& left, float& right);
 	float renderClap();
 	float clapTooth();
 	float noise() { return noise_.next(); }
@@ -679,6 +690,53 @@ public:
 	/// The friction's slips so far, and the interval it is waiting out (samples).
 	int64_t frictionSlipsForTest() const { return slips_; }
 	double frictionPeriodForTest() const { return slipPeriod_; }
+	/// The water's events so far, the chirps sounding now, and the first sounding chirp's frequency in Hz (0 with none).
+	int64_t waterEventsForTest() const { return events_; }
+	int waterChirpsForTest() const {
+		int n = 0;
+		for (const WaterChirp& c : chirps_) {
+			n += c.on ? 1 : 0;
+		}
+		return n;
+	}
+	double waterChirpHzForTest(int i) const { return chirps_[static_cast<size_t>(i)].on ? chirps_[static_cast<size_t>(i)].inc * sr_ : 0.0; }
+	/// The chirp most recently born: its start frequency and the octaves it will rise over its life.
+	double waterLastStartHzForTest() const { return lastStartHz_; }
+	double waterLastRiseOctavesForTest() const { return lastRiseOct_; }
+	float waterLastPanForTest() const { return lastPan_; }
+	float waterSplashForTest() const { return splashEnv_.v; }
+private:
+	// WATER: events (a drop, a bubble) arrive as a Poisson process of the Rate; each starts a sine chirp that rises from its size's pitch, and
+	// a short noise transient (the splash); under them runs a band-limited noise bed (the flow) whose colour follows the size.
+	static constexpr int kWaterChirps = 8;
+	struct WaterChirp {
+		bool on{false};
+		double phase{0.0};
+		double inc{0.0};    ///< cycles per sample
+		double grow{1.0};   ///< the per-sample factor that rises it
+		float amp{0.0f};
+		float decay{1.0f};
+		float gl{0.7f};
+		float gr{0.7f};
+		double octavesLeft{0.0};
+	};
+	std::array<WaterChirp, kWaterChirps> chirps_ {};
+	int64_t events_{0};
+	double lastStartHz_{0.0};
+	double lastRiseOct_{0.0};
+	float lastPan_{0.0f};
+	Env splashEnv_ {};
+	float splashL_{0.7f};
+	float splashR_{0.7f};
+	float splashLp_{0.0f};
+	float splashLpCoef_{1.0f};
+	Svf flowBp_ {};
+	Svf flowBpR_ {};
+	float flowWobble_{0.0f};
+	float flowWobbleCoef_{0.0f};
+	float flowGain_{0.0f};
+	ks::PluckNoise waterNoiseR_{1};
+public:
 private:
 	// FRICTION: a stick-slip generator drives a resonator. Each slip is an impulse (a bow letting go); how often they come is the Speed (a slow bow
 	// creaks, one tick a slip; a fast one locks to the resonance and sustains a tone), how hard, the Pressure; the Noise field's roughness

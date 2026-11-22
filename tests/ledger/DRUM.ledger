@@ -2,7 +2,7 @@
 # difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
 device DRUM - schema=1
 param DRUM drum_enabled unit=choice choice=Off|On
-param DRUM drum_kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String|Particle|Friction
+param DRUM drum_kind unit=choice choice=Kick|Membrane|Snare|Metal|Clap|String|Particle|Friction|Water
 param DRUM drum_note unit=note min=0 max=127 stepped=1
 param DRUM drum_level unit=decibel min=-60 max=6 stepped=0
 param DRUM drum_pan unit=percent min=-1 max=1 stepped=0
@@ -70,6 +70,10 @@ param DRUM drum_density unit=log_hertz min=-2 max=10.965784284662087 stepped=0
 param DRUM drum_grain unit=log_seconds min=-13.287712379549449 max=-1 stepped=0
 param DRUM drum_pressure unit=percent min=0 max=1 stepped=0
 param DRUM drum_speed unit=percent min=0 max=1 stepped=0
+param DRUM drum_rate unit=log_hertz min=-4 max=9.965784284662087 stepped=0
+param DRUM drum_rise unit=percent min=0 max=1 stepped=0
+param DRUM drum_flow unit=percent min=0 max=1 stepped=0
+param DRUM drum_splash unit=percent min=0 max=1 stepped=0
 block DRUM drum.likes.v1 floats=721
 retired DRUM drum_velocity_zone 2026-11-17 the velocity mode, a coordinate that wrapped through Level, Tone and Tension, became a row of depths (drum_vel_level, drum_vel_tone, drum_vel_snap, drum_vel_tension, drum_velocity_noise); the old default is the new default
 retired DRUM drum_wires 2026-11-17 the wires' mode, a coordinate that wrapped through four named mixes, became one amount each (drum_wire_contour, drum_wire_buzz, drum_wire_threshold, drum_wire_gate, drum_body_gate); the old default is the new default

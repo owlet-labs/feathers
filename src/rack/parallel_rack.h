@@ -1075,6 +1075,12 @@ private:
 	/// The pads' keys waiting for the audio thread, and what they were drained into.
 	UiNoteRing padNotes_;
 	std::vector<device::NoteEvent> padIn_;
+	/// WHICH PAD KEYS ARE DOWN (audio thread): a pad strike enters at this rack, so the host's note context never saw it; the chains' devices that
+	/// follow the note (HARM's sines, a keytracker) are handed it from here. `padLast_` is the newest key struck, -1 when none is down.
+	std::array<uint64_t, 2> padHeld_ {};
+	int padLast_ = -1;
+	void padFold(int key, bool on) noexcept;
+	[[nodiscard]] device::NoteContext padNoteFor(const Branch* b, device::NoteContext note) const noexcept;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call
 	size_t owedCount_ = 0;
 	bool releaseAll_ = false;

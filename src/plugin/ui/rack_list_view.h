@@ -73,7 +73,7 @@ public:
 	static constexpr float kPitch = kRowHeight + kRowGap;
 	static constexpr float kGutter = 14.0f;
 	static constexpr float kBarWidth = 4.0f;
-	static constexpr float kColumnWidth = 250.0f;
+	static constexpr float kColumnWidth = 176.0f;
 	/// How many rows a list shows before it scrolls, where its height is the card's to choose (a card in a top-down lane).
 	static constexpr size_t kCardRows = 5;
 	/// The height of `rows` rows, and the most a view of this many shows.

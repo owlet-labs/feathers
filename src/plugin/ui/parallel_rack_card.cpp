@@ -447,6 +447,13 @@ std::string chainSummary(const rack::InnerChain* chain) {
 
 ChainFader::ChainFader(ChainControl& control) : control_(control) {
 	installTooltipHover(*this, *this);
+	onMouseEnter() = [this](const visage::MouseEvent&) { setHot(true); };
+	onMouseExit() = [this](const visage::MouseEvent&) {
+		hovered_ = false;
+		if (!dragging_) {
+			setHot(false);
+		}
+	};
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		if (e.repeatClickCount() >= 2) {
 			// A DOUBLE-CLICK IS UNITY, one undo step.
@@ -459,8 +466,16 @@ ChainFader::ChainFader(ChainControl& control) : control_(control) {
 		startY_ = e.position.y;
 		startValue_ = control_.value();
 		dragging_ = false;
+		fine_ = e.isShiftDown();
+		setHot(true);
 	};
 	onMouseDrag() = [this](const visage::MouseEvent& e) {
+		// FINE DRAG: with Shift held the same travel moves the value `kFineRatio` times less. A change of mode re-anchors, so the value does not jump.
+		if (e.isShiftDown() != fine_) {
+			fine_ = e.isShiftDown();
+			startY_ = e.position.y;
+			startValue_ = control_.value();
+		}
 		const float dy = startY_ - e.position.y; // up raises
 		if (!dragging_) {
 			if (std::fabs(dy) <= 3.0f) {
@@ -468,9 +483,14 @@ ChainFader::ChainFader(ChainControl& control) : control_(control) {
 			}
 			dragging_ = true;
 			control_.beginGesture();
+			startY_ = e.position.y; // the travel counts from where the drag began
+			startValue_ = control_.value();
+			setHot(true);
+			return;
 		}
 		const device::ParamDesc& d = control_.desc();
-		control_.setValue(std::clamp(startValue_ + static_cast<double>(dy / kSpan) * (d.max - d.min), d.min, d.max));
+		const float span = fine_ ? kSpan * kFineRatio : kSpan;
+		control_.setValue(std::clamp(startValue_ + static_cast<double>(dy / span) * (d.max - d.min), d.min, d.max));
 		redraw();
 	};
 	onMouseUp() = [this](const visage::MouseEvent&) {
@@ -479,7 +499,22 @@ ChainFader::ChainFader(ChainControl& control) : control_(control) {
 			control_.endGesture();
 			redraw();
 		}
+		if (!hovered_) {
+			setHot(false);
+		}
 	};
+}
+
+void ChainFader::setHot(bool hot) {
+	if (hot) {
+		hovered_ = true;
+	}
+	if (hot != hot_) {
+		hot_ = hot;
+		if (onActive_) {
+			onActive_(hot);
+		}
+	}
 }
 
 void ChainFader::draw(visage::Canvas& canvas) {
@@ -534,6 +569,12 @@ ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint1
 	addChild(meter_.get());
 	fader_->setVisible(false); // the column's; `resized` shows it when the strip is a column
 	meter_->setVisible(true);  // THE CARD'S STRIPS AND THE WINDOW'S BOTH METER THEIR CHAIN
+	fader_->setActiveHandler([this](bool on) {
+		if (on != readout_ && rowMode_) {
+			readout_ = on;
+			redraw();
+		}
+	});
 	(void)refresh();
 	installTooltipHover(*this, *this);
 	onMouseDown() = [this](const visage::MouseEvent& e) {
@@ -609,11 +650,11 @@ bool ChainStrip::refresh() {
 	reading_ = now;
 	// THE MARKS IN WHOLE PIXELS (`cardMeterMarksFor`): a reading that moves less than a pixel draws the same marks and asks
 	// for no frame.
-	CardMeterMarks marks = cardMeterMarksFor(rowMode_ ? meterTrack_.width() : meterTrack_.height(), !rowMode_, now);
+	CardMeterMarks marks = cardMeterMarksFor(meterTrack_.height(), true, now);
 	if (rowMode_) {
-		// A BAR: the line's marks, made as thick as the track (the level grows from the left, an over from the right).
-		marks.level = { marks.level.x(), 0.0f, marks.level.width(), meterTrack_.height() };
-		marks.over = { marks.over.x(), 0.0f, marks.over.width(), meterTrack_.height() };
+		// A SLIM VERTICAL METER: the line's marks, made as wide as the track (the level rises from the foot, an over falls from the top).
+		marks.level = { 0.0f, marks.level.y(), meterTrack_.width(), marks.level.height() };
+		marks.over = { 0.0f, marks.over.y(), meterTrack_.width(), marks.over.height() };
 	}
 	moved = meter_->setMarks(marks) || moved;
 	if (column_) {
@@ -626,8 +667,8 @@ void ChainStrip::resized() {
 	const float w = static_cast<float>(width());
 	const float h = static_cast<float>(height());
 	column_ = (onRemove_ || inRail_) && w < kColumnBelow;
-	pill_->setVisible(!column_);
-	fader_->setVisible(column_);
+	pill_->setVisible(!column_ && !rowMode_);
+	fader_->setVisible(column_ || rowMode_);
 	if (column_) {
 		// THE CHANNEL STRIP: label, M, S, then the fader and the meter SIDE BY SIDE in what is left, the × at the foot.
 		const float cx = std::round((w - kChipWidth) * 0.5f);
@@ -655,6 +696,26 @@ void ChainStrip::resized() {
 	else {
 		float x = summary_.empty() ? 0.0f : std::round(w * summaryFraction_) + kGap;
 		float right = w;
+		if (rowMode_) {
+			// THE LIST ROW: M, S, the slim fader and the slim meter at the right, side by side, the name taking the rest.
+			const float inner = std::max(0.0f, h - 2.0f);
+			meterTrack_ = { right - kRowMeterWidth - 1.0f, 1.0f, kRowMeterWidth, inner };
+			right -= kRowMeterWidth + 1.0f + kGap * 0.5f;
+			fader_->setBounds(right - kRowFaderWidth, 1.0f, kRowFaderWidth, inner);
+			right -= kRowFaderWidth + kGap;
+			const float chipY = std::max(0.0f, (h - SwitchChip::kHeight) * 0.5f);
+			solo_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
+			right -= kChipWidth + kGap;
+			mute_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
+			right -= kChipWidth + kGap;
+			rowNameWidth_ = std::max(0.0f, right);
+			keyBox_->setVisible(false);
+			chokeBox_->setVisible(false);
+			removeBounds_ = {};
+			meter_->setBounds(meterTrack_);
+			(void)refresh();
+			return;
+		}
 		if (onRemove_) {
 			removeBounds_ = { right - kChipWidth, 0.0f, kChipWidth, h };
 			right -= kChipWidth + kGap;
@@ -662,16 +723,8 @@ void ChainStrip::resized() {
 		else {
 			removeBounds_ = {};
 		}
-		if (rowMode_) {
-			// THE BAR: a few pixels tall, vertically centred, wide enough to read (up to `kBarMaxWidth`, less in a narrow row).
-			const float barW = std::clamp(std::round(w * 0.16f), kBarMinWidth, kBarMaxWidth);
-			meterTrack_ = { right - barW, std::round((h - kBarThickness) * 0.5f), barW, kBarThickness };
-			right -= barW + kGap;
-		}
-		else {
-			meterTrack_ = { right - kMeterWidth, 1.0f, kMeterWidth, std::max(0.0f, h - 2.0f) };
-			right -= kMeterWidth + kGap;
-		}
+		meterTrack_ = { right - kMeterWidth, 1.0f, kMeterWidth, std::max(0.0f, h - 2.0f) };
+		right -= kMeterWidth + kGap;
 		const float chipY = std::max(0.0f, (h - SwitchChip::kHeight) * 0.5f);
 		solo_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
 		right -= kChipWidth + kGap;
@@ -702,8 +755,15 @@ void ChainStrip::draw(visage::Canvas& canvas) {
 		canvas.setColor(kMuted);
 		// A ROW'S NAME STARTS CLEAR OF THE SELECTED ROW'S EDGE BAR (the accent stripe along its left), so the whole name reads.
 		const float inset = rowMode_ ? kRowTextInset : 0.0f;
-		canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, inset, 0.0f, std::max(0.0f, std::round(width() * summaryFraction_) - inset),
-		            height());
+		const float room = rowMode_ ? rowNameWidth_ : std::round(width() * summaryFraction_);
+		if (rowMode_ && readout_) {
+			// THE HAND IS ON THE FADER: its value takes the name's place, so the precision a pill's text gave is still read.
+			canvas.setColor(kInk);
+			canvas.text(level_.text(), font(kKnobLabelSize), visage::Font::kLeft, inset, 0.0f, std::max(0.0f, room - inset), height());
+		}
+		else {
+			canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, inset, 0.0f, std::max(0.0f, room - inset), height());
+		}
 	}
 	if (column_ && !label_.empty()) {
 		canvas.setColor(kMuted);

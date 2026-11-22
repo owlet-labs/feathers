@@ -5602,4 +5602,85 @@ TEST_CASE("view flow: in a real window Tabs and Pads, like List, run the chain i
 	}
 }
 
+
+namespace {
+
+/// A REAL DRAG THROUGH THE WINDOW ROOT: the press on the frame under `from`, the moves to `to` in a few steps, the release there. `shift` is
+/// held throughout; `clicks` 2 makes the press a double-click's second.
+void dragAtWindow(visage::Frame* top, visage::Point from, visage::Point to, bool shift = false, int clicks = 1) {
+	visage::Frame* const down = top->frameAtPoint(from);
+	REQUIRE(down != nullptr);
+	const auto eventAt = [&](visage::Point where, bool isDown) {
+		visage::MouseEvent e;
+		e.window_position = where;
+		e.position = where - down->positionInWindow();
+		e.event_frame = down;
+		e.button_id = visage::kMouseButtonLeft;
+		e.button_state = isDown ? visage::kMouseButtonLeft : visage::kMouseButtonNone;
+		e.is_down = isDown;
+		e.repeat_click_count = clicks;
+		e.modifiers = shift ? visage::kModifierShift : 0;
+		return e;
+	};
+	down->processMouseDown(eventAt(from, true));
+	for (int step = 1; step <= 6; ++step) {
+		const float t = static_cast<float>(step) / 6.0f;
+		down->processMouseDrag(eventAt({ from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t }, true));
+	}
+	down->processMouseUp(eventAt(to, false));
+}
+
+} // namespace
+
+TEST_CASE("list fader: in a real window a row's slim fader is dragged vertically (up is louder), fine-dragged with Shift, reset by a double-click, shows its value in place of the name, and its meter rises with the peak") {
+	ListWindowRig r(3, 3, false);
+	ui::RackListView& list = r.panel->listForTest();
+	REQUIRE(list.isVisible());
+	CHECK(list.nativeWidth() == static_cast<int>(std::lround(ui::RackListView::kColumnWidth * list.dpiScale())));
+	ui::ChainStrip& row = *list.rowForTest(1);
+	const uint16_t chain = r.rack->chainIdAt(1);
+	BridgeDeviceHost probeHost(r.f.bridge);
+	ui::ChainControl probe(probeHost, r.id, chain, ui::ChainControl::Kind::Level);
+	const device::ParamDesc& d = probe.desc();
+	const auto centre = [&] {
+		const visage::Bounds b = row.levelFaderBoundsForTest();
+		const visage::Point o = row.positionInWindow();
+		return visage::Point { o.x + b.x() + b.width() * 0.5f, o.y + b.y() + b.height() * 0.5f };
+	};
+	probe.setValue(d.min + 0.5 * (d.max - d.min));
+	r.tick();
+	REQUIRE(r.top->frameAtPoint(centre()) == &row.levelFrame()); // the press lands on the fader itself
+	const double mid = probe.value();
+	// UP IS LOUDER, by the travel's share of the range (`ChainFader::kSpan` pixels for all of it).
+	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, -24.0f });
+	const double up = probe.value();
+	CHECK(up > mid);
+	CHECK(up - mid == doctest::Approx((24.0 - 3.0) / ui::ChainFader::kSpan * (d.max - d.min)).epsilon(0.02)); // less the 3 px slop the press leaves
+	// DOWN IS QUIETER.
+	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, 30.0f });
+	const double down = probe.value();
+	CHECK(down < up);
+	// THE VALUE TAKES THE NAME'S PLACE while the hand is on the fader, as the value the control itself says.
+	CHECK(row.readoutShownForTest());
+	CHECK(row.readoutTextForTest() == probe.text());
+	// FINE DRAG: the same travel with Shift moves the value kFineRatio times less.
+	probe.setValue(mid);
+	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, -24.0f }, true);
+	const double fine = probe.value() - mid;
+	CHECK(fine > 0.0);
+	CHECK(fine == doctest::Approx((up - mid) / ui::ChainFader::kFineRatio).epsilon(0.1));
+	// A DOUBLE-CLICK IS THE DEFAULT, one undo step.
+	dragAtWindow(r.top, centre(), centre(), false, 2);
+	CHECK(probe.value() == d.def);
+	// THE METER RISES WITH THE PEAK: a published quiet reading then a louder one, the marks read by value (the row is in view).
+	r.rack->publishChainPeakForTest(1, 0.1f);
+	r.tick();
+	const float quiet = row.meterMarksForTest().level.height();
+	CHECK(quiet == std::round(ui::cardMeterReadingFor(0.1f).level * row.meterBoundsForTest().height()));
+	r.rack->publishChainPeakForTest(1, 0.5f);
+	r.tick();
+	CHECK(row.meterMarksForTest().level.height() > quiet);
+	CHECK(row.meterMarksForTest().level.height() == std::round(ui::cardMeterReadingFor(0.5f).level * row.meterBoundsForTest().height()));
+}
+
 #endif // defined(__linux__)

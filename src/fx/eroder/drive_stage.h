@@ -274,6 +274,27 @@ private:
 				r = yr + 2.0f * shape * (r - yr);
 			});
 		}
+		else if (mode == DriveMode::Lean && rotInc_ > 0.0) {
+			// LEAN'S LEAN SWAPS SIDES. A Lean side is its odd part plus or minus its even part (`f(u) = o + e`, the left; the right is `-f(-u) = o - e`); the
+			// rotation scales the even part by `c = cos(2 pi phase)`: left `o + c e`, right `o - c e`. The two sides' power is equal at every instant (`o` is
+			// odd and `e` even, so they do not correlate), the mono sum is `o`, with no even content at any instant, and the lean runs from full left through
+			// none to full right and back once a turn. At `c = 1` (rate off) this is not run: the branch above is today's Lean to the bit.
+			const auto c = static_cast<float>(std::cos(2.0 * 3.141592653589793 * rotPhase_));
+			rotPhase_ += rotInc_;
+			rotPhase_ -= std::floor(rotPhase_);
+			over_.process(&left, &right, 1, [gain, shape, c](float& l, float& r) {
+				const float ul = l * gain;
+				const float ur = r * gain;
+				const float fl = shapeDrive(DriveMode::Lean, ul, shape, gain);
+				const float fln = shapeDrive(DriveMode::Lean, -ul, shape, gain);
+				const float fr = shapeDrive(DriveMode::Lean, ur, shape, gain);
+				const float frn = shapeDrive(DriveMode::Lean, -ur, shape, gain);
+				l = 0.5f * (fl - fln) + c * 0.5f * (fl + fln);
+				r = 0.5f * (fr - frn) - c * 0.5f * (fr + frn);
+			});
+			left *= norm;
+			right *= norm;
+		}
 		else {
 			const CurveExtras curve = s.curve;
 			over_.process(&left, &right, 1, [mode, gain, shape, curve](float& l, float& r) {

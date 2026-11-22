@@ -727,7 +727,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	kept.rateHz = tap.rateHz;
 	combShaper_.set(kept);
 	combTapShaper_.set(tap);
-	if (tap.rateHz > 0.0f && (driveIsPaunchLaw(tap.mode) || driveIsPaunchOdd(tap.mode))) {
+	if (tap.rateHz > 0.0f && driveRotates(tap.mode)) {
 		const double placed = rotationClock_.place(static_cast<double>(tap.rateHz), tickOffset_, sampleRate_);
 		if (placed >= 0.0) {
 			combShaper_.placeRotation(placed);

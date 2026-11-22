@@ -440,6 +440,11 @@ inline constexpr bool driveIsPaunchOdd(DriveMode mode) {
 inline constexpr bool driveIsMidLaw(DriveMode mode) {
 	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode);
 }
+/// THE TYPES THE ROTATION LFO TURNS: the four Paunch Types (their angle) and Lean (its lean, which swaps sides: `shape` is unchanged, the two sides' lean is scaled by
+/// `cos(2 pi phase)` in opposite senses, `drive_stage.h`).
+inline constexpr bool driveRotates(DriveMode mode) {
+	return driveIsMidLaw(mode) || mode == DriveMode::Lean;
+}
 /// A Type that is not a curve: the stage does something else with it. Crush, Decimate, Slew and Lopside never oversample; the
 /// two Paunch laws do (they are in the oversampled region), but have no make-up and no saturation, so the curve's helpers
 /// (`shapeDrive`, `driveMakeUp`) treat them as the identity.

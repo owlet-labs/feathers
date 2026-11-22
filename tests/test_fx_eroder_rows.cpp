@@ -18,6 +18,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
+#include "fx/dyn/oversampler.h"
 #include "fx/eroder/drive_stage.h"
 #include "fx/eroder/eroder_types.h"
 
@@ -361,4 +362,112 @@ TEST_CASE("The third row's curve values count only for their own Types, and sit 
 	CHECK(fresh.driveHard == 0.0f);
 	CHECK(fresh.slotA.sharp == 0.0f);
 	CHECK(fresh.slotB.bias == 0.0f);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// (b) LEAN'S RATE.                                                                                   //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+struct Complex2 {
+	double re = 0.0;
+	double im = 0.0;
+};
+/// The complex component at `hz` over `x[from, from + n)`, at the absolute sample phase (so two runs are comparable).
+Complex2 componentAt(const std::vector<float>& x, size_t from, size_t n, double hz) {
+	Complex2 c;
+	for (size_t i = 0; i < n; ++i) {
+		const double w = 2.0 * kPi * hz * static_cast<double>(from + i) / kRate;
+		c.re += x[from + i] * std::cos(w);
+		c.im += x[from + i] * std::sin(w);
+	}
+	c.re *= 2.0 / static_cast<double>(n);
+	c.im *= 2.0 / static_cast<double>(n);
+	return c;
+}
+DriveSettings leanWith(float rateHz) {
+	DriveSettings d = deriveDrive(0.7f, DriveMode::Lean, 1.0f, kRate);
+	d.leaveDc = true; // the offset is not this case's business
+	d.rateHz = rateHz;
+	return d;
+}
+} // namespace
+
+TEST_CASE("Lean's Rate: off is today's Lean to the bit (the restated oversampled curve, both sides)") {
+	const DriveSettings d = leanWith(0.0f);
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.setTrimOnForTest(false);
+	stage.set(d);
+	fx::dyn::Oversampler4x over;
+	over.reset();
+	for (size_t i = 0; i < 9600; ++i) {
+		const float x = sineAt(i, 700.0, 0.6) + 0.1f * sineAt(i, 1900.0, 1.0);
+		float l = x;
+		float r = 0.8f * x;
+		stage.process(l, r);
+		float wl = x;
+		float wr = 0.8f * x;
+		const float gain = d.gain;
+		const float shape = d.shape;
+		over.process(&wl, &wr, 1, [gain, shape](float& a, float& b) {
+			a = shapeDrive(DriveMode::Lean, a * gain, shape, gain);
+			b = shapeDriveRight(DriveMode::Lean, b * gain, shape, gain);
+		});
+		wl *= d.norm;
+		wr *= d.norm;
+		REQUIRE(l == wl);
+		REQUIRE(r == wr);
+	}
+}
+
+TEST_CASE("Lean's Rate: the lean swaps sides by cos(phase) - the left's 2nd harmonic is c E, the right's -c E, the mono sum has none at any instant, the sides stay level over a turn") {
+	constexpr double kLfoHz = 1.0;
+	constexpr size_t kFrames = 48000; // exactly one turn
+	const auto gen = [](size_t i, float& l, float& r) { l = r = sineAt(i, 1000.0, 0.5); };
+	std::vector<float> still;
+	std::vector<float> stillR;
+	const std::vector<float> stillL = runLeft(leanWith(0.0f), kFrames, gen, &stillR);
+	std::vector<float> turnR;
+	const std::vector<float> turnL = runLeft(leanWith(static_cast<float>(kLfoHz)), kFrames, gen, &turnR);
+	// WINDOWS of 480 samples (ten periods); the LFO moves 1 % of a turn across one, so c is read at its middle.
+	size_t checked = 0;
+	for (size_t from = 2400; from + 480 <= kFrames; from += 2400) { // (not the first window: the oversampler is settling)
+		const double mid = (static_cast<double>(from) + 240.0) / kRate;
+		const double c = std::cos(2.0 * kPi * kLfoHz * mid);
+		const Complex2 e = componentAt(stillL, from, 480, 2000.0);
+		const Complex2 l = componentAt(turnL, from, 480, 2000.0);
+		const Complex2 r = componentAt(turnR, from, 480, 2000.0);
+		const double eMag = std::hypot(e.re, e.im);
+		REQUIRE(eMag > 0.05); // NON-VACUOUS: Lean at Shape 100% has a 2nd harmonic
+		CAPTURE(from);
+		CAPTURE(c);
+		// THE LEFT'S IS c TIMES THE UNROTATED, THE RIGHT'S MINUS c TIMES IT.
+		CHECK(std::abs(l.re - (c * e.re)) < 0.03 * eMag);
+		CHECK(std::abs(l.im - (c * e.im)) < 0.03 * eMag);
+		CHECK(std::abs(r.re - (-c * e.re)) < 0.03 * eMag);
+		CHECK(std::abs(r.im - (-c * e.im)) < 0.03 * eMag);
+		// THE MONO SUM'S 2nd harmonic is nil.
+		CHECK(std::hypot(l.re + r.re, l.im + r.im) < 0.01 * eMag);
+		++checked;
+	}
+	CHECK(checked == 19);
+	// OVER THE WHOLE TURN THE TWO SIDES ARE LEVEL (the mean square of each, DC removed).
+	const auto power = [](const std::vector<float>& x) {
+		double sum = 0.0;
+		double sq = 0.0;
+		for (const float v : x) {
+			sum += v;
+			sq += static_cast<double>(v) * v;
+		}
+		const double m = sum / static_cast<double>(x.size());
+		return sq / static_cast<double>(x.size()) - m * m;
+	};
+	CHECK(power(turnL) == doctest::Approx(power(turnR)).epsilon(0.01));
+	// AND THE DIRECTION SWAPS: the first quarter turn leans left (+), the third leans right.
+	const Complex2 early = componentAt(turnL, 0, 480, 2000.0);
+	const Complex2 late = componentAt(turnL, 24000, 480, 2000.0);
+	const Complex2 e0 = componentAt(stillL, 0, 480, 2000.0);
+	CHECK(early.re * e0.re + early.im * e0.im > 0.0);
+	CHECK(late.re * e0.re + late.im * e0.im < 0.0);
 }

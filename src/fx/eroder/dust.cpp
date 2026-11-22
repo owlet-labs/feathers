@@ -659,7 +659,7 @@ void Dust::tick(const Settings& settings) noexcept {
 	driveBlocks_ = driveOffset;
 	drive.rateHz = rotationRateHz(settings.track, pitchSemitones_, settings.driveRate, settings.driveRateMult, sampleRate_);
 	shaper_.set(drive);
-	if (drive.rateHz > 0.0f && (driveIsPaunchLaw(drive.mode) || driveIsPaunchOdd(drive.mode))) {
+	if (drive.rateHz > 0.0f && driveRotates(drive.mode)) {
 		const double placed = rotationClock_.place(static_cast<double>(drive.rateHz), tickOffset_, sampleRate_);
 		if (placed >= 0.0) {
 			shaper_.placeRotation(placed);
@@ -668,7 +668,7 @@ void Dust::tick(const Settings& settings) noexcept {
 	slotA_.set(slotA);
 	slotB_.set(slotB);
 	const auto placeSlot = [this](DriveStage& stage, RotationClock& clock, const DriveSettings& d) {
-		if (d.rateHz > 0.0f && (driveIsPaunchLaw(d.mode) || driveIsPaunchOdd(d.mode))) {
+		if (d.rateHz > 0.0f && driveRotates(d.mode)) {
 			const double placed = clock.place(static_cast<double>(d.rateHz), tickOffset_, sampleRate_);
 			if (placed >= 0.0) {
 				stage.placeRotation(placed);

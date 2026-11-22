@@ -4623,3 +4623,32 @@ TEST_CASE("PHOTO: the Rack window in Tabs and in Pads, the chain in front runnin
 		r.f.root->removeChild(&backdrop);
 	}
 }
+
+TEST_CASE("rack pane: the pane always shows the first device of the chain's MAIN list; a device's site chains (pre and post) are not that list, and the pane does not read them") {
+	// A RACK CHAIN HAS ONE FLAT DEVICE LIST (its record has a single chain), so "the first device" is the first of that list and the rest of the chain is
+	// the rail beside the pane, in chain order. A device's PRE and POST chains are sites of their own, below the device: opening one changes neither the
+	// pane's device nor the rail's list.
+	for (const int view : { 1, 3 }) {
+		CAPTURE(view);
+		PaneRack p(2, 3, view);
+		REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+		feathers::rack::RackBridge& chain = p.chain(0);
+		const feathers::DeviceInstanceId first = chain.deviceAtPosition(0);
+		REQUIRE(first != feathers::kNoInstance);
+		CHECK(p.pane().device() == first);
+		// THE REST OF THE CHAIN, in order, is the rail's: every device after the first.
+		ui::ChainColumn* col = p.column(0);
+		REQUIRE(col != nullptr);
+		CHECK(col->hiddenLead() == 1);
+		REQUIRE(col->deviceCount() == chain.chainLength());
+		for (size_t k = 1; k < chain.chainLength(); ++k) {
+			CHECK(col->deviceAt(k) == chain.deviceAtPosition(k));
+		}
+		// A SITE OPENED ON THE FIRST DEVICE leaves the pane and the rail as they were.
+		(void)chain.openSite(first);
+		p.settle();
+		CHECK(p.pane().device() == first);
+		CHECK(p.column(0)->deviceCount() == chain.chainLength());
+		CHECK(p.column(0)->hiddenLead() == 1);
+	}
+}

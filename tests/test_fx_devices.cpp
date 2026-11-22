@@ -2510,9 +2510,12 @@ std::vector<std::string> honestyExpected() {
 	//                       with the engine wrap that made it look true — see above.)
 	//
 	//   Harm Release        TWO TRANSITIONS THIS FIXTURE DOES NOT MAKE. A release time acts when the
-	//   Harm Porta          gate FALLS and a portamento when the note CHANGES; the probe holds one
-	//   Harm Porta Mode     note and one gate for 256 samples, so none of the three has anything to act
-	//                       on. Porta Mode decides only whether a glide crosses a gap between two notes, so it
+	//   Harm Porta          gate FALLS and a portamento when the note CHANGES. HARM is on the per-voice
+	//   Harm Porta Mode     road (`setNoteContext`, it declares no `notes` ops), not the note road that
+	//                       plays 72 then 79 while 72 is held: the fixture hands it ONE NoteContext (key
+	//                       84, gate held) for the whole 256 samples, so none of the three has anything to
+	//                       act on. The "one note, one gate" wording is true of HARM and false of the note-road
+	//                       devices, so the entries stay. Porta Mode decides only whether a glide crosses a gap between two notes, so it
 	//                       needs porta on, a note, a release, a gap and a second note. Its values are asserted
 	//                       in test_fx_harm: "legato porta starts a note after a release at its own pitch,
 	//                       always porta glides to it".

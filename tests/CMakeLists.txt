@@ -2193,3 +2193,10 @@ add_executable(test_body_refused test_body_refused.cpp)
 target_link_libraries(test_body_refused PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
 target_include_directories(test_body_refused PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME body-refused COMMAND test_body_refused)
+
+# THE RACK'S DRAIN UNDER THE AUDIO-THREAD GUARD (test_rack_drain_alloc.cpp): chain records published from a second thread
+# while the drain runs, counting allocations and frees inside it.
+add_executable(test_rack_drain_alloc test_rack_drain_alloc.cpp)
+target_link_libraries(test_rack_drain_alloc PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_rack_drain_alloc PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME rack-drain-alloc COMMAND test_rack_drain_alloc)

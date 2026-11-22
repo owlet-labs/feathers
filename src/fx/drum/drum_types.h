@@ -191,6 +191,60 @@ inline constexpr device::Traits kTraits {
 inline constexpr const char* kKindLabels[] = { "Kick", "Membrane", "Snare", "Metal", "Clap", "String" };
 static_assert(std::size(kKindLabels) == feathers::drum::kKindCount);
 
+// THE TOOLTIPS THAT FOLLOW THE KIND (TV audit): a Kind changes what these five controls do, so each names what it does in the current Kind.
+// Indexed by `feathers::drum::Kind` (Kick 0 .. String 5). Refreshed on every road by `DrumDeviceModel::refreshTooltips`, which reads the Kind.
+inline constexpr const char* kToneTips[] = {
+	"Where the head is struck: low is a dull, round thump, high brings out its upper overtones",
+	"Where the head is struck: low is a dull, round note, high brings out its upper overtones",
+	"How bright the snare's wires hiss: low is a dark rattle, high a crisp, thin hiss",
+	"The band the metal rings through: low is a dull clank, high a bright ting",
+	"The band the clap's hands sit in: low is a thick clap, high a thin crack",
+	"How damped the string is: low dies at once, high rings free and bright",
+};
+static_assert(std::size(kToneTips) == feathers::drum::kKindCount);
+
+inline constexpr const char* kSnapTips[] = {
+	"How hard the attack is: a soft mallet click to a hard stick",
+	"How hard the mallet strikes the head: a soft mallet to a hard stick",
+	"How hard the head is struck, and how sharp its click and bell are: soft to hard",
+	"How hard the strike's click is: a soft tap to a hard hit",
+	"How sharp each clap's first hand is: a soft, slow hand to a hard, sharp one",
+	"How hard the pluck is: a soft felt hammer to a hard one",
+};
+static_assert(std::size(kSnapTips) == feathers::drum::kKindCount);
+
+inline constexpr const char* kDecayTips[] = {
+	"How long the body rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the head rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the head rings: the time it takes to fall 60 dB. The wires and the click have their own decays",
+	"How long the metal rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the clap's tail lasts: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the string rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+};
+static_assert(std::size(kDecayTips) == feathers::drum::kKindCount);
+
+/// Tune in a Kind's own pitch (the resting pitch of each kind, `kindBaseHz`); Pitched sets the pitch from the key instead.
+inline constexpr const char* kTuneTips[] = {
+	"The drum's pitch, in semitones from a kick's resting pitch of 50 Hz",
+	"The drum's pitch, in semitones from a membrane's resting pitch of 110 Hz",
+	"The drum's pitch, in semitones from a snare's resting pitch of 180 Hz",
+	"The drum's pitch, in semitones from a metal's resting pitch of 400 Hz",
+	"The drum's pitch, in semitones from a clap's resting pitch of 1000 Hz",
+	"The drum's pitch, in semitones from a string's resting pitch of 110 Hz",
+};
+static_assert(std::size(kTuneTips) == feathers::drum::kKindCount);
+inline constexpr const char* kTunePitchedTip = "The drum's pitch, in semitones from the key it is played on: the key sets the pitch and this shifts it";
+
+inline constexpr const char* kHighPassTips[] = {
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the whole drum below this, after the clap's own High Pass: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+};
+static_assert(std::size(kHighPassTips) == feathers::drum::kKindCount);
+
 inline constexpr device::ParamDesc kParamDescs[] = {
 	{.key = "drum_enabled", .name = "Enabled", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kOffOnNames, .modulatable = true,

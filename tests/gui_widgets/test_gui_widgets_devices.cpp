@@ -43073,6 +43073,32 @@ TEST_CASE("drum device window: a control the Kind does not read is hidden, one i
 	CHECK_FALSE(u.win->widgetForTest(ddv::Param::KickHold)->isVisible());
 }
 
+TEST_CASE("drum tooltips follow the Kind: Tone, Snap, Decay, Tune and High Pass name what they do in the current Kind, on the window and the card") {
+	DrumUi u;
+	const auto tipOf = [&](ddv::Param p) { return std::string(ui::tooltipOf(&u.win->modelForTest().control(p))); };
+	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
+		CAPTURE(k);
+		u.set(ddv::Param::Kind, static_cast<double>(k));
+		CHECK(tipOf(ddv::Param::FieldTone) == ddv::kToneTips[k]);
+		CHECK(tipOf(ddv::Param::FieldSnap) == ddv::kSnapTips[k]);
+		CHECK(tipOf(ddv::Param::Decay) == ddv::kDecayTips[k]);
+		CHECK(tipOf(ddv::Param::Tune) == ddv::kTuneTips[k]);
+		CHECK(tipOf(ddv::Param::HighPass) == ddv::kHighPassTips[k]);
+		// THE CARD'S TUNE PILL shares the same model road: the card's own control reads the same text.
+		CHECK(std::string(ui::tooltipOf(&u.d.card->modelForTest().control(ddv::Param::Tune))) == ddv::kTuneTips[k]);
+	}
+	// NOT VACUOUS: the Kind moved the text (a Kick's Tone is not a Snare's).
+	u.set(ddv::Param::Kind, 0.0);
+	const std::string kickTone = tipOf(ddv::Param::FieldTone);
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Snare));
+	CHECK(tipOf(ddv::Param::FieldTone) != kickTone);
+	// PITCHED: the key sets the pitch, so Tune names the key, in every Kind.
+	u.set(ddv::Param::Keys, 2.0);
+	CHECK(tipOf(ddv::Param::Tune) == ddv::kTunePitchedTip);
+	u.set(ddv::Param::Keys, 0.0);
+	CHECK(tipOf(ddv::Param::Tune) == ddv::kTuneTips[static_cast<size_t>(feathers::drum::Kind::Snare)]);
+}
+
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {
 	DrumUi u;
 	for (size_t i = 0; i < static_cast<size_t>(ddv::Param::kCount); ++i) {

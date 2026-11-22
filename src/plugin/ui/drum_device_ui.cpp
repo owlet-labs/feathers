@@ -122,6 +122,21 @@ HitPicture::Controls DrumDeviceModel::handles() const {
 	return h;
 }
 
+void DrumDeviceModel::refreshTooltips() const {
+	const dd::Settings s = settings();
+	const auto k = static_cast<size_t>(std::clamp(s.index(dd::Param::Kind), 0, static_cast<int>(feathers::drum::kKindCount) - 1));
+	const int state = static_cast<int>(k) * 2 + (s.pitched() ? 1 : 0);
+	if (state == tipState_) {
+		return; // setTooltipOverride takes a string: only a change of Kind or Pitched pays for one
+	}
+	tipState_ = state;
+	control(dd::Param::FieldTone).setTooltipOverride(feathers::fx::drumdevice::kToneTips[k]);
+	control(dd::Param::FieldSnap).setTooltipOverride(feathers::fx::drumdevice::kSnapTips[k]);
+	control(dd::Param::Decay).setTooltipOverride(feathers::fx::drumdevice::kDecayTips[k]);
+	control(dd::Param::Tune).setTooltipOverride(s.pitched() ? feathers::fx::drumdevice::kTunePitchedTip : feathers::fx::drumdevice::kTuneTips[k]);
+	control(dd::Param::HighPass).setTooltipOverride(feathers::fx::drumdevice::kHighPassTips[k]);
+}
+
 void DrumDeviceModel::setModulation(ModState* mod, EditHistory* history) {
 	for (size_t i = 0; i < controls_.size(); ++i) {
 		control(static_cast<dd::Param>(i)).setModulation(mod, history);

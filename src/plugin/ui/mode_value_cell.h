@@ -18,6 +18,7 @@
 #pragma once
 
 #include "plugin/ui/fader_pill.h"
+#include "plugin/ui/key_spread_row.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/value_box.h"
 #include "plugin/ui/zone_select.h"
@@ -74,10 +75,10 @@ public:
 	/// plain overload.
 	ValueBox& addFollower(size_t param, std::unique_ptr<ValueBox> box, std::string label);
 
-	/// **A FADER PILL AS A FOLLOWER** (a stacked cell only): a row of its own, packed in with the boxes and shown while `gateParam` is live. `readout` is asked on
-	/// every refresh for the text at the pill's right end (an empty answer is none). The pill's own controls are its face's (`FaderPill::offeredControls`).
-	FaderPill& addPillFollower(size_t gateParam, std::unique_ptr<FaderPill> pill, std::function<std::string()> readout = {});
-	[[nodiscard]] FaderPill* pillFor(size_t gateParam) const;
+	/// **A KEY CHIP AND SPREAD FADER ROW AS A FOLLOWER** (a stacked cell only): a row of its own, packed in with the boxes and shown while `gateParam` is live. `readout` is asked on
+	/// every refresh for the text at the pill's right end (an empty answer is none). The row's own controls are its chip's and its fader's (each a face).
+	KeySpreadRow& addPillFollower(size_t gateParam, std::unique_ptr<KeySpreadRow> row, std::function<std::string()> readout = {});
+	[[nodiscard]] KeySpreadRow* pillFor(size_t gateParam) const;
 
 	/// **SHOWS THE BOX OF THE FOLLOWER THAT IS LIVE NOW**, and reports whether that changed. The panel calls
 	/// it from its layout pass; nothing here polls.
@@ -124,7 +125,7 @@ private:
 	std::vector<size_t> params_;
 	std::vector<std::unique_ptr<ValueBox>> boxes_;
 	std::vector<size_t> pillParams_;
-	std::vector<std::unique_ptr<FaderPill>> pills_;
+	std::vector<std::unique_ptr<KeySpreadRow>> pills_;
 	std::vector<std::function<std::string()>> pillReadouts_;
 	long active_ = -2; ///< -2: never refreshed, so the first refresh always reports a change
 	float faceDiameter_ = Knob::kDiameter;

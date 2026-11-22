@@ -43649,7 +43649,7 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bi
 					REQUIRE(box != nullptr);
 					shown += box->isVisible() ? 1 : 0;
 				}
-				ui::FaderPill* pill = cell->pillFor(eroAt(ero::Param::DriveKey));
+				ui::KeySpreadRow* pill = cell->pillFor(eroAt(ero::Param::DriveKey));
 				REQUIRE(pill != nullptr);
 				shown += pill->isVisible() ? 1 : 0;
 				const ero::SecondParam want = ero::driveSecondParam(dm);
@@ -43678,7 +43678,8 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bi
 					CHECK(labelOf(ero::Param::DriveBias) == "Bias");
 				}
 				if (want == ero::SecondParam::Key) {
-					CHECK(pill->caption() == "Key");
+					CHECK(pill->chip().caption() == "Key");
+					CHECK(pill->fader().caption() == "Spr");
 					CHECK(pill->bottom() <= static_cast<float>(cell->height()));
 					if (cell == cells().front()) {
 						secondY.push_back(pill->y());
@@ -43794,22 +43795,119 @@ TEST_CASE("ERODER's Key: the Amount knob reads the note's multiple while the swi
 			if (!ero::driveHasKey(type)) {
 				continue;
 			}
-			// THE FADER IS LIVE WITH THE SWITCH OFF: the pill is shown, unpowered, and its drag writes the Spread.
+			// THE FADER IS LIVE WITH THE SWITCH OFF: the row is shown, the chip is off, and the fader's drag writes the Spread.
 			for (ui::ModeValueCell* cell : p.cells) {
-				ui::FaderPill* pill = cell->pillFor(eroAt(p.key));
+				ui::KeySpreadRow* pill = cell->pillFor(eroAt(p.key));
 				REQUIRE(pill != nullptr);
 				CHECK(pill->isVisible());
-				CHECK_FALSE(pill->poweredForTest());
+				CHECK_FALSE(pill->chip().on());
 				e.set(p.spread, 0.0f);
-				pill->amountForTest().beginGesture();
-				pill->amountForTest().setValue(0.6);
-				pill->amountForTest().endGesture();
+				pill->fader().amountForTest().beginGesture();
+				pill->fader().amountForTest().setValue(0.6);
+				pill->fader().amountForTest().endGesture();
 				CHECK(eroField(e.d, p.spread) == doctest::Approx(0.6f));
-				CHECK(pill->powerForTest() != nullptr);
-				CHECK(pill->powerForTest()->desc().key == ero::kParamDescs[eroAt(p.key)].key);
+				CHECK(pill->fader().amountOnly());
+				CHECK(pill->chip().control().desc().key == ero::kParamDescs[eroAt(p.key)].key);
 			}
 		}
 	}
+}
+
+TEST_CASE("ERODER's Key chip and Spread fader are two separate controls on the third row: the chip writes only Key, the fader only Spread and stays lit with Key off, the row is there for the four Types only, and it stays inside its cell at scale 1 and 1.75") {
+	EroFaces e;
+	struct Unit {
+		const char* name;
+		ero::Param type, key, spread;
+		bool narrow;
+		bool slot;
+		ui::ModeValueCell* cell;
+	};
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	const Unit units[] = {
+		{ "card Drive", ero::Param::DriveMode, ero::Param::DriveKey, ero::Param::DriveSpread, true, false, e.d.card->driveCellForTest() },
+		{ "window Drive", ero::Param::DriveMode, ero::Param::DriveKey, ero::Param::DriveSpread, false, false, e.panel->driveCellForTest() },
+		{ "card A", ero::Param::SlotAType, ero::Param::SlotAKey, ero::Param::SlotASpread, true, true, card.cellA.get() },
+		{ "card B", ero::Param::SlotBType, ero::Param::SlotBKey, ero::Param::SlotBSpread, true, true, card.cellB.get() },
+		{ "window A", ero::Param::SlotAType, ero::Param::SlotAKey, ero::Param::SlotASpread, false, true, panel.cellA.get() },
+		{ "window B", ero::Param::SlotBType, ero::Param::SlotBKey, ero::Param::SlotBSpread, false, true, panel.cellB.get() },
+	};
+	e.mode(ero::Mode::Etch);
+	e.set(ero::Param::Drive, 0.5f);
+	for (const Unit& u : units) {
+		CAPTURE(u.name);
+		ui::KeySpreadRow* row = u.cell->pillFor(eroAt(u.key));
+		REQUIRE(row != nullptr);
+		// THE ROW IS THERE FOR THE FOUR TYPES ONLY.
+		for (int type = 0; type < static_cast<int>(ero::DriveMode::kCount); ++type) {
+			CAPTURE(std::string(ero::kDriveModeNames[type]));
+			e.set(u.type, static_cast<float>(type));
+			CHECK(row->isVisible() == ero::driveHasKey(static_cast<ero::DriveMode>(type)));
+		}
+		e.set(u.type, static_cast<float>(ero::DriveMode::Decimate));
+		REQUIRE(row->isVisible());
+		// TWO WIDGETS, each over its own control.
+		CHECK(row->chip().control().desc().key == ero::kParamDescs[eroAt(u.key)].key);
+		CHECK(row->fader().amountForTest().desc().key == ero::kParamDescs[eroAt(u.spread)].key);
+		CHECK(row->fader().amountOnly());
+		CHECK(row->chip().caption() == "Key");
+		CHECK(row->fader().caption() == "Spr");
+		// THE CHIP TOGGLES KEY AND LEAVES SPREAD ALONE.
+		e.set(u.key, 0.0f);
+		e.set(u.spread, 0.0f);
+		const float cx = row->chip().width() * 0.5f;
+		const float cy = row->chip().height() * 0.5f;
+		row->chip().onMouseDown().callback(at(cx, cy));
+		row->chip().onMouseUp().callback(at(cx, cy));
+		CHECK(eroField(e.d, u.key) == 1.0f);
+		CHECK(eroField(e.d, u.spread) == 0.0f);
+		row->chip().onMouseDown().callback(at(cx, cy));
+		row->chip().onMouseUp().callback(at(cx, cy));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		// WITH KEY OFF THE FADER IS LIT AND ITS DRAG WRITES SPREAD (40%), NOT KEY.
+		CHECK_FALSE(row->chip().on());
+		CHECK(row->fader().active());
+		const float fx = row->fader().width() * 0.5f;
+		const float fy = row->fader().height() * 0.5f;
+		const float travel = 0.4f * ui::FaderPill::kSpan;
+		row->fader().onMouseDown().callback(at(fx, fy));
+		row->fader().onMouseDrag().callback(at(fx + travel, fy));
+		row->fader().onMouseUp().callback(at(fx + travel, fy));
+		CHECK(eroField(e.d, u.spread) == doctest::Approx(0.4f));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		// A CLICK ON THE FADER DOES NOT TOGGLE KEY (it has no power of its own).
+		row->fader().onMouseDown().callback(at(fx, fy));
+		row->fader().onMouseUp().callback(at(fx, fy));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		CHECK(row->fader().active());
+	}
+	// NATIVE WIDTHS: nothing in the row leaves the cell, the two controls do not overlap, at scale 1 and at the development display's 1.75.
+	for (const float scale : { 1.0f, 1.75f }) {
+		e.d.card->setDpiScale(scale);
+		e.panel->setDpiScale(scale);
+		for (const Unit& u : units) {
+			CAPTURE(u.name);
+			CAPTURE(scale);
+			e.set(u.type, static_cast<float>(ero::DriveMode::Slew));
+			ui::KeySpreadRow* row = u.cell->pillFor(eroAt(u.key));
+			REQUIRE(row->isVisible());
+			REQUIRE(u.cell->dpiScale() == scale);
+			CHECK(row->nativeX() >= 0);
+			CHECK(row->nativeRight() <= u.cell->nativeWidth());
+			CHECK(row->nativeBottom() <= u.cell->nativeHeight());
+			CHECK(row->chip().nativeX() >= 0);
+			CHECK(row->chip().nativeRight() <= row->fader().nativeX());
+			CHECK(row->fader().nativeRight() <= row->nativeWidth());
+			CHECK(row->chip().nativeBottom() <= row->nativeHeight());
+			// THE FADER HAS ROOM FOR ITS CAPTION (the window prints the percentage too, the narrow cell its fill alone).
+			CHECK(row->fader().nativeWidth() >= static_cast<int>(std::lround(14.0f * scale)));
+			if (u.narrow) {
+				CHECK(row->fader().captionFits());
+			}
+		}
+	}
+	e.d.card->setDpiScale(1.0f);
+	e.panel->setDpiScale(1.0f);
 }
 
 TEST_CASE("ERODER's Rate row follows Track: hertz with it off, the multiple of the note with it on, the other hidden; the multiple's drag lands on the detents and a typed value stays") {
@@ -44863,7 +44961,7 @@ TEST_CASE("ETCH's slot cells carry the Type's second parameter on the card and i
 				for (ui::ModeValueCell* cell : { slot == 0 ? card.cellA.get() : card.cellB.get(), slot == 0 ? panel.cellA.get() : panel.cellB.get() }) {
 					const auto& p = second[static_cast<size_t>(slot)];
 					const auto shown = [&](size_t i) { return cell->boxFor(eroAt(p[i]))->isVisible(); };
-					ui::FaderPill* pill = cell->pillFor(eroAt(keys[static_cast<size_t>(slot)]));
+					ui::KeySpreadRow* pill = cell->pillFor(eroAt(keys[static_cast<size_t>(slot)]));
 					REQUIRE(pill != nullptr);
 					CHECK(shown(0) == (want == ero::SecondParam::Bal));
 					CHECK(shown(1) == (want == ero::SecondParam::Rate && !track));

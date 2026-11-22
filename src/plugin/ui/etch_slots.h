@@ -179,10 +179,11 @@ void addStageRows(ModeValueCell& cell, ControlOf&& control, const StageParams& p
 	mult->setDetents(std::vector<double>(std::begin(fx::eroder::kRateMultDetents), std::end(fx::eroder::kRateMultDetents)));
 	mult->setReadoutFormatter(&rateMultText, true);
 	(void)cell.addFollower(static_cast<size_t>(p.rateMult), std::move(mult), rateLabel);
-	// THE KEY'S ROW IS A FADER PILL: the Key switch (its power) and the Spread (its fader, live with the switch off); the Spread's value is its right-end readout.
+	// THE KEY'S ROW IS TWO CONTROLS: the Key chip (the switch alone) and the Spread fader beside it, lit whatever the chip says, since the
+	// Spread works with Key off. The Spread's value is the fader's right-end readout.
 	DeviceControl& spread = control(p.spread);
-	// (A NARROW CELL has no room for "Key" beside a percentage: the fill is the Spread there, the window prints it.)
-	(void)cell.addPillFollower(static_cast<size_t>(p.key), std::make_unique<FaderPill>(spread, control(p.key), "Key"),
+	// (A NARROW CELL has no room for a percentage: the fill is the Spread there, the window prints it, and the caption is "Spr" in both.)
+	(void)cell.addPillFollower(static_cast<size_t>(p.key), std::make_unique<KeySpreadRow>(control(p.key), spread, "Key", "Spr"),
 	                           narrow ? std::function<std::string()> {} : [&spread]() { return spread.text(); });
 }
 

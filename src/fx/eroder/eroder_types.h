@@ -2449,14 +2449,37 @@ struct Rotation {
 [[nodiscard]] inline float driveCoordinate(DriveMode mode, float shape, float angle) noexcept {
 	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode) ? angle : shape;
 }
-/// **THE TYPE'S SECOND PARAMETER** — the third row of the Drive's cell and of a slot's: Bal for Chonk, Rate for the four Paunch Types, none for
-/// every other Type (the row is then not drawn). The one small table the cells read; more Types are added here.
-enum class SecondParam { None, Bal, Rate };
+/// **THE TYPE'S THIRD ROW** — the row under Type and S in the Drive's cell and in a slot's, and EVERY Type uses it: Hard for Soft and Tube, Sharp for Fold,
+/// Bias for Wreck and Jag, Rate for Lean and the four Paunch Types, Bal for Chonk, and for Crush, Decimate, Slew and Lopside the Key switch with its
+/// Spread fader. Exactly one shows (the cell's size and row places do not move). The one small table the cells read.
+enum class SecondParam { None, Hard, Sharp, Bias, Rate, Bal, Key };
 [[nodiscard]] inline constexpr SecondParam driveSecondParam(DriveMode mode) noexcept {
-	if (mode == DriveMode::Chonk) {
+	switch (mode) {
+	case DriveMode::Soft:
+	case DriveMode::Tube:
+		return SecondParam::Hard;
+	case DriveMode::Fold:
+		return SecondParam::Sharp;
+	case DriveMode::Wreck:
+	case DriveMode::Jag:
+		return SecondParam::Bias;
+	case DriveMode::Lean:
+	case DriveMode::PaunchS:
+	case DriveMode::PaunchH:
+	case DriveMode::PaunchOS:
+	case DriveMode::PaunchOH:
+		return SecondParam::Rate;
+	case DriveMode::Chonk:
 		return SecondParam::Bal;
+	case DriveMode::Crush:
+	case DriveMode::Decimate:
+	case DriveMode::Slew:
+	case DriveMode::Lopside:
+		return SecondParam::Key;
+	case DriveMode::kCount:
+		break;
 	}
-	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode) ? SecondParam::Rate : SecondParam::None;
+	return SecondParam::None;
 }
 /// THE ROTATION LFO'S RATE in hertz from its control (log2 hertz, the bottom is off): 0 is off.
 [[nodiscard]] inline float driveRateHz(float log2Hz) noexcept {

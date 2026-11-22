@@ -65,6 +65,7 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	// selector changes the Type (`mode_value_cell.h`).
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
 	drive_->setFaceDiameter(kKnobDiameter);
+	installKeyReadout(*drive_, driveView_);
 	std::vector<ZoneSelect::ZoneName> types = driveTypeZoneNames();
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 	                                             stageRowGate(driveView_, driveStageParams()));
@@ -296,7 +297,11 @@ void EroderCard::refreshHonesty() {
 	// Comb: its inner loop never stops, `kBankFloor`.)
 	restore_->setEnabled(emphasised);
 	// THE SECOND-PARAMETER ROWS FOLLOW EACH STAGE'S TYPE (and Track, for the Rate's two forms): hidden, not greyed.
+	const StageView driveBefore = *driveView_;
 	*driveView_ = stageViewOf(row, driveStageParams());
+	if (!(driveBefore == *driveView_)) {
+		drive_->redraw();
+	}
 	(void)driveCell_->refresh();
 	(void)etch_.refreshRows(row);
 }

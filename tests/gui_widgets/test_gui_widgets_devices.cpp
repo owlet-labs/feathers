@@ -43607,11 +43607,11 @@ struct EroFaces {
 
 } // namespace
 
-TEST_CASE("ERODER's Drive cell's third row is the Type's own second parameter — Bal for Chonk, Rate for the four Paunch Types, no row for any other — on the card and in the window") {
+TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bias, Rate, Bal, or the Key pill: exactly one for EVERY Type, in one place — on the card and in the window") {
 	EroFaces e;
 	REQUIRE(ui::EroderCard::openHeight() <= ui::kCardUnitHeight);
 	const auto cells = [&] { return std::vector<ui::ModeValueCell*> { e.d.card->driveCellForTest(), e.panel->driveCellForTest() }; };
-	const ero::Param second[] = { ero::Param::DriveBal, ero::Param::DriveRate, ero::Param::DriveRateMult };
+	const ero::Param second[] = { ero::Param::DriveBal, ero::Param::DriveRate, ero::Param::DriveRateMult, ero::Param::DriveHard, ero::Param::DriveSharp, ero::Param::DriveBias };
 	// THE CELL'S OWN SIZE AND ITS ROW PLACES DO NOT MOVE WITH THE TYPE: the shown second row sits where the third row sits.
 	std::vector<float> cardSize;
 	std::vector<float> shapeY;
@@ -43631,12 +43631,40 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own second parameter �
 					REQUIRE(box != nullptr);
 					shown += box->isVisible() ? 1 : 0;
 				}
+				ui::FaderPill* pill = cell->pillFor(eroAt(ero::Param::DriveKey));
+				REQUIRE(pill != nullptr);
+				shown += pill->isVisible() ? 1 : 0;
 				const ero::SecondParam want = ero::driveSecondParam(dm);
-				// HIDDEN, NOT GREYED: a Type with none shows none, a Type with one shows exactly one.
-				CHECK(shown == (want == ero::SecondParam::None ? 0 : 1));
+				// EVERY TYPE USES THE THIRD ROW, and exactly one thing is in it (the others hidden, not greyed).
+				CHECK(want != ero::SecondParam::None);
+				CHECK(shown == 1);
+				const auto labelOf = [&](ero::Param p) { return cell->boxFor(eroAt(p))->label(); };
+				CHECK(cell->boxFor(eroAt(ero::Param::DriveBal))->isVisible() == (want == ero::SecondParam::Bal));
+				CHECK(cell->boxFor(eroAt(ero::Param::DriveHard))->isVisible() == (want == ero::SecondParam::Hard));
+				CHECK(cell->boxFor(eroAt(ero::Param::DriveSharp))->isVisible() == (want == ero::SecondParam::Sharp));
+				CHECK(cell->boxFor(eroAt(ero::Param::DriveBias))->isVisible() == (want == ero::SecondParam::Bias));
+				CHECK(cell->boxFor(eroAt(ero::Param::DriveRate))->isVisible() == (want == ero::SecondParam::Rate)); // Track is off
+				CHECK(pill->isVisible() == (want == ero::SecondParam::Key));
 				if (want == ero::SecondParam::Bal) {
-					CHECK(cell->boxFor(eroAt(ero::Param::DriveBal))->isVisible());
-					CHECK(cell->boxFor(eroAt(ero::Param::DriveBal))->label() == "Bal");
+					CHECK(labelOf(ero::Param::DriveBal) == "Bal");
+				}
+				if (want == ero::SecondParam::Hard) {
+					const std::string label = labelOf(ero::Param::DriveHard);
+					CHECK((label == "Hard" || label == "Hrd"));
+				}
+				if (want == ero::SecondParam::Sharp) {
+					const std::string label = labelOf(ero::Param::DriveSharp);
+					CHECK((label == "Sharp" || label == "Shp"));
+				}
+				if (want == ero::SecondParam::Bias) {
+					CHECK(labelOf(ero::Param::DriveBias) == "Bias");
+				}
+				if (want == ero::SecondParam::Key) {
+					CHECK(pill->caption() == "Key");
+					CHECK(pill->bottom() <= static_cast<float>(cell->height()));
+					if (cell == cells().front()) {
+						secondY.push_back(pill->y());
+					}
 				}
 				if (want == ero::SecondParam::Rate) {
 					CHECK(cell->boxFor(eroAt(ero::Param::DriveRate))->isVisible()); // Track is off
@@ -43651,6 +43679,9 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own second parameter �
 				CHECK(sh->isVisible());
 				CHECK_FALSE(other->isVisible());
 				CHECK(sh->label() == "S");
+				if (pill->isVisible()) {
+					CHECK(pill->y() > sh->y());
+				}
 				for (const ero::Param p : second) {
 					ui::ValueBox* box = cell->boxFor(eroAt(p));
 					if (box->isVisible()) {
@@ -44699,7 +44730,8 @@ TEST_CASE("ETCH's card draws its slot row on one line, both slots and the route 
 	for (ui::ModeValueCell* m : { slots.cellA.get(), slots.cellB.get() }) {
 		CHECK(m->stacked());
 		// THE CARD'S SLOT CELL: Shape and the Type's second parameter (Bal, the Rate in hertz, the Rate as a multiple); the slot's Mix is the WINDOW's knob.
-		CHECK(m->followerParams().size() == 5);
+		CHECK(m->followerParams().size() == 8);
+		CHECK((m->pillFor(eroAt(ero::Param::SlotAKey)) != nullptr || m->pillFor(eroAt(ero::Param::SlotBKey)) != nullptr));
 		CHECK(m->boxFor(eroAt(ero::Param::SlotAMix)) == nullptr);
 		CHECK(m->boxFor(eroAt(ero::Param::SlotBMix)) == nullptr);
 	}
@@ -44731,10 +44763,12 @@ TEST_CASE("ETCH's slot cells carry the Type's second parameter on the card and i
 	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
 	const auto slotCells = [&] { return std::vector<ui::ModeValueCell*> { card.cellA.get(), card.cellB.get(), panel.cellA.get(), panel.cellB.get() }; };
 	const std::array<ero::Param, 2> types { ero::Param::SlotAType, ero::Param::SlotBType };
-	const std::array<std::array<ero::Param, 3>, 2> second {
-		std::array<ero::Param, 3> { ero::Param::SlotABal, ero::Param::SlotARate, ero::Param::SlotARateMult },
-		std::array<ero::Param, 3> { ero::Param::SlotBBal, ero::Param::SlotBRate, ero::Param::SlotBRateMult },
+	const std::array<std::array<ero::Param, 6>, 2> second {
+		std::array<ero::Param, 6> { ero::Param::SlotABal, ero::Param::SlotARate, ero::Param::SlotARateMult, ero::Param::SlotAHard, ero::Param::SlotASharp, ero::Param::SlotABias },
+		std::array<ero::Param, 6> { ero::Param::SlotBBal, ero::Param::SlotBRate, ero::Param::SlotBRateMult, ero::Param::SlotBHard, ero::Param::SlotBSharp, ero::Param::SlotBBias },
 	};
+	const std::array<ero::Param, 2> keys { ero::Param::SlotAKey, ero::Param::SlotBKey };
+	std::vector<float> thirdY;
 	for (int slot = 0; slot < 2; ++slot) {
 		for (const bool track : { false, true }) {
 			e.set(ero::Param::Track, track ? 1.0f : 0.0f);
@@ -44745,16 +44779,35 @@ TEST_CASE("ETCH's slot cells carry the Type's second parameter on the card and i
 				CAPTURE(slot);
 				CAPTURE(track);
 				CAPTURE(std::string(ero::kDriveModeNames[type]));
+				CHECK(want != ero::SecondParam::None); // EVERY TYPE USES THE THIRD ROW
 				for (ui::ModeValueCell* cell : { slot == 0 ? card.cellA.get() : card.cellB.get(), slot == 0 ? panel.cellA.get() : panel.cellB.get() }) {
-					const bool bal = cell->boxFor(eroAt(second[static_cast<size_t>(slot)][0]))->isVisible();
-					const bool hz = cell->boxFor(eroAt(second[static_cast<size_t>(slot)][1]))->isVisible();
-					const bool mult = cell->boxFor(eroAt(second[static_cast<size_t>(slot)][2]))->isVisible();
-					CHECK(bal == (want == ero::SecondParam::Bal));
-					CHECK(hz == (want == ero::SecondParam::Rate && !track));
-					CHECK(mult == (want == ero::SecondParam::Rate && track));
+					const auto& p = second[static_cast<size_t>(slot)];
+					const auto shown = [&](size_t i) { return cell->boxFor(eroAt(p[i]))->isVisible(); };
+					ui::FaderPill* pill = cell->pillFor(eroAt(keys[static_cast<size_t>(slot)]));
+					REQUIRE(pill != nullptr);
+					CHECK(shown(0) == (want == ero::SecondParam::Bal));
+					CHECK(shown(1) == (want == ero::SecondParam::Rate && !track));
+					CHECK(shown(2) == (want == ero::SecondParam::Rate && track));
+					CHECK(shown(3) == (want == ero::SecondParam::Hard));
+					CHECK(shown(4) == (want == ero::SecondParam::Sharp));
+					CHECK(shown(5) == (want == ero::SecondParam::Bias));
+					CHECK(pill->isVisible() == (want == ero::SecondParam::Key));
+					// ONE ROW, ONE PLACE: the shown third row is where the others would be, in every Type.
+					float y = -1.0f;
+					for (size_t i = 0; i < 6; ++i) {
+						y = shown(i) ? cell->boxFor(eroAt(p[i]))->y() : y;
+					}
+					y = pill->isVisible() ? pill->y() : y;
+					CHECK(y > 0.0f);
+					if (cell == (slot == 0 ? card.cellA.get() : card.cellB.get())) {
+						thirdY.push_back(y);
+					}
 				}
 			}
 		}
+	}
+	for (const float y : thirdY) {
+		CHECK(y == thirdY.front());
 	}
 	e.set(ero::Param::Track, 0.0f);
 	// ... AND THE CELL'S SIZE DOES NOT MOVE with the Type.

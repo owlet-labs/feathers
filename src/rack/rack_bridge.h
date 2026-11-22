@@ -778,6 +778,21 @@ public:
 	void setDevicePreset(DeviceInstanceId device, const PresetIdentity& identity) override {
 		(void)outputLabels_.setPreset(device, identity);
 	}
+	/// WHAT THE USER CALLS A DEVICE INSTANCE — the label map holds it, and the patch with it.
+	[[nodiscard]] std::string userNameOf(DeviceInstanceId device) const override { return std::string(outputLabels_.nameOf(device)); }
+	bool setUserName(DeviceInstanceId device, std::string_view name) override {
+		if (!name.empty() && !record_.holds(device)) {
+			return false; // a device that is gone takes no name
+		}
+		if (!outputLabels_.setName(device, name)) {
+			return false;
+		}
+		if (slots_ != nullptr) {
+			(void)slots_->renamedDevice(device); // the host's slot captions name the instance: one rescan owed
+		}
+		markStateDirty();
+		return true;
+	}
 	/// **TOLD WHEN AN OUTPUT'S LABEL MOVES** — by `setOutputLabel` and by `loadPatch` once per (device,
 	/// output) whose label differs from before. A list, `subscribeMacroRename`'s shape.
 	[[nodiscard]] device::Subscription

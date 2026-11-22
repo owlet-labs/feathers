@@ -23,6 +23,7 @@
 
 #include "device/subscribers.h"
 #include "plugin/ui/edit_history.h"
+#include "plugin/ui/device_rename.h"
 #include "plugin/ui/card_factory.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/expanded_canvas.h"
@@ -506,6 +507,7 @@ public:
 	ui::FxCard* cardOfDeviceForTest(DeviceInstanceId device) const noexcept;
 	/// **EVERY CARD, IN CHAIN ORDER** — the order they are drawn in.
 	std::vector<ui::FxCard*> cardsForTest() const;
+	[[nodiscard]] ui::DeviceRename& deviceRenameForTest() noexcept { return *rename_; }
 	/// **EVERY CARD THE EDITOR HOLDS**, whether or not the chain still names its device — the count a case
 	/// needs to prove a removed device's card went, which a walk of the chain cannot see.
 	size_t cardCountForTest() const noexcept {
@@ -778,6 +780,7 @@ private:
 	std::unique_ptr<visage::Frame> preVeil_;
 	void writeCanvasView();
 	std::unique_ptr<ui::NotifyTray> notify_;
+	std::unique_ptr<ui::DeviceRename> rename_;
 	std::unique_ptr<ui::LibraDoor> settingsDoor_;
 	visage::Frame* presets_ = nullptr;
 	/// THE COLUMN'S OWN GROUND, solid and deaf, UNDER its controls and OVER the cards: the lane scrolls sideways beneath

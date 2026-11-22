@@ -80,7 +80,15 @@ FxLane::FxLane(ParamBridge& bridge, WidgetRegistry& registry, ModState* mod, Edi
 	selection_ = std::make_unique<LaneSelection>(bridge_, history_ != nullptr ? *history_ : spareHistory_, notifier_,
 	                                             std::move(selectionHooks));
 	selectionOverlay_ = std::make_unique<SelectionOverlay>(*selection_);
+	rename_ = std::make_unique<DeviceRename>(*this, notifier_);
+	if (history_ != nullptr) {
+		rename_->setHistory(history_);
+	}
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more.
 		if (selection_->key(e)) {
 			afterVerb();
@@ -1086,9 +1094,17 @@ void FxLane::showSlotMenu(size_t slot) {
 	// AND THE SELECTION'S VERBS (backlog OA): over the selection when it holds this card, else this card alone.
 	if (slot < deviceCount()) {
 		selection_->addVerbs(menu, kVerbIds, bridge_.fxDeviceAt(slot));
+		rename_->addRows(menu, deviceHost_, bridge_.fxDeviceAt(slot));
 	}
 	menu.onSelection() = [this, slot, options](int id) {
-		if (id >= kVerbIds) {
+		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
+			if (slot < deviceCount() && slot < cards_.size() && cards_[slot] != nullptr) {
+				FxCard& card = *cards_[slot];
+				(void)rename_->pick(id, deviceHost_, bridge_.fxDeviceAt(slot), card,
+				                    card.renameAnchor());
+			}
+		}
+		else if (id >= kVerbIds) {
 			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds));
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {

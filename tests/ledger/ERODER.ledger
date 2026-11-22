@@ -62,5 +62,8 @@ param ERODER eroder_slot_b_rate_mult unit=number min=0 max=1 stepped=0
 param ERODER eroder_drive_angle unit=percent min=0 max=1 stepped=0
 param ERODER eroder_slot_a_angle unit=percent min=0 max=1 stepped=0
 param ERODER eroder_slot_b_angle unit=percent min=0 max=1 stepped=0
+param ERODER eroder_smear_stages unit=number min=1 max=32 stepped=1
+param ERODER eroder_smear_reso unit=number min=1 max=32 stepped=0
+param ERODER eroder_smear_offset unit=number min=-48 max=48 stepped=0
 retired ERODER eroder_drive 2026-11-15 a gain of 1 to 16 into a tanh that switched in whole became a gain from under the knee to over it into a chosen shaper (eroder_drive_amount, eroder_drive_mode, eroder_drive_shape)
 retired ERODER eroder_dc 2026-11-18 replaced by an on/off DC block (eroder_dc_block)

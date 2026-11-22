@@ -2310,6 +2310,30 @@ TEST_CASE("T11: host automation moves a nested rack's macro") {
 	CHECK(ev[2].kind == hs::SlotEventKind::End);
 }
 
+TEST_CASE("device names: naming an instance renames its host slots once, naming it the same owes the host nothing, and clearing restores the declared name") {
+	SlotNestRig rig;
+	const DeviceInstanceId chain = rig.addChain();
+	const size_t m1 = static_cast<size_t>(composite::Param::Macro1);
+	REQUIRE(rig.bridge.exposeToHost(chain, m1, nullptr));
+	CHECK(rig.pool().target(0).label == "Chain " + kDot + " Macro 1");
+	(void)rig.bridge.slotPool().takeRenamed();
+	// A RENAME: the slot's label is the player's name, and the host is owed that slot's text (one flag, the same slot, the same state).
+	REQUIRE(rig.bridge.setUserName(chain, "Bass bus"));
+	CHECK(rig.pool().target(0).label == "Bass bus " + kDot + " Macro 1");
+	const std::vector<bool> renamed = rig.bridge.slotPool().takeRenamed();
+	REQUIRE(renamed.size() > 0);
+	CHECK(renamed[0]);
+	CHECK(rig.pool().state(0) == SlotState::Pinned);
+	// THE SAME NAME AGAIN: nothing changed, so nothing is owed.
+	CHECK_FALSE(rig.bridge.setUserName(chain, "Bass bus"));
+	const std::vector<bool> again = rig.bridge.slotPool().takeRenamed();
+	CHECK(std::none_of(again.begin(), again.end(), [](bool b) { return b; }));
+	// CLEARED: the declared name comes back, and that is a change the host is owed too.
+	REQUIRE(rig.bridge.setUserName(chain, ""));
+	CHECK(rig.pool().target(0).label == "Chain " + kDot + " Macro 1");
+	CHECK(rig.bridge.slotPool().takeRenamed()[0]);
+}
+
 TEST_CASE("T11: a rename of a nested rack's macro renames the slot") {
 	SlotNestRig rig;
 	const DeviceInstanceId chain = rig.addChain();

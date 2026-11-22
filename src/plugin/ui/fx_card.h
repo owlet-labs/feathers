@@ -946,6 +946,19 @@ public:
 	/// HOW WIDE THE BODY IS — the card less whatever the head took. A card measuring against
 	/// `width()` would draw its content under its own spine.
 	float bodyWidth() const noexcept { return std::max(0.0f, static_cast<float>(width()) - bodyLeft()); }
+	/// **WHERE THE RENAME FIELD OPENS**, in this card's coordinates: over the head's title (a top head: from where the name starts; a
+	/// spine: along the top of the body, where the vertical name cannot be typed into). One line tall.
+	visage::Bounds renameAnchor() const {
+		const float w = static_cast<float>(width());
+		if (headEdge() == CardHeadEdge::Top) {
+			const visage::Bounds box = headLayout().nameBox;
+			const float x = std::min(box.x(), std::max(0.0f, w - 120.0f));
+			return { x, 0.0f, std::max(120.0f, std::min(box.width(), w - x)), kCardHeadHeight };
+		}
+		return { bodyLeft(), 0.0f, std::max(0.0f, w - bodyLeft()), kCardHeadHeight };
+	}
+	[[nodiscard]] std::string titleForTest() const { return headName(); }
+	[[nodiscard]] visage::Bounds slotMenuBoundsForTest() const { return slotMenuBounds(); }
 	float bodyTopEdge() const noexcept {
 		return headEdge() == CardHeadEdge::Top ? kCardHeadHeight : 0.0f;
 	}
@@ -1658,7 +1671,9 @@ public:
 	/// THE NAME THE HEAD WEARS — the descriptor's. A card with no descriptor overrides it.
 	virtual std::string headName() const {
 		const device::Descriptor* desc = descriptor();
-		return desc != nullptr && desc->traits.name != nullptr ? desc->traits.name : "";
+		const backplane::DeviceHost* host = deviceHost();
+		const char* declared = desc != nullptr ? desc->traits.name : nullptr;
+		return host != nullptr ? backplane::instanceBaseName(*host, device(), declared) : std::string(declared != nullptr ? declared : "");
 	}
 
 	/// **A SHORT LINE THE HEAD MAY CARRY AFTER THE NAME** — the chain's summary is the one there is.

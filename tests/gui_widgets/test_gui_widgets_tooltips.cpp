@@ -50,6 +50,7 @@
 #include "mod/macros/macros_types.h"
 #include "plugin/ui/sound_stack.h"
 #include "plugin/ui/parallel_rack_card.h"
+#include "plugin/ui/parallel_rack_expanded.h"
 #include "rack/parallel_rack.h"
 #include "plugin/ui/harmonic_row.h"
 #include "plugin/ui/smooth_card.h"
@@ -4191,4 +4192,104 @@ TEST_CASE("a card inside a card: the wheel is taken when the parent card OR the 
 	CHECK(turn());
 	CHECK(width() == doctest::Approx(0.5 + ui::EroderPlot::kWidthPerNotch));
 	outer.card->removeChild(inner.get());
+}
+
+TEST_CASE("full name: a renamed macro in a chain device's editor shows its whole name on hover") {
+	// THE CHAIN PLUGIN'S MACRO COLUMN (`RackEditor`), built the way the case above builds it.
+	rack::registerChainExpandedView();
+	HeldChain held;
+	ModFixture f;
+	ui::WidgetRegistry registry;
+	auto outer = std::make_unique<ui::SurfaceLayers>();
+	outer->setBounds(0, 0, 1400, 900);
+	const size_t slot = f.bridge.addFxDevice(sc::kTraits.tag);
+	const DeviceInstanceId device = f.bridge.fxDeviceAt(slot);
+	f.bridge.fxBodies().attach(device, held.surface());
+	std::unique_ptr<ui::ExpandedView> view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, device, sc::kDescriptor);
+	REQUIRE(view != nullptr);
+	auto* panel = dynamic_cast<ui::SklitterExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->postRailForTest().setCollapsed(false);
+	REQUIRE(outer->present(std::move(view), ui::SurfaceNeed::SpansGesture, "SKLITTER", {}) != ui::kNoSurface);
+	(void)outer->updateContent();
+	ui::ChainColumn* column = panel->postRailForTest().columnForTest();
+	REQUIRE(column != nullptr);
+	const DeviceInstanceId chain = column->addDevice(cmp::kTraits.tag);
+	REQUIRE(chain != kNoInstance);
+	column->expandDevice(chain);
+	(void)outer->updateContent();
+	auto* chainPanel = findInTree<rack::ChainExpanded>(outer.get());
+	REQUIRE(chainPanel != nullptr);
+	(void)outer->updateContent();
+	rack::RackEditor* editor = chainPanel->editorForTest();
+	REQUIRE(editor != nullptr);
+	REQUIRE_FALSE(editor->macrosForTest().empty());
+
+	const std::string longName = "Humanize Amount Over Tim";
+	ui::MacroSlot& macro = *editor->macrosForTest().front();
+	REQUIRE(macro.naming().rename);
+	macro.naming().rename(longName);
+	macro.refresh();
+	(void)outer->updateContent();
+	ui::Knob& knob = macro.knob();
+	REQUIRE(knob.isVisible());
+	REQUIRE(std::string(knob.label()) == longName);
+	// THE VALUE: the text a hover shows starts with the whole name, whether or not the column cut it.
+	CHECK(ui::hoverText(knob, centreOf(knob)).rfind(longName, 0) == 0);
+	// AND THE ROAD: a real hover reaches the editor's layer and shows it.
+	HandClock clock;
+	visage::Frame* hostFrame = nullptr;
+	REQUIRE(ui::tooltipHostOf(knob, &hostFrame) == editor);
+	ui::TooltipLayer& layer = editor->tooltipLayer();
+	clock.attach(layer);
+	layer.clear();
+	knob.processMouseEnter(hoverAt(&knob, centreOf(knob)));
+	clock.now += ui::TooltipLayer::kDelayMs + 1.0;
+	(void)editor->tickTooltips();
+	REQUIRE(layer.shown());
+	CAPTURE(layer.text());
+	CHECK(layer.text().rfind(longName, 0) == 0);
+	knob.processMouseExit(hoverAt(&knob, centreOf(knob)));
+}
+
+TEST_CASE("full name: a renamed macro in the Rack's window shows its whole name on hover, and an unrenamed one says Macro N") {
+	namespace pr = feathers::rack::parallel;
+	ModFixture f;
+	feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+	bodies.prepare(48000.0, 4096);
+	const size_t at = bodies.addDevice(pr::kTraits.tag);
+	REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+	void* body = bodies.slotAtLane(at).storage.get();
+	REQUIRE(body != nullptr);
+	const size_t slot = f.bridge.addFxDevice(pr::kTraits.tag);
+	const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+	f.bridge.fxBodies().attach(id, body);
+	ui::WidgetRegistry registry;
+	std::unique_ptr<ui::ExpandedView> view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, *f.bridge.descriptorOf(id));
+	auto* panel = dynamic_cast<ui::ParallelRackExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0, 0, 1200, 700);
+	(void)panel->updateContent();
+
+	const std::string longName = "Humanize Amount Over Tim";
+	ui::MacroSlot& macro = panel->macroSlotForTest(0);
+	macro.naming().rename(longName);
+	macro.refresh();
+	ui::Knob& knob = macro.knob();
+	REQUIRE(knob.isVisible());
+	CHECK(ui::hoverText(knob, centreOf(knob)).rfind(longName, 0) == 0);
+	HandClock clock;
+	ui::TooltipLayer& layer = restOn(&knob, centreOf(knob), clock);
+	REQUIRE(layer.shown());
+	CAPTURE(layer.text());
+	CHECK(layer.text().rfind(longName, 0) == 0);
+	knob.processMouseExit(hoverAt(&knob, centreOf(knob)));
+	// A PAD (Momentary) says it too: the chip the macro becomes carries the same name.
+	ui::chooseMacroMenuEntry(macro.menuHooks(), ui::kMacroMenuMomentary);
+	macro.syncType();
+	REQUIRE(macro.chip().isVisible());
+	CHECK(ui::hoverText(macro.chip(), centreOf(macro.chip())).rfind(longName, 0) == 0);
+	// THE UNRENAMED ONE: "M2" is a shortening of "Macro 2", so a hover says the name.
+	ui::MacroSlot& other = panel->macroSlotForTest(1);
+	CHECK(ui::hoverText(other.knob(), centreOf(other.knob())).rfind(other.naming().name(), 0) == 0);
 }

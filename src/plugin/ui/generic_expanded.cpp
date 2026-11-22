@@ -291,7 +291,7 @@ visage::Point GenericExpanded::maximumSize() const {
 }
 
 std::string GenericExpanded::title() const {
-	return desc_.traits.name != nullptr ? std::string(desc_.traits.name) : std::string("Device");
+	return backplane::instanceBaseName(host_, device_, desc_.traits.name != nullptr ? desc_.traits.name : "Device");
 }
 
 /// **THE SAME GATE THE CARD USES** — `ParamDesc::gateControl`, read against the instance's own value.

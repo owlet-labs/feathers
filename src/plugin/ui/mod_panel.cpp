@@ -122,7 +122,8 @@ std::string modSourceName(const ParamBridge& bridge, backplane::Source source) {
 		if (desc == nullptr) {
 			return "Source"; // an id nothing holds, or a device this build lacks, names nothing
 		}
-		std::string name = desc->traits.name;
+		const std::string named = bridge.userNameOf(source.device); // a NAMED instance wears its name alone
+		std::string name = named.empty() ? std::string(desc->traits.name) : named;
 		// NUMBERED BY WHERE THE DEVICE SITS — the label a player reads to know which card a route came
 		// from. (It was numbered by position rather than by lane for the same reason, back when a lane
 		// was the other number to hand.)
@@ -131,7 +132,10 @@ std::string modSourceName(const ParamBridge& bridge, backplane::Source source) {
 		// position in its own chain, the strip's first LFO and the lane's first LFO were both "LFO 1" — two sources
 		// under one name in the route list. A lane device says where it stands: "LFO (FX 2)".
 		const size_t position = positionOfDevice(bridge, source.device);
-		if (position != kNoPosition && bridge.rackSlotOf(source.device) == kNoPosition) {
+		if (!named.empty()) {
+			// the player's own name, no number
+		}
+		else if (position != kNoPosition && bridge.rackSlotOf(source.device) == kNoPosition) {
 			name += " (FX ";
 			name += std::to_string(position + 1);
 			name += ")";

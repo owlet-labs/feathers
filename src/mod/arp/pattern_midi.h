@@ -65,9 +65,21 @@ inline constexpr int kMidiMaxBars = 8;
 /// most `kMidiMaxBars`; else the cycle (or the bars it reaches, capped) padded to the next bar.
 [[nodiscard]] double midiLoopBeats(double cycleBeats) noexcept;
 
-/// **PATTERN `pattern` OF THIS PATCH AS A .mid FILE'S BYTES**, played at `bpm` over its held (latched) chord, C4 if
-/// none is latched.
-[[nodiscard]] std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, double bpm);
+/// **THE KEY AN EXPORT PLAYS OVER, AND WHERE IT CAME FROM**: the latched chord; else the chord most recently played into the device
+/// (the same one the pattern is playing from, since a pattern follows the newest press); else C4. `key` is its root, the lowest
+/// note of the newest press. `keyed` is false where the notes do not follow the keys (Drum, Modulation).
+struct MidiRoot {
+	enum class From { Default, LastPlayed, Latched };
+	From from = From::Default;
+	int key = 60;
+	bool keyed = true;
+};
+/// **THE ROOT, SAID**: "D3 (last played note)", "C4 (default: no note played yet)", "D3 (latched chord)"; empty where not keyed.
+[[nodiscard]] std::string midiRootLabel(const MidiRoot& root);
+
+/// **PATTERN `pattern` OF THIS PATCH AS A .mid FILE'S BYTES**, played at `bpm` over its latched chord, else the chord
+/// last played into it, else C4; where the notes follow the keys the track is named for the root (`midiRootLabel`).
+[[nodiscard]] std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, double bpm, MidiRoot* root = nullptr);
 
 /// The file's name: "Pattern 2.mid".
 [[nodiscard]] std::string patternMidiName(size_t pattern);

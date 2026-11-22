@@ -79,6 +79,8 @@
 
 namespace feathers::rack {
 
+class DeviceLabels;
+
 class SlotOwner {
 public:
 	using Bus = hostslots::SlotValueBus<>;
@@ -86,6 +88,12 @@ public:
 
 	/// `record` must outlive this; the owner declares this after its record.
 	explicit SlotOwner(ChainRecord& record) noexcept : record_(record) {}
+	/// **THE USER'S NAMES FOR THE INSTANCES** (`DeviceLabels::nameOf`), read when a slot is labelled: a named instance wears its name alone
+	/// (no twin number). Null: none. Set once by the host that owns both.
+	void setNames(const DeviceLabels* names) noexcept { names_ = names; }
+	/// **A DEVICE WAS RENAMED**: every slot under it takes its new label, and the host is owed ONE text rescan at the next visit (nothing
+	/// under the device: nothing owed). Returns how many slots were relabelled.
+	uint32_t renamedDevice(DeviceInstanceId device);
 	SlotOwner(const SlotOwner&) = delete;
 	SlotOwner& operator=(const SlotOwner&) = delete;
 
@@ -556,6 +564,7 @@ private:
 	void openSlotGesture(hostslots::SlotIndex n, DeviceInstanceId device, size_t control) noexcept;
 
 	ChainRecord& record_;
+	const DeviceLabels* names_ = nullptr;
 	hostslots::SlotPool pool_;
 	Bus bus_;
 	Outbox outbox_;

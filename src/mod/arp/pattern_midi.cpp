@@ -91,11 +91,25 @@ double midiLoopBeats(double cycleBeats) noexcept {
 	return std::min(maxBeats, std::ceil(std::min(cycleBeats, maxBeats) / 4.0 - 1e-9) * 4.0);
 }
 
+std::string midiRootLabel(const MidiRoot& root) {
+	if (!root.keyed) {
+		return {};
+	}
+	const int k = std::clamp(root.key, 0, 127);
+	std::string name = std::string(kRootNames[k % 12]) + std::to_string(k / 12 - 1);
+	switch (root.from) {
+	case MidiRoot::From::Latched: return name + " (latched chord)";
+	case MidiRoot::From::LastPlayed: return name + " (last played note)";
+	case MidiRoot::From::Default: break;
+	}
+	return name + " (default: no note played yet)";
+}
+
 std::string patternMidiName(size_t pattern) {
 	return "Pattern " + std::to_string(pattern + 1) + ".mid";
 }
 
-std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, double bpm) {
+std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, double bpm, MidiRoot* root) {
 	pattern = std::min(pattern, kPatterns - 1);
 	if (!(bpm > 0.0) || !std::isfinite(bpm)) {
 		bpm = 120.0;
@@ -130,12 +144,30 @@ std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, doubl
 	if (!source.rowLocks.empty()) {
 		(void)d->writeRowLocks(source.rowLocks.data(), source.rowLocks.size());
 	}
-	// THE CHORD IT PLAYS OVER: the latched one, if Latch holds one; else C4 (what the lane draws over).
-	bool latched = false;
-	if (s.latch && !source.play.empty() && d->restorePlay(source.play.data(), source.play.size())) {
-		latched = !d->chordForTest().empty();
+	// THE KEY IT PLAYS OVER: the latched chord, else the chord most recently played into the device (its notes, as one press), else
+	// C4 (what the lane draws over). Restored whatever Latch says: an unlatched patch saves the chord last played.
+	const bool restored = !source.play.empty() && d->restorePlay(source.play.data(), source.play.size());
+	MidiRoot info;
+	info.keyed = q.mode != Mode::Drum && q.mode != Mode::Modulation;
+	if (restored && s.latch && d->chordHeld()) {
+		info.from = MidiRoot::From::Latched;
 	}
-	if (!latched) {
+	else if (restored && info.keyed && !d->recentChord().empty()) {
+		info.from = MidiRoot::From::LastPlayed;
+		const HeldChord& recent = d->recentChord();
+		std::array<device::NoteEvent, kMaxHeld> ons {};
+		std::array<device::NoteEvent, 8> passed {};
+		for (size_t i = 0; i < recent.size(); ++i) {
+			ons[i].kind = device::NoteEvent::Kind::On;
+			ons[i].noteId = static_cast<int32_t>(i) + 1;
+			ons[i].key = recent[i].key;
+			ons[i].channel = recent[i].channel;
+			ons[i].velocity = recent[i].velocity;
+		}
+		size_t n = 0;
+		d->processNotes(ons.data(), recent.size(), passed.data(), passed.size(), &n);
+	}
+	else {
 		device::NoteEvent on {};
 		on.kind = device::NoteEvent::Kind::On;
 		on.noteId = 1;
@@ -144,6 +176,10 @@ std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, doubl
 		std::array<device::NoteEvent, 8> passed {};
 		size_t n = 0;
 		d->processNotes(&on, 1, passed.data(), passed.size(), &n);
+	}
+	info.key = info.from == MidiRoot::From::Default ? 60 : pattern::transposeRootOf(d->recentChord());
+	if (root != nullptr) {
+		*root = info;
 	}
 
 	// PLAY THE LOOP, every event at its sample.
@@ -191,6 +227,14 @@ std::vector<uint8_t> patternMidi(const MidiSource& source, size_t pattern, doubl
 		events.push_back({ 0, { 0xFF, 0x51, 0x03, static_cast<uint8_t>(usPerBeat >> 16), static_cast<uint8_t>(usPerBeat >> 8),
 		                        static_cast<uint8_t>(usPerBeat) } });
 		events.push_back({ 0, { 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08 } });
+	}
+	// THE TRACK NAME says the root where the notes follow the keys, so a clip dragged into a DAW tells which key it was made in.
+	if (const std::string label = midiRootLabel(info); !label.empty()) {
+		const std::string text = "Pattern " + std::to_string(pattern + 1) + " in " + label;
+		std::vector<uint8_t> bytes { 0xFF, 0x03 };
+		putVarLen(bytes, static_cast<uint32_t>(text.size()));
+		bytes.insert(bytes.end(), text.begin(), text.end());
+		events.push_back({ 0, std::move(bytes) });
 	}
 	if (bends) {
 		// RPN 0 (PITCH BEND SENSITIVITY) on channel 1: MSB semitones, LSB cents, the RPN closed after. No MPE zone (RPN 6).

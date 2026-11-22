@@ -481,6 +481,10 @@ enum class Param : int {
 	DriveAngle,
 	SlotAAngle,
 	SlotBAngle,
+	/// THE SMEAR'S THREE (the chain's length, the Q it reaches at full Amount, and where it is centred), after the angles.
+	SmearStages, ///< every engine: how many allpass sections the Smear runs; 8 is what it always ran
+	SmearReso,   ///< every engine: the Q the sections reach at Smear 100%; Amount still sweeps from 0.5 up to it (8 is what it always reached)
+	SmearOffset, ///< every engine: semitones from Freq to where the Smear is centred (the loops stay at Freq)
 
 	kCount,
 };
@@ -505,6 +509,8 @@ inline constexpr size_t kSlotSecondParamCount = 4;
 inline constexpr size_t kRateMultParamCount = 3;
 /// And the three Angle controls after those.
 inline constexpr size_t kAngleParamCount = 3;
+/// And the Smear's Stages, Reso and Offset after those.
+inline constexpr size_t kSmearParamCount = 3;
 /// THE TRACKED RATE: a multiple of the played note's frequency, 0..1, 0 is off (a static angle). Drag lands on the subharmonics below (the
 /// control stays continuous: a typed value is kept as typed, and a modulated one is not snapped).
 inline constexpr double kRateMultDefault = 0.5;
@@ -524,6 +530,16 @@ inline constexpr double kInputMaxDb = 24.0;
 }
 /// The emphasis offset's range, in semitones either way.
 inline constexpr double kEmphOffsetSemitones = 48.0;
+/// THE SMEAR'S CHAIN: how many allpass sections it can run, and the count it always ran (the control's default).
+inline constexpr int kSmearMinStages = 1;
+inline constexpr int kSmearMaxStages = 32;
+inline constexpr int kSmearDefaultStages = 8;
+/// THE Q THE SECTIONS REACH AT SMEAR 100%: 1 (gentle) to 32 (a long, narrow ring); 8 is what it always reached.
+inline constexpr double kSmearResoMin = 1.0;
+inline constexpr double kSmearResoMax = 32.0;
+inline constexpr double kSmearResoDefault = 8.0;
+/// The Smear offset's range, in semitones either way (the emphasis offset's).
+inline constexpr double kSmearOffsetSemitones = 48.0;
 
 inline constexpr const char* kEmphShapeNames[] = { "Tilt", "Bell" };
 inline constexpr const char* kFbTapNames[] = { "Clean", "Driven" };
@@ -1167,7 +1183,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Eight allpass filters centred on Freq: the level stays where it is and the timing is thrown out of step "
+     .tooltip = "Allpass filters (eight by default, set by Stages) centred on Freq (moved by Offset): the level stays where it is and the timing is thrown out of step "
                 "about Freq, so a click becomes a chirp and a square's corners come apart. Inside the loops",
      .zones = 0,
      .modSpan = 0.0,
@@ -1688,6 +1704,60 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateMask = 0,
      .centred = false,
      .shortName = "S"},
+    {.key = "eroder_smear_stages", .name = "Eroder Smear Stages",
+     .min = static_cast<double>(kSmearMinStages),
+     .max = static_cast<double>(kSmearMaxStages),
+     .def = static_cast<double>(kSmearDefaultStages),
+     .stepped = true,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How many allpass filters the Smear runs: more is a longer, deeper chirp, and costs more. Inactive while Smear is at 0",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Stages"},
+    {.key = "eroder_smear_reso", .name = "Eroder Smear Reso",
+     .min = kSmearResoMin,
+     .max = kSmearResoMax,
+     .def = kSmearResoDefault,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "How sharp the Smear's filters get at Smear 100% (Smear itself still sweeps up to it from the gentlest): low is a "
+                "short soft smear, high a long narrow ring. Inactive while Smear is at 0",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Reso"},
+    {.key = "eroder_smear_offset", .name = "Eroder Smear Offset",
+     .min = -kSmearOffsetSemitones,
+     .max = kSmearOffsetSemitones,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Number,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Moves the Smear away from Freq: it is centred this many semitones above (or, below zero, under) it. The "
+                "loops stay on Freq. Inactive while Smear is at 0",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = true,
+     .shortName = "Off",
+     .suffix = "st"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1755,6 +1825,9 @@ struct Settings {
 	float loop = 0.0f;
 	float loopInterval = 0.0f; ///< semitones
 	float emphOffset = 0.0f;   ///< semitones from Freq to the emphasis's tuning
+	float smearStages = static_cast<float>(kSmearDefaultStages); ///< how many allpass sections the Smear runs
+	float smearReso = static_cast<float>(kSmearResoDefault);     ///< the Q the Smear's sections reach at Smear 100%
+	float smearOffset = 0.0f;  ///< semitones from Freq to the Smear's centre
 	float inputDb = 0.0f;      ///< gain on the signal entering the wet chain
 	// ETCH'S SLOTS.
 	SlotSettings slotA { 0.0f, DriveMode::Slew, 0.0f, 1.0f };

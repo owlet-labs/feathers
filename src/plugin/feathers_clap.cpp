@@ -2908,6 +2908,19 @@ private:
 		return slot >= kMaxRackSlots ? UINT32_MAX : static_cast<uint32_t>(slot);
 	}
 
+	static bool testChainSetDeviceName(const clap_plugin* plugin, uint32_t position, const char* name) noexcept {
+		if (plugin == nullptr || plugin->plugin_data == nullptr || name == nullptr || (position & CLAP_FEATHERS_TEST_STRIP) != 0) {
+			return false;
+		}
+		FeathersPlugin* self = fromClap(plugin);
+		const DeviceInstanceId device = self->bridge_.fxDeviceAt(position);
+		if (device == kNoInstance) {
+			return false;
+		}
+		(void)self->bridge_.setUserName(device, name);
+		return true;
+	}
+
 	static bool testChainProvision(const clap_plugin* plugin) noexcept {
 		if (plugin == nullptr || plugin->plugin_data == nullptr) {
 			return false;
@@ -3218,6 +3231,7 @@ private:
 			&FeathersPlugin::testChainWantReadings,
 			&FeathersPlugin::testChainPostNote,
 			&FeathersPlugin::testChainProvision,
+			&FeathersPlugin::testChainSetDeviceName,
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_TEST_CHAIN) == 0) {
 			return &kTestChain;

@@ -24,6 +24,7 @@
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/lane_selection.h"
+#include "plugin/ui/device_rename.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/surface_layers.h"
 #include "plugin/ui/widget_registry.h"
@@ -328,6 +329,7 @@ public:
 	[[nodiscard]] visage::Bounds cardBoundsForTest(DeviceInstanceId device) const;
 	/// The history this column records into — the owner's, so a case can walk the step a drag made.
 	[[nodiscard]] EditHistory& historyForTest() noexcept { return history_; }
+	[[nodiscard]] DeviceRename& renameForTest() noexcept { return *rename_; }
 	static constexpr float kEdgeScrollBand = 24.0f;
 	static constexpr float kEdgeScrollStep = 12.0f;
 
@@ -517,6 +519,7 @@ private:
 	std::unique_ptr<LaneSelection> selection_;
 	std::function<bool(std::span<const DeviceInstanceId>, visage::Point)> onDropOutside_;
 	std::unique_ptr<SelectionOverlay> selectionOverlay_;
+	std::unique_ptr<DeviceRename> rename_;
 	[[nodiscard]] std::vector<DeviceInstanceId> chainOrder() const;
 	void applySelection();
 	void afterVerb();

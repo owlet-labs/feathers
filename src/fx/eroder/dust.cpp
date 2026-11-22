@@ -206,12 +206,23 @@ float shapeDrive(DriveMode mode, float driven, float shape, float gain, const Cu
 		const float tri = triangleOf(u + bias) - triangleOf(bias);
 		return sine + extras.sharp * (tri - sine);
 	}
-	case DriveMode::Wreck:
-		return std::sin(kHalfPi * std::tanh(biasIn > 0.0f ? u + biasIn : u) * (1.0f + kWreckFoldSpan * shape));
+	case DriveMode::Wreck: {
+		const float fold = 1.0f + kWreckFoldSpan * shape;
+		if (biasIn <= 0.0f) {
+			return std::sin(kHalfPi * std::tanh(u) * fold);
+		}
+		// BIASED, BROUGHT BACK THROUGH ZERO (as Fold's is): a signal that is not there makes no offset, so a tail ends; what a signal's own asymmetry makes
+		// is left to the DC block.
+		return std::sin(kHalfPi * std::tanh(u + biasIn) * fold) - std::sin(kHalfPi * std::tanh(biasIn) * fold);
+	}
 	case DriveMode::Jag: {
 		// A TRIANGLE OF PERIOD FOUR through the origin at a slope of one, after the tanh.
-		const float x = std::tanh(biasIn > 0.0f ? u + biasIn : u) * (1.0f + kWreckFoldSpan * shape);
-		return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
+		const float fold = 1.0f + kWreckFoldSpan * shape;
+		if (biasIn <= 0.0f) {
+			const float x = std::tanh(u) * fold;
+			return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
+		}
+		return triangleOf(std::tanh(u + biasIn) * fold) - triangleOf(std::tanh(biasIn) * fold);
 	}
 	case DriveMode::Chonk:
 		// THE PLAIN TANH: the stage's right channel does its own turning-over (`drive_stage.h`).

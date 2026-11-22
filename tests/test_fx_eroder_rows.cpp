@@ -20,6 +20,7 @@
 
 #include "fx/dyn/oversampler.h"
 #include "fx/eroder/drive_stage.h"
+#include "fx/eroder/eroder.h"
 #include "fx/eroder/eroder_types.h"
 
 #include <algorithm>
@@ -78,10 +79,15 @@ double refCurve(DriveMode mode, double u, double shape, const RefExtras& x) {
 		const double tri = refTriangle(u + b) - refTriangle(b);
 		return sine + x.sharp * (tri - sine);
 	}
-	case DriveMode::Wreck:
-		return std::sin(0.5 * kPi * std::tanh(u + x.bias) * (1.0 + 4.0 * shape));
-	case DriveMode::Jag:
-		return refTriangle(std::tanh(u + x.bias) * (1.0 + 4.0 * shape));
+	case DriveMode::Wreck: {
+		// (the bias point's own output is taken out: the curve goes through zero)
+		const double f = 1.0 + 4.0 * shape;
+		return std::sin(0.5 * kPi * std::tanh(u + x.bias) * f) - std::sin(0.5 * kPi * std::tanh(x.bias) * f);
+	}
+	case DriveMode::Jag: {
+		const double f = 1.0 + 4.0 * shape;
+		return refTriangle(std::tanh(u + x.bias) * f) - refTriangle(std::tanh(x.bias) * f);
+	}
 	default:
 		return u;
 	}
@@ -313,6 +319,8 @@ TEST_CASE("Bias: 0 is Wreck and Jag to the bit; above 0 a bias into the tanh giv
 		CHECK(none < 1.0e-3); // an odd curve has none
 		CHECK(some == doctest::Approx(second(1.0, false)).epsilon(0.08));
 		CHECK(some > 0.02); // NON-VACUOUS
+		// A SIGNAL THAT IS NOT THERE MAKES NO OFFSET: the curve goes through zero at zero, at any Bias.
+		CHECK(shapeDrive(mode, 0.0f, 0.3f, 1.0f, CurveExtras { 0.0f, 0.0f, 1.0f }) == 0.0f);
 	}
 	// THE OFFSET IS THE DC BLOCK'S: Bias above 0 makes Wreck and Jag offset-making Types (so the one block runs), and the stage's mean is then ~0.
 	for (const DriveMode mode : { DriveMode::Wreck, DriveMode::Jag }) {
@@ -470,4 +478,513 @@ TEST_CASE("Lean's Rate: the lean swaps sides by cos(phase) - the left's 2nd harm
 	const Complex2 e0 = componentAt(stillL, 0, 480, 2000.0);
 	CHECK(early.re * e0.re + early.im * e0.im > 0.0);
 	CHECK(late.re * e0.re + late.im * e0.im < 0.0);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// (c) KEY, SPREAD AND THE TUNED EDGE.                                                                //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+constexpr double kNoteHz = 220.0;
+
+/// A deterministic noise in [-0.5, 0.5): a different stream per `seed`.
+float noiseAt(size_t i, uint32_t seed) {
+	uint32_t x = static_cast<uint32_t>(i) * 2654435761u + seed * 40503u + 12345u;
+	x ^= x >> 15;
+	x *= 2246822519u;
+	x ^= x >> 13;
+	x *= 3266489917u;
+	x ^= x >> 16;
+	return static_cast<float>(static_cast<int32_t>(x) >> 8) * (1.0f / 16777216.0f);
+}
+DriveSettings keyed(DriveMode mode, float knob, float shape, bool key, float spread, double noteHz = kNoteHz) {
+	return deriveDrive(knob, mode, shape, kRate, nullptr, 1.0f, DriveExtras { {}, key, noteHz, spread });
+}
+/// The two channels of a run of noise (distinct streams), `frames` long.
+void runNoise(const DriveSettings& d, size_t frames, std::vector<float>& l, std::vector<float>& r) {
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.setTrimOnForTest(false);
+	stage.set(d);
+	for (size_t i = 0; i < frames; ++i) {
+		float a = noiseAt(i, 1);
+		float b = noiseAt(i, 2);
+		stage.process(a, b);
+		l.push_back(a);
+		r.push_back(b);
+	}
+}
+/// THE EDGE TIMES OF A TUNED HOLD, read from the output: an edge sample is the one between two held runs, `old + over (new - old)`, so the edge happened
+/// `over` samples before it, at `m - over`, `over = (y[m] - y[m-1]) / (y[m+1] - y[m-1])`. (Holds are at least three frames here, so the edges are apart.)
+std::vector<double> edgeTimes(const std::vector<float>& y) {
+	std::vector<double> t;
+	for (size_t m = 3; m + 3 < y.size(); ++m) {
+		if (y[m - 1] == y[m - 2] && y[m + 1] == y[m + 2] && y[m] != y[m - 1] && y[m + 1] != y[m] && y[m + 1] != y[m - 1]) {
+			t.push_back(static_cast<double>(m) - static_cast<double>(y[m] - y[m - 1]) / static_cast<double>(y[m + 1] - y[m - 1]));
+		}
+	}
+	return t;
+}
+/// The mean spacing of edge times (they are consecutive holds, so a missed edge would double a spacing: the spacing is taken between neighbours and the
+/// median-sized ones kept).
+double meanSpacing(const std::vector<double>& t) {
+	std::vector<double> gaps;
+	for (size_t i = 1; i < t.size(); ++i) {
+		gaps.push_back(t[i] - t[i - 1]);
+	}
+	std::sort(gaps.begin(), gaps.end());
+	const double median = gaps[gaps.size() / 2];
+	double sum = 0.0;
+	size_t n = 0;
+	for (const double g : gaps) {
+		if (g < 1.5 * median) {
+			sum += g;
+			++n;
+		}
+	}
+	return sum / static_cast<double>(n);
+}
+/// The number of changes of an unkeyed (whole-sample) hold per second: its rate.
+double changesPerSecond(const std::vector<float>& y) {
+	size_t n = 0;
+	for (size_t i = 1; i < y.size(); ++i) {
+		n += y[i] != y[i - 1] ? 1 : 0;
+	}
+	return static_cast<double>(n) * kRate / static_cast<double>(y.size());
+}
+
+//--- Today's Crush, Decimate and Slew, restated -------------------------------------------------------
+
+struct OldHold {
+	double phase = 0.0;
+	float held = 0.0f;
+	float prev = 0.0f;
+};
+void oldCrush(OldHold& h, double hold, float step, float in, float& out) {
+	h.phase += 1.0;
+	if (h.phase >= hold) {
+		h.phase -= hold;
+		h.held = std::round(in / step) * step;
+	}
+	out = h.held;
+}
+void oldDecimate(OldHold& h, double hold, float shape, float in, float& out) {
+	h.phase += 1.0;
+	if (h.phase >= hold) {
+		h.phase -= hold;
+		h.prev = h.held;
+		h.held = in;
+	}
+	if (shape <= 0.0f) {
+		out = h.held;
+		return;
+	}
+	const auto t = static_cast<float>(h.phase / hold);
+	const float line = h.prev + (h.held - h.prev) * t;
+	out = shape >= 1.0f ? line : h.held + shape * (line - h.held);
+}
+struct OldSlew {
+	float up = 0.0f;
+	float down = 0.0f;
+	float linUp = 0.0f;
+	float linDown = 0.0f;
+	float y = 0.0f;
+	OldSlew(float hz, float curve, float balance) {
+		const double h = std::clamp(static_cast<double>(hz), 0.01, kRate * 0.45);
+		const float limit = static_cast<float>(4.0 * 0.5 * h / kRate);
+		const float k = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * h / kRate));
+		const float u = std::exp2(balance);
+		const float d = std::exp2(-balance);
+		up = (1.0f - curve) * limit * u;
+		down = (1.0f - curve) * limit * d;
+		linUp = curve * k * u;
+		linDown = curve * k * d;
+	}
+	float process(float x) {
+		const float e = x - y;
+		const float m = std::abs(e);
+		if (e >= 0.0f) {
+			y += std::min(m, up + linUp * m);
+		}
+		else {
+			y -= std::min(m, down + linDown * m);
+		}
+		return y;
+	}
+};
+
+} // namespace
+
+TEST_CASE("Key off and Spread 0: Crush, Decimate, Slew and Lopside are today's bits, both sides") {
+	for (const float knob : { 0.2f, 0.5f, 0.83f }) {
+		for (const float shape : { 0.0f, 0.4f, 1.0f }) {
+			CAPTURE(knob);
+			CAPTURE(shape);
+			{
+				const DriveSettings d = keyed(DriveMode::Crush, knob, shape, false, 0.0f);
+				std::vector<float> l;
+				std::vector<float> r;
+				runNoise(d, 4000, l, r);
+				OldHold hl;
+				OldHold hr;
+				for (size_t i = 0; i < l.size(); ++i) {
+					float a = 0.0f;
+					float b = 0.0f;
+					oldCrush(hl, d.crushHoldFrames, d.crushStep, noiseAt(i, 1), a);
+					oldCrush(hr, d.crushHoldFrames, d.crushStep, noiseAt(i, 2), b);
+					REQUIRE(l[i] == a);
+					REQUIRE(r[i] == b);
+				}
+			}
+			{
+				const DriveSettings d = keyed(DriveMode::Decimate, knob, shape, false, 0.0f);
+				std::vector<float> l;
+				std::vector<float> r;
+				runNoise(d, 4000, l, r);
+				OldHold hl;
+				OldHold hr;
+				for (size_t i = 0; i < l.size(); ++i) {
+					float a = 0.0f;
+					float b = 0.0f;
+					oldDecimate(hl, d.crushHoldFrames, d.shape, noiseAt(i, 1), a);
+					oldDecimate(hr, d.crushHoldFrames, d.shape, noiseAt(i, 2), b);
+					REQUIRE(l[i] == a);
+					REQUIRE(r[i] == b);
+				}
+			}
+			for (const DriveMode mode : { DriveMode::Slew, DriveMode::Lopside }) {
+				const DriveSettings d = keyed(mode, knob, shape, false, 0.0f);
+				std::vector<float> l;
+				std::vector<float> r;
+				runNoise(d, 4000, l, r);
+				OldSlew sl(d.slewHz, d.slewCurve, d.slewBalance);
+				OldSlew sr(d.slewHz, d.slewCurve, d.slewBalance);
+				for (size_t i = 0; i < l.size(); ++i) {
+					REQUIRE(l[i] == sl.process(noiseAt(i, 1)));
+					REQUIRE(r[i] == sr.process(noiseAt(i, 2)));
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE("Key: the multiple runs exponentially from 32x the note at the bottom of the knob to a quarter at the top, and the derived rates are note x multiple") {
+	CHECK(keyMultiple(0.0) == doctest::Approx(32.0));
+	CHECK(keyMultiple(1.0) == doctest::Approx(0.25));
+	CHECK(keyMultiple(0.5) == doctest::Approx(std::sqrt(32.0 * 0.25)));
+	// EXPONENTIAL: equal steps of the knob are equal ratios; CONTINUOUS: nothing snaps.
+	const double step = keyMultiple(0.30) / keyMultiple(0.31);
+	CHECK(keyMultiple(0.62) / keyMultiple(0.63) == doctest::Approx(step));
+	CHECK(keyMultiple(0.300) / keyMultiple(0.301) > 1.0);
+	for (const float knob : { 0.1f, 0.37f, 0.5f, 0.711f, 0.95f }) {
+		CAPTURE(knob);
+		const double mult = 32.0 * std::pow(0.25 / 32.0, static_cast<double>(knob)); // restated
+		const DriveSettings c = keyed(DriveMode::Crush, knob, 0.5f, true, 0.0f);
+		CHECK(c.crushHoldFrames == doctest::Approx(kRate / (kNoteHz * mult)).epsilon(1.0e-9));
+		const DriveSettings s = keyed(DriveMode::Slew, knob, 0.0f, true, 0.0f);
+		CHECK(static_cast<double>(s.slewHz) == doctest::Approx(kNoteHz * mult).epsilon(1.0e-6));
+		CHECK(c.keyed);
+		CHECK(c.crushHoldFramesRight == c.crushHoldFrames);
+		CHECK(s.slewHzRight == s.slewHz);
+	}
+	// WITHOUT A NOTE, or on another Type, the switch is nothing.
+	CHECK_FALSE(keyed(DriveMode::Crush, 0.5f, 0.0f, true, 0.0f, 0.0).keyed);
+	CHECK_FALSE(keyed(DriveMode::Soft, 0.5f, 0.0f, true, 0.5f).keyed);
+	CHECK(keyed(DriveMode::Crush, 0.5f, 0.0f, false, 0.0f).crushHoldFrames == deriveDrive(0.5f, DriveMode::Crush, 0.0f, kRate).crushHoldFrames);
+}
+
+TEST_CASE("Key: the hold rate MEASURED from the output is the note times the multiple, in Crush and Decimate, at several knob positions") {
+	// 220 Hz: holds of 18 to 270 frames across these; a non-integer multiple (0.5 is x2.83) and sub-octave ones (0.9 is x0.41) are among them.
+	for (const DriveMode mode : { DriveMode::Crush, DriveMode::Decimate }) {
+		for (const float knob : { 0.25f, 0.5f, 0.63f, 0.9f }) {
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(knob);
+			const double mult = 32.0 * std::pow(0.25 / 32.0, static_cast<double>(knob));
+			const DriveSettings d = keyed(mode, knob, 0.0f, true, 0.0f);
+			std::vector<float> l;
+			std::vector<float> r;
+			runNoise(d, 96000, l, r);
+			const std::vector<double> edges = edgeTimes(l);
+			REQUIRE(edges.size() > 100);
+			const double measuredHz = kRate / meanSpacing(edges);
+			MESSAGE("knob " << knob << ": measured " << measuredHz << " Hz, note x multiple " << kNoteHz * mult);
+			CHECK(measuredHz == doctest::Approx(kNoteHz * mult).epsilon(0.002));
+		}
+	}
+}
+
+TEST_CASE("Key: Slew's and Lopside's rate frequency MEASURED from a step's ramp is the note times the multiple") {
+	for (const DriveMode mode : { DriveMode::Slew, DriveMode::Lopside }) {
+		for (const float knob : { 0.2f, 0.5f, 0.63f, 0.9f }) {
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(knob);
+			const double mult = 32.0 * std::pow(0.25 / 32.0, static_cast<double>(knob));
+			// A HARD LIMIT (Slew's curve at 0; Lopside's is always hard) at balance 0: Slew Shape 0, Lopside Shape 0.5.
+			const DriveSettings d = keyed(mode, knob, mode == DriveMode::Slew ? 0.0f : 0.5f, true, 0.0f);
+			DriveStage stage;
+			stage.prepare(kRate);
+			stage.set(d);
+			std::vector<float> y;
+			for (size_t i = 0; i < 40; ++i) {
+				float l = 0.8f;
+				float r = 0.8f;
+				stage.process(l, r);
+				y.push_back(l);
+			}
+			// THE FIRST STEPS (the ramp is far from its top): the hard limit is 4 * 0.5 * hz / rate a sample.
+			const double slope = static_cast<double>(y[2]) - static_cast<double>(y[1]);
+			CHECK(slope * kRate / 2.0 == doctest::Approx(kNoteHz * mult).epsilon(0.002));
+		}
+	}
+}
+
+TEST_CASE("Spread: the left and right rates differ by the restated ratio, either way of the Key, and the sides stay level") {
+	const auto ratioOf = [](double spread) { return std::exp2(spread * 50.0 / 1200.0); };
+	for (const double spread : { 0.5, 1.0 }) {
+		CAPTURE(spread);
+		// CRUSH AND DECIMATE, Key off: the left holds shorter by the ratio and the right longer, so the rates' quotient is ratio^2.
+		for (const DriveMode mode : { DriveMode::Crush, DriveMode::Decimate }) {
+			const DriveSettings d = keyed(mode, 0.5f, 0.0f, false, static_cast<float>(spread));
+			std::vector<float> l;
+			std::vector<float> r;
+			runNoise(d, 96000, l, r);
+			const double quotient = changesPerSecond(l) / changesPerSecond(r);
+			CHECK(quotient == doctest::Approx(ratioOf(spread) * ratioOf(spread)).epsilon(0.005));
+			// AND AROUND THE CENTRE: the geometric mean of the two rates is the unspread rate (symmetric in log frequency).
+			const DriveSettings none = keyed(mode, 0.5f, 0.0f, false, 0.0f);
+			std::vector<float> nl;
+			std::vector<float> nr;
+			runNoise(none, 96000, nl, nr);
+			CHECK(std::sqrt(changesPerSecond(l) * changesPerSecond(r)) == doctest::Approx(changesPerSecond(nl)).epsilon(0.005));
+		}
+		// WITH THE KEY ON, from the edge times.
+		{
+			const DriveSettings d = keyed(DriveMode::Decimate, 0.5f, 0.0f, true, static_cast<float>(spread));
+			std::vector<float> l;
+			std::vector<float> r;
+			runNoise(d, 96000, l, r);
+			const double mult = 32.0 * std::pow(0.25 / 32.0, 0.5);
+			CHECK(kRate / meanSpacing(edgeTimes(l)) == doctest::Approx(kNoteHz * mult * ratioOf(spread)).epsilon(0.003));
+			CHECK(kRate / meanSpacing(edgeTimes(r)) == doctest::Approx(kNoteHz * mult / ratioOf(spread)).epsilon(0.003));
+		}
+		// SLEW: the hard limits are in the ratio; a sine's level is the same on both sides within a small bound.
+		{
+			const DriveSettings d = keyed(DriveMode::Slew, 0.8f, 0.0f, false, static_cast<float>(spread));
+			CHECK(static_cast<double>(d.slewHz) / static_cast<double>(d.slewHzRight) == doctest::Approx(ratioOf(spread) * ratioOf(spread)).epsilon(1.0e-5));
+			std::vector<float> l;
+			std::vector<float> r;
+			const std::vector<float> yl = runLeft(d, 48000, [](size_t i, float& a, float& b) { a = b = sineAt(i, 500.0, 0.5); }, &r);
+			const auto rms = [](const std::vector<float>& x) {
+				double sq = 0.0;
+				for (size_t i = 24000; i < x.size(); ++i) {
+					sq += static_cast<double>(x[i]) * x[i];
+				}
+				return std::sqrt(sq / static_cast<double>(x.size() - 24000));
+			};
+			const double db = 20.0 * std::log10(rms(yl) / rms(r));
+			MESSAGE("Slew at Spread " << spread << ": left over right " << db << " dB");
+			CHECK(std::abs(db) < 1.0);
+		}
+	}
+	// SPREAD 0 IS ONE RATE: both sides count alike (L = R for L = R input, to the bit).
+	for (const DriveMode mode : { DriveMode::Crush, DriveMode::Decimate, DriveMode::Slew, DriveMode::Lopside }) {
+		std::vector<float> r;
+		const std::vector<float> l = runLeft(keyed(mode, 0.4f, 0.3f, true, 0.0f), 4800, [](size_t i, float& a, float& b) { a = b = noiseAt(i, 7); }, &r);
+		CHECK(l == r);
+	}
+}
+
+TEST_CASE("The tuned edge: with Key on at x4 a harmonic input has a lower inharmonic floor than with the whole-sample switch") {
+	// 220 Hz at x4: a hold of 48000 / 880 = 54.5454 frames, so the whole-sample switch jitters by a sample. 4800 frames are 22 cycles; the
+	// output of an ideal tuned hold is periodic in the input's period, so every bin that is not a multiple of 22 is NOT harmonic.
+	const double knob = std::log(4.0 / 32.0) / std::log(0.25 / 32.0); // multiple 4
+	CHECK(keyMultiple(knob) == doctest::Approx(4.0));
+	const auto floorDb = [&](DriveMode mode, bool tuned) {
+		DriveSettings d = keyed(mode, static_cast<float>(knob), 0.0f, true, 0.0f);
+		d.keyed = tuned;
+		const auto gen = [](size_t i, float& l, float& r) {
+			l = r = sineAt(i, 220.0, 0.4) + sineAt(i, 440.0, 0.2) + sineAt(i, 660.0, 0.1);
+		};
+		const std::vector<float> y = runLeft(d, 9600 + 4800, gen);
+		constexpr size_t kN = 4800;
+		const size_t from = 9600;
+		double harmonic = 0.0;
+		double other = 0.0;
+		for (size_t bin = 1; bin < kN / 2; ++bin) {
+			const double hz = static_cast<double>(bin) * kRate / static_cast<double>(kN);
+			if (hz > 20000.0) {
+				break;
+			}
+			double re = 0.0;
+			double im = 0.0;
+			for (size_t i = 0; i < kN; ++i) {
+				const double w = 2.0 * kPi * static_cast<double>(bin) * static_cast<double>(i) / static_cast<double>(kN);
+				re += y[from + i] * std::cos(w);
+				im += y[from + i] * std::sin(w);
+			}
+			const double power = re * re + im * im;
+			(bin % 22 == 0 ? harmonic : other) += power;
+		}
+		return 10.0 * std::log10(other / harmonic);
+	};
+	for (const DriveMode mode : { DriveMode::Decimate, DriveMode::Crush }) {
+		const double naive = floorDb(mode, false);
+		const double tuned = floorDb(mode, true);
+		MESSAGE((mode == DriveMode::Crush ? "Crush" : "Decimate") << " x4 at 220 Hz: inharmonic floor naive " << naive << " dB, tuned edge " << tuned << " dB");
+		CHECK(tuned < naive - 10.0);
+	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE DEVICE: PARTITIONS, TAILS, AND THE LOOPS AT THE EXTREMES.                                      //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Settings etchWith() {
+	Settings s = stateOf(rowOf(State {}), static_cast<size_t>(Param::kCount)).settings;
+	s.mode = Mode::Etch;
+	s.mix = 1.0f;
+	s.freq = 10.0f;
+	return s;
+}
+struct Stereo {
+	std::vector<float> l;
+	std::vector<float> r;
+	friend bool operator==(const Stereo&, const Stereo&) = default;
+};
+/// Renders `in` followed by `tail` zeros. The note is changed at multiples of 480 (a whole number of control grids) and the blocks are cut at `block` inside
+/// each such segment, so the only thing that varies between two partitions is where the process calls end.
+Stereo renderEtch(const Settings& s, size_t signal, size_t tail, size_t block, bool moveNote) {
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	Stereo b;
+	const size_t total = signal + tail;
+	b.l.assign(total, 0.0f);
+	for (size_t i = 0; i < signal; ++i) {
+		b.l[i] = noiseAt(i, 3) * 1.6f;
+	}
+	b.r.assign(total, 0.0f);
+	for (size_t i = 0; i < signal; ++i) {
+		b.r[i] = noiseAt(i, 4) * 1.6f;
+	}
+	for (size_t seg = 0; seg < total; seg += 480) {
+		if (moveNote) {
+			e.setNoteContext({ 48.0f + 12.0f * std::sin(static_cast<float>(seg) / 9000.0f), true });
+		}
+		const size_t end = std::min(total, seg + 480);
+		for (size_t done = seg; done < end;) {
+			const size_t take = std::min(block, end - done);
+			e.processStereo(b.l.data() + done, b.r.data() + done, static_cast<int>(take));
+			done += take;
+		}
+	}
+	return b;
+}
+float peakOf(const Stereo& b) {
+	float peak = 0.0f;
+	for (size_t i = 0; i < b.l.size(); ++i) {
+		REQUIRE(std::isfinite(b.l[i]));
+		REQUIRE(std::isfinite(b.r[i]));
+		peak = std::max({ peak, std::abs(b.l[i]), std::abs(b.r[i]) });
+	}
+	return peak;
+}
+bool silentTail(const Stereo& b, size_t n) {
+	for (size_t i = b.l.size() - n; i < b.l.size(); ++i) {
+		if (b.l[i] != 0.0f || b.r[i] != 0.0f) {
+			return false;
+		}
+	}
+	return true;
+}
+
+} // namespace
+
+TEST_CASE("Key and Spread in Etch: any block size gives the same output with the note moving, and the tail ends in exact zero") {
+	struct Pair {
+		DriveMode a;
+		DriveMode b;
+	};
+	for (const Pair pair : { Pair { DriveMode::Crush, DriveMode::Slew }, Pair { DriveMode::Decimate, DriveMode::Lopside } }) {
+		for (const bool parallel : { false, true }) {
+			CAPTURE(static_cast<int>(pair.a));
+			CAPTURE(parallel);
+			Settings s = etchWith();
+			s.slotA = { 0.5f, pair.a, 0.3f, 1.0f };
+			s.slotA.key = true;
+			s.slotA.spread = 0.7f;
+			s.slotB = { 0.6f, pair.b, 0.5f, 1.0f };
+			s.slotB.key = true;
+			s.slotB.spread = 1.0f;
+			s.slotParallel = parallel;
+			s.drive = 0.7f;
+			s.driveMode = DriveMode::Decimate;
+			s.driveKey = true;
+			s.driveSpread = 0.4f;
+			const Stereo whole = renderEtch(s, 24000, 96000, 480, true);
+			CHECK(renderEtch(s, 24000, 96000, 1, true) == whole);
+			CHECK(renderEtch(s, 24000, 96000, 37, true) == whole);
+			CHECK(peakOf(whole) > 0.05f);
+			CHECK(peakOf(whole) < 5.0f);
+			CHECK(silentTail(whole, 24000));
+			// THE NOTE MATTERS (non-vacuous): a still note gives other samples.
+			CHECK_FALSE(renderEtch(s, 24000, 96000, 480, false) == whole);
+		}
+	}
+}
+
+TEST_CASE("The third row at its extremes in three chained stages with the loops on: finite, under the wet ceiling, and silent after") {
+	struct Setup {
+		DriveMode drive;
+		DriveMode a;
+		DriveMode b;
+	};
+	for (const Setup setup : { Setup { DriveMode::Soft, DriveMode::Fold, DriveMode::Wreck }, Setup { DriveMode::Tube, DriveMode::Jag, DriveMode::Lean },
+	                           Setup { DriveMode::Crush, DriveMode::Slew, DriveMode::Decimate }, Setup { DriveMode::Lopside, DriveMode::Soft, DriveMode::Jag } }) {
+		for (const bool tapDriven : { false, true }) {
+			CAPTURE(static_cast<int>(setup.drive));
+			CAPTURE(tapDriven);
+			Settings s = etchWith();
+			s.drive = 0.95f;
+			s.driveMode = setup.drive;
+			s.driveHard = 1.0f;
+			s.driveSharp = 1.0f;
+			s.driveBias = 1.0f;
+			s.driveKey = true;
+			s.driveSpread = 1.0f;
+			s.driveRate = 4.0f;
+			s.slotA = { 0.95f, setup.a, 1.0f, 1.0f };
+			s.slotB = { 0.95f, setup.b, 1.0f, 1.0f };
+			for (SlotSettings* slot : { &s.slotA, &s.slotB }) {
+				slot->hard = 1.0f;
+				slot->sharp = 1.0f;
+				slot->bias = 1.0f;
+				slot->key = true;
+				slot->spread = 1.0f;
+				slot->rate = 4.0f;
+			}
+			s.resonance = 0.9f;
+			s.loop = 0.5f;
+			s.smear = 0.4f;
+			s.tapDriven = tapDriven;
+			s.emphAmount = 12.0f;
+			const Stereo whole = renderEtch(s, 24000, 240000, 480, true);
+			const float peak = peakOf(whole);
+			MESSAGE("peak " << peak);
+			CHECK(peak <= kWetCeiling * 1.001f);
+			CHECK(peak > 0.05f);
+			{
+				float tailPeak = 0.0f;
+				for (size_t i = whole.l.size() - 24000; i < whole.l.size(); ++i) {
+					tailPeak = std::max({ tailPeak, std::abs(whole.l[i]), std::abs(whole.r[i]) });
+				}
+				MESSAGE("tail peak " << tailPeak);
+			}
+			CHECK(silentTail(whole, 24000));
+			CHECK(renderEtch(s, 24000, 240000, 37, true) == whole);
+		}
+	}
 }

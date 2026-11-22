@@ -454,6 +454,8 @@ struct SlewSettings {
 	float curve = 0.0f;
 	/// -1..1. Positive lets rising steps go `2^balance` times as far and falling steps `2^-balance` times; 0 is symmetric.
 	float balance = 0.0f;
+	/// The right channel's rate when it differs from the left's (a Spread); negative means the same as `hz`.
+	float hzRight = -1.0f;
 };
 
 /// **A PARAMETRIC SLEW LIMITER.** Per frame `e = x - y`, and `y` moves toward `x` by `sign(e) * min(|e|, M)`, where the
@@ -476,19 +478,24 @@ public:
 			reset();
 		}
 		on_ = settings.on;
-		const double hz = std::clamp(static_cast<double>(settings.hz), 0.01, rate_ * 0.45);
 		const float curve = std::clamp(settings.curve, 0.0f, 1.0f);
 		const float balance = std::clamp(settings.balance, -1.0f, 1.0f);
-		const float limit = static_cast<float>(4.0 * 0.5 * hz / rate_);
-		const float k = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * hz / rate_));
 		const float up = std::exp2(balance);
 		const float down = std::exp2(-balance);
-		hardUp_ = (1.0f - curve) * limit * up;
-		hardDown_ = (1.0f - curve) * limit * down;
-		linearUp_ = curve * k * up;
-		linearDown_ = curve * k * down;
-		limit_ = limit;
-		k_ = k;
+		for (int c = 0; c < 2; ++c) {
+			const float asked = c == 1 && settings.hzRight >= 0.0f ? settings.hzRight : settings.hz;
+			const double hz = std::clamp(static_cast<double>(asked), 0.01, rate_ * 0.45);
+			const float limit = static_cast<float>(4.0 * 0.5 * hz / rate_);
+			const float k = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * hz / rate_));
+			hardUp_[c] = (1.0f - curve) * limit * up;
+			hardDown_[c] = (1.0f - curve) * limit * down;
+			linearUp_[c] = curve * k * up;
+			linearDown_[c] = curve * k * down;
+			if (c == 0) {
+				limit_ = limit;
+				k_ = k;
+			}
+		}
 	}
 
 	[[nodiscard]] bool on() const noexcept { return on_; }
@@ -500,7 +507,8 @@ public:
 		if (!on_) {
 			return x;
 		}
-		float& y = y_[channel & 1];
+		const int c = channel & 1;
+		float& y = y_[c];
 		const float e = x - y;
 		if (x == 0.0f && std::abs(y) < static_cast<float>(shell_detail::kFloor)) {
 			y = 0.0f;
@@ -508,10 +516,10 @@ public:
 		}
 		const float magnitude = std::abs(e);
 		if (e >= 0.0f) {
-			y += std::min(magnitude, hardUp_ + linearUp_ * magnitude);
+			y += std::min(magnitude, hardUp_[c] + linearUp_[c] * magnitude);
 		}
 		else {
-			y -= std::min(magnitude, hardDown_ + linearDown_ * magnitude);
+			y -= std::min(magnitude, hardDown_[c] + linearDown_[c] * magnitude);
 		}
 		return y;
 	}
@@ -519,7 +527,7 @@ public:
 private:
 	double rate_ = 48000.0;
 	bool on_ = false;
-	float hardUp_ = 0.0f, hardDown_ = 0.0f, linearUp_ = 0.0f, linearDown_ = 0.0f;
+	float hardUp_[2] = {}, hardDown_[2] = {}, linearUp_[2] = {}, linearDown_[2] = {};
 	float limit_ = 0.0f;
 	float k_ = 0.0f;
 	float y_[2] = {};

@@ -91,9 +91,10 @@ public:
 	void reset() noexcept {
 		over_.reset();
 		quiet_ = 0;
-		crushPhase_ = 0.0;
+		crushPhaseL_ = crushPhaseR_ = 0.0;
 		crushL_ = crushR_ = 0.0f;
 		prevL_ = prevR_ = 0.0f;
+		inPrevL_ = inPrevR_ = 0.0f;
 		slew_.reset();
 		dcL_ = dcR_ = 0.0f;
 		fullL_ = fullR_ = 0.0f;
@@ -136,15 +137,17 @@ public:
 			dcNow_ = settings.dcAmount; // a stage that starts from nothing starts at its amount; a running one glides to it
 		}
 		if (running(settings)) {
-			if (settings.slewHz != slewHz_ || settings.slewCurve != slewCurve_ || settings.slewBalance != slewBalance_ ||
-			    !slewSet_) {
+			if (settings.slewHz != slewHz_ || settings.slewHzRight != slewHzRight_ || settings.slewCurve != slewCurve_ ||
+			    settings.slewBalance != slewBalance_ || !slewSet_) {
 				slewHz_ = settings.slewHz;
+				slewHzRight_ = settings.slewHzRight;
 				slewCurve_ = settings.slewCurve;
 				slewBalance_ = settings.slewBalance;
 				slewSet_ = true;
 				SlewSettings slew;
 				slew.on = true;
 				slew.hz = slewHz_;
+				slew.hzRight = slewHzRight_ > 0.0f ? slewHzRight_ : -1.0f; // (a hand-built settings without a right rate has one rate)
 				slew.curve = slewCurve_;
 				slew.balance = slewBalance_;
 				slew_.set(slew);
@@ -189,47 +192,99 @@ private:
 	/// Not run: at the bottom of Drive, or with none of the stage in the signal.
 	[[nodiscard]] static bool running(const DriveSettings& s) noexcept { return s.driven && s.mix > 0.0f; }
 
+	/// THE RIGHT SIDE'S HOLD, in frames: a settings built without one (the default) holds both sides alike.
+	[[nodiscard]] static double rightHold(const DriveSettings& s) noexcept {
+		return s.crushHoldFramesRight > 1.0 || s.crushHoldFrames <= 1.0 ? s.crushHoldFramesRight : s.crushHoldFrames;
+	}
+	/// **THE TUNED HOLD'S EDGE** (Key on only). The clock wraps in the sample where its phase passes the hold, `over` samples (0..1) after the true edge, so
+	/// the new value has held for the fraction `over` of that sample and the old for the rest: the sample is `old + over (new - old)`, a one-sample box
+	/// average of the ideal edge. A whole-sample switch puts the edge up to a sample early or late and the error jitters with the hold's fraction.
+	[[nodiscard]] static float holdEdge(float old, float fresh, float over) noexcept { return old + over * (fresh - old); }
+	/// THE INPUT AT THE EDGE: keyed, the value the input had `over` samples before this one (a line between the previous sample and this), so a tuned hold takes
+	/// its value at the true edge time as well as switching at it; unkeyed, this sample's own value (today's).
+	[[nodiscard]] static float atEdge(bool keyedHold, float now, float before, float over) noexcept {
+		return keyedHold ? now + (before - now) * over : now;
+	}
+	/// DECIMATE'S OUTPUT at a clock position: Shape 0 the held value, 1 the line from the previous to the current held value across the hold, between them blended.
+	[[nodiscard]] static float decimateOut(const DriveSettings& s, double phase, double hold, float prev, float cur) noexcept {
+		if (s.shape <= 0.0f) {
+			return cur;
+		}
+		const auto t = static_cast<float>(std::min(phase / hold, 1.0));
+		const float line = prev + (cur - prev) * t;
+		if (s.shape >= 1.0f) {
+			return line;
+		}
+		return cur + s.shape * (line - cur);
+	}
+
 	void run(float& left, float& right) noexcept {
 		const DriveSettings& s = settings_;
 		if (s.mode == DriveMode::Crush) {
-			// HELD FOR A TIME, ROUNDED TO A STEP. A hold of one frame is every frame.
-			crushPhase_ += 1.0;
-			if (crushPhase_ >= s.crushHoldFrames) {
-				crushPhase_ -= s.crushHoldFrames;
-				crushL_ = std::round(left / s.crushStep) * s.crushStep;
-				crushR_ = std::round(right / s.crushStep) * s.crushStep;
+			// HELD FOR A TIME, ROUNDED TO A STEP. A hold of one frame is every frame. EACH SIDE HAS ITS OWN CLOCK (the Spread detunes them; at 0 they
+			// count alike). KEYED, the edge is placed on the fraction of a sample (`holdEdge`).
+			crushPhaseL_ += 1.0;
+			crushPhaseR_ += 1.0;
+			const double holdR = rightHold(s);
+			const float oldL = crushL_;
+			const float oldR = crushR_;
+			float overL = -1.0f;
+			float overR = -1.0f;
+			const float inL = left;
+			const float inR = right;
+			if (crushPhaseL_ >= s.crushHoldFrames) {
+				overL = static_cast<float>(crushPhaseL_ - s.crushHoldFrames);
+				crushPhaseL_ -= s.crushHoldFrames;
+				crushL_ = std::round(atEdge(s.keyed, inL, inPrevL_, overL) / s.crushStep) * s.crushStep;
 			}
-			left = crushL_;
-			right = crushR_;
+			if (crushPhaseR_ >= holdR) {
+				overR = static_cast<float>(crushPhaseR_ - holdR);
+				crushPhaseR_ -= holdR;
+				crushR_ = std::round(atEdge(s.keyed, inR, inPrevR_, overR) / s.crushStep) * s.crushStep;
+			}
+			inPrevL_ = inL;
+			inPrevR_ = inR;
+			left = s.keyed && overL >= 0.0f ? holdEdge(oldL, crushL_, overL) : crushL_;
+			right = s.keyed && overR >= 0.0f ? holdEdge(oldR, crushR_, overR) : crushR_;
 			return;
 		}
 		if (s.mode == DriveMode::Decimate) {
 			// HELD FOR A TIME, NOT ROUNDED. Shape 0 is the held value; Shape 1 a straight line from the previous held
 			// value to the current one across the hold (a first-order hold: it lags by one hold period); between,
-			// the two outputs blended.
-			crushPhase_ += 1.0;
-			if (crushPhase_ >= s.crushHoldFrames) {
-				crushPhase_ -= s.crushHoldFrames;
+			// the two outputs blended. Each side has its own clock, as in Crush.
+			const double holdR = rightHold(s);
+			crushPhaseL_ += 1.0;
+			crushPhaseR_ += 1.0;
+			float oldOutL = 0.0f;
+			float oldOutR = 0.0f;
+			float overL = -1.0f;
+			float overR = -1.0f;
+			const float inL = left;
+			const float inR = right;
+			if (crushPhaseL_ >= s.crushHoldFrames) {
+				if (s.keyed) {
+					oldOutL = decimateOut(s, crushPhaseL_, s.crushHoldFrames, prevL_, crushL_);
+				}
+				overL = static_cast<float>(crushPhaseL_ - s.crushHoldFrames);
+				crushPhaseL_ -= s.crushHoldFrames;
 				prevL_ = crushL_;
+				crushL_ = atEdge(s.keyed, inL, inPrevL_, overL);
+			}
+			if (crushPhaseR_ >= holdR) {
+				if (s.keyed) {
+					oldOutR = decimateOut(s, crushPhaseR_, holdR, prevR_, crushR_);
+				}
+				overR = static_cast<float>(crushPhaseR_ - holdR);
+				crushPhaseR_ -= holdR;
 				prevR_ = crushR_;
-				crushL_ = left;
-				crushR_ = right;
+				crushR_ = atEdge(s.keyed, inR, inPrevR_, overR);
 			}
-			if (s.shape <= 0.0f) {
-				left = crushL_;
-				right = crushR_;
-				return;
-			}
-			const auto t = static_cast<float>(crushPhase_ / s.crushHoldFrames);
-			const float lineL = prevL_ + (crushL_ - prevL_) * t;
-			const float lineR = prevR_ + (crushR_ - prevR_) * t;
-			if (s.shape >= 1.0f) {
-				left = lineL;
-				right = lineR;
-				return;
-			}
-			left = crushL_ + s.shape * (lineL - crushL_);
-			right = crushR_ + s.shape * (lineR - crushR_);
+			inPrevL_ = inL;
+			inPrevR_ = inR;
+			const float outL = decimateOut(s, crushPhaseL_, s.crushHoldFrames, prevL_, crushL_);
+			const float outR = decimateOut(s, crushPhaseR_, holdR, prevR_, crushR_);
+			left = s.keyed && overL >= 0.0f ? holdEdge(oldOutL, outL, overL) : outL;
+			right = s.keyed && overR >= 0.0f ? holdEdge(oldOutR, outR, overR) : outR;
 			return;
 		}
 		if (s.mode == DriveMode::Slew || s.mode == DriveMode::Lopside) {
@@ -355,9 +410,12 @@ private:
 	dyn::Oversampler4x over_ {};
 	Slew slew_ {};
 	int quiet_ = 0;
-	double crushPhase_ = 0.0;
+	double crushPhaseL_ = 0.0;
+	double crushPhaseR_ = 0.0;
 	float crushL_ = 0.0f;
 	float crushR_ = 0.0f;
+	float inPrevL_ = 0.0f;
+	float inPrevR_ = 0.0f;
 	float prevL_ = 0.0f;
 	float prevR_ = 0.0f;
 	float dcL_ = 0.0f;
@@ -380,6 +438,7 @@ private:
 	bool trimOn_ = true;
 	bool trimUnity_ = false;
 	float slewHz_ = 0.0f;
+	float slewHzRight_ = 0.0f;
 	float slewCurve_ = 0.0f;
 	float slewBalance_ = 0.0f;
 	bool slewSet_ = false;

@@ -128,6 +128,8 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 			}
 		}
 	};
+	// A CARD OPENED ON A STATE ALREADY SHOWS ITS TYPES' TEXTS, before any layout or tick (`StageTips`).
+	refreshHonesty();
 }
 
 DeviceControl& EroderCard::control(ero::Param p) const {
@@ -302,6 +304,8 @@ void EroderCard::refreshHonesty() {
 	if (!(driveBefore == *driveView_)) {
 		drive_->redraw();
 	}
+	// THE HOVER TEXTS FOLLOW THE TYPE (and Key) the same way (`StageTips`).
+	driveTips_.apply([this](ero::Param p) -> DeviceControl& { return control(p); }, driveStageParams(), *driveView_);
 	(void)driveCell_->refresh();
 	(void)etch_.refreshRows(row);
 }

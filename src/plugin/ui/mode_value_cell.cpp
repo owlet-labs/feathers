@@ -56,7 +56,7 @@ ValueBox& ModeValueCell::addFollower(size_t param, std::unique_ptr<ValueBox> box
 	return addFollower(param, std::move(box));
 }
 
-FaderPill& ModeValueCell::addPillFollower(size_t gateParam, std::unique_ptr<FaderPill> pill, std::function<std::string()> readout) {
+KeySpreadRow& ModeValueCell::addPillFollower(size_t gateParam, std::unique_ptr<KeySpreadRow> pill, std::function<std::string()> readout) {
 	pill->setVisible(false); // `refresh` decides
 	addChild(pill.get());
 	pillParams_.push_back(gateParam);
@@ -65,7 +65,7 @@ FaderPill& ModeValueCell::addPillFollower(size_t gateParam, std::unique_ptr<Fade
 	return *pills_.back();
 }
 
-FaderPill* ModeValueCell::pillFor(size_t gateParam) const {
+KeySpreadRow* ModeValueCell::pillFor(size_t gateParam) const {
 	for (size_t i = 0; i < pillParams_.size(); ++i) {
 		if (pillParams_[i] == gateParam) {
 			return pills_[i].get();
@@ -175,7 +175,7 @@ void ModeValueCell::resized() {
 			// (a hidden box keeps the place of the next shown one; it takes no row)
 			row += boxes_[i]->isVisible() ? 1u : 0u;
 		}
-		for (const std::unique_ptr<FaderPill>& pill : pills_) {
+		for (const std::unique_ptr<KeySpreadRow>& pill : pills_) {
 			pill->setBounds(inset, rows.box + rows.pitch * static_cast<float>(row), usable, ValueBox::kCompactHeight);
 			row += pill->isVisible() ? 1u : 0u;
 		}

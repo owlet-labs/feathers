@@ -314,7 +314,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "clip_knee", .name = "Clip Knee", .min = 0.0, .max = 1.0, .def = 0.1, .stepped = false, .unit = device::Unit::Percent,
      .names = {}, .modulatable = true,
      .tooltip = "How much of the range below the ceiling bends — below it the signal is untouched. At 0% the "
-                "bend is a hard clamp, in every mode that has a Knee",
+                "bend is a hard clamp",
      .gateControl = kModeControl, .gateMask = kKneeModes},
     {.key = "clip_freq", .name = "Clip Freq", .min = kFreqMinLog2, .max = kFreqMaxLog2, .def = kFreqDefLog2, .stepped = false,
      .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,

@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <new>
 #include <string>
@@ -540,4 +541,57 @@ TEST_CASE("chain key: a pad strike (the Pads view's own note) reaches a HARM beh
 	CHECK(toneAmplitude(drumOnly, kExpected) < floor);
 	CHECK(toneAmplitude(harmOnly, kExpected) > floor);
 	CHECK(toneAmplitude(drumHarm, kExpected) > floor);
+}
+
+namespace {
+
+/// HARM alone in a chain keyed to 60 (4:1: 1046.5 Hz). `strike` runs the first block; `after` the rest. The run is `blocks` long.
+std::vector<float> harmRun(const std::function<void(KeyRack&)>& strike, int blocks) {
+	KeyRack k(1);
+	rack::RackBridge& b = *k.rk->chainAt(0)->bridge();
+	const DeviceInstanceId id = b.addDevice("HARM");
+	REQUIRE(id != kNoInstance);
+	k.run(2);
+	b.setField(id, static_cast<size_t>(feathers::fx::harm::Param::Harmonic),
+	           static_cast<float>(feathers::fx::harm::harmonicIndexOf(4, 1)));
+	b.setField(id, static_cast<size_t>(feathers::fx::harm::Param::Release), -9.0f);
+	k.rk->setChainKey(0, 60);
+	k.run(2);
+	k.forget();
+	strike(k);
+	k.run(blocks);
+	return k.heardL;
+}
+
+} // namespace
+
+TEST_CASE("chain key: a note that begins and ends inside one block still gates a HARM that block, and the release is honoured after") {
+	constexpr double kExpected = 261.6255653 * 4.0;
+	const auto firstBlock = [](const std::vector<float>& v) { return std::vector<float>(v.begin(), v.begin() + kBlock); };
+	// HOST NOTES at offsets 10 and 40 in the one 256-sample block.
+	const auto host = harmRun([](KeyRack& k) { k.block({ on(60, 10), off(60, 40) }); }, 0);
+	// A PAD STRUCK AND LET GO before the block (the Pads view's own note).
+	const auto pad = harmRun(
+	    [](KeyRack& k) {
+		    REQUIRE(k.rk->postPadNote(60, true, 0.8f));
+		    REQUIRE(k.rk->postPadNote(60, false, 0.0f));
+		    k.block();
+	    },
+	    0);
+	const auto silent = harmRun([](KeyRack& k) { k.block(); }, 0);
+	CHECK(toneAmplitude(firstBlock(host), kExpected) > 0.02);
+	CHECK(toneAmplitude(firstBlock(pad), kExpected) > 0.02);
+	CHECK(toneAmplitude(firstBlock(silent), kExpected) < 0.005);
+	// THE RELEASE TAKES EFFECT ON THE FOLLOWING BLOCKS: with a short release the tone is gone by the end of the run.
+	const auto hostLong = harmRun([](KeyRack& k) { k.block({ on(60, 10), off(60, 40) }); }, 60);
+	const auto tail = std::vector<float>(hostLong.end() - 4 * kBlock, hostLong.end());
+	CHECK(toneAmplitude(tail, kExpected) < 0.005);
+	const auto padLong = harmRun(
+	    [](KeyRack& k) {
+		    REQUIRE(k.rk->postPadNote(60, true, 0.8f));
+		    REQUIRE(k.rk->postPadNote(60, false, 0.0f));
+		    k.block();
+	    },
+	    60);
+	CHECK(toneAmplitude(std::vector<float>(padLong.end() - 4 * kBlock, padLong.end()), kExpected) < 0.005);
 }

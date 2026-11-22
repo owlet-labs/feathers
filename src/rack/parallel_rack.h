@@ -1079,6 +1079,9 @@ private:
 	/// follow the note (HARM's sines, a keytracker) are handed it from here. `padLast_` is the newest key struck, -1 when none is down.
 	std::array<uint64_t, 2> padHeld_ {};
 	int padLast_ = -1;
+	/// Keys struck since the last note context was handed over, held or not: a press and release inside one block still gates for that block.
+	std::array<uint64_t, 2> padStruck_ {};
+	int padStruckLast_ = -1;
 	void padFold(int key, bool on) noexcept;
 	[[nodiscard]] device::NoteContext padNoteFor(const Branch* b, device::NoteContext note) const noexcept;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call

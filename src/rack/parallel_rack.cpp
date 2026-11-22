@@ -1342,6 +1342,8 @@ void Rack::setNoteContext(const device::NoteContext& note) {
 			b->chain.setNoteContext(padNoteFor(b, note));
 		}
 	}
+	padStruck_ = {}; // (a strike gates for the block it arrived in; a held pad goes on in `padHeld_`)
+	padStruckLast_ = -1;
 }
 
 void Rack::padFold(int key, bool on) noexcept {
@@ -1353,6 +1355,8 @@ void Rack::padFold(int key, bool on) noexcept {
 	if (on) {
 		word |= bit;
 		padLast_ = key;
+		padStruck_[static_cast<size_t>(key) >> 6] |= bit;
+		padStruckLast_ = key;
 		return;
 	}
 	word &= ~bit;
@@ -1372,13 +1376,15 @@ void Rack::padFold(int key, bool on) noexcept {
 // note (HARM's sines) would see no gate and no pitch while the drum, which takes the note itself, sounded. A chain is handed its own key
 // while that pad is down (an Any chain, the newest pad down); otherwise what the host said.
 device::NoteContext Rack::padNoteFor(const Branch* b, device::NoteContext note) const noexcept {
-	if (padLast_ < 0) {
+	const int newest = padLast_ >= 0 ? padLast_ : padStruckLast_;
+	if (newest < 0) {
 		return note;
 	}
 	const int chainKey = b->key.load(std::memory_order_relaxed);
-	int key = padLast_;
+	int key = newest;
 	if (chainKey >= 0) {
-		if (((padHeld_[static_cast<size_t>(chainKey) >> 6] >> (chainKey & 63)) & 1u) == 0) {
+		const size_t w = static_cast<size_t>(chainKey) >> 6;
+		if ((((padHeld_[w] | padStruck_[w]) >> (chainKey & 63)) & 1u) == 0) {
 			return note;
 		}
 		key = chainKey;

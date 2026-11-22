@@ -266,7 +266,7 @@ void EroderExpanded::layOut() {
 	laidOutTrack_ = trackOn() ? 1 : 0;
 	// HP WET IS ONE CELL WITH TWO FACES, hidden rather than greyed: semitones from the note while Track is on (an engine that has
 	// Track), else hertz.
-	const bool semisLive = engine() != ero::Mode::Comb && trackOn();
+	const bool semisLive = trackOn();
 	const bool comb = mode == ero::Mode::Comb;
 	const bool etch = mode == ero::Mode::Etch;
 	const float cell = kSideWidth / static_cast<float>(kPerRow);
@@ -397,8 +397,7 @@ void EroderExpanded::layOut() {
 		closeRow(first);
 	}
 
-	// THE BLOCK DIAGRAM, with its four switches in it, and under it Track: one fixed place in every engine (hidden in the Comb,
-	// which has no Freq to follow a note).
+	// THE BLOCK DIAGRAM, with its four switches in it, and under it Track: one fixed place in every engine.
 	const float trackH = SwitchChip::kHeight;
 	const float flowY = std::max(y, static_cast<float>(height()) - kPad - trackH - kGroupGap - EroderFlow::kHeight);
 	flow_->setBounds(x0, flowY, sideW, EroderFlow::kHeight);
@@ -406,7 +405,7 @@ void EroderExpanded::layOut() {
 	(void)flow_->update();
 	flow_->resized();
 	track_->setBounds(x0 + kGroupPad, flowY + EroderFlow::kHeight + kGroupGap, 90.0f, trackH);
-	track_->setVisible(!comb);
+	track_->setVisible(true);
 	refreshHonesty();
 }
 
@@ -429,9 +428,9 @@ void EroderExpanded::refreshHonesty() {
 	knob(P::ModFold)->setActive(source < 1.0f);
 	// SUB THRU GIVES BACK WHAT HP WET TOOK OF A DRY THAT WAS TURNED DOWN: with no filter there is nothing to give
 	// back, and in the Comb the dry is whole unless Blend crossfades it.
-	// THE LIVE ONE: semitones from the note while Track is on in an engine that has it, else HP Wet's hertz (`wetHighpassOn`).
+	// THE LIVE ONE: semitones from the note while Track is on, else HP Wet's hertz (`wetHighpassOn`).
 	const bool filtering = wetHighpassFiltering(row[static_cast<size_t>(ero::Param::HpWet)], ero::kHpWetLog2Min,
-	                                            row[static_cast<size_t>(ero::Param::Track)] >= 0.5f && !comb,
+	                                            row[static_cast<size_t>(ero::Param::Track)] >= 0.5f,
 	                                            row[static_cast<size_t>(ero::Param::HpWetSemis)], ero::kHpWetSemisMin);
 	const bool crossfades = engine() != ero::Mode::Comb || row[static_cast<size_t>(ero::Param::Blend)] >= 0.5f;
 	hp_->refresh(filtering, crossfades);

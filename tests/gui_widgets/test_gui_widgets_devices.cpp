@@ -42535,6 +42535,7 @@ TEST_CASE("ERODER's card and window draw only the running engine's controls, and
 	CHECK(allVisible(d.card->shakerWidgetsForTest(), false));
 	CHECK(allVisible(d.card->rustWidgetsForTest(), false));
 	CHECK(allVisible(d.card->combWidgetsForTest(), true));
+	CHECK(d.card->trackForTest()->isVisible()); // Track is every engine's
 	CHECK(allVisible(panel->dustWidgetsForTest(), false));
 	CHECK(allVisible(panel->rustWidgetsForTest(), false));
 	CHECK(allVisible(panel->combWidgetsForTest(), true));
@@ -42599,6 +42600,7 @@ TEST_CASE("ERODER's card and window draw only the running engine's controls, and
 		}
 		shown.push_back(d.card->drivePairForTest());
 		shown.push_back(d.card->emphasisForTest());
+		shown.push_back(d.card->trackForTest());
 		if (mode != 1.0f) {
 			shown.push_back(d.card->resonanceForTest());
 		}
@@ -43507,12 +43509,24 @@ TEST_CASE("ERODER's HP Wet cell is the hertz knob with Track off and the semiton
 	CHECK(panel->hpWetForTest()->isVisible());
 	CHECK_FALSE(panel->hpWetSemisForTest()->isVisible());
 	CHECK(panel->subThruForTest()->enabled());
-	// THE COMB HAS NO TRACK: whatever Track holds, its HP Wet is the hertz knob.
+	// THE COMB TRACKS TOO: with Track on its HP Wet is the semitone knob, the Track chip is drawn, and Sub Thru still waits on Blend.
 	d.set(eroAt(ero::Param::Track), 1.0f);
 	d.set(eroAt(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	d.set(eroAt(ero::Param::HpWetSemis), 12.0f);
+	(void)panel->updateContent();
+	CHECK(panel->trackForTest()->isVisible());
+	CHECK_FALSE(panel->hpWetForTest()->isVisible());
+	CHECK(panel->hpWetSemisForTest()->isVisible());
+	CHECK_FALSE(panel->subThruForTest()->enabled()); // the dry is whole without Blend: nothing to give back
+	d.set(eroAt(ero::Param::Blend), 1.0f);
+	(void)panel->updateContent();
+	CHECK(panel->subThruForTest()->enabled());
+	// AND WITH TRACK OFF the hertz knob is back in the Comb.
+	d.set(eroAt(ero::Param::Track), 0.0f);
 	(void)panel->updateContent();
 	CHECK(panel->hpWetForTest()->isVisible());
 	CHECK_FALSE(panel->hpWetSemisForTest()->isVisible());
+	CHECK(panel->trackForTest()->isVisible());
 }
 
 //------------------------------------------------------------------------------------------------------------------------------//
@@ -43807,7 +43821,7 @@ TEST_CASE("ERODER's card offers the shared section in every engine, HP Wet and F
 		CAPTURE(static_cast<int>(mode));
 		e.mode(mode);
 		const bool comb = mode == ero::Mode::Comb;
-		std::vector<visage::Frame*> want = { card.mixForTest(), card.drivePairForTest(), card.emphasisForTest() };
+		std::vector<visage::Frame*> want = { card.mixForTest(), card.drivePairForTest(), card.emphasisForTest(), card.trackForTest() };
 		if (comb) {
 			for (visage::Frame* f : card.combWidgetsForTest()) {
 				want.push_back(f);
@@ -45057,7 +45071,7 @@ TEST_CASE("ERODER's window groups its controls: Input, Tone, Drive over a fixed-
 		// THE PICTURE IS BELOW THEM ALL, and the window is tall enough for it, with Track under the picture and outside its frame.
 		CHECK(panel.flowForTest()->y() >= groups[5].y + groups[5].h);
 		CHECK(panel.flowForTest()->y() - (groups[5].y + groups[5].h) < 12.0f);
-		CHECK(panel.trackForTest()->isVisible() == !comb);
+		CHECK(panel.trackForTest()->isVisible());
 		CHECK(panel.trackForTest()->y() >= panel.flowForTest()->y() + panel.flowForTest()->height());
 		CHECK(panel.trackForTest()->y() + panel.trackForTest()->height() <= panel.height());
 		const EroRect trackBox = eroAbsolute(panel.trackForTest(), &panel);

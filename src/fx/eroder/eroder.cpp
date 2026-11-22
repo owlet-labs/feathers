@@ -678,7 +678,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	dryGainTarget_ = s.blend ? 1.0f - std::clamp(s.mix, 0.0f, 1.0f) : 1.0f;
 	inGainTarget_ = inputGainOf(s.inputDb);
 	subThru_ = s.subThru;
-	combHighpass_.set(deriveWetHighpass(s, false, pitchSemitones_, sampleRate_)); // the Comb has no Track
+	combHighpass_.set(deriveWetHighpass(s, s.track, pitchSemitones_, sampleRate_)); // Track moves the shared section here too; the comb's own pitch always follows the note
 	if (!gainsPlaced_) {
 		outGain_ = outGainTarget_;
 		dryGain_ = dryGainTarget_;
@@ -692,7 +692,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	tap.balance = std::clamp(s.driveBal, 0.0f, 1.0f);
 	DriveSettings kept = tap;
 	kept.dcAmount = std::clamp(s.dc, 0.0f, 1.0f);
-	tap.rateHz = rotationRateHz(false, pitchSemitones_, s.driveRate, s.driveRateMult, sampleRate_); // the Comb has no Track
+	tap.rateHz = rotationRateHz(s.track, pitchSemitones_, s.driveRate, s.driveRateMult, sampleRate_);
 	kept.rateHz = tap.rateHz;
 	combShaper_.set(kept);
 	combTapShaper_.set(tap);

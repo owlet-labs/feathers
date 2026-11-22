@@ -180,7 +180,7 @@ std::vector<visage::Frame*> EroderCard::dustWidgetsForTest() const {
 std::vector<visage::Frame*> EroderCard::rustWidgetsForTest() const { return { bias_.get() }; }
 
 std::vector<visage::Frame*> EroderCard::shakerWidgetsForTest() const {
-	return { freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get() };
+	return { freq_.get(), width_.get(), source_.get(), grit_.get() };
 }
 
 std::vector<visage::Frame*> EroderCard::etchWidgetsForTest() const {
@@ -239,7 +239,7 @@ void EroderCard::layOut() {
 	etch_.setShown(open && etch);
 	y += knobH + kRowGap;
 
-	// THE SMALL ROW. Dust: Source, Grit, Track. Comb: Gamma.
+	// THE SMALL ROW. Dust: Source, Grit, Track. Comb: Gamma, Tap, Restore, Track.
 	const float gap = 5.0f;
 	const float chipW = 44.0f;
 	const float boxW = std::max(0.0f, (width - chipW - 2.0f * gap) * 0.5f);
@@ -254,16 +254,16 @@ void EroderCard::layOut() {
 	mixBox_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
 	freqBox_->setVisible(open && etch);
 	mixBox_->setVisible(open && etch);
-	track_->setVisible(open && !comb);
+	track_->setVisible(open); // every engine's: it moves the shared section (HP Wet, the Rate), and Freq where there is one
 	// THE COMB'S SMALL ROW: Gamma, then Tap (Driven) and Restore.
 	const float restoreW = 52.0f;
 	const float tapW = 48.0f;
-	const float gammaW = std::max(0.0f, width - restoreW - tapW - 2.0f * gap);
+	const float gammaW = std::max(0.0f, width - restoreW - tapW - chipW - 3.0f * gap);
 	gamma_->setBounds(left, boxY, gammaW, ValueBox::kCompactHeight);
 	gamma_->setVisible(open && comb);
 	tap_->setBounds(left + gammaW + gap, y, tapW, SwitchChip::kHeight);
 	tap_->setVisible(open && comb);
-	restore_->setBounds(left + width - restoreW, y, restoreW, SwitchChip::kHeight);
+	restore_->setBounds(left + width - chipW - gap - restoreW, y, restoreW, SwitchChip::kHeight);
 	restore_->setVisible(open && comb);
 	y += kSmallRowHeight + kRowGap;
 

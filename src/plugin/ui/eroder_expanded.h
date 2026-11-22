@@ -122,7 +122,7 @@ public:
 	[[nodiscard]] ModeValueCell* driveCellForTest() const { return driveCell_.get(); }
 	[[nodiscard]] PairCell* drivePairForTest() const { return drivePair_.get(); }
 	[[nodiscard]] Knob* hpWetForTest() const { return hp_->hertz(); }
-	/// HP WET'S SEMITONE FACE: shown instead of `hpWetForTest()` while Track is on in an engine that has it.
+	/// HP WET'S SEMITONE FACE: shown instead of `hpWetForTest()` while Track is on.
 	[[nodiscard]] Knob* hpWetSemisForTest() const { return hp_->semitones(); }
 	[[nodiscard]] SwitchChip* subThruForTest() const { return hp_->subThru(); }
 	[[nodiscard]] SwitchChip* blendForTest() const { return blend_.get(); }

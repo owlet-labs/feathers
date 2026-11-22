@@ -71,14 +71,13 @@ inline StageParams slotStageParams(int slot) {
 	return slot == 0 ? StageParams { P::SlotAType, P::SlotAShape, P::SlotAAngle, P::SlotABal, P::SlotARate, P::SlotARateMult }
 	                 : StageParams { P::SlotBType, P::SlotBShape, P::SlotBAngle, P::SlotBBal, P::SlotBRate, P::SlotBRateMult };
 }
-/// THE STAGE VIEW from a row: its Type, and whether Track is on in an engine that has it (the Comb has none).
+/// THE STAGE VIEW from a row: its Type, and whether Track is on.
 inline StageView stageViewOf(const fx::eroder::Row& row, const StageParams& p) {
 	namespace ero = fx::eroder;
 	StageView v;
 	const int t = std::clamp(static_cast<int>(row[static_cast<size_t>(p.type)] + 0.5f), 0, static_cast<int>(ero::DriveMode::kCount) - 1);
 	v.type = static_cast<ero::DriveMode>(t);
-	const int mode = std::clamp(static_cast<int>(row[static_cast<size_t>(ero::Param::Mode)] + 0.5f), 0, static_cast<int>(ero::Mode::kCount) - 1);
-	v.track = row[static_cast<size_t>(ero::Param::Track)] >= 0.5f && static_cast<ero::Mode>(mode) != ero::Mode::Comb;
+	v.track = row[static_cast<size_t>(ero::Param::Track)] >= 0.5f;
 	return v;
 }
 /// THE ROW GATE for a stage's cell: Shape always; Bal for Chonk; Rate (Hz with Track off, the multiple with it on) for the four Paunch Types;

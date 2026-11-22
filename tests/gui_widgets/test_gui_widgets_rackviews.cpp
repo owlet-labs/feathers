@@ -4102,7 +4102,7 @@ TEST_CASE("list view: a row shows its chain's level meter by value, a row out of
 	CHECK(list.rowForTest(0)->meterReadingForTest() == ui::cardMeterReadingFor(0.5f));
 	CHECK(list.rowForTest(1)->meterReadingForTest() == ui::cardMeterReadingFor(0.1f));
 	CHECK_FALSE(list.rowForTest(0)->meterReadingForTest() == list.rowForTest(1)->meterReadingForTest());
-	CHECK(list.rowForTest(0)->meterMarksForTest().level.height() > list.rowForTest(1)->meterMarksForTest().level.height()); // the louder one reaches higher
+	CHECK(list.rowForTest(0)->meterMarksForTest().level.width() > list.rowForTest(1)->meterMarksForTest().level.width()); // the louder one's bar is longer
 	// A ROW OUT OF VIEW IS NOT FOLLOWED: its chain's peak moves and the list reports nothing to repaint.
 	REQUIRE_FALSE(list.rowForTest(11)->isVisible());
 	r.rack().publishChainPeakForTest(11, 0.25f);

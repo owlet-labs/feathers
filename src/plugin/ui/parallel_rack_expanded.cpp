@@ -680,6 +680,19 @@ void ParallelRackExpanded::keepOpenState() {
 bool ParallelRackExpanded::follow() {
 	void* const held = host_.containerSurfaceOf(id_);
 	pr::Rack* rack = pr::rackOf(held);
+	if (rack != nullptr && rack->serial() != subscribedTo_) {
+		// THE RACK'S CHAINS REPLACED UNDER THIS WINDOW (a preset picked in its own browser, an undo, a load): every column and the pane over a
+		// chain let go AT ONCE, while the old chains stand, and are bound again by the next `follow`.
+		subscribedTo_ = rack->serial();
+		replaced_ = rack->subscribeChainsReplaced([this] {
+			pane_->release();
+			for (auto& r : rails_) {
+				if (r != nullptr) {
+					(void)r->rail->follow(nullptr);
+				}
+			}
+		});
+	}
 	std::vector<uint16_t> ids;
 	if (rack != nullptr) {
 		for (size_t i = 0; i < rack->chainCount(); ++i) {

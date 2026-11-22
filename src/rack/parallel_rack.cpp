@@ -1005,6 +1005,7 @@ bool Rack::applyState(const uint8_t* data, size_t bytes) {
 		nextChainId_ = 0;
 		chains_.push_back(makeBranch(nextChainId_++));
 		chains_.back()->slot = freeSlot(kNoChainSlot);
+		chainsReplaced_.notify();
 		markMirrorDue();
 		exports_.load({});
 		publish();
@@ -1135,6 +1136,7 @@ bool Rack::readBody(const uint8_t* data, size_t bytes, bool provision) {
 		chains_.back()->slot = freeSlot(wanted);
 	}
 	nextChainId_ = static_cast<uint16_t>(chains_.empty() ? 0 : highest + 1);
+	chainsReplaced_.notify(); // the old chains are retired and still alive: an editor over one lets go now, before `reap` can free it
 	markMirrorDue();
 	exports_.load(exports);
 	publish();

@@ -29,6 +29,8 @@
 #include "plugin/device_registry.h"
 #include "plugin/feathers_test_chain.h"
 #include "plugin/chain_preset.h"
+#include "plugin/factory_presets.h"
+#include "plugin/preset_store.h"
 #include "plugin/ui/container_presets.h"
 #include "plugin/ui/parallel_rack_expanded.h"
 #include "plugin/ui/preset_browser.h"
@@ -773,4 +775,65 @@ TEST_CASE("the header's browser lists the Racks bank, and loading a rack through
 	CHECK(rackOf(v).liveChainsForTest() == 3);
 	// AND THE ROOT IS STILL ONE RACK DEVICE: the load replaced the rack's contents, not the plugin's root.
 	CHECK(v.bridge().deviceAtPosition(1) == kNoInstance);
+}
+
+TEST_CASE("factory Rack presets: each loads into the Rack plugin while its window's view is built over the live bridge and audio runs, in every view") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	size_t shipped = 0;
+	for (const feathers::FactoryPresetFile& f : feathers::factoryPresetFiles()) {
+		if (f.path.rfind("Racks/", 0) != 0) {
+			continue;
+		}
+		++shipped;
+		feathers::PresetMeta meta;
+		ui::PresetData preset;
+		REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(f.bytes.begin(), f.bytes.end()), &meta, &preset.bytes));
+		for (const int view : { 0, 1, 2, 3 }) {
+			for (const bool twice : { false, true }) {
+				CAPTURE(std::string(f.path));
+				CAPTURE(view);
+				CAPTURE(twice);
+				Venue v;
+				const DeviceInstanceId id = v.bridge().deviceAtPosition(0);
+				v.bridge().setField(id, controlOfKey("rack_view"), static_cast<float>(view));
+				v.run(512);
+				ui::WidgetRegistry registry;
+				const device::Descriptor* desc = v.bridge().descriptorOf(id);
+				REQUIRE(desc != nullptr);
+				std::unique_ptr<ui::ExpandedView> window = ui::makeExpandedView(v.bridge(), nullptr, registry, id, *desc, nullptr);
+				REQUIRE(window != nullptr);
+				window->setBounds(0.0f, 0.0f, 1200.0f, 700.0f);
+				// AND THE RACK'S CARD, beside the window, over the same bridge (a lane shows both).
+				ui::ParallelRackCard card(v.bridge(), registry, id, nullptr);
+				card.setBounds(0.0f, 0.0f, 320.0f, 420.0f);
+				for (int i = 0; i < 3; ++i) {
+					v.run(512);
+					(void)window->update();
+					(void)card.update();
+				}
+				ui::ContainerPresets presets = ui::makeRackDevicePresets(v.bridge(), id, nullptr);
+				for (int load = 0; load < (twice ? 2 : 1); ++load) {
+					REQUIRE(presets.provider->apply(preset));
+					// THE EDITOR'S TICK AND THE AUDIO THREAD'S BLOCKS INTERLEAVE, as a host runs them.
+					for (int i = 0; i < 24; ++i) {
+						v.run(512);
+						if (i % 3 == 0) {
+							v.mainThread();
+						}
+						// A RESIZE OR A REPAINT CAN COME BEFORE THE TICK that rebinds what a preset replaced: layout first, then the tick.
+						window->resized();
+						card.resized();
+						(void)window->update();
+						(void)card.update();
+					}
+				}
+				for (const float x : v.l) {
+					REQUIRE(std::isfinite(x));
+				}
+			}
+		}
+	}
+	REQUIRE(shipped > 0);
 }

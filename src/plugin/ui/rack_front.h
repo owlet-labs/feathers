@@ -18,6 +18,7 @@
 #pragma once
 
 #include "backplane/device_host.h"
+#include "device/subscribers.h"
 #include "plugin/ui/chain_column.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/mod_state.h"
@@ -97,6 +98,10 @@ private:
 	bool shown_ = true;
 	bool horizontal_ = false;
 	std::unique_ptr<ChainColumn> column_;
+	/// **THE RACK'S CHAINS REPLACED UNDER THE COLUMN** (a preset, an undo, a load): the column over the old chain's bridge is let go the moment it
+	/// happens, while that chain still stands, not at the next tick when it may have been freed. Keyed on the Rack's serial, never its address.
+	device::Subscription replaced_;
+	uint64_t subscribedTo_ = 0;
 };
 
 } // namespace feathers::ui

@@ -5218,7 +5218,7 @@ TEST_CASE("list view rename: in a real window a right press on a row's menu and 
 	}
 }
 
-TEST_CASE("column folds: in a real window a real press on the macros header folds only the macros and one on the inspector header folds only the inspector in a Chain's window") {
+TEST_CASE("column folds: in a real window a real press on each pane's rail folds that pane sideways to a strip, the other pane unmoved, in a Chain's window") {
 	EditorFixture f;
 	feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
 	bodies.prepare(48000.0, 4096);
@@ -5255,9 +5255,10 @@ TEST_CASE("column folds: in a real window a real press on the macros header fold
 	}
 	feathers::rack::RackEditor* editor = treeFind<feathers::rack::RackEditor>(top);
 	REQUIRE(editor != nullptr);
-	const auto pressHeader = [&](feathers::ui::FoldHeader& header) {
-		const visage::Point o = header.positionInWindow();
-		pressAtWindow(top, { o.x + static_cast<float>(header.width()) * 0.5f, o.y + static_cast<float>(header.height()) * 0.5f }, false);
+	const auto pressRail = [&](feathers::ui::Rail& rail) {
+		const visage::Bounds t = rail.toggleBounds();
+		const visage::Point o = rail.positionInWindow();
+		pressAtWindow(top, { o.x + t.x() + t.width() * 0.5f, o.y + t.y() + t.height() * 0.5f }, false);
 		for (int i = 0; i < 2; ++i) {
 			(void)f.gui.tickForTest();
 		}
@@ -5296,32 +5297,50 @@ TEST_CASE("column folds: in a real window a real press on the macros header fold
 	REQUIRE(open.macros);
 	REQUIRE(open.levels);
 	REQUIRE(open.routes);
-	// THE REAL PRESS ON THE MACROS HEADER, through the window's root.
-	pressHeader(editor->macrosHeaderForTest());
-	CHECK(editor->macrosFolded());
-	CHECK_FALSE(editor->inspectorFolded());
-	const Seen afterMacros = seen();
-	CHECK_FALSE(afterMacros.macros);
-	CHECK(afterMacros.levels);
-	CHECK(afterMacros.routes);
-	CHECK(afterMacros.level0 == open.level0); // the inspector half did not move
-	shot("macros-folded");
-	// UNFOLD IT, then the INSPECTOR HEADER: the macros stay, the inspector goes.
-	pressHeader(editor->macrosHeaderForTest());
-	CHECK_FALSE(editor->macrosFolded());
-	CHECK(seen().macros);
-	pressHeader(editor->inspectorHeaderForTest());
+	feathers::ui::Rail& container = editor->containerRailForTest();
+	feathers::ui::Rail& macros = editor->macrosRailForTest();
+	const float strip = feathers::ui::Rail::kCollapsedWidth;
+	const float shrink = feathers::rack::RackEditor::kPaneWidth - strip;
+	const float openLaneLeft = editor->laneLeft();
+	const visage::Bounds macro0 = editor->macroBoundsForTest(0);
+	// A REAL PRESS ON THE CONTAINER'S TOGGLE, through the window's root: it folds to a strip, the macros' pane is untouched and moves left.
+	pressRail(container);
 	CHECK(editor->inspectorFolded());
 	CHECK_FALSE(editor->macrosFolded());
-	const Seen afterInspector = seen();
-	CHECK(afterInspector.macros);
-	CHECK_FALSE(afterInspector.levels);
-	CHECK_FALSE(afterInspector.routes);
+	const Seen afterContainer = seen();
+	CHECK(afterContainer.macros);
+	CHECK_FALSE(afterContainer.levels);
+	CHECK_FALSE(afterContainer.routes);
+	CHECK(container.width() == strip);
+	CHECK(editor->macroBoundsForTest(0).x() == doctest::Approx(macro0.x() - shrink));
+	CHECK(editor->laneLeft() == doctest::Approx(openLaneLeft - shrink));
 	shot("inspector-folded");
-	// THE FOLDS ARE THE BRIDGE'S, each under its own flag.
+	// THE MACROS' TOGGLE: both strips, edge to edge in NATIVE pixels, the lane right after them.
+	pressRail(macros);
+	CHECK(editor->macrosFolded());
+	CHECK(container.nativeX() + container.nativeWidth() == macros.nativeX());
+	CHECK(editor->laneLeft() == doctest::Approx(2.0f * strip + 6.0f));
+	shot("both-folded");
+	// UNFOLD THE CONTAINER, then fold the macros alone: the container's pane is as it was.
+	pressRail(container);
+	CHECK_FALSE(editor->inspectorFolded());
+	CHECK(editor->macrosFolded());
+	CHECK(editor->levelBoundsForTest(0) == open.level0);
+	pressRail(macros);
+	CHECK_FALSE(editor->macrosFolded());
+	pressRail(macros);
+	CHECK(editor->macrosFolded());
+	CHECK_FALSE(editor->inspectorFolded());
+	CHECK(seen().levels);
+	CHECK(seen().routes);
+	CHECK(editor->laneLeft() == doctest::Approx(feathers::rack::RackEditor::kPaneWidth + strip + 6.0f));
+	shot("macros-folded");
+	pressRail(macros);
+	CHECK(editor->macroBoundsForTest(0) == macro0);
+	// THE FOLDS ARE THE BRIDGE'S, each under its own flag: the last state here is both open.
 	feathers::rack::RackBridge* inner = feathers::rack::bridgeOf(f.bridge.fxBodies().surfaceOf(chainId));
 	if (inner != nullptr) {
-		CHECK(inner->inspectorCollapsed());
+		CHECK_FALSE(inner->inspectorCollapsed());
 		CHECK_FALSE(inner->macrosCollapsed());
 	}
 	f.bridge.fxBodies().detach(chainId, body);
@@ -5330,13 +5349,14 @@ TEST_CASE("column folds: in a real window a real press on the macros header fold
 	XCloseDisplay(display);
 }
 
-TEST_CASE("column folds: in a real window the Rack window's two headers take real presses and fold each half alone with the other half's controls staying put") {
+TEST_CASE("column folds: in a real window the Rack window's rails take real presses and fold each pane sideways with the other pane unmoved") {
 	withDeviceVenue(2, [](DeviceRenameVenue& v) {
 		ui::ParallelRackExpanded* panel = treeFind<ui::ParallelRackExpanded>(v.top);
 		REQUIRE(panel != nullptr);
-		const auto press = [&](ui::FoldHeader& header) {
-			const visage::Point o = header.positionInWindow();
-			pressAtWindow(v.top, { o.x + static_cast<float>(header.width()) * 0.5f, o.y + static_cast<float>(header.height()) * 0.5f }, false);
+		const auto press = [&](ui::Rail& rail) {
+			const visage::Bounds t = rail.toggleBounds();
+			const visage::Point o = rail.positionInWindow();
+			pressAtWindow(v.top, { o.x + t.x() + t.width() * 0.5f, o.y + t.y() + t.height() * 0.5f }, false);
 			v.tick();
 		};
 		// WITH FEATHERS_FOLD_SHOTS=<dir>, A PHOTOGRAPH OF THE WINDOW IN EACH STATE (cropped by the caller at the printed origin).
@@ -5357,35 +5377,46 @@ TEST_CASE("column folds: in a real window the Rack window's two headers take rea
 			(void)capturePpm(v.window, std::string(keep) + "/rackwin-" + state + ".ppm");
 		};
 		shot("open");
+		ui::Rail& container = panel->containerRailForTest();
+		ui::Rail& macros = panel->macrosRailForTest();
+		const float strip = ui::Rail::kCollapsedWidth;
+		const float open = ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad;
 		const visage::Bounds mode0 = panel->modeBoxBoundsForTest();
 		const visage::Bounds macro0 = panel->macroBoundsForTest(0);
+		const float minWidth0 = panel->minimumSize().x;
 		REQUIRE(panel->macroShownForTest(0));
 		REQUIRE(panel->inspectorShownForTest());
-		// A REAL PRESS ON THE MACROS HEADER.
-		press(panel->macrosHeaderForTest());
-		CHECK(panel->macrosFolded());
-		CHECK_FALSE(panel->inspectorFolded());
-		CHECK_FALSE(panel->macroShownForTest(0));
-		CHECK(panel->inspectorShownForTest());
-		CHECK(panel->modeBoxBoundsForTest() == mode0);
-		shot("macros-folded");
-		press(panel->macrosHeaderForTest());
-		CHECK_FALSE(panel->macrosFolded());
-		CHECK(panel->macroShownForTest(0));
-		CHECK(panel->macroBoundsForTest(0) == macro0);
-		// A REAL PRESS ON THE INSPECTOR HEADER.
-		press(panel->inspectorHeaderForTest());
+		// A REAL PRESS ON THE RACK PANE'S RAIL TOGGLE, through the window's root: it folds to a strip, the macros' pane keeps its state and moves left.
+		press(container);
 		CHECK(panel->inspectorFolded());
 		CHECK_FALSE(panel->macrosFolded());
 		CHECK_FALSE(panel->inspectorShownForTest());
+		CHECK_FALSE(panel->routeListForTest().isVisible());
 		CHECK(panel->macroShownForTest(0));
-		CHECK(panel->macroBoundsForTest(0).y() < macro0.y());
+		CHECK(panel->macroBoundsForTest(0).x() == doctest::Approx(macro0.x() - (open - strip)));
+		CHECK(panel->macroBoundsForTest(0).y() == macro0.y());
+		CHECK(panel->minimumSize().x == doctest::Approx(minWidth0 - (open - strip)));
 		shot("inspector-folded");
-		press(panel->inspectorHeaderForTest());
+		// THE MACROS' RAIL: both strips, edge to edge in native pixels, and the window narrower by both panes less the strips.
+		press(macros);
+		CHECK(panel->macrosFolded());
+		CHECK_FALSE(panel->macroShownForTest(0));
+		CHECK(container.nativeX() + container.nativeWidth() == macros.nativeX());
+		CHECK(panel->minimumSize().x == doctest::Approx(minWidth0 - 2.0f * (open - strip)));
+		shot("both-folded");
+		// UNFOLD THE RACK PANE: as it was; the macros stay a strip. Then the macros alone.
+		press(container);
 		CHECK_FALSE(panel->inspectorFolded());
+		CHECK(panel->macrosFolded());
 		CHECK(panel->inspectorShownForTest());
 		CHECK(panel->modeBoxBoundsForTest() == mode0);
+		CHECK(panel->routeListForTest().isVisible());
+		shot("macros-folded");
+		press(macros);
+		CHECK_FALSE(panel->macrosFolded());
+		CHECK(panel->macroShownForTest(0));
 		CHECK(panel->macroBoundsForTest(0) == macro0);
+		CHECK(panel->minimumSize().x == doctest::Approx(minWidth0));
 	});
 }
 
@@ -5509,6 +5540,10 @@ TEST_CASE("list and tabs pane: in a real window the rest of the front chain is a
 		CAPTURE(view);
 		ListWindowRig r(2, view, true);
 		REQUIRE(r.panel->paneOnForTest());
+		// THE TWO LEFT PANES, THE LIST OR TABS, THE PANE AND THE RAIL ARE WIDER THAN THE EDITOR'S WINDOW OPEN: the macros' pane is folded to its strip
+		// (a fold of its own), so the chain's rail stands inside the window where a hand can press it.
+		(void)r.panel->setMacrosFolded(true);
+		r.tick();
 		ui::FxLaneRail& rail = r.panel->railForTest(0);
 		REQUIRE(rail.isVisible());
 		// THE LANE HOLDS THE CHAIN AFTER THE FIRST DEVICE (the pane has that one), open, and offers its fold.

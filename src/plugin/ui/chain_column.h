@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/edit_history.h"
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/lane_selection.h"
@@ -270,7 +271,7 @@ public:
 	[[nodiscard]] bool full() const;
 
 	/// Open the slot menu for a device, as pressing the three dots in its card's head does.
-	void showSlotMenu(DeviceInstanceId device);
+	void showSlotMenu(DeviceInstanceId device, const SlotMenuOrigin* origin = nullptr);
 	/// WHAT THAT MENU OFFERS, in order — so a case reads the column's own answer rather than restating
 	/// the rules about which ends can move.
 	enum class SlotVerb : uint8_t { AddBefore, AddAfter, MoveUp, MoveDown, Remove };

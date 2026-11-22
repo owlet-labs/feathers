@@ -173,6 +173,9 @@ void ExpandedPanel::wire() {
 	// press. Fifteen subcases passed over a panel nobody could touch, because every one of them
 	// addressed the widgets directly instead of asking where a press lands.
 	setIgnoresMouseEvents(false, true);
+	// SEE `onPressedInside`: accepting keystrokes is what makes a press in the body reach this window first. Keys it does not use
+	// still go up to the layer and the editor, as they did.
+	setAcceptsKeystrokes(true);
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		// THE ✕ CLOSES; THE REST OF THE HEAD DRAGS. Anything else arriving here missed every control
 		// and landed on the panel's own background, which is not a verb.
@@ -193,6 +196,15 @@ void ExpandedPanel::wire() {
 				(void)enableSource_->toggleDeviceEnable();
 			}
 			syncEnable();
+			return;
+		}
+		// THE "..." MARK, AND A RIGHT-PRESS ANYWHERE ON THE BARE HEAD: the device's slot menu, as its card opens it. Before the fold
+		// and the drag, and a right-press never arms either.
+		if (menuBounds().contains(e.position)
+		    || (e.shouldTriggerPopup() && titleBounds().contains(e.position) && !closeBounds().contains(e.position)
+		        && !foldBounds().contains(e.position) && !maximizeBounds().contains(e.position)
+		        && !enableBounds().contains(e.position))) {
+			(void)openMenu();
 			return;
 		}
 		// THE MAXIMIZE BUTTON (backlog OV), tested with the other head buttons and before the drag.
@@ -394,6 +406,7 @@ ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> con
 	    [this, raw] { setFolded(*raw, !raw->folded); },
 	    [this, raw] { setMaximized(*raw, !raw->maximized); });
 	slot->panel->wire();
+	slot->panel->onPressedInside = [this, raw] { raiseOnPress(*raw); };
 	slot->content = std::move(content);
 	// **WHEN THE CONTENT'S MINIMUM MOVES, EVERY PANEL IS FITTED AGAIN.** `panelSizeOf` reads
 	// `minimumSize()` live, so this is the ASK rather than the answer — see
@@ -455,6 +468,7 @@ ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> con
 	}
 	slots_.push_back(std::move(slot));
 	place(*raw);
+	settleFront();
 	setVisible(true);
 	requestKeyboardFocus();
 	resized();
@@ -597,10 +611,39 @@ void ExpandedOverlay::raise(Slot& slot) {
 			removeChild(taken->panel.get());
 			addChild(taken->panel.get());
 			slots_.push_back(std::move(taken));
+			settleFront();
 			redraw();
 			return;
 		}
 	}
+}
+
+void ExpandedOverlay::settleFront() {
+	for (const auto& s : slots_) {
+		s->panel->setOnTop(s.get() == slots_.back().get());
+	}
+}
+
+void ExpandedOverlay::raiseOnPress(Slot& slot) {
+	if (slots_.empty() || slots_.back().get() == &slot) {
+		return; // already the front: no order changes
+	}
+	Slot* old = slots_.back().get();
+	for (auto it = slots_.begin(); it != slots_.end(); ++it) {
+		if (it->get() == &slot) {
+			std::unique_ptr<Slot> taken = std::move(*it);
+			slots_.erase(it);
+			slots_.push_back(std::move(taken));
+			break;
+		}
+	}
+	slot.escape.raise();
+	// THE PREVIOUS FRONT goes to the end of the children (just under the new front, which draws last as `onTop`); the pressed
+	// panel is not re-parented.
+	removeChild(old->panel.get());
+	addChild(old->panel.get());
+	settleFront();
+	redraw();
 }
 
 bool ExpandedOverlay::focusPanelFor(DeviceInstanceId device, DeviceNest nest) {
@@ -682,6 +725,7 @@ void ExpandedOverlay::dismissBy(Slot& slot, Dismissal how) {
 	if (taken == nullptr) {
 		return;
 	}
+	settleFront();
 	// OFF EVERY REDRAW LIST FIRST, AND THE ORDER IS THE WHOLE OF IT. `notify()` calls `redraw()` on
 	// every entry, so a list still holding this frame after the reset is a use-after-free waiting for
 	// the next thing that moves.
@@ -1019,6 +1063,41 @@ visage::Bounds ExpandedPanel::maximizeBounds() const {
 	return { x, fold.y(), ExpandedOverlay::kCloseSize, ExpandedOverlay::kCloseSize };
 }
 
+visage::Bounds ExpandedPanel::menuBounds() const {
+	if (enableSource_ == nullptr || !enableSource_->hasDeviceMenu()) {
+		return {};
+	}
+	// ONE GAP INBOARD OF THE MAXIMIZE SQUARE, the same square: the "..." reads left of the window's own buttons.
+	const visage::Bounds max = maximizeBounds();
+	constexpr float kGap = 6.0f;
+	const float x = windowControlsSide() == WindowControlsSide::Left ? max.right() + kGap
+	                                                                 : max.x() - kGap - ExpandedOverlay::kCloseSize;
+	return { x, max.y(), ExpandedOverlay::kCloseSize, ExpandedOverlay::kCloseSize };
+}
+
+visage::Bounds ExpandedPanel::menuOrMaximizeBounds() const {
+	const visage::Bounds menu = menuBounds();
+	return menu.width() > 0.0f ? menu : maximizeBounds();
+}
+
+bool ExpandedPanel::openMenu() {
+	const visage::Bounds at = menuBounds();
+	if (enableSource_ == nullptr || at.width() <= 0.0f) {
+		return false;
+	}
+	// THE WINDOW PUTS ITSELF AWAY FIRST when a verb takes the device out: the host calls this before it removes.
+	SlotMenuOrigin origin;
+	origin.source = this;
+	origin.anchor = at;
+	origin.closeWindow = [this] {
+		if (onClose_) {
+			onClose_();
+		}
+	};
+	enableSource_->openDeviceMenu(origin);
+	return true;
+}
+
 void ExpandedPanel::setAccessory(visage::Frame* accessory) {
 	if (accessory == accessory_) {
 		return;
@@ -1047,7 +1126,7 @@ visage::Bounds ExpandedPanel::enableBounds() const {
 	if (enableSource_ == nullptr || !enableSource_->hasDeviceEnable()) {
 		return {};
 	}
-	const visage::Bounds fold = maximizeBounds();
+	const visage::Bounds fold = menuOrMaximizeBounds();
 	constexpr float kGap = 10.0f;
 	const float x = windowControlsSide() == WindowControlsSide::Left ? fold.right() + kGap : fold.x() - kGap - kEnableSize;
 	return { x, std::round(fold.y() + (fold.height() - kEnableSize) * 0.5f), kEnableSize, kEnableSize };
@@ -1083,7 +1162,7 @@ float ExpandedPanel::titleX() const {
 	}
 	// LEFT: the title starts one gap past the last of the cluster — the chip when there is one, else the fold.
 	const visage::Bounds sw = enableBounds();
-	const visage::Bounds last = sw.width() > 0.0f ? sw : maximizeBounds();
+	const visage::Bounds last = sw.width() > 0.0f ? sw : menuOrMaximizeBounds();
 	return last.right() + 12.0f;
 }
 
@@ -1107,7 +1186,7 @@ visage::Bounds ExpandedPanel::accessoryBounds() const {
 	// INBOARD OF THE ENABLE CHIP WHEN THERE IS ONE, else of the fold — the row reads, right to left,
 	// ✕, fold, enable, accessory, and then the title from the left.
 	const visage::Bounds sw = enableBounds();
-	const visage::Bounds anchor = sw.width() > 0.0f ? sw : maximizeBounds();
+	const visage::Bounds anchor = sw.width() > 0.0f ? sw : menuOrMaximizeBounds();
 	constexpr float kGap = 10.0f;
 	const float w = accessory_->width();
 	const float h = std::min(accessory_->height(), title.height());
@@ -1212,6 +1291,17 @@ void ExpandedPanel::draw(visage::Canvas& canvas) {
 	               close.bottom() - inset, 1.4f, true);
 	canvas.segment(close.right() - inset, close.y() + inset, close.x() + inset,
 	               close.bottom() - inset, 1.4f, true);
+	// THE "..." MARK: three dots, the card's own (`FxCard::drawSlotMenu`), drawn only where a menu is bound.
+	if (const visage::Bounds dots = menuBounds(); dots.width() > 0.0f) {
+		canvas.setColor(kMuted);
+		constexpr float kDot = 2.0f;
+		constexpr float kStep = 4.0f;
+		const float dy = dots.y() + (dots.height() - kDot) * 0.5f;
+		const float dx = dots.x() + (dots.width() - (2.0f * kStep + kDot)) * 0.5f;
+		for (int i = 0; i < 3; ++i) {
+			canvas.fill(dx + static_cast<float>(i) * kStep, dy, kDot, kDot);
+		}
+	}
 	// THE MAXIMIZE SQUARE, AS GEOMETRY: one outline square to grow, two offset ones (the restore mark) while maximized.
 	{
 		const visage::Bounds mx = maximizeBounds();

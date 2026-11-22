@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/widget_registry.h"
 #include "plugin/bridge_device_host.h"
 #include "plugin/fx_chain.h"
@@ -201,7 +202,9 @@ public:
 	//------------------------------//
 
 	/// Open the slot menu for `slot`, as pressing the three dots in that card's head does.
-	void showSlotMenu(size_t slot);
+	void showSlotMenu(size_t slot, const SlotMenuOrigin* origin = nullptr);
+	/// The same menu for the card of `device`, asked by that device's window. False, opening nothing, when this host holds no card for it.
+	bool showSlotMenuFor(DeviceInstanceId device, const SlotMenuOrigin& origin);
 
 	/// WHAT THAT MENU OFFERS, in order, for a given slot — so a case reads the card's own answer
 	/// rather than restating the rules about which ends can move.

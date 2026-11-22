@@ -146,6 +146,19 @@ bool MountedFrame::routeDeviceEnable() {
 	return false;
 }
 
+bool MountedFrame::hasDeviceMenu() const {
+	if (const auto* view = dynamic_cast<const ExpandedView*>(content_.get()); view != nullptr) {
+		return view->hasDeviceMenu();
+	}
+	return false;
+}
+
+void MountedFrame::openDeviceMenu(const SlotMenuOrigin& origin) {
+	if (auto* view = dynamic_cast<ExpandedView*>(content_.get()); view != nullptr) {
+		view->openDeviceMenu(origin);
+	}
+}
+
 visage::Point MountedFrame::minimumSize() const {
 	if (content_ == nullptr) {
 		return minimum_;

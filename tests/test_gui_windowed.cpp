@@ -3729,6 +3729,279 @@ TEST_CASE("the Pattern's heart menu, opened by a real right press, stays open th
 	pumpEditor(rig.f.gui, 10);
 	CHECK(terrain.likesNow().count == 0);
 }
+
+namespace {
+/// THE ROWS OF AN OPEN MENU, label and enabled state, top level — what a hand reads.
+std::vector<std::string> rowsOfMenu(visage::PopupMenuFrame& popup) {
+	std::vector<std::string> rows;
+	visage::PopupList* list = menu_check::rowsOf(popup);
+	if (list == nullptr) {
+		return rows;
+	}
+	for (int i = 0; i < list->numOptions(); ++i) {
+		const visage::PopupMenu& o = list->option(i);
+		rows.push_back(o.name().toUtf8() + (o.enabled() ? "" : " (off)"));
+	}
+	return rows;
+}
+
+void closePopup(visage::PopupMenuFrame* popup) {
+	if (popup != nullptr) {
+		popup->exit();
+		popup->timerCallback();
+	}
+}
+
+/// A REAL PRESS AND RELEASE of `button` at a point in the editor's logical window coordinates.
+void realClick(ReopenRig& rig, visage::Point at, unsigned int button) {
+	const double scale = rig.f.root->dpiScale();
+	const visage::IPoint n { static_cast<int>(at.x * scale), static_cast<int>(at.y * scale) };
+	EditorPointer p = rig.pointer();
+	const unsigned int mask = button == Button3 ? Button3Mask : Button1Mask;
+	p.send(MotionNotify, n.x, n.y, 0, 0);
+	p.send(ButtonPress, n.x, n.y, button, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, n.x, n.y, button, mask);
+	for (int i = 0; i < 6; ++i) {
+		(void)rig.f.gui.tickForTest();
+		pumpEditor(rig.f.gui, 3);
+	}
+}
+
+visage::Point centreOf(const visage::Frame& frame, const visage::Bounds& local) {
+	return frame.positionInWindow() + visage::Point(local.x() + local.width() / 2, local.y() + local.height() / 2);
+}
+} // namespace
+
+TEST_CASE("a device window's \"...\" and a right-press on its head open the card's own slot menu: the same rows in the same "
+          "states, stays open, and a pick lands") {
+	ReopenRig rig;
+	rig.f.gui.setPopoutWindowForTest(false);
+	const size_t first = rig.f.addFx(fx::harm::kTraits.tag);
+	const size_t second = rig.f.addFx(fx::harm::kTraits.tag);
+	REQUIRE(second == first + 1);
+	ui::ExpandedOverlay* overlay = rig.f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	const DeviceInstanceId device = rig.f.bridge.fxDeviceAt(first);
+	const DeviceInstanceId other = rig.f.bridge.fxDeviceAt(second);
+
+	// THE CARD'S MENU, the value to equal.
+	rig.f.lane->showSlotMenu(first);
+	visage::PopupMenuFrame* cardPopup = menu_check::newestPopup(*rig.f.lane);
+	REQUIRE(cardPopup != nullptr);
+	const std::vector<std::string> cardRows = rowsOfMenu(*cardPopup);
+	closePopup(cardPopup);
+	REQUIRE(cardRows.size() >= 5);
+
+	rig.f.lane->onExpandDevice(first);
+	pumpEditor(rig.f.gui, 5);
+	REQUIRE(overlay->open());
+	ui::ExpandedPanel* panel = overlay->panelForTest();
+	REQUIRE(panel != nullptr);
+	REQUIRE(panel->menuBounds().width() > 0.0f);
+
+	SUBCASE("the \"...\" mark: a real press opens it, it stays open, and a real click on a row lands") {
+		realClick(rig, centreOf(*panel, panel->menuBounds()), Button1);
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*panel);
+		REQUIRE(popup != nullptr);
+		CHECK(popup->isVisible());
+		CHECK(ui::lastMenuPlacementForTest().shown);
+		CHECK(rowsOfMenu(*popup) == cardRows);
+		// "Move later" by its row, as a hand clicks it.
+		size_t row = cardRows.size();
+		for (size_t i = 0; i < cardRows.size(); ++i) {
+			if (cardRows[i] == "Move later") {
+				row = i;
+			}
+		}
+		REQUIRE(row < cardRows.size());
+		const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+		const float rowH = placed.list.height() / static_cast<float>(cardRows.size());
+		realClick(rig, { placed.list.x() + placed.list.width() * 0.5f, placed.list.y() + (static_cast<float>(row) + 0.5f) * rowH },
+		          Button1);
+		CHECK(rig.f.bridge.fxDeviceAt(first) == other);
+		CHECK(rig.f.bridge.fxDeviceAt(second) == device);
+		CHECK(overlay->open()); // a move leaves the window up
+	}
+	SUBCASE("the rows include the card's Rename and Clear name, and Rename from the window opens the field on the card") {
+		bool hasRename = false;
+		for (const std::string& row : cardRows) {
+			hasRename = hasRename || row == "Rename...";
+		}
+		REQUIRE(hasRename);
+		REQUIRE(panel->openMenu());
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*panel);
+		REQUIRE(popup != nullptr);
+		CHECK(rowsOfMenu(*popup) == cardRows);
+		REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+		popup->timerCallback();
+		(void)rig.f.gui.tickForTest();
+		CHECK(rig.f.lane->renameForTest().renaming());
+		CHECK(overlay->open()); // the window stays; the field is on the card
+	}
+	SUBCASE("a right-press on the bare head opens the same rows") {
+		const visage::Point head = panel->positionInWindow() + visage::Point(4.0f, ui::ExpandedOverlay::kTitleHeight * 0.5f);
+		realClick(rig, head, Button3);
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*panel);
+		REQUIRE(popup != nullptr);
+		CHECK(popup->isVisible());
+		CHECK(rowsOfMenu(*popup) == cardRows);
+	}
+	SUBCASE("Remove from the window closes the window and takes the device out, leaving no frame behind") {
+		REQUIRE(panel->openMenu());
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*panel);
+		REQUIRE(popup != nullptr);
+		const size_t before = rig.f.bridge.fxChain().count;
+		REQUIRE(menu_check::pickRow(*popup, "Remove"));
+		popup->timerCallback();
+		(void)rig.f.gui.tickForTest();
+		pumpEditor(rig.f.gui, 5);
+		CHECK(rig.f.bridge.fxChain().count == before - 1);
+		CHECK(rig.f.bridge.fxDeviceAt(first) == other);
+		CHECK_FALSE(overlay->open());
+		CHECK(overlay->panelCount() == 0);
+	}
+}
+
+namespace {
+void collectKnobsUnder(visage::Frame* at, std::vector<ui::Knob*>& out) {
+	if (at == nullptr || !at->isVisible()) {
+		return;
+	}
+	if (auto* knob = dynamic_cast<ui::Knob*>(at); knob != nullptr && knob->width() > 0.0f && knob->control() != nullptr) {
+		out.push_back(knob);
+	}
+	for (visage::Frame* child : at->children()) {
+		collectKnobsUnder(child, out);
+	}
+}
+} // namespace
+
+TEST_CASE("a press anywhere on a window that is behind another brings it to the front, and the control under the press still "
+          "takes it") {
+	ReopenRig rig;
+	rig.f.gui.setPopoutWindowForTest(false);
+	const size_t a = rig.f.addFx(fx::harm::kTraits.tag);
+	const size_t b = rig.f.addFx(fx::harm::kTraits.tag);
+	ui::ExpandedOverlay* overlay = rig.f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	rig.f.lane->onExpandDevice(a);
+	pumpEditor(rig.f.gui, 3);
+	ui::ExpandedPanel* back = overlay->panelForTest();
+	rig.f.lane->onExpandDevice(b);
+	pumpEditor(rig.f.gui, 3);
+	ui::ExpandedPanel* front = overlay->panelForTest();
+	REQUIRE(back != nullptr);
+	REQUIRE(front != nullptr);
+	REQUIRE(back != front);
+	REQUIRE(overlay->panelCount() == 2);
+	// THE FRONT ONE MOVED CLEAR OF MOST OF THE BACK ONE, so a knob of the back window can be pressed where nothing covers it.
+	overlay->beginPanelDrag();
+	overlay->dragPanelBy({ 3000.0f, 0.0f });
+	pumpEditor(rig.f.gui, 3);
+	REQUIRE(overlay->panelForTest() == front);
+
+	std::vector<ui::Knob*> knobs;
+	collectKnobsUnder(back, knobs);
+	ui::Knob* target = nullptr;
+	for (ui::Knob* k : knobs) {
+		const visage::Point c = k->positionInWindow() + visage::Point(k->width() / 2, k->height() / 2);
+		const visage::Point f0 = front->positionInWindow();
+		const bool covered = c.x >= f0.x && c.x <= f0.x + front->width() && c.y >= f0.y && c.y <= f0.y + front->height();
+		if (!covered && c.x > 0.0f && c.x < rig.f.root->width()) {
+			target = k;
+			break;
+		}
+	}
+	REQUIRE(target != nullptr);
+
+	SUBCASE("a press on a control in the back window raises it and the drag still moves the control") {
+		const double before = target->control()->value();
+		const visage::Point c = target->positionInWindow() + visage::Point(target->width() / 2, target->height() / 2);
+		const double scale = rig.f.root->dpiScale();
+		const visage::IPoint at { static_cast<int>(c.x * scale), static_cast<int>(c.y * scale) };
+		EditorPointer p = rig.pointer();
+		p.send(MotionNotify, at.x, at.y, 0, 0);
+		p.send(ButtonPress, at.x, at.y, Button1, 0);
+		pumpEditor(rig.f.gui, 3);
+		// RAISED ON THE PRESS, before any release.
+		CHECK(overlay->panelForTest() == back);
+		for (int i = 1; i <= 10; ++i) {
+			p.send(MotionNotify, at.x, at.y - 6 * i, 0, Button1Mask);
+			pumpEditor(rig.f.gui, 2);
+		}
+		p.send(ButtonRelease, at.x, at.y - 60, Button1, Button1Mask);
+		pumpEditor(rig.f.gui, 5);
+		CHECK(overlay->panelForTest() == back);
+		CHECK(target->control()->value() != before);
+	}
+	SUBCASE("a press on the front window changes no order") {
+		const visage::Point c = front->positionInWindow() + visage::Point(front->width() / 2, front->height() * 0.5f);
+		realClick(rig, c, Button1);
+		CHECK(overlay->panelForTest() == front);
+		realClick(rig, front->positionInWindow() + visage::Point(30.0f, 14.0f), Button1);
+		CHECK(overlay->panelForTest() == front);
+	}
+}
+
+TEST_CASE("after a real click in a device window's body the editor's own keys still work: Ctrl+Z and Ctrl+Shift+Z walk the "
+          "history, and Esc cancels the mod-assign arm and then closes the window") {
+	// THE WINDOW ACCEPTS KEYSTROKES (so a press anywhere in it can raise it), which makes it the keyboard focus after a
+	// click. `handleKeyDown` walks from the focus up through every ancestor that accepts keys, so a key the window does not
+	// use must arrive at the layer and the editor's root. The walk is made here from whatever frame really holds the
+	// keyboard after the click.
+	ReopenRig rig;
+	rig.f.gui.setPopoutWindowForTest(false);
+	const size_t slot = rig.f.addFx(fx::harm::kTraits.tag);
+	ui::ExpandedOverlay* overlay = rig.f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	rig.f.lane->onExpandDevice(slot);
+	pumpEditor(rig.f.gui, 3);
+	REQUIRE(overlay->open());
+	ui::ExpandedPanel* panel = overlay->panelForTest();
+	REQUIRE(panel != nullptr);
+	std::vector<ui::Knob*> knobs;
+	collectKnobsUnder(panel, knobs);
+	REQUIRE_FALSE(knobs.empty());
+	// A REAL PRESS AND RELEASE on a control in the body.
+	realClick(rig, knobs.front()->positionInWindow() + visage::Point(knobs.front()->width() / 2, knobs.front()->height() / 2),
+	          Button1);
+	visage::Frame* const top = rig.f.root->topParentFrame();
+	visage::Frame* held = focusedUnder(top);
+	REQUIRE(held != nullptr);
+	// THE WINDOW REALLY IS WHAT HOLDS THE KEYBOARD NOW (not the root), or this case would prove nothing.
+	bool inPanel = false;
+	for (visage::Frame* at = held; at != nullptr; at = at->parent()) {
+		inPanel = inPanel || at == panel;
+	}
+	REQUIRE(inPanel);
+
+	SUBCASE("Ctrl+Z and Ctrl+Shift+Z") {
+		ui::EditHistory& history = *rig.f.gui.history();
+		const clap_id id = static_cast<clap_id>(ParamId::VoiceLevel);
+		const double before = rig.f.bridge.value(id);
+		const double after = before > 0.5 ? before - 0.25 : before + 0.25;
+		REQUIRE(ui::writeParamAsEdit(rig.f.bridge, id, after));
+		REQUIRE(history.canUndo());
+		CHECK(keyFromFocusUp(held, visage::KeyEvent { visage::KeyCode::Z, visage::kModifierRegCtrl, true }));
+		CHECK(rig.f.bridge.value(id) == before);
+		CHECK(keyFromFocusUp(held, visage::KeyEvent { visage::KeyCode::Z, visage::kModifierRegCtrl | visage::kModifierShift, true }));
+		CHECK(rig.f.bridge.value(id) == after);
+	}
+	SUBCASE("Esc cancels the arm first, then closes the window") {
+		ui::ModState* mod = rig.f.gui.modForTest();
+		REQUIRE(mod != nullptr);
+		mod->focus(backplane::Source::core(0));
+		mod->arm(true);
+		REQUIRE(mod->armed());
+		const visage::KeyEvent escape { visage::KeyCode::Escape, 0, true };
+		CHECK(keyFromFocusUp(held, escape));
+		CHECK_FALSE(mod->armed());
+		CHECK(overlay->open());
+		CHECK(keyFromFocusUp(held, escape));
+		CHECK_FALSE(overlay->open());
+	}
+}
 #endif // defined(__linux__): ReopenRig is Linux-only
 
 TEST_CASE("backlog NF: the Explore pane collapses like the fx lane — a 34px EXPLORE strip, the surface hidden, the "

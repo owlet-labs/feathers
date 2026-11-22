@@ -1064,7 +1064,7 @@ bool FxLane::moveDevice(size_t from, size_t to) {
 	return true;
 }
 
-void FxLane::showSlotMenu(size_t slot) {
+void FxLane::showSlotMenu(size_t slot, const SlotMenuOrigin* origin) {
 	if (slot >= deviceCount()) {
 		return;
 	}
@@ -1105,7 +1105,8 @@ void FxLane::showSlotMenu(size_t slot) {
 		selection_->addVerbs(menu, kVerbIds, bridge_.fxDeviceAt(slot));
 		rename_->addRows(menu, deviceHost_, bridge_.fxDeviceAt(slot));
 	}
-	menu.onSelection() = [this, slot, options](int id) {
+	const std::function<void()> closeWindow = origin != nullptr ? origin->closeWindow : std::function<void()> {};
+	menu.onSelection() = [this, slot, options, closeWindow](int id) {
 		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
 			if (slot < deviceCount() && slot < cards_.size() && cards_[slot] != nullptr) {
 				FxCard& card = *cards_[slot];
@@ -1114,14 +1115,34 @@ void FxLane::showSlotMenu(size_t slot) {
 			}
 		}
 		else if (id >= kVerbIds) {
+			if (closeWindow && verbLeavesDevice(static_cast<FragmentVerb>(id - kVerbIds))) {
+				closeWindow();
+			}
 			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds));
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {
+			if (closeWindow && options[static_cast<size_t>(id)].verb == SlotVerb::Remove) {
+				closeWindow();
+			}
 			slotChoiceForTest(slot, options[static_cast<size_t>(id)].verb);
 		}
 	};
 	// OPENED AT THE DOTS AND NOT OFF THE BOTTOM OF THE WINDOW — see menuAnchorFor.
+	if (origin != nullptr && origin->source != nullptr) {
+		showMenuAt(std::move(menu), *origin->source, origin->anchor);
+		return;
+	}
 	showMenuAt(std::move(menu), *this, menuAnchorFor(slot));
+}
+
+bool FxLane::showSlotMenuFor(DeviceInstanceId device, const SlotMenuOrigin& origin) {
+	for (size_t slot = 0; slot < deviceCount(); ++slot) {
+		if (bridge_.fxDeviceAt(slot) == device) {
+			showSlotMenu(slot, &origin);
+			return true;
+		}
+	}
+	return false;
 }
 
 size_t FxLane::insertChoiceForTest(size_t slot, size_t index) {

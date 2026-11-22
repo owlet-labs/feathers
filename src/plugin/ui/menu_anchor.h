@@ -19,6 +19,7 @@
 
 #include <visage/ui.h>
 
+#include <functional>
 #include <string>
 
 // THE ONE ROAD EVERY DROPDOWN IN THIS EDITOR OPENS BY — placement and the re-click toggle, once.
@@ -65,6 +66,17 @@ namespace feathers::ui {
 /// opened from INSIDE another's pick — "Add before…", a Delete row's confirmation — is not a re-click:
 /// the picked-from menu counts as closed from the moment its pick is delivered, so this replaces it.
 bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bounds& anchor);
+
+/// **WHERE A DEVICE'S SLOT MENU OPENS WHEN A WINDOW ASKED FOR IT, AND WHAT TO DO FIRST.** A card's "..." opens its host's
+/// slot menu at its own dots, from its own frame. A device WINDOW asks the same host for the same menu (one builder, the
+/// host's `showSlotMenu`), so the host is told where the window's mark is (`source` and `anchor`, in `source`'s own
+/// coordinates) and how to put the window away (`closeWindow`): a verb that takes the device out of its chain closes the
+/// window first, so no window is left drawn over a device that is gone. Empty `closeWindow` is a card's own press.
+struct SlotMenuOrigin {
+	visage::Frame* source = nullptr;
+	visage::Bounds anchor;
+	std::function<void()> closeWindow;
+};
 
 /// WHERE THE LAST MENU WENT, in the coordinates of the frame it was parented on — a claim about
 /// placement has to be checkable as geometry, and a popup is not reachable from its call site.

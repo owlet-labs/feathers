@@ -73,10 +73,34 @@ FxLaneRail::FxLaneRail(const Spec& spec, WidgetRegistry& registry, Notifier* not
 		if (toggleHit(e.position)) {
 			toggleCollapsed();
 		}
+		else if (pressHeading(e)) {
+			// the name was pressed: its menu or its rename took it
+		}
 		else if (onPhantomAdd_ && column_ == nullptr && !collapsed() && phantomAddBounds().contains(e.position)) {
 			onPhantomAdd_(); // a phantom's (+): its chain made, and its add menu opened by the holder
 		}
 	};
+}
+
+bool FxLaneRail::pressHeading(const visage::MouseEvent& e) {
+	if (collapsed() || (!headingContext_ && !headingRename_)) {
+		return false;
+	}
+	const visage::Bounds heading = headingBounds();
+	if (!heading.contains(e.position)) {
+		return false;
+	}
+	if (e.isRightButton()) {
+		if (headingContext_) {
+			headingContext_(heading);
+			return true;
+		}
+	}
+	else if (e.repeatClickCount() == 2 && headingRename_) {
+		headingRename_(heading);
+		return true;
+	}
+	return false;
 }
 
 FxLaneRail::~FxLaneRail() {

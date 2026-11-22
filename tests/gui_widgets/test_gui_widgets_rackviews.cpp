@@ -3699,28 +3699,6 @@ TEST_CASE("rename field: opened by the menu's own pick and by double-click, it i
 			}
 		}
 	}
-	// THE STRIP CAPTION'S DOUBLE-CLICK, on the card and in the window (Strips view).
-	{
-		RealRack r;
-		r.chains(3, 2, true);
-		r.view_(0);
-		for (const bool windowSide : { true }) {
-			ui::RackChainRename& rename = r.panel->chainRenameForTest();
-			ui::ChainStrip* strip = &r.panel->stripForTest(1);
-			strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
-			r.refresh();
-			REQUIRE(rename.renaming());
-			ui::TextField& field = rename.field();
-			visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
-			const visage::Point at = field.positionInWindow();
-			const visage::Point centre { at.x + static_cast<float>(field.width()) * 0.5f, at.y + static_cast<float>(field.height()) * 0.5f };
-			CAPTURE(windowSide);
-			CHECK(field.isVisible());
-			CHECK(field.width() > 0);
-			CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&field));
-			(void)keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Escape, 0, true });
-		}
-	}
 	// A NESTED RACK'S OWN TABS, inside the outer window's column (Cards, so its card is drawn there).
 	{
 		RealRack r;
@@ -4035,6 +4013,57 @@ TEST_CASE("list view: a row is inside the card and its column is laid out at 1x,
 	}
 }
 
+TEST_CASE("rename field: a chain strip opens it by a right press's Rename... and by a double-click - on the card and in the window, in Strips") {
+	for (const bool windowSide : { false, true }) {
+		for (const RenameRoad road : { RenameRoad::Menu, RenameRoad::DoubleClick }) {
+			CAPTURE(windowSide);
+			CAPTURE(road == RenameRoad::Menu);
+			RealRack r;
+			r.chains(3, 2, true);
+			r.view_(0);
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+			}
+			const size_t chain = 1;
+			ui::ChainStrip* strip = windowSide ? &r.panel->stripForTest(chain) : r.card->stripsForTest()[chain].get();
+			REQUIRE(strip != nullptr);
+			ui::RackChainRename& rename = windowSide ? r.panel->chainRenameForTest() : r.card->chainRenameForTest();
+			visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
+			const visage::Point at { 2.0f, 2.0f };
+			if (road == RenameRoad::Menu) {
+				strip->pressContextForTest(at);
+				visage::PopupMenuFrame* popup = menu_check::newestPopup(*strip);
+				REQUIRE(popup != nullptr);
+				REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			}
+			else {
+				strip->doubleClickForTest(at);
+			}
+			r.refresh();
+			REQUIRE(rename.renaming());
+			ui::TextField& field = rename.field();
+			CHECK(field.isVisible());
+			CHECK(field.isDrawing());
+			const visage::Point pos = field.positionInWindow();
+			const visage::Point centre { pos.x + static_cast<float>(field.width()) * 0.5f, pos.y + static_cast<float>(field.height()) * 0.5f };
+			CHECK(field.width() >= 60.0f);
+			CHECK(field.height() >= 16.0f);
+			CHECK(field.height() <= 40.0f);
+			CHECK(pos.x >= 0.0f);
+			CHECK(pos.y >= 0.0f);
+			CHECK(pos.x + static_cast<float>(field.width()) <= static_cast<float>(root->width()) + 0.01f);
+			CHECK(pos.y + static_cast<float>(field.height()) <= static_cast<float>(root->height()) + 0.01f);
+			CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&field));
+			field.textInput("Snare");
+			CHECK(keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+			r.refresh();
+			CHECK_FALSE(rename.renaming());
+			CHECK(r.rack().chainLabel(chain) == "Snare");
+		}
+	}
+}
+
+
 TEST_CASE("PHOTO: the Rack's List view on the card and in the window, with a few chains and with many (writes only under FEATHERS_LIST_VIEW_SHOTS)") {
 	const char* keep = std::getenv("FEATHERS_LIST_VIEW_SHOTS");
 	if (keep == nullptr) {
@@ -4219,5 +4248,68 @@ TEST_CASE("list view: a row's level pill shows its value alone and the meter is 
 			const bool collide = 7.0f + caption > w - 7.0f - value;
 			MESSAGE("MEASURED card strip at scale " << scale << ": pill " << w << " px, caption " << caption << ", value '" << strip->levelPill().readout() << "' " << value << ", caption ends at " << 7.0f + caption << ", value starts at " << w - 7.0f - value << ", collides: " << (collide ? "YES" : "no"));
 		}
+	}
+}
+
+
+TEST_CASE("rename field: a single left press on a strip's own surface renames nothing and moves no control; mute still toggles") {
+	RealRack r;
+	r.chains(3, 2, true);
+	r.view_(0);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	ui::ChainStrip& strip = r.panel->stripForTest(1);
+	ui::RackChainRename& rename = r.panel->chainRenameForTest();
+	const bool muted = r.rack().muted(1);
+	visage::MouseEvent down {};
+	down.event_frame = &strip;
+	down.position = { 2.0f, 2.0f };
+	strip.processMouseDown(down);
+	strip.processMouseUp(down);
+	CHECK_FALSE(rename.renaming());
+	CHECK(r.rack().muted(1) == muted);
+	strip.muteControlForTest().setValue(muted ? 0.0 : 1.0);
+	r.refresh();
+	CHECK(r.rack().muted(1) == !muted); // the strip's own control is untouched by the new gesture
+}
+
+TEST_CASE("rename field: an open rail in the window draws the chain's name as its heading, and a double-click or right press there renames") {
+	for (const bool menu : { false, true }) {
+		RealRack r;
+		r.chains(3, 2, true);
+		for (size_t i = 0; i < 3; ++i) {
+			r.rack().setOpen(i, true);
+		}
+		r.view_(0);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		ui::FxLaneRail& rail = r.panel->railForTest(1);
+		REQUIRE_FALSE(rail.collapsed());
+		const visage::Bounds heading = rail.headingBounds();
+		const visage::Point centre { heading.x() + heading.width() * 0.5f, heading.y() + heading.height() * 0.5f };
+		ui::RackChainRename& rename = r.panel->chainRenameForTest();
+		// THE NAME IS WHAT A HAND PRESSES: nothing over it takes the press.
+		CHECK(r.panel->frameAtPoint({ rail.positionInWindow().x - r.panel->positionInWindow().x + centre.x,
+		                              rail.positionInWindow().y - r.panel->positionInWindow().y + centre.y })
+		      == static_cast<visage::Frame*>(&rail));
+		if (menu) {
+			rail.pressHeadingForTest(centre, true, 1);
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(rail);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+		}
+		else {
+			rail.pressHeadingForTest(centre, false, 1);
+			CHECK_FALSE(rename.renaming()); // one click is not a rename
+			rail.pressHeadingForTest(centre, false, 2);
+		}
+		r.refresh();
+		REQUIRE(rename.renaming());
+		rename.field().textInput("Kick");
+		CHECK(keyFromFocus(&rename.field(), visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		r.refresh();
+		CHECK(r.rack().chainLabel(1) == "Kick");
 	}
 }

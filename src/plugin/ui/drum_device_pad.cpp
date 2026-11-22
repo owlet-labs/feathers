@@ -150,6 +150,22 @@ std::optional<size_t> DrumDevicePad::likeUnderStar() const {
 	return best;
 }
 
+visage::Bounds DrumDevicePad::markRect(visage::Point at) const {
+	const float r = kLikeMarkSize * 0.5f + 1.0f;
+	return { at.x - r, at.y - r, 2.0f * r, 2.0f * r };
+}
+
+visage::Point DrumDevicePad::markAt(visage::Point place) const {
+	// A MARK UNDER THE INSET (Rotate's box, drawn over the pad) IS MOVED OUT FROM UNDER IT, straight down to just below it: a like in that
+	// corner stays visible, a little off its place, rather than hidden.
+	const visage::Bounds mark = markRect(place);
+	if (inset_.width() > 0.0f && mark.x() < inset_.right() && mark.right() > inset_.x() && mark.y() < inset_.bottom()
+	    && mark.bottom() > inset_.y()) {
+		return { place.x, inset_.bottom() + mark.height() * 0.5f };
+	}
+	return place;
+}
+
 void DrumDevicePad::draw(visage::Canvas& canvas) {
 	ExplorePad::draw(canvas);
 	likeMarksDrawn_ = 0;
@@ -158,10 +174,11 @@ void DrumDevicePad::draw(visage::Canvas& canvas) {
 	}
 	// EVERY LIKE OF THIS PLANE AND KIND AT ITS PLACE ON THE PICTURE (the warp carried it), a heart in the likes' one hue as the synth's chart draws them.
 	for (const fx::drumdevice::DrumLike& like : applied()) {
-		const visage::Point m = likePixel(like);
-		if (!std::isfinite(m.x) || !std::isfinite(m.y) || m.x < 0.0f || m.y < 0.0f || m.x > width() || m.y > height()) {
+		const visage::Point place = likePixel(like);
+		if (!std::isfinite(place.x) || !std::isfinite(place.y) || place.x < 0.0f || place.y < 0.0f || place.x > width() || place.y > height()) {
 			continue;
 		}
+		const visage::Point m = markAt(place);
 		canvas.setColor(withAlpha(kLikeHue, 0.92f));
 		drawHeart(canvas, m.x, m.y, kLikeMarkSize);
 		++likeMarksDrawn_;

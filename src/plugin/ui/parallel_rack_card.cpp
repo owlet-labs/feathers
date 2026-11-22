@@ -541,8 +541,8 @@ ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint1
 			onRemove_(level_.chain());
 			return;
 		}
-		if (e.shouldTriggerPopup() && context_ && level_.chain() != 0xFFFF) {
-			context_(level_.chain(), visage::Bounds { 0.0f, 0.0f, static_cast<float>(width()), static_cast<float>(height()) });
+		if (e.isRightButton()) {
+			pressContext(e.position);
 			return;
 		}
 		if (surface_) {
@@ -565,6 +565,12 @@ ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint1
 }
 
 ChainStrip::~ChainStrip() = default;
+
+void ChainStrip::pressContext(visage::Point at) {
+	if (context_ && level_.chain() != 0xFFFF && !removeBounds_.contains(at)) {
+		context_(level_.chain(), visage::Bounds { 0.0f, 0.0f, static_cast<float>(width()), static_cast<float>(height()) });
+	}
+}
 
 void ChainStrip::doubleClick(visage::Point at) {
 	if (rename_ && level_.chain() != 0xFFFF && !removeBounds_.contains(at)) {
@@ -1279,6 +1285,11 @@ bool ParallelRackCard::follow() {
 			strip->setRenameHandler([this, raw = strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
 				if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
 					chainRename_->begin(slot, *raw, anchor);
+				}
+			});
+			strip->setContextHandler([this, raw = strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
+				if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+					chainRename_->showMenu(slot, *raw, anchor);
 				}
 			});
 			strip->setVisible(!folded());

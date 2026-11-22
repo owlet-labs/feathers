@@ -55,6 +55,8 @@
 #include "plugin/ui/expanded_views.h"
 #include "composite/composite_types.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/parallel_rack_card.h"
+#include "rack/parallel_rack.h"
 #include "rack/chain_expanded.h"
 #include "rack/chain_state.h"
 #include "rack/converger.h"
@@ -6698,4 +6700,51 @@ TEST_CASE("the Chain plugin's header has no undo buttons, and the preset stepper
 	CHECK(f.editor.onKeyPress().callback(visage::KeyEvent { visage::KeyCode::Z, visage::kModifierRegCtrl, true }));
 	f.bridge.drain();
 	CHECK(f.bridge.chainLength() == 0);
+}
+
+TEST_CASE("rack editor: a Rack's chain strip renames its chain by a right press's Rename... and by a double-click, the field drawn and typing renames") {
+	namespace pr = rack::parallel;
+	for (const bool doubleClick : { false, true }) {
+		CAPTURE(doubleClick);
+		Fixture f;
+		const DeviceInstanceId id = f.add(pr::kTraits.tag);
+		REQUIRE(id != kNoInstance);
+		pr::Rack* rk = pr::rackOf(f.bridge.containerSurfaceOf(id));
+		REQUIRE(rk != nullptr);
+		while (rk->chainCount() < 3) {
+			REQUIRE(rk->addChain() != SIZE_MAX);
+		}
+		f.bridge.setField(id, static_cast<size_t>(pr::Param::View), 0.0f); // Strips
+		f.editor.syncCards();
+		for (int i = 0; i < 3; ++i) {
+			f.bridge.drain();
+			f.editor.syncCards();
+		}
+		ui::FxCard* held = f.editor.cardOfDeviceForTest(id);
+		auto* card = dynamic_cast<ui::ParallelRackCard*>(held);
+		REQUIRE(card != nullptr);
+		(void)card->update();
+		REQUIRE(card->stripsForTest().size() == 3);
+		ui::ChainStrip* strip = card->stripsForTest()[1].get();
+		if (doubleClick) {
+			strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
+		}
+		else {
+			strip->pressContextForTest(visage::Point { 2.0f, 2.0f });
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*strip);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+		}
+		ui::RackChainRename& rename = card->chainRenameForTest();
+		REQUIRE(rename.renaming());
+		ui::TextField& field = rename.field();
+		CHECK(field.isVisible());
+		CHECK(field.width() >= 60.0f);
+		CHECK(field.height() >= 16.0f);
+		CHECK(field.height() <= 40.0f);
+		field.processTextInput("Snare");
+		field.processKeyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true });
+		CHECK_FALSE(rename.renaming());
+		CHECK(rk->chainLabel(1) == "Snare");
+	}
 }

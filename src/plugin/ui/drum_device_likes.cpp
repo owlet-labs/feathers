@@ -242,10 +242,8 @@ const char* DrumLikeBar::tooltipAt(visage::Point local) const {
 	if (heartBounds().contains(local)) {
 		return "Like this drum where it stands, or remove the like it stands on. Liked places are given more room on the terrain, and Mutate favours them. Right-click for more";
 	}
-	if (mutateBounds().contains(local)) {
-		return "Roll the dice: move the drum a step across the terrain, in the view as it is drawn, so the likes steer it";
-	}
-	return "";
+	// EVERYWHERE ELSE ON THE BAR (the gap, a hover at its middle) IT IS MUTATE's: the bar is the two buttons and nothing else.
+	return "Roll the dice: move the drum a step across the terrain, in the view as it is drawn, so the likes steer it";
 }
 
 void DrumLikeBar::offeredControls(std::vector<Offered>& out) const {

@@ -91,6 +91,12 @@ public:
 	/// Where an applied like's mark is, in pixels.
 	[[nodiscard]] visage::Point likePixel(const fx::drumdevice::DrumLike& like) const;
 	static constexpr float kLikeTouchPixels = 6.0f;
+	/// THE BOX DRAWN OVER THE PAD (Rotate's, pad-local; empty by default), which no like mark may hide under.
+	void setInset(visage::Bounds inset) { inset_ = inset; }
+	[[nodiscard]] visage::Bounds insetForTest() const noexcept { return inset_; }
+	/// The rectangle a mark centred at `at` covers, and where the mark for a like at pixel `place` is drawn (moved out from under the inset).
+	[[nodiscard]] visage::Bounds markRect(visage::Point at) const;
+	[[nodiscard]] visage::Point markAt(visage::Point place) const;
 	const char* tooltipAt(visage::Point) const override {
 		return "The terrain the drum stands on: press or drag to place it. It has no edge: the view follows, and Travel X and Y keep going.";
 	}
@@ -105,6 +111,7 @@ public:
 
 private:
 	int likeMarksDrawn_ = 0;
+	visage::Bounds inset_ {};
 	device::Modulatable* travelX_ = nullptr;
 	device::Modulatable* travelY_ = nullptr;
 };

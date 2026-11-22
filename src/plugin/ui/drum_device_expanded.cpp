@@ -215,9 +215,10 @@ void DrumDeviceExpanded::layOut() {
 		constexpr float kRotateWidth = 118.0f;
 		const float natural = static_cast<GammaBox*>(rotate)->naturalHeight();
 		rotate->setBounds(kPad + kTerrainWidth - kRotateWidth - kInset, terrainY + kInset, kRotateWidth, natural);
+		pad_->setInset({ kTerrainWidth - kRotateWidth - kInset, kInset, kRotateWidth, natural });
 		placed[static_cast<size_t>(dd::Param::Rotate)] = true;
 	}
-	likes_->setBounds(kPad, terrainY + kTerrainHeight + 4.0f, kTerrainWidth, DrumLikeBar::kHeight);
+	likes_->setBounds(kPad, terrainY + kTerrainHeight + 4.0f, DrumLikeBar::kHeartWidth + DrumLikeBar::kGap + DrumLikeBar::kMutateWidth, DrumLikeBar::kHeight);
 	Flow terrain { kPad + kTerrainWidth + 12.0f, xMax, kPad + kTerrainWidth + 12.0f, terrainY };
 	for (const dd::Param p : { dd::Param::Zone, dd::Param::ZoneOffset, dd::Param::Gamma, dd::Param::TravelX, dd::Param::TravelY }) {
 		seat(terrain, p, 84.0f, ValueBox::kHeight);

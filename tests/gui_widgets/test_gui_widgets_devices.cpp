@@ -32565,6 +32565,19 @@ TEST_CASE("LQ: OWLTT's band meters read each channel's own gain reduction off th
 	CHECK(d.card->graph()->meters().grSecond == first);
 }
 
+TEST_CASE("OWLTT's gain-reduction meter wears the legend's colours: reduction the DOWN colour, boost the UP colour, both opaque") {
+	// THE LEGEND'S KEY: DOWN is kValue, UP is kAccent (owltt_graph.cpp, the colour key). Boost at 0.4 alpha read as a
+	// disabled band. Asked through `grFillColour`, which the meter draws every half through.
+	const auto opaque = [](uint32_t c) { return (c >> 24) == 0xFFu; };
+	CHECK(ui::OwlttGraph::grFillColour(-0.5f) == kValue);
+	CHECK(ui::OwlttGraph::grFillColour(-0.001f) == kValue);
+	CHECK(ui::OwlttGraph::grFillColour(0.5f) == kAccent);
+	CHECK(ui::OwlttGraph::grFillColour(0.001f) == kAccent);
+	CHECK(opaque(ui::OwlttGraph::grFillColour(-0.5f)));
+	CHECK(opaque(ui::OwlttGraph::grFillColour(0.5f)));
+	CHECK(kValue != kAccent);
+}
+
 //------------------------------------------------------------------------------------------------//
 // THE DELAY'S TAPS STRIP (backlog LF).                                                           //
 //                                                                                                //

@@ -183,6 +183,12 @@ public:
 	static constexpr float kRingRadius = 4.0f;
 	/// THE GAP BETWEEN A BAND'S TWO GAIN-REDUCTION HALVES (backlog LQ: one per channel, L | R or M | S).
 	static constexpr float kMeterSplitGap = 2.0f;
+	/// THE COLOUR OF ONE GAIN-REDUCTION HALF, by the sign of its reading. REDUCTION (downward compression, the
+	/// negative reading) wears the DOWN colour, the one the legend's DOWN key and the down threshold use; BOOST
+	/// (upward compression, the positive reading) wears the UP colour, the legend's UP key and the up threshold.
+	/// Both are opaque: a boost at partial alpha read as a disabled band. The meter draws through this, so a test
+	/// that asks it asks what is on screen.
+	static uint32_t grFillColour(float gr);
 
 	struct BarYs {
 		float threshold; ///< the DOWN threshold's line, the upper one

@@ -39571,6 +39571,7 @@ TEST_CASE("the Pattern window's lane names its gestures on hover — and every g
 #include "fx/delay/delay_lanes.h"
 #include "plugin/ui/delay_card.h"
 #include "plugin/ui/delay_expanded.h"
+#include "fx/clip/clip_tips.h"
 #include "fx/clip/clip_types.h"
 
 namespace {
@@ -47107,4 +47108,141 @@ TEST_CASE("ERODER's per-Type hover table: every Type has an Amount and a Type te
 	// THE CLAUSE STRIPPER: a leading list goes and the first letter is raised; text without one is as it was.
 	CHECK(ero::withoutOnlyClause("Soft and Tube only: the knee. Shown only while its Type is Soft") == "The knee. Shown only while its Type is Soft");
 	CHECK(ero::withoutOnlyClause("What Drive pushes into") == "What Drive pushes into");
+}
+
+//--------------------------------------------------------------------------------------------------//
+// CLIP'S HOVER TEXTS FOLLOW ITS MODE (`ClipCard::applyTips`, `fx/clip/clip_tips.h`).                   //
+// Clip has no expanded window (`Traits::hasExpanded` is false): the card is its one face.             //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE THREE HOVERS UNDER TEST on a Clip card, against the table's row for `mode`: the Mode box, the Drive (its Amount) and, where the mode has one, the Shape.
+void checkClipTips(ui::ClipCard& card, int mode) {
+	namespace cl = feathers::fx::clip;
+	const cl::ClipTip& tip = cl::modeTip(mode);
+	const visage::Point at { 1.0f, 1.0f };
+	auto* drive = dynamic_cast<ui::Knob*>(card.widgetForTest(cl::Param::Drive));
+	auto* shape = dynamic_cast<ui::Knob*>(card.widgetForTest(cl::Param::Shape));
+	REQUIRE(drive != nullptr);
+	REQUIRE(shape != nullptr);
+	CHECK(hoverEndsWith(ui::hoverText(*card.modeForTest(), at), tip.type));
+	CHECK(hoverEndsWith(ui::hoverText(*drive, at), tip.amount));
+	if (tip.shape != nullptr) {
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), tip.shape));
+	}
+	else {
+		// A MODE WITH NO SHAPE KNOB leaves the declared text.
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), cl::kParamDescs[static_cast<size_t>(cl::Param::Shape)].tooltip));
+	}
+}
+
+} // namespace
+
+TEST_CASE("CLIP's hover texts follow its Type — the Mode box, the Drive and the Shape, set through the host") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	for (const cl::Mode mode : { cl::Mode::Soft, cl::Mode::Fold, cl::Mode::Tube, cl::Mode::Jag, cl::Mode::Chonk, cl::Mode::PaunchS, cl::Mode::PaunchOS, cl::Mode::Slew, cl::Mode::Lopside }) {
+		CAPTURE(std::string(cl::kModeNames[static_cast<size_t>(mode)]));
+		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
+		(void)d.card->updateContent();
+		checkClipTips(*d.card, static_cast<int>(mode));
+	}
+	// THE PINS: a table that is wrong everywhere would still agree with itself.
+	auto* drive = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Drive));
+	auto* shape = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Shape));
+	auto* rate = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Rate));
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Slew));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("20 kHz at -24 dB down to 50 Hz at +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*shape, at).find("one-pole lowpass") != std::string::npos);
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Tube));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("from -24 dB to +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*shape, at).find("8 times lower") != std::string::npos);
+	CHECK(ui::hoverText(*drive, at).find("sixteen times") == std::string::npos); // the Eroder's Amount is not Clip's Drive
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::PaunchS));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("four times the mid's level at +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*rate, at).find("Angle holds still") != std::string::npos);
+	CHECK(ui::hoverText(*rate, at).find("Lean") == std::string::npos);
+	// THE MODES' OWN CONTROLS DROP THEIR LEADING "X only:" CLAUSE.
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Tube));
+	(void)d.card->updateContent();
+	auto* hard = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Hard));
+	REQUIRE(hard != nullptr);
+	CHECK(ui::hoverText(*hard, at).find(" only:") == std::string::npos);
+	CHECK(hoverEndsWith(ui::hoverText(*hard, at), feathers::fx::eroder::withoutOnlyClause(hard->control()->desc().tooltip)));
+}
+
+TEST_CASE("CLIP's hover texts update when the Type moves by the Mode box's own selection") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Fold));
+	(void)d.card->updateContent();
+	checkClipTips(*d.card, static_cast<int>(cl::Mode::Fold));
+	// THE MENU'S PICK IS THE ROAD A HAND TAKES: it writes the field, and the card's next tick follows it.
+	for (const cl::Mode to : { cl::Mode::Lean, cl::Mode::PaunchOH, cl::Mode::Lopside, cl::Mode::Soft }) {
+		CAPTURE(std::string(cl::kModeNames[static_cast<size_t>(to)]));
+		d.card->modeForTest()->choiceMenu().onSelection().callback(static_cast<int>(to));
+		d.f.bridge.refresh();
+		(void)d.card->updateContent();
+		checkClipTips(*d.card, static_cast<int>(to));
+	}
+	auto* drive = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Drive));
+	CHECK(ui::hoverText(*drive, at).find("soft shoulder") == std::string::npos); // (the Mode box says that; the Drive says what it feeds)
+	CHECK(hoverEndsWith(ui::hoverText(*drive, at), cl::modeTip(static_cast<int>(cl::Mode::Soft)).amount));
+}
+
+TEST_CASE("CLIP's hover texts are right on a freshly opened card whose state already has a non-default Type") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Chonk));
+	// A NEW CARD, built after the state was set and never given a tick or a layout.
+	ui::WidgetRegistry registry;
+	auto card = std::make_unique<ui::ClipCard>(d.f.deviceHost, registry, d.device);
+	checkClipTips(*card, static_cast<int>(cl::Mode::Chonk));
+	const visage::Point at { 1.0f, 1.0f };
+	CHECK(ui::hoverText(*dynamic_cast<ui::Knob*>(card->widgetForTest(cl::Param::Shape)), at).find("turned over on the right side only") != std::string::npos);
+}
+
+TEST_CASE("CLIP's per-Type hover table: every Type has texts, and no hover in any Type's cell carries \" only:\" or names the hardware") {
+	namespace cl = feathers::fx::clip;
+	REQUIRE(sizeof cl::kModeTips / sizeof cl::kModeTips[0] == static_cast<size_t>(cl::Mode::kCount));
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	const auto clean = [](const std::string& s) {
+		std::string lower;
+		for (const char c : s) {
+			lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+		}
+		// THE NAME THE HARDWARE GOES BY, assembled as `test_device_tooltips` does.
+		return s.find(" only:") == std::string::npos && lower.find(std::string("del") + "uge") == std::string::npos;
+	};
+	size_t seen = 0;
+	for (int mode = 0; mode < static_cast<int>(cl::Mode::kCount); ++mode) {
+		CAPTURE(std::string(cl::kModeNames[mode]));
+		const cl::ClipTip& tip = cl::modeTip(mode);
+		REQUIRE(tip.type != nullptr);
+		REQUIRE(tip.amount != nullptr);
+		CHECK(std::string(tip.type).size() > 20);
+		CHECK(std::string(tip.amount).size() > 20);
+		// A SHAPE TEXT EXACTLY WHERE THE CARD SHOWS A SHAPE KNOB.
+		CHECK((tip.shape != nullptr) == (((cl::kShapeKnobModes >> static_cast<uint32_t>(mode)) & 1u) != 0u));
+		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
+		(void)d.card->updateContent();
+		for (const cl::Param p : d.card->addressedParamsForTest()) {
+			// (THE ENABLE SQUARE IS DRAWN IN THE HEAD, and Bits' segmented control has no one tooltip: neither is a source here.)
+			auto* source = dynamic_cast<ui::TooltipSource*>(d.card->widgetForTest(p));
+			if (source == nullptr) {
+				continue;
+			}
+			++seen;
+			CAPTURE(std::string(cl::kParamDescs[static_cast<size_t>(p)].name));
+			CHECK(clean(ui::hoverText(*source, at)));
+		}
+	}
+	CHECK(seen > 15 * 10);
 }

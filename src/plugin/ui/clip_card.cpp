@@ -17,6 +17,8 @@
 
 #include "plugin/ui/clip_card.h"
 
+#include "fx/clip/clip_tips.h"
+#include "fx/eroder/drive_tips.h"
 #include "plugin/ui/dyn_meter.h"
 #include "plugin/ui/theme.h"
 
@@ -86,6 +88,8 @@ ClipCard::ClipCard(backplane::DeviceHost& host, WidgetRegistry& registry, Device
 			}
 		}
 	};
+	// A CARD OPENED ON A STATE ALREADY SHOWS ITS MODE'S TEXTS, before any layout or tick.
+	applyTips();
 }
 
 DeviceControl& ClipCard::control(cl::Param p) const {
@@ -158,8 +162,33 @@ bool ClipCard::isLive(cl::Param p) const {
 	return device::relevantFor(d, host_.fieldAt(device_, static_cast<size_t>(d.gateControl)));
 }
 
+void ClipCard::applyTips() {
+	const int mode = modeNow();
+	if (mode == tippedMode_) {
+		return;
+	}
+	tippedMode_ = mode;
+	const cl::ClipTip& tip = cl::modeTip(mode);
+	control(cl::Param::Mode).setTooltipOverride(tip.type);
+	control(cl::Param::Drive).setTooltipOverride(tip.amount);
+	// THE MODES WITHOUT A SHAPE KNOB leave its declared text (the knob is not drawn there).
+	control(cl::Param::Shape).setTooltipOverride(tip.shape != nullptr ? tip.shape : "");
+	// THE MODE'S OWN CONTROLS ARE SHOWN ONLY FOR THEIR MODES, so their text is the declared one without its "X only:" clause.
+	for (const cl::Param p : { cl::Param::Bal, cl::Param::Rate, cl::Param::Angle, cl::Param::Hard, cl::Param::Bias, cl::Param::DcBlock }) {
+		DeviceControl& c = control(p);
+		c.setTooltipOverride(fx::eroder::withoutOnlyClause(c.desc().tooltip));
+	}
+	if (mode == static_cast<int>(cl::Mode::Lean)) {
+		control(cl::Param::Rate).setTooltipOverride(fx::eroder::kLeanRateTip);
+	}
+	else if (mode >= 0 && mode < static_cast<int>(cl::Mode::kCount) && ((cl::kPaunchModes >> static_cast<uint32_t>(mode)) & 1u) != 0u) {
+		control(cl::Param::Rate).setTooltipOverride(cl::kPaunchRateTip);
+	}
+}
+
 void ClipCard::layOut() {
 	laidOutMode_ = modeNow();
+	applyTips();
 	const bool open = !folded();
 	const float left = bodyLeft() + kPad;
 	const float width = std::max(0.0f, contentRight() - left);

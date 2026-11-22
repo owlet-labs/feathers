@@ -4421,3 +4421,47 @@ TEST_CASE("header presets: a rack chain's device card menu offers Presets and Sa
 	feathers::rack::RackBridge& viewed = *r.rack().chainAt(static_cast<size_t>(r.field(pr::Param::ViewedChain)))->bridge();
 	checkColumnPresets("card column", *cardColumn, nullptr, viewed, "Card Saved");
 }
+
+TEST_CASE("PHOTO: the Rack window in Tabs and in Pads, the chain in front running left to right (writes only under FEATHERS_LIST_VIEW_SHOTS)") {
+	const char* keep = std::getenv("FEATHERS_LIST_VIEW_SHOTS");
+	if (keep == nullptr) {
+		return;
+	}
+	for (const int view : { 1, 2 }) {
+		CAPTURE(view);
+		RealRack r;
+		r.chains(3, 3, true);
+		for (size_t c = 0; c < 3; ++c) {
+			r.rack().setOpen(c, true); // Pads' lane follows the chain's stored open flag
+		}
+		r.set(pr::Param::ViewedChain, 1.0f);
+		r.view_(view);
+		auto* editor = dynamic_cast<visage::ApplicationEditor*>(r.f.root);
+		REQUIRE(editor != nullptr);
+		const int w = static_cast<int>(r.f.root->width());
+		const int h = static_cast<int>(r.f.root->height());
+		visage::Frame backdrop;
+		backdrop.onDraw() = [](visage::Canvas& canvas) {
+			canvas.setColor(0xff101014);
+			canvas.fill(0.0f, 0.0f, 4000.0f, 4000.0f);
+		};
+		backdrop.setBounds(0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h));
+		r.f.root->addChild(&backdrop);
+		r.panel->setBounds(0.0f, 0.0f, 1000.0f, std::max(r.panel->minimumSize().y, 560.0f));
+		r.f.root->addChild(r.panel);
+		r.panel->resized();
+		r.refresh();
+		editor->setWindowless(w, h);
+		if (!visage::Renderer::instance().supported()) {
+			return;
+		}
+		r.f.root->redrawAll();
+		editor->drawWindow();
+		editor->drawWindow();
+		const visage::Screenshot& shot = editor->takeScreenshot();
+		REQUIRE(shot.width() > 0);
+		shot.save((std::string(keep) + (view == 1 ? "/tabs-window.png" : "/pads-window.png")).c_str());
+		r.f.root->removeChild(r.panel);
+		r.f.root->removeChild(&backdrop);
+	}
+}

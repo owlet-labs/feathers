@@ -33,7 +33,9 @@ namespace {
 /// (backlog NJ). A rate of zero is a hold, not a period, so it stays on the free road, which holds.
 bool followsSongSeconds(const Settings& s, const TransportClock& clock, float hz, float rateMul) noexcept {
 	const double cyclesPerSecond = static_cast<double>(hz) * static_cast<double>(rateMul);
-	return s.mode == Mode::Free && !s.synced() && clock.playing && clock.havePositionSeconds()
+	// THE NOTE BASE FOLLOWS NO SONG CLOCK: its frequency changes with the note, and a phase read off the song's seconds
+	// would jump at every note.
+	return s.mode == Mode::Free && !s.synced() && !s.noteTracked() && clock.playing && clock.havePositionSeconds()
 	       && std::isfinite(cyclesPerSecond) && cyclesPerSecond > 0.0;
 }
 
@@ -134,8 +136,15 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 	// out here and nowhere else, which was fine until the card needed the same answer: what a one-pole
 	// does to a periodic wave depends on `tau / period`, so a picture of the smoothing needs the
 	// period the ENGINE is using rather than one computed beside it. See `rateHz`.
-	const float hz =
-	    static_cast<float>(rateHz(s, clock.haveTempo() ? clock.secondsPerBeat : 0.0));
+	double hzNow = rateHz(s, clock.haveTempo() ? clock.secondsPerBeat : 0.0, noteSemitonesToHz(noteSemitones_));
+	if (s.noteTracked()) {
+		// **CLAMPED, NOT ALIASED**: the wave is published once a control tick, so past a quarter of the tick rate it has
+		// under four points a cycle. The clamp is on the EFFECTIVE frequency, `rateMul` included.
+		const double scale = (std::isfinite(rateMul) && rateMul > 0.0f) ? static_cast<double>(rateMul) : 1.0;
+		hzNow = std::min(hzNow, noteTrackedMaxHz(sampleRate_) / scale);
+	}
+	const float hz = static_cast<float>(hzNow);
+	effectiveHz_ = static_cast<double>(hz) * static_cast<double>(rateMul);
 
 	// ADVANCE THE PHASE.
 	//

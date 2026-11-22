@@ -1929,6 +1929,8 @@ private:
 	/// trace by the time the envelope is asked, and a fast passage would have notes that silently did
 	/// nothing. Set by noteOn, cleared by the tick that consumes it.
 	bool envRetrigger_ = false;
+	/// The last struck key in semitones, for `ModTickContext::notePitch`; C3 until a note is played.
+	float envNotePitch_ = 48.0f;
 
 	/// Whether the last tick found the note stack holding anything. Kept only so a test can read the
 	/// gate — the tick derives it fresh from the voices every time, because they are the only thing

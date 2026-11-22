@@ -4165,3 +4165,51 @@ TEST_CASE("backlog PA: the Phase knob is told both ears of an LFO with Stereo Ph
 	CHECK(right == doctest::Approx(params.resolvedRight(ParamId::OscPhase)).epsilon(1e-9));
 	CHECK(std::abs(right - left) > 1e-3);
 }
+
+TEST_CASE("lfo Note: through the synth, the LFO runs at the struck key's frequency and keeps it after the key is up") {
+	namespace lfo = feathers::mod::lfo;
+	feathers::ParamBridge bridge;
+	const size_t at = bridge.addFxDevice(lfo::kTraits.tag);
+	REQUIRE(at < feathers::kMaxFxSlots);
+	const feathers::DeviceInstanceId lfoId = bridge.fxDeviceAt(at);
+	REQUIRE(lfoId != feathers::kNoInstance);
+	const auto set = [&](lfo::Param p, float v) { bridge.setDeviceControl(lfoId, static_cast<size_t>(p), v); };
+	set(lfo::Param::Mode, static_cast<float>(feathers::mod::Mode::Free));
+	set(lfo::Param::Waveform, static_cast<float>(lfo::Waveform::Sine));
+	set(lfo::Param::Bipolar, 1.0f);
+	set(lfo::Param::TimeBase, static_cast<float>(lfo::kNoteSyncBase));
+	set(lfo::Param::TimeScale, 0.0f); // ratio 1
+	set(lfo::Param::Phase, 0.1f);
+	set(lfo::Param::Smoothing, static_cast<float>(lfo::kDescriptor.params[static_cast<size_t>(lfo::Param::Smoothing)].min));
+
+	Rig rig;
+	rig.synth.provisionDevices(bridge.chainState(), bridge.publishedChains().sequence(), &bridge.fxBodies());
+	feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+	rig.renderTicks(2);
+	const feathers::rack::RackEngine& engine = rig.synth.laneForTest().engineForTest();
+	const size_t slot = engine.slotOf(lfoId);
+	REQUIRE(slot != feathers::rack::RackEngine::kNoSlot);
+	// Rising zero crossings of the published value per second, over four seconds of ticks.
+	const auto measure = [&]() {
+		const int ticks = 3000;
+		int crossings = 0;
+		float prev = 0.0f;
+		for (int k = 0; k < ticks; ++k) {
+			rig.renderTicks(1);
+			const float v = engine.publishedOutputAt(slot, 0);
+			crossings += (k > 0 && prev < 0.0f && v >= 0.0f) ? 1 : 0;
+			prev = v;
+		}
+		const double seconds = static_cast<double>(ticks) * kTickSamples / kSampleRate;
+		return crossings / seconds;
+	};
+	// BEFORE ANY NOTE: C3, 130.81 Hz (MIDI 48).
+	CHECK(measure() == doctest::Approx(130.8128).epsilon(0.01));
+	rig.synth.noteOn(0, 33, 1, 1.0); // A1, 55 Hz (MIDI, A4 = 69 = 440 Hz)
+	CHECK(measure() == doctest::Approx(55.0).epsilon(0.01));
+	rig.synth.noteOff(0, 33, 1, 0.0);
+	rig.renderTicks(4);
+	CHECK(measure() == doctest::Approx(55.0).epsilon(0.01)); // kept after the release
+	rig.synth.noteOn(0, 45, 2, 1.0); // A2, 110 Hz
+	CHECK(measure() == doctest::Approx(110.0).epsilon(0.01));
+}

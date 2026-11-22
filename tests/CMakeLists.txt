@@ -1182,6 +1182,12 @@ target_link_libraries(test_mod_lfo PRIVATE feathers-mod feathers-warnings)
 target_include_directories(test_mod_lfo PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME mod-lfo COMMAND test_mod_lfo)
 
+# The LFO's Note time base: the wave tracks the played note's frequency (control-tick rate, clamped), per voice under Poly.
+add_executable(test_mod_lfo_note test_mod_lfo_note.cpp)
+target_link_libraries(test_mod_lfo_note PRIVATE feathers-mod feathers-warnings)
+target_include_directories(test_mod_lfo_note PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME mod-lfo-note COMMAND test_mod_lfo_note)
+
 # Smoothing across a retrigger (backlog MM), for the three shaped modulators at once — the LFO, the MSEG
 # and the DAHDSR share `mod::PolyShape`, which is where a new note's shape begins.
 add_executable(test_mod_retrigger_smoothing test_mod_retrigger_smoothing.cpp)

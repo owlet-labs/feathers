@@ -344,6 +344,8 @@ void Synth::noteOn(int16_t channel, int16_t key, int32_t noteId, double velocity
 	if (!isPlayableChannel(channel) || !isPlayableKey(key)) {
 		return;
 	}
+	// THE NOTE A PITCH-TRACKING MODULATOR FOLLOWS (the LFO's Note time base): the last struck key, kept after its release.
+	envNotePitch_ = static_cast<float>(key);
 	// A LATCH THE NEXT CONTROL TICK CONSUMES — see Synth::envRetrigger_. Set after the playability
 	// checks above, so a note the synth refuses to play does not restart an envelope either.
 	//
@@ -726,6 +728,9 @@ uint32_t Synth::emitLaneNotes() {
 	for (size_t i = 0; i < made; ++i) {
 		emittedNotes_[i].timeSamples = at;
 		anyOn = anyOn || emittedNotes_[i].kind == device::NoteEvent::Kind::On;
+		if (emittedNotes_[i].kind == device::NoteEvent::Kind::On && emittedNotes_[i].key >= 0) {
+			envNotePitch_ = static_cast<float>(emittedNotes_[i].key); // the played note a tracking modulator follows
+		}
 	}
 	// A NOTE THE LANE INVENTS SETS THE RETRIGGER LATCH, `deliverNotes`' own rule for reading (2): the strip's shared
 	// shapes restart on an arp step as they do on a played note.
@@ -2149,6 +2154,7 @@ bool Synth::tickEnvelopes() {
 	device::ModTickContext context {};
 	context.gate = gate;
 	context.retrigger = retrigger;
+	context.notePitch = envNotePitch_;
 	context.clock = rackClock();
 	// **WHICH NOTE EACH VOICE HOLDS, BEFORE THE TICK** (backlog MV, B): a per-voice source routed into a Poly modulator's
 	// Trig fires that note's shape alone, and only the synth knows which voice plays which note. By the whole note, as

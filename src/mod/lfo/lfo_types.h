@@ -121,6 +121,42 @@ inline constexpr auto& kModeNames = mod::kModeNames;
 /// the fourth quadrant (270°–360°) is implicit and computed from these three.
 inline constexpr float kSkewCount = 3.0f;
 
+/// THE TIME BASE NAMES. All the standard divisions plus "Note", which tracks the played note's pitch.
+/// "Note" is the last entry; its index is kNoteSyncBase.
+///
+/// **THE FIRST IS "Hz", AND IT WAS "Off"** (backlog NJ). It never meant "no rate": it is the base where Rate is a
+/// frequency in its own right, unsynced to the tempo. In Free mode its phase still follows the song's SECONDS while
+/// the transport plays (see `Shape::tick`). A patch that stored "Off" reads it through `kTimeBaseAliases`.
+inline constexpr const char* kTimeBaseNames[] = {
+	"Hz",    "1/64", "1/64.", "1/64T", "1/32", "1/32.", "1/32T", "1/16", "1/16.", "1/16T",
+	"1/8",   "1/8.", "1/8T",  "1/4",  "1/4.",  "1/4T",  "1/2",  "1/2.",  "1/2T",
+	"1 bar", "1 bar.", "1 barT", "2 bar", "2 bar.", "2 barT", "4 bar", "4 bar.", "4 barT",
+	"Note",
+};
+inline constexpr size_t kTimeBaseCount = std::size(kTimeBaseNames);
+static_assert(kTimeBaseCount > device::kDivisionCount);
+/// "Off" WAS THE FIRST BASE'S NAME UNTIL 2026-10-17 — see above. A Choice is stored by its label.
+inline constexpr device::ChoiceAlias kTimeBaseAliases[] = { { "Off", "Hz" } };
+
+/// NOTE is the time base that derives the frequency from the played note (Rate is then a RATIO to it).
+/// It's the last entry in kTimeBaseNames.
+inline constexpr size_t kNoteSyncBase = kTimeBaseCount - 1;
+
+/// **THE NOTE BASE'S NOTE, BEFORE ANY HAS BEEN PLAYED: C3 (MIDI 48, 130.81 Hz)**, the bus note's own default
+/// (`device::NoteContext::pitchSemitones` is 60 there, the tracker's reference is the same octave rule); a released
+/// note stays the note. Semitones, A4 = 69 = 440 Hz.
+inline constexpr float kDefaultNoteSemitones = 48.0f;
+/// A NOTE'S FREQUENCY, from semitones (A4 = 69 = 440 Hz).
+[[nodiscard]] inline double noteSemitonesToHz(double semitones) noexcept {
+	return 440.0 * std::exp2((semitones - 69.0) / 12.0);
+}
+/// **THE FASTEST A NOTE-TRACKED LFO RUNS: A QUARTER OF THE TICK RATE** — half the control tick's Nyquist. A modulator is
+/// published once per `kBlockSamples`, so it is a CONTROL signal (375 Hz is its Nyquist at 48 kHz); above this a wave has
+/// under four points a cycle and aliases. The effective frequency is clamped here, not allowed to fold back.
+[[nodiscard]] inline double noteTrackedMaxHz(double sampleRate) noexcept {
+	return (sampleRate > 0.0 ? sampleRate : 48000.0) / (4.0 * static_cast<double>(mod::kBlockSamples));
+}
+
 struct Settings {
 	/// WHICH CONTROL IS THE TRIG, for `mod::PolyShape`'s per-note resolve (backlog MV, B).
 	static constexpr size_t kTrigControl = static_cast<size_t>(Param::Trig);
@@ -161,8 +197,13 @@ struct Settings {
 	/// STEREO PHASE, radians 0..π — see `Param::StereoPhase`. 0 by default: mono, today's LFO.
 	float stereoPhase = 0.0f;
 
+	/// A DIVISION OF THE TEMPO — every base but Hz (0) and Note (the last), which are frequencies.
 	[[nodiscard]] bool synced() const noexcept {
-		return timeBase > 0;
+		return timeBase > 0 && timeBase < kNoteSyncBase;
+	}
+	/// THE NOTE BASE: Rate is a ratio to the played note's frequency (see `noteTrackedHz`).
+	[[nodiscard]] bool noteTracked() const noexcept {
+		return timeBase == kNoteSyncBase;
 	}
 	/// THE RIGHT EAR'S LEAD, in cycles of the wave (in steps, for a walk): `stereoPhase` / 2π.
 	[[nodiscard]] float stereoLead() const noexcept {
@@ -174,29 +215,6 @@ struct Settings {
 /// all read one place.
 inline constexpr Settings defaults() { return Settings {}; }
 
-/// THE TIME BASE NAMES. All the standard divisions plus "Note" for audio-rate tracking.
-/// "Note" is the last entry; its index is kNoteSyncBase.
-///
-/// **THE FIRST IS "Hz", AND IT WAS "Off"** (backlog NJ). It never meant "no rate": it is the base where Rate is a
-/// frequency in its own right, unsynced to the tempo. In Free mode its phase still follows the song's SECONDS while
-/// the transport plays (see `Shape::tick`). A patch that stored "Off" reads it through `kTimeBaseAliases`.
-inline constexpr const char* kTimeBaseNames[] = {
-	"Hz",    "1/64", "1/64.", "1/64T", "1/32", "1/32.", "1/32T", "1/16", "1/16.", "1/16T",
-	"1/8",   "1/8.", "1/8T",  "1/4",  "1/4.",  "1/4T",  "1/2",  "1/2.",  "1/2T",
-	"1 bar", "1 bar.", "1 barT", "2 bar", "2 bar.", "2 barT", "4 bar", "4 bar.", "4 barT",
-	"Note",
-};
-inline constexpr size_t kTimeBaseCount = std::size(kTimeBaseNames);
-static_assert(kTimeBaseCount > device::kDivisionCount);
-/// "Off" WAS THE FIRST BASE'S NAME UNTIL 2026-10-17 — see above. A Choice is stored by its label.
-inline constexpr device::ChoiceAlias kTimeBaseAliases[] = { { "Off", "Hz" } };
-
-/// NOTE_SYNC is a sentinel time base that means "derive the rate from the note".
-/// It's the last entry in kTimeBaseNames.
-inline constexpr size_t kNoteSyncBase = kTimeBaseCount - 1;
-
-/// @todo Note sync requires note-frequency plumbing in ModTickContext; deferred.
-[[maybe_unused]] constexpr bool kNoteSyncPlaceholder = true;
 
 /// THE DESCRIPTOR TABLE. Index-aligned with Param. The waveform and choice controls
 /// are stepped; the skew knobs and phase are continuous.
@@ -233,11 +251,13 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	  .def = 0.0, .stepped = true, .unit = device::Unit::Choice, .names = kTimeBaseNames, .modulatable = true,
 	  .offsetsMayLeaveRange = false,
 	  .tooltip = "Musical divisions the rate locks to — Hz makes Rate a frequency, unsynced to the tempo (in Free "
-	             "mode it still follows the song's position); Note for audio-rate tracking",
+	             "mode it still follows the song's position); Note runs the LFO at the played note's pitch",
 	  .choiceAliases = kTimeBaseAliases },
 	{ "rate", "Rate", kTimeLog2SecondsMin, kTimeLog2SecondsMax, 0.0, false, device::Unit::LogMultiple, {},
 	  true, false,
-	  "How fast the LFO runs — a multiplier on the division, or its frequency in Hz when Time Base is Hz" },
+	  "How fast the LFO runs — a multiplier on the division, its frequency in Hz when Time Base is Hz, or on Note a ratio "
+	  "to the played note's frequency (1X is the note itself). Note follows the last note played, up to a quarter of the "
+	  "control rate (about 190 Hz): it is a modulation rate, not an audio oscillator. Pitch bend and glide are not followed" },
 	{ "smoothing", "Smoothing", kSmoothingLog2SecondsMin, kSmoothingLog2SecondsMax,
 	  static_cast<double>(defaults().smoothing), false, device::Unit::LogSeconds, {}, true, false,
 	  "How much the corners are softened — square becomes trapezoid; at the bottom of its travel it is off" },

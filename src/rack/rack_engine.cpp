@@ -1420,6 +1420,7 @@ void RackEngine::retrigger() {
 void RackEngine::advanceModulators(int frames, const backplane::BlockContext& block) {
 	device::ModTickContext ctx;
 	ctx.gate = gate_;
+	ctx.notePitch = modNotePitch_;
 	ctx.clock = block.clock;
 	// **IN CHAIN ORDER, LIKE THE OTHER TWO PASSES.** A modulator's output does not feed the next one
 	// today, so lane order would sound identical — which is exactly why it is worth doing rather than
@@ -1971,6 +1972,9 @@ void RackEngine::updateNoteContext() {
 	// should, which is what the wrapper's `retrigger()` per note-on did.
 	if (!events.empty()) {
 		setGate(noteContext_.gate);
+		if (noteContext_.gate) {
+			modNotePitch_ = noteContext_.pitchSemitones;
+		}
 		if (struck) {
 			retrigger();
 		}
@@ -1980,6 +1984,7 @@ void RackEngine::updateNoteContext() {
 void RackEngine::setExternalNote(const device::NoteContext& note) noexcept {
 	externalNote_ = note;
 	externalNoteSet_ = true;
+	modNotePitch_ = note.pitchSemitones;
 	// THE MODULATORS' GATE TOO, through the one door that derives the retrigger edge from it.
 	setGate(note.gate);
 }

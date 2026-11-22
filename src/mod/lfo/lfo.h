@@ -164,7 +164,13 @@ struct SkewMap {
 /// A synced LFO with no transport runs at the scale read as Hz — that is what `tick` has always done
 /// — so this is well defined at every setting and there is no "cannot know the period" case for a
 /// caller to handle. `DeviceHost::secondsPerBeat` answers zero for exactly this situation.
-[[nodiscard]] inline double rateHz(const Settings& s, double secondsPerBeat) noexcept {
+[[nodiscard]] inline double rateHz(const Settings& s, double secondsPerBeat,
+                                  double noteHz = noteSemitonesToHz(kDefaultNoteSemitones)) noexcept {
+	// **THE NOTE BASE: THE PLAYED NOTE'S FREQUENCY TIMES RATE AS A RATIO** (1X = the note itself). Unclamped here; `Shape::tick`
+	// clamps against the tick rate, which this static rule cannot see.
+	if (s.noteTracked()) {
+		return noteHz * timeSeconds(s.timeScale);
+	}
 	if (s.synced() && secondsPerBeat > 0.0 && std::isfinite(secondsPerBeat)) {
 		const size_t divIndex = (s.timeBase > 0) ? s.timeBase - 1 : 0;
 		// QUALIFIED: the `using device::kDivisionBeats` that lets `lfo.cpp` say it bare is in the .cpp,
@@ -414,6 +420,17 @@ public:
 	/// shifts the lock rather than being undone by it (`TransportLock::restartAt`).
 	void fire() noexcept { trigPending_ = true; }
 
+	/// **THE NOTE THIS WAVE TRACKS, IN SEMITONES (A4 = 69)** — read only on the Note time base. The owner sets it before each
+	/// tick: a Poly note's own key, or the host's last note for the one shared wave. It outlives `reset` and a release, so a
+	/// wave keeps the note it last had; a fresh shape is on C3.
+	void setNotePitch(float semitones) noexcept {
+		if (std::isfinite(semitones)) {
+			noteSemitones_ = semitones;
+		}
+	}
+	/// TEST SEAM: the frequency the last tick ran the wave at, after the Note clamp and `rateMul` — the quantity itself.
+	[[nodiscard]] double effectiveHzForTest() const noexcept { return effectiveHz_; }
+
 	/// Advance one block. Returns the output value.
 	float tick(const Settings& settings, bool gate, bool retrigger, TransportClock clock,
 	           float rateMul = 1.0f);
@@ -462,6 +479,8 @@ private:
 	float smoothingKnobWas_ = 0.0f; ///< the knob `smoothingCoeff_` was made for
 	bool smoothingCoeffValid_ = false;
 	size_t smoothingDesigns_ = 0;
+	float noteSemitones_ = kDefaultNoteSemitones;
+	double effectiveHz_ = 0.0;
 	float raw_ = 0.0f;
 	float value_ = 0.0f;
 	/// THE RIGHT EAR (backlog PA) — its own smoother, the left's coefficient. Held equal to the left's while Stereo Phase

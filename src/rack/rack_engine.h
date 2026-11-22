@@ -861,6 +861,11 @@ public:
 	/// to raise is an edge somebody forgets. Setting the gate from false to true IS a retrigger.
 	void setGate(bool gate);
 
+	/// **THE NOTE A TRACKING MODULATOR FOLLOWS** (`device::ModTickContext::notePitch`), semitones. Set by the host that
+	/// ticks the engine (`LaneRack::tickModulators`), and by the engine itself from the notes it folds and the note its
+	/// host hands it; kept after a release. C3 until a note arrives.
+	void setNotePitch(float semitones) noexcept { modNotePitch_ = semitones; }
+
 	/// **THE BUS NOTE — WHAT EVERY BUS DEVICE IS HANDED AS ITS `NoteContext`**.
 	///
 	/// THE DEFAULT is the collapsed note: the last key still held (`updateNoteContext`), kept after the release —
@@ -1419,6 +1424,8 @@ public:
 	/// EACH KEY'S TUNING EXPRESSION, in semitones — see `updateNoteContext` and `kTuningExpression`.
 	std::array<float, 128> keyTuning_ {};
 	device::NoteContext noteContext_ {};
+	/// What the modulators' tick is told the played note is (`setNotePitch`).
+	float modNotePitch_ = 48.0f;
 
 	/// **A NOTE HANDED TO THE RACK BY ITS HOST**, for a rack that is a device in a chain. A standalone
 	/// rack is fed note EVENTS and derives its note from the held stack; a rack in Feathers' lane is

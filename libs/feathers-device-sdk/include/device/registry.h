@@ -744,6 +744,12 @@ struct ModTickContext {
 		                float* out) noexcept = nullptr;
 	};
 	const PerNoteResolver* perNote = nullptr;
+
+	/// **THE PLAYED NOTE'S PITCH IN SEMITONES (A4 = 69), for a modulator that tracks it** (the LFO's Note time base): the
+	/// host's last note, kept after its release, its per-key tuning folded in. Glide is not (a modulator is ticked once a
+	/// control block). A host that has played nothing says C3, 48 — the default. A Poly modulator reads each note's own key
+	/// instead. APPENDED, so every aggregate written before it is unchanged.
+	float notePitch = 48.0f;
 };
 
 /// HOW A HOST ADVANCES A MODULATOR AND READS WHAT IT PUBLISHES — and NULL IS THE CAPABILITY.

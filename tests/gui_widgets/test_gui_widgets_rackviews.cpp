@@ -4084,3 +4084,34 @@ TEST_CASE("PHOTO: the Rack's List view on the card and in the window, with a few
 		}
 	}
 }
+
+TEST_CASE("list view: a row shows its chain's level meter by value, a row out of view is not followed, and a row scrolled in reads the current peak at once") {
+	RealRack r;
+	r.chains(12, 0);
+	r.view_(3);
+	ui::RackListView& list = r.card->listForTest();
+	REQUIRE(list.rowCountForTest() == 12);
+	REQUIRE(list.rowForTest(0)->meterShownForTest()); // the row carries the meter beside its level
+	// TWO CHAINS, TWO PEAKS: each row reads its own chain's published peak (mapped as the card's meter maps it, restated by the mapping itself).
+	r.rack().publishChainPeakForTest(0, 0.5f);
+	r.rack().publishChainPeakForTest(1, 0.1f);
+	r.refresh();
+	CHECK(list.rowForTest(0)->meterReadingForTest() == ui::cardMeterReadingFor(0.5f));
+	CHECK(list.rowForTest(1)->meterReadingForTest() == ui::cardMeterReadingFor(0.1f));
+	CHECK_FALSE(list.rowForTest(0)->meterReadingForTest() == list.rowForTest(1)->meterReadingForTest());
+	CHECK(list.rowForTest(0)->meterMarksForTest().level.height() > list.rowForTest(1)->meterMarksForTest().level.height()); // the louder one reaches higher
+	// A ROW OUT OF VIEW IS NOT FOLLOWED: its chain's peak moves and the list reports nothing to repaint.
+	REQUIRE_FALSE(list.rowForTest(11)->isVisible());
+	r.rack().publishChainPeakForTest(11, 0.25f);
+	(void)list.refresh();
+	CHECK_FALSE(list.refresh());
+	CHECK_FALSE(list.rowForTest(11)->meterReadingForTest() == ui::cardMeterReadingFor(0.25f));
+	// SCROLLED INTO VIEW, IT READS THE CURRENT PEAK AT ONCE, with no tick in between.
+	list.setScrollForTest(list.maxScrollForTest());
+	REQUIRE(list.rowForTest(11)->isVisible());
+	CHECK(list.rowForTest(11)->meterReadingForTest() == ui::cardMeterReadingFor(0.25f));
+	// A VISIBLE ROW'S CHANGE IS A REPAINT: the list says so.
+	r.rack().publishChainPeakForTest(11, 0.6f);
+	CHECK(list.refresh());
+	CHECK(list.rowForTest(11)->meterReadingForTest() == ui::cardMeterReadingFor(0.6f));
+}

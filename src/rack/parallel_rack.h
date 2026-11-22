@@ -772,6 +772,8 @@ public:
 	/// the sum (after its level, mute and solo), published by the audio thread as one atomic. False — `peak` untouched —
 	/// for no such chain or one that has not run yet. Any thread; no allocation.
 	[[nodiscard]] bool chainPeak(size_t index, float& peak) const noexcept;
+	/// A TEST'S STAND-IN FOR THE AUDIO THREAD'S PUBLISH: the held peak chain `index` reads as (no such chain: nothing).
+	void publishChainPeakForTest(size_t index, float peak) noexcept;
 
 	/// **A VIEW SHOWING THE SPECTRUM ASKS FOR IT** (§7a's cost rule, the "readings wanted" bit EQ A17 never built): the
 	/// analyser runs for the next half second of audio and stops when no view has asked since. A lease rather than a

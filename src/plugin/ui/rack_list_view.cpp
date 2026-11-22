@@ -85,8 +85,13 @@ void RackListView::layoutRows() {
 		const visage::Bounds b = rowBoundsForTest(i);
 		ChainStrip& strip = *rows_[i].strip;
 		// A ROW WHOLLY OUTSIDE THE FRAME IS HIDDEN, so no press and no tooltip finds it; one cut by an edge is drawn cut (the frame clips).
-		strip.setVisible(b.bottom() > 0.0f && b.y() < static_cast<float>(height()));
+		const bool shown = b.bottom() > 0.0f && b.y() < static_cast<float>(height());
+		const bool arriving = shown && !strip.isVisible();
+		strip.setVisible(shown);
 		strip.setBounds(b); // unconditionally: a scale change moves no logical rectangle
+		if (arriving) {
+			(void)strip.refresh(); // A ROW SCROLLED INTO VIEW SHOWS THE CURRENT READING AT ONCE (its meter was not followed while away)
+		}
 	}
 }
 
@@ -167,7 +172,10 @@ bool RackListView::refresh() {
 			moved = true;
 		}
 		strip.setSelected(i == viewed);
-		moved = strip.refresh() || moved;
+		// A ROW OUT OF VIEW COSTS NOTHING: its meter is not read and no frame is asked for (it is read the moment it scrolls in).
+		if (strip.isVisible()) {
+			moved = strip.refresh() || moved;
+		}
 	}
 	// A CHANGE OF THE VIEWED CHAIN FROM ELSEWHERE brings its row into view; a press on a row already is.
 	if (viewed != lastViewed_) {

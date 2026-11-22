@@ -47,6 +47,10 @@ private:
 	[[nodiscard]] visage::Bounds meterBounds() const;
 
 	featherverb_meter::Fractions drawn_ {};
+	/// THE TIP TABLE'S KEY (size x conv mode) the card last put on its controls; -1 until the first tick.
+	int drawnTips_ = -1;
+	/// Puts `fx::featherverb::tipFor` over the four controls whose text depends on a Choice, when a Choice moved.
+	void applyTips();
 };
 
 } // namespace feathers::ui

@@ -24,6 +24,7 @@
 
 #include "fx/conv/ir_ref.h"
 #include "fx/featherverb/featherverb.h"
+#include "fx/featherverb/featherverb_tips.h"
 #include "plugin/ui/knob.h"
 #include "device/utf8_path.h"
 #include "plugin/ui/switch_chip.h"
@@ -616,7 +617,22 @@ bool FeatherverbExpanded::applyEnables() {
 	return true;
 }
 
+void FeatherverbExpanded::applyTips() {
+	const int size = static_cast<int>(std::lround(ownHost().fieldAt(deviceId(), static_cast<size_t>(fv::Param::SizeMode))));
+	const int conv = static_cast<int>(std::lround(ownHost().fieldAt(deviceId(), static_cast<size_t>(fv::Param::ConvMode))));
+	const int key = size * fv::kConvModes + conv;
+	if (key == drawnTips_) {
+		return;
+	}
+	drawnTips_ = key;
+	for (const fv::Param p : { fv::Param::Character, fv::Param::Predelay, fv::Param::Matrix, fv::Param::ConvBlend }) {
+		const char* text = fv::tipFor(p, size, conv);
+		controlFor(static_cast<size_t>(p)).setTooltipOverride(text != nullptr ? text : "");
+	}
+}
+
 bool FeatherverbExpanded::updateContent() {
+	applyTips(); // THE TIP TABLE: a tick finds the mode moved on any road (click, automation, preset, undo).
 	// THE FOLDER MENU THE LAST TICK ASKED FOR (`showFolderMenu`): opened here, where no other menu is closing.
 	if (!pendingFolderMenu_.empty()) {
 		const std::string folder = pendingFolderMenu_;

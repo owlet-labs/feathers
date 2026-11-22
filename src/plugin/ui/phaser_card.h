@@ -116,6 +116,8 @@ public:
 	[[nodiscard]] ValueBox* stagesBoxForTest() const { return stages_.get(); }
 	[[nodiscard]] ValueBox* boxForTest(fx::phaser::Param p) const;
 	[[nodiscard]] SwitchChip* keyTrackForTest() const { return keyTrack_.get(); }
+	/// One control's adapter, for the tooltip cases (what the widget says is `tooltipOf` of this).
+	[[nodiscard]] DeviceControl& controlForTest(fx::phaser::Param p) const { return control(p); }
 	[[nodiscard]] SwitchChip* throughZeroForTest() const { return throughZero_.get(); }
 	[[nodiscard]] FaderPill* lfoPillForTest() const { return lfo_.get(); }
 	[[nodiscard]] FaderPill* envPillForTest() const { return env_.get(); }
@@ -130,6 +132,9 @@ private:
 	[[nodiscard]] bool noteTracked() const;
 	/// EVERY ENABLE THE GATES DECIDE, applied; whether any changed.
 	bool applyGates();
+	/// THE TIP TABLE for Center, Delay and Mix, refreshed from `applyGates` (every tick, every road that moves Mode or Key Track).
+	void applyTips();
+	int drawnTips_ = -1; // the key the tips were last put for; -1 until the first tick
 	/// The LFO pill's readout from Rate or Sync; whether it changed.
 	bool refreshLfoCaption();
 	void layOut();

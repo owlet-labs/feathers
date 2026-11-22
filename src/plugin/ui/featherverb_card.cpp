@@ -17,7 +17,10 @@
 
 #include "plugin/ui/featherverb_card.h"
 
+#include "fx/featherverb/featherverb_tips.h"
+
 #include <algorithm>
+#include <cmath>
 
 namespace feathers::ui {
 
@@ -55,8 +58,23 @@ void FeatherverbCard::drawBodyExtras(visage::Canvas& canvas) {
 	featherverb_meter::draw(canvas, meterBounds(), featherverb_meter::read(ownHost(), deviceId()));
 }
 
+void FeatherverbCard::applyTips() {
+	const int size = static_cast<int>(std::lround(ownHost().fieldAt(deviceId(), static_cast<size_t>(fv::Param::SizeMode))));
+	const int conv = static_cast<int>(std::lround(ownHost().fieldAt(deviceId(), static_cast<size_t>(fv::Param::ConvMode))));
+	const int key = size * fv::kConvModes + conv;
+	if (key == drawnTips_) {
+		return;
+	}
+	drawnTips_ = key;
+	for (const fv::Param p : { fv::Param::Character, fv::Param::Predelay, fv::Param::Matrix, fv::Param::ConvBlend }) {
+		const char* text = fv::tipFor(p, size, conv);
+		controlFor(static_cast<size_t>(p)).setTooltipOverride(text != nullptr ? text : "");
+	}
+}
+
 bool FeatherverbCard::updateContent() {
 	bool moved = GenericCard::updateContent();
+	applyTips(); // EVERY ROAD THAT MOVES A MODE (a click, automation, a preset, undo) is a tick that finds the key moved.
 	// WHAT THE METER DRAWS, COMPARED RATHER THAN ASSUMED (`CompCard::updateContent`): a frame only when a bar moved,
 	// and published-to-unpublished is a change too, so a meter that lost its data says "no signal".
 	const featherverb_meter::Fractions now = featherverb_meter::read(ownHost(), deviceId());

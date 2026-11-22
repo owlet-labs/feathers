@@ -51,6 +51,10 @@ void RackFrontColumn::dropColumn() {
 bool RackFrontColumn::follow(size_t viewed, bool open, bool shown) {
 	// THE RACK ASKED AFRESH (its handle is contemporaneous, never remembered), and the chain's identity compared, never dereferenced.
 	pr::Rack* rack = pr::rackOf(host_.containerSurfaceOf(rack_));
+	if (rack != nullptr && rack->serial() != subscribedTo_) {
+		subscribedTo_ = rack->serial();
+		replaced_ = rack->subscribeChainsReplaced([this] { dropColumn(); });
+	}
 	rack::InnerChain* chain = rack != nullptr && viewed < rack->chainCount() ? rack->chainAt(viewed) : nullptr;
 	rack::RackBridge* bridge = chain != nullptr ? chain->bridge() : nullptr;
 	const uint16_t id = bridge != nullptr ? rack->chainIdAt(viewed) : uint16_t { 0xFFFF };

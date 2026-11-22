@@ -33,6 +33,7 @@
 #include "plugin/chain_preset.h"
 #include "plugin/device_preset.h"
 #include "plugin/device_registry.h"
+#include "plugin/factory_presets.h"
 #include "plugin/preset_store.h"
 #include "plugin/ui/container_presets.h"
 #include "plugin/ui/device_preset_menu.h"
@@ -1236,4 +1237,67 @@ TEST_CASE("header presets: a factory preset is never overwritten in one step, an
 	ui::DevicePresetMenu m3(*c.top, h3, nullptr);
 	REQUIRE(m3.apply(probe, ui::DevicePresetMenu::Entry { "Mine", {}, false }));
 	CHECK(c.top->fieldAt(probe, kRes) == doctest::Approx(0.8f));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// EVERY FACTORY RACK PRESET LOADS INTO A RUNNING RACK, whatever the rack held, and the engine renders      //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE SHIPPED RACK PRESETS' PAYLOADS (the factory files, metadata stripped), by name.
+std::vector<std::pair<std::string, std::vector<uint8_t>>> factoryRackPresets() {
+	std::vector<std::pair<std::string, std::vector<uint8_t>>> out;
+	for (const FactoryPresetFile& f : factoryPresetFiles()) {
+		if (f.path.rfind("Racks/", 0) != 0) {
+			continue;
+		}
+		PresetMeta meta;
+		std::vector<uint8_t> payload;
+		REQUIRE(PresetStore::decode(std::vector<uint8_t>(f.bytes.begin(), f.bytes.end()), &meta, &payload));
+		out.emplace_back(std::string(f.path), std::move(payload));
+	}
+	return out;
+}
+
+float peakOf(const std::vector<float>& v) {
+	float p = 0.0f;
+	for (const float x : v) {
+		p = std::max(p, std::fabs(x));
+	}
+	return p;
+}
+
+} // namespace
+
+TEST_CASE("factory Rack presets: each loads into a Rack that held nothing, chains, or another preset, and the next blocks render") {
+	const auto presets = factoryRackPresets();
+	REQUIRE_FALSE(presets.empty());
+	for (const auto& [name, bytes] : presets) {
+		CAPTURE(name);
+		for (const int before : { 0, 1, 2 }) {
+			CAPTURE(before);
+			Rig rig;
+			const DeviceInstanceId rackId = rig.add(kRackTag);
+			if (before >= 1) {
+				while (rig.rackOf(rackId).chainCount() < 3) {
+					REQUIRE(rig.rackOf(rackId).addChain() != SIZE_MAX);
+				}
+				(void)rig.chainOf(rackId, 0).addDevice(fx::filter::kTraits.tag);
+				rig.settle();
+			}
+			if (before == 2) {
+				REQUIRE(applyDevicePreset(*rig.top, rackPresetDescriptor(), rackId, bytes) == DevicePresetLoad::Loaded);
+				rig.settle();
+			}
+			REQUIRE(applyDevicePreset(*rig.top, rackPresetDescriptor(), rackId, bytes) == DevicePresetLoad::Loaded);
+			rig.settle(12);
+			// AND IT SOUNDS LIKE A RACK THAT HOLDS SOMETHING: a block renders, finite.
+			for (const float x : rig.l) {
+				REQUIRE(std::isfinite(x));
+			}
+			CHECK(rig.rackOf(rackId).chainCount() >= 1);
+			(void)peakOf(rig.l);
+		}
+	}
 }

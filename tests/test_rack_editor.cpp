@@ -6845,6 +6845,7 @@ TEST_CASE("header presets: the rack editor's card menu offers Presets and Save p
 	CHECK(f.history.length() == steps + 1);
 	f.history.undo();
 	CHECK(f.bridge.fieldAt(id, res) == doctest::Approx(0.11f));
+}
 
 TEST_CASE("rack editor: a Rack's chain strip renames its chain by a right press's Rename... and by a double-click, the field drawn and typing renames") {
 	namespace pr = rack::parallel;

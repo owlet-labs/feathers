@@ -3824,6 +3824,7 @@ TEST_CASE("header presets: a rack chain's device card menu offers Presets and Sa
 	REQUIRE(cardColumn != nullptr);
 	feathers::rack::RackBridge& viewed = *r.rack().chainAt(static_cast<size_t>(r.field(pr::Param::ViewedChain)))->bridge();
 	checkColumnPresets("card column", *cardColumn, nullptr, viewed, "Card Saved");
+}
 
 TEST_CASE("rename field: a chain strip opens it by a right press's Rename... and by a double-click - on the card and in the window, in Strips") {
 	for (const bool windowSide : { false, true }) {

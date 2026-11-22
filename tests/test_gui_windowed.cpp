@@ -5627,4 +5627,42 @@ TEST_CASE("view flow: in a real window Tabs and Pads, like List, run the chain i
 	}
 }
 
+TEST_CASE("fold strips: the synth's own folded Engine rail photographed beside the rack panes (on request)") {
+	const char* keep = std::getenv("FEATHERS_FOLD_SHOTS");
+	if (keep == nullptr || *keep == '\0') {
+		return;
+	}
+	EditorFixture f;
+	Display* display = XOpenDisplay(nullptr);
+	REQUIRE(display != nullptr);
+	const int screen = DefaultScreen(display);
+	uint32_t w = 0, h = 0;
+	REQUIRE(f.gui.getSize(&w, &h));
+	const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+	                                            BlackPixel(display, screen));
+	XSync(display, False);
+	clap_window window {};
+	window.api = CLAP_WINDOW_API_X11;
+	window.x11 = parent;
+	REQUIRE(f.gui.setParent(&window));
+	visage::Frame* const top = f.gui.root()->topParentFrame();
+	ui::EngineRail* rail = treeFind<ui::EngineRail>(top);
+	REQUIRE(rail != nullptr);
+	(void)rail->setCollapsed(true);
+	for (int i = 0; i < 3; ++i) {
+		(void)f.gui.tickForTest();
+	}
+	XMapWindow(display, parent);
+	XRaiseWindow(display, parent);
+	XFlush(display);
+	for (int slice = 0; slice < 300; ++slice) {
+		f.gui.processEvents();
+		::usleep(4000);
+	}
+	(void)capturePpm(parent, std::string(keep) + "/synth-strip.ppm");
+	f.gui.destroy();
+	XDestroyWindow(display, parent);
+	XCloseDisplay(display);
+}
+
 #endif // defined(__linux__)

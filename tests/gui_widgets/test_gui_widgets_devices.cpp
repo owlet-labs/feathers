@@ -9450,7 +9450,7 @@ TEST_CASE("DG: after a reorder, a device's card reads ITS OWN readings through t
 	const auto owlttReadsItsOwn = [&] {
 		const size_t position = bridge.fxSlotOf(owlttId);
 		const float p = static_cast<float>(position);
-		REQUIRE(host.readingCountAt(owlttId) == 26); // the effective ratios (20..25), then ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
+		REQUIRE(host.readingCountAt(owlttId) == feathers::fx::owltt::Owltt::kReadingCount); // the effective ratios (20..25), then ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
 		CHECK(host.readingAt(owlttId, 0) == -1.0f - p);
 		CHECK(host.readingAt(owlttId, 3) == -10.0f - p);
 		CHECK(host.readingAt(owlttId, 6) == -4.0f - p);
@@ -32551,7 +32551,7 @@ TEST_CASE("LQ: OWLTT's band meters read each channel's own gain reduction off th
 	const std::array<float, 3> second { 0.0f, -0.125f, -0.75f };
 	d.f.bridge.publishOwlttMeters(d.slot, first, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false,
 	                              { false, false, false }, 3.0f, &second);
-	REQUIRE(host.readingCountAt(d.device) == 26); // `Owltt::kReadingCount` since the ratio readout (20 since Key Track (17 since LQ)
+	REQUIRE(host.readingCountAt(d.device) == feathers::fx::owltt::Owltt::kReadingCount); // `Owltt::kReadingCount` since the ratio readout (20 since Key Track (17 since LQ)
 	for (size_t b = 0; b < 3; ++b) {
 		CAPTURE(b);
 		CHECK(host.readingAt(d.device, b) == first[b]);

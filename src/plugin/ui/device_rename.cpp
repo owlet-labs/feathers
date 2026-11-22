@@ -50,6 +50,8 @@ DeviceRename::DeviceRename(visage::Frame& surface, Notifier* notifier) : surface
 		field_->setVisible(false);
 	});
 	field_->onCancel([this] { field_->setVisible(false); });
+	// A SIZE FROM THE START, hidden as it is: every child the editor creates is positioned before anything can draw (`begin` places it for use).
+	field_->setBounds(0.0f, 0.0f, 120.0f, 24.0f);
 	field_->setVisible(false);
 	// ABOVE EVERY SIBLING: a field added once sat under the cards added after it (the chain rename's lesson).
 	field_->setOnTop(true);

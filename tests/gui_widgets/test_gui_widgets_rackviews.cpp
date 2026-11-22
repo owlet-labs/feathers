@@ -27,6 +27,7 @@
 #include "fx/drum/drum_types.h"
 #include "plugin/ui/chain_column.h"
 #include "plugin/preset_store.h"
+#include "plugin/factory_presets.h"
 #include "plugin/ui/lane_selection.h"
 #include "plugin/ui/text_field.h"
 #include "plugin/ui/device_menu.h"
@@ -4528,4 +4529,62 @@ TEST_CASE("rack window folds: each fold is saved with the patch, a fresh instanc
 	CHECK_FALSE(c.panel->inspectorFolded());
 	CHECK(c.panel->macroShownForTest(0));
 	CHECK(c.panel->inspectorShownForTest());
+}
+
+TEST_CASE("factory Rack presets: each, picked in the open Rack window's browser, loads while Strips, Tabs, Pads or List is showing, and the editor follows") {
+	// THE LIBRARY IS A SCRATCH ONE: the factory files are copied into it when a browser reads its bank, never into the user's.
+	const std::filesystem::path scratch = std::filesystem::temp_directory_path() / ("feathers-rackpresets-" + std::to_string(::getpid()));
+	std::filesystem::remove_all(scratch);
+	std::filesystem::create_directories(scratch);
+	const char* was = std::getenv("FEATHERS_PRESET_ROOT");
+	const std::string wasValue = was != nullptr ? was : "";
+	::setenv("FEATHERS_PRESET_ROOT", scratch.c_str(), 1);
+	size_t shipped = 0;
+	for (const feathers::FactoryPresetFile& f : feathers::factoryPresetFiles()) {
+		if (f.path.rfind("Racks/", 0) != 0) {
+			continue;
+		}
+		// THE FACTORY FILE, AS SHIPPED, INTO THE SCRATCH BANK (the library a browser lists).
+		feathers::PresetMeta meta;
+		std::vector<uint8_t> payload;
+		REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(f.bytes.begin(), f.bytes.end()), &meta, &payload));
+		const std::string stem = std::filesystem::path(std::string(f.path)).stem().string();
+		REQUIRE(feathers::PresetStore::save(stem, payload, feathers::kRackPresetBank));
+		++shipped;
+	}
+	REQUIRE(shipped > 0);
+	for (const int view : { 0, 1, 2, 3 }) {
+		for (const int before : { 0, 1 }) {
+			CAPTURE(view);
+			CAPTURE(before);
+			RealRack r;
+			r.chains(before == 0 ? 1 : 3, before == 0 ? 0 : 2, true);
+			r.view_(view);
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+			}
+			ui::PresetBrowser& browser = r.panel->presetBrowserForTest();
+			size_t picked = 0;
+			for (size_t i = 0; i < browser.count(); ++i) {
+				if (browser.entry(i).name == "Init") {
+					continue;
+				}
+				CAPTURE(browser.entry(i).name);
+				REQUIRE(browser.selectIndex(static_cast<int>(i)));
+				++picked;
+				for (int k = 0; k < 6; ++k) {
+					r.refresh();
+				}
+				CHECK(r.rack().chainCount() >= 1);
+			}
+			CHECK(picked >= shipped);
+		}
+	}
+	if (was != nullptr) {
+		::setenv("FEATHERS_PRESET_ROOT", wasValue.c_str(), 1);
+	}
+	else {
+		::unsetenv("FEATHERS_PRESET_ROOT");
+	}
+	std::filesystem::remove_all(scratch);
 }

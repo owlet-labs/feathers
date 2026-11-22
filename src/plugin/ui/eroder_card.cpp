@@ -65,6 +65,7 @@ EroderCard::EroderCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 	// selector changes the Type (`mode_value_cell.h`).
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
 	drive_->setFaceDiameter(kKnobDiameter);
+	installKeyReadout(*drive_, driveView_);
 	std::vector<ZoneSelect::ZoneName> types = driveTypeZoneNames();
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 	                                             stageRowGate(driveView_, driveStageParams()));
@@ -180,7 +181,7 @@ std::vector<visage::Frame*> EroderCard::dustWidgetsForTest() const {
 std::vector<visage::Frame*> EroderCard::rustWidgetsForTest() const { return { bias_.get() }; }
 
 std::vector<visage::Frame*> EroderCard::shakerWidgetsForTest() const {
-	return { freq_.get(), width_.get(), source_.get(), grit_.get(), track_.get() };
+	return { freq_.get(), width_.get(), source_.get(), grit_.get() };
 }
 
 std::vector<visage::Frame*> EroderCard::etchWidgetsForTest() const {
@@ -239,7 +240,7 @@ void EroderCard::layOut() {
 	etch_.setShown(open && etch);
 	y += knobH + kRowGap;
 
-	// THE SMALL ROW. Dust: Source, Grit, Track. Comb: Gamma.
+	// THE SMALL ROW. Dust: Source, Grit, Track. Comb: Gamma, Tap, Restore, Track.
 	const float gap = 5.0f;
 	const float chipW = 44.0f;
 	const float boxW = std::max(0.0f, (width - chipW - 2.0f * gap) * 0.5f);
@@ -254,16 +255,16 @@ void EroderCard::layOut() {
 	mixBox_->setBounds(left + boxW + gap, boxY, boxW, ValueBox::kCompactHeight);
 	freqBox_->setVisible(open && etch);
 	mixBox_->setVisible(open && etch);
-	track_->setVisible(open && !comb);
+	track_->setVisible(open); // every engine's: it moves the shared section (HP Wet, the Rate), and Freq where there is one
 	// THE COMB'S SMALL ROW: Gamma, then Tap (Driven) and Restore.
 	const float restoreW = 52.0f;
 	const float tapW = 48.0f;
-	const float gammaW = std::max(0.0f, width - restoreW - tapW - 2.0f * gap);
+	const float gammaW = std::max(0.0f, width - restoreW - tapW - chipW - 3.0f * gap);
 	gamma_->setBounds(left, boxY, gammaW, ValueBox::kCompactHeight);
 	gamma_->setVisible(open && comb);
 	tap_->setBounds(left + gammaW + gap, y, tapW, SwitchChip::kHeight);
 	tap_->setVisible(open && comb);
-	restore_->setBounds(left + width - restoreW, y, restoreW, SwitchChip::kHeight);
+	restore_->setBounds(left + width - chipW - gap - restoreW, y, restoreW, SwitchChip::kHeight);
 	restore_->setVisible(open && comb);
 	y += kSmallRowHeight + kRowGap;
 
@@ -296,7 +297,11 @@ void EroderCard::refreshHonesty() {
 	// Comb: its inner loop never stops, `kBankFloor`.)
 	restore_->setEnabled(emphasised);
 	// THE SECOND-PARAMETER ROWS FOLLOW EACH STAGE'S TYPE (and Track, for the Rate's two forms): hidden, not greyed.
+	const StageView driveBefore = *driveView_;
 	*driveView_ = stageViewOf(row, driveStageParams());
+	if (!(driveBefore == *driveView_)) {
+		drive_->redraw();
+	}
 	(void)driveCell_->refresh();
 	(void)etch_.refreshRows(row);
 }

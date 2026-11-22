@@ -56,6 +56,24 @@ ValueBox& ModeValueCell::addFollower(size_t param, std::unique_ptr<ValueBox> box
 	return addFollower(param, std::move(box));
 }
 
+FaderPill& ModeValueCell::addPillFollower(size_t gateParam, std::unique_ptr<FaderPill> pill, std::function<std::string()> readout) {
+	pill->setVisible(false); // `refresh` decides
+	addChild(pill.get());
+	pillParams_.push_back(gateParam);
+	pills_.push_back(std::move(pill));
+	pillReadouts_.push_back(std::move(readout));
+	return *pills_.back();
+}
+
+FaderPill* ModeValueCell::pillFor(size_t gateParam) const {
+	for (size_t i = 0; i < pillParams_.size(); ++i) {
+		if (pillParams_[i] == gateParam) {
+			return pills_[i].get();
+		}
+	}
+	return nullptr;
+}
+
 ValueBox* ModeValueCell::boxFor(size_t param) const {
 	for (size_t i = 0; i < params_.size(); ++i) {
 		if (params_[i] == param) {
@@ -76,10 +94,24 @@ bool ModeValueCell::refresh() {
 			live = static_cast<long>(params_[i]);
 		}
 	}
+	// THE PILLS: a stacked cell shows each live one in a row after the boxes'.
+	for (size_t i = 0; i < pills_.size(); ++i) {
+		const bool isLive = stacked_ && relevant_ && relevant_(pillParams_[i]);
+		pills_[i]->setVisible(isLive);
+		if (isLive && live < 0) {
+			live = static_cast<long>(pillParams_[i]);
+		}
+		if (isLive && pillReadouts_[i]) {
+			pills_[i]->setReadout(pillReadouts_[i]());
+		}
+	}
 	// STACKED, A CHANGE IN WHICH ROWS ARE SHOWN IS A CHANGE even where the first live one stayed the same.
 	unsigned mask = 0;
 	for (size_t i = 0; i < boxes_.size() && i < 32; ++i) {
 		mask |= boxes_[i]->isVisible() ? 1u << i : 0u;
+	}
+	for (size_t i = 0; i < pills_.size() && boxes_.size() + i < 32; ++i) {
+		mask |= pills_[i]->isVisible() ? 1u << (boxes_.size() + i) : 0u;
 	}
 	const bool shownMoved = mask != shownMask_;
 	shownMask_ = mask;
@@ -142,6 +174,10 @@ void ModeValueCell::resized() {
 			boxes_[i]->setBounds(inset, rows.box + rows.pitch * static_cast<float>(row), usable, ValueBox::kCompactHeight);
 			// (a hidden box keeps the place of the next shown one; it takes no row)
 			row += boxes_[i]->isVisible() ? 1u : 0u;
+		}
+		for (const std::unique_ptr<FaderPill>& pill : pills_) {
+			pill->setBounds(inset, rows.box + rows.pitch * static_cast<float>(row), usable, ValueBox::kCompactHeight);
+			row += pill->isVisible() ? 1u : 0u;
 		}
 		select_->setBounds(inset, rows.select, usable, Knob::kReadoutHeight);
 		return;

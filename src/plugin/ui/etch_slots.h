@@ -22,6 +22,7 @@
 #pragma once
 
 #include "fx/eroder/eroder_types.h"
+#include "plugin/ui/fader_pill.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/mode_value_cell.h"
 #include "plugin/ui/pair_cell.h"
@@ -58,27 +59,46 @@ namespace feathers::ui {
 struct StageView {
 	fx::eroder::DriveMode type = fx::eroder::DriveMode::Soft;
 	bool track = false;
+	/// THE STAGE'S KEY SWITCH (read where its Type has one): the Amount knob's readout is then the multiple of the note.
+	bool key = false;
+	friend bool operator==(const StageView&, const StageView&) = default;
 };
 struct StageParams {
-	fx::eroder::Param type, shape, angle, bal, rate, rateMult;
+	fx::eroder::Param type, shape, angle, bal, rate, rateMult, hard, sharp, bias, key, spread;
 };
 inline StageParams driveStageParams() {
 	using P = fx::eroder::Param;
-	return { P::DriveMode, P::DriveShape, P::DriveAngle, P::DriveBal, P::DriveRate, P::DriveRateMult };
+	return { P::DriveMode, P::DriveShape, P::DriveAngle, P::DriveBal, P::DriveRate, P::DriveRateMult, P::DriveHard, P::DriveSharp, P::DriveBias, P::DriveKey, P::DriveSpread };
 }
 inline StageParams slotStageParams(int slot) {
 	using P = fx::eroder::Param;
-	return slot == 0 ? StageParams { P::SlotAType, P::SlotAShape, P::SlotAAngle, P::SlotABal, P::SlotARate, P::SlotARateMult }
-	                 : StageParams { P::SlotBType, P::SlotBShape, P::SlotBAngle, P::SlotBBal, P::SlotBRate, P::SlotBRateMult };
+	return slot == 0 ? StageParams { P::SlotAType, P::SlotAShape, P::SlotAAngle, P::SlotABal, P::SlotARate, P::SlotARateMult, P::SlotAHard, P::SlotASharp, P::SlotABias, P::SlotAKey, P::SlotASpread }
+	                 : StageParams { P::SlotBType, P::SlotBShape, P::SlotBAngle, P::SlotBBal, P::SlotBRate, P::SlotBRateMult, P::SlotBHard, P::SlotBSharp, P::SlotBBias, P::SlotBKey, P::SlotBSpread };
 }
-/// THE STAGE VIEW from a row: its Type, and whether Track is on in an engine that has it (the Comb has none).
+/// **THE AMOUNT KNOB'S READOUT UNDER KEY**: the multiple of the note the knob's position sets ("x3.00"), in place of its usual text, while the stage's Type has a Key and
+/// the switch is on. An empty string leaves the control's own text.
+inline std::string keyMultipleText(double knob) {
+	char buf[32];
+	std::snprintf(buf, sizeof buf, "\xC3\x97%.2f", fx::eroder::keyMultiple(knob));
+	return buf;
+}
+inline void installKeyReadout(Knob& knob, std::shared_ptr<StageView> view) {
+	Knob* k = &knob;
+	knob.setReadoutOverride([view, k]() -> std::string {
+		if (!(view->key && fx::eroder::driveHasKey(view->type)) || k->control() == nullptr) {
+			return {};
+		}
+		return keyMultipleText(k->control()->value());
+	});
+}
+/// THE STAGE VIEW from a row: its Type, and whether Track is on.
 inline StageView stageViewOf(const fx::eroder::Row& row, const StageParams& p) {
 	namespace ero = fx::eroder;
 	StageView v;
 	const int t = std::clamp(static_cast<int>(row[static_cast<size_t>(p.type)] + 0.5f), 0, static_cast<int>(ero::DriveMode::kCount) - 1);
 	v.type = static_cast<ero::DriveMode>(t);
-	const int mode = std::clamp(static_cast<int>(row[static_cast<size_t>(ero::Param::Mode)] + 0.5f), 0, static_cast<int>(ero::Mode::kCount) - 1);
-	v.track = row[static_cast<size_t>(ero::Param::Track)] >= 0.5f && static_cast<ero::Mode>(mode) != ero::Mode::Comb;
+	v.track = row[static_cast<size_t>(ero::Param::Track)] >= 0.5f;
+	v.key = row[static_cast<size_t>(p.key)] >= 0.5f;
 	return v;
 }
 /// THE ROW GATE for a stage's cell: Shape always; Bal for Chonk; Rate (Hz with Track off, the multiple with it on) for the four Paunch Types;
@@ -96,6 +116,18 @@ inline std::function<bool(size_t)> stageRowGate(std::shared_ptr<StageView> view,
 		}
 		if (param == static_cast<size_t>(p.bal)) {
 			return second == ero::SecondParam::Bal;
+		}
+		if (param == static_cast<size_t>(p.hard)) {
+			return second == ero::SecondParam::Hard;
+		}
+		if (param == static_cast<size_t>(p.sharp)) {
+			return second == ero::SecondParam::Sharp;
+		}
+		if (param == static_cast<size_t>(p.bias)) {
+			return second == ero::SecondParam::Bias;
+		}
+		if (param == static_cast<size_t>(p.key)) {
+			return second == ero::SecondParam::Key;
 		}
 		if (param == static_cast<size_t>(p.rate)) {
 			return second == ero::SecondParam::Rate && !view->track;
@@ -138,12 +170,20 @@ void addStageRows(ModeValueCell& cell, ControlOf&& control, const StageParams& p
 	(void)cell.addFollower(static_cast<size_t>(p.shape), std::make_unique<ValueBox>(control(p.shape), ""), "S");
 	(void)cell.addFollower(static_cast<size_t>(p.angle), std::make_unique<ValueBox>(control(p.angle), ""), "S");
 	(void)cell.addFollower(static_cast<size_t>(p.bal), std::make_unique<ValueBox>(control(p.bal), ""), "Bal");
+	(void)cell.addFollower(static_cast<size_t>(p.hard), std::make_unique<ValueBox>(control(p.hard), ""), narrow ? "Hrd" : "Hard");
+	(void)cell.addFollower(static_cast<size_t>(p.sharp), std::make_unique<ValueBox>(control(p.sharp), ""), narrow ? "Shp" : "Sharp");
+	(void)cell.addFollower(static_cast<size_t>(p.bias), std::make_unique<ValueBox>(control(p.bias), ""), "Bias");
 	(void)cell.addFollower(static_cast<size_t>(p.rate), std::make_unique<ValueBox>(control(p.rate), ""), rateLabel);
 	auto mult = std::make_unique<ValueBox>(control(p.rateMult), "");
 	// A NUMBER THE HAND DRAGS TO A MUSICAL PLACE AND TYPES ANYTHING INTO: detents for the drag, the number's own text, the plain number typed back.
 	mult->setDetents(std::vector<double>(std::begin(fx::eroder::kRateMultDetents), std::end(fx::eroder::kRateMultDetents)));
 	mult->setReadoutFormatter(&rateMultText, true);
 	(void)cell.addFollower(static_cast<size_t>(p.rateMult), std::move(mult), rateLabel);
+	// THE KEY'S ROW IS A FADER PILL: the Key switch (its power) and the Spread (its fader, live with the switch off); the Spread's value is its right-end readout.
+	DeviceControl& spread = control(p.spread);
+	// (A NARROW CELL has no room for "Key" beside a percentage: the fill is the Spread there, the window prints it.)
+	(void)cell.addPillFollower(static_cast<size_t>(p.key), std::make_unique<FaderPill>(spread, control(p.key), "Key"),
+	                           narrow ? std::function<std::string()> {} : [&spread]() { return spread.text(); });
 }
 
 /// THE WINDOW'S ONE SLOT ROW: the Amount knob, the MIX knob, and the Type's cell, left to right in thirds of the row.
@@ -239,6 +279,7 @@ struct EtchSlots {
 			// THE KNOB IS CAPTIONED WITH ITS SLOT'S NAME, one letter: a word does not fit half a quarter-row.
 			knob = std::make_unique<Knob>(control(amount), name, notifier);
 			knob->setFaceDiameter(faceDiameter);
+			installKeyReadout(*knob, view);
 			const StageParams params = slotStageParams(index);
 			std::vector<ZoneSelect::ZoneName> types = driveTypeZoneNames();
 			mode = std::make_unique<ModeValueCell>(control(params.type), "Type", std::move(types), stageRowGate(view, params));
@@ -269,8 +310,16 @@ struct EtchSlots {
 	}
 	/// THE SECOND-PARAMETER ROWS FOLLOW EACH SLOT'S TYPE AND TRACK (the row read modulated, as the honesty gates read it); true if a row moved.
 	bool refreshRows(const fx::eroder::Row& row) {
+		const StageView before[2] = { *viewA, *viewB };
 		*viewA = stageViewOf(row, slotStageParams(0));
 		*viewB = stageViewOf(row, slotStageParams(1));
+		// THE AMOUNT KNOB'S READOUT FOLLOWS THE KEY (and the Type that has one): it repaints when that changes.
+		if (!(before[0] == *viewA)) {
+			knobA->redraw();
+		}
+		if (!(before[1] == *viewB)) {
+			knobB->redraw();
+		}
 		const bool a = cellA->refresh();
 		const bool b = cellB->refresh();
 		return a || b;

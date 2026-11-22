@@ -18,6 +18,7 @@
 #pragma once
 
 #include "backplane/device_host.h"
+#include "device/subscribers.h"
 #include "plugin/ui/fold_header.h"
 #include "plugin/ui/arm_relay.h"
 #include "plugin/ui/container_presets.h"
@@ -330,6 +331,8 @@ private:
 	std::unique_ptr<SwitchChip> keyTrack_;
 	std::vector<std::pair<visage::Frame*, rack::parallel::Param>> gated_;
 	std::vector<std::unique_ptr<ChainRail>> rails_;
+	device::Subscription replaced_;
+	uint64_t subscribedTo_ = 0;
 	/// **DECLARED AFTER THE RAILS, SO IT IS DESTROYED BEFORE THEM**: the device window it holds is on a rail's modulation list.
 	std::unique_ptr<RackWindowPane> pane_;
 	bool hostedInPane_ = false;

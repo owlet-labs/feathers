@@ -728,12 +728,22 @@ void Knob::announce(const char* verb) {
 	}
 	// THROUGH THE CONTROL, which knows how its own road prints — the host's formatter for a
 	// parameter, the declared unit for a device control. See Modulatable::text.
-	const std::string printed = control_->text();
+	const std::string printed = printedText();
 	if (!printed.empty()) {
 		message += ' ';
 		message += printed;
 		notifier_->say(message);
 	}
+}
+
+std::string Knob::printedText() const {
+	if (readoutOverride_) {
+		std::string over = readoutOverride_();
+		if (!over.empty()) {
+			return over;
+		}
+	}
+	return control_ != nullptr ? control_->text() : std::string {};
 }
 
 void drawKnobFace(visage::Canvas& canvas, float centreX, float centreY, float diameter, float value,
@@ -1005,7 +1015,7 @@ void Knob::draw(visage::Canvas& canvas) {
 		const float top = (static_cast<float>(height()) - block) * 0.5f;
 		drawTracked(canvas, caption, labelFace, kKnobLabelTracking, textX, top, kLabelHeight);
 		if (control_ != nullptr) {
-			const std::string printed = control_->text();
+			const std::string printed = printedText();
 			if (!printed.empty()) {
 				canvas.setColor(lit ? kMuted : kDisabled);
 				canvas.text(printed, font(kKnobReadoutSize), visage::Font::kLeft, textX,
@@ -1033,7 +1043,7 @@ void Knob::draw(visage::Canvas& canvas) {
 	}
 	// THE CONTROL PRINTS ITSELF — the host's formatter for a parameter, the declared unit for a
 	// device control, and this widget does not know or care which it is holding.
-	const std::string printed = control_->text();
+	const std::string printed = printedText();
 	if (!printed.empty()) {
 		canvas.setColor(lit ? kMuted : kDisabled);
 		canvas.text(printed, font(kKnobReadoutSize), visage::Font::kCenter, 0.0f,

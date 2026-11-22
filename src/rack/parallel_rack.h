@@ -21,6 +21,7 @@
 #include "composite/composite_types.h"
 #include "device/latency.h"
 #include "device/registry.h"
+#include "device/subscribers.h"
 #include "rack/export_table.h"
 #include "rack/inner_chain.h"
 #include "plugin/ui_note_ring.h"
@@ -34,6 +35,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -794,6 +796,10 @@ public:
 
 	/// A COUNT THAT MOVES WHENEVER THE CHAINS OR THEIR CONTROLS DO — what a card re-reads on.
 	[[nodiscard]] uint64_t revision() const noexcept { return revision_; }
+	/// **THE CHAINS WERE REPLACED OR REMOVED** (message thread): called the moment the old chains are retired, while they are still alive and before
+	/// anything can free them, so an editor holding a column over one of their bridges lets go of it THEN rather than at its next tick (a preset
+	/// applied from the window's own browser, undo of one, a project load into an open editor). A subscriber must not destroy the Rack.
+	[[nodiscard]] device::Subscription subscribeChainsReplaced(std::function<void()> callback) { return chainsReplaced_.subscribe(std::move(callback)); }
 	/// **WHICH RACK THIS IS, FOR AS LONG AS IT STANDS**: a serial stamped where it is built (never an address, which a slot reuses), so an
 	/// editor can key what it shares between its surfaces on it. Never 0.
 	[[nodiscard]] uint64_t serial() const noexcept { return serial_; }
@@ -1083,6 +1089,7 @@ private:
 	int inspectorFold_ = 0;
 	std::vector<device::HostSlotCaption> slotCaptions_;
 	uint64_t serial_ = 0;
+	device::Subscribers<> chainsReplaced_;
 	/// And what its key held back, which the rack passes on itself.
 	std::vector<device::NoteEvent> skippedIn_;
 	/// The editor's keys (a play button's) drained from one chain's bridge for that chain alone.
@@ -1090,6 +1097,15 @@ private:
 	/// The pads' keys waiting for the audio thread, and what they were drained into.
 	UiNoteRing padNotes_;
 	std::vector<device::NoteEvent> padIn_;
+	/// WHICH PAD KEYS ARE DOWN (audio thread): a pad strike enters at this rack, so the host's note context never saw it; the chains' devices that
+	/// follow the note (HARM's sines, a keytracker) are handed it from here. `padLast_` is the newest key struck, -1 when none is down.
+	std::array<uint64_t, 2> padHeld_ {};
+	int padLast_ = -1;
+	/// Keys struck since the last note context was handed over, held or not: a press and release inside one block still gates for that block.
+	std::array<uint64_t, 2> padStruck_ {};
+	int padStruckLast_ = -1;
+	void padFold(int key, bool on) noexcept;
+	[[nodiscard]] device::NoteContext padNoteFor(const Branch* b, device::NoteContext note) const noexcept;
 	std::vector<device::NoteEvent> owedOffs_; ///< offs a full output could not take, delivered first next call
 	size_t owedCount_ = 0;
 	bool releaseAll_ = false;

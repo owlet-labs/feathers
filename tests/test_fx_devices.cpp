@@ -2510,9 +2510,12 @@ std::vector<std::string> honestyExpected() {
 	//                       with the engine wrap that made it look true — see above.)
 	//
 	//   Harm Release        TWO TRANSITIONS THIS FIXTURE DOES NOT MAKE. A release time acts when the
-	//   Harm Porta          gate FALLS and a portamento when the note CHANGES; the probe holds one
-	//   Harm Porta Mode     note and one gate for 256 samples, so none of the three has anything to act
-	//                       on. Porta Mode decides only whether a glide crosses a gap between two notes, so it
+	//   Harm Porta          gate FALLS and a portamento when the note CHANGES. HARM is on the per-voice
+	//   Harm Porta Mode     road (`setNoteContext`, it declares no `notes` ops), not the note road that
+	//                       plays 72 then 79 while 72 is held: the fixture hands it ONE NoteContext (key
+	//                       84, gate held) for the whole 256 samples, so none of the three has anything to
+	//                       act on. The "one note, one gate" wording is true of HARM and false of the note-road
+	//                       devices, so the entries stay. Porta Mode decides only whether a glide crosses a gap between two notes, so it
 	//                       needs porta on, a note, a release, a gap and a second note. Its values are asserted
 	//                       in test_fx_harm: "legato porta starts a note after a release at its own pitch,
 	//                       always porta glides to it".
@@ -2618,6 +2621,16 @@ std::vector<std::string> honestyExpected() {
 		"Eroder :: Eroder Drive Balance",    "Eroder :: Eroder Drive Rate",   "Eroder :: Eroder Drive Rate Multiple",
 		"Eroder :: Eroder Slot A Balance",   "Eroder :: Eroder Slot A Rate",  "Eroder :: Eroder Slot A Rate Multiple",
 		"Eroder :: Eroder Slot B Balance",   "Eroder :: Eroder Slot B Rate",  "Eroder :: Eroder Slot B Rate Multiple",
+		// THE THIRD ROW OF EVERY TYPE (the Drive's and each slot's): Sharp is heard only on Fold, Bias only on Wreck and Jag, Hard only on Soft and Tube,
+		// and Key and Spread only on Crush, Decimate, Slew and Lopside. The fixture's Drive sits on Soft, which reads only Hard, so the Drive's Sharp,
+		// Bias, Key and Spread are unreachable (its Hard is reached and is not listed). The slots default to Slew (A) and Decimate (B), both of the
+		// Key family, so an arrangement that raises a slot's Amount hears that slot's Key and Spread (they are not listed); but neither default Type
+		// reads Hard, Sharp or Bias, so those six are listed. `test_fx_eroder_rows` asserts each by value (the restated curves, the restated
+		// hold and slew rates measured from the output, the Spread's ratio) and "Every third-row control is wired in all three places" asserts that each
+		// one changes the sound in the Drive and in both slots on its own Types and on no other; the window hides each row unless its Type has it.
+		"Eroder :: Eroder Drive Sharp",      "Eroder :: Eroder Drive Bias",   "Eroder :: Eroder Drive Key",      "Eroder :: Eroder Drive Spread",
+		"Eroder :: Eroder Slot A Hard",      "Eroder :: Eroder Slot A Sharp", "Eroder :: Eroder Slot A Bias",
+		"Eroder :: Eroder Slot B Hard",      "Eroder :: Eroder Slot B Sharp", "Eroder :: Eroder Slot B Bias",
 		// THE PAUNCH TYPES' ANGLE (the Drive's and each slot's) is heard only on those four Types, so the one-control fixture on Soft cannot reach it;
 		// `test_fx_eroder`'s "The Paunch Types read their own Angle" and the rotation cases assert it by value.
 		"Eroder :: Eroder Drive Angle",      "Eroder :: Eroder Slot A Angle", "Eroder :: Eroder Slot B Angle",

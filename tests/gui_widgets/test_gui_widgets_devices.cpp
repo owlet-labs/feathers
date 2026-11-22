@@ -46615,7 +46615,7 @@ TEST_CASE("OWLTT's window: the RATIO row reads each band's effective downward an
 	CHECK(graph->ratioReadoutText(2) == expect(0.9));
 }
 
-TEST_CASE("OWLTT's window: a band's OUT reads in dB like IN, as 20 log10 of the gain the engine applies at that value, and refuses a lossy type-in") {
+TEST_CASE("OWLTT's window: a band's OUT reads in dB like IN, as 20 log10 of the gain the engine applies at that value, and types back through the inverse law") {
 	namespace ow = feathers::fx::owltt;
 	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
 	ui::WidgetRegistry registry;
@@ -46641,6 +46641,7 @@ TEST_CASE("OWLTT's window: a band's OUT reads in dB like IN, as 20 log10 of the 
 			CAPTURE(g);
 			d.set(static_cast<size_t>(levels[band]), static_cast<float>(g));
 			CHECK(out->readout() == text(g));
+			CHECK(out->control().text() == text(g));
 		}
 		// UNITY READS 0, AND THE TOP +20 dB; the floor reads -inf.
 		d.set(static_cast<size_t>(levels[band]), 0.5f);
@@ -46649,7 +46650,30 @@ TEST_CASE("OWLTT's window: a band's OUT reads in dB like IN, as 20 log10 of the 
 		CHECK(out->readout() == "+16.1dB");
 		d.set(static_cast<size_t>(levels[band]), 0.0f);
 		CHECK(out->readout() == "-inf");
-		// A dB PRINT CANNOT READ BACK TO THE EXACT KNOB VALUE, so the box refuses a typed entry rather than open on a lossy text.
-		CHECK(out->readout() != out->control().text());
+		CHECK(out->control().text() == "-inf");
+		// TYPE-IN OPENS ON dB AT FULL PRECISION AND READS BACK TO THE EXACT STORED VALUE, through the inverse of the gain law.
+		for (const double g : { 0.03, 0.25, 0.4, 0.5, 0.65, 0.8, 0.9375, 1.0 }) {
+			CAPTURE(g);
+			d.set(static_cast<size_t>(levels[band]), static_cast<float>(g));
+			const double stored = out->control().value();
+			const std::optional<std::string> opening = out->control().editText();
+			REQUIRE(opening.has_value());
+			CHECK(opening->find("dB") != std::string::npos);
+			const std::optional<double> back = out->control().parseText(*opening, stored);
+			REQUIRE(back.has_value());
+			CHECK(static_cast<float>(*back) == static_cast<float>(stored));
+		}
+		// TYPING -6 dB SETS THE KNOB WHOSE GAIN IS -6 dB (0.5012, the lower half of the law: knob 0.2506); +10 dB IS 3.162 = 0.5 + 2.162/18.
+		for (const char* typed : { "-6dB", "-6", "-6 dB" }) {
+			const std::optional<double> k = out->control().parseText(typed, 0.5);
+			REQUIRE(k.has_value());
+			CHECK(*k == doctest::Approx(std::pow(10.0, -6.0 / 20.0) / 2.0).epsilon(1e-6));
+		}
+		const std::optional<double> hot = out->control().parseText("+10", 0.5);
+		REQUIRE(hot.has_value());
+		CHECK(*hot == doctest::Approx(0.5 + (std::pow(10.0, 0.5) - 1.0) / 18.0).epsilon(1e-6));
+		const std::optional<double> over = out->control().parseText("+30dB", 0.5);
+		REQUIRE(over.has_value());
+		CHECK(*over == doctest::Approx(1.0)); // past the top of the knob: clamped
 	}
 }

@@ -29,6 +29,7 @@
 #include "plugin/ui/mod_state.h"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -148,6 +149,9 @@ public:
 	[[nodiscard]] std::optional<std::string> editText() const override;
 	/// The device's own `TextOps::parse` first (the Rack's `Chain 2`), then the declared unit.
 	[[nodiscard]] std::optional<double> parseText(std::string_view text, double shown) const override;
+	/// A PRECISE OPENING TEXT FOR TYPE-IN, for a control whose face prints coarsely: when set, `editText` returns it (the device's `TextOps::parse` must
+	/// read it back). Display is untouched.
+	void setEditTextFormatter(std::function<std::string(double)> formatter) { editFormatter_ = std::move(formatter); }
 	/// Whether this control can be typed into — `editText`'s refusal, for a reader with no value in hand.
 	[[nodiscard]] bool typeable() const;
 	/// See `RecordsEdits`: the history `endGesture` records into.
@@ -208,6 +212,7 @@ private:
 	ModState* mod_ = nullptr;
 	EditHistory* history_ = nullptr;
 	bool trigger_ = false;
+	std::function<std::string(double)> editFormatter_;
 	double valueBefore_ = 0.0;
 	float amountBefore_ = 0.0f;
 	/// A host Begin has gone out and its End has not (`beginHostGesture`).

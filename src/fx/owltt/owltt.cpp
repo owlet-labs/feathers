@@ -1794,6 +1794,11 @@ bool isCrossover(size_t control) noexcept {
 
 } // namespace
 
+bool isBandLevel(size_t control) noexcept {
+	return control == static_cast<size_t>(Param::LowLevel) || control == static_cast<size_t>(Param::MidLevel)
+	       || control == static_cast<size_t>(Param::HighLevel);
+}
+
 /// THE PER-BAND TRIMS AND OFFSETS, stored 0..1 with 0.5 meaning none: they read and type as signed percentages from the
 /// centre ("0", "+25%", "-40%"), and the stored value and key are unchanged.
 bool isCentred(size_t control) noexcept {
@@ -1802,6 +1807,17 @@ bool isCentred(size_t control) noexcept {
 
 const device::TextOps kTextOps {
 	.format = [](size_t control, double value, const device::TextView& view, char* out, size_t size) {
+		if (isBandLevel(control)) {
+			// THE BAND'S OUTPUT LEVEL IN dB, as its Input reads (one decimal); type-in opens on the same dB at full precision (`bandLevelEditText`).
+			double db = 0.0;
+			if (!bandLevelDb(value, db)) {
+				std::snprintf(out, size, "-inf");
+			}
+			else {
+				std::snprintf(out, size, "%+.1fdB", std::fabs(db) < 0.05 ? 0.0 : db);
+			}
+			return true;
+		}
 		if (isCentred(control)) {
 			const double pct = (value - 0.5) * 100.0;
 			if (std::fabs(pct) < 0.5) {
@@ -1832,6 +1848,39 @@ const device::TextOps kTextOps {
 		return true;
 	},
 	.parse = [](size_t control, const char* text, const device::TextView& view, double* value) {
+		if (isBandLevel(control)) {
+			// dB, through the inverse of the gain law: "-0.9", "-0.9dB", "+16", "-inf".
+			if (text == nullptr) {
+				return false;
+			}
+			const char* s = text;
+			while (*s == ' ') {
+				++s;
+			}
+			if (std::strncmp(s, "-inf", 4) == 0) {
+				*value = 0.0;
+				return true;
+			}
+			char* end = nullptr;
+			const double db = std::strtod(s, &end);
+			if (end == s || !std::isfinite(db)) {
+				return false;
+			}
+			while (*end == ' ') {
+				++end;
+			}
+			if (end[0] == 'd' || end[0] == 'D') {
+				++end;
+				if (end[0] == 'B' || end[0] == 'b') {
+					++end;
+				}
+			}
+			if (*end != '\0') {
+				return false;
+			}
+			*value = bandLevelKnobOfDb(db);
+			return true;
+		}
 		if (isCentred(control)) {
 			if (text == nullptr) {
 				return false;

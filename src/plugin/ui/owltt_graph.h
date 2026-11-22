@@ -218,8 +218,6 @@ public:
 	visage::Bounds tableArea() const;
 	/// A table cell's rectangle in this frame's coordinates, under its band.
 	visage::Bounds tableCell(size_t row, size_t band) const;
-	/// A BAND'S OUT AS THE TABLE PRINTS IT: dB, the engine's own gain law at that knob value.
-	[[nodiscard]] static std::string outLevelText(double knob);
 	/// THE RATIO ROW'S TEXT for a band, `↓4:1 ↑2:1` style (down first): what the engine applies this block, live with modulation.
 	[[nodiscard]] std::string ratioReadoutText(size_t band) const;
 	[[nodiscard]] ValueBox* tableBoxForTest(size_t row, size_t band) const { return cells_[row][band].get(); }

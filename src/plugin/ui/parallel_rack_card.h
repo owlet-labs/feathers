@@ -243,7 +243,11 @@ public:
 	void setLabel(std::string label);
 	/// **A DOUBLE-CLICK ON THE STRIP'S OWN SURFACE (its caption, not a control) renames its chain**: the owner's handler gets the chain's id and the strip's rectangle.
 	void setRenameHandler(std::function<void(uint16_t chain, const visage::Bounds& anchor)> handler) { rename_ = std::move(handler); }
+	/// **A RIGHT PRESS ON THE STRIP'S OWN SURFACE (not on a control, not on the ×) opens the chain's menu** (Rename...), as a tab's and a
+	/// pad's do: the owner's handler gets the chain's id and the strip's rectangle.
+	void setContextHandler(std::function<void(uint16_t chain, const visage::Bounds& anchor)> handler) { context_ = std::move(handler); }
 	void doubleClickForTest(visage::Point at) { doubleClick(at); }
+	void pressContextForTest(visage::Point at) { pressContext(at); }
 	/// **A PHANTOM STRIP** (§2a): its three controls make the chain on their first edit (`ChainControl::setMaterialise`).
 	void setMaterialise(const std::function<uint16_t()>& materialise) {
 		level_.setMaterialise(materialise);
@@ -321,7 +325,9 @@ public:
 
 private:
 	void doubleClick(visage::Point at);
+	void pressContext(visage::Point at);
 	std::function<void(uint16_t, const visage::Bounds&)> rename_;
+	std::function<void(uint16_t, const visage::Bounds&)> context_;
 	ChainControl level_;
 	ChainControl muted_;
 	ChainControl soloed_;

@@ -37,6 +37,8 @@
 #include "fx/sklitter/sklitter_types.h"
 #include "plugin/device_registry.h"
 #include "plugin/ui/delay_card.h"
+#include "plugin/ui/featherverb_card.h"
+#include "plugin/ui/phaser_card.h"
 #include "plugin/ui/eroder_card.h"
 #include "fx/eroder/eroder_types.h"
 #include "plugin/ui/paged_controls.h"
@@ -586,8 +588,12 @@ void sweepHost(visage::Frame* host, const device::Descriptor& desc, SweepTally& 
 			const bool reasoned = vb != nullptr && !vb->enabled() && vb->disabledReason() != nullptr;
 			const char* why = control->unavailable();
 			// AND A SHORTENED OR CUT LABEL'S FULL NAME AT ITS START.
+			// A SURFACE'S OWN OVERRIDE (`setTooltipOverride`, a per-mode text) is the control's text where it is set; the
+			// value cases pin each override's words.
+			const char* own = control->tooltipOverride();
 			CHECK(layer.text() == expectedWithFull(full, why != nullptr       ? std::string(why)
 			                                             : reasoned           ? std::string(vb->disabledReason())
+			                                             : own != nullptr     ? std::string(own)
 			                                                                  : declaredText(control->desc())));
 		}
 		else {
@@ -4303,3 +4309,38 @@ TEST_CASE("full name: a renamed macro in the Rack's window shows its whole name 
 	ui::MacroSlot& other = panel->macroSlotForTest(1);
 	CHECK(ui::hoverText(other.knob(), centreOf(other.knob())).rfind(other.naming().name(), 0) == 0);
 }
+
+// TV audit, Featherverb and Phaser (backlog TV): each per-mode tooltip reads the mode the control stands in, through the
+// hover seam `tooltipOf`, after a tick on the card. The expected strings are restated here, not read from the tables.
+TEST_CASE("TV-C: Featherverb's Character, Predelay, Matrix and Conv Blend say what they do in the size and conv mode they are on") {
+	namespace fv = feathers::fx::featherverb;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag(fv::kTraits.tag);
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::FeatherverbCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	const auto tip = [&](fv::Param p) { return std::string(ui::tooltipOf(&card->controlForTest(static_cast<size_t>(p)))); };
+	const std::string declaredMatrix = declaredText(fv::kDescriptor.params[static_cast<size_t>(fv::Param::Matrix)]);
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::SizeMode), 6.0f); // Aurora
+	(void)card->update();
+	CHECK(tip(fv::Param::Matrix) == "In Aurora, how fast the tail climbs as it rings");
+	CHECK(tip(fv::Param::Predelay) == "Up to 50 ms before the reverb starts");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::SizeMode), 8.0f); // Owl
+	(void)card->update();
+	CHECK(tip(fv::Param::Predelay) == "Up to 50 ms before the reverb starts. In Owl it also sets how fast the tail swells");
+	CHECK(tip(fv::Param::Matrix) == declaredMatrix); // not Aurora: the declared text stands
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::SizeMode), 4.0f); // Feather
+	(void)card->update();
+	CHECK(tip(fv::Param::Character) == "In Feather, its stereo field. It keeps turning, and the mark beside it shows which lap");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::ConvMode), 2.0f); // Series
+	(void)card->update();
+	CHECK(tip(fv::Param::ConvBlend) == "How much of the wet is the convolution: the reverb against the convolved reverb");
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::ConvMode), 0.0f); // Off: hidden, declared text
+	(void)card->update();
+	CHECK(tip(fv::Param::ConvBlend) == declaredText(fv::kDescriptor.params[static_cast<size_t>(fv::Param::ConvBlend)]));
+}
+

@@ -756,7 +756,9 @@ TEST_CASE("the master controls are declared, default to unity, and round-trip th
 	const size_t depthAt = static_cast<size_t>(Param::MasterDepth);
 	CHECK(levelAt == static_cast<size_t>(partialParam(3, PartialField::Active)) + 1);
 	CHECK(depthAt == levelAt + 1);
-	CHECK(static_cast<size_t>(Param::kCount) == depthAt + 1);
+	// NOTHING WAS INSERTED BEFORE THE MASTERS: PortaMode is the one control appended after them, and it is the last.
+	CHECK(static_cast<size_t>(Param::PortaMode) == depthAt + 1);
+	CHECK(static_cast<size_t>(Param::kCount) == depthAt + 2);
 	CHECK(std::string(kParamDescs[levelAt].key) == "harm_master_level");
 	CHECK(std::string(kParamDescs[depthAt].key) == "harm_master_depth");
 	CHECK(kParamDescs[levelAt].def == 1.0);

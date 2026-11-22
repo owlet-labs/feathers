@@ -273,12 +273,12 @@ TEST_CASE("smooth peak (c): driven past the hold the curve stays at its peak - b
 				CHECK(smooth::transferAt(p, x) == atHoldPos);
 				CHECK(smooth::transferAt(p, -x) == atHoldNeg);
 			}
-			// AND IT IS THE PEAK: nothing in between is larger than the held value on its side (a dense scan).
+			// AND THE HELD LEVEL IS WITHIN kHoldWithinDb OF THE PEAK: nothing in between is larger than that (a dense scan).
 			double peak = 0.0;
 			for (int i = -4096; i <= 4096; ++i) {
 				peak = std::max(peak, static_cast<double>(std::fabs(smooth::transferAt(p, static_cast<float>(i) / 4096.0f))));
 			}
-			CHECK(peak <= static_cast<double>(std::max(std::fabs(atHoldPos), std::fabs(atHoldNeg))) * 1.0005);
+			CHECK(peak <= static_cast<double>(std::max(std::fabs(atHoldPos), std::fabs(atHoldNeg))) * std::pow(10.0, smooth::kHoldWithinDb / 20.0) * 1.0005);
 		}
 	}
 }
@@ -398,15 +398,79 @@ TEST_CASE("smooth peak (g): the level table") {
 
 TEST_CASE("smooth peak (n): the factor's and the holds' range per mode") {
 	for (int mode = 0; mode < 8; ++mode) {
-		float lo = 1e9f, hi = 0.0f, holdLo = 1.0f;
+		std::vector<float> holds;
+		float lo = 1e9f, hi = 0.0f;
 		for (int k = 0; k < 100; ++k) {
 			const smooth::Picture p = smooth::pictureOf(settingsAt(mode, 0.01f * static_cast<float>(k), 0.5f));
 			lo = std::min(lo, p.weights.norm);
 			hi = std::max(hi, p.weights.norm);
-			holdLo = std::min({ holdLo, p.weights.holdPos, p.weights.holdNeg });
+			holds.push_back(std::min(p.weights.holdPos, p.weights.holdNeg));
 		}
+		std::sort(holds.begin(), holds.end());
 		CHECK(lo >= 1.2f); // every curve peaks below 0 dBFS un-normalised, so the factor boosts it
 		CHECK(hi < 20.0f); // and none is a near-silent blend amplified without bound
-		MESSAGE("NORM mode " << mode << " min " << lo << " (" << dbOf(lo) << " dB) max " << hi << " (" << dbOf(hi) << " dB); lowest hold " << holdLo);
+		MESSAGE("NORM mode " << mode << " min " << lo << " (" << dbOf(lo) << " dB) max " << hi << " (" << dbOf(hi) << " dB); hold min "
+		                     << holds.front() << " median " << holds[holds.size() / 2] << " max " << holds.back());
 	}
+}
+
+TEST_CASE("smooth peak (late): how many of the 72 cells pass a -6 dBFS sine unclipped") {
+	int passes = 0;
+	int saturating = 0;
+	for (int mode = 0; mode < 8; ++mode) {
+		for (int k = 0; k < 9; ++k) {
+			const smooth::Picture p = smooth::pictureOf(settingsAt(mode, 0.12f * static_cast<float>(k), 0.5f));
+			const bool saturates = mode == 0 || mode == 1 || mode == 7;
+			saturating += saturates ? 1 : 0;
+			// A -6.02 dBFS sine (amplitude 0.5012) is unclipped when it stays below both holds (FM zones never clip).
+			if (!saturates || (p.weights.holdPos > 0.5012f && p.weights.holdNeg > 0.5012f)) {
+				++passes;
+			}
+		}
+	}
+	MESSAGE("LATE -6 dBFS passes unclipped in " << passes << " of 72 cells (" << saturating << " saturating cells, " << passes - (72 - saturating) << " of them pass)");
+	CHECK(passes > 0);
+}
+
+TEST_CASE("smooth peak (outermost): the hold is the outermost local maximum within kHoldWithinDb of the side's global maximum") {
+	int later = 0; // cells where the outermost differs from the global maximum's place: the non-vacuity of the rule
+	for (int mode : { 0, 1 }) {
+		for (int k = 0; k < 9; ++k) {
+			const smooth::Settings s = settingsAt(mode, 0.12f * static_cast<float>(k), 0.5f);
+			smooth::Picture p = smooth::pictureOf(s);
+			const float holdPos = p.weights.holdPos;
+			p.weights.holdPos = p.weights.holdNeg = 1.0f; // the whole curve, to scan it independently
+			constexpr int kN = 8192;
+			std::vector<double> v(kN + 1);
+			double global = 0.0;
+			int atGlobal = 0;
+			for (int i = 0; i <= kN; ++i) {
+				v[static_cast<size_t>(i)] = std::fabs(static_cast<double>(smooth::transferAt(p, static_cast<float>(i) / kN)));
+				if (v[static_cast<size_t>(i)] > global) {
+					global = v[static_cast<size_t>(i)];
+					atGlobal = i;
+				}
+			}
+			const double floorValue = global * std::pow(10.0, -smooth::kHoldWithinDb / 20.0);
+			int outermost = 0;
+			for (int i = 1; i < kN; ++i) {
+				const double x = v[static_cast<size_t>(i)];
+				if (x >= v[static_cast<size_t>(i - 1)] && x >= v[static_cast<size_t>(i + 1)] && x >= floorValue) {
+					outermost = i;
+				}
+			}
+			if (v[kN] >= v[kN - 1] && v[kN] >= floorValue) {
+				outermost = kN;
+			}
+			INFO("mode " << mode << " k " << k << ": hold " << holdPos << ", outermost " << static_cast<double>(outermost) / kN << ", global at "
+			             << static_cast<double>(atGlobal) / kN);
+			CHECK(static_cast<double>(holdPos) == doctest::Approx(static_cast<double>(outermost) / kN).epsilon(0.01).scale(1.0));
+			CHECK(std::fabs(static_cast<double>(holdPos) - static_cast<double>(outermost) / kN) < 0.004);
+			// THE HELD LEVEL stays within kHoldWithinDb of the global maximum.
+			CHECK(dbOf(v[static_cast<size_t>(std::lround(static_cast<double>(holdPos) * kN))]) >= dbOf(global) - smooth::kHoldWithinDb - 0.05);
+			later += (outermost - atGlobal > kN / 20) ? 1 : 0;
+		}
+	}
+	CHECK(later >= 3);
+	MESSAGE("cells (of 18) where the hold sits later than the global maximum: " << later);
 }

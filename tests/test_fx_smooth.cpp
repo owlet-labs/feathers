@@ -699,8 +699,8 @@ namespace {
 
 #if defined(__linux__) && defined(__x86_64__)
 TEST_CASE("HP Wet and Sub Thru at their defaults leave the shaper's render to the bit (hash re-pinned at the level law change: knee at 0 dBFS, peak-normalised curve)") {
-	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 3120022950355029911ull);
-	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 3634392610021785892ull);
+	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 5368033667105289264ull);
+	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 5727080879370042596ull);
 }
 #endif
 
@@ -1318,9 +1318,10 @@ TEST_CASE("the ceiling sits at the knee, 0 dBFS over the gain, in every zone tha
 		const smooth::Picture poly = smooth::pictureOf(settingsWith(7, 0.5f, d, 0.0f));
 		const smooth::Picture fm = smooth::pictureOf(settingsWith(2, 0.5f, d, 0.0f));
 		INFO("drive knob " << d << ", gain " << g);
-		CHECK(cheby.ceilingInput == doctest::Approx(1.0 / g).epsilon(1e-6));
-		CHECK(warm.ceilingInput == doctest::Approx(1.0 / g).epsilon(1e-6));
-		CHECK(poly.ceilingInput == doctest::Approx(1.0 / g).epsilon(1e-6));
+		CHECK(cheby.ceilingInput == doctest::Approx(cheby.weights.holdPos / g).epsilon(1e-6));
+		CHECK(cheby.ceilingInputNeg == doctest::Approx(cheby.weights.holdNeg / g).epsilon(1e-6));
+		CHECK(warm.ceilingInput == doctest::Approx(warm.weights.holdPos / g).epsilon(1e-6));
+		CHECK(poly.ceilingInput == doctest::Approx(poly.weights.holdPos / g).epsilon(1e-6));
 		CHECK(cheby.clips);
 		CHECK(poly.clips);
 		CHECK_FALSE(fm.clips);
@@ -1335,7 +1336,7 @@ TEST_CASE("the ceiling sits at the knee, 0 dBFS over the gain, in every zone tha
 		};
 		for (const smooth::Picture* pic : { &cheby, &poly }) {
 			const int32_t held = std::min(static_cast<int32_t>(pic->weights.holdPos * 16777216.0f), kZeroDbfs - 1) * 128;
-			const float at = pic->ceilingInput * pic->weights.holdPos;
+			const float at = pic->ceilingInput; // already the hold over the gain
 			zoneInputAt(*pic, at * 0.99f, &under);
 			zoneInputAt(*pic, at * 1.01f, &over);
 			CHECK(under.zoneInput < held);
@@ -1345,7 +1346,8 @@ TEST_CASE("the ceiling sits at the knee, 0 dBFS over the gain, in every zone tha
 	// DRAGGING THE CEILING WRITES THE DRIVE THAT PUTS IT THERE — the inverse, round trip.
 	for (float c : { 0.26f, 0.5f, 0.8f, 1.0f, 1.8f, 6.0f }) {
 		smooth::Settings s = settingsWith(0, 0.5f, 0.0f, 0.0f);
-		s.drive = smooth::driveKnobForCeiling(0, c);
+		const float hold = smooth::pictureOf(s).weights.holdPos; // the ceiling is where the curve saturates
+		s.drive = smooth::driveKnobForCeiling(0, c, hold);
 		CHECK(smooth::pictureOf(s).ceilingInput == doctest::Approx(c).epsilon(1e-4));
 	}
 	// Past the fader's travel it stops at the top (4x); a ceiling at infinity is the bottom.
@@ -1379,7 +1381,7 @@ TEST_CASE("Drive at 0 is silence into the shaper and an off-scale ceiling; at 1 
 	smooth::Settings top = settingsWith(0, 0.5f, 0.0f, 0.0f);
 	top.drive = 1.0f;
 	CHECK(smooth::pictureOf(top).driveGain == 4.0f);
-	CHECK(smooth::pictureOf(top).ceilingInput == 0.25f);
+	CHECK(smooth::pictureOf(top).ceilingInput == smooth::pictureOf(top).weights.holdPos * 0.25f);
 	CHECK(smooth::ceilingInputOf(7, 1.0f) == 0.25f);
 }
 

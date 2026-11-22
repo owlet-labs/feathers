@@ -871,31 +871,45 @@ PeakInfo peakInfoOf(int zone, const Coefficients& w, float gain, double sampleRa
 	const auto curve = [&c, zone](int32_t q) { return static_cast<double>(shapeSample(q, 1.0f, zone, c, 0.0f, 0.0f, 0.0f)); };
 	PeakInfo info;
 	if (zone == 0 || zone == 1 || zone == 7) {
-		// THE HOLD: where |f| peaks on each side of the input, on a grid and then a finer look at its best point.
+		// THE HOLD: on each side of the input, the OUTERMOST local maximum of |f| within kHoldWithinDb of that side's global
+		// maximum, so saturation starts as late as it can while the held level stays within that many dB of the peak the
+		// factor normalises (which is the global one). A local maximum is a grid point at least as large as both its
+		// neighbours (the end point x = 1 counts when it is at least as large as the one before it). Found on a grid, then
+		// a finer look around the chosen point for its top. If the global maximum IS the outermost one, it is the hold.
 		const int kN = zone == 7 ? 1024 : 512;
 		const int32_t step = kUnit / kN;
 		int32_t bestAt[2] = { 0, 0 };
-		double best[2] = { -1.0, -1.0 };
-		for (int side = 0; side < 2; ++side) {
-			const int32_t sign = side == 0 ? 1 : -1;
+		std::array<double, 1025> side {};
+		for (int s = 0; s < 2; ++s) {
+			const int32_t sign = s == 0 ? 1 : -1;
+			double global = 0.0;
 			for (int i = 0; i <= kN; ++i) {
-				const int32_t q = std::min(i * step, kUnit);
-				const double v = std::fabs(curve(sign * q));
-				if (v > best[side]) {
-					best[side] = v;
-					bestAt[side] = q;
+				side[static_cast<size_t>(i)] = std::fabs(curve(sign * std::min(i * step, kUnit)));
+				global = std::max(global, side[static_cast<size_t>(i)]);
+			}
+			const double floorValue = global * std::pow(10.0, -kHoldWithinDb / 20.0);
+			int chosen = 0;
+			for (int i = 0; i <= kN; ++i) {
+				const double v = side[static_cast<size_t>(i)];
+				const bool leftOk = i == 0 || v >= side[static_cast<size_t>(i - 1)];
+				const bool rightOk = i == kN || v >= side[static_cast<size_t>(i + 1)];
+				if (leftOk && rightOk && v >= floorValue) {
+					chosen = i; // the last one that qualifies is the outermost
 				}
 			}
-			const int32_t centre = bestAt[side];
+			// THE TOP of the chosen bump, a step either side in 32 pieces.
+			int32_t top = chosen * step;
+			double topValue = side[static_cast<size_t>(chosen)];
 			const int32_t fine = std::max(step / 32, 1);
 			for (int j = -32; j <= 32; ++j) {
-				const int32_t q = std::clamp(centre + j * fine, 0, kUnit);
+				const int32_t q = std::clamp(chosen * step + j * fine, 0, kUnit);
 				const double v = std::fabs(curve(sign * q));
-				if (v > best[side]) {
-					best[side] = v;
-					bestAt[side] = q;
+				if (v > topValue) {
+					topValue = v;
+					top = q;
 				}
 			}
+			bestAt[s] = top;
 		}
 		info.holdPos = static_cast<float>(bestAt[0]) / static_cast<float>(kUnit);
 		info.holdNeg = static_cast<float>(bestAt[1]) / static_cast<float>(kUnit);
@@ -970,10 +984,6 @@ CoefficientTargets targetsOf(int zone, float posInZone, const TwistParams& twist
 	return { left.c1, left.c3, left.c5, left.c7, left.c9, right.c3, right.c5, right.c7, right.c9 };
 }
 
-namespace {
-// THE KNEE OF `shapeSample`, as an input level: `<< 7` saturates at driven = 2^24 (1.0 here), in every zone that saturates.
-float ceilingReferenceOf(int) noexcept { return 1.0f; }
-} // namespace
 
 Picture pictureOf(const Settings& settings) noexcept {
 	const FirmwareControls fc = firmwareControlsOf(settings);
@@ -990,7 +1000,8 @@ Picture pictureOf(const Settings& settings) noexcept {
 	p.weights.holdPos = level.holdPos;
 	p.weights.holdNeg = level.holdNeg;
 	p.clips = p.zone == 0 || p.zone == 1 || p.zone == 7;
-	p.ceilingInput = ceilingOfGain(p.zone, p.driveGain);
+	p.ceilingInput = ceilingOfGain(p.zone, p.driveGain, p.weights.holdPos);
+	p.ceilingInputNeg = ceilingOfGain(p.zone, p.driveGain, p.weights.holdNeg);
 	return p;
 }
 
@@ -1001,24 +1012,24 @@ float transferAt(const Picture& picture, float input) noexcept {
 	return static_cast<float>(shaped) / kQ31PerUnit;
 }
 
-float ceilingOfGain(int zone, float gain) noexcept {
-	return gain > 0.0f ? ceilingReferenceOf(zone) / gain : std::numeric_limits<float>::infinity();
+float ceilingOfGain(int, float gain, float hold) noexcept {
+	return gain > 0.0f ? hold / gain : std::numeric_limits<float>::infinity();
 }
 
-float driveKnobForCeiling(int zone, float ceilingInput) noexcept {
+float driveKnobForCeiling(int, float ceilingInput, float hold) noexcept {
 	if (!(ceilingInput > 0.0f) || std::isinf(ceilingInput)) {
 		return ceilingInput > 0.0f ? 0.0f : 1.0f; // +inf is silence; zero (or NaN) asks for all the gain there is
 	}
-	const float gain = std::clamp(ceilingReferenceOf(zone) / ceilingInput, 0.0f, 4.0f);
+	const float gain = std::clamp(hold / ceilingInput, 0.0f, 4.0f);
 	// `driveGainOf` of the fader's q31 is 4v², so the fader is √gain / 2.
 	return std::clamp(0.5f * std::sqrt(gain), 0.0f, 1.0f);
 }
 
-float ceilingInputOf(int zone, float driveKnob) noexcept {
+float ceilingInputOf(int zone, float driveKnob, float hold) noexcept {
 	// THE SAME ROAD AS `firmwareControlsOf` → `driveGainOf`, so the drawn ceiling is the one the shaper runs at.
 	Settings s;
 	s.drive = driveKnob;
-	return ceilingOfGain(zone, driveGainOf(firmwareControlsOf(s).drive));
+	return ceilingOfGain(zone, driveGainOf(firmwareControlsOf(s).drive), hold);
 }
 
 std::array<float, kHarmonicCount> harmonicsOf(const Picture& picture, float level) noexcept {

@@ -22,6 +22,7 @@
 // THE SMOOTH SHAPER — the reference's sine shaper, ported.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/smooth/smooth.h"
@@ -693,7 +694,7 @@ namespace {
 }
 } // namespace
 
-#if defined(__linux__) && defined(__x86_64__)
+#if FEATHERS_PINNED_PLATFORM
 TEST_CASE("HP Wet and Sub Thru at their defaults leave the shaper's render to the bit (hash pinned from before they existed)") {
 	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 12829206850035549236ull);
 	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 17693863569930900104ull);

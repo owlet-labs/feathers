@@ -16,6 +16,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/owltt/owltt.h"
@@ -2271,7 +2272,7 @@ TEST_CASE("LQ: at the default stereo settings OWLTT renders bit-identically to t
 		const uint64_t h = lqRenderHash(v.s);
 		const std::string seen = std::string(v.name) + " hash " + std::to_string(h);
 		MESSAGE(seen);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 		CHECK(h == v.hash);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned
@@ -2571,7 +2572,7 @@ TEST_CASE("LR: at Width 100% everywhere OWLTT renders bit-identically to the bui
 		const uint64_t h = lqRenderHash(v.s);
 		const std::string seen = std::string(v.name) + " hash " + std::to_string(h);
 		MESSAGE(seen);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 		CHECK(h == v.hash);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned
@@ -2889,7 +2890,7 @@ TEST_CASE("NB: at Drive 0 dB OWLTT renders bit-identically to the build before t
 	heavy.upDownSkew = 0.8f;
 	const uint64_t hBase = lqRenderHash(base);
 	const uint64_t hHeavy = lqRenderHash(heavy);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 	CHECK(hBase == 9074996434631607774ull);
 	CHECK(hHeavy == 16577964413036874256ull);
 #else
@@ -3023,7 +3024,7 @@ TEST_CASE("ND: at Lookahead Off OWLTT renders bit-identically to the build befor
 	heavy.upDownSkew = 0.8f;
 	const uint64_t hBase = lqRenderHash(base);
 	const uint64_t hHeavy = lqRenderHash(heavy);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 	CHECK(hBase == 9074996434631607774ull);
 	CHECK(hHeavy == 16577964413036874256ull);
 #else

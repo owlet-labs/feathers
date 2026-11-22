@@ -20,6 +20,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/delay/delay.h"
@@ -2007,7 +2008,7 @@ TEST_CASE("Ping-Pong Off and Stereo render exactly what Off and On rendered befo
 			if (h != kBefore[m][pp]) {
 				MESSAGE("mode " << m << " pingpong " << pp << " hash " << h);
 			}
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 			CHECK(h == kBefore[m][pp]);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned
@@ -2583,7 +2584,7 @@ TEST_CASE("Reverse is appended: every other mode renders exactly what it rendere
 			if (h != kBefore[m][variant]) {
 				MESSAGE("mode " << m << " variant " << variant << " hash " << h);
 			}
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 			CHECK(h == kBefore[m][variant]);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned
@@ -2693,7 +2694,7 @@ TEST_CASE("MD: where nothing moves, Multi-Tap and Reverse render exactly what th
 		if (h != kBefore[a]) {
 			MESSAGE("arrangement " << a << " hash " << h);
 		}
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 		CHECK(h == kBefore[a]);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned

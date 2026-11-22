@@ -16,6 +16,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/shaper/shaper.h"
@@ -5817,7 +5818,7 @@ TEST_CASE("II: the pad's travel reaches every extra's phase — each moves its o
 
 
 // GUARDED AS ITS ONE CALLER IS — the digests are pinned only where they were measured.
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 /// A DIGEST OF WHAT THE SHAPER PLAYS: FNV-1a over the bits of 48 blocks of a hot two-tone left and a quiet right.
 namespace {
 uint64_t faDigest(const shp::Settings& settings) {
@@ -5894,7 +5895,7 @@ TEST_CASE("FA: at their defaults the input filters and the Mix leave the shaper 
 	// shaped, thresholded position; one with Emphasis, two extras and Bloom on; the Knee-0 bypass with a
 	// trim). Float bits depend on the platform's libm, so they are pinned where they were measured, as
 	// `vox-voice` and `flagship` pin theirs.
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 	const uint64_t kBeforeFa[] = { 0xffbf8d66ddf9889bull, 0xa4cbeab5fa6e699full, 0x87c9999de2f2b797ull,
 		                           0x4f21df927d30cc29ull };
 	const std::vector<shp::Settings> settings = faDigestSettings();

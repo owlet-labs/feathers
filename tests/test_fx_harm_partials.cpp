@@ -20,6 +20,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/harm/harm.h"
@@ -609,7 +610,7 @@ TEST_CASE("a default patch renders the golden bits the device rendered before th
 	}
 	// A BIT-EXACT GOLDEN, so it holds only where it was taken: Linux x86-64 (libm and codegen differ elsewhere), as the
 	// other bake-identity cases are pinned (vox-voice, flagship). The value tests above hold the behaviour on every platform.
-#if defined(__linux__) && defined(__x86_64__)
+#if FEATHERS_PINNED_PLATFORM
 	CHECK(combined == 2828392639871082162ull);
 #else
 	(void)combined;

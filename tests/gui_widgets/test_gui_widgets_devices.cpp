@@ -41277,7 +41277,9 @@ TEST_CASE("hardening: the pattern lane's, the terrain's and the EQ graph's polls
 #endif
 		// AND THE SEAM IS NOT BLIND: a real change is heard, by the same polls.
 		f.deviceHost.setField(id, pt::at(0, pt::Field::TransposeSteps), 3.0f);
-		CHECK((lane.poll() | terrain.poll()));
+		const bool laneHeard = lane.poll(); // both polled: `|` was the same without short-circuiting, and newer clang flags it
+		const bool terrainHeard = terrain.poll();
+		CHECK((laneHeard || terrainHeard));
 	}
 	{
 		namespace eq = feathers::fx::eq;

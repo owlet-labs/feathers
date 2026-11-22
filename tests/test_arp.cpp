@@ -1113,6 +1113,7 @@ constexpr size_t kPinnedCalls = 8153;
 constexpr uint64_t kPinnedHash = 12850714829338137184ull;
 
 TEST_CASE("arp: a long scripted run is pinned event for event — the guard for lifting the clock into a shared core") {
+	// PLATFORM-NEUTRAL: the clock, the event order and a float velocity built by basic IEEE arithmetic only; green on the macOS leg of the v0.2.1 release CI run.
 	// **A REFACTOR GUARD, NOT A SPEC** (terrain-arp design §20 step 0). The other cases restate the design; this one pins
 	// what the classic arp DID before its clock moved into `StepEmitter`, across every road at once — orders, octaves,
 	// swing, nudge, ties, latch, a scrub, a loop, a stop into the free clock, a Rate move, a disable — as one hash of

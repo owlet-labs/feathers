@@ -123,6 +123,7 @@ TEST_CASE("VALUES: tableSine interpolates by the sixteen bits under the top byte
 }
 
 TEST_CASE("VALUES: zoneOf, driveGainOf and saturatingQ31") {
+	// PLATFORM-NEUTRAL: integer Q31 arithmetic and basic float ops, no libm; green on the macOS leg of the v0.2.1 release CI run.
 	CHECK(smooth::zoneOf(0).index == 0);
 	CHECK(smooth::zoneOf(smooth::kZoneWidthQ31).index == 1);
 	CHECK(smooth::zoneOf(smooth::kOneQ31).index == 7);

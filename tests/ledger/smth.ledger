@@ -1,6 +1,6 @@
 # Schema ledger for smth (backlog JF, split per device by NY.1). Checked by tests/test_state_ledger.cpp, whose banner says what each
 # difference means: a new line is pasted, a harmless change is refreshed (FEATHERS_LEDGER_WRITE=1), a MEANING change is a new key or a schema bump.
-device smth - schema=1
+device smth - schema=2
 param smth smooth_enabled unit=choice choice=Off|On
 param smth smooth_poly unit=choice choice=Off|On
 param smth smooth_drive_fader unit=fader min=0 max=1 stepped=0

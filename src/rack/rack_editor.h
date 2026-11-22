@@ -36,6 +36,7 @@
 #include "plugin/ui/macro_slot.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/notify_tray.h"
+#include "plugin/ui/fold_header.h"
 #include "plugin/ui/rail.h"
 #include "plugin/ui/route_list.h"
 #include "plugin/ui/source_arm.h"
@@ -251,6 +252,18 @@ public:
 	std::function<void(bool)> onMacrosCollapsedChanged;
 	/// The column's rail, for a case: its toggle, its width.
 	[[nodiscard]] ui::Rail& macrosRailForTest() const;
+	/// **THE TWO FOLDS INSIDE THE COLUMN, TOLD APART**: the MACROS (the eight knobs and their arms) and the INSPECTOR (Mix and Gain, and the route
+	/// list). Each has its own header row and its own patch key (`macrosColumn`, `inspectorColumn`). Both folded is the strip `macrosCollapsed`
+	/// names, and unfolding the strip opens both. True when the call changed anything; a restore says no word.
+	[[nodiscard]] bool macrosFolded() const;
+	[[nodiscard]] bool inspectorFolded() const;
+	bool setMacrosFolded(bool folded);
+	bool setInspectorFolded(bool folded);
+	[[nodiscard]] ui::FoldHeader& macrosHeaderForTest() const { return *macrosHeader_; }
+	[[nodiscard]] ui::FoldHeader& inspectorHeaderForTest() const { return *inspectorHeader_; }
+	/// A fold header's row, and the gap under it (the inspector's and the macros' are stacked, each over its own half).
+	static constexpr float kFoldRow = 12.0f;
+	static constexpr float kFoldGap = 2.0f;
 	/// HOW TALL THE COLUMN IS AT LEAST, for a window with or without the chain's Mix and Gain and the settings door —
 	/// what the default height has to clear. `columnNeeded` is the one arithmetic the layout and the cases both ask. The ROUTES list takes what is left under it.
 	[[nodiscard]] static float columnNeeded(bool levels, bool door) noexcept;
@@ -260,6 +273,7 @@ public:
 	[[nodiscard]] visage::Bounds levelBoundsForTest(size_t i) const { return outerLevelKnobs_[i]->bounds(); }
 	[[nodiscard]] size_t levelCountForTest() const noexcept { return outerLevelKnobs_.size(); }
 	[[nodiscard]] visage::Bounds columnRuleForTest() const noexcept { return columnRule_; }
+	[[nodiscard]] bool levelShownForTest(size_t i) const { return outerLevelKnobs_[i]->isVisible(); }
 	[[nodiscard]] visage::Bounds columnBackdropForTest() const noexcept;
 	[[nodiscard]] visage::Frame* columnBackdropFrameForTest() const noexcept;
 
@@ -800,8 +814,18 @@ private:
 	std::unique_ptr<ui::RouteList> routes_;
 	/// THE MACROS COLUMN'S RAIL (backlog QN): its head row's toggle and heading when open, the whole strip when closed.
 	std::unique_ptr<ui::Rail> macrosRail_;
-	/// Show or hide everything the column holds, for its fold.
+	/// Show or hide everything the column holds, for its folds: the strip hides the lot, the inspector fold hides Mix and Gain and the
+	/// route list, the macros fold hides the macros and their arms.
 	void showColumn(bool shown);
+	std::unique_ptr<ui::FoldHeader> macrosHeader_;
+	std::unique_ptr<ui::FoldHeader> inspectorHeader_;
+	/// WHILE THE EDITOR ITSELF MOVES THE RAIL (a restore, a header), the rail's own width hook must not write the patch back.
+	bool syncingFolds_ = false;
+	/// The folds as the column was last laid out for, so a change on the beat (a load) relays it.
+	bool foldsAppliedMacros_ = false;
+	bool foldsAppliedInspector_ = false;
+	/// Something moved a fold: derive the strip from the two, show what is shown, lay out, and tell the owner.
+	void foldsChanged();
 	std::unique_ptr<AddDeviceRow> addRow_;
 	/// THE DEVICE AN "Add before" WAS CHOSEN FOR, until its pick lands or its add menu closes. See
 	/// `addDeviceByTag` for why this is state rather than a captured argument (backlog CR).

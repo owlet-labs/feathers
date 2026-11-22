@@ -9450,7 +9450,7 @@ TEST_CASE("DG: after a reorder, a device's card reads ITS OWN readings through t
 	const auto owlttReadsItsOwn = [&] {
 		const size_t position = bridge.fxSlotOf(owlttId);
 		const float p = static_cast<float>(position);
-		REQUIRE(host.readingCountAt(owlttId) == 26); // the effective ratios (20..25), then ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
+		REQUIRE(host.readingCountAt(owlttId) == feathers::fx::owltt::Owltt::kReadingCount); // the effective ratios (20..25), then ten meters + 3 band lights + combined GR (backlog EL) + second-channel GR (LQ) + Key Track's note
 		CHECK(host.readingAt(owlttId, 0) == -1.0f - p);
 		CHECK(host.readingAt(owlttId, 3) == -10.0f - p);
 		CHECK(host.readingAt(owlttId, 6) == -4.0f - p);
@@ -27427,9 +27427,9 @@ TEST_CASE("SMOOTH SHAPER: the card's curve is the core at the card's settings, a
 		for (int i = 0; i < ui::SmoothPictureModel::kCurvePoints; i += 7) {
 			CHECK(m.curve[static_cast<size_t>(i)] == smth::transferAt(p, ui::SmoothPictureModel::inputAt(i)));
 		}
-		// THE CEILING'S x: 0.5 / drive for the Chebyshevs, 1 / drive for Poly and as the FM reference.
+		// THE CEILING'S x: the hold (where the curve saturates) over the drive; 1 over the drive for FM, as the reference.
 		const float g = smth::driveGainOf(smth::firmwareControlsOf(s).drive);
-		const float want = (mode == 0 ? 0.5f : 1.0f) / g;
+		const float want = p.weights.holdPos / g;
 		CHECK(curve->ceilingX() == doctest::Approx(curve->xOfInput(std::min(want, 1.0f))).epsilon(1e-5));
 		CHECK(curve->ceilingOffScale() == (want > 1.0f));
 	}
@@ -27445,29 +27445,34 @@ TEST_CASE("SMOOTH SHAPER: dragging the ceiling writes Drive, a double-click rese
 	const visage::Bounds plot = curve->plotBounds();
 	const float midY = plot.y() + plot.height() * 0.5f;
 
+	// THE HANDLE IS AT THE HOLD (where the curve saturates): the Chebyshev blend at the card's defaults holds early.
+	const float hold = smth::pictureOf(smoothSettingsOf(d)).weights.holdPos;
+	REQUIRE(hold > 0.05f);
+	REQUIRE(hold < 0.6f);
+
 	// A PRESS ON THE CURVE AWAY FROM THE HANDLE: nothing moves.
-	curve->processMouseDown(at(curve->xOfInput(0.1f), midY));
-	curve->processMouseUp(at(curve->xOfInput(0.1f), midY));
+	curve->processMouseDown(at(curve->xOfInput(0.8f), midY));
+	curve->processMouseUp(at(curve->xOfInput(0.8f), midY));
 	CHECK(d.f.deviceHost.fieldAt(d.device, drive) == 0.5f);
 
-	// GRAB THE CEILING (3579 at unity: input 0.5) AND PULL IT IN TO 0.25 — twice the drive, fader √2 / 2.
+	// GRAB THE CEILING (at the hold at unity) AND PULL IT IN TO HALF OF IT - twice the drive, fader √2 / 2.
 	REQUIRE(curve->grabsDrive({ curve->ceilingX(), midY }));
 	curve->processMouseDown(at(curve->ceilingX(), midY));
 	CHECK(curve->draggingForTest());
-	curve->processMouseDrag(at(curve->xOfInput(0.25f), midY));
-	curve->processMouseUp(at(curve->xOfInput(0.25f), midY));
+	curve->processMouseDrag(at(curve->xOfInput(0.5f * hold), midY));
+	curve->processMouseUp(at(curve->xOfInput(0.5f * hold), midY));
 	CHECK_FALSE(curve->draggingForTest());
 	const float dragged = d.f.deviceHost.fieldAt(d.device, drive);
-	CHECK(dragged == doctest::Approx(smth::driveKnobForCeiling(0, 0.25f)).epsilon(1e-3));
+	CHECK(dragged == doctest::Approx(smth::driveKnobForCeiling(0, 0.5f * hold, hold)).epsilon(1e-3));
 	CHECK(dragged == doctest::Approx(std::sqrt(2.0) / 2.0).epsilon(1e-3));
-	// AND THE PICTURE FOLLOWS: the ceiling is now drawn at 0.25.
+	// AND THE PICTURE FOLLOWS: the ceiling is now drawn at half the hold.
 	(void)card->updateContent();
-	CHECK(curve->ceilingX() == doctest::Approx(curve->xOfInput(0.25f)).epsilon(1e-3));
+	CHECK(curve->ceilingX() == doctest::Approx(curve->xOfInput(0.5f * hold)).epsilon(1e-3));
 
 	// THE MIRROR LINE ON THE NEGATIVE SIDE IS THE SAME HANDLE.
-	curve->processMouseDown(at(curve->xOfInput(-0.25f), midY));
-	curve->processMouseDrag(at(curve->xOfInput(-0.5f), midY));
-	curve->processMouseUp(at(curve->xOfInput(-0.5f), midY));
+	curve->processMouseDown(at(curve->xOfInput(-0.5f * hold), midY));
+	curve->processMouseDrag(at(curve->xOfInput(-hold), midY));
+	curve->processMouseUp(at(curve->xOfInput(-hold), midY));
 	CHECK(d.f.deviceHost.fieldAt(d.device, drive) == doctest::Approx(0.5f).epsilon(1e-4));
 
 	// A DOUBLE-CLICK ON THE HANDLE IS THE DEFAULT, as on every knob.
@@ -32546,7 +32551,7 @@ TEST_CASE("LQ: OWLTT's band meters read each channel's own gain reduction off th
 	const std::array<float, 3> second { 0.0f, -0.125f, -0.75f };
 	d.f.bridge.publishOwlttMeters(d.slot, first, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false,
 	                              { false, false, false }, 3.0f, &second);
-	REQUIRE(host.readingCountAt(d.device) == 26); // `Owltt::kReadingCount` since the ratio readout (20 since Key Track (17 since LQ)
+	REQUIRE(host.readingCountAt(d.device) == feathers::fx::owltt::Owltt::kReadingCount); // `Owltt::kReadingCount` since the ratio readout (20 since Key Track (17 since LQ)
 	for (size_t b = 0; b < 3; ++b) {
 		CAPTURE(b);
 		CHECK(host.readingAt(d.device, b) == first[b]);

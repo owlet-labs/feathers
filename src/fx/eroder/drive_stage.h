@@ -42,6 +42,10 @@ namespace feathers::fx::eroder {
 ///
 /// No allocation; a frame at a time, so a host that cuts its blocks anywhere gets the same bits.
 inline constexpr double kDcGlideSeconds = 0.010;
+/// **THE AMOUNT'S GLIDE**: the quantities the Drive's Amount sets (the gain into the curve and its make-up, the holds, the slew rates) move to a
+/// new value by one pole, a frame at a time, with this time constant, so an Amount that is modulated or automated does not step once a control
+/// block. A time, not a count of frames, so a host's block size and the stage's rate do not move it.
+inline constexpr double kDriveAmountGlideSeconds = kDustSmoothingSeconds;
 
 /// **WHERE THE SONG PUTS THE ROTATION LFO — THE HOUSE RULE FOR A FREE LFO** (Phaser's Free rate, automod's `songPeriod`): on a PLAYING
 /// transport that reports a position the phase FOLLOWS THE SONG, `position * rate` on the seconds timeline, by the song's own movement
@@ -85,6 +89,7 @@ public:
 		hostRate_ = rate;
 		slew_.prepare(rate);
 		slewSet_ = false; // the slew was just turned off: the next settings turn it on
+		amountGlide_ = 1.0 - std::exp(-1.0 / (kDriveAmountGlideSeconds * rate));
 		reset();
 	}
 
@@ -99,10 +104,17 @@ public:
 		dcL_ = dcR_ = 0.0f;
 		fullL_ = fullR_ = 0.0f;
 		dcNow_ = settings_.dcAmount;
+		snapAmounts();
 		followPower_ = 0.0f;
 		trim_.reset();
 		rotPhase_ = 0.0;
 	}
+
+	/// TEST SEAMS: the Amount's quantities as the stage runs them this frame (they glide to `settings()`'s).
+	[[nodiscard]] double gainNowForTest() const noexcept { return gainNow_; }
+	[[nodiscard]] double normNowForTest() const noexcept { return normNow_; }
+	[[nodiscard]] double holdFramesNowForTest(int channel) const noexcept { return channel == 0 ? holdLNow_ : holdRNow_; }
+	[[nodiscard]] double slewHzNowForTest(int channel) const noexcept { return channel == 0 ? slewHzNow_ : slewHzRightNow_; }
 
 	/// WHERE THE SONG PLACES THE ROTATION LFO (turns), from the control tick; the stage advances it by its own rate a frame at a time.
 	void placeRotation(double phase) noexcept { rotPhase_ = phase; }
@@ -135,23 +147,15 @@ public:
 		rotInc_ = settings.rateHz > 0.0f && hostRate_ > 0.0 ? static_cast<double>(settings.rateHz) / hostRate_ : 0.0;
 		if (fresh || !running(settings)) {
 			dcNow_ = settings.dcAmount; // a stage that starts from nothing starts at its amount; a running one glides to it
+			snapAmounts();              // and so do the Amount's quantities
+		}
+		if (settings.mode != DriveMode::Slew && settings.mode != DriveMode::Lopside) {
+			// Not a slew: nothing hears the rate, so it is set at once (the glide is for the Types that run on it).
+			slewHzNow_ = static_cast<double>(settings.slewHz);
+			slewHzRightNow_ = static_cast<double>(settings.slewHzRight);
 		}
 		if (running(settings)) {
-			if (settings.slewHz != slewHz_ || settings.slewHzRight != slewHzRight_ || settings.slewCurve != slewCurve_ ||
-			    settings.slewBalance != slewBalance_ || !slewSet_) {
-				slewHz_ = settings.slewHz;
-				slewHzRight_ = settings.slewHzRight;
-				slewCurve_ = settings.slewCurve;
-				slewBalance_ = settings.slewBalance;
-				slewSet_ = true;
-				SlewSettings slew;
-				slew.on = true;
-				slew.hz = slewHz_;
-				slew.hzRight = slewHzRight_ > 0.0f ? slewHzRight_ : -1.0f; // (a hand-built settings without a right rate has one rate)
-				slew.curve = slewCurve_;
-				slew.balance = slewBalance_;
-				slew_.set(slew);
-			}
+			aimSlew();
 		}
 	}
 
@@ -189,6 +193,61 @@ public:
 	}
 
 private:
+	/// THE AMOUNT'S QUANTITIES START AT THEIR TARGETS (a stage from rest, another Type, a reset).
+	void snapAmounts() noexcept {
+		const DriveSettings& s = settings_;
+		gainNow_ = static_cast<double>(s.gain);
+		normNow_ = static_cast<double>(s.norm);
+		holdLNow_ = s.crushHoldFrames;
+		holdRNow_ = rightHold(s);
+		slewHzNow_ = static_cast<double>(s.slewHz);
+		slewHzRightNow_ = static_cast<double>(s.slewHzRight);
+	}
+	/// ONE POLE TOWARD A TARGET, snapped to it within a millionth (relative, floored at 1): a settled stage holds the target's own bits.
+	static void approach(double& now, double target, double coefficient) noexcept {
+		if (now == target) {
+			return;
+		}
+		now += (target - now) * coefficient;
+		if (std::abs(target - now) <= 1.0e-6 * std::max(1.0, std::abs(target))) {
+			now = target;
+		}
+	}
+	/// THE SLEW'S SETTINGS FROM THE RATES NOW (redone only when one moved, or the curve or balance did).
+	void aimSlew() noexcept {
+		const DriveSettings& s = settings_;
+		const auto hz = static_cast<float>(slewHzNow_);
+		const auto hzRight = static_cast<float>(slewHzRightNow_);
+		if (hz == slewHz_ && hzRight == slewHzRight_ && s.slewCurve == slewCurve_ && s.slewBalance == slewBalance_ && slewSet_) {
+			return;
+		}
+		slewHz_ = hz;
+		slewHzRight_ = hzRight;
+		slewCurve_ = s.slewCurve;
+		slewBalance_ = s.slewBalance;
+		slewSet_ = true;
+		SlewSettings slew;
+		slew.on = true;
+		slew.hz = slewHz_;
+		slew.hzRight = slewHzRight_ > 0.0f ? slewHzRight_ : -1.0f; // (a hand-built settings without a right rate has one rate)
+		slew.curve = slewCurve_;
+		slew.balance = slewBalance_;
+		slew_.set(slew);
+	}
+	/// ONE FRAME OF THE GLIDE.
+	void glideAmounts(bool slewMode) noexcept {
+		const DriveSettings& s = settings_;
+		approach(gainNow_, static_cast<double>(s.gain), amountGlide_);
+		approach(normNow_, static_cast<double>(s.norm), amountGlide_);
+		approach(holdLNow_, s.crushHoldFrames, amountGlide_);
+		approach(holdRNow_, rightHold(s), amountGlide_);
+		if (slewMode) {
+			approach(slewHzNow_, static_cast<double>(s.slewHz), amountGlide_);
+			approach(slewHzRightNow_, static_cast<double>(s.slewHzRight), amountGlide_);
+			aimSlew();
+		}
+	}
+
 	/// Not run: at the bottom of Drive, or with none of the stage in the signal.
 	[[nodiscard]] static bool running(const DriveSettings& s) noexcept { return s.driven && s.mix > 0.0f; }
 
@@ -220,21 +279,23 @@ private:
 
 	void run(float& left, float& right) noexcept {
 		const DriveSettings& s = settings_;
+		glideAmounts(s.mode == DriveMode::Slew || s.mode == DriveMode::Lopside);
+		const double holdL = holdLNow_;
 		if (s.mode == DriveMode::Crush) {
 			// HELD FOR A TIME, ROUNDED TO A STEP. A hold of one frame is every frame. EACH SIDE HAS ITS OWN CLOCK (the Spread detunes them; at 0 they
 			// count alike). KEYED, the edge is placed on the fraction of a sample (`holdEdge`).
 			crushPhaseL_ += 1.0;
 			crushPhaseR_ += 1.0;
-			const double holdR = rightHold(s);
+			const double holdR = holdRNow_;
 			const float oldL = crushL_;
 			const float oldR = crushR_;
 			float overL = -1.0f;
 			float overR = -1.0f;
 			const float inL = left;
 			const float inR = right;
-			if (crushPhaseL_ >= s.crushHoldFrames) {
-				overL = static_cast<float>(crushPhaseL_ - s.crushHoldFrames);
-				crushPhaseL_ -= s.crushHoldFrames;
+			if (crushPhaseL_ >= holdL) {
+				overL = static_cast<float>(crushPhaseL_ - holdL);
+				crushPhaseL_ -= holdL;
 				crushL_ = std::round(atEdge(s.keyed, inL, inPrevL_, overL) / s.crushStep) * s.crushStep;
 			}
 			if (crushPhaseR_ >= holdR) {
@@ -252,7 +313,7 @@ private:
 			// HELD FOR A TIME, NOT ROUNDED. Shape 0 is the held value; Shape 1 a straight line from the previous held
 			// value to the current one across the hold (a first-order hold: it lags by one hold period); between,
 			// the two outputs blended. Each side has its own clock, as in Crush.
-			const double holdR = rightHold(s);
+			const double holdR = holdRNow_;
 			crushPhaseL_ += 1.0;
 			crushPhaseR_ += 1.0;
 			float oldOutL = 0.0f;
@@ -261,12 +322,12 @@ private:
 			float overR = -1.0f;
 			const float inL = left;
 			const float inR = right;
-			if (crushPhaseL_ >= s.crushHoldFrames) {
+			if (crushPhaseL_ >= holdL) {
 				if (s.keyed) {
-					oldOutL = decimateOut(s, crushPhaseL_, s.crushHoldFrames, prevL_, crushL_);
+					oldOutL = decimateOut(s, crushPhaseL_, holdL, prevL_, crushL_);
 				}
-				overL = static_cast<float>(crushPhaseL_ - s.crushHoldFrames);
-				crushPhaseL_ -= s.crushHoldFrames;
+				overL = static_cast<float>(crushPhaseL_ - holdL);
+				crushPhaseL_ -= holdL;
 				prevL_ = crushL_;
 				crushL_ = atEdge(s.keyed, inL, inPrevL_, overL);
 			}
@@ -281,7 +342,7 @@ private:
 			}
 			inPrevL_ = inL;
 			inPrevR_ = inR;
-			const float outL = decimateOut(s, crushPhaseL_, s.crushHoldFrames, prevL_, crushL_);
+			const float outL = decimateOut(s, crushPhaseL_, holdL, prevL_, crushL_);
 			const float outR = decimateOut(s, crushPhaseR_, holdR, prevR_, crushR_);
 			left = s.keyed && overL >= 0.0f ? holdEdge(oldOutL, outL, overL) : outL;
 			right = s.keyed && overR >= 0.0f ? holdEdge(oldOutR, outR, overR) : outR;
@@ -296,9 +357,9 @@ private:
 		const float lIn = left;
 		const float rIn = right;
 		const DriveMode mode = s.mode;
-		const float gain = s.gain;
+		const auto gain = static_cast<float>(gainNow_);
 		const float shape = s.shape;
-		const float norm = s.norm;
+		const auto norm = static_cast<float>(normNow_);
 		// THE PAUNCH TYPES' ANGLE: Shape's, plus the rotation LFO's turns (none when its rate is off). The LFO advances a frame at a time.
 		Rotation rot;
 		if (driveIsPaunchOdd(mode) || driveIsPaunchLaw(mode)) {
@@ -432,6 +493,15 @@ private:
 	WidthTrim trim_ {};
 	bool trimOn_ = true;
 	bool trimUnity_ = false;
+	/// THE AMOUNT'S QUANTITIES as they glide (`kDriveAmountGlideSeconds`), in double so that they land on the target's bits and snap to it.
+	double amountGlide_ = 0.0;
+	double gainNow_ = 1.0;
+	double normNow_ = 1.0;
+	double holdLNow_ = 1.0;
+	double holdRNow_ = 1.0;
+	double slewHzNow_ = 0.0;
+	double slewHzRightNow_ = 0.0;
+	/// The rates the slew was last set to.
 	float slewHz_ = 0.0f;
 	float slewHzRight_ = 0.0f;
 	float slewCurve_ = 0.0f;

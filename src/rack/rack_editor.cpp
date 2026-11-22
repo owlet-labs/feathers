@@ -415,12 +415,20 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	};
 	macrosRail_ = std::move(rail);
 	// OPENED THE WAY THE PATCH LEFT IT, from the first frame (before the width hook, so nothing is written back or said); a
-	// later load is followed on the beat (`syncMacros`).
-	(void)macrosRail_->setCollapsed(engine_.macrosCollapsed());
+	// later load is followed on the beat (`syncMacros`). THE STRIP IS BOTH FOLDS AT ONCE: it is closed when the macros and the
+	// inspector are both folded, and its own toggle folds or unfolds the two together.
+	(void)macrosRail_->setCollapsed(engine_.macrosCollapsed() && engine_.inspectorCollapsed());
 	addChild(macrosRail_.get());
 	macrosRail_->onRailWidthChanged([this] {
+		if (syncingFolds_) {
+			return; // the editor moved it itself, from the two folds
+		}
 		const bool folded = macrosRail_->collapsed();
 		engine_.setMacrosCollapsed(folded); // PATCH STATE (QN): saved with the rack, as the canvas's fold is
+		engine_.setInspectorCollapsed(folded);
+		macrosHeader_->setFolded(folded);
+		inspectorHeader_->setFolded(folded);
+		foldsAppliedMacros_ = foldsAppliedInspector_ = folded;
 		showColumn(!folded);
 		resized();
 		redraw();
@@ -428,6 +436,25 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 			onMacrosCollapsedChanged(folded);
 		}
 	});
+	// THE TWO FOLD HEADERS, one per half of the column. A header's press flips its own half and leaves the other where it was.
+	macrosHeader_ = std::make_unique<ui::FoldHeader>("MACROS");
+	inspectorHeader_ = std::make_unique<ui::FoldHeader>("INSPECTOR");
+	macrosHeader_->setFolded(engine_.macrosCollapsed());
+	inspectorHeader_->setFolded(engine_.inspectorCollapsed());
+	foldsAppliedMacros_ = engine_.macrosCollapsed();
+	foldsAppliedInspector_ = engine_.inspectorCollapsed();
+	macrosHeader_->onToggle = [this] {
+		if (setMacrosFolded(!macrosFolded()) && notify_ != nullptr) {
+			notify_->say(macrosFolded() ? "Macros minimised" : "Macros shown");
+		}
+	};
+	inspectorHeader_->onToggle = [this] {
+		if (setInspectorFolded(!inspectorFolded()) && notify_ != nullptr) {
+			notify_->say(inspectorFolded() ? "Inspector minimised" : "Inspector shown");
+		}
+	};
+	addChild(macrosHeader_.get());
+	addChild(inspectorHeader_.get());
 
 	// **THE SELECTION OVER THIS EDITOR'S OWN CHAIN** (backlog OA, D1): which cards are selected, the verbs over them,
 	// the lasso from the bare lane, and the overlay that draws the lasso and the "N selected" pill above the cards.
@@ -774,6 +801,8 @@ void RackEditor::raiseTopLayers() {
 		for (auto& arm : macroArms_) {
 			raise(arm.get());
 		}
+		raise(macrosHeader_.get());
+		raise(inspectorHeader_.get());
 		raise(macrosRail_.get()); // the Macros toggle (QN) over the column's ground, and its folded strip over the cards
 		raise(&tips_); // a tooltip over everything the column holds
 	}
@@ -967,8 +996,9 @@ void RackEditor::syncMacros() {
 	// THE MACROS COLUMN FOLLOWS THE PATCH (backlog QN), on this beat like the macros: a load (or a fresh instance's first
 	// beat) folds or unfolds it as saved. Through the rail's own `setCollapsed`, so no notice is said; writing it back to
 	// the bridge is then a no-op.
-	if (macrosRail_ != nullptr && engine_.macrosCollapsed() != macrosRail_->collapsed()) {
-		(void)macrosRail_->setCollapsed(engine_.macrosCollapsed());
+	if (macrosRail_ != nullptr
+	    && (engine_.macrosCollapsed() != foldsAppliedMacros_ || engine_.inspectorCollapsed() != foldsAppliedInspector_)) {
+		foldsChanged();
 	}
 	macroDrawn_.resize(macroSlots_.size(), -1.0f);
 	for (size_t i = 0; i < macroSlots_.size(); ++i) {
@@ -2251,7 +2281,7 @@ visage::Frame* RackEditor::columnBackdropFrameForTest() const noexcept { return 
 float RackEditor::columnNeeded(bool levels, bool door) noexcept {
 	// THE COLUMN'S HEIGHT, as `layOutColumn` stacks it: the pad, the door, the chain's Mix and Gain and the rule under
 	// them, four macro rows (knob and arm), the pad. With neither door nor Mix/Gain, the Macros toggle's own row first (QN).
-	float y = kPad + (!levels && !door ? kMacrosHeadHeight : 0.0f);
+	float y = kPad + 2.0f * (kFoldRow + kFoldGap); // the two fold headers, stacked, each over its half
 	if (door) {
 		y += ui::Knob::kHeight * 0.5f + kColumnGap;
 	}
@@ -2269,7 +2299,6 @@ float RackEditor::layOutColumn(float top) {
 	// THE RAIL (backlog QN): while open, just its TOGGLE's corner at the column's top right (the frame no larger than the
 	// toggle, so it takes no press meant for the door, the presets or a macro); while folded, the whole strip, when nothing
 	// else of the column is laid out. The column keeps its height: the first row leaves the corner free (`kMacrosToggleRoom`).
-	const bool headless = settingsDoor_ == nullptr && presets_ == nullptr && outerLevelKnobs_.empty();
 	if (macrosRail_ != nullptr) {
 		const bool folded = macrosRail_->collapsed();
 		if (folded) {
@@ -2285,9 +2314,7 @@ float RackEditor::layOutColumn(float top) {
 			return top + kMacrosHeadHeight;
 		}
 	}
-	// A COLUMN WITH NO DOOR ROW AND NO MIX/GAIN ROW opens on the macros, whose second cell's arm would stand under the
-	// toggle: that one shape gives the toggle a row of its own.
-	float y = top + kPad + (headless ? kMacrosHeadHeight : 0.0f);
+	float y = top + kPad;
 	if (columnBackdrop_ != nullptr) {
 		columnBackdrop_->setBounds(0.0f, top, kLaneLeft - kPad * 0.5f, columnHeight);
 	}
@@ -2308,11 +2335,18 @@ float RackEditor::layOutColumn(float top) {
 		}
 		y += std::max(row, presets_ != nullptr ? static_cast<float>(presets_->height()) : 0.0f) + kColumnGap;
 	}
+	// THE FOLD HEADERS' WIDTH LEAVES THE STRIP'S TOGGLE ITS CORNER, so a column with no door row still has the toggle clear.
+	const float headerWidth = kMacroColumnWidth - kMacrosToggleRoom - kColumnGap;
 	columnRule_ = {};
 	if (columnBackdrop_ != nullptr) {
 		columnBackdrop_->setRule({});
 	}
-	if (!outerLevelKnobs_.empty()) {
+	// EACH HALF HAS ITS HEADER DIRECTLY OVER IT, stacked: INSPECTOR, then Mix and Gain and the rule under them; MACROS, then the eight
+	// macros. The route list (the inspector's too, and the only part of the column that takes what is left) stays at the column's foot and
+	// folds with the INSPECTOR header above. The headers' width leaves the strip's corner toggle its room.
+	inspectorHeader_->setBounds(x0, y, headerWidth, kFoldRow);
+	y += kFoldRow + kFoldGap;
+	if (!outerLevelKnobs_.empty() && !engine_.inspectorCollapsed()) {
 		for (size_t i = 0; i < outerLevelKnobs_.size(); ++i) {
 			outerLevelKnobs_[i]->setBounds(x0 + kMacroCellWidth * static_cast<float>(i), y, kMacroKnobWidth, kMacroKnobHeight);
 		}
@@ -2322,6 +2356,11 @@ float RackEditor::layOutColumn(float top) {
 			columnBackdrop_->setRule({ x0, y - top, kMacroColumnWidth, kRuleHeight });
 		}
 		y += kRuleHeight + kColumnGap;
+	}
+	macrosHeader_->setBounds(x0, y, headerWidth, kFoldRow);
+	y += kFoldRow + kFoldGap;
+	if (engine_.macrosCollapsed()) {
+		return y;
 	}
 	for (size_t i = 0; i < macroSlots_.size(); ++i) {
 		const float cx = x0 + kMacroCellWidth * static_cast<float>(i % kMacroColumns);
@@ -2537,29 +2576,83 @@ float RackEditor::laneLeft() const {
 bool RackEditor::macrosCollapsed() const { return macrosRail_ != nullptr && macrosRail_->collapsed(); }
 
 bool RackEditor::setMacrosCollapsed(bool collapsed) {
-	return macrosRail_ != nullptr && macrosRail_->setCollapsed(collapsed);
+	// THE STRIP IS BOTH FOLDS: this sets the two together, whatever either was.
+	if (macrosRail_ == nullptr || (engine_.macrosCollapsed() == collapsed && engine_.inspectorCollapsed() == collapsed)) {
+		return false;
+	}
+	engine_.setMacrosCollapsed(collapsed);
+	engine_.setInspectorCollapsed(collapsed);
+	foldsChanged();
+	return true;
+}
+
+bool RackEditor::macrosFolded() const { return engine_.macrosCollapsed(); }
+bool RackEditor::inspectorFolded() const { return engine_.inspectorCollapsed(); }
+
+bool RackEditor::setMacrosFolded(bool folded) {
+	if (macrosRail_ == nullptr || engine_.macrosCollapsed() == folded) {
+		return false;
+	}
+	engine_.setMacrosCollapsed(folded); // PATCH STATE, as the strip's was
+	foldsChanged();
+	return true;
+}
+
+bool RackEditor::setInspectorFolded(bool folded) {
+	if (macrosRail_ == nullptr || engine_.inspectorCollapsed() == folded) {
+		return false;
+	}
+	engine_.setInspectorCollapsed(folded);
+	foldsChanged();
+	return true;
+}
+
+void RackEditor::foldsChanged() {
+	const bool macros = engine_.macrosCollapsed();
+	const bool inspector = engine_.inspectorCollapsed();
+	const bool stripWas = macrosRail_->collapsed();
+	foldsAppliedMacros_ = macros;
+	foldsAppliedInspector_ = inspector;
+	macrosHeader_->setFolded(macros);
+	inspectorHeader_->setFolded(inspector);
+	// THE STRIP FOLLOWS THE TWO: closed exactly when both are. The editor moves it itself, so its width hook writes nothing back.
+	syncingFolds_ = true;
+	(void)macrosRail_->setCollapsed(macros && inspector);
+	syncingFolds_ = false;
+	showColumn(!(macros && inspector));
+	resized();
+	redraw();
+	if (onMacrosCollapsedChanged && stripWas != (macros && inspector)) {
+		onMacrosCollapsedChanged(macros && inspector);
+	}
 }
 
 ui::Rail& RackEditor::macrosRailForTest() const { return *macrosRail_; }
 
 void RackEditor::showColumn(bool shown) {
-	const auto show = [shown](visage::Frame* f) {
-		if (f != nullptr && f->isVisible() != shown) {
-			f->setVisible(shown);
+	const auto show = [](visage::Frame* f, bool on) {
+		if (f != nullptr && f->isVisible() != on) {
+			f->setVisible(on);
 		}
 	};
-	show(settingsDoor_.get());
-	show(presets_);
-	show(columnBackdrop_.get());
-	show(routes_.get());
+	// THE STRIP HIDES THE WHOLE COLUMN; OPEN, EACH HALF SHOWS ITS OWN: the inspector fold hides Mix and Gain and the route list, the macros
+	// fold hides the macros and their arms. Each header stays, so either half can be unfolded.
+	const bool inspector = shown && !engine_.inspectorCollapsed();
+	const bool macros = shown && !engine_.macrosCollapsed();
+	show(settingsDoor_.get(), shown);
+	show(presets_, shown);
+	show(columnBackdrop_.get(), shown);
+	show(macrosHeader_.get(), shown);
+	show(inspectorHeader_.get(), shown);
+	show(routes_.get(), inspector);
 	for (auto& k : outerLevelKnobs_) {
-		show(k.get());
+		show(k.get(), inspector);
 	}
 	for (auto& s : macroSlots_) {
-		show(s.get());
+		show(s.get(), macros);
 	}
 	for (auto& a : macroArms_) {
-		show(a.get());
+		show(a.get(), macros);
 	}
 }
 

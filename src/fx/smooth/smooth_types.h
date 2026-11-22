@@ -52,18 +52,18 @@
 // THE GAIN STAGING, WHICH IS THE PART THAT MATTERS
 // ---------------------------------------------------------------------------------------------------
 //
-// **1.0 HERE IS THE REFERENCE'S 0 dBFS = 2^24 = ONE_Q31 / 128** (the Eroder's convention, `kHeadroom`). A
-// full-level hardware voice enters the shaper at 2^24; a full-level Feathers voice enters the lane at
-// about 1.0 (MEASURED, design doc: 0.6-1.3 peak at default knobs), so the map puts one where the other
-// sits and no extra constant is needed. The shaper then has its OWN ceilings, and they are kept:
-//   - Zones 0/1 (the Chebyshev blends) saturate their input at 0.5 (-6.02 dB), the exact-harmonics
-//     point: `shiftSaturate(driven, 8)`. At Drive centre a full voice enters at x = 2,
-//     flat-topped BY DESIGN — the firmware's own comment says the harsh edge past it is the signal that
-//     you have overdriven the polynomial.
-//   - Zone 7 (Poly) saturates at 1.0 (0 dB): `shiftSaturate(driven, 7)`.
+// **1.0 HERE IS 0 dBFS = 2^24 = ONE_Q31 / 128** (the Eroder's convention, `kHeadroom`). A full-level voice
+// enters the shaper at about 1.0 (MEASURED, design doc: 0.6-1.3 peak at default knobs).
+//   - THE LEVEL LAW (`peakInfoOf`): every mode's curve peaks at exactly 0 dBFS when driven to its hold, by construction
+//     and with nothing after it. The curve is scaled by `Coefficients::norm`, which is 1 / the largest |output| left
+//     AFTER THE WET HIGHPASS for a full-scale sine (the curve's DC is taken off before it is normalised, so a lopsided
+//     curve peaks at 0 dBFS after the highpass too). This replaces the firmware's fixed +7.8 dB boost.
+//   - THE HOLD (zones 0, 1, 7, whose input saturates): the driven input is held at `holdPos` / `holdNeg`, the outermost
+//     local maximum of |f| within `kHoldWithinDb` of the side's global one
+//     (at most 1.0 = 0 dBFS at unity Drive; a curve that peaks earlier holds earlier). Below the
+//     hold the curve is unchanged. More Drive only pushes the input into the hold, so the output sits at the curve's
+//     peak. The FM zones do not saturate - their output is periodic in the driven phase - so they have no hold.
 //   - The drive clamps at the q31 ceiling, 128.0 here, which nothing reaches.
-// Chebyshev wet is `P(x) · 0.027 · 0.707 · ONE_Q31`, which is 2.443·P(x) in these units: +13.8 dB over
-// the dry below the clip. That is the firmware's level, not a mistake, and it is kept.
 //
 // ---------------------------------------------------------------------------------------------------
 // WHAT IS NOT THE FIRMWARE'S, EACH DELIBERATE (the design's departures table)
@@ -334,6 +334,8 @@ inline constexpr fx::TenantTraits kTraits {
 	.faceColumns = 3,
 	.tags = kTags,
 	.retiredKeys = kRetiredKeys,
+	// SCHEMA 2: the level law changed (knee at 0 dBFS, peak-normalised curve), so an old patch sounds different.
+	.schema = 2,
 	// ITS MIX IS ITS OWN (backlog NR, D2): named for the frame, made by the device, so the slot does not blend and a
 	// POST chain is a series insert after it.
 	.mixControl = static_cast<int>(Param::Mix),
@@ -374,7 +376,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "Gain into the shaper: silent at the bottom, unity at the centre, +12 dB at the top — or drag the "
-                "ceiling on the curve. A full voice already overdrives 3579 at unity; turn down for clean harmonics",
+                "ceiling on the curve. At unity a 0 dBFS input reaches the curve's peak and the shaped output peaks at 0 dBFS; "
+                "more Drive holds it there and never goes over",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -733,11 +736,39 @@ struct Coefficients {
 	int32_t c5q = 0;
 	int32_t c7q = 0;
 	int32_t c9q = 0;
+	/// THE PEAK NORMALISATION: 1 / max|f(x)| of this blend over x in [-1, 1] (`peakNormOf`), applied to the shaped
+	/// output; 1 until set.
+	float norm = 1.0f;
+	/// THE HOLD (zones 0, 1, 7): the driven input, in 0 dBFS = 1.0, past which the curve holds its value - where |f| peaks on
+	/// each side (`peakInfoOf`), so a driven signal sits at the curve's peak. 1 until set (the old knee).
+	float holdPos = 1.0f;
+	float holdNeg = 1.0f;
 	/// `updateQ31`, with the conversions saturating (see the header).
 	void updateQ31() noexcept;
 };
 /// `computeShaperWeightsFromPos` → `weightsToCoeffs`: the Chebyshev blend at a position.
 [[nodiscard]] Coefficients chebyshevCoefficientsOf(float posInZone, double gammaPhase) noexcept;
+/// HOW FAR BELOW THE GLOBAL PEAK THE HOLD MAY SIT: the hold is the outermost local maximum of |f| within this many dB of
+/// the side's global maximum, so saturation starts as late as it can and the held level stays that close to the peak.
+inline constexpr double kHoldWithinDb = 1.0;
+
+/// WHAT THE SHAPED CURVE NEEDS TO PEAK AT 0 dBFS: the factor, and the hold on each side.
+struct PeakInfo {
+	float norm = 1.0f;
+	float holdPos = 1.0f;
+	float holdNeg = 1.0f;
+};
+/// THE LEVEL LAW OF A BLEND, found by scans through the shaper's own arithmetic (so it is its peak, not a model of it):
+///   - the HOLD (zones 0, 1, 7, the ones whose input saturates): per side of the input, the OUTERMOST local maximum of |f|
+///     within `kHoldWithinDb` of that side's global maximum (the one the factor normalises), so a driven signal sits
+///     between -`kHoldWithinDb` dB and 0 dBFS;
+///   - the FACTOR: 1 / the largest |output| left AFTER THE WET HIGHPASS, for a full-scale 1 kHz sine at `gain` (at
+///     least unity) through the held curve and the device's own highpass at `sampleRate`, run to steady state. The
+///     curve's DC is taken off before it is normalised, and so are the droop and overshoot the highpass puts on a held
+///     (flat-topped) wave, for that tone: a lower tone overshoots more.
+/// The FM zones do not saturate (their output is periodic in the phase), so they have no hold. ~50-150 us: the caller
+/// caches it by the weights and the gain and never runs it per sample.
+[[nodiscard]] PeakInfo peakInfoOf(int zone, const Coefficients& w, float gain, double sampleRate) noexcept;
 
 /// THE NINE TARGETS A BLOCK SMOOTHS TOWARD — c1, c3..c9 left, c3..c9 right — as `sineShapeBuffer` picks them:
 /// per zone, from the position in the zone, Twist's harmonic phase and, in stereo, the LFO's position offset
@@ -758,10 +789,12 @@ struct Picture {
 	float driveGain = 1.0f;
 	Coefficients weights {};
 	TwistParams twist {};
-	/// WHERE THE ZONE'S INPUT SATURATES, as an INPUT level (1.0 = the reference's 0 dBFS): 0.5 / drive in the
-	/// Chebyshev zones, 1 / drive in Poly. In the FM zones nothing saturates — the driven input is a phase —
-	/// so this is where the driven signal reaches 0 dBFS, drawn as a reference and not as a clip.
-	float ceilingInput = 0.5f;
+	/// WHERE THE ZONE'S INPUT SATURATES, as an INPUT level (1.0 = 0 dBFS): the positive hold / drive in the zones that
+	/// hold (0, 1, 7). In the FM zones nothing saturates - the driven input is a phase - so this is where the driven
+	/// signal reaches 0 dBFS, drawn as a reference and not as a clip.
+	float ceilingInput = 1.0f;
+	/// AND THE SAME FOR THE NEGATIVE SIDE (the two holds differ for a lopsided curve).
+	float ceilingInputNeg = 1.0f;
 	bool clips = true;
 };
 [[nodiscard]] Picture pictureOf(const Settings& settings) noexcept;
@@ -772,13 +805,14 @@ struct Picture {
 /// THE DRIVE THAT PUTS THE CEILING AT `ceilingInput` — the inverse of `Picture::ceilingInput`, clamped to the
 /// fader's 0..4x, and returned as the Drive FADER's value (0..1). What dragging the ceiling writes. A ceiling at
 /// infinity (or not a number) is the fader at 0.
-[[nodiscard]] float driveKnobForCeiling(int zone, float ceilingInput) noexcept;
+[[nodiscard]] float driveKnobForCeiling(int zone, float ceilingInput, float hold = 1.0f) noexcept;
 /// AND FORWARD: the ceiling (an input level) that the Drive FADER value `driveKnob` (0..1) puts it at, by the
 /// shaper's own gain law — what the modulated ceiling and the handle's drag anchor are drawn from. At a gain of
 /// zero NOTHING reaches the shaper and the ceiling is +infinity: off-scale, never a division by zero.
-[[nodiscard]] float ceilingInputOf(int zone, float driveKnob) noexcept;
-/// `ceilingReferenceOf(zone) / gain`, +infinity at a gain of zero. The one place the division is made.
-[[nodiscard]] float ceilingOfGain(int zone, float gain) noexcept;
+[[nodiscard]] float ceilingInputOf(int zone, float driveKnob, float hold = 1.0f) noexcept;
+/// `hold / gain` (the hold is where the curve saturates, 1.0 for a zone that does not hold), +infinity at a gain of zero.
+/// The one place the division is made.
+[[nodiscard]] float ceilingOfGain(int zone, float gain, float hold = 1.0f) noexcept;
 
 /// THE HARMONICS: one cycle of a sine at `level` (1.0 = the reference's 0 dBFS) through `transferAt`,
 /// `kHarmonicSamples` points, and the magnitudes of H1..H9 by DFT, in the same units.

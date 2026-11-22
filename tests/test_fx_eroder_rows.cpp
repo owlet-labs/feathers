@@ -1059,3 +1059,192 @@ TEST_CASE("Every third-row control is wired in all three places: it changes the 
 		}
 	}
 }
+
+//--------------------------------------------------------------------------------------------------//
+// THE DRIVE'S AMOUNT GLIDES (`kDriveAmountGlideSeconds`).                                             //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+constexpr double kGlideTau = 0.02; // the time constant, written here from the description and not read from the code
+
+/// What a one-pole of time constant `kGlideTau` has reached `k` frames after a step from `from` to `to`, at `rate`.
+double refGlide(double from, double to, double k, double rate) { return to + (from - to) * std::exp(-k / (kGlideTau * rate)); }
+
+/// A stage at `from`, run on a steady input long enough to have been settled, then stepped to `to`.
+struct Stepped {
+	DriveStage stage;
+	DriveSettings from;
+	DriveSettings to;
+	Stepped(DriveMode mode, float knobFrom, float knobTo, double rate, float shape = 0.3f) {
+		stage.prepare(rate);
+		from = deriveDrive(knobFrom, mode, shape, rate);
+		to = deriveDrive(knobTo, mode, shape, rate);
+		stage.set(from);
+		advance(64);
+		stage.set(to);
+	}
+	void advance(size_t frames) {
+		for (size_t i = 0; i < frames; ++i) {
+			float l = 0.1f + 0.05f * sineAt(done_, 220.0, 1.0);
+			float r = l;
+			stage.process(l, r);
+			++done_;
+		}
+	}
+	size_t done_ = 0;
+};
+
+Stereo driveAutomated(DriveMode mode, size_t block, bool inSlot) {
+	Eroder e;
+	e.prepare(kRate);
+	Settings s = etchWith();
+	s.mix = 1.0f;
+	const size_t total = 48000;
+	Stereo b;
+	b.l.resize(total);
+	b.r.resize(total);
+	for (size_t i = 0; i < total; ++i) {
+		b.l[i] = noiseAt(i, 5) * 1.2f;
+		b.r[i] = noiseAt(i, 6) * 1.2f;
+	}
+	for (size_t seg = 0; seg < total; seg += 480) {
+		const float amount = 0.15f + 0.8f * (0.5f + 0.5f * std::sin(static_cast<float>(seg) / 4000.0f));
+		if (inSlot) {
+			s.slotA = { amount, mode, 0.4f, 1.0f };
+		}
+		else {
+			s.drive = amount;
+			s.driveMode = mode;
+			s.driveShape = 0.4f;
+		}
+		e.setTarget(s);
+		const size_t end = std::min(total, seg + 480);
+		for (size_t done = seg; done < end;) {
+			const size_t take = std::min(block, end - done);
+			e.processStereo(b.l.data() + done, b.r.data() + done, static_cast<int>(take));
+			done += take;
+		}
+	}
+	return b;
+}
+
+} // namespace
+
+TEST_CASE("Drive amount glide: the gain into the curve and its make-up follow one pole of 20 ms toward the new Amount, at either rate") {
+	for (const double rate : { 48000.0, 96000.0 }) {
+		for (const DriveMode mode : { DriveMode::Tube, DriveMode::Soft, DriveMode::PaunchS, DriveMode::Chonk }) {
+			CAPTURE(rate);
+			CAPTURE(static_cast<int>(mode));
+			Stepped t(mode, 0.2f, 0.8f, rate);
+			REQUIRE(t.from.gain != t.to.gain);
+			const double g0 = t.from.gain, g1 = t.to.gain, n0 = t.from.norm, n1 = t.to.norm;
+			CHECK(t.stage.gainNowForTest() == doctest::Approx(g0).epsilon(1.0e-12));
+			size_t at = 0;
+			// Offsets in REAL time: 0.5 ms, 5 ms, 20 ms, 50 ms (frames follow the rate).
+			for (const double seconds : { 0.0005, 0.005, 0.02, 0.05 }) {
+				const auto k = static_cast<size_t>(seconds * rate);
+				t.advance(k - at);
+				at = k;
+				CAPTURE(seconds);
+				const double wantGain = refGlide(g0, g1, static_cast<double>(k), rate);
+				const double wantNorm = refGlide(n0, n1, static_cast<double>(k), rate);
+				CHECK(std::abs(t.stage.gainNowForTest() - wantGain) < 1.0e-6 * std::max(1.0, std::abs(g1 - g0)));
+				CHECK(std::abs(t.stage.normNowForTest() - wantNorm) < 1.0e-6 * std::max(1.0, std::abs(n1 - n0)));
+			}
+			// TWENTY-FIVE TIME CONSTANTS ON (the snap is within a millionth of the target), IT IS THE TARGET'S OWN BITS.
+			t.advance(static_cast<size_t>(0.5 * rate) - at + 1);
+			CHECK(t.stage.gainNowForTest() == g1);
+			CHECK(t.stage.normNowForTest() == n1);
+		}
+	}
+}
+
+TEST_CASE("Drive amount glide: Crush's and Decimate's hold, and Slew's and Lopside's rate, glide the same way and land on the target") {
+	for (const DriveMode mode : { DriveMode::Crush, DriveMode::Decimate }) {
+		CAPTURE(static_cast<int>(mode));
+		Stepped t(mode, 0.2f, 0.8f, kRate);
+		const double h0 = t.from.crushHoldFrames, h1 = t.to.crushHoldFrames;
+		REQUIRE(h1 > h0);
+		t.advance(100);
+		const double soon = t.stage.holdFramesNowForTest(0);
+		CHECK(soon > h0);
+		CHECK(soon < h1);
+		CHECK(std::abs(soon - refGlide(h0, h1, 100.0, kRate)) < 1.0e-6 * (h1 - h0));
+		CHECK(std::abs(t.stage.holdFramesNowForTest(1) - soon) < 1.0e-12); // Spread 0: both sides alike
+		t.advance(static_cast<size_t>(0.5 * kRate));
+		CHECK(t.stage.holdFramesNowForTest(0) == h1);
+		CHECK(t.stage.holdFramesNowForTest(1) == h1);
+	}
+	for (const DriveMode mode : { DriveMode::Slew, DriveMode::Lopside }) {
+		CAPTURE(static_cast<int>(mode));
+		Stepped t(mode, 0.2f, 0.8f, kRate);
+		const double z0 = t.from.slewHz, z1 = t.to.slewHz;
+		t.advance(480);
+		const double want = refGlide(z0, z1, 480.0, kRate);
+		CHECK(std::abs(t.stage.slewHzNowForTest(0) - want) < 1.0e-4 * std::abs(z1 - z0));
+		// The Slew itself runs the gliding rate: its hard limit is 2 hz / rate a frame.
+		CHECK(std::abs(static_cast<double>(t.stage.slewForTest().limit()) - 2.0 * want / kRate) < 1.0e-6);
+		t.advance(static_cast<size_t>(0.5 * kRate));
+		CHECK(t.stage.slewHzNowForTest(0) == static_cast<double>(t.to.slewHz));
+		CHECK(static_cast<double>(t.stage.slewForTest().limit()) == doctest::Approx(2.0 * z1 / kRate).epsilon(1.0e-6));
+	}
+}
+
+TEST_CASE("Drive amount glide: a fresh stage, and a changed Type, start at the target and do not glide") {
+	DriveStage stage;
+	stage.prepare(kRate);
+	stage.set(deriveDrive(0.7f, DriveMode::Tube, 0.3f, kRate));
+	CHECK(stage.gainNowForTest() == static_cast<double>(deriveDrive(0.7f, DriveMode::Tube, 0.3f, kRate).gain));
+	stage.set(deriveDrive(0.9f, DriveMode::Crush, 0.3f, kRate));
+	CHECK(stage.holdFramesNowForTest(0) == deriveDrive(0.9f, DriveMode::Crush, 0.3f, kRate).crushHoldFrames);
+	stage.set(deriveDrive(0.0f, DriveMode::Crush, 0.3f, kRate)); // rests
+	stage.set(deriveDrive(0.5f, DriveMode::Crush, 0.3f, kRate));
+	CHECK(stage.holdFramesNowForTest(0) == deriveDrive(0.5f, DriveMode::Crush, 0.3f, kRate).crushHoldFrames);
+}
+
+TEST_CASE("Drive amount glide: once settled the stage is a stage built at the target, to the bit") {
+	for (const DriveMode mode : { DriveMode::Soft, DriveMode::Tube, DriveMode::Crush, DriveMode::Decimate, DriveMode::Slew }) {
+		CAPTURE(static_cast<int>(mode));
+		Stepped moved(mode, 0.2f, 0.8f, kRate);
+		DriveStage direct;
+		direct.prepare(kRate);
+		direct.set(deriveDrive(0.8f, mode, 0.3f, kRate));
+		// Both see the same input from here, for a second; the moved one has had 0.5 s to settle first.
+		moved.advance(24000);
+		size_t same = 0;
+		for (size_t i = 0; i < 48000; ++i) {
+			const float in = 0.1f + 0.4f * sineAt(i, 330.0, 1.0);
+			float a = in, b = in, c = in, d = in;
+			moved.stage.process(a, b);
+			direct.process(c, d);
+			if (i >= 40000) {
+				same += (a == c && b == d) ? 1u : 0u;
+			}
+		}
+		// Crush, Decimate and Slew carry phase or ramp state that a long run does not forget; the others are filters with a finite memory.
+		if (mode == DriveMode::Soft || mode == DriveMode::Tube) {
+			CHECK(same == 8000);
+		}
+		CHECK(moved.stage.gainNowForTest() == direct.gainNowForTest());
+		CHECK(moved.stage.normNowForTest() == direct.normNowForTest());
+		CHECK(moved.stage.holdFramesNowForTest(0) == direct.holdFramesNowForTest(0));
+		CHECK(moved.stage.slewHzNowForTest(0) == direct.slewHzNowForTest(0));
+	}
+}
+
+TEST_CASE("Drive amount glide: a moving Amount gives the same output at any block size, in the Drive and in a slot, in every kind of Type") {
+	for (const bool inSlot : { false, true }) {
+		for (const DriveMode mode : { DriveMode::Soft, DriveMode::Tube, DriveMode::Crush, DriveMode::Decimate, DriveMode::Slew, DriveMode::Lopside,
+		                              DriveMode::Chonk, DriveMode::PaunchS }) {
+			CAPTURE(inSlot);
+			CAPTURE(static_cast<int>(mode));
+			const Stereo whole = driveAutomated(mode, 480, inSlot);
+			CHECK(driveAutomated(mode, 32, inSlot) == whole);
+			CHECK(driveAutomated(mode, 64, inSlot) == whole);
+			CHECK(driveAutomated(mode, 37, inSlot) == whole);
+			CHECK(driveAutomated(mode, 1, inSlot) == whole);
+			CHECK(peakOf(whole) > 0.01f);
+		}
+	}
+}

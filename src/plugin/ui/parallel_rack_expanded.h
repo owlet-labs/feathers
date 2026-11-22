@@ -19,6 +19,7 @@
 
 #include "backplane/device_host.h"
 #include "device/subscribers.h"
+#include "plugin/ui/fold_header.h"
 #include "plugin/ui/arm_relay.h"
 #include "plugin/ui/container_presets.h"
 #include "plugin/ui/device_control.h"
@@ -205,6 +206,31 @@ private:
 	bool moveAcrossChains(uint16_t from, std::span<const DeviceInstanceId> ids, visage::Point inWindow);
 	/// **A CONTROL IS HIDDEN, NOT GREYED, WHERE THE MODE DOES NOT READ IT** — the card's rule. True when it changed.
 	bool showForMode();
+	/// **THE LEFT COLUMN'S TWO FOLDS** (no audio effect, patch state `rack_macros_fold` / `rack_inspector_fold`): the MACROS' (the eight macros and
+	/// their arms) and the INSPECTOR's (Mode, Position, the view rows, Mix and Gain, the bands controls). Each has a header in the column's top pad;
+	/// folding one reflows what is under it and leaves the other half's state alone. A restore or another editor's write is followed on the beat.
+public:
+	[[nodiscard]] bool macrosFolded() const;
+	[[nodiscard]] bool inspectorFolded() const;
+	bool setMacrosFolded(bool folded);
+	bool setInspectorFolded(bool folded);
+	[[nodiscard]] FoldHeader& macrosHeaderForTest() const { return *macrosHeader_; }
+	[[nodiscard]] FoldHeader& inspectorHeaderForTest() const { return *inspectorHeader_; }
+	[[nodiscard]] bool macroShownForTest(size_t n) const { return macroSlots_[n]->isVisible(); }
+	[[nodiscard]] bool inspectorShownForTest() const { return modeBox_->isVisible(); }
+	[[nodiscard]] bool modeBoxShownForTest() const { return modeBox_->isVisible(); }
+	[[nodiscard]] visage::Bounds modeBoxBoundsForTest() const { return modeBox_->bounds(); }
+	[[nodiscard]] visage::Bounds macroBoundsForTest(size_t n) const { return macroSlots_[n]->bounds(); }
+	[[nodiscard]] visage::Bounds mixBoundsForTest() const { return knobs_[0]->bounds(); }
+private:
+	void applyFolds();
+	/// What the column's folds hide, and what the inspector's fold lifts the macros by.
+	[[nodiscard]] float inspectorShift() const;
+	std::unique_ptr<FoldHeader> macrosHeader_;
+	std::unique_ptr<FoldHeader> inspectorHeader_;
+	std::vector<visage::Frame*> inspectorFrames_;
+	bool foldsAppliedMacros_ = false;
+	bool foldsAppliedInspector_ = false;
 	[[nodiscard]] float dividerY() const;
 	[[nodiscard]] float knobY(size_t i) const;
 	[[nodiscard]] visage::Bounds dividerBounds() const;
@@ -219,6 +245,8 @@ private:
 	[[nodiscard]] float tabsColumnLength() const;
 	/// How wide the chain selector's column is: the tabs' thickness, or the list's width.
 	[[nodiscard]] float selectorWidth() const;
+	/// The width the chain in front's rail asks the window for: its cards' length along the flow (capped) in every view but Strips, else the standard column.
+	[[nodiscard]] float frontRailMinWidth() const;
 	[[nodiscard]] bool addShown() const;
 	/// THE BANDS COLUMN beside the macros (Bands only): whether it is drawn, where it starts and ends, and where the rails
 	/// start after the columns.

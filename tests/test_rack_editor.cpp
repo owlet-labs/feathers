@@ -81,7 +81,9 @@
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
+#include <regex>
 #include <set>
+#include <tuple>
 #include <typeinfo>
 #include <string>
 #include <utility>
@@ -5648,7 +5650,8 @@ TEST_CASE("OC: the Chain window seats Mix and Gain over an H-line over the macro
 	ui::RouteList& list = editor->routeListForTest();
 	CHECK(list.y() >= editor->macroBoundsForTest(7).bottom());
 	CHECK(list.bottom() - top <= size.y);
-	CHECK(list.height() >= ui::RouteList::kHeadingHeight + 3.0f * ui::RouteList::kRowHeight); // head and at least three rows at 466
+	// ONE ROW AND ITS HEADING (it was three before the column carried the two fold headers, which the fixed height pays for; the list scrolls)
+	CHECK(list.height() >= ui::RouteList::kHeadingHeight + ui::RouteList::kRowHeight);
 	CHECK(editor->macroBoundsForTest(7).bottom() - top + 12.0f
 	      == doctest::Approx(rack::RackEditor::columnNeeded(true, false) - 4.0f).epsilon(0.02));
 	CHECK(editor->cardBoundsForTest(inner).x() >= rack::RackEditor::kLaneLeft);
@@ -6907,6 +6910,167 @@ TEST_CASE("rack editor: a Rack's chain strip renames its chain by a right press'
 		CHECK_FALSE(rename.renaming());
 		CHECK(rk->chainLabel(1) == "Snare");
 	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE COLUMN'S TWO FOLDS: THE MACROS' AND THE INSPECTOR'S, EACH ITS OWN                               //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// WHAT A COLUMN SHOWS, as values: each half's widgets visible or not, and where the other half stands.
+struct ColumnSeen {
+	bool macros = false;
+	bool levels = false;
+	bool routes = false;
+	visage::Bounds firstLevel {};
+	visage::Bounds firstMacro {};
+};
+
+ColumnSeen seeColumn(rack::RackEditor& e) {
+	ColumnSeen out;
+	out.macros = e.macrosForTest()[0]->isVisible() && e.macrosForTest()[7]->isVisible();
+	out.levels = e.levelCountForTest() > 0 && e.levelShownForTest(0);
+	out.routes = e.routeListForTest().isVisible();
+	out.firstLevel = e.levelCountForTest() > 0 ? e.levelBoundsForTest(0) : visage::Bounds {};
+	out.firstMacro = e.macroBoundsForTest(0);
+	return out;
+}
+
+} // namespace
+
+TEST_CASE("column folds: the macros header folds the macros and nothing else, the inspector header folds Mix and Gain and the route list and nothing else") {
+	namespace cmp = composite;
+	rack::registerChainExpandedView();
+	Fixture f;
+	const DeviceInstanceId chain = f.add(cmp::kTraits.tag);
+	REQUIRE(chain != kNoInstance);
+	rack::ChainExpanded view { f.bridge, chain, nullptr };
+	const visage::Point size = view.minimumSize();
+	view.setBounds(0, 0, size.x, size.y);
+	REQUIRE(view.liveForTest());
+	rack::RackEditor& e = *view.editorForTest();
+	REQUIRE(e.levelCountForTest() == 2);
+	const ColumnSeen open = seeColumn(e);
+	CHECK(open.macros);
+	CHECK(open.levels);
+	CHECK(open.routes);
+	CHECK_FALSE(e.macrosFolded());
+	CHECK_FALSE(e.inspectorFolded());
+	// THE HEADERS ARE STACKED, EACH DIRECTLY OVER ITS HALF: the inspector's over Mix and Gain, the macros' over the macros.
+	const visage::Bounds hm = e.macrosHeaderForTest().bounds();
+	const visage::Bounds hi = e.inspectorHeaderForTest().bounds();
+	CHECK(hi.height() == rack::RackEditor::kFoldRow);
+	CHECK(hm.height() == rack::RackEditor::kFoldRow);
+	CHECK(hi.bottom() <= open.firstLevel.y());
+	CHECK(open.firstLevel.bottom() <= hm.y());
+	CHECK(hm.bottom() <= open.firstMacro.y());
+	CHECK(hm.right() <= rack::RackEditor::kLaneLeft - 6.0f - rack::RackEditor::kMacrosToggleRoom + 0.5f);
+	// A PRESS ON THE MACROS HEADER: the macros go, Mix and Gain and the route list stay exactly where they were.
+	e.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	CHECK(e.macrosFolded());
+	CHECK_FALSE(e.inspectorFolded());
+	const ColumnSeen macrosGone = seeColumn(e);
+	CHECK_FALSE(macrosGone.macros);
+	CHECK(macrosGone.levels);
+	CHECK(macrosGone.routes);
+	CHECK(macrosGone.firstLevel == open.firstLevel);
+	CHECK(f.bridge.fieldAt(chain, 0) == f.bridge.fieldAt(chain, 0)); // nothing else was written
+	CHECK(view.bridgeForTest()->macrosCollapsed());
+	CHECK_FALSE(view.bridgeForTest()->inspectorCollapsed());
+	CHECK_FALSE(e.macrosCollapsed()); // one half folded is not the strip: the column keeps its width
+	CHECK(e.laneLeft() == rack::RackEditor::kLaneLeft);
+	// AND BACK, then the INSPECTOR HEADER: Mix and Gain and the route list go, the macros stay shown.
+	e.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	CHECK_FALSE(e.macrosFolded());
+	CHECK(seeColumn(e).macros);
+	e.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	CHECK(e.inspectorFolded());
+	CHECK_FALSE(e.macrosFolded());
+	const ColumnSeen inspectorGone = seeColumn(e);
+	CHECK(inspectorGone.macros);
+	CHECK_FALSE(inspectorGone.levels);
+	CHECK_FALSE(inspectorGone.routes);
+	CHECK(view.bridgeForTest()->inspectorCollapsed());
+	CHECK_FALSE(view.bridgeForTest()->macrosCollapsed());
+	CHECK_FALSE(e.macrosCollapsed());
+	// BOTH FOLDED IS THE STRIP, and its own toggle opens both.
+	e.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	CHECK(e.macrosFolded());
+	CHECK(e.inspectorFolded());
+	CHECK(e.macrosCollapsed());
+	CHECK(e.laneLeft() == doctest::Approx(ui::Rail::kCollapsedWidth + 6.0f));
+	REQUIRE(e.setMacrosCollapsed(false));
+	CHECK_FALSE(e.macrosFolded());
+	CHECK_FALSE(e.inspectorFolded());
+	const ColumnSeen back = seeColumn(e);
+	CHECK(back.macros);
+	CHECK(back.levels);
+	CHECK(back.routes);
+}
+
+TEST_CASE("column folds: each fold is patch state under its own key, a saved patch loads into a fresh instance with the same two folds, and an old patch (one fold key) opens both the way it was") {
+	const auto roundTrip = [](bool macros, bool inspector) {
+		rack::RackPatch patch;
+		patch.macrosCollapsed = macros;
+		patch.inspectorCollapsed = inspector;
+		std::vector<uint8_t> bytes;
+		clap_ostream out { &bytes, [](const clap_ostream* s, const void* data, uint64_t n) -> int64_t {
+			                  auto* v = static_cast<std::vector<uint8_t>*>(s->ctx);
+			                  v->insert(v->end(), static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + n);
+			                  return static_cast<int64_t>(n);
+		                  } };
+		REQUIRE(rack::writeRack(&out, patch));
+		const std::string text(bytes.begin(), bytes.end());
+		rack::RackPatch read;
+		REQUIRE(rack::parseRackText(text, &read));
+		// INTO A FRESH INSTANCE, as a load does it.
+		Fixture g;
+		(void)g.bridge.loadPatch(read);
+		return std::tuple { read.macrosCollapsed, read.inspectorCollapsed, g.bridge.macrosCollapsed(), g.bridge.inspectorCollapsed(), text };
+	};
+	for (const bool macros : { false, true }) {
+		for (const bool inspector : { false, true }) {
+			CAPTURE(macros);
+			CAPTURE(inspector);
+			const auto [readM, readI, bridgeM, bridgeI, text] = roundTrip(macros, inspector);
+			CHECK(readM == macros);
+			CHECK(readI == inspector);
+			CHECK(bridgeM == macros);
+			CHECK(bridgeI == inspector);
+			CHECK((text.find("\"macrosColumn\"") != std::string::npos) == macros);
+			CHECK((text.find("\"inspectorColumn\"") != std::string::npos) == (macros || inspector));
+		}
+	}
+	// AN OLD PATCH: only `macrosColumn`, which meant the whole column. Both folds follow it.
+	rack::RackPatch old;
+	{
+		const auto [m, i, bm, bi, text] = roundTrip(true, true);
+		(void)m;
+		(void)i;
+		(void)bm;
+		(void)bi;
+		// THE DOCUMENT AS A BUILD BEFORE THE SPLIT WROTE IT: no `inspectorColumn` object at all.
+		const std::regex inspectorKey("\\s*,?\\s*\"inspectorColumn\"\\s*:\\s*\\{[^}]*\\}");
+		const std::string oldText = std::regex_replace(text, inspectorKey, "");
+		REQUIRE(oldText.find("inspectorColumn") == std::string::npos);
+		REQUIRE(oldText.find("macrosColumn") != std::string::npos);
+		REQUIRE(rack::parseRackText(oldText, &old));
+	}
+	CHECK(old.macrosCollapsed);
+	CHECK(old.inspectorCollapsed);
+	Fixture f;
+	(void)f.bridge.loadPatch(old);
+	CHECK(f.bridge.macrosCollapsed());
+	CHECK(f.bridge.inspectorCollapsed());
+	ui::ModState mod;
+	ui::EditHistory history;
+	rack::RackEditor window(f.bridge, mod, history);
+	window.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	CHECK(window.macrosFolded());
+	CHECK(window.inspectorFolded());
+	CHECK(window.macrosCollapsed()); // the strip, as the old patch left it
+	// A PATCH WITH NEITHER KEY OPENS BOTH: the (false, false) round trip above wrote neither key and read both open.
 }
 
 //---------------------------------------------------------------------------------------------------------------------------------

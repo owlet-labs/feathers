@@ -1824,10 +1824,10 @@ namespace {
 /// A rack window in Tabs with the pane chosen, over `chains` chains each holding a Drum then a Delay.
 struct PaneRack {
 	RealRack r;
-	explicit PaneRack(size_t chains = 3, size_t withDevices = 3) {
+	explicit PaneRack(size_t chains = 3, size_t withDevices = 3, int view = 1) {
 		r.chains(chains, withDevices);
 		r.set(pr::Param::Front, 1.0f);
-		r.view_(1);
+		r.view_(view);
 		for (int i = 0; i < 3; ++i) {
 			r.refresh();
 		}
@@ -4047,6 +4047,9 @@ TEST_CASE("PHOTO: the Rack's List view on the card and in the window, with a few
 			RealRack r;
 			r.chains(chains, chains);
 			(void)r.rack().setChainName(0, "Kick");
+			for (size_t c = 0; c < chains; ++c) {
+				r.rack().publishChainPeakForTest(c, 0.9f * std::pow(0.72f, static_cast<float>(c))); // signal present, each chain a little quieter
+			}
 			r.set(pr::Param::ViewedChain, 1.0f);
 			r.view_(3);
 			auto* editor = dynamic_cast<visage::ApplicationEditor*>(r.f.root);
@@ -4114,4 +4117,107 @@ TEST_CASE("list view: a row shows its chain's level meter by value, a row out of
 	r.rack().publishChainPeakForTest(11, 0.6f);
 	CHECK(list.refresh());
 	CHECK(list.rowForTest(11)->meterReadingForTest() == ui::cardMeterReadingFor(0.6f));
+}
+
+TEST_CASE("list view: the Cards|Window pane holds the front chain's first device beside the list, follows a row press once, and Cards puts the view back") {
+	PaneRack p(3, 3, 3);
+	REQUIRE(p.r.panel->paneOnForTest());
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	ui::RackListView& list = p.r.panel->listForTest();
+	REQUIRE(list.isVisible());
+	const feathers::DeviceInstanceId first0 = p.chain(0).deviceAtPosition(0);
+	REQUIRE(first0 != feathers::kNoInstance);
+	CHECK(p.pane().device() == first0);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(0));
+	CHECK(p.pane().isVisible());
+	// THE PANE STANDS BESIDE THE LIST, never under it, and the window is at least as wide as both.
+	CHECK(p.pane().bounds().x() >= list.bounds().right() - 0.5f);
+	CHECK(p.r.panel->minimumSize().x >= p.pane().bounds().right() - 0.5f);
+	// THE FIRST CARD IS HELD BACK FROM THE RAIL, as under Tabs.
+	CHECK(p.column(0)->hiddenLead() == 1);
+	const size_t builds = p.pane().buildsForTest();
+	for (int i = 0; i < 5; ++i) {
+		p.r.refresh();
+	}
+	CHECK(p.pane().buildsForTest() == builds); // not rebuilt while nothing changes
+	// A REAL PRESS ON ROW 1 REBINDS THE PANE TO THAT CHAIN'S FIRST DEVICE, exactly once.
+	const feathers::DeviceInstanceId first1 = p.chain(1).deviceAtPosition(0);
+	REQUIRE(first1 != first0);
+	const visage::Bounds b = list.rowBoundsForTest(1);
+	const visage::Point o = list.positionInWindow();
+	dragThroughRoot(p.r.panel, { o.x + b.x() + 8.0f, o.y + b.y() + b.height() * 0.5f }, { o.x + b.x() + 8.0f, o.y + b.y() + b.height() * 0.5f });
+	p.settle();
+	CHECK(p.r.field(pr::Param::ViewedChain) == 1.0f);
+	CHECK(p.pane().device() == first1);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(1));
+	CHECK(p.pane().buildsForTest() == builds + 1);
+	CHECK(p.column(0)->hiddenLead() == 0);
+	CHECK(p.column(1)->hiddenLead() == 1);
+	// CARDS PUTS THE VIEW BACK, the list staying.
+	p.r.set(pr::Param::Front, 0.0f);
+	p.settle();
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK(p.column(1)->hiddenLead() == 0);
+	CHECK(list.isVisible());
+}
+
+namespace {
+/// The drawn width of a pill's text in logical pixels, as the pill's own font measures it.
+float pixelsOf(const std::string& text) {
+	return ui::font(ui::kKnobLabelSize).stringWidth(std::u32string(text.begin(), text.end()));
+}
+} // namespace
+
+TEST_CASE("list view: a row's level pill shows its value alone and the meter is a bar, at 1x, 1.75x and 2x; the strips' own pills are measured for the same collision") {
+	for (const float scale : { 1.0f, 1.75f, 2.0f }) {
+		CAPTURE(scale);
+		RealRack r;
+		r.chains(3, 0);
+		r.view_(3);
+		r.card->setDpiScale(scale);
+		r.panel->setDpiScale(scale);
+		r.card->resized();
+		r.panel->resized();
+		r.refresh();
+		r.rack().publishChainPeakForTest(0, 0.5f);
+		r.rack().publishChainPeakForTest(1, 0.1f);
+		r.refresh();
+		for (ui::RackListView* list : { &r.card->listForTest(), &r.panel->listForTest() }) {
+			for (size_t k = 0; k < 3; ++k) {
+				ui::ChainStrip& row = *list->rowForTest(k);
+				REQUIRE(row.rowModeForTest());
+				// THE PILL: no caption to collide with the value, and the value fits inside it.
+				const visage::Bounds pill = row.levelPillBoundsForTest();
+				CHECK(row.levelPill().readout() != "");
+				CHECK(row.levelPill().captionForTest().empty());
+				CHECK(pixelsOf(row.levelPill().readout()) <= pill.width() - 2.0f * 7.0f);
+				// THE BAR: a few pixels tall, wide enough to read, clear of the pill and of the chips.
+				const visage::Bounds bar = row.meterBoundsForTest();
+				CHECK(bar.height() >= 5.0f);
+				CHECK(bar.width() >= 24.0f);
+				CHECK(bar.x() >= pill.right());
+				CHECK(bar.x() >= row.muteChip().bounds().right() - 0.5f); // the bar is the far end; the chips stand before it
+			}
+			// THE BARS READ THE CHAINS' PEAKS: the marks' length is the reading's share of the track, restated from the mapping.
+			for (const auto& [k, peak] : { std::pair<size_t, float> { 0, 0.5f }, std::pair<size_t, float> { 1, 0.1f } }) {
+				const ui::ChainStrip& row = *list->rowForTest(k);
+				const float length = row.meterBoundsForTest().width();
+				CHECK(row.meterMarksForTest().level.width() == std::round(ui::cardMeterReadingFor(peak).level * length));
+				CHECK(row.meterMarksForTest().level.height() == row.meterBoundsForTest().height()); // the bar is as thick as its track
+			}
+			CHECK(list->rowForTest(0)->meterMarksForTest().level.width() > list->rowForTest(1)->meterMarksForTest().level.width());
+		}
+		// THE EXISTING STRIPS, MEASURED AND NOT CHANGED: in the Strips view the card's own strips at their own widths, caption against value.
+		r.view_(0);
+		r.card->setDpiScale(scale);
+		r.card->resized();
+		r.refresh();
+		for (const auto& strip : r.card->stripsForTest()) {
+			const float w = static_cast<float>(strip->levelPill().width());
+			const float caption = pixelsOf("Level");
+			const float value = pixelsOf(strip->levelPill().readout());
+			const bool collide = 7.0f + caption > w - 7.0f - value;
+			MESSAGE("MEASURED card strip at scale " << scale << ": pill " << w << " px, caption " << caption << ", value '" << strip->levelPill().readout() << "' " << value << ", caption ends at " << 7.0f + caption << ", value starts at " << w - 7.0f - value << ", collides: " << (collide ? "YES" : "no"));
+		}
+	}
 }

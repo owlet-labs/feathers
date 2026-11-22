@@ -239,7 +239,7 @@ public:
 	}
 	void offeredControls(std::vector<Offered>&) const override {} // its three controls offer themselves
 	/// The summary's room, and the width its text takes — a case asks that the first holds the second.
-	[[nodiscard]] float summaryWidth() const { return summary_.empty() ? 0.0f : std::round(static_cast<float>(width()) * kSummaryWidth); }
+	[[nodiscard]] float summaryWidth() const { return summary_.empty() ? 0.0f : std::round(static_cast<float>(width()) * summaryFraction_); }
 	[[nodiscard]] float summaryTextWidthForTest() const;
 	/// The short name the column layout draws at its head ("1"); the row layout leaves it to the rail's heading.
 	void setLabel(std::string label);
@@ -259,6 +259,16 @@ public:
 		}
 	}
 	[[nodiscard]] bool selectedForTest() const noexcept { return selected_; }
+	/// **A LIST ROW'S DRESS**: the name takes a smaller share, the level pill shows its value alone (a caption and a value do not both fit a pill this
+	/// narrow), and the level meter is a BAR a few pixels tall (`kBarThickness`) at the right end rather than a one-pixel line. The same
+	/// `Rack::chainPeak` reading and `cardMeterMarksFor` arithmetic; only the track's shape differs.
+	void setRowMode() {
+		rowMode_ = true;
+		summaryFraction_ = kRowSummaryWidth;
+		resized();
+	}
+	[[nodiscard]] bool rowModeForTest() const noexcept { return rowMode_; }
+	[[nodiscard]] visage::Bounds levelPillBoundsForTest() const { return pill_->bounds(); }
 	/// **A PHANTOM STRIP** (§2a): its three controls make the chain on their first edit (`ChainControl::setMaterialise`).
 	void setMaterialise(const std::function<uint16_t()>& materialise) {
 		level_.setMaterialise(materialise);
@@ -324,6 +334,10 @@ public:
 	static constexpr float kPillMinWidth = 90.0f; ///< the least the level pill keeps, caption and readout, beside the key box ///< the key box: "Any" or "C#4"
 	static constexpr float kGap = 4.0f;
 	static constexpr float kSummaryWidth = 0.42f; ///< of the strip, when a summary is drawn
+	static constexpr float kRowSummaryWidth = 0.30f; ///< of a list row
+	static constexpr float kBarThickness = 6.0f;
+	static constexpr float kBarMaxWidth = 44.0f;
+	static constexpr float kBarMinWidth = 24.0f;
 	static constexpr float kMeterWidth = 1.0f; ///< MK's one-pixel line, run vertically
 	static constexpr float kFaderWidth = 14.0f; ///< the column's vertical fader, beside the meter
 	/// Narrower than this and the strip lays itself out as a column.
@@ -340,6 +354,8 @@ private:
 	std::function<void(Surface, const visage::MouseEvent&)> surface_;
 	std::function<void(uint16_t, const visage::Bounds&)> context_;
 	bool selected_ = false;
+	bool rowMode_ = false;
+	float summaryFraction_ = kSummaryWidth;
 	ChainControl level_;
 	ChainControl muted_;
 	ChainControl soloed_;
@@ -501,7 +517,7 @@ private:
 	/// The padding across the flow in Tabs and Pads: the card's own when it stands alone, none as a member of another rack's front.
 	[[nodiscard]] float crossPad() const noexcept { return nest().depth > 0 ? 0.0f : kPad; }
 	/// THE ROW OF CHAIN `slot` AS THE CARD'S STRIPS SAY IT: the chain's one label, its role in the mode, what it holds.
-	[[nodiscard]] std::string summaryOfChain(size_t slot) const;
+	[[nodiscard]] std::string summaryOfChain(size_t slot, bool nameOnly = false) const;
 	[[nodiscard]] bool padsView() const { return model_->view() == RackViewKind::Pads; }
 	/// Re-read what is in front (the viewed chain's devices) and the pulse; true when anything drawn changed.
 	bool followView();

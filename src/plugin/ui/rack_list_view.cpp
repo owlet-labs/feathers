@@ -116,7 +116,8 @@ void RackListView::rebuild(const std::vector<uint16_t>& ids) {
 	for (const uint16_t id : ids) {
 		Row row;
 		row.chain = id;
-		row.strip = std::make_unique<ChainStrip>(host_, rack_, id, "Level");
+		row.strip = std::make_unique<ChainStrip>(host_, rack_, id, ""); // the pill shows its value alone
+		row.strip->setRowMode();
 		row.strip->setModulation(mod_, history_);
 		ChainStrip* const raw = row.strip.get();
 		const std::weak_ptr<void> alive = alive_;

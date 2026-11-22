@@ -603,7 +603,13 @@ bool ChainStrip::refresh() {
 	reading_ = now;
 	// THE MARKS IN WHOLE PIXELS (`cardMeterMarksFor`): a reading that moves less than a pixel draws the same marks and asks
 	// for no frame.
-	moved = meter_->setMarks(cardMeterMarksFor(meterTrack_.height(), true, now)) || moved;
+	CardMeterMarks marks = cardMeterMarksFor(rowMode_ ? meterTrack_.width() : meterTrack_.height(), !rowMode_, now);
+	if (rowMode_) {
+		// A BAR: the line's marks, made as thick as the track (the level grows from the left, an over from the right).
+		marks.level = { marks.level.x(), 0.0f, marks.level.width(), meterTrack_.height() };
+		marks.over = { marks.over.x(), 0.0f, marks.over.width(), meterTrack_.height() };
+	}
+	moved = meter_->setMarks(marks) || moved;
 	if (column_) {
 		fader_->redraw(); // the fader reads the control when it draws; a load or an undo moved it without a gesture
 	}
@@ -641,7 +647,7 @@ void ChainStrip::resized() {
 		meterTrack_ = { fx + kFaderWidth + kGap, y, kMeterWidth, height };
 	}
 	else {
-		float x = summary_.empty() ? 0.0f : std::round(w * kSummaryWidth) + kGap;
+		float x = summary_.empty() ? 0.0f : std::round(w * summaryFraction_) + kGap;
 		float right = w;
 		if (onRemove_) {
 			removeBounds_ = { right - kChipWidth, 0.0f, kChipWidth, h };
@@ -650,8 +656,16 @@ void ChainStrip::resized() {
 		else {
 			removeBounds_ = {};
 		}
-		meterTrack_ = { right - kMeterWidth, 1.0f, kMeterWidth, std::max(0.0f, h - 2.0f) };
-		right -= kMeterWidth + kGap;
+		if (rowMode_) {
+			// THE BAR: a few pixels tall, vertically centred, wide enough to read (up to `kBarMaxWidth`, less in a narrow row).
+			const float barW = std::clamp(std::round(w * 0.16f), kBarMinWidth, kBarMaxWidth);
+			meterTrack_ = { right - barW, std::round((h - kBarThickness) * 0.5f), barW, kBarThickness };
+			right -= barW + kGap;
+		}
+		else {
+			meterTrack_ = { right - kMeterWidth, 1.0f, kMeterWidth, std::max(0.0f, h - 2.0f) };
+			right -= kMeterWidth + kGap;
+		}
 		const float chipY = std::max(0.0f, (h - SwitchChip::kHeight) * 0.5f);
 		solo_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
 		right -= kChipWidth + kGap;
@@ -680,7 +694,7 @@ void ChainStrip::draw(visage::Canvas& canvas) {
 	}
 	if (!summary_.empty()) {
 		canvas.setColor(kMuted);
-		canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, 0.0f, 0.0f, std::round(width() * kSummaryWidth),
+		canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, 0.0f, 0.0f, std::round(width() * summaryFraction_),
 		            height());
 	}
 	if (column_ && !label_.empty()) {
@@ -761,7 +775,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	// "RENAME…" FROM A TAB OR A USED PAD'S RIGHT PRESS: the one chain label everywhere reads it back.
 	chainRename_ = std::make_unique<RackChainRename>(*model_, *this, notifier_);
 	list_ = std::make_unique<RackListView>(*model_, host_, device_, *chainRename_);
-	list_->setSummaryFn([this](size_t slot) { return summaryOfChain(slot); });
+	list_->setSummaryFn([this](size_t slot) { return summaryOfChain(slot, true); }); // the name and its role: what it holds is the cards'
 	tabs_->setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, *tabs_, anchor); });
 	tabs_->setRenameHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->begin(slot, *tabs_, anchor); });
 	pads_->gridForTest().setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, pads_->gridForTest(), anchor); });
@@ -1223,7 +1237,7 @@ void ParallelRackCard::foldedChanged() {
 
 ParallelRackCard::~ParallelRackCard() = default;
 
-std::string ParallelRackCard::summaryOfChain(size_t i) const {
+std::string ParallelRackCard::summaryOfChain(size_t i, bool nameOnly) const {
 	const pr::Rack* r = rack();
 	// THE ROLE THE MODE GIVES THIS CHAIN (§2a), or that it has none here.
 	const Plan pl = plan();
@@ -1239,7 +1253,7 @@ std::string ParallelRackCard::summaryOfChain(size_t i) const {
 	if (!role.empty()) {
 		summary += " · " + role;
 	}
-	if (contents != label) {
+	if (contents != label && !nameOnly) {
 		summary += " · " + contents;
 	}
 	return summary;

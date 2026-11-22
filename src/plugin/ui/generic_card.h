@@ -498,6 +498,10 @@ class MissingDeviceCard final : public FxCard {
 public:
 	/// `tag` is the record's four characters, NUL-padded or not.
 	explicit MissingDeviceCard(std::string_view tag);
+	/// **A DEVICE THIS BUILD HAS, WHOSE SAVED CONTENTS IT WOULD NOT TAKE** (backlog TM): drawn as its own name over
+	/// "could not load", in place of controls that would show a fresh device and not what is stored. The record keeps the
+	/// bytes and saves them back as they were; nothing runs. Removal is the one verb, as for a missing device.
+	MissingDeviceCard(const device::Descriptor& refused, std::string_view why);
 
 	void draw(visage::Canvas& canvas) override;
 	float laneHeightAt(float) const override { return folded() ? kCardHeadHeight : height(); }
@@ -513,10 +517,16 @@ public:
 		return named.empty() ? name_ : named;
 	}
 	static constexpr const char* kMessage = "device missing";
+	static constexpr const char* kRefusedMessage = "could not load: kept as saved";
+	/// What the body says (`kMessage`, or `kRefusedMessage`), and why a refused one was refused.
+	[[nodiscard]] const std::string& message() const noexcept { return message_; }
+	[[nodiscard]] const std::string& refusal() const noexcept { return why_; }
 	static constexpr float kBodyHeight = 28.0f;
 
 private:
 	std::string name_;
+	std::string message_ = kMessage;
+	std::string why_;
 };
 
 } // namespace feathers::ui

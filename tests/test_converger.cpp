@@ -31,7 +31,10 @@
 #include "rack/rack_engine.h"
 #include "backplane/block_context.h"
 
+#include <algorithm>
 #include <array>
+#include <span>
+#include <string>
 #include <cmath>
 #include <vector>
 
@@ -770,4 +773,116 @@ TEST_CASE("backlog NS: an Audio-mode Follower whose voices arrive with its switc
 	float level = -1.0f;
 	REQUIRE(r.engine.playheadLevelAt(tap, level));
 	CHECK(std::abs(level - 0.3f) <= 1e-5f);
+}
+
+//==================================================================================================
+// BACKLOG TM — A BODY THE DEVICE REFUSES IS KEPT, SAID, SHOWN AS REFUSED AND NOT RUN
+//==================================================================================================
+
+namespace {
+
+/// BYTES NO FEATHERVERB BODY DECODES FROM — a newer build's body, or a damaged one, as the loader sees it.
+std::vector<uint8_t> refusedBody() { return std::vector<uint8_t>(37, 0xAB); }
+
+bool sameBody(std::span<const uint8_t> got, const std::vector<uint8_t>& want) {
+	return got.size() == want.size() && std::equal(want.begin(), want.end(), got.begin());
+}
+
+/// ONE BLOCK THROUGH THE ENGINE, in place, from a constant — returns the left channel's last sample.
+float throughEngine(RackEngine& e, float in) {
+	std::vector<float> l(256, in), r(256, in);
+	for (int i = 0; i < 8; ++i) {
+		std::fill(l.begin(), l.end(), in);
+		std::fill(r.begin(), r.end(), in);
+		e.processStereo(l.data(), r.data(), 256, backplane::unknownBlock());
+	}
+	return l.back();
+}
+
+} // namespace
+
+TEST_CASE("backlog TM: a body the loader refuses is kept as saved, the device is not run, and the refusal is recorded") {
+	const device::Descriptor* verb = deviceForTag(fx::featherverb::kTraits.tag);
+	REQUIRE(verb != nullptr);
+	REQUIRE(verb->bodyLoader() != nullptr);
+	const std::vector<uint8_t> bad = refusedBody();
+	// NOT VACUOUS: the loader really does refuse these bytes.
+	{
+		Rig probe;
+		ContainerBodies none;
+		ChainState s(kAxes.deviceSlots, 1);
+		seat(s, 0, fx::featherverb::kTraits.tag, 20, 0.25f);
+		REQUIRE(probe.converger.provision(s, &none, 0) == 1);
+		probe.converger.converge(s, 0);
+		void* surface = none.surfaceOf(20);
+		REQUIRE(surface != nullptr);
+		CHECK_FALSE(verb->bodyLoader()(surface, bad.data(), bad.size()));
+	}
+
+	Rig r;
+	ContainerBodies bodies;
+	REQUIRE(bodies.store(21, bad.data(), bad.size()));
+	ChainState s(kAxes.deviceSlots, 1);
+	seat(s, 0, fx::featherverb::kTraits.tag, 21, 0.25f);
+	r.apply(s, &bodies);
+
+	// KEPT: the carrier still holds the bytes, nothing is filed as the running instance, so a save writes them back.
+	CHECK(sameBody(bodies.bodyFor(21), bad));
+	CHECK(bodies.surfaceOf(21) == nullptr);
+	CHECK(bodies.refusalOf(21) != nullptr);
+	// NOT RUN: the engine holds nothing under that id, and the output is the input to the bit.
+	CHECK(r.storageOf(21) == nullptr);
+	CHECK(throughEngine(r.engine, 0.2f) == 0.2f);
+	// REPORTED, once, naming the device, its place and the reason.
+	const auto refusals = r.converger.takeBodyRefusals();
+	REQUIRE(refusals.size() == 1);
+	CHECK(refusals[0].id == 21);
+	CHECK(refusals[0].name == std::string(verb->traits.name));
+	CHECK(refusals[0].where == rack::deviceWhere(verb->traits.name, 0, 0));
+	CHECK(refusals[0].reason.find("37 bytes") != std::string::npos);
+	// STABLE: further rounds neither rebuild it nor say it again.
+	for (int i = 0; i < 3; ++i) {
+		CHECK(r.converger.provision(s, &bodies, 0) == 0);
+		r.converger.converge(s, 0);
+		r.converger.reap();
+	}
+	CHECK(r.converger.takeBodyRefusals().empty());
+	CHECK(sameBody(bodies.bodyFor(21), bad));
+	CHECK(r.storageOf(21) == nullptr);
+
+	// NOT VACUOUS, THE OTHER WAY: the same row with no body is built and runs.
+	Rig ok;
+	ContainerBodies fresh;
+	ok.apply(s, &fresh);
+	CHECK(ok.storageOf(21) != nullptr);
+	CHECK(fresh.refusalOf(21) == nullptr);
+	CHECK(ok.converger.takeBodyRefusals().empty());
+}
+
+TEST_CASE("backlog TM: a body refused over a device already running under that id takes the old instance out") {
+	Rig r;
+	ContainerBodies bodies;
+	ChainState s(kAxes.deviceSlots, 1);
+	seat(s, 0, fx::featherverb::kTraits.tag, 21, 0.25f);
+	r.apply(s, &bodies);
+	REQUIRE(r.storageOf(21) != nullptr); // a previous load's instance is running
+
+	const std::vector<uint8_t> bad = refusedBody();
+	REQUIRE(bodies.store(21, bad.data(), bad.size())); // the next load's body for the same id
+	for (int i = 0; i < 4; ++i) {
+		r.apply(s, &bodies);
+	}
+	CHECK(r.storageOf(21) == nullptr);
+	CHECK(sameBody(bodies.bodyFor(21), bad));
+	CHECK(bodies.surfaceOf(21) == nullptr);
+	CHECK(r.converger.takeBodyRefusals().size() == 1);
+	CHECK(throughEngine(r.engine, 0.2f) == 0.2f);
+
+	// A NEW BODY ENDS THE REFUSAL: an empty one is the device's own start, and it runs again.
+	REQUIRE(bodies.store(21, nullptr, 0));
+	CHECK(bodies.refusalOf(21) == nullptr);
+	for (int i = 0; i < 2; ++i) {
+		r.apply(s, &bodies);
+	}
+	CHECK(r.storageOf(21) != nullptr);
 }

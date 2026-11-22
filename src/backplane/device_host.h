@@ -156,6 +156,11 @@ public:
 	/// audio thread. Empty for a device that is no container, or one this host holds no body for.
 	virtual std::span<const uint8_t> containerBodyOf(DeviceInstanceId) const { return {}; }
 
+	/// **WHY THIS DEVICE'S SAVED CONTENTS WERE NOT TAKEN** (backlog TM), or null when they were (or it has none). A device
+	/// whose body its loader refused is not run: its bytes stay as saved, and its card says so instead of showing controls
+	/// that would not reflect what is stored. Message thread.
+	virtual const std::string* bodyRefusalOf(DeviceInstanceId) const { return nullptr; }
+
 	/// WHICH VERSION OF THAT BODY — moves when the host stores a new one, so a reader re-parses only then.
 	/// 0 for a device with no body.
 	virtual uint64_t containerBodyGenerationOf(DeviceInstanceId) const { return 0; }

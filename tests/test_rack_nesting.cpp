@@ -322,8 +322,9 @@ TEST_CASE("a file nesting racks past the load limit is refused at the limit rath
 		++depth;
 	}
 	// The loaded top is not itself a device load; every rack below it is, and the one that would have
-	// been the `kMaxDepth`-th device load refused its body — so it is there, and empty.
-	CHECK(depth == rack::kMaxDepth);
+	// been the `kMaxDepth`-th device load refused its body. A refused body is kept and its device is not run (backlog TM),
+	// so the walk ends one level above it: the last rack that runs holds nothing the engine runs.
+	CHECK(depth == rack::kMaxDepth - 1);
 	CHECK(walk->chainLength(0) == 0);
 }
 

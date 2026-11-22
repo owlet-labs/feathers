@@ -2188,3 +2188,8 @@ target_link_libraries(test_pattern_likes_gui PRIVATE feathers-impl feathers-warn
 target_include_directories(test_pattern_likes_gui PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME pattern-likes-gui COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_pattern_likes_gui>)
 set_tests_properties(pattern-likes-gui PROPERTIES LABELS "headless-incompatible")
+
+add_executable(test_body_refused test_body_refused.cpp)
+target_link_libraries(test_body_refused PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
+target_include_directories(test_body_refused PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME body-refused COMMAND test_body_refused)

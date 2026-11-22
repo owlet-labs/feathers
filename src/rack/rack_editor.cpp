@@ -1548,7 +1548,7 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 	// as nothing at all here; it is "device missing" now, the one card every host
 	// draws for it.
 	const auto missingTagOf = [&lane](DeviceInstanceId device, const device::Descriptor* desc) {
-		return desc == nullptr ? lane.heldTagOf(device) : device::Tag {};
+		return desc == nullptr || lane.bodyRefusalOf(device) != nullptr ? lane.heldTagOf(device) : device::Tag {};
 	};
 	// FIRST, EVERY CARD WHOSE DEVICE HAS LEFT THE CHAIN OR BECOME ANOTHER, RETIRED.
 	for (auto it = cards.begin(); it != cards.end();) {
@@ -1595,7 +1595,8 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 		const device::Descriptor* desc = lane.descriptorOf(i);
 		const device::Tag missing = missingTagOf(i, desc);
 		std::unique_ptr<ui::FxCard> card;
-		if (desc != nullptr) {
+		const std::string* refusal = lane.bodyRefusalOf(i); // backlog TM: its saved contents were refused
+		if (desc != nullptr && refusal == nullptr) {
 			// THE DEVICE'S OWN CARD IF IT HAS ONE ON THE SEAM, the generic grid otherwise. the rack built `GenericCard` for
 			// everything, because every custom card needed a `ParamBridge` this host does not have.
 			//
@@ -1605,6 +1606,9 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 			if (card == nullptr) {
 				card = std::make_unique<ui::GenericCard>(lane, i, *desc, nullptr);
 			}
+		}
+		else if (desc != nullptr) {
+			card = std::make_unique<ui::MissingDeviceCard>(*desc, *refusal);
 		}
 		else if (missing[0] != '\0') {
 			card = std::make_unique<ui::MissingDeviceCard>(std::string_view(missing.data(), missing.size()));

@@ -1067,6 +1067,16 @@ MissingDeviceCard::MissingDeviceCard(std::string_view tag) {
 	};
 }
 
+MissingDeviceCard::MissingDeviceCard(const device::Descriptor& refused, std::string_view why)
+    : MissingDeviceCard(std::string_view {}) {
+	// ITS OWN NAME, which a refusal still has: the descriptor is here, only its contents were not taken.
+	if (refused.traits.name != nullptr && refused.traits.name[0] != '\0') {
+		name_ = refused.traits.name;
+	}
+	message_ = kRefusedMessage;
+	why_ = std::string(why);
+}
+
 void MissingDeviceCard::draw(visage::Canvas& canvas) {
 	// THE SHARED FRAME, WITH THE TAG WHERE A DESCRIPTOR'S NAME WOULD GO — the base's `draw` names the
 	// card from its descriptor, and a missing device has none. Nothing else of the base's head applies:
@@ -1103,7 +1113,7 @@ void MissingDeviceCard::draw(visage::Canvas& canvas) {
 		// IN THE CARD'S OWN COORDINATES, FROM THE BODY'S ORIGIN — `drawBody` clips to the body and does
 		// not move the origin, so text at y = 0 lands under the head and is clipped away entirely. The
 		// first draft did exactly that and said nothing; the render case below the three hosts' caught it.
-		canvas.text(kMessage, font(kKnobReadoutSize), visage::Font::kLeft, bodyLeft() + kModCardPadX,
+		canvas.text(message_.c_str(), font(kKnobReadoutSize), visage::Font::kLeft, bodyLeft() + kModCardPadX,
 		            bodyTopEdge(), std::max(0.0f, bodyWidth() - 2.0f * kModCardPadX), kBodyHeight);
 	});
 }

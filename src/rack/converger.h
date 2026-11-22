@@ -28,6 +28,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace feathers::rack {
 
@@ -121,6 +124,19 @@ public:
 		const RouteRefusals out = outerDrops_;
 		outerDrops_ = RouteRefusals {};
 		return out;
+	}
+
+	/// **A DEVICE WHOSE STORED BODY ITS LOADER REFUSED** (backlog TM) — one entry per refusal since last taken, for the
+	/// host to put in its load report and its event log. The device is not built into the engine (it plays as a device
+	/// this build cannot run does: not at all, audio passing), its bytes stay in the carrier, and the card says so.
+	struct BodyRefusal {
+		DeviceInstanceId id = kNoInstance;
+		std::string name;  ///< the device's card name
+		std::string where; ///< its place, as a load report spells it ("Rack (chain 1, #2)")
+		std::string reason;
+	};
+	[[nodiscard]] std::vector<BodyRefusal> takeBodyRefusals() noexcept {
+		return std::exchange(bodyRefusals_, {});
 	}
 
 	/// DESTROY WHAT THE AUDIO THREAD HAS FINISHED WITH — the engine's parked devices, and provisions it
@@ -238,6 +254,9 @@ private:
 		/// input re-taken at this same drain may have pointed into a moment before. `reap` frees it only once the epoch has
 		/// moved past a whole block after this one (`epochPassed`): the old storage outlives the block that let it go.
 		uint64_t retiredAt = 0;
+		/// **A TOMBSTONE, NOT A DEVICE** (backlog TM): the device under `instanceId` would not take its body, so the instance
+		/// running under that id (a previous load's) must leave. Never `live()`; the drain removes the slot and hands it back.
+		bool evict = false;
 	};
 
 	/// WHAT A DEVICE IS, BY IDENTITY — the same four facts on both sides of the handover, so the two
@@ -327,6 +346,8 @@ private:
 			desc->container->setHostSlots(storage, makeLink_(linkHost_, self));
 		}
 	}
+	/// See `takeBodyRefusals`.
+	std::vector<BodyRefusal> bodyRefusals_;
 	/// See `takeOuterDrops`.
 	RouteRefusals outerDrops_ {};
 	/// THE AUDIO THREAD'S RECORD of what each engine slot runs — the engine's pool, kept beside it.

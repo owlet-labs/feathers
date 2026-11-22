@@ -2469,7 +2469,9 @@ bool ModPanel::ensureCard(size_t slot) {
 	// and editing the device that used to be above it. The card holds a perfectly valid address — it is
 	// just no longer the device at its position.
 	const DeviceInstanceId builtFor = bridge_.rackDeviceAt(slot);
-	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == builtFor) {
+	// AND WHETHER ITS SAVED CONTENTS WERE REFUSED (backlog TM), found by the converger after the card may exist.
+	const bool refused = host_.bodyRefusalOf(builtFor) != nullptr;
+	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == builtFor && cardRefused_[slot] == refused) {
 		return false;
 	}
 
@@ -2507,7 +2509,12 @@ bool ModPanel::ensureCard(size_t slot) {
 	// meet, and it is deliberately the only one: `FxLane::ensureCard` does exactly this and says the same
 	// thing, *"the card knows its device and the strip knows its position"*.
 	const DeviceInstanceId device = builtFor;
-	switch (kind) {
+	const ModRack refusedRack = bridge_.modRack();
+	const device::Descriptor* refusedDesc = refused && slot < refusedRack.device.size() ? descriptorForRow(refusedRack.device[slot]) : nullptr;
+	if (refusedDesc != nullptr) {
+		cards_[slot] = std::make_unique<MissingDeviceCard>(*refusedDesc, *host_.bodyRefusalOf(device));
+	}
+	else switch (kind) {
 		case CardKind::Mseg:
 			cards_[slot] = std::make_unique<MsegCard>(host_, device, mod_, history_);
 			break;
@@ -2553,6 +2560,7 @@ bool ModPanel::ensureCard(size_t slot) {
 	// BOTH HALVES OF THE KEY, WRITTEN TOGETHER — see `cardDevice_`. Recording the device anywhere other
 	// than beside the tag is how the two come apart again.
 	cardDevice_[slot] = device;
+	cardRefused_[slot] = refused;
 	addChild(cards_[slot].get());
 	return true;
 }
@@ -2969,6 +2977,7 @@ void ModPanel::reserveCards(size_t count) {
 	cards_.resize(want);
 	cardTag_.resize(want);
 	cardDevice_.resize(want);
+	cardRefused_.resize(want);
 }
 
 } // namespace feathers::ui

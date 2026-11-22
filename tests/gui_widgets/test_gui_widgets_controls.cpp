@@ -47,6 +47,8 @@
 #include "plugin/ui/menu_anchor.h"
 #include "../menu_placement_check.h"
 #include "plugin/macro_modes.h"
+#include "fx/featherverb/featherverb_types.h"
+#include "plugin/device_registry.h"
 #include "fx/automod/automod_types.h"
 #include "fx/shaper/shaper_types.h"
 #include "fx/eroder/eroder_types.h"
@@ -6756,6 +6758,42 @@ TEST_CASE("a missing device's card paints its tag in the head and \"device missi
 	const visage::Screenshot& foldedShot = render(folded);
 	const auto foldedInk = inkCounter(foldedShot);
 	CHECK(foldedInk(4, head + 2, kTextRight, kH - 2) == 0); // folded: the head and nothing else
+}
+
+TEST_CASE("backlog TM: a card for a device whose contents were refused paints its own name and 'could not load', not controls") {
+	constexpr int kW = 216;
+	const int kH = static_cast<int>(ui::MissingDeviceCard::height());
+	const device::Descriptor* verb = deviceForTag(fx::featherverb::kTraits.tag);
+	REQUIRE(verb != nullptr);
+	ui::MissingDeviceCard card { *verb, "the device would not take its saved contents (41 bytes)" };
+	REQUIRE(card.name() == std::string(verb->traits.name));
+	REQUIRE(card.message() == ui::MissingDeviceCard::kRefusedMessage);
+	card.setBounds(0, 0, kW, kH);
+	visage::Canvas canvas;
+	markedWindowless(canvas, kW, kH);
+	canvas.setColor(0xff000000);
+	canvas.fill(0.0f, 0.0f, static_cast<float>(kW), static_cast<float>(kH));
+	visage::Region region;
+	region.setBounds(0, 0, kW, kH);
+	canvas.addRegion(&region);
+	canvas.beginRegion(&region);
+	card.draw(canvas);
+	canvas.endRegion();
+	const visage::Screenshot& shot = takeMarkedCapture(canvas, kW, kH);
+	// THE BODY PAINTS THE LONGER MESSAGE: ink well to the right of where "device missing" would end.
+	const int head = static_cast<int>(kCardHeadHeight);
+	const auto peak = [&](int x, int y) {
+		return std::max({ static_cast<int>(shot.sample(x, y).hexRed()), static_cast<int>(shot.sample(x, y).hexGreen()),
+		                  static_cast<int>(shot.sample(x, y).hexBlue()) });
+	};
+	const int ground = peak(kW - 8, kH - 6);
+	int inkRight = 0;
+	for (int y = head + 2; y < kH - 2; ++y) {
+		for (int x = 110; x < 170; ++x) {
+			inkRight += peak(x, y) > ground + 24 ? 1 : 0;
+		}
+	}
+	CHECK(inkRight > 0);
 }
 
 TEST_CASE("a missing device's card frames the rectangle it was GIVEN, not the one its class names") {

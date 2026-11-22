@@ -2326,7 +2326,12 @@ void applyRack(const RackPatch& patch, RackEngine* rack, LoadReport* report) {
 		}
 		if (!device.body.empty() && p.desc->bodyLoader() != nullptr
 		    && !p.desc->bodyLoader()(p.storage.get(), device.body.data(), device.body.size())) {
-			report->note(LoadReport::Kind::BodyRefused, where, device.tag.data());
+			// **NOT ADOPTED** (backlog TM): a fresh empty device here would be what a save of this engine writes, over the
+			// content the body held. The engine has nowhere to carry the bytes, so `loadRack` answers false for the whole
+			// body and the container that holds it keeps its bytes whole, as the converger does for any refused body.
+			report->note(LoadReport::Kind::BodyRefused, where, p.desc->traits.name,
+			             "the device would not take its saved contents (" + std::to_string(device.body.size()) + " bytes)");
+			continue;
 		}
 		restoreBlocksOfPatch(*p.desc, p.storage.get(), device, report, where);
 		const device::Descriptor* desc = p.desc;
@@ -2385,7 +2390,9 @@ bool loadRack(const clap_istream* stream, RackEngine* rack, LoadReport* report) 
 		return false;
 	}
 	applyRack(patch, rack, report);
-	return true;
+	// A REFUSED DEVICE BODY REFUSES THE BODY (backlog TM): the engine holds no opaque bytes, so a partial load would save
+	// as a loss. The caller's container is refused whole and its own carrier keeps the bytes.
+	return report->countOf(LoadReport::Kind::BodyRefused) == 0;
 }
 
 } // namespace feathers::rack

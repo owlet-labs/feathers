@@ -39,6 +39,7 @@
 #include "mod/modulator.h"
 
 #include <atomic>
+#include <utility>
 #include <bit>
 #include <memory>
 #include <array>
@@ -271,6 +272,9 @@ public:
 		loadReport_ = LoadReport {};
 		return out;
 	}
+	/// **THE EVENT-LOG LINES FOR BODIES A DEVICE REFUSED** (backlog TM), since last taken, for the plugin that owns the log.
+	/// The same refusals are in the load report (`LoadReport::Kind::BodyRefused`).
+	[[nodiscard]] std::vector<std::string> takeRefusalLog() { return std::exchange(refusalLog_, {}); }
 	[[nodiscard]] bool hasOuterGate() const noexcept { return record_.hasOuterGate(); }
 	/// THE GATE THIS HOST HANDS A CHAIN IT PROVISIONS (`Converger`): this record's answer, for that chain.
 	[[nodiscard]] device::OuterGate outerGateFor(DeviceInstanceId self) const noexcept {
@@ -314,6 +318,7 @@ public:
 
 	/// A MEMBER CHAIN'S BODY, from this rack's carrier (`bodies_`) — a rack in a rack draws its head from it.
 	std::span<const uint8_t> containerBodyOf(DeviceInstanceId device) const override { return bodies_.bodyFor(device); }
+	const std::string* bodyRefusalOf(DeviceInstanceId device) const override { return bodies_.refusalOf(device); }
 	uint64_t containerBodyGenerationOf(DeviceInstanceId device) const override { return bodies_.generationOf(device); }
 	void* containerSurfaceOf(DeviceInstanceId device) const override { return bodies_.surfaceOf(device); }
 	/// A HAND'S BLOCKS (`DeviceHost::setBlock`): kept in this carrier, and an edit of one is an edit of the patch.
@@ -986,6 +991,11 @@ private:
 	backplane::RouteProbeChannel routeProbe_;
 	/// See `noteRefusedRoutes`.
 	LoadReport loadReport_ {};
+	/// **THE CONVERGER'S REFUSED BODIES, SAID** (backlog TM): into the latched load report, and the event log's lines.
+	void collectBodyRefusals();
+	/// The refusals found since the current load began, so `loadPatch` can return them with its own report.
+	LoadReport bodyRefusalNotes_ {};
+	std::vector<std::string> refusalLog_;
 
 	// THE MESSAGE THREAD'S — the record, and what it has handed across.
 	/// **THE COUNTER THIS BRIDGE FALLS BACK ON WHEN NOBODY LENDS IT ONE.** Declared before `ids_`, which

@@ -352,6 +352,7 @@ size_t FxLane::syncCards() {
 		const bool current = slot < chain.count
 		                         ? cards_[slot] != nullptr && cardTag_[slot] == fxDeviceAtPosition(chain, slot).tag()
 		                               && cardDevice_[slot] == bridge_.fxDeviceAt(slot)
+		                               && cardRefused_[slot] == (deviceHost_.bodyRefusalOf(bridge_.fxDeviceAt(slot)) != nullptr)
 		                         : cards_[slot] == nullptr;
 		stale += current ? 0u : 1u;
 	}
@@ -424,7 +425,9 @@ void FxLane::ensureCard(size_t slot) {
 	// reorder shifts a same-tag neighbour into a position. Found by asking whether the modulator strip's
 	// version of this defect was here too — it was, MEASURED at `1 == 2` with three filters and the
 	// middle one removed.
-	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == device) {
+	// AND WHETHER ITS SAVED CONTENTS WERE REFUSED (backlog TM): the converger finds that after the card may have been built.
+	const bool refused = deviceHost_.bodyRefusalOf(device) != nullptr;
+	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == device && cardRefused_[slot] == refused) {
 		return;
 	}
 
@@ -510,6 +513,7 @@ void FxLane::ensureCard(size_t slot) {
 	// BOTH HALVES OF THE KEY, WRITTEN TOGETHER AND BEFORE THE EARLY RETURN — an empty slot has to
 	// record its device too, or it compares unequal on every layout and rebuilds nothing, forever.
 	cardDevice_[slot] = device;
+	cardRefused_[slot] = refused;
 	if (slot >= chain.count) {
 		return; // an empty slot has no card, which is not the same as a card with nothing in it
 	}
@@ -538,7 +542,12 @@ void FxLane::ensureCard(size_t slot) {
 	//
 	// It reads its row through `fieldsPresentAt`/`fieldAt` now, over the same `DeviceRow` `fxFilterAt`
 	// used to walk, so Feathers' numbers are unchanged by construction rather than by testing.
-	if (const device::Descriptor* known = deviceForTag(tag.data());
+	// **A DEVICE WHOSE SAVED CONTENTS WERE REFUSED HAS NO CONTROLS** (backlog TM): they would show a fresh device and not
+	// what is stored, and nothing runs. It says so, and the slot menu can still take it out.
+	if (const device::Descriptor* kept = refused ? deviceForTag(tag.data()) : nullptr; kept != nullptr) {
+		cards_[slot] = std::make_unique<MissingDeviceCard>(*kept, *deviceHost_.bodyRefusalOf(device));
+	}
+	else if (const device::Descriptor* known = deviceForTag(tag.data());
 	         known != nullptr
 	         && (cards_[slot] = makeCustomCard(deviceHost_, registry_, device, *known, notifier_, mod_,
 	                                           history_))
@@ -1524,6 +1533,7 @@ void FxLane::reserveCards(size_t count) {
 	cardWatches_.resize(want);
 	cardTag_.resize(want);
 	cardDevice_.resize(want);
+	cardRefused_.resize(want);
 }
 
 } // namespace feathers::ui

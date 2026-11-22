@@ -52,7 +52,8 @@ struct Flow {
 bool isBox(dd::Param p) {
 	switch (p) {
 	case dd::Param::Kind: case dd::Param::Note: case dd::Param::Seed: case dd::Param::Zone: case dd::Param::ZoneOffset:
-	case dd::Param::Gamma: case dd::Param::Rotate: case dd::Param::TravelX: case dd::Param::TravelY: case dd::Param::Claps: return true;
+	case dd::Param::Gamma: case dd::Param::Rotate: case dd::Param::TravelX: case dd::Param::TravelY: case dd::Param::Claps:
+	case dd::Param::SweepSync: return true;
 	default: return false;
 	}
 }
@@ -91,6 +92,9 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 				box->setDragSpan(1.0);
 			}
 			w = std::move(box);
+		}
+		else if (p == dd::Param::SweepDir) {
+			w = std::make_unique<SwitchChip>(control, "Down"); // lit: sweeping down; unlit: up
 		}
 		else if (isBox(p)) {
 			w = std::make_unique<ValueBox>(control, d.name);
@@ -255,13 +259,15 @@ void DrumDeviceExpanded::layOut() {
 	seat(body, dd::Param::Drive, kPillW, kPillH);
 	seat(body, dd::Param::DriveCurve, 184.0f, 22.0f);
 	seat(body, dd::Param::DriveTone, kPillW, kPillH);
-	for (const dd::Param p : { dd::Param::Density, dd::Param::Grain, dd::Param::Pressure, dd::Param::Speed, dd::Param::Rate, dd::Param::Rise, dd::Param::Flow, dd::Param::Splash, dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
+	for (const dd::Param p : { dd::Param::Density, dd::Param::Grain, dd::Param::Pressure, dd::Param::Speed, dd::Param::Rate, dd::Param::Rise, dd::Param::Flow, dd::Param::Splash, dd::Param::SweepRange, dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
 	                           dd::Param::WireDecay, dd::Param::ClickDecay, dd::Param::BellStart, dd::Param::BellEnd, dd::Param::BellTime,
 	                           dd::Param::Bell2Hz, dd::Param::Bell2Time, dd::Param::KickHold, dd::Param::KickDip, dd::Param::KickDipTime,
 	                           dd::Param::ClickSweep, dd::Param::ClickSweepTime, dd::Param::StartPhase }) {
 		seat(body, p, kPillW, kPillH);
 	}
 	seat(body, dd::Param::Claps, 56.0f, ValueBox::kHeight);
+	seat(body, dd::Param::SweepDir, 56.0f, 22.0f);
+	seat(body, dd::Param::SweepSync, 96.0f, ValueBox::kHeight);
 	// THE SNARE'S WIRES AND BELLS: one amount each, where the named zones were.
 	seat(body, dd::Param::WireContour, 150.0f, 22.0f);
 	for (const dd::Param p : { dd::Param::WireBuzz, dd::Param::WireThreshold, dd::Param::WireGate, dd::Param::BodyGate, dd::Param::Bell1Level,

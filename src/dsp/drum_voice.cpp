@@ -174,8 +174,9 @@ constexpr double kTensionSteps = 2400.0;
 constexpr uint64_t kWidthSalt = 0x5E7E0D1DE0ull;
 constexpr uint64_t kParticleSalt = 0x9A27C1E5B0A7ull;
 constexpr uint64_t kFrictionSalt = 0xF1C7107B0A7ull;
-constexpr float kFrictionGain = 1.0f; ///< the resonators' sum to the level of the other kinds (measured, test_drum_voice)
+constexpr float kFrictionGain = 10.0f; ///< the resonators' sum to the level of the other kinds (measured, test_drum_voice)
 constexpr uint64_t kWaterSalt = 0x3A7E2B0B91Eull;
+constexpr uint64_t kSweepSalt = 0x5EE9B0A7C1ull;
 constexpr float kParticleGain = 0.35f; ///< the resonances' sum to a hit of about the level of the other kinds (measured, test_drum_voice)
 /// The Modulated contour: the wires' envelope chopped by a falling sawtooth at this rate, to this depth (Microtonic's Mod).
 constexpr double kWireModHz = 45.0;
@@ -215,6 +216,9 @@ FieldUse kindReads(Kind k) {
 	// WATER: the size (Pitch), the shower's length, the splash's and the bed's colour (Tone), the chirp's ring (Snap) and the spread of sizes and places
 	// (Metal). Nothing glides by the Sweep field (Rise is its own control) and there is no Noise share (the Flow control is the bed's level).
 	case Kind::Water: return { true, true, false, true, false, true, true };
+	// SWEEP: the low corner's pitch, the length (its Decay), how far the oscillator follows the filter (Sweep), the filter's type (Tone), the noise against
+	// the oscillator (Noise) and the resonance (Snap). No Metal.
+	case Kind::Sweep: return { true, true, true, true, true, true, false };
 	default: return { false, false, false, false, false, false, false };
 	}
 }
@@ -246,6 +250,7 @@ double kindBaseHz(Kind k) {
 	case Kind::Particle: return 3000.0;
 	case Kind::Friction: return 600.0;
 	case Kind::Water: return 900.0;
+	case Kind::Sweep: return 200.0;
 	default: return 110.0;
 	}
 }
@@ -256,6 +261,7 @@ double kindSweepOctaves(Kind k) {
 	case Kind::Membrane: return 1.0;
 	case Kind::Snare: return 0.5;
 	case Kind::String: return 1.0;
+	case Kind::Sweep: return 1.0; // the Sweep field is how far the oscillator follows the filter (0..1)
 	default: return 0.0;
 	}
 }
@@ -424,6 +430,9 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.buzzThreshold = std::clamp(wire.threshold, 0.0, 1.0);
 	l.density = std::clamp(c.particleDensity, 0.25, 2000.0);
 	l.grainT60 = std::clamp(c.grainSeconds, 1.0e-4, 0.5);
+	l.sweepDirection = c.sweepDirection == 1 ? 1 : 0;
+	l.sweepRange = std::clamp(c.sweepRange, 0.25, 9.0);
+	l.lengthSeconds = std::max(0.005, c.syncBeats > 0.0 && c.secondsPerBeat > 0.0 ? c.syncBeats * c.secondsPerBeat : l.t60);
 	l.waterRate = std::clamp(c.waterRate, 0.0625, 1000.0);
 	l.rise = std::clamp(c.rise, 0.0, 1.0);
 	l.flow = std::clamp(c.flow, 0.0, 1.0);
@@ -581,6 +590,11 @@ void Hit::reset() {
 	flowBp_.clear();
 	flowBpR_.clear();
 	flowWobble_ = 0.0f;
+	sweepFilter_.clear();
+	sweepPos_ = 0.0;
+	sweepEnded_ = false;
+	sweepShape_ = 0.0f;
+	sweepShapeStep_ = 0.0f;
 	fricLp_ = 0.0f;
 	slipAmp_ = 0.0f;
 	partAcc_ = 0.0f;
@@ -754,6 +768,20 @@ void Hit::strike(Kind k, const Laws& l, uint64_t seed, float level) {
 		// THE FIRST COLLISION: a key (One-shot or Gate) lands one at once; a drone starts where its random process does.
 		partThresh_ = static_cast<float>(-std::log(1.0 - unit()));
 		partAcc_ = w.play == kPlayDrone ? 0.0f : partThresh_;
+		break;
+	}
+	case Kind::Sweep: {
+		sweepNoise_ = ks::PluckNoise(seed ^ kSweepSalt);
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		sweepPos_ = 0.0;
+		sweepStep_ = 1.0 / (std::max(0.005, w.lengthSeconds) * sr_);
+		sweepDir_ = 1.0;
+		sweepEnded_ = false;
+		sweepOscPhase_ = 0.0;
+		sweepFilter_.clear();
+		sweepShape_ = static_cast<float>(sweepShape(0.0, w.sweepDirection, w.play));
+		sweepShapeStep_ = 0.0f;
 		break;
 	}
 	case Kind::Water: {
@@ -943,7 +971,7 @@ void Hit::control() {
 	}
 	// NOTHING MOVED, NOTHING TO DO (measured 2026-11-05: recomputing every mode's ratio, decay and rotation each block cost a
 	// Membrane hit about 13 µs a 256-frame block, V5's price). The laws, the bend and the Gate are everything a block reads.
-	const ControlKey key { laws_, bend, released_, releaseT60_, wireBend, bellHz, gates[0], gates[1], holding, dip };
+	const ControlKey key { laws_, bend, released_, releaseT60_, wireBend, bellHz, gates[0], gates[1], holding, dip, sweepPos_ };
 	if (controlValid_ && key == lastControl_) {
 		return;
 	}
@@ -1101,6 +1129,29 @@ void Hit::control() {
 		}
 		break;
 	}
+	case Kind::Sweep: {
+		const double length = std::max(0.005, laws_.lengthSeconds);
+		sweepStep_ = 1.0 / (length * sr_);
+		if (laws_.play == kPlayGate && released_) {
+			body_.d = envDecay(releaseT60_, sr_);
+		}
+		const double lo = std::clamp(laws_.hz, 20.0, kTopFraction * sr_);
+		const double frac = laws_.sweepDirection == 0 ? sweepPos_ : 1.0 - sweepPos_;
+		sweepCorner_ = std::min(sweepCornerHz(lo, laws_.sweepRange, laws_.sweepDirection, sweepPos_), kTopFraction * sr_);
+		const double follow = static_cast<double>(laws_.sweepOctaves);
+		sweepOscInc_ = std::min(lo * std::exp2(laws_.sweepRange * follow * frac), kTopFraction * sr_) / sr_;
+		// THE RESONANCE (Snap): Q from 0.7 (open) to 12 (a whistle); Tone blends the low-pass (dark) into the band-pass (a narrow, vocal sweep).
+		const double q = 0.7 + 11.3 * static_cast<double>(laws_.snap) * static_cast<double>(laws_.snap);
+		sweepFilter_.setBandPass(sweepCorner_, q, sr_);
+		sweepLowMix_ = 1.0f - laws_.tone;
+		sweepBandMix_ = laws_.tone * sweepFilter_.k;
+		sweepGain_ = static_cast<float>(1.4 / std::sqrt(q));
+		// THE LOUDNESS SHAPE, ramped across this block to the next block's.
+		const double ahead = laws_.play == kPlayDrone ? sweepPos_ : std::min(1.0, sweepPos_ + sweepStep_ * kControlBlock);
+		sweepShape_ = static_cast<float>(sweepShape(sweepPos_, laws_.sweepDirection, laws_.play));
+		sweepShapeStep_ = static_cast<float>((sweepShape(ahead, laws_.sweepDirection, laws_.play) - static_cast<double>(sweepShape_)) / kControlBlock);
+		break;
+	}
 	case Kind::Water: {
 		if (laws_.play == kPlayOneShot) {
 			body_.d = envDecay(effective(laws_.t60), sr_);
@@ -1172,6 +1223,7 @@ bool Hit::envelopesSilent() const {
 	case Kind::Metal: return body_.v == 0.0f && click_.v == 0.0f;
 	case Kind::Clap: return nextBurst_ >= laws_.count && !toothOn_ && tail_.v == 0.0f;
 	case Kind::String: return string_ == nullptr || string_->idle();
+	case Kind::Sweep: return body_.v == 0.0f && sweepFilter_.ic1 == 0.0f && sweepFilter_.ic2 == 0.0f;
 	case Kind::Water:
 		for (const WaterChirp& c : chirps_) {
 			if (c.on) {
@@ -1207,6 +1259,9 @@ void Hit::checkSilence() {
 			zr_[u] = 0.0f;
 			zi_[u] = 0.0f;
 		}
+	}
+	if (kind_ == Kind::Sweep && std::fabs(sweepFilter_.ic1) < kSilenceFloor && std::fabs(sweepFilter_.ic2) < kSilenceFloor) {
+		sweepFilter_.clear();
 	}
 	if (kind_ == Kind::Water) {
 		if (std::fabs(splashLp_) < kSilenceFloor) {
@@ -1262,6 +1317,52 @@ void Hit::checkSilence() {
 	if (envelopesSilent()) {
 		reset();
 	}
+}
+
+float Hit::renderSweep() {
+	// THE POSITION: a sample at a time. A One-shot or a Gate runs to the end once (a One-shot then closes in 8 ms, a Gate holds); a Drone ping-pongs.
+	if (laws_.play == kPlayDrone) {
+		sweepPos_ += sweepDir_ * sweepStep_;
+		if (sweepPos_ >= 1.0) {
+			sweepPos_ = 1.0;
+			sweepDir_ = -1.0;
+		}
+		else if (sweepPos_ <= 0.0) {
+			sweepPos_ = 0.0;
+			sweepDir_ = 1.0;
+		}
+	}
+	else if (sweepPos_ < 1.0) {
+		sweepPos_ = std::min(1.0, sweepPos_ + sweepStep_);
+		if (sweepPos_ >= 1.0 && laws_.play == kPlayOneShot && !sweepEnded_) {
+			sweepEnded_ = true;
+			body_.d = envDecay(0.008, sr_); // the end of the sweep: closed in 8 ms (a riser's top is cut, not left ringing)
+		}
+	}
+	const float amp = body_.next();
+	// THE SOURCE: a saw (PolyBLEP-corrected) against white noise by the Noise field.
+	sweepOscPhase_ += sweepOscInc_;
+	sweepOscPhase_ -= std::floor(sweepOscPhase_);
+	const double t = sweepOscPhase_;
+	const double dt = sweepOscInc_;
+	double blep = 0.0;
+	if (t < dt) {
+		const double x = t / dt;
+		blep = x + x - x * x - 1.0;
+	}
+	else if (t > 1.0 - dt) {
+		const double x = (t - 1.0) / dt;
+		blep = x * x + x + x + 1.0;
+	}
+	const float saw = static_cast<float>(2.0 * t - 1.0 - blep);
+	const float balance = laws_.noise;
+	// THE STRENGTH GOES IN BEFORE THE FILTER, so a closed sweep's filter rings down to exact zero rather than being fed for ever.
+	const float x = amp * ((1.0f - balance) * 0.6f * saw + balance * noise());
+	float band = 0.0f;
+	float low = 0.0f;
+	sweepFilter_.step(x, band, low);
+	sweepShape_ += sweepShapeStep_;
+	return (sweepLowMix_ * low + sweepBandMix_ * band) * sweepGain_ * sweepShape_ * level_;
 }
 
 void Hit::renderWater(float& left, float& right) {
@@ -1334,8 +1435,9 @@ void Hit::renderWater(float& left, float& right) {
 	if (flowGain_ > 0.0f) {
 		flowWobble_ += flowWobbleCoef_ * (fricRand_.next() - flowWobble_);
 		const float swell = 0.75f + 0.5f * flowWobble_;
-		l += flowGain_ * swell * env * flowBp_.bandPass(noise());
-		r += flowGain_ * swell * env * flowBpR_.bandPass(waterNoiseR_.next());
+		// THE STRENGTH GOES IN BEFORE THE FILTER, so a spent shower's bed rings down to exact zero rather than being fed for ever.
+		l += flowGain_ * swell * flowBp_.bandPass(env * noise());
+		r += flowGain_ * swell * flowBpR_.bandPass(env * waterNoiseR_.next());
 	}
 	left = l * 0.6f * level_;
 	right = r * 0.6f * level_;
@@ -1370,7 +1472,7 @@ float Hit::renderFriction() {
 		const auto u = static_cast<size_t>(i);
 		y += fresGain_[u] * fresQGain_[u] * fres_[u].bandPass(fricLp_);
 	}
-	return (y * kFrictionGain + fricLp_) * level_;
+	return (y * kFrictionGain + 0.25f * fricLp_) * level_;
 }
 
 float Hit::renderParticle() {
@@ -1702,6 +1804,11 @@ void Hit::render(float* out, int n, float* outR) {
 		case Kind::Friction:
 			for (int i = 0; i < span; ++i) {
 				out[s + i] = renderFriction();
+			}
+			break;
+		case Kind::Sweep:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = renderSweep();
 			}
 			break;
 		case Kind::Water:

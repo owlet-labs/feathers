@@ -76,7 +76,10 @@ public:
 	void reset();
 	void setSettings(const Settings& s);
 	void setTickPhase(int phase) noexcept { phase_ = phase; }
-	void setClock(const device::TransportClock& clock) noexcept { clock_ = clock; }
+	void setClock(const device::TransportClock& clock) noexcept {
+		clock_ = clock;
+		controls_.secondsPerBeat = clock.secondsPerBeat; // a synced Sweep's length follows the tempo
+	}
 	/// THE NOTES OF A PIECE, queued for the next `process`.
 	void queueNotes(const device::NoteEvent* in, size_t count);
 	/// Adds the drum to `left`/`right`.

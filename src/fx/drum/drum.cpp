@@ -108,6 +108,9 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	c.rise = static_cast<double>(s.at(Param::Rise));
 	c.flow = static_cast<double>(s.at(Param::Flow));
 	c.splash = static_cast<double>(s.at(Param::Splash));
+	c.sweepDirection = s.index(Param::SweepDir);
+	c.sweepRange = static_cast<double>(s.at(Param::SweepRange));
+	c.syncBeats = kSyncBeats[std::clamp(s.index(Param::SweepSync), 0, static_cast<int>(std::size(kSyncBeats)) - 1)];
 	c.play = s.index(Param::Trigger);
 	c.width = static_cast<double>(s.at(Param::Width));
 	// THE TERRAIN'S PITCH MODE is the kit's alone (the engine's Pitched mode keeps the half-semitone fine pitch as it always was).
@@ -207,6 +210,7 @@ void DrumDsp::reset() {
 void DrumDsp::setSettings(const Settings& s) {
 	s_ = s;
 	controls_ = controlsOf(s);
+	controls_.secondsPerBeat = clock_.secondsPerBeat;
 	// THE TERRAIN IS DECODED ONLY WHEN WHAT IT READS MOVED: the bits of the row's thirteen numbers (home, rotate, travel, scalers).
 	const std::array<float, 13> key {
 		s.at(Param::Zone), s.at(Param::ZoneOffset), s.at(Param::Gamma), s.at(Param::Rotate), s.at(Param::TravelX),

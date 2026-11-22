@@ -60,12 +60,12 @@
 
 namespace feathers::drum {
 
-enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, Water, kCount };
+enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, Water, Sweep, kCount };
 inline constexpr size_t kKindCount = static_cast<size_t>(Kind::kCount);
 /// The labels a Choice stores (the schema ledger stores a Choice by label, so this order may change; a label may not
 /// without a ChoiceAlias).
 inline constexpr std::array<const char* const, kKindCount> kKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap",
-	                                                                    "String", "Particle", "Friction", "Water" };
+	                                                                    "String", "Particle", "Friction", "Water", "Sweep" };
 
 /// **PLAY MODES**: how a hit is held. One-shot rings the whole hit out; Gate holds it while the key is down and damps it to Release when it is let go;
 /// Drone sounds from the moment the device runs, no key needed, until it is switched off. A mode is offered on a kind only where the engine has an
@@ -73,8 +73,25 @@ inline constexpr std::array<const char* const, kKindCount> kKindNames { "Kick", 
 inline constexpr int kPlayOneShot = 0;
 inline constexpr int kPlayGate = 1;
 inline constexpr int kPlayDrone = 2;
+/// THE SWEEP'S SHAPES, one place for the voice and the picture. `pos` is how far through the sweep it is, 0..1. The filter corner runs from the low
+/// corner (the kind's pitch) up `range` octaves (Up) or back down (Down); the loudness rises as pos squared (Up: a riser) or falls as (1 - pos)^1.5
+/// (Down: a downer, a zap, an impact); a Gate holds what it reached (Up: full; Down: a 0.3 sustain under the fall) and a Drone holds one level.
+[[nodiscard]] inline double sweepCornerHz(double lowHz, double range, int direction, double pos) {
+	return lowHz * std::exp2(range * (direction == 0 ? pos : 1.0 - pos));
+}
+[[nodiscard]] inline double sweepShape(double pos, int direction, int play) {
+	if (play == 2) {
+		return 0.45;
+	}
+	const double p = pos < 0.0 ? 0.0 : (pos > 1.0 ? 1.0 : pos);
+	if (direction == 0) {
+		return p * p;
+	}
+	const double fall = std::pow(1.0 - p, 1.5);
+	return play == 1 ? 0.3 + 0.7 * fall : fall;
+}
 /// Whether a kind has an excitation that goes on (a random process), so that Gate holds it and Drone runs it for ever.
-[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle || k == Kind::Friction || k == Kind::Water; }
+[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle || k == Kind::Friction || k == Kind::Water || k == Kind::Sweep; }
 
 /// THE SEVEN DRUM FIELDS (proposal §3.1), each in [0, 1]: the terrain's, or a scaler's override of it.
 struct Fields {
@@ -179,6 +196,12 @@ struct Controls {
 	double rise{0.6};
 	double flow{0.0};
 	double splash{0.3};
+	/// THE SWEEP'S (noise and an oscillator through a swept filter): up or down (0, 1), how many octaves it covers, and how long it takes, by a
+	/// number of beats at the host's tempo (0: free, the Decay's time) when the tempo is known.
+	int sweepDirection{0};
+	double sweepRange{4.0};
+	double syncBeats{0.0};
+	double secondsPerBeat{0.0};
 	int play{0};
 	friend bool operator==(const Controls&, const Controls&) = default;
 };
@@ -355,6 +378,9 @@ struct Laws {
 	double rise{0.6};
 	double flow{0.0};
 	double splash{0.3};
+	int sweepDirection{0};
+	double sweepRange{4.0};
+	double lengthSeconds{1.0}; ///< the sweep's time: the synced beats at the tempo, else the Decay's (Length applied)
 	int play{0};
 	friend bool operator==(const Laws&, const Laws&) = default;
 };
@@ -414,6 +440,16 @@ struct Svf {
 		ic1 = 2.0f * v1 - ic1;
 		ic2 = 2.0f * v2 - ic2;
 		return v1;
+	}
+	/// Both the band-pass and the low-pass of one step (the filter's two outputs).
+	void step(float x, float& band, float& low) {
+		const float v3 = x - ic2;
+		const float v1 = a1 * ic1 + a2 * v3;
+		const float v2 = ic2 + a2 * ic1 + a3 * v3;
+		ic1 = 2.0f * v1 - ic1;
+		ic2 = 2.0f * v2 - ic2;
+		band = v1;
+		low = v2;
 	}
 	void clear() { ic1 = ic2 = 0.0f; }
 };
@@ -509,6 +545,7 @@ private:
 	float renderFriction();
 	/// One sample of both ears (a drop lands anywhere in the stereo field).
 	void renderWater(float& left, float& right);
+	float renderSweep();
 	float renderClap();
 	float clapTooth();
 	float noise() { return noise_.next(); }
@@ -528,6 +565,7 @@ private:
 		bool wireGated{false};
 		bool holding{false};
 		double dip{1.0};
+		double sweepPos{0.0};
 		friend bool operator==(const ControlKey&, const ControlKey&) = default;
 	};
 	ControlKey lastControl_ {};
@@ -705,6 +743,30 @@ public:
 	double waterLastRiseOctavesForTest() const { return lastRiseOct_; }
 	float waterLastPanForTest() const { return lastPan_; }
 	float waterSplashForTest() const { return splashEnv_.v; }
+	/// The sweep's position (0..1), the filter corner and the oscillator's pitch it has set, and the length it is running to.
+	double sweepPosForTest() const { return sweepPos_; }
+	double sweepCornerHzForTest() const { return sweepCorner_; }
+	double sweepOscHzForTest() const { return sweepOscInc_ * sr_; }
+	double sweepLengthForTest() const { return laws_.lengthSeconds; }
+	bool sweepEndedForTest() const { return sweepEnded_; }
+private:
+	// SWEEP: a saw and noise (the Noise field is the balance) through a swept state-variable filter (Tone: low-pass to band-pass, Snap: resonance); the
+	// oscillator's pitch follows the corner by the Sweep field. The position advances a sample at a time, so a moved length never jumps it.
+	double sweepPos_{0.0};
+	double sweepStep_{0.0};
+	double sweepDir_{1.0};   ///< a Drone's ping-pong: +1 rising, -1 falling
+	bool sweepEnded_{false};
+	double sweepCorner_{0.0};
+	double sweepOscInc_{0.0};
+	double sweepOscPhase_{0.0};
+	float sweepShape_{0.0f};
+	float sweepShapeStep_{0.0f};
+	Svf sweepFilter_ {};
+	float sweepLowMix_{0.0f};
+	float sweepBandMix_{0.0f};
+	float sweepGain_{1.0f};
+	ks::PluckNoise sweepNoise_{1};
+public:
 private:
 	// WATER: events (a drop, a bubble) arrive as a Poisson process of the Rate; each starts a sine chirp that rises from its size's pitch, and
 	// a short noise transient (the splash); under them runs a band-limited noise bed (the flow) whose colour follows the size.

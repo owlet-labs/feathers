@@ -103,7 +103,7 @@ std::vector<float> render(Hit& h, size_t n, size_t block = 256) {
 	return out;
 }
 
-constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle, Kind::Friction, Kind::Water };
+constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle, Kind::Friction, Kind::Water, Kind::Sweep };
 
 } // namespace
 
@@ -1891,4 +1891,156 @@ TEST_CASE("Water: One-shot ends in exact silence and idle, Gate holds until rele
 	texture("water-drip.wav", waterLaws(kPlayDrone, 0.7, 0.8, 0.0, 0.1, 1400.0));
 	texture("water-brook.wav", waterLaws(kPlayDrone, 55.0, 0.7, 0.35, 0.15, 700.0));
 	texture("water-rain.wav", waterLaws(kPlayDrone, 420.0, 0.0, 0.2, 0.9, 2600.0));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// SWEEP: noise and an oscillator through a swept filter, over a long envelope                         //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Laws sweepLaws(int play, int direction, double length, double range = 5.0, double lo = 200.0) {
+	Laws l = baseLaws(lo, length);
+	l.play = play;
+	l.sweepDirection = direction;
+	l.sweepRange = range;
+	l.lengthSeconds = length;
+	l.sweepOctaves = 0.0f;
+	l.noise = 0.5f;
+	l.snap = 0.4f;
+	l.tone = 0.3f;
+	return l;
+}
+
+} // namespace
+
+TEST_CASE("Sweep: the filter corner is at lo x 2^(range x position) going up and the mirror going down, at each moment (by value)") {
+	for (const int direction : { 0, 1 }) {
+		for (const double range : { 2.0, 5.0, 7.5 }) {
+			CAPTURE(direction);
+			CAPTURE(range);
+			const double length = 0.8;
+			Rig r;
+			r.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, direction, length, range), 3, 1.0f);
+			size_t done = 0;
+			for (const double at : { 0.1, 0.25, 0.5, 0.75, 0.9 }) {
+				const auto target = static_cast<size_t>(std::lround(at * length * kSr / 16.0)) * 16 + 1; // one sample into a control block
+				std::vector<float> sink(target - done);
+				r.hit.render(sink.data(), static_cast<int>(sink.size()));
+				done = target;
+				// RESTATED: the position at the last block's start is (done - 1) / (length x sr).
+				const double p = static_cast<double>(done - 1) / (length * kSr);
+				const double want = 200.0 * std::exp2(range * (direction == 0 ? p : 1.0 - p));
+				CHECK(r.hit.sweepCornerHzForTest() == doctest::Approx(want).epsilon(1e-6));
+			}
+		}
+	}
+}
+
+TEST_CASE("Sweep: the oscillator follows the corner by the Sweep field, and a synced length is beats at the host's tempo") {
+	Laws l = sweepLaws(kPlayOneShot, 0, 1.0, 4.0);
+	l.sweepOctaves = 0.5f; // follows half the way
+	Rig r;
+	r.hit.strike(Kind::Sweep, l, 3, 1.0f);
+	std::vector<float> sink(16 * 1500 + 1);
+	r.hit.render(sink.data(), static_cast<int>(sink.size()));
+	const double p = 24000.0 / kSr; // the position at the last block's start
+	CHECK(r.hit.sweepOscHzForTest() == doctest::Approx(200.0 * std::exp2(4.0 * 0.5 * p)).epsilon(1e-6));
+	l.sweepOctaves = 0.0f;
+	Rig still;
+	still.hit.strike(Kind::Sweep, l, 3, 1.0f);
+	still.hit.render(sink.data(), static_cast<int>(sink.size()));
+	CHECK(still.hit.sweepOscHzForTest() == doctest::Approx(200.0).epsilon(1e-9)); // not following: the oscillator stays put
+	// THE LENGTH: beats x seconds per beat when the tempo is known; else the Decay's (Length applied).
+	Controls c;
+	c.decaySeconds = 0.9;
+	c.syncBeats = 4.0;
+	c.secondsPerBeat = 0.5;
+	CHECK(lawsFor(Kind::Sweep, Fields {}, c, 200.0, 1.0).lengthSeconds == doctest::Approx(2.0));
+	c.secondsPerBeat = 0.0; // no tempo from the host
+	CHECK(lawsFor(Kind::Sweep, Fields {}, c, 200.0, 1.0).lengthSeconds == doctest::Approx(0.9));
+	c.syncBeats = 0.0; // Free
+	c.secondsPerBeat = 0.5;
+	CHECK(lawsFor(Kind::Sweep, Fields {}, c, 200.0, 1.0).lengthSeconds == doctest::Approx(0.9));
+}
+
+TEST_CASE("Sweep: a riser grows and is cut at its end, a downer falls, One-shot ends in exact silence, Gate holds and a Drone goes back and forth") {
+	const auto third = [](const std::vector<float>& x, int k) {
+		const size_t n = x.size() / 3;
+		return rms(std::vector<float>(x.begin() + static_cast<std::ptrdiff_t>(n * static_cast<size_t>(k)), x.begin() + static_cast<std::ptrdiff_t>(n * static_cast<size_t>(k + 1))));
+	};
+	Rig up;
+	up.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 1.5, 5.0), 3, 1.0f);
+	const std::vector<float> riser = render(up.hit, static_cast<size_t>(1.5 * kSr));
+	CHECK(third(riser, 2) > 3.0 * third(riser, 0)); // it grows (pos squared)
+	CHECK(peakAbs(riser) > 0.1f);
+	CHECK(peakAbs(riser) < 1.5f);
+	Rig down;
+	down.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 1, 1.5, 5.0), 3, 1.0f);
+	const std::vector<float> fall = render(down.hit, static_cast<size_t>(1.5 * kSr));
+	CHECK(third(fall, 0) > 3.0 * third(fall, 2)); // it falls
+	// AND BOTH END IN EXACT SILENCE after their length (the riser closed in 8 ms), idle.
+	for (Rig* r : { &up, &down }) {
+		(void)render(r->hit, static_cast<size_t>(0.5 * kSr));
+		CHECK(r->hit.idle());
+		const std::vector<float> after = render(r->hit, 4800);
+		CHECK(peakAbs(after) == 0.0f);
+	}
+	// A GATE RUNS TO THE END AND HOLDS WHAT IT REACHED until released: a riser stays full, then releases to idle.
+	Rig gate;
+	gate.hit.strike(Kind::Sweep, sweepLaws(kPlayGate, 0, 0.5, 5.0), 3, 1.0f);
+	const std::vector<float> g1 = render(gate.hit, static_cast<size_t>(2.0 * kSr));
+	CHECK_FALSE(gate.hit.idle());
+	CHECK(rms(g1, static_cast<size_t>(1.5 * kSr)) > 0.05);
+	gate.hit.release(0.2);
+	(void)render(gate.hit, static_cast<size_t>(4.0 * kSr));
+	CHECK(gate.hit.idle());
+	// A DRONE'S POSITION GOES UP AND BACK: at one length it is at the top, at two it is back at the bottom, and it is never idle.
+	Rig drone;
+	drone.hit.strike(Kind::Sweep, sweepLaws(kPlayDrone, 0, 0.5, 5.0), 3, 1.0f);
+	(void)render(drone.hit, static_cast<size_t>(0.5 * kSr) + 1);
+	CHECK(drone.hit.sweepPosForTest() == doctest::Approx(1.0).epsilon(0.01));
+	(void)render(drone.hit, static_cast<size_t>(0.5 * kSr));
+	CHECK(std::fabs(drone.hit.sweepPosForTest()) < 0.01);
+	CHECK_FALSE(drone.hit.idle());
+}
+
+TEST_CASE("Sweep: the same seed is the same sweep, and renders for listening: a 2-bar riser and a zap") {
+	Rig a;
+	Rig b;
+	a.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 12, 1.0f);
+	b.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 12, 1.0f);
+	CHECK(render(a.hit, 24000) == render(b.hit, 24000, 48));
+	Rig c;
+	c.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 13, 1.0f);
+	Rig d;
+	d.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 12, 1.0f);
+	CHECK(render(c.hit, 24000) != render(d.hit, 24000));
+	// A TWO-BAR RISER at 120 bpm is four seconds, noise-led and resonant.
+	Laws riser = sweepLaws(kPlayOneShot, 0, 4.0, 6.0, 150.0);
+	riser.noise = 0.8f;
+	riser.snap = 0.55f;
+	riser.tone = 0.5f;
+	Rig r;
+	r.hit.strike(Kind::Sweep, riser, 9, 1.0f);
+	dumpWav("sweep-riser-2bar.wav", render(r.hit, static_cast<size_t>(4.5 * kSr)));
+	// A ZAP: a quarter second down from high, the oscillator following the filter all the way.
+	Laws zap = sweepLaws(kPlayOneShot, 1, 0.25, 6.0, 120.0);
+	zap.noise = 0.0f;
+	zap.sweepOctaves = 1.0f;
+	zap.snap = 0.6f;
+	zap.tone = 0.1f;
+	Rig z;
+	z.hit.strike(Kind::Sweep, zap, 9, 1.0f);
+	dumpWav("sweep-zap.wav", render(z.hit, static_cast<size_t>(0.7 * kSr)));
+	Rig g;
+	g.hit.strike(Kind::Sweep, sweepLaws(kPlayGate, 0, 1.0, 5.0), 9, 1.0f);
+	std::vector<float> held = render(g.hit, static_cast<size_t>(2.5 * kSr));
+	g.hit.release(0.3);
+	const std::vector<float> tail = render(g.hit, static_cast<size_t>(2.0 * kSr));
+	held.insert(held.end(), tail.begin(), tail.end());
+	dumpWav("sweep-gate.wav", held);
+	Rig dr;
+	dr.hit.strike(Kind::Sweep, sweepLaws(kPlayDrone, 0, 1.0, 5.0), 9, 1.0f);
+	dumpWav("sweep-drone.wav", render(dr.hit, static_cast<size_t>(4.0 * kSr)));
 }

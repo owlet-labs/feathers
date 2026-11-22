@@ -275,6 +275,9 @@ drum::Controls refControls(const dd::Row& r) {
 	c.grainSeconds = std::exp2(v(Param::Grain));
 	c.pressure = v(Param::Pressure);
 	c.speed = v(Param::Speed);
+	c.sweepDirection = static_cast<int>(std::lround(v(Param::SweepDir)));
+	c.sweepRange = v(Param::SweepRange);
+	c.syncBeats = dd::kSyncBeats[std::clamp(static_cast<int>(std::lround(v(Param::SweepSync))), 0, 6)];
 	c.waterRate = std::exp2(v(Param::Rate));
 	c.rise = v(Param::Rise);
 	c.flow = v(Param::Flow);
@@ -1098,6 +1101,9 @@ TEST_CASE("drum: every control changes the sound in SOME arrangement, with notes
 	const auto play = [&](const dd::Row& row) {
 		dd::kAudioOps.reset(d.st);
 		d.row = row;
+		device::TransportClock tempo;
+		tempo.secondsPerBeat = 0.001; // a host's tempo (a fast one, so a synced sweep's length falls inside the script): Sync reads it
+		dd::kAudioOps.setTransportClock(d.st, tempo);
 		Out all(0);
 		for (const auto& [ev, frames] : script) {
 			Out o(frames);
@@ -2141,4 +2147,58 @@ TEST_CASE("drone: every kind that can hold a hit sustains in Drone, stays awake,
 		CHECK_FALSE(d.holds());
 	}
 	CHECK(held >= 2); // Particle and Friction (and the kinds that follow)
+}
+
+TEST_CASE("sweep: Sync takes the sweep's length from the host's tempo, Free from Decay, and a missing tempo falls back to Free's") {
+	const auto lengthOf = [&](double sync, double secondsPerBeat) {
+		Dev d;
+		d.row = defaultRow();
+		d.row[at(Param::Kind)] = static_cast<float>(drum::Kind::Sweep);
+		d.row[at(Param::Decay)] = -1.0f; // half a second, Length at its middle
+		d.row[at(Param::SweepSync)] = static_cast<float>(sync);
+		device::TransportClock clock;
+		clock.secondsPerBeat = secondsPerBeat;
+		dd::kAudioOps.setTransportClock(d.st, clock);
+		(void)run(d, { on(36, 0) }, 64);
+		REQUIRE(d.dsp().newestForTest() != nullptr);
+		return d.dsp().newestForTest()->laws().lengthSeconds;
+	};
+	const double free = lengthOf(0.0, 0.5);
+	CHECK(free == doctest::Approx(lengthOf(0.0, 0.0)));          // Free ignores the tempo
+	CHECK(lengthOf(3.0, 0.5) == doctest::Approx(4.0 * 0.5));      // "1 bar": four beats of half a second
+	CHECK(lengthOf(5.0, 0.4) == doctest::Approx(16.0 * 0.4));     // "4 bars": sixteen beats
+	CHECK(lengthOf(3.0, 0.0) == doctest::Approx(free));           // no tempo from the host: Free's time
+	CHECK(lengthOf(3.0, 0.5) != doctest::Approx(free));           // NON-VACUITY: the synced length is not the free one
+}
+
+TEST_CASE("default level: a default drone of every kind that can hold one reads between -26 and -12 dBFS RMS and never clips, as a default hit of the others does") {
+	const auto db = [](double v) { return 20.0 * std::log10(std::max(1e-9, v)); };
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		const auto kind = static_cast<drum::Kind>(k);
+		if (!drum::kindSustains(kind)) {
+			continue;
+		}
+		CAPTURE(k);
+		Dev d;
+		d.row = defaultRow();
+		d.row[at(Param::Kind)] = static_cast<float>(k);
+		d.row[at(Param::Trigger)] = 2.0f;
+		double sum = 0.0;
+		double peak = 0.0;
+		size_t n = 0;
+		for (int b = 0; b < 700; ++b) {
+			const Out o = run(d, {}, 512);
+			if (b < 100) {
+				continue; // past the start
+			}
+			for (const float x : o.l) {
+				sum += static_cast<double>(x) * x;
+				peak = std::max(peak, static_cast<double>(std::fabs(x)));
+				++n;
+			}
+		}
+		CHECK(db(std::sqrt(sum / static_cast<double>(n))) > -26.0);
+		CHECK(db(std::sqrt(sum / static_cast<double>(n))) < -12.0);
+		CHECK(peak <= 1.0);
+	}
 }

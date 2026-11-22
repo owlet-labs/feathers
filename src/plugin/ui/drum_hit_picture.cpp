@@ -696,6 +696,20 @@ void HitPicture::draw(visage::Canvas& canvas) {
 			     k == 1 ? 4.0f : 2.0f);
 		}
 		break;
+	case drum::Kind::Sweep: {
+		// THE FILTER'S CORNER over the sweep's time: a bold trace from the low corner up (or the high corner down), brightness its loudness.
+		const double length = std::max(0.005, laws_.lengthSeconds);
+		const double lo = std::clamp(laws_.hz, 20.0, 20000.0);
+		for (int step = 0; step < kSteps; ++step) {
+			const double t = secondsAt(plotLeft() + w * static_cast<float>(step) / kSteps);
+			const double pos = laws_.play == drum::kPlayDrone ? 1.0 - std::fabs(1.0 - 2.0 * std::fmod(t / length, 1.0)) * 1.0 : std::min(1.0, t / length);
+			const double hz = drum::sweepCornerHz(lo, laws_.sweepRange, laws_.sweepDirection, laws_.play == drum::kPlayDrone ? 1.0 - pos : pos);
+			canvas.setColor(alphaOf(kValue, seen(drum::sweepShape(pos, laws_.sweepDirection, laws_.play) + 0.02)));
+			canvas.fill(plotLeft() + w * static_cast<float>(step) / kSteps, yOfHz(hz) - 2.0f, w / kSteps + 0.5f, 4.0f);
+		}
+		band(std::sqrt(lo * lo * std::exp2(laws_.sweepRange)), length, std::max(0.1, static_cast<double>(laws_.noise)));
+		break;
+	}
 	case drum::Kind::Water: {
 		// THE DROPS: a rising chirp from the size's pitch, one trace per few sizes within Metal's spread, over the bed's band; ticks at the rate.
 		const double life = std::clamp((0.012 + 0.08 * (1.0 - static_cast<double>(laws_.snap))) * std::sqrt(900.0 / laws_.hz), 0.004, 0.4);
@@ -789,6 +803,11 @@ void HitPicture::draw(visage::Canvas& canvas) {
 		const bool heldShower = drum::kindSustains(kind_) && laws_.play != drum::kPlayOneShot;
 		const double held = heldShower ? 0.0 : (kick ? std::max(0.0, t - laws_.kickHold) : t);
 		double a = std::pow(10.0, -3.0 * held / std::max(1.0e-3, laws_.t60)) * gatedAt(t, bodyGate);
+		if (kind_ == drum::Kind::Sweep) {
+			// THE SWEEP'S OWN SHAPE (the voice's `sweepShape`): a riser grows, a downer falls, a One-shot closes at the end, a Gate holds, a Drone is level.
+			const double length = std::max(0.005, laws_.lengthSeconds);
+			a = laws_.play == drum::kPlayOneShot && t > length ? 0.0 : drum::sweepShape(t / length, laws_.sweepDirection, laws_.play);
+		}
 		if (kick && laws_.kickDip > 0.0) {
 			const double u = (t - 0.5 * laws_.kickDipTime) / laws_.kickDipTime;
 			if (u > 0.0 && u < 1.0) {

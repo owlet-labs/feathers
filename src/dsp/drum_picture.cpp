@@ -93,6 +93,13 @@ void heardSpectrum(Kind kind, const Fields& f, int count, partials::PartialSpect
 		band(metalCentreHz(l.tone) / base, std::max(0.05, noise));
 		break;
 	case Kind::Clap: band(clapCentreHz(l.tone) / base * p, 1.0); break;
+	case Kind::Sweep:
+		// THE SOURCE'S PITCH and the filter's reach: the low corner and as far up as the range goes, over the noise's band.
+		put(p, 1.0);
+		put(p * std::exp2(l.sweepRange * 0.5), 0.5);
+		put(p * std::exp2(l.sweepRange), 0.3);
+		band(std::exp2(l.sweepRange * 0.5) * p, std::max(0.05, noise));
+		break;
 	case Kind::Water:
 		// THE DROPS' PITCH over the bed's band.
 		put(p, 1.0);

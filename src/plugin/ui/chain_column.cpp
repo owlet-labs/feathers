@@ -146,6 +146,7 @@ ChainColumn::ChainColumn(rack::RackBridge& bridge, WidgetRegistry& registry, Mod
 	// until `setPresentedOn` gives it an outer, and offers nothing either: with no outer and no query
 	// installed, no card draws a mark and nothing is ever presented.
 	surfaces_ = std::make_unique<SurfaceLayers>();
+	surfaces_->setAnchor(this); // a window this column opens is OWNED by the window this column sits in
 	surfaces_->setModulationState(&mod_);
 	installSourceList();
 	// **A RELABELLED OUTPUT RENAMES ITS CHIP AND RE-LAYS THE COLUMN** — the arms here are kept across a

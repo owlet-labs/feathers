@@ -103,7 +103,7 @@ std::vector<float> render(Hit& h, size_t n, size_t block = 256) {
 	return out;
 }
 
-constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle };
+constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle, Kind::Friction };
 
 } // namespace
 
@@ -1597,4 +1597,87 @@ TEST_CASE("Particle: kindSustains is the engine's statement, and a Particle's la
 	CHECK(lawsFor(Kind::Particle, Fields {}, c, 3000.0, 1.0).play == kPlayDrone);
 	CHECK(kindReads(Kind::Particle).metal);
 	CHECK_FALSE(kindReads(Kind::Particle).sweep);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// FRICTION: a stick-slip bow into a resonator                                                       //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Laws frictionLaws(int play, double speed, double pressure, double hz = 600.0, double t60 = 0.5) {
+	Laws l = baseLaws(hz, t60);
+	l.play = play;
+	l.speed = speed;
+	l.pressure = pressure;
+	l.noise = 0.0f; // no roughness: the slips come on the clock
+	l.tone = 0.6f;
+	return l;
+}
+
+} // namespace
+
+TEST_CASE("Friction: a fast, firm bow slips once a period of the resonance, a slow one at the creak's own rate (the interval, by value)") {
+	// RESTATED: the slip rate is exp(ln 7 + (ln f0 - ln 7) · speed^1.5), a period of sr / rate samples with no roughness.
+	for (const double speed : { 0.0, 0.25, 0.5, 1.0 }) {
+		CAPTURE(speed);
+		Rig r;
+		r.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, speed, 1.0), 31, 1.0f);
+		(void)render(r.hit, 4800);
+		const double rate = std::exp(std::log(7.0) + (std::log(600.0) - std::log(7.0)) * std::pow(speed, 1.5));
+		CHECK(r.hit.frictionPeriodForTest() == doctest::Approx(kSr / rate).epsilon(1e-9));
+	}
+	// AT FULL SPEED AND PRESSURE EVERY SLIP LETS GO: the count over a second is the resonance's frequency.
+	Rig r;
+	r.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 1.0, 1.0), 31, 1.0f);
+	(void)render(r.hit, static_cast<size_t>(kSr));
+	CHECK(static_cast<double>(r.hit.frictionSlipsForTest()) == doctest::Approx(600.0).epsilon(0.01));
+	// A LIGHT, SLOW BOW SKIPS: fewer slips let go than the clock offers.
+	Rig slow;
+	slow.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 0.2, 0.2), 31, 1.0f);
+	(void)render(slow.hit, static_cast<size_t>(4.0 * kSr));
+	const double rate = std::exp(std::log(7.0) + (std::log(600.0) - std::log(7.0)) * std::pow(0.2, 1.5));
+	CHECK(static_cast<double>(slow.hit.frictionSlipsForTest()) < 0.7 * rate * 4.0);
+	CHECK(slow.hit.frictionSlipsForTest() > 0);
+}
+
+TEST_CASE("Friction: One-shot fades to exact silence and idle, Gate holds until released, a Drone is never idle, and the same seed is the same sound") {
+	Rig a;
+	a.hit.strike(Kind::Friction, frictionLaws(kPlayOneShot, 0.9, 0.8, 600.0, 0.4), 41, 1.0f);
+	const std::vector<float> x = render(a.hit, static_cast<size_t>(6.0 * kSr));
+	CHECK(a.hit.idle());
+	CHECK(peakAbs(x) > 0.1f);
+	CHECK(peakAbs(x) < 1.5f);
+	dumpWav("friction-oneshot.wav", x);
+	Rig g;
+	g.hit.strike(Kind::Friction, frictionLaws(kPlayGate, 0.9, 0.8), 41, 1.0f);
+	std::vector<float> held = render(g.hit, static_cast<size_t>(2.0 * kSr));
+	CHECK_FALSE(g.hit.idle());
+	g.hit.release(0.2);
+	const std::vector<float> tail = render(g.hit, static_cast<size_t>(5.0 * kSr));
+	held.insert(held.end(), tail.begin(), tail.end());
+	CHECK(g.hit.idle());
+	dumpWav("friction-gate.wav", held);
+	Rig d;
+	d.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 0.9, 0.8), 41, 1.0f);
+	const std::vector<float> dr = render(d.hit, static_cast<size_t>(4.0 * kSr));
+	CHECK_FALSE(d.hit.idle());
+	CHECK(peakAbs(dr) > 0.1f);
+	dumpWav("friction-drone.wav", dr);
+	Rig b1;
+	Rig b2;
+	Laws l = frictionLaws(kPlayDrone, 0.7, 0.6);
+	l.noise = 0.5f; // roughness draws from the seed
+	b1.hit.strike(Kind::Friction, l, 7, 1.0f);
+	b2.hit.strike(Kind::Friction, l, 7, 1.0f);
+	CHECK(render(b1.hit, 20000) == render(b2.hit, 20000, 64));
+	Rig b3;
+	b3.hit.strike(Kind::Friction, l, 8, 1.0f);
+	Rig b4;
+	b4.hit.strike(Kind::Friction, l, 7, 1.0f);
+	CHECK(render(b3.hit, 20000) != render(b4.hit, 20000));
+	// CREAK AND SQUEAL: a creak (slow) and a squeal (fast, hard) for listening.
+	Rig creak;
+	creak.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 0.1, 0.7, 300.0, 0.6), 5, 1.0f);
+	dumpWav("friction-creak.wav", render(creak.hit, static_cast<size_t>(4.0 * kSr)));
 }

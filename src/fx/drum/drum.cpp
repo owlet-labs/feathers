@@ -102,6 +102,8 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	c.velocityNoise = static_cast<double>(s.at(Param::VelocityNoise));
 	c.particleDensity = exp2Of(s, Param::Density);
 	c.grainSeconds = exp2Of(s, Param::Grain);
+	c.pressure = static_cast<double>(s.at(Param::Pressure));
+	c.speed = static_cast<double>(s.at(Param::Speed));
 	c.play = s.index(Param::Trigger);
 	c.width = static_cast<double>(s.at(Param::Width));
 	// THE TERRAIN'S PITCH MODE is the kit's alone (the engine's Pitched mode keeps the half-semitone fine pitch as it always was).

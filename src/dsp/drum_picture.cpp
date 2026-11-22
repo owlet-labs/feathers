@@ -93,6 +93,12 @@ void heardSpectrum(Kind kind, const Fields& f, int count, partials::PartialSpect
 		band(metalCentreHz(l.tone) / base, std::max(0.05, noise));
 		break;
 	case Kind::Clap: band(clapCentreHz(l.tone) / base * p, 1.0); break;
+	case Kind::Friction:
+		put(p, 1.0);
+		put(p * (2.1 + 1.3 * static_cast<double>(l.metal)), 0.4);
+		put(p * (3.0 + 2.0 * static_cast<double>(l.metal)), 0.2);
+		band(metalCentreHz(l.tone) / base, std::max(0.05, noise));
+		break;
 	case Kind::Particle:
 		// A FEW RESONANCES scattered about the centre by Metal, each a line, over a rattle band.
 		for (int i = 0; i < 4; ++i) {

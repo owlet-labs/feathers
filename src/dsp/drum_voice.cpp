@@ -173,6 +173,8 @@ constexpr double kTensionSteps = 2400.0;
 /// Width's second noise (the right ear's wires or clap band): its own stream, so the left is the mono hit to the bit.
 constexpr uint64_t kWidthSalt = 0x5E7E0D1DE0ull;
 constexpr uint64_t kParticleSalt = 0x9A27C1E5B0A7ull;
+constexpr uint64_t kFrictionSalt = 0xF1C7107B0A7ull;
+constexpr float kFrictionGain = 1.0f; ///< the resonators' sum to the level of the other kinds (measured, test_drum_voice)
 constexpr float kParticleGain = 0.35f; ///< the resonances' sum to a hit of about the level of the other kinds (measured, test_drum_voice)
 /// The Modulated contour: the wires' envelope chopped by a falling sawtooth at this rate, to this depth (Microtonic's Mod).
 constexpr double kWireModHz = 45.0;
@@ -207,6 +209,8 @@ FieldUse kindReads(Kind k) {
 	// PARTICLE: the resonance's pitch, the shower's length (its Decay), the grains' brightness, the raw noise share, how unequal the grains are, and the
 	// resonances' spread. No sweep: nothing glides.
 	case Kind::Particle: return { true, true, false, true, true, true, true };
+	// FRICTION: the resonator's pitch, its ring (Decay), the slip's brightness (Tone), the roughness (Noise), the slip's edge (Snap), and the second resonance's place (Metal).
+	case Kind::Friction: return { true, true, false, true, true, true, true };
 	default: return { false, false, false, false, false, false, false };
 	}
 }
@@ -236,6 +240,7 @@ double kindBaseHz(Kind k) {
 	case Kind::Clap: return 1000.0;
 	case Kind::String: return 110.0;
 	case Kind::Particle: return 3000.0;
+	case Kind::Friction: return 600.0;
 	default: return 110.0;
 	}
 }
@@ -414,6 +419,8 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.buzzThreshold = std::clamp(wire.threshold, 0.0, 1.0);
 	l.density = std::clamp(c.particleDensity, 0.25, 2000.0);
 	l.grainT60 = std::clamp(c.grainSeconds, 1.0e-4, 0.5);
+	l.pressure = std::clamp(c.pressure, 0.0, 1.0);
+	l.speed = std::clamp(c.speed, 0.0, 1.0);
 	l.play = kindSustains(k) ? std::clamp(c.play, kPlayOneShot, kPlayDrone) : (c.play == kPlayGate ? kPlayGate : kPlayOneShot);
 	return l;
 }
@@ -429,6 +436,7 @@ SettledPitch settledPitch(Kind k, const Fields& f, const Controls& c, double bas
 	case Kind::String:
 		return { true, false, hz };
 	case Kind::Particle:
+	case Kind::Friction:
 		return { true, true, hz }; // a centre the resonances scatter about, as the Metal's
 	case Kind::Membrane:
 	case Kind::Snare:
@@ -552,6 +560,11 @@ void Hit::reset() {
 	for (Svf& r : pres_) {
 		r.clear();
 	}
+	for (Svf& r : fres_) {
+		r.clear();
+	}
+	fricLp_ = 0.0f;
+	slipAmp_ = 0.0f;
 	partAcc_ = 0.0f;
 	partLp_ = 0.0f;
 	partRaw_ = 0.0f;
@@ -723,6 +736,25 @@ void Hit::strike(Kind k, const Laws& l, uint64_t seed, float level) {
 		// THE FIRST COLLISION: a key (One-shot or Gate) lands one at once; a drone starts where its random process does.
 		partThresh_ = static_cast<float>(-std::log(1.0 - unit()));
 		partAcc_ = w.play == kPlayDrone ? 0.0f : partThresh_;
+		break;
+	}
+	case Kind::Friction: {
+		fricRand_ = ks::PluckNoise(seed ^ kFrictionSalt);
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		fricLp_ = 0.0f;
+		fricScrape_ = 0.0f;
+		slips_ = 0;
+		slipAmp_ = 0.0f;
+		// THE RESONANCES: the fundamental, a second at an inharmonic ratio (2.1 to 3.4, Metal), a third an octave and a fifth over; each seeded in gain.
+		const auto u01 = [&] { return std::clamp(0.5 * (static_cast<double>(fricRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6); };
+		fresRatio_ = { 1.0, 2.1 + 1.3 * static_cast<double>(w.metal), 3.0 + 2.0 * static_cast<double>(w.metal) };
+		fresGain_ = { 1.0f, static_cast<float>(0.25 + 0.2 * u01()), static_cast<float>(0.1 + 0.1 * u01()) };
+		for (Svf& r : fres_) {
+			r.clear();
+		}
+		slipCount_ = 0.0; // the first slip is the first sample: a bow lands
+		slipPeriod_ = 1.0;
 		break;
 	}
 	default: break;
@@ -1027,6 +1059,26 @@ void Hit::control() {
 		}
 		break;
 	}
+	case Kind::Friction: {
+		if (laws_.play == kPlayOneShot) {
+			body_.d = envDecay(effective(laws_.t60), sr_);
+		}
+		else {
+			body_.d = released_ ? envDecay(releaseT60_, sr_) : 1.0f;
+		}
+		// THE SLIP'S BRIGHTNESS: a one-pole low-pass on the impulse, 800 Hz (dark) to 20 kHz across Tone and Pressure (a harder press lets go sharper).
+		const double lpHz = std::min(800.0 * std::exp2(4.6 * (0.5 * static_cast<double>(laws_.tone) + 0.3 * laws_.pressure + 0.2 * static_cast<double>(laws_.snap))), kTopFraction * sr_);
+		fricLpCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * lpHz / sr_));
+		const double ring = std::clamp(0.1 * laws_.t60, 0.01, 1.5);
+		for (int i = 0; i < kFrictionResonators; ++i) {
+			const auto u = static_cast<size_t>(i);
+			const double hz = std::min(laws_.hz * fresRatio_[u], kTopFraction * sr_);
+			const double q = std::clamp(std::numbers::pi * hz * ring / std::log(1000.0), 2.0, 600.0);
+			fres_[u].setBandPass(hz, q, sr_);
+			fresQGain_[u] = static_cast<float>(fres_[u].k * std::sqrt(q));
+		}
+		break;
+	}
 	case Kind::String:
 		if (string_ != nullptr) {
 			const double hz = laws_.hz * std::exp2(bend);
@@ -1059,6 +1111,13 @@ bool Hit::envelopesSilent() const {
 	case Kind::Metal: return body_.v == 0.0f && click_.v == 0.0f;
 	case Kind::Clap: return nextBurst_ >= laws_.count && !toothOn_ && tail_.v == 0.0f;
 	case Kind::String: return string_ == nullptr || string_->idle();
+	case Kind::Friction:
+		for (const Svf& r : fres_) {
+			if (r.ic1 != 0.0f || r.ic2 != 0.0f) {
+				return false;
+			}
+		}
+		return body_.v == 0.0f && fricLp_ == 0.0f;
 	case Kind::Particle:
 		for (const Svf& r : pres_) {
 			if (r.ic1 != 0.0f || r.ic2 != 0.0f) {
@@ -1078,6 +1137,20 @@ void Hit::checkSilence() {
 		if (zr_[u] * zr_[u] + zi_[u] * zi_[u] < kSilenceFloor * kSilenceFloor) {
 			zr_[u] = 0.0f;
 			zi_[u] = 0.0f;
+		}
+	}
+	if (kind_ == Kind::Friction) {
+		for (Svf& r : fres_) {
+			if (std::fabs(r.ic1) < kSilenceFloor && std::fabs(r.ic2) < kSilenceFloor) {
+				r.clear();
+			}
+		}
+		if (std::fabs(fricLp_) < kSilenceFloor) {
+			fricLp_ = 0.0f;
+		}
+		// A BOW'S STRENGTH BELOW A TENTH OF A MICROUNIT IS NONE (its resonances are far below the floor by then): a spent bow ends when its sound does.
+		if (body_.d < 1.0f && body_.v < 1.0e-7f) {
+			body_.v = 0.0f;
 		}
 	}
 	if (kind_ == Kind::Particle) {
@@ -1102,6 +1175,38 @@ void Hit::checkSilence() {
 	if (envelopesSilent()) {
 		reset();
 	}
+}
+
+float Hit::renderFriction() {
+	const float env = body_.next();
+	// THE SLIPS: one each period. The period is the resonance's own at full Speed (the bow locks to it and a tone sustains) and lengthens toward
+	// a creak's tick as Speed falls; the roughness jitters it. Whether a slip lets go at all grows with Speed and Pressure, so a slow, light bow
+	// stutters. A slip is an impulse of the size the pressure and speed leave it.
+	slipCount_ -= 1.0;
+	float exc = 0.0f;
+	if (slipCount_ <= 0.0) {
+		const auto u01 = [&] { return std::clamp(0.5 * (static_cast<double>(fricRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6); };
+		const double rough = static_cast<double>(laws_.noise);
+		const double lockHz = std::max(20.0, laws_.hz);
+		const double rate = std::exp(std::log(7.0) + (std::log(lockHz) - std::log(7.0)) * std::pow(laws_.speed, 1.5));
+		slipPeriod_ = sr_ / rate * (1.0 + rough * 0.8 * (2.0 * u01() - 1.0));
+		slipCount_ += std::max(1.0, slipPeriod_);
+		const double chance = std::clamp(2.0 * laws_.speed, 0.15, 1.0) * std::clamp(0.4 + laws_.pressure, 0.0, 1.0);
+		if (u01() <= chance) {
+			slipAmp_ = static_cast<float>((0.25 + 0.75 * laws_.speed) * (0.2 + 0.8 * laws_.pressure) * (1.0 - rough * 0.6 * u01()));
+			exc = slipAmp_ * env;
+			++slips_;
+		}
+	}
+	// THE SCRAPE: the roughness as a hiss under the slips, as bright as the slip.
+	const float scrape = noise() * laws_.noise * env * 0.08f;
+	fricLp_ += fricLpCoef_ * (exc + scrape - fricLp_);
+	float y = 0.0f;
+	for (int i = 0; i < kFrictionResonators; ++i) {
+		const auto u = static_cast<size_t>(i);
+		y += fresGain_[u] * fresQGain_[u] * fres_[u].bandPass(fricLp_);
+	}
+	return (y * kFrictionGain + fricLp_) * level_;
 }
 
 float Hit::renderParticle() {
@@ -1428,6 +1533,11 @@ void Hit::render(float* out, int n, float* outR) {
 		case Kind::Particle:
 			for (int i = 0; i < span; ++i) {
 				out[s + i] = renderParticle();
+			}
+			break;
+		case Kind::Friction:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = renderFriction();
 			}
 			break;
 		case Kind::String:

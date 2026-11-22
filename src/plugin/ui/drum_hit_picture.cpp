@@ -696,6 +696,27 @@ void HitPicture::draw(visage::Canvas& canvas) {
 			     k == 1 ? 4.0f : 2.0f);
 		}
 		break;
+	case drum::Kind::Friction: {
+		// THE RESONANCES the bow drives, over the slips' band; the envelope below is the bow's strength (held flat while it is held).
+		const double ring = std::clamp(0.1 * laws_.t60, 0.01, 1.5);
+		line(laws_.hz, ring, 1.0, 4.0f);
+		line(laws_.hz * (2.1 + 1.3 * static_cast<double>(laws_.metal)), ring, 0.4, 2.0f);
+		line(laws_.hz * (3.0 + 2.0 * static_cast<double>(laws_.metal)), ring, 0.2, 2.0f);
+		band(drum::metalCentreHz(laws_.tone), laws_.t60, std::max(0.1, static_cast<double>(laws_.noise)));
+		// THE SLIPS: a tick at each period, the creak's spacing at a slow bow, closing to the tone's at a fast one.
+		const double rate = std::exp(std::log(7.0) + (std::log(std::max(20.0, laws_.hz)) - std::log(7.0)) * std::pow(laws_.speed, 1.5));
+		for (int k = 0; k < 200; ++k) {
+			const double t = (static_cast<double>(k) + 0.5) / rate;
+			const float x = xOf(t);
+			if (x > plotRight()) {
+				break;
+			}
+			const double a = laws_.play == drum::kPlayOneShot ? std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60)) : 1.0;
+			canvas.setColor(alphaOf(kInk, 0.5f * seen(a)));
+			canvas.fill(x, specTop(), 1.0f, specBottom() - specTop());
+		}
+		break;
+	}
 	case drum::Kind::Particle: {
 		// THE RESONANCES: a few lines scattered about the centre by Metal, each ringing for a part of the shower's length, and the rattle's band.
 		const double ring = std::clamp(0.12 * laws_.t60, 0.003, 2.0);
@@ -737,7 +758,7 @@ void HitPicture::draw(visage::Canvas& canvas) {
 		// A KICK HOLDS, THEN DECAYS, with its fishtail dipped in (the hit's own Hold and dipAt's curve).
 		const bool kick = kind_ == drum::Kind::Kick;
 		// A HELD SHOWER (Gate, Drone) stays at full: the picture draws the level it holds, and a Gate's release is the Release control's.
-		const bool heldShower = kind_ == drum::Kind::Particle && laws_.play != drum::kPlayOneShot;
+		const bool heldShower = drum::kindSustains(kind_) && laws_.play != drum::kPlayOneShot;
 		const double held = heldShower ? 0.0 : (kick ? std::max(0.0, t - laws_.kickHold) : t);
 		double a = std::pow(10.0, -3.0 * held / std::max(1.0e-3, laws_.t60)) * gatedAt(t, bodyGate);
 		if (kick && laws_.kickDip > 0.0) {

@@ -271,6 +271,11 @@ drum::Controls refControls(const dd::Row& r) {
 	c.bell2Hz = std::exp2(v(Param::Bell2Hz));
 	c.bell2Seconds = std::exp2(v(Param::Bell2Time));
 	c.velocityNoise = v(Param::VelocityNoise);
+	c.particleDensity = std::exp2(v(Param::Density));
+	c.grainSeconds = std::exp2(v(Param::Grain));
+	c.pressure = v(Param::Pressure);
+	c.speed = v(Param::Speed);
+	c.play = static_cast<int>(std::lround(v(Param::Trigger)));
 	c.width = v(Param::Width);
 	c.pitchMode = static_cast<int>(std::lround(v(Param::PitchMode)));
 	return c;
@@ -2104,4 +2109,32 @@ TEST_CASE("particle: One-shot and Gate reach exact zero and let the device sleep
 		const Out after = run(d, {}, 512);
 		CHECK(peakOfOut(after) == 0.0f);
 	}
+}
+
+TEST_CASE("drone: every kind that can hold a hit sustains in Drone, stays awake, and leaving it fades to exact zero") {
+	size_t held = 0;
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		const auto kind = static_cast<drum::Kind>(k);
+		if (!drum::kindSustains(kind)) {
+			continue;
+		}
+		++held;
+		CAPTURE(k);
+		Dev d;
+		d.row = particleRow(2.0);
+		d.row[at(Param::Kind)] = static_cast<float>(k);
+		int sounding = 0;
+		for (int block = 0; block < 300; ++block) {
+			const Out o = run(d, {}, 512);
+			sounding += peakOfOut(o) > 0.0f ? 1 : 0;
+			CHECK(d.holds());
+		}
+		CHECK(sounding > 250); // a drone is not a hit: nearly every block carries sound
+		d.set(Param::Trigger, 0.0);
+		(void)run(d, {}, 4096);
+		CHECK(d.dsp().droneForTest() == nullptr);
+		CHECK(peakOfOut(run(d, {}, 512)) == 0.0f);
+		CHECK_FALSE(d.holds());
+	}
+	CHECK(held >= 2); // Particle and Friction (and the kinds that follow)
 }

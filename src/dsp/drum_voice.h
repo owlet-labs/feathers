@@ -60,12 +60,12 @@
 
 namespace feathers::drum {
 
-enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, kCount };
+enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, kCount };
 inline constexpr size_t kKindCount = static_cast<size_t>(Kind::kCount);
 /// The labels a Choice stores (the schema ledger stores a Choice by label, so this order may change; a label may not
 /// without a ChoiceAlias).
 inline constexpr std::array<const char* const, kKindCount> kKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap",
-	                                                                    "String", "Particle" };
+	                                                                    "String", "Particle", "Friction" };
 
 /// **PLAY MODES**: how a hit is held. One-shot rings the whole hit out; Gate holds it while the key is down and damps it to Release when it is let go;
 /// Drone sounds from the moment the device runs, no key needed, until it is switched off. A mode is offered on a kind only where the engine has an
@@ -74,7 +74,7 @@ inline constexpr int kPlayOneShot = 0;
 inline constexpr int kPlayGate = 1;
 inline constexpr int kPlayDrone = 2;
 /// Whether a kind has an excitation that goes on (a random process), so that Gate holds it and Drone runs it for ever.
-[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle; }
+[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle || k == Kind::Friction; }
 
 /// THE SEVEN DRUM FIELDS (proposal §3.1), each in [0, 1]: the terrain's, or a scaler's override of it.
 struct Fields {
@@ -171,6 +171,9 @@ struct Controls {
 	// THE PARTICLE'S (a shower of colliding grains exciting a few resonances): grains a second, one grain's decay, and the play mode.
 	double particleDensity{25.0};
 	double grainSeconds{0.004};
+	/// THE FRICTION'S (a bow rubbed on a resonator): how hard it presses, and how fast it moves.
+	double pressure{0.5};
+	double speed{0.6};
 	int play{0};
 	friend bool operator==(const Controls&, const Controls&) = default;
 };
@@ -341,6 +344,8 @@ struct Laws {
 	// THE PARTICLE'S: the collision rate at full envelope, a grain's decay, and how the shower is held (kPlay*).
 	double density{25.0};
 	double grainT60{0.004};
+	double pressure{0.5};
+	double speed{0.6};
 	int play{0};
 	friend bool operator==(const Laws&, const Laws&) = default;
 };
@@ -492,6 +497,7 @@ private:
 	float renderModes();
 	float renderMetal();
 	float renderParticle();
+	float renderFriction();
 	float renderClap();
 	float clapTooth();
 	float noise() { return noise_.next(); }
@@ -670,6 +676,27 @@ public:
 	int64_t particleGrainsForTest() const { return grains_; }
 	double particleResonatorHzForTest(int i) const { return presRatio_[static_cast<size_t>(i)] * laws_.hz; }
 	float particleDensityEnvForTest() const { return body_.v; }
+	/// The friction's slips so far, and the interval it is waiting out (samples).
+	int64_t frictionSlipsForTest() const { return slips_; }
+	double frictionPeriodForTest() const { return slipPeriod_; }
+private:
+	// FRICTION: a stick-slip generator drives a resonator. Each slip is an impulse (a bow letting go); how often they come is the Speed (a slow bow
+	// creaks, one tick a slip; a fast one locks to the resonance and sustains a tone), how hard, the Pressure; the Noise field's roughness
+	// jitters the intervals and the sizes and adds the scrape.
+	static constexpr int kFrictionResonators = 3;
+	std::array<Svf, kFrictionResonators> fres_ {};
+	std::array<float, kFrictionResonators> fresGain_ {};
+	std::array<float, kFrictionResonators> fresQGain_ {};
+	std::array<double, kFrictionResonators> fresRatio_ {};
+	ks::PluckNoise fricRand_{1};
+	double slipCount_{0.0};
+	double slipPeriod_{1.0};
+	float slipAmp_{0.0f};
+	float fricLp_{0.0f};
+	float fricLpCoef_{1.0f};
+	float fricScrape_{0.0f};
+	int64_t slips_{0};
+public:
 };
 
 } // namespace feathers::drum

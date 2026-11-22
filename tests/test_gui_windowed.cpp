@@ -102,6 +102,7 @@
 #include <visage_app/window_event_handler.h> // backlog MF: the real hover road, driven
 
 #include <algorithm>
+#include <chrono>
 #include <cxxabi.h>
 #include <cmath>
 #include <cstdio>
@@ -4450,7 +4451,15 @@ TEST_CASE("rack rename: real X presses, twice at the centre of a chain strip's v
 		pointer.send(ButtonPress, nx, ny, button, 0);
 		pointer.send(ButtonRelease, nx, ny, button, mask);
 		if (!rightButton) {
-			pumpEditor(f.gui, 100); // a hand's two clicks are about 200 ms apart (100 rounds of 2 ms); the backend counts a repeat only when the clock moved
+			// A HAND'S TWO CLICKS ARE ABOUT 150 ms APART, MEASURED ON THE CLOCK, NOT COUNTED IN PUMP ROUNDS: with the editor animating a round costs
+			// 5-7 ms, so 100 rounds took 500-700 ms and the toolkit (which counts a repeat inside 500 ms) saw two single clicks.
+			const auto gapStart = std::chrono::steady_clock::now();
+			while (std::chrono::steady_clock::now() - gapStart < std::chrono::milliseconds(150)) {
+				f.gui.processEvents();
+				::usleep(2000);
+			}
+			const auto gapMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - gapStart).count();
+			CHECK(gapMs < 400); // well inside the toolkit's repeat window, or the case would be asking about the host's speed
 			pointer.send(ButtonPress, nx, ny, button, 0);
 			pointer.send(ButtonRelease, nx, ny, button, mask);
 		}

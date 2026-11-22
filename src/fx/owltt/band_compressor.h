@@ -124,14 +124,18 @@ public:
 		fractionUp_ = r * r * r; // x^3 curve for balanced feel
 	}
 
+	/// THE BAND'S OUTPUT LEVEL KNOB AS A LINEAR GAIN: the lower half is a straight 0..unity, the upper half takes it up to 10x
+	/// (+20 dB). One statement of the law, for the engine and for the window's dB readout of the same control.
+	[[nodiscard]] static float outputLevelOfKnob(float g) {
+		if (g <= 0.5f) {
+			return g * 2.0f;
+		}
+		return 1.0f + (g - 0.5f) * 2.0f * 9.0f;
+	}
+
 	void setOutputLevel(float g) {
 		outputLevelKnob_ = g;
-		if (g <= 0.5f) {
-			outputLevel_ = g * 2.0f;
-		}
-		else {
-			outputLevel_ = 1.0f + (g - 0.5f) * 2.0f * 9.0f;
-		}
+		outputLevel_ = outputLevelOfKnob(g);
 	}
 
 	void setBandwidth(float bw) {

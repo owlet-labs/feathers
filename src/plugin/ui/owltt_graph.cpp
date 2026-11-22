@@ -967,6 +967,17 @@ const char* OwlttGraph::tableCaption(size_t row) {
 	return kCaptions[std::min(row, kTableRows - 1)];
 }
 
+std::string OwlttGraph::outLevelText(double knob) {
+	const float linear = owltt::BandCompressor::outputLevelOfKnob(static_cast<float>(knob));
+	if (!(linear > 0.0f)) {
+		return "-inf";
+	}
+	const double db = 20.0 * std::log10(static_cast<double>(linear));
+	char buf[24];
+	std::snprintf(buf, sizeof buf, "%+.1fdB", std::fabs(db) < 0.05 ? 0.0 : db);
+	return buf;
+}
+
 std::string OwlttGraph::ratioReadoutText(size_t band) const {
 	const Meters m = meters();
 	const size_t b = std::min<size_t>(band, 2);
@@ -1031,6 +1042,11 @@ void OwlttGraph::setEditor(bool on) {
 				DeviceControl* ctrl = &control(static_cast<size_t>(tableParam(row, band)));
 				auto box = std::make_unique<ValueBox>(*ctrl, "");
 				box->setCompact(true);
+				if (row == 1) {
+					// THE BAND'S OUT READS IN dB, AS ITS IN DOES: 20 log10 of the gain the engine applies at that knob value. The control's own text stays the
+					// declared percent, which is what a type-in reads back, so the box refuses a typed entry rather than open a lossy dB print.
+					box->setReadoutFormatter([](double v) { return outLevelText(v); });
+				}
 				if (row >= 4) {
 					// THE OFFSETS READ SIGNED FROM THEIR CENTRE through the device's own words (`kTextOps`): the box prints the
 					// declared unit unless it is told otherwise.

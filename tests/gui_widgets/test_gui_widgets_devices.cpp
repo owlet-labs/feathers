@@ -46614,3 +46614,42 @@ TEST_CASE("OWLTT's window: the RATIO row reads each band's effective downward an
 	CHECK(graph->ratioReadoutText(0) != "\xE2\x86\x93" "4:1 \xE2\x86\x91" "1.7:1");
 	CHECK(graph->ratioReadoutText(2) == expect(0.9));
 }
+
+TEST_CASE("OWLTT's window: a band's OUT reads in dB like IN, as 20 log10 of the gain the engine applies at that value, and refuses a lossy type-in") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	// THE ENGINE'S LAW, RESTATED: the lower half of the knob is 0..unity, the upper half takes it to 10x.
+	const auto gain = [](double g) { return g <= 0.5 ? g * 2.0 : 1.0 + (g - 0.5) * 18.0; };
+	const auto text = [&](double g) {
+		char buf[24];
+		std::snprintf(buf, sizeof buf, "%+.1fdB", 20.0 * std::log10(gain(g)));
+		return std::string(buf);
+	};
+	const ow::Param levels[] = { ow::Param::LowLevel, ow::Param::MidLevel, ow::Param::HighLevel };
+	for (size_t band = 0; band < 3; ++band) {
+		CAPTURE(band);
+		ui::ValueBox* out = graph->tableBoxForTest(1, band);
+		REQUIRE(out != nullptr);
+		for (const double g : { 0.25, 0.4, 0.5, 0.65, 0.8, 1.0 }) {
+			CAPTURE(g);
+			d.set(static_cast<size_t>(levels[band]), static_cast<float>(g));
+			CHECK(out->readout() == text(g));
+		}
+		// UNITY READS 0, AND THE TOP +20 dB; the floor reads -inf.
+		d.set(static_cast<size_t>(levels[band]), 0.5f);
+		CHECK(out->readout() == "+0.0dB");
+		d.set(static_cast<size_t>(levels[band]), 0.8f);
+		CHECK(out->readout() == "+16.1dB");
+		d.set(static_cast<size_t>(levels[band]), 0.0f);
+		CHECK(out->readout() == "-inf");
+		// A dB PRINT CANNOT READ BACK TO THE EXACT KNOB VALUE, so the box refuses a typed entry rather than open on a lossy text.
+		CHECK(out->readout() != out->control().text());
+	}
+}

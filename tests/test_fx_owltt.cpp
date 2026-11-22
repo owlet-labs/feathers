@@ -3605,3 +3605,14 @@ TEST_CASE("OWLTT's ratio text reads N:1, whole where whole, and 1:1 at rest") {
 	CHECK(ratioText(12.4f) == "12:1");
 	CHECK(ratioText(BandCompressor::kRatioCeiling) == "100:1");
 }
+
+TEST_CASE("OWLTT's band output level: the engine's gain at a knob value is the law the window's dB readout restates") {
+	const auto law = [](float g) { return g <= 0.5f ? g * 2.0f : 1.0f + (g - 0.5f) * 18.0f; };
+	for (const float g : { 0.0f, 0.2f, 0.5f, 0.7f, 1.0f }) {
+		CAPTURE(g);
+		BandCompressor c;
+		c.setOutputLevel(g);
+		CHECK(c.getOutputLevelLinear() == doctest::Approx(law(g)).epsilon(1e-6));
+		CHECK(BandCompressor::outputLevelOfKnob(g) == doctest::Approx(law(g)).epsilon(1e-6));
+	}
+}

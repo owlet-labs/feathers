@@ -158,34 +158,59 @@ double bandPower(double g, double k) noexcept {
 
 } // namespace
 
-float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept {
+namespace {
+/// **THE KNEE** (Soft's and Tube's Hard): `tanh(x)` at 0, a hard clip at the same ceiling (`clamp(x, -1, 1)`) at 1, and between them
+/// `tanh(x) + hard * (clamp(x, -1, 1) - tanh(x))`: both have a slope of one at zero and a ceiling of one, so the small-signal slope and the ceiling
+/// stay where they were and only the corner moves. At 0 it is the tanh itself, to the bit.
+float kneeOf(float x, float hard) noexcept {
+	const float t = std::tanh(x);
+	if (hard <= 0.0f) {
+		return t;
+	}
+	return t + hard * (std::clamp(x, -1.0f, 1.0f) - t);
+}
+/// THE TRIANGLE FOLDER (Sharp's end, Jag's folder): the sine folder's fold points (peaks of one at the sine's own), a slope of one.
+float triangleOf(float x) noexcept {
+	constexpr float kHalfPi = static_cast<float>(std::numbers::pi * 0.5);
+	return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
+}
+} // namespace
+
+float shapeDrive(DriveMode mode, float driven, float shape, float gain, const CurveExtras& extras) noexcept {
 	constexpr float kHalfPi = static_cast<float>(std::numbers::pi * 0.5);
 	const float u = driven;
+	// WRECK'S AND JAG'S BIAS: an offset into the tanh, in the tanh's own units (none at 0, so the input is not touched).
+	const float biasIn = extras.bias > 0.0f ? kBiasSpan * extras.bias : 0.0f;
 	switch (mode) {
 	case DriveMode::Soft: {
-		// STARVED: a dead zone round zero, a share of the reference level, then the tanh of what is over it.
+		// STARVED: a dead zone round zero, a share of the reference level, then the tanh (or its hard-clip blend) of what is over it.
 		const float zone = kSoftStarveSpan * shape * gain * static_cast<float>(kDriveReferencePeak);
 		const float magnitude = std::abs(u);
-		return std::tanh(std::copysign(magnitude > zone ? magnitude - zone : 0.0f, u));
+		return kneeOf(std::copysign(magnitude > zone ? magnitude - zone : 0.0f, u), extras.hard);
 	}
 	case DriveMode::Tube: {
-		// TWO HALVES, a tanh each, the negative one steeper by `r` and brought back to a slope of one.
+		// TWO HALVES, a knee each, the negative one steeper by `r` and brought back to a slope of one.
 		if (u >= 0.0f) {
-			return std::tanh(u);
+			return kneeOf(u, extras.hard);
 		}
 		const float ratio = kTubeRatioMin * std::pow(kTubeRatioMax / kTubeRatioMin, shape);
-		return std::tanh(ratio * u) / ratio;
+		return kneeOf(ratio * u, extras.hard) / ratio;
 	}
 	case DriveMode::Fold: {
-		// A SINE READ FROM A BIAS, brought back through zero.
+		// A SINE READ FROM A BIAS, brought back through zero; Sharp blends it to the triangle folder read the same way.
 		const float bias = kFoldBiasSpan * shape;
-		return std::sin(kHalfPi * (u + bias)) - std::sin(kHalfPi * bias);
+		const float sine = std::sin(kHalfPi * (u + bias)) - std::sin(kHalfPi * bias);
+		if (extras.sharp <= 0.0f) {
+			return sine;
+		}
+		const float tri = triangleOf(u + bias) - triangleOf(bias);
+		return sine + extras.sharp * (tri - sine);
 	}
 	case DriveMode::Wreck:
-		return std::sin(kHalfPi * std::tanh(u) * (1.0f + kWreckFoldSpan * shape));
+		return std::sin(kHalfPi * std::tanh(biasIn > 0.0f ? u + biasIn : u) * (1.0f + kWreckFoldSpan * shape));
 	case DriveMode::Jag: {
 		// A TRIANGLE OF PERIOD FOUR through the origin at a slope of one, after the tanh.
-		const float x = std::tanh(u) * (1.0f + kWreckFoldSpan * shape);
+		const float x = std::tanh(biasIn > 0.0f ? u + biasIn : u) * (1.0f + kWreckFoldSpan * shape);
 		return std::asin(std::sin(kHalfPi * x)) / kHalfPi;
 	}
 	case DriveMode::Chonk:
@@ -210,11 +235,11 @@ float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept
 	return u;
 }
 
-float shapeDriveRight(DriveMode mode, float driven, float shape, float gain) noexcept {
-	return mode == DriveMode::Lean ? -shapeDrive(mode, -driven, shape, gain) : shapeDrive(mode, driven, shape, gain);
+float shapeDriveRight(DriveMode mode, float driven, float shape, float gain, const CurveExtras& extras) noexcept {
+	return mode == DriveMode::Lean ? -shapeDrive(mode, -driven, shape, gain, extras) : shapeDrive(mode, driven, shape, gain, extras);
 }
 
-double driveMakeUp(DriveMode mode, double gain, float shape) noexcept {
+double driveMakeUp(DriveMode mode, double gain, float shape, const CurveExtras& extras) noexcept {
 	if (driveIsNotCurve(mode)) {
 		return 1.0;
 	}
@@ -224,7 +249,7 @@ double driveMakeUp(DriveMode mode, double gain, float shape) noexcept {
 	for (int i = 0; i < kDriveReferencePoints; ++i) {
 		const double theta = 2.0 * std::numbers::pi * (static_cast<double>(i) + 0.5) / kDriveReferencePoints;
 		const auto y = static_cast<double>(shapeDrive(
-		    mode, static_cast<float>(gain * kDriveReferencePeak * std::sin(theta)), shape, static_cast<float>(gain)));
+		    mode, static_cast<float>(gain * kDriveReferencePeak * std::sin(theta)), shape, static_cast<float>(gain), extras));
 		sum += y;
 		squares += y * y;
 	}
@@ -234,24 +259,37 @@ double driveMakeUp(DriveMode mode, double gain, float shape) noexcept {
 	return power > 1.0e-18 && std::isfinite(power) ? std::sqrt(reference / power) : 1.0;
 }
 
-double driveSlope(DriveMode mode, float shape) noexcept {
+double driveSlope(DriveMode mode, float shape, const CurveExtras& extras) noexcept {
 	if (mode == DriveMode::Soft) {
 		return shape > 0.0f ? 0.0 : 1.0;
 	}
 	if (mode == DriveMode::Fold) {
 		const double half = std::numbers::pi * 0.5;
-		return half * std::cos(half * static_cast<double>(kFoldBiasSpan * shape));
+		const double sine = half * std::cos(half * static_cast<double>(kFoldBiasSpan * shape));
+		if (extras.sharp <= 0.0f) {
+			return sine;
+		}
+		// THE TRIANGLE'S SLOPE at the bias point: one, or minus one past the first peak (the bias reaches 0.75 of a quarter period at most).
+		const double b = static_cast<double>(kFoldBiasSpan * shape);
+		const double tri = std::fmod(b + 1.0, 4.0) < 2.0 ? 1.0 : -1.0;
+		return sine + static_cast<double>(extras.sharp) * (tri - sine);
 	}
-	if (mode == DriveMode::Wreck) {
-		return std::numbers::pi * 0.5 * (1.0 + static_cast<double>(kWreckFoldSpan * shape));
-	}
-	if (mode == DriveMode::Jag) {
-		return 1.0 + static_cast<double>(kWreckFoldSpan * shape);
+	if (mode == DriveMode::Wreck || mode == DriveMode::Jag) {
+		const double fold = 1.0 + static_cast<double>(kWreckFoldSpan * shape);
+		// THE BIAS MOVES THE OPERATING POINT of the tanh: its slope there is sech^2, and the folder's is read at the tanh's value.
+		const double b = extras.bias > 0.0f ? static_cast<double>(kBiasSpan * extras.bias) : 0.0;
+		const double sech2 = b > 0.0 ? 1.0 / (std::cosh(b) * std::cosh(b)) : 1.0;
+		const double at = std::tanh(b) * fold;
+		if (mode == DriveMode::Wreck) {
+			const double half = std::numbers::pi * 0.5;
+			return b > 0.0 ? std::abs(std::cos(half * at)) * half * fold * sech2 : half * fold;
+		}
+		return b > 0.0 ? fold * sech2 : fold;
 	}
 	return 1.0;
 }
 
-double driveSmallSignalGain(DriveMode mode, double gain, float shape, bool rotating) noexcept {
+double driveSmallSignalGain(DriveMode mode, double gain, float shape, bool rotating, const CurveExtras& extras) noexcept {
 	// THE ANGLE'S WORST CHANNEL: `|cos| + |sin|` of the angle (1 at Shape 0), and the square root of two at the most when the LFO turns it.
 	const double phi = 2.0 * std::numbers::pi * static_cast<double>(shape);
 	const double reach = rotating ? std::numbers::sqrt2 : std::abs(std::cos(phi)) + std::abs(std::sin(phi));
@@ -270,7 +308,7 @@ double driveSmallSignalGain(DriveMode mode, double gain, float shape, bool rotat
 	if (driveIsNotCurve(mode)) {
 		return 1.0;
 	}
-	return driveSlope(mode, shape) * gain * driveMakeUp(mode, gain, shape);
+	return driveSlope(mode, shape, extras) * gain * driveMakeUp(mode, gain, shape, extras);
 }
 
 float followGain(float follow, float envelope) noexcept {
@@ -280,7 +318,7 @@ float followGain(float follow, float envelope) noexcept {
 }
 
 DriveSettings deriveDrive(float driveKnob, DriveMode mode, float shape, double sampleRate,
-                          const DriveSettings* reuse, float mix) noexcept {
+                          const DriveSettings* reuse, float mix, const DriveExtras& extras) noexcept {
 	const double rate = sampleRate > 0.0 ? sampleRate : kReferenceRate;
 	// At the bottom of Drive the stage is not run at all; just above, the signal is under the curve's knee.
 	const double drive = std::clamp(static_cast<double>(driveKnob), 0.0, 1.0);
@@ -292,14 +330,39 @@ DriveSettings deriveDrive(float driveKnob, DriveMode mode, float shape, double s
 	d.gain = driveIsMidLaw(mode)
 	             ? static_cast<float>(kPaunchAmountMax * drive)
 	             : static_cast<float>(std::exp2(kDriveLog2Min + (kDriveLog2Max - kDriveLog2Min) * drive));
-	const bool same = reuse != nullptr && reuse->mode == d.mode && reuse->shape == d.shape && reuse->gain == d.gain;
-	d.norm = same ? reuse->norm : static_cast<float>(driveMakeUp(d.mode, static_cast<double>(d.gain), d.shape));
-	d.crushHoldFrames = 1.0 + rate * (std::exp2(kCrushOctaves * drive) - 1.0) / kCrushTopHz;
+	// THE THIRD ROW'S CURVE VALUES count only for the Type that reads them, so another Type's value never moves the make-up.
+	CurveExtras curve;
+	if (mode == DriveMode::Soft || mode == DriveMode::Tube) {
+		curve.hard = std::clamp(extras.curve.hard, 0.0f, 1.0f);
+	}
+	else if (mode == DriveMode::Fold) {
+		curve.sharp = std::clamp(extras.curve.sharp, 0.0f, 1.0f);
+	}
+	else if (mode == DriveMode::Wreck || mode == DriveMode::Jag) {
+		curve.bias = std::clamp(extras.curve.bias, 0.0f, 1.0f);
+	}
+	d.curve = curve;
+	const bool same = reuse != nullptr && reuse->mode == d.mode && reuse->shape == d.shape && reuse->gain == d.gain && reuse->curve == d.curve;
+	d.norm = same ? reuse->norm : static_cast<float>(driveMakeUp(d.mode, static_cast<double>(d.gain), d.shape, d.curve));
+	// KEY: the rate is the note's frequency times the knob's multiple (`keyMultiple`) instead of the fixed frequency. SPREAD: the left runs `ratio` faster
+	// and the right `ratio` slower (symmetric in log frequency); at 0 the two are one number, to the bit.
+	const bool keyed = extras.key && driveHasKey(mode) && std::isfinite(extras.noteHz) && extras.noteHz > 0.0;
+	const double spread = driveHasKey(mode) ? std::clamp(static_cast<double>(extras.spread), 0.0, 1.0) : 0.0;
+	const double ratio = spread > 0.0 ? std::exp2(spread * kSpreadCents / 1200.0) : 1.0;
+	d.keyed = keyed;
+	const double keyHz = keyed ? extras.noteHz * keyMultiple(drive) : 0.0;
+	d.crushHoldFrames = keyed ? std::max(1.0, rate / keyHz) : 1.0 + rate * (std::exp2(kCrushOctaves * drive) - 1.0) / kCrushTopHz;
+	d.crushHoldFramesRight = d.crushHoldFrames;
+	if (ratio != 1.0) {
+		d.crushHoldFramesRight = std::max(1.0, d.crushHoldFrames * ratio);
+		d.crushHoldFrames = std::max(1.0, d.crushHoldFrames / ratio);
+	}
 	d.crushStep = static_cast<float>(
 	    std::exp2(1.0 - (kCrushBitsFine + (kCrushBitsCoarse - kCrushBitsFine) * static_cast<double>(d.shape))));
 	// SLEW AND LOPSIDE: the rate runs down the knob, log, and is held under 0.45 of the sample rate.
-	d.slewHz = static_cast<float>(
-	    std::min(kSlewTopHz * std::pow(kSlewBottomHz / kSlewTopHz, drive), kSlewMaxRateFraction * rate));
+	const double slewBase = keyed ? keyHz : kSlewTopHz * std::pow(kSlewBottomHz / kSlewTopHz, drive);
+	d.slewHz = static_cast<float>(std::min(slewBase * ratio, kSlewMaxRateFraction * rate));
+	d.slewHzRight = ratio != 1.0 ? static_cast<float>(std::min(slewBase / ratio, kSlewMaxRateFraction * rate)) : d.slewHz;
 	const bool lopside = mode == DriveMode::Lopside;
 	d.slewCurve = mode == DriveMode::Slew ? d.shape : 0.0f;
 	d.slewBalance = lopside ? 2.0f * d.shape - 1.0f : 0.0f;
@@ -361,8 +424,13 @@ HighpassSettings highpassOf(const DustDerived& d) noexcept {
 }
 
 DriveSettings driveOf(const DustDerived& d) noexcept {
-	return { d.driven, d.driveMode, d.driveShape, static_cast<float>(d.driveGain), static_cast<float>(d.driveNorm),
-		     d.crushHoldFrames, static_cast<float>(d.crushStep), d.slewHz, d.slewCurve, d.slewBalance, d.driveMix };
+	DriveSettings out { d.driven, d.driveMode, d.driveShape, static_cast<float>(d.driveGain), static_cast<float>(d.driveNorm),
+		                d.crushHoldFrames, static_cast<float>(d.crushStep), d.slewHz, d.slewCurve, d.slewBalance, d.driveMix };
+	out.curve = d.driveCurve;
+	out.crushHoldFramesRight = d.crushHoldFramesRight;
+	out.slewHzRight = d.slewHzRight;
+	out.keyed = d.driveKeyed;
+	return out;
 }
 
 DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRate, const DustDerived* reuse) noexcept {
@@ -407,7 +475,8 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	if (reuse != nullptr) {
 		before = driveOf(*reuse);
 	}
-	const DriveSettings shaper = deriveDrive(s.drive, s.driveMode, driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), rate, reuse != nullptr ? &before : nullptr);
+	const DriveSettings shaper = deriveDrive(s.drive, s.driveMode, driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), rate, reuse != nullptr ? &before : nullptr, 1.0f,
+	                                         DriveExtras { { s.driveHard, s.driveSharp, s.driveBias }, s.driveKey, trackedNoteHz(pitchSemitones), s.driveSpread });
 	d.driven = shaper.driven;
 	d.driveMode = shaper.mode;
 	d.driveShape = shaper.shape;
@@ -419,6 +488,10 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	d.slewCurve = shaper.slewCurve;
 	d.slewBalance = shaper.slewBalance;
 	d.driveMix = shaper.mix;
+	d.driveCurve = shaper.curve;
+	d.crushHoldFramesRight = shaper.crushHoldFramesRight;
+	d.slewHzRight = shaper.slewHzRight;
+	d.driveKeyed = shaper.keyed;
 
 	const HighpassSettings hp = deriveWetHighpass(s, s.track, pitchSemitones, rate);
 	d.hpOn = hp.on;
@@ -444,8 +517,10 @@ DustDerived deriveDust(const Settings& s, double pitchSemitones, double sampleRa
 	if (d.etch) {
 		const DriveSettings beforeA = reuse != nullptr ? reuse->slotA : DriveSettings {};
 		const DriveSettings beforeB = reuse != nullptr ? reuse->slotB : DriveSettings {};
-		d.slotA = deriveDrive(s.slotA.amount, s.slotA.type, driveCoordinate(s.slotA.type, s.slotA.shape, s.slotA.angle), rate, reuse != nullptr ? &beforeA : nullptr, s.slotA.mix);
-		d.slotB = deriveDrive(s.slotB.amount, s.slotB.type, driveCoordinate(s.slotB.type, s.slotB.shape, s.slotB.angle), rate, reuse != nullptr ? &beforeB : nullptr, s.slotB.mix);
+		d.slotA = deriveDrive(s.slotA.amount, s.slotA.type, driveCoordinate(s.slotA.type, s.slotA.shape, s.slotA.angle), rate, reuse != nullptr ? &beforeA : nullptr, s.slotA.mix,
+		                    DriveExtras { { s.slotA.hard, s.slotA.sharp, s.slotA.bias }, s.slotA.key, trackedNoteHz(pitchSemitones), s.slotA.spread });
+		d.slotB = deriveDrive(s.slotB.amount, s.slotB.type, driveCoordinate(s.slotB.type, s.slotB.shape, s.slotB.angle), rate, reuse != nullptr ? &beforeB : nullptr, s.slotB.mix,
+		                    DriveExtras { { s.slotB.hard, s.slotB.sharp, s.slotB.bias }, s.slotB.key, trackedNoteHz(pitchSemitones), s.slotB.spread });
 		d.slotA.rateHz = rotationRateHz(s.track, pitchSemitones, s.slotA.rate, s.slotA.rateMult, rate);
 		d.slotB.rateHz = rotationRateHz(s.track, pitchSemitones, s.slotB.rate, s.slotB.rateMult, rate);
 		d.slotA.balance = std::clamp(s.slotA.bal, 0.0f, 1.0f);

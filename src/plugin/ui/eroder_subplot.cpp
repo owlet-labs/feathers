@@ -80,7 +80,7 @@ float curveOutput(const ero::DriveSettings& s, float x) noexcept {
 	if (!s.driven || static_cast<int>(s.mode) > static_cast<int>(ero::DriveMode::Chonk)) {
 		return x;
 	}
-	const float y = s.norm * ero::shapeDrive(s.mode, x * s.gain, s.shape, s.gain);
+	const float y = s.norm * ero::shapeDrive(s.mode, x * s.gain, s.shape, s.gain, s.curve);
 	return x + s.mix * (y - x);
 }
 
@@ -124,11 +124,11 @@ float EroderSubplot::meterFillWidthForTest(Which which) const noexcept {
 static ero::DriveSettings slotSettings(const ero::Settings& s, EroderSubplot::Curve curve, double rate) {
 	switch (curve) {
 	case EroderSubplot::Curve::A:
-		return ero::deriveDrive(s.slotA.amount, s.slotA.type, ero::driveCoordinate(s.slotA.type, s.slotA.shape, s.slotA.angle), rate, nullptr, s.slotA.mix);
+		return ero::deriveDrive(s.slotA.amount, s.slotA.type, ero::driveCoordinate(s.slotA.type, s.slotA.shape, s.slotA.angle), rate, nullptr, s.slotA.mix, ero::DriveExtras { { s.slotA.hard, s.slotA.sharp, s.slotA.bias } });
 	case EroderSubplot::Curve::B:
-		return ero::deriveDrive(s.slotB.amount, s.slotB.type, ero::driveCoordinate(s.slotB.type, s.slotB.shape, s.slotB.angle), rate, nullptr, s.slotB.mix);
+		return ero::deriveDrive(s.slotB.amount, s.slotB.type, ero::driveCoordinate(s.slotB.type, s.slotB.shape, s.slotB.angle), rate, nullptr, s.slotB.mix, ero::DriveExtras { { s.slotB.hard, s.slotB.sharp, s.slotB.bias } });
 	default:
-		return ero::deriveDrive(s.drive, s.driveMode, ero::driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), rate, nullptr, 1.0f);
+		return ero::deriveDrive(s.drive, s.driveMode, ero::driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), rate, nullptr, 1.0f, ero::DriveExtras { { s.driveHard, s.driveSharp, s.driveBias } });
 	}
 }
 

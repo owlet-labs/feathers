@@ -275,9 +275,10 @@ private:
 			});
 		}
 		else {
-			over_.process(&left, &right, 1, [mode, gain, shape](float& l, float& r) {
-				l = shapeDrive(mode, l * gain, shape, gain);
-				r = shapeDriveRight(mode, r * gain, shape, gain);
+			const CurveExtras curve = s.curve;
+			over_.process(&left, &right, 1, [mode, gain, shape, curve](float& l, float& r) {
+				l = shapeDrive(mode, l * gain, shape, gain, curve);
+				r = shapeDriveRight(mode, r * gain, shape, gain, curve);
 			});
 			left *= norm;
 			right *= norm;
@@ -287,7 +288,7 @@ private:
 		if (trimOn_ && driveBalances(mode, shape)) {
 			widthTrim(trim_, lIn, rIn, left, right, mode == DriveMode::Chonk ? s.balance : 1.0f, trimUnity_);
 		}
-		if (driveMakesOffset(mode) && !s.leaveDc) {
+		if (driveMakesOffset(mode, s.curve.bias) && !s.leaveDc) {
 			// THE OFFSET (the stage's own one-pole estimate) TAKEN OUT BY THE AMOUNT: all of it at 1, as this always did.
 			dcL_ += (left - dcL_) * dcCoefficient_;
 			dcR_ += (right - dcR_) * dcCoefficient_;

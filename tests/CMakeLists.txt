@@ -854,6 +854,12 @@ target_link_libraries(test_fx_eroder PRIVATE feathers-fx feathers-warnings)
 target_include_directories(test_fx_eroder PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME fx-eroder COMMAND test_fx_eroder)
 
+# THE ERODER'S THIRD ROW per Type: Hard, Sharp, Bias, Lean's Rate, and the Key and Spread of the four rate Types.
+add_executable(test_fx_eroder_rows test_fx_eroder_rows.cpp)
+target_link_libraries(test_fx_eroder_rows PRIVATE feathers-fx feathers-warnings)
+target_include_directories(test_fx_eroder_rows PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME fx-eroder-rows COMMAND test_fx_eroder_rows)
+
 # THE ERODER'S SHARED SECTION: emphasis pair, smear, loop limiter, slew. Header-only (src/fx/eroder/shell.h).
 add_executable(test_fx_eroder_shell test_fx_eroder_shell.cpp)
 target_link_libraries(test_fx_eroder_shell PRIVATE feathers-fx feathers-warnings)

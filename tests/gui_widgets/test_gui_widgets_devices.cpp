@@ -34942,16 +34942,16 @@ TEST_CASE("OC: the Rack window seats Mix and Gain on top, an H-line, then the ei
 	CHECK(line.x() == ui::ParallelRackExpanded::kPad);
 	CHECK(line.width() == ui::ParallelRackExpanded::kColumnWidth);
 	CHECK(line.height() <= 1.0f);
-	// THE MACROS: two columns, four rows, all BELOW the line; row r holds macros 2r and 2r+1, left to right.
+	// THE MACROS STAND IN THEIR OWN PANE after the rack's: two columns, four rows; row r holds macros 2r and 2r+1, left to right.
+	const float macrosLeft = panel->containerWidth();
 	for (size_t row = 0; row < 4; ++row) {
 		const visage::Bounds left = panel->knobBoundsForTest(2 + 2 * row);
 		const visage::Bounds right = panel->knobBoundsForTest(3 + 2 * row);
 		CHECK(left.y() == right.y());
 		CHECK(left.right() <= right.x());
-		CHECK(left.x() == mix.x()); // the first column stands under Mix, the second under Gain
-		CHECK(right.x() == gain.x());
-		CHECK(left.y() >= line.bottom());
-		CHECK(right.right() <= line.right());
+		CHECK(left.x() == macrosLeft + mix.x()); // the first column is Mix's, the second Gain's, shifted into the macros' pane
+		CHECK(right.x() == macrosLeft + gain.x());
+		CHECK(left.y() >= mix.y()); // the pane's controls begin at the same top as the rack pane's
 		if (row > 0) {
 			CHECK(left.y() >= panel->knobBoundsForTest(2 * row).bottom()); // below the row before
 		}
@@ -34965,7 +34965,7 @@ TEST_CASE("OC: the Rack window seats Mix and Gain on top, an H-line, then the ei
 	CHECK(add.width() < ui::ParallelRackExpanded::kColumnWidth);
 	CHECK(ui::ParallelRackExpanded::kColumnWidth < 240.0f);
 	// AND THE RAILS START RIGHT AFTER THE COLUMN: nothing of the old wide column is left.
-	CHECK(panel->railForTest(0).bounds().x() == ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad);
+	CHECK(panel->railForTest(0).bounds().x() == 2.0f * (ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad)); // after both panes
 	view.reset();
 	f.bridge.fxBodies().detach(r.id, r.body);
 	REQUIRE(f.bridge.removeFxDevice(r.slot));

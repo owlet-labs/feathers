@@ -33708,6 +33708,24 @@ TEST_CASE("Spectral's Vocode is hidden under Poly, on the card and in the window
 // NOISE (backlog MZ) — its card around its picture. Visibility and the plotted numbers, as values. //
 //------------------------------------------------------------------------------------------------//
 
+TEST_CASE("NOISE's plot hover names both of the controls it drives, and the Resonance part follows the Source") {
+	namespace nz = feathers::fx::noise;
+	DynCardFixture<ui::NoiseCard> d(nz::kTraits.tag);
+	ui::NoisePlot* plot = d.card->plotForTest();
+	REQUIRE(plot != nullptr);
+	// A point above the plot's foot: the footer's clicks text does not apply there.
+	const visage::Point at { plot->width() * 0.5f, plot->height() * 0.2f };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY. No modulator is armed, so a drag places both controls.
+	// Noise source: Resonance rings the filter and nothing else.
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings");
+	// Impulses source: the same two controls, and what high resonance does to the clicks.
+	d.set(static_cast<size_t>(nz::Param::Source), 1.0f);
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings, and high "
+	         "resonance turns the clicks into pitched pings");
+}
+
 TEST_CASE("NOISE's card shows a control exactly where the device reads it, through the gate chain") {
 	namespace nz = feathers::fx::noise;
 	using P = nz::Param;

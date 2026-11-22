@@ -734,6 +734,7 @@ public:
 	/// dirty (`RackBridge::serviceHostSlots` marks it; `markDirtyIfEdited` passes it on).
 	void onMainThread() noexcept override {
 		serviceSlots();
+		logBodyRefusals();
 		if (!loadingState_) {
 			markDirtyIfEdited();
 		}
@@ -921,6 +922,7 @@ public:
 		// THROUGH THE BRIDGE: devices built at the old rate and not yet adopted are built again at this one.
 		// AND AT THE HOST'S LONGEST BLOCK (backlog GO), which every device sizes its scratch to.
 		bridge_.prepare(sampleRate, static_cast<int>(maxFrames));
+		logBodyRefusals();
 		// AND EVERY NOTE AN ARP HAD SOUNDING DOWNSTREAM GETS ITS OFF IN THE FIRST BLOCK: the prepare reset the arp, which
 		// has forgotten them, and the instrument this rack plays has not.
 		engine_.flushInventedNotes();
@@ -1469,6 +1471,7 @@ public:
 			         + (detail.empty() ? "" : " " + detail));
 		}
 		lastRefusals_ = refused;
+		logBodyRefusals();
 		// SAID, in the same gesture that caused it — and taken off the bridge, which latched it too, so the
 		// tray's next look does not say it twice.
 		(void)bridge_.takeLoadReport();
@@ -1485,6 +1488,13 @@ public:
 	RackEngine& engine() noexcept { return engine_; }
 
 private:
+	/// **A BODY A DEVICE REFUSED IS SAID IN THE EVENT LOG** (backlog TM): the bridge found it while provisioning, this is
+	/// where the log is. Called after every visit that provisions.
+	void logBodyRefusals() {
+		for (const std::string& line : bridge_.takeRefusalLog()) {
+			log_.say(line);
+		}
+	}
 	void drain(const clap_input_events* in) {
 		if (in == nullptr) {
 			return;
@@ -2134,6 +2144,7 @@ private:
 			nullptr, // want_readings (/13): no readings lease in the rack
 			nullptr, // post_note (/13): the rack has no synth and no editor note ring
 			nullptr, // provision: the rack has no editor beat to model
+			nullptr, // set_device_name: the rack's naming is asked of its bridge directly
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_RACK_TEST) == 0) {
 			return &kTest;

@@ -178,7 +178,7 @@ public:
 	static constexpr float knobRowHeight() { return Knob::columnHeight(kKnobDiameter); }
 	static constexpr float bodyHeight() {
 		return kGap + StepGrid::kHeight + kGap + ValueBox::kHeight + kGap + knobRowHeight() + kGap + ValueBox::kHeight
-		       + kGap + ValueBox::kHeight + kGap;
+		       + kGap + ValueBox::kHeight + kGap + ValueBox::kHeight + kGap;
 	}
 
 	[[nodiscard]] StepGrid& grid() const { return *grid_; }
@@ -194,6 +194,7 @@ public:
 	[[nodiscard]] ActButton& randomiseButton() const { return randomiseButton(grid_->lane()); }
 	[[nodiscard]] ValueBox& randomAmountBox() const { return *amount_; }
 	[[nodiscard]] ValueBox& amountBox() const { return *outAmount_; }
+	[[nodiscard]] ValueBox& smoothingBox() const { return *smoothing_; }
 	[[nodiscard]] Knob& rateKnob() const { return *rate_; }
 	[[nodiscard]] Knob& lockKnob() const { return *lock_; }
 	[[nodiscard]] ValueBox& timeBaseBox() const { return *timeBase_; }
@@ -231,6 +232,7 @@ private:
 	std::array<std::unique_ptr<ActButton>, mod::stepseq::kLaneCount> randomiseButtons_;
 	std::unique_ptr<ValueBox> amount_;
 	std::unique_ptr<ValueBox> outAmount_;
+	std::unique_ptr<ValueBox> smoothing_;
 	std::unique_ptr<SwitchChip> turing_;
 	std::unique_ptr<SwitchChip> bipolar_;
 	std::unique_ptr<SwitchChip> retrig_;

@@ -352,6 +352,10 @@ size_t Converger::provision(const ChainState& want, ContainerBodies* bodies, uin
 			Identity wanted { desc, row.tag, row.instanceId, bodyGeneration };
 			const bool voices = wants(*desc, row, want);
 			if (held != provisioned_.end() && *held == wanted) {
+				// A DEVICE WHOSE BODY WAS REFUSED HAS NOTHING TO SERVICE, NO HANDLE TO FILE AND NO VOICES TO BUILD (backlog TM).
+				if (bodies != nullptr && bodies->refusalOf(row.instanceId) != nullptr) {
+					continue;
+				}
 				// **THE SAME DEVICE WITH ITS POLY MOVED: ITS VOICE INSTANCES, AND NOTHING ELSE** (backlog NS) — built
 				// here when the switch went on, or asked back when it went off. The drain swaps them in or out;
 				// `converge` keeps the switch reading off until they have arrived, so no block runs Poly without them.
@@ -418,10 +422,47 @@ size_t Converger::provision(const ChainState& want, ContainerBodies* bodies, uin
 			// **A CONTAINER'S CONTENTS, STILL ON THIS SIDE OF THE HANDOVER.** Loading builds members and
 			// allocates. A refused body leaves the container as it was built — empty — because `loadState`
 			// is all-or-nothing by contract.
+			// **A BODY THE DEVICE REFUSES IS KEPT, NOT REPLACED** (backlog TM). The answer was dropped here, so a
+			// refused body (a newer build's, a damaged one) left a fresh EMPTY device that the next save wrote over
+			// the user's content. Now the stored bytes stay in the carrier, no instance is built or filed for the
+			// device (a save finds the bytes as it does for a device this build cannot run), the refusal is
+			// recorded for the host to report, and a previous load's instance running under this id is evicted.
+			bool refused = false;
 			if (desc->bodyLoader() != nullptr && bodies != nullptr
 			    && bodies->has(row.instanceId)) {
 				const std::span<const uint8_t> body = bodies->bodyFor(row.instanceId);
-				(void)desc->bodyLoader()(posted->provision.storage.get(), body.data(), body.size());
+				const bool took = desc->bodyLoader()(posted->provision.storage.get(), body.data(), body.size());
+				// AN EMPTY BODY IS "NOTHING SAVED" (a handle filed for a fresh chain), and a loader may decline it.
+				refused = !took && !body.empty();
+				if (refused && bodies->refusalOf(row.instanceId) == nullptr) {
+					std::string reason = "the device would not take its saved contents (" + std::to_string(body.size()) + " bytes)";
+					size_t at = 0;
+					size_t position = 0;
+					(void)want.find(row.instanceId, &at, &position);
+					bodyRefusals_.push_back({ row.instanceId, desc->traits.name, deviceWhere(desc->traits.name, at, position), reason });
+					bodies->refuse(row.instanceId, std::move(reason));
+				}
+			}
+			if (refused) {
+				delete posted;
+				if (engine_.slotOf(row.instanceId) != RackEngine::kNoSlot) {
+					auto* gone = new Posted { RackEngine::Provision {}, row.instanceId, forPublish, nextSerial_++,
+						                      /*forget=*/false, nullptr };
+					gone->provision.desc = desc;
+					gone->evict = true;
+					gone->next = inbox_.load(std::memory_order_relaxed);
+					while (!inbox_.compare_exchange_weak(gone->next, gone, std::memory_order_release,
+					                                     std::memory_order_relaxed)) {
+					}
+				}
+				bodies->detach(row.instanceId);
+				if (held != provisioned_.end()) {
+					*held = wanted;
+				}
+				else {
+					provisioned_.push_back(wanted);
+				}
+				continue;
 			}
 			// **AND THE BLOCKS IT ARRIVED AT ITSELF** (backlog NM), on the same side of the handover and for the same
 			// reason: the instance the drain swaps in already holds what was saved, so nothing is copied on the audio
@@ -638,9 +679,10 @@ void Converger::converge(const ChainState& want, uint32_t published) {
 		}
 		return nullptr;
 	};
+	// A TOMBSTONE (`Posted::evict`) COUNTS AS AN ARRIVAL: the contents under that id are NEW and the running instance is the old ones.
 	const auto hasArrival = [&now](DeviceInstanceId id, const device::Descriptor* desc) {
 		for (const Posted* p = now; p != nullptr; p = p->next) {
-			if (p->instanceId == id && p->provision.desc == desc && p->provision.live()) {
+			if (p->instanceId == id && p->provision.desc == desc && (p->provision.live() || p->evict)) {
 				return true;
 			}
 		}
@@ -736,7 +778,8 @@ void Converger::converge(const ChainState& want, uint32_t published) {
 	// device that IS running is simply surplus (its device was adopted here, or never left).
 	while (now != nullptr) {
 		Posted* next = now->next;
-		retire(now, mustForget(now));
+		// A tombstone is never a device to build again: the refusal is filed with the carrier, and the id stays unbuilt.
+		retire(now, !now->evict && mustForget(now));
 		now = next;
 	}
 	// **AND NOW THE DEPARTURES — only the devices this drain took out AND did not put back.** See

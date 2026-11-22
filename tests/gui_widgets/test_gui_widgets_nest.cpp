@@ -49,6 +49,7 @@
 #include "fx/noise/noise_types.h"
 #include "fx/eq/eq_types.h"
 #include "fx/disperser/disperser_types.h"
+#include "plugin/ui/disperser_card.h"
 #include "fx/waypoint/waypoint_types.h"
 #include "fx/busutil/busutil_types.h"
 #include "mod/lfo/lfo_types.h"
@@ -3226,4 +3227,67 @@ TEST_CASE("a disabled Rack dims every card it holds, at every depth, and re-enab
 	CHECK(dim(*childCard));
 	CHECK_FALSE(dim(*grandCard));
 	CHECK_FALSE(dim(*innerCard));
+}
+
+TEST_CASE("device names: the slot menu's Rename opens the field over the card, Enter names the instance everywhere, undo and redo walk it, and removing the device while the field is open is safe") {
+	NestedThree n;
+	rack::RackBridge& bridge = n.column->bridge();
+	ui::FxCard* card = n.column->cardOf(n.chainDevice);
+	REQUIRE(card != nullptr);
+	ui::DeviceRename& rename = n.column->renameForTest();
+	const device::Descriptor* desc = bridge.descriptorOf(n.chainDevice);
+	REQUIRE(desc != nullptr);
+	const std::string declared = desc->traits.name;
+	CHECK(backplane::instanceBaseName(bridge, n.chainDevice, desc->traits.name) == declared);
+
+	// THE MENU CARRIES THE ROW, and picking it opens the field: visible, editing, holding the declared name, drawn after (above) the cards.
+	visage::PopupMenu menu;
+	rename.addRows(menu, bridge, n.chainDevice);
+	REQUIRE(menu.options().size() == 2);
+	CHECK(menu.options()[0].name().toUtf8() == "Rename...");
+	CHECK_FALSE(menu.options()[1].enabled()); // nothing to clear yet
+	REQUIRE(rename.pick(ui::DeviceRename::kRenameRow, bridge, n.chainDevice, *card, visage::Bounds(0, 0, 200, 24)));
+	CHECK(rename.renaming());
+	CHECK(rename.field().isVisible());
+	CHECK(rename.deviceForTest() == n.chainDevice);
+
+	// ENTER NAMES THE INSTANCE: every reader of the name sees it, and it is one undo step.
+	ui::EditHistory& history = n.column->historyForTest();
+	CHECK(rename.commitForTest("  Pump  "));
+	CHECK(bridge.userNameOf(n.chainDevice) == "Pump");
+	CHECK(backplane::instanceBaseName(bridge, n.chainDevice, desc->traits.name) == "Pump");
+	history.undo();
+	CHECK(bridge.userNameOf(n.chainDevice).empty());
+	history.redo();
+	CHECK(bridge.userNameOf(n.chainDevice) == "Pump");
+	// THE SAME NAME AGAIN CHANGES NOTHING and records nothing; an empty one clears.
+	CHECK_FALSE(rename.commitForTest("Pump"));
+	CHECK(rename.commitForTest(""));
+	CHECK(bridge.userNameOf(n.chainDevice).empty());
+	CHECK(backplane::instanceBaseName(bridge, n.chainDevice, desc->traits.name) == declared);
+
+	// THE DEVICE GOES WHILE THE FIELD IS OPEN: the commit finds nothing to name and nothing breaks.
+	REQUIRE(rename.pick(ui::DeviceRename::kRenameRow, bridge, n.chainDevice, *card, visage::Bounds(0, 0, 200, 24)));
+	REQUIRE(n.column->removeDevice(n.chainDevice));
+	CHECK_FALSE(rename.commitForTest("Late"));
+	history.undo();
+	history.redo();
+}
+
+TEST_CASE("NR: the Disperser's own card draws the site chip in its head once the host binds the verb, and the press is "
+          "the verb — the road to the panel that carries its Mix and wet Gain") {
+	SiteHost h;
+	ui::WidgetRegistry registry;
+	const DeviceInstanceId id = h.bridge.addDevice(fx::disperser::kTraits.tag);
+	REQUIRE(id != kNoInstance);
+	ui::DisperserCard card { h.bridge, registry, id, nullptr };
+	card.setBounds(0, 0, 320, ui::DisperserCard::openHeight());
+	CHECK(card.siteBounds().width() == 0.0f); // no verb bound: no chip
+	int pressed = 0;
+	card.onSite = [&] { ++pressed; };
+	const visage::Bounds chip = card.siteBounds();
+	REQUIRE(chip.width() > 0.0f);
+	CHECK(chip.bottom() <= ui::kCardHeadHeight);
+	card.noteCardPress(centreOf(chip), 1);
+	CHECK(pressed == 1);
 }

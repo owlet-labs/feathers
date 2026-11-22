@@ -81,7 +81,16 @@ FxLane::FxLane(ParamBridge& bridge, WidgetRegistry& registry, ModState* mod, Edi
 	                                             std::move(selectionHooks));
 	selectionOverlay_ = std::make_unique<SelectionOverlay>(*selection_);
 	selection_->setPromptHost(this);
+
+	rename_ = std::make_unique<DeviceRename>(*this, notifier_);
+	if (history_ != nullptr) {
+		rename_->setHistory(history_);
+	}
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more.
 		if (selection_->key(e)) {
 			afterVerb();
@@ -345,6 +354,7 @@ size_t FxLane::syncCards() {
 		const bool current = slot < chain.count
 		                         ? cards_[slot] != nullptr && cardTag_[slot] == fxDeviceAtPosition(chain, slot).tag()
 		                               && cardDevice_[slot] == bridge_.fxDeviceAt(slot)
+		                               && cardRefused_[slot] == (deviceHost_.bodyRefusalOf(bridge_.fxDeviceAt(slot)) != nullptr)
 		                         : cards_[slot] == nullptr;
 		stale += current ? 0u : 1u;
 	}
@@ -417,7 +427,9 @@ void FxLane::ensureCard(size_t slot) {
 	// reorder shifts a same-tag neighbour into a position. Found by asking whether the modulator strip's
 	// version of this defect was here too — it was, MEASURED at `1 == 2` with three filters and the
 	// middle one removed.
-	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == device) {
+	// AND WHETHER ITS SAVED CONTENTS WERE REFUSED (backlog TM): the converger finds that after the card may have been built.
+	const bool refused = deviceHost_.bodyRefusalOf(device) != nullptr;
+	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == device && cardRefused_[slot] == refused) {
 		return;
 	}
 
@@ -503,6 +515,7 @@ void FxLane::ensureCard(size_t slot) {
 	// BOTH HALVES OF THE KEY, WRITTEN TOGETHER AND BEFORE THE EARLY RETURN — an empty slot has to
 	// record its device too, or it compares unequal on every layout and rebuilds nothing, forever.
 	cardDevice_[slot] = device;
+	cardRefused_[slot] = refused;
 	if (slot >= chain.count) {
 		return; // an empty slot has no card, which is not the same as a card with nothing in it
 	}
@@ -531,7 +544,12 @@ void FxLane::ensureCard(size_t slot) {
 	//
 	// It reads its row through `fieldsPresentAt`/`fieldAt` now, over the same `DeviceRow` `fxFilterAt`
 	// used to walk, so Feathers' numbers are unchanged by construction rather than by testing.
-	if (const device::Descriptor* known = deviceForTag(tag.data());
+	// **A DEVICE WHOSE SAVED CONTENTS WERE REFUSED HAS NO CONTROLS** (backlog TM): they would show a fresh device and not
+	// what is stored, and nothing runs. It says so, and the slot menu can still take it out.
+	if (const device::Descriptor* kept = refused ? deviceForTag(tag.data()) : nullptr; kept != nullptr) {
+		cards_[slot] = std::make_unique<MissingDeviceCard>(*kept, *deviceHost_.bodyRefusalOf(device));
+	}
+	else if (const device::Descriptor* known = deviceForTag(tag.data());
 	         known != nullptr
 	         && (cards_[slot] = makeCustomCard(deviceHost_, registry_, device, *known, notifier_, mod_,
 	                                           history_))
@@ -1087,9 +1105,17 @@ void FxLane::showSlotMenu(size_t slot) {
 	// AND THE SELECTION'S VERBS (backlog OA): over the selection when it holds this card, else this card alone.
 	if (slot < deviceCount()) {
 		selection_->addVerbs(menu, kVerbIds, bridge_.fxDeviceAt(slot));
+		rename_->addRows(menu, deviceHost_, bridge_.fxDeviceAt(slot));
 	}
 	menu.onSelection() = [this, slot, options](int id) {
-		if (id >= kVerbIds) {
+		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
+			if (slot < deviceCount() && slot < cards_.size() && cards_[slot] != nullptr) {
+				FxCard& card = *cards_[slot];
+				(void)rename_->pick(id, deviceHost_, bridge_.fxDeviceAt(slot), card,
+				                    card.renameAnchor());
+			}
+		}
+		else if (id >= kVerbIds) {
 			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds));
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {
@@ -1509,6 +1535,7 @@ void FxLane::reserveCards(size_t count) {
 	cardWatches_.resize(want);
 	cardTag_.resize(want);
 	cardDevice_.resize(want);
+	cardRefused_.resize(want);
 }
 
 } // namespace feathers::ui

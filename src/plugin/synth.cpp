@@ -1723,6 +1723,10 @@ rack::RouteRefusals Synth::takeOuterDrops() noexcept {
 	return lane_.takeOuterDrops();
 }
 
+std::vector<rack::Converger::BodyRefusal> Synth::takeBodyRefusals() noexcept {
+	return lane_.takeBodyRefusals();
+}
+
 const mod::mseg::Shape& Synth::msegShapeForTest(size_t slot) const noexcept {
 	// A SLOT NOT RUNNING AN MSEG HAS NO SHAPE, and this is what it says so with. See the declaration:
 	// the array this replaced held one per slot whether or not the slot wanted it, so the seam

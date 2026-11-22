@@ -29,6 +29,8 @@
 #include "plugin/ui/chain_column.h"
 #include "plugin/ui/lane_selection.h"
 #include "plugin/ui/text_field.h"
+
+#include "plugin/ui/device_menu.h"
 #include "plugin/ui/drum_device_card.h"
 #include "plugin/device_registry.h"
 #include "plugin/ui/fx_lane.h"
@@ -2439,7 +2441,7 @@ std::set<int> usedInStrip(ui::RackPadPages& pages, int page) {
 
 } // namespace
 
-TEST_CASE("rack pads fix A: a pad's + asks which device (the lanes' menu, oscillators first), the pick makes the keyed chain holding it, closing makes nothing, on the card and the window") {
+TEST_CASE("rack pads fix A: a pad's + asks which device (the lanes' menu, in their category order), the pick makes the keyed chain holding it, closing makes nothing, on the card and the window") {
 	for (const bool onCard : { false, true }) {
 		CAPTURE(onCard);
 		RealRack r;
@@ -2449,12 +2451,44 @@ TEST_CASE("rack pads fix A: a pad's + asks which device (the lanes' menu, oscill
 		ui::RackPadGrid& grid = onCard ? r.card->padsForTest().gridForTest() : r.panel->padsForTest().gridForTest();
 		const std::vector<const device::Descriptor*> offered = add.offeredForTest();
 		REQUIRE(offered.size() > 10); // any device a chain can hold, not a Drum alone
-		// THE MENU: the Oscillators heading first, a Drum under it, and the other categories after.
+		// THE MENU: the lanes' category order, with a Drum under Oscillators wherever that heading falls — and no heading promoted.
 		visage::PopupMenu menu = add.menuForTest(5);
 		REQUIRE_FALSE(menu.options().empty());
-		CHECK(menu.options().front().name().toUtf8() == "Oscillators");
+		std::vector<std::string> headings;
+		for (const visage::PopupMenu& h : menu.options()) {
+			headings.push_back(h.name().toUtf8());
+		}
+		std::vector<std::string> canonical; // the order the lanes' own builder files the same offer in, restated from the groups
+		for (const device::CategoryGroup& g : device::groupByCategory(offered)) {
+			canonical.push_back(device::categoryName(g.category));
+		}
+		CHECK(headings == canonical);
+		CHECK(headings.front() != "Oscillators");
+		// EVERY OTHER SITE OFFERS LESS (a strip: modulators only; a chain: what fits; the rack: all), and a heading it has no devices
+		// for is absent — the others keep their places, so each site's headings are a subsequence of the full order.
+		for (const std::string& dropped : canonical) {
+			std::vector<const device::Descriptor*> fewer;
+			for (const device::Descriptor* d : offered) {
+				if (std::string(device::categoryName(d->category)) != dropped) {
+					fewer.push_back(d);
+				}
+			}
+			visage::PopupMenu site;
+			ui::addCategorisedDevices(site, fewer, [](size_t) { return true; });
+			std::vector<std::string> want = canonical;
+			want.erase(std::find(want.begin(), want.end(), dropped));
+			std::vector<std::string> got;
+			for (const visage::PopupMenu& h : site.options()) {
+				got.push_back(h.name().toUtf8());
+			}
+			CAPTURE(dropped);
+			CHECK(got == want);
+		}
+		const auto osc = std::find_if(menu.options().begin(), menu.options().end(),
+		                              [](const visage::PopupMenu& h) { return h.name().toUtf8() == "Oscillators"; });
+		REQUIRE(osc != menu.options().end());
 		std::vector<std::string> first;
-		for (const visage::PopupMenu& row : menu.options().front().options()) {
+		for (const visage::PopupMenu& row : osc->options()) {
 			first.push_back(row.name().toUtf8());
 		}
 		CHECK(std::find(first.begin(), first.end(), "Drum") != first.end());
@@ -3670,28 +3704,6 @@ TEST_CASE("rename field: opened by the menu's own pick and by double-click, it i
 			}
 		}
 	}
-	// THE STRIP CAPTION'S DOUBLE-CLICK, on the card and in the window (Strips view).
-	{
-		RealRack r;
-		r.chains(3, 2, true);
-		r.view_(0);
-		for (const bool windowSide : { true }) {
-			ui::RackChainRename& rename = r.panel->chainRenameForTest();
-			ui::ChainStrip* strip = &r.panel->stripForTest(1);
-			strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
-			r.refresh();
-			REQUIRE(rename.renaming());
-			ui::TextField& field = rename.field();
-			visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
-			const visage::Point at = field.positionInWindow();
-			const visage::Point centre { at.x + static_cast<float>(field.width()) * 0.5f, at.y + static_cast<float>(field.height()) * 0.5f };
-			CAPTURE(windowSide);
-			CHECK(field.isVisible());
-			CHECK(field.width() > 0);
-			CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&field));
-			(void)keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Escape, 0, true });
-		}
-	}
 	// A NESTED RACK'S OWN TABS, inside the outer window's column (Cards, so its card is drawn there).
 	{
 		RealRack r;
@@ -3812,4 +3824,115 @@ TEST_CASE("header presets: a rack chain's device card menu offers Presets and Sa
 	REQUIRE(cardColumn != nullptr);
 	feathers::rack::RackBridge& viewed = *r.rack().chainAt(static_cast<size_t>(r.field(pr::Param::ViewedChain)))->bridge();
 	checkColumnPresets("card column", *cardColumn, nullptr, viewed, "Card Saved");
+
+TEST_CASE("rename field: a chain strip opens it by a right press's Rename... and by a double-click - on the card and in the window, in Strips") {
+	for (const bool windowSide : { false, true }) {
+		for (const RenameRoad road : { RenameRoad::Menu, RenameRoad::DoubleClick }) {
+			CAPTURE(windowSide);
+			CAPTURE(road == RenameRoad::Menu);
+			RealRack r;
+			r.chains(3, 2, true);
+			r.view_(0);
+			for (int i = 0; i < 3; ++i) {
+				r.refresh();
+			}
+			const size_t chain = 1;
+			ui::ChainStrip* strip = windowSide ? &r.panel->stripForTest(chain) : r.card->stripsForTest()[chain].get();
+			REQUIRE(strip != nullptr);
+			ui::RackChainRename& rename = windowSide ? r.panel->chainRenameForTest() : r.card->chainRenameForTest();
+			visage::Frame* root = windowSide ? static_cast<visage::Frame*>(r.panel) : r.f.root;
+			const visage::Point at { 2.0f, 2.0f };
+			if (road == RenameRoad::Menu) {
+				strip->pressContextForTest(at);
+				visage::PopupMenuFrame* popup = menu_check::newestPopup(*strip);
+				REQUIRE(popup != nullptr);
+				REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			}
+			else {
+				strip->doubleClickForTest(at);
+			}
+			r.refresh();
+			REQUIRE(rename.renaming());
+			ui::TextField& field = rename.field();
+			CHECK(field.isVisible());
+			CHECK(field.isDrawing());
+			const visage::Point pos = field.positionInWindow();
+			const visage::Point centre { pos.x + static_cast<float>(field.width()) * 0.5f, pos.y + static_cast<float>(field.height()) * 0.5f };
+			CHECK(field.width() >= 60.0f);
+			CHECK(field.height() >= 16.0f);
+			CHECK(field.height() <= 40.0f);
+			CHECK(pos.x >= 0.0f);
+			CHECK(pos.y >= 0.0f);
+			CHECK(pos.x + static_cast<float>(field.width()) <= static_cast<float>(root->width()) + 0.01f);
+			CHECK(pos.y + static_cast<float>(field.height()) <= static_cast<float>(root->height()) + 0.01f);
+			CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(&field));
+			field.textInput("Snare");
+			CHECK(keyFromFocus(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+			r.refresh();
+			CHECK_FALSE(rename.renaming());
+			CHECK(r.rack().chainLabel(chain) == "Snare");
+		}
+	}
+}
+
+TEST_CASE("rename field: a single left press on a strip's own surface renames nothing and moves no control; mute still toggles") {
+	RealRack r;
+	r.chains(3, 2, true);
+	r.view_(0);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	ui::ChainStrip& strip = r.panel->stripForTest(1);
+	ui::RackChainRename& rename = r.panel->chainRenameForTest();
+	const bool muted = r.rack().muted(1);
+	visage::MouseEvent down {};
+	down.event_frame = &strip;
+	down.position = { 2.0f, 2.0f };
+	strip.processMouseDown(down);
+	strip.processMouseUp(down);
+	CHECK_FALSE(rename.renaming());
+	CHECK(r.rack().muted(1) == muted);
+	strip.muteControlForTest().setValue(muted ? 0.0 : 1.0);
+	r.refresh();
+	CHECK(r.rack().muted(1) == !muted); // the strip's own control is untouched by the new gesture
+}
+
+TEST_CASE("rename field: an open rail in the window draws the chain's name as its heading, and a double-click or right press there renames") {
+	for (const bool menu : { false, true }) {
+		RealRack r;
+		r.chains(3, 2, true);
+		for (size_t i = 0; i < 3; ++i) {
+			r.rack().setOpen(i, true);
+		}
+		r.view_(0);
+		for (int i = 0; i < 3; ++i) {
+			r.refresh();
+		}
+		ui::FxLaneRail& rail = r.panel->railForTest(1);
+		REQUIRE_FALSE(rail.collapsed());
+		const visage::Bounds heading = rail.headingBounds();
+		const visage::Point centre { heading.x() + heading.width() * 0.5f, heading.y() + heading.height() * 0.5f };
+		ui::RackChainRename& rename = r.panel->chainRenameForTest();
+		// THE NAME IS WHAT A HAND PRESSES: nothing over it takes the press.
+		CHECK(r.panel->frameAtPoint({ rail.positionInWindow().x - r.panel->positionInWindow().x + centre.x,
+		                              rail.positionInWindow().y - r.panel->positionInWindow().y + centre.y })
+		      == static_cast<visage::Frame*>(&rail));
+		if (menu) {
+			rail.pressHeadingForTest(centre, true, 1);
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(rail);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+		}
+		else {
+			rail.pressHeadingForTest(centre, false, 1);
+			CHECK_FALSE(rename.renaming()); // one click is not a rename
+			rail.pressHeadingForTest(centre, false, 2);
+		}
+		r.refresh();
+		REQUIRE(rename.renaming());
+		rename.field().textInput("Kick");
+		CHECK(keyFromFocus(&rename.field(), visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		r.refresh();
+		CHECK(r.rack().chainLabel(1) == "Kick");
+	}
 }

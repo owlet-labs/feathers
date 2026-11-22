@@ -225,6 +225,10 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	// only shows up when a second road wants it.
 	setAcceptsKeystrokes(true);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// UNDO AND REDO (backlog JB C10): main modifier + Z, + Shift + Z or + Y — Feathers' chord (`ui::undoChordOf`) — walk this
 		// editor's history, which in a nested window forwards to the outermost host's: one history per plugin. THE ONLY ROAD: the
 		// header has no buttons, so the keys must work, and `RackGui` hands the chord here when nothing inside the editor holds the keyboard.
@@ -334,10 +338,13 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 		if (d == nullptr) {
 			return "Source"; // an id nothing holds names nothing
 		}
-		std::string name = d->traits.name;
-		if (const size_t position = engine_.positionOf(source.device); position != RackBridge::kNoSlot) {
-			name += " ";
-			name += std::to_string(position + 1);
+		std::string name = engine_.userNameOf(source.device); // a NAMED instance wears its name alone
+		if (name.empty()) {
+			name = d->traits.name;
+			if (const size_t position = engine_.positionOf(source.device); position != RackBridge::kNoSlot) {
+				name += " ";
+				name += std::to_string(position + 1);
+			}
 		}
 		if (d->outputCount() > 1 && source.index < d->outputCount()) {
 			name += " · ";
@@ -486,6 +493,9 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	notify_ = std::make_unique<ui::NotifyTray>();
 	notify_->setIgnoresMouseEvents(true, false);
 	addChild(notify_.get());
+	// THE DEVICE RENAME FIELD, over a card's header (the slot menu's "Rename..."); one undo step in this editor's history.
+	rename_ = std::make_unique<ui::DeviceRename>(*this, notify_.get());
+	rename_->setHistory(&history_);
 
 	// THE CANVAS, BESIDE THE LANE — a region of this layout, so it is a child here and not of the
 	// surface host, and it sits UNDER the notifier and the surfaces like everything else in the editor.
@@ -1423,6 +1433,7 @@ void RackEditor::showSlotMenu(DeviceInstanceId device) {
 	// **AND THE SELECTION'S VERBS** (backlog OA): Group into Chain / Rack, Copy, Cut, Paste after, Duplicate, and
 	// Remove N — over the selection when it holds this card, else this card alone. A POST card's are POST's (backlog OA).
 	selectionOf(device).addVerbs(menu, kVerbIds, device);
+	rename_->addRows(menu, laneOf(device), device);
 	// **THROUGH `removeSlot`, WHICH IS THE POINT OF `removeSlot` EXISTING.** This inlined the same
 	// four lines and was missing one of them — the focus reset — so a device removed from the MENU
 	// left `focusedSlot_` naming a slot that no longer holds anything. The commit that introduced
@@ -1430,7 +1441,13 @@ void RackEditor::showSlotMenu(DeviceInstanceId device) {
 	// not: the edit that was supposed to redirect this call site silently did not apply, and the
 	// claim went into a commit message unchecked.
 	menu.onSelection() = [this, device](int id) {
-		if (id >= kVerbIds) {
+		if (id == ui::DeviceRename::kRenameRow || id == ui::DeviceRename::kClearRow) {
+			if (const CardEntry* at = entryOf(device); at != nullptr && at->card != nullptr) {
+				ui::FxCard& card = *at->card;
+				(void)rename_->pick(id, laneOf(device), device, card, card.renameAnchor());
+			}
+		}
+		else if (id >= kVerbIds) {
 			(void)slotVerbForTest(device, static_cast<ui::FragmentVerb>(id - kVerbIds));
 		}
 		else if (id == 0) {
@@ -1514,7 +1531,8 @@ void RackEditor::toggleDevicePanel(backplane::DeviceHost& lane, DeviceInstanceId
 	}
 
 	const ui::SurfaceId presented = surfaces_->present(
-	    std::move(content), ui::SurfaceNeed::SpansGesture, desc->traits.name, [this] { pruneExpanded(); });
+	    std::move(content), ui::SurfaceNeed::SpansGesture, backplane::instanceBaseName(lane, device, desc->traits.name),
+	    [this] { pruneExpanded(); });
 	if (presented != ui::kNoSurface) {
 		expanded_.push_back(presented);
 	}
@@ -1531,7 +1549,7 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 	// as nothing at all here; it is "device missing" now, the one card every host
 	// draws for it.
 	const auto missingTagOf = [&lane](DeviceInstanceId device, const device::Descriptor* desc) {
-		return desc == nullptr ? lane.heldTagOf(device) : device::Tag {};
+		return desc == nullptr || lane.bodyRefusalOf(device) != nullptr ? lane.heldTagOf(device) : device::Tag {};
 	};
 	// FIRST, EVERY CARD WHOSE DEVICE HAS LEFT THE CHAIN OR BECOME ANOTHER, RETIRED.
 	for (auto it = cards.begin(); it != cards.end();) {
@@ -1578,7 +1596,8 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 		const device::Descriptor* desc = lane.descriptorOf(i);
 		const device::Tag missing = missingTagOf(i, desc);
 		std::unique_ptr<ui::FxCard> card;
-		if (desc != nullptr) {
+		const std::string* refusal = lane.bodyRefusalOf(i); // backlog TM: its saved contents were refused
+		if (desc != nullptr && refusal == nullptr) {
 			// THE DEVICE'S OWN CARD IF IT HAS ONE ON THE SEAM, the generic grid otherwise. the rack built `GenericCard` for
 			// everything, because every custom card needed a `ParamBridge` this host does not have.
 			//
@@ -1588,6 +1607,9 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 			if (card == nullptr) {
 				card = std::make_unique<ui::GenericCard>(lane, i, *desc, nullptr);
 			}
+		}
+		else if (desc != nullptr) {
+			card = std::make_unique<ui::MissingDeviceCard>(*desc, *refusal);
 		}
 		else if (missing[0] != '\0') {
 			card = std::make_unique<ui::MissingDeviceCard>(std::string_view(missing.data(), missing.size()));
@@ -1697,9 +1719,11 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 					view->setModulation(&mod, &history);
 					view->setNest(nest_);
 				}
+				const std::string holderName = lane.userNameOf(device);
+				const std::string siteTitle = holderName.empty() ? std::string(ui::siteViewDescriptor().traits.name)
+				                                                 : holderName + " \xC2\xB7 " + ui::siteViewDescriptor().traits.name;
 				const ui::SurfaceId presented =
-				    surfaces_->present(std::move(content), ui::SurfaceNeed::SpansGesture,
-				                       ui::siteViewDescriptor().traits.name, [this] { pruneExpanded(); });
+				    surfaces_->present(std::move(content), ui::SurfaceNeed::SpansGesture, siteTitle, [this] { pruneExpanded(); });
 				if (presented != ui::kNoSurface) {
 					expanded_.push_back(presented);
 				}

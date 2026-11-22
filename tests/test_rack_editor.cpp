@@ -26,6 +26,7 @@
 #include "device/device_groups.h"
 #include "rack/device_browser.h"
 
+#include "fx/featherverb/featherverb_types.h"
 #include "fx/owltt/owltt_types.h"
 #include "fx/filter/filter_types.h"
 #include "fx/shaper/shaper_types.h"
@@ -55,6 +56,8 @@
 #include "plugin/ui/expanded_views.h"
 #include "composite/composite_types.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/parallel_rack_card.h"
+#include "rack/parallel_rack.h"
 #include "rack/chain_expanded.h"
 #include "rack/chain_state.h"
 #include "rack/converger.h"
@@ -586,6 +589,37 @@ TEST_CASE("a device this build does not have gets a card that says \"device miss
 	f.editor.syncCards();
 	CHECK(f.editor.cardOfDeviceForTest(lane) == nullptr);
 	CHECK(liveCards(f.editor) == 2);
+}
+
+TEST_CASE("backlog TM: a device whose saved contents were refused is drawn as 'could not load', not as controls, and can be removed") {
+	// The converger found a body the device would not take: nothing runs, the bytes are kept, and the card must not
+	// show controls that would not reflect what is stored (the honesty rule).
+	Fixture f;
+	rack::RackPatch patch;
+	patch.present = true;
+	patch.macro.assign(kAxes.coreSources, 0.0f);
+	rack::RackPatch::Device d;
+	std::copy_n(fx::featherverb::kTraits.tag, std::min<size_t>(std::strlen(fx::featherverb::kTraits.tag), device::kTagBytes), d.tag.begin());
+	d.instanceId = 5;
+	d.body.assign(41, 0xC7);
+	patch.device.push_back(d);
+	f.engine.prepare(48000.0, 4096);
+	f.bridge.prepare(48000.0, 4096);
+	const rack::LoadReport lr = f.bridge.loadPatch(patch);
+	f.bridge.drain();
+	f.editor.syncCards();
+	const DeviceInstanceId id = f.bridge.deviceAtPosition(0);
+	REQUIRE(id != kNoInstance);
+	REQUIRE(f.bridge.bodyRefusalOf(id) != nullptr);
+	const auto* card = dynamic_cast<const ui::MissingDeviceCard*>(f.editor.cardOfDeviceForTest(id));
+	REQUIRE(card != nullptr);
+	CHECK(card->message() == ui::MissingDeviceCard::kRefusedMessage);
+	CHECK(card->name() == std::string(fx::featherverb::kTraits.name));
+	CHECK(card->refusal() == *f.bridge.bodyRefusalOf(id));
+
+	f.remove(id);
+	f.editor.syncCards();
+	CHECK(f.editor.cardOfDeviceForTest(id) == nullptr);
 }
 
 TEST_CASE("a modulator gets a card too, because a device is a device") {
@@ -6811,4 +6845,50 @@ TEST_CASE("header presets: the rack editor's card menu offers Presets and Save p
 	CHECK(f.history.length() == steps + 1);
 	f.history.undo();
 	CHECK(f.bridge.fieldAt(id, res) == doctest::Approx(0.11f));
+
+TEST_CASE("rack editor: a Rack's chain strip renames its chain by a right press's Rename... and by a double-click, the field drawn and typing renames") {
+	namespace pr = rack::parallel;
+	for (const bool doubleClick : { false, true }) {
+		CAPTURE(doubleClick);
+		Fixture f;
+		const DeviceInstanceId id = f.add(pr::kTraits.tag);
+		REQUIRE(id != kNoInstance);
+		pr::Rack* rk = pr::rackOf(f.bridge.containerSurfaceOf(id));
+		REQUIRE(rk != nullptr);
+		while (rk->chainCount() < 3) {
+			REQUIRE(rk->addChain() != SIZE_MAX);
+		}
+		f.bridge.setField(id, static_cast<size_t>(pr::Param::View), 0.0f); // Strips
+		f.editor.syncCards();
+		for (int i = 0; i < 3; ++i) {
+			f.bridge.drain();
+			f.editor.syncCards();
+		}
+		ui::FxCard* held = f.editor.cardOfDeviceForTest(id);
+		auto* card = dynamic_cast<ui::ParallelRackCard*>(held);
+		REQUIRE(card != nullptr);
+		(void)card->update();
+		REQUIRE(card->stripsForTest().size() == 3);
+		ui::ChainStrip* strip = card->stripsForTest()[1].get();
+		if (doubleClick) {
+			strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
+		}
+		else {
+			strip->pressContextForTest(visage::Point { 2.0f, 2.0f });
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*strip);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+		}
+		ui::RackChainRename& rename = card->chainRenameForTest();
+		REQUIRE(rename.renaming());
+		ui::TextField& field = rename.field();
+		CHECK(field.isVisible());
+		CHECK(field.width() >= 60.0f);
+		CHECK(field.height() >= 16.0f);
+		CHECK(field.height() <= 40.0f);
+		field.processTextInput("Snare");
+		field.processKeyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true });
+		CHECK_FALSE(rename.renaming());
+		CHECK(rk->chainLabel(1) == "Snare");
+	}
 }

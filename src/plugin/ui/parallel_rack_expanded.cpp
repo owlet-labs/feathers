@@ -175,7 +175,7 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	pane_ = std::make_unique<RackWindowPane>();
 	addChild(pane_.get());
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
-	// "+" ON AN EMPTY PAD ASKS WHICH DEVICE (the lanes' own add menu, oscillators first); the pick makes the chain on that pad's key.
+	// "+" ON AN EMPTY PAD ASKS WHICH DEVICE (the lanes' own add menu); the pick makes the chain on that pad's key.
 	// THE VIEWING AND PLAYING BOXES PICK A CHAIN BY NAME (a menu of the chains' one label each), not by a typed number.
 	// THEIR READOUT IS THE CHAIN'S LABEL (the control's own text, not the unit's number), cut with "..." from the end when it does not fit.
 	for (auto* box : { viewedBox_.get(), playingBox_.get() }) {
@@ -696,6 +696,24 @@ bool ParallelRackExpanded::follow() {
 				kept->strip->setRenameHandler([this, strip = kept->strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
 					if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
 						chainRename_->begin(slot, *strip, anchor);
+					}
+				});
+				// THE OPEN RAIL DRAWS THE CHAIN'S NAME AS ITS HEADING: a double-click there renames, a right press opens the menu.
+				kept->rail->setHeadingHandlers(
+				    [this, rail = kept->rail.get(), chainId = ids[i]](const visage::Bounds& anchor) {
+					    if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+						    chainRename_->showMenu(slot, *rail, anchor);
+					    }
+				    },
+				    [this, rail = kept->rail.get(), chainId = ids[i]](const visage::Bounds& anchor) {
+					    if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+						    chainRename_->begin(slot, *rail, anchor);
+					    }
+				    });
+				// AND A RIGHT PRESS THERE OPENS ITS MENU (Rename...), as a tab's and a pad's do.
+				kept->strip->setContextHandler([this, strip = kept->strip.get()](uint16_t chainId, const visage::Bounds& anchor) {
+					if (const size_t slot = model_->slotOfChainId(chainId); slot != kNoChain) {
+						chainRename_->showMenu(slot, *strip, anchor);
 					}
 				});
 				kept->rail->setAccessory(kept->strip.get(), ChainStrip::kHeight);

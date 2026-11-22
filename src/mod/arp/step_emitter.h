@@ -156,6 +156,10 @@ public:
 	void publish() noexcept;
 	uint64_t readPlay(float* out, size_t capacity) const noexcept { return play_.read(out, capacity); }
 	bool restorePlay(const float* in, size_t n) noexcept;
+	/// **THE CHORD MOST RECENTLY PLAYED INTO THIS EMITTER** (what a press left in the chord: later releases do not shrink it), kept
+	/// and saved so an export can play over the key the patch was last played from. Empty until a key is pressed.
+	[[nodiscard]] const HeldChord& recentChord() const noexcept { return recent_chord_; }
+	[[nodiscard]] bool chordHeld() const noexcept { return !chord_.empty(); }
 
 	// TEST SEAMS — the values, not a render.
 	[[nodiscard]] size_t soundingCount() const noexcept { return soundingCount_; }
@@ -181,6 +185,8 @@ private:
 	/// THE KEYS UNDER THE FINGERS, and the chord the arp plays — the same set unless Latch holds a chord after them.
 	HeldChord physical_;
 	HeldChord chord_;
+	/// THE CHORD LAST PRESSED (`recentChord`).
+	HeldChord recent_chord_;
 	uint32_t pressCount_ = 0;
 	/// A PRESS GROUP IS OPEN: the keys pressed since the last `emit` share `pressCount_` (backlog QR).
 	bool pressGroupOpen_ = false;

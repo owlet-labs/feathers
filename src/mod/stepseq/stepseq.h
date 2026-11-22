@@ -81,7 +81,7 @@ public:
 	void setOrdinal(uint32_t ordinal) noexcept { ordinal_ = ordinal; }
 	[[nodiscard]] uint32_t ordinal() const noexcept { return ordinal_; }
 
-	/// `mod::PolyShape`'s contract. No smoothing to carry: each step carries its own slew.
+	/// `mod::PolyShape`'s contract. No Carry: a new note's smoother starts at rest (the global Smoothing is per note under Poly).
 	void carrySmoothingFrom(const Shape&) noexcept {}
 	/// ADVANCE (the Trig) and RESET, taken at the next tick.
 	void fire() noexcept { advancePending_ = true; }
@@ -181,6 +181,11 @@ private:
 	float from_ = 0.0f;   ///< where the slew starts (unipolar)
 	float target_ = 0.0f; ///< the step's value, or the held one when it does not play
 	float raw_ = 0.0f;    ///< unipolar value now
+	/// THE GLOBAL SMOOTHER (`mod::smoothingStep`), after the step slew; `smoothed_` is the unipolar output.
+	double smoothed_ = 0.0;
+	double smoothingCoeff_ = 1.0;
+	float smoothingKnobWas_ = 0.0f;
+	bool smoothingCoeffValid_ = false;
 	float value_ = 0.0f;
 	float gate_ = 0.0f;
 	float trigger_ = 0.0f;

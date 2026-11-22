@@ -41,6 +41,8 @@
 #include "fx/spectral/spectral_types.h"
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/knob.h"
+#include "plugin/ui/macro_slot.h"
+#include "plugin/ui/tooltip.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/source_arm.h"
 #include "plugin/ui/switch_chip.h"
@@ -1849,6 +1851,59 @@ TEST_CASE("the editor is laid out with real bounds once the window has a size") 
 		REQUIRE(knob != nullptr);
 		REQUIRE(knob->width() > 0);
 	}
+	gui->destroy(v.plugin);
+}
+
+TEST_CASE("the Chain plugin's own macro row shows a renamed macro's whole name on hover") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	Venue v;
+	const auto* gui = static_cast<const clap_plugin_gui*>(v.plugin->get_extension(v.plugin, CLAP_EXT_GUI));
+#if defined(__APPLE__)
+	const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+	const char* api = CLAP_WINDOW_API_WIN32;
+#else
+	const char* api = CLAP_WINDOW_API_X11;
+#endif
+	REQUIRE(gui->create(v.plugin, api, false));
+	REQUIRE(hostSetSize(gui, v.plugin, rack::RackEditor::kWidth, rack::RackEditor::kHeight));
+	const auto* ext = static_cast<const clap_plugin_feathers_rack_test*>(
+	    v.plugin->get_extension(v.plugin, CLAP_EXT_FEATHERS_RACK_TEST));
+	REQUIRE(ext != nullptr);
+	rack::RackEditor* editor = static_cast<rack::RackEditor*>(ext->editor(v.plugin));
+	REQUIRE(editor != nullptr);
+	REQUIRE_FALSE(editor->macrosForTest().empty());
+
+	const std::string longName = "Humanize Amount Over Tim";
+	ui::MacroSlot& macro = *editor->macrosForTest().front();
+	macro.naming().rename(longName);
+	macro.refresh();
+	ui::Knob& knob = macro.knob();
+	REQUIRE(knob.isVisible());
+	// THE VALUE the hover composes, and the HOST it goes to: the editor is the tooltip host, so the layer exists in the plugin.
+	CHECK(ui::hoverText(knob, { knob.width() * 0.5f, knob.height() * 0.5f }).rfind(longName, 0) == 0);
+	visage::Frame* hostFrame = nullptr;
+	REQUIRE(ui::tooltipHostOf(knob, &hostFrame) == editor);
+	// AND THE ROAD: a real hover rests, then the editor's own tick shows the layer.
+	ui::TooltipLayer& layer = editor->tooltipLayer();
+	double now = 10'000.0;
+	layer.setClock([&now] { return now; });
+	layer.clear();
+	visage::MouseEvent e;
+	e.position = { knob.width() * 0.5f, knob.height() * 0.5f };
+	e.event_frame = &knob;
+	e.button_id = visage::kMouseButtonNone;
+	e.button_state = visage::kMouseButtonNone;
+	e.is_down = false;
+	knob.processMouseEnter(e);
+	now += ui::TooltipLayer::kDelayMs + 1.0;
+	(void)editor->tickTooltips();
+	REQUIRE(layer.shown());
+	CAPTURE(layer.text());
+	CHECK(layer.text().rfind(longName, 0) == 0);
+	knob.processMouseExit(e);
 	gui->destroy(v.plugin);
 }
 

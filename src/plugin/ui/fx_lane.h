@@ -28,6 +28,7 @@
 #include "plugin/ui/drop_gap.h"
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/lane_selection.h"
+#include "plugin/ui/device_rename.h"
 // THE CHIP AT THE FOOT OF A CARD WHOSE DEVICE PUBLISHES — this lane owns them now; see `outputArms_`.
 #include "plugin/ui/source_arm.h"
 #include "plugin/ui/ui_state.h"
@@ -463,6 +464,10 @@ private:
 	/// its verbs record into when the lane was built without one (a case).
 	EditHistory spareHistory_;
 	std::unique_ptr<LaneSelection> selection_;
+	std::unique_ptr<DeviceRename> rename_;
+public:
+	[[nodiscard]] DeviceRename& renameForTest() noexcept { return *rename_; }
+private:
 	std::unique_ptr<SelectionOverlay> selectionOverlay_;
 	[[nodiscard]] std::vector<DeviceInstanceId> laneOrder() const;
 	/// Every card flagged from the selection; the key's target from its anchor.
@@ -577,6 +582,8 @@ private:
 	/// position and the device part company. A DIFFERENT tag masks it, which is why this survived: the
 	/// case that puts two filters in one chain never removes one.
 	std::vector<DeviceInstanceId> cardDevice_ = std::vector<DeviceInstanceId>(kMaxFxSlots);
+	/// WHETHER THE CARD WAS BUILT FOR A DEVICE WHOSE SAVED CONTENTS WERE REFUSED (backlog TM) — part of the key.
+	std::vector<bool> cardRefused_ = std::vector<bool>(kMaxFxSlots);
 
 	float scroll_ = 0.0f;
 

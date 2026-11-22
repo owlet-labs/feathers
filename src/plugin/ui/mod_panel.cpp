@@ -122,7 +122,8 @@ std::string modSourceName(const ParamBridge& bridge, backplane::Source source) {
 		if (desc == nullptr) {
 			return "Source"; // an id nothing holds, or a device this build lacks, names nothing
 		}
-		std::string name = desc->traits.name;
+		const std::string named = bridge.userNameOf(source.device); // a NAMED instance wears its name alone
+		std::string name = named.empty() ? std::string(desc->traits.name) : named;
 		// NUMBERED BY WHERE THE DEVICE SITS — the label a player reads to know which card a route came
 		// from. (It was numbered by position rather than by lane for the same reason, back when a lane
 		// was the other number to hand.)
@@ -131,7 +132,10 @@ std::string modSourceName(const ParamBridge& bridge, backplane::Source source) {
 		// position in its own chain, the strip's first LFO and the lane's first LFO were both "LFO 1" — two sources
 		// under one name in the route list. A lane device says where it stands: "LFO (FX 2)".
 		const size_t position = positionOfDevice(bridge, source.device);
-		if (position != kNoPosition && bridge.rackSlotOf(source.device) == kNoPosition) {
+		if (!named.empty()) {
+			// the player's own name, no number
+		}
+		else if (position != kNoPosition && bridge.rackSlotOf(source.device) == kNoPosition) {
 			name += " (FX ";
 			name += std::to_string(position + 1);
 			name += ")";
@@ -2466,7 +2470,9 @@ bool ModPanel::ensureCard(size_t slot) {
 	// and editing the device that used to be above it. The card holds a perfectly valid address — it is
 	// just no longer the device at its position.
 	const DeviceInstanceId builtFor = bridge_.rackDeviceAt(slot);
-	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == builtFor) {
+	// AND WHETHER ITS SAVED CONTENTS WERE REFUSED (backlog TM), found by the converger after the card may exist.
+	const bool refused = host_.bodyRefusalOf(builtFor) != nullptr;
+	if (cards_[slot] != nullptr && cardTag_[slot] == tag && cardDevice_[slot] == builtFor && cardRefused_[slot] == refused) {
 		return false;
 	}
 
@@ -2504,7 +2510,12 @@ bool ModPanel::ensureCard(size_t slot) {
 	// meet, and it is deliberately the only one: `FxLane::ensureCard` does exactly this and says the same
 	// thing, *"the card knows its device and the strip knows its position"*.
 	const DeviceInstanceId device = builtFor;
-	switch (kind) {
+	const ModRack refusedRack = bridge_.modRack();
+	const device::Descriptor* refusedDesc = refused && slot < refusedRack.device.size() ? descriptorForRow(refusedRack.device[slot]) : nullptr;
+	if (refusedDesc != nullptr) {
+		cards_[slot] = std::make_unique<MissingDeviceCard>(*refusedDesc, *host_.bodyRefusalOf(device));
+	}
+	else switch (kind) {
 		case CardKind::Mseg:
 			cards_[slot] = std::make_unique<MsegCard>(host_, device, mod_, history_);
 			break;
@@ -2550,6 +2561,7 @@ bool ModPanel::ensureCard(size_t slot) {
 	// BOTH HALVES OF THE KEY, WRITTEN TOGETHER — see `cardDevice_`. Recording the device anywhere other
 	// than beside the tag is how the two come apart again.
 	cardDevice_[slot] = device;
+	cardRefused_[slot] = refused;
 	addChild(cards_[slot].get());
 	return true;
 }
@@ -2966,6 +2978,7 @@ void ModPanel::reserveCards(size_t count) {
 	cards_.resize(want);
 	cardTag_.resize(want);
 	cardDevice_.resize(want);
+	cardRefused_.resize(want);
 }
 
 } // namespace feathers::ui

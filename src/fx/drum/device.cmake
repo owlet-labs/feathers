@@ -20,7 +20,8 @@ feathers_register_device(
 	INCLUDES fx/drum/drum_types.h
 	TARGET feathers-fx
 	SOURCES src/fx/drum/drum_types.cpp
-		src/fx/drum/drum.cpp)
+		src/fx/drum/drum.cpp
+		src/fx/drum/drum_likes.cpp)
 
 # **DRUM — one drum, a generator in a chain.** It answers one key, strikes one hit of one kind (the drum engine's own hit) and adds
 # it to what comes in; every note passes through, so drums on one key layer. Its card is the generic one, with the controls a kind does

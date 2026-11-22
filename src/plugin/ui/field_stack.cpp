@@ -37,10 +37,11 @@ const char* FieldStack::tooltipAt(visage::Point) const {
 }
 
 void FieldStack::offeredControls(std::vector<Offered>& out) const {
-	if (!boxes_.empty()) {
-		out.push_back({ &boxes_.front()->control(), Road::Face });
+	// EVERY ROW AND THE SELECTOR: each is its own control, drag-editable and a modulation target.
+	for (const std::unique_ptr<ValueBox>& box : boxes_) {
+		out.push_back({ &box->control(), Road::Face });
 	}
-	else if (select_ != nullptr) {
+	if (select_ != nullptr) {
 		out.push_back({ &select_->control(), Road::Face });
 	}
 }

@@ -105,6 +105,7 @@ void StepEmitter::processNotes(const device::NoteEvent* in, size_t inCount, devi
 				noteRestart_ = true;
 			}
 			chord_.press(e.key, e.channel, velocity, pressCount_);
+			recent_chord_ = chord_;
 			if (!c_.enabled) {
 				physical_.find(e.key)->passed = true;
 				pass(e);
@@ -626,10 +627,12 @@ void StepEmitter::publish() noexcept {
 	device::BlockWriter w(words.data(), words.size());
 	const bool latched = c_.latch && !chord_.empty();
 	w.flag(latched);
-	const size_t count = latched ? chord_.size() : 0;
+	// THE CHORD SAVED is the latched one, else the one last played (the export plays over it; a restore holds it only when latched).
+	const HeldChord& saved = latched ? chord_ : recent_chord_;
+	const size_t count = saved.size();
 	w.u16(static_cast<uint32_t>(count));
 	for (size_t i = 0; i < kMaxHeld; ++i) {
-		const HeldNote h = i < count ? chord_[i] : HeldNote {};
+		const HeldNote h = i < count ? saved[i] : HeldNote {};
 		w.u16(static_cast<uint32_t>(std::clamp<int>(h.key, 0, 127)));
 		w.u16(static_cast<uint32_t>(std::clamp<int>(h.channel, 0, 15)));
 		w.f32(h.velocity);
@@ -654,9 +657,11 @@ bool StepEmitter::restorePlay(const float* in, size_t n) noexcept {
 		const auto channel = static_cast<int16_t>(r.u16());
 		const float velocity = r.f32();
 		const uint32_t order = r.u32();
-		if (i < count && latched) {
+		if (i < count) {
 			chord.press(key, channel, std::isfinite(velocity) ? std::clamp(velocity, 0.0f, 1.0f) : 1.0f, order);
-			newest = std::max(newest, order);
+			if (latched) {
+				newest = std::max(newest, order);
+			}
 		}
 	}
 	const bool free = r.flag();
@@ -664,7 +669,8 @@ bool StepEmitter::restorePlay(const float* in, size_t n) noexcept {
 	if (!r.ok()) {
 		return false;
 	}
-	chord_ = chord;
+	chord_ = latched ? chord : HeldChord {};
+	recent_chord_ = chord;
 	latchWas_ = latched;
 	pressCount_ = std::max(pressCount_, newest);
 	haveFreeRestore_ = free && std::isfinite(phase);

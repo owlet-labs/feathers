@@ -33,6 +33,7 @@
 #include <array>
 #include <cctype>
 #include <span>
+#include <string_view>
 
 namespace feathers::ui {
 
@@ -52,7 +53,7 @@ constexpr KnobSpec kKnobs[] = {
 	{ ero::Param::Step, "Step" },         { ero::Param::Detune, "Detune" },
 	{ ero::Param::ModFold, "Mod Fold" }, { ero::Param::RustBias, "Bias" },    { ero::Param::RustRectify, "Rectify" },
 	{ ero::Param::Heat, "Heat" },
-	{ ero::Param::Smear, "Smear" },     { ero::Param::Loop, "Loop" },
+	{ ero::Param::Loop, "Loop" },
 	{ ero::Param::LoopInterval, "Interval" }, { ero::Param::Input, "Input" },
 };
 
@@ -144,6 +145,14 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	}
 	(void)emphasis_->setSelector(control(ero::Param::EmphShape), std::move(shapes));
 	addChild(emphasis_.get());
+	// THE SMEAR, A STACK OF THREE ROWS: its Amount, its Stages and its Reso. Its Offset (semitones from Freq) is the plot's handle
+	// alone. Stages and Reso are nothing while Smear is at 0 (`refreshHonesty`).
+	smear_ = std::make_unique<FieldStack>("Smear");
+	smear_->setFaceDiameter(kFace);
+	(void)smear_->addBox(std::make_unique<ValueBox>(control(ero::Param::Smear), ""), "Amt");
+	(void)smear_->addBox(std::make_unique<ValueBox>(control(ero::Param::SmearStages), ""), "Stages");
+	(void)smear_->addBox(std::make_unique<ValueBox>(control(ero::Param::SmearReso), ""), "Reso");
+	addChild(smear_.get());
 	loopPair_ = std::make_unique<PairCell>("", *knob(ero::Param::Loop), *knob(ero::Param::LoopInterval));
 	addChild(loopPair_.get());
 
@@ -154,10 +163,7 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
 	drive_->setFaceDiameter(kFace);
-	std::vector<ZoneSelect::ZoneName> types;
-	for (const char* name : ero::kDriveModeNames) {
-		types.push_back({ name, {} });
-	}
+	std::vector<ZoneSelect::ZoneName> types = driveTypeZoneNames();
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 	                                             stageRowGate(driveView_, driveStageParams()));
 	driveCell_->setFaceDiameter(kFace);
@@ -325,7 +331,7 @@ void EroderExpanded::layOut() {
 		const float driveW = 2.0f * cell + 2.0f * kGroupPad;
 		group("Input", x0, inputW, 1, { { knob(P::Input), 1, true, knobH } });
 		group("Tone", x0 + inputW + kGroupGap, toneW, 3,
-		      { { filter_.get(), 1, true, knobH }, { emphasis_.get(), 1, true, knobH }, { knob(P::Smear), 1, true, knobH } });
+		      { { filter_.get(), 1, true, knobH }, { emphasis_.get(), 1, true, knobH }, { smear_.get(), 1, true, knobH } });
 		group("Drive", x0 + inputW + toneW + 2.0f * kGroupGap, driveW, 2, { { drivePair_.get(), 2, true, knobH } });
 		closeRow(first);
 	}
@@ -432,6 +438,11 @@ void EroderExpanded::refreshHonesty() {
 	// THE EMPHASIS'S OWN: the shape, the offset and the restore are nothing at zero.
 	emphasis_->setBoxEnabled(1, emphasised);
 	emphasis_->setSelectorEnabled(emphasised);
+	// THE SMEAR'S OWN: its chain length, Q and centre are nothing at Smear 0.
+	const bool smeared = row[static_cast<size_t>(ero::Param::Smear)] != 0.0f;
+	for (size_t i = 1; i < smear_->boxCount(); ++i) {
+		smear_->setBoxEnabled(i, smeared);
+	}
 	restore_->setEnabled(emphasised);
 	// THE INTERVAL IS THE OUTER LOOP'S: at Loop 0 there is no outer delay.
 	const bool outer = row[static_cast<size_t>(ero::Param::Loop)] > 0.0f;
@@ -501,9 +512,11 @@ std::vector<ero::Param> EroderExpanded::addressedParamsForTest() const {
 			offered.clear();
 			face->offeredControls(offered);
 			for (const ControlFace::Offered& o : offered) {
-				for (size_t i = 0; i < controls_.size(); ++i) {
+				// BY THE CONTROL'S OWN KEY: the plot's handles hold controls of their own (a handle with no field in a box is
+				// reached only through it), and a key names one parameter.
+				for (size_t i = 0; i < std::size(ero::kParamDescs); ++i) {
 					const auto p = static_cast<ero::Param>(i);
-					if (controls_[i] != nullptr && static_cast<const device::Modulatable*>(controls_[i].get()) == o.control
+					if (o.control != nullptr && std::string_view(o.control->desc().key) == ero::kParamDescs[i].key
 					    && std::find(out.begin(), out.end(), p) == out.end()) {
 						out.push_back(p);
 					}

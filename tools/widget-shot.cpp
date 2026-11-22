@@ -65,6 +65,7 @@
 #include "mod/arp/arp.h" // `--arp-play`
 #include "plugin/ui/pattern_card.h"     // `--pattern-focus`
 #include "plugin/ui/pattern_expanded.h" // `--pattern-like`, `--pattern-focus`
+#include "plugin/ui/drum_device_expanded.h" // `--drum-likes`
 #include "plugin/ui/mod_panel.h"
 #include "plugin/ui/route_list.h"
 #include "plugin/ui/chain_column.h"
@@ -536,6 +537,9 @@ int main(int argc, char** argv) {
 	/// `--pattern-like`: in the Pattern device's window, record a like (the heart) for the focused pattern, so the terrain's
 	/// "more like this" highlight shows in the shot.
 	bool patternLike = false;
+	/// `--drum-likes`: in the Drum device's window, like the drum at three places of its terrain (the heart) and leave it standing near the
+	/// first, so the pad shows its marks and the warp they make.
+	bool drumLikes = false;
 	/// `--pattern-focus <1-4>`: the Pattern card's (and window's) tab, through their own verb (`PagedControls`).
 	int patternFocus = 0;
 	/// `--height <px>`: the editor's logical height asked of the host road (adjustSize), for a tall card.
@@ -626,6 +630,7 @@ int main(int argc, char** argv) {
 	bool hoverSequence = false;
 	/// OPEN OWLTT'S MODE MENU once its panel is up — see the block that does it.
 	bool owlttModeMenu = false;
+	std::string typeMenu; ///< `--type-menu <control key>`: open that Type selector's choice menu
 	/// **OPEN THE PANEL IN ITS OWN WINDOW — the default a player gets**, and photograph the whole screen
 	/// as well, since that window is not the editor's. `-popout.png` beside the requested file.
 	bool popout = false;
@@ -1107,6 +1112,10 @@ int main(int argc, char** argv) {
 			patternLike = true;
 			continue;
 		}
+		if (arg == "--drum-likes") {
+			drumLikes = true;
+			continue;
+		}
 		if (arg == "--mod-run" && i + 1 < argc) {
 			modRunSeconds = std::max(0.0, std::atof(argv[++i]));
 			continue;
@@ -1256,6 +1265,10 @@ int main(int argc, char** argv) {
 		}
 		if (arg == "--popout") {
 			popout = true;
+			continue;
+		}
+		if (arg == "--type-menu" && i + 1 < argc) {
+			typeMenu = argv[++i];
 			continue;
 		}
 		if (arg == "--owltt-mode-menu") {
@@ -3145,6 +3158,27 @@ int main(int argc, char** argv) {
 		}
 	}
 
+	if (!typeMenu.empty()) {
+		// A TYPE SELECTOR'S MENU (a stacked mode cell's face), by the press the middle of its face takes, in whichever tree holds it.
+		visage::Frame* host = gui.root();
+		ui::ZoneSelect* found = nullptr;
+		std::function<void(visage::Frame*)> walk = [&](visage::Frame* f) {
+			if (auto* sel = dynamic_cast<ui::ZoneSelect*>(f); sel != nullptr && sel->isVisible() && sel->control().desc().key != nullptr && typeMenu == sel->control().desc().key) {
+				found = sel;
+			}
+			for (visage::Frame* child : f->children()) {
+				walk(child);
+			}
+		};
+		walk(host);
+		if (found == nullptr || !found->pressAt({ found->width() * 0.5f, found->height() * 0.5f })) {
+			std::printf("--type-menu \"%s\": no visible Type selector with that key\n", typeMenu.c_str());
+			return 1;
+		}
+		pump(600);
+		std::printf("menu:     %s opened\n", typeMenu.c_str());
+	}
+
 	if (owlttModeMenu) {
 		// OWLTT'S MODE MENU, OPENED THROUGH THE PANEL'S OWN `showModeMenu` — a report of a dropdown
 		// that did not appear beside its box named this panel. Prints where the rows landed against the
@@ -3808,6 +3842,28 @@ int main(int argc, char** argv) {
 		}
 		const bool liked = window->terrain().like();
 		std::printf("like:     %s\n", liked ? "recorded for the focused pattern" : "REFUSED");
+		pump(300);
+	}
+	if (drumLikes) {
+		ui::DrumDeviceExpanded* window = findInTree<ui::DrumDeviceExpanded>(gui.root());
+		if (window == nullptr) {
+			std::printf("--drum-likes: no Drum window is open (shoot DRUM with its panel)\n");
+			return 1;
+		}
+		namespace dd = fx::drumdevice;
+		const auto stand = [&](double x, double y) {
+			window->modelForTest().control(dd::Param::TravelX).setValue(x);
+			window->modelForTest().control(dd::Param::TravelY).setValue(y);
+			pump(300);
+		};
+		size_t liked = 0;
+		for (const std::array<double, 2> at : { std::array<double, 2> { 0.5, -0.25 }, { 3.0, 2.0 }, { -2.5, 1.5 } }) {
+			stand(at[0], at[1]);
+			liked += window->likesForTest().toggleLike() ? 1 : 0;
+		}
+		window->padForTest().setZoom(0.5);
+		stand(0.9, -0.1);
+		std::printf("drum:     %zu like(s) recorded, the drum left at (0.9, -0.1), the pad at 50%%\n", liked);
 		pump(300);
 	}
 	if (arpPlay) {

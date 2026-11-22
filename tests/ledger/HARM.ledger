@@ -51,3 +51,4 @@ param HARM harm_p4_mode unit=choice choice=Notch|High-pass
 param HARM harm_p4_active unit=choice choice=Off|On
 param HARM harm_master_level unit=percent min=0 max=1 stepped=0
 param HARM harm_master_depth unit=percent min=0 max=1 stepped=0
+param HARM harm_porta_mode unit=choice choice=Legato|Always

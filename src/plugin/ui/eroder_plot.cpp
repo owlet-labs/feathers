@@ -103,6 +103,21 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		if (!spectrum_ || e.position.y > plotFoot() + kFootHeight) {
 			return;
 		}
+		// THE SMEAR'S HANDLE (the window's plot only, and only while Smear runs): a drag across is its offset. Nearer than the emphasis's.
+		if (large_ && smearLive() && std::abs(e.position.x - smearHandleX()) <= kEdgeReach
+		    && std::abs(e.position.y - smearHandleY()) <= kEdgeReach) {
+			const float dSmear = std::hypot(e.position.x - smearHandleX(), e.position.y - smearHandleY());
+			const float dEmph = std::hypot(e.position.x - emphasisHandleX(), e.position.y - emphasisHandleY());
+			const float dBand = etch_ || !dust_ ? 1.0e9f : std::hypot(e.position.x - hzToX(band_.freqHz), e.position.y - handleY());
+			if (dSmear <= dEmph && dSmear < dBand) {
+				drag_.active = true;
+				drag_.smear = true;
+				drag_.startX = e.position.x;
+				drag_.startY = e.position.y;
+				drag_.startOffset = static_cast<double>(host_.fieldAt(device_, static_cast<size_t>(ero::Param::SmearOffset)));
+				return;
+			}
+		}
 		// THE EMPHASIS'S HANDLE (the window's plot only) takes a press nearer it than the band's own: the pointer's pitch moves the
 		// offset, its height the amount, both relative to where the press landed.
 		if (large_ && std::abs(e.position.x - emphasisHandleX()) <= kEdgeReach
@@ -165,6 +180,10 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 		if (!drag_.active) {
 			return;
 		}
+		if (drag_.smear) {
+			dragSmear(e.position);
+			return;
+		}
 		if (drag_.emph) {
 			dragEmphasis(e.position);
 			return;
@@ -209,6 +228,14 @@ EroderPlot::EroderPlot(backplane::DeviceHost& host, DeviceInstanceId id, bool la
 	};
 	onMouseUp() = [this](const visage::MouseEvent&) {
 		if (!drag_.active) {
+			return;
+		}
+		if (drag_.smear) {
+			if (drag_.offsetGesture) {
+				control(ero::Param::SmearOffset).endGesture();
+			}
+			drag_ = {};
+			update();
 			return;
 		}
 		if (drag_.emph) {
@@ -289,6 +316,8 @@ void EroderPlot::offeredControls(std::vector<Offered>& out) const {
 	if (large_) {
 		out.push_back({ &control(ero::Param::EmphOffset), Road::Gesture });
 		out.push_back({ &control(ero::Param::EmphAmount), Road::Gesture });
+		// THE SMEAR'S HANDLE: x is its offset.
+		out.push_back({ &control(ero::Param::SmearOffset), Road::Gesture });
 		// THE COMB'S SHAKE-FILTER HANDLE: x is Cutoff.
 		out.push_back({ &control(ero::Param::Cutoff), Road::Gesture });
 	}
@@ -297,7 +326,7 @@ void EroderPlot::offeredControls(std::vector<Offered>& out) const {
 void EroderPlot::setModulation(ModState* mod, EditHistory* history) {
 	mod_ = mod;
 	history_ = history;
-	for (const ero::Param p : { ero::Param::Freq, ero::Param::Amount, ero::Param::Width, ero::Param::EmphOffset, ero::Param::EmphAmount }) {
+	for (const ero::Param p : { ero::Param::Freq, ero::Param::Amount, ero::Param::Width, ero::Param::EmphOffset, ero::Param::EmphAmount, ero::Param::SmearOffset }) {
 		control(p).setModulation(mod, history);
 	}
 }
@@ -429,6 +458,33 @@ float EroderPlot::emphasisHandleY() const noexcept {
 	return std::clamp(emphasisY(db), plotTop(), plotFoot());
 }
 
+double EroderPlot::smearHz() const noexcept {
+	// THE ENGINE'S OWN: Freq moved by the offset (`SharedSection::smearHz`), not restated here.
+	return ero::SharedSection::smearHz(centreHz(), static_cast<double>(settings_.smearOffset), rate_);
+}
+
+float EroderPlot::smearHandleX() const noexcept { return hzToX(smearHz()); }
+
+float EroderPlot::smearHandleY() const noexcept { return plotTop() + 8.0f; }
+
+bool EroderPlot::smearLive() const noexcept { return settings_.smear != 0.0f; }
+
+void EroderPlot::dragSmear(visage::Point at) {
+	const float dx = at.x - drag_.startX;
+	// ACROSS: the offset, in semitones by the plot's own pitch axis, relative to the press and past the dead zone (as the emphasis's).
+	if (drag_.offsetGesture || std::abs(dx) > kAmountDeadZone) {
+		DeviceControl& offset = control(ero::Param::SmearOffset);
+		if (!drag_.offsetGesture) {
+			drag_.offsetGesture = true;
+			offset.beginGesture();
+		}
+		const float past = std::max(std::abs(dx) - kAmountDeadZone, 0.0f) * (dx < 0.0f ? -1.0f : 1.0f);
+		const double semitones = 12.0 * std::log2(xToHz(drag_.startX + past) / xToHz(drag_.startX));
+		offset.setValue(std::clamp(drag_.startOffset + semitones, -ero::kSmearOffsetSemitones, ero::kSmearOffsetSemitones));
+	}
+	update();
+}
+
 void EroderPlot::dragEmphasis(visage::Point at) {
 	const float dx = at.x - drag_.startX;
 	const float rise = drag_.startY - at.y;
@@ -552,6 +608,9 @@ const char* EroderPlot::tooltipAt(visage::Point p) const {
 	if (!spectrum_) {
 		return kCombTip;
 	}
+	if (large_ && std::abs(p.x - smearHandleX()) < kHandleReach && std::abs(p.y - smearHandleY()) < kHandleReach) {
+		return tooltipOf(&control(ero::Param::SmearOffset));
+	}
 	if (large_ && std::abs(p.x - emphasisHandleX()) < kHandleReach && std::abs(p.y - emphasisHandleY()) < kHandleReach) {
 		return tooltipOf(&control(ero::Param::EmphOffset));
 	}
@@ -661,6 +720,30 @@ void EroderPlot::drawDust(visage::Canvas& canvas) {
 			std::snprintf(label, sizeof(label), "%+.1f st", static_cast<double>(settings_.emphOffset));
 			canvas.setColor(tokens::kGammaAxis);
 			canvas.text(label, font(kKnobReadoutSize), visage::Font::kCenter, hx - 30.0f, hy - 17.0f, 60.0f, 11.0f);
+		}
+	}
+
+	// THE SMEAR'S HANDLE (window only): a square on its own line near the top, in its own hue, so it reads apart from the emphasis's
+	// ring. Hollow and dim while Smear is at 0 (it takes no press then); filled while it runs.
+	if (large_) {
+		const float sx = smearHandleX();
+		const float sy = smearHandleY();
+		const bool live = smearLive();
+		if (live) {
+			canvas.setColor(withAlpha(tokens::kSeed5, 0.35f));
+			canvas.fill(sx - 0.5f, sy, 1.0f, std::max(0.0f, foot - sy));
+		}
+		canvas.setColor(live ? tokens::kSeed5 : withAlpha(tokens::kSeed5, 0.4f));
+		canvas.roundedRectangle(sx - 4.0f, sy - 4.0f, 8.0f, 8.0f, 1.5f);
+		if (!live) {
+			canvas.setColor(kSurface);
+			canvas.roundedRectangle(sx - 2.5f, sy - 2.5f, 5.0f, 5.0f, 1.0f);
+		}
+		if (live && (settings_.smearOffset != 0.0f || drag_.smear)) {
+			char label[24];
+			std::snprintf(label, sizeof(label), "smear %+.1f st", static_cast<double>(settings_.smearOffset));
+			canvas.setColor(tokens::kSeed5);
+			canvas.text(label, font(kKnobReadoutSize), visage::Font::kCenter, sx - 40.0f, sy + 5.0f, 80.0f, 11.0f);
 		}
 	}
 

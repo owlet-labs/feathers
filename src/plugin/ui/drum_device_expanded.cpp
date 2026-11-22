@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/drum_device_expanded.h"
+#include "plugin/ui/gamma_box.h"
 
 #include "plugin/ui/theme.h"
 #include "plugin/ui/type_in.h"
@@ -77,6 +78,15 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 		else if (isSegmented(p)) {
 			w = std::make_unique<SegmentedControl>(control, registry, d.names, notifier);
 		}
+		else if (p == dd::Param::Rotate || p == dd::Param::Gamma) {
+			// AS AUTOMOD'S MINI TERRAIN: Gamma and Rotate are unbounded, so boxes (`GammaBox`), never knobs. ROTATE sits INSIDE the pad, in its
+			// top-right corner (made after the pad, so it draws over the map it turns), one unit of rotate per drag.
+			auto box = std::make_unique<GammaBox>(control, d.name);
+			if (p == dd::Param::Rotate) {
+				box->setDragSpan(1.0);
+			}
+			w = std::move(box);
+		}
 		else if (isBox(p)) {
 			w = std::make_unique<ValueBox>(control, d.name);
 		}
@@ -87,7 +97,9 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 			}
 			w = std::move(pill);
 		}
-		addChild(w.get());
+		if (p != dd::Param::Rotate) {
+			addChild(w.get());
+		}
 		widgets_[i] = std::move(w);
 	}
 	// THE TERRAIN PAD over Travel X and Y (unbounded: the view follows the star, no edge), turned by Rotate as the other pads are.
@@ -95,7 +107,7 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 	    [this](size_t index, float value) { model_.control(index == 0 ? dd::Param::TravelX : dd::Param::TravelY).setValue(static_cast<double>(value)); },
 	    [this](size_t field) { return static_cast<float>(model_.control(field == 0 ? dd::Param::TravelX : dd::Param::TravelY).value()); },
 	    model_.control(dd::Param::Rotate));
-	pad_->context = [this]() -> const dd::Settings& { return padContext_; };
+	pad_->context = [this]() -> const DrumPadContext& { return padContext_; };
 	pad_->onHoldBegan = [this] {
 		padGroup_ = historyOf(model_.control(dd::Param::TravelX));
 		if (padGroup_ != nullptr) {
@@ -115,6 +127,11 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 	pad_->setTravelControls(&model_.control(dd::Param::TravelX), &model_.control(dd::Param::TravelY));
 	installTooltipHover(*pad_, *pad_); // after the pad's own press handlers
 	addChild(pad_.get());
+	addChild(widgets_[static_cast<size_t>(dd::Param::Rotate)].get()); // over the pad
+	// THE HEART AND MUTATE under it: the likes' verbs, the warp the pad is drawn through.
+	likes_ = std::make_unique<DrumLikeBar>(model_, *pad_, notifier);
+	installTooltipHover(*likes_, *likes_);
+	addChild(likes_.get());
 	// THE SETTLED PITCH over Tune: typed note or Hz sets Tune, refused where there is no one pitch.
 	settledControl_ = std::make_unique<SettledPitchControl>(model_.control(dd::Param::Tune), [this] { return model_.settled(); });
 	readout_ = std::make_unique<PitchReadout>(*settledControl_);
@@ -123,7 +140,9 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 		play_ = std::make_unique<DrumPlayButton>(host, [this] { return model_.noteKey(); });
 		addChild(play_.get());
 	}
-	padContext_ = model_.settings();
+	(void)likes_->refresh();
+	padContext_.settings = model_.settings();
+	padContext_.likes = likes_->state();
 	layOut();
 }
 
@@ -190,9 +209,18 @@ void DrumDeviceExpanded::layOut() {
 	}
 	// TERRAIN: the pad at the left; Zone, Offset, Gamma, Rotate and the travel beside it, then the pitch mode, the readout and the scalers.
 	const float terrainY = velocity.bottom() + 12.0f;
-	pad_->setBounds(kPad, terrainY, kTerrainSize, kTerrainSize);
-	Flow terrain { kPad + kTerrainSize + 12.0f, xMax, kPad + kTerrainSize + 12.0f, terrainY };
-	for (const dd::Param p : { dd::Param::Zone, dd::Param::ZoneOffset, dd::Param::Gamma, dd::Param::Rotate, dd::Param::TravelX, dd::Param::TravelY }) {
+	pad_->setBounds(kPad, terrainY, kTerrainWidth, kTerrainHeight);
+	if (visage::Frame* rotate = widgets_[static_cast<size_t>(dd::Param::Rotate)].get()) {
+		constexpr float kInset = 6.0f;
+		constexpr float kRotateWidth = 118.0f;
+		const float natural = static_cast<GammaBox*>(rotate)->naturalHeight();
+		rotate->setBounds(kPad + kTerrainWidth - kRotateWidth - kInset, terrainY + kInset, kRotateWidth, natural);
+		pad_->setInset({ kTerrainWidth - kRotateWidth - kInset, kInset, kRotateWidth, natural });
+		placed[static_cast<size_t>(dd::Param::Rotate)] = true;
+	}
+	likes_->setBounds(kPad, terrainY + kTerrainHeight + 4.0f, DrumLikeBar::kHeartWidth + DrumLikeBar::kGap + DrumLikeBar::kMutateWidth, DrumLikeBar::kHeight);
+	Flow terrain { kPad + kTerrainWidth + 12.0f, xMax, kPad + kTerrainWidth + 12.0f, terrainY };
+	for (const dd::Param p : { dd::Param::Zone, dd::Param::ZoneOffset, dd::Param::Gamma, dd::Param::TravelX, dd::Param::TravelY }) {
 		seat(terrain, p, 84.0f, ValueBox::kHeight);
 	}
 	seat(terrain, dd::Param::PitchMode, 196.0f, 22.0f);
@@ -205,7 +233,7 @@ void DrumDeviceExpanded::layOut() {
 		seat(terrain, p, kPillW, kPillH);
 	}
 	// BODY: the kind's own controls, then the snare's wire and bell amounts.
-	const float bodyY = std::max(terrain.bottom(), terrainY + kTerrainSize) + 12.0f;
+	const float bodyY = std::max(terrain.bottom(), terrainY + kTerrainHeight + 4.0f + DrumLikeBar::kHeight) + 12.0f;
 	Flow body { kPad, xMax, kPad, bodyY };
 	seat(body, dd::Param::Drive, kPillW, kPillH);
 	seat(body, dd::Param::DriveCurve, 184.0f, 22.0f);
@@ -249,7 +277,9 @@ bool DrumDeviceExpanded::updateContent() {
 
 void DrumDeviceExpanded::follow() {
 	picture_.show(model_.kind(), model_.laws(), model_.decaySeconds(), model_.levelDb(), model_.handles());
-	padContext_ = model_.settings();
+	(void)likes_->refresh();
+	padContext_.settings = model_.settings();
+	padContext_.likes = likes_->state();
 	readout_->refresh(drum_pitch::readoutText(model_.settled()));
 }
 

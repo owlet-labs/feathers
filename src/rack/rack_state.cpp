@@ -1504,6 +1504,11 @@ bool rackToText(const RackPatch& patch, std::string* out, bool indented) {
 				w.key("labels");
 				writeValues(w, device.labels);
 			}
+			// AND WHAT THE USER CALLS THE INSTANCE — only when it is named.
+			if (!device.name.empty()) {
+				w.key("name");
+				w.string(device.name);
+			}
 			// AND WHICH PRESET ITS PANEL LAST LOADED OR SAVED (backlog QC) — only when it names one.
 			if (!device.preset.empty()) {
 				w.key("preset");
@@ -1717,6 +1722,7 @@ bool parseRackText(std::string_view text, RackPatch* out, LoadReport* report) {
 				return notLoaded(report, "a device's values are not an object");
 			}
 			(void)readPresetIdentity(node.find("preset"), &device.preset); // backlog QC; absent or odd: none
+			(void)readString(node, "name", &device.name); // the user's name for the instance; absent or odd: none
 			// THE BODY, bounded before a byte of it is allocated for. One ceiling, the rack's: the parse knows
 			// no devices, and the device that receives the body validates it (`loadState`).
 			if (const json::Value* body = node.find("body"); body != nullptr && !body->isNull()) {
@@ -1911,6 +1917,10 @@ RackPatch::Device patchDeviceOfRow(const ChainRecord& record, const ContainerBod
 				device.labels.push_back(RackPatch::Value::label(desc->outputs[output].key, std::string(named)));
 			}
 		}
+	}
+	// AND WHAT THE USER CALLS IT, under the same id.
+	if (labels != nullptr) {
+		device.name = std::string(labels->nameOf(row.instanceId));
 	}
 	// AND WHICH PRESET ITS PANEL CAME FROM (backlog QC), under the same id.
 	if (labels != nullptr) {
@@ -2116,6 +2126,7 @@ size_t placePatchInRecord(const RackPatch& patch, ChainRecord* record, Container
 		// WHICH PRESET ITS PANEL CAME FROM (backlog QC), under the id it ended up wearing.
 		if (labels != nullptr) {
 			(void)labels->setPreset(row.instanceId, device.preset);
+			(void)labels->setName(row.instanceId, device.name);
 		}
 		if (bodies != nullptr && !device.body.empty()) {
 			(void)bodies->store(row.instanceId, device.body.data(), device.body.size());
@@ -2315,7 +2326,12 @@ void applyRack(const RackPatch& patch, RackEngine* rack, LoadReport* report) {
 		}
 		if (!device.body.empty() && p.desc->bodyLoader() != nullptr
 		    && !p.desc->bodyLoader()(p.storage.get(), device.body.data(), device.body.size())) {
-			report->note(LoadReport::Kind::BodyRefused, where, device.tag.data());
+			// **NOT ADOPTED** (backlog TM): a fresh empty device here would be what a save of this engine writes, over the
+			// content the body held. The engine has nowhere to carry the bytes, so `loadRack` answers false for the whole
+			// body and the container that holds it keeps its bytes whole, as the converger does for any refused body.
+			report->note(LoadReport::Kind::BodyRefused, where, p.desc->traits.name,
+			             "the device would not take its saved contents (" + std::to_string(device.body.size()) + " bytes)");
+			continue;
 		}
 		restoreBlocksOfPatch(*p.desc, p.storage.get(), device, report, where);
 		const device::Descriptor* desc = p.desc;
@@ -2374,7 +2390,9 @@ bool loadRack(const clap_istream* stream, RackEngine* rack, LoadReport* report) 
 		return false;
 	}
 	applyRack(patch, rack, report);
-	return true;
+	// A REFUSED DEVICE BODY REFUSES THE BODY (backlog TM): the engine holds no opaque bytes, so a partial load would save
+	// as a loss. The caller's container is refused whole and its own carrier keeps the bytes.
+	return report->countOf(LoadReport::Kind::BodyRefused) == 0;
 }
 
 } // namespace feathers::rack

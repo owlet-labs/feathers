@@ -1294,3 +1294,127 @@ TEST_CASE("NT: two lanes' Randomise Trigs through the rack — each rolls its ow
 	CHECK(back.recordPattern() == drawn);
 	CHECK(back.recordBits() == back.deviceBits());
 }
+
+//------------------------------------------------------------------------------------------------//
+// The global Smoothing: the LFO's law, after each step's own slew                                //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+constexpr double kTick = static_cast<double>(mod::kBlockSamples) / kRate;
+
+/// Two steps at 1 step a second (Hz base, rate 0): step 0 high, step 1 low, with step 0's slew as given.
+sq::Settings smoothingPattern(float slew, float log2Seconds) {
+	sq::Settings s;
+	s.clock = sq::Clock::Rate;
+	s.timeBase = 0;
+	s.rate = 0.0f;
+	s.steps = 2;
+	s.pattern.step[0].value = 1.0f;
+	s.pattern.step[0].slew = slew;
+	s.pattern.step[1].value = 0.0f;
+	s.smoothing = log2Seconds;
+	return s;
+}
+
+} // namespace
+
+TEST_CASE("Smoothing: the key is new, the bottom of the travel is off, and a patch without it plays as it did, to the bit") {
+	const device::ParamDesc& d = sq::kParamDescs[sq::at(sq::Param::Smoothing)];
+	CHECK(std::string(d.key) == "smoothing");
+	CHECK(d.min == doctest::Approx(static_cast<double>(mod::kSmoothingLog2SecondsMin)));
+	CHECK(d.max == doctest::Approx(static_cast<double>(mod::kSmoothingLog2SecondsMax)));
+	CHECK(d.def == static_cast<double>(mod::kSmoothingLog2SecondsMin));
+	CHECK(d.unit == device::Unit::LogSeconds);
+	CHECK(d.modulatable);
+
+	// AN OLD PATCH has no key for it, so the loader gives the declared default: the row then reads it off.
+	std::vector<float> row = defaultsRow();
+	sq::Settings base = smoothingPattern(0.5f, mod::kSmoothingLog2SecondsMin);
+	const sq::Row full = sq::rowOf(base);
+	std::copy(full.begin(), full.end(), row.begin());
+	row[sq::at(sq::Param::Smoothing)] = static_cast<float>(d.def);
+	const sq::Settings old = sq::settingsOf(row.data(), row.size());
+	CHECK(old.smoothing == mod::kSmoothingLog2SecondsMin);
+
+	// THE OUTPUT IS THE OLD ONE: restated in float as the engine's slew always was (`from + (target - from) * glide`).
+	Run run(old);
+	double pos = 0.0;
+	for (int k = 0; k < 1500; ++k) {
+		const float phase = static_cast<float>(pos);
+		const float p = std::clamp(phase, 0.0f, 0.999999f);
+		const bool first = k < 750;
+		const float expect = first ? 0.0f + (1.0f - 0.0f) * std::min(1.0f, p / 0.5f)
+		                           : 1.0f + (0.0f - 1.0f) * 1.0f; // step 1 has no slew
+		if (k < 740) {
+			CHECK(std::bit_cast<uint32_t>(run.shape.value()) == std::bit_cast<uint32_t>(expect));
+		}
+		run.tick();
+		pos += 1.0 * kTick;
+		if (pos >= 1.0) {
+			pos -= 1.0;
+		}
+	}
+}
+
+TEST_CASE("Smoothing: a step's edge becomes the LFO's one-pole, 63% at one time constant, and never overshoots") {
+	const double tau = 0.064; // 48 ticks of 1/750 s
+	const float knob = static_cast<float>(std::log2(tau));
+	CHECK(mod::smoothingTau(knob) == doctest::Approx(tau).epsilon(1e-6));
+
+	Run run(smoothingPattern(0.0f, knob)); // the first tick has run: one tick's worth of the step edge
+	const double c = 1.0 - std::exp(-kTick / tau);
+	double y = c; // restated: y += (target - y) * c, from rest at 0 toward 1
+	CHECK(std::abs(static_cast<double>(run.shape.value()) - y) < 2e-6);
+	for (int k = 2; k <= 700; ++k) {
+		run.tick();
+		y += (1.0 - y) * c;
+		CHECK(std::abs(static_cast<double>(run.shape.value()) - y) < 2e-6);
+		CHECK(run.shape.value() <= 1.0f);
+		CHECK(run.shape.value() >= 0.0f);
+		if (k == 48) {
+			CHECK(std::abs(static_cast<double>(run.shape.value()) - (1.0 - std::exp(-1.0))) < 1e-5);
+		}
+	}
+	// THE FALLING EDGE of step 1 (at 1 s = tick 751) decays the same way and stays in range.
+	float low = 1.0f;
+	for (int k = 701; k <= 2200; ++k) {
+		run.tick();
+		low = std::min(low, run.shape.value());
+		CHECK(run.shape.value() >= 0.0f);
+		CHECK(run.shape.value() <= 1.0f);
+	}
+	CHECK(low < 0.01f);
+	// NOT VACUOUS: unsmoothed, the same pattern is at 1 on the first tick.
+	Run bare(smoothingPattern(0.0f, mod::kSmoothingLog2SecondsMin));
+	CHECK(bare.shape.value() == 1.0f);
+}
+
+TEST_CASE("Smoothing: it smooths the output of each step's slew, so with both the slewed ramp is what the pole follows") {
+	const double tau = 0.064;
+	const float knob = static_cast<float>(std::log2(tau));
+	Run run(smoothingPattern(0.5f, knob));
+	const double c = 1.0 - std::exp(-kTick / tau);
+	// RESTATED: tick k (1-based) has the step at phase (k - 1) ticks into a 750-tick step; the slew ramps over half of it.
+	double y = 0.0;
+	double slewOnly = 0.0;
+	double smoothOnly = 0.0;
+	double apartFromPole = 0.0;
+	double apartFromRamp = 0.0;
+	for (int k = 1; k <= 700; ++k) {
+		const double phase = static_cast<double>(k - 1) / 750.0;
+		const double ramp = std::min(1.0, phase / 0.5);
+		y += (ramp - y) * c;
+		slewOnly = ramp;
+		smoothOnly += (1.0 - smoothOnly) * c;
+		CHECK(std::abs(static_cast<double>(run.shape.value()) - y) < 1e-5);
+		apartFromPole = std::max(apartFromPole, std::abs(y - smoothOnly));
+		apartFromRamp = std::max(apartFromRamp, std::abs(y - slewOnly));
+		if (k < 700) {
+			run.tick();
+		}
+	}
+	// NOT VACUOUS: the combined curve is neither the pole on an instant step nor the bare ramp.
+	CHECK(apartFromPole > 0.3);
+	CHECK(apartFromRamp > 0.05);
+}

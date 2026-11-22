@@ -735,7 +735,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Dry against dispersed, around the whole device"},
+     .tooltip = "Dry against dispersed, around the whole device. A partial Mix of an allpass chain makes comb-like notches, which is expected"},
     {.key = "disperser_wet_gain", .name = "Disperser Wet Gain",
      .min = 0.0,
      .max = 1.0,

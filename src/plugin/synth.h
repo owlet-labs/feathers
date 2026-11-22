@@ -730,6 +730,8 @@ public:
 	/// WHAT THE CHAINS IN THE LANE DROPPED AT THEIR SERVICE since last taken — the plugin entry hands these
 	/// to the bridge's refusal road after each `provisionDevices`, so the editor's tray says them.
 	[[nodiscard]] rack::RouteRefusals takeOuterDrops() noexcept;
+	/// THE BODIES A DEVICE REFUSED at provisioning (backlog TM), for the plugin to say in its report and log.
+	[[nodiscard]] std::vector<rack::Converger::BodyRefusal> takeBodyRefusals() noexcept;
 
 	/// **THE DEVICES THE LANE MAY BUILD** — Feathers' catalogue, which the lane also hands to any device
 	/// it builds that holds devices. The lane defaults to Feathers' own list; the plugin entry point

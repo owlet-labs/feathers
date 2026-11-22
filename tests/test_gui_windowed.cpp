@@ -32,6 +32,8 @@
 #include "doctest.h"
 
 #include <visage_widgets/text_editor.h> // backlog MF (before X11, whose macros collide with its enums)
+#include "mod/arp/pattern_types.h" // (before X11 too: its macros collide with these enums)
+#include "plugin/ui/pattern_expanded.h"
 #include "plugin/editor_prefs.h"
 #include "plugin/gui.h"
 #include "plugin/gui_bridge.h"
@@ -93,11 +95,14 @@
 
 #include "fx/owltt/owltt_types.h"
 #include "fx/harm/harm_types.h"
+#include "fx/drum/drum_types.h"
+#include "plugin/ui/drum_device_expanded.h"
 
 #include <visage_app/application_window.h>
 #include <visage_app/window_event_handler.h> // backlog MF: the real hover road, driven
 
 #include <algorithm>
+#include <cxxabi.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -3639,6 +3644,91 @@ TEST_CASE("a dropdown opened by a real press and release stays open through the 
 		checkMenuSurvivesAndPicks(rig, *other, "other");
 	}
 }
+
+TEST_CASE("the Drum's heart menu, opened by a real right press, stays open through the editor's beats and its Clear lands on a real click") {
+	ReopenRig rig;
+	const size_t slot = rig.f.addFx(fx::drumdevice::kTraits.tag);
+	rig.f.gui.setPopoutWindowForTest(false);
+	REQUIRE(rig.f.gui.canvasForTest()->setCollapsed(false));
+	rig.f.lane->onExpandDevice(slot);
+	pumpEditor(rig.f.gui, 5);
+	ui::DrumDeviceExpanded* window = findIn<ui::DrumDeviceExpanded>(rig.f.root);
+	REQUIRE(window != nullptr);
+	ui::DrumLikeBar& bar = window->likesForTest();
+	// ONE LIKE, so Clear has something to clear (the heart's own press, left button).
+	REQUIRE(bar.toggleLike());
+	REQUIRE(bar.all().size() == 1);
+	const double scale = rig.f.root->dpiScale();
+	const visage::Point heart = bar.positionInWindow() + visage::Point(bar.heartBounds().width() * 0.5f, bar.heartBounds().height() * 0.5f);
+	const visage::IPoint at { static_cast<int>(heart.x * scale), static_cast<int>(heart.y * scale) };
+	EditorPointer p = rig.pointer();
+	p.send(MotionNotify, at.x, at.y, 0, 0);
+	p.send(ButtonPress, at.x, at.y, Button3, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, at.x, at.y, Button3, Button3Mask);
+	for (int i = 0; i < 10; ++i) {
+		(void)rig.f.gui.tickForTest();
+		pumpEditor(rig.f.gui, 3);
+	}
+	visage::PopupMenuFrame* popup = findIn<visage::PopupMenuFrame>(rig.f.root->topParentFrame());
+	REQUIRE(popup != nullptr);
+	CHECK(popup->isVisible());
+	CHECK(ui::lastMenuPlacementForTest().shown);
+	// THE FIRST ROW IS "Clear all likes on Kick": a real click near the top of the list.
+	const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+	const visage::Point rowAt { placed.list.x() + placed.list.width() * 0.5f, placed.list.y() + 10.0f };
+	const visage::IPoint pick { static_cast<int>(rowAt.x * scale), static_cast<int>(rowAt.y * scale) };
+	p.send(MotionNotify, pick.x, pick.y, 0, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonPress, pick.x, pick.y, Button1, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, pick.x, pick.y, Button1, Button1Mask);
+	pumpEditor(rig.f.gui, 10);
+	CHECK(bar.all().empty());
+	CHECK(bar.state() == nullptr);
+}
+
+TEST_CASE("the Pattern's heart menu, opened by a real right press, stays open through the editor's beats and its Clear lands on a real click") {
+	namespace pt = feathers::mod::arp::pat;
+	ReopenRig rig;
+	const size_t slot = rig.f.addFx(pt::kTraits.tag);
+	rig.f.gui.setPopoutWindowForTest(false);
+	REQUIRE(rig.f.gui.canvasForTest()->setCollapsed(false));
+	rig.f.lane->onExpandDevice(slot);
+	pumpEditor(rig.f.gui, 5);
+	ui::PatternExpanded* window = findIn<ui::PatternExpanded>(rig.f.root);
+	REQUIRE(window != nullptr);
+	ui::PatternTerrain& terrain = window->terrain();
+	REQUIRE(terrain.like());
+	REQUIRE(terrain.likesNow().count == 1);
+	const visage::Frame& heart = window->heartForTest();
+	const double scale = rig.f.root->dpiScale();
+	const visage::Point c = heart.positionInWindow() + visage::Point(heart.width() * 0.5f, heart.height() * 0.5f);
+	const visage::IPoint at { static_cast<int>(c.x * scale), static_cast<int>(c.y * scale) };
+	EditorPointer p = rig.pointer();
+	p.send(MotionNotify, at.x, at.y, 0, 0);
+	p.send(ButtonPress, at.x, at.y, Button3, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, at.x, at.y, Button3, Button3Mask);
+	for (int i = 0; i < 10; ++i) {
+		(void)rig.f.gui.tickForTest();
+		pumpEditor(rig.f.gui, 3);
+	}
+	visage::PopupMenuFrame* popup = findIn<visage::PopupMenuFrame>(rig.f.root->topParentFrame());
+	REQUIRE(popup != nullptr);
+	CHECK(popup->isVisible());
+	CHECK(ui::lastMenuPlacementForTest().shown);
+	const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+	const visage::Point rowAt { placed.list.x() + placed.list.width() * 0.5f, placed.list.y() + 10.0f };
+	const visage::IPoint pick { static_cast<int>(rowAt.x * scale), static_cast<int>(rowAt.y * scale) };
+	p.send(MotionNotify, pick.x, pick.y, 0, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonPress, pick.x, pick.y, Button1, 0);
+	pumpEditor(rig.f.gui, 3);
+	p.send(ButtonRelease, pick.x, pick.y, Button1, Button1Mask);
+	pumpEditor(rig.f.gui, 10);
+	CHECK(terrain.likesNow().count == 0);
+}
 #endif // defined(__linux__): ReopenRig is Linux-only
 
 TEST_CASE("backlog NF: the Explore pane collapses like the fx lane — a 34px EXPLORE strip, the surface hidden, the "
@@ -4097,17 +4187,22 @@ T* treeFind(visage::Frame* root) {
 }
 } // namespace
 
-TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visible, on top and holding the keyboard, on the card and in the Rack window, in Tabs and Pads") {
+TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visible, on top and holding the keyboard, on the card and in the Rack window, in Strips, Tabs and Pads") {
 	namespace pr = feathers::rack::parallel;
-	for (const int view : { 1, 2 }) {
+	for (const int view : { 0, 1, 2 }) {
 		for (const bool inWindow : { false, true }) {
 		for (const bool neighbours : { false, true }) {
 			if (inWindow && neighbours) {
 				continue;
 			}
+		for (const bool doubleClick : { false, true }) {
+			if (doubleClick && view != 0) {
+				continue; // a pad has the menu only, and a tab's double-click is checked in the widget suite: the strip's is checked here
+			}
 			CAPTURE(view);
 			CAPTURE(inWindow);
 			CAPTURE(neighbours);
+			CAPTURE(doubleClick);
 			EditorFixture f;
 			feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
 			bodies.prepare(48000.0, 4096);
@@ -4174,7 +4269,9 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			if (neighbours) {
 				// SCROLL THE LANE until the rack card's pad (or tab) is above the knob tray, as a hand would.
 				for (int step = 0; step < 40; ++step) {
-					const visage::Point padAt = view == 2 ? card->padsForTest().gridForTest().positionInWindow() : card->tabBarForTest().positionInWindow();
+					const visage::Point padAt = view == 2   ? card->padsForTest().gridForTest().positionInWindow()
+					                            : view == 1 ? card->tabBarForTest().positionInWindow()
+					                                        : card->stripsForTest()[1]->positionInWindow();
 					const float want = f.lane->positionInWindow().y + 40.0f;
 					if (padAt.y <= want + 1.0f || f.lane->scroll() >= f.lane->maxScroll()) {
 						break;
@@ -4186,18 +4283,32 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			ui::RackChainRename& rename = inWindow ? panel->chainRenameForTest() : card->chainRenameForTest();
 			ui::RackTabBar* bar = inWindow ? &panel->tabBarForTest() : &card->tabBarForTest();
 			ui::RackPadGrid* grid = inWindow ? &panel->padsForTest().gridForTest() : &card->padsForTest().gridForTest();
-			visage::Frame* source = view == 1 ? static_cast<visage::Frame*>(bar) : static_cast<visage::Frame*>(grid);
-			if (view == 1) {
-				bar->pressContextForTest(bar->tabCentre(1));
+			ui::ChainStrip* strip = nullptr;
+			if (view == 0) {
+				strip = inWindow ? &panel->stripForTest(1) : card->stripsForTest()[1].get();
+				REQUIRE(strip != nullptr);
+			}
+			visage::Frame* source = view == 0 ? static_cast<visage::Frame*>(strip)
+			                                  : view == 1 ? static_cast<visage::Frame*>(bar) : static_cast<visage::Frame*>(grid);
+			if (view == 0 && doubleClick) {
+				strip->doubleClickForTest(visage::Point { 2.0f, 2.0f });
 			}
 			else {
-				grid->pressContextForTest(grid->padCentre(1));
+				if (view == 0) {
+					strip->pressContextForTest(visage::Point { 2.0f, 2.0f });
+				}
+				else if (view == 1) {
+					bar->pressContextForTest(bar->tabCentre(1));
+				}
+				else {
+					grid->pressContextForTest(grid->padCentre(1));
+				}
+				visage::PopupMenuFrame* popup = menu_check::newestPopup(*source);
+				REQUIRE(popup != nullptr);
+				// THE REAL PICK, then the popup's own dismissal (its exit timer) as the event loop would run it.
+				REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+				popup->timerCallback();
 			}
-			visage::PopupMenuFrame* popup = menu_check::newestPopup(*source);
-			REQUIRE(popup != nullptr);
-			// THE REAL PICK, then the popup's own dismissal (its exit timer) as the event loop would run it.
-			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
-			popup->timerCallback();
 			(void)f.gui.tickForTest();
 			REQUIRE(rename.renaming());
 			ui::TextField& field = rename.field();
@@ -4240,6 +4351,350 @@ TEST_CASE("rack rename: in a real window the menu's Rename leaves the field visi
 			XCloseDisplay(display);
 		}
 		}
+		}
 	}
 }
+
+TEST_CASE("rack rename: real X presses, twice at the centre of a chain strip's visible label, open the rename field - on the card, in Strips") {
+	namespace pr = feathers::rack::parallel;
+	for (const bool inWindow : { false, true }) {
+	for (const bool rightButton : { false, true }) {
+		CAPTURE(rightButton);
+		CAPTURE(inWindow);
+		EditorFixture f;
+		feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+		bodies.prepare(48000.0, 4096);
+		const size_t at = bodies.addDevice(pr::kTraits.tag);
+		REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+		void* body = bodies.slotAtLane(at).storage.get();
+		for (size_t s = 0; s < kMaxFxSlots; ++s) {
+			if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+				(void)f.bridge.removeFxDevice(s);
+			}
+		}
+		const size_t slot = f.addFx(pr::kTraits.tag);
+		const DeviceInstanceId id = f.bridge.fxDeviceAt(slot);
+		f.bridge.fxBodies().attach(id, body);
+		pr::Rack& rack = *pr::rackOf(body);
+		while (rack.chainCount() < 3) {
+			REQUIRE(rack.addChain() != SIZE_MAX);
+		}
+		for (size_t i = 0; i < 3; ++i) {
+			rack.setChainKey(i, static_cast<int>(i));
+			rack.setOpen(i, true); // an OPEN rail draws the chain's name as its heading, which is what a hand sees in the window
+		}
+		BridgeDeviceHost host(f.bridge);
+		host.setField(id, static_cast<size_t>(pr::Param::View), 0.0f); // Strips
+		f.lane->resized();
+		Display* display = XOpenDisplay(nullptr);
+		REQUIRE(display != nullptr);
+		const int screen = DefaultScreen(display);
+		uint32_t w = 0, h = 0;
+		REQUIRE(f.gui.getSize(&w, &h));
+		const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+		                                            BlackPixel(display, screen));
+		XMapWindow(display, parent);
+		XSync(display, False);
+		clap_window window {};
+		window.api = CLAP_WINDOW_API_X11;
+		window.x11 = parent;
+		REQUIRE(f.gui.setParent(&window));
+		f.gui.setPopoutWindowForTest(false);
+		pumpEditor(f.gui);
+		visage::Frame* const top = f.gui.root()->topParentFrame();
+		ui::ParallelRackCard* card = treeFind<ui::ParallelRackCard>(top);
+		REQUIRE(card != nullptr);
+		ui::ParallelRackExpanded* panel = nullptr;
+		if (inWindow) {
+			f.lane->onExpandDevice(slot);
+			REQUIRE(f.gui.expandedForTest()->open());
+			panel = treeFind<ui::ParallelRackExpanded>(top);
+			REQUIRE(panel != nullptr);
+		}
+		for (int i = 0; i < 3; ++i) {
+			(void)f.gui.tickForTest();
+			(void)card->update();
+			if (panel != nullptr) {
+				(void)panel->update();
+			}
+		}
+		pumpEditor(f.gui);
+		ui::ChainStrip* strip = inWindow ? &panel->stripForTest(1) : card->stripsForTest()[1].get();
+		ui::RackChainRename& rename = inWindow ? panel->chainRenameForTest() : card->chainRenameForTest();
+		// THE VISIBLE NAME'S CENTRE: the card's strip draws it at its left over the row's middle; the window's open rail draws it as its heading.
+		const double scale = f.root->dpiScale();
+		visage::Frame* named = strip;
+		visage::Point label {};
+		if (inWindow) {
+			ui::FxLaneRail& rail = panel->railForTest(1);
+			named = &rail;
+			const visage::Bounds heading = rail.headingBounds();
+			const visage::Point origin = rail.positionInWindow();
+			label = { origin.x + heading.x() + std::min(40.0f, heading.width() * 0.5f), origin.y + heading.y() + heading.height() * 0.5f };
+		}
+		else {
+			const visage::Point origin = strip->positionInWindow();
+			label = { origin.x + std::min(40.0f, strip->summaryWidth() * 0.5f), origin.y + static_cast<float>(strip->height()) * 0.5f };
+		}
+		CAPTURE(label.x);
+		CAPTURE(label.y);
+		// WHAT THE WINDOW WOULD HIT THERE: the frame that draws the name, not one over it.
+		CHECK(top->frameAtPoint(label) == named);
+		const int nx = static_cast<int>(label.x * scale);
+		const int ny = static_cast<int>(label.y * scale);
+		EditorPointer pointer { display, reinterpret_cast<::Window>(static_cast<visage::ApplicationWindow*>(f.root)->window()->nativeHandle()) };
+		pointer.send(MotionNotify, nx, ny, 0, 0);
+		pumpEditor(f.gui, 3);
+		const unsigned int button = rightButton ? Button3 : Button1;
+		const unsigned int mask = rightButton ? Button3Mask : Button1Mask;
+		pointer.send(ButtonPress, nx, ny, button, 0);
+		pointer.send(ButtonRelease, nx, ny, button, mask);
+		if (!rightButton) {
+			pumpEditor(f.gui, 100); // a hand's two clicks are about 200 ms apart (100 rounds of 2 ms); the backend counts a repeat only when the clock moved
+			pointer.send(ButtonPress, nx, ny, button, 0);
+			pointer.send(ButtonRelease, nx, ny, button, mask);
+		}
+		pumpEditor(f.gui, 10);
+		if (rightButton) {
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*named);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			popup->timerCallback();
+			(void)f.gui.tickForTest();
+		}
+		REQUIRE(rename.renaming());
+		ui::TextField& field = rename.field();
+		CHECK(field.isVisible());
+		CHECK(field.hasKeyboardFocus());
+		CHECK(focusedUnder(top) == static_cast<visage::Frame*>(&field));
+		field.textInput("Snare");
+		CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		CHECK_FALSE(rename.renaming());
+		CHECK(rack.chainLabel(1) == "Snare");
+		f.bridge.fxBodies().detach(id, body);
+		f.gui.destroy();
+		XDestroyWindow(display, parent);
+		XCloseDisplay(display);
+	}
+	}
+}
+
+namespace {
+
+/// A REAL PRESS THROUGH THE WINDOW ROOT, left or right: the frame under the point gets down and up, the way the window delivers them.
+void pressAtWindow(visage::Frame* top, visage::Point where, bool right) {
+	visage::Frame* const down = top->frameAtPoint(where);
+	REQUIRE(down != nullptr);
+	const auto eventAt = [&](bool isDown) {
+		visage::MouseEvent e;
+		e.window_position = where;
+		e.position = where - down->positionInWindow();
+		e.event_frame = down;
+		e.button_id = right ? visage::kMouseButtonRight : visage::kMouseButtonLeft;
+		e.button_state = isDown ? e.button_id : visage::kMouseButtonNone;
+		e.is_down = isDown;
+		e.repeat_click_count = 1;
+		return e;
+	};
+	down->processMouseDown(eventAt(true));
+	down->processMouseUp(eventAt(false));
+}
+
+struct DeviceRenameVenue {
+	visage::Frame* top = nullptr;
+	ui::FxCard* card = nullptr;
+	ui::DeviceRename* rename = nullptr;
+	feathers::backplane::DeviceHost* host = nullptr;
+	DeviceInstanceId device = kNoInstance;
+	std::function<size_t()> count; ///< devices in the card's chain, which a stray key must not change
+	std::function<void()> tick;
+};
+
+/// THE DEVICE RENAME FIELD, BY BOTH ROADS ("..." menu and right-click on the head), on a card in a real window: visible, one line, inside
+/// the window, topmost at its centre from the root, focused; the chain's keys stand down, Esc closes only the field, and typing plus Enter
+/// puts the name on the card's head.
+void proveDeviceRenameField(DeviceRenameVenue& v) {
+	for (int route = 0; route < 2; ++route) {
+		CAPTURE(route);
+		(void)v.host->setUserName(v.device, "");
+		v.tick();
+		const auto open = [&] {
+			const visage::Bounds part = route == 0 ? v.card->slotMenuBoundsForTest() : v.card->renameAnchor();
+			const visage::Point o = v.card->positionInWindow();
+			// THE HEAD'S RIGHT PRESS: a spine head has its name down the side, so aim there.
+			visage::Point at { o.x + part.x() + part.width() * 0.5f, o.y + part.y() + part.height() * 0.5f };
+			if (route == 1 && v.card->headEdge() == ui::CardHeadEdge::Left) {
+				at = { o.x + ui::kCardHeadHeight * 0.5f, o.y + static_cast<float>(v.card->height()) * 0.5f };
+			}
+			pressAtWindow(v.top, at, route == 1);
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*v.top);
+			REQUIRE(popup != nullptr);
+			REQUIRE(menu_check::pickRow(*popup, "Rename..."));
+			popup->timerCallback();
+			v.tick();
+		};
+		const size_t before = v.count();
+		open();
+		REQUIRE(v.rename->renaming());
+		ui::TextField& field = v.rename->field();
+		CHECK(field.isVisible());
+		CHECK(field.width() > 0);
+		CHECK(field.height() > 0);
+		CHECK(field.height() <= 26); // ONE LINE, whatever the card is
+		const visage::Point fieldAt = field.positionInWindow();
+		const visage::Point centre { fieldAt.x + static_cast<float>(field.width()) * 0.5f, fieldAt.y + static_cast<float>(field.height()) * 0.5f };
+		CHECK(fieldAt.x >= 0.0f);
+		CHECK(fieldAt.y >= 0.0f);
+		CHECK(fieldAt.x + static_cast<float>(field.width()) <= static_cast<float>(v.top->width()));
+		CHECK(fieldAt.y + static_cast<float>(field.height()) <= static_cast<float>(v.top->height()));
+		CHECK(v.top->frameAtPoint(centre) == static_cast<visage::Frame*>(&field)); // nothing drawn over it
+		CHECK(field.hasKeyboardFocus());
+		CHECK(focusedUnder(v.top) == static_cast<visage::Frame*>(&field));
+		// THE KEYS ARE THE FIELD'S: a chord it leaves to the host must not act on the chain, and Delete/Backspace only edit the text.
+		for (const visage::KeyCode c : { visage::KeyCode::V, visage::KeyCode::C, visage::KeyCode::X }) {
+			CHECK_FALSE(keyFromFocusUp(&field, visage::KeyEvent { c, visage::kModifierRegCtrl, true }));
+			CHECK(v.count() == before);
+			CHECK(v.rename->renaming());
+		}
+		for (const visage::KeyCode c : { visage::KeyCode::Backspace, visage::KeyCode::Delete }) {
+			CHECK(keyFromFocusUp(&field, visage::KeyEvent { c, 0, true }));
+			CHECK(v.count() == before);
+		}
+		// ESC CLOSES ONLY THE FIELD: the device and its (absent) name stay.
+		field.begin("");
+		field.textInput("zz");
+		CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Escape, 0, true }));
+		CHECK_FALSE(v.rename->renaming());
+		CHECK(v.host->userNameOf(v.device).empty());
+		CHECK(v.count() == before);
+		// TYPED CHARACTERS AND ENTER NAME THE INSTANCE, and the card's head says so.
+		open();
+		REQUIRE(v.rename->renaming());
+		field.begin("");
+		field.textInput("Pump");
+		CHECK(keyFromFocusUp(&field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+		CHECK_FALSE(v.rename->renaming());
+		CHECK(v.host->userNameOf(v.device) == "Pump");
+		v.tick();
+		CHECK(v.card->titleForTest() == "Pump");
+		CHECK(v.count() == before);
+	}
+}
+
+} // namespace
+
+TEST_CASE("device rename: in a real window the slot menu's and the header's Rename leave the field visible, one line, on top, focused, with the chain's keys standing down - fx lane, Rack card in Tabs, Rack window") {
+	namespace pr = feathers::rack::parallel;
+	for (const int where : { 0, 1, 2 }) { // lane card, Rack card's front column, Rack window's rail column
+		CAPTURE(where);
+		EditorFixture f;
+		feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+		bodies.prepare(48000.0, 4096);
+		for (size_t s = 0; s < kMaxFxSlots; ++s) {
+			if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+				(void)f.bridge.removeFxDevice(s);
+			}
+		}
+		BridgeDeviceHost host(f.bridge);
+		void* body = nullptr;
+		DeviceInstanceId rackId = kNoInstance;
+		size_t rackSlot = 0;
+		if (where == 0) {
+			(void)f.addFx(fx::harm::kTraits.tag);
+			(void)f.addFx(fx::owltt::kTraits.tag);
+			(void)f.addFx(fx::harm::kTraits.tag);
+		}
+		else {
+			const size_t at = bodies.addDevice(pr::kTraits.tag);
+			REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+			body = bodies.slotAtLane(at).storage.get();
+			const size_t slot = f.addFx(pr::kTraits.tag);
+			rackSlot = slot;
+			rackId = f.bridge.fxDeviceAt(slot);
+			f.bridge.fxBodies().attach(rackId, body);
+			pr::Rack& rack = *pr::rackOf(body);
+			while (rack.chainCount() < 3) {
+				REQUIRE(rack.addChain() != SIZE_MAX);
+			}
+			for (size_t i = 0; i < 3; ++i) {
+				rack.setChainKey(i, static_cast<int>(i));
+				rack.setOpen(i, false);
+				REQUIRE(rack.chainAt(i)->bridge()->addDevice(fx::harm::kTraits.tag) != kNoInstance);
+				REQUIRE(rack.chainAt(i)->bridge()->addDevice(fx::owltt::kTraits.tag) != kNoInstance);
+			}
+			host.setField(rackId, static_cast<size_t>(pr::Param::View), 1.0f); // Tabs
+		}
+		f.lane->resized();
+		Display* display = XOpenDisplay(nullptr);
+		REQUIRE(display != nullptr);
+		const int screen = DefaultScreen(display);
+		uint32_t w = 0, h = 0;
+		REQUIRE(f.gui.getSize(&w, &h));
+		const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+		                                            BlackPixel(display, screen));
+		XSync(display, False);
+		clap_window window {};
+		window.api = CLAP_WINDOW_API_X11;
+		window.x11 = parent;
+		REQUIRE(f.gui.setParent(&window));
+		f.gui.setPopoutWindowForTest(false);
+		visage::Frame* const top = f.gui.root()->topParentFrame();
+		DeviceRenameVenue v;
+		v.top = top;
+		v.host = &host;
+		ui::ParallelRackCard* card = where == 0 ? nullptr : treeFind<ui::ParallelRackCard>(top);
+		ui::ParallelRackExpanded* panel = nullptr;
+		if (where == 2) {
+			f.lane->onExpandDevice(rackSlot);
+			REQUIRE(f.gui.expandedForTest()->open());
+			panel = treeFind<ui::ParallelRackExpanded>(top);
+			REQUIRE(panel != nullptr);
+		}
+		v.tick = [&] {
+			for (int i = 0; i < 3; ++i) {
+				(void)f.gui.tickForTest();
+				if (card != nullptr) {
+					(void)card->update();
+				}
+				if (panel != nullptr) {
+					(void)panel->update();
+				}
+			}
+		};
+		v.tick();
+		ui::ChainColumn* column = nullptr;
+		if (where == 0) {
+			v.card = f.lane->cardAt(1);
+			v.device = f.bridge.fxDeviceAt(1);
+			v.rename = &f.lane->renameForTest();
+			v.count = [&] {
+				size_t n = 0;
+				for (size_t s = 0; s < kMaxFxSlots; ++s) {
+					n += f.bridge.fxDeviceAt(s) != kNoInstance ? 1 : 0;
+				}
+				return n;
+			};
+		}
+		else {
+			REQUIRE((card != nullptr || panel != nullptr));
+			column = where == 1 ? card->frontForTest().columnForTest() : panel->railForTest(0).columnForTest();
+			REQUIRE(column != nullptr);
+			v.device = column->bridge().deviceAtPosition(0);
+			REQUIRE(v.device != kNoInstance);
+			v.card = column->cardOf(v.device);
+			v.rename = &column->renameForTest();
+			v.host = &column->bridge();
+			v.count = [column] { return column->bridge().chainLength(0); };
+		}
+		REQUIRE(v.card != nullptr);
+		proveDeviceRenameField(v);
+		if (body != nullptr) {
+			f.bridge.fxBodies().detach(rackId, body);
+		}
+		f.gui.destroy();
+		XDestroyWindow(display, parent);
+		XCloseDisplay(display);
+	}
+}
+
 #endif // defined(__linux__)

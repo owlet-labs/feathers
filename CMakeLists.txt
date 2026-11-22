@@ -656,6 +656,8 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/drum_pitch_readout.cpp
 	src/plugin/ui/drum_device_ui.cpp
 	src/plugin/ui/drum_device_pad.cpp
+	src/plugin/ui/drum_like_surface.cpp
+	src/plugin/ui/drum_device_likes.cpp
 	src/plugin/ui/drum_device_card.cpp
 	src/plugin/ui/drum_device_expanded.cpp
 	src/plugin/ui/sound_identity.cpp
@@ -740,6 +742,8 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/rack_window_pane.cpp
 	src/plugin/ui/rack_pad_add.cpp
 	src/plugin/ui/device_preset_menu.cpp
+
+	src/plugin/ui/device_rename.cpp
 	src/plugin/ui/parallel_rack_expanded.cpp
 	src/plugin/ui/container_presets.cpp
 	src/plugin/ui/chain_column.cpp

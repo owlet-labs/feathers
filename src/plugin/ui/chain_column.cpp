@@ -20,6 +20,7 @@
  */
 
 #include "plugin/ui/chain_column.h"
+#include "plugin/ui/device_rename.h"
 #include "plugin/ui/card_wheel_gate.h"
 #include "plugin/ui/menu_anchor.h"
 
@@ -93,7 +94,14 @@ ChainColumn::ChainColumn(rack::RackBridge& bridge, WidgetRegistry& registry, Mod
 	selection_ = std::make_unique<LaneSelection>(bridge_, history_, notifier_, std::move(selectionHooks));
 	selectionOverlay_ = std::make_unique<SelectionOverlay>(*selection_);
 	selection_->setPromptHost(this);
+
+	rename_ = std::make_unique<DeviceRename>(*this, notifier_);
+	rename_->setHistory(&history_);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
+		// A NAME BEING TYPED OWNS THE KEYBOARD: a chord the field leaves to the host (Ctrl+V, X, C, Delete) must not act on a device here.
+		if (rename_ != nullptr && rename_->renaming()) {
+			return false;
+		}
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more.
 		if (selection_->key(e)) {
 			afterVerb();
@@ -261,11 +269,13 @@ void ChainColumn::installSourceList() {
 		if (d == nullptr) {
 			return "Source"; // an id nothing holds names nothing
 		}
-		std::string name = d->traits.name;
-		if (const size_t position = bridge_.positionOf(source.device);
-		    position != rack::RackBridge::kNoSlot) {
-			name += " ";
-			name += std::to_string(position + 1);
+		std::string name = bridge_.userNameOf(source.device); // a NAMED instance wears its name alone
+		if (name.empty()) {
+			name = d->traits.name;
+			if (const size_t position = bridge_.positionOf(source.device); position != rack::RackBridge::kNoSlot) {
+				name += " ";
+				name += std::to_string(position + 1);
+			}
 		}
 		if (d->outputCount() > 1 && source.index < d->outputCount()) {
 			name += " \xc2\xb7 "; // " · "
@@ -333,7 +343,9 @@ void ChainColumn::syncCards() {
 	// where the device stands, so a reorder builds nothing and no card is rebuilt under a live press.
 	bool changed = false;
 	const auto missingTagOf = [this](DeviceInstanceId device, const device::Descriptor* desc) {
-		return desc == nullptr ? bridge_.heldTagOf(device) : device::Tag {};
+		// A DEVICE WHOSE SAVED CONTENTS WERE REFUSED (backlog TM) is keyed by its tag as a missing one is, so the card is rebuilt
+		// the moment the converger finds the refusal.
+		return desc == nullptr || bridge_.bodyRefusalOf(device) != nullptr ? bridge_.heldTagOf(device) : device::Tag {};
 	};
 	// FIRST, EVERY CARD WHOSE DEVICE HAS LEFT THE CHAIN OR BECOME ANOTHER, RETIRED.
 	for (auto it = cards_.begin(); it != cards_.end();) {
@@ -369,13 +381,17 @@ void ChainColumn::syncCards() {
 		const device::Descriptor* desc = bridge_.descriptorOf(i);
 		const device::Tag missing = missingTagOf(i, desc);
 		std::unique_ptr<FxCard> card;
-		if (desc != nullptr) {
+		const std::string* refusal = bridge_.bodyRefusalOf(i);
+		if (desc != nullptr && refusal == nullptr) {
 			// THE DEVICE'S OWN CARD IF IT HAS ONE ON THE SEAM, the generic grid otherwise — the SAME
 			// selection both other hosts use, so the three cannot disagree about which UI a device gets.
 			card = makeCustomCard(bridge_, registry_, i, *desc, notifier_, &mod_, &history_);
 			if (card == nullptr) {
 				card = std::make_unique<GenericCard>(bridge_, i, *desc, notifier_);
 			}
+		}
+		else if (desc != nullptr && refusal != nullptr) {
+			card = std::make_unique<MissingDeviceCard>(*desc, *refusal);
 		}
 		else if (missing[0] != '\0') {
 			card = std::make_unique<MissingDeviceCard>(std::string_view(missing.data(), missing.size()));
@@ -698,7 +714,7 @@ void ChainColumn::expandDevice(DeviceInstanceId device) {
 	// armed from off-screen mid-gesture. The layers forward it to the outer, which is where a popup
 	// floating over the whole editor comes from.
 	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture,
-	                                               desc->traits.name, [this] { pruneExpanded(); });
+	                                               instanceBaseName(bridge_, device, desc->traits.name), [this] { pruneExpanded(); });
 	if (presented != kNoSurface) {
 		expanded_.push_back(presented);
 	}
@@ -727,8 +743,11 @@ void ChainColumn::expandSite(DeviceInstanceId device) {
 		view->setModulation(&mod_, &history_);
 		view->setNest(nest_);
 	}
-	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture,
-	                                               siteViewDescriptor().traits.name, [this] { pruneExpanded(); });
+	// A NAMED HOLDER LENDS THE PANEL ITS NAME: "Pump · Pre/Post"; an unnamed one keeps the site's own title.
+	const std::string holderName = bridge_.userNameOf(device);
+	const std::string siteTitle = holderName.empty() ? std::string(siteViewDescriptor().traits.name)
+	                                                 : holderName + " \xC2\xB7 " + siteViewDescriptor().traits.name;
+	const SurfaceId presented = surfaces_->present(std::move(content), SurfaceNeed::SpansGesture, siteTitle, [this] { pruneExpanded(); });
 	if (presented != kNoSurface) {
 		expanded_.push_back(presented);
 	}
@@ -978,8 +997,14 @@ void ChainColumn::showSlotMenu(DeviceInstanceId device) {
 	}
 	// AND THE SELECTION'S VERBS (backlog OA): over the selection when it holds this card, else this card alone.
 	selection_->addVerbs(menu, kVerbIds, device);
+	rename_->addRows(menu, bridge_, device);
 	menu.onSelection() = [this, device, options](int id) {
-		if (id >= kVerbIds) {
+		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
+			if (FxCard* card = cardOf(device); card != nullptr) {
+				(void)rename_->pick(id, bridge_, device, *card, card->renameAnchor());
+			}
+		}
+		else if (id >= kVerbIds) {
 			(void)slotVerbForTest(device, static_cast<FragmentVerb>(id - kVerbIds));
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {

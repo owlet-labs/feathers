@@ -95,6 +95,7 @@ public:
 	[[nodiscard]] FaderPill* pillForTest(size_t i) const { return i < pills_.size() ? pills_[i].get() : nullptr; }
 	[[nodiscard]] SwitchChip* keyTrackForTest() const { return keyTrack_.get(); }
 	[[nodiscard]] ValueBox* qOffsetBoxForTest() const { return qOffset_.get(); }
+	[[nodiscard]] ValueBox* mixBoxForTest() const { return mix_.get(); }
 	/// EVERY CONTROL THE WINDOW SEATS, read off its widget tree (the card's seam, the same way) — the reachability
 	/// guard takes the union with the card's, as it does for EQ, because the Q offset is seated only here.
 	[[nodiscard]] std::vector<fx::disperser::Param> addressedParamsForTest() const;
@@ -127,6 +128,7 @@ private:
 	std::unique_ptr<ValueBox> freq_;
 	std::unique_ptr<ValueBox> offset_;
 	std::unique_ptr<ValueBox> qOffset_;
+	std::unique_ptr<ValueBox> mix_;
 };
 
 } // namespace feathers::ui

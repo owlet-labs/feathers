@@ -19,7 +19,9 @@
 
 #include "backplane/device_host.h"
 #include "device/subscribers.h"
-#include "plugin/ui/fold_header.h"
+#include "plugin/ui/rack_route_host.h"
+#include "plugin/ui/rail.h"
+#include "plugin/ui/route_list.h"
 #include "plugin/ui/arm_relay.h"
 #include "plugin/ui/container_presets.h"
 #include "plugin/ui/device_control.h"
@@ -206,31 +208,43 @@ private:
 	bool moveAcrossChains(uint16_t from, std::span<const DeviceInstanceId> ids, visage::Point inWindow);
 	/// **A CONTROL IS HIDDEN, NOT GREYED, WHERE THE MODE DOES NOT READ IT** — the card's rule. True when it changed.
 	bool showForMode();
-	/// **THE LEFT COLUMN'S TWO FOLDS** (no audio effect, patch state `rack_macros_fold` / `rack_inspector_fold`): the MACROS' (the eight macros and
-	/// their arms) and the INSPECTOR's (Mode, Position, the view rows, Mix and Gain, the bands controls). Each has a header in the column's top pad;
-	/// folding one reflows what is under it and leaves the other half's state alone. A restore or another editor's write is followed on the beat.
+	/// **THE WINDOW'S TWO PANES, EACH FOLDING SIDEWAYS** (no audio effect; patch state `rack_inspector_fold` / `rack_macros_fold`): the RACK's pane
+	/// (Mode, Position, the view rows, Mix and Gain, the bands controls, the route list of the rack's own macros) and the MACROS' pane (the eight
+	/// macros and their arms). Each is a `ui::Rail`, the synth's own fold: open, its toggle heads the pane; folded, a 34 px strip with the label
+	/// upright. Folding one moves the other and the rails left by what it gives up, and leaves its state alone. A restore or another editor's write
+	/// is followed on the beat.
 public:
 	[[nodiscard]] bool macrosFolded() const;
 	[[nodiscard]] bool inspectorFolded() const;
 	bool setMacrosFolded(bool folded);
 	bool setInspectorFolded(bool folded);
-	[[nodiscard]] FoldHeader& macrosHeaderForTest() const { return *macrosHeader_; }
-	[[nodiscard]] FoldHeader& inspectorHeaderForTest() const { return *inspectorHeader_; }
+	[[nodiscard]] Rail& containerRailForTest() const { return *containerRail_; }
+	[[nodiscard]] Rail& macrosRailForTest() const { return *macrosRail_; }
+	[[nodiscard]] RouteList& routeListForTest() const { return *routes_; }
 	[[nodiscard]] bool macroShownForTest(size_t n) const { return macroSlots_[n]->isVisible(); }
 	[[nodiscard]] bool inspectorShownForTest() const { return modeBox_->isVisible(); }
-	[[nodiscard]] bool modeBoxShownForTest() const { return modeBox_->isVisible(); }
 	[[nodiscard]] visage::Bounds modeBoxBoundsForTest() const { return modeBox_->bounds(); }
 	[[nodiscard]] visage::Bounds macroBoundsForTest(size_t n) const { return macroSlots_[n]->bounds(); }
 	[[nodiscard]] visage::Bounds mixBoundsForTest() const { return knobs_[0]->bounds(); }
+	/// How wide each pane is right now: its strip folded, its open width open.
+	[[nodiscard]] float containerWidth() const;
+	[[nodiscard]] float macrosWidth() const;
 private:
 	void applyFolds();
-	/// What the column's folds hide, and what the inspector's fold lifts the macros by.
-	[[nodiscard]] float inspectorShift() const;
-	std::unique_ptr<FoldHeader> macrosHeader_;
-	std::unique_ptr<FoldHeader> inspectorHeader_;
+	/// The rack pane's open width: the column, its pads, and the bands column beside it in Bands.
+	[[nodiscard]] float containerOpenWidth() const;
+	/// How tall the left panes need the window to be.
+	[[nodiscard]] float leftColumnBottom() const;
+	std::unique_ptr<Rail> containerRail_;
+	std::unique_ptr<Rail> macrosRail_;
+	/// The route list's own history, forwarded to the window's (and so the plugin's) when the window is bound: an edit there is one undo step there.
+	EditHistory routeHistory_;
+	std::unique_ptr<RackRouteHost> routeHost_;
+	std::unique_ptr<RouteList> routes_;
 	std::vector<visage::Frame*> inspectorFrames_;
 	bool foldsAppliedMacros_ = false;
 	bool foldsAppliedInspector_ = false;
+	bool syncingFolds_ = false;
 	[[nodiscard]] float dividerY() const;
 	[[nodiscard]] float knobY(size_t i) const;
 	[[nodiscard]] visage::Bounds dividerBounds() const;

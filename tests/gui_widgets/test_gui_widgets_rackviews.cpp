@@ -3199,7 +3199,7 @@ TEST_CASE("rack layout: in the Rack window's Tabs view the tabs are a thin colum
 		CHECK(two.column.width() == doctest::Approx(ui::RackTabBar::kThickness));
 		CHECK(eight.column.width() == doctest::Approx(ui::RackTabBar::kThickness));
 		CHECK(two.column.height() > two.column.width());
-		CHECK(two.column.x() == doctest::Approx(ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad));
+		CHECK(two.column.x() == doctest::Approx(2.0f * (ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad))); // after the rack's pane and the macros'
 		CHECK(two.railX >= two.column.right());
 		// EACH TAB AT MOST THE CAP LONG: two tabs are a short column, not the window's whole height.
 		CHECK(two.tabLength <= ui::RackTabBar::kMaxLength + 0.5f);
@@ -4427,71 +4427,70 @@ TEST_CASE("header presets: a rack chain's device card menu offers Presets and Sa
 // THE RACK WINDOW'S COLUMN FOLDS: THE MACROS' AND THE INSPECTOR'S, EACH ITS OWN                       //
 //--------------------------------------------------------------------------------------------------//
 
-TEST_CASE("rack window folds: the macros header folds only the macros, the inspector header folds only the inspector, each under its own key, and the column reflows") {
+TEST_CASE("rack window folds: each pane's rail folds it SIDEWAYS to a strip, the other pane keeps its state and moves left, the strips stand edge to edge and the window narrows") {
 	RealRack r;
 	r.chains(2, 0, true);
-	r.view_(2); // Pads: its "+ Chain" stands at the column's foot, under the macros
+	r.view_(2); // Pads: its "+ Chain" stands in the rack pane
 	ui::ParallelRackExpanded& w = *r.panel;
+	ui::Rail& container = w.containerRailForTest();
+	ui::Rail& macros = w.macrosRailForTest();
+	const auto press = [&](ui::Rail& rail) {
+		visage::MouseEvent down {};
+		const visage::Bounds t = rail.toggleBounds();
+		down.position = { t.x() + t.width() * 0.5f, t.y() + t.height() * 0.5f };
+		rail.onMouseDown().callback(down);
+		r.refresh();
+	};
+	const float strip = ui::Rail::kCollapsedWidth;
+	const float open = ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad;
 	const auto macrosShown = [&] { return w.macroShownForTest(0) && w.macroShownForTest(7); };
-	// OPEN: everything shown, the headers in the column's top pad.
-	CHECK(macrosShown());
-	CHECK(w.inspectorShownForTest());
+	// BOTH OPEN: the rack's pane first, the macros' after it, the rails after both.
 	CHECK_FALSE(w.macrosFolded());
 	CHECK_FALSE(w.inspectorFolded());
-	// STACKED, EACH DIRECTLY OVER ITS OWN HALF: the inspector's over the mode row, the macros' between Mix and Gain and the first macro row.
-	CHECK(w.inspectorHeaderForTest().height() > 0);
-	CHECK(w.inspectorHeaderForTest().bounds().bottom() <= w.modeBoxBoundsForTest().y());
-	CHECK(w.mixBoundsForTest().bottom() <= w.macrosHeaderForTest().bounds().y());
-	CHECK(w.macrosHeaderForTest().bounds().bottom() <= w.macroBoundsForTest(0).y());
+	CHECK(w.containerWidth() == doctest::Approx(open));
+	CHECK(w.macrosWidth() == doctest::Approx(open));
+	CHECK(macrosShown());
+	CHECK(w.inspectorShownForTest());
+	CHECK(w.routeListForTest().isVisible());
 	const visage::Bounds mode0 = w.modeBoxBoundsForTest();
 	const visage::Bounds mix0 = w.mixBoundsForTest();
 	const visage::Bounds macro0 = w.macroBoundsForTest(0);
-	const visage::Bounds add0 = w.addBoundsForTest();
 	const visage::Point min0 = w.minimumSize();
-	// THE MACROS HEADER: the macros go; the inspector is exactly where it was; the foot rises by the macros' height.
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
-	CHECK(w.macrosFolded());
-	CHECK_FALSE(w.inspectorFolded());
-	CHECK(r.field(pr::Param::MacrosFold) == 1.0f);
-	CHECK(r.field(pr::Param::InspectorFold) == 0.0f);
-	CHECK_FALSE(w.macroShownForTest(0));
-	CHECK_FALSE(w.macroShownForTest(7));
-	CHECK(w.inspectorShownForTest());
-	CHECK(w.modeBoxBoundsForTest() == mode0);
-	CHECK(w.mixBoundsForTest() == mix0);
-	CHECK(w.addBoundsForTest().y() < add0.y());
-	CHECK(w.minimumSize().y <= min0.y);
-	// UNFOLD, THEN THE INSPECTOR HEADER: its controls go; the macros stay shown, risen to the top pad.
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
-	CHECK(macrosShown());
-	CHECK(w.macroBoundsForTest(0) == macro0);
-	CHECK(w.addBoundsForTest() == add0);
-	w.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
+	CHECK(macro0.x() >= open); // the macros stand in their own pane
+	// A PRESS ON THE RACK PANE'S TOGGLE: it folds to a strip; the macros' pane is untouched and moves left by what the rack pane gave up.
+	press(container);
 	CHECK(w.inspectorFolded());
 	CHECK_FALSE(w.macrosFolded());
 	CHECK(r.field(pr::Param::InspectorFold) == 1.0f);
 	CHECK(r.field(pr::Param::MacrosFold) == 0.0f);
+	CHECK(container.width() == strip);
+	CHECK(w.containerWidth() == strip);
 	CHECK_FALSE(w.inspectorShownForTest());
+	CHECK_FALSE(w.routeListForTest().isVisible());
 	CHECK(macrosShown());
-	CHECK(w.macroBoundsForTest(0).y() < macro0.y());
-	CHECK(w.macroBoundsForTest(0).y() == doctest::Approx(w.macrosHeaderForTest().bounds().bottom())); // right under the headers
-	// BOTH FOLDED: the foot sits under the headers. UNFOLD BOTH: the column is as it was.
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
+	CHECK(w.macroBoundsForTest(0).x() == doctest::Approx(macro0.x() - (open - strip)));
+	CHECK(w.macroBoundsForTest(0).y() == macro0.y());
+	CHECK(w.minimumSize().x == doctest::Approx(min0.x - (open - strip)));
+	// THE MACROS' TOGGLE: both are strips, edge to edge in native pixels, and the window narrows by both panes less the strips.
+	press(macros);
 	CHECK(w.macrosFolded());
-	CHECK(w.inspectorFolded());
+	CHECK(macros.width() == strip);
+	CHECK(container.nativeX() + container.nativeWidth() == macros.nativeX()); // no gap, no leftover margin
 	CHECK_FALSE(macrosShown());
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	w.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
-	CHECK(macrosShown());
-	CHECK(w.inspectorShownForTest());
+	CHECK(w.minimumSize().x == doctest::Approx(min0.x - 2.0f * (open - strip)));
+	// UNFOLD THE RACK PANE: it returns as it was, the macros stay a strip, now right after it.
+	press(container);
+	CHECK_FALSE(w.inspectorFolded());
+	CHECK(w.macrosFolded());
 	CHECK(w.modeBoxBoundsForTest() == mode0);
+	CHECK(w.mixBoundsForTest() == mix0);
+	CHECK(w.routeListForTest().isVisible());
+	CHECK(macros.x() == doctest::Approx(open));
+	press(macros);
+	CHECK_FALSE(w.macrosFolded());
+	CHECK(macrosShown());
 	CHECK(w.macroBoundsForTest(0) == macro0);
-	CHECK(w.addBoundsForTest() == add0);
+	CHECK(w.minimumSize().x == doctest::Approx(min0.x));
 }
 
 TEST_CASE("rack window folds: each fold is saved with the patch, a fresh instance loads both as saved and lays out folded on its first frame, and a preset with neither key opens both") {
@@ -4635,4 +4634,52 @@ TEST_CASE("PHOTO: the Rack window in Tabs and in Pads, the chain in front runnin
 		r.f.root->removeChild(r.panel);
 		r.f.root->removeChild(&backdrop);
 	}
+}
+
+TEST_CASE("rack window route list: a route made inside the rack from its armed macro shows as a row in the rack pane, edits through the chain, and the synth's own list stays as it is") {
+	RealRack r;
+	r.chains(2, 2, true); // a Drum then a Delay in each of the first two chains
+	ui::ParallelRackExpanded& w = *r.panel;
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	REQUIRE(delay != feathers::kNoInstance);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	REQUIRE(desc != nullptr);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	const backplane::Source macro1 = backplane::Source::core(0);
+	const backplane::Destination dest = backplane::Destination::control(delay, control);
+	ui::RouteList& list = w.routeListForTest();
+	// NOTHING ROUTED YET: the armed macro reaches nothing.
+	w.macroModForTest().focus(macro1);
+	w.macroModForTest().arm(true);
+	CHECK(list.allRows().empty());
+	// A ROUTE MADE INSIDE THE RACK, in the chain's own table, from the chain's macro 1.
+	chain0.setRouteAmount(macro1, dest, 0.5f);
+	r.refresh();
+	const std::vector<ui::RouteList::Row> rows = list.allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].destination == dest);
+	// THE ROW'S TEXT: the chain by its one label, then the device and the control, as the rack itself names a route into a chain.
+	const std::string text = list.nameOfForTest(rows[0]);
+	CHECK(text == r.rack().chainLabel(0) + " \xC2\xB7 " + desc->traits.name + " \xC2\xB7 " + desc->params[control].name);
+	// EDITED FROM THE LIST: the amount is the chain's, and removing the row removes the chain's route.
+	CHECK(list.amountOfForTest(rows[0]) == doctest::Approx(0.5f));
+	list.writeForTest(rows[0], 0.25f);
+	CHECK(chain0.routeAmount(macro1, dest) == doctest::Approx(0.25f));
+	list.removeForTest(rows[0]);
+	CHECK(chain0.routeAmount(macro1, dest) == 0.0f);
+	CHECK(list.allRows().empty());
+	// ANOTHER MACRO IS ANOTHER LIST: a route from macro 2 does not appear under macro 1.
+	chain0.setRouteAmount(backplane::Source::core(1), dest, 0.5f);
+	CHECK(list.allRows().empty());
+	// THE LIST HAS ROOM: it stands in the rack pane under Mix and Gain, taller than its heading and three rows.
+	CHECK(list.height() >= ui::RouteList::kHeadingHeight + 3.0f * ui::RouteList::kRowHeight);
+	CHECK(list.x() == ui::ParallelRackExpanded::kPad);
+	CHECK(list.right() <= w.containerWidth());
 }

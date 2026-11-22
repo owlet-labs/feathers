@@ -43179,6 +43179,35 @@ TEST_CASE("Delay's Time and Mix hover text follow the Mode, Sync and Dub, on the
 	CHECK(cardTip(dly::Param::Mix) != declaredMix);
 }
 
+TEST_CASE("OWLTT's crossovers say what Key Track makes them: an offset from the note with it on, the declared frequency with it off, on the card and the window") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d { ow::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::OwlttExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	const auto cardTip = [&](ow::Param p) { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(p)))); };
+	const auto winTip = [&](ow::Param p) { return std::string(ui::tooltipOf(&win->controlForTest(p))); };
+	const auto setKeyTrack = [&](double v) {
+		d.set(static_cast<size_t>(ow::Param::KeyTrack), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	// KEY TRACK OFF: the declared frequencies.
+	setKeyTrack(0.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+	CHECK(winTip(ow::Param::HighCrossover) == "Mid-high split frequency");
+	// ON: each is an offset from the note, and the two texts are not the declared ones (not vacuous).
+	setKeyTrack(1.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == ow::kLowCrossoverTipKeyTrack);
+	CHECK(cardTip(ow::Param::HighCrossover) == ow::kHighCrossoverTipKeyTrack);
+	CHECK(winTip(ow::Param::LowCrossover) == ow::kLowCrossoverTipKeyTrack);
+	CHECK(winTip(ow::Param::HighCrossover) == ow::kHighCrossoverTipKeyTrack);
+	CHECK(cardTip(ow::Param::LowCrossover) != "Low-mid split frequency");
+	// AND BACK OFF: the declared text returns on both surfaces.
+	setKeyTrack(0.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+	CHECK(winTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+}
+
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {
 	DrumUi u;
 	for (size_t i = 0; i < static_cast<size_t>(ddv::Param::kCount); ++i) {

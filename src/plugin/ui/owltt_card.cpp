@@ -361,6 +361,13 @@ visage::Bounds OwlttCard::outputMeterBounds() const {
 }
 
 bool OwlttCard::updateContent() {
+	// THE CROSSOVERS' HOVER TEXT FOLLOWS KEY TRACK (the TV audit): an offset from the note while it is on, the declared text when off.
+	const int keyTrack = control(static_cast<size_t>(owltt::Param::KeyTrack)).value() >= 0.5 ? 1 : 0;
+	if (keyTrack != crossoverTipKey_) {
+		crossoverTipKey_ = keyTrack;
+		control(static_cast<size_t>(owltt::Param::LowCrossover)).setTooltipOverride(keyTrack != 0 ? owltt::kLowCrossoverTipKeyTrack : "");
+		control(static_cast<size_t>(owltt::Param::HighCrossover)).setTooltipOverride(keyTrack != 0 ? owltt::kHighCrossoverTipKeyTrack : "");
+	}
 	// THE GRAPH, NOT THIS CARD. Nothing on the card's own surface draws a meter, so redrawing the
 	// card would repaint a head and a set of knobs to move three bars inside a child.
 	bool changed = graph_ != nullptr && graph_->update();

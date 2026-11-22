@@ -36,7 +36,6 @@
 #include "plugin/ui/macro_slot.h"
 #include "plugin/ui/mod_state.h"
 #include "plugin/ui/notify_tray.h"
-#include "plugin/ui/fold_header.h"
 #include "plugin/ui/rail.h"
 #include "plugin/ui/route_list.h"
 #include "plugin/ui/source_arm.h"
@@ -229,44 +228,43 @@ public:
 	static constexpr float kMacroKnobWidth = 56.0f;
 	static constexpr int kMacroColumns = 2;
 	static constexpr float kMacroColumnWidth = kMacroCellWidth * static_cast<float>(kMacroColumns);
-	/// WHERE THE LANE STARTS, from the left edge: the pad, the column, the pad.
-	static constexpr float kLaneLeft = 12.0f + kMacroColumnWidth + 12.0f;
+	/// **ONE PANE'S WIDTH, OPEN** (the pad, the column, half a pad): the editor has TWO panes side by side, the container's (door and presets,
+	/// Mix and Gain, the route list) and the MACROS', each of which folds sideways to its own `ui::Rail` strip. Both open, the lane starts at
+	/// `kLaneLeft`; folded, a pane is `ui::Rail::kCollapsedWidth` wide and the lane starts after the strips and half a pad.
+	static constexpr float kPaneWidth = 12.0f + kMacroColumnWidth + 6.0f;
+	static constexpr float kLaneLeft = 2.0f * kPaneWidth + 6.0f;
 
-	//-- THE MACROS COLUMN, COLLAPSIBLE (backlog QN) --//
-	// The column at the left — the settings door and presets, Mix and Gain, the macros, the route list — is the MACROS
-	// column (it was called the inspector; Feathers' own became the Engine rail, QH). It folds as the Engine rail does: a
-	// `ui::Rail` named MACROS whose toggle heads the column, a 34 px strip with the upright label when closed, a notice,
-	// and the fold kept IN THE PATCH (`RackBridge::macrosCollapsed`, the canvas fold's posture), so it survives a save into a
-	// fresh instance in the Rack plugin and in a Chain device's window alike, which share this editor.
+	//-- THE TWO PANES, EACH FOLDING SIDEWAYS (backlog QN) --//
+	// The container's pane (the settings door and presets, Mix and Gain, the route list) and the MACROS' pane stand side by side. Each is a
+	// `ui::Rail` (the synth's own fold mechanic): its toggle heads the pane while open, and closed it is a 34 px strip with the label upright.
+	// Each fold is kept IN THE PATCH (`RackBridge::inspectorCollapsed` for the container's, `macrosCollapsed` for the macros'), so it survives a
+	// save into a fresh instance in the Rack plugin and in a Chain device's window alike, which share this editor.
 
-	/// The row the toggle takes when the column has no door row and no Mix/Gain row to share: the Rail's toggle and its pad.
-	static constexpr float kMacrosHeadHeight = 26.0f;
-	/// The corner the open column gives its toggle, at the top right: the Rail's toggle and its inset either side.
+	/// The corner each open pane gives its toggle, at the top right: the Rail's toggle and its inset either side, and the head row it takes.
 	static constexpr float kMacrosToggleRoom = ui::Rail::kToggleSize + 2.0f * ui::Rail::kCollapsedPadX;
-	/// WHERE THE LANE STARTS NOW: `kLaneLeft` with the column open, the closed strip and half a pad with it closed.
+	static constexpr float kMacrosHeadHeight = 26.0f;
+	/// WHERE THE LANE STARTS NOW: after the two panes, each open or a strip, and half a pad.
 	[[nodiscard]] float laneLeft() const;
-	[[nodiscard]] bool macrosCollapsed() const;
-	/// Fold or unfold it — the toggle's own road, without its notice. True when that changed anything.
-	bool setMacrosCollapsed(bool collapsed);
-	/// Told after every fold or unfold (the hand's, a load's or `setMacrosCollapsed`'s), with the new state.
-	std::function<void(bool)> onMacrosCollapsedChanged;
-	/// The column's rail, for a case: its toggle, its width.
-	[[nodiscard]] ui::Rail& macrosRailForTest() const;
-	/// **THE TWO FOLDS INSIDE THE COLUMN, TOLD APART**: the MACROS (the eight knobs and their arms) and the INSPECTOR (Mix and Gain, and the route
-	/// list). Each has its own header row and its own patch key (`macrosColumn`, `inspectorColumn`). Both folded is the strip `macrosCollapsed`
-	/// names, and unfolding the strip opens both. True when the call changed anything; a restore says no word.
+	/// The MACROS pane folded, and the container's. Set each alone; a restore says no word. True when the call changed anything.
 	[[nodiscard]] bool macrosFolded() const;
 	[[nodiscard]] bool inspectorFolded() const;
 	bool setMacrosFolded(bool folded);
 	bool setInspectorFolded(bool folded);
-	[[nodiscard]] ui::FoldHeader& macrosHeaderForTest() const { return *macrosHeader_; }
-	[[nodiscard]] ui::FoldHeader& inspectorHeaderForTest() const { return *inspectorHeader_; }
-	/// A fold header's row, and the gap under it (the inspector's and the macros' are stacked, each over its own half).
-	static constexpr float kFoldRow = 12.0f;
-	static constexpr float kFoldGap = 2.0f;
+	/// The macros fold under its older name (the pane's own).
+	[[nodiscard]] bool macrosCollapsed() const { return macrosFolded(); }
+	bool setMacrosCollapsed(bool collapsed) { return setMacrosFolded(collapsed); }
+	/// Told after every fold or unfold of the MACROS pane (the hand's, a load's or a setter's), with the new state.
+	std::function<void(bool)> onMacrosCollapsedChanged;
+	/// The panes' rails, for a case: toggle, strip, width.
+	[[nodiscard]] ui::Rail& macrosRailForTest() const;
+	[[nodiscard]] ui::Rail& containerRailForTest() const;
+	/// What the container's pane is called on its strip: the editor edits a Chain.
+	static constexpr const char* kContainerLabel = "CHAIN";
 	/// HOW TALL THE COLUMN IS AT LEAST, for a window with or without the chain's Mix and Gain and the settings door —
 	/// what the default height has to clear. `columnNeeded` is the one arithmetic the layout and the cases both ask. The ROUTES list takes what is left under it.
 	[[nodiscard]] static float columnNeeded(bool levels, bool door) noexcept;
+	/// The macros pane's height, which the default height also has to clear.
+	[[nodiscard]] static float macrosNeeded() noexcept;
 	/// The macro column's boxes after layout, for the cases: a macro's knob, the arm under it, Mix/Gain, the H-line.
 	[[nodiscard]] visage::Bounds macroBoundsForTest(size_t i) const { return macroSlots_[i]->bounds(); }
 	[[nodiscard]] visage::Bounds macroArmBoundsForTest(size_t i) const { return macroArms_[i]->bounds(); }
@@ -812,20 +810,20 @@ private:
 	/// Place the macro column (and the door, Mix and Gain) from `top`; returns the y its last row ends at.
 	float layOutColumn(float top);
 	std::unique_ptr<ui::RouteList> routes_;
-	/// THE MACROS COLUMN'S RAIL (backlog QN): its head row's toggle and heading when open, the whole strip when closed.
+	/// THE TWO PANES' RAILS (backlog QN): each one's toggle and heading when open, the whole strip when closed. The container's is first.
+	std::unique_ptr<ui::Rail> containerRail_;
 	std::unique_ptr<ui::Rail> macrosRail_;
-	/// Show or hide everything the column holds, for its folds: the strip hides the lot, the inspector fold hides Mix and Gain and the
-	/// route list, the macros fold hides the macros and their arms.
-	void showColumn(bool shown);
-	std::unique_ptr<ui::FoldHeader> macrosHeader_;
-	std::unique_ptr<ui::FoldHeader> inspectorHeader_;
-	/// WHILE THE EDITOR ITSELF MOVES THE RAIL (a restore, a header), the rail's own width hook must not write the patch back.
-	bool syncingFolds_ = false;
-	/// The folds as the column was last laid out for, so a change on the beat (a load) relays it.
+	/// THE MACROS PANE'S OWN GROUND, as the container's is (`columnBackdrop_`).
+	std::unique_ptr<ColumnBackdrop> macrosBackdrop_;
+	/// Show or hide what each pane holds, for its fold: a folded pane's widgets are hidden (its rail's strip stands in), each alone.
+	void showColumn();
+	/// The folds as the panes were last laid out for, so a change on the beat (a load) relays it.
 	bool foldsAppliedMacros_ = false;
 	bool foldsAppliedInspector_ = false;
-	/// Something moved a fold: derive the strip from the two, show what is shown, lay out, and tell the owner.
+	/// A fold moved: put the rails and widgets to match it, lay out and tell the owner.
 	void foldsChanged();
+	/// The rails' own width hook writes the patch back, except while the editor itself moves them.
+	bool syncingFolds_ = false;
 	std::unique_ptr<AddDeviceRow> addRow_;
 	/// THE DEVICE AN "Add before" WAS CHOSEN FOR, until its pick lands or its add menu closes. See
 	/// `addDeviceByTag` for why this is state rather than a captured argument (backlog CR).

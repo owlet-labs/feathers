@@ -117,4 +117,9 @@ enum class FragmentVerb : int { Copy = 0, Cut, Paste, Duplicate, GroupChain, Gro
 /// THE PRESET ROWS' IDS, past the verbs: `kPresetVerbBase + k` loads entry k of the list the menu showed.
 inline constexpr int kPresetVerbBase = 1000;
 
+/// Does picking this verb take the card's device out of its place (cut, grouped away, removed)? A window asking for the menu is closed first for these.
+constexpr bool verbLeavesDevice(FragmentVerb verb) {
+	return verb == FragmentVerb::Cut || verb == FragmentVerb::GroupChain || verb == FragmentVerb::GroupRack || verb == FragmentVerb::Remove;
+}
+
 } // namespace feathers::ui

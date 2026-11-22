@@ -1849,7 +1849,7 @@ bool ModPanel::moveDevice(size_t from, size_t to) {
 	return true;
 }
 
-void ModPanel::showSlotMenu(size_t slot) {
+void ModPanel::showSlotMenu(size_t slot, const SlotMenuOrigin* origin) {
 	// RECORDED BEFORE THE GUARD — see `lastSlotMenuForTest`. What a case needs to know is what the
 	// press RESOLVED TO, and a refusal is one of the answers it can resolve to.
 	lastSlotMenu_ = slot;
@@ -1882,16 +1882,37 @@ void ModPanel::showSlotMenu(size_t slot) {
 	// AND THE SELECTION'S VERBS (backlog PN, the fx lane's): over the selection when it holds this card, else this
 	// card alone.
 	selection_->addVerbs(menu, kVerbIds, instanceAtSlot(slot));
-	menu.onSelection() = [this, slot, options](int id) {
+	const std::function<void()> closeWindow = origin != nullptr ? origin->closeWindow : std::function<void()> {};
+	menu.onSelection() = [this, slot, options, closeWindow](int id) {
 		if (id >= kVerbIds) {
+			if (closeWindow && verbLeavesDevice(static_cast<FragmentVerb>(id - kVerbIds))) {
+				closeWindow();
+			}
 			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds));
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {
+			if (closeWindow && options[static_cast<size_t>(id)].verb == SlotVerb::Remove) {
+				closeWindow();
+			}
 			slotChoiceForTest(slot, options[static_cast<size_t>(id)].verb);
 		}
 	};
+	if (origin != nullptr && origin->source != nullptr) {
+		showMenuAt(std::move(menu), *origin->source, origin->anchor);
+		return;
+	}
 	const visage::Bounds box = slotMenuBounds(sourceOfOutput(slot, 0));
 	showMenuAt(std::move(menu), *this, box);
+}
+
+bool ModPanel::showSlotMenuFor(DeviceInstanceId device, const SlotMenuOrigin& origin) {
+	for (size_t slot = 0; slot < deviceCount(); ++slot) {
+		if (instanceAtSlot(slot) == device) {
+			showSlotMenu(slot, &origin);
+			return true;
+		}
+	}
+	return false;
 }
 
 visage::Bounds ModPanel::foldBounds(backplane::Source source) const {

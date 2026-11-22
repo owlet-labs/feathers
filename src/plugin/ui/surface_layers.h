@@ -112,6 +112,9 @@ public:
 	std::optional<bool> toggleDeviceEnable() override;
 	EnableMarks deviceEnableMarks() const override;
 	bool routeDeviceEnable() override;
+	/// AND THE SLOT MENU, forwarded to a mounted VIEW for the same reason.
+	bool hasDeviceMenu() const override;
+	void openDeviceMenu(const SlotMenuOrigin& origin) override;
 	void resized() override;
 	/// THE SCROLL BAR, when there is anything to scroll — the cards' own `drawBodyScrollBar`, in a
 	/// gutter the content is kept out of (a chain panel fills its whole width with its own surface,

@@ -271,9 +271,22 @@ std::vector<pr::Param> ParallelRackExpanded::addressedParamsForTest() const {
 float ParallelRackExpanded::railsWidth() const {
 	float w = 0.0f;
 	for (const auto& r : rails_) {
-		w += r->rail->railWidth();
+		w += r->rail->standardWidth();
 	}
 	return w;
+}
+
+float ParallelRackExpanded::frontRailMinWidth() const {
+	const ChainRail* front = viewedRail();
+	if (front == nullptr) {
+		return 0.0f;
+	}
+	if (front->rail->collapsed() || front->rail->column() == nullptr || model_ == nullptr || model_->view() == RackViewKind::Strips || paneOn()) {
+		return front->rail->standardWidth();
+	}
+	// THE CHAIN IN FRONT RUNS LEFT TO RIGHT: the cards' own length along the flow at the card height, at most three standard columns (past that it scrolls).
+	const float cross = front->rail->column()->height() > 0 ? static_cast<float>(front->rail->column()->height()) : kCardUnitHeight;
+	return std::clamp(front->rail->column()->contentHeightFor(cross) + 2.0f * FxLaneRail::kPadX, FxLaneRail::kWidth, 3.0f * FxLaneRail::kWidth);
 }
 
 visage::Point ParallelRackExpanded::minimumSize() const {
@@ -286,7 +299,7 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 	// PADS: the panel stands before the rails, so the window is at least its width and height.
 	if (model_ != nullptr && model_->view() == RackViewKind::Pads) {
 		const visage::Point n = pads_->naturalSize();
-		p.x = std::max(p.x, railsLeft() + n.x + kPad + 34.0f); // and a collapsed rail (34 px) beside it
+		p.x = std::max(p.x, railsLeft() + n.x + kPad + std::max(34.0f, frontRailMinWidth())); // and the chain in front's rail beside it (a collapsed one is 34 px)
 		p.y = std::max(p.y, railsTop() + n.y + kPad);
 	}
 	// **THE PANE: THE WINDOW SIZES TO WHAT IS IN FRONT** — the front device's window at its natural size, the rest of the chain's rail beside
@@ -315,7 +328,7 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 	// make the window no wider than two over the same front content.
 	if (model_ != nullptr && tabbedView(model_->view())) {
 		const ChainRail* front = viewedRail();
-		p.x = railsLeft() + selectorWidth() + kPad * 0.5f + (front != nullptr ? front->rail->railWidth() : 0.0f) + kPad;
+		p.x = railsLeft() + selectorWidth() + kPad * 0.5f + frontRailMinWidth() + kPad;
 		p.y = std::max(std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad,
 		               railsTop() + tabsColumnLength() + kPad * 0.5f + RackTabBar::kThickness + kPad);
 		if (front != nullptr) {
@@ -667,8 +680,23 @@ void ParallelRackExpanded::layOut() {
 		if (!shown) {
 			continue;
 		}
-		const float wide = r->rail->railWidth();
+		// THE CHAIN IN FRONT RUNS LEFT TO RIGHT in every view but Strips (the selector's column, the pads' panel or the list, then the cards along a row): its column is horizontal and the rail is as wide
+		// as the cards need, up to the room the window has; elsewhere the rail is the standard column.
+		const bool alongFlow = view != RackViewKind::Strips && !paneShown && i == viewed && r->rail->column() != nullptr;
+		if (r->rail->column() != nullptr) {
+			r->rail->column()->setHorizontal(alongFlow);
+		}
+		r->rail->setWidthOverride(0.0f);
+		float wide = r->rail->railWidth();
 		r->rail->setBounds(x, top, wide, std::max(0.0f, static_cast<float>(height()) - top));
+		if (alongFlow && !r->rail->collapsed()) {
+			ChainColumn& column = *r->rail->column();
+			const float natural = column.contentHeightFor(static_cast<float>(column.height())) + 2.0f * FxLaneRail::kPadX;
+			const float room = std::max(FxLaneRail::kWidth, static_cast<float>(width()) - x - kPad);
+			r->rail->setWidthOverride(std::clamp(natural, FxLaneRail::kWidth, room));
+			wide = r->rail->railWidth();
+			r->rail->setBounds(x, top, wide, std::max(0.0f, static_cast<float>(height()) - top));
+		}
 		x += wide;
 	}
 	const float across = std::max(x - railX0 + phantomsWidth(), kPlaceholderWidth);
@@ -886,7 +914,9 @@ bool ParallelRackExpanded::follow() {
 		applying_ = true;
 		// IN TABS THE CHAIN IN FRONT IS ALWAYS OPEN and no rail has a collapse control (the chain's stored flag is the card's arrow's, and is
 		// left as it is): a collapsed chain was a chain nobody could see how to add an effect to. Strips is as it always was.
-		const bool tabs = model_ != nullptr && tabbedView(model_->view());
+		// IN TABS OR LIST THE CHAIN IN FRONT IS ALWAYS OPEN, unless the window is showing the front device's own window in the pane: then the rest of
+		// the chain is a lane beside it that FOLDS, and its fold is the chain's own stored open flag (the card's arrow writes the same one).
+		const bool tabs = model_ != nullptr && tabbedView(model_->view()) && !paneOn();
 		for (size_t i = 0; i < rails_.size(); ++i) {
 			const bool wantOpen = tabs || rack->open(i);
 			rails_[i]->rail->setCollapsible(!tabs);

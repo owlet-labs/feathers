@@ -270,6 +270,8 @@ public:
 		resized();
 	}
 	[[nodiscard]] bool rowModeForTest() const noexcept { return rowMode_; }
+	/// Where the row's name starts, in the strip's own coordinates (a list row leaves the selected row's edge bar clear).
+	[[nodiscard]] float summaryLeftForTest() const noexcept { return rowMode_ ? kRowTextInset : 0.0f; }
 	[[nodiscard]] visage::Bounds levelPillBoundsForTest() const { return pill_->bounds(); }
 	void pressContextForTest(visage::Point at) { pressContext(at); }
 	/// **A PHANTOM STRIP** (§2a): its three controls make the chain on their first edit (`ChainControl::setMaterialise`).
@@ -339,6 +341,7 @@ public:
 	static constexpr float kSummaryWidth = 0.42f; ///< of the strip, when a summary is drawn
 	static constexpr float kRowSummaryWidth = 0.30f; ///< of a list row
 	static constexpr float kBarThickness = 6.0f;
+	static constexpr float kRowTextInset = 6.0f; ///< a list row's name starts this far in, clear of the selected row's edge bar
 	static constexpr float kBarMaxWidth = 44.0f;
 	static constexpr float kBarMinWidth = 24.0f;
 	static constexpr float kMeterWidth = 1.0f; ///< MK's one-pixel line, run vertically

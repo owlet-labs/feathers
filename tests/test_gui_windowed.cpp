@@ -5389,4 +5389,207 @@ TEST_CASE("column folds: in a real window the Rack window's two headers take rea
 	});
 }
 
+
+namespace {
+
+/// A Rack in the fx lane of a real editor window, its window open, over `chains` chains each holding a few devices: the shared setup of the
+/// List flow and pane fold cases below. Torn down by its destructor, in the order the surfaces need.
+struct ListWindowRig {
+	EditorFixture f;
+	feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+	void* body = nullptr;
+	size_t slot = 0;
+	DeviceInstanceId id = kNoInstance;
+	Display* display = nullptr;
+	::Window parent = 0;
+	visage::Frame* top = nullptr;
+	ui::ParallelRackExpanded* panel = nullptr;
+	feathers::rack::parallel::Rack* rack = nullptr;
+
+	ListWindowRig(size_t chains, int view, bool pane) {
+		namespace pr = feathers::rack::parallel;
+		bodies.prepare(48000.0, 4096);
+		const size_t at = bodies.addDevice(pr::kTraits.tag);
+		REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+		body = bodies.slotAtLane(at).storage.get();
+		for (size_t s = 0; s < kMaxFxSlots; ++s) {
+			if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+				(void)f.bridge.removeFxDevice(s);
+			}
+		}
+		slot = f.addFx(pr::kTraits.tag);
+		id = f.bridge.fxDeviceAt(slot);
+		f.bridge.fxBodies().attach(id, body);
+		rack = pr::rackOf(body);
+		while (rack->chainCount() < chains) {
+			REQUIRE(rack->addChain() != SIZE_MAX);
+		}
+		for (size_t c = 0; c < chains; ++c) {
+			REQUIRE(rack->chainAt(c)->bridge()->addDevice(fx::harm::kTraits.tag) != kNoInstance);
+			REQUIRE(rack->chainAt(c)->bridge()->addDevice(fx::owltt::kTraits.tag) != kNoInstance);
+			REQUIRE(rack->chainAt(c)->bridge()->addDevice(fx::harm::kTraits.tag) != kNoInstance);
+		}
+		BridgeDeviceHost host(f.bridge);
+		host.setField(id, static_cast<size_t>(pr::Param::View), static_cast<float>(view));
+		host.setField(id, static_cast<size_t>(pr::Param::Front), pane ? 1.0f : 0.0f);
+		f.lane->resized();
+		display = XOpenDisplay(nullptr);
+		REQUIRE(display != nullptr);
+		const int screen = DefaultScreen(display);
+		uint32_t w = 0, h = 0;
+		REQUIRE(f.gui.getSize(&w, &h));
+		parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen), BlackPixel(display, screen));
+		XSync(display, False);
+		clap_window window {};
+		window.api = CLAP_WINDOW_API_X11;
+		window.x11 = parent;
+		REQUIRE(f.gui.setParent(&window));
+		f.gui.setPopoutWindowForTest(false);
+		top = f.gui.root()->topParentFrame();
+		f.lane->onExpandDevice(slot);
+		REQUIRE(f.gui.expandedForTest()->open());
+		panel = treeFind<ui::ParallelRackExpanded>(top);
+		REQUIRE(panel != nullptr);
+		tick();
+	}
+	void tick() {
+		for (int i = 0; i < 4; ++i) {
+			(void)f.gui.tickForTest();
+			(void)panel->update();
+		}
+	}
+	~ListWindowRig() {
+		f.bridge.fxBodies().detach(id, body);
+		f.gui.destroy();
+		XDestroyWindow(display, parent);
+		XCloseDisplay(display);
+	}
+};
+
+} // namespace
+
+TEST_CASE("list flow: in a real window a real press on a row brings its chain in front, its cards run left to right beside the list, and the selected row's name starts clear of the edge bar") {
+	ListWindowRig r(3, 3, false);
+	ui::RackListView& list = r.panel->listForTest();
+	REQUIRE(list.isVisible());
+	for (const size_t row : { size_t { 2 }, size_t { 1 } }) {
+		CAPTURE(row);
+		const visage::Bounds b = list.rowBoundsForTest(row);
+		const visage::Point o = list.positionInWindow();
+		pressAtWindow(r.top, { o.x + b.x() + 24.0f, o.y + b.y() + b.height() * 0.5f }, false);
+		r.tick();
+		CHECK(r.panel->viewModelForTest().viewedChain() == row);
+		CHECK(list.rowForTest(row)->selectedForTest());
+		// THE NAME STARTS CLEAR OF THE EDGE BAR (a 2 px stripe) it would otherwise run under.
+		CHECK(list.rowForTest(row)->summaryLeftForTest() >= 4.0f);
+		ui::FxLaneRail& rail = r.panel->railForTest(row);
+		REQUIRE(rail.isVisible());
+		for (size_t other = 0; other < 3; ++other) {
+			CHECK(r.panel->railShownForTest(other) == (other == row));
+		}
+		ui::ChainColumn* column = rail.column();
+		REQUIRE(column != nullptr);
+		CHECK(column->horizontal());
+		const std::vector<ui::FxCard*> cards = column->cardsForTest();
+		REQUIRE(cards.size() == 3);
+		// LEFT TO RIGHT, ALIGNED, IN NATIVE PIXELS, and to the right of the list.
+		for (size_t k = 1; k < cards.size(); ++k) {
+			CHECK(cards[k]->positionInWindow().x > cards[k - 1]->positionInWindow().x + static_cast<float>(cards[k - 1]->width()) - 1.0f);
+			CHECK(cards[k]->nativeY() == cards[0]->nativeY());
+		}
+		CHECK(cards[0]->positionInWindow().x >= list.positionInWindow().x + static_cast<float>(list.width()) - 0.5f);
+		// THE RAIL IS AS WIDE AS THE CARDS NEED (more than the standard column) up to the window's room.
+		CHECK(rail.railWidth() > ui::FxLaneRail::kWidth);
+		CHECK(rail.positionInWindow().x + rail.railWidth() <= r.panel->positionInWindow().x + static_cast<float>(r.panel->width()) + 0.5f);
+	}
+}
+
+TEST_CASE("list and tabs pane: in a real window the rest of the front chain is a lane beside the pane that folds by a real press, and the fold is the chain's stored open flag") {
+	for (const int view : { 1, 3 }) {
+		CAPTURE(view);
+		ListWindowRig r(2, view, true);
+		REQUIRE(r.panel->paneOnForTest());
+		ui::FxLaneRail& rail = r.panel->railForTest(0);
+		REQUIRE(rail.isVisible());
+		// THE LANE HOLDS THE CHAIN AFTER THE FIRST DEVICE (the pane has that one), open, and offers its fold.
+		REQUIRE(rail.column() != nullptr);
+		CHECK(rail.column()->hiddenLead() == 1);
+		CHECK_FALSE(rail.collapsed());
+		CHECK(rail.collapsible());
+		const float open = rail.railWidth();
+		CHECK(open > ui::Rail::kCollapsedWidth);
+		const bool stored = r.rack->open(0);
+		const auto pressToggle = [&] {
+			const visage::Bounds t = rail.toggleBounds();
+			const visage::Point o = rail.positionInWindow();
+			pressAtWindow(r.top, { o.x + t.x() + t.width() * 0.5f, o.y + t.y() + t.height() * 0.5f }, false);
+			r.tick();
+		};
+		pressToggle();
+		CHECK(rail.collapsed());
+		CHECK(rail.railWidth() == ui::Rail::kCollapsedWidth);
+		CHECK(r.rack->open(0) == !stored); // the chain's own stored flag, the card's arrow's too
+		pressToggle();
+		CHECK_FALSE(rail.collapsed());
+		CHECK(rail.railWidth() == open);
+		CHECK(r.rack->open(0) == stored);
+	}
+}
+
+
+TEST_CASE("view flow: in a real window Tabs and Pads, like List, run the chain in front left to right after a real press on their selector, and Strips stays a column of rails") {
+	for (const int view : { 0, 1, 2 }) {
+		CAPTURE(view);
+		ListWindowRig r(3, view, false);
+		for (size_t c = 0; c < 3; ++c) {
+			r.rack->setChainKey(c, static_cast<int>(c));
+		}
+		r.tick();
+		if (view == 0) {
+			// STRIPS: every chain's rail, each a vertical column (cards stacked, same x).
+			for (size_t c = 0; c < 3; ++c) {
+				REQUIRE(r.panel->railShownForTest(c));
+				ui::ChainColumn* column = r.panel->railForTest(c).column();
+				REQUIRE(column != nullptr);
+				CHECK_FALSE(column->horizontal());
+				const std::vector<ui::FxCard*> cards = column->cardsForTest();
+				REQUIRE(cards.size() == 3);
+				CHECK(cards[1]->nativeX() == cards[0]->nativeX());
+				CHECK(cards[1]->positionInWindow().y > cards[0]->positionInWindow().y);
+			}
+			continue;
+		}
+		// THE SELECTOR'S REAL PRESS: a tab, or a pad (key 1 is chain 1).
+		visage::Point at {};
+		if (view == 1) {
+			ui::RackTabBar& bar = r.panel->tabBarForTest();
+			const visage::Point o = bar.positionInWindow();
+			const visage::Point c = bar.tabCentre(1);
+			at = { o.x + c.x, o.y + c.y };
+		}
+		else {
+			ui::RackPadGrid& grid = r.panel->padsForTest().gridForTest();
+			const visage::Point o = grid.positionInWindow();
+			const visage::Point c = grid.padCentre(1);
+			at = { o.x + c.x, o.y + c.y };
+		}
+		pressAtWindow(r.top, at, false);
+		r.tick();
+		CHECK(r.panel->viewModelForTest().viewedChain() == 1);
+		ui::FxLaneRail& rail = r.panel->railForTest(1);
+		REQUIRE(rail.isVisible());
+		ui::ChainColumn* column = rail.column();
+		REQUIRE(column != nullptr);
+		CHECK(column->horizontal());
+		const std::vector<ui::FxCard*> cards = column->cardsForTest();
+		REQUIRE(cards.size() == 3);
+		for (size_t k = 1; k < cards.size(); ++k) {
+			CHECK(cards[k]->positionInWindow().x > cards[k - 1]->positionInWindow().x + static_cast<float>(cards[k - 1]->width()) - 1.0f);
+			CHECK(cards[k]->nativeY() == cards[0]->nativeY());
+		}
+		CHECK(rail.railWidth() > ui::FxLaneRail::kWidth);
+		CHECK(rail.positionInWindow().x + rail.railWidth() <= r.panel->positionInWindow().x + static_cast<float>(r.panel->width()) + 0.5f);
+	}
+}
+
 #endif // defined(__linux__)

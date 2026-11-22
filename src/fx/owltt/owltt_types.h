@@ -28,6 +28,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <span>
 
 // OWLTT (the reference's OTT) — 3-band upward/downward compressor with tonal shaping via CHARACTER and VIBE zones.
@@ -421,6 +423,55 @@ inline float ratioShiftOf(const Settings& s) {
 }
 inline float bandwidthShiftOf(const Settings& s) {
 	return s.bandwidth - 0.5f;
+}
+
+/// **A BAND'S OUTPUT LEVEL AS dB**, in double: the engine's gain law (`BandCompressor::outputLevelOfKnob`: 0..unity over the lower half of the
+/// knob, up to 10x over the upper) and its inverse. The window's OUT prints one decimal of this, and opens type-in on it at full precision.
+[[nodiscard]] inline double bandLevelLinear(double knob) {
+	return knob <= 0.5 ? knob * 2.0 : 1.0 + (knob - 0.5) * 18.0;
+}
+/// -inf at a closed knob. `true` when finite, and writes the dB.
+[[nodiscard]] inline bool bandLevelDb(double knob, double& db) {
+	const double linear = bandLevelLinear(knob);
+	if (!(linear > 0.0)) {
+		return false;
+	}
+	db = 20.0 * std::log10(linear);
+	return true;
+}
+/// THE INVERSE: the knob whose gain is `db`, clamped to the control's 0..1 (a gain over +20 dB is the top of the knob).
+[[nodiscard]] inline double bandLevelKnobOfDb(double db) {
+	const double linear = std::pow(10.0, db / 20.0);
+	return std::clamp(linear <= 1.0 ? linear * 0.5 : 0.5 + (linear - 1.0) / 18.0, 0.0, 1.0);
+}
+/// The type-in text: dB at enough digits that the inverse returns the knob.
+inline std::string bandLevelEditText(double knob) {
+	double db = 0.0;
+	if (!bandLevelDb(knob, db)) {
+		return "-inf";
+	}
+	char buf[40];
+	std::snprintf(buf, sizeof buf, "%+.12gdB", db);
+	return buf;
+}
+
+/// A RATIO AS A PLAYER READS IT, `N` of `N:1`: whole numbers from 10 up, one decimal below, `1:1` at rest (and for anything under 1.05, which is
+/// the ratio of a fraction of 5% or less). The ceiling (`BandCompressor::kRatioCeiling`, 100) reads `100:1`.
+inline std::string ratioText(float ratio) {
+	char buf[24];
+	if (!(ratio >= 1.05f)) {
+		return "1:1";
+	}
+	if (ratio >= 9.95f) {
+		std::snprintf(buf, sizeof buf, "%.0f:1", static_cast<double>(ratio));
+	}
+	else if (std::abs(ratio - std::round(ratio)) < 0.05f) {
+		std::snprintf(buf, sizeof buf, "%.0f:1", static_cast<double>(std::round(ratio)));
+	}
+	else {
+		std::snprintf(buf, sizeof buf, "%.1f:1", static_cast<double>(ratio));
+	}
+	return buf;
 }
 
 inline EffectiveBand effectiveBandOf(const BandParams& band, const Settings& s) {

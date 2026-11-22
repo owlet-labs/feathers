@@ -130,7 +130,8 @@ void installDevicePublishers(RackEngine& engine) {
 			    extras.bandSaturating[0] ? 1.0f : 0.0f, extras.bandSaturating[1] ? 1.0f : 0.0f,
 			    extras.bandSaturating[2] ? 1.0f : 0.0f, extras.combinedGrDb,
 			    extras.secondChannelGr[0], extras.secondChannelGr[1], extras.secondChannelGr[2],
-			    extras.noteHz, extras.inputPeak, extras.outputPeak }; // backlog LQ's three (14..16), Key Track's note (17), the input peak (18), the pre-clip output peak (19)
+			    extras.noteHz, extras.inputPeak, extras.outputPeak,
+			    extras.ratios[0], extras.ratios[1], extras.ratios[2], extras.ratios[3], extras.ratios[4], extras.ratios[5] }; // the effective ratios (20..25), backlog LQ's three (14..16), Key Track's note (17), the input peak (18), the pre-clip output peak (19)
 			target->publishReadings(slot, values.data(), values.size());
 		});
 	});

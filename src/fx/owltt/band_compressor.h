@@ -124,14 +124,18 @@ public:
 		fractionUp_ = r * r * r; // x^3 curve for balanced feel
 	}
 
+	/// THE BAND'S OUTPUT LEVEL KNOB AS A LINEAR GAIN: the lower half is a straight 0..unity, the upper half takes it up to 10x
+	/// (+20 dB). One statement of the law, for the engine and for the window's dB readout of the same control.
+	[[nodiscard]] static float outputLevelOfKnob(float g) {
+		if (g <= 0.5f) {
+			return g * 2.0f;
+		}
+		return 1.0f + (g - 0.5f) * 2.0f * 9.0f;
+	}
+
 	void setOutputLevel(float g) {
 		outputLevelKnob_ = g;
-		if (g <= 0.5f) {
-			outputLevel_ = g * 2.0f;
-		}
-		else {
-			outputLevel_ = 1.0f + (g - 0.5f) * 2.0f * 9.0f;
-		}
+		outputLevel_ = outputLevelOfKnob(g);
 	}
 
 	void setBandwidth(float bw) {
@@ -188,6 +192,27 @@ public:
 			return 100.0f;
 		}
 		return 1.0f / (1.0f - fractionDown_);
+	}
+
+	/// THE RATIO A FRACTION OF GAIN CHANGE AMOUNTS TO, as `N:1`'s N. Both directions work in the log domain: the downward side takes
+	/// `fraction x over` off the signal's distance above the down threshold (`target = -over * fractionDown`), so the output rises
+	/// `1 - fraction` of the input's rise: ratio `1 / (1 - fraction)`. The upward side is the mirror below the up threshold
+	/// (`target = +under * fractionUp`): UPWARD COMPRESSION, so it is also `>= 1:1`; neither side expands. A fraction at or above 0.99
+	/// reads as `kRatioCeiling`.
+	static constexpr float kRatioCeiling = 100.0f;
+	[[nodiscard]] static float ratioOfFraction(float fraction) {
+		if (fraction >= 0.99f) {
+			return kRatioCeiling;
+		}
+		return 1.0f / (1.0f - std::max(0.0f, fraction));
+	}
+	/// THE RATIOS THE BAND IS ACTUALLY APPLYING, for a skew: `calculateGain` scales each direction's fraction by `1 -/+ skew` (clamped to
+	/// 0..1), so the ratio the signal sees is the fraction x that factor, not the knob's. `getRatioForDisplay` is the skew-free downward one.
+	[[nodiscard]] float getEffectiveRatioDown(float skew) const {
+		return ratioOfFraction(fractionDown_ * std::clamp(1.0f + skew, 0.0f, 1.0f));
+	}
+	[[nodiscard]] float getEffectiveRatioUp(float skew) const {
+		return ratioOfFraction(fractionUp_ * std::clamp(1.0f - skew, 0.0f, 1.0f));
 	}
 
 	void reset() {

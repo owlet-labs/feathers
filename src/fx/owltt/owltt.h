@@ -196,6 +196,9 @@ public:
 		float inputPeak = 0.0f;
 		/// THE OUTPUT METER'S PEAK (reading 19): after Output Gain and before the master clip, linear, held and falling.
 		float outputPeak = 0.0f;
+		/// EACH BAND'S EFFECTIVE RATIOS, as `N` of `N:1` (readings 20..25: down for bands 0..2, then up), the ones the compressors apply this
+		/// block: the knob's fraction, the global and per-band trims and the Up/Down skew all folded in. Both sides are compression, so each is >= 1.
+		std::array<float, 6> ratios { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	};
 	using MeterCallback = std::function<void(size_t slot, const std::array<float, 3>& grDB,
 	                                        const std::array<float, 3>& inputLevelDB,
@@ -264,7 +267,9 @@ public:
 	[[nodiscard]] float combinedGainReductionDbForTest() const noexcept { return combinedGainReductionDb_; }
 	/// How many readings this device publishes: 3 GR, 3 input, 3 output, clip, 3 saturating, combined GR, and
 	/// since backlog LQ the second channel's GR per band (14..16; 0..2 are the first channel's).
-	static constexpr size_t kReadingCount = 20;
+	static constexpr size_t kReadingCount = 26; // + the six effective ratios (20..25)
+	/// TEST ONLY: band `band`'s effective ratio as the meters publish it, downward or upward.
+	[[nodiscard]] float effectiveRatioForTest(size_t band, bool down) const noexcept { return bandRatios_[(down ? 0 : 3) + band]; }
 	//-- OWLTT parity sweep seams (2026-09-16); each a value the audio cannot give back. ----------//
 	/// A band's stereo width after the zone table, vibe and feel have written it.
 	[[nodiscard]] float bandWidthForTest(size_t band) const noexcept { return bandWidth_[band]; }
@@ -462,6 +467,8 @@ private:
 	/// for the same ~500 ms the output clip light holds. Refreshed on the meter grid with it.
 	std::array<bool, 3> bandSaturating_ { false, false, false };
 	std::array<int, 3> bandSaturationHold_ { 0, 0, 0 };
+	/// THE EFFECTIVE RATIOS, written on the audio thread beside the gain (down 0..2, up 3..5), published with the meters.
+	std::array<float, 6> bandRatios_ { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	static constexpr float kBandSaturationThreshold = 1.0f;
 	/// THE COMBINED GAIN REDUCTION, in dB: the mean |gain change| across the three bands — the
 	/// firmware's `getGainReduction()`, which scaled it to 0..127 for its display; here it is dB.

@@ -159,6 +159,9 @@ std::optional<std::string> DeviceControl::editText() const {
 	if (!typeable()) {
 		return std::nullopt;
 	}
+	if (editFormatter_) {
+		return editFormatter_(value());
+	}
 	// A DEVICE THAT READS ITS OWN WORDS BACK (`TextOps::parse`) is typed into in them, where it says any: the field opens
 	// on what it shows. Where its hook declines, the unit prints, and the unit's own edit text is the one that reads back.
 	if (desc_->text != nullptr && desc_->text->format != nullptr && desc_->text->parse != nullptr) {

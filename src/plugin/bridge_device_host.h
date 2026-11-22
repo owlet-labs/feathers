@@ -310,7 +310,7 @@ public:
 	/// Feathers that maps OWLTT's struct onto indices; `OwlttGraph` is the one place that maps them back.
 	/// `fx::owltt::Owltt::kReadingCount`, restated: ten meters, then a light per band and the combined
 	/// gain reduction (backlog EL, 2026-09-16). test_gui_widgets_devices pins the two agree.
-	static constexpr size_t kOwlttReadings = 20; // + each band's second-channel GR, backlog LQ; + Key Track's note; + the input peak and the pre-clip output peak
+	static constexpr size_t kOwlttReadings = 26; // + each band's second-channel GR, backlog LQ; + Key Track's note; + the input peak and the pre-clip output peak
 
 	/// AUTOMOD PUBLISHES TWO READINGS — [0] its LFO phase, [1] its envelope follower's level.
 	///
@@ -399,7 +399,10 @@ public:
 			if (index == 18) {
 				return m.inputPeak; // the input peak, after Drive, linear (18)
 			}
-			return index == 19 ? m.outputPeak : 0.0f; // the output peak, after Output Gain and before the master clip (19)
+			if (index == 19) {
+				return m.outputPeak; // the output peak, after Output Gain and before the master clip (19)
+			}
+			return index < 26 ? m.ratios[index - 20] : 0.0f; // the effective ratios, down then up (20..25)
 		}
 		return bridge_.deviceReading(slot, index);
 	}

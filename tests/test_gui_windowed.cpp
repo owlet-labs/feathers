@@ -5655,7 +5655,7 @@ TEST_CASE("list fader: in a real window a row's slim fader is dragged vertically
 	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, -24.0f });
 	const double up = probe.value();
 	CHECK(up > mid);
-	CHECK(up - mid == doctest::Approx((24.0 - 3.0) / ui::ChainFader::kSpan * (d.max - d.min)).epsilon(0.02)); // less the 3 px slop the press leaves
+	CHECK(up - mid == doctest::Approx(24.0 / ui::ChainFader::kSpan * (d.max - d.min)).epsilon(0.02)); // the travel's share of the range
 	// DOWN IS QUIETER.
 	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, 30.0f });
 	const double down = probe.value();

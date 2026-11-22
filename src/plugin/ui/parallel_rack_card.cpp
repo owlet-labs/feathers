@@ -483,10 +483,7 @@ ChainFader::ChainFader(ChainControl& control) : control_(control) {
 			}
 			dragging_ = true;
 			control_.beginGesture();
-			startY_ = e.position.y; // the travel counts from where the drag began
-			startValue_ = control_.value();
 			setHot(true);
-			return;
 		}
 		const device::ParamDesc& d = control_.desc();
 		const float span = fine_ ? kSpan * kFineRatio : kSpan;

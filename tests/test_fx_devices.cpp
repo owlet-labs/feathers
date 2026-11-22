@@ -2622,8 +2622,10 @@ std::vector<std::string> honestyExpected() {
 		"Eroder :: Eroder Slot A Balance",   "Eroder :: Eroder Slot A Rate",  "Eroder :: Eroder Slot A Rate Multiple",
 		"Eroder :: Eroder Slot B Balance",   "Eroder :: Eroder Slot B Rate",  "Eroder :: Eroder Slot B Rate Multiple",
 		// THE THIRD ROW OF EVERY TYPE (the Drive's and each slot's): Sharp is heard only on Fold, Bias only on Wreck and Jag, Hard only on Soft and Tube,
-		// and Key and Spread only on Crush, Decimate, Slew and Lopside; the fixture's Drive sits on Soft and its slots at Amount 0, so a one-control
-		// arrangement reaches only the Drive's Hard (the ones below). `test_fx_eroder_rows` asserts each by value (the restated curves, the restated
+		// and Key and Spread only on Crush, Decimate, Slew and Lopside. The fixture's Drive sits on Soft, which reads only Hard, so the Drive's Sharp,
+		// Bias, Key and Spread are unreachable (its Hard is reached and is not listed). The slots default to Slew (A) and Decimate (B), both of the
+		// Key family, so an arrangement that raises a slot's Amount hears that slot's Key and Spread (they are not listed); but neither default Type
+		// reads Hard, Sharp or Bias, so those six are listed. `test_fx_eroder_rows` asserts each by value (the restated curves, the restated
 		// hold and slew rates measured from the output, the Spread's ratio) and "Every third-row control is wired in all three places" asserts that each
 		// one changes the sound in the Drive and in both slots on its own Types and on no other; the window hides each row unless its Type has it.
 		"Eroder :: Eroder Drive Sharp",      "Eroder :: Eroder Drive Bias",   "Eroder :: Eroder Drive Key",      "Eroder :: Eroder Drive Spread",

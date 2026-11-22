@@ -4417,3 +4417,113 @@ TEST_CASE("header presets: a rack chain's device card menu offers Presets and Sa
 	feathers::rack::RackBridge& viewed = *r.rack().chainAt(static_cast<size_t>(r.field(pr::Param::ViewedChain)))->bridge();
 	checkColumnPresets("card column", *cardColumn, nullptr, viewed, "Card Saved");
 }
+
+//--------------------------------------------------------------------------------------------------//
+// THE RACK WINDOW'S COLUMN FOLDS: THE MACROS' AND THE INSPECTOR'S, EACH ITS OWN                       //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("rack window folds: the macros header folds only the macros, the inspector header folds only the inspector, each under its own key, and the column reflows") {
+	RealRack r;
+	r.chains(2, 0, true);
+	r.view_(2); // Pads: its "+ Chain" stands at the column's foot, under the macros
+	ui::ParallelRackExpanded& w = *r.panel;
+	const auto macrosShown = [&] { return w.macroShownForTest(0) && w.macroShownForTest(7); };
+	// OPEN: everything shown, the headers in the column's top pad.
+	CHECK(macrosShown());
+	CHECK(w.inspectorShownForTest());
+	CHECK_FALSE(w.macrosFolded());
+	CHECK_FALSE(w.inspectorFolded());
+	CHECK(w.inspectorHeaderForTest().height() > 0);
+	CHECK(w.inspectorHeaderForTest().bounds().right() <= w.macrosHeaderForTest().bounds().x());
+	CHECK(w.macrosHeaderForTest().bounds().bottom() <= w.modeBoxBoundsForTest().y());
+	const visage::Bounds mode0 = w.modeBoxBoundsForTest();
+	const visage::Bounds mix0 = w.mixBoundsForTest();
+	const visage::Bounds macro0 = w.macroBoundsForTest(0);
+	const visage::Bounds add0 = w.addBoundsForTest();
+	const visage::Point min0 = w.minimumSize();
+	// THE MACROS HEADER: the macros go; the inspector is exactly where it was; the foot rises by the macros' height.
+	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	r.refresh();
+	CHECK(w.macrosFolded());
+	CHECK_FALSE(w.inspectorFolded());
+	CHECK(r.field(pr::Param::MacrosFold) == 1.0f);
+	CHECK(r.field(pr::Param::InspectorFold) == 0.0f);
+	CHECK_FALSE(w.macroShownForTest(0));
+	CHECK_FALSE(w.macroShownForTest(7));
+	CHECK(w.inspectorShownForTest());
+	CHECK(w.modeBoxBoundsForTest() == mode0);
+	CHECK(w.mixBoundsForTest() == mix0);
+	CHECK(w.addBoundsForTest().y() < add0.y());
+	CHECK(w.minimumSize().y <= min0.y);
+	// UNFOLD, THEN THE INSPECTOR HEADER: its controls go; the macros stay shown, risen to the top pad.
+	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	r.refresh();
+	CHECK(macrosShown());
+	CHECK(w.macroBoundsForTest(0) == macro0);
+	CHECK(w.addBoundsForTest() == add0);
+	w.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	r.refresh();
+	CHECK(w.inspectorFolded());
+	CHECK_FALSE(w.macrosFolded());
+	CHECK(r.field(pr::Param::InspectorFold) == 1.0f);
+	CHECK(r.field(pr::Param::MacrosFold) == 0.0f);
+	CHECK_FALSE(w.inspectorShownForTest());
+	CHECK(macrosShown());
+	CHECK(w.macroBoundsForTest(0).y() < macro0.y());
+	CHECK(w.macroBoundsForTest(0).y() == doctest::Approx(w.macrosHeaderForTest().bounds().bottom())); // right under the headers
+	// BOTH FOLDED: the foot sits under the headers. UNFOLD BOTH: the column is as it was.
+	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	r.refresh();
+	CHECK(w.macrosFolded());
+	CHECK(w.inspectorFolded());
+	CHECK_FALSE(macrosShown());
+	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	w.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	r.refresh();
+	CHECK(macrosShown());
+	CHECK(w.inspectorShownForTest());
+	CHECK(w.modeBoxBoundsForTest() == mode0);
+	CHECK(w.macroBoundsForTest(0) == macro0);
+	CHECK(w.addBoundsForTest() == add0);
+}
+
+TEST_CASE("rack window folds: each fold is saved with the patch, a fresh instance loads both as saved and lays out folded on its first frame, and a preset with neither key opens both") {
+	for (const bool macros : { false, true }) {
+		for (const bool inspector : { false, true }) {
+			CAPTURE(macros);
+			CAPTURE(inspector);
+			std::vector<uint8_t> bytes;
+			{
+				RealRack a;
+				a.chains(2, 0, true);
+				(void)a.panel->setMacrosFolded(macros);
+				(void)a.panel->setInspectorFolded(inspector);
+				a.refresh();
+				REQUIRE(feathers::captureDevicePreset(a.f.deviceHost, pr::kDescriptor, a.id, &bytes));
+			}
+			RealRack b;
+			b.chains(2, 0, true);
+			CHECK_FALSE(b.panel->macrosFolded());
+			REQUIRE(feathers::applyDevicePreset(b.f.deviceHost, pr::kDescriptor, b.id, bytes) == feathers::DevicePresetLoad::Loaded);
+			b.refresh();
+			(void)b.panel->updateContent();
+			CHECK(b.panel->macrosFolded() == macros);
+			CHECK(b.panel->inspectorFolded() == inspector);
+			CHECK(b.panel->macroShownForTest(0) == !macros);
+			CHECK(b.panel->inspectorShownForTest() == !inspector);
+		}
+	}
+	// A PRESET FROM BEFORE THE FOLDS (no key for either): both open.
+	RealRack c;
+	c.chains(2, 0, true);
+	(void)c.panel->setMacrosFolded(true);
+	(void)c.panel->setInspectorFolded(true);
+	const std::vector<uint8_t> init = feathers::initDevicePreset(pr::kDescriptor);
+	REQUIRE(feathers::applyDevicePreset(c.f.deviceHost, pr::kDescriptor, c.id, init) == feathers::DevicePresetLoad::Loaded);
+	c.refresh();
+	(void)c.panel->updateContent();
+	CHECK_FALSE(c.panel->macrosFolded());
+	CHECK_FALSE(c.panel->inspectorFolded());
+	CHECK(c.panel->macroShownForTest(0));
+	CHECK(c.panel->inspectorShownForTest());
+}

@@ -5324,4 +5324,43 @@ TEST_CASE("column folds: in a real window, a real press on the macros header fol
 	XCloseDisplay(display);
 }
 
+TEST_CASE("column folds: in a real window, real presses on the Rack window's two headers fold each half alone, and the other half's controls stay put") {
+	withDeviceVenue(2, [](DeviceRenameVenue& v) {
+		ui::ParallelRackExpanded* panel = treeFind<ui::ParallelRackExpanded>(v.top);
+		REQUIRE(panel != nullptr);
+		const auto press = [&](ui::FoldHeader& header) {
+			const visage::Point o = header.positionInWindow();
+			pressAtWindow(v.top, { o.x + static_cast<float>(header.width()) * 0.5f, o.y + static_cast<float>(header.height()) * 0.5f }, false);
+			v.tick();
+		};
+		const visage::Bounds mode0 = panel->modeBoxBoundsForTest();
+		const visage::Bounds macro0 = panel->macroBoundsForTest(0);
+		REQUIRE(panel->macroShownForTest(0));
+		REQUIRE(panel->inspectorShownForTest());
+		// A REAL PRESS ON THE MACROS HEADER.
+		press(panel->macrosHeaderForTest());
+		CHECK(panel->macrosFolded());
+		CHECK_FALSE(panel->inspectorFolded());
+		CHECK_FALSE(panel->macroShownForTest(0));
+		CHECK(panel->inspectorShownForTest());
+		CHECK(panel->modeBoxBoundsForTest() == mode0);
+		press(panel->macrosHeaderForTest());
+		CHECK_FALSE(panel->macrosFolded());
+		CHECK(panel->macroShownForTest(0));
+		CHECK(panel->macroBoundsForTest(0) == macro0);
+		// A REAL PRESS ON THE INSPECTOR HEADER.
+		press(panel->inspectorHeaderForTest());
+		CHECK(panel->inspectorFolded());
+		CHECK_FALSE(panel->macrosFolded());
+		CHECK_FALSE(panel->inspectorShownForTest());
+		CHECK(panel->macroShownForTest(0));
+		CHECK(panel->macroBoundsForTest(0).y() < macro0.y());
+		press(panel->inspectorHeaderForTest());
+		CHECK_FALSE(panel->inspectorFolded());
+		CHECK(panel->inspectorShownForTest());
+		CHECK(panel->modeBoxBoundsForTest() == mode0);
+		CHECK(panel->macroBoundsForTest(0) == macro0);
+	});
+}
+
 #endif // defined(__linux__)

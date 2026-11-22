@@ -125,6 +125,10 @@ enum class Param : size_t {
 	/// **WHAT THE WINDOW'S TABS VIEW PUTS IN FRONT** (no audio effect): the front chain as its cards, or its first device's own window.
 	/// View state like the view itself: kept with the patch, not modulatable, never on a DAW lane.
 	Front,
+	/// **THE WINDOW'S COLUMN FOLDS, TOLD APART** (no audio effect): the macros' and the inspector's (Mode, Position, the view rows and Mix and Gain).
+	/// View state like the view itself: kept with the patch, not modulatable, never on a DAW lane. 1 is folded; absent reads as open.
+	MacrosFold,
+	InspectorFold,
 	kCount,
 };
 
@@ -317,6 +321,13 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .tooltip = "Tabs, in the window: the front chain as its cards, or its first device's own window in the middle with the rest of "
                 "the chain beside it. It changes nothing you hear",
      .shortName = "Front", .hostSlot = false},
+    {.key = "rack_macros_fold", .name = "Rack Macros Fold", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Choice, .names = kOffOnNames, .modulatable = false,
+     .tooltip = "Folds the window's macros away, or shows them. It changes nothing you hear", .shortName = "Macros Fold", .hostSlot = false},
+    {.key = "rack_inspector_fold", .name = "Rack Inspector Fold", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+     .unit = device::Unit::Choice, .names = kOffOnNames, .modulatable = false,
+     .tooltip = "Folds the window's mode, position, view and Mix and Gain controls away, or shows them. It changes nothing you hear",
+     .shortName = "Inspector Fold", .hostSlot = false},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 static_assert(static_cast<size_t>(Param::Macro1) == static_cast<size_t>(composite::Param::Macro1));
@@ -1068,6 +1079,8 @@ private:
 	int padsPage_ = 0;
 	int followPlayed_ = 0;
 	int front_ = 0;
+	int macrosFold_ = 0;
+	int inspectorFold_ = 0;
 	std::vector<device::HostSlotCaption> slotCaptions_;
 	uint64_t serial_ = 0;
 	/// And what its key held back, which the rack passes on itself.

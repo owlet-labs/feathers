@@ -29,6 +29,8 @@ param RACK rack_pads_page unit=number min=0 max=7 stepped=1
 param RACK rack_playing unit=choice choice=Position|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62|63|64
 param RACK rack_follow_played unit=choice choice=Off|On
 param RACK rack_front unit=choice choice=Cards|Window
+param RACK rack_macros_fold unit=choice choice=Off|On
+param RACK rack_inspector_fold unit=choice choice=Off|On
 param RACK rack_chain_slot_1_level unit=fader min=0 max=1 stepped=0
 param RACK rack_chain_slot_1_mute unit=choice choice=Off|On
 param RACK rack_chain_slot_1_solo unit=choice choice=Off|On

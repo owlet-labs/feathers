@@ -216,7 +216,33 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	addChild(pads_.get());
 	tabs_->setVisible(false);
 	pads_->setVisible(false);
+	// THE COLUMN'S TWO FOLD HEADERS, in its top pad, and the frames the inspector's fold hides.
+	inspectorHeader_ = std::make_unique<FoldHeader>("INSPECTOR");
+	macrosHeader_ = std::make_unique<FoldHeader>("MACROS");
+	inspectorHeader_->onToggle = [this] {
+		if (setInspectorFolded(!inspectorFolded()) && notifier_ != nullptr) {
+			notifier_->say(inspectorFolded() ? "Inspector minimised" : "Inspector shown");
+		}
+	};
+	macrosHeader_->onToggle = [this] {
+		if (setMacrosFolded(!macrosFolded()) && notifier_ != nullptr) {
+			notifier_->say(macrosFolded() ? "Macros minimised" : "Macros shown");
+		}
+	};
+	addChild(inspectorHeader_.get());
+	addChild(macrosHeader_.get());
+	inspectorFrames_ = { modeBox_.get(), position_.get(), unused_.get(), viewSeg_.get(), viewPair_.get(), playingBox_.get(), viewedBox_.get(),
+	                     pageBox_.get(), frontSeg_.get(), bandsBox_.get(), filteringBox_.get(), slope_.get(), keyTrack_.get(),
+	                     knobs_[0].get(), knobs_[1].get() };
+	for (auto& cut : cuts_) {
+		inspectorFrames_.push_back(cut.get());
+	}
+	inspectorHeader_->setFolded(inspectorFolded());
+	macrosHeader_->setFolded(macrosFolded());
+	foldsAppliedMacros_ = macrosFolded();
+	foldsAppliedInspector_ = inspectorFolded();
 	(void)showForMode();
+	applyFolds();
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		if (addBounds().contains(e.position)) {
 			addChain();
@@ -354,12 +380,71 @@ bool ParallelRackExpanded::syncPane() {
 
 float ParallelRackExpanded::dividerY() const { return kPad + kModeRow + kCellHeight + kPad * 0.5f; }
 
+float ParallelRackExpanded::inspectorShift() const {
+	// THE INSPECTOR FOLDED, THE MACROS RISE TO THE COLUMN'S TOP PAD: what stood above them (the mode row, the view rows and Mix and Gain) is gone.
+	return inspectorFolded() ? dividerY() + kPad * 0.5f - kPad : 0.0f;
+}
+
+bool ParallelRackExpanded::macrosFolded() const { return host_.fieldAt(id_, static_cast<size_t>(pr::Param::MacrosFold)) >= 0.5f; }
+bool ParallelRackExpanded::inspectorFolded() const { return host_.fieldAt(id_, static_cast<size_t>(pr::Param::InspectorFold)) >= 0.5f; }
+
+bool ParallelRackExpanded::setMacrosFolded(bool folded) {
+	if (macrosFolded() == folded) {
+		return false;
+	}
+	host_.setField(id_, static_cast<size_t>(pr::Param::MacrosFold), folded ? 1.0f : 0.0f);
+	applyFolds();
+	return true;
+}
+
+bool ParallelRackExpanded::setInspectorFolded(bool folded) {
+	if (inspectorFolded() == folded) {
+		return false;
+	}
+	host_.setField(id_, static_cast<size_t>(pr::Param::InspectorFold), folded ? 1.0f : 0.0f);
+	applyFolds();
+	return true;
+}
+
+void ParallelRackExpanded::applyFolds() {
+	const bool inspector = inspectorFolded();
+	const bool macros = macrosFolded();
+	const bool inspectorChanged = inspector != foldsAppliedInspector_;
+	foldsAppliedInspector_ = inspector;
+	foldsAppliedMacros_ = macros;
+	inspectorHeader_->setFolded(inspector);
+	macrosHeader_->setFolded(macros);
+	// FOLDED, A HALF'S FRAMES ARE HIDDEN; UNFOLDED, THEY ARE LIFTED TO SHOWN AND THE MODE'S OWN RULES (the gates, the view pair) HIDE WHAT THE MODE HIDES.
+	for (visage::Frame* frame : inspectorFrames_) {
+		if (frame->isVisible() == inspector) {
+			frame->setVisible(!inspector);
+		}
+	}
+	for (auto& slot : macroSlots_) {
+		if (slot->isVisible() == macros) {
+			slot->setVisible(!macros);
+		}
+	}
+	for (auto& arm : macroArms_) {
+		if (arm->isVisible() == macros) {
+			arm->setVisible(!macros);
+		}
+	}
+	if (inspectorChanged && !inspector) {
+		laidOutMode_ = -1.0; // the gates and the view pair are asked afresh
+		(void)showForMode();
+	}
+	layOut();
+	minimumSizeChanged();
+	redraw();
+}
+
 float ParallelRackExpanded::knobY(size_t i) const {
 	if (i < kTopKnobs) {
 		return kPad + kModeRow;
 	}
 	const auto row = static_cast<float>((i - kTopKnobs) / kPerRow);
-	return dividerY() + kPad * 0.5f + row * (kCellHeight + kPad);
+	return dividerY() + kPad * 0.5f + row * (kCellHeight + kPad) - inspectorShift();
 }
 
 bool ParallelRackExpanded::bandsColumn() const {
@@ -377,7 +462,7 @@ float ParallelRackExpanded::phantomsWidth() const {
 float ParallelRackExpanded::railsLeft() const {
 	// IN BANDS A SECOND COLUMN BESIDE THE MACROS holds the band controls, so the whole of it sits in the window's height
 	// (it ran off the bottom when it hung under "+ Chain"); the rails start after it.
-	return kColumnWidth + 2.0f * kPad + (bandsColumn() ? kColumnWidth + kPad : 0.0f);
+	return kColumnWidth + 2.0f * kPad + (bandsColumn() && !inspectorFolded() ? kColumnWidth + kPad : 0.0f);
 }
 
 float ParallelRackExpanded::bandsBottom() const {
@@ -402,7 +487,7 @@ float ParallelRackExpanded::selectorWidth() const {
 
 visage::Bounds ParallelRackExpanded::leftColumnFoot() const {
 	// WHERE THE LEFT COLUMN ENDS: under the macros (the button used to stand here, and the column's height is still what it was).
-	return { kPad, dividerY() + kPad * 0.5f + kMacroRows * (kCellHeight + kPad), kAddWidth, kAddHeight };
+	return { kPad, dividerY() + kPad * 0.5f + (macrosFolded() ? 0.0f : kMacroRows * (kCellHeight + kPad)) - inspectorShift(), kAddWidth, kAddHeight };
 }
 
 visage::Bounds ParallelRackExpanded::addSlotBounds() const {
@@ -430,7 +515,7 @@ bool ParallelRackExpanded::addShown() const {
 
 visage::Bounds ParallelRackExpanded::addBounds() const { return addShown() ? addSlotBounds() : visage::Bounds {}; }
 
-visage::Bounds ParallelRackExpanded::dividerBounds() const { return { kPad, dividerY(), kColumnWidth, 1.0f }; }
+visage::Bounds ParallelRackExpanded::dividerBounds() const { return inspectorFolded() ? visage::Bounds {} : visage::Bounds { kPad, dividerY(), kColumnWidth, 1.0f }; }
 
 visage::PopupMenu ParallelRackExpanded::chainPickerMenu(bool playing) {
 	DeviceControl& control = playing ? *playingControl_ : *viewedControl_;
@@ -459,6 +544,10 @@ visage::PopupMenu ParallelRackExpanded::chainPickerMenu(bool playing) {
 
 void ParallelRackExpanded::layOut() {
 	const float cell = kColumnWidth / static_cast<float>(kPerRow);
+	// THE FOLD HEADERS, in the column's top pad: the inspector's, then the macros'. Re-set unconditionally, as every bound here is.
+	constexpr float kInspectorHeaderWidth = 92.0f;
+	inspectorHeader_->setBounds(kPad, 0.0f, kInspectorHeaderWidth, kPad);
+	macrosHeader_->setBounds(kPad + kInspectorHeaderWidth, 0.0f, kColumnWidth - kInspectorHeaderWidth, kPad);
 	// THE MODE ROW: the dropdown at the top of the left cell, the position's knob in the right one.
 	modeBox_->setBounds(kPad, kPad, cell, ValueBox::kHeight);
 	position_->setBounds(kPad + cell, kPad, cell, kCellHeight);
@@ -518,7 +607,7 @@ void ParallelRackExpanded::layOut() {
 	const RackViewKind view = model_->view();
 	tabs_->setVisible(view == RackViewKind::Tabs);
 	list_->setVisible(view == RackViewKind::List);
-	frontSeg_->setVisible((tabbedView(view) || view == RackViewKind::Pads) && !hostedInPane_);
+	frontSeg_->setVisible((tabbedView(view) || view == RackViewKind::Pads) && !hostedInPane_ && !inspectorFolded());
 	pads_->setVisible(view == RackViewKind::Pads);
 	followChip_->setVisible(view == RackViewKind::Pads);
 	if (view == RackViewKind::List) {
@@ -895,7 +984,7 @@ bool ParallelRackExpanded::showForMode() {
 	}
 	// TABS IS OFFERED ONLY TO A RACK OF EIGHT CHAINS OR FEWER (hidden, not greyed); see the card's.
 	const bool tabsOffered = model_->chainCount() <= kMaxRackTabs || model_->view() == RackViewKind::Tabs; // the pair offers List at any count
-	if (viewSeg_->isVisible() != tabsOffered || viewPair_->isVisible() == tabsOffered) {
+	if (!inspectorFolded() && (viewSeg_->isVisible() != tabsOffered || viewPair_->isVisible() == tabsOffered)) {
 		viewSeg_->setVisible(tabsOffered);
 		viewPair_->setVisible(!tabsOffered);
 		changed = true;
@@ -906,7 +995,9 @@ bool ParallelRackExpanded::showForMode() {
 		changed = true;
 	}
 	for (const auto& [frame, param] : gated_) {
-		const bool shown = pr::controlShown(param, mode, bands);
+		// THE INSPECTOR FOLDED hides its gated controls whatever the mode says (the position bar over the rails is not one of them).
+		const bool inspectorOwned = std::find(inspectorFrames_.begin(), inspectorFrames_.end(), frame) != inspectorFrames_.end();
+		const bool shown = pr::controlShown(param, mode, bands) && !(inspectorOwned && inspectorFolded());
 		if (frame->isVisible() != shown) {
 			frame->setVisible(shown);
 			changed = true;
@@ -918,6 +1009,9 @@ bool ParallelRackExpanded::showForMode() {
 bool ParallelRackExpanded::updateContent() {
 	const size_t before = rails_.size();
 	const size_t missingBefore = missingRoles();
+	if (macrosFolded() != foldsAppliedMacros_ || inspectorFolded() != foldsAppliedInspector_) {
+		applyFolds(); // a load, or another editor, moved a fold
+	}
 	const bool shown = showForMode();
 	// THE PANE'S CONTENT FIRST DROPPED IF ITS CHAIN WENT, then the rails follow, then the pane is bound again to what is in front.
 	bool moved = validatePane();

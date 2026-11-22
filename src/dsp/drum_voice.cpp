@@ -1362,7 +1362,7 @@ float Hit::renderSweep() {
 	float low = 0.0f;
 	sweepFilter_.step(x, band, low);
 	sweepShape_ += sweepShapeStep_;
-	return (sweepLowMix_ * low + sweepBandMix_ * band) * sweepGain_ * sweepShape_ * level_;
+	return std::tanh((sweepLowMix_ * low + sweepBandMix_ * band) * sweepGain_ * sweepShape_) * level_; // a soft ceiling: a resonant sweep cannot pass full scale
 }
 
 void Hit::renderWater(float& left, float& right) {
@@ -1439,8 +1439,9 @@ void Hit::renderWater(float& left, float& right) {
 		l += flowGain_ * swell * flowBp_.bandPass(env * noise());
 		r += flowGain_ * swell * flowBpR_.bandPass(env * waterNoiseR_.next());
 	}
-	left = l * 0.6f * level_;
-	right = r * 0.6f * level_;
+	// A SOFT CEILING on the sum of bed, splashes and drops (up to eight chirps pile up at a high Rate): never past full scale.
+	left = std::tanh(l * 0.6f) * level_;
+	right = std::tanh(r * 0.6f) * level_;
 }
 
 float Hit::renderFriction() {
@@ -1472,7 +1473,7 @@ float Hit::renderFriction() {
 		const auto u = static_cast<size_t>(i);
 		y += fresGain_[u] * fresQGain_[u] * fres_[u].bandPass(fricLp_);
 	}
-	return (y * kFrictionGain + 0.25f * fricLp_) * level_;
+	return std::tanh(y * kFrictionGain + 0.25f * fricLp_) * level_; // a soft ceiling: unity when small, never past full scale
 }
 
 float Hit::renderParticle() {
@@ -1499,7 +1500,8 @@ float Hit::renderParticle() {
 	// THE NOISE FIELD is the raw excitation's share, the rattle itself, against the resonances' pitched ring.
 	const float w = laws_.noise;
 	const float mixed = (1.0f - 0.7f * w) * y * kParticleGain + w * 2.0f * partLp_;
-	return mixed * level_;
+	// A SOFT CEILING: unity at small signals, and never past full scale however many grains pile up.
+	return std::tanh(mixed) * level_;
 }
 
 float Hit::renderKick() {

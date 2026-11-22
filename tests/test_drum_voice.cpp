@@ -1469,6 +1469,33 @@ void dumpWav(const char* name, const std::vector<float>& x) {
 	}
 }
 
+/// The same in stereo (two channels), for the kinds that write both ears.
+void dumpWavStereo(const char* name, const std::vector<float>& l, const std::vector<float>& r) {
+	const char* dir = std::getenv("FEATHERS_DRUM_WAV_DIR");
+	if (dir == nullptr || *dir == '\0') {
+		return;
+	}
+	std::vector<uint8_t> b;
+	const auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	const auto put16 = [&](uint16_t v) { for (int i = 0; i < 2; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	const auto sample = [](float v) { return static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))); };
+	for (const char c : std::string("RIFF")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(36 + l.size() * 4));
+	for (const char c : std::string("WAVEfmt ")) b.push_back(static_cast<uint8_t>(c));
+	put32(16); put16(1); put16(2); put32(48000); put32(192000); put16(4); put16(16);
+	for (const char c : std::string("data")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(l.size() * 4));
+	for (size_t i = 0; i < l.size(); ++i) {
+		put16(sample(l[i]));
+		put16(sample(r[i]));
+	}
+	std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+	if (f != nullptr) {
+		std::fwrite(b.data(), 1, b.size(), f);
+		std::fclose(f);
+	}
+}
+
 float peakAbs(const std::vector<float>& v) {
 	float p = 0.0f;
 	for (const float x : v) {
@@ -1859,7 +1886,7 @@ TEST_CASE("Water: One-shot ends in exact silence and idle, Gate holds until rele
 	const Stereo x = renderBoth(a.hit, static_cast<size_t>(8.0 * kSr));
 	CHECK(a.hit.idle());
 	CHECK(peakAbs(x.l) > 0.05f);
-	dumpWav("water-oneshot.wav", x.l);
+	dumpWavStereo("water-oneshot.wav", x.l, x.r);
 	Rig g;
 	g.hit.strike(Kind::Water, waterLaws(kPlayGate, 12.0), 21, 1.0f);
 	Stereo held = renderBoth(g.hit, static_cast<size_t>(2.0 * kSr));
@@ -1867,13 +1894,14 @@ TEST_CASE("Water: One-shot ends in exact silence and idle, Gate holds until rele
 	g.hit.release(0.2);
 	const Stereo tail = renderBoth(g.hit, static_cast<size_t>(5.0 * kSr));
 	held.l.insert(held.l.end(), tail.l.begin(), tail.l.end());
+	held.r.insert(held.r.end(), tail.r.begin(), tail.r.end());
 	CHECK(g.hit.idle());
-	dumpWav("water-gate.wav", held.l);
+	dumpWavStereo("water-gate.wav", held.l, held.r);
 	Rig d;
 	d.hit.strike(Kind::Water, waterLaws(kPlayDrone, 12.0, 0.6, 0.15), 21, 1.0f);
 	const Stereo dr = renderBoth(d.hit, static_cast<size_t>(4.0 * kSr));
 	CHECK_FALSE(d.hit.idle());
-	dumpWav("water-drone.wav", dr.l);
+	dumpWavStereo("water-drone.wav", dr.l, dr.r);
 	Rig b1;
 	Rig b2;
 	b1.hit.strike(Kind::Water, waterLaws(kPlayDrone, 30.0, 0.5, 0.3), 7, 1.0f);
@@ -1886,7 +1914,8 @@ TEST_CASE("Water: One-shot ends in exact silence and idle, Gate holds until rele
 	const auto texture = [&](const char* name, Laws laws) {
 		Rig t;
 		t.hit.strike(Kind::Water, laws, 17, 1.0f);
-		dumpWav(name, renderBoth(t.hit, static_cast<size_t>(4.0 * kSr)).l);
+		const Stereo o = renderBoth(t.hit, static_cast<size_t>(4.0 * kSr));
+		dumpWavStereo(name, o.l, o.r);
 	};
 	texture("water-drip.wav", waterLaws(kPlayDrone, 0.7, 0.8, 0.0, 0.1, 1400.0));
 	texture("water-brook.wav", waterLaws(kPlayDrone, 55.0, 0.7, 0.35, 0.15, 700.0));
@@ -2043,4 +2072,94 @@ TEST_CASE("Sweep: the same seed is the same sweep, and renders for listening: a 
 	Rig dr;
 	dr.hit.strike(Kind::Sweep, sweepLaws(kPlayDrone, 0, 1.0, 5.0), 9, 1.0f);
 	dumpWav("sweep-drone.wav", render(dr.hit, static_cast<size_t>(4.0 * kSr)));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// HEADROOM: the new kinds never exceed full scale, whatever their controls say                        //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("headroom: no new kind exceeds full scale at the extremes of its controls, at the level a hit starts at") {
+	struct Case {
+		Kind kind;
+		const char* what;
+		Laws laws;
+	};
+	std::vector<Case> cases;
+	for (const int play : { kPlayOneShot, kPlayDrone }) {
+		for (const double density : { 0.25, 90.0, 2000.0 }) {
+			for (const double grain : { 1.0e-4, 0.004, 0.5 }) {
+				for (const float noise : { 0.0f, 1.0f }) {
+					for (const float metal : { 0.0f, 1.0f }) {
+						Laws l = baseLaws(3000.0, 0.6);
+						l.play = play;
+						l.density = density;
+						l.grainT60 = grain;
+						l.noise = noise;
+						l.metal = metal;
+						l.snap = 1.0f;
+						l.tone = 1.0f;
+						cases.push_back({ Kind::Particle, "particle", l });
+					}
+				}
+			}
+		}
+		for (const double speed : { 0.0, 0.5, 1.0 }) {
+			for (const double pressure : { 0.2, 1.0 }) {
+				for (const float noise : { 0.0f, 1.0f }) {
+					for (const double hz : { 60.0, 600.0, 9000.0 }) {
+						Laws l = baseLaws(hz, 1.0);
+						l.play = play;
+						l.speed = speed;
+						l.pressure = pressure;
+						l.noise = noise;
+						l.tone = 1.0f;
+						l.snap = 1.0f;
+						l.metal = 1.0f;
+						cases.push_back({ Kind::Friction, "friction", l });
+					}
+				}
+			}
+		}
+		for (const double rate : { 0.0625, 12.0, 1000.0 }) {
+			for (const double flow : { 0.0, 1.0 }) {
+				for (const double splash : { 0.0, 1.0 }) {
+					for (const double rise : { 0.0, 1.0 }) {
+						for (const float metal : { 0.0f, 1.0f }) {
+							Laws l = waterLaws(play, rate, rise, flow, splash, 900.0);
+							l.metal = metal;
+							l.tone = 1.0f;
+							cases.push_back({ Kind::Water, "water", l });
+						}
+					}
+				}
+			}
+		}
+		for (const int direction : { 0, 1 }) {
+			for (const double range : { 0.25, 9.0 }) {
+				for (const float snap : { 0.0f, 1.0f }) {
+					for (const float noise : { 0.0f, 1.0f }) {
+						for (const float tone : { 0.0f, 1.0f }) {
+							Laws l = sweepLaws(play, direction, 0.4, range, 100.0);
+							l.snap = snap;
+							l.noise = noise;
+							l.tone = tone;
+							l.sweepOctaves = 1.0f;
+							cases.push_back({ Kind::Sweep, "sweep", l });
+						}
+					}
+				}
+			}
+		}
+	}
+	double worst = 0.0;
+	for (const Case& c : cases) {
+		Rig r;
+		r.hit.strike(c.kind, c.laws, 5, 1.0f);
+		const Stereo o = renderBoth(r.hit, 48000 * 2, 512);
+		const double peak = std::max(static_cast<double>(peakAbs(o.l)), static_cast<double>(peakAbs(o.r)));
+		worst = std::max(worst, peak);
+		INFO(c.what);
+		CHECK(peak <= 1.0);
+	}
+	CHECK(worst > 0.2); // non-vacuity: they sound
 }

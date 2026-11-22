@@ -36,6 +36,8 @@
 #include "rack/rack_engine.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -2200,5 +2202,60 @@ TEST_CASE("default level: a default drone of every kind that can hold one reads 
 		CHECK(db(std::sqrt(sum / static_cast<double>(n))) > -26.0);
 		CHECK(db(std::sqrt(sum / static_cast<double>(n))) < -12.0);
 		CHECK(peak <= 1.0);
+	}
+}
+
+TEST_CASE("listening renders: every kind at its defaults, in each mode it offers, in stereo (only with FEATHERS_DRUM_WAV_DIR set)") {
+	const char* dir = std::getenv("FEATHERS_DRUM_WAV_DIR");
+	if (dir == nullptr || *dir == '\0') {
+		return;
+	}
+	const auto write = [&](const std::string& name, const std::vector<float>& l, const std::vector<float>& r) {
+		std::vector<uint8_t> b;
+		const auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+		const auto put16 = [&](uint16_t v) { for (int i = 0; i < 2; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+		const auto sample = [](float v) { return static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))); };
+		for (const char c : std::string("RIFF")) b.push_back(static_cast<uint8_t>(c));
+		put32(static_cast<uint32_t>(36 + l.size() * 4));
+		for (const char c : std::string("WAVEfmt ")) b.push_back(static_cast<uint8_t>(c));
+		put32(16); put16(1); put16(2); put32(48000); put32(192000); put16(4); put16(16);
+		for (const char c : std::string("data")) b.push_back(static_cast<uint8_t>(c));
+		put32(static_cast<uint32_t>(l.size() * 4));
+		for (size_t i = 0; i < l.size(); ++i) {
+			put16(sample(l[i]));
+			put16(sample(r[i]));
+		}
+		std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+		REQUIRE(f != nullptr);
+		std::fwrite(b.data(), 1, b.size(), f);
+		std::fclose(f);
+	};
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		const auto kind = static_cast<drum::Kind>(k);
+		for (const int mode : { 0, 1, 2 }) {
+			if (mode == 2 && !drum::kindSustains(kind)) {
+				continue;
+			}
+			Dev d;
+			d.row = defaultRow();
+			d.row[at(Param::Kind)] = static_cast<float>(k);
+			d.row[at(Param::Trigger)] = static_cast<float>(mode);
+			std::vector<float> l;
+			std::vector<float> r;
+			const int blocks = 4 * 48000 / 512;
+			for (int b = 0; b < blocks; ++b) {
+				std::vector<NoteEvent> ev;
+				if (mode != 2 && b == 0) {
+					ev.push_back(on(36, 0));
+				}
+				if (mode == 1 && b == blocks / 2) {
+					ev.push_back(off(36, 0));
+				}
+				const Out o = run(d, ev, 512);
+				l.insert(l.end(), o.l.begin(), o.l.end());
+				r.insert(r.end(), o.r.begin(), o.r.end());
+			}
+			write(std::string(drum::kKindNames[k]) + (mode == 0 ? "-oneshot" : mode == 1 ? "-gate" : "-drone") + ".wav", l, r);
+		}
 	}
 }

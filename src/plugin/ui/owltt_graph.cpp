@@ -32,6 +32,11 @@
 
 namespace feathers::ui {
 
+uint32_t OwlttGraph::grFillColour(float gr) {
+	// Reduction (negative) is the DOWN colour; boost (positive) is the UP colour. Both opaque, as the legend draws them.
+	return gr < 0.0f ? kValue : kAccent;
+}
+
 namespace {
 
 namespace owltt = feathers::fx::owltt;
@@ -1441,7 +1446,7 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			canvas.setColor(withAlpha(kSurface, 0.3f));
 			canvas.rectangle(grX0, xover.y(), grW, xover.height());
 
-			// GR meter fill — accent for reduction (down), muted for boost (up). **ONE HALF PER CHANNEL
+			// GR meter fill — the DOWN colour for reduction, the UP colour for boost, both opaque (`grFillColour`). **ONE HALF PER CHANNEL
 			// (backlog LQ)**: L | R, or M | S in M/S, each with its own gain since the channels came apart. At
 			// Link 100% in L/R the halves are the same reading, which is the truth about a linked band.
 			const std::array<float, 2> grs { region.gr, meters.grSecond[b] };
@@ -1451,11 +1456,11 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 				const float clampedGR = std::clamp(grs[c], -1.0f, 1.0f);
 				const float barH = clampedGR * (xover.height() * 0.5f);
 				if (barH < 0.0f) {
-					canvas.setColor(kAccent);
+					canvas.setColor(grFillColour(clampedGR));
 					canvas.rectangle(x, centerY, halfW, -barH);
 				}
 				else if (barH > 0.0f) {
-					canvas.setColor(withAlpha(kAccent, 0.4f));
+					canvas.setColor(grFillColour(clampedGR));
 					canvas.rectangle(x, centerY - barH, halfW, barH);
 				}
 			}

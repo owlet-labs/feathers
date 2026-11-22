@@ -338,14 +338,9 @@ private:
 			rotPhase_ += rotInc_;
 			rotPhase_ -= std::floor(rotPhase_);
 			over_.process(&left, &right, 1, [gain, shape, c](float& l, float& r) {
-				const float ul = l * gain;
-				const float ur = r * gain;
-				const float fl = shapeDrive(DriveMode::Lean, ul, shape, gain);
-				const float fln = shapeDrive(DriveMode::Lean, -ul, shape, gain);
-				const float fr = shapeDrive(DriveMode::Lean, ur, shape, gain);
-				const float frn = shapeDrive(DriveMode::Lean, -ur, shape, gain);
-				l = 0.5f * (fl - fln) + c * 0.5f * (fl + fln);
-				r = 0.5f * (fr - frn) - c * 0.5f * (fr + frn);
+				const std::pair<float, float> y = leanRotated(l * gain, r * gain, shape, gain, c);
+				l = y.first;
+				r = y.second;
 			});
 			left *= norm;
 			right *= norm;

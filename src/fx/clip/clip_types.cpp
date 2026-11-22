@@ -65,6 +65,8 @@ Settings stateOf(const Row& row, size_t fieldsPresent) {
 	s.bal = rangedOr(row, fieldsPresent, Param::Bal);
 	s.rate = rangedOr(row, fieldsPresent, Param::Rate);
 	s.angle = rangedOr(row, fieldsPresent, Param::Angle);
+	s.hard = rangedOr(row, fieldsPresent, Param::Hard);
+	s.bias = rangedOr(row, fieldsPresent, Param::Bias);
 	return s;
 }
 
@@ -87,6 +89,8 @@ Row rowOf(const Settings& s) {
 	row[static_cast<size_t>(Param::Bal)] = s.bal;
 	row[static_cast<size_t>(Param::Rate)] = s.rate;
 	row[static_cast<size_t>(Param::Angle)] = s.angle;
+	row[static_cast<size_t>(Param::Hard)] = s.hard;
+	row[static_cast<size_t>(Param::Bias)] = s.bias;
 	// THE FURNITURE'S DEFAULTS: the slot reads these, the device never does, and a zero Mix would be silence.
 	row[static_cast<size_t>(Param::Mix)] = 1.0f;
 	row[static_cast<size_t>(Param::WetGain)] = 0.5f;

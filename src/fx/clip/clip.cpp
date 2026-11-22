@@ -115,8 +115,11 @@ struct OpsClip {
 	/// zipper, and Depth is effectively a gain on the folded part (`foldCurve` mixes clamp and fold by it).
 	/// Advanced once per HOST sample (so the four oversampled frames of one sample share a value, and the
 	/// cut of a block changes nothing) and read by `shape` through `kneeNow` and its siblings.
-	dyn::LinearRamp knee, foldback, grit, depth, shapeRamp, dcRamp, balRamp;
-	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f, shapeNow = 0.0f, dcNow = 1.0f, balNow = 1.0f;
+	dyn::LinearRamp knee, foldback, grit, depth, shapeRamp, dcRamp, balRamp, hardRamp, biasRamp;
+	float kneeNow = 0.1f, foldbackNow = 0.5f, gritNow = 0.5f, depthNow = 1.0f, shapeNow = 0.0f, dcNow = 1.0f, balNow = 1.0f, hardNow = 0.0f, biasNow = 0.0f;
+	/// LEAN'S ROTATION: cos of the LFO's phase this host sample (1 with the rate off, when the rotating form is not run).
+	float leanCos = 1.0f;
+	bool leanRotating = false;
 	/// THE PAUNCH RECTIFIER MODES' LAST CLAMP: how often it acted, and over how many processed frames (a seam).
 	size_t dcClampActs = 0, dcFramesRun = 0;
 
@@ -201,6 +204,8 @@ struct OpsClip {
 		shapeRamp.set((state.mode >= static_cast<int>(Mode::PaunchS) && state.mode <= static_cast<int>(Mode::PaunchOH)) ? state.angle : state.shape);
 		dcRamp.set(state.dc);
 		balRamp.set(state.bal);
+		hardRamp.set(state.hard);
+		biasRamp.set(state.bias);
 	}
 
 	/// EVERYTHING WITH MEMORY FORGETS IT: "as if just switched on".
@@ -274,16 +279,26 @@ struct OpsClip {
 			const auto dm = erodeMode(state.mode);
 			const float lIn = l;
 			const float rIn = r;
-			l = eroder::shapeDrive(dm, l, shapeNow, 1.0f);
-			r = eroder::shapeDriveRight(dm, r, shapeNow, 1.0f);
+			const eroder::CurveExtras extras { hardNow, 0.0f, biasNow };
+			if (dm == eroder::DriveMode::Lean && leanRotating) {
+				const std::pair<float, float> y = eroder::leanRotated(l, r, shapeNow, 1.0f, leanCos);
+				l = y.first;
+				r = y.second;
+			}
+			else {
+				l = eroder::shapeDrive(dm, l, shapeNow, 1.0f, extras);
+				r = eroder::shapeDriveRight(dm, r, shapeNow, 1.0f, extras);
+			}
 			if (dm == eroder::DriveMode::Lean) {
 				eroder::widthTrim(trim, lIn, rIn, l, r, 1.0f); // law, then the trim, then the offset's removal
 			}
-			if (dm != eroder::DriveMode::Jag) {
+			if (dm != eroder::DriveMode::Jag || biasNow > 0.0f) {
+				// (a biased Jag's offset is taken out whole: its Bias is the only control that makes it, and the DC switch is not drawn for Jag)
+				const float amount = dm == eroder::DriveMode::Jag ? 1.0f : dcNow;
 				dcL += (l - dcL) * dcCoefficient;
 				dcR += (r - dcR) * dcCoefficient;
-				l -= dcL * dcNow; // (all of it at 100%, as this always did; the clamp below follows the removal for these two)
-				r -= dcR * dcNow;
+				l -= dcL * amount; // (all of it at 100%, as this always did; the clamp below follows the removal for these two)
+				r -= dcR * amount;
 			}
 			// **THE CEILING HOLDS**: Lean's lower half reaches several times -1, and the offset's removal moves the rest.
 			l = std::clamp(l, -1.0f, 1.0f);
@@ -489,6 +504,8 @@ struct OpsClip {
 			shapeNow = shapeRamp.next();
 			dcNow = dcRamp.next();
 			balNow = balRamp.next();
+			hardNow = hardRamp.next();
+			biasNow = biasRamp.next();
 			const float onsetU = onset(state.mode, kneeNow);
 			// THE SLEWS TAKE THEIR RATE FROM DRIVE, NOT A GAIN (as the Eroder's Drive knob does): the signal reaches the
 			// limiter as it came, over the ceiling.
@@ -507,6 +524,13 @@ struct OpsClip {
 					rotPhase -= std::floor(rotPhase);
 				}
 				paunchA = static_cast<float>(eroder::kPaunchAmountMax) * std::clamp((dDb + 24.0f) * (1.0f / 48.0f), 0.0f, 1.0f);
+			}
+			// LEAN'S LEAN SWAPS SIDES with the rotation LFO running (the same phase and rate as the Paunch modes read).
+			leanRotating = state.mode == static_cast<int>(Mode::Lean) && rotInc > 0.0;
+			if (leanRotating) {
+				leanCos = static_cast<float>(std::cos(2.0 * 3.141592653589793 * rotPhase));
+				rotPhase += rotInc;
+				rotPhase -= std::floor(rotPhase);
 			}
 			const float gain = (slewing || lawing) ? 1.0f / ceilingLin : driveLin / ceilingLin;
 			cleanScale = 1.0f / gain;

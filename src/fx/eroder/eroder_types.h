@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <utility>
 
 //--------------------------------------------------------------------------------------------------//
 // THE ERODER — the reference's, ported.                                                                 //
@@ -2412,9 +2413,20 @@ using HighpassSettings = fx::HighpassSettings;
 /// Every one is 0 at 0; all but Soft at Shape above 0 (whose dead zone is a share of the reference level, so it needs
 /// the gain) go straight through it. The Types that are not curves are the identity here.
 [[nodiscard]] float shapeDrive(DriveMode mode, float driven, float shape, float gain, const CurveExtras& extras = {}) noexcept;
+/// **LEAN WITH THE ROTATION LFO RUNNING** (`c = cos(2 pi phase)`), from the two driven inputs: a Lean side is its odd part plus or minus its even part (`f(u) = o + e`, the right is
+/// `-f(-u) = o - e`); the even part is scaled by `c`, left `o + c e`, right `o - c e`. Equal power on the two sides at every instant, no even content in the mono sum, and the lean
+/// runs left, none, right and back once a turn. At `c = 1` it is `shapeDrive` / `shapeDriveRight` (callers do not run it then, so Rate off is today's Lean to the bit).
+[[nodiscard]] inline std::pair<float, float> leanRotated(float drivenL, float drivenR, float shape, float gain, float c) noexcept;
 /// THE RIGHT CHANNEL'S CURVE: the left's, except in Lean, where it is the left's turned over (`-f(-u)`) — the same
 /// odd harmonics, the even ones in the other polarity.
 [[nodiscard]] float shapeDriveRight(DriveMode mode, float driven, float shape, float gain, const CurveExtras& extras = {}) noexcept;
+[[nodiscard]] inline std::pair<float, float> leanRotated(float drivenL, float drivenR, float shape, float gain, float c) noexcept {
+	const float fl = shapeDrive(DriveMode::Lean, drivenL, shape, gain);
+	const float fln = shapeDrive(DriveMode::Lean, -drivenL, shape, gain);
+	const float fr = shapeDrive(DriveMode::Lean, drivenR, shape, gain);
+	const float frn = shapeDrive(DriveMode::Lean, -drivenR, shape, gain);
+	return { 0.5f * (fl - fln) + c * 0.5f * (fl + fln), 0.5f * (fr - frn) - c * 0.5f * (fr + frn) };
+}
 /// **THE PAUNCH LAWS' SQUARE'S FIXED COEFFICIENT.** With the mid `m = P sin`, Paunch-S's `a |m|` has a 2nd harmonic of amplitude
 /// `a P 4 / (3 pi)` (the rectified sine's 2nd term) and Paunch-H's `kappa (a m)^2` one of `kappa (a P)^2 / 2` (the square is
 /// `(1 - cos 2wt) / 2`). Equal at full Amount (`a = 4`) at `P = kDriveReferencePeak`: `kappa (4 P)^2 / 2 = 4 P 4 / (3 pi)`, so

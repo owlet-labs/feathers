@@ -108,6 +108,8 @@ public:
 	[[nodiscard]] float yOfOutput(float output) const;
 	/// THE CEILING'S x ON THE POSITIVE SIDE, clamped to the plot (off-scale ceilings sit on the edge).
 	[[nodiscard]] float ceilingX() const;
+	/// THE HOLD OF ONE SIDE (+1 / -1): where the curve saturates there, as an input level at unity drive.
+	[[nodiscard]] float holdOfSide(float side) const;
 	/// Is the ceiling beyond the plotted input span (a low drive in 3579, below unity in Poly)?
 	[[nodiscard]] bool ceilingOffScale() const;
 	/// Does `local` grab the Drive handle — either ceiling line, or its diamond on the axis?

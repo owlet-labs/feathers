@@ -58,6 +58,11 @@ int32_t saturate22(int32_t v) noexcept {
 	constexpr int32_t lo = -hi - 1;
 	return v > hi ? hi : (v < lo ? lo : v);
 }
+/// THE LEVEL LAW AT ITS TARGET, to the smoother's own tolerance (the factor relatively, the holds absolutely).
+bool levelsClose(const PeakInfo& a, const PeakInfo& b) noexcept {
+	return std::abs(a.norm - b.norm) < kConvergenceEpsilon * b.norm && std::abs(a.holdPos - b.holdPos) < kConvergenceEpsilon
+	       && std::abs(a.holdNeg - b.holdNeg) < kConvergenceEpsilon;
+}
 /// `x << 1` on a q31, modular as the ARM's (and as C++20's).
 int32_t twice(int32_t v) noexcept {
 	return static_cast<int32_t>(static_cast<uint32_t>(v) << 1);
@@ -92,6 +97,9 @@ void SmoothShaper::prepare(double sampleRate) noexcept {
 void SmoothShaper::reset() noexcept {
 	block_ = Block {};
 	coefficientsPlaced_ = false;
+	level_[0] = level_[1] = PeakInfo {};
+	levelPlaced_ = false;
+	levelKey_[0] = levelKey_[1] = LevelKey {};
 	smoothedDriveQ_ = INT32_MIN;
 	driveGain_ = 1.0f;
 	driveGainPlaced_ = false;
@@ -174,6 +182,7 @@ void SmoothShaper::beginBlock() noexcept {
 	b.fmZone = b.zone >= 2 && b.zone <= 6;
 	weights_[0] = { smoothed_[0], smoothed_[1], smoothed_[2], smoothed_[3], smoothed_[4] };
 	weights_[1] = { smoothed_[0], smoothed_[5], smoothed_[6], smoothed_[7], smoothed_[8] };
+	applyLevel();
 	if (b.fmZone) {
 		weights_[0].updateQ31();
 		weights_[1].updateQ31();
@@ -232,7 +241,7 @@ void SmoothShaper::beginBlock() noexcept {
 	}
 	const float driveNorm = static_cast<float>(fc.drive) / kOneQ31F;
 	fbScale *= (1.0f - 0.1f * driveNorm);
-	b.fbAmount = saturatingQ31(twist.feedbackAmount * fbScale * kOneQ31F);
+	const float fbBase = twist.feedbackAmount * fbScale;
 
 	// THE DRIVE'S GLIDE: toward this block's target, per frame; a new voice starts where the last block's
 	// target was (`computeDriveGain(driveCtx.current)`), which is this block's target on the very first.
@@ -248,6 +257,58 @@ void SmoothShaper::beginBlock() noexcept {
 		driveGainPlaced_ = true;
 	}
 	smoothedDriveQ_ = fc.drive;
+
+	// THE LEVEL LAW OF THE TARGETS (the hold and the peak factor): found only when the weights or the gain moved (cached
+	// by value), for the gain the block is driven to.
+	b.levelTarget[0] = levelFor(0, b.targets, b.targetDriveGain);
+	b.levelTarget[1] = levelFor(1, b.targets, b.targetDriveGain);
+	if (!levelPlaced_) {
+		level_[0] = b.levelTarget[0];
+		level_[1] = b.levelTarget[1];
+		levelPlaced_ = true;
+	}
+	applyLevel();
+	for (int ch = 0; ch < 2; ++ch) {
+		b.converged = b.converged && levelsClose(level_[ch], b.levelTarget[ch]);
+	}
+	// **THE FEEDBACK TAP IS SCALED BY 1 / THE PEAK FACTOR**: the factor lifts every curve to 0 dBFS, which would raise the
+	// loop gain of Twist's feedback by the same amount; the tap gives it back, so the loop keeps the calibration the
+	// curves had before they were normalised.
+	const float meanNorm = 0.5f * (b.levelTarget[0].norm + b.levelTarget[1].norm);
+	b.fbAmount = saturatingQ31(fbBase / std::max(meanNorm, 1.0e-3f) * kOneQ31F);
+}
+
+PeakInfo SmoothShaper::levelFor(int channel, const CoefficientSet& t, float gain) noexcept {
+	// ONE CHANNEL'S WEIGHTS FROM THE TARGETS, as `beginBlock` lays them into `weights_`.
+	const size_t o = channel == 0 ? 1 : 5;
+	LevelKey key;
+	key.valid = true;
+	key.zone = block_.zone;
+	key.gain = std::max(gain, 1.0f); // below unity the level law does not move
+	key.c = { t[0], t[o], t[o + 1], t[o + 2], t[o + 3] };
+	const auto same = [](const LevelKey& a, const LevelKey& b) {
+		return a.valid && a.zone == b.zone && a.gain == b.gain && a.c == b.c;
+	};
+	if (same(levelKey_[channel], key)) {
+		return levelKey_[channel].info;
+	}
+	if (channel == 1 && same(levelKey_[0], key)) {
+		levelKey_[1] = levelKey_[0]; // the two sides read the same blend: one scan
+		return levelKey_[1].info;
+	}
+	Coefficients w { key.c[0], key.c[1], key.c[2], key.c[3], key.c[4] };
+	w.updateQ31();
+	key.info = peakInfoOf(key.zone, w, key.gain, sampleRate_);
+	levelKey_[channel] = key;
+	return key.info;
+}
+
+void SmoothShaper::applyLevel() noexcept {
+	for (int ch = 0; ch < 2; ++ch) {
+		weights_[ch].norm = level_[ch].norm;
+		weights_[ch].holdPos = level_[ch].holdPos;
+		weights_[ch].holdNeg = level_[ch].holdNeg;
+	}
 }
 
 void SmoothShaper::advanceCoefficients() noexcept {
@@ -258,6 +319,12 @@ void SmoothShaper::advanceCoefficients() noexcept {
 	}
 	weights_[0] = { smoothed_[0], smoothed_[1], smoothed_[2], smoothed_[3], smoothed_[4] };
 	weights_[1] = { smoothed_[0], smoothed_[5], smoothed_[6], smoothed_[7], smoothed_[8] };
+	for (int ch = 0; ch < 2; ++ch) {
+		level_[ch].norm += (block_.levelTarget[ch].norm - level_[ch].norm) * stridedAlpha_;
+		level_[ch].holdPos += (block_.levelTarget[ch].holdPos - level_[ch].holdPos) * stridedAlpha_;
+		level_[ch].holdNeg += (block_.levelTarget[ch].holdNeg - level_[ch].holdNeg) * stridedAlpha_;
+	}
+	applyLevel();
 	if (block_.fmZone) {
 		weights_[0].updateQ31();
 		weights_[1].updateQ31();
@@ -309,10 +376,12 @@ void SmoothShaper::renderFrames(float* left, float* right, int frames) noexcept 
 		}
 
 		int32_t out[2] = {};
+		bool wetSettled = true; // the wet highpass's output is exactly zero on both sides
 		for (int ch = 0; ch < 2; ++ch) {
 			// THE 100 Hz HIGHPASS ON THE WET ONLY: a lowpass, subtracted.
 			dcState_[ch] = wadd(dcState_[ch], twice(mulhi(wsub(shaped[ch], dcState_[ch]), hpfAlphaQ_)));
 			const int32_t hpfWet = wsub(shaped[ch], dcState_[ch]);
+			wetSettled = wetSettled && hpfWet == 0;
 			// THE FEEDBACK TAP'S ONE-POLE: at 44.1 kHz the firmware's own `(fb + wet) >> 1`, wrap and all;
 			// elsewhere the same pole restated for the rate.
 			if (fbHalf) {
@@ -367,7 +436,10 @@ void SmoothShaper::renderFrames(float* left, float* right, int frames) noexcept 
 				inBand = inBand && std::abs(static_cast<int64_t>(dcState_[ch])) <= deadBand_
 				         && std::abs(static_cast<int64_t>(fbState_[ch])) <= deadBand_;
 			}
-			if (inBand) {
+			// ... OR THE WET IS ALREADY EXACTLY ZERO: the highpass has settled on the shaper's own constant (a feedback tap
+			// parked at -1 by its floor and fed back through a high gain makes one, larger than the dead band). The output is
+			// zero already, so clearing the states changes nothing audible and lets the loop go.
+			if (inBand || wetSettled) {
 				dcState_[0] = dcState_[1] = 0;
 				fbState_[0] = fbState_[1] = 0;
 				hp_.reset();

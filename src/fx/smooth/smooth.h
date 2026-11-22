@@ -89,6 +89,12 @@ public:
 	void adoptCoefficientsForTest(const CoefficientSet& c) noexcept;
 	/// The drive gain the next frame will use; negative before the first block.
 	[[nodiscard]] float driveGainForTest() const noexcept { return driveGainPlaced_ ? driveGain_ : -1.0f; }
+	/// THE LEVEL LAW IN USE per channel (smoothed with the coefficients), and the one the targets ask for.
+	[[nodiscard]] float peakNormForTest(int channel) const noexcept { return level_[channel & 1].norm; }
+	[[nodiscard]] PeakInfo levelForTest(int channel) const noexcept { return level_[channel & 1]; }
+	[[nodiscard]] PeakInfo levelTargetForTest(int channel) const noexcept { return block_.levelTarget[channel & 1]; }
+	/// THE FEEDBACK AMOUNT the block runs (q31), after the 1 / norm scaling.
+	[[nodiscard]] int32_t feedbackAmountForTest() const noexcept { return block_.fbAmount; }
 	[[nodiscard]] float lfoPhaseForTest() const noexcept { return lfoPhase_; }
 	[[nodiscard]] int32_t feedbackStateForTest(int channel) const noexcept { return fbState_[channel & 1]; }
 	[[nodiscard]] int32_t dcStateForTest(int channel) const noexcept { return dcState_[channel & 1]; }
@@ -145,6 +151,7 @@ private:
 		bool fmZone = false;
 		/// c1 shared, then c3..c9 left, then c3..c9 right — the smoother's targets.
 		CoefficientSet targets {};
+		PeakInfo levelTarget[2] {};
 		int framesLeft = 0;
 		int stride = 0;
 	};
@@ -155,6 +162,20 @@ private:
 	CoefficientSet smoothed_ { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 	bool coefficientsPlaced_ = false;
 	Coefficients weights_[2] {};
+	/// THE LEVEL LAW per channel (`peakInfoOf`: the hold and the peak factor): smoothed like the coefficients, found only when the
+	/// weights or the gain it depends on change - keyed on their VALUES (zone, the five numbers, the gain), never an address.
+	PeakInfo level_[2] {};
+	bool levelPlaced_ = false;
+	struct LevelKey {
+		bool valid = false;
+		int zone = 0;
+		float gain = 1.0f;
+		std::array<float, 5> c {};
+		PeakInfo info {};
+	};
+	LevelKey levelKey_[2] {};
+	[[nodiscard]] PeakInfo levelFor(int channel, const CoefficientSet& targets, float gain) noexcept;
+	void applyLevel() noexcept;
 
 	/// `params->smoothedDrive`: the q31 drive the last block asked for, INT32_MIN before the first.
 	int32_t smoothedDriveQ_ = INT32_MIN;

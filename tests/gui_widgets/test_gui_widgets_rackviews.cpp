@@ -4433,9 +4433,11 @@ TEST_CASE("rack window folds: the macros header folds only the macros, the inspe
 	CHECK(w.inspectorShownForTest());
 	CHECK_FALSE(w.macrosFolded());
 	CHECK_FALSE(w.inspectorFolded());
+	// STACKED, EACH DIRECTLY OVER ITS OWN HALF: the inspector's over the mode row, the macros' between Mix and Gain and the first macro row.
 	CHECK(w.inspectorHeaderForTest().height() > 0);
-	CHECK(w.inspectorHeaderForTest().bounds().right() <= w.macrosHeaderForTest().bounds().x());
-	CHECK(w.macrosHeaderForTest().bounds().bottom() <= w.modeBoxBoundsForTest().y());
+	CHECK(w.inspectorHeaderForTest().bounds().bottom() <= w.modeBoxBoundsForTest().y());
+	CHECK(w.mixBoundsForTest().bottom() <= w.macrosHeaderForTest().bounds().y());
+	CHECK(w.macrosHeaderForTest().bounds().bottom() <= w.macroBoundsForTest(0).y());
 	const visage::Bounds mode0 = w.modeBoxBoundsForTest();
 	const visage::Bounds mix0 = w.mixBoundsForTest();
 	const visage::Bounds macro0 = w.macroBoundsForTest(0);

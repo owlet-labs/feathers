@@ -5218,7 +5218,7 @@ TEST_CASE("list view rename: in a real window a right press on a row's menu and 
 	}
 }
 
-TEST_CASE("column folds: in a real window, a real press on the macros header folds only the macros and one on the inspector header folds only the inspector, in a Chain's window") {
+TEST_CASE("column folds: in a real window a real press on the macros header folds only the macros and one on the inspector header folds only the inspector in a Chain's window") {
 	EditorFixture f;
 	feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
 	bodies.prepare(48000.0, 4096);

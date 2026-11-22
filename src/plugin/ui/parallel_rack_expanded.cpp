@@ -381,8 +381,9 @@ bool ParallelRackExpanded::syncPane() {
 float ParallelRackExpanded::dividerY() const { return kPad + kModeRow + kCellHeight + kPad * 0.5f; }
 
 float ParallelRackExpanded::inspectorShift() const {
-	// THE INSPECTOR FOLDED, THE MACROS RISE TO THE COLUMN'S TOP PAD: what stood above them (the mode row, the view rows and Mix and Gain) is gone.
-	return inspectorFolded() ? dividerY() + kPad * 0.5f - kPad : 0.0f;
+	// THE INSPECTOR FOLDED, THE MACROS RISE UNDER ITS HEADER AND THEIR OWN: what stood above them (the mode row, the view rows and Mix and Gain)
+	// is gone, so the first macro row stands two header rows down (the inspector's, in the top pad, and the macros').
+	return inspectorFolded() ? dividerY() + kPad * 0.5f - 2.0f * kPad : 0.0f;
 }
 
 bool ParallelRackExpanded::macrosFolded() const { return host_.fieldAt(id_, static_cast<size_t>(pr::Param::MacrosFold)) >= 0.5f; }
@@ -515,7 +516,10 @@ bool ParallelRackExpanded::addShown() const {
 
 visage::Bounds ParallelRackExpanded::addBounds() const { return addShown() ? addSlotBounds() : visage::Bounds {}; }
 
-visage::Bounds ParallelRackExpanded::dividerBounds() const { return inspectorFolded() ? visage::Bounds {} : visage::Bounds { kPad, dividerY(), kColumnWidth, 1.0f }; }
+// THE H-LINE IS THE TOP EDGE OF THE GAP between Mix and Gain and the macros, and the macros' header fills the rest of it.
+visage::Bounds ParallelRackExpanded::dividerBounds() const {
+	return inspectorFolded() ? visage::Bounds {} : visage::Bounds { kPad, dividerY() - kPad * 0.5f, kColumnWidth, 1.0f };
+}
 
 visage::PopupMenu ParallelRackExpanded::chainPickerMenu(bool playing) {
 	DeviceControl& control = playing ? *playingControl_ : *viewedControl_;
@@ -545,9 +549,14 @@ visage::PopupMenu ParallelRackExpanded::chainPickerMenu(bool playing) {
 void ParallelRackExpanded::layOut() {
 	const float cell = kColumnWidth / static_cast<float>(kPerRow);
 	// THE FOLD HEADERS, in the column's top pad: the inspector's, then the macros'. Re-set unconditionally, as every bound here is.
-	constexpr float kInspectorHeaderWidth = 84.0f;
-	inspectorHeader_->setBounds(kPad, 0.0f, kInspectorHeaderWidth, kPad);
-	macrosHeader_->setBounds(kPad + kInspectorHeaderWidth, 0.0f, kColumnWidth - kInspectorHeaderWidth, kPad);
+	// STACKED, EACH DIRECTLY OVER ITS HALF: the inspector's in the top pad over the mode row, the macros' in the gap over the first macro row
+	// (under the H-line when the inspector is open, right under the inspector's header when it is folded).
+	inspectorHeader_->setBounds(kPad, 0.0f, kColumnWidth, kPad);
+	{
+		const float firstMacroRow = dividerY() + kPad * 0.5f - inspectorShift();
+		const float headerTop = inspectorFolded() ? firstMacroRow - kPad : firstMacroRow - kPad + 1.0f;
+		macrosHeader_->setBounds(kPad, headerTop, kColumnWidth, inspectorFolded() ? kPad : kPad - 1.0f);
+	}
 	// THE MODE ROW: the dropdown at the top of the left cell, the position's knob in the right one.
 	modeBox_->setBounds(kPad, kPad, cell, ValueBox::kHeight);
 	position_->setBounds(kPad + cell, kPad, cell, kCellHeight);

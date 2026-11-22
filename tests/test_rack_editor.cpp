@@ -5649,8 +5649,8 @@ TEST_CASE("OC: the Chain window seats Mix and Gain over an H-line over the macro
 	ui::RouteList& list = editor->routeListForTest();
 	CHECK(list.y() >= editor->macroBoundsForTest(7).bottom());
 	CHECK(list.bottom() - top <= size.y);
-	// TWO ROWS AND ITS HEADING (it was three before the column carried the fold headers' row, which the fixed height pays for)
-	CHECK(list.height() >= ui::RouteList::kHeadingHeight + 2.0f * ui::RouteList::kRowHeight);
+	// ONE ROW AND ITS HEADING (it was three before the column carried the two fold headers, which the fixed height pays for; the list scrolls)
+	CHECK(list.height() >= ui::RouteList::kHeadingHeight + ui::RouteList::kRowHeight);
 	CHECK(editor->macroBoundsForTest(7).bottom() - top + 12.0f
 	      == doctest::Approx(rack::RackEditor::columnNeeded(true, false) - 4.0f).epsilon(0.02));
 	CHECK(editor->cardBoundsForTest(inner).x() >= rack::RackEditor::kLaneLeft);
@@ -6956,13 +6956,15 @@ TEST_CASE("column folds: the macros header folds the macros and nothing else, th
 	CHECK(open.routes);
 	CHECK_FALSE(e.macrosFolded());
 	CHECK_FALSE(e.inspectorFolded());
-	// THE HEADERS ARE TWO FRAMES, side by side in one row, clear of the strip's corner toggle.
+	// THE HEADERS ARE STACKED, EACH DIRECTLY OVER ITS HALF: the inspector's over Mix and Gain, the macros' over the macros.
 	const visage::Bounds hm = e.macrosHeaderForTest().bounds();
 	const visage::Bounds hi = e.inspectorHeaderForTest().bounds();
-	CHECK(hi.right() <= hm.x());
-	CHECK(hm.right() <= rack::RackEditor::kLaneLeft - 6.0f - rack::RackEditor::kMacrosToggleRoom + 0.5f);
-	CHECK(hi.y() == hm.y());
 	CHECK(hi.height() == rack::RackEditor::kFoldRow);
+	CHECK(hm.height() == rack::RackEditor::kFoldRow);
+	CHECK(hi.bottom() <= open.firstLevel.y());
+	CHECK(open.firstLevel.bottom() <= hm.y());
+	CHECK(hm.bottom() <= open.firstMacro.y());
+	CHECK(hm.right() <= rack::RackEditor::kLaneLeft - 6.0f - rack::RackEditor::kMacrosToggleRoom + 0.5f);
 	// A PRESS ON THE MACROS HEADER: the macros go, Mix and Gain and the route list stay exactly where they were.
 	e.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
 	CHECK(e.macrosFolded());

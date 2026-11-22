@@ -261,8 +261,8 @@ public:
 	bool setInspectorFolded(bool folded);
 	[[nodiscard]] ui::FoldHeader& macrosHeaderForTest() const { return *macrosHeader_; }
 	[[nodiscard]] ui::FoldHeader& inspectorHeaderForTest() const { return *inspectorHeader_; }
-	/// The fold headers' row (both share it), and the gap under it.
-	static constexpr float kFoldRow = 14.0f;
+	/// A fold header's row, and the gap under it (the inspector's and the macros' are stacked, each over its own half).
+	static constexpr float kFoldRow = 12.0f;
 	static constexpr float kFoldGap = 2.0f;
 	/// HOW TALL THE COLUMN IS AT LEAST, for a window with or without the chain's Mix and Gain and the settings door —
 	/// what the default height has to clear. `columnNeeded` is the one arithmetic the layout and the cases both ask. The ROUTES list takes what is left under it.

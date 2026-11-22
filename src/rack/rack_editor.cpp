@@ -2281,7 +2281,7 @@ visage::Frame* RackEditor::columnBackdropFrameForTest() const noexcept { return 
 float RackEditor::columnNeeded(bool levels, bool door) noexcept {
 	// THE COLUMN'S HEIGHT, as `layOutColumn` stacks it: the pad, the door, the chain's Mix and Gain and the rule under
 	// them, four macro rows (knob and arm), the pad. With neither door nor Mix/Gain, the Macros toggle's own row first (QN).
-	float y = kPad + kFoldRow + kFoldGap; // the fold headers' row
+	float y = kPad + 2.0f * (kFoldRow + kFoldGap); // the two fold headers, stacked, each over its half
 	if (door) {
 		y += ui::Knob::kHeight * 0.5f + kColumnGap;
 	}
@@ -2341,12 +2341,10 @@ float RackEditor::layOutColumn(float top) {
 	if (columnBackdrop_ != nullptr) {
 		columnBackdrop_->setRule({});
 	}
-	// THE TWO FOLD HEADERS SHARE ONE ROW (the column's height is fixed, and the route list takes what is left): the INSPECTOR's at the
-	// left, the MACROS' beside it. Each folds its own half below: the inspector's is Mix and Gain, the rule under them and the route
-	// list; the macros' is the eight macros and their arms.
-	constexpr float kInspectorHeaderWidth = 92.0f;
-	inspectorHeader_->setBounds(x0, y, kInspectorHeaderWidth, kFoldRow);
-	macrosHeader_->setBounds(x0 + kInspectorHeaderWidth, y, headerWidth - kInspectorHeaderWidth, kFoldRow);
+	// EACH HALF HAS ITS HEADER DIRECTLY OVER IT, stacked: INSPECTOR, then Mix and Gain and the rule under them; MACROS, then the eight
+	// macros. The route list (the inspector's too, and the only part of the column that takes what is left) stays at the column's foot and
+	// folds with the INSPECTOR header above. The headers' width leaves the strip's corner toggle its room.
+	inspectorHeader_->setBounds(x0, y, headerWidth, kFoldRow);
 	y += kFoldRow + kFoldGap;
 	if (!outerLevelKnobs_.empty() && !engine_.inspectorCollapsed()) {
 		for (size_t i = 0; i < outerLevelKnobs_.size(); ++i) {
@@ -2359,6 +2357,8 @@ float RackEditor::layOutColumn(float top) {
 		}
 		y += kRuleHeight + kColumnGap;
 	}
+	macrosHeader_->setBounds(x0, y, headerWidth, kFoldRow);
+	y += kFoldRow + kFoldGap;
 	if (engine_.macrosCollapsed()) {
 		return y;
 	}

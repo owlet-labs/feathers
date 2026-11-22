@@ -92,6 +92,8 @@ void SmoothShaper::prepare(double sampleRate) noexcept {
 void SmoothShaper::reset() noexcept {
 	block_ = Block {};
 	coefficientsPlaced_ = false;
+	norm_[0] = norm_[1] = 1.0f;
+	normKey_[0] = normKey_[1] = NormKey {};
 	smoothedDriveQ_ = INT32_MIN;
 	driveGain_ = 1.0f;
 	driveGainPlaced_ = false;
@@ -165,15 +167,22 @@ void SmoothShaper::beginBlock() noexcept {
 	// together when it goes negative. The reference still has the cache, so the comparisons are exact everywhere
 	// but the stereo passages with Width live, where the difference is bounded (`test_fx_smooth.cpp`).
 	b.targets = targetsOf(b.zone, b.posInZone, twist, stereoMod);
+	// THE PEAK NORMALISATION OF THE TARGETS: found only when the weights moved (cached by value).
+	b.normTarget[0] = normFor(0, b.targets);
+	b.normTarget[1] = normFor(1, b.targets);
 
 	// ONE SMOOTHER PER INSTANCE, PLACED AT ITS TARGETS ON ITS FIRST BLOCK — the departure the header states.
 	if (!coefficientsPlaced_) {
 		smoothed_ = b.targets;
+		norm_[0] = b.normTarget[0];
+		norm_[1] = b.normTarget[1];
 		coefficientsPlaced_ = true;
 	}
 	b.fmZone = b.zone >= 2 && b.zone <= 6;
 	weights_[0] = { smoothed_[0], smoothed_[1], smoothed_[2], smoothed_[3], smoothed_[4] };
 	weights_[1] = { smoothed_[0], smoothed_[5], smoothed_[6], smoothed_[7], smoothed_[8] };
+	weights_[0].norm = norm_[0];
+	weights_[1].norm = norm_[1];
 	if (b.fmZone) {
 		weights_[0].updateQ31();
 		weights_[1].updateQ31();
@@ -182,6 +191,9 @@ void SmoothShaper::beginBlock() noexcept {
 	b.converged = true;
 	for (size_t k = 0; k < smoothed_.size(); ++k) {
 		b.converged = b.converged && std::abs(smoothed_[k] - b.targets[k]) < kConvergenceEpsilon;
+	}
+	for (int ch = 0; ch < 2; ++ch) {
+		b.converged = b.converged && std::abs(norm_[ch] - b.normTarget[ch]) < kConvergenceEpsilon * b.normTarget[ch];
 	}
 
 	// THE STEREO LFO, at buffer rate: its value for the block, then the phase moved on by a block.
@@ -250,6 +262,28 @@ void SmoothShaper::beginBlock() noexcept {
 	smoothedDriveQ_ = fc.drive;
 }
 
+float SmoothShaper::normFor(int channel, const CoefficientSet& t) noexcept {
+	// ONE CHANNEL'S WEIGHTS FROM THE TARGETS, as `beginBlock` lays them into `weights_`.
+	const size_t o = channel == 0 ? 1 : 5;
+	NormKey key;
+	key.valid = true;
+	key.zone = block_.zone;
+	key.c = { t[0], t[o], t[o + 1], t[o + 2], t[o + 3] };
+	const auto same = [](const NormKey& a, const NormKey& b) { return a.valid && a.zone == b.zone && a.c == b.c; };
+	if (same(normKey_[channel], key)) {
+		return normKey_[channel].norm;
+	}
+	if (channel == 1 && same(normKey_[0], key)) {
+		normKey_[1] = normKey_[0]; // the two sides read the same blend: one scan
+		return normKey_[1].norm;
+	}
+	Coefficients w { key.c[0], key.c[1], key.c[2], key.c[3], key.c[4] };
+	w.updateQ31();
+	key.norm = peakNormOf(key.zone, w);
+	normKey_[channel] = key;
+	return key.norm;
+}
+
 void SmoothShaper::advanceCoefficients() noexcept {
 	// "Strided update (alpha already scaled 4x)": `current += (target - current) * alpha`, the scalar form
 	// and the NEON `vmlaq` form being the same unfused arithmetic.
@@ -257,7 +291,12 @@ void SmoothShaper::advanceCoefficients() noexcept {
 		smoothed_[k] += (block_.targets[k] - smoothed_[k]) * stridedAlpha_;
 	}
 	weights_[0] = { smoothed_[0], smoothed_[1], smoothed_[2], smoothed_[3], smoothed_[4] };
+	for (int ch = 0; ch < 2; ++ch) {
+		norm_[ch] += (block_.normTarget[ch] - norm_[ch]) * stridedAlpha_;
+	}
 	weights_[1] = { smoothed_[0], smoothed_[5], smoothed_[6], smoothed_[7], smoothed_[8] };
+	weights_[0].norm = norm_[0];
+	weights_[1].norm = norm_[1];
 	if (block_.fmZone) {
 		weights_[0].updateQ31();
 		weights_[1].updateQ31();
@@ -309,10 +348,12 @@ void SmoothShaper::renderFrames(float* left, float* right, int frames) noexcept 
 		}
 
 		int32_t out[2] = {};
+		bool wetSettled = true; // the wet highpass's output is exactly zero on both sides
 		for (int ch = 0; ch < 2; ++ch) {
 			// THE 100 Hz HIGHPASS ON THE WET ONLY: a lowpass, subtracted.
 			dcState_[ch] = wadd(dcState_[ch], twice(mulhi(wsub(shaped[ch], dcState_[ch]), hpfAlphaQ_)));
 			const int32_t hpfWet = wsub(shaped[ch], dcState_[ch]);
+			wetSettled = wetSettled && hpfWet == 0;
 			// THE FEEDBACK TAP'S ONE-POLE: at 44.1 kHz the firmware's own `(fb + wet) >> 1`, wrap and all;
 			// elsewhere the same pole restated for the rate.
 			if (fbHalf) {
@@ -367,7 +408,10 @@ void SmoothShaper::renderFrames(float* left, float* right, int frames) noexcept 
 				inBand = inBand && std::abs(static_cast<int64_t>(dcState_[ch])) <= deadBand_
 				         && std::abs(static_cast<int64_t>(fbState_[ch])) <= deadBand_;
 			}
-			if (inBand) {
+			// ... OR THE WET IS ALREADY EXACTLY ZERO: the highpass has settled on the shaper's own constant (a feedback tap
+			// parked at -1 by its floor and fed back through a high gain makes one, larger than the dead band). The output is
+			// zero already, so clearing the states changes nothing audible and lets the loop go.
+			if (inBand || wetSettled) {
 				dcState_[0] = dcState_[1] = 0;
 				fbState_[0] = fbState_[1] = 0;
 				hp_.reset();

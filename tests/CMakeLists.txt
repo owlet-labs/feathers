@@ -2193,3 +2193,10 @@ add_executable(test_body_refused test_body_refused.cpp)
 target_link_libraries(test_body_refused PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
 target_include_directories(test_body_refused PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME body-refused COMMAND test_body_refused)
+
+# The Smooth Shaper's level law: knee at 0 dBFS, peak-normalised curve (values, a grid of modes and positions, no allocation).
+add_executable(test_smooth_peak test_smooth_peak.cpp)
+target_link_libraries(test_smooth_peak PRIVATE feathers-fx feathers-warnings)
+target_include_directories(test_smooth_peak PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+target_compile_options(test_smooth_peak PRIVATE ${FEATHERS_FP_EXACT})
+add_test(NAME smooth-peak COMMAND test_smooth_peak)

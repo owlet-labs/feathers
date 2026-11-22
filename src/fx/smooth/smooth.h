@@ -89,6 +89,9 @@ public:
 	void adoptCoefficientsForTest(const CoefficientSet& c) noexcept;
 	/// The drive gain the next frame will use; negative before the first block.
 	[[nodiscard]] float driveGainForTest() const noexcept { return driveGainPlaced_ ? driveGain_ : -1.0f; }
+	/// THE PEAK NORMALISATION IN USE per channel (smoothed with the coefficients), and the one the targets ask for.
+	[[nodiscard]] float peakNormForTest(int channel) const noexcept { return norm_[channel & 1]; }
+	[[nodiscard]] float peakNormTargetForTest(int channel) const noexcept { return block_.normTarget[channel & 1]; }
 	[[nodiscard]] float lfoPhaseForTest() const noexcept { return lfoPhase_; }
 	[[nodiscard]] int32_t feedbackStateForTest(int channel) const noexcept { return fbState_[channel & 1]; }
 	[[nodiscard]] int32_t dcStateForTest(int channel) const noexcept { return dcState_[channel & 1]; }
@@ -145,6 +148,7 @@ private:
 		bool fmZone = false;
 		/// c1 shared, then c3..c9 left, then c3..c9 right — the smoother's targets.
 		CoefficientSet targets {};
+		float normTarget[2] = { 1.0f, 1.0f };
 		int framesLeft = 0;
 		int stride = 0;
 	};
@@ -155,6 +159,17 @@ private:
 	CoefficientSet smoothed_ { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 	bool coefficientsPlaced_ = false;
 	Coefficients weights_[2] {};
+	/// THE PEAK NORMALISATION per channel (`peakNormOf`): smoothed like the coefficients, found only when the weights it
+	/// depends on change - keyed on their VALUES (zone and the five numbers), never on an address.
+	float norm_[2] = { 1.0f, 1.0f };
+	struct NormKey {
+		bool valid = false;
+		int zone = 0;
+		std::array<float, 5> c {};
+		float norm = 1.0f;
+	};
+	NormKey normKey_[2] {};
+	[[nodiscard]] float normFor(int channel, const CoefficientSet& targets) noexcept;
 
 	/// `params->smoothedDrive`: the q31 drive the last block asked for, INT32_MIN before the first.
 	int32_t smoothedDriveQ_ = INT32_MIN;

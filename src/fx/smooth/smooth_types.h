@@ -52,18 +52,15 @@
 // THE GAIN STAGING, WHICH IS THE PART THAT MATTERS
 // ---------------------------------------------------------------------------------------------------
 //
-// **1.0 HERE IS THE REFERENCE'S 0 dBFS = 2^24 = ONE_Q31 / 128** (the Eroder's convention, `kHeadroom`). A
-// full-level hardware voice enters the shaper at 2^24; a full-level Feathers voice enters the lane at
-// about 1.0 (MEASURED, design doc: 0.6-1.3 peak at default knobs), so the map puts one where the other
-// sits and no extra constant is needed. The shaper then has its OWN ceilings, and they are kept:
-//   - Zones 0/1 (the Chebyshev blends) saturate their input at 0.5 (-6.02 dB), the exact-harmonics
-//     point: `shiftSaturate(driven, 8)`. At Drive centre a full voice enters at x = 2,
-//     flat-topped BY DESIGN — the firmware's own comment says the harsh edge past it is the signal that
-//     you have overdriven the polynomial.
-//   - Zone 7 (Poly) saturates at 1.0 (0 dB): `shiftSaturate(driven, 7)`.
+// **1.0 HERE IS 0 dBFS = 2^24 = ONE_Q31 / 128** (the Eroder's convention, `kHeadroom`). A full-level voice
+// enters the shaper at about 1.0 (MEASURED, design doc: 0.6-1.3 peak at default knobs).
+//   - THE KNEE IS 0 dBFS in every mode: at unity Drive an input peak of 1.0 just reaches x = 1, where zones 0/1
+//     (the Chebyshev blends) and zone 7 (Poly) saturate their input (`shiftSaturate(driven, 7)`). More Drive
+//     pushes into that flat region; the FM zones are periodic in the driven phase and never saturate.
+//   - THE CURVE IS PEAK-NORMALISED: the blended transfer is scaled by `Coefficients::norm` = 1 / max|f(x)| over
+//     x in [-1, 1] (`peakNormOf`), so what the shaper shapes peaks at exactly 0 dBFS when driven to the knee,
+//     by construction of the curve and with nothing after it. This replaces the firmware's fixed +7.8 dB boost.
 //   - The drive clamps at the q31 ceiling, 128.0 here, which nothing reaches.
-// Chebyshev wet is `P(x) · 0.027 · 0.707 · ONE_Q31`, which is 2.443·P(x) in these units: +13.8 dB over
-// the dry below the clip. That is the firmware's level, not a mistake, and it is kept.
 //
 // ---------------------------------------------------------------------------------------------------
 // WHAT IS NOT THE FIRMWARE'S, EACH DELIBERATE (the design's departures table)
@@ -334,6 +331,8 @@ inline constexpr fx::TenantTraits kTraits {
 	.faceColumns = 3,
 	.tags = kTags,
 	.retiredKeys = kRetiredKeys,
+	// SCHEMA 2: the level law changed (knee at 0 dBFS, peak-normalised curve), so an old patch sounds different.
+	.schema = 2,
 	// ITS MIX IS ITS OWN (backlog NR, D2): named for the frame, made by the device, so the slot does not blend and a
 	// POST chain is a series insert after it.
 	.mixControl = static_cast<int>(Param::Mix),
@@ -374,7 +373,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "Gain into the shaper: silent at the bottom, unity at the centre, +12 dB at the top — or drag the "
-                "ceiling on the curve. A full voice already overdrives 3579 at unity; turn down for clean harmonics",
+                "ceiling on the curve. At unity a 0 dBFS input just reaches the knee and the shaped output peaks at 0 dBFS; "
+                "more Drive pushes into the curve's own flat top and never goes over",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -733,11 +733,18 @@ struct Coefficients {
 	int32_t c5q = 0;
 	int32_t c7q = 0;
 	int32_t c9q = 0;
+	/// THE PEAK NORMALISATION: 1 / max|f(x)| of this blend over x in [-1, 1] (`peakNormOf`), applied to the shaped
+	/// output; 1 until set.
+	float norm = 1.0f;
 	/// `updateQ31`, with the conversions saturating (see the header).
 	void updateQ31() noexcept;
 };
 /// `computeShaperWeightsFromPos` → `weightsToCoeffs`: the Chebyshev blend at a position.
 [[nodiscard]] Coefficients chebyshevCoefficientsOf(float posInZone, double gammaPhase) noexcept;
+/// 1 / the largest |output| blend `w` can make over a driven input of [-1, 1] at unity drive, evens and rect left
+/// out: a dense scan and a local refinement through the shaper's own arithmetic, so it is its peak and not a model
+/// of it. ~10-40 us: the caller caches it by the weights and never runs it per sample.
+[[nodiscard]] float peakNormOf(int zone, const Coefficients& w) noexcept;
 
 /// THE NINE TARGETS A BLOCK SMOOTHS TOWARD — c1, c3..c9 left, c3..c9 right — as `sineShapeBuffer` picks them:
 /// per zone, from the position in the zone, Twist's harmonic phase and, in stereo, the LFO's position offset

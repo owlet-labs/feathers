@@ -678,6 +678,79 @@ int32_t saturatingQ31(float x) noexcept {
 	return static_cast<int32_t>(x);
 }
 
+namespace {
+/// THE PEAK NORMALISATION APPLIED TO AN INTEGER ZONE'S OUTPUT: exactly the value when it is 1 (the bits the zone made).
+int32_t normalised(int32_t shaped, float norm) noexcept {
+	return norm == 1.0f ? shaped : saturatingQ31(static_cast<float>(shaped) * norm);
+}
+} // namespace
+namespace {
+/// THE FM ZONES (2-6) FROM THE PHASE: four operators of `phase1` blended by the weights, each peaking near half the
+/// table's ceiling, then >> 7 into the reference's level. Pure in (zone, weights, phase1), so the peak search runs it.
+int32_t fmBlend(int zone, const Coefficients& w, uint32_t phase1) noexcept {
+	const int32_t w0q = w.c3q;
+	const int32_t w1q = w.c5q;
+	const int32_t w2q = w.c7q;
+	const int32_t w3q = w.c9q;
+	const int32_t sine1 = tableSine(phase1);
+	const auto u = [](int32_t v) { return static_cast<uint32_t>(v); };
+
+	int32_t m0 = 0;
+	int32_t m1 = 0;
+	int32_t m2 = 0;
+	int32_t m3 = 0;
+	if (zone == 2) {
+		// FM: add, ring, FM, fold, each at twice the input's phase.
+		const uint32_t phase2 = phase1 << 1;
+		const int32_t sine2 = tableSine(phase2);
+		m0 = ((sine1 >> 1) + (sine2 >> 1)) >> 1;
+		m1 = mulhi(sine1, tableSine(phase2 + 0x40000000u));
+		m2 = tableSine(phase1 + u(sine2 >> 1)) >> 1;
+		m3 = tableSine(u(sine1) << 1) >> 1;
+	}
+	else if (zone == 3) {
+		// Fold, k = 1..4.
+		m0 = tableSine(u(sine1)) >> 1;
+		m1 = tableSine(u(sine1) << 1) >> 1;
+		m2 = tableSine(u(sine1) + (u(sine1) << 1)) >> 1;
+		m3 = tableSine(u(sine1) << 2) >> 1;
+	}
+	else if (zone == 4) {
+		// Ring: sin(x) · sin(nx), n = 2..5.
+		m0 = mulhi(sine1, tableSine(phase1 << 1));
+		m1 = mulhi(sine1, tableSine(phase1 + (phase1 << 1)));
+		m2 = mulhi(sine1, tableSine(phase1 << 2));
+		m3 = mulhi(sine1, tableSine((phase1 << 2) + phase1));
+	}
+	else if (zone == 5) {
+		// Add: sin(x) + sin(nx), n = 2..5.
+		const int32_t s2 = tableSine(phase1 << 1);
+		const int32_t s3 = tableSine(phase1 + (phase1 << 1));
+		const int32_t s4 = tableSine(phase1 << 2);
+		const int32_t s5 = tableSine((phase1 << 2) + phase1);
+		m0 = ((sine1 >> 1) + (s2 >> 1)) >> 1;
+		m1 = ((sine1 >> 1) + (s3 >> 1)) >> 1;
+		m2 = ((sine1 >> 1) + (s4 >> 1)) >> 1;
+		m3 = ((sine1 >> 1) + (s5 >> 1)) >> 1;
+	}
+	else {
+		// Mod: FM at depths 0.25, 0.5, 0.75, 1 with the modulator at twice the phase.
+		const int32_t mod = tableSine(phase1 << 1);
+		m0 = tableSine(phase1 + u(mod >> 2)) >> 1;
+		m1 = tableSine(phase1 + u(mod >> 1)) >> 1;
+		m2 = tableSine(phase1 + u((mod >> 1) + (mod >> 2))) >> 1;
+		m3 = tableSine(phase1 + u(mod)) >> 1;
+	}
+
+	int32_t blended = 0;
+	blended = addSaturate(blended, wshl(mulhi(m0, w0q), 1));
+	blended = addSaturate(blended, wshl(mulhi(m1, w1q), 1));
+	blended = addSaturate(blended, wshl(mulhi(m2, w2q), 1));
+	blended = addSaturate(blended, wshl(mulhi(m3, w3q), 1));
+	return blended >> 7;
+}
+} // namespace
+
 int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients& w, float evenAmount,
                     float evenDryBlend, float rectAmount, ShapeProbe* probe) noexcept {
 	// `sineShapeCore`, statement for statement. The stereo core is the same arithmetic run twice with a
@@ -714,12 +787,12 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 			shaped = wadd(shaped, wmul(mulhiRounded(wsub(moreHarmonics, shaped), cascadeBlend), 2));
 		}
 		shaped = wshl(mulhi(shaped, kMinus3dBQ31), 1);
+		shaped = normalised(shaped, w.norm);
 	}
 	else if (zone == 0 || zone == 1) {
-		// 3579 / 3579wm: THE INPUT SATURATES AT HALF THE REFERENCE'S 0 dBFS (<< 8), which is x = 1, where the
-		// normalised Chebyshevs give exactly their harmonics. Past it the input is flat-topped, not the
-		// polynomial exploded.
-		const int32_t scaledInput = shiftSaturate(driven, 8);
+		// 3579 / 3579wm: THE INPUT SATURATES AT 0 dBFS (<< 7), which is x = 1: the knee. At unity Drive a 0 dBFS peak
+		// just reaches it; past it the input is flat-topped, not the polynomial exploded.
+		const int32_t scaledInput = shiftSaturate(driven, 7);
 		if (probe != nullptr) {
 			probe->zoneInput = scaledInput;
 		}
@@ -733,78 +806,15 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 		}
 		const float x2 = x * x;
 		const float result = x * (w.c1 + x2 * (w.c3 + x2 * (w.c5 + x2 * (w.c7 + w.c9 * x2))));
-		// "Tune empirically": 0.027 · 0.707 of the q31 ceiling, 2.443 in these units.
-		constexpr float kChebyBoost = 0.027f;
-		constexpr float kMinus3dB = 0.707f;
-		constexpr float kChebyGainScaled = kChebyBoost * kMinus3dB * kOneQ31F;
-		const float scaled = result * kChebyGainScaled;
+		// THE LEVEL IS THE CURVE'S OWN: `w.norm` = 1 / max|P| over x in [-1, 1], so the peak is 0 dBFS (2^24 here).
+		const float scaled = result * w.norm * kQ31PerUnit;
 		shaped = saturatingQ31(std::clamp(scaled, -2147483648.0f, 2147483647.0f));
 	}
 	else if (zone >= 2 && zone <= 6) {
-		// THE FM ZONES: the driven input times 1..4 becomes a PHASE into the sine table, and four operators
-		// of it are blended — each peaking near half the table's ceiling, then >> 7 into the reference's level.
-		const int32_t w0q = w.c3q;
-		const int32_t w1q = w.c5q;
-		const int32_t w2q = w.c7q;
-		const int32_t w3q = w.c9q;
+		// THE FM ZONES: the driven input times 1..4 becomes a PHASE into the sine table (`fmBlend`).
 		const int32_t gained = wshl(mulhi(driven, w.c1q), 2);
-		const uint32_t phase1 = static_cast<uint32_t>(gained) << 8;
-		const int32_t sine1 = tableSine(phase1);
-		const auto u = [](int32_t v) { return static_cast<uint32_t>(v); };
-
-		int32_t m0 = 0;
-		int32_t m1 = 0;
-		int32_t m2 = 0;
-		int32_t m3 = 0;
-		if (zone == 2) {
-			// FM: add, ring, FM, fold, each at twice the input's phase.
-			const uint32_t phase2 = phase1 << 1;
-			const int32_t sine2 = tableSine(phase2);
-			m0 = ((sine1 >> 1) + (sine2 >> 1)) >> 1;
-			m1 = mulhi(sine1, tableSine(phase2 + 0x40000000u));
-			m2 = tableSine(phase1 + u(sine2 >> 1)) >> 1;
-			m3 = tableSine(u(sine1) << 1) >> 1;
-		}
-		else if (zone == 3) {
-			// Fold, k = 1..4.
-			m0 = tableSine(u(sine1)) >> 1;
-			m1 = tableSine(u(sine1) << 1) >> 1;
-			m2 = tableSine(u(sine1) + (u(sine1) << 1)) >> 1;
-			m3 = tableSine(u(sine1) << 2) >> 1;
-		}
-		else if (zone == 4) {
-			// Ring: sin(x) · sin(nx), n = 2..5.
-			m0 = mulhi(sine1, tableSine(phase1 << 1));
-			m1 = mulhi(sine1, tableSine(phase1 + (phase1 << 1)));
-			m2 = mulhi(sine1, tableSine(phase1 << 2));
-			m3 = mulhi(sine1, tableSine((phase1 << 2) + phase1));
-		}
-		else if (zone == 5) {
-			// Add: sin(x) + sin(nx), n = 2..5.
-			const int32_t s2 = tableSine(phase1 << 1);
-			const int32_t s3 = tableSine(phase1 + (phase1 << 1));
-			const int32_t s4 = tableSine(phase1 << 2);
-			const int32_t s5 = tableSine((phase1 << 2) + phase1);
-			m0 = ((sine1 >> 1) + (s2 >> 1)) >> 1;
-			m1 = ((sine1 >> 1) + (s3 >> 1)) >> 1;
-			m2 = ((sine1 >> 1) + (s4 >> 1)) >> 1;
-			m3 = ((sine1 >> 1) + (s5 >> 1)) >> 1;
-		}
-		else {
-			// Mod: FM at depths 0.25, 0.5, 0.75, 1 with the modulator at twice the phase.
-			const int32_t mod = tableSine(phase1 << 1);
-			m0 = tableSine(phase1 + u(mod >> 2)) >> 1;
-			m1 = tableSine(phase1 + u(mod >> 1)) >> 1;
-			m2 = tableSine(phase1 + u((mod >> 1) + (mod >> 2))) >> 1;
-			m3 = tableSine(phase1 + u(mod)) >> 1;
-		}
-
-		int32_t blended = 0;
-		blended = addSaturate(blended, wshl(mulhi(m0, w0q), 1));
-		blended = addSaturate(blended, wshl(mulhi(m1, w1q), 1));
-		blended = addSaturate(blended, wshl(mulhi(m2, w2q), 1));
-		blended = addSaturate(blended, wshl(mulhi(m3, w3q), 1));
-		shaped = blended >> 7;
+		shaped = fmBlend(zone, w, static_cast<uint32_t>(gained) << 8);
+		shaped = normalised(shaped, w.norm);
 	}
 
 	// EVENS AND RECT (Twist zones 1 and 2), fused in float as the firmware fuses them.
@@ -824,7 +834,8 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 			else if (shapedF < 0.0f && evenDryBlend > 0.0f) {
 				const float absShapedF = -shapedF;
 				const float absDrivenF = std::abs(static_cast<float>(driven));
-				const float cappedDrivenAbs = std::min(absDrivenF, absShapedF * 2.0f);
+				// ...and never above the curve's own peak (2^24 = 0 dBFS), so the blend cannot take the output over it.
+				const float cappedDrivenAbs = std::min(std::min(absDrivenF, absShapedF * 2.0f), kQ31PerUnit);
 				shapedF = -(absShapedF * (1.0f - evenDryBlend) + cappedDrivenAbs * evenDryBlend);
 			}
 		}
@@ -837,6 +848,90 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 	return shaped;
 }
 
+
+//--------------------------------------------------------------------------------------------------//
+// THE PEAK NORMALISATION.                                                                            //
+//--------------------------------------------------------------------------------------------------//
+
+float peakNormOf(int zone, const Coefficients& w) noexcept {
+	// THE LARGEST |OUTPUT| THE BLEND CAN MAKE, IN q31 UNITS (2^24 = 0 dBFS), over everything a driven input of [-1, 1]
+	// can reach at unity drive. Beyond the knee the input saturates (zones 0, 1, 7) or the phase only goes round
+	// again (the FM zones: periodic, and an input gain of 1..4 already covers a whole period at x = 1), so this
+	// is the peak at any Drive. Evens and rect are left out: they only lower the positive half and cap the negative.
+	double peak = 0.0;
+	if (zone == 0 || zone == 1) {
+		// The odd polynomial itself, in float as `shapeSample` runs it; a x in [-1, 1] is reached in both zones (zone 1's
+		// sine of 0.75 of a half-turn passes through every value from -1 to 1). Scanned over [0, 1] and refined.
+		const auto f = [&w](double x) {
+			const float xf = static_cast<float>(x);
+			const float x2 = xf * xf;
+			return std::fabs(static_cast<double>(xf * (w.c1 + x2 * (w.c3 + x2 * (w.c5 + x2 * (w.c7 + w.c9 * x2))))));
+		};
+		constexpr int kN = 1024;
+		int best = 0;
+		for (int i = 0; i <= kN; ++i) {
+			const double v = f(static_cast<double>(i) / kN);
+			if (v > peak) {
+				peak = v;
+				best = i;
+			}
+		}
+		double lo = std::max(0.0, static_cast<double>(best - 1) / kN);
+		double hi = std::min(1.0, static_cast<double>(best + 1) / kN);
+		for (int it = 0; it < 30; ++it) { // ternary: the polynomial is unimodal over two grid steps
+			const double a = lo + (hi - lo) / 3.0;
+			const double b = hi - (hi - lo) / 3.0;
+			if (f(a) < f(b)) {
+				lo = a;
+			}
+			else {
+				hi = b;
+			}
+		}
+		peak = std::max(peak, f(0.5 * (lo + hi))) * static_cast<double>(kQ31PerUnit);
+	}
+	else if (zone >= 2 && zone <= 6) {
+		const auto f = [zone, &w](uint32_t phase) { return std::fabs(static_cast<double>(fmBlend(zone, w, phase))); };
+		constexpr uint32_t kN = 1024;
+		constexpr uint32_t kStep = static_cast<uint32_t>(4294967296ULL / kN);
+		uint32_t bestPhase = 0;
+		for (uint32_t i = 0; i < kN; ++i) {
+			const double v = f(i * kStep);
+			if (v > peak) {
+				peak = v;
+				bestPhase = i * kStep;
+			}
+		}
+		// A FINER LOOK around the best point, a step either side in 32 pieces (the fold zones have sharp crests).
+		constexpr uint32_t kFine = kStep / 32;
+		for (int j = -32; j <= 32; ++j) {
+			peak = std::max(peak, f(bestPhase + static_cast<uint32_t>(j) * kFine));
+		}
+	}
+	else {
+		Coefficients unit = w;
+		unit.norm = 1.0f;
+		const auto f = [&unit, zone](double x) {
+			const int32_t q = saturatingQ31(static_cast<float>(x * static_cast<double>(kQ31PerUnit)));
+			return std::fabs(static_cast<double>(shapeSample(q, 1.0f, zone, unit, 0.0f, 0.0f, 0.0f)));
+		};
+		constexpr int kN = 2048;
+		int best = 0;
+		for (int i = -kN; i <= kN; ++i) {
+			const double v = f(static_cast<double>(i) / kN);
+			if (v > peak) {
+				peak = v;
+				best = i;
+			}
+		}
+		for (int j = -32; j <= 32; ++j) { // the cascade wraps, so no unimodal assumption: a finer scan, not a search
+			peak = std::max(peak, f(static_cast<double>(best) / kN + static_cast<double>(j) / (32.0 * kN)));
+		}
+	}
+	// A blend that makes (almost) nothing is left alone rather than amplified without bound.
+	constexpr double kMinPeak = 4096.0; // 2^12 of 2^24: -72 dBFS
+	return peak < kMinPeak ? 1.0f : static_cast<float>(static_cast<double>(kQ31PerUnit) / peak);
+}
 //--------------------------------------------------------------------------------------------------//
 // THE TARGETS, AND THE PICTURE BUILT ON THEM.                                                        //
 //--------------------------------------------------------------------------------------------------//
@@ -872,9 +967,8 @@ CoefficientTargets targetsOf(int zone, float posInZone, const TwistParams& twist
 }
 
 namespace {
-// THE SATURATION POINTS OF `shapeSample`, as input levels: `<< 8` saturates at driven = 2^23 (0.5 here),
-// `<< 7` at 2^24 (1.0).
-float ceilingReferenceOf(int zone) noexcept { return (zone == 0 || zone == 1) ? 0.5f : 1.0f; }
+// THE KNEE OF `shapeSample`, as an input level: `<< 7` saturates at driven = 2^24 (1.0 here), in every zone that saturates.
+float ceilingReferenceOf(int) noexcept { return 1.0f; }
 } // namespace
 
 Picture pictureOf(const Settings& settings) noexcept {
@@ -887,6 +981,7 @@ Picture pictureOf(const Settings& settings) noexcept {
 	const CoefficientTargets t = targetsOf(p.zone, zone.position, p.twist, 0.0f);
 	p.weights = { t[0], t[1], t[2], t[3], t[4] };
 	p.weights.updateQ31();
+	p.weights.norm = peakNormOf(p.zone, p.weights);
 	p.clips = p.zone == 0 || p.zone == 1 || p.zone == 7;
 	p.ceilingInput = ceilingOfGain(p.zone, p.driveGain);
 	return p;

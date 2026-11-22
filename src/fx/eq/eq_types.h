@@ -81,6 +81,19 @@ inline constexpr const char* kOffOnNames[] = { "Off", "On" };
 inline constexpr const char* kPhaseNames[] = { "Minimum", "Linear" };
 inline constexpr const char* kTypeNames[] = { "Bell", "Low Shelf", "High Shelf", "Low Cut", "High Cut", "Notch" };
 static_assert(std::size(kTypeNames) == static_cast<size_t>(BandType::kCount));
+// WHAT A BAND'S Q IS, by its type (the eight bands share this table): a Bell's and a Notch's Q is their width, a shelf's is
+// its slope, and a cut's is the resonance at its corner. Index is the BandType; "" for a type out of range.
+inline const char* qTip(int type) {
+	switch (static_cast<BandType>(type)) {
+	case BandType::Bell: return "How narrow the bell is: a higher Q is a narrower band";
+	case BandType::LowShelf:
+	case BandType::HighShelf: return "How steep the shelf's transition is: a higher Q is a sharper knee, up to 1.5";
+	case BandType::LowCut:
+	case BandType::HighCut: return "On a cut it is resonance: 0.71 is flat, higher peaks at the corner";
+	case BandType::Notch: return "How narrow the notch is: a higher Q is a narrower slice";
+	default: return "";
+	}
+}
 inline constexpr const char* kSlopeNames[] = { "6 dB", "12 dB", "18 dB", "24 dB", "36 dB", "48 dB", "72 dB", "96 dB" };
 static_assert(std::size(kSlopeNames) == static_cast<size_t>(kSlopeCount));
 

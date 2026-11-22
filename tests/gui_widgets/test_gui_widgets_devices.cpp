@@ -28496,6 +28496,50 @@ void routeInto(ui::ModState& mod, ui::Knob& knob, backplane::Source source, floa
 // THE EQ'S CARD AND PANEL
 // ---------------------------------------------------------------------------------------------------
 
+TEST_CASE("EQ's Q hover text follows its band's Type, on the card and in the window, for an unselected band too") {
+	namespace eq = feathers::fx::eq;
+	DynCardFixture<ui::EqCard> d(eq::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::EqExpanded panel { d.f.deviceHost, registry, d.device };
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY. The hover road may put the control's name in front, so the tail is read.
+	const auto tailIs = [](const std::string& text, const char* want) {
+		const std::string tail(want);
+		return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+	};
+	// Band 0 is the selected one: its Q is on the face once the band is on.
+	d.set(eq::bandIndex(0, eq::BandField::On), 1.0f);
+	const auto selectedAs = [&](float type, const char* want) {
+		d.set(eq::bandIndex(0, eq::BandField::Type), type);
+		d.card->updateContent();
+		panel.updateContent();
+		ui::Knob* onCard = d.card->controlsForTest()->knobForTest(eq::bandIndex(0, eq::BandField::Q));
+		ui::Knob* inWindow = panel.controlsForTest()->knobForTest(eq::bandIndex(0, eq::BandField::Q));
+		REQUIRE(onCard != nullptr);
+		REQUIRE(inWindow != nullptr);
+		CAPTURE(type);
+		CHECK(tailIs(hover(onCard), want));
+		CHECK(tailIs(hover(inWindow), want));
+	};
+	selectedAs(0.0f, "How narrow the bell is: a higher Q is a narrower band");
+	selectedAs(1.0f, "How steep the shelf's transition is: a higher Q is a sharper knee, up to 1.5");
+	selectedAs(3.0f, "On a cut it is resonance: 0.71 is flat, higher peaks at the corner");
+	selectedAs(5.0f, "How narrow the notch is: a higher Q is a narrower slice");
+
+	// BAND 3 IS NOT SELECTED: its Type moves, and its Q's text moves with it on the next poll (the card's and the window's).
+	d.set(eq::bandIndex(3, eq::BandField::Type), 5.0f);
+	d.card->updateContent();
+	panel.updateContent();
+	for (ui::EqControls* c : { d.card->controlsForTest(), panel.controlsForTest() }) {
+		ui::Knob* q = c->knobForTest(eq::bandIndex(3, eq::BandField::Q));
+		REQUIRE(q != nullptr);
+		REQUIRE(q->control() != nullptr);
+		const char* own = q->control()->tooltipOverride();
+		REQUIRE(own != nullptr);
+		CHECK(std::string(own) == "How narrow the notch is: a higher Q is a narrower slice");
+	}
+}
+
 TEST_CASE("EQ's card offers only what the selected band uses, and says so when it is off") {
 	namespace eq = feathers::fx::eq;
 	DynCardFixture<ui::EqCard> d(eq::kTraits.tag);

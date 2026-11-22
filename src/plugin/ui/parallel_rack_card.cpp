@@ -700,7 +700,9 @@ void ChainStrip::draw(visage::Canvas& canvas) {
 	}
 	if (!summary_.empty()) {
 		canvas.setColor(kMuted);
-		canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, 0.0f, 0.0f, std::round(width() * summaryFraction_),
+		// A ROW'S NAME STARTS CLEAR OF THE SELECTED ROW'S EDGE BAR (the accent stripe along its left), so the whole name reads.
+		const float inset = rowMode_ ? kRowTextInset : 0.0f;
+		canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, inset, 0.0f, std::max(0.0f, std::round(width() * summaryFraction_) - inset),
 		            height());
 	}
 	if (column_ && !label_.empty()) {

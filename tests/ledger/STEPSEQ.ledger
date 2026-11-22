@@ -23,6 +23,7 @@ param STEPSEQ rand_gate unit=percent min=0 max=1 stepped=0
 param STEPSEQ rand_prob unit=percent min=0 max=1 stepped=0
 param STEPSEQ rand_ratchet unit=percent min=0 max=1 stepped=0
 param STEPSEQ rand_slew unit=percent min=0 max=1 stepped=0
+param STEPSEQ smoothing unit=log_seconds min=-11 max=0 stepped=0
 extra STEPSEQ steps_pattern floats=66
 block STEPSEQ steps_play floats=47
 out STEPSEQ value bipolar=1

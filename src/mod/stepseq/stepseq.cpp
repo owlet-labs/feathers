@@ -132,6 +132,7 @@ Settings settingsOf(const float* fields, size_t present) {
 	s.trig = fieldOf(fields, present, Param::Trig);
 	s.reset = fieldOf(fields, present, Param::Reset);
 	s.amount = fieldOf(fields, present, Param::Amount);
+	s.smoothing = fieldOf(fields, present, Param::Smoothing);
 	for (size_t l = 0; l < kLaneCount; ++l) {
 		s.randTrig[l] = fieldOf(fields, present, randomiseParam(static_cast<Lane>(l)));
 	}
@@ -159,6 +160,7 @@ Row rowOf(const Settings& s) {
 	row[at(Param::Trig)] = s.trig;
 	row[at(Param::Reset)] = s.reset;
 	row[at(Param::Amount)] = s.amount;
+	row[at(Param::Smoothing)] = s.smoothing;
 	for (size_t l = 0; l < kLaneCount; ++l) {
 		row[at(randomiseParam(static_cast<Lane>(l)))] = s.randTrig[l];
 	}
@@ -479,7 +481,23 @@ float Shape::tick(const Settings& s, bool /*gate*/, bool retrigger, TransportClo
 	const bool noLength = !songRoad && s.clock == Clock::Trig && intervalTicks_ == 0;
 	const float glide = (slew_ > 0.0f && !noLength) ? std::min(1.0f, p / slew_) : 1.0f;
 	raw_ = from_ + (target_ - from_) * glide;
-	value_ = s.bipolar ? 2.0f * raw_ - 1.0f : raw_;
+	// THE GLOBAL SMOOTHING, AFTER THE STEP'S SLEW: raw_ is the slewed value, and the LFO's one-pole (`mod::smoothingCoeff`,
+	// `mod::smoothingStep`) smooths that. At the bottom of the travel the coefficient is 1 and the output is raw_ itself,
+	// to the bit (the smoother follows it meanwhile, so turning Smoothing up mid-play starts from where the output is).
+	if (!smoothingCoeffValid_ || s.smoothing != smoothingKnobWas_) {
+		smoothingKnobWas_ = s.smoothing;
+		smoothingCoeffValid_ = true;
+		smoothingCoeff_ = mod::smoothingCoeff(s.smoothing, tickSeconds_);
+	}
+	float shown = raw_;
+	if (smoothingCoeff_ >= 1.0) {
+		smoothed_ = static_cast<double>(raw_);
+	}
+	else {
+		mod::smoothingStep(smoothed_, static_cast<double>(raw_), smoothingCoeff_);
+		shown = static_cast<float>(smoothed_);
+	}
+	value_ = s.bipolar ? 2.0f * shown - 1.0f : shown;
 	trigger_ = hitThisTick_ ? 1.0f : 0.0f;
 	++ticksInStep_;
 	return value_;
@@ -633,6 +651,8 @@ bool Shape::load(device::BlockReader& r) noexcept {
 	    || !std::isfinite(s.from_) || !std::isfinite(s.target_)) {
 		return false;
 	}
+	// Not saved: a filter state, rebuilt from the output it filters (the LFO's smoother is not saved either).
+	s.smoothed_ = static_cast<double>(s.raw_);
 	s.gateKind_ = static_cast<Gate>(gate);
 	*this = s;
 	return true;

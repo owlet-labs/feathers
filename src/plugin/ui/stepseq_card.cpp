@@ -433,6 +433,8 @@ StepSeqCard::StepSeqCard(backplane::DeviceHost& host, DeviceInstanceId id, Notif
 	// output's scale, as on the LFO.
 	amount_ = box(sq::Param::RandomAmount, "Rand Amt");
 	outAmount_ = box(sq::Param::Amount, "Amount");
+	// "Sm", THE LFO'S CAPTION FOR ITS SMOOTHING: the same control, law and text; the bottom of its travel is off.
+	smoothing_ = box(sq::Param::Smoothing, "Sm");
 
 	const auto knob = [this](sq::Param p, const char* caption) {
 		auto k = std::make_unique<Knob>(control(sq::at(p)), caption, notifier_);
@@ -485,7 +487,7 @@ std::vector<visage::Frame*> StepSeqCard::widgets() const {
 		                              direction_.get(), clock_.get(),     timeBase_.get(), rate_.get(),
 		                              gateLength_.get(), lock_.get(),     seed_.get(),     amount_.get(),
 		                              turing_.get(),    bipolar_.get(),   retrig_.get(),   poly_.get(),
-		                              outAmount_.get() };
+		                              outAmount_.get(), smoothing_.get() };
 	for (size_t l = 0; l < sq::kLaneCount; ++l) {
 		out.push_back(randomiseButtons_[l].get());
 		out.push_back(randomisePads_[l].get());
@@ -557,7 +559,7 @@ std::vector<size_t> StepSeqCard::addressedParamsForTest() const {
 		add(&p->control());
 	}
 	for (ValueBox* b : { steps_.get(), direction_.get(), clock_.get(), timeBase_.get(), seed_.get(), amount_.get(),
-	                     outAmount_.get() }) {
+	                     outAmount_.get(), smoothing_.get() }) {
 		add(&b->control());
 	}
 	for (Knob* k : { rate_.get(), gateLength_.get(), lock_.get() }) {
@@ -647,6 +649,9 @@ void StepSeqCard::resized() {
 	poly_->setBounds(column(1), chipY, quarter, SwitchChip::kHeight);
 	outAmount_->setBounds(column(2), y, quarter, ValueBox::kHeight);
 	bipolar_->setBounds(column(3), chipY, quarter, SwitchChip::kHeight);
+	y += ValueBox::kHeight + kGap;
+	// THE VALUE OUTPUT'S SMOOTHING, under its Amount: both shape only the Value output.
+	smoothing_->setBounds(column(2), y, quarter, ValueBox::kHeight);
 	applyRelevance();
 }
 

@@ -112,6 +112,10 @@ enum class Param : int {
 	RandProb,
 	RandRatchet,
 	RandSlew,
+	/// **THE GLOBAL SMOOTHING**: the LFO's `smoothing` (same law, range, units and text), a one-pole on the Value output
+	/// applied AFTER each step's own slew has shaped its transition. The bottom of its travel is off, and off is the
+	/// output as it was, to the bit.
+	Smoothing,
 	kCount,
 };
 
@@ -252,6 +256,11 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	mod::trigParamDesc("rand_slew", "Randomise Slew",
 	                   mod::trigTooltip<"Randomises the steps' slews as the Slew page's button does, firing as the other "
 	                                    "Trigs do.">()),
+	{ .key = "smoothing", .name = "Smoothing", .min = kSmoothingLog2SecondsMin, .max = kSmoothingLog2SecondsMax,
+	  .def = static_cast<double>(kSmoothingLog2SecondsMin), .stepped = false, .unit = device::Unit::LogSeconds,
+	  .names = {}, .modulatable = true,
+	  .tooltip = "Smooths the Value output, after each step's own Slew has shaped its move: a step's edge becomes a "
+	             "curve with this time constant. At the bottom of its travel it is off" },
 };
 static_assert(std::size(kParamDescs) == kParamCount);
 
@@ -359,7 +368,8 @@ struct Settings {
 	Pattern pattern {};
 
 	/// WHAT `mod::PolyShape` READS: Retrig is LFO Retrig (every note restarts it), its absence is Free — under which
-	/// PolyShape is mono whatever Poly says, as for every modulator. No smoothing: each step carries its own slew.
+	/// PolyShape is mono whatever Poly says, as for every modulator. `smoothing` is the global Smoothing, over the steps' own
+	/// slews; there is no Carry, so a new note's smoother starts at rest.
 	Mode mode = Mode::LfoRetrig;
 	float smoothing = kSmoothingLog2SecondsMin;
 	bool smoothCarry = false;

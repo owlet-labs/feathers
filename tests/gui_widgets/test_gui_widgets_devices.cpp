@@ -24530,6 +24530,55 @@ TEST_CASE("Drive negative: COMP's Drive knob rests at the centre of -24..+24 on 
 	CHECK(std::fabs(d.card->transferDb(-24.0f) - (-36.0f)) < 1e-3f);
 }
 
+TEST_CASE("COMP's hover text follows its Mode, on the card and in the window") {
+	namespace cp = feathers::fx::comp;
+	DynCardFixture<ui::CompCard> d(cp::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::CompExpanded panel { d.f.deviceHost, registry, d.device };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY, not read back from the table under test.
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	// THE HOVER ROAD MAY PUT THE CONTROL'S NAME IN FRONT ("Comp Threshold — …", when its caption is cut), so the
+	// text under test is its tail: it must END in the mode's entry, and nothing else of the descriptor's may survive.
+	const auto check = [&](int mode, cp::Param p, const char* want) {
+		CAPTURE(mode);
+		CAPTURE(static_cast<int>(p));
+		for (ui::Knob* k : { d.card->knobForTest(p), panel.knobForTest(p) }) {
+			REQUIRE(k != nullptr);
+			const std::string text = hover(k);
+			const std::string tail(want);
+			CAPTURE(text);
+			REQUIRE(text.size() >= tail.size());
+			CHECK(text.compare(text.size() - tail.size(), tail.size(), tail) == 0);
+		}
+	};
+	const auto setMode = [&](float m) {
+		d.set(static_cast<size_t>(cp::Param::Mode), m);
+		CHECK(d.card->updateContent());
+		CHECK(panel.updateContent());
+	};
+
+	// COMPRESS, THE DEFAULT: all three say what they do here.
+	check(0, cp::Param::Threshold, "The level above which the signal is turned down");
+	check(0, cp::Param::Release, "How fast gain reduction lets go — off at the bottom is instant");
+	check(0, cp::Param::Drive, "Gain in front of the compressor — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// COMPANDER: Threshold is Ref, Release is the level follower, Drive is the compander's input.
+	setMode(2.0f);
+	check(2, cp::Param::Threshold, "The level above which the signal is turned down. Here it is Ref, the level left alone: louder is turned down, quieter is turned up");
+	check(2, cp::Param::Release, "How fast the level follower falls — off at the bottom is instant");
+	check(2, cp::Param::Drive, "Gain in front of the compander — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// LIMIT: Release and Drive change text; Threshold is hidden there, so it is not read.
+	setMode(1.0f);
+	check(1, cp::Param::Release, "How fast gain reduction lets go — off at the bottom is instant");
+	check(1, cp::Param::Drive, "Gain in front of the limiter — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// BACK TO COMPRESS: the Compander's text does not survive the round trip.
+	setMode(0.0f);
+	check(0, cp::Param::Threshold, "The level above which the signal is turned down");
+	check(0, cp::Param::Drive, "Gain in front of the compressor — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+}
+
 TEST_CASE("COMP's window shows the card's meter — the same IN, OUT and GR bars from the same readings, by value, in every mode") {
 	namespace cp = feathers::fx::comp;
 	DynCardFixture<ui::CompCard> d(cp::kTraits.tag);

@@ -43053,7 +43053,13 @@ TEST_CASE("drum device window: a control the Kind does not read is hidden, one i
 			}
 			CAPTURE(ddv::kParamDescs[i].name);
 			const bool read = device::relevantFor(ddv::kParamDescs[i], ddv::kParamDescs[i].gateControl >= 0 ? u.field(static_cast<ddv::Param>(ddv::kParamDescs[i].gateControl)) : 0.0);
-			CHECK(w->isVisible() == read);
+			// THE TRIGGER HAS TWO FACES: the plain two-way One-shot | Gate, and the three-way with Drone on a kind that can hold a hit.
+			const bool holdable = feathers::drum::kindSustains(static_cast<feathers::drum::Kind>(k));
+			CHECK(w->isVisible() == (p == ddv::Param::Trigger ? read && !holdable : read));
+			if (p == ddv::Param::Trigger) {
+				REQUIRE(u.win->triggerDroneForTest() != nullptr);
+				CHECK(u.win->triggerDroneForTest()->isVisible() == holdable); // Drone is offered only where the engine can hold the hit
+			}
 		}
 	}
 	// AND AGAINST THE ENGINE'S OWN STATEMENT: a Kick reads Hold, a Clap does not; a Clap reads Claps, a Kick does not; Release only on a Gate.

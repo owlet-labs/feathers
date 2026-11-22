@@ -172,6 +172,8 @@ constexpr double kTensionVariation = 0.02;
 constexpr double kTensionSteps = 2400.0;
 /// Width's second noise (the right ear's wires or clap band): its own stream, so the left is the mono hit to the bit.
 constexpr uint64_t kWidthSalt = 0x5E7E0D1DE0ull;
+constexpr uint64_t kParticleSalt = 0x9A27C1E5B0A7ull;
+constexpr float kParticleGain = 0.35f; ///< the resonances' sum to a hit of about the level of the other kinds (measured, test_drum_voice)
 /// The Modulated contour: the wires' envelope chopped by a falling sawtooth at this rate, to this depth (Microtonic's Mod).
 constexpr double kWireModHz = 45.0;
 constexpr float kWireModDepth = 0.8f;
@@ -202,6 +204,9 @@ FieldUse kindReads(Kind k) {
 	case Kind::Metal: return { true, true, false, true, true, true, true };
 	case Kind::Clap: return { true, true, false, true, true, true, false };
 	case Kind::String: return { true, true, true, true, false, true, true };
+	// PARTICLE: the resonance's pitch, the shower's length (its Decay), the grains' brightness, the raw noise share, how unequal the grains are, and the
+	// resonances' spread. No sweep: nothing glides.
+	case Kind::Particle: return { true, true, false, true, true, true, true };
 	default: return { false, false, false, false, false, false, false };
 	}
 }
@@ -230,6 +235,7 @@ double kindBaseHz(Kind k) {
 	case Kind::Metal: return 400.0;
 	case Kind::Clap: return 1000.0;
 	case Kind::String: return 110.0;
+	case Kind::Particle: return 3000.0;
 	default: return 110.0;
 	}
 }
@@ -406,6 +412,9 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.width = std::clamp(c.width, 0.0, 1.0);
 	l.buzz = std::clamp(wire.buzz, 0.0, 1.0);
 	l.buzzThreshold = std::clamp(wire.threshold, 0.0, 1.0);
+	l.density = std::clamp(c.particleDensity, 0.25, 2000.0);
+	l.grainT60 = std::clamp(c.grainSeconds, 1.0e-4, 0.5);
+	l.play = kindSustains(k) ? std::clamp(c.play, kPlayOneShot, kPlayDrone) : (c.play == kPlayGate ? kPlayGate : kPlayOneShot);
 	return l;
 }
 
@@ -419,6 +428,8 @@ SettledPitch settledPitch(Kind k, const Fields& f, const Controls& c, double bas
 	case Kind::Kick:
 	case Kind::String:
 		return { true, false, hz };
+	case Kind::Particle:
+		return { true, true, hz }; // a centre the resonances scatter about, as the Metal's
 	case Kind::Membrane:
 	case Kind::Snare:
 		// The head's lowest mode, which is the pitch heard: mode 0 sits at hz * its ratio at this Metal.
@@ -537,6 +548,13 @@ void Hit::reset() {
 	ratioMetal_ = -1.0f;
 	decayT60_ = -1.0;
 	body_ = {};
+	grain_ = {};
+	for (Svf& r : pres_) {
+		r.clear();
+	}
+	partAcc_ = 0.0f;
+	partLp_ = 0.0f;
+	partRaw_ = 0.0f;
 	click_ = {};
 	band_ = {};
 	tail_ = {};
@@ -682,6 +700,31 @@ void Hit::strike(Kind k, const Laws& l, uint64_t seed, float level) {
 		}
 		string_->reset();
 		break;
+	case Kind::Particle: {
+		// THE SHOWER'S OWN STREAM from the seed (never a count or a clock), so a reload and a retrigger from one seed are one sound. The
+		// density envelope starts at full: One-shot lets it decay by Decay, Gate holds it until released, Drone never lets it go.
+		partRand_ = ks::PluckNoise(seed ^ kParticleSalt);
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		grain_ = {};
+		grain_.d = envDecay(w.grainT60, sr_);
+		partLp_ = 0.0f;
+		partRaw_ = 0.0f;
+		grains_ = 0;
+		const auto unit = [&] { return std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6); };
+		// THE RESONANCES: the first at the centre, the rest scattered about it by up to 1.5 octaves at full Metal, seeded; each with its own gain.
+		for (int i = 0; i < kParticleResonators; ++i) {
+			const auto u = static_cast<size_t>(i);
+			const double scatter = i == 0 ? 0.0 : (2.0 * unit() - 1.0);
+			presRatio_[u] = std::exp2(1.5 * static_cast<double>(w.metal) * scatter);
+			presGain_[u] = static_cast<float>(i == 0 ? 1.0 : 0.5 + 0.5 * unit());
+			pres_[u].clear();
+		}
+		// THE FIRST COLLISION: a key (One-shot or Gate) lands one at once; a drone starts where its random process does.
+		partThresh_ = static_cast<float>(-std::log(1.0 - unit()));
+		partAcc_ = w.play == kPlayDrone ? 0.0f : partThresh_;
+		break;
+	}
 	default: break;
 	}
 	control();
@@ -960,6 +1003,30 @@ void Hit::control() {
 			body_.d = std::min(body_.d, envDecay(releaseT60_, sr_));
 		}
 		break;
+	case Kind::Particle: {
+		// THE DENSITY ENVELOPE: One-shot decays by Decay (shortened by a release); Gate and Drone hold it, and a released Gate falls by Release.
+		if (laws_.play == kPlayOneShot) {
+			body_.d = envDecay(effective(laws_.t60), sr_);
+		}
+		else {
+			body_.d = released_ ? envDecay(releaseT60_, sr_) : 1.0f;
+		}
+		grain_.d = envDecay(laws_.grainT60, sr_);
+		// THE EXCITATION'S BRIGHTNESS: a one-pole low-pass from 400 Hz (dark) to 12.8 kHz (bright) across Tone.
+		const double lpHz = std::min(400.0 * std::exp2(5.0 * static_cast<double>(laws_.tone)), kTopFraction * sr_);
+		partLpCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * lpHz / sr_));
+		// THE RESONANCES ring for a fraction of the shower's own length; each is normalised to unity at its centre, and given back what the
+		// narrower band takes from a noise burst (the square root of its Q).
+		const double ring = std::clamp(0.12 * laws_.t60, 0.003, 2.0);
+		for (int i = 0; i < kParticleResonators; ++i) {
+			const auto u = static_cast<size_t>(i);
+			const double hz = std::min(laws_.hz * presRatio_[u], kTopFraction * sr_);
+			const double q = std::clamp(std::numbers::pi * hz * ring / std::log(1000.0), 1.5, 400.0);
+			pres_[u].setBandPass(hz, q, sr_);
+			presQGain_[u] = static_cast<float>(pres_[u].k * std::sqrt(q));
+		}
+		break;
+	}
 	case Kind::String:
 		if (string_ != nullptr) {
 			const double hz = laws_.hz * std::exp2(bend);
@@ -992,6 +1059,13 @@ bool Hit::envelopesSilent() const {
 	case Kind::Metal: return body_.v == 0.0f && click_.v == 0.0f;
 	case Kind::Clap: return nextBurst_ >= laws_.count && !toothOn_ && tail_.v == 0.0f;
 	case Kind::String: return string_ == nullptr || string_->idle();
+	case Kind::Particle:
+		for (const Svf& r : pres_) {
+			if (r.ic1 != 0.0f || r.ic2 != 0.0f) {
+				return false;
+			}
+		}
+		return body_.v == 0.0f && grain_.v == 0.0f && partLp_ == 0.0f;
 	default: return true;
 	}
 }
@@ -1006,9 +1080,55 @@ void Hit::checkSilence() {
 			zi_[u] = 0.0f;
 		}
 	}
+	if (kind_ == Kind::Particle) {
+		// A RESONANCE BELOW THE FLOOR IS EXACTLY ZERO, so a spent shower can be found silent and no denormal is left ringing.
+		for (Svf& r : pres_) {
+			if (std::fabs(r.ic1) < kSilenceFloor && std::fabs(r.ic2) < kSilenceFloor) {
+				r.clear();
+			}
+		}
+		if (std::fabs(partLp_) < kSilenceFloor) {
+			partLp_ = 0.0f;
+		}
+		// A DECAYING SHOWER ENDS WHEN NO COLLISION CAN STILL COME: the counter still to gain, summed over the density envelope's whole fall,
+		// cannot reach the threshold. (A held or droning shower's envelope does not fall, so this never ends it.)
+		if (body_.v > 0.0f && body_.d < 1.0f) {
+			const double remaining = laws_.density / sr_ * static_cast<double>(body_.v) / (1.0 - static_cast<double>(body_.d));
+			if (static_cast<double>(partAcc_) + remaining < static_cast<double>(partThresh_)) {
+				body_.v = 0.0f;
+			}
+		}
+	}
 	if (envelopesSilent()) {
 		reset();
 	}
+}
+
+float Hit::renderParticle() {
+	// COLLISIONS: the counter fills at density · envelope per second and fires at its exponentially drawn threshold, so the rate follows the envelope
+	// exactly (a Poisson process of time-varying rate). A grain adds a burst of the size Snap leaves it (Snap 0: all alike; 1: uniformly unequal).
+	const float env = body_.next();
+	partAcc_ += static_cast<float>(laws_.density / sr_) * env;
+	if (partAcc_ >= partThresh_) {
+		partAcc_ -= partThresh_;
+		const double u = std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6);
+		const double size = 1.0 - static_cast<double>(laws_.snap) * (1.0 - u);
+		grain_.v = std::min(2.0f, grain_.v + static_cast<float>(size));
+		partThresh_ = static_cast<float>(-std::log(1.0 - std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6)));
+		++grains_;
+	}
+	// THE EXCITATION: white noise under the grains' envelope, its brightness set by Tone.
+	const float x = noise() * grain_.next();
+	partLp_ += partLpCoef_ * (x - partLp_);
+	float y = 0.0f;
+	for (int i = 0; i < kParticleResonators; ++i) {
+		const auto u = static_cast<size_t>(i);
+		y += presGain_[u] * presQGain_[u] * pres_[u].bandPass(partLp_);
+	}
+	// THE NOISE FIELD is the raw excitation's share, the rattle itself, against the resonances' pitched ring.
+	const float w = laws_.noise;
+	const float mixed = (1.0f - 0.7f * w) * y * kParticleGain + w * 2.0f * partLp_;
+	return mixed * level_;
 }
 
 float Hit::renderKick() {
@@ -1304,6 +1424,11 @@ void Hit::render(float* out, int n, float* outR) {
 				++age_;
 			}
 			age_ -= span;
+			break;
+		case Kind::Particle:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = renderParticle();
+			}
 			break;
 		case Kind::String:
 			if (string_ != nullptr) {

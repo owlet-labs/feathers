@@ -76,7 +76,12 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 			continue; // THE HEADER CHIP IS THE ONLY DEVICE-ENABLE (a window body carries none of its own)
 		}
 		else if (isSegmented(p)) {
-			w = std::make_unique<SegmentedControl>(control, registry, d.names, notifier);
+			// THE TRIGGER'S PLAIN FACE IS TWO-WAY (One-shot | Gate): Drone is offered only on a kind that can be held, by the three-way one beside it.
+			w = std::make_unique<SegmentedControl>(control, registry, p == dd::Param::Trigger ? std::span<const char* const>(dd::kTriggerNamesNoDrone) : d.names, notifier);
+			if (p == dd::Param::Trigger) {
+				triggerDrone_ = std::make_unique<SegmentedControl>(control, registry, d.names, notifier);
+				addChild(triggerDrone_.get());
+			}
 		}
 		else if (p == dd::Param::Rotate || p == dd::Param::Gamma) {
 			// AS AUTOMOD'S MINI TERRAIN: Gamma and Rotate are unbounded, so boxes (`GammaBox`), never knobs. ROTATE sits INSIDE the pad, in its
@@ -194,7 +199,19 @@ void DrumDeviceExpanded::layOut() {
 	if (play_ != nullptr) {
 		strike.place(play_.get(), 30.0f, 22.0f);
 	}
-	seat(strike, dd::Param::Trigger, 128.0f, 22.0f);
+	// ONE OF THE TWO TRIGGER FACES: with Drone on a kind that can hold it, else the plain two-way (the engine's `kindSustains`).
+	const bool sustains = feathers::drum::kindSustains(kind);
+	if (triggerDrone_ != nullptr) {
+		triggerDrone_->setVisible(sustains);
+	}
+	if (sustains) {
+		placed[static_cast<size_t>(dd::Param::Trigger)] = true;
+		show(dd::Param::Trigger, false);
+		strike.place(triggerDrone_.get(), 190.0f, 22.0f);
+	}
+	else {
+		seat(strike, dd::Param::Trigger, 128.0f, 22.0f);
+	}
 	seat(strike, dd::Param::Voices, 96.0f, 22.0f);
 	for (const dd::Param p : { dd::Param::Level, dd::Param::Pan, dd::Param::Tune, dd::Param::Decay, dd::Param::Release, dd::Param::Bend,
 	                           dd::Param::Delay, dd::Param::HighPass }) {
@@ -238,7 +255,7 @@ void DrumDeviceExpanded::layOut() {
 	seat(body, dd::Param::Drive, kPillW, kPillH);
 	seat(body, dd::Param::DriveCurve, 184.0f, 22.0f);
 	seat(body, dd::Param::DriveTone, kPillW, kPillH);
-	for (const dd::Param p : { dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
+	for (const dd::Param p : { dd::Param::Density, dd::Param::Grain, dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
 	                           dd::Param::WireDecay, dd::Param::ClickDecay, dd::Param::BellStart, dd::Param::BellEnd, dd::Param::BellTime,
 	                           dd::Param::Bell2Hz, dd::Param::Bell2Time, dd::Param::KickHold, dd::Param::KickDip, dd::Param::KickDipTime,
 	                           dd::Param::ClickSweep, dd::Param::ClickSweepTime, dd::Param::StartPhase }) {

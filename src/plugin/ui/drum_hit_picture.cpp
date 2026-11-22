@@ -696,6 +696,27 @@ void HitPicture::draw(visage::Canvas& canvas) {
 			     k == 1 ? 4.0f : 2.0f);
 		}
 		break;
+	case drum::Kind::Particle: {
+		// THE RESONANCES: a few lines scattered about the centre by Metal, each ringing for a part of the shower's length, and the rattle's band.
+		const double ring = std::clamp(0.12 * laws_.t60, 0.003, 2.0);
+		for (int i = 0; i < 4; ++i) {
+			const double spread = i == 0 ? 0.0 : (i % 2 == 0 ? 1.0 : -1.0) * (0.35 + 0.2 * i);
+			line(laws_.hz * std::exp2(1.5 * static_cast<double>(laws_.metal) * spread), ring, 1.0 / (1.0 + 0.4 * i), i == 0 ? 4.0f : 2.0f);
+		}
+		band(drum::metalCentreHz(laws_.tone), laws_.t60, std::max(0.1, static_cast<double>(laws_.noise)));
+		// THE COLLISIONS: a tick for each grain at the average spacing, fading with the shower's density (held flat when it is held).
+		for (int k = 0; k < 80; ++k) {
+			const double t = (static_cast<double>(k) + 0.5) / std::max(0.25, laws_.density);
+			const float x = xOf(t);
+			if (x > plotRight()) {
+				break;
+			}
+			const double a = laws_.play == drum::kPlayOneShot ? std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60)) : 1.0;
+			canvas.setColor(alphaOf(kInk, 0.5f * seen(a)));
+			canvas.fill(x, specTop(), 1.0f, specBottom() - specTop());
+		}
+		break;
+	}
 	default: break;
 	}
 
@@ -715,7 +736,9 @@ void HitPicture::draw(visage::Canvas& canvas) {
 		const double t = secondsAt(plotLeft() + w * (static_cast<float>(i) + 0.5f) / kSteps);
 		// A KICK HOLDS, THEN DECAYS, with its fishtail dipped in (the hit's own Hold and dipAt's curve).
 		const bool kick = kind_ == drum::Kind::Kick;
-		const double held = kick ? std::max(0.0, t - laws_.kickHold) : t;
+		// A HELD SHOWER (Gate, Drone) stays at full: the picture draws the level it holds, and a Gate's release is the Release control's.
+		const bool heldShower = kind_ == drum::Kind::Particle && laws_.play != drum::kPlayOneShot;
+		const double held = heldShower ? 0.0 : (kick ? std::max(0.0, t - laws_.kickHold) : t);
 		double a = std::pow(10.0, -3.0 * held / std::max(1.0e-3, laws_.t60)) * gatedAt(t, bodyGate);
 		if (kick && laws_.kickDip > 0.0) {
 			const double u = (t - 0.5 * laws_.kickDipTime) / laws_.kickDipTime;

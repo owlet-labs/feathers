@@ -60,12 +60,21 @@
 
 namespace feathers::drum {
 
-enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, kCount };
+enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, kCount };
 inline constexpr size_t kKindCount = static_cast<size_t>(Kind::kCount);
 /// The labels a Choice stores (the schema ledger stores a Choice by label, so this order may change; a label may not
 /// without a ChoiceAlias).
 inline constexpr std::array<const char* const, kKindCount> kKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap",
-	                                                                    "String" };
+	                                                                    "String", "Particle" };
+
+/// **PLAY MODES**: how a hit is held. One-shot rings the whole hit out; Gate holds it while the key is down and damps it to Release when it is let go;
+/// Drone sounds from the moment the device runs, no key needed, until it is switched off. A mode is offered on a kind only where the engine has an
+/// excitation that can be held (`kindSustains`); the impulse kinds ring out, and Gate on them damps the ring as it always did.
+inline constexpr int kPlayOneShot = 0;
+inline constexpr int kPlayGate = 1;
+inline constexpr int kPlayDrone = 2;
+/// Whether a kind has an excitation that goes on (a random process), so that Gate holds it and Drone runs it for ever.
+[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle; }
 
 /// THE SEVEN DRUM FIELDS (proposal §3.1), each in [0, 1]: the terrain's, or a scaler's override of it.
 struct Fields {
@@ -159,6 +168,10 @@ struct Controls {
 	/// THE TERRAIN'S PITCH (kit stance redesign R5): 0 Free (the terrain's contribution as it comes), 1 Semitones (rounded to whole
 	/// semitones before it is applied), 2 Off (none of it). Only the Pitch field's contribution is ever touched; Tune is not.
 	int pitchMode{0};
+	// THE PARTICLE'S (a shower of colliding grains exciting a few resonances): grains a second, one grain's decay, and the play mode.
+	double particleDensity{25.0};
+	double grainSeconds{0.004};
+	int play{0};
 	friend bool operator==(const Controls&, const Controls&) = default;
 };
 
@@ -325,6 +338,10 @@ struct Laws {
 	double width{0.0};
 	double buzz{0.0};
 	double buzzThreshold{0.5};
+	// THE PARTICLE'S: the collision rate at full envelope, a grain's decay, and how the shower is held (kPlay*).
+	double density{25.0};
+	double grainT60{0.004};
+	int play{0};
 	friend bool operator==(const Laws&, const Laws&) = default;
 };
 
@@ -474,6 +491,7 @@ private:
 	float renderKick();
 	float renderModes();
 	float renderMetal();
+	float renderParticle();
 	float renderClap();
 	float clapTooth();
 	float noise() { return noise_.next(); }
@@ -631,6 +649,27 @@ private:
 	ks::KsString* string_{nullptr};
 	ks::PluckBuilder* builder_{nullptr};
 	double stringHz_{-1.0};
+
+	// PARTICLE: collisions arrive as a Poisson process (a counter fills at density/sample rate and fires at an exponentially drawn threshold), each
+	// adding a decaying burst of noise to the excitation, which a few resonances (seeded ratios, the Metal field's spread) turn into pitch.
+	static constexpr int kParticleResonators = 4;
+	std::array<Svf, kParticleResonators> pres_ {};
+	std::array<float, kParticleResonators> presGain_ {};
+	std::array<float, kParticleResonators> presQGain_ {};
+	std::array<double, kParticleResonators> presRatio_ {};
+	Env grain_ {};
+	float partAcc_{0.0f};
+	float partThresh_{1.0f};
+	float partLp_{0.0f};
+	float partLpCoef_{1.0f};
+	float partRaw_{0.0f};
+	ks::PluckNoise partRand_{1};
+	int64_t grains_{0};
+public:
+	/// TEST SEAMS (values): the collisions so far, the resonators' centres now, the density envelope.
+	int64_t particleGrainsForTest() const { return grains_; }
+	double particleResonatorHzForTest(int i) const { return presRatio_[static_cast<size_t>(i)] * laws_.hz; }
+	float particleDensityEnvForTest() const { return body_.v; }
 };
 
 } // namespace feathers::drum

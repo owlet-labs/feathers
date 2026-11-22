@@ -50,7 +50,9 @@ inline constexpr double kWindow = 8388608.0;
 
 /// Stored by label, so the order may grow.
 inline constexpr const char* kOffOnNames[] = { "Off", "On" };
-inline constexpr const char* kTriggerNames[] = { "One-shot", "Gate" };
+/// The play mode (`feathers::drum::kPlay*`): Drone is offered only on a kind with an excitation that can be held (`kindSustains`).
+inline constexpr const char* kTriggerNames[] = { "One-shot", "Gate", "Drone" };
+inline constexpr const char* kTriggerNamesNoDrone[] = { "One-shot", "Gate" };
 inline constexpr const char* kVoicesNames[] = { "1", "2", "4" };
 inline constexpr int kVoicesCounts[] = { 1, 2, 4 };
 inline constexpr int kMaxVoices = 4;
@@ -69,8 +71,9 @@ inline constexpr uint32_t kSnareKinds = 1u << 2;
 inline constexpr uint32_t kClapKinds = 1u << 4;
 inline constexpr uint32_t kSweepKinds = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 5); ///< the Sweep field
 inline constexpr uint32_t kSweepTimeKinds = (1u << 0) | (1u << 5);                       ///< Sweep Time
-inline constexpr uint32_t kNoiseKinds = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4); ///< Noise, Velocity Noise
-inline constexpr uint32_t kMetalKinds = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);   ///< the Metal field
+inline constexpr uint32_t kNoiseKinds = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 6); ///< Noise, Velocity Noise
+inline constexpr uint32_t kMetalKinds = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5) | (1u << 6);   ///< the Metal field
+inline constexpr uint32_t kParticleKinds = 1u << 6;                                      ///< Density, Grain
 inline constexpr uint32_t kWidthKinds = (1u << 2) | (1u << 4);                           ///< Width
 inline constexpr uint32_t kTensionKinds = (1u << 0) | (1u << 1) | (1u << 2);             ///< Vel Tension (Kick, Membrane, Snare)
 
@@ -141,10 +144,12 @@ enum class Param : uint8_t {
 	ClickSweep,
 	ClickSweepTime,
 	StartPhase,
-	Keys, ///< appended last so the order stays stable: One Key | Any Key | Pitched
+	Keys, ///< appended so the order stays stable: One Key | Any Key | Pitched
+	Density,
+	Grain,
 	kCount
 };
-static_assert(static_cast<size_t>(Param::kCount) == 65);
+static_assert(static_cast<size_t>(Param::kCount) == 67);
 
 inline constexpr int16_t kKindControl = static_cast<int16_t>(Param::Kind);
 inline constexpr int16_t kTriggerControl = static_cast<int16_t>(Param::Trigger);
@@ -188,7 +193,7 @@ inline constexpr device::Traits kTraits {
 };
 
 /// A DRUM'S KIND NAMES, in the engine's own order (`feathers::drum::kKindNames`).
-inline constexpr const char* kKindLabels[] = { "Kick", "Membrane", "Snare", "Metal", "Clap", "String" };
+inline constexpr const char* kKindLabels[] = { "Kick", "Membrane", "Snare", "Metal", "Clap", "String", "Particle" };
 static_assert(std::size(kKindLabels) == feathers::drum::kKindCount);
 
 inline constexpr device::ParamDesc kParamDescs[] = {
@@ -197,7 +202,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "Whether the drum is in the chain"},
 	{.key = "drum_kind", .name = "Kind", .min = 0.0, .max = static_cast<double>(feathers::drum::kKindCount - 1), .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kKindLabels, .modulatable = false,
-	 .tooltip = "Which drum this is: a pitch-swept Kick, a ringing Membrane, a Snare, a Metal cymbal or hat, a Clap, or a struck String"},
+	 .tooltip = "Which drum this is: a pitch-swept Kick, a ringing Membrane, a Snare, a Metal cymbal or hat, a Clap, a struck String, or a Particle shower of grains"},
 	{.key = "drum_note", .name = "Note", .min = 0.0, .max = 127.0, .def = 36.0, .stepped = true,
 	 .unit = device::Unit::Note, .names = {}, .modulatable = false,
 	 .tooltip = "The key this drum answers. Every note passes through whatever it does, so several drums on one key sound together",
@@ -228,9 +233,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	{.key = "drum_drive", .name = "Drive", .min = 0.0, .max = 1.0, .def = 0.2, .stepped = false,
 	 .unit = device::Unit::Percent, .names = {}, .modulatable = true,
 	 .tooltip = "How hard the hit is pushed into its Drive Curve: rounder and louder"},
-	{.key = "drum_trigger", .name = "Trigger", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true,
+	{.key = "drum_trigger", .name = "Trigger", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kTriggerNames, .modulatable = false,
-	 .tooltip = "One-shot plays the whole hit whatever the key does. Gate damps it to Release when the key is let go"},
+	 .tooltip = "One-shot plays the whole hit whatever the key does. Gate holds it while the key is down and damps it to Release when it is let go. Drone sounds all the time, with no key (a kind that can be held: Particle)"},
 	{.key = "drum_voices", .name = "Voices", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kVoicesNames, .modulatable = false,
 	 .tooltip = "How many hits of this drum may ring at once; one more fades the oldest out"},
@@ -485,6 +490,16 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	{.key = "drum_keys", .name = "Keys", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kKeysNames, .modulatable = false,
 	 .tooltip = "One Key answers the one key Note names. Any Key answers every key and sounds just as One Key does, whatever key arrives. Pitched answers every key and plays it as a pitch, so the drum is played across the keyboard; Tune moves it from the key"},
+	{.key = "drum_density", .name = "Density", .min = -2.0, .max = 10.965784284662087, .def = 4.643856189098, .stepped = false,
+	 .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
+	 .tooltip = "How many grains collide each second at the full strength of the shower (a Particle): a few a second is a rattle, hundreds a hiss of rain",
+	 .gateControl = kKindControl,
+	 .gateMask = kParticleKinds},
+	{.key = "drum_grain", .name = "Grain Decay", .min = -13.287712379549449, .max = -1.0, .def = -7.965784284662087, .stepped = false,
+	 .unit = device::Unit::LogSeconds, .names = {}, .modulatable = true,
+	 .tooltip = "How long one grain's burst of noise lasts before the resonances take it: short is a tick, long a hiss (a Particle)",
+	 .gateControl = kKindControl,
+	 .gateMask = kParticleKinds},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 

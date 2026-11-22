@@ -28,6 +28,8 @@
 #include "doctest.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -101,7 +103,7 @@ std::vector<float> render(Hit& h, size_t n, size_t block = 256) {
 	return out;
 }
 
-constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String };
+constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle };
 
 } // namespace
 
@@ -1426,4 +1428,173 @@ TEST_CASE("settled pitch: a Kick's measured fundamental, a Membrane's lowest mod
 	r.hit.strike(Kind::Membrane, lawsFor(Kind::Membrane, f, c, 110.0, 0.8), 3, 1.0f);
 	(void)render(r.hit, 4800);
 	CHECK(r.hit.currentHz(0) == doctest::Approx(want).epsilon(1.0e-9));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// PARTICLE: a shower of colliding grains exciting a few resonances                                  //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Laws particleLaws(int play, double density, double t60 = 0.4) {
+	Laws l = baseLaws(2400.0, t60);
+	l.density = density;
+	l.grainT60 = 0.004;
+	l.play = play;
+	l.metal = 0.5f;
+	l.noise = 0.2f;
+	return l;
+}
+
+/// A WAV of mono 16-bit samples, for listening: written only when FEATHERS_DRUM_WAV_DIR names a folder.
+void dumpWav(const char* name, const std::vector<float>& x) {
+	const char* dir = std::getenv("FEATHERS_DRUM_WAV_DIR");
+	if (dir == nullptr || *dir == '\0') {
+		return;
+	}
+	std::vector<uint8_t> b;
+	const auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	const auto put16 = [&](uint16_t v) { for (int i = 0; i < 2; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	for (const char c : std::string("RIFF")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(36 + x.size() * 2));
+	for (const char c : std::string("WAVEfmt ")) b.push_back(static_cast<uint8_t>(c));
+	put32(16); put16(1); put16(1); put32(48000); put32(96000); put16(2); put16(16);
+	for (const char c : std::string("data")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(x.size() * 2));
+	for (const float v : x) put16(static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))));
+	std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+	if (f != nullptr) {
+		std::fwrite(b.data(), 1, b.size(), f);
+		std::fclose(f);
+	}
+}
+
+float peakAbs(const std::vector<float>& v) {
+	float p = 0.0f;
+	for (const float x : v) {
+		p = std::max(p, std::fabs(x));
+	}
+	return p;
+}
+
+} // namespace
+
+TEST_CASE("Particle: the collisions per second follow Density, as a Poisson process (a held shower, many seeds)") {
+	// A DRONE'S RATE IS CONSTANT, so the count over T seconds is Poisson with mean density · T: over many seeds the mean count is that, to a
+	// few percent, and its variance is the mean's.
+	for (const double density : { 8.0, 40.0, 200.0 }) {
+		CAPTURE(density);
+		constexpr int kSeeds = 60;
+		const double seconds = 4.0;
+		double sum = 0.0;
+		double sumSq = 0.0;
+		for (int seed = 1; seed <= kSeeds; ++seed) {
+			Rig r;
+			r.hit.strike(Kind::Particle, particleLaws(kPlayDrone, density), static_cast<uint64_t>(seed) * 7919u, 1.0f);
+			(void)render(r.hit, static_cast<size_t>(seconds * kSr));
+			const double n = static_cast<double>(r.hit.particleGrainsForTest());
+			sum += n;
+			sumSq += n * n;
+		}
+		const double mean = sum / kSeeds;
+		const double variance = sumSq / kSeeds - mean * mean;
+		CHECK(mean == doctest::Approx(density * seconds).epsilon(0.05));
+		CHECK(variance / mean == doctest::Approx(1.0).epsilon(0.5)); // Poisson: variance = mean
+	}
+}
+
+TEST_CASE("Particle: a one-shot shower ends in exact silence and idle, a held one does not, and a Drone is never idle") {
+	{
+		Rig r;
+		r.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 60.0, 0.3), 11, 1.0f);
+		const std::vector<float> x = render(r.hit, static_cast<size_t>(8.0 * kSr));
+		CHECK(r.hit.idle());
+		CHECK(peakAbs(x) > 0.05f);
+		// EXACT ZERO from the sample the hit went idle: the last nonzero sample is followed by nothing but zeros.
+		size_t last = 0;
+		for (size_t i = 0; i < x.size(); ++i) {
+			last = x[i] != 0.0f ? i : last;
+		}
+		CHECK(last < x.size() - static_cast<size_t>(kSr)); // it was silent for at least the last second
+		dumpWav("particle-oneshot.wav", x);
+	}
+	{
+		Rig r;
+		r.hit.strike(Kind::Particle, particleLaws(kPlayGate, 60.0, 0.3), 11, 1.0f);
+		std::vector<float> held = render(r.hit, static_cast<size_t>(2.0 * kSr));
+		CHECK_FALSE(r.hit.idle());
+		CHECK(r.hit.particleDensityEnvForTest() == 1.0f); // the density envelope has not moved
+		r.hit.release(0.15);
+		const std::vector<float> tail = render(r.hit, static_cast<size_t>(6.0 * kSr));
+		held.insert(held.end(), tail.begin(), tail.end());
+		CHECK(r.hit.idle());
+		dumpWav("particle-gate.wav", held);
+	}
+	{
+		Rig r;
+		r.hit.strike(Kind::Particle, particleLaws(kPlayDrone, 30.0, 0.3), 11, 1.0f);
+		const std::vector<float> x = render(r.hit, static_cast<size_t>(4.0 * kSr));
+		CHECK_FALSE(r.hit.idle());
+		CHECK(r.hit.particleDensityEnvForTest() == 1.0f);
+		CHECK(peakAbs(x) > 0.05f);
+		dumpWav("particle-drone.wav", x);
+	}
+}
+
+TEST_CASE("Particle: the level is that of the other kinds, and the same seed is the same shower to the bit") {
+	Rig a;
+	Rig b;
+	Rig c;
+	a.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 80.0), 99, 1.0f);
+	b.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 80.0), 99, 1.0f);
+	c.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 80.0), 100, 1.0f);
+	const std::vector<float> xa = render(a.hit, 24000);
+	const std::vector<float> xb = render(b.hit, 24000, 64); // a different block size
+	const std::vector<float> xc = render(c.hit, 24000);
+	CHECK(xa == xb);
+	CHECK(xa != xc);
+	const float peak = peakAbs(xa);
+	CHECK(peak > 0.15f);
+	CHECK(peak < 1.0f);
+}
+
+TEST_CASE("Particle: the resonances sit at the centre and scatter by Metal, seeded, within an octave and a half") {
+	Laws l = particleLaws(kPlayOneShot, 40.0);
+	l.metal = 0.0f;
+	Rig r;
+	r.hit.strike(Kind::Particle, l, 5, 1.0f);
+	for (int i = 0; i < 4; ++i) {
+		CHECK(r.hit.particleResonatorHzForTest(i) == doctest::Approx(l.hz).epsilon(1e-12)); // no spread: all at the centre
+	}
+	l.metal = 1.0f;
+	r.hit.strike(Kind::Particle, l, 5, 1.0f);
+	CHECK(r.hit.particleResonatorHzForTest(0) == doctest::Approx(l.hz).epsilon(1e-12)); // the first never moves
+	bool spread = false;
+	for (int i = 1; i < 4; ++i) {
+		const double ratio = r.hit.particleResonatorHzForTest(i) / l.hz;
+		CHECK(ratio >= std::exp2(-1.5) - 1e-9);
+		CHECK(ratio <= std::exp2(1.5) + 1e-9);
+		spread = spread || std::fabs(std::log2(ratio)) > 0.05;
+	}
+	CHECK(spread); // NON-VACUITY: Metal at 1 really scatters them
+	Rig other;
+	other.hit.strike(Kind::Particle, l, 6, 1.0f);
+	CHECK(other.hit.particleResonatorHzForTest(2) != r.hit.particleResonatorHzForTest(2)); // seeded: another seed, other places
+}
+
+TEST_CASE("Particle: kindSustains is the engine's statement, and a Particle's laws carry the play mode while an impulse kind keeps only Gate") {
+	CHECK(kindSustains(Kind::Particle));
+	for (const Kind k : { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String }) {
+		CHECK_FALSE(kindSustains(k));
+		Controls c;
+		c.play = kPlayDrone;
+		CHECK(lawsFor(k, Fields {}, c, 110.0, 1.0).play == kPlayOneShot); // Drone on a kind that cannot hold it plays as One-shot
+		c.play = kPlayGate;
+		CHECK(lawsFor(k, Fields {}, c, 110.0, 1.0).play == kPlayGate); // a working Gate stays
+	}
+	Controls c;
+	c.play = kPlayDrone;
+	CHECK(lawsFor(Kind::Particle, Fields {}, c, 3000.0, 1.0).play == kPlayDrone);
+	CHECK(kindReads(Kind::Particle).metal);
+	CHECK_FALSE(kindReads(Kind::Particle).sweep);
 }

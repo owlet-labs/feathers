@@ -102,6 +102,8 @@ public:
 	[[nodiscard]] float keyTuningForTest(int key) const noexcept { return key >= 0 && key < 128 ? keyTuning_[static_cast<size_t>(key)] : 0.0f; }
 	[[nodiscard]] float gainLeftForTest() const noexcept { return gainL_; }
 	[[nodiscard]] float gainRightForTest() const noexcept { return gainR_; }
+	/// The drone's hit, or null while it is not running.
+	[[nodiscard]] const feathers::drum::Hit* droneForTest() const noexcept { return drone_.used ? &drone_.hit : nullptr; }
 
 private:
 	struct Slot {
@@ -133,7 +135,14 @@ private:
 	void release(Slot& s);
 	void fade(Slot& s);
 	void renderSpan(float* left, float* right, int n);
+	/// ONE SLOT'S SPAN, added to the ears: the pool's hits and the drone take the same road.
+	void renderSlot(Slot& s, float* left, float* right, int n);
 	void refreshLaws();
+	/// **THE DRONE**: while the play mode is Drone on a kind that can be held, one hit of its own (outside the pool, so it takes no voice) is kept
+	/// struck from the moment the device runs. A moved control reaches it as any hit's (`setLaws`); a changed Seed or Kind restarts it; leaving the
+	/// mode fades it out. Called at the top of every `process`.
+	void serveDrone();
+	[[nodiscard]] bool droneWanted() const noexcept;
 	[[nodiscard]] bool hpRinging(const Slot& s) const noexcept;
 
 	double sr_ = 48000.0;
@@ -149,6 +158,7 @@ private:
 	device::TransportClock clock_ {};
 	feathers::ks::PluckBuilder builder_ {};
 	std::array<Slot, kPool> slots_ {};
+	Slot drone_ {};
 	std::array<device::NoteEvent, kQueue> queue_ {};
 	size_t queued_ = 0;
 	std::array<float, 128> keyTuning_ {};

@@ -58,6 +58,7 @@ inline constexpr const char* kHostKeys[] = {
 	"drum_vel_level", "drum_vel_tone", "drum_vel_snap", "drum_vel_tension",
 	"drum_wire_buzz", "drum_wire_gate", "drum_body_gate", "drum_bell1_level",
 	"drum_bell2_level",
+	"drum_density", "drum_grain",
 };
 inline constexpr size_t kHostParamCount = sizeof(kHostKeys) / sizeof(kHostKeys[0]);
 

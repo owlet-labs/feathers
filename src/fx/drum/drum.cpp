@@ -665,28 +665,3 @@ const device::NoteOps kNoteOps {
 };
 
 } // namespace feathers::fx::drumdevice
-
-namespace feathers::fx::drumdevice {
-
-bool DrumDsp::writeLikes(const float* in, size_t n) noexcept {
-	// A BLOCK THIS BUILD CANNOT READ IS REFUSED, whole (the drum plays as it did): the words must be whole and the likes sane.
-	if (!readLikeBlock(in, n, nullptr)) {
-		return false;
-	}
-	likes_.write(in, n);
-	return true;
-}
-
-uint64_t readBlock(const void* storage, size_t index, float* out, size_t capacity) {
-	return index == kLikesBlock ? static_cast<const DrumDsp*>(storage)->readLikes(out, capacity) : 0;
-}
-
-bool restoreBlock(void* storage, size_t index, const float* in, size_t n) {
-	return index == kLikesBlock && static_cast<DrumDsp*>(storage)->writeLikes(in, n);
-}
-
-bool applyBlock(void* storage, size_t index, const float* in, size_t n) {
-	return index == kLikesBlock && static_cast<DrumDsp*>(storage)->writeLikes(in, n);
-}
-
-} // namespace feathers::fx::drumdevice

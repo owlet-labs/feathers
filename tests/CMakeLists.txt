@@ -2168,16 +2168,3 @@ add_test(NAME fx-owltt-linear COMMAND test_fx_owltt_linear)
 add_executable(bench_linear_crossover bench_linear_crossover.cpp)
 target_link_libraries(bench_linear_crossover PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)
 target_include_directories(bench_linear_crossover PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
-# THE DRUM'S LIKES, by value: the stored block, the like surface, the warp the pad is drawn through, and Mutate steered by it.
-add_executable(test_drum_likes test_drum_likes.cpp)
-target_link_libraries(test_drum_likes PRIVATE feathers-impl feathers-warnings)
-target_include_directories(test_drum_likes PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
-add_test(NAME drum-likes COMMAND test_drum_likes)
-
-# THE DRUM WINDOW'S LIKES through its real widgets over a real rack: the heart, the marks, Mutate, the press through the warp.
-add_executable(test_drum_likes_gui test_drum_likes_gui.cpp)
-target_link_libraries(test_drum_likes_gui PRIVATE feathers-impl feathers-warnings)
-target_include_directories(test_drum_likes_gui PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
-add_test(NAME drum-likes-gui COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run -- $<TARGET_FILE:test_drum_likes_gui>)
-set_tests_properties(drum-likes-gui PROPERTIES LABELS "headless-incompatible")

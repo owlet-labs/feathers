@@ -93,8 +93,6 @@
 
 #include "fx/owltt/owltt_types.h"
 #include "fx/harm/harm_types.h"
-#include "fx/drum/drum_types.h"
-#include "plugin/ui/drum_device_expanded.h"
 
 #include <visage_app/application_window.h>
 #include <visage_app/window_event_handler.h> // backlog MF: the real hover road, driven
@@ -3640,49 +3638,6 @@ TEST_CASE("a dropdown opened by a real press and release stays open through the 
 		REQUIRE(other != nullptr);
 		checkMenuSurvivesAndPicks(rig, *other, "other");
 	}
-}
-
-TEST_CASE("the Drum's heart menu, opened by a real right press, stays open through the editor's beats and its Clear lands on a real click") {
-	ReopenRig rig;
-	const size_t slot = rig.f.addFx(fx::drumdevice::kTraits.tag);
-	rig.f.gui.setPopoutWindowForTest(false);
-	REQUIRE(rig.f.gui.canvasForTest()->setCollapsed(false));
-	rig.f.lane->onExpandDevice(slot);
-	pumpEditor(rig.f.gui, 5);
-	ui::DrumDeviceExpanded* window = findIn<ui::DrumDeviceExpanded>(rig.f.root);
-	REQUIRE(window != nullptr);
-	ui::DrumLikeBar& bar = window->likesForTest();
-	// ONE LIKE, so Clear has something to clear (the heart's own press, left button).
-	REQUIRE(bar.toggleLike());
-	REQUIRE(bar.all().size() == 1);
-	const double scale = rig.f.root->dpiScale();
-	const visage::Point heart = bar.positionInWindow() + visage::Point(bar.heartBounds().width() * 0.5f, bar.heartBounds().height() * 0.5f);
-	const visage::IPoint at { static_cast<int>(heart.x * scale), static_cast<int>(heart.y * scale) };
-	EditorPointer p = rig.pointer();
-	p.send(MotionNotify, at.x, at.y, 0, 0);
-	p.send(ButtonPress, at.x, at.y, Button3, 0);
-	pumpEditor(rig.f.gui, 3);
-	p.send(ButtonRelease, at.x, at.y, Button3, Button3Mask);
-	for (int i = 0; i < 10; ++i) {
-		(void)rig.f.gui.tickForTest();
-		pumpEditor(rig.f.gui, 3);
-	}
-	visage::PopupMenuFrame* popup = findIn<visage::PopupMenuFrame>(rig.f.root->topParentFrame());
-	REQUIRE(popup != nullptr);
-	CHECK(popup->isVisible());
-	CHECK(ui::lastMenuPlacementForTest().shown);
-	// THE FIRST ROW IS "Clear all likes on Kick": a real click near the top of the list.
-	const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
-	const visage::Point rowAt { placed.list.x() + placed.list.width() * 0.5f, placed.list.y() + 10.0f };
-	const visage::IPoint pick { static_cast<int>(rowAt.x * scale), static_cast<int>(rowAt.y * scale) };
-	p.send(MotionNotify, pick.x, pick.y, 0, 0);
-	pumpEditor(rig.f.gui, 3);
-	p.send(ButtonPress, pick.x, pick.y, Button1, 0);
-	pumpEditor(rig.f.gui, 3);
-	p.send(ButtonRelease, pick.x, pick.y, Button1, Button1Mask);
-	pumpEditor(rig.f.gui, 10);
-	CHECK(bar.all().empty());
-	CHECK(bar.state() == nullptr);
 }
 #endif // defined(__linux__): ReopenRig is Linux-only
 

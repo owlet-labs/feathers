@@ -100,17 +100,9 @@ struct ExplorePlane {
 	double centreY;
 	double halfX; ///< the map's half-extents, in plane units
 	double halfY;
-	/// **A POLICY'S VIEW WARP, IF IT HAS ONE** (the Drum's likes): a place of the VIEW's plane (what the pad draws linearly) to the place of the
-	/// WORLD's it shows. Empty for every other policy, and then `travelAt` is the arithmetic it always was.
-	std::function<std::pair<double, double>(double, double)> warp {};
 	[[nodiscard]] std::array<float, N> travelAt(float ux, float uy) const {
-		double px = centreX + (static_cast<double>(ux) * 2.0 - 1.0) * halfX;
-		double py = centreY + (static_cast<double>(uy) * 2.0 - 1.0) * halfY;
-		if (warp) {
-			const std::pair<double, double> world = warp(px, py);
-			px = world.first;
-			py = world.second;
-		}
+		const double px = centreX + (static_cast<double>(ux) * 2.0 - 1.0) * halfX;
+		const double py = centreY + (static_cast<double>(uy) * 2.0 - 1.0) * halfY;
 		std::array<float, N> travel {};
 		for (size_t i = 0; i < N; ++i) {
 			travel[i] = static_cast<float>(origin[i] + basisX[i] * px + basisY[i] * py);
@@ -218,13 +210,6 @@ public:
 	/// there is never any standing travel for a turn of the plane to move.
 	[[nodiscard]] visage::Point puck() const;
 
-	/// **A PLACE OF THE WORLD'S PLANE** (plane units from the frame's origin, what `starForTest` is in) AS A PIXEL OF THE PAD: through the
-	/// policy's view warp when it has one (`Policy::viewFromWorld`), so a mark sits where the picture shows what it names.
-	[[nodiscard]] visage::Point pixelOfPlane(double x, double y) const;
-	/// The frame's origin (the standing travel it is anchored on), and the plane units one pixel spans.
-	[[nodiscard]] const Phases& frameOrigin() const noexcept { return origin_; }
-	[[nodiscard]] double planePerPixelNow() const { return planePerPixel(); }
-
 	/// **THE PAN, AS EXPLORE DOES IT (backlog IJ)** — the seams. `starForTest` is where the sound is and
 	/// `viewForTest` where the view is centred, both in PLANE units from the frame's origin; at rest both
 	/// are 0, because the frame re-origins on the sound once the view has glided home.
@@ -304,10 +289,6 @@ private:
 
 	/// Plane units per pixel — ONE scale for both axes, from the smaller side, divided by the zoom.
 	[[nodiscard]] double planePerPixel() const;
-	/// THE VIEW'S PLANE TO THE WORLD'S AND BACK — the policy's warp when it names one (`Policy::worldFromView`, `viewFromWorld`, handed the
-	/// context and the frame's origin), the identity otherwise, to the bit.
-	[[nodiscard]] std::pair<double, double> worldOfView(double x, double y) const;
-	[[nodiscard]] std::pair<double, double> viewOfWorld(double x, double y) const;
 	/// The view's half-extents in plane units.
 	[[nodiscard]] std::pair<double, double> viewHalf() const;
 	[[nodiscard]] visage::Point toPixel(double x, double y) const;

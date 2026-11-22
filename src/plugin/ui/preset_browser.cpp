@@ -330,6 +330,7 @@ PresetBrowser::PresetBrowser(std::vector<std::string> factoryNames, std::vector<
 			step(1);
 		}
 		else if (hitsName(e.position)) {
+			refreshIfBankChanged();
 			showList();
 		}
 	};
@@ -339,6 +340,7 @@ PresetBrowser::PresetBrowser(std::vector<std::string> factoryNames, std::vector<
 		// (backlog GG's toggle); this is the browser asking, so any list still open from this box is put
 		// away first and the new one is opened rather than toggled shut.
 		dismissMenuOf(*this);
+		refreshIfBankChanged();
 		showList();
 	});
 }
@@ -361,6 +363,13 @@ int64_t PresetBrowser::now() const {
 		return clock();
 	}
 	return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+void PresetBrowser::refreshIfBankChanged() {
+	// THE BANK WAS WRITTEN SINCE THIS BROWSER READ IT (a preset saved from a device's header menu): read it again.
+	if (loadedRevision_ != PresetStore::revision()) {
+		loadBankFromDisk();
+	}
 }
 
 void PresetBrowser::loadBankFromDisk() {
@@ -393,6 +402,7 @@ void PresetBrowser::loadBankFromDisk() {
 	// The selection follows its entry; nothing is applied — opening an editor must not change the sound.
 	const int found = indexOf(wasName, wasCategory);
 	index_ = found >= 0 ? found : (entries_.empty() ? -1 : 0);
+	loadedRevision_ = PresetStore::revision(); // AFTER the installs above, which are writes too
 	redraw();
 }
 

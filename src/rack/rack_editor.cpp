@@ -440,6 +440,7 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	};
 	selection_ = std::make_unique<ui::LaneSelection>(engine_, history_, nullptr, std::move(selectionHooks));
 	selectionOverlay_ = std::make_unique<ui::SelectionOverlay>(*selection_);
+	selection_->setPromptHost(this);
 	addChild(selectionOverlay_.get());
 	// THE LASSO STARTS ON THE BARE LANE: a press that reaches this frame itself hit no card, no column and no
 	// canvas (each is a child that takes its own presses). A click with no drag clears the selection.

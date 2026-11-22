@@ -80,6 +80,7 @@ FxLane::FxLane(ParamBridge& bridge, WidgetRegistry& registry, ModState* mod, Edi
 	selection_ = std::make_unique<LaneSelection>(bridge_, history_ != nullptr ? *history_ : spareHistory_, notifier_,
 	                                             std::move(selectionHooks));
 	selectionOverlay_ = std::make_unique<SelectionOverlay>(*selection_);
+	selection_->setPromptHost(this);
 	onKeyPress() = [this](const visage::KeyEvent& e) {
 		// THE SELECTION'S KEYS FIRST (backlog OA): Ctrl/Cmd + A C X V D G, and Delete over two or more.
 		if (selection_->key(e)) {

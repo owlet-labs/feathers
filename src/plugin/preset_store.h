@@ -134,6 +134,9 @@ public:
 	/// **THE ROOT, IN THIS ORDER:** `$FEATHERS_PRESET_ROOT` (the tests, and anybody who pins it); else the
 	/// folder a person CHOSE ("Choose preset folder…", `setChosenRoot`); else `defaultRoot()`. Empty with
 	/// none of them: presets then live in memory for the session and nothing persists.
+	/// **A COUNTER THAT RISES WHENEVER A FILE IS WRITTEN, MOVED OR REMOVED THROUGH THE STORE** — how a browser that holds a
+	/// read of a bank learns that someone else (a device's header menu) has changed it since.
+	[[nodiscard]] static uint64_t revision() noexcept;
 	static std::filesystem::path root();
 	/// `$HOME/Documents/Owlet/Feathers/Presets` — what "Reset preset folder" returns to. Empty without a home.
 	static std::filesystem::path defaultRoot();

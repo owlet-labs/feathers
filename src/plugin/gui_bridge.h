@@ -1138,6 +1138,7 @@ public:
 	class StripSite final : public rack::FragmentSite {
 	public:
 		explicit StripSite(ParamBridge& bridge) : b_(bridge) {}
+		[[nodiscard]] ParamBridge& bridge() noexcept { return b_; }
 		rack::ChainRecord& fragmentRecord() override { return b_.fragmentRecord(); }
 		size_t fragmentChain() const override { return kStripChain; }
 		ContainerBodies& fragmentBodies() override { return b_.fragmentBodies(); }

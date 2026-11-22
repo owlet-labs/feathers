@@ -24,8 +24,10 @@
 #include "plugin/ui/card_selection.h"
 #include "plugin/ui/escape_stack.h"
 #include "plugin/ui/fragment_verbs.h"
+#include "plugin/ui/text_field.h"
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 #include <visage/ui.h>
@@ -55,6 +57,20 @@ public:
 	};
 
 	LaneSelection(rack::FragmentSite& site, EditHistory& history, Notifier* notifier, Hooks hooks);
+	~LaneSelection();
+	LaneSelection(const LaneSelection&) = delete;
+	LaneSelection& operator=(const LaneSelection&) = delete;
+
+	/// THE SURFACE THE "SAVE PRESET…" NAME FIELD IS DRAWN ON (the lane or column these cards stand in; `Hooks::cardBounds` is in its
+	/// coordinates). Unset: the row is offered and does nothing.
+	void setPromptHost(visage::Frame* host) noexcept {
+		promptHost_ = host;
+		verbs_.setPromptReady(host != nullptr);
+	}
+	/// The open name field, and a typed answer as its Enter gives it — for a case.
+	[[nodiscard]] bool namingPreset() const;
+	[[nodiscard]] TextField* presetNameFieldForTest() const noexcept { return nameField_.get(); }
+	void promptPresetName(DeviceInstanceId id);
 
 	[[nodiscard]] CardSelection& selection() noexcept { return selection_; }
 	[[nodiscard]] const CardSelection& selection() const noexcept { return selection_; }
@@ -102,6 +118,7 @@ public:
 private:
 	void after();
 	void syncTicket();
+	void finishPresetName(DeviceInstanceId id, const std::string& typed, bool replace);
 
 	FragmentVerbs verbs_;
 	Hooks hooks_;
@@ -123,6 +140,10 @@ private:
 	visage::Point lassoTo_ { 0.0f, 0.0f };
 	bool lassoAdd_ = false;
 	CardSelection lassoBase_;
+	visage::Frame* promptHost_ = nullptr;
+	std::unique_ptr<TextField> nameField_;
+	visage::Bounds nameAnchor_ {};
+	std::shared_ptr<void> alive_ = std::make_shared<char>(0);
 };
 
 /// THE LASSO'S RECTANGLE AND THE "N SELECTED" PILL, drawn ABOVE the cards — visage paints children after their

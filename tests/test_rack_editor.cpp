@@ -61,6 +61,10 @@
 #include "rack/rack_device.h"
 #include "plugin/ui/device_shortcuts.h"
 #include "rack/rack_editor.h"
+#include "plugin/preset_store.h"
+#include "plugin/ui/device_preset_menu.h"
+#include "plugin/ui/lane_selection.h"
+#include "plugin/ui/text_field.h"
 #include "rack/rack_bridge.h"
 #include "rack/rack_engine.h"
 
@@ -70,7 +74,9 @@
 #include <cmath>
 #include <numbers>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <unistd.h>
 #include <set>
 #include <typeinfo>
 #include <string>
@@ -6698,4 +6704,111 @@ TEST_CASE("the Chain plugin's header has no undo buttons, and the preset stepper
 	CHECK(f.editor.onKeyPress().callback(visage::KeyEvent { visage::KeyCode::Z, visage::kModifierRegCtrl, true }));
 	f.bridge.drain();
 	CHECK(f.bridge.chainLength() == 0);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// A DEVICE'S PRESETS FROM THE RACK EDITOR'S HEADER MENU                                              //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A PRESET ROOT OF THIS CASE'S OWN, never a developer's library.
+struct EditorPresetRoot {
+	std::filesystem::path dir;
+	std::string was;
+	bool had = false;
+	EditorPresetRoot() {
+		dir = std::filesystem::temp_directory_path() / ("feathers-hp-" + std::to_string(::getpid()) + "-" + std::to_string(reinterpret_cast<uintptr_t>(this)));
+		std::filesystem::remove_all(dir);
+		std::filesystem::create_directories(dir);
+		if (const char* existing = std::getenv("FEATHERS_PRESET_ROOT"); existing != nullptr) {
+			had = true;
+			was = existing;
+		}
+		::setenv("FEATHERS_PRESET_ROOT", dir.c_str(), 1);
+	}
+	~EditorPresetRoot() {
+		if (had) {
+			::setenv("FEATHERS_PRESET_ROOT", was.c_str(), 1);
+		}
+		else {
+			::unsetenv("FEATHERS_PRESET_ROOT");
+		}
+		std::error_code ec;
+		std::filesystem::remove_all(dir, ec);
+	}
+};
+
+bool hasSubmenu(visage::PopupMenuFrame& popup, const std::string& name) {
+	visage::PopupList* rows = menu_check::rowsOf(popup);
+	for (int i = 0; rows != nullptr && i < rows->numOptions(); ++i) {
+		if (rows->option(i).hasOptions() && rows->option(i).name().toUtf8() == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
+} // namespace
+
+TEST_CASE("header presets: the rack editor's card menu offers Presets and Save preset, the name field is on top and takes the keys, and the save lands in the bank") {
+	EditorPresetRoot root;
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const DeviceInstanceId id = f.add(fx::filter::kTraits.tag);
+	REQUIRE(id != kNoInstance);
+	const size_t res = [] {
+		for (size_t c = 0; c < fx::filter::kDescriptor.params.size(); ++c) {
+			if (std::string(fx::filter::kDescriptor.params[c].key) == "filter_res") {
+				return c;
+			}
+		}
+		return size_t { 0 };
+	}();
+	f.bridge.setField(id, res, 0.77f);
+	f.editor.syncCards();
+	f.editor.resized();
+	f.editor.showSlotMenu(id);
+	visage::PopupMenuFrame* popup = menu_check::newestPopup(f.editor);
+	REQUIRE(popup != nullptr);
+	CHECK(hasSubmenu(*popup, "Presets"));
+	CHECK(menu_check::findRow(*popup, "     Init") != nullptr); // Init is in the list, not ticked
+	REQUIRE(menu_check::findRow(*popup, "Save preset...") != nullptr);
+	REQUIRE(menu_check::pickRow(*popup, "Save preset..."));
+	ui::LaneSelection& selection = f.editor.selectionForTest();
+	REQUIRE(selection.namingPreset());
+	ui::TextField* field = selection.presetNameFieldForTest();
+	REQUIRE(field != nullptr);
+	// THE FIELD IS DRAWN OVER THE CARD'S HEADER: visible, inside the editor, the topmost frame at its own centre.
+	CHECK(field->isVisible());
+	CHECK(field->width() > 0);
+	CHECK(field->height() > 0);
+	const visage::Point at = field->positionInWindow();
+	const visage::Point centre { at.x + static_cast<float>(field->width()) * 0.5f, at.y + static_cast<float>(field->height()) * 0.5f };
+	CHECK(at.x >= 0.0f);
+	CHECK(at.y >= 0.0f);
+	CHECK(f.editor.frameAtPoint(centre) == static_cast<visage::Frame*>(field));
+	// CHAIN KEYS STAND DOWN WHILE TYPING: Delete and a paste chord reach the field, not the lane.
+	const size_t cards = f.bridge.chainLength();
+	CHECK_FALSE(selection.key(visage::KeyEvent { visage::KeyCode::V, visage::kModifierRegCtrl, true }));
+	field->textInput("Menu Saved");
+	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Delete, 0, true }));
+	CHECK(f.bridge.chainLength() == cards);
+	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+	CHECK_FALSE(selection.namingPreset());
+	CHECK(std::filesystem::exists(PresetStore::pathFor("Menu Saved", devicePresetBank(fx::filter::kDescriptor))));
+	// THE SAVED PRESET IS IN THE MENU NOW, ticked as the device's own; the others are not.
+	f.editor.showSlotMenu(id);
+	popup = menu_check::newestPopup(f.editor);
+	REQUIRE(popup != nullptr);
+	CHECK(menu_check::findRow(*popup, "X  Menu Saved") != nullptr);
+	CHECK(menu_check::findRow(*popup, "     Init") != nullptr);
+	// AND ITS PICK PUTS IT BACK AS ONE STEP: change a control, pick the preset, the control returns.
+	f.bridge.setField(id, res, 0.11f);
+	const size_t steps = f.history.length();
+	REQUIRE(menu_check::pickRow(*popup, "X  Menu Saved"));
+	CHECK(f.bridge.fieldAt(id, res) == doctest::Approx(0.77f));
+	CHECK(f.history.length() == steps + 1);
+	f.history.undo();
+	CHECK(f.bridge.fieldAt(id, res) == doctest::Approx(0.11f));
 }

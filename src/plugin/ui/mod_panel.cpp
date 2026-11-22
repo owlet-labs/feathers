@@ -917,6 +917,7 @@ ModPanel::ModPanel(ParamBridge& bridge, backplane::DeviceHost& host, WidgetRegis
 	selection_ = std::make_unique<LaneSelection>(bridge_.stripFragmentSite(), history_, notifier_,
 	                                             std::move(selectionHooks));
 	selectionOverlay_ = std::make_unique<SelectionOverlay>(*selection_);
+	selection_->setPromptHost(this);
 	for (size_t source = 0; source < kMacroCount; ++source) {
 		// SHORT CAPTIONS IN THE ROW. "Macro 1" is 54px of text in a 54px column; the row's own heading
 		// says what these are, so each knob only has to say which. modSourceName still answers with the

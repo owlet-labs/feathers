@@ -57,6 +57,10 @@
 // Out of them to a device outside (`Outbound`): not copied — a duplicated LFO does not double-modulate its old
 // target (D3) — but an undo puts them back. A group keeps what the gates allow and COUNTS what they do not.
 
+namespace feathers::backplane {
+class DeviceHost;
+}
+
 namespace feathers::rack {
 
 /// A FRESH SERIAL NAMING ONE HOST, for "was this lifted from the record I am pasting into" — never an address
@@ -97,6 +101,9 @@ public:
 	/// everywhere else, where D3 holds (a copy does not reach what the original reached). A modulator's routes out are
 	/// the whole of what it does; a copy without them is a card that moves nothing.
 	[[nodiscard]] virtual bool fragmentCopiesOutbound() const { return false; }
+	/// **THE DEVICE HOST OVER THIS SITE'S DEVICES**, for a verb that reads or writes a device through the host's own road (a preset).
+	/// Null where a site has none.
+	[[nodiscard]] virtual backplane::DeviceHost* fragmentHost() { return nullptr; }
 	/// WHETHER GROUP INTO CHAIN / RACK IS OFFERED HERE. The modulator strip holds no containers: it says no.
 	[[nodiscard]] virtual bool fragmentGroups() const { return true; }
 };

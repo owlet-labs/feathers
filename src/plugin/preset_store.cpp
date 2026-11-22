@@ -23,6 +23,7 @@
 #include "device/utf8_path.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -643,6 +644,13 @@ std::vector<StoredPreset> PresetStore::loadAll(const PresetBank& bank) {
 	return out;
 }
 
+namespace {
+std::atomic<uint64_t> gRevision { 1 };
+void bumpRevision() { gRevision.fetch_add(1, std::memory_order_relaxed); }
+} // namespace
+
+uint64_t PresetStore::revision() noexcept { return gRevision.load(std::memory_order_relaxed); }
+
 bool PresetStore::save(const std::string& name, const std::vector<uint8_t>& payload, const PresetBank& bank,
                        const std::string& category, const PresetMeta& meta) {
 	const std::filesystem::path file = pathFor(name, bank, category);
@@ -652,7 +660,11 @@ bool PresetStore::save(const std::string& name, const std::vector<uint8_t>& payl
 	// THE FOLDER IT GOES INTO IS THE CATEGORY IT CARRIES, whatever `meta` said.
 	PresetMeta written = meta;
 	written.category = sanitiseCategory(category);
-	return writeFile(file, encode(written, payload));
+	const bool wrote = writeFile(file, encode(written, payload));
+	if (wrote) {
+		bumpRevision();
+	}
+	return wrote;
 }
 
 bool PresetStore::installIfMissing(const std::string& name, const std::vector<uint8_t>& payload,
@@ -664,7 +676,11 @@ bool PresetStore::installIfMissing(const std::string& name, const std::vector<ui
 	}
 	PresetMeta written = meta;
 	written.category = sanitiseCategory(category);
-	return writeFile(file, encode(written, payload));
+	const bool wrote = writeFile(file, encode(written, payload));
+	if (wrote) {
+		bumpRevision();
+	}
+	return wrote;
 }
 
 int PresetStore::installFactoryFiles(const PresetBank& bank, std::span<const FactoryPresetFile> files) {
@@ -693,6 +709,9 @@ int PresetStore::installFactoryFiles(const PresetBank& bank, std::span<const Fac
 			++wrote;
 		}
 	}
+	if (wrote > 0) {
+		bumpRevision();
+	}
 	return wrote;
 }
 
@@ -703,12 +722,19 @@ bool PresetStore::rename(const std::filesystem::path& from, const std::filesyste
 	}
 	std::filesystem::create_directories(to.parent_path(), ec);
 	std::filesystem::rename(from, to, ec);
+	if (!ec) {
+		bumpRevision();
+	}
 	return !ec;
 }
 
 bool PresetStore::erase(const std::filesystem::path& file) {
 	std::error_code ec;
-	return !file.empty() && std::filesystem::remove(file, ec);
+	const bool removed = !file.empty() && std::filesystem::remove(file, ec);
+	if (removed) {
+		bumpRevision();
+	}
+	return removed;
 }
 
 bool PresetStore::erase(const std::string& name, const PresetBank& bank, const std::string& category) {

@@ -35,6 +35,9 @@
 #include "plugin/device_registry.h"
 #include "plugin/preset_store.h"
 #include "plugin/ui/container_presets.h"
+#include "plugin/ui/device_preset_menu.h"
+#include "plugin/ui/edit_history.h"
+#include "plugin/ui/preset_browser.h"
 #include "rack/inner_chain.h"
 #include "rack/parallel_rack.h"
 #include "rack/rack_axes.h"
@@ -976,4 +979,247 @@ TEST_CASE("OU: a Rack preset picked in the Rack's browser names the browser's fa
 	rig.settle();
 	CHECK(presets.browser->currentName() == "Wide Rack");
 	CHECK(rig.top->devicePreset(rackId).name == "Wide Rack");
+}
+
+//--------------------------------------------------------------------------------------------------//
+// A DEVICE'S PRESETS FROM ITS HEADER MENU: list, apply and save through one controller                //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+struct Said final : ui::Notifier {
+	std::vector<std::string> lines;
+	void say(std::string_view text) override { lines.emplace_back(text); }
+};
+
+/// WHAT A DEVICE HOLDS, as preset bytes — the value to compare, whatever the load did to get there.
+std::vector<uint8_t> heldBy(rack::RackBridge& host, const device::Descriptor& desc, DeviceInstanceId id) {
+	std::vector<uint8_t> bytes;
+	REQUIRE(captureDevicePreset(host, desc, id, &bytes));
+	return bytes;
+}
+
+} // namespace
+
+TEST_CASE("header presets: a Filter saved under a name and loaded into a fresh instance holds every control as saved, by key") {
+	PresetRoot root;
+	Rig a;
+	const DeviceInstanceId filter = a.add(fx::filter::kTraits.tag);
+	a.top->setField(filter, kRes, 0.73f);
+	a.top->setField(filter, kCutoff, 0.41f);
+	ui::EditHistory history;
+	Said said;
+	ui::DevicePresetMenu menu(*a.top, history, &said);
+	REQUIRE(menu.offered(filter));
+	CHECK(menu.save(filter, "Pads/Warm", false) == ui::DevicePresetMenu::Save::Saved);
+	CHECK(menu.current(filter) == PresetIdentity { "Warm", "Pads" });
+	// THE LIST: Init first, then the bank's presets with their folders.
+	const std::vector<ui::DevicePresetMenu::Entry> list = menu.list(filter);
+	REQUIRE(list.size() >= 2);
+	CHECK(list[0].name == "Init");
+	CHECK(list[0].factory);
+	const auto warm = std::find_if(list.begin(), list.end(), [](const auto& e) { return e.name == "Warm"; });
+	REQUIRE(warm != list.end());
+	CHECK(warm->category == "Pads");
+	CHECK_FALSE(warm->factory);
+	// A FRESH INSTANCE, through a fresh controller: every control as saved.
+	Rig b;
+	const DeviceInstanceId fresh = b.add(fx::filter::kTraits.tag);
+	ui::EditHistory history2;
+	ui::DevicePresetMenu menu2(*b.top, history2, &said);
+	REQUIRE(menu2.apply(fresh, *warm));
+	for (size_t c = 0; c < fx::filter::kDescriptor.params.size(); ++c) {
+		CAPTURE(c);
+		CHECK(b.top->fieldAt(fresh, c) == a.top->fieldAt(filter, c));
+	}
+	CHECK(b.top->fieldAt(fresh, kRes) == doctest::Approx(0.73f));
+	CHECK(menu2.current(fresh) == PresetIdentity { "Warm", "Pads" });
+	// AND THE BYTES THE DEVICE HOLDS ARE THE SAVED ONES, extra state included.
+	DevicePresetContents saved;
+	DevicePresetContents loaded;
+	REQUIRE(readDevicePreset(heldBy(*a.top, fx::filter::kDescriptor, filter), &saved, &fx::filter::kDescriptor));
+	REQUIRE(readDevicePreset(heldBy(*b.top, fx::filter::kDescriptor, fresh), &loaded, &fx::filter::kDescriptor));
+	CHECK(saved.field == loaded.field);
+	CHECK(saved.body == loaded.body);
+}
+
+TEST_CASE("header presets: a Chain saved from the menu goes to the Chains bank and loads into a fresh Chain with its children, routes and macros") {
+	PresetRoot root;
+	Rig a;
+	const DeviceInstanceId chain = a.add(kChainTag);
+	const auto [lfo, filter] = fillChain(a, chain);
+	ui::EditHistory history;
+	ui::DevicePresetMenu menu(*a.top, history, nullptr);
+	CHECK(ui::DevicePresetMenu::bankOf(chainPresetDescriptor()) == kChainPresetBank);
+	CHECK(ui::DevicePresetMenu::bankOf(rackPresetDescriptor()) == kRackPresetBank);
+	REQUIRE(menu.save(chain, "Wobbler", false) == ui::DevicePresetMenu::Save::Saved);
+	CHECK(std::filesystem::exists(PresetStore::pathFor("Wobbler", kChainPresetBank)));
+	Rig b;
+	const DeviceInstanceId fresh = b.add(kChainTag);
+	ui::EditHistory history2;
+	ui::DevicePresetMenu menu2(*b.top, history2, nullptr);
+	const auto list = menu2.list(fresh);
+	const auto at = std::find_if(list.begin(), list.end(), [](const auto& e) { return e.name == "Wobbler"; });
+	REQUIRE(at != list.end());
+	REQUIRE(menu2.apply(fresh, *at));
+	b.settle();
+	rack::RackBridge& in = b.inner(fresh);
+	REQUIRE(tagsOf(in) == std::vector<std::string> { mod::lfo::kTraits.tag, fx::filter::kTraits.tag });
+	const DeviceInstanceId lfo2 = in.deviceAtPosition(0);
+	const DeviceInstanceId filter2 = in.deviceAtPosition(1);
+	for (size_t c = 0; c < fx::filter::kDescriptor.params.size(); ++c) {
+		CAPTURE(c);
+		CHECK(in.fieldAt(filter2, c) == a.inner(chain).fieldAt(filter, c));
+	}
+	CHECK(in.routeAmount(Source::output(lfo2, 0), Destination::control(filter2, kCutoff)) == doctest::Approx(0.5f));
+	CHECK(in.routeAmount(Source::core(0), Destination::control(filter2, kRes)) == doctest::Approx(0.25f));
+	CHECK(in.macroName(0) == "Wobble");
+	CHECK(b.top->fieldAt(fresh, kChainMacro1) == doctest::Approx(0.7f));
+}
+
+TEST_CASE("header presets: the menu's list is the window browser's list, a preset saved from the menu is in the browser, and the reverse") {
+	PresetRoot root;
+	Rig a;
+	const DeviceInstanceId filter = a.add(fx::filter::kTraits.tag);
+	ui::EditHistory history;
+	ui::DevicePresetMenu menu(*a.top, history, nullptr);
+	const device::Descriptor& desc = fx::filter::kDescriptor;
+	const auto browserFor = [&] {
+		auto b = std::make_unique<ui::PresetBrowser>(std::vector<std::string> { "Init" }, std::vector<ui::PresetData> { ui::PresetData { initDevicePreset(desc) } },
+		                                             devicePresetBank(desc), ui::PresetBrowser::kPanelStyle);
+		b->loadBankFromDisk();
+		return b;
+	};
+	const auto listed = [&](const ui::PresetBrowser& b) {
+		std::vector<std::string> out;
+		for (size_t i = 0; i < b.count(); ++i) {
+			if (!ui::PresetBrowser::isVariantFile(b.entry(i).name)) {
+				out.push_back(b.entry(i).category.empty() ? b.entry(i).name : b.entry(i).category + "/" + b.entry(i).name);
+			}
+		}
+		std::sort(out.begin(), out.end());
+		return out;
+	};
+	const auto menuNames = [&] {
+		std::vector<std::string> out;
+		for (const auto& e : menu.list(filter)) {
+			out.push_back(e.category.empty() ? e.name : e.category + "/" + e.name);
+		}
+		std::sort(out.begin(), out.end());
+		return out;
+	};
+	// A BROWSER OPENED FIRST, then the menu saves: the browser's list follows when it is next opened.
+	auto browser = browserFor();
+	CHECK(menuNames() == listed(*browser));
+	REQUIRE(menu.save(filter, "Keys/Soft", false) == ui::DevicePresetMenu::Save::Saved);
+	browser->refreshIfBankChanged();
+	CHECK(listed(*browser).end() != std::find(listed(*browser).begin(), listed(*browser).end(), "Keys/Soft"));
+	CHECK(menuNames() == listed(*browser));
+	// AND THE BROWSER SAVES, the menu lists it.
+	struct Provider final : ui::PresetProvider {
+		rack::RackBridge& host;
+		DeviceInstanceId id;
+		Provider(rack::RackBridge& h, DeviceInstanceId i) : host(h), id(i) {}
+		bool capture(ui::PresetData& out) override { return captureDevicePreset(host, fx::filter::kDescriptor, id, &out.bytes); }
+		bool apply(const ui::PresetData&) override { return true; }
+	} provider(*a.top, filter);
+	browser->setProvider(&provider);
+	REQUIRE(browser->saveAs("Bass/Deep"));
+	const auto after = menuNames();
+	CHECK(std::find(after.begin(), after.end(), "Bass/Deep") != after.end());
+	CHECK(after == listed(*browser));
+}
+
+TEST_CASE("header presets: applying is one undo step, undo restores the device exactly, redo applies again") {
+	PresetRoot root;
+	Rig a;
+	const DeviceInstanceId filter = a.add(fx::filter::kTraits.tag);
+	ui::EditHistory history;
+	ui::DevicePresetMenu menu(*a.top, history, nullptr);
+	a.top->setField(filter, kRes, 0.9f);
+	REQUIRE(menu.save(filter, "High", false) == ui::DevicePresetMenu::Save::Saved);
+	a.top->setField(filter, kRes, 0.2f);
+	a.top->setField(filter, kCutoff, 0.7f);
+	const std::vector<uint8_t> before = heldBy(*a.top, fx::filter::kDescriptor, filter);
+	const PresetIdentity identityBefore = menu.current(filter);
+	const size_t steps = history.length();
+	const auto list = menu.list(filter);
+	const auto high = std::find_if(list.begin(), list.end(), [](const auto& e) { return e.name == "High"; });
+	REQUIRE(high != list.end());
+	REQUIRE(menu.apply(filter, *high));
+	CHECK(history.length() == steps + 1);
+	CHECK(a.top->fieldAt(filter, kRes) == doctest::Approx(0.9f));
+	const std::vector<uint8_t> applied = heldBy(*a.top, fx::filter::kDescriptor, filter);
+	CHECK(applied != before);
+	history.undo();
+	CHECK(heldBy(*a.top, fx::filter::kDescriptor, filter) == before); // the bytes, exactly
+	CHECK(a.top->fieldAt(filter, kRes) == doctest::Approx(0.2f));
+	CHECK(menu.current(filter) == identityBefore);
+	history.redo();
+	CHECK(heldBy(*a.top, fx::filter::kDescriptor, filter) == applied);
+}
+
+TEST_CASE("header presets: another device's preset is refused with a word and nothing changed, and a refused apply records no step") {
+	PresetRoot root;
+	Rig a;
+	const DeviceInstanceId filter = a.add(fx::filter::kTraits.tag);
+	const DeviceInstanceId delay = a.add(fx::delay::kTraits.tag);
+	ui::EditHistory history;
+	Said said;
+	ui::DevicePresetMenu menu(*a.top, history, &said);
+	REQUIRE(menu.save(delay, "Echoes", false) == ui::DevicePresetMenu::Save::Saved);
+	// THE DELAY'S FILE, PUT BY HAND INTO THE FILTER'S BANK (a file moved into the wrong folder).
+	std::vector<uint8_t> bytes;
+	for (const StoredPreset& p : PresetStore::loadAll(ui::DevicePresetMenu::bankOf(fx::delay::kDescriptor))) {
+		if (p.name == "Echoes") {
+			bytes = p.bytes;
+		}
+	}
+	REQUIRE_FALSE(bytes.empty());
+	REQUIRE(PresetStore::save("Stray", bytes, ui::DevicePresetMenu::bankOf(fx::filter::kDescriptor)));
+	a.top->setField(filter, kRes, 0.33f);
+	const std::vector<uint8_t> before = heldBy(*a.top, fx::filter::kDescriptor, filter);
+	const size_t steps = history.length();
+	said.lines.clear();
+	CHECK_FALSE(menu.apply(filter, ui::DevicePresetMenu::Entry { "Stray", {}, false }));
+	CHECK(heldBy(*a.top, fx::filter::kDescriptor, filter) == before);
+	CHECK(history.length() == steps);
+	REQUIRE_FALSE(said.lines.empty());
+	CHECK(said.lines.back().find("different device") != std::string::npos);
+	// A NAME THE BANK DOES NOT HOLD.
+	said.lines.clear();
+	CHECK_FALSE(menu.apply(filter, ui::DevicePresetMenu::Entry { "Nothing", {}, false }));
+	CHECK_FALSE(said.lines.empty());
+	CHECK(history.length() == steps);
+}
+
+TEST_CASE("header presets: a factory preset is never overwritten in one step, and a user preset asks before it is replaced") {
+	PresetRoot root;
+	Rig a;
+	const DeviceInstanceId filter = a.add(fx::filter::kTraits.tag);
+	ui::EditHistory history;
+	ui::DevicePresetMenu menu(*a.top, history, nullptr);
+	CHECK(menu.save(filter, "Init", false) == ui::DevicePresetMenu::Save::FactoryRefused);
+	CHECK(menu.save(filter, "Init", true) == ui::DevicePresetMenu::Save::FactoryRefused); // not even when told to replace
+	CHECK(menu.save(filter, "", false) == ui::DevicePresetMenu::Save::BadName);
+	a.top->setField(filter, kRes, 0.1f);
+	REQUIRE(menu.save(filter, "Mine", false) == ui::DevicePresetMenu::Save::Saved);
+	a.top->setField(filter, kRes, 0.8f);
+	CHECK(menu.save(filter, "Mine", false) == ui::DevicePresetMenu::Save::NeedsConfirm);
+	// NOTHING WAS WRITTEN BY THE ASK: the file still holds 0.1.
+	{
+		Rig b;
+		const DeviceInstanceId probe = b.add(fx::filter::kTraits.tag);
+		ui::EditHistory h2;
+		ui::DevicePresetMenu m2(*b.top, h2, nullptr);
+		REQUIRE(m2.apply(probe, ui::DevicePresetMenu::Entry { "Mine", {}, false }));
+		CHECK(b.top->fieldAt(probe, kRes) == doctest::Approx(0.1f));
+	}
+	CHECK(menu.save(filter, "Mine", true) == ui::DevicePresetMenu::Save::Saved);
+	Rig c;
+	const DeviceInstanceId probe = c.add(fx::filter::kTraits.tag);
+	ui::EditHistory h3;
+	ui::DevicePresetMenu m3(*c.top, h3, nullptr);
+	REQUIRE(m3.apply(probe, ui::DevicePresetMenu::Entry { "Mine", {}, false }));
+	CHECK(c.top->fieldAt(probe, kRes) == doctest::Approx(0.8f));
 }

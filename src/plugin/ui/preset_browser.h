@@ -167,6 +167,8 @@ public:
 	/// Install the factory presets that are missing, then read the bank. The selection follows the
 	/// entry it was on, by name and category, and nothing is applied: opening an editor changes no sound.
 	void loadBankFromDisk();
+	/// Read the bank again when the store was written since this browser read it (see `PresetStore::revision`).
+	void refreshIfBankChanged();
 
 	[[nodiscard]] size_t count() const noexcept { return entries_.size(); }
 	[[nodiscard]] const Entry& entry(size_t index) const { return entries_[index]; }
@@ -433,6 +435,7 @@ public:
 	/// The embedded factory files `loadBankFromDisk` installs (`preset_store.h`). Replaceable so a case can
 	/// ship its own set.
 	std::span<const FactoryPresetFile> factoryFiles = factoryPresetSource();
+	uint64_t loadedRevision_ = 0;
 	/// **WHAT THIS BROWSER LISTS** (backlog OU: a browser shows only the kind its context can take). Empty: every file in
 	/// the bank. Set: a file whose payload it refuses is not listed — one moved into the wrong folder by hand, a Rack's in
 	/// `Chains/`. Read by `loadBankFromDisk`, so set it before the first.

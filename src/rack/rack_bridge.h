@@ -570,6 +570,7 @@ public:
 	void fragmentChanged(const DeviceLabels& labelsBefore) override;
 	uint64_t fragmentOrigin() const override { return fragmentOrigin_; }
 	std::weak_ptr<const void> fragmentLife() const override { return life_; }
+	backplane::DeviceHost* fragmentHost() override { return this; }
 	bool fragmentHostsVoices() const override { return engine_.voiceCount() > 0; }
 
 	/// **THE MESSAGE THREAD'S SERVICE** — destroys what the drain parked, and builds again any device the

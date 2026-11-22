@@ -19,11 +19,16 @@
 #include "menu_placement_check.h"
 
 #include <chrono>
+#include <filesystem>
+#include <unistd.h>
 #include <set>
 #include <thread>
 
 #include "fx/drum/drum_types.h"
+#include "plugin/preset_store.h"
 #include "plugin/ui/chain_column.h"
+#include "plugin/ui/lane_selection.h"
+#include "plugin/ui/text_field.h"
 #include "plugin/ui/drum_device_card.h"
 #include "plugin/device_registry.h"
 #include "plugin/ui/fx_lane.h"
@@ -3708,4 +3713,103 @@ TEST_CASE("rename field: opened by the menu's own pick and by double-click, it i
 		checkRenameSurface("nested card, menu", RenameRoad::Menu, r.panel, nestedCard->chainRenameForTest(), &bar, nullptr, 2,
 		                   [&] { r.refresh(); }, [&] { return innerRack->chainLabel(2); });
 	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// A DEVICE'S PRESETS FROM THE HEADER MENU OF A RACK CHAIN'S COLUMN                                    //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+struct ColumnPresetRoot {
+	std::filesystem::path dir;
+	std::string was;
+	bool had = false;
+	ColumnPresetRoot() {
+		dir = std::filesystem::temp_directory_path() / ("feathers-hc-" + std::to_string(::getpid()) + "-" + std::to_string(reinterpret_cast<uintptr_t>(this)));
+		std::filesystem::remove_all(dir);
+		std::filesystem::create_directories(dir);
+		if (const char* existing = std::getenv("FEATHERS_PRESET_ROOT"); existing != nullptr) {
+			had = true;
+			was = existing;
+		}
+		::setenv("FEATHERS_PRESET_ROOT", dir.c_str(), 1);
+	}
+	~ColumnPresetRoot() {
+		if (had) {
+			::setenv("FEATHERS_PRESET_ROOT", was.c_str(), 1);
+		}
+		else {
+			::unsetenv("FEATHERS_PRESET_ROOT");
+		}
+		std::error_code ec;
+		std::filesystem::remove_all(dir, ec);
+	}
+};
+
+bool popupHasSubmenu(visage::PopupMenuFrame& popup, const std::string& name) {
+	visage::PopupList* rows = menu_check::rowsOf(popup);
+	for (int i = 0; rows != nullptr && i < rows->numOptions(); ++i) {
+		if (rows->option(i).hasOptions() && rows->option(i).name().toUtf8() == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/// THE MENU OF `device` IN `column`, through the road its header's dots take: the entries exist, the save opens a field over the header
+/// that is the topmost frame at its centre inside `root`, typing and Enter write the file, and a pick of the saved preset is one undo step.
+void checkColumnPresets(const char* what, ui::ChainColumn& column, visage::Frame* root, feathers::rack::RackBridge& bridge, const std::string& name) {
+	INFO("host: " << std::string(what));
+	const feathers::DeviceInstanceId device = bridge.deviceAtPosition(0);
+	REQUIRE(device != feathers::kNoInstance);
+	const device::Descriptor* desc = bridge.descriptorOf(device);
+	REQUIRE(desc != nullptr);
+	column.showSlotMenu(device);
+	visage::PopupMenuFrame* popup = menu_check::newestPopup(column);
+	REQUIRE(popup != nullptr);
+	CHECK(popupHasSubmenu(*popup, "Presets"));
+	CHECK(menu_check::findRow(*popup, "     Init") != nullptr);
+	REQUIRE(menu_check::pickRow(*popup, "Save preset..."));
+	ui::LaneSelection& selection = column.selectionForTest();
+	REQUIRE(selection.namingPreset());
+	ui::TextField* field = selection.presetNameFieldForTest();
+	REQUIRE(field != nullptr);
+	CHECK(field->isVisible());
+	CHECK(field->width() > 0);
+	CHECK(field->height() > 0);
+	if (root != nullptr) {
+		const visage::Point at = field->positionInWindow();
+		const visage::Point centre { at.x + static_cast<float>(field->width()) * 0.5f, at.y + static_cast<float>(field->height()) * 0.5f };
+		CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(field));
+	}
+	field->textInput(name);
+	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+	CHECK_FALSE(selection.namingPreset());
+	CHECK(std::filesystem::exists(feathers::PresetStore::pathFor(name, feathers::devicePresetBank(*desc))));
+	column.showSlotMenu(device);
+	popup = menu_check::newestPopup(column);
+	REQUIRE(popup != nullptr);
+	CHECK(menu_check::findRow(*popup, "X  " + name) != nullptr);
+	REQUIRE(menu_check::pickRow(*popup, "X  " + name));
+}
+
+} // namespace
+
+TEST_CASE("header presets: a rack chain's device card menu offers Presets and Save preset on the card's column and the window's, and the name field is on top") {
+	ColumnPresetRoot root;
+	RealRack r;
+	r.chains(2, 2, true);
+	r.view_(1);
+	for (int i = 0; i < 3; ++i) {
+		r.refresh();
+	}
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	ui::ChainColumn* windowColumn = r.panel->railForTest(0).column();
+	REQUIRE(windowColumn != nullptr);
+	checkColumnPresets("window rail column", *windowColumn, r.panel, chain0, "Window Saved");
+	ui::ChainColumn* cardColumn = r.card->frontForTest().columnForTest();
+	REQUIRE(cardColumn != nullptr);
+	feathers::rack::RackBridge& viewed = *r.rack().chainAt(static_cast<size_t>(r.field(pr::Param::ViewedChain)))->bridge();
+	checkColumnPresets("card column", *cardColumn, nullptr, viewed, "Card Saved");
 }

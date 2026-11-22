@@ -21,6 +21,7 @@
 
 #include "plugin/ui/lane_selection.h"
 
+#include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/text_field.h"
 
@@ -31,6 +32,77 @@ namespace feathers::ui {
 
 LaneSelection::LaneSelection(rack::FragmentSite& site, EditHistory& history, Notifier* notifier, Hooks hooks)
     : verbs_(site, history, notifier, hooks.order), hooks_(std::move(hooks)) {}
+
+LaneSelection::~LaneSelection() {
+	if (nameField_ != nullptr) {
+		nameField_->onCommit(nullptr);
+		nameField_->onCancel(nullptr);
+		if (nameField_->isVisible()) {
+			nameField_->setVisible(false);
+		}
+		if (promptHost_ != nullptr) {
+			promptHost_->removeChild(nameField_.get());
+		}
+	}
+}
+
+bool LaneSelection::namingPreset() const {
+	return nameField_ != nullptr && nameField_->editing();
+}
+
+void LaneSelection::promptPresetName(DeviceInstanceId id) {
+	if (promptHost_ == nullptr) {
+		return;
+	}
+	if (nameField_ == nullptr) {
+		nameField_ = std::make_unique<TextField>();
+		// **ABOVE EVERY SIBLING AND WHAT THEY HOLD**, as a chain's rename field is: the cards and the selection overlay are siblings.
+		nameField_->setOnTop(true);
+		nameField_->setVisible(false);
+		promptHost_->addChild(nameField_.get());
+	}
+	const std::optional<visage::Bounds> card = hooks_.cardBounds ? hooks_.cardBounds(id) : std::nullopt;
+	// OVER THE CARD'S HEADER: its left edge and top, one line tall, as wide as the card (a floor for a narrow one).
+	constexpr float kLine = 24.0f;
+	const float x = card ? card->x() : 0.0f;
+	const float y = card ? card->y() : 0.0f;
+	const float w = std::max(card ? card->width() : 0.0f, 150.0f);
+	nameAnchor_ = visage::Bounds { x, y, w, kLine };
+	nameField_->setBounds(x, y, w, kLine);
+	const std::weak_ptr<void> alive = alive_;
+	nameField_->onCommit([this, alive, id](std::string text) {
+		if (alive.expired()) {
+			return;
+		}
+		nameField_->setVisible(false);
+		finishPresetName(id, text, false);
+	});
+	nameField_->onCancel([this, alive] {
+		if (!alive.expired()) {
+			nameField_->setVisible(false);
+		}
+	});
+	nameField_->setVisible(true);
+	nameField_->begin(verbs_.presets().suggestedName(id));
+}
+
+void LaneSelection::finishPresetName(DeviceInstanceId id, const std::string& typed, bool replace) {
+	const DevicePresetMenu::Save result = verbs_.presets().save(id, typed, replace);
+	if (result != DevicePresetMenu::Save::NeedsConfirm || promptHost_ == nullptr) {
+		return;
+	}
+	// A USER PRESET BY THAT NAME EXISTS: ask before it is replaced (a factory one was refused above and never gets here).
+	visage::PopupMenu menu;
+	menu.addOption(1, "Replace \"" + typed + "\"");
+	menu.addOption(0, "Cancel");
+	const std::weak_ptr<void> alive = alive_;
+	menu.onSelection() = [this, alive, id, typed](int row) {
+		if (!alive.expired() && row == 1) {
+			finishPresetName(id, typed, true);
+		}
+	};
+	showMenuAt(std::move(menu), *promptHost_, nameAnchor_);
+}
 
 void LaneSelection::setEscapeStack(EscapeStack* stack) {
 	ticket_.release();
@@ -188,6 +260,7 @@ void LaneSelection::addVerbs(visage::PopupMenu& menu, int firstId, DeviceInstanc
 bool LaneSelection::chooseVerb(int id, int firstId, DeviceInstanceId pressed) {
 	const std::vector<DeviceInstanceId> ids = menuIds(pressed);
 	FragmentVerbs::MenuHooks hooks;
+	hooks.promptPresetName = [this](DeviceInstanceId target) { promptPresetName(target); };
 	hooks.select = [this](std::vector<DeviceInstanceId> next) {
 		selection_.set(next);
 		prune();

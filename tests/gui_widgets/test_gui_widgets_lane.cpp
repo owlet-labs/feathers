@@ -6958,3 +6958,97 @@ TEST_CASE("PN teardown: a strip selection of several outlives neither its device
 	f.gui.destroy();
 }
 
+
+//--------------------------------------------------------------------------------------------------//
+// A DEVICE'S PRESETS FROM THE HEADER MENU OF THE SYNTH'S FX LANE AND MODULATOR STRIP                  //
+//--------------------------------------------------------------------------------------------------//
+
+#include "menu_placement_check.h"
+#include "plugin/preset_store.h"
+#include "plugin/device_preset.h"
+#include "plugin/ui/lane_selection.h"
+#include "plugin/ui/text_field.h"
+#include "mod/lfo/lfo_types.h"
+
+#include <filesystem>
+#include <unistd.h>
+
+namespace {
+
+struct LanePresetRoot {
+	std::filesystem::path dir;
+	std::string was;
+	bool had = false;
+	LanePresetRoot() {
+		dir = std::filesystem::temp_directory_path() / ("feathers-hl-" + std::to_string(::getpid()) + "-" + std::to_string(reinterpret_cast<uintptr_t>(this)));
+		std::filesystem::remove_all(dir);
+		std::filesystem::create_directories(dir);
+		if (const char* existing = std::getenv("FEATHERS_PRESET_ROOT"); existing != nullptr) {
+			had = true;
+			was = existing;
+		}
+		::setenv("FEATHERS_PRESET_ROOT", dir.c_str(), 1);
+	}
+	~LanePresetRoot() {
+		if (had) {
+			::setenv("FEATHERS_PRESET_ROOT", was.c_str(), 1);
+		}
+		else {
+			::unsetenv("FEATHERS_PRESET_ROOT");
+		}
+		std::error_code ec;
+		std::filesystem::remove_all(dir, ec);
+	}
+};
+
+bool lanePopupHasSubmenu(visage::PopupMenuFrame& popup, const std::string& name) {
+	visage::PopupList* rows = menu_check::rowsOf(popup);
+	for (int i = 0; rows != nullptr && i < rows->numOptions(); ++i) {
+		if (rows->option(i).hasOptions() && rows->option(i).name().toUtf8() == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/// THE CARD MENU'S PRESET ENTRIES on `host` (a lane or the strip), the save through the field over the header, and the file it writes.
+void checkSynthPresets(const char* what, visage::Frame& host, ui::LaneSelection& selection, const device::Descriptor& desc,
+                       const std::function<void()>& openMenu, const std::string& name) {
+	INFO("host: " << std::string(what));
+	openMenu();
+	visage::PopupMenuFrame* popup = menu_check::newestPopup(host);
+	REQUIRE(popup != nullptr);
+	CHECK(lanePopupHasSubmenu(*popup, "Presets"));
+	CHECK(menu_check::findRow(*popup, "     Init") != nullptr);
+	REQUIRE(menu_check::pickRow(*popup, "Save preset..."));
+	REQUIRE(selection.namingPreset());
+	ui::TextField* field = selection.presetNameFieldForTest();
+	REQUIRE(field != nullptr);
+	CHECK(field->isVisible());
+	CHECK(field->width() > 0);
+	CHECK(field->height() > 0);
+	const visage::Point at = field->positionInWindow();
+	const visage::Point centre { at.x + static_cast<float>(field->width()) * 0.5f, at.y + static_cast<float>(field->height()) * 0.5f };
+	CHECK(host.topParentFrame()->frameAtPoint(centre) == static_cast<visage::Frame*>(field));
+	field->textInput(name);
+	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true }));
+	CHECK_FALSE(selection.namingPreset());
+	CHECK(std::filesystem::exists(feathers::PresetStore::pathFor(name, feathers::devicePresetBank(desc))));
+}
+
+} // namespace
+
+TEST_CASE("header presets: the synth's fx lane and modulator strip card menus offer Presets and Save preset, the field is on top, and the save lands in the device's bank") {
+	LanePresetRoot root;
+	FilterFixture f;
+	// THE FX LANE: its first card is the filter.
+	const device::Descriptor* filterDesc = f.bridge.descriptorOf(f.bridge.fxDeviceAt(0));
+	REQUIRE(filterDesc != nullptr);
+	checkSynthPresets("fx lane", *f.lane, f.lane->selectionForTest(), *filterDesc, [&] { f.lane->showSlotMenu(0); }, "Lane Saved");
+	// THE MODULATOR STRIP: an LFO added to it.
+	const size_t lfoSlot = f.bridge.addRackDevice(mod::lfo::kTraits.tag);
+	REQUIRE(lfoSlot < kMaxRackSlots);
+	f.bridge.refresh();
+	f.panel->resized();
+	checkSynthPresets("modulator strip", *f.panel, f.panel->selectionForTest(), mod::lfo::kDescriptor, [&] { f.panel->showSlotMenu(lfoSlot); }, "Strip Saved");
+}

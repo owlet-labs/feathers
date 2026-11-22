@@ -586,8 +586,11 @@ void sweepHost(visage::Frame* host, const device::Descriptor& desc, SweepTally& 
 			const bool reasoned = vb != nullptr && !vb->enabled() && vb->disabledReason() != nullptr;
 			const char* why = control->unavailable();
 			// AND A SHORTENED OR CUT LABEL'S FULL NAME AT ITS START.
+			// A SURFACE MAY PUT ITS OWN TEXT OVER THE DECLARATION (`setTooltipOverride`: the Eroder's Drive units follow their Type).
+			const char* own = control->tooltipOverride();
 			CHECK(layer.text() == expectedWithFull(full, why != nullptr       ? std::string(why)
 			                                             : reasoned           ? std::string(vb->disabledReason())
+			                                             : own != nullptr     ? std::string(own)
 			                                                                  : declaredText(control->desc())));
 		}
 		else {

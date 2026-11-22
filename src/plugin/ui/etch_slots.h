@@ -21,7 +21,9 @@
 
 #pragma once
 
+#include "fx/eroder/drive_tips.h"
 #include "fx/eroder/eroder_types.h"
+#include "plugin/ui/device_control.h"
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/mode_value_cell.h"
@@ -64,16 +66,16 @@ struct StageView {
 	friend bool operator==(const StageView&, const StageView&) = default;
 };
 struct StageParams {
-	fx::eroder::Param type, shape, angle, bal, rate, rateMult, hard, sharp, bias, key, spread;
+	fx::eroder::Param type, shape, angle, bal, rate, rateMult, hard, sharp, bias, key, spread, amount;
 };
 inline StageParams driveStageParams() {
 	using P = fx::eroder::Param;
-	return { P::DriveMode, P::DriveShape, P::DriveAngle, P::DriveBal, P::DriveRate, P::DriveRateMult, P::DriveHard, P::DriveSharp, P::DriveBias, P::DriveKey, P::DriveSpread };
+	return { P::DriveMode, P::DriveShape, P::DriveAngle, P::DriveBal, P::DriveRate, P::DriveRateMult, P::DriveHard, P::DriveSharp, P::DriveBias, P::DriveKey, P::DriveSpread, P::Drive };
 }
 inline StageParams slotStageParams(int slot) {
 	using P = fx::eroder::Param;
-	return slot == 0 ? StageParams { P::SlotAType, P::SlotAShape, P::SlotAAngle, P::SlotABal, P::SlotARate, P::SlotARateMult, P::SlotAHard, P::SlotASharp, P::SlotABias, P::SlotAKey, P::SlotASpread }
-	                 : StageParams { P::SlotBType, P::SlotBShape, P::SlotBAngle, P::SlotBBal, P::SlotBRate, P::SlotBRateMult, P::SlotBHard, P::SlotBSharp, P::SlotBBias, P::SlotBKey, P::SlotBSpread };
+	return slot == 0 ? StageParams { P::SlotAType, P::SlotAShape, P::SlotAAngle, P::SlotABal, P::SlotARate, P::SlotARateMult, P::SlotAHard, P::SlotASharp, P::SlotABias, P::SlotAKey, P::SlotASpread, P::SlotAAmount }
+	                 : StageParams { P::SlotBType, P::SlotBShape, P::SlotBAngle, P::SlotBBal, P::SlotBRate, P::SlotBRateMult, P::SlotBHard, P::SlotBSharp, P::SlotBBias, P::SlotBKey, P::SlotBSpread, P::SlotBAmount };
 }
 /// **THE AMOUNT KNOB'S READOUT UNDER KEY**: the multiple of the note the knob's position sets ("x3.00"), in place of its usual text, while the stage's Type has a Key and
 /// the switch is on. An empty string leaves the control's own text.
@@ -101,6 +103,47 @@ inline StageView stageViewOf(const fx::eroder::Row& row, const StageParams& p) {
 	v.key = row[static_cast<size_t>(p.key)] >= 0.5f;
 	return v;
 }
+/// **THE HOVER TEXT OF ONE DRIVE UNIT FOLLOWS ITS TYPE** (and its Key switch, for the Types that have one): the Type box, the Amount, the Shape and the third-row
+/// controls each get a text for the Type that is selected (`fx::eroder::kDriveTips`) over their declared one, which stays the general text for every Type at once.
+/// `apply` is asked every tick (from the face's `refreshHonesty`, which every road of change goes through: a click, the arrows, the menu, automation, modulation, a patch,
+/// and the face's own construction) and writes only when the Type or the Key moved. The third row's controls are shown only for their own Types, so their text is the declared
+/// one without its "X only:" clause.
+class StageTips {
+public:
+	template <class ControlOf>
+	void apply(ControlOf&& control, const StageParams& p, const StageView& v) {
+		namespace ero = fx::eroder;
+		const bool keyed = v.key && ero::driveHasKey(v.type);
+		if (set_ && type_ == v.type && keyed_ == keyed) {
+			return;
+		}
+		set_ = true;
+		type_ = v.type;
+		keyed_ = keyed;
+		const ero::DriveTip& tip = ero::driveTip(v.type);
+		control(p.type).setTooltipOverride(tip.type);
+		const char* amount = keyed && tip.amountKeyed != nullptr ? tip.amountKeyed : tip.amount;
+		control(p.amount).setTooltipOverride(amount);
+		// A TYPE WITHOUT A SHAPE OF ITS OWN (the Paunch Types) shows its Angle in that row, whose declared text is the row's.
+		control(p.shape).setTooltipOverride(tip.shape != nullptr ? tip.shape : "");
+		for (const ero::Param third : { p.angle, p.bal, p.hard, p.sharp, p.bias, p.key, p.spread, p.rate, p.rateMult }) {
+			DeviceControl& c = control(third);
+			c.setTooltipOverride(ero::withoutOnlyClause(c.desc().tooltip));
+		}
+		if (v.type == ero::DriveMode::Lean) {
+			control(p.rate).setTooltipOverride(ero::kLeanRateTip);
+			control(p.rateMult).setTooltipOverride(ero::kLeanRateMultTip);
+		}
+	}
+	/// TEST SEAM: the unit's tooltips are written again at the next `apply`.
+	void forget() noexcept { set_ = false; }
+
+private:
+	bool set_ = false;
+	fx::eroder::DriveMode type_ = fx::eroder::DriveMode::Soft;
+	bool keyed_ = false;
+};
+
 /// THE ROW GATE for a stage's cell: Shape always; Bal for Chonk; Rate (Hz with Track off, the multiple with it on) for the four Paunch Types;
 /// every other follower hidden. HIDDEN, NOT GREYED: a row that only a Type switch could enable is not drawn (the honesty rule).
 inline std::function<bool(size_t)> stageRowGate(std::shared_ptr<StageView> view, StageParams p) {
@@ -253,6 +296,9 @@ struct EtchSlots {
 	/// WHAT EACH CELL'S ROW GATE READS (`stageRowGate`), refreshed from the row (`refreshRows`).
 	std::shared_ptr<StageView> viewA = std::make_shared<StageView>();
 	std::shared_ptr<StageView> viewB = std::make_shared<StageView>();
+	/// EACH SLOT'S HOVER TEXTS FOR ITS TYPE (`StageTips`), and the face's accessor they are written through.
+	StageTips tipsA, tipsB;
+	std::function<DeviceControl&(fx::eroder::Param)> controlOf;
 
 	/// @param control   the face's own accessor for a parameter's control
 	/// @param caption   the outer pair's caption; empty for a bare row (no caption band, no outline)
@@ -274,6 +320,7 @@ struct EtchSlots {
 	void makeParts(ControlOf&& control, float faceDiameter, Notifier* notifier, bool windowRow) {
 		namespace ero = fx::eroder;
 		using P = ero::Param;
+		controlOf = [control](ero::Param p) -> DeviceControl& { return control(p); };
 		const auto slot = [&](int index, std::unique_ptr<Knob>& knob, std::unique_ptr<Knob>& mixKnob, std::unique_ptr<ModeValueCell>& mode,
 		                      std::unique_ptr<PairCell>& pair, std::unique_ptr<SlotTriple>& row, std::shared_ptr<StageView>& view, P amount,
 		                      P mix, const char* name) {
@@ -320,6 +367,10 @@ struct EtchSlots {
 		}
 		if (!(before[1] == *viewB)) {
 			knobB->redraw();
+		}
+		if (controlOf) {
+			tipsA.apply(controlOf, slotStageParams(0), *viewA);
+			tipsB.apply(controlOf, slotStageParams(1), *viewB);
 		}
 		const bool a = cellA->refresh();
 		const bool b = cellB->refresh();

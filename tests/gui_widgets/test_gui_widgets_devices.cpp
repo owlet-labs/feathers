@@ -46459,3 +46459,42 @@ TEST_CASE("Spectral's Match: the card holds the chip and the 3-stack cell, the w
 	CHECK(text(-0.5) == "1:2");
 	CHECK(text(0.9) == "10:1");
 }
+
+TEST_CASE("DISPERSER's face carries the slot's Mix: a box on the card and one in the window, both bound to disperser_mix, and a move on either is the same stored value") {
+	DynCardFixture<ui::DisperserCard> d(dspr::kTraits.tag);
+	const size_t mix = static_cast<size_t>(dspr::Param::Mix);
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, dspr::kDescriptor);
+	auto* panel = dynamic_cast<ui::DisperserExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	panel->setBounds(0.0f, 0.0f, 700.0f, 420.0f);
+	(void)panel->updateContent();
+	ui::ValueBox* onCard = d.card->mixBoxForTest();
+	ui::ValueBox* inWindow = panel->mixBoxForTest();
+	REQUIRE(onCard != nullptr);
+	REQUIRE(inWindow != nullptr);
+	CHECK(onCard->isVisible());
+	CHECK(inWindow->isVisible());
+	CHECK(onCard->width() > 0.0f);
+	CHECK(inWindow->width() > 0.0f);
+	// WINDOW ⊇ CARD, by the control each answers for — read off the trees.
+	const auto has = [&](const std::vector<dspr::Param>& v) {
+		return std::find(v.begin(), v.end(), dspr::Param::Mix) != v.end();
+	};
+	CHECK(has(d.card->addressedParamsForTest()));
+	CHECK(has(panel->addressedParamsForTest()));
+	// THE WET GAIN STAYS THE PANEL'S ALONE.
+	const std::vector<dspr::Param> onFace = d.card->addressedParamsForTest();
+	CHECK(std::find(onFace.begin(), onFace.end(), dspr::Param::WetGain) == onFace.end());
+	// THE DEFAULT IS ALL WET, AND A MOVE ON THE CARD'S BOX IS THE STORED VALUE, SEEN BY THE WINDOW'S.
+	CHECK(d.f.deviceHost.fieldAt(d.device, mix) == doctest::Approx(1.0f).epsilon(1e-6));
+	onCard->control().setValue(0.35);
+	d.f.bridge.refresh();
+	CHECK(d.f.deviceHost.fieldAt(d.device, mix) == doctest::Approx(0.35f).epsilon(1e-6));
+	CHECK(inWindow->control().value() == doctest::Approx(0.35).epsilon(1e-6));
+	inWindow->control().setValue(0.8);
+	d.f.bridge.refresh();
+	CHECK(onCard->control().value() == doctest::Approx(0.8).epsilon(1e-6));
+	view.reset();
+}
+

@@ -97,6 +97,10 @@ DisperserExpanded::DisperserExpanded(backplane::DeviceHost& host, WidgetRegistry
 	qOffset_ = std::make_unique<ValueBox>(control(dp::Param::QOffset), "Q Offset");
 	qOffset_->setCompact(true);
 	addChild(qOffset_.get());
+	// THE DEVICE'S OWN FACE FOR THE SLOT'S MIX (a courtesy, the card's twin): the same control the site panel's knob is.
+	mix_ = std::make_unique<ValueBox>(control(dp::Param::Mix), "Mix");
+	mix_->setCompact(true);
+	addChild(mix_.get());
 }
 
 DeviceControl& DisperserExpanded::control(dp::Param p) const {
@@ -172,6 +176,7 @@ void DisperserExpanded::layOut() {
 	offset_->setVisible(laidOutTracking_ == 1);
 	y += kControlRow + kGap;
 	qOffset_->setBounds(x, y, half, ValueBox::kCompactHeight);
+	mix_->setBounds(x + half + kGap, y, half, ValueBox::kCompactHeight);
 }
 
 DisperserExpanded::Strip DisperserExpanded::stripNow() const {

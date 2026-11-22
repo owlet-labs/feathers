@@ -53,6 +53,10 @@ DisperserCard::DisperserCard(backplane::DeviceHost& host, WidgetRegistry& regist
 	addChild(stages_.get());
 	gamma_ = std::make_unique<GammaBox>(control(dp::Param::Gamma), "Gamma");
 	addChild(gamma_.get());
+	// THE SLOT'S MIX ON THE FACE, AS A COURTESY: the same control as the site panel's knob.
+	mix_ = std::make_unique<ValueBox>(control(dp::Param::Mix), "Mix");
+	mix_->setCompact(true);
+	addChild(mix_.get());
 	// TOPO AND TWIST: THE HOUSE'S MODE CELLS — the selector over the mode, a box per follower
 	// (`ModeValueCell`, as `GenericExpanded` seats one from the descriptor's `modeCell`).
 	const auto modeCell = [this](dp::Param mode, const char* caption) {
@@ -127,7 +131,7 @@ float DisperserCard::modeRowHeight() { return Knob::columnHeight(kModeFace); }
 float DisperserCard::openHeight() {
 	const float pillRows = static_cast<float>((dp::kPillCount + kPillsPerRow - 1) / kPillsPerRow);
 	return kSlotHeadHeight + 4.0f + kPlotHeight + kRowGap + kControlRowHeight + kRowGap + modeRowHeight() + kRowGap
-	       + pillRows * kPillHeight + (pillRows - 1.0f) * kPillGap + kPad;
+	       + pillRows * kPillHeight + (pillRows - 1.0f) * kPillGap + kRowGap + kControlRowHeight + kPad;
 }
 
 visage::Bounds DisperserCard::pillBounds(size_t i) const {
@@ -229,6 +233,12 @@ void DisperserCard::layOut() {
 		pills_[i]->setBounds(pillBounds(i));
 		pills_[i]->setVisible(open);
 	}
+	// THE MIX ROW, under the pills: the Mix box at the row's left half.
+	const float pillRows = static_cast<float>((dp::kPillCount + kPillsPerRow - 1) / kPillsPerRow);
+	const float mixTop = pillBounds(0).y() + pillRows * kPillHeight + (pillRows - 1.0f) * kPillGap + kRowGap;
+	mix_->setBounds(left, mixTop + (kControlRowHeight - ValueBox::kCompactHeight) * 0.5f, std::max(0.0f, (width - gap) * 0.5f),
+	                ValueBox::kCompactHeight);
+	mix_->setVisible(open);
 }
 
 void DisperserCard::foldedChanged() { layOut(); }

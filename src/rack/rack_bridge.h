@@ -853,6 +853,17 @@ public:
 		markStateDirty();
 	}
 
+	/// **WHETHER THE INSPECTOR HALF OF THE COLUMN IS FOLDED** — Mix and Gain and the route list, folded apart from the macros. Patch state like
+	/// `macrosCollapsed`, written by the editor's fold header and read on its beat.
+	[[nodiscard]] bool inspectorCollapsed() const noexcept { return inspectorCollapsed_; }
+	void setInspectorCollapsed(bool collapsed) noexcept {
+		if (collapsed == inspectorCollapsed_) {
+			return;
+		}
+		inspectorCollapsed_ = collapsed;
+		markStateDirty();
+	}
+
 	/// **WHETHER THE PATCH HAS BEEN EDITED SINCE THIS WAS LAST ASKED, and clears it** (backlog JV) —
 	/// `ParamBridge::takeStateDirty`'s shape. The rack's plugin drains it once per main-thread visit and
 	/// calls `clap_host_state.mark_dirty`, because nearly all of the rack is not a parameter: every device,
@@ -1022,6 +1033,7 @@ private:
 	std::unordered_map<DeviceInstanceId, uint64_t> outputsShown_;
 	CanvasView canvasView_;
 	bool macrosCollapsed_ = false;
+	bool inspectorCollapsed_ = false;
 	PublishedChains published_;
 	/// THE ROUTES, BY IDENTITY, AS THIS THREAD LAST PUBLISHED THEM — what the drain compiles.
 	backplane::RouteList publishedRoutes_;

@@ -67,6 +67,8 @@
 #include "plugin/ui/menu_anchor.h"
 #include "plugin/ui/plugin_window.h"
 #include "rack/rack_state.h"
+#include "composite/composite_types.h"
+#include "rack/rack_editor.h"
 #include "rack/parallel_rack.h"
 #include "rack/rack_engine.h"
 #include "rack/rack_axes.h"
@@ -5208,6 +5210,118 @@ TEST_CASE("list view rename: in a real window a right press on a row's menu and 
 		XDestroyWindow(display, parent);
 		XCloseDisplay(display);
 	}
+}
+
+TEST_CASE("column folds: in a real window, a real press on the macros header folds only the macros and one on the inspector header folds only the inspector, in a Chain's window") {
+	EditorFixture f;
+	feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
+	bodies.prepare(48000.0, 4096);
+	for (size_t s = 0; s < kMaxFxSlots; ++s) {
+		if (f.bridge.fxDeviceAt(s) != kNoInstance) {
+			(void)f.bridge.removeFxDevice(s);
+		}
+	}
+	const size_t at = bodies.addDevice(composite::kTraits.tag);
+	REQUIRE(at != feathers::rack::RackEngine::kNoSlot);
+	void* body = bodies.slotAtLane(at).storage.get();
+	const size_t slot = f.addFx(composite::kTraits.tag);
+	const DeviceInstanceId chainId = f.bridge.fxDeviceAt(slot);
+	f.bridge.fxBodies().attach(chainId, body);
+	f.lane->resized();
+	Display* display = XOpenDisplay(nullptr);
+	REQUIRE(display != nullptr);
+	const int screen = DefaultScreen(display);
+	uint32_t w = 0, h = 0;
+	REQUIRE(f.gui.getSize(&w, &h));
+	const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+	                                            BlackPixel(display, screen));
+	XSync(display, False);
+	clap_window window {};
+	window.api = CLAP_WINDOW_API_X11;
+	window.x11 = parent;
+	REQUIRE(f.gui.setParent(&window));
+	f.gui.setPopoutWindowForTest(false);
+	visage::Frame* const top = f.gui.root()->topParentFrame();
+	f.lane->onExpandDevice(slot);
+	REQUIRE(f.gui.expandedForTest()->open());
+	for (int i = 0; i < 3; ++i) {
+		(void)f.gui.tickForTest();
+	}
+	feathers::rack::RackEditor* editor = treeFind<feathers::rack::RackEditor>(top);
+	REQUIRE(editor != nullptr);
+	const auto pressHeader = [&](feathers::ui::FoldHeader& header) {
+		const visage::Point o = header.positionInWindow();
+		pressAtWindow(top, { o.x + static_cast<float>(header.width()) * 0.5f, o.y + static_cast<float>(header.height()) * 0.5f }, false);
+		for (int i = 0; i < 2; ++i) {
+			(void)f.gui.tickForTest();
+		}
+	};
+	struct Seen {
+		bool macros, levels, routes;
+		visage::Bounds level0;
+	};
+	const auto seen = [&] {
+		Seen out {};
+		out.macros = editor->macrosForTest()[0]->isVisible();
+		out.levels = editor->levelCountForTest() > 0 && editor->levelShownForTest(0);
+		out.routes = editor->routeListForTest().isVisible();
+		out.level0 = editor->levelCountForTest() > 0 ? editor->levelBoundsForTest(0) : visage::Bounds {};
+		return out;
+	};
+	// WITH FEATHERS_FOLD_SHOTS=<dir>, A PHOTOGRAPH OF THE COLUMN IN EACH STATE (the PPMs are cropped to the column by the caller).
+	const auto shot = [&](const char* state) {
+		const char* keep = std::getenv("FEATHERS_FOLD_SHOTS");
+		if (keep == nullptr || *keep == '\0') {
+			return;
+		}
+		XMapWindow(display, parent);
+		XRaiseWindow(display, parent);
+		XFlush(display);
+		for (int slice = 0; slice < 300; ++slice) {
+			f.gui.processEvents();
+			::usleep(4000);
+		}
+		const visage::Point o = editor->positionInWindow();
+		std::fprintf(stderr, "FOLDSHOT %s %d %d\n", state, static_cast<int>(o.x), static_cast<int>(o.y));
+		(void)capturePpm(parent, std::string(keep) + "/fold-" + state + ".ppm");
+	};
+	shot("open");
+	const Seen open = seen();
+	REQUIRE(open.macros);
+	REQUIRE(open.levels);
+	REQUIRE(open.routes);
+	// THE REAL PRESS ON THE MACROS HEADER, through the window's root.
+	pressHeader(editor->macrosHeaderForTest());
+	CHECK(editor->macrosFolded());
+	CHECK_FALSE(editor->inspectorFolded());
+	const Seen afterMacros = seen();
+	CHECK_FALSE(afterMacros.macros);
+	CHECK(afterMacros.levels);
+	CHECK(afterMacros.routes);
+	CHECK(afterMacros.level0 == open.level0); // the inspector half did not move
+	shot("macros-folded");
+	// UNFOLD IT, then the INSPECTOR HEADER: the macros stay, the inspector goes.
+	pressHeader(editor->macrosHeaderForTest());
+	CHECK_FALSE(editor->macrosFolded());
+	CHECK(seen().macros);
+	pressHeader(editor->inspectorHeaderForTest());
+	CHECK(editor->inspectorFolded());
+	CHECK_FALSE(editor->macrosFolded());
+	const Seen afterInspector = seen();
+	CHECK(afterInspector.macros);
+	CHECK_FALSE(afterInspector.levels);
+	CHECK_FALSE(afterInspector.routes);
+	shot("inspector-folded");
+	// THE FOLDS ARE THE BRIDGE'S, each under its own flag.
+	feathers::rack::RackBridge* inner = feathers::rack::bridgeOf(f.bridge.fxBodies().surfaceOf(chainId));
+	if (inner != nullptr) {
+		CHECK(inner->inspectorCollapsed());
+		CHECK_FALSE(inner->macrosCollapsed());
+	}
+	f.bridge.fxBodies().detach(chainId, body);
+	f.gui.destroy();
+	XDestroyWindow(display, parent);
+	XCloseDisplay(display);
 }
 
 #endif // defined(__linux__)

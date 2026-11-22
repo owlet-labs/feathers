@@ -1632,6 +1632,14 @@ bool rackToText(const RackPatch& patch, std::string* out, bool indented) {
 		w.boolean(true);
 		w.endObject();
 	}
+	// THE INSPECTOR HALF'S FOLD: written when folded, and when the macros are folded and it is not (so a loader does not hand it the macros' value).
+	if (patch.inspectorCollapsed || patch.macrosCollapsed) {
+		w.key("inspectorColumn");
+		w.beginObject();
+		w.key("collapsed");
+		w.boolean(patch.inspectorCollapsed);
+		w.endObject();
+	}
 	// THE HOST SLOT POOL, only when this patch owns one (the outermost plugin's project state).
 	if (patch.hostSlots.has_value()) {
 		w.key("hostSlots");
@@ -1842,6 +1850,13 @@ bool parseRackText(std::string_view text, RackPatch* out, LoadReport* report) {
 	if (const json::Value* column = doc.find("macrosColumn"); column != nullptr && column->isObject()) {
 		if (const json::Value* collapsed = column->find("collapsed"); collapsed != nullptr) {
 			(void)collapsed->asBool(&out->macrosCollapsed); // backlog QN
+		}
+	}
+	// THE INSPECTOR HALF FOLLOWS THE MACROS' VALUE when the document does not name it (a column folded before the two folds were told apart).
+	out->inspectorCollapsed = out->macrosCollapsed;
+	if (const json::Value* column = doc.find("inspectorColumn"); column != nullptr && column->isObject()) {
+		if (const json::Value* collapsed = column->find("collapsed"); collapsed != nullptr) {
+			(void)collapsed->asBool(&out->inspectorCollapsed);
 		}
 	}
 	if (const json::Value* canvas = doc.find("canvas"); canvas != nullptr && canvas->isObject()) {

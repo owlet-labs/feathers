@@ -1057,6 +1057,7 @@ RackPatch RackBridge::patch() const {
 	out.label = label_;
 	out.canvas = canvasView_;
 	out.macrosCollapsed = macrosCollapsed_; // backlog QN
+	out.inspectorCollapsed = inspectorCollapsed_;
 	out.preset = topPreset_; // backlog QC
 	// THE HOST SLOTS, ONLY FROM THE BRIDGE THAT OWNS THEM (plan §2): the outermost patch stores them by path,
 	// so a nested rack's body never carries any (design §7) — a rack preset moved to another project brings
@@ -1089,6 +1090,7 @@ LoadReport RackBridge::loadPatch(const RackPatch& patch) {
 	});
 	canvasView_ = patch.canvas;
 	macrosCollapsed_ = patch.macrosCollapsed; // backlog QN
+	inspectorCollapsed_ = patch.inspectorCollapsed;
 	topPreset_ = patch.preset; // backlog QC: which preset the rack plugin's browser came from
 	for (size_t i = 0; i < patch.macro.size(); ++i) {
 		setMacro(i, patch.macro[i]);

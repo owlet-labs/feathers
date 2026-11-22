@@ -640,6 +640,10 @@ struct RackPatch {
 	/// **WHETHER THE MACROS COLUMN IS FOLDED** (backlog QN) — in the patch, like the canvas's fold, so a rack or a chain reopens
 	/// the way it was left in a fresh instance. `"macrosColumn": {"collapsed": true}`, written only when folded.
 	bool macrosCollapsed = false;
+	/// **WHETHER THE INSPECTOR HALF OF THE COLUMN IS FOLDED** — the door row's neighbours: Mix and Gain and the route list. A fold of its own,
+	/// beside the macros'. `"inspectorColumn": {"collapsed": b}`, written when folded or when the macros are folded and it is not; a document
+	/// without it (one saved before the two folds were told apart) takes the macros' value, so a column that was folded stays folded whole.
+	bool inspectorCollapsed = false;
 	/// **THE HOST SLOT POOL** (backlog JU; host-slots plan §2, T4) — which host param names which control, in
 	/// which state, as `SlotPool::snapshot` took it. ABSENT (nullopt) when the document has no `hostSlots`
 	/// member, which is every patch but the OUTERMOST plugin's own: a nested rack never writes one, and a

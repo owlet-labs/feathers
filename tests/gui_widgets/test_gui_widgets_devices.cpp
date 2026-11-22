@@ -38940,6 +38940,44 @@ TEST_CASE("the Pattern window's step inspector: each setting changes exactly tha
 	othersSame(base, back, -10);
 }
 
+TEST_CASE("Pattern's Degree and Thru hover text follow the tab's Mode: the chord degree in Chords, the line's transposition in the line modes, Thru's Auto by Drum") {
+	namespace pt = feathers::mod::arp::pat;
+	namespace gn = feathers::mod::arp::genes;
+	using Field = pt::Field;
+	ModFixture f;
+	const size_t slot = f.bridge.addRackDevice(pt::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxRackSlots);
+	f.bridge.refresh();
+	f.panel->resized();
+	auto* card = const_cast<ui::PatternCard*>(dynamic_cast<const ui::PatternCard*>(f.panel->cardFrameForTest(slot)));
+	REQUIRE(card != nullptr);
+	const DeviceInstanceId id = card->device();
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, pt::kDescriptor);
+	auto* window = dynamic_cast<ui::PatternExpanded*>(view.get());
+	REQUIRE(window != nullptr);
+	const auto tipOf = [&](Field fld) { return std::string(ui::tooltipOf(&window->controlForTest(pt::at(0, fld)))); };
+	const auto setMode = [&](gn::Mode m) {
+		f.deviceHost.setField(id, pt::at(0, Field::Mode), static_cast<float>(m));
+		(void)window->updateContent();
+	};
+	setMode(gn::Mode::Chords);
+	CHECK(tipOf(Field::Degree) == pt::kDegreeTipChords);
+	setMode(gn::Mode::TbGlide);
+	CHECK(tipOf(Field::Degree) == pt::kDegreeTipLine);
+	// NOT VACUOUS: the two modes name different things.
+	CHECK(pt::kDegreeTipChords != std::string(pt::kDegreeTipLine));
+	setMode(gn::Mode::Drum);
+	// THRU'S AUTO RESOLVES BY MODE: on in Drum, off in a note mode.
+	CHECK(tipOf(Field::Thru) == pt::kThruTipAutoDrum);
+	setMode(gn::Mode::Melody);
+	CHECK(tipOf(Field::Thru) == pt::kThruTipAutoOther);
+	// AN EXPLICIT Thru says what it does, and keeps the declared text (no Auto to resolve).
+	f.deviceHost.setField(id, pt::at(0, Field::Thru), static_cast<float>(pt::Thru::On));
+	(void)window->updateContent();
+	CHECK(tipOf(Field::Thru) != pt::kThruTipAutoOther);
+}
+
 TEST_CASE("the Pattern window's drum grid: a click selects a cell and edits nothing; a double-click toggles that lane's hit; the inspector's Hit and Accent set that cell") {
 	using namespace lane_check;
 	using What = ui::StepControl::What;

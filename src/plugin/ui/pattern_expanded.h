@@ -375,6 +375,8 @@ public:
 	[[nodiscard]] bool updateContent() override;
 	void setFocus(size_t pattern);
 	[[nodiscard]] size_t focus() const { return focus_; }
+	/// The window's own control at a descriptor index (a test seam for its hover text).
+	[[nodiscard]] DeviceControl& controlForTest(size_t index) const;
 	[[nodiscard]] PatternTerrain& terrain() const { return *terrain_; }
 	[[nodiscard]] const visage::Frame& heartForTest() const { return *heart_; }
 	[[nodiscard]] PatternLane& lane() const { return *lane_; }
@@ -432,6 +434,9 @@ private:
 		float height = 0.0f;
 	};
 	[[nodiscard]] DeviceControl& control(size_t index) const;
+	/// THE HOVER TEXT OF EACH TAB'S DEGREE AND THRU, by the tab's Mode (and Thru): set only where they change (`tipKeys_`).
+	void refreshTips();
+	std::array<int, mod::arp::pat::kPatterns> tipKeys_ = { -1, -1, -1, -1 };
 	[[nodiscard]] bool live(size_t index) const;
 	void buildPatternWidgets();
 	void buildPills();

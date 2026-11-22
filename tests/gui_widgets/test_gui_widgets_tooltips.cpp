@@ -586,8 +586,10 @@ void sweepHost(visage::Frame* host, const device::Descriptor& desc, SweepTally& 
 			const bool reasoned = vb != nullptr && !vb->enabled() && vb->disabledReason() != nullptr;
 			const char* why = control->unavailable();
 			// AND A SHORTENED OR CUT LABEL'S FULL NAME AT ITS START.
+			// AND A SURFACE'S OWN TEXT (`setTooltipOverride`: a mode's wording, Pattern's Degree and Thru) when it has set one.
 			CHECK(layer.text() == expectedWithFull(full, why != nullptr       ? std::string(why)
 			                                             : reasoned           ? std::string(vb->disabledReason())
+			                                             : control->tooltipOverride() != nullptr ? std::string(control->tooltipOverride())
 			                                                                  : declaredText(control->desc())));
 		}
 		else {

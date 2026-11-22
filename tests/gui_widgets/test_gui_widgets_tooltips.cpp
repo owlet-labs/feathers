@@ -4344,3 +4344,29 @@ TEST_CASE("TV-C: Featherverb's Character, Predelay, Matrix and Conv Blend say wh
 	CHECK(tip(fv::Param::ConvBlend) == declaredText(fv::kDescriptor.params[static_cast<size_t>(fv::Param::ConvBlend)]));
 }
 
+TEST_CASE("TV-C: Phaser's Center, Delay and Mix say what they do with Key Track and in the mode they are on") {
+	namespace ph = feathers::fx::phaser;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag(ph::kTraits.tag);
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::PhaserCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	const auto tip = [&](ph::Param p) { return std::string(ui::tooltipOf(&card->controlForTest(p))); };
+	const std::string declaredMix = declaredText(ph::kParamDescs[static_cast<size_t>(ph::Param::Mix)]);
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::KeyTrack), 0.0f);
+	(void)card->update();
+	CHECK(tip(ph::Param::CenterHz) == "Where the notches sit with the sweep at rest. Key Track turns this into an offset from the played note");
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::KeyTrack), 1.0f);
+	(void)card->update();
+	CHECK(tip(ph::Param::CenterHz) == "Key Track is on: where the notches sit, as an offset in semitones from the note it tracks. The default puts the first notch on the note");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::Mode), 1.0f); // Flanger
+	(void)card->update();
+	CHECK(tip(ph::Param::Mix) == "Dry against wet: how much of the swept comb is heard against the untouched input. 50% is an even blend; 100% is wet only");
+	CHECK(tip(ph::Param::DelayMs) == "Key Track is on: the flanger's delay, as an offset in semitones from the note it tracks. The default tunes the comb to the note");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::Mode), 0.0f); // Phaser: Mix is the declared text again
+	(void)card->update();
+	CHECK(tip(ph::Param::Mix) == declaredMix);
+}

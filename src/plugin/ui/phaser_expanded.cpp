@@ -21,6 +21,8 @@
 
 #include "plugin/ui/phaser_expanded.h"
 
+#include "fx/phaser/phaser_tips.h"
+
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -279,6 +281,30 @@ void PhaserExpanded::layOut() {
 	(void)applyGates();
 }
 
+void PhaserExpanded::applyTips() {
+	const bool flanger = dhost_.fieldAt(device_, static_cast<size_t>(ph::Param::Mode)) >= 0.5f;
+	const bool keyTrack = dhost_.fieldAt(device_, static_cast<size_t>(ph::Param::KeyTrack)) >= 0.5f;
+	const bool colourDim = !xActive_[static_cast<size_t>(ph::phase_space::Group::Colour)];
+	const bool biasDim = !xActive_[static_cast<size_t>(ph::phase_space::Group::Bias)];
+	const int key = (flanger ? 2 : 0) + (keyTrack ? 1 : 0) + (colourDim ? 4 : 0) + (biasDim ? 8 : 0);
+	if (key == drawnTips_) {
+		return;
+	}
+	drawnTips_ = key;
+	const ph::Mode mode = flanger ? ph::Mode::Flanger : ph::Mode::Phaser;
+	for (const ph::Param p : { ph::Param::CenterHz, ph::Param::DelayMs, ph::Param::Mix }) {
+		const char* text = ph::phaserTip(p, mode, keyTrack);
+		control(p).setTooltipOverride(text != nullptr ? text : "");
+	}
+	// A DIMMED POUR PILL SAYS WHY IT IS NOT HEARD, AND KEEPS ITS DECLARED TEXT AFTER THE WHY.
+	for (const ph::phase_space::Group g : { ph::phase_space::Group::Colour, ph::phase_space::Group::Bias }) {
+		const bool dim = !xActive_[static_cast<size_t>(g)];
+		DeviceControl& amount = control(ph::pillKnobParam(g));
+		const char* declared = amount.desc().tooltip;
+		amount.setTooltipOverride(dim ? std::string(ph::dimmedPillPrefix(g)) + (declared != nullptr ? declared : "") : std::string {});
+	}
+}
+
 bool PhaserExpanded::applyGates() {
 	bool changed = false;
 	const bool lfoOn = dhost_.fieldAt(device_, static_cast<size_t>(ph::Param::LfoOn)) >= 0.5f;
@@ -325,6 +351,7 @@ bool PhaserExpanded::applyGates() {
 		}
 	}
 	// SWEEP HAS NO GATE (by design): the barberpole differs from Normal even with the LFO off (`kParamDescs`).
+	applyTips();
 	return changed;
 }
 

@@ -40,22 +40,24 @@
 
 namespace feathers::ui {
 
-/// **THE VIEW CHOICE WITHOUT TABS** (a rack of more than eight chains cannot be tabbed, so the choice that is offered is Strips | Pads):
-/// the rack's `View` control seen through two segments, 0 = Strips and 1 = Pads (the control's 0 and 2). It is the same control (the same
-/// descriptor entry, gestures and undo), only narrower, so a surface shows it where Tabs is not on offer and the three-way where it is.
+/// **THE VIEW CHOICE WITHOUT TABS** (a rack of more than eight chains cannot be tabbed, so the choice that is offered is Strips | Pads | List):
+/// the rack's `View` control seen through three segments, 0 = Strips, 1 = Pads and 2 = List (the control's 0, 2 and 3). It is the same
+/// control (the same descriptor entry, gestures and undo), only narrower, so a surface shows it where Tabs is not on offer and the four-way
+/// where it is.
 class RackViewPairControl final : public device::Modulatable {
 public:
-	static constexpr const char* kNames[] = { "Strips", "Pads" };
+	static constexpr const char* kNames[] = { "Strips", "Pads", "List" };
 	explicit RackViewPairControl(device::Modulatable& view) : view_(view) {}
 	const device::ParamDesc& desc() const override { return view_.desc(); }
-	double value() const override { return view_.value() >= 1.5 ? 1.0 : 0.0; }
-	void setValue(double v) override { view_.setValue(v >= 0.5 ? 2.0 : 0.0); }
-	void releaseValue(double v) override { view_.releaseValue(v >= 0.5 ? 2.0 : 0.0); }
+	static double toView(double v) { return v >= 1.5 ? 3.0 : (v >= 0.5 ? 2.0 : 0.0); }
+	double value() const override { return view_.value() >= 2.5 ? 2.0 : (view_.value() >= 1.5 ? 1.0 : 0.0); }
+	void setValue(double v) override { view_.setValue(toView(v)); }
+	void releaseValue(double v) override { view_.releaseValue(toView(v)); }
 	device::ModDisplay display() const override { return view_.display(); }
 	void setAmount(float amount) override { view_.setAmount(amount); }
 	void beginGesture() override { view_.beginGesture(); }
 	void endGesture() override { view_.endGesture(); }
-	std::string text() const override { return kNames[value() >= 0.5 ? 1 : 0]; }
+	std::string text() const override { return kNames[static_cast<size_t>(value())]; }
 
 private:
 	device::Modulatable& view_;

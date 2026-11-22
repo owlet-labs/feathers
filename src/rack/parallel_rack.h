@@ -183,7 +183,7 @@ inline constexpr size_t kMaxRoles = 5;
 	return (kRoleModes & kModeBit(mode)) != 0 ? size_t { 2 } : chains;
 }
 inline constexpr const char* kUnusedNames[] = { "Ring out", "Stop" };
-inline constexpr const char* kViewNames[] = { "Strips", "Tabs", "Pads" };
+inline constexpr const char* kViewNames[] = { "Strips", "Tabs", "Pads", "List" };
 /// What the Tabs view shows in front in the rack's window: the chain's cards, or the first device's window.
 inline constexpr const char* kFrontNames[] = { "Cards", "Window" };
 inline constexpr int kPadsPages = 8;
@@ -291,9 +291,9 @@ inline constexpr device::ParamDesc kParamDescs[] = {
                 "default sits on the note, the others keep the default layout above it",
      .gateControl = static_cast<int16_t>(Param::Mode), .gateMask = kBandsOnly, .shortName = "Key"},
     // VIEW STATE: kept with the patch, no audio effect, not automatable (a window's layout is not a lane) and not on a host slot.
-    {.key = "rack_view", .name = "Rack View", .min = 0.0, .max = 2.0, .def = 0.0, .stepped = true,
+    {.key = "rack_view", .name = "Rack View", .min = 0.0, .max = 3.0, .def = 0.0, .stepped = true,
      .unit = device::Unit::Choice, .names = kViewNames, .modulatable = false,
-     .tooltip = "How the window lays the chains out: strips in a column, one chain at a time under tabs, or a grid of pads. "
+     .tooltip = "How the window lays the chains out: strips in a column, one chain at a time under tabs, a grid of pads, or a scrolling list of mini strips. "
                 "It changes nothing you hear",
      .hostSlot = false},
     {.key = "rack_viewed_chain", .name = "Rack Viewed Chain", .min = 0.0, .max = 1023.0, .def = 0.0, .stepped = true,
@@ -772,6 +772,8 @@ public:
 	/// the sum (after its level, mute and solo), published by the audio thread as one atomic. False — `peak` untouched —
 	/// for no such chain or one that has not run yet. Any thread; no allocation.
 	[[nodiscard]] bool chainPeak(size_t index, float& peak) const noexcept;
+	/// A TEST'S STAND-IN FOR THE AUDIO THREAD'S PUBLISH: the held peak chain `index` reads as (no such chain: nothing).
+	void publishChainPeakForTest(size_t index, float peak) noexcept;
 
 	/// **A VIEW SHOWING THE SPECTRUM ASKS FOR IT** (§7a's cost rule, the "readings wanted" bit EQ A17 never built): the
 	/// analyser runs for the next half second of audio and stops when no view has asked since. A lease rather than a

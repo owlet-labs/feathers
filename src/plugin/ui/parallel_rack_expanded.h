@@ -34,6 +34,7 @@
 #include "plugin/ui/rack_mode_views.h"
 #include "plugin/ui/rack_view_adapter.h"
 #include "plugin/ui/rack_pad_add.h"
+#include "plugin/ui/rack_list_view.h"
 #include "plugin/ui/rack_views.h"
 #include "plugin/ui/rack_window_pane.h"
 #include "plugin/ui/widget_registry.h"
@@ -129,6 +130,7 @@ public:
 	/// THE MODE'S DROPDOWN AND THE POSITION'S KNOB (stage 2), on the row above Mix and Gain.
 	/// THE TABS AND PADS VIEWS (`View`): the bar, the pads panel, the model, and which rails are shown.
 	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
+	[[nodiscard]] RackListView& listForTest() const { return *list_; }
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackViewAdapter& viewModelForTest() const { return *model_; }
 	[[nodiscard]] RackPadAdd& padAddForTest() const { return *padAdd_; }
@@ -214,6 +216,8 @@ private:
 	[[nodiscard]] visage::Bounds leftColumnFoot() const;
 	/// How long the Tabs view's column wants to be: every chain's tab at its cap (`RackTabBar::kMaxLength`), then limited to the window's height.
 	[[nodiscard]] float tabsColumnLength() const;
+	/// How wide the chain selector's column is: the tabs' thickness, or the list's width.
+	[[nodiscard]] float selectorWidth() const;
 	[[nodiscard]] bool addShown() const;
 	/// THE BANDS COLUMN beside the macros (Bands only): whether it is drawn, where it starts and ends, and where the rails
 	/// start after the columns.
@@ -286,6 +290,7 @@ private:
 	std::unique_ptr<RackPadAdd> padAdd_;
 	std::unique_ptr<RackChainRename> chainRename_;
 	std::unique_ptr<RackTabBar> tabs_;
+	std::unique_ptr<RackListView> list_; ///< after `chainRename_` (it holds a reference to it)
 	std::unique_ptr<RackPadsPanel> pads_;
 	int laidOutView_ = -1;
 	size_t laidOutViewed_ = static_cast<size_t>(-1);

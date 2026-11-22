@@ -32,6 +32,7 @@
 #include "plugin/ui/parallel_rack_expanded.h"
 #include "plugin/ui/rack_view_adapter.h"
 #include "plugin/ui/rack_view_model.h"
+#include "plugin/ui/rack_list_view.h"
 #include "plugin/ui/rack_views.h"
 #include "plugin/ui_note_ring.h"
 #include "rack/fragment.h"
@@ -1823,10 +1824,10 @@ namespace {
 /// A rack window in Tabs with the pane chosen, over `chains` chains each holding a Drum then a Delay.
 struct PaneRack {
 	RealRack r;
-	explicit PaneRack(size_t chains = 3, size_t withDevices = 3) {
+	explicit PaneRack(size_t chains = 3, size_t withDevices = 3, int view = 1) {
 		r.chains(chains, withDevices);
 		r.set(pr::Param::Front, 1.0f);
-		r.view_(1);
+		r.view_(view);
 		for (int i = 0; i < 3; ++i) {
 			r.refresh();
 		}
@@ -3721,6 +3722,297 @@ TEST_CASE("rename field: opened by the menu's own pick and by double-click, it i
 	}
 }
 
+// ================================================================================================
+// THE LIST VIEW: one mini strip per chain, a column that scrolls, working as Tabs does.
+// ================================================================================================
+namespace {
+
+/// A POINT ON A ROW'S OWN SURFACE (its name's end, clear of every control), in the window of the list's top frame.
+visage::Point rowSurfaceAt(ui::RackListView& list, size_t slot) {
+	const visage::Bounds b = list.rowBoundsForTest(slot);
+	const visage::Point o = list.positionInWindow();
+	return { o.x + b.x() + 8.0f, o.y + b.y() + b.height() * 0.5f };
+}
+
+/// A REAL PRESS-AND-RELEASE through the top frame's own routing, then the rack read back.
+void clickAtThrough(visage::Frame* root, visage::Point at) {
+	visage::Frame* hit = root->frameAtPoint(at);
+	REQUIRE(hit != nullptr);
+	dragThroughRoot(root, at, at);
+}
+
+} // namespace
+
+TEST_CASE("list view: a press on a row shows that chain's cards and only those, in the card and in the window, and the rows follow the chains") {
+	RealRack r;
+	r.chains(4, 4);
+	(void)r.rack().chainAt(2)->bridge()->addDevice("DELAY"); // chain 2 holds three, the others two
+	r.view_(3);
+	REQUIRE(r.field(pr::Param::View) == 3.0f);
+	ui::RackListView& cardList = r.card->listForTest();
+	ui::RackListView& winList = r.panel->listForTest();
+	CHECK(cardList.isVisible());
+	CHECK(winList.isVisible());
+	CHECK_FALSE(r.card->tabBarForTest().isVisible()); // the list stands where the tabs stood
+	CHECK_FALSE(r.panel->tabBarForTest().isVisible());
+	REQUIRE(cardList.rowCountForTest() == 4);
+	REQUIRE(winList.rowCountForTest() == 4);
+	const auto summary = [&](ui::RackListView& list, size_t slot) { return list.rowForTest(slot)->summaryForTest(); };
+	CHECK(summary(cardList, 1).find(r.rack().chainLabel(1)) == 0); // the chain's one label leads the row
+	for (const size_t want : { size_t { 2 }, size_t { 1 }, size_t { 3 } }) {
+		CAPTURE(want);
+		// THE CARD'S LIST: a real press on the row's surface.
+		REQUIRE(cardList.rowVisibleForTest(want));
+		const visage::Point at = rowSurfaceAt(cardList, want);
+		REQUIRE(r.f.root->frameAtPoint(at) == static_cast<visage::Frame*>(cardList.rowForTest(want)));
+		clickAtThrough(r.f.root, at);
+		r.refresh();
+		CHECK(r.field(pr::Param::ViewedChain) == static_cast<float>(want));
+		CHECK(r.card->frontForTest().chainIdForTest() == r.rack().chainIdAt(want));
+		REQUIRE(r.card->frontForTest().columnForTest() != nullptr);
+		CHECK(r.card->frontForTest().columnForTest()->bridge().chainLength() == r.rack().chainAt(want)->bridge()->chainLength());
+		CHECK(cardList.rowForTest(want)->selectedForTest());
+		for (size_t other = 0; other < 4; ++other) {
+			CHECK((other == want) == cardList.rowForTest(other)->selectedForTest());
+		}
+		// AND THE WINDOW'S, the same way: only the chain in front has its rail shown.
+		const size_t next = (want + 1) % 4;
+		const visage::Point inWindow = rowSurfaceAt(winList, next);
+		REQUIRE(r.panel->frameAtPoint(inWindow) == static_cast<visage::Frame*>(winList.rowForTest(next)));
+		clickAtThrough(r.panel, inWindow);
+		r.refresh();
+		CHECK(r.field(pr::Param::ViewedChain) == static_cast<float>(next));
+		for (size_t i = 0; i < 4; ++i) {
+			CHECK(r.panel->railShownForTest(i) == (i == next));
+		}
+	}
+	// A CHAIN ADDED OR REMOVED: the rows follow the rack's own count, with no cap.
+	(void)r.rack().addChain();
+	r.refresh();
+	CHECK(cardList.rowCountForTest() == 5);
+	CHECK(winList.rowCountForTest() == 5);
+}
+
+TEST_CASE("list view: a row's mute, solo and level are the strip's own parameters") {
+	RealRack r;
+	r.chains(3, 0);
+	r.view_(3);
+	ui::RackListView& list = r.card->listForTest();
+	for (size_t k = 0; k < 3; ++k) {
+		CAPTURE(k);
+		ui::ChainStrip& row = *list.rowForTest(k);
+		const uint16_t chain = r.rack().chainIdAt(k);
+		ui::ChainControl muted(r.f.deviceHost, r.id, chain, ui::ChainControl::Kind::Mute);
+		ui::ChainControl soloed(r.f.deviceHost, r.id, chain, ui::ChainControl::Kind::Solo);
+		ui::ChainControl level(r.f.deviceHost, r.id, chain, ui::ChainControl::Kind::Level);
+		const double muteBefore = muted.value();
+		const double soloBefore = soloed.value();
+		// A REAL PRESS on each chip, then the parameter itself read through a control that is neither the row's nor the card strip's.
+		const auto press = [&](visage::Frame& chip) {
+			const visage::Point c = chip.positionInWindow() + visage::Point { static_cast<float>(chip.width()) * 0.5f, static_cast<float>(chip.height()) * 0.5f };
+			REQUIRE(r.f.root->frameAtPoint(c) == &chip);
+			clickAtThrough(r.f.root, c);
+		};
+		press(row.muteChip());
+		CHECK(muted.value() == 1.0 - muteBefore);
+		CHECK(r.card->stripsForTest()[k]->muteControlForTest().value() == muted.value()); // the card's own strip reads the same parameter
+		press(row.soloChip());
+		CHECK(soloed.value() == 1.0 - soloBefore);
+		CHECK(r.card->stripsForTest()[k]->soloControlForTest().value() == soloed.value());
+		row.levelControlForTest().setValue(0.5);
+		CHECK(level.value() == doctest::Approx(0.5));
+		CHECK(r.card->stripsForTest()[k]->levelControlForTest().value() == doctest::Approx(0.5));
+		// THE OTHER ROWS ARE UNTOUCHED.
+		for (size_t other = 0; other < 3; ++other) {
+			if (other != k) {
+				ui::ChainControl otherMute(r.f.deviceHost, r.id, r.rack().chainIdAt(other), ui::ChainControl::Kind::Mute);
+				CHECK(otherMute.value() == 0.0);
+			}
+		}
+		press(row.muteChip()); // put them back for the next row
+		press(row.soloChip());
+	}
+}
+
+TEST_CASE("list view: more rows than fit scroll, every row can be reached and pressed, and a chain viewed from elsewhere scrolls into view") {
+	RealRack r;
+	r.chains(12, 0);
+	r.view_(3);
+	ui::RackListView& list = r.card->listForTest();
+	REQUIRE(list.rowCountForTest() == 12);
+	const float room = static_cast<float>(list.height());
+	CHECK(room == doctest::Approx(ui::RackListView::heightFor(ui::RackListView::kCardRows)).epsilon(0.01)); // a fixed footprint
+	REQUIRE(list.maxScrollForTest() > 0.0f);
+	CHECK(list.maxScrollForTest() == doctest::Approx(ui::RackListView::heightFor(12) - room));
+	// EVERY ROW, scrolled to and pressed for real.
+	for (size_t k = 0; k < 12; ++k) {
+		CAPTURE(k);
+		list.setScrollForTest(std::min(static_cast<float>(k) * ui::RackListView::kPitch, list.maxScrollForTest()));
+		REQUIRE(list.rowVisibleForTest(k));
+		const visage::Point at = rowSurfaceAt(list, k);
+		REQUIRE(r.f.root->frameAtPoint(at) == static_cast<visage::Frame*>(list.rowForTest(k)));
+		clickAtThrough(r.f.root, at);
+		CHECK(r.field(pr::Param::ViewedChain) == static_cast<float>(k));
+	}
+	// A ROW SCROLLED OUT OF THE FRAME IS NOT PRESSABLE through it (nothing is there to take the press).
+	list.setScrollForTest(0.0f);
+	CHECK_FALSE(list.rowForTest(11)->isVisible());
+	// THE WHEEL: one notch moves the content by a notch, never past either end.
+	visage::MouseEvent wheel;
+	wheel.precise_wheel_delta_y = -1.0f;
+	REQUIRE(list.mouseWheel(wheel));
+	CHECK(list.scrollForTest() == doctest::Approx(24.0f));
+	wheel.precise_wheel_delta_y = 100.0f;
+	(void)list.mouseWheel(wheel);
+	CHECK(list.scrollForTest() == 0.0f);
+	// A DRAG ON A ROW'S SURFACE scrolls and does not select.
+	r.set(pr::Param::ViewedChain, 0.0f);
+	r.refresh();
+	const visage::Point from = rowSurfaceAt(list, 2);
+	dragThroughRoot(r.f.root, from, from + visage::Point { 0.0f, -30.0f });
+	CHECK(list.scrollForTest() == doctest::Approx(30.0f));
+	CHECK(r.field(pr::Param::ViewedChain) == 0.0f);
+	// THE VIEWING BOX (or a played note that follows) VIEWS A CHAIN FROM ELSEWHERE: its row is brought into view, and back.
+	list.setScrollForTest(0.0f);
+	r.set(pr::Param::ViewedChain, 11.0f);
+	r.refresh();
+	CHECK(list.scrollForTest() > 0.0f);
+	CHECK(list.rowVisibleForTest(11));
+	r.set(pr::Param::ViewedChain, 0.0f);
+	r.refresh();
+	CHECK(list.rowVisibleForTest(0));
+	CHECK(list.scrollForTest() == 0.0f);
+	// THE WINDOW'S LIST is as tall as its room: with the rows it has room for, none is unreachable either.
+	ui::RackListView& winList = r.panel->listForTest();
+	for (size_t k = 0; k < 12; ++k) {
+		winList.setScrollForTest(std::min(static_cast<float>(k) * ui::RackListView::kPitch, winList.maxScrollForTest()));
+		CHECK(winList.rowVisibleForTest(k));
+	}
+}
+
+TEST_CASE("list view: Select's playing dot sits in the gutter, a press there sets the playing chain and not the viewed one") {
+	RealRack r;
+	r.chains(3, 0);
+	r.set(pr::Param::Mode, static_cast<float>(pr::Mode::Select));
+	r.view_(3);
+	ui::RackListView& list = r.card->listForTest();
+	r.set(pr::Param::Playing, 1.0f);
+	r.set(pr::Param::ViewedChain, 0.0f);
+	r.refresh();
+	CHECK(list.dotLitForTest(0));
+	CHECK_FALSE(list.dotLitForTest(2));
+	list.pressGutterForTest(list.dotCentreForTest(2));
+	r.refresh();
+	CHECK(r.field(pr::Param::Playing) == 3.0f); // the playing chain moved...
+	CHECK(r.field(pr::Param::ViewedChain) == 0.0f); // ...and the chain in front stayed
+	CHECK(list.dotLitForTest(2));
+	// A press in the gutter off the dot views the row, as a tab's press off its dot does.
+	list.pressGutterForTest({ 1.0f, list.dotCentreForTest(1).y - 9.0f }); // the row's top edge, clear of the dot
+	r.refresh();
+	CHECK(r.field(pr::Param::ViewedChain) == 1.0f);
+}
+
+TEST_CASE("list view: add, delete and the window's add control are Tabs' own, with no cap of eight") {
+	RealRack r;
+	r.chains(3, 1);
+	for (const int view : { 1, 3 }) {
+		CAPTURE(view);
+		r.view_(view);
+		// THE ADD CONTROL under the selector, one square, present while the mode allows a chain to be added.
+		const visage::Bounds add = r.panel->addBoundsForTest();
+		CHECK(add.width() > 0.0f);
+		CHECK(add.height() > 0.0f);
+	}
+	// DELETE is the chain in front's rail strip x: the row for it goes, and the others keep their order.
+	r.view_(3);
+	r.set(pr::Param::ViewedChain, 1.0f);
+	r.refresh();
+	const uint16_t gone = r.rack().chainIdAt(1);
+	const uint16_t keep0 = r.rack().chainIdAt(0);
+	const uint16_t keep2 = r.rack().chainIdAt(2);
+	r.panel->removeChainForTest(gone);
+	r.refresh();
+	REQUIRE(r.rack().chainCount() == 2);
+	CHECK(r.card->listForTest().rowCountForTest() == 2);
+	CHECK(r.panel->listForTest().rowCountForTest() == 2);
+	CHECK(r.card->listForTest().rowForTest(0)->levelControlForTest().chain() == keep0);
+	CHECK(r.card->listForTest().rowForTest(1)->levelControlForTest().chain() == keep2);
+	// THE LIST HAS NO CAP: nine chains show the window's add control under List (Tabs withdraws it past eight) and nine rows.
+	r.chains(9, 0);
+	r.view_(3);
+	CHECK(r.card->listForTest().rowCountForTest() == 9);
+	CHECK(r.panel->addBoundsForTest().width() > 0.0f);
+	// AND THE VIEW CHOICE offers List at any count: the three-way Strips, Pads, List is what a window of nine chains shows, and it holds List.
+	REQUIRE(r.panel->viewPairForTest().isVisible());
+	CHECK_FALSE(r.panel->viewSegForTest().isVisible());
+	CHECK(r.rack().chainCount() == 9);
+	r.view_(1);
+	CHECK(r.panel->addBoundsForTest().width() == 0.0f); // Tabs, past eight, has none
+}
+
+TEST_CASE("list view: a row is inside the card and its column is laid out at 1x, 1.75x and 2x, in a vertical and a horizontal lane, and in the window") {
+	for (const float scale : { 1.0f, 1.75f, 2.0f, 1.0f }) {
+		for (const bool horizontal : { false, true }) {
+			CAPTURE(scale);
+			CAPTURE(horizontal);
+			RealRack r;
+			r.chains(6, 1);
+			r.view_(3);
+			r.card->setDpiScale(scale);
+			r.panel->setDpiScale(scale);
+			if (horizontal) {
+				r.card->setLaneAxis(ui::FxCard::LaneAxis::Horizontal);
+			}
+			for (int i = 0; i < 3; ++i) {
+				if (horizontal) {
+					r.card->setBounds(0.0f, 0.0f, r.card->laneExtent(ui::kCardUnitHeight), ui::kCardUnitHeight);
+				}
+				else {
+					r.card->resized();
+				}
+				r.panel->resized();
+				r.refresh();
+			}
+			ui::RackListView& list = r.card->listForTest();
+			REQUIRE(list.isVisible());
+			REQUIRE(list.rowCountForTest() == 6);
+			// EVERY ROW LAID OUT AT THE SCALE: its native width is its logical width at this scale, not the previous scale's.
+			size_t checked = 0;
+			for (size_t k = 0; k < 6; ++k) {
+				ui::ChainStrip& row = *list.rowForTest(k);
+				if (!row.isVisible()) {
+					continue;
+				}
+				++checked;
+				CHECK(std::abs(row.nativeWidth() - static_cast<int>(std::lround(static_cast<float>(row.width()) * scale))) <= 1);
+				CHECK(row.width() > ui::ChainStrip::kColumnBelow); // a row layout, never the narrow column's
+				CHECK(row.x() + row.width() <= list.width());
+				// AND INSIDE THE CARD, whole across.
+				const visage::Point o = row.positionInWindow();
+				const visage::Point c = r.card->positionInWindow();
+				CHECK(o.x >= c.x - 0.5f);
+				CHECK(o.x + static_cast<float>(row.width()) <= c.x + static_cast<float>(r.card->width()) + 0.5f);
+				CHECK(o.y + static_cast<float>(row.height()) <= c.y + static_cast<float>(r.card->height()) + 0.5f);
+			}
+			CHECK(checked > 0);
+			if (horizontal) {
+				CHECK(list.width() == doctest::Approx(ui::RackListView::kColumnWidth));
+			}
+			// THE WINDOW'S COLUMN at the same scale.
+			ui::RackListView& winList = r.panel->listForTest();
+			REQUIRE(winList.isVisible());
+			CHECK(winList.width() == doctest::Approx(ui::RackListView::kColumnWidth));
+			CHECK(winList.nativeWidth() == static_cast<int>(std::lround(ui::RackListView::kColumnWidth * scale)));
+			for (size_t k = 0; k < 6; ++k) {
+				ui::ChainStrip& row = *winList.rowForTest(k);
+				if (row.isVisible()) {
+					CHECK(std::abs(row.nativeWidth() - static_cast<int>(std::lround(static_cast<float>(row.width()) * scale))) <= 1);
+				}
+			}
+		}
+	}
+}
+
 TEST_CASE("rename field: a chain strip opens it by a right press's Rename... and by a double-click - on the card and in the window, in Strips") {
 	for (const bool windowSide : { false, true }) {
 		for (const RenameRoad road : { RenameRoad::Menu, RenameRoad::DoubleClick }) {
@@ -3770,6 +4062,195 @@ TEST_CASE("rename field: a chain strip opens it by a right press's Rename... and
 		}
 	}
 }
+
+
+TEST_CASE("PHOTO: the Rack's List view on the card and in the window, with a few chains and with many (writes only under FEATHERS_LIST_VIEW_SHOTS)") {
+	const char* keep = std::getenv("FEATHERS_LIST_VIEW_SHOTS");
+	if (keep == nullptr) {
+		return;
+	}
+	for (const size_t chains : { size_t { 3 }, size_t { 12 } }) {
+		for (const bool window : { false, true }) {
+			CAPTURE(chains);
+			CAPTURE(window);
+			RealRack r;
+			r.chains(chains, chains);
+			(void)r.rack().setChainName(0, "Kick");
+			for (size_t c = 0; c < chains; ++c) {
+				r.rack().publishChainPeakForTest(c, 0.9f * std::pow(0.72f, static_cast<float>(c))); // signal present, each chain a little quieter
+			}
+			r.set(pr::Param::ViewedChain, 1.0f);
+			r.view_(3);
+			auto* editor = dynamic_cast<visage::ApplicationEditor*>(r.f.root);
+			REQUIRE(editor != nullptr);
+			const int w = static_cast<int>(r.f.root->width());
+			const int h = static_cast<int>(r.f.root->height());
+			visage::Frame backdrop; // the panel is drawn over an opaque ground, not over the editor behind it
+			backdrop.onDraw() = [](visage::Canvas& canvas) {
+				canvas.setColor(0xff101014);
+				canvas.fill(0.0f, 0.0f, 4000.0f, 4000.0f);
+			};
+			if (window) {
+				backdrop.setBounds(0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h));
+				r.f.root->addChild(&backdrop);
+				r.panel->setBounds(0.0f, 0.0f, 1000.0f, std::max(r.panel->minimumSize().y, 560.0f));
+				r.f.root->addChild(r.panel);
+				r.panel->resized();
+				r.refresh();
+			}
+			editor->setWindowless(w, h);
+			if (!visage::Renderer::instance().supported()) {
+				MESSAGE("SKIP no renderer: " << visage::Renderer::instance().errorMessage());
+				return;
+			}
+			r.f.root->redrawAll();
+			editor->drawWindow();
+			editor->drawWindow();
+			const visage::Screenshot& shot = editor->takeScreenshot();
+			REQUIRE(shot.width() > 0);
+			shot.save((std::string(keep) + "/list-" + std::to_string(chains) + (window ? "-window" : "-card") + ".png").c_str());
+			if (window) {
+				r.f.root->removeChild(r.panel);
+				r.f.root->removeChild(&backdrop);
+			}
+		}
+	}
+}
+
+TEST_CASE("list view: a row shows its chain's level meter by value, a row out of view is not followed, and a row scrolled in reads the current peak at once") {
+	RealRack r;
+	r.chains(12, 0);
+	r.view_(3);
+	ui::RackListView& list = r.card->listForTest();
+	REQUIRE(list.rowCountForTest() == 12);
+	REQUIRE(list.rowForTest(0)->meterShownForTest()); // the row carries the meter beside its level
+	// TWO CHAINS, TWO PEAKS: each row reads its own chain's published peak (mapped as the card's meter maps it, restated by the mapping itself).
+	r.rack().publishChainPeakForTest(0, 0.5f);
+	r.rack().publishChainPeakForTest(1, 0.1f);
+	r.refresh();
+	CHECK(list.rowForTest(0)->meterReadingForTest() == ui::cardMeterReadingFor(0.5f));
+	CHECK(list.rowForTest(1)->meterReadingForTest() == ui::cardMeterReadingFor(0.1f));
+	CHECK_FALSE(list.rowForTest(0)->meterReadingForTest() == list.rowForTest(1)->meterReadingForTest());
+	CHECK(list.rowForTest(0)->meterMarksForTest().level.width() > list.rowForTest(1)->meterMarksForTest().level.width()); // the louder one's bar is longer
+	// A ROW OUT OF VIEW IS NOT FOLLOWED: its chain's peak moves and the list reports nothing to repaint.
+	REQUIRE_FALSE(list.rowForTest(11)->isVisible());
+	r.rack().publishChainPeakForTest(11, 0.25f);
+	(void)list.refresh();
+	CHECK_FALSE(list.refresh());
+	CHECK_FALSE(list.rowForTest(11)->meterReadingForTest() == ui::cardMeterReadingFor(0.25f));
+	// SCROLLED INTO VIEW, IT READS THE CURRENT PEAK AT ONCE, with no tick in between.
+	list.setScrollForTest(list.maxScrollForTest());
+	REQUIRE(list.rowForTest(11)->isVisible());
+	CHECK(list.rowForTest(11)->meterReadingForTest() == ui::cardMeterReadingFor(0.25f));
+	// A VISIBLE ROW'S CHANGE IS A REPAINT: the list says so.
+	r.rack().publishChainPeakForTest(11, 0.6f);
+	CHECK(list.refresh());
+	CHECK(list.rowForTest(11)->meterReadingForTest() == ui::cardMeterReadingFor(0.6f));
+}
+
+TEST_CASE("list view: the Cards|Window pane holds the front chain's first device beside the list, follows a row press once, and Cards puts the view back") {
+	PaneRack p(3, 3, 3);
+	REQUIRE(p.r.panel->paneOnForTest());
+	REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+	ui::RackListView& list = p.r.panel->listForTest();
+	REQUIRE(list.isVisible());
+	const feathers::DeviceInstanceId first0 = p.chain(0).deviceAtPosition(0);
+	REQUIRE(first0 != feathers::kNoInstance);
+	CHECK(p.pane().device() == first0);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(0));
+	CHECK(p.pane().isVisible());
+	// THE PANE STANDS BESIDE THE LIST, never under it, and the window is at least as wide as both.
+	CHECK(p.pane().bounds().x() >= list.bounds().right() - 0.5f);
+	CHECK(p.r.panel->minimumSize().x >= p.pane().bounds().right() - 0.5f);
+	// THE FIRST CARD IS HELD BACK FROM THE RAIL, as under Tabs.
+	CHECK(p.column(0)->hiddenLead() == 1);
+	const size_t builds = p.pane().buildsForTest();
+	for (int i = 0; i < 5; ++i) {
+		p.r.refresh();
+	}
+	CHECK(p.pane().buildsForTest() == builds); // not rebuilt while nothing changes
+	// A REAL PRESS ON ROW 1 REBINDS THE PANE TO THAT CHAIN'S FIRST DEVICE, exactly once.
+	const feathers::DeviceInstanceId first1 = p.chain(1).deviceAtPosition(0);
+	REQUIRE(first1 != first0);
+	const visage::Bounds b = list.rowBoundsForTest(1);
+	const visage::Point o = list.positionInWindow();
+	dragThroughRoot(p.r.panel, { o.x + b.x() + 8.0f, o.y + b.y() + b.height() * 0.5f }, { o.x + b.x() + 8.0f, o.y + b.y() + b.height() * 0.5f });
+	p.settle();
+	CHECK(p.r.field(pr::Param::ViewedChain) == 1.0f);
+	CHECK(p.pane().device() == first1);
+	CHECK(p.pane().chainIdForTest() == p.r.rack().chainIdAt(1));
+	CHECK(p.pane().buildsForTest() == builds + 1);
+	CHECK(p.column(0)->hiddenLead() == 0);
+	CHECK(p.column(1)->hiddenLead() == 1);
+	// CARDS PUTS THE VIEW BACK, the list staying.
+	p.r.set(pr::Param::Front, 0.0f);
+	p.settle();
+	CHECK(p.pane().hosting() == ui::RackWindowPane::Hosting::Nothing);
+	CHECK(p.column(1)->hiddenLead() == 0);
+	CHECK(list.isVisible());
+}
+
+namespace {
+/// The drawn width of a pill's text in logical pixels, as the pill's own font measures it.
+float pixelsOf(const std::string& text) {
+	return ui::font(ui::kKnobLabelSize).stringWidth(std::u32string(text.begin(), text.end()));
+}
+} // namespace
+
+TEST_CASE("list view: a row's level pill shows its value alone and the meter is a bar, at 1x, 1.75x and 2x; the strips' own pills are measured for the same collision") {
+	for (const float scale : { 1.0f, 1.75f, 2.0f }) {
+		CAPTURE(scale);
+		RealRack r;
+		r.chains(3, 0);
+		r.view_(3);
+		r.card->setDpiScale(scale);
+		r.panel->setDpiScale(scale);
+		r.card->resized();
+		r.panel->resized();
+		r.refresh();
+		r.rack().publishChainPeakForTest(0, 0.5f);
+		r.rack().publishChainPeakForTest(1, 0.1f);
+		r.refresh();
+		for (ui::RackListView* list : { &r.card->listForTest(), &r.panel->listForTest() }) {
+			for (size_t k = 0; k < 3; ++k) {
+				ui::ChainStrip& row = *list->rowForTest(k);
+				REQUIRE(row.rowModeForTest());
+				// THE PILL: no caption to collide with the value, and the value fits inside it.
+				const visage::Bounds pill = row.levelPillBoundsForTest();
+				CHECK(row.levelPill().readout() != "");
+				CHECK(row.levelPill().captionForTest().empty());
+				CHECK(pixelsOf(row.levelPill().readout()) <= pill.width() - 2.0f * 7.0f);
+				// THE BAR: a few pixels tall, wide enough to read, clear of the pill and of the chips.
+				const visage::Bounds bar = row.meterBoundsForTest();
+				CHECK(bar.height() >= 5.0f);
+				CHECK(bar.width() >= 24.0f);
+				CHECK(bar.x() >= pill.right());
+				CHECK(bar.x() >= row.muteChip().bounds().right() - 0.5f); // the bar is the far end; the chips stand before it
+			}
+			// THE BARS READ THE CHAINS' PEAKS: the marks' length is the reading's share of the track, restated from the mapping.
+			for (const auto& [k, peak] : { std::pair<size_t, float> { 0, 0.5f }, std::pair<size_t, float> { 1, 0.1f } }) {
+				const ui::ChainStrip& row = *list->rowForTest(k);
+				const float length = row.meterBoundsForTest().width();
+				CHECK(row.meterMarksForTest().level.width() == std::round(ui::cardMeterReadingFor(peak).level * length));
+				CHECK(row.meterMarksForTest().level.height() == row.meterBoundsForTest().height()); // the bar is as thick as its track
+			}
+			CHECK(list->rowForTest(0)->meterMarksForTest().level.width() > list->rowForTest(1)->meterMarksForTest().level.width());
+		}
+		// THE EXISTING STRIPS, MEASURED AND NOT CHANGED: in the Strips view the card's own strips at their own widths, caption against value.
+		r.view_(0);
+		r.card->setDpiScale(scale);
+		r.card->resized();
+		r.refresh();
+		for (const auto& strip : r.card->stripsForTest()) {
+			const float w = static_cast<float>(strip->levelPill().width());
+			const float caption = pixelsOf("Level");
+			const float value = pixelsOf(strip->levelPill().readout());
+			const bool collide = 7.0f + caption > w - 7.0f - value;
+			MESSAGE("MEASURED card strip at scale " << scale << ": pill " << w << " px, caption " << caption << ", value '" << strip->levelPill().readout() << "' " << value << ", caption ends at " << 7.0f + caption << ", value starts at " << w - 7.0f - value << ", collides: " << (collide ? "YES" : "no"));
+		}
+	}
+}
+
 
 TEST_CASE("rename field: a single left press on a strip's own surface renames nothing and moves no control; mute still toggles") {
 	RealRack r;

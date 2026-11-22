@@ -16,6 +16,7 @@
  */
 
 #include "plugin/ui/parallel_rack_card.h"
+#include "plugin/ui/rack_list_view.h"
 
 #include "backplane/inner_routes.h"
 #include "plugin/ui/theme.h"
@@ -544,8 +545,21 @@ ChainStrip::ChainStrip(backplane::DeviceHost& host, DeviceInstanceId rack, uint1
 			pressContext(e.position);
 			return;
 		}
+		if (surface_) {
+			surface_(Surface::Down, e);
+		}
 		if (e.repeatClickCount() == 2) {
 			doubleClick(e.position);
+		}
+	};
+	onMouseDrag() = [this](const visage::MouseEvent& e) {
+		if (surface_) {
+			surface_(Surface::Drag, e);
+		}
+	};
+	onMouseUp() = [this](const visage::MouseEvent& e) {
+		if (surface_) {
+			surface_(Surface::Up, e);
 		}
 	};
 }
@@ -595,7 +609,13 @@ bool ChainStrip::refresh() {
 	reading_ = now;
 	// THE MARKS IN WHOLE PIXELS (`cardMeterMarksFor`): a reading that moves less than a pixel draws the same marks and asks
 	// for no frame.
-	moved = meter_->setMarks(cardMeterMarksFor(meterTrack_.height(), true, now)) || moved;
+	CardMeterMarks marks = cardMeterMarksFor(rowMode_ ? meterTrack_.width() : meterTrack_.height(), !rowMode_, now);
+	if (rowMode_) {
+		// A BAR: the line's marks, made as thick as the track (the level grows from the left, an over from the right).
+		marks.level = { marks.level.x(), 0.0f, marks.level.width(), meterTrack_.height() };
+		marks.over = { marks.over.x(), 0.0f, marks.over.width(), meterTrack_.height() };
+	}
+	moved = meter_->setMarks(marks) || moved;
 	if (column_) {
 		fader_->redraw(); // the fader reads the control when it draws; a load or an undo moved it without a gesture
 	}
@@ -633,7 +653,7 @@ void ChainStrip::resized() {
 		meterTrack_ = { fx + kFaderWidth + kGap, y, kMeterWidth, height };
 	}
 	else {
-		float x = summary_.empty() ? 0.0f : std::round(w * kSummaryWidth) + kGap;
+		float x = summary_.empty() ? 0.0f : std::round(w * summaryFraction_) + kGap;
 		float right = w;
 		if (onRemove_) {
 			removeBounds_ = { right - kChipWidth, 0.0f, kChipWidth, h };
@@ -642,8 +662,16 @@ void ChainStrip::resized() {
 		else {
 			removeBounds_ = {};
 		}
-		meterTrack_ = { right - kMeterWidth, 1.0f, kMeterWidth, std::max(0.0f, h - 2.0f) };
-		right -= kMeterWidth + kGap;
+		if (rowMode_) {
+			// THE BAR: a few pixels tall, vertically centred, wide enough to read (up to `kBarMaxWidth`, less in a narrow row).
+			const float barW = std::clamp(std::round(w * 0.16f), kBarMinWidth, kBarMaxWidth);
+			meterTrack_ = { right - barW, std::round((h - kBarThickness) * 0.5f), barW, kBarThickness };
+			right -= barW + kGap;
+		}
+		else {
+			meterTrack_ = { right - kMeterWidth, 1.0f, kMeterWidth, std::max(0.0f, h - 2.0f) };
+			right -= kMeterWidth + kGap;
+		}
 		const float chipY = std::max(0.0f, (h - SwitchChip::kHeight) * 0.5f);
 		solo_->setBounds(right - kChipWidth, chipY, kChipWidth, SwitchChip::kHeight);
 		right -= kChipWidth + kGap;
@@ -664,9 +692,15 @@ void ChainStrip::resized() {
 }
 
 void ChainStrip::draw(visage::Canvas& canvas) {
+	if (selected_) {
+		canvas.setColor(kSurfaceRaised);
+		canvas.fill(0.0f, 0.0f, static_cast<float>(width()), static_cast<float>(height()));
+		canvas.setColor(kAccent);
+		canvas.fill(0.0f, 0.0f, 2.0f, static_cast<float>(height()));
+	}
 	if (!summary_.empty()) {
 		canvas.setColor(kMuted);
-		canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, 0.0f, 0.0f, std::round(width() * kSummaryWidth),
+		canvas.text(summary_, font(kKnobLabelSize), visage::Font::kLeft, 0.0f, 0.0f, std::round(width() * summaryFraction_),
 		            height());
 	}
 	if (column_ && !label_.empty()) {
@@ -746,6 +780,8 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 	pads_ = std::make_unique<RackPadsPanel>(*model_, pulse_, RackFlow::TopDown);
 	// "RENAME…" FROM A TAB OR A USED PAD'S RIGHT PRESS: the one chain label everywhere reads it back.
 	chainRename_ = std::make_unique<RackChainRename>(*model_, *this, notifier_);
+	list_ = std::make_unique<RackListView>(*model_, host_, device_, *chainRename_);
+	list_->setSummaryFn([this](size_t slot) { return summaryOfChain(slot, true); }); // the name and its role: what it holds is the cards'
 	tabs_->setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, *tabs_, anchor); });
 	tabs_->setRenameHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->begin(slot, *tabs_, anchor); });
 	pads_->gridForTest().setContextHandler([this](size_t slot, const visage::Bounds& anchor) { chainRename_->showMenu(slot, pads_->gridForTest(), anchor); });
@@ -790,7 +826,7 @@ ParallelRackCard::ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& 
 		addChild(macroKnobs_[i].get());
 		macroKnobs_[i]->setVisible(false);
 	}
-	for (visage::Frame* f : { static_cast<visage::Frame*>(tabs_.get()), static_cast<visage::Frame*>(pads_.get()),
+	for (visage::Frame* f : { static_cast<visage::Frame*>(tabs_.get()), static_cast<visage::Frame*>(list_.get()), static_cast<visage::Frame*>(pads_.get()),
 	                          static_cast<visage::Frame*>(front_.get()), static_cast<visage::Frame*>(chainArrow_.get()), static_cast<visage::Frame*>(padsStep_.get()),
 	                          static_cast<visage::Frame*>(macroArrow_.get()) }) {
 		addChild(f);
@@ -853,6 +889,7 @@ void ParallelRackCard::setModulation(ModState* mod, EditHistory* history) {
 	for (auto& strip : strips_) {
 		strip->setModulation(mod, history);
 	}
+	list_->setModulation(mod, history);
 	front_->setOuterModulation(mod, history, [this] { return device_; });
 }
 
@@ -891,7 +928,7 @@ ParallelRackCard::Plan ParallelRackCard::plan() const {
 		p.frontExtent = static_cast<int>(std::lround(frontExtentFor(horizontalLane() ? lanesCross() : bodyWidth() - 2.0f * crossPad())));
 		// TABS' ARROW is there when there is more to open than the card in front; PADS' pair is there whenever the chain holds a card (it
 		// steps closed, first, whole, and is still there closed).
-		p.arrow = p.view == RackViewKind::Tabs && front_->deviceCount() > 1;
+		p.arrow = tabbedView(p.view) && front_->deviceCount() > 1;
 		p.step = p.view == RackViewKind::Pads && front_->deviceCount() > 0;
 		p.macros = macrosPresent();
 		p.macrosOpen = p.macros && model_->macrosOpen();
@@ -931,6 +968,9 @@ float ParallelRackCard::viewHeight(const Plan& p) const {
 	if (p.view == RackViewKind::Tabs) {
 		h += RackTabBar::kThickness;
 	}
+	else if (p.view == RackViewKind::List) {
+		h += RackListView::heightFor(std::min(model_->chainCount(), RackListView::kCardRows));
+	}
 	else {
 		h += pads_->naturalSizeFor(bodyWidth()).y;
 	}
@@ -966,9 +1006,10 @@ float ParallelRackCard::laneExtent(float cross) const {
 	if (horizontalLane() && model_->view() != RackViewKind::Strips) {
 		// LEFT TO RIGHT the card is as wide as what is in front: the spine, the bar or the pads panel, the mode and view column, the cards
 		// (the first alone while the chain is closed, all of it open), their arrow and the padding. Never sized to the largest chain.
-		const float lead = model_->view() == RackViewKind::Tabs ? kPad + RackTabBar::kThickness : pads_->naturalSize().x;
+		const float lead = model_->view() == RackViewKind::Tabs ? kPad + RackTabBar::kThickness
+		                                                         : (model_->view() == RackViewKind::List ? kPad + RackListView::kColumnWidth : pads_->naturalSize().x);
 		const float front = frontExtentFor(std::max(0.0f, cross - 2.0f * crossPad()));
-		const float arrow = model_->view() == RackViewKind::Tabs && front_->deviceCount() > 1 ? RackDrawerArrow::kSize + kRowGap : 0.0f;
+		const float arrow = tabbedView(model_->view()) && front_->deviceCount() > 1 ? RackDrawerArrow::kSize + kRowGap : 0.0f;
 		const Plan p = plan();
 		const float column = leftColumnWidthFor(p.macros, p.macrosOpen, p.unusedRow || p.playingRow);
 		return kCardHeadHeight + lead + kRowGap + (column > 0.0f ? column + kRowGap : 0.0f) + front + arrow + kPad;
@@ -996,6 +1037,7 @@ void ParallelRackCard::layOut() {
 	padsStep_->setFlow(flow);
 	const bool open = !folded();
 	tabs_->setVisible(open && p.view == RackViewKind::Tabs);
+	list_->setVisible(open && p.view == RackViewKind::List);
 	pads_->setVisible(open && p.view == RackViewKind::Pads);
 	front_->setVisible(open && !strips);
 	chainArrow_->setVisible(open && !strips && p.arrow);
@@ -1015,6 +1057,12 @@ void ParallelRackCard::layOut() {
 				// INSIDE THE CARD'S OUTLINE, with the card's own padding either side (as wide as the cards beneath it).
 				tabs_->setBounds(bodyLeft() + cp, kSlotHeadHeight, std::max(0.0f, bodyWidth() - 2.0f * cp), RackTabBar::kThickness);
 				top = kSlotHeadHeight + RackTabBar::kThickness + kRowGap;
+			}
+			else if (p.view == RackViewKind::List) {
+				// THE LIST ABOVE THE CARDS, as wide as they are, `kCardRows` rows tall at most (it scrolls past that).
+				const float listH = RackListView::heightFor(std::min(model_->chainCount(), RackListView::kCardRows));
+				list_->setBounds(bodyLeft() + cp, kSlotHeadHeight, std::max(0.0f, bodyWidth() - 2.0f * cp), listH);
+				top = kSlotHeadHeight + listH + kRowGap;
 			}
 			else {
 				const visage::Point n = pads_->naturalSizeFor(bodyWidth());
@@ -1043,11 +1091,14 @@ void ParallelRackCard::layOut() {
 			// right with the card's height as their cross extent, and the arrow after the last of them.
 			float x = bodyLeft();
 			const float h = static_cast<float>(height());
-			if (p.view == RackViewKind::Tabs) {
+			if (tabbedView(p.view)) {
 				// INSIDE THE OUTLINE: the padding before it and across it, the cross extent the cards beside it have.
 				x += kPad;
-				tabs_->setBounds(x, cp, RackTabBar::kThickness, std::max(0.0f, h - 2.0f * cp));
-				x += RackTabBar::kThickness + kRowGap;
+				// THE LIST'S COLUMN is the width a row needs (`RackListView::kColumnWidth`), the card's height tall; it scrolls past that.
+				const float column = p.view == RackViewKind::List ? RackListView::kColumnWidth : RackTabBar::kThickness;
+				(p.view == RackViewKind::List ? static_cast<visage::Frame&>(*list_) : static_cast<visage::Frame&>(*tabs_))
+				    .setBounds(x, cp, column, std::max(0.0f, h - 2.0f * cp));
+				x += column + kRowGap;
 				// TABS' ARROW AT A FIXED PLACE, between the bar and the first card, at the top of its own column.
 				if (p.arrow) {
 					chainArrow_->setBounds(x, cp, RackDrawerArrow::kSize, RackDrawerArrow::kSize);
@@ -1190,6 +1241,30 @@ void ParallelRackCard::foldedChanged() {
 	layOut(); // the chain rows and the overflow line follow the fold, each only where the unit has room for it
 }
 
+ParallelRackCard::~ParallelRackCard() = default;
+
+std::string ParallelRackCard::summaryOfChain(size_t i, bool nameOnly) const {
+	const pr::Rack* r = rack();
+	// THE ROLE THE MODE GIVES THIS CHAIN (§2a), or that it has none here.
+	const Plan pl = plan();
+	const size_t roles = pr::roleCount(pl.mode, strips_.size(), pr::bandCountOf(control(pr::Param::BandCount).value()));
+	std::string role = roleName(pl.mode, i);
+	if ((pr::kRoleModes & pr::kModeBit(pl.mode)) != 0 && i >= roles) {
+		role = std::string("not used by ") + pr::kModeNames[static_cast<size_t>(pl.mode)];
+	}
+	// THE CHAIN'S ONE LABEL first (never its number), then its role, then what it holds — unless that is the label already.
+	const std::string label = r != nullptr ? r->chainLabel(i) : std::to_string(i + 1);
+	const std::string contents = chainSummary(r != nullptr ? r->chainAt(i) : nullptr);
+	std::string summary = label;
+	if (!role.empty()) {
+		summary += " · " + role;
+	}
+	if (contents != label && !nameOnly) {
+		summary += " · " + contents;
+	}
+	return summary;
+}
+
 bool ParallelRackCard::follow() {
 	pr::Rack* r = rack();
 	std::vector<uint16_t> ids;
@@ -1226,23 +1301,7 @@ bool ParallelRackCard::follow() {
 		moved = true;
 	}
 	for (size_t i = 0; i < strips_.size(); ++i) {
-		// THE ROLE THE MODE GIVES THIS CHAIN (§2a), or that it has none here.
-		const Plan pl = plan();
-		const size_t roles = pr::roleCount(pl.mode, strips_.size(), pr::bandCountOf(control(pr::Param::BandCount).value()));
-		std::string role = roleName(pl.mode, i);
-		if ((pr::kRoleModes & pr::kModeBit(pl.mode)) != 0 && i >= roles) {
-			role = std::string("not used by ") + pr::kModeNames[static_cast<size_t>(pl.mode)];
-		}
-		// THE CHAIN'S ONE LABEL first (never its number), then its role, then what it holds — unless that is the label already.
-		const std::string label = r != nullptr ? r->chainLabel(i) : std::to_string(i + 1);
-		const std::string contents = chainSummary(r != nullptr ? r->chainAt(i) : nullptr);
-		std::string summary = label;
-		if (!role.empty()) {
-			summary += " · " + role;
-		}
-		if (contents != label) {
-			summary += " · " + contents;
-		}
+		std::string summary = summaryOfChain(i);
 		if (summary != strips_[i]->summaryForTest()) {
 			strips_[i]->setSummary(std::move(summary));
 			moved = true;
@@ -1380,6 +1439,9 @@ bool ParallelRackCard::followView() {
 	moved = front_->follow(viewed, padsView() ? model_->padsFront() == 2 : model_->expanded(viewed), !padsView() || model_->padsFront() > 0) || moved;
 	moved = front_->updateCards() > 0 || moved;
 	tabs_->refresh();
+	if (model_->view() == RackViewKind::List) {
+		moved = list_->refresh() || moved;
+	}
 	chainArrow_->refresh();
 	padsStep_->refresh();
 	macroArrow_->refresh();

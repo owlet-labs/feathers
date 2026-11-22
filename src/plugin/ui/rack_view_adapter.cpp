@@ -50,8 +50,9 @@ void RackViewAdapter::writeField(pr::Param p, int value) {
 }
 
 RackViewKind RackViewAdapter::view() const {
-	switch (std::clamp(fieldInt(pr::Param::View), 0, 2)) {
+	switch (std::clamp(fieldInt(pr::Param::View), 0, 3)) {
 	case 1: return RackViewKind::Tabs;
+	case 3: return RackViewKind::List;
 	case 2: return RackViewKind::Pads;
 	default: return RackViewKind::Strips;
 	}

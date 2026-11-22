@@ -5499,6 +5499,11 @@ TEST_CASE("list flow: in a real window a real press on a row brings its chain in
 		}
 		CHECK(cards[0]->positionInWindow().x >= list.positionInWindow().x + static_cast<float>(list.width()) - 0.5f);
 		// THE RAIL IS AS WIDE AS THE CARDS NEED (more than the standard column) up to the window's room.
+		// EACH CARD IS A HORIZONTAL LANE'S UNIT: `kCardUnitHeight` tall (what the standalone rack's lane grants) and as wide as the card says for it.
+		for (ui::FxCard* card : cards) {
+			CHECK(card->nativeHeight() == static_cast<int>(std::lround(ui::kCardUnitHeight * card->dpiScale())));
+			CHECK(std::abs(static_cast<float>(card->width()) - card->laneExtent(ui::kCardUnitHeight)) < 0.5f);
+		}
 		CHECK(rail.railWidth() > ui::FxLaneRail::kWidth);
 		CHECK(rail.positionInWindow().x + rail.railWidth() <= r.panel->positionInWindow().x + static_cast<float>(r.panel->width()) + 0.5f);
 	}
@@ -5586,6 +5591,11 @@ TEST_CASE("view flow: in a real window Tabs and Pads, like List, run the chain i
 		for (size_t k = 1; k < cards.size(); ++k) {
 			CHECK(cards[k]->positionInWindow().x > cards[k - 1]->positionInWindow().x + static_cast<float>(cards[k - 1]->width()) - 1.0f);
 			CHECK(cards[k]->nativeY() == cards[0]->nativeY());
+		}
+		// EACH CARD IS A HORIZONTAL LANE'S UNIT: `kCardUnitHeight` tall (what the standalone rack's lane grants) and as wide as the card says for it.
+		for (ui::FxCard* card : cards) {
+			CHECK(card->nativeHeight() == static_cast<int>(std::lround(ui::kCardUnitHeight * card->dpiScale())));
+			CHECK(std::abs(static_cast<float>(card->width()) - card->laneExtent(ui::kCardUnitHeight)) < 0.5f);
 		}
 		CHECK(rail.railWidth() > ui::FxLaneRail::kWidth);
 		CHECK(rail.positionInWindow().x + rail.railWidth() <= r.panel->positionInWindow().x + static_cast<float>(r.panel->width()) + 0.5f);

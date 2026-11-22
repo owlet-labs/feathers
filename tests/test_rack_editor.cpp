@@ -55,6 +55,7 @@
 #include "plugin/ui/automod_card.h"
 #include "plugin/ui/expanded_views.h"
 #include "composite/composite_types.h"
+#include "plugin/chain_preset.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/parallel_rack_card.h"
 #include "rack/parallel_rack.h"
@@ -6905,5 +6906,67 @@ TEST_CASE("rack editor: a Rack's chain strip renames its chain by a right press'
 		field.processKeyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true });
 		CHECK_FALSE(rename.renaming());
 		CHECK(rk->chainLabel(1) == "Snare");
+	}
+}
+
+//---------------------------------------------------------------------------------------------------------------------------------
+// THE CHAIN'S SIDE OF THE REPLACED-CHAINS FAMILY: a Chain preset applied while its editor, its card and its window are open
+//---------------------------------------------------------------------------------------------------------------------------------
+
+TEST_CASE("replaced contents, the Chain: a chain preset applied at the top and into a Chain device with the editor, card and window open, audio running") {
+	rack::registerChainExpandedView();
+	// THE PRESET: another bridge's chain, a Filter and a Delay, captured as the Chain's own preset kind.
+	Fixture source;
+	const DeviceInstanceId srcChain = source.add(feathers::rack::kDeviceDescriptor.traits.tag);
+	REQUIRE(srcChain != kNoInstance);
+	rack::RackBridge* inner = rack::bridgeOf(source.bridge.containerSurfaceOf(srcChain));
+	REQUIRE(inner != nullptr);
+	REQUIRE(inner->addDevice(fx::filter::kTraits.tag) != kNoInstance);
+	REQUIRE(inner->addDevice(fx::delay::kTraits.tag) != kNoInstance);
+	source.bridge.drain();
+	std::vector<uint8_t> deviceBytes;
+	REQUIRE(captureContainerPreset(source.bridge, chainPresetDescriptor(), srcChain, &deviceBytes));
+	std::vector<uint8_t> topBytes;
+	REQUIRE(captureTopPreset(source.bridge, &topBytes));
+
+	std::vector<float> l(512, 0.0f), r(512, 0.0f);
+	for (const bool top : { true, false }) {
+		CAPTURE(top);
+		Fixture f;
+		const DeviceInstanceId chain = f.add(feathers::rack::kDeviceDescriptor.traits.tag);
+		REQUIRE(chain != kNoInstance);
+		rack::RackBridge* held = rack::bridgeOf(f.bridge.containerSurfaceOf(chain));
+		REQUIRE(held != nullptr);
+		REQUIRE(held->addDevice(fx::filter::kTraits.tag) != kNoInstance);
+		REQUIRE(f.add(fx::filter::kTraits.tag) != kNoInstance);
+		f.editor.syncCards();
+		ui::WidgetRegistry registry;
+		const device::Descriptor* desc = f.bridge.descriptorOf(chain);
+		REQUIRE(desc != nullptr);
+		std::unique_ptr<ui::ExpandedView> window = ui::makeExpandedView(f.bridge, nullptr, registry, chain, *desc, nullptr);
+		REQUIRE(window != nullptr);
+		window->setBounds(0.0f, 0.0f, 900.0f, 600.0f);
+		const auto tick = [&](int rounds) {
+			for (int i = 0; i < rounds; ++i) {
+				f.bridge.drain();
+				f.engine.processStereo(l.data(), r.data(), 512, backplane::unknownBlock());
+				f.bridge.publish(f.engine);
+				f.bridge.reapRetired();
+				f.editor.syncCards();
+				window->resized();
+				(void)window->update();
+			}
+			for (const float x : l) {
+				REQUIRE(std::isfinite(x));
+			}
+		};
+		tick(4);
+		if (top) {
+			REQUIRE(feathers::applyTopPreset(f.bridge, topBytes) == feathers::DevicePresetLoad::Loaded);
+		}
+		else {
+			REQUIRE(feathers::applyDevicePreset(f.bridge, chainPresetDescriptor(), chain, deviceBytes) == feathers::DevicePresetLoad::Loaded);
+		}
+		tick(24);
 	}
 }

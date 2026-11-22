@@ -32,6 +32,10 @@
 #include "plugin/factory_presets.h"
 #include "plugin/preset_store.h"
 #include "plugin/ui/container_presets.h"
+#include "plugin/ui/device_preset_menu.h"
+#include "plugin/ui/edit_history.h"
+#include "plugin/ui/surface_layers.h"
+#include "fx/filter/filter_types.h"
 #include "plugin/ui/parallel_rack_expanded.h"
 #include "plugin/ui/preset_browser.h"
 #include "plugin/ui/expanded_views.h"
@@ -51,6 +55,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <new>
 #include <set>
@@ -836,4 +841,211 @@ TEST_CASE("factory Rack presets: each loads into the Rack plugin while its windo
 		}
 	}
 	REQUIRE(shipped > 0);
+}
+
+//---------------------------------------------------------------------------------------------------------------------------------
+// THE SAME DEFECT FAMILY, ROAD BY ROAD: a preset (or a state) replaces the Rack's chains under whatever the editor has open
+//---------------------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/// A RACK PLUGIN WITH ITS WINDOW, ITS CARD AND ITS PRESENTING LAYERS OPEN over the live bridge, three chains, a Filter in the first two.
+struct OpenRack {
+	Venue& v;
+	DeviceInstanceId id;
+	ui::WidgetRegistry registry;
+	ui::SurfaceLayers layers;
+	std::unique_ptr<ui::ExpandedView> window;
+	std::unique_ptr<ui::ParallelRackCard> card;
+	ui::ParallelRackExpanded* panel = nullptr;
+
+	OpenRack(Venue& venue, int view) : v(venue), id(venue.bridge().deviceAtPosition(0)) {
+		while (rackOf(v).chainCount() < 3) {
+			REQUIRE(rackOf(v).addChain() != SIZE_MAX);
+		}
+		for (size_t c = 0; c < 2; ++c) {
+			REQUIRE(rackOf(v).chainAt(c)->bridge()->addDevice(fx::filter::kTraits.tag) != kNoInstance);
+		}
+		v.bridge().setField(id, controlOfKey("rack_view"), static_cast<float>(view));
+		for (int i = 0; i < 4; ++i) {
+			v.run(512);
+		}
+		const device::Descriptor* desc = v.bridge().descriptorOf(id);
+		REQUIRE(desc != nullptr);
+		window = ui::makeExpandedView(v.bridge(), nullptr, registry, id, *desc, nullptr);
+		REQUIRE(window != nullptr);
+		panel = dynamic_cast<ui::ParallelRackExpanded*>(window.get());
+		REQUIRE(panel != nullptr);
+		layers.setBounds(0.0f, 0.0f, 1200.0f, 700.0f);
+		panel->setPresentedOn(&layers);
+		window->setBounds(0.0f, 0.0f, 1200.0f, 700.0f);
+		card = std::make_unique<ui::ParallelRackCard>(v.bridge(), registry, id, nullptr);
+		card->setBounds(0.0f, 0.0f, 320.0f, 420.0f);
+		tick(3);
+	}
+	/// LAYOUT FIRST, THEN THE EDITOR'S TICK, with the audio thread's blocks and the host's visits between, as a host runs them.
+	void tick(int rounds) {
+		for (int i = 0; i < rounds; ++i) {
+			v.run(512);
+			if (i % 3 == 0) {
+				v.mainThread();
+			}
+			window->resized();
+			card->resized();
+			(void)window->update();
+			(void)card->update();
+		}
+		for (const float x : v.l) {
+			REQUIRE(std::isfinite(x));
+		}
+	}
+	rack::RackBridge& chain(size_t i) { return *rackOf(v).chainAt(i)->bridge(); }
+};
+
+std::vector<ui::PresetData> shippedRackPresets() {
+	std::vector<ui::PresetData> out;
+	for (const feathers::FactoryPresetFile& f : feathers::factoryPresetFiles()) {
+		if (f.path.rfind("Racks/", 0) != 0) {
+			continue;
+		}
+		feathers::PresetMeta meta;
+		ui::PresetData data;
+		REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(f.bytes.begin(), f.bytes.end()), &meta, &data.bytes));
+		out.push_back(std::move(data));
+	}
+	REQUIRE_FALSE(out.empty());
+	return out;
+}
+
+} // namespace
+
+TEST_CASE("replaced chains, road 1: a device window open on a device in a chain the preset replaces") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	for (const ui::PresetData& preset : shippedRackPresets()) {
+		for (const int view : { 0, 1, 3 }) {
+			CAPTURE(view);
+			Venue v;
+			OpenRack open(v, view);
+			ui::FxLaneRail& rail = open.panel->railForTest(0);
+			ui::ChainColumn* column = rail.columnForTest();
+			REQUIRE(column != nullptr);
+			column->expandDevice(open.chain(0).deviceAtPosition(0));
+			open.tick(3);
+			REQUIRE(open.layers.overlay().panelCount() >= 1); // the device's window is really open (else this case drives nothing)
+			ui::ContainerPresets presets = ui::makeRackDevicePresets(v.bridge(), open.id, nullptr);
+			REQUIRE(presets.provider->apply(preset));
+			open.tick(24);
+			MESSAGE("panels after the load: ", open.layers.overlay().panelCount());
+		}
+	}
+}
+
+TEST_CASE("replaced chains, road 2: a chain's rename field and a device's rename field open when the preset lands") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	for (const ui::PresetData& preset : shippedRackPresets()) {
+		for (const bool chainField : { true, false }) {
+			for (const int view : { 0, 1, 3 }) {
+				CAPTURE(chainField);
+				CAPTURE(view);
+				Venue v;
+				OpenRack open(v, view);
+				if (chainField) {
+					open.panel->chainRenameForTest().begin(1, open.panel->railForTest(1), visage::Bounds { 0.0f, 0.0f, 120.0f, 20.0f });
+					REQUIRE(open.panel->chainRenameForTest().renaming());
+				}
+				else {
+					ui::ChainColumn* column = open.panel->railForTest(0).columnForTest();
+					REQUIRE(column != nullptr);
+					column->renameForTest().begin(open.chain(0), open.chain(0).deviceAtPosition(0), *column, visage::Bounds { 0.0f, 0.0f, 120.0f, 20.0f });
+					REQUIRE(column->renameForTest().renaming());
+				}
+				ui::ContainerPresets presets = ui::makeRackDevicePresets(v.bridge(), open.id, nullptr);
+				REQUIRE(presets.provider->apply(preset));
+				open.tick(24);
+				// AND A COMMIT AFTER IT (Enter on a field whose chain or device is gone) changes nothing and breaks nothing.
+				if (chainField) {
+					(void)open.panel->chainRenameForTest().renaming();
+				}
+				open.tick(4);
+			}
+		}
+	}
+}
+
+TEST_CASE("replaced chains, road 3: undo and redo of a Rack preset loaded from the header menu, the window open") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	size_t n = 0;
+	for (const feathers::FactoryPresetFile& f : feathers::factoryPresetFiles()) {
+		if (f.path.rfind("Racks/", 0) != 0) {
+			continue;
+		}
+		feathers::PresetMeta meta;
+		std::vector<uint8_t> payload;
+		REQUIRE(feathers::PresetStore::decode(std::vector<uint8_t>(f.bytes.begin(), f.bytes.end()), &meta, &payload));
+		REQUIRE(feathers::PresetStore::save(std::filesystem::path(std::string(f.path)).stem().string(), payload, kRackPresetBank));
+		++n;
+	}
+	REQUIRE(n > 0);
+	for (const int view : { 0, 1, 2, 3 }) {
+		CAPTURE(view);
+		Venue v;
+		OpenRack open(v, view);
+		ui::EditHistory history;
+		ui::DevicePresetMenu menu(v.bridge(), history, nullptr);
+		const auto list = menu.list(open.id);
+		REQUIRE(list.size() >= 2);
+		for (const auto& entry : list) {
+			if (entry.name == "Init") {
+				continue;
+			}
+			REQUIRE(menu.apply(open.id, entry));
+			open.tick(12);
+			history.undo();
+			open.tick(12);
+			history.redo();
+			open.tick(12);
+			history.undo();
+			open.tick(6);
+		}
+	}
+}
+
+TEST_CASE("replaced chains, road 5: the host's state load into a Rack whose window is open, audio running") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	for (const ui::PresetData& preset : shippedRackPresets()) {
+		// THE STATE TO LOAD: another instance holding the shipped preset, saved through the CLAP state road.
+		Venue a;
+		{
+			ui::ContainerPresets presets = ui::makeRackDevicePresets(a.bridge(), a.bridge().deviceAtPosition(0), nullptr);
+			REQUIRE(presets.provider->apply(preset));
+		}
+		for (int i = 0; i < 6; ++i) {
+			a.run(512);
+			a.mainThread();
+		}
+		const std::vector<unsigned char> saved = save(a.plugin);
+		REQUIRE(saved.size() > 64);
+		for (const int view : { 0, 1, 2, 3 }) {
+			for (const bool twice : { false, true }) {
+				CAPTURE(view);
+				CAPTURE(twice);
+				Venue v;
+				OpenRack open(v, view);
+				REQUIRE(load(v.plugin, saved));
+				open.tick(24);
+				if (twice) {
+					REQUIRE(load(v.plugin, saved));
+					open.tick(24);
+				}
+			}
+		}
+	}
 }

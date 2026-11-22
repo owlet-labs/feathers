@@ -16,6 +16,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/clip/clip_types.h"
@@ -1105,7 +1106,7 @@ TEST_CASE("the five original modes render the bits they rendered before the Erod
 			}
 			CAPTURE(os);
 			CAPTURE(static_cast<int>(mode));
-#if defined(__linux__) && defined(__x86_64__) // a bit-exact pin holds only where it was taken (see the eroder's)
+#if FEATHERS_PINNED_PLATFORM // a bit-exact pin holds only where it was taken (see the eroder's)
 			CHECK(h == kPinned[at]);
 #else
 			(void)h;

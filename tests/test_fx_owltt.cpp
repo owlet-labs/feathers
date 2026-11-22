@@ -16,6 +16,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/owltt/owltt.h"
@@ -2271,7 +2272,7 @@ TEST_CASE("LQ: at the default stereo settings OWLTT renders bit-identically to t
 		const uint64_t h = lqRenderHash(v.s);
 		const std::string seen = std::string(v.name) + " hash " + std::to_string(h);
 		MESSAGE(seen);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 		CHECK(h == v.hash);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned
@@ -2571,7 +2572,7 @@ TEST_CASE("LR: at Width 100% everywhere OWLTT renders bit-identically to the bui
 		const uint64_t h = lqRenderHash(v.s);
 		const std::string seen = std::string(v.name) + " hash " + std::to_string(h);
 		MESSAGE(seen);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 		CHECK(h == v.hash);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned
@@ -2889,7 +2890,7 @@ TEST_CASE("NB: at Drive 0 dB OWLTT renders bit-identically to the build before t
 	heavy.upDownSkew = 0.8f;
 	const uint64_t hBase = lqRenderHash(base);
 	const uint64_t hHeavy = lqRenderHash(heavy);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 	CHECK(hBase == 9074996434631607774ull);
 	CHECK(hHeavy == 16577964413036874256ull);
 #else
@@ -3023,7 +3024,7 @@ TEST_CASE("ND: at Lookahead Off OWLTT renders bit-identically to the build befor
 	heavy.upDownSkew = 0.8f;
 	const uint64_t hBase = lqRenderHash(base);
 	const uint64_t hHeavy = lqRenderHash(heavy);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 	CHECK(hBase == 9074996434631607774ull);
 	CHECK(hHeavy == 16577964413036874256ull);
 #else
@@ -3525,4 +3526,94 @@ TEST_CASE("output meter: the output peak is the sum after Output Gain and BEFORE
 	const float loudMeter = run(true, 0.75f, unclippedLoud);
 	CHECK(loudMeter == doctest::Approx(run(false, 0.75f, unclippedLoud)).epsilon(1e-5));
 	CHECK(loudMeter != doctest::Approx(meterPeak).epsilon(1e-3));
+}
+
+// THE EFFECTIVE RATIO READOUT. Each side's ratio is restated here from the engine's law, not read back from the code under test: the
+// downward compressor takes `fraction` of the dB above its threshold off (ratio 1 / (1 - fraction), fraction = the effective ratio knob);
+// the upward one lifts `fraction` of the dB below its threshold (upward COMPRESSION, so also >= 1:1), its fraction the knob cubed.
+// Both are scaled by the Up/Down skew's factor on their side. Neither side expands.
+TEST_CASE("OWLTT's effective ratios: each band publishes the downward and upward ratio the engine applies, as N of N:1") {
+	const auto downOf = [](float knob, float skew) { return 1.0f / (1.0f - std::min(0.99f, knob * std::clamp(1.0f + skew, 0.0f, 1.0f))); };
+	const auto upOf = [](float knob, float skew) { return 1.0f / (1.0f - std::min(0.99f, knob * knob * knob * std::clamp(1.0f - skew, 0.0f, 1.0f))); };
+	const auto settle = [](Owltt& o, const Settings& s, std::array<float, 6>* published = nullptr) {
+		o.prepare(48000.0f);
+		o.setTarget(s);
+		o.setMeterCallback([published](size_t, const std::array<float, 3>&, const std::array<float, 3>&,
+		                               const std::array<float, 3>&, bool, const Owltt::MeterExtras& extras) {
+			if (published != nullptr) {
+				*published = extras.ratios;
+			}
+		});
+		std::vector<float> L(512), R(512);
+		fillSine(L, R, 1000.0f, 48000.0f, 0.2f, L.size());
+		for (int i = 0; i < 20; ++i) {
+			std::vector<float> l = L, r = R;
+			o.processStereo(l.data(), r.data(), 512);
+		}
+	};
+
+	Settings s = defaultSettings();
+	s.ratio = 0.5f;                              // the global at its neutral: it displaces no band
+	s.low.ratio = 0.5f;                           // down 2:1; up 0.5^3 -> 8:7
+	s.mid.ratio = 0.75f;                          // down 4:1
+	s.mid.upRatio = 0.9f;                         // up knob 0.75 + 0.4 -> clamped to 1.0: the ceiling
+	s.high.ratio = 0.2f;
+	s.high.downRatio = 0.7f;                      // down knob 0.2 + 0.2 = 0.4
+	Owltt o;
+	std::array<float, 6> published {};
+	settle(o, s, &published);
+	const float down[3] = { downOf(0.5f, 0.0f), downOf(0.75f, 0.0f), downOf(0.4f, 0.0f) };
+	const float up[3] = { upOf(0.5f, 0.0f), upOf(1.0f, 0.0f), upOf(0.2f, 0.0f) };
+	for (size_t b = 0; b < 3; ++b) {
+		CAPTURE(b);
+		CHECK(o.effectiveRatioForTest(b, true) == doctest::Approx(down[b]).epsilon(1e-4));
+		CHECK(o.effectiveRatioForTest(b, false) == doctest::Approx(up[b]).epsilon(1e-4));
+		// THE WIRE CARRIES THE SAME NUMBERS: down for bands 0..2, then up.
+		CHECK(published[b] == doctest::Approx(down[b]).epsilon(1e-4));
+		CHECK(published[3 + b] == doctest::Approx(up[b]).epsilon(1e-4));
+		CHECK(o.effectiveRatioForTest(b, true) >= 1.0f);
+		CHECK(o.effectiveRatioForTest(b, false) >= 1.0f);
+	}
+	CHECK(o.effectiveRatioForTest(0, true) == doctest::Approx(2.0f).epsilon(1e-4));
+	CHECK(o.effectiveRatioForTest(1, true) == doctest::Approx(4.0f).epsilon(1e-4));
+	CHECK(o.effectiveRatioForTest(1, false) == doctest::Approx(BandCompressor::kRatioCeiling));
+
+	// MODULATING THE RATIO MOVES THE READOUT: the engine's own effective value, not the stored one.
+	Settings modulated = s;
+	modulated.low.ratio = 0.8f;
+	settle(o, modulated);
+	CHECK(o.effectiveRatioForTest(0, true) == doctest::Approx(downOf(0.8f, 0.0f)).epsilon(1e-4)); // 5:1
+	CHECK(o.effectiveRatioForTest(0, true) != doctest::Approx(down[0]).epsilon(1e-2));
+
+	// THE UP/DOWN SKEW SCALES EACH SIDE'S FRACTION: all the way down-ward, the upward side is idle (1:1) and the downward keeps its own.
+	Settings skewed = s;
+	skewed.upDownSkew = 1.0f;
+	settle(o, skewed);
+	CHECK(o.effectiveRatioForTest(1, false) == doctest::Approx(1.0f).epsilon(1e-6));
+	CHECK(o.effectiveRatioForTest(1, true) == doctest::Approx(4.0f).epsilon(1e-4));
+	skewed.upDownSkew = 0.0f; // all the way upward: the downward side is idle
+	settle(o, skewed);
+	CHECK(o.effectiveRatioForTest(1, true) == doctest::Approx(1.0f).epsilon(1e-6));
+}
+
+TEST_CASE("OWLTT's ratio text reads N:1, whole where whole, and 1:1 at rest") {
+	CHECK(ratioText(1.0f) == "1:1");
+	CHECK(ratioText(1.02f) == "1:1");
+	CHECK(ratioText(2.0f) == "2:1");
+	CHECK(ratioText(4.0f) == "4:1");
+	CHECK(ratioText(1.5f) == "1.5:1");
+	CHECK(ratioText(8.0f / 7.0f) == "1.1:1");
+	CHECK(ratioText(12.4f) == "12:1");
+	CHECK(ratioText(BandCompressor::kRatioCeiling) == "100:1");
+}
+
+TEST_CASE("OWLTT's band output level: the engine's gain at a knob value is the law the window's dB readout restates") {
+	const auto law = [](float g) { return g <= 0.5f ? g * 2.0f : 1.0f + (g - 0.5f) * 18.0f; };
+	for (const float g : { 0.0f, 0.2f, 0.5f, 0.7f, 1.0f }) {
+		CAPTURE(g);
+		BandCompressor c;
+		c.setOutputLevel(g);
+		CHECK(c.getOutputLevelLinear() == doctest::Approx(law(g)).epsilon(1e-6));
+		CHECK(BandCompressor::outputLevelOfKnob(g) == doctest::Approx(law(g)).epsilon(1e-6));
+	}
 }

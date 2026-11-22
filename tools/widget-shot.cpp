@@ -1776,9 +1776,10 @@ int main(int argc, char** argv) {
 		if (device::sameTag(tag, fx::owltt::kTraits.tag) && meterArg.size() > 17) {
 			const auto three = [&](size_t at) { return std::array<float, 3> { meterArg[at], meterArg[at + 1], meterArg[at + 2] }; };
 			const std::array<float, 3> second = three(14);
+			const std::array<float, 6> ratios = meterArg.size() >= 26 ? std::array<float, 6> { meterArg[20], meterArg[21], meterArg[22], meterArg[23], meterArg[24], meterArg[25] } : std::array<float, 6> {};
 			bridge.publishOwlttMeters(slot, three(0), three(3), three(6), meterArg[9] >= 0.5f,
 			                          { meterArg[10] >= 0.5f, meterArg[11] >= 0.5f, meterArg[12] >= 0.5f }, meterArg[13], &second,
-			                          meterArg[17], meterArg.size() > 18 ? meterArg[18] : 0.0f, meterArg.size() > 19 ? meterArg[19] : 0.0f);
+			                          meterArg[17], meterArg.size() > 18 ? meterArg[18] : 0.0f, meterArg.size() > 19 ? meterArg[19] : 0.0f, meterArg.size() >= 26 ? &ratios : nullptr);
 		}
 		std::printf("meter:   ");
 		for (const float v : meterArg) {
@@ -4120,10 +4121,11 @@ int main(int argc, char** argv) {
 						                                                  return std::array<float, 3> { v[at], v[at + 1], v[at + 2] };
 					                                                  };
 					                                                  const std::array<float, 3> second = three(14);
+																	const std::array<float, 6> ratios = n >= 26 ? std::array<float, 6> { v[20], v[21], v[22], v[23], v[24], v[25] } : std::array<float, 6> {};
 					                                                  h->bridge->publishOwlttMeters(
 					                                                      h->slot, three(0), three(3), three(6), v[9] >= 0.5f,
 					                                                      { v[10] >= 0.5f, v[11] >= 0.5f, v[12] >= 0.5f }, v[13],
-					                                                      &second, v[17], inputPeak, outputPeak);
+					                                                      &second, v[17], inputPeak, outputPeak, n >= 26 ? &ratios : nullptr);
 				                                                  }
 				                                                  else if (h->road == 2 && n >= 2) {
 					                                                  h->bridge->publishAutomodReadings(h->slot, v[0], v[1]);

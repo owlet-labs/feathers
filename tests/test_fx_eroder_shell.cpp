@@ -785,7 +785,7 @@ TEST_CASE("smear: a change of Stages is a crossfade between the old and new tap,
 	for (float& x : in) {
 		x = 0.5f * noise.next();
 	}
-	for (const auto [from, to] : { std::pair { 8, 5 }, std::pair { 8, 20 }, std::pair { 32, 1 }, std::pair { 1, 32 } }) {
+	for (const auto& [from, to] : { std::pair { 8, 5 }, std::pair { 8, 20 }, std::pair { 32, 1 }, std::pair { 1, 32 } }) {
 		Smear s = smearWith(rate, 0.8f, 800.0f, from, 8.0f);
 		Smear old = smearWith(rate, 0.8f, 800.0f, from, 8.0f);
 		// THE RESTATEMENT: the same biquad run in an independent chain of states, tapped after `from` and after `to` sections.

@@ -26,6 +26,7 @@
 // compared with each other, that is the second assertion, there to prove the first is not vacuous.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "dsp/character_bank.h"
@@ -6936,7 +6937,7 @@ TEST_CASE("backlog OZ: a patch whose Phase is not stereo-live renders the bits i
 	for (size_t i = 0; i < got.size(); ++i) {
 		MESSAGE("patch " << i << " hash " << got[i]);
 	}
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 	const std::array<uint64_t, 4> before = { 12599633901170770067ull, 7095632569927499907ull, 8792885168817650767ull,
 	                                     17290406804018961795ull };
 	for (size_t i = 0; i < got.size(); ++i) {

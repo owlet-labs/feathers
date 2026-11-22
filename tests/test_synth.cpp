@@ -28,6 +28,7 @@
 // way to catch it is to render the same performance twice and compare the samples.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "plugin/rotate_sound.h"
@@ -2082,7 +2083,7 @@ TEST_CASE("per-voice keytrack renders byte-identical to the build before bus key
 		}
 	}
 	MESSAGE("per-voice keytrack digest " << h);
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 	CHECK(h == kPerVoiceKeytrackDigest); // bits, so pinned to the platform it was measured on (vox-voice's rule)
 #endif
 }
@@ -7668,7 +7669,7 @@ TEST_CASE("phase width: the right ear reads Phase's MODULATION mirrored — base
 }
 
 TEST_CASE("stereo modulation's zero cost: Phase moved by mono routes (a per-voice source, a block-rate LFO) with Phase Width renders the bits it rendered before Phase was a stereo destination (pinned at 13e62b37)") {
-#if !(defined(__x86_64__) && defined(__linux__))
+#if !(FEATHERS_PINNED_PLATFORM)
 	MESSAGE("bit identity is pinned on Linux x86-64 only — skipped");
 	return;
 #endif
@@ -9077,7 +9078,7 @@ TEST_CASE("lane-mods: a lane modulator routed to Voice Level holds a released vo
 }
 
 TEST_CASE("stereo modulation's zero cost: a per-voice filter patch with a mono route renders the bits it rendered before it (pinned at 616d4dad)") {
-#if !(defined(__x86_64__) && defined(__linux__))
+#if !(FEATHERS_PINNED_PLATFORM)
 	MESSAGE("bit identity is pinned on Linux x86-64 only — skipped");
 	return;
 #endif
@@ -9286,7 +9287,7 @@ LzRender lzMovingConstellation(bool wide, bool warped, feathers::OscType type = 
 } // namespace
 
 TEST_CASE("LZ: a moving 8-sound V5 constellation renders the bits it rendered before the vowel bake stopped probing twice (mono, wide, warped)") {
-#if !(defined(__x86_64__) && defined(__linux__))
+#if !(FEATHERS_PINNED_PLATFORM)
 	MESSAGE("bit identity is pinned on Linux x86-64 only — skipped");
 	return;
 #endif
@@ -9315,7 +9316,7 @@ TEST_CASE("LZ: a moving 8-sound V5 constellation renders the bits it rendered be
 }
 
 TEST_CASE("LZ: a moving 8-sound Resonate constellation renders the bits it rendered before the string laws were memoised (still weather, moving weather)") {
-#if !(defined(__x86_64__) && defined(__linux__))
+#if !(FEATHERS_PINNED_PLATFORM)
 	MESSAGE("bit identity is pinned on Linux x86-64 only — skipped");
 	return;
 #endif
@@ -9573,7 +9574,7 @@ TEST_CASE("per-voice road: a render with no latent per-voice device is the rende
 		}
 	}
 	MESSAGE("no-latent-per-voice digest " << h);
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 	CHECK(h == kNoLatentPerVoiceDigest); // bits, so pinned to the platform it was measured on (vox-voice's rule)
 #endif
 }

@@ -2291,7 +2291,8 @@ void ParamBridge::publishOwlttMeters(size_t slot, const std::array<float, 3>& gr
                                     const std::array<float, 3>& inputLevelDB,
                                     const std::array<float, 3>& outputLevelDB, bool clipping,
                                     const std::array<bool, 3>& bandSaturating, float combinedGrDb,
-                                    const std::array<float, 3>* secondChannelGr, float noteHz, float inputPeak, float outputPeak) noexcept {
+                                    const std::array<float, 3>* secondChannelGr, float noteHz, float inputPeak, float outputPeak,
+                                    const std::array<float, 6>* ratios) noexcept {
 	auto* t = fxTelemetry_.at(slot);
 	if (t == nullptr) {
 		return;
@@ -2310,6 +2311,9 @@ void ParamBridge::publishOwlttMeters(size_t slot, const std::array<float, 3>& gr
 	t->owlttNoteHz.store(std::isfinite(noteHz) ? noteHz : 0.0f, std::memory_order_relaxed);
 	t->owlttInputPeak.store(std::isfinite(inputPeak) && inputPeak > 0.0f ? inputPeak : 0.0f, std::memory_order_relaxed);
 	t->owlttOutputPeak.store(std::isfinite(outputPeak) && outputPeak > 0.0f ? outputPeak : 0.0f, std::memory_order_relaxed);
+	for (size_t i = 0; i < 6; ++i) {
+		t->owlttRatios[i].store(ratios != nullptr && std::isfinite((*ratios)[i]) ? (*ratios)[i] : 1.0f, std::memory_order_relaxed);
+	}
 
 	// NOT `repaintDirty_`, AND THE SIBLING TWENTY LINES UP ALREADY SAID WHY.
 	//
@@ -2352,6 +2356,10 @@ ParamBridge::OwlttMeterReading ParamBridge::owlttMeters(size_t slot) const noexc
 	reading.noteHz = t->owlttNoteHz.load(std::memory_order_relaxed);
 	reading.inputPeak = t->owlttInputPeak.load(std::memory_order_relaxed);
 	reading.outputPeak = t->owlttOutputPeak.load(std::memory_order_relaxed);
+	for (size_t i = 0; i < 6; ++i) {
+		const float r = t->owlttRatios[i].load(std::memory_order_relaxed);
+		reading.ratios[i] = r >= 1.0f ? r : 1.0f; // never published: 1:1
+	}
 	return reading;
 }
 

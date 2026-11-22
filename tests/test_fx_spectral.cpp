@@ -19,6 +19,7 @@
 // samples, where an impulse lands, the gain each bin is given, the level a sine comes out at.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "device/sidechain.h"
@@ -1392,7 +1393,7 @@ TEST_CASE("vocoder carrier: Input is the default, and vocoding the input is bit 
 	}
 	MESSAGE("input-carrier render hash " << h);
 	// THE BITS ARE THIS PLATFORM'S (pffft's SIMD road and libm differ elsewhere), as `vox-voice` and `flagship` pin theirs.
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 	CHECK(h == 443368943146717043ull);
 #endif
 }

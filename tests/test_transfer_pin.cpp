@@ -27,6 +27,7 @@
 // table, because the claim is "identical", and identity of 566k floats is one number. PLATFORM-PINNED: `std::pow`
 // and `exp2` are libm's, so the bits are this platform's; elsewhere the case still runs and checks finiteness.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "device/transfer.h"
@@ -66,7 +67,7 @@ void report(const char* what, const Fnv& f, int count) {
 
 } // namespace
 
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 #define PIN(expr) CHECK(expr)
 #else
 #define PIN(expr) (void)0

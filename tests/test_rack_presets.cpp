@@ -60,6 +60,20 @@
 #include <string_view>
 #include <vector>
 
+namespace {
+// A PRESET ROOT FOR THE WHOLE BINARY when the harness gave none (ctest does): opening a card's menu now lists, and so installs, a
+// device's bank, which must never be the developer's own library.
+[[maybe_unused]] const bool kPresetRootGiven = [] {
+	if (std::getenv("FEATHERS_PRESET_ROOT") == nullptr) {
+		const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("feathers-rack-presets-root-" + std::to_string(::getpid()));
+		std::filesystem::create_directories(dir);
+		::setenv("FEATHERS_PRESET_ROOT", dir.c_str(), 1);
+	}
+	return true;
+}();
+} // namespace
+
+
 // BACKLOG OU — presets for Chains and Racks, and for the rack plugin, BY VALUE: every claim reads a row, a route's
 // amount, a chain's devices or a browser's entries, never a rendered buffer.
 

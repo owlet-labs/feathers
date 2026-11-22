@@ -86,6 +86,20 @@
 #include <utility>
 #include <vector>
 
+namespace {
+// A PRESET ROOT FOR THE WHOLE BINARY when the harness gave none (ctest does): opening a card's menu now lists, and so installs, a
+// device's bank, which must never be the developer's own library.
+[[maybe_unused]] const bool kPresetRootGiven = [] {
+	if (std::getenv("FEATHERS_PRESET_ROOT") == nullptr) {
+		const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("feathers-rack-editor-root-" + std::to_string(::getpid()));
+		std::filesystem::create_directories(dir);
+		::setenv("FEATHERS_PRESET_ROOT", dir.c_str(), 1);
+	}
+	return true;
+}();
+} // namespace
+
+
 namespace feathers::ui {
 /// A DESCRIPTOR'S NAME FOR A CAPTURE, WITH THE NULL GUARDED — `device::SourceDesc::name` is a
 /// `const char*` with no default initializer and production guards it in three places. A case that

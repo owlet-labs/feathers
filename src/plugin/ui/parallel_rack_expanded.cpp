@@ -245,9 +245,22 @@ std::vector<pr::Param> ParallelRackExpanded::addressedParamsForTest() const {
 float ParallelRackExpanded::railsWidth() const {
 	float w = 0.0f;
 	for (const auto& r : rails_) {
-		w += r->rail->railWidth();
+		w += r->rail->standardWidth();
 	}
 	return w;
+}
+
+float ParallelRackExpanded::frontRailMinWidth() const {
+	const ChainRail* front = viewedRail();
+	if (front == nullptr) {
+		return 0.0f;
+	}
+	if (front->rail->collapsed() || front->rail->column() == nullptr || model_ == nullptr || model_->view() == RackViewKind::Strips || paneOn()) {
+		return front->rail->standardWidth();
+	}
+	// THE CHAIN IN FRONT RUNS LEFT TO RIGHT: the cards' own length along the flow at the card height, at most three standard columns (past that it scrolls).
+	const float cross = front->rail->column()->height() > 0 ? static_cast<float>(front->rail->column()->height()) : kCardUnitHeight;
+	return std::clamp(front->rail->column()->contentHeightFor(cross) + 2.0f * FxLaneRail::kPadX, FxLaneRail::kWidth, 3.0f * FxLaneRail::kWidth);
 }
 
 visage::Point ParallelRackExpanded::minimumSize() const {
@@ -260,7 +273,7 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 	// PADS: the panel stands before the rails, so the window is at least its width and height.
 	if (model_ != nullptr && model_->view() == RackViewKind::Pads) {
 		const visage::Point n = pads_->naturalSize();
-		p.x = std::max(p.x, railsLeft() + n.x + kPad + 34.0f); // and a collapsed rail (34 px) beside it
+		p.x = std::max(p.x, railsLeft() + n.x + kPad + std::max(34.0f, frontRailMinWidth())); // and the chain in front's rail beside it (a collapsed one is 34 px)
 		p.y = std::max(p.y, railsTop() + n.y + kPad);
 	}
 	// **THE PANE: THE WINDOW SIZES TO WHAT IS IN FRONT** — the front device's window at its natural size, the rest of the chain's rail beside
@@ -289,14 +302,7 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 	// make the window no wider than two over the same front content.
 	if (model_ != nullptr && tabbedView(model_->view())) {
 		const ChainRail* front = viewedRail();
-		// A LIST'S WIDE RAIL (its cards run along it) asks the window for the standard rail's width only: the rest is room it takes if there is any.
-		float frontWidth = front == nullptr ? 0.0f : (front->rail->collapsed() ? front->rail->railWidth() : FxLaneRail::kWidth);
-		if (front != nullptr && !front->rail->collapsed() && front->rail->column() != nullptr && model_->view() == RackViewKind::List && !paneOn()) {
-			// THE CARDS' OWN LENGTH ALONG THE FLOW (what they need at the card height), at most three standard columns: past that the column scrolls.
-			const float cross = front->rail->column()->height() > 0 ? static_cast<float>(front->rail->column()->height()) : kCardUnitHeight;
-			frontWidth = std::clamp(front->rail->column()->contentHeightFor(cross) + 2.0f * FxLaneRail::kPadX, FxLaneRail::kWidth, 3.0f * FxLaneRail::kWidth);
-		}
-		p.x = railsLeft() + selectorWidth() + kPad * 0.5f + (model_->view() == RackViewKind::List ? frontWidth : (front != nullptr ? front->rail->railWidth() : 0.0f)) + kPad;
+		p.x = railsLeft() + selectorWidth() + kPad * 0.5f + frontRailMinWidth() + kPad;
 		p.y = std::max(std::max(leftColumnFoot().bottom(), bandsBottom()) + kPad,
 		               railsTop() + tabsColumnLength() + kPad * 0.5f + RackTabBar::kThickness + kPad);
 		if (front != nullptr) {
@@ -576,9 +582,9 @@ void ParallelRackExpanded::layOut() {
 		if (!shown) {
 			continue;
 		}
-		// THE LIST'S CHAIN IN FRONT RUNS LEFT TO RIGHT beside the list (the card's horizontal lane): its column is horizontal and the rail is as wide
+		// THE CHAIN IN FRONT RUNS LEFT TO RIGHT in every view but Strips (the selector's column, the pads' panel or the list, then the cards along a row): its column is horizontal and the rail is as wide
 		// as the cards need, up to the room the window has; elsewhere the rail is the standard column.
-		const bool alongFlow = view == RackViewKind::List && !paneShown && i == viewed && r->rail->column() != nullptr;
+		const bool alongFlow = view != RackViewKind::Strips && !paneShown && i == viewed && r->rail->column() != nullptr;
 		if (r->rail->column() != nullptr) {
 			r->rail->column()->setHorizontal(alongFlow);
 		}

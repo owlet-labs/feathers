@@ -218,6 +218,8 @@ private:
 	[[nodiscard]] float tabsColumnLength() const;
 	/// How wide the chain selector's column is: the tabs' thickness, or the list's width.
 	[[nodiscard]] float selectorWidth() const;
+	/// The width the chain in front's rail asks the window for: its cards' length along the flow (capped) in every view but Strips, else the standard column.
+	[[nodiscard]] float frontRailMinWidth() const;
 	[[nodiscard]] bool addShown() const;
 	/// THE BANDS COLUMN beside the macros (Bands only): whether it is drawn, where it starts and ends, and where the rails
 	/// start after the columns.

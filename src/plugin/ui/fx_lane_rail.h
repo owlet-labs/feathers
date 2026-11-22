@@ -260,6 +260,9 @@ public:
 	/// **A WIDER RAIL WHEN ITS CARDS RUN ALONG IT** (the Rack window's List view lays the chain in front out left to right): the owner sets the
 	/// width it wants (0: the standard `kWidth`). It is the owner's decision from the rack's own state, never a measurement of this rail.
 	void setWidthOverride(float width) noexcept { widthOverride_ = width; }
+	/// What the width is without that override: the standard open column, or the collapsed strip. The window's minimum size is made of this, so a
+	/// wide rail never feeds back into the size it was given room by.
+	[[nodiscard]] float standardWidth() const noexcept { return collapsed() ? kCollapsedWidth : kWidth; }
 
 	/// `FxLane`'s furniture, as SKLITTER's `CircleRail` has it — `sklitter_expanded.h` asserts the two agree.
 	static constexpr float kPadX = 10.0f;

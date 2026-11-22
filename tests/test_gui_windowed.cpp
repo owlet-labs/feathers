@@ -5357,4 +5357,60 @@ TEST_CASE("list and tabs pane: in a real window the rest of the front chain is a
 	}
 }
 
+
+TEST_CASE("view flow: in a real window Tabs and Pads, like List, run the chain in front left to right after a real press on their selector, and Strips stays a column of rails") {
+	for (const int view : { 0, 1, 2 }) {
+		CAPTURE(view);
+		ListWindowRig r(3, view, false);
+		for (size_t c = 0; c < 3; ++c) {
+			r.rack->setChainKey(c, static_cast<int>(c));
+		}
+		r.tick();
+		if (view == 0) {
+			// STRIPS: every chain's rail, each a vertical column (cards stacked, same x).
+			for (size_t c = 0; c < 3; ++c) {
+				REQUIRE(r.panel->railShownForTest(c));
+				ui::ChainColumn* column = r.panel->railForTest(c).column();
+				REQUIRE(column != nullptr);
+				CHECK_FALSE(column->horizontal());
+				const std::vector<ui::FxCard*> cards = column->cardsForTest();
+				REQUIRE(cards.size() == 3);
+				CHECK(cards[1]->nativeX() == cards[0]->nativeX());
+				CHECK(cards[1]->positionInWindow().y > cards[0]->positionInWindow().y);
+			}
+			continue;
+		}
+		// THE SELECTOR'S REAL PRESS: a tab, or a pad (key 1 is chain 1).
+		visage::Point at {};
+		if (view == 1) {
+			ui::RackTabBar& bar = r.panel->tabBarForTest();
+			const visage::Point o = bar.positionInWindow();
+			const visage::Point c = bar.tabCentre(1);
+			at = { o.x + c.x, o.y + c.y };
+		}
+		else {
+			ui::RackPadGrid& grid = r.panel->padsForTest().gridForTest();
+			const visage::Point o = grid.positionInWindow();
+			const visage::Point c = grid.padCentre(1);
+			at = { o.x + c.x, o.y + c.y };
+		}
+		pressAtWindow(r.top, at, false);
+		r.tick();
+		CHECK(r.panel->viewModelForTest().viewedChain() == 1);
+		ui::FxLaneRail& rail = r.panel->railForTest(1);
+		REQUIRE(rail.isVisible());
+		ui::ChainColumn* column = rail.column();
+		REQUIRE(column != nullptr);
+		CHECK(column->horizontal());
+		const std::vector<ui::FxCard*> cards = column->cardsForTest();
+		REQUIRE(cards.size() == 3);
+		for (size_t k = 1; k < cards.size(); ++k) {
+			CHECK(cards[k]->positionInWindow().x > cards[k - 1]->positionInWindow().x + static_cast<float>(cards[k - 1]->width()) - 1.0f);
+			CHECK(cards[k]->nativeY() == cards[0]->nativeY());
+		}
+		CHECK(rail.railWidth() > ui::FxLaneRail::kWidth);
+		CHECK(rail.positionInWindow().x + rail.railWidth() <= r.panel->positionInWindow().x + static_cast<float>(r.panel->width()) + 0.5f);
+	}
+}
+
 #endif // defined(__linux__)

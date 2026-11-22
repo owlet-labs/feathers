@@ -188,6 +188,21 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::SlotBRate)] = s.slotB.rate;
 	row[static_cast<size_t>(Param::SlotABal)] = s.slotA.bal;
 	row[static_cast<size_t>(Param::SlotBBal)] = s.slotB.bal;
+	row[static_cast<size_t>(Param::DriveHard)] = s.driveHard;
+	row[static_cast<size_t>(Param::SlotAHard)] = s.slotA.hard;
+	row[static_cast<size_t>(Param::SlotBHard)] = s.slotB.hard;
+	row[static_cast<size_t>(Param::DriveSharp)] = s.driveSharp;
+	row[static_cast<size_t>(Param::SlotASharp)] = s.slotA.sharp;
+	row[static_cast<size_t>(Param::SlotBSharp)] = s.slotB.sharp;
+	row[static_cast<size_t>(Param::DriveBias)] = s.driveBias;
+	row[static_cast<size_t>(Param::SlotABias)] = s.slotA.bias;
+	row[static_cast<size_t>(Param::SlotBBias)] = s.slotB.bias;
+	row[static_cast<size_t>(Param::DriveKey)] = s.driveKey ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::SlotAKey)] = s.slotA.key ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::SlotBKey)] = s.slotB.key ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::DriveSpread)] = s.driveSpread;
+	row[static_cast<size_t>(Param::SlotASpread)] = s.slotA.spread;
+	row[static_cast<size_t>(Param::SlotBSpread)] = s.slotB.spread;
 	return row;
 }
 
@@ -270,6 +285,21 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.slotB.rate = read(Param::SlotBRate);
 	s.slotA.bal = read(Param::SlotABal);
 	s.slotB.bal = read(Param::SlotBBal);
+	s.driveHard = read(Param::DriveHard);
+	s.slotA.hard = read(Param::SlotAHard);
+	s.slotB.hard = read(Param::SlotBHard);
+	s.driveSharp = read(Param::DriveSharp);
+	s.slotA.sharp = read(Param::SlotASharp);
+	s.slotB.sharp = read(Param::SlotBSharp);
+	s.driveBias = read(Param::DriveBias);
+	s.slotA.bias = read(Param::SlotABias);
+	s.slotB.bias = read(Param::SlotBBias);
+	s.driveKey = read(Param::DriveKey) >= 0.5f;
+	s.slotA.key = read(Param::SlotAKey) >= 0.5f;
+	s.slotB.key = read(Param::SlotBKey) >= 0.5f;
+	s.driveSpread = read(Param::DriveSpread);
+	s.slotA.spread = read(Param::SlotASpread);
+	s.slotB.spread = read(Param::SlotBSpread);
 	return out;
 }
 
@@ -669,7 +699,8 @@ void Eroder::tick(const Settings& s) noexcept {
 	// THE TWO GAINS THE SAMPLE LOOP GLIDES TO: the wet's, with the level law's make-up; the dry's, whole unless Blend.
 	// THE COMB'S LOOPS (`loops.h`), for the pitch of its own line. The level law's make-up assumes a clean loop, so a Driven tap goes without.
 	const DriveSettings driveBefore = combShaper_.settings();
-	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), sampleRate_, &driveBefore);
+	const DriveSettings drive = deriveDrive(s.drive, s.driveMode, driveCoordinate(s.driveMode, s.driveShape, s.driveAngle), sampleRate_, &driveBefore, 1.0f,
+	                                         DriveExtras { { s.driveHard, s.driveSharp, s.driveBias }, s.driveKey, trackedNoteHz(pitchSemitones_), s.driveSpread });
 	combLoops_ = deriveLoops(s, 1.0 / derived_.baseDelaySeconds, derived_.feedback);
 	shared_.setThreshold(heatGain_ / static_cast<float>(kHeadroom));
 	shared_.set(s, combLoops_, 1.0 / derived_.baseDelaySeconds);
@@ -696,7 +727,7 @@ void Eroder::tick(const Settings& s) noexcept {
 	kept.rateHz = tap.rateHz;
 	combShaper_.set(kept);
 	combTapShaper_.set(tap);
-	if (tap.rateHz > 0.0f && (driveIsPaunchLaw(tap.mode) || driveIsPaunchOdd(tap.mode))) {
+	if (tap.rateHz > 0.0f && driveRotates(tap.mode)) {
 		const double placed = rotationClock_.place(static_cast<double>(tap.rateHz), tickOffset_, sampleRate_);
 		if (placed >= 0.0) {
 			combShaper_.placeRotation(placed);

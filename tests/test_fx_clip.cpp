@@ -1730,3 +1730,123 @@ TEST_CASE("The Paunch modes read Angle, not Shape: Shape moves nothing there and
 		CHECK(render(mode, 0.9f, 0.0f) == render(mode, 0.9f, 0.6f));       // and Angle does not
 	}
 }
+
+//------------------------------------------------------------------------------------------------//
+// THE THIRD ROW IN CLIP: Hard (Tube), Bias (Jag), and the Rate on Lean                           //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A mode's output (left, right) for a 1 kHz sine at 0.5, 12 dB of drive, 4x off, 48000 samples.
+std::pair<std::vector<float>, std::vector<float>> renderRow(const clip::Settings& s, double amp = 0.5) {
+	Instance dev;
+	dev.set(s);
+	std::vector<float> l = sine(48000, 1000.0, amp);
+	std::vector<float> r = l;
+	for (int done = 0; done < 48000; done += 480) {
+		dev.process(l.data() + done, r.data() + done, 480);
+	}
+	return { l, r };
+}
+
+} // namespace
+
+TEST_CASE("Clip Tube's Hard: 0% is the Tube it was, 100% is the restated hard clip of its two halves, offset removed, then the clamp") {
+	clip::Settings s;
+	s.mode = static_cast<int>(clip::Mode::Tube);
+	s.shape = 0.0f;
+	s.driveDb = 12.0f;
+	s.oversample = false;
+	const auto old = renderRow(s).first;
+	s.hard = 0.0f;
+	CHECK(renderRow(s).first == old);
+	s.hard = 1.0f;
+	const auto got = renderRow(s).first;
+	// RESTATED: gain 12 dB; positive half clamp(u, -1, 1), negative half clamp(1.5 u, -1, 1) / 1.5; a 10 Hz one-pole's estimate subtracted; the clamp at the ceiling.
+	const double gain = std::pow(10.0, 12.0 / 20.0);
+	const auto coefficient = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * 10.0 / 48000.0));
+	float estimate = 0.0f;
+	double worst = 0.0;
+	const std::vector<float> x = sine(48000, 1000.0, 0.5);
+	for (size_t i = 0; i < x.size(); ++i) {
+		const double u = gain * static_cast<double>(x[i]);
+		const double y = u >= 0.0 ? std::clamp(u, -1.0, 1.0) : std::clamp(1.5 * u, -1.0, 1.0) / 1.5;
+		estimate += (static_cast<float>(y) - estimate) * coefficient;
+		const float removed = std::clamp(static_cast<float>(y) - estimate, -1.0f, 1.0f);
+		worst = std::max(worst, static_cast<double>(std::fabs(removed - got[i])));
+	}
+	MESSAGE("Tube at Hard 100%: worst difference from the restated order " << worst);
+	CHECK(worst < 1.0e-4);
+	CHECK_FALSE(got == old); // NON-VACUOUS
+}
+
+TEST_CASE("Clip Jag's Bias: 0% is Jag as it was; above 0 the 2nd harmonic is the restated one and the offset is gone") {
+	clip::Settings s;
+	s.mode = static_cast<int>(clip::Mode::Jag);
+	s.shape = 0.0f;
+	s.driveDb = 0.0f;
+	s.oversample = false;
+	const auto plain = renderRow(s).first;
+	CHECK(std::abs(project(plain, 24000, 2000.0)) < 1.0e-3);
+	s.bias = 1.0f;
+	const auto got = renderRow(s).first;
+	const std::complex<double> second = project(got, 24000, 2000.0);
+	// RESTATED: triangle(tanh(u + 1)) less the bias point's own value, the sine at 0.5 peak; its 2nd harmonic by DFT over one period's worth of phase.
+	const auto tri = [](double v) {
+		double t = std::fmod(v + 1.0, 4.0);
+		if (t < 0.0) {
+			t += 4.0;
+		}
+		return t < 2.0 ? t - 1.0 : 3.0 - t;
+	};
+	std::complex<double> want = 0.0;
+	constexpr int kN = 4800;
+	for (int i = 0; i < kN; ++i) {
+		const double u = 0.5 * std::sin(2.0 * std::numbers::pi * i / 48.0);
+		const double y = tri(std::tanh(u + 1.0)) - tri(std::tanh(1.0));
+		want += y * std::exp(std::complex<double>(0.0, -2.0 * std::numbers::pi * 2.0 * i / 48.0));
+	}
+	want *= 2.0 / kN;
+	MESSAGE("Jag at Bias 100%: 2nd harmonic " << std::abs(second) << ", restated " << std::abs(want));
+	CHECK(std::abs(second) == doctest::Approx(std::abs(want)).epsilon(0.05));
+	CHECK(std::abs(second) > 0.02);
+	double mean = 0.0;
+	for (size_t i = 36000; i < 48000; ++i) {
+		mean += got[i] / 12000.0;
+	}
+	CHECK(std::abs(mean) < 0.01);
+}
+
+TEST_CASE("Clip Lean's Rate: off is today's Lean; at 1 Hz the 2nd harmonic of the left is c E, of the right -c E, and the mono sum has none") {
+	clip::Settings s;
+	s.mode = static_cast<int>(clip::Mode::Lean);
+	s.shape = 1.0f;
+	s.driveDb = 0.0f;
+	s.oversample = false;
+	s.dc = 0.0f; // (the offset is not this case's business)
+	const auto still = renderRow(s, 0.6);
+	s.rate = static_cast<float>(clip::kRateLog2Min);
+	CHECK(renderRow(s, 0.6).first == still.first);
+	s.rate = 0.0f; // 1 Hz
+	const auto turn = renderRow(s, 0.6);
+	size_t checked = 0;
+	for (size_t from = 2400; from + 480 <= 48000; from += 4800) {
+		const auto part = [from](const std::vector<float>& v) {
+			const std::vector<float> w(v.begin() + static_cast<std::ptrdiff_t>(from), v.begin() + static_cast<std::ptrdiff_t>(from + 480));
+			// (project() takes the absolute phase of its own index: pad so the window keeps its place)
+			std::vector<float> padded(from + 480, 0.0f);
+			std::copy(w.begin(), w.end(), padded.begin() + static_cast<std::ptrdiff_t>(from));
+			return project(padded, from, 2000.0);
+		};
+		const double c = std::cos(2.0 * std::numbers::pi * (static_cast<double>(from) + 240.0) / 48000.0);
+		const auto e = part(still.first);
+		const auto l = part(turn.first);
+		const auto r = part(turn.second);
+		REQUIRE(std::abs(e) > 0.01);
+		CHECK(std::abs(l - c * e) < 0.05 * std::abs(e));
+		CHECK(std::abs(r + c * e) < 0.05 * std::abs(e));
+		CHECK(std::abs(l + r) < 0.02 * std::abs(e));
+		++checked;
+	}
+	CHECK(checked == 10);
+}

@@ -163,6 +163,7 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 
 	drive_ = std::make_unique<Knob>(control(ero::Param::Drive), "Amount", notifier_);
 	drive_->setFaceDiameter(kFace);
+	installKeyReadout(*drive_, driveView_);
 	std::vector<ZoneSelect::ZoneName> types = driveTypeZoneNames();
 	driveCell_ = std::make_unique<ModeValueCell>(control(ero::Param::DriveMode), "Type", std::move(types),
 	                                             stageRowGate(driveView_, driveStageParams()));
@@ -453,7 +454,11 @@ void EroderExpanded::refreshHonesty() {
 	// THE DC BLOCK'S CHIP IS LIVE WHILE SOME STAGE THAT IS RUN MAKES AN OFFSET (a parameter condition, so greyed, not hidden).
 	dc_->setEnabled(ero::chainMakesOffset(ero::stateOf(row, row.size()).settings));
 	// THE SECOND-PARAMETER ROWS FOLLOW EACH STAGE'S TYPE (and Track, for the Rate's two forms): hidden, not greyed.
+	const StageView driveBefore = *driveView_;
 	*driveView_ = stageViewOf(row, driveStageParams());
+	if (!(driveBefore == *driveView_)) {
+		drive_->redraw();
+	}
 	(void)driveCell_->refresh();
 	(void)etch_.refreshRows(row);
 }

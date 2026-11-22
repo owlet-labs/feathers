@@ -304,6 +304,12 @@ public:
 	/// **THIS CAPTION IS A NAME** (`columnName`), not a fixed word. A macro's slot sets it; every other knob keeps the
 	/// upper-cased `columnCaption`.
 	void setCaptionIsName(bool isName);
+	/// **THE READOUT'S TEXT, WHERE THE NUMBER MEANS SOMETHING ELSE FOR A WHILE** (the Eroder's Amount under Key: the multiple of the note it sets). The
+	/// provider returns the text, or an empty string to leave the control's own. It is asked every draw; a change in its answer is the caller's to repaint
+	/// (`redraw`).
+	void setReadoutOverride(std::function<std::string()> provider) { readoutOverride_ = std::move(provider); }
+	/// WHAT THE READOUT PRINTS: the override's text where it gives one, the control's own otherwise.
+	[[nodiscard]] std::string printedText() const;
 	[[nodiscard]] bool captionIsName() const noexcept { return captionIsName_; }
 	/// This knob's caption at its own width — the text `draw` puts under the face (`columnName` for a name, else
 	/// `columnCaption`).
@@ -738,6 +744,7 @@ private:
 	/// builder subscribes, the thing that lives holds — which is the whole rule, applied to a case
 	/// where the two are not the same object.
 	std::vector<Watch> held_;
+	std::function<std::string()> readoutOverride_;
 	void resetToDefault();
 
 	/// Say what this knob now reads, in the readout's lower-left line.

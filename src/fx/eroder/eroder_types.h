@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <utility>
 
 //--------------------------------------------------------------------------------------------------//
 // THE ERODER — the reference's, ported.                                                                 //
@@ -262,6 +263,15 @@ inline constexpr float kFoldBiasSpan = 0.75f;
 inline constexpr float kWreckFoldSpan = 4.0f;
 /// Lean's bias at the top of Shape, in the tanh's own units; none at the bottom.
 inline constexpr float kLeanBiasSpan = 1.2f;
+/// **THE CURVE TYPES' THIRD ROW.** Hard (Soft, Tube) blends the tanh toward a hard clip at the same ceiling, Sharp (Fold) blends the sine folder
+/// toward a triangle folder with the same fold points, and Bias (Wreck, Jag) offsets the input of the tanh by this many of its own units at 100%.
+inline constexpr float kBiasSpan = 1.0f;
+/// **KEY AND SPREAD** (Crush, Decimate, Slew, Lopside): with Key on the Type's rate is the tracked note's frequency times a multiple that the Amount knob
+/// runs exponentially, from `kKeyMultBottom` at the bottom of the knob to `kKeyMultTop` at the top. Spread detunes the left and right rates in opposite
+/// directions, by up to this many cents each at 100%.
+inline constexpr double kKeyMultBottom = 32.0;
+inline constexpr double kKeyMultTop = 0.25;
+inline constexpr double kSpreadCents = 50.0;
 /// CRUSH HOLDS EACH SAMPLE FOR A TIME: nothing at the bottom of Drive, 1 / 500 s at the top, whatever the rate.
 inline constexpr double kCrushTopHz = 40000.0;
 inline constexpr double kCrushOctaves = 6.3;
@@ -394,6 +404,30 @@ inline constexpr const char* kDriveModeNames[] = { "Soft", "Tube", "Fold", "Wrec
 /// of the whole label; the other new labels never shipped bare.
 inline constexpr device::ChoiceAlias kDriveTypeAliases[] = { { "Paunch", "Chonk (w)" }, { "Lean", "Lean (w)" } };
 static_assert(sizeof(kDriveModeNames) / sizeof(kDriveModeNames[0]) == static_cast<size_t>(DriveMode::kCount));
+/// **THE CURVES' THIRD-ROW VALUES**, 0..1 each, every one 0 at its default (and then the curve is what it was, to the bit): `hard` (Soft, Tube), `sharp` (Fold), `bias` (Wreck, Jag).
+struct CurveExtras {
+	float hard = 0.0f;
+	float sharp = 0.0f;
+	float bias = 0.0f;
+	friend bool operator==(const CurveExtras&, const CurveExtras&) = default;
+};
+/// WHAT `deriveDrive` takes besides the knob, Type and Shape: the curve extras, and for Crush, Decimate, Slew and Lopside the Key (the rate as a multiple of
+/// the note's frequency `noteHz`) and Spread (0..1).
+struct DriveExtras {
+	CurveExtras curve {};
+	bool key = false;
+	double noteHz = 0.0;
+	float spread = 0.0f;
+};
+/// THE KEY'S MULTIPLE at a knob position (0..1): `32 * (1/4 / 32)^knob`, continuous and exponential, 32x the note at the bottom and 1/4x at the top.
+[[nodiscard]] inline double keyMultiple(double knob) noexcept {
+	const double k = std::clamp(knob, 0.0, 1.0);
+	return kKeyMultBottom * std::pow(kKeyMultTop / kKeyMultBottom, k);
+}
+/// THE TYPES THE KEY AND SPREAD ARE FOR.
+[[nodiscard]] inline constexpr bool driveHasKey(DriveMode mode) noexcept {
+	return mode == DriveMode::Crush || mode == DriveMode::Decimate || mode == DriveMode::Slew || mode == DriveMode::Lopside;
+}
 /// THE TWO PAUNCH LAWS (Paunch-S and Paunch-H): a function of the mid added to one side and taken from the other, not a curve
 /// of one channel.
 inline constexpr bool driveIsPaunchLaw(DriveMode mode) {
@@ -406,6 +440,11 @@ inline constexpr bool driveIsPaunchOdd(DriveMode mode) {
 /// EITHER FAMILY OF MID LAW: the Amount is linear 0..4, no make-up, no saturation, not a curve of one channel.
 inline constexpr bool driveIsMidLaw(DriveMode mode) {
 	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode);
+}
+/// THE TYPES THE ROTATION LFO TURNS: the four Paunch Types (their angle) and Lean (its lean, which swaps sides: `shape` is unchanged, the two sides' lean is scaled by
+/// `cos(2 pi phase)` in opposite senses, `drive_stage.h`).
+inline constexpr bool driveRotates(DriveMode mode) {
+	return driveIsMidLaw(mode) || mode == DriveMode::Lean;
 }
 /// A Type that is not a curve: the stage does something else with it. Crush, Decimate, Slew and Lopside never oversample; the
 /// two Paunch laws do (they are in the oversampled region), but have no make-up and no saturation, so the curve's helpers
@@ -485,6 +524,13 @@ enum class Param : int {
 	SmearStages, ///< every engine: how many allpass sections the Smear runs; 8 is what it always ran
 	SmearReso,   ///< every engine: the Q the sections reach at Smear 100%; Amount still sweeps from 0.5 up to it (8 is what it always reached)
 	SmearOffset, ///< every engine: semitones from Freq to where the Smear is centred (the loops stay at Freq)
+	// THE CURVE TYPES' THIRD ROW (Drive, slot A, slot B each): Hard (Soft, Tube), Sharp (Fold), Bias (Wreck, Jag); and for Crush, Decimate, Slew and Lopside
+	// the Key switch and the Spread fader. Lean's third row is the Rate above.
+	DriveHard, SlotAHard, SlotBHard,
+	DriveSharp, SlotASharp, SlotBSharp,
+	DriveBias, SlotABias, SlotBBias,
+	DriveKey, SlotAKey, SlotBKey,
+	DriveSpread, SlotASpread, SlotBSpread,
 
 	kCount,
 };
@@ -511,6 +557,8 @@ inline constexpr size_t kRateMultParamCount = 3;
 inline constexpr size_t kAngleParamCount = 3;
 /// And the Smear's Stages, Reso and Offset after those.
 inline constexpr size_t kSmearParamCount = 3;
+/// And the fifteen third-row controls (Hard, Sharp, Bias, Key, Spread; Drive, slot A, slot B) after those.
+inline constexpr size_t kTypeRowParamCount = 15;
 /// THE TRACKED RATE: a multiple of the played note's frequency, 0..1, 0 is off (a static angle). Drag lands on the subharmonics below (the
 /// control stays continuous: a typed value is kept as typed, and a modulated one is not snapped).
 inline constexpr double kRateMultDefault = 0.5;
@@ -1761,6 +1809,261 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .centred = true,
      .shortName = "Off",
      .suffix = "st"},
+    {.key = "eroder_drive_hard", .name = "Eroder Drive Hard",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Soft and Tube only: the knee. At 0% the saturator is the tanh it always was; toward 100% it is blended to a hard clip at the same ceiling (the small-signal slope stays one), so the corner sharpens and the upper harmonics grow. Level-matched as the Type is. Shown in the Drive's cell only while its Type is Soft or Tube",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Hard"},
+    {.key = "eroder_slot_a_hard", .name = "Eroder Slot A Hard",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Soft and Tube only: the knee. At 0% the saturator is the tanh it always was; toward 100% it is blended to a hard clip at the same ceiling (the small-signal slope stays one), so the corner sharpens and the upper harmonics grow. Level-matched as the Type is. Shown in slot A's cell only while its Type is Soft or Tube",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Hard"},
+    {.key = "eroder_slot_b_hard", .name = "Eroder Slot B Hard",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Soft and Tube only: the knee. At 0% the saturator is the tanh it always was; toward 100% it is blended to a hard clip at the same ceiling (the small-signal slope stays one), so the corner sharpens and the upper harmonics grow. Level-matched as the Type is. Shown in slot B's cell only while its Type is Soft or Tube",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Hard"},
+    {.key = "eroder_drive_sharp", .name = "Eroder Drive Sharp",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Fold only: the folder's shape. At 0% it is the sine folder it always was; toward 100% it is blended to a triangle folder with the same fold points, so the folds are sharper and brighter. Shown in the Drive's cell only while its Type is Fold",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Sharp"},
+    {.key = "eroder_slot_a_sharp", .name = "Eroder Slot A Sharp",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Fold only: the folder's shape. At 0% it is the sine folder it always was; toward 100% it is blended to a triangle folder with the same fold points, so the folds are sharper and brighter. Shown in slot A's cell only while its Type is Fold",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Sharp"},
+    {.key = "eroder_slot_b_sharp", .name = "Eroder Slot B Sharp",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Fold only: the folder's shape. At 0% it is the sine folder it always was; toward 100% it is blended to a triangle folder with the same fold points, so the folds are sharper and brighter. Shown in slot B's cell only while its Type is Fold",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Sharp"},
+    {.key = "eroder_drive_bias", .name = "Eroder Drive Bias",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Wreck and Jag only: a bias at the input of the tanh that feeds the folder, so even harmonics appear. 0% is as it was. The offset it makes is taken out by the DC block (it counts as an offset-making Type while Bias is above 0). Shown in the Drive's cell only while its Type is Wreck or Jag",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Bias"},
+    {.key = "eroder_slot_a_bias", .name = "Eroder Slot A Bias",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Wreck and Jag only: a bias at the input of the tanh that feeds the folder, so even harmonics appear. 0% is as it was. The offset it makes is taken out by the DC block (it counts as an offset-making Type while Bias is above 0). Shown in slot A's cell only while its Type is Wreck or Jag",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Bias"},
+    {.key = "eroder_slot_b_bias", .name = "Eroder Slot B Bias",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Wreck and Jag only: a bias at the input of the tanh that feeds the folder, so even harmonics appear. 0% is as it was. The offset it makes is taken out by the DC block (it counts as an offset-making Type while Bias is above 0). Shown in slot B's cell only while its Type is Wreck or Jag",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Bias"},
+    {.key = "eroder_drive_key", .name = "Eroder Drive Key",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Crush, Decimate, Slew and Lopside only: with Key on the Type's rate follows the played note instead of a fixed frequency: the Amount knob then sets a multiple of the note's frequency, running smoothly from 32 times the note at the bottom to a quarter of it at the top, and shows that multiple. Holds change on the fraction of a sample, so a tuned hold does not jitter. Independent of the Track switch. Shown in the Drive's cell only while its Type is one of the four",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Key"},
+    {.key = "eroder_slot_a_key", .name = "Eroder Slot A Key",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Crush, Decimate, Slew and Lopside only: with Key on the Type's rate follows the played note instead of a fixed frequency: the Amount knob then sets a multiple of the note's frequency, running smoothly from 32 times the note at the bottom to a quarter of it at the top, and shows that multiple. Holds change on the fraction of a sample, so a tuned hold does not jitter. Independent of the Track switch. Shown in slot A's cell only while its Type is one of the four",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Key"},
+    {.key = "eroder_slot_b_key", .name = "Eroder Slot B Key",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = true,
+     .unit = fx::ParamUnit::Choice,
+     .names = kOffOnNames,
+     .modulatable = false,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Crush, Decimate, Slew and Lopside only: with Key on the Type's rate follows the played note instead of a fixed frequency: the Amount knob then sets a multiple of the note's frequency, running smoothly from 32 times the note at the bottom to a quarter of it at the top, and shows that multiple. Holds change on the fraction of a sample, so a tuned hold does not jitter. Independent of the Track switch. Shown in slot B's cell only while its Type is one of the four",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Key"},
+    {.key = "eroder_drive_spread", .name = "Eroder Drive Spread",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Crush, Decimate, Slew and Lopside only: detunes the left and right rates in opposite directions, up to 50 cents each way at 100%, so the two sides run at slightly different rates and stay level. Works with Key on or off. Shown in the Drive's cell only while its Type is one of the four",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Spread"},
+    {.key = "eroder_slot_a_spread", .name = "Eroder Slot A Spread",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Crush, Decimate, Slew and Lopside only: detunes the left and right rates in opposite directions, up to 50 cents each way at 100%, so the two sides run at slightly different rates and stay level. Works with Key on or off. Shown in slot A's cell only while its Type is one of the four",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Spread"},
+    {.key = "eroder_slot_b_spread", .name = "Eroder Slot B Spread",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.0,
+     .stepped = false,
+     .unit = fx::ParamUnit::Percent,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Crush, Decimate, Slew and Lopside only: detunes the left and right rates in opposite directions, up to 50 cents each way at 100%, so the two sides run at slightly different rates and stay level. Works with Key on or off. Shown in slot B's cell only while its Type is one of the four",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = static_cast<int16_t>(Param::Mode),
+     .gateMask = kEtchOnly,
+     .centred = false,
+     .shortName = "Spread"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -1782,6 +2085,12 @@ struct SlotSettings {
 	float rate = static_cast<float>(kDriveRateLog2Min);
 	float bal = 1.0f;
 	float rateMult = 0.0f; ///< with Track on, the multiple of the played note's frequency in place of `rate` (the struct's default is off, the control's `kRateMultDefault`)
+	/// THE THIRD ROW'S OTHER VALUES (`CurveExtras`, the Key switch and the Spread), each 0 / off by default.
+	float hard = 0.0f;
+	float sharp = 0.0f;
+	float bias = 0.0f;
+	bool key = false;
+	float spread = 0.0f;
 	friend bool operator==(const SlotSettings&, const SlotSettings&) = default;
 };
 
@@ -1843,6 +2152,12 @@ struct Settings {
 	/// THE PAUNCH TYPES' ROTATION LFO RATE, log2 hertz (`eroder_drive_rate`); the bottom is off.
 	float driveRate = static_cast<float>(kDriveRateLog2Min); ///< off in a hand-built `Settings`; the control's default is `kDriveRateLog2Default`
 	float driveRateMult = 0.0f; ///< with Track on, the multiple of the played note's frequency in place of `driveRate`
+	/// THE DRIVE'S THIRD-ROW VALUES, as a slot's (`SlotSettings`).
+	float driveHard = 0.0f;
+	float driveSharp = 0.0f;
+	float driveBias = 0.0f;
+	bool driveKey = false;
+	float driveSpread = 0.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -1968,22 +2283,30 @@ struct DriveSettings {
 	/// CHONK'S BALANCE, 0..1 (`eroder_drive_bal`): how much of the mid-correlated part of what Chonk adds to the side is taken out (`widthBalance`).
 	/// The other width Types always take all of it; an Etch slot's Chonk is fixed at 1.
 	float balance = 1.0f;
-	/// THE PAUNCH TYPES' ROTATION LFO, in hertz; 0 holds the angle `shape` names still (a slot's is always 0).
+	/// THE PAUNCH TYPES' ROTATION LFO, in hertz; 0 holds the angle `shape` names still (a slot's is always 0). Lean's lean swaps sides at it too.
 	float rateHz = 0.0f;
+	/// THE CURVES' THIRD-ROW VALUES (`CurveExtras`).
+	CurveExtras curve {};
+	/// KEY AND SPREAD: the right channel's hold (Crush, Decimate) and slew rate (Slew, Lopside); the left's are `crushHoldFrames` and `slewHz`. At Spread 0
+	/// each pair is equal. `keyed` marks a rate tuned to the note: its hold edges are placed on the fraction of a sample.
+	double crushHoldFramesRight = 1.0;
+	float slewHzRight = 0.0f;
+	bool keyed = false;
 };
 /// **THE TYPES THAT MAKE AN OFFSET**: Tube, Fold, Lean (its halves are unequal) and Paunch-S and Paunch-H (a rectified or squared mid is
 /// never negative). The one DC stage after the Drive takes it out, whichever stage made it.
-inline constexpr bool driveMakesOffset(DriveMode mode) {
-	return mode == DriveMode::Tube || mode == DriveMode::Fold || mode == DriveMode::Lean || driveIsPaunchLaw(mode);
+inline constexpr bool driveMakesOffset(DriveMode mode, float bias = 0.0f) {
+	return mode == DriveMode::Tube || mode == DriveMode::Fold || mode == DriveMode::Lean || driveIsPaunchLaw(mode) ||
+	       (bias > 0.0f && (mode == DriveMode::Wreck || mode == DriveMode::Jag));
 }
 /// WHETHER A STAGE THAT IS RUN MAKES AN OFFSET.
 [[nodiscard]] inline bool makesOffset(const DriveSettings& s) noexcept {
-	return s.driven && s.mix > 0.0f && driveMakesOffset(s.mode);
+	return s.driven && s.mix > 0.0f && driveMakesOffset(s.mode, s.curve.bias);
 }
 /// WHETHER ANY STAGE THE CONTROLS RUN MAKES AN OFFSET: the Drive, or in Etch a slot with an Amount and a Mix.
 [[nodiscard]] inline bool chainMakesOffset(const Settings& s) noexcept {
-	const auto slot = [](const SlotSettings& t) { return t.amount > 0.0f && t.mix > 0.0f && driveMakesOffset(t.type); };
-	return (s.drive > 0.0f && driveMakesOffset(s.driveMode)) || (s.mode == Mode::Etch && (slot(s.slotA) || slot(s.slotB)));
+	const auto slot = [](const SlotSettings& t) { return t.amount > 0.0f && t.mix > 0.0f && driveMakesOffset(t.type, t.bias); };
+	return (s.drive > 0.0f && driveMakesOffset(s.driveMode, s.driveBias)) || (s.mode == Mode::Etch && (slot(s.slotA) || slot(s.slotB)));
 }
 /// WHETHER THE DC STAGE IS RUNNING for these controls: some stage makes an offset and the amount is above 0.
 [[nodiscard]] inline bool dcStageRuns(const Settings& s) noexcept {
@@ -2021,6 +2344,11 @@ struct DustDerived {
 	float slewCurve = 0.0f;
 	float slewBalance = 0.0f;
 	float driveMix = 1.0f;
+	/// The Drive's third-row derivations (`DriveSettings`).
+	CurveExtras driveCurve {};
+	double crushHoldFramesRight = 1.0;
+	float slewHzRight = 0.0f;
+	bool driveKeyed = false;
 	/// HP WET, trapezoidal like the band: off at the bottom of the range.
 	bool hpOn = false;
 	double hpHz = 0.0;
@@ -2058,7 +2386,7 @@ struct DustDerived {
 ///               is a quadrature, and the control path asks for it every block.
 /// @param mix    the stage's own mix, for a caller that sets one; the Drive control itself is always at 1
 [[nodiscard]] DriveSettings deriveDrive(float drive, DriveMode mode, float shape, double sampleRate,
-                                        const DriveSettings* reuse = nullptr, float mix = 1.0f) noexcept;
+                                        const DriveSettings* reuse = nullptr, float mix = 1.0f, const DriveExtras& extras = {}) noexcept;
 /// @param centreHz   the engine's Freq (the Comb's own pitch)
 /// @param innerFeedbackRaw  the engine's inner loop gain, signed
 [[nodiscard]] LoopDerived deriveLoops(const Settings& settings, double centreHz, double innerFeedbackRaw) noexcept;
@@ -2084,10 +2412,21 @@ using HighpassSettings = fx::HighpassSettings;
 /// The two Paunch laws are not curves of one channel (`paunchLaw`) and are the identity here.
 /// Every one is 0 at 0; all but Soft at Shape above 0 (whose dead zone is a share of the reference level, so it needs
 /// the gain) go straight through it. The Types that are not curves are the identity here.
-[[nodiscard]] float shapeDrive(DriveMode mode, float driven, float shape, float gain) noexcept;
+[[nodiscard]] float shapeDrive(DriveMode mode, float driven, float shape, float gain, const CurveExtras& extras = {}) noexcept;
+/// **LEAN WITH THE ROTATION LFO RUNNING** (`c = cos(2 pi phase)`), from the two driven inputs: a Lean side is its odd part plus or minus its even part (`f(u) = o + e`, the right is
+/// `-f(-u) = o - e`); the even part is scaled by `c`, left `o + c e`, right `o - c e`. Equal power on the two sides at every instant, no even content in the mono sum, and the lean
+/// runs left, none, right and back once a turn. At `c = 1` it is `shapeDrive` / `shapeDriveRight` (callers do not run it then, so Rate off is today's Lean to the bit).
+[[nodiscard]] inline std::pair<float, float> leanRotated(float drivenL, float drivenR, float shape, float gain, float c) noexcept;
 /// THE RIGHT CHANNEL'S CURVE: the left's, except in Lean, where it is the left's turned over (`-f(-u)`) — the same
 /// odd harmonics, the even ones in the other polarity.
-[[nodiscard]] float shapeDriveRight(DriveMode mode, float driven, float shape, float gain) noexcept;
+[[nodiscard]] float shapeDriveRight(DriveMode mode, float driven, float shape, float gain, const CurveExtras& extras = {}) noexcept;
+[[nodiscard]] inline std::pair<float, float> leanRotated(float drivenL, float drivenR, float shape, float gain, float c) noexcept {
+	const float fl = shapeDrive(DriveMode::Lean, drivenL, shape, gain);
+	const float fln = shapeDrive(DriveMode::Lean, -drivenL, shape, gain);
+	const float fr = shapeDrive(DriveMode::Lean, drivenR, shape, gain);
+	const float frn = shapeDrive(DriveMode::Lean, -drivenR, shape, gain);
+	return { 0.5f * (fl - fln) + c * 0.5f * (fl + fln), 0.5f * (fr - frn) - c * 0.5f * (fr + frn) };
+}
 /// **THE PAUNCH LAWS' SQUARE'S FIXED COEFFICIENT.** With the mid `m = P sin`, Paunch-S's `a |m|` has a 2nd harmonic of amplitude
 /// `a P 4 / (3 pi)` (the rectified sine's 2nd term) and Paunch-H's `kappa (a m)^2` one of `kappa (a P)^2 / 2` (the square is
 /// `(1 - cos 2wt) / 2`). Equal at full Amount (`a = 4`) at `P = kDriveReferencePeak`: `kappa (4 P)^2 / 2 = 4 P 4 / (3 pi)`, so
@@ -2122,14 +2461,37 @@ struct Rotation {
 [[nodiscard]] inline float driveCoordinate(DriveMode mode, float shape, float angle) noexcept {
 	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode) ? angle : shape;
 }
-/// **THE TYPE'S SECOND PARAMETER** — the third row of the Drive's cell and of a slot's: Bal for Chonk, Rate for the four Paunch Types, none for
-/// every other Type (the row is then not drawn). The one small table the cells read; more Types are added here.
-enum class SecondParam { None, Bal, Rate };
+/// **THE TYPE'S THIRD ROW** — the row under Type and S in the Drive's cell and in a slot's, and EVERY Type uses it: Hard for Soft and Tube, Sharp for Fold,
+/// Bias for Wreck and Jag, Rate for Lean and the four Paunch Types, Bal for Chonk, and for Crush, Decimate, Slew and Lopside the Key switch with its
+/// Spread fader. Exactly one shows (the cell's size and row places do not move). The one small table the cells read.
+enum class SecondParam { None, Hard, Sharp, Bias, Rate, Bal, Key };
 [[nodiscard]] inline constexpr SecondParam driveSecondParam(DriveMode mode) noexcept {
-	if (mode == DriveMode::Chonk) {
+	switch (mode) {
+	case DriveMode::Soft:
+	case DriveMode::Tube:
+		return SecondParam::Hard;
+	case DriveMode::Fold:
+		return SecondParam::Sharp;
+	case DriveMode::Wreck:
+	case DriveMode::Jag:
+		return SecondParam::Bias;
+	case DriveMode::Lean:
+	case DriveMode::PaunchS:
+	case DriveMode::PaunchH:
+	case DriveMode::PaunchOS:
+	case DriveMode::PaunchOH:
+		return SecondParam::Rate;
+	case DriveMode::Chonk:
 		return SecondParam::Bal;
+	case DriveMode::Crush:
+	case DriveMode::Decimate:
+	case DriveMode::Slew:
+	case DriveMode::Lopside:
+		return SecondParam::Key;
+	case DriveMode::kCount:
+		break;
 	}
-	return driveIsPaunchLaw(mode) || driveIsPaunchOdd(mode) ? SecondParam::Rate : SecondParam::None;
+	return SecondParam::None;
 }
 /// THE ROTATION LFO'S RATE in hertz from its control (log2 hertz, the bottom is off): 0 is off.
 [[nodiscard]] inline float driveRateHz(float log2Hz) noexcept {
@@ -2302,17 +2664,17 @@ inline void widthTrim(WidthTrim& s, float lIn, float rIn, float& l, float& r, fl
 	r *= 1.0f / gl;
 }
 /// The make-up that follows it: `kDriveReferencePeak`'s sine out at the RMS it went in with.
-[[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape) noexcept;
+[[nodiscard]] double driveMakeUp(DriveMode mode, double gain, float shape, const CurveExtras& extras = {}) noexcept;
 /// THE SHAPER'S GAIN FOR A VANISHING SIGNAL, make-up included: what a feedback through it is divided by, so a tail
 /// always dies. For the Paunch laws, which have no make-up: Paunch-H is 1 (the square has no slope at zero); Paunch-S is the
 /// worst case of a channel's gain, `1 + a |w|` (a mono input, where the rectifier's slope has either sign: `1 +- a w`), with
 /// `gain` the Amount's `a` and `w = 1 - 2 shape`.
-[[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape, bool rotating = false) noexcept;
+[[nodiscard]] double driveSmallSignalGain(DriveMode mode, double gain, float shape, bool rotating = false, const CurveExtras& extras = {}) noexcept;
 [[nodiscard]] HighpassSettings highpassOf(const DustDerived& derived) noexcept;
 /// The stage's settings as `deriveDust` found them.
 [[nodiscard]] DriveSettings driveOf(const DustDerived& derived) noexcept;
 /// The curve's slope at zero (0 in Soft above the bottom of Shape: its dead zone).
-[[nodiscard]] double driveSlope(DriveMode mode, float shape) noexcept;
+[[nodiscard]] double driveSlope(DriveMode mode, float shape, const CurveExtras& extras = {}) noexcept;
 /// WHAT FOLLOW MAKES OF THE FOLLOWER: 1 at no Follow, the follower's reach of `kFollowFullAt` at all of it.
 [[nodiscard]] float followGain(float follow, float envelope) noexcept;
 

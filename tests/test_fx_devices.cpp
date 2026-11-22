@@ -2621,6 +2621,14 @@ std::vector<std::string> honestyExpected() {
 		"Eroder :: Eroder Drive Balance",    "Eroder :: Eroder Drive Rate",   "Eroder :: Eroder Drive Rate Multiple",
 		"Eroder :: Eroder Slot A Balance",   "Eroder :: Eroder Slot A Rate",  "Eroder :: Eroder Slot A Rate Multiple",
 		"Eroder :: Eroder Slot B Balance",   "Eroder :: Eroder Slot B Rate",  "Eroder :: Eroder Slot B Rate Multiple",
+		// THE THIRD ROW OF EVERY TYPE (the Drive's and each slot's): Sharp is heard only on Fold, Bias only on Wreck and Jag, Hard only on Soft and Tube,
+		// and Key and Spread only on Crush, Decimate, Slew and Lopside; the fixture's Drive sits on Soft and its slots at Amount 0, so a one-control
+		// arrangement reaches only the Drive's Hard (the ones below). `test_fx_eroder_rows` asserts each by value (the restated curves, the restated
+		// hold and slew rates measured from the output, the Spread's ratio) and "Every third-row control is wired in all three places" asserts that each
+		// one changes the sound in the Drive and in both slots on its own Types and on no other; the window hides each row unless its Type has it.
+		"Eroder :: Eroder Drive Sharp",      "Eroder :: Eroder Drive Bias",   "Eroder :: Eroder Drive Key",      "Eroder :: Eroder Drive Spread",
+		"Eroder :: Eroder Slot A Hard",      "Eroder :: Eroder Slot A Sharp", "Eroder :: Eroder Slot A Bias",
+		"Eroder :: Eroder Slot B Hard",      "Eroder :: Eroder Slot B Sharp", "Eroder :: Eroder Slot B Bias",
 		// THE PAUNCH TYPES' ANGLE (the Drive's and each slot's) is heard only on those four Types, so the one-control fixture on Soft cannot reach it;
 		// `test_fx_eroder`'s "The Paunch Types read their own Angle" and the rotation cases assert it by value.
 		"Eroder :: Eroder Drive Angle",      "Eroder :: Eroder Slot A Angle", "Eroder :: Eroder Slot B Angle",

@@ -83,6 +83,10 @@ enum class Param : int {
 	Rate,
 	/// THE PAUNCH MODES' ANGLE, 0..1, read in place of Shape by those four modes (Shape keeps its meaning for the others, so the angle has a key of its own).
 	Angle,
+	/// TUBE ONLY: the knee, 0..1 (the Eroder's Hard): 0 is the tanh halves as they were, 100% a hard clip at the same ceiling.
+	Hard,
+	/// JAG ONLY: a bias into the tanh that feeds the triangle fold, 0..1 (the Eroder's Bias); 0 is Jag as it was. The offset it makes is taken out by the one-pole.
+	Bias,
 
 	kCount,
 };
@@ -118,6 +122,11 @@ inline constexpr uint32_t kBalModes = kModeBit(Mode::Chonk);
 inline constexpr uint32_t kShapeKnobModes = kShapeModes & ~(kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH) | kModeBit(Mode::PaunchOS) | kModeBit(Mode::PaunchOH));
 /// THE FOUR PAUNCH MODES, which read the rotation LFO's Rate.
 inline constexpr uint32_t kPaunchModes = kModeBit(Mode::PaunchS) | kModeBit(Mode::PaunchH) | kModeBit(Mode::PaunchOS) | kModeBit(Mode::PaunchOH);
+/// THE MODES THAT READ Hard (Tube; Clip's Soft has its Knee, which at 0 is already a hard clamp) AND Bias (Jag). Clip's Fold is already a triangle fold with its Depth, so it has no Sharp.
+inline constexpr uint32_t kHardModes = kModeBit(Mode::Tube);
+inline constexpr uint32_t kBiasModes = kModeBit(Mode::Jag);
+/// THE MODES THAT TURN THE ROTATION LFO: the four Paunch modes (their angle) and Lean (its lean swaps sides).
+inline constexpr uint32_t kRateModes = kPaunchModes | kModeBit(Mode::Lean);
 /// THE RATE'S RANGE (the Eroder Drive's): log2 hertz, the bottom is off, then 0.05 to 20 Hz.
 inline constexpr double kRateLog2Min = -4.321928094887362;
 inline constexpr double kRateLog2Max = 4.321928094887362;
@@ -162,6 +171,8 @@ struct Settings {
 	/// OFF in a hand-built `Settings` (the angle holds still); the CONTROL's default, which a fresh instance and a patch lacking the key read, is `kRateLog2Default`.
 	float rate = static_cast<float>(kRateLog2Min);
 	float angle = 0.0f;
+	float hard = 0.0f;
+	float bias = 0.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -349,14 +360,24 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .gateControl = kModeControl, .gateMask = kBalModes},
     {.key = "clip_rate", .name = "Clip Rate", .min = kRateLog2Min, .max = kRateLog2Max, .def = kRateLog2Default, .stepped = false,
      .unit = device::Unit::LogHertz, .names = {}, .modulatable = true,
-     .tooltip = "Paunch Types only: how fast the angle of the addition turns, so no side leans on average. At the bottom it is off and "
-                "Shape's angle holds still",
-     .gateControl = kModeControl, .gateMask = kPaunchModes, .offAtEnd = -1},
+     .tooltip = "Lean (w) and the Paunch Types: how fast the angle of the addition turns (Lean: how fast its lean swaps sides), so no side leans on "
+                "average. At the bottom it is off and Shape's angle (Lean: Shape's lean) holds still",
+     .gateControl = kModeControl, .gateMask = kRateModes, .offAtEnd = -1},
     {.key = "clip_angle", .name = "Clip Angle", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
      .names = {}, .modulatable = true,
      .tooltip = "Paunch Types only: the angle of the addition. 0% puts it in opposite sides, 25% in both the same, 50% in opposite sides the other way, 75% in both "
                 "inverted. A rotation rate turns it from there. It has a key of its own because Shape keeps its old meaning for every other mode",
      .gateControl = kModeControl, .gateMask = kPaunchModes},
+    {.key = "clip_hard", .name = "Clip Hard", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "Tube only: the knee. At 0% the saturator is the tanh halves it always was; toward 100% it is blended to a hard clip at the same "
+                "ceiling, so the corner sharpens and the upper harmonics grow. Level-matched by the ceiling as the mode is",
+     .gateControl = kModeControl, .gateMask = kHardModes},
+    {.key = "clip_bias", .name = "Clip Bias", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "Jag only: a bias at the input of the tanh that feeds the triangle fold, so even harmonics appear. 0% is as it was. The offset it makes "
+                "is taken out below 10 Hz",
+     .gateControl = kModeControl, .gateMask = kBiasModes},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));

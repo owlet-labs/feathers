@@ -2511,8 +2511,11 @@ std::vector<std::string> honestyExpected() {
 	//
 	//   Harm Release        TWO TRANSITIONS THIS FIXTURE DOES NOT MAKE. A release time acts when the
 	//   Harm Porta          gate FALLS and a portamento when the note CHANGES; the probe holds one
-	//                       note and one gate for 256 samples, so neither control has anything to act
-	//                       on.
+	//   Harm Porta Mode     note and one gate for 256 samples, so none of the three has anything to act
+	//                       on. Porta Mode decides only whether a glide crosses a gap between two notes, so it
+	//                       needs porta on, a note, a release, a gap and a second note. Its values are asserted
+	//                       in test_fx_harm: "legato porta starts a note after a release at its own pitch,
+	//                       always porta glides to it".
 	//
 	//                       **`OWLTT Release` WAS ON THIS LIST AND HAS LEFT IT, which is a real change
 	//                       and not a fixture tweak.** Until `runEnvelope` was corrected, the descent
@@ -2584,7 +2587,7 @@ std::vector<std::string> honestyExpected() {
 	//                       moved, the whole type axis is sample-for-sample silent, which is the row
 	//                       this fixture sees.
 	std::vector<std::string> expected {
-		"Harm :: Harm Release",   "Harm :: Harm Porta",
+		"Harm :: Harm Release",   "Harm :: Harm Porta",     "Harm :: Harm Porta Mode",
 		"Waypoint :: Macro 1 2",  "Waypoint :: Macro 1 3",  "Waypoint :: Macro 1 4",
 		"Drawn :: Wake",
 		// EQ BANDS 1 AND 8 ARE CUTS AND ARE OFF BY DEFAULT (a cut that is on changes the sound, and the

@@ -432,7 +432,7 @@ enum class Param : int {
 	Stereo,    ///< Dust: one shake for both sides at 0, one each at 1
 	Resonance, ///< Dust: signed feedback round the line
 	Drive,     ///< both engines: how hard the wet is pushed into `DriveMode`'s shaper
-	Track,     ///< Dust: Freq follows the last note played
+	Track,     ///< every engine: the note moves Freq (Dust, Rust, Etch), HP Wet's semitones and the Paunch Rate's multiple (the Comb's own pitch always follows it)
 	DriveMode, ///< both engines: which shaper
 	DriveShape, ///< both engines: the shaper's own coordinate, 0..1, stopping at both ends
 	HpWet,     ///< every engine: a highpass on the wet, after the shaper; log2 hertz, the bottom is none
@@ -466,7 +466,7 @@ enum class Param : int {
 	SlotRoute, ///< Etch: B after A (Series) or both on the same input, their changes added (Parallel)
 	EmphOffset, ///< every engine: semitones from Freq to where the emphasis is tuned (Smear and the loops stay at Freq)
 	Input,      ///< every engine: decibels of gain on the signal entering the wet chain, ahead of everything in it
-	HpWetSemis, ///< Dust, Rust, Etch with Track on: HP Wet in semitones from the played note, in HP Wet's cell; the bottom is no filter
+	HpWetSemis, ///< every engine with Track on: HP Wet in semitones from the played note, in HP Wet's cell; the bottom is no filter
 	DcBlock,    ///< every engine: Off or On: the one post high-pass that takes the offset the shapers make out after the Drive (it replaced the DC amount)
 	DriveBal,   ///< every engine: Chonk's balance, the Drive cell's second parameter for that Type; 100% keeps the two sides at the balance they came in with
 	DriveRate,  ///< every engine: the Paunch Types' rotation LFO, the Drive cell's second parameter for those Types; the bottom is off (a static angle)
@@ -864,12 +864,14 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = kOffOnNames,
      .modulatable = false,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Freq follows the last note played, with middle C leaving it where it is set",
+     .tooltip = "Follows the last note played, with middle C leaving it where it is set: Freq, HP Wet as semitones above the note, and a "
+                "Paunch Type's rotation Rate as a multiple of the note. The Comb's own pitch always follows the note, so there Track "
+                "moves only HP Wet and the Rate",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kShakersAndEtch,
+     .gateControl = -1,
+     .gateMask = 0,
      .centred = false,
      .shortName = nullptr,
      .stacked = true},
@@ -947,7 +949,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = false,
      .offsetsMayLeaveRange = false,
      .tooltip = "Gives back from the dry signal what HP Wet took away, so the low end stays whole at any Mix; inactive while HP "
-                "Wet is at its bottom, where there is no filter, and in the Comb while Blend is off",
+                "Wet is at its bottom, where there is no filter, and in the Comb while Blend is off (the dry then passes "
+                "whole, so its low end is already there)",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -1452,8 +1455,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kShakersAndEtch,
+     .gateControl = -1,
+     .gateMask = 0,
      .centred = false,
      .shortName = "HP Wet",
      .offAtEnd = -1,
@@ -1605,8 +1608,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
-     .gateControl = static_cast<int16_t>(Param::Mode),
-     .gateMask = kShakersAndEtch,
+     .gateControl = -1,
+     .gateMask = 0,
      .centred = false,
      .shortName = "Rate",
      .offAtEnd = -1},

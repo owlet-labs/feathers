@@ -102,6 +102,8 @@ public:
 	[[nodiscard]] std::vector<visage::Frame*> rustWidgetsForTest() const;
 	/// What Dust and Rust share and the Comb does not show: the shaker's controls.
 	[[nodiscard]] std::vector<visage::Frame*> shakerWidgetsForTest() const;
+	/// TRACK, every engine's: drawn in the small row's right-hand place in all four.
+	[[nodiscard]] SwitchChip* trackForTest() const { return track_.get(); }
 	/// ETCH'S OWN: the slot row (two slots and their route, on one line), and Freq and Mix as compact boxes in the small row
 	/// (the knob row is the slots' there).
 	[[nodiscard]] std::vector<visage::Frame*> etchWidgetsForTest() const;

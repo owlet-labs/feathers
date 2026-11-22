@@ -1569,8 +1569,12 @@ TEST_CASE("Dust is the declared engine, and its controls are gated to it as the 
 	CHECK(gatedTo(Param::Amount, dust));
 	// RESONANCE IS THE INNER LOOP, and Rust and Etch have one too (a delay of one period of Freq, `loops.h`); Freq, Width
 	// and Track are the shared section's centre, width and pitch, so Etch has them as well.
-	for (const Param p : { Param::Resonance, Param::Freq, Param::Width, Param::Track }) {
+	for (const Param p : { Param::Resonance, Param::Freq, Param::Width }) {
 		CHECK(gatedTo(p, dust | rust | etch));
+	}
+	// TRACK MOVES THE SHARED SECTION (HP Wet's semitones, the Paunch Rate's multiple) IN THE COMB TOO: every engine's.
+	for (const Param p : { Param::Track, Param::HpWetSemis, Param::DriveRateMult }) {
+		CHECK(kParamDescs[static_cast<size_t>(p)].gateControl == -1);
 	}
 	// THE SHAKER'S: Dust moves a head with it, Rust multiplies by it; Etch has no shake.
 	for (const Param p : { Param::Source, Param::Grit, Param::Stereo, Param::Step, Param::Detune, Param::ModFold }) {
@@ -6107,7 +6111,7 @@ TEST_CASE("HP Wet semitones: with Track on the corner is the note's frequency ti
 	const DustDerived low = deriveDust(s, 24.0, kRate);
 	CHECK(low.hpOn);
 	CHECK(std::abs(low.hpHz - 20.0) < 1.0e-6);
-	// THE COMB HAS NO TRACK: its highpass is HP Wet's hertz whatever Track holds.
+	// WITHOUT `tracks` the highpass is HP Wet's hertz (the Comb passes its Track switch in like every engine).
 	s.hpWet = static_cast<float>(std::log2(300.0));
 	s.hpWetSemis = 0.0f;
 	CHECK(deriveWetHighpass(s, false, 69.0, kRate).hz == deriveHighpass(s.hpWet, kRate).hz);
@@ -6128,6 +6132,208 @@ TEST_CASE("HP Wet semitones: off while tracking is today's no-filter bit for bit
 	CHECK(on != today);
 	CHECK(trackedRun(s, 72.0, 64) == on);
 	CHECK(trackedRun(s, 72.0, 37) == on);
+}
+
+namespace {
+/// THE COMB, ONE BLOCK SIZE: the left channel for `in`, at a note.
+std::vector<float> combRender(const Settings& s, double note, const std::vector<float>& in, int block, std::vector<float>* shaped = nullptr) {
+	Eroder e;
+	e.prepare(kRate);
+	e.setTarget(s);
+	e.setNoteContext({ static_cast<float>(note), true });
+	std::vector<float> out;
+	out.reserve(in.size());
+	for (size_t done = 0; done < in.size();) {
+		const size_t take = std::min<size_t>(in.size() - done, static_cast<size_t>(block));
+		std::vector<float> l(in.begin() + static_cast<std::ptrdiff_t>(done), in.begin() + static_cast<std::ptrdiff_t>(done + take));
+		std::vector<float> r = l;
+		if (shaped != nullptr && block == 1) {
+			e.processStereo(l.data(), r.data(), 1);
+			shaped->push_back(e.lastCombShapedForTest());
+		}
+		else {
+			e.processStereo(l.data(), r.data(), static_cast<int>(take));
+		}
+		out.insert(out.end(), l.begin(), l.end());
+		done += take;
+	}
+	return out;
+}
+} // namespace
+
+TEST_CASE("Comb with Track: HP Wet in semitones puts the corner at the note's frequency times 2^(st/12), restated; Track off is the hertz control's bits") {
+	Settings s = defaults();
+	s.blend = false;
+	s.mix = 1.0f;
+	s.hpWet = static_cast<float>(std::log2(300.0));
+	const std::vector<float> in = whiteInput(4800, 0.4f);
+	for (const double note : { 57.0, 69.0 }) {
+		for (const double st : { 0.0, 12.0 }) {
+			CAPTURE(note);
+			CAPTURE(st);
+			Settings t = s;
+			t.track = true;
+			t.hpWetSemis = static_cast<float>(st);
+			std::vector<float> shaped;
+			const std::vector<float> out = combRender(t, note, in, 1, &shaped);
+			// out = dry (whole, Blend off) + HP(wet) at the restated corner.
+			RefHighpass filter(noteHzOf(note) * std::pow(2.0, st / 12.0));
+			RefHighpass wrong(300.0);
+			double worst = 0.0;
+			double wrongWorst = 0.0;
+			for (size_t i = 0; i < in.size(); ++i) {
+				const double want = static_cast<double>(in[i]) + filter.run(static_cast<double>(shaped[i]));
+				const double other = static_cast<double>(in[i]) + wrong.run(static_cast<double>(shaped[i]));
+				worst = std::max(worst, std::abs(static_cast<double>(out[i]) - want));
+				wrongWorst = std::max(wrongWorst, std::abs(static_cast<double>(out[i]) - other));
+			}
+			CHECK(worst < 2.0e-5);
+			CHECK(wrongWorst > 1.0e-3); // the second assertion: the hertz corner would be a different sound
+		}
+	}
+	// TRACK OFF: the hertz control, whatever the semitones and the note say, and the bits the Comb had without the switch.
+	Settings off = s;
+	off.hpWetSemis = 24.0f;
+	off.track = false;
+	Settings plain = off;
+	plain.hpWetSemis = static_cast<float>(kHpWetSemisMin);
+	CHECK(combRender(off, 57.0, in, 256) == combRender(plain, 57.0, in, 256));
+	// THE COMB'S OWN PITCH IS NOT DOUBLY TRACKED: its line's period follows the note whatever Track holds.
+	Settings a = s;
+	a.track = true;
+	Eroder ea;
+	ea.prepare(kRate);
+	ea.setTarget(a);
+	ea.setNoteContext({ 72.0f, true });
+	Eroder eb;
+	eb.prepare(kRate);
+	eb.setTarget(s);
+	eb.setNoteContext({ 72.0f, true });
+	std::vector<float> l(256, 0.1f);
+	std::vector<float> r = l;
+	ea.processStereo(l.data(), r.data(), 256);
+	std::vector<float> l2(256, 0.1f);
+	std::vector<float> r2 = l2;
+	eb.processStereo(l2.data(), r2.data(), 256);
+	CHECK(ea.derivedForTest().baseDelaySeconds == eb.derivedForTest().baseDelaySeconds);
+	CHECK(ea.derivedForTest().hpfHz == eb.derivedForTest().hpfHz);
+}
+
+TEST_CASE("Comb with Track: off while tracking at the semitones' bottom is the no-filter bits, and the same at any partition, Sub Thru on or off") {
+	Settings s = defaults();
+	s.blend = true;
+	s.mix = 0.6f;
+	s.track = true;
+	s.hpWet = 9.0f; // ignored while tracking
+	s.hpWetSemis = static_cast<float>(kHpWetSemisMin);
+	const std::vector<float> in = whiteInput(4800, 0.4f);
+	Settings none = s;
+	none.track = false;
+	none.hpWet = static_cast<float>(kHpWetLog2Min);
+	CHECK(combRender(s, 69.0, in, 256) == combRender(none, 69.0, in, 256));
+	s.hpWetSemis = 7.0f;
+	s.subThru = true;
+	const std::vector<float> on = combRender(s, 66.0, in, 256);
+	CHECK(on != combRender(none, 66.0, in, 256));
+	CHECK(combRender(s, 66.0, in, 37) == on);
+	CHECK(combRender(s, 66.0, in, 64) == on);
+}
+
+TEST_CASE("Comb with Track and Sub Thru: with Blend the crossfade's low end returns at the tracked corner (restated); without Blend the dry is whole and Sub Thru is inert") {
+	Settings s = defaults();
+	s.mix = 0.6f;
+	s.track = true;
+	s.hpWetSemis = 12.0f;
+	s.subThru = true;
+	const double note = 57.0; // 220 Hz, so the corner is 440 Hz
+	const std::vector<float> in = whiteInput(4800, 0.4f);
+	s.blend = true;
+	std::vector<float> shaped;
+	const std::vector<float> out = combRender(s, note, in, 1, &shaped);
+	RefHighpass wetFilter(440.0);
+	RefHighpass dryFilter(440.0);
+	double worst = 0.0;
+	double low = 0.0;
+	for (size_t i = 0; i < in.size(); ++i) {
+		const auto dry = static_cast<double>(in[i]);
+		const double taken = dry - dryFilter.run(dry);
+		const double want = dry * static_cast<double>(1.0f - 0.6f) + wetFilter.run(static_cast<double>(shaped[i])) + static_cast<double>(0.6f) * taken;
+		worst = std::max(worst, std::abs(static_cast<double>(out[i]) - want));
+		low = std::max(low, std::abs(taken));
+	}
+	CHECK(worst < 2.0e-5);
+	CHECK(low > 0.01);
+	// WITHOUT BLEND THE DRY ALREADY PASSES WHOLE (its lows too), so there is nothing to give back: the same bits with Sub Thru on or off.
+	s.blend = false;
+	Settings off = s;
+	off.subThru = false;
+	const bool inert = combRender(s, note, in, 256) == combRender(off, note, in, 256);
+	CHECK(inert);
+	// AND THE LOW TONE IS IN THE OUTPUT AT THE DRY'S OWN LEVEL, 1 : the wet's highpass leaves nothing of it, the dry is whole.
+	std::vector<float> tone(9600);
+	for (size_t i = 0; i < tone.size(); ++i) {
+		tone[i] = static_cast<float>(0.2 * std::sin(2.0 * std::numbers::pi * 50.0 * static_cast<double>(i) / kRate));
+	}
+	Settings quiet = s;
+	quiet.mix = 0.0f;
+	const std::vector<float> through = combRender(s, note, tone, 256);
+	const std::vector<float> dryOnly = combRender(quiet, note, tone, 256);
+	double a = 0.0;
+	double b = 0.0;
+	for (size_t i = 4800; i < tone.size(); ++i) {
+		a = std::max(a, static_cast<double>(std::abs(through[i])));
+		b = std::max(b, static_cast<double>(std::abs(dryOnly[i])));
+	}
+	CHECK(b == doctest::Approx(0.2).epsilon(0.01));
+	CHECK(a == doctest::Approx(b).epsilon(0.05)); // an octave and more under the corner the wet adds ~nothing at 50 Hz and Mix 0.6
+}
+
+TEST_CASE("Comb with Track, Sub Thru and a tracked Paunch Rate: bounded, the same at any partition, and the tail ends in exact silence") {
+	for (const bool blend : { true, false }) {
+		CAPTURE(blend);
+		Settings s = defaults();
+		s.mix = 1.0f;
+		s.blend = blend;
+		s.subThru = true;
+		s.track = true;
+		s.hpWetSemis = 5.0f;
+		s.drive = 0.8f;
+		s.driveMode = DriveMode::PaunchS;
+		s.driveRateMult = 0.5f;
+		s.heat = 0.6f;
+		const std::vector<float> in = whiteInput(24000, 0.9f);
+		const auto render = [&](int block) {
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			e.setNoteContext({ 60.0f, true });
+			std::vector<float> l = in;
+			l.resize(in.size() + 144000, 0.0f);
+			std::vector<float> r = l;
+			for (size_t done = 0; done < l.size();) {
+				const size_t take = std::min<size_t>(l.size() - done, static_cast<size_t>(block));
+				e.processStereo(l.data() + done, r.data() + done, static_cast<int>(take));
+				done += take;
+			}
+			return l;
+		};
+		const std::vector<float> whole = render(4096);
+		const bool byOnes = render(1) == whole;
+		const bool byOdd = render(37) == whole;
+		CHECK(byOnes);
+		CHECK(byOdd);
+		float peak = 0.0f;
+		for (const float v : whole) {
+			REQUIRE(std::isfinite(v));
+			peak = std::max(peak, std::abs(v));
+		}
+		CHECK(peak < 8.0f);
+		bool silent = true;
+		for (size_t i = whole.size() - 24000; i < whole.size(); ++i) {
+			silent = silent && whole[i] == 0.0f;
+		}
+		CHECK(silent);
+	}
 }
 
 //--------------------------------------------------------------------------------------------------//
@@ -7700,18 +7906,22 @@ TEST_CASE("Rotation rate: free in hertz with Track off, a multiple of the played
 	// THE KNOWN-BAD, SPELT: using the hertz control while tracking would read 8 Hz here.
 	s.driveRate = 3.0f;
 	CHECK(driveRotationHz(s, 45.0f) != doctest::Approx(8.0).epsilon(0.001));
-	// THE COMB HAS NO TRACK: its Drive's rate is the hertz control's.
-	Settings c = rotatingDust(DriveMode::PaunchS, true);
-	c.mode = Mode::Comb;
-	c.driveRate = 0.0f;
-	c.driveRateMult = 0.5f;
-	Eroder comb;
-	comb.prepare(kRate);
-	comb.setTarget(c);
-	std::vector<float> l(256, 0.3f);
-	std::vector<float> r = l;
-	comb.processStereo(l.data(), r.data(), 256);
-	CHECK(comb.combDriveForTest().rateHz == doctest::Approx(1.0f).epsilon(0.001));
+	// THE COMB TRACKS THE SHARED SECTION TOO: with Track on its Drive's rotation is the multiple of the note (A2 = 110 Hz), with it off the hertz control's.
+	for (const bool track : { true, false }) {
+		CAPTURE(track);
+		Settings c = rotatingDust(DriveMode::PaunchS, track);
+		c.mode = Mode::Comb;
+		c.driveRate = 0.0f; // 1 Hz
+		c.driveRateMult = 0.5f;
+		Eroder comb;
+		comb.prepare(kRate);
+		comb.setTarget(c);
+		comb.setNoteContext({ 45.0f, true });
+		std::vector<float> l(256, 0.3f);
+		std::vector<float> r = l;
+		comb.processStereo(l.data(), r.data(), 256);
+		CHECK(comb.combDriveForTest().rateHz == doctest::Approx(track ? 55.0f : 1.0f).epsilon(0.001));
+	}
 }
 
 TEST_CASE("Rotation rate: a slot's rate is its own, independent of the Drive's, free or tracked") {

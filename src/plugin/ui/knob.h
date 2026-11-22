@@ -308,6 +308,8 @@ public:
 	/// provider returns the text, or an empty string to leave the control's own. It is asked every draw; a change in its answer is the caller's to repaint
 	/// (`redraw`).
 	void setReadoutOverride(std::function<std::string()> provider) { readoutOverride_ = std::move(provider); }
+	/// WHAT THE READOUT PRINTS: the override's text where it gives one, the control's own otherwise.
+	[[nodiscard]] std::string printedText() const;
 	[[nodiscard]] bool captionIsName() const noexcept { return captionIsName_; }
 	/// This knob's caption at its own width — the text `draw` puts under the face (`columnName` for a name, else
 	/// `columnCaption`).
@@ -747,8 +749,6 @@ private:
 
 	/// Say what this knob now reads, in the readout's lower-left line.
 	void announce(const char* verb = nullptr);
-	/// WHAT THE READOUT PRINTS: the override's text where it gives one, the control's own otherwise.
-	[[nodiscard]] std::string printedText() const;
 
 
 

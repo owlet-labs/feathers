@@ -181,8 +181,9 @@ void addStageRows(ModeValueCell& cell, ControlOf&& control, const StageParams& p
 	(void)cell.addFollower(static_cast<size_t>(p.rateMult), std::move(mult), rateLabel);
 	// THE KEY'S ROW IS A FADER PILL: the Key switch (its power) and the Spread (its fader, live with the switch off); the Spread's value is its right-end readout.
 	DeviceControl& spread = control(p.spread);
+	// (A NARROW CELL has no room for "Key" beside a percentage: the fill is the Spread there, the window prints it.)
 	(void)cell.addPillFollower(static_cast<size_t>(p.key), std::make_unique<FaderPill>(spread, control(p.key), "Key"),
-	                           [&spread]() { return spread.text(); });
+	                           narrow ? std::function<std::string()> {} : [&spread]() { return spread.text(); });
 }
 
 /// THE WINDOW'S ONE SLOT ROW: the Amount knob, the MIX knob, and the Type's cell, left to right in thirds of the row.

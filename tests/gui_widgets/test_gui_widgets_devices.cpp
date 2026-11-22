@@ -25101,18 +25101,18 @@ TEST_CASE("CLIP's card shows exactly each mode's own controls") {
 	// THE TABLE, RESTATED BY HAND FROM THE PLAN (Task 7) — which mode reads which control. Checked
 	// against the card AND against the descriptor's gates, so a card and a descriptor that drifted
 	// together would still be caught by the first.
-	const std::array<cl::Param, 11> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
+	const std::array<cl::Param, 13> gated { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback, cl::Param::Grit,
 		                                    cl::Param::Depth, cl::Param::Bits, cl::Param::Shape, cl::Param::DcBlock, cl::Param::Bal, cl::Param::Rate,
-		                                    cl::Param::Angle };
+		                                    cl::Param::Angle, cl::Param::Hard, cl::Param::Bias };
 	const std::array<std::set<cl::Param>, 15> expected {
 		std::set<cl::Param> { cl::Param::Knee },                                         // Soft
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Freq, cl::Param::Foldback },   // Texture
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Grit },                        // Grit
 		std::set<cl::Param> { cl::Param::Depth },                                        // Fold
 		std::set<cl::Param> { cl::Param::Knee, cl::Param::Bits },                        // Bits
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock },                    // Tube
-		std::set<cl::Param> { cl::Param::Shape },                                        // Jag
-		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock },                    // Lean
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock, cl::Param::Hard },   // Tube
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::Bias },                       // Jag
+		std::set<cl::Param> { cl::Param::Shape, cl::Param::DcBlock, cl::Param::Rate },   // Lean
 		std::set<cl::Param> { cl::Param::Shape, cl::Param::Bal },                        // Chonk
 		std::set<cl::Param> { cl::Param::Angle, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-S
 		std::set<cl::Param> { cl::Param::Angle, cl::Param::DcBlock, cl::Param::Rate },   // Paunch-H
@@ -42872,8 +42872,8 @@ TEST_CASE("ERODER's window knobs are watched for arm, every one of them, once th
 	// boxes): four more continuous controls that are not knobs. The Input drive is a knob and a continuous control both.
 	// AND THE DC AMOUNT, the third row of the Drive's mode cell, a box like its Shape.
 	// THE SLOTS' MIXES ARE KNOBS IN THE WINDOW NOW (two), so only their two Shapes are slot boxes; and the Type's second-parameter boxes (the Drive's
-	// Bal, Rate and Rate multiple, and each slot's three) are nine more, and the three Angles (the S row of a Paunch Type) three continuous controls that are boxes in the cells, not knobs.
-	REQUIRE(knobs.size() == continuous - 2 - 4 - 1 - 3 - 1 - 9 - 3 - 3); // and the Comb's Cutoff, the Filter box's top row there; and the Smear's Amount, Reso and Offset, rows of its own box
+	// Bal, Rate and Rate multiple, and each slot's three) are nine more, and the three Angles (the S row of a Paunch Type) three continuous controls that are boxes in the cells, not knobs. AND THE THIRD ROW'S OTHERS: Hard, Sharp and Bias in the three places are nine boxes and the three Spreads are pills (twelve continuous controls that are not knobs).
+	REQUIRE(knobs.size() == continuous - 2 - 4 - 1 - 3 - 1 - 9 - 3 - 3 - 12); // and the Comb's Cutoff, the Filter box's top row there; and the Smear's Amount, Reso and Offset, rows of its own box
 	for (const ui::Knob* knob : knobs) {
 		CHECK_FALSE(mod->watches(knob));
 	}
@@ -43729,6 +43729,68 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bi
 		rate->control().endGesture();
 		CHECK(eroField(e.d, ero::Param::DriveRate) == doctest::Approx(1.0f));
 		CHECK(rate->control().desc().key == std::string_view("eroder_drive_rate"));
+	}
+}
+
+TEST_CASE("ERODER's Key: the Amount knob reads the note's multiple while the switch is on, the pill's fader is live with the switch off, in the Drive and both slots, card and window") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	struct Place {
+		ero::Param type, amount, key, spread;
+		ui::Knob* knobs[2];
+		ui::ModeValueCell* cells[2];
+	};
+	const Place places[] = {
+		{ ero::Param::DriveMode, ero::Param::Drive, ero::Param::DriveKey, ero::Param::DriveSpread, { e.d.card->driveForTest(), e.panel->driveForTest() },
+		  { e.d.card->driveCellForTest(), e.panel->driveCellForTest() } },
+		{ ero::Param::SlotAType, ero::Param::SlotAAmount, ero::Param::SlotAKey, ero::Param::SlotASpread, { card.knobA.get(), panel.knobA.get() },
+		  { card.cellA.get(), panel.cellA.get() } },
+		{ ero::Param::SlotBType, ero::Param::SlotBAmount, ero::Param::SlotBKey, ero::Param::SlotBSpread, { card.knobB.get(), panel.knobB.get() },
+		  { card.cellB.get(), panel.cellB.get() } },
+	};
+	for (const Place& p : places) {
+		for (const ero::DriveMode type : { ero::DriveMode::Crush, ero::DriveMode::Decimate, ero::DriveMode::Slew, ero::DriveMode::Lopside, ero::DriveMode::Soft }) {
+			CAPTURE(std::string(ero::kDriveModeNames[static_cast<size_t>(type)]));
+			e.set(p.type, static_cast<float>(type));
+			e.set(p.amount, 0.5f);
+			e.set(p.key, 0.0f);
+			e.refresh();
+			for (ui::Knob* knob : p.knobs) {
+				const std::string plain = knob->printedText();
+				CHECK(plain.find("\xC3\x97") == std::string::npos);
+				e.set(p.key, 1.0f);
+				e.refresh();
+				if (ero::driveHasKey(type)) {
+					// THE MULTIPLE, restated: 32 * (1/4 / 32)^0.5 = 2.83
+					CHECK(knob->printedText() == "\xC3\x97" "2.83");
+				}
+				else {
+					CHECK(knob->printedText() == plain); // another Type: the switch is not read, and the text is the control's own
+				}
+				e.set(p.key, 0.0f);
+				e.refresh();
+				CHECK(knob->printedText() == plain);
+			}
+			if (!ero::driveHasKey(type)) {
+				continue;
+			}
+			// THE FADER IS LIVE WITH THE SWITCH OFF: the pill is shown, unpowered, and its drag writes the Spread.
+			for (ui::ModeValueCell* cell : p.cells) {
+				ui::FaderPill* pill = cell->pillFor(eroAt(p.key));
+				REQUIRE(pill != nullptr);
+				CHECK(pill->isVisible());
+				CHECK_FALSE(pill->poweredForTest());
+				e.set(p.spread, 0.0f);
+				pill->amountForTest().beginGesture();
+				pill->amountForTest().setValue(0.6);
+				pill->amountForTest().endGesture();
+				CHECK(eroField(e.d, p.spread) == doctest::Approx(0.6f));
+				CHECK(pill->powerForTest() != nullptr);
+				CHECK(pill->powerForTest()->desc().key == ero::kParamDescs[eroAt(p.key)].key);
+			}
+		}
 	}
 }
 

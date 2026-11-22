@@ -1668,6 +1668,15 @@ TEST_CASE("a device's window offers every control its card offers") {
 		else {
 			sweep("");
 		}
+		// THE RACK'S LIST VIEW is a state no gate reaches (the View is layout, not a gate): its rows (name, mute, solo, level, the playing dot's
+		// control) are on the card and must be in the window's list in the same state.
+		if (std::string(desc.traits.tag) == feathers::rack::parallel::kTraits.tag) {
+			const size_t viewParam = static_cast<size_t>(feathers::rack::parallel::Param::View);
+			const float was = f.deviceHost.fieldAt(placed.device, viewParam);
+			f.deviceHost.setField(placed.device, viewParam, 3.0f);
+			compareNow("View = List");
+			f.deviceHost.setField(placed.device, viewParam, was);
+		}
 		for (const auto& [state, missing] : missingByState) {
 			failures.push_back(tag + " (" + desc.traits.name + "), at " + state + " — the card shows, the window does not:" + missing);
 		}

@@ -38,7 +38,12 @@
 
 namespace feathers::ui {
 
-enum class RackViewKind { Strips, Tabs, Pads };
+enum class RackViewKind { Strips, Tabs, Pads, List };
+/// **TABS AND LIST SELECT ONE CHAIN AND SHOW ITS CARDS BESIDE THE SELECTOR**: every rule that is about the chain in front (the viewed chain, the
+/// pane, the front column, the arrow, the add control) holds for both; only the selector's own drawing differs.
+[[nodiscard]] constexpr bool tabbedView(RackViewKind view) noexcept {
+	return view == RackViewKind::Tabs || view == RackViewKind::List;
+}
 enum class RackRoutingKind { Parallel, Select, Keyed };
 
 /// A chain that answers every key (rather than one).

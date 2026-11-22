@@ -56,6 +56,8 @@
 
 namespace feathers::ui {
 
+class RackListView; // rack_list_view.h includes this header (its rows are `ChainStrip`s)
+
 class ChainControl final : public device::Modulatable, public RoutedControl {
 public:
 	enum class Kind : uint8_t { Level, Mute, Solo, Key, Choke };
@@ -244,6 +246,19 @@ public:
 	/// **A DOUBLE-CLICK ON THE STRIP'S OWN SURFACE (its caption, not a control) renames its chain**: the owner's handler gets the chain's id and the strip's rectangle.
 	void setRenameHandler(std::function<void(uint16_t chain, const visage::Bounds& anchor)> handler) { rename_ = std::move(handler); }
 	void doubleClickForTest(visage::Point at) { doubleClick(at); }
+	/// **A ROW OF THE LIST VIEW** is this strip with the list's three hands on its own surface (a control, the x and a double-click keep theirs):
+	/// the press, the drag and the release the list selects and scrolls by, and a right press that asks for the chain's menu.
+	enum class Surface { Down, Drag, Up };
+	void setSurfaceHandler(std::function<void(Surface, const visage::MouseEvent&)> handler) { surface_ = std::move(handler); }
+	void setContextHandler(std::function<void(uint16_t chain, const visage::Bounds& anchor)> handler) { context_ = std::move(handler); }
+	/// The selected row wears the raised surface and the accent along its edge (the front tab's dress).
+	void setSelected(bool selected) {
+		if (selected != selected_) {
+			selected_ = selected;
+			redraw();
+		}
+	}
+	[[nodiscard]] bool selectedForTest() const noexcept { return selected_; }
 	/// **A PHANTOM STRIP** (§2a): its three controls make the chain on their first edit (`ChainControl::setMaterialise`).
 	void setMaterialise(const std::function<uint16_t()>& materialise) {
 		level_.setMaterialise(materialise);
@@ -322,6 +337,9 @@ public:
 private:
 	void doubleClick(visage::Point at);
 	std::function<void(uint16_t, const visage::Bounds&)> rename_;
+	std::function<void(Surface, const visage::MouseEvent&)> surface_;
+	std::function<void(uint16_t, const visage::Bounds&)> context_;
+	bool selected_ = false;
 	ChainControl level_;
 	ChainControl muted_;
 	ChainControl soloed_;
@@ -357,6 +375,7 @@ uint16_t materialiseRole(backplane::DeviceHost& host, DeviceInstanceId rack, siz
 class ParallelRackCard final : public FxCard {
 public:
 	ParallelRackCard(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id, Notifier* notifier = nullptr);
+	~ParallelRackCard() override;
 	ParallelRackCard(backplane::DeviceHost&, WidgetRegistry&, size_t, Notifier* = nullptr) = delete;
 
 	void drawHeadExtras(visage::Canvas& canvas) override;
@@ -416,6 +435,7 @@ public:
 	[[nodiscard]] const std::vector<std::unique_ptr<ChainStrip>>& stripsForTest() const { return strips_; }
 	/// THE TABS AND PADS VIEWS (`View`): the bar, the pads panel, what is in front of the chain, its arrow, the model and the strike pulse.
 	[[nodiscard]] RackTabBar& tabBarForTest() const { return *tabs_; }
+	[[nodiscard]] RackListView& listForTest() const { return *list_; }
 	[[nodiscard]] RackPadsPanel& padsForTest() const { return *pads_; }
 	[[nodiscard]] RackPadAdd& padAddForTest() const { return *padAdd_; }
 	[[nodiscard]] RackChainRename& chainRenameForTest() const { return *chainRename_; }
@@ -480,6 +500,8 @@ private:
 	[[nodiscard]] visage::Bounds closingRule() const;
 	/// The padding across the flow in Tabs and Pads: the card's own when it stands alone, none as a member of another rack's front.
 	[[nodiscard]] float crossPad() const noexcept { return nest().depth > 0 ? 0.0f : kPad; }
+	/// THE ROW OF CHAIN `slot` AS THE CARD'S STRIPS SAY IT: the chain's one label, its role in the mode, what it holds.
+	[[nodiscard]] std::string summaryOfChain(size_t slot) const;
 	[[nodiscard]] bool padsView() const { return model_->view() == RackViewKind::Pads; }
 	/// Re-read what is in front (the viewed chain's devices) and the pulse; true when anything drawn changed.
 	bool followView();
@@ -525,6 +547,7 @@ private:
 	/// "+" ON AN EMPTY PAD asks which device, as the window's does (declared after the model it reads).
 	std::unique_ptr<RackPadAdd> padAdd_;
 	std::unique_ptr<RackChainRename> chainRename_;
+	std::unique_ptr<RackListView> list_; ///< after the rename: it holds a reference to it
 	std::unique_ptr<RackFrontColumn> front_;
 	/// THE MACRO ROW'S CAPTIONS (the knobs point into them: declared first) and its knobs, behind `macroArrow_`.
 	std::array<std::string, 8> macroCaption_;

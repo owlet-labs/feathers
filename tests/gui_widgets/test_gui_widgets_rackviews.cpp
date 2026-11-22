@@ -1831,6 +1831,10 @@ struct PaneRack {
 	RealRack r;
 	explicit PaneRack(size_t chains = 3, size_t withDevices = 3, int view = 1) {
 		r.chains(chains, withDevices);
+		// THE LANE BESIDE THE PANE FOLLOWS THE CHAIN'S STORED OPEN FLAG (the card's arrow): these cases look at the open lane.
+		for (size_t c = 0; c < chains; ++c) {
+			r.rack().setOpen(c, true);
+		}
 		r.set(pr::Param::Front, 1.0f);
 		r.view_(view);
 		for (int i = 0; i < 3; ++i) {

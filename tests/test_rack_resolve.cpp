@@ -20,6 +20,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "backplane/block_context.h"
@@ -403,7 +404,7 @@ TEST_CASE("SKLITTER's picture survives the rack's readings channel, all of it") 
 }
 
 TEST_CASE("stereo modulation's zero cost: a filter in a rack with mono routes renders the bits it rendered before it (pinned at 616d4dad)") {
-#if !(defined(__x86_64__) && defined(__linux__))
+#if !(FEATHERS_PINNED_PLATFORM)
 	MESSAGE("bit identity is pinned on Linux x86-64 only — skipped");
 	return;
 #endif

@@ -20,6 +20,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "test_heap.h"
 #include "doctest.h"
 
@@ -6278,7 +6279,7 @@ TEST_CASE("OM: with Poly off (the default) the shaper runs once on the bus and n
 
 // PLATFORM-PINNED (Linux x86-64 only): the pinned hash was measured there; libm and float contraction differ on Apple arm64/x86,
 // so the bits do too. Fold, render helper and case are guarded together so macOS has no unused function.
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 namespace {
 
 /// FNV-1a over the bits of a stereo render.

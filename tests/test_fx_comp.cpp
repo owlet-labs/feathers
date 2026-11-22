@@ -16,6 +16,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/busutil/busutil_types.h"
@@ -956,7 +957,7 @@ TEST_CASE("LQ: at the default stereo settings COMP renders bit-identically to th
 		const uint64_t h = lqRenderHash(v.s);
 		const std::string seen = std::string(v.name) + " hash " + std::to_string(h);
 		MESSAGE(seen);
-#if defined(__x86_64__) && defined(__linux__) // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
+#if FEATHERS_PINNED_PLATFORM // the hash was taken on Linux x86-64; arm64 rounds differently (CLAUDE.md: platform-pinned)
 		CHECK(h == v.hash);
 #else
 		(void)h; // computed on every platform, compared only where it was pinned

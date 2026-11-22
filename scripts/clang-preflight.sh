@@ -120,6 +120,7 @@
 # compiles is a pre-flight that reports clean and is wrong.
 #
 #   Usage:  scripts/clang-preflight.sh [build-dir]      (default: build)
+#           PREFLIGHT_ONLY=<regex> scripts/clang-preflight.sh   scans only matching TUs (the static checks always run)
 #
 # NOTE ON `-w`: do not add it. In clang, `-w` is a hard suppress that later `-W` flags do NOT
 # re-enable, so the scan goes silent and reports success having asked nothing. That cost one round of
@@ -143,6 +144,10 @@ if [[ ! -f $BUILD/build.ninja ]]; then
 	exit 2
 fi
 
+# STATIC CHECKS, FIRST (they are instant) FOR WHAT NO LINUX COMPILE SEES: aligned_alloc sizes that macOS refuses, and bit-exact pins not guarded to
+# Linux x86-64. See the script's own header.
+python3 "$root/scripts/macos-static-checks.py" "$root" || exit 1
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -160,8 +165,16 @@ if [[ ! -s $tmp/compdb.json ]]; then
 	exit 2
 fi
 
+# THE GENERATED HEADERS (design tokens, shaders, fonts, branding, credits, build stamp) must exist, or every UI TU is a
+# "file not found" and the scan says nothing about it. Cheap when they are built.
+gen=$(ninja -C "$BUILD" -t targets all | sed -n -E 's/^((generated|feathers-ui-[a-z]+_generated)\/[^:]*\.h): CUSTOM_COMMAND$/\1/p')
+if [[ -n $gen ]]; then
+	# shellcheck disable=SC2086
+	ninja -C "$BUILD" $gen > "$tmp/gen.log" 2>&1 || { cat "$tmp/gen.log"; echo "clang-preflight: could not build the generated headers" >&2; exit 2; }
+fi
+
 CLANG="$CLANG" ROOT="$root" python3 - "$tmp/compdb.json" > "$tmp/scan.sh" <<'PY'
-import json, io, shlex, sys, os
+import json, io, re, shlex, sys, os
 db = json.load(io.open(sys.argv[1]))
 clang = os.environ["CLANG"]
 # ANCHORED, not a substring — see the header and backlog BX. `'/src/' in f` matched the home path.
@@ -176,6 +189,9 @@ for e in db:
 	# reads as linker inputs and warns about, noise that is not ours.
 	if not f.endswith(('.cpp', '.cc', '.cxx', '.mm')):
 		continue
+	# PREFLIGHT_ONLY=<regex>: scan only the TUs whose path matches (iterating on one file; the full run is the gate).
+	if os.environ.get('PREFLIGHT_ONLY') and not re.search(os.environ['PREFLIGHT_ONLY'], f):
+		continue
 	seen.add(f)
 	args, keep, i = shlex.split(e['command']), [], 0
 	while i < len(args):
@@ -187,8 +203,23 @@ for e in db:
 		i += 1
 	# -DFEATHERS_FORCE_SIMDE: the SSE2 headers take macOS's arm64 road (SIMDe), so a target missing SIMDe's
 	# include path fails HERE ("simde/x86/sse2.h not found" reached CI first on 2026-10-06).
-	cmd = [clang, '-fsyntax-only', '-Wall', '-Wextra', '-DFEATHERS_FORCE_SIMDE'] + keep + [f]
+	# APPLE CLANG'S EXTRAS: -Wpotentially-evaluated-expression is on by default there and reached CI as a -Werror on
+	# `typeid(*shown[i])` (a call inside a typeid operand is evaluated); Linux clang needs it asked for. -Wrange-loop-analysis
+	# is likewise newer-clang -Wall territory.
+	apple = ['-Wpotentially-evaluated-expression', '-Wrange-loop-analysis']
+	# -ferror-limit=0: clang stops analysing a TU after 20 errors, and this host's clang-15 on libstdc++-14 reports a handful
+	# in system headers (plus the structured-binding lambda class filtered below) BEFORE it reaches the later test cases.
+	# The default limit made the whole TU silent: a `typeid(*shown[i])` that Apple clang refuses at line 43484 of
+	# test_gui_widgets_devices.cpp produced no warning here until the limit was lifted.
+	cmd = [clang, '-fsyntax-only', '-ferror-limit=0', '-Wall', '-Wextra'] + apple + ['-DFEATHERS_FORCE_SIMDE'] + keep + [f]
 	print(' '.join(shlex.quote(x) for x in cmd) + ' 2>&1 || true')
+	# SECOND PASS, THE OTHER ROAD: a test that guards its bit-exact pins with FEATHERS_PINNED_PLATFORM (tests/platform_pin.h)
+	# is compiled again with the pin forced off, which is the branch macOS compiles. A helper, counter or constant used only
+	# inside the pinned branch is unused there, and -Werror makes that a build failure (v0.2.1's macOS leg). Tests only:
+	# src/ has no such macro.
+	if f.startswith(root + 'tests/') and 'FEATHERS_PINNED_PLATFORM' in io.open(f, encoding='utf-8', errors='ignore').read():
+		cmd2 = cmd[:-1] + ['-DFEATHERS_FORCE_UNPINNED', f]
+		print(' '.join(shlex.quote(x) for x in cmd2) + " 2>&1 | sed 's/$/  [pin forced off: the non-Linux-x86-64 road]/' || true")
 PY
 
 # Only OUR files: a warning inside a vendored header is not ours to fix.
@@ -204,9 +235,19 @@ fi
 # ONE ERROR CLASS IS FILTERED, A VERSION GAP: clang-15 rejects a lambda capturing a C++20 structured binding
 # ("reference to local binding … declared in enclosing function"); clang 16+ and the macOS runner's Apple
 # clang accept it, and the same tests have built on macOS CI. 50 such lines on 2026-10-06, all false.
-out=$(bash "$tmp/scan.sh" 2>/dev/null \
+# `declared in enclosing lambda expression` is the same clang-15 class (the lambda form of the message above).
+# The scan runs PREFLIGHT_JOBS at a time (default 4, niced by env.sh's priority): it is serial work over ~180 TUs, and
+# an hour or more on a loaded host when one at a time.
+JOBS=${PREFLIGHT_JOBS:-4}
+# Each command writes its own file, so two compilers never interleave a diagnostic line.
+mkdir "$tmp/outs"
+head -1 "$tmp/scan.sh" > "$tmp/scan_cd.sh"
+tail -n +2 "$tmp/scan.sh" | tr '\n' '\0' \
+	| (. "$tmp/scan_cd.sh"; xargs -0 -n1 -P "$JOBS" bash -c 'f=$(mktemp -p "$0"); eval "$1" > "$f" 2>/dev/null' "$tmp/outs")
+cat "$tmp"/outs/* > "$tmp/scan.out" 2>/dev/null
+out=$(cat "$tmp/scan.out" \
       | grep -E "warning:|error:" \
-      | grep -v "reference to local binding .* declared in enclosing function" \
+      | grep -v "reference to local binding .* declared in enclosing \(function\|lambda expression\)" \
       | grep -E "$root/(src|tests)/" \
       | grep -v "/libs/" \
       | sort -u)
@@ -337,6 +378,7 @@ INITONLY
 # THE TU COUNT IS PART OF THE VERDICT, not a detail. "clean" without it is indistinguishable from
 # "scanned nothing", which is how this script's own first run lied.
 echo "clang-preflight: clean over $tus TU(s) — unused-const-variable, unused-private-field,"
-echo "                 unused-lambda-capture, braced-scalar-init and the rest of -Wall -Wextra."
+echo "                 unused-lambda-capture, braced-scalar-init and the rest of -Wall -Wextra, plus Apple's"
+echo "                 potentially-evaluated-expression, and the tests again with the platform pins forced off."
 # THE VERSION IS READ, NOT WRITTEN: this line said "clang-14" for a day while the image ran clang-15.
 echo "                 NOT a promise macOS is green: this is $("$CLANG" --version | head -1) on libstdc++, not Apple clang."

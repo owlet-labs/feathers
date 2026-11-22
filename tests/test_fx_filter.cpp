@@ -36,6 +36,7 @@
 //     boundary nobody checks lasts one busy afternoon.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "fx/filter/multimode_filter.h"
@@ -2533,7 +2534,7 @@ uint64_t foldBits(uint64_t h, const std::vector<float>& v) {
 } // namespace
 
 TEST_CASE("stereo modulation's zero cost: the filter renders the bits it rendered before it (pinned at 616d4dad)") {
-#if !(defined(__x86_64__) && defined(__linux__))
+#if !(FEATHERS_PINNED_PLATFORM)
 	MESSAGE("bit identity is pinned on Linux x86-64 only — skipped");
 	return;
 #endif

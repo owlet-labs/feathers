@@ -20,6 +20,7 @@
  */
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "doctest.h"
 
 #include "character/fixedpoint.h"
@@ -6976,7 +6977,7 @@ TEST_CASE("DC stage: Tube, Fold and Lean in the Drive of Dust, Rust and the Comb
 	for (const Pin& pin : pins) {
 		CAPTURE(static_cast<int>(pin.mode));
 		CAPTURE(static_cast<int>(pin.type));
-#if defined(__linux__) && defined(__x86_64__)
+#if FEATHERS_PINNED_PLATFORM
 		CHECK(engineHash(pin.mode, pin.type, pin.shape) == pin.hash);
 #else
 		(void)pin;

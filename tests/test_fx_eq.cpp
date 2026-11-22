@@ -25,6 +25,7 @@
 // lands, Amount's exact inverse through two devices in series, the Nyquist fade, off, and the rest.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "platform_pin.h"
 #include "test_heap.h"
 #include "doctest.h"
 #include "portable_aligned_alloc.h"
@@ -1265,7 +1266,7 @@ TEST_CASE("EQ Key Track: a stored switch, off by default and not modulatable, un
 
 // PLATFORM-PINNED: the hashes were measured on Linux x86-64; libm and float contraction differ on Apple, so the bits do too (the same
 // reason vox-voice and flagship carry the platform-pinned label). Case-level guard: the rest of the suite still runs on macOS.
-#if defined(__x86_64__) && defined(__linux__)
+#if FEATHERS_PINNED_PLATFORM
 TEST_CASE("Rack stage 2 / §7a: lifting the analyser out of eq.cpp left the EQ's readings BIT-IDENTICAL — every published frame, three views, both taps, by hash of the bits") {
 	// THE PROOF THE LIFT CHANGED NOTHING: a stereo noise (L and R different) through a +6 dB bell, every reading the EQ
 	// publishes over two seconds, in each of the three views, hashed bit by bit (FNV-1a over each float's bits). The

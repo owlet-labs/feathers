@@ -262,6 +262,7 @@ TEST_CASE("state blocks: only a harvestOnTick block reaches the store between sa
 }
 
 TEST_CASE("state blocks: the 16-bit words round-trip every bit of a u64, a double and a float, and refuse a damaged one") {
+	// PLATFORM-NEUTRAL: fixed byte patterns written and read back, a round trip rather than a render; green on the macOS leg of the v0.2.1 release CI run.
 	std::array<float, 16> buf {};
 	device::BlockWriter w(buf.data(), buf.size());
 	w.u64(0xFEDCBA9876543210ull);

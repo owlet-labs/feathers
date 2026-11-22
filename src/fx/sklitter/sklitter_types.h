@@ -1258,8 +1258,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     // the moving term — one number that displaces every field by a different amount, because each
     // field carries its own phi multiplier. The pattern recombines rather than sliding.
     {"gamma", "Gamma", kCoordMin, kCoordMax, 0.0, false, device::Unit::Number, {}, false, false,
-     "Re-seeds the whole pattern — one lap displaces every phi field by a different amount. "
-     "On hardware this is the hidden push-and-twist control", 0, 0.0, {}, static_cast<int16_t>(Param::Mode), kLooperModes},
+     "Re-seeds the whole pattern — one lap displaces every phi field by a different amount.", 0, 0.0, {}, static_cast<int16_t>(Param::Mode), kLooperModes},
 
     {"pitch_scale", "Pitch Scale", 0.0, 24.0, 0.0, true, device::Unit::Choice, kPitchScaleNames, false, false,
      "Which scale, or which fixed shift, Pitch mode snaps to", 0, 0.0, {}, static_cast<int16_t>(Param::Mode), kModeBit(Mode::Pitch)},
@@ -1450,7 +1449,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the MPC's "
+     .tooltip = "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the "
                 "heaviest, at full), or the share of the groove template. Drag a digit to move that place",
      .zones = 0,
      .modSpan = 0.0,

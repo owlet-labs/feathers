@@ -831,6 +831,8 @@ void Rack::reset() {
 	// A RESET FORGETS THE NOTE ("as if just switched on": Key Track falls back to the knobs until a key is held).
 	heardNote_ = false;
 	cornersPrimed_ = false;
+	padHeld_ = {};
+	padLast_ = -1;
 	// A RESET LANDS IN THE MODE ASKED FOR, AT FULL LEVEL: nothing is sounding to fade.
 	takeWantedStructure();
 	lr4Engine_.reset();
@@ -1337,9 +1339,59 @@ void Rack::setNoteContext(const device::NoteContext& note) {
 	}
 	if (const Lineup* live = live_.load(std::memory_order_relaxed); live != nullptr) {
 		for (Branch* b : live->branches) {
-			b->chain.setNoteContext(note);
+			b->chain.setNoteContext(padNoteFor(b, note));
 		}
 	}
+	padStruck_ = {}; // (a strike gates for the block it arrived in; a held pad goes on in `padHeld_`)
+	padStruckLast_ = -1;
+}
+
+void Rack::padFold(int key, bool on) noexcept {
+	if (key < 0 || key > 127) {
+		return;
+	}
+	const uint64_t bit = uint64_t { 1 } << (key & 63);
+	uint64_t& word = padHeld_[static_cast<size_t>(key) >> 6];
+	if (on) {
+		word |= bit;
+		padLast_ = key;
+		padStruck_[static_cast<size_t>(key) >> 6] |= bit;
+		padStruckLast_ = key;
+		return;
+	}
+	word &= ~bit;
+	if (padLast_ == key) {
+		// the newest key was let go: fall back to the highest key still down, or none
+		padLast_ = -1;
+		for (int k = 127; k >= 0; --k) {
+			if (((padHeld_[static_cast<size_t>(k) >> 6] >> (k & 63)) & 1u) != 0) {
+				padLast_ = k;
+				break;
+			}
+		}
+	}
+}
+
+// A PAD STRIKE ENTERS AT THIS RACK, so the note context the host handed it never held the key: a device in a pad's chain that follows the
+// note (HARM's sines) would see no gate and no pitch while the drum, which takes the note itself, sounded. A chain is handed its own key
+// while that pad is down (an Any chain, the newest pad down); otherwise what the host said.
+device::NoteContext Rack::padNoteFor(const Branch* b, device::NoteContext note) const noexcept {
+	const int newest = padLast_ >= 0 ? padLast_ : padStruckLast_;
+	if (newest < 0) {
+		return note;
+	}
+	const int chainKey = b->key.load(std::memory_order_relaxed);
+	int key = newest;
+	if (chainKey >= 0) {
+		const size_t w = static_cast<size_t>(chainKey) >> 6;
+		if ((((padHeld_[w] | padStruck_[w]) >> (chainKey & 63)) & 1u) == 0) {
+			return note;
+		}
+		key = chainKey;
+	}
+	note.gate = true;
+	note.pitchSemitones = static_cast<float>(key);
+	return note;
 }
 
 void Rack::setTransportClock(const device::TransportClock& clock) {
@@ -1970,6 +2022,7 @@ size_t Rack::emitNotes(const device::TransportClock& clock, uint64_t sampleNow, 
 			e.noteId = kPadNoteId;
 			e.key = u.key;
 			e.velocity = u.on ? static_cast<double>(u.velocity) : 0.0;
+			padFold(u.key, u.on);
 		}
 		if (n > 0) {
 			padMade = processNotes(padIn_.data(), n, out, capacity);

@@ -24,6 +24,7 @@
 
 #include "backplane/block_context.h"
 #include "fx/drum/drum_types.h"
+#include "fx/harm/harm_types.h"
 #include "persist_rig.h"
 #include "plugin/device_registry.h"
 #include "rack/parallel_rack.h"
@@ -33,6 +34,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <new>
 #include <string>
@@ -456,4 +458,140 @@ TEST_CASE("chain key: one Rack holds more than 128 chains, and a key is per chai
 	CHECK(k.rk->chainKey(129) == 60);
 	CHECK(k.rk->chainKey(0) == 61);
 	CHECK(k.rk->slotOf(129) == par::kNoChainSlot); // past the 64 slots: no route, still a key
+}
+
+namespace {
+
+/// The amplitude of `hz` in `x` (a Goertzel bin over the whole run, scaled so a unit sine reads 1).
+double toneAmplitude(const std::vector<float>& x, double hz) {
+	const double w = 2.0 * 3.14159265358979323846 * hz / kRate;
+	double re = 0.0;
+	double im = 0.0;
+	for (size_t i = 0; i < x.size(); ++i) {
+		re += x[i] * std::cos(w * static_cast<double>(i));
+		im += x[i] * std::sin(w * static_cast<double>(i));
+	}
+	return 2.0 * std::sqrt(re * re + im * im) / static_cast<double>(x.size());
+}
+
+} // namespace
+
+TEST_CASE("chain key: a HARM behind a drum in a keyed chain sounds its harmonic of the chain's key") {
+	// Key 60 is 261.63 Hz; HARM is set to the 4:1 harmonic, so its sine is expected at 1046.5 Hz. (The drum alone has nothing there to speak of.)
+	constexpr double kExpected = 261.6255653 * 4.0;
+	const auto render = [&](int chainKey, bool drum, bool harm) {
+		KeyRack k(1);
+		if (drum) {
+			k.addDrum(0, drum::Kind::Kick, 60);
+		}
+		if (harm) {
+			rack::RackBridge& b = *k.rk->chainAt(0)->bridge();
+			const DeviceInstanceId id = b.addDevice("HARM");
+			REQUIRE(id != kNoInstance);
+			k.run(2);
+			b.setField(id, static_cast<size_t>(feathers::fx::harm::Param::Harmonic),
+			           static_cast<float>(feathers::fx::harm::harmonicIndexOf(4, 1)));
+			k.run(2);
+		}
+		k.rk->setChainKey(0, chainKey);
+		k.run(2);
+		k.forget();
+		k.block({ on(60, 17) });
+		k.run(40);
+		return k.heardL;
+	};
+	const auto harmOnly = render(par::kAnyKey, false, true);
+	const auto drumOnly = render(par::kAnyKey, true, false);
+	const auto drumHarm = render(par::kAnyKey, true, true);
+	const auto keyed = render(60, true, true);
+	const double floor = 0.02; // a HARM sine at full Level is a good fraction of unity; the drum's own energy at 1046 Hz is below this
+	CHECK(toneAmplitude(drumOnly, kExpected) < floor);
+	CHECK(toneAmplitude(harmOnly, kExpected) > floor);
+	CHECK(toneAmplitude(drumHarm, kExpected) > floor);
+	CHECK(toneAmplitude(keyed, kExpected) > floor);
+}
+
+TEST_CASE("chain key: a pad strike (the Pads view's own note) reaches a HARM behind a drum, which sounds its harmonic of the pad's key") {
+	constexpr double kExpected = 261.6255653 * 4.0;
+	const auto render = [&](bool drum, bool harm) {
+		KeyRack k(1);
+		if (drum) {
+			k.addDrum(0, drum::Kind::Kick, 60);
+		}
+		if (harm) {
+			rack::RackBridge& b = *k.rk->chainAt(0)->bridge();
+			const DeviceInstanceId id = b.addDevice("HARM");
+			REQUIRE(id != kNoInstance);
+			k.run(2);
+			b.setField(id, static_cast<size_t>(feathers::fx::harm::Param::Harmonic),
+			           static_cast<float>(feathers::fx::harm::harmonicIndexOf(4, 1)));
+			k.run(2);
+		}
+		k.rk->setChainKey(0, 60);
+		k.run(2);
+		k.forget();
+		REQUIRE(k.rk->postPadNote(60, true, 0.8f));
+		k.run(40); // the pad held down
+		return k.heardL;
+	};
+	const auto drumOnly = render(true, false);
+	const auto harmOnly = render(false, true);
+	const auto drumHarm = render(true, true);
+	const double floor = 0.02;
+	CHECK(toneAmplitude(drumOnly, kExpected) < floor);
+	CHECK(toneAmplitude(harmOnly, kExpected) > floor);
+	CHECK(toneAmplitude(drumHarm, kExpected) > floor);
+}
+
+namespace {
+
+/// HARM alone in a chain keyed to 60 (4:1: 1046.5 Hz). `strike` runs the first block; `after` the rest. The run is `blocks` long.
+std::vector<float> harmRun(const std::function<void(KeyRack&)>& strike, int blocks) {
+	KeyRack k(1);
+	rack::RackBridge& b = *k.rk->chainAt(0)->bridge();
+	const DeviceInstanceId id = b.addDevice("HARM");
+	REQUIRE(id != kNoInstance);
+	k.run(2);
+	b.setField(id, static_cast<size_t>(feathers::fx::harm::Param::Harmonic),
+	           static_cast<float>(feathers::fx::harm::harmonicIndexOf(4, 1)));
+	b.setField(id, static_cast<size_t>(feathers::fx::harm::Param::Release), -9.0f);
+	k.rk->setChainKey(0, 60);
+	k.run(2);
+	k.forget();
+	strike(k);
+	k.run(blocks);
+	return k.heardL;
+}
+
+} // namespace
+
+TEST_CASE("chain key: a note that begins and ends inside one block still gates a HARM that block, and the release is honoured after") {
+	constexpr double kExpected = 261.6255653 * 4.0;
+	const auto firstBlock = [](const std::vector<float>& v) { return std::vector<float>(v.begin(), v.begin() + kBlock); };
+	// HOST NOTES at offsets 10 and 40 in the one 256-sample block.
+	const auto host = harmRun([](KeyRack& k) { k.block({ on(60, 10), off(60, 40) }); }, 0);
+	// A PAD STRUCK AND LET GO before the block (the Pads view's own note).
+	const auto pad = harmRun(
+	    [](KeyRack& k) {
+		    REQUIRE(k.rk->postPadNote(60, true, 0.8f));
+		    REQUIRE(k.rk->postPadNote(60, false, 0.0f));
+		    k.block();
+	    },
+	    0);
+	const auto silent = harmRun([](KeyRack& k) { k.block(); }, 0);
+	CHECK(toneAmplitude(firstBlock(host), kExpected) > 0.02);
+	CHECK(toneAmplitude(firstBlock(pad), kExpected) > 0.02);
+	CHECK(toneAmplitude(firstBlock(silent), kExpected) < 0.005);
+	// THE RELEASE TAKES EFFECT ON THE FOLLOWING BLOCKS: with a short release the tone is gone by the end of the run.
+	const auto hostLong = harmRun([](KeyRack& k) { k.block({ on(60, 10), off(60, 40) }); }, 60);
+	const auto tail = std::vector<float>(hostLong.end() - 4 * kBlock, hostLong.end());
+	CHECK(toneAmplitude(tail, kExpected) < 0.005);
+	const auto padLong = harmRun(
+	    [](KeyRack& k) {
+		    REQUIRE(k.rk->postPadNote(60, true, 0.8f));
+		    REQUIRE(k.rk->postPadNote(60, false, 0.0f));
+		    k.block();
+	    },
+	    60);
+	CHECK(toneAmplitude(std::vector<float>(padLong.end() - 4 * kBlock, padLong.end()), kExpected) < 0.005);
 }

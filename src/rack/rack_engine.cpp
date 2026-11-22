@@ -1934,9 +1934,22 @@ void RackEngine::updateNoteContext() {
 			}
 		}
 	}
+	int strikeKey = -1; // the last note-on of this block, held at its end or not
+	for (const device::NoteEvent& e : events) {
+		if (e.kind == device::NoteEvent::Kind::On && e.velocity > 0.0 && e.key >= 0) {
+			strikeKey = e.key;
+		}
+	}
 	const bool struck = heldKeys_.fold(events.data(), events.size());
 	noteContext_.gate = !heldKeys_.empty();
-	if (noteContext_.gate) {
+	// **A NOTE THAT BEGAN AND ENDED INSIDE ONE BLOCK STILL GATES THAT BLOCK**: the context is one per block, so a short hit (a sequenced drum, a
+	// small note at a large buffer) would otherwise be gone before any device saw its gate. The release takes effect on the next block.
+	if (!noteContext_.gate && strikeKey >= 0) {
+		noteContext_.gate = true;
+		const float tune = static_cast<size_t>(strikeKey) < keyTuning_.size() ? keyTuning_[static_cast<size_t>(strikeKey)] : 0.0f;
+		noteContext_.pitchSemitones = static_cast<float>(strikeKey) + tune;
+	}
+	if (!heldKeys_.empty()) {
 		// THE RULE'S NOTE. The pitch is only updated while something is down, so a device releasing its
 		// envelope keeps the note it was playing rather than snapping to a default on the way out — and a
 		// keytracking filter keeps its corner rather than jumping to the reference key's.

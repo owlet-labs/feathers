@@ -1025,7 +1025,9 @@ TEST_CASE("moving between two controls restarts the delay and the text follows t
 	clock.now += 2.0;
 	(void)placed.card->update();
 	REQUIRE(layer.shown());
-	CHECK(layer.text() == declaredText(boundControl(b)->desc()));
+	// A SURFACE'S OWN TEXT (`setTooltipOverride`, the Delay's Time and Mix by Mode and Dub) is what the layer shows when one is set.
+	CHECK(layer.text() == (boundControl(b)->tooltipOverride() != nullptr ? std::string(boundControl(b)->tooltipOverride())
+	                                                                      : declaredText(boundControl(b)->desc())));
 }
 
 TEST_CASE("OWLTT's graph keeps its own tooltip and the card's layer stays hidden over it") {

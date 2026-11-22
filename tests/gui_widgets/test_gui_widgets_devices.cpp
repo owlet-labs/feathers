@@ -49,6 +49,8 @@
 #include "fx/phaser/phaser_types.h"
 #include "fx/delay/delay.h" // backlog LF: the taps strip is asserted against a running engine
 #include "plugin/ui/delay_card.h"
+#include "plugin/ui/delay_expanded.h"
+#include "plugin/ui/delay_tips.h"
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/noise_card.h"
 #include "plugin/ui/macro_polarity.h"
@@ -43135,6 +43137,46 @@ TEST_CASE("drum tooltips follow the Kind: Tone, Snap, Decay, Tune and High Pass 
 	CHECK(tipOf(ddv::Param::Tune) == ddv::kTunePitchedTip);
 	u.set(ddv::Param::Keys, 0.0);
 	CHECK(tipOf(ddv::Param::Tune) == ddv::kTuneTips[static_cast<size_t>(feathers::drum::Kind::Snare)]);
+}
+
+TEST_CASE("Delay's Time and Mix hover text follow the Mode, Sync and Dub, on the card and on the window alike") {
+	namespace dly = feathers::fx::delay;
+	DynCardFixture<ui::DelayCard> d { dly::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::DelayExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	// THE TWO SURFACES' OWN CONTROLS, the card's from its boxes and the window's from its seam.
+	const auto cardTip = [&](dly::Param p) { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(p)))); };
+	const auto winTip = [&](dly::Param p) { return std::string(ui::tooltipOf(&win->controlForTest(p))); };
+	const auto set = [&](dly::Param p, double v) {
+		d.set(static_cast<size_t>(p), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	const std::string declaredMix = dly::kParamDescs[static_cast<size_t>(dly::Param::Mix)].tooltip;
+	// THE MODE NAMES THE TIME: a Multi-Tap's pattern, a Reverse's chunk, and a tap's own multiplier in the rest.
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::MultiTap));
+	CHECK(cardTip(dly::Param::Time).rfind("How long the whole tap pattern is", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::Reverse));
+	CHECK(cardTip(dly::Param::Time).rfind("How long each reversed chunk is", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::Clean));
+	CHECK(cardTip(dly::Param::Time).rfind("How many of", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	// THE SYNC NAMES THE BASE: a free time, then a division.
+	set(dly::Param::Sync, 0.0);
+	CHECK(cardTip(dly::Param::Time).find("the free time") != std::string::npos);
+	set(dly::Param::Sync, static_cast<double>(dly::kSyncNoteChoice));
+	CHECK(cardTip(dly::Param::Time).find("division") != std::string::npos);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	// MIX IS THE SEND WITH DUB ON, and the declared dry against wet with it off.
+	set(dly::Param::Dub, 0.0);
+	CHECK(cardTip(dly::Param::Mix) == declaredMix);
+	CHECK(winTip(dly::Param::Mix) == declaredMix);
+	set(dly::Param::Dub, 1.0);
+	CHECK(cardTip(dly::Param::Mix) == ui::delay_tips::mixTip(1));
+	CHECK(winTip(dly::Param::Mix) == ui::delay_tips::mixTip(1));
+	CHECK(cardTip(dly::Param::Mix) != declaredMix);
 }
 
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {

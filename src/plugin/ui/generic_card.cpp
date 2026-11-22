@@ -759,6 +759,7 @@ void GenericCard::setModulation(ModState* state, EditHistory* history) {
 /// Without this the hiding would be correct and invisible — right on the next resize, and wrong for
 /// every frame until one. Asked once per paint, against one float.
 bool GenericCard::updateContent() {
+	refreshTips();
 	// **THE PER-FRAME HOOK, WHICH IS NOT INSIDE A PAINT.** The gate poll lived in `drawContent` and
 	// therefore MOVED CHILD BOUNDS WHILE THE CANVAS WAS BEING DRAWN. `FxCard::update` is the road
 	// every host drives every frame for exactly this — a meter, a playhead, a graph — and its return

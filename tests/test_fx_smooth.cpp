@@ -568,34 +568,35 @@ std::pair<int32_t, int32_t> probePeaks(const smooth::Settings& s, float value, i
 
 } // namespace
 
-TEST_CASE("a full-scale voice at Drive centre just reaches the Chebyshevs' knee at x = 1; more Drive is clipped to it") {
-	// THE KNEE IS 0 dBFS. 1.0 here is 0 dBFS, 2^24. The Chebyshev zones read x = scaledInput / 2^31 after `<< 7`
-	// saturation, so x = driven / 2^24 before the clip.
+TEST_CASE("a full-scale voice at Drive centre drives the Chebyshevs to their hold, where the curve peaks; less input passes") {
+	// THE HOLD IS WHERE |f| PEAKS. 1.0 here is 0 dBFS, 2^24. The Chebyshev zones read x = scaledInput / 2^31 after the `<< 7`
+	// saturation, so x = driven / 2^24 before the hold, and the hold clamps the driven input at `holdPos` / `holdNeg`.
+	const auto heldZoneInput = [](float hold) { return std::min(static_cast<int32_t>(hold * 16777216.0f), kZeroDbfs - 1) * 128; };
 	for (int mode : { 0, 1 }) {
 		smooth::Settings s = settingsWith(mode, 0.5f, 0.0f, 0.0f);
+		const smooth::Picture p = smooth::pictureOf(s);
 		const auto [driven, zoneInput] = probePeaks(s, 1.0f);
-		INFO("mode " << mode);
-		// Unity drive: the input as it came, 2^24, which is x = 1: the knee, with nothing clipped yet...
+		INFO("mode " << mode << ": hold " << p.weights.holdPos);
+		REQUIRE(p.weights.holdPos < 1.0f);
+		REQUIRE(p.weights.holdPos > 0.02f);
+		// Unity drive: the input as it came, 2^24, which is x = 1 - past the hold - so the zone is handed the hold...
 		CHECK(driven == kZeroDbfs);
-		CHECK(static_cast<double>(driven) / 16777216.0 == 1.0);
-		// ...so the zone is handed the saturation's ceiling, (2^24 - 1) << 7.
-		CHECK(zoneInput == 0x7FFFFF80);
-		// A -6 dBFS voice at unity no longer reaches the knee: x = 0.5 passes untouched.
-		const auto half = probePeaks(s, 0.5f);
-		CHECK(half.second == 1 << 30);
-		CHECK(static_cast<double>(half.second) / 2147483648.0 == 0.5);
+		CHECK(zoneInput == heldZoneInput(p.weights.holdPos));
+		// ...and an input a quarter under the hold passes untouched (x = 0.75 hold).
+		const auto under = probePeaks(s, 0.75f * p.weights.holdPos);
+		CHECK(static_cast<double>(under.second) / 2147483648.0 == doctest::Approx(0.75 * static_cast<double>(p.weights.holdPos)).epsilon(1e-4));
 	}
 
-	// DRIVE 2x PUTS A HALF-SCALE VOICE AT THE KNEE, and a full one past it: flat-topped at the same ceiling.
+	// DRIVE 2x PUTS A HALF-HOLD VOICE AT THE HOLD, and a full one past it: held at the same value.
 	{
 		smooth::Settings s = settingsWith(0, 0.5f, knobForGain(2.0), 0.0f);
 		const float gain = smooth::driveGainOf(smooth::firmwareControlsOf(s).drive);
 		CHECK(gain == doctest::Approx(2.0).epsilon(1.0e-6));
-		const auto atKnee = probePeaks(s, 0.5f);
-		CHECK(static_cast<double>(atKnee.first) / 16777216.0 == doctest::Approx(1.0).epsilon(1.0e-5));
-		CHECK(static_cast<double>(atKnee.second) / 2147483648.0 == doctest::Approx(1.0).epsilon(1.0e-5));
+		const smooth::Picture p = smooth::pictureOf(s);
+		const auto atHold = probePeaks(s, 0.5f * p.weights.holdPos);
+		CHECK(static_cast<double>(atHold.second) / 2147483648.0 == doctest::Approx(static_cast<double>(p.weights.holdPos)).epsilon(1.0e-4));
 		const auto past = probePeaks(s, 1.0f);
-		CHECK(past.second == 0x7FFFFF80);
+		CHECK(past.second == heldZoneInput(p.weights.holdPos));
 	}
 
 	// ZONE 7 (Poly) CLIPS AT THE REFERENCE'S 0 dBFS, 1.0 — not at half of it.
@@ -698,8 +699,8 @@ namespace {
 
 #if defined(__linux__) && defined(__x86_64__)
 TEST_CASE("HP Wet and Sub Thru at their defaults leave the shaper's render to the bit (hash re-pinned at the level law change: knee at 0 dBFS, peak-normalised curve)") {
-	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 17226549554718540595ull);
-	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 13256433672659082274ull);
+	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 3120022950355029911ull);
+	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 3634392610021785892ull);
 }
 #endif
 
@@ -1205,7 +1206,7 @@ TEST_CASE("after a loud burst the output reaches EXACT zero within 50 ms, on bot
 						if (t.tailPeak > 1.0e-3f || t.lastSoundSeconds > 1.0) { // a loud drone, or a quiet one that never ends
 							// A DRONE — only where the firmware's own feedback sustains itself: ONLY WITH THE FEEDBACK UP.
 							CHECK(twist > 0.375f); // the 0.5+ meta zone carries the feedback too
-							// Since the peak normalisation (every curve peaks at 0 dBFS) the loop gain is higher, and Add, Ring and FM drone in the feedback zone too.
+							// The feedback tap is scaled by 1 / the peak factor, so the loop keeps its pre-normalisation calibration.
 							drones.push_back(std::to_string(mode) + "@" + std::to_string(twist) + "/" + std::to_string(drive));
 							continue;
 						}
@@ -1221,7 +1222,7 @@ TEST_CASE("after a loud burst the output reaches EXACT zero within 50 ms, on bot
 	}
 	MESSAGE("slowest tail to exact zero: " << slowest * 1000.0 << " ms; drones: " << drones.size());
 	CHECK(slowest > 0.0);   // non-vacuity: tails exist and were timed
-	CHECK(drones.size() < 100);
+	CHECK(drones.size() < 40);
 }
 
 TEST_CASE("HP Wet and Sub Thru engaged: a burst's tail still reaches exact zero within the rest") {
@@ -1323,22 +1324,23 @@ TEST_CASE("the ceiling sits at the knee, 0 dBFS over the gain, in every zone tha
 		CHECK(cheby.clips);
 		CHECK(poly.clips);
 		CHECK_FALSE(fm.clips);
-		// AND IT IS WHERE THE CORE ACTUALLY STARTS TO SATURATE: just under the ceiling the zone's input is still
-		// moving, just over it the probe reads the ceiling.
+		// AND THE CORE SATURATES AT THE HOLD, which is where the ceiling's 1.0 is scaled to (the ceiling marks the input
+		// reaching x = 1; the curve holds at `holdPos` of it): just under the held ceiling the zone's input is still moving,
+		// just over it the probe reads the held value.
 		smooth::ShapeProbe under;
 		smooth::ShapeProbe over;
 		const auto zoneInputAt = [&](const smooth::Picture& p, float input, smooth::ShapeProbe* probe) {
 			(void)smooth::shapeSample(representable(static_cast<double>(input) * kZeroDbfs), p.driveGain, p.zone, p.weights,
 			                          0.0f, 0.0f, 0.0f, probe);
 		};
-		zoneInputAt(cheby, cheby.ceilingInput * 0.99f, &under);
-		zoneInputAt(cheby, cheby.ceilingInput * 1.01f, &over);
-		CHECK(under.zoneInput < 0x7FFFFF80);
-		CHECK(over.zoneInput == 0x7FFFFF80);
-		zoneInputAt(poly, poly.ceilingInput * 0.99f, &under);
-		zoneInputAt(poly, poly.ceilingInput * 1.01f, &over);
-		CHECK(under.zoneInput < 0x7FFFFF80);
-		CHECK(over.zoneInput == 0x7FFFFF80);
+		for (const smooth::Picture* pic : { &cheby, &poly }) {
+			const int32_t held = std::min(static_cast<int32_t>(pic->weights.holdPos * 16777216.0f), kZeroDbfs - 1) * 128;
+			const float at = pic->ceilingInput * pic->weights.holdPos;
+			zoneInputAt(*pic, at * 0.99f, &under);
+			zoneInputAt(*pic, at * 1.01f, &over);
+			CHECK(under.zoneInput < held);
+			CHECK(over.zoneInput == held);
+		}
 	}
 	// DRAGGING THE CEILING WRITES THE DRIVE THAT PUTS IT THERE — the inverse, round trip.
 	for (float c : { 0.26f, 0.5f, 0.8f, 1.0f, 1.8f, 6.0f }) {

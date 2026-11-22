@@ -758,10 +758,16 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 	const float inputF = static_cast<float>(input) * driveGain;
 	constexpr float kMaxQ31 = 2147483647.0f; // which is 2^31 as a float: the conversion saturates
 	const float inputFClamped = std::clamp(inputF, -kMaxQ31, kMaxQ31);
-	const int32_t driven = saturatingQ31(inputFClamped);
+	int32_t driven = saturatingQ31(inputFClamped);
 	if (probe != nullptr) {
 		probe->driven = driven;
 		probe->zoneInput = driven;
+	}
+	if (zone == 0 || zone == 1 || zone == 7) {
+		// THE HOLD: past where |f| peaks on each side the input holds, so a driven signal sits at the curve's peak.
+		const auto holdPos = static_cast<int32_t>(w.holdPos * kQ31PerUnit);
+		const auto holdNeg = static_cast<int32_t>(w.holdNeg * kQ31PerUnit);
+		driven = std::clamp(driven, -holdNeg, holdPos);
 	}
 
 	int32_t shaped = 0;
@@ -852,86 +858,84 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 //--------------------------------------------------------------------------------------------------//
 // THE PEAK NORMALISATION.                                                                            //
 //--------------------------------------------------------------------------------------------------//
+/// THE RATE THE CARD'S PICTURE ASSUMES (it has no host): the highpass corner follows it.
+constexpr double kPictureRate = 48000.0;
 
-float peakNormOf(int zone, const Coefficients& w) noexcept {
-	// THE LARGEST |OUTPUT| THE BLEND CAN MAKE, IN q31 UNITS (2^24 = 0 dBFS), over everything a driven input of [-1, 1]
-	// can reach at unity drive. Beyond the knee the input saturates (zones 0, 1, 7) or the phase only goes round
-	// again (the FM zones: periodic, and an input gain of 1..4 already covers a whole period at x = 1), so this
-	// is the peak at any Drive. Evens and rect are left out: they only lower the positive half and cap the negative.
+PeakInfo peakInfoOf(int zone, const Coefficients& w, float gain, double sampleRate) noexcept {
+	constexpr int32_t kUnit = 1 << 24; // 0 dBFS in q31 units, which is also the input's full scale
+	Coefficients c = w;
+	c.norm = 1.0f;
+	c.holdPos = 1.0f;
+	c.holdNeg = 1.0f;
+	// THE CURVE AT ONE DRIVEN INPUT `q` (unity drive, no evens or rect) - the shaper's own arithmetic, in q31 units.
+	const auto curve = [&c, zone](int32_t q) { return static_cast<double>(shapeSample(q, 1.0f, zone, c, 0.0f, 0.0f, 0.0f)); };
+	PeakInfo info;
+	if (zone == 0 || zone == 1 || zone == 7) {
+		// THE HOLD: where |f| peaks on each side of the input, on a grid and then a finer look at its best point.
+		const int kN = zone == 7 ? 1024 : 512;
+		const int32_t step = kUnit / kN;
+		int32_t bestAt[2] = { 0, 0 };
+		double best[2] = { -1.0, -1.0 };
+		for (int side = 0; side < 2; ++side) {
+			const int32_t sign = side == 0 ? 1 : -1;
+			for (int i = 0; i <= kN; ++i) {
+				const int32_t q = std::min(i * step, kUnit);
+				const double v = std::fabs(curve(sign * q));
+				if (v > best[side]) {
+					best[side] = v;
+					bestAt[side] = q;
+				}
+			}
+			const int32_t centre = bestAt[side];
+			const int32_t fine = std::max(step / 32, 1);
+			for (int j = -32; j <= 32; ++j) {
+				const int32_t q = std::clamp(centre + j * fine, 0, kUnit);
+				const double v = std::fabs(curve(sign * q));
+				if (v > best[side]) {
+					best[side] = v;
+					bestAt[side] = q;
+				}
+			}
+		}
+		info.holdPos = static_cast<float>(bestAt[0]) / static_cast<float>(kUnit);
+		info.holdNeg = static_cast<float>(bestAt[1]) / static_cast<float>(kUnit);
+		c.holdPos = info.holdPos;
+		c.holdNeg = info.holdNeg;
+	}
+	// THE WAVEFORM THE HIGHPASS SEES: one cycle of a full-scale sine through the (held) curve at the gain - an input of at
+	// least unity, so the whole curve is reached - run through the device's own wet highpass (a one-pole lowpass
+	// subtracted; its corner as the rate gives it) for a tone of kRefTone, to steady state. The largest |output| is what
+	// the factor makes 0 dBFS. That takes out the curve's DC, and the droop and overshoot the highpass puts on a
+	// flat-topped (held) wave, for THAT tone: a lower one overshoots more. The FM zones have no hold (their output is
+	// periodic in the phase); the same waveform covers them.
+	const float amplitude = std::max(gain, 1.0f);
+	constexpr int kCycle = 2048;
+	constexpr double kRefTone = 1000.0;
+	std::array<float, kCycle> wave;
+	for (int i = 0; i < kCycle; ++i) {
+		const double theta = 2.0 * M_PI * (static_cast<double>(i) + 0.5) / kCycle;
+		const int32_t q = static_cast<int32_t>(std::lround(std::sin(theta) * static_cast<double>(kUnit)));
+		wave[static_cast<size_t>(i)] = static_cast<float>(shapeSample(q, amplitude, zone, c, 0.0f, 0.0f, 0.0f));
+	}
+	const double alpha = std::min(kOutputHpfAlphaAtReference * kReferenceRate / std::max(sampleRate, 1.0), 0.5);
+	const double step = std::min(alpha * sampleRate / (kRefTone * kCycle), 1.0);
+	double lowpass = 0.0;
 	double peak = 0.0;
-	if (zone == 0 || zone == 1) {
-		// The odd polynomial itself, in float as `shapeSample` runs it; a x in [-1, 1] is reached in both zones (zone 1's
-		// sine of 0.75 of a half-turn passes through every value from -1 to 1). Scanned over [0, 1] and refined.
-		const auto f = [&w](double x) {
-			const float xf = static_cast<float>(x);
-			const float x2 = xf * xf;
-			return std::fabs(static_cast<double>(xf * (w.c1 + x2 * (w.c3 + x2 * (w.c5 + x2 * (w.c7 + w.c9 * x2))))));
-		};
-		constexpr int kN = 1024;
-		int best = 0;
-		for (int i = 0; i <= kN; ++i) {
-			const double v = f(static_cast<double>(i) / kN);
-			if (v > peak) {
-				peak = v;
-				best = i;
+	for (int cycle = 0; cycle < 40; ++cycle) {
+		for (int i = 0; i < kCycle; ++i) {
+			const double x = static_cast<double>(wave[static_cast<size_t>(i)]);
+			lowpass += (x - lowpass) * step;
+			if (cycle >= 36) {
+				peak = std::max(peak, std::fabs(x - lowpass));
 			}
-		}
-		double lo = std::max(0.0, static_cast<double>(best - 1) / kN);
-		double hi = std::min(1.0, static_cast<double>(best + 1) / kN);
-		for (int it = 0; it < 30; ++it) { // ternary: the polynomial is unimodal over two grid steps
-			const double a = lo + (hi - lo) / 3.0;
-			const double b = hi - (hi - lo) / 3.0;
-			if (f(a) < f(b)) {
-				lo = a;
-			}
-			else {
-				hi = b;
-			}
-		}
-		peak = std::max(peak, f(0.5 * (lo + hi))) * static_cast<double>(kQ31PerUnit);
-	}
-	else if (zone >= 2 && zone <= 6) {
-		const auto f = [zone, &w](uint32_t phase) { return std::fabs(static_cast<double>(fmBlend(zone, w, phase))); };
-		constexpr uint32_t kN = 1024;
-		constexpr uint32_t kStep = static_cast<uint32_t>(4294967296ULL / kN);
-		uint32_t bestPhase = 0;
-		for (uint32_t i = 0; i < kN; ++i) {
-			const double v = f(i * kStep);
-			if (v > peak) {
-				peak = v;
-				bestPhase = i * kStep;
-			}
-		}
-		// A FINER LOOK around the best point, a step either side in 32 pieces (the fold zones have sharp crests).
-		constexpr uint32_t kFine = kStep / 32;
-		for (int j = -32; j <= 32; ++j) {
-			peak = std::max(peak, f(bestPhase + static_cast<uint32_t>(j) * kFine));
-		}
-	}
-	else {
-		Coefficients unit = w;
-		unit.norm = 1.0f;
-		const auto f = [&unit, zone](double x) {
-			const int32_t q = saturatingQ31(static_cast<float>(x * static_cast<double>(kQ31PerUnit)));
-			return std::fabs(static_cast<double>(shapeSample(q, 1.0f, zone, unit, 0.0f, 0.0f, 0.0f)));
-		};
-		constexpr int kN = 2048;
-		int best = 0;
-		for (int i = -kN; i <= kN; ++i) {
-			const double v = f(static_cast<double>(i) / kN);
-			if (v > peak) {
-				peak = v;
-				best = i;
-			}
-		}
-		for (int j = -32; j <= 32; ++j) { // the cascade wraps, so no unimodal assumption: a finer scan, not a search
-			peak = std::max(peak, f(static_cast<double>(best) / kN + static_cast<double>(j) / (32.0 * kN)));
 		}
 	}
 	// A blend that makes (almost) nothing is left alone rather than amplified without bound.
 	constexpr double kMinPeak = 4096.0; // 2^12 of 2^24: -72 dBFS
-	return peak < kMinPeak ? 1.0f : static_cast<float>(static_cast<double>(kQ31PerUnit) / peak);
+	info.norm = peak < kMinPeak ? 1.0f : static_cast<float>(static_cast<double>(kUnit) / peak);
+	return info;
 }
+
 //--------------------------------------------------------------------------------------------------//
 // THE TARGETS, AND THE PICTURE BUILT ON THEM.                                                        //
 //--------------------------------------------------------------------------------------------------//
@@ -981,7 +985,10 @@ Picture pictureOf(const Settings& settings) noexcept {
 	const CoefficientTargets t = targetsOf(p.zone, zone.position, p.twist, 0.0f);
 	p.weights = { t[0], t[1], t[2], t[3], t[4] };
 	p.weights.updateQ31();
-	p.weights.norm = peakNormOf(p.zone, p.weights);
+	const PeakInfo level = peakInfoOf(p.zone, p.weights, p.driveGain, kPictureRate);
+	p.weights.norm = level.norm;
+	p.weights.holdPos = level.holdPos;
+	p.weights.holdNeg = level.holdNeg;
 	p.clips = p.zone == 0 || p.zone == 1 || p.zone == 7;
 	p.ceilingInput = ceilingOfGain(p.zone, p.driveGain);
 	return p;

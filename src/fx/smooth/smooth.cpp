@@ -58,6 +58,11 @@ int32_t saturate22(int32_t v) noexcept {
 	constexpr int32_t lo = -hi - 1;
 	return v > hi ? hi : (v < lo ? lo : v);
 }
+/// THE LEVEL LAW AT ITS TARGET, to the smoother's own tolerance (the factor relatively, the holds absolutely).
+bool levelsClose(const PeakInfo& a, const PeakInfo& b) noexcept {
+	return std::abs(a.norm - b.norm) < kConvergenceEpsilon * b.norm && std::abs(a.holdPos - b.holdPos) < kConvergenceEpsilon
+	       && std::abs(a.holdNeg - b.holdNeg) < kConvergenceEpsilon;
+}
 /// `x << 1` on a q31, modular as the ARM's (and as C++20's).
 int32_t twice(int32_t v) noexcept {
 	return static_cast<int32_t>(static_cast<uint32_t>(v) << 1);
@@ -92,8 +97,9 @@ void SmoothShaper::prepare(double sampleRate) noexcept {
 void SmoothShaper::reset() noexcept {
 	block_ = Block {};
 	coefficientsPlaced_ = false;
-	norm_[0] = norm_[1] = 1.0f;
-	normKey_[0] = normKey_[1] = NormKey {};
+	level_[0] = level_[1] = PeakInfo {};
+	levelPlaced_ = false;
+	levelKey_[0] = levelKey_[1] = LevelKey {};
 	smoothedDriveQ_ = INT32_MIN;
 	driveGain_ = 1.0f;
 	driveGainPlaced_ = false;
@@ -167,22 +173,16 @@ void SmoothShaper::beginBlock() noexcept {
 	// together when it goes negative. The reference still has the cache, so the comparisons are exact everywhere
 	// but the stereo passages with Width live, where the difference is bounded (`test_fx_smooth.cpp`).
 	b.targets = targetsOf(b.zone, b.posInZone, twist, stereoMod);
-	// THE PEAK NORMALISATION OF THE TARGETS: found only when the weights moved (cached by value).
-	b.normTarget[0] = normFor(0, b.targets);
-	b.normTarget[1] = normFor(1, b.targets);
 
 	// ONE SMOOTHER PER INSTANCE, PLACED AT ITS TARGETS ON ITS FIRST BLOCK — the departure the header states.
 	if (!coefficientsPlaced_) {
 		smoothed_ = b.targets;
-		norm_[0] = b.normTarget[0];
-		norm_[1] = b.normTarget[1];
 		coefficientsPlaced_ = true;
 	}
 	b.fmZone = b.zone >= 2 && b.zone <= 6;
 	weights_[0] = { smoothed_[0], smoothed_[1], smoothed_[2], smoothed_[3], smoothed_[4] };
 	weights_[1] = { smoothed_[0], smoothed_[5], smoothed_[6], smoothed_[7], smoothed_[8] };
-	weights_[0].norm = norm_[0];
-	weights_[1].norm = norm_[1];
+	applyLevel();
 	if (b.fmZone) {
 		weights_[0].updateQ31();
 		weights_[1].updateQ31();
@@ -191,9 +191,6 @@ void SmoothShaper::beginBlock() noexcept {
 	b.converged = true;
 	for (size_t k = 0; k < smoothed_.size(); ++k) {
 		b.converged = b.converged && std::abs(smoothed_[k] - b.targets[k]) < kConvergenceEpsilon;
-	}
-	for (int ch = 0; ch < 2; ++ch) {
-		b.converged = b.converged && std::abs(norm_[ch] - b.normTarget[ch]) < kConvergenceEpsilon * b.normTarget[ch];
 	}
 
 	// THE STEREO LFO, at buffer rate: its value for the block, then the phase moved on by a block.
@@ -244,7 +241,7 @@ void SmoothShaper::beginBlock() noexcept {
 	}
 	const float driveNorm = static_cast<float>(fc.drive) / kOneQ31F;
 	fbScale *= (1.0f - 0.1f * driveNorm);
-	b.fbAmount = saturatingQ31(twist.feedbackAmount * fbScale * kOneQ31F);
+	const float fbBase = twist.feedbackAmount * fbScale;
 
 	// THE DRIVE'S GLIDE: toward this block's target, per frame; a new voice starts where the last block's
 	// target was (`computeDriveGain(driveCtx.current)`), which is this block's target on the very first.
@@ -260,28 +257,58 @@ void SmoothShaper::beginBlock() noexcept {
 		driveGainPlaced_ = true;
 	}
 	smoothedDriveQ_ = fc.drive;
+
+	// THE LEVEL LAW OF THE TARGETS (the hold and the peak factor): found only when the weights or the gain moved (cached
+	// by value), for the gain the block is driven to.
+	b.levelTarget[0] = levelFor(0, b.targets, b.targetDriveGain);
+	b.levelTarget[1] = levelFor(1, b.targets, b.targetDriveGain);
+	if (!levelPlaced_) {
+		level_[0] = b.levelTarget[0];
+		level_[1] = b.levelTarget[1];
+		levelPlaced_ = true;
+	}
+	applyLevel();
+	for (int ch = 0; ch < 2; ++ch) {
+		b.converged = b.converged && levelsClose(level_[ch], b.levelTarget[ch]);
+	}
+	// **THE FEEDBACK TAP IS SCALED BY 1 / THE PEAK FACTOR**: the factor lifts every curve to 0 dBFS, which would raise the
+	// loop gain of Twist's feedback by the same amount; the tap gives it back, so the loop keeps the calibration the
+	// curves had before they were normalised.
+	const float meanNorm = 0.5f * (b.levelTarget[0].norm + b.levelTarget[1].norm);
+	b.fbAmount = saturatingQ31(fbBase / std::max(meanNorm, 1.0e-3f) * kOneQ31F);
 }
 
-float SmoothShaper::normFor(int channel, const CoefficientSet& t) noexcept {
+PeakInfo SmoothShaper::levelFor(int channel, const CoefficientSet& t, float gain) noexcept {
 	// ONE CHANNEL'S WEIGHTS FROM THE TARGETS, as `beginBlock` lays them into `weights_`.
 	const size_t o = channel == 0 ? 1 : 5;
-	NormKey key;
+	LevelKey key;
 	key.valid = true;
 	key.zone = block_.zone;
+	key.gain = std::max(gain, 1.0f); // below unity the level law does not move
 	key.c = { t[0], t[o], t[o + 1], t[o + 2], t[o + 3] };
-	const auto same = [](const NormKey& a, const NormKey& b) { return a.valid && a.zone == b.zone && a.c == b.c; };
-	if (same(normKey_[channel], key)) {
-		return normKey_[channel].norm;
+	const auto same = [](const LevelKey& a, const LevelKey& b) {
+		return a.valid && a.zone == b.zone && a.gain == b.gain && a.c == b.c;
+	};
+	if (same(levelKey_[channel], key)) {
+		return levelKey_[channel].info;
 	}
-	if (channel == 1 && same(normKey_[0], key)) {
-		normKey_[1] = normKey_[0]; // the two sides read the same blend: one scan
-		return normKey_[1].norm;
+	if (channel == 1 && same(levelKey_[0], key)) {
+		levelKey_[1] = levelKey_[0]; // the two sides read the same blend: one scan
+		return levelKey_[1].info;
 	}
 	Coefficients w { key.c[0], key.c[1], key.c[2], key.c[3], key.c[4] };
 	w.updateQ31();
-	key.norm = peakNormOf(key.zone, w);
-	normKey_[channel] = key;
-	return key.norm;
+	key.info = peakInfoOf(key.zone, w, key.gain, sampleRate_);
+	levelKey_[channel] = key;
+	return key.info;
+}
+
+void SmoothShaper::applyLevel() noexcept {
+	for (int ch = 0; ch < 2; ++ch) {
+		weights_[ch].norm = level_[ch].norm;
+		weights_[ch].holdPos = level_[ch].holdPos;
+		weights_[ch].holdNeg = level_[ch].holdNeg;
+	}
 }
 
 void SmoothShaper::advanceCoefficients() noexcept {
@@ -291,12 +318,13 @@ void SmoothShaper::advanceCoefficients() noexcept {
 		smoothed_[k] += (block_.targets[k] - smoothed_[k]) * stridedAlpha_;
 	}
 	weights_[0] = { smoothed_[0], smoothed_[1], smoothed_[2], smoothed_[3], smoothed_[4] };
-	for (int ch = 0; ch < 2; ++ch) {
-		norm_[ch] += (block_.normTarget[ch] - norm_[ch]) * stridedAlpha_;
-	}
 	weights_[1] = { smoothed_[0], smoothed_[5], smoothed_[6], smoothed_[7], smoothed_[8] };
-	weights_[0].norm = norm_[0];
-	weights_[1].norm = norm_[1];
+	for (int ch = 0; ch < 2; ++ch) {
+		level_[ch].norm += (block_.levelTarget[ch].norm - level_[ch].norm) * stridedAlpha_;
+		level_[ch].holdPos += (block_.levelTarget[ch].holdPos - level_[ch].holdPos) * stridedAlpha_;
+		level_[ch].holdNeg += (block_.levelTarget[ch].holdNeg - level_[ch].holdNeg) * stridedAlpha_;
+	}
+	applyLevel();
 	if (block_.fmZone) {
 		weights_[0].updateQ31();
 		weights_[1].updateQ31();

@@ -54,12 +54,14 @@
 //
 // **1.0 HERE IS 0 dBFS = 2^24 = ONE_Q31 / 128** (the Eroder's convention, `kHeadroom`). A full-level voice
 // enters the shaper at about 1.0 (MEASURED, design doc: 0.6-1.3 peak at default knobs).
-//   - THE KNEE IS 0 dBFS in every mode: at unity Drive an input peak of 1.0 just reaches x = 1, where zones 0/1
-//     (the Chebyshev blends) and zone 7 (Poly) saturate their input (`shiftSaturate(driven, 7)`). More Drive
-//     pushes into that flat region; the FM zones are periodic in the driven phase and never saturate.
-//   - THE CURVE IS PEAK-NORMALISED: the blended transfer is scaled by `Coefficients::norm` = 1 / max|f(x)| over
-//     x in [-1, 1] (`peakNormOf`), so what the shaper shapes peaks at exactly 0 dBFS when driven to the knee,
-//     by construction of the curve and with nothing after it. This replaces the firmware's fixed +7.8 dB boost.
+//   - THE LEVEL LAW (`peakInfoOf`): every mode's curve peaks at exactly 0 dBFS when driven to its hold, by construction
+//     and with nothing after it. The curve is scaled by `Coefficients::norm`, which is 1 / the largest |output| left
+//     AFTER THE WET HIGHPASS for a full-scale sine (the curve's DC is taken off before it is normalised, so a lopsided
+//     curve peaks at 0 dBFS after the highpass too). This replaces the firmware's fixed +7.8 dB boost.
+//   - THE HOLD (zones 0, 1, 7, whose input saturates): the driven input is held at `holdPos` / `holdNeg`, where |f|
+//     peaks on each side (at most 1.0 = 0 dBFS at unity Drive; a curve that peaks earlier holds earlier). Below the
+//     hold the curve is unchanged. More Drive only pushes the input into the hold, so the output sits at the curve's
+//     peak. The FM zones do not saturate - their output is periodic in the driven phase - so they have no hold.
 //   - The drive clamps at the q31 ceiling, 128.0 here, which nothing reaches.
 //
 // ---------------------------------------------------------------------------------------------------
@@ -373,8 +375,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = true,
      .offsetsMayLeaveRange = false,
      .tooltip = "Gain into the shaper: silent at the bottom, unity at the centre, +12 dB at the top — or drag the "
-                "ceiling on the curve. At unity a 0 dBFS input just reaches the knee and the shaped output peaks at 0 dBFS; "
-                "more Drive pushes into the curve's own flat top and never goes over",
+                "ceiling on the curve. At unity a 0 dBFS input reaches the curve's peak and the shaped output peaks at 0 dBFS; "
+                "more Drive holds it there and never goes over",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},
@@ -736,15 +738,30 @@ struct Coefficients {
 	/// THE PEAK NORMALISATION: 1 / max|f(x)| of this blend over x in [-1, 1] (`peakNormOf`), applied to the shaped
 	/// output; 1 until set.
 	float norm = 1.0f;
+	/// THE HOLD (zones 0, 1, 7): the driven input, in 0 dBFS = 1.0, past which the curve holds its value - where |f| peaks on
+	/// each side (`peakInfoOf`), so a driven signal sits at the curve's peak. 1 until set (the old knee).
+	float holdPos = 1.0f;
+	float holdNeg = 1.0f;
 	/// `updateQ31`, with the conversions saturating (see the header).
 	void updateQ31() noexcept;
 };
 /// `computeShaperWeightsFromPos` → `weightsToCoeffs`: the Chebyshev blend at a position.
 [[nodiscard]] Coefficients chebyshevCoefficientsOf(float posInZone, double gammaPhase) noexcept;
-/// 1 / the largest |output| blend `w` can make over a driven input of [-1, 1] at unity drive, evens and rect left
-/// out: a dense scan and a local refinement through the shaper's own arithmetic, so it is its peak and not a model
-/// of it. ~10-40 us: the caller caches it by the weights and never runs it per sample.
-[[nodiscard]] float peakNormOf(int zone, const Coefficients& w) noexcept;
+/// WHAT THE SHAPED CURVE NEEDS TO PEAK AT 0 dBFS: the factor, and the hold on each side.
+struct PeakInfo {
+	float norm = 1.0f;
+	float holdPos = 1.0f;
+	float holdNeg = 1.0f;
+};
+/// THE LEVEL LAW OF A BLEND, found by scans through the shaper's own arithmetic (so it is its peak, not a model of it):
+///   - the HOLD (zones 0, 1, 7, the ones whose input saturates): the driven input where |f| peaks, each side separately;
+///   - the FACTOR: 1 / the largest |output| left AFTER THE WET HIGHPASS, for a full-scale 1 kHz sine at `gain` (at
+///     least unity) through the held curve and the device's own highpass at `sampleRate`, run to steady state. The
+///     curve's DC is taken off before it is normalised, and so are the droop and overshoot the highpass puts on a held
+///     (flat-topped) wave, for that tone: a lower tone overshoots more.
+/// The FM zones do not saturate (their output is periodic in the phase), so they have no hold. ~50-150 us: the caller
+/// caches it by the weights and the gain and never runs it per sample.
+[[nodiscard]] PeakInfo peakInfoOf(int zone, const Coefficients& w, float gain, double sampleRate) noexcept;
 
 /// THE NINE TARGETS A BLOCK SMOOTHS TOWARD — c1, c3..c9 left, c3..c9 right — as `sineShapeBuffer` picks them:
 /// per zone, from the position in the zone, Twist's harmonic phase and, in stereo, the LFO's position offset

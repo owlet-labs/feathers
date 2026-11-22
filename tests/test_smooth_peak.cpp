@@ -72,7 +72,7 @@ namespace smooth = feathers::fx::smooth;
 
 namespace {
 
-constexpr double kRate = 192000.0; // a sine of 1 kHz is 192 samples a cycle: the render's peak is the curve's, not a sample's luck
+constexpr double kRate = 768000.0; // a sine of 1 kHz is 768 samples a cycle: the render's peak is the curve's, not a sample's luck
 constexpr double kHz = 1000.0;
 constexpr float kToleranceDb = 0.1f;
 /// The render against its restatement: the highpass is written out in double, the device runs it in q31.
@@ -146,36 +146,9 @@ Measured render(const smooth::Settings& s, const std::vector<float>& in, smooth:
 	return m;
 }
 
-/// THE PEAK, RESTATED INDEPENDENTLY: the largest |shaper output| over a driven input x in [-1, 1] at unity, on a
-/// grid of its own (offset from the code's), through `transferAt` with the normalisation taken out.
-double independentPeak(const smooth::Settings& s) {
-	smooth::Picture p = smooth::pictureOf(s);
-	REQUIRE(p.driveGain == doctest::Approx(1.0));
-	p.weights.norm = 1.0f;
-	p.twist = {};
-	double peak = 0.0;
-	constexpr int kN = 8191; // odd, and not a multiple of the code's grids
-	for (int i = -kN; i <= kN; ++i) {
-		peak = std::max(peak, static_cast<double>(std::fabs(smooth::transferAt(p, static_cast<float>(i) / kN))));
-	}
-	return peak;
-}
-
 } // namespace
 
 namespace {
-
-/// THE SHAPED CURVE'S PEAK AT ONE DRIVE, INDEPENDENTLY: the largest |transfer| over a dense scan of the input in
-/// [-1, 1], through the picture the card draws (the shaper's own arithmetic) with its own normalisation in.
-double shapedPeak(const smooth::Settings& s) {
-	const smooth::Picture p = smooth::pictureOf(s);
-	double peak = 0.0;
-	constexpr int kN = 8191;
-	for (int i = -kN; i <= kN; ++i) {
-		peak = std::max(peak, static_cast<double>(std::fabs(smooth::transferAt(p, static_cast<float>(i) / kN))));
-	}
-	return peak;
-}
 
 /// WHAT THE RENDER'S PEAK MUST BE, RESTATED: the transfer at the input's own samples, through the wet highpass written
 /// out in double (a one-pole lowpass subtracted, its step the device's `alpha / 2^31`), the largest |sample| of the
@@ -199,74 +172,115 @@ double expectedRenderPeak(const smooth::Settings& s, const std::vector<float>& i
 
 } // namespace
 
-TEST_CASE("smooth peak (a): a 0 dBFS sine at unity Drive peaks at 0 dBFS at every mode and position") {
-	const std::vector<float> in = signalOf(Shape::Sine, 1.0, 19200);
-	double worstShaped = 0.0;
-	double worstRender = 0.0;
-	for (int mode = 0; mode < 8; ++mode) {
-		for (int k = 0; k < 9; ++k) {
-			const float pos = 0.12f * static_cast<float>(k);
-			const smooth::Settings s = settingsAt(mode, pos, 0.5f);
-			const Measured m = render(s, in);
-			INFO("mode " << mode << " position " << pos << ": render peak " << m.peak << " (" << dbOf(m.peak) << " dB), norm " << m.norm);
-			// THE FACTOR the device holds is 1 / the independently found peak of the un-normalised curve.
-			const double expectedNorm = 1.0 / independentPeak(s);
-			CHECK(static_cast<double>(m.norm) == doctest::Approx(expectedNorm).epsilon(0.004));
-			// BY CONSTRUCTION: the shaped curve peaks at exactly 0 dBFS, within 0.1 dB (a dense scan, no highpass).
-			const double shaped = shapedPeak(s);
-			CHECK(std::fabs(dbOf(shaped)) < static_cast<double>(kToleranceDb));
-			worstShaped = std::max(worstShaped, std::fabs(dbOf(shaped)));
-			// THE RENDER is the shaped curve through the device's 100 Hz wet highpass, which removes the DC a lopsided
-			// curve (Ring, Add, Mod, some positions of Fold) carries, so it moves that curve's peak by up to that DC.
-			// It must be what the shaped curve at the input's own samples says, mean removed, within 0.1 dB.
-			const double expected = expectedRenderPeak(s, in);
-			CHECK(std::fabs(dbOf(m.peak) - dbOf(expected)) < kRenderToleranceDb);
-			worstRender = std::max(worstRender, std::fabs(dbOf(m.peak) - dbOf(expected)));
+TEST_CASE("smooth peak (a'): a 0 dBFS sine peaks at 0 dBFS after the wet highpass, at unity Drive and at +12 dB, in every mode and position") {
+	const std::vector<float> in = signalOf(Shape::Sine, 1.0, 76800);
+	double worst = 0.0;
+	double worstExpected = 0.0;
+	for (float fader : { 0.5f, 1.0f }) { // unity, and +12 dB: driven into the hold
+		for (int mode = 0; mode < 8; ++mode) {
+			for (int k = 0; k < 9; ++k) {
+				const float pos = 0.12f * static_cast<float>(k);
+				const smooth::Settings s = settingsAt(mode, pos, fader);
+				const Measured m = render(s, in);
+				INFO("fader " << fader << " mode " << mode << " position " << pos << ": render peak " << m.peak << " ("
+				              << dbOf(m.peak) << " dB), norm " << m.norm);
+				CHECK(std::fabs(dbOf(m.peak)) < kRenderToleranceDb);
+				worst = std::max(worst, std::fabs(dbOf(m.peak)));
+				// AND THE RESTATEMENT, independent of the factor's own scan: the held curve at the input's own samples through the
+				// highpass written out in double.
+				const double expected = expectedRenderPeak(s, in);
+				CHECK(std::fabs(dbOf(expected)) < kRenderToleranceDb);
+				CHECK(std::fabs(dbOf(m.peak) - dbOf(expected)) < kRenderToleranceDb);
+				worstExpected = std::max(worstExpected, std::fabs(dbOf(expected)));
+			}
 		}
 	}
-	MESSAGE("worst shaped-curve deviation from 0 dBFS " << worstShaped << " dB; worst render vs restatement " << worstRender << " dB (72 cells)");
+	MESSAGE("worst render deviation from 0 dBFS " << worst << " dB; worst restated " << worstExpected << " dB (144 cells)");
 }
 
-TEST_CASE("smooth peak (b): a -6 dBFS sine no longer reaches the saturation point") {
-	smooth::Settings s = settingsAt(0, 0.5f, 0.5f);
+TEST_CASE("smooth peak (dc): the output AFTER the wet highpass never goes over 0 dBFS, lopsided curves included") {
+	const std::vector<float> in = signalOf(Shape::Sine, 1.0, 76800);
+	double highest = -200.0;
+	int lopsided = 0;
+	for (float fader : { 0.5f, 1.0f }) {
+		for (int mode = 0; mode < 8; ++mode) {
+			for (int k = 0; k < 9; ++k) {
+				const smooth::Settings s = settingsAt(mode, 0.12f * static_cast<float>(k), fader);
+				const Measured m = render(s, in);
+				INFO("fader " << fader << " mode " << mode << " k " << k << ": " << dbOf(m.peak) << " dB");
+				CHECK(dbOf(m.peak) <= static_cast<double>(kToleranceDb));
+				highest = std::max(highest, dbOf(m.peak));
+				// NON-VACUITY: count the curves that carry a DC the highpass has to take off (the ones where it matters).
+				smooth::Picture p = smooth::pictureOf(s);
+				double sum = 0.0;
+				for (int i = 0; i < 512; ++i) {
+					sum += static_cast<double>(smooth::transferAt(p, static_cast<float>(std::sin(2.0 * M_PI * (i + 0.5) / 512.0))));
+				}
+				if (std::fabs(sum / 512.0) > 0.02) {
+					++lopsided;
+				}
+			}
+		}
+	}
+	CHECK(lopsided >= 10);
+	MESSAGE("highest peak after the highpass " << highest << " dB; " << lopsided << " of 144 cells are lopsided (DC > 2%)");
+}
+
+TEST_CASE("smooth peak (b): the hold is where the curve peaks - below it the input passes, past it the output holds") {
 	for (int mode : { 0, 1, 7 }) {
-		s.harmonicMode = mode;
-		smooth::SmoothShaper sh;
-		sh.prepare(kRate);
-		sh.setTarget(s);
-		const std::vector<float> in = signalOf(Shape::Sine, 0.5, 4800);
-		int32_t seen = 0;
-		for (float v : in) {
-			float l = v, r = v;
-			sh.processStereo(&l, &r, 1);
-			seen = std::max(seen, sh.probeForTest(0).zoneInput);
+		for (float pos : { 0.12f, 0.36f, 0.6f }) {
+			const smooth::Settings s = settingsAt(mode, pos, 0.5f);
+			const smooth::Picture p = smooth::pictureOf(s);
+			INFO("mode " << mode << " position " << pos << ": hold " << p.weights.holdPos << " / " << p.weights.holdNeg);
+			REQUIRE(p.weights.holdPos > 0.01f);
+			REQUIRE(p.weights.holdPos <= 1.0f);
+			const auto zoneInputAt = [&](double level) {
+				smooth::SmoothShaper sh;
+				sh.prepare(kRate);
+				sh.setTarget(s);
+				int32_t seen = 0;
+				for (int i = 0; i < 4096; ++i) {
+					float l = static_cast<float>(level * std::sin(2.0 * M_PI * i / 768.0)), r = l;
+					sh.processStereo(&l, &r, 1);
+					seen = std::max(seen, sh.probeForTest(0).zoneInput);
+				}
+				return seen;
+			};
+			const double ceiling = static_cast<double>(static_cast<int32_t>(p.weights.holdPos * 16777216.0f)) * 128.0;
+			// A SINE A QUARTER UNDER THE HOLD never reaches it; one a quarter over it sits at it. (Zone 7's pass-through is
+			// the driven input itself, scaled <<7; the Chebyshevs' likewise.)
+			const int32_t under = zoneInputAt(0.75 * static_cast<double>(p.weights.holdPos));
+			const int32_t over = zoneInputAt(1.25 * static_cast<double>(p.weights.holdPos));
+			CHECK(static_cast<double>(under) < 0.8 * ceiling);
+			CHECK(static_cast<double>(under) > 0.5 * ceiling); // non-vacuity: the signal got there
+			if (p.weights.holdPos < 0.8f) {
+				CHECK(static_cast<double>(over) == doctest::Approx(ceiling).epsilon(1e-4));
+			}
 		}
-		INFO("mode " << mode);
-		CHECK(seen <= (1 << 30) + (1 << 20)); // x = 0.5 (+ a hair for the table's sine) - not the 0x7FFFFF80 ceiling
-		CHECK(seen > (1 << 29));              // non-vacuity: the zone did see the signal
 	}
 }
 
-TEST_CASE("smooth peak (c): at full Drive the shaped curve never exceeds 0 dBFS, with no clipper in the path") {
-	const std::vector<float> in = signalOf(Shape::Sine, 1.0, 19200);
-	double worst = -200.0;
-	double worstRender = -200.0;
-	for (int mode = 0; mode < 8; ++mode) {
+TEST_CASE("smooth peak (c): driven past the hold the curve stays at its peak - by the curve's own shape, with no clipper in the path") {
+	for (int mode : { 0, 1, 7 }) {
 		for (int k = 0; k < 9; ++k) {
-			const float pos = 0.12f * static_cast<float>(k);
-			const smooth::Settings s = settingsAt(mode, pos, 1.0f);
-			// THE CURVE at 4x: over the whole input range, never above the peak the normalisation made (+0.1 dB).
-			const double shaped = shapedPeak(s);
-			INFO("mode " << mode << " position " << pos << ": shaped peak " << dbOf(shaped) << " dB");
-			CHECK(dbOf(shaped) <= static_cast<double>(kToleranceDb));
-			worst = std::max(worst, dbOf(shaped));
-			// THE RENDER agrees with the restatement (its highpass moves a lopsided curve's peak by that curve's DC).
-			const Measured m = render(s, in);
-			CHECK(std::fabs(dbOf(m.peak) - dbOf(expectedRenderPeak(s, in))) < kRenderToleranceDb);
-			worstRender = std::max(worstRender, dbOf(m.peak));
+			const smooth::Settings s = settingsAt(mode, 0.12f * static_cast<float>(k), 1.0f); // +12 dB
+			const smooth::Picture p = smooth::pictureOf(s);
+			INFO("mode " << mode << " k " << k << ": hold " << p.weights.holdPos << " / " << p.weights.holdNeg);
+			// PAST THE HOLD the output is the value at the hold, on each side, for every input up to full scale and beyond.
+			const float atHoldPos = smooth::transferAt(p, p.weights.holdPos);
+			const float atHoldNeg = smooth::transferAt(p, -p.weights.holdNeg);
+			for (float x : { 1.0f, 1.5f, 4.0f }) {
+				CHECK(smooth::transferAt(p, x) == atHoldPos);
+				CHECK(smooth::transferAt(p, -x) == atHoldNeg);
+			}
+			// AND IT IS THE PEAK: nothing in between is larger than the held value on its side (a dense scan).
+			double peak = 0.0;
+			for (int i = -4096; i <= 4096; ++i) {
+				peak = std::max(peak, static_cast<double>(std::fabs(smooth::transferAt(p, static_cast<float>(i) / 4096.0f))));
+			}
+			CHECK(peak <= static_cast<double>(std::max(std::fabs(atHoldPos), std::fabs(atHoldNeg))) * 1.0005);
 		}
 	}
-	MESSAGE("highest shaped peak at full Drive: " << worst << " dB; highest render peak (after the wet highpass): " << worstRender << " dB");
 }
 
 TEST_CASE("smooth peak (c2): Evens and Rect cannot take the curve over its peak") {
@@ -277,13 +291,16 @@ TEST_CASE("smooth peak (c2): Evens and Rect cannot take the curve over its peak"
 			s.sweepOn = true;
 			s.sweep = twist;
 			const smooth::Picture p = smooth::pictureOf(s);
+			smooth::Picture plain = p; // the same blend and level law, with the modifiers off
+			plain.twist = {};
 			double peak = 0.0;
+			double base = 0.0;
 			for (int i = -4096; i <= 4096; ++i) {
 				peak = std::max(peak, static_cast<double>(std::fabs(smooth::transferAt(p, static_cast<float>(i) / 4096.0f))));
+				base = std::max(base, static_cast<double>(std::fabs(smooth::transferAt(plain, static_cast<float>(i) / 4096.0f))));
 			}
-			INFO("mode " << mode << " twist " << twist << ": " << dbOf(peak) << " dB (evens " << p.twist.evenAmount << "/"
-			                 << p.twist.evenDryBlend << " rect " << p.twist.rectAmount << ")");
-			CHECK(dbOf(peak) <= static_cast<double>(kToleranceDb));
+			INFO("mode " << mode << " twist " << twist << ": " << dbOf(peak) << " dB against the plain curve's " << dbOf(base));
+			CHECK(peak <= std::max(base, 1.0) * 1.001); // the dry blend is capped at 0 dBFS: never past the unmodified peak or 1.0
 		}
 	}
 }
@@ -296,10 +313,38 @@ TEST_CASE("smooth peak (d): an old patch loads and follows the new rule") {
 	old.settings.harmonic = 0.3f;
 	const smooth::Row row = smooth::rowOf(old);
 	const smooth::State loaded = smooth::stateOf(row, row.size() - 2); // an older, shorter row
-	const Measured m = render(loaded.settings, signalOf(Shape::Sine, 1.0, 19200));
-	CHECK(std::fabs(dbOf(shapedPeak(loaded.settings))) < static_cast<double>(kToleranceDb));
-	CHECK(std::fabs(dbOf(m.peak) - dbOf(expectedRenderPeak(loaded.settings, signalOf(Shape::Sine, 1.0, 19200)))) < kRenderToleranceDb);
+	const std::vector<float> in = signalOf(Shape::Sine, 1.0, 76800);
+	const Measured m = render(loaded.settings, in);
+	CHECK(std::fabs(dbOf(m.peak)) < kRenderToleranceDb);
 	CHECK(smooth::kTraits.schema == 2);
+}
+
+TEST_CASE("smooth peak (loop): the Twist feedback tap is scaled by 1 / the peak factor") {
+	// THE FACTOR LIFTS EVERY CURVE TO 0 dBFS, which would raise the feedback loop's gain by the same amount; the tap gives it
+	// back, so the loop keeps the calibration the curves had before they were normalised. Restated here from Twist's own
+	// feedback amount, the zone's scale and the drive's, and compared with the amount the block runs.
+	for (int mode : { 0, 2, 3, 5, 6 }) {
+		for (float drive : { 0.5f, 0.75f }) {
+			smooth::Settings s = settingsAt(mode, 0.6f, drive);
+			s.sweepOn = false;
+			s.pillOn[static_cast<size_t>(smooth::Pill::Fdbk)] = true; // Twist's feedback pill, up
+			s.pillAmount[static_cast<size_t>(smooth::Pill::Fdbk)] = 0.9f;
+			smooth::SmoothShaper sh;
+			sh.prepare(kRate);
+			sh.setTarget(s);
+			std::vector<float> l(256, 0.1f), r(256, 0.1f);
+			sh.processStereo(l.data(), r.data(), 256);
+			const smooth::FirmwareControls fc = smooth::firmwareControlsOf(s);
+			const smooth::TwistParams twist = smooth::twistOf(fc);
+			REQUIRE(twist.feedbackAmount > 0.01f);
+			const double driveNorm = static_cast<double>(fc.drive) / 2147483648.0;
+			const double meanNorm = 0.5 * (static_cast<double>(sh.levelTargetForTest(0).norm) + static_cast<double>(sh.levelTargetForTest(1).norm));
+			const double expected = static_cast<double>(twist.feedbackAmount) * 0.25 * (1.0 - 0.1 * driveNorm) / meanNorm * 2147483647.0;
+			INFO("mode " << mode << " drive " << drive << ": norm " << meanNorm);
+			CHECK(static_cast<double>(sh.feedbackAmountForTest()) == doctest::Approx(expected).epsilon(2e-3));
+			CHECK(meanNorm > 1.5); // non-vacuity: the scaling is not 1
+		}
+	}
 }
 
 TEST_CASE("smooth peak (e): no allocation over blocks run while sweeping position") {
@@ -351,16 +396,17 @@ TEST_CASE("smooth peak (g): the level table") {
 	}
 }
 
-TEST_CASE("smooth peak (n): the factor's range per mode") {
+TEST_CASE("smooth peak (n): the factor's and the holds' range per mode") {
 	for (int mode = 0; mode < 8; ++mode) {
-		float lo = 1e9f, hi = 0.0f;
+		float lo = 1e9f, hi = 0.0f, holdLo = 1.0f;
 		for (int k = 0; k < 100; ++k) {
-			const float n = smooth::pictureOf(settingsAt(mode, 0.01f * static_cast<float>(k), 0.5f)).weights.norm;
-			lo = std::min(lo, n);
-			hi = std::max(hi, n);
+			const smooth::Picture p = smooth::pictureOf(settingsAt(mode, 0.01f * static_cast<float>(k), 0.5f));
+			lo = std::min(lo, p.weights.norm);
+			hi = std::max(hi, p.weights.norm);
+			holdLo = std::min({ holdLo, p.weights.holdPos, p.weights.holdNeg });
 		}
-		CHECK(lo >= 1.9f); // every curve peaks below 0 dBFS un-normalised, so the factor boosts it
+		CHECK(lo >= 1.2f); // every curve peaks below 0 dBFS un-normalised, so the factor boosts it
 		CHECK(hi < 20.0f); // and none is a near-silent blend amplified without bound
-		MESSAGE("NORM mode " << mode << " min " << lo << " (" << dbOf(lo) << " dB) max " << hi << " (" << dbOf(hi) << " dB)");
+		MESSAGE("NORM mode " << mode << " min " << lo << " (" << dbOf(lo) << " dB) max " << hi << " (" << dbOf(hi) << " dB); lowest hold " << holdLo);
 	}
 }

@@ -11,7 +11,7 @@
 # See the GNU General Public License for more details.
 
 feathers_register_device(
-	ORDER 420
+	ORDER 422
 	DESCRIPTOR fx::balance::kDescriptor
 	CODEC_INCLUDE device_codecs/balance.h
 	CODEC_REG feathers::codecs::kBalanceCodec

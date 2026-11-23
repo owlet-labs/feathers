@@ -3734,6 +3734,11 @@ TEST_CASE("every x across an fx card's head answers exactly one verb, and the bu
 			const visage::Point where =
 			    card->positionInWindow() + visage::Point { x, ui::FxCard::kSlotHeadHeight * 0.5f };
 
+			// A WINDOW THE LAST PRESS OPENED (the expand button's) IS CLOSED BEFORE THE NEXT: the Chain/site window is wide, and left open it would
+			// stand over this card's head, so a press on the enable chip would reach the window and not the card.
+			if (auto* overlay = f.gui.expandedForTest(); overlay != nullptr && overlay->open()) {
+				overlay->dismiss();
+			}
 			clickThroughRoot(f.root, where);
 
 			const bool folded = card->laneHeight() != doctest::Approx(heightBefore);
@@ -34964,7 +34969,7 @@ TEST_CASE("OC: the Rack window seats Mix and Gain on top, an H-line, then the ei
 		CHECK(left.right() <= right.x());
 		CHECK(left.x() == macrosLeft + mix.x()); // the first column is Mix's, the second Gain's, shifted into the macros' pane
 		CHECK(right.x() == macrosLeft + gain.x());
-		CHECK(left.y() >= mix.y()); // the pane's controls begin at the same top as the rack pane's
+		CHECK(left.y() >= ui::ParallelRackExpanded::kPad); // the pane's rows start under its toggle's head row, from its own top
 		if (row > 0) {
 			CHECK(left.y() >= panel->knobBoundsForTest(2 * row).bottom()); // below the row before
 		}

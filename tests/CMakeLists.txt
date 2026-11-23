@@ -657,6 +657,21 @@ if(TARGET visage)
 		devices/devices_17.cpp
 		devices/devices_18.cpp
 	)
+	# THE DAHDSR SUITE IN 12 PIECES, as the devices suite above (dahdsr_common.h holds the shared helpers and includes).
+	set(_feathers_widget_pieces_dahdsr
+		dahdsr/dahdsr_01.cpp
+		dahdsr/dahdsr_02.cpp
+		dahdsr/dahdsr_03.cpp
+		dahdsr/dahdsr_04.cpp
+		dahdsr/dahdsr_05.cpp
+		dahdsr/dahdsr_06.cpp
+		dahdsr/dahdsr_07.cpp
+		dahdsr/dahdsr_08.cpp
+		dahdsr/dahdsr_09.cpp
+		dahdsr/dahdsr_10.cpp
+		dahdsr/dahdsr_11.cpp
+		dahdsr/dahdsr_12.cpp
+	)
 	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 		string(REPLACE "_" "-" _suite_name "${_suite}")
 		# A SUITE IS ONE FILE, or the PIECES it was split into (a case edit then recompiles one piece, and the pieces build in parallel):
@@ -2043,6 +2058,21 @@ if(FEATHERS_SANITIZE)
 		devices/devices_16.cpp
 		devices/devices_17.cpp
 		devices/devices_18.cpp
+	)
+	# THE DAHDSR SUITE IN 12 PIECES, as the devices suite above (dahdsr_common.h holds the shared helpers and includes).
+	set(_feathers_widget_pieces_dahdsr
+		dahdsr/dahdsr_01.cpp
+		dahdsr/dahdsr_02.cpp
+		dahdsr/dahdsr_03.cpp
+		dahdsr/dahdsr_04.cpp
+		dahdsr/dahdsr_05.cpp
+		dahdsr/dahdsr_06.cpp
+		dahdsr/dahdsr_07.cpp
+		dahdsr/dahdsr_08.cpp
+		dahdsr/dahdsr_09.cpp
+		dahdsr/dahdsr_10.cpp
+		dahdsr/dahdsr_11.cpp
+		dahdsr/dahdsr_12.cpp
 	)
 	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 			string(REPLACE "_" "-" _suite_name "${_suite}")

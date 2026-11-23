@@ -74,6 +74,7 @@ struct OpsBalance {
 		float aR = 0.0f;
 		float oL = 0.0f;
 		float oR = 0.0f;
+		float aLR = 0.0f; // the mean product of the output sides, for the correlation
 		float d = 0.0f;
 		SideGains gains {};
 		float level = 0.0f;
@@ -100,6 +101,13 @@ struct OpsBalance {
 	float focusNow = 0.0f;
 	float toleranceNow = 0.0f;
 	float widenNow = 0.0f;
+	// THE GONIOMETER'S RING: the newest pairs of each channel, written every kPointDecimation samples (a counter carried across calls), never allocated.
+	std::array<std::array<std::array<float, 2>, kRingPairs>, kPointChannels> ring {};
+	uint32_t ringWritten = 0;
+	int untilPoint = 0;
+	float wholeL = 0.0f;
+	float wholeR = 0.0f;
+	float wholeLR = 0.0f;
 	bool smoothPrimed = false;
 	float act = 1.0f; ///< the enable crossfade, 0 (dry) .. 1 (balanced)
 	bool cleared = false;
@@ -152,6 +160,10 @@ struct OpsBalance {
 		resetDetectors();
 		primed = false;
 		untilTick = 0;
+		ring = {};
+		ringWritten = 0;
+		untilPoint = 0;
+		wholeL = wholeR = wholeLR = 0.0f;
 		tailLeft = 0;
 	}
 
@@ -324,12 +336,34 @@ struct OpsBalance {
 				// WHAT THE METER SHOWS AFTER: the band's own output sides, measured as the input's are.
 				s.aL += meanCoef * (cl[b] * cl[b] - s.aL);
 				s.aR += meanCoef * (cr[b] * cr[b] - s.aR);
+				s.aLR += meanCoef * (cl[b] * cr[b] - s.aLR);
 				s.oL += (s.aL > s.oL ? attackCoef : releaseCoef) * (s.aL - s.oL);
 				s.oR += (s.aR > s.oR ? attackCoef : releaseCoef) * (s.aR - s.oR);
+				if (std::fabs(s.aLR) < 1.0e-30f) s.aLR = 0.0f;
 				if (s.aL < 1.0e-30f) s.aL = 0.0f;
 				if (s.aR < 1.0e-30f) s.aR = 0.0f;
 				if (s.oL < 1.0e-30f) s.oL = 0.0f;
 				if (s.oR < 1.0e-30f) s.oR = 0.0f;
+			}
+			// THE WHOLE OUTPUT'S CORRELATION (bands after Widen, lows in), and the point pairs for the picture.
+			{
+				const float tl = sumL + lowL;
+				const float tr = sumR + lowR;
+				wholeL += meanCoef * (tl * tl - wholeL);
+				wholeR += meanCoef * (tr * tr - wholeR);
+				wholeLR += meanCoef * (tl * tr - wholeLR);
+				if (wholeL < 1.0e-30f) wholeL = 0.0f;
+				if (wholeR < 1.0e-30f) wholeR = 0.0f;
+				if (std::fabs(wholeLR) < 1.0e-30f) wholeLR = 0.0f;
+			}
+			if (--untilPoint <= 0) {
+				untilPoint = kPointDecimation;
+				const size_t slot = ringWritten % kRingPairs;
+				for (size_t b = 0; b < 3; ++b) {
+					ring[b][slot] = { b < nb ? cl[b] : 0.0f, b < nb ? cr[b] : 0.0f };
+				}
+				ring[kInputChannel][slot] = { inL, inR };
+				++ringWritten;
 			}
 			float outL = sumL + lowL;
 			float outR = sumR + lowR;
@@ -367,6 +401,22 @@ struct OpsBalance {
 		v[static_cast<size_t>(Reading::Spacing1Hz)] = static_cast<float>(spacingHz[0]);
 		v[static_cast<size_t>(Reading::Spacing2Hz)] = static_cast<float>(spacingHz[1]);
 		v[static_cast<size_t>(Reading::NoteHz)] = state.keyTrack && heardNote ? static_cast<float>(owltt::keyHzOf(noteSemis)) : 0.0f;
+		const auto correlation = [](float lr, float l, float r) {
+			const float den = std::sqrt(l * r);
+			return den > 1.0e-12f ? std::clamp(lr / den, -1.0f, 1.0f) : 0.0f;
+		};
+		for (size_t b = 0; b < 3; ++b) {
+			v[static_cast<size_t>(Reading::Corr0) + b] = b < static_cast<size_t>(state.bands) ? correlation(band[b].aLR, band[b].aL, band[b].aR) : 0.0f;
+		}
+		v[static_cast<size_t>(Reading::CorrAll)] = correlation(wholeLR, wholeL, wholeR);
+		v[static_cast<size_t>(Reading::PointSeq)] = static_cast<float>(ringWritten % 65536u);
+		for (size_t c = 0; c < kPointChannels; ++c) {
+			for (size_t k = 0; k < kRingPairs; ++k) {
+				const auto& p = ring[c][(ringWritten + k) % kRingPairs];
+				v[pointIndex(c, k, 0)] = p[0];
+				v[pointIndex(c, k, 1)] = p[1];
+			}
+		}
 		sink.publish(sink.context, v.data(), v.size());
 	}
 };

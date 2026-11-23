@@ -133,6 +133,15 @@ Row rowOf(const Settings& settings);
 
 /// WHAT THE METER PUBLISHES, IN THIS ORDER: for each of three bands, the imbalance before the correction (dB, positive = left louder), after it, and the
 /// band's level (linear rms of both sides); then the two spacings in Hz as the engine runs them, and the tracked note (0: none).
+/// THE GONIOMETER'S POINTS: each of four channels (the three bands' corrected, widened outputs, then the whole INPUT before HP Wet) keeps its newest `kRingPairs` L/R pairs,
+/// one taken every `kPointDecimation` samples, published oldest first from index `kPointsBase`. A fixed ring on the audio thread, copied out with the other readings.
+inline constexpr size_t kPointChannels = 4;
+inline constexpr size_t kRingPairs = 24;
+inline constexpr size_t kPointsBase = 17;
+inline constexpr int kPointDecimation = 48;
+inline constexpr size_t kInputChannel = 3;
+[[nodiscard]] constexpr size_t pointIndex(size_t channel, size_t pair, size_t side) { return kPointsBase + (channel * kRingPairs + pair) * 2 + side; }
+
 enum class Reading : size_t {
 	Before0, After0, Level0,
 	Before1, After1, Level1,
@@ -140,9 +149,18 @@ enum class Reading : size_t {
 	Spacing1Hz,
 	Spacing2Hz,
 	NoteHz,
-	kCount,
+	/// THE CORRELATION OF EACH BAND'S OUTPUT SIDES (after the correction and the Widen), -1..1, and of the whole output (0 for a band with nothing in it).
+	Corr0,
+	Corr1,
+	Corr2,
+	CorrAll,
+	/// HOW MANY POINT PAIRS THE DEVICE HAS WRITTEN, modulo 65536 (exact in a float): the picture's way to know how many of the ring's newest are new.
+	PointSeq,
+	kCount = 17 + kPointChannels * kRingPairs * 2,
 };
 inline constexpr size_t kBandReadings = 3;
+static_assert(static_cast<size_t>(Reading::PointSeq) + 1 == kPointsBase);
+static_assert(static_cast<size_t>(Reading::kCount) <= 224, "the readings store holds 224 values per device");
 [[nodiscard]] constexpr Reading bandReading(size_t band, size_t what) { return static_cast<Reading>(band * kBandReadings + what); }
 
 /// THE CORRECTION'S GAINS for an imbalance `d` (nepers, ln(rmsL / rmsR)) and a strength: see the law above.

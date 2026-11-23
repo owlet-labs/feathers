@@ -42,7 +42,7 @@ BalanceExpanded::BalanceExpanded(backplane::DeviceHost& host, WidgetRegistry& re
 	bands_ = std::make_unique<SegmentedControl>(control(bal::Param::Bands), registry, bal::kBandsNames, notifier_);
 	keyTrack_ = std::make_unique<SwitchChip>(control(bal::Param::KeyTrack), "Key Track");
 	sharp_ = std::make_unique<SwitchChip>(control(bal::Param::Sharp), "Sharp");
-	view_ = std::make_unique<BalanceView>(host_, device_);
+	view_ = std::make_unique<BalanceView>(host_, device_, control(bal::Param::Spacing), control(bal::Param::Strength), control(bal::Param::Widen), control(bal::Param::Pan));
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		auto knob = std::make_unique<Knob>(control(kKnobs[i]), kCaptions[i], notifier_);
 		knob->setFaceDiameter(kKnobDiameter);

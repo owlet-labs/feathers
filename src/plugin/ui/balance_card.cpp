@@ -30,11 +30,10 @@ namespace bal = fx::balance;
 namespace {
 
 /// THE KNOBS IN FLOW ORDER: where the teeth are, how much is taken out, how the measurement follows, where the whole sits.
-constexpr std::array<bal::Param, 8> kKnobs { bal::Param::Spacing, bal::Param::Spacing2, bal::Param::Strength, bal::Param::Focus,
-	                                        bal::Param::Attack,  bal::Param::Release,  bal::Param::Widen,    bal::Param::Pan };
-constexpr std::array<const char*, 8> kCaptions { "Spacing", "Split 2", "Amount", "Focus", "Attack", "Release", "Widen", "Pan" };
+constexpr std::array<bal::Param, 4> kKnobs { bal::Param::Spacing2, bal::Param::Focus, bal::Param::Attack, bal::Param::Release };
+constexpr std::array<const char*, 4> kCaptions { "Split 2", "Focus", "Attack", "Release" };
 /// THE NAME A SHORTENED CAPTION STANDS FOR (empty: the caption is the name), so the hover and a spoken label say Strength and Spacing 2.
-constexpr std::array<const char*, 8> kFullNames { "", "Spacing 2", "Strength", "", "", "", "", "" };
+constexpr std::array<const char*, 4> kFullNames { "Spacing 2", "", "", "" };
 
 } // namespace
 
@@ -45,7 +44,7 @@ BalanceCard::BalanceCard(backplane::DeviceHost& host, WidgetRegistry& registry, 
 	addChild(bands_.get());
 	keyTrack_ = std::make_unique<SwitchChip>(control(bal::Param::KeyTrack), "Key Track");
 	addChild(keyTrack_.get());
-	view_ = std::make_unique<BalanceView>(host_, device_);
+	view_ = std::make_unique<BalanceView>(host_, device_, control(bal::Param::Spacing), control(bal::Param::Strength), control(bal::Param::Widen), control(bal::Param::Pan));
 	addChild(view_.get());
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		auto knob = std::make_unique<Knob>(control(kKnobs[i]), kCaptions[i], notifier_);
@@ -107,7 +106,7 @@ void BalanceCard::setModulation(ModState* mod, EditHistory* history) {
 }
 
 float BalanceCard::openHeight() {
-	return kSlotHeadHeight + 4.0f + kSwitchHeight + kRowGap + kPictureHeight + kRowGap + 2.0f * (kCellHeight + kRowGap) + kPad - kRowGap;
+	return kSlotHeadHeight + 4.0f + kSwitchHeight + kRowGap + kPictureHeight + kRowGap + kCellHeight + kPad;
 }
 
 float BalanceCard::laneHeightAt(float) const {
@@ -139,7 +138,7 @@ void BalanceCard::layOut() {
 	y += kSwitchHeight + kRowGap;
 
 	// THE PICTURE — and the one row that gives way when the card is shorter than its open height (`SmoothCard`'s rule).
-	const float below = kRowGap + 2.0f * kCellHeight + kRowGap + kPad;
+	const float below = kRowGap + kCellHeight + kPad;
 	const float room = ownFrame().body.bottom() - y - below;
 	const float pictureHeight = std::clamp(room, 0.0f, kPictureHeight);
 	view_->setBounds(left, y, width, pictureHeight);
@@ -196,6 +195,10 @@ visage::Frame* BalanceCard::widgetForTest(bal::Param p) const {
 		}
 	}
 	switch (p) {
+	case bal::Param::Strength:
+	case bal::Param::Widen:
+	case bal::Param::Pan:
+	case bal::Param::Spacing: return view_.get();
 	case bal::Param::Bands: return bands_.get();
 	case bal::Param::KeyTrack: return keyTrack_.get();
 	default: return nullptr;

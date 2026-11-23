@@ -62,7 +62,7 @@ public:
 	static constexpr float kCellHeight = Knob::columnHeight(kKnobDiameter);
 	static constexpr float kSwitchHeight = 18.0f;
 	static constexpr float kPictureWidth = 700.0f;
-	static constexpr float kPictureHeight = 250.0f;
+	static constexpr float kPictureHeight = 300.0f;
 	static constexpr float kChipWidth = 64.0f;
 	static constexpr size_t kCells = 10;
 

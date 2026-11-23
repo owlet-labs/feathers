@@ -109,12 +109,13 @@ public:
 	}
 	[[nodiscard]] bool holdsTail() const { return bal::kAudioOps.holdsTail(storage_.data()); }
 	[[nodiscard]] float reading(bal::Reading r) const { return readings_[static_cast<size_t>(r)]; }
+	[[nodiscard]] float point(size_t channel, size_t pair, size_t side) const { return readings_[bal::pointIndex(channel, pair, side)]; }
 	[[nodiscard]] float imbalance(size_t band) const { return bal::imbalanceForTest(storage_.data(), band); }
 	[[nodiscard]] bal::SideGains gains(size_t band) const { return bal::gainsForTest(storage_.data(), band); }
 
 private:
 	alignas(std::max_align_t) std::array<std::byte, 16384> storage_ {};
-	std::array<float, 16> readings_ {};
+	std::array<float, 256> readings_ {};
 };
 
 /// Fast settings for a case that settles quickly: short Attack and Release, the strongest correction.
@@ -873,6 +874,96 @@ TEST_CASE("Widen makes the sides less alike as it rises, and 0 changes nothing")
 				CHECK(c > 0.9999);
 			}
 		}
+	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE GONIOMETER'S DATA AND THE CORRELATION                                                       //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+/// THE PRINCIPAL AXIS OF A CLOUD OF (L, R) PAIRS, degrees from the L axis: 0 is all left, 45 is mono (the plot's vertical), 90 is all right.
+struct Cloud {
+	double ll = 0.0, rr = 0.0, lr = 0.0;
+	size_t n = 0;
+	void add(float l, float r) {
+		ll += static_cast<double>(l) * static_cast<double>(l);
+		rr += static_cast<double>(r) * static_cast<double>(r);
+		lr += static_cast<double>(l) * static_cast<double>(r);
+		++n;
+	}
+	[[nodiscard]] double angleDeg() const { return 0.5 * std::atan2(2.0 * lr, ll - rr) * 180.0 / 3.14159265358979323846; }
+};
+/// Renders `tones` for `settleSeconds`, then 100 blocks of 1024 samples (exactly a ring of decimated pairs each), gathering channel `channel`'s newest pairs from the readings.
+[[nodiscard]] Cloud gather(const bal::Settings& s, const std::vector<Probe>& tones, size_t channel) {
+	Instance inst;
+	inst.set(s);
+	Tones t;
+	for (const Probe& p : tones) {
+		t.tones.push_back({ p.hz, p.left, p.right });
+	}
+	(void)run(inst, t, 3.0, 0.0);
+	Cloud c;
+	const size_t blockFrames = static_cast<size_t>(bal::kPointDecimation) * bal::kRingPairs;
+	std::vector<float> l(blockFrames), r(blockFrames);
+	for (int block = 0; block < 100; ++block) {
+		t.fill(l, r);
+		inst.process(l.data(), r.data(), static_cast<int>(blockFrames));
+		for (size_t k = 0; k < bal::kRingPairs; ++k) {
+			c.add(inst.point(channel, k, 0), inst.point(channel, k, 1));
+		}
+	}
+	return c;
+}
+} // namespace
+
+TEST_CASE("the goniometer's data: a band leaning left is a cloud leaning left, straight at Strength 100%, and the ghost is the raw input") {
+	// 400 Hz on a 200 Hz comb is all in the on-teeth band (channel 1 of two); left is four times right: the axis is atan(1/4) = 14.04 degrees from L.
+	const std::vector<Probe> tones { { 400.0, 1.0, 0.25 } };
+	const double lean = std::atan(0.25) * 180.0 / 3.14159265358979323846;
+	for (const float strength : { 0.0f, 1.0f }) {
+		const Cloud band = gather(quick(2, strength), tones, 1);
+		const Cloud ghost = gather(quick(2, strength), tones, bal::kInputChannel);
+		CAPTURE(strength);
+		REQUIRE(band.n > 1000u);
+		CHECK(band.angleDeg() == doctest::Approx(strength == 0.0f ? lean : 45.0).epsilon(0.0).scale(1.0).epsilon(0.04));
+		// THE GHOST IS THE INPUT, BEFORE ANY CORRECTION: it leans the same however much the band was straightened.
+		CHECK(ghost.angleDeg() == doctest::Approx(lean).scale(1.0).epsilon(0.02));
+	}
+	// A BAND WITH NOTHING IN IT IS A POINT AT THE ORIGIN.
+	const Cloud empty = gather(quick(3, 1.0f), tones, 0);
+	CHECK(empty.ll + empty.rr < 1.0e-6);
+}
+
+TEST_CASE("the correlation is 1 for mono, about 0 for decorrelated noise, and falls as Widen rises") {
+	const auto corr = [](const bal::Settings& s, bool centred, bal::Reading which) {
+		Instance inst;
+		inst.set(s);
+		uint32_t seed = 77u;
+		double phase = 0.0;
+		std::vector<float> l(512), r(512);
+		for (int block = 0; block < 400; ++block) {
+			if (centred) {
+				::centred(l, r, false, 110.0, phase, seed);
+			}
+			else {
+				noise(l, r, seed, 0.5f, 0.5f);
+			}
+			inst.process(l.data(), r.data(), 512);
+		}
+		return inst.reading(which);
+	};
+	bal::Settings s = quick(3, 0.0f);
+	CHECK(corr(s, true, bal::Reading::CorrAll) > 0.999f);
+	CHECK(corr(s, true, bal::Reading::Corr1) > 0.999f);
+	CHECK(std::fabs(corr(s, false, bal::Reading::CorrAll)) < 0.15f);
+	float previous = 2.0f;
+	for (const float widen : { 0.0f, 0.5f, 1.0f }) {
+		s.widen = widen;
+		const float c = corr(s, true, bal::Reading::CorrAll);
+		CAPTURE(widen);
+		CHECK(c < previous);
+		previous = c;
 	}
 }
 TEST_CASE("the comb ratios helper names the two bands by the ratio, and OWLTT's names are the ones it always had") {

@@ -191,7 +191,8 @@ std::string LfoCard::rateFace(double value) const {
 	lfo::Settings s {};
 	s.timeBase = base;
 	s.timeScale = static_cast<float>(value);
-	if (s.synced()) {
+	// NOTE READS ITS RATIO ("1X" is the note itself), like a division's multiple: it is not a frequency until a note plays.
+	if (s.synced() || s.noteTracked()) {
 		return device::formatValue(lfo::kParamDescs[static_cast<size_t>(lfo::Param::TimeScale)], value);
 	}
 	// THE ENGINE'S RULE FOR THE FREQUENCY — `rateHz` with no tempo is exactly the Hz base's reading.

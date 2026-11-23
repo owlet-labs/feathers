@@ -165,6 +165,11 @@ struct PerNoteTable {
 			if (!n.used) {
 				continue;
 			}
+			// A SHAPE THAT TRACKS PITCH (the LFO's Note time base) IS TOLD THIS NOTE'S OWN KEY: under Poly each voice's wave runs
+			// at its own note. A shape that does not track has no such method, and nothing changes for it.
+			if constexpr (requires { n.shape.setNotePitch(0.0f); }) {
+				n.shape.setNotePitch(static_cast<float>(n.key));
+			}
 			n.shape.tick(settings, n.gate, n.retrigger, ctx.clock, ctx.rateMul);
 			n.retrigger = false;
 			if (!n.gate && n.shape.idle()) {
@@ -339,6 +344,10 @@ struct PolyShape {
 					trigFires += resolved ? 1u : 0u;
 				}
 			}
+		}
+		// THE ONE SHARED WAVE TRACKS THE HOST'S LAST NOTE (kept after its release; C3 before any).
+		if constexpr (requires { mono.setNotePitch(0.0f); }) {
+			mono.setNotePitch(ctx.notePitch);
 		}
 		mono.tick(settings, ctx.gate, ctx.retrigger, ctx.clock, ctx.rateMul);
 		if (poly()) {

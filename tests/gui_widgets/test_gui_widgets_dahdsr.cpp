@@ -4601,6 +4601,30 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 			e.reached.insert(static_cast<size_t>(feathers::mod::macros::kTraits.enableControl));
 		}
 		table.push_back(std::move(e));
+		// THE STRIP HOLDS FOUR: free this seat before the variants take theirs.
+		REQUIRE(f.bridge.removeRackDevice(macrosSlot));
+		f.bridge.refresh();
+		f.panel->resized();
+		// MACRO1 AND MACROS8 — THE SAME CARD OVER THEIR OWN DESCRIPTORS, reached through the strip the same way:
+		// three controls per macro and the head's square for the enable.
+		for (const feathers::device::Descriptor* variant : { &feathers::mod::macro1::kDescriptor, &feathers::mod::macros8::kDescriptor }) {
+			const size_t variantSlot = f.bridge.addRackDevice(variant->traits.tag);
+			REQUIRE(variantSlot < feathers::kMaxRackSlots);
+			f.bridge.refresh();
+			f.panel->resized();
+			auto* variantCard = dynamic_cast<const ui::MacrosCard*>(f.panel->cardFrameForTest(variantSlot));
+			REQUIRE(variantCard != nullptr);
+			Entry e { variant->traits.tag, {}, {}, false };
+			for (const feathers::mod::macros::Param p : variantCard->addressedParamsForTest()) {
+				e.reached.insert(static_cast<size_t>(p));
+			}
+			e.reached.insert(static_cast<size_t>(variant->traits.enableControl));
+			table.push_back(std::move(e));
+			// THE STRIP HAS ONLY SO MANY SEATS: free this one for the next.
+			REQUIRE(f.bridge.removeRackDevice(variantSlot));
+			f.bridge.refresh();
+			f.panel->resized();
+		}
 	}
 
 	// MATH (macro-modulation C) — ON ITS OWN CARD SINCE 2026-09-25 (`MathCard`, the compact layout),
@@ -5674,6 +5698,9 @@ TEST_CASE("the strip offers exactly the devices that may sit there AND are tagge
 	                                    // SIXTH, 2026-09-25: MACROS (macro-modulation B1), four outputs and
 	                                    // tagged a modulator — offered by the strip's own picker.
 	                                    feathers::mod::macros::kTraits.tag,
+	                                    // The one- and eight-macro variants, offered beside it.
+	                                    feathers::mod::macro1::kTraits.tag,
+	                                    feathers::mod::macros8::kTraits.tag,
 	                                    // SEVENTH, 2026-09-25: MATH (macro-modulation C), one output and
 	                                    // tagged a modulator.
 	                                    feathers::mod::math::kTraits.tag,

@@ -22474,6 +22474,121 @@ TEST_CASE("the output arms read the label") {
 	CHECK(f.panel->outputArmForTest(seat.slot, 1)->label() == "Macro 2");
 }
 
+namespace {
+
+/// A ONE- OR EIGHT-MACRO DEVICE IN THE STRIP, and its card — `seatMacros` for another tag.
+MacrosSeat seatVariant(ModFixture& f, const char* tag) {
+	MacrosSeat seat;
+	seat.slot = f.bridge.addRackDevice(tag);
+	REQUIRE(seat.slot < feathers::kMaxRackSlots);
+	seat.device = f.bridge.rackDeviceAt(seat.slot);
+	REQUIRE(seat.device != feathers::kNoInstance);
+	f.bridge.refresh();
+	f.panel->resized();
+	seat.card = const_cast<ui::MacrosCard*>(dynamic_cast<const ui::MacrosCard*>(f.panel->cardFrameForTest(seat.slot)));
+	REQUIRE(seat.card != nullptr);
+	return seat;
+}
+
+struct VariantCase {
+	const char* tag;
+	size_t count;
+};
+constexpr VariantCase kVariantCases[] = { { "MACRO1", 1 }, { "MACROS8", 8 } };
+
+} // namespace
+
+TEST_CASE("MACRO1 and MACROS8 cards: every slot is over its own macro, and does what the four-macro card's does") {
+	for (const VariantCase& vc : kVariantCases) {
+		CAPTURE(vc.tag);
+		const size_t count = vc.count;
+		ModFixture f;
+		const MacrosSeat seat = seatVariant(f, vc.tag);
+		REQUIRE(seat.card->slotCount() == count);
+		// THE CARD OFFERS EVERY CONTROL OF THE DEVICE BUT THE ENABLE: three per macro, each once.
+		const std::vector<mac::Param> addressed = seat.card->addressedParamsForTest();
+		REQUIRE(addressed.size() == 3 * count);
+		for (size_t c = 0; c < 3 * count; ++c) {
+			CHECK(std::find(addressed.begin(), addressed.end(), static_cast<mac::Param>(c)) != addressed.end());
+		}
+		for (size_t n = 0; n < count; ++n) {
+			CAPTURE(n);
+			ui::MacroSlot& slot = seat.card->slot(n);
+			const auto* road = dynamic_cast<const ui::DeviceControl*>(&seat.card->view(n).inner());
+			REQUIRE(road != nullptr);
+			CHECK(road->device() == seat.device);
+			CHECK(road->control() == mac::macroField(n));
+			CHECK(slot.knob().isVisible());
+			CHECK(slot.x() + slot.width() <= seat.card->width() + 0.5f);
+			// A VALUE WRITTEN THROUGH THE SLOT LANDS ON THIS MACRO'S FIELD ONLY.
+			slot.knob().control()->setValue(0.1 + 0.1 * static_cast<double>(n));
+			for (size_t m = 0; m <= n; ++m) {
+				CHECK(f.deviceHost.fieldAt(seat.device, mac::macroField(m)) == doctest::Approx(0.1 + 0.1 * static_cast<double>(m)));
+			}
+			for (size_t m = n + 1; m < count; ++m) {
+				CHECK(f.deviceHost.fieldAt(seat.device, mac::macroField(m)) == doctest::Approx(0.0));
+			}
+			// EACH KNOB IS A DESTINATION, and each output an arm that routes out.
+			CHECK(slot.knob().hasModulationForTest());
+			const ui::SourceArm* arm = f.panel->outputArmForTest(seat.slot, n);
+			REQUIRE(arm != nullptr);
+			CHECK(arm->label() == "Macro " + std::to_string(n + 1));
+		}
+		// THE LAST SLOT'S TYPE AND POLARITY, from its menu: its own fields, and no other macro's.
+		const size_t last = count - 1;
+		ui::MacroSlot& slot = seat.card->slot(last);
+		ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuMomentary);
+		CHECK(f.deviceHost.fieldAt(seat.device, mac::typeField(count, last)) == doctest::Approx(2.0));
+		CHECK(slot.type() == feathers::device::MacroType::Momentary);
+		ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuBipolar);
+		CHECK(f.deviceHost.fieldAt(seat.device, mac::bipolarField(count, last)) == doctest::Approx(1.0));
+		CHECK(seat.card->view(last).bipolar());
+		for (size_t m = 0; m < last; ++m) {
+			CHECK(f.deviceHost.fieldAt(seat.device, mac::typeField(count, m)) == doctest::Approx(0.0));
+			CHECK(f.deviceHost.fieldAt(seat.device, mac::bipolarField(count, m)) == doctest::Approx(0.0));
+		}
+		// RENAME the first: the label is that output's, and the card's caption follows.
+		ui::MacroSlot& first = seat.card->slot(0);
+		ui::chooseMacroMenuEntry(first.menuHooks(), ui::kMacroMenuRename);
+		REQUIRE(first.renaming());
+		typeInto(first.field(), "Wobble");
+		CHECK(f.bridge.outputLabel(seat.device, 0) == "Wobble");
+		CHECK(first.caption() == "Wobble");
+		if (count > 1) {
+			CHECK_FALSE(f.bridge.outputRelabelled(seat.device, 1));
+		}
+	}
+}
+
+TEST_CASE("MACRO1 and MACROS8 cards: the slots lie where the card says — one large knob, or two rows of four") {
+	ModFixture f;
+	const MacrosSeat one = seatVariant(f, "MACRO1");
+	const MacrosSeat eight = seatVariant(f, "MACROS8");
+	const MacrosSeat four = seatMacros(f);
+	// ONE: a single slot, with a full column to itself and a face larger than the four's.
+	CHECK(one.card->slotCount() == 1);
+	CHECK(one.card->slot(0).width() > four.card->slot(0).width() * 2.0f);
+	CHECK(one.card->slot(0).knob().width() > four.card->slot(0).knob().width());
+	CHECK(one.card->slot(0).caption() == "Macro 1");
+	// EIGHT: the first four share a row, the next four lie in the row below, column for column.
+	REQUIRE(eight.card->slotCount() == 8);
+	for (size_t n = 0; n < 4; ++n) {
+		CAPTURE(n);
+		CHECK(eight.card->slot(n).y() == doctest::Approx(eight.card->slot(0).y()));
+		CHECK(eight.card->slot(n + 4).y() > eight.card->slot(n).y() + eight.card->slot(n).height() - 0.5f);
+		CHECK(eight.card->slot(n + 4).x() == doctest::Approx(eight.card->slot(n).x()));
+		// the same column width as the four-macro card: a standard modulator card grid
+		CHECK(eight.card->slot(n).width() == doctest::Approx(four.card->slot(n).width()));
+		CHECK(eight.card->slot(n + 4).y() + eight.card->slot(n + 4).height() <= eight.card->height() + 0.5f);
+	}
+	// THE FOUR IS UNCHANGED: one row.
+	for (size_t n = 1; n < 4; ++n) {
+		CHECK(four.card->slot(n).y() == doctest::Approx(four.card->slot(0).y()));
+	}
+	CHECK(ui::MacrosCard::openHeight(1) == doctest::Approx(ui::kCardHeadHeight + ui::MacrosCard::bodyHeight() + ui::kCardOutputStripHeight));
+	CHECK(ui::MacrosCard::openHeight(2, ui::kMacros8Shape) > ui::MacrosCard::openHeight(2));
+}
+
 TEST_CASE("a relabelled MACROS output in a chain column renames its arm and re-lays the column") {
 	// **THE COLUMN KEEPS ITS ARMS ACROSS A RELABEL** (they are rebuilt only when the stack changes), so
 	// the word has to be HANDED to the arm and the column laid out again for the chip to take the new

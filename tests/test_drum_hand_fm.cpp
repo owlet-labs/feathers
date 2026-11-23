@@ -28,6 +28,9 @@
 #include "dsp/drum_voice.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <array>
 #include <cmath>
 #include <numbers>
@@ -622,4 +625,102 @@ TEST_CASE("headroom: a Hand drum and an FM perc stay inside full scale at the ex
 		}
 	}
 	CHECK(worst > 0.3); // they sound
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// RENDERS FOR LISTENING: written only when FEATHERS_DRUM_WAV_DIR names a folder.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+void dumpWav(const std::string& name, const std::vector<float>& x) {
+	const char* dir = std::getenv("FEATHERS_DRUM_WAV_DIR");
+	if (dir == nullptr || *dir == '\0') {
+		return;
+	}
+	std::vector<uint8_t> b;
+	const auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	const auto put16 = [&](uint16_t v) { for (int i = 0; i < 2; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	for (const char c : std::string("RIFF")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(36 + x.size() * 2));
+	for (const char c : std::string("WAVEfmt ")) b.push_back(static_cast<uint8_t>(c));
+	put32(16); put16(1); put16(1); put32(48000); put32(96000); put16(2); put16(16);
+	for (const char c : std::string("data")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(x.size() * 2));
+	for (const float v : x) put16(static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))));
+	std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+	if (f != nullptr) {
+		std::fwrite(b.data(), 1, b.size(), f);
+		std::fclose(f);
+	}
+}
+
+/// One hand-drum hit through the device's own mapping (lawsFor), rendered seconds long.
+std::vector<float> handHit(int stroke, bool up, double hz, double decay, double shell, double pot, double bend, double seconds, float metal = 0.3f) {
+	Controls c;
+	c.decaySeconds = decay;
+	c.sweepSeconds = 0.08;
+	c.direct = true;
+	c.velTone = 0.5;
+	c.velSnap = 0.0;
+	c.velTension = 1.0;
+	c.handStroke = stroke;
+	c.bendDirection = up ? 1 : 0;
+	c.shell = shell;
+	c.pot = pot;
+	Fields f;
+	f.tone = 0.45f;
+	f.snap = 0.6f;
+	f.noise = 0.15f;
+	f.sweep = static_cast<float>(bend);
+	f.metal = metal;
+	Rig r;
+	r.hit.strike(Kind::Hand, lawsFor(Kind::Hand, f, c, hz, 0.85), 17, 0.85f);
+	return run(r.hit, static_cast<size_t>(seconds * kSr));
+}
+
+std::vector<float> fmHit(int play, double hz, double ratio, double index, double indexSeconds, double decay, double sweep, double feedback, double seconds) {
+	Controls c;
+	c.decaySeconds = decay;
+	c.sweepSeconds = 0.05;
+	c.direct = true;
+	c.fmRatio = ratio;
+	c.fmIndex = index;
+	c.fmIndexSeconds = indexSeconds;
+	c.fmFeedback = feedback;
+	c.play = play;
+	Fields f;
+	f.sweep = static_cast<float>(sweep);
+	f.noise = 0.2f;
+	f.snap = 0.6f;
+	Rig r;
+	r.hit.strike(Kind::FM, lawsFor(Kind::FM, f, c, hz, 0.9), 17, 0.9f);
+	return run(r.hit, static_cast<size_t>(seconds * kSr));
+}
+
+} // namespace
+
+TEST_CASE("renders for listening: hand drum strokes, bends and bodies; FM tom, bell, zap and a drone") {
+	const std::vector<std::pair<const char*, int>> strokes { { "open", kStrokeOpen }, { "muted", kStrokeMuted }, { "slap", kStrokeSlap }, { "bass", kStrokeBass } };
+	for (const auto& [name, stroke] : strokes) {
+		const std::vector<float> x = handHit(stroke, false, 200.0, 0.7, 0.3, 0.2, 0.3, 1.5);
+		CHECK(*std::max_element(x.begin(), x.end()) > 0.05f);
+		dumpWav(std::string("hand-") + name + ".wav", x);
+	}
+	dumpWav("hand-bass-bend-down.wav", handHit(kStrokeBass, false, 140.0, 0.9, 0.3, 0.2, 0.6, 2.0));
+	dumpWav("hand-bass-bend-up.wav", handHit(kStrokeBass, true, 140.0, 0.9, 0.3, 0.2, 0.6, 2.0));
+	dumpWav("hand-open-bend-up.wav", handHit(kStrokeOpen, true, 220.0, 0.7, 0.2, 0.2, 0.5, 1.5));
+	dumpWav("hand-conga-body.wav", handHit(kStrokeOpen, false, 230.0, 0.6, 0.6, 0.0, 0.15, 1.5));
+	dumpWav("hand-udu-body.wav", handHit(kStrokeOpen, false, 230.0, 0.6, 1.0, 1.0, 0.15, 2.5));
+	const std::vector<float> tom = fmHit(kPlayOneShot, 110.0, 1.5, 4.0, 0.08, 0.5, 0.5, 0.0, 1.2);
+	const std::vector<float> bell = fmHit(kPlayOneShot, 600.0, 3.5, 5.0, 1.2, 2.5, 0.0, 0.0, 4.0);
+	const std::vector<float> zap = fmHit(kPlayOneShot, 800.0, 2.0, 8.0, 0.2, 0.3, 1.0, 0.0, 0.8);
+	const std::vector<float> drone = fmHit(kPlayDrone, 220.0, 1.5, 4.0, 0.2, 0.5, 0.0, 0.2, 4.0);
+	for (const auto* v : { &tom, &bell, &zap, &drone }) {
+		CHECK(*std::max_element(v->begin(), v->end()) > 0.02f);
+	}
+	dumpWav("fm-tom.wav", tom);
+	dumpWav("fm-bell.wav", bell);
+	dumpWav("fm-zap.wav", zap);
+	dumpWav("fm-drone-4s.wav", drone);
 }

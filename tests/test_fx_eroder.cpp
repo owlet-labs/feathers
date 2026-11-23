@@ -5416,46 +5416,86 @@ constexpr DriveMode kEveryType[] = { DriveMode::Soft,  DriveMode::Tube,  DriveMo
 
 } // namespace
 
-TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound") {
+namespace {
+
+/// The body of the worst-settings tail case, for ONE engine and ONE Tap: every Type as the Drive (and, in Etch, as both slots), with
+/// and without Bell. The original single case rendered 4 engines x 15 Types x 2 Taps x 2 shapes = 240 combinations; it is split by
+/// engine and Tap into eight cases of 15 x 2 = 30 each (8 x 30 = 240), and nothing else about it changed.
+constexpr int kWorstTailCombinationsPerCase = static_cast<int>(sizeof(kEveryType) / sizeof(kEveryType[0])) * 2;
+
+void worstTailsEndInZero(Mode mode, bool driven) {
 	constexpr double kBoundSeconds = 8.0;
 	double worst = 0.0;
-	for (const Mode mode : { Mode::Dust, Mode::Rust, Mode::Comb, Mode::Etch }) {
-		for (const DriveMode type : kEveryType) {
-			for (const bool driven : { false, true }) {
-				for (const bool bell : { false, true }) {
-					CAPTURE(static_cast<int>(mode));
-					CAPTURE(static_cast<int>(type));
-					CAPTURE(driven);
-					CAPTURE(bell);
-					const Settings s = worstLoops(mode, type, driven, bell);
-					const size_t inFrames = 24000;
-					const size_t total = inFrames + static_cast<size_t>((kBoundSeconds + 1.0) * kRate);
-					std::vector<float> l = whiteInput(inFrames, 0.9f);
-					l.resize(total, 0.0f);
-					std::vector<float> r = l;
-					Eroder e;
-					e.prepare(kRate);
-					e.setTarget(s);
-					for (size_t done = 0; done < total; done += 480) {
-						e.processStereo(l.data() + done, r.data() + done, 480);
-					}
-					size_t last = 0;
-					for (size_t i = 0; i < total; ++i) {
-						REQUIRE(std::isfinite(l[i]));
-						REQUIRE(std::isfinite(r[i]));
-						if (l[i] != 0.0f || r[i] != 0.0f) {
-							last = i;
-						}
-					}
-					const double tail = static_cast<double>(last > inFrames ? last - inFrames : 0) / kRate;
-					worst = std::max(worst, tail);
-					CHECK(tail < kBoundSeconds);
-					CHECK(last < total - static_cast<size_t>(kRate));
+	int combinations = 0;
+	for (const DriveMode type : kEveryType) {
+		for (const bool bell : { false, true }) {
+			CAPTURE(static_cast<int>(mode));
+			CAPTURE(static_cast<int>(type));
+			CAPTURE(driven);
+			CAPTURE(bell);
+			const Settings s = worstLoops(mode, type, driven, bell);
+			const size_t inFrames = 24000;
+			const size_t total = inFrames + static_cast<size_t>((kBoundSeconds + 1.0) * kRate);
+			std::vector<float> l = whiteInput(inFrames, 0.9f);
+			l.resize(total, 0.0f);
+			std::vector<float> r = l;
+			Eroder e;
+			e.prepare(kRate);
+			e.setTarget(s);
+			for (size_t done = 0; done < total; done += 480) {
+				e.processStereo(l.data() + done, r.data() + done, 480);
+			}
+			size_t last = 0;
+			for (size_t i = 0; i < total; ++i) {
+				REQUIRE(std::isfinite(l[i]));
+				REQUIRE(std::isfinite(r[i]));
+				if (l[i] != 0.0f || r[i] != 0.0f) {
+					last = i;
 				}
 			}
+			const double tail = static_cast<double>(last > inFrames ? last - inFrames : 0) / kRate;
+			worst = std::max(worst, tail);
+			CHECK(tail < kBoundSeconds);
+			CHECK(last < total - static_cast<size_t>(kRate));
+			++combinations;
 		}
 	}
-	measured("worst-settings tail, the longest over every combination, seconds", worst);
+	CHECK(combinations == kWorstTailCombinationsPerCase);
+	measured("worst-settings tail, the longest over this engine and Tap, seconds", worst);
+}
+
+} // namespace
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Dust, Tap not Driven") {
+	worstTailsEndInZero(Mode::Dust, false);
+}
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Dust, Tap Driven") {
+	worstTailsEndInZero(Mode::Dust, true);
+}
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Rust, Tap not Driven") {
+	worstTailsEndInZero(Mode::Rust, false);
+}
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Rust, Tap Driven") {
+	worstTailsEndInZero(Mode::Rust, true);
+}
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Comb, Tap not Driven") {
+	worstTailsEndInZero(Mode::Comb, false);
+}
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Comb, Tap Driven") {
+	worstTailsEndInZero(Mode::Comb, true);
+}
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Etch, Tap not Driven") {
+	worstTailsEndInZero(Mode::Etch, false);
+}
+
+TEST_CASE("Hotter loops: at the worst settings — every engine, every Type as the Drive and as both slots, both Taps, a +18 dB Tilt and Bell in the loop — the tail ends in exact zero within the bound — Etch, Tap Driven") {
+	worstTailsEndInZero(Mode::Etch, true);
 }
 
 TEST_CASE("Hotter loops: a howling loop comes out at about the same level whatever the emphasis, and 0 dB leaves the limiters' thresholds as they were") {

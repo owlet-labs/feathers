@@ -92,6 +92,16 @@ public:
 	/// THE WORD `draw` PRINTS NOW — the seam the tests read: the caption in a cell narrower than the name, else the name (cut to its last word
 	/// in a cell narrower than it).
 	[[nodiscard]] std::string shownText() const;
+	/// WHERE `draw` PUTS THINGS: the glyph box, the gap, the inset, the printed word's width and the right edge of the word — the seam a case
+	/// reads to say the word lies inside the chip.
+	struct ContentLayout {
+		float glyph = 0.0f;
+		float gap = 0.0f;
+		float inset = 0.0f;
+		float textWidth = 0.0f;
+		float right = 0.0f;
+	};
+	[[nodiscard]] ContentLayout contentLayout() const;
 	void setLabel(std::string label) {
 		if (label != label_) {
 			label_ = std::move(label);

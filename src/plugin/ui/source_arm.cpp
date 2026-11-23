@@ -17,6 +17,8 @@
 
 #include "plugin/ui/source_arm.h"
 
+#include <algorithm>
+
 #include "plugin/ui/theme.h"
 
 namespace feathers::ui {
@@ -86,13 +88,18 @@ void SourceArm::draw(visage::Canvas& canvas) {
 
 	// A BORDERED CHIP WHEN IT CARRIES A NAME, a bare glyph when it does not. The border is what says
 	// the word and the arrow are ONE button; an arrow floating beside a word reads as a caption.
-	const float glyph = kArmArrowSize + 6.0f;
+	// **A GRID CELL THAT PRINTS ITS SHORT NAME (`setCaption`) IS LAID OUT COMPACT AND CENTRED** (`contentLayout`).
+	const ContentLayout layout = contentLayout();
+	const float glyph = layout.glyph;
+	const float gap = layout.gap;
+	const float inset = layout.inset;
+	const std::string shown = shownText();
 	float cx = static_cast<float>(width()) * 0.5f;
 	if (!label_.empty()) {
 		canvas.setColor(withAlpha(lit ? kModulation : kLine, lit ? 0.95f : 0.75f));
 		canvas.roundedRectangleBorder(0.0f, 1.0f, static_cast<float>(width()),
 		                              static_cast<float>(height()) - 2.0f, kCardCorner, 1.0f);
-		cx = SourceArm::kChipInset + glyph * 0.5f;
+		cx = inset + glyph * 0.5f;
 	}
 
 	// THE SAME MARK FEATHERS USES, from the floor rather than redrawn here — `drawArmArrow` replaced
@@ -103,10 +110,9 @@ void SourceArm::draw(visage::Canvas& canvas) {
 	if (!label_.empty()) {
 		// **A CHIP NARROWER THAN ITS NAME PRINTS THE NAME'S LAST WORD** — "Mod 3" as "3" in a grid cell
 		// (`Traits::outputGridColumns`). A flowed chip is always as wide as its name, so this never fires there.
-		const std::string shown = shownText();
 		canvas.setColor(lit ? kModulation : kMuted);
 		drawTracked(canvas, shown.c_str(), font(kKnobLabelSize), kKnobLabelTracking,
-		            SourceArm::kChipInset + glyph + kLabelGap, 0.0f, static_cast<float>(height()));
+		            inset + glyph + gap, 0.0f, static_cast<float>(height()));
 	}
 }
 
@@ -165,6 +171,22 @@ size_t layoutOutputGrid(size_t count, size_t columns, visage::Bounds strip, std:
 	return rows;
 }
 } // namespace
+
+SourceArm::ContentLayout SourceArm::contentLayout() const {
+	// A GRID CELL THAT PRINTS ITS SHORT NAME: the full chip's inset and arrow box cost more than a quarter-card cell has (the "M4" ran over the
+	// border), so the arrow box is smaller, the gap tighter, and the pair sits in the middle of the cell.
+	ContentLayout out;
+	const bool compact = !label_.empty() && !caption_.empty() && static_cast<float>(width()) < widthFor(label_);
+	out.glyph = compact ? kArmArrowSize + 2.0f : kArmArrowSize + 6.0f;
+	out.gap = compact ? 3.0f : kLabelGap;
+	out.inset = SourceArm::kChipInset;
+	out.textWidth = label_.empty() ? 0.0f : trackedWidth(font(kKnobLabelSize), shownText(), kKnobLabelTracking);
+	if (compact) {
+		out.inset = std::max(3.0f, (static_cast<float>(width()) - (out.glyph + out.gap + out.textWidth)) * 0.5f);
+	}
+	out.right = out.inset + out.glyph + out.gap + out.textWidth;
+	return out;
+}
 
 std::string SourceArm::shownText() const {
 	std::string shown = label_;

@@ -22602,9 +22602,12 @@ TEST_CASE("MACROS and MACROS8: each output chip stands in its knob's column (the
 		size_t count;
 		size_t rows;
 	};
-	for (const Shape& shape : { Shape { "MACROS", 4, 1 }, Shape { "MACROS8", 8, 2 } }) {
+	for (const Shape& shape : { Shape { "MACROS", 4, 1 }, Shape { "MACROS8", 8, 2 } }) for (const float factor : { 1.0f, 1.75f }) {
 		CAPTURE(shape.tag);
+		CAPTURE(factor);
 		ModFixture f;
+		const float scale = f.root->dpiScale() * factor;
+		f.root->setDpiScale(scale);
 		const MacrosSeat seat = seatVariant(f, shape.tag);
 		REQUIRE(seat.card->slotCount() == shape.count);
 		const auto centreX = [](const visage::Frame& frame) { return frame.x() + 0.5f * frame.width(); };
@@ -22631,6 +22634,14 @@ TEST_CASE("MACROS and MACROS8: each output chip stands in its knob's column (the
 			}
 			// THE WORD ON THE CHIP is the short M-number whole, in a cell narrower than the name.
 			CHECK(arm->shownText() == "M" + std::to_string(n + 1));
+			// EVERY CHIP LIES FULLY INSIDE THE CARD with the card's own gutter on the right as on the left, in native pixels at this scale.
+			CHECK(arm->nativeRight() <= seat.card->nativeRight() - static_cast<int>(std::lround(ui::kCardOutputChipPadX * scale)) + 1);
+			CHECK(arm->nativeX() >= seat.card->nativeX() + static_cast<int>(std::lround(ui::kCardOutputChipPadX * scale)) - 1);
+			// AND THE WORD LIES INSIDE ITS OWN CHIP: the arrow and "M4" end before the chip's right border (they ran over it when the cell kept the
+			// full chip's inset), and begin after its left.
+			const ui::SourceArm::ContentLayout content = arm->contentLayout();
+			CHECK(content.right <= static_cast<float>(arm->width()) - 2.0f);
+			CHECK(content.inset >= 2.0f);
 		}
 		// A RENAMED MACRO: the chip still says its number; the name is the hover and the route lists' word.
 		f.bridge.setOutputLabel(seat.device, 1, "Wobble");

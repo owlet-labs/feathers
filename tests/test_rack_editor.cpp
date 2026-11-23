@@ -81,7 +81,6 @@
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
-#include <regex>
 #include <set>
 #include <tuple>
 #include <typeinfo>
@@ -7030,8 +7029,26 @@ TEST_CASE("column folds: each fold is patch state under its own key, a saved pat
 		(void)bm;
 		(void)bi;
 		// THE DOCUMENT AS A BUILD BEFORE THE SPLIT WROTE IT: no `inspectorColumn` object at all.
-		const std::regex inspectorKey("\\s*,?\\s*\"inspectorColumn\"\\s*:\\s*\\{[^}]*\\}");
-		const std::string oldText = std::regex_replace(text, inspectorKey, "");
+		std::string oldText = text;
+		{
+			const size_t key = oldText.find("\"inspectorColumn\"");
+			REQUIRE(key != std::string::npos);
+			const size_t open = oldText.find('{', key);
+			const size_t close = oldText.find('}', open);
+			REQUIRE(close != std::string::npos);
+			size_t from = key;
+			while (from > 0 && (oldText[from - 1] == ' ' || oldText[from - 1] == '\n' || oldText[from - 1] == '\t')) {
+				--from;
+			}
+			size_t to = close + 1;
+			if (from > 0 && oldText[from - 1] == ',') {
+				--from; // the member's own leading comma goes with it
+			}
+			else if (to < oldText.size() && oldText[to] == ',') {
+				++to; // the first member: its trailing comma
+			}
+			oldText.erase(from, to - from);
+		}
 		REQUIRE(oldText.find("inspectorColumn") == std::string::npos);
 		REQUIRE(oldText.find("macrosColumn") != std::string::npos);
 		REQUIRE(rack::parseRackText(oldText, &old));

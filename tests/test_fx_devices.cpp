@@ -2813,6 +2813,8 @@ std::vector<std::string> honestyExpected() {
 	expected.push_back("Rack :: Rack Playing");
 	expected.push_back("Rack :: Rack Follow Played"); // Pads: which chain the window looks at, no audio
 	expected.push_back("Rack :: Rack Front"); // Tabs: what the window puts in front (the cards or the first device's window), no audio
+	expected.push_back("Rack :: Rack Inspector Fold"); // the window's rack pane folded to a strip: view state, no audio
+	expected.push_back("Rack :: Rack Macros Fold"); // the window's macros pane folded to a strip: view state, no audio
 	expected.push_back("Rack :: Rack Cut 3");
 	expected.push_back("Rack :: Rack Cut 4");
 	// THE CHAIN SLOTS (backlog NO item 2) are not on this list because the sweep does not vary them: `sweptControls`

@@ -18,6 +18,7 @@
 #include "plugin/ui/drum_device_ui.h"
 
 #include "plugin/ui/theme.h"
+#include "plugin/ui/trig_pad.h"
 
 #include <algorithm>
 #include <cmath>
@@ -143,43 +144,8 @@ void DrumDeviceModel::setModulation(ModState* mod, EditHistory* history) {
 	}
 }
 
-DrumPlayButton::DrumPlayButton(backplane::DeviceHost& host, std::function<int()> key) : host_(host), key_(std::move(key)) {
-	onMouseDown() = [this](const visage::MouseEvent&) { press(); };
-	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
-	installTooltipHover(*this, *this);
-}
-
-DrumPlayButton::~DrumPlayButton() { release(); }
-
-const char* DrumPlayButton::tooltipAt(visage::Point) const {
-	return "Strike this drum on its Note (middle C when it is Pitched), held while the button is held. Not saved and not modulated.";
-}
-
-void DrumPlayButton::press() {
-	if (held_) {
-		return;
-	}
-	heldKey_ = key_ ? key_() : 0;
-	held_ = host_.postNote(heldKey_, true, kVelocity);
-	redraw();
-}
-
-void DrumPlayButton::release() {
-	if (!held_) {
-		return;
-	}
-	held_ = false;
-	(void)host_.postNote(heldKey_, false, 0.0f);
-	redraw();
-}
-
-void DrumPlayButton::draw(visage::Canvas& canvas) {
-	canvas.setColor(held_ ? kAccent : kSurfaceRaised);
-	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 4.0f);
-	canvas.setColor(kLine);
-	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 4.0f, 1.0f);
-	canvas.setColor(held_ ? kVoid : kInk);
-	canvas.triangleRight(width() * 0.5f - 3.0f, height() * 0.5f - 5.0f, 5.0f);
+bool DrumDeviceModel::droneOn() const {
+	return settings().index(dd::Param::Trigger) == feathers::drum::kPlayDrone && feathers::drum::kindSustains(kind());
 }
 
 } // namespace feathers::ui

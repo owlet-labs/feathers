@@ -60,12 +60,12 @@
 
 namespace feathers::drum {
 
-enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, Water, Sweep, kCount };
+enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, Water, Sweep, Hand, FM, kCount };
 inline constexpr size_t kKindCount = static_cast<size_t>(Kind::kCount);
 /// The labels a Choice stores (the schema ledger stores a Choice by label, so this order may change; a label may not
 /// without a ChoiceAlias).
 inline constexpr std::array<const char* const, kKindCount> kKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap",
-	                                                                    "String", "Particle", "Friction", "Water", "Sweep" };
+	                                                                    "String", "Particle", "Friction", "Water", "Sweep", "Hand drum", "FM perc" };
 
 /// **PLAY MODES**: how a hit is held. One-shot rings the whole hit out; Gate holds it while the key is down and damps it to Release when it is let go;
 /// Drone sounds from the moment the device runs, no key needed, until it is switched off. A mode is offered on a kind only where the engine has an
@@ -91,7 +91,54 @@ inline constexpr int kPlayDrone = 2;
 	return play == 1 ? 0.3 + 0.7 * fall : fall;
 }
 /// Whether a kind has an excitation that goes on (a random process), so that Gate holds it and Drone runs it for ever.
-[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle || k == Kind::Friction || k == Kind::Water || k == Kind::Sweep; }
+[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept {
+	return k == Kind::Particle || k == Kind::Friction || k == Kind::Water || k == Kind::Sweep || k == Kind::FM;
+}
+
+/// **THE HAND DRUM'S STROKES**: how each one moves the hit before the laws are read. `toneShift` moves the strike position (centre is low, rim high),
+/// `snapShift` the contact's hardness, `t60Mul` the whole ring (a damped stroke is short), `fundamental` the lowest head mode's weight against the rest
+/// (a slap has none), `crack` the level of the hand's tap beside the head, and `bendMul` how far the pitch bend reaches (the bass stroke leans on the head).
+struct HandStroke {
+	double toneShift, snapShift, t60Mul, fundamental, crack, bendMul;
+};
+inline constexpr int kStrokeOpen = 0;
+inline constexpr int kStrokeMuted = 1;
+inline constexpr int kStrokeSlap = 2;
+inline constexpr int kStrokeBass = 3;
+[[nodiscard]] constexpr HandStroke handStroke(int stroke) noexcept {
+	switch (stroke) {
+	case kStrokeMuted: return { -0.10, 0.0, 0.12, 1.0, 0.8, 1.0 };
+	case kStrokeSlap: return { 0.35, 0.30, 0.5, 0.35, 2.5, 0.6 };
+	case kStrokeBass: return { -0.40, -0.20, 1.3, 1.0, 0.5, 1.5 };
+	default: return { 0.0, 0.0, 1.0, 1.0, 1.0, 1.0 };
+	}
+}
+inline constexpr int kHandHeadModes = 12;
+/// A HAND DRUM'S MODE RATIOS: a loaded head's near-harmonic set (1, 2, 3 ...) at Metal 0, a free membrane's Bessel set at 1, geometrically between.
+/// The shell's mode is one more, `handShellRatio`: a tube's, at the head's pitch, at Pot 0; a pot's Helmholtz thump, under it, at 1.
+[[nodiscard]] double handRatio(int mode, float metal);
+/// An FM sideband's amplitude: |J_n(index)|, the Bessel function of the first kind, by its power series (the picture's; the tests restate it independently).
+[[nodiscard]] double fmSideband(int n, double index);
+[[nodiscard]] inline double handShellRatio(double pot) { return std::exp2(-1.152003093445049 * (pot < 0.0 ? 0.0 : (pot > 1.0 ? 1.0 : pot))); } // 1 .. 0.45
+/// The shell's ring against the head's, 0.15 (a tube, short) .. 1 (a pot, long).
+[[nodiscard]] inline double handShellT60Share(double pot) { return 0.15 + 0.85 * (pot < 0.0 ? 0.0 : (pot > 1.0 ? 1.0 : pot)); }
+/// **THE FM PERC'S LAWS, one place for the voice and the picture.** The index at `t` seconds: held share (0 One-shot, 0.5 Gate and Drone) plus the
+/// rest decaying by its own T60; a Drone has no strike to decay from and sits at its held share.
+inline constexpr double kFmHeldShare = 0.5;
+[[nodiscard]] inline double fmIndexAt(double index, double indexT60, int play, double t) {
+	if (play == 2) {
+		return index * kFmHeldShare;
+	}
+	const double held = play == 1 ? kFmHeldShare : 0.0;
+	const double e = indexT60 > 0.0 ? std::exp(-6.907755278982137 * t / indexT60) : 0.0; // 60 dB over the T60
+	return index * (held + (1.0 - held) * e);
+}
+/// TONE is the index's brightness: the peak index is scaled by 2^(2·(tone - 0.5)), a quarter at 0 to four times at 1 around the middle's none.
+[[nodiscard]] inline double fmToneScale(double tone) { return std::exp2(2.0 * (tone - 0.5)); }
+/// The modulator's frequency over the carrier's: the Ratio, its Fine (cents) and Metal's inharmonic lean (up to half an octave).
+[[nodiscard]] inline double fmRatioEff(double ratio, double fineCents, double metal) {
+	return ratio * std::exp2(0.5 * metal + fineCents / 1200.0);
+}
 
 /// THE SEVEN DRUM FIELDS (proposal §3.1), each in [0, 1]: the terrain's, or a scaler's override of it.
 struct Fields {
@@ -203,6 +250,17 @@ struct Controls {
 	double syncBeats{0.0};
 	double secondsPerBeat{0.0};
 	int play{0};
+	/// THE HAND DRUM'S: which stroke (kStroke*), whether the bend rises from under the pitch (1) or falls onto it (0), the shell's level and its Pot (0 tube, 1 pot).
+	int handStroke{0};
+	int bendDirection{0};
+	double shell{0.0};
+	double pot{0.0};
+	/// THE FM PERC'S: the modulator's ratio and its fine offset in cents, the peak index, the index's T60, and the modulator's own feedback.
+	double fmRatio{1.0};
+	double fmFineCents{0.0};
+	double fmIndex{3.0};
+	double fmIndexSeconds{0.15};
+	double fmFeedback{0.0};
 	friend bool operator==(const Controls&, const Controls&) = default;
 };
 
@@ -382,6 +440,14 @@ struct Laws {
 	double sweepRange{4.0};
 	double lengthSeconds{1.0}; ///< the sweep's time: the synced beats at the tempo, else the Decay's (Length applied)
 	int play{0};
+	int handStroke{0};
+	bool bendUp{false}; ///< the Hand drum's bend rises onto the pitch from under it
+	double shell{0.0};
+	double pot{0.0};
+	double fmRatio{1.0}; ///< the modulator's frequency over the carrier's, Fine and Metal applied
+	double fmIndex{3.0};
+	double fmIndexT60{0.15};
+	double fmFeedback{0.0};
 	friend bool operator==(const Laws&, const Laws&) = default;
 };
 
@@ -530,6 +596,13 @@ public:
 	/// and filters; 0 once the tooth has landed.
 	float clapToothForTest() const { return toothValue_; }
 	double dipAtForTest(double t) const { return dipAt(t); }
+	/// The Hand drum's: the shell mode's index in the bank, and the signed bend (octaves, negative while rising) the last control block used.
+	int shellModeForTest() const { return modeCount_ - 1; }
+	double handBendForTest() const { return handBend_; }
+	/// The FM perc's: the index now, the carrier's and modulator's frequencies in Hz, and the modulator's last output (feedback's input).
+	double fmIndexForTest() const { return fmIndexNow_; }
+	double fmCarrierHzForTest() const { return fmIncC_ * sr_; }
+	double fmModulatorHzForTest() const { return fmIncM_ * sr_; }
 	const std::array<int, kMaxClapBursts>& clapOnsetsForTest() const { return onsets_; }
 	/// Samples since the strike.
 	int64_t age() const { return age_; }
@@ -546,6 +619,7 @@ private:
 	/// One sample of both ears (a drop lands anywhere in the stereo field).
 	void renderWater(float& left, float& right);
 	float renderSweep();
+	float renderFm();
 	float renderClap();
 	float clapTooth();
 	float noise() { return noise_.next(); }
@@ -643,6 +717,19 @@ private:
 	float ratioMetal_{-1.0f};
 	int ratioCount_{0};
 	double decayT60_{-1.0};
+
+	// Hand drum: the signed bend of the last control block (octaves; negative while it rises onto the pitch), and the shell's cached ratio.
+	double handBend_{0.0};
+	double ratioPot_{-1.0};
+	// FM perc: the carrier and modulator phases (cycles) and per-sample increments, the modulator's last output, the index in use and the amplitude and index envelopes.
+	double fmPhaseC_{0.0};
+	double fmPhaseM_{0.0};
+	double fmIncC_{0.0};
+	double fmIncM_{0.0};
+	float fmPrev_{0.0f};
+	double fmIndexNow_{0.0};
+	double fmToneScale_{1.0};
+	Env fmIdxEnv_ {};
 
 	// Metal: six phases and increments.
 	std::array<double, kMetalOscillators> mphase_ {};

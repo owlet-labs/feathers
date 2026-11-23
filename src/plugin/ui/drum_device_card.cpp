@@ -38,11 +38,9 @@ DrumDeviceCard::DrumDeviceCard(backplane::DeviceHost& host, WidgetRegistry& regi
 	addChild(note_.get());
 	addChild(level_.get());
 	addChild(tune_.get());
-	// THE PLAY BUTTON ONLY WHERE THE HOST HAS A NOTE ROAD (the honesty rule): the standalone rack has none, so it draws no button.
-	if (host.canPostNote()) {
-		play_ = std::make_unique<DrumPlayButton>(host, [this] { return model_.noteKey(); });
-		addChild(play_.get());
-	}
+	// THE TRIG PAD (the house Trig button): the device's Trig param, so a press, a modulator or a pattern can strike the drum.
+	trigPad_ = std::make_unique<TrigPad>(model_.control(dd::Param::Trig), [&host, id](uint32_t& fires) { return host.trigFiresAt(id, fires); });
+	addChild(trigPad_.get());
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		noteCardPress(e);
 		const visage::Point p = e.position;
@@ -69,7 +67,7 @@ void DrumDeviceCard::toggleEnabled() {
 
 void DrumDeviceCard::foldedChanged() {
 	for (visage::Frame* f : { static_cast<visage::Frame*>(&picture_), static_cast<visage::Frame*>(kind_.get()), static_cast<visage::Frame*>(keys_.get()), static_cast<visage::Frame*>(note_.get()),
-	                          static_cast<visage::Frame*>(level_.get()), static_cast<visage::Frame*>(tune_.get()), static_cast<visage::Frame*>(play_.get()) }) {
+	                          static_cast<visage::Frame*>(level_.get()), static_cast<visage::Frame*>(tune_.get()), static_cast<visage::Frame*>(trigPad_.get()) }) {
 		if (f != nullptr) {
 			f->setVisible(!folded_);
 		}
@@ -87,8 +85,8 @@ void DrumDeviceCard::resized() {
 	picture_.setBounds(left, y, w, kPictureHeight);
 	y += kPictureHeight + kGap;
 	// ROW ONE: Kind, Note, and the play button at the right.
-	const float playW = play_ != nullptr ? 30.0f : 0.0f;
-	const float playGap = play_ != nullptr ? kGap : 0.0f;
+	const float playW = trigPad_ != nullptr ? 30.0f : 0.0f;
+	const float playGap = trigPad_ != nullptr ? kGap : 0.0f;
 	const float boxes = w - playW - playGap;
 	// KIND, THEN NOTE (One Key's alone: hidden, not greyed, in Any Key and Pitched, and Kind takes its width).
 	const bool noteShown = model_.relevant(dd::Param::Note);
@@ -98,8 +96,8 @@ void DrumDeviceCard::resized() {
 	kind_->setBounds(left, y, kindW, ValueBox::kHeight);
 	note_->setBounds(left + kindW + kGap, y, 52.0f, ValueBox::kHeight);
 	note_->setVisible(!folded_ && noteShown);
-	if (play_ != nullptr) {
-		play_->setBounds(left + w - playW, y + (ValueBox::kHeight - 22.0f) * 0.5f, playW, 22.0f);
+	if (trigPad_ != nullptr) {
+		trigPad_->setBounds(left + w - playW, y + (ValueBox::kHeight - 22.0f) * 0.5f, playW, 22.0f);
 	}
 	y += ValueBox::kHeight + kGap;
 	// ROW TWO: the Keys choice across the width (three labels on the face, before one is applied).
@@ -120,6 +118,10 @@ bool DrumDeviceCard::updateContent() {
 	if (model_.relevant(dd::Param::Note) != noteShown_) {
 		noteShown_ = !noteShown_;
 		resized();
+	}
+	// A DRONE TAKES NO TRIGGER: the Trig button is hidden while it is on.
+	if (trigPad_ != nullptr && trigPad_->isVisible() == model_.droneOn()) {
+		trigPad_->setVisible(!model_.droneOn());
 	}
 	const bool on = model_.control(dd::Param::Enabled).value() >= 0.5;
 	for (visage::Frame* f : { static_cast<visage::Frame*>(level_.get()), static_cast<visage::Frame*>(tune_.get()) }) {

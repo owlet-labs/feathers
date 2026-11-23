@@ -103,7 +103,7 @@ std::vector<float> render(Hit& h, size_t n, size_t block = 256) {
 	return out;
 }
 
-constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle, Kind::Friction, Kind::Water, Kind::Sweep };
+constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle, Kind::Friction, Kind::Water, Kind::Sweep, Kind::Hand, Kind::FM };
 
 } // namespace
 

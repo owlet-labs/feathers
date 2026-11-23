@@ -24,6 +24,7 @@
 #include "plugin/ui/drum_device_likes.h"
 #include "plugin/ui/drum_device_pad.h"
 #include "plugin/ui/drum_device_ui.h"
+#include "plugin/ui/trig_pad.h"
 #include "plugin/ui/drum_hit_picture.h"
 #include "plugin/ui/drum_pitch_readout.h"
 #include "plugin/ui/expanded_overlay.h"
@@ -73,7 +74,7 @@ public:
 	[[nodiscard]] DrumDevicePad& padForTest() const { return *pad_; }
 	[[nodiscard]] DrumLikeBar& likesForTest() const { return *likes_; }
 	[[nodiscard]] PitchReadout& readoutForTest() const { return *readout_; }
-	[[nodiscard]] DrumPlayButton* playForTest() const { return play_.get(); }
+	[[nodiscard]] TrigPad* trigPadForTest() const { return trigPad_.get(); }
 
 private:
 	enum class Kind : uint8_t { Box, Segmented, Pill, Zone, Chip };
@@ -87,7 +88,7 @@ private:
 	std::unique_ptr<DrumLikeBar> likes_;
 	std::unique_ptr<SettledPitchControl> settledControl_;
 	std::unique_ptr<PitchReadout> readout_;
-	std::unique_ptr<DrumPlayButton> play_;
+	std::unique_ptr<TrigPad> trigPad_;
 	DrumPadContext padContext_ {};
 	EditHistory* padGroup_ = nullptr;
 	feathers::drum::Kind shownKind_ = feathers::drum::Kind::kCount;

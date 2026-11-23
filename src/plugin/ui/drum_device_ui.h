@@ -51,6 +51,8 @@ public:
 	[[nodiscard]] feathers::drum::Kind kind() const;
 	/// Whether `p` is read by the current Kind (a control with no gate always is): the honesty rule's question.
 	[[nodiscard]] bool relevant(dd::Param p) const;
+	/// Whether the drum is a Drone (a kind that can be held, set to Drone): it sounds with no key, so the Trig button has nothing to do and is hidden.
+	[[nodiscard]] bool droneOn() const;
 	/// The hit as the drum engine plays it at velocity 0.8 (the panel's), and the pitch it settles on.
 	[[nodiscard]] feathers::drum::Laws laws() const;
 	[[nodiscard]] feathers::drum::SettledPitch settled() const;
@@ -71,27 +73,6 @@ private:
 	DeviceInstanceId id_;
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(dd::Param::kCount)> controls_ {};
 	mutable int tipState_ = -1; ///< the (Kind, Pitched) the overrides were last set for; -1 before the first refresh
-};
-
-/// **A DRUM'S PLAY BUTTON** (a play glyph): a press strikes the drum's Note through the host's note road (`DeviceHost::postNote`), the release
-/// lets it go; velocity 100/127. Offered only where the host has such a road (`canPostNote`): a host with none draws none.
-class DrumPlayButton : public visage::Frame, public TooltipSource {
-public:
-	static constexpr float kVelocity = 100.0f / 127.0f;
-	DrumPlayButton(backplane::DeviceHost& host, std::function<int()> key);
-	~DrumPlayButton() override;
-	void draw(visage::Canvas& canvas) override;
-	const char* tooltipAt(visage::Point) const override;
-	void offeredControls(std::vector<Offered>&) const override {}
-	void press();
-	void release();
-	[[nodiscard]] bool held() const noexcept { return held_; }
-
-private:
-	backplane::DeviceHost& host_;
-	std::function<int()> key_;
-	bool held_ = false;
-	int heldKey_ = 0;
 };
 
 } // namespace feathers::ui

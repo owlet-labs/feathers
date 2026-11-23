@@ -43424,18 +43424,56 @@ TEST_CASE("drum device card: each widget is bound to its control by index, write
 		const float want = p == ddv::Param::Kind ? 2.0f : p == ddv::Param::Note ? 40.0f : p == ddv::Param::Level ? -9.0f : p == ddv::Param::Tune ? 5.0f : before[i];
 		CHECK(after[i] == want);
 	}
-	// THE PLAY BUTTON IS THERE (this host has a note road) and strikes the Note by value; the release lets go.
-	REQUIRE(u.d.card->playForTest() != nullptr);
-	feathers::UiNoteEvent e;
-	CHECK_FALSE(u.d.f.bridge.popNote(e));
-	u.d.card->playForTest()->press();
-	REQUIRE(u.d.f.bridge.popNote(e));
-	CHECK(e.key == 40);
-	CHECK(e.on);
-	u.d.card->playForTest()->release();
-	REQUIRE(u.d.f.bridge.popNote(e));
-	CHECK(e.key == 40);
-	CHECK_FALSE(e.on);
+	// THE TRIG PAD IS THERE and drives the device's own Trig control: a press holds it at 1 (the edge the drum strikes on), the release puts it back.
+	REQUIRE(u.d.card->trigPadForTest() != nullptr);
+	CHECK(&u.d.card->trigPadForTest()->control().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Trig)]);
+	CHECK(u.field(ddv::Param::Trig) == 0.0f);
+	u.d.card->trigPadForTest()->press();
+	CHECK(u.field(ddv::Param::Trig) == 1.0f);
+	u.d.card->trigPadForTest()->release();
+	CHECK(u.field(ddv::Param::Trig) == 0.0f);
+}
+
+TEST_CASE("drum Trig pad: a real press raises the Trig on the press and before the release, a Gate holds it across, a Drone hides the pad") {
+	DrumUi u;
+	const auto mouse = [](bool down) {
+		visage::MouseEvent e;
+		e.position = { 6.0f, 6.0f };
+		e.button_id = visage::kMouseButtonLeft;
+		e.button_state = down ? visage::kMouseButtonLeft : visage::kMouseButtonNone;
+		e.is_down = down;
+		return e;
+	};
+	for (const bool gate : { false, true }) {
+		CAPTURE(gate);
+		u.set(ddv::Param::Trigger, gate ? 1.0 : 0.0);
+		for (ui::TrigPad* pad : { u.d.card->trigPadForTest(), u.win->trigPadForTest() }) {
+			REQUIRE(pad != nullptr);
+			REQUIRE(pad->isVisible());
+			CHECK(u.field(ddv::Param::Trig) == 0.0f);
+			// THE PRESS: the Trig is high from the press itself (the drum's edge detector strikes on this rise), the release has not happened.
+			pad->onMouseDown().callback(mouse(true));
+			CHECK(u.field(ddv::Param::Trig) == 1.0f);
+			CHECK(pad->lit());
+			// HELD ACROSS THE PRESS, in either trigger mode: nothing lets go until the release.
+			(void)u.d.card->updateContent();
+			(void)u.win->updateContent();
+			CHECK(u.field(ddv::Param::Trig) == 1.0f);
+			pad->onMouseUp().callback(mouse(false));
+			CHECK(u.field(ddv::Param::Trig) == 0.0f);
+		}
+	}
+	// A DRONE TAKES NO TRIGGER: hidden on the card and in the window, on a kind that can be held; a kind that cannot be held keeps it.
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::FM));
+	u.set(ddv::Param::Trigger, 2.0);
+	CHECK_FALSE(u.d.card->trigPadForTest()->isVisible());
+	CHECK_FALSE(u.win->trigPadForTest()->isVisible());
+	u.set(ddv::Param::Trigger, 0.0);
+	CHECK(u.d.card->trigPadForTest()->isVisible());
+	CHECK(u.win->trigPadForTest()->isVisible());
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Membrane));
+	u.set(ddv::Param::Trigger, 2.0); // not a sustaining kind: the Drone choice means a One-shot there, so the pad stays
+	CHECK(u.d.card->trigPadForTest()->isVisible());
 }
 
 TEST_CASE("drum device: the picture's handles write their own controls by value, Tune in whole semitones and Shift fine, and a Kind shows only its own") {

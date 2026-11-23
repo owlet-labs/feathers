@@ -127,6 +127,10 @@ public:
 	/// A press that never got its release (the pad hidden, the card gone) lets go of the control.
 	void cancelHold();
 
+	/// THE JACK AND ITS GLYPH, drawn in a `w` x `h` box: lit is amber, `armed` rings it in the mapping colour, `routed` keeps a thin amber ring.
+	/// One look for every trigger button, so a button that fires by hand (the Drum's, which strikes a note) cannot be read as anything else.
+	static void drawJack(visage::Canvas& canvas, float w, float h, bool lit, bool armed, bool routed);
+
 	static constexpr float kDiameter = 14.0f;
 	static constexpr double kFlashSeconds = 0.12;
 	/// AMBER, the trigger's own colour: no token in the mock is one, and the accent (periwinkle) is the enable's

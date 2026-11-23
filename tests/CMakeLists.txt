@@ -2220,6 +2220,13 @@ target_include_directories(test_smooth_peak PRIVATE ${CMAKE_SOURCE_DIR}/libs/doc
 target_compile_options(test_smooth_peak PRIVATE ${FEATHERS_FP_EXACT})
 add_test(NAME smooth-peak COMMAND test_smooth_peak)
 
+# THE HAND DRUM AND THE FM PERC, hit alone: modal ratios, the signed bend, the strike position, the shell, the Bessel sidebands, the index envelope.
+add_executable(test_drum_hand_fm test_drum_hand_fm.cpp)
+target_link_libraries(test_drum_hand_fm PRIVATE feathers-dsp feathers-warnings)
+target_include_directories(test_drum_hand_fm PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+target_compile_options(test_drum_hand_fm PRIVATE ${FEATHERS_FP_EXACT})
+add_test(NAME drum-hand-fm COMMAND test_drum_hand_fm)
+
 # THE ONE- AND EIGHT-MACRO DEVICES (MACRO1, MACROS8): each output by value through the shared ops, routes into
 # a macro at the engine, a patch saved and loaded into a fresh instance, and the four-macro MACROS patch pinned.
 add_executable(test_mod_macros_variants test_mod_macros_variants.cpp)

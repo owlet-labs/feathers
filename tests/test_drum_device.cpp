@@ -34,6 +34,7 @@
 #include "persist_rig.h"
 #include "plugin/device_registry.h"
 #include "rack/rack_engine.h"
+#include "rack_endpoints.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -284,6 +285,18 @@ drum::Controls refControls(const dd::Row& r) {
 	c.rise = v(Param::Rise);
 	c.flow = v(Param::Flow);
 	c.splash = v(Param::Splash);
+	c.handStroke = static_cast<int>(std::lround(v(Param::Stroke)));
+	c.bendDirection = static_cast<int>(std::lround(v(Param::BendDir)));
+	c.shell = v(Param::Shell);
+	c.pot = v(Param::Pot);
+	{
+		static constexpr double kRatios[] = { 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 7.0, 8.0 };
+		c.fmRatio = kRatios[std::clamp(static_cast<int>(std::lround(v(Param::FmRatio))), 0, 11)];
+	}
+	c.fmFineCents = v(Param::FmFine);
+	c.fmIndex = v(Param::FmIndex);
+	c.fmIndexSeconds = std::exp2(v(Param::FmIndexTime));
+	c.fmFeedback = v(Param::FmFeedback);
 	c.play = static_cast<int>(std::lround(v(Param::Trigger)));
 	c.width = v(Param::Width);
 	c.pitchMode = static_cast<int>(std::lround(v(Param::PitchMode)));
@@ -437,10 +450,16 @@ TEST_CASE("drum: each control is gated on the kinds the engine says read it") {
 			{ Param::BellQ, c.bell },         { Param::BellLink, c.bell },      { Param::WireContour, c.wireContour },
 			{ Param::WireBuzz, c.wireContour }, { Param::WireThreshold, c.wireContour }, { Param::WireGate, c.wireContour },
 			{ Param::BodyGate, c.wireContour }, { Param::VelLevel, true },      { Param::VelTone, true },
-			{ Param::VelSnap, true },         { Param::VelTension, kind == drum::Kind::Kick || kind == drum::Kind::Membrane || kind == drum::Kind::Snare },
+			{ Param::VelSnap, true },         { Param::VelTension, kind == drum::Kind::Kick || kind == drum::Kind::Membrane || kind == drum::Kind::Snare || kind == drum::Kind::Hand },
 			{ Param::KickHold, c.kickShape }, { Param::KickDip, c.kickShape },  { Param::KickDipTime, c.kickShape },
 			{ Param::ClickSweep, c.kickShape }, { Param::ClickSweepTime, c.kickShape }, { Param::StartPhase, c.kickShape },
 			{ Param::VelocityNoise, c.velNoise }, { Param::Width, c.width },
+			// THE HAND DRUM'S AND THE FM PERC'S OWN, each shown on its kind alone.
+			{ Param::Stroke, kind == drum::Kind::Hand },  { Param::BendDir, kind == drum::Kind::Hand },
+			{ Param::Shell, kind == drum::Kind::Hand },   { Param::Pot, kind == drum::Kind::Hand },
+			{ Param::FmRatio, kind == drum::Kind::FM },   { Param::FmFine, kind == drum::Kind::FM },
+			{ Param::FmIndex, kind == drum::Kind::FM },   { Param::FmIndexTime, kind == drum::Kind::FM },
+			{ Param::FmFeedback, kind == drum::Kind::FM },
 		};
 		for (const auto& e : expected) {
 			CAPTURE(dd::kParamDescs[at(e.p)].key);
@@ -2171,6 +2190,185 @@ TEST_CASE("sweep: Sync takes the sweep's length from the host's tempo, Free from
 	CHECK(lengthOf(5.0, 0.4) == doctest::Approx(16.0 * 0.4));     // "4 bars": sixteen beats
 	CHECK(lengthOf(3.0, 0.0) == doctest::Approx(free));           // no tempo from the host: Free's time
 	CHECK(lengthOf(3.0, 0.5) != doctest::Approx(free));           // NON-VACUITY: the synced length is not the free one
+}
+
+TEST_CASE("trig: one strike per rising edge, a held press is one strike, and the strike is the key's (Note, or middle C when Pitched) at 100/127") {
+	Dev d;
+	d.set(Param::Note, 40.0);
+	d.apply();
+	const auto step = [&](double v) {
+		d.set(Param::Trig, v);
+		d.apply();
+		(void)run(d, {}, 64);
+	};
+	CHECK(d.dsp().strikesForTest() == 0u);
+	step(0.0);
+	CHECK(d.dsp().strikesForTest() == 0u);
+	// THREE PRESSES, each held a few ticks: three strikes (a held press is ONE rise, and the edge is the whole of it).
+	for (int press = 1; press <= 3; ++press) {
+		step(1.0);
+		CHECK(d.dsp().strikesForTest() == static_cast<uint32_t>(press));
+		step(1.0);
+		step(1.0);
+		CHECK(d.dsp().strikesForTest() == static_cast<uint32_t>(press));
+		step(0.0);
+		CHECK(d.dsp().strikesForTest() == static_cast<uint32_t>(press));
+	}
+	// THE HYSTERESIS: a value that sags to 0.3 (above the re-arm level 0.25) and comes back does not fire again; one that falls under 0.25 does.
+	step(0.9);
+	CHECK(d.dsp().strikesForTest() == 4u);
+	step(0.3);
+	step(0.9);
+	CHECK(d.dsp().strikesForTest() == 4u);
+	step(0.1);
+	step(0.9);
+	CHECK(d.dsp().strikesForTest() == 5u);
+	// THE KEY AND THE VELOCITY: the newest hit is on key 40, struck at 100/127 (levelFor at the default Vel Level, restated).
+	const drum::Hit* h = d.dsp().newestForTest();
+	REQUIRE(h != nullptr);
+	CHECK(d.dsp().keyStrikesForTest(40) >= 1u);
+	// PITCHED strikes middle C.
+	Dev p;
+	p.set(Param::Keys, 2.0);
+	p.apply();
+	p.set(Param::Trig, 1.0);
+	p.apply();
+	(void)run(p, {}, 64);
+	CHECK(p.dsp().strikesForTest() == 1u);
+	CHECK(p.dsp().keyStrikesForTest(60) == 1u);
+}
+
+TEST_CASE("trig: in Gate the hit is held while the Trig is high and let go on its fall; a One-shot's fall changes nothing; a Drone ignores the Trig") {
+	const auto setup = [](Dev& d, double trigger) {
+		d.set(Param::Trigger, trigger);
+		d.set(Param::Decay, 2.0);                          // a four-second ring
+		d.set(Param::Release, std::log2(0.03));            // a Gate lets go in 30 ms
+		d.apply();
+	};
+	const auto sounding = [](Dev& d) { return d.dsp().soundingForTest(); };
+	{
+		Dev d;
+		setup(d, 1.0);
+		d.set(Param::Trig, 1.0);
+		d.apply();
+		for (int b = 0; b < 20; ++b) {
+			(void)run(d, {}, 512);
+		}
+		CHECK(sounding(d) == 1); // held across the press
+		d.set(Param::Trig, 0.0);
+		d.apply();
+		for (int b = 0; b < 12; ++b) {
+			(void)run(d, {}, 512);
+		}
+		CHECK(sounding(d) == 0); // the fall let it go
+	}
+	{
+		Dev d;
+		setup(d, 0.0);
+		d.set(Param::Trig, 1.0);
+		d.apply();
+		(void)run(d, {}, 512);
+		d.set(Param::Trig, 0.0);
+		d.apply();
+		for (int b = 0; b < 12; ++b) {
+			(void)run(d, {}, 512);
+		}
+		CHECK(sounding(d) == 1); // a One-shot rings on whatever the Trig does
+	}
+	{
+		Dev d;
+		d.set(Param::Kind, static_cast<double>(drum::Kind::FM));
+		setup(d, 2.0);
+		for (const double v : { 1.0, 0.0, 1.0, 0.0 }) {
+			d.set(Param::Trig, v);
+			d.apply();
+			(void)run(d, {}, 512);
+		}
+		CHECK(d.dsp().strikesForTest() == 0u); // a Drone takes no trigger (its own start is not a strike)
+	}
+}
+
+TEST_CASE("trig: a routed modulator strikes the drum, one strike per rising edge of what arrives, by value") {
+	constexpr backplane::Axes kAxes { .coreSources = 8, .coreDestinations = 0, .deviceSlots = 4, .outputStride = 8 };
+	rack::RackEngine engine(kAxes, hostCatalogue());
+	engine.prepare(kSr, 4096);
+	const size_t lane = engine.addDevice(dd::kTraits.tag);
+	REQUIRE(lane != rack::RackEngine::kNoSlot);
+	engine.prepare(kSr, 4096);
+	engine.setRouteAmount(test::macro(0), test::controlOf(engine, lane, at(Param::Trig)), 1.0f);
+	const auto strikes = [&] { return reinterpret_cast<const dd::DrumDsp*>(engine.slotAtLane(lane).storage.get())->strikesForTest(); };
+	Out out(64);
+	const auto block = [&](float macro) {
+		engine.setMacro(0, macro);
+		engine.setBlockNotes(nullptr, 0);
+		engine.processStereo(out.l.data(), out.r.data(), 64, backplane::unknownBlock());
+	};
+	block(0.0f);
+	CHECK(strikes() == 0u);
+	// FOUR RISES of a macro through the route, each held two blocks: four strikes.
+	for (uint32_t rise = 1; rise <= 4; ++rise) {
+		block(1.0f);
+		CHECK(strikes() == rise);
+		block(1.0f);
+		block(0.0f);
+		block(0.0f);
+		CHECK(strikes() == rise);
+	}
+	// BELOW THE FIRE LEVEL nothing happens: a macro that only reaches 0.4 never fires.
+	block(0.4f);
+	block(0.0f);
+	CHECK(strikes() == 4u);
+	// AND THE SOUND IS THE DRUM'S: the last block rang.
+	block(1.0f);
+	CHECK(strikes() == 5u);
+}
+
+TEST_CASE("hand drum: Stroke, Bend Up, Shell and Pot reach the hit's laws, and a Drone asked of it is a One-shot") {
+	Dev d;
+	d.row = defaultRow();
+	d.row[at(Param::Kind)] = static_cast<float>(drum::Kind::Hand);
+	d.row[at(Param::Stroke)] = 2.0f; // Slap
+	d.row[at(Param::BendDir)] = 1.0f; // Up
+	d.row[at(Param::Shell)] = 0.6f;
+	d.row[at(Param::Pot)] = 0.9f;
+	d.row[at(Param::Trigger)] = 2.0f; // Drone: a struck head does not sustain
+	(void)run(d, { on(36, 0) }, 64);
+	REQUIRE(d.dsp().newestForTest() != nullptr);
+	const drum::Laws& l = d.dsp().newestForTest()->laws();
+	CHECK(l.handStroke == drum::kStrokeSlap);
+	CHECK(l.bendUp);
+	CHECK(l.shell == doctest::Approx(0.6));
+	CHECK(l.pot == doctest::Approx(0.9));
+	CHECK(l.play == drum::kPlayOneShot);
+	// AND THE PARAMS AGAINST THE REFERENCE MAPPING (restated above), field by field.
+	const drum::Controls want = refControls(d.row);
+	CHECK(want.handStroke == 2);
+	CHECK(want.bendDirection == 1);
+}
+
+TEST_CASE("FM perc: Ratio, Fine, Index, Index Decay and Feedback reach the hit's laws, and a Drone is held") {
+	static constexpr double kRatios[] = { 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 7.0, 8.0 };
+	for (const int choice : { 0, 5, 11 }) {
+		CAPTURE(choice);
+		Dev d;
+		d.row = defaultRow();
+		d.row[at(Param::Kind)] = static_cast<float>(drum::Kind::FM);
+		d.row[at(Param::FmRatio)] = static_cast<float>(choice);
+		d.row[at(Param::FmFine)] = 40.0f;
+		d.row[at(Param::FmIndex)] = 7.0f;
+		d.row[at(Param::FmIndexTime)] = -3.0f;
+		d.row[at(Param::FmFeedback)] = 0.4f;
+		d.row[at(Param::Trigger)] = 2.0f;
+		(void)run(d, { on(36, 0) }, 64);
+		REQUIRE(d.dsp().newestForTest() != nullptr);
+		const drum::Laws& l = d.dsp().newestForTest()->laws();
+		// THE RATIO: the choice's number, leaned by this place's Metal and the fine offset (restated).
+		CHECK(l.fmRatio == doctest::Approx(kRatios[choice] * std::exp2(0.5 * static_cast<double>(l.metal) + 40.0 / 1200.0)).epsilon(1.0e-9));
+		CHECK(l.fmIndex == doctest::Approx(7.0));
+		CHECK(l.fmIndexT60 == doctest::Approx(0.125));
+		CHECK(l.fmFeedback == doctest::Approx(0.4));
+		CHECK(l.play == drum::kPlayDrone); // an FM perc can be held
+	}
 }
 
 TEST_CASE("default level: a default drone of every kind that can hold one reads between -26 and -12 dBFS RMS and never clips, as a default hit of the others does") {

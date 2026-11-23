@@ -43238,6 +43238,26 @@ TEST_CASE("Sklitter's Groove Amount says what its Groove Mode makes it: the swin
 	CHECK(std::string(sk::kParamDescs[static_cast<size_t>(sk::Param::GrooveAmount)].tooltip).find("MPC") == std::string::npos);
 }
 
+TEST_CASE("Arp's Rate says what its Time Base makes it: steps per second on Hz, a multiple of the division otherwise, on the card and the window") {
+	namespace apx = feathers::mod::arp;
+	DynCardFixture<ui::ArpCard> d { apx::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::ArpExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	const auto rateOn = [&](ui::DeviceControl& c) { return std::string(ui::tooltipOf(&c)); };
+	const auto setTimeBase = [&](double v) {
+		d.set(static_cast<size_t>(apx::Param::TimeBase), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	setTimeBase(0.0); // Hz
+	CHECK(rateOn(d.card->control(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipHz);
+	CHECK(rateOn(win->controlForTest(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipHz);
+	setTimeBase(static_cast<double>(apx::kDefaultTimeBase)); // 1/16
+	CHECK(rateOn(d.card->control(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
+	CHECK(rateOn(win->controlForTest(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
+	CHECK(std::string(apx::kRateTipHz) != apx::kRateTipDivision); // not vacuous
+}
+
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {
 	DrumUi u;
 	for (size_t i = 0; i < static_cast<size_t>(ddv::Param::kCount); ++i) {

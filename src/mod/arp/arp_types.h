@@ -78,6 +78,11 @@ static_assert(kTimeBaseCount == device::kDivisionCount + 1, "Hz, then every divi
 /// 1/16 — the arp a hand assumes.
 inline constexpr size_t kDefaultTimeBase = 7;
 static_assert(device::kDivisionBeats[kDefaultTimeBase - 1] == 0.25);
+// WHAT RATE IS, BY TIME BASE (TV audit): steps per second on Hz (index 0), otherwise a multiple of the chosen division. The card and the window
+// set Rate's hover text from Time Base; the declared text names both cases and remains for a surface that sets none.
+inline constexpr const char* kRateTipHz = "How fast the steps go: steps per second, unsynced to the tempo";
+inline constexpr const char* kRateTipDivision = "How fast the steps go: a multiple of the chosen division";
+inline const char* rateTipFor(int timeBase) { return timeBase == 0 ? kRateTipHz : kRateTipDivision; }
 
 inline constexpr auto& kOffOnNames = mod::kOffOnNames;
 

@@ -47,9 +47,13 @@ class ArpExpanded final : public GenericExpanded {
 public:
 	ArpExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id, Notifier* notifier = nullptr);
 	~ArpExpanded() override;
+	/// The window's own control at a descriptor index (a test seam for its hover text).
+	[[nodiscard]] DeviceControl& controlForTest(size_t index) const { return controlFor(index); }
 
 	void resized() override;
 	[[nodiscard]] bool updateContent() override;
+	/// The Time Base the Rate's hover text was last set for (-1 before the first update).
+	int rateTipKey_ = -1;
 
 	static constexpr float kLaneHeight = 112.0f;
 	static constexpr float kBandGap = 6.0f;

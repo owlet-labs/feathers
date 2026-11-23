@@ -75,25 +75,4 @@ private:
 	mutable int tipState_ = -1; ///< the (Kind, Pitched) the overrides were last set for; -1 before the first refresh
 };
 
-/// **A DRUM'S TRIG BUTTON** (the house trigger jack, `TrigPad::drawJack`): a press strikes the drum's Note through the host's note road (`DeviceHost::postNote`), the release
-/// lets it go; velocity 100/127. Offered only where the host has such a road (`canPostNote`): a host with none draws none.
-class DrumPlayButton : public visage::Frame, public TooltipSource {
-public:
-	static constexpr float kVelocity = 100.0f / 127.0f;
-	DrumPlayButton(backplane::DeviceHost& host, std::function<int()> key);
-	~DrumPlayButton() override;
-	void draw(visage::Canvas& canvas) override;
-	const char* tooltipAt(visage::Point) const override;
-	void offeredControls(std::vector<Offered>&) const override {}
-	void press();
-	void release();
-	[[nodiscard]] bool held() const noexcept { return held_; }
-
-private:
-	backplane::DeviceHost& host_;
-	std::function<int()> key_;
-	bool held_ = false;
-	int heldKey_ = 0;
-};
-
 } // namespace feathers::ui

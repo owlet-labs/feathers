@@ -76,6 +76,9 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 		if (p == dd::Param::Enabled) {
 			continue; // THE HEADER CHIP IS THE ONLY DEVICE-ENABLE (a window body carries none of its own)
 		}
+		else if (p == dd::Param::Trig) {
+			continue; // THE TRIG PAD below is its face
+		}
 		else if (isSegmented(p)) {
 			// THE TRIGGER'S PLAIN FACE IS TWO-WAY (One-shot | Gate): Drone is offered only on a kind that can be held, by the three-way one beside it.
 			w = std::make_unique<SegmentedControl>(control, registry, p == dd::Param::Trigger ? std::span<const char* const>(dd::kTriggerNamesNoDrone) : d.names, notifier);
@@ -148,10 +151,8 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 	settledControl_ = std::make_unique<SettledPitchControl>(model_.control(dd::Param::Tune), [this] { return model_.settled(); });
 	readout_ = std::make_unique<PitchReadout>(*settledControl_);
 	addChild(readout_.get());
-	if (host.canPostNote()) {
-		play_ = std::make_unique<DrumPlayButton>(host, [this] { return model_.noteKey(); });
-		addChild(play_.get());
-	}
+	trigPad_ = std::make_unique<TrigPad>(model_.control(dd::Param::Trig), [&host, id](uint32_t& fires) { return host.trigFiresAt(id, fires); });
+	addChild(trigPad_.get());
 	(void)likes_->refresh();
 	padContext_.settings = model_.settings();
 	padContext_.likes = likes_->state();
@@ -203,12 +204,12 @@ void DrumDeviceExpanded::layOut() {
 	seat(strike, dd::Param::Kind, 86.0f, ValueBox::kHeight);
 	seat(strike, dd::Param::Keys, 168.0f, 22.0f);
 	seat(strike, dd::Param::Note, 56.0f, ValueBox::kHeight);
-	if (play_ != nullptr) {
+	if (trigPad_ != nullptr) {
 		// A DRONE TAKES NO TRIGGER: hidden, not greyed, while it is on.
 		const bool drone = model_.droneOn();
-		play_->setVisible(!drone);
+		trigPad_->setVisible(!drone);
 		if (!drone) {
-			strike.place(play_.get(), 30.0f, 22.0f);
+			strike.place(trigPad_.get(), 30.0f, 22.0f);
 		}
 	}
 	// ONE OF THE TWO TRIGGER FACES: with Drone on a kind that can hold it, else the plain two-way (the engine's `kindSustains`).
@@ -306,7 +307,7 @@ bool DrumDeviceExpanded::updateContent() {
 	const bool settled = model_.settled().defined;
 	const int keys = model_.settings().index(dd::Param::Keys);
 	bool moved = false;
-	const bool trigStale = play_ != nullptr && play_->isVisible() == model_.droneOn(); // the Trig button follows the Drone mode
+	const bool trigStale = trigPad_ != nullptr && trigPad_->isVisible() == model_.droneOn(); // the Trig button follows the Drone mode
 	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || keys != shownKeys_ || trigStale) {
 		layOut();
 		moved = true;

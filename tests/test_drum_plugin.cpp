@@ -634,7 +634,7 @@ TEST_CASE("the audio thread allocates nothing after activate: notes, chokes, par
 	CHECK(v.peak(kFrames) > 0.0f);
 }
 
-TEST_CASE("the editor's play button, pressed on the plugin's own bridge, sounds the drum with no host event at all") {
+TEST_CASE("the editor's Trig pad, pressed on the plugin's own bridge, sounds the drum with no host event at all") {
 	constexpr uint32_t kFrames = 256;
 	Venue v;
 	REQUIRE(blocksToSleep(v, kFrames, 8) >= 0);
@@ -646,14 +646,14 @@ TEST_CASE("the editor's play button, pressed on the plugin's own bridge, sounds 
 	REQUIRE(view != nullptr);
 	auto* panel = dynamic_cast<ui::DrumDeviceExpanded*>(view.get());
 	REQUIRE(panel != nullptr);
-	REQUIRE(panel->playForTest() != nullptr);
+	REQUIRE(panel->trigPadForTest() != nullptr);
 	visage::MouseEvent press;
 	press.position = { 4.0f, 4.0f };
 	press.button_id = visage::kMouseButtonLeft;
 	press.button_state = visage::kMouseButtonLeft;
 	press.is_down = true;
-	panel->playForTest()->onMouseDown().callback(press);
-	CHECK(bridge.hasPendingNotes());
+	panel->trigPadForTest()->onMouseDown().callback(press);
+	// THE SOUND COMES WHILE THE PAD IS STILL DOWN: the Trig param rose, and the drum struck on that rise.
 	CHECK(v.run(kFrames) == CLAP_PROCESS_CONTINUE);
 	float peak = v.peak(kFrames);
 	for (int b = 0; b < 3; ++b) {
@@ -661,10 +661,9 @@ TEST_CASE("the editor's play button, pressed on the plugin's own bridge, sounds 
 		peak = std::max(peak, v.peak(kFrames));
 	}
 	CHECK(peak > 1.0e-3f);
-	CHECK_FALSE(bridge.hasPendingNotes());
 	visage::MouseEvent release = press;
 	release.is_down = false;
-	panel->playForTest()->onMouseUp().callback(release);
+	panel->trigPadForTest()->onMouseUp().callback(release);
 }
 
 //---------------------------------------------------------------------------------------------------------------------------------
@@ -1033,7 +1032,8 @@ TEST_CASE("host ids never move: the Drum plugin's places as they stand on the re
 		"drum_rate", "drum_rise", "drum_flow", "drum_splash",
 		"drum_sweep_dir", "drum_sweep_range", "drum_sweep_sync",
 		"drum_stroke", "drum_bend_dir", "drum_shell", "drum_pot",
-		"drum_fm_ratio", "drum_fm_fine", "drum_fm_index", "drum_fm_idx_decay", "drum_fm_feedback"
+		"drum_fm_ratio", "drum_fm_fine", "drum_fm_index", "drum_fm_idx_decay", "drum_fm_feedback",
+		"drum_trig"
 	};
 	REQUIRE(dp::kHostParamCount >= std::size(kReleased) + std::size(kLater));
 	for (size_t i = 0; i < std::size(kLater); ++i) {

@@ -148,39 +148,4 @@ bool DrumDeviceModel::droneOn() const {
 	return settings().index(dd::Param::Trigger) == feathers::drum::kPlayDrone && feathers::drum::kindSustains(kind());
 }
 
-DrumPlayButton::DrumPlayButton(backplane::DeviceHost& host, std::function<int()> key) : host_(host), key_(std::move(key)) {
-	onMouseDown() = [this](const visage::MouseEvent&) { press(); };
-	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
-	installTooltipHover(*this, *this);
-}
-
-DrumPlayButton::~DrumPlayButton() { release(); }
-
-const char* DrumPlayButton::tooltipAt(visage::Point) const {
-	return "Trig: strikes this drum on its Note (middle C when it is Pitched) the moment it is pressed, and holds a Gate drum until it is let go. Not saved and not modulated.";
-}
-
-void DrumPlayButton::press() {
-	if (held_) {
-		return;
-	}
-	heldKey_ = key_ ? key_() : 0;
-	held_ = host_.postNote(heldKey_, true, kVelocity);
-	redraw();
-}
-
-void DrumPlayButton::release() {
-	if (!held_) {
-		return;
-	}
-	held_ = false;
-	(void)host_.postNote(heldKey_, false, 0.0f);
-	redraw();
-}
-
-void DrumPlayButton::draw(visage::Canvas& canvas) {
-	// THE HOUSE TRIG LOOK (`TrigPad::drawJack`): the round amber jack, lit for as long as the press is held.
-	TrigPad::drawJack(canvas, static_cast<float>(width()), static_cast<float>(height()), held_, false, false);
-}
-
 } // namespace feathers::ui

@@ -20,6 +20,7 @@
 #include "device/registry.h"
 #include "fx/drum/drum_likes.h"
 #include "dsp/drum_voice.h"
+#include "mod/trig.h"
 
 #include <array>
 #include <cmath>
@@ -180,9 +181,10 @@ enum class Param : uint8_t {
 	FmIndex,
 	FmIndexTime,
 	FmFeedback,
+	Trig, ///< the house Trig (`mod/trig.h`): a rise strikes the drum as a key would, a Gate holds it while the Trig stays high
 	kCount
 };
-static_assert(static_cast<size_t>(Param::kCount) == 85);
+static_assert(static_cast<size_t>(Param::kCount) == 86);
 
 inline constexpr int16_t kKindControl = static_cast<int16_t>(Param::Kind);
 inline constexpr int16_t kTriggerControl = static_cast<int16_t>(Param::Trigger);
@@ -230,7 +232,7 @@ inline constexpr const char* kKindLabels[] = { "Kick", "Membrane", "Snare", "Met
 static_assert(std::size(kKindLabels) == feathers::drum::kKindCount);
 
 // THE TOOLTIPS THAT FOLLOW THE KIND (TV audit): a Kind changes what these five controls do, so each names what it does in the current Kind.
-// Indexed by `feathers::drum::Kind` (Kick 0 .. Sweep 9). Refreshed on every road by `DrumDeviceModel::refreshTooltips`, which reads the Kind.
+// Indexed by `feathers::drum::Kind` (Kick 0 .. FM perc 11). Refreshed on every road by `DrumDeviceModel::refreshTooltips`, which reads the Kind.
 inline constexpr const char* kToneTips[] = {
 	"Where the head is struck: low is a dull, round thump, high brings out its upper overtones",
 	"Where the head is struck: low is a dull, round note, high brings out its upper overtones",
@@ -242,6 +244,8 @@ inline constexpr const char* kToneTips[] = {
 	"How bright the bowed slip is: low is a dull, rubbed hum, high a bright, squeaking one",
 	"The colour of the splash and the bed: low is dark and rounded, high bright and splashy",
 	"The filter's type: low is a dark low-pass, high a band-pass that sounds vocal",
+	"Where the hand strikes: low is the centre, a deep, round tone, high the rim, a bright, ringing one",
+	"How bright the index is: low keeps the tone near a pure sine, high sprays out sidebands",
 };
 static_assert(std::size(kToneTips) == feathers::drum::kKindCount);
 
@@ -256,6 +260,8 @@ inline constexpr const char* kSnapTips[] = {
 	"The bow's edge: how sharply the slip catches, soft to a hard, squealing edge",
 	"How hard the drips strike: soft, long splashes to short, hard chirps",
 	"How resonant the sweep is: open at soft, a whistle at hard",
+	"How hard the hand strikes: a soft, muffled touch to a sharp, slapping one",
+	"How hard the tap and noise transient is: a soft tick to a hard click",
 };
 static_assert(std::size(kSnapTips) == feathers::drum::kKindCount);
 
@@ -270,6 +276,8 @@ inline constexpr const char* kDecayTips[] = {
 	"How long the bow's ring lasts: in One-shot, the time it takes to fall 60 dB. A Gate or a Drone holds it instead",
 	"How long the rain falls: in One-shot, the time it takes to fall 60 dB. A Gate or a Drone holds it instead",
 	"How long one sweep runs: the time it takes to fall 60 dB, unless Sweep Sync sets a beat count",
+	"How long the drum rings: the time it takes to fall 60 dB. The stroke and the terrain's Length stretch or shorten it",
+	"How long the tone rings in One-shot: the time it takes to fall 60 dB. A Gate or a Drone holds it instead",
 };
 static_assert(std::size(kDecayTips) == feathers::drum::kKindCount);
 
@@ -285,6 +293,8 @@ inline constexpr const char* kTuneTips[] = {
 	"The drum's pitch, in semitones from a friction's resting pitch of 600 Hz",
 	"The drum's pitch, in semitones from a water's resting pitch of 900 Hz",
 	"The drum's pitch, in semitones from a sweep's resting pitch of 200 Hz",
+	"The drum's pitch, in semitones from a hand drum's resting pitch of 200 Hz",
+	"The drum's pitch, in semitones from an FM perc's resting pitch of 220 Hz",
 };
 static_assert(std::size(kTuneTips) == feathers::drum::kKindCount);
 inline constexpr const char* kTunePitchedTip = "The drum's pitch, in semitones from the key it is played on: the key sets the pitch and this shifts it";
@@ -295,6 +305,8 @@ inline constexpr const char* kHighPassTips[] = {
 	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
 	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
 	"Takes the lows out of the whole drum below this, after the clap's own High Pass: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
 	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
 	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
 	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
@@ -697,6 +709,8 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	 .tooltip = "The modulator's own output fed back into its phase: grit and noise at the top (an FM perc)",
 	 .gateControl = kKindControl,
 	 .gateMask = kFmKinds},
+	mod::trigParamDesc("drum_trig", "Trig",
+	                   mod::trigTooltip<"Strikes the drum, as its key would, when it rises. A Gate drum is held while it stays high and released when it falls. A Drone takes no trigger, so it ignores one. Routes carry no velocity: a routed trigger strikes at 100/127.">()),
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 

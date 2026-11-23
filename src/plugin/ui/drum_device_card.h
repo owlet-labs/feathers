@@ -22,6 +22,7 @@
 #include "plugin/ui/controls.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/drum_device_ui.h"
+#include "plugin/ui/trig_pad.h"
 #include "plugin/ui/drum_hit_picture.h"
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/fx_card.h"
@@ -69,7 +70,7 @@ public:
 	[[nodiscard]] FaderPill& levelForTest() const { return *level_; }
 	[[nodiscard]] FaderPill& tuneForTest() const { return *tune_; }
 	/// Null where the host has no note road (the button is not built there).
-	[[nodiscard]] DrumPlayButton* playForTest() const { return play_.get(); }
+	[[nodiscard]] TrigPad* trigPadForTest() const { return trigPad_.get(); }
 	[[nodiscard]] DrumDeviceModel& modelForTest() { return model_; }
 
 private:
@@ -84,7 +85,7 @@ private:
 	std::unique_ptr<ValueBox> kind_, note_;
 	std::unique_ptr<SegmentedControl> keys_;
 	std::unique_ptr<FaderPill> level_, tune_;
-	std::unique_ptr<DrumPlayButton> play_;
+	std::unique_ptr<TrigPad> trigPad_;
 	bool noteShown_ = true; ///< Note's last laid-out visibility (it follows Keys)
 };
 

@@ -96,6 +96,7 @@ public:
 	[[nodiscard]] int fadingForTest() const noexcept;
 	[[nodiscard]] uint32_t strikesForTest() const noexcept { return strikes_; }
 	[[nodiscard]] uint32_t staleDroppedForTest() const noexcept { return staleDropped_; }
+	[[nodiscard]] uint32_t keyStrikesForTest(int key) const noexcept { return key >= 0 && key < 128 ? keyStrikes_[static_cast<size_t>(key)] : 0u; }
 	[[nodiscard]] const Settings& settingsForTest() const noexcept { return s_; }
 	[[nodiscard]] const feathers::drum::Fields& fieldsForTest() const noexcept { return fields_; }
 	[[nodiscard]] const feathers::drum::Controls& controlsForTest() const noexcept { return controls_; }
@@ -145,6 +146,8 @@ private:
 	/// struck from the moment the device runs. A moved control reaches it as any hit's (`setLaws`); a changed Seed or Kind restarts it; leaving the
 	/// mode fades it out. Called at the top of every `process`.
 	void serveDrone();
+	/// THE TRIG PARAM'S EDGES, as the notes a hand on the key would make (`process` puts them at the front of its queue).
+	void injectTrig(size_t& head, int base);
 	[[nodiscard]] bool droneWanted() const noexcept;
 	[[nodiscard]] bool hpRinging(const Slot& s) const noexcept;
 
@@ -164,6 +167,11 @@ private:
 	Slot drone_ {};
 	std::array<device::NoteEvent, kQueue> queue_ {};
 	size_t queued_ = 0;
+	/// The Trig param's edge detector, the rises it has seen since the last call, whether it has fallen since, and whether a strike of its own is held.
+	feathers::mod::TrigEdge trigEdge_ {};
+	uint32_t trigRisen_ = 0;
+	bool trigFell_ = false;
+	bool trigHeld_ = false;
 	std::array<float, 128> keyTuning_ {};
 	std::array<uint32_t, 128> keyStrikes_ {};
 	uint64_t order_ = 0;

@@ -25,6 +25,7 @@
 
 #include "fx/automod/automod.h"
 
+#include "fx/drum/drum_types.h"
 #include "fx/owltt/owltt.h"
 #include "fx/owltt/owltt_types.h"
 #include "fx/disperser/disperser_types.h"
@@ -1632,6 +1633,12 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 		// road this case is about is the loop that IS overwritten, so the gate is off here.
 		if (device::sameTag(desc->traits.tag, fx::sklitter::kTraits.tag)) {
 			row.field[static_cast<size_t>(fx::sklitter::Param::RecordGate)] = 0.0f;
+		}
+		// THE DRUM'S TRIG IS ITS STRIKE (the house Trig, `mod/trig.h`): at 60% of its span the varied row would strike the drum once at the
+		// start and ring it for as long as the varied Decay lets it, which is a hit and not a tail. The road this case is about is what the
+		// device does with an input that has gone quiet, so the Trig stays at rest.
+		if (device::sameTag(desc->traits.tag, fx::drumdevice::kTraits.tag)) {
+			row.field[static_cast<size_t>(fx::drumdevice::Param::Trig)] = 0.0f;
 		}
 		// THE DELAY'S FEEDBACK REACHES 200% SINCE delay-love S6b, so 60% of its span is 134% — a loop that sustains by
 		// design, as under Freeze (`test_delay_lane` "S6b Feedback to 200% ..." holds that it stays awake, bounded). The

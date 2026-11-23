@@ -211,6 +211,10 @@ void DrumDsp::reset() {
 	drone_.hpX = {};
 	drone_.hpY = {};
 	queued_ = 0;
+	trigEdge_.reset();
+	trigRisen_ = 0;
+	trigFell_ = false;
+	trigHeld_ = false;
 	keyTuning_.fill(0.0f);
 	keyStrikes_.fill(0u);
 	phase_ = -1;
@@ -218,6 +222,17 @@ void DrumDsp::reset() {
 
 void DrumDsp::setSettings(const Settings& s) {
 	s_ = s;
+	// THE TRIG (the house convention, `mod/trig.h`): its RESOLVED value, compared once per row. A rise to the fire level is a strike, and the fall
+	// below the re-arm level lets it go, so a hand on the pad (the base held at 1) and a routed pulse are the same thing. The edges wait here for `process`.
+	{
+		const bool wasArmed = trigEdge_.armed;
+		if (trigEdge_.step(s.at(Param::Trig))) {
+			trigRisen_ = std::min<uint32_t>(trigRisen_ + 1, 4);
+		}
+		else if (!wasArmed && trigEdge_.armed) {
+			trigFell_ = true;
+		}
+	}
 	controls_ = controlsOf(s);
 	controls_.secondsPerBeat = clock_.secondsPerBeat;
 	// THE TERRAIN IS DECODED ONLY WHEN WHAT IT READS MOVED: the bits of the row's thirteen numbers (home, rotate, travel, scalers).
@@ -585,6 +600,54 @@ bool DrumDsp::droneWanted() const noexcept {
 	return s_.index(Param::Trigger) == feathers::drum::kPlayDrone && feathers::drum::kindSustains(kind);
 }
 
+void DrumDsp::injectTrig(size_t& head, int base) {
+	// A DRONE TAKES NO TRIGGER: it sounds with no key, so a rise has nothing to strike and a routed trigger is ignored (the pad is hidden then).
+	if (droneWanted()) {
+		trigRisen_ = 0;
+		trigFell_ = false;
+		trigHeld_ = false;
+		return;
+	}
+	// THE KEY A TRIG STRIKES: the Note, or middle C when the drum is Pitched. VELOCITY 100/127, the pad's press; a routed trigger carries no velocity, so it gets the same.
+	const int key = s_.pitched() ? 60 : std::clamp(s_.index(Param::Note), 0, 127);
+	std::array<device::NoteEvent, 6> made {};
+	size_t n = 0;
+	for (uint32_t i = 0; i < trigRisen_; ++i) {
+		device::NoteEvent e;
+		e.kind = device::NoteEvent::Kind::On;
+		e.timeSamples = static_cast<uint32_t>(base);
+		e.key = static_cast<int16_t>(key);
+		e.velocity = 100.0 / 127.0;
+		made[n++] = e;
+		trigHeld_ = true;
+	}
+	// THE FALL lets go of what the Trig struck (a Gate drum damps it; a One-shot's falling edge changes nothing, as a note-off never does).
+	if (trigFell_ && trigHeld_) {
+		device::NoteEvent e;
+		e.kind = device::NoteEvent::Kind::Off;
+		e.timeSamples = static_cast<uint32_t>(base);
+		e.key = static_cast<int16_t>(key);
+		e.velocity = 0.0;
+		made[n++] = e;
+		trigHeld_ = false;
+	}
+	trigRisen_ = 0;
+	trigFell_ = false;
+	// AT THE FRONT of what is still to come, so a strike is not held behind a later note's time.
+	const size_t room = queue_.size() - queued_;
+	n = std::min(n, room);
+	if (n == 0) {
+		return;
+	}
+	for (size_t i = queued_; i > head; --i) {
+		queue_[i - 1 + n] = queue_[i - 1];
+	}
+	for (size_t i = 0; i < n; ++i) {
+		queue_[head + i] = made[i];
+	}
+	queued_ += n;
+}
+
 void DrumDsp::serveDrone() {
 	if (!droneWanted()) {
 		// LEAVING THE MODE (or the kind): the drone fades out over the steal fade, then its state is exact zero.
@@ -637,6 +700,7 @@ void DrumDsp::process(float* left, float* right, int frames) {
 		++head;
 		++staleDropped_;
 	}
+	injectTrig(head, base);
 	serveDrone();
 	refreshLaws();
 	int pos = 0;

@@ -34,6 +34,7 @@
 #include "persist_rig.h"
 #include "plugin/device_registry.h"
 #include "rack/rack_engine.h"
+#include "rack_endpoints.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -2189,6 +2190,137 @@ TEST_CASE("sweep: Sync takes the sweep's length from the host's tempo, Free from
 	CHECK(lengthOf(5.0, 0.4) == doctest::Approx(16.0 * 0.4));     // "4 bars": sixteen beats
 	CHECK(lengthOf(3.0, 0.0) == doctest::Approx(free));           // no tempo from the host: Free's time
 	CHECK(lengthOf(3.0, 0.5) != doctest::Approx(free));           // NON-VACUITY: the synced length is not the free one
+}
+
+TEST_CASE("trig: one strike per rising edge, a held press is one strike, and the strike is the key's (Note, or middle C when Pitched) at 100/127") {
+	Dev d;
+	d.set(Param::Note, 40.0);
+	d.apply();
+	const auto step = [&](double v) {
+		d.set(Param::Trig, v);
+		d.apply();
+		(void)run(d, {}, 64);
+	};
+	CHECK(d.dsp().strikesForTest() == 0u);
+	step(0.0);
+	CHECK(d.dsp().strikesForTest() == 0u);
+	// THREE PRESSES, each held a few ticks: three strikes (a held press is ONE rise, and the edge is the whole of it).
+	for (int press = 1; press <= 3; ++press) {
+		step(1.0);
+		CHECK(d.dsp().strikesForTest() == static_cast<uint32_t>(press));
+		step(1.0);
+		step(1.0);
+		CHECK(d.dsp().strikesForTest() == static_cast<uint32_t>(press));
+		step(0.0);
+		CHECK(d.dsp().strikesForTest() == static_cast<uint32_t>(press));
+	}
+	// THE HYSTERESIS: a value that sags to 0.3 (above the re-arm level 0.25) and comes back does not fire again; one that falls under 0.25 does.
+	step(0.9);
+	CHECK(d.dsp().strikesForTest() == 4u);
+	step(0.3);
+	step(0.9);
+	CHECK(d.dsp().strikesForTest() == 4u);
+	step(0.1);
+	step(0.9);
+	CHECK(d.dsp().strikesForTest() == 5u);
+	// THE KEY AND THE VELOCITY: the newest hit is on key 40, struck at 100/127 (levelFor at the default Vel Level, restated).
+	const drum::Hit* h = d.dsp().newestForTest();
+	REQUIRE(h != nullptr);
+	CHECK(d.dsp().keyStrikesForTest(40) >= 1u);
+	// PITCHED strikes middle C.
+	Dev p;
+	p.set(Param::Keys, 2.0);
+	p.apply();
+	p.set(Param::Trig, 1.0);
+	p.apply();
+	(void)run(p, {}, 64);
+	CHECK(p.dsp().strikesForTest() == 1u);
+	CHECK(p.dsp().keyStrikesForTest(60) == 1u);
+}
+
+TEST_CASE("trig: in Gate the hit is held while the Trig is high and let go on its fall; a One-shot's fall changes nothing; a Drone ignores the Trig") {
+	const auto setup = [](Dev& d, double trigger) {
+		d.set(Param::Trigger, trigger);
+		d.set(Param::Decay, 2.0);                          // a four-second ring
+		d.set(Param::Release, std::log2(0.03));            // a Gate lets go in 30 ms
+		d.apply();
+	};
+	const auto sounding = [](Dev& d) { return d.dsp().soundingForTest(); };
+	{
+		Dev d;
+		setup(d, 1.0);
+		d.set(Param::Trig, 1.0);
+		d.apply();
+		for (int b = 0; b < 20; ++b) {
+			(void)run(d, {}, 512);
+		}
+		CHECK(sounding(d) == 1); // held across the press
+		d.set(Param::Trig, 0.0);
+		d.apply();
+		for (int b = 0; b < 12; ++b) {
+			(void)run(d, {}, 512);
+		}
+		CHECK(sounding(d) == 0); // the fall let it go
+	}
+	{
+		Dev d;
+		setup(d, 0.0);
+		d.set(Param::Trig, 1.0);
+		d.apply();
+		(void)run(d, {}, 512);
+		d.set(Param::Trig, 0.0);
+		d.apply();
+		for (int b = 0; b < 12; ++b) {
+			(void)run(d, {}, 512);
+		}
+		CHECK(sounding(d) == 1); // a One-shot rings on whatever the Trig does
+	}
+	{
+		Dev d;
+		d.set(Param::Kind, static_cast<double>(drum::Kind::FM));
+		setup(d, 2.0);
+		for (const double v : { 1.0, 0.0, 1.0, 0.0 }) {
+			d.set(Param::Trig, v);
+			d.apply();
+			(void)run(d, {}, 512);
+		}
+		CHECK(d.dsp().strikesForTest() == 0u); // a Drone takes no trigger (its own start is not a strike)
+	}
+}
+
+TEST_CASE("trig: a routed modulator strikes the drum, one strike per rising edge of what arrives, by value") {
+	constexpr backplane::Axes kAxes { .coreSources = 8, .coreDestinations = 0, .deviceSlots = 4, .outputStride = 8 };
+	rack::RackEngine engine(kAxes, hostCatalogue());
+	engine.prepare(kSr, 4096);
+	const size_t lane = engine.addDevice(dd::kTraits.tag);
+	REQUIRE(lane != rack::RackEngine::kNoSlot);
+	engine.prepare(kSr, 4096);
+	engine.setRouteAmount(test::macro(0), test::controlOf(engine, lane, at(Param::Trig)), 1.0f);
+	const auto strikes = [&] { return reinterpret_cast<const dd::DrumDsp*>(engine.slotAtLane(lane).storage.get())->strikesForTest(); };
+	Out out(64);
+	const auto block = [&](float macro) {
+		engine.setMacro(0, macro);
+		engine.setBlockNotes(nullptr, 0);
+		engine.processStereo(out.l.data(), out.r.data(), 64, backplane::unknownBlock());
+	};
+	block(0.0f);
+	CHECK(strikes() == 0u);
+	// FOUR RISES of a macro through the route, each held two blocks: four strikes.
+	for (uint32_t rise = 1; rise <= 4; ++rise) {
+		block(1.0f);
+		CHECK(strikes() == rise);
+		block(1.0f);
+		block(0.0f);
+		block(0.0f);
+		CHECK(strikes() == rise);
+	}
+	// BELOW THE FIRE LEVEL nothing happens: a macro that only reaches 0.4 never fires.
+	block(0.4f);
+	block(0.0f);
+	CHECK(strikes() == 4u);
+	// AND THE SOUND IS THE DRUM'S: the last block rang.
+	block(1.0f);
+	CHECK(strikes() == 5u);
 }
 
 TEST_CASE("hand drum: Stroke, Bend Up, Shell and Pot reach the hit's laws, and a Drone asked of it is a One-shot") {

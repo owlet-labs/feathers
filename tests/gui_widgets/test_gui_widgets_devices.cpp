@@ -18290,7 +18290,7 @@ TEST_CASE("backlog NJ: the LFO's first Time Base reads \"Hz\", and Rate reads Hz
 	CHECK(rate->readout() == "2X");
 }
 
-TEST_CASE("TV audit: the LFO's Ping-Pong is off the card, its saved value still reads back, and Rate's hover text follows Time Base") {
+TEST_CASE("TV audit: the LFO's Ping-Pong is off the card, and its saved value still reads back") {
 	// PING-PONG: the engine never reads it, so its chip is hidden in every mode. Its key stays, so a patch that stored it
 	// loads and keeps the value. RATE: a frequency on Hz, a multiple of a division otherwise; the text is the card's override.
 	namespace lfo = feathers::mod::lfo;
@@ -18313,26 +18313,6 @@ TEST_CASE("TV audit: the LFO's Ping-Pong is off the card, its saved value still 
 	f.bridge.refresh();
 	(void)card->updateContent();
 	CHECK(card->restFromForTest().pingPong == true);
-
-	// RATE'S HOVER TEXT, read at the box's own centre through the hover road.
-	const auto& boxes = ui::LfoCard::layout();
-	const size_t rateBox = static_cast<size_t>(std::find(boxes.begin(), boxes.end(), lfo::Param::TimeScale) - boxes.begin());
-	const ui::ValueBox* rate = card->boxForTest(rateBox);
-	REQUIRE(rate != nullptr);
-	const auto hover = [&rate]() {
-		const auto* source = dynamic_cast<const ui::TooltipSource*>(rate);
-		REQUIRE(source != nullptr);
-		return ui::hoverText(*source, { rate->width() * 0.5f, rate->height() * 0.5f });
-	};
-	const auto set = [&](lfo::Param p, float v) {
-		f.deviceHost.setField(card->device(), static_cast<size_t>(p), v);
-		f.bridge.refresh();
-		(void)card->updateContent();
-	};
-	set(lfo::Param::TimeBase, 0.0f); // Hz
-	CHECK(hover() == std::string("How fast the LFO runs, as a frequency in Hz, unsynced to the tempo"));
-	set(lfo::Param::TimeBase, 13.0f); // 1/4
-	CHECK(hover() == std::string("How fast the LFO runs, as a multiple of the division Time Base picks"));
 }
 
 TEST_CASE("backlog NJ: the LFO's Rate types back in the unit its face prints — \"2hz\", \"2 Hz\", \"2x\" — any case") {

@@ -225,11 +225,6 @@ private:
 	visage::Point fromUnit(float x, float y) const;
 
 	mod::lfo::Settings settings() const;
-	/// THE RATE'S HOVER TEXT, for the Time Base it is read against (a frequency on Hz, a multiple of a division otherwise).
-	/// Moves only when the Time Base's Hz-ness does; called from the constructor and every `updateContent`.
-	void refreshRateTip();
-	/// WHETHER THE RATE'S TEXT IS SET FOR HZ (-1 until the first refresh, 0 for a division, 1 for Hz).
-	int rateTipHz_ = -1;
 	/// **THE SAME ROW WHERE MODULATION LEFT IT** — what the plot draws, so the picture follows a routed control as the knob's ring does. `settings()` stays the STORED row: an edit starts from it, and an edit that started from a modulated one would write the modulation into the patch.
 	mod::lfo::Settings shownSettings() const;
 	/// Modulation moved the shape: the LFO's Settings has no `==`, so the rows (what the device reads) are compared.

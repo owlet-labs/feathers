@@ -74,6 +74,7 @@
 #include "state/state_trailer.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/control_face.h"
+#include "plugin/ui/fader_pill.h"
 #include "rack/parallel_rack.h"
 #include "backplane/endpoint.h"
 #include "fx/harm/harm_types.h"
@@ -6934,7 +6935,7 @@ int altPauseUp() { return 0; }
 
 /// Every visible face lit for the armed source right now, by class (the paint's own input: a repaint is unobservable).
 struct PauseTally {
-	size_t knobs = 0, nonKnobs = 0;
+	size_t knobs = 0, nonKnobs = 0, boxes = 0, pillsChips = 0;
 };
 
 PauseTally pauseTally(visage::Frame* frame) {
@@ -6952,6 +6953,8 @@ PauseTally pauseTally(visage::Frame* frame) {
 			for (const auto& o : offered) {
 				if (face->modLookFor(*o.control).armedGlow) {
 					(dynamic_cast<ui::Knob*>(fr) != nullptr ? t.knobs : t.nonKnobs) += 1;
+					t.boxes += dynamic_cast<ui::ValueBox*>(fr) != nullptr ? 1 : 0;
+					t.pillsChips += (dynamic_cast<ui::FaderPill*>(fr) != nullptr || dynamic_cast<ui::SwitchChip*>(fr) != nullptr) ? 1 : 0;
 				}
 			}
 		}
@@ -6976,6 +6979,9 @@ TEST_CASE("alt pause: in the Chain plugin's editor a held Alt puts out every arm
 	REQUIRE(editor != nullptr);
 	REQUIRE(bridge.addDevice(fx::filter::kTraits.tag) != kNoInstance);
 	REQUIRE(bridge.addDevice(fx::sklitter::kTraits.tag) != kNoInstance);
+	REQUIRE(bridge.addDevice(fx::featherverb::kTraits.tag) != kNoInstance);
+	REQUIRE(bridge.addDevice(fx::resonate::kTraits.tag) != kNoInstance);
+	REQUIRE(bridge.addDevice(fx::spectral::kTraits.tag) != kNoInstance);
 	bridge.drain();
 	gui.tick();
 	editor->setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
@@ -6987,6 +6993,8 @@ TEST_CASE("alt pause: in the Chain plugin's editor a held Alt puts out every arm
 	CAPTURE(lit.knobs);
 	CAPTURE(lit.nonKnobs);
 	REQUIRE(lit.knobs >= 2);
+	REQUIRE(lit.boxes >= 1);      // a non-knob class that reads the same query, or a pause that reached knobs only would pass
+	REQUIRE(lit.pillsChips >= 1);
 
 	gui.setModifierProbeForTest(&altPauseHeld);
 	gui.tick();
@@ -7004,6 +7012,8 @@ TEST_CASE("alt pause: in the Chain plugin's editor a held Alt puts out every arm
 	const PauseTally back = pauseTally(editor);
 	CHECK(back.knobs == lit.knobs);
 	CHECK(back.nonKnobs == lit.nonKnobs);
+	CHECK(back.boxes == lit.boxes);
+	CHECK(back.pillsChips == lit.pillsChips);
 	gui.setModifierProbeForTest(nullptr);
 	gui.destroy();
 }
@@ -7029,6 +7039,7 @@ TEST_CASE("alt pause: in the Rack plugin's window (no chain editor) a held Alt p
 	CAPTURE(lit.knobs);
 	CAPTURE(lit.nonKnobs);
 	REQUIRE(lit.knobs + lit.nonKnobs >= 1);
+	REQUIRE(lit.pillsChips >= 1); // this window offers no value box that routes; its pills and chips are the non-knob targets
 
 	gui.setModifierProbeForTest(&altPauseHeld);
 	gui.tick();
@@ -7042,6 +7053,8 @@ TEST_CASE("alt pause: in the Rack plugin's window (no chain editor) a held Alt p
 	const PauseTally back = pauseTally(view);
 	CHECK(back.knobs == lit.knobs);
 	CHECK(back.nonKnobs == lit.nonKnobs);
+	CHECK(back.boxes == lit.boxes);
+	CHECK(back.pillsChips == lit.pillsChips);
 	gui.setModifierProbeForTest(nullptr);
 	gui.destroy();
 }

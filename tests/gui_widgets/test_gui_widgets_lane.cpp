@@ -1147,7 +1147,26 @@ TEST_CASE("holding Alt edits the parameter underneath without disarming") {
 
 	CHECK(f.bridge.value(static_cast<clap_id>(ParamId::Path)) != before);
 	CHECK(f.bridge.routeList().count() == 0);
-	// Still armed afterwards — the bypass is for one gesture, not a mode change.
+
+	// THE ARM SURVIVES THE GESTURE. The last event the hand sent still carried Alt, so the glow pause
+	// is in force: `mappable()` reads false, which is what the pause is for. What must NOT drop is the
+	// arm itself, read from the state rather than through the glow, because the bypass is for one
+	// gesture, not a mode change.
+	ui::ModState* mod = f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	CHECK(mod->bypassed());
+	CHECK(mod->armed());
+	CHECK_FALSE(path->mappable());
+
+	// Alt released: the next motion without it clears the bypass, and the same arm glows again.
+	visage::MouseEvent release = up;
+	release.modifiers = 0;
+	release.is_down = false;
+	release.button_id = visage::kMouseButtonNone;
+	release.button_state = visage::kMouseButtonNone;
+	path->processMouseMove(release);
+	CHECK_FALSE(mod->bypassed());
+	CHECK(mod->armed());
 	CHECK(path->mappable());
 }
 

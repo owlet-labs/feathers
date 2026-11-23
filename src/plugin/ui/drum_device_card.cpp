@@ -115,6 +115,7 @@ bool DrumDeviceCard::updateContent() {
 	if (!isVisible() || folded()) {
 		return false;
 	}
+	model_.refreshTooltips();
 	picture_.show(model_.kind(), model_.laws(), model_.decaySeconds(), model_.levelDb(), model_.handles());
 	if (model_.relevant(dd::Param::Note) != noteShown_) {
 		noteShown_ = !noteShown_;

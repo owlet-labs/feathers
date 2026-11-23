@@ -1420,6 +1420,7 @@ void RackEngine::retrigger() {
 void RackEngine::advanceModulators(int frames, const backplane::BlockContext& block) {
 	device::ModTickContext ctx;
 	ctx.gate = gate_;
+	ctx.notePitch = modNotePitch_;
 	ctx.clock = block.clock;
 	// **IN CHAIN ORDER, LIKE THE OTHER TWO PASSES.** A modulator's output does not feed the next one
 	// today, so lane order would sound identical — which is exactly why it is worth doing rather than
@@ -1539,7 +1540,10 @@ void RackEngine::advanceModulators(int frames, const backplane::BlockContext& bl
 			{
 				float* win = &slot.outputsWindow[output * static_cast<size_t>(device::kTickWindowStride)];
 				if (ticked) {
-					device::fillTickWindowRamp(win, slot.outputs[output], published);
+					// THE DEVICE'S OWN CURVE for the tick, when one is read and it has one; else the ramp.
+					if (!(!disabled && renderCurveWindow(slot, *d, output, source, false, 0, 0, 0, false, amount, win))) {
+						device::fillTickWindowRamp(win, slot.outputs[output], published);
+					}
 				}
 				else if (published != slot.outputs[output]) {
 					device::fillTickWindowRamp(win, published, published);
@@ -1557,7 +1561,10 @@ void RackEngine::advanceModulators(int frames, const backplane::BlockContext& bl
 			{
 				float* winR = &slot.outputsWindowR[output * static_cast<size_t>(device::kTickWindowStride)];
 				if (ticked) {
-					device::fillTickWindowRamp(winR, slot.outputsR[output], publishedR);
+					const bool pair = !disabled && d->mod->outputPairAt != nullptr && ((slot.emitsPair >> output) & 1u) != 0;
+					if (!(pair && renderCurveWindow(slot, *d, output, source, false, 0, 0, 0, true, amount, winR))) {
+						device::fillTickWindowRamp(winR, slot.outputsR[output], publishedR);
+					}
 				}
 				else if (publishedR != slot.outputsR[output]) {
 					device::fillTickWindowRamp(winR, publishedR, publishedR);
@@ -1971,6 +1978,9 @@ void RackEngine::updateNoteContext() {
 	// should, which is what the wrapper's `retrigger()` per note-on did.
 	if (!events.empty()) {
 		setGate(noteContext_.gate);
+		if (noteContext_.gate) {
+			modNotePitch_ = noteContext_.pitchSemitones;
+		}
 		if (struck) {
 			retrigger();
 		}
@@ -1980,6 +1990,7 @@ void RackEngine::updateNoteContext() {
 void RackEngine::setExternalNote(const device::NoteContext& note) noexcept {
 	externalNote_ = note;
 	externalNoteSet_ = true;
+	modNotePitch_ = note.pitchSemitones;
 	// THE MODULATORS' GATE TOO, through the one door that derives the retrigger edge from it.
 	setGate(note.gate);
 }
@@ -2177,6 +2188,49 @@ void RackEngine::writeVoiceOutput(DeviceInstanceId id, size_t output, size_t voi
 	std::atomic_ref<float>(s.outputsPerVoice[at]).store(next, std::memory_order_relaxed);
 }
 
+bool RackEngine::renderCurveWindow(const Slot& slot, const device::Descriptor& d, size_t output, const void* source,
+                                   bool forNote, int32_t noteId, int16_t channel, int16_t key, bool rightEar,
+                                   float amount, float* window) noexcept {
+	// ONLY AN OUTPUT SOME ROUTE READS, and only a device that has a curve to give: an output nothing reads keeps the
+	// tick value and the ramp, which is all its card ever shows.
+	if (d.mod == nullptr || d.mod->renderWindow == nullptr || source == nullptr || window == nullptr || output >= 64
+	    || ((slot.readOutputs >> output) & 1u) == 0) {
+		return false;
+	}
+	if (!d.mod->renderWindow(source, output, forNote, noteId, channel, key, rightEar, window)) {
+		return false;
+	}
+	// THE AMOUNT AND THE FINITE GATE, as the tick's own publish applies them.
+	for (int i = 0; i < device::kTickWindow; ++i) {
+		const float v = amount * window[i];
+		window[i] = std::isfinite(v) ? v : 0.0f;
+	}
+	window[device::kTickWindow] = 0.0f;
+	return true;
+}
+
+void RackEngine::writeOutputWindowForVoice(DeviceInstanceId id, size_t output, size_t voice, int32_t noteId,
+                                           int16_t channel, int16_t key) noexcept {
+	const size_t slot = slotOf(id);
+	if (slot == kNoSlot || voice >= voices_) {
+		return;
+	}
+	Slot& s = slots_[slot];
+	const device::Descriptor* d = s.live_desc();
+	const size_t at = output * voices_ + voice;
+	const size_t w = at * static_cast<size_t>(device::kTickWindowStride);
+	if (d == nullptr || d->mod == nullptr || d->mod->renderWindow == nullptr || publishesFromVoices(s, *d)
+	    || w + static_cast<size_t>(device::kTickWindowStride) > s.outputsPerVoiceWindow.size()) {
+		return;
+	}
+	const int enable = d->traits.enableControl;
+	if (enable >= 0 && static_cast<size_t>(enable) < s.resolved.size() && s.resolved[static_cast<size_t>(enable)] < 0.5f) {
+		return; // switched off: the ramp to rest, as `writeVoiceOutput` wrote it
+	}
+	(void)renderCurveWindow(s, *d, output, s.storage.get(), true, noteId, channel, key, false, amountOf(*d, s.resolved),
+	                        &s.outputsPerVoiceWindow[w]);
+}
+
 void RackEngine::writeOutputPairForVoice(DeviceInstanceId id, size_t output, size_t voice, int32_t noteId,
                                          int16_t channel, int16_t key, bool start) noexcept {
 	const size_t slot = slotOf(id);
@@ -2204,6 +2258,13 @@ void RackEngine::writeOutputPairForVoice(DeviceInstanceId id, size_t output, siz
 	const size_t w = at * static_cast<size_t>(device::kTickWindowStride);
 	if (w + static_cast<size_t>(device::kTickWindowStride) <= s.outputsPerVoiceWindowR.size()) {
 		device::fillTickWindowRamp(&s.outputsPerVoiceWindowR[w], start ? next : s.outputsPerVoiceR[at], next);
+		// AND THE DEVICE'S OWN CURVE for the note's right ear, when one is read (a note that starts this tick is flat).
+		const int enable = d->traits.enableControl;
+		const bool off = enable >= 0 && static_cast<size_t>(enable) < s.resolved.size() && s.resolved[static_cast<size_t>(enable)] < 0.5f;
+		if (!start && !off && !publishesFromVoices(s, *d)) {
+			(void)renderCurveWindow(s, *d, output, s.storage.get(), true, noteId, channel, key, true, amountOf(*d, s.resolved),
+			                        &s.outputsPerVoiceWindowR[w]);
+		}
 	}
 	std::atomic_ref<float>(s.outputsPerVoiceR[at]).store(next, std::memory_order_relaxed);
 }
@@ -2426,11 +2487,17 @@ void RackEngine::rebuildInputs() noexcept {
 	// this drain reads empty rather than yesterday's.
 	for (Slot& slot : slots_) {
 		slot.anyPerVoiceInput = false;
+		slot.readOutputs = 0;
 		for (InputRange& range : slot.inputs) {
 			range = InputRange {};
 		}
 	}
 	for (const backplane::Route& r : routes) {
+		if (r.source.isDevice() && !r.source.isExport() && r.source.index < 64) {
+			if (const size_t from = slotOf(r.source.device); from != kNoSlot) {
+				slots_[from].readOutputs |= uint64_t { 1 } << r.source.index;
+			}
+		}
 		Slot* slot = nullptr;
 		const size_t control = controlOf(r.destination, &slot);
 		if (control == SIZE_MAX || cellOf(r.source) == nullptr) {

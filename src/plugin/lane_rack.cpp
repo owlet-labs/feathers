@@ -173,6 +173,7 @@ void LaneRack::tickModulators(const device::ModTickContext& context, int frames)
 	// gate and `retrigger` latches one explicitly — a note under a held gate — and both are the same
 	// latch, spent by the first tick that sees it.
 	engine_.setGate(context.gate);
+	engine_.setNotePitch(context.notePitch);
 	if (context.retrigger) {
 		engine_.retrigger();
 	}

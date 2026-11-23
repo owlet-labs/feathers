@@ -478,6 +478,15 @@ int SklitterCard::playingStepForTest() const {
 	return sklitterPlayingStep(ownHost(), deviceId());
 }
 
+void SklitterCard::refreshTips() {
+	const int mode = static_cast<int>(std::lround(control(static_cast<size_t>(sc::Param::GrooveMode)).value()));
+	if (mode == grooveTipKey_) {
+		return;
+	}
+	grooveTipKey_ = mode;
+	control(static_cast<size_t>(sc::Param::GrooveAmount)).setTooltipOverride(sc::grooveAmountTipFor(mode));
+}
+
 bool SklitterCard::updateContent() {
 	// THE LIST'S OWN ANSWER FIRST — a mode change re-lays the rows out and that is a repaint too.
 	bool moved = GenericCard::updateContent();

@@ -85,6 +85,9 @@ public:
 
 	bool updateContent() override;
 	void resized() override;
+	/// Time's and Mix's hover text by the Mode, Sync and Dub (`delay_tips.h`), set on each content update.
+	void refreshTips() override;
+	int tipKey_ = -1;
 
 	//------------//
 	// Test seams //

@@ -154,6 +154,11 @@ public:
 		engine_.startOutputForVoice(device, output, voice, value);
 	}
 	/// AND ITS RIGHT EAR WHILE THE OUTPUT IS A PAIR (backlog PA) — see `RackEngine::writeOutputPairForVoice`.
+	/// THE NOTE'S CURVE into its per-voice window — see `RackEngine::writeOutputWindowForVoice`.
+	void writeOutputWindowForVoice(DeviceInstanceId device, size_t output, size_t voice, int32_t noteId, int16_t channel,
+	                               int16_t key) noexcept {
+		engine_.writeOutputWindowForVoice(device, output, voice, noteId, channel, key);
+	}
 	void writeOutputPairForVoice(DeviceInstanceId device, size_t output, size_t voice, int32_t noteId, int16_t channel,
 	                             int16_t key, bool start) noexcept {
 		engine_.writeOutputPairForVoice(device, output, voice, noteId, channel, key, start);

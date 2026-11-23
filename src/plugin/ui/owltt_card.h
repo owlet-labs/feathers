@@ -217,6 +217,13 @@ private:
 
 	DeviceControl& control(size_t index) const;
 
+	public:
+	/// The card's own control at a descriptor index (a test seam for its hover text).
+	[[nodiscard]] DeviceControl& controlForTest(size_t index) const { return control(index); }
+	private:
+	/// The Key Track state the crossovers' hover text was last set for (-1 before the first update).
+	int crossoverTipKey_ = -1;
+
 	/// THRESHOLD BAR HIT TESTING — returns which bar (if any) is at the given point.
 
 public:

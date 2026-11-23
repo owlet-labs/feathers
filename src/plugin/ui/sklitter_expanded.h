@@ -733,6 +733,8 @@ protected:
 	/// not the grain renderer). **When a device has two surfaces over one picture, a fix to one of
 	/// them is half a fix by default.**
 	bool updateContent() override;
+	/// The Groove Mode the Amount's hover text was last set for (-1 before the first update).
+	int grooveTipKey_ = -1;
 
 private:
 	/// What was last drawn, so `updateContent` can ask whether the picture actually moved.

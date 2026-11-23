@@ -563,6 +563,7 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	// THE SURFACE HOST, ADDED LAST SO IT DRAWS OVER EVERYTHING — including the notifier. A takeover
 	// that let the tray show through would be showing a message about a rack the player cannot see.
 	surfaces_ = std::make_unique<ui::SurfaceLayers>();
+	surfaces_->setAnchor(this); // a window this editor opens is OWNED by the window this editor sits in
 	surfaces_->setCanvas(canvas_.get());
 	// THE LAYERS FORGET THEIR CONTENT ON DISMISSAL — but only through the `ModState` they are given,
 	// and nothing had given the overlay one. The same dangling-watcher fault as the cards above, one

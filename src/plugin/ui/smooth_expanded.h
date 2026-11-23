@@ -90,6 +90,8 @@ public:
 	[[nodiscard]] SmoothCurveView* curveForTest() const { return curve_.get(); }
 	[[nodiscard]] SmoothHarmonicsView* barsForTest() const { return bars_.get(); }
 	[[nodiscard]] FaderPill* pillForTest(size_t i) const { return i < pills_.size() ? pills_[i].get() : nullptr; }
+	/// THE WIDGET A HAND HOVERS FOR A MODE-DEPENDENT CONTROL (`refreshModeTips`): Fdbk, Harmonic or H Phase.
+	[[nodiscard]] visage::Frame* widgetForTest(fx::smooth::Param p) const;
 	[[nodiscard]] WetHighpassControl* hpForTest() const { return hp_.get(); }
 	[[nodiscard]] const SmoothPictureModel& modelForTest() const { return model_; }
 
@@ -103,6 +105,7 @@ private:
 	[[nodiscard]] DeviceControl& control(fx::smooth::Param p) const;
 	[[nodiscard]] fx::smooth::Settings settings(bool modulated = true) const;
 	[[nodiscard]] bool hasReadings() const;
+	void refreshModeTips();
 	void layOut();
 
 	backplane::DeviceHost& host_;
@@ -112,6 +115,8 @@ private:
 	SmoothPictureModel model_ {};
 	bool drawnHadPeak_ = false;
 	float drawnPeak_ = -1.0f;
+	/// THE HARMONIC MODE THE HOVER TEXT WAS SET FOR — `refreshModeTips` moves the strings only when it changes.
+	int tipMode_ = -1;
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<ValueBox> mode_;

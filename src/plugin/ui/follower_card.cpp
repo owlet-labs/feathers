@@ -315,6 +315,9 @@ void FollowerCard::layoutControls() {
 	input_->setBounds(left, y + 0.5f * (kPlotHeight - controlsHeight()), kInputColumnWidth, controlsHeight());
 	input_->setVisible(open);
 	input_->setActive(!audioLaid_);
+	// INPUT DOES NOTHING IN AUDIO (the honesty rule): disabled there, and its hover text says why (the Mode is a user control, so it greys).
+	input_->setEnabled(!audioLaid_);
+	control(at(fl::Param::Input)).setTooltipOverride(audioLaid_ ? "Input does nothing in Audio: the follower hears the audio here instead. Switch Mode to Control to follow it" : "");
 	const float plotLeft = left + kInputColumnWidth + kGap;
 	plot_->setBounds(plotLeft, y, std::max(0.0f, left + inner - plotLeft), kPlotHeight);
 	plot_->setBipolar(signedLaid_);

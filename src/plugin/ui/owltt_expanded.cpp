@@ -160,6 +160,13 @@ DeviceControl& OwlttExpanded::control(dtt::Param param) const {
 }
 
 bool OwlttExpanded::updateContent() {
+	// THE CROSSOVERS' HOVER TEXT FOLLOWS KEY TRACK, as on the card (the TV audit).
+	const int keyTrack = control(dtt::Param::KeyTrack).value() >= 0.5 ? 1 : 0;
+	if (keyTrack != crossoverTipKey_) {
+		crossoverTipKey_ = keyTrack;
+		control(dtt::Param::LowCrossover).setTooltipOverride(keyTrack != 0 ? dtt::kLowCrossoverTipKeyTrack : "");
+		control(dtt::Param::HighCrossover).setTooltipOverride(keyTrack != 0 ? dtt::kHighCrossoverTipKeyTrack : "");
+	}
 	bool changed = graph_ != nullptr && graph_->update();
 	changed = (inMeter_ != nullptr && inMeter_->update()) || changed;
 	changed = (outMeter_ != nullptr && outMeter_->update()) || changed;

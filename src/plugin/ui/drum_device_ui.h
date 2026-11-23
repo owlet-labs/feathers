@@ -63,12 +63,16 @@ public:
 	static constexpr int kPictureKey = 60;
 	/// The picture's handles for the current Kind, each bound to its device control (the kind's own only).
 	[[nodiscard]] HitPicture::Controls handles() const;
+	/// The hover text of the controls a Kind (and Pitched) changes the meaning of, for the current settings. Called on every
+	/// surface's content update, so a Kind change, a patch load, an undo or an automation write all reach it.
+	void refreshTooltips() const;
 	void setModulation(ModState* mod, EditHistory* history);
 
 private:
 	backplane::DeviceHost& host_;
 	DeviceInstanceId id_;
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(dd::Param::kCount)> controls_ {};
+	mutable int tipState_ = -1; ///< the (Kind, Pitched) the overrides were last set for; -1 before the first refresh
 };
 
 /// **A DRUM'S TRIG BUTTON** (the house trigger jack, `TrigPad::drawJack`): a press strikes the drum's Note through the host's note road (`DeviceHost::postNote`), the release

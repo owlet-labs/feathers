@@ -84,6 +84,14 @@ void ArpExpanded::resized() {
 }
 
 bool ArpExpanded::updateContent() {
+	// RATE'S HOVER TEXT FOLLOWS TIME BASE, as on the card (the TV audit).
+	{
+		const int timeBase = static_cast<int>(std::lround(controlFor(static_cast<size_t>(ap::Param::TimeBase)).value()));
+		if (timeBase != rateTipKey_) {
+			rateTipKey_ = timeBase;
+			controlFor(static_cast<size_t>(ap::Param::Rate)).setTooltipOverride(ap::rateTipFor(timeBase));
+		}
+	}
 	const bool grid = GenericExpanded::updateContent();
 	return lane_->poll() || grid;
 }

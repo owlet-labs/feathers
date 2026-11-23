@@ -356,6 +356,12 @@ inline constexpr device::ChoiceAlias kModeAliases[] = { { "LR2 Fast", "LR2 Fast 
 	                                                    { "LR8 Full", "LR8 Full (48 dB/oct)" } };
 
 inline constexpr const char* kOffOnNames[] = {"Off", "On"};
+// THE CROSSOVERS' HOVER TEXT WHEN KEY TRACK PLACES THEM (TV audit): each is then an offset from the last note played, and a plain
+// frequency until a note is heard. The card and the window set these while Key Track is on, and restore the declared text when it is off.
+inline constexpr const char* kLowCrossoverTipKeyTrack = "Low-mid split, as an offset from the last note played: at its default it sits on that note. "
+                                                       "Until a note is heard, a plain frequency";
+inline constexpr const char* kHighCrossoverTipKeyTrack = "Mid-high split, as an offset from the last note played: at its default it keeps its distance "
+                                                        "above that note. Until a note is heard, a plain frequency";
 /// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
 /// (and a stored label "On" loads as Both through `kClipAliases`). Master clips the output sum only, Bands each band only, Both each band and then the sum.
 inline constexpr const char* kClipNames[] = {"Off", "Both", "Master", "Bands"};

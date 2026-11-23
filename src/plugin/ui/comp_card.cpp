@@ -19,6 +19,7 @@
 #include "plugin/ui/modulated_row.h"
 
 #include "fx/comp/comp_lanes.h"
+#include "fx/comp/comp_tips.h"
 #include "plugin/ui/dyn_meter.h"
 #include "plugin/ui/tooltip.h"
 #include "rack/inner_chain.h"
@@ -221,6 +222,11 @@ bool CompCard::isLive(cp::Param p) const {
 
 void CompCard::layOut() {
 	laidOutMode_ = modeNow();
+	// THE HOVER TEXT FOLLOWS THE MODE: a Mode change runs through here, so the three controls whose meaning turns with it
+	// say what they do in the mode the device is in.
+	for (const cp::Param p : { cp::Param::Threshold, cp::Param::Release, cp::Param::Drive }) {
+		control(p).setTooltipOverride(cp::modeTip(p, laidOutMode_));
+	}
 	const bool open = !folded();
 	const float left = bodyLeft() + kPad;
 	const float width = std::max(0.0f, contentRight() - left);

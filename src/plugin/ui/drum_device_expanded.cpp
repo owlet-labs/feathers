@@ -315,6 +315,7 @@ bool DrumDeviceExpanded::updateContent() {
 }
 
 void DrumDeviceExpanded::follow() {
+	model_.refreshTooltips();
 	picture_.show(model_.kind(), model_.laws(), model_.decaySeconds(), model_.levelDb(), model_.handles());
 	(void)likes_->refresh();
 	padContext_.settings = model_.settings();

@@ -4683,3 +4683,46 @@ TEST_CASE("rack window route list: a route made inside the rack from its armed m
 	CHECK(list.x() == ui::ParallelRackExpanded::kPad);
 	CHECK(list.right() <= w.containerWidth());
 }
+
+TEST_CASE("synth route list: a rack macro armed from the synth's editor lists the routes that macro has inside the rack, heading and rows agreeing") {
+	RealRack r;
+	r.chains(2, 2, true);
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	REQUIRE(delay != feathers::kNoInstance);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	REQUIRE(desc != nullptr);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	const backplane::Source inner = backplane::Source::core(0);
+	const backplane::Destination dest = backplane::Destination::control(delay, control);
+	chain0.setRouteAmount(inner, dest, 0.5f); // the rack's macro 1 into a device in its first chain
+	// THE SYNTH'S OWN ARM: the rack's macro as the synth's editor spells it, a source exported by the rack, armed in the synth's state.
+	const backplane::Source armed = r.f.bridge.fxContainerExport(r.id, inner);
+	REQUIRE(armed != backplane::Source::nobody());
+	ui::ModState* mod = r.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	mod->focus(armed);
+	mod->arm(true);
+	ui::RouteList* list = findInTree<ui::RouteList>(r.f.root);
+	REQUIRE(list != nullptr);
+	// THE HEADING NAMES WHOSE ROUTES THESE ARE, AND THE ROWS ARE THEM: a heading that promises rows shows them.
+	CHECK_FALSE(list->headingName().whole.empty());
+	const std::vector<ui::RouteList::Row> rows = list->allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].destination == dest);
+	// THE SYNTH NAMES A CONTAINER BY ITS PLACE ("Chain 2"), then the rack names the chain, the device and the control.
+	CHECK(list->nameOfForTest(rows[0]) == "Chain " + std::to_string(r.slot + 1) + " \xC2\xB7 " + r.rack().chainLabel(0) + " \xC2\xB7 " + desc->traits.name
+	                                          + " \xC2\xB7 " + desc->params[control].name);
+	CHECK(list->amountOfForTest(rows[0]) == doctest::Approx(0.5f));
+	// EDITED THROUGH THE ROW: it is the chain's route.
+	list->writeForTest(rows[0], 0.25f);
+	CHECK(chain0.routeAmount(inner, dest) == doctest::Approx(0.25f));
+	list->removeForTest(rows[0]);
+	CHECK(chain0.routeAmount(inner, dest) == 0.0f);
+}

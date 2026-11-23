@@ -23,6 +23,7 @@
 #include "device/format_value.h"
 #include "plugin/device_registry.h"
 #include "plugin/gui_bridge.h"
+#include "rack/container_local_routes.h"
 #include "rack/export_table.h"
 #include "rack/extra_state_harvest.h"
 #include "rack/site_chains.h"
@@ -262,6 +263,11 @@ std::vector<ParamBridge::InnerRoute> ParamBridge::innerRoutesFrom(backplane::Sou
 	if (source.isOuter()) {
 		return out; // this host's sources only: a source already scoped is not one of ours to walk
 	}
+	// A CONTAINER'S OWN MACRO, ARMED HERE as the container's export: its routes are inside the container's chains, keyed by the chain's own macro.
+	if (source.isContainerExport()) {
+		const DeviceInstanceId holder = source.device;
+		return rack::local_routes::routesFrom(descriptorOf(holder), fxBodies_.surfaceOf(holder), holder, source);
+	}
 	// AND THE ROUTES INSIDE EVERY DEVICE'S SITE (backlog NR), under its site key with the site's own table.
 	for (size_t slot = 0; slot < chains_.length(kLaneChain); ++slot) {
 		const DeviceInstanceId chain = fxDeviceAt(slot);
@@ -277,6 +283,11 @@ std::vector<ParamBridge::InnerRoute> ParamBridge::innerRoutesFrom(backplane::Sou
 float ParamBridge::innerRouteAmount(backplane::Source source, DeviceInstanceId chain, backplane::Destination inner) const {
 	if (chain == kNoInstance) {
 		return 0.0f;
+	}
+	if (source.isContainerExport()) {
+		const rack::RackBridge* bridge = rack::local_routes::holding(descriptorOf(chain), fxBodies_.surfaceOf(chain), inner);
+		const backplane::Source own = rack::local_routes::innerOf(descriptorOf(chain), fxBodies_.surfaceOf(chain), source);
+		return bridge != nullptr && own != backplane::Source::nobody() ? bridge->routeAmount(own, inner) : 0.0f;
 	}
 	return backplane::innerRouteAmountOf(rack::containerTableFor(chain, descriptorOf(chain)), fxBodies_.surfaceOf(chain),
 	                                     source, inner);
@@ -362,6 +373,17 @@ bool ParamBridge::setInnerRouteAmount(backplane::Source source, DeviceInstanceId
                                       float amount) {
 	if (chain == kNoInstance) {
 		return false;
+	}
+	if (source.isContainerExport()) {
+		rack::RackBridge* bridge = rack::local_routes::holding(descriptorOf(chain), fxBodies_.surfaceOf(chain), inner);
+		const backplane::Source own = rack::local_routes::innerOf(descriptorOf(chain), fxBodies_.surfaceOf(chain), source);
+		if (bridge == nullptr || own == backplane::Source::nobody()
+		    || (amount != 0.0f && !bridge->fragmentRecord().mayRoute(own, inner))) {
+			return false;
+		}
+		bridge->setRouteAmount(own, inner, amount);
+		stateDirty_.store(true, std::memory_order_relaxed);
+		return true;
 	}
 	return backplane::setInnerRouteOf(rack::containerTableFor(chain, descriptorOf(chain)), fxBodies_.surfaceOf(chain),
 	                                  source, inner, amount);
@@ -2578,6 +2600,11 @@ backplane::Transfer ParamBridge::innerRouteTransfer(backplane::Source source, De
 	if (chain == kNoInstance) {
 		return backplane::Transfer::Lin;
 	}
+	if (source.isContainerExport()) {
+		const rack::RackBridge* bridge = rack::local_routes::holding(descriptorOf(chain), fxBodies_.surfaceOf(chain), inner);
+		const backplane::Source own = rack::local_routes::innerOf(descriptorOf(chain), fxBodies_.surfaceOf(chain), source);
+		return bridge != nullptr && own != backplane::Source::nobody() ? bridge->routeTransfer(own, inner) : backplane::Transfer::Lin;
+	}
 	return backplane::innerRouteTransferOf(rack::containerTableFor(chain, descriptorOf(chain)), fxBodies_.surfaceOf(chain),
 	                                       source, inner);
 }
@@ -2586,6 +2613,16 @@ bool ParamBridge::setInnerRouteTransfer(backplane::Source source, DeviceInstance
                                         backplane::Transfer t) {
 	if (chain == kNoInstance || !transferAllowedFor(source, t)) {
 		return false;
+	}
+	if (source.isContainerExport()) {
+		rack::RackBridge* bridge = rack::local_routes::holding(descriptorOf(chain), fxBodies_.surfaceOf(chain), inner);
+		const backplane::Source own = rack::local_routes::innerOf(descriptorOf(chain), fxBodies_.surfaceOf(chain), source);
+		if (bridge == nullptr || own == backplane::Source::nobody() || !bridge->setRouteTransfer(own, inner, t)) {
+			return false;
+		}
+		repaintDirty_.store(true, std::memory_order_relaxed);
+		stateDirty_.store(true, std::memory_order_relaxed);
+		return true;
 	}
 	if (!backplane::setInnerRouteTransferOf(rack::containerTableFor(chain, descriptorOf(chain)), fxBodies_.surfaceOf(chain),
 	                                        source, inner, t)) {

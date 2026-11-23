@@ -39,6 +39,7 @@
 #include "fx/eroder/eroder_types.h"
 #include "fx/eq/eq_types.h"
 #include "fx/featherverb/featherverb_types.h"
+#include "fx/balance/balance_types.h"
 #include "fx/clip/clip_types.h"
 #include "fx/drawn/drawn_types.h"
 #include "fx/spectral/spectral_types.h"
@@ -3074,6 +3075,11 @@ std::vector<std::string> honestyExpected() {
 	// and falls 60 dB in Decay seconds" (restated tick by tick) and "NOISE: Impulse Decay is Random Trigger's Decay, tick
 	// for tick, on the same settings and Seed".
 	expected.push_back("Noise :: Noise Impulse Decay");
+	// **STEREO BALANCE'S RELEASE IS THE PHASER ENV RELEASE'S SHAPE: A TRANSITION THIS FIXTURE DOES NOT MAKE.** The detector takes the Release road only when a
+	// side's level FALLS below what it has followed, and this probe is 256 frames of steady noise starting from silence: every sample takes the Attack road, so
+	// Release has nothing to act on. A fixture limit, not a gate the code could drop. Asserted by value in `test_fx_balance.cpp`'s "Release is how fast the
+	// measurement follows a side getting quieter, Attack louder", against the closed form of the two lags in a row (swapping the roads goes red there).
+	expected.push_back("Stereo Balance :: Balance Release");
 	// **SIDECHAIN INJECT'S GAIN (backlog NW) SCALES THE SIDECHAIN, WHICH THIS SWEEP NEVER HANDS IT**: the fixture runs devices
 	// on the bus road with no `setSidechain`, so the term Gain scales is silence at every arrangement (the Spectral vocoder's
 	// controls are on this list for the same reason). Its claim is asserted as the number it is: test_fx_inject's "Inject at
@@ -3300,6 +3306,7 @@ TEST_CASE("NR: every device declares the furniture and the site the decisions gi
 		                         || device::sameTag(d.traits.tag, fx::busutil::kTraits.tag)
 		                         || device::sameTag(d.traits.tag, fx::clip::kTraits.tag)
 		                         || device::sameTag(d.traits.tag, fx::drawn::kTraits.tag)
+		                         || device::sameTag(d.traits.tag, fx::balance::kTraits.tag)
 		                         || device::sameTag(d.traits.tag, fx::harm::kTraits.tag);
 		if (!slotBlended) {
 			CHECK(d.traits.mixInDevice);

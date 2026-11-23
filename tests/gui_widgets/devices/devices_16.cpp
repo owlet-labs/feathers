@@ -2077,8 +2077,9 @@ TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns named for the
 	d.set(static_cast<size_t>(ow::Param::LowCrossover), 100.0f);
 	// THE HIGH CORNER OFF ITS DEFAULT: at 200 Hz and 2 kHz the corners fall on exact thirds of the 20 Hz .. 20 kHz axis, which would hide a column edge that still claimed one.
 	d.set(static_cast<size_t>(ow::Param::HighCrossover), 5000.0f);
-	// 100 and 1000 Hz: ten times, so the on-teeth band is cut at a whole ratio, and named so.
-	const std::array<const char*, 3> classes { "Between", "Others", "Every 10" };
+	// 100 and 1000 Hz, Key Track off: a fixed comb, whose teeth meet an input's harmonics only by chance, so the columns are named for what they structurally are
+	// (harmonic names need a tracked note: `combBandNames`).
+	const std::array<const char*, 3> classes { "Gaps", "Teeth A", "Teeth B" };
 	for (ui::OwlttGraph* graph : { d.card->graph(), panel.graph() }) {
 		CAPTURE(graph == panel.graph());
 		const ui::OwlttGraph::BottomText t = graph->bottomText();

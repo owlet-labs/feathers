@@ -236,6 +236,8 @@ TEST_CASE("every registered device files under the category it was assigned") {
 		// THE DRUM (a generator): it makes sound of its own from notes and adds it to what comes in, so it files under Oscillators, not under a
 		// Note FX (it is heard) or Rhythm & Glitch (which shapes what passes).
 		{ "Drum", device::Category::Oscillators },
+		// STEREO BALANCE: a corrective level tool on the signal, beside OWLTT and the Compressor.
+		{ "Stereo Balance", device::Category::Dynamics },
 	};
 	size_t matched = 0;
 	for (const device::Descriptor& d : kDevices) {

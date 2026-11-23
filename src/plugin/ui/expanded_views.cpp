@@ -52,6 +52,8 @@
 #include "plugin/ui/resonate_expanded.h"
 #include "fx/resonate/resonate_types.h"
 #include "plugin/ui/smooth_expanded.h"
+#include "plugin/ui/balance_expanded.h"
+#include "fx/balance/balance_types.h"
 
 #include <memory>
 #include <vector>
@@ -183,6 +185,12 @@ const Entry* entryFor(const device::Descriptor& desc) {
 		  [](backplane::DeviceHost& h, ParamBridge*, WidgetRegistry& r, DeviceInstanceId s, Notifier* n)
 		      -> std::unique_ptr<ExpandedView> {
 			  return std::make_unique<ResonateExpanded>(h, r, s, n);
+		  } },
+		// STEREO BALANCE'S WINDOW: the card's picture large, every control, HP Wet and Sub Thru (`balance_expanded.h`).
+		{ fx::balance::kTraits.tag,
+		  [](backplane::DeviceHost& h, ParamBridge*, WidgetRegistry& r, DeviceInstanceId s, Notifier* n)
+		      -> std::unique_ptr<ExpandedView> {
+			  return std::make_unique<BalanceExpanded>(h, r, s, n);
 		  } },
 		// THE SMOOTH SHAPER'S PANEL — both pictures large, and every control (`smooth_expanded.h`).
 		{ fx::smooth::kTraits.tag,

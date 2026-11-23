@@ -211,6 +211,8 @@ const Exemption kExemptions[] = {
 	{ "Drawn :: Drawn Wet Gain", "the slot applies it; the device does not read it" },
 	{ "Harm :: Harm Mix", "the slot applies it; the device does not read it" },
 	{ "Harm :: Harm Wet Gain", "the slot applies it; the device does not read it" },
+	{ "Stereo Balance :: Balance Mix", "the slot applies it; the device does not read it" },
+	{ "Stereo Balance :: Balance Wet Gain", "the slot applies it; the device does not read it" },
 };
 
 [[nodiscard]] const Exemption* exemptionFor(const std::string& control) {

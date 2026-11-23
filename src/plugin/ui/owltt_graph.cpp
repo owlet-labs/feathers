@@ -505,8 +505,9 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 	}
 	// IN COMB EACH COLUMN IS HEADED BY ITS HARMONIC CLASS, centred at the top of the bars' area; nothing on the plot then claims a range of frequency.
 	if (combMode()) {
-		const std::array<std::string, 3> names = owltt::combBandNames(owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::LowCrossover)).value(), false),
-		                                                              owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::HighCrossover)).value(), true));
+		const bool harmonic = control(static_cast<size_t>(owltt::Param::KeyTrack)).value() >= 0.5 && noteHz() > 0.0;
+		const std::array<std::string, 3> names = owltt::combBandNames(owltt::combRatioOfKnob(control(static_cast<size_t>(owltt::Param::LowCrossover)).value(), false),
+		                                                              owltt::combRatioOfKnob(control(static_cast<size_t>(owltt::Param::HighCrossover)).value(), true), harmonic);
 		const std::array<std::pair<float, float>, 3> columns { std::pair { xover.x(), xLow }, std::pair { xLow, xHigh },
 			                                                   std::pair { xHigh, xover.right() } };
 		for (size_t b = 0; b < columns.size(); ++b) {

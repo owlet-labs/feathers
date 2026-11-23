@@ -159,6 +159,10 @@ struct SourceDesc {
 	/// (`DeviceHost::setOutputsShown`); before it asks, and on a host that keeps no mask, it is not drawn. A route to it
 	/// reads as ever: this is view, not routing. The window shows every output.
 	bool cardHidden = false;
+	/// **WHAT THE CHIP PRINTS IN A GRID CELL** (`Traits::outputGridColumns`): a word short enough for a quarter of a card, "M1" for
+	/// "Macro 1". Null prints the house rule (the name's last word). The full name, which the hand may have changed, is the chip's
+	/// tooltip and the route lists' word, so a user's name is never cut to fit a cell.
+	const char* shortName = nullptr;
 };
 
 /// HOW A HOST RUNS A DEVICE THAT PROCESSES AUDIO — and NULL IS THE CAPABILITY.

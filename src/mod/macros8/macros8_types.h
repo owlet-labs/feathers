@@ -46,6 +46,8 @@ inline constexpr device::Traits kTraits {
 	.hasExpanded = false,
 	.enableControl = static_cast<int>(kEnabledField),
 	.tags = mod::macros::kVariantTags,
+	/// Two rows of four cells under the knobs, each chip "M1".."M8".
+	.outputGridColumns = 4,
 };
 
 inline constexpr device::Descriptor kDescriptor {

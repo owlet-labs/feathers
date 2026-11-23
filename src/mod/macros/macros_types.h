@@ -128,13 +128,13 @@ static_assert(std::size(device::kAbsoluteMacroTypeNames) == 3, "Type n's declare
 /// the switch that actually moves it, the way the LFO's and the MSEG's do.
 inline constexpr device::SourceDesc kOutputs[] = {
 	{ .key = "macro_1", .name = "Macro 1", .bipolar = true, .bipolarControl = static_cast<int>(Param::Bipolar1),
-	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro1) },
+	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro1), .shortName = "M1" },
 	{ .key = "macro_2", .name = "Macro 2", .bipolar = true, .bipolarControl = static_cast<int>(Param::Bipolar2),
-	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro2) },
+	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro2), .shortName = "M2" },
 	{ .key = "macro_3", .name = "Macro 3", .bipolar = true, .bipolarControl = static_cast<int>(Param::Bipolar3),
-	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro3) },
+	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro3), .shortName = "M3" },
 	{ .key = "macro_4", .name = "Macro 4", .bipolar = true, .bipolarControl = static_cast<int>(Param::Bipolar4),
-	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro4) },
+	  .pairFrom = 1u << static_cast<unsigned>(Param::Macro4), .shortName = "M4" },
 };
 static_assert(std::size(kOutputs) == kMacroCount);
 
@@ -149,6 +149,8 @@ inline constexpr device::Traits kTraits {
 	/// **NO AMOUNT.** Each route already carries its own depth and a macro's value is itself the depth a
 	/// hand sets; a fifth knob scaling all four would be a second way to say the same thing.
 	.tags = kTags,
+	/// **THE OUTPUT CHIPS MIRROR THE KNOB GRID**: four equal cells in a row under the four knobs, each printing "M1".."M4".
+	.outputGridColumns = 4,
 };
 
 extern const device::ModOps kModOps;

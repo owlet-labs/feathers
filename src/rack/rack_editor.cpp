@@ -310,6 +310,7 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 		for (OutputArm& entry : outputArms_) {
 			if (entry.arm != nullptr && entry.device == device && entry.output == output) {
 				entry.arm->setLabel(engine_.outputLabel(device, output));
+				ui::dressOutputChip(*entry.arm, engine_.descriptorOf(device), output, engine_.outputLabel(device, output));
 			}
 		}
 		resized();
@@ -1807,6 +1808,7 @@ bool RackEditor::syncLane(RackBridge& lane, std::vector<CardEntry>& cards, std::
 				// name until a hand relabels it; later relabels arrive by `labelSubscription_`.
 				entry.arm = std::make_unique<SourceArm>(mod, backplane::Source::output(i, out),
 				                                        lane.outputLabel(i, out));
+				ui::dressOutputChip(*entry.arm, d, out, lane.outputLabel(i, out)); // a grid device's chip prints its short name
 				addChild(entry.arm.get());
 				arms.push_back(std::move(entry));
 			}

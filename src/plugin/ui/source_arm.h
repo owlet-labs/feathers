@@ -81,6 +81,17 @@ public:
 	/// host that keeps its arms across a relabel (`ChainColumn`, `RackEditor`); it repaints, and the host
 	/// lays the chip out again, because a new word is a new width.
 	[[nodiscard]] const std::string& label() const noexcept { return label_; }
+	/// **WHAT A GRID CELL PRINTS INSTEAD OF THE NAME** (`SourceDesc::shortName`): when set and the chip is narrower than its name, the chip
+	/// prints this, whole. The name stays the tooltip's and the width's. Empty is the house rule (the name's last word).
+	void setCaption(std::string caption) {
+		if (caption != caption_) {
+			caption_ = std::move(caption);
+			redraw();
+		}
+	}
+	/// THE WORD `draw` PRINTS NOW — the seam the tests read: the caption in a cell narrower than the name, else the name (cut to its last word
+	/// in a cell narrower than it).
+	[[nodiscard]] std::string shownText() const;
 	void setLabel(std::string label) {
 		if (label != label_) {
 			label_ = std::move(label);
@@ -98,6 +109,7 @@ public:
 		}
 	}
 	[[nodiscard]] const char* tooltipAt(visage::Point) const override { return tooltip_.empty() ? nullptr : tooltip_.c_str(); }
+	[[nodiscard]] const std::string& tooltipForTest() const noexcept { return tooltip_; }
 	/// An arm writes no device control: it points a source at them.
 	void offeredControls(std::vector<Offered>&) const override {}
 
@@ -145,6 +157,7 @@ private:
 	/// What the constructor was told, used only while no provider has been set.
 	device::Source fixedSource_ {};
 	std::function<device::Source()> source_;
+	std::string caption_;
 	std::string label_;
 	std::string tooltip_;
 };
@@ -171,6 +184,11 @@ private:
 /// the end of `labels` are measured by their declared names, so an empty span is the declaration alone.
 /// **`shown`: A BIT PER OUTPUT** (`DeviceHost::outputsShown`) — an output whose bit is clear takes no room and gets an
 /// empty rectangle, so the chips after it close up and its arm hides (a route from it keeps reading).
+/// **DRESS AN OUTPUT'S CHIP FOR ITS DESCRIPTOR** — what every host does when it builds or relabels an arm: in a grid device the chip prints
+/// the output's `shortName` and its tooltip is the full name `label` (so a renamed macro shows "M3" on the chip and its name on hover and in
+/// the route lists); in any other device nothing changes. `desc` may be null.
+void dressOutputChip(SourceArm& arm, const device::Descriptor* desc, size_t output, const std::string& label);
+
 size_t outputChipRowsFor(const device::Descriptor& desc, float stripWidth,
                          std::span<const std::string> labels = {}, uint64_t shown = ~uint64_t { 0 });
 

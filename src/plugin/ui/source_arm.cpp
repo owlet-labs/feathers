@@ -103,12 +103,7 @@ void SourceArm::draw(visage::Canvas& canvas) {
 	if (!label_.empty()) {
 		// **A CHIP NARROWER THAN ITS NAME PRINTS THE NAME'S LAST WORD** — "Mod 3" as "3" in a grid cell
 		// (`Traits::outputGridColumns`). A flowed chip is always as wide as its name, so this never fires there.
-		std::string shown = label_;
-		if (static_cast<float>(width()) < widthFor(label_)) {
-			if (const size_t space = label_.find_last_of(' '); space != std::string::npos) {
-				shown = label_.substr(space + 1);
-			}
-		}
+		const std::string shown = shownText();
 		canvas.setColor(lit ? kModulation : kMuted);
 		drawTracked(canvas, shown.c_str(), font(kKnobLabelSize), kKnobLabelTracking,
 		            SourceArm::kChipInset + glyph + kLabelGap, 0.0f, static_cast<float>(height()));
@@ -170,6 +165,28 @@ size_t layoutOutputGrid(size_t count, size_t columns, visage::Bounds strip, std:
 	return rows;
 }
 } // namespace
+
+std::string SourceArm::shownText() const {
+	std::string shown = label_;
+	if (static_cast<float>(width()) < widthFor(label_)) {
+		if (!caption_.empty()) {
+			return caption_;
+		}
+		if (const size_t space = label_.find_last_of(' '); space != std::string::npos) {
+			shown = label_.substr(space + 1);
+		}
+	}
+	return shown;
+}
+
+void dressOutputChip(SourceArm& arm, const device::Descriptor* desc, size_t output, const std::string& label) {
+	if (desc == nullptr || desc->traits.outputGridColumns == 0 || output >= desc->outputs.size()
+	    || desc->outputs[output].shortName == nullptr) {
+		return;
+	}
+	arm.setCaption(desc->outputs[output].shortName);
+	arm.setTooltip(label);
+}
 
 size_t outputChipRowsFor(const device::Descriptor& desc, float stripWidth, std::span<const std::string> labels,
                          uint64_t shown) {

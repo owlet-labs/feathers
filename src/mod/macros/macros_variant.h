@@ -47,6 +47,7 @@ inline constexpr const char* kTypeKey[8] = { "type_1", "type_2", "type_3", "type
 inline constexpr const char* kMacroName[8] = { "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Macro 5", "Macro 6", "Macro 7", "Macro 8" };
 inline constexpr const char* kBipolarName[8] = { "Bipolar 1", "Bipolar 2", "Bipolar 3", "Bipolar 4", "Bipolar 5", "Bipolar 6", "Bipolar 7", "Bipolar 8" };
 inline constexpr const char* kTypeName[8] = { "Type 1", "Type 2", "Type 3", "Type 4", "Type 5", "Type 6", "Type 7", "Type 8" };
+inline constexpr const char* kShort[8] = { "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8" };
 inline constexpr const char* kValueTip[8] = {
 	"Macro 1's value — what its output publishes", "Macro 2's value — what its output publishes",
 	"Macro 3's value — what its output publishes", "Macro 4's value — what its output publishes",
@@ -99,7 +100,8 @@ template <size_t N>
 	std::array<device::SourceDesc, N> out {};
 	for (size_t n = 0; n < N; ++n) {
 		out[n] = device::SourceDesc { .key = variant_tables::kMacroKey[n], .name = variant_tables::kMacroName[n], .bipolar = true,
-			.bipolarControl = static_cast<int>(bipolarField(N, n)), .pairFrom = 1u << static_cast<unsigned>(macroField(n)) };
+			.bipolarControl = static_cast<int>(bipolarField(N, n)), .pairFrom = 1u << static_cast<unsigned>(macroField(n)),
+			.shortName = variant_tables::kShort[n] };
 	}
 	return out;
 }

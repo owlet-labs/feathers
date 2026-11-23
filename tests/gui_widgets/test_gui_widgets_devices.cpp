@@ -33856,7 +33856,7 @@ TEST_CASE("Spectral's routing choice is shown only while both filters are on, in
 	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
 	ui::WidgetRegistry registry;
 	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
-	// Both filters' chips are the one control; each is checked (the tab shows one filter's, the other is hidden with it).
+	// Both filters' chips are the one control; the shown tab's is visible, the other is hidden with its panel.
 	const auto shownWith = [&](float filter1, float filter2) {
 		d.set(static_cast<size_t>(spx::Param::FilterOn), filter1);
 		d.set(static_cast<size_t>(spx::Param::Filter2On), filter2);
@@ -33869,7 +33869,8 @@ TEST_CASE("Spectral's routing choice is shown only while both filters are on, in
 	CHECK(shownWith(0.0f, 0.0f) == std::make_pair(false, false));
 	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
 	CHECK(shownWith(0.0f, 1.0f) == std::make_pair(false, false));
-	CHECK(shownWith(1.0f, 1.0f) == std::make_pair(true, true));
+	// The tab shows filter 1's panel, so only its chip is in the row; filter 2's waits behind its tab.
+	CHECK(shownWith(1.0f, 1.0f) == std::make_pair(true, false));
 	// AND BACK: a switch moved off hides it again at once.
 	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
 }

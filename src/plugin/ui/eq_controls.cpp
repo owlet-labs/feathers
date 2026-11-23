@@ -164,7 +164,19 @@ std::vector<int> EqControls::honestyKey(int selected) const {
 		     anyGainActing() ? 1 : 0 };
 }
 
+void EqControls::refreshQTips() {
+	for (int b = 0; b < eq::kBandCount; ++b) {
+		const int type = static_cast<int>(std::lround(field(eq::bandIndex(b, eq::BandField::Type))));
+		int& seen = qTipType_[static_cast<size_t>(b)];
+		if (type != seen) {
+			seen = type;
+			control_(eq::bandIndex(b, eq::BandField::Q)).setTooltipOverride(eq::qTip(type));
+		}
+	}
+}
+
 void EqControls::layOut(visage::Bounds strip, visage::Bounds globals, int selected, bool open) {
+	refreshQTips();
 	const int sel = std::clamp(selected, 0, eq::kBandCount - 1);
 	offCaption_ = {};
 	for (int b = 0; b < eq::kBandCount; ++b) {

@@ -194,6 +194,7 @@ void SpectralCard::drawHeadExtras(visage::Canvas& canvas) { drawSlotMenu(canvas,
 
 bool SpectralCard::updateContent() {
 	bool changed = false;
+	source_.refreshTips(); // the hover text follows the Filter, Filter 2, Vocode and Key Track as they stand
 	if (visibilityKey() != laidOutKey_) {
 		layOut();
 		changed = true;

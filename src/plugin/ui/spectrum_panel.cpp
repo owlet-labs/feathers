@@ -1133,7 +1133,12 @@ bool SpectrumPanel::sync(size_t selected, bool live) {
 	const bool routed = !spectralRoutingInert(on(selected_, C::FilterOn), source_.has(C::Filter2On) && on(selected_, C::Filter2On));
 	for (size_t f = 0; f < 2; ++f) {
 		if (set.routing[f]) {
-			set.routing[f]->setEnabled(live && master && routed);
+			// THE HONESTY RULE: a choice that changes nothing is HIDDEN, not greyed. The chip's place is laid out either way.
+			set.routing[f]->setEnabled(live && master);
+			if (set.routing[f]->isVisible() != routed) {
+				set.routing[f]->setVisible(routed);
+				repainted = true;
+			}
 		}
 		if (set.tabs[f]) {
 			set.tabs[f]->setEnabled(live);

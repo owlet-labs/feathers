@@ -24530,6 +24530,55 @@ TEST_CASE("Drive negative: COMP's Drive knob rests at the centre of -24..+24 on 
 	CHECK(std::fabs(d.card->transferDb(-24.0f) - (-36.0f)) < 1e-3f);
 }
 
+TEST_CASE("COMP's hover text follows its Mode, on the card and in the window") {
+	namespace cp = feathers::fx::comp;
+	DynCardFixture<ui::CompCard> d(cp::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::CompExpanded panel { d.f.deviceHost, registry, d.device };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY, not read back from the table under test.
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	// THE HOVER ROAD MAY PUT THE CONTROL'S NAME IN FRONT ("Comp Threshold — …", when its caption is cut), so the
+	// text under test is its tail: it must END in the mode's entry, and nothing else of the descriptor's may survive.
+	const auto check = [&](int mode, cp::Param p, const char* want) {
+		CAPTURE(mode);
+		CAPTURE(static_cast<int>(p));
+		for (ui::Knob* k : { d.card->knobForTest(p), panel.knobForTest(p) }) {
+			REQUIRE(k != nullptr);
+			const std::string text = hover(k);
+			const std::string tail(want);
+			CAPTURE(text);
+			REQUIRE(text.size() >= tail.size());
+			CHECK(text.compare(text.size() - tail.size(), tail.size(), tail) == 0);
+		}
+	};
+	const auto setMode = [&](float m) {
+		d.set(static_cast<size_t>(cp::Param::Mode), m);
+		CHECK(d.card->updateContent());
+		CHECK(panel.updateContent());
+	};
+
+	// COMPRESS, THE DEFAULT: all three say what they do here.
+	check(0, cp::Param::Threshold, "The level above which the signal is turned down");
+	check(0, cp::Param::Release, "How fast gain reduction lets go — off at the bottom is instant");
+	check(0, cp::Param::Drive, "Gain in front of the compressor — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// COMPANDER: Threshold is Ref, Release is the level follower, Drive is the compander's input.
+	setMode(2.0f);
+	check(2, cp::Param::Threshold, "The level above which the signal is turned down. Here it is Ref, the level left alone: louder is turned down, quieter is turned up");
+	check(2, cp::Param::Release, "How fast the level follower falls — off at the bottom is instant");
+	check(2, cp::Param::Drive, "Gain in front of the compander — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// LIMIT: Release and Drive change text; Threshold is hidden there, so it is not read.
+	setMode(1.0f);
+	check(1, cp::Param::Release, "How fast gain reduction lets go — off at the bottom is instant");
+	check(1, cp::Param::Drive, "Gain in front of the limiter — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// BACK TO COMPRESS: the Compander's text does not survive the round trip.
+	setMode(0.0f);
+	check(0, cp::Param::Threshold, "The level above which the signal is turned down");
+	check(0, cp::Param::Drive, "Gain in front of the compressor — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+}
+
 TEST_CASE("COMP's window shows the card's meter — the same IN, OUT and GR bars from the same readings, by value, in every mode") {
 	namespace cp = feathers::fx::comp;
 	DynCardFixture<ui::CompCard> d(cp::kTraits.tag);
@@ -28446,6 +28495,50 @@ void routeInto(ui::ModState& mod, ui::Knob& knob, backplane::Source source, floa
 // ---------------------------------------------------------------------------------------------------
 // THE EQ'S CARD AND PANEL
 // ---------------------------------------------------------------------------------------------------
+
+TEST_CASE("EQ's Q hover text follows its band's Type, on the card and in the window, for an unselected band too") {
+	namespace eq = feathers::fx::eq;
+	DynCardFixture<ui::EqCard> d(eq::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::EqExpanded panel { d.f.deviceHost, registry, d.device };
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY. The hover road may put the control's name in front, so the tail is read.
+	const auto tailIs = [](const std::string& text, const char* want) {
+		const std::string tail(want);
+		return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+	};
+	// Band 0 is the selected one: its Q is on the face once the band is on.
+	d.set(eq::bandIndex(0, eq::BandField::On), 1.0f);
+	const auto selectedAs = [&](float type, const char* want) {
+		d.set(eq::bandIndex(0, eq::BandField::Type), type);
+		d.card->updateContent();
+		panel.updateContent();
+		ui::Knob* onCard = d.card->controlsForTest()->knobForTest(eq::bandIndex(0, eq::BandField::Q));
+		ui::Knob* inWindow = panel.controlsForTest()->knobForTest(eq::bandIndex(0, eq::BandField::Q));
+		REQUIRE(onCard != nullptr);
+		REQUIRE(inWindow != nullptr);
+		CAPTURE(type);
+		CHECK(tailIs(hover(onCard), want));
+		CHECK(tailIs(hover(inWindow), want));
+	};
+	selectedAs(0.0f, "How narrow the bell is: a higher Q is a narrower band");
+	selectedAs(1.0f, "How steep the shelf's transition is: a higher Q is a sharper knee, up to 1.5");
+	selectedAs(3.0f, "On a cut it is resonance: 0.71 is flat, higher peaks at the corner");
+	selectedAs(5.0f, "How narrow the notch is: a higher Q is a narrower slice");
+
+	// BAND 3 IS NOT SELECTED: its Type moves, and its Q's text moves with it on the next poll (the card's and the window's).
+	d.set(eq::bandIndex(3, eq::BandField::Type), 5.0f);
+	d.card->updateContent();
+	panel.updateContent();
+	for (ui::EqControls* c : { d.card->controlsForTest(), panel.controlsForTest() }) {
+		ui::Knob* q = c->knobForTest(eq::bandIndex(3, eq::BandField::Q));
+		REQUIRE(q != nullptr);
+		REQUIRE(q->control() != nullptr);
+		const char* own = q->control()->tooltipOverride();
+		REQUIRE(own != nullptr);
+		CHECK(std::string(own) == "How narrow the notch is: a higher Q is a narrower slice");
+	}
+}
 
 TEST_CASE("EQ's card offers only what the selected band uses, and says so when it is off") {
 	namespace eq = feathers::fx::eq;
@@ -33575,6 +33668,121 @@ TEST_CASE("Spectral's window: at every width it can be given, every control lies
 	}
 }
 
+TEST_CASE("Spectral's Formant Shift High and Crossover handles are offered only while the Link is off, on the card's plot and the window's") {
+	namespace spx = feathers::fx::spectral;
+	using H = ui::SpectrumPlot::Handle;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	d.set(static_cast<size_t>(spx::Param::FShiftOn), 1.0f);
+	// THE ENGINE READS THE SAME RULE (spectralControlInert): linked, High and the crossover change nothing, so the plot has no handle for them.
+	for (const bool linked : { true, false }) {
+		CAPTURE(linked);
+		d.set(static_cast<size_t>(spx::Param::FShiftLink), linked ? 1.0f : 0.0f);
+		d.card->updateContent();
+		panel.updateContent();
+		for (ui::SpectrumPlot* plot : { &d.card->plotForTest(), &panel.plotForTest() }) {
+			CHECK(plot->handleForTest(H::ShiftLow).has_value());
+			CHECK(plot->handleForTest(H::ShiftHigh).has_value() == !linked);
+			CHECK(plot->handleForTest(H::Crossover).has_value() == !linked);
+		}
+	}
+}
+
+TEST_CASE("NOISE's plot hover names the routed drag while a modulator is armed on Cutoff") {
+	namespace nz = feathers::fx::noise;
+	DynCardFixture<ui::NoiseCard> d(nz::kTraits.tag);
+	ui::NoisePlot* plot = d.card->plotForTest();
+	REQUIRE(plot != nullptr);
+	const visage::Point at { plot->width() * 0.5f, plot->height() * 0.2f };
+	// ARMED THROUGH THE REAL ARROW: the Cutoff is routable, so the drag routes its amount.
+	d.f.arm(backplane::Source::core(0));
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag up or down: how much of Cutoff's modulation routes (Alt-drag places Cutoff across and Resonance up instead)");
+}
+
+TEST_CASE("Spectral's routing choice is shown only while both filters are on, in the window, for every combination of the two") {
+	namespace spx = feathers::fx::spectral;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	// Both filters' chips are the one control; each is checked (the tab shows one filter's, the other is hidden with it).
+	const auto shownWith = [&](float filter1, float filter2) {
+		d.set(static_cast<size_t>(spx::Param::FilterOn), filter1);
+		d.set(static_cast<size_t>(spx::Param::Filter2On), filter2);
+		panel.updateContent();
+		CAPTURE(filter1);
+		CAPTURE(filter2);
+		return std::make_pair(panel.routingForTest(0, 0).isVisible(), panel.routingForTest(0, 1).isVisible());
+	};
+	// THE TWO FILTERS OFF, ONE AT A TIME, AND BOTH: only the last shows the choice.
+	CHECK(shownWith(0.0f, 0.0f) == std::make_pair(false, false));
+	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
+	CHECK(shownWith(0.0f, 1.0f) == std::make_pair(false, false));
+	CHECK(shownWith(1.0f, 1.0f) == std::make_pair(true, true));
+	// AND BACK: a switch moved off hides it again at once.
+	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
+}
+
+TEST_CASE("Spectral's mode-dependent hover text follows the Filter, Filter 2, Vocode and Key Track, on the card and in the window") {
+	namespace spx = feathers::fx::spectral;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	// THE CARD'S SLOPE IS A KNOB; ITS RESONANCE IS A PLOT HANDLE, which answers from the source's `tooltip` (read below).
+	auto* slope = dynamic_cast<ui::Knob*>(d.card->widgetForTest(spx::Param::FilterSlope));
+	REQUIRE(slope != nullptr);
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	const auto handleText = [&] {
+		const char* t = panel.sourceForTest().tooltip(0, feathers::SpectralControl::FilterResonance);
+		return std::string(t != nullptr ? t : "");
+	};
+	// THE CARD'S TEXT MAY CARRY THE CONTROL'S NAME IN FRONT, so the tail is read; THE WINDOW'S OWN CONTROLS ARE READ BY THEIR OVERRIDE.
+	const auto tailIs = [](const std::string& text, const char* want) {
+		const std::string tail(want);
+		return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+	};
+	const auto windowText = [&](spx::Param p) {
+		const char* own = panel.sourceForTest().deviceControl(p).tooltipOverride();
+		return std::string(own != nullptr ? own : "");
+	};
+	const auto refresh = [&] {
+		d.card->updateContent();
+		panel.updateContent();
+	};
+
+	// LOW PASS: the filter's peak and its falloff, as the plain words say.
+	d.set(static_cast<size_t>(spx::Param::FilterMode), 0.0f);
+	refresh();
+	CHECK(tailIs(handleText(),"A peak drawn at the cutoff"));
+	CHECK(tailIs(hover(slope), "How steeply the filter falls, from gentle (6 dB/oct) to a brick wall (96 dB/oct)"));
+	CHECK(windowText(spx::Param::FilterResonance) == "A peak drawn at the cutoff");
+
+	// BELL: the same two controls are the Bell's width and its sides.
+	d.set(static_cast<size_t>(spx::Param::FilterMode), 4.0f);
+	refresh();
+	CHECK(tailIs(handleText(),"How wide the Bell is, from 3 octaves down to a sixth of one"));
+	CHECK(tailIs(hover(slope), "How steep the Bell's sides are: a classic bell at the default, softer below, a flat-topped band above"));
+	CHECK(windowText(spx::Param::FilterSlope)
+	      == "How steep the Bell's sides are: a classic bell at the default, softer below, a flat-topped band above");
+
+	// KEY TRACK moves where Key Offset is measured from; VOCODE moves whose envelope Formant Shift follows. Both are in the window.
+	d.set(static_cast<size_t>(spx::Param::KeyTrack), 1.0f);
+	refresh();
+	CHECK(windowText(spx::Param::KeyOffset)
+	      == "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from the played note");
+	d.set(static_cast<size_t>(spx::Param::KeyTrack), 0.0f);
+	refresh();
+	CHECK(windowText(spx::Param::KeyOffset)
+	      == "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from C3 (so C0 to C6)");
+	d.set(static_cast<size_t>(spx::Param::VocodeOn), 1.0f);
+	refresh();
+	CHECK(tailIs(windowText(spx::Param::FShiftOn), "using the sidechain's envelope"));
+	d.set(static_cast<size_t>(spx::Param::VocodeOn), 0.0f);
+	refresh();
+	CHECK(tailIs(windowText(spx::Param::FShiftOn), "using the sound's own envelope"));
+}
+
 TEST_CASE("Spectral's Vocode: the card says sidechain silent while it is on and nothing sounds there, and the plot draws the sidechain's envelope while vocoding") {
 	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
 	ui::SpectralCard* card = d.card;
@@ -33627,6 +33835,24 @@ TEST_CASE("Spectral's Vocode is hidden under Poly, on the card and in the window
 //------------------------------------------------------------------------------------------------//
 // NOISE (backlog MZ) — its card around its picture. Visibility and the plotted numbers, as values. //
 //------------------------------------------------------------------------------------------------//
+
+TEST_CASE("NOISE's plot hover names both of the controls it drives, and the Resonance part follows the Source") {
+	namespace nz = feathers::fx::noise;
+	DynCardFixture<ui::NoiseCard> d(nz::kTraits.tag);
+	ui::NoisePlot* plot = d.card->plotForTest();
+	REQUIRE(plot != nullptr);
+	// A point above the plot's foot: the footer's clicks text does not apply there.
+	const visage::Point at { plot->width() * 0.5f, plot->height() * 0.2f };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY. No modulator is armed, so a drag places both controls.
+	// Noise source: Resonance rings the filter and nothing else.
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings");
+	// Impulses source: the same two controls, and what high resonance does to the clicks.
+	d.set(static_cast<size_t>(nz::Param::Source), 1.0f);
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings, and high "
+	         "resonance turns the clicks into pitched pings");
+}
 
 TEST_CASE("NOISE's card shows a control exactly where the device reads it, through the gate chain") {
 	namespace nz = feathers::fx::noise;

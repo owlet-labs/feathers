@@ -2300,7 +2300,7 @@ TEST_CASE("brief is the first sentence of a real declared tooltip, and never cut
 		  "Runs the reverb at twice the rate: less aliasing grit up top at 44.1 and 48 kHz, for about two "
 		  "and a half times the reverb's CPU." },
 		{ "groove_amount",
-		  "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the MPC's heaviest, at "
+		  "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the heaviest, at "
 		  "full), or the share of the groove template." },
 		{ "shaper_hysteresis", "How much of the field's hysteresis you hear — 0.5 is the position's own, 0 removes it" },
 		{ "comp_makeup", "Gain after compression, to win back the level it took" },

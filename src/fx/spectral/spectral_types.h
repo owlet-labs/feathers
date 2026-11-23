@@ -127,6 +127,29 @@ inline constexpr int kResolvedMidi[] = { 68, 54, 28 };
 
 inline constexpr const char* kFilterModeNames[] = { "Low Pass", "High Pass", "Band Pass", "Notch", "Bell" };
 static_assert(std::size(kFilterModeNames) == static_cast<size_t>(shaper::kFilterModeCount));
+// THE HOVER TEXT OF THE CONTROLS WHOSE MEANING TURNS WITH A MODE OR A SWITCH, one table for the card, the window and the plot's
+// handles. `filter`/`filter2` are the stored Filter and Filter 2 Mode (4 is the Bell); nullptr for a control that does not turn.
+inline const char* spectralTip(Param p, int filter, int filter2, bool vocode, bool keyTrack) {
+	constexpr int kBell = 4; // kFilterModeNames[4]
+	switch (p) {
+	case Param::FilterResonance:
+		return filter == kBell ? "How wide the Bell is, from 3 octaves down to a sixth of one" : "A peak drawn at the cutoff";
+	case Param::FilterSlope:
+		return filter == kBell ? "How steep the Bell's sides are: a classic bell at the default, softer below, a flat-topped band above"
+		                       : "How steeply the filter falls, from gentle (6 dB/oct) to a brick wall (96 dB/oct)";
+	case Param::Filter2Resonance:
+		return filter2 == kBell ? "How wide the second Bell is" : "A peak drawn at the second filter's cutoff";
+	case Param::Filter2Slope:
+		return filter2 == kBell ? "How steep the second Bell's sides are" : "How steeply the second filter falls, from 6 to 96 dB/oct";
+	case Param::KeyOffset:
+		return keyTrack ? "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from the played note"
+		                : "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from C3 (so C0 to C6)";
+	case Param::FShiftOn:
+		return vocode ? "Switches Formant Shift in: the envelope slides in frequency while the partials stay put, using the sidechain's envelope"
+		              : "Switches Formant Shift in: the envelope slides in frequency while the partials stay put, using the sound's own envelope";
+	default: return nullptr;
+	}
+}
 /// F2's routing of the two filters (additive design §3.6): Series, the gains multiplied, or Parallel, their held sum.
 inline constexpr const char* kRoutingNames[] = { "Series", "Parallel" };
 inline constexpr double kLog2Of500 = 8.965784284662087;

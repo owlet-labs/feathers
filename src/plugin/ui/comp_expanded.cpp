@@ -19,6 +19,7 @@
 #include "plugin/ui/modulated_row.h"
 
 #include "fx/comp/comp_lanes.h"
+#include "fx/comp/comp_tips.h"
 #include "plugin/ui/control_face.h"
 #include "plugin/ui/theme.h"
 #include "rack/inner_chain.h"
@@ -232,6 +233,10 @@ void CompExpanded::resized() { layOut(); }
 
 void CompExpanded::layOut() {
 	laidOutMode_ = static_cast<int>(std::lround(host_.fieldAt(id_, static_cast<size_t>(cp::Param::Mode))));
+	// THE HOVER TEXT FOLLOWS THE MODE, as the card's does: the same three controls, the same road.
+	for (const cp::Param p : { cp::Param::Threshold, cp::Param::Release, cp::Param::Drive }) {
+		control(p).setTooltipOverride(cp::modeTip(p, laidOutMode_));
+	}
 	const float rail = railWidth();
 	lane_->setBounds(width() - rail, 0.0f, rail, height());
 	lane_->setVisible(rail > 0.0f);

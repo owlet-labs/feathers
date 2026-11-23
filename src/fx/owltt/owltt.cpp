@@ -128,6 +128,9 @@ Settings stateOf(const Row& row) {
 		band->inputDb = std::clamp(row[i++], kBandInputMinDb, kBandInputMaxDb);
 	}
 	s.combResHome = std::clamp(row[i++], 0.0f, 1.0f);
+	s.hpWet = std::clamp(row[i++], static_cast<float>(fx::kWetHighpassLog2Min), static_cast<float>(fx::kWetHighpassLog2Max));
+	s.subThru = row[i++] >= 0.5f;
+	s.hpWetSemis = std::clamp(row[i++], static_cast<float>(kHpWetSemisMin), static_cast<float>(kHpWetSemisMax));
 
 	// **THE WALK ENDS WHERE THE ENUM ENDS, AND THAT IS THE WHOLE DISCIPLINE.** This walk is positional
 	// — `i++` down the row — so an entry read where it makes sense rather than where its `Param` sits
@@ -199,6 +202,9 @@ Row rowOf(const Settings& s) {
 		row[i++] = band->inputDb;
 	}
 	row[i++] = s.combResHome;
+	row[i++] = s.hpWet;
+	row[i++] = s.subThru ? 1.0f : 0.0f;
+	row[i++] = s.hpWetSemis;
 
 	return row;
 }
@@ -264,6 +270,28 @@ void Owltt::prepare(double sampleRate) {
 	comb_ = std::make_unique<CombSplit>();
 	comb_->prepare(sampleRate_);
 	combPrimed_ = false;
+	// THE SUB THRU RING: long enough for the Linear crossover's latency plus the longest lookahead, so it never allocates in the render.
+	subCap_ = rawLen_ + lookCap_ + 2;
+	for (auto& ring : subRing_) {
+		ring.assign(subCap_, 0.0f);
+	}
+	subPos_ = 0;
+}
+
+/// **THE WET HIGHPASS'S SETTINGS FOR THIS SLICE**: off at HP Wet's bottom (nothing is run), else the shared two-pole highpass at HP Wet's hertz, or with Key Track on at HP Wet
+/// Semitones above the played note (the note a held key latched, as the crossovers read it; 60 before one). The Eroder's road (`deriveWetHighpass`), the same filter.
+void Owltt::latchHighpass() {
+	const bool tracks = target_.keyTrack;
+	const bool on = tracks ? static_cast<double>(target_.hpWetSemis) > kHpWetSemisMin + device::kOffEndSlack
+	                       : static_cast<double>(target_.hpWet) > fx::kWetHighpassLog2Min;
+	const double hz = tracks ? keyHzOf(noteSemitones_) * std::exp2(static_cast<double>(target_.hpWetSemis) / 12.0) : std::exp2(static_cast<double>(target_.hpWet));
+	const double clamped = std::clamp(hz, std::exp2(fx::kWetHighpassLog2Min), std::exp2(fx::kWetHighpassLog2Max));
+	hpLatched_ = fx::highpassAt(on, on ? clamped : std::exp2(fx::kWetHighpassLog2Min), sampleRate_, kHpNyquistFraction);
+	hp_.set(hpLatched_);
+	subThru_ = target_.subThru;
+	if (!on) {
+		hp_.reset(); // a filter that is off holds no past: it resumes clean
+	}
 }
 
 void Owltt::resetCrossovers() {
@@ -308,6 +336,11 @@ void Owltt::resetCrossovers() {
 }
 
 void Owltt::reset() {
+	hp_.reset();
+	for (auto& ring : subRing_) {
+		std::fill(ring.begin(), ring.end(), 0.0f);
+	}
+	subPos_ = 0;
 	for (auto& band : bands_) {
 		band.reset();
 	}
@@ -1130,6 +1163,7 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	}
 	computeCharacterAndVibe();
 	updateCrossoverFrequencies();
+	latchHighpass();
 	// BACKLOG LR: THE WIDTH EACH BAND SENDS ON — the zone's, scaled by the global Width and the band's own. At
 	// 100% both scalers are exactly 1, so this is the zone's width to the bit (pinned by "LR: at Width 100%
 	// everywhere ..."). The high band's averaging detector below still keys on the ZONE's width: it is a
@@ -1185,6 +1219,8 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		std::memcpy(dryR.data(), right, static_cast<size_t>(frames) * sizeof(float));
 	}
 
+	// THE LOW END SUB THRU HOLDS (zero, and unread, while HP Wet is at its bottom).
+	std::array<float, static_cast<size_t>(Owltt::kSliceFrames)> subHeldL {}, subHeldR {};
 	// Band buffers.
 	std::array<float, static_cast<size_t>(Owltt::kSliceFrames)> lowL {}, midL {}, highL {};
 	std::array<float, static_cast<size_t>(Owltt::kSliceFrames)> lowR {}, midR {}, highR {};
@@ -1219,8 +1255,29 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			driveDb = driveRun[i];
 			drive = driveGainOf(std::clamp(driveDb, kDriveMinDb, kDriveMaxDb));
 		}
-		const float inL = left[i] * drive;
-		const float inR = right[i] * drive;
+		// HP WET FIRST: what the split and the detectors hear is the high-passed input (then the Drive); the low end it took is held for the sum (Sub Thru).
+		float heardL = left[i];
+		float heardR = right[i];
+		if (hpLatched_.on) {
+			float lowL = 0.0f;
+			float lowR = 0.0f;
+			if (subThru_) {
+				lowL = hp_.taken(0, left[i]);
+				lowR = hp_.taken(1, right[i]);
+			}
+			heardL = hp_.wet(0, left[i]);
+			heardR = hp_.wet(1, right[i]);
+			// held back by what the bands are late by (the Linear crossover's latency, the lookahead's), so it meets them at the sum
+			const uint32_t late = (isLinearMode(crossoverType) ? rawLen_ : 0u) + lookLen_;
+			subRing_[0][subPos_] = lowL;
+			subRing_[1][subPos_] = lowR;
+			const uint32_t at = (subPos_ + subCap_ - late) % subCap_;
+			subHeldL[i] = subRing_[0][at];
+			subHeldR[i] = subRing_[1][at];
+			subPos_ = subPos_ + 1 == subCap_ ? 0 : subPos_ + 1;
+		}
+		const float inL = heardL * drive;
+		const float inR = heardR * drive;
 		// THE INPUT METER (reading 18) reads the signal AFTER the Drive, which is what the bands hear.
 		inputPeakThisBuffer_ = std::max(inputPeakThisBuffer_, std::max(std::abs(inL), std::abs(inR)));
 		CrossoverBands bandsL {}, bandsR {};
@@ -1535,6 +1592,10 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			sumR += R;
 		}
 
+		if (hpLatched_.on && subThru_) {
+			sumL += subHeldL[i]; // the lows, uncompressed, in time with the bands, ahead of the Output Gain and the master clip
+			sumR += subHeldR[i];
+		}
 		// Output gain.
 		sumL *= smoothedOutputGain_;
 		sumR *= smoothedOutputGain_;

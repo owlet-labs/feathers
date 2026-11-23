@@ -55,3 +55,6 @@ param OWLTT low_input unit=decibel min=-18 max=18 stepped=0
 param OWLTT mid_input unit=decibel min=-18 max=18 stepped=0
 param OWLTT high_input unit=decibel min=-18 max=18 stepped=0
 param OWLTT comb_res_home unit=percent min=0 max=1 stepped=0
+param OWLTT owltt_hp_wet unit=log_hertz min=4.321928094887362 max=12.965784284662087 stepped=0
+param OWLTT owltt_sub_thru unit=choice choice=Off|On
+param OWLTT owltt_hp_wet_semis unit=number min=-24 max=128 stepped=0

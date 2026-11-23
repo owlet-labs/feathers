@@ -42495,6 +42495,62 @@ TEST_CASE("OWLTT Comb: each column's curve peaks at its band's harmonics, sharpe
 	}
 }
 
+TEST_CASE("OWLTT HP Wet: the shared element is in the window's tone row in every mode, the semitone knob replaces the hertz one under Key Track, and Sub Thru is inactive without a filter") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::WetHighpassControl* hp = panel.hpForTest();
+	REQUIRE(hp != nullptr);
+	REQUIRE(hp->hertz() != nullptr);
+	REQUIRE(hp->semitones() != nullptr);
+	REQUIRE(hp->subThru() != nullptr);
+	const size_t mode = static_cast<size_t>(ow::Param::Mode);
+	const size_t hpWet = static_cast<size_t>(ow::Param::HpWet);
+	const size_t semis = static_cast<size_t>(ow::Param::HpWetSemis);
+	for (const float m : { 1.0f, 8.0f, 11.0f, 15.0f, 16.0f }) {
+		f.deviceHost.setField(id, mode, m);
+		(void)panel.update();
+		CAPTURE(m);
+		// IN THE TONE ROW, to the right of its two cells, in every mode.
+		CHECK(hp->hertz()->isVisible());
+		CHECK_FALSE(hp->semitones()->isVisible());
+		const visage::Bounds row = panel.toneRowForTest();
+		CHECK(hp->hertz()->x() >= row.x() + row.width() * 0.5f);
+		CHECK(hp->hertz()->right() <= hp->subThru()->x());
+		CHECK(hp->subThru()->right() <= row.right() + 0.5f);
+		for (const auto& cell : panel.modeCellsForTest()) {
+			CHECK(cell->right() <= hp->hertz()->x() + 0.5f);
+		}
+		// SUB THRU HAS NOTHING TO GIVE BACK WITHOUT A FILTER.
+		CHECK_FALSE(hp->subThru()->enabled());
+	}
+	f.deviceHost.setField(id, hpWet, static_cast<float>(std::log2(500.0)));
+	(void)panel.update();
+	CHECK(hp->subThru()->enabled());
+	// KEY TRACK: the semitone knob takes the hertz one's place, and the filter's presence is the semitones' (their bottom is none).
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 1.0f);
+	f.deviceHost.setField(id, semis, static_cast<float>(ow::kHpWetSemisMin));
+	(void)panel.update();
+	CHECK_FALSE(hp->hertz()->isVisible());
+	CHECK(hp->semitones()->isVisible());
+	CHECK_FALSE(hp->subThru()->enabled());
+	f.deviceHost.setField(id, semis, 12.0f);
+	(void)panel.update();
+	CHECK(hp->subThru()->enabled());
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 0.0f);
+	(void)panel.update();
+	CHECK(hp->hertz()->isVisible());
+	CHECK_FALSE(hp->semitones()->isVisible());
+	CHECK(ow::kParamDescs[hpWet].modulatable);
+	CHECK(ow::kParamDescs[semis].modulatable);
+}
+
 TEST_CASE("OWLTT Comb: a handle drag writes its own knob, a tracked drag lands on the ratio detents, and an untracked one does not") {
 	namespace ow = feathers::fx::owltt;
 	FilterFixture f;

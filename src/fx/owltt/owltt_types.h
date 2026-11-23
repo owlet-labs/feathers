@@ -18,6 +18,7 @@
 #pragma once
 
 #include "fx/owltt/band_compressor.h"
+#include "fx/wet_highpass.h"
 #include "fx/owltt/crossover.h"
 #include "device/zone_param.h"
 
@@ -167,6 +168,13 @@ enum class Param : uint8_t {
 	/// **RESONANCE HOME (Comb modes only)**: the centre of the comb teeth's resonance, the feedback gain of each split's comb as a share of `kCombMaxResonance`; Vibe's
 	/// per-split phase pattern then moves each around it. 0 is the plain comb. Appended; modulatable; hidden outside Comb (an engine choice, not a greyed knob).
 	ResHome = 53,
+	/// **HP WET AND SUB THRU, UPSTREAM OF THE SPLIT AND THE DETECTORS (every mode)**: the shared wet highpass (`fx/wet_highpass.h`, the Eroder's and the Smooth Shaper's) runs
+	/// FIRST. Only the high-passed signal feeds the crossover or comb and the band detectors; with Sub Thru on, what it took from the input is given back
+	/// after the bands, uncompressed, delayed as the bands are. HP Wet at its bottom is no filter, so the device is what it was to the bit. With Key Track on,
+	/// HP Wet Semitones takes HP Wet's place: a distance above the played note, as on the Eroder. Appended.
+	HpWet = 54,
+	SubThru = 55,
+	HpWetSemis = 56,
 	kCount
 };
 
@@ -234,6 +242,10 @@ struct Settings {
 	bool keyTrack = false;
 	/// See `Param::ResHome`: 0..1, the home of the Comb modes' resonance.
 	float combResHome = 0.0f;
+	/// See `Param::HpWet`: log2 hertz, the bottom is no filter; Sub Thru gives the lows back; with Key Track on, semitones above the note replace the hertz.
+	float hpWet = static_cast<float>(fx::kWetHighpassLog2Min);
+	bool subThru = false;
+	float hpWetSemis = -24.0f;
 
 	/// The band by index, 0 low, 1 mid, 2 high.
 	[[nodiscard]] const BandParams& band(size_t b) const noexcept { return b == 0 ? low : (b == 1 ? mid : high); }
@@ -371,6 +383,11 @@ inline constexpr const char* kLowCrossoverTipKeyTrack = "Low-mid split, as an of
                                                        "Until a note is heard, a plain frequency";
 inline constexpr const char* kHighCrossoverTipKeyTrack = "Mid-high split, as an offset from the last note played: at its default it keeps its distance "
                                                         "above that note. Until a note is heard, a plain frequency";
+/// HP WET SEMITONES' RANGE, as the Eroder's: the bottom is no filter, the top is far above any note the highpass can reach (it is clamped to HP Wet's own range).
+inline constexpr double kHpWetSemisMin = -24.0;
+inline constexpr double kHpWetSemisMax = 128.0;
+/// The highpass is held under this share of the rate, as the Smooth Shaper's is.
+inline constexpr double kHpNyquistFraction = 0.45;
 /// **IN COMB (Modes 15, 16) THE TWO CROSSOVERS ARE TOOTH SPACINGS** (`comb_split.h`): Low Crossover is split 1's, High Crossover split 2's. The same knob
 /// values that place the other modes' corners place these, so a note-tracked patch keeps its meaning: tracking, a knob is a RATIO to the played note
 /// (Low: knob / 200, so the default 200 Hz is x1; High: knob / 1000, so the default 2000 Hz is x2); not tracking, Low is the spacing in Hz and High is
@@ -914,6 +931,21 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .tooltip = "Comb resonance, home position: how long the comb teeth ring (the feedback of each split's comb). Vibe moves each split's resonance around this "
                 "by its zone pattern. 0 is the plain comb. Comb modes only",
      .shortName = "Res"},
+    {.key = "owltt_hp_wet", .name = "OWLTT HP Wet", .min = fx::kWetHighpassLog2Min, .max = fx::kWetHighpassLog2Max, .def = fx::kWetHighpassLog2Min,
+     .stepped = false, .unit = device::Unit::LogHertz, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Takes the low end out of what the bands hear: the high-passed signal alone feeds the crossover and every detector, so the bass never drives "
+                "a compressor. At the bottom there is no filter. With Key Track on, a distance in semitones from the played note takes this control's place",
+     .shortName = "HP Wet"},
+    {.key = "owltt_sub_thru", .name = "OWLTT Sub Thru", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true, .unit = device::Unit::Choice,
+     .names = kOffOnNames, .modulatable = false, .offsetsMayLeaveRange = false,
+     .tooltip = "Gives back what HP Wet took out, after the bands: the low end passes whole and uncompressed, in time with the bands. Inactive while HP Wet is at "
+                "its bottom, where there is no filter",
+     .shortName = "Sub Thru"},
+    {.key = "owltt_hp_wet_semis", .name = "OWLTT HP Wet Semitones", .min = kHpWetSemisMin, .max = kHpWetSemisMax, .def = kHpWetSemisMin, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "While Key Track is on, sets the HP Wet filter this many semitones above the played note (0 is the note itself, 12 an octave above). At the bottom "
+                "there is no filter. With Key Track off, HP Wet's frequency applies instead",
+     .shortName = "HP Wet", .offAtEnd = -1, .suffix = "st"},
 };
 
 /// ND'S DEFAULT, PINNED TO THE DESCRIPTOR: Off is the device before the lookahead.
@@ -930,6 +962,8 @@ static_assert(BandParams {}.width == static_cast<float>(kParamDescs[static_cast<
 
 /// LQ'S DEFAULTS, PINNED TO THE DESCRIPTOR, so a fresh `Settings` and a fresh row agree: Link 100% and L/R
 /// are the linked device this was before.
+static_assert(Settings {}.hpWet == static_cast<float>(kParamDescs[static_cast<size_t>(Param::HpWet)].def));
+static_assert(Settings {}.hpWetSemis == static_cast<float>(kParamDescs[static_cast<size_t>(Param::HpWetSemis)].def));
 static_assert(Settings {}.combResHome == static_cast<float>(kParamDescs[static_cast<size_t>(Param::ResHome)].def));
 static_assert(Settings {}.stereoLink == static_cast<float>(kParamDescs[static_cast<size_t>(Param::StereoLink)].def));
 static_assert(Settings {}.midSide == (kParamDescs[static_cast<size_t>(Param::StereoMode)].def >= 0.5));

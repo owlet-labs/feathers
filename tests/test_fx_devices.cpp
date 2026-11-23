@@ -1796,6 +1796,15 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 			linearRows.push_back(linearRow);
 			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = static_cast<float>(fx::owltt::kCombMode); // Comb: feedforward lines that hold their input for up to fs / (2 f0) and must then be exact zero
 			linearRows.push_back(linearRow);
+			// HP WET WITH SUB THRU: the lows held back by the Linear crossover's latency (and a lookahead) leave through the same ring, and must end at exact zero too.
+			for (const float mode : { static_cast<float>(fx::owltt::kCombMode), 11.0f, 6.0f }) {
+				DeviceRow hpRow = linearRow;
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = mode;
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::HpWet)] = static_cast<float>(std::log2(500.0));
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::SubThru)] = 1.0f;
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::Lookahead)] = 5.0f;
+				linearRows.push_back(hpRow);
+			}
 		}
 		if (device::sameTag(desc->traits.tag, rack::parallel::kTraits.tag)) {
 			for (const float filtering : { 0.0f, 1.0f, 2.0f }) {

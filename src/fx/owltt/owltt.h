@@ -290,6 +290,9 @@ public:
 	[[nodiscard]] double combDelayForTest(size_t which = 0) const noexcept { return combDelayEnd_[which]; }
 	/// The feedback gain split `which` ran at the end of the last slice, and the goal Res Home and Vibe put it at (before smoothing).
 	[[nodiscard]] float combResonanceForTest(size_t which) const noexcept { return combResEnd_[which]; }
+	/// The highpass the splitters were last given: its corner in Hz, and whether it is in the signal.
+	[[nodiscard]] double hpHzForTest() const noexcept { return hpLatched_.hz; }
+	[[nodiscard]] bool hpOnForTest() const noexcept { return hpLatched_.on; }
 	[[nodiscard]] float combResonanceGoalForTest(size_t which) const noexcept { return combResonanceFor(which); }
 	/// The vibe depth the zone tables were modulated by — 0.55 x the coordinate's lap fraction.
 	[[nodiscard]] float vibeModAmountForTest() const noexcept { return vibeModAmount_; }
@@ -531,6 +534,16 @@ private:
 	std::array<float, 2> combResStart_ {};
 	std::array<float, 2> combResEnd_ {};
 	bool combPrimed_ = false;
+	/// **HP WET AND SUB THRU (every mode)**: the shared wet highpass, latched once a slice (`latchHighpass`), run on the input before the drive and the split. The lows it
+	/// takes are held back by the latency the bands run with (the Linear crossover's plus the lookahead's) in `subRing_` and added to the band sum, so they arrive
+	/// with the bands and uncompressed. All of it idle, and nothing run, while HP Wet is at its bottom.
+	fx::WetHighpass hp_ {};
+	fx::HighpassSettings hpLatched_ {};
+	bool subThru_ = false;
+	std::array<std::vector<float>, 2> subRing_;
+	uint32_t subPos_ = 0;
+	uint32_t subCap_ = 0;
+	void latchHighpass();
 	/// Delay `left`/`right` in place by the linear latency (the bypassed road), feeding the raw delay.
 	void rawDelayStep(float* left, float* right, int frames) noexcept;
 	void ensureRawDelay() noexcept;

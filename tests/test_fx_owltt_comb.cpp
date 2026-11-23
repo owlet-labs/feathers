@@ -783,3 +783,224 @@ TEST_CASE("Comb resonance: the loop is stable at the clamp at fractional delays 
 		}
 	}
 }
+
+//------------------------------------------------------------------------------------------------//
+// HP WET AND SUB THRU: upstream of the split and the detectors, in every mode.                     //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// The log2 hertz HP Wet's control stores for `hz`.
+float hpLog2(double hz) { return static_cast<float>(std::log2(hz)); }
+
+/// A TWO-POLE BUTTERWORTH HIGHPASS, RESTATED from the bilinear transform (the RBJ biquad), the independent check on the shared trapezoidal filter.
+std::vector<float> butterworthHighpass(const std::vector<float>& x, double hz) {
+	const double w0 = 2.0 * kPi * hz / kRate;
+	const double alpha = std::sin(w0) / (2.0 * 0.7071067811865476);
+	const double cw = std::cos(w0);
+	const double a0 = 1.0 + alpha;
+	const double b0 = (1.0 + cw) / 2.0 / a0;
+	const double b1 = -(1.0 + cw) / a0;
+	const double b2 = b0;
+	const double a1 = -2.0 * cw / a0;
+	const double a2 = (1.0 - alpha) / a0;
+	std::vector<float> y(x.size());
+	double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+	for (size_t i = 0; i < x.size(); ++i) {
+		const double v = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+		x2 = x1;
+		x1 = x[i];
+		y2 = y1;
+		y1 = v;
+		y[i] = static_cast<float>(v);
+	}
+	return y;
+}
+
+std::vector<float> throughDevice(const Settings& s, const std::vector<float>& in) {
+	std::vector<float> l = in, r = in;
+	Owltt o;
+	o.prepare(kRate);
+	o.setTarget(s);
+	for (size_t at = 0; at < l.size(); at += 256) {
+		o.processStereo(&l[at], &r[at], 256);
+	}
+	return l;
+}
+
+} // namespace
+
+TEST_CASE("HP Wet: with Sub Thru and the dynamics at rest the output is the input in time, in Comb, in Linear and with a lookahead; without it, the high-passed input") {
+	Noise noise { 2024u };
+	std::vector<float> in(48128);
+	for (auto& v : in) {
+		v = 0.5f * noise.next();
+	}
+	for (const long mode : { kCombMode, kCombSharpMode, 11L }) {
+		for (const uint32_t lookahead : { 0u, 5u }) {
+			CAPTURE(mode);
+			CAPTURE(lookahead);
+			Settings s = combAtRest(220.0, 440.0, mode);
+			s.hpWet = hpLog2(800.0);
+			s.subThru = true;
+			s.lookahead = lookahead;
+			const Row row = rowOf(s);
+			const size_t late = kAudioOps.latencySamples(nullptr, row.data(), row.size(), kRate);
+			const std::vector<float> out = throughDevice(s, in);
+			double worst = 0.0;
+			for (size_t i = late; i < in.size(); ++i) {
+				worst = std::max(worst, std::fabs(static_cast<double>(out[i]) - in[i - late]));
+			}
+			MESSAGE("mode " << mode << " lookahead " << lookahead << ": delay " << late << ", worst |out - delayed in| " << worst);
+			CHECK(worst < 2e-5);
+			CHECK(late == (mode == 11 ? 1152u : 0u) + (lookahead == 5u ? 240u : 0u));
+		}
+	}
+	// SUB THRU OFF: what the bands hear is all there is, the input high-passed at HP Wet (restated by a bilinear biquad).
+	Settings s = combAtRest(220.0, 440.0);
+	s.hpWet = hpLog2(800.0);
+	s.subThru = false;
+	const std::vector<float> out = throughDevice(s, in);
+	const std::vector<float> want = butterworthHighpass(in, std::exp2(static_cast<double>(hpLog2(800.0))));
+	double worst = 0.0;
+	for (size_t i = 0; i < in.size(); ++i) {
+		worst = std::max(worst, std::fabs(static_cast<double>(out[i]) - want[i]));
+	}
+	MESSAGE("Sub Thru off: worst |out - restated highpass| " << worst);
+	CHECK(worst < 1e-3);
+	// NOT VACUOUS: the highpass really took something (its low end is half or more of this noise's energy at 800 Hz of 24 kHz? no — a few per cent).
+	double diff = 0.0;
+	for (size_t i = 0; i < in.size(); ++i) {
+		diff = std::max(diff, std::fabs(static_cast<double>(out[i]) - in[i]));
+	}
+	CHECK(diff > 0.05);
+}
+
+TEST_CASE("HP Wet: the low end does not drive the detectors, and Sub Thru gives it back uncompressed") {
+	// A loud 60 Hz and a quiet 3 kHz through LR2 Full at the default corners (200 Hz, 2 kHz): the sub sits in the Low band and compresses it, until HP Wet takes it out.
+	const auto run = [](bool hp, bool subThru, std::array<float, 3>& gains, std::vector<float>& out) {
+		Settings s = patchDefault();
+		s.mode = 6.0f;
+		s.keyTrack = false;
+		s.ratio = 1.0f;
+		s.threshold = 0.2f;
+		s.softClip = false;
+		s.blend = 1.0f;
+		s.hpWet = hp ? hpLog2(400.0) : static_cast<float>(feathers::fx::kWetHighpassLog2Min);
+		s.subThru = subThru;
+		Owltt o;
+		o.prepare(kRate);
+		o.setTarget(s);
+		out.clear();
+		std::vector<float> l(512), r(512);
+		size_t n = 0;
+		for (int block = 0; block < 120; ++block) {
+			for (size_t i = 0; i < l.size(); ++i, ++n) {
+				const double t = static_cast<double>(n) / kRate;
+				l[i] = r[i] = static_cast<float>(0.8 * std::sin(2.0 * kPi * 60.0 * t) + 0.02 * std::sin(2.0 * kPi * 3000.0 * t));
+			}
+			o.processStereo(l.data(), r.data(), 512);
+			out.insert(out.end(), l.begin(), l.end());
+		}
+		for (size_t b = 0; b < 3; ++b) {
+			gains[b] = o.lastTargetBandGainForTest(b);
+		}
+	};
+	std::array<float, 3> off {}, on {}, thru {};
+	std::vector<float> outOff, outOn, outThru;
+	run(false, false, off, outOff);
+	run(true, false, on, outOn);
+	run(true, true, thru, outThru);
+	MESSAGE("Low band gain: no filter " << off[0] << ", HP Wet " << on[0] << ", with Sub Thru " << thru[0]);
+	CHECK(off[0] < 0.5f);  // the sub drives the Low band's compressor
+	// WITH HP WET the Low band hears only what the 2-pole highpass leaves of the 60 Hz (-33 dB at 400 Hz: 0.8 x 0.022), so it is nearly out of compression.
+	CHECK(on[0] > 0.5f);
+	CHECK(on[0] > 4.0f * off[0]);
+	CHECK(thru[0] == on[0]); // Sub Thru changes nothing the detectors hear: the lows are given back after them
+	// THE 60 Hz IN THE OUTPUT: whole through Sub Thru (the lows, uncompressed), gone without it.
+	const auto sub = [](const std::vector<float>& y) {
+		const std::vector<float> tail(y.begin() + 30000, y.end());
+		std::complex<double> sum = 0.0;
+		for (size_t i = 0; i < tail.size(); ++i) {
+			sum += static_cast<double>(tail[i]) * std::polar(1.0, -2.0 * kPi * 60.0 * static_cast<double>(30000 + i) / kRate);
+		}
+		return 2.0 * std::abs(sum) / static_cast<double>(tail.size());
+	};
+	MESSAGE("60 Hz amplitude: no filter " << sub(outOff) << ", HP Wet " << sub(outOn) << ", with Sub Thru " << sub(outThru));
+	CHECK(sub(outThru) > 0.75);  // 0.8 in, less the 400 Hz highpass's own few per cent
+	CHECK(sub(outOn) < 0.1);
+	CHECK(sub(outOff) < sub(outThru)); // the compressed sub is quieter than the uncompressed one
+}
+
+TEST_CASE("HP Wet: Key Track puts the cutoff the semitones above the played note, as the Eroder's does; off, the hertz rules") {
+	feathers::device::NoteContext note;
+	note.gate = true;
+	Settings s = combAtRest(200.0, 400.0);
+	s.keyTrack = true;
+	s.hpWetSemis = 12.0f; // an octave above the note
+	s.hpWet = hpLog2(512.0);
+	Owltt o;
+	o.prepare(kRate);
+	o.setTarget(s);
+	std::vector<float> l(512, 0.0f), r(512, 0.0f);
+	note.pitchSemitones = 57.0f; // A3, 220 Hz
+	o.setNoteContext(note);
+	o.processStereo(l.data(), r.data(), 512);
+	CHECK(o.hpOnForTest());
+	CHECK(o.hpHzForTest() == doctest::Approx(440.0).epsilon(1e-6));
+	note.pitchSemitones = 69.0f; // A4
+	o.setNoteContext(note);
+	o.processStereo(l.data(), r.data(), 512);
+	CHECK(o.hpHzForTest() == doctest::Approx(880.0).epsilon(1e-6));
+	s.hpWetSemis = 0.0f; // the note itself
+	o.setTarget(s);
+	o.processStereo(l.data(), r.data(), 512);
+	CHECK(o.hpHzForTest() == doctest::Approx(440.0).epsilon(1e-6));
+	s.hpWetSemis = static_cast<float>(kHpWetSemisMin); // the bottom: no filter
+	o.setTarget(s);
+	o.processStereo(l.data(), r.data(), 512);
+	CHECK_FALSE(o.hpOnForTest());
+	s.keyTrack = false; // the hertz knob, whatever the semitones say
+	s.hpWetSemis = 12.0f;
+	o.setTarget(s);
+	o.processStereo(l.data(), r.data(), 512);
+	CHECK(o.hpOnForTest());
+	CHECK(o.hpHzForTest() == doctest::Approx(512.0).epsilon(1e-6));
+	s.hpWet = static_cast<float>(feathers::fx::kWetHighpassLog2Min);
+	o.setTarget(s);
+	o.processStereo(l.data(), r.data(), 512);
+	CHECK_FALSE(o.hpOnForTest());
+}
+
+TEST_CASE("HP Wet: with it at the bottom every mode is what it was (a row from before it loads with it off), and nothing allocates with it on") {
+	const Row full = rowOf(patchDefault());
+	CHECK(kParamDescs[static_cast<size_t>(Param::HpWet)].def == feathers::fx::kWetHighpassLog2Min);
+	CHECK(kParamDescs[static_cast<size_t>(Param::SubThru)].def == 0.0);
+	const Settings fresh = stateOf(full); // a patch from before reads the new fields at these defaults (the host fills omitted fields from them)
+	CHECK(fresh.hpWet == static_cast<float>(feathers::fx::kWetHighpassLog2Min));
+	CHECK_FALSE(fresh.subThru);
+	// NO ALLOCATION with the filter, Sub Thru, the Linear latency and a lookahead all running, through mode changes and a moving corner.
+	Settings s = combAtRest(150.0, 300.0, 11);
+	s.hpWet = hpLog2(300.0);
+	s.subThru = true;
+	s.lookahead = 5;
+	Owltt o;
+	o.prepare(kRate);
+	o.setTarget(s);
+	std::vector<float> l(512), r(512);
+	Noise noise { 55u };
+	allocs.allocations = 0;
+	allocs.armed = true;
+	for (int block = 0; block < 60; ++block) {
+		for (size_t i = 0; i < l.size(); ++i) {
+			l[i] = noise.next();
+			r[i] = noise.next();
+		}
+		s.hpWet = hpLog2(100.0 + 20.0 * block);
+		s.mode = block < 20 ? 11.0f : (block < 40 ? static_cast<float>(kCombMode) : 6.0f);
+		o.setTarget(s);
+		o.processStereo(l.data(), r.data(), 512);
+	}
+	allocs.armed = false;
+	CHECK(allocs.allocations == 0u);
+}

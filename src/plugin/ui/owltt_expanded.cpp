@@ -116,6 +116,10 @@ OwlttExpanded::OwlttExpanded(backplane::DeviceHost& host, WidgetRegistry& regist
 	addChild(resHome_.get());
 	resHome_->setVisible(false);
 
+	// HP WET AND SUB THRU: the shared element, every mode, upstream of the split and the detectors. The knob is hertz, or semitones from the note while Key Track is on.
+	hp_ = std::make_unique<WetHighpassControl>(control(dtt::Param::HpWet), &control(dtt::Param::HpWetSemis), control(dtt::Param::SubThru), notifier, kToneFace);
+	hp_->addTo(*this);
+
 	// THE GLOBAL ROW: boxes in the house form (a caption over a value), one per control.
 	for (const GlobalEntry& entry : kGlobal) {
 		auto box = std::make_unique<ValueBox>(control(entry.param), entry.label);
@@ -181,6 +185,13 @@ bool OwlttExpanded::updateContent() {
 		resized();
 		redraw();
 	}
+	// HP WET: the knob is hertz, or semitones from the note while Key Track is on (hidden, not greyed); Sub Thru is inactive while there is no filter.
+	if (hp_ != nullptr) {
+		const double hpLog2 = control(dtt::Param::HpWet).value();
+		const double semis = control(dtt::Param::HpWetSemis).value();
+		hp_->showFaces(true, keyTrack);
+		hp_->refresh(wetHighpassFiltering(hpLog2, fx::kWetHighpassLog2Min, keyTrack, semis, dtt::kHpWetSemisMin), true);
+	}
 	bool changed = graph_ != nullptr && graph_->update();
 	changed = (inMeter_ != nullptr && inMeter_->update()) || changed;
 	changed = (outMeter_ != nullptr && outMeter_->update()) || changed;
@@ -200,6 +211,9 @@ void OwlttExpanded::modulationBound(ModState* mod, EditHistory* history) {
 	// modulated at all).
 	for (size_t i = 0; i < controls_.size(); ++i) {
 		control(static_cast<dtt::Param>(i)).setModulation(mod, history);
+	}
+	if (hp_ != nullptr) {
+		hp_->setModulation(mod, history);
 	}
 }
 
@@ -245,6 +259,16 @@ visage::Bounds OwlttExpanded::globalRow() const {
 visage::Bounds OwlttExpanded::toneRow() const {
 	const visage::Bounds row = globalRow();
 	return { row.x(), row.bottom() + kRowGap + 4.0f, row.width(), Knob::columnHeight(kToneFace) };
+}
+
+visage::Bounds OwlttExpanded::hpBounds() const {
+	const visage::Bounds tone = toneRow();
+	return { tone.right() - kHpCellWidth - kBoxGap - kHpChipWidth, tone.y(), kHpCellWidth, tone.height() };
+}
+
+visage::Bounds OwlttExpanded::subThruBounds() const {
+	const visage::Bounds tone = toneRow();
+	return { tone.right() - kHpChipWidth, tone.y() + (tone.height() - SwitchChip::kHeight) * 0.5f, kHpChipWidth, SwitchChip::kHeight };
 }
 
 visage::Bounds OwlttExpanded::keyTrackBounds() const {
@@ -336,6 +360,11 @@ void OwlttExpanded::resized() {
 	place(lookahead_.get(), lookaheadBounds());
 	place(stereo_.get(), stereoBounds());
 	place(resHome_.get(), resHomeBounds());
+	if (hp_ != nullptr) {
+		place(hp_->hertz(), hpBounds());
+		place(hp_->semitones(), hpBounds());
+		place(hp_->subThru(), subThruBounds());
+	}
 	if (resHome_ != nullptr) {
 		resHome_->setVisible(resHomeShown_); // after its bounds: a box shown before it has a size is not painted
 	}
@@ -365,8 +394,10 @@ void OwlttExpanded::resized() {
 	// THE TONE GROUP: the two cells side by side, inside one frame.
 	const visage::Bounds tone = toneRow();
 	const size_t cells = modeCells_.size();
+	// THE HP BLOCK TAKES THE RIGHT END; the two cells share what is left.
+	const float cellsWidth = tone.width() - (kHpCellWidth + kBoxGap + kHpChipWidth + kBoxGap);
 	if (cells > 0) {
-		const float w = (tone.width() - kBoxGap * static_cast<float>(cells - 1)) / static_cast<float>(cells);
+		const float w = (cellsWidth - kBoxGap * static_cast<float>(cells - 1)) / static_cast<float>(cells);
 		for (size_t i = 0; i < cells; ++i) {
 			place(modeCells_[i].get(), { tone.x() + static_cast<float>(i) * (w + kBoxGap), tone.y(), w, tone.height() });
 		}

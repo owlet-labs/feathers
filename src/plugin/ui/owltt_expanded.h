@@ -29,6 +29,7 @@
 #include "plugin/ui/owltt_level_meter.h"
 #include "plugin/ui/switch_chip.h"
 #include "plugin/ui/value_box.h"
+#include "plugin/ui/wet_highpass_control.h"
 #include "plugin/ui/vertical_fader.h"
 #include "plugin/ui/widget_registry.h"
 
@@ -132,6 +133,13 @@ public:
 	};
 	visage::Bounds globalRow() const;
 	visage::Bounds toneRow() const;
+	/// The right end of the tone row, where HP Wet (a knob that is hertz or, tracking a note, semitones) and its Sub Thru chip sit.
+	static constexpr float kHpCellWidth = 84.0f;
+	static constexpr float kHpChipWidth = 74.0f;
+	visage::Bounds hpBounds() const;
+	visage::Bounds subThruBounds() const;
+	[[nodiscard]] WetHighpassControl* hpForTest() const noexcept { return hp_.get(); }
+	[[nodiscard]] visage::Bounds toneRowForTest() const { return toneRow(); }
 	static constexpr float kToneHeight = 56.0f;
 	/// The controls of the GLOBAL row, in order.
 	static std::span<const fx::owltt::Param> globalParams();
@@ -188,6 +196,8 @@ private:
 	std::unique_ptr<ValueBox> clip_;
 	std::unique_ptr<ValueBox> resHome_;
 	std::vector<std::unique_ptr<ValueBox>> globalBoxes_;
+	/// HP WET, ITS SEMITONE TWIN AND SUB THRU: the shared element (`wet_highpass_control.h`), at the right end of the tone row.
+	std::unique_ptr<WetHighpassControl> hp_;
 	std::vector<std::unique_ptr<ModeValueCell>> modeCells_;
 	std::vector<fx::owltt::Param> coordParams_;
 	std::vector<visage::Frame*> cells_;

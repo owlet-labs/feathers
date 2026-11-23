@@ -224,8 +224,8 @@ TEST_CASE("VALUES: one sample through each of the eight zones") {
 			probes.add(probe.zoneInput);
 		}
 	}
-	CHECK(f.h == 0x764e3ede2166f4b2ull);
-	CHECK(probes.h == 0x1134211419f6f20bull);
+	CHECK(f.h == 0x1e763a8333dfc5c3ull);
+	CHECK(probes.h == 0x2a1c0790c268e685ull);
 }
 
 TEST_CASE("VALUES: cascadePolynomial, exact entries and a digest") {

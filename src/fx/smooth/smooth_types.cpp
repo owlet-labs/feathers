@@ -678,79 +678,6 @@ int32_t saturatingQ31(float x) noexcept {
 	return static_cast<int32_t>(x);
 }
 
-namespace {
-/// THE PEAK NORMALISATION APPLIED TO AN INTEGER ZONE'S OUTPUT: exactly the value when it is 1 (the bits the zone made).
-int32_t normalised(int32_t shaped, float norm) noexcept {
-	return norm == 1.0f ? shaped : saturatingQ31(static_cast<float>(shaped) * norm);
-}
-} // namespace
-namespace {
-/// THE FM ZONES (2-6) FROM THE PHASE: four operators of `phase1` blended by the weights, each peaking near half the
-/// table's ceiling, then >> 7 into the reference's level. Pure in (zone, weights, phase1), so the peak search runs it.
-int32_t fmBlend(int zone, const Coefficients& w, uint32_t phase1) noexcept {
-	const int32_t w0q = w.c3q;
-	const int32_t w1q = w.c5q;
-	const int32_t w2q = w.c7q;
-	const int32_t w3q = w.c9q;
-	const int32_t sine1 = tableSine(phase1);
-	const auto u = [](int32_t v) { return static_cast<uint32_t>(v); };
-
-	int32_t m0 = 0;
-	int32_t m1 = 0;
-	int32_t m2 = 0;
-	int32_t m3 = 0;
-	if (zone == 2) {
-		// FM: add, ring, FM, fold, each at twice the input's phase.
-		const uint32_t phase2 = phase1 << 1;
-		const int32_t sine2 = tableSine(phase2);
-		m0 = ((sine1 >> 1) + (sine2 >> 1)) >> 1;
-		m1 = mulhi(sine1, tableSine(phase2 + 0x40000000u));
-		m2 = tableSine(phase1 + u(sine2 >> 1)) >> 1;
-		m3 = tableSine(u(sine1) << 1) >> 1;
-	}
-	else if (zone == 3) {
-		// Fold, k = 1..4.
-		m0 = tableSine(u(sine1)) >> 1;
-		m1 = tableSine(u(sine1) << 1) >> 1;
-		m2 = tableSine(u(sine1) + (u(sine1) << 1)) >> 1;
-		m3 = tableSine(u(sine1) << 2) >> 1;
-	}
-	else if (zone == 4) {
-		// Ring: sin(x) · sin(nx), n = 2..5.
-		m0 = mulhi(sine1, tableSine(phase1 << 1));
-		m1 = mulhi(sine1, tableSine(phase1 + (phase1 << 1)));
-		m2 = mulhi(sine1, tableSine(phase1 << 2));
-		m3 = mulhi(sine1, tableSine((phase1 << 2) + phase1));
-	}
-	else if (zone == 5) {
-		// Add: sin(x) + sin(nx), n = 2..5.
-		const int32_t s2 = tableSine(phase1 << 1);
-		const int32_t s3 = tableSine(phase1 + (phase1 << 1));
-		const int32_t s4 = tableSine(phase1 << 2);
-		const int32_t s5 = tableSine((phase1 << 2) + phase1);
-		m0 = ((sine1 >> 1) + (s2 >> 1)) >> 1;
-		m1 = ((sine1 >> 1) + (s3 >> 1)) >> 1;
-		m2 = ((sine1 >> 1) + (s4 >> 1)) >> 1;
-		m3 = ((sine1 >> 1) + (s5 >> 1)) >> 1;
-	}
-	else {
-		// Mod: FM at depths 0.25, 0.5, 0.75, 1 with the modulator at twice the phase.
-		const int32_t mod = tableSine(phase1 << 1);
-		m0 = tableSine(phase1 + u(mod >> 2)) >> 1;
-		m1 = tableSine(phase1 + u(mod >> 1)) >> 1;
-		m2 = tableSine(phase1 + u((mod >> 1) + (mod >> 2))) >> 1;
-		m3 = tableSine(phase1 + u(mod)) >> 1;
-	}
-
-	int32_t blended = 0;
-	blended = addSaturate(blended, wshl(mulhi(m0, w0q), 1));
-	blended = addSaturate(blended, wshl(mulhi(m1, w1q), 1));
-	blended = addSaturate(blended, wshl(mulhi(m2, w2q), 1));
-	blended = addSaturate(blended, wshl(mulhi(m3, w3q), 1));
-	return blended >> 7;
-}
-} // namespace
-
 int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients& w, float evenAmount,
                     float evenDryBlend, float rectAmount, ShapeProbe* probe) noexcept {
 	// `sineShapeCore`, statement for statement. The stereo core is the same arithmetic run twice with a
@@ -758,16 +685,10 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 	const float inputF = static_cast<float>(input) * driveGain;
 	constexpr float kMaxQ31 = 2147483647.0f; // which is 2^31 as a float: the conversion saturates
 	const float inputFClamped = std::clamp(inputF, -kMaxQ31, kMaxQ31);
-	int32_t driven = saturatingQ31(inputFClamped);
+	const int32_t driven = saturatingQ31(inputFClamped);
 	if (probe != nullptr) {
 		probe->driven = driven;
 		probe->zoneInput = driven;
-	}
-	if (zone == 0 || zone == 1 || zone == 7) {
-		// THE HOLD: past where |f| peaks on each side the input holds, so a driven signal sits at the curve's peak.
-		const auto holdPos = static_cast<int32_t>(w.holdPos * kQ31PerUnit);
-		const auto holdNeg = static_cast<int32_t>(w.holdNeg * kQ31PerUnit);
-		driven = std::clamp(driven, -holdNeg, holdPos);
 	}
 
 	int32_t shaped = 0;
@@ -793,12 +714,12 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 			shaped = wadd(shaped, wmul(mulhiRounded(wsub(moreHarmonics, shaped), cascadeBlend), 2));
 		}
 		shaped = wshl(mulhi(shaped, kMinus3dBQ31), 1);
-		shaped = normalised(shaped, w.norm);
 	}
 	else if (zone == 0 || zone == 1) {
-		// 3579 / 3579wm: THE INPUT SATURATES AT 0 dBFS (<< 7), which is x = 1: the knee. At unity Drive a 0 dBFS peak
-		// just reaches it; past it the input is flat-topped, not the polynomial exploded.
-		const int32_t scaledInput = shiftSaturate(driven, 7);
+		// 3579 / 3579wm: THE INPUT SATURATES AT HALF THE REFERENCE'S 0 dBFS (<< 8), which is x = 1, where the
+		// normalised Chebyshevs give exactly their harmonics. Past it the input is flat-topped, not the
+		// polynomial exploded.
+		const int32_t scaledInput = shiftSaturate(driven, 8);
 		if (probe != nullptr) {
 			probe->zoneInput = scaledInput;
 		}
@@ -812,15 +733,78 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 		}
 		const float x2 = x * x;
 		const float result = x * (w.c1 + x2 * (w.c3 + x2 * (w.c5 + x2 * (w.c7 + w.c9 * x2))));
-		// THE LEVEL IS THE CURVE'S OWN: `w.norm` = 1 / max|P| over x in [-1, 1], so the peak is 0 dBFS (2^24 here).
-		const float scaled = result * w.norm * kQ31PerUnit;
+		// "Tune empirically": 0.027 · 0.707 of the q31 ceiling, 2.443 in these units.
+		constexpr float kChebyBoost = 0.027f;
+		constexpr float kMinus3dB = 0.707f;
+		constexpr float kChebyGainScaled = kChebyBoost * kMinus3dB * kOneQ31F;
+		const float scaled = result * kChebyGainScaled;
 		shaped = saturatingQ31(std::clamp(scaled, -2147483648.0f, 2147483647.0f));
 	}
 	else if (zone >= 2 && zone <= 6) {
-		// THE FM ZONES: the driven input times 1..4 becomes a PHASE into the sine table (`fmBlend`).
+		// THE FM ZONES: the driven input times 1..4 becomes a PHASE into the sine table, and four operators
+		// of it are blended — each peaking near half the table's ceiling, then >> 7 into the reference's level.
+		const int32_t w0q = w.c3q;
+		const int32_t w1q = w.c5q;
+		const int32_t w2q = w.c7q;
+		const int32_t w3q = w.c9q;
 		const int32_t gained = wshl(mulhi(driven, w.c1q), 2);
-		shaped = fmBlend(zone, w, static_cast<uint32_t>(gained) << 8);
-		shaped = normalised(shaped, w.norm);
+		const uint32_t phase1 = static_cast<uint32_t>(gained) << 8;
+		const int32_t sine1 = tableSine(phase1);
+		const auto u = [](int32_t v) { return static_cast<uint32_t>(v); };
+
+		int32_t m0 = 0;
+		int32_t m1 = 0;
+		int32_t m2 = 0;
+		int32_t m3 = 0;
+		if (zone == 2) {
+			// FM: add, ring, FM, fold, each at twice the input's phase.
+			const uint32_t phase2 = phase1 << 1;
+			const int32_t sine2 = tableSine(phase2);
+			m0 = ((sine1 >> 1) + (sine2 >> 1)) >> 1;
+			m1 = mulhi(sine1, tableSine(phase2 + 0x40000000u));
+			m2 = tableSine(phase1 + u(sine2 >> 1)) >> 1;
+			m3 = tableSine(u(sine1) << 1) >> 1;
+		}
+		else if (zone == 3) {
+			// Fold, k = 1..4.
+			m0 = tableSine(u(sine1)) >> 1;
+			m1 = tableSine(u(sine1) << 1) >> 1;
+			m2 = tableSine(u(sine1) + (u(sine1) << 1)) >> 1;
+			m3 = tableSine(u(sine1) << 2) >> 1;
+		}
+		else if (zone == 4) {
+			// Ring: sin(x) · sin(nx), n = 2..5.
+			m0 = mulhi(sine1, tableSine(phase1 << 1));
+			m1 = mulhi(sine1, tableSine(phase1 + (phase1 << 1)));
+			m2 = mulhi(sine1, tableSine(phase1 << 2));
+			m3 = mulhi(sine1, tableSine((phase1 << 2) + phase1));
+		}
+		else if (zone == 5) {
+			// Add: sin(x) + sin(nx), n = 2..5.
+			const int32_t s2 = tableSine(phase1 << 1);
+			const int32_t s3 = tableSine(phase1 + (phase1 << 1));
+			const int32_t s4 = tableSine(phase1 << 2);
+			const int32_t s5 = tableSine((phase1 << 2) + phase1);
+			m0 = ((sine1 >> 1) + (s2 >> 1)) >> 1;
+			m1 = ((sine1 >> 1) + (s3 >> 1)) >> 1;
+			m2 = ((sine1 >> 1) + (s4 >> 1)) >> 1;
+			m3 = ((sine1 >> 1) + (s5 >> 1)) >> 1;
+		}
+		else {
+			// Mod: FM at depths 0.25, 0.5, 0.75, 1 with the modulator at twice the phase.
+			const int32_t mod = tableSine(phase1 << 1);
+			m0 = tableSine(phase1 + u(mod >> 2)) >> 1;
+			m1 = tableSine(phase1 + u(mod >> 1)) >> 1;
+			m2 = tableSine(phase1 + u((mod >> 1) + (mod >> 2))) >> 1;
+			m3 = tableSine(phase1 + u(mod)) >> 1;
+		}
+
+		int32_t blended = 0;
+		blended = addSaturate(blended, wshl(mulhi(m0, w0q), 1));
+		blended = addSaturate(blended, wshl(mulhi(m1, w1q), 1));
+		blended = addSaturate(blended, wshl(mulhi(m2, w2q), 1));
+		blended = addSaturate(blended, wshl(mulhi(m3, w3q), 1));
+		shaped = blended >> 7;
 	}
 
 	// EVENS AND RECT (Twist zones 1 and 2), fused in float as the firmware fuses them.
@@ -840,8 +824,7 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 			else if (shapedF < 0.0f && evenDryBlend > 0.0f) {
 				const float absShapedF = -shapedF;
 				const float absDrivenF = std::abs(static_cast<float>(driven));
-				// ...and never above the curve's own peak (2^24 = 0 dBFS), so the blend cannot take the output over it.
-				const float cappedDrivenAbs = std::min(std::min(absDrivenF, absShapedF * 2.0f), kQ31PerUnit);
+				const float cappedDrivenAbs = std::min(absDrivenF, absShapedF * 2.0f);
 				shapedF = -(absShapedF * (1.0f - evenDryBlend) + cappedDrivenAbs * evenDryBlend);
 			}
 		}
@@ -852,102 +835,6 @@ int32_t shapeSample(int32_t input, float driveGain, int zone, const Coefficients
 		shaped = saturatingQ31(shapedF);
 	}
 	return shaped;
-}
-
-
-//--------------------------------------------------------------------------------------------------//
-// THE PEAK NORMALISATION.                                                                            //
-//--------------------------------------------------------------------------------------------------//
-/// THE RATE THE CARD'S PICTURE ASSUMES (it has no host): the highpass corner follows it.
-constexpr double kPictureRate = 48000.0;
-
-PeakInfo peakInfoOf(int zone, const Coefficients& w, float gain, double sampleRate) noexcept {
-	constexpr int32_t kUnit = 1 << 24; // 0 dBFS in q31 units, which is also the input's full scale
-	Coefficients c = w;
-	c.norm = 1.0f;
-	c.holdPos = 1.0f;
-	c.holdNeg = 1.0f;
-	// THE CURVE AT ONE DRIVEN INPUT `q` (unity drive, no evens or rect) - the shaper's own arithmetic, in q31 units.
-	const auto curve = [&c, zone](int32_t q) { return static_cast<double>(shapeSample(q, 1.0f, zone, c, 0.0f, 0.0f, 0.0f)); };
-	PeakInfo info;
-	if (zone == 0 || zone == 1 || zone == 7) {
-		// THE HOLD: on each side of the input, the OUTERMOST local maximum of |f| within kHoldWithinDb of that side's global
-		// maximum, so saturation starts as late as it can while the held level stays within that many dB of the peak the
-		// factor normalises (which is the global one). A local maximum is a grid point at least as large as both its
-		// neighbours (the end point x = 1 counts when it is at least as large as the one before it). Found on a grid, then
-		// a finer look around the chosen point for its top. If the global maximum IS the outermost one, it is the hold.
-		const int kN = zone == 7 ? 1024 : 512;
-		const int32_t step = kUnit / kN;
-		int32_t bestAt[2] = { 0, 0 };
-		std::array<double, 1025> side {};
-		for (int s = 0; s < 2; ++s) {
-			const int32_t sign = s == 0 ? 1 : -1;
-			double global = 0.0;
-			for (int i = 0; i <= kN; ++i) {
-				side[static_cast<size_t>(i)] = std::fabs(curve(sign * std::min(i * step, kUnit)));
-				global = std::max(global, side[static_cast<size_t>(i)]);
-			}
-			const double floorValue = global * std::pow(10.0, -kHoldWithinDb / 20.0);
-			int chosen = 0;
-			for (int i = 0; i <= kN; ++i) {
-				const double v = side[static_cast<size_t>(i)];
-				const bool leftOk = i == 0 || v >= side[static_cast<size_t>(i - 1)];
-				const bool rightOk = i == kN || v >= side[static_cast<size_t>(i + 1)];
-				if (leftOk && rightOk && v >= floorValue) {
-					chosen = i; // the last one that qualifies is the outermost
-				}
-			}
-			// THE TOP of the chosen bump, a step either side in 32 pieces.
-			int32_t top = chosen * step;
-			double topValue = side[static_cast<size_t>(chosen)];
-			const int32_t fine = std::max(step / 32, 1);
-			for (int j = -32; j <= 32; ++j) {
-				const int32_t q = std::clamp(chosen * step + j * fine, 0, kUnit);
-				const double v = std::fabs(curve(sign * q));
-				if (v > topValue) {
-					topValue = v;
-					top = q;
-				}
-			}
-			bestAt[s] = top;
-		}
-		info.holdPos = static_cast<float>(bestAt[0]) / static_cast<float>(kUnit);
-		info.holdNeg = static_cast<float>(bestAt[1]) / static_cast<float>(kUnit);
-		c.holdPos = info.holdPos;
-		c.holdNeg = info.holdNeg;
-	}
-	// THE WAVEFORM THE HIGHPASS SEES: one cycle of a full-scale sine through the (held) curve at the gain - an input of at
-	// least unity, so the whole curve is reached - run through the device's own wet highpass (a one-pole lowpass
-	// subtracted; its corner as the rate gives it) for a tone of kRefTone, to steady state. The largest |output| is what
-	// the factor makes 0 dBFS. That takes out the curve's DC, and the droop and overshoot the highpass puts on a
-	// flat-topped (held) wave, for THAT tone: a lower one overshoots more. The FM zones have no hold (their output is
-	// periodic in the phase); the same waveform covers them.
-	const float amplitude = std::max(gain, 1.0f);
-	constexpr int kCycle = 2048;
-	constexpr double kRefTone = 1000.0;
-	std::array<float, kCycle> wave;
-	for (int i = 0; i < kCycle; ++i) {
-		const double theta = 2.0 * M_PI * (static_cast<double>(i) + 0.5) / kCycle;
-		const int32_t q = static_cast<int32_t>(std::lround(std::sin(theta) * static_cast<double>(kUnit)));
-		wave[static_cast<size_t>(i)] = static_cast<float>(shapeSample(q, amplitude, zone, c, 0.0f, 0.0f, 0.0f));
-	}
-	const double alpha = std::min(kOutputHpfAlphaAtReference * kReferenceRate / std::max(sampleRate, 1.0), 0.5);
-	const double step = std::min(alpha * sampleRate / (kRefTone * kCycle), 1.0);
-	double lowpass = 0.0;
-	double peak = 0.0;
-	for (int cycle = 0; cycle < 40; ++cycle) {
-		for (int i = 0; i < kCycle; ++i) {
-			const double x = static_cast<double>(wave[static_cast<size_t>(i)]);
-			lowpass += (x - lowpass) * step;
-			if (cycle >= 36) {
-				peak = std::max(peak, std::fabs(x - lowpass));
-			}
-		}
-	}
-	// A blend that makes (almost) nothing is left alone rather than amplified without bound.
-	constexpr double kMinPeak = 4096.0; // 2^12 of 2^24: -72 dBFS
-	info.norm = peak < kMinPeak ? 1.0f : static_cast<float>(static_cast<double>(kUnit) / peak);
-	return info;
 }
 
 //--------------------------------------------------------------------------------------------------//
@@ -984,6 +871,11 @@ CoefficientTargets targetsOf(int zone, float posInZone, const TwistParams& twist
 	return { left.c1, left.c3, left.c5, left.c7, left.c9, right.c3, right.c5, right.c7, right.c9 };
 }
 
+namespace {
+// THE SATURATION POINTS OF `shapeSample`, as input levels: `<< 8` saturates at driven = 2^23 (0.5 here),
+// `<< 7` at 2^24 (1.0).
+float ceilingReferenceOf(int zone) noexcept { return (zone == 0 || zone == 1) ? 0.5f : 1.0f; }
+} // namespace
 
 Picture pictureOf(const Settings& settings) noexcept {
 	const FirmwareControls fc = firmwareControlsOf(settings);
@@ -995,13 +887,8 @@ Picture pictureOf(const Settings& settings) noexcept {
 	const CoefficientTargets t = targetsOf(p.zone, zone.position, p.twist, 0.0f);
 	p.weights = { t[0], t[1], t[2], t[3], t[4] };
 	p.weights.updateQ31();
-	const PeakInfo level = peakInfoOf(p.zone, p.weights, p.driveGain, kPictureRate);
-	p.weights.norm = level.norm;
-	p.weights.holdPos = level.holdPos;
-	p.weights.holdNeg = level.holdNeg;
 	p.clips = p.zone == 0 || p.zone == 1 || p.zone == 7;
-	p.ceilingInput = ceilingOfGain(p.zone, p.driveGain, p.weights.holdPos);
-	p.ceilingInputNeg = ceilingOfGain(p.zone, p.driveGain, p.weights.holdNeg);
+	p.ceilingInput = ceilingOfGain(p.zone, p.driveGain);
 	return p;
 }
 
@@ -1012,24 +899,24 @@ float transferAt(const Picture& picture, float input) noexcept {
 	return static_cast<float>(shaped) / kQ31PerUnit;
 }
 
-float ceilingOfGain(int, float gain, float hold) noexcept {
-	return gain > 0.0f ? hold / gain : std::numeric_limits<float>::infinity();
+float ceilingOfGain(int zone, float gain) noexcept {
+	return gain > 0.0f ? ceilingReferenceOf(zone) / gain : std::numeric_limits<float>::infinity();
 }
 
-float driveKnobForCeiling(int, float ceilingInput, float hold) noexcept {
+float driveKnobForCeiling(int zone, float ceilingInput) noexcept {
 	if (!(ceilingInput > 0.0f) || std::isinf(ceilingInput)) {
 		return ceilingInput > 0.0f ? 0.0f : 1.0f; // +inf is silence; zero (or NaN) asks for all the gain there is
 	}
-	const float gain = std::clamp(hold / ceilingInput, 0.0f, 4.0f);
+	const float gain = std::clamp(ceilingReferenceOf(zone) / ceilingInput, 0.0f, 4.0f);
 	// `driveGainOf` of the fader's q31 is 4v², so the fader is √gain / 2.
 	return std::clamp(0.5f * std::sqrt(gain), 0.0f, 1.0f);
 }
 
-float ceilingInputOf(int zone, float driveKnob, float hold) noexcept {
+float ceilingInputOf(int zone, float driveKnob) noexcept {
 	// THE SAME ROAD AS `firmwareControlsOf` → `driveGainOf`, so the drawn ceiling is the one the shaper runs at.
 	Settings s;
 	s.drive = driveKnob;
-	return ceilingOfGain(zone, driveGainOf(firmwareControlsOf(s).drive), hold);
+	return ceilingOfGain(zone, driveGainOf(firmwareControlsOf(s).drive));
 }
 
 std::array<float, kHarmonicCount> harmonicsOf(const Picture& picture, float level) noexcept {

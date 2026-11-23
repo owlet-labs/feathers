@@ -1401,9 +1401,9 @@ TEST_CASE("SMOOTH SHAPER: the card's curve is the core at the card's settings, a
 		for (int i = 0; i < ui::SmoothPictureModel::kCurvePoints; i += 7) {
 			CHECK(m.curve[static_cast<size_t>(i)] == smth::transferAt(p, ui::SmoothPictureModel::inputAt(i)));
 		}
-		// THE CEILING'S x: the hold (where the curve saturates) over the drive; 1 over the drive for FM, as the reference.
+		// THE CEILING'S x: 0.5 / drive for the Chebyshevs, 1 / drive for Poly and as the FM reference.
 		const float g = smth::driveGainOf(smth::firmwareControlsOf(s).drive);
-		const float want = p.weights.holdPos / g;
+		const float want = (mode == 0 ? 0.5f : 1.0f) / g;
 		CHECK(curve->ceilingX() == doctest::Approx(curve->xOfInput(std::min(want, 1.0f))).epsilon(1e-5));
 		CHECK(curve->ceilingOffScale() == (want > 1.0f));
 	}
@@ -1418,34 +1418,29 @@ TEST_CASE("SMOOTH SHAPER: dragging the ceiling writes Drive, a double-click rese
 	const visage::Bounds plot = curve->plotBounds();
 	const float midY = plot.y() + plot.height() * 0.5f;
 
-	// THE HANDLE IS AT THE HOLD (where the curve saturates): the Chebyshev blend at the card's defaults holds early.
-	const float hold = smth::pictureOf(smoothSettingsOf(d)).weights.holdPos;
-	REQUIRE(hold > 0.05f);
-	REQUIRE(hold < 0.6f);
-
 	// A PRESS ON THE CURVE AWAY FROM THE HANDLE: nothing moves.
-	curve->processMouseDown(at(curve->xOfInput(0.8f), midY));
-	curve->processMouseUp(at(curve->xOfInput(0.8f), midY));
+	curve->processMouseDown(at(curve->xOfInput(0.1f), midY));
+	curve->processMouseUp(at(curve->xOfInput(0.1f), midY));
 	CHECK(d.f.deviceHost.fieldAt(d.device, drive) == 0.5f);
 
-	// GRAB THE CEILING (at the hold at unity) AND PULL IT IN TO HALF OF IT - twice the drive, fader √2 / 2.
+	// GRAB THE CEILING (3579 at unity: input 0.5) AND PULL IT IN TO 0.25 — twice the drive, fader √2 / 2.
 	REQUIRE(curve->grabsDrive({ curve->ceilingX(), midY }));
 	curve->processMouseDown(at(curve->ceilingX(), midY));
 	CHECK(curve->draggingForTest());
-	curve->processMouseDrag(at(curve->xOfInput(0.5f * hold), midY));
-	curve->processMouseUp(at(curve->xOfInput(0.5f * hold), midY));
+	curve->processMouseDrag(at(curve->xOfInput(0.25f), midY));
+	curve->processMouseUp(at(curve->xOfInput(0.25f), midY));
 	CHECK_FALSE(curve->draggingForTest());
 	const float dragged = d.f.deviceHost.fieldAt(d.device, drive);
-	CHECK(dragged == doctest::Approx(smth::driveKnobForCeiling(0, 0.5f * hold, hold)).epsilon(1e-3));
+	CHECK(dragged == doctest::Approx(smth::driveKnobForCeiling(0, 0.25f)).epsilon(1e-3));
 	CHECK(dragged == doctest::Approx(std::sqrt(2.0) / 2.0).epsilon(1e-3));
-	// AND THE PICTURE FOLLOWS: the ceiling is now drawn at half the hold.
+	// AND THE PICTURE FOLLOWS: the ceiling is now drawn at 0.25.
 	(void)card->updateContent();
-	CHECK(curve->ceilingX() == doctest::Approx(curve->xOfInput(0.5f * hold)).epsilon(1e-3));
+	CHECK(curve->ceilingX() == doctest::Approx(curve->xOfInput(0.25f)).epsilon(1e-3));
 
 	// THE MIRROR LINE ON THE NEGATIVE SIDE IS THE SAME HANDLE.
-	curve->processMouseDown(at(curve->xOfInput(-0.5f * hold), midY));
-	curve->processMouseDrag(at(curve->xOfInput(-hold), midY));
-	curve->processMouseUp(at(curve->xOfInput(-hold), midY));
+	curve->processMouseDown(at(curve->xOfInput(-0.25f), midY));
+	curve->processMouseDrag(at(curve->xOfInput(-0.5f), midY));
+	curve->processMouseUp(at(curve->xOfInput(-0.5f), midY));
 	CHECK(d.f.deviceHost.fieldAt(d.device, drive) == doctest::Approx(0.5f).epsilon(1e-4));
 
 	// A DOUBLE-CLICK ON THE HANDLE IS THE DEFAULT, as on every knob.

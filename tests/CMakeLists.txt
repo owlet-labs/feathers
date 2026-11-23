@@ -2321,12 +2321,6 @@ target_link_libraries(test_rack_drain_alloc PRIVATE feathers-gui-bridge feathers
 target_include_directories(test_rack_drain_alloc PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME rack-drain-alloc COMMAND test_rack_drain_alloc)
 
-# The Smooth Shaper's level law: knee at 0 dBFS, peak-normalised curve (values, a grid of modes and positions, no allocation).
-add_executable(test_smooth_peak test_smooth_peak.cpp)
-target_link_libraries(test_smooth_peak PRIVATE feathers-fx feathers-warnings)
-target_include_directories(test_smooth_peak PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
-target_compile_options(test_smooth_peak PRIVATE ${FEATHERS_FP_EXACT})
-add_test(NAME smooth-peak COMMAND test_smooth_peak)
 
 # THE HAND DRUM AND THE FM PERC, hit alone: modal ratios, the signed bend, the strike position, the shell, the Bessel sidebands, the index envelope.
 add_executable(test_drum_hand_fm test_drum_hand_fm.cpp)

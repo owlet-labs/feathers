@@ -569,35 +569,31 @@ std::pair<int32_t, int32_t> probePeaks(const smooth::Settings& s, float value, i
 
 } // namespace
 
-TEST_CASE("a full-scale voice at Drive centre drives the Chebyshevs to their hold, where the curve peaks; less input passes") {
-	// THE HOLD IS WHERE |f| PEAKS. 1.0 here is 0 dBFS, 2^24. The Chebyshev zones read x = scaledInput / 2^31 after the `<< 7`
-	// saturation, so x = driven / 2^24 before the hold, and the hold clamps the driven input at `holdPos` / `holdNeg`.
-	const auto heldZoneInput = [](float hold) { return std::min(static_cast<int32_t>(hold * 16777216.0f), kZeroDbfs - 1) * 128; };
+TEST_CASE("a full-scale voice at Drive centre enters the Chebyshevs at x = 2 and is clipped to 1") {
+	// THE DESIGN'S GAIN STAGING TABLE, AS VALUES. 1.0 here is the reference's 0 dBFS, 2^24. The Chebyshev zones
+	// read x = scaledInput / 2^31 after `<< 8` saturation, so x = driven / 2^23 before the clip.
 	for (int mode : { 0, 1 }) {
 		smooth::Settings s = settingsWith(mode, 0.5f, 0.0f, 0.0f);
-		const smooth::Picture p = smooth::pictureOf(s);
 		const auto [driven, zoneInput] = probePeaks(s, 1.0f);
-		INFO("mode " << mode << ": hold " << p.weights.holdPos);
-		REQUIRE(p.weights.holdPos < 1.0f);
-		REQUIRE(p.weights.holdPos > 0.02f);
-		// Unity drive: the input as it came, 2^24, which is x = 1 - past the hold - so the zone is handed the hold...
+		INFO("mode " << mode);
+		// Unity drive: the input as it came, 2^24.
 		CHECK(driven == kZeroDbfs);
-		CHECK(zoneInput == heldZoneInput(p.weights.holdPos));
-		// ...and an input a quarter under the hold passes untouched (x = 0.75 hold).
-		const auto under = probePeaks(s, 0.75f * p.weights.holdPos);
-		CHECK(static_cast<double>(under.second) / 2147483648.0 == doctest::Approx(0.75 * static_cast<double>(p.weights.holdPos)).epsilon(1e-4));
+		// x = 2 before the clip...
+		CHECK(static_cast<double>(driven) / 8388608.0 == 2.0);
+		// ...and 1 after it: the `<< 8` saturation's ceiling, 1 - 2^-23.
+		CHECK(zoneInput == 0x7FFFFF00);
+		CHECK(static_cast<double>(zoneInput) / 2147483648.0 == doctest::Approx(1.0).epsilon(1.0e-6));
 	}
 
-	// DRIVE 2x PUTS A HALF-HOLD VOICE AT THE HOLD, and a full one past it: held at the same value.
+	// DRIVE 0.5x — the knob at about -0.59 — PUTS A FULL VOICE EXACTLY AT x = 1, the exact-harmonics point.
 	{
-		smooth::Settings s = settingsWith(0, 0.5f, knobForGain(2.0), 0.0f);
+		smooth::Settings s = settingsWith(0, 0.5f, knobForGain(0.5), 0.0f);
 		const float gain = smooth::driveGainOf(smooth::firmwareControlsOf(s).drive);
-		CHECK(gain == doctest::Approx(2.0).epsilon(1.0e-6));
-		const smooth::Picture p = smooth::pictureOf(s);
-		const auto atHold = probePeaks(s, 0.5f * p.weights.holdPos);
-		CHECK(static_cast<double>(atHold.second) / 2147483648.0 == doctest::Approx(static_cast<double>(p.weights.holdPos)).epsilon(1.0e-4));
-		const auto past = probePeaks(s, 1.0f);
-		CHECK(past.second == heldZoneInput(p.weights.holdPos));
+		CHECK(gain == doctest::Approx(0.5).epsilon(1.0e-6));
+		const auto [driven, zoneInput] = probePeaks(s, 1.0f);
+		CHECK(static_cast<double>(driven) / 8388608.0 == doctest::Approx(1.0).epsilon(1.0e-5));
+		// At x = 1 the saturation is at its knee: the input passes or is one step under the ceiling.
+		CHECK(static_cast<double>(zoneInput) / 2147483648.0 == doctest::Approx(1.0).epsilon(1.0e-5));
 	}
 
 	// ZONE 7 (Poly) CLIPS AT THE REFERENCE'S 0 dBFS, 1.0 — not at half of it.
@@ -699,9 +695,9 @@ namespace {
 } // namespace
 
 #if FEATHERS_PINNED_PLATFORM
-TEST_CASE("HP Wet and Sub Thru at their defaults leave the shaper's render to the bit (hash re-pinned at the level law change: knee at 0 dBFS, peak-normalised curve)") {
-	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 5368033667105289264ull);
-	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 5727080879370042596ull);
+TEST_CASE("HP Wet and Sub Thru at their defaults leave the shaper's render to the bit (hash pinned from before they existed)") {
+	CHECK(bitHash(renderPassage(48000.0, true, { 128 }, 9600)) == 12829206850035549236ull);
+	CHECK(bitHash(renderPassage(44100.0, false, { 128 }, 9600)) == 17693863569930900104ull);
 }
 #endif
 
@@ -1123,8 +1119,6 @@ struct Tail {
 	float tailPeak = 0.0f;
 	int32_t dc = 0;
 	int32_t fb = 0;
-	int32_t dc1 = 0;
-	int32_t fb1 = 0;
 };
 Tail burstThenSilence(const smooth::Settings& s, double rate, bool mono, double burstSeconds = 0.1,
                       double tailSeconds = 3.0) {
@@ -1166,8 +1160,6 @@ Tail burstThenSilence(const smooth::Settings& s, double rate, bool mono, double 
 	}
 	t.dc = sh.dcStateForTest(0);
 	t.fb = sh.feedbackStateForTest(0);
-	t.dc1 = sh.dcStateForTest(1);
-	t.fb1 = sh.feedbackStateForTest(1);
 	return t;
 }
 
@@ -1203,12 +1195,12 @@ TEST_CASE("after a loud burst the output reaches EXACT zero within 50 ms, on bot
 						const Tail t = burstThenSilence(s, rate, mono);
 						INFO("rate " << rate << (mono ? " mono" : " stereo") << " mode " << mode << " twist " << twist
 						             << " drive " << drive << ": last sound " << t.lastSoundSeconds << " s, tail peak "
-						             << t.tailPeak << " dc1 " << t.dc1 << " fb1 " << t.fb1 << " dc " << t.dc << " fb " << t.fb);
-						if (t.tailPeak > 1.0e-3f || t.lastSoundSeconds > 1.0) { // a loud drone, or a quiet one that never ends
+						             << t.tailPeak);
+						if (t.tailPeak > 1.0e-3f) {
 							// A DRONE — only where the firmware's own feedback sustains itself: ONLY WITH THE FEEDBACK UP.
-							CHECK(twist > 0.375f); // the 0.5+ meta zone carries the feedback too
-							// The feedback tap is scaled by 1 / the peak factor, so the loop keeps its pre-normalisation calibration.
-							drones.push_back(std::to_string(mode) + "@" + std::to_string(twist) + "/" + std::to_string(drive));
+							CHECK(twist > 0.375f);
+							CHECK(twist < 0.5f);
+							drones.push_back(std::to_string(mode));
 							continue;
 						}
 						CHECK(t.lastSoundSeconds < kRestSilentSecondsPlusAFrame);
@@ -1236,7 +1228,7 @@ TEST_CASE("HP Wet and Sub Thru engaged: a burst's tail still reaches exact zero 
 					s.subThru = true;
 					const Tail t = burstThenSilence(s, rate, mono);
 					INFO("rate " << rate << (mono ? " mono" : " stereo") << " mode " << mode << " corner " << hz << ": last sound "
-					             << t.lastSoundSeconds << " s, tail peak " << t.tailPeak << " dc1 " << t.dc1 << " fb1 " << t.fb1 << " dc " << t.dc << " fb " << t.fb);
+					             << t.lastSoundSeconds << " s, tail peak " << t.tailPeak);
 					CHECK(t.lastSoundSeconds < kRestSilentSecondsPlusAFrame);
 					CHECK(t.tailPeak == 0.0f);
 				}
@@ -1311,7 +1303,7 @@ TEST_CASE("the mono road is the stereo road's left, sample for sample, with the 
 // THE PICTURE THE CARD AND THE PANEL DRAW — asserted as values.                                       //
 //--------------------------------------------------------------------------------------------------//
 
-TEST_CASE("the ceiling sits at the knee, 0 dBFS over the gain, in every zone that saturates; FM never clips") {
+TEST_CASE("the ceiling sits where the zone saturates: x = 1 into the Chebyshevs, 1.0 in Poly, a reference in FM") {
 	for (float d : { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f }) {
 		const float g = smooth::driveGainOf(smooth::firmwareControlsOf(settingsWith(0, 0.5f, d, 0.0f)).drive);
 		const smooth::Picture cheby = smooth::pictureOf(settingsWith(0, 0.5f, d, 0.0f));
@@ -1319,36 +1311,33 @@ TEST_CASE("the ceiling sits at the knee, 0 dBFS over the gain, in every zone tha
 		const smooth::Picture poly = smooth::pictureOf(settingsWith(7, 0.5f, d, 0.0f));
 		const smooth::Picture fm = smooth::pictureOf(settingsWith(2, 0.5f, d, 0.0f));
 		INFO("drive knob " << d << ", gain " << g);
-		CHECK(cheby.ceilingInput == doctest::Approx(cheby.weights.holdPos / g).epsilon(1e-6));
-		CHECK(cheby.ceilingInputNeg == doctest::Approx(cheby.weights.holdNeg / g).epsilon(1e-6));
-		CHECK(warm.ceilingInput == doctest::Approx(warm.weights.holdPos / g).epsilon(1e-6));
-		CHECK(poly.ceilingInput == doctest::Approx(poly.weights.holdPos / g).epsilon(1e-6));
+		CHECK(cheby.ceilingInput == doctest::Approx(0.5 / g).epsilon(1e-6));
+		CHECK(warm.ceilingInput == doctest::Approx(0.5 / g).epsilon(1e-6));
+		CHECK(poly.ceilingInput == doctest::Approx(1.0 / g).epsilon(1e-6));
 		CHECK(cheby.clips);
 		CHECK(poly.clips);
 		CHECK_FALSE(fm.clips);
-		// AND THE CORE SATURATES AT THE HOLD, which is where the ceiling's 1.0 is scaled to (the ceiling marks the input
-		// reaching x = 1; the curve holds at `holdPos` of it): just under the held ceiling the zone's input is still moving,
-		// just over it the probe reads the held value.
+		// AND IT IS WHERE THE CORE ACTUALLY STARTS TO SATURATE: just under the ceiling the zone's input is still
+		// moving, just over it the probe reads the ceiling.
 		smooth::ShapeProbe under;
 		smooth::ShapeProbe over;
 		const auto zoneInputAt = [&](const smooth::Picture& p, float input, smooth::ShapeProbe* probe) {
 			(void)smooth::shapeSample(representable(static_cast<double>(input) * kZeroDbfs), p.driveGain, p.zone, p.weights,
 			                          0.0f, 0.0f, 0.0f, probe);
 		};
-		for (const smooth::Picture* pic : { &cheby, &poly }) {
-			const int32_t held = std::min(static_cast<int32_t>(pic->weights.holdPos * 16777216.0f), kZeroDbfs - 1) * 128;
-			const float at = pic->ceilingInput; // already the hold over the gain
-			zoneInputAt(*pic, at * 0.99f, &under);
-			zoneInputAt(*pic, at * 1.01f, &over);
-			CHECK(under.zoneInput < held);
-			CHECK(over.zoneInput == held);
-		}
+		zoneInputAt(cheby, cheby.ceilingInput * 0.99f, &under);
+		zoneInputAt(cheby, cheby.ceilingInput * 1.01f, &over);
+		CHECK(under.zoneInput < 0x7FFFFF00);
+		CHECK(over.zoneInput == 0x7FFFFF00);
+		zoneInputAt(poly, poly.ceilingInput * 0.99f, &under);
+		zoneInputAt(poly, poly.ceilingInput * 1.01f, &over);
+		CHECK(under.zoneInput < 0x7FFFFF80);
+		CHECK(over.zoneInput == 0x7FFFFF80);
 	}
 	// DRAGGING THE CEILING WRITES THE DRIVE THAT PUTS IT THERE — the inverse, round trip.
-	for (float c : { 0.26f, 0.5f, 0.8f, 1.0f, 1.8f, 6.0f }) {
+	for (float c : { 0.13f, 0.25f, 0.4f, 0.5f, 0.9f, 3.0f }) {
 		smooth::Settings s = settingsWith(0, 0.5f, 0.0f, 0.0f);
-		const float hold = smooth::pictureOf(s).weights.holdPos; // the ceiling is where the curve saturates
-		s.drive = smooth::driveKnobForCeiling(0, c, hold);
+		s.drive = smooth::driveKnobForCeiling(0, c);
 		CHECK(smooth::pictureOf(s).ceilingInput == doctest::Approx(c).epsilon(1e-4));
 	}
 	// Past the fader's travel it stops at the top (4x); a ceiling at infinity is the bottom.
@@ -1382,7 +1371,7 @@ TEST_CASE("Drive at 0 is silence into the shaper and an off-scale ceiling; at 1 
 	smooth::Settings top = settingsWith(0, 0.5f, 0.0f, 0.0f);
 	top.drive = 1.0f;
 	CHECK(smooth::pictureOf(top).driveGain == 4.0f);
-	CHECK(smooth::pictureOf(top).ceilingInput == smooth::pictureOf(top).weights.holdPos * 0.25f);
+	CHECK(smooth::pictureOf(top).ceilingInput == 0.125f);
 	CHECK(smooth::ceilingInputOf(7, 1.0f) == 0.25f);
 }
 

@@ -113,9 +113,8 @@ SmoothCurveView::SmoothCurveView(const SmoothPictureModel& model, device::Modula
 			routeDragging_ = false;
 			gestureOpen_ = false;
 			grabX_ = e.position.x;
-			grabSide_ = e.position.x >= xOfInput(0.0f) ? 1.0f : -1.0f;
-			// THE CEILING IS WHERE THE CURVE SATURATES: the hold of the side grabbed, over the gain.
-			grabCeiling_ = sm::ceilingInputOf(model_.picture.zone, drive_.value(), holdOfSide(grabSide_));		}
+			grabCeiling_ = sm::ceilingInputOf(model_.picture.zone, drive_.value());
+			grabSide_ = e.position.x >= xOfInput(0.0f) ? 1.0f : -1.0f;		}
 		redraw();
 	};
 	onMouseDrag() = [this](const visage::MouseEvent& e) {
@@ -210,10 +209,6 @@ float SmoothCurveView::yOfOutput(float output) const {
 	return b.bottom() - t * b.height();
 }
 
-float SmoothCurveView::holdOfSide(float side) const {
-	return side >= 0.0f ? model_.picture.weights.holdPos : model_.picture.weights.holdNeg;
-}
-
 bool SmoothCurveView::ceilingOffScale() const {
 	return model_.picture.ceilingInput > SmoothPictureModel::kInputSpan;
 }
@@ -225,7 +220,7 @@ float SmoothCurveView::ceilingX() const {
 bool SmoothCurveView::grabsDrive(visage::Point p) const {
 	const visage::Bounds b = plotBounds();
 	const float cx = ceilingX();
-	const float mirror = xOfInput(-std::min(model_.picture.ceilingInputNeg, SmoothPictureModel::kInputSpan));
+	const float mirror = xOfInput(-std::min(model_.picture.ceilingInput, SmoothPictureModel::kInputSpan));
 	const bool inHeight = p.y >= b.y() && p.y <= static_cast<float>(height());
 	return inHeight && (std::fabs(p.x - cx) <= kGrabSlop || std::fabs(p.x - mirror) <= kGrabSlop);
 }
@@ -235,7 +230,7 @@ void SmoothCurveView::dragTo(float x) {
 	// a higher ceiling. Anchored to the STORED value, so an off-scale ceiling starts from where it really is
 	// rather than from the plot's edge it is drawn pinned to.
 	const float moved = (inputOfX(x) - inputOfX(grabX_)) * grabSide_;
-	drive_.setValue(sm::driveKnobForCeiling(model_.picture.zone, std::max(grabCeiling_ + moved, 0.02f), holdOfSide(grabSide_)));
+	drive_.setValue(sm::driveKnobForCeiling(model_.picture.zone, std::max(grabCeiling_ + moved, 0.02f)));
 }
 
 void SmoothCurveView::draw(visage::Canvas& canvas) {
@@ -265,7 +260,7 @@ void SmoothCurveView::draw(visage::Canvas& canvas) {
 	const float dash = pic.clips ? 5.0f : 2.0f;
 	const float gap = pic.clips ? 3.0f : 3.0f;
 	const float cRight = ceilingX();
-	const float cLeft = xOfInput(-std::min(pic.ceilingInputNeg, SmoothPictureModel::kInputSpan));
+	const float cLeft = xOfInput(-std::min(pic.ceilingInput, SmoothPictureModel::kInputSpan));
 	canvas.setColor(ceilingColour);
 	for (const float cx : { cLeft, cRight }) {
 		for (float y = b.y(); y < b.bottom(); y += dash + gap) {
@@ -275,12 +270,10 @@ void SmoothCurveView::draw(visage::Canvas& canvas) {
 	// THE MODULATED CEILING, where a route has put Drive this instant — faint, and only while it differs.
 	const device::ModDisplay mod = drive_.display();
 	if (mod.isDestination && std::fabs(mod.modulated - drive_.value()) > 1.0e-4) {
-		const float modPos = std::min(sm::ceilingInputOf(pic.zone, static_cast<float>(mod.modulated), pic.weights.holdPos),
-		                              SmoothPictureModel::kInputSpan);
-		const float modNeg = std::min(sm::ceilingInputOf(pic.zone, static_cast<float>(mod.modulated), pic.weights.holdNeg),
-		                              SmoothPictureModel::kInputSpan);
+		const float modInput = std::min(sm::ceilingInputOf(pic.zone, static_cast<float>(mod.modulated)),
+		                                SmoothPictureModel::kInputSpan);
 		canvas.setColor(withAlpha(kModulation, 0.8f));
-		for (const float cx : { xOfInput(-modNeg), xOfInput(modPos) }) {
+		for (const float cx : { xOfInput(-modInput), xOfInput(modInput) }) {
 			canvas.segment(cx, b.y(), cx, b.bottom(), 1.0f, true);
 		}
 	}

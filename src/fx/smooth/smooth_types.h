@@ -506,7 +506,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "Even harmonics. Harmonic's position picks the flavour: the positive half compressed, or the negative half blended toward the dry. Heard while its power is on"},
+     .tooltip = "Even harmonics. Harmonic's position in its zone picks the flavour: in the first half the positive half is compressed; in the second half the negative half is blended toward the dry. Heard while its power is on"},
     {.key = "smooth_rect", .name = "Smooth Shaper Rect",
      .min = 0.0,
      .max = 1.0,

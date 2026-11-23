@@ -56,6 +56,10 @@
 #include "rack/parallel_rack.h"
 #include "plugin/ui/harmonic_row.h"
 #include "plugin/ui/smooth_card.h"
+#include "plugin/ui/smooth_expanded.h"
+#include "fx/pitch/pitch_tips.h"
+#include "plugin/ui/pitch_card.h"
+#include "fx/smooth/smooth_tips.h"
 #include "plugin/ui/owltt_graph.h"
 #include "plugin/ui/sklitter_expanded.h"
 #include "plugin/ui/surface_layers.h"
@@ -588,12 +592,10 @@ void sweepHost(visage::Frame* host, const device::Descriptor& desc, SweepTally& 
 			const bool reasoned = vb != nullptr && !vb->enabled() && vb->disabledReason() != nullptr;
 			const char* why = control->unavailable();
 			// AND A SHORTENED OR CUT LABEL'S FULL NAME AT ITS START.
-			// A SURFACE'S OWN OVERRIDE (`setTooltipOverride`, a per-mode text) is the control's text where it is set; the
-			// value cases pin each override's words.
-			const char* own = control->tooltipOverride();
+			// AND A SURFACE'S OWN TEXT (`setTooltipOverride`: a mode's wording, Pattern's Degree and Thru) when it has set one.
 			CHECK(layer.text() == expectedWithFull(full, why != nullptr       ? std::string(why)
 			                                             : reasoned           ? std::string(vb->disabledReason())
-			                                             : own != nullptr     ? std::string(own)
+			                                             : control->tooltipOverride() != nullptr ? std::string(control->tooltipOverride())
 			                                                                  : declaredText(control->desc())));
 		}
 		else {
@@ -1029,7 +1031,9 @@ TEST_CASE("moving between two controls restarts the delay and the text follows t
 	clock.now += 2.0;
 	(void)placed.card->update();
 	REQUIRE(layer.shown());
-	CHECK(layer.text() == declaredText(boundControl(b)->desc()));
+	// A SURFACE'S OWN TEXT (`setTooltipOverride`, the Delay's Time and Mix by Mode and Dub) is what the layer shows when one is set.
+	CHECK(layer.text() == (boundControl(b)->tooltipOverride() != nullptr ? std::string(boundControl(b)->tooltipOverride())
+	                                                                      : declaredText(boundControl(b)->desc())));
 }
 
 TEST_CASE("OWLTT's graph keeps its own tooltip and the card's layer stays hidden over it") {
@@ -2300,8 +2304,8 @@ TEST_CASE("brief is the first sentence of a real declared tooltip, and never cut
 		  "Runs the reverb at twice the rate: less aliasing grit up top at 44.1 and 48 kHz, for about two "
 		  "and a half times the reverb's CPU." },
 		{ "groove_amount",
-		  "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the MPC's heaviest, at "
-		  "full), or the share of the groove template." },
+		  "How much of the Groove Mode: the swing % (50% straight, 66.7% a triplet, and at full the heaviest "
+		  "swing), or the share of the groove template." },
 		{ "shaper_hysteresis", "How much of the field's hysteresis you hear — 0.5 is the position's own, 0 removes it" },
 		{ "comp_makeup", "Gain after compression, to win back the level it took" },
 	};
@@ -2641,6 +2645,81 @@ TEST_CASE("the Smooth Shaper's ceiling shows Drive's tooltip when the hand rests
 	ui::TooltipLayer& layer = restOn(curve, onHandle, clock, &host);
 	REQUIRE(layer.shown());
 	CHECK(layer.text() == std::string(desc.params[static_cast<size_t>(feathers::fx::smooth::Param::Drive)].tooltip));
+}
+
+TEST_CASE("the Smooth Shaper's Feedback, Harmonic and H Phase hover text follows the Harmonic mode, on the card and the window") {
+	// THE TABLE IS THE EXPECTATION, read back through the hover road after each mode is set by the host. The rows must
+	// differ where the mode changes the meaning, or the check would pass on a table that said one thing everywhere.
+	namespace sm = feathers::fx::smooth;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag("smth");
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::SmoothCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	ui::WidgetRegistry registry;
+	std::unique_ptr<ui::ExpandedView> view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, placed.device, desc);
+	auto* panel = dynamic_cast<ui::SmoothExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	visage::Frame* cardFdbk = card->pillForTest(static_cast<size_t>(sm::Pill::Fdbk));
+	visage::Frame* cardHarmonic = card->widgetForTest(sm::Param::Harmonic);
+	visage::Frame* winFdbk = panel->widgetForTest(sm::Param::Fdbk);
+	visage::Frame* winHarmonic = panel->widgetForTest(sm::Param::Harmonic);
+	visage::Frame* winPhase = panel->widgetForTest(sm::Param::HarmonicPhase);
+	REQUIRE(cardFdbk != nullptr);
+	REQUIRE(cardHarmonic != nullptr);
+	REQUIRE(winFdbk != nullptr);
+	REQUIRE(winHarmonic != nullptr);
+	REQUIRE(winPhase != nullptr);
+	CHECK(std::string(sm::kModeTips[3].feedback) != sm::kModeTips[0].feedback); // Fold sustains; 3579 does not say so
+	CHECK(std::string(sm::kModeTips[2].harmonic) != sm::kModeTips[0].harmonic); // operators, not harmonics
+	CHECK(std::string(sm::kModeTips[7].phase) != sm::kModeTips[0].phase);       // Poly's own clause
+	const auto field = static_cast<size_t>(sm::Param::HarmonicMode);
+	for (size_t mode = 0; mode < sm::kHarmonicModeTipCount; ++mode) {
+		CAPTURE(mode);
+		f.deviceHost.setField(placed.device, field, static_cast<float>(mode));
+		(void)card->updateContent();
+		(void)panel->update();
+		const sm::ModeTips& want = sm::kModeTips[mode];
+		// THE HOVER ROAD, READ AT THE WIDGET'S CENTRE: the frame must be a tooltip source, or the check is void.
+		// A WINDOW'S LABEL WHOLE-NAMES ITS CONTROL ("Fdbk — …", the full-name road); the declared or overridden text is what follows the dash.
+		const auto hoverOf = [](const visage::Frame* frame) {
+			const auto* source = dynamic_cast<const ui::TooltipSource*>(frame);
+			REQUIRE(source != nullptr);
+			const std::string text = ui::hoverText(*source, centreOf(*frame));
+			const std::string dash = " \xE2\x80\x94 ";
+			const size_t at = text.find(dash);
+			return at == std::string::npos ? text : text.substr(at + dash.size());
+		};
+		CHECK(hoverOf(cardFdbk) == std::string(want.feedback));
+		CHECK(hoverOf(cardHarmonic) == std::string(want.harmonic));
+		CHECK(hoverOf(winFdbk) == std::string(want.feedback));
+		CHECK(hoverOf(winHarmonic) == std::string(want.harmonic));
+		CHECK(hoverOf(winPhase) == std::string(want.phase));
+	}
+}
+
+
+TEST_CASE("Pitch's Shift and Fine hover text follows the Scale: Free, a scale, and Free again, on the card") {
+	// THE HOVER ROAD READS A CONTROL'S OVERRIDE FIRST (`tooltipAt`), so the override on the card's own control is the value a
+	// hand sees. Three steps, so a text that stuck from the first step would fail the last. Pitch has no window.
+	namespace pt = feathers::fx::pitch;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag("PITCH");
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::PitchCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	const auto scaleField = static_cast<size_t>(pt::Param::Scale);
+	const auto text = [](const char* t) { return t == nullptr ? std::string {} : std::string(t); };
+	for (const float scale : { 0.0f, 1.0f, 0.0f }) {
+		CAPTURE(scale);
+		f.deviceHost.setField(placed.device, scaleField, scale);
+		(void)card->updateContent();
+		const pt::ScaleTips& want = pt::tipsFor(scale != 0.0f);
+		CHECK(text(card->controlForTest(static_cast<size_t>(pt::Param::Shift)).tooltipOverride()) == std::string(want.shift));
+		CHECK(text(card->controlForTest(static_cast<size_t>(pt::Param::Fine)).tooltipOverride()) == std::string(want.fine));
+	}
+	// AND THE TWO TEXTS DIFFER, or the check would pass on a table that said one thing everywhere.
+	CHECK(std::string(pt::kFreeTips.shift) != pt::kScaledTips.shift);
 }
 
 TEST_CASE("every hoverable control on the Engine rail shows its tooltip, on both pages") {

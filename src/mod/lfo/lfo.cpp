@@ -18,8 +18,13 @@
 #include "lfo.h"
 #include "mod/per_note.h"
 
+#include "device/tick_window.h"
+
 #include <algorithm>
 #include <cmath>
+#include <array>
+#include <numbers>
+#include <optional>
 #include <utility>
 
 namespace feathers::mod::lfo {
@@ -33,7 +38,9 @@ namespace {
 /// (backlog NJ). A rate of zero is a hold, not a period, so it stays on the free road, which holds.
 bool followsSongSeconds(const Settings& s, const TransportClock& clock, float hz, float rateMul) noexcept {
 	const double cyclesPerSecond = static_cast<double>(hz) * static_cast<double>(rateMul);
-	return s.mode == Mode::Free && !s.synced() && clock.playing && clock.havePositionSeconds()
+	// THE NOTE BASE FOLLOWS NO SONG CLOCK: its frequency changes with the note, and a phase read off the song's seconds
+	// would jump at every note.
+	return s.mode == Mode::Free && !s.synced() && !s.noteTracked() && clock.playing && clock.havePositionSeconds()
 	       && std::isfinite(cyclesPerSecond) && cyclesPerSecond > 0.0;
 }
 
@@ -70,12 +77,16 @@ void Shape::reset() {
 	randomPrimed_ = false;
 	trigPending_ = false;
 	trigRestart_ = false;
+	winOk_ = false;
+	winRenderedAt_ = winRenderedAtR_ = ~uint64_t { 0 };
 }
 
 float Shape::tick(const Settings& settings, bool gate, bool retrigger, TransportClock clock,
                   float rateMul) {
 	const Settings s = settings;
 	clock_ = clock;
+	tickInc_ = 0.0;
+	++tickSerial_;
 	cycles_ = s.mode != Mode::Once;
 
 	// THE GATE, ONCE, AT ONE PLACE. Free and LFO Retrig substitute an always-up gate.
@@ -134,8 +145,9 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 	// out here and nowhere else, which was fine until the card needed the same answer: what a one-pole
 	// does to a periodic wave depends on `tau / period`, so a picture of the smoothing needs the
 	// period the ENGINE is using rather than one computed beside it. See `rateHz`.
-	const float hz =
-	    static_cast<float>(rateHz(s, clock.haveTempo() ? clock.secondsPerBeat : 0.0));
+	const double hzNow = rateHz(s, clock.haveTempo() ? clock.secondsPerBeat : 0.0, noteSemitonesToHz(noteSemitones_));
+	const float hz = static_cast<float>(hzNow);
+	effectiveHz_ = static_cast<double>(hz) * static_cast<double>(rateMul);
 
 	// ADVANCE THE PHASE.
 	//
@@ -154,6 +166,7 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 	    && std::isfinite(windowBeats)) {
 		// **PLUS THE PHASE CONTROL** (backlog NJ follow-up, 2026-10-17): it was live here and moved nothing — the honesty
 		// rule broken on the one road that ignored it. The Hz road adds it the same way.
+		tickInc_ = trigRestart_ ? 0.0 : tickSeconds_ / (clock.secondsPerBeat * windowBeats);
 		double turns = lock_.follow(clock.songPositionBeats, windowBeats, tickSeconds_ / clock.secondsPerBeat, 1);
 		if (trigRestart_) {
 			lock_.restartAt(0.0); // a Trig's reset holds against the song (backlog MV); Phase is added below
@@ -169,6 +182,7 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 		// owes the tempo nothing: a tempo change mid-song does not move it, a playhead jump moves it with the song
 		// (the lock re-anchors), and a bounce therefore matches playback. Its own unit (2), so leaving a synced base
 		// for this one re-anchors rather than subtracting beats from seconds. Stopped, it runs free as before.
+		tickInc_ = static_cast<double>(hz) * static_cast<double>(rateMul) * tickSeconds_;
 		double turns = lock_.follow(clock.songPositionSeconds,
 		                            1.0 / (static_cast<double>(hz) * static_cast<double>(rateMul)), tickSeconds_, 2);
 		if (trigRestart_) {
@@ -221,6 +235,14 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 		raw_ = eval(s, position_.phase);
 	}
 
+	// **WHAT THE WINDOW RENDERER NEEDS OF THIS TICK** (`renderWindow`): the phase it ended on and how far it moved, and
+	// whether that was a plain run of a shaped wave. A walk, a rest, a finished one-shot or a restarted song lock is not.
+	lastSettings_ = s;
+	smoothedBefore_ = smoothed_;
+	winEnd_ = static_cast<double>(position_.phase);
+	winInc_ = tickInc_;
+	winOk_ = !isRandom(s.wave) && !(stopsAtKey_ && resting_) && !position_.finished && std::isfinite(winInc_)
+	         && winInc_ > 0.0;
 	// SMOOTHING. IIR lowpass — for random walk this turns steps into glides.
 	//
 	// **TWO THINGS WERE WRONG WITH THE LINE THIS REPLACES, AND THEY POINTED THE SAME WAY.** It read
@@ -263,6 +285,218 @@ float Shape::tick(const Settings& settings, bool gate, bool retrigger, Transport
 	return value_;
 }
 
+
+//------------------------------------------------------------------------------------------------//
+// The tick as a curve                                                                            //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE ANTIDERIVATIVE, in wave phase 0..1, of the unipolar wave `evalWaveform` returns — so the average of the wave over
+/// any stretch is a difference of two of these, exact, with no sampling of a corner.
+double waveIntegral(Waveform wave, double p) noexcept {
+	switch (wave) {
+		case Waveform::Sine:
+			return 0.5 * p - std::cos(2.0 * M_PI * p) / (4.0 * M_PI);
+		case Waveform::Triangle:
+			return p < 0.5 ? p * p : 2.0 * p - p * p - 0.5;
+		case Waveform::Square:
+			return p < 0.5 ? p : 0.5;
+		default:
+			return 0.0;
+	}
+}
+
+/// THE SKEWED WAVE'S RUNNING INTEGRAL OVER TIME, in cycles — `SkewMap`'s piecewise-linear time warp put through
+/// `waveIntegral`. Inside a quadrant the wave phase is linear in time, so its integral is the quadrant's width times four,
+/// times the difference of the wave integrals. The per-cycle total and each quadrant's start are made once.
+struct SkewIntegral {
+	Waveform wave;
+	std::array<double, 4> weight {};
+	std::array<double, 4> start {};  ///< where each quadrant begins, in cycles
+	std::array<double, 4> before {}; ///< the integral up to the start of each quadrant
+	double cycle = 0.0;              ///< the integral over one whole cycle
+
+	SkewIntegral(const Settings& s) : wave(s.wave) {
+		const SkewMap map(s.skewPrePeak, s.skewPreCross, s.skewPreTrough);
+		double at = 0.0;
+		double sum = 0.0;
+		for (size_t q = 0; q < 4; ++q) {
+			weight[q] = static_cast<double>(map.weight[q]);
+			start[q] = at;
+			before[q] = sum;
+			if (weight[q] > 0.0) {
+				sum += 4.0 * weight[q]
+				       * (waveIntegral(wave, 0.25 * static_cast<double>(q + 1)) - waveIntegral(wave, 0.25 * static_cast<double>(q)));
+			}
+			at += weight[q];
+		}
+		cycle = sum;
+	}
+
+	/// THE INTEGRAL FROM CYCLE ZERO TO `t` (cycles, any real: whole cycles add the per-cycle total).
+	[[nodiscard]] double at(double t) const noexcept {
+		const double whole = std::floor(t);
+		const double u = t - whole;
+		for (size_t q = 0; q < 4; ++q) {
+			if (weight[q] > 0.0 && u < start[q] + weight[q]) {
+				const double wp = 0.25 * (static_cast<double>(q) + (u - start[q]) / weight[q]);
+				return whole * cycle + before[q]
+				       + 4.0 * weight[q] * (waveIntegral(wave, wp) - waveIntegral(wave, 0.25 * static_cast<double>(q)));
+			}
+		}
+		return whole * cycle + cycle;
+	}
+};
+
+} // namespace
+
+bool Shape::renderWindow(bool rightEar, float* window) const noexcept {
+	if (window == nullptr || !winOk_ || gWindowPolicy == WindowPolicy::Never) {
+		return false;
+	}
+	const Settings& s = lastSettings_;
+	if (rightEar && s.mode == Mode::Once) {
+		return false; // the right ear of a one-shot waits at the end, which is not a plain run
+	}
+	constexpr int n = device::kTickWindow;
+	const double lead = rightEar ? static_cast<double>(s.stereoLead()) : 0.0;
+	const double end = winEnd_ + lead;
+	const double perSample = winInc_ / static_cast<double>(n);
+	// WHERE SAMPLE k SITS in cycles: the tick ends on `end`, and the ramp this replaces put sample n-1 there.
+	const auto phaseOf = [&](int k) { return end - perSample * static_cast<double>(n - 1 - k); };
+
+	if (gWindowPolicy == WindowPolicy::Auto) {
+		// DOES THE CURVE STRAY FROM THE RAMP? Three interior points against the chord from the tick's start to its end.
+		const auto point = [&](double t) {
+			return static_cast<double>(eval(s, static_cast<float>(t - std::floor(t))));
+		};
+		const double a = point(phaseOf(-1));
+		const double b = point(phaseOf(n - 1));
+		double worst = 0.0;
+		for (const int k : { n / 4 - 1, n / 2 - 1, 3 * n / 4 - 1 }) {
+			const double chord = a + (b - a) * static_cast<double>(k + 1) / static_cast<double>(n);
+			worst = std::max(worst, std::abs(point(phaseOf(k)) - chord));
+		}
+		if (worst <= static_cast<double>(kWindowRampBound)) {
+			return false;
+		}
+	}
+
+	// SMOOTHING, per sample: the same one-pole, its step the exact pole for ONE SAMPLE. It carries between consecutive
+	// windows; after a gap it starts from where the tick's own pole stood before this tick.
+	const double tau = mod::smoothingTau(s.smoothing);
+	const bool smooth = tau > 0.0;
+	const double coeff = smooth ? 1.0 - std::exp(-1.0 / (sampleRate_ * tau)) : 1.0;
+	double& pole = rightEar ? winSmoothedR_ : winSmoothed_;
+	uint64_t& renderedAt = rightEar ? winRenderedAtR_ : winRenderedAt_;
+	if (smooth && renderedAt + 1 != tickSerial_) {
+		pole = smoothedBefore_;
+	}
+	renderedAt = tickSerial_;
+
+	// **THE WAVE READ AT EACH SAMPLE, WITH ITS CORNERS BAND-LIMITED** (polyBLEP for a jump, polyBLAMP for a change of
+	// slope). The skewed wave's corners are at the four quadrant boundaries: there the wave may jump (a square's edges) or
+	// turn (a triangle's peak, a skew's kink), by amounts that follow from the wave and the weights. A two-sample
+	// polynomial residual is added within one sample either side of each, which is what stops an edge folding back as alias.
+	struct Corner {
+		double at, jump, turn; ///< where (cycles), and by how much the value jumps and its slope (per cycle) turns
+	};
+	std::array<Corner, 4> corners {};
+	size_t cornerCount = 0;
+	const SkewMap skew(s.skewPrePeak, s.skewPreCross, s.skewPreTrough);
+	const double pi = std::numbers::pi;
+	// ONE-SIDED VALUE AND SLOPE of the unipolar wave at wave phase p = q/4: `left` is the limit from below.
+	const auto value = [&](double p, bool left) {
+		switch (s.wave) {
+			case Waveform::Sine: return 0.5 + 0.5 * std::sin(2.0 * pi * p);
+			case Waveform::Triangle: return 1.0 - std::abs(2.0 * p - 1.0);
+			case Waveform::Square: return left ? (p <= 0.0 || p > 0.5 ? 0.0 : 1.0) : (p < 0.5 ? 1.0 : 0.0);
+			default: return 0.0;
+		}
+	};
+	const auto slope = [&](double p, bool left) {
+		switch (s.wave) {
+			case Waveform::Sine: return pi * std::cos(2.0 * pi * p);
+			case Waveform::Triangle: return (left ? p <= 0.5 : p < 0.5) ? 2.0 : -2.0;
+			default: return 0.0;
+		}
+	};
+	{
+		const double scale = s.bipolar ? 2.0 : 1.0;
+		double begin = 0.0;
+		for (size_t q = 0; q < 4; ++q) {
+			const double width = static_cast<double>(skew.weight[q]);
+			if (width <= 0.0) {
+				continue; // a quadrant with no width has no corner of its own
+			}
+			// THE NEAREST QUADRANT WITH WIDTH BEFORE THIS ONE, wrapping: where the wave comes from.
+			size_t before = (q + 3) % 4;
+			while (skew.weight[before] <= 0.0 && before != q) {
+				before = (before + 3) % 4;
+			}
+			const double widthBefore = static_cast<double>(skew.weight[before]);
+			const double pAfter = 0.25 * static_cast<double>(q);
+			const double pBefore = 0.25 * static_cast<double>(before + 1);
+			const double jump = scale * (value(pAfter, false) - value(pBefore, true));
+			const double turn = scale * (slope(pAfter, false) / (4.0 * width) - slope(pBefore, true) / (4.0 * widthBefore));
+			if (jump != 0.0 || turn != 0.0) {
+				corners[cornerCount++] = Corner { begin, jump, turn };
+			}
+			begin += width;
+		}
+	}
+	const auto residual = [&](double phase) {
+		double r = 0.0;
+		for (size_t c = 0; c < cornerCount; ++c) {
+			double t = phase - corners[c].at;
+			t -= std::round(t); // the signed distance in cycles, nearest copy of the corner
+			if (std::abs(t) >= perSample) {
+				continue;
+			}
+			const double u = t / perSample; // in samples, -1..1
+			if (corners[c].jump != 0.0) {
+				// polyBLEP: the two-sample polynomial band-limited step, scaled to half the jump.
+				const double p = u >= 0.0 ? (u + u - u * u - 1.0) : (u * u + u + u + 1.0);
+				r += 0.5 * corners[c].jump * p;
+			}
+			if (corners[c].turn != 0.0) {
+				// polyBLAMP: its integral, for a change of slope (per cycle) over one sample's width.
+				const double p = u >= 0.0 ? std::pow(1.0 - u, 3.0) / 3.0 : std::pow(u + 1.0, 3.0) / 3.0;
+				r += 0.5 * corners[c].turn * perSample * p;
+			}
+		}
+		return r;
+	};
+
+	const bool boxed = perSample >= 0.25; // past a quarter cycle a sample, the average over the slice is the honest answer
+	// THE BOX-AVERAGE ROAD'S INTEGRAL, made only when that road is taken (it costs a few trig calls)
+	std::optional<SkewIntegral> integral;
+	if (boxed) {
+		integral.emplace(s);
+	}
+	const double half = 0.5 * perSample;
+	double previous = boxed ? integral->at(phaseOf(-1) + half) : 0.0;
+	for (int k = 0; k < n; ++k) {
+		double v;
+		if (boxed) {
+			const double now = integral->at(phaseOf(k) + half);
+			v = static_cast<double>(applyBipolar(s, static_cast<float>((now - previous) / perSample)));
+			previous = now;
+		}
+		else {
+			const double ph = phaseOf(k);
+			v = static_cast<double>(applyBipolar(s, evalWaveform(s.wave, skew.remap(static_cast<float>(ph - std::floor(ph)))))) + residual(ph);
+		}
+		if (smooth) {
+			pole += coeff * (v - pole);
+			v = pole;
+		}
+		window[k] = static_cast<float>(v);
+	}
+	window[n] = 0.0f; // moving: the reader takes the per-sample road
+	return true;
+}
 float Shape::rawRightAt(const Settings& s, float lead) const noexcept {
 	// A FINISHED ONE-SHOT HOLDS WHERE IT ENDED in both ears: the right ear, being ahead, finished first.
 	if (s.mode == Mode::Once && position_.finished) {
@@ -379,6 +613,7 @@ void Shape::advance(const Settings& s, float hz, float rateMul) {
 		return;
 	}
 	const float increment = hz * rateMul * static_cast<float>(tickSeconds_);
+	tickInc_ = static_cast<double>(hz) * static_cast<double>(rateMul) * tickSeconds_;
 	float phase = position_.phase + increment;
 
 	if (s.mode == Mode::Once) {
@@ -636,6 +871,17 @@ const device::ModOps kModOps {
 		    return device::EarPair { shape.value(), shape.valueRight() };
 	    },
 	.trigFires = [](const void* storage) { return asShape(storage).trigFires; },
+	// THE TICK AS A CURVE, sample by sample — see `Shape::renderWindow`. The collapsed output is the shared shape's, a
+	// note's its own (the same pick `outputAt` and `outputForNote` make).
+	.renderWindow =
+	    [](const void* storage, size_t output, bool forNote, int32_t noteId, int16_t channel, int16_t key, bool rightEar,
+	       float* window) {
+		    if (output != 0) {
+			    return false;
+		    }
+		    const Shape& shape = forNote ? asShape(storage).shapeForNote(noteId, channel, key) : asShape(storage).sharedShape();
+		    return shape.renderWindow(rightEar, window);
+	    },
 };
 
 /// THE NOTE LANE'S HALF — the MSEG's, which is the DAHDSR's.

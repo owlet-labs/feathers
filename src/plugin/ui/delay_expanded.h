@@ -174,6 +174,8 @@ public:
 	DelayExpanded(backplane::DeviceHost& host, WidgetRegistry& registry, DeviceInstanceId id, Notifier* notifier = nullptr);
 	DelayExpanded(backplane::DeviceHost&, WidgetRegistry&, size_t, Notifier* = nullptr) = delete;
 	~DelayExpanded() override;
+	/// The window's own control for a parameter (a test seam for its hover text).
+	[[nodiscard]] DeviceControl& controlForTest(fx::delay::Param p) const { return control(p); }
 
 	void draw(visage::Canvas& canvas) override;
 	void resized() override;
@@ -218,6 +220,8 @@ protected:
 
 private:
 	[[nodiscard]] DeviceControl& control(fx::delay::Param p) const;
+	/// Time's and Mix's hover text by the Mode, Sync and Dub (`delay_tips.h`), set on each content update.
+	int tipKey_ = -1;
 	[[nodiscard]] bool gateOpen(fx::delay::Param p) const;
 	[[nodiscard]] int modeNow() const;
 	void layOut();

@@ -486,7 +486,11 @@ bool SurfaceLayers::dismissPanelFor(DeviceInstanceId device, DeviceNest nest) {
 	return overlay_->dismissPanelFor(device, nest);
 }
 
-SurfaceId SurfaceLayers::presentMounted(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss) {
+SurfaceId SurfaceLayers::presentMounted(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss,
+                                        const visage::Frame* opener) {
+	if (opener == nullptr) {
+		opener = anchor_; // the innermost host that asked names the opener; the hops outward pass it on
+	}
 	// **THE FORWARD IS HERE RATHER THAN IN `presentImpl`, AND THAT IS BACKLOG HQ'S SECOND DEFECT.**
 	//
 	// THE BUG: for a SKLITTER inside a rack inside a SKLITTER, the windowed editor would not open.
@@ -517,7 +521,7 @@ SurfaceId SurfaceLayers::presentMounted(std::unique_ptr<MountedFrame> mounted, s
 				onDismiss();
 			}
 		};
-		const SurfaceId id = outer_->presentMounted(std::move(mounted), std::move(told));
+		const SurfaceId id = outer_->presentMounted(std::move(mounted), std::move(told), opener);
 		if (id != kNoSurface) {
 			forwarded_.push_back({ id, raw });
 		}
@@ -529,14 +533,15 @@ SurfaceId SurfaceLayers::presentMounted(std::unique_ptr<MountedFrame> mounted, s
 	// new panel arrives (canvas doc §3f). Asked afresh at every present, because the band folds and its
 	// partition moves between them.
 	overlay_->setPreferredRegion(canvasRegion());
-	return presentOverlay(std::move(mounted), std::move(onDismiss));
+	return presentOverlay(std::move(mounted), std::move(onDismiss), opener);
 }
 
-SurfaceId SurfaceLayers::presentOverlay(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss) {
+SurfaceId SurfaceLayers::presentOverlay(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss,
+                                        const visage::Frame* opener) {
 	// SEVERAL PANELS AT ONCE, ONE PER DEVICE — `ExpandedOverlay`'s own rule: `show` dismisses a panel it
 	// replaces THROUGH the dismissal road (`onDismissPanel`), so that entry is erased here before this
 	// one is added, and its presenter is told rather than having its content vanish.
-	const ExpandedOverlay::PanelId panel = overlay_->show(std::move(mounted));
+	const ExpandedOverlay::PanelId panel = overlay_->show(std::move(mounted), opener);
 	if (panel == ExpandedOverlay::kNoPanel) {
 		return kNoSurface;
 	}

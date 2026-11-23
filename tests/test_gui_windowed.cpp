@@ -5665,4 +5665,211 @@ TEST_CASE("fold strips: the synth's own folded Engine rail photographed beside t
 	XCloseDisplay(display);
 }
 
+namespace {
+
+/// A Rack window with one device window OWNED by it (opened from a chain's card inside the Rack) and one unrelated window in front of both, in a
+/// real X window: the order is [rack, owned, other] (back to front) and `other` has been dragged clear to the right.
+struct OwnedRaiseRig : ListWindowRig {
+	ui::ExpandedOverlay* overlay = nullptr;
+	ui::ExpandedOverlay::PanelId rackId = 0, ownedId = 0, otherId = 0;
+
+	OwnedRaiseRig() : ListWindowRig(2, 3, false) {
+		XMapWindow(display, parent);
+		XSync(display, False);
+		overlay = f.gui.expandedForTest();
+		REQUIRE(overlay != nullptr);
+		rackId = overlay->frontPanelIdForTest();
+		ui::ChainColumn* column = panel->railForTest(panel->viewModelForTest().viewedChain()).column();
+		REQUIRE(column != nullptr);
+		column->expandDevice(column->deviceAt(0));
+		tick();
+		pumpEditor(f.gui, 3);
+		ownedId = overlay->frontPanelIdForTest();
+		REQUIRE(ownedId != rackId);
+		// THE OWNED WINDOW TO THE RIGHT, so the Rack's own controls (its left side) stay clear of it.
+		overlay->beginPanelDrag();
+		overlay->dragPanelBy({ 3000.0f, 0.0f });
+		pumpEditor(f.gui, 3);
+		const size_t slot2 = f.addFx(fx::harm::kTraits.tag);
+		f.lane->onExpandDevice(slot2);
+		tick();
+		pumpEditor(f.gui, 3);
+		otherId = overlay->frontPanelIdForTest();
+		REQUIRE(otherId != ownedId);
+		// THE UNRELATED WINDOW FOLDED TO ITS TITLE STRIP AND PUT IN THE BOTTOM RIGHT CORNER: in front of both, hiding little of either.
+		overlay->setFolded(otherId, true);
+		overlay->beginPanelDrag();
+		overlay->dragPanelBy({ 3000.0f, 3000.0f });
+		pumpEditor(f.gui, 3);
+	}
+	/// A point on panel `id`'s head, clear of its buttons.
+	[[nodiscard]] visage::Point headPointOf(ui::ExpandedOverlay::PanelId id) const {
+		const visage::Bounds b = overlay->panelBounds(id);
+		return { b.x() + 40.0f, b.y() + ui::ExpandedOverlay::kTitleHeight * 0.5f };
+	}
+	std::vector<ui::ExpandedOverlay::PanelId> order() const { return overlay->panelIdsForTest(); }
+	[[nodiscard]] long at(ui::ExpandedOverlay::PanelId id) const {
+		const auto ids = order();
+		const auto it = std::find(ids.begin(), ids.end(), id);
+		return it == ids.end() ? -1 : static_cast<long>(it - ids.begin());
+	}
+	/// A point of panel `id`'s body that no other open window covers and that resolves to something inside `id`.
+	[[nodiscard]] std::optional<visage::Point> bodyPointOf(ui::ExpandedOverlay::PanelId id) const {
+		const visage::Bounds b = overlay->panelBounds(id);
+		ui::ExpandedPanel* me = overlay->panelForTest(id);
+		for (float y = b.y() + ui::ExpandedOverlay::kTitleHeight + 6.0f; y < b.y() + b.height() - 8.0f; y += 9.0f) {
+			for (float x = b.x() + 8.0f; x < b.x() + b.width() - 8.0f; x += 9.0f) {
+				bool covered = false;
+				for (const auto other : order()) {
+					const visage::Bounds o = overlay->panelBounds(other);
+					covered = covered || (at(other) > at(id) && x >= o.x() && x <= o.x() + o.width() && y >= o.y() && y <= o.y() + o.height());
+				}
+				if (covered) {
+					continue;
+				}
+				visage::Frame* hit = top->frameAtPoint({ x, y });
+				for (visage::Frame* a = hit; a != nullptr; a = a->parent()) {
+					if (a == me) {
+						return visage::Point(x, y);
+					}
+				}
+			}
+		}
+		return std::nullopt;
+	}
+	/// A beat WITHOUT `panel->update()`: the Rack's content is gone once its window closes.
+	void settle() { (void)f.gui.tickForTest(); }
+	void clickAt(visage::Point where) {
+		const double scale = f.root->dpiScale();
+		const visage::IPoint n { static_cast<int>(where.x * scale), static_cast<int>(where.y * scale) };
+		EditorPointer p { display, reinterpret_cast<::Window>(static_cast<visage::ApplicationWindow*>(f.root)->window()->nativeHandle()) };
+		p.send(MotionNotify, n.x, n.y, 0, 0);
+		p.send(ButtonPress, n.x, n.y, Button1, 0);
+		pumpEditor(f.gui, 3);
+		p.send(ButtonRelease, n.x, n.y, Button1, Button1Mask);
+		for (int i = 0; i < 4; ++i) {
+			settle();
+			pumpEditor(f.gui, 3);
+		}
+	}
+};
+
+void collectKnobsOutsideColumns(visage::Frame* at, std::vector<ui::Knob*>& out) {
+	if (at == nullptr || !at->isVisible() || dynamic_cast<ui::ChainColumn*>(at) != nullptr) {
+		return;
+	}
+	if (auto* knob = dynamic_cast<ui::Knob*>(at); knob != nullptr && knob->width() > 0.0f && knob->control() != nullptr) {
+		out.push_back(knob);
+	}
+	for (visage::Frame* child : at->children()) {
+		collectKnobsOutsideColumns(child, out);
+	}
+}
+
+} // namespace
+
+TEST_CASE("owned windows: a real press on a Rack window raises it with the window opened from inside it, which stays above it, and the press still lands") {
+	OwnedRaiseRig r;
+	REQUIRE(r.overlay->ownerOfForTest(r.ownedId) == r.rackId);
+	REQUIRE(r.overlay->ownerOfForTest(r.otherId) == ui::ExpandedOverlay::kNoPanel);
+	REQUIRE(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.rackId, r.ownedId, r.otherId });
+
+	SUBCASE("(a) a press on the Rack's body brings the Rack and its owned window to the front, and a drag on a Rack control lands") {
+		std::vector<ui::Knob*> knobs;
+		collectKnobsOutsideColumns(r.overlay->panelForTest(r.rackId), knobs);
+		ui::Knob* target = nullptr;
+		for (ui::Knob* k : knobs) {
+			const visage::Point c = k->positionInWindow() + visage::Point(k->width() / 2, k->height() / 2);
+			bool covered = false;
+			for (const auto id : { r.ownedId, r.otherId }) {
+				const visage::Bounds o = r.overlay->panelBounds(id);
+				covered = covered || (c.x >= o.x() && c.x <= o.x() + o.width() && c.y >= o.y() && c.y <= o.y() + o.height());
+			}
+			bool hit = false;
+			for (visage::Frame* a = r.top->frameAtPoint(c); a != nullptr; a = a->parent()) {
+				hit = hit || a == k;
+			}
+			if (!covered && c.x > 0.0f && c.x < r.f.root->width() && hit) {
+				target = k;
+				break;
+			}
+		}
+		CAPTURE(knobs.size());
+		REQUIRE(target != nullptr);
+		const double before = target->control()->value();
+		const visage::Point c = target->positionInWindow() + visage::Point(target->width() / 2, target->height() / 2);
+		const double scale = r.f.root->dpiScale();
+		const visage::IPoint n { static_cast<int>(c.x * scale), static_cast<int>(c.y * scale) };
+		EditorPointer p { r.display, reinterpret_cast<::Window>(static_cast<visage::ApplicationWindow*>(r.f.root)->window()->nativeHandle()) };
+		p.send(MotionNotify, n.x, n.y, 0, 0);
+		p.send(ButtonPress, n.x, n.y, Button1, 0);
+		pumpEditor(r.f.gui, 3);
+		// RAISED ON THE PRESS: the Rack and its owned window above the unrelated one, the owned window above the Rack.
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+		for (int i = 1; i <= 10; ++i) {
+			p.send(MotionNotify, n.x, n.y + 6 * i, 0, Button1Mask);
+			pumpEditor(r.f.gui, 2);
+		}
+		p.send(ButtonRelease, n.x, n.y + 60, Button1, Button1Mask);
+		pumpEditor(r.f.gui, 5);
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+		CHECK(target->control()->value() != before);
+	}
+	SUBCASE("(a) a press on bare Rack body does the same") {
+		const std::optional<visage::Point> body = r.bodyPointOf(r.rackId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+	}
+	SUBCASE("(b) a press on the owned window raises the group with the owned window on top, above the Rack") {
+		const std::optional<visage::Point> body = r.bodyPointOf(r.ownedId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+	}
+	SUBCASE("(c) a press on the Rack while its owned window is already in front never drops the owned window below it") {
+		const std::optional<visage::Point> first = r.bodyPointOf(r.ownedId);
+		REQUIRE(first.has_value());
+		r.clickAt(*first);
+		REQUIRE(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+		const std::optional<visage::Point> body = r.bodyPointOf(r.rackId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.at(r.ownedId) > r.at(r.rackId));
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+	}
+	SUBCASE("an unrelated window raised over the group leaves the group together and in order") {
+		const std::optional<visage::Point> first = r.bodyPointOf(r.rackId);
+		REQUIRE(first.has_value());
+		r.clickAt(*first);
+		r.clickAt(r.headPointOf(r.otherId));
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.rackId, r.ownedId, r.otherId });
+	}
+	SUBCASE("(d) closing the owner leaves no ownership pointing at it, and the window that remains still raises") {
+		r.overlay->dismiss(r.rackId);
+		r.settle();
+		pumpEditor(r.f.gui, 3);
+		for (const auto id : r.order()) {
+			const auto owner = r.overlay->ownerOfForTest(id);
+			CHECK((owner == ui::ExpandedOverlay::kNoPanel || r.at(owner) >= 0));
+		}
+		for (const auto id : r.order()) {
+			if (const std::optional<visage::Point> body = r.bodyPointOf(id); body.has_value()) {
+				r.clickAt(*body);
+			}
+		}
+		CHECK(r.at(r.rackId) == -1);
+	}
+	SUBCASE("(d) closing the owned window leaves the Rack alone, and the Rack still raises") {
+		r.overlay->dismiss(r.ownedId);
+		r.settle();
+		pumpEditor(r.f.gui, 3);
+		CHECK(r.at(r.ownedId) == -1);
+		const std::optional<visage::Point> body = r.bodyPointOf(r.rackId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.overlay->frontPanelIdForTest() == r.rackId);
+	}
+}
+
 #endif // defined(__linux__)

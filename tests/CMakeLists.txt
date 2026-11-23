@@ -1182,6 +1182,12 @@ target_link_libraries(test_mod_lfo PRIVATE feathers-mod feathers-warnings)
 target_include_directories(test_mod_lfo PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME mod-lfo COMMAND test_mod_lfo)
 
+# The LFO's Note time base: the wave tracks the played note's frequency (control-tick rate, clamped), per voice under Poly.
+add_executable(test_mod_lfo_note test_mod_lfo_note.cpp)
+target_link_libraries(test_mod_lfo_note PRIVATE feathers-mod feathers-warnings)
+target_include_directories(test_mod_lfo_note PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME mod-lfo-note COMMAND test_mod_lfo_note)
+
 # Smoothing across a retrigger (backlog MM), for the three shaped modulators at once — the LFO, the MSEG
 # and the DAHDSR share `mod::PolyShape`, which is where a new note's shape begins.
 add_executable(test_mod_retrigger_smoothing test_mod_retrigger_smoothing.cpp)
@@ -2213,3 +2219,10 @@ target_link_libraries(test_smooth_peak PRIVATE feathers-fx feathers-warnings)
 target_include_directories(test_smooth_peak PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 target_compile_options(test_smooth_peak PRIVATE ${FEATHERS_FP_EXACT})
 add_test(NAME smooth-peak COMMAND test_smooth_peak)
+
+# THE ONE- AND EIGHT-MACRO DEVICES (MACRO1, MACROS8): each output by value through the shared ops, routes into
+# a macro at the engine, a patch saved and loaded into a fresh instance, and the four-macro MACROS patch pinned.
+add_executable(test_mod_macros_variants test_mod_macros_variants.cpp)
+target_link_libraries(test_mod_macros_variants PRIVATE feathers-synth feathers-warnings)
+target_include_directories(test_mod_macros_variants PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME mod-macros-variants COMMAND test_mod_macros_variants)

@@ -408,7 +408,11 @@ private:
 	[[nodiscard]] float liveRowsExtent() const;
 	/// Re-lay out when the gate control has moved since the last paint. See the .cpp.
 	[[nodiscard]] bool relayoutIfGateMoved();
+protected:
 	DeviceControl& control(size_t index);
+	/// A SURFACE'S OWN HOVER TEXT, set before the controls draw on each content update (the Delay's Time and Mix, by its Mode, Sync and Dub).
+	virtual void refreshTips() {}
+private:
 
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt.
 	device::Modulatable* enableModulatable() override {

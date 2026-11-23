@@ -191,7 +191,8 @@ std::string LfoCard::rateFace(double value) const {
 	lfo::Settings s {};
 	s.timeBase = base;
 	s.timeScale = static_cast<float>(value);
-	if (s.synced()) {
+	// NOTE READS ITS RATIO ("1X" is the note itself), like a division's multiple: it is not a frequency until a note plays.
+	if (s.synced() || s.noteTracked()) {
 		return device::formatValue(lfo::kParamDescs[static_cast<size_t>(lfo::Param::TimeScale)], value);
 	}
 	// THE ENGINE'S RULE FOR THE FREQUENCY — `rateHz` with no tempo is exactly the Hz base's reading.
@@ -224,7 +225,7 @@ std::string LfoCard::choiceFace(lfo::Param param, double value) {
 const std::array<LfoCard::Chip, LfoCard::kChipCount>& LfoCard::chips() {
 	static const std::array<Chip, kChipCount> k {
 		// WAVEFORM AND MODE ARE NOT CHIPS ANY MORE — see `choices()` (backlog GG). A chip is a switch.
-		Chip { lfo::Param::PingPong, "P-P" },
+		// PING-PONG IS NOT A CHIP: the engine never reads it, so the switch was dead in every mode (hidden 2026-11-22).
 		Chip { lfo::Param::Bipolar, "±" },
 		// **POLY — one shape per note, or one for the device**. A switch, so a chip: two states,
 		// both visible by being the only two.

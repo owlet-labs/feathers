@@ -212,6 +212,80 @@ inline constexpr device::Traits kTraits {
 inline constexpr const char* kKindLabels[] = { "Kick", "Membrane", "Snare", "Metal", "Clap", "String", "Particle", "Friction", "Water", "Sweep" };
 static_assert(std::size(kKindLabels) == feathers::drum::kKindCount);
 
+// THE TOOLTIPS THAT FOLLOW THE KIND (TV audit): a Kind changes what these five controls do, so each names what it does in the current Kind.
+// Indexed by `feathers::drum::Kind` (Kick 0 .. Sweep 9). Refreshed on every road by `DrumDeviceModel::refreshTooltips`, which reads the Kind.
+inline constexpr const char* kToneTips[] = {
+	"Where the head is struck: low is a dull, round thump, high brings out its upper overtones",
+	"Where the head is struck: low is a dull, round note, high brings out its upper overtones",
+	"How bright the snare's wires hiss: low is a dark rattle, high a crisp, thin hiss",
+	"The band the metal rings through: low is a dull clank, high a bright ting",
+	"The band the clap's hands sit in: low is a thick clap, high a thin crack",
+	"How damped the string is: low dies at once, high rings free and bright",
+	"How bright the grains are: low is a dark, muffled patter, high a bright, sharp one",
+	"How bright the bowed slip is: low is a dull, rubbed hum, high a bright, squeaking one",
+	"The colour of the splash and the bed: low is dark and rounded, high bright and splashy",
+	"The filter's type: low is a dark low-pass, high a band-pass that sounds vocal",
+};
+static_assert(std::size(kToneTips) == feathers::drum::kKindCount);
+
+inline constexpr const char* kSnapTips[] = {
+	"How hard the attack is: a soft mallet click to a hard stick",
+	"How hard the mallet strikes the head: a soft mallet to a hard stick",
+	"How hard the head is struck, and how sharp its click and bell are: soft to hard",
+	"How hard the strike's click is: a soft tap to a hard hit",
+	"How sharp each clap's first hand is: a soft, slow hand to a hard, sharp one",
+	"How hard the pluck is: a soft felt hammer to a hard one",
+	"How unequal the grains are: soft ones all alike, hard ones a mix of big and small",
+	"The bow's edge: how sharply the slip catches, soft to a hard, squealing edge",
+	"How hard the drips strike: soft, long splashes to short, hard chirps",
+	"How resonant the sweep is: open at soft, a whistle at hard",
+};
+static_assert(std::size(kSnapTips) == feathers::drum::kKindCount);
+
+inline constexpr const char* kDecayTips[] = {
+	"How long the body rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the head rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the head rings: the time it takes to fall 60 dB. The wires and the click have their own decays",
+	"How long the metal rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the clap's tail lasts: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the string rings: the time it takes to fall 60 dB. The terrain's Length stretches or shortens it",
+	"How long the shower fades: in One-shot, the time it takes to fall 60 dB. A Gate or a Drone holds it instead",
+	"How long the bow's ring lasts: in One-shot, the time it takes to fall 60 dB. A Gate or a Drone holds it instead",
+	"How long the rain falls: in One-shot, the time it takes to fall 60 dB. A Gate or a Drone holds it instead",
+	"How long one sweep runs: the time it takes to fall 60 dB, unless Sweep Sync sets a beat count",
+};
+static_assert(std::size(kDecayTips) == feathers::drum::kKindCount);
+
+/// Tune in a Kind's own pitch (the resting pitch of each kind, `kindBaseHz`); Pitched sets the pitch from the key instead.
+inline constexpr const char* kTuneTips[] = {
+	"The drum's pitch, in semitones from a kick's resting pitch of 50 Hz",
+	"The drum's pitch, in semitones from a membrane's resting pitch of 110 Hz",
+	"The drum's pitch, in semitones from a snare's resting pitch of 180 Hz",
+	"The drum's pitch, in semitones from a metal's resting pitch of 400 Hz",
+	"The drum's pitch, in semitones from a clap's resting pitch of 1000 Hz",
+	"The drum's pitch, in semitones from a string's resting pitch of 110 Hz",
+	"The drum's pitch, in semitones from a particle's resting pitch of 3000 Hz",
+	"The drum's pitch, in semitones from a friction's resting pitch of 600 Hz",
+	"The drum's pitch, in semitones from a water's resting pitch of 900 Hz",
+	"The drum's pitch, in semitones from a sweep's resting pitch of 200 Hz",
+};
+static_assert(std::size(kTuneTips) == feathers::drum::kKindCount);
+inline constexpr const char* kTunePitchedTip = "The drum's pitch, in semitones from the key it is played on: the key sets the pitch and this shifts it";
+
+inline constexpr const char* kHighPassTips[] = {
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the whole drum below this, after the clap's own High Pass: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+	"Takes the lows out of the drum below this: at its bottom, nothing is taken",
+};
+static_assert(std::size(kHighPassTips) == feathers::drum::kKindCount);
+
 inline constexpr device::ParamDesc kParamDescs[] = {
 	{.key = "drum_enabled", .name = "Enabled", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = true,
 	 .unit = device::Unit::Choice, .names = kOffOnNames, .modulatable = true,

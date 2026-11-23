@@ -50,18 +50,22 @@ std::string MacrosCard::shortCaption(size_t n) {
 	return "M" + std::to_string(n + 1);
 }
 
+std::string MacrosCard::captionOf(size_t n) const {
+	return shape_.columns == 1 ? "Macro " + std::to_string(n + 1) : shortCaption(n);
+}
+
 MacrosCard::MacrosCard(backplane::DeviceHost& host, DeviceInstanceId id, Notifier* notifier, ModState* mod,
-                       EditHistory* history)
-    : host_(host), device_(id), notifier_(notifier), mod_(mod), history_(history) {
-	drawnValue_.fill(-1.0f);
-	drawnPolarity_.fill(-1.0f);
-	for (size_t n = 0; n < kSlotCount; ++n) {
+                       EditHistory* history, const MacrosShape& shape)
+    : host_(host), device_(id), notifier_(notifier), mod_(mod), history_(history), shape_(shape),
+      controls_(shape.descriptor->params.size()), views_(shape.count), slots_(shape.count),
+      drawnValue_(shape.count, -1.0f), drawnPolarity_(shape.count, -1.0f) {
+	for (size_t n = 0; n < shape_.count; ++n) {
 		// THE POLARITY IS ASKED OF `Bipolar n` ON EVERY READ, never copied: an undo or a load moves it.
-		views_[n] = std::make_unique<BipolarMacro>(control(mac::macroParam(n)), [this, n] {
-			return control(mac::bipolarParam(n)).value() >= 0.5;
+		views_[n] = std::make_unique<BipolarMacro>(control(mac::macroField(n)), [this, n] {
+			return control(mac::bipolarField(shape_.count, n)).value() >= 0.5;
 		});
-		slots_[n] = std::make_unique<MacroSlot>(*views_[n], shortCaption(n), namingFor(n), hooksFor(n), notifier_);
-		slots_[n]->setFaceDiameter(kFaceDiameter);
+		slots_[n] = std::make_unique<MacroSlot>(*views_[n], captionOf(n), namingFor(n), hooksFor(n), notifier_);
+		slots_[n]->setFaceDiameter(shape_.faceDiameter);
 		// **A DESTINATION, UNLIKE A HEADER MACRO** — the knob takes a route while a source is armed and
 		// draws the ring of whatever rides `Macro n`.
 		slots_[n]->setModulation(mod_, history_);
@@ -70,7 +74,7 @@ MacrosCard::MacrosCard(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 	// **A NAME HEARD FROM THE HOST RELABELS ITS SLOT** — the slot's own field (harmless: its caption is
 	// already right) and each label a patch load moved.
 	labelSubscription_ = host_.subscribeOutputLabel([this](DeviceInstanceId device, size_t output) {
-		if (device == device_ && output < kSlotCount && slots_[output] != nullptr) {
+		if (device == device_ && output < shape_.count && slots_[output] != nullptr) {
 			slots_[output]->refresh();
 		}
 	});
@@ -102,7 +106,7 @@ MacrosCard::~MacrosCard() {
 
 DeviceControl& MacrosCard::control(size_t index) const {
 	if (controls_[index] == nullptr) {
-		controls_[index] = std::make_unique<DeviceControl>(host_, device_, mac::kDescriptor, index, mod_, history_);
+		controls_[index] = std::make_unique<DeviceControl>(host_, device_, *shape_.descriptor, index, mod_, history_);
 	}
 	return *controls_[index];
 }
@@ -114,28 +118,28 @@ MacroMenuHooks MacrosCard::hooksFor(size_t n) {
 	const std::weak_ptr<void> alive = alive_;
 	return {
 		.readBipolar = [this, n, alive] {
-			return !alive.expired() && control(mac::bipolarParam(n)).value() >= 0.5;
+			return !alive.expired() && control(mac::bipolarField(shape_.count, n)).value() >= 0.5;
 		},
 		.writeBipolar =
 		    [this, n, alive](bool bipolar) {
 			    if (alive.expired()) {
 				    return;
 			    }
-			    writeAsGesture(mac::bipolarParam(n), bipolar ? 1.0 : 0.0);
+			    writeAsGesture(mac::bipolarField(shape_.count, n), bipolar ? 1.0 : 0.0);
 			    // THE KNOB READS THROUGH THE NEW POLARITY — its arc, its readout and its rest move now.
 			    slots_[n]->knob().redraw();
 			    slots_[n]->chip().redraw();
 		    },
 		.readType =
 		    [this, n, alive] {
-			    return alive.expired() ? device::MacroType::Knob : typeOf(control(mac::typeParam(n)).value());
+			    return alive.expired() ? device::MacroType::Knob : typeOf(control(mac::typeField(shape_.count, n)).value());
 		    },
 		.writeType =
 		    [this, n, alive](device::MacroType type) {
 			    if (alive.expired()) {
 				    return;
 			    }
-			    writeAsGesture(mac::typeParam(n), static_cast<double>(static_cast<int>(type)));
+			    writeAsGesture(mac::typeField(shape_.count, n), static_cast<double>(static_cast<int>(type)));
 		    },
 		// THE SLOT'S OWN: `MacroSlot` answers Rename with its field, through its own weak handle.
 		.beginRename = [] {},
@@ -178,7 +182,7 @@ void MacrosCard::writeAsGesture(size_t index, double value) {
 }
 
 device::Modulatable* MacrosCard::enableModulatable() {
-	return &control(static_cast<size_t>(mac::Param::Enabled));
+	return &control(mac::enableField(shape_.count));
 }
 
 void MacrosCard::setModulation(ModState* mod, EditHistory* history) {
@@ -194,32 +198,35 @@ void MacrosCard::setModulation(ModState* mod, EditHistory* history) {
 
 std::vector<mac::Param> MacrosCard::addressedParamsForTest() const {
 	std::vector<mac::Param> out;
-	for (size_t n = 0; n < kSlotCount; ++n) {
-		out.push_back(static_cast<mac::Param>(mac::macroParam(n)));
-		out.push_back(static_cast<mac::Param>(mac::bipolarParam(n)));
-		out.push_back(static_cast<mac::Param>(mac::typeParam(n)));
+	for (size_t n = 0; n < shape_.count; ++n) {
+		out.push_back(static_cast<mac::Param>(mac::macroField(n)));
+		out.push_back(static_cast<mac::Param>(mac::bipolarField(shape_.count, n)));
+		out.push_back(static_cast<mac::Param>(mac::typeField(shape_.count, n)));
 	}
 	return out;
 }
 
-float MacrosCard::openHeight(size_t outputRows) {
-	return kCardHeadHeight + bodyHeight() + kCardOutputStripHeight * static_cast<float>(outputRows);
+float MacrosCard::openHeight(size_t outputRows, const MacrosShape& shape) {
+	return kCardHeadHeight + bodyHeight(shape) + kCardOutputStripHeight * static_cast<float>(outputRows);
 }
 
 float MacrosCard::laneHeightAt(float cardWidth) const {
-	return folded() ? kCardHeadHeight : kCardHeadHeight + bodyHeight() + outputStripHeightAt(cardWidth);
+	return folded() ? kCardHeadHeight : kCardHeadHeight + bodyHeight(shape_) + outputStripHeightAt(cardWidth);
 }
 
 visage::Bounds MacrosCard::slotBounds(size_t n) const {
 	// FOUR EQUAL COLUMNS ACROSS THE BODY, under a top head or beside a left spine alike (`bodyLeft`,
 	// `bodyTopEdge`), each as tall as a knob column at the header row's face.
-	const float cell = std::max(0.0f, bodyWidth() - 2.0f * kPadX) / static_cast<float>(kSlotCount);
-	return { bodyLeft() + kPadX + cell * static_cast<float>(n), bodyTopEdge() + kGap, cell,
-		     MacroSlot::columnHeight(kFaceDiameter) };
+	const float cell = std::max(0.0f, bodyWidth() - 2.0f * kPadX) / static_cast<float>(shape_.columns);
+	const size_t col = n % shape_.columns;
+	const size_t row = n / shape_.columns;
+	const float rowHeight = MacroSlot::columnHeight(shape_.faceDiameter);
+	return { bodyLeft() + kPadX + cell * static_cast<float>(col),
+		     bodyTopEdge() + kGap + static_cast<float>(row) * (rowHeight + kGap), cell, rowHeight };
 }
 
 void MacrosCard::resized() {
-	for (size_t n = 0; n < kSlotCount; ++n) {
+	for (size_t n = 0; n < shape_.count; ++n) {
 		const visage::Bounds b = slotBounds(n);
 		slots_[n]->setBounds(b.x(), b.y(), b.width(), b.height());
 	}
@@ -236,10 +243,10 @@ bool MacrosCard::updateContent() {
 	// (`GenericCard::updateContent`'s note). Eight floats and four type reads a frame; a slot repaints
 	// only when one of its own moved. `syncType` is the slot's cheap half of `refresh` for exactly this.
 	bool told = false;
-	for (size_t n = 0; n < kSlotCount; ++n) {
+	for (size_t n = 0; n < shape_.count; ++n) {
 		told = slots_[n]->syncType() || told;
-		const auto value = static_cast<float>(control(mac::macroParam(n)).value());
-		const auto polarity = static_cast<float>(control(mac::bipolarParam(n)).value());
+		const auto value = static_cast<float>(control(mac::macroField(n)).value());
+		const auto polarity = static_cast<float>(control(mac::bipolarField(shape_.count, n)).value());
 		if (value != drawnValue_[n] || polarity != drawnPolarity_[n]) {
 			drawnValue_[n] = value;
 			drawnPolarity_[n] = polarity;
@@ -255,7 +262,7 @@ bool MacrosCard::headSourceFocused() const {
 	if (mod_ == nullptr) {
 		return false;
 	}
-	for (size_t out = 0; out < kSlotCount; ++out) {
+	for (size_t out = 0; out < shape_.count; ++out) {
 		if (mod_->source() == backplane::Source::output(device_, out)) {
 			return true;
 		}
@@ -270,9 +277,9 @@ bool MacrosCard::headArmed() const {
 void MacrosCard::offeredControls(std::vector<Offered>& out) const {
 	FxCard::offeredControls(out);
 	// EACH MACRO'S TYPE AND POLARITY, chosen from the slot's menu (`writeAsGesture`): every choice shown before it applies.
-	for (size_t n = 0; n < mac::kMacroCount; ++n) {
-		out.push_back({ &control(mac::typeParam(n)), Road::Face });
-		out.push_back({ &control(mac::bipolarParam(n)), Road::Face });
+	for (size_t n = 0; n < shape_.count; ++n) {
+		out.push_back({ &control(mac::typeField(shape_.count, n)), Road::Face });
+		out.push_back({ &control(mac::bipolarField(shape_.count, n)), Road::Face });
 	}
 }
 

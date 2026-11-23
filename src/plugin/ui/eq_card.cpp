@@ -123,6 +123,7 @@ bool EqCard::updateContent() {
 		return false;
 	}
 	bool changed = false;
+	controls_->refreshQTips(); // a band's type can move off the selected one (automation, undo, a preset)
 	if (controls_->honestyKey(graph_->selected()) != laidOutKey_) {
 		layOut();
 		changed = true;

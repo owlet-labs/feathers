@@ -726,6 +726,14 @@ void SklitterExpanded::resized() {
 }
 
 bool SklitterExpanded::updateContent() {
+	// GROOVE AMOUNT'S HOVER TEXT BY THE GROOVE MODE (the TV audit), as the card's.
+	{
+		const int mode = static_cast<int>(std::lround(controlFor(static_cast<size_t>(sc::Param::GrooveMode)).value()));
+		if (mode != grooveTipKey_) {
+			grooveTipKey_ = mode;
+			controlFor(static_cast<size_t>(sc::Param::GrooveAmount)).setTooltipOverride(sc::grooveAmountTipFor(mode));
+		}
+	}
 	// THE GRID'S OWN ANSWER FIRST — a mode change re-lays the cells out, and that is a repaint too.
 	bool moved = GenericExpanded::updateContent();
 

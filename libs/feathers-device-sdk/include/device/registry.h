@@ -744,6 +744,12 @@ struct ModTickContext {
 		                float* out) noexcept = nullptr;
 	};
 	const PerNoteResolver* perNote = nullptr;
+
+	/// **THE PLAYED NOTE'S PITCH IN SEMITONES (A4 = 69), for a modulator that tracks it** (the LFO's Note time base): the
+	/// host's last note, kept after its release, its per-key tuning folded in. Glide is not (a modulator is ticked once a
+	/// control block). A host that has played nothing says C3, 48 — the default. A Poly modulator reads each note's own key
+	/// instead. APPENDED, so every aggregate written before it is unchanged.
+	float notePitch = 48.0f;
 };
 
 /// HOW A HOST ADVANCES A MODULATOR AND READS WHAT IT PUBLISHES — and NULL IS THE CAPABILITY.
@@ -1029,6 +1035,17 @@ struct ModOps {
 	/// echoes the value it last read, and the message thread applies a snapshot only while the record's still equals the
 	/// snapshot's, so a snapshot taken before a hand's edit or a load never lands over it.
 	int extraStateBasis = -1;
+
+	/// **THE LAST TICK AS A CURVE, SAMPLE BY SAMPLE — NULL IS "A STRAIGHT RAMP IS THE WHOLE STORY"** (`device/tick_window.h`).
+	/// A source that computes inside its tick can hand a reader what the output does BETWEEN ticks: write the
+	/// `kTickWindow` values of the tick just run (sample `kTickWindow - 1` is the tick's value) into `window` and
+	/// return true. Return false to leave the host's ramp from the last value to this one, which is also what a host
+	/// without this op does. The host calls it only for an output some route reads, and applies the Amount, the enable
+	/// switch and the finite gate itself; the device writes the raw curve. `forNote` false asks for the collapsed
+	/// output (the shape `outputAt` reads), true for the note `noteId`/`channel`/`key` names (`outputForNote`); `rightEar`
+	/// asks for the pair's right ear. AUDIO THREAD, after `tick`; allocates nothing. APPENDED.
+	bool (*renderWindow)(const void* storage, size_t output, bool forNote, int32_t noteId, int16_t channel,
+	                     int16_t key, bool rightEar, float* window) = nullptr;
 };
 
 /// DECLARED AHEAD OF `Catalogue`, which returns one and is itself reached through

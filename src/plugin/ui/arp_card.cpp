@@ -238,6 +238,14 @@ bool ArpCard::updateContent() {
 	if (folded()) {
 		return false;
 	}
+	// RATE'S HOVER TEXT FOLLOWS TIME BASE (the TV audit): steps per second on Hz, a multiple of the division otherwise.
+	{
+		const int timeBase = static_cast<int>(std::lround(control(at(ap::Param::TimeBase)).value()));
+		if (timeBase != rateTipKey_) {
+			rateTipKey_ = timeBase;
+			control(at(ap::Param::Rate)).setTooltipOverride(ap::rateTipFor(timeBase));
+		}
+	}
 	// THE FEEL MAY HAVE MOVED: its cell shows its Amount's box only where the feel has one.
 	const bool feelMoved = feel_->refresh();
 	return lane_->poll() || feelMoved;

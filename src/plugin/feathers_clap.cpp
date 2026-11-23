@@ -2899,7 +2899,8 @@ private:
 	}
 
 	static bool testChainReleaseControl(const clap_plugin* plugin, uint32_t slot, const char* control, double value) noexcept {
-		if (plugin == nullptr || plugin->plugin_data == nullptr || control == nullptr || (slot & CLAP_FEATHERS_TEST_STRIP) == 0) {
+		// A STRIP SLOT (CLAP_FEATHERS_TEST_STRIP) OR A LANE POSITION: both are the editor's road for a pad's release.
+		if (plugin == nullptr || plugin->plugin_data == nullptr || control == nullptr) {
 			return false;
 		}
 		FeathersPlugin* self = fromClap(plugin);

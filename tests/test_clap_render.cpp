@@ -54,6 +54,8 @@
 #include "state/state_trailer.h"
 #include "plugin/feathers_test_chain.h"
 #include "mod/arp/arp_types.h"
+#include "fx/drum/drum_types.h"
+#include "mod/dahdsr/dahdsr_types.h"
 #include "mod/arp/pattern_types.h"
 #include "mod/lfo/lfo_types.h"
 #include "plugin/gui.h"
@@ -8265,6 +8267,99 @@ TEST_CASE("SR [measure]: where an IDLE 1024-frame block's time goes outside the 
 	MESSAGE(report);
 }
 #endif
+
+TEST_CASE("a Trig pad's click quicker than a block, in the SYNTH's own lanes (ParamBridge::releaseDeviceControl): the engine reads the rise, the fall lands at the next visit, and the Drum strikes") {
+	// THE FEATHERS ROAD for a lane device (the Drum, in the fx lane) and a strip modulator (the Envelope), the road the editor's TrigPad takes:
+	// the Trig up by a hand's write and let go by the release road. By value: the ENGINE's base for the Trig (the rise a block read), and, for
+	// the Drum, the audio its strike made. The same click with the plain write is the hole this closes.
+	namespace dd = feathers::fx::drumdevice;
+	const auto energy = [](HostedPlugin& host, int blocks) {
+		EventList none;
+		double sum = 0.0;
+		for (int b = 0; b < blocks; ++b) {
+			host.run(kMaxFrames, none);
+			for (uint32_t i = 0; i < kMaxFrames; ++i) {
+				sum += static_cast<double>(host.left()[i]) * static_cast<double>(host.left()[i]);
+			}
+		}
+		return sum;
+	};
+	for (const bool releaseRoad : { true, false }) {
+		CAPTURE(releaseRoad);
+		static uint32_t drum = UINT32_MAX;
+		static uint32_t strip = UINT32_MAX;
+		HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
+			const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+			REQUIRE(c != nullptr);
+			drum = c->add_device(p, feathers::fx::drumdevice::kTraits.tag);
+			REQUIRE(drum != UINT32_MAX);
+			strip = c->add_mod_device(p, feathers::mod::dahdsr::kTraits.tag);
+			REQUIRE(strip != UINT32_MAX);
+		});
+		const clap_plugin* p = host.plugin();
+		const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(chain != nullptr);
+		EventList none;
+		host.setTransport(0.0, true, false);
+		for (int i = 0; i < 3; ++i) { // the devices are built on the main thread and adopted by a block, as the editor's beat and the audio thread do
+			mainThreadVisit(p);
+			REQUIRE(chain->provision(p));
+			host.run(kMaxFrames, none);
+		}
+		const uint32_t positions[] = { drum, CLAP_FEATHERS_TEST_STRIP | strip };
+		const char* names[] = { "Trig", "Env Trig" };
+		const auto engineBase = [&](size_t k) {
+			double base = -1.0;
+			const bool read = chain->engine_control(p, positions[k], names[k], &base, nullptr);
+			if (!read) {
+				MESSAGE("engine_control failed for k=" << k << " position=" << positions[k]);
+			}
+			REQUIRE(read);
+			return base;
+		};
+		for (size_t k = 0; k < 2; ++k) {
+			CAPTURE(k);
+			REQUIRE(engineBase(k) == 0.0);
+			const double quiet = k == 0 ? energy(host, 4) : 0.0;
+			// THE PRESS AND THE RELEASE, BOTH BEFORE THE NEXT BLOCK.
+			REQUIRE(chain->set_control(p, positions[k], names[k], 1.0));
+			if (releaseRoad) {
+				REQUIRE(chain->release_control(p, positions[k], names[k], 0.0));
+			}
+			else {
+				REQUIRE(chain->set_control(p, positions[k], names[k], 0.0));
+			}
+			const double struck = energy(host, 1);
+			if (releaseRoad) {
+				CHECK(engineBase(k) == 1.0); // the block READ the rise
+				if (k == 0) {
+					CHECK(struck > quiet + 1.0e-6); // and the drum struck
+				}
+				mainThreadVisit(p);                 // the fall lands now that the rise was adopted
+				REQUIRE(chain->provision(p));
+				(void)energy(host, 2);
+				CHECK(engineBase(k) == 0.0);        // and the trigger is back at rest
+			}
+			else {
+				// THE HOLE: the block saw neither the rise nor a strike.
+				CHECK(engineBase(k) == 0.0);
+				if (k == 0) {
+					CHECK(struck <= quiet + 1.0e-9);
+				}
+			}
+		}
+		// A SLOW CLICK, a press held over several blocks, is still read and still lets go.
+		if (releaseRoad) {
+			REQUIRE(chain->set_control(p, drum, "Trig", 1.0));
+			(void)energy(host, 3);
+			CHECK(engineBase(0) == 1.0);
+			REQUIRE(chain->release_control(p, drum, "Trig", 0.0));
+			mainThreadVisit(p);
+			(void)energy(host, 2);
+			CHECK(engineBase(0) == 0.0);
+		}
+	}
+}
 
 TEST_CASE("Pattern's Go pressed and released between two blocks in Feathers' modulator lane: the engine reads the rise for a block, then the fall lands at the next main-thread visit (lead, 2026-11-07: the press was LOST)") {
 	// THE FEATHERS ROAD (`ParamBridge::setDeviceControl` → the chains publish → `Synth::adoptChains`), the rack's twin

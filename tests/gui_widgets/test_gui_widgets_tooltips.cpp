@@ -257,7 +257,6 @@ bool allowListed(const visage::Frame& f, std::string* reason) {
 		{ "feathers::ui::FeatherverbExpanded::Strip", "the IR drawer's toggle strip" },
 		{ "feathers::ui::FxLaneRail", "a rail's own chrome around the cards it holds" },
 		{ "feathers::ui::ItemStepper", "the preset browser, which is not a device control" },
-		{ "feathers::ui::FoldHeader", "a section's fold row: its label names the section it folds, and it edits no device control (view state)" },
 		{ "feathers::ui::(anonymous namespace)::PaneRail", "a pane's fold strip: chrome around the pane it folds, which edits no device control (view state)" },
 	};
 	for (const Entry& e : kAllowed) {

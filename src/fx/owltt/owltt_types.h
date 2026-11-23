@@ -48,8 +48,8 @@ namespace feathers::fx::owltt {
 /// OWLTT's 25 controls, in hardware menu order.
 enum class Param : uint8_t {
 	// Global
-	Mode = 0,            // Stepped 1-14: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
-	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full
+	Mode = 0,            // Stepped 1-15: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
+	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full, 15=Comb
 	Enabled = 1,         // Bypass switch
 	Threshold = 2,       // Linked global threshold
 	Ratio = 3,           // Linked global ratio
@@ -188,7 +188,7 @@ struct BandParams {
 
 /// The full OWLTT state: globals + per-band absolutes.
 struct Settings {
-	float mode = 6.0f;           // 1-14 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full)
+	float mode = 6.0f;           // 1-15 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full, 15 = Comb)
 	bool enabled = true;         // Bypass switch
 	float threshold = 0.5f;      // Linked global threshold
 	// THE STRUCT DEFAULT IS NOT THE PARAMETER DEFAULT, HERE AND ONLY HERE, and it is deliberate: a
@@ -335,7 +335,8 @@ inline constexpr device::Traits kTraits {
 /// with the same latency. `kLastMode` is the highest Mode.
 inline constexpr long kFirstLinearMode = 11;
 inline constexpr long kLastLinearMode = 13;
-inline constexpr long kLastMode = 14; // 14 is LR8 Full, an IIR (48 dB/oct, no latency)
+inline constexpr long kCombMode = 15; // 15 is Comb: the bands are harmonic classes of a fundamental, not frequency ranges (`comb_split.h`); no latency
+inline constexpr long kLastMode = 15;
 [[nodiscard]] inline constexpr bool isLinearMode(long mode) noexcept { return mode >= kFirstLinearMode && mode <= kLastLinearMode; }
 [[nodiscard]] inline constexpr uint8_t linearSteepOf(long mode) noexcept { return static_cast<uint8_t>(mode - kFirstLinearMode); }
 
@@ -345,7 +346,8 @@ inline constexpr long kLastMode = 14; // 14 is LR8 Full, an IIR (48 dB/oct, no l
 /// The labels the first ten went by before the slopes were added are `kModeAliases`: a stored label still loads.
 inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast (12 dB/oct)",
                                              "LR2 Full (12 dB/oct)", "LR4 Fast (24 dB/oct)", "LR4 Full (24 dB/oct)", "Inverted", "Twist3",
-                                             "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 Full (48 dB/oct)"};
+                                             "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 Full (48 dB/oct)",
+                                             "Comb (3 classes)"};
 inline constexpr device::ChoiceAlias kModeAliases[] = { { "LR2 Fast", "LR2 Fast (12 dB/oct)" },
 	                                                    { "LR2 Full", "LR2 Full (12 dB/oct)" },
 	                                                    { "LR4 Fast", "LR4 Fast (24 dB/oct)" },
@@ -362,6 +364,22 @@ inline constexpr const char* kLowCrossoverTipKeyTrack = "Low-mid split, as an of
                                                        "Until a note is heard, a plain frequency";
 inline constexpr const char* kHighCrossoverTipKeyTrack = "Mid-high split, as an offset from the last note played: at its default it keeps its distance "
                                                         "above that note. Until a note is heard, a plain frequency";
+/// IN COMB (Mode 15) THE LOW CROSSOVER IS THE FUNDAMENTAL f0 AND THE HIGH ONE IS UNUSED (`comb_split.h`).
+inline constexpr const char* kLowCrossoverTipComb = "Comb fundamental f0: the bands are the harmonic classes of this pitch (Low the odd harmonics, Mid 2, 6, 10 ..., "
+                                                   "High 4, 8, 12 ...), not frequency ranges";
+inline constexpr const char* kLowCrossoverTipCombKeyTrack = "Comb fundamental f0, as an offset from the last note played: at its default it sits on that note. "
+                                                           "Until a note is heard, a plain frequency";
+inline constexpr const char* kHighCrossoverTipComb = "Not used in Comb: the bands are harmonic classes of the fundamental, so there is no upper corner";
+/// The hover text for a crossover in the state the card and window are in; "" restores the declared text.
+[[nodiscard]] inline const char* crossoverTip(bool high, bool keyTrack, bool comb) noexcept {
+	if (comb) {
+		return high ? kHighCrossoverTipComb : (keyTrack ? kLowCrossoverTipCombKeyTrack : kLowCrossoverTipComb);
+	}
+	if (!keyTrack) {
+		return "";
+	}
+	return high ? kHighCrossoverTipKeyTrack : kLowCrossoverTipKeyTrack;
+}
 /// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
 /// (and a stored label "On" loads as Both through `kClipAliases`). Master clips the output sum only, Bands each band only, Both each band and then the sum.
 inline constexpr const char* kClipNames[] = {"Off", "Both", "Master", "Bands"};
@@ -602,11 +620,13 @@ inline constexpr double kOnePhaseUnit = 1.0;
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // Global
-    {.key = "mode", .name = "Mode", .min = 1.0, .max = 14.0, .def = 6.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
+    {.key = "mode", .name = "Mode", .min = 1.0, .max = 15.0, .def = 6.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
      .modulatable = false, .offsetsMayLeaveRange = false,
      .tooltip = "Crossover filter type — how the spectrum is split into bands. LR2, LR4 and LR8 are Linkwitz-Riley pairs at 12, 24 and 48 dB per octave; "
                 "Linear splits with linear-phase FIRs (the width is how far the transition runs from -0.1 dB to -60 dB): the bands sum to the input "
-                "delayed by 24 ms, which the device reports as latency",
+                "delayed by 24 ms, which the device reports as latency. Comb splits by harmonic class of a fundamental instead of by frequency: Low holds the odd "
+                "harmonics, Mid 2, 6, 10 and so on, High 4, 8, 12 and so on (and DC); the fundamental is Low Crossover (or the played note), the three bands sum to "
+                "the input exactly, and it adds no latency",
      .choiceAliases = kModeAliases},
     // ON BY DEFAULT — all effects should default to on when they are added.
     // See `fx::filter::kParamDescs` for the decision and what it replaced. This device is also the one

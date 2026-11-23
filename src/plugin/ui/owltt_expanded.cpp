@@ -161,11 +161,13 @@ DeviceControl& OwlttExpanded::control(dtt::Param param) const {
 
 bool OwlttExpanded::updateContent() {
 	// THE CROSSOVERS' HOVER TEXT FOLLOWS KEY TRACK, as on the card (the TV audit).
-	const int keyTrack = control(dtt::Param::KeyTrack).value() >= 0.5 ? 1 : 0;
-	if (keyTrack != crossoverTipKey_) {
-		crossoverTipKey_ = keyTrack;
-		control(dtt::Param::LowCrossover).setTooltipOverride(keyTrack != 0 ? dtt::kLowCrossoverTipKeyTrack : "");
-		control(dtt::Param::HighCrossover).setTooltipOverride(keyTrack != 0 ? dtt::kHighCrossoverTipKeyTrack : "");
+	const bool keyTrack = control(dtt::Param::KeyTrack).value() >= 0.5;
+	const bool comb = std::lround(host_.fieldAt(device_, static_cast<size_t>(dtt::Param::Mode))) == dtt::kCombMode;
+	const int tipState = (keyTrack ? 1 : 0) + (comb ? 2 : 0);
+	if (tipState != crossoverTipKey_) {
+		crossoverTipKey_ = tipState;
+		control(dtt::Param::LowCrossover).setTooltipOverride(dtt::crossoverTip(false, keyTrack, comb));
+		control(dtt::Param::HighCrossover).setTooltipOverride(dtt::crossoverTip(true, keyTrack, comb));
 	}
 	bool changed = graph_ != nullptr && graph_->update();
 	changed = (inMeter_ != nullptr && inMeter_->update()) || changed;

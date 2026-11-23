@@ -155,6 +155,14 @@ public:
 	[[nodiscard]] double noteHz() const;
 	[[nodiscard]] double cornerHz(size_t band) const;
 	float bandEdge(size_t band) const;
+	/// **THE COMB CROSSOVER (Mode 15)**: the bands are harmonic classes of a fundamental, so the plot's frequency axis says nothing. The three columns are
+	/// fixed thirds labelled by class; the only frequency left is f0, read where the crossover readouts were and set by the first handle in the lane (a log
+	/// scale across the LANE, 20 Hz to 2 kHz, which claims no band edge); the second handle is not drawn or grabbable (High Crossover is unused).
+	[[nodiscard]] bool combMode() const;
+	[[nodiscard]] float combLaneX(double hz) const;
+	[[nodiscard]] double combLaneHz(float x) const;
+	/// A band's class as its column is headed in Comb: "ODD", "2 6 10", "4 8 12".
+	static const char* combClassText(size_t band);
 
 	/// The plot — this frame's own rectangle, in its own coordinates.
 	visage::Bounds plot() const;
@@ -279,6 +287,9 @@ public:
 	struct BottomText {
 		std::array<visage::Bounds, 2> frequency {};
 		std::array<std::string, 2> frequencyText {};
+		/// In Comb, each column's class heading (centred in the column, at the top of the plot); empty rectangles otherwise.
+		std::array<visage::Bounds, 3> classLabel {};
+		std::array<std::string, 3> classText {};
 		/// The letters drawn, in band order, two per band — none for a band too narrow to letter.
 		std::vector<visage::Bounds> letters;
 		std::vector<size_t> letterBand;

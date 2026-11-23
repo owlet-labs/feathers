@@ -42291,6 +42291,68 @@ TEST_CASE("OWLTT: the combined-reduction readout has a place of its own — no s
 	CHECK(headersChecked == 5u * 6u); // not vacuous: the headers were there to be avoided
 }
 
+TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns headed by class, f0 where the corners were, one handle") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	const auto overlap = [](const visage::Bounds& a, const visage::Bounds& b) {
+		return a.x() < b.right() && b.x() < a.right() && a.y() < b.bottom() && b.y() < a.bottom();
+	};
+	const std::array<float, 3> gr { -0.5f, -0.25f, -0.125f };
+	d.f.bridge.publishOwlttMeters(d.slot, gr, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false, { false, false, false }, 3.0f);
+	// NOT VACUOUS: in an ordinary mode the corners read as frequencies and no column is headed by a class.
+	d.set(static_cast<size_t>(ow::Param::Mode), 8.0f);
+	for (ui::OwlttGraph* graph : { d.card->graph(), panel.graph() }) {
+		const ui::OwlttGraph::BottomText t = graph->bottomText();
+		CHECK(t.frequencyText[0] == "200 Hz");
+		CHECK(t.frequencyText[1] == "2.0 kHz");
+		for (const std::string& c : t.classText) {
+			CHECK(c.empty());
+		}
+	}
+	d.set(static_cast<size_t>(ow::Param::Mode), static_cast<float>(ow::kCombMode));
+	d.set(static_cast<size_t>(ow::Param::LowCrossover), 100.0f);
+	// THE HIGH CORNER OFF ITS DEFAULT: at 200 Hz and 2 kHz the corners fall on exact thirds of the 20 Hz .. 20 kHz axis, which would hide a column edge that still claimed one.
+	d.set(static_cast<size_t>(ow::Param::HighCrossover), 5000.0f);
+	const std::array<const char*, 3> classes { "ODD", "2 6 10", "4 8 12" };
+	for (ui::OwlttGraph* graph : { d.card->graph(), panel.graph() }) {
+		CAPTURE(graph == panel.graph());
+		const ui::OwlttGraph::BottomText t = graph->bottomText();
+		// The one readout is the fundamental where the first corner's was; the second corner says nothing.
+		CHECK(t.frequencyText[0] == "f0 100 Hz");
+		CHECK(t.frequencyText[1].empty());
+		// Each column is headed by its class, centred in a third of the plot.
+		const visage::Bounds whole = graph->bounds();
+		for (size_t b = 0; b < 3; ++b) {
+			CAPTURE(b);
+			CHECK(t.classText[b] == classes[b]);
+			const float centre = t.classLabel[b].x() + t.classLabel[b].width() * 0.5f;
+			CHECK(centre == doctest::Approx(whole.width() * (static_cast<float>(b) + 0.5f) / 3.0f).epsilon(0.01));
+			CHECK_FALSE(overlap(t.classLabel[b], t.frequency[0]));
+			CHECK_FALSE(overlap(t.classLabel[b], graph->readoutBounds()));
+		}
+	}
+	// THE LANE'S FIRST HANDLE IS f0, on its own log scale (an octave is the same distance anywhere), and the second is out of reach.
+	ui::OwlttGraph* lane = panel.graph();
+	std::array<float, 3> x {};
+	size_t at = 0;
+	for (const float hz : { 200.0f, 400.0f, 800.0f }) {
+		d.set(static_cast<size_t>(ow::Param::LowCrossover), hz);
+		const visage::Point h = lane->crossoverHandle(0);
+		CHECK(lane->bottomText().frequencyText[0] == "f0 " + ui::OwlttGraph::frequencyText(hz));
+		x[at++] = h.x;
+		CHECK(lane->hitTestThreshold(h) == ui::OwlttGraph::ThresholdHit::kLowCrossover);
+	}
+	CHECK(x[1] > x[0]);
+	CHECK((x[1] - x[0]) == doctest::Approx(x[2] - x[1]).epsilon(0.01));
+	const visage::Point second = lane->crossoverHandle(1);
+	CHECK(lane->hitTestThreshold(second) == ui::OwlttGraph::ThresholdHit::kNone);
+}
+
 //------------------------------------------------------------------------------------------------//
 // OWLTT'S MODULATION DISPLAY: the glow arrives with the arm, the live dot follows a moving source,  //
 // and the amount drag runs along the handle's own axis.                                           //

@@ -360,7 +360,7 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 			return;
 		}
 		if (dragState_.hit == ThresholdHit::kLowCrossover || dragState_.hit == ThresholdHit::kHighCrossover) {
-			const double hz = static_cast<double>(xToHz(e.position.x, plot()));
+			const double hz = combMode() ? combLaneHz(e.position.x) : static_cast<double>(xToHz(e.position.x, plot()));
 			const double note = noteHz();
 			ctrl.setValue(note > 0.0 ? owltt::kCrossoverKeyRefHz * hz / note : hz);
 			redraw();
@@ -491,6 +491,18 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 			out.letterBand.push_back(b);
 		}
 	}
+	// IN COMB EACH COLUMN IS HEADED BY ITS HARMONIC CLASS, centred at the top of the bars' area; nothing on the plot then claims a range of frequency.
+	if (combMode()) {
+		const std::array<std::pair<float, float>, 3> columns { std::pair { xover.x(), xLow }, std::pair { xLow, xHigh },
+			                                                   std::pair { xHigh, xover.right() } };
+		for (size_t b = 0; b < columns.size(); ++b) {
+			out.classText[b] = combClassText(b);
+			const float w = widthOf(out.classText[b]);
+			// The card has no lane, and its top row is the combined reduction's and f0's: its headings take the row below.
+			const float y = rail().width() > 0.0f ? xover.y() + 2.0f : xover.y() + 16.0f;
+			out.classLabel[b] = { (columns[b].first + columns[b].second - w) * 0.5f, y, w, kRowHeight };
+		}
+	}
 
 	// THE LABELS: inboard of their line on the side with room, on the bottom row — and up a row at a time while
 	// they would touch a letter or the label already placed. A pixel of air either side counts as touching.
@@ -504,6 +516,11 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 	// right of a line); it flips right on the same conditions. The obstacles are the handles, the other label, the clip square,
 	// the combined-reduction text and the lights, so nothing is drawn over a label.
 	std::vector<visage::Bounds> fixed;
+	for (size_t b = 0; b < 3; ++b) {
+		if (!out.classText[b].empty()) {
+			fixed.push_back(out.classLabel[b]); // the headings are obstacles to the f0 readout
+		}
+	}
 	const visage::Bounds lane = rail();
 	if (lane.width() > 0.0f) {
 		for (size_t h = 0; h < 2; ++h) {
@@ -534,7 +551,13 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 		}
 	}
 	for (size_t which = 0; which < 2; ++which) {
-		out.frequencyText[which] = frequencyText(static_cast<float>(cornerHz(which)));
+		// IN COMB the one readout is the fundamental, where the first crossover's was; the second corner means nothing and prints nothing.
+		if (combMode()) {
+			out.frequencyText[which] = which == 0 ? "f0 " + frequencyText(static_cast<float>(cornerHz(0))) : std::string {};
+		}
+		else {
+			out.frequencyText[which] = frequencyText(static_cast<float>(cornerHz(which)));
+		}
 		const float w = widthOf(out.frequencyText[which]);
 		const float y = lane.width() > 0.0f ? lane.y() + (lane.height() - kRowHeight) * 0.5f : whole.y() + 2.0f;
 		const float anchor = lane.width() > 0.0f ? crossoverHandle(which).x : edges[which];
@@ -902,7 +925,39 @@ double OwlttGraph::cornerHz(size_t band) const {
 	return owltt::trackedCrossoverHz(control(static_cast<size_t>(param)).value(), note > 0.0, note);
 }
 
-float OwlttGraph::bandEdge(size_t band) const { return hzToX(static_cast<float>(cornerHz(band)), plot()); }
+float OwlttGraph::bandEdge(size_t band) const {
+	if (combMode()) {
+		// FIXED THIRDS: a harmonic class has no frequency range to draw (`combMode`).
+		const visage::Bounds box = plot();
+		return box.x() + box.width() * static_cast<float>(band + 1) / 3.0f;
+	}
+	return hzToX(static_cast<float>(cornerHz(band)), plot());
+}
+
+bool OwlttGraph::combMode() const {
+	return std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode))) == owltt::kCombMode;
+}
+
+float OwlttGraph::combLaneX(double hz) const {
+	// f0's own scale, 20 Hz to 2 kHz (Low Crossover's range) across the lane, a ring radius in from each end so the handle stays grabbable.
+	const visage::Bounds box = plot();
+	const float inset = OwlttGraph::kRingRadius;
+	const double t = std::clamp(std::log2(std::max(hz, 1.0) / 20.0) / std::log2(100.0), 0.0, 1.0);
+	return box.x() + inset + static_cast<float>(t) * std::max(0.0f, box.width() - 2.0f * inset);
+}
+
+double OwlttGraph::combLaneHz(float x) const {
+	const visage::Bounds box = plot();
+	const float inset = OwlttGraph::kRingRadius;
+	const float span = std::max(1.0f, box.width() - 2.0f * inset);
+	const double t = std::clamp(static_cast<double>((x - box.x() - inset) / span), 0.0, 1.0);
+	return 20.0 * std::pow(100.0, t);
+}
+
+const char* OwlttGraph::combClassText(size_t band) {
+	constexpr const char* kText[3] = { "ODD", "2 6 10", "4 8 12" };
+	return kText[std::min<size_t>(band, 2)];
+}
 
 void OwlttGraph::setCrossoversDraggable(bool on) {
 	rail_ = on;
@@ -1064,6 +1119,9 @@ ModHandle& OwlttGraph::crossoverMod(size_t which) const {
 			crossoverMod_[i] = ModHandle({ ModHandleAxis {
 			    &control(static_cast<size_t>(param)), true, [this](double value) {
 				    const double note = noteHz();
+				    if (combMode()) {
+					    return combLaneX(owltt::trackedCrossoverHz(value, note > 0.0, note));
+				    }
 				    return hzToX(static_cast<float>(owltt::trackedCrossoverHz(value, note > 0.0, note)), plot());
 			    } } });
 		}
@@ -1079,6 +1137,13 @@ visage::Point OwlttGraph::crossoverHandle(size_t which) const {
 	}
 	// ON THE LINE IT MOVES, at the lane's midline. A handle ON the thing beats a handle NEAR it, and
 	// held a radius inside the plot so the ends of the sweep stay grabbable.
+	if (combMode()) {
+		// F0 IS THE FIRST HANDLE, on its own scale; the second means nothing here and sits where nothing can reach it.
+		if (which != 0) {
+			return { -1000.0f, -1000.0f };
+		}
+		return { combLaneX(cornerHz(0)), r.y() + r.height() * 0.5f };
+	}
 	const float x = std::clamp(bandEdge(which), r.x() + OwlttGraph::kRingRadius, r.right() - OwlttGraph::kRingRadius);
 	return { x, r.y() + r.height() * 0.5f };
 }
@@ -1303,6 +1368,9 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		canvas.setColor(withAlpha(kLine, 0.5f));
 		canvas.fill(r.x(), r.bottom() - 1.0f, r.width(), 1.0f);
 		for (size_t which = 0; which < 2; ++which) {
+			if (which == 1 && combMode()) {
+				continue; // High Crossover is unused in Comb
+			}
 			const visage::Point c = crossoverHandle(which);
 			// THE HANDLE STAYS AT THE BASE; its halo and amount stroke go under it, the live dot over it.
 			crossoverMod(which).drawUnder(canvas, c.x, c.y, OwlttGraph::kRingRadius);
@@ -1333,6 +1401,14 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		canvas.setColor(withAlpha(kMuted, 0.85f));
 		canvas.text(bottom.frequencyText[which], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f,
 		            label.y(), label.width() + 4.0f, label.height());
+	}
+	for (size_t b = 0; b < 3; ++b) {
+		const visage::Bounds label = bottom.classLabel[b];
+		if (!bottom.classText[b].empty()) {
+			canvas.setColor(withAlpha(kMuted, 0.95f));
+			canvas.text(bottom.classText[b], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f, label.y(), label.width() + 4.0f,
+			            label.height());
+		}
 	}
 
 	// PER-BAND GRAPH CONTROLS — threshold bars, GR meters, level strips.

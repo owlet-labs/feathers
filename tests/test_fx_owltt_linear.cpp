@@ -132,9 +132,9 @@ double rmsOf(const std::vector<float>& v, size_t from) {
 
 TEST_CASE("Linear: Mode offers it as the 11th choice, after the ten that keep their numbers") {
 	const auto& d = kParamDescs[static_cast<size_t>(Param::Mode)];
-	CHECK(d.max == 14.0);
+	CHECK(d.max == static_cast<double>(kLastMode));
 	CHECK(d.min == 1.0);
-	REQUIRE(std::size(kModeNames) == 14);
+	REQUIRE(static_cast<long>(std::size(kModeNames)) == kLastMode);
 	CHECK(std::string(kModeNames[10]) == "Linear (94 Hz)");
 	CHECK(std::string(kModeNames[9]) == "Twist3"); // the ten before it keep their numbers
 	CHECK(d.def == 6.0);
@@ -305,10 +305,10 @@ TEST_CASE("Linear: after the input stops the output reaches exact zero within th
 }
 
 TEST_CASE("Linear steepness: Linear, Linear Mild and Linear Gentle report one latency, land the impulse on it, and sum flat") {
-	REQUIRE(std::size(kModeNames) == 14);
+	REQUIRE(static_cast<long>(std::size(kModeNames)) == kLastMode);
 	CHECK(std::string(kModeNames[11]) == "Linear Mild (186 Hz)");
 	CHECK(std::string(kModeNames[12]) == "Linear Gentle (368 Hz)");
-	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].max == 14.0);
+	CHECK(kParamDescs[static_cast<size_t>(Param::Mode)].max == static_cast<double>(kLastMode));
 	for (const float mode : { 11.0f, 12.0f, 13.0f }) {
 		CAPTURE(mode);
 		Settings s = linearAtRest();
@@ -370,7 +370,7 @@ double lr8LowGain(double lo, double hi, double hz) {
 } // namespace
 
 TEST_CASE("LR8 Full: Mode 14 is the last choice, the ten before keep their numbers, and it adds no latency") {
-	REQUIRE(std::size(kModeNames) == 14);
+	REQUIRE(static_cast<long>(std::size(kModeNames)) == kLastMode);
 	CHECK(std::string(kModeNames[13]) == "LR8 Full (48 dB/oct)");
 	Settings s = linearAtRest();
 	s.mode = 14.0f;

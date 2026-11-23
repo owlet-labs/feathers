@@ -258,9 +258,17 @@ void Owltt::prepare(double sampleRate) {
 	rawPos_ = 0;
 	rawLive_ = false;
 	linearBuild_ = true;
+	// THE COMB CROSSOVER (Mode 15): its four delay lines, allocated here with everything else.
+	comb_ = std::make_unique<CombSplit>();
+	comb_->prepare(sampleRate_);
+	combPrimed_ = false;
 }
 
 void Owltt::resetCrossovers() {
+	if (comb_) {
+		comb_->clear();
+	}
+	combPrimed_ = false;
 	if (linear_) {
 		linear_->clearAudio();
 	}
@@ -459,6 +467,28 @@ void Owltt::updateCrossoverFrequencies() {
 		else {
 			linear_->setTargets(corners.data());
 		}
+	}
+	// THE COMB CROSSOVER'S FUNDAMENTAL: the low corner the splitters were handed (the knob, or the tracked note moved by its offset), glided in log2 over
+	// the Key Track's 5 ms and clamped to what the delay lines serve, then turned into the first comb's delay D = fs / (2 f0). The delay at the slice's
+	// start is the last slice's end, and the render moves it linearly across the slice, so f0 never steps. The high corner means nothing here.
+	if (std::lround(target_.mode) == kCombMode && comb_) {
+		const double lo = comb_->minF0(sampleRate_);
+		const double hi = comb_->maxF0(sampleRate_);
+		const double goal = std::log2(std::clamp(static_cast<double>(low), lo, hi));
+		if (!combPrimed_) {
+			combLog2F0_ = goal;
+			combDelayEnd_ = comb_->delayFor(std::exp2(goal), sampleRate_);
+			combPrimed_ = true;
+		}
+		else {
+			const double alpha = 1.0 - std::exp(-static_cast<double>(std::max(sliceFrames_, 1)) / (kKeySmoothSeconds * std::max(sampleRate_, 1.0)));
+			combLog2F0_ += alpha * (goal - combLog2F0_);
+			if (std::fabs(goal - combLog2F0_) < kGlideSnap) {
+				combLog2F0_ = goal;
+			}
+		}
+		combDelayStart_ = combDelayEnd_;
+		combDelayEnd_ = comb_->delayFor(std::exp2(combLog2F0_), sampleRate_);
 	}
 }
 
@@ -938,7 +968,7 @@ void Owltt::processStereo(float* left, float* right, int frames) {
 	// THE LOOKAHEAD IN FORCE (backlog ND), from the stored choice — the same function `latencySamples` answers from, so
 	// the delay applied is the latency reported. A change applies at once; the host restarts after it (assumption L6).
 	lookLen_ = lookCap_ > 0 ? std::min(lookaheadSamplesFor(target_.lookahead, sampleRate_), lookCap_ - 1) : 0;
-	// A MODE OUTSIDE 1-13 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
+	// A MODE OUTSIDE 1-15 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
 	// this it reported the lookahead's latency and delayed nothing. The descriptor cannot reach it; a raw row can.
 	const long crossoverType = std::lround(target_.mode);
 	if (!target_.enabled || crossoverType < 1 || crossoverType > kLastMode) {
@@ -1041,9 +1071,12 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	sliceFrames_ = frames;
 
 	const uint8_t crossoverType = static_cast<uint8_t>(std::round(target_.mode));
-	// Mode is 1-13 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
+	// Mode is 1-15 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
 	if (crossoverType < 1 || crossoverType > kLastMode) {
 		return;
+	}
+	if (crossoverType == kCombMode && !comb_) {
+		return; // never prepared
 	}
 	if (isLinearMode(crossoverType) && !linear_) {
 		return; // never prepared
@@ -1209,6 +1242,22 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			dryL[i] = alignedDryAt(left[i], lr8full_[0].alignDry(left[i]), i);
 			dryR[i] = alignedDryAt(right[i], lr8full_[1].alignDry(right[i]), i);
 			break;
+		// COMB (Mode 15): the three bands are harmonic classes of f0 (`CombSplit`) — odd harmonics in Low, 2 6 10 ... in Mid, 4 8 12 ... and DC in High — and they
+		// are `x - E`, `E - A` and `A`, so they sum to the DRIVEN input exactly and the Blend's dry (the raw input) needs no alignment. The first comb's delay
+		// moves linearly across the slice from where the last one ended.
+		case 15: {
+			const double along = static_cast<double>(i + 1) / static_cast<double>(frames);
+			const auto d1 = static_cast<float>(combDelayStart_ + (combDelayEnd_ - combDelayStart_) * along);
+			const CombSplit::Bands l = comb_->process(0, inL, d1);
+			const CombSplit::Bands r = comb_->process(1, inR, d1);
+			bandsL.low = l.odd;
+			bandsL.mid = l.two;
+			bandsL.high = l.four;
+			bandsR.low = r.odd;
+			bandsR.mid = r.two;
+			bandsR.high = r.four;
+			break;
+		}
 		case 9: // Inverted (AP1 with swapped low/high)
 			ap1_[0].process(inL, bandsL);
 			ap1_[1].process(inR, bandsR);

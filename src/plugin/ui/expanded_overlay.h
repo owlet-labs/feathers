@@ -617,7 +617,11 @@ public:
 	/// panels writing one device is a state nothing can address. Ownership transfers: the layer
 	/// destroys the content when it is dismissed, so a re-open is always a fresh view over the same
 	/// bridge rather than a stale one. Returns the panel's id, or `kNoPanel` for null content.
-	PanelId show(std::unique_ptr<ExpandedView> content);
+	///
+	/// **`opener` NAMES WHO ASKED** (a frame inside the window that opened this one, or null): the panel that holds it, if any, OWNS the new
+	/// one. An owner and its owned windows rise and fall together (`raiseOnPress`), owned windows staying above their owner. Ownership is
+	/// recorded as the owner's `PanelId`, never an address, and follows the owner's own owner when the owner closes.
+	PanelId show(std::unique_ptr<ExpandedView> content, const visage::Frame* opener = nullptr);
 
 	/// CLOSE EVERYTHING. Safe when nothing is open, because every road to it can arrive when the
 	/// layer is already closed.
@@ -805,6 +809,11 @@ public:
 		return out;
 	}
 	PanelId frontPanelIdForTest() const noexcept { return slots_.empty() ? kNoPanel : slots_.back()->id; }
+	/// The panel that owns `id` (`kNoPanel` for none, or for an unknown id).
+	PanelId ownerOfForTest(PanelId id) const noexcept {
+		const Slot* s = slotOf(id);
+		return s == nullptr ? kNoPanel : s->owner;
+	}
 
 	/// WHICH ROAD CLOSED IT, so a case can prove Esc worked rather than that something did.
 	/// `Outside` is retained as a value nothing produces any more, so a case asserting it never
@@ -838,6 +847,11 @@ private:
 		/// WHEN READ** (`contentSizeOf`): a panel whose cap drops (SKLITTER's circle closing) is drawn at
 		/// the cap, and gets the hand's room back when the cap rises again.
 		std::optional<visage::Point> sized;
+		/// THE WINDOW THAT OPENED THIS ONE, by id (`kNoPanel`: none). Follows its owner's owner when the owner closes.
+		PanelId owner = kNoPanel;
+		/// DRAWN `onTop`. Always a SUFFIX of `slots_` (the back one at least): a press-raise cannot re-parent the pressed panel, so
+		/// it and everything above it are lifted instead, and everything below is re-parented in order.
+		bool lifted = false;
 		bool folded = false;
 		bool maximized = false;
 		visage::Point resizeAnchor { 0.0f, 0.0f };
@@ -868,6 +882,11 @@ private:
 	/// A PRESS INSIDE A BACK PANEL BRINGS IT FORWARD NOW, from its own press: the order and `onTop` move, and only the PREVIOUS front is
 	/// re-parented (just under the new one) — it holds no press in flight. A press on the front changes nothing.
 	void raiseOnPress(Slot& slot);
+	/// The order a raise of `slot` makes: every window outside its group in its present order, then the group of its outermost owner
+	/// (the owner, then its owned windows in their present order, the path to `slot` last, each window's own owned windows above it).
+	std::vector<Slot*> groupOrderFor(const Slot& slot) const;
+	/// Make `slots_` and the children `target`; `pressed` (or null) is a panel that must not be re-parented.
+	void applyOrder(const std::vector<Slot*>& target, Slot* pressed);
 	void beginPanelDrag(Slot& slot);
 	void dragPanelBy(Slot& slot, visage::Point delta);
 	void beginPanelResize(Slot& slot);

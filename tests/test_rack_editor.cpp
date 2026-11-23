@@ -4997,16 +4997,49 @@ TEST_CASE("the rack's output arms read the label") {
 	};
 	f.editor.setBounds(0, 0, 1200, kEditorHeight); // a laid-out lane, so the chips have a strip
 	REQUIRE(armFor(2) != nullptr);
+	// THESE ARE THE FOUR OUTPUTS OF A MACROS DEVICE ON ITS CARD IN THE RACK, which lay their chips in the device's output grid (four equal cells under
+	// the four knobs, `Traits::outputGridColumns`): a cell is narrower than the name, so the chip prints its M-number and the name is the hover.
+	// (A device with no grid keeps its flowed chips, as wide as the word: the next case.)
 	CHECK(armFor(2)->label() == "Macro 3");
-	CHECK(armFor(2)->width() == doctest::Approx(ui::SourceArm::widthFor("Macro 3")));
+	CHECK(armFor(2)->width() < ui::SourceArm::widthFor("Macro 3"));
+	CHECK(armFor(2)->shownText() == "M3");
 	f.bridge.setOutputLabel(macros, 2, "Filter sweep");
 	REQUIRE(armFor(2) != nullptr);
 	CHECK(armFor(2)->label() == "Filter sweep");
-	// AS WIDE AS THE WORD, which the lane re-laid it at.
-	CHECK(armFor(2)->width() == doctest::Approx(ui::SourceArm::widthFor("Filter sweep")));
+	// THE CELL DOES NOT MOVE WITH THE NAME: the chip still says M3 and the name is its hover.
+	CHECK(armFor(2)->width() < ui::SourceArm::widthFor("Filter sweep"));
+	CHECK(armFor(2)->shownText() == "M3");
+	CHECK(armFor(2)->tooltipForTest() == "Filter sweep");
 	CHECK(armFor(1)->label() == "Macro 2");
 	// AND THE CARD'S SLOT CARRIES THE SAME NAME — one label, two surfaces.
 	CHECK(macrosCardOf(f.editor, macros)->slot(2).caption() == "Filter sweep");
+}
+
+TEST_CASE("a flowed device's output arm keeps reading its label at the label's width: only a grid chip takes a short name") {
+	Fixture f;
+	const DeviceInstanceId env = f.add(mod::dahdsr::kTraits.tag);
+	REQUIRE(env != kNoInstance);
+	f.editor.syncCards();
+	const auto armFor = [&](size_t output) -> const ui::SourceArm* {
+		for (size_t i = 0; i < f.editor.outputArmCountForTest(); ++i) {
+			if (f.editor.outputArmDeviceForTest(i) == env && f.editor.outputArmOutputForTest(i) == output) {
+				return dynamic_cast<const ui::SourceArm*>(f.editor.outputArmFrameForTest(i));
+			}
+		}
+		return nullptr;
+	};
+	f.editor.setBounds(0, 0, 1200, kEditorHeight);
+	REQUIRE(armFor(0) != nullptr);
+	const std::string declared = armFor(0)->label();
+	CHECK(armFor(0)->width() == doctest::Approx(ui::SourceArm::widthFor(declared)));
+	CHECK(armFor(0)->shownText() == declared);
+	f.bridge.setOutputLabel(env, 0, "Filter sweep");
+	REQUIRE(armFor(0) != nullptr);
+	CHECK(armFor(0)->label() == "Filter sweep");
+	// AS WIDE AS THE WORD, which the lane re-laid it at, printing the whole word and with no short caption or hover of its own.
+	CHECK(armFor(0)->width() == doctest::Approx(ui::SourceArm::widthFor("Filter sweep")));
+	CHECK(armFor(0)->shownText() == "Filter sweep");
+	CHECK(armFor(0)->tooltipForTest().empty());
 }
 
 TEST_CASE("a MACROS card popup left open across the rack editor's destruction writes nothing") {

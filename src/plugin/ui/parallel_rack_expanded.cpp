@@ -391,6 +391,12 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 		if (front != nullptr) {
 			p.y = std::max(p.y, railsTop() + (front->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
 			                                                           : front->rail->openMinimumHeight()));
+			// THE CARDS RUN LEFT TO RIGHT AT ONE UNIT'S HEIGHT, so the window is tall enough for that row whatever the left column asks: the rail's own
+			// chrome (its height less its column's) plus the unit and the column's padding.
+			if (!front->rail->collapsed() && front->rail->column() != nullptr) {
+				const float chrome = front->rail->openMinimumHeight() - ChainColumn::kMinimumUsefulHeight;
+				p.y = std::max(p.y, railsTop() + chrome + kCardUnitHeight + 2.0f * ChainColumn::kPadX);
+			}
 		}
 		return p;
 	}
@@ -398,6 +404,14 @@ visage::Point ParallelRackExpanded::minimumSize() const {
 		// A CLOSED RAIL IS A CHANNEL STRIP NOW (backlog OC), and needs its column's height; an open one its floor.
 		p.y = std::max(p.y, r->rail->collapsed() ? Rail::kCollapsedChromeHeight + ChainStrip::kColumnMinimumHeight
 		                                         : r->rail->openMinimumHeight());
+	}
+	// PADS, NO PANE: the chain in front runs left to right too, so the same unit-height row as Tabs asks.
+	if (model_ != nullptr && model_->view() == RackViewKind::Pads) {
+		const ChainRail* front = viewedRail();
+		if (front != nullptr && !front->rail->collapsed() && front->rail->column() != nullptr) {
+			const float chrome = front->rail->openMinimumHeight() - ChainColumn::kMinimumUsefulHeight;
+			p.y = std::max(p.y, railsTop() + chrome + kCardUnitHeight + 2.0f * ChainColumn::kPadX);
+		}
 	}
 	return p;
 }

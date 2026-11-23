@@ -5706,16 +5706,29 @@ struct OwnedRaiseRig : ListWindowRig {
 		pumpEditor(f.gui, 3);
 		otherId = overlay->frontPanelIdForTest();
 		REQUIRE(otherId != ownedId);
-		// THE UNRELATED WINDOW FOLDED TO ITS TITLE STRIP AND PUT IN THE BOTTOM RIGHT CORNER: in front of both, hiding little of either.
+		// THE UNRELATED WINDOW FOLDED TO ITS TITLE STRIP AND PUT IN THE TOP LEFT CORNER: in front of both, hiding little of either, and clear
+		// of them when the Rack and its owned window (wide ones, now) are raised over it.
 		overlay->setFolded(otherId, true);
 		overlay->beginPanelDrag();
-		overlay->dragPanelBy({ 3000.0f, 3000.0f });
+		overlay->dragPanelBy({ -3000.0f, -3000.0f });
 		pumpEditor(f.gui, 3);
 	}
 	/// A point on panel `id`'s head, clear of its buttons.
 	[[nodiscard]] visage::Point headPointOf(ui::ExpandedOverlay::PanelId id) const {
 		const visage::Bounds b = overlay->panelBounds(id);
-		return { b.x() + 40.0f, b.y() + ui::ExpandedOverlay::kTitleHeight * 0.5f };
+		const float y = b.y() + ui::ExpandedOverlay::kTitleHeight * 0.5f;
+		// THE FIRST POINT ALONG THE HEAD that no window in front of `id` covers (a wide Rack window can lie over the head's usual spot).
+		for (float x = b.x() + 40.0f; x < b.x() + b.width() - 8.0f; x += 4.0f) {
+			bool covered = false;
+			for (const auto other : order()) {
+				const visage::Bounds o = overlay->panelBounds(other);
+				covered = covered || (at(other) > at(id) && x >= o.x() && x <= o.x() + o.width() && y >= o.y() && y <= o.y() + o.height());
+			}
+			if (!covered) {
+				return { x, y };
+			}
+		}
+		return { b.x() + 40.0f, y };
 	}
 	std::vector<ui::ExpandedOverlay::PanelId> order() const { return overlay->panelIdsForTest(); }
 	[[nodiscard]] long at(ui::ExpandedOverlay::PanelId id) const {

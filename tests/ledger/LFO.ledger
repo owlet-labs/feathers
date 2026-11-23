@@ -77,6 +77,7 @@ param LFO t4_smooth_carry unit=choice choice=Off|On
 param LFO t4_trig unit=percent min=0 max=1 stepped=0
 param LFO t4_notes_trig unit=choice choice=Off|On
 param LFO t4_stereo_phase unit=degrees min=0 max=3.141592653589793 stepped=0
+param LFO view_tab unit=number min=0 max=3 stepped=1
 out LFO lfo bipolar=1
 out LFO lfo_2 bipolar=1
 out LFO lfo_3 bipolar=1

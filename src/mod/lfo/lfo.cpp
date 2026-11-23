@@ -814,6 +814,8 @@ using TabShape = mod::PolyShape<Shape, Settings>;
 /// ticking while off, as this device always did, so a patch that never uses the others behaves as it did.
 struct OpsShape {
 	std::array<TabShape, kTabs> tab;
+	/// THE TAB THE CARD SHOWS (`kViewTabField`): its playhead and fire count are the ones published.
+	size_t view = 0;
 
 	OpsShape() {
 		for (size_t t = 0; t < kTabs; ++t) {
@@ -857,6 +859,9 @@ void setFieldsOf(void* storage, const float* fields, size_t fieldsPresent) {
 	for (size_t t = 0; t < kTabs; ++t) {
 		quad.tab[t].settings = settingsOfTab(fields, fieldsPresent, t);
 	}
+	// THE VIEW FIELD, when the row reaches it: a tab index, clamped.
+	const float view = fieldsPresent > kViewTabField && std::isfinite(fields[kViewTabField]) ? fields[kViewTabField] : 0.0f;
+	quad.view = static_cast<size_t>(std::clamp(std::lround(view), 0L, static_cast<long>(kTabs) - 1));
 }
 
 } // namespace
@@ -905,7 +910,7 @@ const device::ModOps kModOps {
 	    },
 	.playhead =
 	    [](const void* storage, uint32_t* ordinal, float* phase) {
-		    const Playhead where = asShape(storage).of(0).sharedShape().playhead();
+		    const Playhead where = asShape(storage).of(asShape(storage).view).sharedShape().playhead();
 		    *ordinal = where.ordinal;
 		    *phase = where.phase;
 	    },
@@ -918,7 +923,7 @@ const device::ModOps kModOps {
 		    const Shape& shape = asShape(storage).of(output).sharedShape();
 		    return device::EarPair { shape.value(), shape.valueRight() };
 	    },
-	.trigFires = [](const void* storage) { return asShape(storage).of(0).trigFires; },
+	.trigFires = [](const void* storage) { return asShape(storage).of(asShape(storage).view).trigFires; },
 	// THE TICK AS A CURVE, sample by sample — see `Shape::renderWindow`. The collapsed output is the shared shape's, a
 	// note's its own (the same pick `outputAt` and `outputForNote` make). A tab that is off has no curve to give.
 	.renderWindow =

@@ -303,6 +303,7 @@ private:
 	std::string rateFaceOf(size_t tab, double value) const;
 	void drawTabs(visage::Canvas& canvas);
 	void showTabOutputs();
+	void writeViewTab();
 };
 
 } // namespace feathers::ui

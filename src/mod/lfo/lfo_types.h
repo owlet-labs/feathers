@@ -294,20 +294,31 @@ inline constexpr size_t kPerTab = static_cast<size_t>(Param::kCount);
 	  .tooltip = "How far ahead the right ear reads the wave — 0° is mono, 90° a quarter cycle, 180° the opposite "    \
 	             "side. Random reads the same walk that far along, not a second one" },
 
+/// **WHICH TAB THE CARD SHOWS, ONE FIELD AFTER THE TABS** — a VIEW control, like the rack's own view fields: it changes no sound,
+/// but the device's playhead and fire count (the star on the plot, the pad's pulse) are published for one tab, and this is
+/// the tab they are published for. The card writes it when a tab is pressed, and follows it when a patch or an undo moves it.
+inline constexpr size_t kViewTabField = kTabs * kPerTab;
+inline constexpr device::ParamDesc kViewTabDesc {
+	.key = "view_tab", .name = "View Tab", .min = 0.0, .max = static_cast<double>(kTabs) - 1.0, .def = 0.0, .stepped = true,
+	.unit = device::Unit::Number, .names = {}, .modulatable = false,
+	.tooltip = "Which tab the card shows — a view setting: it changes no sound, only which tab's playhead and trigger "
+	           "pulses the card draws"
+};
 inline constexpr device::ParamDesc kParamDescs[] = {
 	FEATHERS_LFO_TAB(0, "", "", 1.0)
 	FEATHERS_LFO_TAB(19, "t2_", " 2", 0.0)
 	FEATHERS_LFO_TAB(38, "t3_", " 3", 0.0)
 	FEATHERS_LFO_TAB(57, "t4_", " 4", 0.0)
+	kViewTabDesc
 };
 #undef FEATHERS_LFO_TAB
-static_assert(std::size(kParamDescs) == kTabs * kPerTab);
+static_assert(std::size(kParamDescs) == kTabs * kPerTab + 1);
 static_assert(kPerTab == 19, "the tab offsets above are written for 19 controls a tab");
 
 /// THE ROW. One float per control of ONE TAB, index-aligned with Param — what `rowOf`/`settingsOf` convert, and what the
 /// codec test round-trips. The device's whole row is `FullRow`, the four tabs end to end.
 using Row = std::array<float, static_cast<size_t>(Param::kCount)>;
-using FullRow = std::array<float, kTabs * kPerTab>;
+using FullRow = std::array<float, kTabs * kPerTab + 1>;
 
 /// THE FOUR OUTPUTS, one a tab. Tab 1's is the LFO's output as it always was (index 0, key "lfo"); the others are appended
 /// and own their enable and amount, so a tab switched off rests and a tab's Amount scales that tab alone.

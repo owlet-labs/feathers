@@ -112,12 +112,12 @@ LfoCard::LfoCard(backplane::DeviceHost& host, DeviceInstanceId id, ModState& mod
 			});
 			addChild(set.choiceBoxes[i].get());
 		}
-		// THE TRIG PAD (backlog MV): the tab's Trig control, and the fire count it lights from. THE COUNT IS TAB 1'S ALONE
-		// (the device reports one): the other tabs' pads fire and show their ring, but do not pulse on their own fires.
+		// THE TRIG PAD (backlog MV): the tab's Trig control, and the fire count it lights from. THE COUNT IS THE VIEWED TAB'S ALONE
+		// (the device reports the viewed tab's).
 		set.trigControl = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
 		                                                  fieldOf(t, lfo::Param::Trig), &mod_, &history_);
 		set.trigPad = std::make_unique<TrigPad>(*set.trigControl, [this, t](uint32_t& fires) {
-			return t == 0 && host_.trigFiresAt(device_, fires);
+			return t == tab_ && host_.trigFiresAt(device_, fires);
 		});
 		// AND ITS NORMAL (backlog NU): the right-click's "Notes fire Trig", and the dot that shows it made.
 		set.notesTrigControl = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
@@ -637,11 +637,21 @@ void LfoCard::showTabOutputs() {
 	}
 }
 
+void LfoCard::writeViewTab() {
+	// THE VIEW FIELD FOLLOWS THE SELECTION, so the device publishes this tab's playhead and fire count. A view setting, not an
+	// edit: no undo step (a tab press is not something to undo), and written only when it differs.
+	if (static_cast<size_t>(std::lround(host_.fieldAt(device_, mod::lfo::kViewTabField))) != tab_) {
+		backplane::ControlGestureScope gesture(host_, device_);
+		gesture.setField(mod::lfo::kViewTabField, static_cast<float>(tab_));
+	}
+}
+
 void LfoCard::selectTab(size_t tab) {
 	if (tab >= kTabCount || tab == tab_) {
 		return;
 	}
 	tab_ = tab;
+	writeViewTab();
 	// THE SELECTED SET IS SHOWN AND THE OTHERS HIDDEN; nothing is re-pointed.
 	resized();
 	redraw();
@@ -661,7 +671,7 @@ void LfoCard::drawTabs(visage::Canvas& canvas) {
 		else {
 			canvas.roundedRectangleBorder(sq.x(), sq.y(), sq.width(), sq.height(), 2.0f, 1.0f);
 		}
-		const std::string label = "LFO " + std::to_string(t + 1);
+		const std::string label = std::to_string(t + 1); // the number alone: four tabs in 216 px
 		canvas.setColor(selected ? kSurface : (on ? kMuted : kDisabled));
 		drawTracked(canvas, label, font(kKnobLabelSize), kKnobLabelTracking, sq.right() + 5.0f, b.y(), b.height());
 	}
@@ -676,6 +686,7 @@ std::vector<size_t> LfoCard::addressedFieldsForTest() const {
 			out.push_back(fieldOf(t, p));
 		}
 	}
+	out.push_back(mod::lfo::kViewTabField); // the tab strip writes it
 	return out;
 }
 
@@ -685,6 +696,12 @@ bool LfoCard::updateContent() {
 	// modulation of another control — and a row that reflows only when a hand did it would show a
 	// seed box over a triangle for as long as nobody touched the box. Watched here, where every
 	// frame already asks this card whether it is out of date.
+	// THE VIEW FIELD MOVED UNDER US (a patch load, an undo, a host write): follow it, with no write back.
+	if (const auto viewed = static_cast<size_t>(std::clamp(std::lround(host_.fieldAt(device_, mod::lfo::kViewTabField)), 0L, static_cast<long>(kTabCount) - 1)); viewed != tab_) {
+		tab_ = viewed;
+		resized();
+		redraw();
+	}
 	// THE TABS' ON SQUARES move by more roads than a press (undo, a preset, automation, a route): watched here too.
 	unsigned onMask = 0;
 	for (size_t t = 0; t < kTabCount; ++t) {

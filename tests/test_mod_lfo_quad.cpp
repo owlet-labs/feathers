@@ -88,7 +88,7 @@ std::vector<float> oldRow(const Settings& s) {
 
 /// THE FULL ROW: four tabs, tabs 2-4 at their descriptors' defaults (off) unless `put`.
 std::vector<float> fullRow(const Settings& first) {
-	std::vector<float> row(kTabs * kPerTab, 0.0f);
+	std::vector<float> row(kTabs * kPerTab + 1, 0.0f);
 	for (size_t i = 0; i < row.size(); ++i) {
 		row[i] = static_cast<float>(kParamDescs[i].def);
 	}
@@ -99,7 +99,7 @@ std::vector<float> fullRow(const Settings& first) {
 } // namespace
 
 TEST_CASE("quad lfo: the descriptor is four copies of one tab, tab 1's keys untouched, tabs 2-4 off") {
-	REQUIRE(std::size(kParamDescs) == kTabs * kPerTab);
+	REQUIRE(std::size(kParamDescs) == kTabs * kPerTab + 1);
 	for (size_t i = 0; i < kPerTab; ++i) {
 		const std::string base = kParamDescs[i].key;
 		for (size_t t = 1; t < kTabs; ++t) {
@@ -280,4 +280,37 @@ TEST_CASE("quad lfo: under Poly a tab runs a wave per note of its own") {
 	kNoteOps.processNotes(notes, in, 2, out, 4, &made);
 	CHECK(made == 2);
 	kNoteOps.destruct(notes);
+}
+
+TEST_CASE("quad lfo: the view field picks the tab whose playhead the device publishes") {
+	const Settings one = freeSine(std::log2(3.0f));
+	Settings two = freeSine(std::log2(5.0f));
+	two.wave = Waveform::Triangle;
+	std::vector<float> row = fullRow(one);
+	put(row, 1, two);
+	row[tabParam(1, Param::Enabled)] = 1.0f;
+	Instance inst;
+	inst.fields(row);
+	Shape ref1, ref2;
+	ref1.prepare(kSampleRate);
+	ref2.prepare(kSampleRate);
+	const auto phaseOf = [&] {
+		uint32_t ordinal = 0;
+		float phase = 0.0f;
+		kModOps.playhead(inst.storage(), &ordinal, &phase);
+		return phase;
+	};
+	for (int t = 0; t < 40; ++t) {
+		inst.tick();
+		ref1.tick(one, false, false, feathers::mod::TransportClock {});
+		ref2.tick(two, false, false, feathers::mod::TransportClock {});
+	}
+	CHECK(phaseOf() == ref1.playhead().phase); // view 0 (the default row): tab 1
+	row[kViewTabField] = 1.0f;
+	inst.fields(row);
+	CHECK(phaseOf() == ref2.playhead().phase); // view 1: tab 2's own
+	CHECK(ref1.playhead().phase != ref2.playhead().phase);
+	row[kViewTabField] = 9.0f; // out of range clamps to the last tab
+	inst.fields(row);
+	CHECK(std::isfinite(phaseOf()));
 }

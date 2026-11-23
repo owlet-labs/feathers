@@ -210,7 +210,7 @@ for e in db:
 	# -ferror-limit=0: clang stops analysing a TU after 20 errors, and this host's clang-15 on libstdc++-14 reports a handful
 	# in system headers (plus the structured-binding lambda class filtered below) BEFORE it reaches the later test cases.
 	# The default limit made the whole TU silent: a `typeid(*shown[i])` that Apple clang refuses at line 43484 of
-	# test_gui_widgets_devices.cpp produced no warning here until the limit was lifted.
+	# test_gui_widgets_devices.cpp (since split into gui_widgets/devices/devices_NN.cpp) produced no warning here until the limit was lifted.
 	cmd = [clang, '-fsyntax-only', '-ferror-limit=0', '-Wall', '-Wextra'] + apple + ['-DFEATHERS_FORCE_SIMDE'] + keep + [f]
 	print(' '.join(shlex.quote(x) for x in cmd) + ' 2>&1 || true')
 	# SECOND PASS, THE OTHER ROAD: a test that guards its bit-exact pins with FEATHERS_PINNED_PLATFORM (tests/platform_pin.h)

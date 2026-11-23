@@ -56,8 +56,13 @@ link_libraries(feathers-test-sandbox)
 # The case count is read from the source at configure time rather than written down, so the balance
 # follows the file instead of going stale behind it.
 function(feathers_count_test_cases OUT_VAR SOURCE)
-	file(STRINGS "${SOURCE}" _lines REGEX "^TEST_CASE")
-	list(LENGTH _lines _n)
+	# SOURCE may be one file or a ;-list of the files a suite is split over: the count is the sum.
+	set(_n 0)
+	foreach(_file IN LISTS SOURCE)
+		file(STRINGS "${_file}" _lines REGEX "^TEST_CASE")
+		list(LENGTH _lines _count)
+		math(EXPR _n "${_n} + ${_count}")
+	endforeach()
 	set(${OUT_VAR} ${_n} PARENT_SCOPE)
 endfunction()
 
@@ -631,15 +636,50 @@ if(TARGET visage)
 	set(_feathers_widget_shards_undo 1)
 	# rackviews — the Rack's Tabs and Pads views (src/plugin/ui/rack_views.h) over a fake model.
 	set(_feathers_widget_shards_rackviews 1)
+	# THE DEVICES SUITE IN 18 PIECES, each its cases in their original order (devices_common.h holds the shared helpers and includes).
+	set(_feathers_widget_pieces_devices
+		devices/devices_01.cpp
+		devices/devices_02.cpp
+		devices/devices_03.cpp
+		devices/devices_04.cpp
+		devices/devices_05.cpp
+		devices/devices_06.cpp
+		devices/devices_07.cpp
+		devices/devices_08.cpp
+		devices/devices_09.cpp
+		devices/devices_10.cpp
+		devices/devices_11.cpp
+		devices/devices_12.cpp
+		devices/devices_13.cpp
+		devices/devices_14.cpp
+		devices/devices_15.cpp
+		devices/devices_16.cpp
+		devices/devices_17.cpp
+		devices/devices_18.cpp
+	)
 	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 		string(REPLACE "_" "-" _suite_name "${_suite}")
+		# A SUITE IS ONE FILE, or the PIECES it was split into (a case edit then recompiles one piece, and the pieces build in parallel):
+		# `_feathers_widget_pieces_<suite>` lists them, relative to gui_widgets/. The binary, its case names and its shards are the same either way.
+		if(DEFINED _feathers_widget_pieces_${_suite})
+			set(_suite_sources "")
+			foreach(_piece IN LISTS _feathers_widget_pieces_${_suite})
+				list(APPEND _suite_sources gui_widgets/${_piece})
+			endforeach()
+		else()
+			set(_suite_sources gui_widgets/test_gui_widgets_${_suite}.cpp)
+		endif()
+		set(_suite_abs "")
+		foreach(_source IN LISTS _suite_sources)
+			list(APPEND _suite_abs ${CMAKE_CURRENT_SOURCE_DIR}/${_source})
+		endforeach()
 		add_executable(test_gui_widgets_${_suite}
-			gui_widgets/test_gui_widgets_${_suite}.cpp
+			${_suite_sources}
 			gui_widgets/main.cpp
 		)
 		target_link_libraries(test_gui_widgets_${_suite} PRIVATE feathers-gui-widget-fixtures)
 		feathers_add_sharded_test(NAME gui-widgets-${_suite_name} TARGET test_gui_widgets_${_suite}
-			SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/gui_widgets/test_gui_widgets_${_suite}.cpp
+			SOURCE "${_suite_abs}"
 			SHARDS ${_feathers_widget_shards_${_suite}}
 			LABELS "headless-incompatible" VENUE)
 	endforeach()
@@ -1983,7 +2023,28 @@ if(FEATHERS_SANITIZE)
 		# to four of these run at once, each with RUN_CASES_JOBS=4 case processes and its own Xvfb — a
 		# heavier moment than the one widget entry stacking on the rack suites was; the gate's cost line
 		# is the place to re-measure it.
-		foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
+		# THE DEVICES SUITE IN 18 PIECES, each its cases in their original order (devices_common.h holds the shared helpers and includes).
+	set(_feathers_widget_pieces_devices
+		devices/devices_01.cpp
+		devices/devices_02.cpp
+		devices/devices_03.cpp
+		devices/devices_04.cpp
+		devices/devices_05.cpp
+		devices/devices_06.cpp
+		devices/devices_07.cpp
+		devices/devices_08.cpp
+		devices/devices_09.cpp
+		devices/devices_10.cpp
+		devices/devices_11.cpp
+		devices/devices_12.cpp
+		devices/devices_13.cpp
+		devices/devices_14.cpp
+		devices/devices_15.cpp
+		devices/devices_16.cpp
+		devices/devices_17.cpp
+		devices/devices_18.cpp
+	)
+	foreach(_suite controls explore lane dahdsr devices mod_ring nest presets tooltips undo rackviews)
 			string(REPLACE "_" "-" _suite_name "${_suite}")
 			add_test(NAME sanitize-gui-widgets-${_suite_name} COMMAND ${CMAKE_SOURCE_DIR}/scripts/venue-xvfb.sh run --
 				${_feathers_each} $<TARGET_FILE:test_gui_widgets_${_suite}>)

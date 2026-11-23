@@ -4943,6 +4943,16 @@ TEST_CASE("KO: in a FULL lane, edits taken in turn across the devices never put 
 		p->deactivate(p);
 		REQUIRE(p->activate(p, 48000.0, 1, 4096));
 		REQUIRE(p->start_processing(p));
+		// **THE EDITOR'S BEAT, NOT JUST A MAIN-THREAD VISIT.** A device whose Poly switch is not modulatable (the Follower's) is built with its
+		// voice instances only when the record wants them, and that build is the editor's tick (`provisionAndDrain`); `on_main_thread` does not
+		// run it. Without it the engine holds such a device's Poly off ("reads off until its voices have arrived") and the case read a
+		// device's base at 0 for an edit that was in the record: it passed or failed with the CHUNKING, by whether a neighbour happened to
+		// provision after the Poly edit, and went red when two registry entries moved the chunks.
+		const auto beat = [&] {
+			mainThreadVisit(h.plugin());
+			REQUIRE(chain->provision != nullptr);
+			REQUIRE(chain->provision(h.plugin()));
+		};
 		size_t longest = 0;
 		for (const std::vector<Want>& w : perDevice) {
 			longest = std::max(longest, w.size());
@@ -4956,10 +4966,10 @@ TEST_CASE("KO: in a FULL lane, edits taken in turn across the devices never put 
 				REQUIRE(chain->drag_control(h.plugin(), w.at, w.name.c_str(), &w.value, 1));
 				h.run(kBlock, none);
 			}
-			mainThreadVisit(h.plugin());
+			beat();
 			h.run(kBlock, none);
 		}
-		mainThreadVisit(h.plugin());
+		beat();
 		h.run(kBlock, none);
 		h.run(kBlock, none);
 		for (const std::vector<Want>& wants : perDevice) {

@@ -40,6 +40,8 @@ DrumDeviceCard::DrumDeviceCard(backplane::DeviceHost& host, WidgetRegistry& regi
 	addChild(tune_.get());
 	// THE TRIG PAD (the house Trig button): the device's Trig param, so a press, a modulator or a pattern can strike the drum.
 	trigPad_ = std::make_unique<TrigPad>(model_.control(dd::Param::Trig), [&host, id](uint32_t& fires) { return host.trigFiresAt(id, fires); });
+	// THE DRUM STRIKES ON THE TRIG'S RISE, so a quick click must leave one for a block to read: the release goes through the release road.
+	trigPad_->setReleaseRoad(true);
 	addChild(trigPad_.get());
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		noteCardPress(e);

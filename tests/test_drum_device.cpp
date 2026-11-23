@@ -2288,6 +2288,111 @@ TEST_CASE("trig: in Gate the hit is held while the Trig is high and let go on it
 	}
 }
 
+TEST_CASE("trig: a pad press strikes exactly once however short, through the release road (a fall waits until a block has read the rise)") {
+	const size_t trig = at(Param::Trig);
+	const auto seatDrum = [&](persist::Rig& rig, double trigger) {
+		dd::Row row = defaultRow();
+		row[at(Param::Trigger)] = static_cast<float>(trigger);
+		row[at(Param::Decay)] = 2.0f;                                // a four-second ring
+		row[at(Param::Release)] = static_cast<float>(std::log2(0.03)); // a Gate lets go in 30 ms
+		rig.seat(dd::kTraits.tag, std::span<const float>(row.data(), row.size()));
+		rig.block();
+	};
+	const auto strikes = [](persist::Rig& rig) { return rig.as<dd::DrumDsp>().strikesForTest(); };
+	// A PRESS AS THE PAD MAKES IT: the Trig up, `between` blocks, then the release by the release road (`Modulatable::releaseValue`).
+	const auto tap = [&](persist::Rig& rig, int between, bool releaseRoad) {
+		rig.bridge->setField(rig.id, trig, 1.0f);
+		for (int b = 0; b < between; ++b) {
+			rig.block();
+		}
+		if (releaseRoad) {
+			rig.bridge->releaseField(rig.id, trig, 0.0f);
+		}
+		else {
+			rig.bridge->setField(rig.id, trig, 0.0f);
+		}
+	};
+	// THE MAIN THREAD'S VISIT (`serviceHostSlots` lands a held fall once the engine has adopted its rise) between blocks, a few times.
+	const auto settle = [&](persist::Rig& rig, int rounds = 6) {
+		for (int i = 0; i < rounds; ++i) {
+			(void)rig.bridge->serviceHostSlots();
+			rig.block();
+		}
+	};
+	// 0 BLOCKS BETWEEN IS A PRESS AND RELEASE WITHIN ONE MAIN-THREAD TICK: 1, a block, and N blocks, each exactly one strike, and the Trig ends at rest.
+	for (const int between : { 0, 1, 3, 20 }) {
+		CAPTURE(between);
+		persist::Rig rig;
+		seatDrum(rig, 0.0);
+		tap(rig, between, true);
+		settle(rig);
+		CHECK(strikes(rig) == 1u);
+		CHECK(rig.bridge->fieldAt(rig.id, trig) == 0.0f);
+	}
+	// THE HOLE THIS CLOSES, shown: the same quick click with the plain write is never read at all.
+	{
+		persist::Rig rig;
+		seatDrum(rig, 0.0);
+		tap(rig, 0, false);
+		settle(rig);
+		CHECK(strikes(rig) == 0u);
+	}
+	// A BURST OF TEN FAST TAPS, one main-thread visit and a block between taps: ten strikes.
+	{
+		persist::Rig rig;
+		seatDrum(rig, 0.0);
+		for (int i = 1; i <= 10; ++i) {
+			tap(rig, 0, true);
+			settle(rig, 3);
+			CHECK(strikes(rig) == static_cast<uint32_t>(i));
+		}
+	}
+	// GATE: a tap strikes and lets go at once (the fall lands a block later); a held press holds across blocks and releases on the fall.
+	{
+		persist::Rig rig;
+		seatDrum(rig, 1.0);
+		tap(rig, 0, true);
+		settle(rig, 300);
+		CHECK(strikes(rig) == 1u);
+		CHECK(rig.as<dd::DrumDsp>().soundingForTest() == 0); // released: damped in 30 ms, long since
+	}
+	{
+		persist::Rig rig;
+		seatDrum(rig, 1.0);
+		rig.bridge->setField(rig.id, trig, 1.0f);
+		for (int b = 0; b < 40; ++b) {
+			(void)rig.bridge->serviceHostSlots();
+			rig.block();
+		}
+		CHECK(strikes(rig) == 1u);
+		CHECK(rig.as<dd::DrumDsp>().soundingForTest() == 1); // held across the press
+		rig.bridge->releaseField(rig.id, trig, 0.0f);
+		settle(rig, 300);
+		CHECK(rig.as<dd::DrumDsp>().soundingForTest() == 0);
+	}
+	// A SLOW CLICK is still one strike (no double strike from the held fall), and a Drone still ignores the pad.
+	{
+		persist::Rig rig;
+		seatDrum(rig, 0.0);
+		tap(rig, 12, true);
+		settle(rig);
+		CHECK(strikes(rig) == 1u);
+	}
+	{
+		persist::Rig rig;
+		dd::Row row = defaultRow();
+		row[at(Param::Kind)] = static_cast<float>(drum::Kind::FM);
+		row[at(Param::Trigger)] = 2.0f;
+		rig.seat(dd::kTraits.tag, std::span<const float>(row.data(), row.size()));
+		rig.block();
+		tap(rig, 0, true);
+		settle(rig);
+		tap(rig, 5, true);
+		settle(rig);
+		CHECK(strikes(rig) == 0u);
+	}
+}
+
 TEST_CASE("trig: a routed modulator strikes the drum, one strike per rising edge of what arrives, by value") {
 	constexpr backplane::Axes kAxes { .coreSources = 8, .coreDestinations = 0, .deviceSlots = 4, .outputStride = 8 };
 	rack::RackEngine engine(kAxes, hostCatalogue());

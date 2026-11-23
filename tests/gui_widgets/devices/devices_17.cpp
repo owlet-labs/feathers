@@ -548,6 +548,14 @@ TEST_CASE("drum device card: each widget is bound to its control by index, write
 	u.d.card->trigPadForTest()->release();
 	CHECK(u.field(ddv::Param::Trig) == 0.0f);
 }
+TEST_CASE("drum Trig pad: the card's and the window's pads let go through the release road, so a click quicker than a block still strikes") {
+	DrumUi u;
+	REQUIRE(u.d.card->trigPadForTest() != nullptr);
+	REQUIRE(u.win->trigPadForTest() != nullptr);
+	CHECK(u.d.card->trigPadForTest()->releaseRoadForTest());
+	CHECK(u.win->trigPadForTest()->releaseRoadForTest());
+}
+
 TEST_CASE("drum Trig pad: a real press raises the Trig on the press and before the release, a Gate holds it across, a Drone hides the pad") {
 	DrumUi u;
 	const auto mouse = [](bool down) {

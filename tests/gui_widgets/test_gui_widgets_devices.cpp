@@ -33655,6 +33655,29 @@ TEST_CASE("Spectral's window: at every width it can be given, every control lies
 	}
 }
 
+TEST_CASE("Spectral's routing choice is shown only while both filters are on, in the window, for every combination of the two") {
+	namespace spx = feathers::fx::spectral;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	// Both filters' chips are the one control; each is checked (the tab shows one filter's, the other is hidden with it).
+	const auto shownWith = [&](float filter1, float filter2) {
+		d.set(static_cast<size_t>(spx::Param::FilterOn), filter1);
+		d.set(static_cast<size_t>(spx::Param::Filter2On), filter2);
+		panel.updateContent();
+		CAPTURE(filter1);
+		CAPTURE(filter2);
+		return std::make_pair(panel.routingForTest(0, 0).isVisible(), panel.routingForTest(0, 1).isVisible());
+	};
+	// THE TWO FILTERS OFF, ONE AT A TIME, AND BOTH: only the last shows the choice.
+	CHECK(shownWith(0.0f, 0.0f) == std::make_pair(false, false));
+	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
+	CHECK(shownWith(0.0f, 1.0f) == std::make_pair(false, false));
+	CHECK(shownWith(1.0f, 1.0f) == std::make_pair(true, true));
+	// AND BACK: a switch moved off hides it again at once.
+	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
+}
+
 TEST_CASE("Spectral's mode-dependent hover text follows the Filter, Filter 2, Vocode and Key Track, on the card and in the window") {
 	namespace spx = feathers::fx::spectral;
 	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);

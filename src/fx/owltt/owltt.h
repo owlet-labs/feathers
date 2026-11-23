@@ -18,6 +18,7 @@
 #pragma once
 
 #include "dsp/linear_crossover.h"
+#include "fx/owltt/comb_split.h"
 #include "fx/owltt/owltt_types.h"
 
 #include <array>
@@ -283,6 +284,16 @@ public:
 	[[nodiscard]] float effectiveHighCrossoverHzForTest() const noexcept { return effectiveHighCrossoverHz_; }
 	/// The low corner the splitters were last handed, Hz (the knob, or the tracked corner).
 	[[nodiscard]] float effectiveLowCrossoverHzForTest() const noexcept { return effectiveLowCrossoverHz_; }
+	/// **THE COMB CROSSOVER (Modes 15, 16)**: split `which`'s tooth spacing in Hz the lines were last asked to run at, after the glide and the clamp, and its comb delay
+	/// in samples. 0 until the mode has run.
+	[[nodiscard]] double combSpacingHzForTest(size_t which) const noexcept { return combPrimed_ ? std::exp2(combLog2Fc_[which]) : 0.0; }
+	[[nodiscard]] double combDelayForTest(size_t which = 0) const noexcept { return combDelayEnd_[which]; }
+	/// The feedback gain split `which` ran at the end of the last slice, and the goal Res Home and Vibe put it at (before smoothing).
+	[[nodiscard]] float combResonanceForTest(size_t which) const noexcept { return combResEnd_[which]; }
+	/// The highpass the splitters were last given: its corner in Hz, and whether it is in the signal.
+	[[nodiscard]] double hpHzForTest() const noexcept { return hpLatched_.hz; }
+	[[nodiscard]] bool hpOnForTest() const noexcept { return hpLatched_.on; }
+	[[nodiscard]] float combResonanceGoalForTest(size_t which) const noexcept { return combResonanceFor(which); }
 	/// The vibe depth the zone tables were modulated by — 0.55 x the coordinate's lap fraction.
 	[[nodiscard]] float vibeModAmountForTest() const noexcept { return vibeModAmount_; }
 
@@ -337,6 +348,11 @@ private:
 	void processStereoSlice(float* left, float* right, int frames);
 
 	void updateCrossoverFrequencies();
+	/// **SPLIT `which`'S RESONANCE GOAL**: Res Home as a share of `kCombMaxResonance`, plus Vibe's phase for that split times `kCombVibeResonanceDepth`, clamped to
+	/// [0, kCombMaxResonance] — the one place the resonance is decided.
+	[[nodiscard]] float combResonanceFor(size_t which) const noexcept {
+		return std::clamp(target_.combResHome * kCombMaxResonance + kCombVibeResonanceDepth * vibePhaseRes_[which], 0.0f, kCombMaxResonance);
+	}
 	/// EVERY CROSSOVER'S STATE CLEARED — on a reset, and on a crossover TYPE change (backlog EH, shape
 	/// 6): the type that comes in would otherwise resume from whatever it held when it last ran.
 	void resetCrossovers();
@@ -420,6 +436,8 @@ private:
 	float vibePhaseKnee_ = 0.0f;
 	std::array<float, 3> vibePhaseTiming_ {0.0f, 0.0f, 0.0f};
 	std::array<float, 3> vibePhaseSkew_ {0.0f, 0.0f, 0.0f};
+	/// The Comb resonance's phase for each split (see `computeCharacterAndVibe`): Vibe's fifth phased quantity.
+	std::array<float, 2> vibePhaseRes_ {0.0f, 0.0f};
 	float vibePhaseOffset_ = 0.0f;
 	float feelPhaseOffset_ = 0.0f;
 
@@ -504,6 +522,28 @@ private:
 	uint32_t rawLen_ = 0;
 	bool rawLive_ = false;   ///< the raw delay has been fed without a gap, so it holds the input's recent past
 	bool linearBuild_ = false; ///< Linear just came in: its kernels are built whole, not crossfaded from nothing
+	/// **THE COMB CROSSOVER (Modes 15, 16)**: a tree of two combs (`comb_split.h`) a channel. Their spacings are Low and High Crossover (`combSpacingHz`: the
+	/// knobs, or with Key Track on and a note heard the note moved by their offsets, `updateCrossoverFrequencies`), glided in log2 and clamped to what the lines
+	/// serve. Each comb's delay moves linearly across the slice from `combDelayStart_` to `combDelayEnd_`, so a moving spacing never steps. Allocated at
+	/// `prepare`; the bands sum to the input with no delay, so there is no latency and the Blend's dry is the raw input as in the other modes.
+	std::unique_ptr<CombSplit> comb_;
+	std::array<double, 2> combLog2Fc_ {};
+	std::array<double, 2> combDelayStart_ {};
+	std::array<double, 2> combDelayEnd_ {};
+	/// The two splits' feedback gains: smoothed toward `combResonanceFor`'s goal once a slice and ramped across it like the delays.
+	std::array<float, 2> combResStart_ {};
+	std::array<float, 2> combResEnd_ {};
+	bool combPrimed_ = false;
+	/// **HP WET AND SUB THRU (every mode)**: the shared wet highpass, latched once a slice (`latchHighpass`), run on the input before the drive and the split. The lows it
+	/// takes are held back by the latency the bands run with (the Linear crossover's plus the lookahead's) in `subRing_` and added to the band sum, so they arrive
+	/// with the bands and uncompressed. All of it idle, and nothing run, while HP Wet is at its bottom.
+	fx::WetHighpass hp_ {};
+	fx::HighpassSettings hpLatched_ {};
+	bool subThru_ = false;
+	std::array<std::vector<float>, 2> subRing_;
+	uint32_t subPos_ = 0;
+	uint32_t subCap_ = 0;
+	void latchHighpass();
 	/// Delay `left`/`right` in place by the linear latency (the bypassed road), feeding the raw delay.
 	void rawDelayStep(float* left, float* right, int frames) noexcept;
 	void ensureRawDelay() noexcept;

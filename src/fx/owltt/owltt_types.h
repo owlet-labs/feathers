@@ -18,6 +18,7 @@
 #pragma once
 
 #include "fx/owltt/band_compressor.h"
+#include "fx/wet_highpass.h"
 #include "fx/owltt/crossover.h"
 #include "device/zone_param.h"
 
@@ -48,8 +49,8 @@ namespace feathers::fx::owltt {
 /// OWLTT's 25 controls, in hardware menu order.
 enum class Param : uint8_t {
 	// Global
-	Mode = 0,            // Stepped 1-14: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
-	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full
+	Mode = 0,            // Stepped 1-16: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
+	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full, 15=Comb, 16=Comb Sharp
 	Enabled = 1,         // Bypass switch
 	Threshold = 2,       // Linked global threshold
 	Ratio = 3,           // Linked global ratio
@@ -164,6 +165,16 @@ enum class Param : uint8_t {
 	LowInput = 50,
 	MidInput = 51,
 	HighInput = 52,
+	/// **RESONANCE HOME (Comb modes only)**: the centre of the comb teeth's resonance, the feedback gain of each split's comb as a share of `kCombMaxResonance`; Vibe's
+	/// per-split phase pattern then moves each around it. 0 is the plain comb. Appended; modulatable; hidden outside Comb (an engine choice, not a greyed knob).
+	ResHome = 53,
+	/// **HP WET AND SUB THRU, UPSTREAM OF THE SPLIT AND THE DETECTORS (every mode)**: the shared wet highpass (`fx/wet_highpass.h`, the Eroder's and the Smooth Shaper's) runs
+	/// FIRST. Only the high-passed signal feeds the crossover or comb and the band detectors; with Sub Thru on, what it took from the input is given back
+	/// after the bands, uncompressed, delayed as the bands are. HP Wet at its bottom is no filter, so the device is what it was to the bit. With Key Track on,
+	/// HP Wet Semitones takes HP Wet's place: a distance above the played note, as on the Eroder. Appended.
+	HpWet = 54,
+	SubThru = 55,
+	HpWetSemis = 56,
 	kCount
 };
 
@@ -188,7 +199,7 @@ struct BandParams {
 
 /// The full OWLTT state: globals + per-band absolutes.
 struct Settings {
-	float mode = 6.0f;           // 1-14 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full)
+	float mode = 6.0f;           // 1-16 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full, 15 = Comb, 16 = Comb Sharp)
 	bool enabled = true;         // Bypass switch
 	float threshold = 0.5f;      // Linked global threshold
 	// THE STRUCT DEFAULT IS NOT THE PARAMETER DEFAULT, HERE AND ONLY HERE, and it is deliberate: a
@@ -229,6 +240,12 @@ struct Settings {
 	/// BACKLOG ND — see `Param::Lookahead`. An index into `kLookaheadNames`; 0 is Off.
 	uint32_t lookahead = 0;
 	bool keyTrack = false;
+	/// See `Param::ResHome`: 0..1, the home of the Comb modes' resonance.
+	float combResHome = 0.0f;
+	/// See `Param::HpWet`: log2 hertz, the bottom is no filter; Sub Thru gives the lows back; with Key Track on, semitones above the note replace the hertz.
+	float hpWet = static_cast<float>(fx::kWetHighpassLog2Min);
+	bool subThru = false;
+	float hpWetSemis = -24.0f;
 
 	/// The band by index, 0 low, 1 mid, 2 high.
 	[[nodiscard]] const BandParams& band(size_t b) const noexcept { return b == 0 ? low : (b == 1 ? mid : high); }
@@ -335,7 +352,10 @@ inline constexpr device::Traits kTraits {
 /// with the same latency. `kLastMode` is the highest Mode.
 inline constexpr long kFirstLinearMode = 11;
 inline constexpr long kLastLinearMode = 13;
-inline constexpr long kLastMode = 14; // 14 is LR8 Full, an IIR (48 dB/oct, no latency)
+inline constexpr long kCombMode = 15; // 15 is Comb: the bands are harmonic classes of a fundamental, not frequency ranges (`comb_split.h`); no latency
+inline constexpr long kCombSharpMode = 16; // 16 is Comb Sharp: the same tree with each comb run twice (narrower teeth, flat nulls)
+inline constexpr long kLastMode = 16;
+[[nodiscard]] inline constexpr bool isCombMode(long mode) noexcept { return mode == kCombMode || mode == kCombSharpMode; }
 [[nodiscard]] inline constexpr bool isLinearMode(long mode) noexcept { return mode >= kFirstLinearMode && mode <= kLastLinearMode; }
 [[nodiscard]] inline constexpr uint8_t linearSteepOf(long mode) noexcept { return static_cast<uint8_t>(mode - kFirstLinearMode); }
 
@@ -345,7 +365,8 @@ inline constexpr long kLastMode = 14; // 14 is LR8 Full, an IIR (48 dB/oct, no l
 /// The labels the first ten went by before the slopes were added are `kModeAliases`: a stored label still loads.
 inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast (12 dB/oct)",
                                              "LR2 Full (12 dB/oct)", "LR4 Fast (24 dB/oct)", "LR4 Full (24 dB/oct)", "Inverted", "Twist3",
-                                             "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 Full (48 dB/oct)"};
+                                             "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 Full (48 dB/oct)",
+                                             "Comb", "Comb Sharp"};
 inline constexpr device::ChoiceAlias kModeAliases[] = { { "LR2 Fast", "LR2 Fast (12 dB/oct)" },
 	                                                    { "LR2 Full", "LR2 Full (12 dB/oct)" },
 	                                                    { "LR4 Fast", "LR4 Fast (24 dB/oct)" },
@@ -362,6 +383,82 @@ inline constexpr const char* kLowCrossoverTipKeyTrack = "Low-mid split, as an of
                                                        "Until a note is heard, a plain frequency";
 inline constexpr const char* kHighCrossoverTipKeyTrack = "Mid-high split, as an offset from the last note played: at its default it keeps its distance "
                                                         "above that note. Until a note is heard, a plain frequency";
+/// HP WET SEMITONES' RANGE, as the Eroder's: the bottom is no filter, the top is far above any note the highpass can reach (it is clamped to HP Wet's own range).
+inline constexpr double kHpWetSemisMin = -24.0;
+inline constexpr double kHpWetSemisMax = 128.0;
+/// The highpass is held under this share of the rate, as the Smooth Shaper's is.
+inline constexpr double kHpNyquistFraction = 0.45;
+/// **IN COMB (Modes 15, 16) THE TWO CROSSOVERS ARE TOOTH SPACINGS** (`comb_split.h`): Low Crossover is split 1's, High Crossover split 2's. The same knob
+/// values that place the other modes' corners place these, so a note-tracked patch keeps its meaning: tracking, a knob is a RATIO to the played note
+/// (Low: knob / 200, so the default 200 Hz is x1; High: knob / 1000, so the default 2000 Hz is x2); not tracking, Low is the spacing in Hz and High is
+/// **THE COMB'S RESONANCE**: each split's comb is followed by a feedback comb `y = (1 - g) e + g y[-D]`, unity at the teeth and ringing for D / (1 - g) samples.
+/// `g` is clamped below 1 by this constant, so the loop is stable whatever Res Home, Vibe and a modulator add up to. The band the split leaves behind is the
+/// INPUT minus the resonant band, never a separately designed filter, so the three bands sum to the input at any `g`, moving or not.
+inline constexpr float kCombMaxResonance = 0.95f;
+/// How far Vibe's per-split phase (0 .. 0.5, as Timing's and Skew's are) moves the resonance from Res Home, in units of `g` per unit of phase.
+inline constexpr float kCombVibeResonanceDepth = 1.0f;
+/// the knob / 5 in Hz (its default 2000 reads as 400 Hz, twice Low's 200).
+inline constexpr double kCombLowUnityKnob = 200.0;  ///< Low Crossover's value for x1
+inline constexpr double kCombHighUnityKnob = 1000.0; ///< High Crossover's value for x1
+/// The spacing a knob means, Hz: the knob itself for Low, a fifth of it for High (the default pair 200 / 2000 is then 200 / 400).
+[[nodiscard]] inline double combSpacingHz(double knob, bool high) noexcept { return high ? knob * (kCombLowUnityKnob / kCombHighUnityKnob) : knob; }
+/// The ratio to the note a knob means while tracking.
+[[nodiscard]] inline double combRatioOfKnob(double knob, bool high) noexcept { return knob / (high ? kCombHighUnityKnob : kCombLowUnityKnob); }
+[[nodiscard]] inline double combKnobOfRatio(double ratio, bool high) noexcept { return ratio * (high ? kCombHighUnityKnob : kCombLowUnityKnob); }
+/// THE DETENTS a ratio snaps to, as the Harm device's harmonic box has them: simple ratios from x1/8 to x8.
+inline constexpr double kCombDetents[] = { 1.0 / 8.0, 1.0 / 4.0, 1.0 / 3.0, 1.0 / 2.0, 1.0, 2.0, 3.0, 4.0, 8.0 };
+inline constexpr double kCombDetentReach = 0.04; ///< a ratio within 4% of a detent (in log) is on it
+/// The ratio, snapped to a detent when within reach.
+[[nodiscard]] inline double combSnapRatio(double ratio) noexcept {
+	for (const double d : kCombDetents) {
+		if (ratio > 0.0 && std::fabs(std::log(ratio / d)) < kCombDetentReach) {
+			return d;
+		}
+	}
+	return ratio;
+}
+/// A ratio as it reads: "x1", "x2", "x1/2" on a detent, else two significant figures ("x1.4").
+[[nodiscard]] inline std::string combRatioText(double ratio) {
+	static constexpr const char* kNames[] = { "x1/8", "x1/4", "x1/3", "x1/2", "x1", "x2", "x3", "x4", "x8" };
+	for (size_t i = 0; i < std::size(kCombDetents); ++i) {
+		if (std::fabs(std::log(std::max(ratio, 1e-9) / kCombDetents[i])) < 1.0e-3) {
+			return kNames[i];
+		}
+	}
+	char out[24] = {};
+	std::snprintf(out, sizeof(out), "x%.2g", ratio);
+	return out;
+}
+/// THE COLUMNS' NAMES FOLLOW THE RATIOS: the second spacing over the first says what the on-teeth band is cut into. At 2 the halves are the odd and
+/// the even teeth of the first comb; at a whole n the High band is every n-th and Mid the rest; otherwise the two are named for the second comb.
+[[nodiscard]] inline std::array<std::string, 3> combBandNames(double spacing1, double spacing2) {
+	const double r = spacing2 / std::max(spacing1, 1e-9);
+	if (std::fabs(r - 2.0) < 0.02) {
+		return { "Between", "Odd", "Even" };
+	}
+	if (r > 2.5 && std::fabs(r - std::round(r)) < 0.02) {
+		return { "Between", "Others", "Every " + std::to_string(static_cast<int>(std::lround(r))) };
+	}
+	return { "Between", "Off " + combRatioText(r), "On " + combRatioText(r) };
+}
+inline constexpr const char* kLowCrossoverTipComb = "Comb tooth spacing: the bands are harmonic classes of this spacing, not frequency ranges. Low is "
+                                                   "what falls between its teeth. In Hz";
+inline constexpr const char* kLowCrossoverTipCombKeyTrack = "Comb tooth spacing as a ratio to the last note played (x1 = the note's own harmonics, x2 = every "
+                                                           "other one, x1/2 = twice as dense). Until a note is heard, a plain frequency";
+inline constexpr const char* kHighCrossoverTipComb = "Comb second split's tooth spacing: it cuts the on-teeth band in two. Read in Hz, a fifth of this "
+                                                    "knob, and its default is twice Low's";
+inline constexpr const char* kHighCrossoverTipCombKeyTrack = "Comb second split as a ratio to the last note played (x2 = odd against even harmonics, x3 = "
+                                                            "every third). Until a note is heard, a plain frequency";
+/// The hover text for a crossover in the state the card and window are in; "" restores the declared text.
+[[nodiscard]] inline const char* crossoverTip(bool high, bool keyTrack, bool comb) noexcept {
+	if (comb) {
+		return high ? (keyTrack ? kHighCrossoverTipCombKeyTrack : kHighCrossoverTipComb) : (keyTrack ? kLowCrossoverTipCombKeyTrack : kLowCrossoverTipComb);
+	}
+	if (!keyTrack) {
+		return "";
+	}
+	return high ? kHighCrossoverTipKeyTrack : kLowCrossoverTipKeyTrack;
+}
 /// THE CLIP CHOICE (`soft_clip`). It was Off|On; the old On is Both, kept at index 1 so a stored or host-held NUMBER means what it did
 /// (and a stored label "On" loads as Both through `kClipAliases`). Master clips the output sum only, Bands each band only, Both each band and then the sum.
 inline constexpr const char* kClipNames[] = {"Off", "Both", "Master", "Bands"};
@@ -602,11 +699,13 @@ inline constexpr double kOnePhaseUnit = 1.0;
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // Global
-    {.key = "mode", .name = "Mode", .min = 1.0, .max = 14.0, .def = 6.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
+    {.key = "mode", .name = "Mode", .min = 1.0, .max = 16.0, .def = 6.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
      .modulatable = false, .offsetsMayLeaveRange = false,
      .tooltip = "Crossover filter type — how the spectrum is split into bands. LR2, LR4 and LR8 are Linkwitz-Riley pairs at 12, 24 and 48 dB per octave; "
                 "Linear splits with linear-phase FIRs (the width is how far the transition runs from -0.1 dB to -60 dB): the bands sum to the input "
-                "delayed by 24 ms, which the device reports as latency",
+                "delayed by 24 ms, which the device reports as latency. Comb splits by harmonic class instead of by frequency, with two combs whose tooth spacings are Low and High Crossover (as ratios to "
+                "the played note under Key Track): Low is what falls between the teeth, Mid and High cut the on-teeth band in two (at the defaults, the odd and the even "
+                "harmonics). The bands sum to the input exactly and it adds no latency; Comb Sharp runs each comb twice for narrower teeth",
      .choiceAliases = kModeAliases},
     // ON BY DEFAULT — all effects should default to on when they are added.
     // See `fx::filter::kParamDescs` for the decision and what it replaced. This device is also the one
@@ -827,6 +926,26 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .unit = device::Unit::Decibel, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
      .tooltip = "High band input level — gain on this band after the split and before its detector and compressor",
      .shortName = "In"},
+    {.key = "comb_res_home", .name = "Res Home", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent, .names = {},
+     .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Comb resonance, home position: how long the comb teeth ring (the feedback of each split's comb). Vibe moves each split's resonance around this "
+                "by its zone pattern. 0 is the plain comb. Comb modes only",
+     .shortName = "Res"},
+    {.key = "owltt_hp_wet", .name = "OWLTT HP Wet", .min = fx::kWetHighpassLog2Min, .max = fx::kWetHighpassLog2Max, .def = fx::kWetHighpassLog2Min,
+     .stepped = false, .unit = device::Unit::LogHertz, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Takes the low end out of what the bands hear: the high-passed signal alone feeds the crossover and every detector, so the bass never drives "
+                "a compressor. At the bottom there is no filter. With Key Track on, a distance in semitones from the played note takes this control's place",
+     .shortName = "HP Wet"},
+    {.key = "owltt_sub_thru", .name = "OWLTT Sub Thru", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true, .unit = device::Unit::Choice,
+     .names = kOffOnNames, .modulatable = false, .offsetsMayLeaveRange = false,
+     .tooltip = "Gives back what HP Wet took out, after the bands: the low end passes whole and uncompressed, in time with the bands. Inactive while HP Wet is at "
+                "its bottom, where there is no filter",
+     .shortName = "Sub Thru"},
+    {.key = "owltt_hp_wet_semis", .name = "OWLTT HP Wet Semitones", .min = kHpWetSemisMin, .max = kHpWetSemisMax, .def = kHpWetSemisMin, .stepped = false,
+     .unit = device::Unit::Number, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "While Key Track is on, sets the HP Wet filter this many semitones above the played note (0 is the note itself, 12 an octave above). At the bottom "
+                "there is no filter. With Key Track off, HP Wet's frequency applies instead",
+     .shortName = "HP Wet", .offAtEnd = -1, .suffix = "st"},
 };
 
 /// ND'S DEFAULT, PINNED TO THE DESCRIPTOR: Off is the device before the lookahead.
@@ -843,6 +962,9 @@ static_assert(BandParams {}.width == static_cast<float>(kParamDescs[static_cast<
 
 /// LQ'S DEFAULTS, PINNED TO THE DESCRIPTOR, so a fresh `Settings` and a fresh row agree: Link 100% and L/R
 /// are the linked device this was before.
+static_assert(Settings {}.hpWet == static_cast<float>(kParamDescs[static_cast<size_t>(Param::HpWet)].def));
+static_assert(Settings {}.hpWetSemis == static_cast<float>(kParamDescs[static_cast<size_t>(Param::HpWetSemis)].def));
+static_assert(Settings {}.combResHome == static_cast<float>(kParamDescs[static_cast<size_t>(Param::ResHome)].def));
 static_assert(Settings {}.stereoLink == static_cast<float>(kParamDescs[static_cast<size_t>(Param::StereoLink)].def));
 static_assert(Settings {}.midSide == (kParamDescs[static_cast<size_t>(Param::StereoMode)].def >= 0.5));
 

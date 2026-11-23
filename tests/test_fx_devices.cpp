@@ -1790,7 +1790,7 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 			CHECK_MESSAGE(bbdLast < silentBlocks / 2, "the Delay in BBD still sounding halfway through the silence");
 			CHECK_FALSE(bbd.ops->holdsTail(bbd.mem));
 		}
-		// **THE LINEAR CROSSOVER'S FIR TAILS AND THE LR8 IIR'S** (OWLTT's Modes 11 and 14, the Rack's Linear slope in each Filtering): a convolution of a
+		// **THE LINEAR CROSSOVER'S FIR TAILS AND THE LR8 IIR'S** (OWLTT's Modes 11, 14 and 15, the Rack's Linear slope in each Filtering): a convolution of a
 		// burst rings for its kernel's length and must then be EXACT zero, with the device saying it holds nothing.
 		std::vector<DeviceRow> linearRows;
 		if (device::sameTag(desc->traits.tag, fx::owltt::kTraits.tag)) {
@@ -1799,6 +1799,19 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 			linearRows.push_back(linearRow);
 			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = 14.0f; // LR8 Full: an IIR whose eight biquads a side must flush to exact zero
 			linearRows.push_back(linearRow);
+			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = static_cast<float>(fx::owltt::kCombSharpMode); // Comb Sharp: twice the lines of Comb, and
+			linearRows.push_back(linearRow);
+			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = static_cast<float>(fx::owltt::kCombMode); // Comb: feedforward lines that hold their input for up to fs / (2 f0) and must then be exact zero
+			linearRows.push_back(linearRow);
+			// HP WET WITH SUB THRU: the lows held back by the Linear crossover's latency (and a lookahead) leave through the same ring, and must end at exact zero too.
+			for (const float mode : { static_cast<float>(fx::owltt::kCombMode), 11.0f, 6.0f }) {
+				DeviceRow hpRow = linearRow;
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = mode;
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::HpWet)] = static_cast<float>(std::log2(500.0));
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::SubThru)] = 1.0f;
+				hpRow.field[static_cast<size_t>(fx::owltt::Param::Lookahead)] = 5.0f;
+				linearRows.push_back(hpRow);
+			}
 		}
 		if (device::sameTag(desc->traits.tag, rack::parallel::kTraits.tag)) {
 			for (const float filtering : { 0.0f, 1.0f, 2.0f }) {

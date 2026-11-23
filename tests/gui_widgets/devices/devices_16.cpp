@@ -2050,6 +2050,318 @@ TEST_CASE("OWLTT: the combined-reduction readout has a place of its own — no s
 	CHECK(headersChecked == 5u * 6u); // not vacuous: the headers were there to be avoided
 }
 
+TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns named for their classes, the spacings where the corners were, two handles") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { d.f.deviceHost, registry, d.device };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	const auto overlap = [](const visage::Bounds& a, const visage::Bounds& b) {
+		return a.x() < b.right() && b.x() < a.right() && a.y() < b.bottom() && b.y() < a.bottom();
+	};
+	const std::array<float, 3> gr { -0.5f, -0.25f, -0.125f };
+	d.f.bridge.publishOwlttMeters(d.slot, gr, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false, { false, false, false }, 3.0f);
+	// NOT VACUOUS: in an ordinary mode the corners read as frequencies and no column is headed by a class.
+	d.set(static_cast<size_t>(ow::Param::Mode), 8.0f);
+	for (ui::OwlttGraph* graph : { d.card->graph(), panel.graph() }) {
+		const ui::OwlttGraph::BottomText t = graph->bottomText();
+		CHECK(t.frequencyText[0] == "200 Hz");
+		CHECK(t.frequencyText[1] == "2.0 kHz");
+		for (const std::string& c : t.classText) {
+			CHECK(c.empty());
+		}
+	}
+	d.set(static_cast<size_t>(ow::Param::Mode), static_cast<float>(ow::kCombMode));
+	d.set(static_cast<size_t>(ow::Param::LowCrossover), 100.0f);
+	// THE HIGH CORNER OFF ITS DEFAULT: at 200 Hz and 2 kHz the corners fall on exact thirds of the 20 Hz .. 20 kHz axis, which would hide a column edge that still claimed one.
+	d.set(static_cast<size_t>(ow::Param::HighCrossover), 5000.0f);
+	// 100 and 1000 Hz: ten times, so the on-teeth band is cut at a whole ratio, and named so.
+	const std::array<const char*, 3> classes { "Between", "Others", "Every 10" };
+	for (ui::OwlttGraph* graph : { d.card->graph(), panel.graph() }) {
+		CAPTURE(graph == panel.graph());
+		const ui::OwlttGraph::BottomText t = graph->bottomText();
+		// The one readout is the fundamental where the first corner's was; the second corner says nothing.
+		CHECK(t.frequencyText[0] == "f1 100 Hz");
+		CHECK(t.frequencyText[1] == "f2 1.0 kHz"); // High at 5000 reads as a fifth of it, in Hz
+		// Each column is headed by its class, centred in a third of the plot.
+		const visage::Bounds whole = graph->bounds();
+		for (size_t b = 0; b < 3; ++b) {
+			CAPTURE(b);
+			CHECK(t.classText[b] == classes[b]);
+			const float centre = t.classLabel[b].x() + t.classLabel[b].width() * 0.5f;
+			CHECK(centre == doctest::Approx(whole.width() * (static_cast<float>(b) + 0.5f) / 3.0f).epsilon(0.01));
+			CHECK_FALSE(overlap(t.classLabel[b], t.frequency[0]));
+			CHECK_FALSE(overlap(t.classLabel[b], graph->readoutBounds()));
+		}
+	}
+	// THE LANE'S FIRST HANDLE IS f0, on its own log scale (an octave is the same distance anywhere), and the second is out of reach.
+	ui::OwlttGraph* lane = panel.graph();
+	std::array<float, 3> x {};
+	size_t at = 0;
+	for (const float hz : { 200.0f, 400.0f, 800.0f }) {
+		d.set(static_cast<size_t>(ow::Param::LowCrossover), hz);
+		const visage::Point h = lane->crossoverHandle(0);
+		CHECK(lane->bottomText().frequencyText[0] == "f1 " + ui::OwlttGraph::frequencyText(hz));
+		x[at++] = h.x;
+		CHECK(lane->hitTestThreshold(h) == ui::OwlttGraph::ThresholdHit::kLowCrossover);
+	}
+	CHECK(x[1] > x[0]);
+	CHECK((x[1] - x[0]) == doctest::Approx(x[2] - x[1]).epsilon(0.01));
+	// THE SECOND HANDLE IS THE SECOND SPACING, on the same spacing scale: an octave is the same distance there too, and the defaults (200 and 400 Hz) are an octave apart.
+	std::array<float, 3> y {};
+	at = 0;
+	d.set(static_cast<size_t>(ow::Param::LowCrossover), 20.0f); // out of the way: the handles share one scale
+	for (const float knob : { 1000.0f, 2000.0f, 4000.0f }) {
+		d.set(static_cast<size_t>(ow::Param::HighCrossover), knob);
+		const visage::Point h = lane->crossoverHandle(1);
+		CHECK(lane->hitTestThreshold(h) == ui::OwlttGraph::ThresholdHit::kHighCrossover);
+		y[at++] = h.x;
+	}
+	CHECK(y[1] > y[0]);
+	CHECK((y[1] - y[0]) == doctest::Approx(y[2] - y[1]).epsilon(0.01));
+}
+
+TEST_CASE("OWLTT Comb: Res Home is in the window's header right of the Mode box, only in a Comb mode, and writes its parameter") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::ValueBox* box = panel.resHomeForTest();
+	REQUIRE(box != nullptr);
+	const size_t mode = static_cast<size_t>(ow::Param::Mode);
+	// HIDDEN in every other mode: an engine choice could be the only thing to enable it, so it is not drawn rather than greyed.
+	for (const float other : { 1.0f, 6.0f, 11.0f, 14.0f }) {
+		f.deviceHost.setField(id, mode, other);
+		(void)panel.update();
+		CAPTURE(other);
+		CHECK_FALSE(box->isVisible());
+	}
+	const float clipBefore = panel.clipBounds().x();
+	for (const long comb : { ow::kCombMode, ow::kCombSharpMode }) {
+		f.deviceHost.setField(id, mode, static_cast<float>(comb));
+		(void)panel.update();
+		CAPTURE(comb);
+		CHECK(box->isVisible());
+		// RIGHT OF THE MODE BOX, on its row, with Clip moved along rather than overlapped.
+		const visage::Bounds m = panel.modeBounds();
+		CHECK(box->x() >= m.right());
+		CHECK(box->x() - m.right() < 16.0f);
+		CHECK(box->width() > 40.0f);
+		CHECK(panel.clipBounds().x() >= box->x() + box->width());
+		CHECK(panel.clipBounds().x() > clipBefore);
+	}
+	// THE BOX WRITES RES HOME (it is the control's own face).
+	ui::DeviceControl c { f.deviceHost, id, ow::kDescriptor, static_cast<size_t>(ow::Param::ResHome) };
+	c.setValue(0.4);
+	CHECK(f.deviceHost.fieldAt(id, static_cast<size_t>(ow::Param::ResHome)) == doctest::Approx(0.4f));
+	// BACK OUT OF COMB, it goes and Clip returns.
+	f.deviceHost.setField(id, mode, 6.0f);
+	(void)panel.update();
+	CHECK_FALSE(box->isVisible());
+	CHECK(panel.clipBounds().x() == clipBefore);
+	CHECK(ow::kParamDescs[static_cast<size_t>(ow::Param::ResHome)].modulatable);
+}
+
+TEST_CASE("OWLTT Comb: each column's curve peaks at its band's harmonics, sharpens with Res Home and follows the second spacing; the three colours differ") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::Mode), static_cast<float>(ow::kCombMode));
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	constexpr size_t kPoints = 641; // a step of 0.025 in harmonic number over 0 .. 16
+	const auto peaks = [&](size_t band) {
+		const std::vector<float> c = graph->combCurve(band, kPoints);
+		std::vector<double> at;
+		for (size_t i = 1; i + 1 < c.size(); ++i) {
+			if (c[i] > 0.75f && c[i] >= c[i - 1] && c[i] > c[i + 1]) {
+				at.push_back(ui::OwlttGraph::kCombCurveSpan * static_cast<double>(i) / static_cast<double>(kPoints - 1));
+			}
+		}
+		return at;
+	};
+	const auto expectPeaks = [&](size_t band, double first, double step, size_t count) {
+		const std::vector<double> got = peaks(band);
+		CAPTURE(band);
+		REQUIRE(got.size() == count);
+		for (size_t k = 0; k < count; ++k) {
+			CHECK(got[k] == doctest::Approx(first + step * static_cast<double>(k)).epsilon(0.01).scale(1.0));
+		}
+	};
+	const size_t high = static_cast<size_t>(ow::Param::HighCrossover);
+	const size_t res = static_cast<size_t>(ow::Param::ResHome);
+	for (const float home : { 0.0f, 0.8f }) {
+		CAPTURE(home);
+		f.deviceHost.setField(id, res, home);
+		// THE DEFAULTS (x1, x2): Between on the half harmonics, Odd on 1 3 5 ..., Even on 2 4 6 ... (the edges of the span are not interior peaks).
+		expectPeaks(0, 0.5, 1.0, 16);
+		expectPeaks(1, 1.0, 2.0, 8);
+		expectPeaks(2, 2.0, 2.0, 7);
+	}
+	// A SECOND SPACING OF x3: High keeps every third harmonic, so its peaks are 3, 6, 9, 12, 15.
+	f.deviceHost.setField(id, res, 0.0f);
+	f.deviceHost.setField(id, high, 3000.0f);
+	expectPeaks(2, 3.0, 3.0, 5);
+	f.deviceHost.setField(id, high, 2000.0f);
+	// RES HOME NARROWS THE TEETH: the width at half height of Odd's first peak falls as it rises.
+	const auto halfWidth = [&](float home) {
+		f.deviceHost.setField(id, res, home);
+		const std::vector<float> c = graph->combCurve(1, kPoints);
+		const size_t centre = 40; // u = 1
+		const float half = c[centre] * 0.5f;
+		size_t a = centre;
+		while (a > 0 && c[a] > half) {
+			--a;
+		}
+		size_t b = centre;
+		while (b + 1 < c.size() && c[b] > half) {
+			++b;
+		}
+		return b - a;
+	};
+	CHECK(halfWidth(0.9f) < halfWidth(0.0f));
+	CHECK(halfWidth(0.5f) < halfWidth(0.0f));
+	// THREE COLOURS, apart from each other and from the orange and blue the bars use for down and up.
+	const auto distance = [](uint32_t a, uint32_t b) {
+		const auto channel = [](uint32_t c, int shift) { return static_cast<double>((c >> shift) & 0xff); };
+		double sum = 0.0;
+		for (const int shift : { 0, 8, 16 }) {
+			sum += (channel(a, shift) - channel(b, shift)) * (channel(a, shift) - channel(b, shift));
+		}
+		return std::sqrt(sum);
+	};
+	const std::array<uint32_t, 5> all { ui::OwlttGraph::combBandColour(0), ui::OwlttGraph::combBandColour(1), ui::OwlttGraph::combBandColour(2),
+		                                feathers::tokens::kValue, feathers::tokens::kAccent };
+	for (size_t i = 0; i < 3; ++i) {
+		for (size_t j = i + 1; j < all.size(); ++j) {
+			CAPTURE(i);
+			CAPTURE(j);
+			CHECK(distance(all[i], all[j]) > 60.0);
+		}
+	}
+}
+
+TEST_CASE("OWLTT HP Wet: the shared element is in the window's tone row in every mode, the semitone knob replaces the hertz one under Key Track, and Sub Thru is inactive without a filter") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::WetHighpassControl* hp = panel.hpForTest();
+	REQUIRE(hp != nullptr);
+	REQUIRE(hp->hertz() != nullptr);
+	REQUIRE(hp->semitones() != nullptr);
+	REQUIRE(hp->subThru() != nullptr);
+	const size_t mode = static_cast<size_t>(ow::Param::Mode);
+	const size_t hpWet = static_cast<size_t>(ow::Param::HpWet);
+	const size_t semis = static_cast<size_t>(ow::Param::HpWetSemis);
+	for (const float m : { 1.0f, 8.0f, 11.0f, 15.0f, 16.0f }) {
+		f.deviceHost.setField(id, mode, m);
+		(void)panel.update();
+		CAPTURE(m);
+		// IN THE TONE ROW, to the right of its two cells, in every mode.
+		CHECK(hp->hertz()->isVisible());
+		CHECK_FALSE(hp->semitones()->isVisible());
+		const visage::Bounds row = panel.toneRowForTest();
+		CHECK(hp->hertz()->x() >= row.x() + row.width() * 0.5f);
+		CHECK(hp->hertz()->right() <= hp->subThru()->x());
+		CHECK(hp->subThru()->right() <= row.right() + 0.5f);
+		for (const auto& cell : panel.modeCellsForTest()) {
+			CHECK(cell->right() <= hp->hertz()->x() + 0.5f);
+		}
+		// SUB THRU HAS NOTHING TO GIVE BACK WITHOUT A FILTER.
+		CHECK_FALSE(hp->subThru()->enabled());
+	}
+	f.deviceHost.setField(id, hpWet, static_cast<float>(std::log2(500.0)));
+	(void)panel.update();
+	CHECK(hp->subThru()->enabled());
+	// KEY TRACK: the semitone knob takes the hertz one's place, and the filter's presence is the semitones' (their bottom is none).
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 1.0f);
+	f.deviceHost.setField(id, semis, static_cast<float>(ow::kHpWetSemisMin));
+	(void)panel.update();
+	CHECK_FALSE(hp->hertz()->isVisible());
+	CHECK(hp->semitones()->isVisible());
+	CHECK_FALSE(hp->subThru()->enabled());
+	f.deviceHost.setField(id, semis, 12.0f);
+	(void)panel.update();
+	CHECK(hp->subThru()->enabled());
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 0.0f);
+	(void)panel.update();
+	CHECK(hp->hertz()->isVisible());
+	CHECK_FALSE(hp->semitones()->isVisible());
+	CHECK(ow::kParamDescs[hpWet].modulatable);
+	CHECK(ow::kParamDescs[semis].modulatable);
+}
+
+TEST_CASE("OWLTT Comb: a handle drag writes its own knob, a tracked drag lands on the ratio detents, and an untracked one does not") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	const size_t low = static_cast<size_t>(ow::Param::LowCrossover);
+	const size_t high = static_cast<size_t>(ow::Param::HighCrossover);
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::Mode), static_cast<float>(ow::kCombMode));
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	const std::array<float, 3> zero { 0.0f, 0.0f, 0.0f };
+	const auto publishNote = [&](float hz) {
+		f.bridge.publishOwlttMeters(1, zero, zero, zero, false, { false, false, false }, 0.0f, nullptr, hz);
+		(void)panel.update();
+	};
+	// THE LANE'S SCALE, RESTATED: the spacing a knob means, on one log scale of 20 Hz .. 4 kHz, a ring radius in from each end of the plot.
+	const auto laneX = [&](double knob, bool isHigh) {
+		const visage::Bounds box = graph->plot();
+		const float inset = ui::OwlttGraph::kRingRadius;
+		const double t = std::log2(ow::combSpacingHz(knob, isHigh) / 20.0) / std::log2(200.0);
+		return box.x() + inset + static_cast<float>(t) * (box.width() - 2.0f * inset);
+	};
+	const auto drag = [&](ui::OwlttGraph::ThresholdHit which, float toX) {
+		const visage::Point h = graph->crossoverHandle(which == ui::OwlttGraph::ThresholdHit::kLowCrossover ? 0 : 1);
+		graph->onMouseDown().callback(at(h.x, h.y));
+		graph->onMouseDrag().callback(at(toX, h.y));
+		graph->onMouseUp().callback(at(toX, h.y));
+	};
+	// TRACKING A NOTE: a drag to a hair off x2 (knob 408) lands on 400 exactly; off a detent (x1.4: 280) it stays where it was put.
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 1.0f);
+	publishNote(220.0f);
+	drag(ui::OwlttGraph::ThresholdHit::kLowCrossover, laneX(408.0, false));
+	CHECK(f.deviceHost.fieldAt(id, low) == doctest::Approx(400.0f).epsilon(1e-4));
+	CHECK(f.deviceHost.fieldAt(id, high) == doctest::Approx(2000.0f)); // the other knob untouched
+	drag(ui::OwlttGraph::ThresholdHit::kLowCrossover, laneX(280.0, false));
+	CHECK(f.deviceHost.fieldAt(id, low) == doctest::Approx(280.0f).epsilon(0.01));
+	// THE HIGH HANDLE: x3 is a knob of 3000.
+	drag(ui::OwlttGraph::ThresholdHit::kHighCrossover, laneX(3050.0, true));
+	CHECK(f.deviceHost.fieldAt(id, high) == doctest::Approx(3000.0f).epsilon(1e-4));
+	CHECK(graph->bottomText().frequencyText[1] == "f2 x3");
+	// NOT TRACKING: no note, the same drag is a plain Hz value, no snapping.
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 0.0f);
+	publishNote(0.0f);
+	drag(ui::OwlttGraph::ThresholdHit::kLowCrossover, laneX(408.0, false));
+	CHECK(f.deviceHost.fieldAt(id, low) == doctest::Approx(408.0f).epsilon(0.01));
+}
+
 namespace {
 //------------------------------------------------------------------------------------------------//
 // OWLTT'S MODULATION DISPLAY: the glow arrives with the arm, the live dot follows a moving source,  //

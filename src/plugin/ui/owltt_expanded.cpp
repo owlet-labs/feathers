@@ -110,6 +110,15 @@ OwlttExpanded::OwlttExpanded(backplane::DeviceHost& host, WidgetRegistry& regist
 	clip_ = std::make_unique<ValueBox>(control(dtt::Param::SoftClip), "Clip");
 	clip_->setCompact(true);
 	addChild(clip_.get());
+	// RES HOME (Comb modes): the centre of the teeth's resonance, in the header beside the Mode box; shown only while a Comb mode is chosen.
+	resHome_ = std::make_unique<ValueBox>(control(dtt::Param::ResHome), "Res Home");
+	resHome_->setCompact(true);
+	addChild(resHome_.get());
+	resHome_->setVisible(false);
+
+	// HP WET AND SUB THRU: the shared element, every mode, upstream of the split and the detectors. The knob is hertz, or semitones from the note while Key Track is on.
+	hp_ = std::make_unique<WetHighpassControl>(control(dtt::Param::HpWet), &control(dtt::Param::HpWetSemis), control(dtt::Param::SubThru), notifier, kToneFace);
+	hp_->addTo(*this);
 
 	// THE GLOBAL ROW: boxes in the house form (a caption over a value), one per control.
 	for (const GlobalEntry& entry : kGlobal) {
@@ -161,11 +170,27 @@ DeviceControl& OwlttExpanded::control(dtt::Param param) const {
 
 bool OwlttExpanded::updateContent() {
 	// THE CROSSOVERS' HOVER TEXT FOLLOWS KEY TRACK, as on the card (the TV audit).
-	const int keyTrack = control(dtt::Param::KeyTrack).value() >= 0.5 ? 1 : 0;
-	if (keyTrack != crossoverTipKey_) {
-		crossoverTipKey_ = keyTrack;
-		control(dtt::Param::LowCrossover).setTooltipOverride(keyTrack != 0 ? dtt::kLowCrossoverTipKeyTrack : "");
-		control(dtt::Param::HighCrossover).setTooltipOverride(keyTrack != 0 ? dtt::kHighCrossoverTipKeyTrack : "");
+	const bool keyTrack = control(dtt::Param::KeyTrack).value() >= 0.5;
+	const bool comb = dtt::isCombMode(std::lround(host_.fieldAt(device_, static_cast<size_t>(dtt::Param::Mode))));
+	const int tipState = (keyTrack ? 1 : 0) + (comb ? 2 : 0);
+	if (tipState != crossoverTipKey_) {
+		crossoverTipKey_ = tipState;
+		control(dtt::Param::LowCrossover).setTooltipOverride(dtt::crossoverTip(false, keyTrack, comb));
+		control(dtt::Param::HighCrossover).setTooltipOverride(dtt::crossoverTip(true, keyTrack, comb));
+	}
+	// RES HOME APPEARS WITH A COMB MODE and takes its slot in the header; Clip moves along.
+	if (comb != resHomeShown_) {
+		resHomeShown_ = comb;
+		resHome_->setVisible(false);
+		resized();
+		redraw();
+	}
+	// HP WET: the knob is hertz, or semitones from the note while Key Track is on (hidden, not greyed); Sub Thru is inactive while there is no filter.
+	if (hp_ != nullptr) {
+		const double hpLog2 = control(dtt::Param::HpWet).value();
+		const double semis = control(dtt::Param::HpWetSemis).value();
+		hp_->showFaces(true, keyTrack);
+		hp_->refresh(wetHighpassFiltering(hpLog2, fx::kWetHighpassLog2Min, keyTrack, semis, dtt::kHpWetSemisMin), true);
 	}
 	bool changed = graph_ != nullptr && graph_->update();
 	changed = (inMeter_ != nullptr && inMeter_->update()) || changed;
@@ -186,6 +211,9 @@ void OwlttExpanded::modulationBound(ModState* mod, EditHistory* history) {
 	// modulated at all).
 	for (size_t i = 0; i < controls_.size(); ++i) {
 		control(static_cast<dtt::Param>(i)).setModulation(mod, history);
+	}
+	if (hp_ != nullptr) {
+		hp_->setModulation(mod, history);
 	}
 }
 
@@ -233,6 +261,16 @@ visage::Bounds OwlttExpanded::toneRow() const {
 	return { row.x(), row.bottom() + kRowGap + 4.0f, row.width(), Knob::columnHeight(kToneFace) };
 }
 
+visage::Bounds OwlttExpanded::hpBounds() const {
+	const visage::Bounds tone = toneRow();
+	return { tone.right() - kHpCellWidth - kBoxGap - kHpChipWidth, tone.y(), kHpCellWidth, tone.height() };
+}
+
+visage::Bounds OwlttExpanded::subThruBounds() const {
+	const visage::Bounds tone = toneRow();
+	return { tone.right() - kHpChipWidth, tone.y() + (tone.height() - SwitchChip::kHeight) * 0.5f, kHpChipWidth, SwitchChip::kHeight };
+}
+
 visage::Bounds OwlttExpanded::keyTrackBounds() const {
 	return { kPad, kPad + (kSwitchHeight - SwitchChip::kHeight) * 0.5f, kKeyTrackWidth, SwitchChip::kHeight };
 }
@@ -255,8 +293,13 @@ visage::Bounds OwlttExpanded::modeBounds() const {
 	return { before.right() + kRowGap, kPad, kModeWidth, kSwitchHeight };
 }
 
-visage::Bounds OwlttExpanded::clipBounds() const {
+visage::Bounds OwlttExpanded::resHomeBounds() const {
 	const visage::Bounds before = modeBounds();
+	return { before.right() + kRowGap, kPad + (kSwitchHeight - ValueBox::kCompactHeight) * 0.5f, kResHomeWidth, ValueBox::kCompactHeight };
+}
+
+visage::Bounds OwlttExpanded::clipBounds() const {
+	const visage::Bounds before = resHomeShown_ ? resHomeBounds() : modeBounds();
 	return { before.right() + kRowGap, kPad + (kSwitchHeight - ValueBox::kCompactHeight) * 0.5f, kClipWidth,
 		     ValueBox::kCompactHeight };
 }
@@ -316,6 +359,15 @@ void OwlttExpanded::resized() {
 	place(keyTrack_.get(), keyTrackBounds());
 	place(lookahead_.get(), lookaheadBounds());
 	place(stereo_.get(), stereoBounds());
+	place(resHome_.get(), resHomeBounds());
+	if (hp_ != nullptr) {
+		place(hp_->hertz(), hpBounds());
+		place(hp_->semitones(), hpBounds());
+		place(hp_->subThru(), subThruBounds());
+	}
+	if (resHome_ != nullptr) {
+		resHome_->setVisible(resHomeShown_); // after its bounds: a box shown before it has a size is not painted
+	}
 	place(clip_.get(), clipBounds());
 	place(drive_.get(), driveBounds());
 	place(output_.get(), outputBounds());
@@ -342,8 +394,10 @@ void OwlttExpanded::resized() {
 	// THE TONE GROUP: the two cells side by side, inside one frame.
 	const visage::Bounds tone = toneRow();
 	const size_t cells = modeCells_.size();
+	// THE HP BLOCK TAKES THE RIGHT END; the two cells share what is left.
+	const float cellsWidth = tone.width() - (kHpCellWidth + kBoxGap + kHpChipWidth + kBoxGap);
 	if (cells > 0) {
-		const float w = (tone.width() - kBoxGap * static_cast<float>(cells - 1)) / static_cast<float>(cells);
+		const float w = (cellsWidth - kBoxGap * static_cast<float>(cells - 1)) / static_cast<float>(cells);
 		for (size_t i = 0; i < cells; ++i) {
 			place(modeCells_[i].get(), { tone.x() + static_cast<float>(i) * (w + kBoxGap), tone.y(), w, tone.height() });
 		}

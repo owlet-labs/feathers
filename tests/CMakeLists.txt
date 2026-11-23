@@ -2336,3 +2336,10 @@ add_executable(test_mod_macros_variants test_mod_macros_variants.cpp)
 target_link_libraries(test_mod_macros_variants PRIVATE feathers-synth feathers-warnings)
 target_include_directories(test_mod_macros_variants PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME mod-macros-variants COMMAND test_mod_macros_variants)
+
+# STEREO BALANCE — the correction's law (the gains multiply to one; the sides meet at 100%, half-way at 50%), the equal-power Pan, per-band independence,
+# Attack / Release against the exponential, the bands summing to the input, the lows kept out of the detectors, Key Track, the exact-zero tail, no allocation.
+add_executable(test_fx_balance test_fx_balance.cpp)
+target_link_libraries(test_fx_balance PRIVATE feathers-fx feathers-warnings)
+target_include_directories(test_fx_balance PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME fx-balance COMMAND test_fx_balance)

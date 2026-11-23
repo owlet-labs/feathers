@@ -716,6 +716,9 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/phaser_card.cpp
 	src/plugin/ui/phaser_plot.cpp
 	src/plugin/ui/phaser_expanded.cpp
+	src/plugin/ui/balance_card.cpp
+	src/plugin/ui/balance_expanded.cpp
+	src/plugin/ui/balance_view.cpp
 	src/plugin/ui/clip_card.cpp
 	src/plugin/ui/noise_card.cpp
 	src/plugin/ui/noise_plot.cpp

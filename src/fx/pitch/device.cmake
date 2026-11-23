@@ -15,6 +15,8 @@ feathers_register_device(
 	DESCRIPTOR fx::pitch::kDescriptor
 	CODEC_INCLUDE device_codecs/pitch.h
 	CODEC_REG feathers::codecs::kPitchCodec
+	CARD_INCLUDE plugin/ui/cards/pitch.h
+	CARD_REG feathers::ui::cards::kPitchCard
 	INCLUDES fx/pitch/pitch_types.h
 	TARGET feathers-fx
 	SOURCES src/fx/pitch/pitch.cpp)

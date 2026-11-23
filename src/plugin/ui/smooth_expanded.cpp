@@ -25,6 +25,8 @@
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/theme.h"
 
+#include "fx/smooth/smooth_tips.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -83,6 +85,30 @@ SmoothExpanded::SmoothExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 		addChild(f);
 	}
 	(void)model_.refresh(settings(), settings(false));
+	refreshModeTips();
+}
+
+void SmoothExpanded::refreshModeTips() {
+	// THE MODE'S HOVER TEXT, the card's table (`smooth_tips.h`), and H Phase, which only the window has. Moves only when
+	// the mode does.
+	const int mode = settings().harmonicMode;
+	if (mode == tipMode_) {
+		return;
+	}
+	tipMode_ = mode;
+	const sm::ModeTips& tips = sm::modeTipsFor(mode);
+	control(sm::Param::Fdbk).setTooltipOverride(tips.feedback);
+	control(sm::Param::Harmonic).setTooltipOverride(tips.harmonic);
+	control(sm::Param::HarmonicPhase).setTooltipOverride(tips.phase);
+}
+
+visage::Frame* SmoothExpanded::widgetForTest(sm::Param p) const {
+	switch (p) {
+	case sm::Param::Fdbk: return pills_[static_cast<size_t>(sm::Pill::Fdbk)].get();
+	case sm::Param::Harmonic: return harmonic_.get();
+	case sm::Param::HarmonicPhase: return harmonicPhase_.get();
+	default: return nullptr;
+	}
 }
 
 DeviceControl& SmoothExpanded::control(sm::Param p) const {
@@ -183,6 +209,8 @@ void SmoothExpanded::layOut() {
 }
 
 bool SmoothExpanded::updateContent() {
+	// BEFORE THE VISIBILITY TEST: a window that is closed still keeps its hover text true to the mode it opens on.
+	refreshModeTips();
 	if (!isVisible()) {
 		return false;
 	}

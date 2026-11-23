@@ -595,6 +595,7 @@ add_library(feathers-ui STATIC
 	src/plugin/ui/generic_expanded.cpp
 	src/plugin/ui/featherverb_expanded.cpp
 	src/plugin/ui/featherverb_card.cpp
+	src/plugin/ui/pitch_card.cpp
 	src/plugin/ui/delay_card.cpp
 	src/plugin/ui/delay_strip.cpp
 	src/plugin/ui/delay_expanded.cpp

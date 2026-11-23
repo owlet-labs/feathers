@@ -224,7 +224,7 @@ std::string LfoCard::choiceFace(lfo::Param param, double value) {
 const std::array<LfoCard::Chip, LfoCard::kChipCount>& LfoCard::chips() {
 	static const std::array<Chip, kChipCount> k {
 		// WAVEFORM AND MODE ARE NOT CHIPS ANY MORE — see `choices()` (backlog GG). A chip is a switch.
-		Chip { lfo::Param::PingPong, "P-P" },
+		// PING-PONG IS NOT A CHIP: the engine never reads it, so the switch was dead in every mode (hidden 2026-11-22).
 		Chip { lfo::Param::Bipolar, "±" },
 		// **POLY — one shape per note, or one for the device**. A switch, so a chip: two states,
 		// both visible by being the only two.

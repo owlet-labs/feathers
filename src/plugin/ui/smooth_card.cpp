@@ -25,6 +25,8 @@
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/theme.h"
 
+#include "fx/smooth/smooth_tips.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -90,6 +92,20 @@ SmoothCard::SmoothCard(backplane::DeviceHost& host, WidgetRegistry& registry, De
 		}
 	};
 	(void)model_.refresh(settings(), settings(false));
+	refreshModeTips();
+}
+
+void SmoothCard::refreshModeTips() {
+	// THE MODE'S HOVER TEXT, from the one table (`smooth_tips.h`). Called on every tick, so a mode set by the host, a
+	// preset or an undo reaches the strings the same way it reaches the picture; they move only when the mode does.
+	const int mode = settings().harmonicMode;
+	if (mode == tipMode_) {
+		return;
+	}
+	tipMode_ = mode;
+	const sm::ModeTips& tips = sm::modeTipsFor(mode);
+	control(sm::Param::Fdbk).setTooltipOverride(tips.feedback);
+	control(sm::Param::Harmonic).setTooltipOverride(tips.harmonic);
 }
 
 DeviceControl& SmoothCard::control(sm::Param p) const {
@@ -210,6 +226,7 @@ float SmoothCard::inputPeak() const {
 }
 
 bool SmoothCard::updateContent() {
+	refreshModeTips();
 	bool changed = false;
 	if (model_.refresh(settings(), settings(false))) {
 		changed = true;

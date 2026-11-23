@@ -32,14 +32,14 @@
 #include <string>
 #include <vector>
 
-// STEREO BALANCE'S WINDOW — the card's picture large, every control the card has, and the three it leaves out (Comb Sharp, and HP Wet with Sub Thru, which keep the lows out of the
+// STEREO BALANCE'S WINDOW — the card's picture large, every control the card has, and the four it leaves out (Comb Sharp, Tolerance, and HP Wet with Sub Thru, which keep the lows out of the
 // split and the detectors).
 //
 //   [ 2 bands | 3 bands ]   [Key Track] [Sharp]                                  [Sub Thru]
 //   ┌─────────────────────────────────────────────────────────────────────────┐
 //   │  the comb, and one imbalance meter per band, large                      │
 //   └─────────────────────────────────────────────────────────────────────────┘
-//   (◯) SPACING (◯) SPACING 2 (◯) STRENGTH (◯) ATTACK (◯) RELEASE (◯) PAN (◯) HP WET
+//   (◯) SPACING 2 … STRENGTH FOCUS TOLERANCE ATTACK RELEASE WIDEN PAN HP WET
 
 namespace feathers::ui {
 
@@ -61,10 +61,10 @@ public:
 	static constexpr float kKnobDiameter = Knob::kEngineRailDiameter;
 	static constexpr float kCellHeight = Knob::columnHeight(kKnobDiameter);
 	static constexpr float kSwitchHeight = 18.0f;
-	static constexpr float kPictureWidth = 560.0f;
+	static constexpr float kPictureWidth = 700.0f;
 	static constexpr float kPictureHeight = 250.0f;
 	static constexpr float kChipWidth = 64.0f;
-	static constexpr size_t kCells = 7;
+	static constexpr size_t kCells = 10;
 
 	//-- test seams ---------------------------------------------------------------------------------//
 	[[nodiscard]] std::vector<fx::balance::Param> addressedParamsForTest() const;

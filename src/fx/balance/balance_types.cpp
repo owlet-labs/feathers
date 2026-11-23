@@ -55,6 +55,9 @@ Settings stateOf(const Row& row, size_t fieldsPresent) {
 	s.pan = rangedOr(row, fieldsPresent, Param::Pan);
 	s.hpWet = rangedOr(row, fieldsPresent, Param::HpWet);
 	s.subThru = fieldOr(row, fieldsPresent, Param::SubThru) >= 0.5f;
+	s.focus = rangedOr(row, fieldsPresent, Param::Focus);
+	s.toleranceDb = rangedOr(row, fieldsPresent, Param::Tolerance);
+	s.widen = rangedOr(row, fieldsPresent, Param::Widen);
 	return s;
 }
 
@@ -72,6 +75,9 @@ Row rowOf(const Settings& s) {
 	row[static_cast<size_t>(Param::Pan)] = s.pan;
 	row[static_cast<size_t>(Param::HpWet)] = s.hpWet;
 	row[static_cast<size_t>(Param::SubThru)] = s.subThru ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::Focus)] = s.focus;
+	row[static_cast<size_t>(Param::Tolerance)] = s.toleranceDb;
+	row[static_cast<size_t>(Param::Widen)] = s.widen;
 	// THE FURNITURE'S DEFAULTS: the slot reads these, the device never does, and a zero Mix would be silence.
 	row[static_cast<size_t>(Param::Mix)] = 1.0f;
 	row[static_cast<size_t>(Param::WetGain)] = 0.5f;

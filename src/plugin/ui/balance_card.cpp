@@ -30,9 +30,11 @@ namespace bal = fx::balance;
 namespace {
 
 /// THE KNOBS IN FLOW ORDER: where the teeth are, how much is taken out, how the measurement follows, where the whole sits.
-constexpr std::array<bal::Param, 6> kKnobs { bal::Param::Spacing, bal::Param::Spacing2, bal::Param::Strength,
-	                                        bal::Param::Attack,  bal::Param::Release,  bal::Param::Pan };
-constexpr std::array<const char*, 6> kCaptions { "Spacing", "Spacing 2", "Strength", "Attack", "Release", "Pan" };
+constexpr std::array<bal::Param, 8> kKnobs { bal::Param::Spacing, bal::Param::Spacing2, bal::Param::Strength, bal::Param::Focus,
+	                                        bal::Param::Attack,  bal::Param::Release,  bal::Param::Widen,    bal::Param::Pan };
+constexpr std::array<const char*, 8> kCaptions { "Spacing", "Split 2", "Amount", "Focus", "Attack", "Release", "Widen", "Pan" };
+/// THE NAME A SHORTENED CAPTION STANDS FOR (empty: the caption is the name), so the hover and a spoken label say Strength and Spacing 2.
+constexpr std::array<const char*, 8> kFullNames { "", "Spacing 2", "Strength", "", "", "", "", "" };
 
 } // namespace
 
@@ -48,6 +50,9 @@ BalanceCard::BalanceCard(backplane::DeviceHost& host, WidgetRegistry& registry, 
 	for (size_t i = 0; i < kKnobs.size(); ++i) {
 		auto knob = std::make_unique<Knob>(control(kKnobs[i]), kCaptions[i], notifier_);
 		knob->setFaceDiameter(kKnobDiameter);
+		if (kFullNames[i][0] != '\0') {
+			knob->setFullName(kFullNames[i]);
+		}
 		addChild(knob.get());
 		knobs_.push_back(std::move(knob));
 	}
@@ -181,7 +186,7 @@ void BalanceCard::drawContent(visage::Canvas&) {}
 
 std::vector<bal::Param> BalanceCard::addressedParamsForTest() const {
 	return { bal::Param::Bands, bal::Param::KeyTrack, bal::Param::Spacing, bal::Param::Spacing2,
-		     bal::Param::Strength, bal::Param::Attack, bal::Param::Release, bal::Param::Pan, bal::Param::Enabled };
+		     bal::Param::Strength, bal::Param::Focus, bal::Param::Attack, bal::Param::Release, bal::Param::Widen, bal::Param::Pan, bal::Param::Enabled };
 }
 
 visage::Frame* BalanceCard::widgetForTest(bal::Param p) const {

@@ -27,6 +27,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 
 // STEREO BALANCE — a corrective tool: it splits the signal into harmonic classes with OWLTT's comb split (`fx/owltt/comb_split.h`), measures the
 // integrated left/right level of each class, and pulls each class's imbalance towards the centre, with an Attack and Release on the measurement and a
@@ -82,6 +84,13 @@ enum class Param : int {
 	/// THE SLOT'S TWO CONTROLS (backlog NR): applied by the slot, never read by the device.
 	Mix,
 	WetGain,
+	/// FOCUS, 0..1 (default 0): how much of each band's own deviation from the whole's imbalance is corrected, over the global part every band gets alike.
+	/// 0 balances the whole and leaves the bands' relative image; 1 brings every band to the centre. APPENDED.
+	Focus,
+	/// TOLERANCE, dB (default 0, off): a dead zone on the deviation part, so a band within it of the whole's imbalance is not pulled further.
+	Tolerance,
+	/// WIDEN, 0..1 (default 0): complementary comb bands sent to opposite sides, mono-safe and level-balanced.
+	Widen,
 	kCount,
 };
 
@@ -110,6 +119,9 @@ struct Settings {
 	float pan = 0.0f;
 	float hpWet = static_cast<float>(fx::kWetHighpassLog2Min);
 	bool subThru = false;
+	float focus = 0.0f;
+	float toleranceDb = 0.0f;
+	float widen = 0.0f;
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };
@@ -154,6 +166,62 @@ struct SideGains {
 	return { kSqrt2 * std::cos(a), kSqrt2 * std::sin(a) };
 }
 
+
+/// **THE CORRECTION LAW, IN ONE PLACE.** `d` is a band's imbalance and `dTotal` the whole signal's (both ln(rmsL / rmsR), the whole's from the SUMMED band
+/// energies), `focus` 0..1, `toleranceNepers` >= 0. The band's deviation from the whole is `d - dTotal`; the tolerance is a dead zone on it (only the excess
+/// counts, with its sign); the imbalance the band is corrected by is `dTotal + focus * excess`. Focus 0 gives every band the whole's correction (the bands'
+/// relative image is kept), Focus 1 with no tolerance gives `d`: each band to the centre. The gains are then `correctionGains` of that at `strength`.
+[[nodiscard]] inline float correctedImbalance(float d, float dTotal, float focus, float toleranceNepers) {
+	const float dev = d - dTotal;
+	const float excess = std::max(0.0f, std::fabs(dev) - toleranceNepers);
+	return dTotal + focus * (dev < 0.0f ? -excess : excess);
+}
+[[nodiscard]] inline SideGains bandCorrection(float d, float dTotal, float strength, float focus, float toleranceNepers) {
+	return correctionGains(correctedImbalance(d, dTotal, focus, toleranceNepers), strength);
+}
+
+/// **WIDEN'S AMOUNTS.** The first band of the pair goes left, the second right. Each band's mid is moved between the channels (`L += a m`, `R -= a m` for the
+/// left band, the reverse for the right one, m = (L + R) / 2), so L + R is unchanged for ANY input: mono-safe by construction. A centred band then ends at
+/// (1 + a, 1 - a). The two amounts are `w` for the weaker band and less for the stronger, `w min(1, E_other / E_this)`, because the sides' energy difference is
+/// `4 (a1 E1 - a2 E2)` for orthogonal bands and that is zero exactly then: the widened result stays level from side to side.
+struct WidenAmounts {
+	float first = 0.0f;
+	float second = 0.0f;
+};
+[[nodiscard]] inline WidenAmounts widenAmounts(float widen, float energyFirst, float energySecond) {
+	constexpr float kFloor = 1.0e-12f;
+	const float a = energyFirst + kFloor;
+	const float b = energySecond + kFloor;
+	return { widen * std::min(1.0f, b / a), widen * std::min(1.0f, a / b) };
+}
+
+/// **THE BAND NAMES, HONEST ABOUT KEY TRACK.** Tracking a note (Key Track on and a note heard) the spacing is a ratio to it, so the bands are true harmonic classes:
+/// Between / Odd / Even (`owltt::combBandNames`), or the two-band names (`combBandNames2`). Not tracking, the comb is fixed in Hz and its teeth meet an input's
+/// harmonics only when its pitch matches, so the bands are named by their teeth: "x200 Hz" is the multiples of 200 Hz (Odd / Even of them with three bands).
+[[nodiscard]] inline std::array<std::string, 3> bandNames(const Settings& s, bool noteHeard) {
+	const bool tracking = s.keyTrack && noteHeard;
+	char hz1[24];
+	std::snprintf(hz1, sizeof hz1, "x%.0f Hz", static_cast<double>(s.spacing));
+	if (s.bands < 3) {
+		if (tracking) {
+			const auto names = owltt::combBandNames2(owltt::combRatioOfKnob(s.spacing, false));
+			return { names[0], names[1], "" };
+		}
+		return { "Between", hz1, "" };
+	}
+	const double s1 = owltt::combSpacingHz(s.spacing, false);
+	const double s2 = owltt::combSpacingHz(s.spacing2, true);
+	if (tracking) {
+		return owltt::combBandNames(s1, s2);
+	}
+	const double r = s2 / std::max(s1, 1.0e-9);
+	char hz2[24];
+	std::snprintf(hz2, sizeof hz2, "%.0f Hz", s2);
+	if (std::fabs(r - 2.0) < 0.02) {
+		return { "Between", std::string("Odd ") + hz1, std::string("Even ") + hz1 };
+	}
+	return { "Between", std::string("Off x") + hz2, std::string("On x") + hz2 };
+}
 inline constexpr const char* kTags[] = { "dynamics", "fx" };
 
 inline constexpr device::Traits kTraits {
@@ -179,7 +247,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
                 "between, odd and even at the default spacings"},
     {.key = "balance_spacing", .name = "Balance Spacing", .min = 20.0, .max = 2000.0, .def = 200.0, .stepped = false, .unit = device::Unit::Number,
      .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
-     .tooltip = "The comb's tooth spacing: the bands are harmonic classes of it, not frequency ranges. In Hz",
+     .tooltip = "The comb's tooth spacing: the bands are harmonic classes of it, not frequency ranges. In Hz. With Key Track off the comb is fixed in Hz, so its teeth meet an input's harmonics only when the pitch matches: it then works as a broadband balancer or widener",
      .wholeReadout = true, .suffix = "Hz"},
     {.key = "balance_spacing2", .name = "Balance Spacing 2", .min = 200.0, .max = 20000.0, .def = 2000.0, .stepped = false, .unit = device::Unit::Number,
      .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
@@ -188,7 +256,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "balance_key_track", .name = "Balance Key Track", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true, .unit = device::Unit::Choice,
      .names = kOffOnNames,
      .tooltip = "The spacings follow the last note played: the knobs read as ratios to it (x1 = the note's own harmonics, x2 = every other one). "
-                "Until a note is heard, a plain frequency"},
+                "Until a note is heard, a plain frequency, and the bands are named by their teeth, not as harmonics"},
     {.key = "balance_sharp", .name = "Balance Comb Sharp", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = true, .unit = device::Unit::Choice,
      .names = kOffOnNames,
      .tooltip = "Each comb run twice: narrower teeth and flat nulls, so the bands keep to their harmonics more tightly. The bands still sum to the input"},
@@ -219,6 +287,19 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     {.key = "balance_wet_gain", .name = "Balance Wet Gain", .min = 0.0, .max = 1.0, .def = 0.5, .stepped = false, .unit = device::Unit::Fader,
      .names = {}, .modulatable = true,
      .tooltip = "Level of the balanced signal alone, unity at twelve o'clock; the dry in a partial Mix is untouched"},
+    {.key = "balance_focus", .name = "Balance Focus", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "How much each band is corrected on its own. 0% balances the whole signal and keeps the bands' relative image (a band that leans right stays right of the rest); "
+                "100% brings every band to the centre. Strength scales the whole correction"},
+    {.key = "balance_tolerance", .name = "Balance Tolerance", .min = 0.0, .max = 12.0, .def = 0.0, .stepped = false, .unit = device::Unit::Number,
+     .names = {}, .modulatable = true,
+     .tooltip = "A dead zone, in dB, on how far a band may lean from the whole before it is corrected on its own: only the excess is pulled in. 0 is off. Works with Focus",
+     .suffix = "dB"},
+    {.key = "balance_widen", .name = "Balance Widen", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent,
+     .names = {}, .modulatable = true,
+     .tooltip = "Sends complementary comb bands to opposite sides (odd to the left, even to the right; with two bands the first to the left, the second to the right), "
+                "so the sound widens without the sum changing: left plus right is exactly what it was. The amounts are weighted by the bands' levels so the two sides stay level. "
+                "0 is no change. With Key Track off the comb is fixed in Hz and widens broadband material rather than harmonics"},
 };
 
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
@@ -238,6 +319,9 @@ static_assert(Settings {}.attack == detail::defOf(Param::Attack));
 static_assert(Settings {}.release == detail::defOf(Param::Release));
 static_assert(Settings {}.pan == detail::defOf(Param::Pan));
 static_assert(Settings {}.hpWet == detail::defOf(Param::HpWet));
+static_assert(Settings {}.focus == detail::defOf(Param::Focus));
+static_assert(Settings {}.toleranceDb == detail::defOf(Param::Tolerance));
+static_assert(Settings {}.widen == detail::defOf(Param::Widen));
 
 extern const device::AudioOps kAudioOps;
 /// WHILE A NOTE IS TRACKED the two Spacing knobs print as ratios to it ("x2"), and read one back.

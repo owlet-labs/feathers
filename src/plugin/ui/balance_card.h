@@ -39,14 +39,14 @@
 //   │ Odd      ▓▓|░░░                      │
 //   │ Even            |                    │
 //   └──────────────────────────────────────┘
-//   (◯) SPACING  (◯) SPACING 2  (◯) STRENGTH     where the teeth are, and how much of the imbalance is taken out
-//   (◯) ATTACK   (◯) RELEASE    (◯) PAN          how the measurement follows, and where the corrected whole sits
+//   (◯) SPACING (◯) SPACING 2 (◯) STRENGTH (◯) FOCUS      where the teeth are, how much is taken out, and how much of it is per band
+//   (◯) ATTACK  (◯) RELEASE   (◯) WIDEN    (◯) PAN        how the measurement follows, the balanced widening, where the whole sits
 //
 // Spacing 2 is drawn only in three bands (it cuts the on-teeth band; two bands have no second split): hidden, not greyed. Mix is the slot's,
-// and Comb Sharp, HP Wet and Sub Thru are the window's (`BalanceExpanded`).
+// and Comb Sharp, Tolerance, HP Wet and Sub Thru are the window's (`BalanceExpanded`).
 //
 // WHAT REACHES WHAT, because the reachability guard takes this card's word:
-//   - Bands — a segmented control. Key Track — a chip. Spacing, Spacing 2, Strength, Attack, Release, Pan — a knob each.
+//   - Bands — a segmented control. Key Track — a chip. Spacing, Spacing 2, Strength, Focus, Attack, Release, Widen, Pan — a knob each.
 //   - Enabled — the square in the head, drawn by `FxCard` and answered here.
 // The picture reaches nothing: it reads.
 
@@ -79,7 +79,7 @@ public:
 	static constexpr float kSwitchHeight = 18.0f;
 	static constexpr float kPictureHeight = 150.0f;
 	static constexpr float kChipWidth = 58.0f;
-	static constexpr size_t kKnobsPerRow = 3;
+	static constexpr size_t kKnobsPerRow = 4;
 
 	[[nodiscard]] static float openHeight();
 	[[nodiscard]] static constexpr float foldedHeight() { return kSlotHeadHeight; }

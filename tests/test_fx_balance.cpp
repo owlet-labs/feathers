@@ -122,6 +122,7 @@ private:
 	bal::Settings s;
 	s.bands = bands;
 	s.strength = strength;
+	s.focus = 1.0f; // per band to the centre: the correction these cases were written for
 	s.attack = static_cast<float>(bal::kAttackMinLog2);
 	s.release = static_cast<float>(bal::kReleaseMinLog2);
 	return s;
@@ -593,6 +594,287 @@ TEST_CASE("a saved row loads into a fresh instance that renders the same") {
 	CHECK(bal::stateOf(empty, 0) == bal::Settings {});
 }
 
+
+//------------------------------------------------------------------------------------------------//
+// FOCUS, TOLERANCE                                                                                //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+/// A TONE'S L/R LEVEL IN dB (positive = left louder) in a rendered tail, and the whole's.
+struct Probe {
+	double hz;
+	double left;
+	double right;
+};
+[[nodiscard]] double toneDb(const Rendered& r, const Probe& p, double startSample) {
+	return db(amplitudeAt(r.l, p.hz, startSample) / std::max(amplitudeAt(r.r, p.hz, startSample), 1.0e-9));
+}
+[[nodiscard]] double inputDb(const Probe& p) { return db(p.left / p.right); }
+/// THE WHOLE'S L/R POWER RATIO IN dB for a set of tones (each a sine, so its power is half its amplitude squared).
+[[nodiscard]] double wholeDb(const std::vector<Probe>& tones) {
+	double l = 0.0;
+	double r = 0.0;
+	for (const Probe& t : tones) {
+		l += t.left * t.left;
+		r += t.right * t.right;
+	}
+	return 10.0 * std::log10(l / r);
+}
+[[nodiscard]] Rendered renderTones(const bal::Settings& s, const std::vector<Probe>& tones, double& startSample) {
+	Instance inst;
+	inst.set(s);
+	Tones t;
+	for (const Probe& p : tones) {
+		t.tones.push_back({ p.hz, p.left, p.right });
+	}
+	const Rendered r = run(inst, t, 3.0, 0.5);
+	startSample = std::fmod(static_cast<double>(static_cast<size_t>(3.0 * kRate) - r.l.size()), kRate);
+	return r;
+}
+} // namespace
+
+TEST_CASE("the correction law: the whole's part, Focus of each band's own, outside the Tolerance") {
+	// d, dTotal in nepers. Focus 1, no tolerance: the band's own d. Focus 0: the whole's. Between: linear in Focus.
+	CHECK(bal::correctedImbalance(0.8f, 0.2f, 1.0f, 0.0f) == doctest::Approx(0.8).scale(1.0));
+	CHECK(bal::correctedImbalance(0.8f, 0.2f, 0.0f, 0.0f) == doctest::Approx(0.2).scale(1.0));
+	CHECK(bal::correctedImbalance(0.8f, 0.2f, 0.5f, 0.0f) == doctest::Approx(0.5).scale(1.0));
+	// A DEAD ZONE ON THE DEVIATION: within it only the whole's part; past it, the excess with its sign.
+	CHECK(bal::correctedImbalance(0.4f, 0.2f, 1.0f, 0.3f) == doctest::Approx(0.2).scale(1.0));
+	CHECK(bal::correctedImbalance(0.9f, 0.2f, 1.0f, 0.3f) == doctest::Approx(0.2 + 0.4).scale(1.0));
+	CHECK(bal::correctedImbalance(-0.3f, 0.2f, 1.0f, 0.3f) == doctest::Approx(0.2 - 0.2).scale(1.0));
+	// THE GAINS: Strength scales the whole correction, and a mono band (d = dTotal = 0) is exactly untouched.
+	const bal::SideGains full = bal::bandCorrection(0.8f, 0.2f, 1.0f, 1.0f, 0.0f);
+	const bal::SideGains half = bal::bandCorrection(0.8f, 0.2f, 0.5f, 1.0f, 0.0f);
+	CHECK(std::log(full.left / full.right) == doctest::Approx(-0.8).scale(1.0).epsilon(1e-5));
+	CHECK(std::log(half.left / half.right) == doctest::Approx(-0.4).scale(1.0).epsilon(1e-5));
+	CHECK(bal::bandCorrection(0.0f, 0.0f, 1.0f, 0.7f, 2.0f).left == 1.0f);
+}
+
+TEST_CASE("Focus 0 balances the whole and keeps the bands' relative image, Focus 100% brings every band to the centre") {
+	// THREE BANDS AT 200 / 400 HZ TEETH. The whole leans left (the odd and even bands do), but the Between band (300 Hz) leans right.
+	const std::vector<Probe> tones { { 200.0, 1.0, 0.5 }, { 400.0, 1.0, 0.5 }, { 300.0, 0.2, 0.4 } };
+	const double total = wholeDb(tones);
+	REQUIRE(total > 4.0);
+	double start = 0.0;
+	for (const float strength : { 1.0f, 0.5f }) {
+		bal::Settings s = quick(3, strength);
+		s.focus = 0.0f;
+		const Rendered r = renderTones(s, tones, start);
+		CAPTURE(strength);
+		// THE OVERALL L/R ENERGY IS BALANCED (at Strength 1; half-way at 0.5), AND EVERY BAND MOVED BY THE SAME dB: its deviation from the rest is kept.
+		CHECK(std::fabs(lrDb(r) - total * (1.0 - static_cast<double>(strength))) < 0.35);
+		for (const Probe& p : tones) {
+			CHECK(toneDb(r, p, start) == doctest::Approx(inputDb(p) - total * static_cast<double>(strength)).epsilon(0.0).scale(1.0).epsilon(0.02));
+		}
+	}
+	// THE BETWEEN BAND STILL LEANS RIGHT OF THE OTHERS at Strength 1: it was 6 dB right, it is.
+	bal::Settings s = quick(3, 1.0f);
+	s.focus = 0.0f;
+	const Rendered r = renderTones(s, tones, start);
+	CHECK(toneDb(r, tones[2], start) < toneDb(r, tones[0], start) - 8.0);
+	// FOCUS 100%: every band at the centre.
+	s.focus = 1.0f;
+	const Rendered centred = renderTones(s, tones, start);
+	for (const Probe& p : tones) {
+		CHECK(std::fabs(toneDb(centred, p, start)) < 0.5);
+	}
+}
+
+TEST_CASE("Tolerance is a dead zone on a band's deviation from the whole: inside it nothing more, outside it only the excess") {
+	// TWO BANDS (300 Hz between the teeth of 200, 400 on them): the 400 leans 1 dB left, the 300 leans 6 dB right. The whole leans about 1.2 dB right.
+	const std::vector<Probe> tones { { 400.0, 0.8, 0.8 / std::pow(10.0, 1.0 / 20.0) }, { 300.0, 0.4, 0.8 } };
+	const double total = wholeDb(tones);
+	const double devOn = inputDb(tones[0]) - total;  // about +2.2: inside 3 dB
+	const double devBetween = inputDb(tones[1]) - total; // about -4.8: outside
+	REQUIRE(std::fabs(devOn) < 3.0);
+	REQUIRE(std::fabs(devBetween) > 3.0);
+	double start = 0.0;
+	for (const float strength : { 1.0f, 0.5f }) {
+		bal::Settings s = quick(2, strength);
+		s.focus = 1.0f;
+		s.toleranceDb = 3.0f;
+		const Rendered r = renderTones(s, tones, start);
+		const double sx = static_cast<double>(strength);
+		CAPTURE(strength);
+		// THE LAW RESTATED: the corrected imbalance is the whole's plus the excess past the tolerance (with its sign); Strength scales that.
+		const auto expected = [&](const Probe& p) {
+			const double dev = inputDb(p) - total;
+			const double excess = std::max(0.0, std::fabs(dev) - 3.0);
+			return inputDb(p) - sx * (total + (dev < 0.0 ? -excess : excess));
+		};
+		for (const Probe& p : tones) {
+			CHECK(toneDb(r, p, start) == doctest::Approx(expected(p)).epsilon(0.0).scale(1.0).epsilon(0.02));
+		}
+		if (strength == 1.0f) {
+			// INSIDE: it keeps its deviation from the whole; OUTSIDE: pulled to exactly the tolerance off the (now centred) whole.
+			CHECK(toneDb(r, tones[0], start) == doctest::Approx(devOn).scale(1.0).epsilon(0.03));
+			CHECK(toneDb(r, tones[1], start) == doctest::Approx(-3.0).scale(1.0).epsilon(0.03));
+		}
+	}
+}
+
+TEST_CASE("the bands are named by their harmonics only while a note is tracked, by their teeth otherwise") {
+	bal::Settings s;
+	s.bands = 3;
+	s.keyTrack = true;
+	CHECK(bal::bandNames(s, true)[1] == "Odd");
+	CHECK(bal::bandNames(s, true)[2] == "Even");
+	// KEY TRACK ON BUT NO NOTE HEARD YET, AND KEY TRACK OFF: the comb is fixed in Hz, so the names say so.
+	for (const bool tracking : { false, true }) {
+		s.keyTrack = tracking;
+		const std::array<std::string, 3> names = bal::bandNames(s, false);
+		CAPTURE(tracking);
+		CHECK(names[1].find("Hz") != std::string::npos);
+		CHECK(names[2].find("Hz") != std::string::npos);
+		CHECK(names[1].find("Odd") != std::string::npos);
+	}
+	s.bands = 2;
+	s.keyTrack = true;
+	CHECK(bal::bandNames(s, true)[1] == "Harmonics");
+	s.keyTrack = false;
+	CHECK(bal::bandNames(s, true)[1] == "x200 Hz");
+	CHECK(bal::bandNames(s, true)[0] == "Between");
+}
+
+//------------------------------------------------------------------------------------------------//
+// ORDER: THE LOWS AND THE PAN                                                                     //
+//------------------------------------------------------------------------------------------------//
+
+TEST_CASE("Pan places the whole, lows included, and a low-only imbalance is not corrected") {
+	for (const float pan : { -1.0f, 0.5f, 0.0f }) {
+		bal::Settings s = quick(2, 1.0f);
+		s.hpWet = static_cast<float>(std::log2(500.0));
+		s.subThru = true;
+		s.pan = pan;
+		double start = 0.0;
+		// A 60 Hz TONE 6 dB LEFT AND NOTHING ELSE: it passes the highpass only as the Sub Thru's lows, so the detectors never act on it.
+		const Rendered r = renderTones(s, { { 60.0, 1.0, 0.5 } }, start);
+		const bal::SideGains g = bal::panGains(pan);
+		CAPTURE(pan);
+		CHECK(amplitudeAt(r.l, 60.0, start) == doctest::Approx(1.0 * static_cast<double>(g.left)).epsilon(0.02).scale(1.0));
+		CHECK(amplitudeAt(r.r, 60.0, start) == doctest::Approx(0.5 * static_cast<double>(g.right)).epsilon(0.02).scale(1.0));
+	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// WIDEN                                                                                           //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+[[nodiscard]] double correlation(const std::vector<float>& a, const std::vector<float>& b) {
+	double ab = 0.0;
+	double aa = 0.0;
+	double bb = 0.0;
+	for (size_t i = 0; i < a.size(); ++i) {
+		ab += static_cast<double>(a[i]) * static_cast<double>(b[i]);
+		aa += static_cast<double>(a[i]) * static_cast<double>(a[i]);
+		bb += static_cast<double>(b[i]) * static_cast<double>(b[i]);
+	}
+	return ab / std::sqrt(aa * bb);
+}
+/// A CENTRED SAW at `hz`, or NOISE: filled into both channels.
+void centred(std::vector<float>& l, std::vector<float>& r, bool saw, double hz, double& phase, uint32_t& seed) {
+	for (size_t i = 0; i < l.size(); ++i) {
+		float v;
+		if (saw) {
+			phase += hz / kRate;
+			phase -= std::floor(phase);
+			v = static_cast<float>(0.5 * (2.0 * phase - 1.0));
+		}
+		else {
+			seed = seed * 1664525u + 1013904223u;
+			v = 0.5f * (static_cast<float>(seed >> 8) / 8388608.0f - 1.0f);
+		}
+		l[i] = v;
+		r[i] = v;
+	}
+}
+struct WidenRun {
+	std::vector<float> l, r;
+};
+[[nodiscard]] WidenRun renderCentred(const bal::Settings& s, bool saw, double seconds, double tail) {
+	Instance inst;
+	inst.set(s);
+	double phase = 0.0;
+	uint32_t seed = 4242u;
+	WidenRun out;
+	std::vector<float> l(512);
+	std::vector<float> r(512);
+	const auto blocks = static_cast<size_t>(seconds * kRate / 512.0);
+	for (size_t b = 0; b < blocks; ++b) {
+		centred(l, r, saw, 110.0, phase, seed);
+		inst.process(l.data(), r.data(), 512);
+		if (static_cast<double>(b * 512) >= (seconds - tail) * kRate) {
+			out.l.insert(out.l.end(), l.begin(), l.end());
+			out.r.insert(out.r.end(), r.begin(), r.end());
+		}
+	}
+	return out;
+}
+[[nodiscard]] bal::Settings widenSettings(float widen, int bands = 3) {
+	bal::Settings s = quick(bands, 0.0f);
+	s.spacing = 110.0f; // the saw's own harmonics: odd ones in Odd, even ones in Even
+	s.widen = widen;
+	return s;
+}
+} // namespace
+
+TEST_CASE("Widen is mono-safe: left plus right is what it was, for any input and any amount") {
+	for (const int bands : { 2, 3 }) {
+		for (const float widen : { 0.3f, 1.0f }) {
+			Instance wide;
+			Instance flat;
+			bal::Settings s = quick(bands, 0.6f);
+			s.widen = widen;
+			wide.set(s);
+			s.widen = 0.0f;
+			flat.set(s);
+			uint32_t seed = 31u;
+			std::vector<float> l(512), r(512);
+			float worst = 0.0f;
+			for (int block = 0; block < 100; ++block) {
+				noise(l, r, seed, 0.9f, 0.3f); // an unequal stereo input, so it is not a property of a centred one
+				std::vector<float> l2 = l, r2 = r;
+				wide.process(l.data(), r.data(), 512);
+				flat.process(l2.data(), r2.data(), 512);
+				for (size_t i = 0; i < l.size(); ++i) {
+					worst = std::max(worst, std::fabs((l[i] + r[i]) - (l2[i] + r2[i])));
+				}
+			}
+			CAPTURE(bands);
+			CAPTURE(widen);
+			CHECK(worst < 2.0e-6f);
+		}
+	}
+}
+
+TEST_CASE("Widen stays level from side to side: a centred saw and noise within 1 dB at 100%") {
+	for (const bool saw : { true, false }) {
+		const WidenRun r = renderCentred(widenSettings(1.0f), saw, 4.0, 1.0);
+		CAPTURE(saw);
+		const double lr = db(rms(r.l) / rms(r.r));
+		CHECK(std::fabs(lr) < 1.0);
+		// NON-VACUOUS: the sides are not the same signal any more.
+		CHECK(correlation(r.l, r.r) < 0.9);
+	}
+}
+
+TEST_CASE("Widen makes the sides less alike as it rises, and 0 changes nothing") {
+	for (const bool saw : { true, false }) {
+		double previous = 2.0;
+		for (const float widen : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f }) {
+			const WidenRun r = renderCentred(widenSettings(widen), saw, 3.0, 1.0);
+			const double c = correlation(r.l, r.r);
+			CAPTURE(saw);
+			CAPTURE(widen);
+			CHECK(c < previous);
+			previous = c;
+			if (widen == 0.0f) {
+				CHECK(c > 0.9999);
+			}
+		}
+	}
+}
 TEST_CASE("the comb ratios helper names the two bands by the ratio, and OWLTT's names are the ones it always had") {
 	CHECK(ow::combBandNames2(1.0)[1] == "Harmonics");
 	CHECK(ow::combBandNames2(1.0)[0] == "Between");

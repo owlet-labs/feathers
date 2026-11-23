@@ -69,6 +69,11 @@ struct OpsBalance {
 		float mR = 0.0f;
 		float eL = 0.0f;
 		float eR = 0.0f;
+		/// THE SAME TWO LAGS ON THE BAND'S OUTPUT SIDES, for the meter's "after".
+		float aL = 0.0f;
+		float aR = 0.0f;
+		float oL = 0.0f;
+		float oR = 0.0f;
 		float d = 0.0f;
 		SideGains gains {};
 		float level = 0.0f;
@@ -92,6 +97,9 @@ struct OpsBalance {
 
 	float strengthNow = 0.5f;
 	float panNow = 0.0f;
+	float focusNow = 0.0f;
+	float toleranceNow = 0.0f;
+	float widenNow = 0.0f;
 	bool smoothPrimed = false;
 	float act = 1.0f; ///< the enable crossfade, 0 (dry) .. 1 (balanced)
 	bool cleared = false;
@@ -186,6 +194,9 @@ struct OpsBalance {
 		if (!smoothPrimed) {
 			strengthNow = state.strength;
 			panNow = state.pan;
+			focusNow = state.focus;
+			toleranceNow = state.toleranceDb;
+			widenNow = state.widen;
 			smoothPrimed = true;
 		}
 
@@ -211,6 +222,18 @@ struct OpsBalance {
 			panNow += (state.pan - panNow) * smoothCoef;
 			if (std::fabs(state.pan - panNow) < 1.0e-6f) {
 				panNow = state.pan;
+			}
+			focusNow += (state.focus - focusNow) * smoothCoef;
+			if (std::fabs(state.focus - focusNow) < 1.0e-6f) {
+				focusNow = state.focus;
+			}
+			toleranceNow += (state.toleranceDb - toleranceNow) * smoothCoef;
+			if (std::fabs(state.toleranceDb - toleranceNow) < 1.0e-6f) {
+				toleranceNow = state.toleranceDb;
+			}
+			widenNow += (state.widen - widenNow) * smoothCoef;
+			if (std::fabs(state.widen - widenNow) < 1.0e-6f) {
+				widenNow = state.widen;
 			}
 
 			// HP WET FIRST: the split and the detectors hear the high-passed signal; the lows come back after, Sub Thru willing.
@@ -250,8 +273,9 @@ struct OpsBalance {
 				br = { wr - onR, onR, 0.0f };
 			}
 
-			float sumL = 0.0f;
-			float sumR = 0.0f;
+			// THE DETECTORS FIRST, for every band: the whole's imbalance needs the summed energies.
+			float totalL = 0.0f;
+			float totalR = 0.0f;
 			for (size_t b = 0; b < nb; ++b) {
 				Detector& s = band[b];
 				s.mL += meanCoef * (bl[b] * bl[b] - s.mL);
@@ -263,9 +287,49 @@ struct OpsBalance {
 				if (s.eL < 1.0e-30f) s.eL = 0.0f;
 				if (s.eR < 1.0e-30f) s.eR = 0.0f;
 				s.d = 0.5f * std::log((s.eL + kEnergyFloor) / (s.eR + kEnergyFloor));
-				s.gains = correctionGains(s.d, strengthNow);
-				sumL += bl[b] * s.gains.left;
-				sumR += br[b] * s.gains.right;
+				totalL += s.eL;
+				totalR += s.eR;
+			}
+			const float dTotal = 0.5f * std::log((totalL + kEnergyFloor) / (totalR + kEnergyFloor));
+			// THE CORRECTION (`bandCorrection`: the whole's part, then Focus of each band's own, outside the Tolerance), each band's gains kept for the meters.
+			std::array<float, 3> cl {};
+			std::array<float, 3> cr {};
+			std::array<float, 3> energy {};
+			const float tolNepers = toleranceNow / kNeperDb;
+			for (size_t b = 0; b < nb; ++b) {
+				Detector& s = band[b];
+				s.gains = bandCorrection(s.d, dTotal, strengthNow, focusNow, tolNepers);
+				cl[b] = bl[b] * s.gains.left;
+				cr[b] = br[b] * s.gains.right;
+				energy[b] = 0.5f * (s.gains.left * s.gains.left * s.eL + s.gains.right * s.gains.right * s.eR);
+			}
+			// WIDEN: the pair's mids move between the channels (mono-safe), weighted by the corrected energies so the sides stay level. Off, nothing is touched.
+			if (widenNow != 0.0f) {
+				const size_t first = nb == 3 ? 1 : 0;
+				const size_t second = first + 1;
+				const WidenAmounts a = widenAmounts(widenNow, energy[first], energy[second]);
+				const float mFirst = 0.5f * (cl[first] + cr[first]);
+				const float mSecond = 0.5f * (cl[second] + cr[second]);
+				cl[first] += a.first * mFirst;
+				cr[first] -= a.first * mFirst;
+				cl[second] -= a.second * mSecond;
+				cr[second] += a.second * mSecond;
+			}
+			float sumL = 0.0f;
+			float sumR = 0.0f;
+			for (size_t b = 0; b < nb; ++b) {
+				Detector& s = band[b];
+				sumL += cl[b];
+				sumR += cr[b];
+				// WHAT THE METER SHOWS AFTER: the band's own output sides, measured as the input's are.
+				s.aL += meanCoef * (cl[b] * cl[b] - s.aL);
+				s.aR += meanCoef * (cr[b] * cr[b] - s.aR);
+				s.oL += (s.aL > s.oL ? attackCoef : releaseCoef) * (s.aL - s.oL);
+				s.oR += (s.aR > s.oR ? attackCoef : releaseCoef) * (s.aR - s.oR);
+				if (s.aL < 1.0e-30f) s.aL = 0.0f;
+				if (s.aR < 1.0e-30f) s.aR = 0.0f;
+				if (s.oL < 1.0e-30f) s.oL = 0.0f;
+				if (s.oR < 1.0e-30f) s.oR = 0.0f;
 			}
 			float outL = sumL + lowL;
 			float outR = sumR + lowR;
@@ -297,7 +361,7 @@ struct OpsBalance {
 			const Detector& s = band[b];
 			const bool live = b < static_cast<size_t>(state.bands);
 			v[static_cast<size_t>(bandReading(b, 0))] = live ? s.d * kNeperDb : 0.0f;
-			v[static_cast<size_t>(bandReading(b, 1))] = live ? (s.d + std::log(s.gains.left / s.gains.right)) * kNeperDb : 0.0f;
+			v[static_cast<size_t>(bandReading(b, 1))] = live ? 0.5f * std::log((s.oL + kEnergyFloor) / (s.oR + kEnergyFloor)) * kNeperDb : 0.0f;
 			v[static_cast<size_t>(bandReading(b, 2))] = live ? s.level : 0.0f;
 		}
 		v[static_cast<size_t>(Reading::Spacing1Hz)] = static_cast<float>(spacingHz[0]);

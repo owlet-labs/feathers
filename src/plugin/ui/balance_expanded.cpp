@@ -30,9 +30,9 @@ namespace bal = fx::balance;
 
 namespace {
 
-constexpr std::array<bal::Param, 6> kKnobs { bal::Param::Spacing, bal::Param::Spacing2, bal::Param::Strength,
-	                                        bal::Param::Attack,  bal::Param::Release,  bal::Param::Pan };
-constexpr std::array<const char*, 6> kCaptions { "Spacing", "Spacing 2", "Strength", "Attack", "Release", "Pan" };
+constexpr std::array<bal::Param, 9> kKnobs { bal::Param::Spacing, bal::Param::Spacing2, bal::Param::Strength, bal::Param::Focus, bal::Param::Tolerance,
+	                                        bal::Param::Attack,  bal::Param::Release,  bal::Param::Widen,    bal::Param::Pan };
+constexpr std::array<const char*, 9> kCaptions { "Spacing", "Spacing 2", "Strength", "Focus", "Tolerance", "Attack", "Release", "Widen", "Pan" };
 
 } // namespace
 
@@ -152,7 +152,7 @@ void BalanceExpanded::draw(visage::Canvas&) {}
 
 std::vector<bal::Param> BalanceExpanded::addressedParamsForTest() const {
 	return { bal::Param::Bands,    bal::Param::KeyTrack, bal::Param::Sharp,   bal::Param::Spacing, bal::Param::Spacing2,
-		     bal::Param::Strength, bal::Param::Attack,   bal::Param::Release, bal::Param::Pan,     bal::Param::HpWet,
+		     bal::Param::Strength, bal::Param::Focus, bal::Param::Tolerance, bal::Param::Attack, bal::Param::Release, bal::Param::Widen, bal::Param::Pan, bal::Param::HpWet,
 		     bal::Param::SubThru };
 }
 

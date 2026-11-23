@@ -32,7 +32,7 @@ namespace ow = fx::owltt;
 
 namespace {
 
-constexpr float kNameWidth = 64.0f;
+constexpr float kNameWidth = 74.0f;
 constexpr float kReadoutWidth = 92.0f;
 constexpr float kRowGap = 3.0f;
 constexpr float kPlotShare = 0.46f;
@@ -56,15 +56,8 @@ std::string imbalanceText(float db) {
 //------------------------------------------------------------------------------------------------//
 
 std::array<std::string, 3> BalanceModel::bandNames() const {
-	const bool tracking = settings.keyTrack && noteHz > 0.0f;
-	if (bandCount() == 3) {
-		return ow::combBandNames(ow::combSpacingHz(settings.spacing, false), ow::combSpacingHz(settings.spacing2, true)) ;
-	}
-	if (tracking) {
-		const auto names = ow::combBandNames2(ow::combRatioOfKnob(settings.spacing, false));
-		return { names[0], names[1], "" };
-	}
-	return { "Between", "On teeth", "" };
+	// HONEST ABOUT KEY TRACK: harmonic classes only while a note is tracked, else the comb's teeth in Hz (`bal::bandNames`).
+	return bal::bandNames(settings, noteHz > 0.0f);
 }
 
 double BalanceModel::ratio21() const {

@@ -155,6 +155,21 @@ public:
 	[[nodiscard]] double noteHz() const;
 	[[nodiscard]] double cornerHz(size_t band) const;
 	float bandEdge(size_t band) const;
+	/// **THE COMB CROSSOVER (Modes 15, 16)**: the bands are harmonic classes, so the plot's frequency axis says nothing. The three columns are fixed thirds named
+	/// for what each holds (`combBandNames`); the two crossover handles in the lane are the two tooth spacings, each on its own knob's log scale (which claims
+	/// no band edge), read as a ratio to the note while one is tracked and snapping to its detents, else in Hz.
+	[[nodiscard]] bool combMode() const;
+	[[nodiscard]] float combLaneX(double knob, bool high) const;
+	[[nodiscard]] double combLaneKnob(float x, bool high) const;
+	/// **THE COMB CURVES (Comb modes)**: in place of the band level bars each column draws its band's magnitude response, from the current spacings, the sharpness
+	/// (Mode) and Res Home's resonance (Vibe's per-split deviation is not drawn: the plot reads parameters, not the engine). The x axis is the first spacing's
+	/// harmonic number, 0 .. `kCombCurveSpan`, never Hz. `points` samples, each the magnitude (0 .. ~1).
+	static constexpr double kCombCurveSpan = 16.0;
+	[[nodiscard]] std::vector<float> combCurve(size_t band, size_t points) const;
+	/// EACH BAND'S ONE COLOUR in Comb: its curve, and the tint of that column's rings and strips. Data colours, so the chrome hue never turns them: a green for
+	/// Between, a lime for the first on-teeth band (Odd), a magenta for the second (Even), each over 60 apart in RGB from the peach and blue the bars use for down and
+	/// up (the chrome has no light theme, so one set is checked: against the dark ground all three read at once).
+	[[nodiscard]] static uint32_t combBandColour(size_t band) noexcept;
 
 	/// The plot — this frame's own rectangle, in its own coordinates.
 	visage::Bounds plot() const;
@@ -279,6 +294,9 @@ public:
 	struct BottomText {
 		std::array<visage::Bounds, 2> frequency {};
 		std::array<std::string, 2> frequencyText {};
+		/// In Comb, each column's class heading (centred in the column, at the top of the plot); empty rectangles otherwise.
+		std::array<visage::Bounds, 3> classLabel {};
+		std::array<std::string, 3> classText {};
 		/// The letters drawn, in band order, two per band — none for a band too narrow to letter.
 		std::vector<visage::Bounds> letters;
 		std::vector<size_t> letterBand;

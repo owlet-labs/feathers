@@ -53,6 +53,7 @@ const char* modeName(int32_t mode) {
 	case 12: return "Linear Mild";
 	case 13: return "Linear Gentle";
 	case 14: return "LR8";
+	case 15: return "Comb";
 	default: return "?";
 	}
 }
@@ -362,11 +363,13 @@ visage::Bounds OwlttCard::outputMeterBounds() const {
 
 bool OwlttCard::updateContent() {
 	// THE CROSSOVERS' HOVER TEXT FOLLOWS KEY TRACK (the TV audit): an offset from the note while it is on, the declared text when off.
-	const int keyTrack = control(static_cast<size_t>(owltt::Param::KeyTrack)).value() >= 0.5 ? 1 : 0;
-	if (keyTrack != crossoverTipKey_) {
-		crossoverTipKey_ = keyTrack;
-		control(static_cast<size_t>(owltt::Param::LowCrossover)).setTooltipOverride(keyTrack != 0 ? owltt::kLowCrossoverTipKeyTrack : "");
-		control(static_cast<size_t>(owltt::Param::HighCrossover)).setTooltipOverride(keyTrack != 0 ? owltt::kHighCrossoverTipKeyTrack : "");
+	const bool keyTrack = control(static_cast<size_t>(owltt::Param::KeyTrack)).value() >= 0.5;
+	const bool comb = owltt::isCombMode(std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode))));
+	const int tipState = (keyTrack ? 1 : 0) + (comb ? 2 : 0);
+	if (tipState != crossoverTipKey_) {
+		crossoverTipKey_ = tipState;
+		control(static_cast<size_t>(owltt::Param::LowCrossover)).setTooltipOverride(owltt::crossoverTip(false, keyTrack, comb));
+		control(static_cast<size_t>(owltt::Param::HighCrossover)).setTooltipOverride(owltt::crossoverTip(true, keyTrack, comb));
 	}
 	// THE GRAPH, NOT THIS CARD. Nothing on the card's own surface draws a meter, so redrawing the
 	// card would repaint a head and a set of knobs to move three bars inside a child.

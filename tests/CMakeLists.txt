@@ -2182,6 +2182,12 @@ target_link_libraries(test_fx_owltt_linear PRIVATE feathers-fx feathers-warnings
 target_include_directories(test_fx_owltt_linear PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME fx-owltt-linear COMMAND test_fx_owltt_linear)
 
+# OWLTT's Comb crossover (Mode 15): bands that are harmonic classes of f0 and sum to the input exactly; per-class compression, Key Track, no allocation.
+add_executable(test_fx_owltt_comb test_fx_owltt_comb.cpp)
+target_link_libraries(test_fx_owltt_comb PRIVATE feathers-fx feathers-warnings)
+target_include_directories(test_fx_owltt_comb PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME fx-owltt-comb COMMAND test_fx_owltt_comb)
+
 # THE LINEAR CROSSOVER'S COST (OWLTT Mode 11 and the Rack's Linear slope against LR4) - NOT A TEST: bench_phaser's posture.
 add_executable(bench_linear_crossover bench_linear_crossover.cpp)
 target_link_libraries(bench_linear_crossover PRIVATE feathers-gui-bridge feathers-synth feathers-rack feathers-warnings)

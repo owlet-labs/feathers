@@ -21,6 +21,7 @@
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/diagnostic.h"
 #include "plugin/ui/mod_route_menu.h"
+#include "fx/owltt/comb_split.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/tooltip.h"
 
@@ -360,8 +361,19 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 			return;
 		}
 		if (dragState_.hit == ThresholdHit::kLowCrossover || dragState_.hit == ThresholdHit::kHighCrossover) {
-			const double hz = static_cast<double>(xToHz(e.position.x, plot()));
 			const double note = noteHz();
+			if (combMode()) {
+				// IN COMB the handle is the knob on its own lane scale, and while a note is tracked its ratio snaps to the detents.
+				const bool high = dragState_.hit == ThresholdHit::kHighCrossover;
+				double knob = combLaneKnob(e.position.x, high);
+				if (note > 0.0) {
+					knob = owltt::combKnobOfRatio(owltt::combSnapRatio(owltt::combRatioOfKnob(knob, high)), high);
+				}
+				ctrl.setValue(knob);
+				redraw();
+				return;
+			}
+			const double hz = static_cast<double>(xToHz(e.position.x, plot()));
 			ctrl.setValue(note > 0.0 ? owltt::kCrossoverKeyRefHz * hz / note : hz);
 			redraw();
 			return;
@@ -491,6 +503,20 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 			out.letterBand.push_back(b);
 		}
 	}
+	// IN COMB EACH COLUMN IS HEADED BY ITS HARMONIC CLASS, centred at the top of the bars' area; nothing on the plot then claims a range of frequency.
+	if (combMode()) {
+		const std::array<std::string, 3> names = owltt::combBandNames(owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::LowCrossover)).value(), false),
+		                                                              owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::HighCrossover)).value(), true));
+		const std::array<std::pair<float, float>, 3> columns { std::pair { xover.x(), xLow }, std::pair { xLow, xHigh },
+			                                                   std::pair { xHigh, xover.right() } };
+		for (size_t b = 0; b < columns.size(); ++b) {
+			out.classText[b] = names[b];
+			const float w = widthOf(out.classText[b]);
+			// The card has no lane, and its top row is the combined reduction's and f0's: its headings take the row below.
+			const float y = rail().width() > 0.0f ? xover.y() + 2.0f : xover.y() + 16.0f;
+			out.classLabel[b] = { (columns[b].first + columns[b].second - w) * 0.5f, y, w, kRowHeight };
+		}
+	}
 
 	// THE LABELS: inboard of their line on the side with room, on the bottom row — and up a row at a time while
 	// they would touch a letter or the label already placed. A pixel of air either side counts as touching.
@@ -504,6 +530,11 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 	// right of a line); it flips right on the same conditions. The obstacles are the handles, the other label, the clip square,
 	// the combined-reduction text and the lights, so nothing is drawn over a label.
 	std::vector<visage::Bounds> fixed;
+	for (size_t b = 0; b < 3; ++b) {
+		if (!out.classText[b].empty()) {
+			fixed.push_back(out.classLabel[b]); // the headings are obstacles to the f0 readout
+		}
+	}
 	const visage::Bounds lane = rail();
 	if (lane.width() > 0.0f) {
 		for (size_t h = 0; h < 2; ++h) {
@@ -534,7 +565,17 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 		}
 	}
 	for (size_t which = 0; which < 2; ++which) {
-		out.frequencyText[which] = frequencyText(static_cast<float>(cornerHz(which)));
+		// IN COMB the readouts are the two tooth spacings: a ratio to the note while one is tracked, else Hz.
+		if (combMode()) {
+			const bool high = which == 1;
+			const double knob = control(static_cast<size_t>(high ? owltt::Param::HighCrossover : owltt::Param::LowCrossover)).value();
+			const double note = noteHz();
+			out.frequencyText[which] = std::string(high ? "f2 " : "f1 ")
+			                           + (note > 0.0 ? owltt::combRatioText(owltt::combRatioOfKnob(knob, high)) : frequencyText(static_cast<float>(owltt::combSpacingHz(knob, high))));
+		}
+		else {
+			out.frequencyText[which] = frequencyText(static_cast<float>(cornerHz(which)));
+		}
 		const float w = widthOf(out.frequencyText[which]);
 		const float y = lane.width() > 0.0f ? lane.y() + (lane.height() - kRowHeight) * 0.5f : whole.y() + 2.0f;
 		const float anchor = lane.width() > 0.0f ? crossoverHandle(which).x : edges[which];
@@ -902,7 +943,56 @@ double OwlttGraph::cornerHz(size_t band) const {
 	return owltt::trackedCrossoverHz(control(static_cast<size_t>(param)).value(), note > 0.0, note);
 }
 
-float OwlttGraph::bandEdge(size_t band) const { return hzToX(static_cast<float>(cornerHz(band)), plot()); }
+float OwlttGraph::bandEdge(size_t band) const {
+	if (combMode()) {
+		// FIXED THIRDS: a harmonic class has no frequency range to draw (`combMode`).
+		const visage::Bounds box = plot();
+		return box.x() + box.width() * static_cast<float>(band + 1) / 3.0f;
+	}
+	return hzToX(static_cast<float>(cornerHz(band)), plot());
+}
+
+bool OwlttGraph::combMode() const {
+	return owltt::isCombMode(std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode))));
+}
+
+float OwlttGraph::combLaneX(double knob, bool high) const {
+	// BOTH HANDLES ON ONE LOG SCALE OF TOOTH SPACING (20 Hz .. 4 kHz: Low's knob is its spacing, High's a fifth of its knob), a ring radius in from each end so
+	// they stay grabbable. The default pair (200 and 400 Hz) is an octave apart, never on top of each other. A scale of spacings, not of band edges: the
+	// plot's columns are fixed thirds.
+	const visage::Bounds box = plot();
+	const float inset = OwlttGraph::kRingRadius;
+	const double t = std::clamp(std::log2(std::max(owltt::combSpacingHz(knob, high), 1.0) / 20.0) / std::log2(200.0), 0.0, 1.0);
+	return box.x() + inset + static_cast<float>(t) * std::max(0.0f, box.width() - 2.0f * inset);
+}
+
+double OwlttGraph::combLaneKnob(float x, bool high) const {
+	const visage::Bounds box = plot();
+	const float inset = OwlttGraph::kRingRadius;
+	const float span = std::max(1.0f, box.width() - 2.0f * inset);
+	const double t = std::clamp(static_cast<double>((x - box.x() - inset) / span), 0.0, 1.0);
+	const double spacing = 20.0 * std::pow(200.0, t);
+	return high ? spacing * (owltt::kCombHighUnityKnob / owltt::kCombLowUnityKnob) : spacing;
+}
+
+std::vector<float> OwlttGraph::combCurve(size_t band, size_t points) const {
+	std::vector<float> out(points, 0.0f);
+	const double s1 = owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::LowCrossover)).value(), false);
+	const double s2 = owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::HighCrossover)).value(), true);
+	const long mode = std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode)));
+	const int stages = mode == owltt::kCombSharpMode ? 2 : 1;
+	const auto g = static_cast<float>(control(static_cast<size_t>(owltt::Param::ResHome)).value() * owltt::kCombMaxResonance);
+	for (size_t i = 0; i < points; ++i) {
+		const double u = kCombCurveSpan * static_cast<double>(i) / static_cast<double>(std::max<size_t>(points - 1, 1));
+		out[i] = owltt::combResponse(u, s2 / std::max(s1, 1.0e-9), stages, g, g)[std::min<size_t>(band, 2)];
+	}
+	return out;
+}
+
+uint32_t OwlttGraph::combBandColour(size_t band) noexcept {
+	constexpr uint32_t kColours[3] = { 0xff3FCB8F, 0xffC9D64A, 0xffD65FB6 };
+	return kColours[std::min<size_t>(band, 2)];
+}
 
 void OwlttGraph::setCrossoversDraggable(bool on) {
 	rail_ = on;
@@ -1062,8 +1152,11 @@ ModHandle& OwlttGraph::crossoverMod(size_t which) const {
 			// A CONTROL VALUE TO AN X: the same road `bandEdge` draws the line by — the corner the value runs at
 			// (key-tracked while a note is heard), on the plot's frequency axis. No second formula.
 			crossoverMod_[i] = ModHandle({ ModHandleAxis {
-			    &control(static_cast<size_t>(param)), true, [this](double value) {
+			    &control(static_cast<size_t>(param)), true, [this, i](double value) {
 				    const double note = noteHz();
+				    if (combMode()) {
+					    return combLaneX(value, i == 1);
+				    }
 				    return hzToX(static_cast<float>(owltt::trackedCrossoverHz(value, note > 0.0, note)), plot());
 			    } } });
 		}
@@ -1079,6 +1172,10 @@ visage::Point OwlttGraph::crossoverHandle(size_t which) const {
 	}
 	// ON THE LINE IT MOVES, at the lane's midline. A handle ON the thing beats a handle NEAR it, and
 	// held a radius inside the plot so the ends of the sweep stay grabbable.
+	if (combMode()) {
+		// EACH HANDLE ON ITS KNOB'S OWN SCALE (the columns do not move with it).
+		return { combLaneX(control(static_cast<size_t>(which == 0 ? owltt::Param::LowCrossover : owltt::Param::HighCrossover)).value(), which == 1), r.y() + r.height() * 0.5f };
+	}
 	const float x = std::clamp(bandEdge(which), r.x() + OwlttGraph::kRingRadius, r.right() - OwlttGraph::kRingRadius);
 	return { x, r.y() + r.height() * 0.5f };
 }
@@ -1334,6 +1431,14 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		canvas.text(bottom.frequencyText[which], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f,
 		            label.y(), label.width() + 4.0f, label.height());
 	}
+	for (size_t b = 0; b < 3; ++b) {
+		const visage::Bounds label = bottom.classLabel[b];
+		if (!bottom.classText[b].empty()) {
+			canvas.setColor(withAlpha(kMuted, 0.95f));
+			canvas.text(bottom.classText[b], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f, label.y(), label.width() + 4.0f,
+			            label.height());
+		}
+	}
 
 	// PER-BAND GRAPH CONTROLS — threshold bars, GR meters, level strips.
 	{
@@ -1352,6 +1457,9 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			if (regionW <= 0.0f) continue;
 
 			const size_t b = region.band;
+			// IN COMB each column is tinted in its band's colour: its rings and strips (and, below, its curve).
+			const bool comb = combMode();
+			const uint32_t tint = comb ? combBandColour(b) : 0u;
 
 			// THE VALUES THE DEVICE IS USING, for the strips. The bars come from `barYs` below, which
 			// asks this same function -- so the whole band is drawn from one reading.
@@ -1432,8 +1540,8 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 				}
 			};
 			if (!editor_) {
-				modRing(Handle::ThresholdBar, kValue);
-				modRing(Handle::BandwidthBar, kAccent);
+				modRing(Handle::ThresholdBar, comb ? tint : kValue);
+				modRing(Handle::BandwidthBar, comb ? tint : kAccent);
 				followDot();
 			}
 
@@ -1488,9 +1596,39 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			// SAME READING COLOUR AS THE GR BAR (kAccent) — both are readouts, not controls.
 			// `kValue` is the colour this editor uses for things that ARE values; a meter wearing
 			// it reads as a control, which is what misled on the earlier render.
-			const float levelH = region.level * xover.height();
-			canvas.setColor(withAlpha(kAccent, 0.25f));
-			canvas.rectangle(region.x0, xover.bottom() - levelH, regionW, levelH);
+			// IN COMB THIS BACKDROP IS THE BAND'S COMB RESPONSE CURVE instead, in the band's colour (`combBandColour`): a faint fill under a line, one sample a pixel.
+			if (comb) {
+				// FOUR SAMPLES A PIXEL, so a sharp tooth is not stepped over; the fill takes the largest of each pixel's four.
+				const auto points = static_cast<size_t>(std::max(2.0f, regionW)) * 4;
+				const std::vector<float> curve = combCurve(b, points);
+				const float pad = 3.0f;
+				const float yBase = xover.bottom() - pad;
+				const float span = xover.height() - 2.0f * pad;
+				float prevY = yBase;
+				for (size_t i = 0; i < points; ++i) {
+					const float x = region.x0 + regionW * static_cast<float>(i) / static_cast<float>(points);
+					const float y = yBase - std::clamp(curve[i], 0.0f, 1.05f) * span;
+					if (i % 4 == 0) {
+						float top = 0.0f;
+						for (size_t k = i; k < std::min(i + 4, points); ++k) {
+							top = std::max(top, curve[k]);
+						}
+						const float yTop = yBase - std::clamp(top, 0.0f, 1.05f) * span;
+						canvas.setColor(withAlpha(tint, 0.14f));
+						canvas.rectangle(x, yTop, regionW * 4.0f / static_cast<float>(points) + 0.5f, yBase - yTop);
+					}
+					if (i > 0) {
+						canvas.setColor(withAlpha(tint, 0.85f));
+						canvas.segment(x - regionW / static_cast<float>(points), prevY, x, y, 1.2f, true);
+					}
+					prevY = y;
+				}
+			}
+			else {
+				const float levelH = region.level * xover.height();
+				canvas.setColor(withAlpha(kAccent, 0.25f));
+				canvas.rectangle(region.x0, xover.bottom() - levelH, regionW, levelH);
+			}
 
 			// DRAW ratio and level strips — vertical, over the band.
 			const StripSpan strip = stripSpanOf(region.x0, region.x1);
@@ -1505,20 +1643,20 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			canvas.rectangle(stripX0, xover.y(), stripX1 - stripX0, xover.height());
 			// THE STRIPS ARE NOT BLUE OR ORANGE: those two colours mean upward and downward on this plot (the bars and
 			// the thumbs), and the base ratio and the level belong to neither.
-			canvas.setColor(withAlpha(tokens::kGammaAxis, 0.6f));
+			canvas.setColor(withAlpha(comb ? tint : tokens::kGammaAxis, comb ? 0.5f : 0.6f));
 			const float ratioH = ratio * xover.height();
 			canvas.rectangle(stripX0, xover.bottom() - ratioH, stripX1 - stripX0, ratioH);
 
 			// Level strip (right).
 			canvas.setColor(withAlpha(kSurface, 0.3f));
 			canvas.rectangle(stripX1, xover.y(), stripX2 - stripX1, xover.height());
-			canvas.setColor(withAlpha(kMuted, 0.55f));
+			canvas.setColor(withAlpha(comb ? tint : kMuted, comb ? 0.4f : 0.55f));
 			const float levelStripH = level * xover.height();
 			canvas.rectangle(stripX1, xover.bottom() - levelStripH, stripX2 - stripX1, levelStripH);
 
 			// THE STRIPS' HANDLES: the same ring and `ModHandle` as the bars', drawn in the strip's own colour.
-			modRing(Handle::RatioStrip, tokens::kGammaAxis);
-			modRing(Handle::LevelStrip, kMuted);
+			modRing(Handle::RatioStrip, comb ? tint : tokens::kGammaAxis);
+			modRing(Handle::LevelStrip, comb ? tint : kMuted);
 
 			if (editor_) {
 				// THE STRIPS' CAPTIONS, once per band, at the top of each strip.
@@ -1533,8 +1671,8 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 
 			if (editor_) {
 				// THE RING AND THUMB HANDLES LAST, over the meter and the strips, so nothing darkens them.
-				modRing(Handle::ThresholdBar, kValue);
-				modRing(Handle::BandwidthBar, kAccent);
+				modRing(Handle::ThresholdBar, comb ? tint : kValue);
+				modRing(Handle::BandwidthBar, comb ? tint : kAccent);
 				followDot();
 				drawThumbs();
 			}

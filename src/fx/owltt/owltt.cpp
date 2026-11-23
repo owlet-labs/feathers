@@ -127,6 +127,10 @@ Settings stateOf(const Row& row) {
 	for (BandParams* band : { &s.low, &s.mid, &s.high }) {
 		band->inputDb = std::clamp(row[i++], kBandInputMinDb, kBandInputMaxDb);
 	}
+	s.combResHome = std::clamp(row[i++], 0.0f, 1.0f);
+	s.hpWet = std::clamp(row[i++], static_cast<float>(fx::kWetHighpassLog2Min), static_cast<float>(fx::kWetHighpassLog2Max));
+	s.subThru = row[i++] >= 0.5f;
+	s.hpWetSemis = std::clamp(row[i++], static_cast<float>(kHpWetSemisMin), static_cast<float>(kHpWetSemisMax));
 
 	// **THE WALK ENDS WHERE THE ENUM ENDS, AND THAT IS THE WHOLE DISCIPLINE.** This walk is positional
 	// — `i++` down the row — so an entry read where it makes sense rather than where its `Param` sits
@@ -197,6 +201,10 @@ Row rowOf(const Settings& s) {
 	for (const BandParams* band : { &s.low, &s.mid, &s.high }) {
 		row[i++] = band->inputDb;
 	}
+	row[i++] = s.combResHome;
+	row[i++] = s.hpWet;
+	row[i++] = s.subThru ? 1.0f : 0.0f;
+	row[i++] = s.hpWetSemis;
 
 	return row;
 }
@@ -258,9 +266,39 @@ void Owltt::prepare(double sampleRate) {
 	rawPos_ = 0;
 	rawLive_ = false;
 	linearBuild_ = true;
+	// THE COMB CROSSOVER (Mode 15): its four delay lines, allocated here with everything else.
+	comb_ = std::make_unique<CombSplit>();
+	comb_->prepare(sampleRate_);
+	combPrimed_ = false;
+	// THE SUB THRU RING: long enough for the Linear crossover's latency plus the longest lookahead, so it never allocates in the render.
+	subCap_ = rawLen_ + lookCap_ + 2;
+	for (auto& ring : subRing_) {
+		ring.assign(subCap_, 0.0f);
+	}
+	subPos_ = 0;
+}
+
+/// **THE WET HIGHPASS'S SETTINGS FOR THIS SLICE**: off at HP Wet's bottom (nothing is run), else the shared two-pole highpass at HP Wet's hertz, or with Key Track on at HP Wet
+/// Semitones above the played note (the note a held key latched, as the crossovers read it; 60 before one). The Eroder's road (`deriveWetHighpass`), the same filter.
+void Owltt::latchHighpass() {
+	const bool tracks = target_.keyTrack;
+	const bool on = tracks ? static_cast<double>(target_.hpWetSemis) > kHpWetSemisMin + device::kOffEndSlack
+	                       : static_cast<double>(target_.hpWet) > fx::kWetHighpassLog2Min;
+	const double hz = tracks ? keyHzOf(noteSemitones_) * std::exp2(static_cast<double>(target_.hpWetSemis) / 12.0) : std::exp2(static_cast<double>(target_.hpWet));
+	const double clamped = std::clamp(hz, std::exp2(fx::kWetHighpassLog2Min), std::exp2(fx::kWetHighpassLog2Max));
+	hpLatched_ = fx::highpassAt(on, on ? clamped : std::exp2(fx::kWetHighpassLog2Min), sampleRate_, kHpNyquistFraction);
+	hp_.set(hpLatched_);
+	subThru_ = target_.subThru;
+	if (!on) {
+		hp_.reset(); // a filter that is off holds no past: it resumes clean
+	}
 }
 
 void Owltt::resetCrossovers() {
+	if (comb_) {
+		comb_->clear();
+	}
+	combPrimed_ = false;
 	if (linear_) {
 		linear_->clearAudio();
 	}
@@ -298,6 +336,11 @@ void Owltt::resetCrossovers() {
 }
 
 void Owltt::reset() {
+	hp_.reset();
+	for (auto& ring : subRing_) {
+		std::fill(ring.begin(), ring.end(), 0.0f);
+	}
+	subPos_ = 0;
 	for (auto& band : bands_) {
 		band.reset();
 	}
@@ -460,6 +503,41 @@ void Owltt::updateCrossoverFrequencies() {
 			linear_->setTargets(corners.data());
 		}
 	}
+	// THE COMB CROSSOVER'S TWO SPACINGS: Low Crossover and High Crossover as tooth spacings (`combSpacingHz`: tracking, the glided knobs are the note times
+	// their offsets, so Low at its default IS the note and High at its default is twice it), glided in log2 over the Key Track's 5 ms and clamped to what the
+	// delay lines serve, then turned into each comb's delay D = fs / fc. A comb's delay at the slice's start is the last slice's end and the render moves it
+	// linearly across the slice, so a spacing never steps.
+	if (isCombMode(std::lround(target_.mode)) && comb_) {
+		const double lo = CombSplit::minSpacing(sampleRate_);
+		const double hi = CombSplit::maxSpacing(sampleRate_);
+		const std::array<double, 2> knobs { static_cast<double>(low), static_cast<double>(highKnob) };
+		const double alpha = 1.0 - std::exp(-static_cast<double>(std::max(sliceFrames_, 1)) / (kKeySmoothSeconds * std::max(sampleRate_, 1.0)));
+		for (size_t k = 0; k < 2; ++k) {
+			const double goal = std::log2(std::clamp(combSpacingHz(knobs[k], k == 1), lo, hi));
+			if (!combPrimed_) {
+				combLog2Fc_[k] = goal;
+				combDelayEnd_[k] = CombSplit::delayFor(std::exp2(goal), sampleRate_);
+			}
+			else {
+				combLog2Fc_[k] += alpha * (goal - combLog2Fc_[k]);
+				if (std::fabs(goal - combLog2Fc_[k]) < kGlideSnap) {
+					combLog2Fc_[k] = goal;
+				}
+			}
+			combDelayStart_[k] = combDelayEnd_[k];
+			combDelayEnd_[k] = CombSplit::delayFor(std::exp2(combLog2Fc_[k]), sampleRate_);
+		}
+		// THE RESONANCE: the goal Res Home and Vibe set, glided over the same 5 ms and ramped across the slice, so a fast move neither clicks nor leaves the clamp.
+		for (size_t k = 0; k < 2; ++k) {
+			const float goal = combResonanceFor(k);
+			combResStart_[k] = combPrimed_ ? combResEnd_[k] : goal;
+			combResEnd_[k] = std::clamp(combResStart_[k] + static_cast<float>(alpha) * (goal - combResStart_[k]), 0.0f, kCombMaxResonance);
+			if (std::fabs(goal - combResEnd_[k]) < 1.0e-6f) {
+				combResEnd_[k] = goal;
+			}
+		}
+		combPrimed_ = true;
+	}
 }
 
 /// Port of the firmware's setVibe + setCharacter. Computes all character/vibe-derived parameters.
@@ -541,6 +619,7 @@ void Owltt::computeCharacterAndVibe() {
 		vibePhaseSkew_[0] = 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi325 + 0.25f + ph325);
 		vibePhaseSkew_[1] = 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi360 - 0.083f + ph360);
 		vibePhaseSkew_[2] = 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi385 + 0.583f + ph385);
+		vibePhaseRes_ = { 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi350 + 0.5f + ph350), 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi400 - 0.25f + ph400) };
 	}
 	else {
 		switch (vibeZone) {
@@ -603,6 +682,26 @@ void Owltt::computeCharacterAndVibe() {
 			vibePhaseKnee_ = 0.0f;
 			vibePhaseTiming_ = {0.0f, 0.0f, 0.0f};
 			vibePhaseSkew_ = {0.0f, 0.0f, 0.0f};
+		}
+	}
+	// **THE COMB'S RESONANCE IS VIBE'S FIFTH PHASED QUANTITY** (beside width, knee, timing and skew): a phase per SPLIT (0 .. ~0.6), by the same zones and, past the
+	// first lap, the same phi triangles, that `combResonanceFor` turns into each split's feedback gain around Res Home. A split has a resonance of its own
+	// where a band does not: the first comb's is the Low band's (what it leaves between its teeth), the second's the High band's; Mid, being the on-teeth
+	// band less High, has none (`CombSplit`). Frequency modes never read these, so they are bit-identical.
+	if (vibePhaseOffset_ == 0.0f) {
+		const float p = vibeZonePos;
+		switch (vibeZone) {
+		case 0: vibePhaseRes_ = { 0.1f * p, 0.1f * p }; break;     // Sync
+		case 1: vibePhaseRes_ = { 0.2f * p, 0.6f * p }; break;     // Spread
+		case 2: vibePhaseRes_ = { 0.5f * p, 0.5f * p }; break;     // Pairs
+		case 3: vibePhaseRes_ = { 0.25f * p, 0.5f * p }; break;    // Cascade
+		case 4: vibePhaseRes_ = { 0.5f * p, 0.0f }; break;         // Invert
+		case 5: vibePhaseRes_ = { 0.0f, 0.1f * p }; break;         // Pulse
+		case 6: vibePhaseRes_ = { 0.1f * p, 0.4f * p }; break;     // Drift
+		case 7:                                                    // Twist
+			vibePhaseRes_ = { 0.5f * triangleFloat(p * owlet::dsp::phi::kPhi350 + 0.5f), 0.5f * triangleFloat(p * owlet::dsp::phi::kPhi400 - 0.25f) };
+			break;
+		default: vibePhaseRes_ = { 0.0f, 0.0f };
 		}
 	}
 
@@ -938,7 +1037,7 @@ void Owltt::processStereo(float* left, float* right, int frames) {
 	// THE LOOKAHEAD IN FORCE (backlog ND), from the stored choice — the same function `latencySamples` answers from, so
 	// the delay applied is the latency reported. A change applies at once; the host restarts after it (assumption L6).
 	lookLen_ = lookCap_ > 0 ? std::min(lookaheadSamplesFor(target_.lookahead, sampleRate_), lookCap_ - 1) : 0;
-	// A MODE OUTSIDE 1-13 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
+	// A MODE OUTSIDE 1-16 TAKES THE BYPASS ROAD (backlog OY's aside): the slice returns on one untouched, so without
 	// this it reported the lookahead's latency and delayed nothing. The descriptor cannot reach it; a raw row can.
 	const long crossoverType = std::lround(target_.mode);
 	if (!target_.enabled || crossoverType < 1 || crossoverType > kLastMode) {
@@ -1041,9 +1140,12 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	sliceFrames_ = frames;
 
 	const uint8_t crossoverType = static_cast<uint8_t>(std::round(target_.mode));
-	// Mode is 1-13 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
+	// Mode is 1-16 (crossover type selector). Mode 0 is not valid (Enabled handles bypass).
 	if (crossoverType < 1 || crossoverType > kLastMode) {
 		return;
+	}
+	if (isCombMode(crossoverType) && !comb_) {
+		return; // never prepared
 	}
 	if (isLinearMode(crossoverType) && !linear_) {
 		return; // never prepared
@@ -1061,6 +1163,7 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 	}
 	computeCharacterAndVibe();
 	updateCrossoverFrequencies();
+	latchHighpass();
 	// BACKLOG LR: THE WIDTH EACH BAND SENDS ON — the zone's, scaled by the global Width and the band's own. At
 	// 100% both scalers are exactly 1, so this is the zone's width to the bit (pinned by "LR: at Width 100%
 	// everywhere ..."). The high band's averaging detector below still keys on the ZONE's width: it is a
@@ -1116,6 +1219,8 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 		std::memcpy(dryR.data(), right, static_cast<size_t>(frames) * sizeof(float));
 	}
 
+	// THE LOW END SUB THRU HOLDS (zero, and unread, while HP Wet is at its bottom).
+	std::array<float, static_cast<size_t>(Owltt::kSliceFrames)> subHeldL {}, subHeldR {};
 	// Band buffers.
 	std::array<float, static_cast<size_t>(Owltt::kSliceFrames)> lowL {}, midL {}, highL {};
 	std::array<float, static_cast<size_t>(Owltt::kSliceFrames)> lowR {}, midR {}, highR {};
@@ -1150,8 +1255,29 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			driveDb = driveRun[i];
 			drive = driveGainOf(std::clamp(driveDb, kDriveMinDb, kDriveMaxDb));
 		}
-		const float inL = left[i] * drive;
-		const float inR = right[i] * drive;
+		// HP WET FIRST: what the split and the detectors hear is the high-passed input (then the Drive); the low end it took is held for the sum (Sub Thru).
+		float heardL = left[i];
+		float heardR = right[i];
+		if (hpLatched_.on) {
+			float lowL = 0.0f;
+			float lowR = 0.0f;
+			if (subThru_) {
+				lowL = hp_.taken(0, left[i]);
+				lowR = hp_.taken(1, right[i]);
+			}
+			heardL = hp_.wet(0, left[i]);
+			heardR = hp_.wet(1, right[i]);
+			// held back by what the bands are late by (the Linear crossover's latency, the lookahead's), so it meets them at the sum
+			const uint32_t late = (isLinearMode(crossoverType) ? rawLen_ : 0u) + lookLen_;
+			subRing_[0][subPos_] = lowL;
+			subRing_[1][subPos_] = lowR;
+			const uint32_t at = (subPos_ + subCap_ - late) % subCap_;
+			subHeldL[i] = subRing_[0][at];
+			subHeldR[i] = subRing_[1][at];
+			subPos_ = subPos_ + 1 == subCap_ ? 0 : subPos_ + 1;
+		}
+		const float inL = heardL * drive;
+		const float inR = heardR * drive;
 		// THE INPUT METER (reading 18) reads the signal AFTER the Drive, which is what the bands hear.
 		inputPeakThisBuffer_ = std::max(inputPeakThisBuffer_, std::max(std::abs(inL), std::abs(inR)));
 		CrossoverBands bandsL {}, bandsR {};
@@ -1209,6 +1335,27 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			dryL[i] = alignedDryAt(left[i], lr8full_[0].alignDry(left[i]), i);
 			dryR[i] = alignedDryAt(right[i], lr8full_[1].alignDry(right[i]), i);
 			break;
+		// COMB (Modes 15, 16): the three bands are the tree of two combs (`CombSplit`) — Low between the first comb's teeth, Mid on them but off the second's, High
+		// on both (at the default spacings, between the harmonics, the odd and the even) — taken as residuals, so they sum to the DRIVEN input exactly and the
+		// Blend's dry (the raw input) needs no alignment. Each comb's delay moves linearly across the slice from where the last one ended.
+		case 15:
+		case 16: {
+			const double along = static_cast<double>(i + 1) / static_cast<double>(frames);
+			const auto d1 = static_cast<float>(combDelayStart_[0] + (combDelayEnd_[0] - combDelayStart_[0]) * along);
+			const auto d2 = static_cast<float>(combDelayStart_[1] + (combDelayEnd_[1] - combDelayStart_[1]) * along);
+			const CombShape shape { crossoverType == 16 ? 2 : 1 };
+			const auto g1 = static_cast<float>(combResStart_[0] + (combResEnd_[0] - combResStart_[0]) * static_cast<float>(along));
+			const auto g2 = static_cast<float>(combResStart_[1] + (combResEnd_[1] - combResStart_[1]) * static_cast<float>(along));
+			const CombSplit::Bands l = comb_->process(0, inL, d1, d2, shape, g1, g2);
+			const CombSplit::Bands r = comb_->process(1, inR, d1, d2, shape, g1, g2);
+			bandsL.low = l.between;
+			bandsL.mid = l.partB;
+			bandsL.high = l.partA;
+			bandsR.low = r.between;
+			bandsR.mid = r.partB;
+			bandsR.high = r.partA;
+			break;
+		}
 		case 9: // Inverted (AP1 with swapped low/high)
 			ap1_[0].process(inL, bandsL);
 			ap1_[1].process(inR, bandsR);
@@ -1445,6 +1592,10 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			sumR += R;
 		}
 
+		if (hpLatched_.on && subThru_) {
+			sumL += subHeldL[i]; // the lows, uncompressed, in time with the bands, ahead of the Output Gain and the master clip
+			sumR += subHeldR[i];
+		}
 		// Output gain.
 		sumL *= smoothedOutputGain_;
 		sumR *= smoothedOutputGain_;

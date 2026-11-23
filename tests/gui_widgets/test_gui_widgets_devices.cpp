@@ -51,6 +51,7 @@
 #include "plugin/ui/delay_card.h"
 #include "plugin/ui/delay_expanded.h"
 #include "plugin/ui/delay_tips.h"
+#include "plugin/ui/follower_card.h"
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/noise_card.h"
 #include "plugin/ui/macro_polarity.h"
@@ -43256,6 +43257,27 @@ TEST_CASE("Arp's Rate says what its Time Base makes it: steps per second on Hz, 
 	CHECK(rateOn(d.card->control(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
 	CHECK(rateOn(win->controlForTest(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
 	CHECK(std::string(apx::kRateTipHz) != apx::kRateTipDivision); // not vacuous
+}
+
+TEST_CASE("Follower's Input is disabled in Audio, where it does nothing, and its hover text says why; in Control it is live with its own text") {
+	namespace fl = feathers::mod::follower;
+	DynCardFixture<ui::FollowerCard> d { fl::kTraits.tag };
+	const auto inputTip = [&] { return std::string(ui::tooltipOf(d.card->input().control())); };
+	const auto setMode = [&](double v) {
+		d.set(static_cast<size_t>(fl::Param::Mode), static_cast<float>(v));
+		(void)d.card->updateContent();
+	};
+	setMode(static_cast<double>(fl::Mode::Control));
+	CHECK(d.card->input().enabled());
+	CHECK(inputTip() == fl::kParamDescs[static_cast<size_t>(fl::Param::Input)].tooltip);
+	setMode(static_cast<double>(fl::Mode::Audio));
+	CHECK_FALSE(d.card->input().enabled());
+	CHECK(inputTip().find("does nothing in Audio") != std::string::npos);
+	CHECK(inputTip().find("Switch Mode to Control") != std::string::npos);
+	// AND BACK: live again, the declared text.
+	setMode(static_cast<double>(fl::Mode::Control));
+	CHECK(d.card->input().enabled());
+	CHECK(inputTip() == fl::kParamDescs[static_cast<size_t>(fl::Param::Input)].tooltip);
 }
 
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {

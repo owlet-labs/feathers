@@ -342,8 +342,8 @@ float ParallelRackExpanded::frontRailMinWidth() const {
 		return front->rail->standardWidth();
 	}
 	// THE CHAIN IN FRONT RUNS LEFT TO RIGHT: the cards' own length along the flow at the card height, at most three standard columns (past that it scrolls).
-	const float cross = front->rail->column()->height() > 0 ? static_cast<float>(front->rail->column()->height()) : kCardUnitHeight;
-	return std::clamp(front->rail->column()->contentHeightFor(cross) + 2.0f * FxLaneRail::kPadX, FxLaneRail::kWidth, 3.0f * FxLaneRail::kWidth);
+	const float cross = front->rail->column()->height() > 0 ? static_cast<float>(front->rail->column()->height()) : kCardUnitHeight + 2.0f * ChainColumn::kPadX;
+	return std::clamp(front->rail->column()->contentHeightFor(front->rail->column()->cappedCross(cross)) + 2.0f * FxLaneRail::kPadX, FxLaneRail::kWidth, 3.0f * FxLaneRail::kWidth);
 }
 
 visage::Point ParallelRackExpanded::minimumSize() const {
@@ -784,13 +784,15 @@ void ParallelRackExpanded::layOut() {
 		const bool alongFlow = view != RackViewKind::Strips && !paneShown && i == viewed && r->rail->column() != nullptr;
 		if (r->rail->column() != nullptr) {
 			r->rail->column()->setHorizontal(alongFlow);
+			// ONE UNIT TALL, as a horizontal lane's cards are (`kCardUnitHeight`): a taller window leaves the rest of the rail empty under the row.
+			r->rail->column()->setCardCross(alongFlow ? kCardUnitHeight : 0.0f);
 		}
 		r->rail->setWidthOverride(0.0f);
 		float wide = r->rail->railWidth();
 		r->rail->setBounds(x, top, wide, std::max(0.0f, static_cast<float>(height()) - top));
 		if (alongFlow && !r->rail->collapsed()) {
 			ChainColumn& column = *r->rail->column();
-			const float natural = column.contentHeightFor(static_cast<float>(column.height())) + 2.0f * FxLaneRail::kPadX;
+			const float natural = column.contentHeightFor(column.cappedCross(static_cast<float>(column.height()))) + 2.0f * FxLaneRail::kPadX;
 			const float room = std::max(FxLaneRail::kWidth, static_cast<float>(width()) - x - kPad);
 			r->rail->setWidthOverride(std::clamp(natural, FxLaneRail::kWidth, room));
 			wide = r->rail->railWidth();

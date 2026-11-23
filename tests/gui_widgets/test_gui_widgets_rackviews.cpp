@@ -4141,7 +4141,7 @@ TEST_CASE("list view: a row shows its chain's level meter by value, a row out of
 	CHECK(list.rowForTest(0)->meterReadingForTest() == ui::cardMeterReadingFor(0.5f));
 	CHECK(list.rowForTest(1)->meterReadingForTest() == ui::cardMeterReadingFor(0.1f));
 	CHECK_FALSE(list.rowForTest(0)->meterReadingForTest() == list.rowForTest(1)->meterReadingForTest());
-	CHECK(list.rowForTest(0)->meterMarksForTest().level.width() > list.rowForTest(1)->meterMarksForTest().level.width()); // the louder one's bar is longer
+	CHECK(list.rowForTest(0)->meterMarksForTest().level.height() > list.rowForTest(1)->meterMarksForTest().level.height()); // the louder one's fill is taller
 	// A ROW OUT OF VIEW IS NOT FOLLOWED: its chain's peak moves and the list reports nothing to repaint.
 	REQUIRE_FALSE(list.rowForTest(11)->isVisible());
 	r.rack().publishChainPeakForTest(11, 0.25f);
@@ -4200,14 +4200,8 @@ TEST_CASE("list view: the Cards|Window pane holds the front chain's first device
 	CHECK(list.isVisible());
 }
 
-namespace {
-/// The drawn width of a pill's text in logical pixels, as the pill's own font measures it.
-float pixelsOf(const std::string& text) {
-	return ui::font(ui::kKnobLabelSize).stringWidth(std::u32string(text.begin(), text.end()));
-}
-} // namespace
 
-TEST_CASE("list view: a row's level pill shows its value alone and the meter is a bar, at 1x, 1.75x and 2x; the strips' own pills are measured for the same collision") {
+TEST_CASE("list view: a row's fader and meter are slim and vertical beside M and S, the name keeps its room, and the list is as narrow as asked, at 1x, 1.75x and 2x") {
 	for (const float scale : { 1.0f, 1.75f, 2.0f }) {
 		CAPTURE(scale);
 		RealRack r;
@@ -4225,42 +4219,35 @@ TEST_CASE("list view: a row's level pill shows its value alone and the meter is 
 			for (size_t k = 0; k < 3; ++k) {
 				ui::ChainStrip& row = *list->rowForTest(k);
 				REQUIRE(row.rowModeForTest());
-				// THE PILL: no caption to collide with the value, and the value fits inside it.
-				const visage::Bounds pill = row.levelPillBoundsForTest();
-				CHECK(row.levelPill().readout() != "");
-				CHECK(row.levelPill().captionForTest().empty());
-				CHECK(pixelsOf(row.levelPill().readout()) <= pill.width() - 2.0f * 7.0f);
-				// THE BAR: a few pixels tall, wide enough to read, clear of the pill and of the chips.
-				const visage::Bounds bar = row.meterBoundsForTest();
-				CHECK(bar.height() >= 5.0f);
-				CHECK(bar.width() >= 24.0f);
-				CHECK(bar.x() >= pill.right());
-				CHECK(bar.x() >= row.muteChip().bounds().right() - 0.5f); // the bar is the far end; the chips stand before it
+				// NO PILL: the fader is the level's face, a slim vertical one inside the row's own height.
+				CHECK_FALSE(row.levelPill().isVisible());
+				const visage::Bounds fader = row.levelFaderBoundsForTest();
+				const visage::Bounds meter = row.meterBoundsForTest();
+				CHECK(row.levelFrame().bounds() == fader); // the level's face IS the fader
+				CHECK(fader.width() == doctest::Approx(ui::ChainStrip::kRowFaderWidth));
+				CHECK(meter.width() == doctest::Approx(ui::ChainStrip::kRowMeterWidth));
+				CHECK(fader.height() >= 16.0f);
+				CHECK(fader.height() <= static_cast<float>(row.height()));
+				CHECK(meter.height() == doctest::Approx(fader.height()));
+				// SIDE BY SIDE AT THE RIGHT, after M and S, the meter last.
+				CHECK(fader.x() >= row.soloChip().bounds().right() - 0.5f);
+				CHECK(meter.x() >= fader.right() - 0.5f);
+				CHECK(meter.right() <= static_cast<float>(row.width()) + 0.5f);
+				// THE NAME KEEPS A USEFUL ROOM.
+				CHECK(row.summaryWidth() >= 70.0f);
 			}
-			// THE BARS READ THE CHAINS' PEAKS: the marks' length is the reading's share of the track, restated from the mapping.
+			// THE METER READS THE CHAINS' PEAKS: the marks' height is the reading's share of the track, as wide as the track.
 			for (const auto& [k, peak] : { std::pair<size_t, float> { 0, 0.5f }, std::pair<size_t, float> { 1, 0.1f } }) {
 				const ui::ChainStrip& row = *list->rowForTest(k);
-				const float length = row.meterBoundsForTest().width();
-				CHECK(row.meterMarksForTest().level.width() == std::round(ui::cardMeterReadingFor(peak).level * length));
-				CHECK(row.meterMarksForTest().level.height() == row.meterBoundsForTest().height()); // the bar is as thick as its track
+				CHECK(row.meterMarksForTest().level.height() == std::round(ui::cardMeterReadingFor(peak).level * row.meterBoundsForTest().height()));
+				CHECK(row.meterMarksForTest().level.width() == doctest::Approx(row.meterBoundsForTest().width()));
 			}
-			CHECK(list->rowForTest(0)->meterMarksForTest().level.width() > list->rowForTest(1)->meterMarksForTest().level.width());
+			CHECK(list->rowForTest(0)->meterMarksForTest().level.height() > list->rowForTest(1)->meterMarksForTest().level.height());
 		}
-		// THE EXISTING STRIPS, MEASURED AND NOT CHANGED: in the Strips view the card's own strips at their own widths, caption against value.
-		r.view_(0);
-		r.card->setDpiScale(scale);
-		r.card->resized();
-		r.refresh();
-		for (const auto& strip : r.card->stripsForTest()) {
-			const float w = static_cast<float>(strip->levelPill().width());
-			const float caption = pixelsOf("Level");
-			const float value = pixelsOf(strip->levelPill().readout());
-			const bool collide = 7.0f + caption > w - 7.0f - value;
-			MESSAGE("MEASURED card strip at scale " << scale << ": pill " << w << " px, caption " << caption << ", value '" << strip->levelPill().readout() << "' " << value << ", caption ends at " << 7.0f + caption << ", value starts at " << w - 7.0f - value << ", collides: " << (collide ? "YES" : "no"));
-		}
+		// THE LIST COLUMN'S WIDTH, in native pixels, in the window.
+		CHECK(r.panel->listForTest().nativeWidth() == static_cast<int>(std::lround(ui::RackListView::kColumnWidth * scale)));
 	}
 }
-
 
 TEST_CASE("rename field: a single left press on a strip's own surface renames nothing and moves no control; mute still toggles") {
 	RealRack r;
@@ -4725,4 +4712,33 @@ TEST_CASE("synth route list: a rack macro armed from the synth's editor lists th
 	CHECK(chain0.routeAmount(inner, dest) == doctest::Approx(0.25f));
 	list->removeForTest(rows[0]);
 	CHECK(chain0.routeAmount(inner, dest) == 0.0f);
+}
+
+TEST_CASE("rack pane: the pane always shows the first device of the chain's MAIN list; a device's site chains (pre and post) are not that list, and the pane does not read them") {
+	// A RACK CHAIN HAS ONE FLAT DEVICE LIST (its record has a single chain), so "the first device" is the first of that list and the rest of the chain is
+	// the rail beside the pane, in chain order. A device's PRE and POST chains are sites of their own, below the device: opening one changes neither the
+	// pane's device nor the rail's list.
+	for (const int view : { 1, 3 }) {
+		CAPTURE(view);
+		PaneRack p(2, 3, view);
+		REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+		feathers::rack::RackBridge& chain = p.chain(0);
+		const feathers::DeviceInstanceId first = chain.deviceAtPosition(0);
+		REQUIRE(first != feathers::kNoInstance);
+		CHECK(p.pane().device() == first);
+		// THE REST OF THE CHAIN, in order, is the rail's: every device after the first.
+		ui::ChainColumn* col = p.column(0);
+		REQUIRE(col != nullptr);
+		CHECK(col->hiddenLead() == 1);
+		REQUIRE(col->deviceCount() == chain.chainLength());
+		for (size_t k = 1; k < chain.chainLength(); ++k) {
+			CHECK(col->deviceAt(k) == chain.deviceAtPosition(k));
+		}
+		// A SITE OPENED ON THE FIRST DEVICE leaves the pane and the rail as they were.
+		(void)chain.openSite(first);
+		p.settle();
+		CHECK(p.pane().device() == first);
+		CHECK(p.column(0)->deviceCount() == chain.chainLength());
+		CHECK(p.column(0)->hiddenLead() == 1);
+	}
 }

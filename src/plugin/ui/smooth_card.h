@@ -127,6 +127,7 @@ private:
 	device::Modulatable* enableModulatable() override;
 	[[nodiscard]] DeviceControl& control(fx::smooth::Param p) const;
 	[[nodiscard]] fx::smooth::Settings settings(bool modulated = true) const;
+	void refreshModeTips();
 	void layOut();
 
 	backplane::DeviceHost& host_;
@@ -136,6 +137,8 @@ private:
 	SmoothPictureModel model_ {};
 	bool drawnHadPeak_ = false;
 	float drawnPeak_ = -1.0f;
+	/// THE HARMONIC MODE THE HOVER TEXT WAS SET FOR — `refreshModeTips` moves the strings only when it changes.
+	int tipMode_ = -1;
 
 	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
 	std::unique_ptr<ValueBox> mode_;

@@ -45,6 +45,7 @@
 #include "dsp/partial_spectrum.h"
 #include "plugin/ui/spectral_expanded.h"
 #include "plugin/ui/smooth_expanded.h"
+#include "fx/smooth/smooth_tips.h"
 #include "plugin/ui/phaser_pad.h" // phaser Task 9a: the explore pad over the phaser's policy
 #include "fx/phaser/phaser_types.h"
 #include "fx/delay/delay.h" // backlog LF: the taps strip is asserted against a running engine
@@ -27722,7 +27723,8 @@ TEST_CASE("SMOOTH SHAPER: Harmonic and Twist are unbounded coordinates with coar
 		CHECK(cell->sigil() != nullptr);
 		CHECK_FALSE(cell->select().isVisible());
 	}
-	CHECK(std::string(hCell->tooltipAt({ 1.0f, 1.0f })) == smth::kParamDescs[harmonic].tooltip);
+	// THE HARMONIC'S TEXT IS THE MODE'S ROW OF THE TABLE (`smooth_tips.h`), for the mode the card is drawn in.
+	CHECK(std::string(hCell->tooltipAt({ 1.0f, 1.0f })) == std::string(smth::modeTipsFor(card->drawnFromForTest().harmonicMode).harmonic));
 	CHECK(std::string(tCell->tooltipAt({ 1.0f, 1.0f })) == smth::kParamDescs[twist].tooltip);
 
 	// THE PANEL SEATS THE SAME TWO, THE SAME CONTROL (no dropdown there either), AND T PHASE IS GONE FROM IT.

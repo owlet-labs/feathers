@@ -54,6 +54,8 @@
 #include "rack/parallel_rack.h"
 #include "plugin/ui/harmonic_row.h"
 #include "plugin/ui/smooth_card.h"
+#include "plugin/ui/smooth_expanded.h"
+#include "fx/smooth/smooth_tips.h"
 #include "plugin/ui/owltt_graph.h"
 #include "plugin/ui/sklitter_expanded.h"
 #include "plugin/ui/surface_layers.h"
@@ -588,7 +590,9 @@ void sweepHost(visage::Frame* host, const device::Descriptor& desc, SweepTally& 
 			// AND A SHORTENED OR CUT LABEL'S FULL NAME AT ITS START.
 			CHECK(layer.text() == expectedWithFull(full, why != nullptr       ? std::string(why)
 			                                             : reasoned           ? std::string(vb->disabledReason())
-			                                                                  : declaredText(control->desc())));
+			                                                                  : control->tooltipOverride() != nullptr
+			                                                                      ? std::string(control->tooltipOverride())
+			                                                                      : declaredText(control->desc())));
 		}
 		else {
 			// THE REST AFTER A FULL-NAME PREFIX is the declaration (a pill answers for two).
@@ -2635,6 +2639,57 @@ TEST_CASE("the Smooth Shaper's ceiling shows Drive's tooltip when the hand rests
 	ui::TooltipLayer& layer = restOn(curve, onHandle, clock, &host);
 	REQUIRE(layer.shown());
 	CHECK(layer.text() == std::string(desc.params[static_cast<size_t>(feathers::fx::smooth::Param::Drive)].tooltip));
+}
+
+TEST_CASE("the Smooth Shaper's Feedback, Harmonic and H Phase hover text follows the Harmonic mode, on the card and the window") {
+	// THE TABLE IS THE EXPECTATION, read back through the hover road after each mode is set by the host. The rows must
+	// differ where the mode changes the meaning, or the check would pass on a table that said one thing everywhere.
+	namespace sm = feathers::fx::smooth;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag("smth");
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::SmoothCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	ui::WidgetRegistry registry;
+	std::unique_ptr<ui::ExpandedView> view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, placed.device, desc);
+	auto* panel = dynamic_cast<ui::SmoothExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	visage::Frame* cardFdbk = card->pillForTest(static_cast<size_t>(sm::Pill::Fdbk));
+	visage::Frame* cardHarmonic = card->widgetForTest(sm::Param::Harmonic);
+	visage::Frame* winFdbk = panel->widgetForTest(sm::Param::Fdbk);
+	visage::Frame* winHarmonic = panel->widgetForTest(sm::Param::Harmonic);
+	visage::Frame* winPhase = panel->widgetForTest(sm::Param::HarmonicPhase);
+	REQUIRE(cardFdbk != nullptr);
+	REQUIRE(cardHarmonic != nullptr);
+	REQUIRE(winFdbk != nullptr);
+	REQUIRE(winHarmonic != nullptr);
+	REQUIRE(winPhase != nullptr);
+	CHECK(std::string(sm::kModeTips[3].feedback) != sm::kModeTips[0].feedback); // Fold sustains; 3579 does not say so
+	CHECK(std::string(sm::kModeTips[2].harmonic) != sm::kModeTips[0].harmonic); // operators, not harmonics
+	CHECK(std::string(sm::kModeTips[7].phase) != sm::kModeTips[0].phase);       // Poly's own clause
+	const auto field = static_cast<size_t>(sm::Param::HarmonicMode);
+	for (size_t mode = 0; mode < sm::kHarmonicModeTipCount; ++mode) {
+		CAPTURE(mode);
+		f.deviceHost.setField(placed.device, field, static_cast<float>(mode));
+		(void)card->updateContent();
+		(void)panel->update();
+		const sm::ModeTips& want = sm::kModeTips[mode];
+		// THE HOVER ROAD, READ AT THE WIDGET'S CENTRE: the frame must be a tooltip source, or the check is void.
+		// A WINDOW'S LABEL WHOLE-NAMES ITS CONTROL ("Fdbk — …", the full-name road); the declared or overridden text is what follows the dash.
+		const auto hoverOf = [](const visage::Frame* frame) {
+			const auto* source = dynamic_cast<const ui::TooltipSource*>(frame);
+			REQUIRE(source != nullptr);
+			const std::string text = ui::hoverText(*source, centreOf(*frame));
+			const std::string dash = " \xE2\x80\x94 ";
+			const size_t at = text.find(dash);
+			return at == std::string::npos ? text : text.substr(at + dash.size());
+		};
+		CHECK(hoverOf(cardFdbk) == std::string(want.feedback));
+		CHECK(hoverOf(cardHarmonic) == std::string(want.harmonic));
+		CHECK(hoverOf(winFdbk) == std::string(want.feedback));
+		CHECK(hoverOf(winHarmonic) == std::string(want.harmonic));
+		CHECK(hoverOf(winPhase) == std::string(want.phase));
+	}
 }
 
 TEST_CASE("every hoverable control on the Engine rail shows its tooltip, on both pages") {

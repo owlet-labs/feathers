@@ -119,6 +119,9 @@ public:
 
 private:
 	[[nodiscard]] const rack::parallel::Rack* rackNow() const { return rack::parallel::rackOf(host_.containerSurfaceOf(rack_)); }
+	// THIS LIST COVERS THE RACK'S OWN MACROS ONLY. A modulator device sitting in one of its chains is a device source (`isDevice`): its routes
+	// are listed by the chain's own editor, and the Rack window has no way to arm one. Covering them here belongs with the container's
+	// modulator strip, not with this list. An outer source is the host's, so not this list's either.
 	[[nodiscard]] static bool isMacro(backplane::Source source) { return !source.isDevice() && !source.isOuter(); }
 	[[nodiscard]] rack::RackBridge* bridgeHolding(backplane::Destination inner) const {
 		const rack::parallel::Rack* rack = rackNow();

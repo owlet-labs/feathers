@@ -4714,6 +4714,47 @@ TEST_CASE("synth route list: a rack macro armed from the synth's editor lists th
 	CHECK(chain0.routeAmount(inner, dest) == 0.0f);
 }
 
+TEST_CASE("synth route list: a SYNTH source routed into a device inside a rack chain lists and edits as it always did, row text and amount asserted") {
+	RealRack r;
+	r.chains(2, 2, true);
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	REQUIRE(delay != feathers::kNoInstance);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	REQUIRE(desc != nullptr);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	const backplane::Destination dest = backplane::Destination::control(delay, control);
+	// A SYNTH MACRO (its own source, not an export of the rack) routed into the device through the rack's own gate.
+	const backplane::Source synth = backplane::Source::core(0);
+	// THE CHAIN SEES THE SYNTH'S SOURCES UPSTREAM, as its editor wires it when following the rack; then the route is written as an editor would.
+	chain0.setOuterGate(feathers::rack::ChainRecord::gateOver(&r.f.bridge.chainRecord(), r.id));
+	chain0.setRouteAmount(synth.asOuter(), dest, 0.4f);
+	REQUIRE(chain0.routeAmount(synth.asOuter(), dest) == doctest::Approx(0.4f));
+	ui::ModState* mod = r.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	mod->focus(synth);
+	mod->arm(true);
+	ui::RouteList* list = findInTree<ui::RouteList>(r.f.root);
+	REQUIRE(list != nullptr);
+	const std::vector<ui::RouteList::Row> rows = list->allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].chain == r.id);
+	CHECK(rows[0].destination == dest);
+	CHECK(list->nameOfForTest(rows[0]) == "Chain " + std::to_string(r.slot + 1) + " \xC2\xB7 " + r.rack().chainLabel(0) + " \xC2\xB7 " + desc->traits.name
+	                                          + " \xC2\xB7 " + desc->params[control].name);
+	CHECK(list->amountOfForTest(rows[0]) == doctest::Approx(0.4f));
+	list->writeForTest(rows[0], 0.2f);
+	CHECK(r.f.bridge.innerRouteAmount(synth, r.id, dest) == doctest::Approx(0.2f));
+	list->removeForTest(rows[0]);
+	CHECK(r.f.bridge.innerRouteAmount(synth, r.id, dest) == 0.0f);
+}
+
 TEST_CASE("rack pane: the pane always shows the first device of the chain's MAIN list; a device's site chains (pre and post) are not that list, and the pane does not read them") {
 	// A RACK CHAIN HAS ONE FLAT DEVICE LIST (its record has a single chain), so "the first device" is the first of that list and the rest of the chain is
 	// the rail beside the pane, in chain order. A device's PRE and POST chains are sites of their own, below the device: opening one changes neither the

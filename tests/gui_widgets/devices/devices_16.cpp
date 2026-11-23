@@ -2254,6 +2254,62 @@ TEST_CASE("OWLTT Comb: each column's curve peaks at its band's harmonics, sharpe
 	}
 }
 
+TEST_CASE("OWLTT Comb: the three curves are overlaid across the full plot width, each owning its harmonics, in its column's colour; frequency modes draw none") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	const size_t mode = static_cast<size_t>(ow::Param::Mode);
+	// A FREQUENCY MODE DRAWS NO COMB CURVES.
+	f.deviceHost.setField(id, mode, 6.0f);
+	CHECK(graph->combLayers(641).empty());
+	f.deviceHost.setField(id, mode, static_cast<float>(ow::kCombMode));
+	constexpr size_t kPoints = 641;
+	const std::vector<ui::OwlttGraph::CombLayer> layers = graph->combLayers(kPoints);
+	REQUIRE(layers.size() == 3);
+	const visage::Bounds plot = graph->plot();
+	// RECONSTRUCT THE DRAWN CURVE: sample at the x of harmonic number u, y read back to a response by the plot's own pad (an independent restatement).
+	const auto response = [&](const ui::OwlttGraph::CombLayer& l, double u) {
+		const float x = graph->combCurveX(u);
+		const float t = (x - l.x0) / (l.x1 - l.x0);
+		const auto i = static_cast<size_t>(std::lround(t * static_cast<float>(kPoints - 1)));
+		const float yTop = l.y[i];
+		const visage::Bounds area = graph->barAreaForTest();
+		return (area.bottom() - 3.0f - yTop) / (area.height() - 6.0f);
+	};
+	for (size_t b = 0; b < 3; ++b) {
+		CAPTURE(b);
+		// FULL WIDTH: the curve starts and ends at the bar area's edges (not a third of it), which fill the plot's width.
+		const visage::Bounds area = graph->barAreaForTest();
+		CHECK(layers[b].band == b);
+		CHECK(layers[b].x0 == doctest::Approx(area.x()));
+		CHECK(layers[b].x1 == doctest::Approx(area.right()));
+		CHECK((layers[b].x1 - layers[b].x0) > 0.8f * plot.width());
+		CHECK(layers[b].colour == ui::OwlttGraph::combBandColour(b));
+	}
+	CHECK(layers[0].colour != layers[1].colour);
+	CHECK(layers[1].colour != layers[2].colour);
+	// AT HARMONIC k (defaults) the owner peaks and the others are low; Between owns the half harmonics.
+	for (int k = 1; k <= 15; ++k) {
+		CAPTURE(k);
+		const size_t owner = k % 2 == 1 ? 1 : 2;
+		const size_t other = owner == 1 ? 2 : 1;
+		CHECK(response(layers[owner], k) > 0.9f);
+		CHECK(response(layers[other], k) < 0.2f);
+		CHECK(response(layers[0], k) < 0.2f);
+		CHECK(response(layers[0], k + 0.5) > 0.9f);
+		CHECK(response(layers[1], k + 0.5) < 0.5f);
+		CHECK(response(layers[2], k + 0.5) < 0.5f);
+	}
+}
+
 TEST_CASE("OWLTT HP Wet: the shared element is in the window's tone row in every mode, the semitone knob replaces the hertz one under Key Track, and Sub Thru is inactive without a filter") {
 	namespace ow = feathers::fx::owltt;
 	FilterFixture f;

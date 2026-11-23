@@ -994,6 +994,36 @@ uint32_t OwlttGraph::combBandColour(size_t band) noexcept {
 	return kColours[std::min<size_t>(band, 2)];
 }
 
+float OwlttGraph::combCurveX(double harmonic) const {
+	const visage::Bounds area = barArea();
+	return area.x() + area.width() * static_cast<float>(harmonic / kCombCurveSpan);
+}
+
+std::vector<OwlttGraph::CombLayer> OwlttGraph::combLayers(size_t points) const {
+	std::vector<CombLayer> out;
+	if (!combMode()) {
+		return out;
+	}
+	const visage::Bounds area = barArea();
+	const float pad = 3.0f;
+	const float yBase = area.bottom() - pad;
+	const float span = area.height() - 2.0f * pad;
+	for (size_t b = 0; b < 3; ++b) {
+		CombLayer layer;
+		layer.band = b;
+		layer.colour = combBandColour(b);
+		layer.x0 = area.x();
+		layer.x1 = area.right();
+		const std::vector<float> curve = combCurve(b, points);
+		layer.y.reserve(curve.size());
+		for (const float v : curve) {
+			layer.y.push_back(yBase - std::clamp(v, 0.0f, 1.05f) * span);
+		}
+		out.push_back(std::move(layer));
+	}
+	return out;
+}
+
 void OwlttGraph::setCrossoversDraggable(bool on) {
 	rail_ = on;
 	redraw();
@@ -1440,6 +1470,41 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		}
 	}
 
+		// IN COMB: THE THREE BANDS' RESPONSE CURVES, OVERLAID ACROSS THE FULL PLOT behind every column's strips and handles, one colour per band (`combLayers`).
+		// Faint guides at the harmonics first, so the teeth read against them; then a translucent fill and a line per band, so where two cross both stay visible.
+		if (combMode()) {
+			for (int k = 0; k <= static_cast<int>(kCombCurveSpan); ++k) {
+				const float gx = combCurveX(static_cast<double>(k));
+				canvas.setColor(withAlpha(kMuted, k == 1 ? 0.30f : 0.12f));
+				canvas.rectangle(std::min(gx, xover.right() - 1.0f), xover.y(), 1.0f, xover.height());
+			}
+			// FOUR SAMPLES A PIXEL, so a sharp tooth is not stepped over.
+			const auto points = static_cast<size_t>(std::max(2.0f, xover.width())) * 4;
+			const float yBase = xover.bottom() - 3.0f;
+			for (const CombLayer& layer : combLayers(points)) {
+				const float w = layer.x1 - layer.x0;
+				float prevX = layer.x0;
+				float prevY = layer.y.front();
+				for (size_t i = 0; i < layer.y.size(); ++i) {
+					const float x = layer.x0 + w * static_cast<float>(i) / static_cast<float>(layer.y.size() - 1);
+					if (i % 4 == 0) {
+						float top = layer.y[i];
+						for (size_t k = i; k < std::min(i + 4, layer.y.size()); ++k) {
+							top = std::min(top, layer.y[k]);
+						}
+						canvas.setColor(withAlpha(layer.colour, 0.10f));
+						canvas.rectangle(x, top, w * 4.0f / static_cast<float>(layer.y.size()) + 0.5f, yBase - top);
+					}
+					if (i > 0) {
+						canvas.setColor(withAlpha(layer.colour, 0.9f));
+						canvas.segment(prevX, prevY, x, layer.y[i], 1.4f, true);
+					}
+					prevX = x;
+					prevY = layer.y[i];
+				}
+			}
+		}
+
 	// PER-BAND GRAPH CONTROLS — threshold bars, GR meters, level strips.
 	{
 		const Meters meters = this->meters();
@@ -1596,35 +1661,8 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			// SAME READING COLOUR AS THE GR BAR (kAccent) — both are readouts, not controls.
 			// `kValue` is the colour this editor uses for things that ARE values; a meter wearing
 			// it reads as a control, which is what misled on the earlier render.
-			// IN COMB THIS BACKDROP IS THE BAND'S COMB RESPONSE CURVE instead, in the band's colour (`combBandColour`): a faint fill under a line, one sample a pixel.
-			if (comb) {
-				// FOUR SAMPLES A PIXEL, so a sharp tooth is not stepped over; the fill takes the largest of each pixel's four.
-				const auto points = static_cast<size_t>(std::max(2.0f, regionW)) * 4;
-				const std::vector<float> curve = combCurve(b, points);
-				const float pad = 3.0f;
-				const float yBase = xover.bottom() - pad;
-				const float span = xover.height() - 2.0f * pad;
-				float prevY = yBase;
-				for (size_t i = 0; i < points; ++i) {
-					const float x = region.x0 + regionW * static_cast<float>(i) / static_cast<float>(points);
-					const float y = yBase - std::clamp(curve[i], 0.0f, 1.05f) * span;
-					if (i % 4 == 0) {
-						float top = 0.0f;
-						for (size_t k = i; k < std::min(i + 4, points); ++k) {
-							top = std::max(top, curve[k]);
-						}
-						const float yTop = yBase - std::clamp(top, 0.0f, 1.05f) * span;
-						canvas.setColor(withAlpha(tint, 0.14f));
-						canvas.rectangle(x, yTop, regionW * 4.0f / static_cast<float>(points) + 0.5f, yBase - yTop);
-					}
-					if (i > 0) {
-						canvas.setColor(withAlpha(tint, 0.85f));
-						canvas.segment(x - regionW / static_cast<float>(points), prevY, x, y, 1.2f, true);
-					}
-					prevY = y;
-				}
-			}
-			else {
+			// IN COMB THE CURVES ARE NOT PER COLUMN: all three are drawn together as a full-width backdrop before this loop (see `combLayers`), so no bar here.
+			if (!comb) {
 				const float levelH = region.level * xover.height();
 				canvas.setColor(withAlpha(kAccent, 0.25f));
 				canvas.rectangle(region.x0, xover.bottom() - levelH, regionW, levelH);

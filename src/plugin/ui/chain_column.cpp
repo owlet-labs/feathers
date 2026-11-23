@@ -161,6 +161,7 @@ ChainColumn::ChainColumn(rack::RackBridge& bridge, WidgetRegistry& registry, Mod
 	labelSubscription_ = bridge_.subscribeOutputLabel([this](DeviceInstanceId device, size_t output) {
 		if (SourceArm* arm = outputArmOf(device, output); arm != nullptr) {
 			arm->setLabel(bridge_.outputLabel(device, output));
+			dressOutputChip(*arm, bridge_.descriptorOf(device), output, bridge_.outputLabel(device, output));
 		}
 		resized();
 		redraw();
@@ -492,6 +493,7 @@ void ChainColumn::rebuildOutputArms() {
 			// here would be an arm offering a route the engine refuses.
 			entry.arm = std::make_unique<SourceArm>(mod_, backplane::Source::output(i, output),
 			                                        bridge_.outputLabel(i, output));
+			dressOutputChip(*entry.arm, desc, output, bridge_.outputLabel(i, output)); // a grid device's chip prints its short name
 			// **AND A PRESS ON THE CHIP SELECTS THE CARD IT SITS ON.** The chip is on top of the card, so
 			// `FxCard::onCardPressed` never hears this press; `SourceArm::onPressed` exists for exactly
 			// this, and the report behind it was a lit card with a DIFFERENT card deleted.

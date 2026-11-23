@@ -2382,6 +2382,7 @@ SourceArm* ModPanel::ensureOutputArm(size_t slot, size_t output) {
 	entry.output = output;
 	entry.label = outputName(slot, output);
 	entry.arm = std::make_unique<SourceArm>(mod_, sourceOfOutput(slot, output), entry.label);
+	dressOutputChip(*entry.arm, descriptorOf(slot), output, entry.label); // a grid device's chip prints its short name, the name on hover
 	// **AND THE WAY TO ASK AGAIN.** The constructor's value is right at this instant and will not stay
 	// right: this arm belongs to a SLOT, and which device stands at that slot changes under it. The arm's
 	// identity is {slot, output} — its position in the strip — and the source is DERIVED from that at

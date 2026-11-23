@@ -217,12 +217,22 @@ float MacrosCard::laneHeightAt(float cardWidth) const {
 visage::Bounds MacrosCard::slotBounds(size_t n) const {
 	// FOUR EQUAL COLUMNS ACROSS THE BODY, under a top head or beside a left spine alike (`bodyLeft`,
 	// `bodyTopEdge`), each as tall as a knob column at the header row's face.
-	const float cell = std::max(0.0f, bodyWidth() - 2.0f * kPadX) / static_cast<float>(shape_.columns);
 	const size_t col = n % shape_.columns;
 	const size_t row = n / shape_.columns;
 	const float rowHeight = MacroSlot::columnHeight(shape_.faceDiameter);
-	return { bodyLeft() + kPadX + cell * static_cast<float>(col),
-		     bodyTopEdge() + kGap + static_cast<float>(row) * (rowHeight + kGap), cell, rowHeight };
+	const float top = bodyTopEdge() + kGap + static_cast<float>(row) * (rowHeight + kGap);
+	if (shape_.columns > 1) {
+		// **A KNOB'S COLUMN IS ITS OUTPUT CHIP'S CELL** (`layoutOutputGrid`, the grid road the device's `outputGridColumns` asks for): the same
+		// equal cells with the same padding and gap, and the slot is the cell widened by half a gap each side, so a knob and the chip under it
+		// share one centre and the chips read as the knobs' own captions.
+		const float usable = std::max(0.0f, bodyWidth() - 2.0f * kCardOutputChipPadX);
+		const float cols = static_cast<float>(shape_.columns);
+		const float cell = std::max(0.0f, (usable - (cols - 1.0f) * kCardOutputChipGap) / cols);
+		const float left = bodyLeft() + kCardOutputChipPadX + static_cast<float>(col) * (cell + kCardOutputChipGap);
+		return { left - 0.5f * kCardOutputChipGap, top, cell + kCardOutputChipGap, rowHeight };
+	}
+	const float cell = std::max(0.0f, bodyWidth() - 2.0f * kPadX) / static_cast<float>(shape_.columns);
+	return { bodyLeft() + kPadX + cell * static_cast<float>(col), top, cell, rowHeight };
 }
 
 void MacrosCard::resized() {

@@ -22356,9 +22356,8 @@ TEST_CASE("MACROS card: four slots over the four controls") {
 		// THE SHORT CAPTION while the output carries no label of its own — and printed whole.
 		CHECK(slot.caption() == "M" + std::to_string(n + 1));
 		CHECK(slot.knob().drawnCaption() == "M" + std::to_string(n + 1));
-		// WHY NOT THE DECLARED "Macro n": in this column it would be cut, which is the choice's reason
-		// (`MacrosCard::shortCaption`) measured rather than asserted — 49.5px, "MACR..." on 2026-09-25.
-		CHECK(ui::Knob::columnCaption("Macro 1", slot.width()) != "MACRO 1");
+		// THE KNOB'S CAPTION STAYS THE SHORT ONE, as the output chip under it prints the same word (the grid cell is now the knob's column,
+		// 52px, where the declared name would just fit, so the choice is about reading as one pair, no longer about fitting).
 		// ON SHOW AS A KNOB — the declared default type — and laid inside the card.
 		CHECK(slot.knob().isVisible());
 		CHECK(slot.width() > 0.0f);
@@ -22468,12 +22467,15 @@ TEST_CASE("the output arms read the label") {
 	REQUIRE(before != nullptr);
 	CHECK(before->label() == "Macro 3");
 	f.bridge.setOutputLabel(seat.device, 2, "Filter sweep");
-	// THE STRIP HEARD IT AND RE-LAID: the arm on output 3 prints the label, and is as wide as it.
+	// THE STRIP HEARD IT AND RE-LAID: the arm on output 3 carries the label, and its grid cell (the knob's column) is narrower than the word, so the
+	// chip prints its M-number and the name is the hover; the route lists read the name (`outputName`).
 	const ui::SourceArm* after = f.panel->outputArmForTest(seat.slot, 2);
 	REQUIRE(after != nullptr);
 	CHECK(after->label() == "Filter sweep");
 	CHECK(f.panel->outputName(seat.slot, 2) == "Filter sweep");
-	CHECK(after->width() == doctest::Approx(ui::SourceArm::widthFor("Filter sweep")));
+	CHECK(after->width() < ui::SourceArm::widthFor("Filter sweep"));
+	CHECK(after->shownText() == "M3");
+	CHECK(after->tooltipForTest() == "Filter sweep");
 	// ITS NEIGHBOURS KEEP THEIR DECLARED NAMES.
 	REQUIRE(f.panel->outputArmForTest(seat.slot, 1) != nullptr);
 	CHECK(f.panel->outputArmForTest(seat.slot, 1)->label() == "Macro 2");
@@ -22594,6 +22596,64 @@ TEST_CASE("MACRO1 and MACROS8 cards: the slots lie where the card says — one l
 	CHECK(ui::MacrosCard::openHeight(2, ui::kMacros8Shape) > ui::MacrosCard::openHeight(2));
 }
 
+TEST_CASE("MACROS and MACROS8: each output chip stands in its knob's column (the same grid, 1x4 and 2x4), prints M1..Mn, and a renamed macro keeps the M-number with its name on hover") {
+	struct Shape {
+		const char* tag;
+		size_t count;
+		size_t rows;
+	};
+	for (const Shape& shape : { Shape { "MACROS", 4, 1 }, Shape { "MACROS8", 8, 2 } }) for (const float factor : { 1.0f, 1.75f }) {
+		CAPTURE(shape.tag);
+		CAPTURE(factor);
+		ModFixture f;
+		const float scale = f.root->dpiScale() * factor;
+		f.root->setDpiScale(scale);
+		const MacrosSeat seat = seatVariant(f, shape.tag);
+		REQUIRE(seat.card->slotCount() == shape.count);
+		const auto centreX = [](const visage::Frame& frame) { return frame.x() + 0.5f * frame.width(); };
+		float firstRowY = 0.0f;
+		for (size_t n = 0; n < shape.count; ++n) {
+			CAPTURE(n);
+			const ui::SourceArm* arm = f.panel->outputArmForTest(seat.slot, n);
+			REQUIRE(arm != nullptr);
+			REQUIRE(arm->width() > 0.0f);
+			const ui::MacroSlot& slot = seat.card->slot(n);
+			// THE CHIP'S CENTRE IS THE KNOB COLUMN'S, within a pixel (both in the panel's coordinates).
+			const float knobColumn = seat.card->x() + centreX(slot);
+			CHECK(std::abs(centreX(*arm) - knobColumn) <= 1.0f);
+			// THE ROWS MIRROR THE KNOBS: four to a row, in order.
+			if (n == 0) {
+				firstRowY = arm->y();
+			}
+			if (n < 4) {
+				CHECK(arm->y() == doctest::Approx(firstRowY));
+			}
+			else {
+				CHECK(arm->y() > firstRowY + 10.0f);
+				CHECK(arm->x() == doctest::Approx(f.panel->outputArmForTest(seat.slot, n - 4)->x()));
+			}
+			// THE WORD ON THE CHIP is the short M-number whole, in a cell narrower than the name.
+			CHECK(arm->shownText() == "M" + std::to_string(n + 1));
+			// EVERY CHIP LIES FULLY INSIDE THE CARD with the card's own gutter on the right as on the left, in native pixels at this scale.
+			CHECK(arm->nativeRight() <= seat.card->nativeRight() - static_cast<int>(std::lround(ui::kCardOutputChipPadX * scale)) + 1);
+			CHECK(arm->nativeX() >= seat.card->nativeX() + static_cast<int>(std::lround(ui::kCardOutputChipPadX * scale)) - 1);
+			// AND THE WORD LIES INSIDE ITS OWN CHIP: the arrow and "M4" end before the chip's right border (they ran over it when the cell kept the
+			// full chip's inset), and begin after its left.
+			const ui::SourceArm::ContentLayout content = arm->contentLayout();
+			CHECK(content.right <= static_cast<float>(arm->width()) - 2.0f);
+			CHECK(content.inset >= 2.0f);
+		}
+		// A RENAMED MACRO: the chip still says its number; the name is the hover and the route lists' word.
+		f.bridge.setOutputLabel(seat.device, 1, "Wobble");
+		f.panel->resized();
+		const ui::SourceArm* renamed = f.panel->outputArmForTest(seat.slot, 1);
+		REQUIRE(renamed != nullptr);
+		CHECK(renamed->shownText() == "M2");
+		CHECK(renamed->tooltipForTest().find("Wobble") != std::string::npos);
+		CHECK(renamed->label().find("Wobble") != std::string::npos);
+	}
+}
+
 TEST_CASE("a relabelled MACROS output in a chain column renames its arm and re-lays the column") {
 	// **THE COLUMN KEEPS ITS ARMS ACROSS A RELABEL** (they are rebuilt only when the stack changes), so
 	// the word has to be HANDED to the arm and the column laid out again for the chip to take the new
@@ -22611,16 +22671,17 @@ TEST_CASE("a relabelled MACROS output in a chain column renames its arm and re-l
 	ui::SourceArm* arm = column.outputArmOf(macros, 2);
 	REQUIRE(arm != nullptr);
 	CHECK(arm->label() == "Macro 3");
-	CHECK(column.outputArmBoundsForTest(macros, 2).width() == doctest::Approx(ui::SourceArm::widthFor("Macro 3")));
+	// A GRID CELL, NOT THE NAME'S WIDTH: the chip prints its M-number and keeps the name for the hover.
+	CHECK(column.outputArmBoundsForTest(macros, 2).width() < ui::SourceArm::widthFor("Macro 3"));
+	CHECK(arm->shownText() == "M3");
 
 	held.bridge().setOutputLabel(macros, 2, "Filter sweep");
-	// THE SAME ARM, TOLD THE WORD — and placed again at the word's width.
+	// THE SAME ARM, TOLD THE WORD — the cell does not move with the name, the chip still says M3, and the name is its hover.
 	CHECK(column.outputArmOf(macros, 2) == arm);
 	CHECK(arm->label() == "Filter sweep");
-	CHECK(column.outputArmBoundsForTest(macros, 2).width()
-	      == doctest::Approx(ui::SourceArm::widthFor("Filter sweep")));
-	// NOT VACUOUS: the two words measure differently, so the width above can only be the new one's.
-	CHECK(ui::SourceArm::widthFor("Filter sweep") != doctest::Approx(ui::SourceArm::widthFor("Macro 3")));
+	CHECK(arm->shownText() == "M3");
+	CHECK(arm->tooltipForTest() == "Filter sweep");
+	CHECK(column.outputArmBoundsForTest(macros, 2).width() < ui::SourceArm::widthFor("Filter sweep"));
 	// ITS NEIGHBOURS KEEP THEIR DECLARED NAMES.
 	REQUIRE(column.outputArmOf(macros, 1) != nullptr);
 	CHECK(column.outputArmOf(macros, 1)->label() == "Macro 2");

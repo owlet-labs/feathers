@@ -255,6 +255,7 @@ SourceArm* FxLane::ensureOutputArm(size_t slot, size_t output) {
 	// relabels it, as every route list reads it.
 	entry.label = bridge_.outputLabel(bridge_.fxDeviceAt(slot), output);
 	entry.arm = std::make_unique<SourceArm>(*mod_, sourceOfOutput(slot, output), entry.label);
+	dressOutputChip(*entry.arm, desc, output, entry.label); // a grid device's chip prints its short name, the name on hover
 	// THE WAY TO ASK AGAIN — the arm's identity is its PLACE in the lane, and the source is derived
 	// from that place at every press and every paint.
 	entry.arm->setSourceProvider([this, slot, output] { return sourceOfOutput(slot, output); });

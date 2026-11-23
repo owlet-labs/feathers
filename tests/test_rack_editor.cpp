@@ -6804,7 +6804,7 @@ bool hasSubmenu(visage::PopupMenuFrame& popup, const std::string& name) {
 
 } // namespace
 
-TEST_CASE("header presets: the rack editor's card menu offers Presets and Save preset, the name field is on top and takes the keys, and the save lands in the bank") {
+TEST_CASE("header presets: the rack editor's card menu offers a Presets row that opens the full box's popup on top, and a save with a tag lands in the bank and loads as one step") {
 	EditorPresetRoot root;
 	Fixture f;
 	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);

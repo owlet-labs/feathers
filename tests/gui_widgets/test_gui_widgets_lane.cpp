@@ -7031,7 +7031,7 @@ void checkSynthPresets(const char* what, visage::Frame& host, ui::LaneSelection&
 
 } // namespace
 
-TEST_CASE("header presets: the synth's fx lane and modulator strip card menus offer Presets and Save preset, the field is on top, and the save lands in the device's bank") {
+TEST_CASE("header presets: the synth's fx lane and modulator strip card menus offer a Presets row that opens the full box's popup, and a save with a tag lands in the device's bank") {
 	LanePresetRoot root;
 	FilterFixture f;
 	// THE FX LANE: its first card is the filter.

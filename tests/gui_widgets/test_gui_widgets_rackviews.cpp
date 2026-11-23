@@ -4379,7 +4379,7 @@ void checkColumnPresets(const char* what, ui::ChainColumn& column, visage::Frame
 
 } // namespace
 
-TEST_CASE("header presets: a rack chain's device card menu offers Presets and Save preset on the card's column and the window's, and the name field is on top") {
+TEST_CASE("header presets: a rack chain's device card menu offers a Presets row on the card's column and the window's that opens the full box's popup, and a save with a tag lands in the bank") {
 	ColumnPresetRoot root;
 	RealRack r;
 	r.chains(2, 2, true);

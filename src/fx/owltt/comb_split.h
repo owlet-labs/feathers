@@ -105,6 +105,12 @@ public:
 		return { x - on, on - a, a };
 	}
 
+	/// THE FIRST COMB ALONE (a two-band split: `x - on` between the teeth, `on` on them), no resonance: what `process` computes for its first stage, without the
+	/// second comb's reads and writes. Same delay line, same arithmetic, so a device that uses one comb is the three-band device's first split to the bit.
+	[[nodiscard]] float processFirst(size_t channel, float x, float d, const CombShape& shape) {
+		return comb(*channels_[channel], 0, x, d, shape, 0.0f);
+	}
+
 private:
 	struct Channel {
 		explicit Channel(const dsp::SincTable& table)

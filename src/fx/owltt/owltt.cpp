@@ -127,6 +127,7 @@ Settings stateOf(const Row& row) {
 	for (BandParams* band : { &s.low, &s.mid, &s.high }) {
 		band->inputDb = std::clamp(row[i++], kBandInputMinDb, kBandInputMaxDb);
 	}
+	s.combResHome = std::clamp(row[i++], 0.0f, 1.0f);
 
 	// **THE WALK ENDS WHERE THE ENUM ENDS, AND THAT IS THE WHOLE DISCIPLINE.** This walk is positional
 	// — `i++` down the row — so an entry read where it makes sense rather than where its `Param` sits
@@ -197,6 +198,7 @@ Row rowOf(const Settings& s) {
 	for (const BandParams* band : { &s.low, &s.mid, &s.high }) {
 		row[i++] = band->inputDb;
 	}
+	row[i++] = s.combResHome;
 
 	return row;
 }
@@ -492,6 +494,15 @@ void Owltt::updateCrossoverFrequencies() {
 			combDelayStart_[k] = combDelayEnd_[k];
 			combDelayEnd_[k] = CombSplit::delayFor(std::exp2(combLog2Fc_[k]), sampleRate_);
 		}
+		// THE RESONANCE: the goal Res Home and Vibe set, glided over the same 5 ms and ramped across the slice, so a fast move neither clicks nor leaves the clamp.
+		for (size_t k = 0; k < 2; ++k) {
+			const float goal = combResonanceFor(k);
+			combResStart_[k] = combPrimed_ ? combResEnd_[k] : goal;
+			combResEnd_[k] = std::clamp(combResStart_[k] + static_cast<float>(alpha) * (goal - combResStart_[k]), 0.0f, kCombMaxResonance);
+			if (std::fabs(goal - combResEnd_[k]) < 1.0e-6f) {
+				combResEnd_[k] = goal;
+			}
+		}
 		combPrimed_ = true;
 	}
 }
@@ -575,6 +586,7 @@ void Owltt::computeCharacterAndVibe() {
 		vibePhaseSkew_[0] = 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi325 + 0.25f + ph325);
 		vibePhaseSkew_[1] = 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi360 - 0.083f + ph360);
 		vibePhaseSkew_[2] = 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi385 + 0.583f + ph385);
+		vibePhaseRes_ = { 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi350 + 0.5f + ph350), 0.5f * triangleFloat(globalVibePos * owlet::dsp::phi::kPhi400 - 0.25f + ph400) };
 	}
 	else {
 		switch (vibeZone) {
@@ -637,6 +649,26 @@ void Owltt::computeCharacterAndVibe() {
 			vibePhaseKnee_ = 0.0f;
 			vibePhaseTiming_ = {0.0f, 0.0f, 0.0f};
 			vibePhaseSkew_ = {0.0f, 0.0f, 0.0f};
+		}
+	}
+	// **THE COMB'S RESONANCE IS VIBE'S FIFTH PHASED QUANTITY** (beside width, knee, timing and skew): a phase per SPLIT (0 .. ~0.6), by the same zones and, past the
+	// first lap, the same phi triangles, that `combResonanceFor` turns into each split's feedback gain around Res Home. A split has a resonance of its own
+	// where a band does not: the first comb's is the Low band's (what it leaves between its teeth), the second's the High band's; Mid, being the on-teeth
+	// band less High, has none (`CombSplit`). Frequency modes never read these, so they are bit-identical.
+	if (vibePhaseOffset_ == 0.0f) {
+		const float p = vibeZonePos;
+		switch (vibeZone) {
+		case 0: vibePhaseRes_ = { 0.1f * p, 0.1f * p }; break;     // Sync
+		case 1: vibePhaseRes_ = { 0.2f * p, 0.6f * p }; break;     // Spread
+		case 2: vibePhaseRes_ = { 0.5f * p, 0.5f * p }; break;     // Pairs
+		case 3: vibePhaseRes_ = { 0.25f * p, 0.5f * p }; break;    // Cascade
+		case 4: vibePhaseRes_ = { 0.5f * p, 0.0f }; break;         // Invert
+		case 5: vibePhaseRes_ = { 0.0f, 0.1f * p }; break;         // Pulse
+		case 6: vibePhaseRes_ = { 0.1f * p, 0.4f * p }; break;     // Drift
+		case 7:                                                    // Twist
+			vibePhaseRes_ = { 0.5f * triangleFloat(p * owlet::dsp::phi::kPhi350 + 0.5f), 0.5f * triangleFloat(p * owlet::dsp::phi::kPhi400 - 0.25f) };
+			break;
+		default: vibePhaseRes_ = { 0.0f, 0.0f };
 		}
 	}
 
@@ -1255,8 +1287,10 @@ void Owltt::processStereoSlice(float* left, float* right, int frames) {
 			const auto d1 = static_cast<float>(combDelayStart_[0] + (combDelayEnd_[0] - combDelayStart_[0]) * along);
 			const auto d2 = static_cast<float>(combDelayStart_[1] + (combDelayEnd_[1] - combDelayStart_[1]) * along);
 			const CombShape shape { crossoverType == 16 ? 2 : 1 };
-			const CombSplit::Bands l = comb_->process(0, inL, d1, d2, shape);
-			const CombSplit::Bands r = comb_->process(1, inR, d1, d2, shape);
+			const auto g1 = static_cast<float>(combResStart_[0] + (combResEnd_[0] - combResStart_[0]) * static_cast<float>(along));
+			const auto g2 = static_cast<float>(combResStart_[1] + (combResEnd_[1] - combResStart_[1]) * static_cast<float>(along));
+			const CombSplit::Bands l = comb_->process(0, inL, d1, d2, shape, g1, g2);
+			const CombSplit::Bands r = comb_->process(1, inR, d1, d2, shape, g1, g2);
 			bandsL.low = l.between;
 			bandsL.mid = l.partB;
 			bandsL.high = l.partA;

@@ -40,6 +40,9 @@ namespace feathers::fx::owltt {
 /// as differences. Both combs are feedforward and read the past only, so nothing is delayed. A real filter cannot tell harmonic k from N - k, so
 /// only the pairs (on, off) of one comb are offered: a third class by mod-3 would need a Hilbert split.
 ///
+/// RESONANCE (Vibe and Res Home, `kCombMaxResonance`): each comb is followed by a feedback comb of the same delay and a gain g in [0, 0.95]; the bands stay the
+/// residuals above, so they sum to the input at any g, moving or not.
+///
 /// `CombShape::stages` is the sharpness: 1 is the plain comb; 2 runs each comb twice, `((1 + z^-D) / 2)^2`, whose teeth are narrower and whose
 /// nulls are flat (a double zero). THE SHAPE'S VALUES LIVE HERE, in this one struct, so that anything that later varies them (a tooth depth, a
 /// resonance) changes this and not the call sites.
@@ -94,10 +97,10 @@ public:
 	}
 
 	/// One sample of one channel; `d1` and `d2` are the two combs' delays in samples.
-	[[nodiscard]] Bands process(size_t channel, float x, float d1, float d2, const CombShape& shape) {
+	[[nodiscard]] Bands process(size_t channel, float x, float d1, float d2, const CombShape& shape, float g1 = 0.0f, float g2 = 0.0f) {
 		Channel& c = *channels_[channel];
-		const float on = comb(c, 0, x, d1, shape);
-		const float a = comb(c, 2, on, d2, shape);
+		const float on = comb(c, 0, x, d1, shape, g1);
+		const float a = comb(c, 2, on, d2, shape, g2);
 		return { x - on, on - a, a };
 	}
 
@@ -105,18 +108,25 @@ private:
 	struct Channel {
 		explicit Channel(const dsp::SincTable& table)
 		    : lines { dsp::SincDelayLine<kLineSize>(table), dsp::SincDelayLine<kLineSize>(table), dsp::SincDelayLine<kLineSize>(table),
-			          dsp::SincDelayLine<kLineSize>(table) } {}
-		std::array<dsp::SincDelayLine<kLineSize>, 4> lines; ///< two stages for each of the two combs
+			          dsp::SincDelayLine<kLineSize>(table), dsp::SincDelayLine<kLineSize>(table), dsp::SincDelayLine<kLineSize>(table) } {}
+		std::array<dsp::SincDelayLine<kLineSize>, 6> lines; ///< two feedforward stages for each of the two combs, then each comb's feedback line
 	};
 
 	/// The comb at line pair `first`: `stages` passes of (v + v[-D]) / 2.
-	static float comb(Channel& c, size_t first, float v, float d, const CombShape& shape) {
+	static float comb(Channel& c, size_t first, float v, float d, const CombShape& shape, float g) {
 		for (int s = 0; s < shape.stages && s < 2; ++s) {
 			auto& line = c.lines[first + static_cast<size_t>(s)];
 			const float delayed = line.read(d);
 			line.write(v);
 			v = 0.5f * (v + delayed);
 		}
+		// THE RESONANCE: a feedback comb y = (1 - g) v + g y[-D] on the teeth-passing signal. Its gain is 1 at every tooth (where v passes whole) and its
+		// nulls stay nulls, so it only lengthens the ringing of what the teeth let through. The line is written at every g, 0 included, so a g that moves
+		// off 0 finds its past. The caller clamps g below 1 (`kCombMaxResonance`); the complement is taken from the INPUT, so the sum stays exact.
+		auto& fb = c.lines[4 + first / 2];
+		const float y = (1.0f - g) * v + g * fb.read(d);
+		fb.write(y);
+		v = y;
 		return v;
 	}
 

@@ -164,6 +164,9 @@ enum class Param : uint8_t {
 	LowInput = 50,
 	MidInput = 51,
 	HighInput = 52,
+	/// **RESONANCE HOME (Comb modes only)**: the centre of the comb teeth's resonance, the feedback gain of each split's comb as a share of `kCombMaxResonance`; Vibe's
+	/// per-split phase pattern then moves each around it. 0 is the plain comb. Appended; modulatable; hidden outside Comb (an engine choice, not a greyed knob).
+	ResHome = 53,
 	kCount
 };
 
@@ -229,6 +232,8 @@ struct Settings {
 	/// BACKLOG ND — see `Param::Lookahead`. An index into `kLookaheadNames`; 0 is Off.
 	uint32_t lookahead = 0;
 	bool keyTrack = false;
+	/// See `Param::ResHome`: 0..1, the home of the Comb modes' resonance.
+	float combResHome = 0.0f;
 
 	/// The band by index, 0 low, 1 mid, 2 high.
 	[[nodiscard]] const BandParams& band(size_t b) const noexcept { return b == 0 ? low : (b == 1 ? mid : high); }
@@ -369,6 +374,12 @@ inline constexpr const char* kHighCrossoverTipKeyTrack = "Mid-high split, as an 
 /// **IN COMB (Modes 15, 16) THE TWO CROSSOVERS ARE TOOTH SPACINGS** (`comb_split.h`): Low Crossover is split 1's, High Crossover split 2's. The same knob
 /// values that place the other modes' corners place these, so a note-tracked patch keeps its meaning: tracking, a knob is a RATIO to the played note
 /// (Low: knob / 200, so the default 200 Hz is x1; High: knob / 1000, so the default 2000 Hz is x2); not tracking, Low is the spacing in Hz and High is
+/// **THE COMB'S RESONANCE**: each split's comb is followed by a feedback comb `y = (1 - g) e + g y[-D]`, unity at the teeth and ringing for D / (1 - g) samples.
+/// `g` is clamped below 1 by this constant, so the loop is stable whatever Res Home, Vibe and a modulator add up to. The band the split leaves behind is the
+/// INPUT minus the resonant band, never a separately designed filter, so the three bands sum to the input at any `g`, moving or not.
+inline constexpr float kCombMaxResonance = 0.95f;
+/// How far Vibe's per-split phase (0 .. 0.5, as Timing's and Skew's are) moves the resonance from Res Home, in units of `g` per unit of phase.
+inline constexpr float kCombVibeResonanceDepth = 1.0f;
 /// the knob / 5 in Hz (its default 2000 reads as 400 Hz, twice Low's 200).
 inline constexpr double kCombLowUnityKnob = 200.0;  ///< Low Crossover's value for x1
 inline constexpr double kCombHighUnityKnob = 1000.0; ///< High Crossover's value for x1
@@ -898,6 +909,11 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .unit = device::Unit::Decibel, .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
      .tooltip = "High band input level — gain on this band after the split and before its detector and compressor",
      .shortName = "In"},
+    {.key = "comb_res_home", .name = "Res Home", .min = 0.0, .max = 1.0, .def = 0.0, .stepped = false, .unit = device::Unit::Percent, .names = {},
+     .modulatable = true, .offsetsMayLeaveRange = false,
+     .tooltip = "Comb resonance, home position: how long the comb teeth ring (the feedback of each split's comb). Vibe moves each split's resonance around this "
+                "by its zone pattern. 0 is the plain comb. Comb modes only",
+     .shortName = "Res"},
 };
 
 /// ND'S DEFAULT, PINNED TO THE DESCRIPTOR: Off is the device before the lookahead.
@@ -914,6 +930,7 @@ static_assert(BandParams {}.width == static_cast<float>(kParamDescs[static_cast<
 
 /// LQ'S DEFAULTS, PINNED TO THE DESCRIPTOR, so a fresh `Settings` and a fresh row agree: Link 100% and L/R
 /// are the linked device this was before.
+static_assert(Settings {}.combResHome == static_cast<float>(kParamDescs[static_cast<size_t>(Param::ResHome)].def));
 static_assert(Settings {}.stereoLink == static_cast<float>(kParamDescs[static_cast<size_t>(Param::StereoLink)].def));
 static_assert(Settings {}.midSide == (kParamDescs[static_cast<size_t>(Param::StereoMode)].def >= 0.5));
 

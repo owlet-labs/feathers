@@ -42364,6 +42364,52 @@ TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns named for the
 	CHECK((y[1] - y[0]) == doctest::Approx(y[2] - y[1]).epsilon(0.01));
 }
 
+TEST_CASE("OWLTT Comb: Res Home is in the window's header right of the Mode box, only in a Comb mode, and writes its parameter") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	ui::ValueBox* box = panel.resHomeForTest();
+	REQUIRE(box != nullptr);
+	const size_t mode = static_cast<size_t>(ow::Param::Mode);
+	// HIDDEN in every other mode: an engine choice could be the only thing to enable it, so it is not drawn rather than greyed.
+	for (const float other : { 1.0f, 6.0f, 11.0f, 14.0f }) {
+		f.deviceHost.setField(id, mode, other);
+		(void)panel.update();
+		CAPTURE(other);
+		CHECK_FALSE(box->isVisible());
+	}
+	const float clipBefore = panel.clipBounds().x();
+	for (const long comb : { ow::kCombMode, ow::kCombSharpMode }) {
+		f.deviceHost.setField(id, mode, static_cast<float>(comb));
+		(void)panel.update();
+		CAPTURE(comb);
+		CHECK(box->isVisible());
+		// RIGHT OF THE MODE BOX, on its row, with Clip moved along rather than overlapped.
+		const visage::Bounds m = panel.modeBounds();
+		CHECK(box->x() >= m.right());
+		CHECK(box->x() - m.right() < 16.0f);
+		CHECK(box->width() > 40.0f);
+		CHECK(panel.clipBounds().x() >= box->x() + box->width());
+		CHECK(panel.clipBounds().x() > clipBefore);
+	}
+	// THE BOX WRITES RES HOME (it is the control's own face).
+	ui::DeviceControl c { f.deviceHost, id, ow::kDescriptor, static_cast<size_t>(ow::Param::ResHome) };
+	c.setValue(0.4);
+	CHECK(f.deviceHost.fieldAt(id, static_cast<size_t>(ow::Param::ResHome)) == doctest::Approx(0.4f));
+	// BACK OUT OF COMB, it goes and Clip returns.
+	f.deviceHost.setField(id, mode, 6.0f);
+	(void)panel.update();
+	CHECK_FALSE(box->isVisible());
+	CHECK(panel.clipBounds().x() == clipBefore);
+	CHECK(ow::kParamDescs[static_cast<size_t>(ow::Param::ResHome)].modulatable);
+}
+
 TEST_CASE("OWLTT Comb: a handle drag writes its own knob, a tracked drag lands on the ratio detents, and an untracked one does not") {
 	namespace ow = feathers::fx::owltt;
 	FilterFixture f;

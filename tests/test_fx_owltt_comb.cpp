@@ -542,3 +542,244 @@ TEST_CASE("Comb: a spacing that jumps moves the delay across each block, so the 
 	MESSAGE("largest output step: fixed " << still << ", jumping " << jumping);
 	CHECK(jumping < 4.0 * still);
 }
+
+//------------------------------------------------------------------------------------------------//
+// RESONANCE: Res Home plus Vibe's per-split phase; the bands are residuals, so they sum at any g.  //
+//------------------------------------------------------------------------------------------------//
+
+TEST_CASE("Comb resonance: the three bands sum to the input at g = 0, 0.5 and 0.95 and while g sweeps (to the float, 1e-6)") {
+	for (const int stages : { 1, 2 }) {
+		for (const float g : { 0.0f, 0.5f, kCombMaxResonance }) {
+			CAPTURE(stages);
+			CAPTURE(g);
+			CombSplit comb;
+			comb.prepare(kRate);
+			const auto d1 = static_cast<float>(CombSplit::delayFor(441.0, kRate));
+			const auto d2 = static_cast<float>(CombSplit::delayFor(882.0, kRate));
+			Noise noise { 31u };
+			double worst = 0.0;
+			for (int i = 0; i < 30000; ++i) {
+				const float x = 0.5f * noise.next();
+				const CombSplit::Bands b = comb.process(0, x, d1, d2, CombShape { stages }, g, g);
+				worst = std::max(worst, std::fabs(static_cast<double>(b.between) + b.partB + b.partA - x));
+			}
+			CHECK(worst < 1e-6);
+		}
+		// A SWEEP: g runs 0 .. 0.95 .. 0 across the run, a different one for each split, with the delays moving too.
+		CombSplit comb;
+		comb.prepare(kRate);
+		Noise noise { 32u };
+		double worst = 0.0;
+		for (int i = 0; i < 60000; ++i) {
+			const double t = static_cast<double>(i) / 60000.0;
+			const float g1 = kCombMaxResonance * static_cast<float>(0.5 - 0.5 * std::cos(2.0 * kPi * t * 3.0));
+			const float g2 = kCombMaxResonance * static_cast<float>(0.5 - 0.5 * std::cos(2.0 * kPi * t * 5.0));
+			const auto d1 = static_cast<float>(CombSplit::delayFor(200.0 + 150.0 * std::sin(2.0 * kPi * t * 2.0), kRate));
+			const auto d2 = static_cast<float>(CombSplit::delayFor(400.0 + 200.0 * std::sin(2.0 * kPi * t * 3.0), kRate));
+			const float x = 0.5f * noise.next();
+			const CombSplit::Bands b = comb.process(0, x, d1, d2, CombShape { stages }, g1, g2);
+			worst = std::max(worst, std::fabs(static_cast<double>(b.between) + b.partB + b.partA - x));
+		}
+		CHECK(worst < 1e-6);
+	}
+}
+
+TEST_CASE("Comb resonance: the teeth's gain off a tooth follows the feedback comb's law, so the Q rises with g") {
+	// A tone a tenth of the way between two teeth (theta = 0.2 pi of the delay's phase). The on-teeth band is E = FB(FF x): its gain there is
+	// |cos(theta / 2)| (the feedforward comb) times (1 - g) / |1 - g e^{-j theta}| (the feedback comb), restated here from the two transfer functions.
+	const double fc = 441.0;
+	const double theta = 0.2 * kPi;
+	const double hz = fc * (3.0 + theta / (2.0 * kPi));
+	double previous = 2.0;
+	for (const float g : { 0.0f, 0.5f, 0.9f }) {
+		CAPTURE(g);
+		CombSplit comb;
+		comb.prepare(kRate);
+		const auto d1 = static_cast<float>(CombSplit::delayFor(fc, kRate));
+		const auto d2 = static_cast<float>(CombSplit::delayFor(2.0 * fc, kRate));
+		std::vector<float> on(48000);
+		for (size_t i = 0; i < on.size(); ++i) {
+			const auto x = static_cast<float>(std::cos(2.0 * kPi * hz * static_cast<double>(i) / kRate));
+			const CombSplit::Bands b = comb.process(0, x, d1, d2, CombShape { 1 }, g, 0.0f);
+			on[i] = b.partB + b.partA;
+		}
+		const double measured = std::sqrt(2.0 * powerOf(on, 20000));
+		const std::complex<double> fb = (1.0 - g) / (1.0 - static_cast<double>(g) * std::polar(1.0, -theta));
+		const double want = std::fabs(std::cos(theta / 2.0)) * std::abs(fb);
+		MESSAGE("g " << g << ": gain a tenth off a tooth " << measured << ", restated " << want);
+		CHECK(measured == doctest::Approx(want).epsilon(0.01));
+		CHECK(measured < previous); // narrower teeth as g rises
+		previous = measured;
+	}
+}
+
+TEST_CASE("Comb resonance: Res Home sets the goal as a share of the clamp, Vibe's zone phase moves each split around it, and the clamp holds") {
+	Settings s = combAtRest(200.0, 400.0);
+	Owltt o;
+	o.prepare(kRate);
+	const auto run = [&](int blocks) {
+		std::vector<float> l(512, 0.0f), r(512, 0.0f);
+		for (int b = 0; b < blocks; ++b) {
+			o.processStereo(l.data(), r.data(), 512);
+		}
+	};
+	// AT THE DEFAULTS there is no resonance: Res Home 0 and Vibe at 0.
+	s.vibe = 0.0f;
+	s.combResHome = 0.0f;
+	o.setTarget(s);
+	run(4);
+	CHECK(o.combResonanceGoalForTest(0) == 0.0f);
+	CHECK(o.combResonanceGoalForTest(1) == 0.0f);
+	// RES HOME moves both splits to its share of the clamp (Vibe still at 0), and the gain arrives there (smoothed).
+	for (const float home : { 0.25f, 0.5f, 1.0f }) {
+		CAPTURE(home);
+		s.combResHome = home;
+		o.setTarget(s);
+		run(60);
+		CHECK(o.combResonanceGoalForTest(0) == doctest::Approx(home * kCombMaxResonance).epsilon(1e-6));
+		CHECK(o.combResonanceGoalForTest(1) == doctest::Approx(home * kCombMaxResonance).epsilon(1e-6));
+		CHECK(o.combResonanceForTest(0) == doctest::Approx(home * kCombMaxResonance).epsilon(1e-5));
+	}
+	// VIBE IN SPREAD (mode 1): the two splits' phases are 0.2 and 0.6 of the position in the zone, added to Home, so they differ by the pattern.
+	s.vibeMode = 1;
+	s.vibe = 0.5f;
+	s.combResHome = 0.25f;
+	o.setTarget(s);
+	run(60);
+	const double home = 0.25 * kCombMaxResonance;
+	const double pos = 0.5; // the position in the zone is the amount
+	MESSAGE("goals " << o.combResonanceGoalForTest(0) << " " << o.combResonanceGoalForTest(1) << ", restated " << home + 0.2 * pos << " " << home + 0.6 * pos);
+	CHECK(o.combResonanceGoalForTest(0) == doctest::Approx(home + kCombVibeResonanceDepth * 0.2 * pos).epsilon(1e-4));
+	CHECK(o.combResonanceGoalForTest(1) == doctest::Approx(home + kCombVibeResonanceDepth * 0.6 * pos).epsilon(1e-4));
+	CHECK(o.combResonanceGoalForTest(1) > o.combResonanceGoalForTest(0));
+	// THE CLAMP: Home at the top and Vibe pushing past it stays at the named constant, both as goal and as gain.
+	s.combResHome = 1.0f;
+	s.vibe = 1.0f;
+	s.vibeMode = 2; // Pairs: 0.5 of the position on both
+	o.setTarget(s);
+	run(60);
+	for (size_t k = 0; k < 2; ++k) {
+		CHECK(o.combResonanceGoalForTest(k) <= kCombMaxResonance);
+		CHECK(o.combResonanceForTest(k) <= kCombMaxResonance);
+	}
+	CHECK(o.combResonanceForTest(1) == doctest::Approx(kCombMaxResonance));
+}
+
+TEST_CASE("Comb resonance: the device sums to the input at several Home and Vibe settings and through a sweep of both, and stays bounded at the clamp") {
+	const struct { float home; uint32_t vibeMode; float vibe; } settings[] = { { 0.0f, 8, 0.0f }, { 0.5f, 8, 0.0f }, { 1.0f, 8, 0.0f }, { 0.3f, 1, 0.8f }, { 1.0f, 2, 1.0f }, { 0.6f, 7, 0.9f } };
+	for (const long mode : { kCombMode, kCombSharpMode }) {
+		for (const auto& c : settings) {
+			CAPTURE(mode);
+			CAPTURE(c.home);
+			CAPTURE(c.vibeMode);
+			Settings s = combAtRest(220.0, 660.0, mode);
+			s.combResHome = c.home;
+			s.vibeMode = c.vibeMode;
+			s.vibe = c.vibe;
+			std::vector<float> in(48128), l, r;
+			Noise noise { 91u };
+			for (auto& v : in) {
+				v = 0.5f * noise.next();
+			}
+			l = in;
+			r = in;
+			Owltt o;
+			o.prepare(kRate);
+			o.setTarget(s);
+			double worst = 0.0;
+			double peak = 0.0;
+			for (size_t at = 0; at < l.size(); at += 256) {
+				if (at % 4096 == 0) { // a sweep of Res Home and Vibe as the run goes
+					s.combResHome = static_cast<float>(0.5 - 0.5 * std::cos(static_cast<double>(at) / 9000.0));
+					s.vibe = static_cast<float>(0.5 - 0.5 * std::sin(static_cast<double>(at) / 7000.0));
+					o.setTarget(s);
+				}
+				o.processStereo(&l[at], &r[at], 256);
+			}
+			for (size_t i = 0; i < in.size(); ++i) {
+				worst = std::max(worst, std::fabs(static_cast<double>(l[i]) - in[i]));
+				peak = std::max(peak, std::fabs(static_cast<double>(l[i])));
+			}
+			CHECK(worst < 1e-5);
+			CHECK(peak < 1.0); // sums to the input, which is bounded by 0.5: no growth anywhere
+		}
+	}
+}
+
+TEST_CASE("Comb resonance: at the clamp the teeth ring after the input stops and the output still reaches exact zero") {
+	for (const long mode : { kCombMode, kCombSharpMode }) {
+		CAPTURE(mode);
+		Settings s = patchDefault();
+		s.mode = static_cast<float>(mode);
+		s.keyTrack = false;
+		s.combResHome = 1.0f;
+		s.ratio = 1.0f;
+		s.threshold = 0.3f;
+		Owltt o;
+		o.prepare(kRate);
+		o.setTarget(s);
+		Noise noise { 7u };
+		std::vector<float> l(512), r(512);
+		for (int block = 0; block < 100; ++block) {
+			for (size_t i = 0; i < l.size(); ++i) {
+				l[i] = 0.5f * noise.next();
+				r[i] = 0.5f * noise.next();
+			}
+			o.processStereo(l.data(), r.data(), 512);
+		}
+		int lastNonZero = -1;
+		const int silentBlocks = 60 * 94; // 60 s
+		for (int block = 0; block < silentBlocks; ++block) {
+			std::fill(l.begin(), l.end(), 0.0f);
+			std::fill(r.begin(), r.end(), 0.0f);
+			o.processStereo(l.data(), r.data(), 512);
+			for (size_t i = 0; i < l.size(); ++i) {
+				if (l[i] != 0.0f || r[i] != 0.0f) {
+					lastNonZero = block;
+					break;
+				}
+			}
+		}
+		MESSAGE("mode " << mode << ": last non-zero block " << lastNonZero << " of " << silentBlocks << " (" << lastNonZero * 512.0 / kRate << " s)");
+		CHECK(lastNonZero >= 5); // not vacuous: the teeth rang
+		CHECK(lastNonZero < silentBlocks / 2);
+	}
+}
+
+TEST_CASE("Comb resonance: the loop is stable at the clamp at fractional delays (an impulse dies away), and the clamp is what keeps it so") {
+	// THE SUM CANNOT SEE A LOOP BLOW UP (the complement cancels it), so the bands themselves are watched: an impulse through the resonant comb at a
+	// fractional delay, then silence. At g = kCombMaxResonance the ringing falls by 0.95 a period; a loop gain of 1.02 would grow.
+	for (const double fc : { 441.0, 200.0, 1234.5, 3000.0 }) {
+		for (const int stages : { 1, 2 }) {
+			CAPTURE(fc);
+			CAPTURE(stages);
+			const auto tail = [&](float g) {
+				CombSplit comb;
+				comb.prepare(kRate);
+				const auto d1 = static_cast<float>(CombSplit::delayFor(fc, kRate));
+				const auto d2 = static_cast<float>(CombSplit::delayFor(2.0 * fc, kRate));
+				double early = 0.0;
+				double late = 0.0;
+				for (int i = 0; i < 480000; ++i) {
+					const CombSplit::Bands b = comb.process(0, i == 0 ? 1.0f : 0.0f, d1, d2, CombShape { stages }, g, g);
+					double m = std::max({ std::fabs(static_cast<double>(b.partA)), std::fabs(static_cast<double>(b.partB)), std::fabs(static_cast<double>(b.between)) });
+					if (!std::isfinite(b.partA) || !std::isfinite(b.partB) || !std::isfinite(b.between)) {
+						m = 1.0e30; // overflowed: a max() would drop a NaN
+					}
+					if (i < 48000) {
+						early = std::max(early, m);
+					}
+					if (i >= 432000) {
+						late = std::max(late, m);
+					}
+				}
+				return std::pair { early, late };
+			};
+			const auto [early, late] = tail(kCombMaxResonance);
+			MESSAGE("at the clamp: first second " << early << ", last second " << late);
+			CHECK(early > 0.01); // not vacuous
+			CHECK(late < early * 1.0e-3);
+			CHECK(tail(1.02f).second > 10.0 * early); // an unclamped loop grows: this is what the clamp prevents
+		}
+	}
+}

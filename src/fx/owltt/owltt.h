@@ -288,6 +288,9 @@ public:
 	/// in samples. 0 until the mode has run.
 	[[nodiscard]] double combSpacingHzForTest(size_t which) const noexcept { return combPrimed_ ? std::exp2(combLog2Fc_[which]) : 0.0; }
 	[[nodiscard]] double combDelayForTest(size_t which = 0) const noexcept { return combDelayEnd_[which]; }
+	/// The feedback gain split `which` ran at the end of the last slice, and the goal Res Home and Vibe put it at (before smoothing).
+	[[nodiscard]] float combResonanceForTest(size_t which) const noexcept { return combResEnd_[which]; }
+	[[nodiscard]] float combResonanceGoalForTest(size_t which) const noexcept { return combResonanceFor(which); }
 	/// The vibe depth the zone tables were modulated by — 0.55 x the coordinate's lap fraction.
 	[[nodiscard]] float vibeModAmountForTest() const noexcept { return vibeModAmount_; }
 
@@ -342,6 +345,11 @@ private:
 	void processStereoSlice(float* left, float* right, int frames);
 
 	void updateCrossoverFrequencies();
+	/// **SPLIT `which`'S RESONANCE GOAL**: Res Home as a share of `kCombMaxResonance`, plus Vibe's phase for that split times `kCombVibeResonanceDepth`, clamped to
+	/// [0, kCombMaxResonance] — the one place the resonance is decided.
+	[[nodiscard]] float combResonanceFor(size_t which) const noexcept {
+		return std::clamp(target_.combResHome * kCombMaxResonance + kCombVibeResonanceDepth * vibePhaseRes_[which], 0.0f, kCombMaxResonance);
+	}
 	/// EVERY CROSSOVER'S STATE CLEARED — on a reset, and on a crossover TYPE change (backlog EH, shape
 	/// 6): the type that comes in would otherwise resume from whatever it held when it last ran.
 	void resetCrossovers();
@@ -425,6 +433,8 @@ private:
 	float vibePhaseKnee_ = 0.0f;
 	std::array<float, 3> vibePhaseTiming_ {0.0f, 0.0f, 0.0f};
 	std::array<float, 3> vibePhaseSkew_ {0.0f, 0.0f, 0.0f};
+	/// The Comb resonance's phase for each split (see `computeCharacterAndVibe`): Vibe's fifth phased quantity.
+	std::array<float, 2> vibePhaseRes_ {0.0f, 0.0f};
 	float vibePhaseOffset_ = 0.0f;
 	float feelPhaseOffset_ = 0.0f;
 
@@ -517,6 +527,9 @@ private:
 	std::array<double, 2> combLog2Fc_ {};
 	std::array<double, 2> combDelayStart_ {};
 	std::array<double, 2> combDelayEnd_ {};
+	/// The two splits' feedback gains: smoothed toward `combResonanceFor`'s goal once a slice and ramped across it like the delays.
+	std::array<float, 2> combResStart_ {};
+	std::array<float, 2> combResEnd_ {};
 	bool combPrimed_ = false;
 	/// Delay `left`/`right` in place by the linear latency (the bypassed road), feeding the raw delay.
 	void rawDelayStep(float* left, float* right, int frames) noexcept;

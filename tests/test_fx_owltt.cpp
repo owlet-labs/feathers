@@ -1364,6 +1364,7 @@ TEST_CASE("every descriptor sits at its own Param's index, named") {
 		{ Param::LowInput, "Low Input" },
 		{ Param::MidInput, "Mid Input" },
 		{ Param::HighInput, "High Input" },
+		{ Param::ResHome, "Res Home" }, // Comb resonance, appended
 	};
 	// THE COUNT IS PART OF THE CLAIM, or a list that lost an entry would pass by checking fewer.
 	CHECK(std::size(kExpected) == static_cast<size_t>(Param::kCount));

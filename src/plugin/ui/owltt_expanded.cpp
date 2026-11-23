@@ -110,6 +110,11 @@ OwlttExpanded::OwlttExpanded(backplane::DeviceHost& host, WidgetRegistry& regist
 	clip_ = std::make_unique<ValueBox>(control(dtt::Param::SoftClip), "Clip");
 	clip_->setCompact(true);
 	addChild(clip_.get());
+	// RES HOME (Comb modes): the centre of the teeth's resonance, in the header beside the Mode box; shown only while a Comb mode is chosen.
+	resHome_ = std::make_unique<ValueBox>(control(dtt::Param::ResHome), "Res Home");
+	resHome_->setCompact(true);
+	addChild(resHome_.get());
+	resHome_->setVisible(false);
 
 	// THE GLOBAL ROW: boxes in the house form (a caption over a value), one per control.
 	for (const GlobalEntry& entry : kGlobal) {
@@ -168,6 +173,13 @@ bool OwlttExpanded::updateContent() {
 		crossoverTipKey_ = tipState;
 		control(dtt::Param::LowCrossover).setTooltipOverride(dtt::crossoverTip(false, keyTrack, comb));
 		control(dtt::Param::HighCrossover).setTooltipOverride(dtt::crossoverTip(true, keyTrack, comb));
+	}
+	// RES HOME APPEARS WITH A COMB MODE and takes its slot in the header; Clip moves along.
+	if (comb != resHomeShown_) {
+		resHomeShown_ = comb;
+		resHome_->setVisible(false);
+		resized();
+		redraw();
 	}
 	bool changed = graph_ != nullptr && graph_->update();
 	changed = (inMeter_ != nullptr && inMeter_->update()) || changed;
@@ -257,8 +269,13 @@ visage::Bounds OwlttExpanded::modeBounds() const {
 	return { before.right() + kRowGap, kPad, kModeWidth, kSwitchHeight };
 }
 
-visage::Bounds OwlttExpanded::clipBounds() const {
+visage::Bounds OwlttExpanded::resHomeBounds() const {
 	const visage::Bounds before = modeBounds();
+	return { before.right() + kRowGap, kPad + (kSwitchHeight - ValueBox::kCompactHeight) * 0.5f, kResHomeWidth, ValueBox::kCompactHeight };
+}
+
+visage::Bounds OwlttExpanded::clipBounds() const {
+	const visage::Bounds before = resHomeShown_ ? resHomeBounds() : modeBounds();
 	return { before.right() + kRowGap, kPad + (kSwitchHeight - ValueBox::kCompactHeight) * 0.5f, kClipWidth,
 		     ValueBox::kCompactHeight };
 }
@@ -318,6 +335,10 @@ void OwlttExpanded::resized() {
 	place(keyTrack_.get(), keyTrackBounds());
 	place(lookahead_.get(), lookaheadBounds());
 	place(stereo_.get(), stereoBounds());
+	place(resHome_.get(), resHomeBounds());
+	if (resHome_ != nullptr) {
+		resHome_->setVisible(resHomeShown_); // after its bounds: a box shown before it has a size is not painted
+	}
 	place(clip_.get(), clipBounds());
 	place(drive_.get(), driveBounds());
 	place(output_.get(), outputBounds());

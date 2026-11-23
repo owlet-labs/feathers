@@ -25,7 +25,6 @@
 #include "plugin/ui/preset_browser.h"
 
 #include <algorithm>
-#include <chrono>
 #include <memory>
 
 namespace feathers::ui {
@@ -63,24 +62,6 @@ const char* refusalWords(DevicePresetLoad load) {
 		return rack::kNestingFullMessage;
 	}
 	return "";
-}
-
-bool isFactoryEntry(const std::string& name, const std::string& category, const std::filesystem::path& path) {
-	if (category.empty() && name == "Init") {
-		return true;
-	}
-	if (path.empty()) {
-		return false;
-	}
-	const std::filesystem::path relative = path.lexically_relative(PresetStore::root());
-	const auto files = factoryPresetSource();
-	return std::any_of(files.begin(), files.end(), [&relative](const FactoryPresetFile& f) {
-		return std::filesystem::path(std::string(f.path)) == relative;
-	});
-}
-
-int64_t nowSeconds() {
-	return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 /// THE HOST OVER A SITE'S DEVICES: the site's own (a rack bridge is one), else the synth bridge's adapter, built on first use.
@@ -166,27 +147,18 @@ bool DevicePresetMenu::offered(DeviceInstanceId id) const {
 	return host != nullptr && host->descriptorOf(id) != nullptr && !PresetStore::root().empty();
 }
 
-std::vector<DevicePresetMenu::Entry> DevicePresetMenu::list(DeviceInstanceId id) const {
-	std::vector<Entry> out;
-	const backplane::DeviceHost* host = hostOf();
-	const device::Descriptor* desc = host != nullptr ? host->descriptorOf(id) : nullptr;
-	if (desc == nullptr) {
-		return out;
-	}
-	const std::string bank = bankOf(*desc);
-	(void)PresetStore::installFactoryFiles(bank);
-	out.push_back({ "Init", {}, true });
-	const bool container = isContainerKind(*desc);
-	for (const StoredPreset& stored : PresetStore::loadAll(bank)) {
-		if (stored.category.empty() && stored.name == "Init") {
-			continue; // the computed one, listed first
+DevicePresetMenu::DevicePresetMenu(rack::FragmentSite& site, EditHistory& history, Notifier* notifier)
+    : site_(site), history_(history), notifier_(notifier) {}
+
+void DevicePresetMenu::close() {
+	if (browser_ != nullptr) {
+		browser_->setProvider(nullptr);
+		if (browser_->parent() != nullptr) {
+			browser_->parent()->removeChild(browser_.get()); // a parent torn down first has already let go of it
 		}
-		if (PresetBrowser::isVariantFile(stored.name) || (container && !isPresetOf(kindOf(*desc), stored.bytes))) {
-			continue;
-		}
-		out.push_back({ stored.name, stored.category, isFactoryEntry(stored.name, stored.category, stored.path) });
 	}
-	return out;
+	browser_.reset();
+	provider_.reset();
 }
 
 PresetIdentity DevicePresetMenu::current(DeviceInstanceId id) const {
@@ -194,93 +166,85 @@ PresetIdentity DevicePresetMenu::current(DeviceInstanceId id) const {
 	return host != nullptr ? host->devicePreset(id) : PresetIdentity {};
 }
 
-std::string DevicePresetMenu::suggestedName(DeviceInstanceId id) const {
-	const PresetIdentity now = current(id);
-	return now.category.empty() ? now.name : now.category + "/" + now.name;
-}
-
-bool DevicePresetMenu::apply(DeviceInstanceId id, const Entry& entry) {
-	backplane::DeviceHost* host = hostOf();
-	const device::Descriptor* desc = host != nullptr ? host->descriptorOf(id) : nullptr;
-	if (desc == nullptr) {
-		return false;
-	}
-	std::vector<uint8_t> bytes;
-	bool found = false;
-	for (StoredPreset& stored : PresetStore::loadAll(bankOf(*desc))) {
-		if (stored.name == entry.name && stored.category == entry.category) {
-			bytes = std::move(stored.bytes);
-			found = true;
-			break;
-		}
-	}
-	if (!found && entry.category.empty() && entry.name == "Init") {
-		bytes = initDevicePreset(kindOf(*desc));
-		found = !bytes.empty();
-	}
-	if (!found) {
-		say("Preset not found: " + entry.name);
-		return false;
-	}
-	std::vector<uint8_t> before;
-	if (!captureDevicePreset(*host, kindOf(*desc), id, &before)) {
-		say("Preset not loaded: the device could not be read");
-		return false;
-	}
-	const PresetIdentity was = host->devicePreset(id);
-	const DevicePresetLoad load = applyDevicePreset(*host, kindOf(*desc), id, bytes);
-	if (load != DevicePresetLoad::Loaded) {
-		say(refusalWords(load));
-		return false;
-	}
-	const PresetIdentity now { entry.name, entry.category };
-	host->setDevicePreset(id, now);
-	history_.record(std::make_unique<PresetLoadEdit>(site_, id, *desc, std::move(before), std::move(bytes), was, now, adapter_));
-	say("Preset: " + entry.name);
-	return true;
-}
-
-DevicePresetMenu::Save DevicePresetMenu::save(DeviceInstanceId id, const std::string& typed, bool replace) {
+PresetBrowser* DevicePresetMenu::prepare(DeviceInstanceId id, visage::Frame* frame, const visage::Bounds& anchor) {
 	backplane::DeviceHost* host = hostOf();
 	const device::Descriptor* desc = host != nullptr ? host->descriptorOf(id) : nullptr;
 	if (desc == nullptr || PresetStore::root().empty()) {
-		return Save::NoStore;
+		return nullptr;
 	}
-	const auto [name, category] = PresetStore::splitTyped(typed);
-	if (name.empty()) {
-		say("Preset not saved: give it a name");
-		return Save::BadName;
+	close();
+	const device::Descriptor& kind = kindOf(*desc);
+	const bool container = isContainerKind(*desc);
+	// THE PROVIDER: capture as the window's browser does, and apply as ONE undo step. The step is recorded when the browser reports the pick,
+	// by which time the browser has told the host which preset the device now came from.
+	struct Pending {
+		std::vector<uint8_t> before;
+		std::vector<uint8_t> after;
+		PresetIdentity was;
+		bool open = false;
+	};
+	auto pending = std::make_shared<Pending>();
+	provider_ = std::make_unique<FunctionPresetProvider>(
+	    [this, host, desc, id, &kind, container](PresetData& out) {
+		    const bool ok = container ? captureContainerPreset(*host, kind, id, &out.bytes) : captureDevicePreset(*host, *desc, id, &out.bytes);
+		    if (!ok) {
+			    say("Preset not saved: the device could not be read");
+		    }
+		    return ok;
+	    },
+	    [this, host, id, &kind, pending](const PresetData& data) {
+		    std::vector<uint8_t> before;
+		    if (!captureDevicePreset(*host, kind, id, &before)) {
+			    say("Preset not loaded: the device could not be read");
+			    return false;
+		    }
+		    const PresetIdentity was = host->devicePreset(id);
+		    const DevicePresetLoad load = applyDevicePreset(*host, kind, id, data.bytes);
+		    if (load != DevicePresetLoad::Loaded) {
+			    say(refusalWords(load));
+			    return false;
+		    }
+		    *pending = Pending { std::move(before), data.bytes, was, true };
+		    return true;
+	    });
+	browser_ = std::make_unique<PresetBrowser>(std::vector<std::string> { "Init" }, std::vector<PresetData> { PresetData { initDevicePreset(kind) } },
+	                                           bankOf(*desc), PresetBrowser::kPanelStyle);
+	if (container) {
+		browser_->accepts = [&kind](std::span<const uint8_t> bytes) { return isPresetOf(kind, bytes); };
 	}
-	const std::string bank = bankOf(*desc);
-	const std::filesystem::path path = PresetStore::pathFor(name, bank, category);
-	if (path.empty()) {
-		return Save::BadName;
+	// THE BROWSER STANDS WHERE THE HEADER WAS PRESSED: its name box (what the list opens under, one arrow in from its left edge) at the
+	// anchor, and its dialog under its bar. Never drawn; hidden once placed.
+	const float width = browser_->barWidth();
+	browser_->setBounds(anchor.x() - PresetBrowser::kPanelStyle.arrowWidth, anchor.y(), width, PresetBrowser::barHeightFor(PresetBrowser::kPanelStyle));
+	browser_->loadBankFromDisk();
+	browser_->setProvider(provider_.get());
+	browser_->setNotifier(notifier_);
+	bindPresetIdentity(
+	    *browser_, [host, id] { return host->devicePreset(id); }, [host, id](const PresetIdentity& identity) { host->setDevicePreset(id, identity); });
+	const std::weak_ptr<const void> life = site_.fragmentLife();
+	browser_->onSelected([this, host, desc, id, &kind, pending, life](int) {
+		if (!pending->open || life.expired()) {
+			return;
+		}
+		pending->open = false;
+		const PresetIdentity now = host->devicePreset(id);
+		history_.record(std::make_unique<PresetLoadEdit>(site_, id, *desc, std::move(pending->before), std::move(pending->after), pending->was, now, adapter_));
+		say(now.name.empty() ? std::string("Preset loaded") : "Preset: " + now.name);
+	});
+	if (frame != nullptr) {
+		frame->addChild(browser_.get());
+		browser_->setVisible(false);
 	}
-	std::error_code ec;
-	const bool exists = std::filesystem::exists(path, ec);
-	if (isFactoryEntry(name, category, path) && (exists || (category.empty() && name == "Init"))) {
-		say("\"" + name + "\" is a factory preset: save under another name");
-		return Save::FactoryRefused;
+	return browser_.get();
+}
+
+bool DevicePresetMenu::open(DeviceInstanceId id, visage::Frame& host, const visage::Bounds& anchor) {
+	PresetBrowser* browser = prepare(id, &host, anchor);
+	if (browser == nullptr) {
+		return false;
 	}
-	if (exists && !replace) {
-		return Save::NeedsConfirm;
-	}
-	std::vector<uint8_t> bytes;
-	const bool captured = isContainerKind(*desc) ? captureContainerPreset(*host, kindOf(*desc), id, &bytes) : captureDevicePreset(*host, *desc, id, &bytes);
-	if (!captured || bytes.empty()) {
-		say("Preset not saved: the device could not be read");
-		return Save::NotCaptured;
-	}
-	PresetMeta meta;
-	meta.saved = nowSeconds();
-	meta.category = category;
-	if (!PresetStore::save(name, bytes, bank, category, meta)) {
-		say("Preset not saved: the file could not be written");
-		return Save::NoStore;
-	}
-	host->setDevicePreset(id, PresetIdentity { name, PresetStore::sanitiseCategory(category) });
-	say("Preset saved: " + name);
-	return Save::Saved;
+	browser->showPresetMenu();
+	return true;
 }
 
 } // namespace feathers::ui

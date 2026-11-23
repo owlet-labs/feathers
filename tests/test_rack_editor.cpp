@@ -22,6 +22,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 #include "card_head_check.h"
+#include "header_preset_check.h"
 #include "menu_placement_check.h"
 #include "device/device_groups.h"
 #include "rack/device_browser.h"
@@ -6823,42 +6824,34 @@ TEST_CASE("header presets: the rack editor's card menu offers Presets and Save p
 	f.editor.showSlotMenu(id);
 	visage::PopupMenuFrame* popup = menu_check::newestPopup(f.editor);
 	REQUIRE(popup != nullptr);
-	CHECK(hasSubmenu(*popup, "Presets"));
-	CHECK(menu_check::findRow(*popup, "     Init") != nullptr); // Init is in the list, not ticked
-	REQUIRE(menu_check::findRow(*popup, "Save preset...") != nullptr);
-	REQUIRE(menu_check::pickRow(*popup, "Save preset..."));
+	REQUIRE(menu_check::findRow(*popup, "Presets...") != nullptr);
+	CHECK_FALSE(hasSubmenu(*popup, "Presets"));
 	ui::LaneSelection& selection = f.editor.selectionForTest();
-	REQUIRE(selection.namingPreset());
-	ui::TextField* field = selection.presetNameFieldForTest();
-	REQUIRE(field != nullptr);
-	// THE FIELD IS DRAWN OVER THE CARD'S HEADER: visible, inside the editor, the topmost frame at its own centre.
-	CHECK(field->isVisible());
-	CHECK(field->width() > 0);
-	CHECK(field->height() > 0);
-	const visage::Point at = field->positionInWindow();
-	const visage::Point centre { at.x + static_cast<float>(field->width()) * 0.5f, at.y + static_cast<float>(field->height()) * 0.5f };
-	CHECK(at.x >= 0.0f);
-	CHECK(at.y >= 0.0f);
-	CHECK(f.editor.frameAtPoint(centre) == static_cast<visage::Frame*>(field));
-	// CHAIN KEYS STAND DOWN WHILE TYPING: Delete and a paste chord reach the field, not the lane.
-	const size_t cards = f.bridge.chainLength();
-	CHECK_FALSE(selection.key(visage::KeyEvent { visage::KeyCode::V, visage::kModifierRegCtrl, true }));
-	field->textInput("Menu Saved");
-	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Delete, 0, true }));
-	CHECK(f.bridge.chainLength() == cards);
-	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true }));
-	CHECK_FALSE(selection.namingPreset());
+	visage::PopupMenuFrame* list = header_presets::openBox(*popup, f.editor);
+	REQUIRE(list != nullptr);
+	CHECK(menu_check::findRow(*list, header_presets::kSaveAs) != nullptr);
+	// THE POPUP STANDS AT THE CARD'S HEADER, inside the editor, and is the topmost frame at its centre.
+	const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+	REQUIRE(placed.shown);
+	CHECK(placed.list.x() >= 0.0f);
+	CHECK(placed.list.right() <= placed.windowWidth + 0.5f);
+	const visage::Point listCentre { placed.list.x() + placed.list.width() * 0.5f, placed.list.y() + placed.list.height() * 0.5f };
+	bool underPopup = false;
+	for (visage::Frame* at = f.editor.topParentFrame()->frameAtPoint(listCentre); at != nullptr; at = at->parent()) {
+		underPopup = underPopup || at == list;
+	}
+	CHECK(underPopup);
+	REQUIRE(header_presets::saveThroughDialog(*list, selection, "Menu Saved", "mood:calm") != nullptr);
 	CHECK(std::filesystem::exists(PresetStore::pathFor("Menu Saved", devicePresetBank(fx::filter::kDescriptor))));
-	// THE SAVED PRESET IS IN THE MENU NOW, ticked as the device's own; the others are not.
-	f.editor.showSlotMenu(id);
-	popup = menu_check::newestPopup(f.editor);
-	REQUIRE(popup != nullptr);
-	CHECK(menu_check::findRow(*popup, "X  Menu Saved") != nullptr);
-	CHECK(menu_check::findRow(*popup, "     Init") != nullptr);
-	// AND ITS PICK PUTS IT BACK AS ONE STEP: change a control, pick the preset, the control returns.
+	CHECK(header_presets::storedWithTag(devicePresetBank(fx::filter::kDescriptor), "Menu Saved", "mood:calm"));
+	// AND ITS PICK, through the box, PUTS IT BACK AS ONE STEP: change a control, load the preset, the control returns.
 	f.bridge.setField(id, res, 0.11f);
 	const size_t steps = f.history.length();
-	REQUIRE(menu_check::pickRow(*popup, "X  Menu Saved"));
+	ui::PresetBrowser* box = selection.verbs().presets().browser();
+	REQUIRE(box != nullptr);
+	const int saved = box->indexOf("Menu Saved");
+	REQUIRE(saved >= 0);
+	REQUIRE(box->selectIndex(saved));
 	CHECK(f.bridge.fieldAt(id, res) == doctest::Approx(0.77f));
 	CHECK(f.history.length() == steps + 1);
 	f.history.undo();

@@ -61,16 +61,18 @@ public:
 	LaneSelection(const LaneSelection&) = delete;
 	LaneSelection& operator=(const LaneSelection&) = delete;
 
-	/// THE SURFACE THE "SAVE PRESET…" NAME FIELD IS DRAWN ON (the lane or column these cards stand in; `Hooks::cardBounds` is in its
-	/// coordinates). Unset: the row is offered and does nothing.
+	/// THE SURFACE THE PRESET BOX STANDS IN (the lane or column these cards stand in; `Hooks::cardBounds` is in its coordinates). Unset:
+	/// "Presets..." is not offered.
 	void setPromptHost(visage::Frame* host) noexcept {
+		if (host == nullptr) {
+			verbs_.presets().close();
+		}
 		promptHost_ = host;
 		verbs_.setPromptReady(host != nullptr);
 	}
-	/// The open name field, and a typed answer as its Enter gives it — for a case.
-	[[nodiscard]] bool namingPreset() const;
-	[[nodiscard]] TextField* presetNameFieldForTest() const noexcept { return nameField_.get(); }
-	void promptPresetName(DeviceInstanceId id);
+	/// THE FULL PRESET BOX'S POPUP for `id`, under `pressAt` (the header's press, in the window's coordinates; none: the card's own head).
+	/// A preset saved through it carries its tags and is found by them, as one saved from a full box.
+	bool openPresets(DeviceInstanceId id, const std::optional<visage::Bounds>& pressAt = std::nullopt);
 
 	[[nodiscard]] CardSelection& selection() noexcept { return selection_; }
 	[[nodiscard]] const CardSelection& selection() const noexcept { return selection_; }
@@ -101,7 +103,7 @@ public:
 	[[nodiscard]] std::vector<DeviceInstanceId> menuIds(DeviceInstanceId pressed) const;
 	/// THE CARD'S MENU, WITH THE VERBS APPENDED (from `firstId`); and the pick, which selects what it made.
 	void addVerbs(visage::PopupMenu& menu, int firstId, DeviceInstanceId pressed) const;
-	bool chooseVerb(int id, int firstId, DeviceInstanceId pressed);
+	bool chooseVerb(int id, int firstId, DeviceInstanceId pressed, const std::optional<visage::Bounds>& pressAt = std::nullopt);
 
 	/// THESE AND ONLY THESE, and the surface told. After an edit, `prune` drops what the chain no longer holds.
 	void select(std::span<const DeviceInstanceId> ids);
@@ -141,8 +143,6 @@ private:
 	bool lassoAdd_ = false;
 	CardSelection lassoBase_;
 	visage::Frame* promptHost_ = nullptr;
-	std::unique_ptr<TextField> nameField_;
-	visage::Bounds nameAnchor_ {};
 	std::shared_ptr<void> alive_ = std::make_shared<char>(0);
 };
 

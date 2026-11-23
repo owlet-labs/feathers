@@ -34,74 +34,25 @@ LaneSelection::LaneSelection(rack::FragmentSite& site, EditHistory& history, Not
     : verbs_(site, history, notifier, hooks.order), hooks_(std::move(hooks)) {}
 
 LaneSelection::~LaneSelection() {
-	if (nameField_ != nullptr) {
-		nameField_->onCommit(nullptr);
-		nameField_->onCancel(nullptr);
-		if (nameField_->isVisible()) {
-			nameField_->setVisible(false);
-		}
-		if (promptHost_ != nullptr) {
-			promptHost_->removeChild(nameField_.get());
-		}
-	}
+	verbs_.presets().close(); // while the host it stands in is alive
 }
 
-bool LaneSelection::namingPreset() const {
-	return nameField_ != nullptr && nameField_->editing();
-}
-
-void LaneSelection::promptPresetName(DeviceInstanceId id) {
+bool LaneSelection::openPresets(DeviceInstanceId id, const std::optional<visage::Bounds>& pressAt) {
 	if (promptHost_ == nullptr) {
-		return;
+		return false;
 	}
-	if (nameField_ == nullptr) {
-		nameField_ = std::make_unique<TextField>();
-		// **ABOVE EVERY SIBLING AND WHAT THEY HOLD**, as a chain's rename field is: the cards and the selection overlay are siblings.
-		nameField_->setOnTop(true);
-		nameField_->setVisible(false);
-		promptHost_->addChild(nameField_.get());
-	}
-	const std::optional<visage::Bounds> card = hooks_.cardBounds ? hooks_.cardBounds(id) : std::nullopt;
-	// OVER THE CARD'S HEADER: its left edge and top, one line tall, as wide as the card (a floor for a narrow one).
+	// AT THE HEADER THAT WAS PRESSED: the press the surface gave, in the host's coordinates, else the card's own head (its left edge
+	// and top, one line tall).
 	constexpr float kLine = 24.0f;
-	const float x = card ? card->x() : 0.0f;
-	const float y = card ? card->y() : 0.0f;
-	const float w = std::max(card ? card->width() : 0.0f, 150.0f);
-	nameAnchor_ = visage::Bounds { x, y, w, kLine };
-	nameField_->setBounds(x, y, w, kLine);
-	const std::weak_ptr<void> alive = alive_;
-	nameField_->onCommit([this, alive, id](std::string text) {
-		if (alive.expired()) {
-			return;
-		}
-		nameField_->setVisible(false);
-		finishPresetName(id, text, false);
-	});
-	nameField_->onCancel([this, alive] {
-		if (!alive.expired()) {
-			nameField_->setVisible(false);
-		}
-	});
-	nameField_->setVisible(true);
-	nameField_->begin(verbs_.presets().suggestedName(id));
-}
-
-void LaneSelection::finishPresetName(DeviceInstanceId id, const std::string& typed, bool replace) {
-	const DevicePresetMenu::Save result = verbs_.presets().save(id, typed, replace);
-	if (result != DevicePresetMenu::Save::NeedsConfirm || promptHost_ == nullptr) {
-		return;
+	visage::Bounds anchor { 0.0f, 0.0f, 150.0f, kLine };
+	if (pressAt.has_value()) {
+		const visage::Point host = promptHost_->positionInWindow();
+		anchor = visage::Bounds { pressAt->x() - host.x, pressAt->y() - host.y, std::max(pressAt->width(), 1.0f), std::max(pressAt->height(), 1.0f) };
 	}
-	// A USER PRESET BY THAT NAME EXISTS: ask before it is replaced (a factory one was refused above and never gets here).
-	visage::PopupMenu menu;
-	menu.addOption(1, "Replace \"" + typed + "\"");
-	menu.addOption(0, "Cancel");
-	const std::weak_ptr<void> alive = alive_;
-	menu.onSelection() = [this, alive, id, typed](int row) {
-		if (!alive.expired() && row == 1) {
-			finishPresetName(id, typed, true);
-		}
-	};
-	showMenuAt(std::move(menu), *promptHost_, nameAnchor_);
+	else if (const std::optional<visage::Bounds> card = hooks_.cardBounds ? hooks_.cardBounds(id) : std::nullopt) {
+		anchor = visage::Bounds { card->x(), card->y(), std::max(card->width(), 150.0f), kLine };
+	}
+	return verbs_.presets().open(id, *promptHost_, anchor);
 }
 
 void LaneSelection::setEscapeStack(EscapeStack* stack) {
@@ -257,10 +208,10 @@ void LaneSelection::addVerbs(visage::PopupMenu& menu, int firstId, DeviceInstanc
 	verbs_.addTo(menu, firstId, menuIds(pressed));
 }
 
-bool LaneSelection::chooseVerb(int id, int firstId, DeviceInstanceId pressed) {
+bool LaneSelection::chooseVerb(int id, int firstId, DeviceInstanceId pressed, const std::optional<visage::Bounds>& pressAt) {
 	const std::vector<DeviceInstanceId> ids = menuIds(pressed);
 	FragmentVerbs::MenuHooks hooks;
-	hooks.promptPresetName = [this](DeviceInstanceId target) { promptPresetName(target); };
+	hooks.openPresets = [this, pressAt](DeviceInstanceId target) { (void)openPresets(target, pressAt); };
 	hooks.select = [this](std::vector<DeviceInstanceId> next) {
 		selection_.set(next);
 		prune();

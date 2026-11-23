@@ -16,6 +16,7 @@
  */
 
 #include "fixtures.h"
+#include "header_preset_check.h"
 #include "menu_placement_check.h"
 
 #include <chrono>
@@ -4364,30 +4365,16 @@ void checkColumnPresets(const char* what, ui::ChainColumn& column, visage::Frame
 	column.showSlotMenu(device);
 	visage::PopupMenuFrame* popup = menu_check::newestPopup(column);
 	REQUIRE(popup != nullptr);
-	CHECK(popupHasSubmenu(*popup, "Presets"));
-	CHECK(menu_check::findRow(*popup, "     Init") != nullptr);
-	REQUIRE(menu_check::pickRow(*popup, "Save preset..."));
+	REQUIRE(menu_check::findRow(*popup, "Presets...") != nullptr);
+	CHECK_FALSE(popupHasSubmenu(*popup, "Presets"));
 	ui::LaneSelection& selection = column.selectionForTest();
-	REQUIRE(selection.namingPreset());
-	ui::TextField* field = selection.presetNameFieldForTest();
-	REQUIRE(field != nullptr);
-	CHECK(field->isVisible());
-	CHECK(field->width() > 0);
-	CHECK(field->height() > 0);
-	if (root != nullptr) {
-		const visage::Point at = field->positionInWindow();
-		const visage::Point centre { at.x + static_cast<float>(field->width()) * 0.5f, at.y + static_cast<float>(field->height()) * 0.5f };
-		CHECK(root->frameAtPoint(centre) == static_cast<visage::Frame*>(field));
-	}
-	field->textInput(name);
-	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true }));
-	CHECK_FALSE(selection.namingPreset());
+	visage::PopupMenuFrame* list = header_presets::openBox(*popup, column);
+	REQUIRE(list != nullptr);
+	CHECK(menu_check::findRow(*list, header_presets::kSaveAs) != nullptr);
+	REQUIRE(header_presets::saveThroughDialog(*list, selection, name, "mood:calm") != nullptr);
 	CHECK(std::filesystem::exists(feathers::PresetStore::pathFor(name, feathers::devicePresetBank(*desc))));
-	column.showSlotMenu(device);
-	popup = menu_check::newestPopup(column);
-	REQUIRE(popup != nullptr);
-	CHECK(menu_check::findRow(*popup, "X  " + name) != nullptr);
-	REQUIRE(menu_check::pickRow(*popup, "X  " + name));
+	CHECK(header_presets::storedWithTag(feathers::devicePresetBank(*desc), name, "mood:calm"));
+	(void)root;
 }
 
 } // namespace

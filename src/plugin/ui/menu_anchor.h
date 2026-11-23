@@ -72,6 +72,12 @@ bool showMenuAt(visage::PopupMenu menu, visage::Frame& source, const visage::Bou
 /// host's `showSlotMenu`), so the host is told where the window's mark is (`source` and `anchor`, in `source`'s own
 /// coordinates) and how to put the window away (`closeWindow`): a verb that takes the device out of its chain closes the
 /// window first, so no window is left drawn over a device that is gone. Empty `closeWindow` is a card's own press.
+/// `anchor` (in `frame`'s coordinates) in the window's, so a later step can stand something at the press without keeping the frame.
+[[nodiscard]] inline visage::Bounds anchorInWindow(const visage::Frame& frame, const visage::Bounds& anchor) {
+	const visage::Point at = frame.positionInWindow();
+	return { at.x + anchor.x(), at.y + anchor.y(), anchor.width(), anchor.height() };
+}
+
 struct SlotMenuOrigin {
 	visage::Frame* source = nullptr;
 	visage::Bounds anchor;

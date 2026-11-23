@@ -48,9 +48,9 @@ public:
 	              std::function<std::vector<DeviceInstanceId>()> order)
 	    : site_(site), history_(history), notifier_(notifier), order_(std::move(order)), presets_(site, history, notifier) {}
 
-	/// THE DEVICE'S PRESETS (list, apply, save), over this site: the header menu's "Presets" and "Save preset…" act through it.
+	/// THE DEVICE'S PRESETS, over this site: the header menu's "Presets..." opens the full preset box's popup through it.
 	[[nodiscard]] DevicePresetMenu& presets() noexcept { return presets_; }
-	/// WHETHER THE SURFACE CAN ASK FOR A NAME (it has somewhere to put the field): "Save preset…" is offered only then, never as a dead row.
+	/// WHETHER THE SURFACE HAS A FRAME TO STAND THE PRESET BOX IN: "Presets..." is offered only then, never as a dead row.
 	void setPromptReady(bool ready) noexcept { promptReady_ = ready; }
 
 	[[nodiscard]] std::vector<DeviceInstanceId> order() const { return order_(); }
@@ -84,8 +84,8 @@ public:
 	/// becomes. "Remove N" is offered only for two or more: one card keeps the surface's own Remove and its road.
 	struct MenuHooks {
 		std::function<void(std::vector<DeviceInstanceId>)> select;
-		/// "Save preset…": the surface asks for a name over the device's header and saves through `presets()`. Unset: the row does nothing.
-		std::function<void(DeviceInstanceId)> promptPresetName;
+		/// "Presets...": the surface opens the preset box's popup at the pressed header, through `presets()`. Unset: the row does nothing.
+		std::function<void(DeviceInstanceId)> openPresets;
 	};
 	/// The option ids this adds start at `firstId`; `choose` runs the one picked.
 	void addTo(visage::PopupMenu& menu, int firstId, std::span<const DeviceInstanceId> ids) const;
@@ -108,14 +108,10 @@ private:
 	std::string lastSaid_;
 	DevicePresetMenu presets_;
 	bool promptReady_ = false;
-	/// THE LIST THE OPEN MENU SHOWED, so a pick names its entry by position; a pick finds the preset again by name.
-	mutable std::vector<DevicePresetMenu::Entry> presetList_;
 };
 
 /// THE MENU'S LABELS, in the order `addTo` adds them — for a case that picks one by name.
-enum class FragmentVerb : int { Copy = 0, Cut, Paste, Duplicate, GroupChain, GroupRack, Remove, SavePreset, Count };
-/// THE PRESET ROWS' IDS, past the verbs: `kPresetVerbBase + k` loads entry k of the list the menu showed.
-inline constexpr int kPresetVerbBase = 1000;
+enum class FragmentVerb : int { Copy = 0, Cut, Paste, Duplicate, GroupChain, GroupRack, Remove, Presets, Count };
 
 /// Does picking this verb take the card's device out of its place (cut, grouped away, removed)? A window asking for the menu is closed first for these.
 constexpr bool verbLeavesDevice(FragmentVerb verb) {

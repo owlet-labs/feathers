@@ -395,66 +395,15 @@ void FragmentVerbs::addTo(visage::PopupMenu& menu, int firstId, std::span<const 
 	if (n > 1) {
 		menu.addOption(firstId + static_cast<int>(FragmentVerb::Remove), "Remove" + count);
 	}
-	// A DEVICE'S PRESETS (one card only): the bank its window lists, and a save under a name.
-	presetList_.clear();
-	if (n == 1 && presets_.offered(ids[0])) {
-		presetList_ = presets_.list(ids[0]);
-		const PresetIdentity now = presets_.current(ids[0]);
-		struct Node {
-			std::string name;
-			std::vector<std::pair<std::string, int>> leaves; // label, entry index
-			std::vector<Node> kids;
-		};
-		Node root;
-		for (size_t i = 0; i < presetList_.size(); ++i) {
-			Node* at = &root;
-			size_t from = 0;
-			const std::string& category = presetList_[i].category;
-			while (from < category.size()) {
-				const size_t slash = category.find('/', from);
-				const std::string part = category.substr(from, slash == std::string::npos ? std::string::npos : slash - from);
-				from = slash == std::string::npos ? category.size() : slash + 1;
-				auto kid = std::find_if(at->kids.begin(), at->kids.end(), [&](const Node& k) { return k.name == part; });
-				if (kid == at->kids.end()) {
-					at->kids.push_back(Node { part, {}, {} });
-					kid = at->kids.end() - 1;
-				}
-				at = &*kid;
-			}
-			at->leaves.emplace_back(presetList_[i].name, static_cast<int>(i));
-		}
-		const auto build = [&](const auto& self, const Node& node, visage::PopupMenu& into) -> void {
-			for (const Node& kid : node.kids) {
-				visage::PopupMenu sub(kid.name);
-				self(self, kid, sub);
-				into.addSubMenu(std::move(sub));
-			}
-			for (const auto& [label, index] : node.leaves) {
-				const DevicePresetMenu::Entry& e = presetList_[static_cast<size_t>(index)];
-				addChoiceRow(into, firstId + kPresetVerbBase + index, label, !now.empty() && now.name == e.name && now.category == e.category);
-			}
-		};
-		visage::PopupMenu presets("Presets");
-		build(build, root, presets);
+	// A DEVICE'S PRESETS (one card only): one row that opens the full preset box's own popup, where the header was pressed.
+	if (n == 1 && promptReady_ && presets_.offered(ids[0])) {
 		menu.addBreak();
-		menu.addSubMenu(std::move(presets));
-		if (promptReady_) {
-			menu.addOption(firstId + static_cast<int>(FragmentVerb::SavePreset), "Save preset...");
-		}
+		menu.addOption(firstId + static_cast<int>(FragmentVerb::Presets), "Presets...");
 	}
 }
 
 bool FragmentVerbs::choose(int id, int firstId, std::span<const DeviceInstanceId> ids, const MenuHooks& hooks) {
 	const int verb = id - firstId;
-	if (verb >= kPresetVerbBase) {
-		// A PRESET ROW: entry k of the list the menu showed, put into the one device it was opened on, as one undo step.
-		const size_t k = static_cast<size_t>(verb - kPresetVerbBase);
-		if (ids.size() != 1 || k >= presetList_.size()) {
-			return false;
-		}
-		(void)presets_.apply(ids[0], presetList_[k]);
-		return true;
-	}
 	if (verb < 0 || verb >= static_cast<int>(FragmentVerb::Count)) {
 		return false;
 	}
@@ -483,11 +432,11 @@ bool FragmentVerbs::choose(int id, int firstId, std::span<const DeviceInstanceId
 	case FragmentVerb::Remove:
 		(void)remove(ids);
 		break;
-	case FragmentVerb::SavePreset:
-		if (ids.size() != 1 || !hooks.promptPresetName) {
+	case FragmentVerb::Presets:
+		if (ids.size() != 1 || !hooks.openPresets) {
 			return false;
 		}
-		hooks.promptPresetName(ids[0]);
+		hooks.openPresets(ids[0]);
 		return true;
 	case FragmentVerb::Count:
 		return false;

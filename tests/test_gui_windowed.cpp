@@ -76,6 +76,7 @@
 #include "plugin/ui/parallel_rack_expanded.h"
 #include "plugin/ui/rack_list_view.h"
 #include "plugin/ui/rack_views.h"
+#include "header_preset_check.h"
 #include "menu_placement_check.h"
 #include "plugin/ui/mod_state.h"
 // BEFORE Xlib, like everything above: `ZoneCoordBox::NameStyle` has a member Xlib's `None` macro
@@ -4801,6 +4802,7 @@ struct DeviceRenameVenue {
 	::Window window = 0;
 	Display* display = nullptr;
 	std::function<void()> pump; ///< one pass of the window's own events
+	std::function<ui::ExpandedOverlay*()> expandCard; ///< opens the card's own window (fx lane venue only); the overlay holding it
 };
 
 /// THE DEVICE RENAME FIELD, BY BOTH ROADS ("..." menu and right-click on the head), on a card in a real window: visible, one line, inside
@@ -4876,79 +4878,129 @@ void proveDeviceRenameField(DeviceRenameVenue& v) {
 
 } // namespace
 
-/// THE SAVE-PRESET NAME FIELD on a card in a real window, by both roads ("..." menu press and right press on the head): the menu offers
-/// Presets and Save preset, the field is visible, one line, inside the window, topmost at its centre from the root and focused; a typed name
-/// plus Enter writes the file under the preset root, and the saved preset is in the card's Presets list, ticked as the device's own.
-void proveSavePresetField(DeviceRenameVenue& v) {
+/// THE HEADER'S PRESET POPUP, opened by real presses: the popup `list` that "Presets..." opened is the full preset box's own list
+/// (visible, inside the window, topmost at its centre from the window root, standing where the header menu stood), "Save as..." opens its
+/// dialog with a name and a tags field, and what is saved with a tag is found again in the tag view and loads back by value.
+void checkHeaderPresetPopup(DeviceRenameVenue& v, visage::PopupMenuFrame& list, const ui::MenuPlacement& headerMenu, ui::PresetBrowser& box,
+                            const device::Descriptor& desc, const std::string& name) {
+	const ui::MenuPlacement placed = ui::lastMenuPlacementForTest();
+	REQUIRE(placed.shown);
+	// WHERE THE HEADER WAS PRESSED: the box's name box (the popup's anchor) starts at the header menu's own corner, in the window's coordinates.
+	CHECK(menu_check::near(placed.anchor.x(), headerMenu.anchor.x()));
+	CHECK(menu_check::near(placed.anchor.y(), headerMenu.anchor.y()));
+	// VISIBLE, INSIDE THE WINDOW, AND ON TOP at its centre.
+	CHECK(list.isVisible());
+	CHECK(placed.list.width() > 0.0f);
+	CHECK(placed.list.height() > 0.0f);
+	CHECK(placed.list.x() >= -0.5f);
+	CHECK(placed.list.y() >= -0.5f);
+	CHECK(placed.list.right() <= static_cast<float>(v.top->width()) + 0.5f);
+	CHECK(placed.list.bottom() <= static_cast<float>(v.top->height()) + 0.5f);
+	const visage::Point centre { placed.list.x() + placed.list.width() * 0.5f, placed.list.y() + placed.list.height() * 0.5f };
+	bool onTop = false;
+	for (visage::Frame* at = v.top->frameAtPoint(centre); at != nullptr; at = at->parent()) {
+		onTop = onTop || at == &list;
+	}
+	CHECK(onTop);
+	CHECK(menu_check::findRow(list, header_presets::kSaveAs) != nullptr);
+	// A CONTROL TO SAVE AND LOAD BY VALUE: the first modulatable one.
+	size_t control = 0;
+	for (size_t c = 0; c < desc.params.size(); ++c) {
+		// not the enable: a load leaves the bypass as it was
+		if (desc.params[c].modulatable && static_cast<int>(c) != desc.traits.enableControl) {
+			control = c;
+			break;
+		}
+	}
+	v.host->setField(v.device, control, 0.31f);
+	v.tick();
+	// THE SAVE DIALOG: name AND tags, in the window's top frame, inside it, on top at its centre.
+	REQUIRE(menu_check::pickRow(list, header_presets::kSaveAs));
+	list.timerCallback();
+	visage::Frame* dialog = box.promptFrameForTest();
+	REQUIRE(dialog != nullptr);
+	CHECK(dialog->isVisible());
+	REQUIRE(box.nameFieldForTest() != nullptr);
+	REQUIRE(box.tagsFieldForTest() != nullptr);
+	const visage::Point dialogAt = dialog->positionInWindow();
+	CHECK(dialogAt.x >= -0.5f);
+	CHECK(dialogAt.y >= -0.5f);
+	CHECK(dialogAt.x + static_cast<float>(dialog->width()) <= static_cast<float>(v.top->width()) + 0.5f);
+	CHECK(dialogAt.y + static_cast<float>(dialog->height()) <= static_cast<float>(v.top->height()) + 0.5f);
+	// UNDER THE HEADER'S NAME BOX (or above it when there is no room): its left edge is the press's.
+	CHECK(menu_check::near(dialogAt.x, std::clamp(placed.anchor.x() - ui::PresetBrowser::kPanelStyle.arrowWidth, 0.0f, std::max(0.0f, static_cast<float>(v.top->width()) - static_cast<float>(dialog->width())))));
+	const visage::Point dialogCentre { dialogAt.x + static_cast<float>(dialog->width()) * 0.5f, dialogAt.y + static_cast<float>(dialog->height()) * 0.5f };
+	bool dialogOnTop = false;
+	for (visage::Frame* at = v.top->frameAtPoint(dialogCentre); at != nullptr; at = at->parent()) {
+		dialogOnTop = dialogOnTop || at == dialog;
+	}
+	CHECK(dialogOnTop);
+	box.typeForTest(name);
+	box.typeTagsForTest("mood:calm");
+	box.submitPrompt();
+	v.tick();
+	const std::string bank = devicePresetBank(desc);
+	CHECK(std::filesystem::exists(PresetStore::pathFor(name, bank)));
+	CHECK(header_presets::storedWithTag(bank, name, "mood:calm"));
+	// FOUND AGAIN BY THAT TAG: the box's tag view lists it under mood > calm, and picking that row loads it by value.
+	v.host->setField(v.device, control, 0.77f);
+	box.setView(ui::PresetBrowser::View::Tags);
+	box.showPresetMenu();
+	visage::PopupMenuFrame* byTag = menu_check::newestPopup(*v.top);
+	REQUIRE(byTag != nullptr);
+	const visage::PopupMenu* leaf = nullptr;
+	if (visage::PopupList* rows = menu_check::rowsOf(*byTag)) {
+		for (int i = 0; i < rows->numOptions(); ++i) {
+			const visage::PopupMenu& ns = rows->option(i);
+			if (!ns.hasOptions() || ns.name().toUtf8() != "mood") {
+				continue;
+			}
+			for (const visage::PopupMenu& value : ns.options()) {
+				if (value.name().toUtf8().rfind("calm", 0) != 0) {
+					continue;
+				}
+				for (const visage::PopupMenu& item : value.options()) {
+					if (item.name().toUtf8().find(name) != std::string::npos) {
+						leaf = &item;
+					}
+				}
+			}
+		}
+	}
+	REQUIRE(leaf != nullptr);
+	byTag->optionSelected(*leaf, menu_check::rowsOf(*byTag));
+	byTag->timerCallback();
+	v.tick();
+	CHECK(v.host->fieldAt(v.device, control) == doctest::Approx(0.31f));
+	box.setView(ui::PresetBrowser::View::Folders);
+}
+
+/// THE HEADER'S PRESET POPUP ON A CARD in a real window, by both roads ("..." menu press and right press on the head).
+void proveSavePresetPopup(DeviceRenameVenue& v) {
 	const device::Descriptor* desc = v.host->descriptorOf(v.device);
 	REQUIRE(desc != nullptr);
 	REQUIRE(v.selection != nullptr);
-	static int serial = 0; // THE PRESET ROOT IS ONE FOR THE WHOLE RUN, so each save takes a name no other venue used (a repeat would ask to replace)
+	static int serial = 0; // THE PRESET ROOT IS ONE FOR THE WHOLE RUN, so each save takes a name no other venue used
 	++serial;
 	for (int route = 0; route < 2; ++route) {
 		CAPTURE(route);
 		const std::string name = std::string(route == 0 ? "Saved By Dots " : "Saved By Click ") + std::to_string(serial);
-		const auto openMenu = [&] {
-			const visage::Bounds part = route == 0 ? v.card->slotMenuBoundsForTest() : v.card->renameAnchor();
-			const visage::Point o = v.card->positionInWindow();
-			visage::Point at { o.x + part.x() + part.width() * 0.5f, o.y + part.y() + part.height() * 0.5f };
-			if (route == 1 && v.card->headEdge() == ui::CardHeadEdge::Left) {
-				at = { o.x + ui::kCardHeadHeight * 0.5f, o.y + static_cast<float>(v.card->height()) * 0.5f };
-			}
-			pressAtWindow(v.top, at, route == 1);
-			visage::PopupMenuFrame* popup = menu_check::newestPopup(*v.top);
-			REQUIRE(popup != nullptr);
-			return popup;
-		};
-		visage::PopupMenuFrame* popup = openMenu();
-		visage::PopupList* rows = menu_check::rowsOf(*popup);
-		REQUIRE(rows != nullptr);
-		bool presets = false;
-		for (int i = 0; i < rows->numOptions(); ++i) {
-			presets = presets || (rows->option(i).hasOptions() && rows->option(i).name().toUtf8() == "Presets");
+		const visage::Bounds part = route == 0 ? v.card->slotMenuBoundsForTest() : v.card->renameAnchor();
+		const visage::Point o = v.card->positionInWindow();
+		visage::Point at { o.x + part.x() + part.width() * 0.5f, o.y + part.y() + part.height() * 0.5f };
+		if (route == 1 && v.card->headEdge() == ui::CardHeadEdge::Left) {
+			at = { o.x + ui::kCardHeadHeight * 0.5f, o.y + static_cast<float>(v.card->height()) * 0.5f };
 		}
-		CHECK(presets);
-		CHECK(menu_check::findRow(*popup, "     Init") != nullptr);
-		REQUIRE(menu_check::pickRow(*popup, "Save preset..."));
-		popup->timerCallback();
-		v.tick();
-		REQUIRE(v.selection->namingPreset());
-		ui::TextField* field = v.selection->presetNameFieldForTest();
-		REQUIRE(field != nullptr);
-		CHECK(field->isVisible());
-		CHECK(field->width() > 0);
-		CHECK(field->height() > 0);
-		CHECK(field->height() <= 26); // ONE LINE
-		const visage::Point fieldAt = field->positionInWindow();
-		const visage::Point centre { fieldAt.x + static_cast<float>(field->width()) * 0.5f, fieldAt.y + static_cast<float>(field->height()) * 0.5f };
-		CHECK(fieldAt.x >= 0.0f);
-		CHECK(fieldAt.y >= 0.0f);
-		CHECK(fieldAt.x + static_cast<float>(field->width()) <= static_cast<float>(v.top->width()));
-		CHECK(fieldAt.y + static_cast<float>(field->height()) <= static_cast<float>(v.top->height()));
-		CHECK(v.top->frameAtPoint(centre) == static_cast<visage::Frame*>(field)); // nothing drawn over it
-		CHECK(field->hasKeyboardFocus());
-		CHECK(focusedUnder(v.top) == static_cast<visage::Frame*>(field));
-		// THE CHAIN'S KEYS STAND DOWN: a chord the field leaves to the host does not act on the chain.
-		const size_t before = v.count();
-		for (const visage::KeyCode c : { visage::KeyCode::V, visage::KeyCode::C, visage::KeyCode::X }) {
-			CHECK_FALSE(keyFromFocusUp(field, visage::KeyEvent { c, visage::kModifierRegCtrl, true }));
-			CHECK(v.count() == before);
-			CHECK(v.selection->namingPreset());
-		}
-		field->begin("");
-		field->textInput(name);
-		CHECK(keyFromFocusUp(field, visage::KeyEvent { visage::KeyCode::Return, 0, true }));
-		CHECK_FALSE(v.selection->namingPreset());
-		v.tick();
-		CHECK(std::filesystem::exists(PresetStore::pathFor(name, devicePresetBank(*desc))));
-		CHECK(v.count() == before);
-		// THE SAVED PRESET IS IN THE LIST, ticked as the device's own.
-		popup = openMenu();
-		CHECK(menu_check::findRow(*popup, "X  " + name) != nullptr);
-		// PICKING IT CLOSES THE MENU THE WAY A HAND DOES (and loads the preset the device already holds), so the next road opens a fresh one.
-		REQUIRE(menu_check::pickRow(*popup, "X  " + name));
-		popup->timerCallback();
-		v.tick();
+		pressAtWindow(v.top, at, route == 1);
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*v.top);
+		REQUIRE(popup != nullptr);
+		const ui::MenuPlacement headerMenu = ui::lastMenuPlacementForTest();
+		REQUIRE(menu_check::findRow(*popup, "Presets...") != nullptr);
+		visage::PopupMenuFrame* list = header_presets::openBox(*popup, *v.top);
+		REQUIRE(list != nullptr);
+		ui::PresetBrowser* box = v.selection->verbs().presets().browser();
+		REQUIRE(box != nullptr);
+		checkHeaderPresetPopup(v, *list, headerMenu, *box, *desc, name);
 	}
 }
 
@@ -5040,6 +5092,10 @@ void withDeviceVenue(int where, Prove prove) {
 	if (where == 0) {
 		v.card = f.lane->cardAt(1);
 		v.device = f.bridge.fxDeviceAt(1);
+		v.expandCard = [&f]() -> ui::ExpandedOverlay* {
+			f.lane->onExpandDevice(1);
+			return f.gui.expandedForTest();
+		};
 		v.rename = &f.lane->renameForTest();
 		v.count = [&] {
 			size_t n = 0;
@@ -5077,12 +5133,40 @@ TEST_CASE("device rename: in a real window the slot menu's and the header's Rena
 	}
 }
 
-TEST_CASE("device presets: in a real window the header menu's Save preset opens a field that is visible, one line, on top and focused, and the saved name is in the Presets list - fx lane, Rack card in Tabs, Rack window") {
+TEST_CASE("device presets: in a real window the header menu's Presets row opens the full preset box's popup, anchored at the header, on top, and a preset saved with a tag is found by that tag and loads - fx lane, Rack card in Tabs, Rack window") {
 	for (const int where : { 0, 1, 2 }) {
-		withDeviceVenue(where, [](DeviceRenameVenue& v) { proveSavePresetField(v); });
+		withDeviceVenue(where, [](DeviceRenameVenue& v) { proveSavePresetPopup(v); });
 	}
 }
 
+
+TEST_CASE("device presets: in a real window the expanded window header's menu opens the same preset popup at the press of that header, not at the card's") {
+	withDeviceVenue(0, [](DeviceRenameVenue& v) {
+		REQUIRE(v.expandCard);
+		ui::ExpandedOverlay* overlay = v.expandCard();
+		REQUIRE(overlay != nullptr);
+		REQUIRE(overlay->open());
+		v.tick();
+		ui::ExpandedPanel* panel = overlay->panelForTest();
+		REQUIRE(panel != nullptr);
+		const visage::Bounds dots = panel->menuBounds();
+		REQUIRE(dots.width() > 0.0f);
+		const visage::Point o = panel->positionInWindow();
+		pressAtWindow(v.top, { o.x + dots.x() + dots.width() * 0.5f, o.y + dots.y() + dots.height() * 0.5f }, false);
+		visage::PopupMenuFrame* popup = menu_check::newestPopup(*v.top);
+		REQUIRE(popup != nullptr);
+		const ui::MenuPlacement headerMenu = ui::lastMenuPlacementForTest();
+		// THE MENU STANDS AT THE WINDOW'S OWN HEADER, far from the card's.
+		CHECK(menu_check::near(headerMenu.anchor.x(), o.x + dots.x()));
+		const device::Descriptor* desc = v.host->descriptorOf(v.device);
+		REQUIRE(desc != nullptr);
+		visage::PopupMenuFrame* list = header_presets::openBox(*popup, *v.top);
+		REQUIRE(list != nullptr);
+		ui::PresetBrowser* box = v.selection->verbs().presets().browser();
+		REQUIRE(box != nullptr);
+		checkHeaderPresetPopup(v, *list, headerMenu, *box, *desc, "Saved From Window Head");
+	});
+}
 
 TEST_CASE("list view rename: in a real window a right press on a row's menu and a real double-click open the field - visible, one line, on top, focused - and typing names the chain, on the card and in the Rack window") {
 	namespace pr = feathers::rack::parallel;

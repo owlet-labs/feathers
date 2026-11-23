@@ -6963,6 +6963,7 @@ TEST_CASE("PN teardown: a strip selection of several outlives neither its device
 // A DEVICE'S PRESETS FROM THE HEADER MENU OF THE SYNTH'S FX LANE AND MODULATOR STRIP                  //
 //--------------------------------------------------------------------------------------------------//
 
+#include "header_preset_check.h"
 #include "menu_placement_check.h"
 #include "plugin/preset_store.h"
 #include "plugin/device_preset.h"
@@ -7018,22 +7019,14 @@ void checkSynthPresets(const char* what, visage::Frame& host, ui::LaneSelection&
 	openMenu();
 	visage::PopupMenuFrame* popup = menu_check::newestPopup(host);
 	REQUIRE(popup != nullptr);
-	CHECK(lanePopupHasSubmenu(*popup, "Presets"));
-	CHECK(menu_check::findRow(*popup, "     Init") != nullptr);
-	REQUIRE(menu_check::pickRow(*popup, "Save preset..."));
-	REQUIRE(selection.namingPreset());
-	ui::TextField* field = selection.presetNameFieldForTest();
-	REQUIRE(field != nullptr);
-	CHECK(field->isVisible());
-	CHECK(field->width() > 0);
-	CHECK(field->height() > 0);
-	const visage::Point at = field->positionInWindow();
-	const visage::Point centre { at.x + static_cast<float>(field->width()) * 0.5f, at.y + static_cast<float>(field->height()) * 0.5f };
-	CHECK(host.topParentFrame()->frameAtPoint(centre) == static_cast<visage::Frame*>(field));
-	field->textInput(name);
-	CHECK(field->keyPress(visage::KeyEvent { visage::KeyCode::Return, 0, true }));
-	CHECK_FALSE(selection.namingPreset());
+	REQUIRE(menu_check::findRow(*popup, "Presets...") != nullptr);
+	CHECK_FALSE(lanePopupHasSubmenu(*popup, "Presets")); // one row into the full box's popup, not a menu of its own
+	visage::PopupMenuFrame* list = header_presets::openBox(*popup, host);
+	REQUIRE(list != nullptr);
+	CHECK(menu_check::findRow(*list, header_presets::kSaveAs) != nullptr);
+	REQUIRE(header_presets::saveThroughDialog(*list, selection, name, "mood:calm") != nullptr);
 	CHECK(std::filesystem::exists(feathers::PresetStore::pathFor(name, feathers::devicePresetBank(desc))));
+	CHECK(header_presets::storedWithTag(feathers::devicePresetBank(desc), name, "mood:calm"));
 }
 
 } // namespace

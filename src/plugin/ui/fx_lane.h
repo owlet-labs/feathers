@@ -239,7 +239,7 @@ public:
 	/// The editor's Esc stack (backlog NN): a selection of two or more is one entry on it.
 	void setEscapeStack(EscapeStack* stack) { selection_->setEscapeStack(stack); }
 	/// ONE OF THE DOTS MENU'S SELECTION VERBS, picked on `slot`'s card — the menu's road, without a menu.
-	bool slotVerbForTest(size_t slot, FragmentVerb verb);
+	bool slotVerbForTest(size_t slot, FragmentVerb verb, const std::optional<visage::Bounds>& pressAt = std::nullopt);
 	/// Where those verbs' option ids start in the dots menu, past the lane's own `SlotVerb`s.
 	static constexpr int kVerbIds = 100;
 

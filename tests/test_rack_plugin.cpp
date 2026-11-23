@@ -998,13 +998,14 @@ TEST_CASE("replaced chains, road 3: undo and redo of a Rack preset loaded from t
 		OpenRack open(v, view);
 		ui::EditHistory history;
 		ui::DevicePresetMenu menu(v.bridge(), history, nullptr);
-		const auto list = menu.list(open.id);
-		REQUIRE(list.size() >= 2);
-		for (const auto& entry : list) {
-			if (entry.name == "Init") {
+		ui::PresetBrowser* box = menu.prepare(open.id, nullptr, {});
+		REQUIRE(box != nullptr);
+		REQUIRE(box->count() >= 2);
+		for (size_t k = 0; k < box->count(); ++k) {
+			if (box->entry(k).name == "Init" || ui::PresetBrowser::isVariantFile(box->entry(k).name)) {
 				continue;
 			}
-			REQUIRE(menu.apply(open.id, entry));
+			REQUIRE(box->selectIndex(static_cast<int>(k)));
 			open.tick(12);
 			history.undo();
 			open.tick(12);

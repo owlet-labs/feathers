@@ -1001,7 +1001,10 @@ void ChainColumn::showSlotMenu(DeviceInstanceId device, const SlotMenuOrigin* or
 	selection_->addVerbs(menu, kVerbIds, device);
 	rename_->addRows(menu, bridge_, device);
 	const std::function<void()> closeWindow = origin != nullptr ? origin->closeWindow : std::function<void()> {};
-	menu.onSelection() = [this, device, options, closeWindow](int id) {
+	// WHERE THE HEADER WAS PRESSED, in the window's coordinates: the preset box stands there.
+	const visage::Bounds pressAt = origin != nullptr && origin->source != nullptr ? anchorInWindow(*origin->source, origin->anchor)
+	                                                                                : anchorInWindow(*this, menuAnchorFor(bridge_.positionOf(device)));
+	menu.onSelection() = [this, device, options, closeWindow, pressAt](int id) {
 		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
 			if (FxCard* card = cardOf(device); card != nullptr) {
 				(void)rename_->pick(id, bridge_, device, *card, card->renameAnchor());
@@ -1011,7 +1014,7 @@ void ChainColumn::showSlotMenu(DeviceInstanceId device, const SlotMenuOrigin* or
 			if (closeWindow && verbLeavesDevice(static_cast<FragmentVerb>(id - kVerbIds))) {
 				closeWindow();
 			}
-			(void)slotVerbForTest(device, static_cast<FragmentVerb>(id - kVerbIds));
+			(void)slotVerbForTest(device, static_cast<FragmentVerb>(id - kVerbIds), pressAt);
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {
 			if (closeWindow && options[static_cast<size_t>(id)].verb == SlotVerb::Remove) {
@@ -1250,8 +1253,8 @@ void ChainColumn::afterVerb() {
 	redraw();
 }
 
-bool ChainColumn::slotVerbForTest(DeviceInstanceId device, FragmentVerb verb) {
-	if (!selection_->chooseVerb(kVerbIds + static_cast<int>(verb), kVerbIds, device)) {
+bool ChainColumn::slotVerbForTest(DeviceInstanceId device, FragmentVerb verb, const std::optional<visage::Bounds>& pressAt) {
+	if (!selection_->chooseVerb(kVerbIds + static_cast<int>(verb), kVerbIds, device, pressAt)) {
 		return false;
 	}
 	afterVerb();

@@ -1824,12 +1824,12 @@ void ModPanel::dropCard(size_t from, size_t gap) {
 	}
 }
 
-bool ModPanel::slotVerbForTest(size_t slot, FragmentVerb verb) {
+bool ModPanel::slotVerbForTest(size_t slot, FragmentVerb verb, const std::optional<visage::Bounds>& pressAt) {
 	const DeviceInstanceId id = instanceAtSlot(slot);
 	if (id == kNoInstance) {
 		return false;
 	}
-	if (!selection_->chooseVerb(kVerbIds + static_cast<int>(verb), kVerbIds, id)) {
+	if (!selection_->chooseVerb(kVerbIds + static_cast<int>(verb), kVerbIds, id, pressAt)) {
 		return false;
 	}
 	afterVerb();
@@ -1883,12 +1883,15 @@ void ModPanel::showSlotMenu(size_t slot, const SlotMenuOrigin* origin) {
 	// card alone.
 	selection_->addVerbs(menu, kVerbIds, instanceAtSlot(slot));
 	const std::function<void()> closeWindow = origin != nullptr ? origin->closeWindow : std::function<void()> {};
-	menu.onSelection() = [this, slot, options, closeWindow](int id) {
+	// WHERE THE HEADER WAS PRESSED, in the window's coordinates: the preset box stands there.
+	const visage::Bounds pressAt = origin != nullptr && origin->source != nullptr ? anchorInWindow(*origin->source, origin->anchor)
+	                                                                                : anchorInWindow(*this, slotMenuBounds(sourceOfOutput(slot, 0)));
+	menu.onSelection() = [this, slot, options, closeWindow, pressAt](int id) {
 		if (id >= kVerbIds) {
 			if (closeWindow && verbLeavesDevice(static_cast<FragmentVerb>(id - kVerbIds))) {
 				closeWindow();
 			}
-			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds));
+			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds), pressAt);
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {
 			if (closeWindow && options[static_cast<size_t>(id)].verb == SlotVerb::Remove) {

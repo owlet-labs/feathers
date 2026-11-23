@@ -41,6 +41,7 @@
 #include "plugin/ui/rail.h"
 #include "plugin/ui/route_list.h"
 
+#include <optional>
 #include <array>
 #include <functional>
 #include <memory>
@@ -568,7 +569,7 @@ public:
 	/// The editor's Esc stack: a selection of two or more is one entry on it.
 	void setEscapeStack(EscapeStack* stack) { selection_->setEscapeStack(stack); }
 	/// THE DOTS MENU'S VERB, as picking it would — over the selection when it holds the card at `slot`.
-	bool slotVerbForTest(size_t slot, FragmentVerb verb);
+	bool slotVerbForTest(size_t slot, FragmentVerb verb, const std::optional<visage::Bounds>& pressAt = std::nullopt);
 	/// The menu's verb ids start here, past the slot verbs.
 	static constexpr int kVerbIds = 100;
 	/// THE MACRO ROW'S TOOLTIP LAYER (`tips_`); `updateTooltips` is its delay, advanced on the editor's tick.

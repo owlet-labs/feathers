@@ -343,7 +343,7 @@ public:
 	[[nodiscard]] LaneSelection& selectionForTest() noexcept { return *selection_; }
 	void setEscapeStack(EscapeStack* stack) { selection_->setEscapeStack(stack); }
 	/// ONE OF THE DOTS MENU'S SELECTION VERBS, picked on `device`'s card — the menu's road, without a menu.
-	bool slotVerbForTest(DeviceInstanceId device, FragmentVerb verb);
+	bool slotVerbForTest(DeviceInstanceId device, FragmentVerb verb, const std::optional<visage::Bounds>& pressAt = std::nullopt);
 	static constexpr int kVerbIds = 100;
 
 	//---------------------//

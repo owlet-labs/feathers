@@ -178,11 +178,11 @@ void FxLane::afterVerb() {
 	redraw();
 }
 
-bool FxLane::slotVerbForTest(size_t slot, FragmentVerb verb) {
+bool FxLane::slotVerbForTest(size_t slot, FragmentVerb verb, const std::optional<visage::Bounds>& pressAt) {
 	if (slot >= deviceCount()) {
 		return false;
 	}
-	if (!selection_->chooseVerb(kVerbIds + static_cast<int>(verb), kVerbIds, bridge_.fxDeviceAt(slot))) {
+	if (!selection_->chooseVerb(kVerbIds + static_cast<int>(verb), kVerbIds, bridge_.fxDeviceAt(slot), pressAt)) {
 		return false;
 	}
 	afterVerb();
@@ -1108,7 +1108,9 @@ void FxLane::showSlotMenu(size_t slot, const SlotMenuOrigin* origin) {
 		rename_->addRows(menu, deviceHost_, bridge_.fxDeviceAt(slot));
 	}
 	const std::function<void()> closeWindow = origin != nullptr ? origin->closeWindow : std::function<void()> {};
-	menu.onSelection() = [this, slot, options, closeWindow](int id) {
+	// WHERE THE HEADER WAS PRESSED, in the window's coordinates: the preset box stands there.
+	const visage::Bounds pressAt = origin != nullptr && origin->source != nullptr ? anchorInWindow(*origin->source, origin->anchor) : anchorInWindow(*this, menuAnchorFor(slot));
+	menu.onSelection() = [this, slot, options, closeWindow, pressAt](int id) {
 		if (id == DeviceRename::kRenameRow || id == DeviceRename::kClearRow) {
 			if (slot < deviceCount() && slot < cards_.size() && cards_[slot] != nullptr) {
 				FxCard& card = *cards_[slot];
@@ -1120,7 +1122,7 @@ void FxLane::showSlotMenu(size_t slot, const SlotMenuOrigin* origin) {
 			if (closeWindow && verbLeavesDevice(static_cast<FragmentVerb>(id - kVerbIds))) {
 				closeWindow();
 			}
-			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds));
+			(void)slotVerbForTest(slot, static_cast<FragmentVerb>(id - kVerbIds), pressAt);
 		}
 		else if (id >= 0 && static_cast<size_t>(id) < options.size()) {
 			if (closeWindow && options[static_cast<size_t>(id)].verb == SlotVerb::Remove) {

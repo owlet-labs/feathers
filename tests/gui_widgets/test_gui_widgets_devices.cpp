@@ -43208,6 +43208,36 @@ TEST_CASE("OWLTT's crossovers say what Key Track makes them: an offset from the 
 	CHECK(winTip(ow::Param::LowCrossover) == "Low-mid split frequency");
 }
 
+TEST_CASE("Sklitter's Groove Amount says what its Groove Mode makes it: the swing, the template share, the walk, or nothing in Straight, on the card and the window") {
+	namespace sk = feathers::fx::sklitter;
+	DynCardFixture<ui::SklitterCard> d { sk::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::SklitterExpanded>(d.f.deviceHost, registry, d.device, sk::kDescriptor, nullptr);
+	const auto cardTip = [&] { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(sk::Param::GrooveAmount)))); };
+	const auto winTip = [&] { return std::string(ui::tooltipOf(&win->controlForTest(static_cast<size_t>(sk::Param::GrooveAmount)))); };
+	const auto setMode = [&](int m) {
+		d.set(static_cast<size_t>(sk::Param::GrooveMode), static_cast<float>(m));
+		(void)win->updateContentForTest();
+		(void)d.card->updateContentForTest();
+	};
+	// ONE TEXT PER FAMILY, the same on both surfaces; each family's text differs from the others (not vacuous).
+	setMode(0);
+	CHECK(cardTip() == sk::kGrooveAmountTipStraight);
+	CHECK(winTip() == sk::kGrooveAmountTipStraight);
+	setMode(2);
+	CHECK(cardTip() == sk::kGrooveAmountTipSwing);
+	CHECK(winTip() == sk::kGrooveAmountTipSwing);
+	setMode(5);
+	CHECK(cardTip() == sk::kGrooveAmountTipGroove);
+	CHECK(winTip() == sk::kGrooveAmountTipGroove);
+	setMode(8);
+	CHECK(cardTip() == sk::kGrooveAmountTipFree);
+	CHECK(winTip() == sk::kGrooveAmountTipFree);
+	CHECK(std::string(sk::kGrooveAmountTipSwing) != sk::kGrooveAmountTipGroove);
+	// THE DECLARED TEXT NAMES NO SAMPLER (the hardware rule).
+	CHECK(std::string(sk::kParamDescs[static_cast<size_t>(sk::Param::GrooveAmount)].tooltip).find("MPC") == std::string::npos);
+}
+
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {
 	DrumUi u;
 	for (size_t i = 0; i < static_cast<size_t>(ddv::Param::kCount); ++i) {

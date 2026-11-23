@@ -785,6 +785,30 @@ inline constexpr const char* kGrooveModeNames[] = {
 };
 static_assert(std::size(kGrooveModeNames) == static_cast<size_t>(GrooveMode::kCount));
 
+// WHAT GROOVE AMOUNT DOES IN EACH FAMILY (TV audit): a swing's lateness, a groove's share of its template, a free family's walk. Straight has
+// no groove, so the amount does nothing there, and the text says so. Indexed by the Groove Mode's value; the card sets these, and an
+// out-of-range value gets the declared text.
+inline constexpr const char* kGrooveAmountTipStraight = "Straight has no groove, so the amount does nothing in this mode";
+inline constexpr const char* kGrooveAmountTipSwing = "How late every second step lands: 50% is straight, 66.7% a triplet, and at full the heaviest swing";
+inline constexpr const char* kGrooveAmountTipGroove = "How far each step lands late by its own amount: the share of the groove template, none at 0 and all of it at full";
+inline constexpr const char* kGrooveAmountTipFree = "Which of the free phi patterns plays: the amount walks through them, each a different groove";
+/// The hover text of Groove Amount for a Groove Mode's value (`GrooveMode`), or "" for a value outside the modes (the declared text).
+inline const char* grooveAmountTipFor(int mode) {
+	if (mode == 0) {
+		return kGrooveAmountTipStraight;
+	}
+	if (mode >= 1 && mode <= 3) {
+		return kGrooveAmountTipSwing;
+	}
+	if (mode >= 4 && mode <= 6) {
+		return kGrooveAmountTipGroove;
+	}
+	if (mode >= 7 && mode <= 9) {
+		return kGrooveAmountTipFree;
+	}
+	return "";
+}
+
 /// **WHICH GROOVE MODES READ `GrooveAmount` (a depth) AND WHICH READ `FreePhase` (a position)** — the two
 /// controls' gates on `GrooveMode`, as bits of its value. Straight reads neither.
 inline constexpr uint32_t kGrooveDepthModes =
@@ -1450,8 +1474,8 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .names = {},
      .modulatable = true,
      .offsetsMayLeaveRange = false,
-     .tooltip = "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the MPC's "
-                "heaviest, at full), or the share of the groove template. Drag a digit to move that place",
+     .tooltip = "How much of the Groove Mode: the swing % (50% straight, 66.7% a triplet, and at full the heaviest "
+                "swing), or the share of the groove template. Drag a digit to move that place",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},

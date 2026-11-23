@@ -177,9 +177,37 @@ bool DeviceSpectrumSource::range(size_t, SpectralControl c, double& lo, double& 
 	return true;
 }
 
+DeviceSpectrumSource::TipState DeviceSpectrumSource::tipState() const {
+	TipState s;
+	s.filter = static_cast<int>(std::lround(field(static_cast<size_t>(Param::FilterMode))));
+	s.filter2 = static_cast<int>(std::lround(field(static_cast<size_t>(Param::Filter2Mode))));
+	s.vocode = field(static_cast<size_t>(Param::VocodeOn)) >= 0.5f;
+	s.keyTrack = field(static_cast<size_t>(Param::KeyTrack)) >= 0.5f;
+	return s;
+}
+
 const char* DeviceSpectrumSource::tooltip(size_t, SpectralControl c) const {
 	const auto p = paramOf(c);
-	return p.has_value() ? kParamDescs[static_cast<size_t>(*p)].tooltip : nullptr;
+	if (!p.has_value()) {
+		return nullptr;
+	}
+	const TipState s = tipState();
+	const char* live = spectralTip(*p, s.filter, s.filter2, s.vocode, s.keyTrack);
+	return live != nullptr ? live : kParamDescs[static_cast<size_t>(*p)].tooltip;
+}
+
+void DeviceSpectrumSource::refreshTips() {
+	const TipState s = tipState();
+	const int key = s.filter + 8 * s.filter2 + 64 * (s.vocode ? 1 : 0) + 128 * (s.keyTrack ? 1 : 0);
+	if (key == tipKey_) {
+		return;
+	}
+	tipKey_ = key;
+	for (const Param p : { Param::FilterResonance, Param::FilterSlope, Param::Filter2Resonance, Param::Filter2Slope, Param::KeyOffset,
+	                       Param::FShiftOn }) {
+		const char* text = spectralTip(p, s.filter, s.filter2, s.vocode, s.keyTrack);
+		deviceControl(p).setTooltipOverride(text != nullptr ? text : "");
+	}
 }
 
 ui::DeviceControl& DeviceSpectrumSource::deviceControl(Param p) {

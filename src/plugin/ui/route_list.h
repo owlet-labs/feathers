@@ -118,6 +118,10 @@ public:
 	std::vector<Row> allRows() const;
 	/// What a row is drawn as — for a venue that reads the list rather than the pixels.
 	std::string nameOfForTest(const Row& row) const { return nameOf(row); }
+	/// A row's amount, its write and its removal, for a venue that reads values rather than pixels (the rows' own gestures call the same).
+	[[nodiscard]] float amountOfForTest(const Row& row) const { return amountOf(row); }
+	void writeForTest(const Row& row, float amount) { write(row, amount); }
+	void removeForTest(const Row& row) { remove(row); }
 
 	static constexpr float kRowHeight = 18.0f;
 	static constexpr float kHeadingHeight = 14.0f;

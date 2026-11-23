@@ -28,6 +28,8 @@
 #include "doctest.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -101,7 +103,7 @@ std::vector<float> render(Hit& h, size_t n, size_t block = 256) {
 	return out;
 }
 
-constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String };
+constexpr Kind kAllKinds[] { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String, Kind::Particle, Kind::Friction, Kind::Water, Kind::Sweep, Kind::Hand, Kind::FM };
 
 } // namespace
 
@@ -1426,4 +1428,738 @@ TEST_CASE("settled pitch: a Kick's measured fundamental, a Membrane's lowest mod
 	r.hit.strike(Kind::Membrane, lawsFor(Kind::Membrane, f, c, 110.0, 0.8), 3, 1.0f);
 	(void)render(r.hit, 4800);
 	CHECK(r.hit.currentHz(0) == doctest::Approx(want).epsilon(1.0e-9));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// PARTICLE: a shower of colliding grains exciting a few resonances                                  //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Laws particleLaws(int play, double density, double t60 = 0.4) {
+	Laws l = baseLaws(2400.0, t60);
+	l.density = density;
+	l.grainT60 = 0.004;
+	l.play = play;
+	l.metal = 0.5f;
+	l.noise = 0.2f;
+	return l;
+}
+
+/// A WAV of mono 16-bit samples, for listening: written only when FEATHERS_DRUM_WAV_DIR names a folder.
+void dumpWav(const char* name, const std::vector<float>& x) {
+	const char* dir = std::getenv("FEATHERS_DRUM_WAV_DIR");
+	if (dir == nullptr || *dir == '\0') {
+		return;
+	}
+	std::vector<uint8_t> b;
+	const auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	const auto put16 = [&](uint16_t v) { for (int i = 0; i < 2; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	for (const char c : std::string("RIFF")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(36 + x.size() * 2));
+	for (const char c : std::string("WAVEfmt ")) b.push_back(static_cast<uint8_t>(c));
+	put32(16); put16(1); put16(1); put32(48000); put32(96000); put16(2); put16(16);
+	for (const char c : std::string("data")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(x.size() * 2));
+	for (const float v : x) put16(static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))));
+	std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+	if (f != nullptr) {
+		std::fwrite(b.data(), 1, b.size(), f);
+		std::fclose(f);
+	}
+}
+
+/// The same in stereo (two channels), for the kinds that write both ears.
+void dumpWavStereo(const char* name, const std::vector<float>& l, const std::vector<float>& r) {
+	const char* dir = std::getenv("FEATHERS_DRUM_WAV_DIR");
+	if (dir == nullptr || *dir == '\0') {
+		return;
+	}
+	std::vector<uint8_t> b;
+	const auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	const auto put16 = [&](uint16_t v) { for (int i = 0; i < 2; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+	const auto sample = [](float v) { return static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))); };
+	for (const char c : std::string("RIFF")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(36 + l.size() * 4));
+	for (const char c : std::string("WAVEfmt ")) b.push_back(static_cast<uint8_t>(c));
+	put32(16); put16(1); put16(2); put32(48000); put32(192000); put16(4); put16(16);
+	for (const char c : std::string("data")) b.push_back(static_cast<uint8_t>(c));
+	put32(static_cast<uint32_t>(l.size() * 4));
+	for (size_t i = 0; i < l.size(); ++i) {
+		put16(sample(l[i]));
+		put16(sample(r[i]));
+	}
+	std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+	if (f != nullptr) {
+		std::fwrite(b.data(), 1, b.size(), f);
+		std::fclose(f);
+	}
+}
+
+float peakAbs(const std::vector<float>& v) {
+	float p = 0.0f;
+	for (const float x : v) {
+		p = std::max(p, std::fabs(x));
+	}
+	return p;
+}
+
+} // namespace
+
+TEST_CASE("Particle: the collisions per second follow Density, as a Poisson process (a held shower, many seeds)") {
+	// A DRONE'S RATE IS CONSTANT, so the count over T seconds is Poisson with mean density · T: over many seeds the mean count is that, to a
+	// few percent, and its variance is the mean's.
+	for (const double density : { 8.0, 40.0, 200.0 }) {
+		CAPTURE(density);
+		constexpr int kSeeds = 60;
+		const double seconds = 4.0;
+		double sum = 0.0;
+		double sumSq = 0.0;
+		for (int seed = 1; seed <= kSeeds; ++seed) {
+			Rig r;
+			r.hit.strike(Kind::Particle, particleLaws(kPlayDrone, density), static_cast<uint64_t>(seed) * 7919u, 1.0f);
+			(void)render(r.hit, static_cast<size_t>(seconds * kSr));
+			const double n = static_cast<double>(r.hit.particleGrainsForTest());
+			sum += n;
+			sumSq += n * n;
+		}
+		const double mean = sum / kSeeds;
+		const double variance = sumSq / kSeeds - mean * mean;
+		CHECK(mean == doctest::Approx(density * seconds).epsilon(0.05));
+		CHECK(variance / mean == doctest::Approx(1.0).epsilon(0.5)); // Poisson: variance = mean
+	}
+}
+
+TEST_CASE("Particle: a one-shot shower ends in exact silence and idle, a held one does not, and a Drone is never idle") {
+	{
+		Rig r;
+		r.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 60.0, 0.3), 11, 1.0f);
+		const std::vector<float> x = render(r.hit, static_cast<size_t>(8.0 * kSr));
+		CHECK(r.hit.idle());
+		CHECK(peakAbs(x) > 0.05f);
+		// EXACT ZERO from the sample the hit went idle: the last nonzero sample is followed by nothing but zeros.
+		size_t last = 0;
+		for (size_t i = 0; i < x.size(); ++i) {
+			last = x[i] != 0.0f ? i : last;
+		}
+		CHECK(last < x.size() - static_cast<size_t>(kSr)); // it was silent for at least the last second
+		dumpWav("particle-oneshot.wav", x);
+	}
+	{
+		Rig r;
+		r.hit.strike(Kind::Particle, particleLaws(kPlayGate, 60.0, 0.3), 11, 1.0f);
+		std::vector<float> held = render(r.hit, static_cast<size_t>(2.0 * kSr));
+		CHECK_FALSE(r.hit.idle());
+		CHECK(r.hit.particleDensityEnvForTest() == 1.0f); // the density envelope has not moved
+		r.hit.release(0.15);
+		const std::vector<float> tail = render(r.hit, static_cast<size_t>(6.0 * kSr));
+		held.insert(held.end(), tail.begin(), tail.end());
+		CHECK(r.hit.idle());
+		dumpWav("particle-gate.wav", held);
+	}
+	{
+		Rig r;
+		r.hit.strike(Kind::Particle, particleLaws(kPlayDrone, 30.0, 0.3), 11, 1.0f);
+		const std::vector<float> x = render(r.hit, static_cast<size_t>(4.0 * kSr));
+		CHECK_FALSE(r.hit.idle());
+		CHECK(r.hit.particleDensityEnvForTest() == 1.0f);
+		CHECK(peakAbs(x) > 0.05f);
+		dumpWav("particle-drone.wav", x);
+	}
+}
+
+TEST_CASE("Particle: the level is that of the other kinds, and the same seed is the same shower to the bit") {
+	Rig a;
+	Rig b;
+	Rig c;
+	a.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 80.0), 99, 1.0f);
+	b.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 80.0), 99, 1.0f);
+	c.hit.strike(Kind::Particle, particleLaws(kPlayOneShot, 80.0), 100, 1.0f);
+	const std::vector<float> xa = render(a.hit, 24000);
+	const std::vector<float> xb = render(b.hit, 24000, 64); // a different block size
+	const std::vector<float> xc = render(c.hit, 24000);
+	CHECK(xa == xb);
+	CHECK(xa != xc);
+	const float peak = peakAbs(xa);
+	CHECK(peak > 0.15f);
+	CHECK(peak < 1.0f);
+}
+
+TEST_CASE("Particle: the resonances sit at the centre and scatter by Metal, seeded, within an octave and a half") {
+	Laws l = particleLaws(kPlayOneShot, 40.0);
+	l.metal = 0.0f;
+	Rig r;
+	r.hit.strike(Kind::Particle, l, 5, 1.0f);
+	for (int i = 0; i < 4; ++i) {
+		CHECK(r.hit.particleResonatorHzForTest(i) == doctest::Approx(l.hz).epsilon(1e-12)); // no spread: all at the centre
+	}
+	l.metal = 1.0f;
+	r.hit.strike(Kind::Particle, l, 5, 1.0f);
+	CHECK(r.hit.particleResonatorHzForTest(0) == doctest::Approx(l.hz).epsilon(1e-12)); // the first never moves
+	bool spread = false;
+	for (int i = 1; i < 4; ++i) {
+		const double ratio = r.hit.particleResonatorHzForTest(i) / l.hz;
+		CHECK(ratio >= std::exp2(-1.5) - 1e-9);
+		CHECK(ratio <= std::exp2(1.5) + 1e-9);
+		spread = spread || std::fabs(std::log2(ratio)) > 0.05;
+	}
+	CHECK(spread); // NON-VACUITY: Metal at 1 really scatters them
+	Rig other;
+	other.hit.strike(Kind::Particle, l, 6, 1.0f);
+	CHECK(other.hit.particleResonatorHzForTest(2) != r.hit.particleResonatorHzForTest(2)); // seeded: another seed, other places
+}
+
+TEST_CASE("Particle: kindSustains is the engine's statement, and a Particle's laws carry the play mode while an impulse kind keeps only Gate") {
+	CHECK(kindSustains(Kind::Particle));
+	for (const Kind k : { Kind::Kick, Kind::Membrane, Kind::Snare, Kind::Metal, Kind::Clap, Kind::String }) {
+		CHECK_FALSE(kindSustains(k));
+		Controls c;
+		c.play = kPlayDrone;
+		CHECK(lawsFor(k, Fields {}, c, 110.0, 1.0).play == kPlayOneShot); // Drone on a kind that cannot hold it plays as One-shot
+		c.play = kPlayGate;
+		CHECK(lawsFor(k, Fields {}, c, 110.0, 1.0).play == kPlayGate); // a working Gate stays
+	}
+	Controls c;
+	c.play = kPlayDrone;
+	CHECK(lawsFor(Kind::Particle, Fields {}, c, 3000.0, 1.0).play == kPlayDrone);
+	CHECK(kindReads(Kind::Particle).metal);
+	CHECK_FALSE(kindReads(Kind::Particle).sweep);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// FRICTION: a stick-slip bow into a resonator                                                       //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Laws frictionLaws(int play, double speed, double pressure, double hz = 600.0, double t60 = 0.5) {
+	Laws l = baseLaws(hz, t60);
+	l.play = play;
+	l.speed = speed;
+	l.pressure = pressure;
+	l.noise = 0.0f; // no roughness: the slips come on the clock
+	l.tone = 0.6f;
+	return l;
+}
+
+} // namespace
+
+TEST_CASE("Friction: a fast, firm bow slips once a period of the resonance, a slow one at the creak's own rate (the interval, by value)") {
+	// RESTATED: the slip rate is exp(ln 7 + (ln f0 - ln 7) · speed^1.5), a period of sr / rate samples with no roughness.
+	for (const double speed : { 0.0, 0.25, 0.5, 1.0 }) {
+		CAPTURE(speed);
+		Rig r;
+		r.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, speed, 1.0), 31, 1.0f);
+		(void)render(r.hit, 4800);
+		const double rate = std::exp(std::log(7.0) + (std::log(600.0) - std::log(7.0)) * std::pow(speed, 1.5));
+		CHECK(r.hit.frictionPeriodForTest() == doctest::Approx(kSr / rate).epsilon(1e-9));
+	}
+	// AT FULL SPEED AND PRESSURE EVERY SLIP LETS GO: the count over a second is the resonance's frequency.
+	Rig r;
+	r.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 1.0, 1.0), 31, 1.0f);
+	(void)render(r.hit, static_cast<size_t>(kSr));
+	CHECK(static_cast<double>(r.hit.frictionSlipsForTest()) == doctest::Approx(600.0).epsilon(0.01));
+	// A LIGHT, SLOW BOW SKIPS: fewer slips let go than the clock offers.
+	Rig slow;
+	slow.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 0.2, 0.2), 31, 1.0f);
+	(void)render(slow.hit, static_cast<size_t>(4.0 * kSr));
+	const double rate = std::exp(std::log(7.0) + (std::log(600.0) - std::log(7.0)) * std::pow(0.2, 1.5));
+	CHECK(static_cast<double>(slow.hit.frictionSlipsForTest()) < 0.7 * rate * 4.0);
+	CHECK(slow.hit.frictionSlipsForTest() > 0);
+}
+
+TEST_CASE("Friction: One-shot fades to exact silence and idle, Gate holds until released, a Drone is never idle, and the same seed is the same sound") {
+	Rig a;
+	a.hit.strike(Kind::Friction, frictionLaws(kPlayOneShot, 0.9, 0.8, 600.0, 0.4), 41, 1.0f);
+	const std::vector<float> x = render(a.hit, static_cast<size_t>(6.0 * kSr));
+	CHECK(a.hit.idle());
+	CHECK(peakAbs(x) > 0.1f);
+	CHECK(peakAbs(x) < 1.5f);
+	dumpWav("friction-oneshot.wav", x);
+	Rig g;
+	g.hit.strike(Kind::Friction, frictionLaws(kPlayGate, 0.9, 0.8), 41, 1.0f);
+	std::vector<float> held = render(g.hit, static_cast<size_t>(2.0 * kSr));
+	CHECK_FALSE(g.hit.idle());
+	g.hit.release(0.2);
+	const std::vector<float> tail = render(g.hit, static_cast<size_t>(5.0 * kSr));
+	held.insert(held.end(), tail.begin(), tail.end());
+	CHECK(g.hit.idle());
+	dumpWav("friction-gate.wav", held);
+	Rig d;
+	d.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 0.9, 0.8), 41, 1.0f);
+	const std::vector<float> dr = render(d.hit, static_cast<size_t>(4.0 * kSr));
+	CHECK_FALSE(d.hit.idle());
+	CHECK(peakAbs(dr) > 0.1f);
+	dumpWav("friction-drone.wav", dr);
+	Rig b1;
+	Rig b2;
+	Laws l = frictionLaws(kPlayDrone, 0.7, 0.6);
+	l.noise = 0.5f; // roughness draws from the seed
+	b1.hit.strike(Kind::Friction, l, 7, 1.0f);
+	b2.hit.strike(Kind::Friction, l, 7, 1.0f);
+	CHECK(render(b1.hit, 20000) == render(b2.hit, 20000, 64));
+	Rig b3;
+	b3.hit.strike(Kind::Friction, l, 8, 1.0f);
+	Rig b4;
+	b4.hit.strike(Kind::Friction, l, 7, 1.0f);
+	CHECK(render(b3.hit, 20000) != render(b4.hit, 20000));
+	// CREAK AND SQUEAL: a creak (slow) and a squeal (fast, hard) for listening.
+	Rig creak;
+	creak.hit.strike(Kind::Friction, frictionLaws(kPlayDrone, 0.1, 0.7, 300.0, 0.6), 5, 1.0f);
+	dumpWav("friction-creak.wav", render(creak.hit, static_cast<size_t>(4.0 * kSr)));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// WATER: chirps from a random process, a splash for each, a bed of flow under them                   //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Laws waterLaws(int play, double rate, double rise = 0.6, double flow = 0.0, double splash = 0.3, double hz = 900.0) {
+	Laws l = baseLaws(hz, 1.0);
+	l.play = play;
+	l.waterRate = rate;
+	l.rise = rise;
+	l.flow = flow;
+	l.splash = splash;
+	l.metal = 0.0f;
+	l.snap = 0.5f;
+	l.tone = 0.5f;
+	return l;
+}
+
+struct Stereo {
+	std::vector<float> l;
+	std::vector<float> r;
+};
+
+Stereo renderBoth(Hit& h, size_t n, size_t block = 256) {
+	Stereo o { std::vector<float>(n), std::vector<float>(n) };
+	for (size_t i = 0; i < n; i += block) {
+		h.render(o.l.data() + i, static_cast<int>(std::min(block, n - i)), o.r.data() + i);
+	}
+	return o;
+}
+
+/// The energy of `x` at `hz` (a Goertzel bin), per sample.
+double energyAt(const std::vector<float>& x, double hz) {
+	const double w = 2.0 * std::numbers::pi * hz / kSr;
+	const double c = 2.0 * std::cos(w);
+	double s1 = 0.0;
+	double s2 = 0.0;
+	for (const float v : x) {
+		const double s0 = static_cast<double>(v) + c * s1 - s2;
+		s2 = s1;
+		s1 = s0;
+	}
+	return (s1 * s1 + s2 * s2 - c * s1 * s2) / (static_cast<double>(x.size()) * static_cast<double>(x.size()));
+}
+
+double rms(const std::vector<float>& x, size_t from = 0) {
+	double sum = 0.0;
+	for (size_t i = from; i < x.size(); ++i) {
+		sum += static_cast<double>(x[i]) * x[i];
+	}
+	return std::sqrt(sum / static_cast<double>(x.size() - from));
+}
+
+} // namespace
+
+TEST_CASE("Water: the events per second follow Rate from a drip to a river (a held shower, many seeds)") {
+	for (const double rate : { 0.5, 8.0, 120.0, 700.0 }) {
+		CAPTURE(rate);
+		const int seeds = rate < 1.0 ? 120 : 40;
+		const double seconds = rate < 1.0 ? 8.0 : 3.0;
+		double sum = 0.0;
+		double sumSq = 0.0;
+		for (int seed = 1; seed <= seeds; ++seed) {
+			Rig r;
+			r.hit.strike(Kind::Water, waterLaws(kPlayDrone, rate), static_cast<uint64_t>(seed) * 104729u, 1.0f);
+			(void)renderBoth(r.hit, static_cast<size_t>(seconds * kSr), 512);
+			const double n = static_cast<double>(r.hit.waterEventsForTest());
+			sum += n;
+			sumSq += n * n;
+		}
+		const double mean = sum / seeds;
+		CHECK(mean == doctest::Approx(rate * seconds).epsilon(0.07));
+		CHECK((sumSq / seeds - mean * mean) / mean == doctest::Approx(1.0).epsilon(0.6));
+	}
+}
+
+TEST_CASE("Water: a chirp starts at its size's pitch and rises by Rise x 2.2 octaves over its life, by value") {
+	for (const double rise : { 0.0, 0.5, 1.0 }) {
+		CAPTURE(rise);
+		Laws l = waterLaws(kPlayOneShot, 0.0625, rise);
+		Rig r;
+		r.hit.strike(Kind::Water, l, 3, 1.0f);
+		(void)renderBoth(r.hit, 1);
+		REQUIRE(r.hit.waterChirpsForTest() == 1); // a key lands a drop at once
+		CHECK(r.hit.waterLastStartHzForTest() == doctest::Approx(900.0).epsilon(1e-12)); // no spread: exactly the size
+		CHECK(r.hit.waterLastRiseOctavesForTest() == doctest::Approx(2.2 * rise).epsilon(1e-12));
+		// ITS LIFE, restated: (0.012 + 0.08 (1 - snap)) sqrt(900 / hz), clamped; at the end of it the pitch has risen the octaves.
+		const double life = std::clamp((0.012 + 0.08 * 0.5) * std::sqrt(900.0 / 900.0), 0.004, 0.4);
+		const double first = r.hit.waterChirpHzForTest(0);
+		CHECK(first == doctest::Approx(900.0).epsilon(0.01));
+		(void)renderBoth(r.hit, static_cast<size_t>(life * kSr) - 1);
+		CHECK(r.hit.waterChirpHzForTest(0) == doctest::Approx(900.0 * std::exp2(2.2 * rise)).epsilon(0.01));
+	}
+}
+
+TEST_CASE("Water: Splash sizes each drop's transient, and Rise 0 with Splash up is a surface while Rise up with Splash 0 is a bubble") {
+	for (const double splash : { 0.0, 0.5, 1.0 }) {
+		CAPTURE(splash);
+		Rig r;
+		r.hit.strike(Kind::Water, waterLaws(kPlayOneShot, 0.0625, 0.0, 0.0, splash), 3, 1.0f);
+		(void)renderBoth(r.hit, 1);
+		// a drop's splash is between half and all of Splash (the seed's own size), at the sample it landed
+		CHECK(r.hit.waterSplashForTest() >= static_cast<float>(splash * 0.5) - 1e-6f);
+		CHECK(r.hit.waterSplashForTest() <= static_cast<float>(splash) + 1e-6f);
+	}
+	// THE SOUND: a surface (no rise) carries far more broadband energy in its first 5 ms than a bubble (rise, no splash) of the same size.
+	Laws sl = waterLaws(kPlayOneShot, 0.0625, 0.0, 0.0, 1.0);
+	Laws bl = waterLaws(kPlayOneShot, 0.0625, 1.0, 0.0, 0.0);
+	sl.tone = bl.tone = 1.0f; // a bright splash, so its noise reaches the probe
+	Rig surface;
+	surface.hit.strike(Kind::Water, sl, 3, 1.0f);
+	Rig bubble;
+	bubble.hit.strike(Kind::Water, bl, 3, 1.0f);
+	const Stereo a = renderBoth(surface.hit, 240);
+	const Stereo b = renderBoth(bubble.hit, 240);
+	const double hiSurface = energyAt(a.l, 9000.0);
+	const double hiBubble = energyAt(b.l, 9000.0);
+	CHECK(hiSurface > 20.0 * hiBubble);
+}
+
+TEST_CASE("Water: Flow is a band-limited bed between the drops whose colour follows Size, and Flow never moves the drops") {
+	// AT A FEW DROPS A SECOND THE GAPS ARE SILENT WITHOUT FLOW and carry the bed with it.
+	Rig dry;
+	dry.hit.strike(Kind::Water, waterLaws(kPlayDrone, 0.0625, 0.6, 0.0, 0.0), 9, 1.0f);
+	Rig wet;
+	wet.hit.strike(Kind::Water, waterLaws(kPlayDrone, 0.0625, 0.6, 1.0, 0.0), 9, 1.0f);
+	const Stereo d = renderBoth(dry.hit, static_cast<size_t>(3.0 * kSr));
+	const Stereo w = renderBoth(wet.hit, static_cast<size_t>(3.0 * kSr));
+	// THE SAME DROPS WITH AND WITHOUT FLOW (the bed draws from its own stream), at a rate that gives dozens: the counts and the last drop agree.
+	Rig busyDry;
+	busyDry.hit.strike(Kind::Water, waterLaws(kPlayDrone, 20.0, 0.6, 0.0, 0.3), 9, 1.0f);
+	Rig busyWet;
+	busyWet.hit.strike(Kind::Water, waterLaws(kPlayDrone, 20.0, 0.6, 1.0, 0.3), 9, 1.0f);
+	(void)renderBoth(busyDry.hit, static_cast<size_t>(3.0 * kSr));
+	(void)renderBoth(busyWet.hit, static_cast<size_t>(3.0 * kSr));
+	CHECK(busyDry.hit.waterEventsForTest() > 30);
+	CHECK(busyDry.hit.waterEventsForTest() == busyWet.hit.waterEventsForTest());
+	CHECK(busyDry.hit.waterLastStartHzForTest() == busyWet.hit.waterLastStartHzForTest());
+	CHECK(rms(d.l, static_cast<size_t>(1.5 * kSr)) < 1e-3);
+	CHECK(rms(w.l, static_cast<size_t>(1.5 * kSr)) > 0.02);
+	CHECK(w.l != w.r); // an independent noise for each ear: the wash is wide
+	// ITS COLOUR FOLLOWS SIZE: the bed centres on size x (0.5 + 1.5 tone), so a small size puts the energy up high and a large one low.
+	const auto bedRms = [&](double hz, double probe) {
+		Rig r;
+		r.hit.strike(Kind::Water, waterLaws(kPlayDrone, 0.0625, 0.6, 1.0, 0.0, hz), 5, 1.0f);
+		const Stereo o = renderBoth(r.hit, static_cast<size_t>(2.0 * kSr));
+		std::vector<float> tail(o.l.begin() + static_cast<std::ptrdiff_t>(kSr), o.l.end());
+		return energyAt(tail, probe);
+	};
+	CHECK(bedRms(300.0, 375.0) > 4.0 * bedRms(300.0, 6000.0));   // a big size: the bed is low
+	CHECK(bedRms(4000.0, 5000.0) > 4.0 * bedRms(4000.0, 300.0)); // a small size: the bed is high
+}
+
+TEST_CASE("Water: Metal spreads the sizes and the places, with none every drop is the size and in the middle") {
+	Rig mid;
+	mid.hit.strike(Kind::Water, waterLaws(kPlayDrone, 200.0), 11, 1.0f);
+	const Stereo m = renderBoth(mid.hit, 48000, 512);
+	CHECK(m.l == m.r); // no spread: every drop dead centre (no flow, no stereo noise)
+	CHECK(mid.hit.waterLastPanForTest() == 0.0f);
+	Laws l = waterLaws(kPlayDrone, 200.0);
+	l.metal = 1.0f;
+	Rig wide;
+	wide.hit.strike(Kind::Water, l, 11, 1.0f);
+	const Stereo wd = renderBoth(wide.hit, 48000, 512);
+	CHECK(wd.l != wd.r);
+	// THE SIZES SCATTER about the centre within 1.2 octaves.
+	CHECK(wide.hit.waterLastStartHzForTest() >= 900.0 * std::exp2(-1.2) - 1e-6);
+	CHECK(wide.hit.waterLastStartHzForTest() <= 900.0 * std::exp2(1.2) + 1e-6);
+}
+
+TEST_CASE("Water: One-shot ends in exact silence and idle, Gate holds until released, a Drone is never idle, the same seed the same water") {
+	Rig a;
+	a.hit.strike(Kind::Water, waterLaws(kPlayOneShot, 12.0, 0.6, 0.0, 0.3), 21, 1.0f);
+	const Stereo x = renderBoth(a.hit, static_cast<size_t>(8.0 * kSr));
+	CHECK(a.hit.idle());
+	CHECK(peakAbs(x.l) > 0.05f);
+	dumpWavStereo("water-oneshot.wav", x.l, x.r);
+	Rig g;
+	g.hit.strike(Kind::Water, waterLaws(kPlayGate, 12.0), 21, 1.0f);
+	Stereo held = renderBoth(g.hit, static_cast<size_t>(2.0 * kSr));
+	CHECK_FALSE(g.hit.idle());
+	g.hit.release(0.2);
+	const Stereo tail = renderBoth(g.hit, static_cast<size_t>(5.0 * kSr));
+	held.l.insert(held.l.end(), tail.l.begin(), tail.l.end());
+	held.r.insert(held.r.end(), tail.r.begin(), tail.r.end());
+	CHECK(g.hit.idle());
+	dumpWavStereo("water-gate.wav", held.l, held.r);
+	Rig d;
+	d.hit.strike(Kind::Water, waterLaws(kPlayDrone, 12.0, 0.6, 0.15), 21, 1.0f);
+	const Stereo dr = renderBoth(d.hit, static_cast<size_t>(4.0 * kSr));
+	CHECK_FALSE(d.hit.idle());
+	dumpWavStereo("water-drone.wav", dr.l, dr.r);
+	Rig b1;
+	Rig b2;
+	b1.hit.strike(Kind::Water, waterLaws(kPlayDrone, 30.0, 0.5, 0.3), 7, 1.0f);
+	b2.hit.strike(Kind::Water, waterLaws(kPlayDrone, 30.0, 0.5, 0.3), 7, 1.0f);
+	const Stereo r1 = renderBoth(b1.hit, 20000, 256);
+	const Stereo r2 = renderBoth(b2.hit, 20000, 64);
+	CHECK(r1.l == r2.l);
+	CHECK(r1.r == r2.r);
+	// THE THREE TEXTURES for listening: a drip, a brook, steady rain.
+	const auto texture = [&](const char* name, Laws laws) {
+		Rig t;
+		t.hit.strike(Kind::Water, laws, 17, 1.0f);
+		const Stereo o = renderBoth(t.hit, static_cast<size_t>(4.0 * kSr));
+		dumpWavStereo(name, o.l, o.r);
+	};
+	texture("water-drip.wav", waterLaws(kPlayDrone, 0.7, 0.8, 0.0, 0.1, 1400.0));
+	texture("water-brook.wav", waterLaws(kPlayDrone, 55.0, 0.7, 0.35, 0.15, 700.0));
+	texture("water-rain.wav", waterLaws(kPlayDrone, 420.0, 0.0, 0.2, 0.9, 2600.0));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// SWEEP: noise and an oscillator through a swept filter, over a long envelope                         //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+Laws sweepLaws(int play, int direction, double length, double range = 5.0, double lo = 200.0) {
+	Laws l = baseLaws(lo, length);
+	l.play = play;
+	l.sweepDirection = direction;
+	l.sweepRange = range;
+	l.lengthSeconds = length;
+	l.sweepOctaves = 0.0f;
+	l.noise = 0.5f;
+	l.snap = 0.4f;
+	l.tone = 0.3f;
+	return l;
+}
+
+} // namespace
+
+TEST_CASE("Sweep: the filter corner is at lo x 2^(range x position) going up and the mirror going down, at each moment (by value)") {
+	for (const int direction : { 0, 1 }) {
+		for (const double range : { 2.0, 5.0, 7.5 }) {
+			CAPTURE(direction);
+			CAPTURE(range);
+			const double length = 0.8;
+			Rig r;
+			r.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, direction, length, range), 3, 1.0f);
+			size_t done = 0;
+			for (const double at : { 0.1, 0.25, 0.5, 0.75, 0.9 }) {
+				const auto target = static_cast<size_t>(std::lround(at * length * kSr / 16.0)) * 16 + 1; // one sample into a control block
+				std::vector<float> sink(target - done);
+				r.hit.render(sink.data(), static_cast<int>(sink.size()));
+				done = target;
+				// RESTATED: the position at the last block's start is (done - 1) / (length x sr).
+				const double p = static_cast<double>(done - 1) / (length * kSr);
+				const double want = 200.0 * std::exp2(range * (direction == 0 ? p : 1.0 - p));
+				CHECK(r.hit.sweepCornerHzForTest() == doctest::Approx(want).epsilon(1e-6));
+			}
+		}
+	}
+}
+
+TEST_CASE("Sweep: the oscillator follows the corner by the Sweep field, and a synced length is beats at the host's tempo") {
+	Laws l = sweepLaws(kPlayOneShot, 0, 1.0, 4.0);
+	l.sweepOctaves = 0.5f; // follows half the way
+	Rig r;
+	r.hit.strike(Kind::Sweep, l, 3, 1.0f);
+	std::vector<float> sink(16 * 1500 + 1);
+	r.hit.render(sink.data(), static_cast<int>(sink.size()));
+	const double p = 24000.0 / kSr; // the position at the last block's start
+	CHECK(r.hit.sweepOscHzForTest() == doctest::Approx(200.0 * std::exp2(4.0 * 0.5 * p)).epsilon(1e-6));
+	l.sweepOctaves = 0.0f;
+	Rig still;
+	still.hit.strike(Kind::Sweep, l, 3, 1.0f);
+	still.hit.render(sink.data(), static_cast<int>(sink.size()));
+	CHECK(still.hit.sweepOscHzForTest() == doctest::Approx(200.0).epsilon(1e-9)); // not following: the oscillator stays put
+	// THE LENGTH: beats x seconds per beat when the tempo is known; else the Decay's (Length applied).
+	Controls c;
+	c.decaySeconds = 0.9;
+	c.syncBeats = 4.0;
+	c.secondsPerBeat = 0.5;
+	CHECK(lawsFor(Kind::Sweep, Fields {}, c, 200.0, 1.0).lengthSeconds == doctest::Approx(2.0));
+	c.secondsPerBeat = 0.0; // no tempo from the host
+	CHECK(lawsFor(Kind::Sweep, Fields {}, c, 200.0, 1.0).lengthSeconds == doctest::Approx(0.9));
+	c.syncBeats = 0.0; // Free
+	c.secondsPerBeat = 0.5;
+	CHECK(lawsFor(Kind::Sweep, Fields {}, c, 200.0, 1.0).lengthSeconds == doctest::Approx(0.9));
+}
+
+TEST_CASE("Sweep: a riser grows and is cut at its end, a downer falls, One-shot ends in exact silence, Gate holds and a Drone goes back and forth") {
+	const auto third = [](const std::vector<float>& x, int k) {
+		const size_t n = x.size() / 3;
+		return rms(std::vector<float>(x.begin() + static_cast<std::ptrdiff_t>(n * static_cast<size_t>(k)), x.begin() + static_cast<std::ptrdiff_t>(n * static_cast<size_t>(k + 1))));
+	};
+	Rig up;
+	up.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 1.5, 5.0), 3, 1.0f);
+	const std::vector<float> riser = render(up.hit, static_cast<size_t>(1.5 * kSr));
+	CHECK(third(riser, 2) > 3.0 * third(riser, 0)); // it grows (pos squared)
+	CHECK(peakAbs(riser) > 0.1f);
+	CHECK(peakAbs(riser) < 1.5f);
+	Rig down;
+	down.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 1, 1.5, 5.0), 3, 1.0f);
+	const std::vector<float> fall = render(down.hit, static_cast<size_t>(1.5 * kSr));
+	CHECK(third(fall, 0) > 3.0 * third(fall, 2)); // it falls
+	// AND BOTH END IN EXACT SILENCE after their length (the riser closed in 8 ms), idle.
+	for (Rig* r : { &up, &down }) {
+		(void)render(r->hit, static_cast<size_t>(0.5 * kSr));
+		CHECK(r->hit.idle());
+		const std::vector<float> after = render(r->hit, 4800);
+		CHECK(peakAbs(after) == 0.0f);
+	}
+	// A GATE RUNS TO THE END AND HOLDS WHAT IT REACHED until released: a riser stays full, then releases to idle.
+	Rig gate;
+	gate.hit.strike(Kind::Sweep, sweepLaws(kPlayGate, 0, 0.5, 5.0), 3, 1.0f);
+	const std::vector<float> g1 = render(gate.hit, static_cast<size_t>(2.0 * kSr));
+	CHECK_FALSE(gate.hit.idle());
+	CHECK(rms(g1, static_cast<size_t>(1.5 * kSr)) > 0.05);
+	gate.hit.release(0.2);
+	(void)render(gate.hit, static_cast<size_t>(4.0 * kSr));
+	CHECK(gate.hit.idle());
+	// A DRONE'S POSITION GOES UP AND BACK: at one length it is at the top, at two it is back at the bottom, and it is never idle.
+	Rig drone;
+	drone.hit.strike(Kind::Sweep, sweepLaws(kPlayDrone, 0, 0.5, 5.0), 3, 1.0f);
+	(void)render(drone.hit, static_cast<size_t>(0.5 * kSr) + 1);
+	CHECK(drone.hit.sweepPosForTest() == doctest::Approx(1.0).epsilon(0.01));
+	(void)render(drone.hit, static_cast<size_t>(0.5 * kSr));
+	CHECK(std::fabs(drone.hit.sweepPosForTest()) < 0.01);
+	CHECK_FALSE(drone.hit.idle());
+}
+
+TEST_CASE("Sweep: the same seed is the same sweep, and renders for listening: a 2-bar riser and a zap") {
+	Rig a;
+	Rig b;
+	a.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 12, 1.0f);
+	b.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 12, 1.0f);
+	CHECK(render(a.hit, 24000) == render(b.hit, 24000, 48));
+	Rig c;
+	c.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 13, 1.0f);
+	Rig d;
+	d.hit.strike(Kind::Sweep, sweepLaws(kPlayOneShot, 0, 0.6, 4.0), 12, 1.0f);
+	CHECK(render(c.hit, 24000) != render(d.hit, 24000));
+	// A TWO-BAR RISER at 120 bpm is four seconds, noise-led and resonant.
+	Laws riser = sweepLaws(kPlayOneShot, 0, 4.0, 6.0, 150.0);
+	riser.noise = 0.8f;
+	riser.snap = 0.55f;
+	riser.tone = 0.5f;
+	Rig r;
+	r.hit.strike(Kind::Sweep, riser, 9, 1.0f);
+	dumpWav("sweep-riser-2bar.wav", render(r.hit, static_cast<size_t>(4.5 * kSr)));
+	// A ZAP: a quarter second down from high, the oscillator following the filter all the way.
+	Laws zap = sweepLaws(kPlayOneShot, 1, 0.25, 6.0, 120.0);
+	zap.noise = 0.0f;
+	zap.sweepOctaves = 1.0f;
+	zap.snap = 0.6f;
+	zap.tone = 0.1f;
+	Rig z;
+	z.hit.strike(Kind::Sweep, zap, 9, 1.0f);
+	dumpWav("sweep-zap.wav", render(z.hit, static_cast<size_t>(0.7 * kSr)));
+	Rig g;
+	g.hit.strike(Kind::Sweep, sweepLaws(kPlayGate, 0, 1.0, 5.0), 9, 1.0f);
+	std::vector<float> held = render(g.hit, static_cast<size_t>(2.5 * kSr));
+	g.hit.release(0.3);
+	const std::vector<float> tail = render(g.hit, static_cast<size_t>(2.0 * kSr));
+	held.insert(held.end(), tail.begin(), tail.end());
+	dumpWav("sweep-gate.wav", held);
+	Rig dr;
+	dr.hit.strike(Kind::Sweep, sweepLaws(kPlayDrone, 0, 1.0, 5.0), 9, 1.0f);
+	dumpWav("sweep-drone.wav", render(dr.hit, static_cast<size_t>(4.0 * kSr)));
+}
+
+//--------------------------------------------------------------------------------------------------//
+// HEADROOM: the new kinds never exceed full scale, whatever their controls say                        //
+//--------------------------------------------------------------------------------------------------//
+
+TEST_CASE("headroom: no new kind exceeds full scale at the extremes of its controls, at the level a hit starts at") {
+	struct Case {
+		Kind kind;
+		const char* what;
+		Laws laws;
+	};
+	std::vector<Case> cases;
+	for (const int play : { kPlayOneShot, kPlayDrone }) {
+		for (const double density : { 0.25, 90.0, 2000.0 }) {
+			for (const double grain : { 1.0e-4, 0.004, 0.5 }) {
+				for (const float noise : { 0.0f, 1.0f }) {
+					for (const float metal : { 0.0f, 1.0f }) {
+						Laws l = baseLaws(3000.0, 0.6);
+						l.play = play;
+						l.density = density;
+						l.grainT60 = grain;
+						l.noise = noise;
+						l.metal = metal;
+						l.snap = 1.0f;
+						l.tone = 1.0f;
+						cases.push_back({ Kind::Particle, "particle", l });
+					}
+				}
+			}
+		}
+		for (const double speed : { 0.0, 0.5, 1.0 }) {
+			for (const double pressure : { 0.2, 1.0 }) {
+				for (const float noise : { 0.0f, 1.0f }) {
+					for (const double hz : { 60.0, 600.0, 9000.0 }) {
+						Laws l = baseLaws(hz, 1.0);
+						l.play = play;
+						l.speed = speed;
+						l.pressure = pressure;
+						l.noise = noise;
+						l.tone = 1.0f;
+						l.snap = 1.0f;
+						l.metal = 1.0f;
+						cases.push_back({ Kind::Friction, "friction", l });
+					}
+				}
+			}
+		}
+		for (const double rate : { 0.0625, 12.0, 1000.0 }) {
+			for (const double flow : { 0.0, 1.0 }) {
+				for (const double splash : { 0.0, 1.0 }) {
+					for (const double rise : { 0.0, 1.0 }) {
+						for (const float metal : { 0.0f, 1.0f }) {
+							Laws l = waterLaws(play, rate, rise, flow, splash, 900.0);
+							l.metal = metal;
+							l.tone = 1.0f;
+							cases.push_back({ Kind::Water, "water", l });
+						}
+					}
+				}
+			}
+		}
+		for (const int direction : { 0, 1 }) {
+			for (const double range : { 0.25, 9.0 }) {
+				for (const float snap : { 0.0f, 1.0f }) {
+					for (const float noise : { 0.0f, 1.0f }) {
+						for (const float tone : { 0.0f, 1.0f }) {
+							Laws l = sweepLaws(play, direction, 0.4, range, 100.0);
+							l.snap = snap;
+							l.noise = noise;
+							l.tone = tone;
+							l.sweepOctaves = 1.0f;
+							cases.push_back({ Kind::Sweep, "sweep", l });
+						}
+					}
+				}
+			}
+		}
+	}
+	double worst = 0.0;
+	for (const Case& c : cases) {
+		Rig r;
+		r.hit.strike(c.kind, c.laws, 5, 1.0f);
+		const Stereo o = renderBoth(r.hit, 48000 * 2, 512);
+		const double peak = std::max(static_cast<double>(peakAbs(o.l)), static_cast<double>(peakAbs(o.r)));
+		worst = std::max(worst, peak);
+		INFO(c.what);
+		CHECK(peak <= 1.0);
+	}
+	CHECK(worst > 0.2); // non-vacuity: they sound
 }

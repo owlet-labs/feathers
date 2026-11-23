@@ -409,6 +409,15 @@ public:
 	/// **THE COLUMN RUNS LEFT TO RIGHT** (a host whose flow is horizontal): the cards are laid out along x with the column's height as their
 	/// cross extent (`FxCard::setLaneAxis`), it scrolls and drags along x, and the (+) follows the last card. Vertical is the column's own.
 	void setHorizontal(bool horizontal);
+	/// **THE CARD HEIGHT A HORIZONTAL LANE GRANTS** (`kCardUnitHeight`, as the standalone rack's lane gives it): a horizontal column holding more room
+	/// than that does not stretch its cards to it; they stay one unit tall and what is left of the column is empty. 0 (the default): the whole
+	/// column, as a vertical column's cards take the whole width. Meaningful only while the column is horizontal.
+	void setCardCross(float cardCross) {
+		cardCross_ = cardCross;
+		resized();
+	}
+	/// The column's cross extent as the cards see it: `raw` itself, or the card cross the host set plus the column's two paddings, if that is less.
+	[[nodiscard]] float cappedCross(float raw) const noexcept { return horizontal_ && cardCross_ > 0.0f ? std::min(raw, cardCross_ + 2.0f * padX_) : raw; }
 	[[nodiscard]] bool horizontal() const noexcept { return horizontal_; }	[[nodiscard]] size_t shownCount() const;
 	[[nodiscard]] bool addShown() const noexcept { return addShown_; }
 	/// How tall the content is at a column `width` wide, for the host that sizes itself to it: the shown cards, their gaps and the padding.
@@ -563,8 +572,9 @@ private:
 	std::vector<SurfaceId> expanded_;
 	// THE HOST'S SAY over padding, how many cards, and the (+) (see `setPadding`); the defaults are the column's own.
 	bool horizontal_ = false;
+	float cardCross_ = 0.0f;
 	[[nodiscard]] float flowSize() const { return static_cast<float>(horizontal_ ? width() : height()); }
-	[[nodiscard]] float crossSize() const { return static_cast<float>(horizontal_ ? height() : width()); }
+	[[nodiscard]] float crossSize() const { return cappedCross(static_cast<float>(horizontal_ ? height() : width())); }
 	/// A rectangle given along the flow and across it, as a column-coordinate one.
 	[[nodiscard]] visage::Bounds placed(float flowPos, float flowLen, float crossPos, float crossLen) const {
 		return horizontal_ ? visage::Bounds { flowPos, crossPos, flowLen, crossLen } : visage::Bounds { crossPos, flowPos, crossLen, flowLen };

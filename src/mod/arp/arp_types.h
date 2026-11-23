@@ -78,6 +78,11 @@ static_assert(kTimeBaseCount == device::kDivisionCount + 1, "Hz, then every divi
 /// 1/16 — the arp a hand assumes.
 inline constexpr size_t kDefaultTimeBase = 7;
 static_assert(device::kDivisionBeats[kDefaultTimeBase - 1] == 0.25);
+// WHAT RATE IS, BY TIME BASE (TV audit): steps per second on Hz (index 0), otherwise a multiple of the chosen division. The card and the window
+// set Rate's hover text from Time Base; the declared text names both cases and remains for a surface that sets none.
+inline constexpr const char* kRateTipHz = "How fast the steps go: steps per second, unsynced to the tempo";
+inline constexpr const char* kRateTipDivision = "How fast the steps go: a multiple of the chosen division";
+inline const char* rateTipFor(int timeBase) { return timeBase == 0 ? kRateTipHz : kRateTipDivision; }
 
 inline constexpr auto& kOffOnNames = mod::kOffOnNames;
 
@@ -162,7 +167,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	  .tooltip = "How much of a step each note lasts. Over 100% it overlaps the next note — a tie" },
 	{ .key = "feel", .name = "Feel", .min = 0.0, .max = static_cast<double>(kFeelCount) - 1.0, .def = 0.0,
 	  .stepped = true, .unit = device::Unit::Choice, .names = kFeelNames, .modulatable = true,
-	  .tooltip = "The bar's feel: Swing delays the off-beats (the MPC's), Groove leans them by a phi template, Free walks "
+	  .tooltip = "The bar's feel: Swing delays the off-beats (a shuffle), Groove leans them by a phi template, Free walks "
 	             "a phase through it",
 	  // DRAWN AS SKLITTER'S GROOVE IS: one zone-knob cell, the
 	  // feel on its ZoneSelect and Feel Amount its box — still two params, so an amount never rolls into another feel.

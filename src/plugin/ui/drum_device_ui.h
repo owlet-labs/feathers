@@ -51,6 +51,8 @@ public:
 	[[nodiscard]] feathers::drum::Kind kind() const;
 	/// Whether `p` is read by the current Kind (a control with no gate always is): the honesty rule's question.
 	[[nodiscard]] bool relevant(dd::Param p) const;
+	/// Whether the drum is a Drone (a kind that can be held, set to Drone): it sounds with no key, so the Trig button has nothing to do and is hidden.
+	[[nodiscard]] bool droneOn() const;
 	/// The hit as the drum engine plays it at velocity 0.8 (the panel's), and the pitch it settles on.
 	[[nodiscard]] feathers::drum::Laws laws() const;
 	[[nodiscard]] feathers::drum::SettledPitch settled() const;
@@ -61,33 +63,16 @@ public:
 	static constexpr int kPictureKey = 60;
 	/// The picture's handles for the current Kind, each bound to its device control (the kind's own only).
 	[[nodiscard]] HitPicture::Controls handles() const;
+	/// The hover text of the controls a Kind (and Pitched) changes the meaning of, for the current settings. Called on every
+	/// surface's content update, so a Kind change, a patch load, an undo or an automation write all reach it.
+	void refreshTooltips() const;
 	void setModulation(ModState* mod, EditHistory* history);
 
 private:
 	backplane::DeviceHost& host_;
 	DeviceInstanceId id_;
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(dd::Param::kCount)> controls_ {};
-};
-
-/// **A DRUM'S PLAY BUTTON** (a play glyph): a press strikes the drum's Note through the host's note road (`DeviceHost::postNote`), the release
-/// lets it go; velocity 100/127. Offered only where the host has such a road (`canPostNote`): a host with none draws none.
-class DrumPlayButton : public visage::Frame, public TooltipSource {
-public:
-	static constexpr float kVelocity = 100.0f / 127.0f;
-	DrumPlayButton(backplane::DeviceHost& host, std::function<int()> key);
-	~DrumPlayButton() override;
-	void draw(visage::Canvas& canvas) override;
-	const char* tooltipAt(visage::Point) const override;
-	void offeredControls(std::vector<Offered>&) const override {}
-	void press();
-	void release();
-	[[nodiscard]] bool held() const noexcept { return held_; }
-
-private:
-	backplane::DeviceHost& host_;
-	std::function<int()> key_;
-	bool held_ = false;
-	int heldKey_ = 0;
+	mutable int tipState_ = -1; ///< the (Kind, Pitched) the overrides were last set for; -1 before the first refresh
 };
 
 } // namespace feathers::ui

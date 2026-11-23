@@ -81,7 +81,6 @@
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
-#include <regex>
 #include <set>
 #include <tuple>
 #include <typeinfo>
@@ -5549,7 +5548,7 @@ TEST_CASE("backlog KQ: in the rack, every control a hand-written card shows is i
 	}
 }
 
-TEST_CASE("OC: the standalone rack has its Macros column at the left — macros two across and four tall with their arms BESIDE them, the route list under them — and the lane starts after it with no band above") {
+TEST_CASE("OC: the standalone rack has its two panes at the left — the container's (the route list) and the Macros' (two across and four tall with their arms BESIDE them) — and the lane starts after them with no band above") {
 	Fixture f;
 	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
 	const DeviceInstanceId inner = f.add(fx::filter::kTraits.tag);
@@ -5564,11 +5563,12 @@ TEST_CASE("OC: the standalone rack has its Macros column at the left — macros 
 		CAPTURE(i);
 		const visage::Bounds b = f.editor.macroBoundsForTest(i);
 		const visage::Bounds arm = f.editor.macroArmBoundsForTest(i);
-		CHECK(b.x() == doctest::Approx(12.0f + rack::RackEditor::kMacroCellWidth * static_cast<float>(i % 2)));
+		const float macrosX = rack::RackEditor::kPaneWidth + 12.0f; // the macros' pane stands right of the container's
+		CHECK(b.x() == doctest::Approx(macrosX + rack::RackEditor::kMacroCellWidth * static_cast<float>(i % 2)));
 		CHECK(b.width() == rack::RackEditor::kMacroKnobWidth);
 		// THE ARM IS BESIDE ITS KNOB, level with the dial, inside the cell: not under it.
 		CHECK(arm.x() >= b.right());
-		CHECK(arm.right() <= 12.0f + rack::RackEditor::kMacroCellWidth * static_cast<float>(i % 2 + 1));
+		CHECK(arm.right() <= macrosX + rack::RackEditor::kMacroCellWidth * static_cast<float>(i % 2 + 1));
 		CHECK(arm.y() >= b.y());
 		CHECK(arm.bottom() <= b.bottom());
 		if (i >= 2) {
@@ -5580,20 +5580,20 @@ TEST_CASE("OC: the standalone rack has its Macros column at the left — macros 
 		}
 	}
 	CHECK(f.editor.macroBoundsForTest(0).y() >= top);
-	// THE ROUTE LIST IS UNDER THE LAST MACRO ROW, in the column, and inside the window: the window keeps its height.
+	// THE ROUTE LIST IS IN THE CONTAINER'S PANE, the macros' left neighbour, and takes what is left of its height: three rows and more.
 	ui::RouteList& list = f.editor.routeListForTest();
 	CHECK(list.x() == 12.0f);
 	CHECK(list.width() == rack::RackEditor::kMacroColumnWidth);
-	CHECK(list.y() >= f.editor.macroBoundsForTest(7).bottom());
+	CHECK(list.right() <= f.editor.macroBoundsForTest(0).x());
 	CHECK(list.bottom() <= static_cast<float>(kEditorHeight));
-	CHECK(list.height() >= ui::RouteList::kHeadingHeight + ui::RouteList::kRowHeight);
+	CHECK(list.height() >= ui::RouteList::kHeadingHeight + 3.0f * ui::RouteList::kRowHeight);
 	CHECK(rack::RackEditor::kHeight == 466);
 	// THE LANE STARTS AFTER THE COLUMN AND AT THE TOP: no band above it any more.
 	const visage::Bounds card = f.editor.cardBoundsForTest(inner);
 	CHECK(card.x() >= rack::RackEditor::kLaneLeft);
 	CHECK(card.y() == doctest::Approx(top + 12.0f));
 	// THE COLUMN'S GROUND covers what scrolls under it, and it is drawn OVER the cards (sibling order), list included.
-	CHECK(f.editor.columnBackdropForTest().right() > f.editor.macroBoundsForTest(1).right());
+	CHECK(f.editor.columnBackdropForTest().right() > list.right());
 	ui::FxCard* placed = f.editor.cardOfDeviceForTest(inner);
 	REQUIRE(placed != nullptr);
 	const int cardAt = f.editor.indexOfChild(placed);
@@ -5602,9 +5602,9 @@ TEST_CASE("OC: the standalone rack has its Macros column at the left — macros 
 	CHECK(f.editor.indexOfChild(f.editor.columnBackdropFrameForTest()) > cardAt);
 	CHECK(f.editor.indexOfChild(&list) > cardAt);
 	// THE ARITHMETIC THE LAYOUT AND THE REPORT SHARE, against the default height, with and without the settings door.
-	CHECK(rack::RackEditor::columnNeeded(false, true) + ui::RouteList::kHeadingHeight + ui::RouteList::kRowHeight
+	CHECK(rack::RackEditor::columnNeeded(false, true) + ui::RouteList::kHeadingHeight + 3.0f * ui::RouteList::kRowHeight
 	      <= static_cast<float>(rack::RackEditor::kHeight));
-	CHECK(f.editor.macroBoundsForTest(7).bottom() + 12.0f == doctest::Approx(top + rack::RackEditor::columnNeeded(false, false)).epsilon(0.002));
+	CHECK(f.editor.macroBoundsForTest(7).bottom() + 12.0f == doctest::Approx(top + rack::RackEditor::macrosNeeded()).epsilon(0.002));
 }
 
 TEST_CASE("OC: the Chain window seats Mix and Gain over an H-line over the macros, then the route list, in the default height, and the lane starts after them") {
@@ -5637,8 +5637,8 @@ TEST_CASE("OC: the Chain window seats Mix and Gain over an H-line over the macro
 	for (size_t i = 0; i < 8; ++i) {
 		CAPTURE(i);
 		const visage::Bounds b = editor->macroBoundsForTest(i);
-		CHECK(b.y() >= rule.bottom()); // the macros below it
-		CHECK(b.x() == (i % 2 == 0 ? mix.x() : gain.x())); // two across, under Mix and Gain
+		// THE MACROS STAND IN THEIR OWN PANE, right of the container's: two across, the same cell pitch as Mix and Gain.
+		CHECK(b.x() == doctest::Approx(rack::RackEditor::kPaneWidth + (i % 2 == 0 ? mix.x() : gain.x())));
 		if (i >= 2) {
 			CHECK(b.y() >= editor->macroBoundsForTest(i - 2).bottom());
 		}
@@ -5648,12 +5648,11 @@ TEST_CASE("OC: the Chain window seats Mix and Gain over an H-line over the macro
 	// (RELATIVE TO THE CANVAS BAND, which a nested editor has none of once it is presented, and this fixture presents nowhere.)
 	const float top = editor->canvasExtent();
 	ui::RouteList& list = editor->routeListForTest();
-	CHECK(list.y() >= editor->macroBoundsForTest(7).bottom());
+	CHECK(list.y() >= rule.bottom()); // the list under Mix and Gain and the rule, in the container's pane
 	CHECK(list.bottom() - top <= size.y);
-	// ONE ROW AND ITS HEADING (it was three before the column carried the two fold headers, which the fixed height pays for; the list scrolls)
-	CHECK(list.height() >= ui::RouteList::kHeadingHeight + ui::RouteList::kRowHeight);
+	CHECK(list.height() >= ui::RouteList::kHeadingHeight + 3.0f * ui::RouteList::kRowHeight); // three rows and more, with the macros in a pane of their own
 	CHECK(editor->macroBoundsForTest(7).bottom() - top + 12.0f
-	      == doctest::Approx(rack::RackEditor::columnNeeded(true, false) - 4.0f).epsilon(0.02));
+	      == doctest::Approx(rack::RackEditor::macrosNeeded()).epsilon(0.02));
 	CHECK(editor->cardBoundsForTest(inner).x() >= rack::RackEditor::kLaneLeft);
 	CHECK(size.x == static_cast<float>(rack::RackEditor::kWidth));
 }
@@ -6451,7 +6450,7 @@ TEST_CASE("TFIELD with the orbit Off: Rate's cell shows Phase and Sync hides, an
 
 // ---- QN: THE MACROS COLUMN FOLDS (collapsible in the rack and in a chain) ----
 
-TEST_CASE("QN: the Macros column folds to the rail's strip and back — the lane starts at the strip, the column's widgets hide, "
+TEST_CASE("QN: the Macros pane folds to the rail's strip and back — the lane starts after the strip, the pane's widgets hide, "
           "the hand's toggle says so, and a macro and its route keep working while it is folded") {
 	Fixture f;
 	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
@@ -6491,14 +6490,14 @@ TEST_CASE("QN: the Macros column folds to the rail's strip and back — the lane
 	CHECK(told == std::vector<bool> { true });
 	// FOLDED: the strip is the rail's own width, the lane starts at it, and the column's widgets are hidden.
 	CHECK(rail.width() == doctest::Approx(ui::Rail::kCollapsedWidth));
-	CHECK(rail.x() == 0.0f);
-	CHECK(f.editor.laneLeft() == doctest::Approx(ui::Rail::kCollapsedWidth + 6.0f));
+	CHECK(rail.x() == rack::RackEditor::kPaneWidth); // the macros' pane stands after the container's, which is open
+	CHECK(f.editor.laneLeft() == doctest::Approx(rack::RackEditor::kPaneWidth + ui::Rail::kCollapsedWidth + 6.0f));
 	const float foldedCardX = f.editor.cardBoundsForTest(filter).x();
-	CHECK(openCardX - foldedCardX == doctest::Approx(rack::RackEditor::kLaneLeft - (ui::Rail::kCollapsedWidth + 6.0f)));
+	CHECK(openCardX - foldedCardX == doctest::Approx(rack::RackEditor::kPaneWidth - ui::Rail::kCollapsedWidth));
 	for (const auto& slot : f.editor.macrosForTest()) {
 		CHECK_FALSE(slot->isVisible());
 	}
-	CHECK_FALSE(f.editor.routeListForTest().isVisible());
+	CHECK(f.editor.routeListForTest().isVisible()); // the container's pane is the route list's, and it is open
 
 	// AND STILL WORKING: the route is the engine's, untouched by the fold; a macro the host moves reaches the engine.
 	CHECK(f.engine.routeAmount(macro1, cutoff) == doctest::Approx(0.5f));
@@ -6562,7 +6561,8 @@ TEST_CASE("QN: a CHAIN device's Macros column, folded in its window, rides its b
 	rack::RackEditor window(*inner, mod, history);
 	window.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
 	CHECK(window.macrosCollapsed()); // opened folded, from its first frame
-	CHECK(window.laneLeft() == doctest::Approx(ui::Rail::kCollapsedWidth + 6.0f));
+	CHECK_FALSE(window.inspectorFolded()); // only the macros' pane was folded when it was saved
+	CHECK(window.laneLeft() == doctest::Approx(rack::RackEditor::kPaneWidth + ui::Rail::kCollapsedWidth + 6.0f));
 
 	// A LOAD UNDER THE OPEN WINDOW: the bridge unfolds, and the next beat (`syncMacros`) follows it — silently.
 	window.notifyTrayForTest().say("");
@@ -6731,7 +6731,7 @@ TEST_CASE("the Chain and Rack plugins' preset browser shows all 8 variant chips,
 		CHECK(first.y() > static_cast<float>(ui::PresetBrowser::kPanelStyle.height) * 0.5f);
 		ui::MacroSlot* slot = f.editor.macrosForTest()[0].get();
 		REQUIRE(slot != nullptr);
-		CHECK(static_cast<float>(slot->y()) >= static_cast<float>(browser.y() + browser.height()));
+		CHECK(f.editor.routeListForTest().y() >= static_cast<float>(browser.y() + browser.height())); // the container's pane stacks below it
 	}
 }
 
@@ -6916,30 +6916,8 @@ TEST_CASE("rack editor: a Rack's chain strip renames its chain by a right press'
 // THE COLUMN'S TWO FOLDS: THE MACROS' AND THE INSPECTOR'S, EACH ITS OWN                               //
 //--------------------------------------------------------------------------------------------------//
 
-namespace {
 
-/// WHAT A COLUMN SHOWS, as values: each half's widgets visible or not, and where the other half stands.
-struct ColumnSeen {
-	bool macros = false;
-	bool levels = false;
-	bool routes = false;
-	visage::Bounds firstLevel {};
-	visage::Bounds firstMacro {};
-};
-
-ColumnSeen seeColumn(rack::RackEditor& e) {
-	ColumnSeen out;
-	out.macros = e.macrosForTest()[0]->isVisible() && e.macrosForTest()[7]->isVisible();
-	out.levels = e.levelCountForTest() > 0 && e.levelShownForTest(0);
-	out.routes = e.routeListForTest().isVisible();
-	out.firstLevel = e.levelCountForTest() > 0 ? e.levelBoundsForTest(0) : visage::Bounds {};
-	out.firstMacro = e.macroBoundsForTest(0);
-	return out;
-}
-
-} // namespace
-
-TEST_CASE("column folds: the macros header folds the macros and nothing else, the inspector header folds Mix and Gain and the route list and nothing else") {
+TEST_CASE("column folds: each pane's rail folds it SIDEWAYS to a strip and leaves the other pane where it was, the strips standing edge to edge") {
 	namespace cmp = composite;
 	rack::registerChainExpandedView();
 	Fixture f;
@@ -6951,62 +6929,62 @@ TEST_CASE("column folds: the macros header folds the macros and nothing else, th
 	REQUIRE(view.liveForTest());
 	rack::RackEditor& e = *view.editorForTest();
 	REQUIRE(e.levelCountForTest() == 2);
-	const ColumnSeen open = seeColumn(e);
-	CHECK(open.macros);
-	CHECK(open.levels);
-	CHECK(open.routes);
+	ui::Rail& container = e.containerRailForTest();
+	ui::Rail& macros = e.macrosRailForTest();
+	const auto press = [&](ui::Rail& rail) {
+		visage::MouseEvent down {};
+		const visage::Bounds t = rail.toggleBounds();
+		down.position = { t.x() + t.width() * 0.5f, t.y() + t.height() * 0.5f };
+		rail.onMouseDown().callback(down);
+	};
+	const float strip = ui::Rail::kCollapsedWidth;
+	const float shrink = rack::RackEditor::kPaneWidth - strip;
+	// BOTH OPEN: the container's pane first, the macros' after it, the lane after both; the pane's label is the container's kind.
+	CHECK_FALSE(e.inspectorFolded());
 	CHECK_FALSE(e.macrosFolded());
-	CHECK_FALSE(e.inspectorFolded());
-	// THE HEADERS ARE STACKED, EACH DIRECTLY OVER ITS HALF: the inspector's over Mix and Gain, the macros' over the macros.
-	const visage::Bounds hm = e.macrosHeaderForTest().bounds();
-	const visage::Bounds hi = e.inspectorHeaderForTest().bounds();
-	CHECK(hi.height() == rack::RackEditor::kFoldRow);
-	CHECK(hm.height() == rack::RackEditor::kFoldRow);
-	CHECK(hi.bottom() <= open.firstLevel.y());
-	CHECK(open.firstLevel.bottom() <= hm.y());
-	CHECK(hm.bottom() <= open.firstMacro.y());
-	CHECK(hm.right() <= rack::RackEditor::kLaneLeft - 6.0f - rack::RackEditor::kMacrosToggleRoom + 0.5f);
-	// A PRESS ON THE MACROS HEADER: the macros go, Mix and Gain and the route list stay exactly where they were.
-	e.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	CHECK(e.macrosFolded());
-	CHECK_FALSE(e.inspectorFolded());
-	const ColumnSeen macrosGone = seeColumn(e);
-	CHECK_FALSE(macrosGone.macros);
-	CHECK(macrosGone.levels);
-	CHECK(macrosGone.routes);
-	CHECK(macrosGone.firstLevel == open.firstLevel);
-	CHECK(f.bridge.fieldAt(chain, 0) == f.bridge.fieldAt(chain, 0)); // nothing else was written
-	CHECK(view.bridgeForTest()->macrosCollapsed());
-	CHECK_FALSE(view.bridgeForTest()->inspectorCollapsed());
-	CHECK_FALSE(e.macrosCollapsed()); // one half folded is not the strip: the column keeps its width
 	CHECK(e.laneLeft() == rack::RackEditor::kLaneLeft);
-	// AND BACK, then the INSPECTOR HEADER: Mix and Gain and the route list go, the macros stay shown.
-	e.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	CHECK_FALSE(e.macrosFolded());
-	CHECK(seeColumn(e).macros);
-	e.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	CHECK(e.macrosForTest()[0]->isVisible());
+	CHECK(e.levelShownForTest(0));
+	CHECK(e.routeListForTest().isVisible());
+	CHECK(std::string(rack::RackEditor::kContainerLabel) == "CHAIN");
+	const visage::Bounds mix0 = e.levelBoundsForTest(0);
+	const visage::Bounds macro0 = e.macroBoundsForTest(0);
+	CHECK(macro0.x() >= rack::RackEditor::kPaneWidth); // the macros stand in their own pane, right of the container's
+	// A PRESS ON THE CONTAINER'S TOGGLE: it folds to a strip, the macros pane is untouched, and moves left by what the container gave up.
+	press(container);
 	CHECK(e.inspectorFolded());
 	CHECK_FALSE(e.macrosFolded());
-	const ColumnSeen inspectorGone = seeColumn(e);
-	CHECK(inspectorGone.macros);
-	CHECK_FALSE(inspectorGone.levels);
-	CHECK_FALSE(inspectorGone.routes);
+	CHECK(container.width() == strip);
+	CHECK(e.macroBoundsForTest(0).x() == doctest::Approx(strip + 12.0f)); // the macros' pane starts right after the strip: no gap, no margin
+	CHECK_FALSE(e.levelShownForTest(0));
+	CHECK_FALSE(e.routeListForTest().isVisible());
+	CHECK(e.macrosForTest()[0]->isVisible());
+	CHECK(e.macroBoundsForTest(0).x() == doctest::Approx(macro0.x() - shrink));
+	CHECK(e.macroBoundsForTest(0).y() == macro0.y());
+	CHECK(e.laneLeft() == doctest::Approx(rack::RackEditor::kLaneLeft - shrink));
 	CHECK(view.bridgeForTest()->inspectorCollapsed());
 	CHECK_FALSE(view.bridgeForTest()->macrosCollapsed());
-	CHECK_FALSE(e.macrosCollapsed());
-	// BOTH FOLDED IS THE STRIP, and its own toggle opens both.
-	e.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
+	// AND THE MACROS' TOGGLE: both are strips, side by side, and the lane starts right after them (half a pad).
+	press(macros);
 	CHECK(e.macrosFolded());
-	CHECK(e.inspectorFolded());
-	CHECK(e.macrosCollapsed());
-	CHECK(e.laneLeft() == doctest::Approx(ui::Rail::kCollapsedWidth + 6.0f));
-	REQUIRE(e.setMacrosCollapsed(false));
-	CHECK_FALSE(e.macrosFolded());
+	CHECK(macros.width() == strip);
+	CHECK(macros.x() == container.x() + container.width());
+	CHECK_FALSE(e.macrosForTest()[0]->isVisible());
+	CHECK(e.laneLeft() == doctest::Approx(2.0f * strip + 6.0f));
+	// UNFOLD THE CONTAINER: its pane comes back to where it was, the macros stay a strip.
+	press(container);
 	CHECK_FALSE(e.inspectorFolded());
-	const ColumnSeen back = seeColumn(e);
-	CHECK(back.macros);
-	CHECK(back.levels);
-	CHECK(back.routes);
+	CHECK(e.macrosFolded());
+	CHECK(e.levelBoundsForTest(0) == mix0);
+	CHECK(e.levelShownForTest(0));
+	CHECK(e.routeListForTest().isVisible());
+	CHECK(macros.x() == rack::RackEditor::kPaneWidth); // the macros' strip stands right after the container's open pane
+	CHECK(e.laneLeft() == doctest::Approx(rack::RackEditor::kPaneWidth + strip + 6.0f));
+	// AND THE MACROS: back where they were.
+	press(macros);
+	CHECK_FALSE(e.macrosFolded());
+	CHECK(e.macroBoundsForTest(0) == macro0);
+	CHECK(e.laneLeft() == rack::RackEditor::kLaneLeft);
 }
 
 TEST_CASE("column folds: each fold is patch state under its own key, a saved patch loads into a fresh instance with the same two folds, and an old patch (one fold key) opens both the way it was") {
@@ -7051,8 +7029,26 @@ TEST_CASE("column folds: each fold is patch state under its own key, a saved pat
 		(void)bm;
 		(void)bi;
 		// THE DOCUMENT AS A BUILD BEFORE THE SPLIT WROTE IT: no `inspectorColumn` object at all.
-		const std::regex inspectorKey("\\s*,?\\s*\"inspectorColumn\"\\s*:\\s*\\{[^}]*\\}");
-		const std::string oldText = std::regex_replace(text, inspectorKey, "");
+		std::string oldText = text;
+		{
+			const size_t key = oldText.find("\"inspectorColumn\"");
+			REQUIRE(key != std::string::npos);
+			const size_t open = oldText.find('{', key);
+			const size_t close = oldText.find('}', open);
+			REQUIRE(close != std::string::npos);
+			size_t from = key;
+			while (from > 0 && (oldText[from - 1] == ' ' || oldText[from - 1] == '\n' || oldText[from - 1] == '\t')) {
+				--from;
+			}
+			size_t to = close + 1;
+			if (from > 0 && oldText[from - 1] == ',') {
+				--from; // the member's own leading comma goes with it
+			}
+			else if (to < oldText.size() && oldText[to] == ',') {
+				++to; // the first member: its trailing comma
+			}
+			oldText.erase(from, to - from);
+		}
 		REQUIRE(oldText.find("inspectorColumn") == std::string::npos);
 		REQUIRE(oldText.find("macrosColumn") != std::string::npos);
 		REQUIRE(rack::parseRackText(oldText, &old));
@@ -7133,4 +7129,40 @@ TEST_CASE("replaced contents, the Chain: a chain preset applied at the top and i
 		}
 		tick(24);
 	}
+}
+
+TEST_CASE("route list: in the Chain editor, a nested rack's macro armed as the rack's export lists the routes that macro has inside the rack, with the row text asserted") {
+	namespace pr = rack::parallel;
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const DeviceInstanceId nested = f.add(pr::kTraits.tag);
+	REQUIRE(nested != kNoInstance);
+	pr::Rack* inner = pr::rackOf(f.bridge.containerSurfaceOf(nested));
+	REQUIRE(inner != nullptr);
+	if (inner->chainCount() < 2) {
+		REQUIRE(inner->addChain() != SIZE_MAX);
+	}
+	rack::RackBridge& chain0 = *inner->chainAt(0)->bridge();
+	const DeviceInstanceId filter = chain0.addDevice(fx::filter::kTraits.tag);
+	REQUIRE(filter != kNoInstance);
+	const size_t control = fx::filter::kDescriptor.controlOfNthModulatableBesideEnable(0);
+	const backplane::Source macro = backplane::Source::core(0);
+	const backplane::Destination dest = backplane::Destination::control(filter, control);
+	chain0.setRouteAmount(macro, dest, 0.5f);
+	// THE EDITOR'S OWN ARM of the nested rack's macro 1: the rack's export row, armed in this editor's state.
+	const backplane::Source armed = f.bridge.containerExport(nested, macro);
+	REQUIRE(armed != backplane::Source::nobody());
+	f.mod.focus(armed);
+	f.mod.arm(true);
+	ui::RouteList& list = f.editor.routeListForTest();
+	const std::vector<ui::RouteList::Row> rows = list.allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].destination == dest);
+	const std::string name = list.nameOfForTest(rows[0]);
+	CHECK(name.find(fx::filter::kTraits.name) != std::string::npos);
+	CHECK(name.find(fx::filter::kDescriptor.params[control].name) != std::string::npos);
+	list.writeForTest(rows[0], 0.25f);
+	CHECK(chain0.routeAmount(macro, dest) == doctest::Approx(0.25f));
+	list.removeForTest(rows[0]);
+	CHECK(chain0.routeAmount(macro, dest) == 0.0f);
 }

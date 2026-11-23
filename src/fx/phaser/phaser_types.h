@@ -796,7 +796,7 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
                  "effect"),
     pillPowerDesc("phaser_x_fb_tilt_on", "Phaser X Fb Tilt On", "Fb tilt", "The pad's feedback tilt on or off"),
     pillKnobDesc("phaser_x_pairing_field", "Phaser X Pairing", "Pairing",
-                 "The pad's pull of each pair of stages apart around their corner. Phaser only. 0 = field forced to its "
+                 "The pad's pull of each pair of stages apart around their corner. 0 = field forced to its "
                  "minimum, middle = the terrain's value, full = forced to its maximum; switch off = no effect",
                  kGateMode, kPhaserOnly),
     pillPowerDesc("phaser_x_pairing_on", "Phaser X Pairing On", "Pairing", "The pad's notch pairing on or off",

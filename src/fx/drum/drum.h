@@ -76,7 +76,10 @@ public:
 	void reset();
 	void setSettings(const Settings& s);
 	void setTickPhase(int phase) noexcept { phase_ = phase; }
-	void setClock(const device::TransportClock& clock) noexcept { clock_ = clock; }
+	void setClock(const device::TransportClock& clock) noexcept {
+		clock_ = clock;
+		controls_.secondsPerBeat = clock.secondsPerBeat; // a synced Sweep's length follows the tempo
+	}
 	/// THE NOTES OF A PIECE, queued for the next `process`.
 	void queueNotes(const device::NoteEvent* in, size_t count);
 	/// Adds the drum to `left`/`right`.
@@ -93,6 +96,7 @@ public:
 	[[nodiscard]] int fadingForTest() const noexcept;
 	[[nodiscard]] uint32_t strikesForTest() const noexcept { return strikes_; }
 	[[nodiscard]] uint32_t staleDroppedForTest() const noexcept { return staleDropped_; }
+	[[nodiscard]] uint32_t keyStrikesForTest(int key) const noexcept { return key >= 0 && key < 128 ? keyStrikes_[static_cast<size_t>(key)] : 0u; }
 	[[nodiscard]] const Settings& settingsForTest() const noexcept { return s_; }
 	[[nodiscard]] const feathers::drum::Fields& fieldsForTest() const noexcept { return fields_; }
 	[[nodiscard]] const feathers::drum::Controls& controlsForTest() const noexcept { return controls_; }
@@ -102,6 +106,8 @@ public:
 	[[nodiscard]] float keyTuningForTest(int key) const noexcept { return key >= 0 && key < 128 ? keyTuning_[static_cast<size_t>(key)] : 0.0f; }
 	[[nodiscard]] float gainLeftForTest() const noexcept { return gainL_; }
 	[[nodiscard]] float gainRightForTest() const noexcept { return gainR_; }
+	/// The drone's hit, or null while it is not running.
+	[[nodiscard]] const feathers::drum::Hit* droneForTest() const noexcept { return drone_.used ? &drone_.hit : nullptr; }
 
 private:
 	struct Slot {
@@ -133,7 +139,16 @@ private:
 	void release(Slot& s);
 	void fade(Slot& s);
 	void renderSpan(float* left, float* right, int n);
+	/// ONE SLOT'S SPAN, added to the ears: the pool's hits and the drone take the same road.
+	void renderSlot(Slot& s, float* left, float* right, int n);
 	void refreshLaws();
+	/// **THE DRONE**: while the play mode is Drone on a kind that can be held, one hit of its own (outside the pool, so it takes no voice) is kept
+	/// struck from the moment the device runs. A moved control reaches it as any hit's (`setLaws`); a changed Seed or Kind restarts it; leaving the
+	/// mode fades it out. Called at the top of every `process`.
+	void serveDrone();
+	/// THE TRIG PARAM'S EDGES, as the notes a hand on the key would make (`process` puts them at the front of its queue).
+	void injectTrig(size_t& head, int base);
+	[[nodiscard]] bool droneWanted() const noexcept;
 	[[nodiscard]] bool hpRinging(const Slot& s) const noexcept;
 
 	double sr_ = 48000.0;
@@ -149,8 +164,14 @@ private:
 	device::TransportClock clock_ {};
 	feathers::ks::PluckBuilder builder_ {};
 	std::array<Slot, kPool> slots_ {};
+	Slot drone_ {};
 	std::array<device::NoteEvent, kQueue> queue_ {};
 	size_t queued_ = 0;
+	/// The Trig param's edge detector, the rises it has seen since the last call, whether it has fallen since, and whether a strike of its own is held.
+	feathers::mod::TrigEdge trigEdge_ {};
+	uint32_t trigRisen_ = 0;
+	bool trigFell_ = false;
+	bool trigHeld_ = false;
 	std::array<float, 128> keyTuning_ {};
 	std::array<uint32_t, 128> keyStrikes_ {};
 	uint64_t order_ = 0;

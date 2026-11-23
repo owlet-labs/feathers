@@ -126,13 +126,15 @@ public:
 	static constexpr size_t kBoxCount = 10; ///< Base, Rate, Sm, Amt, Ph | Pk, Cr, Tr, Seed, St
 	static const std::array<mod::lfo::Param, kBoxCount>& layout();
 
-	/// The switches: Ping-Pong, Bipolar. TWO-STATE ONLY — see `toggleChip`, and the MSEG's chip list,
+	/// The switches: Bipolar, Poly, Carry. TWO-STATE ONLY — see `toggleChip`, and the MSEG's chip list,
 	/// which is the shape this follows. It was five; the Smoothing switch went with its param (decided
-	/// 2026-09-19 — the box's bottom is its off), and Waveform and Mode left for `choices()`.
-	static constexpr size_t kChipCount = 4;
-	/// HOW MANY OF THEM SIT IN THE CHIP ROW — the first three. The fourth, Carry, sits in the second box row's last
+	/// 2026-09-19 — the box's bottom is its off), and Waveform and Mode left for `choices()`. PING-PONG LEFT THE LIST
+	/// (2026-11-22): the engine never reads it, so its chip was inert in every mode. Its key stays in the descriptor, so
+	/// saved values still load and save; the real reversal is a separate piece of work.
+	static constexpr size_t kChipCount = 3;
+	/// HOW MANY OF THEM SIT IN THE CHIP ROW — the first two. The third, Carry, sits in the second box row's last
 	/// column (see `chipBounds`).
-	static constexpr size_t kRowChips = 3;
+	static constexpr size_t kRowChips = 2;
 	struct Chip {
 		mod::lfo::Param param;
 		const char* label;

@@ -45,10 +45,14 @@
 #include "dsp/partial_spectrum.h"
 #include "plugin/ui/spectral_expanded.h"
 #include "plugin/ui/smooth_expanded.h"
+#include "fx/smooth/smooth_tips.h"
 #include "plugin/ui/phaser_pad.h" // phaser Task 9a: the explore pad over the phaser's policy
 #include "fx/phaser/phaser_types.h"
 #include "fx/delay/delay.h" // backlog LF: the taps strip is asserted against a running engine
 #include "plugin/ui/delay_card.h"
+#include "plugin/ui/delay_expanded.h"
+#include "plugin/ui/delay_tips.h"
+#include "plugin/ui/follower_card.h"
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/noise_card.h"
 #include "plugin/ui/macro_polarity.h"
@@ -3734,6 +3738,11 @@ TEST_CASE("every x across an fx card's head answers exactly one verb, and the bu
 			const visage::Point where =
 			    card->positionInWindow() + visage::Point { x, ui::FxCard::kSlotHeadHeight * 0.5f };
 
+			// A WINDOW THE LAST PRESS OPENED (the expand button's) IS CLOSED BEFORE THE NEXT: the Chain/site window is wide, and left open it would
+			// stand over this card's head, so a press on the enable chip would reach the window and not the card.
+			if (auto* overlay = f.gui.expandedForTest(); overlay != nullptr && overlay->open()) {
+				overlay->dismiss();
+			}
 			clickThroughRoot(f.root, where);
 
 			const bool folded = card->laneHeight() != doctest::Approx(heightBefore);
@@ -18220,13 +18229,18 @@ TEST_CASE("the LFO's card can reach every control its device declares") {
 	REQUIRE(card != nullptr);
 	const std::vector<lfo::Param> reached = card->addressedParamsForTest();
 	// THE SEAM IS NOT A STUB ANY MORE, asserted before it is trusted — the whole case rests on it.
-	REQUIRE(reached.size() >= static_cast<size_t>(lfo::Param::kCount));
+	// ALL BUT PING-PONG, which is hidden (2026-11-22): the seam must answer with the rest, or it is a stub again.
+	REQUIRE(reached.size() >= static_cast<size_t>(lfo::Param::kCount) - 1);
 
 	for (int i = 0; i < static_cast<int>(lfo::Param::kCount); ++i) {
 		const auto param = static_cast<lfo::Param>(i);
 		// `CAPTURE` on a `const char*` prints the POINTER, not the text — playbook, and it printed "1" the
 		// first time this case went red. `std::string` is what makes the failure name the control.
 		CAPTURE(std::string(lfo::kParamDescs[static_cast<size_t>(i)].name));
+		// PING-PONG IS HIDDEN (2026-11-22): the engine never reads it, so no card reaches it. Its own case asserts the absence.
+		if (param == lfo::Param::PingPong) {
+			continue;
+		}
 		CHECK(std::find(reached.begin(), reached.end(), param) != reached.end());
 	}
 
@@ -18282,6 +18296,31 @@ TEST_CASE("backlog NJ: the LFO's first Time Base reads \"Hz\", and Rate reads Hz
 	set(lfo::Param::TimeBase, 13.0f); // 1/4
 	CHECK(base->readout() == "1/4");
 	CHECK(rate->readout() == "2X");
+}
+
+TEST_CASE("TV audit: the LFO's Ping-Pong is off the card, and its saved value still reads back") {
+	// PING-PONG: the engine never reads it, so its chip is hidden in every mode. Its key stays, so a patch that stored it
+	// loads and keeps the value. RATE: a frequency on Hz, a multiple of a division otherwise; the text is the card's override.
+	namespace lfo = feathers::mod::lfo;
+	ModFixture f;
+	auto* panel = findInTree<ui::ModPanel>(f.root);
+	REQUIRE(panel != nullptr);
+	const size_t slot = f.bridge.addRackDevice(lfo::kTraits.tag);
+	REQUIRE(slot >= 1);
+	f.bridge.refresh();
+	panel->resized();
+	auto* card = const_cast<ui::LfoCard*>(dynamic_cast<const ui::LfoCard*>(panel->cardFrameForTest(slot)));
+	REQUIRE(card != nullptr);
+
+	const std::vector<lfo::Param> reached = card->addressedParamsForTest();
+	CHECK(std::find(reached.begin(), reached.end(), lfo::Param::PingPong) == reached.end());
+	CHECK(ui::LfoCard::kChipCount == 3);
+
+	// THE VALUE STILL LOADS AND READS BACK: set it through the host, and the card's settings carry it.
+	f.deviceHost.setField(card->device(), static_cast<size_t>(lfo::Param::PingPong), 1.0f);
+	f.bridge.refresh();
+	(void)card->updateContent();
+	CHECK(card->restFromForTest().pingPong == true);
 }
 
 TEST_CASE("backlog NJ: the LFO's Rate types back in the unit its face prints — \"2hz\", \"2 Hz\", \"2x\" — any case") {
@@ -22440,6 +22479,121 @@ TEST_CASE("the output arms read the label") {
 	CHECK(f.panel->outputArmForTest(seat.slot, 1)->label() == "Macro 2");
 }
 
+namespace {
+
+/// A ONE- OR EIGHT-MACRO DEVICE IN THE STRIP, and its card — `seatMacros` for another tag.
+MacrosSeat seatVariant(ModFixture& f, const char* tag) {
+	MacrosSeat seat;
+	seat.slot = f.bridge.addRackDevice(tag);
+	REQUIRE(seat.slot < feathers::kMaxRackSlots);
+	seat.device = f.bridge.rackDeviceAt(seat.slot);
+	REQUIRE(seat.device != feathers::kNoInstance);
+	f.bridge.refresh();
+	f.panel->resized();
+	seat.card = const_cast<ui::MacrosCard*>(dynamic_cast<const ui::MacrosCard*>(f.panel->cardFrameForTest(seat.slot)));
+	REQUIRE(seat.card != nullptr);
+	return seat;
+}
+
+struct VariantCase {
+	const char* tag;
+	size_t count;
+};
+constexpr VariantCase kVariantCases[] = { { "MACRO1", 1 }, { "MACROS8", 8 } };
+
+} // namespace
+
+TEST_CASE("MACRO1 and MACROS8 cards: every slot is over its own macro, and does what the four-macro card's does") {
+	for (const VariantCase& vc : kVariantCases) {
+		CAPTURE(vc.tag);
+		const size_t count = vc.count;
+		ModFixture f;
+		const MacrosSeat seat = seatVariant(f, vc.tag);
+		REQUIRE(seat.card->slotCount() == count);
+		// THE CARD OFFERS EVERY CONTROL OF THE DEVICE BUT THE ENABLE: three per macro, each once.
+		const std::vector<mac::Param> addressed = seat.card->addressedParamsForTest();
+		REQUIRE(addressed.size() == 3 * count);
+		for (size_t c = 0; c < 3 * count; ++c) {
+			CHECK(std::find(addressed.begin(), addressed.end(), static_cast<mac::Param>(c)) != addressed.end());
+		}
+		for (size_t n = 0; n < count; ++n) {
+			CAPTURE(n);
+			ui::MacroSlot& slot = seat.card->slot(n);
+			const auto* road = dynamic_cast<const ui::DeviceControl*>(&seat.card->view(n).inner());
+			REQUIRE(road != nullptr);
+			CHECK(road->device() == seat.device);
+			CHECK(road->control() == mac::macroField(n));
+			CHECK(slot.knob().isVisible());
+			CHECK(slot.x() + slot.width() <= seat.card->width() + 0.5f);
+			// A VALUE WRITTEN THROUGH THE SLOT LANDS ON THIS MACRO'S FIELD ONLY.
+			slot.knob().control()->setValue(0.1 + 0.1 * static_cast<double>(n));
+			for (size_t m = 0; m <= n; ++m) {
+				CHECK(f.deviceHost.fieldAt(seat.device, mac::macroField(m)) == doctest::Approx(0.1 + 0.1 * static_cast<double>(m)));
+			}
+			for (size_t m = n + 1; m < count; ++m) {
+				CHECK(f.deviceHost.fieldAt(seat.device, mac::macroField(m)) == doctest::Approx(0.0));
+			}
+			// EACH KNOB IS A DESTINATION, and each output an arm that routes out.
+			CHECK(slot.knob().hasModulationForTest());
+			const ui::SourceArm* arm = f.panel->outputArmForTest(seat.slot, n);
+			REQUIRE(arm != nullptr);
+			CHECK(arm->label() == "Macro " + std::to_string(n + 1));
+		}
+		// THE LAST SLOT'S TYPE AND POLARITY, from its menu: its own fields, and no other macro's.
+		const size_t last = count - 1;
+		ui::MacroSlot& slot = seat.card->slot(last);
+		ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuMomentary);
+		CHECK(f.deviceHost.fieldAt(seat.device, mac::typeField(count, last)) == doctest::Approx(2.0));
+		CHECK(slot.type() == feathers::device::MacroType::Momentary);
+		ui::chooseMacroMenuEntry(slot.menuHooks(), ui::kMacroMenuBipolar);
+		CHECK(f.deviceHost.fieldAt(seat.device, mac::bipolarField(count, last)) == doctest::Approx(1.0));
+		CHECK(seat.card->view(last).bipolar());
+		for (size_t m = 0; m < last; ++m) {
+			CHECK(f.deviceHost.fieldAt(seat.device, mac::typeField(count, m)) == doctest::Approx(0.0));
+			CHECK(f.deviceHost.fieldAt(seat.device, mac::bipolarField(count, m)) == doctest::Approx(0.0));
+		}
+		// RENAME the first: the label is that output's, and the card's caption follows.
+		ui::MacroSlot& first = seat.card->slot(0);
+		ui::chooseMacroMenuEntry(first.menuHooks(), ui::kMacroMenuRename);
+		REQUIRE(first.renaming());
+		typeInto(first.field(), "Wobble");
+		CHECK(f.bridge.outputLabel(seat.device, 0) == "Wobble");
+		CHECK(first.caption() == "Wobble");
+		if (count > 1) {
+			CHECK_FALSE(f.bridge.outputRelabelled(seat.device, 1));
+		}
+	}
+}
+
+TEST_CASE("MACRO1 and MACROS8 cards: the slots lie where the card says — one large knob, or two rows of four") {
+	ModFixture f;
+	const MacrosSeat one = seatVariant(f, "MACRO1");
+	const MacrosSeat eight = seatVariant(f, "MACROS8");
+	const MacrosSeat four = seatMacros(f);
+	// ONE: a single slot, with a full column to itself and a face larger than the four's.
+	CHECK(one.card->slotCount() == 1);
+	CHECK(one.card->slot(0).width() > four.card->slot(0).width() * 2.0f);
+	CHECK(one.card->slot(0).knob().width() > four.card->slot(0).knob().width());
+	CHECK(one.card->slot(0).caption() == "Macro 1");
+	// EIGHT: the first four share a row, the next four lie in the row below, column for column.
+	REQUIRE(eight.card->slotCount() == 8);
+	for (size_t n = 0; n < 4; ++n) {
+		CAPTURE(n);
+		CHECK(eight.card->slot(n).y() == doctest::Approx(eight.card->slot(0).y()));
+		CHECK(eight.card->slot(n + 4).y() > eight.card->slot(n).y() + eight.card->slot(n).height() - 0.5f);
+		CHECK(eight.card->slot(n + 4).x() == doctest::Approx(eight.card->slot(n).x()));
+		// the same column width as the four-macro card: a standard modulator card grid
+		CHECK(eight.card->slot(n).width() == doctest::Approx(four.card->slot(n).width()));
+		CHECK(eight.card->slot(n + 4).y() + eight.card->slot(n + 4).height() <= eight.card->height() + 0.5f);
+	}
+	// THE FOUR IS UNCHANGED: one row.
+	for (size_t n = 1; n < 4; ++n) {
+		CHECK(four.card->slot(n).y() == doctest::Approx(four.card->slot(0).y()));
+	}
+	CHECK(ui::MacrosCard::openHeight(1) == doctest::Approx(ui::kCardHeadHeight + ui::MacrosCard::bodyHeight() + ui::kCardOutputStripHeight));
+	CHECK(ui::MacrosCard::openHeight(2, ui::kMacros8Shape) > ui::MacrosCard::openHeight(2));
+}
+
 TEST_CASE("a relabelled MACROS output in a chain column renames its arm and re-lays the column") {
 	// **THE COLUMN KEEPS ITS ARMS ACROSS A RELABEL** (they are rebuilt only when the stack changes), so
 	// the word has to be HANDED to the arm and the column laid out again for the chip to take the new
@@ -24528,6 +24682,55 @@ TEST_CASE("Drive negative: COMP's Drive knob rests at the centre of -24..+24 on 
 	d.set(static_cast<size_t>(cp::Param::Knee), 0.0f);
 	CHECK(std::fabs(d.card->transferDb(0.0f) - (-16.5f)) < 1e-3f);
 	CHECK(std::fabs(d.card->transferDb(-24.0f) - (-36.0f)) < 1e-3f);
+}
+
+TEST_CASE("COMP's hover text follows its Mode, on the card and in the window") {
+	namespace cp = feathers::fx::comp;
+	DynCardFixture<ui::CompCard> d(cp::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::CompExpanded panel { d.f.deviceHost, registry, d.device };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY, not read back from the table under test.
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	// THE HOVER ROAD MAY PUT THE CONTROL'S NAME IN FRONT ("Comp Threshold — …", when its caption is cut), so the
+	// text under test is its tail: it must END in the mode's entry, and nothing else of the descriptor's may survive.
+	const auto check = [&](int mode, cp::Param p, const char* want) {
+		CAPTURE(mode);
+		CAPTURE(static_cast<int>(p));
+		for (ui::Knob* k : { d.card->knobForTest(p), panel.knobForTest(p) }) {
+			REQUIRE(k != nullptr);
+			const std::string text = hover(k);
+			const std::string tail(want);
+			CAPTURE(text);
+			REQUIRE(text.size() >= tail.size());
+			CHECK(text.compare(text.size() - tail.size(), tail.size(), tail) == 0);
+		}
+	};
+	const auto setMode = [&](float m) {
+		d.set(static_cast<size_t>(cp::Param::Mode), m);
+		CHECK(d.card->updateContent());
+		CHECK(panel.updateContent());
+	};
+
+	// COMPRESS, THE DEFAULT: all three say what they do here.
+	check(0, cp::Param::Threshold, "The level above which the signal is turned down");
+	check(0, cp::Param::Release, "How fast gain reduction lets go — off at the bottom is instant");
+	check(0, cp::Param::Drive, "Gain in front of the compressor — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// COMPANDER: Threshold is Ref, Release is the level follower, Drive is the compander's input.
+	setMode(2.0f);
+	check(2, cp::Param::Threshold, "The level above which the signal is turned down. Here it is Ref, the level left alone: louder is turned down, quieter is turned up");
+	check(2, cp::Param::Release, "How fast the level follower falls — off at the bottom is instant");
+	check(2, cp::Param::Drive, "Gain in front of the compander — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// LIMIT: Release and Drive change text; Threshold is hidden there, so it is not read.
+	setMode(1.0f);
+	check(1, cp::Param::Release, "How fast gain reduction lets go — off at the bottom is instant");
+	check(1, cp::Param::Drive, "Gain in front of the limiter — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
+
+	// BACK TO COMPRESS: the Compander's text does not survive the round trip.
+	setMode(0.0f);
+	check(0, cp::Param::Threshold, "The level above which the signal is turned down");
+	check(0, cp::Param::Drive, "Gain in front of the compressor — how hard the signal is pushed into it; negative backs it off. The dry is never driven");
 }
 
 TEST_CASE("COMP's window shows the card's meter — the same IN, OUT and GR bars from the same readings, by value, in every mode") {
@@ -27722,7 +27925,8 @@ TEST_CASE("SMOOTH SHAPER: Harmonic and Twist are unbounded coordinates with coar
 		CHECK(cell->sigil() != nullptr);
 		CHECK_FALSE(cell->select().isVisible());
 	}
-	CHECK(std::string(hCell->tooltipAt({ 1.0f, 1.0f })) == smth::kParamDescs[harmonic].tooltip);
+	// THE HARMONIC'S TEXT IS THE MODE'S ROW OF THE TABLE (`smooth_tips.h`), for the mode the card is drawn in.
+	CHECK(std::string(hCell->tooltipAt({ 1.0f, 1.0f })) == std::string(smth::modeTipsFor(card->drawnFromForTest().harmonicMode).harmonic));
 	CHECK(std::string(tCell->tooltipAt({ 1.0f, 1.0f })) == smth::kParamDescs[twist].tooltip);
 
 	// THE PANEL SEATS THE SAME TWO, THE SAME CONTROL (no dropdown there either), AND T PHASE IS GONE FROM IT.
@@ -28446,6 +28650,50 @@ void routeInto(ui::ModState& mod, ui::Knob& knob, backplane::Source source, floa
 // ---------------------------------------------------------------------------------------------------
 // THE EQ'S CARD AND PANEL
 // ---------------------------------------------------------------------------------------------------
+
+TEST_CASE("EQ's Q hover text follows its band's Type, on the card and in the window, for an unselected band too") {
+	namespace eq = feathers::fx::eq;
+	DynCardFixture<ui::EqCard> d(eq::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::EqExpanded panel { d.f.deviceHost, registry, d.device };
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY. The hover road may put the control's name in front, so the tail is read.
+	const auto tailIs = [](const std::string& text, const char* want) {
+		const std::string tail(want);
+		return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+	};
+	// Band 0 is the selected one: its Q is on the face once the band is on.
+	d.set(eq::bandIndex(0, eq::BandField::On), 1.0f);
+	const auto selectedAs = [&](float type, const char* want) {
+		d.set(eq::bandIndex(0, eq::BandField::Type), type);
+		d.card->updateContent();
+		panel.updateContent();
+		ui::Knob* onCard = d.card->controlsForTest()->knobForTest(eq::bandIndex(0, eq::BandField::Q));
+		ui::Knob* inWindow = panel.controlsForTest()->knobForTest(eq::bandIndex(0, eq::BandField::Q));
+		REQUIRE(onCard != nullptr);
+		REQUIRE(inWindow != nullptr);
+		CAPTURE(type);
+		CHECK(tailIs(hover(onCard), want));
+		CHECK(tailIs(hover(inWindow), want));
+	};
+	selectedAs(0.0f, "How narrow the bell is: a higher Q is a narrower band");
+	selectedAs(1.0f, "How steep the shelf's transition is: a higher Q is a sharper knee, up to 1.5");
+	selectedAs(3.0f, "On a cut it is resonance: 0.71 is flat, higher peaks at the corner");
+	selectedAs(5.0f, "How narrow the notch is: a higher Q is a narrower slice");
+
+	// BAND 3 IS NOT SELECTED: its Type moves, and its Q's text moves with it on the next poll (the card's and the window's).
+	d.set(eq::bandIndex(3, eq::BandField::Type), 5.0f);
+	d.card->updateContent();
+	panel.updateContent();
+	for (ui::EqControls* c : { d.card->controlsForTest(), panel.controlsForTest() }) {
+		ui::Knob* q = c->knobForTest(eq::bandIndex(3, eq::BandField::Q));
+		REQUIRE(q != nullptr);
+		REQUIRE(q->control() != nullptr);
+		const char* own = q->control()->tooltipOverride();
+		REQUIRE(own != nullptr);
+		CHECK(std::string(own) == "How narrow the notch is: a higher Q is a narrower slice");
+	}
+}
 
 TEST_CASE("EQ's card offers only what the selected band uses, and says so when it is off") {
 	namespace eq = feathers::fx::eq;
@@ -32565,6 +32813,19 @@ TEST_CASE("LQ: OWLTT's band meters read each channel's own gain reduction off th
 	CHECK(d.card->graph()->meters().grSecond == first);
 }
 
+TEST_CASE("OWLTT's gain-reduction meter wears the legend's colours: reduction the DOWN colour, boost the UP colour, both opaque") {
+	// THE LEGEND'S KEY: DOWN is kValue, UP is kAccent (owltt_graph.cpp, the colour key). Boost at 0.4 alpha read as a
+	// disabled band. Asked through `grFillColour`, which the meter draws every half through.
+	const auto opaque = [](uint32_t c) { return (c >> 24) == 0xFFu; };
+	CHECK(ui::OwlttGraph::grFillColour(-0.5f) == kValue);
+	CHECK(ui::OwlttGraph::grFillColour(-0.001f) == kValue);
+	CHECK(ui::OwlttGraph::grFillColour(0.5f) == kAccent);
+	CHECK(ui::OwlttGraph::grFillColour(0.001f) == kAccent);
+	CHECK(opaque(ui::OwlttGraph::grFillColour(-0.5f)));
+	CHECK(opaque(ui::OwlttGraph::grFillColour(0.5f)));
+	CHECK(kValue != kAccent);
+}
+
 //------------------------------------------------------------------------------------------------//
 // THE DELAY'S TAPS STRIP (backlog LF).                                                           //
 //                                                                                                //
@@ -33562,6 +33823,122 @@ TEST_CASE("Spectral's window: at every width it can be given, every control lies
 	}
 }
 
+TEST_CASE("Spectral's Formant Shift High and Crossover handles are offered only while the Link is off, on the card's plot and the window's") {
+	namespace spx = feathers::fx::spectral;
+	using H = ui::SpectrumPlot::Handle;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	d.set(static_cast<size_t>(spx::Param::FShiftOn), 1.0f);
+	// THE ENGINE READS THE SAME RULE (spectralControlInert): linked, High and the crossover change nothing, so the plot has no handle for them.
+	for (const bool linked : { true, false }) {
+		CAPTURE(linked);
+		d.set(static_cast<size_t>(spx::Param::FShiftLink), linked ? 1.0f : 0.0f);
+		d.card->updateContent();
+		panel.updateContent();
+		for (ui::SpectrumPlot* plot : { &d.card->plotForTest(), &panel.plotForTest() }) {
+			CHECK(plot->handleForTest(H::ShiftLow).has_value());
+			CHECK(plot->handleForTest(H::ShiftHigh).has_value() == !linked);
+			CHECK(plot->handleForTest(H::Crossover).has_value() == !linked);
+		}
+	}
+}
+
+TEST_CASE("NOISE's plot hover names the routed drag while a modulator is armed on Cutoff") {
+	namespace nz = feathers::fx::noise;
+	DynCardFixture<ui::NoiseCard> d(nz::kTraits.tag);
+	ui::NoisePlot* plot = d.card->plotForTest();
+	REQUIRE(plot != nullptr);
+	const visage::Point at { plot->width() * 0.5f, plot->height() * 0.2f };
+	// ARMED THROUGH THE REAL ARROW: the Cutoff is routable, so the drag routes its amount.
+	d.f.arm(backplane::Source::core(0));
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag up or down: how much of Cutoff's modulation routes (Alt-drag places Cutoff across and Resonance up instead)");
+}
+
+TEST_CASE("Spectral's routing choice is shown only while both filters are on, in the window, for every combination of the two") {
+	namespace spx = feathers::fx::spectral;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	// Both filters' chips are the one control; the shown tab's is visible, the other is hidden with its panel.
+	const auto shownWith = [&](float filter1, float filter2) {
+		d.set(static_cast<size_t>(spx::Param::FilterOn), filter1);
+		d.set(static_cast<size_t>(spx::Param::Filter2On), filter2);
+		panel.updateContent();
+		CAPTURE(filter1);
+		CAPTURE(filter2);
+		return std::make_pair(panel.routingForTest(0, 0).isVisible(), panel.routingForTest(0, 1).isVisible());
+	};
+	// THE TWO FILTERS OFF, ONE AT A TIME, AND BOTH: only the last shows the choice.
+	CHECK(shownWith(0.0f, 0.0f) == std::make_pair(false, false));
+	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
+	CHECK(shownWith(0.0f, 1.0f) == std::make_pair(false, false));
+	// The tab shows filter 1's panel, so only its chip is in the row; filter 2's waits behind its tab.
+	CHECK(shownWith(1.0f, 1.0f) == std::make_pair(true, false));
+	// AND BACK: a switch moved off hides it again at once.
+	CHECK(shownWith(1.0f, 0.0f) == std::make_pair(false, false));
+}
+
+TEST_CASE("Spectral's mode-dependent hover text follows the Filter, Filter 2, Vocode and Key Track, on the card and in the window") {
+	namespace spx = feathers::fx::spectral;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	// THE CARD'S SLOPE IS A KNOB; ITS RESONANCE IS A PLOT HANDLE, which answers from the source's `tooltip` (read below).
+	auto* slope = dynamic_cast<ui::Knob*>(d.card->widgetForTest(spx::Param::FilterSlope));
+	REQUIRE(slope != nullptr);
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	const auto handleText = [&] {
+		const char* t = panel.sourceForTest().tooltip(0, feathers::SpectralControl::FilterResonance);
+		return std::string(t != nullptr ? t : "");
+	};
+	// THE CARD'S TEXT MAY CARRY THE CONTROL'S NAME IN FRONT, so the tail is read; THE WINDOW'S OWN CONTROLS ARE READ BY THEIR OVERRIDE.
+	const auto tailIs = [](const std::string& text, const char* want) {
+		const std::string tail(want);
+		return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+	};
+	const auto windowText = [&](spx::Param p) {
+		const char* own = panel.sourceForTest().deviceControl(p).tooltipOverride();
+		return std::string(own != nullptr ? own : "");
+	};
+	const auto refresh = [&] {
+		d.card->updateContent();
+		panel.updateContent();
+	};
+
+	// LOW PASS: the filter's peak and its falloff, as the plain words say.
+	d.set(static_cast<size_t>(spx::Param::FilterMode), 0.0f);
+	refresh();
+	CHECK(tailIs(handleText(),"A peak drawn at the cutoff"));
+	CHECK(tailIs(hover(slope), "How steeply the filter falls, from gentle (6 dB/oct) to a brick wall (96 dB/oct)"));
+	CHECK(windowText(spx::Param::FilterResonance) == "A peak drawn at the cutoff");
+
+	// BELL: the same two controls are the Bell's width and its sides.
+	d.set(static_cast<size_t>(spx::Param::FilterMode), 4.0f);
+	refresh();
+	CHECK(tailIs(handleText(),"How wide the Bell is, from 3 octaves down to a sixth of one"));
+	CHECK(tailIs(hover(slope), "How steep the Bell's sides are: a classic bell at the default, softer below, a flat-topped band above"));
+	CHECK(windowText(spx::Param::FilterSlope)
+	      == "How steep the Bell's sides are: a classic bell at the default, softer below, a flat-topped band above");
+
+	// KEY TRACK moves where Key Offset is measured from; VOCODE moves whose envelope Formant Shift follows. Both are in the window.
+	d.set(static_cast<size_t>(spx::Param::KeyTrack), 1.0f);
+	refresh();
+	CHECK(windowText(spx::Param::KeyOffset)
+	      == "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from the played note");
+	d.set(static_cast<size_t>(spx::Param::KeyTrack), 0.0f);
+	refresh();
+	CHECK(windowText(spx::Param::KeyOffset)
+	      == "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from C3 (so C0 to C6)");
+	d.set(static_cast<size_t>(spx::Param::VocodeOn), 1.0f);
+	refresh();
+	CHECK(tailIs(windowText(spx::Param::FShiftOn), "using the sidechain's envelope"));
+	d.set(static_cast<size_t>(spx::Param::VocodeOn), 0.0f);
+	refresh();
+	CHECK(tailIs(windowText(spx::Param::FShiftOn), "using the sound's own envelope"));
+}
+
 TEST_CASE("Spectral's Vocode: the card says sidechain silent while it is on and nothing sounds there, and the plot draws the sidechain's envelope while vocoding") {
 	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
 	ui::SpectralCard* card = d.card;
@@ -33614,6 +33991,24 @@ TEST_CASE("Spectral's Vocode is hidden under Poly, on the card and in the window
 //------------------------------------------------------------------------------------------------//
 // NOISE (backlog MZ) — its card around its picture. Visibility and the plotted numbers, as values. //
 //------------------------------------------------------------------------------------------------//
+
+TEST_CASE("NOISE's plot hover names both of the controls it drives, and the Resonance part follows the Source") {
+	namespace nz = feathers::fx::noise;
+	DynCardFixture<ui::NoiseCard> d(nz::kTraits.tag);
+	ui::NoisePlot* plot = d.card->plotForTest();
+	REQUIRE(plot != nullptr);
+	// A point above the plot's foot: the footer's clicks text does not apply there.
+	const visage::Point at { plot->width() * 0.5f, plot->height() * 0.2f };
+	// THE EXPECTED TEXT IS RESTATED HERE, LITERALLY. No modulator is armed, so a drag places both controls.
+	// Noise source: Resonance rings the filter and nothing else.
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings");
+	// Impulses source: the same two controls, and what high resonance does to the clicks.
+	d.set(static_cast<size_t>(nz::Param::Source), 1.0f);
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings, and high "
+	         "resonance turns the clicks into pitched pings");
+}
 
 TEST_CASE("NOISE's card shows a control exactly where the device reads it, through the gate chain") {
 	namespace nz = feathers::fx::noise;
@@ -34942,16 +35337,16 @@ TEST_CASE("OC: the Rack window seats Mix and Gain on top, an H-line, then the ei
 	CHECK(line.x() == ui::ParallelRackExpanded::kPad);
 	CHECK(line.width() == ui::ParallelRackExpanded::kColumnWidth);
 	CHECK(line.height() <= 1.0f);
-	// THE MACROS: two columns, four rows, all BELOW the line; row r holds macros 2r and 2r+1, left to right.
+	// THE MACROS STAND IN THEIR OWN PANE after the rack's: two columns, four rows; row r holds macros 2r and 2r+1, left to right.
+	const float macrosLeft = panel->containerWidth();
 	for (size_t row = 0; row < 4; ++row) {
 		const visage::Bounds left = panel->knobBoundsForTest(2 + 2 * row);
 		const visage::Bounds right = panel->knobBoundsForTest(3 + 2 * row);
 		CHECK(left.y() == right.y());
 		CHECK(left.right() <= right.x());
-		CHECK(left.x() == mix.x()); // the first column stands under Mix, the second under Gain
-		CHECK(right.x() == gain.x());
-		CHECK(left.y() >= line.bottom());
-		CHECK(right.right() <= line.right());
+		CHECK(left.x() == macrosLeft + mix.x()); // the first column is Mix's, the second Gain's, shifted into the macros' pane
+		CHECK(right.x() == macrosLeft + gain.x());
+		CHECK(left.y() >= ui::ParallelRackExpanded::kPad); // the pane's rows start under its toggle's head row, from its own top
 		if (row > 0) {
 			CHECK(left.y() >= panel->knobBoundsForTest(2 * row).bottom()); // below the row before
 		}
@@ -34965,7 +35360,7 @@ TEST_CASE("OC: the Rack window seats Mix and Gain on top, an H-line, then the ei
 	CHECK(add.width() < ui::ParallelRackExpanded::kColumnWidth);
 	CHECK(ui::ParallelRackExpanded::kColumnWidth < 240.0f);
 	// AND THE RAILS START RIGHT AFTER THE COLUMN: nothing of the old wide column is left.
-	CHECK(panel->railForTest(0).bounds().x() == ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad);
+	CHECK(panel->railForTest(0).bounds().x() == 2.0f * (ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad)); // after both panes
 	view.reset();
 	f.bridge.fxBodies().detach(r.id, r.body);
 	REQUIRE(f.bridge.removeFxDevice(r.slot));
@@ -38940,6 +39335,44 @@ TEST_CASE("the Pattern window's step inspector: each setting changes exactly tha
 	othersSame(base, back, -10);
 }
 
+TEST_CASE("Pattern's Degree and Thru hover text follow the tab's Mode: the chord degree in Chords, the line's transposition in the line modes, Thru's Auto by Drum") {
+	namespace pt = feathers::mod::arp::pat;
+	namespace gn = feathers::mod::arp::genes;
+	using Field = pt::Field;
+	ModFixture f;
+	const size_t slot = f.bridge.addRackDevice(pt::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxRackSlots);
+	f.bridge.refresh();
+	f.panel->resized();
+	auto* card = const_cast<ui::PatternCard*>(dynamic_cast<const ui::PatternCard*>(f.panel->cardFrameForTest(slot)));
+	REQUIRE(card != nullptr);
+	const DeviceInstanceId id = card->device();
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, pt::kDescriptor);
+	auto* window = dynamic_cast<ui::PatternExpanded*>(view.get());
+	REQUIRE(window != nullptr);
+	const auto tipOf = [&](Field fld) { return std::string(ui::tooltipOf(&window->controlForTest(pt::at(0, fld)))); };
+	const auto setMode = [&](gn::Mode m) {
+		f.deviceHost.setField(id, pt::at(0, Field::Mode), static_cast<float>(m));
+		(void)window->updateContent();
+	};
+	setMode(gn::Mode::Chords);
+	CHECK(tipOf(Field::Degree) == pt::kDegreeTipChords);
+	setMode(gn::Mode::TbGlide);
+	CHECK(tipOf(Field::Degree) == pt::kDegreeTipLine);
+	// NOT VACUOUS: the two modes name different things.
+	CHECK(pt::kDegreeTipChords != std::string(pt::kDegreeTipLine));
+	setMode(gn::Mode::Drum);
+	// THRU'S AUTO RESOLVES BY MODE: on in Drum, off in a note mode.
+	CHECK(tipOf(Field::Thru) == pt::kThruTipAutoDrum);
+	setMode(gn::Mode::Melody);
+	CHECK(tipOf(Field::Thru) == pt::kThruTipAutoOther);
+	// AN EXPLICIT Thru says what it does, and keeps the declared text (no Auto to resolve).
+	f.deviceHost.setField(id, pt::at(0, Field::Thru), static_cast<float>(pt::Thru::On));
+	(void)window->updateContent();
+	CHECK(tipOf(Field::Thru) != pt::kThruTipAutoOther);
+}
+
 TEST_CASE("the Pattern window's drum grid: a click selects a cell and edits nothing; a double-click toggles that lane's hit; the inspector's Hit and Accent set that cell") {
 	using namespace lane_check;
 	using What = ui::StepControl::What;
@@ -39571,6 +40004,7 @@ TEST_CASE("the Pattern window's lane names its gestures on hover — and every g
 #include "fx/delay/delay_lanes.h"
 #include "plugin/ui/delay_card.h"
 #include "plugin/ui/delay_expanded.h"
+#include "fx/clip/clip_tips.h"
 #include "fx/clip/clip_types.h"
 
 namespace {
@@ -42991,18 +43425,56 @@ TEST_CASE("drum device card: each widget is bound to its control by index, write
 		const float want = p == ddv::Param::Kind ? 2.0f : p == ddv::Param::Note ? 40.0f : p == ddv::Param::Level ? -9.0f : p == ddv::Param::Tune ? 5.0f : before[i];
 		CHECK(after[i] == want);
 	}
-	// THE PLAY BUTTON IS THERE (this host has a note road) and strikes the Note by value; the release lets go.
-	REQUIRE(u.d.card->playForTest() != nullptr);
-	feathers::UiNoteEvent e;
-	CHECK_FALSE(u.d.f.bridge.popNote(e));
-	u.d.card->playForTest()->press();
-	REQUIRE(u.d.f.bridge.popNote(e));
-	CHECK(e.key == 40);
-	CHECK(e.on);
-	u.d.card->playForTest()->release();
-	REQUIRE(u.d.f.bridge.popNote(e));
-	CHECK(e.key == 40);
-	CHECK_FALSE(e.on);
+	// THE TRIG PAD IS THERE and drives the device's own Trig control: a press holds it at 1 (the edge the drum strikes on), the release puts it back.
+	REQUIRE(u.d.card->trigPadForTest() != nullptr);
+	CHECK(&u.d.card->trigPadForTest()->control().desc() == &ddv::kParamDescs[static_cast<size_t>(ddv::Param::Trig)]);
+	CHECK(u.field(ddv::Param::Trig) == 0.0f);
+	u.d.card->trigPadForTest()->press();
+	CHECK(u.field(ddv::Param::Trig) == 1.0f);
+	u.d.card->trigPadForTest()->release();
+	CHECK(u.field(ddv::Param::Trig) == 0.0f);
+}
+
+TEST_CASE("drum Trig pad: a real press raises the Trig on the press and before the release, a Gate holds it across, a Drone hides the pad") {
+	DrumUi u;
+	const auto mouse = [](bool down) {
+		visage::MouseEvent e;
+		e.position = { 6.0f, 6.0f };
+		e.button_id = visage::kMouseButtonLeft;
+		e.button_state = down ? visage::kMouseButtonLeft : visage::kMouseButtonNone;
+		e.is_down = down;
+		return e;
+	};
+	for (const bool gate : { false, true }) {
+		CAPTURE(gate);
+		u.set(ddv::Param::Trigger, gate ? 1.0 : 0.0);
+		for (ui::TrigPad* pad : { u.d.card->trigPadForTest(), u.win->trigPadForTest() }) {
+			REQUIRE(pad != nullptr);
+			REQUIRE(pad->isVisible());
+			CHECK(u.field(ddv::Param::Trig) == 0.0f);
+			// THE PRESS: the Trig is high from the press itself (the drum's edge detector strikes on this rise), the release has not happened.
+			pad->onMouseDown().callback(mouse(true));
+			CHECK(u.field(ddv::Param::Trig) == 1.0f);
+			CHECK(pad->lit());
+			// HELD ACROSS THE PRESS, in either trigger mode: nothing lets go until the release.
+			(void)u.d.card->updateContent();
+			(void)u.win->updateContent();
+			CHECK(u.field(ddv::Param::Trig) == 1.0f);
+			pad->onMouseUp().callback(mouse(false));
+			CHECK(u.field(ddv::Param::Trig) == 0.0f);
+		}
+	}
+	// A DRONE TAKES NO TRIGGER: hidden on the card and in the window, on a kind that can be held; a kind that cannot be held keeps it.
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::FM));
+	u.set(ddv::Param::Trigger, 2.0);
+	CHECK_FALSE(u.d.card->trigPadForTest()->isVisible());
+	CHECK_FALSE(u.win->trigPadForTest()->isVisible());
+	u.set(ddv::Param::Trigger, 0.0);
+	CHECK(u.d.card->trigPadForTest()->isVisible());
+	CHECK(u.win->trigPadForTest()->isVisible());
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Membrane));
+	u.set(ddv::Param::Trigger, 2.0); // not a sustaining kind: the Drone choice means a One-shot there, so the pad stays
+	CHECK(u.d.card->trigPadForTest()->isVisible());
 }
 
 TEST_CASE("drum device: the picture's handles write their own controls by value, Tune in whole semitones and Shift fine, and a Kind shows only its own") {
@@ -43058,7 +43530,13 @@ TEST_CASE("drum device window: a control the Kind does not read is hidden, one i
 			}
 			CAPTURE(ddv::kParamDescs[i].name);
 			const bool read = device::relevantFor(ddv::kParamDescs[i], ddv::kParamDescs[i].gateControl >= 0 ? u.field(static_cast<ddv::Param>(ddv::kParamDescs[i].gateControl)) : 0.0);
-			CHECK(w->isVisible() == read);
+			// THE TRIGGER HAS TWO FACES: the plain two-way One-shot | Gate, and the three-way with Drone on a kind that can hold a hit.
+			const bool holdable = feathers::drum::kindSustains(static_cast<feathers::drum::Kind>(k));
+			CHECK(w->isVisible() == (p == ddv::Param::Trigger ? read && !holdable : read));
+			if (p == ddv::Param::Trigger) {
+				REQUIRE(u.win->triggerDroneForTest() != nullptr);
+				CHECK(u.win->triggerDroneForTest()->isVisible() == holdable); // Drone is offered only where the engine can hold the hit
+			}
 		}
 	}
 	// AND AGAINST THE ENGINE'S OWN STATEMENT: a Kick reads Hold, a Clap does not; a Clap reads Claps, a Kick does not; Release only on a Gate.
@@ -43071,6 +43549,172 @@ TEST_CASE("drum device window: a control the Kind does not read is hidden, one i
 	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Clap));
 	CHECK(u.win->widgetForTest(ddv::Param::Claps)->isVisible());
 	CHECK_FALSE(u.win->widgetForTest(ddv::Param::KickHold)->isVisible());
+}
+
+TEST_CASE("drum tooltips follow the Kind: Tone, Snap, Decay, Tune and High Pass name what they do in the current Kind, on the window and the card") {
+	DrumUi u;
+	const auto tipOf = [&](ddv::Param p) { return std::string(ui::tooltipOf(&u.win->modelForTest().control(p))); };
+	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
+		CAPTURE(k);
+		u.set(ddv::Param::Kind, static_cast<double>(k));
+		CHECK(tipOf(ddv::Param::FieldTone) == ddv::kToneTips[k]);
+		CHECK(tipOf(ddv::Param::FieldSnap) == ddv::kSnapTips[k]);
+		CHECK(tipOf(ddv::Param::Decay) == ddv::kDecayTips[k]);
+		CHECK(tipOf(ddv::Param::Tune) == ddv::kTuneTips[k]);
+		CHECK(tipOf(ddv::Param::HighPass) == ddv::kHighPassTips[k]);
+		// THE CARD'S TUNE PILL shares the same model road: the card's own control reads the same text.
+		CHECK(std::string(ui::tooltipOf(&u.d.card->modelForTest().control(ddv::Param::Tune))) == ddv::kTuneTips[k]);
+	}
+	// NOT VACUOUS: the Kind moved the text (a Kick's Tone is not a Snare's).
+	u.set(ddv::Param::Kind, 0.0);
+	const std::string kickTone = tipOf(ddv::Param::FieldTone);
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Snare));
+	CHECK(tipOf(ddv::Param::FieldTone) != kickTone);
+	// PITCHED: the key sets the pitch, so Tune names the key, in every Kind.
+	u.set(ddv::Param::Keys, 2.0);
+	CHECK(tipOf(ddv::Param::Tune) == ddv::kTunePitchedTip);
+	u.set(ddv::Param::Keys, 0.0);
+	CHECK(tipOf(ddv::Param::Tune) == ddv::kTuneTips[static_cast<size_t>(feathers::drum::Kind::Snare)]);
+}
+
+TEST_CASE("Delay's Time and Mix hover text follow the Mode, Sync and Dub, on the card and on the window alike") {
+	namespace dly = feathers::fx::delay;
+	DynCardFixture<ui::DelayCard> d { dly::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::DelayExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	// THE TWO SURFACES' OWN CONTROLS, the card's from its boxes and the window's from its seam.
+	const auto cardTip = [&](dly::Param p) { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(p)))); };
+	const auto winTip = [&](dly::Param p) { return std::string(ui::tooltipOf(&win->controlForTest(p))); };
+	const auto set = [&](dly::Param p, double v) {
+		d.set(static_cast<size_t>(p), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	const std::string declaredMix = dly::kParamDescs[static_cast<size_t>(dly::Param::Mix)].tooltip;
+	// THE MODE NAMES THE TIME: a Multi-Tap's pattern, a Reverse's chunk, and a tap's own multiplier in the rest.
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::MultiTap));
+	CHECK(cardTip(dly::Param::Time).rfind("How long the whole tap pattern is", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::Reverse));
+	CHECK(cardTip(dly::Param::Time).rfind("How long each reversed chunk is", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::Clean));
+	CHECK(cardTip(dly::Param::Time).rfind("How many of", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	// THE SYNC NAMES THE BASE: a free time, then a division.
+	set(dly::Param::Sync, 0.0);
+	CHECK(cardTip(dly::Param::Time).find("the free time") != std::string::npos);
+	set(dly::Param::Sync, static_cast<double>(dly::kSyncNoteChoice));
+	CHECK(cardTip(dly::Param::Time).find("division") != std::string::npos);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	// MIX IS THE SEND WITH DUB ON, and the declared dry against wet with it off.
+	set(dly::Param::Dub, 0.0);
+	CHECK(cardTip(dly::Param::Mix) == declaredMix);
+	CHECK(winTip(dly::Param::Mix) == declaredMix);
+	set(dly::Param::Dub, 1.0);
+	CHECK(cardTip(dly::Param::Mix) == ui::delay_tips::mixTip(1));
+	CHECK(winTip(dly::Param::Mix) == ui::delay_tips::mixTip(1));
+	CHECK(cardTip(dly::Param::Mix) != declaredMix);
+}
+
+TEST_CASE("OWLTT's crossovers say what Key Track makes them: an offset from the note with it on, the declared frequency with it off, on the card and the window") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d { ow::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::OwlttExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	const auto cardTip = [&](ow::Param p) { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(p)))); };
+	const auto winTip = [&](ow::Param p) { return std::string(ui::tooltipOf(&win->controlForTest(p))); };
+	const auto setKeyTrack = [&](double v) {
+		d.set(static_cast<size_t>(ow::Param::KeyTrack), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	// KEY TRACK OFF: the declared frequencies.
+	setKeyTrack(0.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+	CHECK(winTip(ow::Param::HighCrossover) == "Mid-high split frequency");
+	// ON: each is an offset from the note, and the two texts are not the declared ones (not vacuous).
+	setKeyTrack(1.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == ow::kLowCrossoverTipKeyTrack);
+	CHECK(cardTip(ow::Param::HighCrossover) == ow::kHighCrossoverTipKeyTrack);
+	CHECK(winTip(ow::Param::LowCrossover) == ow::kLowCrossoverTipKeyTrack);
+	CHECK(winTip(ow::Param::HighCrossover) == ow::kHighCrossoverTipKeyTrack);
+	CHECK(cardTip(ow::Param::LowCrossover) != "Low-mid split frequency");
+	// AND BACK OFF: the declared text returns on both surfaces.
+	setKeyTrack(0.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+	CHECK(winTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+}
+
+TEST_CASE("Sklitter's Groove Amount says what its Groove Mode makes it: the swing, the template share, the walk, or nothing in Straight, on the card and the window") {
+	namespace sk = feathers::fx::sklitter;
+	DynCardFixture<ui::SklitterCard> d { sk::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::SklitterExpanded>(d.f.deviceHost, registry, d.device, sk::kDescriptor, nullptr);
+	const auto cardTip = [&] { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(sk::Param::GrooveAmount)))); };
+	const auto winTip = [&] { return std::string(ui::tooltipOf(&win->controlForTest(static_cast<size_t>(sk::Param::GrooveAmount)))); };
+	const auto setMode = [&](int m) {
+		d.set(static_cast<size_t>(sk::Param::GrooveMode), static_cast<float>(m));
+		(void)win->updateContentForTest();
+		(void)d.card->updateContentForTest();
+	};
+	// ONE TEXT PER FAMILY, the same on both surfaces; each family's text differs from the others (not vacuous).
+	setMode(0);
+	CHECK(cardTip() == sk::kGrooveAmountTipStraight);
+	CHECK(winTip() == sk::kGrooveAmountTipStraight);
+	setMode(2);
+	CHECK(cardTip() == sk::kGrooveAmountTipSwing);
+	CHECK(winTip() == sk::kGrooveAmountTipSwing);
+	setMode(5);
+	CHECK(cardTip() == sk::kGrooveAmountTipGroove);
+	CHECK(winTip() == sk::kGrooveAmountTipGroove);
+	setMode(8);
+	CHECK(cardTip() == sk::kGrooveAmountTipFree);
+	CHECK(winTip() == sk::kGrooveAmountTipFree);
+	CHECK(std::string(sk::kGrooveAmountTipSwing) != sk::kGrooveAmountTipGroove);
+	// THE DECLARED TEXT NAMES NO SAMPLER (the hardware rule).
+	CHECK(std::string(sk::kParamDescs[static_cast<size_t>(sk::Param::GrooveAmount)].tooltip).find("MPC") == std::string::npos);
+}
+
+TEST_CASE("Arp's Rate says what its Time Base makes it: steps per second on Hz, a multiple of the division otherwise, on the card and the window") {
+	namespace apx = feathers::mod::arp;
+	DynCardFixture<ui::ArpCard> d { apx::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::ArpExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	const auto rateOn = [&](ui::DeviceControl& c) { return std::string(ui::tooltipOf(&c)); };
+	const auto setTimeBase = [&](double v) {
+		d.set(static_cast<size_t>(apx::Param::TimeBase), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	setTimeBase(0.0); // Hz
+	CHECK(rateOn(d.card->control(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipHz);
+	CHECK(rateOn(win->controlForTest(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipHz);
+	setTimeBase(static_cast<double>(apx::kDefaultTimeBase)); // 1/16
+	CHECK(rateOn(d.card->control(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
+	CHECK(rateOn(win->controlForTest(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
+	CHECK(std::string(apx::kRateTipHz) != apx::kRateTipDivision); // not vacuous
+}
+
+TEST_CASE("Follower's Input is disabled in Audio, where it does nothing, and its hover text says why; in Control it is live with its own text") {
+	namespace fl = feathers::mod::follower;
+	DynCardFixture<ui::FollowerCard> d { fl::kTraits.tag };
+	const auto inputTip = [&] { return std::string(ui::tooltipOf(d.card->input().control())); };
+	const auto setMode = [&](double v) {
+		d.set(static_cast<size_t>(fl::Param::Mode), static_cast<float>(v));
+		(void)d.card->updateContent();
+	};
+	setMode(static_cast<double>(fl::Mode::Control));
+	CHECK(d.card->input().enabled());
+	CHECK(inputTip() == fl::kParamDescs[static_cast<size_t>(fl::Param::Input)].tooltip);
+	setMode(static_cast<double>(fl::Mode::Audio));
+	CHECK_FALSE(d.card->input().enabled());
+	CHECK(inputTip().find("does nothing in Audio") != std::string::npos);
+	CHECK(inputTip().find("Switch Mode to Control") != std::string::npos);
+	// AND BACK: live again, the declared text.
+	setMode(static_cast<double>(fl::Mode::Control));
+	CHECK(d.card->input().enabled());
+	CHECK(inputTip() == fl::kParamDescs[static_cast<size_t>(fl::Param::Input)].tooltip);
 }
 
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {
@@ -43649,7 +44293,7 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bi
 					REQUIRE(box != nullptr);
 					shown += box->isVisible() ? 1 : 0;
 				}
-				ui::FaderPill* pill = cell->pillFor(eroAt(ero::Param::DriveKey));
+				ui::KeySpreadRow* pill = cell->pillFor(eroAt(ero::Param::DriveKey));
 				REQUIRE(pill != nullptr);
 				shown += pill->isVisible() ? 1 : 0;
 				const ero::SecondParam want = ero::driveSecondParam(dm);
@@ -43678,7 +44322,8 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bi
 					CHECK(labelOf(ero::Param::DriveBias) == "Bias");
 				}
 				if (want == ero::SecondParam::Key) {
-					CHECK(pill->caption() == "Key");
+					CHECK(pill->chip().caption() == "Key");
+					CHECK(pill->fader().caption() == "Spr");
 					CHECK(pill->bottom() <= static_cast<float>(cell->height()));
 					if (cell == cells().front()) {
 						secondY.push_back(pill->y());
@@ -43794,22 +44439,119 @@ TEST_CASE("ERODER's Key: the Amount knob reads the note's multiple while the swi
 			if (!ero::driveHasKey(type)) {
 				continue;
 			}
-			// THE FADER IS LIVE WITH THE SWITCH OFF: the pill is shown, unpowered, and its drag writes the Spread.
+			// THE FADER IS LIVE WITH THE SWITCH OFF: the row is shown, the chip is off, and the fader's drag writes the Spread.
 			for (ui::ModeValueCell* cell : p.cells) {
-				ui::FaderPill* pill = cell->pillFor(eroAt(p.key));
+				ui::KeySpreadRow* pill = cell->pillFor(eroAt(p.key));
 				REQUIRE(pill != nullptr);
 				CHECK(pill->isVisible());
-				CHECK_FALSE(pill->poweredForTest());
+				CHECK_FALSE(pill->chip().on());
 				e.set(p.spread, 0.0f);
-				pill->amountForTest().beginGesture();
-				pill->amountForTest().setValue(0.6);
-				pill->amountForTest().endGesture();
+				pill->fader().amountForTest().beginGesture();
+				pill->fader().amountForTest().setValue(0.6);
+				pill->fader().amountForTest().endGesture();
 				CHECK(eroField(e.d, p.spread) == doctest::Approx(0.6f));
-				CHECK(pill->powerForTest() != nullptr);
-				CHECK(pill->powerForTest()->desc().key == ero::kParamDescs[eroAt(p.key)].key);
+				CHECK(pill->fader().amountOnly());
+				CHECK(pill->chip().control().desc().key == ero::kParamDescs[eroAt(p.key)].key);
 			}
 		}
 	}
+}
+
+TEST_CASE("ERODER's Key chip and Spread fader are two separate controls on the third row: the chip writes only Key, the fader only Spread and stays lit with Key off, the row is there for the four Types only, and it stays inside its cell at scale 1 and 1.75") {
+	EroFaces e;
+	struct Unit {
+		const char* name;
+		ero::Param type, key, spread;
+		bool narrow;
+		bool slot;
+		ui::ModeValueCell* cell;
+	};
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	const Unit units[] = {
+		{ "card Drive", ero::Param::DriveMode, ero::Param::DriveKey, ero::Param::DriveSpread, true, false, e.d.card->driveCellForTest() },
+		{ "window Drive", ero::Param::DriveMode, ero::Param::DriveKey, ero::Param::DriveSpread, false, false, e.panel->driveCellForTest() },
+		{ "card A", ero::Param::SlotAType, ero::Param::SlotAKey, ero::Param::SlotASpread, true, true, card.cellA.get() },
+		{ "card B", ero::Param::SlotBType, ero::Param::SlotBKey, ero::Param::SlotBSpread, true, true, card.cellB.get() },
+		{ "window A", ero::Param::SlotAType, ero::Param::SlotAKey, ero::Param::SlotASpread, false, true, panel.cellA.get() },
+		{ "window B", ero::Param::SlotBType, ero::Param::SlotBKey, ero::Param::SlotBSpread, false, true, panel.cellB.get() },
+	};
+	e.mode(ero::Mode::Etch);
+	e.set(ero::Param::Drive, 0.5f);
+	for (const Unit& u : units) {
+		CAPTURE(u.name);
+		ui::KeySpreadRow* row = u.cell->pillFor(eroAt(u.key));
+		REQUIRE(row != nullptr);
+		// THE ROW IS THERE FOR THE FOUR TYPES ONLY.
+		for (int type = 0; type < static_cast<int>(ero::DriveMode::kCount); ++type) {
+			CAPTURE(std::string(ero::kDriveModeNames[type]));
+			e.set(u.type, static_cast<float>(type));
+			CHECK(row->isVisible() == ero::driveHasKey(static_cast<ero::DriveMode>(type)));
+		}
+		e.set(u.type, static_cast<float>(ero::DriveMode::Decimate));
+		REQUIRE(row->isVisible());
+		// TWO WIDGETS, each over its own control.
+		CHECK(row->chip().control().desc().key == ero::kParamDescs[eroAt(u.key)].key);
+		CHECK(row->fader().amountForTest().desc().key == ero::kParamDescs[eroAt(u.spread)].key);
+		CHECK(row->fader().amountOnly());
+		CHECK(row->chip().caption() == "Key");
+		CHECK(row->fader().caption() == "Spr");
+		// THE CHIP TOGGLES KEY AND LEAVES SPREAD ALONE.
+		e.set(u.key, 0.0f);
+		e.set(u.spread, 0.0f);
+		const float cx = row->chip().width() * 0.5f;
+		const float cy = row->chip().height() * 0.5f;
+		row->chip().onMouseDown().callback(at(cx, cy));
+		row->chip().onMouseUp().callback(at(cx, cy));
+		CHECK(eroField(e.d, u.key) == 1.0f);
+		CHECK(eroField(e.d, u.spread) == 0.0f);
+		row->chip().onMouseDown().callback(at(cx, cy));
+		row->chip().onMouseUp().callback(at(cx, cy));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		// WITH KEY OFF THE FADER IS LIT AND ITS DRAG WRITES SPREAD (40%), NOT KEY.
+		CHECK_FALSE(row->chip().on());
+		CHECK(row->fader().active());
+		const float fx = row->fader().width() * 0.5f;
+		const float fy = row->fader().height() * 0.5f;
+		const float travel = 0.4f * ui::FaderPill::kSpan;
+		row->fader().onMouseDown().callback(at(fx, fy));
+		row->fader().onMouseDrag().callback(at(fx + travel, fy));
+		row->fader().onMouseUp().callback(at(fx + travel, fy));
+		CHECK(eroField(e.d, u.spread) == doctest::Approx(0.4f));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		// A CLICK ON THE FADER DOES NOT TOGGLE KEY (it has no power of its own).
+		row->fader().onMouseDown().callback(at(fx, fy));
+		row->fader().onMouseUp().callback(at(fx, fy));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		CHECK(row->fader().active());
+	}
+	// NATIVE WIDTHS: nothing in the row leaves the cell, the two controls do not overlap, at scale 1 and at the development display's 1.75.
+	for (const float scale : { 1.0f, 1.75f }) {
+		e.d.card->setDpiScale(scale);
+		e.panel->setDpiScale(scale);
+		for (const Unit& u : units) {
+			CAPTURE(u.name);
+			CAPTURE(scale);
+			e.set(u.type, static_cast<float>(ero::DriveMode::Slew));
+			ui::KeySpreadRow* row = u.cell->pillFor(eroAt(u.key));
+			REQUIRE(row->isVisible());
+			REQUIRE(u.cell->dpiScale() == scale);
+			CHECK(row->nativeX() >= 0);
+			CHECK(row->nativeRight() <= u.cell->nativeWidth());
+			CHECK(row->nativeBottom() <= u.cell->nativeHeight());
+			CHECK(row->chip().nativeX() >= 0);
+			CHECK(row->chip().nativeRight() <= row->fader().nativeX());
+			CHECK(row->fader().nativeRight() <= row->nativeWidth());
+			CHECK(row->chip().nativeBottom() <= row->nativeHeight());
+			// THE FADER HAS ROOM FOR ITS CAPTION (the window prints the percentage too, the narrow cell its fill alone).
+			CHECK(row->fader().nativeWidth() >= static_cast<int>(std::lround(14.0f * scale)));
+			if (u.narrow) {
+				CHECK(row->fader().captionFits());
+			}
+		}
+	}
+	e.d.card->setDpiScale(1.0f);
+	e.panel->setDpiScale(1.0f);
 }
 
 TEST_CASE("ERODER's Rate row follows Track: hertz with it off, the multiple of the note with it on, the other hidden; the multiple's drag lands on the detents and a typed value stays") {
@@ -44863,7 +45605,7 @@ TEST_CASE("ETCH's slot cells carry the Type's second parameter on the card and i
 				for (ui::ModeValueCell* cell : { slot == 0 ? card.cellA.get() : card.cellB.get(), slot == 0 ? panel.cellA.get() : panel.cellB.get() }) {
 					const auto& p = second[static_cast<size_t>(slot)];
 					const auto shown = [&](size_t i) { return cell->boxFor(eroAt(p[i]))->isVisible(); };
-					ui::FaderPill* pill = cell->pillFor(eroAt(keys[static_cast<size_t>(slot)]));
+					ui::KeySpreadRow* pill = cell->pillFor(eroAt(keys[static_cast<size_t>(slot)]));
 					REQUIRE(pill != nullptr);
 					CHECK(shown(0) == (want == ero::SecondParam::Bal));
 					CHECK(shown(1) == (want == ero::SecondParam::Rate && !track));
@@ -46977,4 +47719,338 @@ TEST_CASE("PHOTO: the quad LFO and quad S&H cards, tab 1 and a switched-on tab 2
 		f.panel->resized();
 		shoot(f, out + "/snh-tab2.png");
 	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE ERODER'S HOVER TEXTS FOLLOW EACH DRIVE UNIT'S TYPE (`StageTips`, `fx/eroder/drive_tips.h`).     //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A HOVER MAY CARRY THE CONTROL'S FULL NAME OR THE TYPE'S AT ITS START ("Paunch-S (w) - ..."); what it ends with is the text under test.
+bool hoverEndsWith(const std::string& hover, const std::string& tail) {
+	return !tail.empty() && hover.size() >= tail.size() && hover.compare(hover.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+/// ONE DRIVE UNIT'S FACES, card and window: its parameters, its Amount knobs and its cells (the Drive's, slot A's, slot B's).
+struct TipUnit {
+	const char* name;
+	ui::StageParams p;
+	ui::Knob* knobs[2];
+	ui::ModeValueCell* cells[2];
+};
+
+std::vector<TipUnit> tipUnits(EroFaces& e) {
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	return { { "Drive", ui::driveStageParams(), { e.d.card->driveForTest(), e.panel->driveForTest() }, { e.d.card->driveCellForTest(), e.panel->driveCellForTest() } },
+		     { "Slot A", ui::slotStageParams(0), { card.knobA.get(), panel.knobA.get() }, { card.cellA.get(), panel.cellA.get() } },
+		     { "Slot B", ui::slotStageParams(1), { card.knobB.get(), panel.knobB.get() }, { card.cellB.get(), panel.cellB.get() } } };
+}
+
+/// THE THREE HOVERS UNDER TEST for one cell and knob, against the table's row for `type` (and `keyed`).
+void checkTipsFor(ui::Knob& knob, ui::ModeValueCell& cell, const ui::StageParams& p, ero::DriveMode type, bool keyed) {
+	const ero::DriveTip& tip = ero::driveTip(type);
+	const visage::Point at { 1.0f, 1.0f };
+	const std::string amount = keyed && tip.amountKeyed != nullptr ? tip.amountKeyed : tip.amount;
+	CHECK(hoverEndsWith(ui::hoverText(knob, at), amount));
+	CHECK(hoverEndsWith(ui::hoverText(cell, at), tip.type));
+	if (tip.shape != nullptr) {
+		ui::ValueBox* shape = cell.boxFor(static_cast<size_t>(p.shape));
+		REQUIRE(shape != nullptr);
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), tip.shape));
+	}
+	else {
+		// THE PAUNCH TYPES' ROW IS THEIR ANGLE, whose tooltip is its own (declared, without the list of Types).
+		ui::ValueBox* angle = cell.boxFor(static_cast<size_t>(p.angle));
+		REQUIRE(angle != nullptr);
+		CHECK(hoverEndsWith(ui::hoverText(*angle, at), ero::withoutOnlyClause(angle->control().desc().tooltip)));
+	}
+}
+
+} // namespace
+
+TEST_CASE("ERODER's hover texts follow each Drive unit's Type — the Drive and both Etch slots, on the card and in the window, set through the host") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	const std::vector<TipUnit> units = tipUnits(e);
+	const visage::Point at { 1.0f, 1.0f };
+	for (const TipUnit& u : units) {
+		CAPTURE(std::string(u.name));
+		for (const ero::DriveMode type : { ero::DriveMode::Tube, ero::DriveMode::Fold, ero::DriveMode::PaunchS, ero::DriveMode::Decimate, ero::DriveMode::Lean,
+		                                   ero::DriveMode::Chonk, ero::DriveMode::Slew, ero::DriveMode::Soft }) {
+			CAPTURE(std::string(ero::kDriveModeNames[static_cast<size_t>(type)]));
+			e.set(static_cast<ero::Param>(u.p.type), static_cast<float>(type));
+			for (size_t i = 0; i < 2; ++i) {
+				CAPTURE(i);
+				checkTipsFor(*u.knobs[i], *u.cells[i], u.p, type, false);
+			}
+		}
+		// THE PINS: a table that is wrong everywhere would still agree with itself.
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Decimate));
+		for (size_t i = 0; i < 2; ++i) {
+			CHECK(ui::hoverText(*u.knobs[i], at).find("How long each sample is held") != std::string::npos);
+			ui::ValueBox* shape = u.cells[i]->boxFor(static_cast<size_t>(u.p.shape));
+			CHECK(ui::hoverText(*shape, at).find("straight line") != std::string::npos);
+			CHECK(ui::hoverText(*u.cells[i], at).find("nothing is rounded") != std::string::npos);
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Tube));
+		for (size_t i = 0; i < 2; ++i) {
+			CHECK(ui::hoverText(*u.knobs[i], at).find("an eighth at 0% to sixteen times at 100%") != std::string::npos);
+			CHECK(ui::hoverText(*u.cells[i]->boxFor(static_cast<size_t>(u.p.shape)), at).find("8 times lower") != std::string::npos);
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::PaunchS));
+		for (size_t i = 0; i < 2; ++i) {
+			CHECK(ui::hoverText(*u.knobs[i], at).find("rectified mid") != std::string::npos);
+		}
+	}
+}
+
+TEST_CASE("ERODER's hover texts update when the Type moves by any road, and the Amount's follows the Key switch") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	const std::vector<TipUnit> units = tipUnits(e);
+	const visage::Point at { 1.0f, 1.0f };
+	for (const TipUnit& u : units) {
+		CAPTURE(std::string(u.name));
+		// THE HOST ROAD (automation, a patch load) AND THE CONTROL'S OWN ROAD (a click, an arrow, a menu pick) are both a write to the field;
+		// the second is made through the cell's own control with a gesture, as a hand does.
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Fold));
+		checkTipsFor(*u.knobs[0], *u.cells[0], u.p, ero::DriveMode::Fold, false);
+		ui::ZoneSelect& select = u.cells[0]->select();
+		select.selectZone(static_cast<size_t>(ero::DriveMode::Crush));
+		e.refresh();
+		for (size_t i = 0; i < 2; ++i) {
+			checkTipsFor(*u.knobs[i], *u.cells[i], u.p, ero::DriveMode::Crush, false);
+		}
+		CHECK(ui::hoverText(*u.knobs[0], at).find("about 2 ms") != std::string::npos);
+		// KEY ON: the Amount is a multiple of the note; Key off: back to the time. A Type without a Key does not read the switch.
+		e.set(u.p.key, 1.0f);
+		for (size_t i = 0; i < 2; ++i) {
+			checkTipsFor(*u.knobs[i], *u.cells[i], u.p, ero::DriveMode::Crush, true);
+			CHECK(ui::hoverText(*u.knobs[i], at).find("multiple of the played note's frequency") != std::string::npos);
+		}
+		e.set(u.p.key, 0.0f);
+		checkTipsFor(*u.knobs[0], *u.cells[0], u.p, ero::DriveMode::Crush, false);
+		e.set(u.p.key, 1.0f);
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Tube));
+		for (size_t i = 0; i < 2; ++i) {
+			checkTipsFor(*u.knobs[i], *u.cells[i], u.p, ero::DriveMode::Tube, true);
+		}
+		e.set(u.p.key, 0.0f);
+		// THE THIRD ROW: its text is the declared one without the list of Types, and Lean's Rate says what it turns.
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Soft));
+		for (size_t i = 0; i < 2; ++i) {
+			ui::ValueBox* hard = u.cells[i]->boxFor(static_cast<size_t>(u.p.hard));
+			CHECK(hoverEndsWith(ui::hoverText(*hard, at), ero::withoutOnlyClause(hard->control().desc().tooltip)));
+			CHECK(ui::hoverText(*hard, at).find(" only:") == std::string::npos);
+			CHECK(ui::hoverText(*hard, at).find("knee") != std::string::npos);
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Lean));
+		for (size_t i = 0; i < 2; ++i) {
+			ui::ValueBox* rate = u.cells[i]->boxFor(static_cast<size_t>(u.p.rate));
+			CHECK(hoverEndsWith(ui::hoverText(*rate, at), ero::kLeanRateTip));
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::PaunchOS));
+		for (size_t i = 0; i < 2; ++i) {
+			ui::ValueBox* rate = u.cells[i]->boxFor(static_cast<size_t>(u.p.rate));
+			CHECK(hoverEndsWith(ui::hoverText(*rate, at), ero::withoutOnlyClause(rate->control().desc().tooltip)));
+		}
+	}
+}
+
+TEST_CASE("ERODER's hover texts are right on a freshly opened card and window whose state already has a non-default Type") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	const ero::DriveMode types[] = { ero::DriveMode::Decimate, ero::DriveMode::PaunchOH, ero::DriveMode::Lopside };
+	const ui::StageParams params[] = { ui::driveStageParams(), ui::slotStageParams(0), ui::slotStageParams(1) };
+	for (size_t u = 0; u < 3; ++u) {
+		d.set(eroAt(params[u].type), static_cast<float>(types[u]));
+	}
+	// A NEW CARD AND A NEW WINDOW, built after the state was set and never given a tick.
+	ui::WidgetRegistry registry;
+	auto card = std::make_unique<ui::EroderCard>(d.f.deviceHost, registry, d.device);
+	ui::WidgetRegistry registry2;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry2, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	ui::Knob* cardKnobs[] = { card->driveForTest(), card->etchSlotsForTest().knobA.get(), card->etchSlotsForTest().knobB.get() };
+	ui::ModeValueCell* cardCells[] = { card->driveCellForTest(), card->etchSlotsForTest().cellA.get(), card->etchSlotsForTest().cellB.get() };
+	ui::Knob* panelKnobs[] = { panel->driveForTest(), panel->etchSlotsForTest().knobA.get(), panel->etchSlotsForTest().knobB.get() };
+	ui::ModeValueCell* panelCells[] = { panel->driveCellForTest(), panel->etchSlotsForTest().cellA.get(), panel->etchSlotsForTest().cellB.get() };
+	for (size_t u = 0; u < 3; ++u) {
+		CAPTURE(u);
+		checkTipsFor(*cardKnobs[u], *cardCells[u], params[u], types[u], false);
+		checkTipsFor(*panelKnobs[u], *panelCells[u], params[u], types[u], false);
+	}
+}
+
+TEST_CASE("ERODER's per-Type hover table: every Type has an Amount and a Type text, a Shape text or the Angle's, and no text carries an \"only:\" clause or names the hardware") {
+	REQUIRE(sizeof ero::kDriveTips / sizeof ero::kDriveTips[0] == static_cast<size_t>(ero::DriveMode::kCount));
+	for (size_t i = 0; i < static_cast<size_t>(ero::DriveMode::kCount); ++i) {
+		const auto type = static_cast<ero::DriveMode>(i);
+		CAPTURE(std::string(ero::kDriveModeNames[i]));
+		const ero::DriveTip& tip = ero::driveTip(type);
+		REQUIRE(tip.type != nullptr);
+		REQUIRE(tip.amount != nullptr);
+		CHECK(std::string(tip.type).size() > 20);
+		CHECK(std::string(tip.amount).size() > 20);
+		// A SHAPE TEXT, OR THE ANGLE: the four Paunch Types alone have none (their row is another control); a Key's text only where there is a Key.
+		CHECK((tip.shape == nullptr) == (ero::driveIsPaunchLaw(type) || ero::driveIsPaunchOdd(type)));
+		CHECK((tip.amountKeyed != nullptr) == ero::driveHasKey(type));
+		for (const char* text : { tip.type, tip.amount, tip.amountKeyed, tip.shape }) {
+			if (text == nullptr) {
+				continue;
+			}
+			const std::string s(text);
+			CHECK(s.find(" only:") == std::string::npos);
+			// THE NAME THE HARDWARE GOES BY, assembled as `test_device_tooltips` does.
+			std::string lower;
+			for (const char c : s) {
+				lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+			}
+			CHECK(lower.find(std::string("del") + "uge") == std::string::npos);
+		}
+	}
+	CHECK(std::string(ero::kLeanRateTip).find(" only:") == std::string::npos);
+	CHECK(std::string(ero::kLeanRateMultTip).find(" only:") == std::string::npos);
+	// THE CLAUSE STRIPPER: a leading list goes and the first letter is raised; text without one is as it was.
+	CHECK(ero::withoutOnlyClause("Soft and Tube only: the knee. Shown only while its Type is Soft") == "The knee. Shown only while its Type is Soft");
+	CHECK(ero::withoutOnlyClause("What Drive pushes into") == "What Drive pushes into");
+}
+
+//--------------------------------------------------------------------------------------------------//
+// CLIP'S HOVER TEXTS FOLLOW ITS MODE (`ClipCard::applyTips`, `fx/clip/clip_tips.h`).                   //
+// Clip has no expanded window (`Traits::hasExpanded` is false): the card is its one face.             //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE THREE HOVERS UNDER TEST on a Clip card, against the table's row for `mode`: the Mode box, the Drive (its Amount) and, where the mode has one, the Shape.
+void checkClipTips(ui::ClipCard& card, int mode) {
+	namespace cl = feathers::fx::clip;
+	const cl::ClipTip& tip = cl::modeTip(mode);
+	const visage::Point at { 1.0f, 1.0f };
+	auto* drive = dynamic_cast<ui::Knob*>(card.widgetForTest(cl::Param::Drive));
+	auto* shape = dynamic_cast<ui::Knob*>(card.widgetForTest(cl::Param::Shape));
+	REQUIRE(drive != nullptr);
+	REQUIRE(shape != nullptr);
+	CHECK(hoverEndsWith(ui::hoverText(*card.modeForTest(), at), tip.type));
+	CHECK(hoverEndsWith(ui::hoverText(*drive, at), tip.amount));
+	if (tip.shape != nullptr) {
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), tip.shape));
+	}
+	else {
+		// A MODE WITH NO SHAPE KNOB leaves the declared text.
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), cl::kParamDescs[static_cast<size_t>(cl::Param::Shape)].tooltip));
+	}
+}
+
+} // namespace
+
+TEST_CASE("CLIP's hover texts follow its Type — the Mode box, the Drive and the Shape, set through the host") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	for (const cl::Mode mode : { cl::Mode::Soft, cl::Mode::Fold, cl::Mode::Tube, cl::Mode::Jag, cl::Mode::Chonk, cl::Mode::PaunchS, cl::Mode::PaunchOS, cl::Mode::Slew, cl::Mode::Lopside }) {
+		CAPTURE(std::string(cl::kModeNames[static_cast<size_t>(mode)]));
+		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
+		(void)d.card->updateContent();
+		checkClipTips(*d.card, static_cast<int>(mode));
+	}
+	// THE PINS: a table that is wrong everywhere would still agree with itself.
+	auto* drive = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Drive));
+	auto* shape = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Shape));
+	auto* rate = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Rate));
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Slew));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("20 kHz at -24 dB down to 50 Hz at +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*shape, at).find("one-pole lowpass") != std::string::npos);
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Tube));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("from -24 dB to +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*shape, at).find("8 times lower") != std::string::npos);
+	CHECK(ui::hoverText(*drive, at).find("sixteen times") == std::string::npos); // the Eroder's Amount is not Clip's Drive
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::PaunchS));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("four times the mid's level at +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*rate, at).find("Angle holds still") != std::string::npos);
+	CHECK(ui::hoverText(*rate, at).find("Lean") == std::string::npos);
+	// THE MODES' OWN CONTROLS DROP THEIR LEADING "X only:" CLAUSE.
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Tube));
+	(void)d.card->updateContent();
+	auto* hard = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Hard));
+	REQUIRE(hard != nullptr);
+	CHECK(ui::hoverText(*hard, at).find(" only:") == std::string::npos);
+	CHECK(hoverEndsWith(ui::hoverText(*hard, at), feathers::fx::eroder::withoutOnlyClause(hard->control()->desc().tooltip)));
+}
+
+TEST_CASE("CLIP's hover texts update when the Type moves by the Mode box's own selection") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Fold));
+	(void)d.card->updateContent();
+	checkClipTips(*d.card, static_cast<int>(cl::Mode::Fold));
+	// THE MENU'S PICK IS THE ROAD A HAND TAKES: it writes the field, and the card's next tick follows it.
+	for (const cl::Mode to : { cl::Mode::Lean, cl::Mode::PaunchOH, cl::Mode::Lopside, cl::Mode::Soft }) {
+		CAPTURE(std::string(cl::kModeNames[static_cast<size_t>(to)]));
+		d.card->modeForTest()->choiceMenu().onSelection().callback(static_cast<int>(to));
+		d.f.bridge.refresh();
+		(void)d.card->updateContent();
+		checkClipTips(*d.card, static_cast<int>(to));
+	}
+	auto* drive = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Drive));
+	CHECK(ui::hoverText(*drive, at).find("soft shoulder") == std::string::npos); // (the Mode box says that; the Drive says what it feeds)
+	CHECK(hoverEndsWith(ui::hoverText(*drive, at), cl::modeTip(static_cast<int>(cl::Mode::Soft)).amount));
+}
+
+TEST_CASE("CLIP's hover texts are right on a freshly opened card whose state already has a non-default Type") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Chonk));
+	// A NEW CARD, built after the state was set and never given a tick or a layout.
+	ui::WidgetRegistry registry;
+	auto card = std::make_unique<ui::ClipCard>(d.f.deviceHost, registry, d.device);
+	checkClipTips(*card, static_cast<int>(cl::Mode::Chonk));
+	const visage::Point at { 1.0f, 1.0f };
+	CHECK(ui::hoverText(*dynamic_cast<ui::Knob*>(card->widgetForTest(cl::Param::Shape)), at).find("turned over on the right side only") != std::string::npos);
+}
+
+TEST_CASE("CLIP's per-Type hover table: every Type has texts, and no hover in any Type's cell carries \" only:\" or names the hardware") {
+	namespace cl = feathers::fx::clip;
+	REQUIRE(sizeof cl::kModeTips / sizeof cl::kModeTips[0] == static_cast<size_t>(cl::Mode::kCount));
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	const auto clean = [](const std::string& s) {
+		std::string lower;
+		for (const char c : s) {
+			lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+		}
+		// THE NAME THE HARDWARE GOES BY, assembled as `test_device_tooltips` does.
+		return s.find(" only:") == std::string::npos && lower.find(std::string("del") + "uge") == std::string::npos;
+	};
+	size_t seen = 0;
+	for (int mode = 0; mode < static_cast<int>(cl::Mode::kCount); ++mode) {
+		CAPTURE(std::string(cl::kModeNames[mode]));
+		const cl::ClipTip& tip = cl::modeTip(mode);
+		REQUIRE(tip.type != nullptr);
+		REQUIRE(tip.amount != nullptr);
+		CHECK(std::string(tip.type).size() > 20);
+		CHECK(std::string(tip.amount).size() > 20);
+		// A SHAPE TEXT EXACTLY WHERE THE CARD SHOWS A SHAPE KNOB.
+		CHECK((tip.shape != nullptr) == (((cl::kShapeKnobModes >> static_cast<uint32_t>(mode)) & 1u) != 0u));
+		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
+		(void)d.card->updateContent();
+		for (const cl::Param p : d.card->addressedParamsForTest()) {
+			// (THE ENABLE SQUARE IS DRAWN IN THE HEAD, and Bits' segmented control has no one tooltip: neither is a source here.)
+			auto* source = dynamic_cast<ui::TooltipSource*>(d.card->widgetForTest(p));
+			if (source == nullptr) {
+				continue;
+			}
+			++seen;
+			CAPTURE(std::string(cl::kParamDescs[static_cast<size_t>(p)].name));
+			CHECK(clean(ui::hoverText(*source, at)));
+		}
+	}
+	CHECK(seen > 15 * 10);
 }

@@ -3199,7 +3199,7 @@ TEST_CASE("rack layout: in the Rack window's Tabs view the tabs are a thin colum
 		CHECK(two.column.width() == doctest::Approx(ui::RackTabBar::kThickness));
 		CHECK(eight.column.width() == doctest::Approx(ui::RackTabBar::kThickness));
 		CHECK(two.column.height() > two.column.width());
-		CHECK(two.column.x() == doctest::Approx(ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad));
+		CHECK(two.column.x() == doctest::Approx(2.0f * (ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad))); // after the rack's pane and the macros'
 		CHECK(two.railX >= two.column.right());
 		// EACH TAB AT MOST THE CAP LONG: two tabs are a short column, not the window's whole height.
 		CHECK(two.tabLength <= ui::RackTabBar::kMaxLength + 0.5f);
@@ -4141,7 +4141,7 @@ TEST_CASE("list view: a row shows its chain's level meter by value, a row out of
 	CHECK(list.rowForTest(0)->meterReadingForTest() == ui::cardMeterReadingFor(0.5f));
 	CHECK(list.rowForTest(1)->meterReadingForTest() == ui::cardMeterReadingFor(0.1f));
 	CHECK_FALSE(list.rowForTest(0)->meterReadingForTest() == list.rowForTest(1)->meterReadingForTest());
-	CHECK(list.rowForTest(0)->meterMarksForTest().level.width() > list.rowForTest(1)->meterMarksForTest().level.width()); // the louder one's bar is longer
+	CHECK(list.rowForTest(0)->meterMarksForTest().level.height() > list.rowForTest(1)->meterMarksForTest().level.height()); // the louder one's fill is taller
 	// A ROW OUT OF VIEW IS NOT FOLLOWED: its chain's peak moves and the list reports nothing to repaint.
 	REQUIRE_FALSE(list.rowForTest(11)->isVisible());
 	r.rack().publishChainPeakForTest(11, 0.25f);
@@ -4200,14 +4200,8 @@ TEST_CASE("list view: the Cards|Window pane holds the front chain's first device
 	CHECK(list.isVisible());
 }
 
-namespace {
-/// The drawn width of a pill's text in logical pixels, as the pill's own font measures it.
-float pixelsOf(const std::string& text) {
-	return ui::font(ui::kKnobLabelSize).stringWidth(std::u32string(text.begin(), text.end()));
-}
-} // namespace
 
-TEST_CASE("list view: a row's level pill shows its value alone and the meter is a bar, at 1x, 1.75x and 2x; the strips' own pills are measured for the same collision") {
+TEST_CASE("list view: a row's fader and meter are slim and vertical beside M and S, the name keeps its room, and the list is as narrow as asked, at 1x, 1.75x and 2x") {
 	for (const float scale : { 1.0f, 1.75f, 2.0f }) {
 		CAPTURE(scale);
 		RealRack r;
@@ -4225,42 +4219,35 @@ TEST_CASE("list view: a row's level pill shows its value alone and the meter is 
 			for (size_t k = 0; k < 3; ++k) {
 				ui::ChainStrip& row = *list->rowForTest(k);
 				REQUIRE(row.rowModeForTest());
-				// THE PILL: no caption to collide with the value, and the value fits inside it.
-				const visage::Bounds pill = row.levelPillBoundsForTest();
-				CHECK(row.levelPill().readout() != "");
-				CHECK(row.levelPill().captionForTest().empty());
-				CHECK(pixelsOf(row.levelPill().readout()) <= pill.width() - 2.0f * 7.0f);
-				// THE BAR: a few pixels tall, wide enough to read, clear of the pill and of the chips.
-				const visage::Bounds bar = row.meterBoundsForTest();
-				CHECK(bar.height() >= 5.0f);
-				CHECK(bar.width() >= 24.0f);
-				CHECK(bar.x() >= pill.right());
-				CHECK(bar.x() >= row.muteChip().bounds().right() - 0.5f); // the bar is the far end; the chips stand before it
+				// NO PILL: the fader is the level's face, a slim vertical one inside the row's own height.
+				CHECK_FALSE(row.levelPill().isVisible());
+				const visage::Bounds fader = row.levelFaderBoundsForTest();
+				const visage::Bounds meter = row.meterBoundsForTest();
+				CHECK(row.levelFrame().bounds() == fader); // the level's face IS the fader
+				CHECK(fader.width() == doctest::Approx(ui::ChainStrip::kRowFaderWidth));
+				CHECK(meter.width() == doctest::Approx(ui::ChainStrip::kRowMeterWidth));
+				CHECK(fader.height() >= 16.0f);
+				CHECK(fader.height() <= static_cast<float>(row.height()));
+				CHECK(meter.height() == doctest::Approx(fader.height()));
+				// SIDE BY SIDE AT THE RIGHT, after M and S, the meter last.
+				CHECK(fader.x() >= row.soloChip().bounds().right() - 0.5f);
+				CHECK(meter.x() >= fader.right() - 0.5f);
+				CHECK(meter.right() <= static_cast<float>(row.width()) + 0.5f);
+				// THE NAME KEEPS A USEFUL ROOM.
+				CHECK(row.summaryWidth() >= 70.0f);
 			}
-			// THE BARS READ THE CHAINS' PEAKS: the marks' length is the reading's share of the track, restated from the mapping.
+			// THE METER READS THE CHAINS' PEAKS: the marks' height is the reading's share of the track, as wide as the track.
 			for (const auto& [k, peak] : { std::pair<size_t, float> { 0, 0.5f }, std::pair<size_t, float> { 1, 0.1f } }) {
 				const ui::ChainStrip& row = *list->rowForTest(k);
-				const float length = row.meterBoundsForTest().width();
-				CHECK(row.meterMarksForTest().level.width() == std::round(ui::cardMeterReadingFor(peak).level * length));
-				CHECK(row.meterMarksForTest().level.height() == row.meterBoundsForTest().height()); // the bar is as thick as its track
+				CHECK(row.meterMarksForTest().level.height() == std::round(ui::cardMeterReadingFor(peak).level * row.meterBoundsForTest().height()));
+				CHECK(row.meterMarksForTest().level.width() == doctest::Approx(row.meterBoundsForTest().width()));
 			}
-			CHECK(list->rowForTest(0)->meterMarksForTest().level.width() > list->rowForTest(1)->meterMarksForTest().level.width());
+			CHECK(list->rowForTest(0)->meterMarksForTest().level.height() > list->rowForTest(1)->meterMarksForTest().level.height());
 		}
-		// THE EXISTING STRIPS, MEASURED AND NOT CHANGED: in the Strips view the card's own strips at their own widths, caption against value.
-		r.view_(0);
-		r.card->setDpiScale(scale);
-		r.card->resized();
-		r.refresh();
-		for (const auto& strip : r.card->stripsForTest()) {
-			const float w = static_cast<float>(strip->levelPill().width());
-			const float caption = pixelsOf("Level");
-			const float value = pixelsOf(strip->levelPill().readout());
-			const bool collide = 7.0f + caption > w - 7.0f - value;
-			MESSAGE("MEASURED card strip at scale " << scale << ": pill " << w << " px, caption " << caption << ", value '" << strip->levelPill().readout() << "' " << value << ", caption ends at " << 7.0f + caption << ", value starts at " << w - 7.0f - value << ", collides: " << (collide ? "YES" : "no"));
-		}
+		// THE LIST COLUMN'S WIDTH, in native pixels, in the window.
+		CHECK(r.panel->listForTest().nativeWidth() == static_cast<int>(std::lround(ui::RackListView::kColumnWidth * scale)));
 	}
 }
-
 
 TEST_CASE("rename field: a single left press on a strip's own surface renames nothing and moves no control; mute still toggles") {
 	RealRack r;
@@ -4427,71 +4414,70 @@ TEST_CASE("header presets: a rack chain's device card menu offers Presets and Sa
 // THE RACK WINDOW'S COLUMN FOLDS: THE MACROS' AND THE INSPECTOR'S, EACH ITS OWN                       //
 //--------------------------------------------------------------------------------------------------//
 
-TEST_CASE("rack window folds: the macros header folds only the macros, the inspector header folds only the inspector, each under its own key, and the column reflows") {
+TEST_CASE("rack window folds: each pane's rail folds it SIDEWAYS to a strip, the other pane keeps its state and moves left, the strips stand edge to edge and the window narrows") {
 	RealRack r;
 	r.chains(2, 0, true);
-	r.view_(2); // Pads: its "+ Chain" stands at the column's foot, under the macros
+	r.view_(2); // Pads: its "+ Chain" stands in the rack pane
 	ui::ParallelRackExpanded& w = *r.panel;
+	ui::Rail& container = w.containerRailForTest();
+	ui::Rail& macros = w.macrosRailForTest();
+	const auto press = [&](ui::Rail& rail) {
+		visage::MouseEvent down {};
+		const visage::Bounds t = rail.toggleBounds();
+		down.position = { t.x() + t.width() * 0.5f, t.y() + t.height() * 0.5f };
+		rail.onMouseDown().callback(down);
+		r.refresh();
+	};
+	const float strip = ui::Rail::kCollapsedWidth;
+	const float open = ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad;
 	const auto macrosShown = [&] { return w.macroShownForTest(0) && w.macroShownForTest(7); };
-	// OPEN: everything shown, the headers in the column's top pad.
-	CHECK(macrosShown());
-	CHECK(w.inspectorShownForTest());
+	// BOTH OPEN: the rack's pane first, the macros' after it, the rails after both.
 	CHECK_FALSE(w.macrosFolded());
 	CHECK_FALSE(w.inspectorFolded());
-	// STACKED, EACH DIRECTLY OVER ITS OWN HALF: the inspector's over the mode row, the macros' between Mix and Gain and the first macro row.
-	CHECK(w.inspectorHeaderForTest().height() > 0);
-	CHECK(w.inspectorHeaderForTest().bounds().bottom() <= w.modeBoxBoundsForTest().y());
-	CHECK(w.mixBoundsForTest().bottom() <= w.macrosHeaderForTest().bounds().y());
-	CHECK(w.macrosHeaderForTest().bounds().bottom() <= w.macroBoundsForTest(0).y());
+	CHECK(w.containerWidth() == doctest::Approx(open));
+	CHECK(w.macrosWidth() == doctest::Approx(open));
+	CHECK(macrosShown());
+	CHECK(w.inspectorShownForTest());
+	CHECK(w.routeListForTest().isVisible());
 	const visage::Bounds mode0 = w.modeBoxBoundsForTest();
 	const visage::Bounds mix0 = w.mixBoundsForTest();
 	const visage::Bounds macro0 = w.macroBoundsForTest(0);
-	const visage::Bounds add0 = w.addBoundsForTest();
 	const visage::Point min0 = w.minimumSize();
-	// THE MACROS HEADER: the macros go; the inspector is exactly where it was; the foot rises by the macros' height.
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
-	CHECK(w.macrosFolded());
-	CHECK_FALSE(w.inspectorFolded());
-	CHECK(r.field(pr::Param::MacrosFold) == 1.0f);
-	CHECK(r.field(pr::Param::InspectorFold) == 0.0f);
-	CHECK_FALSE(w.macroShownForTest(0));
-	CHECK_FALSE(w.macroShownForTest(7));
-	CHECK(w.inspectorShownForTest());
-	CHECK(w.modeBoxBoundsForTest() == mode0);
-	CHECK(w.mixBoundsForTest() == mix0);
-	CHECK(w.addBoundsForTest().y() < add0.y());
-	CHECK(w.minimumSize().y <= min0.y);
-	// UNFOLD, THEN THE INSPECTOR HEADER: its controls go; the macros stay shown, risen to the top pad.
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
-	CHECK(macrosShown());
-	CHECK(w.macroBoundsForTest(0) == macro0);
-	CHECK(w.addBoundsForTest() == add0);
-	w.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
+	CHECK(macro0.x() >= open); // the macros stand in their own pane
+	// A PRESS ON THE RACK PANE'S TOGGLE: it folds to a strip; the macros' pane is untouched and moves left by what the rack pane gave up.
+	press(container);
 	CHECK(w.inspectorFolded());
 	CHECK_FALSE(w.macrosFolded());
 	CHECK(r.field(pr::Param::InspectorFold) == 1.0f);
 	CHECK(r.field(pr::Param::MacrosFold) == 0.0f);
+	CHECK(container.width() == strip);
+	CHECK(w.containerWidth() == strip);
 	CHECK_FALSE(w.inspectorShownForTest());
+	CHECK_FALSE(w.routeListForTest().isVisible());
 	CHECK(macrosShown());
-	CHECK(w.macroBoundsForTest(0).y() < macro0.y());
-	CHECK(w.macroBoundsForTest(0).y() == doctest::Approx(w.macrosHeaderForTest().bounds().bottom())); // right under the headers
-	// BOTH FOLDED: the foot sits under the headers. UNFOLD BOTH: the column is as it was.
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
+	CHECK(w.macroBoundsForTest(0).x() == doctest::Approx(macro0.x() - (open - strip)));
+	CHECK(w.macroBoundsForTest(0).y() == macro0.y());
+	CHECK(w.minimumSize().x == doctest::Approx(min0.x - (open - strip)));
+	// THE MACROS' TOGGLE: both are strips, edge to edge in native pixels, and the window narrows by both panes less the strips.
+	press(macros);
 	CHECK(w.macrosFolded());
-	CHECK(w.inspectorFolded());
+	CHECK(macros.width() == strip);
+	CHECK(container.nativeX() + container.nativeWidth() == macros.nativeX()); // no gap, no leftover margin
 	CHECK_FALSE(macrosShown());
-	w.macrosHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	w.inspectorHeaderForTest().onMouseDown().callback(visage::MouseEvent {});
-	r.refresh();
-	CHECK(macrosShown());
-	CHECK(w.inspectorShownForTest());
+	CHECK(w.minimumSize().x == doctest::Approx(min0.x - 2.0f * (open - strip)));
+	// UNFOLD THE RACK PANE: it returns as it was, the macros stay a strip, now right after it.
+	press(container);
+	CHECK_FALSE(w.inspectorFolded());
+	CHECK(w.macrosFolded());
 	CHECK(w.modeBoxBoundsForTest() == mode0);
+	CHECK(w.mixBoundsForTest() == mix0);
+	CHECK(w.routeListForTest().isVisible());
+	CHECK(macros.x() == doctest::Approx(open));
+	press(macros);
+	CHECK_FALSE(w.macrosFolded());
+	CHECK(macrosShown());
 	CHECK(w.macroBoundsForTest(0) == macro0);
-	CHECK(w.addBoundsForTest() == add0);
+	CHECK(w.minimumSize().x == doctest::Approx(min0.x));
 }
 
 TEST_CASE("rack window folds: each fold is saved with the patch, a fresh instance loads both as saved and lays out folded on its first frame, and a preset with neither key opens both") {
@@ -4634,5 +4620,166 @@ TEST_CASE("PHOTO: the Rack window in Tabs and in Pads, the chain in front runnin
 		shot.save((std::string(keep) + (view == 1 ? "/tabs-window.png" : "/pads-window.png")).c_str());
 		r.f.root->removeChild(r.panel);
 		r.f.root->removeChild(&backdrop);
+	}
+}
+
+TEST_CASE("rack window route list: a route made inside the rack from its armed macro shows as a row in the rack pane, edits through the chain, and the synth's own list stays as it is") {
+	RealRack r;
+	r.chains(2, 2, true); // a Drum then a Delay in each of the first two chains
+	ui::ParallelRackExpanded& w = *r.panel;
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	REQUIRE(delay != feathers::kNoInstance);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	REQUIRE(desc != nullptr);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	const backplane::Source macro1 = backplane::Source::core(0);
+	const backplane::Destination dest = backplane::Destination::control(delay, control);
+	ui::RouteList& list = w.routeListForTest();
+	// NOTHING ROUTED YET: the armed macro reaches nothing.
+	w.macroModForTest().focus(macro1);
+	w.macroModForTest().arm(true);
+	CHECK(list.allRows().empty());
+	// A ROUTE MADE INSIDE THE RACK, in the chain's own table, from the chain's macro 1.
+	chain0.setRouteAmount(macro1, dest, 0.5f);
+	r.refresh();
+	const std::vector<ui::RouteList::Row> rows = list.allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].destination == dest);
+	// THE ROW'S TEXT: the chain by its one label, then the device and the control, as the rack itself names a route into a chain.
+	const std::string text = list.nameOfForTest(rows[0]);
+	CHECK(text == r.rack().chainLabel(0) + " \xC2\xB7 " + desc->traits.name + " \xC2\xB7 " + desc->params[control].name);
+	// EDITED FROM THE LIST: the amount is the chain's, and removing the row removes the chain's route.
+	CHECK(list.amountOfForTest(rows[0]) == doctest::Approx(0.5f));
+	list.writeForTest(rows[0], 0.25f);
+	CHECK(chain0.routeAmount(macro1, dest) == doctest::Approx(0.25f));
+	list.removeForTest(rows[0]);
+	CHECK(chain0.routeAmount(macro1, dest) == 0.0f);
+	CHECK(list.allRows().empty());
+	// ANOTHER MACRO IS ANOTHER LIST: a route from macro 2 does not appear under macro 1.
+	chain0.setRouteAmount(backplane::Source::core(1), dest, 0.5f);
+	CHECK(list.allRows().empty());
+	// THE LIST HAS ROOM: it stands in the rack pane under Mix and Gain, taller than its heading and three rows.
+	CHECK(list.height() >= ui::RouteList::kHeadingHeight + 3.0f * ui::RouteList::kRowHeight);
+	CHECK(list.x() == ui::ParallelRackExpanded::kPad);
+	CHECK(list.right() <= w.containerWidth());
+}
+
+TEST_CASE("synth route list: a rack macro armed from the synth's editor lists the routes that macro has inside the rack, heading and rows agreeing") {
+	RealRack r;
+	r.chains(2, 2, true);
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	REQUIRE(delay != feathers::kNoInstance);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	REQUIRE(desc != nullptr);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	const backplane::Source inner = backplane::Source::core(0);
+	const backplane::Destination dest = backplane::Destination::control(delay, control);
+	chain0.setRouteAmount(inner, dest, 0.5f); // the rack's macro 1 into a device in its first chain
+	// THE SYNTH'S OWN ARM: the rack's macro as the synth's editor spells it, a source exported by the rack, armed in the synth's state.
+	const backplane::Source armed = r.f.bridge.fxContainerExport(r.id, inner);
+	REQUIRE(armed != backplane::Source::nobody());
+	ui::ModState* mod = r.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	mod->focus(armed);
+	mod->arm(true);
+	ui::RouteList* list = findInTree<ui::RouteList>(r.f.root);
+	REQUIRE(list != nullptr);
+	// THE HEADING NAMES WHOSE ROUTES THESE ARE, AND THE ROWS ARE THEM: a heading that promises rows shows them.
+	CHECK_FALSE(list->headingName().whole.empty());
+	const std::vector<ui::RouteList::Row> rows = list->allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].destination == dest);
+	// THE SYNTH NAMES A CONTAINER BY ITS PLACE ("Chain 2"), then the rack names the chain, the device and the control.
+	CHECK(list->nameOfForTest(rows[0]) == "Chain " + std::to_string(r.slot + 1) + " \xC2\xB7 " + r.rack().chainLabel(0) + " \xC2\xB7 " + desc->traits.name
+	                                          + " \xC2\xB7 " + desc->params[control].name);
+	CHECK(list->amountOfForTest(rows[0]) == doctest::Approx(0.5f));
+	// EDITED THROUGH THE ROW: it is the chain's route.
+	list->writeForTest(rows[0], 0.25f);
+	CHECK(chain0.routeAmount(inner, dest) == doctest::Approx(0.25f));
+	list->removeForTest(rows[0]);
+	CHECK(chain0.routeAmount(inner, dest) == 0.0f);
+}
+
+TEST_CASE("synth route list: a SYNTH source routed into a device inside a rack chain lists and edits as it always did, row text and amount asserted") {
+	RealRack r;
+	r.chains(2, 2, true);
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	REQUIRE(delay != feathers::kNoInstance);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	REQUIRE(desc != nullptr);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	const backplane::Destination dest = backplane::Destination::control(delay, control);
+	// A SYNTH MACRO (its own source, not an export of the rack) routed into the device through the rack's own gate.
+	const backplane::Source synth = backplane::Source::core(0);
+	// THE CHAIN SEES THE SYNTH'S SOURCES UPSTREAM, as its editor wires it when following the rack; then the route is written as an editor would.
+	chain0.setOuterGate(feathers::rack::ChainRecord::gateOver(&r.f.bridge.chainRecord(), r.id));
+	chain0.setRouteAmount(synth.asOuter(), dest, 0.4f);
+	REQUIRE(chain0.routeAmount(synth.asOuter(), dest) == doctest::Approx(0.4f));
+	ui::ModState* mod = r.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	mod->focus(synth);
+	mod->arm(true);
+	ui::RouteList* list = findInTree<ui::RouteList>(r.f.root);
+	REQUIRE(list != nullptr);
+	const std::vector<ui::RouteList::Row> rows = list->allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].chain == r.id);
+	CHECK(rows[0].destination == dest);
+	CHECK(list->nameOfForTest(rows[0]) == "Chain " + std::to_string(r.slot + 1) + " \xC2\xB7 " + r.rack().chainLabel(0) + " \xC2\xB7 " + desc->traits.name
+	                                          + " \xC2\xB7 " + desc->params[control].name);
+	CHECK(list->amountOfForTest(rows[0]) == doctest::Approx(0.4f));
+	list->writeForTest(rows[0], 0.2f);
+	CHECK(r.f.bridge.innerRouteAmount(synth, r.id, dest) == doctest::Approx(0.2f));
+	list->removeForTest(rows[0]);
+	CHECK(r.f.bridge.innerRouteAmount(synth, r.id, dest) == 0.0f);
+}
+
+TEST_CASE("rack pane: the pane always shows the first device of the chain's MAIN list; a device's site chains (pre and post) are not that list, and the pane does not read them") {
+	// A RACK CHAIN HAS ONE FLAT DEVICE LIST (its record has a single chain), so "the first device" is the first of that list and the rest of the chain is
+	// the rail beside the pane, in chain order. A device's PRE and POST chains are sites of their own, below the device: opening one changes neither the
+	// pane's device nor the rail's list.
+	for (const int view : { 1, 3 }) {
+		CAPTURE(view);
+		PaneRack p(2, 3, view);
+		REQUIRE(p.pane().hosting() == ui::RackWindowPane::Hosting::Window);
+		feathers::rack::RackBridge& chain = p.chain(0);
+		const feathers::DeviceInstanceId first = chain.deviceAtPosition(0);
+		REQUIRE(first != feathers::kNoInstance);
+		CHECK(p.pane().device() == first);
+		// THE REST OF THE CHAIN, in order, is the rail's: every device after the first.
+		ui::ChainColumn* col = p.column(0);
+		REQUIRE(col != nullptr);
+		CHECK(col->hiddenLead() == 1);
+		REQUIRE(col->deviceCount() == chain.chainLength());
+		for (size_t k = 1; k < chain.chainLength(); ++k) {
+			CHECK(col->deviceAt(k) == chain.deviceAtPosition(k));
+		}
+		// A SITE OPENED ON THE FIRST DEVICE leaves the pane and the rail as they were.
+		(void)chain.openSite(first);
+		p.settle();
+		CHECK(p.pane().device() == first);
+		CHECK(p.column(0)->deviceCount() == chain.chainLength());
+		CHECK(p.column(0)->hiddenLead() == 1);
 	}
 }

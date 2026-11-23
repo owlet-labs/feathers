@@ -2211,8 +2211,8 @@ private:
 	/// **FEATHERS DRUM** (`kDrumDescriptor`): the same engine and window shell holding one Drum device (drum_plugin.h).
 	bool drum_ = false;
 	/// Which control of the device each place of `drumplugin::kHostKeys` is (main thread; `pinDrumControls` rebuilds it).
-	std::array<size_t, 64> drumControlOfPlace_ {};
-	static_assert(drumplugin::kHostParamCount <= 64 && rackplugin::kHostParamCount <= 64);
+	std::array<size_t, 96> drumControlOfPlace_ {};
+	static_assert(drumplugin::kHostParamCount <= 96 && rackplugin::kHostParamCount <= 96);
 	/// **FEATHERS RACK** (`kRackDescriptor`): the same engine holding one Rack device (rack_plugin.h); `drumControlOfPlace_` serves it too.
 	bool rack_ = false;
 	/// Its audio: silence the engine runs on, sized at activate (a note rack is handed no buffers).

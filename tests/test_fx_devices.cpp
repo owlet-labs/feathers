@@ -25,6 +25,7 @@
 
 #include "fx/automod/automod.h"
 
+#include "fx/drum/drum_types.h"
 #include "fx/owltt/owltt.h"
 #include "fx/owltt/owltt_types.h"
 #include "fx/disperser/disperser_types.h"
@@ -1633,6 +1634,12 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 		if (device::sameTag(desc->traits.tag, fx::sklitter::kTraits.tag)) {
 			row.field[static_cast<size_t>(fx::sklitter::Param::RecordGate)] = 0.0f;
 		}
+		// THE DRUM'S TRIG IS ITS STRIKE (the house Trig, `mod/trig.h`): at 60% of its span the varied row would strike the drum once at the
+		// start and ring it for as long as the varied Decay lets it, which is a hit and not a tail. The road this case is about is what the
+		// device does with an input that has gone quiet, so the Trig stays at rest.
+		if (device::sameTag(desc->traits.tag, fx::drumdevice::kTraits.tag)) {
+			row.field[static_cast<size_t>(fx::drumdevice::Param::Trig)] = 0.0f;
+		}
 		// THE DELAY'S FEEDBACK REACHES 200% SINCE delay-love S6b, so 60% of its span is 134% — a loop that sustains by
 		// design, as under Freeze (`test_delay_lane` "S6b Feedback to 200% ..." holds that it stays awake, bounded). The
 		// road this case is about is the tail that ENDS, so it gets the varied value it had before the range widened.
@@ -2813,6 +2820,8 @@ std::vector<std::string> honestyExpected() {
 	expected.push_back("Rack :: Rack Playing");
 	expected.push_back("Rack :: Rack Follow Played"); // Pads: which chain the window looks at, no audio
 	expected.push_back("Rack :: Rack Front"); // Tabs: what the window puts in front (the cards or the first device's window), no audio
+	expected.push_back("Rack :: Rack Inspector Fold"); // the window's rack pane folded to a strip: view state, no audio
+	expected.push_back("Rack :: Rack Macros Fold"); // the window's macros pane folded to a strip: view state, no audio
 	expected.push_back("Rack :: Rack Cut 3");
 	expected.push_back("Rack :: Rack Cut 4");
 	// THE CHAIN SLOTS (backlog NO item 2) are not on this list because the sweep does not vary them: `sweptControls`

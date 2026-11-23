@@ -37,6 +37,8 @@
 #include "fx/sklitter/sklitter_types.h"
 #include "plugin/device_registry.h"
 #include "plugin/ui/delay_card.h"
+#include "plugin/ui/featherverb_card.h"
+#include "plugin/ui/phaser_card.h"
 #include "plugin/ui/eroder_card.h"
 #include "fx/eroder/eroder_types.h"
 #include "plugin/ui/paged_controls.h"
@@ -54,6 +56,10 @@
 #include "rack/parallel_rack.h"
 #include "plugin/ui/harmonic_row.h"
 #include "plugin/ui/smooth_card.h"
+#include "plugin/ui/smooth_expanded.h"
+#include "fx/pitch/pitch_tips.h"
+#include "plugin/ui/pitch_card.h"
+#include "fx/smooth/smooth_tips.h"
 #include "plugin/ui/owltt_graph.h"
 #include "plugin/ui/sklitter_expanded.h"
 #include "plugin/ui/surface_layers.h"
@@ -255,7 +261,7 @@ bool allowListed(const visage::Frame& f, std::string* reason) {
 		{ "feathers::ui::FeatherverbExpanded::Strip", "the IR drawer's toggle strip" },
 		{ "feathers::ui::FxLaneRail", "a rail's own chrome around the cards it holds" },
 		{ "feathers::ui::ItemStepper", "the preset browser, which is not a device control" },
-		{ "feathers::ui::FoldHeader", "a section's fold row: its label names the section it folds, and it edits no device control (view state)" },
+		{ "feathers::ui::(anonymous namespace)::PaneRail", "a pane's fold strip: chrome around the pane it folds, which edits no device control (view state)" },
 	};
 	for (const Entry& e : kAllowed) {
 		if (name == e.cls) {
@@ -586,8 +592,10 @@ void sweepHost(visage::Frame* host, const device::Descriptor& desc, SweepTally& 
 			const bool reasoned = vb != nullptr && !vb->enabled() && vb->disabledReason() != nullptr;
 			const char* why = control->unavailable();
 			// AND A SHORTENED OR CUT LABEL'S FULL NAME AT ITS START.
+			// AND A SURFACE'S OWN TEXT (`setTooltipOverride`: a mode's wording, Pattern's Degree and Thru) when it has set one.
 			CHECK(layer.text() == expectedWithFull(full, why != nullptr       ? std::string(why)
 			                                             : reasoned           ? std::string(vb->disabledReason())
+			                                             : control->tooltipOverride() != nullptr ? std::string(control->tooltipOverride())
 			                                                                  : declaredText(control->desc())));
 		}
 		else {
@@ -1023,7 +1031,9 @@ TEST_CASE("moving between two controls restarts the delay and the text follows t
 	clock.now += 2.0;
 	(void)placed.card->update();
 	REQUIRE(layer.shown());
-	CHECK(layer.text() == declaredText(boundControl(b)->desc()));
+	// A SURFACE'S OWN TEXT (`setTooltipOverride`, the Delay's Time and Mix by Mode and Dub) is what the layer shows when one is set.
+	CHECK(layer.text() == (boundControl(b)->tooltipOverride() != nullptr ? std::string(boundControl(b)->tooltipOverride())
+	                                                                      : declaredText(boundControl(b)->desc())));
 }
 
 TEST_CASE("OWLTT's graph keeps its own tooltip and the card's layer stays hidden over it") {
@@ -2294,8 +2304,8 @@ TEST_CASE("brief is the first sentence of a real declared tooltip, and never cut
 		  "Runs the reverb at twice the rate: less aliasing grit up top at 44.1 and 48 kHz, for about two "
 		  "and a half times the reverb's CPU." },
 		{ "groove_amount",
-		  "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the MPC's heaviest, at "
-		  "full), or the share of the groove template." },
+		  "How much of the Groove Mode: the swing % (50% straight, 66.7% a triplet, and at full the heaviest "
+		  "swing), or the share of the groove template." },
 		{ "shaper_hysteresis", "How much of the field's hysteresis you hear — 0.5 is the position's own, 0 removes it" },
 		{ "comp_makeup", "Gain after compression, to win back the level it took" },
 	};
@@ -2635,6 +2645,81 @@ TEST_CASE("the Smooth Shaper's ceiling shows Drive's tooltip when the hand rests
 	ui::TooltipLayer& layer = restOn(curve, onHandle, clock, &host);
 	REQUIRE(layer.shown());
 	CHECK(layer.text() == std::string(desc.params[static_cast<size_t>(feathers::fx::smooth::Param::Drive)].tooltip));
+}
+
+TEST_CASE("the Smooth Shaper's Feedback, Harmonic and H Phase hover text follows the Harmonic mode, on the card and the window") {
+	// THE TABLE IS THE EXPECTATION, read back through the hover road after each mode is set by the host. The rows must
+	// differ where the mode changes the meaning, or the check would pass on a table that said one thing everywhere.
+	namespace sm = feathers::fx::smooth;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag("smth");
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::SmoothCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	ui::WidgetRegistry registry;
+	std::unique_ptr<ui::ExpandedView> view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, placed.device, desc);
+	auto* panel = dynamic_cast<ui::SmoothExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	visage::Frame* cardFdbk = card->pillForTest(static_cast<size_t>(sm::Pill::Fdbk));
+	visage::Frame* cardHarmonic = card->widgetForTest(sm::Param::Harmonic);
+	visage::Frame* winFdbk = panel->widgetForTest(sm::Param::Fdbk);
+	visage::Frame* winHarmonic = panel->widgetForTest(sm::Param::Harmonic);
+	visage::Frame* winPhase = panel->widgetForTest(sm::Param::HarmonicPhase);
+	REQUIRE(cardFdbk != nullptr);
+	REQUIRE(cardHarmonic != nullptr);
+	REQUIRE(winFdbk != nullptr);
+	REQUIRE(winHarmonic != nullptr);
+	REQUIRE(winPhase != nullptr);
+	CHECK(std::string(sm::kModeTips[3].feedback) != sm::kModeTips[0].feedback); // Fold sustains; 3579 does not say so
+	CHECK(std::string(sm::kModeTips[2].harmonic) != sm::kModeTips[0].harmonic); // operators, not harmonics
+	CHECK(std::string(sm::kModeTips[7].phase) != sm::kModeTips[0].phase);       // Poly's own clause
+	const auto field = static_cast<size_t>(sm::Param::HarmonicMode);
+	for (size_t mode = 0; mode < sm::kHarmonicModeTipCount; ++mode) {
+		CAPTURE(mode);
+		f.deviceHost.setField(placed.device, field, static_cast<float>(mode));
+		(void)card->updateContent();
+		(void)panel->update();
+		const sm::ModeTips& want = sm::kModeTips[mode];
+		// THE HOVER ROAD, READ AT THE WIDGET'S CENTRE: the frame must be a tooltip source, or the check is void.
+		// A WINDOW'S LABEL WHOLE-NAMES ITS CONTROL ("Fdbk — …", the full-name road); the declared or overridden text is what follows the dash.
+		const auto hoverOf = [](const visage::Frame* frame) {
+			const auto* source = dynamic_cast<const ui::TooltipSource*>(frame);
+			REQUIRE(source != nullptr);
+			const std::string text = ui::hoverText(*source, centreOf(*frame));
+			const std::string dash = " \xE2\x80\x94 ";
+			const size_t at = text.find(dash);
+			return at == std::string::npos ? text : text.substr(at + dash.size());
+		};
+		CHECK(hoverOf(cardFdbk) == std::string(want.feedback));
+		CHECK(hoverOf(cardHarmonic) == std::string(want.harmonic));
+		CHECK(hoverOf(winFdbk) == std::string(want.feedback));
+		CHECK(hoverOf(winHarmonic) == std::string(want.harmonic));
+		CHECK(hoverOf(winPhase) == std::string(want.phase));
+	}
+}
+
+
+TEST_CASE("Pitch's Shift and Fine hover text follows the Scale: Free, a scale, and Free again, on the card") {
+	// THE HOVER ROAD READS A CONTROL'S OVERRIDE FIRST (`tooltipAt`), so the override on the card's own control is the value a
+	// hand sees. Three steps, so a text that stuck from the first step would fail the last. Pitch has no window.
+	namespace pt = feathers::fx::pitch;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag("PITCH");
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::PitchCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	const auto scaleField = static_cast<size_t>(pt::Param::Scale);
+	const auto text = [](const char* t) { return t == nullptr ? std::string {} : std::string(t); };
+	for (const float scale : { 0.0f, 1.0f, 0.0f }) {
+		CAPTURE(scale);
+		f.deviceHost.setField(placed.device, scaleField, scale);
+		(void)card->updateContent();
+		const pt::ScaleTips& want = pt::tipsFor(scale != 0.0f);
+		CHECK(text(card->controlForTest(static_cast<size_t>(pt::Param::Shift)).tooltipOverride()) == std::string(want.shift));
+		CHECK(text(card->controlForTest(static_cast<size_t>(pt::Param::Fine)).tooltipOverride()) == std::string(want.fine));
+	}
+	// AND THE TWO TEXTS DIFFER, or the check would pass on a table that said one thing everywhere.
+	CHECK(std::string(pt::kFreeTips.shift) != pt::kScaledTips.shift);
 }
 
 TEST_CASE("every hoverable control on the Engine rail shows its tooltip, on both pages") {
@@ -4302,4 +4387,65 @@ TEST_CASE("full name: a renamed macro in the Rack's window shows its whole name 
 	// THE UNRENAMED ONE: "M2" is a shortening of "Macro 2", so a hover says the name.
 	ui::MacroSlot& other = panel->macroSlotForTest(1);
 	CHECK(ui::hoverText(other.knob(), centreOf(other.knob())).rfind(other.naming().name(), 0) == 0);
+}
+
+// TV audit, Featherverb and Phaser (backlog TV): each per-mode tooltip reads the mode the control stands in, through the
+// hover seam `tooltipOf`, after a tick on the card. The expected strings are restated here, not read from the tables.
+TEST_CASE("TV-C: Featherverb's Character, Predelay, Matrix and Conv Blend say what they do in the size and conv mode they are on") {
+	namespace fv = feathers::fx::featherverb;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag(fv::kTraits.tag);
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::FeatherverbCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	const auto tip = [&](fv::Param p) { return std::string(ui::tooltipOf(&card->controlForTest(static_cast<size_t>(p)))); };
+	const std::string declaredMatrix = declaredText(fv::kDescriptor.params[static_cast<size_t>(fv::Param::Matrix)]);
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::SizeMode), 6.0f); // Aurora
+	(void)card->update();
+	CHECK(tip(fv::Param::Matrix) == "In Aurora, how fast the tail climbs as it rings");
+	CHECK(tip(fv::Param::Predelay) == "Up to 50 ms before the reverb starts");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::SizeMode), 8.0f); // Owl
+	(void)card->update();
+	CHECK(tip(fv::Param::Predelay) == "Up to 50 ms before the reverb starts. In Owl it also sets how fast the tail swells");
+	CHECK(tip(fv::Param::Matrix) == declaredMatrix); // not Aurora: the declared text stands
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::SizeMode), 4.0f); // Feather
+	(void)card->update();
+	CHECK(tip(fv::Param::Character) == "In Feather, its stereo field. It keeps turning, and the mark beside it shows which lap");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::ConvMode), 2.0f); // Series
+	(void)card->update();
+	CHECK(tip(fv::Param::ConvBlend) == "How much of the wet is the convolution: the reverb against the convolved reverb");
+	f.deviceHost.setField(placed.device, static_cast<size_t>(fv::Param::ConvMode), 0.0f); // Off: hidden, declared text
+	(void)card->update();
+	CHECK(tip(fv::Param::ConvBlend) == declaredText(fv::kDescriptor.params[static_cast<size_t>(fv::Param::ConvBlend)]));
+}
+
+TEST_CASE("TV-C: Phaser's Center, Delay and Mix say what they do with Key Track and in the mode they are on") {
+	namespace ph = feathers::fx::phaser;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag(ph::kTraits.tag);
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::PhaserCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	const auto tip = [&](ph::Param p) { return std::string(ui::tooltipOf(&card->controlForTest(p))); };
+	const std::string declaredMix = declaredText(ph::kParamDescs[static_cast<size_t>(ph::Param::Mix)]);
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::KeyTrack), 0.0f);
+	(void)card->update();
+	CHECK(tip(ph::Param::CenterHz) == "Where the notches sit with the sweep at rest. Key Track turns this into an offset from the played note");
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::KeyTrack), 1.0f);
+	(void)card->update();
+	CHECK(tip(ph::Param::CenterHz) == "Key Track is on: where the notches sit, as an offset in semitones from the note it tracks. The default puts the first notch on the note");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::Mode), 1.0f); // Flanger
+	(void)card->update();
+	CHECK(tip(ph::Param::Mix) == "Dry against wet: how much of the swept comb is heard against the untouched input. 50% is an even blend; 100% is wet only");
+	CHECK(tip(ph::Param::DelayMs) == "Key Track is on: the flanger's delay, as an offset in semitones from the note it tracks. The default tunes the comb to the note");
+
+	f.deviceHost.setField(placed.device, static_cast<size_t>(ph::Param::Mode), 0.0f); // Phaser: Mix is the declared text again
+	(void)card->update();
+	CHECK(tip(ph::Param::Mix) == declaredMix);
 }

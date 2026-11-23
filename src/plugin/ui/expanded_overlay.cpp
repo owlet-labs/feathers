@@ -175,8 +175,18 @@ void ExpandedPanel::wire() {
 	setIgnoresMouseEvents(false, true);
 	// SEE `onPressedInside`: accepting keystrokes is what makes a press in the body reach this window first. Keys it does not use
 	// still go up to the layer and the editor, as they did.
+	// **A PRESS ON ANY CONTROL INSIDE BUBBLES UP TO THIS WINDOW** (it runs after the control's own handler, which has landed the press). The focus
+	// hook above only reaches a window whose content takes no keystrokes itself: a Rack window's content (and its chain columns) do, so the
+	// press's focus stopped there and the window was never raised. Every handler below acts only on a press that is THIS frame's own.
+	setReceiveChildMouseEvents(true);
 	setAcceptsKeystrokes(true);
 	onMouseDown() = [this](const visage::MouseEvent& e) {
+		if (e.event_frame != nullptr && e.event_frame != this) {
+			if (onPressedInside) {
+				onPressedInside();
+			}
+			return;
+		}
 		// THE ✕ CLOSES; THE REST OF THE HEAD DRAGS. Anything else arriving here missed every control
 		// and landed on the panel's own background, which is not a verb.
 		if (closeBounds().contains(e.position)) {
@@ -243,6 +253,9 @@ void ExpandedPanel::wire() {
 		}
 	};
 	onMouseDrag() = [this](const visage::MouseEvent& e) {
+		if (e.event_frame != nullptr && e.event_frame != this) {
+			return;
+		}
 		if (resizing_ && onResizeTo_) {
 			onResizeTo_(e.window_position - resizeOrigin_);
 			return;
@@ -251,7 +264,10 @@ void ExpandedPanel::wire() {
 			onDragTo_(e.window_position - dragOrigin_);
 		}
 	};
-	onMouseUp() = [this](const visage::MouseEvent&) {
+	onMouseUp() = [this](const visage::MouseEvent& e) {
+		if (e.event_frame != nullptr && e.event_frame != this) {
+			return;
+		}
 		dragging_ = false;
 		resizing_ = false;
 		// TO THE FRONT, ON RELEASE — see `onRaise_` for why not on the press.
@@ -370,7 +386,7 @@ ExpandedOverlay::Slot* ExpandedOverlay::slotOf(PanelId id) const {
 	return nullptr;
 }
 
-ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> content) {
+ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> content, const visage::Frame* opener) {
 	if (content == nullptr) {
 		return kNoPanel;
 	}
@@ -395,6 +411,15 @@ ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> con
 	auto slot = std::make_unique<Slot>();
 	Slot* raw = slot.get();
 	slot->id = next_++;
+	// WHO OPENED IT: the panel (if any) that holds the opener frame owns this one. Found now, by walking up, and kept as an id.
+	for (const visage::Frame* at = opener; at != nullptr && slot->owner == kNoPanel; at = at->parent()) {
+		for (const auto& other : slots_) {
+			if (other->panel.get() == at) {
+				slot->owner = other->id;
+				break;
+			}
+		}
+	}
 	slot->key = key;
 	// THE PANEL'S CHROME, WIRED TO THIS SLOT. Every callback captures the slot pointer, which is stable
 	// for the slot's life (a `unique_ptr` in the vector, moved by pointer and never by value).
@@ -406,7 +431,11 @@ ExpandedOverlay::PanelId ExpandedOverlay::show(std::unique_ptr<ExpandedView> con
 	    [this, raw] { setFolded(*raw, !raw->folded); },
 	    [this, raw] { setMaximized(*raw, !raw->maximized); });
 	slot->panel->wire();
-	slot->panel->onPressedInside = [this, raw] { raiseOnPress(*raw); };
+	slot->panel->onPressedInside = [this, id = raw->id] {
+		if (Slot* open = slotOf(id); open != nullptr) {
+			raiseOnPress(*open);
+		}
+	};
 	slot->content = std::move(content);
 	// **WHEN THE CONTENT'S MINIMUM MOVES, EVERY PANEL IS FITTED AGAIN.** `panelSizeOf` reads
 	// `minimumSize()` live, so this is the ASK rather than the answer — see
@@ -595,55 +624,123 @@ void ExpandedOverlay::place(Slot& slot) {
 	slot.placed = { rect.x(), rect.y() };
 }
 
+std::vector<ExpandedOverlay::Slot*> ExpandedOverlay::groupOrderFor(const Slot& slot) const {
+	// THE PATH FROM `slot` UP TO ITS OUTERMOST OWNER, by id (an owner that has gone is no owner; the bound stops a cycle nobody can make).
+	std::vector<PanelId> path { slot.id };
+	const Slot* root = &slot;
+	for (size_t hops = 0; hops < slots_.size() && root->owner != kNoPanel; ++hops) {
+		const Slot* up = slotOf(root->owner);
+		if (up == nullptr) {
+			break;
+		}
+		root = up;
+		path.push_back(root->id);
+	}
+	const auto onPath = [&](PanelId id) { return std::find(path.begin(), path.end(), id) != path.end(); };
+	std::vector<Slot*> group;
+	// A WINDOW, THEN ITS OWNED WINDOWS in their present order with the one on the way to `slot` last, each owned window's own above it.
+	const std::function<void(Slot*)> emit = [&](Slot* node) {
+		group.push_back(node);
+		std::vector<Slot*> kids;
+		Slot* toward = nullptr;
+		for (const auto& s : slots_) {
+			if (s->owner != node->id || s.get() == node) {
+				continue;
+			}
+			if (onPath(s->id)) {
+				toward = s.get();
+			}
+			else {
+				kids.push_back(s.get());
+			}
+		}
+		for (Slot* kid : kids) {
+			emit(kid);
+		}
+		if (toward != nullptr) {
+			emit(toward);
+		}
+	};
+	emit(const_cast<Slot*>(root));
+	std::vector<Slot*> target;
+	for (const auto& s : slots_) {
+		if (std::find(group.begin(), group.end(), s.get()) == group.end()) {
+			target.push_back(s.get());
+		}
+	}
+	target.insert(target.end(), group.begin(), group.end());
+	return target;
+}
+
+void ExpandedOverlay::applyOrder(const std::vector<Slot*>& target, Slot* pressed) {
+	bool same = target.size() == slots_.size();
+	size_t firstMoved = 0;
+	for (; same && firstMoved < target.size(); ++firstMoved) {
+		if (slots_[firstMoved].get() != target[firstMoved]) {
+			break;
+		}
+	}
+	if (same && firstMoved == target.size()) {
+		return;
+	}
+	std::vector<std::unique_ptr<Slot>> next;
+	next.reserve(slots_.size());
+	for (Slot* want : target) {
+		for (auto& have : slots_) {
+			if (have.get() == want) {
+				next.push_back(std::move(have));
+				break;
+			}
+		}
+	}
+	slots_ = std::move(next);
+	// THE PRESSED PANEL CANNOT BE RE-PARENTED (`removeChild` takes the press in flight off it), so it and everything above it in the new order
+	// are LIFTED (`onTop`: drawn after every sibling, in child order among themselves) and only the panels below it are re-added, in order.
+	size_t pressedAt = slots_.size() - 1;
+	for (size_t i = 0; pressed != nullptr && i < slots_.size(); ++i) {
+		if (slots_[i].get() == pressed) {
+			pressedAt = i;
+		}
+	}
+	for (size_t i = 0; i < slots_.size(); ++i) {
+		const bool readd = pressed == nullptr || i != pressedAt;
+		if (readd) {
+			removeChild(slots_[i]->panel.get());
+			addChild(slots_[i]->panel.get());
+		}
+		slots_[i]->lifted = pressed != nullptr ? i >= pressedAt : i + 1 == slots_.size();
+	}
+	for (size_t i = firstMoved; i < slots_.size(); ++i) {
+		slots_[i]->escape.raise();
+	}
+	settleFront();
+	redraw();
+}
+
 void ExpandedOverlay::raise(Slot& slot) {
 	// BROUGHT TO THE FRONT IS OPENED AGAIN, for Esc's order too (backlog NN) — even when it already was the
 	// front panel, because something of another kind may have opened over it since.
 	slot.escape.raise();
-	if (slots_.empty() || slots_.back().get() == &slot) {
+	if (slots_.empty()) {
 		return;
 	}
-	for (auto it = slots_.begin(); it != slots_.end(); ++it) {
-		if (it->get() == &slot) {
-			std::unique_ptr<Slot> taken = std::move(*it);
-			slots_.erase(it);
-			// LAST CHILD DRAWS LAST: re-added at the end. Only ever from a RELEASE (see `ExpandedPanel::
-			// onRaise_`), because `removeChild` clears the frame a drag is being delivered to.
-			removeChild(taken->panel.get());
-			addChild(taken->panel.get());
-			slots_.push_back(std::move(taken));
-			settleFront();
-			redraw();
-			return;
-		}
-	}
+	// ITS WHOLE GROUP RISES (owner and owned windows together). Only ever from a RELEASE or a card (see `ExpandedPanel::onRaise_`): every
+	// panel is re-parented, and `removeChild` clears the frame a drag is being delivered to.
+	applyOrder(groupOrderFor(slot), nullptr);
 }
 
 void ExpandedOverlay::settleFront() {
 	for (const auto& s : slots_) {
-		s->panel->setOnTop(s.get() == slots_.back().get());
+		s->panel->setOnTop(s->lifted || s.get() == slots_.back().get());
 	}
 }
 
 void ExpandedOverlay::raiseOnPress(Slot& slot) {
-	if (slots_.empty() || slots_.back().get() == &slot) {
-		return; // already the front: no order changes
+	if (slots_.empty()) {
+		return;
 	}
-	Slot* old = slots_.back().get();
-	for (auto it = slots_.begin(); it != slots_.end(); ++it) {
-		if (it->get() == &slot) {
-			std::unique_ptr<Slot> taken = std::move(*it);
-			slots_.erase(it);
-			slots_.push_back(std::move(taken));
-			break;
-		}
-	}
-	slot.escape.raise();
-	// THE PREVIOUS FRONT goes to the end of the children (just under the new front, which draws last as `onTop`); the pressed
-	// panel is not re-parented.
-	removeChild(old->panel.get());
-	addChild(old->panel.get());
-	settleFront();
-	redraw();
+	// THE PRESSED PANEL IS NOT RE-PARENTED; see `applyOrder`.
+	applyOrder(groupOrderFor(slot), &slot);
 }
 
 bool ExpandedOverlay::focusPanelFor(DeviceInstanceId device, DeviceNest nest) {
@@ -724,6 +821,12 @@ void ExpandedOverlay::dismissBy(Slot& slot, Dismissal how) {
 	}
 	if (taken == nullptr) {
 		return;
+	}
+	// ITS OWNED WINDOWS PASS TO ITS OWNER (or to nobody): an id that names a closed window must not linger, and a later id is never reused.
+	for (const auto& s : slots_) {
+		if (s->owner == taken->id) {
+			s->owner = taken->owner;
+		}
 	}
 	settleFront();
 	// OFF EVERY REDRAW LIST FIRST, AND THE ORDER IS THE WHOLE OF IT. `notify()` calls `redraw()` on

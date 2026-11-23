@@ -119,6 +119,8 @@ public:
 	[[nodiscard]] SegmentedControl* modeForTest() const { return mode_.get(); }
 	[[nodiscard]] SegmentedControl* sweepForTest() const { return sweep_.get(); }
 	[[nodiscard]] SwitchChip* keyTrackForTest() const { return keyTrack_.get(); }
+	/// One control's adapter, for the tooltip cases (what the widget says is `tooltipOf` of this).
+	[[nodiscard]] DeviceControl& controlForTest(fx::phaser::Param p) const { return control(p); }
 	[[nodiscard]] SwitchChip* throughZeroForTest() const { return throughZero_.get(); }
 	[[nodiscard]] FaderPill* lfoPillForTest() const { return lfo_.get(); }
 	[[nodiscard]] FaderPill* envPillForTest() const { return env_.get(); }
@@ -143,6 +145,9 @@ private:
 	/// The height the control rows under the plot take, Mode's row above it included.
 	[[nodiscard]] static float rowsHeight();
 	bool applyGates();
+	/// THE TIP TABLE for Center, Delay and Mix and the dimmed Colour and Bias pills; refreshed at the end of `applyGates`.
+	void applyTips();
+	int drawnTips_ = -1; // the key the tips were last put for; -1 until the first tick
 	/// The LFO pill's readout from Rate or Sync — the card's; whether it changed.
 	bool refreshLfoCaption();
 	void layOut();

@@ -1334,9 +1334,9 @@ TEST_CASE("THE DECISION: the rack opened in Bitwig's order (no set_scale) opens 
 	feathers::EditorPrefs prefs;
 	prefs.load();
 	const double uiScale = std::clamp(prefs.number(ui::PluginWindow::kUiScaleKey, 1.0), 1.0, 2.0);
-	// THE DESIGN, restated: the lane's 720 plus the macro column at its left (12 + 2 x 100 Macros column; backlog OC); one vertical
-	// unit tall with the canvas closed (LX: 34 + 106 + 12 + 336 + 12).
-	const double designW = 720.0 + 12.0 + 200.0;
+	// THE DESIGN, restated: the lane's 720 plus the two panes at its left (the container's and the macros', each 12 + 2 x 100 and half a pad; backlog OC);
+	// one vertical unit tall with the canvas closed (LX: 34 + 106 + 12 + 336 + 12).
+	const double designW = 720.0 + 12.0 + 200.0 + 12.0 + 200.0 + 6.0;
 	const double designH = 500.0;
 	Display* display = XOpenDisplay(nullptr);
 	REQUIRE(display != nullptr);
@@ -5500,9 +5500,10 @@ TEST_CASE("backlog LG: the rack's Libra mark opens the same settings screen, and
 	REQUIRE(screen != nullptr);
 	CHECK(door->isVisible());
 	CHECK(door->markBounds().width() > 0.0f);
-	// THE MACROS START UNDER THE DOOR (backlog OC: the door heads the macro column).
+	// THE ROUTE LIST STARTS UNDER THE DOOR (the door heads the container's pane; the macros have a pane of their own beside it).
 	REQUIRE_FALSE(editor->macrosForTest().empty());
-	CHECK(editor->macrosForTest().front()->y() >= door->y() + door->height());
+	CHECK(editor->routeListForTest().y() >= door->y() + door->height());
+	CHECK(editor->macrosForTest().front()->x() >= door->x() + door->width());
 	CHECK_FALSE(screen->isVisible());
 
 	visage::MouseEvent press;
@@ -6673,7 +6674,7 @@ TEST_CASE("QN: the Rack plugin's Macros column, folded, is folded again after a 
 		REQUIRE(editor != nullptr);
 		CHECK(editor->macrosCollapsed() == folded);
 		CHECK(editor->laneLeft()
-		      == doctest::Approx(folded ? ui::Rail::kCollapsedWidth + 6.0f : rack::RackEditor::kLaneLeft));
+		      == doctest::Approx(folded ? rack::RackEditor::kPaneWidth + ui::Rail::kCollapsedWidth + 6.0f : rack::RackEditor::kLaneLeft)); // the macros' pane is the strip
 		gui->destroy(fresh.plugin);
 	}
 }

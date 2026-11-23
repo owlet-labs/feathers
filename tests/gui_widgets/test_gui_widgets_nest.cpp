@@ -1275,7 +1275,13 @@ TEST_CASE("NR: Harm offers PRE — its notch and high-pass process the passing s
 	const VeilRead poly = readPreVeil(h, id);
 	CHECK(poly.offersPre);
 	CHECK(poly.visible);
-	REQUIRE(poly.rows.size() >= 2u); // it does not fit on one row, so the wrap is what is under test
+	// THE VEIL RUNS FROM THE EDITOR'S PAD OVER THE TWO PANES TO THE PARTITION, so it is wide now: the reason is one row when it fits and wraps when it does not.
+	REQUIRE_FALSE(poly.rows.empty());
+	std::string wholePoly;
+	for (const std::string& row : poly.rows) {
+		wholePoly += (wholePoly.empty() ? "" : " ") + row;
+	}
+	CHECK((ui::textWidth(wholePoly, ui::font(12.0f)) <= poly.room) == (poly.rows.size() == 1u));
 	const visage::Font face = ui::font(12.0f);
 	for (const std::string& row : poly.rows) {
 		INFO(row);
@@ -1297,7 +1303,7 @@ TEST_CASE("NR: a POST-only device's PRE veil says why, and every row of it fits 
 	const VeilRead noise = readPreVeil(h, id);
 	CHECK_FALSE(noise.offersPre);
 	CHECK(noise.visible);
-	REQUIRE(noise.rows.size() >= 2u);
+	REQUIRE_FALSE(noise.rows.empty()); // one row when the (wide) veil holds it, wrapped when it does not
 	const visage::Font face = ui::font(12.0f);
 	std::string joined;
 	for (const std::string& row : noise.rows) {

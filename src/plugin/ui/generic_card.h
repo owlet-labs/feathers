@@ -386,6 +386,8 @@ protected:
 	[[nodiscard]] const device::Descriptor& ownDescriptor() const noexcept { return desc_; }
 	[[nodiscard]] DeviceInstanceId deviceId() const noexcept { return device_; }
 	[[nodiscard]] backplane::DeviceHost& ownHost() const noexcept { return host_; }
+	/// THE ADAPTER FOR ONE CONTROL, for a subclass that puts a per-mode tooltip over it (`DeviceControl::setTooltipOverride`).
+	[[nodiscard]] DeviceControl& controlFor(size_t index) { return control(index); }
 
 private:
 	void layOut();
@@ -406,7 +408,11 @@ private:
 	[[nodiscard]] float liveRowsExtent() const;
 	/// Re-lay out when the gate control has moved since the last paint. See the .cpp.
 	[[nodiscard]] bool relayoutIfGateMoved();
+protected:
 	DeviceControl& control(size_t index);
+	/// A SURFACE'S OWN HOVER TEXT, set before the controls draw on each content update (the Delay's Time and Mix, by its Mode, Sync and Dub).
+	virtual void refreshTips() {}
+private:
 
 	/// THE ENABLE SQUARE'S CONTROL, for FxCard::enablePressAt.
 	device::Modulatable* enableModulatable() override {

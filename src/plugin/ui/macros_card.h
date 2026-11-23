@@ -19,7 +19,9 @@
 
 #include "backplane/device_host.h"
 #include "device/subscribers.h"
+#include "mod/macro1/macro1_types.h"
 #include "mod/macros/macros_types.h"
+#include "mod/macros8/macros8_types.h"
 #include "plugin/ui/device_control.h"
 #include "plugin/ui/fx_card.h"
 #include "plugin/ui/macro_polarity.h"
@@ -55,6 +57,21 @@ namespace feathers::ui {
 
 class Notifier;
 
+/// WHAT DIFFERS BETWEEN THE ONE-, FOUR- AND EIGHT-MACRO CARDS: the descriptor the controls address, how
+/// many slots, how many columns they lie in, and the face size of a knob. The four-macro device's is
+/// `kMacros4Shape`, and every default below is it, so that card is unchanged.
+struct MacrosShape {
+	const device::Descriptor* descriptor = nullptr;
+	size_t count = 4;
+	size_t columns = 4;
+	float faceDiameter = 36.0f;
+};
+inline constexpr MacrosShape kMacros4Shape { &mod::macros::kDescriptor, 4, 4, 36.0f };
+/// ONE LARGE KNOB, centred in the body — the one-knob card.
+inline constexpr MacrosShape kMacro1Shape { &mod::macro1::kDescriptor, 1, 1, 64.0f };
+/// TWO ROWS OF FOUR, so the card keeps the standard modulator card's width.
+inline constexpr MacrosShape kMacros8Shape { &mod::macros8::kDescriptor, 8, 4, 36.0f };
+
 class MacrosCard final : public FxCard {
 public:
 	/// See `ControlFace` — what this surface offers, so the window-superset guard can see it.
@@ -62,7 +79,7 @@ public:
 	/// `mod` and `history` may be null — a host with no modulation state gets knobs that take no route,
 	/// and writes that record no undo step; `setModulation` hands them over later either way.
 	MacrosCard(backplane::DeviceHost& host, DeviceInstanceId id, Notifier* notifier = nullptr,
-	           ModState* mod = nullptr, EditHistory* history = nullptr);
+	           ModState* mod = nullptr, EditHistory* history = nullptr, const MacrosShape& shape = kMacros4Shape);
 	/// **A LANE OR A SLOT IS NOT AN ID** — `DeviceControl`'s guard, here too.
 	MacrosCard(backplane::DeviceHost&, size_t, Notifier* = nullptr, ModState* = nullptr,
 	           EditHistory* = nullptr) = delete;
@@ -85,7 +102,7 @@ public:
 	bool headSourceFocused() const override;
 	bool headArmed() const override;
 
-	const device::Descriptor* descriptor() const override { return &mod::macros::kDescriptor; }
+	const device::Descriptor* descriptor() const override { return shape_.descriptor; }
 	const backplane::DeviceHost* deviceHost() const override { return &host_; }
 	DeviceInstanceId device() const override { return device_; }
 
@@ -95,14 +112,20 @@ public:
 	/// THE HEADER ROW'S FACE (`ModPanel::kMacroDiameter`), so a macro reads as one size wherever it is.
 	static constexpr float kFaceDiameter = 36.0f;
 
-	/// THE BODY: a gap, one row of slots, a gap.
-	static constexpr float bodyHeight() { return kGap + MacroSlot::columnHeight(kFaceDiameter) + kGap; }
+	/// THE BODY: a gap, the rows of slots with a gap between them, a gap.
+	static float bodyHeight(const MacrosShape& shape = kMacros4Shape) {
+		const auto rows = static_cast<float>((shape.count + shape.columns - 1) / shape.columns);
+		return kGap + rows * MacroSlot::columnHeight(shape.faceDiameter) + (rows - 1.0f) * kGap + kGap;
+	}
+	[[nodiscard]] size_t slotCount() const { return shape_.count; }
 	/// OPEN, IN A VERTICAL LANE — head, body and `outputRows` rows of output chips. Static so a host can
 	/// reserve the card before it has built one (`ModPanel::bodyHeightOf`).
-	static float openHeight(size_t outputRows);
+	static float openHeight(size_t outputRows, const MacrosShape& shape = kMacros4Shape);
 
 	/// **THE SHORT CAPTION OF SLOT n** — "M1".."M4", printed while output n carries no label of its own.
 	[[nodiscard]] static std::string shortCaption(size_t n);
+	/// THIS CARD'S CAPTION OF SLOT n — the short one, or the whole name where the slot has a full column to itself.
+	[[nodiscard]] std::string captionOf(size_t n) const;
 
 	[[nodiscard]] MacroSlot& slot(size_t n) const { return *slots_[n]; }
 	/// THE VIEW SLOT n's CONTROLS ARE BUILT ON — `Macro n` through `Bipolar n`.
@@ -130,13 +153,14 @@ private:
 	std::shared_ptr<void> alive_ = std::make_shared<char>(0);
 	/// THE PARAMETER ROAD, ONE PER DECLARED CONTROL, built on first ask. Declared before the views and
 	/// the slots so it outlives both: a held momentary lets go through them as its chip dies.
-	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(mod::macros::Param::kCount)> controls_;
-	std::array<std::unique_ptr<BipolarMacro>, kSlotCount> views_;
-	std::array<std::unique_ptr<MacroSlot>, kSlotCount> slots_;
+	MacrosShape shape_;
+	mutable std::vector<std::unique_ptr<DeviceControl>> controls_;
+	std::vector<std::unique_ptr<BipolarMacro>> views_;
+	std::vector<std::unique_ptr<MacroSlot>> slots_;
 	/// WHAT EACH SLOT LAST DREW — the base value and the polarity — so `updateContent` repaints a slot
 	/// only when an undo, a load or the host moved one under it.
-	std::array<float, kSlotCount> drawnValue_ {};
-	std::array<float, kSlotCount> drawnPolarity_ {};
+	std::vector<float> drawnValue_;
+	std::vector<float> drawnPolarity_;
 	/// THE EAR ON OUTPUT RELABELS — it refreshes `slots_`, so it is declared after them and dies first.
 	device::Subscription labelSubscription_;
 };

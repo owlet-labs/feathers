@@ -277,25 +277,6 @@ TEST_CASE("rack plugin: a posted key and its release equal a host note-on and no
 	CHECK_FALSE(rack.bridge().postNote(-1, true, 0.8f));
 }
 
-TEST_CASE("rack plugin: a play button destroyed mid-press posts its off, so the note is never left stuck") {
-	Rack rack;
-	ui::DrumDeviceModel* none = nullptr;
-	(void)none;
-	{
-		ui::DrumPlayButton button(rack.bridge(), [] { return 36; });
-		button.press();
-		CHECK(button.held());
-	}
-	UiNoteEvent e;
-	REQUIRE(rack.bridge().popNote(e));
-	CHECK(e.key == 36);
-	CHECK(e.on);
-	REQUIRE(rack.bridge().popNote(e));
-	CHECK(e.key == 36);
-	CHECK_FALSE(e.on);
-	CHECK_FALSE(rack.bridge().popNote(e));
-}
-
 TEST_CASE("rack plugin: a full ring drops and counts, a block drains it without a crash, and a block with posted keys allocates nothing") {
 	Rack rack;
 	for (size_t i = 0; i < UiNoteRing::kCapacity; ++i) {

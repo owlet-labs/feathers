@@ -634,7 +634,7 @@ TEST_CASE("the audio thread allocates nothing after activate: notes, chokes, par
 	CHECK(v.peak(kFrames) > 0.0f);
 }
 
-TEST_CASE("the editor's play button, pressed on the plugin's own bridge, sounds the drum with no host event at all") {
+TEST_CASE("the editor's Trig pad, pressed on the plugin's own bridge, sounds the drum with no host event at all") {
 	constexpr uint32_t kFrames = 256;
 	Venue v;
 	REQUIRE(blocksToSleep(v, kFrames, 8) >= 0);
@@ -646,14 +646,14 @@ TEST_CASE("the editor's play button, pressed on the plugin's own bridge, sounds 
 	REQUIRE(view != nullptr);
 	auto* panel = dynamic_cast<ui::DrumDeviceExpanded*>(view.get());
 	REQUIRE(panel != nullptr);
-	REQUIRE(panel->playForTest() != nullptr);
+	REQUIRE(panel->trigPadForTest() != nullptr);
 	visage::MouseEvent press;
 	press.position = { 4.0f, 4.0f };
 	press.button_id = visage::kMouseButtonLeft;
 	press.button_state = visage::kMouseButtonLeft;
 	press.is_down = true;
-	panel->playForTest()->onMouseDown().callback(press);
-	CHECK(bridge.hasPendingNotes());
+	panel->trigPadForTest()->onMouseDown().callback(press);
+	// THE SOUND COMES WHILE THE PAD IS STILL DOWN: the Trig param rose, and the drum struck on that rise.
 	CHECK(v.run(kFrames) == CLAP_PROCESS_CONTINUE);
 	float peak = v.peak(kFrames);
 	for (int b = 0; b < 3; ++b) {
@@ -661,10 +661,9 @@ TEST_CASE("the editor's play button, pressed on the plugin's own bridge, sounds 
 		peak = std::max(peak, v.peak(kFrames));
 	}
 	CHECK(peak > 1.0e-3f);
-	CHECK_FALSE(bridge.hasPendingNotes());
 	visage::MouseEvent release = press;
 	release.is_down = false;
-	panel->playForTest()->onMouseUp().callback(release);
+	panel->trigPadForTest()->onMouseUp().callback(release);
 }
 
 //---------------------------------------------------------------------------------------------------------------------------------
@@ -973,4 +972,79 @@ TEST_CASE("the editor is the drum's own window: it opens at the view's size, reo
 	CHECK(w2 == w);
 	CHECK(h2 == h);
 	gui->destroy(v.plugin);
+}
+
+namespace {
+/// The control's declared name, found by its key, for a place's host name.
+std::string desc_name(const char* key) {
+	for (const device::ParamDesc& p : drumDesc().params) {
+		if (std::string(p.key) == key) {
+			return p.name;
+		}
+	}
+	return "?";
+}
+} // namespace
+
+TEST_CASE("host ids never move: the Drum plugin's places as they stand on the released list, key by key, with the same id each") {
+	// THE LIST AS IT WAS BEFORE THE PLAY MODE AND THE NEW KINDS, written out: a host keeps its automation on an id for ever, so every place here
+	// keeps its key (and so its id, 0x1000 + place). New controls join AFTER the last of these and nothing is ever inserted before one.
+	static const char* const kReleased[] = {
+		"drum_enabled", "drum_kind", "drum_note", "drum_level",
+		"drum_pan", "drum_tune", "drum_decay", "drum_f_tone",
+		"drum_f_noise", "drum_drive", "drum_trigger", "drum_voices",
+		"drum_release", "drum_bend", "drum_delay", "drum_hp",
+		"drum_seed", "drum_zone", "drum_zone_offset", "drum_gamma",
+		"drum_rotate", "drum_travel_x", "drum_travel_y", "drum_pitch_mode",
+		"drum_f_pitch", "drum_f_length", "drum_f_sweep", "drum_f_snap",
+		"drum_f_metal", "drum_sweep_time", "drum_drive_curve", "drum_drive_tone",
+		"drum_velocity_noise", "drum_width", "drum_claps", "drum_spread",
+		"drum_clap_q", "drum_clap_hp", "drum_wire_decay", "drum_click_decay",
+		"drum_bell_start", "drum_bell_end", "drum_bell_time", "drum_bell2_hz",
+		"drum_bell2_time", "drum_kick_hold", "drum_kick_dip", "drum_kick_dip_time",
+		"drum_click_sweep", "drum_click_sweep_time", "drum_start_phase", "drum_keys",
+		"drum_vel_level", "drum_vel_tone", "drum_vel_snap", "drum_vel_tension",
+		"drum_wire_buzz", "drum_wire_gate", "drum_body_gate", "drum_bell1_level",
+		"drum_bell2_level"
+	};
+	REQUIRE(dp::kHostParamCount >= std::size(kReleased));
+	for (size_t i = 0; i < std::size(kReleased); ++i) {
+		CAPTURE(i);
+		CHECK(std::string(dp::kHostKeys[i]) == kReleased[i]);
+	}
+	// AND THE PLUGIN HANDS THEM OUT UNDER THOSE IDS.
+	Venue v;
+	const clap_plugin_params* params = v.params();
+	REQUIRE(params != nullptr);
+	for (size_t i = 0; i < std::size(kReleased); ++i) {
+		clap_param_info info {};
+		REQUIRE(params->get_info(v.plugin, static_cast<uint32_t>(i), &info));
+		CAPTURE(i);
+		CHECK(info.id == 0x1000 + i);
+		CHECK(std::string(info.name).find(desc_name(kReleased[i])) != std::string::npos);
+	}
+	// THE NEW PLACES FOLLOW, in order, and every key is still listed once.
+	CHECK(std::string(dp::kHostKeys[std::size(kReleased)]) == "drum_density");
+	// THE NEXT TWO BLOCKS, pinned the same way once they were on a list: the foley kinds' controls, then the Hand drum's and the FM perc's. A place
+	// keeps its key and so its id; the nine of the second block were appended and moved nothing before them.
+	static const char* const kLater[] = {
+		"drum_density", "drum_grain", "drum_pressure", "drum_speed",
+		"drum_rate", "drum_rise", "drum_flow", "drum_splash",
+		"drum_sweep_dir", "drum_sweep_range", "drum_sweep_sync",
+		"drum_stroke", "drum_bend_dir", "drum_shell", "drum_pot",
+		"drum_fm_ratio", "drum_fm_fine", "drum_fm_index", "drum_fm_idx_decay", "drum_fm_feedback",
+		"drum_trig"
+	};
+	REQUIRE(dp::kHostParamCount >= std::size(kReleased) + std::size(kLater));
+	for (size_t i = 0; i < std::size(kLater); ++i) {
+		CAPTURE(i);
+		CHECK(std::string(dp::kHostKeys[std::size(kReleased) + i]) == kLater[i]);
+		clap_param_info info {};
+		REQUIRE(params->get_info(v.plugin, static_cast<uint32_t>(std::size(kReleased) + i), &info));
+		CHECK(info.id == 0x1000 + std::size(kReleased) + i);
+	}
+	std::set<std::string> seen;
+	for (const char* key : dp::kHostKeys) {
+		CHECK(seen.insert(key).second);
+	}
 }

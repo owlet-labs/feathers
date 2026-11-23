@@ -24,6 +24,7 @@
 #include "plugin/ui/drum_device_likes.h"
 #include "plugin/ui/drum_device_pad.h"
 #include "plugin/ui/drum_device_ui.h"
+#include "plugin/ui/trig_pad.h"
 #include "plugin/ui/drum_hit_picture.h"
 #include "plugin/ui/drum_pitch_readout.h"
 #include "plugin/ui/expanded_overlay.h"
@@ -68,10 +69,12 @@ public:
 	[[nodiscard]] HitPicture& pictureForTest() { return picture_; }
 	/// The widget bound to control `p`, null where the control has none of its own (the picture's handles apart).
 	[[nodiscard]] visage::Frame* widgetForTest(dd::Param p) const { return widgets_[static_cast<size_t>(p)].get(); }
+	/// The Trigger's three-way face (Drone offered), shown instead of the plain one on a kind that can hold a hit.
+	[[nodiscard]] visage::Frame* triggerDroneForTest() const { return triggerDrone_.get(); }
 	[[nodiscard]] DrumDevicePad& padForTest() const { return *pad_; }
 	[[nodiscard]] DrumLikeBar& likesForTest() const { return *likes_; }
 	[[nodiscard]] PitchReadout& readoutForTest() const { return *readout_; }
-	[[nodiscard]] DrumPlayButton* playForTest() const { return play_.get(); }
+	[[nodiscard]] TrigPad* trigPadForTest() const { return trigPad_.get(); }
 
 private:
 	enum class Kind : uint8_t { Box, Segmented, Pill, Zone, Chip };
@@ -85,11 +88,13 @@ private:
 	std::unique_ptr<DrumLikeBar> likes_;
 	std::unique_ptr<SettledPitchControl> settledControl_;
 	std::unique_ptr<PitchReadout> readout_;
-	std::unique_ptr<DrumPlayButton> play_;
+	std::unique_ptr<TrigPad> trigPad_;
 	DrumPadContext padContext_ {};
 	EditHistory* padGroup_ = nullptr;
 	feathers::drum::Kind shownKind_ = feathers::drum::Kind::kCount;
 	bool shownGate_ = false;
+	/// THE TRIGGER'S THREE-WAY FACE (One-shot | Gate | Drone), shown instead of the plain two-way one on a kind that can be held.
+	std::unique_ptr<SegmentedControl> triggerDrone_;
 	int shownKeys_ = 0;
 	bool shownSettled_ = false;
 	float contentBottom_ = 0.0f;

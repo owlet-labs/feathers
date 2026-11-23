@@ -52,7 +52,8 @@ struct Flow {
 bool isBox(dd::Param p) {
 	switch (p) {
 	case dd::Param::Kind: case dd::Param::Note: case dd::Param::Seed: case dd::Param::Zone: case dd::Param::ZoneOffset:
-	case dd::Param::Gamma: case dd::Param::Rotate: case dd::Param::TravelX: case dd::Param::TravelY: case dd::Param::Claps: return true;
+	case dd::Param::Gamma: case dd::Param::Rotate: case dd::Param::TravelX: case dd::Param::TravelY: case dd::Param::Claps:
+	case dd::Param::SweepSync: case dd::Param::Stroke: case dd::Param::FmRatio: return true;
 	default: return false;
 	}
 }
@@ -75,8 +76,16 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 		if (p == dd::Param::Enabled) {
 			continue; // THE HEADER CHIP IS THE ONLY DEVICE-ENABLE (a window body carries none of its own)
 		}
+		else if (p == dd::Param::Trig) {
+			continue; // THE TRIG PAD below is its face
+		}
 		else if (isSegmented(p)) {
-			w = std::make_unique<SegmentedControl>(control, registry, d.names, notifier);
+			// THE TRIGGER'S PLAIN FACE IS TWO-WAY (One-shot | Gate): Drone is offered only on a kind that can be held, by the three-way one beside it.
+			w = std::make_unique<SegmentedControl>(control, registry, p == dd::Param::Trigger ? std::span<const char* const>(dd::kTriggerNamesNoDrone) : d.names, notifier);
+			if (p == dd::Param::Trigger) {
+				triggerDrone_ = std::make_unique<SegmentedControl>(control, registry, d.names, notifier);
+				addChild(triggerDrone_.get());
+			}
 		}
 		else if (p == dd::Param::Rotate || p == dd::Param::Gamma) {
 			// AS AUTOMOD'S MINI TERRAIN: Gamma and Rotate are unbounded, so boxes (`GammaBox`), never knobs. ROTATE sits INSIDE the pad, in its
@@ -86,6 +95,12 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 				box->setDragSpan(1.0);
 			}
 			w = std::move(box);
+		}
+		else if (p == dd::Param::BendDir) {
+			w = std::make_unique<SwitchChip>(control, "Up"); // lit: the bend rises onto the pitch; unlit: it falls onto it
+		}
+		else if (p == dd::Param::SweepDir) {
+			w = std::make_unique<SwitchChip>(control, "Down"); // lit: sweeping down; unlit: up
 		}
 		else if (isBox(p)) {
 			w = std::make_unique<ValueBox>(control, d.name);
@@ -136,10 +151,8 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 	settledControl_ = std::make_unique<SettledPitchControl>(model_.control(dd::Param::Tune), [this] { return model_.settled(); });
 	readout_ = std::make_unique<PitchReadout>(*settledControl_);
 	addChild(readout_.get());
-	if (host.canPostNote()) {
-		play_ = std::make_unique<DrumPlayButton>(host, [this] { return model_.noteKey(); });
-		addChild(play_.get());
-	}
+	trigPad_ = std::make_unique<TrigPad>(model_.control(dd::Param::Trig), [&host, id](uint32_t& fires) { return host.trigFiresAt(id, fires); });
+	addChild(trigPad_.get());
 	(void)likes_->refresh();
 	padContext_.settings = model_.settings();
 	padContext_.likes = likes_->state();
@@ -191,10 +204,27 @@ void DrumDeviceExpanded::layOut() {
 	seat(strike, dd::Param::Kind, 86.0f, ValueBox::kHeight);
 	seat(strike, dd::Param::Keys, 168.0f, 22.0f);
 	seat(strike, dd::Param::Note, 56.0f, ValueBox::kHeight);
-	if (play_ != nullptr) {
-		strike.place(play_.get(), 30.0f, 22.0f);
+	if (trigPad_ != nullptr) {
+		// A DRONE TAKES NO TRIGGER: hidden, not greyed, while it is on.
+		const bool drone = model_.droneOn();
+		trigPad_->setVisible(!drone);
+		if (!drone) {
+			strike.place(trigPad_.get(), 30.0f, 22.0f);
+		}
 	}
-	seat(strike, dd::Param::Trigger, 128.0f, 22.0f);
+	// ONE OF THE TWO TRIGGER FACES: with Drone on a kind that can hold it, else the plain two-way (the engine's `kindSustains`).
+	const bool sustains = feathers::drum::kindSustains(kind);
+	if (triggerDrone_ != nullptr) {
+		triggerDrone_->setVisible(sustains);
+	}
+	if (sustains) {
+		placed[static_cast<size_t>(dd::Param::Trigger)] = true;
+		show(dd::Param::Trigger, false);
+		strike.place(triggerDrone_.get(), 190.0f, 22.0f);
+	}
+	else {
+		seat(strike, dd::Param::Trigger, 128.0f, 22.0f);
+	}
 	seat(strike, dd::Param::Voices, 96.0f, 22.0f);
 	for (const dd::Param p : { dd::Param::Level, dd::Param::Pan, dd::Param::Tune, dd::Param::Decay, dd::Param::Release, dd::Param::Bend,
 	                           dd::Param::Delay, dd::Param::HighPass }) {
@@ -238,13 +268,22 @@ void DrumDeviceExpanded::layOut() {
 	seat(body, dd::Param::Drive, kPillW, kPillH);
 	seat(body, dd::Param::DriveCurve, 184.0f, 22.0f);
 	seat(body, dd::Param::DriveTone, kPillW, kPillH);
-	for (const dd::Param p : { dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
+	for (const dd::Param p : { dd::Param::Density, dd::Param::Grain, dd::Param::Pressure, dd::Param::Speed, dd::Param::Rate, dd::Param::Rise, dd::Param::Flow, dd::Param::Splash, dd::Param::SweepRange, dd::Param::SweepTime, dd::Param::Width, dd::Param::Spread, dd::Param::ClapQ, dd::Param::ClapHighPass,
 	                           dd::Param::WireDecay, dd::Param::ClickDecay, dd::Param::BellStart, dd::Param::BellEnd, dd::Param::BellTime,
 	                           dd::Param::Bell2Hz, dd::Param::Bell2Time, dd::Param::KickHold, dd::Param::KickDip, dd::Param::KickDipTime,
 	                           dd::Param::ClickSweep, dd::Param::ClickSweepTime, dd::Param::StartPhase }) {
 		seat(body, p, kPillW, kPillH);
 	}
 	seat(body, dd::Param::Claps, 56.0f, ValueBox::kHeight);
+	seat(body, dd::Param::SweepDir, 56.0f, 22.0f);
+	seat(body, dd::Param::SweepSync, 96.0f, ValueBox::kHeight);
+	// THE HAND DRUM'S STROKE AND BEND, AND THE FM PERC'S RATIO: a choice shown before it is applied (the box's menu), or the chip's two states.
+	seat(body, dd::Param::Stroke, 86.0f, ValueBox::kHeight);
+	seat(body, dd::Param::BendDir, 56.0f, 22.0f);
+	seat(body, dd::Param::FmRatio, 64.0f, ValueBox::kHeight);
+	for (const dd::Param p : { dd::Param::Shell, dd::Param::Pot, dd::Param::FmFine, dd::Param::FmIndex, dd::Param::FmIndexTime, dd::Param::FmFeedback }) {
+		seat(body, p, kPillW, kPillH);
+	}
 	// THE SNARE'S WIRES AND BELLS: one amount each, where the named zones were.
 	seat(body, dd::Param::WireContour, 150.0f, 22.0f);
 	for (const dd::Param p : { dd::Param::WireBuzz, dd::Param::WireThreshold, dd::Param::WireGate, dd::Param::BodyGate, dd::Param::Bell1Level,
@@ -268,7 +307,8 @@ bool DrumDeviceExpanded::updateContent() {
 	const bool settled = model_.settled().defined;
 	const int keys = model_.settings().index(dd::Param::Keys);
 	bool moved = false;
-	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || keys != shownKeys_) {
+	const bool trigStale = trigPad_ != nullptr && trigPad_->isVisible() == model_.droneOn(); // the Trig button follows the Drone mode
+	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || keys != shownKeys_ || trigStale) {
 		layOut();
 		moved = true;
 	}
@@ -276,6 +316,7 @@ bool DrumDeviceExpanded::updateContent() {
 }
 
 void DrumDeviceExpanded::follow() {
+	model_.refreshTooltips();
 	picture_.show(model_.kind(), model_.laws(), model_.decaySeconds(), model_.levelDb(), model_.handles());
 	(void)likes_->refresh();
 	padContext_.settings = model_.settings();

@@ -83,6 +83,36 @@ void heardSpectrum(Kind kind, const Fields& f, int count, partials::PartialSpect
 		}
 		break;
 	}
+	case Kind::Hand: {
+		// THE HEAD'S TWELVE MODES at the strike position, each as long as it rings, and the shell's tone under them.
+		double sum = 0.0;
+		for (int k = 0; k < kHandHeadModes; ++k) {
+			sum += std::pow(handRatio(k, l.metal), -(2.2 - 2.0 * tone));
+		}
+		for (int k = 0; k < kHandHeadModes; ++k) {
+			const double ratio = handRatio(k, l.metal);
+			put(p * ratio, std::pow(ratio, -(2.2 - 2.0 * tone)) / sum * std::sqrt(modeT60(l.t60, ratio, 0.0f) / l.t60));
+		}
+		if (l.shell > 0.0) {
+			put(p * handShellRatio(l.pot), l.shell * 0.8 * std::sqrt(handShellT60Share(l.pot)));
+		}
+		if (noise > 0.0) {
+			band(2.0 * p, 0.5 * noise * std::sqrt(0.3));
+		}
+		break;
+	}
+	case Kind::FM: {
+		// THE CARRIER AND ITS SIDEBANDS at the held index: line n at the carrier plus n modulator frequencies, |J_n(index)| tall.
+		const double index = l.fmIndex * fmToneScale(tone) * kFmHeldShare;
+		for (int n = -6; n <= 6; ++n) {
+			const double ratio = p * (1.0 + static_cast<double>(n) * l.fmRatio);
+			put(std::abs(ratio), fmSideband(n, index));
+		}
+		if (noise > 0.0) {
+			band(4.0 * p, 0.5 * noise * std::sqrt(0.15));
+		}
+		break;
+	}
 	case Kind::Metal:
 		for (int i = 0; i < kMetalOscillators; ++i) {
 			const double r = p * metalRatio(i, l.metal);
@@ -93,6 +123,33 @@ void heardSpectrum(Kind kind, const Fields& f, int count, partials::PartialSpect
 		band(metalCentreHz(l.tone) / base, std::max(0.05, noise));
 		break;
 	case Kind::Clap: band(clapCentreHz(l.tone) / base * p, 1.0); break;
+	case Kind::Sweep:
+		// THE SOURCE'S PITCH and the filter's reach: the low corner and as far up as the range goes, over the noise's band.
+		put(p, 1.0);
+		put(p * std::exp2(l.sweepRange * 0.5), 0.5);
+		put(p * std::exp2(l.sweepRange), 0.3);
+		band(std::exp2(l.sweepRange * 0.5) * p, std::max(0.05, noise));
+		break;
+	case Kind::Water:
+		// THE DROPS' PITCH over the bed's band.
+		put(p, 1.0);
+		put(p * std::exp2(static_cast<double>(l.rise) * 1.1), 0.5);
+		band((0.5 + 1.5 * static_cast<double>(l.tone)) * p, std::max(0.05, static_cast<double>(l.flow)));
+		break;
+	case Kind::Friction:
+		put(p, 1.0);
+		put(p * (2.1 + 1.3 * static_cast<double>(l.metal)), 0.4);
+		put(p * (3.0 + 2.0 * static_cast<double>(l.metal)), 0.2);
+		band(metalCentreHz(l.tone) / base, std::max(0.05, noise));
+		break;
+	case Kind::Particle:
+		// A FEW RESONANCES scattered about the centre by Metal, each a line, over a rattle band.
+		for (int i = 0; i < 4; ++i) {
+			const double spread = i == 0 ? 0.0 : (i % 2 == 0 ? 1.0 : -1.0) * (0.35 + 0.2 * i);
+			put(p * std::exp2(1.5 * static_cast<double>(l.metal) * spread), 1.0 / (1.0 + 0.4 * i));
+		}
+		band(metalCentreHz(l.tone) / base, std::max(0.05, noise));
+		break;
 	case Kind::String:
 		for (int k = 1; k <= 16; ++k) {
 			put(p * k, std::pow(static_cast<double>(k), -1.0 - 0.25 - 0.25 * (1.0 - tone)));

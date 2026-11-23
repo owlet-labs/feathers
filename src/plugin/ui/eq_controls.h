@@ -97,6 +97,11 @@ public:
 	/// Amount act on. When it changes the owner re-lays out.
 	[[nodiscard]] std::vector<int> honestyKey(int selected) const;
 
+	/// Each band's Q hover text follows that band's TYPE (a Bell's Q is its width, a cut's its resonance). The owner calls
+	/// it on every road it polls, so a type moved by automation, undo or a preset is seen; it re-sets a band only when
+	/// that band's type has moved, so a steady frame allocates nothing.
+	void refreshQTips();
+
 	/// Where the owner writes "Band n is off", or an empty rectangle.
 	[[nodiscard]] visage::Bounds offCaption() const { return offCaption_; }
 
@@ -135,6 +140,8 @@ private:
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_;
 	ControlFn control_;
+	/// The type each band's Q tooltip was last set for; -1 until the first refresh.
+	std::array<int, feathers::fx::eq::kBandCount> qTipType_ { -1, -1, -1, -1, -1, -1, -1, -1 };
 	float diameter_;
 	std::array<BandWidgets, fx::eq::kBandCount> bands_ {};
 	std::unique_ptr<Knob> offset_, amount_, tilt_, output_;

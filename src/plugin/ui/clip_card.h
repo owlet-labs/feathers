@@ -123,6 +123,8 @@ private:
 	[[nodiscard]] DeviceControl& control(fx::clip::Param p) const;
 	[[nodiscard]] MeterFractions meterFractions() const;
 	[[nodiscard]] int modeNow() const;
+	/// THE HOVER TEXTS FOR THE MODE THE ROW IS ON (`fx/clip/clip_tips.h`): written when the mode moved, from the constructor and from `layOut`.
+	void applyTips();
 
 	[[nodiscard]] float contentRight() const;
 	void layOut();
@@ -133,6 +135,8 @@ private:
 	Notifier* notifier_ = nullptr;
 
 	int laidOutMode_ = -1;
+	/// THE MODE `applyTips` last wrote for (-1: none yet).
+	int tippedMode_ = -1;
 	float drawnIn_ = -1.0f;
 	float drawnOut_ = -1.0f;
 	float drawnOver_ = -1.0f;

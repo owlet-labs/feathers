@@ -204,6 +204,9 @@ public:
 	/// nested hosts is what lets an outer say "I am going" while its members are still intact.
 	void setOuterLayers(SurfaceLayers* outer);
 	SurfaceLayers* outerLayers() const noexcept { return outer_; }
+	/// **THE FRAME THIS HOST'S PRESENTS COME FROM**, passed with each forwarded present so the outermost overlay can tell which window opened
+	/// the new one (`ExpandedOverlay::show`'s `opener`). The owner of this host (a frame), set once, and read only during a present.
+	void setAnchor(const visage::Frame* anchor) noexcept { anchor_ = anchor; }
 	/// How many forwarded presents this host still believes are up — for a case asserting the entry
 	/// was dropped rather than merely that nothing crashed.
 	size_t forwardedCountForTest() const noexcept { return forwarded_.size(); }
@@ -265,8 +268,10 @@ private:
 	/// A MOUNT, WHERE THIS HOST PUTS ITS OWN: the overlay, preferring the band while it shows. The road a
 	/// NESTED host's forwarded presents take too (backlog EB: a device inside a chain opens beside the
 	/// chain's panel in the band, or floats over the editor when the band is folded).
-	SurfaceId presentMounted(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss);
-	SurfaceId presentOverlay(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss);
+	SurfaceId presentMounted(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss,
+	                        const visage::Frame* opener = nullptr);
+	SurfaceId presentOverlay(std::unique_ptr<MountedFrame> mounted, std::function<void()> onDismiss,
+	                         const visage::Frame* opener = nullptr);
 	void panelWentDown(ExpandedOverlay::PanelId panel);
 
 	/// EVERY SPANNING SURFACE THIS HOST HAS UP: its id, its panel, and who to tell. Ids stay monotonic
@@ -312,6 +317,7 @@ private:
 	std::unique_ptr<ExpandedOverlay> overlay_;
 	ExpandedCanvas* canvas_ = nullptr;
 	SurfaceLayers* outer_ = nullptr;
+	const visage::Frame* anchor_ = nullptr;
 	FrameWatchers* watchers_ = nullptr;
 	ModState* mod_ = nullptr;
 };

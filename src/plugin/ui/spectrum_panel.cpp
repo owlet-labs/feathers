@@ -919,7 +919,10 @@ void SpectrumPanel::showFilterHead(size_t slot, bool setShown) {
 	show(set.modeBox2.get(), inRow[1]);
 	for (size_t f = 0; f < 2; ++f) {
 		show(set.tabs[f].get(), inRow[f]);
-		show(set.routing[f].get(), inRow[f]);
+		// The routing chip is further hidden while it changes nothing (see sync).
+		const bool routed = !spectralRoutingInert(on(slot, SpectralControl::FilterOn),
+		                                          source_.has(SpectralControl::Filter2On) && on(slot, SpectralControl::Filter2On));
+		show(set.routing[f].get(), inRow[f] && routed);
 	}
 }
 
@@ -1133,7 +1136,16 @@ bool SpectrumPanel::sync(size_t selected, bool live) {
 	const bool routed = !spectralRoutingInert(on(selected_, C::FilterOn), source_.has(C::Filter2On) && on(selected_, C::Filter2On));
 	for (size_t f = 0; f < 2; ++f) {
 		if (set.routing[f]) {
-			set.routing[f]->setEnabled(live && master && routed);
+			// THE HONESTY RULE: a choice that changes nothing is HIDDEN, not greyed. The chip's place is laid out either way.
+			set.routing[f]->setEnabled(live && master);
+			bool inRow = false;
+			for (const Panel& p : set.panels) {
+				inRow = inRow || (p.filter == static_cast<int>(f) && !p.hidden);
+			}
+			if (set.routing[f]->isVisible() != (routed && inRow)) {
+				set.routing[f]->setVisible(routed && inRow);
+				repainted = true;
+			}
 		}
 		if (set.tabs[f]) {
 			set.tabs[f]->setEnabled(live);
@@ -1524,7 +1536,7 @@ bool SpectrumPanel::liveForTest(size_t slot, SpectralControl control) const {
 	}
 	if (control == SpectralControl::FilterRouting) {
 		const SwitchChip* chip = sets_[slotOf(slot)].routing[static_cast<size_t>(filterTab_)].get();
-		return chip != nullptr && chip->enabled();
+		return chip != nullptr && chip->enabled() && chip->isVisible(); // hidden while inert (honesty rule)
 	}
 	if (const ModeValueCell* cell = sets_[slotOf(slot)].partialsCell;
 	    cell != nullptr && (control == SpectralControl::PartialsMode || control == SpectralControl::PartialsCount

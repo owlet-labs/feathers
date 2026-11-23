@@ -288,7 +288,8 @@ visage::Point HitPicture::handleAt(Handle h) const {
 	case Handle::Tune: return { plotLeft() + 0.72f * (plotRight() - plotLeft()), yOfHz(laws_.hz) }; // on the resting pitch, late
 	case Handle::SweepTime: {
 		const double t = 3.0 * laws_.sweepTau; // the sweep's time: 95% of the drop done
-		return { xOf(t), yOfHz(laws_.hz * std::exp2(laws_.sweepOctaves * std::exp(-3.0))) };
+		const double signedOctaves = laws_.bendUp ? -laws_.sweepOctaves : laws_.sweepOctaves; // a Hand drum's bend may rise onto the pitch
+		return { xOf(t), yOfHz(laws_.hz * std::exp2(signedOctaves * std::exp(-3.0))) };
 	}
 	case Handle::Decay: return { xOf(laws_.t60), envBottom() };
 	case Handle::Level: return { plotLeft() + 4.0f, yOfLevel(levelDb_) };
@@ -696,6 +697,135 @@ void HitPicture::draw(visage::Canvas& canvas) {
 			     k == 1 ? 4.0f : 2.0f);
 		}
 		break;
+	case drum::Kind::Hand: {
+		// THE HEAD'S MODES, each a line riding the bend (falling onto its pitch, or rising onto it), the lowest bold and a slap's weak; the shell's line stays where it is.
+		const double fundamental = drum::handStroke(laws_.handStroke).fundamental;
+		const double signedOctaves = laws_.bendUp ? -laws_.sweepOctaves : laws_.sweepOctaves;
+		for (int k = 0; k < drum::kHandHeadModes; ++k) {
+			const double ratio = drum::handRatio(k, laws_.metal);
+			const double t60 = drum::modeT60(laws_.t60, ratio, 0.0f);
+			const double level = std::pow(ratio, -(1.1 - laws_.tone)) * (k == 0 ? fundamental : 1.0);
+			for (int i = 0; i < kSteps; ++i) {
+				const double t = secondsAt(plotLeft() + w * static_cast<float>(i) / kSteps);
+				const double hz = laws_.hz * ratio * std::exp2(signedOctaves * std::exp(-t / std::max(1.0e-4, laws_.sweepTau)));
+				canvas.setColor(alphaOf(kValue, seen(level * std::pow(10.0, -3.0 * t / std::max(1.0e-3, t60)))));
+				canvas.fill(plotLeft() + w * static_cast<float>(i) / kSteps, yOfHz(hz) - (k == 0 ? 2.0f : 1.0f), w / kSteps + 0.5f, k == 0 ? 4.0f : 2.0f);
+			}
+		}
+		if (laws_.shell > 0.0) {
+			line(laws_.hz * drum::handShellRatio(laws_.pot), laws_.t60 * drum::handShellT60Share(laws_.pot), laws_.shell, 3.0f);
+		}
+		if (laws_.noise > 0.0f) {
+			band(2.0 * laws_.hz, 0.3 * laws_.t60, laws_.noise);
+		}
+		break;
+	}
+	case drum::Kind::FM: {
+		// THE CARRIER AND ITS SIDEBANDS: line n at the carrier plus n modulator frequencies, as bright as |J_n(index)| at that moment, so the spray collapses as the index falls.
+		const bool held = laws_.play != drum::kPlayOneShot;
+		for (int n = -6; n <= 6; ++n) {
+			for (int i = 0; i < kSteps; ++i) {
+				const double t = secondsAt(plotLeft() + w * static_cast<float>(i) / kSteps);
+				const double carrier = laws_.hz * std::exp2(laws_.sweepOctaves * std::exp(-t / std::max(1.0e-4, laws_.sweepTau)));
+				const double hz = std::abs(carrier * (1.0 + static_cast<double>(n) * laws_.fmRatio));
+				if (hz < 20.0 || hz > 20000.0) {
+					continue;
+				}
+				const double index = drum::fmIndexAt(laws_.fmIndex, laws_.fmIndexT60, laws_.play, t) * drum::fmToneScale(laws_.tone);
+				const double ring = held ? 1.0 : std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60));
+				canvas.setColor(alphaOf(kValue, seen(drum::fmSideband(n, index) * ring)));
+				canvas.fill(plotLeft() + w * static_cast<float>(i) / kSteps, yOfHz(hz) - (n == 0 ? 2.0f : 1.0f), w / kSteps + 0.5f, n == 0 ? 4.0f : 2.0f);
+			}
+		}
+		if (laws_.noise > 0.0f) {
+			band(4.0 * laws_.hz, std::min(0.25, 0.15 * laws_.t60), laws_.noise);
+		}
+		break;
+	}
+	case drum::Kind::Sweep: {
+		// THE FILTER'S CORNER over the sweep's time: a bold trace from the low corner up (or the high corner down), brightness its loudness.
+		const double length = std::max(0.005, laws_.lengthSeconds);
+		const double lo = std::clamp(laws_.hz, 20.0, 20000.0);
+		for (int step = 0; step < kSteps; ++step) {
+			const double t = secondsAt(plotLeft() + w * static_cast<float>(step) / kSteps);
+			const double pos = laws_.play == drum::kPlayDrone ? 1.0 - std::fabs(1.0 - 2.0 * std::fmod(t / length, 1.0)) * 1.0 : std::min(1.0, t / length);
+			const double hz = drum::sweepCornerHz(lo, laws_.sweepRange, laws_.sweepDirection, laws_.play == drum::kPlayDrone ? 1.0 - pos : pos);
+			canvas.setColor(alphaOf(kValue, seen(drum::sweepShape(pos, laws_.sweepDirection, laws_.play) + 0.02)));
+			canvas.fill(plotLeft() + w * static_cast<float>(step) / kSteps, yOfHz(hz) - 2.0f, w / kSteps + 0.5f, 4.0f);
+		}
+		band(std::sqrt(lo * lo * std::exp2(laws_.sweepRange)), length, std::max(0.1, static_cast<double>(laws_.noise)));
+		break;
+	}
+	case drum::Kind::Water: {
+		// THE DROPS: a rising chirp from the size's pitch, one trace per few sizes within Metal's spread, over the bed's band; ticks at the rate.
+		const double life = std::clamp((0.012 + 0.08 * (1.0 - static_cast<double>(laws_.snap))) * std::sqrt(900.0 / laws_.hz), 0.004, 0.4);
+		for (int i = -1; i <= 1; ++i) {
+			const double start = laws_.hz * std::exp2(1.2 * static_cast<double>(laws_.metal) * i * 0.8);
+			for (int step = 0; step < kSteps; ++step) {
+				const double t = secondsAt(plotLeft() + w * static_cast<float>(step) / kSteps);
+				if (t > life * 3.0) {
+					break;
+				}
+				const double hz = start * std::exp2(2.2 * laws_.rise * std::min(1.0, t / life));
+				canvas.setColor(alphaOf(kValue, seen(std::pow(10.0, -3.0 * t / life)) * (i == 0 ? 1.0f : 0.5f)));
+				canvas.fill(plotLeft() + w * static_cast<float>(step) / kSteps, yOfHz(hz) - 1.5f, w / kSteps + 0.5f, 3.0f);
+			}
+		}
+		band((0.5 + 1.5 * static_cast<double>(laws_.tone)) * laws_.hz, laws_.t60, laws_.flow);
+		for (int k = 0; k < 120; ++k) {
+			const double t = (static_cast<double>(k) + 0.5) / std::max(0.0625, laws_.waterRate);
+			const float x = xOf(t);
+			if (x > plotRight()) {
+				break;
+			}
+			const double a = laws_.play == drum::kPlayOneShot ? std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60)) : 1.0;
+			canvas.setColor(alphaOf(kInk, 0.5f * seen(a)));
+			canvas.fill(x, specTop(), 1.0f, specBottom() - specTop());
+		}
+		break;
+	}
+	case drum::Kind::Friction: {
+		// THE RESONANCES the bow drives, over the slips' band; the envelope below is the bow's strength (held flat while it is held).
+		const double ring = std::clamp(0.1 * laws_.t60, 0.01, 1.5);
+		line(laws_.hz, ring, 1.0, 4.0f);
+		line(laws_.hz * (2.1 + 1.3 * static_cast<double>(laws_.metal)), ring, 0.4, 2.0f);
+		line(laws_.hz * (3.0 + 2.0 * static_cast<double>(laws_.metal)), ring, 0.2, 2.0f);
+		band(drum::metalCentreHz(laws_.tone), laws_.t60, std::max(0.1, static_cast<double>(laws_.noise)));
+		// THE SLIPS: a tick at each period, the creak's spacing at a slow bow, closing to the tone's at a fast one.
+		const double rate = std::exp(std::log(7.0) + (std::log(std::max(20.0, laws_.hz)) - std::log(7.0)) * std::pow(laws_.speed, 1.5));
+		for (int k = 0; k < 200; ++k) {
+			const double t = (static_cast<double>(k) + 0.5) / rate;
+			const float x = xOf(t);
+			if (x > plotRight()) {
+				break;
+			}
+			const double a = laws_.play == drum::kPlayOneShot ? std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60)) : 1.0;
+			canvas.setColor(alphaOf(kInk, 0.5f * seen(a)));
+			canvas.fill(x, specTop(), 1.0f, specBottom() - specTop());
+		}
+		break;
+	}
+	case drum::Kind::Particle: {
+		// THE RESONANCES: a few lines scattered about the centre by Metal, each ringing for a part of the shower's length, and the rattle's band.
+		const double ring = std::clamp(0.12 * laws_.t60, 0.003, 2.0);
+		for (int i = 0; i < 4; ++i) {
+			const double spread = i == 0 ? 0.0 : (i % 2 == 0 ? 1.0 : -1.0) * (0.35 + 0.2 * i);
+			line(laws_.hz * std::exp2(1.5 * static_cast<double>(laws_.metal) * spread), ring, 1.0 / (1.0 + 0.4 * i), i == 0 ? 4.0f : 2.0f);
+		}
+		band(drum::metalCentreHz(laws_.tone), laws_.t60, std::max(0.1, static_cast<double>(laws_.noise)));
+		// THE COLLISIONS: a tick for each grain at the average spacing, fading with the shower's density (held flat when it is held).
+		for (int k = 0; k < 80; ++k) {
+			const double t = (static_cast<double>(k) + 0.5) / std::max(0.25, laws_.density);
+			const float x = xOf(t);
+			if (x > plotRight()) {
+				break;
+			}
+			const double a = laws_.play == drum::kPlayOneShot ? std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60)) : 1.0;
+			canvas.setColor(alphaOf(kInk, 0.5f * seen(a)));
+			canvas.fill(x, specTop(), 1.0f, specBottom() - specTop());
+		}
+		break;
+	}
 	default: break;
 	}
 
@@ -715,8 +845,15 @@ void HitPicture::draw(visage::Canvas& canvas) {
 		const double t = secondsAt(plotLeft() + w * (static_cast<float>(i) + 0.5f) / kSteps);
 		// A KICK HOLDS, THEN DECAYS, with its fishtail dipped in (the hit's own Hold and dipAt's curve).
 		const bool kick = kind_ == drum::Kind::Kick;
-		const double held = kick ? std::max(0.0, t - laws_.kickHold) : t;
+		// A HELD SHOWER (Gate, Drone) stays at full: the picture draws the level it holds, and a Gate's release is the Release control's.
+		const bool heldShower = drum::kindSustains(kind_) && laws_.play != drum::kPlayOneShot;
+		const double held = heldShower ? 0.0 : (kick ? std::max(0.0, t - laws_.kickHold) : t);
 		double a = std::pow(10.0, -3.0 * held / std::max(1.0e-3, laws_.t60)) * gatedAt(t, bodyGate);
+		if (kind_ == drum::Kind::Sweep) {
+			// THE SWEEP'S OWN SHAPE (the voice's `sweepShape`): a riser grows, a downer falls, a One-shot closes at the end, a Gate holds, a Drone is level.
+			const double length = std::max(0.005, laws_.lengthSeconds);
+			a = laws_.play == drum::kPlayOneShot && t > length ? 0.0 : drum::sweepShape(t / length, laws_.sweepDirection, laws_.play);
+		}
 		if (kick && laws_.kickDip > 0.0) {
 			const double u = (t - 0.5 * laws_.kickDipTime) / laws_.kickDipTime;
 			if (u > 0.0 && u < 1.0) {

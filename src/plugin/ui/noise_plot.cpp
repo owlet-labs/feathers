@@ -258,7 +258,18 @@ const char* NoisePlot::tooltipAt(visage::Point p) const {
 	if (p.y > plotFoot()) {
 		return "Two seconds of the clicks the current settings make";
 	}
-	return tooltipOf(&control(nz::Param::Cutoff));
+	// THE PLOT DRIVES TWO CONTROLS, and this text says what each drag does. A plain drag places Cutoff across and
+	// Resonance up; with a modulator armed on Cutoff, the drag routes Cutoff's amount instead (Alt places). The
+	// Impulses source adds what high resonance does to the clicks. Literals, so the tooltip allocates nothing.
+	const bool routed = control(nz::Param::Cutoff).display().routable;
+	const bool impulses = control(nz::Param::Source).value() >= 0.5;
+	if (routed) {
+		return "Drag up or down: how much of Cutoff's modulation routes (Alt-drag places Cutoff across and Resonance up instead)";
+	}
+	return impulses
+	           ? "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings, and high "
+	             "resonance turns the clicks into pitched pings"
+	           : "Drag across: Cutoff, where the filter acts. Drag up or down: Resonance, how sharply it rings";
 }
 
 void NoisePlot::draw(visage::Canvas& canvas) {

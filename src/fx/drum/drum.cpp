@@ -43,7 +43,7 @@ constexpr float kHpFloor = 1.0e-9f;
 
 [[nodiscard]] bool stereoWritten(Kind k) noexcept {
 	// Membrane, Snare and Clap write the right ear themselves (Width); the others are one signal.
-	return k == Kind::Membrane || k == Kind::Snare || k == Kind::Clap;
+	return k == Kind::Membrane || k == Kind::Snare || k == Kind::Clap || k == Kind::Water;
 }
 
 } // namespace
@@ -100,6 +100,27 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	c.bell2Hz = exp2Of(s, Param::Bell2Hz);
 	c.bell2Seconds = exp2Of(s, Param::Bell2Time);
 	c.velocityNoise = static_cast<double>(s.at(Param::VelocityNoise));
+	c.particleDensity = exp2Of(s, Param::Density);
+	c.grainSeconds = exp2Of(s, Param::Grain);
+	c.pressure = static_cast<double>(s.at(Param::Pressure));
+	c.speed = static_cast<double>(s.at(Param::Speed));
+	c.waterRate = exp2Of(s, Param::Rate);
+	c.rise = static_cast<double>(s.at(Param::Rise));
+	c.flow = static_cast<double>(s.at(Param::Flow));
+	c.splash = static_cast<double>(s.at(Param::Splash));
+	c.sweepDirection = s.index(Param::SweepDir);
+	c.sweepRange = static_cast<double>(s.at(Param::SweepRange));
+	c.syncBeats = kSyncBeats[std::clamp(s.index(Param::SweepSync), 0, static_cast<int>(std::size(kSyncBeats)) - 1)];
+	c.handStroke = s.index(Param::Stroke);
+	c.bendDirection = s.index(Param::BendDir);
+	c.shell = static_cast<double>(s.at(Param::Shell));
+	c.pot = static_cast<double>(s.at(Param::Pot));
+	c.fmRatio = kFmRatios[std::clamp(s.index(Param::FmRatio), 0, static_cast<int>(std::size(kFmRatios)) - 1)];
+	c.fmFineCents = static_cast<double>(s.at(Param::FmFine));
+	c.fmIndex = static_cast<double>(s.at(Param::FmIndex));
+	c.fmIndexSeconds = exp2Of(s, Param::FmIndexTime);
+	c.fmFeedback = static_cast<double>(s.at(Param::FmFeedback));
+	c.play = s.index(Param::Trigger);
 	c.width = static_cast<double>(s.at(Param::Width));
 	// THE TERRAIN'S PITCH MODE is the kit's alone (the engine's Pitched mode keeps the half-semitone fine pitch as it always was).
 	c.pitchMode = s.pitched() ? 0 : s.index(Param::PitchMode);
@@ -151,6 +172,9 @@ void DrumDsp::prepare(double sampleRate) {
 		s.hit.prepare(sr_);
 		s.hit.setString(&s.string, &builder_);
 	}
+	drone_.string.prepare(sr_);
+	drone_.hit.prepare(sr_);
+	drone_.hit.setString(&drone_.string, &builder_);
 	// EVERY KIND, STRUCK AND RENDERED ONCE, so a lazily built table is built here and not on the audio thread.
 	Slot& w = slots_[0];
 	const Settings defaults = stateOf(Row {}, 0);
@@ -181,7 +205,16 @@ void DrumDsp::reset() {
 		s.hpX = {};
 		s.hpY = {};
 	}
+	drone_.hit.reset();
+	drone_.string.reset();
+	drone_.used = drone_.struck = drone_.released = drone_.gateApplied = drone_.fading = false;
+	drone_.hpX = {};
+	drone_.hpY = {};
 	queued_ = 0;
+	trigEdge_.reset();
+	trigRisen_ = 0;
+	trigFell_ = false;
+	trigHeld_ = false;
 	keyTuning_.fill(0.0f);
 	keyStrikes_.fill(0u);
 	phase_ = -1;
@@ -189,7 +222,19 @@ void DrumDsp::reset() {
 
 void DrumDsp::setSettings(const Settings& s) {
 	s_ = s;
+	// THE TRIG (the house convention, `mod/trig.h`): its RESOLVED value, compared once per row. A rise to the fire level is a strike, and the fall
+	// below the re-arm level lets it go, so a hand on the pad (the base held at 1) and a routed pulse are the same thing. The edges wait here for `process`.
+	{
+		const bool wasArmed = trigEdge_.armed;
+		if (trigEdge_.step(s.at(Param::Trig))) {
+			trigRisen_ = std::min<uint32_t>(trigRisen_ + 1, 4);
+		}
+		else if (!wasArmed && trigEdge_.armed) {
+			trigFell_ = true;
+		}
+	}
 	controls_ = controlsOf(s);
+	controls_.secondsPerBeat = clock_.secondsPerBeat;
 	// THE TERRAIN IS DECODED ONLY WHEN WHAT IT READS MOVED: the bits of the row's thirteen numbers (home, rotate, travel, scalers).
 	const std::array<float, 13> key {
 		s.at(Param::Zone), s.at(Param::ZoneOffset), s.at(Param::Gamma), s.at(Param::Rotate), s.at(Param::TravelX),
@@ -217,6 +262,10 @@ void DrumDsp::setSettings(const Settings& s) {
 }
 
 void DrumDsp::queueNotes(const device::NoteEvent* in, size_t count) {
+	// A DRONE ANSWERS NO KEY: it is always on, so a note has nothing to start or end.
+	if (droneWanted()) {
+		return;
+	}
 	for (size_t i = 0; i < count; ++i) {
 		const device::NoteEvent& e = in[i];
 		if (e.kind == device::NoteEvent::Kind::Expression) {
@@ -258,7 +307,8 @@ bool DrumDsp::holdsTail() const noexcept {
 			return true;
 		}
 	}
-	return false;
+	// A DRONE SUSTAINS BY DESIGN: the device stays awake for as long as it runs, with no timeout.
+	return drone_.used;
 }
 
 int DrumDsp::soundingForTest() const noexcept {
@@ -472,66 +522,166 @@ void DrumDsp::handle(const device::NoteEvent& e, int pos, int /*base*/) {
 }
 
 void DrumDsp::refreshLaws() {
-	for (Slot& s : slots_) {
-		if (!s.used || !s.struck || s.hit.idle() || s.kind != static_cast<Kind>(std::clamp(s_.index(Param::Kind), 0, 5))) {
-			continue;
+	const Kind current = static_cast<Kind>(std::clamp(s_.index(Param::Kind), 0, static_cast<int>(feathers::drum::kKindCount) - 1));
+	const auto refresh = [&](Slot& s) {
+		if (!s.used || !s.struck || s.hit.idle() || s.kind != current) {
+			return;
 		}
 		// THE CONTROL TICK'S REFRESH: a sounding hit follows the row (a route on Decay, Tone, Zone; the key's tuning) and keeps its velocity.
 		const double moved = static_cast<double>(keyTuning_[static_cast<size_t>(s.key & 127)]);
 		s.hit.setLaws(feathers::drum::lawsFor(s.kind, fields_, controls_, baseHzOf(s.kind, s_, s.key, moved), s.velocity));
+	};
+	for (Slot& s : slots_) {
+		refresh(s);
+	}
+	refresh(drone_);
+}
+
+void DrumDsp::renderSlot(Slot& s, float* left, float* right, int n) {
+	if (!s.used || (!s.struck && s.delayLeft > 0)) {
+		return;
+	}
+	if (!s.struck) {
+		strikeNow(s);
+	}
+	s.hit.render(tl_.data(), n, tr_.data());
+	if (!stereoWritten(s.kind)) {
+		std::copy(tl_.begin(), tl_.begin() + n, tr_.begin());
+	}
+	if (s.fading) {
+		for (int i = 0; i < n; ++i) {
+			const float g = s.fadeLeft > 0 ? static_cast<float>(s.fadeLeft) / static_cast<float>(s.fadeTotal) : 0.0f;
+			tl_[static_cast<size_t>(i)] *= g;
+			tr_[static_cast<size_t>(i)] *= g;
+			if (s.fadeLeft > 0) {
+				--s.fadeLeft;
+			}
+		}
+	}
+	if (hpA_ < 1.0f) {
+		const std::array<float*, 2> ears { tl_.data(), tr_.data() };
+		for (size_t ear = 0; ear < 2; ++ear) {
+			float px = s.hpX[ear];
+			float py = s.hpY[ear];
+			for (int i = 0; i < n; ++i) {
+				const float y = hpA_ * (py + ears[ear][i] - px);
+				px = ears[ear][i];
+				py = y;
+				ears[ear][i] = y;
+			}
+			s.hpX[ear] = px;
+			s.hpY[ear] = py;
+		}
+	}
+	for (int i = 0; i < n; ++i) {
+		left[i] += gainL_ * tl_[static_cast<size_t>(i)];
+		right[i] += gainR_ * tr_[static_cast<size_t>(i)];
+	}
+	// DONE: faded out, or silent to the exact sample with its high-pass rung out. Its state is then exact zero.
+	const bool done = s.fading ? s.fadeLeft == 0 : (s.hit.idle() && !hpRinging(s));
+	if (done) {
+		s.hit.reset();
+		s.string.reset();
+		s.used = s.struck = s.fading = false;
+		s.hpX = {};
+		s.hpY = {};
 	}
 }
 
 void DrumDsp::renderSpan(float* left, float* right, int n) {
 	for (Slot& s : slots_) {
-		if (!s.used || (!s.struck && s.delayLeft > 0)) {
-			continue;
+		renderSlot(s, left, right, n);
+	}
+	renderSlot(drone_, left, right, n);
+}
+
+bool DrumDsp::droneWanted() const noexcept {
+	const auto kind = static_cast<Kind>(std::clamp(s_.index(Param::Kind), 0, static_cast<int>(feathers::drum::kKindCount) - 1));
+	return s_.index(Param::Trigger) == feathers::drum::kPlayDrone && feathers::drum::kindSustains(kind);
+}
+
+void DrumDsp::injectTrig(size_t& head, int base) {
+	// A DRONE TAKES NO TRIGGER: it sounds with no key, so a rise has nothing to strike and a routed trigger is ignored (the pad is hidden then).
+	if (droneWanted()) {
+		trigRisen_ = 0;
+		trigFell_ = false;
+		trigHeld_ = false;
+		return;
+	}
+	// THE KEY A TRIG STRIKES: the Note, or middle C when the drum is Pitched. VELOCITY 100/127, the pad's press; a routed trigger carries no velocity, so it gets the same.
+	const int key = s_.pitched() ? 60 : std::clamp(s_.index(Param::Note), 0, 127);
+	std::array<device::NoteEvent, 6> made {};
+	size_t n = 0;
+	for (uint32_t i = 0; i < trigRisen_; ++i) {
+		device::NoteEvent e;
+		e.kind = device::NoteEvent::Kind::On;
+		e.timeSamples = static_cast<uint32_t>(base);
+		e.key = static_cast<int16_t>(key);
+		e.velocity = 100.0 / 127.0;
+		made[n++] = e;
+		trigHeld_ = true;
+	}
+	// THE FALL lets go of what the Trig struck (a Gate drum damps it; a One-shot's falling edge changes nothing, as a note-off never does).
+	if (trigFell_ && trigHeld_) {
+		device::NoteEvent e;
+		e.kind = device::NoteEvent::Kind::Off;
+		e.timeSamples = static_cast<uint32_t>(base);
+		e.key = static_cast<int16_t>(key);
+		e.velocity = 0.0;
+		made[n++] = e;
+		trigHeld_ = false;
+	}
+	trigRisen_ = 0;
+	trigFell_ = false;
+	// AT THE FRONT of what is still to come, so a strike is not held behind a later note's time.
+	const size_t room = queue_.size() - queued_;
+	n = std::min(n, room);
+	if (n == 0) {
+		return;
+	}
+	for (size_t i = queued_; i > head; --i) {
+		queue_[i - 1 + n] = queue_[i - 1];
+	}
+	for (size_t i = 0; i < n; ++i) {
+		queue_[head + i] = made[i];
+	}
+	queued_ += n;
+}
+
+void DrumDsp::serveDrone() {
+	if (!droneWanted()) {
+		// LEAVING THE MODE (or the kind): the drone fades out over the steal fade, then its state is exact zero.
+		if (drone_.used && !drone_.fading) {
+			drone_.struck = true;
+			fade(drone_);
 		}
-		if (!s.struck) {
-			strikeNow(s);
-		}
-		s.hit.render(tl_.data(), n, tr_.data());
-		if (!stereoWritten(s.kind)) {
-			std::copy(tl_.begin(), tl_.begin() + n, tr_.begin());
-		}
-		if (s.fading) {
-			for (int i = 0; i < n; ++i) {
-				const float g = s.fadeLeft > 0 ? static_cast<float>(s.fadeLeft) / static_cast<float>(s.fadeTotal) : 0.0f;
-				tl_[static_cast<size_t>(i)] *= g;
-				tr_[static_cast<size_t>(i)] *= g;
-				if (s.fadeLeft > 0) {
-					--s.fadeLeft;
-				}
-			}
-		}
-		if (hpA_ < 1.0f) {
-			const std::array<float*, 2> ears { tl_.data(), tr_.data() };
-			for (size_t ear = 0; ear < 2; ++ear) {
-				float px = s.hpX[ear];
-				float py = s.hpY[ear];
-				for (int i = 0; i < n; ++i) {
-					const float y = hpA_ * (py + ears[ear][i] - px);
-					px = ears[ear][i];
-					py = y;
-					ears[ear][i] = y;
-				}
-				s.hpX[ear] = px;
-				s.hpY[ear] = py;
-			}
-		}
-		for (int i = 0; i < n; ++i) {
-			left[i] += gainL_ * tl_[static_cast<size_t>(i)];
-			right[i] += gainR_ * tr_[static_cast<size_t>(i)];
-		}
-		// DONE: faded out, or silent to the exact sample with its high-pass rung out. Its state is then exact zero.
-		const bool done = s.fading ? s.fadeLeft == 0 : (s.hit.idle() && !hpRinging(s));
-		if (done) {
-			s.hit.reset();
-			s.string.reset();
-			s.used = s.struck = s.fading = false;
-			s.hpX = {};
-			s.hpY = {};
-		}
+		return;
+	}
+	const auto kind = static_cast<Kind>(std::clamp(s_.index(Param::Kind), 0, static_cast<int>(feathers::drum::kKindCount) - 1));
+	// THE DRONE'S STREAM comes from the Seed alone (no key, no strike count, no transport): a reload plays the same sound from its start.
+	const uint64_t seed = strikeSeed(static_cast<uint64_t>(std::lround(s_.at(Param::Seed))), 0, kind, -1, 0);
+	if (drone_.used && (drone_.fading || drone_.kind != kind || drone_.seed != seed)) {
+		// A CHANGED SEED OR KIND RESTARTS IT (a fading one is replaced too): the old state goes at once.
+		drone_.hit.reset();
+		drone_.used = drone_.struck = drone_.fading = false;
+		drone_.hpX = {};
+		drone_.hpY = {};
+	}
+	if (!drone_.used) {
+		drone_.used = true;
+		drone_.struck = false;
+		drone_.released = false;
+		drone_.gateApplied = false;
+		drone_.fading = false;
+		drone_.delayLeft = 0;
+		drone_.kind = kind;
+		drone_.key = 0;
+		drone_.noteId = -1;
+		drone_.velocity = 1.0;
+		drone_.seed = seed;
+		drone_.order = 0;
+		strikeNow(drone_);
+		--strikes_; // a drone's start is not a strike of the drum
 	}
 }
 
@@ -550,6 +700,8 @@ void DrumDsp::process(float* left, float* right, int frames) {
 		++head;
 		++staleDropped_;
 	}
+	injectTrig(head, base);
+	serveDrone();
 	refreshLaws();
 	int pos = 0;
 	while (pos < frames) {

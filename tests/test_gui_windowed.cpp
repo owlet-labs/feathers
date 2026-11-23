@@ -5218,7 +5218,7 @@ TEST_CASE("list view rename: in a real window a right press on a row's menu and 
 	}
 }
 
-TEST_CASE("column folds: in a real window a real press on the macros header folds only the macros and one on the inspector header folds only the inspector in a Chain's window") {
+TEST_CASE("column folds: in a real window a real press on each pane's rail folds that pane sideways to a strip, the other pane unmoved, in a Chain's window") {
 	EditorFixture f;
 	feathers::rack::RackEngine bodies { feathers::rack::kRackAxes, feathers::hostCatalogue() };
 	bodies.prepare(48000.0, 4096);
@@ -5255,9 +5255,10 @@ TEST_CASE("column folds: in a real window a real press on the macros header fold
 	}
 	feathers::rack::RackEditor* editor = treeFind<feathers::rack::RackEditor>(top);
 	REQUIRE(editor != nullptr);
-	const auto pressHeader = [&](feathers::ui::FoldHeader& header) {
-		const visage::Point o = header.positionInWindow();
-		pressAtWindow(top, { o.x + static_cast<float>(header.width()) * 0.5f, o.y + static_cast<float>(header.height()) * 0.5f }, false);
+	const auto pressRail = [&](feathers::ui::Rail& rail) {
+		const visage::Bounds t = rail.toggleBounds();
+		const visage::Point o = rail.positionInWindow();
+		pressAtWindow(top, { o.x + t.x() + t.width() * 0.5f, o.y + t.y() + t.height() * 0.5f }, false);
 		for (int i = 0; i < 2; ++i) {
 			(void)f.gui.tickForTest();
 		}
@@ -5296,32 +5297,50 @@ TEST_CASE("column folds: in a real window a real press on the macros header fold
 	REQUIRE(open.macros);
 	REQUIRE(open.levels);
 	REQUIRE(open.routes);
-	// THE REAL PRESS ON THE MACROS HEADER, through the window's root.
-	pressHeader(editor->macrosHeaderForTest());
-	CHECK(editor->macrosFolded());
-	CHECK_FALSE(editor->inspectorFolded());
-	const Seen afterMacros = seen();
-	CHECK_FALSE(afterMacros.macros);
-	CHECK(afterMacros.levels);
-	CHECK(afterMacros.routes);
-	CHECK(afterMacros.level0 == open.level0); // the inspector half did not move
-	shot("macros-folded");
-	// UNFOLD IT, then the INSPECTOR HEADER: the macros stay, the inspector goes.
-	pressHeader(editor->macrosHeaderForTest());
-	CHECK_FALSE(editor->macrosFolded());
-	CHECK(seen().macros);
-	pressHeader(editor->inspectorHeaderForTest());
+	feathers::ui::Rail& container = editor->containerRailForTest();
+	feathers::ui::Rail& macros = editor->macrosRailForTest();
+	const float strip = feathers::ui::Rail::kCollapsedWidth;
+	const float shrink = feathers::rack::RackEditor::kPaneWidth - strip;
+	const float openLaneLeft = editor->laneLeft();
+	const visage::Bounds macro0 = editor->macroBoundsForTest(0);
+	// A REAL PRESS ON THE CONTAINER'S TOGGLE, through the window's root: it folds to a strip, the macros' pane is untouched and moves left.
+	pressRail(container);
 	CHECK(editor->inspectorFolded());
 	CHECK_FALSE(editor->macrosFolded());
-	const Seen afterInspector = seen();
-	CHECK(afterInspector.macros);
-	CHECK_FALSE(afterInspector.levels);
-	CHECK_FALSE(afterInspector.routes);
+	const Seen afterContainer = seen();
+	CHECK(afterContainer.macros);
+	CHECK_FALSE(afterContainer.levels);
+	CHECK_FALSE(afterContainer.routes);
+	CHECK(container.width() == strip);
+	CHECK(editor->macroBoundsForTest(0).x() == doctest::Approx(macro0.x() - shrink));
+	CHECK(editor->laneLeft() == doctest::Approx(openLaneLeft - shrink));
 	shot("inspector-folded");
-	// THE FOLDS ARE THE BRIDGE'S, each under its own flag.
+	// THE MACROS' TOGGLE: both strips, edge to edge in NATIVE pixels, the lane right after them.
+	pressRail(macros);
+	CHECK(editor->macrosFolded());
+	CHECK(container.nativeX() + container.nativeWidth() == macros.nativeX());
+	CHECK(editor->laneLeft() == doctest::Approx(2.0f * strip + 6.0f));
+	shot("both-folded");
+	// UNFOLD THE CONTAINER, then fold the macros alone: the container's pane is as it was.
+	pressRail(container);
+	CHECK_FALSE(editor->inspectorFolded());
+	CHECK(editor->macrosFolded());
+	CHECK(editor->levelBoundsForTest(0) == open.level0);
+	pressRail(macros);
+	CHECK_FALSE(editor->macrosFolded());
+	pressRail(macros);
+	CHECK(editor->macrosFolded());
+	CHECK_FALSE(editor->inspectorFolded());
+	CHECK(seen().levels);
+	CHECK(seen().routes);
+	CHECK(editor->laneLeft() == doctest::Approx(feathers::rack::RackEditor::kPaneWidth + strip + 6.0f));
+	shot("macros-folded");
+	pressRail(macros);
+	CHECK(editor->macroBoundsForTest(0) == macro0);
+	// THE FOLDS ARE THE BRIDGE'S, each under its own flag: the last state here is both open.
 	feathers::rack::RackBridge* inner = feathers::rack::bridgeOf(f.bridge.fxBodies().surfaceOf(chainId));
 	if (inner != nullptr) {
-		CHECK(inner->inspectorCollapsed());
+		CHECK_FALSE(inner->inspectorCollapsed());
 		CHECK_FALSE(inner->macrosCollapsed());
 	}
 	f.bridge.fxBodies().detach(chainId, body);
@@ -5330,13 +5349,14 @@ TEST_CASE("column folds: in a real window a real press on the macros header fold
 	XCloseDisplay(display);
 }
 
-TEST_CASE("column folds: in a real window the Rack window's two headers take real presses and fold each half alone with the other half's controls staying put") {
+TEST_CASE("column folds: in a real window the Rack window's rails take real presses and fold each pane sideways with the other pane unmoved") {
 	withDeviceVenue(2, [](DeviceRenameVenue& v) {
 		ui::ParallelRackExpanded* panel = treeFind<ui::ParallelRackExpanded>(v.top);
 		REQUIRE(panel != nullptr);
-		const auto press = [&](ui::FoldHeader& header) {
-			const visage::Point o = header.positionInWindow();
-			pressAtWindow(v.top, { o.x + static_cast<float>(header.width()) * 0.5f, o.y + static_cast<float>(header.height()) * 0.5f }, false);
+		const auto press = [&](ui::Rail& rail) {
+			const visage::Bounds t = rail.toggleBounds();
+			const visage::Point o = rail.positionInWindow();
+			pressAtWindow(v.top, { o.x + t.x() + t.width() * 0.5f, o.y + t.y() + t.height() * 0.5f }, false);
 			v.tick();
 		};
 		// WITH FEATHERS_FOLD_SHOTS=<dir>, A PHOTOGRAPH OF THE WINDOW IN EACH STATE (cropped by the caller at the printed origin).
@@ -5357,35 +5377,46 @@ TEST_CASE("column folds: in a real window the Rack window's two headers take rea
 			(void)capturePpm(v.window, std::string(keep) + "/rackwin-" + state + ".ppm");
 		};
 		shot("open");
+		ui::Rail& container = panel->containerRailForTest();
+		ui::Rail& macros = panel->macrosRailForTest();
+		const float strip = ui::Rail::kCollapsedWidth;
+		const float open = ui::ParallelRackExpanded::kColumnWidth + 2.0f * ui::ParallelRackExpanded::kPad;
 		const visage::Bounds mode0 = panel->modeBoxBoundsForTest();
 		const visage::Bounds macro0 = panel->macroBoundsForTest(0);
+		const float minWidth0 = panel->minimumSize().x;
 		REQUIRE(panel->macroShownForTest(0));
 		REQUIRE(panel->inspectorShownForTest());
-		// A REAL PRESS ON THE MACROS HEADER.
-		press(panel->macrosHeaderForTest());
-		CHECK(panel->macrosFolded());
-		CHECK_FALSE(panel->inspectorFolded());
-		CHECK_FALSE(panel->macroShownForTest(0));
-		CHECK(panel->inspectorShownForTest());
-		CHECK(panel->modeBoxBoundsForTest() == mode0);
-		shot("macros-folded");
-		press(panel->macrosHeaderForTest());
-		CHECK_FALSE(panel->macrosFolded());
-		CHECK(panel->macroShownForTest(0));
-		CHECK(panel->macroBoundsForTest(0) == macro0);
-		// A REAL PRESS ON THE INSPECTOR HEADER.
-		press(panel->inspectorHeaderForTest());
+		// A REAL PRESS ON THE RACK PANE'S RAIL TOGGLE, through the window's root: it folds to a strip, the macros' pane keeps its state and moves left.
+		press(container);
 		CHECK(panel->inspectorFolded());
 		CHECK_FALSE(panel->macrosFolded());
 		CHECK_FALSE(panel->inspectorShownForTest());
+		CHECK_FALSE(panel->routeListForTest().isVisible());
 		CHECK(panel->macroShownForTest(0));
-		CHECK(panel->macroBoundsForTest(0).y() < macro0.y());
+		CHECK(panel->macroBoundsForTest(0).x() == doctest::Approx(macro0.x() - (open - strip)));
+		CHECK(panel->macroBoundsForTest(0).y() == macro0.y());
+		CHECK(panel->minimumSize().x == doctest::Approx(minWidth0 - (open - strip)));
 		shot("inspector-folded");
-		press(panel->inspectorHeaderForTest());
+		// THE MACROS' RAIL: both strips, edge to edge in native pixels, and the window narrower by both panes less the strips.
+		press(macros);
+		CHECK(panel->macrosFolded());
+		CHECK_FALSE(panel->macroShownForTest(0));
+		CHECK(container.nativeX() + container.nativeWidth() == macros.nativeX());
+		CHECK(panel->minimumSize().x == doctest::Approx(minWidth0 - 2.0f * (open - strip)));
+		shot("both-folded");
+		// UNFOLD THE RACK PANE: as it was; the macros stay a strip. Then the macros alone.
+		press(container);
 		CHECK_FALSE(panel->inspectorFolded());
+		CHECK(panel->macrosFolded());
 		CHECK(panel->inspectorShownForTest());
 		CHECK(panel->modeBoxBoundsForTest() == mode0);
+		CHECK(panel->routeListForTest().isVisible());
+		shot("macros-folded");
+		press(macros);
+		CHECK_FALSE(panel->macrosFolded());
+		CHECK(panel->macroShownForTest(0));
 		CHECK(panel->macroBoundsForTest(0) == macro0);
+		CHECK(panel->minimumSize().x == doctest::Approx(minWidth0));
 	});
 }
 
@@ -5499,6 +5530,11 @@ TEST_CASE("list flow: in a real window a real press on a row brings its chain in
 		}
 		CHECK(cards[0]->positionInWindow().x >= list.positionInWindow().x + static_cast<float>(list.width()) - 0.5f);
 		// THE RAIL IS AS WIDE AS THE CARDS NEED (more than the standard column) up to the window's room.
+		// EACH CARD IS A HORIZONTAL LANE'S UNIT: `kCardUnitHeight` tall (what the standalone rack's lane grants) and as wide as the card says for it.
+		for (ui::FxCard* card : cards) {
+			CHECK(card->nativeHeight() == static_cast<int>(std::lround(ui::kCardUnitHeight * card->dpiScale())));
+			CHECK(std::abs(static_cast<float>(card->width()) - card->laneExtent(ui::kCardUnitHeight)) < 0.5f);
+		}
 		CHECK(rail.railWidth() > ui::FxLaneRail::kWidth);
 		CHECK(rail.positionInWindow().x + rail.railWidth() <= r.panel->positionInWindow().x + static_cast<float>(r.panel->width()) + 0.5f);
 	}
@@ -5509,6 +5545,10 @@ TEST_CASE("list and tabs pane: in a real window the rest of the front chain is a
 		CAPTURE(view);
 		ListWindowRig r(2, view, true);
 		REQUIRE(r.panel->paneOnForTest());
+		// THE TWO LEFT PANES, THE LIST OR TABS, THE PANE AND THE RAIL ARE WIDER THAN THE EDITOR'S WINDOW OPEN: the macros' pane is folded to its strip
+		// (a fold of its own), so the chain's rail stands inside the window where a hand can press it.
+		(void)r.panel->setMacrosFolded(true);
+		r.tick();
 		ui::FxLaneRail& rail = r.panel->railForTest(0);
 		REQUIRE(rail.isVisible());
 		// THE LANE HOLDS THE CHAIN AFTER THE FIRST DEVICE (the pane has that one), open, and offers its fold.
@@ -5587,9 +5627,353 @@ TEST_CASE("view flow: in a real window Tabs and Pads, like List, run the chain i
 			CHECK(cards[k]->positionInWindow().x > cards[k - 1]->positionInWindow().x + static_cast<float>(cards[k - 1]->width()) - 1.0f);
 			CHECK(cards[k]->nativeY() == cards[0]->nativeY());
 		}
+		// EACH CARD IS A HORIZONTAL LANE'S UNIT: `kCardUnitHeight` tall (what the standalone rack's lane grants) and as wide as the card says for it.
+		for (ui::FxCard* card : cards) {
+			CHECK(card->nativeHeight() == static_cast<int>(std::lround(ui::kCardUnitHeight * card->dpiScale())));
+			CHECK(std::abs(static_cast<float>(card->width()) - card->laneExtent(ui::kCardUnitHeight)) < 0.5f);
+		}
 		CHECK(rail.railWidth() > ui::FxLaneRail::kWidth);
 		CHECK(rail.positionInWindow().x + rail.railWidth() <= r.panel->positionInWindow().x + static_cast<float>(r.panel->width()) + 0.5f);
 	}
+}
+
+TEST_CASE("fold strips: the synth's own folded Engine rail photographed beside the rack panes (on request)") {
+	const char* keep = std::getenv("FEATHERS_FOLD_SHOTS");
+	if (keep == nullptr || *keep == '\0') {
+		return;
+	}
+	EditorFixture f;
+	Display* display = XOpenDisplay(nullptr);
+	REQUIRE(display != nullptr);
+	const int screen = DefaultScreen(display);
+	uint32_t w = 0, h = 0;
+	REQUIRE(f.gui.getSize(&w, &h));
+	const ::Window parent = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, w, h, 0, BlackPixel(display, screen),
+	                                            BlackPixel(display, screen));
+	XSync(display, False);
+	clap_window window {};
+	window.api = CLAP_WINDOW_API_X11;
+	window.x11 = parent;
+	REQUIRE(f.gui.setParent(&window));
+	visage::Frame* const top = f.gui.root()->topParentFrame();
+	ui::EngineRail* rail = treeFind<ui::EngineRail>(top);
+	REQUIRE(rail != nullptr);
+	(void)rail->setCollapsed(true);
+	for (int i = 0; i < 3; ++i) {
+		(void)f.gui.tickForTest();
+	}
+	XMapWindow(display, parent);
+	XRaiseWindow(display, parent);
+	XFlush(display);
+	for (int slice = 0; slice < 300; ++slice) {
+		f.gui.processEvents();
+		::usleep(4000);
+	}
+	(void)capturePpm(parent, std::string(keep) + "/synth-strip.ppm");
+	f.gui.destroy();
+	XDestroyWindow(display, parent);
+	XCloseDisplay(display);
+}
+
+namespace {
+
+/// A Rack window with one device window OWNED by it (opened from a chain's card inside the Rack) and one unrelated window in front of both, in a
+/// real X window: the order is [rack, owned, other] (back to front) and `other` has been dragged clear to the right.
+struct OwnedRaiseRig : ListWindowRig {
+	ui::ExpandedOverlay* overlay = nullptr;
+	ui::ExpandedOverlay::PanelId rackId = 0, ownedId = 0, otherId = 0;
+
+	OwnedRaiseRig() : ListWindowRig(2, 3, false) {
+		XMapWindow(display, parent);
+		XSync(display, False);
+		overlay = f.gui.expandedForTest();
+		REQUIRE(overlay != nullptr);
+		rackId = overlay->frontPanelIdForTest();
+		ui::ChainColumn* column = panel->railForTest(panel->viewModelForTest().viewedChain()).column();
+		REQUIRE(column != nullptr);
+		column->expandDevice(column->deviceAt(0));
+		tick();
+		pumpEditor(f.gui, 3);
+		ownedId = overlay->frontPanelIdForTest();
+		REQUIRE(ownedId != rackId);
+		// THE OWNED WINDOW TO THE RIGHT, so the Rack's own controls (its left side) stay clear of it.
+		overlay->beginPanelDrag();
+		overlay->dragPanelBy({ 3000.0f, 0.0f });
+		pumpEditor(f.gui, 3);
+		const size_t slot2 = f.addFx(fx::harm::kTraits.tag);
+		f.lane->onExpandDevice(slot2);
+		tick();
+		pumpEditor(f.gui, 3);
+		otherId = overlay->frontPanelIdForTest();
+		REQUIRE(otherId != ownedId);
+		// THE UNRELATED WINDOW FOLDED TO ITS TITLE STRIP AND PUT IN THE TOP LEFT CORNER: in front of both, hiding little of either, and clear
+		// of them when the Rack and its owned window (wide ones, now) are raised over it.
+		overlay->setFolded(otherId, true);
+		overlay->beginPanelDrag();
+		overlay->dragPanelBy({ -3000.0f, -3000.0f });
+		pumpEditor(f.gui, 3);
+	}
+	/// A point on panel `id`'s head, clear of its buttons.
+	[[nodiscard]] visage::Point headPointOf(ui::ExpandedOverlay::PanelId id) const {
+		const visage::Bounds b = overlay->panelBounds(id);
+		const float y = b.y() + ui::ExpandedOverlay::kTitleHeight * 0.5f;
+		// THE FIRST POINT ALONG THE HEAD that no window in front of `id` covers (a wide Rack window can lie over the head's usual spot).
+		for (float x = b.x() + 40.0f; x < b.x() + b.width() - 8.0f; x += 4.0f) {
+			bool covered = false;
+			for (const auto other : order()) {
+				const visage::Bounds o = overlay->panelBounds(other);
+				covered = covered || (at(other) > at(id) && x >= o.x() && x <= o.x() + o.width() && y >= o.y() && y <= o.y() + o.height());
+			}
+			if (!covered) {
+				return { x, y };
+			}
+		}
+		return { b.x() + 40.0f, y };
+	}
+	std::vector<ui::ExpandedOverlay::PanelId> order() const { return overlay->panelIdsForTest(); }
+	[[nodiscard]] long at(ui::ExpandedOverlay::PanelId id) const {
+		const auto ids = order();
+		const auto it = std::find(ids.begin(), ids.end(), id);
+		return it == ids.end() ? -1 : static_cast<long>(it - ids.begin());
+	}
+	/// A point of panel `id`'s body that no other open window covers and that resolves to something inside `id`.
+	[[nodiscard]] std::optional<visage::Point> bodyPointOf(ui::ExpandedOverlay::PanelId id) const {
+		const visage::Bounds b = overlay->panelBounds(id);
+		ui::ExpandedPanel* me = overlay->panelForTest(id);
+		for (float y = b.y() + ui::ExpandedOverlay::kTitleHeight + 6.0f; y < b.y() + b.height() - 8.0f; y += 9.0f) {
+			for (float x = b.x() + 8.0f; x < b.x() + b.width() - 8.0f; x += 9.0f) {
+				bool covered = false;
+				for (const auto other : order()) {
+					const visage::Bounds o = overlay->panelBounds(other);
+					covered = covered || (at(other) > at(id) && x >= o.x() && x <= o.x() + o.width() && y >= o.y() && y <= o.y() + o.height());
+				}
+				if (covered) {
+					continue;
+				}
+				visage::Frame* hit = top->frameAtPoint({ x, y });
+				for (visage::Frame* a = hit; a != nullptr; a = a->parent()) {
+					if (a == me) {
+						return visage::Point(x, y);
+					}
+				}
+			}
+		}
+		return std::nullopt;
+	}
+	/// A beat WITHOUT `panel->update()`: the Rack's content is gone once its window closes.
+	void settle() { (void)f.gui.tickForTest(); }
+	void clickAt(visage::Point where) {
+		const double scale = f.root->dpiScale();
+		const visage::IPoint n { static_cast<int>(where.x * scale), static_cast<int>(where.y * scale) };
+		EditorPointer p { display, reinterpret_cast<::Window>(static_cast<visage::ApplicationWindow*>(f.root)->window()->nativeHandle()) };
+		p.send(MotionNotify, n.x, n.y, 0, 0);
+		p.send(ButtonPress, n.x, n.y, Button1, 0);
+		pumpEditor(f.gui, 3);
+		p.send(ButtonRelease, n.x, n.y, Button1, Button1Mask);
+		for (int i = 0; i < 4; ++i) {
+			settle();
+			pumpEditor(f.gui, 3);
+		}
+	}
+};
+
+void collectKnobsOutsideColumns(visage::Frame* at, std::vector<ui::Knob*>& out) {
+	if (at == nullptr || !at->isVisible() || dynamic_cast<ui::ChainColumn*>(at) != nullptr) {
+		return;
+	}
+	if (auto* knob = dynamic_cast<ui::Knob*>(at); knob != nullptr && knob->width() > 0.0f && knob->control() != nullptr) {
+		out.push_back(knob);
+	}
+	for (visage::Frame* child : at->children()) {
+		collectKnobsOutsideColumns(child, out);
+	}
+}
+
+} // namespace
+
+
+namespace {
+
+/// A REAL DRAG THROUGH THE WINDOW ROOT: the press on the frame under `from`, the moves to `to` in a few steps, the release there. `shift` is
+/// held throughout; `clicks` 2 makes the press a double-click's second.
+void dragAtWindow(visage::Frame* top, visage::Point from, visage::Point to, bool shift = false, int clicks = 1) {
+	visage::Frame* const down = top->frameAtPoint(from);
+	REQUIRE(down != nullptr);
+	const auto eventAt = [&](visage::Point where, bool isDown) {
+		visage::MouseEvent e;
+		e.window_position = where;
+		e.position = where - down->positionInWindow();
+		e.event_frame = down;
+		e.button_id = visage::kMouseButtonLeft;
+		e.button_state = isDown ? visage::kMouseButtonLeft : visage::kMouseButtonNone;
+		e.is_down = isDown;
+		e.repeat_click_count = clicks;
+		e.modifiers = shift ? visage::kModifierShift : 0;
+		return e;
+	};
+	down->processMouseDown(eventAt(from, true));
+	for (int step = 1; step <= 6; ++step) {
+		const float t = static_cast<float>(step) / 6.0f;
+		down->processMouseDrag(eventAt({ from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t }, true));
+	}
+	down->processMouseUp(eventAt(to, false));
+}
+
+} // namespace
+
+TEST_CASE("owned windows: a real press on a Rack window raises it with the window opened from inside it, which stays above it, and the press still lands") {
+	OwnedRaiseRig r;
+	REQUIRE(r.overlay->ownerOfForTest(r.ownedId) == r.rackId);
+	REQUIRE(r.overlay->ownerOfForTest(r.otherId) == ui::ExpandedOverlay::kNoPanel);
+	REQUIRE(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.rackId, r.ownedId, r.otherId });
+
+	SUBCASE("(a) a press on the Rack's body brings the Rack and its owned window to the front, and a drag on a Rack control lands") {
+		std::vector<ui::Knob*> knobs;
+		collectKnobsOutsideColumns(r.overlay->panelForTest(r.rackId), knobs);
+		ui::Knob* target = nullptr;
+		for (ui::Knob* k : knobs) {
+			const visage::Point c = k->positionInWindow() + visage::Point(k->width() / 2, k->height() / 2);
+			bool covered = false;
+			for (const auto id : { r.ownedId, r.otherId }) {
+				const visage::Bounds o = r.overlay->panelBounds(id);
+				covered = covered || (c.x >= o.x() && c.x <= o.x() + o.width() && c.y >= o.y() && c.y <= o.y() + o.height());
+			}
+			bool hit = false;
+			for (visage::Frame* a = r.top->frameAtPoint(c); a != nullptr; a = a->parent()) {
+				hit = hit || a == k;
+			}
+			if (!covered && c.x > 0.0f && c.x < r.f.root->width() && hit) {
+				target = k;
+				break;
+			}
+		}
+		CAPTURE(knobs.size());
+		REQUIRE(target != nullptr);
+		const double before = target->control()->value();
+		const visage::Point c = target->positionInWindow() + visage::Point(target->width() / 2, target->height() / 2);
+		const double scale = r.f.root->dpiScale();
+		const visage::IPoint n { static_cast<int>(c.x * scale), static_cast<int>(c.y * scale) };
+		EditorPointer p { r.display, reinterpret_cast<::Window>(static_cast<visage::ApplicationWindow*>(r.f.root)->window()->nativeHandle()) };
+		p.send(MotionNotify, n.x, n.y, 0, 0);
+		p.send(ButtonPress, n.x, n.y, Button1, 0);
+		pumpEditor(r.f.gui, 3);
+		// RAISED ON THE PRESS: the Rack and its owned window above the unrelated one, the owned window above the Rack.
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+		for (int i = 1; i <= 10; ++i) {
+			p.send(MotionNotify, n.x, n.y + 6 * i, 0, Button1Mask);
+			pumpEditor(r.f.gui, 2);
+		}
+		p.send(ButtonRelease, n.x, n.y + 60, Button1, Button1Mask);
+		pumpEditor(r.f.gui, 5);
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+		CHECK(target->control()->value() != before);
+	}
+	SUBCASE("(a) a press on bare Rack body does the same") {
+		const std::optional<visage::Point> body = r.bodyPointOf(r.rackId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+	}
+	SUBCASE("(b) a press on the owned window raises the group with the owned window on top, above the Rack") {
+		const std::optional<visage::Point> body = r.bodyPointOf(r.ownedId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+	}
+	SUBCASE("(c) a press on the Rack while its owned window is already in front never drops the owned window below it") {
+		const std::optional<visage::Point> first = r.bodyPointOf(r.ownedId);
+		REQUIRE(first.has_value());
+		r.clickAt(*first);
+		REQUIRE(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+		const std::optional<visage::Point> body = r.bodyPointOf(r.rackId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.at(r.ownedId) > r.at(r.rackId));
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.otherId, r.rackId, r.ownedId });
+	}
+	SUBCASE("an unrelated window raised over the group leaves the group together and in order") {
+		const std::optional<visage::Point> first = r.bodyPointOf(r.rackId);
+		REQUIRE(first.has_value());
+		r.clickAt(*first);
+		r.clickAt(r.headPointOf(r.otherId));
+		CHECK(r.order() == std::vector<ui::ExpandedOverlay::PanelId> { r.rackId, r.ownedId, r.otherId });
+	}
+	SUBCASE("(d) closing the owner leaves no ownership pointing at it, and the window that remains still raises") {
+		r.overlay->dismiss(r.rackId);
+		r.settle();
+		pumpEditor(r.f.gui, 3);
+		for (const auto id : r.order()) {
+			const auto owner = r.overlay->ownerOfForTest(id);
+			CHECK((owner == ui::ExpandedOverlay::kNoPanel || r.at(owner) >= 0));
+		}
+		for (const auto id : r.order()) {
+			if (const std::optional<visage::Point> body = r.bodyPointOf(id); body.has_value()) {
+				r.clickAt(*body);
+			}
+		}
+		CHECK(r.at(r.rackId) == -1);
+	}
+	SUBCASE("(d) closing the owned window leaves the Rack alone, and the Rack still raises") {
+		r.overlay->dismiss(r.ownedId);
+		r.settle();
+		pumpEditor(r.f.gui, 3);
+		CHECK(r.at(r.ownedId) == -1);
+		const std::optional<visage::Point> body = r.bodyPointOf(r.rackId);
+		REQUIRE(body.has_value());
+		r.clickAt(*body);
+		CHECK(r.overlay->frontPanelIdForTest() == r.rackId);
+	}
+}
+
+TEST_CASE("list fader: in a real window a row's slim fader is dragged vertically (up is louder), fine-dragged with Shift, reset by a double-click, shows its value in place of the name, and its meter rises with the peak") {
+	ListWindowRig r(3, 3, false);
+	ui::RackListView& list = r.panel->listForTest();
+	REQUIRE(list.isVisible());
+	CHECK(list.nativeWidth() == static_cast<int>(std::lround(ui::RackListView::kColumnWidth * list.dpiScale())));
+	ui::ChainStrip& row = *list.rowForTest(1);
+	const uint16_t chain = r.rack->chainIdAt(1);
+	BridgeDeviceHost probeHost(r.f.bridge);
+	ui::ChainControl probe(probeHost, r.id, chain, ui::ChainControl::Kind::Level);
+	const device::ParamDesc& d = probe.desc();
+	const auto centre = [&] {
+		const visage::Bounds b = row.levelFaderBoundsForTest();
+		const visage::Point o = row.positionInWindow();
+		return visage::Point { o.x + b.x() + b.width() * 0.5f, o.y + b.y() + b.height() * 0.5f };
+	};
+	probe.setValue(d.min + 0.5 * (d.max - d.min));
+	r.tick();
+	REQUIRE(r.top->frameAtPoint(centre()) == &row.levelFrame()); // the press lands on the fader itself
+	const double mid = probe.value();
+	// UP IS LOUDER, by the travel's share of the range (`ChainFader::kSpan` pixels for all of it).
+	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, -24.0f });
+	const double up = probe.value();
+	CHECK(up > mid);
+	CHECK(up - mid == doctest::Approx(24.0 / ui::ChainFader::kSpan * (d.max - d.min)).epsilon(0.02)); // the travel's share of the range
+	// DOWN IS QUIETER.
+	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, 30.0f });
+	const double down = probe.value();
+	CHECK(down < up);
+	// THE VALUE TAKES THE NAME'S PLACE while the hand is on the fader, as the value the control itself says.
+	CHECK(row.readoutShownForTest());
+	CHECK(row.readoutTextForTest() == probe.text());
+	// FINE DRAG: the same travel with Shift moves the value kFineRatio times less.
+	probe.setValue(mid);
+	dragAtWindow(r.top, centre(), centre() + visage::Point { 0.0f, -24.0f }, true);
+	const double fine = probe.value() - mid;
+	CHECK(fine > 0.0);
+	CHECK(fine == doctest::Approx((up - mid) / ui::ChainFader::kFineRatio).epsilon(0.1));
+	// A DOUBLE-CLICK IS THE DEFAULT, one undo step.
+	dragAtWindow(r.top, centre(), centre(), false, 2);
+	CHECK(probe.value() == d.def);
+	// THE METER RISES WITH THE PEAK: a published quiet reading then a louder one, the marks read by value (the row is in view).
+	r.rack->publishChainPeakForTest(1, 0.1f);
+	r.tick();
+	const float quiet = row.meterMarksForTest().level.height();
+	CHECK(quiet == std::round(ui::cardMeterReadingFor(0.1f).level * row.meterBoundsForTest().height()));
+	r.rack->publishChainPeakForTest(1, 0.5f);
+	r.tick();
+	CHECK(row.meterMarksForTest().level.height() > quiet);
+	CHECK(row.meterMarksForTest().level.height() == std::round(ui::cardMeterReadingFor(0.5f).level * row.meterBoundsForTest().height()));
 }
 
 #endif // defined(__linux__)

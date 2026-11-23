@@ -94,6 +94,7 @@ bool EqExpanded::updateContent() {
 		return false;
 	}
 	bool changed = false;
+	controls_->refreshQTips(); // a band's type can move off the selected one (automation, undo, a preset)
 	const int sel = graph_->selected();
 	if (controls_->honestyKey(sel) != laidOutKey_ || sel != drawnSelected_) {
 		drawnSelected_ = sel;

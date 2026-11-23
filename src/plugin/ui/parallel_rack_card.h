@@ -197,8 +197,17 @@ public:
 	const char* tooltipAt(visage::Point) const override { return tooltipOf(&control_); }
 	void offeredControls(std::vector<Offered>& out) const override { out.push_back({ &control_, Road::Face }); }
 	static constexpr float kSpan = 120.0f;
+	static constexpr float kFineRatio = 8.0f; ///< Shift: the same travel moves the value this many times less
+	/// TOLD WHEN THE HAND IS ON IT (hovering or dragging) and when it leaves: a list row shows the value in place of its name meanwhile.
+	void setActiveHandler(std::function<void(bool)> handler) { onActive_ = std::move(handler); }
+	[[nodiscard]] bool activeForTest() const noexcept { return hot_; }
 
 private:
+	void setHot(bool hot);
+	std::function<void(bool)> onActive_;
+	bool hot_ = false;
+	bool hovered_ = false;
+	bool fine_ = false;
 	ChainControl& control_;
 	float startY_ = 0.0f;
 	double startValue_ = 0.0;
@@ -239,7 +248,7 @@ public:
 	}
 	void offeredControls(std::vector<Offered>&) const override {} // its three controls offer themselves
 	/// The summary's room, and the width its text takes — a case asks that the first holds the second.
-	[[nodiscard]] float summaryWidth() const { return summary_.empty() ? 0.0f : std::round(static_cast<float>(width()) * summaryFraction_); }
+	[[nodiscard]] float summaryWidth() const { return summary_.empty() ? 0.0f : (rowMode_ ? rowNameWidth_ : std::round(static_cast<float>(width()) * summaryFraction_)); }
 	[[nodiscard]] float summaryTextWidthForTest() const;
 	/// The short name the column layout draws at its head ("1"); the row layout leaves it to the rail's heading.
 	void setLabel(std::string label);
@@ -272,7 +281,10 @@ public:
 	[[nodiscard]] bool rowModeForTest() const noexcept { return rowMode_; }
 	/// Where the row's name starts, in the strip's own coordinates (a list row leaves the selected row's edge bar clear).
 	[[nodiscard]] float summaryLeftForTest() const noexcept { return rowMode_ ? kRowTextInset : 0.0f; }
-	[[nodiscard]] visage::Bounds levelPillBoundsForTest() const { return pill_->bounds(); }
+	/// Whether the hand is on the row's fader (the name is then the value), and the text shown in its place.
+	[[nodiscard]] bool readoutShownForTest() const noexcept { return readout_; }
+	[[nodiscard]] std::string readoutTextForTest() const { return level_.text(); }
+	[[nodiscard]] visage::Bounds levelFaderBoundsForTest() const { return fader_->bounds(); }
 	void pressContextForTest(visage::Point at) { pressContext(at); }
 	/// **A PHANTOM STRIP** (§2a): its three controls make the chain on their first edit (`ChainControl::setMaterialise`).
 	void setMaterialise(const std::function<uint16_t()>& materialise) {
@@ -310,10 +322,10 @@ public:
 	[[nodiscard]] ChainFader& levelFader() noexcept { return *fader_; }
 	/// THE LEVEL CONTROL'S FACE AS LAID OUT NOW: the vertical fader in the column, the pill in the row.
 	[[nodiscard]] ControlFace& levelFace() noexcept {
-		return column_ ? static_cast<ControlFace&>(*fader_) : static_cast<ControlFace&>(*pill_);
+		return column_ || rowMode_ ? static_cast<ControlFace&>(*fader_) : static_cast<ControlFace&>(*pill_);
 	}
 	[[nodiscard]] visage::Frame& levelFrame() noexcept {
-		return column_ ? static_cast<visage::Frame&>(*fader_) : static_cast<visage::Frame&>(*pill_);
+		return column_ || rowMode_ ? static_cast<visage::Frame&>(*fader_) : static_cast<visage::Frame&>(*pill_);
 	}
 	[[nodiscard]] SwitchChip& muteChip() noexcept { return *mute_; }
 	[[nodiscard]] SwitchChip& soloChip() noexcept { return *solo_; }
@@ -340,10 +352,9 @@ public:
 	static constexpr float kGap = 4.0f;
 	static constexpr float kSummaryWidth = 0.42f; ///< of the strip, when a summary is drawn
 	static constexpr float kRowSummaryWidth = 0.30f; ///< of a list row
-	static constexpr float kBarThickness = 6.0f;
+	static constexpr float kRowFaderWidth = 8.0f;
+	static constexpr float kRowMeterWidth = 3.0f;
 	static constexpr float kRowTextInset = 6.0f; ///< a list row's name starts this far in, clear of the selected row's edge bar
-	static constexpr float kBarMaxWidth = 44.0f;
-	static constexpr float kBarMinWidth = 24.0f;
 	static constexpr float kMeterWidth = 1.0f; ///< MK's one-pixel line, run vertically
 	static constexpr float kFaderWidth = 14.0f; ///< the column's vertical fader, beside the meter
 	/// Narrower than this and the strip lays itself out as a column.
@@ -362,6 +373,8 @@ private:
 	std::function<void(uint16_t, const visage::Bounds&)> context_;
 	bool selected_ = false;
 	bool rowMode_ = false;
+	bool readout_ = false;
+	float rowNameWidth_ = 0.0f;
 	float summaryFraction_ = kSummaryWidth;
 	ChainControl level_;
 	ChainControl muted_;

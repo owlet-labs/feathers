@@ -42410,6 +42410,91 @@ TEST_CASE("OWLTT Comb: Res Home is in the window's header right of the Mode box,
 	CHECK(ow::kParamDescs[static_cast<size_t>(ow::Param::ResHome)].modulatable);
 }
 
+TEST_CASE("OWLTT Comb: each column's curve peaks at its band's harmonics, sharpens with Res Home and follows the second spacing; the three colours differ") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::Mode), static_cast<float>(ow::kCombMode));
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	constexpr size_t kPoints = 641; // a step of 0.025 in harmonic number over 0 .. 16
+	const auto peaks = [&](size_t band) {
+		const std::vector<float> c = graph->combCurve(band, kPoints);
+		std::vector<double> at;
+		for (size_t i = 1; i + 1 < c.size(); ++i) {
+			if (c[i] > 0.75f && c[i] >= c[i - 1] && c[i] > c[i + 1]) {
+				at.push_back(ui::OwlttGraph::kCombCurveSpan * static_cast<double>(i) / static_cast<double>(kPoints - 1));
+			}
+		}
+		return at;
+	};
+	const auto expectPeaks = [&](size_t band, double first, double step, size_t count) {
+		const std::vector<double> got = peaks(band);
+		CAPTURE(band);
+		REQUIRE(got.size() == count);
+		for (size_t k = 0; k < count; ++k) {
+			CHECK(got[k] == doctest::Approx(first + step * static_cast<double>(k)).epsilon(0.01).scale(1.0));
+		}
+	};
+	const size_t high = static_cast<size_t>(ow::Param::HighCrossover);
+	const size_t res = static_cast<size_t>(ow::Param::ResHome);
+	for (const float home : { 0.0f, 0.8f }) {
+		CAPTURE(home);
+		f.deviceHost.setField(id, res, home);
+		// THE DEFAULTS (x1, x2): Between on the half harmonics, Odd on 1 3 5 ..., Even on 2 4 6 ... (the edges of the span are not interior peaks).
+		expectPeaks(0, 0.5, 1.0, 16);
+		expectPeaks(1, 1.0, 2.0, 8);
+		expectPeaks(2, 2.0, 2.0, 7);
+	}
+	// A SECOND SPACING OF x3: High keeps every third harmonic, so its peaks are 3, 6, 9, 12, 15.
+	f.deviceHost.setField(id, res, 0.0f);
+	f.deviceHost.setField(id, high, 3000.0f);
+	expectPeaks(2, 3.0, 3.0, 5);
+	f.deviceHost.setField(id, high, 2000.0f);
+	// RES HOME NARROWS THE TEETH: the width at half height of Odd's first peak falls as it rises.
+	const auto halfWidth = [&](float home) {
+		f.deviceHost.setField(id, res, home);
+		const std::vector<float> c = graph->combCurve(1, kPoints);
+		const size_t centre = 40; // u = 1
+		const float half = c[centre] * 0.5f;
+		size_t a = centre;
+		while (a > 0 && c[a] > half) {
+			--a;
+		}
+		size_t b = centre;
+		while (b + 1 < c.size() && c[b] > half) {
+			++b;
+		}
+		return b - a;
+	};
+	CHECK(halfWidth(0.9f) < halfWidth(0.0f));
+	CHECK(halfWidth(0.5f) < halfWidth(0.0f));
+	// THREE COLOURS, apart from each other and from the orange and blue the bars use for down and up.
+	const auto distance = [](uint32_t a, uint32_t b) {
+		const auto channel = [](uint32_t c, int shift) { return static_cast<double>((c >> shift) & 0xff); };
+		double sum = 0.0;
+		for (const int shift : { 0, 8, 16 }) {
+			sum += (channel(a, shift) - channel(b, shift)) * (channel(a, shift) - channel(b, shift));
+		}
+		return std::sqrt(sum);
+	};
+	const std::array<uint32_t, 5> all { ui::OwlttGraph::combBandColour(0), ui::OwlttGraph::combBandColour(1), ui::OwlttGraph::combBandColour(2),
+		                                feathers::tokens::kValue, feathers::tokens::kAccent };
+	for (size_t i = 0; i < 3; ++i) {
+		for (size_t j = i + 1; j < all.size(); ++j) {
+			CAPTURE(i);
+			CAPTURE(j);
+			CHECK(distance(all[i], all[j]) > 60.0);
+		}
+	}
+}
+
 TEST_CASE("OWLTT Comb: a handle drag writes its own knob, a tracked drag lands on the ratio detents, and an untracked one does not") {
 	namespace ow = feathers::fx::owltt;
 	FilterFixture f;

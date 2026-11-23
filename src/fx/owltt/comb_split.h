@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <memory>
 
 namespace feathers::fx::owltt {
@@ -134,5 +135,23 @@ private:
 	std::unique_ptr<dsp::SincTable> table_;
 	std::array<std::unique_ptr<Channel>, 2> channels_;
 };
+
+/// **THE BANDS' MAGNITUDE RESPONSES, from the transfer functions** (ideal fractional delays), for the plot's curves and for the cases that restate them. `u` is the
+/// frequency in units of the first comb's tooth spacing (u = f / fc1), `r21` is fc2 / fc1, `stages` the shape's, `g1` and `g2` the two feedback gains.
+/// E = H1 R1 x with H = ((1 + z^-D) / 2)^stages and R = (1 - g) / (1 - g z^-D); Low = 1 - E, High = H2 R2 E, Mid = E - High. Returns { Low, Mid, High }.
+[[nodiscard]] inline std::array<float, 3> combResponse(double u, double r21, int stages, float g1, float g2) {
+	constexpr double kTwoPi = 6.283185307179586;
+	const auto comb = [stages](double phase, double g) {
+		const std::complex<double> z = std::polar(1.0, -phase);
+		std::complex<double> h = 1.0;
+		for (int s = 0; s < stages; ++s) {
+			h *= 0.5 * (1.0 + z);
+		}
+		return h * ((1.0 - g) / (1.0 - g * z));
+	};
+	const std::complex<double> e = comb(kTwoPi * u, g1);
+	const std::complex<double> a = e * comb(kTwoPi * u / std::max(r21, 1.0e-9), g2);
+	return { static_cast<float>(std::abs(1.0 - e)), static_cast<float>(std::abs(e - a)), static_cast<float>(std::abs(a)) };
+}
 
 } // namespace feathers::fx::owltt

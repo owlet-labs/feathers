@@ -161,6 +161,15 @@ public:
 	[[nodiscard]] bool combMode() const;
 	[[nodiscard]] float combLaneX(double knob, bool high) const;
 	[[nodiscard]] double combLaneKnob(float x, bool high) const;
+	/// **THE COMB CURVES (Comb modes)**: in place of the band level bars each column draws its band's magnitude response, from the current spacings, the sharpness
+	/// (Mode) and Res Home's resonance (Vibe's per-split deviation is not drawn: the plot reads parameters, not the engine). The x axis is the first spacing's
+	/// harmonic number, 0 .. `kCombCurveSpan`, never Hz. `points` samples, each the magnitude (0 .. ~1).
+	static constexpr double kCombCurveSpan = 16.0;
+	[[nodiscard]] std::vector<float> combCurve(size_t band, size_t points) const;
+	/// EACH BAND'S ONE COLOUR in Comb: its curve, and the tint of that column's rings and strips. Data colours, so the chrome hue never turns them: a green for
+	/// Between, a lime for the first on-teeth band (Odd), a magenta for the second (Even), each over 60 apart in RGB from the peach and blue the bars use for down and
+	/// up (the chrome has no light theme, so one set is checked: against the dark ground all three read at once).
+	[[nodiscard]] static uint32_t combBandColour(size_t band) noexcept;
 
 	/// The plot — this frame's own rectangle, in its own coordinates.
 	visage::Bounds plot() const;

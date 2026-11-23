@@ -21,6 +21,7 @@
 #include "plugin/gui_bridge.h"
 #include "plugin/ui/diagnostic.h"
 #include "plugin/ui/mod_route_menu.h"
+#include "fx/owltt/comb_split.h"
 #include "plugin/ui/theme.h"
 #include "plugin/ui/tooltip.h"
 
@@ -974,6 +975,25 @@ double OwlttGraph::combLaneKnob(float x, bool high) const {
 	return high ? spacing * (owltt::kCombHighUnityKnob / owltt::kCombLowUnityKnob) : spacing;
 }
 
+std::vector<float> OwlttGraph::combCurve(size_t band, size_t points) const {
+	std::vector<float> out(points, 0.0f);
+	const double s1 = owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::LowCrossover)).value(), false);
+	const double s2 = owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::HighCrossover)).value(), true);
+	const long mode = std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode)));
+	const int stages = mode == owltt::kCombSharpMode ? 2 : 1;
+	const auto g = static_cast<float>(control(static_cast<size_t>(owltt::Param::ResHome)).value() * owltt::kCombMaxResonance);
+	for (size_t i = 0; i < points; ++i) {
+		const double u = kCombCurveSpan * static_cast<double>(i) / static_cast<double>(std::max<size_t>(points - 1, 1));
+		out[i] = owltt::combResponse(u, s2 / std::max(s1, 1.0e-9), stages, g, g)[std::min<size_t>(band, 2)];
+	}
+	return out;
+}
+
+uint32_t OwlttGraph::combBandColour(size_t band) noexcept {
+	constexpr uint32_t kColours[3] = { 0xff3FCB8F, 0xffC9D64A, 0xffD65FB6 };
+	return kColours[std::min<size_t>(band, 2)];
+}
+
 void OwlttGraph::setCrossoversDraggable(bool on) {
 	rail_ = on;
 	redraw();
@@ -1437,6 +1457,9 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			if (regionW <= 0.0f) continue;
 
 			const size_t b = region.band;
+			// IN COMB each column is tinted in its band's colour: its rings and strips (and, below, its curve).
+			const bool comb = combMode();
+			const uint32_t tint = comb ? combBandColour(b) : 0u;
 
 			// THE VALUES THE DEVICE IS USING, for the strips. The bars come from `barYs` below, which
 			// asks this same function -- so the whole band is drawn from one reading.
@@ -1517,8 +1540,8 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 				}
 			};
 			if (!editor_) {
-				modRing(Handle::ThresholdBar, kValue);
-				modRing(Handle::BandwidthBar, kAccent);
+				modRing(Handle::ThresholdBar, comb ? tint : kValue);
+				modRing(Handle::BandwidthBar, comb ? tint : kAccent);
 				followDot();
 			}
 
@@ -1573,9 +1596,39 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			// SAME READING COLOUR AS THE GR BAR (kAccent) — both are readouts, not controls.
 			// `kValue` is the colour this editor uses for things that ARE values; a meter wearing
 			// it reads as a control, which is what misled on the earlier render.
-			const float levelH = region.level * xover.height();
-			canvas.setColor(withAlpha(kAccent, 0.25f));
-			canvas.rectangle(region.x0, xover.bottom() - levelH, regionW, levelH);
+			// IN COMB THIS BACKDROP IS THE BAND'S COMB RESPONSE CURVE instead, in the band's colour (`combBandColour`): a faint fill under a line, one sample a pixel.
+			if (comb) {
+				// FOUR SAMPLES A PIXEL, so a sharp tooth is not stepped over; the fill takes the largest of each pixel's four.
+				const auto points = static_cast<size_t>(std::max(2.0f, regionW)) * 4;
+				const std::vector<float> curve = combCurve(b, points);
+				const float pad = 3.0f;
+				const float yBase = xover.bottom() - pad;
+				const float span = xover.height() - 2.0f * pad;
+				float prevY = yBase;
+				for (size_t i = 0; i < points; ++i) {
+					const float x = region.x0 + regionW * static_cast<float>(i) / static_cast<float>(points);
+					const float y = yBase - std::clamp(curve[i], 0.0f, 1.05f) * span;
+					if (i % 4 == 0) {
+						float top = 0.0f;
+						for (size_t k = i; k < std::min(i + 4, points); ++k) {
+							top = std::max(top, curve[k]);
+						}
+						const float yTop = yBase - std::clamp(top, 0.0f, 1.05f) * span;
+						canvas.setColor(withAlpha(tint, 0.14f));
+						canvas.rectangle(x, yTop, regionW * 4.0f / static_cast<float>(points) + 0.5f, yBase - yTop);
+					}
+					if (i > 0) {
+						canvas.setColor(withAlpha(tint, 0.85f));
+						canvas.segment(x - regionW / static_cast<float>(points), prevY, x, y, 1.2f, true);
+					}
+					prevY = y;
+				}
+			}
+			else {
+				const float levelH = region.level * xover.height();
+				canvas.setColor(withAlpha(kAccent, 0.25f));
+				canvas.rectangle(region.x0, xover.bottom() - levelH, regionW, levelH);
+			}
 
 			// DRAW ratio and level strips — vertical, over the band.
 			const StripSpan strip = stripSpanOf(region.x0, region.x1);
@@ -1590,20 +1643,20 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 			canvas.rectangle(stripX0, xover.y(), stripX1 - stripX0, xover.height());
 			// THE STRIPS ARE NOT BLUE OR ORANGE: those two colours mean upward and downward on this plot (the bars and
 			// the thumbs), and the base ratio and the level belong to neither.
-			canvas.setColor(withAlpha(tokens::kGammaAxis, 0.6f));
+			canvas.setColor(withAlpha(comb ? tint : tokens::kGammaAxis, comb ? 0.5f : 0.6f));
 			const float ratioH = ratio * xover.height();
 			canvas.rectangle(stripX0, xover.bottom() - ratioH, stripX1 - stripX0, ratioH);
 
 			// Level strip (right).
 			canvas.setColor(withAlpha(kSurface, 0.3f));
 			canvas.rectangle(stripX1, xover.y(), stripX2 - stripX1, xover.height());
-			canvas.setColor(withAlpha(kMuted, 0.55f));
+			canvas.setColor(withAlpha(comb ? tint : kMuted, comb ? 0.4f : 0.55f));
 			const float levelStripH = level * xover.height();
 			canvas.rectangle(stripX1, xover.bottom() - levelStripH, stripX2 - stripX1, levelStripH);
 
 			// THE STRIPS' HANDLES: the same ring and `ModHandle` as the bars', drawn in the strip's own colour.
-			modRing(Handle::RatioStrip, tokens::kGammaAxis);
-			modRing(Handle::LevelStrip, kMuted);
+			modRing(Handle::RatioStrip, comb ? tint : tokens::kGammaAxis);
+			modRing(Handle::LevelStrip, comb ? tint : kMuted);
 
 			if (editor_) {
 				// THE STRIPS' CAPTIONS, once per band, at the top of each strip.
@@ -1618,8 +1671,8 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 
 			if (editor_) {
 				// THE RING AND THUMB HANDLES LAST, over the meter and the strips, so nothing darkens them.
-				modRing(Handle::ThresholdBar, kValue);
-				modRing(Handle::BandwidthBar, kAccent);
+				modRing(Handle::ThresholdBar, comb ? tint : kValue);
+				modRing(Handle::BandwidthBar, comb ? tint : kAccent);
 				followDot();
 				drawThumbs();
 			}

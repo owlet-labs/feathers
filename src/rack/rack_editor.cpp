@@ -155,17 +155,27 @@ public:
 			redraw();
 		}
 	}
+	/// THE PANE'S TITLE at its top left, the synth's own panel heading (`MODULATORS`): the control size, tracked, muted, a pad in and a pad down.
+	void setTitle(std::string title) {
+		title_ = std::move(title);
+		redraw();
+	}
 	void draw(visage::Canvas& canvas) override {
 		canvas.setColor(ui::kSurface);
 		canvas.fill(0.0f, 0.0f, width(), height());
 		canvas.setColor(ui::kLine);
 		canvas.fill(width() - 1.0f, 0.0f, 1.0f, height());
+		if (!title_.empty()) {
+			canvas.setColor(ui::kMuted);
+			ui::drawTracked(canvas, title_, ui::font(ui::kControlSize), ui::kControlTracking, 10.0f, 12.0f, 14.0f);
+		}
 		if (rule_.width() > 0.0f) {
 			canvas.fill(rule_.x(), rule_.y(), rule_.width(), rule_.height());
 		}
 	}
 
 private:
+	std::string title_;
 	visage::Bounds rule_ {};
 };
 
@@ -255,6 +265,7 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 		return true;
 	};
 	columnBackdrop_ = std::make_unique<ColumnBackdrop>();
+	columnBackdrop_->setTitle(kContainerLabel);
 	addChild(columnBackdrop_.get());
 	// THE LANE'S SCROLL BAR (backlog NE): a drag asks for an absolute scroll, which goes the wheel's road.
 	laneScrollBar_ = std::make_unique<LaneScrollBar>();
@@ -434,6 +445,7 @@ RackEditor::RackEditor(RackBridge& engine, ui::ModState& mod, ui::EditHistory& h
 	foldsAppliedMacros_ = engine_.macrosCollapsed();
 	foldsAppliedInspector_ = engine_.inspectorCollapsed();
 	macrosBackdrop_ = std::make_unique<ColumnBackdrop>();
+	macrosBackdrop_->setTitle("MACROS");
 	addChild(macrosBackdrop_.get());
 
 	// **THE SELECTION OVER THIS EDITOR'S OWN CHAIN** (backlog OA, D1): which cards are selected, the verbs over them,
@@ -2261,8 +2273,8 @@ visage::Frame* RackEditor::columnBackdropFrameForTest() const noexcept { return 
 float RackEditor::columnNeeded(bool levels, bool door) noexcept {
 	// THE CONTAINER'S PANE HEIGHT WITHOUT ITS ROUTE LIST, as `layOutColumn` stacks it: the pad, the door row (or the toggle's own row without
 	// one), the chain's Mix and Gain and the rule under them. The list takes what is left; the macros are a pane of their own (`macrosNeeded`).
-	float y = kPad;
-	y += door ? ui::Knob::kHeight * 0.5f + kColumnGap : kMacrosHeadHeight - kPad;
+	float y = kMacrosHeadHeight; // the title row
+	y += door ? ui::Knob::kHeight * 0.5f + kColumnGap : 0.0f;
 	if (levels) {
 		y += kMacroKnobHeight + kColumnGap + kRuleHeight + kColumnGap;
 	}
@@ -2312,7 +2324,7 @@ float RackEditor::layOutColumn(float top) {
 	// THE CONTAINER'S PANE: the door and presets row (the presets stop short of the toggle's corner), Mix and Gain, the rule under them; the route
 	// list takes what is left, placed by the caller from the y this returns.
 	const float x0 = kPad;
-	float y = top + kPad;
+	float y = top + kMacrosHeadHeight; // under the pane's title row, which the toggle's corner shares
 	if (!containerFolded) {
 		if (settingsDoor_ != nullptr || presets_ != nullptr) {
 			const float row = ui::Knob::kHeight * 0.5f;
@@ -2328,9 +2340,6 @@ float RackEditor::layOutColumn(float top) {
 				                    std::max(0.0f, std::min(static_cast<float>(presets_->width()), right - left)), h);
 			}
 			y += std::max(row, presets_ != nullptr ? static_cast<float>(presets_->height()) : 0.0f) + kColumnGap;
-		}
-		else {
-			y += kMacrosHeadHeight - kPad; // the toggle's own row when there is no door row
 		}
 		if (!outerLevelKnobs_.empty()) {
 			for (size_t i = 0; i < outerLevelKnobs_.size(); ++i) {

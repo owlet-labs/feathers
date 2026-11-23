@@ -1399,6 +1399,14 @@ void ParallelRackExpanded::onInnerNestChanged() {
 }
 
 void ParallelRackExpanded::draw(visage::Canvas& canvas) {
+	// EACH OPEN PANE'S TITLE at its top left, the synth's own panel heading (`MODULATORS`): the control size, tracked, muted, a pad in and a pad down.
+	canvas.setColor(kMuted);
+	if (!inspectorFolded()) {
+		drawTracked(canvas, "RACK", font(kControlSize), kControlTracking, 10.0f, 12.0f, 14.0f);
+	}
+	if (!macrosFolded()) {
+		drawTracked(canvas, "MACROS", font(kControlSize), kControlTracking, containerWidth() + 10.0f, 12.0f, 14.0f);
+	}
 	// THE H-LINE BETWEEN MIX/GAIN AND THE MACROS.
 	const visage::Bounds line = dividerBounds();
 	canvas.setColor(withAlpha(kLine, 0.6f));

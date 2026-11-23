@@ -103,7 +103,7 @@ EroderFlow::Path EroderFlow::pathFor(const ero::Row& row) {
 	// SUB THRU GIVES BACK, AFTER HP WET, WHAT HP WET TOOK OF THE INPUT (`Eroder::processStereo`): nothing without a filter,
 	// and in the Comb nothing while the dry is whole (Blend off) — the window's enable rule.
 	const bool crossfades = !comb || at(ero::Param::Blend) >= 0.5f;
-	path.bypass = { input, hp, at(ero::Param::SubThru) >= 0.5f && filtering && crossfades };
+	path.bypass = { input, hp, at(ero::Param::SubThru) >= 0.5f && filtering && crossfades, crossfades };
 	path.returns.push_back({ driven ? drive : engineEnd, sum, inner, false });
 	path.returns.push_back({ drive, sum, outer, true });
 	return path;
@@ -340,7 +340,7 @@ void EroderFlow::draw(visage::Canvas& canvas) {
 	}
 
 	// THE SUB THRU ROAD OVER THE LINE: off the input, along the top, and down into the arrow after HP Wet.
-	{
+	if (path_.bypass.shown) {
 		const Bypass& b = path_.bypass;
 		const Rect& from = boxes_[b.from];
 		const float xFrom = from.x + from.w * 0.5f;
@@ -371,7 +371,11 @@ void EroderFlow::draw(visage::Canvas& canvas) {
 
 	// THE CHIPS' PLATES ARE BACKED WITH THE PICTURE'S OWN GROUND, after every line and before the chips themselves: a road that
 	// passes under a chip (Sub Thru's, the Tap's) must not show through it.
-	for (const Rect& r : chipRects_) {
+	for (size_t chipIndex = 0; chipIndex < chipRects_.size(); ++chipIndex) {
+		const Rect& r = chipRects_[chipIndex];
+		if (chipIndex == static_cast<size_t>(Chip::SubThru) && !path_.bypass.shown) {
+			continue;
+		}
 		canvas.setColor(kSurface);
 		canvas.roundedRectangle(r.x, r.y, r.w, r.h, 3.0f);
 		if (recording_) {

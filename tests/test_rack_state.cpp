@@ -1466,7 +1466,7 @@ TEST_CASE("rack bridge: two MACROS instances keep separate labels") {
 }
 
 TEST_CASE("rack bridge: a one-output device's source name is unchanged") {
-	const device::Descriptor* lfo = deviceForTag("LFO");
+	const device::Descriptor* lfo = deviceForTag("MSEG");
 	REQUIRE(lfo != nullptr);
 	REQUIRE(lfo->outputCount() == 1);
 	rack::RackEngine engine(kAxes, hostCatalogue());

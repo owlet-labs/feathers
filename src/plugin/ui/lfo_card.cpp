@@ -27,6 +27,7 @@
 #include "plugin/ui/plot_grid.h"
 #include "plugin/ui/trace_marker.h"
 #include "plugin/ui/theme.h"
+#include "plugin/ui/tab_chip.h"
 
 #include <algorithm>
 #include <cmath>
@@ -46,9 +47,9 @@ constexpr float kPlayheadSize = 3.0f;
 /// setting to another, not a field edit somebody has to replay in order.
 class LfoShapeEdit : public EditRecord {
 public:
-	LfoShapeEdit(backplane::DeviceHost& host, DeviceInstanceId id, mod::lfo::Settings before,
+	LfoShapeEdit(backplane::DeviceHost& host, DeviceInstanceId id, size_t tab, mod::lfo::Settings before,
 	             mod::lfo::Settings after)
-	    : host_(host), device_(id), before_(before), after_(after) {}
+	    : host_(host), device_(id), tab_(tab), before_(before), after_(after) {}
 
 	void undo() const override { write(before_); }
 	void redo() const override { write(after_); }
@@ -59,12 +60,13 @@ private:
 		const mod::lfo::Row row = mod::lfo::rowOf(settings);
 		backplane::ControlGestureScope gesture(host_, device_); // one host gesture per undo (host slots, T6b)
 		for (size_t i = 0; i < row.size(); ++i) {
-			gesture.setField(i, row[i]);
+			gesture.setField(mod::lfo::tabParam(tab_, static_cast<mod::lfo::Param>(0)) + i, row[i]);
 		}
 	}
 
 	backplane::DeviceHost& host_;
 	DeviceInstanceId device_;
+	size_t tab_;
 	mod::lfo::Settings before_;
 	mod::lfo::Settings after_;
 };
@@ -74,51 +76,68 @@ constexpr std::array<const char*, LfoCard::kBoxCount> kCaptions { "Base", "Rate"
 	                                                                  "Seed", "St" };
 
 } // namespace
-
 LfoCard::LfoCard(backplane::DeviceHost& host, DeviceInstanceId id, ModState& mod, EditHistory& history)
 	: host_(host), device_(id), mod_(mod), history_(history) {
-	for (size_t i = 0; i < kBoxCount; ++i) {
-		controls_[i] = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
-		                                              static_cast<size_t>(layout()[i]), &mod_, &history_);
-		boxes_[i] = std::make_unique<ValueBox>(*controls_[i], kCaptions[i]);
-		addChild(boxes_[i].get());
-		bindBox(i);
-		// **RATE READS HZ ON THE HZ BASE** (backlog NJ, decided 2026-10-17): there the number is a frequency,
-		// `lfo::rateHz`'s own, and "1X" would be a multiple of a base that does not exist. Elsewhere it is the
-		// declared multiple. The base is read at each draw, so a pick of Time Base relabels it at once.
-		if (layout()[i] == lfo::Param::TimeScale) {
-			boxes_[i]->setReadoutFormatter([this](double v) { return rateFace(v); }, true);
+	// **ONE FULL SET OF CONTROLS PER TAB**, each bound to its own tab's fields, all built now: a tab press shows one and hides
+	// the rest (the HARM card's arrangement), so no control is ever re-pointed and every tab's controls stay what they were.
+	for (size_t t = 0; t < kTabCount; ++t) {
+		TabSet& set = sets_[t];
+		for (size_t i = 0; i < kBoxCount; ++i) {
+			set.controls[i] = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
+			                                                 fieldOf(t, layout()[i]), &mod_, &history_);
+			set.boxes[i] = std::make_unique<ValueBox>(*set.controls[i], kCaptions[i]);
+			addChild(set.boxes[i].get());
+			bindBox(t, i);
+			// **RATE READS HZ ON THE HZ BASE** (backlog NJ, decided 2026-10-17): there the number is a frequency,
+			// `lfo::rateHz`'s own, and "1X" would be a multiple of a base that does not exist. Elsewhere it is the
+			// declared multiple. The base is read at each draw, so a pick of Time Base relabels it at once.
+			if (layout()[i] == lfo::Param::TimeScale) {
+				set.boxes[i]->setReadoutFormatter([this, t](double v) { return rateFaceOf(t, v); }, true);
+			}
 		}
-	}
-	// THE CHOICES — compact, uncaptioned, in the chip row. The menu is the box's own, opened from the
-	// descriptor (`ValueBox::choiceMenuAvailable`); nothing here opts in.
-	for (size_t i = 0; i < kChoiceCount; ++i) {
-		const lfo::Param param = choices()[i];
-		choiceControls_[i] = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
-		                                                    static_cast<size_t>(param), &mod_, &history_);
-		choiceBoxes_[i] = std::make_unique<ValueBox>(*choiceControls_[i], "");
-		choiceBoxes_[i]->setCompact(true);
-		choiceBoxes_[i]->setReadoutFormatter([param](double v) { return choiceFace(param, v); });
-		// THE WAVEFORM IS THE BOXES' GATE, so a pick re-lays the rows in the same frame rather than
-		// at the next `updateContent`.
-		choiceBoxes_[i]->onValueChanged([this]() {
-			resized();
-			redraw();
+		// THE CHOICES — compact, uncaptioned, in the chip row. The menu is the box's own, opened from the
+		// descriptor (`ValueBox::choiceMenuAvailable`); nothing here opts in.
+		for (size_t i = 0; i < kChoiceCount; ++i) {
+			const lfo::Param param = choices()[i];
+			set.choiceControls[i] = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
+			                                                       fieldOf(t, param), &mod_, &history_);
+			set.choiceBoxes[i] = std::make_unique<ValueBox>(*set.choiceControls[i], "");
+			set.choiceBoxes[i]->setCompact(true);
+			set.choiceBoxes[i]->setReadoutFormatter([param](double v) { return choiceFace(param, v); });
+			// THE WAVEFORM IS THE BOXES' GATE, so a pick re-lays the rows in the same frame rather than
+			// at the next `updateContent`.
+			set.choiceBoxes[i]->onValueChanged([this]() {
+				resized();
+				redraw();
+			});
+			addChild(set.choiceBoxes[i].get());
+		}
+		// THE TRIG PAD (backlog MV): the tab's Trig control, and the fire count it lights from. THE COUNT IS TAB 1'S ALONE
+		// (the device reports one): the other tabs' pads fire and show their ring, but do not pulse on their own fires.
+		set.trigControl = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
+		                                                  fieldOf(t, lfo::Param::Trig), &mod_, &history_);
+		set.trigPad = std::make_unique<TrigPad>(*set.trigControl, [this, t](uint32_t& fires) {
+			return t == 0 && host_.trigFiresAt(device_, fires);
 		});
-		addChild(choiceBoxes_[i].get());
+		// AND ITS NORMAL (backlog NU): the right-click's "Notes fire Trig", and the dot that shows it made.
+		set.notesTrigControl = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
+		                                                       fieldOf(t, lfo::Param::NotesTrig), &mod_, &history_);
+		set.trigPad->setNormal({ set.notesTrigControl.get() });
+		addChild(set.trigPad.get());
+		watches_.push_back(mod_.watch(set.trigPad.get())); // its ring is the mapping signal
+		// THE TAB'S ON SQUARE, a control of its own so a press is one undo step and a route can ride it.
+		set.onControl = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
+		                                                fieldOf(t, lfo::Param::Enabled), &mod_, &history_);
+		const bool shown = t == tab_;
+		for (auto& box : set.boxes) {
+			box->setVisible(shown);
+		}
+		for (auto& box : set.choiceBoxes) {
+			box->setVisible(shown);
+		}
+		set.trigPad->setVisible(shown);
 	}
-	// THE TRIG PAD (backlog MV): the device's Trig control, and the fire count it lights from.
-	trigControl_ = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
-	                                               static_cast<size_t>(lfo::Param::Trig), &mod_, &history_);
-	trigPad_ = std::make_unique<TrigPad>(*trigControl_, [this](uint32_t& fires) {
-		return host_.trigFiresAt(device_, fires);
-	});
-	// AND ITS NORMAL (backlog NU): the right-click's "Notes fire Trig", and the dot that shows it made.
-	notesTrigControl_ = std::make_unique<DeviceControl>(host_, device_, mod::lfo::kDescriptor,
-	                                                    static_cast<size_t>(lfo::Param::NotesTrig), &mod_, &history_);
-	trigPad_->setNormal({ notesTrigControl_.get() });
-	addChild(trigPad_.get());
-	watches_.push_back(mod_.watch(trigPad_.get())); // its ring is the mapping signal
+	showTabOutputs();
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		// **THE PRESS IS THE CARD'S TO HAND BACK, AND THIS CARD WAS KEEPING IT.** `FxCard` takes the
 		// drag and the release — `onMouseDrag`/`onMouseUp` are assigned in its constructor — and says
@@ -145,6 +164,16 @@ LfoCard::LfoCard(backplane::DeviceHost& host, DeviceInstanceId id, ModState& mod
 			return;
 		}
 		if (e.position.y < bodyTopEdge()) {
+			return;
+		}
+		// THE TAB STRIP: the On square toggles that tab, the rest of the tab selects it.
+		if (const size_t tab = tabAt(e.position); tab < kTabCount) {
+			if (tabOnBounds(tab).contains(e.position)) {
+				toggleTabOn(tab);
+			}
+			else {
+				selectTab(tab);
+			}
 			return;
 		}
 		for (size_t chip = 0; chip < kChipCount; ++chip) {
@@ -187,7 +216,11 @@ const std::array<lfo::Param, LfoCard::kChoiceCount>& LfoCard::choices() {
 }
 
 std::string LfoCard::rateFace(double value) const {
-	const auto base = static_cast<size_t>(std::max(0L, std::lround(host_.fieldAt(device_, static_cast<size_t>(lfo::Param::TimeBase)))));
+	return rateFaceOf(tab_, value);
+}
+
+std::string LfoCard::rateFaceOf(size_t tab, double value) const {
+	const auto base = static_cast<size_t>(std::max(0L, std::lround(host_.fieldAt(device_, fieldOf(tab, lfo::Param::TimeBase)))));
 	lfo::Settings s {};
 	s.timeBase = base;
 	s.timeScale = static_cast<float>(value);
@@ -286,12 +319,12 @@ void LfoCard::toggleChip(size_t index) {
 	// recorded nothing, so a chip could not be undone while changing the rate by box could. The
 	// MSEG's `toggleChip` banks a `MsegShapeEdit` for exactly this reason, and `LfoShapeEdit` is the
 	// same entry for this device.
-	history_.record(std::make_unique<LfoShapeEdit>(host_, device_, was, s));
+	history_.record(std::make_unique<LfoShapeEdit>(host_, device_, tab_, was, s));
 	redraw();
 }
 
 visage::Bounds LfoCard::editorBounds() const {
-	return { bodyLeft() + kPadX + kTrigColumn, bodyTop() + kGap, bodyWidth() - 2.0f * kPadX - kTrigColumn,
+	return { bodyLeft() + kPadX + kTrigColumn, bodyTop() + kTabStrip + kGap, bodyWidth() - 2.0f * kPadX - kTrigColumn,
 		     kEditorHeight };
 }
 
@@ -306,7 +339,7 @@ visage::Bounds LfoCard::editorGrabBounds() const {
 }
 
 float LfoCard::boxRowTop(size_t row) const {
-	return bodyTop() + kGap + kEditorHeight + kGap
+	return bodyTop() + kTabStrip + kGap + kEditorHeight + kGap
 	       + static_cast<float>(row) * (ValueBox::kHeight + kRowGap);
 }
 
@@ -319,7 +352,7 @@ bool LfoCard::boxIsLive(size_t index) const {
 		return true;
 	}
 	const auto& descs = mod::lfo::kDescriptor.params;
-	const auto param = static_cast<size_t>(layout()[index]);
+	const auto param = fieldOf(layout()[index]);
 	if (param >= descs.size()) {
 		return true;
 	}
@@ -408,30 +441,48 @@ visage::Point LfoCard::fromUnit(float x, float y) const {
 }
 
 lfo::Settings LfoCard::settings() const {
+	// THE SELECTED TAB'S BLOCK OF THE ROW, as stored.
 	lfo::Row row {};
-	const size_t present = std::min(host_.fieldsPresentAt(device_), row.size());
+	const size_t first = fieldOf(static_cast<lfo::Param>(0));
+	const size_t fields = host_.fieldsPresentAt(device_);
+	const size_t present = fields > first ? std::min(fields - first, row.size()) : 0;
 	for (size_t i = 0; i < present; ++i) {
-		row[i] = host_.fieldAt(device_, i);
+		row[i] = host_.fieldAt(device_, first + i);
 	}
-	return lfo::settingsOf(row, present);
+	lfo::Settings s = lfo::settingsOf(row, present);
+	if (tab_ > 0 && present <= static_cast<size_t>(lfo::Param::Enabled)) {
+		s.enabled = false; // a tab the row does not reach is off
+	}
+	return s;
 }
 
 lfo::Settings LfoCard::shownSettings() const {
 	lfo::Row row {};
-	const size_t present = readModulatedRow(host_, device_, mod::lfo::kDescriptor, row);
-	return lfo::settingsOf(row, present);
+	const size_t first = fieldOf(static_cast<lfo::Param>(0));
+	const size_t fields = host_.fieldsPresentAt(device_);
+	const size_t present = fields > first ? std::min(fields - first, row.size()) : 0;
+	for (size_t i = 0; i < present; ++i) {
+		row[i] = readModulatedField(host_, device_, mod::lfo::kDescriptor, first + i, false);
+	}
+	lfo::Settings s = lfo::settingsOf(row, present);
+	if (tab_ > 0 && present <= static_cast<size_t>(lfo::Param::Enabled)) {
+		s.enabled = false;
+	}
+	return s;
 }
 
 void LfoCard::writeSettings(const lfo::Settings& s) {
 	const lfo::Row row = lfo::rowOf(s);
+	const size_t first = fieldOf(static_cast<lfo::Param>(0));
 	// ONE USER ACTION, ONE HOST GESTURE per control it moves (host slots, T6b review).
 	backplane::ControlGestureScope gesture(host_, device_);
 	for (size_t i = 0; i < row.size(); ++i) {
-		gesture.setField(i, row[i]);
+		gesture.setField(first + i, row[i]);
 	}
 }
 
 void LfoCard::drawContent(visage::Canvas& canvas) {
+	drawTabs(canvas);
 	const visage::Bounds box = editorBounds();
 
 	// OSCILLOSCOPE BACKGROUND — dark with subtle border.
@@ -528,13 +579,123 @@ void LfoCard::drawContent(visage::Canvas& canvas) {
 	}
 }
 
+//------------------------------------------------------------------------------------------------//
+// The tabs                                                                                       //
+//------------------------------------------------------------------------------------------------//
+
+visage::Bounds LfoCard::tabBounds(size_t tab) const {
+	const float usable = bodyWidth() - 2.0f * kPadX;
+	const float each = (usable - kTabGap * static_cast<float>(kTabCount - 1)) / static_cast<float>(kTabCount);
+	return { bodyLeft() + kPadX + static_cast<float>(tab) * (each + kTabGap), bodyTop() + 2.0f, each, kTabStrip - 4.0f };
+}
+
+visage::Bounds LfoCard::tabOnBounds(size_t tab) const {
+	// A SQUARE AT THE TAB'S LEFT, the card's own On mark for that LFO.
+	const visage::Bounds b = tabBounds(tab);
+	const float side = std::min(10.0f, b.height() - 4.0f);
+	return { b.x() + 4.0f, b.y() + (b.height() - side) * 0.5f, side, side };
+}
+
+size_t LfoCard::tabAt(visage::Point position) const {
+	if (folded_) {
+		return kTabCount;
+	}
+	for (size_t t = 0; t < kTabCount; ++t) {
+		if (tabBounds(t).contains(position)) {
+			return t;
+		}
+	}
+	return kTabCount;
+}
+
+bool LfoCard::tabOn(size_t tab) const {
+	return tab < kTabCount && host_.fieldAt(device_, fieldOf(tab, lfo::Param::Enabled)) >= 0.5;
+}
+
+void LfoCard::toggleTabOn(size_t tab) {
+	if (tab >= kTabCount || sets_[tab].onControl == nullptr) {
+		return;
+	}
+	// ONE CONTROL, ONE UNDO STEP — the same road a box's edit takes.
+	DeviceControl& on = *sets_[tab].onControl;
+	on.setValue(on.value() >= 0.5 ? 0.0 : 1.0);
+	redraw();
+}
+
+void LfoCard::showTabOutputs() {
+	// **THE CARD SHOWS THE OUTPUT OF EVERY TAB THAT IS ON** (and tab 1's always): `SourceDesc::cardHidden` keeps tabs 2-4's
+	// off the card until a hand turns them on, so a patch that never uses them looks and lays out as it always did. View
+	// state only — a route from a hidden output reads as ever.
+	uint64_t mask = 1;
+	for (size_t t = 1; t < kTabCount; ++t) {
+		if (tabOn(t)) {
+			mask |= uint64_t { 1 } << t;
+		}
+	}
+	if (host_.outputsShown(device_) != mask) {
+		host_.setOutputsShown(device_, mask);
+	}
+}
+
+void LfoCard::selectTab(size_t tab) {
+	if (tab >= kTabCount || tab == tab_) {
+		return;
+	}
+	tab_ = tab;
+	// THE SELECTED SET IS SHOWN AND THE OTHERS HIDDEN; nothing is re-pointed.
+	resized();
+	redraw();
+}
+
+void LfoCard::drawTabs(visage::Canvas& canvas) {
+	for (size_t t = 0; t < kTabCount; ++t) {
+		const visage::Bounds b = tabBounds(t);
+		const bool selected = t == tab_;
+		drawTabChip(canvas, b, std::string {}, selected);
+		const bool on = tabOn(t);
+		const visage::Bounds sq = tabOnBounds(t);
+		canvas.setColor(selected ? kSurface : (on ? kAccent : kDisabled));
+		if (on) {
+			canvas.roundedRectangle(sq.x(), sq.y(), sq.width(), sq.height(), 2.0f);
+		}
+		else {
+			canvas.roundedRectangleBorder(sq.x(), sq.y(), sq.width(), sq.height(), 2.0f, 1.0f);
+		}
+		const std::string label = "LFO " + std::to_string(t + 1);
+		canvas.setColor(selected ? kSurface : (on ? kMuted : kDisabled));
+		drawTracked(canvas, label, font(kKnobLabelSize), kKnobLabelTracking, sq.right() + 5.0f, b.y(), b.height());
+	}
+}
+
+std::vector<size_t> LfoCard::addressedFieldsForTest() const {
+	// EVERY TAB'S SET IS REACHED BY ITS TAB — the same reach as the selected tab's, offset to each.
+	std::vector<size_t> out;
+	const std::vector<lfo::Param> one = addressedParamsForTest();
+	for (size_t t = 0; t < kTabCount; ++t) {
+		for (const lfo::Param p : one) {
+			out.push_back(fieldOf(t, p));
+		}
+	}
+	return out;
+}
+
 bool LfoCard::updateContent() {
 	// **THE GATE MOVES BY MORE ROADS THAN THE BOX.** Picking the waveform re-lays the card out at the
 	// press, but the same value also arrives from an undo, a preset load, host automation and the
 	// modulation of another control — and a row that reflows only when a hand did it would show a
 	// seed box over a triangle for as long as nobody touched the box. Watched here, where every
 	// frame already asks this card whether it is out of date.
-	const bool trigChanged = trigPad_->poll();
+	// THE TABS' ON SQUARES move by more roads than a press (undo, a preset, automation, a route): watched here too.
+	unsigned onMask = 0;
+	for (size_t t = 0; t < kTabCount; ++t) {
+		onMask |= (tabOn(t) ? 1u : 0u) << t;
+	}
+	if (onMask != tabsOnDrawn_) {
+		tabsOnDrawn_ = onMask;
+		showTabOutputs();
+		redraw();
+	}
+	const bool trigChanged = cur().trigPad->poll();
 	const float gate = gateValue();
 	if (gate != gateDrawn_) {
 		resized();  // stamps gateDrawn_
@@ -736,11 +897,11 @@ std::string LfoCard::boxCaption(size_t index) const {
 }
 
 const visage::Frame* LfoCard::boxFrame(size_t index) const {
-	return index < kBoxCount ? boxes_[index].get() : nullptr;
+	return index < kBoxCount ? cur().boxes[index].get() : nullptr;
 }
 
-void LfoCard::bindBox(size_t index) {
-	ValueBox* box = boxes_[index].get();
+void LfoCard::bindBox(size_t tab, size_t index) {
+	ValueBox* box = sets_[tab].boxes[index].get();
 	box->onValueChanged([this]() { redraw(); });
 	box->onEdited([](double, double) {});
 }
@@ -749,26 +910,31 @@ void LfoCard::resized() {
 	// ONE ANSWER FOR WHERE A BOX IS — `boxBounds` — rather than the placement being computed here and
 	// the hit-testing computing it again. The card that drew its chips from one arithmetic and tested
 	// them against another is the bug this shape cannot have.
-	for (size_t i = 0; i < kBoxCount; ++i) {
-		// A BOX WHOSE CONTROL DOES NOTHING IN THIS WAVEFORM IS NOT DRAWN — the honesty rule, which the
-		// tooltips stated and nothing enforced. Still placed, so that a card whose gate changes while
-		// it is folded comes back with its bounds already right.
-		const visage::Bounds b = boxBounds(i);
-		boxes_[i]->setBounds(b.x(), b.y(), b.width(), b.height());
-		boxes_[i]->setVisible(!folded_ && boxIsLive(i));
+	// EVERY TAB'S SET IS PLACED, only the selected one is shown: a card whose tab changes while it is folded comes back right.
+	for (size_t t = 0; t < kTabCount; ++t) {
+		TabSet& set = sets_[t];
+		const bool shown = !folded_ && t == tab_;
+		for (size_t i = 0; i < kBoxCount; ++i) {
+			// A BOX WHOSE CONTROL DOES NOTHING IN THIS WAVEFORM IS NOT DRAWN — the honesty rule, which the
+			// tooltips stated and nothing enforced. Still placed, so that a card whose gate changes while
+			// it is folded comes back with its bounds already right.
+			const visage::Bounds b = boxBounds(i);
+			set.boxes[i]->setBounds(b.x(), b.y(), b.width(), b.height());
+			set.boxes[i]->setVisible(shown && (t != tab_ || boxIsLive(i)));
+		}
+		for (size_t i = 0; i < kChoiceCount; ++i) {
+			seatInChipCell(*set.choiceBoxes[i], choiceBounds(i));
+			set.choiceBoxes[i]->setVisible(shown);
+		}
+		const visage::Bounds trig = trigPadBounds();
+		set.trigPad->setBounds(trig.x(), trig.y(), trig.width(), trig.height());
+		set.trigPad->setVisible(shown);
 	}
-	for (size_t i = 0; i < kChoiceCount; ++i) {
-		seatInChipCell(*choiceBoxes_[i], choiceBounds(i));
-		choiceBoxes_[i]->setVisible(!folded_);
-	}
-	const visage::Bounds trig = trigPadBounds();
-	trigPad_->setBounds(trig.x(), trig.y(), trig.width(), trig.height());
-	trigPad_->setVisible(!folded_);
 	gateDrawn_ = gateValue();
 }
 
 float LfoCard::gateValue() const {
-	return host_.fieldAt(device_, static_cast<size_t>(lfo::Param::Waveform));
+	return host_.fieldAt(device_, fieldOf(lfo::Param::Waveform));
 }
 
 bool LfoCard::headSourceFocused() const {
@@ -790,18 +956,22 @@ void LfoCard::foldedChanged() {
 	// THROUGH `boxIsLive`, NOT A BARE `!folded_`. Unfolding used to show every box, including the ones
 	// the current waveform has nothing for — so a fold and an unfold was a way to bring back a control
 	// the gate had just hidden, and it would stay back until the next layout.
-	for (size_t i = 0; i < kBoxCount; ++i) {
-		if (boxes_[i] != nullptr) {
-			boxes_[i]->setVisible(!folded_ && boxIsLive(i));
+	for (size_t t = 0; t < kTabCount; ++t) {
+		TabSet& set = sets_[t];
+		const bool shown = !folded_ && t == tab_;
+		for (size_t i = 0; i < kBoxCount; ++i) {
+			if (set.boxes[i] != nullptr) {
+				set.boxes[i]->setVisible(shown && (t != tab_ || boxIsLive(i)));
+			}
 		}
-	}
-	for (const auto& box : choiceBoxes_) {
-		if (box != nullptr) {
-			box->setVisible(!folded_);
+		for (const auto& box : set.choiceBoxes) {
+			if (box != nullptr) {
+				box->setVisible(shown);
+			}
 		}
-	}
-	if (trigPad_ != nullptr) {
-		trigPad_->setVisible(!folded_);
+		if (set.trigPad != nullptr) {
+			set.trigPad->setVisible(shown);
+		}
 	}
 }
 
@@ -812,7 +982,7 @@ const char* LfoCard::contentTooltipAt(visage::Point local) const {
 	}
 	for (size_t chip = 0; chip < kChipCount; ++chip) {
 		if (chipBounds(chip).contains(local)) {
-			return controlTooltip(static_cast<size_t>(chips()[chip].param));
+			return controlTooltip(fieldOf(chips()[chip].param));
 		}
 	}
 	return nullptr;

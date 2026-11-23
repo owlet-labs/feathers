@@ -5039,7 +5039,7 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		g.panel->resized();
 		auto* lfoCard = dynamic_cast<const ui::LfoCard*>(g.panel->cardFrameForTest(lfoSlot));
 		REQUIRE(lfoCard != nullptr);
-		for (const feathers::mod::lfo::Param p : lfoCard->addressedParamsForTest()) {
+		for (const size_t p : lfoCard->addressedFieldsForTest()) {
 			e.reached.insert(static_cast<size_t>(p));
 		}
 		table.push_back(std::move(e));
@@ -21877,7 +21877,7 @@ TEST_CASE("MV: every Trig pad's right-click lists the routes into it, and removi
 		REQUIRE(card != nullptr);
 		collectTrigPads(card, &pads);
 	}
-	REQUIRE(pads.size() == 12); // one per card, seven on the sequencer (Advance, Reset, a Randomise per lane — backlog NT)
+	REQUIRE(pads.size() == 12 + (feathers::mod::lfo::kTabs - 1)); // one per card, seven on the sequencer (Advance, Reset, a Randomise per lane — backlog NT), and one a tab on the LFO
 
 	const backplane::Source a = backplane::Source::core(0);
 	const backplane::Source b = backplane::Source::core(1);

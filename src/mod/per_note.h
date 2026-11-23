@@ -304,6 +304,9 @@ struct PolyShape {
 	/// tick for the whole rack (`mod/trig.h`). It fires the one shape, and every note the host cannot resolve for (see
 	/// `tick`). Each note also carries its own (`PerNoteTable::Note::trig`) for a per-voice source.
 	TrigEdge trig;
+	/// WHICH CONTROL OF THE DEVICE IS THIS SHAPE'S TRIG, for the per-note resolve: the settings' own unless the device holds
+	/// several (the LFO's tabs) and says which.
+	size_t trigControl = Settings::kTrigControl;
 	/// HOW MANY TIMES THE TRIG HAS FIRED, the device's edge and every note's — a count rather than a flag, so a reader
 	/// that looks less often than the device ticks (a card at 60 Hz against 750) still sees that a one-tick fire
 	/// happened.
@@ -338,7 +341,7 @@ struct PolyShape {
 				}
 				float own = 0.0f;
 				const bool resolved = r != nullptr && r->resolve != nullptr
-				                      && r->resolve(r->context, Settings::kTrigControl, n.noteId, n.channel, n.key, &own);
+				                      && r->resolve(r->context, trigControl, n.noteId, n.channel, n.key, &own);
 				if (resolved ? n.trig.step(own) : fired) {
 					n.shape.fire();
 					trigFires += resolved ? 1u : 0u;

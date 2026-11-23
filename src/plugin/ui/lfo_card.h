@@ -54,7 +54,7 @@ public:
 
 	/// **THE TRIG PAD** (backlog MV), at the drawn wave's left, where a reset sends it — the DAHDSR's seat.
 	[[nodiscard]] visage::Bounds trigPadBounds() const;
-	[[nodiscard]] TrigPad* trigPadForTest() const noexcept { return trigPad_.get(); }
+	[[nodiscard]] TrigPad* trigPadForTest() const noexcept { return cur().trigPad.get(); }
 	/// THE SLOT MENU'S DOTS, WHEN A HOST BINDS ONE (a lane: Feathers' fx lane holds modulators since 2026-10-04) —
 	/// `drawSlotMenu` draws nothing where none is bound, so the strip, which draws its own head mark, is unchanged.
 	void drawHeadExtras(visage::Canvas& canvas) override { drawSlotMenu(canvas, kMuted); }
@@ -98,11 +98,16 @@ public:
 	/// The Trig pad's column at the wave's left — the pad and a gap.
 	static constexpr float kTrigColumn = TrigPad::kDiameter + 6.0f;
 	static constexpr float kRowGap = 4.0f;
-	static constexpr float kEditorHeight = 96.0f;
+	static constexpr float kEditorHeight = 80.0f;
 	static constexpr float kChipHeight = 16.0f;
+	/// **THE TAB STRIP** along the top of the body: four tabs, each a whole LFO (`mod::lfo::kTabs`), the selected one's control
+	/// set shown below and the others' hidden, never re-pointed. Each tab carries its own On square.
+	static constexpr float kTabStrip = 16.0f;
+	static constexpr float kTabGap = 4.0f;
+	static constexpr size_t kTabCount = mod::lfo::kTabs;
 
 	static constexpr float height() {
-		return kGap + kEditorHeight + kGap + kBoxRows * (ValueBox::kHeight + kRowGap) - kRowGap + kGap
+		return kTabStrip + kGap + kEditorHeight + kGap + kBoxRows * (ValueBox::kHeight + kRowGap) - kRowGap + kGap
 		       + kChipHeight + kGap;
 	}
 
@@ -150,10 +155,10 @@ public:
 	static constexpr size_t kChoiceCount = 2;
 	static const std::array<mod::lfo::Param, kChoiceCount>& choices();
 	const ValueBox* choiceBoxForTest(size_t index) const {
-		return index < kChoiceCount ? choiceBoxes_[index].get() : nullptr;
+		return index < kChoiceCount ? cur().choiceBoxes[index].get() : nullptr;
 	}
 	ValueBox* choiceBoxForTest(size_t index) {
-		return index < kChoiceCount ? choiceBoxes_[index].get() : nullptr;
+		return index < kChoiceCount ? cur().choiceBoxes[index].get() : nullptr;
 	}
 	/// The cell a choice sits in; its box is inset one pixel so the cell's outline shows.
 	visage::Bounds choiceBounds(size_t index) const;
@@ -168,6 +173,29 @@ public:
 	/// WHERE THE WAVEFORM IS DRAWN.
 	visage::Bounds editorBounds() const;
 	visage::Bounds editorGrabBounds() const;
+
+	/// **THE TABS.** `selectedTab` is 0-based; `selectTab` shows that tab's set and hides the rest. `tabBounds` is where a
+	/// tab is drawn and hit (the strip's own arithmetic, shared with the press); `tabOnBounds` the On square inside it.
+	[[nodiscard]] size_t selectedTab() const noexcept { return tab_; }
+	/// HOW MANY OF ALL THE TABS' CHOICE BOXES AND TRIG PADS ARE SHOWN: one set's, never more.
+	[[nodiscard]] size_t visibleSetWidgetsForTest() const {
+		size_t n = 0;
+		for (const TabSet& set : sets_) {
+			for (const auto& box : set.choiceBoxes) {
+				n += box->isVisible() ? 1u : 0u;
+			}
+			n += set.trigPad->isVisible() ? 1u : 0u;
+		}
+		return n;
+	}
+	void selectTab(size_t tab);
+	[[nodiscard]] visage::Bounds tabBounds(size_t tab) const;
+	[[nodiscard]] visage::Bounds tabOnBounds(size_t tab) const;
+	/// The tab a point is over, or `kTabCount` for none.
+	[[nodiscard]] size_t tabAt(visage::Point position) const;
+	/// WHETHER TAB `tab` IS SWITCHED ON — its Enabled field as stored (tab 1 is always drawn lit by the head too).
+	[[nodiscard]] bool tabOn(size_t tab) const;
+	void toggleTabOn(size_t tab);
 
 	bool updateContent() override;
 
@@ -188,11 +216,13 @@ public:
 	[[nodiscard]] size_t rightStrokesDrawnForTest() const noexcept { return rightStrokes_; }
 
 	std::vector<mod::lfo::Param> addressedParamsForTest() const;
+	/// EVERY DEVICE FIELD A HAND CAN REACH ON THE CARD, all four tabs (what the reachability guard reads).
+	[[nodiscard]] std::vector<size_t> addressedFieldsForTest() const;
 
 	std::string boxCaption(size_t index) const;
 	const visage::Frame* boxFrame(size_t index) const;
 	const ValueBox* boxForTest(size_t index) const {
-		return index < kBoxCount ? boxes_[index].get() : nullptr;
+		return index < kBoxCount ? cur().boxes[index].get() : nullptr;
 	}
 
 	device::Modulatable* enableModulatable() override;
@@ -206,7 +236,7 @@ public:
 
 private:
 	std::vector<Watch> watches_;
-	void bindBox(size_t index);
+	void bindBox(size_t tab, size_t index);
 	/// The top of a row of value boxes, and where one box sits. `resized` places the boxes through
 	/// `boxBounds` so the placement and any hit-test are one arithmetic rather than two.
 	float boxRowTop(size_t row) const;
@@ -244,17 +274,35 @@ private:
 	ModState& mod_;
 	EditHistory& history_;
 
-	std::array<std::unique_ptr<DeviceControl>, kBoxCount> controls_;
+	/// **ONE TAB'S WHOLE SET OF CONTROLS**, built once for each tab bound to that tab's own fields — a tab press shows one
+	/// set and hides the others (the HARM card's arrangement); nothing is ever re-pointed.
+	struct TabSet {
+		std::array<std::unique_ptr<DeviceControl>, kBoxCount> controls;
+		std::array<std::unique_ptr<ValueBox>, kBoxCount> boxes;
+		std::array<std::unique_ptr<DeviceControl>, kChoiceCount> choiceControls;
+		std::array<std::unique_ptr<ValueBox>, kChoiceCount> choiceBoxes;
+		std::unique_ptr<DeviceControl> trigControl;
+		/// "NOTES FIRE TRIG" (backlog NU), the pad's normal — declared before the pad, which holds it.
+		std::unique_ptr<DeviceControl> notesTrigControl;
+		std::unique_ptr<TrigPad> trigPad;
+		/// THIS TAB'S ON SQUARE, on its tab (tab 1's is the head's Enable too: one control).
+		std::unique_ptr<DeviceControl> onControl;
+	};
+	std::array<TabSet, kTabCount> sets_;
 	mutable std::unique_ptr<DeviceControl> enableControl_;
-
-	std::array<std::unique_ptr<ValueBox>, kBoxCount> boxes_;
-
-	std::array<std::unique_ptr<DeviceControl>, kChoiceCount> choiceControls_;
-	std::array<std::unique_ptr<ValueBox>, kChoiceCount> choiceBoxes_;
-	std::unique_ptr<DeviceControl> trigControl_;
-	/// "NOTES FIRE TRIG" (backlog NU), the pad's normal — declared before the pad, which holds it.
-	std::unique_ptr<DeviceControl> notesTrigControl_;
-	std::unique_ptr<TrigPad> trigPad_;
+	/// THE SELECTED TAB. A card-local view choice, not patch state.
+	size_t tab_ = 0;
+	/// The On squares as last drawn, a bit a tab; see `updateContent`.
+	unsigned tabsOnDrawn_ = ~0u;
+	[[nodiscard]] TabSet& cur() noexcept { return sets_[tab_]; }
+	[[nodiscard]] const TabSet& cur() const noexcept { return sets_[tab_]; }
+	/// THE DEVICE FIELD OF control `p` ON TAB `tab` (the selected one by default).
+	[[nodiscard]] size_t fieldOf(mod::lfo::Param p) const noexcept { return mod::lfo::tabParam(tab_, p); }
+	[[nodiscard]] size_t fieldOf(size_t tab, mod::lfo::Param p) const noexcept { return mod::lfo::tabParam(tab, p); }
+	/// WHAT THE RATE BOX OF TAB `tab` PRINTS — `rateFace`, for a tab other than the selected one.
+	std::string rateFaceOf(size_t tab, double value) const;
+	void drawTabs(visage::Canvas& canvas);
+	void showTabOutputs();
 };
 
 } // namespace feathers::ui

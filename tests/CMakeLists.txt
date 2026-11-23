@@ -1188,6 +1188,12 @@ target_link_libraries(test_mod_lfo_note PRIVATE feathers-mod feathers-warnings)
 target_include_directories(test_mod_lfo_note PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 add_test(NAME mod-lfo-note COMMAND test_mod_lfo_note)
 
+# THE QUAD LFO: four tabs behind one device — tab 1 is the old LFO, tabs 2-4 appended and off.
+add_executable(test_mod_lfo_quad test_mod_lfo_quad.cpp)
+target_link_libraries(test_mod_lfo_quad PRIVATE feathers-mod feathers-warnings)
+target_include_directories(test_mod_lfo_quad PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
+add_test(NAME mod-lfo-quad COMMAND test_mod_lfo_quad)
+
 # Smoothing across a retrigger (backlog MM), for the three shaped modulators at once — the LFO, the MSEG
 # and the DAHDSR share `mod::PolyShape`, which is where a new note's shape begins.
 add_executable(test_mod_retrigger_smoothing test_mod_retrigger_smoothing.cpp)

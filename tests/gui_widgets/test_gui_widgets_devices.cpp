@@ -46813,3 +46813,56 @@ TEST_CASE("OWLTT's window: a band's OUT reads in dB like IN, as 20 log10 of the 
 		CHECK(*over == doctest::Approx(1.0)); // past the top of the knob: clamped
 	}
 }
+
+TEST_CASE("QUAD LFO: the card's tabs are real presses; each tab shows its own set, bound to its own fields, and the others stay put") {
+	namespace lfo = feathers::mod::lfo;
+	FilterFixture f;
+	const size_t slot = f.bridge.addRackDevice(lfo::kTraits.tag);
+	REQUIRE(slot < kMaxRackSlots);
+	f.bridge.refresh();
+	f.panel->resized();
+	auto* card = const_cast<ui::LfoCard*>(dynamic_cast<const ui::LfoCard*>(f.panel->cardFrameForTest(slot)));
+	REQUIRE(card != nullptr);
+	const DeviceInstanceId id = f.bridge.rackDeviceAt(slot);
+	const auto field = [&](size_t tab, lfo::Param p) { return static_cast<double>(f.bridge.rackFieldAt(slot, lfo::tabParam(tab, p))); };
+	const auto clickTab = [&](size_t tab) {
+		const visage::Bounds b = card->tabBounds(tab);
+		// THE LABEL SIDE, away from the On square: a press there selects.
+		dragThroughRoot(f.root, card->positionInWindow() + visage::Point { b.right() - 6.0f, b.y() + b.height() * 0.5f },
+		                card->positionInWindow() + visage::Point { b.right() - 6.0f, b.y() + b.height() * 0.5f });
+	};
+	// THE VISIBLE CHOICE BOX IS ALWAYS EXACTLY ONE SET'S.
+	for (const size_t tab : { size_t { 2 }, size_t { 1 }, size_t { 3 }, size_t { 0 } }) {
+		CAPTURE(tab);
+		clickTab(tab);
+		REQUIRE(card->selectedTab() == tab);
+		CHECK(card->visibleSetWidgetsForTest() == 3); // two choice boxes and the pad of ONE set
+		double before[lfo::kTabs];
+		for (size_t t = 0; t < lfo::kTabs; ++t) {
+			before[t] = field(t, lfo::Param::Mode);
+		}
+		ui::ValueBox* mode = card->choiceBoxForTest(1); // the selected tab's Mode box
+		REQUIRE(mode != nullptr);
+		REQUIRE(mode->isVisible());
+		const double target = before[tab] == 3.0 ? 1.0 : 3.0;
+		mode->control().setValue(target);
+		for (size_t t = 0; t < lfo::kTabs; ++t) {
+			CAPTURE(t);
+			CHECK(field(t, lfo::Param::Mode) == (t == tab ? target : before[t]));
+		}
+	}
+	// A PRESS ON A TAB'S ON SQUARE SWITCHES THAT TAB, and selects nothing.
+	clickTab(0);
+	REQUIRE(card->selectedTab() == 0);
+	REQUIRE_FALSE(card->tabOn(2));
+	const visage::Bounds on = card->tabOnBounds(2);
+	const visage::Point centre = card->positionInWindow() + visage::Point { on.x() + on.width() * 0.5f, on.y() + on.height() * 0.5f };
+	dragThroughRoot(f.root, centre, centre);
+	CHECK(card->tabOn(2));
+	CHECK(field(2, lfo::Param::Enabled) == 1.0);
+	CHECK(card->selectedTab() == 0);
+	// AND THE CARD NOW SHOWS TAB 3'S OUTPUT, which `cardHidden` kept off until it was on.
+	(void)card->updateContent();
+	CHECK((f.bridge.outputsShown(id) & (uint64_t { 1 } << 2)) != 0);
+	CHECK((f.bridge.outputsShown(id) & (uint64_t { 1 } << 1)) == 0);
+}

@@ -805,9 +805,44 @@ void setValueOf(Settings* settings, Param param, float value) {
 
 namespace {
 
-/// THE DEVICE'S STATE: its wave, poly or mono (`mod::PolyShape`), and its latched settings — the MSEG's
-/// arrangement. Mono by default: one wave the patch breathes with; Poly gives each note its own.
-using OpsShape = mod::PolyShape<Shape, Settings>;
+/// ONE TAB: its wave, poly or mono (`mod::PolyShape`), and its latched settings — the MSEG's arrangement. Mono by
+/// default: one wave the patch breathes with; Poly gives each note its own.
+using TabShape = mod::PolyShape<Shape, Settings>;
+
+/// **THE DEVICE'S STATE: FOUR TABS, EACH A WHOLE LFO.** Preallocated with the device (no tab is built when switched on),
+/// and a tab that is switched off is not run at all: not ticked, not fed notes, not asked for a window. Tab 1 alone keeps
+/// ticking while off, as this device always did, so a patch that never uses the others behaves as it did.
+struct OpsShape {
+	std::array<TabShape, kTabs> tab;
+
+	OpsShape() {
+		for (size_t t = 0; t < kTabs; ++t) {
+			tab[t].trigControl = tabParam(t, Param::Trig);
+			tab[t].settings.enabled = t == 0; // tabs 2-4 start off until a row says otherwise
+		}
+	}
+	[[nodiscard]] bool runs(size_t t) const noexcept { return mod::tabRuns(t, tab[t].settings.enabled); }
+
+	void prepare(double sampleRate) {
+		for (TabShape& t : tab) {
+			t.prepare(sampleRate);
+		}
+	}
+	void reset() {
+		for (TabShape& t : tab) {
+			t.reset();
+		}
+	}
+	void tick(const device::ModTickContext& ctx) {
+		for (size_t t = 0; t < kTabs; ++t) {
+			if (runs(t)) {
+				tab[t].tick(ctx);
+			}
+		}
+	}
+	/// A tab's note table, or tab 1's for an output past the last (a host asking for an output that is not there).
+	[[nodiscard]] const TabShape& of(size_t output) const noexcept { return tab[output < kTabs ? output : 0]; }
+};
 
 OpsShape& asShape(void* storage) {
 	return *static_cast<OpsShape*>(storage);
@@ -818,15 +853,28 @@ const OpsShape& asShape(const void* storage) {
 }
 
 void setFieldsOf(void* storage, const float* fields, size_t fieldsPresent) {
-	Row row {};
-	const size_t take = std::min(fieldsPresent, row.size());
-	for (size_t i = 0; i < take; ++i) {
-		row[i] = fields[i];
+	OpsShape& quad = asShape(storage);
+	for (size_t t = 0; t < kTabs; ++t) {
+		quad.tab[t].settings = settingsOfTab(fields, fieldsPresent, t);
 	}
-	asShape(storage).settings = settingsOf(row, fieldsPresent);
 }
 
 } // namespace
+
+Settings settingsOfTab(const float* fields, size_t fieldsPresent, size_t tab) {
+	const size_t first = tab * kPerTab;
+	Row row {};
+	const size_t present = fieldsPresent > first ? std::min(fieldsPresent - first, kPerTab) : 0;
+	for (size_t i = 0; i < present; ++i) {
+		row[i] = fields[first + i];
+	}
+	Settings s = settingsOf(row, present);
+	// A TAB THE ROW DOES NOT REACH (a patch from before the tabs) IS OFF; tab 1 keeps its own default.
+	if (tab > 0 && present <= static_cast<size_t>(Param::Enabled)) {
+		s.enabled = false;
+	}
+	return s;
+}
 
 const device::ModOps kModOps {
 	.stateBytes = sizeof(OpsShape),
@@ -839,47 +887,48 @@ const device::ModOps kModOps {
 	.blockSamples = static_cast<size_t>(kBlockSamples),
 	.tick = [](void* storage, const device::ModTickContext& ctx) { asShape(storage).tick(ctx); },
 	.outputAt = [](const void* storage, size_t output) {
-		return output == 0 ? asShape(storage).sharedShape().value() : 0.0f;
+		return output < kTabs ? asShape(storage).of(output).sharedShape().value() : 0.0f;
 	},
 	// THE PER-VOICE ROAD — see the MSEG's, which this is.
 	.outputForNote =
 	    [](const void* storage, size_t output, int32_t noteId, int16_t channel, int16_t key) {
-		    return output == 0 ? asShape(storage).valueForNote(noteId, channel, key) : 0.0f;
+		    return output < kTabs ? asShape(storage).of(output).valueForNote(noteId, channel, key) : 0.0f;
 	    },
 	// **AND BOTH EARS** (backlog PA), asked only while Stereo Phase makes the output a pair (`SourceDesc::pairWhile`).
 	.outputPairForNote =
 	    [](const void* storage, size_t output, int32_t noteId, int16_t channel, int16_t key) {
-		    if (output != 0) {
+		    if (output >= kTabs) {
 			    return device::EarPair {};
 		    }
-		    const Shape& shape = asShape(storage).shapeForNote(noteId, channel, key);
+		    const Shape& shape = asShape(storage).of(output).shapeForNote(noteId, channel, key);
 		    return device::EarPair { shape.value(), shape.valueRight() };
 	    },
 	.playhead =
 	    [](const void* storage, uint32_t* ordinal, float* phase) {
-		    const Playhead where = asShape(storage).sharedShape().playhead();
+		    const Playhead where = asShape(storage).of(0).sharedShape().playhead();
 		    *ordinal = where.ordinal;
 		    *phase = where.phase;
 	    },
 	// THE COLLAPSED PAIR — what a destination with no voice reads, the shape `outputAt` reads.
 	.outputPairAt =
 	    [](const void* storage, size_t output) {
-		    if (output != 0) {
+		    if (output >= kTabs) {
 			    return device::EarPair {};
 		    }
-		    const Shape& shape = asShape(storage).sharedShape();
+		    const Shape& shape = asShape(storage).of(output).sharedShape();
 		    return device::EarPair { shape.value(), shape.valueRight() };
 	    },
-	.trigFires = [](const void* storage) { return asShape(storage).trigFires; },
+	.trigFires = [](const void* storage) { return asShape(storage).of(0).trigFires; },
 	// THE TICK AS A CURVE, sample by sample — see `Shape::renderWindow`. The collapsed output is the shared shape's, a
-	// note's its own (the same pick `outputAt` and `outputForNote` make).
+	// note's its own (the same pick `outputAt` and `outputForNote` make). A tab that is off has no curve to give.
 	.renderWindow =
 	    [](const void* storage, size_t output, bool forNote, int32_t noteId, int16_t channel, int16_t key, bool rightEar,
 	       float* window) {
-		    if (output != 0) {
+		    if (output >= kTabs || !asShape(storage).runs(output)) {
 			    return false;
 		    }
-		    const Shape& shape = forNote ? asShape(storage).shapeForNote(noteId, channel, key) : asShape(storage).sharedShape();
+		    const TabShape& tab = asShape(storage).of(output);
+		    const Shape& shape = forNote ? tab.shapeForNote(noteId, channel, key) : tab.sharedShape();
 		    return shape.renderWindow(rightEar, window);
 	    },
 };
@@ -895,8 +944,14 @@ const device::NoteOps kNoteOps {
 	.processNotes =
 	    [](void* storage, const device::NoteEvent* in, size_t inCount, device::NoteEvent* out,
 	       size_t outCapacity, size_t* outCount) {
-		    asShape(storage).processNotes(in, inCount, out, outCapacity, outCount, false,
-		                                  [](Shape& shape, const mod::PerNoteTable<Shape>::Note*) { shape.reset(); });
+		    // EVERY TAB THAT RUNS HEARS THE NOTES; every event passes through once (each writes the same events).
+		    OpsShape& quad = asShape(storage);
+		    for (size_t t = 0; t < kTabs; ++t) {
+			    if (t == 0 || quad.runs(t)) {
+				    quad.tab[t].processNotes(in, inCount, out, outCapacity, outCount, false,
+				                             [](Shape& shape, const mod::PerNoteTable<Shape>::Note*) { shape.reset(); });
+			    }
+		    }
 	    },
 	.listensOnly = true,
 };

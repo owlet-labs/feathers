@@ -4341,3 +4341,110 @@ TEST_CASE("lfo window through the engine: under Poly each voice's window is its 
 	CHECK(found220 == 1);
 	CHECK(found440 == 1);
 }
+
+TEST_CASE("quad lfo through the engine: every tab publishes on its own output, with its own enable and amount") {
+	namespace lfo = feathers::mod::lfo;
+	feathers::ParamBridge bridge;
+	const size_t at = bridge.addFxDevice(lfo::kTraits.tag);
+	REQUIRE(at < feathers::kMaxFxSlots);
+	const feathers::DeviceInstanceId lfoId = bridge.fxDeviceAt(at);
+	const auto set = [&](size_t tab, lfo::Param p, float v) { bridge.setDeviceControl(lfoId, lfo::tabParam(tab, p), v); };
+	const float smoothOff = static_cast<float>(lfo::kDescriptor.params[static_cast<size_t>(lfo::Param::Smoothing)].min);
+	for (size_t tab = 0; tab < 3; ++tab) {
+		set(tab, lfo::Param::Mode, static_cast<float>(feathers::mod::Mode::Free));
+		set(tab, lfo::Param::Waveform, static_cast<float>(lfo::Waveform::Square));
+		set(tab, lfo::Param::Bipolar, 1.0f);
+		set(tab, lfo::Param::TimeBase, 0.0f);
+		set(tab, lfo::Param::TimeScale, 0.0f);
+		set(tab, lfo::Param::Smoothing, smoothOff);
+	}
+	set(1, lfo::Param::Enabled, 1.0f);
+	set(1, lfo::Param::Amount, 0.5f);
+	set(2, lfo::Param::Enabled, 0.0f); // tab 3 off
+	Rig rig;
+	rig.synth.provisionDevices(bridge.chainState(), bridge.publishedChains().sequence(), &bridge.fxBodies());
+	feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+	rig.renderTicks(2); // the engine adopts the device at its first render
+	const feathers::rack::RackEngine& engine = rig.synth.laneForTest().engineForTest();
+	const size_t slot = engine.slotOf(lfoId);
+	REQUIRE(slot != feathers::rack::RackEngine::kNoSlot);
+	float peak[4] {};
+	for (int t = 0; t < 1500; ++t) {
+		rig.renderTicks(1);
+		for (size_t o = 0; o < 4; ++o) {
+			peak[o] = std::max(peak[o], std::abs(engine.publishedOutputAt(slot, o)));
+		}
+	}
+	CHECK(peak[0] == doctest::Approx(1.0f)); // tab 1: a bipolar square at full amount
+	CHECK(peak[1] == doctest::Approx(0.5f)); // tab 2: its own amount, and tab 1's is untouched
+	CHECK(peak[2] == 0.0f);                  // tab 3: switched off, at rest
+	CHECK(peak[3] == 0.0f);                  // tab 4: never switched on
+	// SWITCHED OFF WHILE RUNNING: the tab's value is stale and non-zero in the device, and the engine rests it — by THAT
+	// TAB'S OWN enable, not tab 1's (which is still on).
+	bridge.setDeviceControl(lfoId, lfo::tabParam(1, lfo::Param::Enabled), 0.0f);
+	feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+	rig.renderTicks(3);
+	CHECK(engine.publishedOutputAt(slot, 1) == 0.0f);
+	CHECK(std::abs(engine.publishedOutputAt(slot, 0)) == doctest::Approx(1.0f)); // tab 1 untouched
+}
+
+TEST_CASE("quad lfo through the engine: under Poly a later tab's per-voice windows are its own notes' curves") {
+	namespace lfo = feathers::mod::lfo;
+	feathers::ParamBridge bridge;
+	const size_t at = bridge.addFxDevice(lfo::kTraits.tag);
+	REQUIRE(at < feathers::kMaxFxSlots);
+	const feathers::DeviceInstanceId lfoId = bridge.fxDeviceAt(at);
+	const auto set = [&](lfo::Param p, float v) { bridge.setDeviceControl(lfoId, lfo::tabParam(1, p), v); };
+	set(lfo::Param::Enabled, 1.0f);
+	set(lfo::Param::Mode, static_cast<float>(feathers::mod::Mode::LfoRetrig));
+	set(lfo::Param::Poly, 1.0f);
+	set(lfo::Param::Waveform, static_cast<float>(lfo::Waveform::Sine));
+	set(lfo::Param::Bipolar, 1.0f);
+	set(lfo::Param::TimeBase, static_cast<float>(lfo::kNoteSyncBase));
+	set(lfo::Param::TimeScale, 0.0f);
+	set(lfo::Param::Smoothing, static_cast<float>(lfo::kDescriptor.params[static_cast<size_t>(lfo::Param::Smoothing)].min));
+	const int fine = feathers::modDestinationIndexOf(ParamId::FineTune);
+	REQUIRE(fine >= 0);
+	// ROUTED FROM OUTPUT 1 (tab 2) ALONE: only that output's windows are rendered.
+	bridge.setRouteAmount(feathers::backplane::Source::output(lfoId, 1),
+	                      feathers::backplane::Destination::core(static_cast<size_t>(fine)), 0.5f);
+	Rig rig;
+	rig.synth.provisionDevices(bridge.chainState(), bridge.publishedChains().sequence(), &bridge.fxBodies());
+	feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+	rig.renderTicks(2);
+	rig.synth.noteOn(0, 57, 1, 1.0); // A3, 220 Hz
+	rig.synth.noteOn(0, 69, 2, 1.0); // A4, 440 Hz
+	rig.renderTicks(3);
+	const feathers::rack::RackEngine& engine = rig.synth.laneForTest().engineForTest();
+	const float* tab2 = engine.outputWindowForVoiceOf(lfoId, 1);
+	const float* tab1 = engine.outputWindowForVoiceOf(lfoId, 0);
+	REQUIRE(tab2 != nullptr);
+	REQUIRE(tab1 != nullptr);
+	constexpr size_t kStride = feathers::device::kTickWindowStride;
+	std::vector<std::vector<float>> streams(feathers::kVoiceSlots);
+	double tab1Bend = 0.0;
+	for (int t = 0; t < 750; ++t) {
+		rig.renderTicks(1);
+		for (size_t v = 0; v < streams.size(); ++v) {
+			streams[v].insert(streams[v].end(), tab2 + v * kStride, tab2 + v * kStride + 64);
+			const float* w = tab1 + v * kStride;
+			tab1Bend = std::max(tab1Bend, static_cast<double>(std::abs(w[31] - (w[0] + (w[63] - w[0]) * (31.0f / 63.0f)))));
+		}
+	}
+	int found220 = 0, found440 = 0;
+	for (const auto& stream : streams) {
+		double energy = 0.0;
+		for (const float v : stream) {
+			energy += static_cast<double>(v) * v;
+		}
+		if (energy < 1.0) {
+			continue;
+		}
+		const double hz = lnPeakHz(stream, 198.0, 484.0, 0.5);
+		found220 += std::abs(hz - 220.0) < 1.5 ? 1 : 0;
+		found440 += std::abs(hz - 440.0) < 3.0 ? 1 : 0;
+	}
+	CHECK(found220 == 1);
+	CHECK(found440 == 1);
+	CHECK(tab1Bend < 1e-5); // tab 1's output is not routed: its windows stay the ramp
+}

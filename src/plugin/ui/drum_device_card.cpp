@@ -120,6 +120,10 @@ bool DrumDeviceCard::updateContent() {
 		noteShown_ = !noteShown_;
 		resized();
 	}
+	// A DRONE TAKES NO TRIGGER: the Trig button is hidden while it is on.
+	if (play_ != nullptr && play_->isVisible() == model_.droneOn()) {
+		play_->setVisible(!model_.droneOn());
+	}
 	const bool on = model_.control(dd::Param::Enabled).value() >= 0.5;
 	for (visage::Frame* f : { static_cast<visage::Frame*>(level_.get()), static_cast<visage::Frame*>(tune_.get()) }) {
 		(void)f;

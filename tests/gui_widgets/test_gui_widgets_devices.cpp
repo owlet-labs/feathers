@@ -43134,6 +43134,53 @@ TEST_CASE("drum device card: each widget is bound to its control by index, write
 	CHECK_FALSE(e.on);
 }
 
+TEST_CASE("drum Trig button: a real press strikes on the press and before the release, a Gate holds across it, a Drone hides it") {
+	DrumUi u;
+	const auto mouse = [](bool down) {
+		visage::MouseEvent e;
+		e.position = { 6.0f, 6.0f };
+		e.button_id = visage::kMouseButtonLeft;
+		e.button_state = down ? visage::kMouseButtonLeft : visage::kMouseButtonNone;
+		e.is_down = down;
+		return e;
+	};
+	for (const bool gate : { false, true }) {
+		CAPTURE(gate);
+		u.set(ddv::Param::Trigger, gate ? 1.0 : 0.0);
+		for (ui::DrumPlayButton* button : { u.d.card->playForTest(), u.win->playForTest() }) {
+			REQUIRE(button != nullptr);
+			REQUIRE(button->isVisible());
+			feathers::UiNoteEvent e;
+			while (u.d.f.bridge.popNote(e)) {
+			}
+			// THE PRESS: the strike is posted by the press itself, and nothing else is posted yet (the release has not happened).
+			button->onMouseDown().callback(mouse(true));
+			REQUIRE(u.d.f.bridge.popNote(e));
+			CHECK(e.on);
+			CHECK(e.key == static_cast<int>(u.field(ddv::Param::Note)));
+			CHECK(button->held());
+			// HELD: no note-off while the button is down, in either trigger mode (a Gate's hit is held by the key staying down).
+			CHECK_FALSE(u.d.f.bridge.popNote(e));
+			// THE RELEASE lets go.
+			button->onMouseUp().callback(mouse(false));
+			REQUIRE(u.d.f.bridge.popNote(e));
+			CHECK_FALSE(e.on);
+			CHECK_FALSE(button->held());
+		}
+	}
+	// A DRONE TAKES NO TRIGGER: hidden on the card and in the window, on a kind that can be held; a kind that cannot be held keeps it.
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::FM));
+	u.set(ddv::Param::Trigger, 2.0);
+	CHECK_FALSE(u.d.card->playForTest()->isVisible());
+	CHECK_FALSE(u.win->playForTest()->isVisible());
+	u.set(ddv::Param::Trigger, 0.0);
+	CHECK(u.d.card->playForTest()->isVisible());
+	CHECK(u.win->playForTest()->isVisible());
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Membrane));
+	u.set(ddv::Param::Trigger, 2.0); // not a sustaining kind: the Drone choice means a One-shot there, so the button stays
+	CHECK(u.d.card->playForTest()->isVisible());
+}
+
 TEST_CASE("drum device: the picture's handles write their own controls by value, Tune in whole semitones and Shift fine, and a Kind shows only its own") {
 	DrumUi u;
 	using H = ui::HitPicture::Handle;

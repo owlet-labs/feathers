@@ -18,6 +18,7 @@
 #include "plugin/ui/drum_device_ui.h"
 
 #include "plugin/ui/theme.h"
+#include "plugin/ui/trig_pad.h"
 
 #include <algorithm>
 #include <cmath>
@@ -128,6 +129,10 @@ void DrumDeviceModel::setModulation(ModState* mod, EditHistory* history) {
 	}
 }
 
+bool DrumDeviceModel::droneOn() const {
+	return settings().index(dd::Param::Trigger) == feathers::drum::kPlayDrone && feathers::drum::kindSustains(kind());
+}
+
 DrumPlayButton::DrumPlayButton(backplane::DeviceHost& host, std::function<int()> key) : host_(host), key_(std::move(key)) {
 	onMouseDown() = [this](const visage::MouseEvent&) { press(); };
 	onMouseUp() = [this](const visage::MouseEvent&) { release(); };
@@ -137,7 +142,7 @@ DrumPlayButton::DrumPlayButton(backplane::DeviceHost& host, std::function<int()>
 DrumPlayButton::~DrumPlayButton() { release(); }
 
 const char* DrumPlayButton::tooltipAt(visage::Point) const {
-	return "Strike this drum on its Note (middle C when it is Pitched), held while the button is held. Not saved and not modulated.";
+	return "Trig: strikes this drum on its Note (middle C when it is Pitched) the moment it is pressed, and holds a Gate drum until it is let go. Not saved and not modulated.";
 }
 
 void DrumPlayButton::press() {
@@ -159,12 +164,8 @@ void DrumPlayButton::release() {
 }
 
 void DrumPlayButton::draw(visage::Canvas& canvas) {
-	canvas.setColor(held_ ? kAccent : kSurfaceRaised);
-	canvas.roundedRectangle(0.0f, 0.0f, width(), height(), 4.0f);
-	canvas.setColor(kLine);
-	canvas.roundedRectangleBorder(0.0f, 0.0f, width(), height(), 4.0f, 1.0f);
-	canvas.setColor(held_ ? kVoid : kInk);
-	canvas.triangleRight(width() * 0.5f - 3.0f, height() * 0.5f - 5.0f, 5.0f);
+	// THE HOUSE TRIG LOOK (`TrigPad::drawJack`): the round amber jack, lit for as long as the press is held.
+	TrigPad::drawJack(canvas, static_cast<float>(width()), static_cast<float>(height()), held_, false, false);
 }
 
 } // namespace feathers::ui

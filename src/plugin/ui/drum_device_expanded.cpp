@@ -204,7 +204,12 @@ void DrumDeviceExpanded::layOut() {
 	seat(strike, dd::Param::Keys, 168.0f, 22.0f);
 	seat(strike, dd::Param::Note, 56.0f, ValueBox::kHeight);
 	if (play_ != nullptr) {
-		strike.place(play_.get(), 30.0f, 22.0f);
+		// A DRONE TAKES NO TRIGGER: hidden, not greyed, while it is on.
+		const bool drone = model_.droneOn();
+		play_->setVisible(!drone);
+		if (!drone) {
+			strike.place(play_.get(), 30.0f, 22.0f);
+		}
 	}
 	// ONE OF THE TWO TRIGGER FACES: with Drone on a kind that can hold it, else the plain two-way (the engine's `kindSustains`).
 	const bool sustains = feathers::drum::kindSustains(kind);
@@ -301,7 +306,8 @@ bool DrumDeviceExpanded::updateContent() {
 	const bool settled = model_.settled().defined;
 	const int keys = model_.settings().index(dd::Param::Keys);
 	bool moved = false;
-	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || keys != shownKeys_) {
+	const bool trigStale = play_ != nullptr && play_->isVisible() == model_.droneOn(); // the Trig button follows the Drone mode
+	if (kind != shownKind_ || gate != shownGate_ || settled != shownSettled_ || keys != shownKeys_ || trigStale) {
 		layOut();
 		moved = true;
 	}

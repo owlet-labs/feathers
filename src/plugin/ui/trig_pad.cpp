@@ -195,17 +195,10 @@ bool TrigPad::poll() {
 	return poll(std::chrono::duration<double>(Clock::now().time_since_epoch()).count());
 }
 
-void TrigPad::draw(visage::Canvas& canvas) {
-	const float w = static_cast<float>(width());
-	const float h = static_cast<float>(height());
+void TrigPad::drawJack(visage::Canvas& canvas, float w, float h, bool on, bool armed, bool routed) {
 	const float d = std::min({ kDiameter, w, h });
 	const float x = (w - d) * 0.5f;
 	const float y = (h - d) * 0.5f;
-	const bool on = lit();
-	const device::ModDisplay state = control_.display();
-	const bool armed = state.routable;
-	// A ROUTE FROM ANY SOURCE marks it (backlog QK): one from an unfocused source drew nothing.
-	const bool routed = routedNow();
 
 	// THE JACK: a round socket, ringed. Amber filled when lit; the mapping colour around it while a source is armed
 	// (the same signal every destination gives); a routed pad keeps a thin amber ring so a wired trigger reads as one.
@@ -222,6 +215,18 @@ void TrigPad::draw(visage::Canvas& canvas) {
 	canvas.segment(x + d * 0.24f, lo, cx, lo, 1.2f, true);
 	canvas.segment(cx, lo, cx, hi, 1.2f, true);
 	canvas.segment(cx, hi, x + d * 0.76f, hi, 1.2f, true);
+}
+
+void TrigPad::draw(visage::Canvas& canvas) {
+	const float w = static_cast<float>(width());
+	const float h = static_cast<float>(height());
+	const bool on = lit();
+	// A ROUTE FROM ANY SOURCE marks it (backlog QK): one from an unfocused source drew nothing.
+	drawJack(canvas, w, h, on, control_.display().routable, routedNow());
+	const float d = std::min({ kDiameter, w, h });
+	const float x = (w - d) * 0.5f;
+	const float y = (h - d) * 0.5f;
+	const float cx = x + d * 0.5f;
 
 	// THE NORMAL'S MARK (backlog NU): a dot over the rising edge while notes fire this Trig too — the note patched in.
 	// Absent when the normal is broken, and on a pad that has none.

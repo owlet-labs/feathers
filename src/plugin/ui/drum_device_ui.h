@@ -51,6 +51,8 @@ public:
 	[[nodiscard]] feathers::drum::Kind kind() const;
 	/// Whether `p` is read by the current Kind (a control with no gate always is): the honesty rule's question.
 	[[nodiscard]] bool relevant(dd::Param p) const;
+	/// Whether the drum is a Drone (a kind that can be held, set to Drone): it sounds with no key, so the Trig button has nothing to do and is hidden.
+	[[nodiscard]] bool droneOn() const;
 	/// The hit as the drum engine plays it at velocity 0.8 (the panel's), and the pitch it settles on.
 	[[nodiscard]] feathers::drum::Laws laws() const;
 	[[nodiscard]] feathers::drum::SettledPitch settled() const;
@@ -69,7 +71,7 @@ private:
 	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(dd::Param::kCount)> controls_ {};
 };
 
-/// **A DRUM'S PLAY BUTTON** (a play glyph): a press strikes the drum's Note through the host's note road (`DeviceHost::postNote`), the release
+/// **A DRUM'S TRIG BUTTON** (the house trigger jack, `TrigPad::drawJack`): a press strikes the drum's Note through the host's note road (`DeviceHost::postNote`), the release
 /// lets it go; velocity 100/127. Offered only where the host has such a road (`canPostNote`): a host with none draws none.
 class DrumPlayButton : public visage::Frame, public TooltipSource {
 public:

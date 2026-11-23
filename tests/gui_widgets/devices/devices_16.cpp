@@ -2182,7 +2182,7 @@ TEST_CASE("OWLTT Comb: each column's curve peaks at its band's harmonics, sharpe
 	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::Mode), static_cast<float>(ow::kCombMode));
 	ui::OwlttGraph* graph = panel.graph();
 	REQUIRE(graph != nullptr);
-	constexpr size_t kPoints = 641; // a step of 0.025 in harmonic number over 0 .. 16
+	constexpr size_t kPoints = 641; // a step of 0.0125 in harmonic number over 0 .. 8
 	const auto peaks = [&](size_t band) {
 		const std::vector<float> c = graph->combCurve(band, kPoints);
 		std::vector<double> at;
@@ -2207,20 +2207,20 @@ TEST_CASE("OWLTT Comb: each column's curve peaks at its band's harmonics, sharpe
 		CAPTURE(home);
 		f.deviceHost.setField(id, res, home);
 		// THE DEFAULTS (x1, x2): Between on the half harmonics, Odd on 1 3 5 ..., Even on 2 4 6 ... (the edges of the span are not interior peaks).
-		expectPeaks(0, 0.5, 1.0, 16);
-		expectPeaks(1, 1.0, 2.0, 8);
-		expectPeaks(2, 2.0, 2.0, 7);
+		expectPeaks(0, 0.5, 1.0, 8);
+		expectPeaks(1, 1.0, 2.0, 4);
+		expectPeaks(2, 2.0, 2.0, 3);
 	}
-	// A SECOND SPACING OF x3: High keeps every third harmonic, so its peaks are 3, 6, 9, 12, 15.
+	// A SECOND SPACING OF x3: High keeps every third harmonic, so its peaks are 3 and 6.
 	f.deviceHost.setField(id, res, 0.0f);
 	f.deviceHost.setField(id, high, 3000.0f);
-	expectPeaks(2, 3.0, 3.0, 5);
+	expectPeaks(2, 3.0, 3.0, 2);
 	f.deviceHost.setField(id, high, 2000.0f);
 	// RES HOME NARROWS THE TEETH: the width at half height of Odd's first peak falls as it rises.
 	const auto halfWidth = [&](float home) {
 		f.deviceHost.setField(id, res, home);
 		const std::vector<float> c = graph->combCurve(1, kPoints);
-		const size_t centre = 40; // u = 1
+		const size_t centre = 80; // u = 1
 		const float half = c[centre] * 0.5f;
 		size_t a = centre;
 		while (a > 0 && c[a] > half) {
@@ -2282,7 +2282,7 @@ TEST_CASE("OWLTT Comb: the three curves are overlaid across the full plot width,
 		const auto i = static_cast<size_t>(std::lround(t * static_cast<float>(kPoints - 1)));
 		const float yTop = l.y[i];
 		const visage::Bounds area = graph->barAreaForTest();
-		return (area.bottom() - 3.0f - yTop) / (area.height() - 6.0f);
+		return (area.bottom() - ui::OwlttGraph::kCombBottomPad - yTop) / (area.height() - ui::OwlttGraph::kCombTopMargin - ui::OwlttGraph::kCombBottomPad);
 	};
 	for (size_t b = 0; b < 3; ++b) {
 		CAPTURE(b);
@@ -2297,7 +2297,7 @@ TEST_CASE("OWLTT Comb: the three curves are overlaid across the full plot width,
 	CHECK(layers[0].colour != layers[1].colour);
 	CHECK(layers[1].colour != layers[2].colour);
 	// AT HARMONIC k (defaults) the owner peaks and the others are low; Between owns the half harmonics.
-	for (int k = 1; k <= 15; ++k) {
+	for (int k = 1; k <= 7; ++k) {
 		CAPTURE(k);
 		const size_t owner = k % 2 == 1 ? 1 : 2;
 		const size_t other = owner == 1 ? 2 : 1;

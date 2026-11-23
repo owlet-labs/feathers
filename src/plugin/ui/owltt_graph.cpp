@@ -1005,9 +1005,8 @@ std::vector<OwlttGraph::CombLayer> OwlttGraph::combLayers(size_t points) const {
 		return out;
 	}
 	const visage::Bounds area = barArea();
-	const float pad = 3.0f;
-	const float yBase = area.bottom() - pad;
-	const float span = area.height() - 2.0f * pad;
+	const float yBase = area.bottom() - kCombBottomPad;
+	const float span = area.height() - kCombTopMargin - kCombBottomPad;
 	for (size_t b = 0; b < 3; ++b) {
 		CombLayer layer;
 		layer.band = b;
@@ -1017,7 +1016,7 @@ std::vector<OwlttGraph::CombLayer> OwlttGraph::combLayers(size_t points) const {
 		const std::vector<float> curve = combCurve(b, points);
 		layer.y.reserve(curve.size());
 		for (const float v : curve) {
-			layer.y.push_back(yBase - std::clamp(v, 0.0f, 1.05f) * span);
+			layer.y.push_back(yBase - std::clamp(v, 0.0f, 1.0f) * span);
 		}
 		out.push_back(std::move(layer));
 	}
@@ -1390,6 +1389,41 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 	canvas.setColor(withAlpha(kLine, 0.8f));
 	canvas.segment(xLow, whole.y(), xLow, whole.bottom(), 1.0f, true);
 	canvas.segment(xHigh, whole.y(), xHigh, whole.bottom(), 1.0f, true);
+	// IN COMB: THE THREE BANDS' RESPONSE CURVES, OVERLAID ACROSS THE FULL PLOT behind every column's strips and handles, one colour per band (`combLayers`).
+	// Faint guides at the harmonics first, so the teeth read against them; then a translucent fill and a line per band, so where two cross both stay visible.
+	if (combMode()) {
+		for (int k = 0; k <= static_cast<int>(kCombCurveSpan); ++k) {
+			const float gx = combCurveX(static_cast<double>(k));
+			canvas.setColor(withAlpha(kMuted, k == 1 ? 0.30f : 0.12f));
+			canvas.rectangle(std::min(gx, xover.right() - 1.0f), xover.y(), 1.0f, xover.height());
+		}
+		// FOUR SAMPLES A PIXEL, so a sharp tooth is not stepped over.
+		const auto points = static_cast<size_t>(std::max(2.0f, xover.width())) * 4;
+		const float yBase = xover.bottom() - kCombBottomPad;
+		for (const CombLayer& layer : combLayers(points)) {
+			const float w = layer.x1 - layer.x0;
+			float prevX = layer.x0;
+			float prevY = layer.y.front();
+			for (size_t i = 0; i < layer.y.size(); ++i) {
+				const float x = layer.x0 + w * static_cast<float>(i) / static_cast<float>(layer.y.size() - 1);
+				if (i % 4 == 0) {
+					float top = layer.y[i];
+					for (size_t k = i; k < std::min(i + 4, layer.y.size()); ++k) {
+						top = std::min(top, layer.y[k]);
+					}
+					canvas.setColor(withAlpha(layer.colour, 0.035f));
+					canvas.rectangle(x, top, w * 4.0f / static_cast<float>(layer.y.size()) + 0.5f, yBase - top);
+				}
+				if (i > 0) {
+					canvas.setColor(withAlpha(layer.colour, 0.8f));
+					canvas.segment(prevX, prevY, x, layer.y[i], 1.2f, true);
+				}
+				prevX = x;
+				prevY = layer.y[i];
+			}
+		}
+	}
+
 
 	// THE TABLE UNDER THE BARS: a rule above it, the row captions once at the left, and each band's column heading it by
 	// the crossover lines already drawn. The boxes are children and paint themselves.
@@ -1464,46 +1498,13 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 	for (size_t b = 0; b < 3; ++b) {
 		const visage::Bounds label = bottom.classLabel[b];
 		if (!bottom.classText[b].empty()) {
+			canvas.setColor(withAlpha(kSurface, 0.85f));
+			canvas.roundedRectangle(label.x() + label.width() * 0.5f - 22.0f, label.y(), 44.0f, label.height(), 3.0f);
 			canvas.setColor(withAlpha(kMuted, 0.95f));
 			canvas.text(bottom.classText[b], font(kKnobReadoutSize), visage::Font::kCenter, label.x() - 2.0f, label.y(), label.width() + 4.0f,
 			            label.height());
 		}
 	}
-
-		// IN COMB: THE THREE BANDS' RESPONSE CURVES, OVERLAID ACROSS THE FULL PLOT behind every column's strips and handles, one colour per band (`combLayers`).
-		// Faint guides at the harmonics first, so the teeth read against them; then a translucent fill and a line per band, so where two cross both stay visible.
-		if (combMode()) {
-			for (int k = 0; k <= static_cast<int>(kCombCurveSpan); ++k) {
-				const float gx = combCurveX(static_cast<double>(k));
-				canvas.setColor(withAlpha(kMuted, k == 1 ? 0.30f : 0.12f));
-				canvas.rectangle(std::min(gx, xover.right() - 1.0f), xover.y(), 1.0f, xover.height());
-			}
-			// FOUR SAMPLES A PIXEL, so a sharp tooth is not stepped over.
-			const auto points = static_cast<size_t>(std::max(2.0f, xover.width())) * 4;
-			const float yBase = xover.bottom() - 3.0f;
-			for (const CombLayer& layer : combLayers(points)) {
-				const float w = layer.x1 - layer.x0;
-				float prevX = layer.x0;
-				float prevY = layer.y.front();
-				for (size_t i = 0; i < layer.y.size(); ++i) {
-					const float x = layer.x0 + w * static_cast<float>(i) / static_cast<float>(layer.y.size() - 1);
-					if (i % 4 == 0) {
-						float top = layer.y[i];
-						for (size_t k = i; k < std::min(i + 4, layer.y.size()); ++k) {
-							top = std::min(top, layer.y[k]);
-						}
-						canvas.setColor(withAlpha(layer.colour, 0.10f));
-						canvas.rectangle(x, top, w * 4.0f / static_cast<float>(layer.y.size()) + 0.5f, yBase - top);
-					}
-					if (i > 0) {
-						canvas.setColor(withAlpha(layer.colour, 0.9f));
-						canvas.segment(prevX, prevY, x, layer.y[i], 1.4f, true);
-					}
-					prevX = x;
-					prevY = layer.y[i];
-				}
-			}
-		}
 
 	// PER-BAND GRAPH CONTROLS — threshold bars, GR meters, level strips.
 	{

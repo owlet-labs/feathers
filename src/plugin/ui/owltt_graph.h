@@ -164,7 +164,9 @@ public:
 	/// **THE COMB CURVES (Comb modes)**: in place of the band level bars each column draws its band's magnitude response, from the current spacings, the sharpness
 	/// (Mode) and Res Home's resonance (Vibe's per-split deviation is not drawn: the plot reads parameters, not the engine). The x axis is the first spacing's
 	/// harmonic number, 0 .. `kCombCurveSpan`, never Hz. `points` samples, each the magnitude (0 .. ~1).
-	static constexpr double kCombCurveSpan = 16.0;
+	static constexpr double kCombCurveSpan = 8.0;
+	static constexpr float kCombTopMargin = 16.0f; // the curves stay below the column headings
+	static constexpr float kCombBottomPad = 3.0f;
 	[[nodiscard]] std::vector<float> combCurve(size_t band, size_t points) const;
 	/// **THE OVERLAY**: in Comb all three curves are drawn together, behind the columns, across the plot's FULL width on one shared axis: the first spacing's harmonic
 	/// number (not Hz: the teeth are defined on it, so Between's sit between the harmonics, Odd's on the odd ones and Even's on the even ones however the spacings

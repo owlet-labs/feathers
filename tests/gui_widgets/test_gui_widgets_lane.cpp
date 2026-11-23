@@ -7045,3 +7045,25 @@ TEST_CASE("header presets: the synth's fx lane and modulator strip card menus of
 	f.panel->resized();
 	checkSynthPresets("modulator strip", *f.panel, f.panel->selectionForTest(), mod::lfo::kDescriptor, [&] { f.panel->showSlotMenu(lfoSlot); }, "Strip Saved");
 }
+
+TEST_CASE("header presets: the lane torn down while the preset popup and its save dialog are open leaves nothing behind") {
+	LanePresetRoot root;
+	for (const bool withDialog : { false, true }) {
+		CAPTURE(withDialog);
+		{
+			FilterFixture f;
+			f.lane->showSlotMenu(0);
+			visage::PopupMenuFrame* popup = menu_check::newestPopup(*f.lane);
+			REQUIRE(popup != nullptr);
+			visage::PopupMenuFrame* list = header_presets::openBox(*popup, *f.lane);
+			REQUIRE(list != nullptr);
+			if (withDialog) {
+				REQUIRE(menu_check::pickRow(*list, header_presets::kSaveAs));
+				list->timerCallback();
+				REQUIRE(f.lane->selectionForTest().verbs().presets().browser()->promptFrameForTest() != nullptr);
+			}
+			// THE FIXTURE GOES WITH THE POPUP (and the dialog) STILL OPEN: the box, its provider and the dialog are taken down with the lane.
+		}
+		CHECK(true);
+	}
+}

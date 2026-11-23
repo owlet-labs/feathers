@@ -239,10 +239,6 @@ private:
 	std::unique_ptr<DeviceControl> macrosFoldControl_;
 	std::unique_ptr<Rail> containerRail_;
 	std::unique_ptr<Rail> macrosRail_;
-	/// The route list's own history, forwarded to the window's (and so the plugin's) when the window is bound: an edit there is one undo step there.
-	EditHistory routeHistory_;
-	std::unique_ptr<RackRouteHost> routeHost_;
-	std::unique_ptr<RouteList> routes_;
 	std::vector<visage::Frame*> inspectorFrames_;
 	bool foldsAppliedMacros_ = false;
 	bool foldsAppliedInspector_ = false;
@@ -374,6 +370,12 @@ private:
 	/// (a child of the host's: one hand, one arm) and `syncMacroArm` lends its source to every rail. Declared before the arrows.
 	ModState macroMod_;
 	std::vector<std::unique_ptr<SourceArm>> macroArms_;
+	/// **THE ROUTE LIST WATCHES `macroMod_`, so it is declared BELOW it** (members die in reverse): above it, the list outlived the state it is
+	/// watching and its destructor unwatched into a state already gone (`~FrameWatchers`' assert, in a build that has asserts). Its history
+	/// is forwarded to the window's (and so the plugin's) when the window is bound: an edit there is one undo step there.
+	EditHistory routeHistory_;
+	std::unique_ptr<RackRouteHost> routeHost_;
+	std::unique_ptr<RouteList> routes_;
 	bool relayArm();
 	/// **A MACRO ARMED HERE IS ARMED IN EVERY CHAIN** (see `macroMod_`): each rail's state is borrowed for the macro's source
 	/// while the hand holds it, and put back as found when it lets go.

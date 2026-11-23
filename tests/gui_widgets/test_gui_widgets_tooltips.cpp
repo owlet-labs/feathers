@@ -55,6 +55,8 @@
 #include "plugin/ui/harmonic_row.h"
 #include "plugin/ui/smooth_card.h"
 #include "plugin/ui/smooth_expanded.h"
+#include "fx/pitch/pitch_tips.h"
+#include "plugin/ui/pitch_card.h"
 #include "fx/smooth/smooth_tips.h"
 #include "plugin/ui/owltt_graph.h"
 #include "plugin/ui/sklitter_expanded.h"
@@ -2690,6 +2692,30 @@ TEST_CASE("the Smooth Shaper's Feedback, Harmonic and H Phase hover text follows
 		CHECK(hoverOf(winHarmonic) == std::string(want.harmonic));
 		CHECK(hoverOf(winPhase) == std::string(want.phase));
 	}
+}
+
+
+TEST_CASE("Pitch's Shift and Fine hover text follows the Scale: Free, a scale, and Free again, on the card") {
+	// THE HOVER ROAD READS A CONTROL'S OVERRIDE FIRST (`tooltipAt`), so the override on the card's own control is the value a
+	// hand sees. Three steps, so a text that stuck from the first step would fail the last. Pitch has no window.
+	namespace pt = feathers::fx::pitch;
+	ModFixture f;
+	const device::Descriptor& desc = descriptorByTag("PITCH");
+	const Placed placed = place(f, desc);
+	auto* card = dynamic_cast<ui::PitchCard*>(placed.card);
+	REQUIRE(card != nullptr);
+	const auto scaleField = static_cast<size_t>(pt::Param::Scale);
+	const auto text = [](const char* t) { return t == nullptr ? std::string {} : std::string(t); };
+	for (const float scale : { 0.0f, 1.0f, 0.0f }) {
+		CAPTURE(scale);
+		f.deviceHost.setField(placed.device, scaleField, scale);
+		(void)card->updateContent();
+		const pt::ScaleTips& want = pt::tipsFor(scale != 0.0f);
+		CHECK(text(card->controlForTest(static_cast<size_t>(pt::Param::Shift)).tooltipOverride()) == std::string(want.shift));
+		CHECK(text(card->controlForTest(static_cast<size_t>(pt::Param::Fine)).tooltipOverride()) == std::string(want.fine));
+	}
+	// AND THE TWO TEXTS DIFFER, or the check would pass on a table that said one thing everywhere.
+	CHECK(std::string(pt::kFreeTips.shift) != pt::kScaledTips.shift);
 }
 
 TEST_CASE("every hoverable control on the Engine rail shows its tooltip, on both pages") {

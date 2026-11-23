@@ -4658,6 +4658,102 @@ TEST_CASE("rack window route list: a route made inside the rack from its armed m
 	CHECK(list.right() <= w.containerWidth());
 }
 
+/// A KNOB IN `column` THAT A HAND CAN ROUTE TO: a device control that is lit as a destination (the armed source reaches it).
+ui::Knob* routeTargetIn(ui::ChainColumn& column) {
+	std::vector<ui::Knob*> knobs;
+	collectKnobs(&column, &knobs);
+	for (ui::Knob* k : knobs) {
+		if (k->isModDestination() && dynamic_cast<ui::DeviceControl*>(k->control()) != nullptr && k->width() > 0.0f && k->haloLit()) {
+			return k;
+		}
+	}
+	return nullptr;
+}
+
+TEST_CASE("route list refresh: in the Rack window a route made by dragging a target knob while a rack macro is armed tells the list at once") {
+	RealRack r;
+	r.chains(2, 2, true);
+	r.rack().setOpen(0, true); // the first chain's rail shows its cards
+	ui::EditHistory history;
+	r.panel->modulationBound(r.f.gui.modForTest(), &history);
+	r.refresh();
+	ui::ParallelRackExpanded& w = *r.panel;
+	ui::ModState& macroMod = w.macroModForTest();
+	macroMod.focus(backplane::Source::core(0));
+	macroMod.arm(true);
+	r.refresh();
+	ui::ChainColumn* column = w.railForTest(0).column();
+	REQUIRE(column != nullptr);
+	ui::Knob* target = routeTargetIn(*column);
+	REQUIRE(target != nullptr);
+	ui::RouteList& list = w.routeListForTest();
+	CHECK(list.allRows().empty());
+	// THE LIST'S REDRAW IS DELIVERED BY THE STATE IT WATCHES: the tally of frames that state has told rises only when a frame was told.
+	const size_t told = macroMod.framesToldForTest();
+	const visage::Point at = target->positionInWindow() + visage::Point { target->width() * 0.5f, target->height() * 0.5f };
+	dragThroughRoot(r.panel, at, at - visage::Point { 0.0f, 60.0f });
+	r.refresh();
+	REQUIRE(list.allRows().size() == 1); // the route exists (read on demand)
+	CHECK(macroMod.framesToldForTest() > told); // and the list was told, so it draws it without a re-arm
+}
+
+TEST_CASE("route list refresh: arming a rack macro whose routes exist shows them at once (first arm)") {
+	RealRack r;
+	r.chains(2, 2, true);
+	r.rack().setOpen(0, true);
+	ui::EditHistory history;
+	r.panel->modulationBound(r.f.gui.modForTest(), &history);
+	r.refresh();
+	ui::ParallelRackExpanded& w = *r.panel;
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	chain0.setRouteAmount(backplane::Source::core(0), backplane::Destination::control(delay, control), 0.5f);
+	ui::ModState& macroMod = w.macroModForTest();
+	macroMod.focus(backplane::Source::core(0));
+	macroMod.arm(true);
+	r.refresh();
+	CHECK(w.routeListForTest().allRows().size() == 1); // the arm itself repaints the list, which reads its rows when drawn
+}
+
+TEST_CASE("route list refresh: the synth's list for a rack macro armed from the synth's editor tells at once when a route is made by dragging a target in the rack") {
+	RealRack r;
+	r.chains(2, 2, true);
+	r.rack().setOpen(0, true);
+	ui::EditHistory history;
+	ui::ModState* mod = r.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	r.panel->modulationBound(mod, &history);
+	r.refresh();
+	// THE MACRO ARMED IN THE RACK WINDOW: its arrow arms the macro in every chain, and the window relays that arm out to the synth's state as
+	// the rack's exported source, so the synth's own list (and heading) are for it.
+	r.panel->macroModForTest().focus(backplane::Source::core(0));
+	r.panel->macroModForTest().arm(true);
+	r.refresh();
+	REQUIRE(mod->armed());
+	CHECK(mod->source() == r.f.bridge.fxContainerExport(r.id, backplane::Source::core(0)));
+	ui::ChainColumn* column = r.panel->railForTest(0).column();
+	REQUIRE(column != nullptr);
+	ui::Knob* target = routeTargetIn(*column);
+	REQUIRE(target != nullptr);
+	ui::RouteList* list = findInTree<ui::RouteList>(r.f.root);
+	REQUIRE(list != nullptr);
+	CHECK(list->allRows().empty());
+	const size_t told = mod->framesToldForTest();
+	const visage::Point at = target->positionInWindow() + visage::Point { target->width() * 0.5f, target->height() * 0.5f };
+	dragThroughRoot(r.panel, at, at - visage::Point { 0.0f, 60.0f });
+	r.refresh();
+	REQUIRE(list->allRows().size() == 1);
+	CHECK(mod->framesToldForTest() > told);
+}
+
 TEST_CASE("synth route list: a rack macro armed from the synth's editor lists the routes that macro has inside the rack, heading and rows agreeing") {
 	RealRack r;
 	r.chains(2, 2, true);

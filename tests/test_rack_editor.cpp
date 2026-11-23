@@ -7192,3 +7192,43 @@ TEST_CASE("route list: in the Chain editor, a nested rack's macro armed as the r
 	list.removeForTest(rows[0]);
 	CHECK(chain0.routeAmount(macro, dest) == 0.0f);
 }
+
+TEST_CASE("route list refresh: in the Chain editor a route made by dragging a target knob while a macro is armed tells the editor's list at once") {
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const DeviceInstanceId id = f.add(fx::filter::kTraits.tag);
+	REQUIRE(id != kNoInstance);
+	f.editor.syncCards();
+	f.editor.resized();
+	ui::RouteList& list = f.editor.routeListForTest();
+	f.mod.focus(backplane::Source::core(0));
+	f.mod.arm(true);
+	f.editor.syncCards();
+	f.editor.resized();
+	ui::FxCard* card = f.editor.cardOfDeviceForTest(id);
+	REQUIRE(card != nullptr);
+	std::vector<ui::Knob*> knobs;
+	std::function<void(visage::Frame*)> walk = [&](visage::Frame* at) {
+		if (auto* knob = dynamic_cast<ui::Knob*>(at); knob != nullptr && knob->isModDestination() && knob->haloLit() && knob->width() > 0.0f
+		                                                  && dynamic_cast<ui::DeviceControl*>(knob->control()) != nullptr) {
+			knobs.push_back(knob);
+		}
+		for (visage::Frame* child : at->children()) {
+			walk(child);
+		}
+	};
+	walk(card);
+	REQUIRE_FALSE(knobs.empty());
+	CHECK(list.allRows().empty());
+	const size_t told = f.mod.framesToldForTest();
+	ui::Knob* target = knobs.front();
+	REQUIRE(f.mod.armed());
+	// A route made through the card's own control, as a drag on the knob writes it: the amount is written through the knob's control.
+	auto* control = dynamic_cast<ui::DeviceControl*>(target->control());
+	REQUIRE(control != nullptr);
+	control->beginGesture();
+	control->setAmount(0.5f);
+	control->endGesture();
+	CHECK(list.allRows().size() == 1);
+	CHECK(f.mod.framesToldForTest() > told);
+}

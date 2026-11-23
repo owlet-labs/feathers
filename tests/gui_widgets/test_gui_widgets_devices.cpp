@@ -33655,6 +33655,65 @@ TEST_CASE("Spectral's window: at every width it can be given, every control lies
 	}
 }
 
+TEST_CASE("Spectral's mode-dependent hover text follows the Filter, Filter 2, Vocode and Key Track, on the card and in the window") {
+	namespace spx = feathers::fx::spectral;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	// THE CARD'S SLOPE IS A KNOB; ITS RESONANCE IS A PLOT HANDLE, which answers from the source's `tooltip` (read below).
+	auto* slope = dynamic_cast<ui::Knob*>(d.card->widgetForTest(spx::Param::FilterSlope));
+	REQUIRE(slope != nullptr);
+	const auto hover = [](ui::Knob* k) { return ui::hoverText(*k, visage::Point { k->width() * 0.5f, k->height() * 0.5f }); };
+	const auto handleText = [&] {
+		const char* t = panel.sourceForTest().tooltip(0, feathers::SpectralControl::FilterResonance);
+		return std::string(t != nullptr ? t : "");
+	};
+	// THE CARD'S TEXT MAY CARRY THE CONTROL'S NAME IN FRONT, so the tail is read; THE WINDOW'S OWN CONTROLS ARE READ BY THEIR OVERRIDE.
+	const auto tailIs = [](const std::string& text, const char* want) {
+		const std::string tail(want);
+		return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+	};
+	const auto windowText = [&](spx::Param p) {
+		const char* own = panel.sourceForTest().deviceControl(p).tooltipOverride();
+		return std::string(own != nullptr ? own : "");
+	};
+	const auto refresh = [&] {
+		d.card->updateContent();
+		panel.updateContent();
+	};
+
+	// LOW PASS: the filter's peak and its falloff, as the plain words say.
+	d.set(static_cast<size_t>(spx::Param::FilterMode), 0.0f);
+	refresh();
+	CHECK(tailIs(handleText(),"A peak drawn at the cutoff"));
+	CHECK(tailIs(hover(slope), "How steeply the filter falls, from gentle (6 dB/oct) to a brick wall (96 dB/oct)"));
+	CHECK(windowText(spx::Param::FilterResonance) == "A peak drawn at the cutoff");
+
+	// BELL: the same two controls are the Bell's width and its sides.
+	d.set(static_cast<size_t>(spx::Param::FilterMode), 4.0f);
+	refresh();
+	CHECK(tailIs(handleText(),"How wide the Bell is, from 3 octaves down to a sixth of one"));
+	CHECK(tailIs(hover(slope), "How steep the Bell's sides are: a classic bell at the default, softer below, a flat-topped band above"));
+	CHECK(windowText(spx::Param::FilterSlope)
+	      == "How steep the Bell's sides are: a classic bell at the default, softer below, a flat-topped band above");
+
+	// KEY TRACK moves where Key Offset is measured from; VOCODE moves whose envelope Formant Shift follows. Both are in the window.
+	d.set(static_cast<size_t>(spx::Param::KeyTrack), 1.0f);
+	refresh();
+	CHECK(windowText(spx::Param::KeyOffset)
+	      == "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from the played note");
+	d.set(static_cast<size_t>(spx::Param::KeyTrack), 0.0f);
+	refresh();
+	CHECK(windowText(spx::Param::KeyOffset)
+	      == "Moves the fundamental the comb, Odd/Even and the curve are measured in, in semitones: from C3 (so C0 to C6)");
+	d.set(static_cast<size_t>(spx::Param::VocodeOn), 1.0f);
+	refresh();
+	CHECK(tailIs(windowText(spx::Param::FShiftOn), "using the sidechain's envelope"));
+	d.set(static_cast<size_t>(spx::Param::VocodeOn), 0.0f);
+	refresh();
+	CHECK(tailIs(windowText(spx::Param::FShiftOn), "using the sound's own envelope"));
+}
+
 TEST_CASE("Spectral's Vocode: the card says sidechain silent while it is on and nothing sounds there, and the plot draws the sidechain's envelope while vocoding") {
 	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
 	ui::SpectralCard* card = d.card;

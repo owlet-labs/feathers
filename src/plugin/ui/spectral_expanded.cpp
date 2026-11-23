@@ -206,6 +206,7 @@ std::unique_ptr<PillStack> SpectralExpanded::makeStack(const std::vector<sp::Par
 }
 
 bool SpectralExpanded::updateContent() {
+	deviceSource.refreshTips(); // the same road as the card's: the window's own controls carry the same text
 	if (!isVisible()) {
 		return false;
 	}

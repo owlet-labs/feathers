@@ -85,6 +85,9 @@ public:
 
 	/// THE DEVICE'S OWN CONTROL `p`, one per control and owned here, for the widgets the card and window build beside the panels.
 	[[nodiscard]] ui::DeviceControl& deviceControl(Param p);
+	/// Each mode-dependent control's hover text follows the Filter, Filter 2, Vocode and Key Track as they stand. Called
+	/// from the card's and the window's per-frame refresh; it re-sets only when one of those four has moved.
+	void refreshTips();
 	/// The drawer's control `c` as the device's, if it has one.
 	[[nodiscard]] static std::optional<Param> paramOf(SpectralControl c);
 	/// The device's settings as stored (the row), and the frame's f0 as the device published it (C3 before any reading).
@@ -97,6 +100,15 @@ public:
 
 private:
 	[[nodiscard]] float field(size_t index) const;
+	/// The four stored values the hover text turns on, and the last set of them the refresh wrote (-1 before any).
+	struct TipState {
+		int filter = 0;
+		int filter2 = 0;
+		bool vocode = false;
+		bool keyTrack = false;
+	};
+	[[nodiscard]] TipState tipState() const;
+	int tipKey_ = -1;
 	/// Build the frame from the readings and the settings now (readFrame's work); `playing` as the readings say.
 	void makeFrame(SpectralPlotFrame& out) const;
 

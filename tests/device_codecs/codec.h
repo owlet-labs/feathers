@@ -55,6 +55,25 @@ inline RowVec tripPlain(const RowVec& in) {
 	return RowVec(out.begin(), out.end());
 }
 
+/// A device whose row is `Tabs` copies of one `PerTab`-long block, then fields that belong to no tab (the view
+/// tab). Each block goes through the device's own per-tab conversion; the trailing fields are carried as they came.
+/// (`tripSized` alone covers only the first block, so the other tabs' ranges would escape the sweep.)
+template <typename Row, typename State, State (*Decode)(const Row&, size_t), Row (*Encode)(const State&), size_t Tabs, size_t PerTab>
+inline RowVec tripTabbed(const RowVec& in) {
+	RowVec out(in);
+	for (size_t tab = 0; tab < Tabs; ++tab) {
+		Row row {};
+		for (size_t i = 0; i < PerTab && tab * PerTab + i < in.size(); ++i) {
+			row[i] = in[tab * PerTab + i];
+		}
+		const Row enc = Encode(Decode(row, row.size()));
+		for (size_t i = 0; i < PerTab && tab * PerTab + i < out.size(); ++i) {
+			out[tab * PerTab + i] = enc[i];
+		}
+	}
+	return out;
+}
+
 
 struct Codec {
 	const char* tag;

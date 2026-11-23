@@ -29,6 +29,6 @@
 namespace feathers::codecs {
 
 /// This device's row codec for tests/test_device_ranges.cpp, registered from its own file (backlog NY.1).
-inline constexpr Codec kSampleholdCodec { mod::samplehold::kTraits.tag, &tripSized<mod::samplehold::Row, mod::samplehold::Settings, &mod::samplehold::settingsOf, &mod::samplehold::rowOf> };
+inline constexpr Codec kSampleholdCodec { mod::samplehold::kTraits.tag, &tripTabbed<mod::samplehold::Row, mod::samplehold::Settings, &mod::samplehold::settingsOf, &mod::samplehold::rowOf, mod::samplehold::kTabs, mod::samplehold::kPerTab> };
 
 } // namespace feathers::codecs

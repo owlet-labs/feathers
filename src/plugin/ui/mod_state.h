@@ -169,6 +169,9 @@ public:
 
 	/// Whether the next drag on a destination edits its AMOUNT rather than its value.
 	bool armed() const noexcept { return armed_ || (parent_ != nullptr && parent_->armed()); }
+	/// **THE ONE GLOW QUERY**: armed and Alt not held. Every control's `ModDisplay::armed`/`routable` (the glow of every painter)
+	/// reads this, so a held Alt pauses assign mode on knobs, boxes, pills, chips and plot handles alike.
+	bool assigning() const noexcept { return armed() && !bypassed(); }
 	/// This state's OWN arm, the parent's not counted — what an inner rack's arms toggle.
 	bool armedLocally() const noexcept { return armed_; }
 

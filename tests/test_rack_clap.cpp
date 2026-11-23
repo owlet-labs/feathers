@@ -73,6 +73,9 @@
 #include "rack/rack_test_ext.h"
 #include "state/state_trailer.h"
 #include "plugin/ui/device_control.h"
+#include "plugin/ui/control_face.h"
+#include "rack/parallel_rack.h"
+#include "backplane/endpoint.h"
 #include "fx/harm/harm_types.h"
 #include "mod/arp/pattern_types.h"
 #include "fx/automod/automod.h"
@@ -6917,4 +6920,128 @@ TEST_CASE("note rack: Pattern on a running transport hands the host the same ons
 		}
 		CHECK(missing == 0);
 	}
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE ALT PAUSE IN THE CHAIN AND RACK PLUGINS. Held Alt pauses assign mode: every glowing control goes dark, and comes back  //
+// when it lifts. The rack's tick had no read of the live modifiers at all, so the pause reached nothing here.               //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+int altPauseHeld() { return visage::kModifierAlt; }
+int altPauseUp() { return 0; }
+
+/// Every visible face lit for the armed source right now, by class (the paint's own input: a repaint is unobservable).
+struct PauseTally {
+	size_t knobs = 0, nonKnobs = 0;
+};
+
+PauseTally pauseTally(visage::Frame* frame) {
+	PauseTally t;
+	std::vector<visage::Frame*> stack { frame };
+	while (!stack.empty()) {
+		visage::Frame* fr = stack.back();
+		stack.pop_back();
+		if (!fr->isVisible()) {
+			continue;
+		}
+		if (const auto* face = dynamic_cast<const ui::ControlFace*>(fr)) {
+			std::vector<ui::ControlFace::Offered> offered;
+			face->offeredControls(offered);
+			for (const auto& o : offered) {
+				if (face->modLookFor(*o.control).armedGlow) {
+					(dynamic_cast<ui::Knob*>(fr) != nullptr ? t.knobs : t.nonKnobs) += 1;
+				}
+			}
+		}
+		for (visage::Frame* child : fr->children()) {
+			stack.push_back(child);
+		}
+	}
+	return t;
+}
+
+} // namespace
+
+TEST_CASE("alt pause: in the Chain plugin's editor a held Alt puts out every armed glow on the tick, and lifting it restores them") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	rack::RackEngine engine { rack::kRackAxes, hostCatalogue() };
+	rack::RackBridge bridge { engine };
+	rack::RackGui gui { bridge };
+	REQUIRE(gui.create(CLAP_WINDOW_API_X11, false));
+	rack::RackEditor* editor = gui.editorForTest();
+	REQUIRE(editor != nullptr);
+	REQUIRE(bridge.addDevice(fx::filter::kTraits.tag) != kNoInstance);
+	REQUIRE(bridge.addDevice(fx::sklitter::kTraits.tag) != kNoInstance);
+	bridge.drain();
+	gui.tick();
+	editor->setBounds(0, 0, rack::RackEditor::kWidth, rack::RackEditor::kHeight);
+	editor->resized();
+	ui::ModState& mod = gui.modForTest();
+	mod.focus(backplane::Source::core(0));
+	mod.arm(true);
+	const PauseTally lit = pauseTally(editor);
+	CAPTURE(lit.knobs);
+	CAPTURE(lit.nonKnobs);
+	REQUIRE(lit.knobs >= 2);
+
+	gui.setModifierProbeForTest(&altPauseHeld);
+	gui.tick();
+	CHECK(mod.bypassed());
+	CHECK(gui.altPauseFramesForTest() >= lit.knobs);
+	const PauseTally paused = pauseTally(editor);
+	CHECK(paused.knobs == 0);
+	CHECK(paused.nonKnobs == 0);
+	gui.tick();
+	CHECK(gui.altPauseFramesForTest() == 0); // a flag that did not move tells nobody
+
+	gui.setModifierProbeForTest(&altPauseUp);
+	gui.tick();
+	CHECK_FALSE(mod.bypassed());
+	const PauseTally back = pauseTally(editor);
+	CHECK(back.knobs == lit.knobs);
+	CHECK(back.nonKnobs == lit.nonKnobs);
+	gui.setModifierProbeForTest(nullptr);
+	gui.destroy();
+}
+
+TEST_CASE("alt pause: in the Rack plugin's window (no chain editor) a held Alt puts out every armed glow, and lifting it restores them") {
+	if (!rack::RackGui::isAvailable()) {
+		return;
+	}
+	rack::RackEngine engine { rack::kRackAxes, hostCatalogue() };
+	rack::RackBridge bridge { engine };
+	REQUIRE(bridge.addDevice(rack::parallel::kTraits.tag) != kNoInstance);
+	bridge.drain();
+	rack::RackGui gui { bridge };
+	gui.setRackMode(true);
+	REQUIRE(gui.create(CLAP_WINDOW_API_X11, false));
+	ui::ExpandedView* view = gui.drumViewForTest();
+	REQUIRE(view != nullptr);
+	ui::ModState& mod = gui.modForTest();
+	mod.focus(backplane::Source::core(0));
+	mod.arm(true);
+	gui.tick();
+	const PauseTally lit = pauseTally(view);
+	CAPTURE(lit.knobs);
+	CAPTURE(lit.nonKnobs);
+	REQUIRE(lit.knobs + lit.nonKnobs >= 1);
+
+	gui.setModifierProbeForTest(&altPauseHeld);
+	gui.tick();
+	CHECK(mod.bypassed());
+	const PauseTally paused = pauseTally(view);
+	CHECK(paused.knobs + paused.nonKnobs == 0);
+
+	gui.setModifierProbeForTest(&altPauseUp);
+	gui.tick();
+	CHECK_FALSE(mod.bypassed());
+	const PauseTally back = pauseTally(view);
+	CHECK(back.knobs == lit.knobs);
+	CHECK(back.nonKnobs == lit.nonKnobs);
+	gui.setModifierProbeForTest(nullptr);
+	gui.destroy();
 }

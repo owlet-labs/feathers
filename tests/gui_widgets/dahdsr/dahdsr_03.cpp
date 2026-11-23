@@ -1896,9 +1896,6 @@ TEST_CASE("the strip offers exactly the devices that may sit there AND are tagge
 	                                    // SIXTH, 2026-09-25: MACROS (macro-modulation B1), four outputs and
 	                                    // tagged a modulator — offered by the strip's own picker.
 	                                    feathers::mod::macros::kTraits.tag,
-	                                    // The one- and eight-macro variants, offered beside it.
-	                                    feathers::mod::macro1::kTraits.tag,
-	                                    feathers::mod::macros8::kTraits.tag,
 	                                    // SEVENTH, 2026-09-25: MATH (macro-modulation C), one output and
 	                                    // tagged a modulator.
 	                                    feathers::mod::math::kTraits.tag,
@@ -1916,7 +1913,10 @@ TEST_CASE("the strip offers exactly the devices that may sit there AND are tagge
 	                                    feathers::mod::arp::kTraits.tag,
 	                                    // 2026-10-30: THE PATTERN DEVICE (terrain-arp), seven outputs, tagged a modulator.
 	                                    feathers::mod::arp::pat::kTraits.tag,
-	                                    feathers::mod::twinfield::kTraits.tag });
+	                                    feathers::mod::twinfield::kTraits.tag,
+	                                    // The one- and eight-macro variants register last, so the picker lists them last.
+	                                    feathers::mod::macro1::kTraits.tag,
+	                                    feathers::mod::macros8::kTraits.tag });
 
 	// A TAG WITHOUT THE CAPABILITY WOULD OFFER SOMETHING THE RACK REFUSES — the honesty rule for a list.
 	// The conjunction hides that case (it would simply drop out), so it is asserted separately: a device

@@ -2145,6 +2145,7 @@ private:
 			nullptr, // post_note (/13): the rack has no synth and no editor note ring
 			nullptr, // provision: the rack has no editor beat to model
 			nullptr, // set_device_name: the rack's naming is asked of its bridge directly
+			nullptr, // device_storage: the rack's cases read its engine directly
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_RACK_TEST) == 0) {
 			return &kTest;

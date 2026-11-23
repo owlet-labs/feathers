@@ -107,6 +107,9 @@ public:
 
 	/// A press and its release, as the hand makes them — `altDown` bypasses the arm.
 	void press(bool altDown = false, int clicks = 1);
+	/// **EVERY PRESS LETS GO THROUGH THE RELEASE ROAD** (`Modulatable::releaseValue`, `HeldFalls`): a fall whose rise no block has read yet waits,
+	/// the record keeping the Trig up, until the engine has adopted the rise. With a plain write, a press and release between two blocks (a quick
+	/// click) left the engine nothing to read, and the device that acts on the rise never fired. A held press and a slow click are unchanged.
 	/// THE RIGHT-CLICK: the routes into this Trig, each pick arming its source (so the second click of a pair then
 	/// unroutes THAT one), and one row removing them all — `ui::appendRouteRows`, the rows every destination lists —
 	/// then, with a normal, the checkable "Notes fire Trig". False, and nothing shown, when it would be empty.

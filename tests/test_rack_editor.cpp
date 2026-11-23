@@ -59,6 +59,7 @@
 #include "plugin/chain_preset.h"
 #include "plugin/ui/knob.h"
 #include "plugin/ui/parallel_rack_card.h"
+#include "plugin/ui/parallel_rack_expanded.h"
 #include "rack/parallel_rack.h"
 #include "rack/chain_expanded.h"
 #include "rack/chain_state.h"
@@ -7191,4 +7192,137 @@ TEST_CASE("route list: in the Chain editor, a nested rack's macro armed as the r
 	CHECK(chain0.routeAmount(macro, dest) == doctest::Approx(0.25f));
 	list.removeForTest(rows[0]);
 	CHECK(chain0.routeAmount(macro, dest) == 0.0f);
+}
+
+TEST_CASE("route list refresh: in the Chain editor a route made by dragging a target knob while a macro is armed tells the editor's list at once") {
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const DeviceInstanceId id = f.add(fx::filter::kTraits.tag);
+	REQUIRE(id != kNoInstance);
+	f.editor.syncCards();
+	f.editor.resized();
+	ui::RouteList& list = f.editor.routeListForTest();
+	f.mod.focus(backplane::Source::core(0));
+	f.mod.arm(true);
+	f.editor.syncCards();
+	f.editor.resized();
+	ui::FxCard* card = f.editor.cardOfDeviceForTest(id);
+	REQUIRE(card != nullptr);
+	std::vector<ui::Knob*> knobs;
+	std::function<void(visage::Frame*)> walk = [&](visage::Frame* at) {
+		if (auto* knob = dynamic_cast<ui::Knob*>(at); knob != nullptr && knob->isModDestination() && knob->haloLit() && knob->width() > 0.0f
+		                                                  && dynamic_cast<ui::DeviceControl*>(knob->control()) != nullptr) {
+			knobs.push_back(knob);
+		}
+		for (visage::Frame* child : at->children()) {
+			walk(child);
+		}
+	};
+	walk(card);
+	REQUIRE_FALSE(knobs.empty());
+	CHECK(list.allRows().empty());
+	const size_t told = f.mod.framesToldForTest();
+	ui::Knob* target = knobs.front();
+	REQUIRE(f.mod.armed());
+	// A route made through the card's own control, as a drag on the knob writes it: the amount is written through the knob's control.
+	auto* control = dynamic_cast<ui::DeviceControl*>(target->control());
+	REQUIRE(control != nullptr);
+	control->beginGesture();
+	control->setAmount(0.5f);
+	control->endGesture();
+	CHECK(list.allRows().size() == 1);
+	CHECK(f.mod.framesToldForTest() > told);
+}
+
+namespace {
+
+/// A PRESS, A DRAG AND A RELEASE through `root`'s hit test, as the window delivers them: the frame under `from` takes all three.
+void dragOnRoot(visage::Frame& root, visage::Point from, visage::Point to) {
+	visage::Frame* down = root.frameAtPoint(from);
+	REQUIRE(down != nullptr);
+	const auto eventAt = [&](visage::Point where, bool isDown) {
+		visage::MouseEvent e {};
+		e.event_frame = down;
+		e.window_position = where;
+		e.position = where - down->positionInWindow();
+		e.button_id = visage::kMouseButtonLeft;
+		e.button_state = isDown ? visage::kMouseButtonLeft : visage::kMouseButtonNone;
+		e.is_down = isDown;
+		e.repeat_click_count = 1;
+		return e;
+	};
+	down->processMouseDown(eventAt(from, true));
+	down->processMouseDrag(eventAt(to, true));
+	down->processMouseUp(eventAt(to, false));
+}
+
+template <typename T>
+T* findFrame(visage::Frame* at) {
+	if (auto* hit = dynamic_cast<T*>(at)) {
+		return hit;
+	}
+	for (visage::Frame* child : at->children()) {
+		if (T* found = findFrame<T>(child)) {
+			return found;
+		}
+	}
+	return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("route list refresh: in the Chain editor a route made by a press in a NESTED rack's window while that rack's macro is armed shows in the editor's list without re-arming") {
+	namespace pr = rack::parallel;
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const DeviceInstanceId nested = f.add(pr::kTraits.tag);
+	REQUIRE(nested != kNoInstance);
+	pr::Rack* inner = pr::rackOf(f.bridge.containerSurfaceOf(nested));
+	REQUIRE(inner != nullptr);
+	while (inner->chainCount() < 2) {
+		REQUIRE(inner->addChain() != SIZE_MAX);
+	}
+	for (size_t c = 0; c < 2; ++c) {
+		REQUIRE(inner->chainAt(c)->bridge()->addDevice(fx::filter::kTraits.tag) != kNoInstance);
+		inner->setOpen(c, c == 0);
+	}
+	f.editor.syncCards();
+	f.editor.resized();
+	ui::FxCard* card = f.editor.cardOfDeviceForTest(nested);
+	REQUIRE(card != nullptr);
+	REQUIRE(card->onExpand);
+	card->onExpand();
+	ui::ExpandedPanel* panel = f.editor.overlayForTest().panelForTest();
+	REQUIRE(panel != nullptr);
+	ui::ParallelRackExpanded* window = findFrame<ui::ParallelRackExpanded>(panel);
+	REQUIRE(window != nullptr);
+	(void)window->update();
+	// THE NESTED WINDOW'S STATES HANG OFF THE EDITOR'S, so one touch reaches the editor's list.
+	CHECK(window->macroModForTest().parent() == &f.mod);
+	window->macroModForTest().focus(backplane::Source::core(0));
+	window->macroModForTest().arm(true);
+	(void)window->update();
+	REQUIRE(f.mod.armed());
+	ui::RouteList& list = f.editor.routeListForTest();
+	CHECK(list.allRows().empty());
+	ui::ChainColumn* column = window->railForTest(0).column();
+	REQUIRE(column != nullptr);
+	ui::Knob* target = nullptr;
+	std::function<void(visage::Frame*)> walk = [&](visage::Frame* at) {
+		if (auto* knob = dynamic_cast<ui::Knob*>(at); target == nullptr && knob != nullptr && knob->isModDestination() && knob->haloLit() && knob->width() > 0.0f
+		                                                  && dynamic_cast<ui::DeviceControl*>(knob->control()) != nullptr) {
+			target = knob;
+		}
+		for (visage::Frame* child : at->children()) {
+			walk(child);
+		}
+	};
+	walk(column);
+	REQUIRE(target != nullptr);
+	const size_t told = f.mod.framesToldForTest();
+	const visage::Point at = target->positionInWindow() + visage::Point { target->width() * 0.5f, target->height() * 0.5f };
+	dragOnRoot(f.editor, at, at - visage::Point { 0.0f, 60.0f });
+	(void)window->update();
+	CHECK(list.allRows().size() == 1);
+	CHECK(f.mod.framesToldForTest() > told);
 }

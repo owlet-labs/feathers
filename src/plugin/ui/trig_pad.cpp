@@ -147,7 +147,7 @@ void TrigPad::release() {
 		return;
 	}
 	held_ = false;
-	control_.setValue(control_.desc().min);
+	control_.releaseValue(control_.desc().min);
 	control_.endGesture();
 	redraw();
 }
@@ -158,7 +158,7 @@ void TrigPad::cancelHold() {
 		return;
 	}
 	held_ = false;
-	control_.setValue(control_.desc().min);
+	control_.releaseValue(control_.desc().min);
 	control_.endGesture();
 }
 

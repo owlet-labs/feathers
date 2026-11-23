@@ -10,7 +10,7 @@
 # without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 feathers_register_device(
-	ORDER 231
+	ORDER 420
 	DESCRIPTOR mod::macro1::kDescriptor
 	CODEC_INCLUDE device_codecs/macro1.h
 	CODEC_REG feathers::codecs::kMacro1Codec

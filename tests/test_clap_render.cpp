@@ -54,6 +54,14 @@
 #include "state/state_trailer.h"
 #include "plugin/feathers_test_chain.h"
 #include "mod/arp/arp_types.h"
+#include "fx/drum/drum.h"
+#include "fx/drum/drum_types.h"
+#include "mod/dahdsr/dahdsr_types.h"
+#include "mod/lfo/lfo_types.h"
+#include "mod/mseg/mseg_types.h"
+#include "mod/rtrig/rtrig_types.h"
+#include "mod/samplehold/samplehold_types.h"
+#include "mod/stepseq/stepseq_types.h"
 #include "mod/arp/pattern_types.h"
 #include "mod/lfo/lfo_types.h"
 #include "plugin/gui.h"
@@ -8265,6 +8273,112 @@ TEST_CASE("SR [measure]: where an IDLE 1024-frame block's time goes outside the 
 	MESSAGE(report);
 }
 #endif
+
+TEST_CASE("a Trig pad's quick click in the SYNTH's own lanes (ParamBridge::releaseDeviceControl): every modulator in the strip and the Drum in the fx lane fire once per click, five times for five, and the Trig ends at rest") {
+	// THE FEATHERS ROAD, the one the editor's TrigPad takes in the synth: the Trig up by a hand's write (`ParamBridge::setDeviceControl`) and let go by
+	// the release road (`releaseDeviceControl`, `HeldFalls`, `heldFallsLive_`). A held fall is landed by the next MAIN-THREAD VISIT (`on_main_thread`
+	// -> `serviceSlots` -> `landHeldControls`) once the synth has adopted the rise, and by the editor's beat, which calls the same; with no editor open
+	// the plugin does not ask the host for a visit, so a fall waits for the host's next one (pads only exist with an editor, so nothing is lost).
+	// COUNTED BY THE DEVICE'S OWN SEAM through the engine's running instance (`device_storage`): a Drum's strikes, a modulator's `ModOps::trigFires`.
+	namespace dd = feathers::fx::drumdevice;
+	struct Row {
+		const char* tag;
+		size_t trig;
+		bool lane; // a lane device (the Drum); else a modulator in the strip
+		uint32_t (*fires)(uint32_t word);
+	};
+	const auto whole = [](uint32_t word) { return word; };
+	const auto advanceByte = [](uint32_t word) { return (word >> feathers::mod::stepseq::kFireAdvanceShift) & feathers::mod::stepseq::kFireAdvanceMask; };
+	const std::vector<Row> rows = {
+		{ dd::kTraits.tag, static_cast<size_t>(dd::Param::Trig), true, nullptr },
+		{ feathers::mod::dahdsr::kTraits.tag, static_cast<size_t>(feathers::mod::dahdsr::Param::Trig), false, whole },
+		{ feathers::mod::lfo::kTraits.tag, static_cast<size_t>(feathers::mod::lfo::Param::Trig), false, whole },
+		{ feathers::mod::mseg::kTraits.tag, static_cast<size_t>(feathers::mod::mseg::Param::Trig), false, whole },
+		{ feathers::mod::samplehold::kTraits.tag, static_cast<size_t>(feathers::mod::samplehold::Param::Trig), false, whole },
+		{ feathers::mod::rtrig::kTraits.tag, static_cast<size_t>(feathers::mod::rtrig::Param::Trig), false, whole },
+		{ feathers::mod::stepseq::kTraits.tag, static_cast<size_t>(feathers::mod::stepseq::Param::Trig), false, advanceByte },
+	};
+	for (const Row& row : rows) {
+		CAPTURE(std::string(row.tag));
+		static const char* tagNow = nullptr;
+		static bool laneNow = false;
+		static uint32_t seated = UINT32_MAX;
+		tagNow = row.tag;
+		laneNow = row.lane;
+		HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
+			const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+			REQUIRE(c != nullptr);
+			seated = laneNow ? c->add_device(p, tagNow) : c->add_mod_device(p, tagNow);
+			REQUIRE(seated != UINT32_MAX);
+		});
+		const clap_plugin* p = host.plugin();
+		const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
+		REQUIRE(chain != nullptr);
+		REQUIRE(chain->device_storage != nullptr);
+		EventList none;
+		host.setTransport(0.0, true, false);
+		// THE EDITOR'S BEAT: a main-thread visit, the provisioning, and a block that adopts what it built.
+		const auto beat = [&] {
+			mainThreadVisit(p);
+			REQUIRE(chain->provision(p));
+			host.run(kMaxFrames, none);
+		};
+		for (int i = 0; i < 3; ++i) {
+			beat();
+		}
+		const uint32_t position = row.lane ? seated : (CLAP_FEATHERS_TEST_STRIP | seated);
+		const feathers::device::Descriptor* desc = feathers::deviceForTag(row.tag);
+		REQUIRE(desc != nullptr);
+		const char* name = desc->params[row.trig].name;
+		const auto fires = [&]() -> uint32_t {
+			const void* storage = chain->device_storage(p, position);
+			REQUIRE(storage != nullptr);
+			if (row.lane) {
+				return static_cast<const dd::DrumDsp*>(storage)->strikesForTest();
+			}
+			REQUIRE(desc->mod != nullptr);
+			REQUIRE(desc->mod->trigFires != nullptr);
+			return row.fires(desc->mod->trigFires(storage));
+		};
+		const auto base = [&] {
+			double value = -1.0;
+			REQUIRE(chain->engine_control(p, position, name, &value, nullptr));
+			return value;
+		};
+		const uint32_t start = fires();
+		// THE PRESS AND THE RELEASE BEFORE THE NEXT BLOCK, one click.
+		REQUIRE(chain->set_control(p, position, name, 1.0));
+		REQUIRE(chain->release_control(p, position, name, 0.0));
+		host.run(kMaxFrames, none);
+		for (int i = 0; i < 3; ++i) {
+			beat();
+		}
+		CHECK(fires() - start == 1u);
+		CHECK(base() == 0.0);
+		// FIVE FAST CLICKS, a visit and a block between them: five.
+		for (uint32_t click = 2; click <= 6; ++click) {
+			REQUIRE(chain->set_control(p, position, name, 1.0));
+			REQUIRE(chain->release_control(p, position, name, 0.0));
+			host.run(kMaxFrames, none);
+			for (int i = 0; i < 3; ++i) {
+				beat();
+			}
+			CHECK(fires() - start == click);
+		}
+		CHECK(base() == 0.0);
+		// A SLOW CLICK (a press held over several blocks) is one more, not two.
+		REQUIRE(chain->set_control(p, position, name, 1.0));
+		for (int i = 0; i < 4; ++i) {
+			host.run(kMaxFrames, none);
+		}
+		REQUIRE(chain->release_control(p, position, name, 0.0));
+		for (int i = 0; i < 3; ++i) {
+			beat();
+		}
+		CHECK(fires() - start == 7u);
+		CHECK(base() == 0.0);
+	}
+}
 
 TEST_CASE("Pattern's Go pressed and released between two blocks in Feathers' modulator lane: the engine reads the rise for a block, then the fall lands at the next main-thread visit (lead, 2026-11-07: the press was LOST)") {
 	// THE FEATHERS ROAD (`ParamBridge::setDeviceControl` → the chains publish → `Synth::adoptChains`), the rack's twin

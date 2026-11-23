@@ -4658,6 +4658,167 @@ TEST_CASE("rack window route list: a route made inside the rack from its armed m
 	CHECK(list.right() <= w.containerWidth());
 }
 
+/// A KNOB IN `column` THAT A HAND CAN ROUTE TO: a device control that is lit as a destination (the armed source reaches it).
+ui::Knob* routeTargetIn(ui::ChainColumn& column) {
+	std::vector<ui::Knob*> knobs;
+	collectKnobs(&column, &knobs);
+	for (ui::Knob* k : knobs) {
+		if (k->isModDestination() && dynamic_cast<ui::DeviceControl*>(k->control()) != nullptr && k->width() > 0.0f && k->haloLit()) {
+			return k;
+		}
+	}
+	return nullptr;
+}
+
+TEST_CASE("route list refresh: in the Rack window a route made by dragging a target knob while a rack macro is armed tells the list at once") {
+	RealRack r;
+	r.chains(2, 2, true);
+	r.rack().setOpen(0, true); // the first chain's rail shows its cards
+	ui::EditHistory history;
+	r.panel->modulationBound(r.f.gui.modForTest(), &history);
+	r.refresh();
+	ui::ParallelRackExpanded& w = *r.panel;
+	ui::ModState& macroMod = w.macroModForTest();
+	macroMod.focus(backplane::Source::core(0));
+	macroMod.arm(true);
+	r.refresh();
+	ui::ChainColumn* column = w.railForTest(0).column();
+	REQUIRE(column != nullptr);
+	ui::Knob* target = routeTargetIn(*column);
+	REQUIRE(target != nullptr);
+	ui::RouteList& list = w.routeListForTest();
+	CHECK(list.allRows().empty());
+	// THE LIST'S REDRAW IS DELIVERED BY THE STATE IT WATCHES: the tally of frames that state has told rises only when a frame was told.
+	const size_t told = macroMod.framesToldForTest();
+	const visage::Point at = target->positionInWindow() + visage::Point { target->width() * 0.5f, target->height() * 0.5f };
+	dragThroughRoot(r.panel, at, at - visage::Point { 0.0f, 60.0f });
+	r.refresh();
+	REQUIRE(list.allRows().size() == 1); // the route exists (read on demand)
+	CHECK(macroMod.framesToldForTest() > told); // and the list was told, so it draws it without a re-arm
+}
+
+TEST_CASE("route list refresh: arming a rack macro whose routes exist shows them at once (first arm)") {
+	RealRack r;
+	r.chains(2, 2, true);
+	r.rack().setOpen(0, true);
+	ui::EditHistory history;
+	r.panel->modulationBound(r.f.gui.modForTest(), &history);
+	r.refresh();
+	ui::ParallelRackExpanded& w = *r.panel;
+	feathers::rack::RackBridge& chain0 = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId delay = chain0.deviceAtPosition(1);
+	const device::Descriptor* desc = chain0.descriptorOf(delay);
+	size_t control = 0;
+	for (size_t c = 0; c < desc->params.size(); ++c) {
+		if (desc->params[c].modulatable) {
+			control = c;
+			break;
+		}
+	}
+	chain0.setRouteAmount(backplane::Source::core(0), backplane::Destination::control(delay, control), 0.5f);
+	ui::ModState& macroMod = w.macroModForTest();
+	macroMod.focus(backplane::Source::core(0));
+	macroMod.arm(true);
+	r.refresh();
+	CHECK(w.routeListForTest().allRows().size() == 1); // the arm itself repaints the list, which reads its rows when drawn
+}
+
+TEST_CASE("route list refresh: the synth's list for a rack macro armed from the synth's editor tells at once when a route is made by dragging a target in the rack") {
+	RealRack r;
+	r.chains(2, 2, true);
+	r.rack().setOpen(0, true);
+	ui::EditHistory history;
+	ui::ModState* mod = r.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	r.panel->modulationBound(mod, &history);
+	r.refresh();
+	// THE MACRO ARMED IN THE RACK WINDOW: its arrow arms the macro in every chain, and the window relays that arm out to the synth's state as
+	// the rack's exported source, so the synth's own list (and heading) are for it.
+	r.panel->macroModForTest().focus(backplane::Source::core(0));
+	r.panel->macroModForTest().arm(true);
+	r.refresh();
+	REQUIRE(mod->armed());
+	CHECK(mod->source() == r.f.bridge.fxContainerExport(r.id, backplane::Source::core(0)));
+	ui::ChainColumn* column = r.panel->railForTest(0).column();
+	REQUIRE(column != nullptr);
+	ui::Knob* target = routeTargetIn(*column);
+	REQUIRE(target != nullptr);
+	ui::RouteList* list = findInTree<ui::RouteList>(r.f.root);
+	REQUIRE(list != nullptr);
+	CHECK(list->allRows().empty());
+	const size_t told = mod->framesToldForTest();
+	const visage::Point at = target->positionInWindow() + visage::Point { target->width() * 0.5f, target->height() * 0.5f };
+	dragThroughRoot(r.panel, at, at - visage::Point { 0.0f, 60.0f });
+	r.refresh();
+	REQUIRE(list->allRows().size() == 1);
+	CHECK(mod->framesToldForTest() > told);
+}
+
+TEST_CASE("route list refresh: a route made by a press in a rack nested in a rack tells the outer Rack window's list and the synth's list without re-arming") {
+	RealRack r; // the outer rack, in the synth's fx lane
+	r.chains(1, 0, true);
+	r.rack().setOpen(0, true);
+	feathers::rack::RackBridge& outerChain = *r.rack().chainAt(0)->bridge();
+	const feathers::DeviceInstanceId nestedId = outerChain.addDevice(pr::kTraits.tag);
+	REQUIRE(nestedId != feathers::kNoInstance);
+	pr::Rack* inner = pr::rackOf(outerChain.containerSurfaceOf(nestedId));
+	REQUIRE(inner != nullptr);
+	while (inner->chainCount() < 1) {
+		REQUIRE(inner->addChain() != SIZE_MAX);
+	}
+	REQUIRE(inner->chainAt(0)->bridge()->addDevice(fx::filter::kTraits.tag) != feathers::kNoInstance);
+	inner->setOpen(0, true);
+	// THE OUTER RACK'S OWN WINDOW, opened from its card in the lane, and the nested rack's window opened from the outer window's rail.
+	auto* lane = findInTree<ui::FxLane>(r.f.root);
+	REQUIRE(lane != nullptr);
+	lane->onExpandDevice(r.slot);
+	ui::ExpandedOverlay* overlay = r.f.gui.expandedForTest();
+	REQUIRE(overlay != nullptr);
+	REQUIRE(overlay->open());
+	ui::ParallelRackExpanded* outer = findInTree<ui::ParallelRackExpanded>(overlay->panelForTest());
+	REQUIRE(outer != nullptr);
+	(void)outer->update();
+	ui::ChainColumn* column = outer->railForTest(0).column();
+	REQUIRE(column != nullptr);
+	column->expandDevice(column->deviceAt(0));
+	ui::ParallelRackExpanded* nested = findInTree<ui::ParallelRackExpanded>(overlay->panelForTest());
+	REQUIRE(nested != nullptr);
+	REQUIRE(nested != outer);
+	ui::ModState* mod = r.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	// EVERY STATE OF BOTH WINDOWS HANGS OFF THE SYNTH'S: one touch reaches both lists.
+	const auto rootOf = [](const ui::ModState* state) {
+		while (state->parent() != nullptr) {
+			state = state->parent();
+		}
+		return state;
+	};
+	CHECK(rootOf(&nested->macroModForTest()) == mod);
+	CHECK(rootOf(&outer->macroModForTest()) == mod);
+	(void)nested->update();
+	nested->macroModForTest().focus(backplane::Source::core(0));
+	nested->macroModForTest().arm(true);
+	(void)nested->update();
+	(void)outer->update();
+	ui::ChainColumn* nestedColumn = nested->railForTest(0).column();
+	REQUIRE(nestedColumn != nullptr);
+	ui::Knob* target = routeTargetIn(*nestedColumn);
+	REQUIRE(target != nullptr);
+	const size_t synthTold = mod->framesToldForTest();
+	const size_t outerTold = outer->macroModForTest().framesToldForTest();
+	const visage::Point at = target->positionInWindow() + visage::Point { target->width() * 0.5f, target->height() * 0.5f };
+	dragThroughRoot(r.f.root, at, at - visage::Point { 0.0f, 60.0f });
+	CHECK(mod->framesToldForTest() > synthTold);
+	CHECK(outer->macroModForTest().framesToldForTest() > outerTold);
+	CHECK(nested->macroModForTest().framesToldForTest() > 0);
+	// BOTH WINDOWS ARE PUT AWAY BEFORE THE RACK UNDER THEM GOES.
+	for (int guard = 0; guard < 8 && overlay->open(); ++guard) {
+		overlay->dismiss();
+		(void)r.f.gui.tickForTest();
+	}
+	CHECK_FALSE(overlay->open());
+}
+
 TEST_CASE("synth route list: a rack macro armed from the synth's editor lists the routes that macro has inside the rack, heading and rows agreeing") {
 	RealRack r;
 	r.chains(2, 2, true);

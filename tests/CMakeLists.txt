@@ -1544,6 +1544,11 @@ add_executable(test_rack_editor test_rack_editor.cpp)
 target_link_libraries(test_rack_editor PRIVATE feathers-rack-ui feathers-warnings)
 target_include_directories(test_rack_editor PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME rack-editor COMMAND test_rack_editor)
+# EVERY TRIG PAD fires on every click, however short: through the pad, a real bridge and engine, the device's own fire count.
+add_executable(test_trig_pad_fast_click test_trig_pad_fast_click.cpp)
+target_link_libraries(test_trig_pad_fast_click PRIVATE feathers-rack-ui feathers-warnings)
+target_include_directories(test_trig_pad_fast_click PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME trig-pad-fast-click COMMAND test_trig_pad_fast_click)
 # BACKLOG PU: the as-modulated readout, by value against the engine and an independent restatement (headless).
 add_executable(test_mod_readout test_mod_readout.cpp)
 target_link_libraries(test_mod_readout PRIVATE feathers-rack-ui feathers-warnings)

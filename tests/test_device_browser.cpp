@@ -201,6 +201,8 @@ TEST_CASE("every registered device files under the category it was assigned") {
 		// MACRO MODULATION (2026-09-25, at the macro-mod merge): both are
 		// modulators — MACROS is four hand-set sources, MATH combines two.
 		{ "Macros", device::Category::Modulators },     { "Math", device::Category::Modulators },
+		// The macros modulator at a count of one and of eight: modulators like Macros.
+		{ "Macro 1", device::Category::Modulators },    { "Macros 8", device::Category::Modulators },
 		// THE SMOOTH SHAPER: beside the Shaper under Drive & Colour — confirmed.
 		{ "Smooth Shaper", device::Category::DriveColour },
 		{ "EQ", device::Category::FilterEq },
@@ -298,7 +300,7 @@ TEST_CASE("groupByCategory files every offered device exactly once, headings in 
 		return out;
 	};
 	CHECK(namesOf(device::Category::Modulators)
-	      == std::vector<std::string> { "DAHDSR", "Follower", "LFO", "Macros", "Math", "MSEG", "Note Expressions", "Random Trigger", "Sample & Hold", "Step Seq", "Stereo Tool", "Tracker", "Twin Field" });
+	      == std::vector<std::string> { "DAHDSR", "Follower", "LFO", "Macro 1", "Macros", "Macros 8", "Math", "MSEG", "Note Expressions", "Random Trigger", "Sample & Hold", "Step Seq", "Stereo Tool", "Tracker", "Twin Field" });
 	CHECK(namesOf(device::Category::Notes) == std::vector<std::string> { "Arp", "Pattern" });
 	CHECK(namesOf(device::Category::Oscillators) == std::vector<std::string> { "Drum", "Harm" });
 	CHECK(namesOf(device::Category::Utility) == std::vector<std::string> { "Bus Utility", "Noise", "Sidechain Inject" });

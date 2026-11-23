@@ -29,6 +29,6 @@
 namespace feathers::codecs {
 
 /// This device's row codec for tests/test_device_ranges.cpp, registered from its own file (backlog NY.1).
-inline constexpr Codec kLfoCodec { mod::lfo::kTraits.tag, &tripSized<mod::lfo::Row, mod::lfo::Settings, &mod::lfo::settingsOf, &mod::lfo::rowOf> };
+inline constexpr Codec kLfoCodec { mod::lfo::kTraits.tag, &tripTabbed<mod::lfo::Row, mod::lfo::Settings, &mod::lfo::settingsOf, &mod::lfo::rowOf, mod::lfo::kTabs, mod::lfo::kPerTab> };
 
 } // namespace feathers::codecs

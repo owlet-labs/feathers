@@ -312,8 +312,8 @@ struct clap_plugin_feathers_test_chain {
 	/// **ONE VOICE'S READING BY VALUE** (/9): voice `slot`'s `what` (`clap_feathers_voice_reading`). False for a slot
 	/// out of range or an unknown `what`. Read between blocks. Null in the rack, which has no voices.
 	bool (*voice_reading)(const clap_plugin* plugin, uint32_t slot, uint32_t what, double* out);
-	/// **A MOMENTARY'S RELEASE** (/10) — `set_control` on the strip, by name, but as a release (`DeviceHost::releaseField`): a
-	/// fall whose rise no block has read yet waits for the plugin's next main-thread visit after one has. Strip slots only.
+	/// **A MOMENTARY'S RELEASE** (/10) — `set_control` by name, but as a release (`DeviceHost::releaseField`): a
+	/// fall whose rise no block has read yet waits for the plugin's next main-thread visit after one has. A strip slot or a lane position.
 	bool (*release_control)(const clap_plugin* plugin, uint32_t slot, const char* control, double value);
 	/// **THE SYNTH'S SOAK READINGS BY VALUE** (/11): `what` is a `clap_feathers_synth_reading`. False for an unknown
 	/// `what`. Read between blocks. Null in the rack, which has no voices.
@@ -334,6 +334,9 @@ struct clap_plugin_feathers_test_chain {
 	/// **NAME THE LANE DEVICE AT `position`** (appended): the editor's Rename commit, through `DeviceHost::setUserName`, so a case can say by
 	/// value that the DAW's slot captions follow and the host is told once. An empty name clears it. False when no device is there. Null in the rack.
 	bool (*set_device_name)(const clap_plugin* plugin, uint32_t position, const char* name);
+	/// **THE RUNNING INSTANCE OF THE DEVICE AT `position`** (appended; a strip slot or a lane position): the engine's own storage for it, which
+	/// a case reads through the device's seams (a Drum's strike count, `ModOps::trigFires`). Null where no device runs there, and in the rack.
+	const void* (*device_storage)(const clap_plugin* plugin, uint32_t position);
 };
 
 } // extern "C"

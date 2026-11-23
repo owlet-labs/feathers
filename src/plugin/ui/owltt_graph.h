@@ -164,8 +164,22 @@ public:
 	/// **THE COMB CURVES (Comb modes)**: in place of the band level bars each column draws its band's magnitude response, from the current spacings, the sharpness
 	/// (Mode) and Res Home's resonance (Vibe's per-split deviation is not drawn: the plot reads parameters, not the engine). The x axis is the first spacing's
 	/// harmonic number, 0 .. `kCombCurveSpan`, never Hz. `points` samples, each the magnitude (0 .. ~1).
-	static constexpr double kCombCurveSpan = 16.0;
+	static constexpr double kCombCurveSpan = 8.0;
+	static constexpr float kCombTopMargin = 16.0f; // the curves stay below the column headings
+	static constexpr float kCombBottomPad = 3.0f;
 	[[nodiscard]] std::vector<float> combCurve(size_t band, size_t points) const;
+	/// **THE OVERLAY**: in Comb all three curves are drawn together, behind the columns, across the plot's FULL width on one shared axis: the first spacing's harmonic
+	/// number (not Hz: the teeth are defined on it, so Between's sit between the harmonics, Odd's on the odd ones and Even's on the even ones however the spacings
+	/// move, and a log-Hz axis would crowd the first harmonics and spread the sixteenth). `combCurveX(u)` is the x of harmonic number u; `combLayers(points)` is
+	/// exactly what the paint draws (x of sample i = x0 + (x1 - x0) * i / (points - 1); y in the same coordinates, up to 1 at the plot's top), empty outside Comb.
+	struct CombLayer {
+		size_t band = 0;
+		uint32_t colour = 0;
+		float x0 = 0.0f, x1 = 0.0f;
+		std::vector<float> y;
+	};
+	[[nodiscard]] float combCurveX(double harmonic) const;
+	[[nodiscard]] std::vector<CombLayer> combLayers(size_t points) const;
 	/// EACH BAND'S ONE COLOUR in Comb: its curve, and the tint of that column's rings and strips. Data colours, so the chrome hue never turns them: a green for
 	/// Between, a lime for the first on-teeth band (Odd), a magenta for the second (Even), each over 60 apart in RGB from the peach and blue the bars use for down and
 	/// up (the chrome has no light theme, so one set is checked: against the dark ground all three read at once).
@@ -242,6 +256,7 @@ public:
 	/// THE RATIO ROW'S TEXT for a band, `↓4:1 ↑2:1` style (down first): what the engine applies this block, live with modulation.
 	[[nodiscard]] std::string ratioReadoutText(size_t band) const;
 	[[nodiscard]] ValueBox* tableBoxForTest(size_t row, size_t band) const { return cells_[row][band].get(); }
+	[[nodiscard]] visage::Bounds barAreaForTest() const { return barArea(); }
 
 	/// THE RATIO TRACK a band's thumbs slide along, left to right, ratio 0 to 1.
 	struct Track {

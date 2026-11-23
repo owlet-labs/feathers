@@ -54,8 +54,14 @@
 #include "state/state_trailer.h"
 #include "plugin/feathers_test_chain.h"
 #include "mod/arp/arp_types.h"
+#include "fx/drum/drum.h"
 #include "fx/drum/drum_types.h"
 #include "mod/dahdsr/dahdsr_types.h"
+#include "mod/lfo/lfo_types.h"
+#include "mod/mseg/mseg_types.h"
+#include "mod/rtrig/rtrig_types.h"
+#include "mod/samplehold/samplehold_types.h"
+#include "mod/stepseq/stepseq_types.h"
 #include "mod/arp/pattern_types.h"
 #include "mod/lfo/lfo_types.h"
 #include "plugin/gui.h"
@@ -8268,96 +8274,109 @@ TEST_CASE("SR [measure]: where an IDLE 1024-frame block's time goes outside the 
 }
 #endif
 
-TEST_CASE("a Trig pad's click quicker than a block, in the SYNTH's own lanes (ParamBridge::releaseDeviceControl): the engine reads the rise, the fall lands at the next visit, and the Drum strikes") {
-	// THE FEATHERS ROAD for a lane device (the Drum, in the fx lane) and a strip modulator (the Envelope), the road the editor's TrigPad takes:
-	// the Trig up by a hand's write and let go by the release road. By value: the ENGINE's base for the Trig (the rise a block read), and, for
-	// the Drum, the audio its strike made. The same click with the plain write is the hole this closes.
+TEST_CASE("a Trig pad's quick click in the SYNTH's own lanes (ParamBridge::releaseDeviceControl): every modulator in the strip and the Drum in the fx lane fire once per click, five times for five, and the Trig ends at rest") {
+	// THE FEATHERS ROAD, the one the editor's TrigPad takes in the synth: the Trig up by a hand's write (`ParamBridge::setDeviceControl`) and let go by
+	// the release road (`releaseDeviceControl`, `HeldFalls`, `heldFallsLive_`). A held fall is landed by the next MAIN-THREAD VISIT (`on_main_thread`
+	// -> `serviceSlots` -> `landHeldControls`) once the synth has adopted the rise, and by the editor's beat, which calls the same; with no editor open
+	// the plugin does not ask the host for a visit, so a fall waits for the host's next one (pads only exist with an editor, so nothing is lost).
+	// COUNTED BY THE DEVICE'S OWN SEAM through the engine's running instance (`device_storage`): a Drum's strikes, a modulator's `ModOps::trigFires`.
 	namespace dd = feathers::fx::drumdevice;
-	const auto energy = [](HostedPlugin& host, int blocks) {
-		EventList none;
-		double sum = 0.0;
-		for (int b = 0; b < blocks; ++b) {
-			host.run(kMaxFrames, none);
-			for (uint32_t i = 0; i < kMaxFrames; ++i) {
-				sum += static_cast<double>(host.left()[i]) * static_cast<double>(host.left()[i]);
-			}
-		}
-		return sum;
+	struct Row {
+		const char* tag;
+		size_t trig;
+		bool lane; // a lane device (the Drum); else a modulator in the strip
+		uint32_t (*fires)(uint32_t word);
 	};
-	for (const bool releaseRoad : { true, false }) {
-		CAPTURE(releaseRoad);
-		static uint32_t drum = UINT32_MAX;
-		static uint32_t strip = UINT32_MAX;
+	const auto whole = [](uint32_t word) { return word; };
+	const auto advanceByte = [](uint32_t word) { return (word >> feathers::mod::stepseq::kFireAdvanceShift) & feathers::mod::stepseq::kFireAdvanceMask; };
+	const std::vector<Row> rows = {
+		{ dd::kTraits.tag, static_cast<size_t>(dd::Param::Trig), true, nullptr },
+		{ feathers::mod::dahdsr::kTraits.tag, static_cast<size_t>(feathers::mod::dahdsr::Param::Trig), false, whole },
+		{ feathers::mod::lfo::kTraits.tag, static_cast<size_t>(feathers::mod::lfo::Param::Trig), false, whole },
+		{ feathers::mod::mseg::kTraits.tag, static_cast<size_t>(feathers::mod::mseg::Param::Trig), false, whole },
+		{ feathers::mod::samplehold::kTraits.tag, static_cast<size_t>(feathers::mod::samplehold::Param::Trig), false, whole },
+		{ feathers::mod::rtrig::kTraits.tag, static_cast<size_t>(feathers::mod::rtrig::Param::Trig), false, whole },
+		{ feathers::mod::stepseq::kTraits.tag, static_cast<size_t>(feathers::mod::stepseq::Param::Trig), false, advanceByte },
+	};
+	for (const Row& row : rows) {
+		CAPTURE(std::string(row.tag));
+		static const char* tagNow = nullptr;
+		static bool laneNow = false;
+		static uint32_t seated = UINT32_MAX;
+		tagNow = row.tag;
+		laneNow = row.lane;
 		HostedPlugin host(&kHost, [](const clap_plugin* p, void*) {
 			const auto* c = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
 			REQUIRE(c != nullptr);
-			drum = c->add_device(p, feathers::fx::drumdevice::kTraits.tag);
-			REQUIRE(drum != UINT32_MAX);
-			strip = c->add_mod_device(p, feathers::mod::dahdsr::kTraits.tag);
-			REQUIRE(strip != UINT32_MAX);
+			seated = laneNow ? c->add_device(p, tagNow) : c->add_mod_device(p, tagNow);
+			REQUIRE(seated != UINT32_MAX);
 		});
 		const clap_plugin* p = host.plugin();
 		const auto* chain = static_cast<const clap_plugin_feathers_test_chain*>(p->get_extension(p, CLAP_EXT_FEATHERS_TEST_CHAIN));
 		REQUIRE(chain != nullptr);
+		REQUIRE(chain->device_storage != nullptr);
 		EventList none;
 		host.setTransport(0.0, true, false);
-		for (int i = 0; i < 3; ++i) { // the devices are built on the main thread and adopted by a block, as the editor's beat and the audio thread do
+		// THE EDITOR'S BEAT: a main-thread visit, the provisioning, and a block that adopts what it built.
+		const auto beat = [&] {
 			mainThreadVisit(p);
 			REQUIRE(chain->provision(p));
 			host.run(kMaxFrames, none);
-		}
-		const uint32_t positions[] = { drum, CLAP_FEATHERS_TEST_STRIP | strip };
-		const char* names[] = { "Trig", "Env Trig" };
-		const auto engineBase = [&](size_t k) {
-			double base = -1.0;
-			const bool read = chain->engine_control(p, positions[k], names[k], &base, nullptr);
-			if (!read) {
-				MESSAGE("engine_control failed for k=" << k << " position=" << positions[k]);
-			}
-			REQUIRE(read);
-			return base;
 		};
-		for (size_t k = 0; k < 2; ++k) {
-			CAPTURE(k);
-			REQUIRE(engineBase(k) == 0.0);
-			const double quiet = k == 0 ? energy(host, 4) : 0.0;
-			// THE PRESS AND THE RELEASE, BOTH BEFORE THE NEXT BLOCK.
-			REQUIRE(chain->set_control(p, positions[k], names[k], 1.0));
-			if (releaseRoad) {
-				REQUIRE(chain->release_control(p, positions[k], names[k], 0.0));
-			}
-			else {
-				REQUIRE(chain->set_control(p, positions[k], names[k], 0.0));
-			}
-			const double struck = energy(host, 1);
-			if (releaseRoad) {
-				CHECK(engineBase(k) == 1.0); // the block READ the rise
-				if (k == 0) {
-					CHECK(struck > quiet + 1.0e-6); // and the drum struck
-				}
-				mainThreadVisit(p);                 // the fall lands now that the rise was adopted
-				REQUIRE(chain->provision(p));
-				(void)energy(host, 2);
-				CHECK(engineBase(k) == 0.0);        // and the trigger is back at rest
-			}
-			else {
-				// THE HOLE: the block saw neither the rise nor a strike.
-				CHECK(engineBase(k) == 0.0);
-				if (k == 0) {
-					CHECK(struck <= quiet + 1.0e-9);
-				}
-			}
+		for (int i = 0; i < 3; ++i) {
+			beat();
 		}
-		// A SLOW CLICK, a press held over several blocks, is still read and still lets go.
-		if (releaseRoad) {
-			REQUIRE(chain->set_control(p, drum, "Trig", 1.0));
-			(void)energy(host, 3);
-			CHECK(engineBase(0) == 1.0);
-			REQUIRE(chain->release_control(p, drum, "Trig", 0.0));
-			mainThreadVisit(p);
-			(void)energy(host, 2);
-			CHECK(engineBase(0) == 0.0);
+		const uint32_t position = row.lane ? seated : (CLAP_FEATHERS_TEST_STRIP | seated);
+		const feathers::device::Descriptor* desc = feathers::deviceForTag(row.tag);
+		REQUIRE(desc != nullptr);
+		const char* name = desc->params[row.trig].name;
+		const auto fires = [&]() -> uint32_t {
+			const void* storage = chain->device_storage(p, position);
+			REQUIRE(storage != nullptr);
+			if (row.lane) {
+				return static_cast<const dd::DrumDsp*>(storage)->strikesForTest();
+			}
+			REQUIRE(desc->mod != nullptr);
+			REQUIRE(desc->mod->trigFires != nullptr);
+			return row.fires(desc->mod->trigFires(storage));
+		};
+		const auto base = [&] {
+			double value = -1.0;
+			REQUIRE(chain->engine_control(p, position, name, &value, nullptr));
+			return value;
+		};
+		const uint32_t start = fires();
+		// THE PRESS AND THE RELEASE BEFORE THE NEXT BLOCK, one click.
+		REQUIRE(chain->set_control(p, position, name, 1.0));
+		REQUIRE(chain->release_control(p, position, name, 0.0));
+		host.run(kMaxFrames, none);
+		for (int i = 0; i < 3; ++i) {
+			beat();
 		}
+		CHECK(fires() - start == 1u);
+		CHECK(base() == 0.0);
+		// FIVE FAST CLICKS, a visit and a block between them: five.
+		for (uint32_t click = 2; click <= 6; ++click) {
+			REQUIRE(chain->set_control(p, position, name, 1.0));
+			REQUIRE(chain->release_control(p, position, name, 0.0));
+			host.run(kMaxFrames, none);
+			for (int i = 0; i < 3; ++i) {
+				beat();
+			}
+			CHECK(fires() - start == click);
+		}
+		CHECK(base() == 0.0);
+		// A SLOW CLICK (a press held over several blocks) is one more, not two.
+		REQUIRE(chain->set_control(p, position, name, 1.0));
+		for (int i = 0; i < 4; ++i) {
+			host.run(kMaxFrames, none);
+		}
+		REQUIRE(chain->release_control(p, position, name, 0.0));
+		for (int i = 0; i < 3; ++i) {
+			beat();
+		}
+		CHECK(fires() - start == 7u);
+		CHECK(base() == 0.0);
 	}
 }
 

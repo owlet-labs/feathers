@@ -334,6 +334,9 @@ struct clap_plugin_feathers_test_chain {
 	/// **NAME THE LANE DEVICE AT `position`** (appended): the editor's Rename commit, through `DeviceHost::setUserName`, so a case can say by
 	/// value that the DAW's slot captions follow and the host is told once. An empty name clears it. False when no device is there. Null in the rack.
 	bool (*set_device_name)(const clap_plugin* plugin, uint32_t position, const char* name);
+	/// **THE RUNNING INSTANCE OF THE DEVICE AT `position`** (appended; a strip slot or a lane position): the engine's own storage for it, which
+	/// a case reads through the device's seams (a Drum's strike count, `ModOps::trigFires`). Null where no device runs there, and in the rack.
+	const void* (*device_storage)(const clap_plugin* plugin, uint32_t position);
 };
 
 } // extern "C"

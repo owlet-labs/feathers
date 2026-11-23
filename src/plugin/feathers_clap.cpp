@@ -2935,6 +2935,23 @@ private:
 		return true;
 	}
 
+	static const void* testChainDeviceStorage(const clap_plugin* plugin, uint32_t position) noexcept {
+		if (plugin == nullptr || plugin->plugin_data == nullptr) {
+			return nullptr;
+		}
+		const FeathersPlugin* self = fromClap(plugin);
+		const DeviceInstanceId device = self->deviceAtForTest(position);
+		if (device == kNoInstance) {
+			return nullptr;
+		}
+		const LaneRack& lane = self->synth_.laneForTest();
+		const size_t slot = lane.slotOf(device);
+		if (slot == rack::RackEngine::kNoSlot) {
+			return nullptr;
+		}
+		return lane.engineForTest().slotAtLane(slot).storage.get();
+	}
+
 	static bool testChainProvision(const clap_plugin* plugin) noexcept {
 		if (plugin == nullptr || plugin->plugin_data == nullptr) {
 			return false;
@@ -3246,6 +3263,7 @@ private:
 			&FeathersPlugin::testChainPostNote,
 			&FeathersPlugin::testChainProvision,
 			&FeathersPlugin::testChainSetDeviceName,
+			&FeathersPlugin::testChainDeviceStorage,
 		};
 		if (id != nullptr && std::strcmp(id, CLAP_EXT_FEATHERS_TEST_CHAIN) == 0) {
 			return &kTestChain;

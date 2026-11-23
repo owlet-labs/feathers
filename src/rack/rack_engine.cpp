@@ -120,13 +120,27 @@ void destructWith(const device::Descriptor& d, void* storage) noexcept {
 	}
 }
 
-/// **IS THIS DEVICE ONE THING PER VOICE THIS BLOCK?** Read off its own declaration and its own
-/// resolved row, so the engine never names a control — `FxRunner`'s `perVoice`, over the rack's row.
-/// The RESOLVED row, as `FxRunner` synced the modulated one: a route onto the switch flips it.
-/// THE OUTPUT SCALE A MODULATOR'S ROW ASKS FOR (backlog DH) — its `amountControl`'s resolved value,
+/// THE OUTPUT SCALE A MODULATOR'S ROW ASKS FOR (backlog DH) lives in `outputAmount` below: its amount control's resolved value,
 /// clamped to the declared span; unity for a device that names none or a row too short to carry it.
-float amountOf(const device::Descriptor& d, const std::vector<float>& resolved) noexcept {
-	const int control = d.traits.amountControl;
+
+/// **ONE OUTPUT'S ENABLE AND AMOUNT CONTROL** — the output's own where `SourceDesc` declares them (an LFO tab), the
+/// device's (`Traits`) otherwise. A device with one output, or none declaring, is exactly what it was.
+int enableControlOf(const device::Descriptor& d, size_t output) noexcept {
+	return output < d.outputs.size() && d.outputs[output].enableControl >= 0 ? d.outputs[output].enableControl
+	                                                                         : d.traits.enableControl;
+}
+int amountControlOf(const device::Descriptor& d, size_t output) noexcept {
+	return output < d.outputs.size() && d.outputs[output].amountControl >= 0 ? d.outputs[output].amountControl
+	                                                                         : d.traits.amountControl;
+}
+/// SWITCHED OFF: the output's enable control reads below one half.
+bool outputOff(const device::Descriptor& d, size_t output, const std::vector<float>& resolved) noexcept {
+	const int enable = enableControlOf(d, output);
+	return enable >= 0 && static_cast<size_t>(enable) < resolved.size() && resolved[static_cast<size_t>(enable)] < 0.5f;
+}
+/// THE OUTPUT SCALE: its amount control's resolved value clamped to -1..1, unity for none (`amountOf`'s rule).
+float outputAmount(const device::Descriptor& d, size_t output, const std::vector<float>& resolved) noexcept {
+	const int control = amountControlOf(d, output);
 	if (control < 0 || static_cast<size_t>(control) >= resolved.size()) {
 		return 1.0f;
 	}
@@ -134,6 +148,9 @@ float amountOf(const device::Descriptor& d, const std::vector<float>& resolved) 
 	return std::isfinite(amount) ? std::clamp(amount, -1.0f, 1.0f) : 1.0f;
 }
 
+/// **IS THIS DEVICE ONE THING PER VOICE THIS BLOCK?** Read off its own declaration and its own
+/// resolved row, so the engine never names a control — `FxRunner`'s `perVoice`, over the rack's row.
+/// The RESOLVED row, as `FxRunner` synced the modulated one: a route onto the switch flips it.
 bool polyInRow(const device::Descriptor& d, const std::vector<float>& resolved) noexcept {
 	if (d.traits.perVoiceControl < 0) {
 		return false;
@@ -1514,15 +1531,14 @@ void RackEngine::advanceModulators(int frames, const backplane::BlockContext& bl
 		// one. The device keeps TICKING while switched off, so switching back on lands where the music is
 		// rather than where it left. This rule lived in `sourceValue`, the read side; it lives on the write
 		// side now, once, so `outputAt`, the editor and every input read the one published number.
-		const int enable = d->traits.enableControl;
-		const bool disabled = enable >= 0 && static_cast<size_t>(enable) < slot.resolved.size()
-		                      && slot.resolved[static_cast<size_t>(enable)] < 0.5f;
 		// **THE AMOUNT, APPLIED HERE AND NOWHERE ELSE** (backlog DH): a modulator that names one
 		// (`Traits::amountControl`) has every output scaled by its RESOLVED value — so the knob is
 		// itself a destination, and a macro riding it rides every route — at the one publish every
 		// reader takes. Unity for a device that names none.
-		const float amount = amountOf(*d, slot.resolved);
 		for (size_t output = 0; output < d->outputs.size() && output < slot.outputs.size(); ++output) {
+			// THIS OUTPUT'S OWN ENABLE AND AMOUNT where it declares them (an LFO tab), else the device's.
+			const bool disabled = outputOff(*d, output, slot.resolved);
+			const float amount = outputAmount(*d, output, slot.resolved);
 			// FROM THE VOICES: the newest note's, or rest before any voice has held one.
 			const size_t newest = fromVoices ? newestVoice() : 0;
 			void* const source = !fromVoices ? slot.storage.get()
@@ -2163,12 +2179,12 @@ void RackEngine::writeVoiceOutput(DeviceInstanceId id, size_t output, size_t voi
 	// THE AMOUNT REACHES THE PER-VOICE RUN TOO (backlog DH), by the block's resolved value — one knob,
 	// every voice; a per-voice source's amount is not itself resolved per voice.
 	if (const device::Descriptor* d = s.live_desc(); d != nullptr) {
-		value *= amountOf(*d, s.resolved);
+		value *= outputAmount(*d, output, s.resolved);
 		// **AND THE ENABLE SWITCH, WHICH THE COLLAPSED PUBLISH APPLIES AND THIS ROAD DID NOT** (backlog
 		// EH, shape 6 — a guard asymmetry inside one function). The amount was carried here for DH; the
 		// switch was not, so a per-voice source switched OFF kept reaching every voice: in the default
 		// patch the strip envelope, routed into Level at full amount, could not be switched off at all.
-		const int enable = d->traits.enableControl;
+		const int enable = enableControlOf(*d, output);
 		if (enable >= 0 && static_cast<size_t>(enable) < s.resolved.size()
 		    && s.resolved[static_cast<size_t>(enable)] < 0.5f) {
 			value = 0.0f;
@@ -2223,11 +2239,11 @@ void RackEngine::writeOutputWindowForVoice(DeviceInstanceId id, size_t output, s
 	    || w + static_cast<size_t>(device::kTickWindowStride) > s.outputsPerVoiceWindow.size()) {
 		return;
 	}
-	const int enable = d->traits.enableControl;
+	const int enable = enableControlOf(*d, output);
 	if (enable >= 0 && static_cast<size_t>(enable) < s.resolved.size() && s.resolved[static_cast<size_t>(enable)] < 0.5f) {
 		return; // switched off: the ramp to rest, as `writeVoiceOutput` wrote it
 	}
-	(void)renderCurveWindow(s, *d, output, s.storage.get(), true, noteId, channel, key, false, amountOf(*d, s.resolved),
+	(void)renderCurveWindow(s, *d, output, s.storage.get(), true, noteId, channel, key, false, outputAmount(*d, output, s.resolved),
 	                        &s.outputsPerVoiceWindow[w]);
 }
 
@@ -2247,8 +2263,8 @@ void RackEngine::writeOutputPairForVoice(DeviceInstanceId id, size_t output, siz
 	// applies them); or, for a device with no pair per note, the collapsed pair's right ear, already scaled and gated.
 	float value = relaxedLoadCell(s.outputsR[output]);
 	if (d->mod->outputPairForNote != nullptr && !publishesFromVoices(s, *d)) {
-		value = d->mod->outputPairForNote(s.storage.get(), output, noteId, channel, key).right * amountOf(*d, s.resolved);
-		const int enable = d->traits.enableControl;
+		value = d->mod->outputPairForNote(s.storage.get(), output, noteId, channel, key).right * outputAmount(*d, output, s.resolved);
+		const int enable = enableControlOf(*d, output);
 		if (enable >= 0 && static_cast<size_t>(enable) < s.resolved.size()
 		    && s.resolved[static_cast<size_t>(enable)] < 0.5f) {
 			value = 0.0f;
@@ -2259,10 +2275,10 @@ void RackEngine::writeOutputPairForVoice(DeviceInstanceId id, size_t output, siz
 	if (w + static_cast<size_t>(device::kTickWindowStride) <= s.outputsPerVoiceWindowR.size()) {
 		device::fillTickWindowRamp(&s.outputsPerVoiceWindowR[w], start ? next : s.outputsPerVoiceR[at], next);
 		// AND THE DEVICE'S OWN CURVE for the note's right ear, when one is read (a note that starts this tick is flat).
-		const int enable = d->traits.enableControl;
+		const int enable = enableControlOf(*d, output);
 		const bool off = enable >= 0 && static_cast<size_t>(enable) < s.resolved.size() && s.resolved[static_cast<size_t>(enable)] < 0.5f;
 		if (!start && !off && !publishesFromVoices(s, *d)) {
-			(void)renderCurveWindow(s, *d, output, s.storage.get(), true, noteId, channel, key, true, amountOf(*d, s.resolved),
+			(void)renderCurveWindow(s, *d, output, s.storage.get(), true, noteId, channel, key, true, outputAmount(*d, output, s.resolved),
 			                        &s.outputsPerVoiceWindowR[w]);
 		}
 	}

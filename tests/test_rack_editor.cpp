@@ -524,7 +524,7 @@ TEST_CASE("the rack's namer reads a relabelled MACROS output, and leaves a one-o
 	// INSTANCE calls it — "Macros 1 · Wobble" — and a one-output device by its name and place alone.
 	Fixture f;
 	const DeviceInstanceId macros = f.add("MACROS");
-	const DeviceInstanceId lfo = f.add("LFO");
+	const DeviceInstanceId lfo = f.add("MSEG");
 	REQUIRE(macros != kNoInstance);
 	REQUIRE(lfo != kNoInstance);
 	const backplane::Source second = backplane::Source::output(macros, 1);
@@ -532,7 +532,7 @@ TEST_CASE("the rack's namer reads a relabelled MACROS output, and leaves a one-o
 	f.bridge.setOutputLabel(macros, 1, "Wobble");
 	CHECK(f.mod.sourceName(second) == "Macros 1 · Wobble");
 	CHECK(f.mod.sourceName(backplane::Source::output(macros, 0)) == "Macros 1 · Macro 1");
-	CHECK(f.mod.sourceName(backplane::Source::output(lfo, 0)) == "LFO 2");
+	CHECK(f.mod.sourceName(backplane::Source::output(lfo, 0)) == "MSEG 2");
 }
 
 TEST_CASE("a rename committed after the rack editor died writes nothing") {

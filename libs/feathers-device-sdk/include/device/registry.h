@@ -163,6 +163,12 @@ struct SourceDesc {
 	/// "Macro 1". Null prints the house rule (the name's last word). The full name, which the hand may have changed, is the chip's
 	/// tooltip and the route lists' word, so a user's name is never cut to fit a cell.
 	const char* shortName = nullptr;
+
+	/// **THIS OUTPUT'S OWN ENABLE SWITCH AND AMOUNT, WHEN THEY ARE NOT THE DEVICE'S** (`Traits::enableControl` /
+	/// `amountControl`): a device with several independent outputs (the LFO's tabs) gives each its own. A control index of
+	/// this device, -1 for "the device's". A switched-off output publishes its rest value; the amount scales it. APPENDED.
+	int enableControl = -1;
+	int amountControl = -1;
 };
 
 /// HOW A HOST RUNS A DEVICE THAT PROCESSES AUDIO — and NULL IS THE CAPABILITY.

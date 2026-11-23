@@ -4421,8 +4421,8 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		auto* shCard = dynamic_cast<const ui::SampleHoldCard*>(f.panel->cardFrameForTest(shSlot));
 		REQUIRE(shCard != nullptr);
 		Entry e { feathers::mod::samplehold::kTraits.tag, {}, {}, false };
-		for (const feathers::mod::samplehold::Param p : shCard->addressedParamsForTest()) {
-			e.reached.insert(static_cast<size_t>(p));
+		for (const size_t p : shCard->addressedFieldsForTest()) {
+			e.reached.insert(p);
 		}
 		e.reached.insert(static_cast<size_t>(feathers::mod::samplehold::kTraits.enableControl));
 		table.push_back(std::move(e));
@@ -5074,14 +5074,14 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		g.panel->resized();
 		auto* lfoCard = dynamic_cast<const ui::LfoCard*>(g.panel->cardFrameForTest(lfoSlot));
 		REQUIRE(lfoCard != nullptr);
-		for (const feathers::mod::lfo::Param p : lfoCard->addressedParamsForTest()) {
+		for (const size_t p : lfoCard->addressedFieldsForTest()) {
 			e.reached.insert(static_cast<size_t>(p));
 		}
-		// PING-PONG IS HIDDEN (2026-11-22): the engine never reads it, so no card reaches it. Its key stays in the descriptor.
-		e.knownGaps = {
-		    {static_cast<size_t>(feathers::mod::lfo::Param::PingPong),
-		     "Ping-Pong — hidden: the engine never reads it, so no card reaches it"},
-		};
+		// PING-PONG IS HIDDEN (2026-11-22), ON EVERY TAB: the engine never reads it, so no card reaches it. Its key stays.
+		for (size_t t = 0; t < feathers::mod::lfo::kTabs; ++t) {
+			e.knownGaps.emplace(feathers::mod::lfo::tabParam(t, feathers::mod::lfo::Param::PingPong),
+			                    "Ping-Pong — hidden: the engine never reads it, so no card reaches it");
+		}
 		table.push_back(std::move(e));
 		REQUIRE(g.bridge.removeRackDevice(lfoSlot));
 		g.bridge.refresh();
@@ -21920,7 +21920,7 @@ TEST_CASE("MV: every Trig pad's right-click lists the routes into it, and removi
 		REQUIRE(card != nullptr);
 		collectTrigPads(card, &pads);
 	}
-	REQUIRE(pads.size() == 12); // one per card, seven on the sequencer (Advance, Reset, a Randomise per lane — backlog NT)
+	REQUIRE(pads.size() == 12 + 2 * (feathers::mod::lfo::kTabs - 1)); // one per card, seven on the sequencer (Advance, Reset, a Randomise per lane — backlog NT), and one a tab on the LFO and the S&H
 
 	const backplane::Source a = backplane::Source::core(0);
 	const backplane::Source b = backplane::Source::core(1);

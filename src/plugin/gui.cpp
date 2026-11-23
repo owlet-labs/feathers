@@ -28,6 +28,7 @@
 
 #if defined(FEATHERS_GUI_VISAGE)
 
+#include "plugin/ui/alt_pause.h"
 #include "plugin/ui/keyboard_claim.h"
 #include "plugin/ui/knob_tray.h"
 #include "plugin/ui/master_meter.h"
@@ -1414,19 +1415,7 @@ struct Gui::Impl : ModStateHolder, WatcherHolder, PluginWindow::Client {
 		// feed set it on each move and the next frame took it away. The glow stayed lit while Alt held and the press
 		// (which reads its own event) still bypassed. That was macOS after the visage v1 port dropped the override.
 		// Where the platform cannot answer, the event feed is the only witness and the poll stays out of its way.
-		{
-			int modifiers = -1; // negative: nothing read
-			if (modifierProbe != nullptr) {
-				modifiers = modifierProbe();
-			}
-			else if (window.app() != nullptr && window.app()->window() != nullptr
-			         && window.app()->window()->hasModifierState()) {
-				modifiers = window.app()->window()->modifierState();
-			}
-			if (modifiers >= 0) {
-				report.bypassFrames += mod.setBypass((modifiers & visage::kModifierAlt) != 0);
-			}
-		}
+		report.bypassFrames += ui::pollAltPause(mod, window.app(), modifierProbe);
 		// **ESC MUST HAVE SOMEWHERE TO GO WHILE ANYTHING ON THE ESC STACK IS OPEN.** visage's `handleKeyDown`
 		// returns at once when no frame holds the keyboard, so a close that takes the focused frame with it
 		// (a device window's ✕, a card deleted) leaves the focus on nobody and the next Esc never reaches the

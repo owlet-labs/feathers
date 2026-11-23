@@ -20,4 +20,65 @@ param LFO smooth_carry unit=choice choice=Off|On
 param LFO trig unit=percent min=0 max=1 stepped=0
 param LFO notes_trig unit=choice choice=Off|On
 param LFO stereo_phase unit=degrees min=0 max=3.141592653589793 stepped=0
+param LFO t2_waveform unit=choice choice=Sine|Triangle|Square|Random|Random Glide
+param LFO t2_skew_pre_peak unit=percent min=0 max=1 stepped=0
+param LFO t2_skew_pre_cross unit=percent min=0 max=1 stepped=0
+param LFO t2_skew_pre_trough unit=percent min=0 max=1 stepped=0
+param LFO t2_seed unit=number min=0 max=999 stepped=1
+param LFO t2_time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT|Note
+param LFO t2_rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param LFO t2_smoothing unit=log_seconds min=-11 max=0 stepped=0
+param LFO t2_mode unit=choice choice=Gate|Loop|Once|Free|LFO Retrig
+param LFO t2_phase unit=percent min=0 max=1 stepped=0
+param LFO t2_ping_pong unit=choice choice=Off|On
+param LFO t2_bipolar unit=choice choice=Off|On
+param LFO t2_enabled unit=choice choice=Off|On
+param LFO t2_amount unit=percent min=-1 max=1 stepped=0
+param LFO t2_poly unit=choice choice=Off|On
+param LFO t2_smooth_carry unit=choice choice=Off|On
+param LFO t2_trig unit=percent min=0 max=1 stepped=0
+param LFO t2_notes_trig unit=choice choice=Off|On
+param LFO t2_stereo_phase unit=degrees min=0 max=3.141592653589793 stepped=0
+param LFO t3_waveform unit=choice choice=Sine|Triangle|Square|Random|Random Glide
+param LFO t3_skew_pre_peak unit=percent min=0 max=1 stepped=0
+param LFO t3_skew_pre_cross unit=percent min=0 max=1 stepped=0
+param LFO t3_skew_pre_trough unit=percent min=0 max=1 stepped=0
+param LFO t3_seed unit=number min=0 max=999 stepped=1
+param LFO t3_time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT|Note
+param LFO t3_rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param LFO t3_smoothing unit=log_seconds min=-11 max=0 stepped=0
+param LFO t3_mode unit=choice choice=Gate|Loop|Once|Free|LFO Retrig
+param LFO t3_phase unit=percent min=0 max=1 stepped=0
+param LFO t3_ping_pong unit=choice choice=Off|On
+param LFO t3_bipolar unit=choice choice=Off|On
+param LFO t3_enabled unit=choice choice=Off|On
+param LFO t3_amount unit=percent min=-1 max=1 stepped=0
+param LFO t3_poly unit=choice choice=Off|On
+param LFO t3_smooth_carry unit=choice choice=Off|On
+param LFO t3_trig unit=percent min=0 max=1 stepped=0
+param LFO t3_notes_trig unit=choice choice=Off|On
+param LFO t3_stereo_phase unit=degrees min=0 max=3.141592653589793 stepped=0
+param LFO t4_waveform unit=choice choice=Sine|Triangle|Square|Random|Random Glide
+param LFO t4_skew_pre_peak unit=percent min=0 max=1 stepped=0
+param LFO t4_skew_pre_cross unit=percent min=0 max=1 stepped=0
+param LFO t4_skew_pre_trough unit=percent min=0 max=1 stepped=0
+param LFO t4_seed unit=number min=0 max=999 stepped=1
+param LFO t4_time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT|Note
+param LFO t4_rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param LFO t4_smoothing unit=log_seconds min=-11 max=0 stepped=0
+param LFO t4_mode unit=choice choice=Gate|Loop|Once|Free|LFO Retrig
+param LFO t4_phase unit=percent min=0 max=1 stepped=0
+param LFO t4_ping_pong unit=choice choice=Off|On
+param LFO t4_bipolar unit=choice choice=Off|On
+param LFO t4_enabled unit=choice choice=Off|On
+param LFO t4_amount unit=percent min=-1 max=1 stepped=0
+param LFO t4_poly unit=choice choice=Off|On
+param LFO t4_smooth_carry unit=choice choice=Off|On
+param LFO t4_trig unit=percent min=0 max=1 stepped=0
+param LFO t4_notes_trig unit=choice choice=Off|On
+param LFO t4_stereo_phase unit=degrees min=0 max=3.141592653589793 stepped=0
+param LFO view_tab unit=number min=0 max=3 stepped=1
 out LFO lfo bipolar=1
+out LFO lfo_2 bipolar=1
+out LFO lfo_3 bipolar=1
+out LFO lfo_4 bipolar=1

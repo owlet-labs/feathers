@@ -149,7 +149,7 @@ public:
 		out.modulated = out.base; // nothing modulates an identity per block; the turn edits the base itself
 		out.isDestination = true;
 		const backplane::Destination dest = destination();
-		out.armed = mod_ != nullptr && mod_->armed();
+		out.armed = mod_ != nullptr && mod_->assigning();
 		const backplane::Source focused = mod_ != nullptr ? mod_->source() : backplane::Source::nobody();
 		out.routable = out.armed && bridge_.mayRoute(focused, dest);
 		out.amount = mod_ != nullptr ? bridge_.routeAmount(focused, dest) : 0.0f;

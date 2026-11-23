@@ -21,6 +21,7 @@
 #include "device/registry.h"
 #include "mod/modulator.h"
 #include "mod/trig.h"
+#include "mod/tabs.h"
 
 #include <array>
 #include <cmath>
@@ -210,95 +211,129 @@ struct Settings {
 inline constexpr Settings defaults() { return Settings {}; }
 
 
-/// THE DESCRIPTOR TABLE. Index-aligned with Param. The waveform and choice controls
+/// **FOUR TABS, EACH A WHOLE LFO.** Every control below exists once per tab: tab 1 is the LFO this device always was (its
+/// keys and indexes are unchanged, so a saved patch is tab 1 and nothing else), tabs 2-4 are appended copies whose keys
+/// carry `t2_`/`t3_`/`t4_` and whose names a number, and which start switched OFF. A switched-off tab is not run at all.
+/// `kPerTab` controls a tab, `kTabs` tabs; control `c` of tab `t` is `tabParam(t, c)`.
+inline constexpr size_t kTabs = mod::kTabs;
+inline constexpr size_t kPerTab = static_cast<size_t>(Param::kCount);
+/// THE ROW INDEX of control `p` on tab `tab` (0-based).
+[[nodiscard]] constexpr size_t tabParam(size_t tab, Param p) noexcept {
+	return mod::tabField(kPerTab, tab, static_cast<size_t>(p));
+}
+
+/// THE DESCRIPTOR TABLE. Index-aligned with Param, tab 1's block first. The waveform and choice controls
 /// are stepped; the skew knobs and phase are continuous.
-inline constexpr device::ParamDesc kParamDescs[] = {
-	{ "waveform", "Waveform", 0.0, static_cast<double>(Waveform::kCount) - 1.0, 0.0, true, device::Unit::Choice,
-	  kWaveformNames, false, false,
-	  "The base shape — sine, triangle or square — the skew knobs deform" },
-	// **THE THREE SKEWS ARE THE SHAPED WAVES', AND THE SEED IS RANDOM'S** — gated, so a card shows
-	// each only where it does something (`device::relevantFor`). The skews remap a PHASE and
-	// the random walk has no phase to remap; the seed picks a sequence and a sine has no sequence to
-	// pick. Both were stated in prose in these very tooltips — "only meaningful in Random mode",
-	// "periodic modes only" — and declared to nobody, so the card drew all four at all times and the
-	// honesty rule was carried by a sentence a player has to hover to read.
-	// **0..1 WITH 0.5 NEUTRAL, NOT 0..100 — because `Unit::Percent` in this project STORES A FRACTION**
-	// and the box multiplies by 100 to print it. Declared 0..100, these read **5000%** (2026-09-19). Two spellings of percent in one declaration; the
-	// range is what moves, or the project acquires a second convention.
-	//
-	// AND THEY NEST rather than each owning a quadrant — see `SkewMap`. Pre-Cross places the
-	// mid-crossing and so sets the two halves; the other two divide the half each belongs to.
-	{ "skew_pre_peak", "Skew Pre-Peak", 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,
-	  "Where the peak sits INSIDE the first half — 0% puts it at the very start, 100% at the crossing",
-	  0, 0.0, {}, static_cast<int16_t>(Param::Waveform), kShapedWaves },
-	{ "skew_pre_cross", "Skew Pre-Cross", 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,
-	  "How much of the cycle is the FIRST HALF — at 100% a triangle becomes a rising sawtooth, at 0% a falling one",
-	  0, 0.0, {}, static_cast<int16_t>(Param::Waveform), kShapedWaves },
-	{ "skew_pre_trough", "Skew Pre-Trough", 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,
-	  "Where the trough sits INSIDE the second half — 0% puts it at the crossing, 100% at the end",
-	  0, 0.0, {}, static_cast<int16_t>(Param::Waveform), kShapedWaves },
-	{ "seed", "Seed", 0.0, 999.0, 0.0, true, device::Unit::Number, {}, false, false,
-	  "Random seed — which random walk plays. The walk is deterministic against the song position, so "
-	  "a seed is a sequence you choose rather than a surprise",
-	  0, 0.0, {}, static_cast<int16_t>(Param::Waveform), kRandomWave },
-	{ .key = "time_base", .name = "Time Base", .min = 0.0, .max = static_cast<double>(kTimeBaseCount) - 1.0,
-	  .def = 0.0, .stepped = true, .unit = device::Unit::Choice, .names = kTimeBaseNames, .modulatable = true,
-	  .offsetsMayLeaveRange = false,
-	  .tooltip = "Musical divisions the rate locks to — Hz makes Rate a frequency, unsynced to the tempo (in Free "
-	             "mode it still follows the song's position); Note runs the LFO at the played note's pitch",
-	  .choiceAliases = kTimeBaseAliases },
-	{ "rate", "Rate", kTimeLog2SecondsMin, kTimeLog2SecondsMax, 0.0, false, device::Unit::LogMultiple, {},
-	  true, false,
-	  "How fast the LFO runs — a multiplier on the division, its frequency in Hz when Time Base is Hz, or on Note a ratio "
-	  "to the played note's frequency (1X is the note itself). Note follows the last note played (pitch bend and glide are "
-	  "not followed); at audio rates it reaches the destinations that read modulation per sample" },
-	{ "smoothing", "Smoothing", kSmoothingLog2SecondsMin, kSmoothingLog2SecondsMax,
-	  static_cast<double>(defaults().smoothing), false, device::Unit::LogSeconds, {}, true, false,
-	  "How much the corners are softened — square becomes trapezoid; at the bottom of its travel it is off" },
-	{ "mode", "Mode", 0.0, static_cast<double>(Mode::kCount) - 1.0, 0.0, true, device::Unit::Choice,
-	  kModeNames, false, false,
-	  "How the LFO runs — Gate retriggers while held, Loop cycles, Once fires and holds, Free runs continuously, LFO Retrig runs and restarts on every note" },
-	{ "phase", "Phase", 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, false, false,
-	  "Where in the waveform it starts — 0 begins at the start, 1 is the end" },
-	{ "ping_pong", "Ping-Pong", 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,
-	  "Reverses at the loop boundaries instead of wrapping forward" },
-	{ "bipolar", "Bipolar", 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,
-	  "Swings the output between -1 and +1 instead of 0 and 1" },
-	{ "enabled", "Enabled", 0.0, 1.0, 1.0, true, device::Unit::Choice, kOffOnNames, true, false,
-	  "Bypass switch — off removes the LFO from the rack" },
-	{ "amount", "Amount", -1.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,
-	  "How deeply the LFO modulates its destination — the output level of the modulation signal" },
-	{ "poly", "Poly", 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,
-	  "On: every note gets its own wave, restarted at its note. Off: one wave every note shares" },
-	{ "smooth_carry", "Smooth Carry", 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,
-	  "Smooth through retrigger: a new note's wave glides from where the last note's smoothed output stood, "
-	  "instead of starting its smoothing from zero. Needs Poly and some Smoothing",
-	  0, 0.0, {}, static_cast<int16_t>(Param::Poly), 1u << 1 },
-	mod::trigParamDesc("trig", "Trig",
-	                   mod::trigTooltip<"Resets the wave to its start phase: it fires when this rises past half and "
-	                                    "fires again only after it falls below a quarter. Route a trigger here, or "
-	                                    "click to fire by hand.">()),
-	mod::notesTrigParamDesc("notes_trig", "Notes Trig"),
-	// NOT A DESTINATION, as Phase is not: whether the output is a pair is decided from this control's value at the
-	// drain (`SourceDesc::pairWhile`), so a route moving it across zero would have to re-run the drain every tick.
-	{ .key = "stereo_phase", .name = "Stereo Phase", .min = 0.0, .max = static_cast<double>(M_PI), .def = 0.0,
-	  .stepped = false, .unit = device::Unit::Degrees, .names = {}, .modulatable = false,
-	  .tooltip = "How far ahead the right ear reads the wave — 0° is mono, 90° a quarter cycle, 180° the opposite "
+///
+/// **THE THREE SKEWS ARE THE SHAPED WAVES', AND THE SEED IS RANDOM'S** — gated, so a card shows each only where it does
+/// something (`device::relevantFor`). The skews remap a PHASE and the random walk has no phase to remap; the seed picks a
+/// sequence and a sine has no sequence to pick. **0..1 WITH 0.5 NEUTRAL, NOT 0..100 — because `Unit::Percent` in this
+/// project STORES A FRACTION** and the box multiplies by 100 to print it (declared 0..100 they read 5000%). They NEST
+/// rather than each owning a quadrant — see `SkewMap`. Stereo Phase is NOT A DESTINATION, as Phase is not: whether the
+/// output is a pair is decided from its value at the drain (`SourceDesc::pairWhile`).
+///
+/// ONE MACRO, BECAUSE A TAB IS THE SAME NINETEEN ENTRIES WITH A KEY PREFIX, A NAME SUFFIX, AN OFFSET FOR THE GATES THAT NAME
+/// ANOTHER CONTROL OF THE SAME TAB, AND A DEFAULT FOR ITS ENABLE. (No comments inside: a line splice would swallow them.)
+#define FEATHERS_LFO_TAB(OFF, KP, NS, ENABLED_DEFAULT)                                                                   \
+	{ KP "waveform", "Waveform" NS, 0.0, static_cast<double>(Waveform::kCount) - 1.0, 0.0, true, device::Unit::Choice,   \
+	  kWaveformNames, false, false,                                                                                    \
+	  "The base shape — sine, triangle or square — the skew knobs deform" },                                          \
+	{ KP "skew_pre_peak", "Skew Pre-Peak" NS, 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,           \
+	  "Where the peak sits INSIDE the first half — 0% puts it at the very start, 100% at the crossing",               \
+	  0, 0.0, {}, static_cast<int16_t>(OFF + static_cast<int>(Param::Waveform)), kShapedWaves },                       \
+	{ KP "skew_pre_cross", "Skew Pre-Cross" NS, 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,         \
+	  "How much of the cycle is the FIRST HALF — at 100% a triangle becomes a rising sawtooth, at 0% a falling one",  \
+	  0, 0.0, {}, static_cast<int16_t>(OFF + static_cast<int>(Param::Waveform)), kShapedWaves },                       \
+	{ KP "skew_pre_trough", "Skew Pre-Trough" NS, 0.0, 1.0, 0.5, false, device::Unit::Percent, {}, true, false,       \
+	  "Where the trough sits INSIDE the second half — 0% puts it at the crossing, 100% at the end",                   \
+	  0, 0.0, {}, static_cast<int16_t>(OFF + static_cast<int>(Param::Waveform)), kShapedWaves },                       \
+	{ KP "seed", "Seed" NS, 0.0, 999.0, 0.0, true, device::Unit::Number, {}, false, false,                             \
+	  "Random seed — which random walk plays. The walk is deterministic against the song position, so "               \
+	  "a seed is a sequence you choose rather than a surprise",                                                       \
+	  0, 0.0, {}, static_cast<int16_t>(OFF + static_cast<int>(Param::Waveform)), kRandomWave },                        \
+	{ .key = KP "time_base", .name = "Time Base" NS, .min = 0.0, .max = static_cast<double>(kTimeBaseCount) - 1.0,     \
+	  .def = 0.0, .stepped = true, .unit = device::Unit::Choice, .names = kTimeBaseNames, .modulatable = true,         \
+	  .offsetsMayLeaveRange = false,                                                                                  \
+	  .tooltip = "Musical divisions the rate locks to — Hz makes Rate a frequency, unsynced to the tempo (in Free "    \
+	             "mode it still follows the song's position); Note runs the LFO at the played note's pitch",          \
+	  .choiceAliases = kTimeBaseAliases },                                                                            \
+	{ KP "rate", "Rate" NS, kTimeLog2SecondsMin, kTimeLog2SecondsMax, 0.0, false, device::Unit::LogMultiple, {},      \
+	  true, false,                                                                                                    \
+	  "How fast the LFO runs — a multiplier on the division, its frequency in Hz when Time Base is Hz, or on Note a ratio " \
+	  "to the played note's frequency (1X is the note itself). Note follows the last note played (pitch bend and glide are " \
+	  "not followed); at audio rates it reaches the destinations that read modulation per sample" },                  \
+	{ KP "smoothing", "Smoothing" NS, kSmoothingLog2SecondsMin, kSmoothingLog2SecondsMax,                              \
+	  static_cast<double>(defaults().smoothing), false, device::Unit::LogSeconds, {}, true, false,                     \
+	  "How much the corners are softened — square becomes trapezoid; at the bottom of its travel it is off" },        \
+	{ KP "mode", "Mode" NS, 0.0, static_cast<double>(Mode::kCount) - 1.0, 0.0, true, device::Unit::Choice,             \
+	  kModeNames, false, false,                                                                                       \
+	  "How the LFO runs — Gate retriggers while held, Loop cycles, Once fires and holds, Free runs continuously, LFO Retrig runs and restarts on every note" }, \
+	{ KP "phase", "Phase" NS, 0.0, 1.0, 0.0, false, device::Unit::Percent, {}, false, false,                           \
+	  "Where in the waveform it starts — 0 begins at the start, 1 is the end" },                                      \
+	{ KP "ping_pong", "Ping-Pong" NS, 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,            \
+	  "Reverses at the loop boundaries instead of wrapping forward" },                                                \
+	{ KP "bipolar", "Bipolar" NS, 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,                \
+	  "Swings the output between -1 and +1 instead of 0 and 1" },                                                     \
+	{ KP "enabled", "Enabled" NS, 0.0, 1.0, ENABLED_DEFAULT, true, device::Unit::Choice, kOffOnNames, true, false,     \
+	  "Bypass switch — off removes the LFO from the rack" },                                                          \
+	{ KP "amount", "Amount" NS, -1.0, 1.0, 1.0, false, device::Unit::Percent, {}, true, false,                         \
+	  "How deeply the LFO modulates its destination — the output level of the modulation signal" },                   \
+	{ KP "poly", "Poly" NS, 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,                      \
+	  "On: every note gets its own wave, restarted at its note. Off: one wave every note shares" },                   \
+	{ KP "smooth_carry", "Smooth Carry" NS, 0.0, 1.0, 0.0, true, device::Unit::Choice, kOffOnNames, false, false,     \
+	  "Smooth through retrigger: a new note's wave glides from where the last note's smoothed output stood, "         \
+	  "instead of starting its smoothing from zero. Needs Poly and some Smoothing",                                   \
+	  0, 0.0, {}, static_cast<int16_t>(OFF + static_cast<int>(Param::Poly)), 1u << 1 },                                \
+	mod::trigParamDesc(KP "trig", "Trig" NS,                                                                           \
+	                   mod::trigTooltip<"Resets the wave to its start phase: it fires when this rises past half and "  \
+	                                    "fires again only after it falls below a quarter. Route a trigger here, or "   \
+	                                    "click to fire by hand.">()),                                                  \
+	mod::notesTrigParamDesc(KP "notes_trig", "Notes Trig" NS),                                                         \
+	{ .key = KP "stereo_phase", .name = "Stereo Phase" NS, .min = 0.0, .max = static_cast<double>(M_PI), .def = 0.0,   \
+	  .stepped = false, .unit = device::Unit::Degrees, .names = {}, .modulatable = false,                              \
+	  .tooltip = "How far ahead the right ear reads the wave — 0° is mono, 90° a quarter cycle, 180° the opposite "    \
 	             "side. Random reads the same walk that far along, not a second one" },
+
+/// **WHICH TAB THE CARD SHOWS, ONE FIELD AFTER THE TABS** — a VIEW control, like the rack's own view fields: it changes no sound,
+/// but the device's playhead and fire count (the star on the plot, the pad's pulse) are published for one tab, and this is
+/// the tab they are published for. The card writes it when a tab is pressed, and follows it when a patch or an undo moves it.
+inline constexpr size_t kViewTabField = kTabs * kPerTab;
+inline constexpr device::ParamDesc kViewTabDesc {
+	.key = "view_tab", .name = "View Tab", .min = 0.0, .max = static_cast<double>(kTabs) - 1.0, .def = 0.0, .stepped = true,
+	.unit = device::Unit::Number, .names = {}, .modulatable = false,
+	.tooltip = "Which tab the card shows — a view setting: it changes no sound, only which tab's playhead and trigger "
+	           "pulses the card draws"
 };
-static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
+inline constexpr device::ParamDesc kParamDescs[] = {
+	FEATHERS_LFO_TAB(0, "", "", 1.0)
+	FEATHERS_LFO_TAB(19, "t2_", " 2", 0.0)
+	FEATHERS_LFO_TAB(38, "t3_", " 3", 0.0)
+	FEATHERS_LFO_TAB(57, "t4_", " 4", 0.0)
+	kViewTabDesc
+};
+#undef FEATHERS_LFO_TAB
+static_assert(std::size(kParamDescs) == kTabs * kPerTab + 1);
+static_assert(kPerTab == 19, "the tab offsets above are written for 19 controls a tab");
 
-/// THE SINGLE OUTPUT. The host routes this to modulation destinations.
-
-/// THE ROW. One float per control, index-aligned with Param.
+/// THE ROW. One float per control of ONE TAB, index-aligned with Param — what `rowOf`/`settingsOf` convert, and what the
+/// codec test round-trips. The device's whole row is `FullRow`, the four tabs end to end.
 using Row = std::array<float, static_cast<size_t>(Param::kCount)>;
+using FullRow = std::array<float, kTabs * kPerTab + 1>;
 
-/// THE SINGLE OUTPUT. The host routes this to modulation destinations.
+/// THE FOUR OUTPUTS, one a tab. Tab 1's is the LFO's output as it always was (index 0, key "lfo"); the others are appended
+/// and own their enable and amount, so a tab switched off rests and a tab's Amount scales that tab alone.
+/// PER VOICE IN VALUE (backlog GA, 2026-10-03) — see the MSEG's output and `mod/per_note.h`.
+#define FEATHERS_LFO_OUT(KEY, NAME, OFF, HIDDEN, ENABLE, AMOUNT)                                                                  \
+	{ .key = KEY, .name = NAME, .bipolar = true, .bipolarControl = (OFF) + static_cast<int>(Param::Bipolar),                 \
+	  .perVoice = true, .pairWhile = (OFF) + static_cast<int>(Param::StereoPhase), .cardHidden = HIDDEN, .enableControl = ENABLE,                  \
+	  .amountControl = AMOUNT },
 inline constexpr device::SourceDesc kOutputs[] = {
-	/// PER VOICE IN VALUE (backlog GA, 2026-10-03) — see the MSEG's output and `mod/per_note.h`.
-	{ .key = "lfo", .name = "LFO", .bipolar = true, .bipolarControl = static_cast<int>(Param::Bipolar), .perVoice = true,
-	  .pairWhile = static_cast<int>(Param::StereoPhase) },
+	FEATHERS_LFO_OUT("lfo", "Tab 1", 0, false, -1, -1)
+	FEATHERS_LFO_OUT("lfo_2", "Tab 2", 19, true, 19 + static_cast<int>(Param::Enabled), 19 + static_cast<int>(Param::Amount))
+	FEATHERS_LFO_OUT("lfo_3", "Tab 3", 38, true, 38 + static_cast<int>(Param::Enabled), 38 + static_cast<int>(Param::Amount))
+	FEATHERS_LFO_OUT("lfo_4", "Tab 4", 57, true, 57 + static_cast<int>(Param::Enabled), 57 + static_cast<int>(Param::Amount))
 };
+#undef FEATHERS_LFO_OUT
 
 /// TAGS — what the browser groups this by.
 inline constexpr const char* kTags[] = { "lfo", "modulator" };
@@ -321,6 +356,8 @@ extern const device::NoteOps kNoteOps;
 /// ROW <-> SETTINGS conversion. Declared here so the codec test can call them.
 Row rowOf(const Settings& s);
 Settings settingsOf(const Row& row, size_t fieldsPresent);
+/// ONE TAB OF THE DEVICE'S WHOLE ROW (`FullRow`, `fieldsPresent` long) as settings. A tab the row does not reach is off.
+Settings settingsOfTab(const float* fields, size_t fieldsPresent, size_t tab);
 void sanitize(Settings* settings);
 float valueOf(const Settings& s, Param param);
 void setValueOf(Settings* settings, Param param, float value);

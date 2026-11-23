@@ -2220,3 +2220,10 @@ target_link_libraries(test_drum_hand_fm PRIVATE feathers-dsp feathers-warnings)
 target_include_directories(test_drum_hand_fm PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest)
 target_compile_options(test_drum_hand_fm PRIVATE ${FEATHERS_FP_EXACT})
 add_test(NAME drum-hand-fm COMMAND test_drum_hand_fm)
+
+# THE ONE- AND EIGHT-MACRO DEVICES (MACRO1, MACROS8): each output by value through the shared ops, routes into
+# a macro at the engine, a patch saved and loaded into a fresh instance, and the four-macro MACROS patch pinned.
+add_executable(test_mod_macros_variants test_mod_macros_variants.cpp)
+target_link_libraries(test_mod_macros_variants PRIVATE feathers-synth feathers-warnings)
+target_include_directories(test_mod_macros_variants PRIVATE ${CMAKE_SOURCE_DIR}/libs/doctest ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME mod-macros-variants COMMAND test_mod_macros_variants)

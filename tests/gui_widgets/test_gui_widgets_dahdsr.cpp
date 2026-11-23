@@ -11516,11 +11516,16 @@ TEST_CASE("Twin Field's output arms are a 2x4 grid: Mod 1-4 on top, Mod 5-8 belo
 	for (size_t k = 0; k < 8; ++k) {
 		CHECK((short1[k].width() > 0.0f) == (k < 4));
 	}
-	// AND A FLOW DEVICE IS UNTOUCHED: no other device declares a grid.
+	// AND A FLOW DEVICE IS UNTOUCHED: the only other devices that declare a grid are the two Macros devices (their chips mirror their knob
+	// grid, four to a row), so every other device keeps the house flow.
 	for (const feathers::device::Descriptor& other : feathers::kDevices) {
-		if (!feathers::device::sameTag(other.traits.tag, d.traits.tag)) {
-			CHECK(other.traits.outputGridColumns == 0);
+		const std::string tag(other.traits.tag);
+		if (tag == std::string(d.traits.tag)) {
+			continue;
 		}
+		const bool macros = tag == "MACROS" || tag == "MACROS8";
+		CAPTURE(tag);
+		CHECK(other.traits.outputGridColumns == (macros ? 4 : 0));
 	}
 }
 

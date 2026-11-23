@@ -7130,3 +7130,39 @@ TEST_CASE("replaced contents, the Chain: a chain preset applied at the top and i
 		tick(24);
 	}
 }
+
+TEST_CASE("route list: in the Chain editor, a nested rack's macro armed as the rack's export lists the routes that macro has inside the rack, with the row text asserted") {
+	namespace pr = rack::parallel;
+	Fixture f;
+	f.editor.setBounds(0, 0, rack::RackEditor::kWidth, kEditorHeight);
+	const DeviceInstanceId nested = f.add(pr::kTraits.tag);
+	REQUIRE(nested != kNoInstance);
+	pr::Rack* inner = pr::rackOf(f.bridge.containerSurfaceOf(nested));
+	REQUIRE(inner != nullptr);
+	if (inner->chainCount() < 2) {
+		REQUIRE(inner->addChain() != SIZE_MAX);
+	}
+	rack::RackBridge& chain0 = *inner->chainAt(0)->bridge();
+	const DeviceInstanceId filter = chain0.addDevice(fx::filter::kTraits.tag);
+	REQUIRE(filter != kNoInstance);
+	const size_t control = fx::filter::kDescriptor.controlOfNthModulatableBesideEnable(0);
+	const backplane::Source macro = backplane::Source::core(0);
+	const backplane::Destination dest = backplane::Destination::control(filter, control);
+	chain0.setRouteAmount(macro, dest, 0.5f);
+	// THE EDITOR'S OWN ARM of the nested rack's macro 1: the rack's export row, armed in this editor's state.
+	const backplane::Source armed = f.bridge.containerExport(nested, macro);
+	REQUIRE(armed != backplane::Source::nobody());
+	f.mod.focus(armed);
+	f.mod.arm(true);
+	ui::RouteList& list = f.editor.routeListForTest();
+	const std::vector<ui::RouteList::Row> rows = list.allRows();
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].destination == dest);
+	const std::string name = list.nameOfForTest(rows[0]);
+	CHECK(name.find(fx::filter::kTraits.name) != std::string::npos);
+	CHECK(name.find(fx::filter::kDescriptor.params[control].name) != std::string::npos);
+	list.writeForTest(rows[0], 0.25f);
+	CHECK(chain0.routeAmount(macro, dest) == doctest::Approx(0.25f));
+	list.removeForTest(rows[0]);
+	CHECK(chain0.routeAmount(macro, dest) == 0.0f);
+}

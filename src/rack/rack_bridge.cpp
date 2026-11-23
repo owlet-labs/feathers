@@ -16,6 +16,7 @@
  */
 
 #include "rack/rack_bridge.h"
+#include "rack/container_local_routes.h"
 #include "rack/export_table.h"
 #include "rack/extra_state_harvest.h"
 #include "rack/nesting.h"
@@ -1206,6 +1207,11 @@ std::vector<RackBridge::InnerRoute> RackBridge::innerRoutesFrom(backplane::Sourc
 	if (source.isOuter()) {
 		return out; // this host's sources only: a source already scoped is not one of ours to walk
 	}
+	// A NESTED CONTAINER'S OWN MACRO, ARMED HERE as its export: its routes are inside its chains, keyed by the chain's own macro.
+	if (source.isContainerExport()) {
+		const DeviceInstanceId holder = source.device;
+		return local_routes::routesFrom(descriptorOf(holder), bodies_.surfaceOf(holder), holder, source);
+	}
 	// AND THE ROUTES INSIDE EVERY DEVICE'S SITE (backlog NR), filed under its site key with the site's own table — the
 	// key is what a row carries back to the verbs below.
 	for (size_t position = 0; position < chainLength(0); ++position) {
@@ -1224,6 +1230,11 @@ float RackBridge::innerRouteAmount(backplane::Source source, DeviceInstanceId ch
 	if (chain == kNoInstance) {
 		return 0.0f;
 	}
+	if (source.isContainerExport()) {
+		const RackBridge* bridge = local_routes::holding(descriptorOf(chain), bodies_.surfaceOf(chain), inner);
+		const backplane::Source own = local_routes::innerOf(descriptorOf(chain), bodies_.surfaceOf(chain), source);
+		return bridge != nullptr && own != backplane::Source::nobody() ? bridge->routeAmount(own, inner) : 0.0f;
+	}
 	return backplane::innerRouteAmountOf(containerTableFor(chain, descriptorOf(chain)), bodies_.surfaceOf(chain), source,
 	                                     inner);
 }
@@ -1232,6 +1243,15 @@ bool RackBridge::setInnerRouteAmount(backplane::Source source, DeviceInstanceId 
                                      float amount) {
 	if (chain == kNoInstance) {
 		return false;
+	}
+	if (source.isContainerExport()) {
+		RackBridge* bridge = local_routes::holding(descriptorOf(chain), bodies_.surfaceOf(chain), inner);
+		const backplane::Source own = local_routes::innerOf(descriptorOf(chain), bodies_.surfaceOf(chain), source);
+		if (bridge == nullptr || own == backplane::Source::nobody() || (amount != 0.0f && !bridge->fragmentRecord().mayRoute(own, inner))) {
+			return false;
+		}
+		bridge->setRouteAmount(own, inner, amount);
+		return true;
 	}
 	return backplane::setInnerRouteOf(containerTableFor(chain, descriptorOf(chain)), bodies_.surfaceOf(chain), source,
 	                                  inner, amount);
@@ -1242,6 +1262,11 @@ backplane::Transfer RackBridge::innerRouteTransfer(backplane::Source source, Dev
 	if (chain == kNoInstance) {
 		return backplane::Transfer::Lin;
 	}
+	if (source.isContainerExport()) {
+		const RackBridge* bridge = local_routes::holding(descriptorOf(chain), bodies_.surfaceOf(chain), inner);
+		const backplane::Source own = local_routes::innerOf(descriptorOf(chain), bodies_.surfaceOf(chain), source);
+		return bridge != nullptr && own != backplane::Source::nobody() ? bridge->routeTransfer(own, inner) : backplane::Transfer::Lin;
+	}
 	return backplane::innerRouteTransferOf(containerTableFor(chain, descriptorOf(chain)), bodies_.surfaceOf(chain),
 	                                       source, inner);
 }
@@ -1250,6 +1275,11 @@ bool RackBridge::setInnerRouteTransfer(backplane::Source source, DeviceInstanceI
                                        backplane::Transfer t) {
 	if (chain == kNoInstance) {
 		return false;
+	}
+	if (source.isContainerExport()) {
+		RackBridge* bridge = local_routes::holding(descriptorOf(chain), bodies_.surfaceOf(chain), inner);
+		const backplane::Source own = local_routes::innerOf(descriptorOf(chain), bodies_.surfaceOf(chain), source);
+		return bridge != nullptr && own != backplane::Source::nobody() && bridge->setRouteTransfer(own, inner, t);
 	}
 	return backplane::setInnerRouteTransferOf(containerTableFor(chain, descriptorOf(chain)), bodies_.surfaceOf(chain),
 	                                          source, inner, t);

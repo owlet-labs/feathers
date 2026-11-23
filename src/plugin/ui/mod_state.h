@@ -365,10 +365,17 @@ public:
 	/// IT RETURNS HOW MANY FRAMES IT TOLD, and that number is the only way to test any of this. A
 	/// repaint is unobservable headlessly, so the line that DELIVERS one has to report that it did —
 	/// `FrameWatchers::notify` returns a count for exactly this reason and this hands it on.
+	///
+	/// **THE ROUTINGS ARE ONE FACT FOR THE WHOLE TREE OF STATES.** A route made by a knob in a chain's column is written through that
+	/// column's own state, but the lists that show it watch another one (a rack window's macro state, the synth's own): they
+	/// would draw the new route only after the source was disarmed and armed again. So this tells every state of the tree, from its
+	/// root down, and each state counts the frames it told. The return is the frames told in all.
 	size_t touched() {
-		const size_t told = watchers_.notify();
-		framesTold_ += told;
-		return told;
+		ModState* top = this;
+		while (top->parent_ != nullptr) {
+			top = top->parent_;
+		}
+		return top->touchTree();
 	}
 
 	/// HOW MANY FRAMES THIS STATE HAS TOLD, EVER — the tally a case reads across a road it cannot
@@ -480,6 +487,17 @@ private:
 			disarmed += child->disarmOthers(keep);
 		}
 		return disarmed;
+	}
+
+	/// This state's watchers and every descendant's, each state counting what it told (`framesToldForTest`).
+	size_t touchTree() {
+		const size_t told = watchers_.notify();
+		framesTold_ += told;
+		size_t total = told;
+		for (ModState* child : children_) {
+			total += child->touchTree();
+		}
+		return total;
 	}
 
 	/// A CHANGE HERE IS A CHANGE FOR EVERY STATE FOLLOWING THIS ONE: their watchers are told too.

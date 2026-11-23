@@ -398,6 +398,14 @@ inline constexpr int kScopeSteps = 8;
 // Shape — the DSP                                                                                //
 //------------------------------------------------------------------------------------------------//
 
+/// **HOW FAR THE CURVE MAY STRAY FROM THE STRAIGHT RAMP BEFORE A TICK IS RENDERED SAMPLE BY SAMPLE**, in full scale
+/// (1e-4, about 0.8 LSB of a 14-bit control). Under it the ramp stands and the output is bit-for-bit what it was; a sine
+/// strays by `19.7 * inc^2 / 8` of its swing (about 3.4 Hz at the 750 Hz tick), and a corner inside the tick always does.
+inline constexpr float kWindowRampBound = 1.0e-4f;
+/// A SEAM FOR THE BENCH AND THE TESTS: Auto is the rule above, Always renders every tick, Never leaves every ramp.
+enum class WindowPolicy { Auto, Always, Never };
+inline WindowPolicy gWindowPolicy = WindowPolicy::Auto;
+
 /// THE LFO DSP. Advances a phase, evaluates the skewed waveform, applies smoothing.
 class Shape {
 public:
@@ -430,6 +438,15 @@ public:
 	}
 	/// TEST SEAM: the frequency the last tick ran the wave at, after the Note clamp and `rateMul` — the quantity itself.
 	[[nodiscard]] double effectiveHzForTest() const noexcept { return effectiveHz_; }
+
+	/// **THE LAST TICK AS A CURVE — what the output does BETWEEN ticks, sample by sample** (`ModOps::renderWindow`). Writes
+	/// `device::kTickWindow` values into `window` and returns true, or returns false to leave the host's straight ramp.
+	/// Each sample is the wave's AVERAGE over that sample's slice of the cycle (an exact integral of the skewed wave: the
+	/// first-order antiderivative method), not a point read, so a corner (a square's edge, a triangle's peak) or a wave
+	/// faster than the sample rate does not fold into aliasing; and Smoothing is the same one-pole run per sample.
+	/// `rightEar` reads `Settings::stereoLead` cycles on. Only a plain run of a shaped wave has a curve (not a walk, a
+	/// rest, or a finished one-shot), and only when the curve strays from the ramp by more than `kWindowRampBound`.
+	[[nodiscard]] bool renderWindow(bool rightEar, float* window) const noexcept;
 
 	/// Advance one block. Returns the output value.
 	float tick(const Settings& settings, bool gate, bool retrigger, TransportClock clock,
@@ -481,6 +498,16 @@ private:
 	size_t smoothingDesigns_ = 0;
 	float noteSemitones_ = kDefaultNoteSemitones;
 	double effectiveHz_ = 0.0;
+	// WHAT `renderWindow` NEEDS OF THE LAST TICK — see `tick`.
+	Settings lastSettings_ {};
+	double tickInc_ = 0.0;      ///< cycles the phase moved this tick, by the road that moved it (0: none knows)
+	double winEnd_ = 0.0;       ///< the phase the tick ended on
+	double winInc_ = 0.0;       ///< and how far it moved
+	bool winOk_ = false;        ///< a plain run of a shaped wave
+	double smoothedBefore_ = 0.0; ///< the tick pole's state before this tick
+	uint64_t tickSerial_ = 0;
+	mutable double winSmoothed_ = 0.0, winSmoothedR_ = 0.0; ///< the per-sample poles, carried while windows are rendered in a row
+	mutable uint64_t winRenderedAt_ = ~uint64_t { 0 }, winRenderedAtR_ = ~uint64_t { 0 };
 	float raw_ = 0.0f;
 	float value_ = 0.0f;
 	/// THE RIGHT EAR (backlog PA) — its own smoother, the left's coefficient. Held equal to the left's while Stereo Phase

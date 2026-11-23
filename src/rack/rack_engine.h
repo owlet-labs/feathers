@@ -231,6 +231,10 @@ struct Slot {
 	/// by the editor, which draws the collapsed `resolved`.
 	std::vector<float> resolvedVoice;
 	bool anyPerVoiceInput = false;
+	/// **WHICH OF THIS DEVICE'S OUTPUTS SOME ROUTE READS** (a bit per output), counted at each drain by `rebuildInputs` from the
+	/// whole route list, the host's own destinations included. An output nothing reads publishes its tick value and a ramp;
+	/// only a read one asks the device for its per-sample curve (`ModOps::renderWindow`).
+	uint64_t readOutputs = 0;
 	/// **THE NODE'S OUTPUTS — what this device last published, one cell per declared output.** Written
 	/// by the block after the device ticks (`advanceModulators`), read by every input that points here.
 	/// **SIZED FROM ITS OWN DEVICE, AND NEVER FREED BY THE AUDIO THREAD** (2026-11-07):
@@ -1130,6 +1134,11 @@ public:
 	/// for an output that is not a pair this block. Call it beside `writeOutputForVoice`/`startOutputForVoice`.
 	void writeOutputPairForVoice(DeviceInstanceId id, size_t output, size_t voice, int32_t noteId, int16_t channel,
 	                             int16_t key, bool start) noexcept;
+	/// **THE NOTE'S OWN CURVE FOR THE TICK, INTO ITS PER-VOICE WINDOW** (`ModOps::renderWindow`): call it after
+	/// `writeOutputForVoice` for a voice that did not start its note this tick, and the ramp that call wrote is replaced by
+	/// the device's per-sample curve, when the output is read by some route and the device has one. Otherwise nothing.
+	void writeOutputWindowForVoice(DeviceInstanceId id, size_t output, size_t voice, int32_t noteId, int16_t channel,
+	                               int16_t key) noexcept;
 	/// The right ear's per-voice tick windows of an output — `outputWindowForVoiceOf`'s twin, into
 	/// `Slot::outputsPerVoiceWindowR`. Current only while the output is a pair (`outputPairsOf`), so read it only then.
 	[[nodiscard]] const float* outputWindowRForVoiceOf(DeviceInstanceId id, size_t output) const noexcept;
@@ -1725,6 +1734,11 @@ private:
 	/// and the removal in between is a null dereference on the audio thread. Taking it as an argument
 	/// makes that unrepresentable rather than remembered.
 	void resolveInto(Slot& slot, const device::Descriptor& desc);
+	/// **A DEVICE'S CURVE FOR THE TICK INTO `window`, SCALED BY ITS AMOUNT — or false and the window untouched**: when no
+	/// route reads `output`, the device has no `renderWindow`, or it declines (a plain ramp is the whole story).
+	static bool renderCurveWindow(const Slot& slot, const device::Descriptor& d, size_t output, const void* source,
+	                              bool forNote, int32_t noteId, int16_t channel, int16_t key, bool rightEar, float amount,
+	                              float* window) noexcept;
 	/// ONE CONTROL, RESOLVED — for the block (`kNoVoice`) or for one voice, which reads a per-voice source's
 	/// own cell for that voice. The one body both rows above come from.
 	static constexpr size_t kNoVoice = static_cast<size_t>(-1);

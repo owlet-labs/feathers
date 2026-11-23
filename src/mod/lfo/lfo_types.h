@@ -150,12 +150,6 @@ inline constexpr float kDefaultNoteSemitones = 48.0f;
 [[nodiscard]] inline double noteSemitonesToHz(double semitones) noexcept {
 	return 440.0 * std::exp2((semitones - 69.0) / 12.0);
 }
-/// **THE FASTEST A NOTE-TRACKED LFO RUNS: A QUARTER OF THE TICK RATE** — half the control tick's Nyquist. A modulator is
-/// published once per `kBlockSamples`, so it is a CONTROL signal (375 Hz is its Nyquist at 48 kHz); above this a wave has
-/// under four points a cycle and aliases. The effective frequency is clamped here, not allowed to fold back.
-[[nodiscard]] inline double noteTrackedMaxHz(double sampleRate) noexcept {
-	return (sampleRate > 0.0 ? sampleRate : 48000.0) / (4.0 * static_cast<double>(mod::kBlockSamples));
-}
 
 struct Settings {
 	/// WHICH CONTROL IS THE TRIG, for `mod::PolyShape`'s per-note resolve (backlog MV, B).
@@ -256,8 +250,8 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	{ "rate", "Rate", kTimeLog2SecondsMin, kTimeLog2SecondsMax, 0.0, false, device::Unit::LogMultiple, {},
 	  true, false,
 	  "How fast the LFO runs — a multiplier on the division, its frequency in Hz when Time Base is Hz, or on Note a ratio "
-	  "to the played note's frequency (1X is the note itself). Note follows the last note played, up to a quarter of the "
-	  "control rate (about 190 Hz): it is a modulation rate, not an audio oscillator. Pitch bend and glide are not followed" },
+	  "to the played note's frequency (1X is the note itself). Note follows the last note played (pitch bend and glide are "
+	  "not followed); at audio rates it reaches the destinations that read modulation per sample" },
 	{ "smoothing", "Smoothing", kSmoothingLog2SecondsMin, kSmoothingLog2SecondsMax,
 	  static_cast<double>(defaults().smoothing), false, device::Unit::LogSeconds, {}, true, false,
 	  "How much the corners are softened — square becomes trapezoid; at the bottom of its travel it is off" },

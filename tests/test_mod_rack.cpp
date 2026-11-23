@@ -4213,3 +4213,131 @@ TEST_CASE("lfo Note: through the synth, the LFO runs at the struck key's frequen
 	rig.synth.noteOn(0, 45, 2, 1.0); // A2, 110 Hz
 	CHECK(measure() == doctest::Approx(110.0).epsilon(0.01));
 }
+
+namespace {
+
+/// THE STRONGEST FREQUENCY in [lo, hi] Hz of a 48 kHz stream, by a Goertzel scan, Hann windowed.
+double lnPeakHz(const std::vector<float>& x, double lo, double hi, double step) {
+	double bestHz = lo, best = -1.0;
+	for (double f = lo; f <= hi; f += step) {
+		double re = 0.0, im = 0.0;
+		const double w = 2.0 * M_PI * f / kSampleRate;
+		for (size_t i = 0; i < x.size(); ++i) {
+			const double hann = 0.5 - 0.5 * std::cos(2.0 * M_PI * static_cast<double>(i) / static_cast<double>(x.size()));
+			re += x[i] * hann * std::cos(w * static_cast<double>(i));
+			im -= x[i] * hann * std::sin(w * static_cast<double>(i));
+		}
+		if (re * re + im * im > best) {
+			best = re * re + im * im;
+			bestHz = f;
+		}
+	}
+	return bestHz;
+}
+
+} // namespace
+
+TEST_CASE("lfo window through the engine: a READ output publishes its per-sample curve, an unread one keeps the ramp") {
+	namespace lfo = feathers::mod::lfo;
+	for (const bool routed : { true, false }) {
+		CAPTURE(routed);
+		feathers::ParamBridge bridge;
+		const size_t at = bridge.addFxDevice(lfo::kTraits.tag);
+		REQUIRE(at < feathers::kMaxFxSlots);
+		const feathers::DeviceInstanceId lfoId = bridge.fxDeviceAt(at);
+		const auto set = [&](lfo::Param p, float v) { bridge.setDeviceControl(lfoId, static_cast<size_t>(p), v); };
+		set(lfo::Param::Mode, static_cast<float>(feathers::mod::Mode::Free));
+		set(lfo::Param::Waveform, static_cast<float>(lfo::Waveform::Sine));
+		set(lfo::Param::Bipolar, 1.0f);
+		set(lfo::Param::TimeBase, static_cast<float>(lfo::kNoteSyncBase));
+		set(lfo::Param::TimeScale, 0.0f);
+		set(lfo::Param::Phase, 0.1f);
+		set(lfo::Param::Smoothing, static_cast<float>(lfo::kDescriptor.params[static_cast<size_t>(lfo::Param::Smoothing)].min));
+		if (routed) {
+			const int fine = feathers::modDestinationIndexOf(ParamId::FineTune);
+			REQUIRE(fine >= 0);
+			bridge.setRouteAmount(feathers::backplane::Source::output(lfoId, 0),
+			                      feathers::backplane::Destination::core(static_cast<size_t>(fine)), 0.5f);
+		}
+		Rig rig;
+		rig.synth.provisionDevices(bridge.chainState(), bridge.publishedChains().sequence(), &bridge.fxBodies());
+		feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+		rig.renderTicks(2);
+		rig.synth.noteOn(0, 57, 1, 1.0); // A3, 220 Hz
+		rig.renderTicks(2);
+		const feathers::rack::RackEngine& engine = rig.synth.laneForTest().engineForTest();
+		std::vector<float> stream;
+		double worstBend = 0.0; // how far a window strays from a straight line
+		for (int t = 0; t < 750; ++t) {
+			rig.renderTicks(1);
+			const float* w = engine.outputWindowOf(lfoId, 0);
+			REQUIRE(w != nullptr);
+			stream.insert(stream.end(), w, w + 64);
+			const double chord = (static_cast<double>(w[63]) - w[0]) / 63.0;
+			for (int i = 0; i < 64; ++i) {
+				worstBend = std::max(worstBend, std::abs(static_cast<double>(w[i]) - (w[0] + chord * i)));
+			}
+		}
+		if (routed) {
+			CHECK(lnPeakHz(stream, 198.0, 242.0, 0.1) == doctest::Approx(220.0).epsilon(0.005));
+			CHECK(worstBend > 0.05); // a 220 Hz sine bends well away from a line inside 1.3 ms
+		}
+		else {
+			CHECK(worstBend < 1e-5); // nothing reads it: the ramp, as before
+		}
+	}
+}
+
+TEST_CASE("lfo window through the engine: under Poly each voice's window is its own note's curve") {
+	namespace lfo = feathers::mod::lfo;
+	feathers::ParamBridge bridge;
+	const size_t at = bridge.addFxDevice(lfo::kTraits.tag);
+	REQUIRE(at < feathers::kMaxFxSlots);
+	const feathers::DeviceInstanceId lfoId = bridge.fxDeviceAt(at);
+	const auto set = [&](lfo::Param p, float v) { bridge.setDeviceControl(lfoId, static_cast<size_t>(p), v); };
+	set(lfo::Param::Mode, static_cast<float>(feathers::mod::Mode::LfoRetrig));
+	set(lfo::Param::Poly, 1.0f);
+	set(lfo::Param::Waveform, static_cast<float>(lfo::Waveform::Sine));
+	set(lfo::Param::Bipolar, 1.0f);
+	set(lfo::Param::TimeBase, static_cast<float>(lfo::kNoteSyncBase));
+	set(lfo::Param::TimeScale, 0.0f);
+	set(lfo::Param::Smoothing, static_cast<float>(lfo::kDescriptor.params[static_cast<size_t>(lfo::Param::Smoothing)].min));
+	const int fine = feathers::modDestinationIndexOf(ParamId::FineTune);
+	REQUIRE(fine >= 0);
+	bridge.setRouteAmount(feathers::backplane::Source::output(lfoId, 0),
+	                      feathers::backplane::Destination::core(static_cast<size_t>(fine)), 0.5f);
+	Rig rig;
+	rig.synth.provisionDevices(bridge.chainState(), bridge.publishedChains().sequence(), &bridge.fxBodies());
+	feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+	rig.renderTicks(2);
+	rig.synth.noteOn(0, 57, 1, 1.0); // A3, 220 Hz
+	rig.synth.noteOn(0, 69, 2, 1.0); // A4, 440 Hz
+	rig.renderTicks(3);
+	const feathers::rack::RackEngine& engine = rig.synth.laneForTest().engineForTest();
+	const float* base = engine.outputWindowForVoiceOf(lfoId, 0);
+	REQUIRE(base != nullptr);
+	constexpr size_t kStride = feathers::device::kTickWindowStride;
+	std::vector<std::vector<float>> streams(feathers::kVoiceSlots);
+	for (int t = 0; t < 750; ++t) {
+		rig.renderTicks(1);
+		for (size_t v = 0; v < streams.size(); ++v) {
+			streams[v].insert(streams[v].end(), base + v * kStride, base + v * kStride + 64);
+		}
+	}
+	// TWO VOICES SOUND, AT THE TWO NOTES' OWN FREQUENCIES — whichever slots the synth gave them.
+	int found220 = 0, found440 = 0;
+	for (const auto& stream : streams) {
+		double energy = 0.0;
+		for (const float v : stream) {
+			energy += static_cast<double>(v) * v;
+		}
+		if (energy < 1.0) {
+			continue; // a voice with no note
+		}
+		const double hz = lnPeakHz(stream, 198.0, 484.0, 0.5);
+		found220 += std::abs(hz - 220.0) < 1.5 ? 1 : 0;
+		found440 += std::abs(hz - 440.0) < 3.0 ? 1 : 0;
+	}
+	CHECK(found220 == 1);
+	CHECK(found440 == 1);
+}

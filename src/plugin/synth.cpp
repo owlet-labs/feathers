@@ -2290,6 +2290,8 @@ bool Synth::tickEnvelopes() {
 				// by id alone every voice read the first note the device held.
 				lane_.writeOutputForVoice(id, output, static_cast<size_t>(v.slot),
 				                          lane_.outputForNoteOf(id, output, laneNoteIdOf(v), v.channel, v.key));
+				// AND THE DEVICE'S OWN CURVE FOR THE TICK in place of that ramp, when a route reads it (an LFO's per-sample wave).
+				lane_.writeOutputWindowForVoice(id, output, static_cast<size_t>(v.slot), laneNoteIdOf(v), v.channel, v.key);
 				// AND ITS RIGHT EAR, while the output is a pair (backlog PA: the LFO's Stereo Phase); nothing otherwise.
 				lane_.writeOutputPairForVoice(id, output, static_cast<size_t>(v.slot), laneNoteIdOf(v), v.channel, v.key, false);
 			}

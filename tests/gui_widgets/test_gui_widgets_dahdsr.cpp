@@ -5041,6 +5041,11 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		for (const feathers::mod::lfo::Param p : lfoCard->addressedParamsForTest()) {
 			e.reached.insert(static_cast<size_t>(p));
 		}
+		// PING-PONG IS HIDDEN (2026-11-22): the engine never reads it, so no card reaches it. Its key stays in the descriptor.
+		e.knownGaps = {
+		    {static_cast<size_t>(feathers::mod::lfo::Param::PingPong),
+		     "Ping-Pong — hidden: the engine never reads it, so no card reaches it"},
+		};
 		table.push_back(std::move(e));
 		REQUIRE(g.bridge.removeRackDevice(lfoSlot));
 		g.bridge.refresh();

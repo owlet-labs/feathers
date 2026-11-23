@@ -90,6 +90,7 @@ LfoCard::LfoCard(backplane::DeviceHost& host, DeviceInstanceId id, ModState& mod
 			boxes_[i]->setReadoutFormatter([this](double v) { return rateFace(v); }, true);
 		}
 	}
+	refreshRateTip();
 	// THE CHOICES — compact, uncaptioned, in the chip row. The menu is the box's own, opened from the
 	// descriptor (`ValueBox::choiceMenuAvailable`); nothing here opts in.
 	for (size_t i = 0; i < kChoiceCount; ++i) {
@@ -224,7 +225,7 @@ std::string LfoCard::choiceFace(lfo::Param param, double value) {
 const std::array<LfoCard::Chip, LfoCard::kChipCount>& LfoCard::chips() {
 	static const std::array<Chip, kChipCount> k {
 		// WAVEFORM AND MODE ARE NOT CHIPS ANY MORE — see `choices()` (backlog GG). A chip is a switch.
-		Chip { lfo::Param::PingPong, "P-P" },
+		// PING-PONG IS NOT A CHIP: the engine never reads it, so the switch was dead in every mode (hidden 2026-11-22).
 		Chip { lfo::Param::Bipolar, "±" },
 		// **POLY — one shape per note, or one for the device**. A switch, so a chip: two states,
 		// both visible by being the only two.
@@ -527,7 +528,26 @@ void LfoCard::drawContent(visage::Canvas& canvas) {
 	}
 }
 
+void LfoCard::refreshRateTip() {
+	// **RATE'S HOVER TEXT FOLLOWS TIME BASE** (TV audit, 2026-11-22): on Hz it is a frequency; on a division it is a
+	// multiple of that division. Set on the Rate's own control, and moved only when the Hz-ness changes.
+	const int hz = settings().synced() ? 0 : 1;
+	if (hz == rateTipHz_) {
+		return;
+	}
+	rateTipHz_ = hz;
+	const std::string text = hz != 0
+	                             ? "How fast the LFO runs, as a frequency in Hz, unsynced to the tempo"
+	                             : "How fast the LFO runs, as a multiple of the division Time Base picks";
+	for (size_t i = 0; i < kBoxCount; ++i) {
+		if (layout()[i] == lfo::Param::TimeScale) {
+			controls_[i]->setTooltipOverride(text);
+		}
+	}
+}
+
 bool LfoCard::updateContent() {
+	refreshRateTip();
 	// **THE GATE MOVES BY MORE ROADS THAN THE BOX.** Picking the waveform re-lays the card out at the
 	// press, but the same value also arrives from an undo, a preset load, host automation and the
 	// modulation of another control — and a row that reflows only when a hand did it would show a

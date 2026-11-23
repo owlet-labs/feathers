@@ -18221,13 +18221,18 @@ TEST_CASE("the LFO's card can reach every control its device declares") {
 	REQUIRE(card != nullptr);
 	const std::vector<lfo::Param> reached = card->addressedParamsForTest();
 	// THE SEAM IS NOT A STUB ANY MORE, asserted before it is trusted — the whole case rests on it.
-	REQUIRE(reached.size() >= static_cast<size_t>(lfo::Param::kCount));
+	// ALL BUT PING-PONG, which is hidden (2026-11-22): the seam must answer with the rest, or it is a stub again.
+	REQUIRE(reached.size() >= static_cast<size_t>(lfo::Param::kCount) - 1);
 
 	for (int i = 0; i < static_cast<int>(lfo::Param::kCount); ++i) {
 		const auto param = static_cast<lfo::Param>(i);
 		// `CAPTURE` on a `const char*` prints the POINTER, not the text — playbook, and it printed "1" the
 		// first time this case went red. `std::string` is what makes the failure name the control.
 		CAPTURE(std::string(lfo::kParamDescs[static_cast<size_t>(i)].name));
+		// PING-PONG IS HIDDEN (2026-11-22): the engine never reads it, so no card reaches it. Its own case asserts the absence.
+		if (param == lfo::Param::PingPong) {
+			continue;
+		}
 		CHECK(std::find(reached.begin(), reached.end(), param) != reached.end());
 	}
 
@@ -18283,6 +18288,51 @@ TEST_CASE("backlog NJ: the LFO's first Time Base reads \"Hz\", and Rate reads Hz
 	set(lfo::Param::TimeBase, 13.0f); // 1/4
 	CHECK(base->readout() == "1/4");
 	CHECK(rate->readout() == "2X");
+}
+
+TEST_CASE("TV audit: the LFO's Ping-Pong is off the card, its saved value still reads back, and Rate's hover text follows Time Base") {
+	// PING-PONG: the engine never reads it, so its chip is hidden in every mode. Its key stays, so a patch that stored it
+	// loads and keeps the value. RATE: a frequency on Hz, a multiple of a division otherwise; the text is the card's override.
+	namespace lfo = feathers::mod::lfo;
+	ModFixture f;
+	auto* panel = findInTree<ui::ModPanel>(f.root);
+	REQUIRE(panel != nullptr);
+	const size_t slot = f.bridge.addRackDevice(lfo::kTraits.tag);
+	REQUIRE(slot >= 1);
+	f.bridge.refresh();
+	panel->resized();
+	auto* card = const_cast<ui::LfoCard*>(dynamic_cast<const ui::LfoCard*>(panel->cardFrameForTest(slot)));
+	REQUIRE(card != nullptr);
+
+	const std::vector<lfo::Param> reached = card->addressedParamsForTest();
+	CHECK(std::find(reached.begin(), reached.end(), lfo::Param::PingPong) == reached.end());
+	CHECK(ui::LfoCard::kChipCount == 3);
+
+	// THE VALUE STILL LOADS AND READS BACK: set it through the host, and the card's settings carry it.
+	f.deviceHost.setField(card->device(), static_cast<size_t>(lfo::Param::PingPong), 1.0f);
+	f.bridge.refresh();
+	(void)card->updateContent();
+	CHECK(card->restFromForTest().pingPong == true);
+
+	// RATE'S HOVER TEXT, read at the box's own centre through the hover road.
+	const auto& boxes = ui::LfoCard::layout();
+	const size_t rateBox = static_cast<size_t>(std::find(boxes.begin(), boxes.end(), lfo::Param::TimeScale) - boxes.begin());
+	const ui::ValueBox* rate = card->boxForTest(rateBox);
+	REQUIRE(rate != nullptr);
+	const auto hover = [&rate]() {
+		const auto* source = dynamic_cast<const ui::TooltipSource*>(rate);
+		REQUIRE(source != nullptr);
+		return ui::hoverText(*source, { rate->width() * 0.5f, rate->height() * 0.5f });
+	};
+	const auto set = [&](lfo::Param p, float v) {
+		f.deviceHost.setField(card->device(), static_cast<size_t>(p), v);
+		f.bridge.refresh();
+		(void)card->updateContent();
+	};
+	set(lfo::Param::TimeBase, 0.0f); // Hz
+	CHECK(hover() == std::string("How fast the LFO runs, as a frequency in Hz, unsynced to the tempo"));
+	set(lfo::Param::TimeBase, 13.0f); // 1/4
+	CHECK(hover() == std::string("How fast the LFO runs, as a multiple of the division Time Base picks"));
 }
 
 TEST_CASE("backlog NJ: the LFO's Rate types back in the unit its face prints — \"2hz\", \"2 Hz\", \"2x\" — any case") {

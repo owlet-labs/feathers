@@ -121,13 +121,15 @@ public:
 	static constexpr size_t kBoxCount = 10; ///< Base, Rate, Sm, Amt, Ph | Pk, Cr, Tr, Seed, St
 	static const std::array<mod::lfo::Param, kBoxCount>& layout();
 
-	/// The switches: Ping-Pong, Bipolar. TWO-STATE ONLY — see `toggleChip`, and the MSEG's chip list,
+	/// The switches: Bipolar, Poly, Carry. TWO-STATE ONLY — see `toggleChip`, and the MSEG's chip list,
 	/// which is the shape this follows. It was five; the Smoothing switch went with its param (decided
-	/// 2026-09-19 — the box's bottom is its off), and Waveform and Mode left for `choices()`.
-	static constexpr size_t kChipCount = 4;
-	/// HOW MANY OF THEM SIT IN THE CHIP ROW — the first three. The fourth, Carry, sits in the second box row's last
+	/// 2026-09-19 — the box's bottom is its off), and Waveform and Mode left for `choices()`. PING-PONG LEFT THE LIST
+	/// (2026-11-22): the engine never reads it, so its chip was inert in every mode. Its key stays in the descriptor, so
+	/// saved values still load and save; the real reversal is a separate piece of work.
+	static constexpr size_t kChipCount = 3;
+	/// HOW MANY OF THEM SIT IN THE CHIP ROW — the first two. The third, Carry, sits in the second box row's last
 	/// column (see `chipBounds`).
-	static constexpr size_t kRowChips = 3;
+	static constexpr size_t kRowChips = 2;
 	struct Chip {
 		mod::lfo::Param param;
 		const char* label;
@@ -223,6 +225,11 @@ private:
 	visage::Point fromUnit(float x, float y) const;
 
 	mod::lfo::Settings settings() const;
+	/// THE RATE'S HOVER TEXT, for the Time Base it is read against (a frequency on Hz, a multiple of a division otherwise).
+	/// Moves only when the Time Base's Hz-ness does; called from the constructor and every `updateContent`.
+	void refreshRateTip();
+	/// WHETHER THE RATE'S TEXT IS SET FOR HZ (-1 until the first refresh, 0 for a division, 1 for Hz).
+	int rateTipHz_ = -1;
 	/// **THE SAME ROW WHERE MODULATION LEFT IT** — what the plot draws, so the picture follows a routed control as the knob's ring does. `settings()` stays the STORED row: an edit starts from it, and an edit that started from a modulated one would write the modulation into the patch.
 	mod::lfo::Settings shownSettings() const;
 	/// Modulation moved the shape: the LFO's Settings has no `==`, so the rows (what the device reads) are compared.

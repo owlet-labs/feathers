@@ -172,6 +172,12 @@ constexpr double kTensionVariation = 0.02;
 constexpr double kTensionSteps = 2400.0;
 /// Width's second noise (the right ear's wires or clap band): its own stream, so the left is the mono hit to the bit.
 constexpr uint64_t kWidthSalt = 0x5E7E0D1DE0ull;
+constexpr uint64_t kParticleSalt = 0x9A27C1E5B0A7ull;
+constexpr uint64_t kFrictionSalt = 0xF1C7107B0A7ull;
+constexpr float kFrictionGain = 10.0f; ///< the resonators' sum to the level of the other kinds (measured, test_drum_voice)
+constexpr uint64_t kWaterSalt = 0x3A7E2B0B91Eull;
+constexpr uint64_t kSweepSalt = 0x5EE9B0A7C1ull;
+constexpr float kParticleGain = 0.35f; ///< the resonances' sum to a hit of about the level of the other kinds (measured, test_drum_voice)
 /// The Modulated contour: the wires' envelope chopped by a falling sawtooth at this rate, to this depth (Microtonic's Mod).
 constexpr double kWireModHz = 45.0;
 constexpr float kWireModDepth = 0.8f;
@@ -202,6 +208,17 @@ FieldUse kindReads(Kind k) {
 	case Kind::Metal: return { true, true, false, true, true, true, true };
 	case Kind::Clap: return { true, true, false, true, true, true, false };
 	case Kind::String: return { true, true, true, true, false, true, true };
+	// PARTICLE: the resonance's pitch, the shower's length (its Decay), the grains' brightness, the raw noise share, how unequal the grains are, and the
+	// resonances' spread. No sweep: nothing glides.
+	case Kind::Particle: return { true, true, false, true, true, true, true };
+	// FRICTION: the resonator's pitch, its ring (Decay), the slip's brightness (Tone), the roughness (Noise), the slip's edge (Snap), and the second resonance's place (Metal).
+	case Kind::Friction: return { true, true, false, true, true, true, true };
+	// WATER: the size (Pitch), the shower's length, the splash's and the bed's colour (Tone), the chirp's ring (Snap) and the spread of sizes and places
+	// (Metal). Nothing glides by the Sweep field (Rise is its own control) and there is no Noise share (the Flow control is the bed's level).
+	case Kind::Water: return { true, true, false, true, false, true, true };
+	// SWEEP: the low corner's pitch, the length (its Decay), how far the oscillator follows the filter (Sweep), the filter's type (Tone), the noise against
+	// the oscillator (Noise) and the resonance (Snap). No Metal.
+	case Kind::Sweep: return { true, true, true, true, true, true, false };
 	default: return { false, false, false, false, false, false, false };
 	}
 }
@@ -230,6 +247,10 @@ double kindBaseHz(Kind k) {
 	case Kind::Metal: return 400.0;
 	case Kind::Clap: return 1000.0;
 	case Kind::String: return 110.0;
+	case Kind::Particle: return 3000.0;
+	case Kind::Friction: return 600.0;
+	case Kind::Water: return 900.0;
+	case Kind::Sweep: return 200.0;
 	default: return 110.0;
 	}
 }
@@ -240,6 +261,7 @@ double kindSweepOctaves(Kind k) {
 	case Kind::Membrane: return 1.0;
 	case Kind::Snare: return 0.5;
 	case Kind::String: return 1.0;
+	case Kind::Sweep: return 1.0; // the Sweep field is how far the oscillator follows the filter (0..1)
 	default: return 0.0;
 	}
 }
@@ -406,6 +428,18 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.width = std::clamp(c.width, 0.0, 1.0);
 	l.buzz = std::clamp(wire.buzz, 0.0, 1.0);
 	l.buzzThreshold = std::clamp(wire.threshold, 0.0, 1.0);
+	l.density = std::clamp(c.particleDensity, 0.25, 2000.0);
+	l.grainT60 = std::clamp(c.grainSeconds, 1.0e-4, 0.5);
+	l.sweepDirection = c.sweepDirection == 1 ? 1 : 0;
+	l.sweepRange = std::clamp(c.sweepRange, 0.25, 9.0);
+	l.lengthSeconds = std::max(0.005, c.syncBeats > 0.0 && c.secondsPerBeat > 0.0 ? c.syncBeats * c.secondsPerBeat : l.t60);
+	l.waterRate = std::clamp(c.waterRate, 0.0625, 1000.0);
+	l.rise = std::clamp(c.rise, 0.0, 1.0);
+	l.flow = std::clamp(c.flow, 0.0, 1.0);
+	l.splash = std::clamp(c.splash, 0.0, 1.0);
+	l.pressure = std::clamp(c.pressure, 0.0, 1.0);
+	l.speed = std::clamp(c.speed, 0.0, 1.0);
+	l.play = kindSustains(k) ? std::clamp(c.play, kPlayOneShot, kPlayDrone) : (c.play == kPlayGate ? kPlayGate : kPlayOneShot);
 	return l;
 }
 
@@ -419,6 +453,10 @@ SettledPitch settledPitch(Kind k, const Fields& f, const Controls& c, double bas
 	case Kind::Kick:
 	case Kind::String:
 		return { true, false, hz };
+	case Kind::Particle:
+	case Kind::Friction:
+	case Kind::Water:
+		return { true, true, hz }; // a centre the resonances scatter about, as the Metal's
 	case Kind::Membrane:
 	case Kind::Snare:
 		// The head's lowest mode, which is the pitch heard: mode 0 sits at hz * its ratio at this Metal.
@@ -537,6 +575,31 @@ void Hit::reset() {
 	ratioMetal_ = -1.0f;
 	decayT60_ = -1.0;
 	body_ = {};
+	grain_ = {};
+	for (Svf& r : pres_) {
+		r.clear();
+	}
+	for (Svf& r : fres_) {
+		r.clear();
+	}
+	for (WaterChirp& c : chirps_) {
+		c = {};
+	}
+	splashEnv_ = {};
+	splashLp_ = 0.0f;
+	flowBp_.clear();
+	flowBpR_.clear();
+	flowWobble_ = 0.0f;
+	sweepFilter_.clear();
+	sweepPos_ = 0.0;
+	sweepEnded_ = false;
+	sweepShape_ = 0.0f;
+	sweepShapeStep_ = 0.0f;
+	fricLp_ = 0.0f;
+	slipAmp_ = 0.0f;
+	partAcc_ = 0.0f;
+	partLp_ = 0.0f;
+	partRaw_ = 0.0f;
 	click_ = {};
 	band_ = {};
 	tail_ = {};
@@ -682,6 +745,88 @@ void Hit::strike(Kind k, const Laws& l, uint64_t seed, float level) {
 		}
 		string_->reset();
 		break;
+	case Kind::Particle: {
+		// THE SHOWER'S OWN STREAM from the seed (never a count or a clock), so a reload and a retrigger from one seed are one sound. The
+		// density envelope starts at full: One-shot lets it decay by Decay, Gate holds it until released, Drone never lets it go.
+		partRand_ = ks::PluckNoise(seed ^ kParticleSalt);
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		grain_ = {};
+		grain_.d = envDecay(w.grainT60, sr_);
+		partLp_ = 0.0f;
+		partRaw_ = 0.0f;
+		grains_ = 0;
+		const auto unit = [&] { return std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6); };
+		// THE RESONANCES: the first at the centre, the rest scattered about it by up to 1.5 octaves at full Metal, seeded; each with its own gain.
+		for (int i = 0; i < kParticleResonators; ++i) {
+			const auto u = static_cast<size_t>(i);
+			const double scatter = i == 0 ? 0.0 : (2.0 * unit() - 1.0);
+			presRatio_[u] = std::exp2(1.5 * static_cast<double>(w.metal) * scatter);
+			presGain_[u] = static_cast<float>(i == 0 ? 1.0 : 0.5 + 0.5 * unit());
+			pres_[u].clear();
+		}
+		// THE FIRST COLLISION: a key (One-shot or Gate) lands one at once; a drone starts where its random process does.
+		partThresh_ = static_cast<float>(-std::log(1.0 - unit()));
+		partAcc_ = w.play == kPlayDrone ? 0.0f : partThresh_;
+		break;
+	}
+	case Kind::Sweep: {
+		sweepNoise_ = ks::PluckNoise(seed ^ kSweepSalt);
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		sweepPos_ = 0.0;
+		sweepStep_ = 1.0 / (std::max(0.005, w.lengthSeconds) * sr_);
+		sweepDir_ = 1.0;
+		sweepEnded_ = false;
+		sweepOscPhase_ = 0.0;
+		sweepFilter_.clear();
+		sweepShape_ = static_cast<float>(sweepShape(0.0, w.sweepDirection, w.play));
+		sweepShapeStep_ = 0.0f;
+		break;
+	}
+	case Kind::Water: {
+		partRand_ = ks::PluckNoise(seed ^ kWaterSalt);
+		waterNoiseR_ = ks::PluckNoise(seed ^ kWaterSalt ^ kWidthSalt);
+		fricRand_ = ks::PluckNoise(seed ^ kWaterSalt ^ 0x77ull); // the bed's swell, its own stream so Flow never moves the drops
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		for (WaterChirp& c : chirps_) {
+			c = {};
+		}
+		splashEnv_ = {};
+		splashLp_ = 0.0f;
+		flowBp_.clear();
+		flowBpR_.clear();
+		flowWobble_ = 0.0f;
+		events_ = 0;
+		lastStartHz_ = 0.0;
+		lastRiseOct_ = 0.0;
+		lastPan_ = 0.0f;
+		const double u = std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6);
+		partThresh_ = static_cast<float>(-std::log(1.0 - u));
+		// A KEY LANDS A DROP AT ONCE; a drone starts where its random process does.
+		partAcc_ = w.play == kPlayDrone ? 0.0f : partThresh_;
+		break;
+	}
+	case Kind::Friction: {
+		fricRand_ = ks::PluckNoise(seed ^ kFrictionSalt);
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		fricLp_ = 0.0f;
+		fricScrape_ = 0.0f;
+		slips_ = 0;
+		slipAmp_ = 0.0f;
+		// THE RESONANCES: the fundamental, a second at an inharmonic ratio (2.1 to 3.4, Metal), a third an octave and a fifth over; each seeded in gain.
+		const auto u01 = [&] { return std::clamp(0.5 * (static_cast<double>(fricRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6); };
+		fresRatio_ = { 1.0, 2.1 + 1.3 * static_cast<double>(w.metal), 3.0 + 2.0 * static_cast<double>(w.metal) };
+		fresGain_ = { 1.0f, static_cast<float>(0.25 + 0.2 * u01()), static_cast<float>(0.1 + 0.1 * u01()) };
+		for (Svf& r : fres_) {
+			r.clear();
+		}
+		slipCount_ = 0.0; // the first slip is the first sample: a bow lands
+		slipPeriod_ = 1.0;
+		break;
+	}
 	default: break;
 	}
 	control();
@@ -826,7 +971,7 @@ void Hit::control() {
 	}
 	// NOTHING MOVED, NOTHING TO DO (measured 2026-11-05: recomputing every mode's ratio, decay and rotation each block cost a
 	// Membrane hit about 13 µs a 256-frame block, V5's price). The laws, the bend and the Gate are everything a block reads.
-	const ControlKey key { laws_, bend, released_, releaseT60_, wireBend, bellHz, gates[0], gates[1], holding, dip };
+	const ControlKey key { laws_, bend, released_, releaseT60_, wireBend, bellHz, gates[0], gates[1], holding, dip, sweepPos_ };
 	if (controlValid_ && key == lastControl_) {
 		return;
 	}
@@ -960,6 +1105,92 @@ void Hit::control() {
 			body_.d = std::min(body_.d, envDecay(releaseT60_, sr_));
 		}
 		break;
+	case Kind::Particle: {
+		// THE DENSITY ENVELOPE: One-shot decays by Decay (shortened by a release); Gate and Drone hold it, and a released Gate falls by Release.
+		if (laws_.play == kPlayOneShot) {
+			body_.d = envDecay(effective(laws_.t60), sr_);
+		}
+		else {
+			body_.d = released_ ? envDecay(releaseT60_, sr_) : 1.0f;
+		}
+		grain_.d = envDecay(laws_.grainT60, sr_);
+		// THE EXCITATION'S BRIGHTNESS: a one-pole low-pass from 400 Hz (dark) to 12.8 kHz (bright) across Tone.
+		const double lpHz = std::min(400.0 * std::exp2(5.0 * static_cast<double>(laws_.tone)), kTopFraction * sr_);
+		partLpCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * lpHz / sr_));
+		// THE RESONANCES ring for a fraction of the shower's own length; each is normalised to unity at its centre, and given back what the
+		// narrower band takes from a noise burst (the square root of its Q).
+		const double ring = std::clamp(0.12 * laws_.t60, 0.003, 2.0);
+		for (int i = 0; i < kParticleResonators; ++i) {
+			const auto u = static_cast<size_t>(i);
+			const double hz = std::min(laws_.hz * presRatio_[u], kTopFraction * sr_);
+			const double q = std::clamp(std::numbers::pi * hz * ring / std::log(1000.0), 1.5, 400.0);
+			pres_[u].setBandPass(hz, q, sr_);
+			presQGain_[u] = static_cast<float>(pres_[u].k * std::sqrt(q));
+		}
+		break;
+	}
+	case Kind::Sweep: {
+		const double length = std::max(0.005, laws_.lengthSeconds);
+		sweepStep_ = 1.0 / (length * sr_);
+		if (laws_.play == kPlayGate && released_) {
+			body_.d = envDecay(releaseT60_, sr_);
+		}
+		const double lo = std::clamp(laws_.hz, 20.0, kTopFraction * sr_);
+		const double frac = laws_.sweepDirection == 0 ? sweepPos_ : 1.0 - sweepPos_;
+		sweepCorner_ = std::min(sweepCornerHz(lo, laws_.sweepRange, laws_.sweepDirection, sweepPos_), kTopFraction * sr_);
+		const double follow = static_cast<double>(laws_.sweepOctaves);
+		sweepOscInc_ = std::min(lo * std::exp2(laws_.sweepRange * follow * frac), kTopFraction * sr_) / sr_;
+		// THE RESONANCE (Snap): Q from 0.7 (open) to 12 (a whistle); Tone blends the low-pass (dark) into the band-pass (a narrow, vocal sweep).
+		const double q = 0.7 + 11.3 * static_cast<double>(laws_.snap) * static_cast<double>(laws_.snap);
+		sweepFilter_.setBandPass(sweepCorner_, q, sr_);
+		sweepLowMix_ = 1.0f - laws_.tone;
+		sweepBandMix_ = laws_.tone * sweepFilter_.k;
+		sweepGain_ = static_cast<float>(1.4 / std::sqrt(q));
+		// THE LOUDNESS SHAPE, ramped across this block to the next block's.
+		const double ahead = laws_.play == kPlayDrone ? sweepPos_ : std::min(1.0, sweepPos_ + sweepStep_ * kControlBlock);
+		sweepShape_ = static_cast<float>(sweepShape(sweepPos_, laws_.sweepDirection, laws_.play));
+		sweepShapeStep_ = static_cast<float>((sweepShape(ahead, laws_.sweepDirection, laws_.play) - static_cast<double>(sweepShape_)) / kControlBlock);
+		break;
+	}
+	case Kind::Water: {
+		if (laws_.play == kPlayOneShot) {
+			body_.d = envDecay(effective(laws_.t60), sr_);
+		}
+		else {
+			body_.d = released_ ? envDecay(releaseT60_, sr_) : 1.0f;
+		}
+		// THE SPLASH'S AND THE BED'S COLOUR: Tone moves the splash's low-pass from 1.5 to 16 kHz; the bed's band centres on the size's pitch,
+		// brighter with Tone, so the wash follows what the drops are doing.
+		const double lpHz = std::min(1500.0 * std::exp2(3.4 * static_cast<double>(laws_.tone)), kTopFraction * sr_);
+		splashLpCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * lpHz / sr_));
+		splashEnv_.d = envDecay(0.004 + 0.012 * (1.0 - static_cast<double>(laws_.snap)), sr_);
+		const double bedHz = std::clamp(laws_.hz * (0.5 + 1.5 * static_cast<double>(laws_.tone)), 60.0, kTopFraction * sr_);
+		flowBp_.setBandPass(bedHz, 0.7, sr_);
+		flowBpR_.setBandPass(bedHz, 0.7, sr_);
+		flowWobbleCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * 3.0 / sr_));
+		flowGain_ = static_cast<float>(0.55 * laws_.flow * std::sqrt(0.7));
+		break;
+	}
+	case Kind::Friction: {
+		if (laws_.play == kPlayOneShot) {
+			body_.d = envDecay(effective(laws_.t60), sr_);
+		}
+		else {
+			body_.d = released_ ? envDecay(releaseT60_, sr_) : 1.0f;
+		}
+		// THE SLIP'S BRIGHTNESS: a one-pole low-pass on the impulse, 800 Hz (dark) to 20 kHz across Tone and Pressure (a harder press lets go sharper).
+		const double lpHz = std::min(800.0 * std::exp2(4.6 * (0.5 * static_cast<double>(laws_.tone) + 0.3 * laws_.pressure + 0.2 * static_cast<double>(laws_.snap))), kTopFraction * sr_);
+		fricLpCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * lpHz / sr_));
+		const double ring = std::clamp(0.1 * laws_.t60, 0.01, 1.5);
+		for (int i = 0; i < kFrictionResonators; ++i) {
+			const auto u = static_cast<size_t>(i);
+			const double hz = std::min(laws_.hz * fresRatio_[u], kTopFraction * sr_);
+			const double q = std::clamp(std::numbers::pi * hz * ring / std::log(1000.0), 2.0, 600.0);
+			fres_[u].setBandPass(hz, q, sr_);
+			fresQGain_[u] = static_cast<float>(fres_[u].k * std::sqrt(q));
+		}
+		break;
+	}
 	case Kind::String:
 		if (string_ != nullptr) {
 			const double hz = laws_.hz * std::exp2(bend);
@@ -992,6 +1223,29 @@ bool Hit::envelopesSilent() const {
 	case Kind::Metal: return body_.v == 0.0f && click_.v == 0.0f;
 	case Kind::Clap: return nextBurst_ >= laws_.count && !toothOn_ && tail_.v == 0.0f;
 	case Kind::String: return string_ == nullptr || string_->idle();
+	case Kind::Sweep: return body_.v == 0.0f && sweepFilter_.ic1 == 0.0f && sweepFilter_.ic2 == 0.0f;
+	case Kind::Water:
+		for (const WaterChirp& c : chirps_) {
+			if (c.on) {
+				return false;
+			}
+		}
+		return body_.v == 0.0f && splashEnv_.v == 0.0f && splashLp_ == 0.0f && flowBp_.ic1 == 0.0f && flowBp_.ic2 == 0.0f
+		       && flowBpR_.ic1 == 0.0f && flowBpR_.ic2 == 0.0f;
+	case Kind::Friction:
+		for (const Svf& r : fres_) {
+			if (r.ic1 != 0.0f || r.ic2 != 0.0f) {
+				return false;
+			}
+		}
+		return body_.v == 0.0f && fricLp_ == 0.0f;
+	case Kind::Particle:
+		for (const Svf& r : pres_) {
+			if (r.ic1 != 0.0f || r.ic2 != 0.0f) {
+				return false;
+			}
+		}
+		return body_.v == 0.0f && grain_.v == 0.0f && partLp_ == 0.0f;
 	default: return true;
 	}
 }
@@ -1006,9 +1260,248 @@ void Hit::checkSilence() {
 			zi_[u] = 0.0f;
 		}
 	}
+	if (kind_ == Kind::Sweep && std::fabs(sweepFilter_.ic1) < kSilenceFloor && std::fabs(sweepFilter_.ic2) < kSilenceFloor) {
+		sweepFilter_.clear();
+	}
+	if (kind_ == Kind::Water) {
+		if (std::fabs(splashLp_) < kSilenceFloor) {
+			splashLp_ = 0.0f;
+		}
+		for (Svf* r : { &flowBp_, &flowBpR_ }) {
+			if (std::fabs(r->ic1) < kSilenceFloor && std::fabs(r->ic2) < kSilenceFloor) {
+				r->clear();
+			}
+		}
+		// A DECAYING SHOWER ENDS WHEN NO EVENT CAN STILL COME and its bed is below hearing: the drops still ringing finish on their own.
+		if (body_.v > 0.0f && body_.d < 1.0f) {
+			const double remaining = laws_.waterRate / sr_ * static_cast<double>(body_.v) / (1.0 - static_cast<double>(body_.d));
+			const bool noMore = static_cast<double>(partAcc_) + remaining < static_cast<double>(partThresh_);
+			if (noMore && (laws_.flow == 0.0 || body_.v < 1.0e-7f)) {
+				body_.v = 0.0f;
+			}
+		}
+	}
+	if (kind_ == Kind::Friction) {
+		for (Svf& r : fres_) {
+			if (std::fabs(r.ic1) < kSilenceFloor && std::fabs(r.ic2) < kSilenceFloor) {
+				r.clear();
+			}
+		}
+		if (std::fabs(fricLp_) < kSilenceFloor) {
+			fricLp_ = 0.0f;
+		}
+		// A BOW'S STRENGTH BELOW A TENTH OF A MICROUNIT IS NONE (its resonances are far below the floor by then): a spent bow ends when its sound does.
+		if (body_.d < 1.0f && body_.v < 1.0e-7f) {
+			body_.v = 0.0f;
+		}
+	}
+	if (kind_ == Kind::Particle) {
+		// A RESONANCE BELOW THE FLOOR IS EXACTLY ZERO, so a spent shower can be found silent and no denormal is left ringing.
+		for (Svf& r : pres_) {
+			if (std::fabs(r.ic1) < kSilenceFloor && std::fabs(r.ic2) < kSilenceFloor) {
+				r.clear();
+			}
+		}
+		if (std::fabs(partLp_) < kSilenceFloor) {
+			partLp_ = 0.0f;
+		}
+		// A DECAYING SHOWER ENDS WHEN NO COLLISION CAN STILL COME: the counter still to gain, summed over the density envelope's whole fall,
+		// cannot reach the threshold. (A held or droning shower's envelope does not fall, so this never ends it.)
+		if (body_.v > 0.0f && body_.d < 1.0f) {
+			const double remaining = laws_.density / sr_ * static_cast<double>(body_.v) / (1.0 - static_cast<double>(body_.d));
+			if (static_cast<double>(partAcc_) + remaining < static_cast<double>(partThresh_)) {
+				body_.v = 0.0f;
+			}
+		}
+	}
 	if (envelopesSilent()) {
 		reset();
 	}
+}
+
+float Hit::renderSweep() {
+	// THE POSITION: a sample at a time. A One-shot or a Gate runs to the end once (a One-shot then closes in 8 ms, a Gate holds); a Drone ping-pongs.
+	if (laws_.play == kPlayDrone) {
+		sweepPos_ += sweepDir_ * sweepStep_;
+		if (sweepPos_ >= 1.0) {
+			sweepPos_ = 1.0;
+			sweepDir_ = -1.0;
+		}
+		else if (sweepPos_ <= 0.0) {
+			sweepPos_ = 0.0;
+			sweepDir_ = 1.0;
+		}
+	}
+	else if (sweepPos_ < 1.0) {
+		sweepPos_ = std::min(1.0, sweepPos_ + sweepStep_);
+		if (sweepPos_ >= 1.0 && laws_.play == kPlayOneShot && !sweepEnded_) {
+			sweepEnded_ = true;
+			body_.d = envDecay(0.008, sr_); // the end of the sweep: closed in 8 ms (a riser's top is cut, not left ringing)
+		}
+	}
+	const float amp = body_.next();
+	// THE SOURCE: a saw (PolyBLEP-corrected) against white noise by the Noise field.
+	sweepOscPhase_ += sweepOscInc_;
+	sweepOscPhase_ -= std::floor(sweepOscPhase_);
+	const double t = sweepOscPhase_;
+	const double dt = sweepOscInc_;
+	double blep = 0.0;
+	if (t < dt) {
+		const double x = t / dt;
+		blep = x + x - x * x - 1.0;
+	}
+	else if (t > 1.0 - dt) {
+		const double x = (t - 1.0) / dt;
+		blep = x * x + x + x + 1.0;
+	}
+	const float saw = static_cast<float>(2.0 * t - 1.0 - blep);
+	const float balance = laws_.noise;
+	// THE STRENGTH GOES IN BEFORE THE FILTER, so a closed sweep's filter rings down to exact zero rather than being fed for ever.
+	const float x = amp * ((1.0f - balance) * 0.6f * saw + balance * noise());
+	float band = 0.0f;
+	float low = 0.0f;
+	sweepFilter_.step(x, band, low);
+	sweepShape_ += sweepShapeStep_;
+	return std::tanh((sweepLowMix_ * low + sweepBandMix_ * band) * sweepGain_ * sweepShape_) * level_; // a soft ceiling: a resonant sweep cannot pass full scale
+}
+
+void Hit::renderWater(float& left, float& right) {
+	const float env = body_.next();
+	// EVENTS: a Poisson process of Rate · the shower's strength. One is a chirp (a bubble's sine, rising from its size's pitch over its own life),
+	// born with a place in the field and a size within Metal's spread, and a splash (a short noise transient) of Splash's size.
+	partAcc_ += static_cast<float>(laws_.waterRate / sr_) * env;
+	if (partAcc_ >= partThresh_) {
+		partAcc_ -= partThresh_;
+		const auto u01 = [&] { return std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6); };
+		partThresh_ = static_cast<float>(-std::log(1.0 - u01()));
+		const double spread = static_cast<double>(laws_.metal);
+		const double hz = std::min(laws_.hz * std::exp2(1.2 * spread * (2.0 * u01() - 1.0)), kTopFraction * sr_);
+		// THE LIFE of a chirp: shorter for a small bubble, longer when soft (Snap down); it rises Rise · 2.2 octaves over it.
+		const double life = std::clamp((0.012 + 0.08 * (1.0 - static_cast<double>(laws_.snap))) * std::sqrt(900.0 / hz), 0.004, 0.4);
+		const double octaves = 2.2 * laws_.rise;
+		WaterChirp* take = nullptr;
+		for (WaterChirp& c : chirps_) {
+			if (!c.on) {
+				take = &c;
+				break;
+			}
+			if (take == nullptr || c.amp < take->amp) {
+				take = &c;
+			}
+		}
+		const float pan = static_cast<float>((2.0 * u01() - 1.0) * spread);
+		const double theta = (static_cast<double>(pan) + 1.0) * std::numbers::pi / 4.0;
+		take->on = true;
+		take->phase = 0.0;
+		take->inc = hz / sr_;
+		// the per-sample factor that carries it `octaves` up by the end of its life (T60 mapped: the chirp's amplitude is 1/1000 there)
+		take->grow = std::exp2(octaves / (life * sr_));
+		take->octavesLeft = octaves;
+		take->amp = static_cast<float>(0.5 + 0.5 * u01());
+		take->decay = envDecay(life, sr_);
+		take->gl = static_cast<float>(std::cos(theta) * std::numbers::sqrt2);
+		take->gr = static_cast<float>(std::sin(theta) * std::numbers::sqrt2);
+		splashEnv_.v = std::min(1.5f, splashEnv_.v + static_cast<float>(laws_.splash * (0.5 + 0.5 * u01())));
+		splashL_ = take->gl;
+		splashR_ = take->gr;
+		lastStartHz_ = hz;
+		lastRiseOct_ = octaves;
+		lastPan_ = pan;
+		++events_;
+	}
+	float l = 0.0f;
+	float r = 0.0f;
+	for (WaterChirp& c : chirps_) {
+		if (!c.on) {
+			continue;
+		}
+		const float y = static_cast<float>(std::sin(kTwoPi * c.phase)) * c.amp;
+		c.phase += c.inc;
+		c.phase -= std::floor(c.phase);
+		c.inc = std::min(c.inc * c.grow, 0.45);
+		c.amp *= c.decay;
+		if (c.amp < kSilenceFloor) {
+			c = {};
+		}
+		l += y * c.gl;
+		r += y * c.gr;
+	}
+	// THE SPLASH: noise under a fast envelope, coloured by Tone, at the place of the event that made it.
+	const float sp = splashEnv_.next();
+	splashLp_ += splashLpCoef_ * (noise() * sp - splashLp_);
+	l += splashLp_ * splashL_ * 0.7f;
+	r += splashLp_ * splashR_ * 0.7f;
+	// THE FLOW: a band-limited bed, an independent noise for each ear, its level breathing slowly (a low-passed noise, about 3 Hz).
+	if (flowGain_ > 0.0f) {
+		flowWobble_ += flowWobbleCoef_ * (fricRand_.next() - flowWobble_);
+		const float swell = 0.75f + 0.5f * flowWobble_;
+		// THE STRENGTH GOES IN BEFORE THE FILTER, so a spent shower's bed rings down to exact zero rather than being fed for ever.
+		l += flowGain_ * swell * flowBp_.bandPass(env * noise());
+		r += flowGain_ * swell * flowBpR_.bandPass(env * waterNoiseR_.next());
+	}
+	// A SOFT CEILING on the sum of bed, splashes and drops (up to eight chirps pile up at a high Rate): never past full scale.
+	left = std::tanh(l * 0.6f) * level_;
+	right = std::tanh(r * 0.6f) * level_;
+}
+
+float Hit::renderFriction() {
+	const float env = body_.next();
+	// THE SLIPS: one each period. The period is the resonance's own at full Speed (the bow locks to it and a tone sustains) and lengthens toward
+	// a creak's tick as Speed falls; the roughness jitters it. Whether a slip lets go at all grows with Speed and Pressure, so a slow, light bow
+	// stutters. A slip is an impulse of the size the pressure and speed leave it.
+	slipCount_ -= 1.0;
+	float exc = 0.0f;
+	if (slipCount_ <= 0.0) {
+		const auto u01 = [&] { return std::clamp(0.5 * (static_cast<double>(fricRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6); };
+		const double rough = static_cast<double>(laws_.noise);
+		const double lockHz = std::max(20.0, laws_.hz);
+		const double rate = std::exp(std::log(7.0) + (std::log(lockHz) - std::log(7.0)) * std::pow(laws_.speed, 1.5));
+		slipPeriod_ = sr_ / rate * (1.0 + rough * 0.8 * (2.0 * u01() - 1.0));
+		slipCount_ += std::max(1.0, slipPeriod_);
+		const double chance = std::clamp(2.0 * laws_.speed, 0.15, 1.0) * std::clamp(0.4 + laws_.pressure, 0.0, 1.0);
+		if (u01() <= chance) {
+			slipAmp_ = static_cast<float>((0.25 + 0.75 * laws_.speed) * (0.2 + 0.8 * laws_.pressure) * (1.0 - rough * 0.6 * u01()));
+			exc = slipAmp_ * env;
+			++slips_;
+		}
+	}
+	// THE SCRAPE: the roughness as a hiss under the slips, as bright as the slip.
+	const float scrape = noise() * laws_.noise * env * 0.08f;
+	fricLp_ += fricLpCoef_ * (exc + scrape - fricLp_);
+	float y = 0.0f;
+	for (int i = 0; i < kFrictionResonators; ++i) {
+		const auto u = static_cast<size_t>(i);
+		y += fresGain_[u] * fresQGain_[u] * fres_[u].bandPass(fricLp_);
+	}
+	return std::tanh(y * kFrictionGain + 0.25f * fricLp_) * level_; // a soft ceiling: unity when small, never past full scale
+}
+
+float Hit::renderParticle() {
+	// COLLISIONS: the counter fills at density · envelope per second and fires at its exponentially drawn threshold, so the rate follows the envelope
+	// exactly (a Poisson process of time-varying rate). A grain adds a burst of the size Snap leaves it (Snap 0: all alike; 1: uniformly unequal).
+	const float env = body_.next();
+	partAcc_ += static_cast<float>(laws_.density / sr_) * env;
+	if (partAcc_ >= partThresh_) {
+		partAcc_ -= partThresh_;
+		const double u = std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6);
+		const double size = 1.0 - static_cast<double>(laws_.snap) * (1.0 - u);
+		grain_.v = std::min(2.0f, grain_.v + static_cast<float>(size));
+		partThresh_ = static_cast<float>(-std::log(1.0 - std::clamp(0.5 * (static_cast<double>(partRand_.next()) + 1.0), 1.0e-6, 1.0 - 1.0e-6)));
+		++grains_;
+	}
+	// THE EXCITATION: white noise under the grains' envelope, its brightness set by Tone.
+	const float x = noise() * grain_.next();
+	partLp_ += partLpCoef_ * (x - partLp_);
+	float y = 0.0f;
+	for (int i = 0; i < kParticleResonators; ++i) {
+		const auto u = static_cast<size_t>(i);
+		y += presGain_[u] * presQGain_[u] * pres_[u].bandPass(partLp_);
+	}
+	// THE NOISE FIELD is the raw excitation's share, the rattle itself, against the resonances' pitched ring.
+	const float w = laws_.noise;
+	const float mixed = (1.0f - 0.7f * w) * y * kParticleGain + w * 2.0f * partLp_;
+	// A SOFT CEILING: unity at small signals, and never past full scale however many grains pile up.
+	return std::tanh(mixed) * level_;
 }
 
 float Hit::renderKick() {
@@ -1305,6 +1798,30 @@ void Hit::render(float* out, int n, float* outR) {
 			}
 			age_ -= span;
 			break;
+		case Kind::Particle:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = renderParticle();
+			}
+			break;
+		case Kind::Friction:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = renderFriction();
+			}
+			break;
+		case Kind::Sweep:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = renderSweep();
+			}
+			break;
+		case Kind::Water:
+			for (int i = 0; i < span; ++i) {
+				float right = 0.0f;
+				renderWater(out[s + i], right);
+				if (outR != nullptr) {
+					outR[s + i] = right;
+				}
+			}
+			break;
 		case Kind::String:
 			if (string_ != nullptr) {
 				string_->render(out + s, nullptr, span);
@@ -1316,7 +1833,7 @@ void Hit::render(float* out, int n, float* outR) {
 		default: std::fill(out + s, out + s + span, 0.0f); break;
 		}
 		// THE RIGHT EAR of every kind with no Width of its own is the left.
-		if (outR != nullptr && kind_ != Kind::Membrane && kind_ != Kind::Snare && kind_ != Kind::Clap) {
+		if (outR != nullptr && kind_ != Kind::Membrane && kind_ != Kind::Snare && kind_ != Kind::Clap && kind_ != Kind::Water) {
 			std::copy(out + s, out + s + span, outR + s);
 		}
 		if (driveGain_ > 0.0f) {

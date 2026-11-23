@@ -386,6 +386,8 @@ protected:
 	[[nodiscard]] const device::Descriptor& ownDescriptor() const noexcept { return desc_; }
 	[[nodiscard]] DeviceInstanceId deviceId() const noexcept { return device_; }
 	[[nodiscard]] backplane::DeviceHost& ownHost() const noexcept { return host_; }
+	/// THE ADAPTER FOR ONE CONTROL, for a subclass that puts a per-mode tooltip over it (`DeviceControl::setTooltipOverride`).
+	[[nodiscard]] DeviceControl& controlFor(size_t index) { return control(index); }
 
 private:
 	void layOut();

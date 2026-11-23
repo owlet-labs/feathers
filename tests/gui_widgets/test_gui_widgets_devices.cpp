@@ -32565,6 +32565,19 @@ TEST_CASE("LQ: OWLTT's band meters read each channel's own gain reduction off th
 	CHECK(d.card->graph()->meters().grSecond == first);
 }
 
+TEST_CASE("OWLTT's gain-reduction meter wears the legend's colours: reduction the DOWN colour, boost the UP colour, both opaque") {
+	// THE LEGEND'S KEY: DOWN is kValue, UP is kAccent (owltt_graph.cpp, the colour key). Boost at 0.4 alpha read as a
+	// disabled band. Asked through `grFillColour`, which the meter draws every half through.
+	const auto opaque = [](uint32_t c) { return (c >> 24) == 0xFFu; };
+	CHECK(ui::OwlttGraph::grFillColour(-0.5f) == kValue);
+	CHECK(ui::OwlttGraph::grFillColour(-0.001f) == kValue);
+	CHECK(ui::OwlttGraph::grFillColour(0.5f) == kAccent);
+	CHECK(ui::OwlttGraph::grFillColour(0.001f) == kAccent);
+	CHECK(opaque(ui::OwlttGraph::grFillColour(-0.5f)));
+	CHECK(opaque(ui::OwlttGraph::grFillColour(0.5f)));
+	CHECK(kValue != kAccent);
+}
+
 //------------------------------------------------------------------------------------------------//
 // THE DELAY'S TAPS STRIP (backlog LF).                                                           //
 //                                                                                                //
@@ -39571,6 +39584,7 @@ TEST_CASE("the Pattern window's lane names its gestures on hover — and every g
 #include "fx/delay/delay_lanes.h"
 #include "plugin/ui/delay_card.h"
 #include "plugin/ui/delay_expanded.h"
+#include "fx/clip/clip_tips.h"
 #include "fx/clip/clip_types.h"
 
 namespace {
@@ -43058,7 +43072,13 @@ TEST_CASE("drum device window: a control the Kind does not read is hidden, one i
 			}
 			CAPTURE(ddv::kParamDescs[i].name);
 			const bool read = device::relevantFor(ddv::kParamDescs[i], ddv::kParamDescs[i].gateControl >= 0 ? u.field(static_cast<ddv::Param>(ddv::kParamDescs[i].gateControl)) : 0.0);
-			CHECK(w->isVisible() == read);
+			// THE TRIGGER HAS TWO FACES: the plain two-way One-shot | Gate, and the three-way with Drone on a kind that can hold a hit.
+			const bool holdable = feathers::drum::kindSustains(static_cast<feathers::drum::Kind>(k));
+			CHECK(w->isVisible() == (p == ddv::Param::Trigger ? read && !holdable : read));
+			if (p == ddv::Param::Trigger) {
+				REQUIRE(u.win->triggerDroneForTest() != nullptr);
+				CHECK(u.win->triggerDroneForTest()->isVisible() == holdable); // Drone is offered only where the engine can hold the hit
+			}
 		}
 	}
 	// AND AGAINST THE ENGINE'S OWN STATEMENT: a Kick reads Hold, a Clap does not; a Clap reads Claps, a Kick does not; Release only on a Gate.
@@ -43649,7 +43669,7 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bi
 					REQUIRE(box != nullptr);
 					shown += box->isVisible() ? 1 : 0;
 				}
-				ui::FaderPill* pill = cell->pillFor(eroAt(ero::Param::DriveKey));
+				ui::KeySpreadRow* pill = cell->pillFor(eroAt(ero::Param::DriveKey));
 				REQUIRE(pill != nullptr);
 				shown += pill->isVisible() ? 1 : 0;
 				const ero::SecondParam want = ero::driveSecondParam(dm);
@@ -43678,7 +43698,8 @@ TEST_CASE("ERODER's Drive cell's third row is the Type's own — Hard, Sharp, Bi
 					CHECK(labelOf(ero::Param::DriveBias) == "Bias");
 				}
 				if (want == ero::SecondParam::Key) {
-					CHECK(pill->caption() == "Key");
+					CHECK(pill->chip().caption() == "Key");
+					CHECK(pill->fader().caption() == "Spr");
 					CHECK(pill->bottom() <= static_cast<float>(cell->height()));
 					if (cell == cells().front()) {
 						secondY.push_back(pill->y());
@@ -43794,22 +43815,119 @@ TEST_CASE("ERODER's Key: the Amount knob reads the note's multiple while the swi
 			if (!ero::driveHasKey(type)) {
 				continue;
 			}
-			// THE FADER IS LIVE WITH THE SWITCH OFF: the pill is shown, unpowered, and its drag writes the Spread.
+			// THE FADER IS LIVE WITH THE SWITCH OFF: the row is shown, the chip is off, and the fader's drag writes the Spread.
 			for (ui::ModeValueCell* cell : p.cells) {
-				ui::FaderPill* pill = cell->pillFor(eroAt(p.key));
+				ui::KeySpreadRow* pill = cell->pillFor(eroAt(p.key));
 				REQUIRE(pill != nullptr);
 				CHECK(pill->isVisible());
-				CHECK_FALSE(pill->poweredForTest());
+				CHECK_FALSE(pill->chip().on());
 				e.set(p.spread, 0.0f);
-				pill->amountForTest().beginGesture();
-				pill->amountForTest().setValue(0.6);
-				pill->amountForTest().endGesture();
+				pill->fader().amountForTest().beginGesture();
+				pill->fader().amountForTest().setValue(0.6);
+				pill->fader().amountForTest().endGesture();
 				CHECK(eroField(e.d, p.spread) == doctest::Approx(0.6f));
-				CHECK(pill->powerForTest() != nullptr);
-				CHECK(pill->powerForTest()->desc().key == ero::kParamDescs[eroAt(p.key)].key);
+				CHECK(pill->fader().amountOnly());
+				CHECK(pill->chip().control().desc().key == ero::kParamDescs[eroAt(p.key)].key);
 			}
 		}
 	}
+}
+
+TEST_CASE("ERODER's Key chip and Spread fader are two separate controls on the third row: the chip writes only Key, the fader only Spread and stays lit with Key off, the row is there for the four Types only, and it stays inside its cell at scale 1 and 1.75") {
+	EroFaces e;
+	struct Unit {
+		const char* name;
+		ero::Param type, key, spread;
+		bool narrow;
+		bool slot;
+		ui::ModeValueCell* cell;
+	};
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	const Unit units[] = {
+		{ "card Drive", ero::Param::DriveMode, ero::Param::DriveKey, ero::Param::DriveSpread, true, false, e.d.card->driveCellForTest() },
+		{ "window Drive", ero::Param::DriveMode, ero::Param::DriveKey, ero::Param::DriveSpread, false, false, e.panel->driveCellForTest() },
+		{ "card A", ero::Param::SlotAType, ero::Param::SlotAKey, ero::Param::SlotASpread, true, true, card.cellA.get() },
+		{ "card B", ero::Param::SlotBType, ero::Param::SlotBKey, ero::Param::SlotBSpread, true, true, card.cellB.get() },
+		{ "window A", ero::Param::SlotAType, ero::Param::SlotAKey, ero::Param::SlotASpread, false, true, panel.cellA.get() },
+		{ "window B", ero::Param::SlotBType, ero::Param::SlotBKey, ero::Param::SlotBSpread, false, true, panel.cellB.get() },
+	};
+	e.mode(ero::Mode::Etch);
+	e.set(ero::Param::Drive, 0.5f);
+	for (const Unit& u : units) {
+		CAPTURE(u.name);
+		ui::KeySpreadRow* row = u.cell->pillFor(eroAt(u.key));
+		REQUIRE(row != nullptr);
+		// THE ROW IS THERE FOR THE FOUR TYPES ONLY.
+		for (int type = 0; type < static_cast<int>(ero::DriveMode::kCount); ++type) {
+			CAPTURE(std::string(ero::kDriveModeNames[type]));
+			e.set(u.type, static_cast<float>(type));
+			CHECK(row->isVisible() == ero::driveHasKey(static_cast<ero::DriveMode>(type)));
+		}
+		e.set(u.type, static_cast<float>(ero::DriveMode::Decimate));
+		REQUIRE(row->isVisible());
+		// TWO WIDGETS, each over its own control.
+		CHECK(row->chip().control().desc().key == ero::kParamDescs[eroAt(u.key)].key);
+		CHECK(row->fader().amountForTest().desc().key == ero::kParamDescs[eroAt(u.spread)].key);
+		CHECK(row->fader().amountOnly());
+		CHECK(row->chip().caption() == "Key");
+		CHECK(row->fader().caption() == "Spr");
+		// THE CHIP TOGGLES KEY AND LEAVES SPREAD ALONE.
+		e.set(u.key, 0.0f);
+		e.set(u.spread, 0.0f);
+		const float cx = row->chip().width() * 0.5f;
+		const float cy = row->chip().height() * 0.5f;
+		row->chip().onMouseDown().callback(at(cx, cy));
+		row->chip().onMouseUp().callback(at(cx, cy));
+		CHECK(eroField(e.d, u.key) == 1.0f);
+		CHECK(eroField(e.d, u.spread) == 0.0f);
+		row->chip().onMouseDown().callback(at(cx, cy));
+		row->chip().onMouseUp().callback(at(cx, cy));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		// WITH KEY OFF THE FADER IS LIT AND ITS DRAG WRITES SPREAD (40%), NOT KEY.
+		CHECK_FALSE(row->chip().on());
+		CHECK(row->fader().active());
+		const float fx = row->fader().width() * 0.5f;
+		const float fy = row->fader().height() * 0.5f;
+		const float travel = 0.4f * ui::FaderPill::kSpan;
+		row->fader().onMouseDown().callback(at(fx, fy));
+		row->fader().onMouseDrag().callback(at(fx + travel, fy));
+		row->fader().onMouseUp().callback(at(fx + travel, fy));
+		CHECK(eroField(e.d, u.spread) == doctest::Approx(0.4f));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		// A CLICK ON THE FADER DOES NOT TOGGLE KEY (it has no power of its own).
+		row->fader().onMouseDown().callback(at(fx, fy));
+		row->fader().onMouseUp().callback(at(fx, fy));
+		CHECK(eroField(e.d, u.key) == 0.0f);
+		CHECK(row->fader().active());
+	}
+	// NATIVE WIDTHS: nothing in the row leaves the cell, the two controls do not overlap, at scale 1 and at the development display's 1.75.
+	for (const float scale : { 1.0f, 1.75f }) {
+		e.d.card->setDpiScale(scale);
+		e.panel->setDpiScale(scale);
+		for (const Unit& u : units) {
+			CAPTURE(u.name);
+			CAPTURE(scale);
+			e.set(u.type, static_cast<float>(ero::DriveMode::Slew));
+			ui::KeySpreadRow* row = u.cell->pillFor(eroAt(u.key));
+			REQUIRE(row->isVisible());
+			REQUIRE(u.cell->dpiScale() == scale);
+			CHECK(row->nativeX() >= 0);
+			CHECK(row->nativeRight() <= u.cell->nativeWidth());
+			CHECK(row->nativeBottom() <= u.cell->nativeHeight());
+			CHECK(row->chip().nativeX() >= 0);
+			CHECK(row->chip().nativeRight() <= row->fader().nativeX());
+			CHECK(row->fader().nativeRight() <= row->nativeWidth());
+			CHECK(row->chip().nativeBottom() <= row->nativeHeight());
+			// THE FADER HAS ROOM FOR ITS CAPTION (the window prints the percentage too, the narrow cell its fill alone).
+			CHECK(row->fader().nativeWidth() >= static_cast<int>(std::lround(14.0f * scale)));
+			if (u.narrow) {
+				CHECK(row->fader().captionFits());
+			}
+		}
+	}
+	e.d.card->setDpiScale(1.0f);
+	e.panel->setDpiScale(1.0f);
 }
 
 TEST_CASE("ERODER's Rate row follows Track: hertz with it off, the multiple of the note with it on, the other hidden; the multiple's drag lands on the detents and a typed value stays") {
@@ -44863,7 +44981,7 @@ TEST_CASE("ETCH's slot cells carry the Type's second parameter on the card and i
 				for (ui::ModeValueCell* cell : { slot == 0 ? card.cellA.get() : card.cellB.get(), slot == 0 ? panel.cellA.get() : panel.cellB.get() }) {
 					const auto& p = second[static_cast<size_t>(slot)];
 					const auto shown = [&](size_t i) { return cell->boxFor(eroAt(p[i]))->isVisible(); };
-					ui::FaderPill* pill = cell->pillFor(eroAt(keys[static_cast<size_t>(slot)]));
+					ui::KeySpreadRow* pill = cell->pillFor(eroAt(keys[static_cast<size_t>(slot)]));
 					REQUIRE(pill != nullptr);
 					CHECK(shown(0) == (want == ero::SecondParam::Bal));
 					CHECK(shown(1) == (want == ero::SecondParam::Rate && !track));
@@ -46812,4 +46930,338 @@ TEST_CASE("OWLTT's window: a band's OUT reads in dB like IN, as 20 log10 of the 
 		REQUIRE(over.has_value());
 		CHECK(*over == doctest::Approx(1.0)); // past the top of the knob: clamped
 	}
+}
+
+//--------------------------------------------------------------------------------------------------//
+// THE ERODER'S HOVER TEXTS FOLLOW EACH DRIVE UNIT'S TYPE (`StageTips`, `fx/eroder/drive_tips.h`).     //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// A HOVER MAY CARRY THE CONTROL'S FULL NAME OR THE TYPE'S AT ITS START ("Paunch-S (w) - ..."); what it ends with is the text under test.
+bool hoverEndsWith(const std::string& hover, const std::string& tail) {
+	return !tail.empty() && hover.size() >= tail.size() && hover.compare(hover.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+/// ONE DRIVE UNIT'S FACES, card and window: its parameters, its Amount knobs and its cells (the Drive's, slot A's, slot B's).
+struct TipUnit {
+	const char* name;
+	ui::StageParams p;
+	ui::Knob* knobs[2];
+	ui::ModeValueCell* cells[2];
+};
+
+std::vector<TipUnit> tipUnits(EroFaces& e) {
+	ui::EtchSlots& card = e.d.card->etchSlotsForTest();
+	ui::EtchSlots& panel = e.panel->etchSlotsForTest();
+	return { { "Drive", ui::driveStageParams(), { e.d.card->driveForTest(), e.panel->driveForTest() }, { e.d.card->driveCellForTest(), e.panel->driveCellForTest() } },
+		     { "Slot A", ui::slotStageParams(0), { card.knobA.get(), panel.knobA.get() }, { card.cellA.get(), panel.cellA.get() } },
+		     { "Slot B", ui::slotStageParams(1), { card.knobB.get(), panel.knobB.get() }, { card.cellB.get(), panel.cellB.get() } } };
+}
+
+/// THE THREE HOVERS UNDER TEST for one cell and knob, against the table's row for `type` (and `keyed`).
+void checkTipsFor(ui::Knob& knob, ui::ModeValueCell& cell, const ui::StageParams& p, ero::DriveMode type, bool keyed) {
+	const ero::DriveTip& tip = ero::driveTip(type);
+	const visage::Point at { 1.0f, 1.0f };
+	const std::string amount = keyed && tip.amountKeyed != nullptr ? tip.amountKeyed : tip.amount;
+	CHECK(hoverEndsWith(ui::hoverText(knob, at), amount));
+	CHECK(hoverEndsWith(ui::hoverText(cell, at), tip.type));
+	if (tip.shape != nullptr) {
+		ui::ValueBox* shape = cell.boxFor(static_cast<size_t>(p.shape));
+		REQUIRE(shape != nullptr);
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), tip.shape));
+	}
+	else {
+		// THE PAUNCH TYPES' ROW IS THEIR ANGLE, whose tooltip is its own (declared, without the list of Types).
+		ui::ValueBox* angle = cell.boxFor(static_cast<size_t>(p.angle));
+		REQUIRE(angle != nullptr);
+		CHECK(hoverEndsWith(ui::hoverText(*angle, at), ero::withoutOnlyClause(angle->control().desc().tooltip)));
+	}
+}
+
+} // namespace
+
+TEST_CASE("ERODER's hover texts follow each Drive unit's Type — the Drive and both Etch slots, on the card and in the window, set through the host") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	const std::vector<TipUnit> units = tipUnits(e);
+	const visage::Point at { 1.0f, 1.0f };
+	for (const TipUnit& u : units) {
+		CAPTURE(std::string(u.name));
+		for (const ero::DriveMode type : { ero::DriveMode::Tube, ero::DriveMode::Fold, ero::DriveMode::PaunchS, ero::DriveMode::Decimate, ero::DriveMode::Lean,
+		                                   ero::DriveMode::Chonk, ero::DriveMode::Slew, ero::DriveMode::Soft }) {
+			CAPTURE(std::string(ero::kDriveModeNames[static_cast<size_t>(type)]));
+			e.set(static_cast<ero::Param>(u.p.type), static_cast<float>(type));
+			for (size_t i = 0; i < 2; ++i) {
+				CAPTURE(i);
+				checkTipsFor(*u.knobs[i], *u.cells[i], u.p, type, false);
+			}
+		}
+		// THE PINS: a table that is wrong everywhere would still agree with itself.
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Decimate));
+		for (size_t i = 0; i < 2; ++i) {
+			CHECK(ui::hoverText(*u.knobs[i], at).find("How long each sample is held") != std::string::npos);
+			ui::ValueBox* shape = u.cells[i]->boxFor(static_cast<size_t>(u.p.shape));
+			CHECK(ui::hoverText(*shape, at).find("straight line") != std::string::npos);
+			CHECK(ui::hoverText(*u.cells[i], at).find("nothing is rounded") != std::string::npos);
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Tube));
+		for (size_t i = 0; i < 2; ++i) {
+			CHECK(ui::hoverText(*u.knobs[i], at).find("an eighth at 0% to sixteen times at 100%") != std::string::npos);
+			CHECK(ui::hoverText(*u.cells[i]->boxFor(static_cast<size_t>(u.p.shape)), at).find("8 times lower") != std::string::npos);
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::PaunchS));
+		for (size_t i = 0; i < 2; ++i) {
+			CHECK(ui::hoverText(*u.knobs[i], at).find("rectified mid") != std::string::npos);
+		}
+	}
+}
+
+TEST_CASE("ERODER's hover texts update when the Type moves by any road, and the Amount's follows the Key switch") {
+	EroFaces e;
+	e.mode(ero::Mode::Etch);
+	const std::vector<TipUnit> units = tipUnits(e);
+	const visage::Point at { 1.0f, 1.0f };
+	for (const TipUnit& u : units) {
+		CAPTURE(std::string(u.name));
+		// THE HOST ROAD (automation, a patch load) AND THE CONTROL'S OWN ROAD (a click, an arrow, a menu pick) are both a write to the field;
+		// the second is made through the cell's own control with a gesture, as a hand does.
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Fold));
+		checkTipsFor(*u.knobs[0], *u.cells[0], u.p, ero::DriveMode::Fold, false);
+		ui::ZoneSelect& select = u.cells[0]->select();
+		select.selectZone(static_cast<size_t>(ero::DriveMode::Crush));
+		e.refresh();
+		for (size_t i = 0; i < 2; ++i) {
+			checkTipsFor(*u.knobs[i], *u.cells[i], u.p, ero::DriveMode::Crush, false);
+		}
+		CHECK(ui::hoverText(*u.knobs[0], at).find("about 2 ms") != std::string::npos);
+		// KEY ON: the Amount is a multiple of the note; Key off: back to the time. A Type without a Key does not read the switch.
+		e.set(u.p.key, 1.0f);
+		for (size_t i = 0; i < 2; ++i) {
+			checkTipsFor(*u.knobs[i], *u.cells[i], u.p, ero::DriveMode::Crush, true);
+			CHECK(ui::hoverText(*u.knobs[i], at).find("multiple of the played note's frequency") != std::string::npos);
+		}
+		e.set(u.p.key, 0.0f);
+		checkTipsFor(*u.knobs[0], *u.cells[0], u.p, ero::DriveMode::Crush, false);
+		e.set(u.p.key, 1.0f);
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Tube));
+		for (size_t i = 0; i < 2; ++i) {
+			checkTipsFor(*u.knobs[i], *u.cells[i], u.p, ero::DriveMode::Tube, true);
+		}
+		e.set(u.p.key, 0.0f);
+		// THE THIRD ROW: its text is the declared one without the list of Types, and Lean's Rate says what it turns.
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Soft));
+		for (size_t i = 0; i < 2; ++i) {
+			ui::ValueBox* hard = u.cells[i]->boxFor(static_cast<size_t>(u.p.hard));
+			CHECK(hoverEndsWith(ui::hoverText(*hard, at), ero::withoutOnlyClause(hard->control().desc().tooltip)));
+			CHECK(ui::hoverText(*hard, at).find(" only:") == std::string::npos);
+			CHECK(ui::hoverText(*hard, at).find("knee") != std::string::npos);
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::Lean));
+		for (size_t i = 0; i < 2; ++i) {
+			ui::ValueBox* rate = u.cells[i]->boxFor(static_cast<size_t>(u.p.rate));
+			CHECK(hoverEndsWith(ui::hoverText(*rate, at), ero::kLeanRateTip));
+		}
+		e.set(u.p.type, static_cast<float>(ero::DriveMode::PaunchOS));
+		for (size_t i = 0; i < 2; ++i) {
+			ui::ValueBox* rate = u.cells[i]->boxFor(static_cast<size_t>(u.p.rate));
+			CHECK(hoverEndsWith(ui::hoverText(*rate, at), ero::withoutOnlyClause(rate->control().desc().tooltip)));
+		}
+	}
+}
+
+TEST_CASE("ERODER's hover texts are right on a freshly opened card and window whose state already has a non-default Type") {
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	const ero::DriveMode types[] = { ero::DriveMode::Decimate, ero::DriveMode::PaunchOH, ero::DriveMode::Lopside };
+	const ui::StageParams params[] = { ui::driveStageParams(), ui::slotStageParams(0), ui::slotStageParams(1) };
+	for (size_t u = 0; u < 3; ++u) {
+		d.set(eroAt(params[u].type), static_cast<float>(types[u]));
+	}
+	// A NEW CARD AND A NEW WINDOW, built after the state was set and never given a tick.
+	ui::WidgetRegistry registry;
+	auto card = std::make_unique<ui::EroderCard>(d.f.deviceHost, registry, d.device);
+	ui::WidgetRegistry registry2;
+	auto view = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry2, d.device, ero::kDescriptor);
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	REQUIRE(panel != nullptr);
+	ui::Knob* cardKnobs[] = { card->driveForTest(), card->etchSlotsForTest().knobA.get(), card->etchSlotsForTest().knobB.get() };
+	ui::ModeValueCell* cardCells[] = { card->driveCellForTest(), card->etchSlotsForTest().cellA.get(), card->etchSlotsForTest().cellB.get() };
+	ui::Knob* panelKnobs[] = { panel->driveForTest(), panel->etchSlotsForTest().knobA.get(), panel->etchSlotsForTest().knobB.get() };
+	ui::ModeValueCell* panelCells[] = { panel->driveCellForTest(), panel->etchSlotsForTest().cellA.get(), panel->etchSlotsForTest().cellB.get() };
+	for (size_t u = 0; u < 3; ++u) {
+		CAPTURE(u);
+		checkTipsFor(*cardKnobs[u], *cardCells[u], params[u], types[u], false);
+		checkTipsFor(*panelKnobs[u], *panelCells[u], params[u], types[u], false);
+	}
+}
+
+TEST_CASE("ERODER's per-Type hover table: every Type has an Amount and a Type text, a Shape text or the Angle's, and no text carries an \"only:\" clause or names the hardware") {
+	REQUIRE(sizeof ero::kDriveTips / sizeof ero::kDriveTips[0] == static_cast<size_t>(ero::DriveMode::kCount));
+	for (size_t i = 0; i < static_cast<size_t>(ero::DriveMode::kCount); ++i) {
+		const auto type = static_cast<ero::DriveMode>(i);
+		CAPTURE(std::string(ero::kDriveModeNames[i]));
+		const ero::DriveTip& tip = ero::driveTip(type);
+		REQUIRE(tip.type != nullptr);
+		REQUIRE(tip.amount != nullptr);
+		CHECK(std::string(tip.type).size() > 20);
+		CHECK(std::string(tip.amount).size() > 20);
+		// A SHAPE TEXT, OR THE ANGLE: the four Paunch Types alone have none (their row is another control); a Key's text only where there is a Key.
+		CHECK((tip.shape == nullptr) == (ero::driveIsPaunchLaw(type) || ero::driveIsPaunchOdd(type)));
+		CHECK((tip.amountKeyed != nullptr) == ero::driveHasKey(type));
+		for (const char* text : { tip.type, tip.amount, tip.amountKeyed, tip.shape }) {
+			if (text == nullptr) {
+				continue;
+			}
+			const std::string s(text);
+			CHECK(s.find(" only:") == std::string::npos);
+			// THE NAME THE HARDWARE GOES BY, assembled as `test_device_tooltips` does.
+			std::string lower;
+			for (const char c : s) {
+				lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+			}
+			CHECK(lower.find(std::string("del") + "uge") == std::string::npos);
+		}
+	}
+	CHECK(std::string(ero::kLeanRateTip).find(" only:") == std::string::npos);
+	CHECK(std::string(ero::kLeanRateMultTip).find(" only:") == std::string::npos);
+	// THE CLAUSE STRIPPER: a leading list goes and the first letter is raised; text without one is as it was.
+	CHECK(ero::withoutOnlyClause("Soft and Tube only: the knee. Shown only while its Type is Soft") == "The knee. Shown only while its Type is Soft");
+	CHECK(ero::withoutOnlyClause("What Drive pushes into") == "What Drive pushes into");
+}
+
+//--------------------------------------------------------------------------------------------------//
+// CLIP'S HOVER TEXTS FOLLOW ITS MODE (`ClipCard::applyTips`, `fx/clip/clip_tips.h`).                   //
+// Clip has no expanded window (`Traits::hasExpanded` is false): the card is its one face.             //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+/// THE THREE HOVERS UNDER TEST on a Clip card, against the table's row for `mode`: the Mode box, the Drive (its Amount) and, where the mode has one, the Shape.
+void checkClipTips(ui::ClipCard& card, int mode) {
+	namespace cl = feathers::fx::clip;
+	const cl::ClipTip& tip = cl::modeTip(mode);
+	const visage::Point at { 1.0f, 1.0f };
+	auto* drive = dynamic_cast<ui::Knob*>(card.widgetForTest(cl::Param::Drive));
+	auto* shape = dynamic_cast<ui::Knob*>(card.widgetForTest(cl::Param::Shape));
+	REQUIRE(drive != nullptr);
+	REQUIRE(shape != nullptr);
+	CHECK(hoverEndsWith(ui::hoverText(*card.modeForTest(), at), tip.type));
+	CHECK(hoverEndsWith(ui::hoverText(*drive, at), tip.amount));
+	if (tip.shape != nullptr) {
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), tip.shape));
+	}
+	else {
+		// A MODE WITH NO SHAPE KNOB leaves the declared text.
+		CHECK(hoverEndsWith(ui::hoverText(*shape, at), cl::kParamDescs[static_cast<size_t>(cl::Param::Shape)].tooltip));
+	}
+}
+
+} // namespace
+
+TEST_CASE("CLIP's hover texts follow its Type — the Mode box, the Drive and the Shape, set through the host") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	for (const cl::Mode mode : { cl::Mode::Soft, cl::Mode::Fold, cl::Mode::Tube, cl::Mode::Jag, cl::Mode::Chonk, cl::Mode::PaunchS, cl::Mode::PaunchOS, cl::Mode::Slew, cl::Mode::Lopside }) {
+		CAPTURE(std::string(cl::kModeNames[static_cast<size_t>(mode)]));
+		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
+		(void)d.card->updateContent();
+		checkClipTips(*d.card, static_cast<int>(mode));
+	}
+	// THE PINS: a table that is wrong everywhere would still agree with itself.
+	auto* drive = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Drive));
+	auto* shape = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Shape));
+	auto* rate = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Rate));
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Slew));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("20 kHz at -24 dB down to 50 Hz at +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*shape, at).find("one-pole lowpass") != std::string::npos);
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Tube));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("from -24 dB to +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*shape, at).find("8 times lower") != std::string::npos);
+	CHECK(ui::hoverText(*drive, at).find("sixteen times") == std::string::npos); // the Eroder's Amount is not Clip's Drive
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::PaunchS));
+	(void)d.card->updateContent();
+	CHECK(ui::hoverText(*drive, at).find("four times the mid's level at +24 dB") != std::string::npos);
+	CHECK(ui::hoverText(*rate, at).find("Angle holds still") != std::string::npos);
+	CHECK(ui::hoverText(*rate, at).find("Lean") == std::string::npos);
+	// THE MODES' OWN CONTROLS DROP THEIR LEADING "X only:" CLAUSE.
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Tube));
+	(void)d.card->updateContent();
+	auto* hard = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Hard));
+	REQUIRE(hard != nullptr);
+	CHECK(ui::hoverText(*hard, at).find(" only:") == std::string::npos);
+	CHECK(hoverEndsWith(ui::hoverText(*hard, at), feathers::fx::eroder::withoutOnlyClause(hard->control()->desc().tooltip)));
+}
+
+TEST_CASE("CLIP's hover texts update when the Type moves by the Mode box's own selection") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Fold));
+	(void)d.card->updateContent();
+	checkClipTips(*d.card, static_cast<int>(cl::Mode::Fold));
+	// THE MENU'S PICK IS THE ROAD A HAND TAKES: it writes the field, and the card's next tick follows it.
+	for (const cl::Mode to : { cl::Mode::Lean, cl::Mode::PaunchOH, cl::Mode::Lopside, cl::Mode::Soft }) {
+		CAPTURE(std::string(cl::kModeNames[static_cast<size_t>(to)]));
+		d.card->modeForTest()->choiceMenu().onSelection().callback(static_cast<int>(to));
+		d.f.bridge.refresh();
+		(void)d.card->updateContent();
+		checkClipTips(*d.card, static_cast<int>(to));
+	}
+	auto* drive = dynamic_cast<ui::Knob*>(d.card->widgetForTest(cl::Param::Drive));
+	CHECK(ui::hoverText(*drive, at).find("soft shoulder") == std::string::npos); // (the Mode box says that; the Drive says what it feeds)
+	CHECK(hoverEndsWith(ui::hoverText(*drive, at), cl::modeTip(static_cast<int>(cl::Mode::Soft)).amount));
+}
+
+TEST_CASE("CLIP's hover texts are right on a freshly opened card whose state already has a non-default Type") {
+	namespace cl = feathers::fx::clip;
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(cl::Mode::Chonk));
+	// A NEW CARD, built after the state was set and never given a tick or a layout.
+	ui::WidgetRegistry registry;
+	auto card = std::make_unique<ui::ClipCard>(d.f.deviceHost, registry, d.device);
+	checkClipTips(*card, static_cast<int>(cl::Mode::Chonk));
+	const visage::Point at { 1.0f, 1.0f };
+	CHECK(ui::hoverText(*dynamic_cast<ui::Knob*>(card->widgetForTest(cl::Param::Shape)), at).find("turned over on the right side only") != std::string::npos);
+}
+
+TEST_CASE("CLIP's per-Type hover table: every Type has texts, and no hover in any Type's cell carries \" only:\" or names the hardware") {
+	namespace cl = feathers::fx::clip;
+	REQUIRE(sizeof cl::kModeTips / sizeof cl::kModeTips[0] == static_cast<size_t>(cl::Mode::kCount));
+	DynCardFixture<ui::ClipCard> d(cl::kTraits.tag);
+	const visage::Point at { 1.0f, 1.0f };
+	const auto clean = [](const std::string& s) {
+		std::string lower;
+		for (const char c : s) {
+			lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+		}
+		// THE NAME THE HARDWARE GOES BY, assembled as `test_device_tooltips` does.
+		return s.find(" only:") == std::string::npos && lower.find(std::string("del") + "uge") == std::string::npos;
+	};
+	size_t seen = 0;
+	for (int mode = 0; mode < static_cast<int>(cl::Mode::kCount); ++mode) {
+		CAPTURE(std::string(cl::kModeNames[mode]));
+		const cl::ClipTip& tip = cl::modeTip(mode);
+		REQUIRE(tip.type != nullptr);
+		REQUIRE(tip.amount != nullptr);
+		CHECK(std::string(tip.type).size() > 20);
+		CHECK(std::string(tip.amount).size() > 20);
+		// A SHAPE TEXT EXACTLY WHERE THE CARD SHOWS A SHAPE KNOB.
+		CHECK((tip.shape != nullptr) == (((cl::kShapeKnobModes >> static_cast<uint32_t>(mode)) & 1u) != 0u));
+		d.set(static_cast<size_t>(cl::Param::Mode), static_cast<float>(mode));
+		(void)d.card->updateContent();
+		for (const cl::Param p : d.card->addressedParamsForTest()) {
+			// (THE ENABLE SQUARE IS DRAWN IN THE HEAD, and Bits' segmented control has no one tooltip: neither is a source here.)
+			auto* source = dynamic_cast<ui::TooltipSource*>(d.card->widgetForTest(p));
+			if (source == nullptr) {
+				continue;
+			}
+			++seen;
+			CAPTURE(std::string(cl::kParamDescs[static_cast<size_t>(p)].name));
+			CHECK(clean(ui::hoverText(*source, at)));
+		}
+	}
+	CHECK(seen > 15 * 10);
 }

@@ -179,6 +179,7 @@ private:
 	std::unique_ptr<Knob> drive_;
 	std::unique_ptr<ModeValueCell> driveCell_;
 	std::shared_ptr<StageView> driveView_ = std::make_shared<StageView>();
+	StageTips driveTips_;
 	std::unique_ptr<PairCell> drivePair_;
 	/// HP Wet (hertz, and semitones under Track) and Sub Thru: the shared element (`wet_highpass_control.h`).
 	std::unique_ptr<WetHighpassControl> hp_;

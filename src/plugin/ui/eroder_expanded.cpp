@@ -187,6 +187,8 @@ EroderExpanded::EroderExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	character_ = coordinate(ero::Param::Character, "Character");
 	gamma_ = std::make_unique<GammaBox>(control(ero::Param::Gamma), "Gamma");
 	addChild(gamma_.get());
+	// A WINDOW OPENED ON A STATE ALREADY SHOWS ITS TYPES' TEXTS, before any layout or tick (`StageTips`).
+	refreshHonesty();
 }
 
 DeviceControl& EroderExpanded::control(ero::Param p) const {
@@ -459,6 +461,8 @@ void EroderExpanded::refreshHonesty() {
 	if (!(driveBefore == *driveView_)) {
 		drive_->redraw();
 	}
+	// THE HOVER TEXTS FOLLOW THE TYPE (and Key) the same way (`StageTips`).
+	driveTips_.apply([this](ero::Param p) -> DeviceControl& { return control(p); }, driveStageParams(), *driveView_);
 	(void)driveCell_->refresh();
 	(void)etch_.refreshRows(row);
 }

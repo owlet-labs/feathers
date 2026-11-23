@@ -997,8 +997,8 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .modulatable = false,
      .offsetsMayLeaveRange = false,
      .tooltip = "Gives back from the dry signal what HP Wet took away, so the low end stays whole at any Mix; inactive while HP "
-                "Wet is at its bottom, where there is no filter, and in the Comb while Blend is off (the dry then passes "
-                "whole, so its low end is already there)",
+                "Wet is at its bottom, where there is no filter, and not shown in the Comb while Blend is off (the dry "
+                "then passes whole, so its low end is already there)",
      .zones = 0,
      .modSpan = 0.0,
      .zoneNames = {},

@@ -44029,8 +44029,11 @@ TEST_CASE("ERODER's Drive is one pair in the card and the window: the knob, and 
 	CHECK(d.card->drivePairForTest()->y() == cardPairY);
 	CHECK(panel->drivePairForTest()->right() <= panel->width());
 	CHECK(panel->drivePairForTest()->bottom() <= panel->height());
-	// AS ARE HP WET AND SUB THRU NOW.
+	// AS IS HP WET; SUB THRU IS NOT DRAWN IN THE COMB WHILE BLEND IS OFF (its own case), and is with Blend on.
 	CHECK(panel->hpWetForTest()->isVisible());
+	CHECK_FALSE(panel->subThruForTest()->isVisible());
+	d.set(eroAt(ero::Param::Blend), 1.0f);
+	(void)panel->updateContent();
 	CHECK(panel->subThruForTest()->isVisible());
 	CHECK(panel->followForTest()->isVisible());
 }
@@ -44082,6 +44085,104 @@ TEST_CASE("ERODER draws out of the signal what another control makes inert: Widt
 	d.set(eroAt(ero::Param::HpWet), static_cast<float>(ero::kHpWetLog2Min));
 	(void)panel->updateContent();
 	CHECK_FALSE(panel->subThruForTest()->enabled());
+	// BLEND ON: the chip is drawn (greyed here, with HP Wet at its bottom), not hidden.
+	CHECK(panel->subThruForTest()->isVisible());
+}
+
+TEST_CASE("ERODER's Sub Thru chip and its road are not drawn in the Comb while Blend is off, and are everywhere else") {
+	const auto eroAtLocal = [](ero::Param p) { return static_cast<size_t>(p); };
+	DynCardFixture<ui::EroderCard> d(ero::kTraits.tag);
+	ui::WidgetRegistry registry;
+	const auto open = [&] {
+		auto v = ui::makeExpandedView(d.f.deviceHost, &d.f.bridge, registry, d.device, ero::kDescriptor);
+		auto* p = dynamic_cast<ui::EroderExpanded*>(v.get());
+		REQUIRE(p != nullptr);
+		p->setBounds(0.0f, 0.0f, p->minimumSize().x, p->minimumSize().y);
+		(void)p->updateContent();
+		return v;
+	};
+	// A FRESH WINDOW ON A STATE THAT IS ALREADY COMB + BLEND OFF: hidden from the first frame.
+	d.set(eroAtLocal(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	d.set(eroAtLocal(ero::Param::Blend), 0.0f);
+	d.set(eroAtLocal(ero::Param::HpWet), 9.0f);
+	{
+		auto fresh = open();
+		CHECK_FALSE(dynamic_cast<ui::EroderExpanded*>(fresh.get())->subThruForTest()->isVisible());
+	}
+	auto view = open();
+	auto* panel = dynamic_cast<ui::EroderExpanded*>(view.get());
+	ui::EroderFlow& flow = *panel->flowForTest();
+	flow.setRecordingForTest(true);
+	// The road's top run is a horizontal segment on the anchor's row; its plate is a backing rectangle.
+	const auto roadSegments = [&] {
+		visage::Canvas canvas;
+		flow.draw(canvas);
+		const float y = flow.anchorForTest(ui::EroderFlow::Chip::SubThru).y;
+		size_t n = 0;
+		for (const auto& ev : flow.drawnForTest()) {
+			n += (!ev.backing && ev.y0 == y && ev.y1 == y) ? 1u : 0u;
+		}
+		return n;
+	};
+	const auto platePresent = [&] {
+		const ui::EroderFlow::Rect r = flow.chipRectForTest(ui::EroderFlow::Chip::SubThru);
+		for (const auto& ev : flow.drawnForTest()) {
+			if (ev.backing && std::abs(ev.x0 - r.x) < 0.01f && std::abs(ev.y0 - r.y) < 0.01f) {
+				return true;
+			}
+		}
+		return false;
+	};
+	// A PRESS AT THE CHIP'S PLACE, through the hit test, then the chip's own handler on whatever took it.
+	const auto press = [&]() -> bool {
+		ui::SwitchChip* chip = panel->subThruForTest();
+		const visage::Point where { flow.x() + chip->x() + chip->width() * 0.5f, flow.y() + chip->y() + chip->height() * 0.5f };
+		const bool reached = panel->frameAtPoint(where) == chip;
+		if (reached) {
+			chip->toggleForTest();
+		}
+		return reached;
+	};
+	const auto sub = [&] { return panel->subThruForTest()->control().value(); };
+	const auto settle = [&] {
+		(void)d.card->updateContent();
+		(void)panel->updateContent();
+	};
+	struct Case {
+		ero::Mode mode;
+		bool blend;
+		bool shown;
+	};
+	const Case cases[] = { { ero::Mode::Comb, false, false }, { ero::Mode::Comb, true, true }, { ero::Mode::Dust, false, true },
+		                   { ero::Mode::Dust, true, true },   { ero::Mode::Rust, false, true }, { ero::Mode::Rust, true, true },
+		                   { ero::Mode::Comb, false, false } };
+	for (const Case& c : cases) {
+		CAPTURE(static_cast<int>(c.mode));
+		CAPTURE(c.blend);
+		d.set(eroAtLocal(ero::Param::Mode), static_cast<float>(c.mode));
+		d.set(eroAtLocal(ero::Param::Blend), c.blend ? 1.0f : 0.0f);
+		d.set(eroAtLocal(ero::Param::SubThru), 0.0f);
+		settle();
+		CHECK(panel->subThruForTest()->isVisible() == c.shown);
+		CHECK(flow.pathForTest().bypass.shown == c.shown);
+		CHECK((roadSegments() > 0) == c.shown);
+		CHECK(platePresent() == c.shown);
+		// THE SEAT DOES NOT MOVE, shown or not.
+		CHECK(flow.chipRectForTest(ui::EroderFlow::Chip::SubThru).w > 0.0f);
+		const float before = sub();
+		CHECK(press() == c.shown);
+		CHECK((sub() != before) == c.shown);
+	}
+	// THE OTHER CHIPS' SEATS DO NOT JUMP WHEN IT HIDES.
+	d.set(eroAtLocal(ero::Param::Mode), static_cast<float>(ero::Mode::Comb));
+	d.set(eroAtLocal(ero::Param::Blend), 1.0f);
+	settle();
+	const auto tapShown = flow.chipRectForTest(ui::EroderFlow::Chip::Tap);
+	const auto subShown = flow.chipRectForTest(ui::EroderFlow::Chip::SubThru);
+	d.set(eroAtLocal(ero::Param::Blend), 0.0f);
+	settle();
+	CHECK(flow.chipRectForTest(ui::EroderFlow::Chip::Tap).x == tapShown.x);
+	CHECK(flow.chipRectForTest(ui::EroderFlow::Chip::SubThru).x == subShown.x);
 }
 
 TEST_CASE("ERODER's HP Wet cell is the hertz knob with Track off and the semitone knob with Track on, each writing its own parameter") {

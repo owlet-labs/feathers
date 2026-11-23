@@ -437,6 +437,9 @@ void EroderExpanded::refreshHonesty() {
 	                                            row[static_cast<size_t>(ero::Param::HpWetSemis)], ero::kHpWetSemisMin);
 	const bool crossfades = engine() != ero::Mode::Comb || row[static_cast<size_t>(ero::Param::Blend)] >= 0.5f;
 	hp_->refresh(filtering, crossfades);
+	// IN THE COMB WITH BLEND OFF THE DRY IS WHOLE AND THE SWITCH CAN NEVER DO ANYTHING: it is not drawn (nor is its road,
+	// `EroderFlow::pathFor`), hidden, not greyed. The seat does not move.
+	hp_->subThru()->setVisible(crossfades);
 	// THE EMPHASIS'S OWN: the shape, the offset and the restore are nothing at zero.
 	emphasis_->setBoxEnabled(1, emphasised);
 	emphasis_->setSelectorEnabled(emphasised);

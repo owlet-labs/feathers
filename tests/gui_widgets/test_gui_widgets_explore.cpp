@@ -9043,9 +9043,13 @@ TEST_CASE("spectrum panel: the tab is on the face on Additive only, and every pa
 			if (auto* chip = dynamic_cast<ui::SwitchChip*>(frame); chip != nullptr) {
 				// Link greys with its operator, which a fresh sound has off (the greying case pins that rule).
 				const bool link = chip == d.switchForTest(selected, SpectralControl::FormantShiftLink);
-				// THE ROUTING greys unless both filters are on (F2), which a fresh sound has not.
+				// THE ROUTING is hidden unless both filters are on (F2), which a fresh sound has not.
 				const bool routing = chip == &d.routingForTest(selected, 0) || chip == &d.routingForTest(selected, 1);
-				CHECK(chip->enabled() == (additive && !link && !routing));
+				// A routing chip is HIDDEN (not greyed) while it changes nothing, so it keeps the panel's enabled state.
+				CHECK(chip->enabled() == (additive && !link));
+				if (routing) {
+					CHECK_FALSE(chip->isVisible());
+				}
 			}
 		}
 		// THE FILTER MODE BOX greys with the engine, and with its own filter (it changes nothing while the filter is off): on here.
@@ -11110,6 +11114,12 @@ TEST_CASE("F2 spectrum panel: the Filter 1 / Filter 2 tabs show one filter's pan
 	}
 	CHECK(d.filterTabsForTest(s, 0).isVisible());
 	CHECK_FALSE(d.filterTabsForTest(s, 1).isVisible());
+	// THE ROUTING IS HIDDEN while a filter is off (it changes nothing), then shown only in the shown tab's head.
+	CHECK_FALSE(d.routingForTest(s, 0).isVisible());
+	CHECK_FALSE(d.routingForTest(s, 1).isVisible());
+	f.set(drawerParam(s, SpectralControl::FilterOn), 1.0);
+	f.set(drawerParam(s, SpectralControl::Filter2On), 1.0);
+	f.update();
 	CHECK(d.routingForTest(s, 0).isVisible());
 	CHECK_FALSE(d.routingForTest(s, 1).isVisible());
 	// THE TAB: Filter 2's panel in the row, filter 1's out of it — and nothing written to any param (view state).
@@ -11126,7 +11136,7 @@ TEST_CASE("F2 spectrum panel: the Filter 1 / Filter 2 tabs show one filter's pan
 		CHECK_FALSE(shown(c));
 	}
 	CHECK(d.filterTabsForTest(s, 1).isVisible());
-	CHECK(d.routingForTest(s, 1).isVisible());
+	CHECK(d.routingForTest(s, 1).isVisible()); // both filters on: the shown tab's chip
 	CHECK(f.bridge.value(static_cast<clap_id>(drawerParam(s, SpectralControl::FilterRouting))) == routingBefore);
 	// EVERY SHOWN CONTROL LIES INSIDE THE PANEL, filter 2's head included (the tabs, the switch, the Mode, the routing).
 	for (visage::Frame* frame : d.controlsForTest(s)) {
@@ -11182,7 +11192,8 @@ TEST_CASE("F2 spectrum panel: Gain is live only in Bell, a 0 dB Bell greys its R
 			at(SpectralControl::Filter2On, two ? 1.0 : 0.0);
 			f.update();
 			CHECK(d.liveForTest(s, SpectralControl::FilterRouting) == (one && two));
-			CHECK(d.routingForTest(s, 1).enabled() == (one && two));
+			CHECK(d.routingForTest(s, 0).isVisible() == (one && two)); // filter 1's tab is shown; the chip is hidden while inert
+			CHECK_FALSE(d.routingForTest(s, 1).isVisible());
 		}
 	}
 }

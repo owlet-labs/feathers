@@ -974,3 +974,60 @@ TEST_CASE("the editor is the drum's own window: it opens at the view's size, reo
 	CHECK(h2 == h);
 	gui->destroy(v.plugin);
 }
+
+namespace {
+/// The control's declared name, found by its key, for a place's host name.
+std::string desc_name(const char* key) {
+	for (const device::ParamDesc& p : drumDesc().params) {
+		if (std::string(p.key) == key) {
+			return p.name;
+		}
+	}
+	return "?";
+}
+} // namespace
+
+TEST_CASE("host ids never move: the Drum plugin's places as they stand on the released list, key by key, with the same id each") {
+	// THE LIST AS IT WAS BEFORE THE PLAY MODE AND THE NEW KINDS, written out: a host keeps its automation on an id for ever, so every place here
+	// keeps its key (and so its id, 0x1000 + place). New controls join AFTER the last of these and nothing is ever inserted before one.
+	static const char* const kReleased[] = {
+		"drum_enabled", "drum_kind", "drum_note", "drum_level",
+		"drum_pan", "drum_tune", "drum_decay", "drum_f_tone",
+		"drum_f_noise", "drum_drive", "drum_trigger", "drum_voices",
+		"drum_release", "drum_bend", "drum_delay", "drum_hp",
+		"drum_seed", "drum_zone", "drum_zone_offset", "drum_gamma",
+		"drum_rotate", "drum_travel_x", "drum_travel_y", "drum_pitch_mode",
+		"drum_f_pitch", "drum_f_length", "drum_f_sweep", "drum_f_snap",
+		"drum_f_metal", "drum_sweep_time", "drum_drive_curve", "drum_drive_tone",
+		"drum_velocity_noise", "drum_width", "drum_claps", "drum_spread",
+		"drum_clap_q", "drum_clap_hp", "drum_wire_decay", "drum_click_decay",
+		"drum_bell_start", "drum_bell_end", "drum_bell_time", "drum_bell2_hz",
+		"drum_bell2_time", "drum_kick_hold", "drum_kick_dip", "drum_kick_dip_time",
+		"drum_click_sweep", "drum_click_sweep_time", "drum_start_phase", "drum_keys",
+		"drum_vel_level", "drum_vel_tone", "drum_vel_snap", "drum_vel_tension",
+		"drum_wire_buzz", "drum_wire_gate", "drum_body_gate", "drum_bell1_level",
+		"drum_bell2_level"
+	};
+	REQUIRE(dp::kHostParamCount >= std::size(kReleased));
+	for (size_t i = 0; i < std::size(kReleased); ++i) {
+		CAPTURE(i);
+		CHECK(std::string(dp::kHostKeys[i]) == kReleased[i]);
+	}
+	// AND THE PLUGIN HANDS THEM OUT UNDER THOSE IDS.
+	Venue v;
+	const clap_plugin_params* params = v.params();
+	REQUIRE(params != nullptr);
+	for (size_t i = 0; i < std::size(kReleased); ++i) {
+		clap_param_info info {};
+		REQUIRE(params->get_info(v.plugin, static_cast<uint32_t>(i), &info));
+		CAPTURE(i);
+		CHECK(info.id == 0x1000 + i);
+		CHECK(std::string(info.name).find(desc_name(kReleased[i])) != std::string::npos);
+	}
+	// THE NEW PLACES FOLLOW, in order, and every key is still listed once.
+	CHECK(std::string(dp::kHostKeys[std::size(kReleased)]) == "drum_density");
+	std::set<std::string> seen;
+	for (const char* key : dp::kHostKeys) {
+		CHECK(seen.insert(key).second);
+	}
+}

@@ -68,6 +68,8 @@ public:
 	[[nodiscard]] HitPicture& pictureForTest() { return picture_; }
 	/// The widget bound to control `p`, null where the control has none of its own (the picture's handles apart).
 	[[nodiscard]] visage::Frame* widgetForTest(dd::Param p) const { return widgets_[static_cast<size_t>(p)].get(); }
+	/// The Trigger's three-way face (Drone offered), shown instead of the plain one on a kind that can hold a hit.
+	[[nodiscard]] visage::Frame* triggerDroneForTest() const { return triggerDrone_.get(); }
 	[[nodiscard]] DrumDevicePad& padForTest() const { return *pad_; }
 	[[nodiscard]] DrumLikeBar& likesForTest() const { return *likes_; }
 	[[nodiscard]] PitchReadout& readoutForTest() const { return *readout_; }
@@ -90,6 +92,8 @@ private:
 	EditHistory* padGroup_ = nullptr;
 	feathers::drum::Kind shownKind_ = feathers::drum::Kind::kCount;
 	bool shownGate_ = false;
+	/// THE TRIGGER'S THREE-WAY FACE (One-shot | Gate | Drone), shown instead of the plain two-way one on a kind that can be held.
+	std::unique_ptr<SegmentedControl> triggerDrone_;
 	int shownKeys_ = 0;
 	bool shownSettled_ = false;
 	float contentBottom_ = 0.0f;

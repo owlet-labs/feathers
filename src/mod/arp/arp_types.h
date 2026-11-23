@@ -167,7 +167,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
 	  .tooltip = "How much of a step each note lasts. Over 100% it overlaps the next note — a tie" },
 	{ .key = "feel", .name = "Feel", .min = 0.0, .max = static_cast<double>(kFeelCount) - 1.0, .def = 0.0,
 	  .stepped = true, .unit = device::Unit::Choice, .names = kFeelNames, .modulatable = true,
-	  .tooltip = "The bar's feel: Swing delays the off-beats (the MPC's), Groove leans them by a phi template, Free walks "
+	  .tooltip = "The bar's feel: Swing delays the off-beats (a shuffle), Groove leans them by a phi template, Free walks "
 	             "a phase through it",
 	  // DRAWN AS SKLITTER'S GROOVE IS: one zone-knob cell, the
 	  // feel on its ZoneSelect and Feel Amount its box — still two params, so an amount never rolls into another feel.

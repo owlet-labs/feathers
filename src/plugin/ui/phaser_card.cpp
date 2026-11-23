@@ -21,6 +21,8 @@
 
 #include "plugin/ui/phaser_card.h"
 
+#include "fx/phaser/phaser_tips.h"
+
 #include "plugin/ui/theme.h"
 
 #include <algorithm>
@@ -230,7 +232,23 @@ void PhaserCard::layOut() {
 	(void)applyGates();
 }
 
+void PhaserCard::applyTips() {
+	const bool flanger = host_.fieldAt(device_, static_cast<size_t>(ph::Param::Mode)) >= 0.5f;
+	const bool keyTrack = host_.fieldAt(device_, static_cast<size_t>(ph::Param::KeyTrack)) >= 0.5f;
+	const int key = (flanger ? 2 : 0) + (keyTrack ? 1 : 0);
+	if (key == drawnTips_) {
+		return;
+	}
+	drawnTips_ = key;
+	const ph::Mode mode = flanger ? ph::Mode::Flanger : ph::Mode::Phaser;
+	for (const ph::Param p : { ph::Param::CenterHz, ph::Param::DelayMs, ph::Param::Mix }) {
+		const char* text = ph::phaserTip(p, mode, keyTrack);
+		control(p).setTooltipOverride(text != nullptr ? text : "");
+	}
+}
+
 bool PhaserCard::applyGates() {
+	applyTips();
 	bool changed = false;
 	const auto set = [&](ValueBox* b, bool on) {
 		if (b->enabled() != on) {

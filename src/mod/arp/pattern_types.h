@@ -308,7 +308,7 @@ inline constexpr double kPi = 3.14159265358979323846;
 	  .shortName = "Solo", .retextsWords = true },                                                                                             \
 	{ .key = "p" #N ".mode", .name = "P" #N " Mode", .min = 0.0, .max = static_cast<double>(kModeChoices) - 1.0,        \
 	  .def = 0.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames, .modulatable = true,             \
-	  .tooltip = "What this pattern plays: a melody, a one-voice line, chords, or a 303-style line — TB-Mono overlaps its " \
+	  .tooltip = "What this pattern plays: a melody, a one-voice line, chords, or a bass line with slides — TB-Mono overlaps its " \
 	             "slides for a Legato synth, TB-Glide bends one held note itself for a synth without Legato",          \
 	  .shortName = "Mode", .retextsWords = true },                                                                                             \
 	{ .key = "p" #N ".root", .name = "P" #N " Root", .min = 0.0, .max = 11.0, .def = 0.0, .stepped = true,             \
@@ -360,12 +360,12 @@ inline constexpr double kPi = 3.14159265358979323846;
 	  .tooltip = "What an accented step adds to the velocity", .shortName = "Accent" },                                  \
 	{ .key = "p" #N ".pitch_on_notes", .name = "P" #N " Pitch on Notes", .min = 0.0, .max = 1.0, .def = 1.0,          \
 	  .stepped = true, .unit = device::Unit::Choice, .names = mod::kOffOnNames, .modulatable = true,                    \
-	  .tooltip = "As on a 303: the pitches advance only on notes, not on ties or rests, so the two lines drift against " \
+	  .tooltip = "As on a classic acid bass line: the pitches advance only on notes, not on ties or rests, so the two lines drift against " \
 	             "each other",                                                                                          \
 	  .gateControl = static_cast<int16_t>(at((N) - 1, Field::Mode)), .gateMask = kTbModes, .shortName = "Pitch/Notes" }, \
 	{ .key = "p" #N ".glide_time", .name = "P" #N " Glide Time", .min = kGlideTimeMin, .max = kGlideTimeMax,              \
 	  .def = kGlideTimeDef, .stepped = false, .unit = device::Unit::LogSeconds, .names = {}, .modulatable = true,         \
-	  .tooltip = "How long a TB-Glide slide takes to settle: the lag's time constant. 22 ms is the 303's own",           \
+	  .tooltip = "How long a TB-Glide slide takes to settle: the lag's time constant. 22 ms is the classic setting",           \
 	  .gateControl = static_cast<int16_t>(at((N) - 1, Field::Mode)), .gateMask = modeBit(Mode::TbGlide),                \
 	  .shortName = "Glide" },                                                                                            \
 	{ .key = "p" #N ".thru", .name = "P" #N " Thru", .min = 0.0, .max = static_cast<double>(kThruCount) - 1.0,        \

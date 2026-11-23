@@ -1282,8 +1282,7 @@ inline constexpr device::ParamDesc kParamDescs[] = {
     // the moving term — one number that displaces every field by a different amount, because each
     // field carries its own phi multiplier. The pattern recombines rather than sliding.
     {"gamma", "Gamma", kCoordMin, kCoordMax, 0.0, false, device::Unit::Number, {}, false, false,
-     "Re-seeds the whole pattern — one lap displaces every phi field by a different amount. "
-     "On hardware this is the hidden push-and-twist control", 0, 0.0, {}, static_cast<int16_t>(Param::Mode), kLooperModes},
+     "Re-seeds the whole pattern — one lap displaces every phi field by a different amount.", 0, 0.0, {}, static_cast<int16_t>(Param::Mode), kLooperModes},
 
     {"pitch_scale", "Pitch Scale", 0.0, 24.0, 0.0, true, device::Unit::Choice, kPitchScaleNames, false, false,
      "Which scale, or which fixed shift, Pitch mode snaps to", 0, 0.0, {}, static_cast<int16_t>(Param::Mode), kModeBit(Mode::Pitch)},

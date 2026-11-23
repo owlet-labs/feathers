@@ -22,6 +22,7 @@
 // THE DAHDSR CARD. Lines 16675–30293 of the one file, moved verbatim 2026-09-03.
 
 #include "fx/eq/eq_types.h"
+#include "fx/owltt/owltt.h"
 #include "plugin/ui/owltt_level_meter.h"
 #include "plugin/ui/param_control.h"
 #include "fx/drum/drum_types.h"
@@ -21253,7 +21254,7 @@ TEST_CASE("backlog EL: the OWLTT graph reads the band lights and the combined ga
 	FilterFixture f;
 	REQUIRE(f.bridge.addFxDevice(fx::owltt::kTraits.tag) == 1);
 	ui::OwlttGraph graph { f.deviceHost, f.bridge.fxDeviceAt(1) };
-	REQUIRE(f.deviceHost.readingCountAt(f.bridge.fxDeviceAt(1)) == 20); // + input peak (18), pre-clip output peak (19), second-channel GR, backlog LQ
+	REQUIRE(f.deviceHost.readingCountAt(f.bridge.fxDeviceAt(1)) == feathers::fx::owltt::Owltt::kReadingCount); // + input peak (18), pre-clip output peak (19), second-channel GR, backlog LQ
 
 	// THE OLD FIVE ARGUMENTS ONLY: the extras default dark and zero, as a device publishing ten does.
 	f.bridge.publishOwlttMeters(1, { -0.5f, 0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f }, { 0.4f, 0.4f, 0.4f }, false);

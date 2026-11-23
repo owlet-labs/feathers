@@ -140,6 +140,9 @@ protected:
 	void drawBodyExtras(visage::Canvas& canvas) override;
 
 private:
+	/// Puts `fx::featherverb::tipFor` over the four controls whose text depends on a Choice, when a Choice moved (see the .cpp).
+	void applyTips();
+	int drawnTips_ = -1; // the key the tips were last put for; -1 until the first tick
 	class Strip;
 	class IrSource;
 	[[nodiscard]] fx::featherverb::Featherverb* verb() const;

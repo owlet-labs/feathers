@@ -36,6 +36,8 @@
 #include "rack/rack_engine.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -271,6 +273,18 @@ drum::Controls refControls(const dd::Row& r) {
 	c.bell2Hz = std::exp2(v(Param::Bell2Hz));
 	c.bell2Seconds = std::exp2(v(Param::Bell2Time));
 	c.velocityNoise = v(Param::VelocityNoise);
+	c.particleDensity = std::exp2(v(Param::Density));
+	c.grainSeconds = std::exp2(v(Param::Grain));
+	c.pressure = v(Param::Pressure);
+	c.speed = v(Param::Speed);
+	c.sweepDirection = static_cast<int>(std::lround(v(Param::SweepDir)));
+	c.sweepRange = v(Param::SweepRange);
+	c.syncBeats = dd::kSyncBeats[std::clamp(static_cast<int>(std::lround(v(Param::SweepSync))), 0, 6)];
+	c.waterRate = std::exp2(v(Param::Rate));
+	c.rise = v(Param::Rise);
+	c.flow = v(Param::Flow);
+	c.splash = v(Param::Splash);
+	c.play = static_cast<int>(std::lround(v(Param::Trigger)));
 	c.width = v(Param::Width);
 	c.pitchMode = static_cast<int>(std::lround(v(Param::PitchMode)));
 	return c;
@@ -306,7 +320,7 @@ Out refRender(const dd::Row& r, double velocity, int frames, uint32_t count = 0,
 		h.hit.render(o.l.data() + s, n, o.r.data() + s);
 	}
 	const drum::Kind k = kindOf(r);
-	if (!(k == drum::Kind::Membrane || k == drum::Kind::Snare || k == drum::Kind::Clap)) {
+	if (!(k == drum::Kind::Membrane || k == drum::Kind::Snare || k == drum::Kind::Clap || k == drum::Kind::Water)) {
 		o.r = o.l;
 	}
 	return o;
@@ -1089,6 +1103,9 @@ TEST_CASE("drum: every control changes the sound in SOME arrangement, with notes
 	const auto play = [&](const dd::Row& row) {
 		dd::kAudioOps.reset(d.st);
 		d.row = row;
+		device::TransportClock tempo;
+		tempo.secondsPerBeat = 0.001; // a host's tempo (a fast one, so a synced sweep's length falls inside the script): Sync reads it
+		dd::kAudioOps.setTransportClock(d.st, tempo);
 		Out all(0);
 		for (const auto& [ev, frames] : script) {
 			Out o(frames);
@@ -1948,4 +1965,297 @@ TEST_CASE("drum: a scaler stops at the top of its range instead of wrapping into
 	CHECK(run(a, { on(36, 0) }, 512).l == run(b, { on(36, 0) }, 512).l);
 	// NON-VACUITY: the first and the last zone differ.
 	CHECK(drum::wiresAt(0.0).buzz != drum::wiresAt(3.0 / 4.0).buzz);
+}
+
+//--------------------------------------------------------------------------------------------------//
+// PLAY MODE: One-shot | Gate | Drone, and the Particle kind                                          //
+//--------------------------------------------------------------------------------------------------//
+
+namespace {
+
+dd::Row particleRow(double trigger) {
+	dd::Row r = defaultRow();
+	r[at(Param::Kind)] = static_cast<float>(drum::Kind::Particle);
+	r[at(Param::Trigger)] = static_cast<float>(trigger);
+	r[at(Param::Seed)] = 23.0f;
+	r[at(Param::Decay)] = -1.6f;
+	r[at(Param::Release)] = static_cast<float>(std::log2(0.05));
+	return r;
+}
+
+float peakOfOut(const Out& o) {
+	float p = 0.0f;
+	for (const float x : o.l) {
+		p = std::max(p, std::fabs(x));
+	}
+	return p;
+}
+
+} // namespace
+
+TEST_CASE("drone: with Trigger on Drone a Particle sounds with no key, stays awake for ever, answers no key and takes no voice") {
+	Dev d;
+	d.row = particleRow(2.0);
+	REQUIRE(d.holds() == false); // nothing yet: the drone starts with the first block the device runs
+	float quietest = 1.0f;
+	for (int block = 0; block < 400; ++block) { // about 3 s of 512-frame blocks, far past any hit's own length
+		const Out o = run(d, {}, 512);
+		if (block >= 8) {
+			quietest = std::min(quietest, peakOfOut(o) > 0.0f ? 1.0f : 0.0f);
+		}
+		CHECK(d.holds()); // sustains by design: never asleep, no timeout
+	}
+	CHECK(quietest == 1.0f); // and a block of exact silence never came in the steady state (a density of 25 a second against 512-frame blocks)
+	REQUIRE(d.dsp().droneForTest() != nullptr);
+	CHECK(d.dsp().soundingForTest() == 0); // outside the pool
+	// A KEY CHANGES NOTHING: the notes are not struck (the drone has no key), and the strike count stays where it was.
+	const uint32_t strikes = d.dsp().strikesForTest();
+	(void)run(d, { on(36, 0), off(36, 100) }, 512);
+	CHECK(d.dsp().strikesForTest() == strikes);
+	CHECK(d.dsp().soundingForTest() == 0);
+}
+
+TEST_CASE("drone: a moved control follows without a restart, a new Seed restarts it, and leaving Drone fades it to exact zero") {
+	Dev d;
+	d.row = particleRow(2.0);
+	(void)run(d, {}, 4096);
+	const drum::Hit* drone = d.dsp().droneForTest();
+	REQUIRE(drone != nullptr);
+	const int64_t before = drone->age();
+	// A MOVED CONTROL (Tune, Decay, a field) is the laws' business: the drone's age runs on and its stream is the same stream.
+	d.set(Param::Tune, 5.0);
+	d.set(Param::Decay, -2.5);
+	(void)run(d, {}, 2048);
+	REQUIRE(d.dsp().droneForTest() != nullptr);
+	CHECK(d.dsp().droneForTest()->age() == before + 2048);
+	CHECK(d.dsp().droneForTest()->laws().hz > drone->laws().hz * 0.0); // (the pointer is the same hit: it follows)
+	const uint64_t seedBefore = d.dsp().droneForTest()->seed();
+	// A CHANGED SEED RESTARTS IT: the age is small again, and the stream is the new seed's.
+	d.set(Param::Seed, 24.0);
+	(void)run(d, {}, 512);
+	REQUIRE(d.dsp().droneForTest() != nullptr);
+	CHECK(d.dsp().droneForTest()->age() == 512);
+	CHECK(d.dsp().droneForTest()->seed() != seedBefore);
+	// LEAVING THE MODE fades it out: silent to the exact sample, and the device may sleep.
+	d.set(Param::Trigger, 0.0);
+	(void)run(d, {}, 4096);
+	CHECK(d.dsp().droneForTest() == nullptr);
+	const Out after = run(d, {}, 512);
+	CHECK(peakOfOut(after) == 0.0f);
+	CHECK_FALSE(d.holds());
+}
+
+TEST_CASE("drone: the same row from the same start is the same sound, to the bit, in a fresh instance (the seed is the whole of its state)") {
+	Dev a;
+	Dev b;
+	a.row = b.row = particleRow(2.0);
+	a.row[at(Param::Seed)] = b.row[at(Param::Seed)] = 777.0f;
+	std::vector<float> xa;
+	std::vector<float> xb;
+	for (int block = 0; block < 40; ++block) {
+		const Out oa = run(a, {}, 256);
+		const Out ob = run(b, {}, 256);
+		xa.insert(xa.end(), oa.l.begin(), oa.l.end());
+		xb.insert(xb.end(), ob.l.begin(), ob.l.end());
+	}
+	CHECK(xa == xb);
+	// NON-VACUITY: another seed is another shower.
+	Dev c;
+	c.row = a.row;
+	c.row[at(Param::Seed)] = 778.0f;
+	std::vector<float> xc;
+	for (int block = 0; block < 40; ++block) {
+		const Out oc = run(c, {}, 256);
+		xc.insert(xc.end(), oc.l.begin(), oc.l.end());
+	}
+	CHECK(xa != xc);
+	// AND A CHAIN RESET (the engine's park, a transport restart) puts it back at its start: the same bits again.
+	dd::kAudioOps.reset(a.st);
+	std::vector<float> xr;
+	for (int block = 0; block < 40; ++block) {
+		const Out o = run(a, {}, 256);
+		xr.insert(xr.end(), o.l.begin(), o.l.end());
+	}
+	CHECK(xr == xa);
+}
+
+TEST_CASE("play mode: Drone on a kind that cannot hold one plays as One-shot (no drone, notes strike), and Gate on every kind damps to Release as it did") {
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		const auto kind = static_cast<drum::Kind>(k);
+		CAPTURE(k);
+		Dev d;
+		d.row = particleRow(2.0);
+		d.row[at(Param::Kind)] = static_cast<float>(k);
+		if (drum::kindSustains(kind)) {
+			(void)run(d, {}, 512);
+			CHECK(d.dsp().droneForTest() != nullptr);
+			continue;
+		}
+		const Out idle = run(d, {}, 512);
+		CHECK(peakOfOut(idle) == 0.0f); // no key, no sound: there is no drone here
+		CHECK(d.dsp().droneForTest() == nullptr);
+		const Out hit = run(d, { on(36, 0) }, 512);
+		CHECK(peakOfOut(hit) > 0.0f); // and a note still strikes it
+	}
+}
+
+TEST_CASE("particle: One-shot and Gate reach exact zero and let the device sleep, and a held Gate does not until its key goes") {
+	for (const double trig : { 0.0, 1.0 }) {
+		CAPTURE(trig);
+		Dev d;
+		d.row = particleRow(trig);
+		(void)run(d, { on(36, 0) }, 512);
+		if (trig == 1.0) {
+			for (int block = 0; block < 100; ++block) { // held: still sounding after far longer than Decay
+				(void)run(d, {}, 512);
+				CHECK(d.holds());
+			}
+			(void)run(d, { off(36, 0) }, 512);
+		}
+		bool slept = false;
+		for (int block = 0; block < 1200 && !slept; ++block) { // about 12 s
+			(void)run(d, {}, 512);
+			slept = !d.holds();
+		}
+		CHECK(slept);
+		const Out after = run(d, {}, 512);
+		CHECK(peakOfOut(after) == 0.0f);
+	}
+}
+
+TEST_CASE("drone: every kind that can hold a hit sustains in Drone, stays awake, and leaving it fades to exact zero") {
+	size_t held = 0;
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		const auto kind = static_cast<drum::Kind>(k);
+		if (!drum::kindSustains(kind)) {
+			continue;
+		}
+		++held;
+		CAPTURE(k);
+		Dev d;
+		d.row = particleRow(2.0);
+		d.row[at(Param::Kind)] = static_cast<float>(k);
+		int sounding = 0;
+		for (int block = 0; block < 300; ++block) {
+			const Out o = run(d, {}, 512);
+			sounding += peakOfOut(o) > 0.0f ? 1 : 0;
+			CHECK(d.holds());
+		}
+		CHECK(sounding >= 10); // it sounds on its own (a sparse one, a few drops a second, has silent blocks between)
+		d.set(Param::Trigger, 0.0);
+		(void)run(d, {}, 4096);
+		CHECK(d.dsp().droneForTest() == nullptr);
+		CHECK(peakOfOut(run(d, {}, 512)) == 0.0f);
+		CHECK_FALSE(d.holds());
+	}
+	CHECK(held >= 2); // Particle and Friction (and the kinds that follow)
+}
+
+TEST_CASE("sweep: Sync takes the sweep's length from the host's tempo, Free from Decay, and a missing tempo falls back to Free's") {
+	const auto lengthOf = [&](double sync, double secondsPerBeat) {
+		Dev d;
+		d.row = defaultRow();
+		d.row[at(Param::Kind)] = static_cast<float>(drum::Kind::Sweep);
+		d.row[at(Param::Decay)] = -1.0f; // half a second, Length at its middle
+		d.row[at(Param::SweepSync)] = static_cast<float>(sync);
+		device::TransportClock clock;
+		clock.secondsPerBeat = secondsPerBeat;
+		dd::kAudioOps.setTransportClock(d.st, clock);
+		(void)run(d, { on(36, 0) }, 64);
+		REQUIRE(d.dsp().newestForTest() != nullptr);
+		return d.dsp().newestForTest()->laws().lengthSeconds;
+	};
+	const double free = lengthOf(0.0, 0.5);
+	CHECK(free == doctest::Approx(lengthOf(0.0, 0.0)));          // Free ignores the tempo
+	CHECK(lengthOf(3.0, 0.5) == doctest::Approx(4.0 * 0.5));      // "1 bar": four beats of half a second
+	CHECK(lengthOf(5.0, 0.4) == doctest::Approx(16.0 * 0.4));     // "4 bars": sixteen beats
+	CHECK(lengthOf(3.0, 0.0) == doctest::Approx(free));           // no tempo from the host: Free's time
+	CHECK(lengthOf(3.0, 0.5) != doctest::Approx(free));           // NON-VACUITY: the synced length is not the free one
+}
+
+TEST_CASE("default level: a default drone of every kind that can hold one reads between -26 and -12 dBFS RMS and never clips, as a default hit of the others does") {
+	const auto db = [](double v) { return 20.0 * std::log10(std::max(1e-9, v)); };
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		const auto kind = static_cast<drum::Kind>(k);
+		if (!drum::kindSustains(kind)) {
+			continue;
+		}
+		CAPTURE(k);
+		Dev d;
+		d.row = defaultRow();
+		d.row[at(Param::Kind)] = static_cast<float>(k);
+		d.row[at(Param::Trigger)] = 2.0f;
+		double sum = 0.0;
+		double peak = 0.0;
+		size_t n = 0;
+		for (int b = 0; b < 700; ++b) {
+			const Out o = run(d, {}, 512);
+			if (b < 100) {
+				continue; // past the start
+			}
+			for (const float x : o.l) {
+				sum += static_cast<double>(x) * x;
+				peak = std::max(peak, static_cast<double>(std::fabs(x)));
+				++n;
+			}
+		}
+		CHECK(db(std::sqrt(sum / static_cast<double>(n))) > -26.0);
+		CHECK(db(std::sqrt(sum / static_cast<double>(n))) < -12.0);
+		CHECK(peak <= 1.0);
+	}
+}
+
+TEST_CASE("listening renders: every kind at its defaults, in each mode it offers, in stereo (only with FEATHERS_DRUM_WAV_DIR set)") {
+	const char* dir = std::getenv("FEATHERS_DRUM_WAV_DIR");
+	if (dir == nullptr || *dir == '\0') {
+		return;
+	}
+	const auto write = [&](const std::string& name, const std::vector<float>& l, const std::vector<float>& r) {
+		std::vector<uint8_t> b;
+		const auto put32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+		const auto put16 = [&](uint16_t v) { for (int i = 0; i < 2; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+		const auto sample = [](float v) { return static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))); };
+		for (const char c : std::string("RIFF")) b.push_back(static_cast<uint8_t>(c));
+		put32(static_cast<uint32_t>(36 + l.size() * 4));
+		for (const char c : std::string("WAVEfmt ")) b.push_back(static_cast<uint8_t>(c));
+		put32(16); put16(1); put16(2); put32(48000); put32(192000); put16(4); put16(16);
+		for (const char c : std::string("data")) b.push_back(static_cast<uint8_t>(c));
+		put32(static_cast<uint32_t>(l.size() * 4));
+		for (size_t i = 0; i < l.size(); ++i) {
+			put16(sample(l[i]));
+			put16(sample(r[i]));
+		}
+		std::FILE* f = std::fopen((std::string(dir) + "/" + name).c_str(), "wb");
+		REQUIRE(f != nullptr);
+		std::fwrite(b.data(), 1, b.size(), f);
+		std::fclose(f);
+	};
+	for (size_t k = 0; k < drum::kKindCount; ++k) {
+		const auto kind = static_cast<drum::Kind>(k);
+		for (const int mode : { 0, 1, 2 }) {
+			if (mode == 2 && !drum::kindSustains(kind)) {
+				continue;
+			}
+			Dev d;
+			d.row = defaultRow();
+			d.row[at(Param::Kind)] = static_cast<float>(k);
+			d.row[at(Param::Trigger)] = static_cast<float>(mode);
+			std::vector<float> l;
+			std::vector<float> r;
+			const int blocks = 4 * 48000 / 512;
+			for (int b = 0; b < blocks; ++b) {
+				std::vector<NoteEvent> ev;
+				if (mode != 2 && b == 0) {
+					ev.push_back(on(36, 0));
+				}
+				if (mode == 1 && b == blocks / 2) {
+					ev.push_back(off(36, 0));
+				}
+				const Out o = run(d, ev, 512);
+				l.insert(l.end(), o.l.begin(), o.l.end());
+				r.insert(r.end(), o.r.begin(), o.r.end());
+			}
+			write(std::string(drum::kKindNames[k]) + (mode == 0 ? "-oneshot" : mode == 1 ? "-gate" : "-drone") + ".wav", l, r);
+		}
+	}
 }

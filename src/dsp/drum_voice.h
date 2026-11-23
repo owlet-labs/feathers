@@ -60,12 +60,38 @@
 
 namespace feathers::drum {
 
-enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, kCount };
+enum class Kind : uint8_t { Kick, Membrane, Snare, Metal, Clap, String, Particle, Friction, Water, Sweep, kCount };
 inline constexpr size_t kKindCount = static_cast<size_t>(Kind::kCount);
 /// The labels a Choice stores (the schema ledger stores a Choice by label, so this order may change; a label may not
 /// without a ChoiceAlias).
 inline constexpr std::array<const char* const, kKindCount> kKindNames { "Kick", "Membrane", "Snare", "Metal", "Clap",
-	                                                                    "String" };
+	                                                                    "String", "Particle", "Friction", "Water", "Sweep" };
+
+/// **PLAY MODES**: how a hit is held. One-shot rings the whole hit out; Gate holds it while the key is down and damps it to Release when it is let go;
+/// Drone sounds from the moment the device runs, no key needed, until it is switched off. A mode is offered on a kind only where the engine has an
+/// excitation that can be held (`kindSustains`); the impulse kinds ring out, and Gate on them damps the ring as it always did.
+inline constexpr int kPlayOneShot = 0;
+inline constexpr int kPlayGate = 1;
+inline constexpr int kPlayDrone = 2;
+/// THE SWEEP'S SHAPES, one place for the voice and the picture. `pos` is how far through the sweep it is, 0..1. The filter corner runs from the low
+/// corner (the kind's pitch) up `range` octaves (Up) or back down (Down); the loudness rises as pos squared (Up: a riser) or falls as (1 - pos)^1.5
+/// (Down: a downer, a zap, an impact); a Gate holds what it reached (Up: full; Down: a 0.3 sustain under the fall) and a Drone holds one level.
+[[nodiscard]] inline double sweepCornerHz(double lowHz, double range, int direction, double pos) {
+	return lowHz * std::exp2(range * (direction == 0 ? pos : 1.0 - pos));
+}
+[[nodiscard]] inline double sweepShape(double pos, int direction, int play) {
+	if (play == 2) {
+		return 0.45;
+	}
+	const double p = pos < 0.0 ? 0.0 : (pos > 1.0 ? 1.0 : pos);
+	if (direction == 0) {
+		return p * p;
+	}
+	const double fall = std::pow(1.0 - p, 1.5);
+	return play == 1 ? 0.3 + 0.7 * fall : fall;
+}
+/// Whether a kind has an excitation that goes on (a random process), so that Gate holds it and Drone runs it for ever.
+[[nodiscard]] constexpr bool kindSustains(Kind k) noexcept { return k == Kind::Particle || k == Kind::Friction || k == Kind::Water || k == Kind::Sweep; }
 
 /// THE SEVEN DRUM FIELDS (proposal §3.1), each in [0, 1]: the terrain's, or a scaler's override of it.
 struct Fields {
@@ -159,6 +185,24 @@ struct Controls {
 	/// THE TERRAIN'S PITCH (kit stance redesign R5): 0 Free (the terrain's contribution as it comes), 1 Semitones (rounded to whole
 	/// semitones before it is applied), 2 Off (none of it). Only the Pitch field's contribution is ever touched; Tune is not.
 	int pitchMode{0};
+	// THE PARTICLE'S (a shower of colliding grains exciting a few resonances): grains a second, one grain's decay, and the play mode.
+	double particleDensity{25.0};
+	double grainSeconds{0.004};
+	/// THE FRICTION'S (a bow rubbed on a resonator): how hard it presses, and how fast it moves.
+	double pressure{0.5};
+	double speed{0.6};
+	/// THE WATER'S: events a second at full strength (drips to rain), how far each chirp rises, the noise bed's level, and each event's splash.
+	double waterRate{4.0};
+	double rise{0.6};
+	double flow{0.0};
+	double splash{0.3};
+	/// THE SWEEP'S (noise and an oscillator through a swept filter): up or down (0, 1), how many octaves it covers, and how long it takes, by a
+	/// number of beats at the host's tempo (0: free, the Decay's time) when the tempo is known.
+	int sweepDirection{0};
+	double sweepRange{4.0};
+	double syncBeats{0.0};
+	double secondsPerBeat{0.0};
+	int play{0};
 	friend bool operator==(const Controls&, const Controls&) = default;
 };
 
@@ -325,6 +369,19 @@ struct Laws {
 	double width{0.0};
 	double buzz{0.0};
 	double buzzThreshold{0.5};
+	// THE PARTICLE'S: the collision rate at full envelope, a grain's decay, and how the shower is held (kPlay*).
+	double density{25.0};
+	double grainT60{0.004};
+	double pressure{0.5};
+	double speed{0.6};
+	double waterRate{4.0};
+	double rise{0.6};
+	double flow{0.0};
+	double splash{0.3};
+	int sweepDirection{0};
+	double sweepRange{4.0};
+	double lengthSeconds{1.0}; ///< the sweep's time: the synced beats at the tempo, else the Decay's (Length applied)
+	int play{0};
 	friend bool operator==(const Laws&, const Laws&) = default;
 };
 
@@ -383,6 +440,16 @@ struct Svf {
 		ic1 = 2.0f * v1 - ic1;
 		ic2 = 2.0f * v2 - ic2;
 		return v1;
+	}
+	/// Both the band-pass and the low-pass of one step (the filter's two outputs).
+	void step(float x, float& band, float& low) {
+		const float v3 = x - ic2;
+		const float v1 = a1 * ic1 + a2 * v3;
+		const float v2 = ic2 + a2 * ic1 + a3 * v3;
+		ic1 = 2.0f * v1 - ic1;
+		ic2 = 2.0f * v2 - ic2;
+		band = v1;
+		low = v2;
 	}
 	void clear() { ic1 = ic2 = 0.0f; }
 };
@@ -474,6 +541,11 @@ private:
 	float renderKick();
 	float renderModes();
 	float renderMetal();
+	float renderParticle();
+	float renderFriction();
+	/// One sample of both ears (a drop lands anywhere in the stereo field).
+	void renderWater(float& left, float& right);
+	float renderSweep();
 	float renderClap();
 	float clapTooth();
 	float noise() { return noise_.next(); }
@@ -493,6 +565,7 @@ private:
 		bool wireGated{false};
 		bool holding{false};
 		double dip{1.0};
+		double sweepPos{0.0};
 		friend bool operator==(const ControlKey&, const ControlKey&) = default;
 	};
 	ControlKey lastControl_ {};
@@ -631,6 +704,119 @@ private:
 	ks::KsString* string_{nullptr};
 	ks::PluckBuilder* builder_{nullptr};
 	double stringHz_{-1.0};
+
+	// PARTICLE: collisions arrive as a Poisson process (a counter fills at density/sample rate and fires at an exponentially drawn threshold), each
+	// adding a decaying burst of noise to the excitation, which a few resonances (seeded ratios, the Metal field's spread) turn into pitch.
+	static constexpr int kParticleResonators = 4;
+	std::array<Svf, kParticleResonators> pres_ {};
+	std::array<float, kParticleResonators> presGain_ {};
+	std::array<float, kParticleResonators> presQGain_ {};
+	std::array<double, kParticleResonators> presRatio_ {};
+	Env grain_ {};
+	float partAcc_{0.0f};
+	float partThresh_{1.0f};
+	float partLp_{0.0f};
+	float partLpCoef_{1.0f};
+	float partRaw_{0.0f};
+	ks::PluckNoise partRand_{1};
+	int64_t grains_{0};
+public:
+	/// TEST SEAMS (values): the collisions so far, the resonators' centres now, the density envelope.
+	int64_t particleGrainsForTest() const { return grains_; }
+	double particleResonatorHzForTest(int i) const { return presRatio_[static_cast<size_t>(i)] * laws_.hz; }
+	float particleDensityEnvForTest() const { return body_.v; }
+	/// The friction's slips so far, and the interval it is waiting out (samples).
+	int64_t frictionSlipsForTest() const { return slips_; }
+	double frictionPeriodForTest() const { return slipPeriod_; }
+	/// The water's events so far, the chirps sounding now, and the first sounding chirp's frequency in Hz (0 with none).
+	int64_t waterEventsForTest() const { return events_; }
+	int waterChirpsForTest() const {
+		int n = 0;
+		for (const WaterChirp& c : chirps_) {
+			n += c.on ? 1 : 0;
+		}
+		return n;
+	}
+	double waterChirpHzForTest(int i) const { return chirps_[static_cast<size_t>(i)].on ? chirps_[static_cast<size_t>(i)].inc * sr_ : 0.0; }
+	/// The chirp most recently born: its start frequency and the octaves it will rise over its life.
+	double waterLastStartHzForTest() const { return lastStartHz_; }
+	double waterLastRiseOctavesForTest() const { return lastRiseOct_; }
+	float waterLastPanForTest() const { return lastPan_; }
+	float waterSplashForTest() const { return splashEnv_.v; }
+	/// The sweep's position (0..1), the filter corner and the oscillator's pitch it has set, and the length it is running to.
+	double sweepPosForTest() const { return sweepPos_; }
+	double sweepCornerHzForTest() const { return sweepCorner_; }
+	double sweepOscHzForTest() const { return sweepOscInc_ * sr_; }
+	double sweepLengthForTest() const { return laws_.lengthSeconds; }
+	bool sweepEndedForTest() const { return sweepEnded_; }
+private:
+	// SWEEP: a saw and noise (the Noise field is the balance) through a swept state-variable filter (Tone: low-pass to band-pass, Snap: resonance); the
+	// oscillator's pitch follows the corner by the Sweep field. The position advances a sample at a time, so a moved length never jumps it.
+	double sweepPos_{0.0};
+	double sweepStep_{0.0};
+	double sweepDir_{1.0};   ///< a Drone's ping-pong: +1 rising, -1 falling
+	bool sweepEnded_{false};
+	double sweepCorner_{0.0};
+	double sweepOscInc_{0.0};
+	double sweepOscPhase_{0.0};
+	float sweepShape_{0.0f};
+	float sweepShapeStep_{0.0f};
+	Svf sweepFilter_ {};
+	float sweepLowMix_{0.0f};
+	float sweepBandMix_{0.0f};
+	float sweepGain_{1.0f};
+	ks::PluckNoise sweepNoise_{1};
+public:
+private:
+	// WATER: events (a drop, a bubble) arrive as a Poisson process of the Rate; each starts a sine chirp that rises from its size's pitch, and
+	// a short noise transient (the splash); under them runs a band-limited noise bed (the flow) whose colour follows the size.
+	static constexpr int kWaterChirps = 8;
+	struct WaterChirp {
+		bool on{false};
+		double phase{0.0};
+		double inc{0.0};    ///< cycles per sample
+		double grow{1.0};   ///< the per-sample factor that rises it
+		float amp{0.0f};
+		float decay{1.0f};
+		float gl{0.7f};
+		float gr{0.7f};
+		double octavesLeft{0.0};
+	};
+	std::array<WaterChirp, kWaterChirps> chirps_ {};
+	int64_t events_{0};
+	double lastStartHz_{0.0};
+	double lastRiseOct_{0.0};
+	float lastPan_{0.0f};
+	Env splashEnv_ {};
+	float splashL_{0.7f};
+	float splashR_{0.7f};
+	float splashLp_{0.0f};
+	float splashLpCoef_{1.0f};
+	Svf flowBp_ {};
+	Svf flowBpR_ {};
+	float flowWobble_{0.0f};
+	float flowWobbleCoef_{0.0f};
+	float flowGain_{0.0f};
+	ks::PluckNoise waterNoiseR_{1};
+public:
+private:
+	// FRICTION: a stick-slip generator drives a resonator. Each slip is an impulse (a bow letting go); how often they come is the Speed (a slow bow
+	// creaks, one tick a slip; a fast one locks to the resonance and sustains a tone), how hard, the Pressure; the Noise field's roughness
+	// jitters the intervals and the sizes and adds the scrape.
+	static constexpr int kFrictionResonators = 3;
+	std::array<Svf, kFrictionResonators> fres_ {};
+	std::array<float, kFrictionResonators> fresGain_ {};
+	std::array<float, kFrictionResonators> fresQGain_ {};
+	std::array<double, kFrictionResonators> fresRatio_ {};
+	ks::PluckNoise fricRand_{1};
+	double slipCount_{0.0};
+	double slipPeriod_{1.0};
+	float slipAmp_{0.0f};
+	float fricLp_{0.0f};
+	float fricLpCoef_{1.0f};
+	float fricScrape_{0.0f};
+	int64_t slips_{0};
+public:
 };
 
 } // namespace feathers::drum

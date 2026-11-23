@@ -49,6 +49,9 @@
 #include "fx/phaser/phaser_types.h"
 #include "fx/delay/delay.h" // backlog LF: the taps strip is asserted against a running engine
 #include "plugin/ui/delay_card.h"
+#include "plugin/ui/delay_expanded.h"
+#include "plugin/ui/delay_tips.h"
+#include "plugin/ui/follower_card.h"
 #include "plugin/ui/fader_pill.h"
 #include "plugin/ui/noise_card.h"
 #include "plugin/ui/macro_polarity.h"
@@ -39179,6 +39182,44 @@ TEST_CASE("the Pattern window's step inspector: each setting changes exactly tha
 	othersSame(base, back, -10);
 }
 
+TEST_CASE("Pattern's Degree and Thru hover text follow the tab's Mode: the chord degree in Chords, the line's transposition in the line modes, Thru's Auto by Drum") {
+	namespace pt = feathers::mod::arp::pat;
+	namespace gn = feathers::mod::arp::genes;
+	using Field = pt::Field;
+	ModFixture f;
+	const size_t slot = f.bridge.addRackDevice(pt::kTraits.tag);
+	REQUIRE(slot < feathers::kMaxRackSlots);
+	f.bridge.refresh();
+	f.panel->resized();
+	auto* card = const_cast<ui::PatternCard*>(dynamic_cast<const ui::PatternCard*>(f.panel->cardFrameForTest(slot)));
+	REQUIRE(card != nullptr);
+	const DeviceInstanceId id = card->device();
+	ui::WidgetRegistry registry;
+	auto view = ui::makeExpandedView(f.deviceHost, &f.bridge, registry, id, pt::kDescriptor);
+	auto* window = dynamic_cast<ui::PatternExpanded*>(view.get());
+	REQUIRE(window != nullptr);
+	const auto tipOf = [&](Field fld) { return std::string(ui::tooltipOf(&window->controlForTest(pt::at(0, fld)))); };
+	const auto setMode = [&](gn::Mode m) {
+		f.deviceHost.setField(id, pt::at(0, Field::Mode), static_cast<float>(m));
+		(void)window->updateContent();
+	};
+	setMode(gn::Mode::Chords);
+	CHECK(tipOf(Field::Degree) == pt::kDegreeTipChords);
+	setMode(gn::Mode::TbGlide);
+	CHECK(tipOf(Field::Degree) == pt::kDegreeTipLine);
+	// NOT VACUOUS: the two modes name different things.
+	CHECK(pt::kDegreeTipChords != std::string(pt::kDegreeTipLine));
+	setMode(gn::Mode::Drum);
+	// THRU'S AUTO RESOLVES BY MODE: on in Drum, off in a note mode.
+	CHECK(tipOf(Field::Thru) == pt::kThruTipAutoDrum);
+	setMode(gn::Mode::Melody);
+	CHECK(tipOf(Field::Thru) == pt::kThruTipAutoOther);
+	// AN EXPLICIT Thru says what it does, and keeps the declared text (no Auto to resolve).
+	f.deviceHost.setField(id, pt::at(0, Field::Thru), static_cast<float>(pt::Thru::On));
+	(void)window->updateContent();
+	CHECK(tipOf(Field::Thru) != pt::kThruTipAutoOther);
+}
+
 TEST_CASE("the Pattern window's drum grid: a click selects a cell and edits nothing; a double-click toggles that lane's hit; the inspector's Hit and Accent set that cell") {
 	using namespace lane_check;
 	using What = ui::StepControl::What;
@@ -43317,6 +43358,172 @@ TEST_CASE("drum device window: a control the Kind does not read is hidden, one i
 	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Clap));
 	CHECK(u.win->widgetForTest(ddv::Param::Claps)->isVisible());
 	CHECK_FALSE(u.win->widgetForTest(ddv::Param::KickHold)->isVisible());
+}
+
+TEST_CASE("drum tooltips follow the Kind: Tone, Snap, Decay, Tune and High Pass name what they do in the current Kind, on the window and the card") {
+	DrumUi u;
+	const auto tipOf = [&](ddv::Param p) { return std::string(ui::tooltipOf(&u.win->modelForTest().control(p))); };
+	for (size_t k = 0; k < feathers::drum::kKindCount; ++k) {
+		CAPTURE(k);
+		u.set(ddv::Param::Kind, static_cast<double>(k));
+		CHECK(tipOf(ddv::Param::FieldTone) == ddv::kToneTips[k]);
+		CHECK(tipOf(ddv::Param::FieldSnap) == ddv::kSnapTips[k]);
+		CHECK(tipOf(ddv::Param::Decay) == ddv::kDecayTips[k]);
+		CHECK(tipOf(ddv::Param::Tune) == ddv::kTuneTips[k]);
+		CHECK(tipOf(ddv::Param::HighPass) == ddv::kHighPassTips[k]);
+		// THE CARD'S TUNE PILL shares the same model road: the card's own control reads the same text.
+		CHECK(std::string(ui::tooltipOf(&u.d.card->modelForTest().control(ddv::Param::Tune))) == ddv::kTuneTips[k]);
+	}
+	// NOT VACUOUS: the Kind moved the text (a Kick's Tone is not a Snare's).
+	u.set(ddv::Param::Kind, 0.0);
+	const std::string kickTone = tipOf(ddv::Param::FieldTone);
+	u.set(ddv::Param::Kind, static_cast<double>(feathers::drum::Kind::Snare));
+	CHECK(tipOf(ddv::Param::FieldTone) != kickTone);
+	// PITCHED: the key sets the pitch, so Tune names the key, in every Kind.
+	u.set(ddv::Param::Keys, 2.0);
+	CHECK(tipOf(ddv::Param::Tune) == ddv::kTunePitchedTip);
+	u.set(ddv::Param::Keys, 0.0);
+	CHECK(tipOf(ddv::Param::Tune) == ddv::kTuneTips[static_cast<size_t>(feathers::drum::Kind::Snare)]);
+}
+
+TEST_CASE("Delay's Time and Mix hover text follow the Mode, Sync and Dub, on the card and on the window alike") {
+	namespace dly = feathers::fx::delay;
+	DynCardFixture<ui::DelayCard> d { dly::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::DelayExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	// THE TWO SURFACES' OWN CONTROLS, the card's from its boxes and the window's from its seam.
+	const auto cardTip = [&](dly::Param p) { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(p)))); };
+	const auto winTip = [&](dly::Param p) { return std::string(ui::tooltipOf(&win->controlForTest(p))); };
+	const auto set = [&](dly::Param p, double v) {
+		d.set(static_cast<size_t>(p), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	const std::string declaredMix = dly::kParamDescs[static_cast<size_t>(dly::Param::Mix)].tooltip;
+	// THE MODE NAMES THE TIME: a Multi-Tap's pattern, a Reverse's chunk, and a tap's own multiplier in the rest.
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::MultiTap));
+	CHECK(cardTip(dly::Param::Time).rfind("How long the whole tap pattern is", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::Reverse));
+	CHECK(cardTip(dly::Param::Time).rfind("How long each reversed chunk is", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	set(dly::Param::Mode, static_cast<double>(dly::Mode::Clean));
+	CHECK(cardTip(dly::Param::Time).rfind("How many of", 0) == 0);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	// THE SYNC NAMES THE BASE: a free time, then a division.
+	set(dly::Param::Sync, 0.0);
+	CHECK(cardTip(dly::Param::Time).find("the free time") != std::string::npos);
+	set(dly::Param::Sync, static_cast<double>(dly::kSyncNoteChoice));
+	CHECK(cardTip(dly::Param::Time).find("division") != std::string::npos);
+	CHECK(winTip(dly::Param::Time) == cardTip(dly::Param::Time));
+	// MIX IS THE SEND WITH DUB ON, and the declared dry against wet with it off.
+	set(dly::Param::Dub, 0.0);
+	CHECK(cardTip(dly::Param::Mix) == declaredMix);
+	CHECK(winTip(dly::Param::Mix) == declaredMix);
+	set(dly::Param::Dub, 1.0);
+	CHECK(cardTip(dly::Param::Mix) == ui::delay_tips::mixTip(1));
+	CHECK(winTip(dly::Param::Mix) == ui::delay_tips::mixTip(1));
+	CHECK(cardTip(dly::Param::Mix) != declaredMix);
+}
+
+TEST_CASE("OWLTT's crossovers say what Key Track makes them: an offset from the note with it on, the declared frequency with it off, on the card and the window") {
+	namespace ow = feathers::fx::owltt;
+	DynCardFixture<ui::OwlttCard> d { ow::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::OwlttExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	const auto cardTip = [&](ow::Param p) { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(p)))); };
+	const auto winTip = [&](ow::Param p) { return std::string(ui::tooltipOf(&win->controlForTest(p))); };
+	const auto setKeyTrack = [&](double v) {
+		d.set(static_cast<size_t>(ow::Param::KeyTrack), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	// KEY TRACK OFF: the declared frequencies.
+	setKeyTrack(0.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+	CHECK(winTip(ow::Param::HighCrossover) == "Mid-high split frequency");
+	// ON: each is an offset from the note, and the two texts are not the declared ones (not vacuous).
+	setKeyTrack(1.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == ow::kLowCrossoverTipKeyTrack);
+	CHECK(cardTip(ow::Param::HighCrossover) == ow::kHighCrossoverTipKeyTrack);
+	CHECK(winTip(ow::Param::LowCrossover) == ow::kLowCrossoverTipKeyTrack);
+	CHECK(winTip(ow::Param::HighCrossover) == ow::kHighCrossoverTipKeyTrack);
+	CHECK(cardTip(ow::Param::LowCrossover) != "Low-mid split frequency");
+	// AND BACK OFF: the declared text returns on both surfaces.
+	setKeyTrack(0.0);
+	CHECK(cardTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+	CHECK(winTip(ow::Param::LowCrossover) == "Low-mid split frequency");
+}
+
+TEST_CASE("Sklitter's Groove Amount says what its Groove Mode makes it: the swing, the template share, the walk, or nothing in Straight, on the card and the window") {
+	namespace sk = feathers::fx::sklitter;
+	DynCardFixture<ui::SklitterCard> d { sk::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::SklitterExpanded>(d.f.deviceHost, registry, d.device, sk::kDescriptor, nullptr);
+	const auto cardTip = [&] { return std::string(ui::tooltipOf(&d.card->controlForTest(static_cast<size_t>(sk::Param::GrooveAmount)))); };
+	const auto winTip = [&] { return std::string(ui::tooltipOf(&win->controlForTest(static_cast<size_t>(sk::Param::GrooveAmount)))); };
+	const auto setMode = [&](int m) {
+		d.set(static_cast<size_t>(sk::Param::GrooveMode), static_cast<float>(m));
+		(void)win->updateContentForTest();
+		(void)d.card->updateContentForTest();
+	};
+	// ONE TEXT PER FAMILY, the same on both surfaces; each family's text differs from the others (not vacuous).
+	setMode(0);
+	CHECK(cardTip() == sk::kGrooveAmountTipStraight);
+	CHECK(winTip() == sk::kGrooveAmountTipStraight);
+	setMode(2);
+	CHECK(cardTip() == sk::kGrooveAmountTipSwing);
+	CHECK(winTip() == sk::kGrooveAmountTipSwing);
+	setMode(5);
+	CHECK(cardTip() == sk::kGrooveAmountTipGroove);
+	CHECK(winTip() == sk::kGrooveAmountTipGroove);
+	setMode(8);
+	CHECK(cardTip() == sk::kGrooveAmountTipFree);
+	CHECK(winTip() == sk::kGrooveAmountTipFree);
+	CHECK(std::string(sk::kGrooveAmountTipSwing) != sk::kGrooveAmountTipGroove);
+	// THE DECLARED TEXT NAMES NO SAMPLER (the hardware rule).
+	CHECK(std::string(sk::kParamDescs[static_cast<size_t>(sk::Param::GrooveAmount)].tooltip).find("MPC") == std::string::npos);
+}
+
+TEST_CASE("Arp's Rate says what its Time Base makes it: steps per second on Hz, a multiple of the division otherwise, on the card and the window") {
+	namespace apx = feathers::mod::arp;
+	DynCardFixture<ui::ArpCard> d { apx::kTraits.tag };
+	ui::WidgetRegistry registry;
+	auto win = std::make_unique<ui::ArpExpanded>(d.f.deviceHost, registry, d.device, nullptr);
+	const auto rateOn = [&](ui::DeviceControl& c) { return std::string(ui::tooltipOf(&c)); };
+	const auto setTimeBase = [&](double v) {
+		d.set(static_cast<size_t>(apx::Param::TimeBase), static_cast<float>(v));
+		(void)win->updateContent();
+		(void)d.card->updateContent();
+	};
+	setTimeBase(0.0); // Hz
+	CHECK(rateOn(d.card->control(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipHz);
+	CHECK(rateOn(win->controlForTest(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipHz);
+	setTimeBase(static_cast<double>(apx::kDefaultTimeBase)); // 1/16
+	CHECK(rateOn(d.card->control(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
+	CHECK(rateOn(win->controlForTest(static_cast<size_t>(apx::Param::Rate))) == apx::kRateTipDivision);
+	CHECK(std::string(apx::kRateTipHz) != apx::kRateTipDivision); // not vacuous
+}
+
+TEST_CASE("Follower's Input is disabled in Audio, where it does nothing, and its hover text says why; in Control it is live with its own text") {
+	namespace fl = feathers::mod::follower;
+	DynCardFixture<ui::FollowerCard> d { fl::kTraits.tag };
+	const auto inputTip = [&] { return std::string(ui::tooltipOf(d.card->input().control())); };
+	const auto setMode = [&](double v) {
+		d.set(static_cast<size_t>(fl::Param::Mode), static_cast<float>(v));
+		(void)d.card->updateContent();
+	};
+	setMode(static_cast<double>(fl::Mode::Control));
+	CHECK(d.card->input().enabled());
+	CHECK(inputTip() == fl::kParamDescs[static_cast<size_t>(fl::Param::Input)].tooltip);
+	setMode(static_cast<double>(fl::Mode::Audio));
+	CHECK_FALSE(d.card->input().enabled());
+	CHECK(inputTip().find("does nothing in Audio") != std::string::npos);
+	CHECK(inputTip().find("Switch Mode to Control") != std::string::npos);
+	// AND BACK: live again, the declared text.
+	setMode(static_cast<double>(fl::Mode::Control));
+	CHECK(d.card->input().enabled());
+	CHECK(inputTip() == fl::kParamDescs[static_cast<size_t>(fl::Param::Input)].tooltip);
 }
 
 TEST_CASE("drum device window: every widget is bound to its control by index, and a write lands in that field alone") {

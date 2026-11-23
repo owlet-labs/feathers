@@ -202,6 +202,13 @@ inline constexpr const char* kInversionNames[] = { "Auto", "Root", "1st", "2nd",
 enum class Thru : uint8_t { Auto, Off, On, kCount };
 inline constexpr const char* kThruNames[] = { "Auto", "Off", "On" };
 inline constexpr size_t kThruCount = static_cast<size_t>(Thru::kCount);
+
+// THE HOVER TEXT THAT FOLLOWS THE MODE (TV audit): Degree names what it does in the pattern's Mode, and Thru's Auto what it resolves to.
+// The window refreshes them on every content update (`PatternExpanded::refreshTips`); "" restores the declared text.
+inline constexpr const char* kDegreeTipChords = "The chord's degree in the scale: the scale chord the chord is built on";
+inline constexpr const char* kDegreeTipLine = "The line's transposition, in scale degrees: each step moves the whole line up or down the scale";
+inline constexpr const char* kThruTipAutoDrum = "Auto is on in Drum: the kit's own notes pass to the output untouched, and any other note is a trigger";
+inline constexpr const char* kThruTipAutoOther = "Auto is off in this mode: incoming notes are not passed through";
 inline constexpr const char* kTrigNames[] = { "Auto", "Transport", "Gate", "Restart" };
 inline constexpr size_t kTrigCount = std::size(kTrigNames);
 /// **PLAY MODE AND A TAB'S NEXT** (design §7.6). Next, Previous and Random walk the patterns in range (the enabled ones;

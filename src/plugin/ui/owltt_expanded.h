@@ -156,6 +156,10 @@ public:
 	OwlttGraph* graph() const noexcept { return graph_.get(); }
 
 	bool updateContent() override;
+	/// The window's own control for a parameter (a test seam for its hover text).
+	[[nodiscard]] DeviceControl& controlForTest(fx::owltt::Param p) const { return control(p); }
+	/// The Key Track state the crossovers' hover text was last set for (-1 before the first update).
+	int crossoverTipKey_ = -1;
 
 private:
 	DeviceControl& control(fx::owltt::Param param) const;

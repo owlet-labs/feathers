@@ -1552,7 +1552,38 @@ void PatternExpanded::draw(visage::Canvas& canvas) {
 	PatternTabs::drawPanel(canvas, panel_.x(), panel_.y(), panel_.width(), panel_.height());
 }
 
+DeviceControl& PatternExpanded::controlForTest(size_t index) const { return control(index); }
+
+void PatternExpanded::refreshTips() {
+	static_assert(std::tuple_size_v<decltype(tipKeys_)> == pt::kPatterns);
+	for (size_t p = 0; p < pt::kPatterns; ++p) {
+		const auto mode = static_cast<gn::Mode>(std::clamp<long>(std::lround(host_.fieldAt(device_, pt::at(p, Field::Mode))), 0,
+		                                                         static_cast<long>(gn::Mode::kCount) - 1));
+		const long thru = std::clamp<long>(std::lround(host_.fieldAt(device_, pt::at(p, Field::Thru))), 0, 2);
+		const int key = static_cast<int>(mode) * 4 + static_cast<int>(thru);
+		if (key == tipKeys_[p]) {
+			continue;
+		}
+		tipKeys_[p] = key;
+		const char* degree = "";
+		if (mode == gn::Mode::Chords) {
+			degree = pt::kDegreeTipChords;
+		}
+		else if (mode == gn::Mode::Melody || mode == gn::Mode::MelodyMono || mode == gn::Mode::TbMono || mode == gn::Mode::TbGlide) {
+			degree = pt::kDegreeTipLine;
+		}
+		// Thru's Auto resolves by Mode; Off and On say what they do, so they keep the declared text.
+		const char* thruText = "";
+		if (thru == static_cast<long>(pt::Thru::Auto)) {
+			thruText = mode == gn::Mode::Drum ? pt::kThruTipAutoDrum : pt::kThruTipAutoOther;
+		}
+		control(pt::at(p, Field::Degree)).setTooltipOverride(degree);
+		control(pt::at(p, Field::Thru)).setTooltipOverride(thruText);
+	}
+}
+
 bool PatternExpanded::updateContent() {
+	refreshTips();
 	// GO'S PENDING LOOK: the fill the DEVICE says is armed (published beside its playhead), until it fires.
 	{
 		float level = 0.0f;

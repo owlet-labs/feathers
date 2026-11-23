@@ -23,6 +23,7 @@
 
 #include "fx/delay/delay_lanes.h"
 #include "plugin/ui/delay_strip.h"
+#include "plugin/ui/delay_tips.h"
 #include "rack/inner_chain.h"
 #include "rack/rack_bridge.h"
 #include "plugin/ui/theme.h"
@@ -142,6 +143,12 @@ void DelayCard::drawBodyExtras(visage::Canvas& canvas) {
 	const bool has = picture(&p);
 	const double unit = has ? handUnitSeconds(p) : 0.0;
 	paintDelayStrip(canvas, DelayStrip { stripBounds(), has ? dl::stripSpanSeconds(unit) : 0.0 }, has ? &p : nullptr, unit);
+}
+
+void DelayCard::refreshTips() {
+	const auto value = [this](dl::Param p) { return static_cast<int>(std::lround(control(static_cast<size_t>(p)).value())); };
+	delay_tips::applyTips(value(dl::Param::Mode), value(dl::Param::Sync), value(dl::Param::Dub), tipKey_,
+	                      [this](dl::Param p) -> DeviceControl& { return control(static_cast<size_t>(p)); });
 }
 
 bool DelayCard::updateContent() {

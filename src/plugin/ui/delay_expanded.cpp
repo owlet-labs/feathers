@@ -21,6 +21,8 @@
 
 #include "plugin/ui/delay_expanded.h"
 
+#include "plugin/ui/delay_tips.h"
+
 #include "fx/delay/delay_lanes.h"
 #include "plugin/ui/generic_card.h"
 #include "plugin/ui/knob.h"
@@ -718,6 +720,9 @@ bool DelayExpanded::applyGates() {
 }
 
 bool DelayExpanded::updateContent() {
+	const auto value = [this](dl::Param p) { return static_cast<int>(std::lround(control(p).value())); };
+	delay_tips::applyTips(value(dl::Param::Mode), value(dl::Param::Sync), value(dl::Param::Dub), tipKey_,
+	                      [this](dl::Param p) -> DeviceControl& { return control(p); });
 	bool moved = false;
 	if (modeNow() != laidOutMode_) {
 		layOut();

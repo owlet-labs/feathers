@@ -100,6 +100,8 @@ public:
 	void setModulation(ModState* mod, EditHistory* history) override;
 	void foldedChanged() override;
 	bool updateContent() override;
+	/// The Time Base the Rate's hover text was last set for (-1 before the first update).
+	int rateTipKey_ = -1;
 	void drawContent(visage::Canvas& canvas) override;
 	void drawHeadExtras(visage::Canvas& canvas) override { drawSlotMenu(canvas, kMuted); }
 	bool headSourceFocused() const override;

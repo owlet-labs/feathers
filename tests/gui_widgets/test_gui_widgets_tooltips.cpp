@@ -588,12 +588,10 @@ void sweepHost(visage::Frame* host, const device::Descriptor& desc, SweepTally& 
 			const bool reasoned = vb != nullptr && !vb->enabled() && vb->disabledReason() != nullptr;
 			const char* why = control->unavailable();
 			// AND A SHORTENED OR CUT LABEL'S FULL NAME AT ITS START.
-			// A SURFACE'S OWN OVERRIDE (`setTooltipOverride`, a per-mode text) is the control's text where it is set; the
-			// value cases pin each override's words.
-			const char* own = control->tooltipOverride();
+			// AND A SURFACE'S OWN TEXT (`setTooltipOverride`: a mode's wording, Pattern's Degree and Thru) when it has set one.
 			CHECK(layer.text() == expectedWithFull(full, why != nullptr       ? std::string(why)
 			                                             : reasoned           ? std::string(vb->disabledReason())
-			                                             : own != nullptr     ? std::string(own)
+			                                             : control->tooltipOverride() != nullptr ? std::string(control->tooltipOverride())
 			                                                                  : declaredText(control->desc())));
 		}
 		else {
@@ -1029,7 +1027,9 @@ TEST_CASE("moving between two controls restarts the delay and the text follows t
 	clock.now += 2.0;
 	(void)placed.card->update();
 	REQUIRE(layer.shown());
-	CHECK(layer.text() == declaredText(boundControl(b)->desc()));
+	// A SURFACE'S OWN TEXT (`setTooltipOverride`, the Delay's Time and Mix by Mode and Dub) is what the layer shows when one is set.
+	CHECK(layer.text() == (boundControl(b)->tooltipOverride() != nullptr ? std::string(boundControl(b)->tooltipOverride())
+	                                                                      : declaredText(boundControl(b)->desc())));
 }
 
 TEST_CASE("OWLTT's graph keeps its own tooltip and the card's layer stays hidden over it") {
@@ -2300,8 +2300,8 @@ TEST_CASE("brief is the first sentence of a real declared tooltip, and never cut
 		  "Runs the reverb at twice the rate: less aliasing grit up top at 44.1 and 48 kHz, for about two "
 		  "and a half times the reverb's CPU." },
 		{ "groove_amount",
-		  "How much of the Groove Mode: the swing % (50% straight, 66.7% the triplet, 75% the heaviest, at "
-		  "full), or the share of the groove template." },
+		  "How much of the Groove Mode: the swing % (50% straight, 66.7% a triplet, and at full the heaviest "
+		  "swing), or the share of the groove template." },
 		{ "shaper_hysteresis", "How much of the field's hysteresis you hear — 0.5 is the position's own, 0 removes it" },
 		{ "comp_makeup", "Gain after compression, to win back the level it took" },
 	};

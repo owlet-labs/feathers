@@ -283,6 +283,9 @@ protected:
 	/// delivery. `FxLane::updateCards` only COUNTS cards that report movement; it repaints none of
 	/// them. So this compares, redraws, and then reports.
 	bool updateContent() override;
+	/// Groove Amount's hover text by the Groove Mode (`grooveAmountTipFor`), set on each content update.
+	void refreshTips() override;
+	int grooveTipKey_ = -1;
 
 private:
 	/// WHAT WAS LAST DRAWN, so `updateContent` can ask whether the picture actually moved.

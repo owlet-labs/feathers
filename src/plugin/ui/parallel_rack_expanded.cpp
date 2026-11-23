@@ -55,9 +55,10 @@ constexpr float kPaneTop = kPaneHead + 2.0f;
 
 /// **A PANE'S RAIL** — the synth's own fold: open, just the toggle's corner at the pane's top right; folded, the 34 px strip with the label upright.
 /// It holds no widget (the window shows and hides the pane's), so it is the chrome alone, as the editor's panes' rails are.
-class PaneRail final : public Rail {
+class PaneRail final : public Rail, public ControlFace {
 public:
-	PaneRail(const char* label, std::function<float()> openWidth) : Rail(label, Side::Left), openWidth_(std::move(openWidth)) {
+	PaneRail(const char* label, std::function<float()> openWidth, const device::Modulatable* control)
+	    : Rail(label, Side::Left), openWidth_(std::move(openWidth)), control_(control) {
 		onMouseDown() = [this](const visage::MouseEvent& e) {
 			if (toggleHit(e.position) && toggleCollapsed() && handToggled) {
 				handToggled();
@@ -67,6 +68,12 @@ public:
 	/// Told after a toggle the HAND made. `setCollapsed` (a restore) tells nobody.
 	std::function<void()> handToggled;
 	float expandedWidth() const override { return openWidth_ ? openWidth_() : kCollapsedWidth; }
+	/// THE FOLD THIS STRIP CHANGES IS A DEVICE CONTROL OF THE RACK (view state), so the strip declares it: the surfaces that reach a control say so.
+	void offeredControls(std::vector<Offered>& out) const override {
+		if (control_ != nullptr) {
+			out.push_back({ control_, Road::Face });
+		}
+	}
 	void draw(visage::Canvas& canvas) override {
 		if (collapsed()) {
 			canvas.setColor(kSurface);
@@ -77,6 +84,7 @@ public:
 
 private:
 	std::function<float()> openWidth_;
+	const device::Modulatable* control_ = nullptr;
 };
 
 /// EACH RAIL IS HANDED ITS OWN CHAIN as the handle, so its cast is the identity.
@@ -253,7 +261,8 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 	// THE TWO PANES' RAILS, and the frames each pane's fold hides.
 	const auto makeRail = [this](const char* label, bool macros) {
 		auto rail = std::make_unique<PaneRail>(label, macros ? std::function<float()>([] { return kColumnWidth + 2.0f * kPad; })
-		                                                     : std::function<float()>([this] { return containerOpenWidth(); }));
+		                                                     : std::function<float()>([this] { return containerOpenWidth(); }),
+		                                       macros ? macrosFoldControl_.get() : inspectorFoldControl_.get());
 		rail->handToggled = [this, macros] {
 			if (notifier_ != nullptr) {
 				const bool folded = macros ? macrosFolded() : inspectorFolded();
@@ -263,6 +272,8 @@ ParallelRackExpanded::ParallelRackExpanded(backplane::DeviceHost& host, WidgetRe
 		addChild(rail.get());
 		return rail;
 	};
+	inspectorFoldControl_ = std::make_unique<DeviceControl>(host_, id_, pr::kDescriptor, static_cast<size_t>(pr::Param::InspectorFold));
+	macrosFoldControl_ = std::make_unique<DeviceControl>(host_, id_, pr::kDescriptor, static_cast<size_t>(pr::Param::MacrosFold));
 	containerRail_ = makeRail("RACK", false);
 	macrosRail_ = makeRail("MACROS", true);
 	(void)containerRail_->setCollapsed(inspectorFolded());

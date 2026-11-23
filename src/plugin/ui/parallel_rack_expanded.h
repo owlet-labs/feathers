@@ -235,6 +235,8 @@ private:
 	[[nodiscard]] float containerOpenWidth() const;
 	/// How tall the left panes need the window to be.
 	[[nodiscard]] float leftColumnBottom() const;
+	std::unique_ptr<DeviceControl> inspectorFoldControl_;
+	std::unique_ptr<DeviceControl> macrosFoldControl_;
 	std::unique_ptr<Rail> containerRail_;
 	std::unique_ptr<Rail> macrosRail_;
 	/// The route list's own history, forwarded to the window's (and so the plugin's) when the window is bound: an edit there is one undo step there.

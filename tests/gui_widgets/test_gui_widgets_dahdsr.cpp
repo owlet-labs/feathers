@@ -4905,6 +4905,17 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 			REQUIRE(rackPanel->cutKnobForTest(k).control() != nullptr);
 			e.reached.insert(static_cast<size_t>(pr::Param::Cut1) + k);
 		}
+		// THE TWO PANES' FOLD STRIPS declare the fold they change through `ControlFace`, each offering exactly its own control.
+		for (const auto& [rail, param] : { std::pair<ui::Rail*, pr::Param> { &rackPanel->containerRailForTest(), pr::Param::InspectorFold },
+		                                   std::pair<ui::Rail*, pr::Param> { &rackPanel->macrosRailForTest(), pr::Param::MacrosFold } }) {
+			const auto* face = dynamic_cast<const ui::ControlFace*>(rail);
+			REQUIRE(face != nullptr);
+			std::vector<ui::ControlFace::Offered> offered;
+			face->offeredControls(offered);
+			REQUIRE(offered.size() == 1);
+			CHECK(offered[0].control != nullptr);
+			e.reached.insert(static_cast<size_t>(param));
+		}
 		// THE VIEWED CHAIN AND THE PADS' PAGE are reached by GESTURES: a press on a tab views its chain (the rack's `ViewedChain`) and a press on
 		// a page thumbnail changes the page (`PadsPage`) — asserted by value in `test_gui_widgets_rackviews` ("a press on a tab views that
 		// chain", "a press on page 5 changes the rack's own PadsPage").

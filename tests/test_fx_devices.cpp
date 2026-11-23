@@ -1792,6 +1792,8 @@ TEST_CASE("EVERY audio device: the tail reaches exact silence, or is named as on
 			linearRows.push_back(linearRow);
 			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = 14.0f; // LR8 Full: an IIR whose eight biquads a side must flush to exact zero
 			linearRows.push_back(linearRow);
+			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = static_cast<float>(fx::owltt::kCombSharpMode); // Comb Sharp: twice the lines of Comb, and
+			linearRows.push_back(linearRow);
 			linearRow.field[static_cast<size_t>(fx::owltt::Param::Mode)] = static_cast<float>(fx::owltt::kCombMode); // Comb: feedforward lines that hold their input for up to fs / (2 f0) and must then be exact zero
 			linearRows.push_back(linearRow);
 		}

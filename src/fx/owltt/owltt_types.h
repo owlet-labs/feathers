@@ -48,8 +48,8 @@ namespace feathers::fx::owltt {
 /// OWLTT's 25 controls, in hardware menu order.
 enum class Param : uint8_t {
 	// Global
-	Mode = 0,            // Stepped 1-15: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
-	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full, 15=Comb
+	Mode = 0,            // Stepped 1-16: 1=AP 6dB, 2=Quirky, 3=Twisted, 4=Weird, 5=LR2 Fast,
+	                     //   6=LR2 Full, 7=LR4 Fast, 8=LR4 Full, 9=Inverted, 10=Twist3, 11-13=Linear (linear-phase FIR), 14=LR8 Full, 15=Comb, 16=Comb Sharp
 	Enabled = 1,         // Bypass switch
 	Threshold = 2,       // Linked global threshold
 	Ratio = 3,           // Linked global ratio
@@ -188,7 +188,7 @@ struct BandParams {
 
 /// The full OWLTT state: globals + per-band absolutes.
 struct Settings {
-	float mode = 6.0f;           // 1-15 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full, 15 = Comb)
+	float mode = 6.0f;           // 1-16 = crossover type (6 = LR2 Full default, 11-13 = Linear, Mild, Gentle, 14 = LR8 Full, 15 = Comb, 16 = Comb Sharp)
 	bool enabled = true;         // Bypass switch
 	float threshold = 0.5f;      // Linked global threshold
 	// THE STRUCT DEFAULT IS NOT THE PARAMETER DEFAULT, HERE AND ONLY HERE, and it is deliberate: a
@@ -336,7 +336,9 @@ inline constexpr device::Traits kTraits {
 inline constexpr long kFirstLinearMode = 11;
 inline constexpr long kLastLinearMode = 13;
 inline constexpr long kCombMode = 15; // 15 is Comb: the bands are harmonic classes of a fundamental, not frequency ranges (`comb_split.h`); no latency
-inline constexpr long kLastMode = 15;
+inline constexpr long kCombSharpMode = 16; // 16 is Comb Sharp: the same tree with each comb run twice (narrower teeth, flat nulls)
+inline constexpr long kLastMode = 16;
+[[nodiscard]] inline constexpr bool isCombMode(long mode) noexcept { return mode == kCombMode || mode == kCombSharpMode; }
 [[nodiscard]] inline constexpr bool isLinearMode(long mode) noexcept { return mode >= kFirstLinearMode && mode <= kLastLinearMode; }
 [[nodiscard]] inline constexpr uint8_t linearSteepOf(long mode) noexcept { return static_cast<uint8_t>(mode - kFirstLinearMode); }
 
@@ -347,7 +349,7 @@ inline constexpr long kLastMode = 15;
 inline constexpr const char* kModeNames[] = {"AP 6dB",   "Quirky",   "Twisted", "Weird",    "LR2 Fast (12 dB/oct)",
                                              "LR2 Full (12 dB/oct)", "LR4 Fast (24 dB/oct)", "LR4 Full (24 dB/oct)", "Inverted", "Twist3",
                                              "Linear (94 Hz)", "Linear Mild (186 Hz)", "Linear Gentle (368 Hz)", "LR8 Full (48 dB/oct)",
-                                             "Comb (3 classes)"};
+                                             "Comb", "Comb Sharp"};
 inline constexpr device::ChoiceAlias kModeAliases[] = { { "LR2 Fast", "LR2 Fast (12 dB/oct)" },
 	                                                    { "LR2 Full", "LR2 Full (12 dB/oct)" },
 	                                                    { "LR4 Fast", "LR4 Fast (24 dB/oct)" },
@@ -364,16 +366,65 @@ inline constexpr const char* kLowCrossoverTipKeyTrack = "Low-mid split, as an of
                                                        "Until a note is heard, a plain frequency";
 inline constexpr const char* kHighCrossoverTipKeyTrack = "Mid-high split, as an offset from the last note played: at its default it keeps its distance "
                                                         "above that note. Until a note is heard, a plain frequency";
-/// IN COMB (Mode 15) THE LOW CROSSOVER IS THE FUNDAMENTAL f0 AND THE HIGH ONE IS UNUSED (`comb_split.h`).
-inline constexpr const char* kLowCrossoverTipComb = "Comb fundamental f0: the bands are the harmonic classes of this pitch (Low the odd harmonics, Mid 2, 6, 10 ..., "
-                                                   "High 4, 8, 12 ...), not frequency ranges";
-inline constexpr const char* kLowCrossoverTipCombKeyTrack = "Comb fundamental f0, as an offset from the last note played: at its default it sits on that note. "
-                                                           "Until a note is heard, a plain frequency";
-inline constexpr const char* kHighCrossoverTipComb = "Not used in Comb: the bands are harmonic classes of the fundamental, so there is no upper corner";
+/// **IN COMB (Modes 15, 16) THE TWO CROSSOVERS ARE TOOTH SPACINGS** (`comb_split.h`): Low Crossover is split 1's, High Crossover split 2's. The same knob
+/// values that place the other modes' corners place these, so a note-tracked patch keeps its meaning: tracking, a knob is a RATIO to the played note
+/// (Low: knob / 200, so the default 200 Hz is x1; High: knob / 1000, so the default 2000 Hz is x2); not tracking, Low is the spacing in Hz and High is
+/// the knob / 5 in Hz (its default 2000 reads as 400 Hz, twice Low's 200).
+inline constexpr double kCombLowUnityKnob = 200.0;  ///< Low Crossover's value for x1
+inline constexpr double kCombHighUnityKnob = 1000.0; ///< High Crossover's value for x1
+/// The spacing a knob means, Hz: the knob itself for Low, a fifth of it for High (the default pair 200 / 2000 is then 200 / 400).
+[[nodiscard]] inline double combSpacingHz(double knob, bool high) noexcept { return high ? knob * (kCombLowUnityKnob / kCombHighUnityKnob) : knob; }
+/// The ratio to the note a knob means while tracking.
+[[nodiscard]] inline double combRatioOfKnob(double knob, bool high) noexcept { return knob / (high ? kCombHighUnityKnob : kCombLowUnityKnob); }
+[[nodiscard]] inline double combKnobOfRatio(double ratio, bool high) noexcept { return ratio * (high ? kCombHighUnityKnob : kCombLowUnityKnob); }
+/// THE DETENTS a ratio snaps to, as the Harm device's harmonic box has them: simple ratios from x1/8 to x8.
+inline constexpr double kCombDetents[] = { 1.0 / 8.0, 1.0 / 4.0, 1.0 / 3.0, 1.0 / 2.0, 1.0, 2.0, 3.0, 4.0, 8.0 };
+inline constexpr double kCombDetentReach = 0.04; ///< a ratio within 4% of a detent (in log) is on it
+/// The ratio, snapped to a detent when within reach.
+[[nodiscard]] inline double combSnapRatio(double ratio) noexcept {
+	for (const double d : kCombDetents) {
+		if (ratio > 0.0 && std::fabs(std::log(ratio / d)) < kCombDetentReach) {
+			return d;
+		}
+	}
+	return ratio;
+}
+/// A ratio as it reads: "x1", "x2", "x1/2" on a detent, else two significant figures ("x1.4").
+[[nodiscard]] inline std::string combRatioText(double ratio) {
+	static constexpr const char* kNames[] = { "x1/8", "x1/4", "x1/3", "x1/2", "x1", "x2", "x3", "x4", "x8" };
+	for (size_t i = 0; i < std::size(kCombDetents); ++i) {
+		if (std::fabs(std::log(std::max(ratio, 1e-9) / kCombDetents[i])) < 1.0e-3) {
+			return kNames[i];
+		}
+	}
+	char out[24] = {};
+	std::snprintf(out, sizeof(out), "x%.2g", ratio);
+	return out;
+}
+/// THE COLUMNS' NAMES FOLLOW THE RATIOS: the second spacing over the first says what the on-teeth band is cut into. At 2 the halves are the odd and
+/// the even teeth of the first comb; at a whole n the High band is every n-th and Mid the rest; otherwise the two are named for the second comb.
+[[nodiscard]] inline std::array<std::string, 3> combBandNames(double spacing1, double spacing2) {
+	const double r = spacing2 / std::max(spacing1, 1e-9);
+	if (std::fabs(r - 2.0) < 0.02) {
+		return { "Between", "Odd", "Even" };
+	}
+	if (r > 2.5 && std::fabs(r - std::round(r)) < 0.02) {
+		return { "Between", "Others", "Every " + std::to_string(static_cast<int>(std::lround(r))) };
+	}
+	return { "Between", "Off " + combRatioText(r), "On " + combRatioText(r) };
+}
+inline constexpr const char* kLowCrossoverTipComb = "Comb tooth spacing: the bands are harmonic classes of this spacing, not frequency ranges. Low is "
+                                                   "what falls between its teeth. In Hz";
+inline constexpr const char* kLowCrossoverTipCombKeyTrack = "Comb tooth spacing as a ratio to the last note played (x1 = the note's own harmonics, x2 = every "
+                                                           "other one, x1/2 = twice as dense). Until a note is heard, a plain frequency";
+inline constexpr const char* kHighCrossoverTipComb = "Comb second split's tooth spacing: it cuts the on-teeth band in two. Read in Hz, a fifth of this "
+                                                    "knob, and its default is twice Low's";
+inline constexpr const char* kHighCrossoverTipCombKeyTrack = "Comb second split as a ratio to the last note played (x2 = odd against even harmonics, x3 = "
+                                                            "every third). Until a note is heard, a plain frequency";
 /// The hover text for a crossover in the state the card and window are in; "" restores the declared text.
 [[nodiscard]] inline const char* crossoverTip(bool high, bool keyTrack, bool comb) noexcept {
 	if (comb) {
-		return high ? kHighCrossoverTipComb : (keyTrack ? kLowCrossoverTipCombKeyTrack : kLowCrossoverTipComb);
+		return high ? (keyTrack ? kHighCrossoverTipCombKeyTrack : kHighCrossoverTipComb) : (keyTrack ? kLowCrossoverTipCombKeyTrack : kLowCrossoverTipComb);
 	}
 	if (!keyTrack) {
 		return "";
@@ -620,13 +671,13 @@ inline constexpr double kOnePhaseUnit = 1.0;
 
 inline constexpr device::ParamDesc kParamDescs[] = {
     // Global
-    {.key = "mode", .name = "Mode", .min = 1.0, .max = 15.0, .def = 6.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
+    {.key = "mode", .name = "Mode", .min = 1.0, .max = 16.0, .def = 6.0, .stepped = true, .unit = device::Unit::Choice, .names = kModeNames,
      .modulatable = false, .offsetsMayLeaveRange = false,
      .tooltip = "Crossover filter type — how the spectrum is split into bands. LR2, LR4 and LR8 are Linkwitz-Riley pairs at 12, 24 and 48 dB per octave; "
                 "Linear splits with linear-phase FIRs (the width is how far the transition runs from -0.1 dB to -60 dB): the bands sum to the input "
-                "delayed by 24 ms, which the device reports as latency. Comb splits by harmonic class of a fundamental instead of by frequency: Low holds the odd "
-                "harmonics, Mid 2, 6, 10 and so on, High 4, 8, 12 and so on (and DC); the fundamental is Low Crossover (or the played note), the three bands sum to "
-                "the input exactly, and it adds no latency",
+                "delayed by 24 ms, which the device reports as latency. Comb splits by harmonic class instead of by frequency, with two combs whose tooth spacings are Low and High Crossover (as ratios to "
+                "the played note under Key Track): Low is what falls between the teeth, Mid and High cut the on-teeth band in two (at the defaults, the odd and the even "
+                "harmonics). The bands sum to the input exactly and it adds no latency; Comb Sharp runs each comb twice for narrower teeth",
      .choiceAliases = kModeAliases},
     // ON BY DEFAULT — all effects should default to on when they are added.
     // See `fx::filter::kParamDescs` for the decision and what it replaced. This device is also the one

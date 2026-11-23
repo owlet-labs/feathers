@@ -364,7 +364,7 @@ visage::Bounds OwlttCard::outputMeterBounds() const {
 bool OwlttCard::updateContent() {
 	// THE CROSSOVERS' HOVER TEXT FOLLOWS KEY TRACK (the TV audit): an offset from the note while it is on, the declared text when off.
 	const bool keyTrack = control(static_cast<size_t>(owltt::Param::KeyTrack)).value() >= 0.5;
-	const bool comb = std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode))) == owltt::kCombMode;
+	const bool comb = owltt::isCombMode(std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode))));
 	const int tipState = (keyTrack ? 1 : 0) + (comb ? 2 : 0);
 	if (tipState != crossoverTipKey_) {
 		crossoverTipKey_ = tipState;

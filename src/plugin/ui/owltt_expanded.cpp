@@ -162,7 +162,7 @@ DeviceControl& OwlttExpanded::control(dtt::Param param) const {
 bool OwlttExpanded::updateContent() {
 	// THE CROSSOVERS' HOVER TEXT FOLLOWS KEY TRACK, as on the card (the TV audit).
 	const bool keyTrack = control(dtt::Param::KeyTrack).value() >= 0.5;
-	const bool comb = std::lround(host_.fieldAt(device_, static_cast<size_t>(dtt::Param::Mode))) == dtt::kCombMode;
+	const bool comb = dtt::isCombMode(std::lround(host_.fieldAt(device_, static_cast<size_t>(dtt::Param::Mode))));
 	const int tipState = (keyTrack ? 1 : 0) + (comb ? 2 : 0);
 	if (tipState != crossoverTipKey_) {
 		crossoverTipKey_ = tipState;

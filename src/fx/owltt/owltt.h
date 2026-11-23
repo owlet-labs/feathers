@@ -284,10 +284,10 @@ public:
 	[[nodiscard]] float effectiveHighCrossoverHzForTest() const noexcept { return effectiveHighCrossoverHz_; }
 	/// The low corner the splitters were last handed, Hz (the knob, or the tracked corner).
 	[[nodiscard]] float effectiveLowCrossoverHzForTest() const noexcept { return effectiveLowCrossoverHz_; }
-	/// **THE COMB CROSSOVER (Mode 15)**: the fundamental the lines were last asked to run at, Hz, after the glide and the clamp to what they serve; and its
-	/// first comb delay in samples (the second runs at half). 0 until the mode has run.
-	[[nodiscard]] double combF0HzForTest() const noexcept { return combPrimed_ ? std::exp2(combLog2F0_) : 0.0; }
-	[[nodiscard]] double combDelayForTest() const noexcept { return combDelayEnd_; }
+	/// **THE COMB CROSSOVER (Modes 15, 16)**: split `which`'s tooth spacing in Hz the lines were last asked to run at, after the glide and the clamp, and its comb delay
+	/// in samples. 0 until the mode has run.
+	[[nodiscard]] double combSpacingHzForTest(size_t which) const noexcept { return combPrimed_ ? std::exp2(combLog2Fc_[which]) : 0.0; }
+	[[nodiscard]] double combDelayForTest(size_t which = 0) const noexcept { return combDelayEnd_[which]; }
 	/// The vibe depth the zone tables were modulated by — 0.55 x the coordinate's lap fraction.
 	[[nodiscard]] float vibeModAmountForTest() const noexcept { return vibeModAmount_; }
 
@@ -509,14 +509,14 @@ private:
 	uint32_t rawLen_ = 0;
 	bool rawLive_ = false;   ///< the raw delay has been fed without a gap, so it holds the input's recent past
 	bool linearBuild_ = false; ///< Linear just came in: its kernels are built whole, not crossfaded from nothing
-	/// **THE COMB CROSSOVER (Mode 15)**: three harmonic classes of f0 (`comb_split.h`), two feedforward combs a channel. f0 is Low Crossover (Hz), or
-	/// with Key Track on and a note heard the note moved by the knob's offset (`effectiveLowCrossoverHz_`), glided in log2 and clamped to what the lines
-	/// serve. The first comb's delay moves linearly across the slice from `combDelayStart_` to `combDelayEnd_`, so a moving f0 never steps. Allocated at
+	/// **THE COMB CROSSOVER (Modes 15, 16)**: a tree of two combs (`comb_split.h`) a channel. Their spacings are Low and High Crossover (`combSpacingHz`: the
+	/// knobs, or with Key Track on and a note heard the note moved by their offsets, `updateCrossoverFrequencies`), glided in log2 and clamped to what the lines
+	/// serve. Each comb's delay moves linearly across the slice from `combDelayStart_` to `combDelayEnd_`, so a moving spacing never steps. Allocated at
 	/// `prepare`; the bands sum to the input with no delay, so there is no latency and the Blend's dry is the raw input as in the other modes.
 	std::unique_ptr<CombSplit> comb_;
-	double combLog2F0_ = 0.0;
-	double combDelayStart_ = 0.0;
-	double combDelayEnd_ = 0.0;
+	std::array<double, 2> combLog2Fc_ {};
+	std::array<double, 2> combDelayStart_ {};
+	std::array<double, 2> combDelayEnd_ {};
 	bool combPrimed_ = false;
 	/// Delay `left`/`right` in place by the linear latency (the bypassed road), feeding the raw delay.
 	void rawDelayStep(float* left, float* right, int frames) noexcept;

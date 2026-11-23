@@ -26,36 +26,39 @@
 
 namespace feathers::fx::owltt {
 
-/// **THE COMB CROSSOVER (OWLTT Mode 15): THREE BANDS THAT ARE HARMONIC CLASSES OF A FUNDAMENTAL f0, NOT FREQUENCY RANGES.**
+/// **THE COMB CROSSOVER (OWLTT Modes 15 and 16): A TREE OF TWO COMPLEMENTARY COMBS, SO THE BANDS ARE HARMONIC CLASSES, NOT FREQUENCY RANGES.**
 ///
-/// A feedforward comb `H(z) = (1 + z^-D) / 2` with the delay D = fs / (2 f0) has the response (1 + e^(-j pi k)) / 2 at the k-th harmonic of f0: 1 for
-/// an even k, 0 for an odd one. So `E = H x` carries the even harmonics (and DC), and the RESIDUAL `O = x - E` the odd ones. The same cut one
-/// octave finer, on E alone, with D2 = D / 2 = fs / (4 f0), splits the even harmonics by whether k/2 is even:
+/// A feedforward comb `H(z) = (1 + z^-D) / 2` with D = fs / fc has unity gain at every multiple of fc (the TEETH) and a null half way between.
+/// Split 1 runs at spacing fc1 on the input x: `E = H1 x` holds what sits on the teeth, and the residual `x - E` what sits between them.
+/// Split 2 runs at spacing fc2 on E alone: `A = H2 E` and the residual `E - A`. The three bands are
 ///
-///   odd  = x - E                      harmonics 1, 3, 5, 7 ...            (k odd; the fundamental is here)
-///   two  = E - A                      harmonics 2, 6, 10, 14 ...          (k = 2 mod 4)
-///   four = A = (E + E z^-D2) / 2      harmonics 4, 8, 12 ... and DC       (k = 0 mod 4)
+///   Low  = x - E     between the teeth of fc1                          (at fc2 = 2 fc1: everything between the harmonics)
+///   Mid  = E - A     on fc1's teeth but not fc2's                      (at fc2 = 2 fc1: the odd harmonics)
+///   High = A         on both                                           (at fc2 = 2 fc1: the even harmonics)
 ///
-/// THE THREE SUM TO THE INPUT EXACTLY, whatever the delay and however it is interpolated: the second and third bands are `E - A` and `A`, so
-/// `two + four = E`, and `odd + E = x`. A fractional delay that is off by a fraction of a sample, or a window that rolls the top octave off,
-/// only blurs which band a component lands in; nothing is ever lost or doubled. The classes mod 4 are each their own mirror (k and 4 - k are the
-/// same class), which is what a real filter requires: a split into classes mod 3 would have to separate k from 3 - k, and no real filter can.
+/// THEY SUM TO THE INPUT EXACTLY for any fc1 and fc2, however the delays are interpolated: Mid + High = E and Low + E = x, the residuals being taken
+/// as differences. Both combs are feedforward and read the past only, so nothing is delayed. A real filter cannot tell harmonic k from N - k, so
+/// only the pairs (on, off) of one comb are offered: a third class by mod-3 would need a Hilbert split.
 ///
-/// No latency: both combs are feedforward and read the past only. The fractional delay is the codebase's windowed-sinc line
-/// (`dsp::SincDelayLine`) at bandwidth 1.0, which at a whole-sample delay is the sample itself to the bit, and elsewhere is a flat twelve-tap
-/// interpolator out to about a third of the rate (the ripple near Nyquist is the price; it moves energy between classes there and loses none).
+/// `CombShape::stages` is the sharpness: 1 is the plain comb; 2 runs each comb twice, `((1 + z^-D) / 2)^2`, whose teeth are narrower and whose
+/// nulls are flat (a double zero). THE SHAPE'S VALUES LIVE HERE, in this one struct, so that anything that later varies them (a tooth depth, a
+/// resonance) changes this and not the call sites.
+struct CombShape {
+	int stages = 1;
+};
+
 class CombSplit {
 public:
-	/// Each line holds 16384 samples: a 20 Hz fundamental needs fs / 40 = 1200 at 48 kHz, 4800 at 192 kHz, and up to 655 kHz fits.
-	static constexpr int kLineSize = 16384;
-	/// The lowest fundamental: 20 Hz where the lines reach, never below what they can hold.
-	static constexpr double kMinF0Hz = 20.0;
-
+	/// Each line holds 32768 samples. The longest delay asked for is fs / fcMin, so the lowest spacing served is fs / (kLineSize - 16): 1.5 Hz at 48 kHz, 5.9 Hz
+	/// at 192 kHz; that is the bound on the lines: the lowest note the device tracks (20 Hz) at x1/8 is 2.5 Hz, which 48 kHz serves and 192 kHz clamps.
+	static constexpr int kLineSize = 32768;
+	/// A floor under that, whatever the rate.
+	static constexpr double kSpacingFloorHz = 1.0;
 	/// The three bands of one sample, in OWLTT's Low, Mid, High slots.
 	struct Bands {
-		float odd = 0.0f;  ///< Low slot: the odd harmonics
-		float two = 0.0f;  ///< Mid slot: harmonics 2, 6, 10 ... (k = 2 mod 4)
-		float four = 0.0f; ///< High slot: harmonics 4, 8, 12 ... and DC (k = 0 mod 4)
+		float between = 0.0f; ///< Low slot
+		float partB = 0.0f;   ///< Mid slot: on fc1's teeth, off fc2's
+		float partA = 0.0f;   ///< High slot: on both
 	};
 
 	/// Allocates the lines. The only allocation; `process` and the setters never allocate.
@@ -72,43 +75,51 @@ public:
 	void clear() {
 		for (auto& channel : channels_) {
 			if (channel) {
-				channel->first.clear();
-				channel->second.clear();
+				for (auto& line : channel->lines) {
+					line.clear();
+				}
 			}
 		}
 	}
 
-	/// The fundamentals the lines can serve: the second comb's delay fs / (4 f0) must be at least the interpolator's six samples, and the first
-	/// comb's, twice that, at most what a line holds.
-	[[nodiscard]] double minF0(double sampleRate) const noexcept {
-		return std::max(kMinF0Hz, sampleRate / (2.0 * static_cast<double>(kLineSize - 16)));
+	/// The tooth spacings the lines can serve: the delay fs / fc is at least the interpolator's six samples and at most what a line holds.
+	[[nodiscard]] static double minSpacing(double sampleRate) noexcept {
+		return std::max(kSpacingFloorHz, sampleRate / static_cast<double>(kLineSize - 16));
 	}
-	[[nodiscard]] double maxF0(double sampleRate) const noexcept { return sampleRate / (4.0 * static_cast<double>(dsp::SincDelayLine<kLineSize>::kMinDelay)); }
+	[[nodiscard]] static double maxSpacing(double sampleRate) noexcept { return sampleRate / static_cast<double>(dsp::SincDelayLine<kLineSize>::kMinDelay); }
 
-	/// THE FIRST COMB'S DELAY, samples, for a fundamental (clamped to what the lines serve): fs / (2 f0).
-	[[nodiscard]] double delayFor(double f0Hz, double sampleRate) const noexcept {
-		const double f0 = std::clamp(f0Hz, minF0(sampleRate), maxF0(sampleRate));
-		return sampleRate / (2.0 * f0);
+	/// A COMB'S DELAY, samples, for a tooth spacing (clamped to what the lines serve): fs / fc.
+	[[nodiscard]] static double delayFor(double spacingHz, double sampleRate) noexcept {
+		return sampleRate / std::clamp(spacingHz, minSpacing(sampleRate), maxSpacing(sampleRate));
 	}
 
-	/// One sample of one channel at the first comb's delay `d1` (the second runs at d1 / 2).
-	[[nodiscard]] Bands process(size_t channel, float x, float d1) {
+	/// One sample of one channel; `d1` and `d2` are the two combs' delays in samples.
+	[[nodiscard]] Bands process(size_t channel, float x, float d1, float d2, const CombShape& shape) {
 		Channel& c = *channels_[channel];
-		const float delayed1 = c.first.read(d1);
-		c.first.write(x);
-		const float even = 0.5f * (x + delayed1);
-		const float delayed2 = c.second.read(0.5f * d1);
-		c.second.write(even);
-		const float four = 0.5f * (even + delayed2);
-		return { x - even, even - four, four };
+		const float on = comb(c, 0, x, d1, shape);
+		const float a = comb(c, 2, on, d2, shape);
+		return { x - on, on - a, a };
 	}
 
 private:
 	struct Channel {
-		explicit Channel(const dsp::SincTable& table) : first(table), second(table) {}
-		dsp::SincDelayLine<kLineSize> first;  ///< x, read at D
-		dsp::SincDelayLine<kLineSize> second; ///< E, read at D / 2
+		explicit Channel(const dsp::SincTable& table)
+		    : lines { dsp::SincDelayLine<kLineSize>(table), dsp::SincDelayLine<kLineSize>(table), dsp::SincDelayLine<kLineSize>(table),
+			          dsp::SincDelayLine<kLineSize>(table) } {}
+		std::array<dsp::SincDelayLine<kLineSize>, 4> lines; ///< two stages for each of the two combs
 	};
+
+	/// The comb at line pair `first`: `stages` passes of (v + v[-D]) / 2.
+	static float comb(Channel& c, size_t first, float v, float d, const CombShape& shape) {
+		for (int s = 0; s < shape.stages && s < 2; ++s) {
+			auto& line = c.lines[first + static_cast<size_t>(s)];
+			const float delayed = line.read(d);
+			line.write(v);
+			v = 0.5f * (v + delayed);
+		}
+		return v;
+	}
+
 	double sampleRate_ = 48000.0;
 	std::unique_ptr<dsp::SincTable> table_;
 	std::array<std::unique_ptr<Channel>, 2> channels_;

@@ -360,8 +360,19 @@ OwlttGraph::OwlttGraph(backplane::DeviceHost& host, DeviceInstanceId id, Notifie
 			return;
 		}
 		if (dragState_.hit == ThresholdHit::kLowCrossover || dragState_.hit == ThresholdHit::kHighCrossover) {
-			const double hz = combMode() ? combLaneHz(e.position.x) : static_cast<double>(xToHz(e.position.x, plot()));
 			const double note = noteHz();
+			if (combMode()) {
+				// IN COMB the handle is the knob on its own lane scale, and while a note is tracked its ratio snaps to the detents.
+				const bool high = dragState_.hit == ThresholdHit::kHighCrossover;
+				double knob = combLaneKnob(e.position.x, high);
+				if (note > 0.0) {
+					knob = owltt::combKnobOfRatio(owltt::combSnapRatio(owltt::combRatioOfKnob(knob, high)), high);
+				}
+				ctrl.setValue(knob);
+				redraw();
+				return;
+			}
+			const double hz = static_cast<double>(xToHz(e.position.x, plot()));
 			ctrl.setValue(note > 0.0 ? owltt::kCrossoverKeyRefHz * hz / note : hz);
 			redraw();
 			return;
@@ -493,10 +504,12 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 	}
 	// IN COMB EACH COLUMN IS HEADED BY ITS HARMONIC CLASS, centred at the top of the bars' area; nothing on the plot then claims a range of frequency.
 	if (combMode()) {
+		const std::array<std::string, 3> names = owltt::combBandNames(owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::LowCrossover)).value(), false),
+		                                                              owltt::combSpacingHz(control(static_cast<size_t>(owltt::Param::HighCrossover)).value(), true));
 		const std::array<std::pair<float, float>, 3> columns { std::pair { xover.x(), xLow }, std::pair { xLow, xHigh },
 			                                                   std::pair { xHigh, xover.right() } };
 		for (size_t b = 0; b < columns.size(); ++b) {
-			out.classText[b] = combClassText(b);
+			out.classText[b] = names[b];
 			const float w = widthOf(out.classText[b]);
 			// The card has no lane, and its top row is the combined reduction's and f0's: its headings take the row below.
 			const float y = rail().width() > 0.0f ? xover.y() + 2.0f : xover.y() + 16.0f;
@@ -551,9 +564,13 @@ OwlttGraph::BottomText OwlttGraph::bottomText() const {
 		}
 	}
 	for (size_t which = 0; which < 2; ++which) {
-		// IN COMB the one readout is the fundamental, where the first crossover's was; the second corner means nothing and prints nothing.
+		// IN COMB the readouts are the two tooth spacings: a ratio to the note while one is tracked, else Hz.
 		if (combMode()) {
-			out.frequencyText[which] = which == 0 ? "f0 " + frequencyText(static_cast<float>(cornerHz(0))) : std::string {};
+			const bool high = which == 1;
+			const double knob = control(static_cast<size_t>(high ? owltt::Param::HighCrossover : owltt::Param::LowCrossover)).value();
+			const double note = noteHz();
+			out.frequencyText[which] = std::string(high ? "f2 " : "f1 ")
+			                           + (note > 0.0 ? owltt::combRatioText(owltt::combRatioOfKnob(knob, high)) : frequencyText(static_cast<float>(owltt::combSpacingHz(knob, high))));
 		}
 		else {
 			out.frequencyText[which] = frequencyText(static_cast<float>(cornerHz(which)));
@@ -935,28 +952,26 @@ float OwlttGraph::bandEdge(size_t band) const {
 }
 
 bool OwlttGraph::combMode() const {
-	return std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode))) == owltt::kCombMode;
+	return owltt::isCombMode(std::lround(host_.fieldAt(device_, static_cast<size_t>(owltt::Param::Mode))));
 }
 
-float OwlttGraph::combLaneX(double hz) const {
-	// f0's own scale, 20 Hz to 2 kHz (Low Crossover's range) across the lane, a ring radius in from each end so the handle stays grabbable.
+float OwlttGraph::combLaneX(double knob, bool high) const {
+	// BOTH HANDLES ON ONE LOG SCALE OF TOOTH SPACING (20 Hz .. 4 kHz: Low's knob is its spacing, High's a fifth of its knob), a ring radius in from each end so
+	// they stay grabbable. The default pair (200 and 400 Hz) is an octave apart, never on top of each other. A scale of spacings, not of band edges: the
+	// plot's columns are fixed thirds.
 	const visage::Bounds box = plot();
 	const float inset = OwlttGraph::kRingRadius;
-	const double t = std::clamp(std::log2(std::max(hz, 1.0) / 20.0) / std::log2(100.0), 0.0, 1.0);
+	const double t = std::clamp(std::log2(std::max(owltt::combSpacingHz(knob, high), 1.0) / 20.0) / std::log2(200.0), 0.0, 1.0);
 	return box.x() + inset + static_cast<float>(t) * std::max(0.0f, box.width() - 2.0f * inset);
 }
 
-double OwlttGraph::combLaneHz(float x) const {
+double OwlttGraph::combLaneKnob(float x, bool high) const {
 	const visage::Bounds box = plot();
 	const float inset = OwlttGraph::kRingRadius;
 	const float span = std::max(1.0f, box.width() - 2.0f * inset);
 	const double t = std::clamp(static_cast<double>((x - box.x() - inset) / span), 0.0, 1.0);
-	return 20.0 * std::pow(100.0, t);
-}
-
-const char* OwlttGraph::combClassText(size_t band) {
-	constexpr const char* kText[3] = { "ODD", "2 6 10", "4 8 12" };
-	return kText[std::min<size_t>(band, 2)];
+	const double spacing = 20.0 * std::pow(200.0, t);
+	return high ? spacing * (owltt::kCombHighUnityKnob / owltt::kCombLowUnityKnob) : spacing;
 }
 
 void OwlttGraph::setCrossoversDraggable(bool on) {
@@ -1117,10 +1132,10 @@ ModHandle& OwlttGraph::crossoverMod(size_t which) const {
 			// A CONTROL VALUE TO AN X: the same road `bandEdge` draws the line by — the corner the value runs at
 			// (key-tracked while a note is heard), on the plot's frequency axis. No second formula.
 			crossoverMod_[i] = ModHandle({ ModHandleAxis {
-			    &control(static_cast<size_t>(param)), true, [this](double value) {
+			    &control(static_cast<size_t>(param)), true, [this, i](double value) {
 				    const double note = noteHz();
 				    if (combMode()) {
-					    return combLaneX(owltt::trackedCrossoverHz(value, note > 0.0, note));
+					    return combLaneX(value, i == 1);
 				    }
 				    return hzToX(static_cast<float>(owltt::trackedCrossoverHz(value, note > 0.0, note)), plot());
 			    } } });
@@ -1138,11 +1153,8 @@ visage::Point OwlttGraph::crossoverHandle(size_t which) const {
 	// ON THE LINE IT MOVES, at the lane's midline. A handle ON the thing beats a handle NEAR it, and
 	// held a radius inside the plot so the ends of the sweep stay grabbable.
 	if (combMode()) {
-		// F0 IS THE FIRST HANDLE, on its own scale; the second means nothing here and sits where nothing can reach it.
-		if (which != 0) {
-			return { -1000.0f, -1000.0f };
-		}
-		return { combLaneX(cornerHz(0)), r.y() + r.height() * 0.5f };
+		// EACH HANDLE ON ITS KNOB'S OWN SCALE (the columns do not move with it).
+		return { combLaneX(control(static_cast<size_t>(which == 0 ? owltt::Param::LowCrossover : owltt::Param::HighCrossover)).value(), which == 1), r.y() + r.height() * 0.5f };
 	}
 	const float x = std::clamp(bandEdge(which), r.x() + OwlttGraph::kRingRadius, r.right() - OwlttGraph::kRingRadius);
 	return { x, r.y() + r.height() * 0.5f };
@@ -1368,9 +1380,6 @@ void OwlttGraph::draw(visage::Canvas& canvas) {
 		canvas.setColor(withAlpha(kLine, 0.5f));
 		canvas.fill(r.x(), r.bottom() - 1.0f, r.width(), 1.0f);
 		for (size_t which = 0; which < 2; ++which) {
-			if (which == 1 && combMode()) {
-				continue; // High Crossover is unused in Comb
-			}
 			const visage::Point c = crossoverHandle(which);
 			// THE HANDLE STAYS AT THE BASE; its halo and amount stroke go under it, the live dot over it.
 			crossoverMod(which).drawUnder(canvas, c.x, c.y, OwlttGraph::kRingRadius);

@@ -42291,7 +42291,7 @@ TEST_CASE("OWLTT: the combined-reduction readout has a place of its own — no s
 	CHECK(headersChecked == 5u * 6u); // not vacuous: the headers were there to be avoided
 }
 
-TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns headed by class, f0 where the corners were, one handle") {
+TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns named for their classes, the spacings where the corners were, two handles") {
 	namespace ow = feathers::fx::owltt;
 	DynCardFixture<ui::OwlttCard> d(ow::kTraits.tag);
 	ui::WidgetRegistry registry;
@@ -42318,13 +42318,14 @@ TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns headed by cla
 	d.set(static_cast<size_t>(ow::Param::LowCrossover), 100.0f);
 	// THE HIGH CORNER OFF ITS DEFAULT: at 200 Hz and 2 kHz the corners fall on exact thirds of the 20 Hz .. 20 kHz axis, which would hide a column edge that still claimed one.
 	d.set(static_cast<size_t>(ow::Param::HighCrossover), 5000.0f);
-	const std::array<const char*, 3> classes { "ODD", "2 6 10", "4 8 12" };
+	// 100 and 1000 Hz: ten times, so the on-teeth band is cut at a whole ratio, and named so.
+	const std::array<const char*, 3> classes { "Between", "Others", "Every 10" };
 	for (ui::OwlttGraph* graph : { d.card->graph(), panel.graph() }) {
 		CAPTURE(graph == panel.graph());
 		const ui::OwlttGraph::BottomText t = graph->bottomText();
 		// The one readout is the fundamental where the first corner's was; the second corner says nothing.
-		CHECK(t.frequencyText[0] == "f0 100 Hz");
-		CHECK(t.frequencyText[1].empty());
+		CHECK(t.frequencyText[0] == "f1 100 Hz");
+		CHECK(t.frequencyText[1] == "f2 1.0 kHz"); // High at 5000 reads as a fifth of it, in Hz
 		// Each column is headed by its class, centred in a third of the plot.
 		const visage::Bounds whole = graph->bounds();
 		for (size_t b = 0; b < 3; ++b) {
@@ -42343,14 +42344,76 @@ TEST_CASE("OWLTT Comb: the plot claims no frequency range: columns headed by cla
 	for (const float hz : { 200.0f, 400.0f, 800.0f }) {
 		d.set(static_cast<size_t>(ow::Param::LowCrossover), hz);
 		const visage::Point h = lane->crossoverHandle(0);
-		CHECK(lane->bottomText().frequencyText[0] == "f0 " + ui::OwlttGraph::frequencyText(hz));
+		CHECK(lane->bottomText().frequencyText[0] == "f1 " + ui::OwlttGraph::frequencyText(hz));
 		x[at++] = h.x;
 		CHECK(lane->hitTestThreshold(h) == ui::OwlttGraph::ThresholdHit::kLowCrossover);
 	}
 	CHECK(x[1] > x[0]);
 	CHECK((x[1] - x[0]) == doctest::Approx(x[2] - x[1]).epsilon(0.01));
-	const visage::Point second = lane->crossoverHandle(1);
-	CHECK(lane->hitTestThreshold(second) == ui::OwlttGraph::ThresholdHit::kNone);
+	// THE SECOND HANDLE IS THE SECOND SPACING, on the same spacing scale: an octave is the same distance there too, and the defaults (200 and 400 Hz) are an octave apart.
+	std::array<float, 3> y {};
+	at = 0;
+	d.set(static_cast<size_t>(ow::Param::LowCrossover), 20.0f); // out of the way: the handles share one scale
+	for (const float knob : { 1000.0f, 2000.0f, 4000.0f }) {
+		d.set(static_cast<size_t>(ow::Param::HighCrossover), knob);
+		const visage::Point h = lane->crossoverHandle(1);
+		CHECK(lane->hitTestThreshold(h) == ui::OwlttGraph::ThresholdHit::kHighCrossover);
+		y[at++] = h.x;
+	}
+	CHECK(y[1] > y[0]);
+	CHECK((y[1] - y[0]) == doctest::Approx(y[2] - y[1]).epsilon(0.01));
+}
+
+TEST_CASE("OWLTT Comb: a handle drag writes its own knob, a tracked drag lands on the ratio detents, and an untracked one does not") {
+	namespace ow = feathers::fx::owltt;
+	FilterFixture f;
+	REQUIRE(f.bridge.addFxDevice(ow::kTraits.tag) == 1);
+	const feathers::DeviceInstanceId id = f.bridge.fxDeviceAt(1);
+	ui::WidgetRegistry registry;
+	ui::OwlttExpanded panel { f.deviceHost, registry, id };
+	const visage::Point want = panel.minimumSize();
+	panel.setBounds(0.0f, 0.0f, want.x, want.y);
+	panel.resized();
+	const size_t low = static_cast<size_t>(ow::Param::LowCrossover);
+	const size_t high = static_cast<size_t>(ow::Param::HighCrossover);
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::Mode), static_cast<float>(ow::kCombMode));
+	ui::OwlttGraph* graph = panel.graph();
+	REQUIRE(graph != nullptr);
+	const std::array<float, 3> zero { 0.0f, 0.0f, 0.0f };
+	const auto publishNote = [&](float hz) {
+		f.bridge.publishOwlttMeters(1, zero, zero, zero, false, { false, false, false }, 0.0f, nullptr, hz);
+		(void)panel.update();
+	};
+	// THE LANE'S SCALE, RESTATED: the spacing a knob means, on one log scale of 20 Hz .. 4 kHz, a ring radius in from each end of the plot.
+	const auto laneX = [&](double knob, bool isHigh) {
+		const visage::Bounds box = graph->plot();
+		const float inset = ui::OwlttGraph::kRingRadius;
+		const double t = std::log2(ow::combSpacingHz(knob, isHigh) / 20.0) / std::log2(200.0);
+		return box.x() + inset + static_cast<float>(t) * (box.width() - 2.0f * inset);
+	};
+	const auto drag = [&](ui::OwlttGraph::ThresholdHit which, float toX) {
+		const visage::Point h = graph->crossoverHandle(which == ui::OwlttGraph::ThresholdHit::kLowCrossover ? 0 : 1);
+		graph->onMouseDown().callback(at(h.x, h.y));
+		graph->onMouseDrag().callback(at(toX, h.y));
+		graph->onMouseUp().callback(at(toX, h.y));
+	};
+	// TRACKING A NOTE: a drag to a hair off x2 (knob 408) lands on 400 exactly; off a detent (x1.4: 280) it stays where it was put.
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 1.0f);
+	publishNote(220.0f);
+	drag(ui::OwlttGraph::ThresholdHit::kLowCrossover, laneX(408.0, false));
+	CHECK(f.deviceHost.fieldAt(id, low) == doctest::Approx(400.0f).epsilon(1e-4));
+	CHECK(f.deviceHost.fieldAt(id, high) == doctest::Approx(2000.0f)); // the other knob untouched
+	drag(ui::OwlttGraph::ThresholdHit::kLowCrossover, laneX(280.0, false));
+	CHECK(f.deviceHost.fieldAt(id, low) == doctest::Approx(280.0f).epsilon(0.01));
+	// THE HIGH HANDLE: x3 is a knob of 3000.
+	drag(ui::OwlttGraph::ThresholdHit::kHighCrossover, laneX(3050.0, true));
+	CHECK(f.deviceHost.fieldAt(id, high) == doctest::Approx(3000.0f).epsilon(1e-4));
+	CHECK(graph->bottomText().frequencyText[1] == "f2 x3");
+	// NOT TRACKING: no note, the same drag is a plain Hz value, no snapping.
+	f.deviceHost.setField(id, static_cast<size_t>(ow::Param::KeyTrack), 0.0f);
+	publishNote(0.0f);
+	drag(ui::OwlttGraph::ThresholdHit::kLowCrossover, laneX(408.0, false));
+	CHECK(f.deviceHost.fieldAt(id, low) == doctest::Approx(408.0f).epsilon(0.01));
 }
 
 //------------------------------------------------------------------------------------------------//

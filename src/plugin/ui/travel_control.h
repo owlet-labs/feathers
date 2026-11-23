@@ -186,7 +186,7 @@ public:
 		                                            : out.base + pulls.theta[slot_];
 		out.isDestination = true;
 		const backplane::Destination dest = destination();
-		out.armed = mod_ != nullptr && mod_->armed();
+		out.armed = mod_ != nullptr && mod_->assigning();
 		const backplane::Source focused = mod_ != nullptr ? mod_->source() : backplane::Source::core(0);
 		out.routable = out.armed && bridge_.mayRoute(focused, dest);
 		out.amount = mod_ != nullptr ? bridge_.routeAmount(focused, dest) : 0.0f;

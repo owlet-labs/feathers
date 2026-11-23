@@ -121,7 +121,7 @@ device::ModDisplay FxControl::display() const {
 		return out;
 	}
 
-	out.armed = mod_ != nullptr && mod_->armed();
+	out.armed = mod_ != nullptr && mod_->assigning();
 	// THE GATE AND THE GLOW, ASKED ONCE, of the same authority the bridge's write gate uses — so a
 	// control cannot light for a drag that would then be refused.
 	out.routable = out.armed && bridge_.mayRoute(mod_->source(), dest);

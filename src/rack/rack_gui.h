@@ -119,6 +119,10 @@ public:
 	ui::PresetBrowser* presetBrowserForTest() noexcept { return presets_.browser.get(); }
 	/// The editor's modulation state, which outlives every close with the editor (backlog KS).
 	ui::ModState& modForTest() noexcept { return mod_; }
+	/// Test seam for the Alt pause poll (`ui::pollAltPause`): stands in for the window's live modifier read.
+	void setModifierProbeForTest(int (*probe)()) noexcept { modifierProbe_ = probe; }
+	/// Frames told by the last tick's Alt poll (zero when the flag did not move).
+	size_t altPauseFramesForTest() const noexcept { return altPauseFrames_; }
 	/// The global UI scale in force (backlog EJ) — the same preference Feathers' editor reads.
 	double uiScaleForTest() const noexcept { return window_.uiScale(); }
 	double contentScaleForTest() const noexcept { return window_.contentScaleForTest(); }
@@ -204,6 +208,8 @@ private:
 	/// **AND THE RACK'S UI NOW NAMES THE ENGINE NOWHERE AT ALL** (AS 1a's guarantee, widened).
 	RackBridge& bridge_;
 	ui::ModState mod_;
+	int (*modifierProbe_)() = nullptr;
+	size_t altPauseFrames_ = 0;
 	ui::EditHistory history_;
 	/// DRUM MODE: the view of the one device. After `mod_` and `history_`, which it holds, and before the window, so it goes first.
 	bool drum_ = false;

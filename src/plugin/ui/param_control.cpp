@@ -174,7 +174,7 @@ device::ModDisplay ParamControl::display() const {
 	}
 	const backplane::Destination dest = *destination;
 
-	out.armed = mod_ != nullptr && mod_->armed();
+	out.armed = mod_ != nullptr && mod_->assigning();
 	// WITH NO PANEL, NO SOURCE IS FOCUSED — the first host source is what `ModState` starts on, and it
 	// is only ever read here to report an amount of zero from a state that does not exist.
 	const backplane::Source focused = mod_ != nullptr ? mod_->source() : backplane::Source::core(0);

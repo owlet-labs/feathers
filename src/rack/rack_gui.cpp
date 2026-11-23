@@ -21,6 +21,9 @@
 
 #include "rack/rack_gui.h"
 #include "plugin/ui/undo_chord.h"
+#if defined(FEATHERS_GUI_VISAGE)
+#include "plugin/ui/alt_pause.h"
+#endif
 
 #include "plugin/ui/expanded_views.h"
 
@@ -492,6 +495,13 @@ void RackGui::layout() {
 }
 
 void RackGui::tick() {
+#if defined(FEATHERS_GUI_VISAGE)
+	// **THE ALT PAUSE, POLLED ON THE BEAT** — the rack had no such read, so a held Alt paused nothing here (the synth's
+	// tick had it). It reads the platform's live modifiers, so it holds wherever the keyboard sits (root, a device
+	// window, a menu), and it is one shared helper (`ui::pollAltPause`) with the synth's tick. Before the early-outs:
+	// the Rack and Drum windows have no editor and still glow.
+	altPauseFrames_ = ui::pollAltPause(mod_, window_.app(), modifierProbe_);
+#endif
 	// **THE MESSAGE THREAD'S SERVICE, ON THE BEAT** (backlog CF): the drain parks what it removes and
 	// never frees; this is where the parked devices are destroyed, and where a lane the engine could not
 	// take is built again. There is no "an edit did not land" to say any more: the record IS the edit,

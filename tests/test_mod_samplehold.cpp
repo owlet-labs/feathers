@@ -90,7 +90,10 @@ struct Rig {
 	}
 	float held() const { return mod.outputAt(mem, static_cast<size_t>(sh::Output::Held)); }
 	float pulse() const { return mod.outputAt(mem, static_cast<size_t>(sh::Output::TrigOut)); }
-	const sh::Device& device() const { return *static_cast<const sh::Device*>(mem); }
+	const sh::Device& device() const { return static_cast<const sh::Quad*>(mem)->tab[0]; }
+	const sh::Quad& quad() const { return *static_cast<const sh::Quad*>(mem); }
+	void applyRow(const std::vector<float>& row) { mod.setFields(mem, row.data(), row.size()); }
+	float out(size_t output) const { return mod.outputAt(mem, output); }
 	uint32_t taken() const { return device().mono.taken(); }
 	uint32_t clocks() const { return device().mono.clocks(); }
 };
@@ -620,10 +623,19 @@ TEST_CASE("S&H is registered: a modulator with a card, two per-voice outputs, an
 	CHECK(d->mod == &sh::kModOps);
 	CHECK(d->notes == &sh::kNoteOps);
 	CHECK(d->traits.amountControl == -1); // the host would scale the pulse with it
-	REQUIRE(d->outputs.size() == 2u);
+	REQUIRE(d->outputs.size() == 2u * sh::kTabs); // a pair a tab
 	CHECK(d->outputs[0].perVoice);
 	CHECK(d->outputs[1].perVoice);
 	CHECK_FALSE(d->outputs[1].bipolar);
+	for (size_t t = 0; t < sh::kTabs; ++t) {
+		CHECK(d->outputs[2 * t].perVoice);
+		CHECK(d->outputs[2 * t + 1].perVoice);
+		CHECK(d->outputs[2 * t].bipolarControl == static_cast<int>(sh::tabParam(t, sh::Param::Bipolar)));
+		if (t > 0) {
+			CHECK(d->outputs[2 * t].enableControl == static_cast<int>(sh::tabParam(t, sh::Param::Enabled)));
+			CHECK(d->outputs[2 * t + 1].enableControl == static_cast<int>(sh::tabParam(t, sh::Param::Enabled)));
+		}
+	}
 }
 
 TEST_CASE("S&H Quantize reads \"off\" at the bottom of its travel, where it is off, and a count above it") {
@@ -889,4 +901,165 @@ TEST_CASE("S&H persistence in Feathers' modulator strip: the chains block a save
 	CHECK(std::bit_cast<uint32_t>(device(bridge2, back)->mono.held())
 	      == std::bit_cast<uint32_t>(device(bridge, id)->mono.held()));
 	(void)heldAtSave;
+}
+
+//------------------------------------------------------------------------------------------------//
+// THE QUAD S&H: four tabs, each a whole hold behind one device                                    //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+
+std::vector<float> fullRowOf(const sh::Settings& first) {
+	std::vector<float> row(sh::kTabs * sh::kPerTab + 1, 0.0f);
+	for (size_t i = 0; i < row.size(); ++i) {
+		row[i] = static_cast<float>(sh::kParamDescs[i].def);
+	}
+	const sh::Row r = sh::rowOf(first);
+	std::copy(r.begin(), r.end(), row.begin());
+	return row;
+}
+
+void putTab(std::vector<float>& row, size_t tab, const sh::Settings& s) {
+	const sh::Row r = sh::rowOf(s);
+	std::copy(r.begin(), r.end(), row.begin() + static_cast<std::ptrdiff_t>(tab * sh::kPerTab));
+}
+
+} // namespace
+
+TEST_CASE("quad S&H: the descriptor is four copies of one tab, tab 1's keys untouched, tabs 2-4 off") {
+	REQUIRE(std::size(sh::kParamDescs) == sh::kTabs * sh::kPerTab + 1);
+	for (size_t i = 0; i < sh::kPerTab; ++i) {
+		const std::string base = sh::kParamDescs[i].key;
+		for (size_t t = 1; t < sh::kTabs; ++t) {
+			const auto& d = sh::kParamDescs[t * sh::kPerTab + i];
+			CHECK(std::string(d.key) == "t" + std::to_string(t + 1) + "_" + base);
+			CHECK(d.min == sh::kParamDescs[i].min);
+			CHECK(d.max == sh::kParamDescs[i].max);
+			if (sh::kParamDescs[i].gateControl >= 0) {
+				CHECK(d.gateControl == sh::kParamDescs[i].gateControl + static_cast<int>(t * sh::kPerTab));
+			}
+		}
+	}
+	CHECK(std::string(sh::kParamDescs[0].key) == "source");
+	CHECK(sh::kParamDescs[sh::tabParam(0, sh::Param::Enabled)].def == 1.0);
+	for (size_t t = 1; t < sh::kTabs; ++t) {
+		CHECK(sh::kParamDescs[sh::tabParam(t, sh::Param::Enabled)].def == 0.0);
+	}
+	CHECK(std::string(sh::kParamDescs[sh::kViewTabField].key) == "view_tab");
+	MESSAGE("quad S&H instance: ", sh::kModOps.stateBytes, " bytes");
+}
+
+TEST_CASE("quad S&H: a patch from before the tabs is tab 1, bit for bit, and tabs 2-4 are off") {
+	sh::Settings s = atHz(7.5);
+	s.slew = -7.0f;
+	s.quantize = 12;
+	Rig before(s); // fifteen fields: an old patch
+	Rig after;     // the whole row
+	after.applyRow(fullRowOf(s));
+	for (int t = 0; t < 1500; ++t) {
+		before.tick();
+		after.tick();
+		CHECK(std::bit_cast<uint32_t>(before.held()) == std::bit_cast<uint32_t>(after.held()));
+		CHECK(std::bit_cast<uint32_t>(before.pulse()) == std::bit_cast<uint32_t>(after.pulse()));
+		for (size_t o = 2; o < 2 * sh::kTabs; ++o) {
+			CHECK(before.out(o) == 0.0f);
+			CHECK(after.out(o) == 0.0f);
+		}
+	}
+}
+
+TEST_CASE("quad S&H: each tab holds on its own clock and its own seed, and tab 1 is unmoved by the others") {
+	sh::Settings one = atHz(7.5);
+	one.seed = 3;
+	sh::Settings two = atHz(11.0);
+	two.seed = 4;
+	two.enabled = true;
+	Rig alone;
+	alone.applyRow(fullRowOf(one));
+	Rig both;
+	std::vector<float> row = fullRowOf(one);
+	putTab(row, 1, two);
+	both.applyRow(row);
+	// THE REFERENCE FOR TAB 2: a bare device running those settings.
+	Rig reference(two);
+	bool differ = false;
+	for (int t = 0; t < 2000; ++t) {
+		alone.tick();
+		both.tick();
+		reference.tick();
+		CHECK(std::bit_cast<uint32_t>(both.held()) == std::bit_cast<uint32_t>(alone.held()));
+		CHECK(std::bit_cast<uint32_t>(both.out(2)) == std::bit_cast<uint32_t>(reference.held()));
+		CHECK(std::bit_cast<uint32_t>(both.out(3)) == std::bit_cast<uint32_t>(reference.pulse()));
+		differ = differ || both.held() != both.out(2);
+	}
+	CHECK(differ);
+}
+
+TEST_CASE("quad S&H: a tab that is off is not run, and per-tab holds persist (capture, save, load into a fresh instance, compare)") {
+	sh::Settings one = atHz(7.5);
+	sh::Settings two = atHz(9.0);
+	two.seed = 11;
+	two.enabled = true;
+	std::vector<float> row = fullRowOf(one);
+	putTab(row, 1, two);
+	Rig a;
+	a.applyRow(row);
+	a.tick(900);
+	// OFF: tab 3 never ticked, its pair rests.
+	CHECK(a.out(4) == 0.0f);
+	CHECK(a.out(5) == 0.0f);
+	CHECK(a.quad().tab[2].mono.clocks() == 0u);
+	// SAVE: every tab's block; LOAD: into a fresh instance — a reload goes on holding what was heard.
+	std::array<std::array<float, sh::kHoldWords>, sh::kTabs> saved {};
+	std::array<uint64_t, sh::kTabs> serial {};
+	for (size_t t = 0; t < sh::kTabs; ++t) {
+		serial[t] = sh::readBlock(a.mem, t, saved[t].data(), saved[t].size());
+	}
+	CHECK(serial[0] != 0);
+	CHECK(serial[1] != 0);
+	CHECK(serial[2] == 0); // a tab that never ran has nothing to save
+	Rig b;
+	b.applyRow(row);
+	for (size_t t = 0; t < 2; ++t) {
+		REQUIRE(sh::restoreBlock(b.mem, t, saved[t].data(), saved[t].size()));
+	}
+	CHECK(b.out(0) == doctest::Approx(a.out(0)).epsilon(1e-6));
+	CHECK(b.out(2) == doctest::Approx(a.out(2)).epsilon(1e-6));
+	for (int t = 0; t < 600; ++t) {
+		a.tick();
+		b.tick();
+		CHECK(b.out(0) == doctest::Approx(a.out(0)).epsilon(1e-5));
+		CHECK(b.out(2) == doctest::Approx(a.out(2)).epsilon(1e-5));
+	}
+	CHECK(a.out(2) != a.out(0));
+}
+
+TEST_CASE("quad S&H: the view field picks the tab whose playhead and recent samples the device publishes") {
+	sh::Settings one = atHz(7.5);
+	sh::Settings two = atHz(11.0);
+	two.seed = 5;
+	two.enabled = true;
+	std::vector<float> row = fullRowOf(one);
+	putTab(row, 1, two);
+	Rig rig;
+	rig.applyRow(row);
+	rig.tick(300);
+	const auto playhead = [&] {
+		uint32_t ordinal = 0;
+		float phase = 0.0f;
+		rig.mod.playhead(rig.mem, &ordinal, &phase);
+		return std::pair { ordinal, phase };
+	};
+	device::RecentEvent first[device::kRecentEvents] {};
+	device::RecentEvent second[device::kRecentEvents] {};
+	const size_t nFirst = rig.mod.recentEvents(rig.mem, first, device::kRecentEvents);
+	const auto head1 = playhead();
+	row[sh::kViewTabField] = 1.0f;
+	rig.applyRow(row);
+	const size_t nSecond = rig.mod.recentEvents(rig.mem, second, device::kRecentEvents);
+	const auto head2 = playhead();
+	CHECK(nFirst > 0);
+	CHECK(nSecond > 0);
+	CHECK(head1 != head2);
+	CHECK(first[0].value != second[0].value); // two seeds, two samples
 }

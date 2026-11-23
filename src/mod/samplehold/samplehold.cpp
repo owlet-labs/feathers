@@ -436,13 +436,13 @@ void Device::tick(const device::ModTickContext& ctx) {
 				continue;
 			}
 			float own = 0.0f;
-			const bool resolved = resolve(Settings::kTrigControl, n, &own);
+			const bool resolved = resolve(trigControl, n, &own);
 			if (resolved ? n.trig.step(own) : fired) {
 				n.shape.fire();
 				trigFires += resolved ? 1u : 0u;
 			}
 			float in = settings.input;
-			(void)resolve(Settings::kInputControl, n, &in);
+			(void)resolve(inputControl, n, &in);
 			n.shape.setInput(in);
 		}
 	}
@@ -577,75 +577,105 @@ Settings settingsOf(const Row& row, size_t fieldsPresent) {
 
 namespace {
 
-Device& asDevice(void* storage) {
-	return *static_cast<Device*>(storage);
+Quad& asQuad(void* storage) {
+	return *static_cast<Quad*>(storage);
 }
 
-const Device& asDevice(const void* storage) {
-	return *static_cast<const Device*>(storage);
+const Quad& asQuad(const void* storage) {
+	return *static_cast<const Quad*>(storage);
 }
 
 void setFieldsOf(void* storage, const float* fields, size_t fieldsPresent) {
-	Row row {};
-	const size_t take = std::min(fieldsPresent, row.size());
-	for (size_t i = 0; i < take; ++i) {
-		row[i] = fields[i];
+	Quad& quad = asQuad(storage);
+	for (size_t t = 0; t < kTabs; ++t) {
+		quad.tab[t].settings = settingsOfTab(fields, fieldsPresent, t);
 	}
-	asDevice(storage).settings = settingsOf(row, fieldsPresent);
+	const float view = fieldsPresent > kViewTabField && std::isfinite(fields[kViewTabField]) ? fields[kViewTabField] : 0.0f;
+	quad.view = static_cast<size_t>(std::clamp(std::lround(view), 0L, static_cast<long>(kTabs) - 1));
 }
 
 } // namespace
 
+Settings settingsOfTab(const float* fields, size_t fieldsPresent, size_t tab) {
+	const size_t first = tab * kPerTab;
+	Row row {};
+	const size_t present = fieldsPresent > first ? std::min(fieldsPresent - first, kPerTab) : 0;
+	for (size_t i = 0; i < present; ++i) {
+		row[i] = fields[first + i];
+	}
+	Settings s = settingsOf(row, present);
+	// A TAB THE ROW DOES NOT REACH (a patch from before the tabs) IS OFF; tab 1 keeps its own default.
+	if (tab > 0 && present <= static_cast<size_t>(Param::Enabled)) {
+		s.enabled = false;
+	}
+	return s;
+}
+
 uint64_t readBlock(const void* storage, size_t index, float* out, size_t capacity) {
-	return index == 0 ? asDevice(storage).holdSnapshot.read(out, capacity) : 0;
+	return index < kTabs ? asQuad(storage).tab[index].holdSnapshot.read(out, capacity) : 0;
 }
 
 bool restoreBlock(void* storage, size_t index, const float* in, size_t n) {
-	return index == 0 && n == kHoldWords && asDevice(storage).loadHold(in, n);
+	return index < kTabs && n == kHoldWords && asQuad(storage).tab[index].loadHold(in, n);
 }
 
 const device::ModOps kModOps {
-	.stateBytes = sizeof(Device),
-	.stateAlign = alignof(Device),
-	.construct = [](void* storage) { new (storage) Device(); },
-	.destruct = [](void* storage) { asDevice(storage).~Device(); },
-	.prepare = [](void* storage, double sampleRate) { asDevice(storage).prepare(sampleRate); },
-	.reset = [](void* storage) { asDevice(storage).reset(); },
+	.stateBytes = sizeof(Quad),
+	.stateAlign = alignof(Quad),
+	.construct = [](void* storage) { new (storage) Quad(); },
+	.destruct = [](void* storage) { asQuad(storage).~Quad(); },
+	.prepare = [](void* storage, double sampleRate) { asQuad(storage).prepare(sampleRate); },
+	.reset = [](void* storage) { asQuad(storage).reset(); },
 	.setFields = setFieldsOf,
 	.blockSamples = static_cast<size_t>(kBlockSamples),
-	.tick = [](void* storage, const device::ModTickContext& ctx) { asDevice(storage).tick(ctx); },
+	.tick = [](void* storage, const device::ModTickContext& ctx) { asQuad(storage).tick(ctx); },
 	.outputAt = [](const void* storage, size_t output) {
-		const Device& d = asDevice(storage);
-		return d.outputOf(d.sharedShape(), output);
+		const Device& d = asQuad(storage).of(output);
+		return d.outputOf(d.sharedShape(), Quad::kindOf(output));
 	},
 	.outputForNote =
 	    [](const void* storage, size_t output, int32_t noteId, int16_t channel, int16_t key) {
-		    const Device& d = asDevice(storage);
-		    return d.outputOf(d.shapeForNote(noteId, channel, key), output);
+		    const Device& d = asQuad(storage).of(output);
+		    return d.outputOf(d.shapeForNote(noteId, channel, key), Quad::kindOf(output));
 	    },
 	.playhead =
 	    [](const void* storage, uint32_t* ordinal, float* phase) {
-		    const Playhead where = asDevice(storage).sharedShape().playhead();
+		    const Quad& q = asQuad(storage);
+		    const Playhead where = q.tab[q.view].sharedShape().playhead();
 		    *ordinal = where.ordinal;
 		    *phase = where.phase;
 	    },
-	.playheadLevel = [](const void* storage) { return asDevice(storage).sharedShape().playhead().level; },
-	.trigFires = [](const void* storage) { return asDevice(storage).trigFires; },
+	.playheadLevel = [](const void* storage) {
+		const Quad& q = asQuad(storage);
+		return q.tab[q.view].sharedShape().playhead().level;
+	},
+	.trigFires = [](const void* storage) {
+		const Quad& q = asQuad(storage);
+		return q.tab[q.view].trigFires;
+	},
 	.recentEvents = [](const void* storage, device::RecentEvent* out, size_t capacity) {
-		return asDevice(storage).sharedShape().recentEvents(out, capacity);
+		const Quad& q = asQuad(storage);
+		return q.tab[q.view].sharedShape().recentEvents(out, capacity);
 	},
 };
 
 const device::NoteOps kNoteOps {
-	.stateBytes = sizeof(Device),
-	.stateAlign = alignof(Device),
-	.construct = [](void* storage) { new (storage) Device(); },
-	.destruct = [](void* storage) { asDevice(storage).~Device(); },
-	.prepare = [](void* storage, double sampleRate) { asDevice(storage).prepare(sampleRate); },
+	.stateBytes = sizeof(Quad),
+	.stateAlign = alignof(Quad),
+	.construct = [](void* storage) { new (storage) Quad(); },
+	.destruct = [](void* storage) { asQuad(storage).~Quad(); },
+	.prepare = [](void* storage, double sampleRate) { asQuad(storage).prepare(sampleRate); },
 	.setFields = setFieldsOf,
 	.processNotes =
 	    [](void* storage, const device::NoteEvent* in, size_t inCount, device::NoteEvent* out, size_t outCapacity,
-	       size_t* outCount) { asDevice(storage).processNotes(in, inCount, out, outCapacity, outCount); },
+	       size_t* outCount) {
+		    Quad& quad = asQuad(storage);
+		    for (size_t t = 0; t < kTabs; ++t) {
+			    if (quad.runs(t)) {
+				    quad.tab[t].processNotes(in, inCount, out, outCapacity, outCount);
+			    }
+		    }
+	    },
 	.listensOnly = true,
 };
 

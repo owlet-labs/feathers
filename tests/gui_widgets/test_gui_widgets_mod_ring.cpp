@@ -1235,10 +1235,10 @@ TEST_CASE("holding Alt over an armed knob puts its glow out, because the press w
 	CHECK(mod->bypassed());
 	CHECK_FALSE(path->haloLit());
 	CHECK_FALSE(path->mappable(true));
-	// THE DEFAULT IS STILL THE DEFAULT — `mappable()` with no event answers about the gate with no hand
-	// on it, which is what the tools and the other cases ask. The halo must not read it; that was the
-	// defect.
-	CHECK(path->mappable());
+	// THE DEFAULT AGREES NOW: the pause is folded into the one glow query (`ModState::assigning`, read by every control's
+	// `display()`), so `mappable()` with no event is false while Alt is held, as the halo is. It used to be true (a second
+	// answer the halo had to avoid); one answer is the point.
+	CHECK_FALSE(path->mappable());
 
 	// THE FLIP TOLD THE KNOB, and a flip that does not move tells nobody — ModState's own contract,
 	// asserted through its return because a repaint cannot be observed here any other way.
@@ -2174,4 +2174,76 @@ TEST_CASE("a value box draws where modulation has put the value, on a drag windo
 		CHECK(span.lo == doctest::Approx(0.5f));
 		CHECK(span.hi == doctest::Approx(0.6f).epsilon(0.001));
 	}
+}
+
+namespace {
+
+/// Every visible face in the tree that is lit for the armed source RIGHT NOW (`ModLook::armedGlow`, the paint's own input),
+/// tallied by widget class. A repaint cannot be observed headlessly, so the glow is read at its source.
+struct GlowTally {
+	size_t knobs = 0, boxes = 0, pills = 0, chips = 0, others = 0;
+	[[nodiscard]] size_t total() const { return knobs + boxes + pills + chips + others; }
+	[[nodiscard]] size_t nonKnob() const { return total() - knobs; }
+};
+
+GlowTally glowTally(visage::Frame* frame) {
+	GlowTally t;
+	std::vector<visage::Frame*> stack { frame };
+	while (!stack.empty()) {
+		visage::Frame* fr = stack.back();
+		stack.pop_back();
+		if (!fr->isVisible()) {
+			continue;
+		}
+		if (const auto* face = dynamic_cast<const ui::ControlFace*>(fr)) {
+			std::vector<ui::ControlFace::Offered> offered;
+			face->offeredControls(offered);
+			for (const auto& o : offered) {
+				if (!face->modLookFor(*o.control).armedGlow) {
+					continue;
+				}
+				if (dynamic_cast<ui::Knob*>(fr) != nullptr) ++t.knobs;
+				else if (dynamic_cast<ui::ValueBox*>(fr) != nullptr) ++t.boxes;
+				else if (dynamic_cast<ui::FaderPill*>(fr) != nullptr) ++t.pills;
+				else if (dynamic_cast<ui::SwitchChip*>(fr) != nullptr) ++t.chips;
+				else ++t.others;
+			}
+		}
+		for (visage::Frame* child : fr->children()) {
+			stack.push_back(child);
+		}
+	}
+	return t;
+}
+
+} // namespace
+
+TEST_CASE("alt pause: a held Alt puts out the glow of EVERY control class, not only knobs, and lifting it brings them all back") {
+	// THE REGRESSION: Alt paused only the knob's halo (`Knob::haloLit` read the bypass itself); value boxes, pills, chips and
+	// plot handles read `ModDisplay::armed/routable` and kept glowing. The shared query is `ModState::assigning()`, which
+	// every control's display() asks, so one flag pauses every painter.
+	ModFixture f;
+	ui::ModState* mod = f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	f.arm(macroSourceAt(0));
+	const GlowTally before = glowTally(f.root);
+	CAPTURE(before.knobs);
+	CAPTURE(before.boxes);
+	CAPTURE(before.pills);
+	CAPTURE(before.chips);
+	CAPTURE(before.others);
+	REQUIRE(before.knobs >= 2);
+	REQUIRE(before.nonKnob() >= 1); // a pause that only reached knobs would pass a knob-only count
+
+	f.gui.setModifierProbeForTest(&altHeldProbe);
+	(void)f.gui.tickForTest();
+	const GlowTally paused = glowTally(f.root);
+	CHECK(paused.total() == 0);
+	CHECK(paused.nonKnob() == 0);
+
+	f.gui.setModifierProbeForTest(&nothingHeldProbe);
+	(void)f.gui.tickForTest();
+	const GlowTally after = glowTally(f.root);
+	CHECK(after.total() == before.total());
+	f.gui.setModifierProbeForTest(nullptr);
 }

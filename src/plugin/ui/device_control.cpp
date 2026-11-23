@@ -258,7 +258,7 @@ device::ModDisplay DeviceControl::display() const {
 		return out;
 	}
 
-	out.armed = mod_ != nullptr && mod_->armed();
+	out.armed = mod_ != nullptr && mod_->assigning();
 	// THIS SEATING HAS A HOST, so it asks the host rather than Feathers' own tables — it is the seam a
 	// rack device is drawn through and must not assume whose editor it is in.
 	//

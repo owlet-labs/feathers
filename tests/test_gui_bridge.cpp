@@ -9035,10 +9035,10 @@ TEST_CASE("two MACROS instances keep separate labels") {
 }
 
 TEST_CASE("a one-output device's source name is unchanged") {
-	// The LFO declares ONE output: its label is its declared name, and `modSourceName` adds no suffix for
+	// The MSEG declares ONE output (the LFO has four, one a tab): its label is its declared name, and `modSourceName` adds no suffix for
 	// it (asserted as text in the widget suite).
 	ParamBridge bridge;
-	const size_t slot = bridge.addRackDevice("LFO");
+	const size_t slot = bridge.addRackDevice("MSEG");
 	REQUIRE(slot < kMaxRackSlots);
 	const DeviceInstanceId id = bridge.rackDeviceAt(slot);
 	const device::Descriptor* lfo = bridge.descriptorOf(id);

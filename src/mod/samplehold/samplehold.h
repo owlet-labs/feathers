@@ -194,6 +194,10 @@ struct Device {
 	uint64_t notesSinceRestart = 0;
 	uint64_t notesEver = 0;
 	bool wasPlaying = false;
+	/// WHICH CONTROLS OF THE DEVICE ARE THIS HOLD'S TRIG AND INPUT, for the per-note resolve: the settings' own unless the device
+	/// holds several (the tabs) and says which.
+	size_t trigControl = Settings::kTrigControl;
+	size_t inputControl = Settings::kInputControl;
 	/// THE ONE HOLD AS LAST PUBLISHED, for the patch (`kStateOps`; backlog NM): written after every tick.
 	device::BlockSnapshot<kHoldWords> holdSnapshot;
 
@@ -212,4 +216,40 @@ struct Device {
 	                  size_t* outCount) noexcept;
 };
 
+/// **THE DEVICE'S STATE: FOUR TABS, EACH A WHOLE SAMPLE & HOLD** — `mod/tabs.h`'s arrangement, as the LFO's. A tab that is off
+/// is not run (not ticked, not fed notes); tab 1 keeps ticking while off, as this device always did.
+struct Quad {
+	std::array<Device, kTabs> tab;
+	/// THE TAB THE CARD SHOWS (`kViewTabField`): its playhead, fire count and recent samples are the ones published.
+	size_t view = 0;
+
+	Quad() {
+		for (size_t t = 0; t < kTabs; ++t) {
+			tab[t].trigControl = tabParam(t, Param::Trig);
+			tab[t].inputControl = tabParam(t, Param::Input);
+			tab[t].settings.enabled = t == 0; // tabs 2-4 start off until a row says otherwise
+		}
+	}
+	[[nodiscard]] bool runs(size_t t) const noexcept { return mod::tabRuns(t, tab[t].settings.enabled); }
+	void prepare(double sampleRate) {
+		for (Device& d : tab) {
+			d.prepare(sampleRate);
+		}
+	}
+	void reset() {
+		for (Device& d : tab) {
+			d.reset();
+		}
+	}
+	void tick(const device::ModTickContext& ctx) {
+		for (size_t t = 0; t < kTabs; ++t) {
+			if (runs(t)) {
+				tab[t].tick(ctx);
+			}
+		}
+	}
+	/// OUTPUT `o` IS TAB `o / 2`'S, KIND `o % 2` (Held, Trig Out); one past the last answers rest.
+	[[nodiscard]] const Device& of(size_t output) const noexcept { return tab[std::min(output / 2, kTabs - 1)]; }
+	[[nodiscard]] static size_t kindOf(size_t output) noexcept { return output % 2; }
+};
 } // namespace feathers::mod::samplehold

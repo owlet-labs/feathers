@@ -6061,3 +6061,54 @@ TEST_CASE("list fader: in a real window a row's slim fader is dragged vertically
 }
 
 #endif // defined(__linux__)
+
+namespace {
+int windowedAltHeld() { return visage::kModifierAlt; }
+int windowedAltUp() { return 0; }
+
+/// The first frame under `frame` (not `frame` itself) that takes keystrokes: a device window's panel, once one is up.
+visage::Frame* firstKeyTakerUnder(visage::Frame* frame) {
+	for (visage::Frame* child : frame->children()) {
+		if (child->acceptsKeystrokes() && child->isVisible()) {
+			return child;
+		}
+		if (visage::Frame* found = firstKeyTakerUnder(child); found != nullptr) {
+			return found;
+		}
+	}
+	return nullptr;
+}
+} // namespace
+
+TEST_CASE("alt pause: with the keyboard on a frame other than the root, a held Alt still pauses assign mode, lifting it resumes it, and Esc still cancels") {
+	// The pause reads the platform's live modifiers on the tick (`ui::pollAltPause`), not a key event, so where the keyboard sits
+	// cannot swallow it. Value-level: `ModState::assigning()` is the query every control's glow asks.
+	ReopenRig rig;
+	ui::ModState* mod = rig.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	visage::Frame* root = rig.f.root;
+	visage::Frame* taker = firstKeyTakerUnder(root);
+	if (taker != nullptr) {
+		taker->requestKeyboardFocus();
+	}
+	mod->focus(backplane::Source::core(0));
+	mod->arm(true);
+	for (int i = 0; i < 3; ++i) {
+		(void)rig.f.gui.tickForTest();
+	}
+	REQUIRE(mod->assigning());
+	rig.f.gui.setModifierProbeForTest(&windowedAltHeld);
+	(void)rig.f.gui.tickForTest();
+	CHECK(mod->armed());
+	CHECK_FALSE(mod->assigning());
+	rig.f.gui.setModifierProbeForTest(&windowedAltUp);
+	(void)rig.f.gui.tickForTest();
+	CHECK(mod->assigning());
+	rig.f.gui.setModifierProbeForTest(nullptr);
+	// Esc, from wherever the keyboard now sits, still leaves assign mode.
+	visage::Frame* held = focusedUnder(rig.f.gui.root()->topParentFrame());
+	REQUIRE(held != nullptr);
+	const visage::KeyEvent escape { visage::KeyCode::Escape, 0, true };
+	CHECK(keyFromFocusUp(held, escape));
+	CHECK_FALSE(mod->armed());
+}

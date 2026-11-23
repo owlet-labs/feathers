@@ -78,6 +78,8 @@ public:
 		size_t from = 0;
 		size_t to = 0;
 		bool lit = false;
+		/// False in the Comb while Blend is off: the dry is whole there, the switch is not shown and the road is not drawn.
+		bool shown = true;
 		bool operator==(const Bypass&) const = default;
 	};
 	/// The path for one row: the one function the drawing and its test seam both read.

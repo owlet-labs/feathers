@@ -3669,7 +3669,7 @@ TEST_CASE("a relabelled MACROS output names its source in the tray") {
 	REQUIRE(lfoSlot < kMaxRackSlots);
 	const DeviceInstanceId lfo = f.bridge.rackDeviceAt(lfoSlot);
 	CHECK(ui::modSourceName(f.bridge, backplane::Source::output(lfo, 0))
-	      == "LFO " + std::to_string(f.bridge.rackSlotOf(lfo) + 1));
+	      == "LFO " + std::to_string(f.bridge.rackSlotOf(lfo) + 1) + " · Tab 1");
 }
 
 TEST_CASE("the fx lane's output arm picks up a relabel") {
@@ -6691,8 +6691,8 @@ TEST_CASE("lane-mods: a modulator in the fx lane — named apart from the strip'
 	SUBCASE("named by its chain: the strip's LFO and the lane's are two names in the route list") {
 		const std::string inStrip = ui::modSourceName(f.bridge, backplane::Source::output(stripLfo, 0));
 		const std::string inLane = ui::modSourceName(f.bridge, backplane::Source::output(laneLfo, 0));
-		CHECK(inStrip == "LFO " + std::to_string(stripLfoSlot + 1));
-		CHECK(inLane == "LFO (FX 2)");
+		CHECK(inStrip == "LFO " + std::to_string(stripLfoSlot + 1) + " · Tab 1");
+		CHECK(inLane == "LFO (FX 2) · Tab 1");
 		CHECK(inStrip != inLane);
 	}
 

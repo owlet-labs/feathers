@@ -46866,3 +46866,115 @@ TEST_CASE("QUAD LFO: the card's tabs are real presses; each tab shows its own se
 	CHECK((f.bridge.outputsShown(id) & (uint64_t { 1 } << 2)) != 0);
 	CHECK((f.bridge.outputsShown(id) & (uint64_t { 1 } << 1)) == 0);
 }
+
+TEST_CASE("QUAD S&H: the card's tabs are real presses; each tab shows its own set, bound to its own fields, and the view field follows") {
+	namespace sh = feathers::mod::samplehold;
+	FilterFixture f;
+	const size_t slot = f.bridge.addRackDevice(sh::kTraits.tag);
+	REQUIRE(slot < kMaxRackSlots);
+	f.bridge.refresh();
+	f.panel->resized();
+	auto* card = const_cast<ui::SampleHoldCard*>(dynamic_cast<const ui::SampleHoldCard*>(f.panel->cardFrameForTest(slot)));
+	REQUIRE(card != nullptr);
+	const DeviceInstanceId id = f.bridge.rackDeviceAt(slot);
+	const auto field = [&](size_t tab, sh::Param p) { return static_cast<double>(f.bridge.rackFieldAt(slot, sh::tabParam(tab, p))); };
+	const auto clickAt = [&](visage::Point inCard) {
+		const visage::Point w = card->positionInWindow() + inCard;
+		dragThroughRoot(f.root, w, w);
+	};
+	for (const size_t tab : { size_t { 2 }, size_t { 1 }, size_t { 3 }, size_t { 0 } }) {
+		CAPTURE(tab);
+		const visage::Bounds b = card->tabBounds(tab);
+		clickAt({ b.right() - 6.0f, b.y() + b.height() * 0.5f });
+		REQUIRE(card->selectedTab() == tab);
+		// THE VIEW FIELD FOLLOWS, which is what makes the device publish this tab's playhead.
+		CHECK(f.bridge.rackFieldAt(slot, sh::kViewTabField) == static_cast<float>(tab));
+		// EXACTLY ONE SET'S WIDGETS ARE SHOWN (the live boxes, the three chips, the pad), and a Rate edit lands on THIS tab.
+		CHECK(card->visibleSetWidgetsForTest() >= 4);
+		double before[sh::kTabs];
+		for (size_t t = 0; t < sh::kTabs; ++t) {
+			before[t] = field(t, sh::Param::Probability);
+		}
+		const double target = before[tab] > 0.5 ? 0.25 : 0.75;
+		card->box(sh::Param::Probability).control().setValue(target);
+		for (size_t t = 0; t < sh::kTabs; ++t) {
+			CAPTURE(t);
+			CHECK(field(t, sh::Param::Probability) == doctest::Approx(t == tab ? target : before[t]));
+		}
+	}
+	// THE SET COUNT IS CONSTANT: switching tabs shows one set whatever the tab.
+	card->selectTab(1);
+	const size_t one = card->visibleSetWidgetsForTest();
+	card->selectTab(3);
+	CHECK(card->visibleSetWidgetsForTest() == one);
+	// THE ON SQUARE SWITCHES THAT TAB AND SELECTS NOTHING; the card then shows that tab's pair of outputs.
+	card->selectTab(0);
+	REQUIRE_FALSE(card->tabOn(2));
+	const visage::Bounds on = card->tabOnBounds(2);
+	clickAt({ on.x() + on.width() * 0.5f, on.y() + on.height() * 0.5f });
+	CHECK(card->tabOn(2));
+	CHECK(card->selectedTab() == 0);
+	(void)card->updateContent();
+	CHECK((f.bridge.outputsShown(id) & (uint64_t { 0b11 } << 4)) == (uint64_t { 0b11 } << 4));
+	CHECK((f.bridge.outputsShown(id) & (uint64_t { 0b11 } << 2)) == 0);
+}
+
+TEST_CASE("PHOTO: the quad LFO and quad S&H cards, tab 1 and a switched-on tab 2 (writes only under FEATHERS_QUAD_SHOT_DIR)") {
+	const char* dir = std::getenv("FEATHERS_QUAD_SHOT_DIR");
+	if (dir == nullptr) {
+		return;
+	}
+	const std::string out = dir;
+	namespace lfo = feathers::mod::lfo;
+	namespace sh = feathers::mod::samplehold;
+	// THE WHOLE EDITOR, windowless, as the rack views' photographs are taken: the real strip with the real cards in it, children
+	// and all.
+	const auto shoot = [](FilterFixture& f, const std::string& path) {
+		auto* editor = dynamic_cast<visage::ApplicationEditor*>(f.root);
+		REQUIRE(editor != nullptr);
+		editor->setWindowless(static_cast<int>(f.root->width()), static_cast<int>(f.root->height()));
+		if (!visage::Renderer::instance().supported()) {
+			MESSAGE("SKIP no renderer: " << visage::Renderer::instance().errorMessage());
+			return;
+		}
+		f.root->redrawAll();
+		editor->drawWindow();
+		editor->drawWindow();
+		const visage::Screenshot& shot = editor->takeScreenshot();
+		REQUIRE(shot.width() > 0);
+		shot.save(path.c_str());
+	};
+	{
+		FilterFixture f;
+		const size_t slot = f.bridge.addRackDevice(lfo::kTraits.tag);
+		REQUIRE(slot < kMaxRackSlots);
+		f.bridge.refresh();
+		f.panel->resized();
+		auto* card = const_cast<ui::LfoCard*>(dynamic_cast<const ui::LfoCard*>(f.panel->cardFrameForTest(slot)));
+		REQUIRE(card != nullptr);
+		shoot(f, out + "/lfo-tab1.png");
+		f.bridge.setDeviceControl(f.bridge.rackDeviceAt(slot), lfo::tabParam(1, lfo::Param::Enabled), 1.0f);
+		f.bridge.setDeviceControl(f.bridge.rackDeviceAt(slot), lfo::tabParam(1, lfo::Param::Waveform), static_cast<float>(lfo::Waveform::Square));
+		f.bridge.refresh();
+		card->selectTab(1);
+		(void)card->updateContent();
+		f.panel->resized();
+		shoot(f, out + "/lfo-tab2.png");
+	}
+	{
+		FilterFixture f;
+		const size_t slot = f.bridge.addRackDevice(sh::kTraits.tag);
+		REQUIRE(slot < kMaxRackSlots);
+		f.bridge.refresh();
+		f.panel->resized();
+		auto* card = const_cast<ui::SampleHoldCard*>(dynamic_cast<const ui::SampleHoldCard*>(f.panel->cardFrameForTest(slot)));
+		REQUIRE(card != nullptr);
+		shoot(f, out + "/snh-tab1.png");
+		f.bridge.setDeviceControl(f.bridge.rackDeviceAt(slot), sh::tabParam(1, sh::Param::Enabled), 1.0f);
+		f.bridge.refresh();
+		card->selectTab(1);
+		(void)card->updateContent();
+		f.panel->resized();
+		shoot(f, out + "/snh-tab2.png");
+	}
+}

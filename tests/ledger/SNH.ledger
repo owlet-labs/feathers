@@ -16,6 +16,61 @@ param SNH poly unit=choice choice=Off|On
 param SNH amount unit=percent min=-1 max=1 stepped=0
 param SNH enabled unit=choice choice=Off|On
 param SNH trig unit=percent min=0 max=1 stepped=0
+param SNH t2_source unit=choice choice=White|Pink|Brown|Input
+param SNH t2_input unit=percent min=-1 max=1 stepped=0
+param SNH t2_clock unit=choice choice=Rate|Note|Trig|Random
+param SNH t2_time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param SNH t2_rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param SNH t2_slew unit=log_seconds min=-11 max=0 stepped=0
+param SNH t2_quantize unit=number min=0 max=48 stepped=1
+param SNH t2_probability unit=percent min=0 max=1 stepped=0
+param SNH t2_seed_mode unit=choice choice=Stable|Free
+param SNH t2_seed unit=number min=0 max=999 stepped=1
+param SNH t2_bipolar unit=choice choice=Off|On
+param SNH t2_poly unit=choice choice=Off|On
+param SNH t2_amount unit=percent min=-1 max=1 stepped=0
+param SNH t2_enabled unit=choice choice=Off|On
+param SNH t2_trig unit=percent min=0 max=1 stepped=0
+param SNH t3_source unit=choice choice=White|Pink|Brown|Input
+param SNH t3_input unit=percent min=-1 max=1 stepped=0
+param SNH t3_clock unit=choice choice=Rate|Note|Trig|Random
+param SNH t3_time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param SNH t3_rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param SNH t3_slew unit=log_seconds min=-11 max=0 stepped=0
+param SNH t3_quantize unit=number min=0 max=48 stepped=1
+param SNH t3_probability unit=percent min=0 max=1 stepped=0
+param SNH t3_seed_mode unit=choice choice=Stable|Free
+param SNH t3_seed unit=number min=0 max=999 stepped=1
+param SNH t3_bipolar unit=choice choice=Off|On
+param SNH t3_poly unit=choice choice=Off|On
+param SNH t3_amount unit=percent min=-1 max=1 stepped=0
+param SNH t3_enabled unit=choice choice=Off|On
+param SNH t3_trig unit=percent min=0 max=1 stepped=0
+param SNH t4_source unit=choice choice=White|Pink|Brown|Input
+param SNH t4_input unit=percent min=-1 max=1 stepped=0
+param SNH t4_clock unit=choice choice=Rate|Note|Trig|Random
+param SNH t4_time_base unit=choice choice=Hz|1/64|1/64.|1/64T|1/32|1/32.|1/32T|1/16|1/16.|1/16T|1/8|1/8.|1/8T|1/4|1/4.|1/4T|1/2|1/2.|1/2T|1 bar|1 bar.|1 barT|2 bar|2 bar.|2 barT|4 bar|4 bar.|4 barT
+param SNH t4_rate unit=log_multiple min=-11 max=3.321928024291992 stepped=0
+param SNH t4_slew unit=log_seconds min=-11 max=0 stepped=0
+param SNH t4_quantize unit=number min=0 max=48 stepped=1
+param SNH t4_probability unit=percent min=0 max=1 stepped=0
+param SNH t4_seed_mode unit=choice choice=Stable|Free
+param SNH t4_seed unit=number min=0 max=999 stepped=1
+param SNH t4_bipolar unit=choice choice=Off|On
+param SNH t4_poly unit=choice choice=Off|On
+param SNH t4_amount unit=percent min=-1 max=1 stepped=0
+param SNH t4_enabled unit=choice choice=Off|On
+param SNH t4_trig unit=percent min=0 max=1 stepped=0
+param SNH view_tab unit=number min=0 max=3 stepped=1
 block SNH snh_hold floats=97
+block SNH snh_hold_2 floats=97
+block SNH snh_hold_3 floats=97
+block SNH snh_hold_4 floats=97
 out SNH held bipolar=1
 out SNH trig_out bipolar=0
+out SNH held_2 bipolar=1
+out SNH trig_out_2 bipolar=0
+out SNH held_3 bipolar=1
+out SNH trig_out_3 bipolar=0
+out SNH held_4 bipolar=1
+out SNH trig_out_4 bipolar=0

@@ -62,6 +62,7 @@
 #include "mod/lfo/lfo_types.h"
 #include "mod/math/math_types.h"
 #include "mod/mseg/mseg_types.h"
+#include "mod/samplehold/samplehold_types.h"
 #include "doctest.h"
 
 #include "dsp/puck_motion.h"
@@ -4447,4 +4448,47 @@ TEST_CASE("quad lfo through the engine: under Poly a later tab's per-voice windo
 	CHECK(found220 == 1);
 	CHECK(found440 == 1);
 	CHECK(tab1Bend < 1e-5); // tab 1's output is not routed: its windows stay the ramp
+}
+
+TEST_CASE("quad S&H through the engine: each tab's pair publishes on its own outputs, and a tab switched off rests") {
+	namespace sh = feathers::mod::samplehold;
+	feathers::ParamBridge bridge;
+	const size_t at = bridge.addFxDevice(sh::kTraits.tag);
+	REQUIRE(at < feathers::kMaxFxSlots);
+	const feathers::DeviceInstanceId id = bridge.fxDeviceAt(at);
+	const auto set = [&](size_t tab, sh::Param p, float v) { bridge.setDeviceControl(id, sh::tabParam(tab, p), v); };
+	for (size_t tab = 0; tab < 2; ++tab) {
+		set(tab, sh::Param::Clock, static_cast<float>(sh::Clock::Rate));
+		set(tab, sh::Param::TimeBase, 0.0f);
+		set(tab, sh::Param::Rate, std::log2(40.0f)); // 40 samples a second
+		set(tab, sh::Param::Seed, tab == 0 ? 3.0f : 9.0f);
+	}
+	set(1, sh::Param::Enabled, 1.0f);
+	Rig rig;
+	rig.synth.provisionDevices(bridge.chainState(), bridge.publishedChains().sequence(), &bridge.fxBodies());
+	feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+	rig.renderTicks(2);
+	const feathers::rack::RackEngine& engine = rig.synth.laneForTest().engineForTest();
+	const size_t slot = engine.slotOf(id);
+	REQUIRE(slot != feathers::rack::RackEngine::kNoSlot);
+	float peak[8] {};
+	for (int t = 0; t < 1500; ++t) {
+		rig.renderTicks(1);
+		for (size_t o = 0; o < 8; ++o) {
+			peak[o] = std::max(peak[o], std::abs(engine.publishedOutputAt(slot, o)));
+		}
+	}
+	CHECK(peak[0] > 0.1f); // tab 1's held value
+	CHECK(peak[1] == 1.0f); // and its Trig Out
+	CHECK(peak[2] > 0.1f); // tab 2's own
+	CHECK(peak[3] == 1.0f);
+	for (size_t o = 4; o < 8; ++o) {
+		CHECK(peak[o] == 0.0f); // tabs 3 and 4 were never switched on
+	}
+	// SWITCHED OFF WHILE HOLDING: tab 2's pair rests by ITS OWN enable (tab 1 is still on).
+	bridge.setDeviceControl(id, sh::tabParam(1, sh::Param::Enabled), 0.0f);
+	feathers::publishEditorLanes(bridge, rig.params, rig.synth);
+	rig.renderTicks(3);
+	CHECK(engine.publishedOutputAt(slot, 2) == 0.0f);
+	CHECK(engine.publishedOutputAt(slot, 3) == 0.0f);
 }

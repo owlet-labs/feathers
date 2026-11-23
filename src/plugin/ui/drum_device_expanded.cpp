@@ -53,7 +53,7 @@ bool isBox(dd::Param p) {
 	switch (p) {
 	case dd::Param::Kind: case dd::Param::Note: case dd::Param::Seed: case dd::Param::Zone: case dd::Param::ZoneOffset:
 	case dd::Param::Gamma: case dd::Param::Rotate: case dd::Param::TravelX: case dd::Param::TravelY: case dd::Param::Claps:
-	case dd::Param::SweepSync: return true;
+	case dd::Param::SweepSync: case dd::Param::Stroke: case dd::Param::FmRatio: return true;
 	default: return false;
 	}
 }
@@ -92,6 +92,9 @@ DrumDeviceExpanded::DrumDeviceExpanded(backplane::DeviceHost& host, WidgetRegist
 				box->setDragSpan(1.0);
 			}
 			w = std::move(box);
+		}
+		else if (p == dd::Param::BendDir) {
+			w = std::make_unique<SwitchChip>(control, "Up"); // lit: the bend rises onto the pitch; unlit: it falls onto it
 		}
 		else if (p == dd::Param::SweepDir) {
 			w = std::make_unique<SwitchChip>(control, "Down"); // lit: sweeping down; unlit: up
@@ -268,6 +271,13 @@ void DrumDeviceExpanded::layOut() {
 	seat(body, dd::Param::Claps, 56.0f, ValueBox::kHeight);
 	seat(body, dd::Param::SweepDir, 56.0f, 22.0f);
 	seat(body, dd::Param::SweepSync, 96.0f, ValueBox::kHeight);
+	// THE HAND DRUM'S STROKE AND BEND, AND THE FM PERC'S RATIO: a choice shown before it is applied (the box's menu), or the chip's two states.
+	seat(body, dd::Param::Stroke, 86.0f, ValueBox::kHeight);
+	seat(body, dd::Param::BendDir, 56.0f, 22.0f);
+	seat(body, dd::Param::FmRatio, 64.0f, ValueBox::kHeight);
+	for (const dd::Param p : { dd::Param::Shell, dd::Param::Pot, dd::Param::FmFine, dd::Param::FmIndex, dd::Param::FmIndexTime, dd::Param::FmFeedback }) {
+		seat(body, p, kPillW, kPillH);
+	}
 	// THE SNARE'S WIRES AND BELLS: one amount each, where the named zones were.
 	seat(body, dd::Param::WireContour, 150.0f, 22.0f);
 	for (const dd::Param p : { dd::Param::WireBuzz, dd::Param::WireThreshold, dd::Param::WireGate, dd::Param::BodyGate, dd::Param::Bell1Level,

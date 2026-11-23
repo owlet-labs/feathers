@@ -166,6 +166,22 @@ constexpr uint64_t kClapSalt = 0xC1A9C1A9B0B5EEDull;
 /// The modes' start phases (doc §13 item 10): their own stream, so the tone, level and clap draws are as they were.
 constexpr uint64_t kPhaseSalt = 0x9A5E0F5E7D1CEull;
 constexpr double kModePhaseJitter = 0.1;
+/// A HAND DRUM'S CEILING: the head, the shell and the hand's tap add, so the sum may pass full scale. Linear up to 0.8, a tanh knee above it that tends to 1, 0 in 0 out.
+float handCeiling(float x) {
+	constexpr float kKnee = 0.8f;
+	const float a = std::fabs(x);
+	if (a <= kKnee) {
+		return x;
+	}
+	const float y = kKnee + (1.0f - kKnee) * dsp::fasttanh(std::min((a - kKnee) / (1.0f - kKnee), 4.5f));
+	return x < 0.0f ? -y : y;
+}
+/// The shell's mode at full Shell, against the head's modes (which sum to the strike's level).
+constexpr double kHandShellGain = 0.8;
+/// The FM perc's carrier gain: the carrier is a unit sine, so the tap and the noise share fit above it.
+constexpr double kFmGain = 0.8;
+/// A Drone's: a held tone sits under a mix rather than striking it, so its default, through the default Drive, reads between -26 and -12 dBFS RMS like the other held kinds.
+constexpr double kFmDroneGain = 0.08;
 /// ±2% of the tension glide's depth, seeded (doc §13 item 10).
 constexpr double kTensionVariation = 0.02;
 /// A tension glide's resolution: half a cent (1/2400 of an octave).
@@ -219,6 +235,11 @@ FieldUse kindReads(Kind k) {
 	// SWEEP: the low corner's pitch, the length (its Decay), how far the oscillator follows the filter (Sweep), the filter's type (Tone), the noise against
 	// the oscillator (Noise) and the resonance (Snap). No Metal.
 	case Kind::Sweep: return { true, true, true, true, true, true, false };
+	// HAND DRUM: the pitch, the ring (Decay), the bend's depth (Sweep), the strike position (Tone), the skin's and fingers' noise, the contact's hardness (Snap) and the
+	// head's inharmonicity (Metal). FM PERC: the carrier's pitch, the amplitude's ring, the pitch envelope's depth (Sweep), the index's brightness (Tone), the
+	// noise transient's share, its hardness (Snap) and the ratio's inharmonic lean (Metal).
+	case Kind::Hand:
+	case Kind::FM: return { true, true, true, true, true, true, true };
 	default: return { false, false, false, false, false, false, false };
 	}
 }
@@ -228,11 +249,11 @@ ControlUse kindControls(Kind k) {
 	// DRIVE ON EVERY KIND, with its curve and the tone before it.
 	u.drive = k != Kind::kCount;
 	// SWEEP TIME: the Kick's pitch envelope and the String's; a Membrane's or a Snare's glide follows its own ring (Tension).
-	u.sweepTime = k == Kind::Kick || k == Kind::String;
+	u.sweepTime = k == Kind::Kick || k == Kind::String || k == Kind::Hand || k == Kind::FM;
 	u.count = u.spread = u.clapFilter = k == Kind::Clap;
 	u.snareEnvelopes = u.bell = k == Kind::Snare;
 	u.kickShape = k == Kind::Kick;
-	u.tension = k == Kind::Kick || k == Kind::Membrane || k == Kind::Snare;
+	u.tension = k == Kind::Kick || k == Kind::Membrane || k == Kind::Snare || k == Kind::Hand;
 	u.velNoise = k != Kind::kCount && kindReads(k).noise;
 	u.wireContour = k == Kind::Snare;
 	u.width = k == Kind::Snare || k == Kind::Clap;
@@ -251,6 +272,8 @@ double kindBaseHz(Kind k) {
 	case Kind::Friction: return 600.0;
 	case Kind::Water: return 900.0;
 	case Kind::Sweep: return 200.0;
+	case Kind::Hand: return 200.0;
+	case Kind::FM: return 220.0;
 	default: return 110.0;
 	}
 }
@@ -262,6 +285,8 @@ double kindSweepOctaves(Kind k) {
 	case Kind::Snare: return 0.5;
 	case Kind::String: return 1.0;
 	case Kind::Sweep: return 1.0; // the Sweep field is how far the oscillator follows the filter (0..1)
+	case Kind::Hand: return 1.0;  // the bend's depth, up or down
+	case Kind::FM: return 3.0;    // the pitch envelope's depth, falling onto the pitch
 	default: return 0.0;
 	}
 }
@@ -372,14 +397,20 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.snap = clamp01(static_cast<double>(f.snap) + vtSnap);
 	l.sweepOctaves = static_cast<double>(f.sweep) * kindSweepOctaves(k);
 	l.sweepTau = std::max(1.0e-4, c.sweepSeconds / 3.0);
-	if (k == Kind::Kick || k == Kind::Membrane || k == Kind::Snare) {
+	// THE HAND DRUM'S STROKE moves the hit before anything below reads it: the strike position, the contact, the ring and the bend's reach.
+	const HandStroke stroke = k == Kind::Hand ? handStroke(c.handStroke) : handStroke(kStrokeOpen);
+	l.tone = clamp01(l.tone + stroke.toneShift);
+	l.snap = clamp01(l.snap + stroke.snapShift);
+	l.t60 *= stroke.t60Mul;
+	l.sweepOctaves *= stroke.bendMul;
+	if (k == Kind::Kick || k == Kind::Membrane || k == Kind::Snare || k == Kind::Hand) {
 		// TENSION (doc §13 item 1, Avanzini): a struck head's pitch offset goes as its amplitude SQUARED, so the glide's depth
 		// is velocity² (a hard hit drops further by itself), Velocity Tension setting how much of that law applies. On a
 		// Membrane or a Snare the glide follows the head's own envelope squared, 10^(−6t/T60), so it is as long as the drum
 		// rings: no Sweep Time. The Kick keeps its Sweep Time (its pitch envelope is the kick's character).
 		const double v = std::clamp(velocity, 0.0, 1.0);
 		l.sweepOctaves *= std::max(0.0, 1.0 + std::clamp(vel.tension, 0.0, 1.0) * (v * v - 1.0));
-		if (k != Kind::Kick) {
+		if (k == Kind::Membrane || k == Kind::Snare) {
 			l.sweepTau = l.t60 / (6.0 * std::numbers::ln10);
 		}
 	}
@@ -440,6 +471,18 @@ Laws lawsFor(Kind k, const Fields& f, const Controls& c, double baseHz, double v
 	l.pressure = std::clamp(c.pressure, 0.0, 1.0);
 	l.speed = std::clamp(c.speed, 0.0, 1.0);
 	l.play = kindSustains(k) ? std::clamp(c.play, kPlayOneShot, kPlayDrone) : (c.play == kPlayGate ? kPlayGate : kPlayOneShot);
+	l.handStroke = std::clamp(c.handStroke, kStrokeOpen, kStrokeBass);
+	l.bendUp = k == Kind::Hand && c.bendDirection == 1;
+	l.shell = std::clamp(c.shell, 0.0, 1.0);
+	l.pot = std::clamp(c.pot, 0.0, 1.0);
+	l.fmRatio = fmRatioEff(std::clamp(c.fmRatio, 0.25, 16.0), std::clamp(c.fmFineCents, -100.0, 100.0), static_cast<double>(f.metal));
+	l.fmIndex = std::clamp(c.fmIndex, 0.0, 12.0);
+	l.fmIndexT60 = std::clamp(c.fmIndexSeconds, 0.002, 4.0);
+	l.fmFeedback = std::clamp(c.fmFeedback, 0.0, 1.0);
+	// A DRONE HAS NO STRIKE: the held tone sits at its pitch, no envelope falling onto it.
+	if (k == Kind::FM && l.play == kPlayDrone) {
+		l.sweepOctaves = 0.0;
+	}
 	return l;
 }
 
@@ -461,6 +504,8 @@ SettledPitch settledPitch(Kind k, const Fields& f, const Controls& c, double bas
 	case Kind::Snare:
 		// The head's lowest mode, which is the pitch heard: mode 0 sits at hz * its ratio at this Metal.
 		return { true, false, hz * modeRatio(0, f.metal) };
+	case Kind::Hand: return { true, false, hz * handRatio(0, f.metal) };
+	case Kind::FM: return { true, false, hz }; // the carrier's pitch the envelope lands on
 	case Kind::Metal: {
 		// Inharmonic by design: the lowest of its oscillators, offered as a centre rather than a pitch.
 		double lowest = metalRatio(0, f.metal);
@@ -487,6 +532,27 @@ double modeRatio(int k, float metal) {
 	const size_t s = std::min<size_t>(static_cast<size_t>(m), 2);
 	const double u = m - static_cast<double>(s);
 	return std::pow((*stations[s])[i], 1.0 - u) * std::pow((*stations[s + 1])[i], u);
+}
+
+double fmSideband(int n, double index) {
+	const int order = n < 0 ? -n : n;
+	const double half = 0.5 * index;
+	double term = std::pow(half, order);
+	for (int k = 1; k <= order; ++k) {
+		term /= static_cast<double>(k);
+	}
+	double sum = 0.0;
+	for (int k = 0; k < 60; ++k) {
+		sum += term;
+		term *= -half * half / (static_cast<double>(k + 1) * static_cast<double>(k + 1 + order));
+	}
+	return std::abs(sum);
+}
+
+double handRatio(int mode, float metal) {
+	const double u = static_cast<double>(std::clamp(metal, 0.0f, 1.0f));
+	const double harmonic = static_cast<double>(mode + 1);
+	return std::pow(harmonic, 1.0 - u) * std::pow(kMembraneRatios[static_cast<size_t>(mode)], u);
 }
 
 double metalRatio(int i, float metal) {
@@ -573,7 +639,17 @@ void Hit::reset() {
 	idle_ = true;
 	controlValid_ = false;
 	ratioMetal_ = -1.0f;
+	ratioPot_ = -1.0;
 	decayT60_ = -1.0;
+	handBend_ = 0.0;
+	fmPhaseC_ = 0.0;
+	fmPhaseM_ = 0.0;
+	fmIncC_ = 0.0;
+	fmIncM_ = 0.0;
+	fmPrev_ = 0.0f;
+	fmIndexNow_ = 0.0;
+	fmToneScale_ = 1.0;
+	fmIdxEnv_ = {};
 	body_ = {};
 	grain_ = {};
 	for (Svf& r : pres_) {
@@ -827,6 +903,55 @@ void Hit::strike(Kind k, const Laws& l, uint64_t seed, float level) {
 		slipPeriod_ = 1.0;
 		break;
 	}
+	case Kind::Hand: {
+		// THE HEAD'S MODES at the strike position (Tone: mode k starts at ratio_k^-(2.2 - 2·tone), as a Membrane's), the stroke's fundamental weight on the lowest, each
+		// weighted by the contact's spectrum at its frequency at the strike (the bend's far end), and the shell's one more mode beside them, at its own level.
+		modeCount_ = kHandHeadModes + 1;
+		const HandStroke stroke = handStroke(w.handStroke);
+		const double toneExp = 2.2 - 2.0 * static_cast<double>(w.tone);
+		double sum = 0.0;
+		std::array<double, kMembraneModes> a {};
+		for (int i = 0; i < kHandHeadModes; ++i) {
+			a[static_cast<size_t>(i)] = std::pow(handRatio(i, w.metal), -toneExp) * (i == 0 ? stroke.fundamental : 1.0);
+			sum += a[static_cast<size_t>(i)];
+		}
+		ks::PluckNoise phases(seed ^ kPhaseSalt);
+		const double strikeHz = w.hz * std::exp2(w.bendUp ? -w.sweepOctaves : w.sweepOctaves);
+		for (int i = 0; i < kHandHeadModes; ++i) {
+			const auto u = static_cast<size_t>(i);
+			const double mallet = malletWeight(strikeHz * handRatio(i, w.metal) * w.malletSeconds);
+			const double amp = static_cast<double>(level_) * a[u] / sum * mallet;
+			const double phi = kModePhaseJitter * static_cast<double>(phases.next());
+			zr_[u] = static_cast<float>(amp * std::cos(phi));
+			zi_[u] = static_cast<float>(amp * std::sin(phi));
+		}
+		const auto shell = static_cast<size_t>(kHandHeadModes);
+		const double shellAmp = static_cast<double>(level_) * kHandShellGain * w.shell;
+		const double shellPhi = kModePhaseJitter * static_cast<double>(phases.next());
+		zr_[shell] = static_cast<float>(shellAmp * std::cos(shellPhi));
+		zi_[shell] = static_cast<float>(shellAmp * std::sin(shellPhi));
+		// THE HAND'S OWN TAP beside the head (a slap's crack, a muted stroke's slap), and the skin's and fingers' noise.
+		click_.set(std::min(1.0f, level_ * 0.5f * w.snap * static_cast<float>(stroke.crack)), 0.003 + 0.010 * (1.0 - static_cast<double>(w.snap)), sr_);
+		clickCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * (1000.0 * std::pow(12.0, static_cast<double>(w.snap))) / sr_));
+		band_.set(level_ * 0.5f * w.noise, 0.3 * w.t60, sr_);
+		break;
+	}
+	case Kind::FM: {
+		// A STRIKE STARTS BOTH PHASES AT ZERO, so the first sample is exactly 0 and a hit never clicks by itself. The index starts at its peak and falls (a Drone
+		// has no strike: it sits at its held share). The tap and the noise transient are the strike's, so a Drone has none.
+		fmPhaseC_ = 0.0;
+		fmPhaseM_ = 0.0;
+		fmPrev_ = 0.0f;
+		fmIdxEnv_.v = w.play == kPlayDrone ? 0.0f : 1.0f;
+		fmIdxEnv_.d = envDecay(w.fmIndexT60, sr_);
+		body_.v = 1.0f;
+		body_.d = 1.0f;
+		const bool struck = w.play != kPlayDrone;
+		click_.set(struck ? level_ * 0.3f * w.snap : 0.0f, 0.002 + 0.008 * (1.0 - static_cast<double>(w.snap)), sr_);
+		clickCoef_ = static_cast<float>(1.0 - std::exp(-kTwoPi * (2000.0 * std::pow(8.0, static_cast<double>(w.snap))) / sr_));
+		band_.set(struck ? level_ * 0.5f * w.noise : 0.0f, std::min(0.25, 0.15 * w.t60), sr_);
+		break;
+	}
 	default: break;
 	}
 	control();
@@ -866,30 +991,41 @@ void Hit::release(double t60Seconds) {
 double Hit::effective(double t60) const { return released_ ? std::min(t60, releaseT60_) : t60; }
 
 void Hit::setModes(int count, double bend) {
+	// A HAND DRUM'S LAST MODE IS ITS SHELL: a cavity's resonance, which does not bend with the head, at its own ratio and its own ring.
+	const bool hand = kind_ == Kind::Hand;
+	const int heads = hand ? count - 1 : count;
 	const double scale = laws_.hz * std::exp2(bend);
-	// THE RATIOS AND THE DECAYS ARE CACHED on what they read (Metal; the T60 and the Gate): a sweeping hit moves only its
+	// THE RATIOS AND THE DECAYS ARE CACHED on what they read (Metal and the shell's Pot; the T60 and the Gate): a sweeping hit moves only its
 	// frequencies, so only the rotations are computed again while it bends (measured: a burst of struck Membranes at 1024
 	// frames cost about twice a resting hit's while every block re-ran sixteen pows for the ratios and sixteen for the decays).
 	const double t60 = bodyGated_ ? std::min(effective(laws_.t60), kGateFall) : effective(laws_.t60);
-	const bool ratiosStale = !(ratioMetal_ == laws_.metal) || ratioCount_ != count;
+	const bool ratiosStale = !(ratioMetal_ == laws_.metal) || ratioCount_ != count || (hand && !(ratioPot_ == laws_.pot));
 	if (ratiosStale) {
-		for (int i = 0; i < count; ++i) {
-			ratio_[static_cast<size_t>(i)] = modeRatio(i, laws_.metal);
+		for (int i = 0; i < heads; ++i) {
+			ratio_[static_cast<size_t>(i)] = hand ? handRatio(i, laws_.metal) : modeRatio(i, laws_.metal);
+		}
+		if (hand) {
+			ratio_[static_cast<size_t>(heads)] = handShellRatio(laws_.pot);
 		}
 		ratioMetal_ = laws_.metal;
+		ratioPot_ = laws_.pot;
 		ratioCount_ = count;
 	}
 	const bool decaysStale = ratiosStale || !(decayT60_ == t60);
 	if (decaysStale) {
-		for (int i = 0; i < count; ++i) {
-			decayR_[static_cast<size_t>(i)] = decayFactor(modeT60(t60, ratio_[static_cast<size_t>(i)], laws_.metal), sr_);
+		for (int i = 0; i < heads; ++i) {
+			// A hand drum's skin keeps the skin's law (Metal's material is a Membrane's: a hand drum is always skin).
+			decayR_[static_cast<size_t>(i)] = decayFactor(modeT60(t60, ratio_[static_cast<size_t>(i)], hand ? 0.0f : laws_.metal), sr_);
+		}
+		if (hand) {
+			decayR_[static_cast<size_t>(heads)] = decayFactor(t60 * handShellT60Share(laws_.pot), sr_);
 		}
 		decayT60_ = t60;
 	}
 	for (int i = 0; i < count; ++i) {
 		const auto u = static_cast<size_t>(i);
 		const double ratio = ratio_[u];
-		const double hz = scale * ratio;
+		const double hz = (hand && i == heads ? laws_.hz : scale) * ratio;
 		if (hz >= kTopFraction * sr_) {
 			// ABOVE THE TOP the mode is silent, never aliased: its state goes to zero.
 			modeHz_[u] = hz;
@@ -937,8 +1073,12 @@ void Hit::control() {
 	// rings, and re-tuning sixteen modes every control block took it from 2.6 to 6.3 µs a further voice). On a Membrane or a
 	// Snare the bend is rounded to 1/2400 of an octave, so the modes are re-tuned only when it has moved half a cent, which
 	// no ear follows; the fast early glide still re-tunes nearly every block.
-	if (kind_ == Kind::Membrane || kind_ == Kind::Snare) {
+	if (kind_ == Kind::Membrane || kind_ == Kind::Snare || kind_ == Kind::Hand) {
 		bend = std::round(bend * kTensionSteps) / kTensionSteps;
+	}
+	// THE HAND DRUM'S BEND MAY RISE: it starts under the pitch and lands on it, so the bend is signed.
+	if (kind_ == Kind::Hand && laws_.bendUp) {
+		bend = -bend;
 	}
 	// THE SNARE'S MOVING PARTS: the wires' filter bend and the bell's centre, each landed (taken as still) once within a tenth
 	// of a cent of rest, and its gates, so a resting snare pays for no control block either.
@@ -1023,6 +1163,32 @@ void Hit::control() {
 		bandHz_ = std::min(2.0 * laws_.hz, kTopFraction * sr_);
 		bp_.setBandPass(bandHz_, 1.0, sr_);
 		break;
+	case Kind::Hand:
+		handBend_ = bend;
+		setModes(modeCount_, bend);
+		band_.d = envDecay(effective(0.3 * laws_.t60), sr_);
+		bandHz_ = std::min(2.0 * laws_.hz, kTopFraction * sr_);
+		bp_.setBandPass(bandHz_, 1.0, sr_);
+		break;
+	case Kind::FM: {
+		// THE CARRIER FALLS ONTO ITS PITCH by the envelope (a Drone has none); the modulator keeps its ratio to it. Neither may pass the top.
+		const double carrier = std::min(laws_.hz * std::exp2(bend), kTopFraction * sr_);
+		fmIncC_ = carrier / sr_;
+		fmIncM_ = std::min(carrier * laws_.fmRatio, kTopFraction * sr_) / sr_;
+		fmIdxEnv_.d = envDecay(laws_.fmIndexT60, sr_);
+		fmToneScale_ = fmToneScale(static_cast<double>(laws_.tone));
+		// THE AMPLITUDE: One-shot rings out by Decay; Gate and Drone hold it, and a released Gate falls by Release.
+		if (laws_.play == kPlayOneShot) {
+			body_.d = envDecay(effective(laws_.t60), sr_);
+		}
+		else {
+			body_.d = released_ ? envDecay(releaseT60_, sr_) : 1.0f;
+		}
+		band_.d = envDecay(effective(std::min(0.25, 0.15 * laws_.t60)), sr_);
+		bandHz_ = std::min(4.0 * laws_.hz, kTopFraction * sr_);
+		bp_.setBandPass(bandHz_, 1.0, sr_);
+		break;
+	}
 	case Kind::Snare: {
 		// THE GATES: past Shape · T60 a component falls in kGateFall (the body through its modes, the wires through their band).
 		bodyGated_ = laws_.bodyGate > 0.0 && t >= laws_.bodyGate;
@@ -1211,7 +1377,9 @@ void Hit::control() {
 bool Hit::envelopesSilent() const {
 	switch (kind_) {
 	case Kind::Kick: return body_.v == 0.0f && click_.v == 0.0f && band_.v == 0.0f;
+	case Kind::FM: return body_.v == 0.0f && click_.v == 0.0f && band_.v == 0.0f;
 	case Kind::Membrane:
+	case Kind::Hand:
 	case Kind::Snare: {
 		for (int i = 0; i < modeCount_; ++i) {
 			if (zr_[static_cast<size_t>(i)] != 0.0f || zi_[static_cast<size_t>(i)] != 0.0f) {
@@ -1317,6 +1485,34 @@ void Hit::checkSilence() {
 	if (envelopesSilent()) {
 		reset();
 	}
+}
+
+float Hit::renderFm() {
+	const float amp = body_.next();
+	// THE INDEX, a sample at a time: the held share plus the rest falling by the index's own T60 (a Drone sits at its held share, its envelope at 0).
+	const double held = laws_.play == kPlayOneShot ? 0.0 : kFmHeldShare;
+	fmIndexNow_ = laws_.fmIndex * fmToneScale_ * (held + (1.0 - held) * static_cast<double>(fmIdxEnv_.next()));
+	// THE PHASES ARE READ BEFORE THEY ADVANCE, so the strike's first sample is sin(0): exactly zero, and a hit never clicks by itself.
+	// THE MODULATOR'S FEEDBACK: its previous output leans on its own phase, up to pi at full (the FM operator's own).
+	const auto m = static_cast<float>(std::sin(kTwoPi * fmPhaseM_ + laws_.fmFeedback * std::numbers::pi * static_cast<double>(fmPrev_)));
+	fmPrev_ = m;
+	const auto carrier = static_cast<float>(std::sin(kTwoPi * fmPhaseC_ + fmIndexNow_ * static_cast<double>(m)));
+	fmPhaseM_ += fmIncM_;
+	fmPhaseM_ -= std::floor(fmPhaseM_);
+	fmPhaseC_ += fmIncC_;
+	fmPhaseC_ -= std::floor(fmPhaseC_);
+	// THE NOISE SHARE takes from the carrier what its transient adds, so the hit's level stays where Level put it.
+	float y = static_cast<float>(laws_.play == kPlayDrone ? kFmDroneGain : kFmGain) * amp * (1.0f - 0.5f * laws_.noise) * carrier * level_;
+	// A SPENT TAP OR BAND DRAWS NO NOISE (its envelope is exactly zero): the draws are still the hit's own and in the same order on every pass.
+	if (click_.v != 0.0f) {
+		clickLp_ += clickCoef_ * (noise() - clickLp_);
+		y += click_.next() * clickLp_;
+	}
+	if (band_.v != 0.0f) {
+		y += 2.0f * band_.next() * bp_.bandPass(noise());
+	}
+	// A GUARD, NOT A SHAPER: the carrier, the tap and the noise are sized to fit, so this binds only at the extremes of every control at once.
+	return std::clamp(y, -1.0f, 1.0f);
 }
 
 float Hit::renderSweep() {
@@ -1813,6 +2009,16 @@ void Hit::render(float* out, int n, float* outR) {
 				out[s + i] = renderSweep();
 			}
 			break;
+		case Kind::Hand:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = handCeiling(renderModes());
+			}
+			break;
+		case Kind::FM:
+			for (int i = 0; i < span; ++i) {
+				out[s + i] = renderFm();
+			}
+			break;
 		case Kind::Water:
 			for (int i = 0; i < span; ++i) {
 				float right = 0.0f;
@@ -1852,7 +2058,9 @@ double Hit::currentHz(int mode) const {
 	switch (kind_) {
 	case Kind::Kick: return inc_ * sr_;
 	case Kind::Membrane:
+	case Kind::Hand:
 	case Kind::Snare: return modeHz_[static_cast<size_t>(mode)];
+	case Kind::FM: return fmIncC_ * sr_;
 	case Kind::String: return string_ != nullptr ? string_->frequencyHz() : 0.0;
 	default: return laws_.hz;
 	}

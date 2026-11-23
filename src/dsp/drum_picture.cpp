@@ -83,6 +83,36 @@ void heardSpectrum(Kind kind, const Fields& f, int count, partials::PartialSpect
 		}
 		break;
 	}
+	case Kind::Hand: {
+		// THE HEAD'S TWELVE MODES at the strike position, each as long as it rings, and the shell's tone under them.
+		double sum = 0.0;
+		for (int k = 0; k < kHandHeadModes; ++k) {
+			sum += std::pow(handRatio(k, l.metal), -(2.2 - 2.0 * tone));
+		}
+		for (int k = 0; k < kHandHeadModes; ++k) {
+			const double ratio = handRatio(k, l.metal);
+			put(p * ratio, std::pow(ratio, -(2.2 - 2.0 * tone)) / sum * std::sqrt(modeT60(l.t60, ratio, 0.0f) / l.t60));
+		}
+		if (l.shell > 0.0) {
+			put(p * handShellRatio(l.pot), l.shell * 0.8 * std::sqrt(handShellT60Share(l.pot)));
+		}
+		if (noise > 0.0) {
+			band(2.0 * p, 0.5 * noise * std::sqrt(0.3));
+		}
+		break;
+	}
+	case Kind::FM: {
+		// THE CARRIER AND ITS SIDEBANDS at the held index: line n at the carrier plus n modulator frequencies, |J_n(index)| tall.
+		const double index = l.fmIndex * fmToneScale(tone) * kFmHeldShare;
+		for (int n = -6; n <= 6; ++n) {
+			const double ratio = p * (1.0 + static_cast<double>(n) * l.fmRatio);
+			put(std::abs(ratio), fmSideband(n, index));
+		}
+		if (noise > 0.0) {
+			band(4.0 * p, 0.5 * noise * std::sqrt(0.15));
+		}
+		break;
+	}
 	case Kind::Metal:
 		for (int i = 0; i < kMetalOscillators; ++i) {
 			const double r = p * metalRatio(i, l.metal);

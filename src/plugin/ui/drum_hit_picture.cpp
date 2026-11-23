@@ -288,7 +288,8 @@ visage::Point HitPicture::handleAt(Handle h) const {
 	case Handle::Tune: return { plotLeft() + 0.72f * (plotRight() - plotLeft()), yOfHz(laws_.hz) }; // on the resting pitch, late
 	case Handle::SweepTime: {
 		const double t = 3.0 * laws_.sweepTau; // the sweep's time: 95% of the drop done
-		return { xOf(t), yOfHz(laws_.hz * std::exp2(laws_.sweepOctaves * std::exp(-3.0))) };
+		const double signedOctaves = laws_.bendUp ? -laws_.sweepOctaves : laws_.sweepOctaves; // a Hand drum's bend may rise onto the pitch
+		return { xOf(t), yOfHz(laws_.hz * std::exp2(signedOctaves * std::exp(-3.0))) };
 	}
 	case Handle::Decay: return { xOf(laws_.t60), envBottom() };
 	case Handle::Level: return { plotLeft() + 4.0f, yOfLevel(levelDb_) };
@@ -696,6 +697,51 @@ void HitPicture::draw(visage::Canvas& canvas) {
 			     k == 1 ? 4.0f : 2.0f);
 		}
 		break;
+	case drum::Kind::Hand: {
+		// THE HEAD'S MODES, each a line riding the bend (falling onto its pitch, or rising onto it), the lowest bold and a slap's weak; the shell's line stays where it is.
+		const double fundamental = drum::handStroke(laws_.handStroke).fundamental;
+		const double signedOctaves = laws_.bendUp ? -laws_.sweepOctaves : laws_.sweepOctaves;
+		for (int k = 0; k < drum::kHandHeadModes; ++k) {
+			const double ratio = drum::handRatio(k, laws_.metal);
+			const double t60 = drum::modeT60(laws_.t60, ratio, 0.0f);
+			const double level = std::pow(ratio, -(1.1 - laws_.tone)) * (k == 0 ? fundamental : 1.0);
+			for (int i = 0; i < kSteps; ++i) {
+				const double t = secondsAt(plotLeft() + w * static_cast<float>(i) / kSteps);
+				const double hz = laws_.hz * ratio * std::exp2(signedOctaves * std::exp(-t / std::max(1.0e-4, laws_.sweepTau)));
+				canvas.setColor(alphaOf(kValue, seen(level * std::pow(10.0, -3.0 * t / std::max(1.0e-3, t60)))));
+				canvas.fill(plotLeft() + w * static_cast<float>(i) / kSteps, yOfHz(hz) - (k == 0 ? 2.0f : 1.0f), w / kSteps + 0.5f, k == 0 ? 4.0f : 2.0f);
+			}
+		}
+		if (laws_.shell > 0.0) {
+			line(laws_.hz * drum::handShellRatio(laws_.pot), laws_.t60 * drum::handShellT60Share(laws_.pot), laws_.shell, 3.0f);
+		}
+		if (laws_.noise > 0.0f) {
+			band(2.0 * laws_.hz, 0.3 * laws_.t60, laws_.noise);
+		}
+		break;
+	}
+	case drum::Kind::FM: {
+		// THE CARRIER AND ITS SIDEBANDS: line n at the carrier plus n modulator frequencies, as bright as |J_n(index)| at that moment, so the spray collapses as the index falls.
+		const bool held = laws_.play != drum::kPlayOneShot;
+		for (int n = -6; n <= 6; ++n) {
+			for (int i = 0; i < kSteps; ++i) {
+				const double t = secondsAt(plotLeft() + w * static_cast<float>(i) / kSteps);
+				const double carrier = laws_.hz * std::exp2(laws_.sweepOctaves * std::exp(-t / std::max(1.0e-4, laws_.sweepTau)));
+				const double hz = std::abs(carrier * (1.0 + static_cast<double>(n) * laws_.fmRatio));
+				if (hz < 20.0 || hz > 20000.0) {
+					continue;
+				}
+				const double index = drum::fmIndexAt(laws_.fmIndex, laws_.fmIndexT60, laws_.play, t) * drum::fmToneScale(laws_.tone);
+				const double ring = held ? 1.0 : std::pow(10.0, -3.0 * t / std::max(1.0e-3, laws_.t60));
+				canvas.setColor(alphaOf(kValue, seen(drum::fmSideband(n, index) * ring)));
+				canvas.fill(plotLeft() + w * static_cast<float>(i) / kSteps, yOfHz(hz) - (n == 0 ? 2.0f : 1.0f), w / kSteps + 0.5f, n == 0 ? 4.0f : 2.0f);
+			}
+		}
+		if (laws_.noise > 0.0f) {
+			band(4.0 * laws_.hz, std::min(0.25, 0.15 * laws_.t60), laws_.noise);
+		}
+		break;
+	}
 	case drum::Kind::Sweep: {
 		// THE FILTER'S CORNER over the sweep's time: a bold trace from the low corner up (or the high corner down), brightness its loudness.
 		const double length = std::max(0.005, laws_.lengthSeconds);

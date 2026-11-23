@@ -111,6 +111,15 @@ feathers::drum::Controls controlsOf(const Settings& s) {
 	c.sweepDirection = s.index(Param::SweepDir);
 	c.sweepRange = static_cast<double>(s.at(Param::SweepRange));
 	c.syncBeats = kSyncBeats[std::clamp(s.index(Param::SweepSync), 0, static_cast<int>(std::size(kSyncBeats)) - 1)];
+	c.handStroke = s.index(Param::Stroke);
+	c.bendDirection = s.index(Param::BendDir);
+	c.shell = static_cast<double>(s.at(Param::Shell));
+	c.pot = static_cast<double>(s.at(Param::Pot));
+	c.fmRatio = kFmRatios[std::clamp(s.index(Param::FmRatio), 0, static_cast<int>(std::size(kFmRatios)) - 1)];
+	c.fmFineCents = static_cast<double>(s.at(Param::FmFine));
+	c.fmIndex = static_cast<double>(s.at(Param::FmIndex));
+	c.fmIndexSeconds = exp2Of(s, Param::FmIndexTime);
+	c.fmFeedback = static_cast<double>(s.at(Param::FmFeedback));
 	c.play = s.index(Param::Trigger);
 	c.width = static_cast<double>(s.at(Param::Width));
 	// THE TERRAIN'S PITCH MODE is the kit's alone (the engine's Pitched mode keeps the half-semitone fine pitch as it always was).

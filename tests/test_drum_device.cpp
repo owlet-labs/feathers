@@ -284,6 +284,18 @@ drum::Controls refControls(const dd::Row& r) {
 	c.rise = v(Param::Rise);
 	c.flow = v(Param::Flow);
 	c.splash = v(Param::Splash);
+	c.handStroke = static_cast<int>(std::lround(v(Param::Stroke)));
+	c.bendDirection = static_cast<int>(std::lround(v(Param::BendDir)));
+	c.shell = v(Param::Shell);
+	c.pot = v(Param::Pot);
+	{
+		static constexpr double kRatios[] = { 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 7.0, 8.0 };
+		c.fmRatio = kRatios[std::clamp(static_cast<int>(std::lround(v(Param::FmRatio))), 0, 11)];
+	}
+	c.fmFineCents = v(Param::FmFine);
+	c.fmIndex = v(Param::FmIndex);
+	c.fmIndexSeconds = std::exp2(v(Param::FmIndexTime));
+	c.fmFeedback = v(Param::FmFeedback);
 	c.play = static_cast<int>(std::lround(v(Param::Trigger)));
 	c.width = v(Param::Width);
 	c.pitchMode = static_cast<int>(std::lround(v(Param::PitchMode)));
@@ -437,10 +449,16 @@ TEST_CASE("drum: each control is gated on the kinds the engine says read it") {
 			{ Param::BellQ, c.bell },         { Param::BellLink, c.bell },      { Param::WireContour, c.wireContour },
 			{ Param::WireBuzz, c.wireContour }, { Param::WireThreshold, c.wireContour }, { Param::WireGate, c.wireContour },
 			{ Param::BodyGate, c.wireContour }, { Param::VelLevel, true },      { Param::VelTone, true },
-			{ Param::VelSnap, true },         { Param::VelTension, kind == drum::Kind::Kick || kind == drum::Kind::Membrane || kind == drum::Kind::Snare },
+			{ Param::VelSnap, true },         { Param::VelTension, kind == drum::Kind::Kick || kind == drum::Kind::Membrane || kind == drum::Kind::Snare || kind == drum::Kind::Hand },
 			{ Param::KickHold, c.kickShape }, { Param::KickDip, c.kickShape },  { Param::KickDipTime, c.kickShape },
 			{ Param::ClickSweep, c.kickShape }, { Param::ClickSweepTime, c.kickShape }, { Param::StartPhase, c.kickShape },
 			{ Param::VelocityNoise, c.velNoise }, { Param::Width, c.width },
+			// THE HAND DRUM'S AND THE FM PERC'S OWN, each shown on its kind alone.
+			{ Param::Stroke, kind == drum::Kind::Hand },  { Param::BendDir, kind == drum::Kind::Hand },
+			{ Param::Shell, kind == drum::Kind::Hand },   { Param::Pot, kind == drum::Kind::Hand },
+			{ Param::FmRatio, kind == drum::Kind::FM },   { Param::FmFine, kind == drum::Kind::FM },
+			{ Param::FmIndex, kind == drum::Kind::FM },   { Param::FmIndexTime, kind == drum::Kind::FM },
+			{ Param::FmFeedback, kind == drum::Kind::FM },
 		};
 		for (const auto& e : expected) {
 			CAPTURE(dd::kParamDescs[at(e.p)].key);
@@ -2171,6 +2189,54 @@ TEST_CASE("sweep: Sync takes the sweep's length from the host's tempo, Free from
 	CHECK(lengthOf(5.0, 0.4) == doctest::Approx(16.0 * 0.4));     // "4 bars": sixteen beats
 	CHECK(lengthOf(3.0, 0.0) == doctest::Approx(free));           // no tempo from the host: Free's time
 	CHECK(lengthOf(3.0, 0.5) != doctest::Approx(free));           // NON-VACUITY: the synced length is not the free one
+}
+
+TEST_CASE("hand drum: Stroke, Bend Up, Shell and Pot reach the hit's laws, and a Drone asked of it is a One-shot") {
+	Dev d;
+	d.row = defaultRow();
+	d.row[at(Param::Kind)] = static_cast<float>(drum::Kind::Hand);
+	d.row[at(Param::Stroke)] = 2.0f; // Slap
+	d.row[at(Param::BendDir)] = 1.0f; // Up
+	d.row[at(Param::Shell)] = 0.6f;
+	d.row[at(Param::Pot)] = 0.9f;
+	d.row[at(Param::Trigger)] = 2.0f; // Drone: a struck head does not sustain
+	(void)run(d, { on(36, 0) }, 64);
+	REQUIRE(d.dsp().newestForTest() != nullptr);
+	const drum::Laws& l = d.dsp().newestForTest()->laws();
+	CHECK(l.handStroke == drum::kStrokeSlap);
+	CHECK(l.bendUp);
+	CHECK(l.shell == doctest::Approx(0.6));
+	CHECK(l.pot == doctest::Approx(0.9));
+	CHECK(l.play == drum::kPlayOneShot);
+	// AND THE PARAMS AGAINST THE REFERENCE MAPPING (restated above), field by field.
+	const drum::Controls want = refControls(d.row);
+	CHECK(want.handStroke == 2);
+	CHECK(want.bendDirection == 1);
+}
+
+TEST_CASE("FM perc: Ratio, Fine, Index, Index Decay and Feedback reach the hit's laws, and a Drone is held") {
+	static constexpr double kRatios[] = { 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 7.0, 8.0 };
+	for (const int choice : { 0, 5, 11 }) {
+		CAPTURE(choice);
+		Dev d;
+		d.row = defaultRow();
+		d.row[at(Param::Kind)] = static_cast<float>(drum::Kind::FM);
+		d.row[at(Param::FmRatio)] = static_cast<float>(choice);
+		d.row[at(Param::FmFine)] = 40.0f;
+		d.row[at(Param::FmIndex)] = 7.0f;
+		d.row[at(Param::FmIndexTime)] = -3.0f;
+		d.row[at(Param::FmFeedback)] = 0.4f;
+		d.row[at(Param::Trigger)] = 2.0f;
+		(void)run(d, { on(36, 0) }, 64);
+		REQUIRE(d.dsp().newestForTest() != nullptr);
+		const drum::Laws& l = d.dsp().newestForTest()->laws();
+		// THE RATIO: the choice's number, leaned by this place's Metal and the fine offset (restated).
+		CHECK(l.fmRatio == doctest::Approx(kRatios[choice] * std::exp2(0.5 * static_cast<double>(l.metal) + 40.0 / 1200.0)).epsilon(1.0e-9));
+		CHECK(l.fmIndex == doctest::Approx(7.0));
+		CHECK(l.fmIndexT60 == doctest::Approx(0.125));
+		CHECK(l.fmFeedback == doctest::Approx(0.4));
+		CHECK(l.play == drum::kPlayDrone); // an FM perc can be held
+	}
 }
 
 TEST_CASE("default level: a default drone of every kind that can hold one reads between -26 and -12 dBFS RMS and never clips, as a default hit of the others does") {

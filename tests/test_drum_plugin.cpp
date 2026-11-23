@@ -1026,6 +1026,23 @@ TEST_CASE("host ids never move: the Drum plugin's places as they stand on the re
 	}
 	// THE NEW PLACES FOLLOW, in order, and every key is still listed once.
 	CHECK(std::string(dp::kHostKeys[std::size(kReleased)]) == "drum_density");
+	// THE NEXT TWO BLOCKS, pinned the same way once they were on a list: the foley kinds' controls, then the Hand drum's and the FM perc's. A place
+	// keeps its key and so its id; the nine of the second block were appended and moved nothing before them.
+	static const char* const kLater[] = {
+		"drum_density", "drum_grain", "drum_pressure", "drum_speed",
+		"drum_rate", "drum_rise", "drum_flow", "drum_splash",
+		"drum_sweep_dir", "drum_sweep_range", "drum_sweep_sync",
+		"drum_stroke", "drum_bend_dir", "drum_shell", "drum_pot",
+		"drum_fm_ratio", "drum_fm_fine", "drum_fm_index", "drum_fm_idx_decay", "drum_fm_feedback"
+	};
+	REQUIRE(dp::kHostParamCount >= std::size(kReleased) + std::size(kLater));
+	for (size_t i = 0; i < std::size(kLater); ++i) {
+		CAPTURE(i);
+		CHECK(std::string(dp::kHostKeys[std::size(kReleased) + i]) == kLater[i]);
+		clap_param_info info {};
+		REQUIRE(params->get_info(v.plugin, static_cast<uint32_t>(std::size(kReleased) + i), &info));
+		CHECK(info.id == 0x1000 + std::size(kReleased) + i);
+	}
 	std::set<std::string> seen;
 	for (const char* key : dp::kHostKeys) {
 		CHECK(seen.insert(key).second);

@@ -23,6 +23,10 @@
 
 #include "devices/devices_common.h"
 
+#include "fx/balance/balance_types.h"
+#include "plugin/ui/balance_card.h"
+#include "plugin/ui/owltt_graph.h"
+
 // A PICTURE OF THE ROW, when FEATHERS_SLOT_SHOT_DIR names a directory: the composite on the card's ground at both scales.
 TEST_CASE("The slot row is photographed at the card width at scale 1 and 1.75 when asked") {
 	const char* dir = std::getenv("FEATHERS_SLOT_SHOT_DIR");
@@ -2573,3 +2577,59 @@ TEST_CASE("CLIP's per-Type hover table: every Type has texts, and no hover in an
 	CHECK(seen > 15 * 10);
 }
 
+
+// STEREO BALANCE: THE HANDLES ARE MODULATION TARGETS AND SHOW IT (the house rule: a handle beside or instead of a knob is modulable and draws the ring). Strength,
+// Widen and Pan are handles on the picture, each a `ModHandle`: a route on the control gives the card's handle its halo while a source is armed and its amount stroke.
+TEST_CASE("Stereo Balance's card: a route on Strength, Widen or Pan shows its modulation on the picture's handle") {
+	namespace bal = feathers::fx::balance;
+	DynCardFixture<ui::BalanceCard> d(bal::kTraits.tag);
+	ui::BalanceView* view = d.card->viewForTest();
+	REQUIRE(view != nullptr);
+	ui::ModState* mod = d.f.gui.modForTest();
+	REQUIRE(mod != nullptr);
+	d.card->setModulation(mod, nullptr);
+	view->setBounds(0.0f, 0.0f, 236.0f, 222.0f);
+	const backplane::Source macro = backplane::Source::core(0);
+	size_t which = 0;
+	for (const bal::Param p : { bal::Param::Strength, bal::Param::Widen, bal::Param::Pan }) {
+		CAPTURE(which);
+		const backplane::Destination dest = backplane::Destination::control(d.device, static_cast<size_t>(p));
+		d.f.bridge.setRouteAmount(macro, dest, 0.2f);
+		mod->arm(false);
+		const ui::ModHandlePlan quiet = view->modPlan(which);
+		REQUIRE(quiet.axes.size() == 1u);
+		CHECK(quiet.axes[0].offered);
+		CHECK_FALSE(quiet.halo);
+		mod->focus(macro);
+		mod->arm(true);
+		const ui::ModHandlePlan armed = view->modPlan(which);
+		CHECK(armed.halo);
+		REQUIRE(armed.axes[0].hasStroke);
+		// THE STROKE IS THE AMOUNT: 0.2 of the control's travel is 0.2 of the rail, and it starts where the handle is drawn.
+		const visage::Bounds rail = view->sliderRail(which);
+		CHECK(armed.axes[0].strokeHi - armed.axes[0].strokeLo == doctest::Approx(0.2f * rail.width()).epsilon(0.002));
+		CHECK(armed.axes[0].base == doctest::Approx(view->handleX(which)).epsilon(0.001));
+		mod->arm(false);
+		d.f.bridge.setRouteAmount(macro, dest, 0.0f);
+		++which;
+	}
+}
+
+TEST_CASE("Stereo Balance's traces and meters take the OWLTT Comb's band colours, and the ghost is a neutral grey") {
+	using V = ui::BalanceView;
+	for (size_t b = 0; b < 3; ++b) {
+		CHECK(V::bandColour(b, 3) == ui::OwlttGraph::combBandColour(b));
+	}
+	// TWO BANDS: the first and the last of the three, so a band keeps its colour across the switch.
+	CHECK(V::bandColour(0, 2) == ui::OwlttGraph::combBandColour(0));
+	CHECK(V::bandColour(1, 2) == ui::OwlttGraph::combBandColour(2));
+	CHECK(V::bandColour(0, 3) != V::bandColour(1, 3));
+	CHECK(V::bandColour(1, 3) != V::bandColour(2, 3));
+	const uint32_t g = V::ghostColour();
+	const auto ch = [&](int shift) { return static_cast<int>((g >> shift) & 0xffu); };
+	CHECK(std::abs(ch(0) - ch(8)) < 24);
+	CHECK(std::abs(ch(8) - ch(16)) < 24);
+	for (size_t b = 0; b < 3; ++b) {
+		CHECK(V::bandColour(b, 3) != g);
+	}
+}

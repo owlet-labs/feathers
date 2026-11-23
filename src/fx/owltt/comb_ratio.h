@@ -61,33 +61,55 @@ inline constexpr double kCombDetentReach = 0.04; ///< a ratio within 4% of a det
 	std::snprintf(out, sizeof(out), "x%.2g", ratio);
 	return out;
 }
-/// THE COLUMNS' NAMES FOLLOW THE RATIOS: the second spacing over the first says what the on-teeth band is cut into. At 2 the halves are the odd and
-/// the even teeth of the first comb; at a whole n the High band is every n-th and Mid the rest; otherwise the two are named for the second comb.
-[[nodiscard]] inline std::array<std::string, 3> combBandNames(double spacing1, double spacing2) {
-	const double r = spacing2 / std::max(spacing1, 1e-9);
-	if (std::fabs(r - 2.0) < 0.02) {
-		return { "Between", "Odd", "Even" };
+/// **THE BANDS' NAMES, EXACT OR STRUCTURAL.** A comb's bands are harmonic classes ONLY when its teeth sit on the harmonics of the input's pitch, and only a tracked note
+/// says what that is. So `harmonic` (Key Track on and a note heard) with the first spacing at x1 of it names them as harmonics: the second spacing at x2 makes
+/// Between / Odd / Even, at a whole n >= 3 Between / Others / Every n. EVERYTHING ELSE (a fixed spacing in Hz, a ratio that is not x1, a second spacing that is
+/// neither) is named for what it structurally is, which is always true: Gaps (between the first comb's teeth), Teeth A (on them, off the second comb's) and Teeth B (on both).
+/// `r1` and `r2` are the two spacings as ratios to the note (`combRatioOfKnob`); untracked they are unused.
+[[nodiscard]] inline std::array<std::string, 3> combBandNames(double r1, double r2, bool harmonic) {
+	if (harmonic && std::fabs(r1 - 1.0) < 0.02) {
+		const double r = r2 / r1;
+		if (std::fabs(r - 2.0) < 0.02) {
+			return { "Between", "Odd", "Even" };
+		}
+		if (r > 2.5 && std::fabs(r - std::round(r)) < 0.02) {
+			return { "Between", "Others", "Every " + std::to_string(static_cast<int>(std::lround(r))) };
+		}
 	}
-	if (r > 2.5 && std::fabs(r - std::round(r)) < 0.02) {
-		return { "Between", "Others", "Every " + std::to_string(static_cast<int>(std::lround(r))) };
-	}
-	return { "Between", "Off " + combRatioText(r), "On " + combRatioText(r) };
+	return { "Gaps", "Teeth A", "Teeth B" };
 }
 
-/// **THE TWO BANDS OF ONE COMB'S NAMES** (Stereo Balance's two-band mode; OWLTT's two-split `combBandNames` is the three-band reading): `ratio` is the tooth spacing over the
-/// played note (x1 = the note's own harmonics). Index 0 is what falls between the teeth, index 1 what sits on them. At x1 the teeth are the harmonics; at a whole n the on-teeth
-/// band is every n-th harmonic (x2: the even ones) and the other holds the rest; otherwise the two are named for the spacing.
-[[nodiscard]] inline std::array<std::string, 2> combBandNames2(double ratio) {
-	if (std::fabs(ratio - 1.0) < 0.02) {
+/// **THE TWO BANDS OF ONE COMB'S NAMES**, by the same rule: harmonic only for a tracked note, with the spacing at x1 (Between / Harmonics) or a whole n >= 2
+/// (Rest / Every n); otherwise Gaps / Teeth.
+[[nodiscard]] inline std::array<std::string, 2> combBandNames2(double r1, bool harmonic) {
+	if (harmonic && std::fabs(r1 - 1.0) < 0.02) {
 		return { "Between", "Harmonics" };
 	}
-	if (std::fabs(ratio - 2.0) < 0.02) {
-		return { "Rest", "Even" };
+	if (harmonic && r1 > 1.5 && std::fabs(r1 - std::round(r1)) < 0.02) {
+		return { "Rest", "Every " + std::to_string(static_cast<int>(std::lround(r1))) };
 	}
-	if (ratio > 2.5 && std::fabs(ratio - std::round(ratio)) < 0.02) {
-		return { "Rest", "Every " + std::to_string(static_cast<int>(std::lround(ratio))) };
+	return { "Gaps", "Teeth" };
+}
+
+/// **WHAT THE TEETH ARE, in words for a caption or a tooltip**: the first spacing (Hz, or the ratio to the note while tracked) and, with a second comb, which teeth B takes.
+[[nodiscard]] inline std::string combTeethCaption(double spacing1Hz, bool tracked, double r1, double spacing2Over1, bool threeBands) {
+	char out[96];
+	if (tracked) {
+		std::snprintf(out, sizeof out, "Teeth every %s of the note (%.0f Hz)", combRatioText(r1).c_str(), spacing1Hz);
 	}
-	return { "Off " + combRatioText(ratio), "On " + combRatioText(ratio) };
+	else {
+		std::snprintf(out, sizeof out, "Teeth every %.0f Hz", spacing1Hz);
+	}
+	std::string text = out;
+	if (threeBands) {
+		if (std::fabs(spacing2Over1 - std::round(spacing2Over1)) < 0.02 && spacing2Over1 > 1.5) {
+			text += "; B takes every " + std::to_string(static_cast<int>(std::lround(spacing2Over1))) + (std::lround(spacing2Over1) == 2 ? "nd" : std::lround(spacing2Over1) == 3 ? "rd" : "th") + " tooth";
+		}
+		else {
+			text += "; B takes the teeth of a comb " + combRatioText(spacing2Over1) + " as wide";
+		}
+	}
+	return text;
 }
 
 /// THE NOTE'S OWN FREQUENCY, A4 = 69, the pitch clamped to [−60, 200] semitones — `fx::phaser::keyHzOf`, restated.

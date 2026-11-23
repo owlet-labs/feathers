@@ -101,10 +101,9 @@ struct OpsBalance {
 	float focusNow = 0.0f;
 	float toleranceNow = 0.0f;
 	float widenNow = 0.0f;
-	// THE GONIOMETER'S RING: the newest pairs of each channel, written every kPointDecimation samples (a counter carried across calls), never allocated.
+	// THE GONIOMETER'S RING: the newest pairs of each channel, written EVERY sample (so the newest are consecutive), never allocated.
 	std::array<std::array<std::array<float, 2>, kRingPairs>, kPointChannels> ring {};
 	uint32_t ringWritten = 0;
-	int untilPoint = 0;
 	float wholeL = 0.0f;
 	float wholeR = 0.0f;
 	float wholeLR = 0.0f;
@@ -162,7 +161,6 @@ struct OpsBalance {
 		untilTick = 0;
 		ring = {};
 		ringWritten = 0;
-		untilPoint = 0;
 		wholeL = wholeR = wholeLR = 0.0f;
 		tailLeft = 0;
 	}
@@ -356,8 +354,8 @@ struct OpsBalance {
 				if (wholeR < 1.0e-30f) wholeR = 0.0f;
 				if (std::fabs(wholeLR) < 1.0e-30f) wholeLR = 0.0f;
 			}
-			if (--untilPoint <= 0) {
-				untilPoint = kPointDecimation;
+			{
+				// EVERY SAMPLE, so the newest `kRingPairs` are CONSECUTIVE: a polyline through them is a piece of the real waveform in the plane.
 				const size_t slot = ringWritten % kRingPairs;
 				for (size_t b = 0; b < 3; ++b) {
 					ring[b][slot] = { b < nb ? cl[b] : 0.0f, b < nb ? cr[b] : 0.0f };

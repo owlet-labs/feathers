@@ -20,6 +20,7 @@
 #include "backplane/device_host.h"
 #include "device/modulatable.h"
 #include "fx/balance/balance_types.h"
+#include "plugin/ui/mod_handle.h"
 #include "plugin/ui/tooltip.h"
 
 #include <visage/ui.h>
@@ -76,6 +77,8 @@ struct TracePoint {
 	float x = 0.0f;
 	float y = 0.0f;
 	int age = 1 << 20;
+	/// Joined to the point written just before it (the same burst of consecutive samples): a line is drawn between them.
+	bool linked = false;
 };
 
 class BalanceView final : public visage::Frame, public TooltipSource {
@@ -96,8 +99,8 @@ public:
 	static constexpr float kMeterSpanDb = 6.0f;
 	static constexpr double kCurveSpan = 8.0;
 	/// HOW MANY REFRESHES A POINT LIVES (persistence), and how many each trace keeps.
-	static constexpr int kLife = 40;
-	static constexpr size_t kTracePoints = 384;
+	static constexpr int kLife = 32;
+	static constexpr size_t kTracePoints = 768;
 	/// A BAND'S COLOUR: the OWLTT Comb's (green, lime, magenta); a two-band split uses the first and the last. The ghost is a neutral grey.
 	[[nodiscard]] static uint32_t bandColour(size_t band, size_t bands) noexcept;
 	[[nodiscard]] static uint32_t ghostColour() noexcept { return 0xff9aa0a8; }
@@ -117,6 +120,11 @@ public:
 	/// WHERE A HANDLE IS DRAWN (x of its centre) for the current value, and the value a pointer x means.
 	[[nodiscard]] float handleX(size_t which) const;
 	[[nodiscard]] double valueAt(size_t which, float x) const;
+	/// A HANDLE'S MODULATION: the same `ModHandle` every plot handle uses, so a route on the control shows its stroke, dot and halo here and a drag with a source armed makes one.
+	[[nodiscard]] const ModHandle& modHandle(size_t which) const { return mods_[which]; }
+	[[nodiscard]] ModHandlePlan modPlan(size_t which) const { return mods_[which].plan(); }
+	[[nodiscard]] float handleY(size_t which) const;
+	[[nodiscard]] float xOfValue(size_t which, double value) const;
 
 private:
 	[[nodiscard]] device::Modulatable& controlOf(size_t which) const;
@@ -141,9 +149,7 @@ private:
 	// THE DRAG
 	int dragging_ = -1;
 	bool gestureOpen_ = false;
-	bool routeDragging_ = false;
-	float routeAnchorY_ = 0.0f;
-	float routeAnchorAmount_ = 0.0f;
+	std::array<ModHandle, 4> mods_ {};
 	double grabOffset_ = 0.0;
 };
 

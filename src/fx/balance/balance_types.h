@@ -134,11 +134,10 @@ Row rowOf(const Settings& settings);
 /// WHAT THE METER PUBLISHES, IN THIS ORDER: for each of three bands, the imbalance before the correction (dB, positive = left louder), after it, and the
 /// band's level (linear rms of both sides); then the two spacings in Hz as the engine runs them, and the tracked note (0: none).
 /// THE GONIOMETER'S POINTS: each of four channels (the three bands' corrected, widened outputs, then the whole INPUT before HP Wet) keeps its newest `kRingPairs` L/R pairs,
-/// one taken every `kPointDecimation` samples, published oldest first from index `kPointsBase`. A fixed ring on the audio thread, copied out with the other readings.
+/// the newest consecutive samples, published oldest first from index `kPointsBase`. A fixed ring on the audio thread, copied out with the other readings.
 inline constexpr size_t kPointChannels = 4;
 inline constexpr size_t kRingPairs = 24;
 inline constexpr size_t kPointsBase = 17;
-inline constexpr int kPointDecimation = 48;
 inline constexpr size_t kInputChannel = 3;
 [[nodiscard]] constexpr size_t pointIndex(size_t channel, size_t pair, size_t side) { return kPointsBase + (channel * kRingPairs + pair) * 2 + side; }
 
@@ -213,33 +212,16 @@ struct WidenAmounts {
 	return { widen * std::min(1.0f, b / a), widen * std::min(1.0f, a / b) };
 }
 
-/// **THE BAND NAMES, HONEST ABOUT KEY TRACK.** Tracking a note (Key Track on and a note heard) the spacing is a ratio to it, so the bands are true harmonic classes:
-/// Between / Odd / Even (`owltt::combBandNames`), or the two-band names (`combBandNames2`). Not tracking, the comb is fixed in Hz and its teeth meet an input's
-/// harmonics only when its pitch matches, so the bands are named by their teeth: "x200 Hz" is the multiples of 200 Hz (Odd / Even of them with three bands).
+/// **THE BAND NAMES (`owltt::combBandNames`)**: harmonic classes only while a note is tracked and the first spacing is x1 of it; otherwise Gaps / Teeth (A, B).
 [[nodiscard]] inline std::array<std::string, 3> bandNames(const Settings& s, bool noteHeard) {
-	const bool tracking = s.keyTrack && noteHeard;
-	char hz1[24];
-	std::snprintf(hz1, sizeof hz1, "x%.0f Hz", static_cast<double>(s.spacing));
+	const bool harmonic = s.keyTrack && noteHeard;
 	if (s.bands < 3) {
-		if (tracking) {
-			const auto names = owltt::combBandNames2(owltt::combRatioOfKnob(s.spacing, false));
-			return { names[0], names[1], "" };
-		}
-		return { "Between", hz1, "" };
+		const auto names = owltt::combBandNames2(owltt::combRatioOfKnob(s.spacing, false), harmonic);
+		return { names[0], names[1], "" };
 	}
-	const double s1 = owltt::combSpacingHz(s.spacing, false);
-	const double s2 = owltt::combSpacingHz(s.spacing2, true);
-	if (tracking) {
-		return owltt::combBandNames(s1, s2);
-	}
-	const double r = s2 / std::max(s1, 1.0e-9);
-	char hz2[24];
-	std::snprintf(hz2, sizeof hz2, "%.0f Hz", s2);
-	if (std::fabs(r - 2.0) < 0.02) {
-		return { "Between", std::string("Odd ") + hz1, std::string("Even ") + hz1 };
-	}
-	return { "Between", std::string("Off x") + hz2, std::string("On x") + hz2 };
+	return owltt::combBandNames(owltt::combRatioOfKnob(s.spacing, false), owltt::combRatioOfKnob(s.spacing2, true), harmonic);
 }
+
 inline constexpr const char* kTags[] = { "dynamics", "fx" };
 
 inline constexpr device::Traits kTraits {
@@ -261,11 +243,11 @@ inline constexpr device::ParamDesc kParamDescs[] = {
      .names = kOffOnNames, .modulatable = true, .tooltip = "Whether the balancer is in the chain"},
     {.key = "balance_bands", .name = "Balance Bands", .min = 0.0, .max = 1.0, .def = 1.0, .stepped = true, .unit = device::Unit::Choice,
      .names = kBandsNames,
-     .tooltip = "How many comb bands are balanced on their own. 2: one comb, what falls between its teeth and what sits on them. 3: two combs, "
-                "between, odd and even at the default spacings"},
+     .tooltip = "How many comb bands are balanced on their own. 2: one comb, Gaps (between its teeth) and Teeth (on them). 3: two combs, Gaps, Teeth A (on the first comb's teeth, off the second's) "
+                "and Teeth B (on both). They are harmonic classes (Between, Odd, Even) only while Key Track follows a note at x1"},
     {.key = "balance_spacing", .name = "Balance Spacing", .min = 20.0, .max = 2000.0, .def = 200.0, .stepped = false, .unit = device::Unit::Number,
      .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,
-     .tooltip = "The comb's tooth spacing: the bands are harmonic classes of it, not frequency ranges. In Hz. With Key Track off the comb is fixed in Hz, so its teeth meet an input's harmonics only when the pitch matches: it then works as a broadband balancer or widener",
+     .tooltip = "The comb's tooth spacing: the bands are classes of teeth, not frequency ranges. In Hz. With Key Track off the comb is fixed in Hz, so its teeth meet an input's harmonics only when the pitch matches: it then works as a broadband balancer or widener",
      .wholeReadout = true, .suffix = "Hz"},
     {.key = "balance_spacing2", .name = "Balance Spacing 2", .min = 200.0, .max = 20000.0, .def = 2000.0, .stepped = false, .unit = device::Unit::Number,
      .names = {}, .modulatable = true, .offsetsMayLeaveRange = false,

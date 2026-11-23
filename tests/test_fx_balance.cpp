@@ -714,28 +714,46 @@ TEST_CASE("Tolerance is a dead zone on a band's deviation from the whole: inside
 	}
 }
 
-TEST_CASE("the bands are named by their harmonics only while a note is tracked, by their teeth otherwise") {
+TEST_CASE("the bands' names: harmonic classes only for a tracked note at x1, structural everywhere else") {
+	// THE TABLE: (tracking) x (r1 in x1, x1.5, x2) x (r2 in x2, x3, x2.5). Harmonic names need tracking AND r1 = x1 AND r2 = x2 or a whole n >= 3.
+	for (const bool tracking : { false, true }) {
+		for (const double r1 : { 1.0, 1.5, 2.0 }) {
+			for (const double r2 : { 2.0, 3.0, 2.5 }) {
+				std::array<std::string, 3> expected { "Gaps", "Teeth A", "Teeth B" };
+				if (tracking && r1 == 1.0 && r2 == 2.0) {
+					expected = { "Between", "Odd", "Even" };
+				}
+				else if (tracking && r1 == 1.0 && r2 == 3.0) {
+					expected = { "Between", "Others", "Every 3" };
+				}
+				CAPTURE(tracking);
+				CAPTURE(r1);
+				CAPTURE(r2);
+				CHECK(ow::combBandNames(r1, r2, tracking) == expected);
+			}
+		}
+	}
+	// TWO BANDS: x1 is Between / Harmonics, a whole n Rest / Every n, tracked; Gaps / Teeth otherwise.
+	CHECK(ow::combBandNames2(1.0, true) == std::array<std::string, 2> { "Between", "Harmonics" });
+	CHECK(ow::combBandNames2(3.0, true) == std::array<std::string, 2> { "Rest", "Every 3" });
+	CHECK(ow::combBandNames2(1.5, true) == std::array<std::string, 2> { "Gaps", "Teeth" });
+	CHECK(ow::combBandNames2(1.0, false) == std::array<std::string, 2> { "Gaps", "Teeth" });
+	// THE DEVICE'S OWN READING: Key Track on without a note heard is a fixed comb, and says so.
 	bal::Settings s;
 	s.bands = 3;
 	s.keyTrack = true;
 	CHECK(bal::bandNames(s, true)[1] == "Odd");
-	CHECK(bal::bandNames(s, true)[2] == "Even");
-	// KEY TRACK ON BUT NO NOTE HEARD YET, AND KEY TRACK OFF: the comb is fixed in Hz, so the names say so.
-	for (const bool tracking : { false, true }) {
-		s.keyTrack = tracking;
-		const std::array<std::string, 3> names = bal::bandNames(s, false);
-		CAPTURE(tracking);
-		CHECK(names[1].find("Hz") != std::string::npos);
-		CHECK(names[2].find("Hz") != std::string::npos);
-		CHECK(names[1].find("Odd") != std::string::npos);
-	}
+	CHECK(bal::bandNames(s, false)[1] == "Teeth A");
+	s.keyTrack = false;
+	CHECK(bal::bandNames(s, true)[1] == "Teeth A");
 	s.bands = 2;
+	CHECK(bal::bandNames(s, true)[1] == "Teeth");
 	s.keyTrack = true;
 	CHECK(bal::bandNames(s, true)[1] == "Harmonics");
-	s.keyTrack = false;
-	CHECK(bal::bandNames(s, true)[1] == "x200 Hz");
-	CHECK(bal::bandNames(s, true)[0] == "Between");
+	// THE CAPTION SAYS WHAT THE TEETH ARE.
+	CHECK(ow::combTeethCaption(200.0, false, 1.0, 2.0, true) == "Teeth every 200 Hz; B takes every 2nd tooth");
 }
+
 
 //------------------------------------------------------------------------------------------------//
 // ORDER: THE LOWS AND THE PAN                                                                     //
@@ -894,7 +912,7 @@ struct Cloud {
 	}
 	[[nodiscard]] double angleDeg() const { return 0.5 * std::atan2(2.0 * lr, ll - rr) * 180.0 / 3.14159265358979323846; }
 };
-/// Renders `tones` for `settleSeconds`, then 100 blocks of 1024 samples (exactly a ring of decimated pairs each), gathering channel `channel`'s newest pairs from the readings.
+/// Renders `tones` for `settleSeconds`, then 100 blocks of 512 samples, gathering channel `channel`'s newest pairs from the readings.
 [[nodiscard]] Cloud gather(const bal::Settings& s, const std::vector<Probe>& tones, size_t channel) {
 	Instance inst;
 	inst.set(s);
@@ -904,7 +922,7 @@ struct Cloud {
 	}
 	(void)run(inst, t, 3.0, 0.0);
 	Cloud c;
-	const size_t blockFrames = static_cast<size_t>(bal::kPointDecimation) * bal::kRingPairs;
+	const size_t blockFrames = 512;
 	std::vector<float> l(blockFrames), r(blockFrames);
 	for (int block = 0; block < 100; ++block) {
 		t.fill(l, r);
@@ -935,6 +953,53 @@ TEST_CASE("the goniometer's data: a band leaning left is a cloud leaning left, s
 	CHECK(empty.ll + empty.rr < 1.0e-6);
 }
 
+
+TEST_CASE("the goniometer's points are consecutive samples: a stereo sine pair at a fixed phase offset lies on its ellipse") {
+	// L = a sin(wt), R = b sin(wt + phi): every point satisfies (L/a)^2 + (R/b)^2 - 2 (L/a)(R/b) cos(phi) = sin^2(phi). 400 Hz is on a tooth of the 200 Hz comb,
+	// so the band passes it whole (the comb's delay is two whole cycles) and the band's points, like the input's, are the ellipse.
+	const double a = 0.8;
+	const double b = 0.5;
+	const double phi = 1.0;
+	Instance inst;
+	inst.set(quick(2, 0.0f));
+	std::vector<float> l(512), r(512);
+	double worst[2] = { 0.0, 0.0 };
+	size_t count = 0;
+	double t = 0.0;
+	for (int block = 0; block < 200; ++block) {
+		for (size_t i = 0; i < l.size(); ++i, t += 1.0) {
+			l[i] = static_cast<float>(a * std::sin(kTwoPi * 400.0 * t / kRate));
+			r[i] = static_cast<float>(b * std::sin(kTwoPi * 400.0 * t / kRate + phi));
+		}
+		inst.process(l.data(), r.data(), 512);
+		if (block < 20) {
+			continue;
+		}
+		// THE POINTS ARE CONSECUTIVE: neighbours advance the phase by exactly 2 pi 400 / 48000, so the input's cloud walks the ellipse in order.
+		size_t channel = 0;
+		for (const size_t ch : { bal::kInputChannel, static_cast<size_t>(1) }) {
+			for (size_t k = 0; k < bal::kRingPairs; ++k) {
+				if (k > 0) {
+					const double dx = static_cast<double>(inst.point(ch, k, 0) - inst.point(ch, k - 1, 0));
+					const double dy = static_cast<double>(inst.point(ch, k, 1) - inst.point(ch, k - 1, 1));
+					// ONE SAMPLE'S STEP ALONG THE ELLIPSE: the phase moves 2 pi 400 / 48000 = 0.052 rad, at most 0.052 of the larger semi-axis.
+					CHECK(std::hypot(dx, dy) < 0.06);
+				}
+				const double x = static_cast<double>(inst.point(ch, k, 0)) / a;
+				const double y = static_cast<double>(inst.point(ch, k, 1)) / b;
+				const double residual = x * x + y * y - 2.0 * x * y * std::cos(phi) - std::sin(phi) * std::sin(phi);
+				worst[channel] = std::max(worst[channel], std::fabs(residual));
+				++count;
+			}
+			++channel;
+		}
+		// THE INPUT'S NEWEST PAIR IS THE LAST SAMPLE OF THE BLOCK, to the bit.
+		CHECK(inst.point(bal::kInputChannel, bal::kRingPairs - 1, 0) == l[511] * 0.0f + static_cast<float>(a * std::sin(kTwoPi * 400.0 * (t - 1.0) / kRate)));
+	}
+	REQUIRE(count > 1000u);
+	CHECK(worst[0] < 2.0e-3);
+	CHECK(worst[1] < 5.0e-3);
+}
 TEST_CASE("the correlation is 1 for mono, about 0 for decorrelated noise, and falls as Widen rises") {
 	const auto corr = [](const bal::Settings& s, bool centred, bal::Reading which) {
 		Instance inst;
@@ -967,12 +1032,6 @@ TEST_CASE("the correlation is 1 for mono, about 0 for decorrelated noise, and fa
 	}
 }
 TEST_CASE("the comb ratios helper names the two bands by the ratio, and OWLTT's names are the ones it always had") {
-	CHECK(ow::combBandNames2(1.0)[1] == "Harmonics");
-	CHECK(ow::combBandNames2(1.0)[0] == "Between");
-	CHECK(ow::combBandNames2(2.0)[1] == "Even");
-	CHECK(ow::combBandNames2(3.0)[1] == "Every 3");
-	CHECK(ow::combBandNames(200.0, 400.0)[1] == "Odd");
-	CHECK(ow::combBandNames(200.0, 400.0)[2] == "Even");
 	CHECK(ow::combRatioText(0.5) == "x1/2");
 	CHECK(ow::combSnapRatio(1.02) == 1.0);
 	CHECK(ow::keyHzOf(69.0) == 440.0);

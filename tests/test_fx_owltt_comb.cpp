@@ -442,10 +442,10 @@ TEST_CASE("Comb: ratios snap to their detents, read as ratios, and name the colu
 	CHECK(combRatioOfKnob(2000.0, true) == 2.0);
 	CHECK(combKnobOfRatio(combRatioOfKnob(333.0, true), true) == doctest::Approx(333.0));
 	CHECK(combSpacingHz(2000.0, true) == 400.0);
-	const auto names = [](double a, double b) { return combBandNames(a, b); };
-	CHECK(names(200.0, 400.0) == std::array<std::string, 3> { "Between", "Odd", "Even" });
-	CHECK(names(200.0, 600.0) == std::array<std::string, 3> { "Between", "Others", "Every 3" });
-	CHECK(names(200.0, 300.0) == std::array<std::string, 3> { "Between", "Off x1.5", "On x1.5" });
+	// THE NAMES ARE HARMONIC ONLY FOR A TRACKED NOTE AT x1; else structural (the table is in test_fx_balance's "the bands' names").
+	CHECK(combBandNames(1.0, 2.0, true) == std::array<std::string, 3> { "Between", "Odd", "Even" });
+	CHECK(combBandNames(1.0, 3.0, true) == std::array<std::string, 3> { "Between", "Others", "Every 3" });
+	CHECK(combBandNames(1.0, 2.0, false) == std::array<std::string, 3> { "Gaps", "Teeth A", "Teeth B" });
 }
 
 TEST_CASE("Comb: the spacings are clamped to what the lines serve") {

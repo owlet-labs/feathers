@@ -53,11 +53,6 @@ std::string imbalanceText(float db) {
 	return out;
 }
 
-/// IS A PRESS ABOUT THE ROUTE OR THE VALUE: armed, allowed to reach this control, and Alt not held (`Knob::mappable`'s question).
-bool routeGestureWanted(const device::Modulatable& ctrl, const visage::MouseEvent& e) {
-	return !e.isAltDown() && ctrl.display().routable;
-}
-
 } // namespace
 
 //------------------------------------------------------------------------------------------------//
@@ -131,10 +126,9 @@ device::Modulatable& BalanceView::controlOf(size_t which) const {
 	return *controls_[which];
 }
 
-float BalanceView::handleX(size_t which) const {
+float BalanceView::xOfValue(size_t which, double v) const {
 	const visage::Bounds r = which == 3 ? spacingRail() : sliderRail(which);
 	const device::ParamDesc& d = controlOf(which).desc();
-	const double v = controlOf(which).value();
 	double t = 0.0;
 	if (which == 3) {
 		t = std::log(std::max(v, d.min) / d.min) / std::log(d.max / d.min);
@@ -143,6 +137,15 @@ float BalanceView::handleX(size_t which) const {
 		t = (v - d.min) / (d.max - d.min);
 	}
 	return r.x() + r.width() * static_cast<float>(std::clamp(t, 0.0, 1.0));
+}
+
+float BalanceView::handleX(size_t which) const {
+	return xOfValue(which, controlOf(which).value());
+}
+
+float BalanceView::handleY(size_t which) const {
+	const visage::Bounds r = which == 3 ? spacingRail() : sliderRail(which);
+	return r.y() + r.height() * 0.5f;
 }
 
 double BalanceView::valueAt(size_t which, float x) const {
@@ -178,6 +181,10 @@ BalanceView::BalanceView(backplane::DeviceHost& host, DeviceInstanceId device, d
 	for (auto& t : traces_) {
 		t.assign(kTracePoints, TracePoint {});
 	}
+	// EVERY HANDLE IS A `ModHandle` on a horizontal axis whose coordinate is the rail's (Spacing's log).
+	for (size_t w = 0; w < 4; ++w) {
+		mods_[w] = ModHandle({ ModHandleAxis { controls_[w], true, [this, w](double v) { return xOfValue(w, v); } } });
+	}
 	onMouseDown() = [this](const visage::MouseEvent& e) {
 		const int which = handleAt(e.position);
 		if (which < 0) {
@@ -189,16 +196,16 @@ BalanceView::BalanceView(backplane::DeviceHost& host, DeviceInstanceId device, d
 			redraw();
 			return;
 		}
+		const auto w = static_cast<size_t>(which);
+		// A RIGHT-CLICK ON A ROUTED HANDLE OPENS THE SOURCES MENU, as a knob's does.
+		if (e.shouldTriggerPopup() && mods_[w].showMenu(*this)) {
+			return;
+		}
 		dragging_ = which;
 		gestureOpen_ = false;
-		routeDragging_ = false;
-		if (routeGestureWanted(c, e)) {
-			routeDragging_ = true;
-			routeAnchorY_ = e.position.y;
-			const float before = c.display().amount;
-			routeAnchorAmount_ = before != 0.0f ? before : Knob::kRouteSeedAmount;
-			c.beginAmountGesture();
-			c.setAmount(routeAnchorAmount_);
+		// ARMED, A PRESS ROUTES (the `ModHandle` road: one undo entry, vertical travel is the amount); else it is a value drag.
+		if (const size_t axis = mods_[w].routeAxisFor(e.isAltDown(), e.position, handleX(w), handleY(w)); axis != ModHandle::npos) {
+			mods_[w].beginRoute(axis, e);
 		}
 		else {
 			// A PRESS ON THE HANDLE WRITES NOTHING (the drag moves it by how far the hand has gone); a press elsewhere on the rail takes the handle to the hand.
@@ -211,8 +218,8 @@ BalanceView::BalanceView(backplane::DeviceHost& host, DeviceInstanceId device, d
 			return;
 		}
 		device::Modulatable& c = controlOf(static_cast<size_t>(dragging_));
-		if (routeDragging_) {
-			c.setAmount(std::clamp(routeAnchorAmount_ + (routeAnchorY_ - e.position.y) / Knob::kRouteDragRange, -device::kMaxAmount, device::kMaxAmount));
+		if (mods_[static_cast<size_t>(dragging_)].routing()) {
+			mods_[static_cast<size_t>(dragging_)].dragRoute(e);
 		}
 		else {
 			if (!gestureOpen_) {
@@ -233,17 +240,13 @@ BalanceView::BalanceView(backplane::DeviceHost& host, DeviceInstanceId device, d
 			return;
 		}
 		device::Modulatable& c = controlOf(static_cast<size_t>(dragging_));
-		if (routeDragging_) {
-			if (std::fabs(c.display().amount) < device::kAmountUnroutedBelow) {
-				c.setAmount(0.0f);
-			}
-			c.endAmountGesture();
+		if (mods_[static_cast<size_t>(dragging_)].endRoute()) {
+			// the route gesture is closed
 		}
 		else if (gestureOpen_) {
 			c.endGesture();
 		}
 		gestureOpen_ = false;
-		routeDragging_ = false;
 		dragging_ = -1;
 		redraw();
 	};
@@ -273,12 +276,15 @@ void BalanceView::absorbPoints() {
 	float peak = 0.0f;
 	for (size_t c = 0; c < bal::kPointChannels; ++c) {
 		for (size_t k = bal::kRingPairs - fresh; k < bal::kRingPairs; ++k) {
+			const bool first = k == bal::kRingPairs - fresh;
 			const float l = host_.readingAt(device_, bal::pointIndex(c, k, 0));
 			const float r = host_.readingAt(device_, bal::pointIndex(c, k, 1));
 			TracePoint& p = traces_[c][head_[c]];
 			p.x = (r - l) * kInvSqrt2;
 			p.y = (l + r) * kInvSqrt2;
 			p.age = 0;
+			// THE FIRST POINT OF A BURST STARTS A NEW LINE; the rest continue it (they are consecutive samples).
+			p.linked = !first;
 			head_[c] = (head_[c] + 1) % kTracePoints;
 			peak = std::max({ peak, std::fabs(l), std::fabs(r) });
 		}
@@ -365,25 +371,30 @@ void BalanceView::drawGonio(visage::Canvas& canvas) {
 	canvas.text("R", font(kKnobLabelSize), visage::Font::kRight, g.right() - 13.0f, g.y() + 1.0f, 10.0f, 10.0f);
 	canvas.text("M", font(kKnobLabelSize), visage::Font::kCenter, cx - 5.0f, g.y() + 1.0f, 10.0f, 10.0f);
 
-	const auto plot = [&](const TracePoint& p, uint32_t colour, float alpha) {
-		if (p.age > kLife) {
-			return;
+	// THE GHOST OF THE WHOLE INPUT FIRST, faint and grey, then the bands added together in their colours: each trace is a polyline through consecutive samples, so a sine
+	// is a line or an ellipse and a mix a dense cloud. Thin, and faded by age.
+	const auto lines = [&](const std::vector<TracePoint>& trace, size_t head, uint32_t colour, float alpha) {
+		const size_t n = trace.size();
+		for (size_t k = 0; k < n; ++k) {
+			const TracePoint& p = trace[k];
+			const TracePoint& q = trace[(k + n - 1) % n];
+			if (!p.linked || p.age > kLife || k == head || q.age > kLife) {
+				continue;
+			}
+			const float life = 1.0f - static_cast<float>(p.age) / static_cast<float>(kLife + 1);
+			const auto at = [&](const TracePoint& t) {
+				return visage::Point { cx + std::clamp(t.x / (scale_ * 0.8f), -1.0f, 1.0f) * radius * 0.92f, cy - std::clamp(t.y / (scale_ * 0.8f), -1.0f, 1.0f) * radius * 0.92f };
+			};
+			const visage::Point a = at(q);
+			const visage::Point b = at(p);
+			canvas.setColor(withAlpha(colour, alpha * life));
+			canvas.segment(a.x, a.y, b.x, b.y, 1.0f, true);
 		}
-		const float life = 1.0f - static_cast<float>(p.age) / static_cast<float>(kLife + 1);
-		const float x = cx + std::clamp(p.x / (scale_ * 0.8f), -1.0f, 1.0f) * radius * 0.92f;
-		const float y = cy - std::clamp(p.y / (scale_ * 0.8f), -1.0f, 1.0f) * radius * 0.92f;
-		canvas.setColor(withAlpha(colour, alpha * life));
-		canvas.rectangle(x - 1.0f, y - 1.0f, 2.0f, 2.0f);
 	};
-	// THE GHOST OF THE WHOLE INPUT FIRST, faint and grey, then the bands added together in their colours.
-	for (const TracePoint& p : traces_[bal::kInputChannel]) {
-		plot(p, ghostColour(), 0.3f);
-	}
+	lines(traces_[bal::kInputChannel], head_[bal::kInputChannel], ghostColour(), 0.35f);
 	canvas.setBlendMode(visage::BlendMode::Add);
 	for (size_t b = 0; b < nb; ++b) {
-		for (const TracePoint& p : traces_[b]) {
-			plot(p, bandColour(b, nb), 0.75f);
-		}
+		lines(traces_[b], head_[b], bandColour(b, nb), 0.8f);
 	}
 	canvas.setBlendMode(visage::BlendMode::Alpha);
 }
@@ -406,9 +417,11 @@ void BalanceView::drawHandles(visage::Canvas& canvas) {
 		}
 		canvas.setColor(withAlpha(kAccent, 0.75f));
 		canvas.rectangle(std::min(from, hx), cy - 1.0f, std::max(1.0f, std::fabs(hx - from)), 2.0f);
+		mods_[i].drawUnder(canvas, hx, cy, 4.0f);
 		canvas.setColor(kValue);
 		canvas.circle(hx - 4.0f, cy - 4.0f, 8.0f);
 		char text[24];
+		mods_[i].drawOver(canvas, hx, cy, 4.0f);
 		const double v = controlOf(i).value();
 		if (i == 2) {
 			if (std::fabs(v) < 0.005) {
@@ -439,16 +452,11 @@ void BalanceView::draw(visage::Canvas& canvas) {
 		canvas.setColor(withAlpha(kMuted, k == 1 ? 0.30f : 0.12f));
 		canvas.rectangle(gx, plot.y(), 1.0f, plot.height());
 	}
-	char caption[64];
-	const double hz = model_.hasReadings && model_.spacing1Hz > 0.0f ? static_cast<double>(model_.spacing1Hz) : ow::combSpacingHz(model_.settings.spacing, false);
-	if (model_.settings.keyTrack && model_.noteHz > 0.0f) {
-		std::snprintf(caption, sizeof caption, "TEETH EVERY %.0f Hz (%s OF THE NOTE)", hz, ow::combRatioText(ow::combRatioOfKnob(model_.settings.spacing, false)).c_str());
-	}
-	else {
-		std::snprintf(caption, sizeof caption, "TEETH EVERY %.0f Hz", hz);
-	}
+	const double hz0 = model_.hasReadings && model_.spacing1Hz > 0.0f ? static_cast<double>(model_.spacing1Hz) : ow::combSpacingHz(model_.settings.spacing, false);
+	const bool tracked = model_.settings.keyTrack && model_.noteHz > 0.0f;
+	const std::string caption = ow::combTeethCaption(hz0, tracked, ow::combRatioOfKnob(model_.settings.spacing, false), model_.ratio21(), nb == 3);
 	canvas.setColor(withAlpha(kMuted, 0.85f));
-	canvas.text(caption, font(kKnobLabelSize), visage::Font::kLeft, 4.0f, 1.0f, plot.width() - 8.0f, 11.0f);
+	canvas.text(caption.c_str(), font(kKnobLabelSize), visage::Font::kLeft, 4.0f, 1.0f, plot.width() - 8.0f, 11.0f);
 	constexpr float kBottomPad = 2.0f;
 	constexpr float kTopMargin = 12.0f;
 	const float yBase = plot.bottom() - kBottomPad;
@@ -484,8 +492,10 @@ void BalanceView::draw(visage::Canvas& canvas) {
 		const float cy = rail.y() + rail.height() * 0.5f;
 		canvas.setColor(withAlpha(kLine, 0.7f));
 		canvas.rectangle(rail.x(), cy - 1.0f, rail.width(), 2.0f);
+		mods_[3].drawUnder(canvas, hx, cy, 4.0f);
 		canvas.setColor(kValue);
 		canvas.circle(hx - 4.0f, cy - 4.0f, 8.0f);
+		mods_[3].drawOver(canvas, hx, cy, 4.0f);
 	}
 
 	drawGonio(canvas);
@@ -545,7 +555,7 @@ const char* BalanceView::tooltipAt(visage::Point local) const {
 		return tooltipOf(&controlOf(static_cast<size_t>(which)));
 	}
 	if (local.y <= curveBounds().bottom()) {
-		return "The comb: each band's response against the harmonics of the first spacing. The bands are harmonic classes, so each curve sits on its own teeth. "
+		return "The comb: each band's response against multiples of the first spacing; each curve sits on its own teeth. "
 		       "The handle under it is Spacing";
 	}
 	if (local.x <= gonioBounds().right()) {

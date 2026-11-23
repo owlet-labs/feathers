@@ -33655,6 +33655,39 @@ TEST_CASE("Spectral's window: at every width it can be given, every control lies
 	}
 }
 
+TEST_CASE("Spectral's Formant Shift High and Crossover handles are offered only while the Link is off, on the card's plot and the window's") {
+	namespace spx = feathers::fx::spectral;
+	using H = ui::SpectrumPlot::Handle;
+	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);
+	ui::WidgetRegistry registry;
+	ui::SpectralExpanded panel { d.f.deviceHost, registry, d.device };
+	d.set(static_cast<size_t>(spx::Param::FShiftOn), 1.0f);
+	// THE ENGINE READS THE SAME RULE (spectralControlInert): linked, High and the crossover change nothing, so the plot has no handle for them.
+	for (const bool linked : { true, false }) {
+		CAPTURE(linked);
+		d.set(static_cast<size_t>(spx::Param::FShiftLink), linked ? 1.0f : 0.0f);
+		d.card->updateContent();
+		panel.updateContent();
+		for (ui::SpectrumPlot* plot : { &d.card->plotForTest(), &panel.plotForTest() }) {
+			CHECK(plot->handleForTest(H::ShiftLow).has_value());
+			CHECK(plot->handleForTest(H::ShiftHigh).has_value() == !linked);
+			CHECK(plot->handleForTest(H::Crossover).has_value() == !linked);
+		}
+	}
+}
+
+TEST_CASE("NOISE's plot hover names the routed drag while a modulator is armed on Cutoff") {
+	namespace nz = feathers::fx::noise;
+	DynCardFixture<ui::NoiseCard> d(nz::kTraits.tag);
+	ui::NoisePlot* plot = d.card->plotForTest();
+	REQUIRE(plot != nullptr);
+	const visage::Point at { plot->width() * 0.5f, plot->height() * 0.2f };
+	// ARMED THROUGH THE REAL ARROW: the Cutoff is routable, so the drag routes its amount.
+	d.f.arm(backplane::Source::core(0));
+	CHECK(ui::hoverText(*plot, at)
+	      == "Drag up or down: how much of Cutoff's modulation routes (Alt-drag places Cutoff across and Resonance up instead)");
+}
+
 TEST_CASE("Spectral's routing choice is shown only while both filters are on, in the window, for every combination of the two") {
 	namespace spx = feathers::fx::spectral;
 	DynCardFixture<ui::SpectralCard> d(spx::kTraits.tag);

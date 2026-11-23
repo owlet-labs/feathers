@@ -159,6 +159,11 @@ struct SourceDesc {
 	/// (`DeviceHost::setOutputsShown`); before it asks, and on a host that keeps no mask, it is not drawn. A route to it
 	/// reads as ever: this is view, not routing. The window shows every output.
 	bool cardHidden = false;
+	/// **THIS OUTPUT'S OWN ENABLE SWITCH AND AMOUNT, WHEN THEY ARE NOT THE DEVICE'S** (`Traits::enableControl` /
+	/// `amountControl`): a device with several independent outputs (the LFO's tabs) gives each its own. A control index of
+	/// this device, -1 for "the device's". A switched-off output publishes its rest value; the amount scales it. APPENDED.
+	int enableControl = -1;
+	int amountControl = -1;
 };
 
 /// HOW A HOST RUNS A DEVICE THAT PROCESSES AUDIO — and NULL IS THE CAPABILITY.

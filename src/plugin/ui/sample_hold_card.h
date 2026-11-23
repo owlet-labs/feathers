@@ -73,15 +73,33 @@ public:
 	const backplane::DeviceHost* deviceHost() const override { return &host_; }
 	DeviceInstanceId device() const override { return device_; }
 
+	/// **THE TABS** — four, each a whole sample & hold (`mod::samplehold::kTabs`): `selectTab` shows that tab's set and hides
+	/// the rest; `tabBounds`/`tabOnBounds` are the strip's own arithmetic, shared with the press.
+	static constexpr size_t kTabCount = mod::samplehold::kTabs;
+	static constexpr float kTabStrip = 16.0f;
+	static constexpr float kTabGap = 4.0f;
+	[[nodiscard]] size_t selectedTab() const noexcept { return tab_; }
+	void selectTab(size_t tab);
+	[[nodiscard]] visage::Bounds tabBounds(size_t tab) const;
+	[[nodiscard]] visage::Bounds tabOnBounds(size_t tab) const;
+	/// The tab a point is over, or `kTabCount` for none.
+	[[nodiscard]] size_t tabAt(visage::Point position) const;
+	[[nodiscard]] bool tabOn(size_t tab) const;
+	void toggleTabOn(size_t tab);
+	/// HOW MANY OF ALL THE TABS' WIDGETS ARE SHOWN: one set's, never more.
+	[[nodiscard]] size_t visibleSetWidgetsForTest() const;
+	/// EVERY DEVICE FIELD A HAND CAN REACH ON THE CARD, all four tabs and the view field.
+	[[nodiscard]] std::vector<size_t> addressedFieldsForTest() const;
+
 	static constexpr float kPadX = 9.0f;
 	static constexpr float kGap = 6.0f;
 	static constexpr float kRowGap = 4.0f;
 	static constexpr float kTrigColumn = TrigPad::kDiameter + 6.0f;
-	static constexpr float kScopeHeight = 72.0f;
+	static constexpr float kScopeHeight = 56.0f;
 	static constexpr size_t kColumns = 4;
 	static constexpr size_t kBoxRows = 3;
 	static constexpr float bodyHeight() {
-		return kGap + kScopeHeight + kGap + static_cast<float>(kBoxRows) * (ValueBox::kHeight + kRowGap) - kRowGap
+		return kTabStrip + kGap + kScopeHeight + kGap + static_cast<float>(kBoxRows) * (ValueBox::kHeight + kRowGap) - kRowGap
 		       + kGap + SwitchChip::kHeight + kGap;
 	}
 	/// OPEN, IN A VERTICAL LANE — `MathCard::openHeight`'s shape, for `ModPanel::bodyHeightOf`.
@@ -103,7 +121,7 @@ public:
 	[[nodiscard]] DeviceControl& control(size_t index) const;
 	[[nodiscard]] ValueBox& box(mod::samplehold::Param p) const;
 	[[nodiscard]] SwitchChip& chip(mod::samplehold::Param p) const;
-	[[nodiscard]] TrigPad& trigPad() const { return *trigPad_; }
+	[[nodiscard]] TrigPad& trigPad() const { return *cur().trigPad; }
 	/// Whether `p`'s box is drawn now — its gate, asked of the descriptor with the instance's value.
 	[[nodiscard]] bool boxLive(mod::samplehold::Param p) const;
 	/// Whether the Input knob does anything now: only under Source = Input (else it is drawn greyed, with the reason).
@@ -141,10 +159,30 @@ private:
 	DeviceInstanceId device_ = kNoInstance;
 	ModState& mod_;
 	EditHistory& history_;
-	mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(mod::samplehold::Param::kCount)> controls_;
-	std::array<std::unique_ptr<ValueBox>, kBoxes.size()> boxes_;
-	std::array<std::unique_ptr<SwitchChip>, kChips.size()> chips_;
-	std::unique_ptr<TrigPad> trigPad_;
+	/// **ONE TAB'S WHOLE SET OF CONTROLS**, built once for each tab bound to that tab's own fields — a tab press shows one set
+	/// and hides the others; nothing is ever re-pointed (the HARM card's arrangement, as the LFO's).
+	struct TabSet {
+		mutable std::array<std::unique_ptr<DeviceControl>, static_cast<size_t>(mod::samplehold::Param::kCount)> controls;
+		std::array<std::unique_ptr<ValueBox>, kBoxes.size()> boxes;
+		std::array<std::unique_ptr<SwitchChip>, kChips.size()> chips;
+		std::unique_ptr<TrigPad> trigPad;
+	};
+	std::array<TabSet, mod::samplehold::kTabs> sets_;
+	/// THE SELECTED TAB: a card-local view choice, mirrored into the device's view field.
+	size_t tab_ = 0;
+	/// THE TABS' ON SQUARES as last drawn, a bit a tab; see `updateContent`.
+	unsigned tabsOnDrawn_ = ~0u;
+	[[nodiscard]] TabSet& cur() noexcept { return sets_[tab_]; }
+	[[nodiscard]] const TabSet& cur() const noexcept { return sets_[tab_]; }
+	/// THE DEVICE FIELD OF control `p` ON TAB `tab` (the selected one by default).
+	[[nodiscard]] size_t fieldOf(mod::samplehold::Param p) const noexcept { return mod::samplehold::tabParam(tab_, p); }
+	[[nodiscard]] size_t fieldOf(size_t tab, mod::samplehold::Param p) const noexcept {
+		return mod::samplehold::tabParam(tab, p);
+	}
+	[[nodiscard]] DeviceControl& controlOfTab(size_t tab, size_t index) const;
+	void drawTabs(visage::Canvas& canvas);
+	void showTabOutputs();
+	void writeViewTab();
 	std::vector<Watch> watches_;
 	/// THE GATES' VALUES THE LAYOUT WAS LAST MADE FOR — Source, Clock and Seed Mode packed — so an undo, a load or host
 	/// automation that flips one reflows the rows at the next frame.

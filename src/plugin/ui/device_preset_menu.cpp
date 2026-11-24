@@ -222,7 +222,7 @@ PresetBrowser* DevicePresetMenu::prepare(DeviceInstanceId id, visage::Frame* fra
 	bindPresetIdentity(
 	    *browser_, [host, id] { return host->devicePreset(id); }, [host, id](const PresetIdentity& identity) { host->setDevicePreset(id, identity); });
 	const std::weak_ptr<const void> life = site_.fragmentLife();
-	browser_->onSelected([this, host, desc, id, &kind, pending, life](int) {
+	browser_->onSelected([this, host, desc, id, pending, life](int) {
 		if (!pending->open || life.expired()) {
 			return;
 		}

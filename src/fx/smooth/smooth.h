@@ -133,6 +133,10 @@ private:
 	fx::WetHighpass hp_ {};
 	fx::HighpassSettings hpLatched_ {};
 	bool subThru_ = false;
+	/// THE WET GAIN as a gain, latched on the grid and RAMPED linearly across the block from the last one's: exactly 1 at the fader's centre, where the wet is not touched.
+	float wetGainStart_ = 1.0f; ///< the gain at the start of the block: the last block's end, so a step is a ramp
+	float wetGainEnd_ = 1.0f;   ///< the gain at the block's last frame
+	bool wetGainPlaced_ = false; ///< false until the first block: that one snaps
 
 	/// THE BLOCK THE GRID IS IN — everything the firmware hoists out of its sample loop.
 	struct Block {

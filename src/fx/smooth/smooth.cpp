@@ -110,6 +110,8 @@ void SmoothShaper::reset() noexcept {
 	hp_.reset();
 	hpLatched_ = {};
 	subThru_ = false;
+	wetGainStart_ = wetGainEnd_ = 1.0f;
+	wetGainPlaced_ = false;
 	probe_[0] = probe_[1] = ShapeProbe {};
 	silentRun_ = 0;
 	inPeak_.reset();
@@ -153,6 +155,13 @@ void SmoothShaper::beginBlock() noexcept {
 	                            std::exp2(static_cast<double>(target_.hpWet)), sampleRate_, kHpNyquistFraction);
 	hp_.set(hpLatched_);
 	subThru_ = target_.subThru;
+	{
+		const float p = std::isfinite(target_.wetGain) ? std::clamp(target_.wetGain, 0.0f, 1.0f) : 0.5f;
+		const float g = (2.0f * p) * (2.0f * p); // the slot's law (`rack::siteFaderGain`), restated
+		wetGainStart_ = wetGainPlaced_ ? wetGainEnd_ : g;
+		wetGainEnd_ = g;
+		wetGainPlaced_ = true;
+	}
 
 	// `prepareSmoothing(*smoothedDrive, drive)`, snapping on first use. Its `current` is read once, below.
 	const int32_t driveCurrentQ = smoothedDriveQ_ == INT32_MIN ? fc.drive : smoothedDriveQ_;
@@ -400,6 +409,13 @@ void SmoothShaper::renderFrames(float* left, float* right, int frames) noexcept 
 					wetF += hp_.taken(ch, fromQ31(dry[ch]));
 				}
 				wetQ = toQ31(wetF);
+			}
+			// WET GAIN: only off its centre, so the default is the bits it was; the dry is not touched.
+			if (wetGainStart_ != 1.0f || wetGainEnd_ != 1.0f) {
+				// LINEAR ACROSS THE BLOCK: frame `k` of `kBlockFrames` is `k + 1` steps of the way, so the last frame is the target.
+				const int k = kBlockFrames - b.framesLeft + i;
+				const float g = wetGainStart_ + (wetGainEnd_ - wetGainStart_) * (static_cast<float>(k + 1) / static_cast<float>(kBlockFrames));
+				wetQ = toQ31(fromQ31(wetQ) * g);
 			}
 			// WET AND DRY, IN q31 — the dry too, so a Mix short of full passes the dry through the same
 			// quantisation the hardware's does.

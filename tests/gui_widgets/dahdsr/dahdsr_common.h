@@ -70,6 +70,8 @@
 #include "plugin/ui/pattern_card.h"
 #include "plugin/ui/eroder_card.h"
 #include "plugin/ui/eroder_expanded.h"
+#include "plugin/ui/balance_card.h"
+#include "plugin/ui/balance_expanded.h"
 #include "plugin/ui/smooth_card.h"
 #include "plugin/ui/spectral_card.h"
 #include "plugin/ui/spectral_expanded.h"

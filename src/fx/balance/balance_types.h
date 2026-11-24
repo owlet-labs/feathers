@@ -167,8 +167,17 @@ struct SideGains {
 	float left = 1.0f;
 	float right = 1.0f;
 };
+/// THE MOST ANY SIDE IS EVER MOVED, dB. Gain cannot centre a one-sided signal (zero times any gain is zero), and without a bound the detector's
+/// imbalance of a hard-panned band (tens of dB, bounded only by the energy floor) would take the loud side to silence. With the bound, a hard-right
+/// band stays right, at most this much quieter. A crossfeed correction that really centres it is a separate idea, not this law.
+inline constexpr float kMaxCorrectionDb = 12.0f;
+inline constexpr float kMaxCorrectionNepers = kMaxCorrectionDb / 8.685889638065035f;
 [[nodiscard]] inline SideGains correctionGains(float d, float strength) {
-	const float h = 0.5f * strength * d;
+	// A non-finite imbalance or strength is no correction; Strength 0 is exactly unity whatever d is.
+	if (!std::isfinite(d) || !std::isfinite(strength) || strength == 0.0f) {
+		return {};
+	}
+	const float h = std::clamp(0.5f * strength * d, -kMaxCorrectionNepers, kMaxCorrectionNepers);
 	return { std::exp(-h), std::exp(h) };
 }
 

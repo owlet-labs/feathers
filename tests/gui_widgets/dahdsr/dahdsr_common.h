@@ -287,7 +287,7 @@ struct HarmFixture : ModFixture {
 // THE CHAIN FURNITURE (backlog OW, 2026-10-29): HARM's Mix and wet Gain are the site panel's head row, supplied by the
 // slot (test_gui_widgets_nest, "NR: the eight devices ..."). Neither the card nor the window draws them, by the NR
 // decision that the custom cards are not touched, so the HARM sweeps below skip exactly these two and nothing else.
-static bool harmSlotFurniture(size_t i) {
+[[maybe_unused]] static bool harmSlotFurniture(size_t i) {
 	return i == static_cast<size_t>(fx::harm::Param::Mix) || i == static_cast<size_t>(fx::harm::Param::WetGain);
 }
 

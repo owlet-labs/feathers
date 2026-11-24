@@ -6080,6 +6080,7 @@ visage::Frame* firstKeyTakerUnder(visage::Frame* frame) {
 }
 } // namespace
 
+#if defined(__linux__) // ReopenRig and keyFromFocusUp (above) exist only on Linux
 TEST_CASE("alt pause: with the keyboard on a frame other than the root, a held Alt still pauses assign mode, lifting it resumes it, and Esc still cancels") {
 	// The pause reads the platform's live modifiers on the tick (`ui::pollAltPause`), not a key event, so where the keyboard sits
 	// cannot swallow it. Value-level: `ModState::assigning()` is the query every control's glow asks.
@@ -6112,3 +6113,4 @@ TEST_CASE("alt pause: with the keyboard on a frame other than the root, a held A
 	CHECK(keyFromFocusUp(held, escape));
 	CHECK_FALSE(mod->armed());
 }
+#endif // defined(__linux__): ReopenRig and keyFromFocusUp are Linux-only

@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -214,7 +215,7 @@ struct Rendered {
 //------------------------------------------------------------------------------------------------//
 
 TEST_CASE("the correction's gains multiply to one and bring the sides to one level at full Strength") {
-	for (const float d : { -2.0f, -0.7f, 0.0f, 0.3f, 1.386f, 3.0f }) {
+	for (const float d : { -2.0f, -0.7f, 0.0f, 0.3f, 1.386f, 2.0f }) {
 		for (const float s : { 0.0f, 0.25f, 0.5f, 1.0f }) {
 			const bal::SideGains g = bal::correctionGains(d, s);
 			CAPTURE(d);
@@ -1035,6 +1036,117 @@ TEST_CASE("the comb ratios helper names the two bands by the ratio, and OWLTT's 
 	CHECK(ow::combRatioText(0.5) == "x1/2");
 	CHECK(ow::combSnapRatio(1.02) == 1.0);
 	CHECK(ow::keyHzOf(69.0) == 440.0);
+}
+
+//------------------------------------------------------------------------------------------------//
+// ONE-SIDED INPUT: the correction is bounded, so a hard-panned signal is never taken to silence    //
+//------------------------------------------------------------------------------------------------//
+
+namespace {
+/// Noise on one side only (`left` / `right` amplitudes), a fixed LCG so the cases are repeatable.
+[[nodiscard]] Rendered runNoise(Instance& inst, double left, double right, double seconds) {
+	Rendered out;
+	uint32_t seed = 12345u;
+	std::vector<float> l(512);
+	std::vector<float> r(512);
+	const auto blocks = static_cast<size_t>(seconds * kRate / 512.0);
+	for (size_t b = 0; b < blocks; ++b) {
+		for (size_t i = 0; i < 512; ++i) {
+			seed = seed * 1664525u + 1013904223u;
+			const double n = static_cast<double>(seed >> 8) / 8388608.0 - 1.0;
+			l[i] = static_cast<float>(n * left);
+			r[i] = static_cast<float>(n * right);
+		}
+		inst.process(l.data(), r.data(), 512);
+		if (b + 1 > blocks / 2) {
+			out.l.insert(out.l.end(), l.begin(), l.end());
+			out.r.insert(out.r.end(), r.begin(), r.end());
+		}
+	}
+	return out;
+}
+[[nodiscard]] bool allFinite(const std::vector<float>& v) {
+	return std::all_of(v.begin(), v.end(), [](float x) { return std::isfinite(x); });
+}
+} // namespace
+
+TEST_CASE("the correction's gains never leave the clamp, and a non-finite imbalance is no correction") {
+	for (const float d : { -1.0e6f, -30.0f, 30.0f, 1.0e6f }) {
+		const bal::SideGains g = bal::correctionGains(d, 1.0f);
+		CAPTURE(d);
+		CHECK(std::fabs(20.0 * std::log10(static_cast<double>(g.left))) <= static_cast<double>(bal::kMaxCorrectionDb) + 1.0e-3);
+		CHECK(std::fabs(20.0 * std::log10(static_cast<double>(g.right))) <= static_cast<double>(bal::kMaxCorrectionDb) + 1.0e-3);
+		CHECK(bal::correctionGains(d, 0.0f).left == 1.0f);
+		CHECK(bal::correctionGains(d, 0.0f).right == 1.0f);
+	}
+	// THE END OF THE RANGE, restated: -30 nepers of imbalance quietens the right side by exactly the clamp.
+	CHECK(20.0 * std::log10(static_cast<double>(bal::correctionGains(-30.0f, 1.0f).right)) == doctest::Approx(-12.0).epsilon(1.0e-4));
+	CHECK(bal::correctionGains(std::nanf(""), 1.0f).left == 1.0f);
+	CHECK(bal::correctionGains(std::numeric_limits<float>::infinity(), 0.5f).right == 1.0f);
+}
+
+TEST_CASE("a hard-panned input is finite and never silent, moved by at most the clamp, and untouched at Strength 0") {
+	for (const float focus : { 0.0f, 1.0f }) {
+		for (const bool rightSide : { true, false }) {
+			for (const int bands : { 2, 3 }) {
+				CAPTURE(focus);
+				CAPTURE(rightSide);
+				CAPTURE(bands);
+				const double lAmp = rightSide ? 0.0 : 0.5;
+				const double rAmp = rightSide ? 0.5 : 0.0;
+				Instance off;
+				bal::Settings s0 = quick(bands, 0.0f);
+				s0.focus = focus;
+				off.set(s0);
+				const Rendered base = runNoise(off, lAmp, rAmp, 2.0);
+				REQUIRE(allFinite(base.l));
+				REQUIRE(allFinite(base.r));
+				const std::vector<float>& loudBase = rightSide ? base.r : base.l;
+				REQUIRE(rms(loudBase) > 0.05);
+				for (const float strength : { 0.0f, 0.5f, 1.0f }) {
+					CAPTURE(strength);
+					Instance on;
+					bal::Settings s1 = quick(bands, strength);
+					s1.focus = focus;
+					on.set(s1);
+					const Rendered corr = runNoise(on, lAmp, rAmp, 2.0);
+					REQUIRE(allFinite(corr.l));
+					REQUIRE(allFinite(corr.r));
+					const std::vector<float>& loudCorr = rightSide ? corr.r : corr.l;
+					const std::vector<float>& quietCorr = rightSide ? corr.l : corr.r;
+					// NEVER SILENT: the live side keeps the clamp's worth of the Strength 0 level, and never gains more than the clamp's rounding.
+					const double change = db(rms(loudCorr) / rms(loudBase));
+					CHECK(rms(loudCorr) > 0.05 * std::pow(10.0, -static_cast<double>(bal::kMaxCorrectionDb) / 20.0));
+					CHECK(change <= 0.5);
+					CHECK(change >= -static_cast<double>(bal::kMaxCorrectionDb) - 0.5);
+					if (strength == 0.0f) {
+						CHECK(change == doctest::Approx(0.0).epsilon(1.0e-6).scale(1.0));
+					}
+					// The silent side stays exactly silent: gain cannot make sound from nothing.
+					CHECK(rms(quietCorr) == 0.0);
+				}
+			}
+		}
+	}
+}
+
+TEST_CASE("one side silent and both sides silent: the output is finite, and silence stays exactly zero") {
+	for (const float focus : { 0.0f, 1.0f }) {
+		Instance inst;
+		bal::Settings s = quick(2, 1.0f);
+		s.focus = focus;
+		inst.set(s);
+		const Rendered quiet = runNoise(inst, 0.0, 0.0, 1.0);
+		CAPTURE(focus);
+		CHECK(rms(quiet.l) == 0.0);
+		CHECK(rms(quiet.r) == 0.0);
+		// AND THE DETECTORS RECOVER: noise after silence is heard on both sides at the Strength 100% levels, finite.
+		const Rendered back = runNoise(inst, 0.5, 0.5, 1.0);
+		REQUIRE(allFinite(back.l));
+		REQUIRE(allFinite(back.r));
+		CHECK(rms(back.l) > 0.05);
+		CHECK(rms(back.r) > 0.05);
+	}
 }
 
 } // namespace

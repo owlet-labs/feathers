@@ -3761,3 +3761,95 @@ TEST_CASE("NL: the brickwall's tail reaches exact silence in both its homes — 
 		CHECK_FALSE(holdsAtEnd);
 	}
 }
+
+TEST_CASE("every fx device: a one-sided input gives a finite, non-silent output") {
+	// **A HARD-PANNED SIGNAL IS ORDINARY INPUT.** Every device at its DEFAULT row, switched on, is fed noise on the left channel only, then on the right
+	// channel only. Asserted per device: every output sample is finite, and the output is not silent whenever the same noise on BOTH channels is not (a
+	// device that is quiet at its defaults for any input is not blamed for this one). The levels are read after a settling second, so a slow detector has
+	// had its time. A device listed in `kOneSidedKnown` is named with what it does, and is skipped for that side; the list holds facts, not excuses.
+	const std::vector<const device::Descriptor*> devices = audioDevices();
+	REQUIRE(devices.size() >= 5);
+	constexpr int kFrames = 512;
+	constexpr int kBlocks = 200; // 2.1 s at 48 kHz
+	constexpr double kSilentRms = 1.0e-4;
+	// NOT SILENT MEANS: within 24 dB of what the same noise on both channels gives (a hard side is already 3 dB under it by power; a correction that
+	// takes the live side down by tens of dB is the failure this case exists for, and 12 dB is the most any device should move one side).
+	constexpr double kMinVsCentre = 0.0631;
+	// DEVICE NAME, SIDE (0 = hard-left, 1 = hard-right, 2 = both), WHAT IT DOES. Filled from the first run.
+	struct Known {
+		const char* who;
+		int side;
+		const char* does;
+	};
+	static const Known kOneSidedKnown[] = { {nullptr, 0, nullptr} };
+	const auto known = [&](const std::string& who, int side) {
+		for (const Known& k : kOneSidedKnown) {
+			if (k.who != nullptr && who == k.who && (k.side == 2 || k.side == side)) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	struct Out {
+		bool finite = true;
+		double rms = 0.0;
+		int firstBad = -1;
+	};
+	const auto run = [&](const device::Descriptor& desc, double left, double right) {
+		Out out;
+		DeviceRow row = enabledRowFor(desc);
+		if (device::sameTag(desc.traits.tag, fx::harm::kTraits.tag)) {
+			allHarmPartialsOn(row);
+		}
+		Raw dev(desc, 48000.0, row);
+		std::vector<float> l(kFrames);
+		std::vector<float> r(kFrames);
+		uint32_t seed = 987654321u;
+		double sum = 0.0;
+		size_t n = 0;
+		for (int b = 0; b < kBlocks; ++b) {
+			for (int i = 0; i < kFrames; ++i) {
+				seed = seed * 1664525u + 1013904223u;
+				const double x = static_cast<double>(seed >> 8) / 8388608.0 - 1.0;
+				l[i] = static_cast<float>(0.5 * left * x);
+				r[i] = static_cast<float>(0.5 * right * x);
+			}
+			dev.process(l.data(), r.data(), kFrames);
+			for (int i = 0; i < kFrames; ++i) {
+				if (!std::isfinite(l[i]) || !std::isfinite(r[i])) {
+					out.finite = false;
+					out.firstBad = out.firstBad < 0 ? b * kFrames + i : out.firstBad;
+				} else if (b >= kBlocks / 2) {
+					sum += static_cast<double>(l[i]) * l[i] + static_cast<double>(r[i]) * r[i];
+					++n;
+				}
+			}
+		}
+		out.rms = std::sqrt(sum / static_cast<double>(std::max<size_t>(n, 1)));
+		return out;
+	};
+
+	std::vector<std::string> reds;
+	for (const device::Descriptor* desc : devices) {
+		const std::string who = deviceName(*desc);
+		CAPTURE(who);
+		const Out both = run(*desc, 1.0, 1.0);
+		const Out sides[2] = { run(*desc, 1.0, 0.0), run(*desc, 0.0, 1.0) };
+		for (int side = 0; side < 2; ++side) {
+			const bool silentAtCentre = !both.finite || both.rms < kSilentRms;
+			const bool bad = !sides[side].finite || (!silentAtCentre && sides[side].rms < std::max(kSilentRms, kMinVsCentre * both.rms));
+			if (bad) {
+				reds.push_back(who + (side == 0 ? " hard-left: " : " hard-right: ") + (sides[side].finite ? "silent (rms " + std::to_string(sides[side].rms) + ")" : "non-finite from sample " + std::to_string(sides[side].firstBad)));
+			}
+			if (!known(who, side)) {
+				CHECK_MESSAGE(sides[side].finite, who, side == 0 ? " hard-left" : " hard-right", ": non-finite output from sample ", sides[side].firstBad);
+				const bool silentOnly = !bad || !sides[side].finite;
+				CHECK_MESSAGE(silentOnly, who, " is silent for a one-sided input (centre rms ", both.rms, ")");
+			}
+		}
+	}
+	for (const std::string& line : reds) {
+		MESSAGE("ONE-SIDED: " << line);
+	}
+}

@@ -1362,6 +1362,24 @@ TEST_CASE("every control a DEVICE declares has something on one of its surfaces 
 		}
 		table.push_back(std::move(e));
 	}
+	// THE STEREO BALANCE: its own card AND its window, each listing what a hand reaches on it (the window reaches
+	// all; the card leaves some knobs to it). Built directly, the lane being full by here.
+	{
+		ui::WidgetRegistry balanceRegistry;
+		ui::BalanceCard balanceCard { f.deviceHost, balanceRegistry, kNoInstance };
+		ui::BalanceExpanded balancePanel { f.deviceHost, balanceRegistry, kNoInstance };
+		Entry e { feathers::fx::balance::kTraits.tag, {}, {}, false };
+		for (const feathers::fx::balance::Param p : balanceCard.addressedParamsForTest()) {
+			e.reached.insert(static_cast<size_t>(p));
+		}
+		for (const feathers::fx::balance::Param p : balancePanel.addressedParamsForTest()) {
+			e.reached.insert(static_cast<size_t>(p));
+		}
+		if (feathers::fx::balance::kTraits.enableControl >= 0) {
+			e.reached.insert(static_cast<size_t>(feathers::fx::balance::kTraits.enableControl));
+		}
+		table.push_back(std::move(e));
+	}
 	// SPECTRAL: its own card (`SpectralCard`), the plot's handles among what it reaches — by the delay's road.
 	{
 		ui::WidgetRegistry spectralRegistry;

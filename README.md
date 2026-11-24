@@ -173,13 +173,16 @@ Racks nest inside racks and chains to any depth.
 - **Harm** (window): Strips the fundamental with a note-tracking notch and puts a clean sine sub-harmonic back.
 - **Noise**: Adds noise or pseudorandom impulses to whatever passes, through its own filter.
 - **Sidechain Inject**: Brings the plugin's sidechain input into the chain at this point.
+- **Stereo Balance** (work in progress): Splits the signal into comb bands and corrects each band's left/right balance, with Widen, Pan and a goniometer.
 
 #### Modulators
 
 - **DAHDSR**: Delay, attack, hold, decay, sustain, release envelope.
 - **Follower**: Envelope follower, and a threshold that turns any signal into trigger pulses.
 - **LFO**: Low-frequency oscillator with shapes, sync, phase and its own preview.
+- **Macro 1**: One macro knob as a modulator device.
 - **Macros**: Four macro knobs as a modulator device.
+- **Macros 8**: Eight macro knobs as a modulator device.
 - **Math**: Combines two modulation inputs into one output, through a transfer curve.
 - **MSEG**: Multi-segment envelope: a shape made of segments you draw.
 - **Note Expressions**: Seven per-note controllers (volume, pan, tune, vibrato, expression, brightness and more) as routable outputs.

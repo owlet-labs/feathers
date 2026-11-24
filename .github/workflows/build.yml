@@ -47,7 +47,7 @@ env:
 jobs:
   build:
     name: ${{ matrix.leg }}
-    runs-on: ${{ fromJSON('{"linux-x86_64":"ubuntu-latest","windows-x86_64":"windows-latest","macos-universal2":"macos-latest"}')[matrix.leg] }}
+    runs-on: ${{ fromJSON('{"linux-x86_64":"ubuntu-24.04","windows-x86_64":"windows-latest","macos-universal2":"macos-latest"}')[matrix.leg] }}
     # Windows is bounded so a hang costs at most this. 150 and not 90: its COLD build MEASURED 1 h 48 min (run
     # 42565871384, 804 of 815 compiles missed ccache), and tests took 22 min; a warm cache should allow less.
     timeout-minutes: ${{ matrix.leg == 'windows-x86_64' && 150 || 360 }}

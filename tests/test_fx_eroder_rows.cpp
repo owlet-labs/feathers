@@ -991,26 +991,44 @@ TEST_CASE("The third row at its extremes in three chained stages with the loops 
 
 TEST_CASE("Every third-row control is wired in all three places: it changes the sound on its own Types, in the Drive and in each slot, and is read on no other") {
 	enum class Place { Drive, SlotA, SlotB };
-	const auto field = [](Settings& s, Place place, float SlotSettings::*slotField, float Settings::*driveField) -> float& {
-		return place == Place::Drive ? s.*driveField : (place == Place::SlotA ? s.slotA : s.slotB).*slotField;
+	// THE ROW IS NAMED, NOT ADDRESSED THROUGH A POINTER TO MEMBER: GCC 13.3 (CI's ubuntu-24.04) wrote the slot's
+	// member through `(cond ? s.slotA : s.slotB).*slotField` such that the render never saw it (every slot case read
+	// identical at 0 and 1); 13.4 and 14 did not. Each member is written by name below.
+	enum class Row { Hard, Sharp, Bias, Spread };
+	const auto slotRow = [](SlotSettings& slot, Row row) -> float& {
+		switch (row) {
+		case Row::Hard: return slot.hard;
+		case Row::Sharp: return slot.sharp;
+		case Row::Bias: return slot.bias;
+		case Row::Spread: break;
+		}
+		return slot.spread;
+	};
+	const auto driveRow = [](Settings& s, Row row) -> float& {
+		switch (row) {
+		case Row::Hard: return s.driveHard;
+		case Row::Sharp: return s.driveSharp;
+		case Row::Bias: return s.driveBias;
+		case Row::Spread: break;
+		}
+		return s.driveSpread;
 	};
 	struct Case {
 		const char* name;
 		DriveMode type;
 		DriveMode elsewhere;
-		float SlotSettings::*slotField;
-		float Settings::*driveField;
+		Row row;
 	};
 	const Case cases[] = {
-		{ "Hard on Soft", DriveMode::Soft, DriveMode::Chonk, &SlotSettings::hard, &Settings::driveHard },
-		{ "Hard on Tube", DriveMode::Tube, DriveMode::Chonk, &SlotSettings::hard, &Settings::driveHard },
-		{ "Sharp on Fold", DriveMode::Fold, DriveMode::Chonk, &SlotSettings::sharp, &Settings::driveSharp },
-		{ "Bias on Wreck", DriveMode::Wreck, DriveMode::Chonk, &SlotSettings::bias, &Settings::driveBias },
-		{ "Bias on Jag", DriveMode::Jag, DriveMode::Chonk, &SlotSettings::bias, &Settings::driveBias },
-		{ "Spread on Crush", DriveMode::Crush, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
-		{ "Spread on Decimate", DriveMode::Decimate, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
-		{ "Spread on Slew", DriveMode::Slew, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
-		{ "Spread on Lopside", DriveMode::Lopside, DriveMode::Chonk, &SlotSettings::spread, &Settings::driveSpread },
+		{ "Hard on Soft", DriveMode::Soft, DriveMode::Chonk, Row::Hard },
+		{ "Hard on Tube", DriveMode::Tube, DriveMode::Chonk, Row::Hard },
+		{ "Sharp on Fold", DriveMode::Fold, DriveMode::Chonk, Row::Sharp },
+		{ "Bias on Wreck", DriveMode::Wreck, DriveMode::Chonk, Row::Bias },
+		{ "Bias on Jag", DriveMode::Jag, DriveMode::Chonk, Row::Bias },
+		{ "Spread on Crush", DriveMode::Crush, DriveMode::Chonk, Row::Spread },
+		{ "Spread on Decimate", DriveMode::Decimate, DriveMode::Chonk, Row::Spread },
+		{ "Spread on Slew", DriveMode::Slew, DriveMode::Chonk, Row::Spread },
+		{ "Spread on Lopside", DriveMode::Lopside, DriveMode::Chonk, Row::Spread },
 	};
 	for (const Case& c : cases) {
 		for (const Place place : { Place::Drive, Place::SlotA, Place::SlotB }) {
@@ -1027,7 +1045,12 @@ TEST_CASE("Every third-row control is wired in all three places: it changes the 
 					slot.amount = 0.8f;
 					slot.type = type;
 				}
-				field(s, place, c.slotField, c.driveField) = value;
+				if (place == Place::Drive) {
+					driveRow(s, c.row) = value;
+				}
+				else {
+					slotRow(place == Place::SlotA ? s.slotA : s.slotB, c.row) = value;
+				}
 				return renderEtch(s, 24000, 4800, 480, true);
 			};
 			CHECK_FALSE(render(c.type, 0.0f) == render(c.type, 1.0f)); // it is heard on its own Type

@@ -125,6 +125,7 @@ private:
 	std::unique_ptr<SmoothHarmonicsView> bars_;
 	std::unique_ptr<Knob> drive_;
 	std::unique_ptr<Knob> mix_;
+	std::unique_ptr<Knob> wetGain_; ///< the shaped signal's level before Mix, on the HP Wet row
 	std::unique_ptr<ZoneCoordCell> harmonic_;
 	std::unique_ptr<GammaBox> harmonicPhase_;
 	std::unique_ptr<GammaBox> gamma_;

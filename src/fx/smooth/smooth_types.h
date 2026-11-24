@@ -244,6 +244,7 @@ enum class Param : int {
 	// THE WET HIGHPASS (`fx/wet_highpass.h`), appended: a patch saved before them reads them at their defaults, which are off.
 	HpWet,  ///< a highpass on the wet, before Mix; log2 hertz, the bottom is none
 	SubThru, ///< what HP Wet took from the wet is given back from the dry
+	WetGain, ///< the shaped signal's level before Mix, a fader position: unity at 0.5, the dry untouched
 
 	kCount,
 };
@@ -337,6 +338,7 @@ inline constexpr fx::TenantTraits kTraits {
 	// ITS MIX IS ITS OWN (backlog NR, D2): named for the frame, made by the device, so the slot does not blend and a
 	// POST chain is a series insert after it.
 	.mixControl = static_cast<int>(Param::Mix),
+	.wetGainControl = static_cast<int>(Param::WetGain),
 	.mixInDevice = true,
 };
 
@@ -599,6 +601,23 @@ inline constexpr fx::ParamDesc kParamDescs[] = {
      .gateMask = 0,
      .centred = false,
      .shortName = "Sub Thru"},
+    {.key = "smooth_wet_gain", .name = "Smooth Shaper Wet Gain",
+     .min = 0.0,
+     .max = 1.0,
+     .def = 0.5,
+     .stepped = false,
+     .unit = fx::ParamUnit::Fader,
+     .names = {},
+     .modulatable = true,
+     .offsetsMayLeaveRange = false,
+     .tooltip = "Level of the shaped signal alone, unity at twelve o'clock; the dry in a partial Mix is untouched",
+     .zones = 0,
+     .modSpan = 0.0,
+     .zoneNames = {},
+     .gateControl = -1,
+     .gateMask = 0,
+     .centred = false,
+     .shortName = "Wet Gain"},
 };
 static_assert(std::size(kParamDescs) == static_cast<size_t>(Param::kCount));
 
@@ -621,6 +640,7 @@ struct Settings {
 	float gamma = 0.0f;
 	float hpWet = static_cast<float>(fx::kWetHighpassLog2Min); ///< log2 hertz; the bottom is no filter
 	bool subThru = false;
+	float wetGain = 0.5f; ///< a fader position: unity at 0.5
 
 	friend bool operator==(const Settings&, const Settings&) = default;
 };

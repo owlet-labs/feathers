@@ -54,6 +54,7 @@ SmoothExpanded::SmoothExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	};
 	drive_ = knob(sm::Param::Drive, "Drive");
 	mix_ = knob(sm::Param::Mix, "Mix");
+	wetGain_ = knob(sm::Param::WetGain, "Wet Gain");
 	// HARMONIC AND TWIST ARE THE CARD'S CONTROL — `makeSmoothCoordCell`, no dropdowns.
 	harmonic_ = makeSmoothCoordCell(control(sm::Param::Harmonic), sm::Param::Harmonic, "Harmonic", kKnobDiameter);
 	// THE TWO PHASES ARE DRAG WINDOWS, SO BOXES, NEVER KNOBS (`device::isDragWindow`; `gamma_box.h`).
@@ -80,7 +81,7 @@ SmoothExpanded::SmoothExpanded(backplane::DeviceHost& host, WidgetRegistry& regi
 	                                           kKnobDiameter);
 	hp_->addTo(*this);
 	for (visage::Frame* f : std::initializer_list<visage::Frame*> {
-	         mode_.get(), poly_.get(), curve_.get(), bars_.get(), drive_.get(), mix_.get(),
+	         mode_.get(), poly_.get(), curve_.get(), bars_.get(), drive_.get(), mix_.get(), wetGain_.get(),
 	         harmonic_.get(), harmonicPhase_.get(), gamma_.get(), twist_.get() }) {
 		addChild(f);
 	}
@@ -130,7 +131,7 @@ bool SmoothExpanded::hasReadings() const {
 }
 
 void SmoothExpanded::modulationBound(ModState* mod, EditHistory* history) {
-	for (Knob* k : { drive_.get(), mix_.get() }) {
+	for (Knob* k : { drive_.get(), mix_.get(), wetGain_.get() }) {
 		k->setModulation(mod, history);
 	}
 	hp_->setModulation(mod, history);
@@ -191,6 +192,7 @@ void SmoothExpanded::layOut() {
 	hp_->hertz()->setBounds(left, hpRow, cell, kCellHeight);
 	hp_->subThru()->setBounds(left + cell + kRowGap, hpRow + (kCellHeight - SwitchChip::kHeight) * 0.5f, kSweepChipWidth + 12.0f,
 	                          SwitchChip::kHeight);
+	wetGain_->setBounds(left + 2.0f * cell, hpRow, cell, kCellHeight);
 	hp_->showFaces(true, false);
 	{
 		const sm::Settings now = settings();
@@ -270,7 +272,7 @@ std::vector<sm::Param> SmoothExpanded::addressedParamsForTest() const {
 		     sm::Param::Mix,          sm::Param::Harmonic,      sm::Param::HarmonicPhase, sm::Param::Gamma,
 		     sm::Param::Sweep,        sm::Param::SweepOn,       sm::Param::Width,   sm::Param::Evens,
 		     sm::Param::Rect,         sm::Param::Fdbk,          sm::Param::WidthOn, sm::Param::EvensOn,
-		     sm::Param::RectOn,       sm::Param::FdbkOn,        sm::Param::HpWet, sm::Param::SubThru };
+		     sm::Param::RectOn,       sm::Param::FdbkOn,        sm::Param::HpWet, sm::Param::SubThru, sm::Param::WetGain };
 }
 
 } // namespace feathers::ui

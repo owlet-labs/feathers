@@ -192,6 +192,7 @@ Row rowOf(const State& state) {
 	row[static_cast<size_t>(Param::SweepOn)] = s.sweepOn ? 1.0f : 0.0f;
 	row[static_cast<size_t>(Param::HpWet)] = s.hpWet;
 	row[static_cast<size_t>(Param::SubThru)] = s.subThru ? 1.0f : 0.0f;
+	row[static_cast<size_t>(Param::WetGain)] = s.wetGain;
 	for (size_t i = 0; i < kPillCount; ++i) {
 		const auto pill = static_cast<Pill>(i);
 		row[static_cast<size_t>(pillAmountParam(pill))] = s.pillAmount[i];
@@ -223,6 +224,7 @@ State stateOf(const Row& row, size_t fieldsPresent) {
 	s.sweepOn = read(Param::SweepOn) >= 0.5f;
 	s.hpWet = read(Param::HpWet);
 	s.subThru = read(Param::SubThru) >= 0.5f;
+	s.wetGain = read(Param::WetGain);
 	for (size_t i = 0; i < kPillCount; ++i) {
 		const auto pill = static_cast<Pill>(i);
 		s.pillAmount[i] = read(pillAmountParam(pill));

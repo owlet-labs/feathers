@@ -1756,3 +1756,88 @@ TEST_CASE("NM: on a playing transport the bus instance's stereo LFO is the song'
 	block(voice, at, true);
 	CHECK(std::abs(voice.lfoPhaseNowForTest() - through.lfoPhaseNowForTest()) > 1e-3f);
 }
+
+TEST_CASE("Wet Gain: appended with its key, unity at the centre; the wet scales by the slot's law, the dry is untouched") {
+	CHECK(std::string_view(smooth::kParamDescs[static_cast<size_t>(Param::WetGain)].key) == "smooth_wet_gain");
+	CHECK(static_cast<size_t>(Param::WetGain) == static_cast<size_t>(Param::SubThru) + 1);
+	CHECK(smooth::kParamDescs[static_cast<size_t>(Param::WetGain)].def == 0.5);
+	CHECK(smooth::kTraits.wetGainControl == static_cast<int>(Param::WetGain));
+	CHECK(smooth::Settings {}.wetGain == 0.5f);
+	const smooth::Row row = smooth::rowOf(smooth::State {});
+	CHECK(row[static_cast<size_t>(Param::WetGain)] == 0.5f);
+
+	smooth::Settings base = hpSettings(0.0f, false);
+	const MixWeights w = mixWeightsOf(base);
+	REQUIRE(w.wet > 0.0);
+	REQUIRE(w.dry > 0.0);
+	const Stereo centre = renderTones(base, 50.0, 2500.0);
+	for (const float position : { 0.0f, 0.25f, 0.75f }) {
+		// THE SLOT LAW, restated: (2p)^2.
+		const double gain = (2.0 * position) * (2.0 * position);
+		smooth::Settings s = base;
+		s.wetGain = position;
+		const Stereo moved = renderTones(s, 50.0, 2500.0);
+		double worst = 0.0;
+		double moveSeen = 0.0;
+		for (int ch = 0; ch < 2; ++ch) {
+			for (size_t i = 0; i < centre.in[ch].size(); ++i) {
+				const double dry = w.dry * static_cast<double>(centre.in[ch][i]);
+				const double wet = static_cast<double>(centre.out[ch][i]) - dry;
+				const double expected = dry + gain * wet;
+				worst = std::max(worst, std::fabs(expected - static_cast<double>(moved.out[ch][i])));
+				moveSeen = std::max(moveSeen, std::fabs(static_cast<double>(moved.out[ch][i]) - static_cast<double>(centre.out[ch][i])));
+			}
+		}
+		INFO("position " << position);
+		CHECK(worst < 2.0e-5);
+		CHECK(moveSeen > 0.01); // non-vacuity: the gain moved the output
+	}
+	// UNITY IS THE BITS IT WAS: an explicit centre equals the default's output, sample for sample.
+	smooth::Settings explicitCentre = base;
+	explicitCentre.wetGain = 0.5f;
+	const Stereo again = renderTones(explicitCentre, 50.0, 2500.0);
+	CHECK(again.out[0] == centre.out[0]);
+	CHECK(again.out[1] == centre.out[1]);
+}
+
+TEST_CASE("Wet Gain: a fader step is a linear ramp across one block, by value") {
+	smooth::Settings base = hpSettings(0.0f, false);
+	const MixWeights w = mixWeightsOf(base);
+	smooth::Settings stepped = base;
+	stepped.wetGain = 0.75f; // gain 2.25 from unity
+	// THE STEP IS TAKEN AT THE SECOND BLOCK: the device renders one block at the centre, then the target moves.
+	std::vector<float> in(static_cast<size_t>(4 * smooth::kBlockFrames));
+	for (size_t i = 0; i < in.size(); ++i) {
+		in[i] = 0.3f * static_cast<float>(std::sin(0.05 * static_cast<double>(i)));
+	}
+	const auto run = [&](bool step) {
+		smooth::SmoothShaper dev;
+		dev.prepare(kHpRate);
+		dev.setTarget(base);
+		std::vector<float> l = in, r = in;
+		const size_t n = static_cast<size_t>(smooth::kBlockFrames);
+		dev.processStereo(l.data(), r.data(), static_cast<int>(n));
+		if (step) {
+			dev.setTarget(stepped);
+		}
+		dev.processStereo(l.data() + n, r.data() + n, static_cast<int>(3 * n));
+		return l;
+	};
+	const std::vector<float> flat = run(false);
+	const std::vector<float> moved = run(true);
+	const size_t n = static_cast<size_t>(smooth::kBlockFrames);
+	for (size_t i = 0; i < n; ++i) {
+		CHECK(moved[i] == flat[i]); // before the step: the bits it was
+	}
+	double worst = 0.0;
+	for (size_t i = 0; i < 3 * n; ++i) {
+		const size_t at = n + i;
+		const double ramp = i < n ? 1.0 + 1.25 * static_cast<double>(i + 1) / static_cast<double>(n) : 2.25;
+		const double dry = w.dry * static_cast<double>(in[at]);
+		const double expected = dry + ramp * (static_cast<double>(flat[at]) - dry);
+		worst = std::max(worst, std::fabs(expected - static_cast<double>(moved[at])));
+	}
+	CHECK(worst < 2.0e-5);
+	// NON-VACUITY: mid-ramp the output sits between the ends, not at either.
+	CHECK(std::fabs(moved[n + n / 2] - flat[n + n / 2]) > 1.0e-4);
+}

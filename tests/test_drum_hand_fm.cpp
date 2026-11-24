@@ -358,6 +358,24 @@ double lineAmplitude(const std::vector<float>& x, double hz) {
 
 } // namespace
 
+// J_n(x) BY ITS SERIES, sum over k of (-1)^k (x/2)^(2k+n) / (k! (k+n)!): Apple's libc++ has no std::cyl_bessel_j
+// (macOS CI). Measured against libstdc++'s cyl_bessel_j for n 0..3 and x 0..12: within 6e-13.
+static double besselJ(int n, double x) {
+	double term = 1.0;
+	for (int k = 1; k <= n; ++k) {
+		term *= (x / 2.0) / static_cast<double>(k);
+	}
+	double sum = term;
+	for (int k = 1; k < 200; ++k) {
+		term *= -(x / 2.0) * (x / 2.0) / (static_cast<double>(k) * static_cast<double>(k + n));
+		sum += term;
+		if (k > n && std::abs(term) < 1.0e-17 * std::abs(sum)) {
+			break;
+		}
+	}
+	return sum;
+}
+
 TEST_CASE("FM: in a Drone the sidebands stand at the Bessel values J_n(index), at the held index, for the carrier plus n modulator frequencies") {
 	// carrier 4800 Hz, modulator 600 Hz (ratio 0.125): every line is a whole number of hertz, so a one-second window holds whole cycles, and the
 	// sidebands that fold back through zero (n <= -8) are of the order of J_8 and below, far under the tolerance.
@@ -377,7 +395,7 @@ TEST_CASE("FM: in a Drone the sidebands stand at the Bessel values J_n(index), a
 		for (int n = -3; n <= 3; ++n) {
 			CAPTURE(n);
 			const double line = lineAmplitude(y, carrier + spacing * n);
-			const double want = std::abs(std::cyl_bessel_j(static_cast<double>(std::abs(n)), actual)) / std::abs(std::cyl_bessel_j(1.0, actual));
+			const double want = std::abs(besselJ(std::abs(n), actual)) / std::abs(besselJ(1, actual));
 			CHECK(line / a1 == doctest::Approx(want).epsilon(2.0e-3).scale(1.0)); // an absolute 2e-3 where J is near zero
 			if (std::abs(want) < 1.0e-6) {
 				CHECK(line / a1 < 2.0e-3);
